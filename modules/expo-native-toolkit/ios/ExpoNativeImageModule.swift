@@ -31,9 +31,16 @@ public class ExpoNativeImageModule: Module {
             if let mh = maxH, srcH > mh { scale = min(scale, mh / srcH) }
             let newSize = CGSize(width: srcW * scale, height: srcH * scale)
 
-            let renderer = UIGraphicsImageRenderer(size: newSize)
+            // [2026-10-07 send-media] scale = 1: the default renderer format uses
+            // the SCREEN scale (2x/3x), so a "1600px" resize produced a 4800px
+            // JPEG (output 9x the pixels asked for). Also opaque for JPEG.
+            let fmt = UIGraphicsImageRendererFormat.default()
+            fmt.scale = 1
+            fmt.opaque = (format != "png")
+            let pixelSize = CGSize(width: max(1, floor(newSize.width)), height: max(1, floor(newSize.height)))
+            let renderer = UIGraphicsImageRenderer(size: pixelSize, format: fmt)
             let resized = renderer.image { _ in
-                original.draw(in: CGRect(origin: .zero, size: newSize))
+                original.draw(in: CGRect(origin: .zero, size: pixelSize))
             }
 
             // Encode
@@ -56,8 +63,8 @@ public class ExpoNativeImageModule: Module {
 
             return [
                 "uri": "file://" + outUrl.path,
-                "width": Int(newSize.width),
-                "height": Int(newSize.height),
+                "width": Int(pixelSize.width),
+                "height": Int(pixelSize.height),
                 "sizeBytes": bytes.count,
             ]
         }

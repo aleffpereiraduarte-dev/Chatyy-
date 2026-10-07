@@ -370,7 +370,9 @@ export function getCachedMessagesSync(convId, limit = 50) {
   // cold for this conv.
   if (arr.length === 0) {
     try {
-      const raw = getString(_msgKey(String(convId)));
+      // [2026-10-07 bgsync] legacy owner: fall back to the unscoped blob.
+      const raw = getString(_msgKey(String(convId))) ||
+        (_adoptLegacy && _acctSuffix ? getString(MSG_KEY_PREFIX + String(convId)) : null);
       if (raw) {
         const parsed = JSON.parse(raw);
         if (Array.isArray(parsed) && parsed.length) {
@@ -504,9 +506,26 @@ export function clearChatCache() {
 // (so a read can never serve the previous account, not even for one frame), then
 // re-hydrate from the new account's scoped keys. Wired from AuthContext on
 // login / account switch. Idempotent for the same account.
-export function setActiveAccount(email) {
+// [2026-10-07 bgsync] opts.adoptLegacy: the device's single (legacy) owner
+// keeps reading the pre-isolation UNSCOPED blobs until its scoped keys exist —
+// before this fix no cold start ever scoped the accelerator, so the scoped keys
+// are empty on existing installs and the frame-1 paint would go blank.
+let _adoptLegacy = false;
+function _adoptLegacyConvs() {
+  if (!_adoptLegacy || !_acctSuffix) return;
+  try {
+    if (getString(_convKey())) return;
+    const legacy = getString(CONV_KEY);
+    if (legacy) setString(_convKey(), legacy);
+  } catch {}
+}
+export function setActiveAccount(email, opts) {
   const next = normAccount(email);
-  if (next === _acct) return;
+  if (next === _acct) {
+    if (opts && opts.adoptLegacy && !_adoptLegacy) { _adoptLegacy = true; _adoptLegacyConvs(); try { if (!_convs.length) _doHydrate(); } catch {} }
+    return;
+  }
+  _adoptLegacy = !!(opts && opts.adoptLegacy);
   // Flush the outgoing account so nothing queued is lost, then wipe memory.
   try { flushPendingWrites(); } catch {}
   _msgs.clear();
@@ -516,11 +535,12 @@ export function setActiveAccount(email) {
   _index.totalBytes = 0;
   _acct = next;
   _acctSuffix = next ? ('_' + accountKeyHash(next)) : '';
+  _adoptLegacyConvs();
   // Re-hydrate synchronously from the new account's keys so the next sync read
   // paints the correct account from frame 1. Async MMKV layer retries below.
   try { _doHydrate(); } catch {}
   if (Platform.OS !== 'web' && typeof waitForCacheReady === 'function') {
-    try { waitForCacheReady().then(() => { try { _doHydrate(); } catch {} }).catch(() => {}); } catch {}
+    try { waitForCacheReady().then(() => { try { _adoptLegacyConvs(); _doHydrate(); } catch {} }).catch(() => {}); } catch {}
   }
 }
 

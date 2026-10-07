@@ -21,6 +21,9 @@ import { apiCall } from './api';
 
 let LK_AudioSession = null;
 if (Platform.OS !== 'web') {
+  // [2026-10-07 coldstart] LiveKit globals are registered after first paint by
+  // app/_layout.js; make sure they exist before this module can connect a Room.
+  try { if (typeof globalThis !== 'undefined' && typeof globalThis.__chatyyEnsureLiveKitGlobals === 'function') globalThis.__chatyyEnsureLiveKitGlobals(); } catch {}
   try {
     const lkrn = require('@livekit/react-native');
     LK_AudioSession = lkrn.AudioSession || null;

@@ -29,7 +29,16 @@ function probeKeyboardController() {
   try {
     if (!TurboModuleRegistry.get('KeyboardController')) return false;
     if (!TurboModuleRegistry.get('WorkletsModule')) return false;
-    if (!TurboModuleRegistry.get('ReanimatedModule')) return false;
+    // [2026-10-07 wb586] NUNCA instanciar 'ReanimatedModule' aqui. No Android o
+    // construtor (NativeProxy.initHybrid) lê o WorkletsModuleProxy, que só existe
+    // depois que o JS do react-native-worklets chama installTurboModule() — ou
+    // seja, depois do require abaixo. Pedido antes disso → NullPointerException
+    // engolida por este try/catch, MAS o TurboModuleManager deixa o ModuleHolder
+    // preso em "creating" (endCreatingModule nunca roda) e o próximo acesso ao
+    // ReanimatedModule (o próprio require do reanimated) espera PRA SEMPRE na
+    // thread JS → tela branca no boot (build 586, runtime 2.6.0). O require do
+    // reanimated já cria o módulo na ordem certa (worklets → reanimated) e lança
+    // se o nativo faltar, o que cai no catch.
     // eslint-disable-next-line global-require
     Rea = require('react-native-reanimated');
     // eslint-disable-next-line global-require

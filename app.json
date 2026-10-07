@@ -312,6 +312,7 @@
       "./plugins/with-android-packaging-pickfirst",
       "./plugins/voip-push",
       "./plugins/with-notification-service",
+      "./plugins/with-bg-chat-sync",
       "./plugins/with-broadcast-extension",
       "expo-asset",
       [
@@ -352,7 +353,8 @@
           "android": {
             "minSdkVersion": 26,
             "enableProguardInReleaseBuilds": true,
-            "enableShrinkResources": true
+            "enableShrinkResources": true,
+            "extraProguardRules": "# [2026-10-07] R8 ofuscava classes usadas por reflection (token FCM não chegava ao Expo; headless do task-manager falhava)\n-keep class expo.modules.notifications.** { *; }\n-keep class expo.modules.adapters.react.apploader.** { *; }\n-keep class expo.modules.taskManager.** { *; }\n-keep class expo.modules.backgroundfetch.** { *; }\n-keep class expo.modules.callkit.** { *; }"
           }
         }
       ]

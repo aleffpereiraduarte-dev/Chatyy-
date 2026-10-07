@@ -4857,12 +4857,20 @@ export function chatDeliveryAckBatched(conversationId, messageIds) {
   if (!q) { q = new Set(); _ackQueues.set(conversationId, q); }
   for (const id of messageIds) if (id != null) q.add(id);
   if (_ackTimers.has(conversationId)) return; // already scheduled
-  const handle = setTimeout(() => {
-    _ackTimers.delete(conversationId);
+  // [2026-10-07 receipts2] LEADING-EDGE: o 1º recibo de uma janela sai já no
+  // próximo tick (coalesce só ids do MESMO tick) — antes TODO ✓✓ cinza esperava
+  // 250ms parado aqui. A rajada que chegar nos 250ms seguintes vai num único
+  // envio no fim da janela (trailing), igual antes.
+  const _flushNow = () => {
     const ids = Array.from(_ackQueues.get(conversationId) || []);
     _ackQueues.delete(conversationId);
     if (ids.length === 0) return;
     _ackWithRetry(conversationId, ids);
+  };
+  setTimeout(_flushNow, 0);
+  const handle = setTimeout(() => {
+    _ackTimers.delete(conversationId);
+    _flushNow();
   }, 250);
   _ackTimers.set(conversationId, handle);
 }
@@ -5556,6 +5564,17 @@ export async function searchByUsername(query) {
   return apiCall('search_by_username', { query });
 }
 
+// [2026-10-07 discovery] Unified "find people" — one box for name / @user /
+// phone / e-mail. Server classifies + ranks (exact first, contacts first,
+// accent-insensitive, typo-tolerant) and honours blocks / discoverable /
+// shadowban. Response: { query_type, contacts[], global[], users[], invite }.
+// homeDial = device country dial code (digits) so national numbers resolve.
+export async function peopleSearch(q, homeDial = '') {
+  const params = { q: String(q || '').slice(0, 100) };
+  if (homeDial) params.home_dial = String(homeDial).replace(/\D/g, '');
+  return apiCall('people_search', params, 'POST');
+}
+
 // E2E Encryption
 export async function e2eUploadKey(publicKey, deviceId = 'default') {
   return apiCall('e2e_upload_key', { public_key: publicKey, device_id: deviceId }, 'POST');
@@ -6121,6 +6140,14 @@ export async function chatTopActive(limit = 3) {
 // doesn't poison the flag for the rest of the session. Before this, one
 // failed probe locked the client into the PHP fallback permanently and
 // photos stayed "loading" silently.
+// [2026-10-07 send-media] The Rust media-upload service (:9103) only runs on
+// the US origin — the regional edges (api-br / api-eu) answer 405 on
+// /api/rust/upload*, so every BR/EU-routed client failed the probe and sent ALL
+// media through PHP chat_upload (single multipart POST: no resume, no chunk
+// retry). Bytes go to R2 either way, and the bearer is validated against PG
+// auth_tokens (shared), so always target the US origin for Rust uploads; the
+// commit (chat_send with the cdn_url) still goes to the user's regional base.
+function _rustUploadBase() { return US_FALLBACK_BASE || BASE_URL; }
 let _rustUploadAvailable = null;
 let _rustUploadProbedAt = 0;
 // Force a fresh probe on next call — used when the user taps "Start backup"
@@ -6137,7 +6164,7 @@ async function _probeRustUpload() {
   try {
     const ctrl = new AbortController();
     const t = setTimeout(() => ctrl.abort(), 2500);
-    const r = await fetch(`${BASE_URL}/api/rust/upload`, { method: 'OPTIONS', signal: ctrl.signal });
+    const r = await fetch(`${_rustUploadBase()}/api/rust/upload`, { method: 'OPTIONS', signal: ctrl.signal });
     clearTimeout(t);
     _rustUploadAvailable = r.status >= 200 && r.status < 300;
   } catch { _rustUploadAvailable = false; }
@@ -6188,7 +6215,7 @@ export async function rustUpload(file, userEmail, context = 'chat', externalSign
     if (onProgress && typeof XMLHttpRequest !== 'undefined') {
       return await new Promise((resolve) => {
         const xhr = new XMLHttpRequest();
-        xhr.open('POST', `${BASE_URL}/api/rust/upload`);
+        xhr.open('POST', `${_rustUploadBase()}/api/rust/upload`);
         xhr.setRequestHeader('Authorization', `Bearer ${authToken}`);
         if (Platform.OS === 'web') xhr.withCredentials = true;
         xhr.timeout = 90000;
@@ -6227,7 +6254,7 @@ export async function rustUpload(file, userEmail, context = 'chat', externalSign
       else externalSignal.addEventListener('abort', onExternalAbort, { once: true });
     }
     try {
-      const resp = await fetch(`${BASE_URL}/api/rust/upload`, {
+      const resp = await fetch(`${_rustUploadBase()}/api/rust/upload`, {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${authToken}` },
         body: formData,
@@ -6254,7 +6281,12 @@ export async function rustUpload(file, userEmail, context = 'chat', externalSign
  * If connection drops, resumes from last chunk.
  * Returns same format as rustUpload.
  */
-export async function rustChunkedUpload(file, userEmail, context = 'chat', onProgress = null, externalSignal = null) {
+// [2026-10-07 send-media] `resume` = { uploadId, onUploadId(id) } (native only):
+// reuse a persisted Rust chunk session and skip the chunks the server already
+// has (/upload/status), so a retry after a drop / app kill resumes instead of
+// restarting. onUploadId fires as soon as a NEW session is created so the
+// caller can persist it.
+export async function rustChunkedUpload(file, userEmail, context = 'chat', onProgress = null, externalSignal = null, resume = null) {
   if ((await _probeRustUpload()) === false) return { success: false, error: 'unavailable' };
   const CHUNK_SIZE = 5 * 1024 * 1024; // 5MB
   // aborted:true (instead of null) keeps the caller's !isAborted() gate as the
@@ -6276,7 +6308,7 @@ export async function rustChunkedUpload(file, userEmail, context = 'chat', onPro
       try { blob = await fetch(file.uri).then(r => r.blob()); } catch { return rustUpload(file, userEmail, context, externalSignal, onProgress); }
     } else if (file.uri && Platform.OS !== 'web') {
       // Native — read the file via expo-file-system in chunks (no blob support).
-      return await rustChunkedUploadNative(file, userEmail, context, onProgress, externalSignal);
+      return await rustChunkedUploadNative(file, userEmail, context, onProgress, externalSignal, resume);
     } else {
       return rustUpload(file, userEmail, context, externalSignal, onProgress);
     }
@@ -6295,7 +6327,7 @@ export async function rustChunkedUpload(file, userEmail, context = 'chat', onPro
     const contentType = file.type || blob.type || 'application/octet-stream';
 
     // 1. Init
-    const initResp = await fetch(`${BASE_URL}/api/rust/upload/init`, {
+    const initResp = await fetch(`${_rustUploadBase()}/api/rust/upload/init`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${authToken}` },
       body: JSON.stringify({ filename, total_size: totalSize, total_chunks: totalChunks, content_type: contentType, user_email: userEmail, context }),
@@ -6307,7 +6339,7 @@ export async function rustChunkedUpload(file, userEmail, context = 'chat', onPro
     // 2. Check which chunks already uploaded (resume support)
     let startChunk = 0;
     try {
-      const statusResp = await fetch(`${BASE_URL}/api/rust/upload/status`, {
+      const statusResp = await fetch(`${_rustUploadBase()}/api/rust/upload/status`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${authToken}` },
         body: JSON.stringify({ upload_id: uploadId }),
@@ -6328,7 +6360,7 @@ export async function rustChunkedUpload(file, userEmail, context = 'chat', onPro
       formData.append('chunk_index', String(i));
       formData.append('chunk', chunk, `chunk_${i}`);
 
-      const resp = await fetch(`${BASE_URL}/api/rust/upload/chunk`, {
+      const resp = await fetch(`${_rustUploadBase()}/api/rust/upload/chunk`, {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${authToken}` },
         body: formData,
@@ -6341,7 +6373,7 @@ export async function rustChunkedUpload(file, userEmail, context = 'chat', onPro
     if (_isAborted()) return _abortedResult();
 
     // 4. Complete
-    const completeResp = await fetch(`${BASE_URL}/api/rust/upload/complete`, {
+    const completeResp = await fetch(`${_rustUploadBase()}/api/rust/upload/complete`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${authToken}` },
       body: JSON.stringify({ upload_id: uploadId, filename, content_type: contentType, user_email: userEmail, context }),
@@ -6359,7 +6391,7 @@ export async function rustChunkedUpload(file, userEmail, context = 'chat', onPro
  * Each chunk is a separate small POST, so iOS NSURLSession's idle-timeout doesn't
  * kill big uploads. Used by photo backup for files > 3 MB.
  */
-async function rustChunkedUploadNative(file, userEmail, context, onProgress, externalSignal = null) {
+async function rustChunkedUploadNative(file, userEmail, context, onProgress, externalSignal = null, resume = null) {
   const CHUNK_SIZE = 1 * 1024 * 1024; // 1 MB chunks — small enough to finish in <14s on 3 Mbps wifi
   try {
     // BUG fix: expo-file-system/legacy is the only one that exposes cacheDirectory
@@ -6385,20 +6417,53 @@ async function rustChunkedUploadNative(file, userEmail, context, onProgress, ext
     const filename = file.name || 'upload';
     const contentType = file.type || 'application/octet-stream';
 
-    // 1. Init the upload
-    const initCtrl = new AbortController();
-    const initTimer = setTimeout(() => initCtrl.abort(), 15000);
-    const initResp = await fetch(`${BASE_URL}/api/rust/upload/init`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${authToken}` },
-      body: JSON.stringify({ filename, total_size: totalSize, total_chunks: totalChunks, content_type: contentType, user_email: userEmail, context }),
-      signal: initCtrl.signal,
-    }).catch(e => null);
-    clearTimeout(initTimer);
-    if (!initResp || !initResp.ok) return { success: false, error: 'init_failed' };
-    const initData = await initResp.json().catch(() => null);
-    const uploadId = initData?.upload_id;
-    if (!uploadId) return { success: false, error: 'no_upload_id' };
+    // [2026-10-07 send-media] 0. Resume: ask the server which chunks of the
+    // persisted session it already holds. 404 (expired / other owner) → new
+    // session; a network error is surfaced so the caller retries later with
+    // the SAME session instead of opening a new one.
+    let uploadId = null;
+    const alreadyHave = new Set();
+    if (resume && resume.uploadId && /^[0-9a-f]{32}$/.test(String(resume.uploadId))) {
+      const stCtrl = new AbortController();
+      const stTimer = setTimeout(() => stCtrl.abort(), 15000);
+      let stResp = null;
+      try {
+        stResp = await fetch(`${_rustUploadBase()}/api/rust/upload/status`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${authToken}` },
+          body: JSON.stringify({ upload_id: String(resume.uploadId) }),
+          signal: stCtrl.signal,
+        });
+      } catch { stResp = null; }
+      clearTimeout(stTimer);
+      if (!stResp) return { success: false, error: 'status_network' };
+      if (stResp.ok) {
+        const st = await stResp.json().catch(() => null);
+        if (st && Array.isArray(st.received_chunks)) {
+          uploadId = String(resume.uploadId);
+          for (const i of st.received_chunks) if (Number.isInteger(i) && i >= 0 && i < totalChunks) alreadyHave.add(i);
+        }
+      }
+    }
+
+    // 1. Init the upload (new session)
+    if (!uploadId) {
+      const initCtrl = new AbortController();
+      const initTimer = setTimeout(() => initCtrl.abort(), 15000);
+      const initResp = await fetch(`${_rustUploadBase()}/api/rust/upload/init`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${authToken}` },
+        body: JSON.stringify({ filename, total_size: totalSize, total_chunks: totalChunks, content_type: contentType, user_email: userEmail, context }),
+        signal: initCtrl.signal,
+      }).catch(e => null);
+      clearTimeout(initTimer);
+      if (!initResp) return { success: false, error: 'init_network' };
+      if (!initResp.ok) return { success: false, error: 'init_failed_' + initResp.status };
+      const initData = await initResp.json().catch(() => null);
+      uploadId = initData?.upload_id;
+      if (!uploadId) return { success: false, error: 'no_upload_id' };
+      try { resume?.onUploadId?.(uploadId); } catch {}
+    }
 
     // 2. Upload each 1 MB chunk as multipart/form-data — Rust expects that format.
     //    Write the slice to a temp file then FormData with { uri } so React Native
@@ -6413,7 +6478,8 @@ async function rustChunkedUploadNative(file, userEmail, context, onProgress, ext
     // limits concurrent connections per origin, and more in-flight buys
     // diminishing returns vs. memory cost.
     const CONCURRENCY = 3;
-    let completed = 0;
+    let completed = alreadyHave.size;
+    if (completed > 0 && onProgress) { try { onProgress(completed / totalChunks); } catch {} }
     let aborted = false;
     let firstError = null;
 
@@ -6463,21 +6529,39 @@ async function rustChunkedUploadNative(file, userEmail, context, onProgress, ext
         attempts++;
         const ctrl = new AbortController();
         const timer = setTimeout(() => ctrl.abort(), 60000);
+        // [2026-10-07 send-media] user cancel aborts the in-flight chunk too.
+        const onExt = () => { try { ctrl.abort(); } catch {} };
+        if (externalSignal) externalSignal.addEventListener?.('abort', onExt, { once: true });
         try {
           const fd = new FormData();
           fd.append('upload_id', uploadId);
           fd.append('chunk_index', String(i));
           fd.append('chunk', { uri: tmpPath, name: `chunk_${i}.bin`, type: 'application/octet-stream' });
-          const resp = await fetch(`${BASE_URL}/api/rust/upload/chunk`, {
+          // [2026-10-07 send-media] Authorization was MISSING here: nginx
+          // auth_request + Rust resolve_bearer_email 401'd every native chunk
+          // (5 retries each), so every >2MB native upload burned ~10s and then
+          // re-sent the whole file through PHP.
+          const resp = await fetch(`${_rustUploadBase()}/api/rust/upload/chunk`, {
             method: 'POST',
+            headers: { 'Authorization': `Bearer ${authToken}` },
             body: fd,
             signal: ctrl.signal,
           });
           chunkOk = resp.ok;
+          // 401/404/413 never heal by retrying this chunk.
+          if (!chunkOk && (resp.status === 401 || resp.status === 404 || resp.status === 413 || resp.status === 400)) {
+            clearTimeout(timer);
+            if (externalSignal) externalSignal.removeEventListener?.('abort', onExt);
+            firstError = firstError || `chunk_http_${resp.status}`;
+            aborted = true;
+            break;
+          }
         } catch (e) {
           // network error or timeout — fall through to backoff
         }
         clearTimeout(timer);
+        if (externalSignal) externalSignal.removeEventListener?.('abort', onExt);
+        if (externalSignal && externalSignal.aborted) { aborted = true; break; }
         if (!chunkOk && attempts < MAX_CHUNK_ATTEMPTS) {
           await new Promise(r => setTimeout(r, Math.min(5000, 800 * Math.pow(2, attempts - 1))));
         }
@@ -6494,21 +6578,25 @@ async function rustChunkedUploadNative(file, userEmail, context, onProgress, ext
 
     // Worker pool: each worker pulls the next chunk index from a shared
     // counter so we never have idle workers while there's still work.
+    // [2026-10-07 send-media] resume: only the chunks the server lacks.
+    const todo = [];
+    for (let i = 0; i < totalChunks; i++) if (!alreadyHave.has(i)) todo.push(i);
     let nextChunkIdx = 0;
-    const workers = Array.from({ length: Math.min(CONCURRENCY, totalChunks) }, async () => {
+    const workers = Array.from({ length: Math.max(1, Math.min(CONCURRENCY, todo.length)) }, async () => {
       while (!aborted) {
-        const idx = nextChunkIdx++;
-        if (idx >= totalChunks) return;
-        await uploadChunk(idx);
+        const pos = nextChunkIdx++;
+        if (pos >= todo.length) return;
+        await uploadChunk(todo[pos]);
       }
     });
     await Promise.all(workers);
+    if (externalSignal && externalSignal.aborted) return { success: false, error: 'aborted', aborted: true };
     if (aborted) return { success: false, error: firstError || 'aborted' };
 
     // 3. Complete
     const completeCtrl = new AbortController();
     const completeTimer = setTimeout(() => completeCtrl.abort(), 30000);
-    const completeResp = await fetch(`${BASE_URL}/api/rust/upload/complete`, {
+    const completeResp = await fetch(`${_rustUploadBase()}/api/rust/upload/complete`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${authToken}` },
       body: JSON.stringify({ upload_id: uploadId, filename, content_type: contentType, user_email: userEmail, context }),

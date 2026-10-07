@@ -626,7 +626,14 @@ export function applyEvents(events, messagesById, setMessages, hydratedMessages 
             const kid = Number(next[k]?.id) || 0;
             if (!kid || kid > mid) continue;
             if (String(next[k]?.sender_email || '').toLowerCase() === actor) continue;
-            if (next[k].read_at) continue;
+            // [2026-10-07 receipts2] Registra o leitor em read_by[] (grupo agrega
+            // por membro no thread). Antes o 2º leitor de um grupo era pulado aqui
+            // (read_at já setado pelo 1º) e o azul de grupo só vinha com refetch.
+            const rb = Array.isArray(next[k].read_by) ? next[k].read_by : [];
+            const hasActor = rb.some((x) => String((typeof x === 'string' ? x : x?.email) || '').toLowerCase() === actor);
+            if (next[k].read_at && hasActor) continue;
+            if (next[k].read_at) { next[k] = { ...next[k], read_by: [...rb, actor] }; continue; }
+            if (!hasActor) next[k] = { ...next[k], read_by: [...rb, actor] };
             // [2026-10-04] Lido implica ENTREGUE — marca _delivered/delivered_at
             // junto do read. O renderer agora exige entrega p/ pintar azul (mata
             // azul falso em msg não-entregue), então leitura REAL do peer precisa
@@ -653,15 +660,22 @@ export function applyEvents(events, messagesById, setMessages, hydratedMessages 
             : [];
           if (!dids.length) break;
           const dset = new Set(dids);
+          // [2026-10-07 receipts2] Registra QUEM recebeu (delivered_to[]): em grupo
+          // o thread agrega por membro (_rcGroupAgg) e ignora o `_delivered` de um
+          // único recibo; em 1:1 nada muda.
+          const dWho = String(ev?.payload?.email || ev?.actor || '').toLowerCase();
           for (let k = 0; k < next.length; k++) {
             const kid = Number(next[k]?.id) || 0;
             if (!kid || !dset.has(kid)) continue;
             if (next[k].status === 'read' || next[k]._readStatus === 2) continue;
+            const dt = Array.isArray(next[k].delivered_to) ? next[k].delivered_to : [];
+            const hasWho = !dWho || dt.some((x) => String((typeof x === 'string' ? x : x?.email) || '').toLowerCase() === dWho);
             next[k] = {
               ...next[k],
               status: 'delivered',
               _delivered: true,
               delivered_at: next[k].delivered_at || ev.created_at,
+              ...(hasWho ? null : { delivered_to: [...dt, dWho] }),
             };
           }
           break;

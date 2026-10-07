@@ -53,5 +53,6 @@ Pod::Spec.new do |s|
 
   s.source_files = '**/*.swift'
 
-  s.frameworks = 'CallKit', 'PushKit', 'AVFoundation', 'CoreImage', 'CoreVideo', 'Intents'
+  # [2026-10-07 bgsync] BackgroundTasks → ChatBgSyncAppDelegateSubscriber (BGAppRefreshTask).
+  s.frameworks = 'CallKit', 'PushKit', 'AVFoundation', 'CoreImage', 'CoreVideo', 'Intents', 'BackgroundTasks'
 end

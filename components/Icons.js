@@ -977,3 +977,14 @@ export function IconSliders({ size, color, style }) {
 export function IconFeedShare({ size, color, style }) {
   return <I size={size} color={color} style={style}><Polyline points="17 1 21 5 17 9"/><Path d="M3 11V9a4 4 0 0 1 4-4h14"/><Polyline points="7 23 3 19 7 15"/><Path d="M21 13v2a4 4 0 0 1-4 4H3"/></I>;
 }
+
+// [2026-10-07 apps-menu] Reels — rounded "clapper" frame (top band with two
+// slants) + play triangle. Distinct from IconFilm (gallery strip) and
+// IconVideo (camera/call) so the Apps drawer reads "short videos" at a glance.
+export function IconReels({ size, color, style }) {
+  return <I size={size} color={color} style={style}><Rect x="3" y="3" width="18" height="18" rx="5"/><Line x1="3" y1="8.5" x2="21" y2="8.5"/><Line x1="9" y1="3.2" x2="11.5" y2="8.5"/><Line x1="14.5" y1="3.2" x2="17" y2="8.5"/><Path d="M10.5 12.2v5.1l4.2-2.55z"/></I>;
+}
+// [2026-10-07 apps-menu] Live / broadcast — dot with two radiating arcs.
+export function IconBroadcast({ size, color, style }) {
+  return <I size={size} color={color} style={style}><Circle cx="12" cy="12" r="2"/><Path d="M16.24 7.76a6 6 0 0 1 0 8.49"/><Path d="M7.76 16.24a6 6 0 0 1 0-8.49"/><Path d="M19.07 4.93a10 10 0 0 1 0 14.14"/><Path d="M4.93 19.07a10 10 0 0 1 0-14.14"/></I>;
+}

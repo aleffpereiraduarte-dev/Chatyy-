@@ -20,7 +20,7 @@
  */
 import { Platform } from 'react-native';
 import {
-  CHATSTORE_MIGRATIONS, ACCOUNT_COLUMN_ALTERS, normAccount,
+  CHATSTORE_MIGRATIONS, ACCOUNT_COLUMN_ALTERS, normAccount, acctClause,
 } from './chatStore/schema';
 
 // Only import SQLite on native — web doesn't support it
@@ -49,6 +49,11 @@ let _accountColReady = false;
 export function dbSetActiveAccount(email) { _activeAccount = normAccount(email); }
 export function dbGetActiveAccount() { return _activeAccount; }
 function _acctScoped() { return _accountColReady && !!_activeAccount; }
+// [2026-10-07 bgsync] Legacy owner also sees account_email IS NULL rows (see
+// chatStore/schema.js acctClause). Set by the chatStore facade.
+let _legacyOwner = '';
+export function dbSetLegacyOwner(email) { _legacyOwner = normAccount(email); }
+function _acctSql() { return acctClause(_activeAccount, _legacyOwner); }
 
 export function getDb() { return _db; }
 export function isDbReady() { return _ready; }
@@ -764,7 +769,7 @@ export async function dbGetConversations(includeArchived = false) {
   const clauses = [];
   const params = [];
   if (!includeArchived) clauses.push('archived = 0');
-  if (_acctScoped()) { clauses.push('account_email = ?'); params.push(_activeAccount); }
+  if (_acctScoped()) { const ac = _acctSql(); clauses.push(ac.sql.replace(/^ AND /, '')); params.push(...ac.params); }
   const where = clauses.length ? 'WHERE ' + clauses.join(' AND ') : '';
   const rows = await _db.getAllAsync(
     `SELECT raw_json FROM conversations ${where} ORDER BY pinned DESC, last_message_time DESC LIMIT 200`,
@@ -900,7 +905,7 @@ export async function dbGetMessages(conversationId, limit = 50, beforeId = null)
     query += ' AND id < ?';
     params.push(beforeId);
   }
-  if (_acctScoped()) { query += ' AND account_email = ?'; params.push(_activeAccount); }
+  if (_acctScoped()) { const ac = _acctSql(); query += ac.sql; params.push(...ac.params); }
   query += ' ORDER BY id DESC LIMIT ?';
   params.push(limit);
   // [#1206 2026-05-19] Wrap the read so a sudden getAllAsync failure (DB
@@ -929,7 +934,7 @@ export async function dbGetLastMessageId(conversationId) {
   if (isWeb || !_db) return 0;
   let sql = 'SELECT MAX(id) as max_id FROM messages WHERE conversation_id = ?';
   const params = [conversationId];
-  if (_acctScoped()) { sql += ' AND account_email = ?'; params.push(_activeAccount); }
+  if (_acctScoped()) { const ac = _acctSql(); sql += ac.sql; params.push(...ac.params); }
   const row = await _db.getFirstAsync(sql, params);
   return row?.max_id || 0;
 }

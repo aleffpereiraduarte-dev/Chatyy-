@@ -43,7 +43,7 @@
 //   isReady() / reset()
 
 import { Platform } from 'react-native';
-import { CREATE_CURSORS_SQL, normAccount } from './chatStore/schema';
+import { CREATE_CURSORS_SQL, CREATE_CHATSTORE_META_SQL, normAccount, acctClause } from './chatStore/schema';
 
 const isWeb = Platform.OS === 'web';
 const DB_NAME = 'chatyy.db'; // MUST match services/db.js
@@ -67,6 +67,11 @@ let _hasAccountColCache = null; // null=unknown, true/false once probed
 let _activeAccount = '';
 export function setActiveAccount(email) { _activeAccount = normAccount(email); }
 export function getActiveAccount() { return _activeAccount; }
+// [2026-10-07 bgsync] Device legacy owner — also sees account_email IS NULL rows
+// (see chatStore/schema.js acctClause).
+let _legacyOwner = '';
+export function setLegacyOwner(email) { _legacyOwner = normAccount(email); }
+export function getLegacyOwner() { return _legacyOwner; }
 
 // Probe (once) whether the shared messages table already carries the
 // account_email column db.js adds at init. Reads/writes only reference the
@@ -82,9 +87,7 @@ function _hasAccountCol(db) {
 }
 function _acctFilter(db) {
   // Returns { sql, params } fragment to AND into a messages query, or empty.
-  if (_activeAccount && _hasAccountCol(db)) {
-    return { sql: ' AND account_email = ?', params: [_activeAccount] };
-  }
+  if (_activeAccount && _hasAccountCol(db)) return acctClause(_activeAccount, _legacyOwner);
   return { sql: '', params: [] };
 }
 
@@ -227,10 +230,12 @@ export function getConversationsSync() {
     );
     if (!t) return [];
   } catch { return []; }
-  const clauses = ['archived = 0'];
+  let where = 'WHERE archived = 0';
   const params = [];
-  if (_activeAccount && _hasAccountColConv(db)) { clauses.push('account_email = ?'); params.push(_activeAccount); }
-  const where = 'WHERE ' + clauses.join(' AND ');
+  if (_activeAccount && _hasAccountColConv(db)) {
+    const ac = acctClause(_activeAccount, _legacyOwner);
+    where += ac.sql; params.push(...ac.params);
+  }
   let rows;
   try {
     rows = db.getAllSync(
@@ -476,6 +481,60 @@ export function setMediaLocalPathSync(msgId, localPath, dims = null) {
   }
 }
 
+// ─── [2026-10-07 bgsync] Legacy-owner resolution + raw handle ──────────────
+
+function _metaGet(db, k) {
+  try { db.execSync(CREATE_CHATSTORE_META_SQL); } catch { return null; }
+  try { const r = db.getFirstSync('SELECT v FROM chatstore_meta WHERE k = ?', [k]); return r ? (r.v ?? null) : null; }
+  catch { return null; }
+}
+function _metaSet(db, k, v) {
+  try { db.runSync('INSERT OR REPLACE INTO chatstore_meta (k, v) VALUES (?, ?)', [k, String(v)]); return true; }
+  catch { return false; }
+}
+
+/**
+ * Decide (once per device) which account owns the pre-isolation rows
+ * (account_email IS NULL). Recorded only when the device is known to have a
+ * SINGLE signed-in account (deviceAccounts <= 1) and NULL conversation rows
+ * exist — otherwise nobody adopts them (multi-account device → hidden, the
+ * normal sync refills each account; privacy over convenience). Cheap: one
+ * LIMIT 1 probe on the small `conversations` table, then a cached meta row.
+ * @returns {string} the legacy owner ('' = none)
+ */
+export function resolveLegacyOwnerSync(email, deviceAccounts) {
+  if (isWeb) return '';
+  const acct = normAccount(email);
+  const db = _getDb();
+  if (!db || !acct) return '';
+  const known = _metaGet(db, 'legacy_owner');
+  if (known != null) return known === '-' ? '' : normAccount(known);
+  if (!(Number.isFinite(deviceAccounts) && deviceAccounts <= 1)) return '';
+  try {
+    if (!_hasAccountColConv(db)) return '';
+    const t = db.getFirstSync("SELECT name FROM sqlite_master WHERE type='table' AND name='conversations'");
+    if (!t) return '';
+    const r = db.getFirstSync('SELECT 1 AS x FROM conversations WHERE account_email IS NULL LIMIT 1');
+    if (!r) { _metaSet(db, 'legacy_owner', '-'); return ''; }
+  } catch { return ''; }
+  _metaSet(db, 'legacy_owner', acct);
+  return acct;
+}
+
+/** Raw sync handle (messages table present) for services/bgJournal.js. */
+export function getSyncDb() {
+  if (isWeb) return null;
+  const db = _getDb();
+  return db && _ensureTable(db) ? db : null;
+}
+
+/** Whether the shared tables carry account_email (probed once). */
+export function hasAccountColumnsSync() {
+  const db = _getDb();
+  if (!db) return { messages: false, conversations: false };
+  return { messages: _hasAccountCol(db), conversations: _hasAccountColConv(db) };
+}
+
 // ─── Lifecycle ──────────────────────────────────────────────────────────────
 export function isReady() {
   if (isWeb) return false;
@@ -505,6 +564,11 @@ export default {
   setMediaLocalPathSync,
   setActiveAccount,
   getActiveAccount,
+  setLegacyOwner,
+  getLegacyOwner,
+  resolveLegacyOwnerSync,
+  getSyncDb,
+  hasAccountColumnsSync,
   isReady,
   reset,
 };

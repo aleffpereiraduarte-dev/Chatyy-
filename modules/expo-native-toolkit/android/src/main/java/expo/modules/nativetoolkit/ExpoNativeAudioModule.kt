@@ -355,9 +355,12 @@ class ExpoNativeAudioModule : Module() {
     rec.setAudioSource(MediaRecorder.AudioSource.MIC)
     rec.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
     rec.setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
-    rec.setAudioSamplingRate(44100)
+    // [2026-10-07 send-media] Voice-note profile: AAC-LC mono 24 kHz @ 32 kbps
+    // (~240 KB/min; was 44.1 kHz @ 96 kbps ≈ 720 KB/min). Same container/codec
+    // (m4a/AAC) so every player and old note keeps working.
+    rec.setAudioSamplingRate(24000)
     rec.setAudioChannels(1)
-    rec.setAudioEncodingBitRate(96_000)
+    rec.setAudioEncodingBitRate(32_000)
     rec.setOutputFile(outFile.absolutePath)
     return rec
   }

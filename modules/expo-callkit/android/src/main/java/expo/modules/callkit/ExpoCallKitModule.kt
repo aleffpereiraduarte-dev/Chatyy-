@@ -612,6 +612,70 @@ class ExpoCallKitModule : Module() {
       }
     }
 
+    // [2026-10-07 recv-native] Native chat-notification state written by JS
+    // (services/pushNotifications.js). See ChatNotifStore.
+    //   setChatNotificationAuth(activeEmail, activeToken, {email: bearer})
+    //     → inline Reply / Mark-as-read from the notification sign with the
+    //       bearer of the account the push was addressed to.
+    //   setActiveChatConversation(convId | "") → no banner for the open chat.
+    //   dismissChatNotification(convId) → chat read in the app → drop its
+    //       native MessagingStyle notification + cached thread.
+    AsyncFunction("setChatNotificationAuth") { activeEmail: String, activeToken: String, tokens: Map<String, Any> ->
+      try {
+        val m = HashMap<String, String>()
+        for ((k, v) in tokens) { val s = v as? String; if (!s.isNullOrBlank()) m[k] = s }
+        ChatNotifStore.setAuth(context, activeEmail, activeToken, m)
+      } catch (t: Throwable) {
+        Log.w(TAG, "setChatNotificationAuth failed: ${t.message}")
+      }
+    }
+
+    Function("setActiveChatConversation") { conversationId: String ->
+      try { ChatNotifStore.setActiveConversation(context, conversationId) } catch (_: Throwable) {}
+    }
+
+    Function("dismissChatNotification") { conversationId: String ->
+      try {
+        if (conversationId.isNotBlank()) ChatMessagingStyleHandler.cancelConversation(context, conversationId)
+      } catch (_: Throwable) {}
+    }
+
+    Function("clearChatNotificationAuth") {
+      try { ChatNotifStore.clearAuth(context) } catch (_: Throwable) {}
+    }
+
+    // [2026-10-07 bgsync] Background message journal + periodic bg sync.
+    //   bgJournalRead()            → {text, bytes} (sync; JS merges before 1st paint)
+    //   bgJournalCommit(bytes, keep) → drop what JS consumed, keep `keep` lines +
+    //                                  anything appended after the read
+    //   bgJournalClear()           → logout
+    //   bgSyncConfigure(json)      → {acct, convs:[{id, pts}]} for ChatBgSyncWorker
+    //   bgSyncSchedule(enabled)    → WorkManager unique periodic work (15 min)
+    Function("bgJournalRead") {
+      val (text, bytes) = try { ChatBgJournal.readWithSize(context) } catch (_: Throwable) { Pair("", 0L) }
+      mapOf("text" to text, "bytes" to bytes.toDouble())
+    }
+
+    Function("bgJournalCommit") { consumedBytes: Double, keep: String ->
+      try { ChatBgJournal.commit(context, consumedBytes.toLong(), keep) } catch (_: Throwable) { false }
+    }
+
+    Function("bgJournalClear") {
+      try { ChatBgJournal.clear(context); ChatBgSyncWorker.clear(context) } catch (_: Throwable) {}
+    }
+
+    AsyncFunction("bgSyncConfigure") { cfgJson: String ->
+      try { ChatBgSyncWorker.configure(context, cfgJson) } catch (t: Throwable) {
+        Log.w(TAG, "bgSyncConfigure failed: ${t.message}")
+      }
+    }
+
+    AsyncFunction("bgSyncSchedule") { enabled: Boolean ->
+      try { ChatBgSyncWorker.schedule(context, enabled) } catch (t: Throwable) {
+        Log.w(TAG, "bgSyncSchedule failed: ${t.message}")
+      }
+    }
+
     AsyncFunction("displayIncomingCall") { callId: String, callerName: String, hasVideo: Boolean, callerEmail: String?, conversationId: String?, lkToken: String?, lkUrl: String? ->
       // [STAGE-B 2026-05-20] WhatsApp parity path. We do THREE things in
       // parallel:

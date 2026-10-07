@@ -66,12 +66,17 @@ public class ExpoNativeAudioModule: Module {
             let cachesDir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first!
             let path = cachesDir.appendingPathComponent("voice_\(UUID().uuidString).m4a")
 
+            // [2026-10-07 send-media] Voice-note profile: AAC-LC mono 24 kHz @
+            // 32 kbps (~240 KB/min; was 44.1 kHz @ 64 kbps ≈ 480 KB/min). Speech
+            // is band-limited — no audible loss, half the upload. Stays AAC/m4a
+            // (not WhatsApp's Ogg/Opus) because AVPlayer can't play Ogg and every
+            // existing player/cache path expects m4a — old notes unaffected.
             let settings: [String: Any] = [
                 AVFormatIDKey: Int(kAudioFormatMPEG4AAC),
-                AVSampleRateKey: 44100,
+                AVSampleRateKey: 24000,
                 AVNumberOfChannelsKey: 1,
                 AVEncoderAudioQualityKey: AVAudioQuality.high.rawValue,
-                AVEncoderBitRateKey: 64000,
+                AVEncoderBitRateKey: 32000,
             ]
             let newRecorder = try AVAudioRecorder(url: path, settings: settings)
             newRecorder.isMeteringEnabled = true

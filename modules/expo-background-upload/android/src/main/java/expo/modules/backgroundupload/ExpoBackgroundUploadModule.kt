@@ -285,6 +285,11 @@ class ExpoBackgroundUploadModule : Module() {
       mapOf("queued" to 0, "failed" to 0)
     }
     Function("cancelAll") { /* no-op — BackupWorker is the only persistent path on Android */ }
+    // [2026-10-07 send-media] iOS-only concept (UIApplication background task).
+    // On Android the JS runtime keeps running while the process lives, so the
+    // chat media queue needs no grant; return -1 so JS treats it as "none".
+    Function("beginBackgroundTask") { _name: String -> -1 }
+    Function("endBackgroundTask") { _id: Int -> }
   }
 
   // ──────────────────────────────────────────────────────────────────

@@ -31,9 +31,24 @@ function _loadIndexFromMmkv() {
     if (!raw) return false;
     const obj = JSON.parse(raw);
     if (obj && typeof obj === 'object') {
+      // [2026-10-07 coldstart] The disk re-scan (initSyncCache) no longer runs
+      // before first paint, so guard here against the one case it fixed: after
+      // an app update/reinstall iOS can move the sandbox (new container UUID)
+      // and the absolute paths persisted last session point nowhere. Only
+      // accept entries under the CURRENT cache/saved dirs; stale ones are
+      // dropped (render falls back to the remote URL, exactly like a miss)
+      // until the post-paint scan re-adds them with the right prefix.
+      let okPrefixes = null;
+      try {
+        const c = getCacheDir(); const sdir = getSavedDir();
+        okPrefixes = [c, sdir].filter(Boolean);
+        if (!okPrefixes.length) okPrefixes = null;
+      } catch { okPrefixes = null; }
       let n = 0;
       for (const [k, v] of Object.entries(obj)) {
-        if (typeof v === 'string') { syncIndex.set(k, v); n++; }
+        if (typeof v !== 'string') continue;
+        if (okPrefixes && !okPrefixes.some(p => v.startsWith(p))) continue;
+        syncIndex.set(k, v); n++;
       }
       return n > 0;
     }

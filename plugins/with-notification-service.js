@@ -56,6 +56,50 @@ const ENTITLEMENTS_PLIST = `<?xml version="1.0" encoding="UTF-8"?>
 </plist>
 `;
 
+// [2026-10-07 bgsync] NSE App Group GATE. The NSE writes incoming chat
+// messages into the App Group journal (group.com.onemundo.mail/
+// chatyy_bg_journal/inbox.jsonl) so the app shows them instantly on open.
+// That needs the App Group entitlement on the NSE — but requesting an
+// entitlement the provisioning profile lacks breaks code signing (the reason it
+// was removed on 2026-05-18). So:
+//   ON  when CHATYY_NSE_APP_GROUP=1 (eas.json / CI env), or the local
+//       credentials/chatyy-nse.mobileprovision already lists the group
+//       (regenerate it with the App Group linked — same ASC flow as
+//       scripts/asc-create-broadcast-profile.js, which linked the group OK).
+//   OFF when CHATYY_NSE_APP_GROUP=0 or neither holds → empty entitlements
+//       (today's behaviour; containerURL == nil → the NSE simply skips the
+//       journal; Android + the iOS BGAppRefreshTask still work).
+function nseAppGroupGate(projectRoot) {
+  const force = (process.env.CHATYY_NSE_APP_GROUP || '').trim().toLowerCase();
+  if (force === '0' || force === 'false' || force === 'off') return { on: false, why: 'CHATYY_NSE_APP_GROUP=0' };
+  if (force === '1' || force === 'true' || force === 'on') return { on: true, why: 'CHATYY_NSE_APP_GROUP=1' };
+  try {
+    const prof = path.join(projectRoot || '', 'credentials', 'chatyy-nse.mobileprovision');
+    if (fs.existsSync(prof)) {
+      const txt = fs.readFileSync(prof).toString('latin1');
+      const i = txt.indexOf('com.apple.security.application-groups');
+      if (i >= 0 && txt.slice(i, i + 400).includes(APP_GROUP)) return { on: true, why: 'NSE profile carries the App Group' };
+    }
+  } catch {}
+  return { on: false, why: 'NSE profile lacks the App Group — journal disabled on iOS NSE' };
+}
+function nseEntitlementsPlist(projectRoot) {
+  const gate = nseAppGroupGate(projectRoot);
+  console.log(`[with-notification-service] NSE App Group ${gate.on ? 'ON' : 'OFF'} (${gate.why})`);
+  if (!gate.on) return ENTITLEMENTS_PLIST;
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+\t<key>com.apple.security.application-groups</key>
+\t<array>
+\t\t<string>${APP_GROUP}</string>
+\t</array>
+</dict>
+</plist>
+`;
+}
+
 const INFO_PLIST = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -97,6 +141,16 @@ const INFO_PLIST = `<?xml version="1.0" encoding="UTF-8"?>
 // WhatsApp-style), NOT a no-op. [2026-10-04] Keep this in sync with
 // ios/ChatyyNotificationService/NotificationService.swift.
 function readCanonicalSwift(projectRoot) {
+  // [2026-10-07 recv-native] Source of truth is now the COMMITTED file
+  // plugins/notification-service/NotificationService.swift (ios/ is gitignored,
+  // so the old "canonical" copy under ios/ never reached CI/Mac builds and the
+  // embedded template below — Swift `\(` interpolation can't live in a JS
+  // template string — was what actually shipped). Order: plugin file → ios/
+  // copy (local prebuilds) → embedded legacy fallback.
+  try {
+    const own = path.join(__dirname, 'notification-service', 'NotificationService.swift');
+    if (fs.existsSync(own)) return fs.readFileSync(own, 'utf8');
+  } catch {}
   try {
     const p = path.join(projectRoot, 'ios', EXT_NAME, 'NotificationService.swift');
     if (fs.existsSync(p)) return fs.readFileSync(p, 'utf8');
@@ -252,7 +306,8 @@ function withNotificationServiceFiles(config) {
       const files = {
         'NotificationService.swift': swift,
         'Info.plist': INFO_PLIST,
-        [`${EXT_NAME}.entitlements`]: ENTITLEMENTS_PLIST,
+        // [2026-10-07 bgsync] App Group on the NSE only when its profile has it.
+        [`${EXT_NAME}.entitlements`]: nseEntitlementsPlist(cfg.modRequest.projectRoot),
       };
       for (const [fileName, content] of Object.entries(files)) {
         fs.writeFileSync(path.join(destDir, fileName), content, 'utf8');
@@ -270,6 +325,43 @@ function withMainAppGroup(config) {
     const groups = cfg.modResults['com.apple.security.application-groups'] || [];
     if (!groups.includes(APP_GROUP)) groups.push(APP_GROUP);
     cfg.modResults['com.apple.security.application-groups'] = groups;
+    return cfg;
+  });
+}
+
+// [2026-10-07 recv-native] Communication Notifications capability on the MAIN
+// app (com.apple.developer.usernotifications.communication). The NSE's
+// INSendMessageIntent → content.updating(from:) only renders the avatar /
+// WhatsApp-style layout when the app carries this entitlement. GATED: adding
+// an entitlement the provisioning profile lacks breaks code signing, and the
+// current credentials/chatyy-main.mobileprovision does NOT include it.
+//   ON  when CHATYY_COMM_NOTIF=1, or the main profile already contains the key
+//       (after scripts/asc-enable-communication-notifications.js regenerates it).
+//   OFF when CHATYY_COMM_NOTIF=0 (forced) or neither of the above.
+// Info.plist NSUserActivityTypes=[INSendMessageIntent] is already in app.json.
+const COMM_ENTITLEMENT = 'com.apple.developer.usernotifications.communication';
+function communicationNotifGate(projectRoot) {
+  const force = (process.env.CHATYY_COMM_NOTIF || '').trim().toLowerCase();
+  if (force === '0' || force === 'false' || force === 'off') return { on: false, why: 'CHATYY_COMM_NOTIF=0' };
+  if (force === '1' || force === 'true' || force === 'on') return { on: true, why: 'CHATYY_COMM_NOTIF=1' };
+  try {
+    const prof = path.join(projectRoot, 'credentials', 'chatyy-main.mobileprovision');
+    if (fs.existsSync(prof) && fs.readFileSync(prof).toString('latin1').includes(COMM_ENTITLEMENT)) {
+      return { on: true, why: 'main profile carries the capability' };
+    }
+  } catch {}
+  return { on: false, why: 'main profile lacks the capability — run scripts/asc-enable-communication-notifications.js' };
+}
+
+function withCommunicationNotifications(config) {
+  return withEntitlementsPlist(config, (cfg) => {
+    const gate = communicationNotifGate(cfg.modRequest.projectRoot);
+    if (gate.on) {
+      cfg.modResults[COMM_ENTITLEMENT] = true;
+    } else {
+      delete cfg.modResults[COMM_ENTITLEMENT];
+    }
+    console.log(`[with-notification-service] Communication Notifications entitlement ${gate.on ? 'ON' : 'OFF'} (${gate.why})`);
     return cfg;
   });
 }
@@ -328,9 +420,10 @@ function withNotificationServiceTarget(config) {
       target.uuid
     );
 
-    // Frameworks — UserNotifications
+    // Frameworks — UserNotifications + Intents ([2026-10-07 recv-native]
+    // INSendMessageIntent / INPerson for Communication Notifications).
     project.addBuildPhase(
-      ['UserNotifications.framework'],
+      ['UserNotifications.framework', 'Intents.framework'],
       'PBXFrameworksBuildPhase',
       'Frameworks',
       target.uuid
@@ -539,6 +632,7 @@ function withNotificationServiceProviderStub(config) {
 module.exports = function withNotificationService(config) {
   config = withNotificationServiceFiles(config);
   config = withMainAppGroup(config);
+  config = withCommunicationNotifications(config);
   config = withNotificationServiceTarget(config);
   config = withNotificationServicePodTarget(config);
   config = withNotificationServiceProviderStub(config);

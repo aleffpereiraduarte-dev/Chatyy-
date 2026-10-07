@@ -1,6 +1,8 @@
 import { useEffect, useRef, useCallback } from 'react';
 import { View, Animated, Image, StyleSheet, Easing } from 'react-native';
-import * as SplashScreen from 'expo-splash-screen';
+// [2026-10-07 coldstart] Splash hide goes through services/bootTrace so the
+// boot trace records who released it (idempotent with the chat-list owner).
+import { hideNativeSplash } from '../services/bootTrace';
 
 // [#1239 2026-05-20] Restore Chatyy logo on the JS splash so the cold-start
 // hand-off doesn't show a blank white square. The native splash image lives
@@ -33,7 +35,7 @@ export default function AnimatedSplash({ onFinish }) {
   const eyelid = useRef(new Animated.Value(0)).current;
 
   const onLayoutReady = useCallback(() => {
-    SplashScreen.hideAsync().catch(() => {});
+    hideNativeSplash('brand');
   }, []);
 
   // [COLD-START 2026-09-30] The branded JS splash used to HOLD a hardcoded

@@ -144,6 +144,8 @@
         <action android:name="com.onemundo.mail.ACTION_CHAT_SNOOZE_1H" />
         <action android:name="com.onemundo.mail.ACTION_CHAT_SMART_REPLY" />
         <action android:name="com.onemundo.mail.ACTION_CALL_BACK" />
+        <!-- [2026-10-07 recv-native] swipe-dismiss of a chat notification -->
+        <action android:name="com.onemundo.mail.ACTION_CHAT_DISMISSED" />
       </intent-filter>
     </receiver>
 

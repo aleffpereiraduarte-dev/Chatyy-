@@ -1,13 +1,21 @@
 {
-  "platforms": ["apple", "android"],
+  "platforms": [
+    "apple",
+    "android"
+  ],
   "apple": {
-    "modules": ["ExpoCallKitModule"],
+    "modules": [
+      "ExpoCallKitModule"
+    ],
     "appDelegateSubscribers": [
       "VoipPushAppDelegateSubscriber",
-      "RelayWakeAppDelegateSubscriber"
+      "RelayWakeAppDelegateSubscriber",
+      "ChatBgSyncAppDelegateSubscriber"
     ]
   },
   "android": {
-    "modules": ["expo.modules.callkit.ExpoCallKitModule"]
+    "modules": [
+      "expo.modules.callkit.ExpoCallKitModule"
+    ]
   }
 }

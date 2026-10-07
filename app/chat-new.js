@@ -12,8 +12,9 @@ import { useLanguage } from '../context/LanguageContext';
 import { BorderRadius, FontSize, Spacing, Shadow } from '../constants/theme';
 import * as api from '../services/api';
 import { getCached, getCachedSync, setCache } from '../services/cache';
-import { syncContacts } from '../services/contactSync';
+import { syncContacts, getHomeDialDigits } from '../services/contactSync';
 import { prettifyHandle } from '../services/displayName';
+import { buildContactQrPayload, buildProfileLink, parseContactQr } from '../utils/contactQr';
 import {
   IconArrowLeft, IconSearch, IconX, IconUsers, IconMessageSquare,
   IconCheck, IconPlus, IconMail, IconRefresh, IconClock, IconUserPlus,
@@ -165,10 +166,62 @@ function formatLastSeen(dateStr, t) {
 // props actually change (its item, `selected`, `invitingEmail`, `searchText`,
 // `mode`, `colors`). Behavior/markup are byte-for-byte identical to the previous
 // inline renderer — this is purely memoization + style hoisting.
+// [2026-10-07 discovery] Real on-device QR (react-native-qrcode-svg, already a
+// dependency of /profile-qr) — replaces api.qrserver.com, which received the
+// user's e-mail + name in the URL and broke offline.
+let QRCodeSvg = null;
+try { QRCodeSvg = require('react-native-qrcode-svg').default; } catch {}
+
+// [2026-10-07 discovery] Accent-insensitive fold ("Áléff" → "aleff") for the
+// local search pass. String.prototype.normalize can be missing on some Hermes
+// builds without Intl → manual map fallback for pt/es/fr diacritics.
+const _ACCENT_MAP = { á:'a', à:'a', â:'a', ã:'a', ä:'a', å:'a', é:'e', è:'e', ê:'e', ë:'e', í:'i', ì:'i', î:'i', ï:'i', ó:'o', ò:'o', ô:'o', õ:'o', ö:'o', ú:'u', ù:'u', û:'u', ü:'u', ç:'c', ñ:'n', ý:'y', ÿ:'y' };
+function foldSearchText(s) {
+  let out = String(s || '').toLowerCase();
+  try {
+    if (typeof out.normalize === 'function') out = out.normalize('NFD').replace(/[̀-ͯ]/g, '');
+  } catch {}
+  return out.replace(/[áàâãäåéèêëíìîïóòôõöúùûüçñýÿ]/g, (c) => _ACCENT_MAP[c] || c);
+}
+
 const ContactRow = React.memo(function ContactRow({
   item, colors, searchText, mode, selected, invitingEmail, t,
-  onMessageYourself, onSelect, onInviteByEmail, onInviteShare, onInviteViaWhatsApp, onShowInviteInput,
+  onMessageYourself, onSelect, onInviteByEmail, onInviteShare, onInviteViaWhatsApp, onShowInviteInput, onInvitePhone,
 }) {
+  // [2026-10-07 discovery] Section label inside the flat search-results list.
+  if (item._isSearchHeader) {
+    return (
+      <View style={[sty.sectionHeader, { backgroundColor: 'transparent', paddingTop: 12, paddingBottom: 4 }]} accessibilityRole="header">
+        <View style={sty.sectionAccentLine} />
+        <Text style={[sty.sectionTitle, { color: colors.textSecondary || colors.text }]} numberOfLines={2}>{item.title}</Text>
+      </View>
+    );
+  }
+  // [2026-10-07 discovery] Typed phone number that is NOT on Chatyy → invite
+  // row (WhatsApp "Convidar para o WhatsApp": SMS / WhatsApp / compartilhar).
+  if (item._isPhoneInvite) {
+    return (
+      <View style={[sty.contactRow, { borderBottomColor: colors.border }]}>
+        <View style={[sty.quickActionIcon, { backgroundColor: '#111111', marginRight: 12 }]}>
+          <IconUserPlus size={18} color="#fff" />
+        </View>
+        <View style={sty.contactInfo}>
+          <Text style={[sty.contactName, { color: colors.text, fontWeight: '700' }]} numberOfLines={1}>{item.display || item.phone}</Text>
+          <Text style={[sty.contactSub, { color: colors.textTertiary }]} numberOfLines={1}>
+            {t('chat.phoneNotOnChatyy') || 'Este número ainda não usa o Chatyy'}
+          </Text>
+        </View>
+        <InvitePill
+          style={[sty.inviteBtn, sty.inviteBtnWithIcon, { backgroundColor: '#111111' }]}
+          onPress={() => onInvitePhone && onInvitePhone(item)}
+          accessibilityLabel={t('chat.invitePhone') || 'Convidar este número'}
+        >
+          <IconUserPlus size={13} color="#fff" />
+          <Text style={sty.inviteBtnText}>{t('chat.invite')}</Text>
+        </InvitePill>
+      </View>
+    );
+  }
   // "Message yourself" pinned row — WhatsApp parity (print 7175 top entry).
   if (item._isMessageYourself) {
     return (
@@ -508,8 +561,16 @@ export default function ChatNewScreen() {
             { text: t('chat.openSettings') || 'Abrir Ajustes', onPress: () => { try { require('react-native').Linking.openSettings(); } catch {} } },
           ]
         );
+      } else if (result.error === 'consent_denied') {
+        // [2026-10-07 discovery] User tapped "Agora não" — respect it silently
+        // (was surfaced as a raw "Erro consent_denied").
       } else if (result.error) {
-        Alert.alert('Erro', String(result.error));
+        // [2026-10-07 discovery] pt-BR copy instead of raw codes
+        // ("module_unavailable: …", "sync_failed", "api_failed").
+        Alert.alert(
+          t('common.error') || 'Erro',
+          t('chat.contactSyncFailed') || 'Não foi possível sincronizar seus contatos agora. Verifique sua conexão e tente de novo.'
+        );
       } else if ((result.chatyContacts || []).length === 0 && (result.otherContacts || []).length === 0) {
         Alert.alert(t('chat.noContacts') || 'Sem contatos', t('chat.noContactsMsg') || 'Nenhum contato com email ou telefone foi encontrado no seu celular.');
       }
@@ -918,169 +979,131 @@ export default function ChatNewScreen() {
     [selectedMembers, invitingEmail, mode, searchText, colors]
   );
 
+  // [2026-10-07 discovery] Unified people search (WhatsApp/Telegram parity).
+  // ONE server call (people_search) replaces the old fan-out of chatyy_users +
+  // contacts (IMAP Sent scan) + search_by_username (did not exist → 400) +
+  // find_by_phone. Instant local pass first (accent-insensitive) over people I
+  // already know (agenda + conversas), then the ranked server sections:
+  //   "Seus contatos" → "No Chatyy" → "Convidar para o Chatyy" (agenda
+  //   non-users + phone number not on Chatyy). Stale responses are dropped
+  //   via a sequence counter so fast typing never shows an older result.
+  const searchSeqRef = useRef(0);
   const handleSearch = useCallback((text) => {
     setSearchText(text);
     clearTimeout(searchTimeout.current);
-    if (!text || text.length < 1) {
+    const seq = ++searchSeqRef.current;
+    const raw = String(text || '').trim();
+    if (!raw) {
       setSearchResults([]);
       setSearchChannelResults([]);
+      setSearching(false);
       return;
     }
 
-    // Instant local filtering from already-loaded users (no API call needed)
-    const q = text.toLowerCase().trim();
-    // Normalize: treat dots, hyphens, underscores as spaces for matching
-    const qNorm = q.replace(/[.\-_]/g, ' ');
-    const qParts = qNorm.split(/\s+/).filter(Boolean);
+    const isUsernameSearch = raw.startsWith('@');
+    const qf = foldSearchText(isUsernameSearch ? raw.slice(1) : raw).replace(/[.\-_]/g, ' ').replace(/\s+/g, ' ').trim();
+    const qParts = qf.split(' ').filter(Boolean);
+    const qDigits = raw.replace(/\D/g, '');
+    const looksLikePhone = qDigits.length >= 8 && qDigits.length <= 15 && qDigits.length === raw.replace(/[\s+()\-./]/g, '').length;
+    const looksLikeEmail = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(raw);
 
-    // Strip leading @ for username search
-    const isUsernameSearch = q.startsWith('@');
-    const qClean = isUsernameSearch ? q.slice(1) : q;
-
-    const localResults = allChatyyUsers.filter(u => {
-      const name = (u.name || '').toLowerCase();
-      const email = (u.email || '').toLowerCase();
-      const emailUser = email.split('@')[0];
-      const handle = (u.username || '').toLowerCase();
-      // Normalize name and username for fuzzy matching
-      const nameNorm = name.replace(/[.\-_]/g, ' ');
-      const userNorm = emailUser.replace(/[.\-_]/g, ' ');
-      const phone = (u.phone || '').replace(/\D/g, '');
-      const qDigits = qClean.replace(/\D/g, '');
-
-      // @username search: match against the handle field or email username
-      if (isUsernameSearch && qClean) {
-        if (handle.includes(qClean) || emailUser.includes(qClean)) return true;
-        return false;
+    const fieldsOf = (u) => {
+      const email = String(u.email || '').toLowerCase();
+      const local = email.split('@')[0];
+      return {
+        name: foldSearchText(u.name || '').replace(/[.\-_]/g, ' '),
+        local: local.replace(/[.\-_]/g, ' '),
+        email,
+        handle: String(u.username || '').toLowerCase(),
+        phone: String(u.phone || '').replace(/\D/g, ''),
+      };
+    };
+    const matchLocal = (u) => {
+      const f = fieldsOf(u);
+      if (isUsernameSearch) {
+        const h = qf.replace(/ /g, '');
+        return !!h && (f.handle.startsWith(h) || f.local.replace(/ /g, '').startsWith(h));
       }
-
-      // Direct match (original query)
-      if (name.includes(q) || email.includes(q) || emailUser.includes(q) || handle.includes(q)) return true;
-      // Normalized match (dots/spaces/hyphens equivalent)
-      if (nameNorm.includes(qNorm) || userNorm.includes(qNorm)) return true;
-      // Multi-word match: all query parts must appear somewhere
-      if (qParts.length > 1) {
-        const searchable = `${nameNorm} ${userNorm} ${email} ${handle}`;
-        if (qParts.every(p => searchable.includes(p))) return true;
+      if (looksLikePhone) {
+        // last 8 digits are stable across +55 / 0 / 9th-digit variants
+        const tail = qDigits.slice(-8);
+        return !!f.phone && f.phone.endsWith(tail);
       }
-      // Phone match
-      if (qDigits.length >= 3 && phone.includes(qDigits)) return true;
-      return false;
-    });
-    if (localResults.length > 0) {
-      setSearchResults(localResults);
-      setSearching(false);
-    } else {
-      setSearchResults([]);
-      setSearching(true);
-    }
+      if (raw.includes('@')) return f.email.startsWith(raw.toLowerCase());
+      const hay = `${f.name} ${f.local} ${f.handle}`;
+      if (!qParts.length) return false;
+      // every query word must START a word in name/handle/local (WhatsApp-like)
+      const words = hay.split(' ').filter(Boolean);
+      return qParts.every(p => words.some(w => w.startsWith(p))) || (qf.length >= 3 && hay.includes(qf));
+    };
 
-    // ALWAYS also search server (local cache may be empty or incomplete)
-    // If the query looks like a phone number (≥ 8 digits, mostly digits),
-    // hash it and hit chat_sync_contacts — that's how we find Chatyy users by
-    // phone without ever sending the plaintext number to the server.
-    const digitsOnly = qClean.replace(/\D/g, '');
-    const looksLikePhone = digitsOnly.length >= 8 && digitsOnly.length === qClean.replace(/[\s+()\-.]/g, '').length;
+    const localContacts = allChatyyUsers.filter(matchLocal).map(u => ({ ...u, isRegistered: true, _localHit: true }));
+    const localInvites = (otherContacts || []).filter(matchLocal).slice(0, 20).map(c => ({ ...c, isRegistered: false }));
+
+    // Header rows are rendered by ContactRow (_isSearchHeader).
+    const hdr = (key, title) => ({ _isSearchHeader: true, _key: `hdr_${key}`, title });
+    const compose = (serverContacts, serverGlobal, phoneInvite) => {
+      const seen = new Set();
+      const take = (arr) => arr.filter(u => {
+        const k = String(u.email || '').toLowerCase();
+        if (!k || seen.has(k) || k === String(user?.email || '').toLowerCase()) return false;
+        seen.add(k);
+        return true;
+      });
+      // Exact identifier hits (phone / @handle / e-mail) jump to the very top.
+      const exact = take([...serverContacts, ...serverGlobal].filter(u => (u.score || 0) >= 950)
+        .map(u => ({ ...u, isRegistered: true })));
+      const mine = take([...localContacts, ...serverContacts.map(u => ({ ...u, isRegistered: true }))]);
+      const global = take(serverGlobal.map(u => ({ ...u, isRegistered: true })));
+      const out = [];
+      if (exact.length) out.push(hdr('exact', t('chat.searchBestMatch') || 'Melhor resultado'), ...exact);
+      if (mine.length) out.push(hdr('mine', t('chat.searchYourContacts') || 'Seus contatos'), ...mine);
+      if (global.length) out.push(hdr('global', t('chat.searchOnChatyy') || 'No Chatyy'), ...global);
+      const invites = [...localInvites];
+      if (phoneInvite && !exact.length && !mine.length && !global.length) {
+        invites.unshift({ _isPhoneInvite: true, _key: `inv_${phoneInvite.e164}`, phone: phoneInvite.e164, name: phoneInvite.display || phoneInvite.e164, display: phoneInvite.display });
+      }
+      if (invites.length) out.push(hdr('invite', t('chat.inviteToChatyy') || 'Convidar para o Chatyy'), ...invites);
+      return out;
+    };
+
+    const firstPaint = compose([], [], null);
+    setSearchResults(firstPaint);
+
+    const serverWorthy = isUsernameSearch || looksLikePhone || looksLikeEmail || qf.length >= 2;
+    if (!serverWorthy) { setSearching(false); setSearchChannelResults([]); return; }
+    // Spinner only when there is nothing local to show yet.
+    setSearching(firstPaint.length === 0);
 
     searchTimeout.current = setTimeout(async () => {
-      // Also search public channels in parallel — discovery feed extends the
-      // search bar (per task spec). Result fed into a separate state used by
-      // the Descobrir canais section above the contacts list.
-      try {
-        if (api.chatDiscoverPublic) {
-          api.chatDiscoverPublic({ q: text, sort: 'members_desc' }).then(r => {
-            if (r?.success) setSearchChannelResults(r.data?.channels || []);
-            else setSearchChannelResults([]);
-          }).catch(() => setSearchChannelResults([]));
-        }
-      } catch {}
-
-      try {
-        // Build parallel API calls; include @username search if query starts with @
-        const promises = [
-          api.chatyyUsers(text, 50),
-          api.searchContacts(text),
-        ];
-        if (isUsernameSearch && qClean.length >= 2) {
-          promises.push(api.searchByUsername(qClean));
-        }
-
-        // Phone lookup: when the user EXPLICITLY types a number into the
-        // search bar, bypass the contacts-consent gate (which only governs
-        // bulk uploads of the phonebook) and call find_by_phone directly.
-        // Why: syncContactsHashed silently returns [] when contacts consent
-        // isn't granted — and on web, where there is no contacts disclosure
-        // flow at all, that meant phone search appeared totally broken.
-        let phonePromise = null;
-        if (looksLikePhone) {
-          const candidate = qClean.startsWith('+') ? qClean : ('+' + digitsOnly);
-          phonePromise = api.findByPhone(candidate).then(r => {
-            const list = (r?.success && Array.isArray(r?.data)) ? r.data : [];
-            return { matches: list.map(x => ({ email: x.email, name: x.display_name || x.name || (x.email || '').split('@')[0] })) };
-          }).catch(() => ({ matches: [] }));
-        }
-
-        const results = await Promise.all(promises);
-        const [chatyyR, contactsR] = results;
-        const usernameR = results[2] || null;
-
-        const merged = new Map();
-        // Keep local results first
-        for (const r of localResults) {
-          if (r.email) merged.set(r.email, r);
-        }
-
-        // Phone match wins top spot — user typed the exact number, so the hit
-        // is almost certainly the person they want to reach.
-        if (phonePromise) {
-          try {
-            const pRes = await phonePromise;
-            for (const m of (pRes?.matches || [])) {
-              if (m.email && m.email !== user?.email && !merged.has(m.email)) {
-                merged.set(m.email, {
-                  email: m.email,
-                  name: m.name,
-                  isRegistered: true,
-                  _matchedByPhone: true,
-                });
-              }
-            }
-          } catch {}
-        }
-
-        // @username search results (highest priority for username queries)
-        if (usernameR?.success) {
-          for (const u of (usernameR.data?.users || [])) {
-            if (u.email !== user?.email && !merged.has(u.email)) {
-              merged.set(u.email, { ...u, isRegistered: true });
-            }
-          }
-        }
-
-        if (chatyyR?.success) {
-          for (const u of (chatyyR.data?.users || [])) {
-            if (u.email !== user?.email && !merged.has(u.email)) {
-              merged.set(u.email, { ...u, isRegistered: true });
-            }
-          }
-        }
-
-        if (contactsR?.success) {
-          for (const c of (contactsR.data || [])) {
-            if (c.email !== user?.email && !merged.has(c.email)) {
-              merged.set(c.email, { ...c, isRegistered: false });
-            }
-          }
-        }
-
-        const finalResults = Array.from(merged.values());
-        setSearchResults(finalResults);
-      } catch (err) {
-        // search error - silently ignored
+      // Public channels (Telegram "global search" extension) — names only.
+      if (!looksLikePhone && !looksLikeEmail && api.chatDiscoverPublic) {
+        api.chatDiscoverPublic({ q: raw, sort: 'members_desc' }).then(r => {
+          if (seq !== searchSeqRef.current) return;
+          setSearchChannelResults(r?.success ? (r.data?.channels || []) : []);
+        }).catch(() => { if (seq === searchSeqRef.current) setSearchChannelResults([]); });
+      } else {
+        setSearchChannelResults([]);
       }
-      setSearching(false);
-    }, 300);
-  }, [user?.email, allChatyyUsers]);
+      try {
+        let homeDial = '';
+        try { homeDial = getHomeDialDigits(); } catch {}
+        const r = await api.peopleSearch(raw, homeDial);
+        if (seq !== searchSeqRef.current) return; // a newer keystroke won
+        if (r?.success) {
+          const d = r.data || {};
+          setSearchResults(compose(d.contacts || [], d.global || [], d.invite || null));
+        } else if (r?.message && /muitas/i.test(r.message)) {
+          // 429 — keep local results, tell the user calmly (pt-BR from server).
+          setSearchResults([...compose([], [], null), { _isSearchHeader: true, _key: 'hdr_rl', title: r.message }]);
+        }
+      } catch {
+        // network error: keep the local results already painted
+      } finally {
+        if (seq === searchSeqRef.current) setSearching(false);
+      }
+    }, 280);
+  }, [user?.email, allChatyyUsers, otherContacts, t]);
 
   const handleSelectContact = (contact) => {
     // Pick-mode: adding this contact to an existing group. One-tap flow —
@@ -1267,15 +1290,36 @@ export default function ChatNewScreen() {
     Linking.openURL(url).catch(() => {});
   };
 
+  // [2026-10-07 discovery] Invite a typed phone number that is not on Chatyy:
+  // SMS (native composer, prefilled), WhatsApp click-to-chat, or share sheet.
+  // Android Alert renders at most 3 buttons → no explicit cancel (tap outside).
+  const handleInvitePhone = (item) => {
+    const digits = String(item?.phone || '').replace(/\D/g, '');
+    if (!digits) return;
+    const msg = t('chat.inviteShareMessage') || 'Baixe o Chatyy! Mensagens seguras e gratuitas. https://chatyy.com.br';
+    const wa = `https://wa.me/${digits}?text=${encodeURIComponent(msg)}`;
+    if (Platform.OS === 'web') { Linking.openURL(wa).catch(() => {}); return; }
+    const sms = Platform.OS === 'ios'
+      ? `sms:+${digits}&body=${encodeURIComponent(msg)}`
+      : `sms:+${digits}?body=${encodeURIComponent(msg)}`;
+    Alert.alert(
+      t('chat.invitePhone') || 'Convidar este número',
+      item?.display || `+${digits}`,
+      [
+        { text: 'SMS', onPress: () => Linking.openURL(sms).catch(() => {}) },
+        { text: 'WhatsApp', onPress: () => Linking.openURL(wa).catch(() => {}) },
+        { text: t('chat.inviteShare') || 'Compartilhar', onPress: () => { Share.share({ message: msg }).catch(() => {}); } },
+      ],
+      { cancelable: true }
+    );
+  };
+
   const isSelected = (email) => selectedMembers.some(m => m.email === email);
 
-  // QR code data
-  const qrData = JSON.stringify({
-    type: 'chatyy_contact',
-    email: user?.email || '',
-    name: user?.name || user?.email?.split('@')[0] || '',
-  });
-  const qrImageUrl = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(qrData)}`;
+  // QR code data — [2026-10-07 discovery] canonical chatyy://add-contact
+  // payload shared with /profile-qr (was JSON only this screen understood).
+  const qrData = buildContactQrPayload(user?.email || '', user?.name || user?.email?.split('@')[0] || '');
+  const profileLink = buildProfileLink(user);
 
   // QR code handler
   const handleQrPress = () => {
@@ -1309,28 +1353,23 @@ export default function ChatNewScreen() {
   const handleBarCodeScanned = ({ data }) => {
     if (qrScanned) return;
     setQrScanned(true);
-    try {
-      const parsed = JSON.parse(data);
-      if (parsed.type === 'chatyy_contact' && parsed.email) {
-        setShowQrModal(false);
-        handleCreateDirect(parsed.email, parsed.name || parsed.email);
-        return;
-      }
-    } catch {}
-    // Group invite QR — WhatsApp-style. Backend invite URL is
-    // `https://chatyy.com.br/j/<token>` (32-hex). Route the token through
-    // the existing /j/[token] deep-link handler, which calls
-    // chat_group_join_via_link and pushes the conversation.
-    const groupInvite = /chatyy\.com\.br\/j\/([a-f0-9]{32})/i.exec(data);
-    if (groupInvite) {
+    // [2026-10-07 discovery] One tolerant parser: chatyy://add-contact (this
+    // screen + /profile-qr), legacy JSON, /u/<handle> & /@handle links,
+    // group invites /j/<token>, mailto:/bare e-mail.
+    const parsed = parseContactQr(data);
+    if (parsed?.kind === 'email') {
       setShowQrModal(false);
-      try { router.push(`/j/${groupInvite[1]}`); } catch {}
+      handleCreateDirect(parsed.email, parsed.name || parsed.email);
       return;
     }
-    // If not a valid Chatyy QR, check if it's just an email
-    if (data.includes('@') && !data.includes(' ')) {
+    if (parsed?.kind === 'group') {
       setShowQrModal(false);
-      handleCreateDirect(data.trim(), data.trim());
+      try { router.push(`/j/${parsed.token}`); } catch {}
+      return;
+    }
+    if (parsed?.kind === 'profile') {
+      setShowQrModal(false);
+      try { router.push(`/u/${encodeURIComponent(parsed.slug)}`); } catch {}
       return;
     }
     safeAlert(t('chat.qrCode'), t('chat.qrInvalid'));
@@ -1339,44 +1378,16 @@ export default function ChatNewScreen() {
   };
 
   // Share QR code as image
+  // [2026-10-07 discovery] Share my profile LINK (works outside the app and
+  // for non-users) instead of downloading a PNG from a third-party QR API.
   const handleShareQrImage = async () => {
-    const shareText = `${t('chat.qrSharePrefix')} ${user?.email}`;
-    try {
-      if (Platform.OS === 'web') {
-        // On web: download QR image from API
-        const link = document.createElement('a');
-        link.download = `chatyy-qr-${(user?.email || 'contact').split('@')[0]}.png`;
-        link.href = qrImageUrl;
-        link.target = '_blank';
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-        safeAlert('', t('chat.qrSaved'));
-      } else {
-        // On native: download QR image to temp file and share
-        try {
-          const filename = `chatyy-qr-${Date.now()}.png`;
-          const fileUri = `${FileSystem.cacheDirectory}${filename}`;
-          await FileSystem.downloadAsync(qrImageUrl, fileUri);
-          await Sharing.shareAsync(fileUri, {
-            mimeType: 'image/png',
-            dialogTitle: t('chat.qrCode'),
-            UTI: 'public.png',
-          });
-        } catch (err) {
-          // Fallback to text share
-          Share.share({ message: shareText }).catch(() => {});
-        }
-      }
-    } catch {
-      // Fallback to text share
-      if (Platform.OS === 'web') {
-        try { await navigator.clipboard.writeText(shareText); } catch {}
-        safeAlert('', t('chat.inviteCopied'));
-      } else {
-        Share.share({ message: shareText }).catch(() => {});
-      }
+    const shareText = `${t('chat.qrSharePrefix') || 'Fale comigo no Chatyy:'} ${profileLink}`;
+    if (Platform.OS === 'web') {
+      try { await navigator.clipboard.writeText(shareText); safeAlert('', t('chat.inviteCopied')); }
+      catch { safeAlert('Chatyy', shareText); }
+      return;
     }
+    Share.share({ message: shareText, url: profileLink }).catch(() => {});
   };
 
   // Build alphabet index — prefer phone contacts (the WhatsApp-style
@@ -1630,10 +1641,12 @@ export default function ChatNewScreen() {
   rowHandlersRef.current.inviteByEmail = handleInviteByEmail;
   rowHandlersRef.current.inviteShare = handleInviteShare;
   rowHandlersRef.current.inviteWhatsApp = handleInviteViaWhatsApp;
+  rowHandlersRef.current.invitePhone = handleInvitePhone;
   const onSelectRow = useCallback((c) => rowHandlersRef.current.select(c), []);
   const onInviteByEmailRow = useCallback((e, n) => rowHandlersRef.current.inviteByEmail(e, n), []);
   const onInviteShareRow = useCallback((c) => rowHandlersRef.current.inviteShare(c), []);
   const onInviteViaWhatsAppRow = useCallback((c) => rowHandlersRef.current.inviteWhatsApp(c), []);
+  const onInvitePhoneRow = useCallback((c) => rowHandlersRef.current.invitePhone(c), []);
 
   // ---- Render contact row ----
   // Thin adapter: computes the per-row `selected` flag and hands the row its
@@ -1656,9 +1669,10 @@ export default function ChatNewScreen() {
         onInviteShare={onInviteShareRow}
         onInviteViaWhatsApp={onInviteViaWhatsAppRow}
         onShowInviteInput={setShowInviteInput}
+        onInvitePhone={onInvitePhoneRow}
       />
     );
-  }, [colors, searchText, mode, selectedMembers, invitingEmail, t, handleMessageYourself, onSelectRow, onInviteByEmailRow, onInviteShareRow, onInviteViaWhatsAppRow]);
+  }, [colors, searchText, mode, selectedMembers, invitingEmail, t, handleMessageYourself, onSelectRow, onInviteByEmailRow, onInviteShareRow, onInviteViaWhatsAppRow, onInvitePhoneRow]);
 
   // Section header renderer — hoisted to a stable useCallback (was an inline
   // arrow on the SectionList). Only depends on isDark.
@@ -1886,7 +1900,7 @@ export default function ChatNewScreen() {
         ) : (
           <FlatList
             data={searchResults}
-            keyExtractor={(item, i) => item.email || String(i)}
+            keyExtractor={(item, i) => item._key || (item.email ? `${item.email}` : '') || (item.phone ? `ph_${item.phone}` : '') || String(i)}
             renderItem={renderContact}
             extraData={listExtraData}
             removeClippedSubviews
@@ -1940,7 +1954,7 @@ export default function ChatNewScreen() {
                       </Text>
                     </TouchableOpacity>
                   )}
-                  {searchText.includes('@') && (
+                  {/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test((searchText || '').trim()) && (
                     <View style={{ gap: 10, marginTop: 16, alignItems: 'center' }}>
                       {mode !== 'direct' && (
                         <TouchableOpacity
@@ -2396,11 +2410,11 @@ export default function ChatNewScreen() {
                     {user?.email}
                   </Text>
                   <View style={{ marginTop: 16, padding: 12, backgroundColor: '#fff', borderRadius: 12 }}>
-                    <Image
-                      source={{ uri: qrImageUrl }}
-                      style={{ width: 180, height: 180 }}
-                      resizeMode="contain"
-                    />
+                    {QRCodeSvg ? (
+                      <QRCodeSvg value={qrData} size={180} color="#000" backgroundColor="#fff" />
+                    ) : (
+                      <Text style={{ width: 180, fontSize: 12, color: '#333', textAlign: 'center' }} selectable>{profileLink}</Text>
+                    )}
                   </View>
                   <Text style={{ fontSize: 12, color: '#999', marginTop: 12, textAlign: 'center' }}>
                     {t('chat.qrShareDesc')}

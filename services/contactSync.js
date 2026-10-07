@@ -1,9 +1,18 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Alert, Platform, Linking } from 'react-native';
-import { apiCall, chatSyncContacts } from './api';
+import { apiCall, chatSyncContacts, getActiveAccountEmail } from './api';
 import { COUNTRIES } from '../constants/countries';
 
-const CACHE_KEY = '@chatyy_synced_contacts';
+const CACHE_KEY_BASE = '@chatyy_synced_contacts';
+// [2026-10-07 discovery] Cache is namespaced per account — the old global key
+// leaked one account's matched phonebook into another account on the same
+// device (multi-account), see fluidez cross-account cache leak note.
+function cacheKey() {
+  try {
+    const em = String((typeof getActiveAccountEmail === 'function' ? getActiveAccountEmail() : '') || '').trim().toLowerCase();
+    return em ? `${CACHE_KEY_BASE}:${em}` : CACHE_KEY_BASE;
+  } catch { return CACHE_KEY_BASE; }
+}
 const CACHE_TTL = 60 * 60 * 1000; // 1 hour in milliseconds
 const CONSENT_KEY = '@chatyy_contacts_consent_v1'; // 'granted' | 'denied' | undefined
 
@@ -64,7 +73,7 @@ export async function ensureContactsConsent(t) {
 export async function revokeContactsConsent() {
   _consentMemory = 'denied';
   try { await AsyncStorage.setItem(CONSENT_KEY, 'denied'); } catch {}
-  try { await AsyncStorage.removeItem(CACHE_KEY); } catch {}
+  try { await AsyncStorage.removeItem(cacheKey()); } catch {}
 }
 
 export async function getContactsConsentState() {
@@ -98,7 +107,7 @@ const KNOWN_DIAL_CODES = [
 // country code to phonebook numbers saved in national format (e.g. a BR
 // contact saved as "(33) 99965-2818" → needs +55). Falls back to BR (55).
 // Synchronous-ish: best-effort from expo-localization, then default 55.
-function getHomeDialDigits() {
+export function getHomeDialDigits() {
   try {
     const { getLocales } = require('expo-localization');
     const region = (getLocales?.()?.[0]?.regionCode || '').toUpperCase();
@@ -498,6 +507,17 @@ export async function syncContacts(forceRefresh = false, t) {
       }
     }
 
+    // [2026-10-07 discovery] An explicit "Sincronizar" tap after an earlier
+    // "Agora não" must ask again — before, the persisted 'denied' made the
+    // manual sync a silent no-op forever (user could never opt back in here).
+    if (forceRefresh) {
+      try {
+        if ((await getContactsConsentState()) === 'denied') {
+          _consentMemory = null;
+          await AsyncStorage.removeItem(CONSENT_KEY);
+        }
+      } catch {}
+    }
     // Apple guideline 5.1.2: get explicit user consent BEFORE the iOS
     // permission prompt and BEFORE any contacts data leaves the device.
     // Saved across app launches so users only see this once.
@@ -523,7 +543,7 @@ export async function syncContacts(forceRefresh = false, t) {
 
       if (!nativeContacts || nativeContacts.length === 0) {
         const empty = { chatyContacts: [], otherContacts: [], timestamp: Date.now() };
-        await AsyncStorage.setItem(CACHE_KEY, JSON.stringify(empty));
+        await AsyncStorage.setItem(cacheKey(), JSON.stringify(empty));
         return { chatyContacts: [], otherContacts: [], error: null };
       }
 
@@ -555,7 +575,7 @@ export async function syncContacts(forceRefresh = false, t) {
 
       if (!rawContacts || rawContacts.length === 0) {
         const empty = { chatyContacts: [], otherContacts: [], timestamp: Date.now() };
-        await AsyncStorage.setItem(CACHE_KEY, JSON.stringify(empty));
+        await AsyncStorage.setItem(cacheKey(), JSON.stringify(empty));
         return { chatyContacts: [], otherContacts: [], error: null };
       }
 
@@ -568,7 +588,7 @@ export async function syncContacts(forceRefresh = false, t) {
     // Nothing to check
     if (uniqueEmails.length === 0 && uniquePhones.length === 0) {
       const empty = { chatyContacts: [], otherContacts: [], timestamp: Date.now() };
-      await AsyncStorage.setItem(CACHE_KEY, JSON.stringify(empty));
+      await AsyncStorage.setItem(cacheKey(), JSON.stringify(empty));
       return { chatyContacts: [], otherContacts: [], error: null };
     }
 
@@ -579,9 +599,14 @@ export async function syncContacts(forceRefresh = false, t) {
     // slow on low-end devices.
     // Usa o número original com DDI (phoneMap.values()) — antes mandava as
     // chaves normalizadas sem DDI e os hashes não batiam com o servidor.
+    // [2026-10-07 discovery] The hashed (WhatsApp-style) lookup used to be
+    // fire-and-forget and its matches were DISCARDED — so phone-first accounts
+    // (only in chat_phone_registry) never showed under "Contatos no Chatyy".
+    // Now it runs in PARALLEL with check_contacts and its matches are merged.
+    let hashedPromise = Promise.resolve({ matches: [] });
     try {
       const phonesForHash = Array.from(phoneMap.values()).map(v => v?.phone).filter(Boolean);
-      syncContactsHashed(phonesForHash).catch(() => {});
+      hashedPromise = syncContactsHashed(phonesForHash).catch(() => ({ matches: [] }));
     } catch {}
 
     // Ask the backend which contacts are registered
@@ -589,11 +614,27 @@ export async function syncContacts(forceRefresh = false, t) {
       emails: uniqueEmails,
       phones: uniquePhones,
     }, 'POST');
+    const hashed = await hashedPromise;
+
+    // [2026-10-07 discovery] Server answers { success, data: { registered } } —
+    // the old code read `result.registered` (always undefined) so this list
+    // was ALWAYS empty. Accept both shapes.
+    const registeredList = Array.isArray(result?.data?.registered)
+      ? result.data.registered
+      : (Array.isArray(result?.registered) ? result.registered : []);
+    // Fold hashed matches in (phone = the device number that matched).
+    const seenReg = new Set(registeredList.map(r => String(r?.email || '').toLowerCase()).filter(Boolean));
+    for (const m of (hashed?.matches || [])) {
+      const em = String(m?.email || '').toLowerCase();
+      if (!em || seenReg.has(em)) continue;
+      seenReg.add(em);
+      registeredList.push({ email: em, name: m.name || em.split('@')[0], phone: m.phone || '', avatar: null });
+    }
 
     // If API call failed, don't overwrite cache with bad data
-    if (!result || result.error) {
+    if ((!result || result.success === false || result.error) && registeredList.length === 0) {
       console.warn('[contactSync] check_contacts failed:', result?.error || 'no response');
-      const raw = await AsyncStorage.getItem(CACHE_KEY);
+      const raw = await AsyncStorage.getItem(cacheKey());
       if (raw) {
         const cached = JSON.parse(raw);
         return { chatyContacts: cached.chatyContacts || [], otherContacts: cached.otherContacts || [], error: result?.error || 'api_failed' };
@@ -606,8 +647,8 @@ export async function syncContacts(forceRefresh = false, t) {
     const registeredPhones = new Set();
     const chatyContacts = [];
 
-    if (result && result.registered) {
-      for (const reg of result.registered) {
+    if (registeredList.length > 0) {
+      for (const reg of registeredList) {
         if (reg.email) registeredEmails.add(reg.email.toLowerCase());
         if (reg.phone) {
           const norm = normalizePhone(reg.phone);
@@ -688,14 +729,14 @@ export async function syncContacts(forceRefresh = false, t) {
 
     // Cache
     const cacheData = { chatyContacts, otherContacts, timestamp: Date.now() };
-    await AsyncStorage.setItem(CACHE_KEY, JSON.stringify(cacheData));
+    await AsyncStorage.setItem(cacheKey(), JSON.stringify(cacheData));
 
     return { chatyContacts, otherContacts, error: null };
   } catch (err) {
     console.warn('[contactSync] syncContacts error:', err);
     // Try to return stale cache on error
     try {
-      const raw = await AsyncStorage.getItem(CACHE_KEY);
+      const raw = await AsyncStorage.getItem(cacheKey());
       if (raw) {
         const cached = JSON.parse(raw);
         return {
@@ -719,7 +760,7 @@ export async function syncContacts(forceRefresh = false, t) {
  */
 export async function getCachedContacts() {
   try {
-    const raw = await AsyncStorage.getItem(CACHE_KEY);
+    const raw = await AsyncStorage.getItem(cacheKey());
     if (!raw) return null;
 
     const cached = JSON.parse(raw);
@@ -744,7 +785,7 @@ export async function getCachedContacts() {
  */
 export async function clearContactsCache() {
   try {
-    await AsyncStorage.removeItem(CACHE_KEY);
+    await AsyncStorage.removeItem(cacheKey());
   } catch (err) {
     console.warn('[contactSync] clearContactsCache error:', err);
   }

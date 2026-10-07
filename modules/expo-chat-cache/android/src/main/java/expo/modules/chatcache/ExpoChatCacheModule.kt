@@ -59,14 +59,29 @@ class ExpoChatCacheModule : Module() {
   private val driveCache = ConcurrentHashMap<Long, MutableList<JSONObject>>()
   private val avatarCache = ConcurrentHashMap<String, String>()
 
-  private val ctx: Context get() = appContext.reactContext!!
+  // [2026-10-07 coldstart] Descriptive exception instead of a bare `!!` NPE.
+  // Every caller is inside try/catch (OnCreate, bg threads) or is a JS-facing
+  // Function whose exception surfaces as a catchable JS error.
+  private val ctx: Context get() = appContext.reactContext
+    ?: throw IllegalStateException("ExpoChatCache: React context unavailable")
 
   override fun definition() = ModuleDefinition {
-    Name("ExpoChatCache")
+    // [2026-10-07 coldstart] MUST match the JS lookup
+    // requireOptionalNativeModule('ExpoChatCacheModule') and the iOS
+    // Name("ExpoChatCacheModule"). It was "ExpoChatCache" → on Android the JS
+    // side never found the module (Native === null), so the native SQLite
+    // cache — and the logout/account-switch clearAll() privacy wipe — never ran.
+    Name("ExpoChatCacheModule")
 
     OnCreate {
-      openDb()
-      preloadMemoryCache()
+      // Never let a cache problem take the app down at module creation: the
+      // JS callers already treat this module as optional (null-safe).
+      try {
+        openDb()
+        preloadMemoryCache()
+      } catch (e: Throwable) {
+        Log.w(TAG, "OnCreate init failed: ${e.message}")
+      }
     }
 
     // ── Messages ─────────────────────────────────────────────────
@@ -440,9 +455,14 @@ class ExpoChatCacheModule : Module() {
   // ── DB helper + queries ────────────────────────────────────────
 
   private fun openDb() {
+    // [2026-10-07 coldstart] Create the helper only — do NOT open the database
+    // here. OnCreate runs during module registry setup (app start, before the
+    // first frame); the old `writableDatabase.close()` did a synchronous file
+    // open + schema check + close on that path for nothing (and closing the
+    // shared SQLiteOpenHelper connection forced every later call to reopen it).
+    // SQLiteOpenHelper opens lazily on first readable/writableDatabase access,
+    // which preloadMemoryCache() already does on its background thread.
     dbHelper = ChatDbHelper(ctx)
-    // Trigger init
-    dbHelper?.writableDatabase?.close()
   }
 
   private fun preloadMemoryCache() {

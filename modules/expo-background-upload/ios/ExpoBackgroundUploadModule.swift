@@ -604,6 +604,28 @@ public class ExpoBackgroundUploadModule: Module {
             self.bgSession.getAllTasks { tasks in tasks.forEach { $0.cancel() } }
         }
 
+        // [2026-10-07 send-media] Chat media send queue: keep compressing /
+        // uploading for the window iOS grants (~30s) after the user leaves the
+        // app, instead of the JS networking being frozen mid-upload. Returns
+        // the task id (-1 when iOS refused). The expiration handler always ends
+        // the task so we never get killed for overrunning; anything unfinished
+        // resumes later from the persisted Rust chunk session.
+        Function("beginBackgroundTask") { (name: String) -> Int in
+            var tid: UIBackgroundTaskIdentifier = .invalid
+            tid = UIApplication.shared.beginBackgroundTask(withName: name) {
+                if tid != .invalid {
+                    UIApplication.shared.endBackgroundTask(tid)
+                    tid = .invalid
+                }
+            }
+            return tid == .invalid ? -1 : tid.rawValue
+        }
+
+        Function("endBackgroundTask") { (id: Int) in
+            guard id >= 0 else { return }
+            UIApplication.shared.endBackgroundTask(UIBackgroundTaskIdentifier(rawValue: id))
+        }
+
         // Reset backed up IDs (for testing or to fix stale data)
         Function("resetBackedUpIds") {
             UserDefaults.standard.removeObject(forKey: "com.onemundo.backedUpAssets")

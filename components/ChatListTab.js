@@ -81,6 +81,36 @@ const WA_PILL_BG_DARK = 'rgba(0,168,132,0.26)'; // selected filter pill fill (da
 const WA_PILL_TXT_LIGHT = '#027d69';  // selected filter pill text (light)
 const WA_PILL_TXT_DARK = '#4ee6b8';   // selected filter pill text (dark)
 const SWIPE_THRESHOLD = 40; // lowered from 60 for better responsiveness
+
+// [2026-10-07 receipts2] Recibos ao vivo na LISTA, com regra de GRUPO igual à
+// conversa aberta e ao servidor (chat_list all_delivered/all_read): em grupo o
+// ✓✓ cinza só quando TODOS os outros membros receberam, o azul só quando todos
+// leram. Antes 1 recibo de 1 membro pintava ✓✓ (e um leitor pintava delivered).
+// `who` = e-mail (lc) de quem recebeu/leu; sem `who` em grupo → no-op (o
+// próximo chat_list traz o estado do servidor). 1:1 mantém o comportamento.
+function _rcGroupNeeded(c) {
+  if (!c || c.type !== 'group') return 0;
+  const n = Number(c.member_count) || (Array.isArray(c.members) ? c.members.length : 0);
+  return n > 1 ? n - 1 : 0;
+}
+function _rcListMark(c, who, kind) {
+  const lm = c.last_message;
+  const nowIso = new Date().toISOString();
+  if (c.type !== 'group') {
+    if (kind === 'read') return { ...c, last_message: { ...lm, read_at: lm.read_at || nowIso, delivered_at: lm.delivered_at || nowIso } };
+    return lm.delivered_at ? c : { ...c, last_message: { ...lm, delivered_at: nowIso } };
+  }
+  const needed = _rcGroupNeeded(c);
+  if (!who || !needed) return c;
+  const dlv = new Set(Array.isArray(lm._dlv_by) ? lm._dlv_by : []);
+  const rd = new Set(Array.isArray(lm._rd_by) ? lm._rd_by : []);
+  dlv.add(who);
+  if (kind === 'read') rd.add(who);
+  const next = { ...lm, _dlv_by: Array.from(dlv), _rd_by: Array.from(rd) };
+  if (dlv.size >= needed && !next.delivered_at) next.delivered_at = nowIso;
+  if (rd.size >= needed) { next.read_at = next.read_at || nowIso; next.all_read = true; }
+  return { ...c, last_message: next };
+}
 // Must match the `.swipeActionsLeft/.swipeActionsRight` width below (160)
 // so the row opens EXACTLY flush with the action buttons — otherwise the
 // last button (delete) has a 10px dead zone where clicks hit the row
@@ -1540,14 +1570,23 @@ function EmptyBubbles({ isDark }) {
 // small — 100 most recent rows — because localStorage is capped at ~5 MB.
 // Full history still lives in IndexedDB, localStorage just buys us a single
 // synchronous readable chunk so React's first render has data).
+// [2026-10-07 coldstart] Native: LAZY. This used to JSON.parse the whole
+// `chat_conversations` MMKV blob at module eval on every cold start even though
+// the durable SQLite read (chatStore) wins first on native — 10-30 ms of wasted
+// parse on the critical path. Now parsed only if the durable read is empty.
 let _preloadedConversations = null;
-if (Platform.OS !== 'web') {
+let _preloadedConvsLoaded = Platform.OS === 'web';
+function _getPreloadedConversations() {
+  if (_preloadedConvsLoaded) return _preloadedConversations;
+  _preloadedConvsLoaded = true;
   try {
     const { getString: _gs } = require('../services/mmkv');
     const raw = _gs('chat_conversations');
     if (raw) _preloadedConversations = JSON.parse(raw);
   } catch {}
-} else if (typeof localStorage !== 'undefined') {
+  return _preloadedConversations;
+}
+if (Platform.OS === 'web' && typeof localStorage !== 'undefined') {
   try {
     // The mirror is now scoped per active account (`u:<email>:chatyy_convs_v1`)
     // to keep two browser sessions on the same machine from leaking each
@@ -2889,18 +2928,47 @@ function ChatListTab({ colors, isDark, t, user, router, searchQuery = '', setAct
   // Try MMKV preload first; fall back to the native SQLite cache (iOS).
   // Both reads are synchronous so the very first render already has data,
   // eliminating the empty-list flash that was happening before.
-  const _initialConvs = (() => {
+  // [2026-10-07 coldstart] Computed ONCE per mount (useState initializer).
+  // It was an IIFE in the render body → a synchronous SQLite SELECT (≤200 rows)
+  // + JSON.parse of every row ran on EVERY ChatListTab re-render (dozens during
+  // boot: presence, WS, sync ticks), stealing 10-40 ms of JS per render on a
+  // mid Android. All consumers only ever needed the mount-time value.
+  const [_initialConvs] = useState(() => {
     // DURABLE-FIRST (Builder 2): try the durable SQLite store (services/chatStore)
     // before the MMKV/localStorage preload. The durable mirror survives cache
     // eviction and is account-isolated, so frame-1 paint is instant AND never
     // shows a stale/other-account list. Falls back to the legacy MMKV/localStorage
     // preload, then the SmartCache native read, exactly as before.
+    try { require('../services/bootTrace').mark('chatlist_initial_read'); } catch {}
     const durable = _readDurableConversationsSync();
     if (durable?.length) return durable;
-    if (_preloadedConversations?.length) return _preloadedConversations;
+    const preloaded = _getPreloadedConversations();
+    if (preloaded?.length) return preloaded;
     const native = _readNativeConversationsSync();
     return native || [];
-  })();
+  });
+  // [2026-10-07 coldstart] Frame-1 rows came from the local store → no
+  // skeleton, no fade-in; the native splash is released when they are drawn.
+  const _paintedFromCacheRef = useRef(_initialConvs.length > 0);
+  // Splash owner callbacks (services/bootTrace — idempotent, first wins).
+  // onLoad = FlashList has drawn its first items → hide native splash now.
+  // Wrapper layout = backup (empty list, or onLoad not delivered): immediate
+  // when there is nothing to draw, short grace otherwise. Skeleton layout = no
+  // local data (fresh install / wiped cache) → show the skeleton, don't hold.
+  const _onListLoad = useCallback(() => {
+    try { require('../services/bootTrace').markFirstListPaint(_paintedFromCacheRef.current ? 'cache_rows' : 'rows'); } catch {}
+  }, []);
+  const _onListWrapLayout = useCallback(() => {
+    try {
+      const bt = require('../services/bootTrace');
+      if (bt.hasFirstPaint()) return;
+      if (_convsCountRef.current === 0) { bt.markFirstListPaint('empty'); return; }
+      setTimeout(() => { try { bt.markFirstListPaint('layout_backup'); } catch {} }, 250);
+    } catch {}
+  }, []);
+  const _onSkeletonLayout = useCallback(() => {
+    try { require('../services/bootTrace').markFirstListPaint('skeleton'); } catch {}
+  }, []);
   // Lazy single-pass partition — was 2× filter (active + archived) on every
   // initial mount even when both sets came from the same array.
   // WAVE 95 (2026-05-21): chat-list row avatar tap → fullscreen lightbox.
@@ -2915,6 +2983,30 @@ function ChatListTab({ colors, isDark, t, user, router, searchQuery = '', setAct
   // Sync ref for conversations count — avoids async setState detection bug
   const _convsCountRef = useRef(_initialConvs.length);
   _convsCountRef.current = conversations?.length || 0;
+  // [2026-10-07 bgsync] Foreground merge of the native background journal
+  // (services/bgJournal.js): messages that arrived while the app was in the
+  // background are already in SQLite — show them NOW (same ordering rules as
+  // the WS new-message path), before the network resync lands. The cold-start
+  // case needs nothing here: the merge runs before _initialConvs is read.
+  useEffect(() => {
+    if (Platform.OS === 'web') return undefined;
+    let sub = null;
+    try {
+      const { DeviceEventEmitter } = require('react-native');
+      const bj = require('../services/bgJournal');
+      sub = DeviceEventEmitter.addListener(bj.MERGED_EVENT, (p) => {
+        try {
+          const ups = Array.isArray(p?.convs) ? p.convs : [];
+          if (!ups.length) return;
+          const active = ups.filter((c) => !c.archived);
+          const archived = ups.filter((c) => !!c.archived);
+          if (active.length) setConversations((prev) => bj.applyConvUpdates(prev || [], active));
+          if (archived.length) setArchivedConversations((prev) => bj.applyConvUpdates(prev || [], archived));
+        } catch {}
+      });
+    } catch {}
+    return () => { try { sub?.remove?.(); } catch {} };
+  }, []);
   // Web badge: empurra unread total pro document.title + navigator.setAppBadge
   // (no-op em mobile). Recomputado quando conversations muda.
   React.useEffect(() => {
@@ -3655,7 +3747,10 @@ function ChatListTab({ colors, isDark, t, user, router, searchQuery = '', setAct
   useEffect(() => {
     // If we already painted from MMKV/native cache, do a silent sync
     // (no spinner ever flashes). Only show the loader on a truly cold start.
-    loadConversations(_initialConvs.length === 0);
+    // [2026-10-07 coldstart] _initialConvs is now the mount-time snapshot; use
+    // the live count so a later re-run (searchText change) never shows the
+    // full-screen loader over an already-painted list.
+    loadConversations(_convsCountRef.current === 0);
     // Safety: force loading off after 5s in case API hangs
     const safety = setTimeout(() => setLoading(false), 5000);
     return () => clearTimeout(safety);
@@ -4348,7 +4443,7 @@ function ChatListTab({ colors, isDark, t, user, router, searchQuery = '', setAct
                        // correctly stayed gray — list/thread desync.
                        && (!data?.last_read_id || !Number(c.last_message.id)
                            || Number(data.last_read_id) >= Number(c.last_message.id))) {
-              next.last_message = { ...c.last_message, read_at: new Date().toISOString(), delivered_at: c.last_message.delivered_at || new Date().toISOString() };
+              next.last_message = _rcListMark(c, readerLower, 'read').last_message; // [2026-10-07 receipts2] grupo = todos
             }
             return next;
           });
@@ -4372,7 +4467,7 @@ function ChatListTab({ colors, isDark, t, user, router, searchQuery = '', setAct
                 // id >= the previewed id covers it.
                 && (!data?.message_id || !Number(c.last_message.id)
                     || Number(data.message_id) >= Number(c.last_message.id))) {
-              return { ...c, last_message: { ...c.last_message, delivered_at: new Date().toISOString() } };
+              return _rcListMark(c, String(data?.email || '').toLowerCase(), 'delivered'); // [2026-10-07 receipts2]
             }
             return c;
           });
@@ -4404,7 +4499,8 @@ function ChatListTab({ colors, isDark, t, user, router, searchQuery = '', setAct
             if (lm && lm.sender_email && lm.sender_email.toLowerCase() === meLower
                 && !lm.delivered_at
                 && (!Number(lm.id) || maxId >= Number(lm.id))) {
-              return { ...c, last_message: { ...lm, delivered_at: new Date().toISOString() } };
+              // [2026-10-07 receipts2] grupo agrega por membro (hub manda email/delivered_to)
+              return _rcListMark(c, String(data?.email || (typeof data?.delivered_to === 'string' ? data.delivered_to : '') || '').toLowerCase(), 'delivered');
             }
             return c;
           });
@@ -4429,11 +4525,7 @@ function ChatListTab({ colors, isDark, t, user, router, searchQuery = '', setAct
                        && !c.last_message.read_at
                        && (!readUpTo || !Number(c.last_message.id)
                            || readUpTo >= Number(c.last_message.id))) {
-              next.last_message = {
-                ...c.last_message,
-                read_at: new Date().toISOString(),
-                delivered_at: c.last_message.delivered_at || new Date().toISOString(),
-              };
+              next.last_message = _rcListMark(c, readerLower, 'read').last_message; // [2026-10-07 receipts2] grupo = todos
             }
             return next;
           });
@@ -7201,7 +7293,7 @@ function ChatListTab({ colors, isDark, t, user, router, searchQuery = '', setAct
 
       {/* List */}
       {loading && !refreshing ? (
-        <View style={{ flex: 1, paddingTop: 8 }}>
+        <View style={{ flex: 1, paddingTop: 8 }} onLayout={_onSkeletonLayout}>
           {(() => {
             // Native CAGradientLayer shimmer skeletons (iOS) — much smoother
             // than the JS placeholder loop. Falls back to the JS skeletons
@@ -7227,8 +7319,9 @@ function ChatListTab({ colors, isDark, t, user, router, searchQuery = '', setAct
         // (cheap, no layout shift on a full list); runs once when this branch
         // mounts (skeleton→content), not on pull-to-refresh (the list stays
         // mounted then, so no replay).
-        <FadeSlideIn distance={0} duration={260}>
+        <FadeSlideIn distance={0} duration={260} skip={_paintedFromCacheRef.current} onLayout={_onListWrapLayout}>
         <ListComponent
+          onLoad={_onListLoad}
           data={visibleConversations}
           keyExtractor={keyExtractor}
           estimatedItemSize={64}

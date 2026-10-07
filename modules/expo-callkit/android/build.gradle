@@ -74,6 +74,9 @@ dependencies {
   implementation 'androidx.lifecycle:lifecycle-runtime-ktx:2.7.0'
   implementation platform('com.google.firebase:firebase-bom:33.7.0')
   implementation 'com.google.firebase:firebase-messaging'
+  // [2026-10-07 bgsync] ChatBgSyncWorker (periodic background chat sync).
+  // Same version expo-background-task already pulls → no dependency conflict.
+  implementation 'androidx.work:work-runtime-ktx:2.9.1'
 
   // [2026-05-16 Day 2 — full native call] LiveKit Android SDK. Bundles libwebrtc
   // m144 transitively (~15-25MB across ABIs). API surface used by CallActivity:

@@ -35,10 +35,15 @@ export default function FadeSlideIn({
   distance = 10,
   duration = 220,
   style,
+  // [2026-10-07 coldstart] `skip` = render settled (no fade/slide). Used when
+  // content is painted from LOCAL cache on frame 1 (chat list cold start):
+  // fading it in from opacity 0 only delayed the first visible rows ~260 ms.
+  skip = false,
+  onLayout,
 }) {
   // Reduce Motion: skip the fade + slide-up entirely — content appears
   // settled (opacity 1, no offset) so low-animation users get no movement.
-  const reduceMotion = isReduceMotionEnabled();
+  const reduceMotion = isReduceMotionEnabled() || !!skip;
   const fade = useRef(new Animated.Value(reduceMotion ? 1 : 0)).current;
   const slide = useRef(new Animated.Value(reduceMotion ? 0 : distance)).current;
 
@@ -69,6 +74,7 @@ export default function FadeSlideIn({
   return (
     <Animated.View
       style={[{ flex: 1, opacity: fade, transform: [{ translateY: slide }] }, style]}
+      onLayout={onLayout}
     >
       {children}
     </Animated.View>

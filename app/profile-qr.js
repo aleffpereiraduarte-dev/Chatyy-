@@ -23,6 +23,7 @@ import { Spacing, BorderRadius } from '../constants/theme';
 import { IconX, IconShare, IconCamera, IconUserPlus } from './../components/Icons';
 import AvatarCircle from './../components/AvatarCircle';
 import { getAvatarUrlForEmail } from '../services/api';
+import { parseContactQr } from '../utils/contactQr';
 
 // Lazy-load react-native-qrcode-svg so an environment without it (or web
 // SSR without react-native-svg) doesn't crash. Real QRs are preferred but
@@ -123,27 +124,17 @@ export default function ProfileQRScreen() {
   const handleScanned = ({ data }) => {
     if (scanned) return;
     setScanned(true);
-    if (typeof data !== 'string' || !data.startsWith('chatyy://add-contact')) {
-      Alert.alert(t('profile.qrCode') || 'QR de contato', t('profile.qrInvalid') || 'QR inválido');
-      setTimeout(() => setScanned(false), 1200);
+    // [2026-10-07 discovery] Shared tolerant parser — also accepts the QR from
+    // /chat-new (legacy JSON), /u/<handle> profile links and group invites.
+    const parsed = parseContactQr(data);
+    if (parsed?.kind === 'email') {
+      router.push(`/chat-conversation?email=${encodeURIComponent(parsed.email)}&name=${encodeURIComponent(parsed.name || parsed.email.split('@')[0])}`);
       return;
     }
-    try {
-      const q = data.split('?')[1] || '';
-      const params = new URLSearchParams(q);
-      const email = params.get('email') || '';
-      const name = params.get('name') || email.split('@')[0];
-      if (!email || !email.includes('@')) {
-        Alert.alert(t('profile.qrCode') || 'QR de contato', t('profile.qrInvalid') || 'QR inválido');
-        setScanned(false);
-        return;
-      }
-      // Open chat with that contact.
-      router.push(`/chat-conversation?email=${encodeURIComponent(email)}&name=${encodeURIComponent(name)}`);
-    } catch (e) {
-      Alert.alert(t('profile.qrCode') || 'QR de contato', t('profile.qrInvalid') || 'QR inválido');
-      setScanned(false);
-    }
+    if (parsed?.kind === 'profile') { router.push(`/u/${encodeURIComponent(parsed.slug)}`); return; }
+    if (parsed?.kind === 'group') { router.push(`/j/${parsed.token}`); return; }
+    Alert.alert(t('profile.qrCode') || 'QR de contato', t('profile.qrInvalid') || 'QR inválido');
+    setTimeout(() => setScanned(false), 1200);
   };
 
   return (

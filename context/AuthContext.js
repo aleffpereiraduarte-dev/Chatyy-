@@ -141,6 +141,43 @@ function _chatStoreSetActiveAccount(email) {
     mod?.setActiveAccount?.((email || '').toLowerCase());
   } catch {}
 }
+// [2026-10-07 bgsync] COLD START wiring. Before this, NO cold-start path called
+// chatStore.setActiveAccount — only login/switch did — so the frame-1 chat-list
+// read (and every write of that session) ran UNSCOPED: with 2 accounts on one
+// device the list could paint the other account's conversations. Now the
+// active account is set BEFORE setUser() (→ before ChatListTab's first read).
+// `coldStart` skips the 800 ms scope lock (nothing else has been painted yet)
+// and `deviceAccounts` lets the store decide whether the pre-isolation rows
+// (account_email NULL) belong to this — the device's only — account.
+async function _chatStoreSetActiveAccountColdStart(email) {
+  let deviceAccounts;
+  try {
+    let list = api.getStoredAccounts?.() || [];
+    if ((!Array.isArray(list) || list.length === 0) && Platform.OS !== 'web') {
+      const SecureStore = require('expo-secure-store');
+      // Sync keychain/keystore read when available (few ms), else bounded async.
+      let raw;
+      try { if (typeof SecureStore.getItem === 'function') raw = SecureStore.getItem('mail_accounts'); } catch { raw = undefined; }
+      if (raw === undefined) {
+        raw = await Promise.race([
+          SecureStore.getItemAsync('mail_accounts').catch(() => null),
+          new Promise((r) => setTimeout(() => r(undefined), 250)),
+        ]);
+      }
+      if (raw === undefined) list = null; // timed out → unknown
+      else { try { list = raw ? JSON.parse(raw) : []; } catch { list = null; } }
+    }
+    if (Array.isArray(list)) {
+      const set = new Set(list.map((a) => String(a?.email || '').toLowerCase()).filter(Boolean));
+      if (email) set.add(String(email).toLowerCase());
+      deviceAccounts = set.size;
+    }
+  } catch {}
+  try {
+    const mod = require('../services/chatStore');
+    mod?.setActiveAccount?.((email || '').toLowerCase(), { coldStart: true, deviceAccounts });
+  } catch {}
+}
 function _chatStoreClearForSwitch(prevEmail) {
   try {
     const mod = require('../services/chatStore');
@@ -649,6 +686,8 @@ export function AuthProvider({ children }) {
             if (userData?.email) {
               await clearMmkvIfAccountChanged(userData.email);
               setCacheUser(userData.email);
+              // [2026-10-07 bgsync] scope the chat store BEFORE the list mounts.
+              await _chatStoreSetActiveAccountColdStart(userData.email);
               setUser(userData);
               loadAccounts();
               _syncShareExtAuth(userData.email);
@@ -659,8 +698,24 @@ export function AuthProvider({ children }) {
               // checkAuth success (chat sync engines, avatar/profile prefetch,
               // native-call token, child status). All idempotent + best-effort
               // so none of them can ever stall or crash boot.
-              try { _bootSyncEngines(); } catch {}
-              try { prefetchAvatar(userData.email); prefetchProfile(userData.email); } catch {}
+              // [2026-10-07 coldstart] Sync engines + avatar/profile prefetch now
+              // start right AFTER the chat list's first paint (services/bootTrace,
+              // capped ~2.5 s from JS start) instead of in the same tick the
+              // cached user lands — that tick is exactly when index.js routes to
+              // /chat and ChatListTab renders. deltaSync's first sync is already
+              // delayed internally, so nothing user-visible moves earlier/later.
+              // Skipped if the user explicitly logged out in the meantime
+              // (_teardownSyncEngines would otherwise be undone).
+              try {
+                require('../services/bootTrace').afterFirstPaint(() => {
+                  try { if (wasExplicitLogoutRecently(60000)) return; } catch {}
+                  try { _bootSyncEngines(); } catch {}
+                  try { prefetchAvatar(userData.email); prefetchProfile(userData.email); } catch {}
+                }, 0);
+              } catch {
+                try { _bootSyncEngines(); } catch {}
+                try { prefetchAvatar(userData.email); prefetchProfile(userData.email); } catch {}
+              }
               try { _childRestrictions = userData.is_child ? (userData.child_restrictions || {}) : null; } catch {}
               if (Platform.OS !== 'web') {
                 try {
@@ -733,6 +788,7 @@ export function AuthProvider({ children }) {
             const accts = api.getStoredAccounts?.() || [];
             const a = accts.find(x => x.email === active);
             if (a?.email) {
+              await _chatStoreSetActiveAccountColdStart(a.email); // [2026-10-07 bgsync]
               setUser({ email: a.email, name: a.name || a.email.split('@')[0] });
               loadAccounts();
               setLoading(false);
@@ -788,6 +844,7 @@ export function AuthProvider({ children }) {
         if (r.success && r.data?.email) {
           await clearMmkvIfAccountChanged(r.data.email);
           setCacheUser(r.data.email);
+          await _chatStoreSetActiveAccountColdStart(r.data.email); // [2026-10-07 bgsync]
           setUser(r.data);
           try {
             const { setReporterIdentity, reportStep } = require('../services/crashReporter');
@@ -1552,6 +1609,9 @@ export function AuthProvider({ children }) {
     // screen / a stray chat getter) can never paint this account's list.
     _chatStoreClearForSwitch(_outgoingEmail);
     _chatStoreSetActiveAccount('');
+    // [2026-10-07 bgsync] Drop the outgoing account's background-journal lines
+    // + stop the periodic bg sync when no account is left signed in.
+    try { require('../services/bgJournal').onLogout?.(_outgoingEmail); } catch {}
     // SECURITY (P1): drop the biometric lock state on the way out so the
     // outgoing identity's unlocked overlay can't carry into whoever signs in
     // next on this device (the lock will re-arm + re-challenge for them).

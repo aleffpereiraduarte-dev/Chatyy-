@@ -46,6 +46,13 @@ class CallFirebaseMessagingService : FirebaseMessagingService() {
         // Mirrors the iOS Notification Service Extension's reportDelivered.
         try { ChatDeliveryReporter.maybeReport(applicationContext, data) } catch (e: Throwable) {}
 
+        // [2026-10-07 bgsync] WhatsApp-style background store: write the chat
+        // message this push carries into the local journal (ChatBgJournal) so
+        // the app shows it instantly on open — merged into expo-sqlite before
+        // the chat list's first paint (services/bgJournal.js). Runs before any
+        // rendering branch (several of them return early). ~1 ms, never throws.
+        try { ChatBgJournal.maybeAppendFromPush(applicationContext, data) } catch (e: Throwable) {}
+
         // [2026-05-16 Stage 4] Silent push wake. When the web companion
         // device needs chat history that only this phone has in SQLite,
         // the server fires a data-only push to wake us briefly. We DO
@@ -408,7 +415,11 @@ class CallFirebaseMessagingService : FirebaseMessagingService() {
             // actions). If the handler succeeds, we DO NOT forward to Expo
             // (would duplicate the notification). If it fails or the type
             // doesn't match, fall through to the Expo delegate path below.
-            if (type == "chat_message" || type == "chat_mention" || type == "chat_reaction") {
+            // [2026-10-07 recv-native] Also the EXPO-routed shape (prod route for
+            // Android chat: CHAT_PUSH_ANDROID_PREFER_EXPO) — type lives inside
+            // the JSON in data["body"], so the old top-level `type` match never
+            // fired and every prod chat push fell to expo-notifications.
+            if (ChatMessagingStyleHandler.looksLikeChatPush(data)) {
                 try {
                     if (ChatMessagingStyleHandler.tryHandle(applicationContext, message)) {
                         Log.d(TAG, "MessagingStyle handler consumed $type")

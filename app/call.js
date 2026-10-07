@@ -85,6 +85,12 @@ let _livekitRegistered = false;
 function ensureLiveKitRegistered() {
   if (_livekitRegistered) return;
   if (Platform.OS === 'web') { _livekitRegistered = true; return; }
+  // [2026-10-07 coldstart] app/_layout.js now registers the LiveKit globals
+  // (with autoConfigureAudioSession:false + iOS earpiece default) only AFTER the
+  // chat list's first paint. A call opened before that (launch from a call
+  // push / CallKit) must still get that registration FIRST, exactly as when it
+  // ran at boot — so run it synchronously here before our own registerGlobals.
+  try { if (typeof globalThis !== 'undefined' && typeof globalThis.__chatyyEnsureLiveKitGlobals === 'function') globalThis.__chatyyEnsureLiveKitGlobals(); } catch {}
   try {
     const lkrn = require('@livekit/react-native');
     LK_VideoView = lkrn.VideoView || null;

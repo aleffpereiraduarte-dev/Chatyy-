@@ -38,11 +38,21 @@ export const CREATE_CONV_READ_STATE_SQL =
      last_read_at TEXT
    );`;
 
+// [2026-10-07 bgsync] Tiny key/value table for store-level facts that must be
+// readable SYNCHRONOUSLY at cold start (before MMKV/AsyncStorage warm up) —
+// e.g. `legacy_owner` (see acctClause below).
+export const CREATE_CHATSTORE_META_SQL =
+  `CREATE TABLE IF NOT EXISTS chatstore_meta (
+     k TEXT PRIMARY KEY,
+     v TEXT
+   );`;
+
 // Ordered list db.js executes during init. Each statement is idempotent so
 // re-running on an existing DB is a no-op.
 export const CHATSTORE_MIGRATIONS = [
   CREATE_CURSORS_SQL,
   CREATE_CONV_READ_STATE_SQL,
+  CREATE_CHATSTORE_META_SQL,
 ];
 
 // ── Multi-account isolation ──────────────────────────────────────────────────
@@ -57,6 +67,23 @@ export const ACCOUNT_COLUMN_ALTERS = [
   'ALTER TABLE conversations ADD COLUMN account_email TEXT',
   'ALTER TABLE messages ADD COLUMN account_email TEXT',
 ];
+
+// [2026-10-07 bgsync] Account WHERE fragment shared by db.js + sqliteStore.js.
+// Until 2026-10-07 nobody called setActiveAccount on a COLD START (only on
+// login / switch), so most rows on existing installs were written with
+// account_email = NULL. Filtering strictly by `account_email = ?` would hide
+// that whole local history the moment the cold-start fix lands. The device's
+// "legacy owner" (recorded once, only when the device had a single account —
+// chatStore.setActiveAccount → sqliteStore.resolveLegacyOwnerSync) therefore
+// also sees the NULL rows; every other account never does (no leak). New
+// writes are stamped, and re-syncs re-stamp old rows over time.
+export function acctClause(active, legacyOwner, col = 'account_email') {
+  if (!active) return { sql: '', params: [] };
+  if (legacyOwner && legacyOwner === active) {
+    return { sql: ` AND (${col} = ? OR ${col} IS NULL)`, params: [active] };
+  }
+  return { sql: ` AND ${col} = ?`, params: [active] };
+}
 
 // Normalize an email into a stable account key. Exported so every layer
 // (db.js, sqliteStore.js, smartChatCache.js, the facade) agrees on the exact

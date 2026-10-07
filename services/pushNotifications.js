@@ -66,10 +66,62 @@ export function setPushMasterEnabled(enabled) {
 }
 export function isPushMasterEnabled() { return _pushMasterEnabled; }
 
+// [2026-10-07 recv-native] Android native chat-notification bridge
+// (modules/expo-callkit → ChatNotifStore / ChatMessagingStyleHandler). The
+// native FCM handler renders chat pushes itself (MessagingStyle + avatar +
+// conversation shortcut + inline Reply/Mark-read that POST in background) and
+// needs: the bearer of each signed-in account, the conversation open on screen,
+// and a "this chat was read" signal to drop its notification. Every call is
+// feature-detected in index.ts → no-op on iOS, web and older binaries.
+let _nativeChatMod = null;
+function _nativeChat() {
+  if (Platform.OS !== 'android') return null;
+  if (_nativeChatMod) return _nativeChatMod;
+  try { _nativeChatMod = require('../modules/expo-callkit'); } catch { _nativeChatMod = null; }
+  return _nativeChatMod;
+}
+let _lastNativeAuthSig = '';
+let _lastNativeAuthAt = 0;
+export async function syncNativeChatAuth(force = false) {
+  try {
+    const nc = _nativeChat();
+    if (!nc || typeof nc.setChatNotificationAuth !== 'function') return;
+    const api = require('./api');
+    const tok = (typeof api.getAuthToken === 'function' ? api.getAuthToken() : '') || '';
+    const email = (typeof api.getActiveAccountEmail === 'function' ? api.getActiveAccountEmail() : '') || '';
+    const tokens = {};
+    try {
+      const accts = (typeof api.getStoredAccounts === 'function' ? api.getStoredAccounts() : []) || [];
+      for (const a of (Array.isArray(accts) ? accts : [])) {
+        if (a && a.email && typeof a.token === 'string' && a.token) tokens[String(a.email)] = a.token;
+      }
+    } catch {}
+    // Never wipe native state from a not-yet-hydrated JS (cold start race).
+    if (!tok && Object.keys(tokens).length === 0) return;
+    const sig = email + '|' + tok.slice(-12) + '|' + Object.keys(tokens).sort().join(',');
+    const now = Date.now();
+    if (!force && sig === _lastNativeAuthSig && now - _lastNativeAuthAt < 10 * 60 * 1000) return;
+    _lastNativeAuthSig = sig;
+    _lastNativeAuthAt = now;
+    await nc.setChatNotificationAuth(email, tok, tokens);
+  } catch {}
+}
+
 // Active conversation tracker — set by chat-conversation.js to suppress notifications for the open chat
 let _activeConversationId = null;
 export function setActiveConversation(conversationId) {
   _activeConversationId = conversationId;
+  // [2026-10-07 recv-native] Mirror to native (Android): the FCM handler drops
+  // the banner for the chat on screen, and opening the chat = read → remove
+  // the native MessagingStyle notification of that conversation.
+  try {
+    const nc = _nativeChat();
+    if (nc) {
+      nc.setActiveChatConversation?.(conversationId);
+      if (conversationId != null) nc.dismissChatNotification?.(conversationId);
+    }
+  } catch {}
+  syncNativeChatAuth().catch(() => {});
   // [2026-10-04] WhatsApp parity: opening a conversation = reading it, so clear
   // that chat's ALREADY-DELIVERED push notifications from the tray. The
   // _activeConversationId check below only suppresses NEW pushes while you're in
@@ -86,6 +138,9 @@ export function setActiveConversation(conversationId) {
 export async function dismissConversationNotifications(conversationId) {
   try {
     if (Platform.OS === 'web' || conversationId == null) return;
+    // [2026-10-07 recv-native] native MessagingStyle notification (Android)
+    // is not an expo-notifications record → drop it through the bridge too.
+    try { _nativeChat()?.dismissChatNotification?.(conversationId); } catch {}
     if (!Notifications) {
       try { Notifications = await import('expo-notifications'); } catch { return; }
     }
@@ -114,6 +169,7 @@ export async function dismissConversationNotifications(conversationId) {
 }
 export function clearActiveConversation() {
   _activeConversationId = null;
+  try { _nativeChat()?.setActiveChatConversation?.(''); } catch {}
 }
 // Exposed so ChatListTab can also skip bumping unread_count for messages
 // arriving INTO the conversation the user is currently viewing — without
@@ -1241,6 +1297,9 @@ export async function sendTokenToBackend(pushToken) {
     return await _sendTokenToBackendInner(pushToken);
   } finally {
     _sendTokenInFlightKeys.delete(_key);
+    // [2026-10-07 recv-native] login / account switch / token refresh all pass
+    // here → keep the Android native reply/mark-read bearers in sync.
+    syncNativeChatAuth(true).catch(() => {});
   }
 }
 
@@ -1916,6 +1975,10 @@ export async function setupNotificationListeners() {
     _flushAppStateSub = AppState.addEventListener('change', (state) => {
       if (state === 'active') {
         flushPendingTokens().catch(() => {});
+      } else if (state === 'background') {
+        // [2026-10-07 recv-native] Leaving the app is exactly when the native
+        // notification path takes over → hand it a fresh bearer set.
+        syncNativeChatAuth(true).catch(() => {});
       }
     });
   } catch {}
@@ -1933,9 +1996,52 @@ export async function setupNotificationListeners() {
   // last session (cold start with stale queue).
   flushPendingTokens().catch(() => {});
 
+  // [2026-10-07 recv-native] Android native notification tap = deep link
+  // onemundomail://chat-conversation?id=…&acct=<recipient>. expo-router opens
+  // the conversation by itself; when the push belongs to ANOTHER signed-in
+  // account we switch first and re-open the chat under the right session
+  // (same rule as handleNotificationNavigation → ensureNotificationAccount).
+  let _linkSub = null;
+  try {
+    if (Platform.OS === 'android') {
+      const { Linking } = require('react-native');
+      const _onChatLink = async (url) => {
+        try {
+          if (!url || url.indexOf('chat-conversation') === -1 || url.indexOf('acct=') === -1) return;
+          const q = url.split('?')[1] || '';
+          const p = {};
+          for (const kv of q.split('&')) {
+            const i = kv.indexOf('=');
+            if (i > 0) p[decodeURIComponent(kv.slice(0, i))] = decodeURIComponent(kv.slice(i + 1).replace(/\+/g, ' '));
+          }
+          if (!p.id || !p.acct) return;
+          const before = _normAcctEmail(await _getActiveEmailSafe());
+          if (!before || before === _normAcctEmail(p.acct)) return; // right account already
+          const ok = await ensureNotificationAccount({ recipient_email: p.acct });
+          if (!ok) return;
+          setTimeout(() => {
+            try {
+              handleNotificationNavigation({
+                type: 'chat_message',
+                conversation_id: p.id,
+                is_group: p.type === 'group' ? '1' : '0',
+                sender_name: p.name || '',
+                sender_email: p.email || '',
+              });
+            } catch {}
+          }, 800);
+        } catch {}
+      };
+      _linkSub = Linking.addEventListener('url', (ev) => { _onChatLink(ev?.url); });
+      Linking.getInitialURL().then((u) => { if (u) _onChatLink(u); }).catch(() => {});
+    }
+  } catch {}
+  syncNativeChatAuth(true).catch(() => {});
+
   return () => {
     receivedSub?.remove?.();
     responseSub?.remove?.();
+    try { _linkSub?.remove?.(); } catch {}
     try { _flushAppStateSub?.remove?.(); } catch {}
     try { _flushWsConnUnsub?.(); } catch {}
     try { _tokenRotationSub?.remove?.(); _tokenRotationSub = null; } catch {}

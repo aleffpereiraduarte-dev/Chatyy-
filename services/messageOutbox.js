@@ -125,6 +125,11 @@ const _owned = new Map(); // cmi -> claimedAt
 const OWN_STALE_MS = 90000;
 function _own(cmi) { try { _owned.set(String(cmi), Date.now()); } catch {} }
 function _disown(cmi) { try { _owned.delete(String(cmi)); } catch {} }
+/** [2026-10-07 send-media] Refresh a live claim (long uploads outlive OWN_STALE_MS). */
+export function touchOwned(cmi) {
+  const k = String(cmi);
+  if (_owned.has(k)) _owned.set(k, Date.now());
+}
 export function isOwnedSending(cmi) {
   const t = _owned.get(String(cmi));
   return !!t && (Date.now() - t) < OWN_STALE_MS;
@@ -147,7 +152,8 @@ export async function refreshBacklog() {
   try {
     // Rows the foreground currently owns ('sending' in this process) are not
     // a backlog — the foreground is already sending them in order.
-    const owned = await db.getAllAsync(`SELECT conversation_id AS c, client_message_id AS k, state FROM outbox WHERE state IN ('queued','sending')`);
+    // [2026-10-07 send-media] upload-lane rows never block text (own lane).
+    const owned = await db.getAllAsync(`SELECT conversation_id AS c, client_message_id AS k, state FROM outbox WHERE state IN ('queued','sending') AND lane = 'msg'`);
     const nonOwned = new Set();
     for (const r of owned || []) {
       const c = Number(r?.c);
@@ -318,6 +324,16 @@ async function _ensureDb() {
         CREATE INDEX IF NOT EXISTS idx_outbox_conv_seq ON outbox(conversation_id, seq);
         CREATE INDEX IF NOT EXISTS idx_outbox_cmi ON outbox(client_message_id);
       `);
+      // [2026-10-07 send-media] `lane` column. 'msg' = the ordered per-
+      // conversation chat_send FIFO (text, GIF, sticker, location and media
+      // whose bytes are already on the CDN). 'upload' = media still being
+      // compressed/uploaded by services/mediaSendQueue.js — those rows must NOT
+      // head-block the conversation (a 2-minute video upload would otherwise
+      // hold every text typed after it). Once the upload finishes the row is
+      // promoted to 'msg' (keeping its seq) and the normal worker commits it.
+      // Additive migration: ALTER fails harmlessly when the column exists.
+      try { await _db.execAsync(`ALTER TABLE outbox ADD COLUMN lane TEXT NOT NULL DEFAULT 'msg'`); } catch {}
+      try { await _db.execAsync(`CREATE INDEX IF NOT EXISTS idx_outbox_lane ON outbox(lane, state, next_retry_at)`); } catch {}
       return _db;
     } catch (e) {
       try { console.warn('[messageOutbox] init failed:', e?.message); } catch {}
@@ -363,6 +379,9 @@ export async function enqueue(payload, opts = null) {
   // instead of enqueue + markSending), so the HTTP/WS send no longer waits on
   // two serialized writes. Default stays 'queued' for every other caller.
   const initialState = (opts && opts.initialState === 'sending') ? 'sending' : 'queued';
+  // [2026-10-07 send-media] lane: 'upload' for media that still needs bytes on
+  // the CDN (mediaSendQueue owns it), 'msg' (default) for everything else.
+  const lane = (opts && opts.lane === 'upload') ? 'upload' : 'msg';
   if (!payload || !payload.client_message_id || !payload.conversation_id) return null;
   const db = await _db_or_null();
   if (!db) return null;
@@ -400,9 +419,9 @@ export async function enqueue(payload, opts = null) {
         const res = await db.runAsync(
           `INSERT OR IGNORE INTO outbox
             (client_message_id, conversation_id, payload, state, attempts,
-             next_retry_at, seq, created_at, updated_at)
-           VALUES (?, ?, ?, ?, 0, 0, ?, ?, ?)`,
-          cmi, conv, payloadJson, initialState, seq, now, now,
+             next_retry_at, seq, created_at, updated_at, lane)
+           VALUES (?, ?, ?, ?, 0, 0, ?, ?, ?, ?)`,
+          cmi, conv, payloadJson, initialState, seq, now, now, lane,
         );
         if ((res?.changes ?? 0) === 0) {
           // A concurrent transaction won the race — re-read the winner's row.
@@ -429,9 +448,9 @@ export async function enqueue(payload, opts = null) {
       const res = await db.runAsync(
         `INSERT OR IGNORE INTO outbox
           (client_message_id, conversation_id, payload, state, attempts,
-           next_retry_at, seq, created_at, updated_at)
-         VALUES (?, ?, ?, ?, 0, 0, ?, ?, ?)`,
-        cmi, conv, payloadJson, initialState, seq, now, now,
+           next_retry_at, seq, created_at, updated_at, lane)
+         VALUES (?, ?, ?, ?, 0, 0, ?, ?, ?, ?)`,
+        cmi, conv, payloadJson, initialState, seq, now, now, lane,
       );
       if ((res?.changes ?? 0) === 0) {
         const existing = await db.getFirstAsync(
@@ -473,7 +492,7 @@ export async function dequeueNext(conversationId = null) {
     if (conversationId == null) {
       row = await db.getFirstAsync(
         `SELECT * FROM outbox
-          WHERE state = 'queued' AND next_retry_at <= ?
+          WHERE state = 'queued' AND next_retry_at <= ? AND lane = 'msg'
           ORDER BY conversation_id ASC, seq ASC
           LIMIT 1`,
         now
@@ -484,7 +503,7 @@ export async function dequeueNext(conversationId = null) {
       // while an older row is still in backoff or in flight.
       row = await db.getFirstAsync(
         `SELECT * FROM outbox
-          WHERE conversation_id = ? AND state IN ('queued','sending')
+          WHERE conversation_id = ? AND state IN ('queued','sending') AND lane = 'msg'
           ORDER BY seq ASC
           LIMIT 1`,
         Number(conversationId)
@@ -702,6 +721,95 @@ export async function retryNow(conversationId = null) {
   } catch { return 0; }
 }
 
+// ---------------------------------------------------------------------------
+// [2026-10-07 send-media] Upload lane helpers (driven by mediaSendQueue.js)
+// ---------------------------------------------------------------------------
+
+/** Due upload-lane rows (queued, backoff elapsed), oldest conversation/seq first. */
+export async function dequeueUploads(limit = 4) {
+  const db = await _db_or_null();
+  if (!db) return [];
+  try {
+    const rows = await db.getAllAsync(
+      `SELECT * FROM outbox
+        WHERE lane = 'upload' AND state = 'queued' AND next_retry_at <= ?
+        ORDER BY created_at ASC, seq ASC
+        LIMIT ?`,
+      Date.now(), Math.max(1, limit | 0)
+    );
+    return (rows || []).map(_hydrate);
+  } catch { return []; }
+}
+
+/** Earliest next_retry_at among queued upload-lane rows (epoch ms) or null. */
+export async function nextUploadDueAt() {
+  const db = await _db_or_null();
+  if (!db) return null;
+  try {
+    const row = await db.getFirstAsync(`SELECT MIN(next_retry_at) AS m FROM outbox WHERE lane = 'upload' AND state = 'queued'`);
+    const m = row ? (row.m ?? row['m']) : null;
+    return m == null ? null : Number(m);
+  } catch { return null; }
+}
+
+/**
+ * Bytes are on the CDN: merge `patch` (cdn_url, server size/name…) into the
+ * payload and park the row in state 'ready' (still upload lane) until every
+ * OLDER upload of the same conversation is ready too — promoteReady() then
+ * hands them to the chat_send FIFO in seq order (album order preserved even
+ * when photo 3 finishes uploading before photo 1).
+ */
+export async function markUploadReady(cmi, patch = null) {
+  _disown(cmi);
+  const db = await _db_or_null();
+  if (!db) return false;
+  try {
+    const row = await db.getFirstAsync('SELECT payload, state FROM outbox WHERE client_message_id = ?', String(cmi));
+    if (!row) return false;
+    if (row.state === 'sent' || row.state === 'delivered' || row.state === 'read') return false;
+    let p = {};
+    try { p = JSON.parse(row.payload) || {}; } catch {}
+    await db.runAsync(
+      `UPDATE outbox SET payload = ?, state = 'ready', last_error = NULL, updated_at = ? WHERE client_message_id = ?`,
+      JSON.stringify({ ...p, ...(patch || {}) }), Date.now(), String(cmi)
+    );
+    _notify(cmi, await getStatus(cmi));
+    return true;
+  } catch { return false; }
+}
+
+/**
+ * Promote the leading run of 'ready' upload rows of a conversation to the
+ * 'msg' lane (state queued, due now, original seq kept). Stops at the first
+ * row that is still uploading/backing off. Hard-failed uploads don't block.
+ * Returns the promoted client_message_ids.
+ */
+export async function promoteReady(conversationId) {
+  const db = await _db_or_null();
+  if (!db || conversationId == null) return [];
+  const promoted = [];
+  try {
+    const rows = await db.getAllAsync(
+      `SELECT client_message_id AS k, state FROM outbox
+        WHERE conversation_id = ? AND lane = 'upload' AND state IN ('queued','sending','ready')
+        ORDER BY seq ASC`,
+      Number(conversationId)
+    );
+    for (const r of rows || []) {
+      if (r.state !== 'ready') break;
+      const res = await db.runAsync(
+        `UPDATE outbox SET lane = 'msg', state = 'queued', next_retry_at = 0, attempts = 0, updated_at = ?
+          WHERE client_message_id = ? AND state = 'ready'`,
+        Date.now(), String(r.k)
+      );
+      if ((res?.changes ?? 0) > 0) promoted.push(String(r.k));
+    }
+    if (promoted.length) noteBacklog(conversationId);
+    for (const k of promoted) _notify(k, await getStatus(k));
+  } catch {}
+  return promoted;
+}
+
 /** Earliest next_retry_at among queued rows (epoch ms) or null. */
 export async function nextDueAt() {
   const db = await _db_or_null();
@@ -714,10 +822,11 @@ export async function nextDueAt() {
     // timer every 250ms.
     const row = await db.getFirstAsync(
       `SELECT MIN(o.next_retry_at) AS m FROM outbox o
-        WHERE o.state = 'queued'
+        WHERE o.state = 'queued' AND o.lane = 'msg'
           AND NOT EXISTS (SELECT 1 FROM outbox h
                            WHERE h.conversation_id = o.conversation_id
                              AND h.state IN ('queued','sending')
+                             AND h.lane = 'msg'
                              AND h.seq < o.seq)`
     );
     const m = row ? (row.m ?? row['m']) : null;
@@ -825,20 +934,25 @@ export async function reconcileWithServer(conversationId, serverMessages) {
  * All rows still pending (queued|sending|failed) — optionally filtered to one
  * conversation. Used by the worker on app boot to resume.
  */
-export async function getPending(conversationId = null) {
+export async function getPending(conversationId = null, opts = null) {
   const db = await _db_or_null();
   if (!db) return [];
+  // [2026-10-07 send-media] opts.lane filters one lane ('msg' for the
+  // chat_send worker, 'upload' for mediaSendQueue). Default = every lane (UI
+  // rehydrate, reconcileWithServer, background-fetch counters).
+  const lane = opts && (opts.lane === 'msg' || opts.lane === 'upload') ? opts.lane : null;
+  const laneSql = lane ? ` AND lane = '${lane}'` : '';
   try {
     const rows = conversationId == null
       ? await db.getAllAsync(
           `SELECT * FROM outbox
-            WHERE state IN ('queued','sending','failed')
+            WHERE state IN ('queued','sending','failed','ready')${laneSql}
             ORDER BY conversation_id ASC, seq ASC`
         )
       : await db.getAllAsync(
           `SELECT * FROM outbox
             WHERE conversation_id = ?
-              AND state IN ('queued','sending','failed')
+              AND state IN ('queued','sending','failed','ready')${laneSql}
             ORDER BY seq ASC`,
           Number(conversationId)
         );
@@ -935,6 +1049,7 @@ function _hydrate(row) {
     updated_at: Number(row.updated_at) || 0,
     last_error: row.last_error || null,
     server_id: row.server_id || null,
+    lane: row.lane || 'msg', // [2026-10-07 send-media]
   };
 }
 
@@ -958,6 +1073,11 @@ export default {
   updatePayload,
   retryNow,
   nextDueAt,
+  dequeueUploads,
+  nextUploadDueAt,
+  markUploadReady,
+  promoteReady,
+  touchOwned,
   hasBacklog,
   noteBacklog,
   refreshBacklog,

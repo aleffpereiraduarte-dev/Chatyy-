@@ -19,10 +19,20 @@ try { _sip = require('../services/sipCall'); } catch {}
 const startSipCall = _sip?.startSipCall || (async () => ({ success: false }));
 const hangupSipCall = _sip?.hangupSipCall || (() => {});
 // PSTN dialer (ligar pra qualquer número) via LiveKit + Vonage — substitui Telnyx.
-let _pstn = null;
-try { _pstn = require('../services/pstnCall'); } catch {}
-const startPstnCall = _pstn?.startPstnCall || (async () => {});
-const hangupPstnCall = _pstn?.hangupPstnCall || (() => {});
+// [2026-10-07 coldstart] LAZY: app/chat.js imports this tab statically, and
+// pstnCall pulls `livekit-client` + `@livekit/react-native` at module eval —
+// i.e. the whole LiveKit JS SDK was evaluated on the launch→chat-list path.
+// Now it is required on the first PSTN dial/hangup only.
+let _pstn; // undefined = not loaded yet, null = failed to load
+function _getPstn() {
+  if (_pstn === undefined) {
+    try { _pstn = require('../services/pstnCall'); } catch { _pstn = null; }
+  }
+  return _pstn;
+}
+const startPstnCall = (...args) => { const f = _getPstn()?.startPstnCall; return f ? f(...args) : Promise.resolve(); };
+// Never loaded → no PSTN call can be active → nothing to hang up.
+const hangupPstnCall = (...args) => { if (_pstn === undefined) return undefined; const f = _pstn?.hangupPstnCall; return f ? f(...args) : undefined; };
 const muteSipCall = _sip?.muteSipCall || (() => {});
 const sipSendDTMF = _sip?.sendDTMF || (() => {});
 

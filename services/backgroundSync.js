@@ -89,6 +89,19 @@ if (Platform.OS !== 'web') {
         // logo após o return.
         if (v2Pending > 0 && sendWorker?.poke) {
           try { await sendWorker.poke(); } catch {}
+          // [2026-10-07 send-media] media upload lane: start due uploads and give
+          // them the remaining background budget (bounded — iOS kills the task
+          // around 30s; whatever is unfinished resumes from the persisted
+          // chunk session next time).
+          try {
+            const ups = await outbox.getPending?.(null, { lane: 'upload' });
+            if (Array.isArray(ups) && ups.length > 0) {
+              const mq = require('./mediaSendQueue');
+              await (mq.kick || mq.default?.kick)?.();
+              await new Promise((res) => setTimeout(res, 20000));
+              await sendWorker.poke();
+            }
+          } catch {}
         }
 
         const ok = legacyReplayed > 0 || v2Pending > 0;

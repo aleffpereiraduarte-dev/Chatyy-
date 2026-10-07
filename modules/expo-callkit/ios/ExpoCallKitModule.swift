@@ -1646,6 +1646,32 @@ public class ExpoCallKitModule: Module {
       ud.removeObject(forKey: "chatyy.share_outbox")
       ud.synchronize()
     }
+
+    // [2026-10-07 bgsync] Background message journal (App Group JSONL written
+    // by the NSE + the chat BGAppRefreshTask) — see ChatBgJournal.swift.
+    Function("bgJournalRead") { () -> [String: Any] in
+      let (text, bytes) = ChatBgJournal.read()
+      return ["text": text, "bytes": bytes]
+    }
+
+    Function("bgJournalCommit") { (consumedBytes: Double, keep: String) -> Bool in
+      return ChatBgJournal.commit(consumed: Int(consumedBytes), keep: keep)
+    }
+
+    Function("bgJournalClear") { () -> Void in
+      ChatBgJournal.clear()
+    }
+
+    AsyncFunction("bgSyncConfigure") { (cfgJson: String) -> Void in
+      ChatBgJournal.configure(cfgJson)
+    }
+
+    AsyncFunction("bgSyncSchedule") { (enabled: Bool) -> Void in
+      // Without the Info.plist permission the task was never registered —
+      // submitting would just fail; keep it a clean no-op.
+      guard ChatBgSyncAppDelegateSubscriber.isRegistered else { return }
+      ChatBgJournal.setEnabled(enabled)
+    }
   }
 
   // [share outbox feedback, 2026-05-19] Subscribe to the NSNotification the

@@ -53,18 +53,62 @@ let _activeAccount = '';
  * same account. Raises the cache-scope lock so in-flight renders can't paint the
  * outgoing account while the layers re-scope.
  */
-export function setActiveAccount(email) {
+export function setActiveAccount(email, opts = {}) {
   const next = normAccount(email);
-  const changed = next !== _activeAccount;
-  if (changed) {
+  const prev = _activeAccount;
+  const changed = next !== prev;
+  // [2026-10-07 bgsync] COLD START ('' → X, opts.coldStart): nothing of another
+  // account has been painted yet, so no lock — locking here would blank the
+  // chat list's frame-1 read for 800 ms (the whole point of the local-first
+  // boot). A real switch (X → Y, or login after logout) still locks.
+  if (changed && !(opts && opts.coldStart && !prev)) {
     // Hold the lock across the swap so every sync read short-circuits to [].
     try { chatCache.lockCacheScope?.(800); } catch {}
   }
   _activeAccount = next;
+  // [2026-10-07 bgsync] Legacy owner: pre-isolation rows (account_email NULL,
+  // written by every cold-start session before this fix) stay visible to the
+  // device's single account instead of vanishing. See schema.acctClause.
+  let owner = '';
+  if (next && !isWeb) {
+    try { owner = sqliteStore.resolveLegacyOwnerSync?.(next, opts && opts.deviceAccounts) || ''; } catch {}
+  }
+  try { sqliteStore.setLegacyOwner?.(owner); } catch {}
+  try { require('../db').dbSetLegacyOwner?.(owner); } catch {}
+  const adoptLegacy = !!next && (owner === next ||
+    (isWeb && opts && Number.isFinite(opts.deviceAccounts) && opts.deviceAccounts <= 1));
   // Propagate to every layer (each is a no-op if already on this account).
   try { sqliteStore.setActiveAccount?.(next); } catch {}
-  try { smartChatCache.setActiveAccount?.(next); } catch {}
+  try { smartChatCache.setActiveAccount?.(next, { adoptLegacy }); } catch {}
   try { require('../db').dbSetActiveAccount?.(next); } catch {}
+  // A newly-active account may have journaled messages waiting.
+  if (changed) _journalPending = true;
+}
+
+// ─── [2026-10-07 bgsync] Background-journal merge hook ───────────────────────
+// Messages stored natively while the app was backgrounded/killed (Android FCM
+// service + WorkManager, iOS NSE + BGAppRefreshTask) are merged into SQLite
+// right BEFORE the first synchronous list read (cold start) and again after
+// each foreground (services/bgJournal.js flips the flag on AppState active).
+// Sync, bounded (~ms for a few lines); never throws.
+let _journalPending = true;
+export function markJournalPending() { _journalPending = true; }
+function _maybeMergeJournal() {
+  if (!_journalPending || isWeb || !_activeAccount) return;
+  _journalPending = false;
+  try {
+    const r = require('../bgJournal').mergeSync?.('first_read');
+    if (r && r.retry) {
+      _journalPending = true;
+      // Busy DB at boot (db.js migrating) → never block the paint; retry right
+      // after it (bgJournal emits MERGED_EVENT so the list picks it up).
+      try {
+        require('../bootTrace').afterFirstPaint(() => {
+          try { const r2 = require('../bgJournal').mergeSync?.('after_paint'); if (!r2 || !r2.retry) _journalPending = false; } catch {}
+        }, 300);
+      } catch {}
+    }
+  } catch {}
 }
 
 export function getActiveAccount() { return _activeAccount; }
@@ -103,6 +147,7 @@ export function isLocked() {
 export function getConversationsSync() {
   if (isLocked()) return [];
   if (!isWeb) {
+    _maybeMergeJournal();
     try {
       const rows = sqliteStore.getConversationsSync();
       if (Array.isArray(rows) && rows.length) return rows;
@@ -239,6 +284,7 @@ export function setCursor(scope, cursor = {}) {
 export default {
   setActiveAccount,
   getActiveAccount,
+  markJournalPending,
   clearForAccountSwitch,
   isLocked,
   getConversationsSync,

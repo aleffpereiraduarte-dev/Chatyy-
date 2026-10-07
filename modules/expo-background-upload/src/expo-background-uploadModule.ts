@@ -31,6 +31,10 @@ declare class ExpoBackgroundUploadModuleClass extends NativeModule<ExpoBackgroun
   // local notification posted by notifyBackupComplete. Default ON.
   setBackupNotificationsEnabled?(enabled: boolean): void;
   isBackupNotificationsEnabled?(): boolean;
+  // [2026-10-07 send-media] iOS UIApplication background task around chat
+  // media uploads (-1 = not granted / Android / old binary without it).
+  beginBackgroundTask?(name: string): number;
+  endBackgroundTask?(id: number): void;
 }
 
 // No-op stub for web and unsupported platforms. Without this,
@@ -58,6 +62,8 @@ const NoOpModule: any = {
   setBackupNotificationsEnabled: () => {},
   isBackupNotificationsEnabled: () => true,
   reconcileWorkerBackedUp: async () => ({ ids: [], updated_at: 0 }),
+  beginBackgroundTask: () => -1,
+  endBackgroundTask: () => {},
 };
 
 let mod: ExpoBackgroundUploadModuleClass | any = NoOpModule;

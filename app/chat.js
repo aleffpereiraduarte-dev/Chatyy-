@@ -11,7 +11,10 @@ import {
   IconImage, IconVideo, IconSparkles, IconUser, IconSettings, IconStar,
   IconBell, IconShield, IconGlobe, IconGrid, IconCamera, IconMapPin,
   IconCreditCard, IconDiamond,
+  // [2026-10-07 apps-menu] Apps drawer redesign icons
+  IconMegaphone, IconUsersSmall, IconReels, IconBroadcast,
 } from '../components/Icons';
+import PressableScale from '../components/PressableScale';
 import Svg, { Circle as SvgCircle, Path, Rect, Line, Defs, LinearGradient, Stop } from 'react-native-svg';
 // [2026-05-22 monetization-pause] hidden by MONETIZATION_ENABLED flag
 import { WALLET_ENABLED } from '../constants/featureFlags';
@@ -796,6 +799,9 @@ function ChatHub() {
   // state churn (SyncBar ticks, badge updates). useCallback pins them.
   const onOpenStatusConsumed = useCallback(() => setOpenStatusEmail(null), []);
   const onFeedModeConsumed = useCallback(() => setPendingReels(false), []);
+  // [2026-10-07 apps-menu] Apps drawer "Reels" tile → feed tab in reels mode
+  // (ChatFeedTab consumes initialFeedMode='reels' → full-screen ReelsViewer).
+  const openReelsFromApps = useCallback(() => { setShowAppsDrawer(false); setPendingReels(true); handleTabPress('feed'); }, [handleTabPress]);
   // PERF: tabProps was a fresh object every render and is spread into ALL
   // mounted tabs. Memoizing it means a tab only re-renders when a value it
   // actually consumes changes, not on every parent re-render.
@@ -1295,6 +1301,7 @@ function ChatHub() {
         t={t}
         userEmail={user?.email}
         onOpenFeed={openFeedFromApps}
+        onOpenReels={openReelsFromApps}
         onOpenChannels={openChannelsFromApps}
         onOpenCommunities={openCommunitiesFromApps}
         badges={appsBadges}
@@ -1332,8 +1339,10 @@ const _readRecentApps = () => {
       const raw = typeof localStorage !== 'undefined' ? localStorage.getItem(RECENT_APPS_KEY) : null;
       return raw ? JSON.parse(raw) : [];
     }
-    const { mmkv } = require('../services/mmkv');
-    const raw = mmkv?.getString(RECENT_APPS_KEY);
+    // [2026-10-07 apps-menu] services/mmkv exports getString/setString — there is
+    // no `mmkv` named export, so native Recentes/usage never persisted.
+    const { getString } = require('../services/mmkv');
+    const raw = getString(RECENT_APPS_KEY);
     return raw ? JSON.parse(raw) : [];
   } catch { return []; }
 };
@@ -1343,8 +1352,8 @@ const _writeRecentApps = (list) => {
     if (Platform.OS === 'web') {
       if (typeof localStorage !== 'undefined') localStorage.setItem(RECENT_APPS_KEY, v);
     } else {
-      const { mmkv } = require('../services/mmkv');
-      mmkv?.set(RECENT_APPS_KEY, v);
+      const { setString } = require('../services/mmkv');
+      setString(RECENT_APPS_KEY, v);
     }
   } catch {}
 };
@@ -1354,8 +1363,10 @@ const _readAppUsage = () => {
       const raw = typeof localStorage !== 'undefined' ? localStorage.getItem(APP_USAGE_KEY) : null;
       return raw ? JSON.parse(raw) : {};
     }
-    const { mmkv } = require('../services/mmkv');
-    const raw = mmkv?.getString(APP_USAGE_KEY);
+    // [2026-10-07 apps-menu] services/mmkv exports getString/setString — there is
+    // no `mmkv` named export, so native Recentes/usage never persisted.
+    const { getString } = require('../services/mmkv');
+    const raw = getString(APP_USAGE_KEY);
     return raw ? JSON.parse(raw) : {};
   } catch { return {}; }
 };
@@ -1365,8 +1376,8 @@ const _writeAppUsage = (obj) => {
     if (Platform.OS === 'web') {
       if (typeof localStorage !== 'undefined') localStorage.setItem(APP_USAGE_KEY, v);
     } else {
-      const { mmkv } = require('../services/mmkv');
-      mmkv?.set(APP_USAGE_KEY, v);
+      const { setString } = require('../services/mmkv');
+      setString(APP_USAGE_KEY, v);
     }
   } catch {}
 };
@@ -1382,31 +1393,54 @@ const _bumpRecentApp = (key) => {
   } catch {}
 };
 
-// One app tile in the drawer (used in both Recentes row and section grid).
-// Hover lifts to 1.02 (spring), active press drops to 0.97 (snappier than
-// the old 0.9). Badge gets a continuous pulse PLUS a rolling flip whenever
-// the count itself changes — iOS Mail / Sparrow + Telegram counter style.
-function AppTile({ item, badge, onPress, colors, isDark }) {
-  const scale = useRef(new Animated.Value(1)).current;
+// [2026-10-07 apps-menu] Apps drawer redesign — super-app launcher pattern
+// (WeChat "Discover" / Grab home / Revolut hub / Telegram mini-apps):
+//   • featured Bia card, then "Recentes" (MRU), then grouped sections
+//     Comunicação · Social · Ferramentas · Conta, each a soft rounded card;
+//   • 4-col grid, colored rounded-square tiles (soft tint + colored glyph,
+//     SVG from components/Icons — never emoji), label below (2 lines max);
+//   • accent/diacritic-insensitive search over label + keywords + section;
+//   • PressableScale press feedback; light/dark via theme tokens + isDark.
+// Routes/actions are unchanged from the previous drawer; NEW entries: Reels
+// (feed tab in reels mode — same ReelsViewer the old bottom-bar Reels opened)
+// and Feed (posts — onOpenFeed was already wired but had no tile).
+
+// Hex "#rrggbb" + alpha 0..1 → rgba(). Tiles are tinted from the app color.
+const _hexA = (hex, a) => {
+  const h = String(hex || '#111111').replace('#', '');
+  const n = parseInt(h.length === 3 ? h.split('').map(c => c + c).join('') : h, 16);
+  return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
+};
+// Mix hex toward white (dark-mode glyphs need a lighter tone to keep contrast).
+const _lighten = (hex, p) => {
+  const h = String(hex || '#111111').replace('#', '');
+  const n = parseInt(h, 16);
+  const m = (v) => Math.round(v + (255 - v) * p);
+  return `rgb(${m((n >> 16) & 255)},${m((n >> 8) & 255)},${m(n & 255)})`;
+};
+// Accent/diacritic-insensitive lowercase ("vídeo" ≈ "video").
+const _norm = (s) => {
+  try { return String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase(); }
+  catch { return String(s || '').toLowerCase(); }
+};
+
+// One app tile (Recentes row + section grids). PressableScale gives the
+// spring + haptic; the badge keeps its pulse + rolling counter.
+function AppTile({ item, badge, onPress, colors, isDark, t }) {
   const badgePulse = useRef(new Animated.Value(1)).current;
-  // Rolling animation state — when `badge` value mutates, the digit slides
-  // up (translateY -10 → 0) with a tiny fade. Mirrors WhatsApp/Telegram
-  // unread counter behavior. We keep the prev text around for one frame so
-  // the outgoing digit is visible briefly underneath the new one.
   const rollY = useRef(new Animated.Value(0)).current;
   const rollOpacity = useRef(new Animated.Value(1)).current;
   const prevBadgeRef = useRef(badge);
   useEffect(() => {
     if (!badge) return undefined;
     const loop = Animated.loop(Animated.sequence([
-      Animated.timing(badgePulse, { toValue: 1.18, duration: 700, useNativeDriver: true }),
+      Animated.timing(badgePulse, { toValue: 1.15, duration: 700, useNativeDriver: true }),
       Animated.timing(badgePulse, { toValue: 1, duration: 700, useNativeDriver: true }),
     ]));
     loop.start();
     return () => loop.stop();
   }, [badge]);
   useEffect(() => {
-    // Trigger rolling flip only when value actually changes (and was/became >0).
     const prev = prevBadgeRef.current;
     if (prev !== badge && (prev || badge)) {
       rollY.setValue(-10);
@@ -1418,159 +1452,183 @@ function AppTile({ item, badge, onPress, colors, isDark }) {
     }
     prevBadgeRef.current = badge;
   }, [badge, rollY, rollOpacity]);
-  // Press scale: 0.97 (subtle, snappy). Hover scale: 1.02 (lifts the tile).
-  const animateTo = (to) => Animated.spring(scale, {
-    toValue: to, tension: 340, friction: 16, useNativeDriver: true,
-  }).start();
+  // [2026-10-07 apps-menu mono] Founder: manter preto e branco (identidade [MONO]),
+  // só mais bonito — ladrilho neutro com borda fina + sombra suave, ícone em tinta.
+  const tileBg = isDark ? '#1f2a30' : '#ffffff';
+  const glyph = isDark ? '#e9edef' : '#111111';
+  const a11y = item.label + (badge ? ', ' + (t('apps.badgeNew', { count: badge > 99 ? '99+' : badge })) : '');
   return (
-    <Pressable
-      onPress={onPress}
-      onPressIn={() => animateTo(0.97)}
-      onPressOut={() => animateTo(1)}
-      onHoverIn={() => animateTo(1.02)}
-      onHoverOut={() => animateTo(1)}
-      style={({ hovered }) => ({
-        width: '25%', alignItems: 'center', paddingVertical: 10,
-        ...(hovered ? { opacity: 0.95 } : null),
-      })}
-      accessibilityRole="button"
-      accessibilityLabel={item.label + (badge ? `, ${badge} novos` : '')}
-    >
-      <Animated.View style={{ width: 60, height: 60, transform: [{ scale }] }}>
-        {/* [MONO 2026-09-30] Strict monochrome — the per-app accent
-            (item.ic.c: green/red/blue/orange/yellow/…) is intentionally
-            IGNORED for rendering so every tile reads as one black&white set:
-            a soft light-gray tile (#f5f6f8 / #18222c) with a black (light) /
-            white (dark) glyph. 60×60 radius-18 for a cleaner, roomier grid. */}
-        <View style={{
-          width: 60, height: 60, borderRadius: 18,
-          backgroundColor: isDark ? '#18222c' : '#f5f6f8',
-          alignItems: 'center', justifyContent: 'center',
-        }}>
-          <item.ic.Comp size={26} color={isDark ? '#e9edef' : '#111111'} />
-        </View>
-        {!!badge && (
-          <Animated.View style={{
-            position: 'absolute', top: -4, right: -4,
-            minWidth: 18, height: 18, paddingHorizontal: 5,
-            borderRadius: 9, backgroundColor: colors.badge,
+    <View style={{ width: '25%', paddingVertical: 8 }}>
+      <PressableScale
+        onPress={onPress}
+        scaleTo={0.92}
+        haptic="select"
+        activeOpacity={0.85}
+        style={{ alignItems: 'center', width: '100%' }}
+        accessibilityRole="button"
+        accessibilityLabel={a11y}
+        testID={'apps-tile-' + item.key}
+      >
+        <View style={{ width: 56, height: 56 }}>
+          <View style={{
+            width: 56, height: 56, borderRadius: 17,
+            backgroundColor: tileBg,
             alignItems: 'center', justifyContent: 'center',
-            borderWidth: 2, borderColor: isDark ? '#0f0f14' : '#fff',
-            transform: [{ scale: badgePulse }],
-            overflow: 'hidden',
+            borderWidth: StyleSheet.hairlineWidth,
+            borderColor: isDark ? '#2f3b42' : '#e3e6ea',
+            shadowColor: '#000', shadowOpacity: isDark ? 0 : 0.06, shadowRadius: 6, shadowOffset: { width: 0, height: 2 },
+            elevation: isDark ? 0 : 1,
           }}>
-            <Animated.Text
-              style={{
-                color: '#fff', fontSize: 10, fontWeight: '800',
-                transform: [{ translateY: rollY }],
-                opacity: rollOpacity,
-              }}
-              numberOfLines={1}
-            >
-              {badge > 99 ? '99+' : String(badge)}
-            </Animated.Text>
-          </Animated.View>
-        )}
-      </Animated.View>
-      <Text style={{ fontSize: 12, color: colors.text, fontWeight: '600', textAlign: 'center', marginTop: 8, letterSpacing: -0.1 }} numberOfLines={1}>{item.label}</Text>
-    </Pressable>
+            <item.ic.Comp size={26} color={glyph} />
+          </View>
+          {!!badge && (
+            <Animated.View style={{
+              position: 'absolute', top: -5, right: -7,
+              minWidth: 20, height: 20, paddingHorizontal: 5,
+              borderRadius: 10, backgroundColor: isDark ? '#e9edef' : (colors.badge || '#111111'),
+              alignItems: 'center', justifyContent: 'center',
+              borderWidth: 2, borderColor: isDark ? '#1b2329' : '#f6f7f9',
+              transform: [{ scale: badgePulse }],
+              overflow: 'hidden',
+            }}>
+              <Animated.Text
+                style={{ color: isDark ? '#111b21' : '#fff', fontSize: 10, fontWeight: '800', transform: [{ translateY: rollY }], opacity: rollOpacity }}
+                numberOfLines={1}
+              >
+                {badge > 99 ? '99+' : String(badge)}
+              </Animated.Text>
+            </Animated.View>
+          )}
+        </View>
+        <Text
+          style={{ fontSize: 12, lineHeight: 15, color: colors.text, fontWeight: '500', textAlign: 'center', marginTop: 7, paddingHorizontal: 2, letterSpacing: -0.1 }}
+          numberOfLines={2}
+        >
+          {item.label}
+        </Text>
+      </PressableScale>
+    </View>
   );
 }
 
-const AppsDrawerModal = React.memo(function AppsDrawerModal({ visible, onClose, router, colors, isDark, t, userEmail, onOpenFeed, onOpenChannels, onOpenCommunities, badges }) {
+// Section header + rounded card holding a 4-col grid of tiles.
+function AppsSection({ title, items, badges, onItemPress, colors, isDark, t }) {
+  return (
+    <View style={{ marginBottom: 16 }} accessibilityRole="none">
+      <Text
+        style={{ fontSize: 13, fontWeight: '700', color: colors.textSecondary || (isDark ? '#9ca3af' : '#667781'), letterSpacing: 0.2, marginBottom: 8, paddingHorizontal: 6 }}
+        accessibilityRole="header"
+      >
+        {title}
+      </Text>
+      <View style={{
+        flexDirection: 'row', flexWrap: 'wrap',
+        backgroundColor: isDark ? 'rgba(255,255,255,0.045)' : '#f6f7f9',
+        borderRadius: 22, paddingVertical: 6, paddingHorizontal: 2,
+      }}>
+        {items.map((it) => (
+          <AppTile
+            key={it.key}
+            item={it}
+            badge={badges?.[it.key] || 0}
+            onPress={() => onItemPress(it)}
+            colors={colors}
+            isDark={isDark}
+            t={t}
+          />
+        ))}
+      </View>
+    </View>
+  );
+}
+
+const AppsDrawerModal = React.memo(function AppsDrawerModal({ visible, onClose, router, colors, isDark, t, userEmail, onOpenFeed, onOpenReels, onOpenChannels, onOpenCommunities, badges }) {
+  const insets = useSafeAreaInsets();
   const [q, setQ] = useState('');
-  // MRU drawer bar — reflects the last 4 apps the user opened. Refreshes
-  // whenever the drawer opens (cheap, list is at most 8 entries).
+  // MRU + usage counters (local only). Refreshed whenever the drawer opens.
   const [recentKeys, setRecentKeys] = useState(() => _readRecentApps());
-  // Usage counter per app key — drives section sort so power users see their
-  // top-3 within each group bubble up to the front.
   const [usageMap, setUsageMap] = useState(() => _readAppUsage());
   React.useEffect(() => {
     if (visible) {
       setRecentKeys(_readRecentApps());
       setUsageMap(_readAppUsage());
+    } else {
+      setQ('');
     }
   }, [visible]);
 
-  // SVG icon render helper — each item stores icon component + color
   const I = (Comp, c) => ({ Comp, c });
+  const go = useCallback((path) => () => { onClose(); try { router.push(path); } catch (e) { console.warn('[chat] router.push failed:', e); } }, [onClose, router]);
 
-  // Reorganized 2026-05-08: removidos Feed/Status/Calls que já têm aba
-  // dedicada no bottom nav (eram duplicação real — usuário reclamou que
-  // aba "Apps tem muita coisa"). Comunicação agora só lista o que NÃO
-  // tem entry point primário (Channels, Communities). Tudo o que está em
-  // aba bottom = single source of truth.
+  // Sections. Every key/route/action below existed before except reels/feed.
+  // `kw` = extra search keywords (pt/en/es) so "video", "tiktok", "agenda"…
+  // find the right app. `featured` items render in the hero card instead of
+  // the grid (still searchable + eligible for Recentes).
   const sections = useMemo(() => ([
     {
-      title: t('apps.communication') || 'Comunicação',
+      key: 'communication',
+      title: t('apps.communication'),
       items: [
-        { key: 'channels', label: t('channel.title') || 'Channels',      ic: I(IconBell, '#111111'),     action: onOpenChannels },
-        { key: 'communities', label: t('community.title') || 'Communities', ic: I(IconUsers, '#10b981'),   action: onOpenCommunities },
-        { key: 'snapmap',  label: t('snapmap.tile') || t('snapmap.sidebar') || 'Mapa de Amigos', ic: I(IconMapPin, '#22c55e'), route: '/snap-map' },
+        { key: 'email',       label: t('apps.email'),        ic: I(IconMail, '#dc2626'),      route: '/inbox',     kw: 'email mail inbox caixa entrada correo' },
+        { key: 'meet',        label: t('sidebar.meetings'),  ic: I(IconVideo, '#2563eb'),     route: '/meetings',  kw: 'meet reuniao meeting video chamada call reunion' },
+        { key: 'channels',    label: t('channel.title'),     ic: I(IconMegaphone, '#0284c7'), action: onOpenChannels,    kw: 'canais channels canales broadcast' },
+        { key: 'communities', label: t('community.title'),   ic: I(IconUsersSmall, '#16a34a'), action: onOpenCommunities, kw: 'comunidades communities grupos groups' },
       ],
     },
     {
-      title: t('apps.productivity') || 'Produtividade',
+      key: 'social',
+      title: t('apps.social'),
       items: [
-        { key: 'email',    label: t('sidebar.inbox') || 'Email',        ic: I(IconMail, '#ef4444'),      route: '/inbox' },
-        { key: 'calendar', label: t('sidebar.calendar') || 'Agenda',    ic: I(IconCalendar, '#10b981'),  route: '/calendar' },
-        { key: 'meet',     label: t('sidebar.meetings') || 'Meet',      ic: I(IconFilm, '#3b82f6'),      route: '/meetings' },
-        { key: 'contacts', label: t('sidebar.contacts') || 'Contatos',  ic: I(IconUsers, '#111111'),     route: '/contacts' },
-        { key: 'files',    label: t('sidebar.files') || 'Arquivos',     ic: I(IconFolder, '#f59e0b'),    route: '/files' },
-        { key: 'docs',     label: t('sidebar.documents') || 'Docs',     ic: I(IconFileText, '#4285f4'),  route: '/documentos' },
-        { key: 'notes',    label: t('sidebar.notes') || 'Notas',        ic: I(IconStickyNote, '#eab308'), route: '/notes' },
+        { key: 'reels',   label: t('apps.reels'),   ic: I(IconReels, '#db2777'),     action: onOpenReels,  kw: 'reels videos curtos shorts tiktok video' },
+        { key: 'feed',    label: t('apps.feed'),    ic: I(IconGrid, '#ea580c'),      action: onOpenFeed,   kw: 'feed posts publicacoes timeline' },
+        { key: 'live',    label: t('apps.goLive'),  ic: I(IconBroadcast, '#9333ea'), route: '/live-broadcast', kw: 'live ao vivo transmissao stream en vivo' },
+        { key: 'snapmap', label: t('snapmap.tile'), ic: I(IconMapPin, '#65a30d'),    route: '/snap-map',   kw: 'mapa map amigos friends localizacao location' },
       ],
     },
     {
-      title: t('apps.mediaAi') || 'Mídia & IA',
+      key: 'tools',
+      title: t('apps.tools'),
       items: [
-        { key: 'photos',   label: t('sidebar.photos') || 'Fotos',        ic: I(IconImage, '#111111'),    route: '/photos' },
-        { key: 'live',     label: t('apps.goLive') || 'Ao vivo',         ic: I(IconVideo, '#ef4444'),    route: '/live-broadcast' },
-        { key: 'one',      label: 'Bia',                                 ic: I(IconSparkles, '#111111'), route: '/one' },
+        { key: 'one',      label: 'Bia',                  ic: I(IconSparkles, '#111111'), route: '/one', featured: true, kw: 'bia ia ai assistente assistant one' },
+        { key: 'calendar', label: t('sidebar.calendar'),  ic: I(IconCalendar, '#6366f1'), route: '/calendar',   kw: 'agenda calendario calendar eventos events' },
+        { key: 'contacts', label: t('sidebar.contacts'),  ic: I(IconUsers, '#0d9488'),    route: '/contacts',   kw: 'contatos contacts agenda contactos' },
+        { key: 'files',    label: t('sidebar.files'),     ic: I(IconFolder, '#0ea5e9'),   route: '/files',      kw: 'arquivos files cloud drive nuvem archivos' },
+        { key: 'docs',     label: t('sidebar.documents'), ic: I(IconFileText, '#2563eb'), route: '/documentos', kw: 'docs documentos documents planilhas sheets' },
+        { key: 'notes',    label: t('sidebar.notes'),     ic: I(IconStickyNote, '#d97706'), route: '/notes',    kw: 'notas notes anotacoes' },
+        { key: 'photos',   label: t('sidebar.photos'),    ic: I(IconImage, '#14b8a6'),    route: '/photos',     kw: 'fotos photos galeria gallery imagens' },
       ],
     },
     {
-      title: t('apps.account') || 'Conta',
+      key: 'account',
+      title: t('apps.account'),
       items: [
-        { key: 'profile',       label: t('sidebar.profile') || 'Perfil',         ic: I(IconUser, '#64748b'),     action: () => { onClose(); if (userEmail) try { router.push(`/u/${encodeURIComponent(userEmail)}`); } catch (e) { console.warn('[chat] router.push failed:', e); } } },
-        // [#1240 2026-05-20] Wallet exposto no Apps drawer — antes só era
-        // alcançável via diamond-shop / gift sheets. Brand purple porque é a
-        // entry pra economia (top-up + cashout).
-        // 2026-05-21 — WAVE 57 wallet redesign: single-currency "saldo".
-        // Removed duplicate "Diamantes" Apps drawer entry — /wallet is the
-        // single source of truth now (Adicionar sheet handles top-ups).
-        // [2026-05-22 monetization-pause] hidden by MONETIZATION_ENABLED flag —
-        // "Carteira" tile dropped from the Apps drawer; the wallet screen
-        // itself redirects to /chat now, so leaving the tile would just
-        // bounce users. Spread keeps it gone from sort/search arrays too.
-        ...(WALLET_ENABLED ? [{ key: 'wallet', label: t('apps.wallet') || 'Carteira', ic: I(IconCreditCard, '#111111'), route: '/wallet' }] : []),
-        { key: 'settings',      label: t('sidebar.settings') || 'Configurações', ic: I(IconSettings, '#475569'), action: () => { onClose(); try { router.push('/settings'); } catch (e) { console.warn('[chat] router.push failed:', e); } } },
-        { key: 'notifications', label: t('sidebar.notifications') || 'Alertas',  ic: I(IconBell, '#f97316'),     route: '/notifications' },
-        { key: 'backup',        label: t('sidebar.backup') || 'Backup',          ic: I(IconShield, '#0ea5e9'),   route: '/backup' },
+        { key: 'profile', label: t('sidebar.profile'), ic: I(IconUser, '#475569'), kw: 'perfil profile conta account',
+          action: () => { onClose(); if (userEmail) try { router.push(`/u/${encodeURIComponent(userEmail)}`); } catch (e) { console.warn('[chat] router.push failed:', e); } } },
+        // [2026-05-22 monetization-pause] wallet tile only when WALLET_ENABLED.
+        ...(WALLET_ENABLED ? [{ key: 'wallet', label: t('apps.wallet'), ic: I(IconCreditCard, '#059669'), route: '/wallet', kw: 'carteira wallet saldo pagamentos' }] : []),
+        { key: 'notifications', label: t('sidebar.notifications'), ic: I(IconBell, '#f97316'),     route: '/notifications', kw: 'alertas notificacoes notifications' },
+        { key: 'backup',        label: t('sidebar.backup'),        ic: I(IconShield, '#0891b2'),   route: '/backup',        kw: 'backup copia seguranca' },
+        { key: 'settings',      label: t('sidebar.settings'),      ic: I(IconSettings, '#64748b'), action: go('/settings'), kw: 'configuracoes settings ajustes preferencias' },
       ],
     },
-  ]), [t, onOpenFeed, onOpenChannels, onOpenCommunities, onClose, router, userEmail]);
+  ]), [t, onOpenFeed, onOpenReels, onOpenChannels, onOpenCommunities, onClose, router, userEmail, go]);
 
-  const qLower = q.trim().toLowerCase();
-  // Sort items within each section by usage count desc — most-used first,
-  // ties keep original section order (which is curated). Search results
-  // also benefit from the same sort.
+  const qn = _norm(q.trim());
   const sortByUsage = useCallback((items) => {
     const score = (k) => (usageMap?.[k] || 0);
     return [...items].sort((a, b) => score(b.key) - score(a.key));
   }, [usageMap]);
   const filteredSections = useMemo(() => {
-    const base = qLower
-      ? sections.map(s => ({ ...s, items: s.items.filter(i => i.label.toLowerCase().includes(qLower)) })).filter(s => s.items.length > 0)
-      : sections;
-    return base.map(s => ({ ...s, items: sortByUsage(s.items) }));
-  }, [qLower, sections, sortByUsage]);
+    const base = qn
+      ? sections.map(s => {
+          const secHit = _norm(s.title).includes(qn);
+          return { ...s, items: s.items.filter(i => secHit || _norm(i.label).includes(qn) || _norm(i.kw).includes(qn)) };
+        })
+      : sections.map(s => ({ ...s, items: s.items.filter(i => !i.featured) }));
+    return base.filter(s => s.items.length > 0).map(s => ({ ...s, items: sortByUsage(s.items) }));
+  }, [qn, sections, sortByUsage]);
 
   const handlePress = useCallback((it) => {
-    // MRU bookkeeping — every launch bumps the key to the front of the
-    // recents list AND increments the per-app usage counter (drives the
-    // section sort). State updates so the user sees a live resort next
-    // open without waiting for unmount/remount.
     try {
       _bumpRecentApp(it.key);
       setUsageMap(_readAppUsage());
@@ -1580,7 +1638,6 @@ const AppsDrawerModal = React.memo(function AppsDrawerModal({ visible, onClose, 
     try { router.push(it.route); } catch (e) { console.warn('[chat] router.push failed:', e); }
   }, [onClose, router]);
 
-  // Lookup table: key → item. Used to render the recents row below.
   const itemByKey = useMemo(() => {
     const m = new Map();
     for (const s of sections) for (const it of s.items) m.set(it.key, it);
@@ -1590,104 +1647,105 @@ const AppsDrawerModal = React.memo(function AppsDrawerModal({ visible, onClose, 
     (recentKeys || []).map(k => itemByKey.get(k)).filter(Boolean).slice(0, 4)
   ), [recentKeys, itemByKey]);
 
-  // Skip heavy render when hidden (hooks ran above — safe to bail now)
   if (!visible) return null;
+
+  const sheetBg = isDark ? '#111b21' : '#ffffff';
+  const fieldBg = isDark ? 'rgba(255,255,255,0.07)' : '#f0f2f5';
+  const muted = colors.textSecondary || '#667781';
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        style={{ flex: 1 }}
-      >
-      <TouchableOpacity
-        activeOpacity={1}
-        onPress={onClose}
-        // Subtle backdrop "blur" — real GPU blur needs expo-blur which isn't
-        // a dep; on web we use CSS backdrop-filter, on native we lean on a
-        // slightly heavier tint + tiny brand tone so the canvas behind the
-        // drawer recedes instead of just darkening. Subtle, not aggressive.
-        style={{
-          flex: 1,
-          backgroundColor: isDark ? 'rgba(8,8,14,0.62)' : 'rgba(10,10,18,0.42)',
-          justifyContent: 'flex-end',
-          ...(Platform.OS === 'web' ? {
-            backdropFilter: 'blur(6px) saturate(120%)',
-            WebkitBackdropFilter: 'blur(6px) saturate(120%)',
-          } : {}),
-        }}
-      >
-        <TouchableOpacity
-          activeOpacity={1}
-          onPress={() => {}}
+      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
+      <View style={{ flex: 1, justifyContent: 'flex-end' }}>
+        {/* Backdrop — tap to close. Web gets a light CSS blur. */}
+        <Pressable
+          onPress={onClose}
+          accessibilityRole="button"
+          accessibilityLabel={t('common.close')}
           style={{
-            backgroundColor: isDark ? '#111b21' : '#fff',
-            borderTopLeftRadius: 24,
-            borderTopRightRadius: 24,
-            paddingTop: 10,
-            paddingBottom: 32,
-            paddingHorizontal: 16,
-            maxHeight: '85%',
+            position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
+            backgroundColor: isDark ? 'rgba(8,8,14,0.62)' : 'rgba(10,10,18,0.40)',
+            ...(Platform.OS === 'web' ? { backdropFilter: 'blur(6px) saturate(120%)', WebkitBackdropFilter: 'blur(6px) saturate(120%)', cursor: 'default' } : {}),
           }}
+        />
+        <View
+          style={{
+            backgroundColor: sheetBg,
+            borderTopLeftRadius: 28,
+            borderTopRightRadius: 28,
+            paddingTop: 8,
+            paddingHorizontal: 16,
+            maxHeight: '90%',
+            ...(Platform.OS === 'web' ? { boxShadow: '0 -8px 32px rgba(0,0,0,0.18)' } : {}),
+          }}
+          accessibilityViewIsModal
         >
           {/* Grabber */}
-          <View style={{ alignItems: 'center', marginBottom: 10 }}>
-            <View style={{ width: 40, height: 4, borderRadius: 2, backgroundColor: isDark ? '#333' : '#ddd' }} />
+          <View style={{ alignItems: 'center', marginBottom: 8 }}>
+            <View style={{ width: 38, height: 5, borderRadius: 3, backgroundColor: isDark ? 'rgba(255,255,255,0.18)' : 'rgba(0,0,0,0.12)' }} />
           </View>
           {/* Header */}
-          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10, paddingHorizontal: 4 }}>
-            <Text style={{ fontSize: 20, fontWeight: '800', letterSpacing: -0.3, color: colors.text }}>
-              {t('chat.apps') || 'Apps'}
-            </Text>
-            <TouchableOpacity onPress={onClose} hitSlop={10}>
-              <IconClose size={22} color="#888" />
-            </TouchableOpacity>
+          <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12, paddingHorizontal: 4 }}>
+            <View style={{ flex: 1 }}>
+              <Text style={{ fontSize: 24, fontWeight: '800', letterSpacing: -0.5, color: colors.text }} accessibilityRole="header">
+                {t('chat.apps')}
+              </Text>
+              <Text style={{ fontSize: 13, color: muted, marginTop: 1 }} numberOfLines={1}>
+                {t('apps.subtitle')}
+              </Text>
+            </View>
+            <PressableScale
+              onPress={onClose}
+              scaleTo={0.9}
+              hitSlop={10}
+              accessibilityRole="button"
+              accessibilityLabel={t('common.close')}
+              style={{ width: 34, height: 34, borderRadius: 17, backgroundColor: fieldBg, alignItems: 'center', justifyContent: 'center' }}
+            >
+              <IconClose size={18} color={isDark ? '#c7cdd2' : '#54656f'} />
+            </PressableScale>
           </View>
-          {/* Search — prominent light pill at the top of the sheet */}
-          <View style={{
-            flexDirection: 'row',
-            alignItems: 'center',
-            backgroundColor: isDark ? '#18222c' : '#f0f2f5',
-            borderRadius: 14,
-            paddingHorizontal: 12,
-            marginBottom: 14,
-          }}>
-            <IconSearch size={16} color={isDark ? '#8696a0' : '#8696a0'} />
+          {/* Search */}
+          <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: fieldBg, borderRadius: 14, paddingHorizontal: 12, height: 42, marginBottom: 14 }}>
+            <IconSearch size={17} color={muted} />
             <TextInput
               value={q}
               onChangeText={setQ}
-              placeholder={t('apps.searchPlaceholder') || 'Buscar apps'}
-              placeholderTextColor={isDark ? '#555' : '#9ca3af'}
-              style={{ flex: 1, paddingVertical: 10, paddingHorizontal: 8, color: colors.text, fontSize: 14, outlineStyle: 'none' }}
+              placeholder={t('apps.searchPlaceholder')}
+              placeholderTextColor={isDark ? '#6b7a84' : '#8696a0'}
+              style={{ flex: 1, paddingVertical: 0, paddingHorizontal: 8, color: colors.text, fontSize: 15, height: 42, ...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {}) }}
               autoCorrect={false}
+              autoCapitalize="none"
+              returnKeyType="search"
+              accessibilityLabel={t('apps.searchPlaceholder')}
             />
+            {!!q && (
+              <Pressable onPress={() => setQ('')} hitSlop={10} accessibilityRole="button" accessibilityLabel={t('apps.clearSearch')}
+                style={{ width: 20, height: 20, borderRadius: 10, backgroundColor: isDark ? 'rgba(255,255,255,0.22)' : 'rgba(0,0,0,0.22)', alignItems: 'center', justifyContent: 'center' }}>
+                <IconClose size={12} color={isDark ? '#111b21' : '#ffffff'} />
+              </Pressable>
+            )}
           </View>
-          {/* Scrollable content — keyboardShouldPersistTaps='handled' garante
-              que tap em app durante busca registra antes do keyboard fechar */}
           <ScrollView
-            style={{ maxHeight: 500 }}
+            style={{ flexGrow: 0, flexShrink: 1 }}
             showsVerticalScrollIndicator={false}
-            contentContainerStyle={{ paddingBottom: 12 }}
-            removeClippedSubviews={Platform.OS !== 'web'}
+            contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 12) + 12 }}
             keyboardShouldPersistTaps="handled"
             keyboardDismissMode="on-drag"
           >
-            {/* Featured "Chatyy One" card \u2014 the app's personal AI, front and
-                center. Small black surface (accent) in light, light surface in
-                dark, with a bubble + two eyes glyph. Reuses the existing 'one'
-                route via handlePress so navigation logic is untouched. */}
-            {!qLower && (
-              <Pressable
-                onPress={() => { const one = itemByKey.get('one'); if (one) { handlePress(one); } else { onClose(); try { router.push('/one'); } catch (e) { console.warn('[chat] router.push failed:', e); } } }}
-                style={({ pressed }) => ({
+            {/* Featured — Bia (personal AI). */}
+            {!qn && (
+              <PressableScale
+                onPress={() => { const one = itemByKey.get('one'); if (one) handlePress(one); }}
+                scaleTo={0.98}
+                style={{
                   flexDirection: 'row', alignItems: 'center', gap: 14,
                   backgroundColor: isDark ? '#e9edef' : '#111111',
-                  borderRadius: 18, paddingVertical: 14, paddingHorizontal: 16, marginBottom: 18,
-                  transform: [{ scale: pressed ? 0.985 : 1 }],
-                })}
+                  borderRadius: 20, paddingVertical: 14, paddingHorizontal: 16, marginBottom: 18,
+                }}
                 accessibilityRole="button"
-                accessibilityLabel="Bia"
+                accessibilityLabel={'Bia, ' + t('one.subtitle')}
               >
-                {/* Bubble + eyes avatar */}
                 <View style={{ width: 46, height: 46, borderRadius: 23, backgroundColor: isDark ? '#111b21' : '#ffffff', alignItems: 'center', justifyContent: 'center' }}>
                   <View style={{ flexDirection: 'row', gap: 6 }}>
                     <View style={{ width: 5, height: 9, borderRadius: 3, backgroundColor: isDark ? '#e9edef' : '#111111' }} />
@@ -1702,87 +1760,48 @@ const AppsDrawerModal = React.memo(function AppsDrawerModal({ visible, onClose, 
                     </View>
                   </View>
                   <Text style={{ fontSize: 13, color: isDark ? 'rgba(17,27,33,0.7)' : 'rgba(255,255,255,0.75)', marginTop: 2 }} numberOfLines={1}>
-                    {t('one.subtitle') || 'Sua IA pessoal'}
+                    {t('one.subtitle')}
                   </Text>
                 </View>
                 <Svg width={18} height={18} viewBox="0 0 24 24" fill="none" stroke={isDark ? 'rgba(17,27,33,0.5)' : 'rgba(255,255,255,0.6)'} strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round">
                   <Path d="M9 18l6-6-6-6" />
                 </Svg>
-              </Pressable>
+              </PressableScale>
             )}
-            {/* Recently opened \u2014 only when not searching, only when MRU
-                actually has entries. Mirrors iOS App Library "Recently
-                Added" + Android launcher recents pattern. */}
-            {!qLower && recentItems.length > 0 && (
-              <View style={{ marginBottom: 18 }}>
-                {/* Recents pill header — brand-subtle, slight letterSpacing
-                    and uppercase so it reads as a section title, not a body
-                    label. Mirrors the iOS "Recently Added" eyebrow style. */}
-                <Text style={{
-                  fontSize: 11,
-                  fontWeight: '700',
-                  color: isDark ? '#9ca3af' : '#6b7280',
-                  letterSpacing: 0.6,
-                  textTransform: 'uppercase',
-                  marginBottom: 12,
-                  paddingHorizontal: 6,
-                }}>
-                  {t('apps.recent') || 'Recentes'}
-                </Text>
-                <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
-                  {recentItems.map((it) => (
-                    <AppTile
-                      key={'r_' + it.key}
-                      item={it}
-                      badge={badges?.[it.key] || 0}
-                      onPress={() => handlePress(it)}
-                      colors={colors}
-                      isDark={isDark}
-                    />
-                  ))}
-                </View>
-              </View>
+            {/* Recentes (MRU) — only when not searching and there is history. */}
+            {!qn && recentItems.length > 0 && (
+              <AppsSection
+                title={t('apps.recent')}
+                items={recentItems}
+                badges={badges}
+                onItemPress={handlePress}
+                colors={colors}
+                isDark={isDark}
+                t={t}
+              />
             )}
             {filteredSections.length === 0 ? (
               <View style={{ alignItems: 'center', paddingVertical: 40 }}>
-                <View style={{ width: 56, height: 56, borderRadius: 28, alignItems: 'center', justifyContent: 'center', backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)', marginBottom: 10 }}>
-                  <IconSearch size={26} color={colors.textSecondary} />
+                <View style={{ width: 56, height: 56, borderRadius: 28, alignItems: 'center', justifyContent: 'center', backgroundColor: fieldBg, marginBottom: 10 }}>
+                  <IconSearch size={26} color={muted} />
                 </View>
-                <Text style={{ color: colors.textSecondary, fontSize: 13 }}>{t('apps.noResults') || 'Nenhum app encontrado'}</Text>
+                <Text style={{ color: muted, fontSize: 14 }}>{t('apps.noResults')}</Text>
               </View>
             ) : filteredSections.map((section) => (
-              <View key={section.title} style={{ marginBottom: 18 }}>
-                {/* Section header — matches the Recents eyebrow treatment
-                    (uppercase + 0.5 letterSpacing) but in a neutral muted
-                    color so it doesn't compete visually with Recentes. */}
-                <Text style={{
-                  fontSize: 11,
-                  fontWeight: '700',
-                  color: isDark ? '#9ca3af' : '#6b7280',
-                  letterSpacing: 0.6,
-                  textTransform: 'uppercase',
-                  marginBottom: 12,
-                  paddingHorizontal: 6,
-                }}>
-                  {section.title}
-                </Text>
-                <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
-                  {section.items.map((it) => (
-                    <AppTile
-                      key={it.key}
-                      item={it}
-                      badge={badges?.[it.key] || 0}
-                      onPress={() => handlePress(it)}
-                      colors={colors}
-                      isDark={isDark}
-                    />
-                  ))}
-                </View>
-              </View>
+              <AppsSection
+                key={section.key}
+                title={section.title}
+                items={section.items}
+                badges={badges}
+                onItemPress={handlePress}
+                colors={colors}
+                isDark={isDark}
+                t={t}
+              />
             ))}
           </ScrollView>
-        </TouchableOpacity>
-      </TouchableOpacity>
+        </View>
+      </View>
       </KeyboardAvoidingView>
     </Modal>
   );

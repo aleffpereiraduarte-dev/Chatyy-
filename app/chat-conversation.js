@@ -47,6 +47,72 @@ import { useRowOverlayStore, useOverlaySetter, useRowOverlayVersion, useComposer
 // [2026-10-06 keyboard-controller] Keyboard glued to the composer on the UI
 // thread (native) / RN KeyboardAvoidingView fallback (web + binaries without KC).
 import { ThreadKeyboardAvoider, ThreadKeyboardGestureArea, THREAD_LIST_KEYBOARD_DISMISS_MODE, THREAD_COMPOSER_NATIVE_ID } from '../utils/threadKeyboard';
+// ─────────────────────────────────────────────────────────────────────────────
+// [2026-10-07 flashlist] Lista de MENSAGENS em FlashList v2 (JS-only, ≥2.3.3).
+// Motores (escolha por plataforma, FlatList invertida intacta como fallback):
+//   'flash'          = layout de chat do FlashList v2: dados oldest→newest,
+//                      maintainVisibleContentPosition{startRenderingFromBottom,
+//                      autoscrollToBottomThreshold}, onStartReached p/ páginas
+//                      antigas. (padrão)
+//   'flash-inverted' = FlashList ≥2.3 `inverted` (mesmos dados newest-first da
+//                      FlatList) — alternativa se o 'flash' regredir no device.
+//   'flatlist'       = FlatList invertida antiga.
+// TODO o scroll passa por UM adaptador (`threadScroll` no componente):
+// toLatest() / toMessage(id) / isNearLatest(). `flatListRef.current` vira um
+// shim legado (scrollToOffset(0) ⇒ toLatest) p/ chamadas fora da região da
+// lista (envio de mídia/voz) não precisarem mudar.
+// Web QA override: localStorage.chatyy_thread_list = flatlist|flash|flash-inverted
+import { FlashList } from '@shopify/flash-list';
+const THREAD_FLASHLIST = true;
+const THREAD_LIST_ENGINE_BY_PLATFORM = { ios: 'flash', android: 'flash', web: 'flash' };
+const THREAD_LIST_ENGINE = (() => {
+  if (!THREAD_FLASHLIST) return 'flatlist';
+  let mode = THREAD_LIST_ENGINE_BY_PLATFORM[Platform.OS] || 'flatlist';
+  if (Platform.OS === 'web') {
+    try {
+      const o = typeof window !== 'undefined' && window.localStorage ? window.localStorage.getItem('chatyy_thread_list') : null;
+      if (o === 'flatlist' || o === 'flash' || o === 'flash-inverted') mode = o;
+    } catch {}
+  }
+  return mode;
+})();
+const THREAD_IS_FLASH = THREAD_LIST_ENGINE !== 'flatlist';
+// Ordem dos dados renderizados: true ⇒ índice 0 = MAIS ANTIGA (layout chat v2).
+const THREAD_OLDEST_FIRST = THREAD_LIST_ENGINE === 'flash';
+// Recycling de células entre mensagens diferentes. As rows têm MUITO estado de
+// montagem (Animated.Value em useRef: MessageSendAnim/MessageDeleteAnim com
+// opacity 0 no fim do fade, HighlightFlash, players de áudio, imagem "pintada")
+// que vazaria p/ a próxima mensagem numa célula reciclada. OFF = cada row
+// ganha key própria (remonta como a FlatList faz ao entrar na janela); o
+// FlashList continua dando layout síncrono/estimado (sem células em branco),
+// scrollToIndex p/ itens fora da janela e MVCP. Ligar só após auditar rows.
+const THREAD_FLASH_RECYCLE = false;
+// Empty/skeleton state counter-flip: only the FlatList path needs it (FlashList
+// inverted already un-flips ListEmptyComponent; the oldest-first layout isn't
+// flipped at all).
+const THREAD_EMPTY_FLIP = THREAD_IS_FLASH ? null : { transform: [{ scaleY: -1 }] };
+// getItemType: o FlashList v2 estima a altura de itens não medidos pela MÉDIA
+// do tipo (MultiTypeAverageWindow) — tipos bem separados = estimativas boas =
+// scrollbar/jump estáveis. (v2 removeu estimativa por item em overrideItemLayout.)
+function threadItemType(item) {
+  if (!item) return 'x';
+  const tt = item._type;
+  if (tt === 'separator') return 'sep';
+  if (tt === 'unread_separator') return 'unread';
+  if (tt === 'album') return 'album';
+  if (item.deleted_at) return 'deleted';
+  switch (item.type) {
+    case 'system': return 'system';
+    case 'image': case 'video': case 'gif': return 'media';
+    case 'sticker': return 'sticker';
+    case 'audio': case 'voice': return 'audio';
+    case 'file': return 'file';
+    case 'location': case 'live_location': return 'location';
+    case 'text': case undefined: case null: case '':
+      return (item.reply_to_id || item.reply_to) ? 'text_reply' : 'text';
+    default: return 'other';
+  }
+}
 import PressableScale from '../components/PressableScale'; // [2026-10-06 UX2] contact info sheet
 import FadeSlideIn from '../components/FadeSlideIn'; // [2026-10-06 UX2]
 import { isReduceMotionEnabled } from '../components/reducedMotion'; // [2026-10-04] honor OS Reduce Motion
@@ -153,6 +219,7 @@ let _LinearGradient = null;
 try { _LinearGradient = require('expo-linear-gradient').LinearGradient; } catch {}
 import { cacheMessages, getCachedMessages, getLastSyncId, cacheSingleMessage, savePendingMessage, removePendingMessage, getPendingMessages, purgeStalePending } from '../services/chatCache';
 import messageOutbox, { OUTBOX_V2_ONLY } from '../services/messageOutbox';
+import mediaSendQueue from '../services/mediaSendQueue'; // [2026-10-07 send-media]
 import { userScopedKey } from '../services/cache';
 import * as SmartCache from '../services/smartChatCache';
 import useIsMounted from '../hooks/useIsMounted';
@@ -830,6 +897,32 @@ function senderColorFromEmail(email) {
 //   peerDelivered     — true se ESTA msg foi entregue ao peer
 //                       (_delivered / delivered_at / delivered_to[peer];
 //                        em grupo = apenas _delivered)
+// [2026-10-07 receipts2] GRUPO: recibo ao vivo registra QUEM recebeu (mesmo
+// shape do servidor: delivered_to[] de e-mails) em vez de virar `_delivered`
+// com o 1º membro. A agregação contra o nº de membros fica em _rcGroupAgg.
+function _rcAddDeliveredTo(m, who) {
+  if (!m || !who) return m;
+  const cur = Array.isArray(m.delivered_to) ? m.delivered_to : [];
+  for (const x of cur) {
+    const e = (typeof x === 'string' ? x : (x && (x.email || x.user_email))) || '';
+    if (e.toLowerCase() === who) return m;
+  }
+  return { ...m, delivered_to: [...cur, who] };
+}
+// Agrega leitura/entrega de UMA msg própria em grupo: leitores = read_by[] ∪
+// membros cujo watermark (readReceipts) cobre o id; entregues = leitores ∪
+// delivered_to[]. others = Set(lc) dos OUTROS membros atuais. Ler ⇒ entregar.
+function _rcGroupAgg(item, others, readWm) {
+  const idN = Number(item && item.id);
+  const readers = new Set();
+  const norm = (x) => ((typeof x === 'string' ? x : (x && (x.email || x.user_email || x.user))) || '').toLowerCase();
+  if (Array.isArray(item.read_by)) for (const x of item.read_by) { const e = norm(x); if (others.has(e)) readers.add(e); }
+  if (Number.isFinite(idN) && idN > 0) for (const [e, lr] of readWm) { if (others.has(e) && lr >= idN) readers.add(e); }
+  const delivered = new Set(readers);
+  if (Array.isArray(item.delivered_to)) for (const x of item.delivered_to) { const e = norm(x); if (others.has(e)) delivered.add(e); }
+  return { read: readers.size >= others.size, delivered: delivered.size >= others.size };
+}
+
 function computeTickState(msg, opts = {}) {
   if (!msg) return 1;
   if (msg._pending) return 0;
@@ -7845,6 +7938,97 @@ function ChatConversationInner() {
   const composerBottomPad = Math.max(insets.bottom, Spacing.sm);
   const params = useLocalSearchParams();
   const flatListRef = useRef(null);
+  // ── [2026-10-07 flashlist] ONE scroll adapter for the message list ────────
+  // Every scroll of the thread goes through `threadScroll` so the call sites
+  // don't care which engine/orientation is mounted (THREAD_LIST_ENGINE):
+  //   toLatest({animated})            → newest message (bottom of the screen)
+  //   toMessage(id, {viewPosition})   → row holding that message (album cells too)
+  //   toKey(_key) / toIndex(i)        → separators / render-order index
+  //   isNearLatest()                  → user is at (or ~300px from) the newest msg
+  //   distanceFromLatest(scrollEvent) → px between viewport bottom and newest msg
+  // `flatListRef.current` becomes `threadScroll.legacy` under FlashList so the
+  // pre-existing FlatList-shaped calls OUTSIDE the list region (media/voice/
+  // location/contact senders, poll/meetup creators) keep working unchanged:
+  // legacy scrollToOffset({offset:0}) ⇒ toLatest; scrollToIndex(i) takes a
+  // NEWEST-FIRST index (flatListData order) and is remapped.
+  const flashListRef = useRef(null);
+  const threadDataRef = useRef([]); // data in RENDER order of the mounted list
+  const threadScrollStateRef = useRef({ scrolledUp: false });
+  const threadScroll = useMemo(() => {
+    const inst = () => (THREAD_IS_FLASH ? flashListRef.current : flatListRef.current);
+    const findIdx = (pred) => {
+      const d = threadDataRef.current || [];
+      for (let i = 0; i < d.length; i++) { if (pred(d[i])) return i; }
+      return -1;
+    };
+    const api = {
+      engine: THREAD_LIST_ENGINE,
+      toLatest({ animated = true } = {}) {
+        const l = inst();
+        if (!l) return;
+        try {
+          if (THREAD_OLDEST_FIRST) {
+            l.scrollToEnd?.({ animated });
+            // Callers fire this right after setMessages(append) — the new row
+            // isn't laid out yet, so the first scrollToEnd targets the OLD end.
+            // Settle once more after the commit (MVCP autoscrollToBottom covers
+            // the near-bottom case; this covers "sent while scrolled up").
+            setTimeout(() => { try { const l2 = inst(); l2 && l2.scrollToEnd?.({ animated }); } catch {} }, 180);
+          } else {
+            l.scrollToOffset?.({ offset: 0, animated });
+          }
+        } catch {}
+      },
+      toIndex(index, { animated = true, viewPosition = 0.5, viewOffset } = {}) {
+        const l = inst();
+        const n = (threadDataRef.current || []).length;
+        if (!l || !(index >= 0) || index >= n) return false;
+        try {
+          const p = l.scrollToIndex?.({ index, animated, viewPosition, ...(viewOffset != null ? { viewOffset } : {}) });
+          if (p && typeof p.catch === 'function') p.catch(() => {}); // v2 returns a Promise
+          return true;
+        } catch { return false; }
+      },
+      indexOfMessage(id) {
+        const s = String(id ?? '');
+        if (!s) return -1;
+        return findIdx(m => !!m && (String(m.id ?? '') === s
+          || (m._type === 'album' && Array.isArray(m._items) && m._items.some(c => c && String(c.id ?? '') === s))));
+      },
+      toMessage(id, opts) {
+        const i = api.indexOfMessage(id);
+        return i < 0 ? false : api.toIndex(i, opts);
+      },
+      toKey(key, opts) {
+        const i = findIdx(m => !!m && m._key === key);
+        return i < 0 ? false : api.toIndex(i, opts);
+      },
+      isNearLatest() { return !threadScrollStateRef.current.scrolledUp; },
+      distanceFromLatest(e) {
+        const ne = e && e.nativeEvent;
+        if (!ne || !ne.contentOffset) return 0;
+        const y = ne.contentOffset.y || 0;
+        if (!THREAD_OLDEST_FIRST) return y; // inverted: offset 0 == newest
+        const ch = ne.contentSize ? ne.contentSize.height : 0;
+        const vh = ne.layoutMeasurement ? ne.layoutMeasurement.height : 0;
+        if (!(ch > 0) || !(vh > 0)) return 0;
+        return Math.max(0, ch - vh - y);
+      },
+    };
+    api.legacy = {
+      __threadScrollShim: true,
+      scrollToOffset({ offset = 0, animated = true } = {}) {
+        if (!offset) api.toLatest({ animated });
+      },
+      scrollToIndex({ index, animated = true, viewPosition = 0.5 } = {}) {
+        const n = (threadDataRef.current || []).length;
+        api.toIndex(THREAD_OLDEST_FIRST ? n - 1 - index : index, { animated, viewPosition });
+      },
+      scrollToEnd() { /* FlatList-inverted scrollToEnd == OLDEST; unused */ },
+    };
+    return api;
+  }, []);
+  if (THREAD_IS_FLASH && flatListRef.current !== threadScroll.legacy) flatListRef.current = threadScroll.legacy;
   // Declared up here so `safeScrollToMsg`'s useCallback dependency array can
   // reference it. Previously declared further down — caused a Temporal Dead
   // Zone error in the production minified bundle ("Cannot access 'Ht' before
@@ -7882,12 +8066,12 @@ function ChatConversationInner() {
         setTimeout(() => setReplyJumpHighlightId(prev => (prev === idNum ? null : prev)), 1500);
       } catch {}
     };
+    // [2026-10-07 flashlist] Resolve the row in the RENDERED data (threadDataRef,
+    // any engine/orientation; matches album cells too) — the old findIndex over
+    // enrichedMessages drifted from the list index whenever the Saved filter /
+    // disappearing filter removed rows.
     const tryScroll = () => {
-      const cur = _safeScrollListRef.current;
-      if (!Array.isArray(cur) || cur.length === 0) return false;
-      const idx = cur.findIndex(m => m && String(m.id ?? '') === targetId);
-      if (idx < 0) return false;
-      try { flatListRef.current?.scrollToIndex?.({ index: idx, animated: true, viewPosition: 0.5 }); } catch {}
+      if (!threadScroll.toMessage(targetId, { animated: true, viewPosition: 0.5 })) return false;
       flashHighlight();
       return true;
     };
@@ -7915,8 +8099,10 @@ function ChatConversationInner() {
         const out = Array.from(map.values()).sort((a, b) => Number(a.id) - Number(b.id));
         return out;
       });
-      // Wait a tick for state to flush, then scroll.
-      setTimeout(() => { tryScroll(); }, 60);
+      // Wait a tick for state to flush, then scroll. [2026-10-07 flashlist]
+      // retry once — the list data (threadDataRef) refreshes on the next
+      // render, which can land after 60ms on a busy JS thread.
+      setTimeout(() => { if (!tryScroll()) setTimeout(() => { tryScroll(); }, 240); }, 60);
     } catch (e) {
       // Best-effort — silent on failure (no banner spam for a tap miss).
       try { console.warn?.('[safeScrollToMsg] load_around failed:', e?.message || e); } catch {}
@@ -9549,7 +9735,10 @@ function ChatConversationInner() {
   // HD quality toggle (2048 vs 4096) — defaults to ON per user request
   // "sem perder qualidade". Browser-only compression still caps at 4096px
   // to keep uploads reasonable; native uses the original file unchanged.
-  const [hdMode, setHdMode] = useState(true);
+  // [2026-10-07 send-media] Default STANDARD (WhatsApp parity: HD is opt-in per
+  // send via the MediaPreview "HD" toggle). Was true → every photo/video went
+  // out at HD size by default (1080p@3Mbps video, 2048-4096px photos).
+  const [hdMode, setHdMode] = useState(false);
 
   // Share-to-Chatyy hand-off — if user came in from /share-receive with a file
   // or text, surface it as a pending media preview or pre-fill the composer.
@@ -9834,13 +10023,82 @@ function ChatConversationInner() {
       return !m._pending && !m._uploading;
     }));
     setUploadProgress(prev => { const n = { ...prev }; delete n[tempId]; return n; });
+    // [2026-10-07 send-media] Native media lives in the durable media queue:
+    // abort the in-flight compress/upload, drop the outbox row + durable copy.
+    if (OUTBOX_V2_ONLY) { try { mediaSendQueue.cancelByTempId(tempId)?.catch?.(() => {}); } catch {} }
   }, []);
+
+  // [2026-10-07 send-media] Media queue → bubble state. Progress ticks only
+  // touch the uploadProgress map (bubbles read _uploadPct from it); setMessages
+  // runs only when a flag actually flips (uploading/compressing/queued/failed),
+  // so a 100-tick upload doesn't re-render the thread 100 times.
+  useEffect(() => {
+    if (!OUTBOX_V2_ONLY) return undefined;
+    const RICH = new Set(['image', 'video', 'audio', 'voice', 'file', 'gif', 'sticker', 'location']);
+    const patchMsg = (tid, cmi, patch) => {
+      setMessages(prev => {
+        const idx = prev.findIndex(m => (tid && m.id === tid) || (cmi && m._client_id === cmi && typeof m.id === 'string'));
+        if (idx === -1) return prev;
+        const m = prev[idx];
+        if (typeof m.id !== 'string' || !m.id.startsWith('tmp')) return prev; // server already owns it
+        let changed = false;
+        for (const k of Object.keys(patch)) { if (m[k] !== patch[k]) { changed = true; break; } }
+        if (!changed) return prev;
+        const next = [...prev];
+        next[idx] = { ...m, ...patch };
+        return next;
+      });
+    };
+    const dropPct = (tid) => setUploadProgress(prev => {
+      if (!tid || !Object.prototype.hasOwnProperty.call(prev, tid)) return prev;
+      const n = { ...prev }; delete n[tid]; return n;
+    });
+    const unsubP = mediaSendQueue.subscribeProgress((ev) => {
+      if (!mountedRef.current || !ev || String(ev.conversation_id) !== String(conversationId)) return;
+      const tid = ev.temp_id;
+      const cmi = ev.client_message_id;
+      if (ev.phase === 'compress' || ev.phase === 'upload' || ev.phase === 'commit') {
+        if (tid) setUploadProgress(prev => (prev[tid] === ev.pct ? prev : { ...prev, [tid]: ev.pct }));
+        patchMsg(tid, cmi, { _uploading: ev.phase !== 'commit', _compressing: ev.phase === 'compress', _queued: false, _failed: false, _pending: true });
+      } else if (ev.phase === 'queued') {
+        dropPct(tid);
+        patchMsg(tid, cmi, { _uploading: false, _compressing: false, _queued: true, _failed: false, _pending: true, pending_state: 'queued' });
+      } else if (ev.phase === 'failed') {
+        dropPct(tid);
+        patchMsg(tid, cmi, { _uploading: false, _compressing: false, _queued: false, _failed: true, _pending: false });
+      } else if (ev.phase === 'done' || ev.phase === 'cancelled') {
+        dropPct(tid);
+      }
+    });
+    // Commit-stage failures (msg lane, e.g. chat_send 4xx) for rich bubbles.
+    const unsubS = messageOutbox.subscribe('*', (snap) => {
+      if (!mountedRef.current || !snap || snap.state !== 'failed') return;
+      if (String(snap.conversation_id) !== String(conversationId)) return;
+      const p = snap.payload || {};
+      if (!RICH.has(p.type)) return;
+      dropPct(p.temp_id);
+      patchMsg(p.temp_id, snap.client_message_id, { _uploading: false, _compressing: false, _queued: false, _failed: true, _pending: false });
+    });
+    return () => { try { unsubP(); } catch {} try { unsubS(); } catch {} };
+  }, [conversationId]);
 
   // [2026-10-04] Tap-to-resend from the failed-media overlay (MediaSendOverlay).
   // Same local-media path as the failed-bubble "Tentar" action: re-enqueue the
   // upload in offlineCache and replay now. Remote-URL media falls back to the
   // existing footer alert flow (this is a no-op there).
   const retryFailedMediaSend = useCallback(async (msg) => {
+    // [2026-10-07 send-media] Row still in the durable outbox → requeue it
+    // there (resumes the persisted upload; no second file, same cmi).
+    if (OUTBOX_V2_ONLY) {
+      try {
+        const _cmi = msg?._client_id || msg?.client_message_id;
+        if (_cmi && (await messageOutbox.getStatus(String(_cmi)))) {
+          setMessages(prev => prev.map(m => m.id === msg.id ? { ...m, _failed: false, _pending: true, _queued: true, _uploading: false } : m));
+          await mediaSendQueue.retry(String(_cmi));
+          return;
+        }
+      } catch {}
+    }
     try {
       const raw = msg?._localUri || msg?.file_url || '';
       if (!raw || /^https?:/i.test(raw)) return;
@@ -10055,6 +10313,10 @@ function ChatConversationInner() {
   // server-side via chat_group_admin (the backend may add the flag separately;
   // for now we only persist + reflect the toggle locally).
   const [hideMembers, setHideMembers] = useState(false);
+  // [2026-10-07 group-admin] true when the server stripped the roster for ME
+  // (non-admin + hide_members) — the sheet then says so instead of "Membros (1)".
+  const [membersHiddenForMe, setMembersHiddenForMe] = useState(false);
+  const [groupMemberCount, setGroupMemberCount] = useState(0);
 
   // ── Member search + role filter inside the Group Info modal ──
   // Tracks the live search box + a 3-way role chip (all/admins/members).
@@ -10765,16 +11027,22 @@ function ChatConversationInner() {
       // history (scrolled up — e.g. to quote/reply), opening the keyboard must
       // NOT yank them down. Inverted list: offset 0 == bottom (newest).
       if (!isScrolledUpRef.current) {
-        requestAnimationFrame(() => {
-          try { flatListRef.current?.scrollToOffset?.({ offset: 0, animated: true }); } catch {}
-        });
+        requestAnimationFrame(() => { threadScroll.toLatest({ animated: true }); }); // [2026-10-07 flashlist]
       }
     };
     const sub1 = Keyboard.addListener(showEvent, onShow);
+    // [2026-10-07 flashlist] Oldest-first FlashList: the viewport shrinks from
+    // the BOTTOM while the keyboard rises (container paddingBottom), so the
+    // newest rows slide under the composer unless we re-pin after the frame
+    // settles (FlashList's autoscrollToBottom on window resize covers the
+    // in-between frames). Inverted engines stay bottom-anchored for free.
+    const sub2 = (THREAD_OLDEST_FIRST && Platform.OS === 'ios')
+      ? Keyboard.addListener('keyboardDidShow', () => { if (!isScrolledUpRef.current) threadScroll.toLatest({ animated: true }); })
+      : null;
     // Navigating here with the keyboard still up from the previous screen
     // would otherwise open the thread lifted. Dismiss on mount.
     try { Keyboard.dismiss(); } catch {}
-    return () => { sub1.remove(); };
+    return () => { sub1.remove(); try { sub2 && sub2.remove(); } catch {} };
   }, []);
 
   // ============================================================
@@ -12132,8 +12400,14 @@ function ChatConversationInner() {
             sender_email: p.sender_email || currentEmail,
             content: p.display_content || p.content || p.caption || '',
             type: p.type || 'text',
-            file_url: p.file_url || p.local_uri || null,
+            // [2026-10-07 send-media] media rows: rebuild the durable local path
+            // (iOS container path changes across app updates) for the preview.
+            file_url: (p.durable_name ? (mediaSendQueue.resolveLocalUri?.(p) || null) : null) || p.file_url || p.local_uri || null,
+            _localUri: (p.durable_name ? (mediaSendQueue.resolveLocalUri?.(p) || null) : null) || p.local_uri || undefined,
             file_name: p.file_name || null,
+            is_view_once: p.view_once ? 1 : 0,
+            duration: p.duration || undefined,
+            _uploading: row.lane === 'upload' && row.state === 'sending' ? true : undefined,
             reply_to_id: p.reply_to_id || null,
             created_at: createdAt,
             _client_id: cmi,
@@ -12283,6 +12557,8 @@ function ChatConversationInner() {
     // Load members on mount (needed for mentions, calls, group info)
     api.chatMembers(conversationId).then(r => {
       if (r.success) setMembers(r.data?.members || []);
+      // [2026-10-07 group-admin] same payload carries the group flags.
+      if (r.success && conversationType === 'group') { try { applyGroupFlagsRef.current?.(r.data); } catch {} }
     }).catch(() => {});
     // Check block status for direct conversations
     if (conversationType === 'direct' && params.email) {
@@ -13444,6 +13720,11 @@ function ChatConversationInner() {
             (Array.isArray(data?.client_message_ids) ? data.client_message_ids : [])
               .map(String)
           );
+          // [2026-10-07 receipts2] GRUPO: um membro recebeu ≠ ✓✓. Só registra QUEM
+          // recebeu (delivered_to) — o enrichment agrega contra o nº de membros.
+          const _rcGroup = conversationType === 'group';
+          const _rcWho = String(data?.email || (typeof data?.delivered_to === 'string' ? data.delivered_to : '') || '').toLowerCase();
+          if (_rcGroup && !_rcWho) return;
           setMessages(prev => prev.map(m => {
             if (m.status === 'read') return m;
             const numId = Number(m.id);
@@ -13451,7 +13732,9 @@ function ChatConversationInner() {
               (!Number.isNaN(numId) && deliveredSet.has(numId)) ||
               (m._client_id && deliveredCids.has(String(m._client_id))) ||
               (m.client_message_id && deliveredCids.has(String(m.client_message_id)));
-            return matched ? { ...m, status: 'delivered', _delivered: true } : m;
+            if (!matched) return m;
+            if (_rcGroup) return _rcAddDeliveredTo(m, _rcWho);
+            return { ...m, status: 'delivered', _delivered: true };
           }));
         }
       });
@@ -13473,6 +13756,17 @@ function ChatConversationInner() {
           const ids = new Set(data.message_ids.map(Number).filter(n => !Number.isNaN(n)));
           if (!ids.size) return;
           const deliveredStampBatch = data?.delivered_at || new Date().toISOString();
+          // [2026-10-07 receipts2] GRUPO: registra o membro em delivered_to; o
+          // enrichment só pinta ✓✓ quando TODOS receberam (antes 1 membro bastava).
+          if (conversationType === 'group') {
+            const who = String(data?.email || '').toLowerCase();
+            if (!who) return;
+            setMessages(prev => prev.map(m => {
+              const numId = Number(m.id);
+              return (!Number.isNaN(numId) && ids.has(numId)) ? _rcAddDeliveredTo(m, who) : m;
+            }));
+            return;
+          }
           try {
             const buf = deliveredIdBufferRef.current;
             if (buf) { ids.forEach(id => buf.add(id)); if (buf.size > 600) buf.clear(); }
@@ -13488,6 +13782,11 @@ function ChatConversationInner() {
         }
         const mid = data?.message_id;
         if (!mid) return;
+        if (conversationType === 'group') { // [2026-10-07 receipts2] idem (shape singular legado)
+          const who = String(data?.email || '').toLowerCase();
+          if (who) setMessages(prev => prev.map(m => (Number(m.id) === Number(mid) ? _rcAddDeliveredTo(m, who) : m)));
+          return;
+        }
         // [WhatsApp instant ✓ 2026-06-03] Remember this delivered server id so
         // that if it arrived BEFORE our own HTTP swapped temp→server id on the
         // just-sent bubble (instant-✓ window), the swap can still apply ✓✓.
@@ -13594,11 +13893,12 @@ function ChatConversationInner() {
           if (data?.last_read_id) {
             const readUpTo = Number(data.last_read_id) || 0;
             const isGroup = conversationType === 'group';
-            setMessages(prev => prev.map(m =>
+            // [2026-10-07 receipts2] GRUPO: não sintetiza mais `_delivered` a partir
+            // de UM leitor (pintava ✓✓ com 1 de N). O readReceipts acima já guarda o
+            // watermark desse membro; o enrichment agrega leitura/entrega por membro.
+            if (!isGroup) setMessages(prev => prev.map(m =>
               m.sender_email === currentEmail && readUpTo > 0 && Number.isFinite(Number(m.id)) && Number(m.id) > 0 && Number(m.id) <= readUpTo
-                ? (isGroup
-                    ? (!m._delivered ? { ...m, _delivered: true } : m)
-                    : (!m._read ? { ...m, status: 'read', _read: true, _delivered: true } : m))
+                ? (!m._read ? { ...m, status: 'read', _read: true, _delivered: true } : m)
                 : m
             ));
           }
@@ -14820,6 +15120,39 @@ function ChatConversationInner() {
     // is purely whitespace post-trim. Empty string → bail silently.
     if (!text) return;
     if (!text.replace(/[\s ​-‍﻿]/g, '').length) return;
+    // [2026-10-07 group-admin] Group send gates, checked BEFORE the optimistic
+    // bubble: the server rejects these (403 admin-only / 429 slow mode), but
+    // the client used to queue them for silent retry (web: forever) with no
+    // explanation. Keep the typed text, tell the user why.
+    if (conversationType === 'group') {
+      if (composerBlocked) {
+        try { setScheduleToast(t('chat.onlyAdmins') || 'Somente admins podem enviar mensagens'); setTimeout(() => setScheduleToast(''), 2500); } catch {}
+        return;
+      }
+      const _smSec = Number(slowModeSeconds || 0);
+      const _meLcSm = (currentEmail || '').toLowerCase();
+      const _meIsAdmin = (membersRef.current?.length ? membersRef.current : (members || [])).some(m => (m?.email || '').toLowerCase() === _meLcSm && m?.role === 'admin');
+      if (_smSec > 0 && !_meIsAdmin) {
+        let _lastMine = 0;
+        const _arr = messagesRef?.current || messages || [];
+        for (let i = _arr.length - 1, n = 0; i >= 0 && n < 200; i--, n++) {
+          const m = _arr[i];
+          if (!m || m.type === 'system' || m._failed) continue;
+          if ((m.sender_email || '').toLowerCase() !== _meLcSm) continue;
+          const ts = Date.parse(m.created_at || '');
+          if (Number.isFinite(ts)) _lastMine = ts;
+          break;
+        }
+        const _wait = _lastMine ? Math.ceil(_smSec - (Date.now() - _lastMine) / 1000) : 0;
+        if (_wait > 0) {
+          try {
+            setScheduleToast(`${t('chat.slowMode') || 'Modo lento'} · ${(t('chat.slowModeWait') || 'Aguarde {seconds}s').replace('{seconds}', String(_wait))}`);
+            setTimeout(() => setScheduleToast(''), 2500);
+          } catch {}
+          return;
+        }
+      }
+    }
     // Never flip sending→false here — that reopens a race window for
     // duplicate sends on rapid double-tap. Just ignore the second tap.
     // Synchronous ref guard FIRST (state `sending` lags a frame — see decl).
@@ -15749,6 +16082,32 @@ function ChatConversationInner() {
     setCaptionPreview({ visible: true, kind: 'gif', file: null, gif, gifUri: previewUri });
   };
 
+  // [2026-10-07 send-media] Durable send for rich messages that need no upload
+  // (GIF, sticker, static location): SQLite outbox 'msg' lane + sendWorker —
+  // same FIFO / backoff / offline-aware retry / client_message_id idempotency
+  // as text, survives app kill. The worker's local 'chat_message' echo swaps
+  // the optimistic bubble by cmi; failures reach it via the [send-media]
+  // effect. Returns false when the outbox is unavailable (web / SQLite down)
+  // so callers fall back to their legacy inline path.
+  const _sendRichViaOutbox = async ({ msgId, tempId, type, content, fileUrl = null, createdAt }) => {
+    if (!OUTBOX_V2_ONLY) return false;
+    try {
+      const r = await messageOutbox.enqueue({
+        client_message_id: msgId,
+        conversation_id: conversationId,
+        temp_id: tempId,
+        type,
+        content,
+        file_url: fileUrl || null,
+        sender_email: currentEmail,
+        created_at: createdAt || new Date().toISOString(),
+      });
+      if (!r) return false;
+      try { require('../services/sendWorker').poke?.(); } catch {}
+      return true;
+    } catch { return false; }
+  };
+
   const handleSendGif = async (gif, caption = '') => {
     setShowGifPicker(false);
     // WhatsApp/Telegram parity: prefer Tenor's mediumgif URL (200-800KB) so
@@ -15810,6 +16169,19 @@ function ChatConversationInner() {
       mailWs.relayChatMessage(conversationId, { ...optimisticMsg, _optimistic: true, _pending: false }, tempId, getMemberEmails());
     } catch {}
 
+    // [2026-10-07 send-media] Native: durable outbox (GIF, then the caption as
+    // its own text row right behind it — FIFO keeps the order).
+    if (await _sendRichViaOutbox({ msgId, tempId, type: 'gif', content: bodyContent, fileUrl: fileUrlArg, createdAt: optimisticMsg.created_at })) {
+      requestAnimationFrame(() => { flatListRef.current?.scrollToOffset?.({ offset: 0, animated: true }); });
+      if (_cap) {
+        const capMsgId = 'msg_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
+        const capTempId = `tmp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+        const capCreated = new Date().toISOString();
+        setMessages(prev => [...prev, { id: capTempId, _negId: Date.now() * 1000 + Math.floor(Math.random() * 1000), conversation_id: conversationId, sender_email: currentEmail, content: _cap, type: 'text', created_at: capCreated, _pending: true, _client_id: capMsgId }]);
+        await _sendRichViaOutbox({ msgId: capMsgId, tempId: capTempId, type: 'text', content: _cap, createdAt: capCreated });
+      }
+      return;
+    }
     // ⭐ Save pending GIF BEFORE network attempt
     const pendingData = { temp_id: tempId, client_message_id: msgId, conversation_id: conversationId, content: bodyContent, file_url: fileUrlArg, type: 'gif', created_at: optimisticMsg.created_at, sender_email: currentEmail };
     await savePendingMessage(conversationId, pendingData).catch(() => {});
@@ -15891,6 +16263,11 @@ function ChatConversationInner() {
       mailWs.relayChatMessage(conversationId, { ...optimisticMsg, _optimistic: true, _pending: false }, tempId, getMemberEmails());
     } catch {}
 
+    // [2026-10-07 send-media] Native: durable outbox.
+    if (await _sendRichViaOutbox({ msgId, tempId, type: 'sticker', content: sticker, fileUrl: isImage ? sticker : null, createdAt: optimisticMsg.created_at })) {
+      requestAnimationFrame(() => { flatListRef.current?.scrollToOffset?.({ offset: 0, animated: true }); });
+      return;
+    }
     // ⭐ Save pending sticker BEFORE network attempt
     const pendingData = { temp_id: tempId, client_message_id: msgId, conversation_id: conversationId, content: sticker, type: 'sticker', file_url: isImage ? sticker : null, created_at: optimisticMsg.created_at, sender_email: currentEmail };
     await savePendingMessage(conversationId, pendingData).catch(() => {});
@@ -16522,6 +16899,41 @@ function ChatConversationInner() {
         _local: true,
       });
     } catch {}
+    // [2026-10-07 send-media] Native: hand the message to the durable media
+    // queue (SQLite outbox 'upload' lane → compress → resumable Rust upload →
+    // ordered chat_send, all keyed by msgId). Survives app kill, retries on
+    // reconnect with backoff, keeps going briefly in background, never blocks
+    // text typed after it; progress/cancel/failed reach this bubble via the
+    // [send-media] effect. Web (blob: URLs) keeps the legacy inline path below.
+    if (OUTBOX_V2_ONLY && Platform.OS !== 'web' && !file?.blob && file?.uri) {
+      let _queued = null;
+      try {
+        _queued = await mediaSendQueue.enqueueMedia({
+          client_message_id: msgId,
+          conversation_id: conversationId,
+          temp_id: tempId,
+          type: fileType,
+          local_uri: file.uri,
+          mime_type: mimeType,
+          file_name: file.name || 'file',
+          file_size: file.size || 0,
+          caption: caption || '',
+          view_once: forceViewOnce ? 1 : 0,
+          hd: !!hdMode,
+          sender_email: user?.email,
+          created_at: optimisticMsg.created_at,
+          batch_id: batchId || null,
+          duration: file.duration || null,
+        });
+      } catch { _queued = null; }
+      if (_queued) {
+        setUploadProgress(prev => ({ ...prev, [tempId]: 0 }));
+        setUploading(false);
+        requestAnimationFrame(() => flatListRef.current?.scrollToOffset?.({ offset: 0, animated: true }));
+        return;
+      }
+      // Outbox unavailable (SQLite failed to open) → legacy inline path.
+    }
     // [SEND-01, 2026-05-19] Persist optimistic media to local SQLite BEFORE
     // upload kicks off so it survives app kill / network loss. Mirrors the
     // text-send durability pattern. `_localUri` lets the bubble re-render
@@ -17114,6 +17526,40 @@ function ChatConversationInner() {
       _client_id: audioMsgId,
     };
     setMessages(prev => [...prev, optimisticMsg]);
+    // [2026-10-07 send-media] Native voice notes go through the durable media
+    // queue too: recording copied to documentDirectory, voice-session finalize
+    // tried first (bytes already streamed while recording), else chat_upload
+    // (server keeps doing transcode/peaks), idempotent on audioMsgId, retried
+    // on reconnect, survives app kill. Web keeps the legacy path below.
+    if (OUTBOX_V2_ONLY && Platform.OS !== 'web' && !audioData?.blob && audioData?.uri) {
+      let _queued = null;
+      try {
+        _queued = await mediaSendQueue.enqueueMedia({
+          client_message_id: audioMsgId,
+          conversation_id: conversationId,
+          temp_id: tempId,
+          type: 'audio',
+          upload_via: 'php',
+          local_uri: audioData.uri,
+          mime_type: audioData.type || 'audio/mp4',
+          file_name: audioData.name || 'voice.m4a',
+          caption: optimisticMsg.content,
+          view_once: audioViewOnce ? 1 : 0,
+          duration: audioData.duration || null,
+          voice_session_id: (audioData.voiceSessionId && !audioViewOnce) ? audioData.voiceSessionId : null,
+          voice_session_mime: audioData.voiceSessionMime || null,
+          waveform: Array.isArray(audioData.waveform) ? audioData.waveform.slice(0, 64) : null,
+          sender_email: user?.email,
+          created_at: optimisticMsg.created_at,
+        });
+      } catch { _queued = null; }
+      if (_queued) {
+        setUploadProgress(prev => ({ ...prev, [tempId]: 0 }));
+        setUploading(false);
+        requestAnimationFrame(() => flatListRef.current?.scrollToOffset?.({ offset: 0, animated: true }));
+        return;
+      }
+    }
     // [SEND-01, 2026-05-19] Persist voice msg to local SQLite BEFORE upload
     // so it survives app kill mid-upload. Mirrors text-send durability.
     try {
@@ -17556,31 +18002,65 @@ function ChatConversationInner() {
       const locMsgId = 'msg_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
       const locTempId = `tmp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 
-      // ⭐ Save pending location BEFORE network attempt
-      const locPendingData = { temp_id: locTempId, client_message_id: locMsgId, conversation_id: conversationId, content, type: 'location', created_at: new Date().toISOString(), sender_email: currentEmail };
-      await savePendingMessage(conversationId, locPendingData).catch(() => {});
-
-      console.log('[loc] about to chatSend static', { lat: latitude, lng: longitude });
-      const r = await enqueueChatSend(() => api.chatSend(conversationId, content, 'location', null, null, null, locTempId, locMsgId));
-      console.log('[loc] chatSend result', { success: r?.success, hasId: !!r?.data?.id, msg: r?.message });
       let inserted = null;
-      if (r.success && r.data?.id) {
-        inserted = normalizeMessageTypes([r.data])[0];
-        setMessages(prev => {
-          if (prev.some(m => m.id === inserted.id)) return prev;
-          return [...prev, inserted];
-        });
-        removePendingMessage(conversationId, locTempId).catch(() => {});
-        requestAnimationFrame(() => flatListRef.current?.scrollToOffset?.({ offset: 0, animated: true }));
-      } else if (!r?.success) {
-        // Surface backend failure so user knows it didn't go through.
-        // Previously silent → user thought location share was broken when
-        // the network/auth was the actual culprit.
-        safeAlert(
-          t('common.error') || 'Erro',
-          (r?.message || t('chatConv.locationError') || 'Could not send location'),
-        );
-        return;
+      // [2026-10-07 send-media] Native: optimistic bubble + durable outbox (was:
+      // blocking HTTP, offline = error alert + lost pin). The reverse-geocode
+      // label update below needs the server id → wait (bounded) for 'sent'.
+      let _locViaOutbox = false;
+      if (OUTBOX_V2_ONLY) {
+        const _locCreated = new Date().toISOString();
+        let _locOpt = null;
+        try {
+          _locOpt = normalizeMessageTypes([{ id: locTempId, _negId: Date.now() * 1000 + Math.floor(Math.random() * 1000), conversation_id: conversationId, sender_email: currentEmail, content, type: 'location', created_at: _locCreated, _pending: true, _client_id: locMsgId }])[0];
+        } catch {}
+        if (_locOpt) setMessages(prev => [...prev, _locOpt]);
+        if (await _sendRichViaOutbox({ msgId: locMsgId, tempId: locTempId, type: 'location', content, createdAt: _locCreated })) {
+          _locViaOutbox = true;
+          requestAnimationFrame(() => flatListRef.current?.scrollToOffset?.({ offset: 0, animated: true }));
+          inserted = await new Promise((resolve) => {
+            let done = false;
+            let unsub = () => {};
+            const finish = (v) => { if (done) return; done = true; try { unsub(); } catch {} clearTimeout(timer); resolve(v); };
+            const timer = setTimeout(() => finish(null), 20000);
+            const check = (st) => {
+              if (!st) return;
+              if ((st.state === 'sent' || st.state === 'delivered' || st.state === 'read') && st.server_id) finish({ id: st.server_id });
+              else if (st.state === 'failed' || st.state === 'removed') finish(null);
+            };
+            unsub = messageOutbox.subscribe(locMsgId, check);
+            messageOutbox.getStatus(locMsgId).then(check).catch(() => {});
+          });
+          if (!inserted) return; // queued offline / failed — bubble shows the state; label stays coords
+        } else if (_locOpt) {
+          setMessages(prev => prev.filter(m => m.id !== locTempId));
+        }
+      }
+      if (!_locViaOutbox) {
+        // ⭐ Save pending location BEFORE network attempt
+        const locPendingData = { temp_id: locTempId, client_message_id: locMsgId, conversation_id: conversationId, content, type: 'location', created_at: new Date().toISOString(), sender_email: currentEmail };
+        await savePendingMessage(conversationId, locPendingData).catch(() => {});
+
+        console.log('[loc] about to chatSend static', { lat: latitude, lng: longitude });
+        const r = await enqueueChatSend(() => api.chatSend(conversationId, content, 'location', null, null, null, locTempId, locMsgId));
+        console.log('[loc] chatSend result', { success: r?.success, hasId: !!r?.data?.id, msg: r?.message });
+        if (r.success && r.data?.id) {
+          inserted = normalizeMessageTypes([r.data])[0];
+          setMessages(prev => {
+            if (prev.some(m => m.id === inserted.id)) return prev;
+            return [...prev, inserted];
+          });
+          removePendingMessage(conversationId, locTempId).catch(() => {});
+          requestAnimationFrame(() => flatListRef.current?.scrollToOffset?.({ offset: 0, animated: true }));
+        } else if (!r?.success) {
+          // Surface backend failure so user knows it didn't go through.
+          // Previously silent → user thought location share was broken when
+          // the network/auth was the actual culprit.
+          safeAlert(
+            t('common.error') || 'Erro',
+            (r?.message || t('chatConv.locationError') || 'Could not send location'),
+          );
+          return;
+        }
       }
 
       // Background: reverse geocode and update the message label (non-blocking)
@@ -18963,52 +19443,96 @@ function ChatConversationInner() {
     }
   }, [pinnedMessages, _executePin, t]);
 
+  // [2026-10-07 group-admin] Single place that maps the server's group flags
+  // (chat_info / chat_group_info payload) onto local state. Used on chat mount
+  // (so a member's composer banner / hidden Forward work WITHOUT opening Info
+  // do Grupo first — before, adminOnlyMessages/forwardingDisabled only
+  // hydrated inside loadGroupMembers), on sheet open, and when a settings
+  // system message lands. Unknown/absent fields leave local state untouched.
+  const applyGroupFlags = (conv) => {
+    if (!conv || typeof conv !== 'object') return;
+    if (typeof conv.slow_mode_seconds !== 'undefined') setSlowModeSeconds(Number(conv.slow_mode_seconds || 0));
+    if (typeof conv.admin_only_post !== 'undefined' || typeof conv.admin_only !== 'undefined') {
+      setAdminOnlyMessages(!!(conv.admin_only_post ?? conv.admin_only));
+    }
+    if (typeof conv.hide_members !== 'undefined') setHideMembers(!!conv.hide_members);
+    if (typeof conv.members_hidden !== 'undefined') setMembersHiddenForMe(!!conv.members_hidden);
+    if (typeof conv.member_count !== 'undefined') setGroupMemberCount(Number(conv.member_count || 0));
+    if (typeof conv.forwarding_disabled !== 'undefined') setForwardingDisabled(!!conv.forwarding_disabled);
+    if (typeof conv.require_approval !== 'undefined' || typeof conv.approval_required !== 'undefined') {
+      setApprovalRequired(!!(conv.require_approval ?? conv.approval_required));
+    }
+    if (typeof conv.disappearing_timer !== 'undefined') setDisappearingTimer(Number(conv.disappearing_timer || 0));
+    if (typeof conv.description === 'string') setConversationDescription(conv.description);
+    // Mute row ("Silenciar conversa" / "Remover silêncio") — mutedUntil was
+    // only ever set by a mute done in THIS session, so reopening the chat
+    // always showed "Silenciar conversa" even while muted.
+    if (typeof conv.muted !== 'undefined') {
+      if (!Number(conv.muted)) setMutedUntil(null);
+      else {
+        const mu = Number(conv.mute_until || 0);
+        setMutedUntil(mu > 0 ? new Date(mu * 1000).toISOString() : '2099-12-31T23:59:59Z');
+      }
+    }
+  };
+  const applyGroupFlagsRef = useRef(applyGroupFlags);
+  applyGroupFlagsRef.current = applyGroupFlags;
+  // [2026-10-07 group-admin] Live re-sync: admin toggles (só admins enviam,
+  // modo lento, encaminhar, ocultar membros, aprovação, temporárias, roles)
+  // all post a system row. When a NEW system row lands in a group, re-read the
+  // flags once (debounced) so an open member's composer banner / Forward
+  // action / slow-mode gate follow the change without reopening the chat.
+  const _lastSysIdRef = useRef(null);
+  const _flagsRefetchTimerRef = useRef(null);
+  const _lastSysId = useMemo(() => {
+    if (conversationType !== 'group' || !Array.isArray(messages)) return null;
+    for (let i = messages.length - 1, n = 0; i >= 0 && n < 8; i--, n++) {
+      const m = messages[i];
+      if (m && m.type === 'system' && typeof m.id === 'number') return m.id;
+    }
+    return null;
+  }, [messages, conversationType]);
+  useEffect(() => {
+    if (_lastSysId == null) return undefined;
+    if (_lastSysIdRef.current == null) { _lastSysIdRef.current = _lastSysId; return undefined; } // initial load
+    if (_lastSysId === _lastSysIdRef.current) return undefined;
+    _lastSysIdRef.current = _lastSysId;
+    if (_flagsRefetchTimerRef.current) clearTimeout(_flagsRefetchTimerRef.current);
+    _flagsRefetchTimerRef.current = setTimeout(() => {
+      api.chatMembers(conversationId).then(r => {
+        if (!mountedRef.current || !r?.success) return;
+        if (Array.isArray(r.data?.members)) setMembers(r.data.members);
+        try { applyGroupFlagsRef.current?.(r.data); } catch {}
+      }).catch(() => {});
+    }, 600);
+    return undefined;
+  }, [_lastSysId, conversationId]);
+  useEffect(() => () => { if (_flagsRefetchTimerRef.current) clearTimeout(_flagsRefetchTimerRef.current); }, []);
+
   const loadGroupMembers = async () => {
     try {
-      const r = await api.chatMembers(conversationId);
-      if (r.success) setMembers(r.data?.members || []);
+      // [2026-10-07 group-admin] chatMembers and chatGroupInfo hit the SAME
+      // endpoint (chat_info alias) — one round-trip is enough.
       const info = await api.chatGroupInfo(conversationId);
       if (info?.success) {
         const conv = info.data?.conversation || info.data || {};
-        setSlowModeSeconds(Number(conv.slow_mode_seconds || info.data?.slow_mode_seconds || 0));
-        // Surface admin_only_post + hide_members so toggles reflect
-        // server state on first open. Backend may not carry the flag
-        // yet — fall back to current local value.
-        if (typeof conv.admin_only_post !== 'undefined' || typeof conv.admin_only !== 'undefined') {
-          setAdminOnlyMessages(!!(conv.admin_only_post ?? conv.admin_only));
-        }
-        if (typeof conv.hide_members !== 'undefined') {
-          setHideMembers(!!conv.hide_members);
-        }
-        if (typeof conv.forwarding_disabled !== 'undefined') {
-          setForwardingDisabled(!!conv.forwarding_disabled);
-        }
-        // require_approval — surfaces the admin-set gate for invite-link joins.
-        // TODO(backend): buildConversationData() in chat.php doesn't emit
-        // `require_approval` today, so this branch is no-op until the server
-        // adds it to the chat_group_info response. The endpoint
-        // chat_group_set_require_approval persists correctly and
-        // chat_group_join_via_link already enforces the gate (chat.php
-        // ~14760); the only gap is surfacing the current value back to the
-        // UI on modal open. Until then, the toggle reflects the last
-        // optimistic state set during this session.
-        if (typeof conv.require_approval !== 'undefined' || typeof conv.approval_required !== 'undefined') {
-          setApprovalRequired(!!(conv.require_approval ?? conv.approval_required));
-        }
-        // Group description (markdown-lite). Backend stores up to 500 chars
-        // on the chat_conversations.description column.
-        // TODO(backend): same gap as require_approval — chat_group_info
-        // doesn't currently include `description` in the conversation
-        // payload. Once buildConversationData passes it through, this will
-        // hydrate automatically.
-        if (typeof conv.description === 'string') {
-          setConversationDescription(conv.description);
+        if (Array.isArray(conv.members)) setMembers(conv.members);
+        applyGroupFlags(conv);
+        // Pending join requests — admins only (non-admin would just 403).
+        const meRow = (conv.members || []).find(m => (m?.email || '').toLowerCase() === (currentEmail || '').toLowerCase());
+        if (meRow?.role === 'admin') {
+          try {
+            const p = await api.chatPendingMembers(conversationId);
+            if (p?.success) setPendingMembers(p.data?.items || []);
+          } catch {}
         }
       }
-      // Pending join requests count — admins only. Silent on non-admin (403).
+      // Notification sound: server copy wins over the device-local cache so a
+      // choice made on another device shows here too.
       try {
-        const p = await api.chatPendingMembers(conversationId);
-        if (p?.success) setPendingMembers(p.data?.items || []);
+        const cs = await api.chatGetConvSettings(conversationId);
+        const snd = cs?.data?.settings?.sound ?? cs?.data?.sound;
+        if (cs?.success && typeof snd === 'string' && snd) setChatNotifSound(snd === 'silent' ? 'none' : snd);
       } catch {}
     } catch {}
   };
@@ -19255,6 +19779,21 @@ function ChatConversationInner() {
   };
   // Close the sheet, then run the action. iOS can drop a Modal presented in
   // the same frame another one is dismissing, so defer a beat there.
+  // [2026-10-07 group-admin] Same iOS rule for Info do Grupo: rows that open
+  // another Modal (mute / som / modo lento / temporárias / tópicos / pedidos /
+  // QR) while the sheet is presented were dropped on iOS (sibling Modal can't
+  // present over a presented one). iOS: close the sheet, open after the
+  // dismiss animation. Elsewhere: `keepOpen` stacks the picker over the sheet
+  // (later JSX sibling renders on top), so the user lands back in the sheet.
+  const groupInfoGo = (fn, keepOpen = false) => {
+    if (Platform.OS === 'ios') {
+      setShowGroupInfo(false);
+      setTimeout(() => { try { fn(); } catch {} }, 350);
+      return;
+    }
+    if (!keepOpen) setShowGroupInfo(false);
+    try { fn(); } catch {}
+  };
   const contactInfoGo = (fn) => {
     setShowContactInfo(false);
     if (Platform.OS === 'ios') setTimeout(() => { try { fn(); } catch {} }, 350);
@@ -19419,7 +19958,11 @@ function ChatConversationInner() {
       // Tolerate array/items/messages shapes. (QA #36)
       if (r.success && r.data) {
         const list = Array.isArray(r.data) ? r.data : (r.data.items || r.data.messages || []);
-        setStarredMessages(list);
+        // [2026-10-07 group-admin] "Mensagens favoritas" opened from THIS chat
+        // (Info do Grupo / header) listed favorites from EVERY conversation.
+        // Scope to this conversation (WhatsApp parity); rows without a
+        // conversation_id are kept (older payload shape).
+        setStarredMessages(list.filter(m => m?.conversation_id == null || String(m.conversation_id) === String(conversationId)));
       }
     } catch {} finally {
       setStarredLoading(false);
@@ -20560,6 +21103,21 @@ function ChatConversationInner() {
     // Entregue é watermark e LER IMPLICA ENTREGAR → piso = readWatermark.
     const deliveredWatermark = Math.max(ownDeliveredWatermark, readWatermark);
     const isGroupConv = conversationType === 'group';
+    // [2026-10-07 receipts2] Roster de grupo (OUTROS membros, lc) + watermark de
+    // leitura por membro (readReceipts, nunca o meu). null = roster desconhecido
+    // ou escondido (hide_members) → cai nas flags do servidor.
+    let _groupOthers = null;
+    const _groupReadWm = new Map();
+    if (isGroupConv && Array.isArray(members) && members.length > 1) {
+      const _meLc = (currentEmail || '').toLowerCase();
+      const s = new Set();
+      for (const mm of members) { const e = String(mm?.email || '').toLowerCase(); if (e && e !== _meLc) s.add(e); }
+      if (s.size > 0) _groupOthers = s;
+      for (const rr of (readReceipts || [])) {
+        const e = String(rr?.email || '').toLowerCase(); const v = Number(rr?.last_read_id);
+        if (e && e !== _meLc && Number.isFinite(v)) _groupReadWm.set(e, Math.max(v, _groupReadWm.get(e) || 0));
+      }
+    }
     for (let i = 0; i < reversedMessages.length; i++) {
       const item = reversedMessages[i];
       if (item._type === 'separator') { out[i] = item; continue; }
@@ -20604,10 +21162,19 @@ function ChatConversationInner() {
       //     watermark peer-only readWatermark >= id); entregue por
       //     _delivered/delivered_at/delivered_to[peer]. NUNCA azul por flag
       //     stale nem pelo próprio last_read (maxReadId já exclui meu e-mail).
+      // [2026-10-07 receipts2] GRUPO ao vivo: com o roster conhecido, entregue/
+      // lido = agregado por MEMBRO (delivered_to/read_by do servidor + recibos ao
+      // vivo + watermark de cada membro). Antes: ✓✓ com o 1º membro (eventos
+      // setavam _delivered) e azul só após refetch. Sem roster → flags do servidor.
+      let _gAgg = null;
+      if (isGroupConv && isOwn && _groupOthers) {
+        _gAgg = _rcGroupAgg(item, _groupOthers, _groupReadWm);
+        if (item._read === true) _gAgg = { read: true, delivered: true }; // servidor: todos leram
+      }
       const peerDelivered = isGroupConv
-        ? !!item._delivered
+        ? (_gAgg ? _gAgg.delivered : !!item._delivered)
         : !!(item._delivered || item.delivered_at || _peerDeliveredOnLoad(item));
-      const readStatus = computeTickState(item, {
+      const readStatus = computeTickState((_gAgg && _gAgg.read && item._read !== true) ? { ...item, _read: true } : item, {
         isOwn,
         isGroup: isGroupConv,
         peerReadWatermark: readWatermark,
@@ -20642,7 +21209,7 @@ function ChatConversationInner() {
     }
     _enrichCacheRef.current = newCache; // drop stale entries
     return out;
-  }, [reversedMessages, highlightedMsgId, heartPopMsg, maxReadId, currentEmail, conversationType]);
+  }, [reversedMessages, highlightedMsgId, heartPopMsg, maxReadId, currentEmail, conversationType, members, readReceipts]); // [2026-10-07 receipts2] +members/readReceipts (agregado de grupo)
 
   // [perf] Overlay live upload progress onto ONLY the row(s) currently
   // uploading. uploadProgress ticks ~60×/s during a media send; folding it
@@ -20845,11 +21412,19 @@ function ChatConversationInner() {
       const cutoff = vanishTickNow - disappearingTimer * 1000;
       base = selectionOverlayMessages.filter(m => {
         if (!m || m._type === 'separator' || m._type === 'unread_separator' || m.type === 'system') return true;
+        if (m.kept === true) return true; // [2026-10-07 group-admin] "Manter mensagem" — server cron now spares kept rows too
         const t = Date.parse(m.created_at);
         if (!Number.isFinite(t)) return true; // unsent/optimistic — keep
         if (t < setAtMs) return true;          // sent BEFORE disappearing was on — keep forever
         return t > cutoff;                     // a disappearing msg: hide once older than timer
       });
+    }
+    // [2026-10-07 group-admin] Tópicos: picking a topic in the sheet only set
+    // activeTopic (used for sends) — the thread kept showing everything. Show
+    // the topic's messages (+ meta rows and not-yet-acked optimistic sends).
+    if (activeTopic?.id) {
+      const _tid = Number(activeTopic.id);
+      base = base.filter(m => !m || m._type || m._pending || typeof m.id !== 'number' || Number(m.topic_id) === _tid);
     }
     if (!isSavedMode) return base;
     const q = String(savedSearch || '').trim().toLowerCase();
@@ -20873,8 +21448,19 @@ function ChatConversationInner() {
       }
       return true;
     });
-  }, [selectionOverlayMessages, isSavedMode, savedSearch, savedFilter, disappearingTimer, disappearingSetAt, vanishTickNow]);
+  }, [selectionOverlayMessages, isSavedMode, savedSearch, savedFilter, disappearingTimer, disappearingSetAt, vanishTickNow, activeTopic]); // [2026-10-07 group-admin] +activeTopic
   flatListDataRef.current = flatListData; // [2026-10-06 thread-tech]
+  // [2026-10-07 flashlist] Data in the mounted list's RENDER order. The whole
+  // pipeline above (grouping/receipts/overlays) stays newest-first for the
+  // FlatList fallback; the FlashList chat layout wants oldest→newest, so flip
+  // once here (O(n) array copy, same row objects ⇒ MemoizedMessageRow still
+  // bails on reference equality). threadDataRef feeds threadScroll + the
+  // viewability prefetch.
+  const threadListData = useMemo(
+    () => (THREAD_OLDEST_FIRST ? flatListData.slice().reverse() : flatListData),
+    [flatListData]
+  );
+  threadDataRef.current = threadListData;
 
   // PERF: stable callback for FlatList — was an inline arrow recreated
   // every render, which `windowSize`-aware FlatList treats as a new prop
@@ -20890,8 +21476,12 @@ function ChatConversationInner() {
   // PERF: was `[styles.messageList, { paddingTop: Spacing.sm }]` inline —
   // a new array literal on every render forces FlatList shadow node to
   // re-evaluate contentContainerStyle each frame.
+  // [2026-10-07 flashlist] Oldest-first list: the gap above the composer is the
+  // content's paddingBottom (inverted lists draw paddingTop at the bottom).
   const messageListContentStyle = useMemo(
-    () => [styles.messageList, { paddingTop: Spacing.sm }],
+    () => (THREAD_OLDEST_FIRST
+      ? [styles.messageList, { paddingTop: 0, paddingBottom: Spacing.sm }]
+      : [styles.messageList, { paddingTop: Spacing.sm }]),
     []
   );
 
@@ -20905,6 +21495,30 @@ function ChatConversationInner() {
     () => (Platform.OS === 'ios' ? { minIndexForVisible: 1, autoscrollToTopThreshold: 100 } : undefined),
     []
   );
+  // [2026-10-07 flashlist] FlashList v2 MVCP (JS anchor on the first visible
+  // row, all platforms):
+  //  • 'flash' (oldest-first): older pages PREPENDED via onStartReached keep the
+  //    reading position; a new message arriving while the user is within 20% of
+  //    a viewport from the bottom auto-scrolls to it (WhatsApp); further up it
+  //    stays put and the FAB counter bumps. startRenderingFromBottom = open at
+  //    the newest message (initialScrollIndex = last) and bottom-align short
+  //    threads.
+  //  • 'flash-inverted': newest rows enter at index 0 == offset 0. MVCP would
+  //    anchor the previous first row and hide the new bubble below the fold
+  //    while the user sits at the bottom, so it's disabled (FlatList-Android
+  //    parity: content simply grows at the visual bottom).
+  const flashMvcpConfig = useMemo(
+    () => (THREAD_OLDEST_FIRST
+      ? { startRenderingFromBottom: true, autoscrollToBottomThreshold: 0.2, animateAutoScrollToBottom: true }
+      : { disabled: true }),
+    []
+  );
+  // [2026-10-07 flashlist] Load older history: the OLDEST rows sit at the start
+  // of an oldest-first list (onStartReached) and at the end of an inverted one
+  // (onEndReached). The ref keeps the prop stable for FlashList.
+  const handleLoadMoreRef = useRef(null);
+  handleLoadMoreRef.current = handleLoadMore;
+  const onThreadReachedOldest = useCallback(() => { try { handleLoadMoreRef.current?.(); } catch {} }, []);
 
   // PERF: ListHeaderComponent was inline JSX — recreated every parent render
   // (and the parent re-renders on EVERY keystroke via setInputText). That
@@ -20944,7 +21558,7 @@ function ChatConversationInner() {
       // viewport, leaving a giant white plane on slow Suporte chats with many
       // view-once rows). Single call with count=6 matches the actual prop API.
       return (
-        <View style={{ transform: [{ scaleY: -1 }], paddingTop: 20 }}>
+        <View style={[THREAD_EMPTY_FLIP, { paddingTop: 20 }]}>
           <ChatBubbleSkeleton count={6} />
         </View>
       );
@@ -20958,7 +21572,7 @@ function ChatConversationInner() {
       // button. This is what WhatsApp does: conversation just looks empty
       // when offline + cache miss; tapping anywhere lets you compose.
       return (
-        <View style={[styles.emptyMessages, { transform: [{ scaleY: -1 }], paddingHorizontal: 32 }]}>
+        <View style={[styles.emptyMessages, THREAD_EMPTY_FLIP, { paddingHorizontal: 32 }]}>
           <Text style={{ color: colors.text, fontSize: 15, fontWeight: '600', textAlign: 'center', marginBottom: 8 }}>
             {t('chatConv.loadErrorTitle') || 'Não foi possível carregar'}
           </Text>
@@ -20977,7 +21591,7 @@ function ChatConversationInner() {
       );
     }
     return (
-      <View style={[styles.emptyMessages, { transform: [{ scaleY: -1 }] }]}>
+      <View style={[styles.emptyMessages, THREAD_EMPTY_FLIP]}>
         <View style={{
           width: 96, height: 96, borderRadius: 48,
           backgroundColor: isDark ? 'rgba(17, 17, 17,0.10)' : 'rgba(17, 17, 17,0.10)',
@@ -21191,8 +21805,19 @@ function ChatConversationInner() {
     // picotava o scroll). Dispara só quando a visibilidade muda — 1×, não por
     // render. Pré-aquece as próximas ~5 imagens além do maior índice visível.
     try {
+      // [2026-10-07 flashlist] "Next OLDER rows" = higher indices in the
+      // newest-first data (FlatList / FlashList inverted) but LOWER indices in
+      // the oldest-first FlashList data. Normalize to a newest-first index over
+      // a newest-first view so the loop below is engine-agnostic.
       let maxIdx = -1;
-      for (const v of viewableItems) { if (typeof v?.index === 'number' && v.index > maxIdx) maxIdx = v.index; }
+      if (THREAD_OLDEST_FIRST) {
+        const n = (threadDataRef.current || []).length;
+        let minIdx = Infinity;
+        for (const v of viewableItems) { if (typeof v?.index === 'number' && v.index < minIdx) minIdx = v.index; }
+        if (minIdx !== Infinity && n > 0) maxIdx = n - 1 - minIdx;
+      } else {
+        for (const v of viewableItems) { if (typeof v?.index === 'number' && v.index > maxIdx) maxIdx = v.index; }
+      }
       if (maxIdx >= 0) {
         // [2026-10-06 thread-tech] BUG: `v.index` is an index into the
         // INVERTED list data (newest-first: flatListData), but this indexed
@@ -21301,9 +21926,24 @@ function ChatConversationInner() {
     if (enrichedMessages.length === 0) return;
     const tm = setTimeout(() => {
       try {
-        const idx = enrichedMessages.findIndex(m => m._type === 'unread_separator');
-        if (idx >= 0) {
-          flatListRef.current?.scrollToIndex?.({ index: idx, animated: false, viewPosition: 0.5 });
+        // [2026-10-07 flashlist] via threadScroll (render-order index of the
+        // divider in the MOUNTED data). Oldest-first FlashList: the thread
+        // opened at the newest message; if the divider is already on screen
+        // don't move (would push the newest rows off the bottom), otherwise
+        // park it near the TOP so the unread run fills the screen (WhatsApp).
+        if (THREAD_OLDEST_FIRST) {
+          const d = threadDataRef.current || [];
+          const di = d.findIndex(m => m && m._type === 'unread_separator');
+          if (di < 0) return;
+          let vis = null;
+          try { vis = flashListRef.current?.computeVisibleIndices?.(); } catch {}
+          if (!(vis && di >= vis.startIndex && di <= vis.endIndex)) {
+            threadScroll.toIndex(di, { animated: false, viewPosition: 0.15 });
+          }
+          didScrollToUnreadRef.current = true;
+          return;
+        }
+        if (threadScroll.toKey('unread-sep', { animated: false, viewPosition: 0.5 })) {
           didScrollToUnreadRef.current = true;
         }
       } catch {}
@@ -21314,9 +21954,11 @@ function ChatConversationInner() {
   // Optimized scroll handler - uses ref to avoid setState on every scroll event
   const showScrollDownRef = useRef(false);
   const handleFlatListScroll = useCallback((e) => {
-    const y = e.nativeEvent.contentOffset.y;
-    const scrolledUp = y > 300;
+    // [2026-10-07 flashlist] distance from the NEWEST message, engine-agnostic
+    // (inverted: contentOffset.y; oldest-first: contentH - viewportH - y).
+    const scrolledUp = threadScroll.distanceFromLatest(e) > 300;
     isScrolledUpRef.current = scrolledUp;
+    threadScrollStateRef.current.scrolledUp = scrolledUp;
     // Only trigger setState when the value actually changes
     if (showScrollDownRef.current !== scrolledUp) {
       showScrollDownRef.current = scrolledUp;
@@ -25797,15 +26439,8 @@ function ChatConversationInner() {
                   } catch {
                     // Fallback to the inline path on the off chance the
                     // callback ref isn't ready yet (very early renders).
-                    const idx = enrichedMessages.findIndex(m => m && m.id === targetId);
-                    if (idx >= 0) {
-                      try {
-                        flatListRef.current?.scrollToIndex?.({
-                          index: idx,
-                          animated: true,
-                          viewPosition: 0.5,
-                        });
-                      } catch {}
+                    // [2026-10-07 flashlist] via the scroll adapter (any engine).
+                    if (threadScroll.toMessage(targetId, { animated: true, viewPosition: 0.5 })) {
                       setReplyJumpHighlightId(targetId);
                       setTimeout(() => setReplyJumpHighlightId(prev => prev === targetId ? null : prev), 1500);
                     }
@@ -26446,6 +27081,16 @@ function ChatConversationInner() {
     // [2026-10-06 thread-tech] theme deps: a new renderItem makes the FlatList
     // re-run renderItem for mounted cells; the comparator then repaints them.
   }, [isDark, colors]); // eslint-disable-line react-hooks/exhaustive-deps
+  // [2026-10-07 flashlist] FlashList renderItem. With THREAD_FLASH_RECYCLE off
+  // the row gets a per-message key, so a recycled cell REMOUNTS the row instead
+  // of handing one message's mount-state (fade/scale Animated values, audio
+  // player, painted image) to another message.
+  const threadRenderItem = useCallback((info) => {
+    if (THREAD_FLASH_RECYCLE) return memoizedRenderItem(info);
+    const it = info && info.item;
+    return <React.Fragment key={it ? msgKeyExtractor(it) : 'x'}>{memoizedRenderItem(info)}</React.Fragment>;
+  }, [memoizedRenderItem, msgKeyExtractor]);
+  const threadGetItemType = useCallback((item) => threadItemType(item), []);
 
   // ── Drag-and-drop on web: arrastar foto/vídeo/arquivo pro chat envia ───
   // Native (iOS/Android) doesn't expose HTML drag events; the existing
@@ -26652,9 +27297,12 @@ function ChatConversationInner() {
           }} style={styles.headerBtn} accessibilityLabel={t('chatConv.star') || 'Favoritar'}>
             <IconStar size={20} color={colors.text} />
           </TouchableOpacity>
+          {/* [2026-10-07 group-admin] "Não permitir encaminhar": hidden for non-admins (ctx menu already did; multi-select bypassed it → 403). */}
+          {!(forwardingDisabled && !isGroupAdmin) && (
           <TouchableOpacity onPress={handleForwardSelected} style={styles.headerBtn} accessibilityLabel={t('chatConv.forward') || 'Encaminhar'}>
             <IconForward size={20} color={colors.text} />
           </TouchableOpacity>
+          )}
           <TouchableOpacity onPress={handleCopySelected} style={styles.headerBtn} accessibilityLabel={t('chatConv.copy') || 'Copiar'}>
             <IconCopy size={19} color={colors.text} />
           </TouchableOpacity>
@@ -27708,12 +28356,10 @@ function ChatConversationInner() {
                       // Best-effort scroll-to. scrollToItem can throw silently
                       // if the row isn't yet windowed in — we wrap in try/catch
                       // and let the user re-tap to re-attempt.
-                      try {
-                        const idx = messages.findIndex(m => String(m.id) === String(p.id));
-                        if (idx >= 0 && flatListRef.current?.scrollToIndex) {
-                          flatListRef.current.scrollToIndex({ index: idx, animated: true, viewPosition: 0.3 });
-                        }
-                      } catch {}
+                      // [2026-10-07 flashlist] Was a `messages` (oldest-first)
+                      // index fed to the newest-first list → jumped to the wrong
+                      // row. safeScrollToMsg = adapter + load-around + flash.
+                      try { safeScrollToMsg({ id: p.id }); } catch {}
                     }}
                     style={{
                       maxWidth: 220,
@@ -27807,6 +28453,47 @@ function ChatConversationInner() {
           </View>
         )}
         <ThreadKeyboardGestureArea>
+        {THREAD_IS_FLASH ? (
+        // [2026-10-07 flashlist] FlashList v2 thread (see THREAD_LIST_ENGINE).
+        // FlatList-only props (windowSize, maxToRenderPerBatch, initialNumToRender,
+        // updateCellsBatchingPeriod, removeClippedSubviews, onScrollToIndexFailed)
+        // don't exist here — v2 lays rows out synchronously from per-type size
+        // estimates and scrollToIndex works for rows outside the window.
+        <FlashList
+          ref={flashListRef}
+          data={threadListData}
+          inverted={!THREAD_OLDEST_FIRST}
+          keyExtractor={msgKeyExtractor}
+          renderItem={threadRenderItem}
+          getItemType={threadGetItemType}
+          // ~1 extra screen above/below on fling (2.3.3 fixed blank rows with
+          // small drawDistance; chat rows are tall → keep a generous buffer).
+          drawDistance={Platform.OS === 'web' ? 800 : 600}
+          contentContainerStyle={messageListContentStyle}
+          // Web: RN-web's ScrollView calls dismissKeyboard() (blur) on EVERY
+          // scroll event when 'on-drag' — programmatic ones included — and the
+          // FlashList autoscrolls to the bottom when the composer grows / a
+          // message arrives, which blurred the composer after the 1st typed
+          // char (QA 2026-10-07). Native modes only react to real drags.
+          keyboardDismissMode={Platform.OS === 'web' ? 'none' : THREAD_LIST_KEYBOARD_DISMISS_MODE}
+          keyboardShouldPersistTaps="handled"
+          bounces={false}
+          overScrollMode="never"
+          {...(THREAD_OLDEST_FIRST
+            ? { onStartReached: onThreadReachedOldest, onStartReachedThreshold: 0.5 }
+            : { onEndReached: onThreadReachedOldest, onEndReachedThreshold: 0.5 })}
+          onScroll={handleFlatListScroll}
+          scrollEventThrottle={16}
+          viewabilityConfig={viewabilityConfig}
+          onViewableItemsChanged={onViewableItemsChanged}
+          maintainVisibleContentPosition={flashMvcpConfig}
+          // Oldest-first: the "loading older" spinner sits at the TOP (header)
+          // and the typing bubble at the BOTTOM (footer) — inverted swaps them.
+          ListHeaderComponent={THREAD_OLDEST_FIRST ? listFooter : listHeader}
+          ListFooterComponent={THREAD_OLDEST_FIRST ? listHeader : listFooter}
+          ListEmptyComponent={listEmpty}
+        />
+        ) : (
         <FlatList
           ref={flatListRef}
           data={flatListData}
@@ -27862,6 +28549,7 @@ function ChatConversationInner() {
           // re-enabled clipping on native and brought back the inverted
           // FlatList row-jump bug we already fixed.
         />
+        )}
         </ThreadKeyboardGestureArea>
         </>
       )}
@@ -28370,7 +29058,7 @@ function ChatConversationInner() {
       {showScrollDown && (
         <ScrollDownFabAnim
           onPress={() => {
-            flatListRef.current?.scrollToOffset({ offset: 0, animated: true });
+            threadScroll.toLatest({ animated: true }); // [2026-10-07 flashlist]
             setShowScrollDown(false);
             setNewMsgCount(0);
             try { if (Platform.OS !== 'web') Haptics.selectionAsync(); } catch {}
@@ -31045,7 +31733,11 @@ function ChatConversationInner() {
             // non-HEIC). Re-encode through ImageManipulator drops EXIF.
             // HEIC + >800KB cases are already re-encoded inside
             // uploadAndSendFile so EXIF gets stripped there for free.
-            if (stripExif && Platform.OS !== 'web' && isImage(f) && f.uri && !_isGif) {
+            // [2026-10-07 send-media] Skipped when the durable media queue owns
+            // native sends: it ALWAYS re-encodes non-GIF photos (EXIF/GPS strip,
+            // HEIC→JPEG, fit-in-box), and an await here would let the 4-wide
+            // pool enqueue album items out of order.
+            if (stripExif && Platform.OS !== 'web' && !OUTBOX_V2_ONLY && isImage(f) && f.uri && !_isGif) {
               try {
                 const fSize = f.size || 0;
                 const _isHeic = /\.heic$|\.heif$/i.test(f.name || f.uri || '') || /heic|heif/i.test(f.type || '');
@@ -31858,7 +32550,7 @@ function ChatConversationInner() {
                 {conversationName}
               </Text>
               <Text style={{ fontSize: 13.5, color: colors.textSecondary, fontWeight: '500' }}>
-                {t('chatConv.group') || 'Grupo'} · {members.length} {t('chatConv.members') || 'participantes'}
+                {t('chatConv.group') || 'Grupo'} · {membersHiddenForMe && groupMemberCount > 0 ? groupMemberCount : members.length} {t('chatConv.members') || 'participantes'}{/* [2026-10-07 group-admin] real count when roster hidden */}
               </Text>
               {/* WhatsApp-style action buttons row (4 round, tinted) */}
               <View style={{ flexDirection: 'row', gap: 10, marginTop: 24 }}>
@@ -31866,7 +32558,7 @@ function ChatConversationInner() {
                   { Icon: IconPhone, tint: GI_ACCENT, label: t('chatConv.audio') || 'Áudio', onPress: () => { setShowGroupInfo(false); handleStartAudioCall(); } },
                   { Icon: IconVideo, tint: '#0A84FF', label: t('chatConv.video') || 'Vídeo', onPress: () => { setShowGroupInfo(false); handleStartVideoCall(); } },
                   { Icon: IconSearch, tint: '#5856D6', label: t('chatConv.search') || 'Buscar', onPress: () => { setShowGroupInfo(false); setShowSearchBar?.(true); } },
-                  { Icon: IconBell, tint: '#FF9500', label: mutedUntil ? (t('chatConv.muted') || 'Mudo') : (t('chatConv.muteChat') || 'Silenciar'), onPress: () => { setShowGroupInfo(false); setShowMuteModal(true); } },
+                  { Icon: IconBell, tint: '#FF9500', label: mutedUntil ? (t('chatConv.muted') || 'Mudo') : (t('chatConv.muteChat') || 'Silenciar'), onPress: () => groupInfoGo(() => setShowMuteModal(true)) }, // [2026-10-07 group-admin]
                 ].map((a, ai) => (
                   <TouchableOpacity key={ai} activeOpacity={0.6} onPress={a.onPress} style={{ alignItems: 'center', width: 70 }}>
                     <View style={{ width: 54, height: 54, borderRadius: 27, backgroundColor: a.tint + '1F', alignItems: 'center', justifyContent: 'center' }}>
@@ -31930,13 +32622,19 @@ function ChatConversationInner() {
                   tint="#F59E0B"
                   title={`${pendingMembers.length} ${pendingMembers.length === 1 ? (t('chatConv.pendingRequestSingular') || 'solicitação pendente') : (t('chatConv.pendingRequestsPlural') || 'solicitações pendentes')}`}
                   subtitle={t('chatConv.pendingTapToReview') || 'Toque para revisar'}
-                  onPress={() => { refreshPendingMembers(); setShowPendingModal(true); }}
+                  onPress={() => { refreshPendingMembers(); groupInfoGo(() => setShowPendingModal(true), true); }} // [2026-10-07 group-admin]
                   right="chevron"
                 />
               </GroupCard>
             )}
 
-            <GroupSectionLabel colors={colors}>{`${t('chatConv.members')} (${members.length})`}</GroupSectionLabel>
+            <GroupSectionLabel colors={colors}>{`${t('chatConv.members')} (${membersHiddenForMe && groupMemberCount > 0 ? groupMemberCount : members.length})`}</GroupSectionLabel>
+            {/* [2026-10-07 group-admin] roster stripped by "Ocultar lista de membros" — say so instead of a lone "você". */}
+            {membersHiddenForMe && !isGroupAdmin && (
+              <Text style={{ fontSize: 12.5, color: colors.textTertiary, marginTop: -4, marginBottom: 8, paddingHorizontal: 4 }}>
+                {t('chatConv.membersHiddenNote') || 'Os admins ocultaram a lista de membros deste grupo.'}
+              </Text>
+            )}
             <GroupCard colors={colors} isDark={isDark}>
               {isGroupAdmin && (
                 <>
@@ -32195,7 +32893,7 @@ function ChatConversationInner() {
                       } catch {}
                       setInviteLinkLoading(false);
                     }
-                    setShowInviteQr(true);
+                    groupInfoGo(() => setShowInviteQr(true), true); // [2026-10-07 group-admin]
                   }}
                   activeOpacity={0.7}
                   style={{ marginTop: 10, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: 11, borderRadius: 11, backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : '#f0f2f5', gap: 7 }}
@@ -32222,7 +32920,7 @@ function ChatConversationInner() {
                 Icon={IconImage}
                 tint="#0A84FF"
                 title={t('chatConv.media') || 'Midia, links e docs'}
-                onPress={() => { setShowGroupInfo(false); setShowMediaGallery(true); }}
+                onPress={() => groupInfoGo(() => setShowMediaGallery(true))} // [2026-10-07 group-admin]
                 right="chevron"
               />
               <GroupDivider colors={colors} />
@@ -32240,7 +32938,7 @@ function ChatConversationInner() {
                 Icon={IconStar}
                 tint="#F59E0B"
                 title={t('chat.starredMessages') || 'Mensagens favoritas'}
-                onPress={() => { setShowGroupInfo(false); setShowStarredModal(true); loadStarredMessages(); }}
+                onPress={() => { loadStarredMessages(); groupInfoGo(() => setShowStarredModal(true)); }} // [2026-10-07 group-admin]
                 right="chevron"
               />
             </GroupCard>
@@ -32255,14 +32953,14 @@ function ChatConversationInner() {
               tint="#FF9500"
               title={mutedUntil ? (t('chatConv.unmute') || 'Remover silêncio') : (t('chatConv.muteChat') || 'Silenciar conversa')}
               titleColor={mutedUntil ? '#f59e0b' : colors.text}
-              onPress={() => setShowMuteModal(true)}
+              onPress={() => groupInfoGo(() => setShowMuteModal(true), true)} // [2026-10-07 group-admin] iOS drops a sibling Modal
               right="chevron"
             />
             <GroupDivider colors={colors} />
 
             {/* Notification Sound */}
             <TouchableOpacity
-              onPress={() => setShowNotifSoundPicker(true)}
+              onPress={() => groupInfoGo(() => setShowNotifSoundPicker(true), true)} // [2026-10-07 group-admin]
               activeOpacity={0.6}
               style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, paddingVertical: 11, minHeight: 56, gap: 12 }}
             >
@@ -32290,12 +32988,12 @@ function ChatConversationInner() {
                 <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, paddingVertical: 11, minHeight: 56, gap: 12 }}>
                   <TouchableOpacity
                     onPress={async () => {
-                      setShowGroupInfo(false);
+                      // [2026-10-07 group-admin] open via groupInfoGo (iOS sibling-Modal drop)
                       try {
                         const r = await api.chatTopicList(conversationId);
-                        if (r?.success) setTopics(r.data?.topics || []);
+                        if (r?.success) setTopics(r.data?.topics || r.data?.items || []); // [2026-10-07 group-admin] server returned only `items` → sheet was always empty
                       } catch {}
-                      setShowTopicsModal(true);
+                      groupInfoGo(() => setShowTopicsModal(true), true);
                     }}
                     activeOpacity={0.6}
                     style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 12 }}
@@ -32319,12 +33017,12 @@ function ChatConversationInner() {
                         // doesn't collide with a stale state.
                         try {
                           const r = await api.chatTopicList(conversationId);
-                          if (r?.success) setTopics(r.data?.topics || []);
+                          if (r?.success) setTopics(r.data?.topics || r.data?.items || []); // [2026-10-07 group-admin] server returned only `items` → sheet was always empty
                         } catch {}
                         setNewTopicName('');
                         setNewTopicIcon('💬');
                         setNewTopicColor('#111111');
-                        setShowTopicCreate(true);
+                        groupInfoGo(() => setShowTopicCreate(true), true); // [2026-10-07 group-admin]
                       }}
                       accessibilityLabel={t('chat.createTopic') || 'Criar tópico'}
                       style={{ width: 32, height: 32, borderRadius: 16, backgroundColor: GI_ACCENT, alignItems: 'center', justifyContent: 'center' }}
@@ -32349,7 +33047,7 @@ function ChatConversationInner() {
                     : slowModeSeconds < 60 ? `${slowModeSeconds}s`
                     : slowModeSeconds < 3600 ? `${Math.round(slowModeSeconds/60)}m`
                     : `${Math.round(slowModeSeconds/3600)}h`}
-                  onPress={() => setShowSlowModePicker(true)}
+                  onPress={() => groupInfoGo(() => setShowSlowModePicker(true), true)} // [2026-10-07 group-admin]
                   right="chevron"
                 />
               </>
@@ -32373,21 +33071,39 @@ function ChatConversationInner() {
                       subtitle={t('chatConv.inviteLinkHint') || 'Qualquer um com o link pode entrar no grupo'}
                       right="chevron"
                       onPress={async () => {
+                        // [2026-10-07 group-admin] Web: safeAlert maps to
+                        // window.confirm → only "Copiar" was reachable (no
+                        // rotate/revoke) — reuse the copy+confirm flow there.
+                        // Native: + "Revogar link" and keep inviteLink state
+                        // in sync after rotate/revoke (QR/"Link do grupo"
+                        // kept showing the dead link).
+                        if (Platform.OS === 'web') { handleGenerateInviteLink(false); return; }
                         try {
                           const r = await api.chatGroupInviteLinkV2(conversationId, 'get');
                           const url = r?.data?.url || '';
-                          if (!url) { safeAlert(t('common.error'), 'Falha ao gerar link'); return; }
+                          if (!url) { safeAlert(t('common.error'), r?.message || 'Falha ao gerar link'); return; }
+                          setInviteLink(url);
                           safeAlert(
                             t('chatConv.inviteLink') || 'Link de convite',
                             url,
                             [
                               { text: t('common.cancel') || 'Cancelar', style: 'cancel' },
                               { text: t('common.copy') || 'Copiar', onPress: () => {
-                                try { Platform.OS === 'web' ? navigator.clipboard?.writeText?.(url) : Clipboard.setStringAsync(url); } catch {}
+                                try { Clipboard.setStringAsync(url); } catch {}
                               }},
                               { text: t('chatConv.inviteRotate') || 'Gerar novo', onPress: async () => {
-                                await api.chatGroupInviteLinkV2(conversationId, 'rotate');
-                                safeAlert(t('common.success') || 'OK', t('chatConv.inviteRotated') || 'Link anterior invalidado');
+                                const rr = await api.chatGroupInviteLinkV2(conversationId, 'rotate');
+                                if (rr?.success) {
+                                  setInviteLink(rr?.data?.url || null);
+                                  safeAlert(t('common.success') || 'OK', t('chatConv.inviteRotated') || 'Link anterior invalidado');
+                                } else safeAlert(t('common.error') || 'Erro', rr?.message || 'Falha');
+                              }},
+                              { text: t('chatConv.inviteRevoke') || 'Revogar link', style: 'destructive', onPress: async () => {
+                                const rv = await api.chatGroupInviteLinkV2(conversationId, 'revoke');
+                                if (rv?.success) {
+                                  setInviteLink(null);
+                                  safeAlert(t('common.success') || 'OK', t('chatConv.inviteRevoked') || 'Link revogado. Ninguém mais entra por ele.');
+                                } else safeAlert(t('common.error') || 'Erro', rv?.message || 'Falha');
                               }},
                             ]
                           );
@@ -32512,7 +33228,7 @@ function ChatConversationInner() {
                       right="chevron"
                       accessibilityRole="button"
                       accessibilityLabel={t('chat.disappearing') || 'Mensagens temporárias'}
-                      onPress={() => { setShowGroupInfo(false); setShowDisappearingModal(true); }}
+                      onPress={() => groupInfoGo(() => setShowDisappearingModal(true), true)} // [2026-10-07 group-admin]
                     />
                   </GroupCard>
                 </>

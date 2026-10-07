@@ -502,6 +502,38 @@ export async function persistAuthForNativeCall(token: string, baseUrl: string): 
   }
 }
 
+// [2026-10-07 recv-native] Android chat-notification native state (no-op on
+// iOS / older binaries: every call is feature-detected, never throws).
+export async function setChatNotificationAuth(
+  activeEmail: string,
+  activeToken: string,
+  tokens: Record<string, string>,
+): Promise<void> {
+  const m: any = getModule();
+  if (!m || typeof m.setChatNotificationAuth !== 'function') return;
+  try {
+    await m.setChatNotificationAuth(activeEmail || '', activeToken || '', tokens || {});
+  } catch {}
+}
+
+export function setActiveChatConversation(conversationId: string | number | null | undefined): void {
+  const m: any = getModule();
+  if (!m || typeof m.setActiveChatConversation !== 'function') return;
+  try { m.setActiveChatConversation(conversationId == null ? '' : String(conversationId)); } catch {}
+}
+
+export function dismissChatNotification(conversationId: string | number | null | undefined): void {
+  const m: any = getModule();
+  if (!m || conversationId == null || typeof m.dismissChatNotification !== 'function') return;
+  try { m.dismissChatNotification(String(conversationId)); } catch {}
+}
+
+export function clearChatNotificationAuth(): void {
+  const m: any = getModule();
+  if (!m || typeof m.clearChatNotificationAuth !== 'function') return;
+  try { m.clearChatNotificationAuth(); } catch {}
+}
+
 export async function persistPendingLkToken(roomName: string, token: string, url: string): Promise<void> {
   const m = getModule();
   if (!m) return;
@@ -867,4 +899,43 @@ export function onShareDidSend(
   if (!e) return () => {};
   const sub = e.addListener('onShareDidSend', cb);
   return () => sub.remove();
+}
+
+// ─── [2026-10-07 bgsync] Background message journal + periodic bg sync ────
+// Native writers: Android FCM service + ChatBgSyncWorker (WorkManager), iOS
+// NSE + BGAppRefreshTask. JS (services/bgJournal.js) merges before first
+// paint. Every wrapper is feature-detected → a no-op on older binaries.
+
+export function bgJournalRead(): { text: string; bytes: number } | null {
+  const m: any = getModule();
+  if (!m || typeof m.bgJournalRead !== 'function') return null;
+  try {
+    const r = m.bgJournalRead();
+    if (!r || typeof r.text !== 'string') return null;
+    return { text: r.text, bytes: Number(r.bytes) || 0 };
+  } catch { return null; }
+}
+
+export function bgJournalCommit(consumedBytes: number, keep: string): boolean {
+  const m: any = getModule();
+  if (!m || typeof m.bgJournalCommit !== 'function') return false;
+  try { return !!m.bgJournalCommit(Number(consumedBytes) || 0, keep || ''); } catch { return false; }
+}
+
+export function bgJournalClear(): void {
+  const m: any = getModule();
+  if (!m || typeof m.bgJournalClear !== 'function') return;
+  try { m.bgJournalClear(); } catch {}
+}
+
+export async function bgSyncConfigure(cfgJson: string): Promise<void> {
+  const m: any = getModule();
+  if (!m || typeof m.bgSyncConfigure !== 'function') return;
+  try { await m.bgSyncConfigure(cfgJson || '{}'); } catch {}
+}
+
+export async function bgSyncSchedule(enabled: boolean): Promise<void> {
+  const m: any = getModule();
+  if (!m || typeof m.bgSyncSchedule !== 'function') return;
+  try { await m.bgSyncSchedule(!!enabled); } catch {}
 }

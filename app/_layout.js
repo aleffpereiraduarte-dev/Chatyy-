@@ -81,6 +81,10 @@ try {
 // before React/components so the monkey-patch is installed before any screen
 // mounts and schedules a LayoutAnimation. Android is left untouched.
 import '../services/disableLayoutAnimationIOS';
+// [2026-10-07 coldstart] Boot trace + native-splash owner + after-first-paint
+// scheduler. Imported this early so its T0 is as close to bundle start as
+// possible (imports evaluate in order).
+import { mark as _bootMark, armSplashFallback, afterFirstPaint, reportBootMarksSampled } from '../services/bootTrace';
 // Suspende a renderização de telas empilhadas fora de tela → menos trabalho no
 // thread JS e menos memória (react-native-screens já está no bundle nativo).
 import { enableFreeze } from 'react-native-screens';
@@ -145,8 +149,18 @@ function _registerLiveKitGlobals() {
     if (typeof console !== 'undefined') console.warn('[LiveKit] registerGlobals failed:', e?.message);
   }
 }
+// [2026-10-07 coldstart] setTimeout(0) still ran the 80-200 ms require +
+// registerGlobals on the JS thread BEFORE the first frames (timers fire while
+// the root is mounting). Now: after the chat list's first paint (+1.2 s,
+// staggered behind the critical post-paint work). Any call path that needs
+// WebRTC globals earlier (call launched from a push / CallKit within the first
+// second) calls globalThis.__chatyyEnsureLiveKitGlobals() synchronously first
+// (app/call.js ensureLiveKitRegistered, services/pstnCall.js) — so the
+// registration ORDER is unchanged: this opts-registration always runs before
+// the screen's own registerGlobals(), exactly as when it ran at boot.
+try { if (typeof globalThis !== 'undefined') globalThis.__chatyyEnsureLiveKitGlobals = _registerLiveKitGlobals; } catch {}
 if (Platform.OS !== 'web' && typeof setTimeout === 'function') {
-  setTimeout(_registerLiveKitGlobals, 0);
+  afterFirstPaint(_registerLiveKitGlobals, 1200);
 }
 
 // Web has no native Animated module — force useNativeDriver:false globally
@@ -402,8 +416,23 @@ SplashScreen.preventAutoHideAsync().catch(() => {});
 // bridges and is irrelevant to first paint; running it at module-eval time
 // added native bridge work before the first screen could render. setTimeout(0)
 // lets the launch→chat-list path finish first; registration is idempotent.
+// [2026-10-07 coldstart] setTimeout(0) still landed inside the first-frame
+// window; now after the chat list's first paint (+1.5 s, idempotent).
 if (Platform.OS !== 'web' && typeof setTimeout === 'function') {
-  setTimeout(() => { try { registerBackgroundSync().catch(() => {}); } catch {} }, 0);
+  afterFirstPaint(() => { try { registerBackgroundSync().catch(() => {}); } catch {} }, 1500);
+  // [2026-10-07 bgsync] Background message journal: foreground merge hook now
+  // (cheap listener; the cold-start merge itself runs inside the chat list's
+  // first store read — services/chatStore getConversationsSync), periodic
+  // native bg sync (Android WorkManager / iOS BGAppRefreshTask) + its cursor
+  // snapshot after the first paint. All no-ops on binaries without the natives.
+  try { require('../services/bgJournal').init(); } catch {}
+  afterFirstPaint(() => {
+    try {
+      const bj = require('../services/bgJournal');
+      bj.scheduleBackgroundSync(true);
+      bj.exportSyncConfig();
+    } catch {}
+  }, 2500);
 }
 
 // Handles deep links: mailto:, chat, email, and other app URLs
@@ -701,27 +730,13 @@ function AppInit({ onNotification, setOtaToast }) {
     // AuthContext to confirm the user before warming caches.
     if (!auth?.user?.email) return;
     prefetchedRef.current = true;
-    // Warm memory cache from persistent storage first
-    warmCache(['contacts', 'calendar_events', 'files_root', 'notes', 'one_conversations']).catch(() => {});
-    // Scan disk media cache (chat-media-cache/ + chat-media-saved/) to build
-    // a synchronous URL→file:// index. Lets resolveMediaUri() return cached
-    // paths without flicker at first render on Android/reopen.
-    try { import('../services/mediaCache').then(m => m.initSyncCache?.().catch(() => {})); } catch {}
-    // Prime contact nicknames (per-user display-name overrides) so bubbles
-    // and the chat list can resolve custom names synchronously on first paint.
-    try { import('../services/nicknames').then(m => m.refreshNicknames?.().catch(() => {})); } catch {}
-    // Outbox drainer — retries any chat_send that was queued while offline.
-    // Drains on boot, on network reconnect, on WS reconnect, and every 60s.
-    // Server dedup by client_message_id makes double-sends impossible.
-    try { import('../services/outboxDrainer').then(m => m.initOutboxDrainer?.()); } catch {}
-
-    // WhatsApp-grade send worker (#1169) — SQLite-backed outbox state machine
-    // with WS-first delivery + exponential backoff + per-conversation FIFO.
-    // Lives alongside the legacy drainer above; both are idempotent (server
-    // dedups by client_message_id), the new worker just provides UI status
-    // visibility ("Enviando...", "Tentando de novo (3)") via SendStatusText.
-    try { import('../services/sendWorker').then(m => m.start?.()); } catch {}
-
+    // [2026-10-07 coldstart] Every service init below used to fire in the SAME
+    // tick the cached user landed — i.e. while index.js was routing to /chat and
+    // ChatListTab was doing its first render — so ~10 module evaluations +
+    // starts competed with the first paint on the single JS thread. They now
+    // run AFTER the chat list's first paint (services/bootTrace.afterFirstPaint,
+    // capped at 2.5 s from JS start), staggered into separate macrotasks. Order
+    // = importance: live persistence first, send paths next, housekeeping last.
     // Global chat persistence — WhatsApp-style local-first. Every WS / MQTT /
     // TCP chat event (msg, edit, delete, reaction) lands in SQLite + SmartCache
     // the instant it arrives, no matter which screen is open. Before this, only
@@ -729,28 +744,52 @@ function AppInit({ onNotification, setOtaToast }) {
     // arrived while the user was on the chat list left the msg in memory only —
     // tapping the chat then re-fetched it from the server (and showed a
     // skeleton flash). Idempotent + safe across re-login.
-    try {
-      import('../services/chatPersistence').then(m => {
-        try { m.startChatPersistence?.(); } catch {}
-        // Eager hydrate SQLite + SmartCache so the very first paint of any
-        // chat screen already has data on disk-backed local-first cache.
-        try { m.hydrateChatFromDisk?.().catch?.(() => {}); } catch {}
-      });
-    } catch {}
+    afterFirstPaint(() => {
+      try {
+        import('../services/chatPersistence').then(m => {
+          try { m.startChatPersistence?.(); } catch {}
+          // Eager hydrate SQLite + SmartCache so the very first paint of any
+          // chat screen already has data on disk-backed local-first cache.
+          try { m.hydrateChatFromDisk?.().catch?.(() => {}); } catch {}
+        });
+      } catch {}
+    }, 0);
+    // Prime contact nicknames (per-user display-name overrides). The MMKV copy
+    // is loaded synchronously at module eval; this is the network refresh.
+    afterFirstPaint(() => { try { import('../services/nicknames').then(m => m.refreshNicknames?.().catch(() => {})); } catch {} }, 0);
+    // Outbox drainer — retries any chat_send that was queued while offline.
+    // Drains on boot, on network reconnect, on WS reconnect, and every 60s.
+    // Server dedup by client_message_id makes double-sends impossible.
+    afterFirstPaint(() => { try { import('../services/outboxDrainer').then(m => m.initOutboxDrainer?.()); } catch {} }, 150);
+
+    // WhatsApp-grade send worker (#1169) — SQLite-backed outbox state machine
+    // with WS-first delivery + exponential backoff + per-conversation FIFO.
+    // Lives alongside the legacy drainer above; both are idempotent (server
+    // dedups by client_message_id), the new worker just provides UI status
+    // visibility ("Enviando...", "Tentando de novo (3)") via SendStatusText.
+    afterFirstPaint(() => { try { import('../services/sendWorker').then(m => m.start?.()); } catch {} }, 150);
 
     // Online recovery orchestrator — WhatsApp-grade auto-sync. Listens for
     // NetInfo offline→online flips, WS authenticated reconnects, and
     // AppState 'active' transitions; coalesces them with an 800ms debounce
     // and runs: outbox flush → conv delta sync → chat list refresh →
     // envelope pull. See services/onlineRecoveryOrchestrator.js.
-    try {
-      import('../services/onlineRecoveryOrchestrator').then(m => {
-        try {
-          const apiMod = require('../services/api');
-          m.startOnlineRecovery?.(apiMod);
-        } catch {}
-      });
-    } catch {}
+    afterFirstPaint(() => {
+      try {
+        import('../services/onlineRecoveryOrchestrator').then(m => {
+          try {
+            const apiMod = require('../services/api');
+            m.startOnlineRecovery?.(apiMod);
+          } catch {}
+        });
+      } catch {}
+    }, 250);
+    // Scan disk media cache (chat-media-cache/ + chat-media-saved/) to refresh
+    // the synchronous URL→file:// index against the real disk (readDirectory
+    // over thousands of files — the reason it is no longer in the boot gate).
+    afterFirstPaint(() => { try { import('../services/mediaCache').then(m => m.initSyncCache?.().catch(() => {})); } catch {} }, 600);
+    // Warm memory cache from persistent storage (non-chat tabs only).
+    afterFirstPaint(() => { warmCache(['contacts', 'calendar_events', 'files_root', 'notes', 'one_conversations']).catch(() => {}); }, 1200);
 
     // [share outbox bridge, 2026-05-19] Subscribe to native iOS ShareExtension
     // completion events. Without this, shares sent via the iOS Share Sheet
@@ -760,13 +799,15 @@ function AppInit({ onNotification, setOtaToast }) {
     // AppDelegate NSNotification → ExpoCallKit `onShareDidSend` event) and
     // triggers a deltaSync.syncNow() so the chat list + affected
     // conversation reflect the newly-sent message.
-    try {
-      import('../services/shareOutbox').then(m => {
-        try {
-          m.subscribeShareOutbox?.(m.defaultShareOutboxHandler);
-        } catch {}
-      });
-    } catch {}
+    afterFirstPaint(() => {
+      try {
+        import('../services/shareOutbox').then(m => {
+          try {
+            m.subscribeShareOutbox?.(m.defaultShareOutboxHandler);
+          } catch {}
+        });
+      } catch {}
+    }, 400);
 
     // [chat cloud backup scheduler, 2026-05-20] Fire-and-forget — registers
     // the once-a-day chat backup BG task. The scheduler self-gates on the
@@ -774,11 +815,13 @@ function AppInit({ onNotification, setOtaToast }) {
     // when the user hasn't cached a passphrase yet (setup not finished).
     // Safe to call on every cold start: expo-task-manager + BackgroundFetch
     // dedupe by task name, so re-registering is a no-op.
-    try {
-      import('../services/backupScheduler').then(m => {
-        try { m.scheduleDaily?.().catch(() => {}); } catch {}
-      });
-    } catch {}
+    afterFirstPaint(() => {
+      try {
+        import('../services/backupScheduler').then(m => {
+          try { m.scheduleDaily?.().catch(() => {}); } catch {}
+        });
+      } catch {}
+    }, 3000);
 
     // [photo backup worker reconcile, 2026-05-19] Android-only — when the
     // BackupWorker uploads photos in the background while the app is
@@ -788,11 +831,13 @@ function AppInit({ onNotification, setOtaToast }) {
     // stays consistent and the backup screen shows correct counts. Without
     // this, the next foreground re-attempts already-uploaded files
     // (server dedups via content_hash but wastes battery on the rescan).
-    try {
-      import('../services/photoBackup').then(m => {
-        try { m.wireWorkerReconcile?.(); } catch {}
-      });
-    } catch {}
+    afterFirstPaint(() => {
+      try {
+        import('../services/photoBackup').then(m => {
+          try { m.wireWorkerReconcile?.(); } catch {}
+        });
+      } catch {}
+    }, 3000);
 
     // Share-intent: one-shot check at startup. The CONTINUOUS live listener
     // (for shares that arrive while the app is already running in the
@@ -895,7 +940,8 @@ function AppInit({ onNotification, setOtaToast }) {
       } catch {}
     };
     // Delay pre-fetch to not compete with initial inbox load
-    setTimeout(doPreload, 3000);
+    // [2026-10-07 coldstart] anchored to the chat list's first paint.
+    afterFirstPaint(doPreload, 2500);
 
     // Stage D (#1200, 2026-05-20): GLOBAL trigger for the WhatsApp-grade
     // full-history bootstrap. Previously chat.js was the ONLY entry point —
@@ -906,13 +952,14 @@ function AppInit({ onNotification, setOtaToast }) {
     // SQLite gate if it's already 'done', and on the singleton flag if a
     // run is already in flight. The 2500ms delay lets first paint settle.
     if (Platform.OS !== 'web') {
-      setTimeout(() => {
+      // [2026-10-07 coldstart] anchored to the chat list's first paint.
+      afterFirstPaint(() => {
         try {
           const { bootstrapFullHistoryOnce } = require('../services/fullHistorySync');
           const apiMod = require('../services/api');
           bootstrapFullHistoryOnce(apiMod.apiCall, auth.user.email).catch(() => {});
         } catch {}
-      }, 2500);
+      }, 2000);
       // Stage E (#1247, 2026-05-21): WhatsApp-grade BACKGROUND media auto-sync.
       // Separate from the bootstrap loop — that one walks message history; this
       // one fills any media row whose local_path stayed NULL after WS push +
@@ -921,12 +968,12 @@ function AppInit({ onNotification, setOtaToast }) {
       // tick. The user's request: "deveria sincronizar automaticamente pra
       // nunca faltar nada" — Settings now reads from this loop's progress so
       // they see "Sincronizado" instead of "Mídias faltantes: 47".
-      setTimeout(() => {
+      afterFirstPaint(() => {
         try {
           const { initMediaAutoSync } = require('../services/mediaAutoSync');
           initMediaAutoSync(auth.user.email);
         } catch {}
-      }, 4000);
+      }, 3500);
     }
   }, [auth?.user?.email]);
 
@@ -1049,9 +1096,10 @@ function AppInit({ onNotification, setOtaToast }) {
     let mounted = true;
 
     // Analytics tracking — app_open for native only (web pageviews tracked by pathname useEffect)
-    try {
-      if (Platform.OS !== 'web') { trackAppOpen(); }
-    } catch {}
+    // [2026-10-07 coldstart] analytics beacon after first paint (+1 s).
+    if (Platform.OS !== 'web') {
+      afterFirstPaint(() => { try { trackAppOpen(); } catch {} }, 1000);
+    }
 
     // Set foreground notification handler for in-app toast (works on all platforms)
     (async () => {
@@ -1182,15 +1230,18 @@ function AppInit({ onNotification, setOtaToast }) {
     // is never the target of relay_request (it doesn't own SQLite history).
     // Safe to install eagerly — handler is a single ws.on() registration.
     let relayResponderUnsub = null;
-    (async () => {
+    // [2026-10-07 coldstart] relay answers are for OTHER devices — after paint.
+    afterFirstPaint(async () => {
       try {
+        if (!mounted) return;
         const { installRelayResponder } = await import('../services/relayResponder');
+        if (!mounted) return;
         relayResponderUnsub = installRelayResponder();
       } catch (e) {
         // Non-fatal — relay is best-effort.
         console.warn('[relayResponder] install failed:', e?.message);
       }
-    })();
+    }, 500);
 
     if (Platform.OS === 'web') return () => {
       mounted = false;
@@ -1226,12 +1277,14 @@ function AppInit({ onNotification, setOtaToast }) {
     })();
 
     // Schedule local notifications for upcoming meetings
-    (async () => {
+    // [2026-10-07 coldstart] not needed for the first screen → after paint.
+    afterFirstPaint(async () => {
       try {
+        if (!mounted) return;
         const { initMeetingReminders } = await import('../services/meetingReminders');
         if (mounted) await initMeetingReminders();
       } catch {}
-    })();
+    }, 2000);
 
     // Setup CallKit + VoIP Push (iOS only)
     // SKIP on web to avoid TDZ issues in callkeep module
@@ -1318,7 +1371,8 @@ function AppInit({ onNotification, setOtaToast }) {
         finally { _syncing = false; }
       };
       // Initial sync — 1.5s after mount so we don't fight cold-start work.
-      setTimeout(() => { maybeRunSync(false).catch(() => {}); }, 1500);
+      // [2026-10-07 coldstart] 1.5 s AFTER the chat list's first paint.
+      afterFirstPaint(() => { if (mounted) maybeRunSync(false).catch(() => {}); }, 1500);
       // AppState foreground re-check — react-native AppState 'change' fires
       // every time the user comes back; we gate by the 12h timestamp so this
       // is cheap on rapid switches.
@@ -1345,7 +1399,9 @@ function AppInit({ onNotification, setOtaToast }) {
     // Initialize auto photo backup (global, not tied to Photos screen)
     // Listens for new photos (MediaLibrary) and app foreground (AppState)
     if (Platform.OS !== 'web') {
-      setTimeout(() => {
+      // [2026-10-07 coldstart] 2 s after first paint (was 2 s after mount,
+      // which on a slow device still landed inside the first-paint window).
+      afterFirstPaint(() => {
         initAutoBackup().catch(() => {});
       }, 2000); // Start backup quickly (was 10s - too slow, user minimizes before)
     }
@@ -1565,35 +1621,42 @@ export default function RootLayout() {
   // reported after swipe-up kill ("se eu swipe up, abro de novo, carrega
   // tudo de novo"). Web is unaffected — localStorage is sync there.
   const [cacheReady, setCacheReady] = useState(Platform.OS === 'web');
+  try { _bootMark('root_layout_render'); } catch {}
 
   useEffect(() => {
     if (Platform.OS === 'web') return;
     let cancelled = false;
+    // [2026-10-07 coldstart] The gate no longer HIDES the native splash: the
+    // chat list hides it once its first rows are drawn (services/bootTrace —
+    // WhatsApp-style "splash until real content"), app/index.js hides it for
+    // any other destination, and armSplashFallback() guarantees it can never
+    // stay up more than 1.5 s past the gate (never worse than before).
+    const _open = (why) => {
+      if (cancelled) return;
+      _bootMark('cache_ready:' + why);
+      setCacheReady(true);
+      armSplashFallback(1500);
+    };
     (async () => {
       try {
         const { waitForCacheReady } = require('../services/mmkv');
         await waitForCacheReady?.();
-        // Also wait for the URL→file:// media index to load from MMKV. Without
-        // this, the first paint after cold start sees an empty syncIndex and
-        // ExpoImage falls back to the remote URL, re-downloading every photo
-        // and gif until the index hydrates a moment later.
-        const { waitForSyncIndexReady } = require('../services/mediaCache');
-        await waitForSyncIndexReady?.();
+        // [2026-10-07 coldstart] REMOVED `await mediaCache.waitForSyncIndexReady()`
+        // from the gate: it ran getInfo+readDirectory over chat-media-cache AND
+        // chat-media-saved (thousands of files on heavy users = 50-400 ms on a
+        // mid Android) before ANY UI could render, and the chat list doesn't
+        // use the media index at all. The MMKV half of the index is already
+        // loaded at mediaCache module eval / after mmkv ready (with stale-
+        // sandbox paths dropped, see _loadIndexFromMmkv), and the disk scan
+        // still runs post-paint via AppInit → initSyncCache().
       } catch {}
-      if (!cancelled) {
-        setCacheReady(true);
-        try { SplashScreen.hideAsync().catch(() => {}); } catch {}
-      }
+      _open('mmkv');
     })();
-    // Hard fallback: never hold the splash longer than 1500ms even if cache
+    // Hard fallback: never hold the gate longer than 1500ms even if cache
     // hydration somehow stalls. The chat list will still cold-fetch from
     // API in that case — same as before this fix.
-    const timeout = setTimeout(() => {
-      if (!cancelled) {
-        setCacheReady(true);
-        try { SplashScreen.hideAsync().catch(() => {}); } catch {}
-      }
-    }, 1500);
+    const timeout = setTimeout(() => _open('timeout'), 1500);
+    try { reportBootMarksSampled(); } catch {}
     return () => { cancelled = true; clearTimeout(timeout); };
   }, []);
 

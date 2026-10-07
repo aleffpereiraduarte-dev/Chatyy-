@@ -168,7 +168,236 @@ public class ExpoNativeVideoModule: Module {
 
   // ─── compressVideo ─────────────────────────────────────────────────────────
 
+  // [2026-10-07 send-media] Entry point: bitrate-controlled AVAssetWriter
+  // transcode first (WhatsApp-like ~1.5 Mbps 720p H.264 + AAC), falling back to
+  // the AVAssetExportSession preset path below on any failure. The preset path
+  // ignores `bitrate` entirely (AVAssetExportPreset1280x720 writes ~5-8 Mbps),
+  // so a 60s clip came out ~40-60MB instead of ~11MB.
   private static func runCompress(srcUri: String, options: [String: Any], promise: Promise) {
+    guard let url = resolveURL(srcUri) else {
+      promise.reject("E_COMP_URL", "Cannot parse srcUri: \(srcUri)")
+      return
+    }
+    let asset = AVURLAsset(url: url)
+    let maxWidth = (options["maxWidth"] as? NSNumber)?.intValue ?? 1280
+    let maxHeight = (options["maxHeight"] as? NSNumber)?.intValue ?? 720
+    let bitrate = (options["bitrate"] as? NSNumber)?.intValue ?? 1_500_000
+    let audioBitrate = (options["audioBitrate"] as? NSNumber)?.intValue ?? 96_000
+    let fps = (options["fps"] as? NSNumber)?.intValue ?? 30
+    Self.writerCompress(asset: asset, url: url, srcUri: srcUri, maxWidth: maxWidth, maxHeight: maxHeight,
+                   bitrate: bitrate, audioBitrate: audioBitrate, fps: fps) { result in
+      if let result = result {
+        promise.resolve(result)
+      } else {
+        Self.runExportCompress(srcUri: srcUri, options: options, promise: promise)
+      }
+    }
+  }
+
+  private static func fileSize(_ url: URL) -> Int64 {
+    guard url.isFileURL else { return 0 }
+    let attrs = try? FileManager.default.attributesOfItem(atPath: url.path)
+    return (attrs?[.size] as? NSNumber)?.int64Value ?? 0
+  }
+
+  /// AVAssetReader → AVAssetWriter H.264/AAC transcode with explicit bitrate,
+  /// fit-in-box scaling (never upscales), fps cap and faststart MP4.
+  /// Calls completion(nil) on ANY failure so the caller can fall back.
+  private static func writerCompress(asset: AVURLAsset, url: URL, srcUri: String,
+                                     maxWidth: Int, maxHeight: Int, bitrate: Int,
+                                     audioBitrate: Int, fps: Int,
+                                     completion: @escaping ([String: Any]?) -> Void) {
+    guard let vTrack = asset.tracks(withMediaType: .video).first else { completion(nil); return }
+    let natural = vTrack.naturalSize
+    let t = vTrack.preferredTransform
+    let rotated = abs(t.b) == 1.0 && abs(t.c) == 1.0
+    let dispW = rotated ? natural.height : natural.width
+    let dispH = rotated ? natural.width : natural.height
+    guard dispW > 0, dispH > 0 else { completion(nil); return }
+    let boxLong = CGFloat(max(maxWidth, maxHeight))
+    let boxShort = CGFloat(max(1, min(maxWidth, maxHeight)))
+    let scale = min(1.0, boxLong / max(dispW, dispH), boxShort / min(dispW, dispH))
+    func even(_ v: CGFloat) -> Int { return max(2, Int((v / 2.0).rounded(.down)) * 2) }
+    let encW = even(natural.width * scale)
+    let encH = even(natural.height * scale)
+    let durationSec = CMTimeGetSeconds(asset.duration)
+    let srcSize = Self.fileSize(url)
+    let srcFps = Double(vTrack.nominalFrameRate)
+
+    // Already inside the envelope (dims fit, bitrate ≤ target+15%, fps ok) →
+    // hand back the source untouched (re-encoding would only lose quality).
+    if scale >= 1.0, durationSec > 0, srcSize > 0,
+       Double(srcSize) * 8.0 / durationSec <= Double(bitrate + audioBitrate) * 1.15,
+       srcFps <= Double(fps) * 1.1 + 0.5 {
+      completion([
+        "uri": srcUri, "size": srcSize,
+        "width": Int(dispW), "height": Int(dispH),
+        "durationMs": Int64(durationSec * 1000.0),
+      ])
+      return
+    }
+
+    let outURL = URL(fileURLWithPath: NSTemporaryDirectory())
+      .appendingPathComponent("compressed_\(Int(Date().timeIntervalSince1970 * 1000))_\(Int.random(in: 0..<100000)).mp4")
+    try? FileManager.default.removeItem(at: outURL)
+
+    let reader: AVAssetReader
+    let writer: AVAssetWriter
+    do {
+      reader = try AVAssetReader(asset: asset)
+      writer = try AVAssetWriter(outputURL: outURL, fileType: .mp4)
+    } catch { completion(nil); return }
+    writer.shouldOptimizeForNetworkUse = true
+
+    // Video: decode to NV12, writer scales + encodes.
+    let vOut = AVAssetReaderTrackOutput(track: vTrack, outputSettings: [
+      kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange,
+    ])
+    vOut.alwaysCopiesSampleData = false
+    guard reader.canAdd(vOut) else { completion(nil); return }
+    reader.add(vOut)
+    let capFps = max(1, min(fps, Int(srcFps > 0 ? srcFps.rounded() : Double(fps))))
+    let vSettings: [String: Any] = [
+      AVVideoCodecKey: AVVideoCodecType.h264,
+      AVVideoWidthKey: encW,
+      AVVideoHeightKey: encH,
+      AVVideoScalingModeKey: AVVideoScalingModeResizeAspectFill,
+      AVVideoCompressionPropertiesKey: [
+        AVVideoAverageBitRateKey: max(250_000, bitrate),
+        AVVideoProfileLevelKey: AVVideoProfileLevelH264HighAutoLevel,
+        AVVideoMaxKeyFrameIntervalKey: capFps * 2,
+        AVVideoExpectedSourceFrameRateKey: capFps,
+      ] as [String: Any],
+    ]
+    let vIn = AVAssetWriterInput(mediaType: .video, outputSettings: vSettings)
+    vIn.expectsMediaDataInRealTime = false
+    vIn.transform = t
+    guard writer.canAdd(vIn) else { completion(nil); return }
+    writer.add(vIn)
+
+    // Audio (optional): decode to 44.1k PCM, re-encode AAC at audioBitrate.
+    var aOut: AVAssetReaderTrackOutput? = nil
+    var aIn: AVAssetWriterInput? = nil
+    if let aTrack = asset.tracks(withMediaType: .audio).first {
+      var channels = 2
+      if let fd = aTrack.formatDescriptions.first {
+        let desc = fd as! CMAudioFormatDescription
+        if let asbd = CMAudioFormatDescriptionGetStreamBasicDescription(desc)?.pointee {
+          channels = max(1, min(2, Int(asbd.mChannelsPerFrame)))
+        }
+      }
+      let ao = AVAssetReaderTrackOutput(track: aTrack, outputSettings: [
+        AVFormatIDKey: kAudioFormatLinearPCM,
+        AVSampleRateKey: 44100,
+        AVNumberOfChannelsKey: channels,
+        AVLinearPCMBitDepthKey: 16,
+        AVLinearPCMIsFloatKey: false,
+        AVLinearPCMIsBigEndianKey: false,
+        AVLinearPCMIsNonInterleaved: false,
+      ])
+      ao.alwaysCopiesSampleData = false
+      let abr = max(32_000, min(audioBitrate, channels == 1 ? 128_000 : 192_000))
+      let ai = AVAssetWriterInput(mediaType: .audio, outputSettings: [
+        AVFormatIDKey: kAudioFormatMPEG4AAC,
+        AVSampleRateKey: 44100,
+        AVNumberOfChannelsKey: channels,
+        AVEncoderBitRateKey: abr,
+      ])
+      ai.expectsMediaDataInRealTime = false
+      if reader.canAdd(ao) && writer.canAdd(ai) {
+        reader.add(ao); writer.add(ai)
+        aOut = ao; aIn = ai
+      }
+    }
+
+    guard reader.startReading(), writer.startWriting() else {
+      reader.cancelReading(); writer.cancelWriting()
+      try? FileManager.default.removeItem(at: outURL)
+      completion(nil); return
+    }
+    writer.startSession(atSourceTime: .zero)
+
+    let group = DispatchGroup()
+    let lock = NSLock()
+    var failed = false
+    func markFailed() { lock.lock(); failed = true; lock.unlock() }
+
+    // Video pump (drops frames above the fps cap).
+    group.enter()
+    let vQueue = DispatchQueue(label: "expo.nativevideo.writer.video")
+    var vDone = false
+    var lastKept = -Double.infinity
+    let minGap = srcFps > Double(capFps) * 1.1 ? (0.95 / Double(capFps)) : 0
+    vIn.requestMediaDataWhenReady(on: vQueue) {
+      if vDone { return }
+      while vIn.isReadyForMoreMediaData {
+        guard let sb = vOut.copyNextSampleBuffer() else {
+          vDone = true; vIn.markAsFinished(); group.leave(); return
+        }
+        if minGap > 0 {
+          let pts = CMTimeGetSeconds(CMSampleBufferGetPresentationTimeStamp(sb))
+          if pts - lastKept < minGap { continue }
+          lastKept = pts
+        }
+        if !vIn.append(sb) {
+          markFailed(); vDone = true; vIn.markAsFinished(); group.leave(); return
+        }
+      }
+    }
+    if let ai = aIn, let ao = aOut {
+      group.enter()
+      let aQueue = DispatchQueue(label: "expo.nativevideo.writer.audio")
+      var aDone = false
+      ai.requestMediaDataWhenReady(on: aQueue) {
+        if aDone { return }
+        while ai.isReadyForMoreMediaData {
+          guard let sb = ao.copyNextSampleBuffer() else {
+            aDone = true; ai.markAsFinished(); group.leave(); return
+          }
+          if !ai.append(sb) {
+            markFailed(); aDone = true; ai.markAsFinished(); group.leave(); return
+          }
+        }
+      }
+    }
+
+    group.notify(queue: DispatchQueue.global(qos: .userInitiated)) {
+      lock.lock(); let didFail = failed; lock.unlock()
+      if didFail || reader.status == .failed || writer.status == .failed {
+        reader.cancelReading(); writer.cancelWriting()
+        try? FileManager.default.removeItem(at: outURL)
+        completion(nil); return
+      }
+      writer.finishWriting {
+        guard writer.status == .completed else {
+          try? FileManager.default.removeItem(at: outURL)
+          completion(nil); return
+        }
+        let outSize = Self.fileSize(outURL)
+        if outSize <= 0 { completion(nil); return }
+        if srcSize > 0 && outSize >= srcSize {
+          // Re-encode didn't help (already efficient source) → keep source.
+          try? FileManager.default.removeItem(at: outURL)
+          completion([
+            "uri": srcUri, "size": srcSize,
+            "width": Int(dispW), "height": Int(dispH),
+            "durationMs": Int64(durationSec * 1000.0),
+          ])
+          return
+        }
+        completion([
+          "uri": "file://\(outURL.path)",
+          "size": outSize,
+          "width": rotated ? encH : encW,
+          "height": rotated ? encW : encH,
+          "durationMs": Int64(durationSec * 1000.0),
+        ])
+      }
+    }
+  }
+
+  // Legacy preset-based path (fallback).
+  private static func runExportCompress(srcUri: String, options: [String: Any], promise: Promise) {
     guard let url = resolveURL(srcUri) else {
       promise.reject("E_COMP_URL", "Cannot parse srcUri: \(srcUri)")
       return

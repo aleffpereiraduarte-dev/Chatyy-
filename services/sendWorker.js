@@ -125,6 +125,7 @@ export function kick(reason = 'kick') {
   return Promise.resolve()
     .then(() => recoverStuck().catch(() => 0))
     .then(() => retryNow().catch(() => 0))
+    .then(() => { _mediaQueue()?.kick?.()?.catch?.(() => {}); }) // [2026-10-07 send-media]
     .then(() => poke());
 }
 let _cleanupTimer = null;
@@ -141,6 +142,10 @@ function _api() {
 }
 function _ws() {
   try { return require('./websocket').default; } catch { return null; }
+}
+// [2026-10-07 send-media] upload lane (compress + resumable upload).
+function _mediaQueue() {
+  try { const m = require('./mediaSendQueue'); return m.default || m; } catch { return null; }
 }
 
 /**
@@ -203,7 +208,9 @@ async function _drainOneConversation(conversationId) {
 // conversation — one in-flight per conversation, many conversations at once.
 // A per-pass skip set keeps us from launching two sends for the same conv.
 async function _drainAllConversations() {
-  const pending = await getPending(null); // ordered conv ASC, seq ASC
+  // [2026-10-07 send-media] msg lane only — upload-lane rows belong to
+  // mediaSendQueue (they must not head-block text while bytes upload).
+  const pending = await getPending(null, { lane: 'msg' }); // ordered conv ASC, seq ASC
   if (!pending || pending.length === 0) return;
   const now = Date.now();
   const startedThisPass = new Set();
@@ -260,7 +267,7 @@ function _kickoff(row) {
 }
 
 // Media types we treat as "needs upload before chat_send".
-const MEDIA_TYPES = new Set(['image', 'video', 'voice', 'audio', 'file']);
+const MEDIA_TYPES = new Set(['image', 'video', 'voice', 'audio', 'file', 'video_note']); // [2026-10-07 send-media] + video_note
 
 async function _processRow(row) {
   const cmi = row.client_message_id;
@@ -327,7 +334,10 @@ async function _uploadAndSendMedia(row) {
   }
   const p = row.payload || {};
   const cmi = row.client_message_id;
-  const localUri = p.local_uri || p.uri || p.file_url || null;
+  // [2026-10-07 send-media] Rows promoted from mediaSendQueue already have the
+  // bytes on the CDN (p.cdn_url) — commit only, never re-upload. Legacy rows
+  // (enqueued by older bundles, no cdn_url) keep the upload-here path below.
+  const localUri = p.cdn_url ? null : (p.local_uri || p.uri || p.file_url || null);
   const mimeType = p.mime_type || p.type_mime || '';
   const fileName = p.file_name || p.name || 'file';
   const fileSize = p.file_size || 0;
@@ -340,7 +350,7 @@ async function _uploadAndSendMedia(row) {
     await markFailed(cmi, 'blob_lost', { kind: 'hard' });
     return;
   }
-  if (!localUri) {
+  if (!localUri && !p.cdn_url) {
     await markFailed(cmi, 'no_local_uri', { kind: 'hard' });
     return;
   }
@@ -354,11 +364,11 @@ async function _uploadAndSendMedia(row) {
 
   try {
     // Try Rust direct-to-R2 upload first; fall back to PHP chatUploadFile.
-    let cdnUrl = null;
-    let serverSize = fileSize;
-    let serverName = fileName;
+    let cdnUrl = p.cdn_url || null;
+    let serverSize = p.server_size || fileSize;
+    let serverName = p.server_file_name || fileName;
     let rustResult = null;
-    try {
+    if (!cdnUrl) try {
       if (fileSize > 1 * 1024 * 1024 && api.rustChunkedUpload) {
         rustResult = await api.rustChunkedUpload(filePayload, p.sender_email || null, 'chat');
       } else if (api.rustUpload) {
@@ -368,7 +378,7 @@ async function _uploadAndSendMedia(row) {
       // Rust path failed — silent, PHP fallback below.
       rustResult = null;
     }
-    if (rustResult?.success && rustResult.cdn_url) {
+    if (!cdnUrl && rustResult?.success && rustResult.cdn_url) {
       cdnUrl = rustResult.cdn_url;
       serverSize = rustResult.size || fileSize;
       serverName = rustResult.filename || fileName;
@@ -387,8 +397,9 @@ async function _uploadAndSendMedia(row) {
         view_once: p.view_once ? 1 : 0,
         client_message_id: cmi,
         temp_id: p.temp_id || null,
+        ...(p.reply_to_id ? { reply_to_id: p.reply_to_id } : {}),
       }, 'POST');
-    } else if (api.chatUploadFile) {
+    } else if (api.chatUploadFile && localUri) {
       // PHP fallback — single combined upload + chat_send. Pass cmi so a
       // replay of this outbox row (response lost on a previous attempt)
       // dedups server-side instead of landing a duplicate photo/blob.
@@ -424,6 +435,9 @@ async function _uploadAndSendMedia(row) {
           message: { ...serverMsg, client_message_id: serverMsg.client_message_id || cmi },
         });
         ws?.relayChatMessage?.(p.conversation_id, serverMsg, p.temp_id || null, []);
+        // [2026-10-07 send-media] adopt the local file as the CDN cache copy +
+        // drop the durable outbox copy.
+        _mediaQueue()?.onCommitted?.({ ...p, client_message_id: cmi }, serverMsg)?.catch?.(() => {});
       } catch {}
       return;
     }
@@ -608,6 +622,8 @@ export function start() {
 
   // Initial drain after a short delay so the app finishes booting first.
   setTimeout(() => { kick('boot'); }, 1500);
+  // [2026-10-07 send-media] media upload lane shares the worker lifecycle.
+  try { _mediaQueue()?.start?.(); } catch {}
 
   // AppState — drain on foreground transition (backoff reset: the network may
   // have come back while we were suspended and no timer fired).
@@ -676,6 +692,9 @@ export function start() {
   try {
     _outboxSubUnsub = messageOutbox.subscribe('*', (snap) => {
       const st = snap && snap.state;
+      // [2026-10-07 send-media] upload-lane rows (tap-to-retry requeue, backoff)
+      // are drained by mediaSendQueue, not by this FIFO.
+      if (snap && snap.lane === 'upload') { if (st === 'queued') _mediaQueue()?.drain?.(); return; }
       if (st === 'sent' || st === 'queued' || st === 'failed' || st === 'removed') _scheduleWake(Date.now());
     });
   } catch {}
@@ -704,6 +723,7 @@ export function stop() {
   try { _outboxSubUnsub?.(); } catch {}
   _outboxSubUnsub = null;
   _inflight.clear();
+  try { _mediaQueue()?.stop?.(); } catch {}
 }
 
 export default { start, stop, poke, send, kick, isConversationBusy };
