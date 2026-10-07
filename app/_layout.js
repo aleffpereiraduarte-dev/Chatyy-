@@ -347,6 +347,7 @@ import { CallProvider } from '../context/CallContext';
 import CallStatusBar from '../components/CallStatusBar';
 // [2026-10-07 voice-native] global voice-note mini player (leaves the chat → keeps playing)
 import VoiceMiniPlayer from '../components/chat/VoiceMiniPlayer';
+import EmailUndoBar from '../components/EmailUndoBar';
 
 // Lazy-load call components to break circular dependency
 const IncomingCallListener = React.lazy(() => import('../components/IncomingCallListener'));
@@ -1895,6 +1896,7 @@ export default function RootLayout() {
                 </Suspense>
                 <CallStatusBar />
                 <VoiceMiniPlayer />
+                <EmailUndoBar />
                 <Suspense fallback={null}>
                   <IncomingCallListener />
                 </Suspense>

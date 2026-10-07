@@ -611,12 +611,12 @@ export default function ComposeScreen() {
     if (Platform.OS === 'web') {
       try {
         const d = typeof localStorage !== 'undefined' && localStorage.getItem('undo_send_delay');
-        if (d) undoDelayRef.current = parseInt(d, 10) || 5;
+        if (d != null && d !== '' && !isNaN(parseInt(d, 10))) undoDelayRef.current = Math.max(0, parseInt(d, 10));
       } catch {}
     } else {
       import('@react-native-async-storage/async-storage').then(m => {
         m.default.getItem('undo_send_delay').then(d => {
-          if (d) undoDelayRef.current = parseInt(d, 10) || 5;
+          if (d != null && d !== '' && !isNaN(parseInt(d, 10))) undoDelayRef.current = Math.max(0, parseInt(d, 10));
         }).catch(() => {});
       }).catch(() => {});
     }
@@ -645,6 +645,22 @@ export default function ComposeScreen() {
 
     if (params.to && !params.reply_uid) {
       setTo(parseEmailsParam(params.to));
+    }
+
+    // [2026-10-07 email-instant-send] reopened by "Desfazer" in EmailUndoBar.
+    if (params.restore_undo === '1') {
+      try {
+        const r = require('../services/emailUndo').takeEmailUndoRestore();
+        if (r) {
+          setTo(r.to || []);
+          if (r.cc?.length) { setCc(r.cc); setShowCc(true); }
+          if (r.bcc?.length) { setBcc(r.bcc); setShowBcc(true); }
+          setSubject(r.subject || '');
+          setBody(r.body || '');
+          if (r.attachments?.length) setAttachments(r.attachments);
+          contentChangedRef.current = true;
+        }
+      } catch {}
     }
 
     // Follow-up chip ("Enviar follow-up") navigates without reply_uid — the
@@ -1194,9 +1210,12 @@ export default function ComposeScreen() {
     if (plainBody.length > 10 && hash !== toneCheckedHash) {
       try {
         // Run leak + tone in parallel
+        // [2026-10-07 email-instant-send] cap the AI safety checks at 900ms —
+        // a slow model must never hold the Send button.
+        const _cap = (pr) => Promise.race([pr, new Promise((res) => setTimeout(() => res(null), 900))]);
         const [leakRes, toneRes] = await Promise.all([
-          aiDetectLeak(plainBody.slice(0, 3000)).catch(() => null),
-          plainBody.length > 30 ? aiToneCheck(plainBody.slice(0, 2000)).catch(() => null) : Promise.resolve(null),
+          _cap(aiDetectLeak(plainBody.slice(0, 3000)).catch(() => null)),
+          plainBody.length > 30 ? _cap(aiToneCheck(plainBody.slice(0, 2000)).catch(() => null)) : Promise.resolve(null),
         ]);
         if (leakRes?.success && leakRes.data?.has_secret) {
           setLeakWarning({
@@ -1218,7 +1237,7 @@ export default function ComposeScreen() {
       } catch {}
       setToneCheckedHash(hash);
     }
-    setTimeout(() => doSend(), 60);
+    setTimeout(() => doSend(), 0);
   };
 
   const handleSendAnyway = () => {
@@ -1295,7 +1314,7 @@ export default function ComposeScreen() {
     // After a successful send (queued or immediate), transition the UI to
     // "sent" and pop back. For undo_delay>0 the backend holds the message and
     // actually transmits it after `delay`s — this only governs our visuals.
-    const finishSendSuccess = async () => {
+    const finishSendSuccess = async (opts = {}) => {
       // Message is sent — flip the guard FIRST so the unmount flush + any
       // pending autosave tick become no-ops and can't re-create the draft.
       sentRef.current = true;
@@ -1324,7 +1343,7 @@ export default function ComposeScreen() {
       setSuccess(true);
       if (Platform.OS !== 'web') Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       refresh();
-      setTimeout(() => router.back(), 1200);
+      setTimeout(() => router.back(), opts.instant ? 0 : 450);
     };
 
     // Fire the send NOW. With undo_delay>0 the backend enqueues for `delay`
@@ -1420,8 +1439,19 @@ export default function ComposeScreen() {
             // re-saved the compose as a draft → same email in Sent AND Drafts.
             // cancelUndoSend() reverts this so Desfazer restores draft-ability.
             sentRef.current = true;
-            // Show the visual countdown; the backend transmits after `delay`s
-            // unless cancelUndoSend() hits cancel_send(sid) first.
+            // [2026-10-07 email-instant-send] Gmail model: close the composer
+            // NOW; the server keeps holding the message for `delay`s and the
+            // global EmailUndoBar (outside this screen) offers Desfazer.
+            try {
+              require('../services/emailUndo').startEmailUndo({
+                sid, seconds: delay,
+                restore: { to: sendTo, cc: sendCc, bcc: sendBcc, subject: sendSubject, body: sendBody, attachments: sendAttachments },
+              });
+              undoSendIdRef.current = null;
+              finishSendSuccess({ instant: true });
+              return;
+            } catch {}
+            // Fallback (should not happen): in-screen countdown as before.
             setUndoCountdown(delay);
             const countRef = { value: delay };
             undoIntervalRef.current = setInterval(() => {

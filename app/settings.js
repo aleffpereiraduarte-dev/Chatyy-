@@ -1060,7 +1060,7 @@ function SettingsScreenInner() {
     // Load undo delay + smart compose + notif prefs
     if (Platform.OS === 'web') {
       const d = getStorage('undo_send_delay');
-      if (d) setUndoDelay(parseInt(d, 10) || 5);
+      if (d != null && d !== '' && !isNaN(parseInt(d, 10))) setUndoDelay(Math.max(0, parseInt(d, 10)));
       const sc = getStorage('smart_compose');
       if (sc === 'false') setSmartComposeOn(false);
       try {
@@ -1073,7 +1073,7 @@ function SettingsScreenInner() {
     } else {
       import('@react-native-async-storage/async-storage').then(m => {
         m.default.getItem('undo_send_delay').then(d => {
-          if (d) setUndoDelay(parseInt(d, 10) || 5);
+          if (d != null && d !== '' && !isNaN(parseInt(d, 10))) setUndoDelay(Math.max(0, parseInt(d, 10)));
         }).catch(() => {});
         m.default.getItem('smart_compose').then(v => {
           if (v === 'false') setSmartComposeOn(false);
@@ -1637,7 +1637,7 @@ function SettingsScreenInner() {
             {t('settings.undoSendDesc')}
           </Text>
           <View style={s.perPageBtns}>
-            {[5, 10, 15, 30].map(n => (
+            {[0, 5, 10, 15, 30].map(n => (
               <TouchableOpacity
                 key={n}
                 style={[
@@ -1651,7 +1651,7 @@ function SettingsScreenInner() {
                   s.perPageText, { color: colors.text },
                   undoDelay === n && { color: '#fff' },
                 ]}>
-                  {t('settings.undoSendSeconds', { n })}
+                  {n === 0 ? (t('settings.undoSendOff') || 'Desligado') : t('settings.undoSendSeconds', { n })}
                 </Text>
               </TouchableOpacity>
             ))}
