@@ -81,12 +81,31 @@ const ACCENT_GLOW = 'rgba(17, 17, 17,0.35)';
 // bright #25D366 reads the same in light/dark, like WhatsApp). The dark/light
 // variants below are only for the *selected filter pill* (fill + text), which
 // WhatsApp tints as a soft green chip rather than a solid bright fill.
-const WA_GREEN = '#25D366';           // unread badge, mention badge (bright)
-const WA_GREEN_TIME = '#00a884';      // unread timestamp (slightly teal, high-contrast on white)
-const WA_PILL_BG_LIGHT = '#d9fdd3';   // selected filter pill fill (light)
-const WA_PILL_BG_DARK = 'rgba(0,168,132,0.26)'; // selected filter pill fill (dark)
-const WA_PILL_TXT_LIGHT = '#027d69';  // selected filter pill text (light)
-const WA_PILL_TXT_DARK = '#4ee6b8';   // selected filter pill text (dark)
+// [2026-10-08 chat-beauty-list] Founder: lista PRETO & BRANCO premium (sem
+// verde/roxo). Os acentos WhatsApp-verde acima viraram monocromáticos: pill de
+// não-lida preta (claro) / branca (escuro), horário da não-lida em negrito na
+// cor do texto, chip selecionado preenchido invertido. Uma paleta só, usada
+// por linha/filtros/cabeçalhos — superfícies escuras near-black (#0b0b0b) e
+// cards #1c1c1e (iOS systemGray6 dark) em vez do azul-marinho do tema global.
+const LP_LIGHT = {
+  bg: '#ffffff', text: '#0b0b0b', sub: '#737373', subStrong: '#262626', faint: '#a3a3a3',
+  icon: 'rgba(0,0,0,0.38)', hair: 'rgba(0,0,0,0.08)', press: 'rgba(0,0,0,0.045)', pinnedBg: '#fafafa',
+  chipBg: '#f2f2f2', chipTxt: '#3a3a3a', chipCount: 'rgba(0,0,0,0.08)',
+  pillBg: '#0b0b0b', pillTxt: '#ffffff', mutedPillBg: '#e5e5ea', mutedPillTxt: '#48484a',
+  card: '#f5f5f5', surface: '#ffffff',
+};
+const LP_DARK = {
+  bg: '#0b0b0b', text: '#f5f5f5', sub: '#8e8e93', subStrong: '#e5e5ea', faint: '#636366',
+  icon: 'rgba(255,255,255,0.42)', hair: 'rgba(255,255,255,0.09)', press: 'rgba(255,255,255,0.06)', pinnedBg: '#111111',
+  chipBg: '#1c1c1e', chipTxt: '#d1d1d6', chipCount: 'rgba(255,255,255,0.12)',
+  pillBg: '#f5f5f5', pillTxt: '#0b0b0b', mutedPillBg: '#3a3a3c', mutedPillTxt: '#d1d1d6',
+  card: '#1c1c1e', surface: '#141414',
+};
+// Swipe actions: escala de cinzas + vermelho só no destrutivo.
+const SWIPE_C = { read: '#1c1c1e', mute: '#3a3a3c', pin: '#636366', email: '#8e8e93', archive: '#3a3a3c', del: '#FF3B30' };
+// Row rhythm: avatar 54 + gutter 16 + gap 14 → separator inset 84 (iOS).
+const ROW_AVATAR = 54;
+const SEP_INSET = 16 + ROW_AVATAR + 14;
 const SWIPE_THRESHOLD = 40; // lowered from 60 for better responsiveness
 
 // [2026-10-07 receipts2] Recibos ao vivo na LISTA, com regra de GRUPO igual à
@@ -379,17 +398,8 @@ function PulsingOnlineDot({ colors, isDark }) {
     <Animated.View style={[s.onlineDot, {
       borderColor: colors.background,
       transform: [{ scale: innerScale }],
-      // [beauty 2026-05-31] Single soft halo instead of a stacked double-glow —
-      // a crisp 2px-ringed presence pip with a calm green aura, never a neon blob.
-      ...(Platform.OS === 'web'
-        ? { boxShadow: '0 0 6px rgba(34,197,94,0.5)' }
-        : {
-            shadowColor: '#22c55e',
-            shadowOffset: { width: 0, height: 0 },
-            shadowOpacity: 0.55,
-            shadowRadius: 3.5,
-            elevation: 3,
-          }),
+      // [2026-10-08 chat-beauty-list] flat pip (no glow/elevation) — the
+      // pulsing halo below already carries "live"; shadows per row cost GPU.
     }]}>
       <Animated.View
         pointerEvents="none"
@@ -603,6 +613,7 @@ const ConversationRow = React.memo(function ConversationRow({
   const isPinned = !!conversation.pinned;
   const isMuted = !!conversation.muted;
   const [hovered, setHovered] = useState(false);
+  const P = isDark ? LP_DARK : LP_LIGHT; // [2026-10-08 chat-beauty-list]
 
   // Prefer server-provided other_email/contact_email — those are computed
   // authoritatively by chat.php:buildConversationData knowing exactly who
@@ -1014,25 +1025,25 @@ const ConversationRow = React.memo(function ConversationRow({
     return (
       <View style={{ flexDirection: 'row' }}>
         {/* [2026-10-06 UX2] read/unread toggle */}
-        <TouchableOpacity style={[s.nativeSwipeBtn, { backgroundColor: '#6366F1' }]} onPress={() => { try { haptic.select(); } catch {} swipeRef.current?.close(); propsRef.current.onMarkUnread?.(conversation); }}>
+        <TouchableOpacity style={[s.nativeSwipeBtn, { backgroundColor: SWIPE_C.read }]} onPress={() => { try { haptic.select(); } catch {} swipeRef.current?.close(); propsRef.current.onMarkUnread?.(conversation); }}>
           <Animated.View style={{ transform: [{ scale }], alignItems: 'center' }}>
             <UnreadIc size={20} color="#fff" />
             <Text style={s.nativeSwipeLabel} numberOfLines={1} adjustsFontSizeToFit>{unreadSwipeLabel}</Text>
           </Animated.View>
         </TouchableOpacity>
-        <TouchableOpacity style={[s.nativeSwipeBtn, { backgroundColor: '#64748B' }]} onPress={() => { swipeRef.current?.close(); propsRef.current.onMute?.(conversation); }}>
+        <TouchableOpacity style={[s.nativeSwipeBtn, { backgroundColor: SWIPE_C.mute }]} onPress={() => { swipeRef.current?.close(); propsRef.current.onMute?.(conversation); }}>
           <Animated.View style={{ transform: [{ scale }], alignItems: 'center' }}>
             <MuteIc size={20} color="#fff" />
             <Text style={s.nativeSwipeLabel} numberOfLines={1} adjustsFontSizeToFit>{isMuted ? (t('chat.unmute') || 'Reativar') : (t('chat.mute') || 'Silenciar')}</Text>
           </Animated.View>
         </TouchableOpacity>
-        <TouchableOpacity style={[s.nativeSwipeBtn, { backgroundColor: '#F59E0B' }]} onPress={() => { swipeRef.current?.close(); propsRef.current.onPin?.(conversation); }}>
+        <TouchableOpacity style={[s.nativeSwipeBtn, { backgroundColor: SWIPE_C.pin }]} onPress={() => { swipeRef.current?.close(); propsRef.current.onPin?.(conversation); }}>
           <Animated.View style={{ transform: [{ scale }], alignItems: 'center' }}>
             <IconPin size={20} color="#fff" />
             <Text style={s.nativeSwipeLabel} numberOfLines={1} adjustsFontSizeToFit>{isPinned ? (t('chat.unpin') || 'Desafixar') : (t('chat.pin') || 'Fixar')}</Text>
           </Animated.View>
         </TouchableOpacity>
-        <TouchableOpacity style={[s.nativeSwipeBtn, { backgroundColor: '#0EA5E9' }]} onPress={() => { swipeRef.current?.close(); propsRef.current.onEmail?.(conversation); }}>
+        <TouchableOpacity style={[s.nativeSwipeBtn, { backgroundColor: SWIPE_C.email }]} onPress={() => { swipeRef.current?.close(); propsRef.current.onEmail?.(conversation); }}>
           <Animated.View style={{ transform: [{ scale }], alignItems: 'center' }}>
             <IconMail size={20} color="#fff" />
             <Text style={s.nativeSwipeLabel} numberOfLines={1} adjustsFontSizeToFit>{t('chat.email') || 'E-mail'}</Text>
@@ -1045,13 +1056,13 @@ const ConversationRow = React.memo(function ConversationRow({
     const scale = dragX.interpolate({ inputRange: [-80, 0], outputRange: [1, 0.5], extrapolate: 'clamp' });
     return (
       <View style={{ flexDirection: 'row' }}>
-        <TouchableOpacity style={[s.nativeSwipeBtn, { backgroundColor: '#00A884' }]} onPress={() => { try { haptic.success(); } catch {} swipeRef.current?.close(); propsRef.current.onArchive?.(conversation); }}>
+        <TouchableOpacity style={[s.nativeSwipeBtn, { backgroundColor: SWIPE_C.archive }]} onPress={() => { try { haptic.success(); } catch {} swipeRef.current?.close(); propsRef.current.onArchive?.(conversation); }}>
           <Animated.View style={{ transform: [{ scale }], alignItems: 'center' }}>
             <IconArchive size={20} color="#fff" />
             <Text style={s.nativeSwipeLabel} numberOfLines={1} adjustsFontSizeToFit>{isArchived ? (t('chat.unarchive') || 'Desarquivar') : (t('chat.archive') || 'Arquivar')}</Text>
           </Animated.View>
         </TouchableOpacity>
-        <TouchableOpacity style={[s.nativeSwipeBtn, { backgroundColor: '#EF4444' }]} onPress={() => { try { haptic.medium(); } catch {} swipeRef.current?.close(); propsRef.current.onDelete?.(conversation); }}>
+        <TouchableOpacity style={[s.nativeSwipeBtn, { backgroundColor: SWIPE_C.del }]} onPress={() => { try { haptic.medium(); } catch {} swipeRef.current?.close(); propsRef.current.onDelete?.(conversation); }}>
           <Animated.View style={{ transform: [{ scale }], alignItems: 'center' }}>
             <IconTrash size={20} color="#fff" />
             <Text style={s.nativeSwipeLabel} numberOfLines={1} adjustsFontSizeToFit>{t('chat.delete') || 'Excluir'}</Text>
@@ -1093,12 +1104,14 @@ const ConversationRow = React.memo(function ConversationRow({
     // [beauty 2026-05-31] Web hover is a very light tint (hovered is only ever
     // set on web via onMouseEnter — mobile never flips it), so the cursor leaves
     // a subtle wash instead of a flat grey. Tasteful, low alpha.
-    ? (isDark ? 'rgba(17, 17, 17,0.10)' : 'rgba(17, 17, 17,0.05)')
+    ? P.press
     // [beauty 2026-10-01] Unread rows are NO LONGER tinted — WhatsApp signals
     // unread with the bold name + count pill on a plain white row, which reads
     // much lighter/cleaner. Pinned keeps a whisper of tint.
+    // [2026-10-08 chat-beauty-list] tints were #111-on-#111 (invisible in dark)
+    // → neutral palette values that actually read in both themes.
     : isPinned
-      ? (isDark ? 'rgba(17, 17, 17,0.04)' : 'rgba(17, 17, 17,0.03)')
+      ? P.pinnedBg
       : colors.background;
 
   // Native swipe row content
@@ -1116,7 +1129,7 @@ const ConversationRow = React.memo(function ConversationRow({
           style={[
             s.row,
             {
-              backgroundColor: isSelected ? (isDark ? 'rgba(17, 17, 17,0.12)' : 'rgba(17, 17, 17,0.08)') : rowBg,
+              backgroundColor: isSelected ? (isDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.06)') : rowBg,
               ...(isWeb ? { transition: 'background-color 0.2s ease' } : {}),
             },
           ]}
@@ -1159,19 +1172,19 @@ const ConversationRow = React.memo(function ConversationRow({
           {selectionMode && (
             <View style={{
               width: 26, height: 26, borderRadius: 13, marginRight: 10,
-              borderWidth: 2, borderColor: isSelected ? ACCENT : (isDark ? 'rgba(255,255,255,0.3)' : 'rgba(0,0,0,0.25)'),
-              backgroundColor: isSelected ? ACCENT : 'transparent',
+              borderWidth: 2, borderColor: isSelected ? P.pillBg : (isDark ? 'rgba(255,255,255,0.3)' : 'rgba(0,0,0,0.25)'),
+              backgroundColor: isSelected ? P.pillBg : 'transparent',
               alignItems: 'center', justifyContent: 'center',
             }}>
-              {isSelected && <IconCheck size={16} color="#fff" />}
+              {isSelected && <IconCheck size={16} color={P.pillTxt} />}
             </View>
           )}
           {/* Avatar area */}
           <View style={s.avatarWrap}>
             {isChannel ? (
               <View style={{
-                width: 56, height: 56, borderRadius: 28,
-                backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(17,17,17,0.06)',
+                width: ROW_AVATAR, height: ROW_AVATAR, borderRadius: ROW_AVATAR / 2,
+                backgroundColor: P.card,
                 alignItems: 'center', justifyContent: 'center',
               }}>
                 <Svg width={24} height={24} viewBox="0 0 24 24" fill="none" stroke={isDark ? '#F2F3F5' : '#111111'} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
@@ -1180,7 +1193,7 @@ const ConversationRow = React.memo(function ConversationRow({
                 </Svg>
               </View>
             ) : isGroup ? (
-              <GroupAvatarStack conversation={conversation} size={56} isDark={isDark} />
+              <GroupAvatarStack conversation={conversation} size={ROW_AVATAR} isDark={isDark} />
             ) : (
               <View>
                 {/* [beauty 2026-10-01] Removed the unread "halo" ring and the
@@ -1190,7 +1203,7 @@ const ConversationRow = React.memo(function ConversationRow({
                 <AvatarCircle
                   name={displayName}
                   email={otherEmail}
-                  size={56}
+                  size={ROW_AVATAR}
                   // WAVE 95: tap-avatar → fullscreen lightbox (only for direct
                   // chats; group/channel avatars don't have a single photo to
                   // enlarge — the row tap still opens the conversation).
@@ -1205,12 +1218,12 @@ const ConversationRow = React.memo(function ConversationRow({
             {noteText ? (
               <View style={{
                 position: 'absolute', top: -6, left: -4, right: -4,
-                backgroundColor: isDark ? '#161618' : '#F1F3F5',
+                backgroundColor: P.card,
                 borderRadius: 10, paddingHorizontal: 5, paddingVertical: 2,
-                borderWidth: 1, borderColor: isDark ? '#111111' : '#F1F3F5',
+                borderWidth: 1.5, borderColor: colors.background,
                 zIndex: 5, alignItems: 'center',
               }}>
-                <Text style={{ fontSize: 8, color: isDark ? '#F1F3F5' : '#111111', fontWeight: '700' }} numberOfLines={1}>
+                <Text style={{ fontSize: 9, color: P.text, fontWeight: '600' }} numberOfLines={1} maxFontSizeMultiplier={1.2}>
                   {noteText}
                 </Text>
               </View>
@@ -1223,29 +1236,25 @@ const ConversationRow = React.memo(function ConversationRow({
                     Tipo de conv (grupo/canal) já fica claro pelo avatar e
                     estilo do row. Member count fica visível dentro do
                     chat-conversation header onde é contexto correto. */}
-                <Text style={[s.rowName, { color: colors.text }, unread && s.rowNameUnread]} numberOfLines={1}>{displayName}</Text>
+                <Text style={[s.rowName, { color: P.text }, unread && s.rowNameUnread]} numberOfLines={1} maxFontSizeMultiplier={1.35}>{displayName}</Text>
                 {!isGroup && !isChannel && (() => {
                   const activity = formatActivityStatus(isOnline, lastSeen, t);
                   if (!activity) return null;
                   return (
-                    <Text style={{ fontSize: 11, fontWeight: '500', color: activity.color || (isDark ? 'rgba(255,255,255,0.35)' : 'rgba(0,0,0,0.35)'), marginLeft: 6, flexShrink: 0 }} numberOfLines={1}>
+                    <Text style={{ fontSize: 12, fontWeight: '500', color: activity.color || P.faint, marginLeft: 6, flexShrink: 0 }} numberOfLines={1} maxFontSizeMultiplier={1.3}>
                       {activity.text}
                     </Text>
                   );
                 })()}
               </View>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
-                {isPinned && (
-                  <View style={s.pinnedIconWrap}>
-                    <IconPin size={14} color={isDark ? 'rgba(255,255,255,0.4)' : 'rgba(0,0,0,0.35)'} />
-                  </View>
-                )}
-                {isLocked && <IconLock size={12} color={isDark ? 'rgba(255,255,255,0.35)' : 'rgba(0,0,0,0.3)'} />}
-                <Text style={[s.rowTime, (unread && !isMuted) ? {
+                {isLocked && <IconLock size={12} color={P.icon} />}
+                <Text maxFontSizeMultiplier={1.3} style={[s.rowTime, (unread && !isMuted) ? {
                   // [2026-10-06 UX] muted chats keep the time grey (WhatsApp)
-                  color: WA_GREEN_TIME, fontWeight: '700',
+                  // [2026-10-08 chat-beauty-list] unread = bold in text colour (B&W)
+                  color: P.text, fontWeight: '700',
                 } : {
-                  color: isDark ? 'rgba(255,255,255,0.35)' : 'rgba(0,0,0,0.35)',
+                  color: P.sub,
                 }]}>
                   {lastMsg ? formatChatTime(lastMsg.created_at, t, language) : ''}
                 </Text>
@@ -1258,8 +1267,8 @@ const ConversationRow = React.memo(function ConversationRow({
               <Animated.View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', opacity: subtitleFade }}>
               {isLocked ? (
                 <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 5, marginRight: 10 }}>
-                  <IconLock size={13} color={isDark ? 'rgba(255,255,255,0.45)' : 'rgba(0,0,0,0.45)'} />
-                  <Text style={[s.rowPreview, { color: isDark ? 'rgba(255,255,255,0.45)' : 'rgba(0,0,0,0.45)', flex: 1 }]} numberOfLines={1}>
+                  <IconLock size={13} color={P.sub} />
+                  <Text style={[s.rowPreview, { color: P.sub, flex: 1 }]} numberOfLines={1} maxFontSizeMultiplier={1.3}>
                     {t('chat.lockedChat') || 'Chat bloqueado'}
                   </Text>
                 </View>
@@ -1289,15 +1298,15 @@ const ConversationRow = React.memo(function ConversationRow({
                   const unit = `${days}d`;
                   return [pre, unit, pre ? '' : suf].filter(Boolean).join(' ').trim();
                 })();
-                const muted = isDark ? 'rgba(255,255,255,0.5)' : 'rgba(0,0,0,0.45)';
+                const muted = P.sub;
                 const tint = isFresh ? '#dc2626' : muted;
                 // [beauty 2026-10-01] Draft preview is now plain inline text
                 // (dropped the filled box) — WhatsApp shows a red "Draft:" prefix
                 // inline, no container, which keeps the row rhythm clean.
                 return (
                   <View style={{ flex: 1, marginRight: 10 }}>
-                    <Text style={[s.rowPreview, { color: tint, fontWeight: '500' }]} numberOfLines={1}>
-                      <Text style={{ color: tint, fontWeight: '700' }}>{t('chat.draft') || 'Rascunho'}: </Text>
+                    <Text style={[s.rowPreview, { color: P.sub }]} numberOfLines={1} maxFontSizeMultiplier={1.3}>
+                      <Text style={{ color: tint, fontWeight: '600' }}>{t('chat.draft') || 'Rascunho'}: </Text>
                       {draftText}
                     </Text>
                     {ageLabel ? (
@@ -1307,8 +1316,8 @@ const ConversationRow = React.memo(function ConversationRow({
                 );
               })() : typingName ? (
                 <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 6, marginRight: 10 }}>
-                  <TypingDotsInline color={ACCENT} />
-                  <Text style={[s.rowPreview, { color: ACCENT, fontStyle: 'italic', fontWeight: '600', flex: 0 }]} numberOfLines={1}>
+                  <TypingDotsInline color={P.text} />
+                  <Text style={[s.rowPreview, { color: P.text, fontWeight: '500', flex: 0 }]} numberOfLines={1} maxFontSizeMultiplier={1.3}>
                     {isGroup ? `${typingName} ` : ''}{typingRecording ? (t('chat.recordingAudio') || 'gravando áudio...') : ((isGroup && typingNames.length > 1) ? (t('chat.typingMultiple') || 'estão digitando...') : (t('chat.typing') || 'digitando...'))}
                   </Text>
                 </View>
@@ -1316,7 +1325,7 @@ const ConversationRow = React.memo(function ConversationRow({
                 <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', marginRight: 10 }}>
                   {hasScheduled && (
                     <View style={{ marginRight: 4, opacity: 0.85 }}>
-                      <IconClockMini size={13} color={isDark ? 'rgba(255,255,255,0.6)' : 'rgba(0,0,0,0.55)'} />
+                      <IconClockMini size={13} color={P.sub} />
                     </View>
                   )}
                   {renderStatusIcon()}
@@ -1327,25 +1336,24 @@ const ConversationRow = React.memo(function ConversationRow({
                         // Unread preview reads a notch darker + a hair heavier so
                         // the whole row (name + preview) leans forward as "unread",
                         // while read rows stay quiet secondary text. WhatsApp/iMessage.
-                        color: unread
-                          ? (isDark ? '#e8e8ea' : '#262626')
-                          : (isDark ? 'rgba(255,255,255,0.45)' : 'rgba(0,0,0,0.45)'),
-                        fontWeight: unread ? '500' : '400',
+                        color: unread ? P.subStrong : P.sub,
+                        fontWeight: '400',
                       },
                     ]}
                     numberOfLines={1}
+                    maxFontSizeMultiplier={1.3}
                   >
                     {previewSender ? (
                       <>
-                        <Text style={{ fontWeight: '600', color: colors.textSecondary }}>{previewSender}: </Text>
-                        {withPreviewIcon(preview, unread ? (isDark ? '#e8e8ea' : '#262626') : (isDark ? 'rgba(255,255,255,0.45)' : 'rgba(0,0,0,0.45)'))}
+                        <Text style={{ fontWeight: '500', color: unread ? P.text : P.sub }}>{previewSender}: </Text>
+                        {withPreviewIcon(preview, unread ? P.subStrong : P.sub)}
                       </>
-                    ) : (withPreviewIcon(preview, unread ? (isDark ? '#e8e8ea' : '#262626') : (isDark ? 'rgba(255,255,255,0.45)' : 'rgba(0,0,0,0.45)')) || t('chat.noMessages'))}
+                    ) : (withPreviewIcon(preview, unread ? P.subStrong : P.sub) || t('chat.noMessages'))}
                   </Text>
                 </View>
               )}
               </Animated.View>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, minHeight: 22 }}>
                 {/* Mute icon stays mounted during the fade-out (muteVisible
                     flips false only after the 200ms timing finishes), so the
                     true→false transition fades instead of popping. Unmounted
@@ -1353,8 +1361,17 @@ const ConversationRow = React.memo(function ConversationRow({
                     14px slot in the flex gap. */}
                 {muteVisible && (
                   <Animated.View style={{ opacity: muteOpacity }} pointerEvents="none">
-                    <IconBellOff size={14} color={isDark ? 'rgba(255,255,255,0.35)' : 'rgba(0,0,0,0.3)'} />
+                    <IconBellOff size={15} color={P.icon} />
                   </Animated.View>
+                )}
+                {/* [2026-10-08 chat-beauty-list] Pin moved from the time line to
+                    the status column (WhatsApp/Telegram) so name→time stays clean
+                    and all row indicators (mute · pin · @ · count) share one
+                    baseline. */}
+                {isPinned && (
+                  <View style={s.pinnedIconWrap}>
+                    <IconPin size={15} color={P.icon} />
+                  </View>
                 )}
                 {/* Mention badge: a single @ indicator (the duplicate
                     has_mention pill was removed 2026-10-01). Stays even when the
@@ -1363,30 +1380,20 @@ const ConversationRow = React.memo(function ConversationRow({
                     — it's differentiated from the count pill by the @ glyph +
                     weight, not by a new hue. Spring-pops when the count rises. */}
                 {conversation.unread_mentions > 0 && (
-                  <Animated.View style={[s.unreadBadge, s.unreadBadgeShadow, { backgroundColor: WA_GREEN, marginRight: 4, minWidth: 22, transform: [{ scale: mentionScale }] }]}>
-                    <Text style={[s.unreadText, { fontSize: 13, fontWeight: '900' }]}>@</Text>
+                  <Animated.View style={[s.unreadBadge, { backgroundColor: P.pillBg, minWidth: 22, transform: [{ scale: mentionScale }] }]}>
+                    <Text maxFontSizeMultiplier={1.15} style={[s.unreadText, { color: P.pillTxt, fontSize: 13, fontWeight: '800' }]}>@</Text>
                   </Animated.View>
                 )}
                 {unread && (
                   <Animated.View style={[
                     s.unreadBadge,
-                    s.unreadBadgeShadow,
-                    // Muted chats get a neutral grey pill with NO purple glow —
-                    // the badge stays informative but visually de-emphasized so
-                    // the brand-purple unread accent is reserved for live chats.
-                    isMuted && !conversation.unread_mentions && {
-                      backgroundColor: isDark ? '#555' : '#9aa3b2',
-                      ...Platform.select({
-                        ios: { shadowOpacity: 0 },
-                        android: { elevation: 0 },
-                        web: { boxShadow: 'none' },
-                        default: {},
-                      }),
-                    },
+                    // [2026-10-08 chat-beauty-list] B&W pill: black/white
+                    // (inverted in dark), flat — no glow. Muted = soft grey.
+                    { backgroundColor: (isMuted && !conversation.unread_mentions) ? P.mutedPillBg : P.pillBg },
                     // Spring-pop only when the unread count goes UP (see unreadScale).
                     { transform: [{ scale: unreadScale }] },
                   ]}>
-                    <Text style={s.unreadText}>{conversation.unread_count > 99 ? '99+' : conversation.unread_count}</Text>
+                    <Text maxFontSizeMultiplier={1.15} style={[s.unreadText, { color: (isMuted && !conversation.unread_mentions) ? P.mutedPillTxt : P.pillTxt }]}>{conversation.unread_count > 99 ? '99+' : conversation.unread_count}</Text>
                   </Animated.View>
                 )}
               </View>
@@ -1421,26 +1428,26 @@ const ConversationRow = React.memo(function ConversationRow({
   return (
     <View style={s.swipeContainer}>
       <Animated.View style={[s.swipeActionsLeft, { opacity: leftOpacity }]}>
-        <TouchableOpacity style={[s.swipeActionBtnWide, { borderRadius: 14, marginLeft: 4, marginVertical: 3, backgroundColor: '#64748B' }]} onPress={() => { resetSwipe(); propsRef.current.onMute?.(conversation); }}>
+        <TouchableOpacity style={[s.swipeActionBtnWide, { borderRadius: 14, marginLeft: 4, marginVertical: 3, backgroundColor: SWIPE_C.mute }]} onPress={() => { resetSwipe(); propsRef.current.onMute?.(conversation); }}>
           {isMuted ? <IconBell size={22} color="#fff" /> : <IconVolume2 size={22} color="#fff" />}
           <Text style={s.swipeActionLabel}>{isMuted ? (t('chat.unmute') || 'Unmute') : (t('chat.mute') || 'Mute')}</Text>
         </TouchableOpacity>
-        <TouchableOpacity style={[s.swipeActionBtnWide, { borderRadius: 14, marginRight: 4, marginVertical: 3, backgroundColor: '#F59E0B' }]} onPress={() => { resetSwipe(); propsRef.current.onPin?.(conversation); }}>
+        <TouchableOpacity style={[s.swipeActionBtnWide, { borderRadius: 14, marginRight: 4, marginVertical: 3, backgroundColor: SWIPE_C.pin }]} onPress={() => { resetSwipe(); propsRef.current.onPin?.(conversation); }}>
           <IconPin size={22} color="#fff" />
           <Text style={s.swipeActionLabel}>{isPinned ? (t('chat.unpin') || 'Unpin') : (t('chat.pin') || 'Pin')}</Text>
         </TouchableOpacity>
         {/* [2026-10-06 UX2] toggle-aware read/unread (parity with native Swipeable) */}
-        <TouchableOpacity style={[s.swipeActionBtnWide, { borderRadius: 14, marginRight: 4, marginVertical: 3, backgroundColor: '#6366F1' }]} onPress={() => { try { haptic.select(); } catch {} resetSwipe(); propsRef.current.onMarkUnread?.(conversation); }}>
+        <TouchableOpacity style={[s.swipeActionBtnWide, { borderRadius: 14, marginRight: 4, marginVertical: 3, backgroundColor: SWIPE_C.read }]} onPress={() => { try { haptic.select(); } catch {} resetSwipe(); propsRef.current.onMarkUnread?.(conversation); }}>
           <UnreadIc size={22} color="#fff" />
           <Text style={s.swipeActionLabel}>{unreadSwipeLabel}</Text>
         </TouchableOpacity>
       </Animated.View>
       <Animated.View style={[s.swipeActionsRight, { opacity: rightOpacity }]}>
-        <TouchableOpacity style={[s.swipeActionBtnWide, { borderRadius: 14, marginLeft: 4, marginVertical: 3, backgroundColor: '#00A884' }]} onPress={() => { try { haptic.success(); } catch {} resetSwipe(); propsRef.current.onArchive?.(conversation); }}>
+        <TouchableOpacity style={[s.swipeActionBtnWide, { borderRadius: 14, marginLeft: 4, marginVertical: 3, backgroundColor: SWIPE_C.archive }]} onPress={() => { try { haptic.success(); } catch {} resetSwipe(); propsRef.current.onArchive?.(conversation); }}>
           <IconArchive size={22} color="#fff" />
           <Text style={s.swipeActionLabel}>{isArchived ? (t('chat.unarchive') || 'Unarchive') : (t('chat.archive') || 'Archive')}</Text>
         </TouchableOpacity>
-        <TouchableOpacity style={[s.swipeActionBtnWide, { borderRadius: 14, marginRight: 4, marginVertical: 3, backgroundColor: '#EF4444' }]} onPress={() => { try { haptic.medium(); } catch {} resetSwipe(); propsRef.current.onDelete?.(conversation); }}>
+        <TouchableOpacity style={[s.swipeActionBtnWide, { borderRadius: 14, marginRight: 4, marginVertical: 3, backgroundColor: SWIPE_C.del }]} onPress={() => { try { haptic.medium(); } catch {} resetSwipe(); propsRef.current.onDelete?.(conversation); }}>
           <IconTrash size={22} color="#fff" />
           <Text style={s.swipeActionLabel}>{t('chat.delete') || 'Excluir'}</Text>
         </TouchableOpacity>
@@ -2932,7 +2939,16 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab, reque
   );
 }
 
-function ChatListTab({ colors, isDark, t, user, router, searchQuery = '', setActiveTab, requestOpenStatus, requestNewStatus, largeTitle, onLargeTitleCollapsedChange, bottomInset = 0 }) {
+function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuery = '', setActiveTab, requestOpenStatus, requestNewStatus, largeTitle, onLargeTitleCollapsedChange, bottomInset = 0 }) {
+  // [2026-10-08 chat-beauty-list] Neutral B&W surface for everything the list
+  // paints (rows, chips, sheets): near-black #0b0b0b in dark instead of the
+  // global navy, neutral greys instead of the bluish WhatsApp text tones.
+  const P = isDark ? LP_DARK : LP_LIGHT;
+  const colors = useMemo(() => ({
+    ..._themeColors,
+    background: P.bg, surface: P.surface, text: P.text,
+    textSecondary: P.sub, textTertiary: P.faint, border: P.hair,
+  }), [_themeColors, P]);
   const confirm = useConfirm();
   const { language } = useLanguage();
   // Try MMKV preload first; fall back to the native SQLite cache (iOS).
@@ -6154,47 +6170,38 @@ function ChatListTab({ colors, isDark, t, user, router, searchQuery = '', setAct
 
   const FilterChip = useCallback(({ label, value, count, folder }) => {
     const active = filter === value;
-    // WhatsApp-parity pills: selected = soft green fill + dark-green text + a
-    // thin green border; unselected = thin gray outline + muted gray text.
-    const pillBg = active
-      ? (isDark ? WA_PILL_BG_DARK : WA_PILL_BG_LIGHT)
-      : 'transparent';
-    const pillBorder = active
-      ? (isDark ? 'rgba(78,230,184,0.35)' : 'rgba(2,125,105,0.22)')
-      : (isDark ? 'rgba(255,255,255,0.18)' : 'rgba(17,17,17,0.16)');
-    const pillTxt = active
-      ? (isDark ? WA_PILL_TXT_DARK : WA_PILL_TXT_LIGHT)
-      : (isDark ? '#8696a0' : '#667781');
+    // [2026-10-08 chat-beauty-list] B&W pills: selected = solid black (white
+    // in dark) + inverted text; unselected = soft grey fill, no outline.
+    const pillBg = active ? P.pillBg : P.chipBg;
+    const pillTxt = active ? P.pillTxt : P.chipTxt;
     return (
       <TouchableOpacity
         style={[
           s.chip,
-          { backgroundColor: pillBg, borderColor: pillBorder },
-          isWeb && { transition: 'all 0.18s cubic-bezier(0.4,0,0.2,1)', cursor: 'pointer' },
+          { backgroundColor: pillBg },
+          isWeb && { transition: 'background-color 0.18s cubic-bezier(0.4,0,0.2,1)', cursor: 'pointer' },
         ]}
         onPress={() => setFilter(filter === value ? 'all' : value)}
         onLongPress={folder ? () => handleDeleteFolderChip(folder) : undefined}
         delayLongPress={350}
         activeOpacity={0.7}
+        accessibilityRole="button"
+        accessibilityState={{ selected: active }}
       >
-        <Text style={[s.chipText, { color: pillTxt }]}>
+        <Text maxFontSizeMultiplier={1.25} style={[s.chipText, { color: pillTxt, fontWeight: active ? '600' : '500' }]}>
           {label}
         </Text>
         {count > 0 ? (
           <View style={[
             s.chipBadge,
-            {
-              backgroundColor: active
-                ? (isDark ? 'rgba(78,230,184,0.22)' : 'rgba(2,125,105,0.16)')
-                : (isDark ? 'rgba(255,255,255,0.10)' : 'rgba(17,17,17,0.08)'),
-            },
+            { backgroundColor: active ? (isDark ? 'rgba(0,0,0,0.12)' : 'rgba(255,255,255,0.2)') : P.chipCount },
           ]}>
-            <Text style={[s.chipBadgeText, { color: pillTxt }]}>{count > 99 ? '99+' : count}</Text>
+            <Text maxFontSizeMultiplier={1.15} style={[s.chipBadgeText, { color: pillTxt }]}>{count > 99 ? '99+' : count}</Text>
           </View>
         ) : null}
       </TouchableOpacity>
     );
-  }, [filter, isDark, handleDeleteFolderChip]);
+  }, [filter, isDark, P, handleDeleteFolderChip]);
 
   const renderPinnedLabel = () => {
     if (filter !== 'all' || pinnedCount === 0) return null;
@@ -6582,8 +6589,8 @@ function ChatListTab({ colors, isDark, t, user, router, searchQuery = '', setAct
         {/* Small crisp pin glyph reads as a real section marker (thin-stroke SVG
             sized to match the caps). Neutral monochrome tint so the PINNED group
             reads as a first-class section, WhatsApp/Telegram-style. */}
-        <IconPin size={11} color={isDark ? 'rgba(255,255,255,0.5)' : 'rgba(0,0,0,0.45)'} />
-        <Text style={[s.sectionLabelText, { color: isDark ? 'rgba(255,255,255,0.5)' : 'rgba(0,0,0,0.5)' }]}>
+        <IconPin size={12} color={P.sub} />
+        <Text maxFontSizeMultiplier={1.3} style={[s.sectionLabelText, { color: P.sub }]}>
           {(() => { const v = t('chat.pinned'); return v && v !== 'chat.pinned' ? v : 'FIXADAS'; })()}
         </Text>
       </View>
@@ -6614,28 +6621,25 @@ function ChatListTab({ colors, isDark, t, user, router, searchQuery = '', setAct
     const openLocked = () => { router.push('/locked-chats'); };
     return (
       <TouchableOpacity
-        style={[s.archivedHeader, {
-          borderBottomColor: isDark ? '#2a2e3a' : '#dadbe0',
-          backgroundColor: isDark ? '#1c1c24' : '#f3f3f7',
-        }]}
+        style={s.archivedHeader}
         onPress={openLocked}
         activeOpacity={0.65}
         accessibilityLabel={t('chat.hiddenSection') || 'Conversas trancadas'}
         accessibilityRole="button"
       >
-        <View style={[s.archivedHeaderIcon, { backgroundColor: '#52525b' }]}>
-          <IconLock size={16} color="#fff" />
+        <View style={s.archivedHeaderIcon}>
+          <IconLock size={20} color={P.text} />
         </View>
         <View style={{ flex: 1 }}>
-          <Text style={[s.archivedHeaderText, { color: colors.text }]}>
+          <Text maxFontSizeMultiplier={1.35} style={[s.archivedHeaderText, { color: P.text }]}>
             {t('chat.hiddenSection') || 'Conversas trancadas'}
           </Text>
-          <Text style={{ fontSize: 12, color: colors.textTertiary, marginTop: 2 }}>
+          <Text maxFontSizeMultiplier={1.3} style={{ fontSize: 13, color: P.sub, marginTop: 2 }}>
             {t('chat.hiddenSectionDesc') || 'Toque para ver suas conversas trancadas'}
           </Text>
         </View>
-        <View style={[s.archivedCountBadge, { backgroundColor: '#52525b' }]}>
-          <Text style={s.archivedCountText}>{lockedCount}</Text>
+        <View style={s.archivedCountBadge}>
+          <Text style={[s.archivedCountText, { color: P.sub }]}>{lockedCount}</Text>
         </View>
       </TouchableOpacity>
     );
@@ -6645,24 +6649,21 @@ function ChatListTab({ colors, isDark, t, user, router, searchQuery = '', setAct
     if (filter !== 'all' || archivedCount === 0) return null;
     return (
       <TouchableOpacity
-        style={[s.archivedHeader, {
-          borderBottomColor: isDark ? '#2a3a2e' : '#d8f0de',
-          backgroundColor: isDark ? '#161617' : '#f6f6f7',
-          ...(isWeb ? { transition: 'background 0.2s ease' } : {}),
-        }]}
+        style={s.archivedHeader}
         onPress={() => setFilter('archived')}
         activeOpacity={0.65}
+        accessibilityRole="button"
       >
         <View style={s.archivedHeaderIcon}>
-          <IconArchive size={18} color="#fff" />
+          <IconArchive size={20} color={P.text} />
         </View>
         <View style={{ flex: 1 }}>
-          <Text style={[s.archivedHeaderText, { color: colors.text }]}>
+          <Text maxFontSizeMultiplier={1.35} style={[s.archivedHeaderText, { color: P.text }]}>
             {t('chat.archived') || 'Arquivadas'}
           </Text>
         </View>
         <View style={s.archivedCountBadge}>
-          <Text style={s.archivedCountText}>{archivedCount}</Text>
+          <Text maxFontSizeMultiplier={1.3} style={[s.archivedCountText, { color: P.sub }]}>{archivedCount}</Text>
         </View>
       </TouchableOpacity>
     );
@@ -6946,35 +6947,41 @@ function ChatListTab({ colors, isDark, t, user, router, searchQuery = '', setAct
           activeOpacity={0.7}
           style={{
             flexDirection: 'row', alignItems: 'center', gap: 14,
-            paddingHorizontal: 16, paddingVertical: 14,
-            borderBottomWidth: StyleSheet.hairlineWidth,
-            borderBottomColor: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)',
+            paddingHorizontal: 16, paddingVertical: 10, minHeight: 74,
           }}
         >
           {/* WAVE 46 (2026-05-21): swap solid purple + sparkle for the real
               app icon with a winking-eye animation (~every 4–8s). Same 52px
               footprint so layout doesn't shift. */}
-          <ChatyyOneAvatar size={52} />
+          {/* dark: hairline ring so the black Bia mark doesn't melt into #0b0b0b */}
+          <View style={isDark ? { borderRadius: ROW_AVATAR / 2, borderWidth: 1, borderColor: 'rgba(255,255,255,0.14)', margin: -1 } : null}>
+            <ChatyyOneAvatar size={ROW_AVATAR} />
+          </View>
           <View style={{ flex: 1 }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-              <Text style={{ fontSize: 16, fontWeight: '700', color: colors.text }}>
+              <Text maxFontSizeMultiplier={1.35} style={[s.rowName, { flex: 0, color: P.text }]}>
                 {t?.('one.title') || 'Bia'}
               </Text>
               <View style={{
-                backgroundColor: isDark ? 'rgba(255,255,255,0.12)' : 'rgba(17, 17, 17,0.08)',
-                borderRadius: 6, paddingHorizontal: 6, paddingVertical: 1,
+                backgroundColor: P.chipBg,
+                borderRadius: 5, paddingHorizontal: 5, paddingVertical: 1,
               }}>
-                <Text style={{ color: colors.textSecondary, fontSize: 9, fontWeight: '800', letterSpacing: 0.6 }}>AI</Text>
+                <Text maxFontSizeMultiplier={1.1} style={{ color: P.sub, fontSize: 10, fontWeight: '700', letterSpacing: 0.5 }}>AI</Text>
               </View>
             </View>
-            <Text style={{ fontSize: 13, color: colors.textSecondary, marginTop: 2 }} numberOfLines={1}>
+            <Text maxFontSizeMultiplier={1.3} style={[s.rowPreview, { color: P.sub, marginTop: 3, marginRight: 0 }]} numberOfLines={1}>
               {t?.('one.subtitle') || 'Pergunte qualquer coisa • IA pessoal'}
             </Text>
           </View>
-          <Svg width={18} height={18} viewBox="0 0 24 24" fill="none">
-            <Path d="M9 6l6 6-6 6" stroke={colors.textSecondary} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+          <Svg width={16} height={16} viewBox="0 0 24 24" fill="none">
+            <Path d="M9 6l6 6-6 6" stroke={P.faint} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
           </Svg>
         </TouchableOpacity>
+      )}
+      {/* [2026-10-08 chat-beauty-list] Same inset hairline as the rows (was
+          a full-bleed border that broke the list rhythm). */}
+      {!(searchQuery || '').trim() && Platform.OS !== 'android' && (
+        <View style={[s.separator, { backgroundColor: P.hair, marginLeft: SEP_INSET }]} />
       )}
 
       {/* Status stories (Instagram-style) — only when not searching.
@@ -7178,9 +7185,13 @@ function ChatListTab({ colors, isDark, t, user, router, searchQuery = '', setAct
     <ChatListSmartEmpty router={router} t={t} filtered={_emptyIsFiltered} currentEmail={user?.email} />
   ), [loading, t, router, _emptyIsFiltered, user?.email]);
 
+  // [2026-10-08 chat-beauty-list] iOS/web: hairline inset under the text
+  // column (starts where the name starts). Android/Material: no dividers —
+  // the 74pt rhythm + whitespace separates rows (WhatsApp Android).
   const ItemSeparatorComponent = useCallback(() => (
-    <View style={[s.separator, { backgroundColor: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)', marginLeft: 84, marginRight: 0 }]} />
-  ), [isDark]);
+    <View style={[s.separator, { backgroundColor: P.hair, marginLeft: SEP_INSET, marginRight: 0 }]} />
+  ), [P]);
+  const _itemSeparator = Platform.OS === 'android' ? undefined : ItemSeparatorComponent;
 
   // [2026-10-07 native-ui-build] Topo da lista (notas + filtros) extraído p/
   // poder morar fixo (web/desktop) OU dentro do header da FlashList (nativo
@@ -7194,8 +7205,8 @@ function ChatListTab({ colors, isDark, t, user, router, searchQuery = '', setAct
         <ScrollView
           horizontal
           showsHorizontalScrollIndicator={false}
-          style={{ flexGrow: 0, flexShrink: 0, height: 90 }}
-          contentContainerStyle={{ paddingHorizontal: 12, paddingVertical: 8, gap: 12, alignItems: 'center' }}
+          style={{ flexGrow: 0, flexShrink: 0, height: 98 }}
+          contentContainerStyle={{ paddingHorizontal: 12, paddingVertical: 8, gap: 10, alignItems: 'center' }}
         >
           {/* Set your note button */}
           <TouchableOpacity
@@ -7203,21 +7214,21 @@ function ChatListTab({ colors, isDark, t, user, router, searchQuery = '', setAct
             style={{ alignItems: 'center', width: 64 }}
           >
             <View style={{
-              width: 52, height: 52, borderRadius: 26,
-              borderWidth: 2, borderColor: myNote ? ACCENT : (isDark ? 'rgba(255,255,255,0.2)' : 'rgba(0,0,0,0.15)'),
+              width: 56, height: 56, borderRadius: 28,
+              borderWidth: 1.5, borderColor: myNote ? P.text : (isDark ? 'rgba(255,255,255,0.22)' : 'rgba(0,0,0,0.18)'),
               borderStyle: myNote ? 'solid' : 'dashed',
               alignItems: 'center', justifyContent: 'center',
-              backgroundColor: isDark ? 'rgba(17, 17, 17,0.08)' : 'rgba(17, 17, 17,0.05)',
+              backgroundColor: P.card,
             }}>
               {myNote ? (
                 <Text style={{ fontSize: 9, color: colors.text, textAlign: 'center', paddingHorizontal: 3 }} numberOfLines={2}>
                   {myNote.content}
                 </Text>
               ) : (
-                <Text style={{ fontSize: 20, color: ACCENT, fontWeight: '300' }}>+</Text>
+                <Svg width={20} height={20} viewBox="0 0 24 24" fill="none" stroke={P.text} strokeWidth={2} strokeLinecap="round"><Path d="M12 5v14M5 12h14" /></Svg>
               )}
             </View>
-            <Text style={{ fontSize: 10, color: colors.textSecondary, marginTop: 3, fontWeight: '600' }} numberOfLines={1}>
+            <Text maxFontSizeMultiplier={1.2} style={{ fontSize: 11, color: P.sub, marginTop: 5, fontWeight: '500' }} numberOfLines={1}>
               {myNote ? (t('chat.setNote') || 'Set note') : (t('chat.setNote') || 'Set note')}
             </Text>
           </TouchableOpacity>
@@ -7227,17 +7238,17 @@ function ChatListTab({ colors, isDark, t, user, router, searchQuery = '', setAct
             return (
               <View key={note.email} style={{ alignItems: 'center', width: 64 }}>
                 <View style={{
-                  width: 52, height: 52, borderRadius: 26,
-                  borderWidth: 2, borderColor: ACCENT,
+                  width: 56, height: 56, borderRadius: 28,
+                  borderWidth: 1.5, borderColor: P.text,
                   alignItems: 'center', justifyContent: 'center',
-                  backgroundColor: isDark ? 'rgba(17, 17, 17,0.12)' : 'rgba(17, 17, 17,0.06)',
-                  padding: 3,
+                  backgroundColor: P.card,
+                  padding: 4,
                 }}>
                   <Text style={{ fontSize: 9, color: colors.text, textAlign: 'center' }} numberOfLines={2}>
                     {note.content}
                   </Text>
                 </View>
-                <Text style={{ fontSize: 10, color: colors.textSecondary, marginTop: 3, fontWeight: '500' }} numberOfLines={1}>
+                <Text maxFontSizeMultiplier={1.2} style={{ fontSize: 11, color: P.sub, marginTop: 5, fontWeight: '500' }} numberOfLines={1}>
                   {displayName.split(' ')[0]}
                 </Text>
               </View>
@@ -7249,7 +7260,7 @@ function ChatListTab({ colors, isDark, t, user, router, searchQuery = '', setAct
       <ScrollView
         horizontal
         showsHorizontalScrollIndicator={false}
-        style={{ flexGrow: 0, flexShrink: 0, height: 50 }}
+        style={{ flexGrow: 0, flexShrink: 0, height: 46 }}
         contentContainerStyle={s.filtersRow}
       >
         <FilterChip label={t('chat.filterAll') || 'Todas'} value="all" />
@@ -7264,7 +7275,7 @@ function ChatListTab({ colors, isDark, t, user, router, searchQuery = '', setAct
       </ScrollView>
     </>
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  ), [notes, myNote, isDark, colors, t, FilterChip, unreadCount, favoritesCount, groupCount, channelCount, archivedCount, chatFolders]);
+  ), [notes, myNote, isDark, colors, P, t, FilterChip, unreadCount, favoritesCount, groupCount, channelCount, archivedCount, chatFolders]);
 
   // Large title "Conversas" (iOS UINavigationBar large title / M3 large top
   // app bar): rola 1:1 com a lista; o chat.js faz o título compacto aparecer
@@ -7297,16 +7308,14 @@ function ChatListTab({ colors, isDark, t, user, router, searchQuery = '', setAct
   }, [loading, largeTitle]);
 
   return (
-    <View style={[{ flex: 1 }, isWeb && isDark && {
-      backgroundColor: '#0D0D10',
-    }]}>
+    <View style={[{ flex: 1, backgroundColor: colors.background }]}>
       {/* Selection toolbar */}
       {selectionMode && (
         <View style={{
           flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
           paddingHorizontal: 16, paddingVertical: 10,
-          backgroundColor: isDark ? 'rgba(17, 17, 17,0.12)' : 'rgba(17, 17, 17,0.08)',
-          borderBottomWidth: 1, borderBottomColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)',
+          backgroundColor: P.press,
+          borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: P.hair,
         }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
             <TouchableOpacity onPress={exitSelectionMode} style={{ padding: 4 }}>
@@ -7364,7 +7373,7 @@ function ChatListTab({ colors, isDark, t, user, router, searchQuery = '', setAct
                 const { Skeleton } = require('../modules/expo-native-toolkit');
                 if (Skeleton) {
                   return [0, 1, 2, 3, 4, 5, 6].map(i => (
-                    <Skeleton key={i} variant="chatRow" style={{ height: 64, width: '100%' }} />
+                    <Skeleton key={i} variant="chatRow" style={{ height: 74, width: '100%' }} />
                   ));
                 }
               } catch {}
@@ -7385,7 +7394,7 @@ function ChatListTab({ colors, isDark, t, user, router, searchQuery = '', setAct
           onLoad={_onListLoad}
           data={visibleConversations}
           keyExtractor={keyExtractor}
-          estimatedItemSize={64}
+          estimatedItemSize={74}
           ListHeaderComponent={_listHeaderEl}
           ListFooterComponent={ListFooterComponent}
           renderItem={renderItem}
@@ -7395,7 +7404,7 @@ function ChatListTab({ colors, isDark, t, user, router, searchQuery = '', setAct
           // no header) + tab bar translúcida iOS (conteúdo rola por baixo).
           {...(largeTitle ? { onScroll: _onListScroll, scrollEventThrottle: 32 } : {})}
           {...(bottomInset ? { scrollIndicatorInsets: { bottom: bottomInset } } : {})}
-          ItemSeparatorComponent={ItemSeparatorComponent}
+          ItemSeparatorComponent={_itemSeparator}
           // [2026-10-06 android-audit] With the search keyboard up, Android's
           // default ('never') eats the first tap on a conversation just to
           // dismiss the keyboard. 'handled' lets the row press go through.
@@ -7409,9 +7418,9 @@ function ChatListTab({ colors, isDark, t, user, router, searchQuery = '', setAct
             <RefreshControl
               refreshing={refreshing}
               onRefresh={onRefresh}
-              tintColor={ACCENT}
-              colors={[ACCENT, ACCENT2]}
-              progressBackgroundColor={isDark ? '#1F2C33' : '#fff'}
+              tintColor={P.text}
+              colors={[P.text, P.text]}
+              progressBackgroundColor={isDark ? '#1c1c1e' : '#fff'}
             />
           }
           extraData={extraDataMemo}
@@ -8600,65 +8609,55 @@ const s = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 16,
-    paddingVertical: 8,
+    paddingTop: 4,
+    paddingBottom: 10,
     gap: 8,
   },
   // Filter pills — taller + rounder so they read like real WhatsApp/Telegram
   // category chips. Monochrome segmented control (2026): pill, hairline border,
   // active state = solid black fill with a single whisper-soft lift.
+  // [2026-10-08 chat-beauty-list] Filled pills (Instagram/WhatsApp 2024):
+  // unselected = soft grey fill, no border; selected = solid black (white in
+  // dark) with inverted text. Flat — no shadow.
   chip: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    paddingHorizontal: 13,
-    paddingVertical: 6,
+    paddingHorizontal: 14,
     borderRadius: 999,
-    borderWidth: 1,
     height: 32,
     justifyContent: 'center',
     flexShrink: 0,
   },
-  // Active chip — solid monochrome fill with one subtle, neutral lift (flat +
-  // a whisper, never a colored bloom).
-  chipActive: {
-    backgroundColor: '#111111',
-    borderColor: '#111111',
-    ...Platform.select({
-      ios: { shadowColor: '#101114', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.16, shadowRadius: 4 },
-      android: { elevation: 2 },
-      web: { boxShadow: '0 1px 4px rgba(16,17,20,0.18)' },
-    }),
-  },
   chipText: {
-    fontSize: 13,
-    fontWeight: '600',
-    letterSpacing: -0.1,
+    fontSize: 14,
+    letterSpacing: -0.15,
   },
   chipBadge: {
-    minWidth: 20,
-    height: 20,
+    minWidth: 18,
+    height: 18,
     borderRadius: 999,
-    paddingHorizontal: 6,
+    paddingHorizontal: 5,
     alignItems: 'center',
     justifyContent: 'center',
   },
   chipBadgeText: {
     fontSize: 11,
-    fontWeight: '800',
-    letterSpacing: 0.2,
+    fontWeight: '700',
+    fontVariant: ['tabular-nums'],
   },
   sectionLabel: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
     paddingHorizontal: 16,
-    paddingTop: 12,
-    paddingBottom: 4,
+    paddingTop: 14,
+    paddingBottom: 6,
   },
   sectionLabelText: {
-    fontSize: 11,
-    fontWeight: '800',
-    letterSpacing: 1.5,
+    fontSize: 12,
+    fontWeight: '600',
+    letterSpacing: 0.6,
     textTransform: 'uppercase',
   },
   // [beauty 2026-05-31] Row breathes a touch more: a hair more horizontal
@@ -8669,12 +8668,14 @@ const s = StyleSheet.create({
   // DENSIDADE 2026 (nível Gmail): linha mais compacta — menos padding vertical
   // e altura mínima menor pra caber mais conversas por tela. Continua bem acima
   // do alvo de toque mínimo.
+  // [2026-10-08 chat-beauty-list] 54 avatar + 10/10 padding → 74pt rows
+  // (WhatsApp 72 / Telegram 76 band).
   row: {
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 16,
-    paddingVertical: 11,
-    minHeight: 76,
+    paddingVertical: 10,
+    minHeight: 74,
     ...(Platform.OS === 'web' ? {
       transition: 'background-color 0.18s ease, box-shadow 0.18s ease',
       cursor: 'pointer',
@@ -8682,7 +8683,7 @@ const s = StyleSheet.create({
   },
   avatarWrap: {
     position: 'relative',
-    marginRight: 12,
+    marginRight: 14,
     // [beauty 2026-10-01] Dropped the per-avatar drop shadow — WhatsApp avatars
     // are flat. Keeps the avatar column calm and clean.
   },
@@ -8691,13 +8692,13 @@ const s = StyleSheet.create({
   // pip, WhatsApp-style, never a floating blob.
   onlineDot: {
     position: 'absolute',
-    bottom: 1.5,
-    right: 1.5,
-    width: 13,
-    height: 13,
-    borderRadius: 6.5,
+    bottom: 1,
+    right: 1,
+    width: 14,
+    height: 14,
+    borderRadius: 7,
     backgroundColor: '#22c55e',
-    borderWidth: 2,
+    borderWidth: 2.5,
     zIndex: 5,
     overflow: 'visible',
   },
@@ -8726,8 +8727,8 @@ const s = StyleSheet.create({
   rowTop: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 4,
+    alignItems: 'baseline',
+    marginBottom: 3,
   },
   // [beauty 2026-05-31] Name reads crisper at 16 with a slightly tighter
   // tracking; read rows sit at semibold so the unread→bold step is a real,
@@ -8736,7 +8737,7 @@ const s = StyleSheet.create({
     fontSize: 16.5,
     fontWeight: '600',
     flex: 1,
-    letterSpacing: -0.25,
+    letterSpacing: -0.3,
   },
   // [beauty 2026-05-31] Unread jumps to 800 so the read(500)→unread(800) step is
   // an unmistakable iMessage/WhatsApp-style contrast — a glance reads which rows
@@ -8746,12 +8747,12 @@ const s = StyleSheet.create({
   // across rows regardless of "agora" vs "14:32" vs "Ontem".
   // [beauty 2026-05-31] Timestamp flush-right, tabular so the right column stays
   // pixel-aligned across "agora" / "14:32" / "Ontem".
-  rowTime: { fontSize: 12, letterSpacing: -0.1, fontWeight: '400', fontVariant: ['tabular-nums'] },
+  rowTime: { fontSize: 12.5, letterSpacing: -0.05, fontWeight: '400', fontVariant: ['tabular-nums'] },
   rowBottom: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginTop: 2,
+    marginTop: 1,
   },
   // [beauty 2026-05-31] Preview kept discreet at 14 with a calm 19 line-height
   // so it reads as the quiet secondary line under the name — never competing
@@ -8760,8 +8761,8 @@ const s = StyleSheet.create({
     fontSize: 14.5,
     flex: 1,
     marginRight: 10,
-    lineHeight: 19,
-    letterSpacing: -0.1,
+    lineHeight: 20,
+    letterSpacing: -0.15,
   },
   // Unread badge — brand-purple pill (was WhatsApp green). Crisp squircle pill
   // with a soft brand glow so a fresh count reads as the colored attention dot.
@@ -8777,24 +8778,13 @@ const s = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: 7,
-    // WhatsApp-parity: unread count sits in a bright green pill.
-    backgroundColor: WA_GREEN,
-  },
-  // [beauty 2026-05-31] One soft, tasteful shadow — no glow stack. Calmed from a
-  // heavier purple bloom (0.38 / 0 2px 7px 0.4) to a single gentle lift so the
-  // pill reads as a clean colored count, not a glowing blob.
-  unreadBadgeShadow: {
-    ...Platform.select({
-      ios: { shadowColor: WA_GREEN, shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.3, shadowRadius: 3 },
-      android: { elevation: 2 },
-      web: { boxShadow: '0 1px 4px rgba(37,211,102,0.4)' },
-      default: {},
-    }),
+    // [2026-10-08 chat-beauty-list] fill comes from the B&W palette per theme.
+    backgroundColor: LP_LIGHT.pillBg,
   },
   unreadText: {
     color: '#fff',
     fontSize: 12,
-    fontWeight: '800',
+    fontWeight: '700',
     letterSpacing: 0.1,
     fontVariant: ['tabular-nums'],
     includeFontPadding: false,
@@ -8846,56 +8836,43 @@ const s = StyleSheet.create({
   // button without wrapping to a second line.
   nativeSwipeLabel: {
     color: '#fff',
-    fontSize: 11,
-    fontWeight: '600',
-    marginTop: 4,
+    fontSize: 11.5,
+    fontWeight: '500',
+    marginTop: 5,
+    letterSpacing: -0.1,
   },
+  // [2026-10-08 chat-beauty-list] Archived / locked entries are plain list
+  // rows now (WhatsApp): icon centred in the avatar column, label aligned with
+  // the names, count in secondary text on the right. No tinted card/border.
   archivedHeader: {
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 16,
-    paddingVertical: 14,
-    borderBottomWidth: 1,
-    marginHorizontal: 12,
-    marginTop: 4,
-    marginBottom: 4,
-    borderRadius: 14,
+    minHeight: 52,
+    paddingVertical: 8,
   },
   archivedHeaderIcon: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+    width: ROW_AVATAR,
+    height: 30,
     alignItems: 'center',
     justifyContent: 'center',
     marginRight: 14,
-    ...Platform.select({
-      ios: { backgroundColor: ACCENT },
-      android: { backgroundColor: ACCENT },
-      web: { backgroundColor: ACCENT },
-    }),
   },
   archivedHeaderText: {
-    fontSize: 15,
+    fontSize: 16,
     fontWeight: '600',
-    letterSpacing: 0.1,
+    letterSpacing: -0.3,
   },
   archivedCountBadge: {
-    minWidth: 26,
+    minWidth: 22,
     height: 22,
-    borderRadius: 11,
-    alignItems: 'center',
+    alignItems: 'flex-end',
     justifyContent: 'center',
-    paddingHorizontal: 8,
-    ...Platform.select({
-      ios: { backgroundColor: ACCENT },
-      android: { backgroundColor: ACCENT },
-      web: { background: `linear-gradient(135deg, ${ACCENT} 0%, ${ACCENT2} 100%)` },
-    }),
   },
   archivedCountText: {
-    color: '#fff',
-    fontSize: 12,
-    fontWeight: '700',
+    fontSize: 13,
+    fontWeight: '500',
+    fontVariant: ['tabular-nums'],
   },
   emptyContainer: {
     flex: 1,
@@ -8940,8 +8917,8 @@ const s = StyleSheet.create({
   listEmpty: { flexGrow: 1 },
   // [2026-10-07 native-ui-build] large title nativo (34pt bold, iOS HIG).
   largeTitle: {
-    fontSize: 32, fontWeight: '800', letterSpacing: -0.9,
-    paddingHorizontal: 16, paddingTop: 2, paddingBottom: 6,
+    fontSize: 34, fontWeight: '700', letterSpacing: -0.9,
+    paddingHorizontal: 16, paddingTop: 2, paddingBottom: 8,
   },
   fab: {
     position: 'absolute',

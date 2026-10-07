@@ -1,17 +1,20 @@
 import { androidTopInset } from '../utils/systemInsets'; // [2026-10-07 android-native] edge-to-edge
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Platform, FlatList, Alert, ActivityIndicator, TextInput, ScrollView, Image, Animated, Easing, KeyboardAvoidingView, Modal, Vibration, Dimensions, RefreshControl, Linking, Share } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useRouter, Stack } from 'expo-router';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import Svg, { Circle, Path } from 'react-native-svg';
+import { USE_NATIVE_HEADER, nativeHeaderOptions, HeaderIconButton } from '../components/nativeHeader'; // [2026-10-08 parental-redesign]
+import PressableScale from '../components/PressableScale';
+import { Skeleton } from '../components/Skeleton';
 import { useTheme } from '../context/ThemeContext';
 import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
-import { IconArrowLeft, IconPlus, IconUser, IconShield, IconChevronRight, IconMessageSquare, IconCamera, IconCheck, IconX, IconAlertCircle, IconFileText, IconBarChart, IconClock, IconLock, IconPhone, IconEye, IconCopy, IconImage, IconHome, IconStar, IconSmartphone, IconSparkles, IconAlertTriangle, IconMoon, IconUsers, IconSearch, IconHeart, IconSmile } from '../components/Icons';
+import { IconArrowLeft, IconPlus, IconUser, IconShield, IconChevronRight, IconMessageSquare, IconCamera, IconCheck, IconX, IconAlertCircle, IconFileText, IconBarChart, IconClock, IconLock, IconPhone, IconEye, IconCopy, IconImage, IconHome, IconStar, IconSmartphone, IconSparkles, IconAlertTriangle, IconMoon, IconUsers, IconSearch, IconHeart, IconSmile, IconMapPin, IconPause, IconPlay, IconMoreHorizontal, IconRefresh } from '../components/Icons';
 import * as api from '../services/api';
 import { getCached, setCache } from '../services/cache';
 import * as ImagePicker from 'expo-image-picker';
 import SmartDateInput from '../components/SmartDateInput';
-import BrandFab from '../components/BrandFab';
-import EmptyStateCard from '../components/EmptyStateCard';
 import AvatarCircle from '../components/AvatarCircle';
 import useIsMounted from '../hooks/useIsMounted';
 import * as haptics from '../services/haptics';
@@ -89,7 +92,7 @@ const getAgePresets = (age) => {
 //
 // `justWentOnline` triggers a one-shot green flash + scale-pop overlay so the
 // offline→online transition feels alive instead of silently swapping in.
-function OnlineDot({ dark, justWentOnline }) {
+function OnlineDot({ dark, justWentOnline, ringColor }) {
   const scale = useRef(new Animated.Value(1)).current;
   // Flash overlay: bigger green halo + opacity that pulses ONCE when
   // justWentOnline flips true. Independent from the steady-state pulse loop.
@@ -134,7 +137,7 @@ function OnlineDot({ dark, justWentOnline }) {
         }}
       />
       <Animated.View style={{ transform: [{ scale: popScale }] }}>
-        <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: '#22c55e', borderWidth: 2, borderColor: dark ? '#1a2332' : '#fff' }} />
+        <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: '#22c55e', borderWidth: 2, borderColor: ringColor || (dark ? '#1a2332' : '#fff') }} />
       </Animated.View>
     </View>
   );
@@ -152,6 +155,10 @@ function ParentalScreenInner() {
   const [children, setChildren] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  // [2026-10-08 parental-redesign] erro de carga (sem cache) + sheet "Mais" por filho.
+  const [loadError, setLoadError] = useState(false);
+  const [moreChild, setMoreChild] = useState(null);
+  const insets = useSafeAreaInsets();
 
   // Per-child enrichments (screen-time, restrictions for bedtime).
   // Keyed by child_email. Loaded lazily when children list arrives.
@@ -398,12 +405,16 @@ function ParentalScreenInner() {
     } catch {}
     // Refresh from API in background (don't block UI)
     api.parentalListChildren().then(r => {
-      if (r.success && isMountedRef.current) {
+      if (!isMountedRef.current) return;
+      if (r?.success) {
         const list = r.data?.children || [];
         setChildren(list);
+        setLoadError(false);
         setCache('parental_children', list, 2592000000).catch(() => {});
+      } else {
+        setLoadError(true); // [2026-10-08 parental-redesign] só aparece se não houver cache
       }
-    }).catch(() => {}).finally(() => { if (isMountedRef.current) setLoading(false); });
+    }).catch(() => { if (isMountedRef.current) setLoadError(true); }).finally(() => { if (isMountedRef.current) setLoading(false); });
   }, [isMountedRef]);
 
   // Pending unlock requests — drives the red-dot banner at top of dashboard.
@@ -452,6 +463,7 @@ function ParentalScreenInner() {
       if (r?.success && isMountedRef.current) {
         const list = r.data?.children || [];
         setChildren(list);
+        setLoadError(false);
         setCache('parental_children', list, 2592000000).catch(() => {});
         await Promise.all([loadPendingRequests(), loadChildMeta(list)]);
       }
@@ -732,6 +744,23 @@ function ParentalScreenInner() {
         },
       ]
     );
+  }, [t, childMeta, isMountedRef]);
+
+  // [2026-10-08 parental-redesign] "Pausar" virou toggle: retomar libera na
+  // hora (otimista, reverte em falha) via parental_update_restrictions locked=false.
+  const unlockChildNow = useCallback(async (child) => {
+    haptics.success();
+    const prev = childMeta[child.child_email];
+    setChildMeta(p => ({ ...p, [child.child_email]: { ...(p[child.child_email] || {}), locked: false } }));
+    try {
+      const r = await api.parentalUnlockChild(child.child_email);
+      if (!r?.success) throw new Error('unlock failed');
+    } catch {
+      if (isMountedRef.current) {
+        setChildMeta(p => ({ ...p, [child.child_email]: prev || {} }));
+        Alert.alert(t('parental.error'), t('parental.connectionError'));
+      }
+    }
   }, [t, childMeta, isMountedRef]);
 
   // Grant +15 min bonus screen-time. Works even when no daily limit set.
@@ -1475,203 +1504,248 @@ function ParentalScreenInner() {
     );
   };
 
+  // [2026-10-08 parental-redesign] Tokens do painel (grouped bg + cards brancos, hairline).
+  const PAGE_BG = isDark ? colors.background : '#F4F5F7';
+  const CARD_BG = isDark ? colors.surface : '#FFFFFF';
+  const HAIR = isDark ? 'rgba(255,255,255,0.09)' : 'rgba(0,0,0,0.07)';
+  const TILE_BG = isDark ? 'rgba(255,255,255,0.07)' : '#F2F3F5';
+
   // ─── Child Card Renderer ───
-  // Quick-action row config — 5 actions per WhatsApp/Snapchat parent app pattern.
-  // Monochrome action row — only the destructive "Pausar" (lock) keeps a
-  // semantic red. Everything else is neutral and theme-aware.
-  const CHILD_QUICK_ACTIONS = [
-    { key: 'messages', Icon: IconMessageSquare, labelKey: 'parental.messages', fallback: 'Mensagens' },
-    { key: 'screenTime', Icon: IconClock, labelKey: 'parental.screenTime', fallback: 'Tempo' },
-    { key: 'location', Icon: IconHome, labelKey: 'parental.location', fallback: 'Local' },
-    { key: 'lock', Icon: IconLock, labelKey: 'parental.lockNow', fallback: 'Pausar', danger: true },
-    { key: 'bonus', Icon: IconStar, labelKey: 'parental.bonus15', fallback: '+15min' },
-  ];
-  // tWithFallback — when the i18n key isn't found, t() returns the key string
-  // itself (which is truthy), so the `||` fallback never fires. Detect that
-  // case and prefer the fallback. Used for the quick-action labels below.
-  const tWithFallback = (key, fallback) => {
-    const v = t(key);
-    return (v === key || v == null) ? fallback : v;
+  // [2026-10-08 parental-redesign] Card do filho reescrito no padrão B&W
+  // premium (iOS Tempo de Uso / Google Family Link): avatar 52 sem halo
+  // duplo, nome 17 semibold, e-mail em fonte do sistema, status como texto
+  // + ponto pequeno (sem pílulas coloridas), resumo do dia (tempo de tela,
+  // modo noturno, local, alertas) e 4 ações que nunca truncam — Mensagens,
+  // Pausar/Retomar (toggle), +15 min e "Mais" (local, tempo de tela,
+  // resumo IA, enviar mensagem). A grade "Ações rápidas" (que só agia no
+  // children[0]) saiu: tudo agora é por filho.
+  const openChildMonitor = (child) => {
+    router.push(`/parental-monitor?child_email=${encodeURIComponent(child.child_email)}&child_name=${encodeURIComponent(child.child_name)}`);
   };
 
   const handleChildAction = (key, child) => {
     haptics.tap('light');
-    if (key === 'messages' || key === 'screenTime') {
-      router.push(`/parental-monitor?child_email=${encodeURIComponent(child.child_email)}&child_name=${encodeURIComponent(child.child_name)}`);
+    const meta = childMeta[child.child_email] || {};
+    if (key === 'messages' || key === 'screenTime' || key === 'message' || key === 'activity') {
+      openChildMonitor(child);
     } else if (key === 'location') {
       openChildLocation(child);
     } else if (key === 'lock') {
-      lockChildNow(child);
+      if (meta.locked) unlockChildNow(child);
+      else lockChildNow(child);
     } else if (key === 'bonus') {
       grantBonusTime(child);
+    } else if (key === 'summary') {
+      openAiSummary(child);
+    } else if (key === 'more') {
+      setMoreChild(child);
     }
   };
 
-  const renderChild = ({ item, index }) => {
-    const st = statusConfig[item.status] || statusConfig.pending_verification;
+  // "Mais" sheet — fecha o sheet ANTES de abrir o próximo modal (iOS não
+  // apresenta dois Modals ao mesmo tempo).
+  const runMoreAction = (key) => {
+    const child = moreChild;
+    setMoreChild(null);
+    if (!child) return;
+    setTimeout(() => { if (isMountedRef.current) handleChildAction(key, child); }, Platform.OS === 'ios' ? 380 : 60);
+  };
+
+  const seenLabel = (item) => {
+    if (!item?.last_active) return '';
+    const last = new Date(item.last_active).getTime();
+    if (!Number.isFinite(last)) return '';
+    const diffMin = Math.max(0, Math.floor((now - last) / 60000));
+    if (diffMin < 3) return t('parentalDash.onlineNow');
+    if (diffMin < 60) return t('parentalDash.seenMin', { n: diffMin });
+    const diffH = Math.floor(diffMin / 60);
+    if (diffH < 24) return t('parentalDash.seenHour', { n: diffH });
+    return t('parentalDash.seenDay', { n: Math.floor(diffH / 24) });
+  };
+
+  const childStatusLine = (item, meta) => {
+    switch (item.status) {
+      case 'active':
+        if (meta.locked) return { dot: '#ef4444', label: t('parentalDash.statusPaused') };
+        if (isOnline(item)) return { dot: '#22c55e', label: t('parentalDash.onlineNow') };
+        if (item.last_active) return { dot: null, label: seenLabel(item) };
+        return { dot: '#22c55e', label: t('parentalDash.statusActive') };
+      case 'pending_verification':
+        return { dot: '#F59E0B', label: t('parentalDash.statusPending') };
+      case 'suspended':
+        return { dot: '#ef4444', label: t('parental.suspended') };
+      case 'revoked':
+        return { dot: colors.textSecondary, label: t('parental.revoked') };
+      case 'graduated':
+        return { dot: colors.textSecondary, label: t('parental.graduated') };
+      default:
+        return { dot: '#F59E0B', label: t('parentalDash.statusPending') };
+    }
+  };
+
+  // Tile de ação (ícone + rótulo). `active` = estado ligado (Pausado).
+  const renderActionTile = ({ key, Icon, label, onPress, active = false, badge = 0, a11y }) => (
+    <View key={key} style={s.actTileWrap}>
+      <PressableScale
+        onPress={onPress}
+        haptic={false}
+        scaleTo={0.95}
+        style={[s.actTile, { backgroundColor: active ? colors.text : TILE_BG }]}
+        accessibilityRole="button"
+        accessibilityLabel={a11y || label}
+        accessibilityState={key === 'lock' ? { checked: !!active } : undefined}
+      >
+        <View>
+          <Icon size={20} color={active ? CARD_BG : colors.text} />
+          {badge > 0 && (
+            <View style={[s.miniBadge, { borderColor: active ? colors.text : TILE_BG }]}>
+              <Text style={s.miniBadgeText} allowFontScaling={false}>{badge > 99 ? '99+' : badge}</Text>
+            </View>
+          )}
+        </View>
+        <Text
+          style={[s.actTileText, { color: active ? CARD_BG : colors.text }]}
+          numberOfLines={1}
+          adjustsFontSizeToFit
+          minimumFontScale={0.8}
+          maxFontSizeMultiplier={1.2}
+        >
+          {label}
+        </Text>
+      </PressableScale>
+    </View>
+  );
+
+  const renderMetaItem = (key, Icon, text, tone) => (
+    <View key={key} style={s.metaItem}>
+      <Icon size={14} color={tone || colors.textSecondary} />
+      <Text style={[s.metaText, { color: tone || colors.textSecondary }]} numberOfLines={1} maxFontSizeMultiplier={1.4}>{text}</Text>
+    </View>
+  );
+
+  const renderChild = ({ item }) => {
     const isGraduated = item.status === 'graduated';
     const isActive = item.status === 'active';
+    const isPending = item.status === 'pending_verification';
     const meta = childMeta[item.child_email] || {};
-    const online = isActive && isOnline(item);
+    const online = isActive && !meta.locked && isOnline(item);
     const bedtime = isActive ? bedtimeStatus(meta) : { active: false };
-    const grad = childGradient(item.child_email);
+    const status = childStatusLine(item, meta);
     const stUsed = Number(meta.screen_time_used || 0);
     const stLimit = Number(meta.screen_time_limit || 0);
     const stPct = stLimit > 0 ? Math.min(100, Math.round((stUsed / stLimit) * 100)) : 0;
-    const stColor = stPct >= 90 ? '#ef4444' : stPct >= 70 ? '#f59e0b' : '#22c55e';
+    const stOver = stLimit > 0 && stUsed >= stLimit;
+    const locLabel = (meta.last_location && (meta.last_location.label || meta.last_location.name || meta.last_location.address)) || '';
+    const alerts = Number(item.unread_alerts || 0);
+    const metaItems = [];
+    if (isActive && bedtime.active) metaItems.push(renderMetaItem('bed', IconMoon, t('parentalDash.bedtimeUntil', { time: bedtime.endLabel })));
+    if (isActive && locLabel) metaItems.push(renderMetaItem('loc', IconMapPin, String(locLabel)));
+    if (alerts > 0) metaItems.push(renderMetaItem('alerts', IconAlertCircle, alerts === 1 ? t('parentalDash.alertOne') : t('parentalDash.alertsMany', { n: alerts }), '#ef4444'));
+    const showSummary = isActive && (stLimit > 0 || stUsed > 0 || metaItems.length > 0);
+
+    const onCardPress = () => {
+      haptics.tap('light');
+      if (isActive) openChildMonitor(item);
+      else if (isPending) {
+        setNewChild({ account_id: item.id, child_email: item.child_email, child_name: item.child_name });
+        setShowWizard(true);
+        setStep(1);
+      }
+    };
 
     return (
-      <Animated.View
-        style={[s.childCard, {
-          backgroundColor: isDark ? '#1a2332' : '#fff',
-          borderColor: isDark ? '#2d3748' : '#e8ecf0',
-          // Subtle staggered fade-in based on list index.
-          opacity: fadeAnim,
-        }]}
-      >
+      <View style={[s.childCard, { backgroundColor: CARD_BG, borderColor: HAIR }]}>
         <TouchableOpacity
           style={s.childCardMain}
           onLongPress={() => { if (isActive) { haptics.tap('medium'); openAiSummary(item); } }}
-          onPress={() => {
-            haptics.tap('light');
-            if (isActive) router.push(`/parental-monitor?child_email=${encodeURIComponent(item.child_email)}&child_name=${encodeURIComponent(item.child_name)}`);
-            else if (item.status === 'pending_verification') {
-              setNewChild({ account_id: item.id, child_email: item.child_email, child_name: item.child_name });
-              setShowWizard(true);
-              setStep(1);
-            }
-          }}
-          activeOpacity={0.85}
+          onPress={onCardPress}
+          activeOpacity={0.7}
+          accessibilityRole="button"
+          accessibilityLabel={`${item.child_name}, ${status.label}`}
         >
-          {/* Avatar with gradient halo + online pulse */}
-          <View style={{ position: 'relative', alignItems: 'center', justifyContent: 'center' }}>
-            <View
-              style={[s.childAvatarHalo, {
-                ...(Platform.OS === 'web'
-                  ? { background: `linear-gradient(135deg, ${grad[0]} 0%, ${grad[1]} 100%)` }
-                  : { backgroundColor: grad[0] }),
-              }]}
-            />
-            <AvatarCircle
-              email={item.child_email}
-              name={item.child_name}
-              size={52}
-              style={{ borderWidth: 3, borderColor: isDark ? '#1a2332' : '#fff' }}
-            />
+          <View style={s.avatarWrap}>
+            <AvatarCircle email={item.child_email} name={item.child_name} size={52} />
             {online && (
-              // `key` includes the flash timestamp so React remounts the
-              // dot whenever the offline→online transition fires, which
-              // replays the flash + scale-pop animation cleanly.
               <OnlineDot
                 key={`online-${item.child_email}-${onlineFlashes[item.child_email] || 0}`}
-                dark={isDark}
+                ringColor={CARD_BG}
                 justWentOnline={!!onlineFlashes[item.child_email]}
               />
             )}
             {meta.locked && (
-              <View style={s.lockBadge}>
-                <IconLock size={10} color="#fff" />
+              <View style={[s.lockBadge, { backgroundColor: colors.text, borderColor: CARD_BG }]}>
+                <IconLock size={10} color={CARD_BG} />
               </View>
             )}
           </View>
 
-          <View style={{ flex: 1, marginLeft: 14 }}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-              <Text style={[s.childName, { color: colors.text }]} numberOfLines={1}>{item.child_name}</Text>
-            </View>
-            <Text style={[s.childEmail, { color: colors.textSecondary }]} numberOfLines={1}>{item.child_email}</Text>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 4 }}>
-              {online ? (
-                <Text style={[s.lastActive, { color: '#22c55e', fontWeight: '700' }]} numberOfLines={1}>
-                  {presenceLine(item)}
-                </Text>
-              ) : item.last_active ? (
-                <Text style={[s.lastActive, { color: colors.textSecondary }]} numberOfLines={1}>{presenceLine(item)}</Text>
-              ) : (
-                <View style={[s.statusPill, { backgroundColor: st.color + '15' }]}>
-                  <Text style={[s.statusText, { color: st.color }]}>{st.label}</Text>
-                </View>
-              )}
-              {item.unread_alerts > 0 && (
-                <View style={[s.alertPill, { backgroundColor: '#ef444418' }]}>
-                  <IconAlertCircle size={11} color="#ef4444" />
-                  <Text style={s.alertPillText}>{item.unread_alerts}</Text>
-                </View>
-              )}
+          <View style={s.childInfo}>
+            <Text style={[s.childName, { color: colors.text }]} numberOfLines={1} maxFontSizeMultiplier={1.4}>{item.child_name}</Text>
+            <Text style={[s.childEmail, { color: colors.textSecondary }]} numberOfLines={1} maxFontSizeMultiplier={1.4}>{item.child_email}</Text>
+            <View style={s.statusRow}>
+              {status.dot ? <View style={[s.statusDot, { backgroundColor: status.dot }]} /> : null}
+              <Text style={[s.statusText, { color: colors.textSecondary }]} numberOfLines={1} maxFontSizeMultiplier={1.4}>{status.label}</Text>
             </View>
           </View>
-          <IconChevronRight size={18} color={colors.textSecondary} />
+          <IconChevronRight size={18} color={colors.textTertiary || colors.textSecondary} />
         </TouchableOpacity>
 
-        {/* Bedtime active banner — countdown updates via `now` heartbeat */}
-        {isActive && bedtime.active && (
-          <View style={[s.bedtimeBanner, { backgroundColor: isDark ? '#1c2a35' : '#F1F3F5', borderTopColor: isDark ? '#2d3748' : '#F1F3F5' }]}>
-            <IconMoon size={16} color={isDark ? '#F1F3F5' : '#111111'} />
-            <Text style={[s.bedtimeText, { color: isDark ? '#F1F3F5' : '#111111' }]} numberOfLines={1}>
-              {t('parental.bedtimeActive') || 'Em modo noturno até'} {bedtime.endLabel}
-              {bedtime.minsLeft > 0 ? ` · ${bedtime.minsLeft} min` : ''}
-            </Text>
-          </View>
-        )}
-
-        {/* Screen-time mini-progress */}
-        {isActive && stLimit > 0 && (
-          <View style={[s.screenTimeRow, { borderTopColor: isDark ? '#2d3748' : '#f1f5f9' }]}>
-            <View style={{ flex: 1 }}>
-              <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 }}>
-                <Text style={[s.screenTimeLabel, { color: colors.textSecondary }]}>
-                  {t('parental.screenTimeToday') || 'Tempo de tela'}
-                </Text>
-                <Text style={[s.screenTimeLabel, { color: stColor, fontWeight: '700' }]}>
-                  {stUsed}/{stLimit} min
-                </Text>
+        {showSummary && (
+          <View style={[s.summaryBlock, { borderTopColor: HAIR }]}>
+            {(stLimit > 0 || stUsed > 0) && (
+              <View>
+                <View style={s.stHead}>
+                  <View style={s.metaItem}>
+                    <IconClock size={14} color={colors.textSecondary} />
+                    <Text style={[s.metaText, { color: colors.textSecondary }]} numberOfLines={1} maxFontSizeMultiplier={1.4}>{t('parentalDash.screenTimeLabel')}</Text>
+                  </View>
+                  <Text style={[s.stValue, { color: stOver ? '#ef4444' : colors.text }]} numberOfLines={1} maxFontSizeMultiplier={1.4}>
+                    {stLimit > 0 ? t('parentalDash.screenTimeOf', { used: stUsed, limit: stLimit }) : t('parentalDash.screenTimeMin', { used: stUsed })}
+                  </Text>
+                </View>
+                {stLimit > 0 && (
+                  <View style={[s.stTrack, { backgroundColor: TILE_BG }]}>
+                    <View style={[s.stFill, { width: `${stPct}%`, backgroundColor: stOver ? '#ef4444' : colors.text }]} />
+                  </View>
+                )}
               </View>
-              <View style={[s.screenTimeBar, { backgroundColor: isDark ? '#0f172a' : '#f1f5f9' }]}>
-                <View style={[s.screenTimeFill, { width: `${stPct}%`, backgroundColor: stColor }]} />
-              </View>
-            </View>
+            )}
+            {metaItems.length > 0 && <View style={s.metaRow}>{metaItems}</View>}
           </View>
         )}
 
         {isGraduated && (
-          <View style={[s.graduatedBanner, { backgroundColor: '#11111110', borderTopColor: isDark ? '#2d3748' : '#e8ecf0' }]}>
-            <IconStar size={14} color="#111111" />
-            <Text style={[s.graduatedText, { color: '#111111' }]}>{t('parental.turnedThirteen')}</Text>
+          <View style={[s.summaryBlock, { borderTopColor: HAIR }]}>
+            {renderMetaItem('grad', IconStar, t('parental.turnedThirteen'))}
           </View>
         )}
 
-        {/* Quick-action icon row (5 actions) */}
         {isActive && (
-          <View style={[s.childActions, { borderTopColor: isDark ? '#2d3748' : '#f1f5f9' }]}>
-            {CHILD_QUICK_ACTIONS.map((a, i) => {
-              const showBadge = a.key === 'messages' && meta.messages_today > 0;
-              const tone = a.danger ? '#ef4444' : colors.textSecondary;
-              return (
-                <TouchableOpacity
-                  key={a.key}
-                  style={[s.childQuickAction, i > 0 && { borderLeftColor: isDark ? '#2d3748' : '#f1f5f9', borderLeftWidth: 1 }]}
-                  onPress={() => handleChildAction(a.key, item)}
-                  activeOpacity={0.6}
-                  accessibilityLabel={tWithFallback(a.labelKey, a.fallback)}
-                  accessibilityRole="button"
-                >
-                  <View style={{ position: 'relative' }}>
-                    <a.Icon size={18} color={tone} />
-                    {showBadge && (
-                      <View style={s.miniBadge}>
-                        <Text style={s.miniBadgeText}>{meta.messages_today > 99 ? '99+' : meta.messages_today}</Text>
-                      </View>
-                    )}
-                  </View>
-                  <Text style={[s.childActionText, { color: tone, fontSize: 11 }]} numberOfLines={1}>
-                    {tWithFallback(a.labelKey, a.fallback)}
-                  </Text>
-                </TouchableOpacity>
-              );
-            })}
+          <View style={s.actRow}>
+            {renderActionTile({ key: 'messages', Icon: IconMessageSquare, label: t('parentalDash.actMessages'), badge: Number(meta.messages_today || 0), onPress: () => handleChildAction('messages', item) })}
+            {renderActionTile({ key: 'lock', Icon: meta.locked ? IconPlay : IconPause, label: meta.locked ? t('parentalDash.actResume') : t('parentalDash.actPause'), active: !!meta.locked, onPress: () => handleChildAction('lock', item) })}
+            {renderActionTile({ key: 'bonus', Icon: IconPlus, label: t('parentalDash.actBonus'), a11y: t('parentalDash.actBonusA11y'), onPress: () => handleChildAction('bonus', item) })}
+            {renderActionTile({ key: 'more', Icon: IconMoreHorizontal, label: t('parentalDash.actMore'), a11y: t('parentalDash.moreA11y'), onPress: () => handleChildAction('more', item) })}
           </View>
         )}
-      </Animated.View>
+
+        {isPending && (
+          <View style={s.actRow}>
+            <View style={{ flex: 1 }}>
+              <PressableScale
+                onPress={onCardPress}
+                haptic={false}
+                style={[s.pendingCta, { backgroundColor: TILE_BG }]}
+                accessibilityRole="button"
+                accessibilityLabel={t('parentalDash.finishVerification')}
+              >
+                <IconShield size={18} color={colors.text} />
+                <Text style={[s.pendingCtaText, { color: colors.text }]} numberOfLines={1} maxFontSizeMultiplier={1.3}>{t('parentalDash.finishVerification')}</Text>
+              </PressableScale>
+            </View>
+          </View>
+        )}
+      </View>
     );
   };
 
@@ -1690,6 +1764,8 @@ function ParentalScreenInner() {
 
     return (
       <KeyboardAvoidingView style={[s.container, { backgroundColor: colors.background }]} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+        {/* [2026-10-08 parental-redesign] o wizard tem header próprio → esconde o nativo */}
+        {USE_NATIVE_HEADER && <Stack.Screen options={{ headerShown: false }} />}
         {/* Gradient Header with steps */}
         <View style={[s.wizardHeaderBar, headerBg]}>
           <View style={s.wizardHeaderRow}>
@@ -1937,187 +2013,322 @@ function ParentalScreenInner() {
     </Modal>
   );
 
-  // Quick actions config
-  // Monochrome quick actions — only the destructive "Pausar" (lock) keeps a
-  // semantic red. Icon/label colors are computed at render from the theme so
-  // they stay legible in dark mode.
-  const quickActions = [
-    { key: 'screenTime', label: t('parental.screenTime'), Icon: IconClock },
-    { key: 'lock', label: t('parental.lockDevice'), Icon: IconShield, danger: true },
-    { key: 'message', label: t('parental.sendMessage'), Icon: IconMessageSquare },
-    { key: 'summary', label: t('parental.aiSummary'), Icon: IconSparkles },
-  ];
+  // [2026-10-08 parental-redesign] Pedidos dos filhos — o banner antes só
+  // setava `requestsModal` e NADA era renderizado (botão morto). Agora abre
+  // um sheet com Aprovar / Recusar (parental_resolve_request).
+  const pendingCount = (pendingRequests || []).length;
 
-  const handleQuickAction = (action, child) => {
-    haptics.tap('light');
-    if (action === 'screenTime') {
-      router.push(`/parental-monitor?child_email=${encodeURIComponent(child.child_email)}&child_name=${encodeURIComponent(child.child_name)}`);
-    } else if (action === 'summary') {
-      openAiSummary(child);
-    } else if (action === 'lock') {
-      lockChildNow(child);
-    } else if (action === 'message') {
-      router.push(`/parental-monitor?child_email=${encodeURIComponent(child.child_email)}&child_name=${encodeURIComponent(child.child_name)}`);
+  const resolveRequest = async (req, decision) => {
+    if (!req?.id || resolvingId) return;
+    setResolvingId(req.id);
+    try {
+      const r = await api.parentalResolveRequest(req.id, decision);
+      if (!isMountedRef.current) return;
+      if (r?.success || r?.status === 409) {
+        if (decision === 'approved') haptics.success(); else haptics.tap('light');
+        setPendingRequests(prev => {
+          const next = (prev || []).filter(x => x.id !== req.id);
+          if (next.length === 0) setRequestsModal(false);
+          return next;
+        });
+      } else {
+        Alert.alert(t('parental.error'), r?.message || t('parental.connectionError'));
+      }
+    } catch {
+      if (isMountedRef.current) Alert.alert(t('parental.error'), t('parental.connectionError'));
+    } finally {
+      if (isMountedRef.current) setResolvingId(null);
     }
   };
 
-  // Pending requests banner — shows red dot + count when any child has
-  // a pending parental_unlock_request waiting for the parent's decision.
-  const pendingCount = (pendingRequests || []).length;
+  const requestReasonLabel = (req) => {
+    const map = {
+      bedtime: 'parentalDash.reasonBedtime',
+      bedtime_unlock: 'parentalDash.reasonBedtime',
+      screen_time: 'parentalDash.reasonScreenTime',
+      extra_time: 'parentalDash.reasonScreenTime',
+      chat_disabled: 'parentalDash.reasonChat',
+      chat_unlock: 'parentalDash.reasonChat',
+      contact: 'parentalDash.reasonContact',
+      contact_approval: 'parentalDash.reasonContact',
+    };
+    const k = map[String(req?.reason || '').toLowerCase()];
+    return k ? t(k) : t('parentalDash.reasonGeneric');
+  };
 
   const renderPendingBanner = () => {
     if (pendingCount === 0) return null;
     const names = pendingChildNames.slice(0, 2).join(', ') + (pendingChildNames.length > 2 ? '…' : '');
+    const title = pendingCount === 1 ? t('parentalDash.requestsOne') : t('parentalDash.requestsMany', { n: pendingCount });
     return (
-      <TouchableOpacity
-        style={[s.pendingBanner, { backgroundColor: isDark ? '#3b1115' : '#fef2f2', borderColor: '#ef444460' }]}
+      <PressableScale
         onPress={() => { haptics.tap('light'); setRequestsModal(true); }}
-        activeOpacity={0.85}
-        accessibilityLabel={`${pendingCount} pedidos pendentes`}
+        haptic={false}
+        style={[s.reqBanner, { backgroundColor: CARD_BG, borderColor: HAIR }]}
+        accessibilityLabel={title}
         accessibilityRole="button"
       >
-        <View style={s.pendingDotWrap}>
-          <View style={s.pendingDot} />
+        <View style={[s.reqIcon, { backgroundColor: TILE_BG }]}>
+          <IconAlertCircle size={18} color={colors.text} />
+          <View style={[s.reqDot, { borderColor: CARD_BG }]} />
         </View>
         <View style={{ flex: 1 }}>
-          <Text style={[s.pendingTitle, { color: '#ef4444' }]} numberOfLines={1}>
-            {pendingCount} {pendingCount === 1
-              ? (t('parental.pendingRequest') || 'pedido do(a) seu(sua) filho(a)')
-              : (t('parental.pendingRequests') || 'pedidos do(s) seu(s) filho(s)')}
-          </Text>
-          {names ? (
-            <Text style={[s.pendingSub, { color: isDark ? '#fca5a5' : '#991b1b' }]} numberOfLines={1}>{names}</Text>
-          ) : null}
+          <Text style={[s.reqTitle, { color: colors.text }]} numberOfLines={1} maxFontSizeMultiplier={1.4}>{title}</Text>
+          {names ? <Text style={[s.reqSub, { color: colors.textSecondary }]} numberOfLines={1} maxFontSizeMultiplier={1.4}>{names}</Text> : null}
         </View>
-        <IconChevronRight size={18} color="#ef4444" />
-      </TouchableOpacity>
+        <IconChevronRight size={18} color={colors.textTertiary || colors.textSecondary} />
+      </PressableScale>
     );
   };
 
-  // ─── Dashboard (Main Screen) ───
-  return (
-    <View style={[s.container, { backgroundColor: colors.background }]}>
-      {renderSummaryModal()}
-
-      {/* Clean white header — matches app redesign (hairline border, dark text) */}
-      <View style={[s.header, { backgroundColor: colors.headerBgSolid, borderBottomWidth: 1, borderBottomColor: colors.border }]}>
-        <TouchableOpacity onPress={() => router.back()} style={s.backBtn} accessibilityLabel="Back" accessibilityRole="button">
-          <IconArrowLeft size={24} color={colors.text} />
-        </TouchableOpacity>
-        <View style={{ flex: 1 }}>
-          <Text style={[s.headerTitle, { color: colors.text }]}>{t('parental.dashboard')}</Text>
-          <Text style={[s.headerSub, { color: colors.textSecondary }]}>{t('parental.dashboardSub')}</Text>
-        </View>
-        <View style={{ width: 44, height: 44, borderRadius: 14, backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : colors.chipBg, alignItems: 'center', justifyContent: 'center' }}>
-          <IconShield size={22} color={colors.text} />
+  // Bottom sheet genérico (Modal transparente) — usado pelo "Mais" e pelos pedidos.
+  const renderSheet = ({ visible, onClose, title, subtitle, children: body }) => (
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+      <View style={s.sheetRoot}>
+        <TouchableOpacity style={s.sheetBackdrop} activeOpacity={1} onPress={onClose} accessibilityRole="button" accessibilityLabel={t('parentalDash.cancel')} />
+        <View style={[s.sheet, { backgroundColor: CARD_BG, paddingBottom: Math.max(insets.bottom, 12) + 8 }]}>
+          <View style={[s.sheetGrabber, { backgroundColor: HAIR }]} />
+          {title ? (
+            <View style={s.sheetHead}>
+              <Text style={[s.sheetTitle, { color: colors.text }]} numberOfLines={1}>{title}</Text>
+              {subtitle ? <Text style={[s.sheetSub, { color: colors.textSecondary }]} numberOfLines={1}>{subtitle}</Text> : null}
+            </View>
+          ) : null}
+          {body}
         </View>
       </View>
+    </Modal>
+  );
 
-      {/* Empty state — Lottie-style illustration + CTA via EmptyStateCard primitive */}
-      {children.length === 0 && !loading && (
-        <ScrollView
-          contentContainerStyle={{ flexGrow: 1, justifyContent: 'center', paddingBottom: 40 }}
-          refreshControl={
-            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={ACCENT} colors={[ACCENT]} />
-          }
+  const MORE_ITEMS = [
+    { key: 'activity', Icon: IconBarChart, label: t('parentalDash.moreActivity') },
+    { key: 'screenTime', Icon: IconClock, label: t('parentalDash.moreScreenTime') },
+    { key: 'location', Icon: IconMapPin, label: t('parentalDash.moreLocation') },
+    { key: 'summary', Icon: IconSparkles, label: t('parentalDash.moreSummary') },
+    { key: 'message', Icon: IconMessageSquare, label: t('parentalDash.moreSendMessage') },
+  ];
+
+  const renderMoreSheet = () => renderSheet({
+    visible: !!moreChild,
+    onClose: () => setMoreChild(null),
+    title: moreChild?.child_name || '',
+    subtitle: moreChild?.child_email || '',
+    children: (
+      <View>
+        {MORE_ITEMS.map((it, i) => (
+          <TouchableOpacity
+            key={it.key}
+            style={[s.sheetRow, i > 0 && { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: HAIR }]}
+            onPress={() => runMoreAction(it.key)}
+            activeOpacity={0.6}
+            accessibilityRole="button"
+            accessibilityLabel={it.label}
+          >
+            <View style={[s.sheetRowIcon, { backgroundColor: TILE_BG }]}>
+              <it.Icon size={18} color={colors.text} />
+            </View>
+            <Text style={[s.sheetRowText, { color: colors.text }]} numberOfLines={1} maxFontSizeMultiplier={1.4}>{it.label}</Text>
+            <IconChevronRight size={16} color={colors.textTertiary || colors.textSecondary} />
+          </TouchableOpacity>
+        ))}
+        <TouchableOpacity
+          style={[s.sheetCancel, { backgroundColor: TILE_BG }]}
+          onPress={() => setMoreChild(null)}
+          activeOpacity={0.7}
+          accessibilityRole="button"
         >
-          {renderPendingBanner()}
-          <EmptyStateCard
-            illustration={
-              <View style={s.heroIllustration}>
-                <View style={[s.heroBlob, { backgroundColor: ACCENT + '18' }]} />
-                <View style={[s.heroBlob, s.heroBlob2, { backgroundColor: '#10B98118' }]} />
-                <View style={[s.heroBlob, s.heroBlob3, { backgroundColor: '#11111118' }]} />
-                <View style={s.heroIconCenter}>
-                  <IconShield size={56} color={ACCENT} />
-                </View>
-              </View>
-            }
-            title={t('parental.heroTitle') || t('parental.parentalControl')}
-            subtitle={t('parental.heroDesc')}
-            ctaLabel={t('parental.addFirstChild') || t('parental.addChild')}
-            onPress={() => { haptics.tap('medium'); setShowWizard(true); }}
-            tone="primary"
-          />
-        </ScrollView>
-      )}
+          <Text style={[s.sheetCancelText, { color: colors.text }]}>{t('parentalDash.cancel')}</Text>
+        </TouchableOpacity>
+      </View>
+    ),
+  });
 
-      {/* Children List with quick actions */}
-      {(children.length > 0 || loading) && (
-        loading && children.length === 0 ? (
-          <View style={{ padding: 16, gap: 14 }}>
-            {[0, 1].map(i => (
-              <View key={i} style={[s.skeletonCard, { backgroundColor: isDark ? '#1a2332' : '#f1f5f9', borderColor: isDark ? '#2d3748' : '#e8ecf0' }]}>
-                <View style={[s.skeletonAvatar, { backgroundColor: isDark ? '#2d3748' : '#e2e8f0' }]} />
-                <View style={{ flex: 1, gap: 8 }}>
-                  <View style={[s.skeletonLine, { backgroundColor: isDark ? '#2d3748' : '#e2e8f0', width: '60%' }]} />
-                  <View style={[s.skeletonLine, { backgroundColor: isDark ? '#2d3748' : '#e2e8f0', width: '85%', height: 10 }]} />
-                  <View style={[s.skeletonLine, { backgroundColor: isDark ? '#2d3748' : '#e2e8f0', width: '40%', height: 10 }]} />
+  const renderRequestsSheet = () => renderSheet({
+    visible: requestsModal,
+    onClose: () => setRequestsModal(false),
+    title: t('parentalDash.requestsTitle'),
+    children: (
+      <ScrollView style={{ maxHeight: 420 }} contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 4 }}>
+        {pendingCount === 0 ? (
+          <Text style={[s.sheetSub, { color: colors.textSecondary, textAlign: 'center', paddingVertical: 24 }]}>{t('parentalDash.requestsEmpty')}</Text>
+        ) : (pendingRequests || []).map((req, i) => {
+          const nm = (req.child_name && !String(req.child_name).includes('@')) ? req.child_name : String(req.child_email || '').split('@')[0];
+          const busy = resolvingId === req.id;
+          return (
+            <View key={String(req.id)} style={[s.reqItem, i > 0 && { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: HAIR }]}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+                <AvatarCircle email={req.child_email} name={nm} size={36} />
+                <View style={{ flex: 1 }}>
+                  <Text style={[s.reqTitle, { color: colors.text }]} numberOfLines={1}>{nm}</Text>
+                  <Text style={[s.reqSub, { color: colors.textSecondary }]} numberOfLines={1}>{requestReasonLabel(req)}</Text>
                 </View>
               </View>
-            ))}
+              {req.note ? <Text style={[s.reqNote, { color: colors.text }]}>{req.note}</Text> : null}
+              <View style={s.reqBtns}>
+                <TouchableOpacity
+                  style={[s.reqBtn, { backgroundColor: TILE_BG }]}
+                  disabled={busy}
+                  onPress={() => resolveRequest(req, 'rejected')}
+                  accessibilityRole="button"
+                  accessibilityLabel={t('parentalDash.reject')}
+                >
+                  <Text style={[s.reqBtnText, { color: colors.text }]}>{t('parentalDash.reject')}</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[s.reqBtn, { backgroundColor: colors.text }]}
+                  disabled={busy}
+                  onPress={() => resolveRequest(req, 'approved')}
+                  accessibilityRole="button"
+                  accessibilityLabel={t('parentalDash.approve')}
+                >
+                  {busy ? <ActivityIndicator size="small" color={CARD_BG} /> : <Text style={[s.reqBtnText, { color: CARD_BG }]}>{t('parentalDash.approve')}</Text>}
+                </TouchableOpacity>
+              </View>
+            </View>
+          );
+        })}
+      </ScrollView>
+    ),
+  });
+
+  const openWizard = () => { haptics.tap('medium'); setShowWizard(true); };
+  const retryLoad = () => { haptics.tap('light'); setLoadError(false); setLoading(true); loadChildren(); loadPendingRequests(); };
+
+  // ─── Estados vazios / carregando / erro ───
+  const renderSkeleton = () => (
+    <View style={{ gap: 12 }}>
+      {[0, 1].map(i => (
+        <View key={i} style={[s.childCard, { backgroundColor: CARD_BG, borderColor: HAIR }]}>
+          <View style={s.childCardMain}>
+            <Skeleton width={52} height={52} radius={26} delay={i * 120} />
+            <View style={{ flex: 1, gap: 8 }}>
+              <Skeleton width="55%" height={14} delay={i * 120} />
+              <Skeleton width="80%" height={11} delay={i * 120} />
+              <Skeleton width="35%" height={11} delay={i * 120} />
+            </View>
           </View>
-        ) : (
-          <FlatList
-            data={children}
-            keyExtractor={item => String(item.id)}
-            renderItem={renderChild}
-            contentContainerStyle={{ padding: 16, paddingBottom: 120 }}
-            keyboardShouldPersistTaps="handled"
-            refreshControl={
-              <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={ACCENT} colors={[ACCENT]} />
-            }
-            ListHeaderComponent={
-              children.length > 0 ? (
-                <View style={{ marginBottom: 16 }}>
-                  {renderPendingBanner()}
-                  <Text style={[s.quickActionsTitle, { color: colors.textSecondary }]}>
-                    {(t('parental.quickActions')).toUpperCase()}
-                  </Text>
-                  <View style={s.quickActionsGrid}>
-                    {quickActions.map(action => {
-                      const tone = action.danger ? '#ef4444' : colors.text;
-                      const chipBg = action.danger ? '#ef444415' : (isDark ? 'rgba(255,255,255,0.06)' : colors.chipBg);
-                      return (
-                        <TouchableOpacity
-                          key={action.key}
-                          style={[s.quickActionCard, {
-                            backgroundColor: colors.surface,
-                            borderColor: colors.border,
-                          }]}
-                          onPress={() => children[0] && handleQuickAction(action.key, children[0])}
-                          activeOpacity={0.6}
-                          accessibilityLabel={action.label}
-                          accessibilityRole="button"
-                        >
-                          <View style={[s.quickActionIcon, { backgroundColor: chipBg }]}>
-                            <action.Icon size={22} color={tone} />
-                          </View>
-                          <Text style={[s.quickActionLabel, { color: action.danger ? '#ef4444' : colors.text }]}>{action.label}</Text>
-                        </TouchableOpacity>
-                      );
-                    })}
-                  </View>
-                </View>
-              ) : null
-            }
-          />
-        )
+          <View style={s.actRow}>
+            {[0, 1, 2, 3].map(j => <View key={j} style={s.actTileWrap}><Skeleton height={60} radius={12} delay={i * 120} /></View>)}
+          </View>
+        </View>
+      ))}
+    </View>
+  );
+
+  const renderEmpty = () => (
+    <View style={s.emptyWrap}>
+      <Svg width={148} height={148} viewBox="0 0 140 140" accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
+        <Circle cx="70" cy="70" r="68" fill={TILE_BG} />
+        <Circle cx="70" cy="70" r="50" fill={CARD_BG} stroke={HAIR} strokeWidth="1" />
+        <Path d="M70 36 L94 45 V67 C94 84 83 95 70 101 C57 95 46 84 46 67 V45 Z" fill="none" stroke={colors.text} strokeWidth="3" strokeLinejoin="round" />
+        <Circle cx="64" cy="61" r="6" fill={colors.text} />
+        <Path d="M53.5 84 C53.5 75.5 58 71 64 71 C70 71 74.5 75.5 74.5 84 Z" fill={colors.text} />
+        <Circle cx="79" cy="68" r="4.5" fill={colors.textSecondary} />
+        <Path d="M71.5 86 C71.5 80 74.6 76.6 79 76.6 C83.4 76.6 86.5 80 86.5 86 Z" fill={colors.textSecondary} />
+      </Svg>
+      <Text style={[s.emptyTitle, { color: colors.text }]} maxFontSizeMultiplier={1.4}>{t('parentalDash.emptyTitle')}</Text>
+      <Text style={[s.emptyDesc, { color: colors.textSecondary }]} maxFontSizeMultiplier={1.4}>{t('parentalDash.emptyDesc')}</Text>
+      <PressableScale onPress={openWizard} haptic={false} style={[s.primaryBtn, { backgroundColor: colors.text }]} accessibilityRole="button" accessibilityLabel={t('parentalDash.addChild')}>
+        <IconPlus size={18} color={CARD_BG} />
+        <Text style={[s.primaryBtnText, { color: CARD_BG }]} maxFontSizeMultiplier={1.3}>{t('parentalDash.addChild')}</Text>
+      </PressableScale>
+    </View>
+  );
+
+  const renderError = () => (
+    <View style={s.emptyWrap}>
+      <View style={[s.errorIcon, { backgroundColor: TILE_BG }]}>
+        <IconAlertCircle size={28} color={colors.text} />
+      </View>
+      <Text style={[s.emptyTitle, { color: colors.text }]} maxFontSizeMultiplier={1.4}>{t('parentalDash.errorTitle')}</Text>
+      <Text style={[s.emptyDesc, { color: colors.textSecondary }]} maxFontSizeMultiplier={1.4}>{t('parentalDash.errorDesc')}</Text>
+      <PressableScale onPress={retryLoad} haptic={false} style={[s.primaryBtn, { backgroundColor: colors.text }]} accessibilityRole="button" accessibilityLabel={t('parentalDash.retry')}>
+        <IconRefresh size={18} color={CARD_BG} />
+        <Text style={[s.primaryBtnText, { color: CARD_BG }]} maxFontSizeMultiplier={1.3}>{t('parentalDash.retry')}</Text>
+      </PressableScale>
+    </View>
+  );
+
+  const listHeader = (
+    <View>
+      {renderPendingBanner()}
+      {children.length > 0 && (
+        <Text style={[s.sectionLabel, { color: colors.textSecondary }]} maxFontSizeMultiplier={1.3}>
+          {t('parentalDash.childrenSection', { n: children.length })}
+        </Text>
+      )}
+    </View>
+  );
+
+  const listFooter = children.length > 0 ? (
+    <PressableScale onPress={openWizard} haptic={false} style={[s.addRow, { backgroundColor: CARD_BG, borderColor: HAIR }]} accessibilityRole="button" accessibilityLabel={t('parentalDash.addChild')}>
+      <View style={[s.addRowIcon, { backgroundColor: TILE_BG }]}>
+        <IconPlus size={20} color={colors.text} />
+      </View>
+      <View style={{ flex: 1 }}>
+        <Text style={[s.addRowTitle, { color: colors.text }]} numberOfLines={1} maxFontSizeMultiplier={1.4}>{t('parentalDash.addChild')}</Text>
+        <Text style={[s.addRowSub, { color: colors.textSecondary }]} numberOfLines={2} maxFontSizeMultiplier={1.4}>{t('parentalDash.addChildSub')}</Text>
+      </View>
+      <IconChevronRight size={18} color={colors.textTertiary || colors.textSecondary} />
+    </PressableScale>
+  ) : null;
+
+  const listEmpty = loading ? renderSkeleton() : (loadError ? renderError() : renderEmpty());
+
+  // ─── Dashboard (Main Screen) ───
+  return (
+    <View style={[s.container, { backgroundColor: PAGE_BG }]}>
+      {USE_NATIVE_HEADER ? (
+        <Stack.Screen options={nativeHeaderOptions({
+          colors,
+          isDark,
+          title: t('parental.dashboard'),
+          largeTitle: true,
+          headerShadowVisible: false,
+          headerStyle: { backgroundColor: PAGE_BG },
+          headerLargeStyle: { backgroundColor: PAGE_BG },
+          contentStyle: { backgroundColor: PAGE_BG },
+          headerRight: () => (
+            <HeaderIconButton onPress={openWizard} accessibilityLabel={t('parentalDash.addChild')}>
+              <IconPlus size={24} color={colors.text} />
+            </HeaderIconButton>
+          ),
+        })} />
+      ) : (
+        <View style={[s.webHeader, { paddingTop: insets.top + 6, backgroundColor: PAGE_BG }]}>
+          <View style={s.webHeaderBar}>
+            <TouchableOpacity onPress={() => router.back()} style={s.headerBtn} accessibilityLabel={t('parentalDash.back')} accessibilityRole="button">
+              <IconArrowLeft size={22} color={colors.text} />
+            </TouchableOpacity>
+            <TouchableOpacity onPress={openWizard} style={[s.headerBtn, s.headerBtnRound, { backgroundColor: TILE_BG }]} accessibilityLabel={t('parentalDash.addChild')} accessibilityRole="button">
+              <IconPlus size={20} color={colors.text} />
+            </TouchableOpacity>
+          </View>
+          <Text style={[s.largeTitle, { color: colors.text }]} numberOfLines={1} maxFontSizeMultiplier={1.3} accessibilityRole="header">{t('parental.dashboard')}</Text>
+        </View>
       )}
 
-      {/* FAB — Telegram-grade glass orb */}
-      {children.length > 0 && (
-        <BrandFab
-          style={{ position: 'absolute', bottom: 28, right: 28 }}
-          size={60}
-          radius={22}
-          color={ACCENT}
-          onPress={() => setShowWizard(true)}
-          accessibilityLabel="Add child"
-        >
-          <IconPlus size={26} color="#fff" />
-        </BrandFab>
-      )}
+      <FlatList
+        data={loading && children.length === 0 ? [] : children}
+        keyExtractor={item => String(item.id ?? item.child_email)}
+        renderItem={renderChild}
+        ItemSeparatorComponent={() => <View style={{ height: 12 }} />}
+        contentInsetAdjustmentBehavior="automatic"
+        contentContainerStyle={[s.listContent, { paddingBottom: 32 + insets.bottom }, children.length === 0 && !loading && { flexGrow: 1 }]}
+        keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.text} colors={[colors.text]} />
+        }
+        ListHeaderComponent={listHeader}
+        ListEmptyComponent={listEmpty}
+        ListFooterComponent={listFooter}
+        ListFooterComponentStyle={{ marginTop: 12 }}
+      />
+
+      {renderSummaryModal()}
+      {renderMoreSheet()}
+      {renderRequestsSheet()}
     </View>
   );
 }
@@ -2132,11 +2343,82 @@ export default function ParentalScreen() {
 const s = StyleSheet.create({
   container: { flex: 1 },
 
+  // ─── [2026-10-08 parental-redesign] Painel ───
+  webHeader: { paddingHorizontal: 16, paddingBottom: 4 },
+  webHeaderBar: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginLeft: -6 },
+  headerBtn: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
+  headerBtnRound: { width: 36, height: 36, borderRadius: 18, marginRight: 2 },
+  largeTitle: { fontSize: 32, fontWeight: '700', letterSpacing: 0.2, marginTop: 2 },
+  listContent: { paddingHorizontal: 16, paddingTop: 8 },
+  sectionLabel: { fontSize: 13, fontWeight: '600', letterSpacing: 0.4, textTransform: 'uppercase', marginBottom: 8, marginLeft: 4 },
+
+  childCard: { borderRadius: 16, borderWidth: StyleSheet.hairlineWidth, overflow: 'hidden' },
+  childCardMain: { flexDirection: 'row', alignItems: 'center', padding: 16, gap: 14 },
+  avatarWrap: { width: 52, height: 52 },
+  childInfo: { flex: 1, minWidth: 0 },
+  childName: { fontSize: 17, fontWeight: '600', letterSpacing: -0.2 },
+  childEmail: { fontSize: 14, marginTop: 2 },
+  statusRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 4 },
+  statusDot: { width: 7, height: 7, borderRadius: 4 },
+  statusText: { fontSize: 13, flexShrink: 1 },
+  lockBadge: { position: 'absolute', bottom: -1, right: -1, width: 20, height: 20, borderRadius: 10, alignItems: 'center', justifyContent: 'center', borderWidth: 2 },
+
+  summaryBlock: { marginHorizontal: 16, paddingTop: 12, paddingBottom: 2, borderTopWidth: StyleSheet.hairlineWidth, gap: 10 },
+  stHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
+  stValue: { fontSize: 13, fontWeight: '600', fontVariant: ['tabular-nums'] },
+  stTrack: { height: 4, borderRadius: 2, overflow: 'hidden', marginTop: 8 },
+  stFill: { height: 4, borderRadius: 2 },
+  metaRow: { flexDirection: 'row', flexWrap: 'wrap', columnGap: 16, rowGap: 6 },
+  metaItem: { flexDirection: 'row', alignItems: 'center', gap: 6, flexShrink: 1 },
+  metaText: { fontSize: 13, flexShrink: 1 },
+
+  actRow: { flexDirection: 'row', gap: 8, paddingHorizontal: 12, paddingTop: 12, paddingBottom: 12 },
+  actTileWrap: { flex: 1, minWidth: 0 },
+  actTile: { minHeight: 60, borderRadius: 12, alignItems: 'center', justifyContent: 'center', gap: 5, paddingHorizontal: 4, paddingVertical: 9 },
+  actTileText: { fontSize: 12, fontWeight: '600', textAlign: 'center' },
+  miniBadge: { position: 'absolute', top: -6, right: -11, minWidth: 17, height: 17, borderRadius: 9, backgroundColor: '#ef4444', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 4, borderWidth: 2 },
+  miniBadgeText: { color: '#fff', fontSize: 9, fontWeight: '700' },
+  pendingCta: { minHeight: 48, borderRadius: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingHorizontal: 12 },
+  pendingCtaText: { fontSize: 15, fontWeight: '600' },
+
+  reqBanner: { flexDirection: 'row', alignItems: 'center', gap: 12, padding: 14, borderRadius: 16, borderWidth: StyleSheet.hairlineWidth, marginBottom: 20 },
+  reqIcon: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
+  reqDot: { position: 'absolute', top: 1, right: 1, width: 10, height: 10, borderRadius: 5, backgroundColor: '#ef4444', borderWidth: 2 },
+  reqTitle: { fontSize: 15, fontWeight: '600' },
+  reqSub: { fontSize: 13, marginTop: 2 },
+  reqItem: { paddingVertical: 14, gap: 10 },
+  reqNote: { fontSize: 15, lineHeight: 21 },
+  reqBtns: { flexDirection: 'row', gap: 10 },
+  reqBtn: { flex: 1, height: 44, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
+  reqBtnText: { fontSize: 15, fontWeight: '600' },
+
+  addRow: { flexDirection: 'row', alignItems: 'center', gap: 14, padding: 16, borderRadius: 16, borderWidth: StyleSheet.hairlineWidth },
+  addRowIcon: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center' },
+  addRowTitle: { fontSize: 16, fontWeight: '600' },
+  addRowSub: { fontSize: 13, marginTop: 2 },
+
+  emptyWrap: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 24, paddingVertical: 40 },
+  emptyTitle: { fontSize: 22, fontWeight: '700', textAlign: 'center', marginTop: 20 },
+  emptyDesc: { fontSize: 15, lineHeight: 21, textAlign: 'center', marginTop: 8, maxWidth: 320 },
+  errorIcon: { width: 72, height: 72, borderRadius: 36, alignItems: 'center', justifyContent: 'center' },
+  primaryBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, height: 50, paddingHorizontal: 24, borderRadius: 25, marginTop: 24, minWidth: 200 },
+  primaryBtnText: { fontSize: 16, fontWeight: '600' },
+
+  sheetRoot: { flex: 1, justifyContent: 'flex-end' },
+  sheetBackdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.4)' },
+  sheet: { borderTopLeftRadius: 20, borderTopRightRadius: 20, paddingTop: 8, width: '100%', maxWidth: 560, alignSelf: 'center' },
+  sheetGrabber: { width: 36, height: 5, borderRadius: 3, alignSelf: 'center', marginBottom: 8 },
+  sheetHead: { paddingHorizontal: 20, paddingTop: 4, paddingBottom: 10 },
+  sheetTitle: { fontSize: 17, fontWeight: '600' },
+  sheetSub: { fontSize: 13, marginTop: 2 },
+  sheetRow: { flexDirection: 'row', alignItems: 'center', gap: 14, minHeight: 56, marginHorizontal: 16, paddingVertical: 8 },
+  sheetRowIcon: { width: 36, height: 36, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
+  sheetRowText: { flex: 1, fontSize: 16 },
+  sheetCancel: { height: 50, borderRadius: 14, alignItems: 'center', justifyContent: 'center', marginHorizontal: 16, marginTop: 10 },
+  sheetCancelText: { fontSize: 16, fontWeight: '600' },
+
   // Dashboard header
-  header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 18, paddingTop: Platform.OS === 'ios' ? 56 : androidTopInset(20), paddingBottom: 16, gap: 14 },
   backBtn: { padding: 6, minWidth: 48, minHeight: 48, alignItems: 'center', justifyContent: 'center' },
-  headerTitle: { fontSize: 22, fontWeight: '800' },
-  headerSub: { fontSize: 13, marginTop: 2 },
 
   // Wizard header
   wizardHeaderBar: { paddingTop: Platform.OS === 'ios' ? 44 : androidTopInset(12), paddingBottom: 10, paddingHorizontal: 16 },
@@ -2324,16 +2606,6 @@ const s = StyleSheet.create({
   confettiPiece: { position: 'absolute' },
 
   // Quick Actions (dashboard)
-  quickActionsTitle: { fontSize: 12, fontWeight: '700', letterSpacing: 0.8, marginBottom: 10, paddingHorizontal: 2 },
-  quickActionsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
-  quickActionCard: {
-    width: '48%', flexGrow: 1, flexBasis: '45%',
-    alignItems: 'center', justifyContent: 'center', gap: 9,
-    paddingVertical: 16, paddingHorizontal: 12, borderRadius: 18, borderWidth: 1,
-    minHeight: 84,
-  },
-  quickActionIcon: { width: 42, height: 42, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
-  quickActionLabel: { fontSize: 13, fontWeight: '700', textAlign: 'center' },
 
   // Hero
   hero: { alignItems: 'center', paddingHorizontal: 32, paddingTop: 60 },
@@ -2343,22 +2615,6 @@ const s = StyleSheet.create({
   heroBtnText: { color: '#fff', fontWeight: '800', fontSize: 17 },
 
   // Child cards
-  childCard: { borderRadius: 18, borderWidth: 1, marginBottom: 12, overflow: 'hidden' },
-  childCardMain: { flexDirection: 'row', alignItems: 'center', padding: 16, gap: 14 },
-  childAvatar: { width: 56, height: 56, borderRadius: 20, alignItems: 'center', justifyContent: 'center' },
-  childName: { fontSize: 18, fontWeight: '800' },
-  childEmail: { fontSize: 12, marginTop: 2, fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace' },
-  statusPill: { alignSelf: 'flex-start', paddingHorizontal: 10, paddingVertical: 3, borderRadius: 10 },
-  statusText: { fontSize: 11, fontWeight: '700' },
-  lastActive: { fontSize: 11 },
-  alertPill: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 8, paddingVertical: 3, borderRadius: 10 },
-  alertPillText: { color: '#ef4444', fontSize: 11, fontWeight: '600' },
-  childActions: { flexDirection: 'row', borderTopWidth: 1 },
-  childActionBtn: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingVertical: 11 },
-  childActionText: { fontSize: 13, fontWeight: '600' },
-  childActionDivider: { width: 1 },
-  graduatedBanner: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 16, paddingVertical: 10, borderTopWidth: 1 },
-  graduatedText: { fontSize: 12, flex: 1 },
 
   // AI Summary Modal
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center', padding: 24 },
@@ -2386,45 +2642,20 @@ const s = StyleSheet.create({
   flaggedText: { flex: 1, fontSize: 13, lineHeight: 18 },
 
   // FAB
-  fab: { position: 'absolute', bottom: 28, right: 28, width: 60, height: 60, borderRadius: 22, alignItems: 'center', justifyContent: 'center', elevation: 8, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.25, shadowRadius: 8, ...(Platform.OS === 'web' ? { boxShadow: '0 6px 24px rgba(17, 17, 17,0.4)' } : {}) },
 
   // Pending requests banner (top of dashboard)
-  pendingBanner: { flexDirection: 'row', alignItems: 'center', gap: 12, padding: 14, borderRadius: 18, borderWidth: 1.5, marginBottom: 14 },
-  pendingDotWrap: { width: 24, height: 24, alignItems: 'center', justifyContent: 'center' },
-  pendingDot: { width: 12, height: 12, borderRadius: 6, backgroundColor: '#ef4444' },
-  pendingTitle: { fontSize: 14, fontWeight: '800' },
-  pendingSub: { fontSize: 12, marginTop: 2 },
 
   // Child avatar halo (gradient ring under AvatarCircle)
-  childAvatarHalo: { position: 'absolute', width: 60, height: 60, borderRadius: 30 },
 
   // Lock badge over avatar when child account is paused
-  lockBadge: { position: 'absolute', top: -2, right: -2, width: 18, height: 18, borderRadius: 9, backgroundColor: '#ef4444', alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: '#fff' },
 
   // Bedtime banner (in-window child)
-  bedtimeBanner: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 14, paddingVertical: 10, borderTopWidth: 1 },
-  bedtimeText: { flex: 1, fontSize: 12, fontWeight: '700' },
 
   // Screen-time mini-bar
-  screenTimeRow: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, paddingVertical: 10, borderTopWidth: 1, gap: 12 },
-  screenTimeLabel: { fontSize: 11, fontWeight: '600' },
-  screenTimeBar: { height: 6, borderRadius: 3, overflow: 'hidden' },
-  screenTimeFill: { height: 6, borderRadius: 3 },
 
   // Per-child quick-action row (5 icons)
-  childQuickAction: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 4, paddingVertical: 10 },
-  miniBadge: { position: 'absolute', top: -6, right: -10, minWidth: 16, height: 14, borderRadius: 8, backgroundColor: '#ef4444', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 4 },
-  miniBadgeText: { color: '#fff', fontSize: 9, fontWeight: '800' },
 
   // Hero illustration (empty state)
-  heroIllustration: { width: 180, height: 180, alignItems: 'center', justifyContent: 'center', position: 'relative' },
-  heroBlob: { position: 'absolute', width: 110, height: 110, borderRadius: 55 },
-  heroBlob2: { top: 8, left: 14, width: 80, height: 80, borderRadius: 40 },
-  heroBlob3: { bottom: 10, right: 16, width: 70, height: 70, borderRadius: 35 },
-  heroIconCenter: { width: 96, height: 96, borderRadius: 48, backgroundColor: '#fff', alignItems: 'center', justifyContent: 'center', elevation: 4, shadowColor: '#111111', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.25, shadowRadius: 12 },
 
   // Skeleton loader (initial load, no cache)
-  skeletonCard: { flexDirection: 'row', alignItems: 'center', padding: 18, gap: 14, borderRadius: 22, borderWidth: 1.5 },
-  skeletonAvatar: { width: 52, height: 52, borderRadius: 26 },
-  skeletonLine: { height: 14, borderRadius: 7 },
 });

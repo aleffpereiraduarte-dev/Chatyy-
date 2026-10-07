@@ -827,15 +827,29 @@ function ScrollDownFabAnim({ onPress, isDark, colors, newMsgCount, t }) {
     <Animated.View style={{ opacity, transform: [{ translateY }, { scale }] }}>
       <TouchableOpacity
         onPress={onPress}
-        style={[styles.scrollDownFab, { backgroundColor: colors.chatBubbleOther || (isDark ? '#1F2C33' : '#fff') }]} /* [2026-10-06 wa-look] WA: FAB = bubble surface (#202C33 dark), not pure black */
+        /* [2026-10-08 chat-beauty-chrome] superfície neutra + hairline, chevron
+           na cor do texto, badge monocromático (preto/branco) com aro da
+           superfície — era verde WhatsApp. */
+        style={[styles.scrollDownFab, {
+          backgroundColor: isDark ? '#1c1c1e' : '#ffffff',
+          borderWidth: StyleSheet.hairlineWidth,
+          borderColor: isDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.10)',
+        }]}
         activeOpacity={0.75}
-        accessibilityLabel={t('chatConv.scrollToBottom') || 'Scroll to bottom'}
+        accessibilityLabel={newMsgCount > 0
+          ? `${t('chatConv.scrollToBottom') || 'Scroll to bottom'} (${newMsgCount})`
+          : (t('chatConv.scrollToBottom') || 'Scroll to bottom')}
         accessibilityRole="button"
+        hitSlop={4}
       >
-        <IconChevronDown size={20} color={colors.textSecondary} />
+        <IconChevronDown size={24} color={colors.text} />
         {newMsgCount > 0 && (
-          <Animated.View style={[styles.scrollDownBadge, { backgroundColor: '#25D366', transform: [{ scale: badgeScale }] }]}>
-            <Text style={styles.scrollDownBadgeText}>{newMsgCount > 99 ? '99+' : newMsgCount}</Text>
+          <Animated.View style={[styles.scrollDownBadge, {
+            backgroundColor: isDark ? '#ffffff' : '#111111',
+            borderColor: isDark ? '#0b141a' : '#f0f2f5',
+            transform: [{ scale: badgeScale }],
+          }]}>
+            <Text style={[styles.scrollDownBadgeText, { color: isDark ? '#111111' : '#ffffff' }]}>{newMsgCount > 99 ? '99+' : newMsgCount}</Text>
           </Animated.View>
         )}
       </TouchableOpacity>
@@ -1194,6 +1208,30 @@ function MediaStatusFooter({ msg, isOwn, variant }) {
     );
   }
 
+  // [2026-10-08 chat-beauty-bubbles] 'scrim' (foto): degradê inferior +
+  // hora/✓ em branco com sombra de texto — sem pílula. 'bare' (vídeo, que já
+  // pinta o próprio degradê): só o texto. Sem LinearGradient → pílula antiga.
+  if ((variant === 'scrim' && _LinearGradient) || variant === 'bare') {
+    const _ts = { textShadowColor: 'rgba(0,0,0,0.45)', textShadowOffset: { width: 0, height: 0.5 }, textShadowRadius: 2 };
+    return (
+      <View pointerEvents="none" style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: 40, justifyContent: 'flex-end', alignItems: 'flex-end' }}>
+        {variant === 'scrim' && (
+          <_LinearGradient
+            pointerEvents="none"
+            colors={['rgba(0,0,0,0)', 'rgba(0,0,0,0.42)']}
+            style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0 }}
+          />
+        )}
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3, paddingRight: 10, paddingBottom: 6 }}>
+          {!!msg.edited_at && (
+            <Text style={[{ fontSize: 10, color: 'rgba(255,255,255,0.85)', fontStyle: 'italic' }, _ts]}>{_mt('chatConv.edited', 'editada')}</Text>
+          )}
+          <Text style={[{ fontSize: 11, color: '#fff', fontWeight: '600', fontVariant: ['tabular-nums'] }, _ts]}>{time}</Text>
+          <Checks />
+        </View>
+      </View>
+    );
+  }
   // Default: floating dark pill over the bottom-right corner of the media.
   return (
     <View style={{
@@ -1232,12 +1270,13 @@ function UnreadSeparatorPulse({ isDark, t }) {
     <Animated.View style={{
       marginVertical: 10, marginHorizontal: -6, paddingVertical: 5,
       alignItems: 'center', justifyContent: 'center', opacity,
-      backgroundColor: isDark ? 'rgba(255,255,255,0.07)' : 'rgba(255,255,255,0.72)',
+      // [2026-10-08 chat-beauty-bubbles] faixa mono que aparece no fundo branco/preto.
+      backgroundColor: isDark ? 'rgba(255,255,255,0.07)' : 'rgba(0,0,0,0.04)',
       ...(Platform.OS === 'web' ? { backdropFilter: 'blur(6px)', WebkitBackdropFilter: 'blur(6px)' } : {}),
     }}>
       <Text style={{
         fontSize: 12, fontWeight: '600', letterSpacing: 0.4, textTransform: 'uppercase',
-        color: isDark ? 'rgba(233,237,239,0.78)' : 'rgba(17,27,33,0.62)',
+        color: isDark ? 'rgba(235,235,245,0.75)' : 'rgba(60,60,67,0.82)',
       }}>
         {t('chatConv.unreadMessages') || 'Mensagens não lidas'}
       </Text>
@@ -2437,7 +2476,9 @@ function LinkPreview({ url, colors }) {
 const linkPreviewStyles = StyleSheet.create({
   container: {
     borderRadius: 12, overflow: 'hidden', marginTop: 6, maxWidth: 280,
-    borderLeftWidth: 3, borderLeftColor: '#111111',
+    // [2026-10-08 chat-beauty-bubbles] cartão neutro com hairline (a barra
+    // #111 sumia na bolha preta e no tema escuro).
+    borderWidth: StyleSheet.hairlineWidth,
   },
   image: { width: '100%', height: 140, backgroundColor: '#00000010' },
   imageFallback: {
@@ -2925,20 +2966,35 @@ function TypingDots({ color = '#888', size = 5 }) {
 // Cross-fades the chat header subtitle ("online" / "digitando..." / last-seen)
 // when the value changes. Without this the text instant-swaps and feels
 // jarring on every state change. iMessage/Telegram both use a soft fade.
+// [2026-10-08 chat-beauty-chrome] Real cross-fade: the old line fades OUT and
+// drifts up 3pt, the new one fades IN from 3pt below (iOS nav-bar subtitle
+// feel). Interrupted transitions (online → digitando → online in <300ms) no
+// longer strand a stale label: the latest `text` always lands.
 function PresenceTextFade({ text, style }) {
   const [displayed, setDisplayed] = React.useState(text);
   const opacity = useRef(new Animated.Value(1)).current;
+  const shift = useRef(new Animated.Value(0)).current;
+  const latestRef = useRef(text);
+  latestRef.current = text;
   useEffect(() => {
     if (text === displayed) return;
     const nd = Platform.OS !== 'web';
-    Animated.timing(opacity, { toValue: 0.25, duration: 130, useNativeDriver: nd }).start(({ finished }) => {
-      if (!finished) return;
-      setDisplayed(text);
-      Animated.timing(opacity, { toValue: 1, duration: 180, useNativeDriver: nd }).start();
+    if (isReduceMotionEnabled()) { setDisplayed(text); opacity.setValue(1); shift.setValue(0); return; }
+    Animated.parallel([
+      Animated.timing(opacity, { toValue: 0, duration: 110, easing: Easing.in(Easing.quad), useNativeDriver: nd }),
+      Animated.timing(shift, { toValue: -3, duration: 110, easing: Easing.in(Easing.quad), useNativeDriver: nd }),
+    ]).start(() => {
+      setDisplayed(latestRef.current);
+      shift.setValue(3);
+      Animated.parallel([
+        Animated.timing(opacity, { toValue: 1, duration: 190, easing: Easing.out(Easing.cubic), useNativeDriver: nd }),
+        Animated.timing(shift, { toValue: 0, duration: 190, easing: Easing.out(Easing.cubic), useNativeDriver: nd }),
+      ]).start();
     });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [text]);
   return (
-    <Animated.Text style={[style, { opacity }]} numberOfLines={1}>{displayed}</Animated.Text>
+    <Animated.Text style={[style, { opacity, transform: [{ translateY: shift }] }]} numberOfLines={1}>{displayed}</Animated.Text>
   );
 }
 
@@ -3587,8 +3643,12 @@ function AudioPlayer({ url, duration, isOwn, colors, messageId, waveform, played
   // vanish. Use dark controls for own on light theme; white on dark.
   const ownCtrl = isDarkMode ? '#fff' : '#111111';
   const ownCtrlSoft = isDarkMode ? 'rgba(255,255,255,0.85)' : 'rgba(17, 17, 17,0.85)';
-  const tintColor = isOwn ? ownCtrl : '#111111';
-  const tintDim = isOwn ? (isDarkMode ? 'rgba(255,255,255,0.35)' : 'rgba(17, 17, 17,0.30)') : 'rgba(17, 17, 17,0.25)';
+  // [2026-10-08 chat-beauty-bubbles] SÓ cores: controles do áudio RECEBIDO
+  // seguem o tema (eram #111 fixo → invisíveis na bolha #1C1C1E do escuro).
+  const inCtrl = isDarkMode ? '#F5F5F7' : '#111111';
+  const playGlyph = (!isOwn && isDarkMode) ? '#111111' : '#fff';
+  const tintColor = isOwn ? ownCtrl : inCtrl;
+  const tintDim = isOwn ? (isDarkMode ? 'rgba(255,255,255,0.35)' : 'rgba(17, 17, 17,0.30)') : (isDarkMode ? 'rgba(245,245,247,0.28)' : 'rgba(17, 17, 17,0.25)');
   // Idle → total length; active / scrubbed → current position (WhatsApp).
   const showCur = vs.active || curSec > 0;
   const displayTime = showCur ? curSec : (duration || 0);
@@ -3610,18 +3670,18 @@ function AudioPlayer({ url, duration, isOwn, colors, messageId, waveform, played
           accessibilityLabel={t('chatConv.skipBack15') || 'Voltar 15 segundos'}
           accessibilityRole="button"
         >
-          <IconRotateCcw size={16} color={isOwn ? ownCtrlSoft : '#111111'} />
-          <Text style={[audioStyles.skipLabel, { color: isOwn ? ownCtrlSoft : '#111111' }]}>15</Text>
+          <IconRotateCcw size={16} color={isOwn ? ownCtrlSoft : inCtrl} />
+          <Text style={[audioStyles.skipLabel, { color: isOwn ? ownCtrlSoft : inCtrl }]}>15</Text>
         </TouchableOpacity>
       )}
       <View style={{ position: 'relative' }}>
-        <TouchableOpacity onPress={togglePlay} style={[audioStyles.playBtn, { backgroundColor: isOwn ? (isDarkMode ? 'rgba(255,255,255,0.25)' : '#111111') : '#111111' }]} accessibilityLabel={busy ? (t('common.downloading') || 'Baixando') : playing ? (t('common.pause') || 'Pausar') : (t('common.play') || 'Reproduzir')} accessibilityRole="button">
+        <TouchableOpacity onPress={togglePlay} style={[audioStyles.playBtn, { backgroundColor: isOwn ? (isDarkMode ? 'rgba(255,255,255,0.25)' : '#111111') : inCtrl }]} accessibilityLabel={busy ? (t('common.downloading') || 'Baixando') : playing ? (t('common.pause') || 'Pausar') : (t('common.play') || 'Reproduzir')} accessibilityRole="button">
           {busy ? (
-            <ActivityIndicator size={18} color="#fff" />
+            <ActivityIndicator size={18} color={playGlyph} />
           ) : playing ? (
-            <IconPause size={20} color="#fff" />
+            <IconPause size={20} color={playGlyph} />
           ) : (
-            <IconPlay size={20} color="#fff" />
+            <IconPlay size={20} color={playGlyph} />
           )}
         </TouchableOpacity>
         {caching && cacheProgress > 0 && cacheProgress < 1 && (
@@ -3637,8 +3697,8 @@ function AudioPlayer({ url, duration, isOwn, colors, messageId, waveform, played
           accessibilityLabel={t('chatConv.skipForward15') || 'Avançar 15 segundos'}
           accessibilityRole="button"
         >
-          <IconRotateCw size={16} color={isOwn ? ownCtrlSoft : '#111111'} />
-          <Text style={[audioStyles.skipLabel, { color: isOwn ? ownCtrlSoft : '#111111' }]}>15</Text>
+          <IconRotateCw size={16} color={isOwn ? ownCtrlSoft : inCtrl} />
+          <Text style={[audioStyles.skipLabel, { color: isOwn ? ownCtrlSoft : inCtrl }]}>15</Text>
         </TouchableOpacity>
       )}
       <View style={audioStyles.trackWrap}>
@@ -3672,9 +3732,9 @@ function AudioPlayer({ url, duration, isOwn, colors, messageId, waveform, played
             onPress={cycleSpeed}
             accessibilityLabel={`${t ? (t('chatConv.playbackSpeed') || 'Playback speed') : 'Playback speed'} ${speed}x`}
             accessibilityRole="button"
-            style={{ paddingHorizontal: 6, paddingVertical: 2, borderRadius: 10, backgroundColor: isOwn ? (isDarkMode ? 'rgba(255,255,255,0.15)' : 'rgba(17, 17, 17,0.12)') : 'rgba(17, 17, 17,0.15)' }}
+            style={{ paddingHorizontal: 6, paddingVertical: 2, borderRadius: 10, backgroundColor: isOwn ? (isDarkMode ? 'rgba(255,255,255,0.15)' : 'rgba(17, 17, 17,0.12)') : (isDarkMode ? 'rgba(245,245,247,0.14)' : 'rgba(17, 17, 17,0.15)') }}
           >
-            <Text style={{ fontSize: 10, fontWeight: '800', color: isOwn ? ownCtrlSoft : '#111111' }}>{speed}x</Text>
+            <Text style={{ fontSize: 10, fontWeight: '800', color: isOwn ? ownCtrlSoft : inCtrl }}>{speed}x</Text>
           </TouchableOpacity>
         </View>
       </View>
@@ -4319,10 +4379,14 @@ function AttachmentMenuItem({ item, index, onPress, colors, sheetAnim }) {
       <Animated.View style={{ alignItems: 'center', transform: [{ scale: Animated.multiply(itemScale, scaleBtn) }], opacity: itemOpacity }}>
         {/* [beauty 2026-10-02] Mono neutral chip instead of the per-item
             rainbow filled circle — matches the rest of the app's palette. */}
-        <View style={[attachStyles.iconCircle, { backgroundColor: colors.surfaceVariant || '#F0F1F3' }]}>
-          <item.icon size={23} color={colors.text} />
+        {/* [2026-10-08 chat-beauty-chrome] same monochrome circle as the native sheet */}
+        <View style={[attachStyles.iconCircle, {
+          backgroundColor: colors.surfaceVariant || '#F0F1F3',
+          borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border || 'rgba(0,0,0,0.06)',
+        }]}>
+          <item.icon size={26} color={colors.text} />
         </View>
-        <Text style={[attachStyles.label, { color: colors.text }]}>{item.label}</Text>
+        <Text style={[attachStyles.label, { color: colors.textSecondary || colors.text }]} numberOfLines={1}>{item.label}</Text>
       </Animated.View>
     </TouchableOpacity>
   );
@@ -4334,12 +4398,13 @@ const attachStyles = StyleSheet.create({
   fullscreenOverlay: { ...StyleSheet.absoluteFillObject, zIndex: 9998 },
   overlay: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.35)' },
   sheetWrap: { position: 'absolute', bottom: 0, left: 0, right: 0 },
-  sheet: { borderTopLeftRadius: 20, borderTopRightRadius: 20, paddingHorizontal: Spacing.lg, paddingBottom: 40, paddingTop: Spacing.sm },
-  handle: { width: 36, height: 4, borderRadius: 2, alignSelf: 'center', marginBottom: Spacing.lg },
-  grid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-around' },
-  item: { alignItems: 'center', width: '30%', marginBottom: Spacing.xl || 24 },
-  iconCircle: { width: 56, height: 56, borderRadius: 28, alignItems: 'center', justifyContent: 'center', marginBottom: 8 },
-  label: { fontSize: FontSize.xs, fontWeight: '500' },
+  // [2026-10-08 chat-beauty-chrome] 4-column grid like the native sheet, 24 radius
+  sheet: { borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingHorizontal: Spacing.md, paddingBottom: 32, paddingTop: Spacing.sm, ...(Platform.OS === 'web' ? { maxWidth: 560, width: '100%', alignSelf: 'center' } : {}) },
+  handle: { width: 36, height: 5, borderRadius: 2.5, alignSelf: 'center', marginBottom: 18 },
+  grid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'flex-start' },
+  item: { alignItems: 'center', width: '25%', marginBottom: 18 },
+  iconCircle: { width: 60, height: 60, borderRadius: 30, alignItems: 'center', justifyContent: 'center', marginBottom: 8 },
+  label: { fontSize: 12.5, fontWeight: '500', letterSpacing: -0.1, maxWidth: 84, textAlign: 'center' },
 });
 
 // ============================================================
@@ -8450,9 +8515,26 @@ function ChatConversationInner() {
     if (segs === 3) return 40;
     return 0;
   }
-  // WhatsApp 2026: own bubble text color depends on theme
-  const ownTextColor = isDark ? '#E9EDEF' : '#111B21';
-  const ownMetaColor = isDark ? 'rgba(233,237,239,0.7)' : 'rgba(17,27,33,0.55)';
+  // [2026-10-08 chat-beauty-bubbles] Paleta P&B premium da área de mensagens.
+  // ENVIADA = superfície ESCURA nos dois temas (preto #111 no claro, grafite
+  // #333336 no escuro) com tinta branca → todo o miolo da bolha própria
+  // (rgba(255,255,255,…) legado) passa a ter contraste certo em ambos os temas.
+  // RECEBIDA = cinza claro #EEEEF0 (claro) / #1C1C1E (escuro). Fundo da
+  // conversa = branco puro / preto puro. Contraste AA: texto ≥ 12:1; meta
+  // (hora/✓) ≥ 4.5:1 nas 4 combinações.
+  const ownBubbleBg = isDark ? '#333336' : '#111111';
+  const otherBubbleBg = isDark ? '#1C1C1E' : '#EEEEF0';
+  const chatWallBg = isDark ? '#000000' : '#FFFFFF';
+  const ownTextColor = isDark ? '#F5F5F7' : '#FFFFFF';
+  const ownMetaColor = isDark ? 'rgba(245,245,247,0.62)' : 'rgba(255,255,255,0.62)';
+  const otherMetaColor = isDark ? 'rgba(235,235,245,0.55)' : 'rgba(60,60,67,0.74)';
+  // Tinta de destaque dentro da bolha RECEBIDA (links/ícones/menções). Antes
+  // era colors.primary (#111 nos DOIS temas) → sumia no escuro.
+  const otherInk = isDark ? '#F5F5F7' : '#111111';
+  // AudioPlayer (componente de voz — intocado) deduz claro/escuro de
+  // colors.background. A bolha própria agora é escura nos 2 temas → passa um
+  // colors com fundo escuro SÓ pra ela, e os controles saem brancos.
+  const ownAudioColors = useMemo(() => ({ ...colors, background: '#000000' }), [colors]);
 
   // Bubble shape (settings.js `bubble_shape`, default 'rounded'). Maps the
   // enum to a corner radius. The styles.bubble* defaults bake in radius 18,
@@ -21830,7 +21912,8 @@ function ChatConversationInner() {
               #E1F2DA, which clashed with the violet header/bubbles). Light:
               soft lavender wash + violet ink. Dark: deep glass + muted text. */}
           {/* [2026-10-06 wa-look] WA day pill: received-bubble surface + muted ink. */}
-          <Text style={[styles.dateText, { color: colors.textSecondary || (isDark ? 'rgba(233,237,239,0.78)' : '#54656F'), backgroundColor: colors.chatBubbleOther }]}>
+          {/* [2026-10-08 chat-beauty-bubbles] Pílula de data P&B translúcida. */}
+          <Text style={[styles.dateText, isDark ? styles.dateTextDark : styles.dateTextLight]}>
             {item._label || formatDateSeparator(item.date, t)}
           </Text>
         </View>
@@ -22029,26 +22112,23 @@ function ChatConversationInner() {
       // chrome, so a sender who shares 5 photos at once never saw ANY
       // delivered/read indicator. Mirror the single-bubble meta row.
       const albumTime = formatTime(item.created_at);
-      const albumTickColor = isOwn
-        ? (isDark ? 'rgba(255,255,255,0.7)' : 'rgba(0,0,0,0.55)')
-        : (isDark ? 'rgba(255,255,255,0.55)' : 'rgba(0,0,0,0.45)');
+      // [2026-10-08 chat-beauty-bubbles] mesma tinta de meta das bolhas de texto.
+      const albumTickColor = isOwn ? ownMetaColor : otherMetaColor;
       return (
         <View style={{
-          paddingHorizontal: 12,
-          marginBottom: item._isLastInGroup ? 6 : 2,
+          paddingHorizontal: 16,
+          marginBottom: item._isLastInGroup ? 8 : 2,
           alignItems: isOwn ? 'flex-end' : 'flex-start',
         }}>
           <View style={{
             maxWidth: maxW,
-            borderRadius: 14,
+            borderRadius: bubbleRadius,
             overflow: 'hidden',
             // [MONO 2026-09-30] Own-bubble bg was #E8DEF8 (light lavender/
             // violet) — the hue the founder saw when the album photos didn't
             // paint over it. Neutralized to the same gray as the single-photo
             // bubble skeleton (#F0F0F2 light / #1E1E22 dark). NO purple tints.
-            backgroundColor: isOwn
-              ? (isDark ? '#1E1E22' : '#F0F0F2')
-              : (isDark ? '#1a2330' : '#ffffff'),
+            backgroundColor: isOwn ? ownBubbleBg : otherBubbleBg,
           }}>
             {/* [MONO 2026-09-30] Hard height cap on the MEDIA region so the
                 album can never grow full-screen, even if the carousel/grid
@@ -22071,8 +22151,8 @@ function ChatConversationInner() {
               if (onlyFilenames) return null;
               return (
                 <Text style={{
-                  paddingHorizontal: 10, paddingVertical: 6, fontSize: 14,
-                  color: isDark ? '#fff' : '#1a1a1a',
+                  paddingHorizontal: 12, paddingTop: 7, paddingBottom: 2, fontSize: 15.5, lineHeight: 21,
+                  color: isOwn ? ownTextColor : colors.text,
                 }}>
                   {item.content}
                 </Text>
@@ -22082,7 +22162,7 @@ function ChatConversationInner() {
               flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end',
               paddingHorizontal: 8, paddingBottom: 4, paddingTop: 2, gap: 4,
             }}>
-              <Text style={{ fontSize: 10, color: albumTickColor, fontVariant: ['tabular-nums'] }}>{albumTime}</Text>
+              <Text style={{ fontSize: 11, color: albumTickColor, fontVariant: ['tabular-nums'] }}>{albumTime}</Text>
               {/* [2026-10-01 Bug A] pending → clock (⏱) while any photo is
                   still uploading. Without the prop, status 0 rendered a bare
                   single ✓ (AnimatedCheckStatus treats <1.5 as "sent"), so a
@@ -22523,7 +22603,10 @@ function ChatConversationInner() {
               }}
               delayLongPress={350}
               activeOpacity={0.9}
-              style={{ marginHorizontal: -13, marginTop: -8, marginBottom: hasCaption ? 0 : -8 }}>
+              // [2026-10-08 chat-beauty-bubbles] margens negativas = padding da
+              // bolha de mídia (3/3/4): foto de ponta a ponta SEM cortar 10px de
+              // cada lado, e a legenda passa a respeitar o padding 12.
+              style={{ marginHorizontal: -3, marginTop: -3, marginBottom: hasCaption ? 0 : -4 }}>
               <MediaPopIn enabled={!!msg._uploading && typeof msg.id === 'string' && msg.id.startsWith('tmp_')} style={{ overflow: 'hidden', width: imgBoxW, height: imgBoxH, maxHeight: 320, maxWidth: 300, backgroundColor: (() => {
                 // [WAVE 77 2026-05-21] HSL base painted on the WRAPPER itself so
                 // that even when every internal layer is transparent (e.g. during
@@ -22967,24 +23050,24 @@ function ChatConversationInner() {
                     Album: render only on the LAST image of the album (matches
                     WhatsApp/Telegram — one footer per album, not per row). */}
                 {!hasCaption && !imgUploading && (!isAlbumMember || isAlbumLast) && (
-                  <MediaStatusFooter msg={msg} isOwn={isOwn} />
+                  <MediaStatusFooter msg={msg} isOwn={isOwn} variant="scrim" />
                 )}
               </MediaPopIn>
               {hasCaption && (
                 <View>
-                  <Text style={[styles.msgText, { color: isOwn ? ownTextColor : colors.text, fontSize: msgFontSize, lineHeight: msgLineHeight, marginTop: 6, paddingHorizontal: 13 }]}>{msg.content}</Text>
+                  <Text style={[styles.msgText, { color: isOwn ? ownTextColor : colors.text, fontSize: msgFontSize, lineHeight: msgLineHeight, marginTop: 6, paddingHorizontal: 12 }]}>{msg.content}</Text>
                   {!imgUploading && (
-                    <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 3, paddingHorizontal: 13, paddingTop: 2, paddingBottom: 4 }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 3, paddingHorizontal: 10, paddingTop: 2, paddingBottom: 3 }}>
                       {!!msg.edited_at && (
-                        <Text style={{ fontSize: 10, color: isOwn ? 'rgba(255,255,255,0.7)' : colors.textTertiary, fontStyle: 'italic' }}>{t('chatConv.edited')}</Text>
+                        <Text style={{ fontSize: 10, color: isOwn ? ownMetaColor : otherMetaColor, fontStyle: 'italic' }}>{t('chatConv.edited')}</Text>
                       )}
-                      <Text style={{ fontSize: 10.5, color: isOwn ? 'rgba(255,255,255,0.85)' : colors.textTertiary, fontWeight: '500' }}>{formatTime(msg.created_at)}</Text>
+                      <Text style={{ fontSize: 10.5, color: isOwn ? ownMetaColor : otherMetaColor, fontWeight: '500' }}>{formatTime(msg.created_at)}</Text>
                       {isOwn && !msg._pending && !msg._failed && (
                         msg._readStatus === 2
                           ? <View style={{ flexDirection: 'row', marginLeft: 1, flexShrink: 0 }}><IconCheck size={12} strokeWidth={2.6} color="#53BDEB" style={{ marginRight: -6 }} /><IconCheck size={12} strokeWidth={2.6} color="#53BDEB" /></View>
                           : msg._readStatus === 1.5
-                          ? <View style={{ flexDirection: 'row', marginLeft: 1, flexShrink: 0 }}><IconCheck size={11} color={isOwn ? 'rgba(255,255,255,0.85)' : colors.textTertiary} style={{ marginRight: -6 }} /><IconCheck size={11} color={isOwn ? 'rgba(255,255,255,0.85)' : colors.textTertiary} /></View>
-                          : <IconCheck size={11} color={isOwn ? 'rgba(255,255,255,0.75)' : colors.textTertiary} style={{ marginLeft: 1 }} />
+                          ? <View style={{ flexDirection: 'row', marginLeft: 1, flexShrink: 0 }}><IconCheck size={11} color={isOwn ? ownMetaColor : otherMetaColor} style={{ marginRight: -6 }} /><IconCheck size={11} color={isOwn ? ownMetaColor : otherMetaColor} /></View>
+                          : <IconCheck size={11} color={isOwn ? ownMetaColor : otherMetaColor} style={{ marginLeft: 1 }} />
                       )}
                     </View>
                   )}
@@ -23432,7 +23515,7 @@ function ChatConversationInner() {
               {/* Time + read receipts pill bottom-right (WhatsApp-style).
                   Album: only on last row (matches photo album behavior). */}
               {!vidUploading && (!isAlbumMember || isAlbumLast) && (
-                <MediaStatusFooter msg={msg} isOwn={isOwn} />
+                <MediaStatusFooter msg={msg} isOwn={isOwn} variant={vidIsDownloading ? undefined : 'bare'} />
               )}
               </MediaPopIn>
             </TouchableOpacity>
@@ -23506,7 +23589,7 @@ function ChatConversationInner() {
                 url={msg._localUri || audioLocalPath || resolveMediaUri(msg.file_url)}
                 duration={msg.duration || 0}
                 isOwn={isOwn}
-                colors={colors}
+                colors={isOwn ? ownAudioColors : colors}
                 messageId={msg.id}
                 waveform={msg.waveform}
                 playedByPeer={!!(msg.played_at || msg._voice_played)}
@@ -23578,11 +23661,11 @@ function ChatConversationInner() {
                   >
                     <Svg width={12} height={12} viewBox="0 0 24 24" style={{ marginRight: 5 }}>
                       {msg._txHidden
-                        ? <Path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z M12 9a3 3 0 100 6 3 3 0 000-6z" stroke={isOwn ? '#fff' : colors.primary} strokeWidth={2} fill="none" strokeLinecap="round" strokeLinejoin="round" />
-                        : <Path d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19m-6.72-1.07a3 3 0 11-4.24-4.24 M1 1l22 22" stroke={isOwn ? '#fff' : colors.primary} strokeWidth={2} fill="none" strokeLinecap="round" strokeLinejoin="round" />
+                        ? <Path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z M12 9a3 3 0 100 6 3 3 0 000-6z" stroke={isOwn ? '#fff' : otherInk} strokeWidth={2} fill="none" strokeLinecap="round" strokeLinejoin="round" />
+                        : <Path d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19m-6.72-1.07a3 3 0 11-4.24-4.24 M1 1l22 22" stroke={isOwn ? '#fff' : otherInk} strokeWidth={2} fill="none" strokeLinecap="round" strokeLinejoin="round" />
                       }
                     </Svg>
-                    <Text style={{ fontSize: 12, fontWeight: '600', color: isOwn ? '#fff' : colors.primary }}>
+                    <Text style={{ fontSize: 12, fontWeight: '600', color: isOwn ? '#fff' : otherInk }}>
                       {msg._txHidden
                         ? (t('chatConv.showTranscript') || 'Mostrar transcrição')
                         : (t('chatConv.hideTranscript') || 'Ocultar transcrição')}
@@ -23600,7 +23683,7 @@ function ChatConversationInner() {
                 if (!tx) return null;
                 if (tx.loading) {
                   return (
-                    <Text style={{ fontSize: 12, fontStyle: 'italic', color: isOwn ? ownMetaColor : colors.textTertiary, marginTop: 6 }}>
+                    <Text style={{ fontSize: 12, fontStyle: 'italic', color: isOwn ? ownMetaColor : otherMetaColor, marginTop: 6 }}>
                       {t('chatConv.translating') || 'Traduzindo...'}
                     </Text>
                   );
@@ -23608,7 +23691,7 @@ function ChatConversationInner() {
                 if (!tx.text) return null;
                 return (
                   <View style={{ marginTop: 6, paddingTop: 6, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: isOwn ? 'rgba(255,255,255,0.2)' : colors.border }}>
-                    <Text style={{ fontSize: 10, fontWeight: '600', color: isOwn ? ownMetaColor : colors.textTertiary, marginBottom: 2, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                    <Text style={{ fontSize: 10, fontWeight: '600', color: isOwn ? ownMetaColor : otherMetaColor, marginBottom: 2, textTransform: 'uppercase', letterSpacing: 0.5 }}>
                       {t('chatConv.translated') || 'Traduzido'}
                       {tx.sourceLang && tx.targetLang
                         ? `  ${tx.sourceLang.toUpperCase()} → ${tx.targetLang.toUpperCase()}`
@@ -23631,15 +23714,15 @@ function ChatConversationInner() {
                 >
                   {isTranscribing ? (
                     <>
-                      <ActivityIndicator size={11} color={isOwn ? 'rgba(255,255,255,0.85)' : colors.primary} />
-                      <Text style={{ fontSize: 12, color: isOwn ? 'rgba(255,255,255,0.85)' : colors.primary, fontWeight: '500' }}>
+                      <ActivityIndicator size={11} color={isOwn ? 'rgba(255,255,255,0.85)' : otherInk} />
+                      <Text style={{ fontSize: 12, color: isOwn ? 'rgba(255,255,255,0.85)' : otherInk, fontWeight: '500' }}>
                         {t('chat.transcribing') || 'Transcrevendo...'}
                       </Text>
                     </>
                   ) : (
                     <>
-                      <IconSparkles size={12} color={isOwn ? 'rgba(255,255,255,0.85)' : colors.primary} />
-                      <Text style={{ fontSize: 12, color: isOwn ? 'rgba(255,255,255,0.85)' : colors.primary, fontWeight: '500', textDecorationLine: 'underline' }}>
+                      <IconSparkles size={12} color={isOwn ? 'rgba(255,255,255,0.85)' : otherInk} />
+                      <Text style={{ fontSize: 12, color: isOwn ? 'rgba(255,255,255,0.85)' : otherInk, fontWeight: '500', textDecorationLine: 'underline' }}>
                         {transcribeErr === 'unavailable'
                           ? (t('chat.transcribeUnavailable') || 'Transcrição indisponível')
                           : transcribeErr
@@ -23653,7 +23736,7 @@ function ChatConversationInner() {
               {audioUploading && (
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 2 }}>
                   <ActivityIndicator size={10} color={isOwn ? 'rgba(255,255,255,0.5)' : colors.textTertiary} />
-                  <Text style={{ fontSize: 10, color: isOwn ? ownMetaColor : colors.textTertiary }}>
+                  <Text style={{ fontSize: 10, color: isOwn ? ownMetaColor : otherMetaColor }}>
                     {t('chat.uploading') || 'Enviando'} {audioProgress}%
                   </Text>
                 </View>
@@ -24005,7 +24088,7 @@ function ChatConversationInner() {
             : (isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)');
           // Own bubble on LIGHT theme is light lavender — a white accent on the
           // faint white-wash card vanished. Dark purple on light, white on dark.
-          const accent = isOwn ? (isDark ? '#fff' : '#111111') : '#111111';
+          const accent = isOwn ? ownTextColor : otherInk;
           const handleStartChat = () => {
             if (ctEmail) {
               try { router.push(`/chat-new?email=${encodeURIComponent(ctEmail)}`); } catch {}
@@ -24074,7 +24157,7 @@ function ChatConversationInner() {
                   {ctEmail ? (
                     <Text
                       numberOfLines={1}
-                      style={{ fontSize: 12.5, color: isOwn ? ownMetaColor : colors.textTertiary, marginTop: prettyPhone ? 2 : 4 }}
+                      style={{ fontSize: 12.5, color: isOwn ? ownMetaColor : otherMetaColor, marginTop: prettyPhone ? 2 : 4 }}
                     >
                       {ctEmail}
                     </Text>
@@ -24396,7 +24479,7 @@ function ChatConversationInner() {
                     backgroundColor: isOwn ? 'rgba(255,255,255,0.2)' : (colors.primary + '18'),
                   }}
                 >
-                  <Text style={{ fontSize: 12, fontWeight: '700', color: isOwn ? '#fff' : colors.primary }}>
+                  <Text style={{ fontSize: 12, fontWeight: '700', color: isOwn ? '#fff' : otherInk }}>
                     {t('chatConv.callButton') || 'LIGAR'}
                   </Text>
                 </TouchableOpacity>
@@ -24475,7 +24558,7 @@ function ChatConversationInner() {
               : '';
           // Own bubble on LIGHT theme: white accent stripe vanished on light
           // lavender — use a visible purple stripe; keep white on dark.
-          const accent = isOwn ? (isDark ? 'rgba(255,255,255,0.85)' : 'rgba(17, 17, 17,0.85)') : colors.primary;
+          const accent = isOwn ? 'rgba(255,255,255,0.85)' : otherInk;
           // Status TTL = 24h. WhatsApp pattern: when user taps an expired
           // snapshot, show "Status nao disponivel" toast in vez de navegar
           // pra um profile que vai falhar silenciosamente. Backend agora
@@ -24676,7 +24759,7 @@ function ChatConversationInner() {
                 </View>
               </View>
               {/* Body */}
-              <View style={{ backgroundColor: isOwn ? 'rgba(0,0,0,0.06)' : (isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.02)'), padding: 10 }}>
+              <View style={{ backgroundColor: isOwn ? 'rgba(255,255,255,0.08)' : (isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.03)'), padding: 10 }}>
                 {/* Date/time row */}
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 }}>
                   <IconClock size={14} color={isPast ? '#6b7280' : '#111111'} />
@@ -24706,7 +24789,7 @@ function ChatConversationInner() {
                     </View>
                   )}
                   {totalAttendees > 0 && (
-                    <Text style={{ fontSize: 10, color: isOwn ? ownMetaColor : colors.textTertiary, marginLeft: 'auto' }}>
+                    <Text style={{ fontSize: 10, color: isOwn ? ownMetaColor : otherMetaColor, marginLeft: 'auto' }}>
                       {totalAttendees} {totalAttendees === 1 ? (t('chatConv.attendee') || 'participante') : (t('chatConv.attendees') || 'participantes')}
                     </Text>
                   )}
@@ -24840,7 +24923,7 @@ function ChatConversationInner() {
                   url={msg._localUri || fileAudioLocalPath || resolveMediaUri(msg.file_url)}
                   duration={msg.duration || 0}
                   isOwn={isOwn}
-                  colors={colors}
+                  colors={isOwn ? ownAudioColors : colors}
                   messageId={msg.id}
                   waveform={msg.waveform}
                   playedByPeer={!!(msg.played_at || msg._voice_played)}
@@ -25093,21 +25176,21 @@ function ChatConversationInner() {
                   </Text>
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 3 }}>
                     {msg.file_size > 0 && (
-                      <Text style={{ fontSize: 11.5, color: isOwn ? ownMetaColor : colors.textTertiary, fontWeight: '500' }}>
+                      <Text style={{ fontSize: 11.5, color: isOwn ? ownMetaColor : otherMetaColor, fontWeight: '500' }}>
                         {msg.file_size < 1048576 ? (msg.file_size / 1024).toFixed(0) + ' KB' : (msg.file_size / 1048576).toFixed(1) + ' MB'}
                       </Text>
                     )}
                     {!fileIsLocal && Platform.OS !== 'web' && !fileIsDownloading ? (
                       <>
-                        <Text style={{ fontSize: 11, color: isOwn ? ownMetaColor : colors.textTertiary }}>·</Text>
-                        <Text style={{ fontSize: 11, color: isOwn ? ownMetaColor : colors.textTertiary, fontStyle: 'italic' }}>
+                        <Text style={{ fontSize: 11, color: isOwn ? ownMetaColor : otherMetaColor }}>·</Text>
+                        <Text style={{ fontSize: 11, color: isOwn ? ownMetaColor : otherMetaColor, fontStyle: 'italic' }}>
                           {t('chat.tapToDownload') || 'Toque para baixar'}
                         </Text>
                       </>
                     ) : (isPDF || isEditable) ? (
                       <>
-                        <Text style={{ fontSize: 11, color: isOwn ? ownMetaColor : colors.textTertiary }}>·</Text>
-                        <Text style={{ fontSize: 11, color: isOwn ? ownMetaColor : colors.textTertiary, fontStyle: 'italic' }}>
+                        <Text style={{ fontSize: 11, color: isOwn ? ownMetaColor : otherMetaColor }}>·</Text>
+                        <Text style={{ fontSize: 11, color: isOwn ? ownMetaColor : otherMetaColor, fontStyle: 'italic' }}>
                           {t('chat.tapToPreview') || 'Toque para ver'}
                         </Text>
                       </>
@@ -25135,10 +25218,10 @@ function ChatConversationInner() {
                   accessibilityLabel={t('chat.editFile') || 'Editar no Chatyy'}
                 >
                   <Svg width={18} height={18} viewBox="0 0 24 24" fill="none">
-                    <Path d="M12 20h9" stroke={isOwn ? ownTextColor : colors.primary} strokeWidth={2} strokeLinecap="round" />
-                    <Path d="M16.5 3.5a2.1 2.1 0 113 3L7 19l-4 1 1-4 12.5-12.5z" stroke={isOwn ? ownTextColor : colors.primary} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
+                    <Path d="M12 20h9" stroke={isOwn ? ownTextColor : otherInk} strokeWidth={2} strokeLinecap="round" />
+                    <Path d="M16.5 3.5a2.1 2.1 0 113 3L7 19l-4 1 1-4 12.5-12.5z" stroke={isOwn ? ownTextColor : otherInk} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
                   </Svg>
-                  <Text style={{ fontSize: 10, color: isOwn ? ownMetaColor : colors.primary, fontWeight: '700', marginTop: 2 }}>
+                  <Text style={{ fontSize: 10, color: isOwn ? ownMetaColor : otherInk, fontWeight: '700', marginTop: 2 }}>
                     {t('chat.edit') || 'Editar'}
                   </Text>
                 </TouchableOpacity>
@@ -25394,8 +25477,8 @@ function ChatConversationInner() {
                         borderRadius: 12,
                         ...(Platform.OS === 'web' ? {
                           background: voted
-                            ? (isOwn ? 'linear-gradient(90deg, rgba(255,255,255,0.32) 0%, rgba(255,255,255,0.15) 100%)' : 'linear-gradient(90deg, rgba(17, 17, 17,0.35) 0%, rgba(17, 17, 17,0.12) 100%)')
-                            : (isOwn ? 'linear-gradient(90deg, rgba(255,255,255,0.18) 0%, rgba(255,255,255,0.06) 100%)' : 'linear-gradient(90deg, rgba(17, 17, 17,0.18) 0%, rgba(17, 17, 17,0.06) 100%)'),
+                            ? (isOwn ? 'linear-gradient(90deg, rgba(255,255,255,0.32) 0%, rgba(255,255,255,0.15) 100%)' : (isDark ? 'linear-gradient(90deg, rgba(255,255,255,0.24) 0%, rgba(255,255,255,0.08) 100%)' : 'linear-gradient(90deg, rgba(17, 17, 17,0.35) 0%, rgba(17, 17, 17,0.12) 100%)'))
+                            : (isOwn ? 'linear-gradient(90deg, rgba(255,255,255,0.18) 0%, rgba(255,255,255,0.06) 100%)' : (isDark ? 'linear-gradient(90deg, rgba(255,255,255,0.14) 0%, rgba(255,255,255,0.05) 100%)' : 'linear-gradient(90deg, rgba(17, 17, 17,0.18) 0%, rgba(17, 17, 17,0.06) 100%)')),
                           transition: 'width 0.3s ease',
                         } : {}),
                       }}
@@ -25446,7 +25529,7 @@ function ChatConversationInner() {
                 <View style={{
                   marginTop: 6, paddingHorizontal: 10, paddingVertical: 8,
                   borderRadius: 8,
-                  backgroundColor: isOwn ? 'rgba(255,255,255,0.12)' : (isDark ? 'rgba(17, 17, 17,0.18)' : 'rgba(17, 17, 17,0.08)'),
+                  backgroundColor: isOwn ? 'rgba(255,255,255,0.12)' : (isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)'),
                 }}>
                   <Text style={{ fontSize: 11, fontWeight: '700', color: cardSubtext, marginBottom: 2 }}>
                     {t('chat.quizExplanation') || 'Explica\u00E7\u00E3o'}
@@ -25633,7 +25716,7 @@ function ChatConversationInner() {
                   <Text style={{ fontSize: 13, fontWeight: '600', color: isOwn ? ownTextColor : colors.text }}>
                     {isVideo ? 'Videochamada' : 'Chamada de voz'}
                   </Text>
-                  <Text style={{ fontSize: 11, color: isOwn ? ownMetaColor : colors.textTertiary }}>
+                  <Text style={{ fontSize: 11, color: isOwn ? ownMetaColor : otherMetaColor }}>
                     Toque para entrar
                   </Text>
                 </View>
@@ -25733,8 +25816,8 @@ function ChatConversationInner() {
                         <TextWithLinks
                           text={rest}
                           style={[styles.msgText, { color: isOwn ? ownTextColor : colors.text, fontSize: msgFontSize, lineHeight: msgLineHeight }]}
-                          linkColor={isOwn ? '#111111' : colors.primary}
-                          mentionColor={isOwn ? '#111111' : '#1a73e8'}
+                          linkColor={isOwn ? ownTextColor : otherInk}
+                          mentionColor={isOwn ? ownTextColor : otherInk}
                           colors={colors}
                           router={router}
                         />
@@ -25765,8 +25848,8 @@ function ChatConversationInner() {
                       <TextWithLinks
                         text={_c}
                         style={_txtStyle}
-                        linkColor={isOwn ? '#111111' : colors.primary}
-                        mentionColor={isOwn ? '#111111' : '#1a73e8'}
+                        linkColor={isOwn ? ownTextColor : otherInk}
+                        mentionColor={isOwn ? ownTextColor : otherInk}
                         colors={colors}
                         router={router}
                       />
@@ -25785,8 +25868,8 @@ function ChatConversationInner() {
                   <TextWithLinks
                     text={msg.content}
                     style={_txtStyle}
-                    linkColor={isOwn ? '#111111' : colors.primary}
-                    mentionColor={isOwn ? '#111111' : '#1a73e8'}
+                    linkColor={isOwn ? ownTextColor : otherInk}
+                    mentionColor={isOwn ? ownTextColor : otherInk}
                     colors={colors}
                     router={router}
                   />
@@ -25803,14 +25886,14 @@ function ChatConversationInner() {
                   marginTop: msg._filtered && msg._hidden ? 4 : 0,
                 } : {
                   marginTop: 6, padding: 8, borderRadius: 10,
-                  backgroundColor: isOwn ? 'rgba(255,255,255,0.13)' : 'rgba(17, 17, 17,0.08)',
+                  backgroundColor: isOwn ? 'rgba(255,255,255,0.13)' : (isDark ? 'rgba(255,255,255,0.07)' : 'rgba(0,0,0,0.05)'),
                   borderLeftWidth: 2,
-                  borderLeftColor: isOwn ? 'rgba(255,255,255,0.4)' : '#111111',
+                  borderLeftColor: isOwn ? 'rgba(255,255,255,0.4)' : otherInk,
                 }}>
                   {msgTranslation.loading ? (
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                      <IconGlobe size={12} color={isOwn ? ownMetaColor : colors.textTertiary} />
-                      <Text style={{ fontSize: 12, fontStyle: 'italic', color: isOwn ? ownMetaColor : colors.textTertiary }}>
+                      <IconGlobe size={12} color={isOwn ? ownMetaColor : otherMetaColor} />
+                      <Text style={{ fontSize: 12, fontStyle: 'italic', color: isOwn ? ownMetaColor : otherMetaColor }}>
                         {t('chatConv.translating')}
                       </Text>
                     </View>
@@ -25818,8 +25901,8 @@ function ChatConversationInner() {
                     <View>
                       {!msgTranslation._auto && (
                         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5, marginBottom: 3 }}>
-                          <IconGlobe size={11} color={isOwn ? ownMetaColor : '#111111'} />
-                          <Text style={{ fontSize: 10, fontWeight: '700', color: isOwn ? ownMetaColor : '#111111', textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                          <IconGlobe size={11} color={isOwn ? ownMetaColor : otherInk} />
+                          <Text style={{ fontSize: 10, fontWeight: '700', color: isOwn ? ownMetaColor : otherInk, textTransform: 'uppercase', letterSpacing: 0.5 }}>
                             {t('chatConv.translated')}
                             {msgTranslation.sourceLang && msgTranslation.targetLang
                               ? `  ${msgTranslation.sourceLang.toUpperCase()} → ${msgTranslation.targetLang.toUpperCase()}`
@@ -25847,7 +25930,7 @@ function ChatConversationInner() {
                         >
                           <Text style={{
                             fontSize: 11,
-                            color: isOwn ? ownMetaColor : (isDark ? '#111111' : '#111111'),
+                            color: isOwn ? ownMetaColor : otherInk,
                             textDecorationLine: 'underline',
                           }}>
                             {msgTranslation._showOriginal
@@ -25901,7 +25984,7 @@ function ChatConversationInner() {
     const isAlbumLast = isAlbumMember && msg._albumIndex === (msg._albumSize - 1);
     const wrapMargin = isAlbumMember && !isAlbumLast
       ? 1
-      : (isLastInGroup ? 6 : 1); // [2026-10-06 wa-look] 2→1: ~3px inside a group (WA)
+      : (isLastInGroup ? 4 : 0); // [2026-10-08 chat-beauty-bubbles] 2px dentro do grupo (row gap) / 8px entre grupos (4 + msgRowGroupEnd 4)
 
     return (
       <MessageDeleteAnim deleting={__ov.deleting}>
@@ -26049,28 +26132,22 @@ function ChatConversationInner() {
               // ver theme.js). ENVIADO = cinza-neutro mais escuro (light) /
               // tom elevado blue-charcoal (dark). Hairline + sombra base (muito
               // sutil) pra descolar do fundo sem glow. Zero cor.
-              ? [styles.bubbleOwn, {
-                  backgroundColor: colors.chatBubbleOwn,
-                  borderWidth: StyleSheet.hairlineWidth,
-                  borderColor: colors.chatBubbleOwnBorder,
-                  ...(Platform.OS === 'ios' ? { shadowOpacity: isDark ? 0.18 : 0.07, shadowRadius: 5 } : {}),
-                }]
-              // RECEBIDO = branco puro (light) / blue-charcoal escuro (dark),
-              // sempre via token. Hairline nos dois temas + sombra leve no iOS
-              // light pra separar do wallpaper. Mention mantém o tint verde.
+              // [2026-10-08 chat-beauty-bubbles] P&B: enviada = superfície
+              // escura chapada (sem hairline/sombra — flat iMessage/Telegram).
+              ? [styles.bubbleOwn, { backgroundColor: ownBubbleBg }]
+              // RECEBIDO = cinza claro / grafite. Menção = tom um pouco mais
+              // forte do mesmo cinza (sem verde).
               : [styles.bubbleOther, {
-                  backgroundColor: isUserMentioned(msg, currentEmail) ? (isDark ? '#1a3a2a' : '#d4f0e0') : colors.chatBubbleOther,
-                  borderWidth: StyleSheet.hairlineWidth,
-                  borderColor: colors.chatBubbleOtherBorder,
-                  ...(Platform.OS === 'ios' && !isDark ? { shadowOpacity: 0.08, shadowRadius: 5 } : {}),
+                  backgroundColor: isUserMentioned(msg, currentEmail) ? (isDark ? '#2A2A2E' : '#E2E2E6') : otherBubbleBg,
                 }],
             // Bubble shape (settings.js `bubble_shape`). Layered AFTER the
-            // default bubbleOwn/bubbleOther corner radii so it overrides them,
-            // but BEFORE the isFirstInGroup tail override below so the tail
-            // corner still flattens correctly.
+            // default bubbleOwn/bubbleOther corner radii so it overrides them.
             isOwn ? ownBubbleShapeStyle : otherBubbleShapeStyle,
-            // [VISUAL-G2, 2026-05-19] Tail moved to TOP (isFirstInGroup) — WA places tail on first-of-group.
-            isFirstInGroup && (isOwn ? { borderTopRightRadius: 0 } : { borderTopLeftRadius: 0 }),
+            // [2026-10-08 chat-beauty-bubbles] Cantos agrupados (iMessage/
+            // Telegram): sem rabicho SVG. O canto de baixo do lado do autor é
+            // sempre justo (âncora); quando a msg CONTINUA um grupo, o canto de
+            // cima do mesmo lado também fica justo → o grupo vira um bloco.
+            !isFirstInGroup && (isOwn ? { borderTopRightRadius: bubbleTailRadius } : { borderTopLeftRadius: bubbleTailRadius }),
             isDeleted && styles.bubbleDeleted,
             (msg.type === 'sticker' || msg.type === 'gif') && { backgroundColor: 'transparent', borderWidth: 0, paddingHorizontal: 0, paddingVertical: 0, elevation: 0, shadowOpacity: 0 },
             (msg.type === 'image' || msg.type === 'video') && { paddingHorizontal: 3, paddingTop: 3, paddingBottom: 4, overflow: 'hidden' },
@@ -26088,27 +26165,8 @@ function ChatConversationInner() {
               WAVE 129 (2026-05-22): also skip when msg has reply_to — bubbleWithReply now
               uses overflow:'hidden' to clip the inner reply pill (bug #1354), which would
               also clip the tail. WhatsApp behavior on reply bubbles is tail-less; matches. */}
-          {isFirstInGroup && msg.type !== 'sticker' && msg.type !== 'gif' && msg.type !== 'image' && msg.type !== 'video' && !(msg.reply_to && !isDeleted) && (
-            <Svg
-              width={8}
-              height={13}
-              viewBox="0 0 8 13"
-              style={{
-                position: 'absolute',
-                top: 0,
-                ...(isOwn ? { right: -8 } : { left: -8 }),
-              }}
-            >
-              <Path
-                d={isOwn
-                  ? 'M0,0 L8,0 C8,0 8,3 7,5.5 C5,9.5 0,13 0,13 Z'
-                  : 'M8,0 L0,0 C0,0 0,3 1,5.5 C3,9.5 8,13 8,13 Z'}
-                fill={isOwn
-                  ? colors.chatBubbleOwn
-                  : (isUserMentioned(msg, currentEmail) ? (isDark ? '#1a3a2a' : '#d4f0e0') : colors.chatBubbleOther)}
-              />
-            </Svg>
-          )}
+          {/* [2026-10-08 chat-beauty-bubbles] Rabicho SVG removido — a forma
+              do grupo vem dos cantos agrupados (ver estilo da bolha acima). */}
           {msg._heartPop && (
             <Animated.View pointerEvents="none" style={{ position: 'absolute', top: '30%', left: '35%', zIndex: 99, transform: [{ scale: heartScale }], opacity: heartOpacity }}>
               <IconHeart size={48} color="#ef4444" />
@@ -26121,7 +26179,7 @@ function ChatConversationInner() {
               media bubbles where the chrome would clash with the image. */}
           {e2eEnabled && msg.type !== 'sticker' && msg.type !== 'gif' && msg.type !== 'image' && msg.type !== 'video' && (
             <View pointerEvents="none" style={{ position: 'absolute', top: 4, right: 4, opacity: 0.6, zIndex: 2 }}>
-              <IconLock size={12} color={isOwn ? 'rgba(255,255,255,0.85)' : (colors.primary || '#111111')} />
+              <IconLock size={12} color={isOwn ? ownMetaColor : otherMetaColor} />
             </View>
           )}
           {/* audit gap #8 — pin / star surface for long messages. Long-form
@@ -26162,7 +26220,7 @@ function ChatConversationInner() {
               ? (colors.error || '#ef4444')
               // Own bubble on LIGHT theme is light lavender — white-65% text
               // vanished. Use a muted dark purple on light, keep white on dark.
-              : (isOwn ? (isDark ? 'rgba(255,255,255,0.65)' : 'rgba(17, 17, 17,0.70)') : colors.textTertiary);
+              : (isOwn ? ownMetaColor : otherMetaColor);
             // Resolve display name: forwarded_from_name (server-supplied via
             // metadata) > emailToDisplayName(forwarded_from) > raw email local
             // part. Falls through gracefully if any are missing.
@@ -26212,6 +26270,12 @@ function ChatConversationInner() {
               : (resolvedName || (resolvedEmail ? emailToDisplayName(resolvedEmail) : (t('chat.unknown') || 'Desconhecido')));
             // [VISUAL-G8, 2026-05-19] Reply quote bar color = quoted sender's color (same djb2 palette).
             const replySenderColor = senderColorFromEmail(resolvedEmail || resolvedName || '');
+            // [2026-10-08 chat-beauty-bubbles] P&B: em 1:1 a barra/nome da citação
+            // usam a tinta da própria bolha (branco na enviada, preto/branco na
+            // recebida). Em grupo a cor do autor citado continua (identidade).
+            const replyAccent = conversationType === 'group' && !isOwn
+              ? replySenderColor
+              : (isOwn ? ownTextColor : otherInk);
             return (
               <TouchableOpacity
                 activeOpacity={0.7}
@@ -26252,9 +26316,9 @@ function ChatConversationInner() {
                   // own-bubble fill on light theme so the quote section
                   // disappeared visually. Wash uses ~8% brand purple per spec.
                   backgroundColor: isOwn
-                    ? (isDark ? 'rgba(255,255,255,0.10)' : 'rgba(17, 17, 17,0.10)')
-                    : 'rgba(17, 17, 17,0.08)',
-                  borderLeftColor: replySenderColor,
+                    ? 'rgba(255,255,255,0.12)'
+                    : (isDark ? 'rgba(255,255,255,0.07)' : 'rgba(0,0,0,0.05)'),
+                  borderLeftColor: replyAccent,
                 }]}
               >
                 <View style={{ flexDirection: 'row', alignItems: 'flex-start' }}>
@@ -26271,7 +26335,7 @@ function ChatConversationInner() {
                       ? { maxWidth: '70%', marginRight: 8 }
                       : null)
                   }}>
-                    <Text style={[styles.replyName, { color: replySenderColor }]} numberOfLines={1}>
+                    <Text style={[styles.replyName, { color: replyAccent }]} numberOfLines={1}>
                       {replyDisplayName}
                     </Text>
                     {(() => {
@@ -26285,7 +26349,7 @@ function ChatConversationInner() {
                         { color: isOwn ? ownMetaColor : colors.textSecondary },
                         msg.reply_to?.deleted_at && { fontStyle: 'italic', opacity: 0.7 },
                       ];
-                      const iconColor = isOwn ? ownMetaColor : (isDark ? '#111111' : '#111111');
+                      const iconColor = isOwn ? ownMetaColor : colors.textSecondary;
                       const renderIconLabel = (IconCmp, label) => (
                         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
                           <IconCmp size={12} color={iconColor} />
@@ -26401,7 +26465,10 @@ function ChatConversationInner() {
             );
           })()}
           {renderContent()}
-          {msg.type !== 'sticker' && msg.type !== 'gif' && !(msg.type === 'image' && !(msg.content && msg.content !== msg.file_name)) && msg.type !== 'video' && (
+          {/* [2026-10-08 chat-beauty-bubbles] imagem NUNCA usa esta linha: sem
+              legenda = selo sobre a foto; com legenda = linha própria sob a
+              legenda (antes a hora saía DUAS vezes). */}
+          {msg.type !== 'sticker' && msg.type !== 'gif' && msg.type !== 'image' && msg.type !== 'video' && (
             <View style={[styles.msgMeta, _waInlineMeta && styles.msgMetaInline]}>
               {(() => {
                 // Disappearing clock indicator — show ONLY on messages that
@@ -26420,7 +26487,7 @@ function ChatConversationInner() {
                 if (!Number.isFinite(s)) return null;
                 const t = Date.parse(msg.created_at);
                 const willVanish = !Number.isFinite(t) || t >= s;
-                return willVanish ? <IconClock size={10} color={isOwn ? ownMetaColor : colors.textTertiary} style={{ marginRight: 2 }} /> : null;
+                return willVanish ? <IconClock size={10} color={isOwn ? ownMetaColor : otherMetaColor} style={{ marginRight: 2 }} /> : null;
               })()}
               {/* WAVE 46 (2026-05-21) removed the inline star to keep the bubble
                   clean — but QA 2026-05-29 showed users had no in-bubble signal
@@ -26429,10 +26496,10 @@ function ChatConversationInner() {
                   starred (msg.starred now arrives from chat_messages — Fix B).
                   Tiny (10px) + same meta color = clean look, real feedback. */}
               {!!msg.starred && (
-                <IconStarFilled size={10} color={isOwn ? ownMetaColor : colors.textTertiary} style={{ marginRight: 2 }} />
+                <IconStarFilled size={10} color={isOwn ? ownMetaColor : otherMetaColor} style={{ marginRight: 2 }} />
               )}
               {!!msg._e2e && (
-                <IconLock size={10} color={isOwn ? ownMetaColor : colors.textTertiary} style={{ marginRight: 2 }} />
+                <IconLock size={10} color={isOwn ? ownMetaColor : otherMetaColor} style={{ marginRight: 2 }} />
               )}
               {msg.edited_at && !isDeleted && (() => {
                 // Show "(editada Nx)" when the server reports more than one
@@ -26447,7 +26514,7 @@ function ChatConversationInner() {
                   <TouchableOpacity onPress={() => openEditHistory(msg.id)} hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }} style={{ flexShrink: 1 }}>
                     <Text
                       numberOfLines={1}
-                      style={[styles.editedLabel, { color: isOwn ? ownMetaColor : colors.textTertiary, textDecorationLine: 'underline' }]}
+                      style={[styles.editedLabel, { color: isOwn ? ownMetaColor : otherMetaColor, textDecorationLine: 'underline' }]}
                     >
                       {label}
                     </Text>
@@ -26469,8 +26536,8 @@ function ChatConversationInner() {
                 const label = m > 0 ? `${m}m` : `${s}s`;
                 return (
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 2, marginRight: 4 }} accessibilityLabel={t('chatConv.vanishingIn') || 'Apaga em'}>
-                    <IconClock size={10} color={isOwn ? ownMetaColor : colors.textTertiary} />
-                    <Text numberOfLines={1} style={{ fontSize: 10, fontWeight: '500', color: isOwn ? ownMetaColor : colors.textTertiary }}>
+                    <IconClock size={10} color={isOwn ? ownMetaColor : otherMetaColor} />
+                    <Text numberOfLines={1} style={{ fontSize: 10, fontWeight: '500', color: isOwn ? ownMetaColor : otherMetaColor }}>
                       {label}
                     </Text>
                   </View>
@@ -26479,7 +26546,7 @@ function ChatConversationInner() {
               {/* [edited indicator] single source — the tappable "(editada Nx)"
                   label above (line ~22054) is the only one. A second plain
                   "editada" here rendered the tag TWICE on every edited message. */}
-              <Text numberOfLines={1} style={[styles.msgTime, { color: isOwn ? ownMetaColor : colors.textTertiary }]}>
+              <Text numberOfLines={1} style={[styles.msgTime, { color: isOwn ? ownMetaColor : otherMetaColor }]}>
                 {formatTime(msg.created_at)}
               </Text>
               {isOwn && !isDeleted && (() => {
@@ -26763,7 +26830,7 @@ function ChatConversationInner() {
         })()}
 
         {Object.keys(reactionGroups).length > 0 && !isDeleted && (
-          <Animated.View style={[styles.reactionsRow, isOwn && styles.reactionsRowOwn, reactionBounceId === msg.id && { transform: [{ scale: reactionBounceScale }], opacity: reactionBounceOpacity }]}>
+          <Animated.View style={[styles.reactionsRow, isOwn ? styles.reactionsRowOwn : styles.reactionsRowOther, reactionBounceId === msg.id && { transform: [{ scale: reactionBounceScale }], opacity: reactionBounceOpacity }]}>
             {/* Cap at 6 distinct emoji + a "+N" pill for the rest. With 50
                 reactions on a viral message we used to mount 50 chips per
                 bubble — kills scroll perf and overflows the bubble width.
@@ -26793,10 +26860,11 @@ function ChatConversationInner() {
                   }}
                   onLongPress={() => setReactionDetail({ emoji, reactors: users.map(u => ({ email: u, name: emailToDisplayName(u) })) })}
                   delayLongPress={400}
+                  // [2026-10-08 chat-beauty-bubbles] Chip sobreposto à borda da
+                  // bolha com anel da cor do fundo (recorte limpo, sem sombra).
                   style={[styles.reactionChip, {
-                    backgroundColor: meReacted ? colors.primary + '33' : colors.surface,
-                    borderColor: meReacted ? colors.primary : colors.border,
-                    borderWidth: meReacted ? 1.5 : StyleSheet.hairlineWidth,
+                    backgroundColor: meReacted ? (isDark ? '#48484C' : '#DCDCE0') : (isDark ? '#2C2C2E' : '#F2F2F4'),
+                    borderColor: chatWallBg,
                   }]}
                   accessibilityLabel={meReacted ? `Remover reacao ${emoji}` : `Ver quem reagiu com ${emoji}`}
                   accessibilityRole="button"
@@ -26822,7 +26890,9 @@ function ChatConversationInner() {
                     <Text style={styles.reactionEmoji}>{REACTION_EMOJI_MAP[emoji] || emoji}</Text>
                   )}
 
-                  <Text style={[styles.reactionCount, { color: colors.text, fontWeight: meReacted ? '700' : '500' }]}>{users.length}</Text>
+                  {users.length > 1 && (
+                    <Text style={[styles.reactionCount, { color: colors.text, fontWeight: meReacted ? '700' : '600' }]}>{users.length}</Text>
+                  )}
                 </TouchableOpacity>
                 </ReactionChipPop>
               );
@@ -26837,7 +26907,7 @@ function ChatConversationInner() {
                         const allReactors = overflow.flatMap(([em, us]) => us.map(u => ({ email: u, name: emailToDisplayName(u), emoji: em })));
                         setReactionDetail({ emoji: '+', reactors: allReactors });
                       }}
-                      style={[styles.reactionChip, { backgroundColor: colors.surface, borderColor: colors.border, borderWidth: StyleSheet.hairlineWidth }]}
+                      style={[styles.reactionChip, { backgroundColor: isDark ? '#2C2C2E' : '#F2F2F4', borderColor: chatWallBg }]}
                       accessibilityLabel={`Ver mais ${overflowCount} reacoes`}
                       accessibilityRole="button"
                     >
@@ -26974,7 +27044,7 @@ function ChatConversationInner() {
   if (chatLocked && !chatUnlocked) {
     return (
       <View style={[styles.container, { backgroundColor: colors.background, justifyContent: 'center', alignItems: 'center' }]}>
-        <View style={[styles.header, { backgroundColor: isDark ? '#111b21' : '#ffffff', borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: isDark ? '#1a2730' : '#eef0f1', paddingTop: insets.top + 6, position: 'absolute', top: 0, left: 0, right: 0 }]}>
+        <View style={[styles.header, { backgroundColor: isDark ? '#111b21' : '#ffffff', borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: isDark ? '#1a2730' : 'rgba(0,0,0,0.10)', paddingTop: insets.top + 6, position: 'absolute', top: 0, left: 0, right: 0 }]}>
           <TouchableOpacity onPress={goBack} style={styles.headerBtn}>
             <IconArrowLeft size={22} color={colors.text} />
           </TouchableOpacity>
@@ -27022,7 +27092,7 @@ function ChatConversationInner() {
       // Android) with keyboardVerticalOffset=-bottomInset. See
       // utils/threadKeyboard(.native).js.
       bottomInset={composerBottomPad}
-      style={[styles.container, { backgroundColor: isDark ? '#0b141a' : '#f0f2f5' }]}
+      style={[styles.container, { backgroundColor: chatWallBg /* [2026-10-08 chat-beauty-bubbles] */ }]}
     >
       {/* Drag-and-drop overlay (web only) — appears while the user is
           dragging a file over the window. Click-through is disabled so the
@@ -27070,14 +27140,15 @@ function ChatConversationInner() {
         <View style={[styles.header, {
           backgroundColor: isDark ? '#111b21' : '#ffffff',
           borderBottomWidth: StyleSheet.hairlineWidth,
-          borderBottomColor: isDark ? '#1a2730' : '#eef0f1',
+          borderBottomColor: isDark ? '#1a2730' : 'rgba(0,0,0,0.10)',
           paddingTop: insets.top + 6,
         }]}>
           <TouchableOpacity onPress={handleClearSelection} style={styles.headerBtn} accessibilityLabel={t('common.cancel') || 'Cancelar'} accessibilityRole="button">
-            <IconX size={22} color={colors.text} />
+            <IconX size={24} color={colors.text} />
           </TouchableOpacity>
-          <View style={[styles.headerInfo, { flexDirection: 'row', alignItems: 'center' }]}>
-            <Text style={[styles.headerTitle, { color: colors.text, fontSize: 18 }]}>
+          <View style={[styles.headerInfo, { flexDirection: 'row', alignItems: 'center', marginLeft: 6 }]}>
+            {/* [2026-10-08 chat-beauty-chrome] contador tabular 20 semibold */}
+            <Text style={[styles.headerTitle, { color: colors.text, fontSize: 20, fontVariant: ['tabular-nums'] }]}>
               {selectedIds.size}
             </Text>
             {messages.length > selectedIds.size && (
@@ -27094,19 +27165,19 @@ function ChatConversationInner() {
             setSelectedIds(new Set());
             setSelectionMode(false);
           }} style={styles.headerBtn} accessibilityLabel={t('chatConv.star') || 'Favoritar'}>
-            <IconStar size={20} color={colors.text} />
+            <IconStar size={22} color={colors.text} />
           </TouchableOpacity>
           {/* [2026-10-07 group-admin] "Não permitir encaminhar": hidden for non-admins (ctx menu already did; multi-select bypassed it → 403). */}
           {!(forwardingDisabled && !isGroupAdmin) && (
           <TouchableOpacity onPress={handleForwardSelected} style={styles.headerBtn} accessibilityLabel={t('chatConv.forward') || 'Encaminhar'}>
-            <IconForward size={20} color={colors.text} />
+            <IconForward size={22} color={colors.text} />
           </TouchableOpacity>
           )}
           <TouchableOpacity onPress={handleCopySelected} style={styles.headerBtn} accessibilityLabel={t('chatConv.copy') || 'Copiar'}>
-            <IconCopy size={19} color={colors.text} />
+            <IconCopy size={21} color={colors.text} />
           </TouchableOpacity>
           <TouchableOpacity onPress={handleDeleteSelected} style={styles.headerBtn} accessibilityLabel={t('common.delete') || 'Excluir'}>
-            <IconTrash size={19} color={colors.error || '#EF4444'} />
+            <IconTrash size={21} color={colors.error || '#EF4444'} />
           </TouchableOpacity>
         </View>
       ) : (
@@ -27114,22 +27185,23 @@ function ChatConversationInner() {
       <View style={[styles.header, {
         backgroundColor: isDark ? '#111b21' : '#ffffff',
         borderBottomWidth: StyleSheet.hairlineWidth,
-        borderBottomColor: isDark ? '#1a2730' : '#eef0f1',
+        borderBottomColor: isDark ? '#1a2730' : 'rgba(0,0,0,0.10)',
         paddingTop: insets.top + 6,
         ...(Platform.OS === 'web'
           ? {
               background: isDark ? '#111b21' : '#ffffff',
-              boxShadow: isDark ? '0 1px 0 rgba(255,255,255,0.05)' : '0 1px 0 rgba(0,0,0,0.05)',
+              boxShadow: 'none', // [2026-10-08 chat-beauty-chrome] só a hairline (era linha dupla)
             }
           : {}),
       }]}>
-        <TouchableOpacity onPress={goBack} hitSlop={8} style={[styles.headerBtn, { marginRight: 2 }, Platform.OS === 'ios' && { marginLeft: -6 }]} accessibilityLabel={t('common.back') || 'Back'} accessibilityRole="button">
+        <TouchableOpacity onPress={goBack} hitSlop={8} style={[styles.headerBtn, { width: 36 }, Platform.OS === 'ios' && { marginLeft: -4 }]} accessibilityLabel={t('common.back') || 'Back'} accessibilityRole="button">
           {/* [2026-10-07 app-feel-nav] iOS = chevron do sistema (WhatsApp/iMessage); Android/web = seta Material */}
+          {/* [2026-10-08 chat-beauty-chrome] seta 24 (mesma grade dos ícones de ação) */}
           {Platform.OS === 'ios'
-            ? <IconChevronLeft size={28} color={colors.text} />
-            : <IconArrowLeft size={22} color={colors.text} />}
+            ? <IconChevronLeft size={30} color={colors.text} />
+            : <IconArrowLeft size={24} color={colors.text} />}
         </TouchableOpacity>
-        <TouchableOpacity style={[styles.headerInfo, { flexDirection: 'row', alignItems: 'center', gap: 8 }]} onPress={() => {
+        <TouchableOpacity style={[styles.headerInfo, { flexDirection: 'row', alignItems: 'center', gap: 10, minHeight: 44 }]} onPress={() => {
           if (conversationType === 'group') {
             setEditGroupName(conversationName);
             loadGroupMembers();
@@ -27140,11 +27212,11 @@ function ChatConversationInner() {
             setProfileViewer({ name: conversationName, email: params.email || '' });
           }
         }} activeOpacity={0.7}>
-          <View style={{ position: 'relative', width: 36, height: 36 }}>
+          <View style={{ position: 'relative', width: 38, height: 38 }}>
             {/* Halo violeta respirando ao redor do avatar quando online —
                 "presence as ambient glow" (iOS Messages active-now feel). */}
             {presence?.status === 'online' && conversationType === 'direct' && (
-              <AvatarHalo size={36} />
+              <AvatarHalo size={38} />
             )}
             <AvatarCircle
               name={conversationName}
@@ -27157,7 +27229,7 @@ function ChatConversationInner() {
                 return candidate;
               })()}
               uri={conversationType === 'group' ? conversationAvatar : undefined}
-              size={36}
+              size={38}
               onPress={() => {
                 // WAVE 95: tap the header avatar → fullscreen lightbox of the
                 // friend's profile photo (WhatsApp parity). The outer
@@ -27216,11 +27288,13 @@ function ChatConversationInner() {
                     hidden={isTyping}
                   />
                 )}
+                {/* [2026-10-08 chat-beauty-chrome] monocromático: status em
+                    cinza secundário; "digitando…" sobe pra cor do texto (sem
+                    itálico) — o pip verde continua sendo o único sinal de cor. */}
                 <PresenceTextFade
                   text={presenceText}
                   style={[styles.headerSubtitle, {
-                    color: presence?.status === 'online' && !isTyping && wsConnected ? (isDark ? '#4ade80' : '#0b8a4a') : colors.textSecondary,
-                    ...(isTyping ? { fontStyle: 'italic' } : {}),
+                    color: isTyping ? colors.text : colors.textSecondary,
                     flexShrink: 1,
                   }]}
                 />
@@ -27242,9 +27316,9 @@ function ChatConversationInner() {
             accessibilityRole="button"
             hitSlop={{ top: 6, bottom: 6, left: 4, right: 4 }}
           >
-            <IconPin size={15} color="#f59e0b" />
+            <IconPin size={18} color={colors.text} />
             {visiblePinnedMessages.length > 1 ? (
-              <Text style={{ color: '#f59e0b', fontSize: 11, fontWeight: '700' }}>{visiblePinnedMessages.length}</Text>
+              <Text style={{ color: colors.text, fontSize: 11, fontWeight: '700' }}>{visiblePinnedMessages.length}</Text>
             ) : null}
           </TouchableOpacity>
         ) : null}
@@ -27274,18 +27348,20 @@ function ChatConversationInner() {
           accessibilityLabel={t('chat.searchPlaceholder') || 'Buscar'}
           accessibilityRole="button"
         >
-          <IconSearch size={17} color={colors.text} />
+          {/* [2026-10-08 chat-beauty-chrome] ícones de ação numa grade só:
+              glifo 22 (viewBox 24, traço 1.9) em alvo 40×44 — antes 17/17/18/20. */}
+          <IconSearch size={22} color={colors.text} />
         </TouchableOpacity>
         <TouchableOpacity onPress={handleStartAudioCall} disabled={startingCall} style={styles.headerBtn} accessibilityLabel={t('call.callingAudio') || 'Audio call'} accessibilityRole="button">
-          <IconPhone size={17} color={colors.text} />
+          <IconPhone size={22} color={colors.text} />
         </TouchableOpacity>
         <TouchableOpacity onPress={handleStartVideoCall} disabled={startingCall} style={styles.headerBtn} accessibilityLabel={t('call.callingVideo') || 'Video call'} accessibilityRole="button">
           {startingCall
             ? <ActivityIndicator size="small" color={colors.text} />
-            : <IconVideo size={18} color={colors.text} />}
+            : <IconVideo size={24} color={colors.text} />}
         </TouchableOpacity>
-        <TouchableOpacity onPress={() => setShowHeaderMenu(true)} style={styles.headerBtn} accessibilityLabel={t('common.more') || 'More options'} accessibilityRole="button">
-          <IconMoreVert size={20} color={colors.text} />
+        <TouchableOpacity onPress={() => setShowHeaderMenu(true)} style={[styles.headerBtn, { width: 36 }]} accessibilityLabel={t('common.more') || 'More options'} accessibilityRole="button">
+          <IconMoreVert size={22} color={colors.text} />
         </TouchableOpacity>
       </View>
       )}
@@ -27315,7 +27391,7 @@ function ChatConversationInner() {
           through the shared renderer so the picker and the chat agree. The
           web dotted pattern for 'none' is kept as an extra overlay. */}
       {Platform.OS === 'web' && wallpaperColor === 'none' && (
-        <View style={[styles.wallpaper, { opacity: isDark ? 0.03 : 0.04, backgroundColor: isDark ? '#000000' : '#ECE5DD' }]} pointerEvents="none">
+        <View style={[styles.wallpaper, { opacity: isDark ? 0.07 : 0.045 }]} pointerEvents="none">
           <View style={styles.wallpaperPattern} />
         </View>
       )}
@@ -27344,7 +27420,7 @@ function ChatConversationInner() {
         >
           <IconClock size={14} color={isDark ? '#fcd34d' : '#b45309'} />
           <Text style={[styles.disappearingBannerText, { color: isDark ? '#fde68a' : '#92400e' }]}>
-            {`🕐 Mensagens desta conversa somem após ${formatDisappearTimer(disappearingTimer)}`}
+            {`Mensagens desta conversa somem após ${formatDisappearTimer(disappearingTimer)}`}
           </Text>
           <TouchableOpacity
             onPress={async (e) => {
@@ -27728,25 +27804,28 @@ function ChatConversationInner() {
           omit the countdown entirely. */}
       {visiblePinnedMessages.length > 0 && showPinnedBanner && !showSearchBar && (
         <View style={{
-          backgroundColor: isDark ? 'rgba(245,158,11,0.10)' : 'rgba(245,158,11,0.08)',
-          borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border,
+          // [2026-10-08 chat-beauty-chrome] barra fixada monocromática (era
+          // âmbar): superfície do header + hairline, pin e barra lateral na cor
+          // do texto, sem emoji no preview de mídia.
+          backgroundColor: isDark ? '#111b21' : '#ffffff',
+          borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: isDark ? '#1a2730' : 'rgba(0,0,0,0.10)',
           paddingVertical: 6,
         }}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, paddingBottom: 4 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, paddingBottom: 2 }}>
             <View style={{
               width: 22, height: 22, borderRadius: 11,
-              backgroundColor: 'rgba(245,158,11,0.18)',
+              backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)',
               alignItems: 'center', justifyContent: 'center', marginRight: 8,
             }}>
-              <IconPin size={12} color="#f59e0b" />
+              <IconPin size={12} color={colors.text} />
             </View>
-            <Text style={{ fontSize: 11, color: '#f59e0b', fontWeight: '700', letterSpacing: 0.2, flex: 1 }}>
+            <Text style={{ fontSize: 12, color: colors.textSecondary, fontWeight: '600', letterSpacing: 0.1, flex: 1 }}>
               {visiblePinnedMessages.length > 1
                 ? `${visiblePinnedMessages.length} ${t('chatConv.pinnedMessages') || 'mensagens fixadas'}`
                 : (t('chatConv.pinnedMessage') || 'Mensagem fixada')}
             </Text>
-            <TouchableOpacity onPress={() => setShowPinnedBanner(false)} style={{ padding: 4 }} hitSlop={6}>
-              <IconX size={14} color={colors.textSecondary} />
+            <TouchableOpacity onPress={() => setShowPinnedBanner(false)} style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center', marginRight: -6 }} hitSlop={6} accessibilityRole="button" accessibilityLabel={t('common.close') || 'Fechar'}>
+              <IconX size={16} color={colors.textSecondary} />
             </TouchableOpacity>
           </View>
           {visiblePinnedMessages.slice(0, 3).map((pinned) => {
@@ -27765,13 +27844,13 @@ function ChatConversationInner() {
                 accessibilityRole="button"
                 accessibilityLabel={t('chatConv.pinnedMessage') || 'Pinned message'}
               >
-                <View style={{ width: 3, alignSelf: 'stretch', backgroundColor: '#f59e0b', borderRadius: 2 }} />
+                <View style={{ width: 3, alignSelf: 'stretch', backgroundColor: colors.text, borderRadius: 2, opacity: 0.85 }} />
                 <View style={{ flex: 1 }}>
-                  <Text style={{ fontSize: 11, color: '#f59e0b', fontWeight: '600' }} numberOfLines={1}>
+                  <Text style={{ fontSize: 12, color: colors.text, fontWeight: '600' }} numberOfLines={1}>
                     {pinned.sender_name || pinned.sender_email?.split('@')[0] || ''}
                   </Text>
-                  <Text style={{ fontSize: 13, color: colors.text }} numberOfLines={1}>
-                    {pinned.content || (pinned.type === 'image' ? '📷 Foto' : pinned.type === 'video' ? '🎬 Vídeo' : pinned.type === 'voice' ? '🎵 Áudio' : 'Mensagem')}
+                  <Text style={{ fontSize: 13.5, color: colors.textSecondary }} numberOfLines={1}>
+                    {pinned.content || (pinned.type === 'image' ? (t('chat.photo') || 'Foto') : pinned.type === 'video' ? (t('chat.video') || 'Vídeo') : (pinned.type === 'voice' || pinned.type === 'audio') ? (t('chat.audio') || 'Áudio') : (t('chat.message') || 'Mensagem'))}
                   </Text>
                 </View>
                 {!!remaining && (
@@ -28759,11 +28838,15 @@ function ChatConversationInner() {
       {(replyTo || editingMsg) && (() => {
         // [VISUAL-G8, 2026-05-19] Composer reply chip bar color = quoted sender's color.
         // For edit-mode use brand purple (editing your own msg, no quoted sender).
-        const _composerReplyColor = editingMsg
-          ? '#111111'
-          : senderColorFromEmail(replyTo?.sender_email || replyTo?.sender_name || '');
+        // [2026-10-08 chat-beauty-chrome] Monochrome: the gray sender palette
+        // (SENDER_COLORS) is dark-on-dark in dark mode — the bar + label now
+        // use the text color in both themes (reads as WhatsApp's quote card).
+        const _composerReplyColor = colors.text;
         return (
-        <ReplyPreviewBar style={[styles.replyBar, { backgroundColor: isDark ? '#1a2329' : '#f0f2f5', borderTopColor: colors.border }]}>
+        <ReplyPreviewBar style={[styles.replyBar, {
+          backgroundColor: isDark ? '#1c1c1e' : '#ffffff',
+          borderColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.10)',
+        }]}>
           <View style={[styles.replyBarLine, { backgroundColor: _composerReplyColor }]} />
           <View style={[styles.replyBarContent, { flexDirection: 'row', alignItems: 'center', gap: 8 }]}>
             <View style={{ flex: 1 }}>
@@ -28838,8 +28921,13 @@ function ChatConversationInner() {
           <TouchableOpacity
             onPress={() => { setReplyTo(null); setEditingMsg(null); setInputText(''); }}
             style={styles.replyBarClose}
+            accessibilityRole="button"
+            accessibilityLabel={t('common.cancel') || 'Cancelar'}
+            hitSlop={4}
           >
-            <IconX size={20} color={colors.textTertiary} />
+            <View style={{ width: 24, height: 24, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: isDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.06)' }}>
+              <IconX size={14} color={colors.textSecondary} />
+            </View>
           </TouchableOpacity>
         </ReplyPreviewBar>
         );
@@ -28904,16 +28992,35 @@ function ChatConversationInner() {
           latest screen state (replyTo, sending, members, colors…). */}
       <ThreadComposerHost store={composerStore} render={(inputText) => {
       const hasRichInput = _RICH_INPUT_RE.test(inputText);
+      // [2026-10-08 chat-beauty-chrome] Neutral (iOS systemGray) glyph tint for
+      // the in-pill icons — was WhatsApp's teal-gray #8696a0.
+      const _chromeIcon = isDark ? '#a1a1a6' : '#6e6e73';
+      // [2026-10-08 chat-beauty-chrome] Web: RN-web's <textarea> never grows
+      // (the 2nd line was clipped). Size it to its content after each composer
+      // render — up to ~6 lines (140px), then it scrolls. Native TextInput
+      // already auto-grows up to maxHeight.
+      if (Platform.OS === 'web') {
+        try {
+          requestAnimationFrame(() => {
+            const el = inputRef.current;
+            if (!el || !el.style || typeof el.scrollHeight !== 'number') return;
+            // '0px' (not 'auto'): an 'auto' textarea falls back to its rows=2
+            // default, so an EMPTY composer measured 2 lines tall.
+            el.style.height = '0px';
+            el.style.height = Math.min(Math.max(el.scrollHeight, 42), 140) + 'px';
+          });
+        } catch {}
+      }
       return (<>
       {!composerBlocked && (<View style={{ position: 'relative' }}>
       {isRecording ? (
         <View
           pointerEvents={voiceHoldMode === 'hold' ? 'none' : 'auto'}
           style={voiceHoldMode === 'hold' ? {
-            position: 'absolute', left: 0, right: 92, top: 0, bottom: 0,
+            position: 'absolute', left: 0, right: 72, top: 0, bottom: 0, // [2026-10-08 chat-beauty-chrome] mic 58→44 (+room p/ o scale do hold)
             zIndex: 30, elevation: 10,
             justifyContent: 'flex-end',
-            backgroundColor: isDark ? '#111b21' : '#f0f2f5',
+            backgroundColor: isDark ? '#111b21' : '#ffffff',
             paddingBottom: composerBottomPad,
           } : { paddingBottom: composerBottomPad }}
         >
@@ -29181,7 +29288,9 @@ function ChatConversationInner() {
           />
         )}
         <View pointerEvents={(blockedByPeer || iBlockedPeer) && conversationType === 'direct' ? 'none' : 'auto'} style={[styles.inputBar, {
-          backgroundColor: isDark ? '#111b21' : '#f0f2f5',
+          // [2026-10-08 chat-beauty-chrome] same surface as the header + hairline
+          backgroundColor: isDark ? '#111b21' : '#ffffff',
+          borderTopColor: isDark ? '#1a2730' : 'rgba(0,0,0,0.10)',
           opacity: (blockedByPeer || iBlockedPeer) && conversationType === 'direct' ? 0.4 : 1,
           // Bottom safe-area so the composer clears the system bar on BOTH
           // platforms: Android nav/gesture bar (insets.bottom ≈ 48px) and iOS
@@ -29200,27 +29309,48 @@ function ChatConversationInner() {
               PanResponder via composerSwipeHandlers; the inner TextInput
               still gets normal touches because the responder only takes
               over once movement crosses a horizontal threshold. */}
+          {/* [2026-10-08 chat-beauty-chrome] "+" OUTSIDE the pill on the left
+              (WhatsApp iOS) — was a paperclip squeezed inside the pill. Same
+              handler (keyboard dismiss → attach sheet). */}
+          <TouchableOpacity
+            onPress={() => {
+              // Dismiss keyboard FIRST so the overlay animates onto a stable
+              // viewport. Otherwise the keyboard closing mid-animation jerks
+              // the sheet around and breaks pointer handling on Android.
+              try { Keyboard.dismiss(); } catch {}
+              setTimeout(() => setShowAttachMenu(true), Platform.OS === 'android' ? 80 : 0);
+            }}
+            disabled={uploading}
+            style={{ width: 40, height: 44, alignItems: 'center', justifyContent: 'center', alignSelf: 'flex-end' }}
+            accessibilityLabel={t('chatConv.attach') || 'Attach file'}
+            accessibilityRole="button"
+          >
+            {uploading ? (
+              <ActivityIndicator size="small" color={colors.text} />
+            ) : (
+              <IconPlus size={26} color={colors.text} />
+            )}
+          </TouchableOpacity>
           <View
             {...composerSwipeHandlers}
             style={{
+            // [2026-10-08 chat-beauty-chrome] floating pill: radius 22, 44 min,
+            // 1px hairline in light / #1c1c1e fill in dark.
             flex: 1, flexDirection: 'row', alignItems: 'flex-end',
-            backgroundColor: isDark ? '#161618' : '#ffffff',
-            borderRadius: 26, minHeight: 48,
-            paddingLeft: 6, paddingRight: 4, paddingVertical: 2,
+            backgroundColor: isDark ? '#1c1c1e' : '#ffffff',
+            borderRadius: 22, minHeight: 44,
+            paddingLeft: 4, paddingRight: 4,
             borderWidth: 1,
-            borderColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)',
-            ...(Platform.OS === 'web' ? {
-              boxShadow: isDark ? 'none' : '0 1px 3px rgba(0,0,0,0.04)',
-            } : {}),
+            borderColor: isDark ? '#1c1c1e' : 'rgba(0,0,0,0.14)',
           }}>
           {/* Emoji/Sticker button - left side of pill */}
             <TouchableOpacity
               onPress={() => { setShowStickerPicker(prev => !prev); setShowGifPicker(false); }}
-              style={{ width: 36, height: 44, alignItems: 'center', justifyContent: 'center' }}
+              style={{ width: 36, height: 42, alignItems: 'center', justifyContent: 'center' }}
               accessibilityLabel={t('chatConv.stickers') || 'Stickers'}
               accessibilityRole="button"
             >
-              <IconSmile size={22} color={showStickerPicker ? '#111111' : (isDark ? '#8696a0' : '#8696a0')} />
+              <IconSmile size={22} color={showStickerPicker ? colors.text : _chromeIcon} />
             </TouchableOpacity>
 
             {/* TextInput - center, flex: 1.
@@ -29238,7 +29368,7 @@ function ChatConversationInner() {
               // KeyboardGestureArea (Android interactive dismiss) is scoped to this input.
               nativeID={THREAD_COMPOSER_NATIVE_ID}
               style={{
-                width: '100%', fontSize: 15,
+                width: '100%',
                 // [bug 2026-05-14 android-font-strange-while-typing]
                 // RichTextOverlay paints text on top, so iOS/web make the
                 // input text transparent. On Android the glyph metrics of
@@ -29256,10 +29386,13 @@ function ChatConversationInner() {
                 // [2026-09-24] iOS: transparente SÓ quando há rich content (overlay
                 // pinta). Texto normal → cor nativa visível = digitação instantânea.
                 color: (Platform.OS === 'android' || Platform.OS === 'web') ? (isDark ? '#e5e7eb' : '#111') : (hasRichInput ? 'transparent' : (isDark ? '#e5e7eb' : '#111')),
-                minHeight: 40, maxHeight: 120,
+                // [2026-10-08 chat-beauty-chrome] 16pt text, grows to ~6 lines (140)
+                fontSize: 16,
+                minHeight: 42, maxHeight: 140,
                 paddingHorizontal: 4,
-                paddingTop: Platform.OS === 'ios' ? 10 : 8,
-                paddingBottom: Platform.OS === 'ios' ? 10 : 8,
+                paddingTop: Platform.OS === 'ios' ? 11 : 9,
+                paddingBottom: Platform.OS === 'ios' ? 11 : 9,
+                ...(Platform.OS === 'web' ? { resize: 'none', lineHeight: 21 } : {}),
                 // caretColor explicit on web: TextInput color is transparent
                 // (RichTextOverlay paints the glyphs) but on web caret-color
                 // CSS inherits from color, so the caret disappears too. RN
@@ -29267,7 +29400,7 @@ function ChatConversationInner() {
                 ...(Platform.OS === 'web' ? { outlineStyle: 'none', caretColor: colors.primary || '#111111' } : {}),
               }}
               placeholder={t('chatConv.messagePlaceholder') || 'Mensagem'}
-              placeholderTextColor={isDark ? '#8696a0' : '#8696a0'}
+              placeholderTextColor={_chromeIcon}
               keyboardAppearance={isDark ? 'dark' : 'light'}
               selectionColor={colors.primary}
               // Auto-correct gate (settings.js `autocorrect_enabled`, default
@@ -29447,11 +29580,11 @@ function ChatConversationInner() {
               <RichTextOverlay
                 text={inputText}
                 style={{
-                  fontSize: 15,
+                  fontSize: 16,
                   color: colors.text,
                   paddingHorizontal: 4,
-                  paddingTop: Platform.OS === 'ios' ? 10 : 8,
-                  paddingBottom: Platform.OS === 'ios' ? 10 : 8,
+                  paddingTop: Platform.OS === 'ios' ? 11 : 9,
+                  paddingBottom: Platform.OS === 'ios' ? 11 : 9,
                   lineHeight: undefined,
                 }}
                 colors={colors}
@@ -29474,11 +29607,11 @@ function ChatConversationInner() {
             {!inputText.trim() && (
               <TouchableOpacity
                 onPress={() => handlePickAttachment('camera')}
-                style={{ width: 34, height: 44, alignItems: 'center', justifyContent: 'center' }}
+                style={{ width: 40, height: 42, alignItems: 'center', justifyContent: 'center' }}
                 accessibilityLabel={t('chatConv.camera') || 'Camera'}
                 accessibilityRole="button"
               >
-                <IconCamera size={21} color={isDark ? '#8696a0' : '#8696a0'} />
+                <IconCamera size={22} color={_chromeIcon} />
               </TouchableOpacity>
             )}
 
@@ -29486,26 +29619,7 @@ function ChatConversationInner() {
                 hdMode default fica TRUE (HD on); pode ser togglado dentro do
                 MediaPreview header onde o botão "HD" já existe (linha ~3999). */}
 
-            {/* Attachment paperclip - right side inside pill */}
-            <TouchableOpacity
-              onPress={() => {
-                // Dismiss keyboard FIRST so the overlay animates onto a stable
-                // viewport. Otherwise the keyboard closing mid-animation jerks
-                // the sheet around and breaks pointer handling on Android.
-                try { Keyboard.dismiss(); } catch {}
-                setTimeout(() => setShowAttachMenu(true), Platform.OS === 'android' ? 80 : 0);
-              }}
-              disabled={uploading}
-              style={{ width: 36, height: 44, alignItems: 'center', justifyContent: 'center' }}
-              accessibilityLabel={t('chatConv.attach') || 'Attach file'}
-              accessibilityRole="button"
-            >
-              {uploading ? (
-                <ActivityIndicator size="small" color={isDark ? '#8696a0' : '#8696a0'} />
-              ) : (
-                <IconPaperclip size={21} color={isDark ? '#8696a0' : '#8696a0'} />
-              )}
-            </TouchableOpacity>
+            {/* [2026-10-08 chat-beauty-chrome] paperclip moved OUT of the pill → "+" on the left. */}
             {isSavedMode && (
               <>
                 {/* Cabeçalho — quick-insert a section heading. Inserts a
@@ -29523,7 +29637,7 @@ function ChatConversationInner() {
                   accessibilityLabel={t('chatConv.savedHeading') || 'Cabeçalho'}
                   accessibilityRole="button"
                 >
-                  <Text style={{ color: isDark ? '#8696a0' : '#8696a0', fontWeight: '800', fontSize: 15 }}>H</Text>
+                  <Text style={{ color: _chromeIcon, fontWeight: '800', fontSize: 15 }}>H</Text>
                 </TouchableOpacity>
                 {/* Lembrar-me em — schedule the message via existing
                     chatScheduleMessage so the user gets it back as a chat
@@ -29539,7 +29653,7 @@ function ChatConversationInner() {
                   accessibilityLabel={t('chatConv.savedRemindMe') || 'Lembrar-me em'}
                   accessibilityRole="button"
                 >
-                  <IconClock size={20} color={isDark ? '#8696a0' : '#8696a0'} />
+                  <IconClock size={20} color={_chromeIcon} />
                 </TouchableOpacity>
               </>
             )}
@@ -29548,7 +29662,7 @@ function ChatConversationInner() {
           {/* Send / Mic - OUTSIDE the pill, separate green circle */}
           <SendButtonAnim isSend={!!inputText.trim()}>
           {inputText.trim() ? (
-            <Animated.View style={{ position: 'relative', marginLeft: 6, transform: [
+            <Animated.View style={{ position: 'relative', marginLeft: 2, transform: [
               { scale: Animated.multiply(sendBoomScale, sendPressScale) },
               { rotate: sendBoomRotate.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '14deg'] }) },
             ] }}>
@@ -29565,14 +29679,15 @@ function ChatConversationInner() {
                   }
                 }}
                 delayLongPress={400}
-                style={[styles.sendBtn, { backgroundColor: '#111111', transform: [{ scale: sending ? 0.92 : 1 }] }]}
+                style={[styles.sendBtn, { backgroundColor: isDark ? '#ffffff' : '#111111', transform: [{ scale: sending ? 0.92 : 1 }] }]}
                 accessibilityLabel={t('chatConv.send') || 'Send message'}
                 accessibilityRole="button"
               >
+                {/* [2026-10-08 chat-beauty-chrome] preto no claro / branco no escuro */}
                 {sending ? (
-                  <ActivityIndicator size="small" color="#fff" />
+                  <ActivityIndicator size="small" color={isDark ? '#111111' : '#ffffff'} />
                 ) : (
-                  <IconSend size={20} color="#fff" />
+                  <IconSend size={20} color={isDark ? '#111111' : '#ffffff'} style={{ marginLeft: -2, marginBottom: -1 }} />
                 )}
               </TouchableOpacity>
               {/* Schedule menu popup */}
@@ -29627,7 +29742,7 @@ function ChatConversationInner() {
               )}
             </Animated.View>
           ) : (
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, alignSelf: 'flex-end' }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 2, alignSelf: 'flex-end' }}>
               {/* Chat 2026 — round video note trigger. Hidden on web (no
                   expo-camera) and on channels for non-admins (chat is
                   already gated above so we just check the native flag). */}
@@ -29635,16 +29750,14 @@ function ChatConversationInner() {
                 <TouchableOpacity
                   onPress={() => setShowVideoNoteRecorder(true)}
                   style={{
-                    width: 44, height: 44, borderRadius: 22,
-                    backgroundColor: 'rgba(17, 17, 17,0.12)',
+                    width: 40, height: 44,
                     alignItems: 'center', justifyContent: 'center',
-                    marginLeft: 6,
                   }}
                   accessibilityLabel={t('videoNote.button') || 'Video note'}
                   accessibilityRole="button"
-                  hitSlop={8}
+                  hitSlop={4}
                 >
-                  <IconVideoNote size={20} color="#111111" />
+                  <IconVideoNote size={22} color={colors.text} />
                 </TouchableOpacity>
               ) : null}
               {VoiceMicButton ? (
@@ -29701,6 +29814,12 @@ function ChatConversationInner() {
                     } catch {}
                   }}
                   accessibilityLabel={t('chatConv.recordAudio') || 'Record audio'}
+                  // [2026-10-08 chat-beauty-chrome] visual-only props: 44pt
+                  // circle (= send), no ambient pulse ring, inverted in dark.
+                  size={44}
+                  idle={false}
+                  color={isDark ? '#ffffff' : '#111111'}
+                  iconColor={isDark ? '#111111' : '#ffffff'}
                 />
               ) : (
                 /* Fallback (require failed): keep the old inline button so
@@ -29716,11 +29835,11 @@ function ChatConversationInner() {
                       mailWs.sendTyping(conversationId, true);
                     } catch {}
                   }}
-                  style={{ width: 48, height: 48, borderRadius: 24, backgroundColor: '#111111', alignItems: 'center', justifyContent: 'center', marginLeft: 6 }}
+                  style={{ width: 44, height: 44, borderRadius: 22, backgroundColor: isDark ? '#ffffff' : '#111111', alignItems: 'center', justifyContent: 'center', marginLeft: 2 }}
                   accessibilityLabel={t('chatConv.recordAudio') || 'Record audio'}
                   accessibilityRole="button"
                 >
-                  <IconMic size={22} color="#fff" />
+                  <IconMic size={21} color={isDark ? '#111111' : '#ffffff'} />
                 </TouchableOpacity>
               )}
             </View>
@@ -31632,9 +31751,9 @@ function ChatConversationInner() {
       >
         <View style={[styles.forwardModal, { backgroundColor: colors.background }]}>
           <View style={[styles.forwardHeader, { borderBottomColor: colors.border }]}>
-            <Text style={[styles.forwardTitle, { color: colors.text }]}>{t('chatConv.contactInfoTitle') || 'Dados do contato'}</Text>
-            <TouchableOpacity onPress={() => setShowContactInfo(false)} accessibilityRole="button" accessibilityLabel={t('common.close') || 'Fechar'} hitSlop={8}>
-              <IconX size={22} color={colors.text} />
+            <Text style={[styles.forwardTitle, { color: colors.text, fontSize: 17, fontWeight: '600' }]}>{t('chatConv.contactInfoTitle') || 'Dados do contato'}</Text>
+            <TouchableOpacity onPress={() => setShowContactInfo(false)} accessibilityRole="button" accessibilityLabel={t('common.close') || 'Fechar'} hitSlop={8} style={{ width: 44, height: 44, alignItems: 'center', justifyContent: 'center', marginRight: -10 }}>
+              <IconX size={24} color={colors.text} />
             </TouchableOpacity>
           </View>
           <ScrollView style={{ flex: 1, backgroundColor: isDark ? colors.background : '#f0f2f5' }} contentContainerStyle={{ paddingBottom: Spacing.xl + insets.bottom }}>
@@ -31678,10 +31797,11 @@ function ChatConversationInner() {
                         { Icon: IconSearch, tint: '#5856D6', label: t('chatConv.search') || 'Buscar', onPress: () => contactInfoGo(() => { setShowSearchBar(true); setTimeout(() => searchInputRef.current?.focus(), 200); }) },
                       ].map((a, ai) => (
                         <PressableScale key={ai} onPress={a.onPress} style={{ alignItems: 'center', width: 76 }} accessibilityRole="button" accessibilityLabel={a.label}>
-                          <View style={{ width: 54, height: 54, borderRadius: 27, backgroundColor: a.tint + '1F', alignItems: 'center', justifyContent: 'center' }}>
-                            <a.Icon size={21} color={a.tint} />
+                          {/* [2026-10-08 chat-beauty-chrome] ações monocromáticas (WhatsApp iOS 2025): cartão neutro + glifo na cor do texto */}
+                          <View style={{ width: 76, height: 58, borderRadius: 14, backgroundColor: isDark ? '#1c1c1e' : '#ffffff', borderWidth: StyleSheet.hairlineWidth, borderColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.10)', alignItems: 'center', justifyContent: 'center', gap: 4 }}>
+                            <a.Icon size={22} color={colors.text} />
+                            <Text style={{ fontSize: 12, color: colors.text, fontWeight: '500' }} numberOfLines={1}>{a.label}</Text>
                           </View>
-                          <Text style={{ fontSize: 11.5, color: colors.textSecondary, marginTop: 7, fontWeight: '500' }} numberOfLines={1}>{a.label}</Text>
                         </PressableScale>
                       ))}
                     </View>
@@ -32340,9 +32460,9 @@ function ChatConversationInner() {
       >
         <View style={[styles.forwardModal, { backgroundColor: colors.background }]}>
           <View style={[styles.forwardHeader, { borderBottomColor: colors.border }]}>
-            <Text style={[styles.forwardTitle, { color: colors.text }]}>{t('chatConv.groupInfo')}</Text>
-            <TouchableOpacity onPress={() => setShowGroupInfo(false)}>
-              <IconX size={22} color={colors.text} />
+            <Text style={[styles.forwardTitle, { color: colors.text, fontSize: 17, fontWeight: '600' }]}>{t('chatConv.groupInfo')}</Text>
+            <TouchableOpacity onPress={() => setShowGroupInfo(false)} accessibilityRole="button" accessibilityLabel={t('common.close') || 'Fechar'} hitSlop={8} style={{ width: 44, height: 44, alignItems: 'center', justifyContent: 'center', marginRight: -10 }}>
+              <IconX size={24} color={colors.text} />
             </TouchableOpacity>
           </View>
           <ScrollView style={{ flex: 1, backgroundColor: isDark ? colors.background : '#f0f2f5' }} contentContainerStyle={{ paddingBottom: Spacing.xl }}>
@@ -32365,14 +32485,14 @@ function ChatConversationInner() {
                   <View style={{
                     position: 'absolute', right: -2, bottom: -2,
                     width: 38, height: 38, borderRadius: 19,
-                    backgroundColor: GI_ACCENT,
+                    backgroundColor: isDark ? '#ffffff' : '#111111', // [2026-10-08 chat-beauty-chrome] era verde
                     alignItems: 'center', justifyContent: 'center',
                     borderWidth: 3, borderColor: colors.surface,
-                    ...(Platform.OS === 'web' ? { boxShadow: '0 2px 6px rgba(37,211,102,0.4)' } : { shadowColor: GI_ACCENT, shadowOpacity: 0.4, shadowRadius: 5, shadowOffset: { width: 0, height: 2 }, elevation: 3 }),
+                    ...(Platform.OS === 'web' ? { boxShadow: '0 2px 6px rgba(0,0,0,0.18)' } : { shadowColor: '#000', shadowOpacity: 0.18, shadowRadius: 5, shadowOffset: { width: 0, height: 2 }, elevation: 3 }),
                   }}>
                     {changingGroupPhoto
-                      ? <ActivityIndicator size={14} color="#fff" />
-                      : <IconCamera size={17} color="#fff" />}
+                      ? <ActivityIndicator size={14} color={isDark ? '#111111' : '#ffffff'} />
+                      : <IconCamera size={17} color={isDark ? '#111111' : '#ffffff'} />}
                   </View>
                 )}
               </TouchableOpacity>
@@ -32390,11 +32510,12 @@ function ChatConversationInner() {
                   { Icon: IconSearch, tint: '#5856D6', label: t('chatConv.search') || 'Buscar', onPress: () => { setShowGroupInfo(false); setShowSearchBar?.(true); } },
                   { Icon: IconBell, tint: '#FF9500', label: mutedUntil ? (t('chatConv.muted') || 'Mudo') : (t('chatConv.muteChat') || 'Silenciar'), onPress: () => groupInfoGo(() => setShowMuteModal(true)) }, // [2026-10-07 group-admin]
                 ].map((a, ai) => (
-                  <TouchableOpacity key={ai} activeOpacity={0.6} onPress={a.onPress} style={{ alignItems: 'center', width: 70 }}>
-                    <View style={{ width: 54, height: 54, borderRadius: 27, backgroundColor: a.tint + '1F', alignItems: 'center', justifyContent: 'center' }}>
-                      <a.Icon size={21} color={a.tint} />
+                  <TouchableOpacity key={ai} activeOpacity={0.6} onPress={a.onPress} style={{ alignItems: 'center', width: 74 }} accessibilityRole="button" accessibilityLabel={a.label}>
+                    {/* [2026-10-08 chat-beauty-chrome] ações monocromáticas (mesmo cartão do "Dados do contato") */}
+                    <View style={{ width: 74, height: 58, borderRadius: 14, backgroundColor: isDark ? '#1c1c1e' : '#ffffff', borderWidth: StyleSheet.hairlineWidth, borderColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.10)', alignItems: 'center', justifyContent: 'center', gap: 4 }}>
+                      <a.Icon size={22} color={colors.text} />
+                      <Text style={{ fontSize: 12, color: colors.text, fontWeight: '500' }} numberOfLines={1}>{a.label}</Text>
                     </View>
-                    <Text style={{ fontSize: 11.5, color: colors.textSecondary, marginTop: 7, fontWeight: '500' }} numberOfLines={1}>{a.label}</Text>
                   </TouchableOpacity>
                 ))}
               </View>
@@ -34387,13 +34508,15 @@ function ChatConversationInner() {
 // da palavra (foto do founder: "coca ca", "valac"). Um valor em px derivado da
 // TELA é estável desde o primeiro frame. Capado em 620 pra não ficar gigante em
 // iPad/web (lá a coluna já é centralizada).
-const BUBBLE_MAX_W = Math.round(Math.min(Dimensions.get('window').width, 620) * 0.80); // [2026-10-06 wa-look] 0.84→0.80 (WA ~78-80%)
+const BUBBLE_MAX_W = Math.round(Math.min(Dimensions.get('window').width, 620) * 0.78); // [2026-10-08 chat-beauty-bubbles] 0.80→0.78
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
   header: {
+    // [2026-10-08 chat-beauty-chrome] 56pt bar (44pt row + 6/6 padding) +
+    // hairline; side padding 6 so the 44pt hit areas sit at the screen edge.
     flexDirection: 'row', alignItems: 'center',
-    paddingHorizontal: Spacing.md + 4, paddingBottom: 8, paddingTop: 6,
+    paddingHorizontal: 6, paddingBottom: 6, paddingTop: 6, minHeight: 56,
     borderBottomWidth: 0,
     zIndex: 10,
     // Flatter chrome — a single, barely-there lift (the dark bar already reads
@@ -34410,16 +34533,19 @@ const styles = StyleSheet.create({
     // ate ~260px of a 393px screen, leaving the name truncated to "Carlos J...".
     // 34px keeps tap target generous (>=44pt apple HIG counts padding) while
     // freeing ~24px for the name + presence subtitle.
-    width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center',
+    // [2026-10-08 chat-beauty-chrome] 44pt-tall hit area (Apple HIG) with a
+    // 40pt-wide footprint — the header padding was trimmed (20→6) so four
+    // actions + back + avatar still leave the name ~130pt on a 390pt phone.
+    width: 40, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center',
     ...(Platform.OS === 'web' ? { cursor: 'pointer', transition: 'background-color 0.15s ease, transform 0.15s ease' } : {}),
   },
   // [beauty 2026-05-31] marginHorizontal 6→8 gives the name a hair more
   // breathing room from the avatar + action icons so it reads centered.
-  headerInfo: { flex: 1, marginHorizontal: 8 },
-  // [beauty 2026-05-31] Tighter tracking (-0.3→-0.35) at 800 weight reads as a
-  // confident, condensed name (matches iMessage/WhatsApp header typography).
-  headerTitle: { fontSize: 17, fontWeight: '700', letterSpacing: LetterSpacing.tighter },
-  headerSubtitle: { fontSize: 12.5, marginTop: 1, opacity: 0.85, fontWeight: '500', letterSpacing: 0.1 },
+  headerInfo: { flex: 1, marginHorizontal: 4 },
+  // [2026-10-08 chat-beauty-chrome] iOS nav-bar typography: 17 semibold name,
+  // 13 regular secondary status line.
+  headerTitle: { fontSize: 17, fontWeight: '600', letterSpacing: -0.35, flexShrink: 1 },
+  headerSubtitle: { fontSize: 13, marginTop: 1, fontWeight: '400', letterSpacing: -0.05 },
   disappearingBanner: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
     paddingVertical: 8, paddingHorizontal: 14, gap: 6,
@@ -34439,7 +34565,7 @@ const styles = StyleSheet.create({
     // [beauty 2026-05-31] 14→16 so the pill floats with clear air above/below
     // the surrounding bubbles — reads as a deliberate day-divider, not crowding
     // the last/next message.
-    marginVertical: 10, // [2026-10-06 wa-look] 16→10 (WA ~8-12)
+    marginVertical: 12, // [2026-10-08 chat-beauty-bubbles] respiro simétrico
   },
   dateText: {
     // Pill geometry tuned for the lavender brand wash: a touch more letter
@@ -34454,40 +34580,40 @@ const styles = StyleSheet.create({
     // shadow (2026: dividers read as quiet structure, not floating chips).
     // [2026-10-06 wa-look] WA geometry: 12.5px/500, 7.5px radius-ish pill
     // (rounded rect, not a full capsule), hairline lift like a bubble.
-    fontSize: 12.5, fontWeight: '500', letterSpacing: 0.1,
-    paddingHorizontal: 10, paddingVertical: 5,
-    borderRadius: 8, overflow: 'hidden',
-    ...Platform.select({
-      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.06, shadowRadius: 1 },
-      android: { elevation: 1 },
-      web: { boxShadow: '0 1px 0.5px rgba(11,20,26,0.13)' },
-    }),
+    // [2026-10-08 chat-beauty-bubbles] Pílula P&B: cápsula translúcida sem
+    // sombra (web ganha blur do fundo). Cor via dateTextLight/Dark.
+    fontSize: 12, fontWeight: '600', letterSpacing: 0.2,
+    paddingHorizontal: 12, paddingVertical: 4,
+    borderRadius: 12, overflow: 'hidden',
+    ...(Platform.OS === 'web' ? { backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)' } : {}),
   },
+  dateTextLight: { color: 'rgba(60,60,67,0.82)', backgroundColor: 'rgba(236,236,240,0.88)' },
+  dateTextDark: { color: 'rgba(235,235,245,0.72)', backgroundColor: 'rgba(44,44,46,0.82)' },
   systemMsg: { alignItems: 'center', marginVertical: 8, paddingHorizontal: Spacing.lg },
   systemText: { fontSize: 12, textAlign: 'center', fontWeight: '500', lineHeight: 17, letterSpacing: 0.1 },
   // [polish] System pill: subtle centered chip (WhatsApp 'X joined'). Neutral wash reads in light + dark.
   systemPill: { alignSelf: 'center', paddingHorizontal: 12, paddingVertical: 5, borderRadius: 12, overflow: 'hidden', backgroundColor: 'rgba(128,128,128,0.16)', maxWidth: '88%' },
   scrollDownFab: {
-    position: 'absolute', right: 14, bottom: 90,
-    width: 42, height: 42, borderRadius: 21,
+    position: 'absolute', right: 12, bottom: 90,
+    width: 44, height: 44, borderRadius: 22,
     alignItems: 'center', justifyContent: 'center',
     borderWidth: 0,
     // Brand-tinted lift: a faint violet halo (was pure black) so the FAB
     // reads as part of the purple system instead of a generic grey button.
     ...Platform.select({
-      ios: { shadowColor: '#111111', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.14, shadowRadius: 6 },
+      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.12, shadowRadius: 8 },
       android: { elevation: 3 },
-      web: { boxShadow: '0 4px 16px rgba(17,17,17,0.14), 0 1px 4px rgba(0,0,0,0.06)', backdropFilter: 'blur(16px)', WebkitBackdropFilter: 'blur(16px)', transition: 'transform 0.2s ease, box-shadow 0.2s ease' },
+      web: { boxShadow: '0 3px 12px rgba(0,0,0,0.12), 0 1px 3px rgba(0,0,0,0.06)', transition: 'transform 0.2s ease, box-shadow 0.2s ease' },
     }),
     zIndex: 10,
   },
   scrollDownBadge: {
-    position: 'absolute', top: -6, right: -4,
-    minWidth: 20, height: 20, borderRadius: 10,
+    position: 'absolute', top: -7, right: -5,
+    minWidth: 22, height: 22, borderRadius: 11,
     alignItems: 'center', justifyContent: 'center',
-    paddingHorizontal: 4,
+    paddingHorizontal: 5, borderWidth: 2,
   },
-  scrollDownBadgeText: { color: '#fff', fontSize: 10, fontWeight: '700' },
+  scrollDownBadgeText: { color: '#fff', fontSize: 11, fontWeight: '700', fontVariant: ['tabular-nums'] },
   wallpaper: {
     ...StyleSheet.absoluteFillObject, zIndex: 0, overflow: 'hidden',
   },
@@ -34501,9 +34627,9 @@ const styles = StyleSheet.create({
   // last msg in the group so the next speaker's bubble has clear visual
   // separation (~8dp, WhatsApp standard).
   msgRow: { maxWidth: BUBBLE_MAX_W, marginBottom: ChatBubble.gap },
-  msgRowGroupEnd: { marginBottom: ChatBubble.gapGroup - 2 }, // [2026-10-06 wa-look] +2→-2: ~9px between speaker groups (with wrap 6)
-  msgRowOwn: { alignSelf: 'flex-end', marginRight: 10 },
-  msgRowOther: { alignSelf: 'flex-start', marginLeft: 10 },
+  msgRowGroupEnd: { marginBottom: 4 }, // [2026-10-08 chat-beauty-bubbles] 4 + wrap 4 = 8px entre grupos; 2px dentro
+  msgRowOwn: { alignSelf: 'flex-end', marginRight: 8 },
+  msgRowOther: { alignSelf: 'flex-start', marginLeft: 8 },
   // [beauty 2026-05-31] marginBottom 6→5 + tiny marginTop so the group-sender
   // label hugs its bubble a touch tighter (clearer "who said this" grouping).
   msgSenderRow: { flexDirection: 'row', alignItems: 'center', marginTop: 1, marginBottom: 5, marginLeft: 4 },
@@ -34515,9 +34641,10 @@ const styles = StyleSheet.create({
     // as a single mashed block. marginTop:2 separates from the bubble's
     // top edge so the quote isn't kissing the bubble corner. borderRadius
     // bumped 4→6 to match the WhatsApp quote pill.
-    borderLeftWidth: 4, borderRadius: 8,
+    // [2026-10-08 chat-beauty-bubbles] barra 3px + raio 10 (bloco mais leve).
+    borderLeftWidth: 3, borderRadius: 10,
     paddingHorizontal: 10, paddingVertical: 6,
-    marginTop: 2,
+    marginTop: 3,
     marginBottom: 6,
     overflow: 'hidden',
     // Natural width — lets the reply preview push the bubble out to
@@ -34542,8 +34669,10 @@ const styles = StyleSheet.create({
     // beneath it never looks cramped against the bottom edge.
     // DENSIDADE 2026: bolha mais enxuta — geometria vinda do token ChatBubble
     // (raio 14, padding 10×6) pra bater com todo bubble do app.
-    borderRadius: ChatBubble.radius, paddingHorizontal: ChatBubble.paddingX,
-    paddingTop: ChatBubble.paddingY, paddingBottom: ChatBubble.paddingY,
+    // [2026-10-08 chat-beauty-bubbles] raio 18 / padding 12×7 (P&B premium).
+    // msgText mantém paddingRight:3 (folga do último glifo no iOS).
+    borderRadius: 18, paddingHorizontal: 12,
+    paddingTop: 7, paddingBottom: 7,
     minWidth: 74,
     // flexShrink + alignSelf so Yoga measures the Text intrinsic width
     // BEFORE applying minWidth — without these, the first render in a
@@ -34554,14 +34683,8 @@ const styles = StyleSheet.create({
     // Reported 2026-05-12.
     flexShrink: 1,
     alignSelf: 'flex-start',
-    ...Platform.select({
-      // Soft, single-direction elevation — a gentle drop shadow that lifts
-      // the bubble off the wallpaper without the muddy halo a large radius
-      // gives. Tuned to read on both light and dark themes.
-      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.06, shadowRadius: 4 },
-      android: { elevation: 1 },
-      web: { boxShadow: '0 1px 3px rgba(0,0,0,0.06)' },
-    }),
+    // [2026-10-08 chat-beauty-bubbles] SEM sombra/elevation por bolha: visual
+    // chapado (iMessage/Telegram) e zero custo de composição na rolagem.
   },
   // WAVE 129 (2026-05-22, bug #1354 / foto 7192): originally added
   // overflow:'hidden' to clip the inner reply quote pill's rounded corners.
@@ -34577,12 +34700,12 @@ const styles = StyleSheet.create({
   // bubble edge instead of being hard-clipped mid-word.
   bubbleWithReply: { minWidth: 200 },
   bubbleOwn: {
-    borderTopLeftRadius: ChatBubble.radius, borderTopRightRadius: ChatBubble.radius,
-    borderBottomLeftRadius: ChatBubble.radius, borderBottomRightRadius: 5,
+    borderTopLeftRadius: 18, borderTopRightRadius: 18,
+    borderBottomLeftRadius: 18, borderBottomRightRadius: 5,
   },
   bubbleOther: {
-    borderTopLeftRadius: ChatBubble.radius, borderTopRightRadius: ChatBubble.radius,
-    borderBottomLeftRadius: 5, borderBottomRightRadius: ChatBubble.radius,
+    borderTopLeftRadius: 18, borderTopRightRadius: 18,
+    borderBottomLeftRadius: 5, borderBottomRightRadius: 18,
     borderWidth: 0, borderColor: 'transparent',
   },
   // [beauty 2026-05-31] Match the live bubble's horizontal padding (13) so a
@@ -34604,7 +34727,7 @@ const styles = StyleSheet.create({
   // encosta na borda, a bolha dimensiona com a folga. Simétrico o bastante (o
   // paddingHorizontal:14 da bolha domina o visual). Cobre todos os caminhos de
   // render que reusam msgText (texto puro + FormattedText segmentado).
-  msgText: { fontSize: 15.5, lineHeight: 21, letterSpacing: 0, paddingRight: 3 },
+  msgText: { fontSize: 15.5, lineHeight: 21.5, letterSpacing: 0, paddingRight: 3 },
   // Time + tick row. Always one line inside the bubble. Minimum width is
   // enforced by bubble.minWidth so the row never wraps and the V never
   // "falls behind" the bubble when the bubble is narrow.
@@ -34618,9 +34741,9 @@ const styles = StyleSheet.create({
     minHeight: 14,
   },
   editedLabel: { fontSize: 10, fontStyle: 'italic', opacity: 0.55 },
-  msgTime: { fontSize: 11, fontWeight: '400', letterSpacing: 0.1, opacity: 0.78, flexShrink: 0 },
+  msgTime: { fontSize: 11, fontWeight: '500', letterSpacing: 0.1, flexShrink: 0, fontVariant: ['tabular-nums'] },
   // [2026-10-06 wa-look] Floated meta (time+ticks) for ghost-spaced text bubbles.
-  msgMetaInline: { position: 'absolute', right: 9, bottom: 4, marginTop: 0 },
+  msgMetaInline: { position: 'absolute', right: 10, bottom: 6, marginTop: 0 },
   // Same font size/letter-spacing as msgTime so the mirrored width matches;
   // transparent ink, never selectable.
   metaGhost: { fontSize: 11, letterSpacing: 0.1, color: 'transparent', ...(Platform.OS === 'web' ? { userSelect: 'none' } : {}) },
@@ -34630,23 +34753,22 @@ const styles = StyleSheet.create({
   },
   // [beauty 2026-05-31] marginTop 5→6 so the reaction shelf sits clearly below
   // the bubble's bottom edge instead of kissing it.
-  reactionsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 4, marginTop: 5 },
-  reactionsRowOwn: { justifyContent: 'flex-end' },
+  // [2026-10-08 chat-beauty-bubbles] Chips sobrepostos à borda inferior da
+  // bolha (−8) e recuados 10px do canto; zIndex acima da bolha.
+  reactionsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 3, marginTop: -8, marginBottom: 2, zIndex: 2 },
+  reactionsRowOwn: { justifyContent: 'flex-end', paddingRight: 10 },
+  reactionsRowOther: { justifyContent: 'flex-start', paddingLeft: 10 },
   // Why (vidiante): chips bumped 16→17 radius + tighter chunkier padding so
   // they read as proper sticker-pills, not text labels. Added cursor +
   // overshoot transition on web so hover feels playful — that micro-spring
   // is exactly the dopamine moment.
   reactionChip: {
-    flexDirection: 'row', alignItems: 'center', gap: 4,
-    paddingHorizontal: 7, paddingVertical: 2,
-    borderRadius: 13, borderWidth: 1,
-    ...Platform.select({
-      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.10, shadowRadius: 3 },
-      android: { elevation: 1 },
-      web: { boxShadow: '0 1px 3px rgba(0,0,0,0.12)', backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)', transition: 'transform 0.18s cubic-bezier(0.34,1.56,0.64,1), box-shadow 0.18s ease', cursor: 'pointer' },
-    }),
+    flexDirection: 'row', alignItems: 'center', gap: 3,
+    paddingHorizontal: 6, paddingVertical: 1.5, minHeight: 24,
+    borderRadius: 12, borderWidth: 2,
+    ...(Platform.OS === 'web' ? { transition: 'transform 0.18s cubic-bezier(0.34,1.56,0.64,1)', cursor: 'pointer' } : {}),
   },
-  reactionEmoji: { fontSize: 14 },
+  reactionEmoji: { fontSize: 13.5 },
   reactionCount: { fontSize: 11, fontWeight: '700', letterSpacing: 0.1 },
   loadMoreBtn: {
     alignSelf: 'center', paddingVertical: Spacing.sm, paddingHorizontal: Spacing.lg,
@@ -34658,26 +34780,28 @@ const styles = StyleSheet.create({
   // (.08→.12) + radius (8→14) so it floats above the input pill instead of
   // sitting flush. Web stack got a subtle purple tint via boxShadow so the
   // chip telegraphs "this is reply context" without reading as a separator.
+  // [2026-10-08 chat-beauty-chrome] Quote card above the composer: 16 radius,
+  // 1px hairline, soft lift; left bar + label in text color, round X chip.
   replyBar: {
     flexDirection: 'row', alignItems: 'center',
-    paddingHorizontal: Spacing.md + 4, paddingVertical: 14,
-    borderTopWidth: 0, borderRadius: 24, marginHorizontal: 10, marginBottom: 6,
+    paddingLeft: 12, paddingRight: 4, paddingVertical: 10,
+    borderWidth: 1, borderRadius: 16, marginHorizontal: 8, marginBottom: 6,
     ...Platform.select({
-      ios: { shadowColor: '#111111', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.12, shadowRadius: 14 },
-      android: { elevation: 4 },
-      web: { backdropFilter: 'blur(28px) saturate(180%)', WebkitBackdropFilter: 'blur(28px) saturate(180%)', boxShadow: '0 4px 18px rgba(17, 17, 17,0.10), 0 1px 3px rgba(0,0,0,0.04)' },
+      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.06, shadowRadius: 8 },
+      android: { elevation: 1 },
+      web: { boxShadow: '0 2px 10px rgba(0,0,0,0.06)', maxWidth: 944, alignSelf: 'center', width: 'calc(100% - 16px)' },
     }),
   },
   // Why: 4→3px wider-feel via borderRadius (2.5→1.5) for a sharper accent
   // bar — colored left bar per sender becomes more deliberate. Min height
   // 32 keeps it from collapsing on single-line previews.
-  replyBarLine: { width: 3, minHeight: 32, height: '100%', borderRadius: 1.5, marginRight: Spacing.md },
+  replyBarLine: { width: 3, minHeight: 34, alignSelf: 'stretch', borderRadius: 1.5, marginRight: 10 },
   replyBarContent: { flex: 1 },
-  replyBarLabel: { fontSize: 12.5, fontWeight: '800', letterSpacing: -0.1 },
-  replyBarText: { fontSize: 13, marginTop: 3, lineHeight: 18, opacity: 0.85 },
+  replyBarLabel: { fontSize: 13, fontWeight: '600', letterSpacing: -0.1 },
+  replyBarText: { fontSize: 13.5, marginTop: 2, lineHeight: 18 },
   // Why: tap area 40pt (Apple HIG min); padding 10→11 to reach 40pt with the
   // 18-pt close icon comfortably centered.
-  replyBarClose: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center', borderRadius: 20 },
+  replyBarClose: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center', borderRadius: 22 },
   uploadBar: {
     flexDirection: 'row', alignItems: 'center', gap: 8,
     paddingHorizontal: Spacing.md, paddingVertical: 8,
@@ -34689,20 +34813,16 @@ const styles = StyleSheet.create({
   // pill and send button visually paired but not sticky-touching. paddingBottom
   // stays 8 (insets handled inline) so the floating bar still sits on the
   // safe-area edge.
+  // [2026-10-08 chat-beauty-chrome] Flat bar + hairline (mirrors the header):
+  // [+] [pill] [send/mic], 6pt rhythm. borderTopColor is set inline per theme.
   inputBar: {
     flexDirection: 'row', alignItems: 'flex-end',
-    paddingHorizontal: 8, paddingTop: 12, paddingBottom: 10,
-    gap: 6,
-    borderTopWidth: 0,
+    paddingLeft: 4, paddingRight: 8, paddingTop: 6, paddingBottom: 8,
+    gap: 4,
+    borderTopWidth: StyleSheet.hairlineWidth,
     ...Platform.select({
-      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: -1 }, shadowOpacity: 0.04, shadowRadius: 4 },
-      android: { elevation: 3 },
-      web: {
-        maxWidth: 960, alignSelf: 'center', width: '100%',
-        backdropFilter: 'blur(20px) saturate(180%)',
-        WebkitBackdropFilter: 'blur(20px) saturate(180%)',
-        boxShadow: '0 -2px 12px rgba(0,0,0,0.04)',
-      },
+      web: { maxWidth: 960, alignSelf: 'center', width: '100%' },
+      default: {},
     }),
   },
   // Why: send button gets a real "premium lift" — shadowRadius 10→16,
@@ -34712,16 +34832,15 @@ const styles = StyleSheet.create({
   // Web boxShadow doubled in spread + warm 2nd layer so the gradient orb
   // reads like a floating glass dome on white surfaces.
   sendBtn: {
-    width: 48, height: 48, borderRadius: 24,
+    // [2026-10-08 chat-beauty-chrome] 44pt round (= pill height = mic), flat.
+    width: 44, height: 44, borderRadius: 22,
     alignItems: 'center', justifyContent: 'center',
-    alignSelf: 'flex-end', marginBottom: 2,
-    // Solid monochrome action button — one calm lift, no heavy halo (2026).
+    alignSelf: 'flex-end', marginBottom: 0,
     ...Platform.select({
-      ios: { shadowColor: '#111111', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.20, shadowRadius: 8 },
-      android: { elevation: 4 },
+      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.10, shadowRadius: 3 },
+      android: { elevation: 1 },
       web: {
-        backgroundColor: '#111111',
-        boxShadow: '0 3px 10px rgba(17,17,17,0.20), inset 0 1px 0 rgba(255,255,255,0.12)',
+        boxShadow: '0 1px 3px rgba(0,0,0,0.12)',
         transition: 'transform 0.15s cubic-bezier(0.34,1.56,0.64,1), box-shadow 0.2s ease',
         cursor: 'pointer',
       },

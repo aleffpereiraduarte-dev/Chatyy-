@@ -46,6 +46,15 @@ const OPEN_SPRING = { damping: 22, stiffness: 260, mass: 0.9 };
 const BACK_SPRING = { damping: 20, stiffness: 300 };
 const HIDDEN = 600; // off-screen offset before the sheet height is measured
 
+// [2026-10-08 chat-beauty-chrome] theme sniff without a new prop: the sheet
+// only receives `colors` — dark palettes have a dark `background`.
+function isDarkColors(colors) {
+  const bg = String((colors && (colors.background || colors.surface)) || '#ffffff').replace('#', '');
+  if (bg.length < 6) return false;
+  const r = parseInt(bg.slice(0, 2), 16), g = parseInt(bg.slice(2, 4), 16), b = parseInt(bg.slice(4, 6), 16);
+  return (0.299 * r + 0.587 * g + 0.114 * b) < 96;
+}
+
 let _haptics = null;
 function _tick(kind) {
   try {
@@ -75,10 +84,15 @@ function GridItem({ item, index, progress, colors, onPress, width }) {
         accessibilityRole="button"
         accessibilityLabel={item.label}
       >
-        <View style={[styles.iconCircle, { backgroundColor: colors.surfaceVariant || '#F0F1F3' }]}>
-          {Icon ? <Icon size={24} color={colors.text} /> : null}
+        {/* [2026-10-08 chat-beauty-chrome] monochrome circle: neutral fill +
+            hairline ring, glyph in text color, label in secondary. */}
+        <View style={[styles.iconCircle, {
+          backgroundColor: isDarkColors(colors) ? '#2c2c2e' : '#f2f2f4',
+          borderColor: isDarkColors(colors) ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)',
+        }]}>
+          {Icon ? <Icon size={26} color={colors.text} /> : null}
         </View>
-        <Text style={[styles.label, { color: colors.text }]} numberOfLines={1}>{item.label}</Text>
+        <Text style={[styles.label, { color: colors.textSecondary || colors.text }]} numberOfLines={1}>{item.label}</Text>
       </PressableScale>
     </A.View>
   );
@@ -163,10 +177,13 @@ export default function AttachSheet({ visible, onClose, onPick, colors, items })
       <GH.GestureDetector gesture={pan}>
         <A.View
           onLayout={onSheetLayout}
-          style={[styles.sheet, { backgroundColor: colors.surface, paddingBottom: Math.max(insets.bottom, 12) + 12 }, sheetStyle]}
+          style={[styles.sheet, {
+            backgroundColor: isDarkColors(colors) ? '#1c1c1e' : '#ffffff',
+            paddingBottom: Math.max(insets.bottom, 12) + 12,
+          }, sheetStyle]}
         >
           <View style={styles.grabZone}>
-            <View style={[styles.handle, { backgroundColor: colors.border }]} />
+            <View style={[styles.handle, { backgroundColor: isDarkColors(colors) ? 'rgba(255,255,255,0.22)' : 'rgba(0,0,0,0.16)' }]} />
           </View>
           <View style={[styles.grid, { width: gridW }]}>
             {(items || []).map((item, idx) => (
@@ -192,15 +209,15 @@ const styles = StyleSheet.create({
   backdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.38)' },
   sheet: {
     position: 'absolute', left: 0, right: 0, bottom: 0,
-    borderTopLeftRadius: 22, borderTopRightRadius: 22,
+    borderTopLeftRadius: 24, borderTopRightRadius: 24,
     alignItems: 'center',
-    shadowColor: '#000', shadowOffset: { width: 0, height: -4 }, shadowOpacity: 0.12, shadowRadius: 16,
+    shadowColor: '#000', shadowOffset: { width: 0, height: -2 }, shadowOpacity: 0.10, shadowRadius: 20,
     elevation: 24,
   },
-  grabZone: { alignSelf: 'stretch', alignItems: 'center', paddingTop: 8, paddingBottom: 14 },
-  handle: { width: 38, height: 5, borderRadius: 3 },
+  grabZone: { alignSelf: 'stretch', alignItems: 'center', paddingTop: 8, paddingBottom: 18 },
+  handle: { width: 36, height: 5, borderRadius: 2.5 },
   grid: { flexDirection: 'row', flexWrap: 'wrap' },
-  item: { alignItems: 'center', paddingVertical: 8, marginBottom: 6 },
-  iconCircle: { width: 58, height: 58, borderRadius: 29, alignItems: 'center', justifyContent: 'center', marginBottom: 8 },
-  label: { fontSize: 12, fontWeight: '500', maxWidth: 84, textAlign: 'center' },
+  item: { alignItems: 'center', paddingVertical: 6, marginBottom: 10 },
+  iconCircle: { width: 60, height: 60, borderRadius: 30, borderWidth: StyleSheet.hairlineWidth, alignItems: 'center', justifyContent: 'center', marginBottom: 8 },
+  label: { fontSize: 12.5, fontWeight: '500', maxWidth: 84, textAlign: 'center', letterSpacing: -0.1 },
 });

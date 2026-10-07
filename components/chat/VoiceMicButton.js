@@ -94,6 +94,10 @@ export default function VoiceMicButton({
   disabled = false,
   idle = true,
   size = 58,
+  // [2026-10-08 chat-beauty-chrome] visual-only: circle + glyph colors so the
+  // composer can invert the button in dark mode (white circle, black mic).
+  color = BRAND,
+  iconColor = '#fff',
 }) {
   // Press scale — dips to 0.92 on press-in, springs back on press-out.
   const pressScale = useRef(new Animated.Value(1)).current;
@@ -293,7 +297,7 @@ export default function VoiceMicButton({
     width: ringSize,
     height: ringSize,
     borderRadius: ringSize / 2,
-    backgroundColor: BRAND,
+    backgroundColor: color,
     opacity: pulse.interpolate({
       inputRange: [0, 1],
       outputRange: [0.32, 0],
@@ -310,23 +314,23 @@ export default function VoiceMicButton({
     width: size,
     height: size,
     borderRadius: size / 2,
-    backgroundColor: BRAND,
+    backgroundColor: color,
     alignItems: 'center',
     justifyContent: 'center',
     opacity: disabled ? 0.5 : 1,
     ...(Platform.OS === 'web' ? {
       cursor: disabled ? 'not-allowed' : 'pointer',
-      boxShadow: `0 6px 16px ${BRAND}55`,
+      boxShadow: size >= 52 ? `0 6px 16px ${BRAND}55` : '0 1px 3px rgba(0,0,0,0.12)',
       transition: 'transform 180ms cubic-bezier(0.34, 1.56, 0.64, 1)',
     } : {}),
     ...Platform.select({
       ios: {
-        shadowColor: BRAND,
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.4,
-        shadowRadius: 10,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: size >= 52 ? 4 : 1 },
+        shadowOpacity: size >= 52 ? 0.4 : 0.10,
+        shadowRadius: size >= 52 ? 10 : 3,
       },
-      android: { elevation: 6 },
+      android: { elevation: size >= 52 ? 6 : 1 },
       default: {},
     }),
   };
@@ -357,7 +361,7 @@ export default function VoiceMicButton({
 
   return (
     <View
-      style={{ width: size, height: size, marginLeft: 6, alignSelf: 'flex-end', opacity: locked ? 0 : 1 }}
+      style={{ width: size, height: size, marginLeft: size >= 52 ? 6 : 2, alignSelf: 'flex-end', opacity: locked ? 0 : 1 }}
       pointerEvents={locked ? 'none' : 'auto'}
     >
       {idle && !holding && <Animated.View pointerEvents="none" style={pulseStyle} />}
@@ -384,7 +388,7 @@ export default function VoiceMicButton({
             accessibilityHint={lockHintLabel || undefined}
             hitSlop={6}
           >
-            <IconMic size={Math.round(size * 0.42)} color="#fff" />
+            <IconMic size={Math.round(size * (size >= 52 ? 0.42 : 0.48))} color={iconColor} />
           </View>
         ) : (
           <TouchableOpacity
@@ -397,7 +401,7 @@ export default function VoiceMicButton({
             accessibilityRole="button"
             hitSlop={6}
           >
-            <IconMic size={Math.round(size * 0.42)} color="#fff" />
+            <IconMic size={Math.round(size * (size >= 52 ? 0.42 : 0.48))} color={iconColor} />
           </TouchableOpacity>
         )}
       </Animated.View>
