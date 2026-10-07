@@ -14,7 +14,7 @@ import { androidBottomInset, androidTopInset } from '../utils/systemInsets'; // 
 import { useState, useEffect, useRef, useMemo } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet, ActivityIndicator,
-  Animated, Platform, KeyboardAvoidingView, ScrollView, Dimensions, Modal,
+  Animated, Platform, ScrollView, Dimensions, Modal,
   Image, ActionSheetIOS, Easing, Pressable, useWindowDimensions,
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
@@ -35,6 +35,15 @@ import { IconArrowLeft, IconArrowRight, IconCheck, IconCheckCircle, IconUser, Ic
 import SignupIntro from '../components/SignupIntro';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import RestoreBackupPrompt from '../components/RestoreBackupPrompt';
+// [2026-10-07 signup-ux] keyboard-controller aware container (falls back to RN
+// KeyboardAvoidingView when KC native is absent / on web), draft resume,
+// smarter phone/handle/password helpers.
+import { ThreadKeyboardAvoider } from '../utils/threadKeyboard';
+import SignupPasswordMeter from '../components/signup/SignupPasswordMeter';
+import {
+  loadSignupDraft, saveSignupDraft, clearSignupDraft, parsePhoneInput,
+  usernameCandidates, usernameLocalError, sanitizeUsernameTyping, friendlyServerError,
+} from '../components/signup/signupSmarts';
 
 const { width: SCREEN_W } = Dimensions.get('window');
 // Wide-screen breakpoint — tablet / desktop web. At >=768 we lay the handle
@@ -55,7 +64,9 @@ export default function SignupPhone() {
   const { loginWithToken } = useAuth();
   // Reactive window width for the responsive handle-step layout.
   const { width: _winW } = useWindowDimensions();
-  const isWide = _winW >= 768;
+  // [2026-10-07 signup-ux] the form now lives in a centered 520pt column on
+  // tablet/web, so the old side-by-side @handle|password layout is retired.
+  const isWide = false;
 
   // 5 steps: welcome → phone → otp → name → handle → done.
   // welcome is the Telegram-style 5-slide carousel (SignupIntro component).
@@ -130,6 +141,7 @@ export default function SignupPhone() {
     } catch { return 'BR'; }
   }); // PhoneInput espera ISO code
   const [code, setCode] = useState('');
+  const codeRef = useRef(''); codeRef.current = code; // [2026-10-07 signup-ux] fresh value for checkOtp
   // Hydrated from params.verify_token when /login forwards us straight to
   // the name step after a successful OTP verify on its side. finishSignup
   // requires verifyToken to be non-empty — without seeding it from params
@@ -186,6 +198,43 @@ export default function SignupPhone() {
   // so the UI doesn't feel sticky. params.fromLogin === '1' is the trigger.
   const [showFromLoginBanner, setShowFromLoginBanner] = useState(() => params?.fromLogin === '1');
 
+  // [2026-10-07 signup-ux] Resume where the user left off. If the app was
+  // closed mid-signup we restore country/phone/name/@handle/photo from a local
+  // draft (NO secrets: never the OTP, the password or the verify_token — the
+  // number is simply re-confirmed by SMS, then name/@ come back pre-filled).
+  // Skipped when /login handed us a phone or a verify_token (that wins).
+  const [resumedDraft, setResumedDraft] = useState(false);
+  const _draftReadyRef = useRef(false);
+  const _reachedRef = useRef('phone');
+  useEffect(() => {
+    if (params?.verify_token || params?.phone) { _draftReadyRef.current = true; return; }
+    let cancelled = false;
+    loadSignupDraft().then((d) => {
+      if (cancelled) return;
+      if (d) {
+        if (d.countryCode) setCountryCode(d.countryCode);
+        if (d.phone) setPhone(d.phone);
+        if (d.firstName) setFirstName(d.firstName);
+        if (d.lastName) setLastName(d.lastName);
+        if (d.username) setUsername(d.username);
+        if (d.avatarUri) setAvatarUri(d.avatarUri);
+        if (d.reached) _reachedRef.current = d.reached;
+        setResumedDraft(true);
+        setStep((cur) => (cur === 'welcome' ? 'phone' : cur));
+      }
+      _draftReadyRef.current = true;
+    }).catch(() => { _draftReadyRef.current = true; });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const _startOver = () => {
+    clearSignupDraft();
+    setResumedDraft(false);
+    setPhone(''); setFirstName(''); setLastName(''); setUsername(''); setAvatarUri(null);
+    _reachedRef.current = 'phone';
+    try { Haptics.selectionAsync(); } catch {}
+  };
+
   const fade = useRef(new Animated.Value(1)).current;
   const slide = useRef(new Animated.Value(0)).current;
   const resendTimerRef = useRef(null);
@@ -194,7 +243,6 @@ export default function SignupPhone() {
   // outer halo so the brand orb itself stays still — keeps the screen calm
   // but signals the app is alive. Mirrors iMessage's tinted CallKit avatar.
   const heroScale = useRef(new Animated.Value(0.6)).current;
-  const heroPulse = useRef(new Animated.Value(0)).current;
   const heroIconFade = useRef(new Animated.Value(1)).current;
   // Whole-hero opacity that drives a true crossfade between steps (fade-out
   // → swap → fade-in). Distinct from heroIconFade (only the inner icon) so
@@ -217,21 +265,15 @@ export default function SignupPhone() {
     backFade.setValue(0);
     Animated.timing(backFade, { toValue: 1, duration: 260, easing: Easing.out(Easing.quad), useNativeDriver: true }).start();
   }, [step, heroScale, heroIconFade, heroFade, backFade]);
-  useEffect(() => {
-    if (step === 'done') return;
-    const loop = Animated.loop(
-      Animated.sequence([
-        Animated.timing(heroPulse, { toValue: 1, duration: 2000, easing: Easing.inOut(Easing.quad), useNativeDriver: true }),
-        Animated.timing(heroPulse, { toValue: 0, duration: 2000, easing: Easing.inOut(Easing.quad), useNativeDriver: true }),
-      ])
-    );
-    loop.start();
-    return () => loop.stop();
-  }, [step, heroPulse]);
+  // [2026-10-07 signup-ux] breathing halo loop removed together with the 200px
+  // orb hero (B&W premium: compact ink tile + big left-aligned title). Saves a
+  // permanent 4s animation loop on every signup step.
   // Focus tracking for the stacked-input hairline-active treatment (login parity).
   const [focused, setFocused] = useState('');
   // OTP per-box refs so paste/backspace can advance focus.
   const otpRefs = useRef([]);
+  const lastNameRef = useRef(null);
+  const passwordRef = useRef(null); // [2026-10-07 signup-ux] "next" on @handle → password; "next" on first name → last name
   // Per-box scale animation (1 → 1.08 → 1) when a digit transitions empty→filled.
   const otpBoxScales = useRef(Array.from({ length: 6 }, () => new Animated.Value(1))).current;
   // Horizontal shake on OTP error — WhatsApp/Telegram pattern. translateX
@@ -332,15 +374,18 @@ export default function SignupPhone() {
   // Auto-suggest handle from name when entering the handle step. Runs on
   // back-navigate too (vs goName one-shot below). Slug rule: lowercase, strip
   // diacritics, drop chars outside [a-z0-9._], cap at 20.
+  // [2026-10-07 signup-ux] smarter slug: "João Silva" → joao.silva (then
+  // joaosilva, joao_silva, … as chips if taken). `_usernameAutoRef` = the
+  // current handle was suggested by us (not typed), so editing the name and
+  // coming back re-suggests instead of keeping a stale handle.
+  const _usernameAutoRef = useRef(false);
+  const _nameCandidates = useMemo(() => usernameCandidates(firstName, lastName), [firstName, lastName]);
   useEffect(() => {
-    if (step === 'handle' && !username && name) {
-      const slug = name.trim().toLowerCase()
-        .normalize('NFD').replace(/[̀-ͯ]/g, '')
-        .replace(/[^a-z0-9._]/g, '')
-        .slice(0, 20);
-      if (slug) setUsername(slug);
+    if (step === 'handle' && !username && _nameCandidates[0]) {
+      _usernameAutoRef.current = true;
+      setUsername(_nameCandidates[0]);
     }
-  }, [step, name, username]);
+  }, [step, username, _nameCandidates]);
 
   // Resend countdown ticker (60s after each verify_send).
   useEffect(() => {
@@ -348,6 +393,19 @@ export default function SignupPhone() {
     resendTimerRef.current = setTimeout(() => setResendCountdown(c => Math.max(0, c - 1)), 1000);
     return () => clearTimeout(resendTimerRef.current);
   }, [resendCountdown]);
+
+  // [2026-10-07 signup-ux] Persist the non-secret draft (debounced) so a
+  // killed app resumes here. `reached` remembers the furthest step.
+  useEffect(() => {
+    if (!_draftReadyRef.current) return;
+    if (step === 'welcome' || step === 'done') return;
+    const order = ['phone', 'otp', 'name', 'handle'];
+    if (order.indexOf(step) > order.indexOf(_reachedRef.current)) _reachedRef.current = step;
+    const id = setTimeout(() => {
+      saveSignupDraft({ countryCode, phone, firstName, lastName, username, avatarUri, reached: _reachedRef.current });
+    }, 500);
+    return () => clearTimeout(id);
+  }, [step, countryCode, phone, firstName, lastName, username, avatarUri]);
 
   // Smooth crossfade between steps so the screen feels like one continuous form.
   // Haptic on step advance — WhatsApp/Telegram tactile feel. The `done` step
@@ -426,6 +484,12 @@ export default function SignupPhone() {
   // number via SMS for fraud protection — but the user sees the right framing
   // upfront. Costs one cheap API call (no SMS) before the actual verify_send.
   const [accountExists, setAccountExists] = useState(null); // null | true | false
+  // [2026-10-07 signup-ux] Friendly, translated error text for a failed API
+  // response (backend messages are hard-coded pt-BR). See signupSmarts.
+  const _errText = (r, fallbackKey) => {
+    const f = friendlyServerError(r, fallbackKey);
+    return f.text || t(f.key);
+  };
   const sendOtp = async (channel = 'sms') => {
     const digits = phone.replace(/\D/g, '');
     if (digits.length < 8 || !E164_RE.test(fullPhone)) { setError(t('login.phoneInvalid') || 'Número inválido'); return; }
@@ -487,7 +551,7 @@ export default function SignupPhone() {
         if (step !== 'otp') goStep('otp');
         setCode('');
       } else {
-        setError(r?.message || (t('signupPhone.sendError') || 'Falha ao enviar código'));
+        setError(_errText(r, 'signupPhone.sendError'));
       }
     } catch (e) {
       if (!mountedRef.current) return;
@@ -495,8 +559,17 @@ export default function SignupPhone() {
     } finally { if (mountedRef.current) setBusy(false); }
   };
 
-  const checkOtp = async () => {
+  // [2026-10-07 signup-ux] `codeArg` — auto-submit fires from onChangeText via
+  // setTimeout, where `code` is still the PREVIOUS render's 5-digit value
+  // (stale closure), so the old `code.length !== 6` guard silently returned
+  // and auto-submit never worked for typed codes. The fresh digits are now
+  // passed in; `_otpInFlightRef` blocks a double submit (auto + CTA tap).
+  const _otpInFlightRef = useRef(false);
+  const checkOtp = async (codeArg) => {
+    const code = typeof codeArg === 'string' ? codeArg : codeRef.current;
     if (code.length !== 6) return;
+    if (_otpInFlightRef.current) return;
+    _otpInFlightRef.current = true;
     setError(''); setBusy(true);
     try {
       // Telegram-style unified flow: phone_login_verify is the single OTP
@@ -548,6 +621,7 @@ export default function SignupPhone() {
         // existing backup tied to this phone (reinstall scenario). On
         // any probe error or web platform we just navigate immediately.
         try { await loginWithToken(r.data.token, r.data.email); } catch {}
+        clearSignupDraft(); // [2026-10-07 signup-ux]
         goStep('done');
         _maybePromptRestoreThenGoChat();
       } else if (r?.success && r.data?.exists === false && r.data?.verify_token) {
@@ -555,14 +629,19 @@ export default function SignupPhone() {
         setVerifyToken(r.data.verify_token);
         goStep('name');
       } else {
-        setError(r?.message || (t('signupPhone.otpInvalid') || 'Código incorreto'));
+        const _f = friendlyServerError(r, 'signupPhone.otpInvalid');
+        // Wrong/expired code is by far the common case — say it plainly.
+        setError(_f.kind === 'rate' ? t(_f.key) : (t('signupPhone.otpInvalid') || 'Código incorreto'));
         setCode('');
         triggerOtpError();
       }
     } catch {
       if (!mountedRef.current) return;
       setError(t('login.errorConnection') || 'Erro de conexão');
-    } finally { if (mountedRef.current) setBusy(false); }
+    } finally {
+      _otpInFlightRef.current = false;
+      if (mountedRef.current) setBusy(false);
+    }
   };
 
   const goName = () => {
@@ -573,30 +652,57 @@ export default function SignupPhone() {
     // Suggest a default handle from the joined name (lowercase, no spaces, no accents).
     // The useEffect above also fills it on back-navigate; this keeps the forward
     // path one-shot so the handle step lands pre-filled on first entry too.
-    const handle = name.trim().toLowerCase()
-      .normalize('NFD').replace(/[̀-ͯ]/g, '')
-      .replace(/[^a-z0-9._]/g, '').slice(0, 20);
-    if (!username) setUsername(handle);
+    const handle = _nameCandidates[0] || '';
+    if (handle && (!username || _usernameAutoRef.current)) { _usernameAutoRef.current = true; setUsername(handle); }
     goStep('handle');
   };
 
   // Live username availability check (debounced 600ms — matches Instagram's
   // username field cadence, less spammy than 400ms).
+  // [2026-10-07 signup-ux] Local rules first (no request for "jo" / "a..b" /
+  // "joao."), then the server. Responses for a handle the user has already
+  // typed past are dropped (out-of-order guard). A 429 / network blip leaves
+  // the state "unknown" (null) instead of falsely saying "taken".
+  // usernameReason: null | 'taken' | 'reserved' | 'short' | 'long' | 'chars' | 'edges' | 'double'
+  const [usernameReason, setUsernameReason] = useState(null);
+  const _usernameLatestRef = useRef('');
   const runUsernameCheck = useDebouncedCallback(async (uname) => {
     try {
       const r = await api.checkUsername(uname, 'chatyy.com.br');
-      const ok = r && r.success && (r.data?.available !== false);
-      setUsernameAvailable(ok);
-      setUsernameSuggestions(r?.data?.suggestions || []);
+      if (!mountedRef.current || _usernameLatestRef.current !== uname) return;
+      const status = Number(r?.__httpStatus || 0);
+      if (r?.success) {
+        const ok = r.data?.available !== false;
+        setUsernameAvailable(ok);
+        setUsernameReason(ok ? null : 'taken');
+        const sugg = Array.isArray(r.data?.suggestions) ? r.data.suggestions.filter(x => typeof x === 'string' && !usernameLocalError(x)) : [];
+        setUsernameSuggestions(ok ? [] : (sugg.length ? sugg : _nameCandidates.filter(c => c !== uname)));
+      } else if (status === 429 || !r) {
+        setUsernameAvailable(null); setUsernameReason(null);
+      } else {
+        setUsernameAvailable(false); setUsernameReason('chars');
+        setUsernameSuggestions(_nameCandidates.filter(c => c !== uname));
+      }
     } catch {
-      setUsernameAvailable(null);
-    } finally { setUsernameChecking(false); }
-  }, 600);
+      if (_usernameLatestRef.current === uname) { setUsernameAvailable(null); setUsernameReason(null); }
+    } finally { if (mountedRef.current && _usernameLatestRef.current === uname) setUsernameChecking(false); }
+  }, 450);
 
   useEffect(() => {
-    if (step !== 'handle' || !username || username.length < 3) {
-      setUsernameAvailable(null);
+    _usernameLatestRef.current = username;
+    if (step !== 'handle' || !username) {
+      setUsernameAvailable(null); setUsernameReason(null);
       setUsernameSuggestions([]);
+      setUsernameChecking(false);
+      return;
+    }
+    const localErr = usernameLocalError(username);
+    if (localErr) {
+      // "short" while still typing is not an error worth shouting about.
+      setUsernameAvailable(localErr === 'short' ? null : false);
+      setUsernameReason(localErr);
+      setUsernameSuggestions([]);
+      setUsernameChecking(false);
       return;
     }
     setUsernameChecking(true);
@@ -618,7 +724,8 @@ export default function SignupPhone() {
 
   const finishSignup = async () => {
     if (!verifyToken) { setError(t('signupPhone.expired') || 'Verificação expirou. Recomece.'); goStep('phone'); return; }
-    if (!username || usernameAvailable === false) return;
+    if (!username || usernameAvailable === false || usernameLocalError(username)) return;
+    if (password.length < 8) { setError(t('signupPhone.err.passwordShort')); return; }
     setError(''); setBusy(true);
     try {
       const r = await api.phoneSignup({ verify_token: verifyToken, username, name, domain: 'chatyy.com.br', password });
@@ -630,6 +737,7 @@ export default function SignupPhone() {
         const lr = await loginWithToken(r.data.token, r.data.email);
         if (!mountedRef.current) return;
         if (lr?.success) {
+          clearSignupDraft(); // [2026-10-07 signup-ux] account exists now — nothing to resume
           // Best-effort avatar upload — runs after auth so the bearer token
           // is in place. Failure is swallowed (signup already succeeded).
           if (avatarUri) {
@@ -652,7 +760,17 @@ export default function SignupPhone() {
           setError(lr?.message || (t('signupPhone.signupError') || 'Falha ao entrar após criar conta'));
         }
       } else {
-        setError(r?.message || (t('signupPhone.signupError') || 'Falha ao criar conta'));
+        // [2026-10-07 signup-ux] friendly + actionable: a handle taken in the
+        // race window flips the field to "taken" with suggestions; an expired
+        // verify_token sends the user back to re-confirm the (pre-filled) number.
+        const f = friendlyServerError(r, 'signupPhone.signupError');
+        if (f.kind === 'username') {
+          setUsernameAvailable(false); setUsernameReason('taken');
+          setUsernameSuggestions(_nameCandidates.filter(c => c !== username));
+          try { Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error); } catch {}
+        }
+        setError(f.text || t(f.key));
+        if (f.kind === 'expired') { setVerifyToken(''); setCode(''); goStep('phone'); }
       }
     } catch (e) {
       if (!mountedRef.current) return;
@@ -779,160 +897,112 @@ export default function SignupPhone() {
     }} />;
   }
 
+  // [2026-10-07 signup-ux] Footer bottom padding (home indicator / nav bar).
+  // ThreadKeyboardAvoider subtracts (pad - 12) so the CTA rides 12pt above the
+  // keyboard frame-by-frame when keyboard-controller is present (native 2.6.0),
+  // and falls back to RN KeyboardAvoidingView otherwise. Before, Android had
+  // NO keyboard avoidance (behavior undefined + absolute footer) and the CTA
+  // sat under the keyboard on edge-to-edge builds.
+  const _footerPadBottom = Math.max(Platform.OS === 'ios' ? 30 : 16, _insets.bottom + 12);
+  const _topPad = Math.max(_insets.top, Platform.OS === 'android' ? (require('react-native').StatusBar.currentHeight || 24) : (Platform.OS === 'web' ? 12 : 44));
+  const _stepOrder = ['phone', 'otp', 'name', 'handle'];
+  const _stepIdx = _stepOrder.indexOf(step);
+
   return (
-    <KeyboardAvoidingView
+    <ThreadKeyboardAvoider
       style={[styles.container, { backgroundColor: colors.background }]}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      bottomInset={_footerPadBottom - 12}
     >
-      {/* Segmented progress bar — moved ABOVE the header (Telegram pattern).
-          User-eye landing zone: the very top of the screen tells them "you
-          are at step 2 of 4" before they even read the brand or hero. 4
-          segments (phone, otp, name, handle), 3pt tall, 2pt gap. */}
-      {step !== 'welcome' && step !== 'done' && (() => {
-        const order = ['phone', 'otp', 'name', 'handle'];
-        const cur = order.indexOf(step);
-        const names = [t('onb.step.phone'), t('onb.step.otp'), t('onb.step.name'), t('onb.step.handle')];
-        return (
-          <View style={{
-            marginHorizontal: 24,
-            marginTop: Math.max(_insets.top, Platform.OS === 'android' ? (require('react-native').StatusBar.currentHeight || 24) : 44) + 4,
-            marginBottom: 4,
-          }}>
-            <View style={{ height: 5, flexDirection: 'row', gap: 4 }} accessibilityRole="progressbar" accessibilityLabel={t('onb.stepLabel', { n: cur + 1, total: order.length })}>
-              {order.map((s2, idx) => (
-                <View
-                  key={s2}
-                  style={{ flex: 1, height: 5, borderRadius: 999, backgroundColor: idx <= cur ? colors.primary : colors.border }}
-                />
-              ))}
-            </View>
-            <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 8 }}>
-              <Text style={{ fontSize: 12, fontWeight: '700', color: colors.primary, letterSpacing: 0.2 }}>
-                {t('onb.stepLabel', { n: cur + 1, total: order.length })}
-              </Text>
-              <Text style={{ fontSize: 12, fontWeight: '500', color: colors.textTertiary }}>
-                {names[cur]}
-              </Text>
-            </View>
+      {/* [2026-10-07 signup-ux] One compact top row: back · progress · n/4.
+          Replaces progress bar + separate header with a gradient "Chatyy"
+          wordmark (≈70pt of chrome) so the question sits higher and the input
+          stays above the keyboard on small phones. */}
+      {step !== 'done' ? (
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 12, paddingTop: _topPad + 6, paddingBottom: 6 }}>
+          <Animated.View style={{ opacity: backFade }}>
+            <TouchableOpacity onPress={goBack} style={styles.backBtn} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }} accessibilityRole="button" accessibilityLabel={t('common.back') || 'Voltar'}>
+              <IconArrowLeft size={22} color={colors.text} />
+            </TouchableOpacity>
+          </Animated.View>
+          <View
+            style={{ flex: 1, height: 4, flexDirection: 'row', gap: 4 }}
+            accessibilityRole="progressbar"
+            accessibilityLabel={t('onb.stepLabel', { n: _stepIdx + 1, total: _stepOrder.length })}
+            accessibilityValue={{ min: 1, max: _stepOrder.length, now: _stepIdx + 1 }}
+          >
+            {_stepOrder.map((s2, idx) => (
+              <View key={s2} style={{ flex: 1, height: 4, borderRadius: 2, backgroundColor: idx <= _stepIdx ? colors.text : colors.border }} />
+            ))}
           </View>
-        );
-      })()}
+          <Text style={{ minWidth: 28, textAlign: 'right', fontSize: 13, fontWeight: '700', color: colors.textSecondary, fontVariant: ['tabular-nums'] }}>
+            {`${_stepIdx + 1}/${_stepOrder.length}`}
+          </Text>
+        </View>
+      ) : (
+        <View style={{ height: _topPad + 12 }} />
+      )}
 
-      {/* Header — back button + brand. paddingTop is reduced now that the
-          progress bar above already pushes us off the status bar / notch /
-          punch-hole. Back button wrapped with Animated.View driven by
-          backFade so it gently fades on step change instead of snap-popping. */}
-      <View style={[styles.header, { paddingTop: (step !== 'welcome' && step !== 'done') ? 8 : Math.max(_insets.top, Platform.OS === 'android' ? (require('react-native').StatusBar.currentHeight || 24) : 44) + 8 }]}>
-        <Animated.View style={{ opacity: backFade }}>
-          <TouchableOpacity onPress={goBack} style={styles.backBtn} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }} accessibilityLabel={t('common.back') || 'Voltar'}>
-            <IconArrowLeft size={22} color={colors.text} />
-          </TouchableOpacity>
-        </Animated.View>
-        <Text style={[styles.brand, {
-          color: colors.primary,
-          ...(Platform.OS === 'web' ? {
-            backgroundImage: `linear-gradient(135deg, ${colors.primaryDark} 0%, ${colors.primary} 60%, ${colors.brandSecondary} 100%)`,
-            WebkitBackgroundClip: 'text',
-            WebkitTextFillColor: 'transparent',
-            backgroundClip: 'text',
-          } : {}),
-        }]}>Chatyy</Text>
-        <View style={{ width: 32 }} />
-      </View>
-
-      <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+      <ScrollView style={{ flex: 1 }} contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled" keyboardDismissMode="interactive" showsVerticalScrollIndicator={false}>
         <Animated.View style={{ opacity: fade, transform: [{ translateY: slide }, { scale: stepScale }], width: '100%' }}>
-          {/* Welcome → Telegram-style horizontal carousel. Renders 5 slides
-              (icon + title + subtitle), swipeable with paging snap. Below the
-              pager there are dots showing position. Bottom CTA changes label
-              on the last slide ("Começar" vs "Continuar"). */}
-          {/* Hide the brand orb on `name` and `handle` steps — those screens
-              have their own visual focus (the avatar picker on name, the
-              @handle preview on handle). Stacking the big purple orb above
-              redundant illustrations created a duplicated-icon look in the
-              prints (2026-05-07) and pushed the input fields below the
-              keyboard fold. The orb stays on phone + otp where there is no
-              competing illustration. */}
-          {step !== 'done' && step !== 'name' && step !== 'handle' && (
-            <Animated.View style={{ alignItems: 'center', marginBottom: 18, opacity: heroFade }}>
-              {/* Telegram-grade hero: single soft halo behind the brand
-                  orb. One entrance scale-pop, no breathing pulse, no triple
-                  halo. Icon swaps per step but the orb stays brand-purple
-                  (calm, recognizable). Mirrors login.js L930-957.
-                  Wrapped in Animated.View w/ heroFade so steps crossfade. */}
-              <Animated.View style={{
-                width: 200, height: 200,
-                alignItems: 'center', justifyContent: 'center',
-                transform: [{ scale: heroScale }],
-              }}>
-                {/* Outer halo — biggest, softest, slowest breath. Pulls eye
-                    to the orb without blocking content below. Telegram/iMessage
-                    hero pattern. */}
-                <Animated.View style={{
-                  position: 'absolute',
-                  width: 200, height: 200, borderRadius: 100,
-                  backgroundColor: `${colors.primary}1A`,
-                  opacity: heroPulse.interpolate({ inputRange: [0, 1], outputRange: [0.45, 0.85] }),
-                  transform: [{ scale: heroPulse.interpolate({ inputRange: [0, 1], outputRange: [0.95, 1.08] }) }],
-                }} />
-                {/* Middle halo — primary brand glow, in-phase with breath */}
-                <Animated.View style={{
-                  position: 'absolute',
-                  width: 148, height: 148, borderRadius: 74,
-                  backgroundColor: `${colors.primary}26`,
-                  opacity: heroPulse.interpolate({ inputRange: [0, 1], outputRange: [0.5, 0.9] }),
-                  transform: [{ scale: heroPulse.interpolate({ inputRange: [0, 1], outputRange: [1, 1.06] }) }],
-                }} />
-                {/* Crisp inner ring removed 2026-05-07 — print showed it as a
-                    distinct 3rd concentric ring around the orb, which read
-                    "stacked rings" instead of "soft halo". The two backing
-                    halos (200/148) are enough for depth without the busy
-                    look. */}
-                <View style={{
-                  width: 92, height: 92, borderRadius: 46,
-                  backgroundColor: colors.primary,
-                  alignItems: 'center', justifyContent: 'center',
-                  shadowColor: colors.primary,
-                  shadowOffset: { width: 0, height: 12 },
-                  shadowOpacity: 0.42, shadowRadius: 26, elevation: 12,
-                  ...(Platform.OS === 'web' ? { boxShadow: `0 14px 36px ${colors.primary}66, inset 0 1px 0 rgba(255,255,255,0.18)` } : {}),
-                }}>
-                  <Animated.View style={{ opacity: heroIconFade, transform: [{ scale: heroIconFade.interpolate({ inputRange: [0, 1], outputRange: [0.7, 1] }) }] }}>
-                    {/* Phone step: minimalist smartphone outline (line-art).
-                        Replaces the heavier IconPhone receiver — cleaner
-                        on the brand orb. Other steps keep their lucide
-                        icons since they read well at this size. */}
-                    {step === 'phone'  && (
-                      <Svg viewBox="0 0 24 24" width={44} height={44} fill="none">
-                        <Rect x="7" y="2.5" width="10" height="19" rx="2.5" stroke={colors.onPrimary} strokeWidth={2} fill="none" />
-                        <Line x1="10.5" y1="5.5" x2="13.5" y2="5.5" stroke={colors.onPrimary} strokeWidth={1.5} strokeLinecap="round" />
-                        <SvgCircle cx="12" cy="18.5" r="0.9" fill={colors.onPrimary} />
-                      </Svg>
-                    )}
-                    {/* OTP step: swap generic shield for the new Chatyy brand
-                        icon (bug #7193 — May 19 1.3MB asset). Rendered inside
-                        the existing purple orb, slightly inset so the white
-                        ring/halo of the orb still frames it. Kept ~84x84 so it
-                        fills the 92px orb cleanly without touching the edges. */}
-                    {step === 'otp'    && (
-                      <Image
-                        source={require('../assets/icon.png')}
-                        style={{ width: 84, height: 84, borderRadius: 42 }}
-                        resizeMode="cover"
-                      />
-                    )}
-                    {step === 'name'   && <IconUser size={42} color={colors.onPrimary} />}
-                    {step === 'handle' && <IconAtSign size={42} color={colors.onPrimary} />}
-                  </Animated.View>
-                </View>
+          {/* Resume banner — the app was closed mid-signup; fields came back
+              from the local draft. "Começar de novo" wipes it. */}
+          {resumedDraft && step === 'phone' && (
+            <View style={{
+              flexDirection: 'row', alignItems: 'center', gap: 10,
+              paddingVertical: 10, paddingHorizontal: 12, borderRadius: 12, marginBottom: 18,
+              backgroundColor: colors.surfaceVariant, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border,
+            }}>
+              <IconCheckCircle size={16} color={colors.text} />
+              <Text style={{ flex: 1, fontSize: 13, lineHeight: 18, color: colors.text }}>
+                {t('signupPhone.resumed')}
+              </Text>
+              <TouchableOpacity onPress={_startOver} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} accessibilityRole="button">
+                <Text style={{ fontSize: 13, fontWeight: '700', color: colors.text, textDecorationLine: 'underline' }}>
+                  {t('signupPhone.startOver')}
+                </Text>
+              </TouchableOpacity>
+            </View>
+          )}
+          {/* Compact ink tile (B&W premium) replaces the 200pt purple orb +
+              breathing halos. Hidden on `name` (the avatar picker is the
+              visual there) and on `done`. */}
+          {step !== 'done' && step !== 'name' && (
+            <Animated.View style={{
+              width: 52, height: 52, borderRadius: 16, marginBottom: 20,
+              backgroundColor: colors.text,
+              alignItems: 'center', justifyContent: 'center',
+              opacity: heroFade,
+              transform: [{ scale: heroScale }],
+            }}>
+              <Animated.View style={{ opacity: heroIconFade }}>
+                {step === 'phone' && (
+                  <Svg viewBox="0 0 24 24" width={26} height={26} fill="none">
+                    <Rect x="7" y="2.5" width="10" height="19" rx="2.5" stroke={colors.background} strokeWidth={2} fill="none" />
+                    <Line x1="10.5" y1="5.5" x2="13.5" y2="5.5" stroke={colors.background} strokeWidth={1.5} strokeLinecap="round" />
+                    <SvgCircle cx="12" cy="18.5" r="0.9" fill={colors.background} />
+                  </Svg>
+                )}
+                {step === 'otp' && <IconShield size={24} color={colors.background} />}
+                {step === 'handle' && <IconAtSign size={24} color={colors.background} />}
               </Animated.View>
             </Animated.View>
           )}
-          {/* Title + sub do step central — escondido no welcome (cada slide tem o seu) */}
-          {step !== 'welcome' && (
+          {/* One question per screen, big left-aligned type. */}
+          {step !== 'done' && (
             <>
-              <Text style={[styles.title, { color: colors.text, textAlign: 'center' }]}>{headerTitle}</Text>
-              <Text style={[styles.sub, { color: colors.textSecondary, textAlign: 'center' }]}>{headerSub}</Text>
+              <Text style={[styles.title, { color: colors.text }]} accessibilityRole="header">{headerTitle}</Text>
+              {step === 'otp' ? (
+                <Text style={[styles.sub, { color: colors.textSecondary }]}>
+                  {t('signupPhone.subOtp') || 'Enviamos um código de 6 dígitos para'}{' '}
+                  <Text style={{ color: colors.text, fontWeight: '700' }}>{fullPhoneFormatted}</Text>
+                  {'  '}
+                  <Text onPress={goBack} style={{ color: colors.text, fontWeight: '700', textDecorationLine: 'underline' }} accessibilityRole="link">
+                    {t('signupPhone.edit')}
+                  </Text>
+                </Text>
+              ) : (
+                <Text style={[styles.sub, { color: colors.textSecondary }]}>{headerSub}</Text>
+              )}
             </>
           )}
 
@@ -1019,27 +1089,39 @@ export default function SignupPhone() {
                         borderBottomColor: phoneValid ? colors.success : (_isFocused ? _hairlineActive : _hairline),
                         marginTop: -StyleSheet.hairlineWidth,
                       }}>
-                        <View style={{ width: 64, paddingVertical: 14, paddingRight: 8 }}>
-                          <Text style={{ fontSize: 16, color: colors.text, fontWeight: '500' }}>
+                        <View style={{ minWidth: 64, paddingVertical: 12, paddingRight: 10 }}>
+                          <Text style={{ fontSize: 22, color: colors.text, fontWeight: '600' }}>
                             {_country.dial}
                           </Text>
                         </View>
                         <View style={{ width: StyleSheet.hairlineWidth, height: 22, backgroundColor: _hairline, marginRight: 8 }} />
                         <TextInput
                           style={[{
-                            flex: 1, fontSize: 16, paddingVertical: 14,
+                            flex: 1, minWidth: 0, fontSize: 22, fontWeight: '600', letterSpacing: 0.3, paddingVertical: 12,
                             color: colors.text,
                           }, Platform.OS === 'web' && { outlineStyle: 'none' }]}
                           value={formatPhone(phone, _country.mask)}
                           onChangeText={(text) => {
                             // Extract digits only; the mask is re-applied on render
-                            // via formatPhone(). Cap at the country's maxDigits so
-                            // typing past the mask doesn't break the formatting.
-                            const digits = text.replace(/\D/g, '').slice(0, _country.maxDigits || 15);
-                            setPhone(digits);
+                            // via formatPhone(). [2026-10-07 signup-ux] parsePhoneInput
+                            // also understands a pasted / iOS-autofilled "+1 415…" or
+                            // "0055…" (switches the country) and a duplicated dial
+                            // code / BR trunk 0, then caps at the country's maxDigits.
+                            const parsed = parsePhoneInput(text, countryCode, COUNTRIES);
+                            if (parsed.countryCode !== countryCode) {
+                              setCountryCode(parsed.countryCode);
+                              try { Haptics.selectionAsync(); } catch {}
+                            }
+                            setPhone(parsed.digits);
+                            if (accountExists !== null) setAccountExists(null);
                             if (error) setError('');
                             if (showFromLoginBanner) setShowFromLoginBanner(false);
                           }}
+                          textContentType="telephoneNumber"
+                          autoComplete="tel"
+                          returnKeyType="go"
+                          onSubmitEditing={() => { if (phoneValid && !busy) sendOtp(); }}
+                          accessibilityLabel={t('signupPhone.titlePhone') || 'Seu telefone'}
                           keyboardType="phone-pad"
                           placeholder={_country.mask ? _country.mask.replace(/#/g, '0') : '11 99999-9999'}
                           placeholderTextColor={colors.textTertiary}
@@ -1119,7 +1201,8 @@ export default function SignupPhone() {
                         <Animated.View
                           key={i}
                           style={{
-                            width: 42, height: 52, borderRadius: 12,
+                            // [2026-10-07 signup-ux] bigger targets, but never wider than the screen (SE 320pt)
+                            width: Math.min(46, Math.floor((Math.min(_winW, 520) - 48 - 40) / 6)), height: 58, borderRadius: 14,
                             borderWidth: _focused ? 2 : 1.5,
                             borderColor: _otpBorder,
                             backgroundColor: _otpBg,
@@ -1130,7 +1213,7 @@ export default function SignupPhone() {
                             ...(_focused && Platform.OS === 'android' ? { elevation: 4 } : {}),
                           }}
                         >
-                          <Text style={{ fontSize: 22, fontWeight: '700', color: colors.text }}>
+                          <Text style={{ fontSize: 26, fontWeight: '700', color: colors.text, fontVariant: ['tabular-nums'] }}>
                             {_digit}
                           </Text>
                           {/* Custom blinking caret in the focused-empty box —
@@ -1188,7 +1271,7 @@ export default function SignupPhone() {
                       } catch {}
                       if (digits.length === 6) {
                         // Auto-submit on full code (matches Telegram / iMessage).
-                        setTimeout(() => { try { checkOtp(); } catch {} }, 150);
+                        setTimeout(() => { try { checkOtp(digits); } catch {} }, 150);
                       }
                     }}
                     keyboardType="number-pad"
@@ -1227,9 +1310,8 @@ export default function SignupPhone() {
                     </View>
                   </View>
                 )}
-                <TouchableOpacity onPress={goBack} activeOpacity={0.6} style={{ alignSelf: 'center', paddingVertical: 10, marginTop: 6 }}>
-                  <Text style={{ fontSize: 13, fontWeight: '600', color: colors.primary }}>{t('onb.changeNumber')}</Text>
-                </TouchableOpacity>
+                {/* [2026-10-07 signup-ux] "Trocar número" now lives inline in
+                    the subtitle ("…para +55 (11) 9… Editar"). */}
                 <TouchableOpacity
                   disabled={resendCountdown > 0 || busy}
                   onPress={() => sendOtp('sms')}
@@ -1420,7 +1502,7 @@ export default function SignupPhone() {
                   }}>
                     <TextInput
                       style={[{
-                        fontSize: 16, paddingVertical: 14, color: colors.text,
+                        fontSize: 20, fontWeight: '600', paddingVertical: 12, color: colors.text,
                       }, Platform.OS === 'web' && { outlineStyle: 'none' }]}
                       placeholder={t('signupPhone.firstName') || 'Nome'}
                       placeholderTextColor={colors.textTertiary}
@@ -1429,6 +1511,11 @@ export default function SignupPhone() {
                       autoCapitalize="words"
                       autoFocus
                       maxLength={50}
+                      textContentType="givenName"
+                      autoComplete="name-given"
+                      blurOnSubmit={false}
+                      onSubmitEditing={() => { try { lastNameRef.current?.focus?.(); } catch {} }}
+                      accessibilityLabel={t('signupPhone.firstName') || 'Nome'}
                       returnKeyType="next"
                       onFocus={() => setFocused('firstName')}
                       onBlur={() => setFocused('')}
@@ -1442,10 +1529,14 @@ export default function SignupPhone() {
                     borderBottomColor: _isLastFocused ? colors.primary : _hairline,
                   }}>
                     <TextInput
+                      ref={lastNameRef}
+                      textContentType="familyName"
+                      autoComplete="name-family"
+                      accessibilityLabel={t('signupPhone.lastNameOptional')}
                       style={[{
-                        fontSize: 16, paddingVertical: 14, color: colors.text,
+                        fontSize: 20, fontWeight: '600', paddingVertical: 12, color: colors.text,
                       }, Platform.OS === 'web' && { outlineStyle: 'none' }]}
-                      placeholder={t('signupPhone.lastName') || 'Sobrenome'}
+                      placeholder={t('signupPhone.lastNameOptional')}
                       placeholderTextColor={colors.textTertiary}
                       value={lastName}
                       onChangeText={(v) => { setLastName(v); if (error) setError(''); }}
@@ -1476,7 +1567,7 @@ export default function SignupPhone() {
               // hint render below the row to keep the layout simple. On
               // narrow screens the rows stack vertically as before.
               const _usernameRow = (
-                <View style={{ flex: isWide ? 1 : undefined }}>
+                <View>
                   <View style={{
                     flexDirection: 'row', alignItems: 'center', gap: 10,
                     paddingVertical: 6,
@@ -1486,16 +1577,22 @@ export default function SignupPhone() {
                     <IconAtSign size={18} color={_isFocused ? colors.primary : colors.textSecondary} />
                     <TextInput
                       style={[{
-                        flex: 1, fontSize: 16, paddingVertical: 14, color: colors.text,
+                        flex: 1, minWidth: 0, fontSize: 20, fontWeight: '600', paddingVertical: 12, color: colors.text,
                       }, Platform.OS === 'web' && { outlineStyle: 'none' }]}
                       placeholder="seu.username"
                       placeholderTextColor={colors.textTertiary}
                       value={username}
-                      onChangeText={(v) => setUsername(v.toLowerCase().replace(/[^a-z0-9._-]/g, '').slice(0, 30))}
+                      onChangeText={(v) => { _usernameAutoRef.current = false; setUsername(sanitizeUsernameTyping(v)); if (error) setError(''); }}
                       autoCapitalize="none"
                       autoCorrect={false}
+                      autoComplete="username-new"
+                      textContentType="username"
                       autoFocus
                       maxLength={30}
+                      returnKeyType="next"
+                      blurOnSubmit={false}
+                      onSubmitEditing={() => { try { passwordRef.current?.focus?.(); } catch {} }}
+                      accessibilityLabel={t('signupPhone.titleHandle') || 'Escolha seu @'}
                       onFocus={() => setFocused('handle')}
                       onBlur={() => setFocused('')}
                     />
@@ -1523,7 +1620,7 @@ export default function SignupPhone() {
               const _pwdBottomColor = _pwdValid ? colors.success : (_isFocusedPwd ? colors.primary : _hl);
               const _pwdBottomWidth = (_isFocusedPwd || _pwdValid) ? 2 : StyleSheet.hairlineWidth;
               const _passwordRow = (
-                <View style={{ flex: isWide ? 1 : undefined, marginTop: isWide ? 0 : 18 }}>
+                <View style={{ marginTop: isWide ? 0 : 24 }}>
                   <View style={{
                     flexDirection: 'row', alignItems: 'center', gap: 10,
                     paddingVertical: 6,
@@ -1537,8 +1634,12 @@ export default function SignupPhone() {
                       }, Platform.OS === 'web' && { outlineStyle: 'none' }]}
                       placeholder={t('signupPhone.passwordPlaceholder') || 'Mínimo 8 caracteres'}
                       placeholderTextColor={colors.textTertiary}
+                      ref={passwordRef}
                       value={password}
-                      onChangeText={setPassword}
+                      onChangeText={(v) => { setPassword(v); if (error) setError(''); }}
+                      returnKeyType="done"
+                      onSubmitEditing={() => { if (!busy && usernameAvailable === true && password.length >= 8) finishSignup(); }}
+                      accessibilityLabel={t('signupPhone.passwordLabel')}
                       autoCapitalize="none"
                       autoCorrect={false}
                       secureTextEntry={!showPassword}
@@ -1552,7 +1653,7 @@ export default function SignupPhone() {
                       onPress={() => setShowPassword(v => !v)}
                       hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
                       accessibilityRole="button"
-                      accessibilityLabel={showPassword ? 'Ocultar senha' : 'Mostrar senha'}
+                      accessibilityLabel={showPassword ? (t('signupPhone.hidePassword') || 'Ocultar senha') : (t('signupPhone.showPassword') || 'Mostrar senha')}
                     >
                       {showPassword ? <IconEyeOff size={18} color={colors.textSecondary} /> : <IconEye size={18} color={colors.textSecondary} />}
                     </TouchableOpacity>
@@ -1562,65 +1663,66 @@ export default function SignupPhone() {
                   </View>
                 </View>
               );
+              // [2026-10-07 signup-ux] One status line under the handle (full
+              // address + state) instead of the tinted preview card; reason-
+              // specific copy (taken vs. invalid format); suggestion chips in
+              // ink outline; strength meter under the password.
+              const _uStatus = (() => {
+                if (!username) return null;
+                if (usernameChecking) return { text: t('signupPhone.checking'), color: colors.textTertiary };
+                if (usernameAvailable === true) return { text: `${username}@chatyy.com.br · ${t('onb.available')}`, color: colors.success };
+                if (usernameReason === 'taken') return { text: t('onb.taken'), color: colors.error };
+                if (usernameReason === 'short') return { text: t('signupPhone.err.usernameShort'), color: colors.textTertiary };
+                if (usernameReason) return { text: t('signupPhone.err.usernameInvalid'), color: colors.error };
+                return { text: `${username}@chatyy.com.br`, color: colors.textTertiary };
+              })();
               return (
                 <>
                   {/* Side-by-side at >=768; stacked below 768. */}
                   <View style={isWide
                     ? { flexDirection: 'row', alignItems: 'flex-start', gap: 16 }
                     : { flexDirection: 'column' }}>
-                    {_usernameRow}
-                    {_passwordRow}
-                  </View>
-                  {/* Suggestions when taken */}
-                  {usernameAvailable === false && usernameSuggestions.length > 0 && (
-                    <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 12 }}>
-                      {usernameSuggestions.slice(0, 4).map(s => (
-                        <TouchableOpacity
-                          key={s}
-                          onPress={() => setUsername(s)}
-                          style={{
-                            paddingHorizontal: 12, paddingVertical: 7, borderRadius: 14,
-                            backgroundColor: isDark ? `${colors.primary}2e` : `${colors.primary}1a`,
-                            borderWidth: 1, borderColor: isDark ? `${colors.primary}59` : `${colors.primary}3f`,
-                          }}
-                        >
-                          <Text style={{ fontSize: 13, color: colors.primary, fontWeight: '600' }}>{s}</Text>
-                        </TouchableOpacity>
-                      ))}
-                    </View>
-                  )}
-                  {!!username && (
-                    <View style={{
-                      marginTop: 14, padding: 12, borderRadius: 12,
-                      backgroundColor: usernameAvailable === false ? `${colors.error}14` : (isDark ? `${colors.primary}1f` : `${colors.primary}0f`),
-                    }}>
-                      <Text style={{ fontSize: 11, fontWeight: '700', letterSpacing: 0.5, textTransform: 'uppercase', color: colors.textTertiary }}>
-                        {t('onb.handlePreview')}
-                      </Text>
-                      <Text style={{ fontSize: 15, fontWeight: '700', color: colors.text, marginTop: 3 }} numberOfLines={1}>
-                        {username}@chatyy.com.br
-                      </Text>
-                      {usernameAvailable !== null && !usernameChecking && (
-                        <Text style={{ fontSize: 12, fontWeight: '600', marginTop: 3, color: usernameAvailable ? colors.success : colors.error }}>
-                          {usernameAvailable ? t('onb.available') : t('onb.taken')}
+                    <View style={{ flex: isWide ? 1 : undefined }}>
+                      {_usernameRow}
+                      {!!_uStatus && (
+                        <Text style={{ fontSize: 13, fontWeight: '600', marginTop: 8, color: _uStatus.color }} numberOfLines={2} accessibilityLiveRegion="polite">
+                          {_uStatus.text}
                         </Text>
                       )}
+                      {usernameAvailable === false && usernameSuggestions.length > 0 && (
+                        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 10 }}>
+                          {usernameSuggestions.slice(0, 4).map(sg => (
+                            <TouchableOpacity
+                              key={sg}
+                              onPress={() => { _usernameAutoRef.current = false; setUsername(sg); try { Haptics.selectionAsync(); } catch {} }}
+                              accessibilityRole="button"
+                              style={{
+                                paddingHorizontal: 12, paddingVertical: 7, borderRadius: 999,
+                                borderWidth: 1, borderColor: colors.text,
+                              }}
+                            >
+                              <Text style={{ fontSize: 13, color: colors.text, fontWeight: '600' }}>@{sg}</Text>
+                            </TouchableOpacity>
+                          ))}
+                        </View>
+                      )}
+                      <Text style={[styles.hint, { color: colors.textTertiary }]}>
+                        {t('signupPhone.hintHandle') || 'Esse vai ser seu email no Chatyy também — pra receber e mandar mensagem.'}
+                      </Text>
                     </View>
-                  )}
-                  <Text style={[styles.hint, { color: colors.textTertiary }]}>
-                    {t('signupPhone.hintHandle') || 'Esse vai ser seu email no Chatyy também — pra receber e mandar mensagem.'}
-                  </Text>
-
-                  {/* Password hint — outside the row so it spans the form width. */}
-                  {(() => {
-                    return (
-                      <View style={{ marginTop: 8 }}>
-                        <Text style={[styles.hint, { color: colors.textTertiary, marginTop: 8 }]}>
-                          {t('signupPhone.passwordHint') || 'Use pra entrar pelo email também (IMAP / web). Guarde com carinho.'}
-                        </Text>
-                      </View>
-                    );
-                  })()}
+                    <View style={{ flex: isWide ? 1 : undefined }}>
+                      {_passwordRow}
+                      <SignupPasswordMeter
+                        password={password}
+                        context={[firstName, lastName, username, phone]}
+                        colors={colors}
+                        t={t}
+                      />
+                      <Text style={[styles.hint, { color: colors.textTertiary }]}>
+                        {t('signupPhone.passwordHint') || 'Use pra entrar pelo email também (IMAP / web). Guarde com carinho.'}
+                      </Text>
+                    </View>
+                  </View>
                 </>
               );
             })()}
@@ -1640,7 +1742,7 @@ export default function SignupPhone() {
                     <Animated.View style={{
                       position: 'absolute',
                       width: 140, height: 140, borderRadius: 70,
-                      borderWidth: 2, borderColor: colors.success,
+                      borderWidth: 2, borderColor: colors.text,
                       opacity: doneScale.interpolate({ inputRange: [0, 0.6, 1], outputRange: [0.0, 0.5, 0.0] }),
                       transform: [{ scale: doneScale.interpolate({ inputRange: [0, 1], outputRange: [0.6, 1.25] }) }],
                     }} />
@@ -1648,20 +1750,20 @@ export default function SignupPhone() {
                     <Animated.View style={{
                       position: 'absolute',
                       width: 124, height: 124, borderRadius: 62,
-                      backgroundColor: `${colors.success}26`,
+                      backgroundColor: colors.surfaceVariant,
                       opacity: doneScale,
                       transform: [{ scale: doneScale.interpolate({ inputRange: [0, 1], outputRange: [0.85, 1] }) }],
                     }} />
                     <Animated.View style={{
                       width: 96, height: 96, borderRadius: 48,
-                      backgroundColor: colors.success,
+                      backgroundColor: colors.text, // [2026-10-07 signup-ux] ink, B&W premium
                       alignItems: 'center', justifyContent: 'center',
                       transform: [{ scale: doneScale }],
-                      shadowColor: colors.success, shadowOffset: { width: 0, height: 10 },
-                      shadowOpacity: 0.45, shadowRadius: 22, elevation: 12,
-                      ...(Platform.OS === 'web' ? { boxShadow: `0 14px 32px ${colors.success}73, inset 0 1px 0 rgba(255,255,255,0.25)` } : {}),
+                      shadowColor: '#000', shadowOffset: { width: 0, height: 10 },
+                      shadowOpacity: 0.25, shadowRadius: 22, elevation: 10,
+                      ...(Platform.OS === 'web' ? { boxShadow: '0 14px 32px rgba(0,0,0,0.25)' } : {}),
                     }}>
-                      <IconCheck size={56} color="#fff" strokeWidth={3} />
+                      <IconCheck size={52} color={colors.background} strokeWidth={3} />
                     </Animated.View>
                   </View>
                   {!!_firstName && (
@@ -1726,20 +1828,23 @@ export default function SignupPhone() {
 
       {/* Primary action button (sticky bottom for the form-like feel) */}
       {step !== 'done' && (
-        <View style={[styles.footer, { borderTopColor: colors.border, paddingBottom: Math.max(Platform.OS === 'ios' ? 30 : 16, _insets.bottom + 12) }]}>
+        <View style={[styles.footer, { borderTopColor: colors.border, backgroundColor: colors.background, paddingBottom: _footerPadBottom }]}>
           {/* ToS disclaimer — rendered on EVERY step (phone/otp/name/handle)
               so legal consent stays visible up through the moment of account
               creation. Hidden only on `done` (already signed up — no further
               consent needed). Centralized below via the _renderTosFooter
               helper so all four steps share one component. */}
-          {step !== 'done' && (
-            <Text style={{ fontSize: 11, color: colors.textTertiary, textAlign: 'center', marginBottom: 10, lineHeight: 16, paddingHorizontal: 8 }}>
+          {/* [2026-10-07 signup-ux] consent shown where it matters — when the
+              number is submitted (phone) and at account creation (handle) —
+              instead of on all 4 steps. Links open the native /legal screen. */}
+          {(step === 'phone' || step === 'handle') && (
+            <Text style={{ fontSize: 12, color: colors.textTertiary, textAlign: 'center', marginBottom: 10, lineHeight: 17, paddingHorizontal: 8 }}>
               {t('signupPhone.tosLine') || 'Ao continuar você concorda com os '}
-              <Text style={{ color: colors.primary, fontWeight: '600' }} onPress={() => { try { router.push({ pathname: '/legal', params: { doc: 'terms' } }); } catch {} }}>
+              <Text style={{ color: colors.text, fontWeight: '600', textDecorationLine: 'underline' }} accessibilityRole="link" onPress={() => { try { router.push({ pathname: '/legal', params: { doc: 'terms' } }); } catch {} }}>
                 {t('signupPhone.tosLink') || 'Termos'}
               </Text>
               {' '}{t('common.and') || 'e'}{' '}
-              <Text style={{ color: colors.primary, fontWeight: '600' }} onPress={() => { try { router.push({ pathname: '/legal', params: { doc: 'privacy' } }); } catch {} }}>
+              <Text style={{ color: colors.text, fontWeight: '600', textDecorationLine: 'underline' }} accessibilityRole="link" onPress={() => { try { router.push({ pathname: '/legal', params: { doc: 'privacy' } }); } catch {} }}>
                 {t('signupPhone.privacyLink') || 'Privacidade'}
               </Text>
               .
@@ -1755,7 +1860,7 @@ export default function SignupPhone() {
                   (step === 'phone' && phone.replace(/\D/g, '').length < 8) ||
                   (step === 'otp'   && (lockRequired ? lockPin.length < 4 : code.length !== 6)) ||
                   (step === 'name'  && (firstName || '').trim().length < 2) ||
-                  (step === 'handle' && (!username || usernameAvailable !== true || password.length < 8))
+                  (step === 'handle' && (!username || usernameAvailable !== true || !!usernameLocalError(username) || password.length < 8))
                 ) ? 0.5 : 1,
               },
             ]}
@@ -1763,13 +1868,13 @@ export default function SignupPhone() {
               (step === 'phone' && phone.replace(/\D/g, '').length < 8) ||
               (step === 'otp'   && (lockRequired ? lockPin.length < 4 : code.length !== 6)) ||
               (step === 'name'  && (firstName || '').trim().length < 2) ||
-              (step === 'handle' && (!username || usernameAvailable !== true || password.length < 8))}
+              (step === 'handle' && (!username || usernameAvailable !== true || !!usernameLocalError(username) || password.length < 8))}
             onPress={() => {
               // WhatsApp/Telegram both skip the "is this the right number?"
               // sheet — the OTP screen already shows the number with an Edit
               // link, so the friction wasn't paying for itself.
               if (step === 'phone')  sendOtp();
-              else if (step === 'otp')    checkOtp();
+              else if (step === 'otp')    checkOtp(code);
               else if (step === 'name')   goName();
               else if (step === 'handle') finishSignup();
             }}
@@ -1885,7 +1990,7 @@ export default function SignupPhone() {
               autoFocus={Platform.OS === 'web'}
             />
           </View>
-          <ScrollView keyboardShouldPersistTaps="handled" style={{ flex: 1 }}>
+          <ScrollView keyboardShouldPersistTaps="handled" style={{ flex: 1 }} contentContainerStyle={{ paddingBottom: 320 }}>
             {(() => {
               // Telegram-pattern picker: when there's no search, render a
               // "Suggested" header at the top with the locale-detected country
@@ -1966,7 +2071,7 @@ export default function SignupPhone() {
         onClose={_handleRestorePromptClose}
         onRestored={() => { /* onClose handles nav after the user taps "Pronto" */ }}
       />
-    </KeyboardAvoidingView>
+    </ThreadKeyboardAvoider>
   );
 }
 
@@ -1977,18 +2082,21 @@ const styles = StyleSheet.create({
   brand: { fontSize: 22, fontWeight: '800', letterSpacing: -0.5 },
   dotsRow: { flexDirection: 'row', justifyContent: 'center', gap: 6, marginBottom: 20 },
   dot: { width: 28, height: 4, borderRadius: 2 },
-  scroll: { paddingHorizontal: 22, paddingBottom: 120 },
+  scroll: { paddingHorizontal: 24, paddingTop: 12, paddingBottom: 32, width: '100%', maxWidth: 520, alignSelf: 'center' },
   // Telegram/iMessage hero typography: heavy weight, tighter tracking, crisp
   // line-height. The previous 28/-0.6 sat between ranks; this lands the title
   // squarely in "feature hero" territory.
-  title: { fontSize: 30, fontWeight: '800', letterSpacing: -0.8, marginBottom: 8, lineHeight: 36 },
-  sub: { fontSize: 15, lineHeight: 22, fontWeight: '400' },
+  // [2026-10-07 signup-ux] one question per screen → big left-aligned type.
+  title: { fontSize: 32, fontWeight: '800', letterSpacing: -0.9, marginBottom: 10, lineHeight: 38 },
+  sub: { fontSize: 16, lineHeight: 23, fontWeight: '400' },
   hint: { fontSize: 12, marginTop: 12, lineHeight: 17 },
+  // [2026-10-07 signup-ux] in-flow (not absolute) so the keyboard avoider can
+  // lift it; ScrollView above is flex:1.
   footer: {
-    position: 'absolute', left: 0, right: 0, bottom: 0,
+    width: '100%', maxWidth: 520, alignSelf: 'center',
     paddingHorizontal: 22, paddingTop: 12,
     paddingBottom: Platform.OS === 'ios' ? 30 : androidBottomInset(16),
-    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopWidth: 0, // [2026-10-07 signup-ux] no rule in the centered column
     backgroundColor: 'transparent',
   },
   cta: {

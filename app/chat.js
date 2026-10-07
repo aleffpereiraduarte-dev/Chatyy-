@@ -37,6 +37,7 @@ import SyncBar from '../components/SyncBar';
 import { isSyncComplete, runInitialSync } from '../services/initialSync';
 import PlusOnboardingTour, { checkShouldShowPlusOnboarding } from '../components/PlusOnboardingTour';
 import GlobalSearch from '../components/GlobalSearch';
+import FirstRunGate from '../components/onboarding/FirstRunGate'; // [2026-10-07 welcome]
 import { BarMaterial, canNativeBlur } from '../components/NativeBlur'; // [2026-10-07 native-ui-build]
 
 // ─── Custom SVG Icons for Tab Bar ───
@@ -1082,6 +1083,8 @@ function ChatHub() {
           {/* ChatListTab has its own FAB (new chat/group/channel), and
               ChatFeedTab has its own composer — nothing to render here. */}
         </View>
+        {/* [2026-10-07 welcome] per-account first-run (renders null when done) */}
+        {!isKids ? <FirstRunGate /> : null}
       </View>
     );
   }
@@ -1368,6 +1371,8 @@ function ChatHub() {
       />
       {/* No UnifiedComposeFab here — ChatListTab has its own FAB with
           new chat/group/channel, and each other tab owns its composer. */}
+      {/* [2026-10-07 welcome] per-account first-run (renders null when done) */}
+      {!isKids ? <FirstRunGate /> : null}
       <PlusOnboardingTour
         visible={showPlusTour}
         onClose={() => setShowPlusTour(false)}

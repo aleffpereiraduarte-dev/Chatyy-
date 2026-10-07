@@ -94,3 +94,14 @@ export function pushPrimerClosed(accepted) {
     _needed = false;
   }
 }
+
+/**
+ * [2026-10-07 welcome] The first-run flow showed its own notifications step
+ * and the user tapped "Agora não": count it as an offer so the chat_open
+ * primer respects the same backoff (no second sheet on the very first chat).
+ */
+export function recordPushPrimerOffer() {
+  const s = _readState();
+  if (s.done) return;
+  _writeState({ ...s, offers: (Number(s.offers) || 0) + 1, lastOfferAt: Date.now() });
+}

@@ -4,7 +4,7 @@ import {
   KeyboardAvoidingView, Platform, ScrollView, ActivityIndicator, Animated, Easing, Linking,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useRouter } from 'expo-router';
+import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useAuthTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import { forgotPasswordOptions, forgotPasswordInitiate, forgotPasswordVerify, resetPassword, BASE_URL } from '../services/api';
@@ -16,22 +16,36 @@ import {
   IconMail, IconShield, IconCheckCircle, IconEye, IconEyeOff, IconSend, IconLock,
   IconSun, IconMoon, IconSmartphone,
 } from '../components/Icons';
+// [2026-10-07 login-ux] shared auth-screen pieces (keyboard-aware scroll,
+// inline notices, haptics, identifier normalisation, last-identifier prefill).
+import LoginKeyboardScroll from '../components/login/LoginKeyboardScroll';
+import LoginNotice from '../components/login/LoginNotice';
+import { normalizeLoginEmail, isPlausibleEmail, saveLastIdentifier } from '../components/login/loginSmart';
+import { tap as hTap, success as hSuccess, error as hError, selection as hSelection } from '../services/haptics';
 
 export default function ForgotPassword() {
   const { colors, isDark, toggle } = useAuthTheme();
   const { t } = useLanguage();
   const router = useRouter();
+  const params = useLocalSearchParams();
   const insets = useSafeAreaInsets();
   const [showHelp, setShowHelp] = useState(false);
   const [showPrivacy, setShowPrivacy] = useState(false);
   const [showTerms, setShowTerms] = useState(false);
   // Steps: 1=email, 2=choose method, 3=verify code, 4=new password, 5=success
-  const [step, setStep] = useState(1);
+  // ?find=1 (login "Não lembra seu e-mail?") opens straight on the finder.
+  const [step, setStep] = useState(() => (String(params?.find || '') === '1' ? 6 : 1));
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
   // Step 1
-  const [username, setUsername] = useState('');
+  // ?email= from the login password step → prefilled (no retyping).
+  const [username, setUsername] = useState(() => {
+    try {
+      const pre = typeof params?.email === 'string' ? params.email : (Array.isArray(params?.email) ? params.email[0] : '');
+      return pre ? String(pre).replace(/\s+/g, '').toLowerCase() : '';
+    } catch { return ''; }
+  });
   const [domain, setDomain] = useState('chatyy.com.br');
   const [findQuery, setFindQuery] = useState('');
   const [foundEmails, setFoundEmails] = useState([]);
@@ -87,11 +101,27 @@ export default function ForgotPassword() {
     return () => clearTimeout(timerRef.current);
   }, [countdown]);
 
-  const fullEmail = `${username}@${domain}`;
+  // [2026-10-07 login-ux] BUG FIX: was always `${username}@${domain}` — the
+  // field accepts a FULL address of any domain (Apple 2.1a fix), so typing
+  // "ana@gmail.com" asked the server about "ana@gmail.com@chatyy.com.br" and
+  // recovery could never find the account.
+  const fullEmail = String(username || '').includes('@')
+    ? normalizeLoginEmail(username)
+    : normalizeLoginEmail(`${String(username || '').replace(/^@/, '')}@${domain}`);
+
+  // Haptic on every new inline error (was silent).
+  useEffect(() => { if (error) hError(); }, [error]);
+  const goBackToLogin = () => {
+    hSelection();
+    try { if (router.canGoBack?.()) { router.back(); return; } } catch {}
+    router.replace('/login');
+  };
 
   // Step 1: Get recovery options
   const handleGetOptions = async () => {
     if (!username.trim()) { setError(t('forgot.validation.usernameRequired')); return; }
+    if (!isPlausibleEmail(fullEmail)) { setError(t('login.errorEmailInvalid')); return; }
+    hTap('light');
     setError('');
     setLoading(true);
     try {
@@ -121,7 +151,8 @@ export default function ForgotPassword() {
 
   // Find email by phone or name (Google-style "Forgot email?")
   const handleFindEmail = async () => {
-    if (!findQuery.trim() || findQuery.trim().length < 3) { setError('Digite pelo menos 3 caracteres'); return; }
+    if (!findQuery.trim() || findQuery.trim().length < 3) { setError(t('forgot.findMinChars')); return; }
+    hTap('light');
     setError('');
     setLoading(true);
     try {
@@ -138,10 +169,10 @@ export default function ForgotPassword() {
           match: a.match,
         })));
       } else {
-        setError(data?.message || 'Erro ao buscar');
+        setError(data?.message || t('forgot.findError'));
         setFoundEmails([]);
       }
-    } catch { setError('Erro de conexao'); }
+    } catch { setError(t('forgot.validation.connectionError')); }
     finally { setLoading(false); }
   };
 
@@ -218,6 +249,9 @@ export default function ForgotPassword() {
     try {
       const r = await resetPassword(fullEmail, resetToken, newPwd);
       if (r.success) {
+        hSuccess();
+        // The login screen will open with this account prefilled.
+        saveLastIdentifier(fullEmail);
         setStep(5);
       } else {
         setError(r.message || t('forgot.validation.resetError'));
@@ -240,11 +274,9 @@ export default function ForgotPassword() {
 
   const entryScale = fadeAnim.interpolate({ inputRange: [0, 1], outputRange: [0.97, 1] });
 
+  // [2026-10-07 login-ux] Same inline notice as the login (a11y live region).
   const renderError = () => !!error && (
-    <View style={[s.errorBox, { backgroundColor: colors.errorBg, borderColor: colors.error + '18' }]}>
-      <IconAlertTriangle size={15} color={colors.error} />
-      <Text style={[s.errorText, { color: colors.error }]}>{error}</Text>
-    </View>
+    <LoginNotice tone="error" text={error} colors={colors} style={{ marginBottom: 16 }} />
   );
 
   const renderContent = () => {
@@ -259,7 +291,7 @@ export default function ForgotPassword() {
           </Text>
         </View>
 
-        <Text style={[s.label, { color: colors.authLabelColor }]}>Email</Text>
+        <Text style={[s.label, { color: colors.authLabelColor }]}>{t('forgot.emailLabel')}</Text>
         <View style={inputBoxStyle('username')}>
           <TextInput
             style={[s.textInput, { color: colors.text }]}
@@ -276,8 +308,13 @@ export default function ForgotPassword() {
             placeholderTextColor={colors.textTertiary}
             autoCapitalize="none"
             autoCorrect={false}
+            spellCheck={false}
             keyboardType="email-address"
-            autoFocus
+            textContentType="username"
+            autoComplete="username"
+            importantForAutofill="yes"
+            accessibilityLabel={t('forgot.emailLabel')}
+            autoFocus={!username}
             returnKeyType="go"
             onSubmitEditing={() => { if (username && !loading) handleGetOptions(); }}
             onFocus={() => setFocused('username')}
@@ -302,7 +339,7 @@ export default function ForgotPassword() {
           <TouchableOpacity style={s.backBtn} onPress={() => setStep(6)} activeOpacity={0.6}>
             <Text style={[s.backText, { color: colors.primary }]}>{t('forgot.forgotEmail') || 'Esqueceu o email?'}</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={s.backBtn} onPress={() => router.push('/login')} activeOpacity={0.6}>
+          <TouchableOpacity style={s.backBtn} onPress={goBackToLogin} activeOpacity={0.6} accessibilityRole="button">
             <Text style={[s.backText, { color: colors.textSecondary }]}>{t('forgot.backToLogin')}</Text>
           </TouchableOpacity>
         </View>
@@ -316,19 +353,23 @@ export default function ForgotPassword() {
         <View style={s.hintRow}>
           <IconShield size={16} color={colors.textTertiary} />
           <Text style={[s.hintText, { color: colors.textTertiary }]}>
-            Digite seu telefone ou nome completo para encontrar sua conta
+            {t('forgot.findHint')}
           </Text>
         </View>
 
-        <Text style={[s.label, { color: colors.authLabelColor }]}>Telefone ou nome</Text>
+        <Text style={[s.label, { color: colors.authLabelColor }]}>{t('forgot.findLabel')}</Text>
         <View style={inputBoxStyle('findEmail')}>
           <TextInput
             style={[s.textInput, { color: colors.text }]}
             value={findQuery}
-            onChangeText={setFindQuery}
-            placeholder="(11) 99999-9999 ou Nome Completo"
+            onChangeText={(v) => { setFindQuery(v); if (error) setError(''); }}
+            placeholder={t('forgot.findPlaceholder')}
             placeholderTextColor={colors.textTertiary}
             autoCapitalize="words"
+            autoCorrect={false}
+            returnKeyType="search"
+            onSubmitEditing={() => { if (!loading && findQuery.trim()) handleFindEmail(); }}
+            accessibilityLabel={t('forgot.findLabel')}
             autoFocus
             onFocus={() => setFocused('findEmail')}
             onBlur={() => setFocused('')}
@@ -337,7 +378,7 @@ export default function ForgotPassword() {
 
         {foundEmails.length > 0 && (
           <View style={{ marginTop: 12 }}>
-            <Text style={[s.label, { color: colors.authLabelColor }]}>Contas encontradas</Text>
+            <Text style={[s.label, { color: colors.authLabelColor }]}>{t('forgot.foundAccounts')}</Text>
             {foundEmails.map((acc, i) => (
               <TouchableOpacity
                 key={i}
@@ -367,7 +408,7 @@ export default function ForgotPassword() {
 
         {findQuery.length > 0 && foundEmails.length === 0 && !loading && (
           <Text style={{ color: colors.textSecondary, fontSize: 12, textAlign: 'center', marginTop: 12 }}>
-            Nenhuma conta encontrada. Verifique o telefone ou nome.
+            {t('forgot.noAccountsFound')}
           </Text>
         )}
 
@@ -379,11 +420,11 @@ export default function ForgotPassword() {
             activeOpacity={0.85}
           >
             {loading ? <ActivityIndicator color="#fff" size="small" /> : (
-              <Text style={[s.primaryBtnText, { color: colors.onPrimary }]}>Buscar conta</Text>
+              <Text style={[s.primaryBtnText, { color: colors.onPrimary }]}>{t('forgot.findCta')}</Text>
             )}
           </TouchableOpacity>
           <TouchableOpacity style={s.backBtn} onPress={() => { setStep(1); setFindQuery(''); setFoundEmails([]); }} activeOpacity={0.6}>
-            <Text style={[s.backText, { color: colors.primary }]}>Voltar</Text>
+            <Text style={[s.backText, { color: colors.primary }]}>{t('forgot.back')}</Text>
           </TouchableOpacity>
         </View>
       </>
@@ -488,9 +529,9 @@ export default function ForgotPassword() {
                   <IconMail size={22} color={colors.brandSecondary} />
                 </View>
                 <View style={s.methodInfo}>
-                  <Text style={[s.methodTitle, { color: colors.text }]}>Email Chatyy</Text>
+                  <Text style={[s.methodTitle, { color: colors.text }]}>{t('forgot.methodSelfEmail')}</Text>
                   <Text style={[s.methodDesc, { color: colors.textSecondary }]}>
-                    Enviar codigo para {emailMasked}
+                    {t('forgot.methodSelfEmailTo', { email: emailMasked })}
                   </Text>
                 </View>
                 {loading && selectedMethod === 'self_email' ? (
@@ -587,20 +628,45 @@ export default function ForgotPassword() {
       <>
         {renderError()}
 
+        {/* Keychain anchor: lets iOS / password managers attach the NEW
+            password to THIS account (invisible, not focusable). */}
+        <View pointerEvents="none" importantForAccessibility="no-hide-descendants" accessibilityElementsHidden style={{ position: 'absolute', width: 1, height: 1, opacity: 0, overflow: 'hidden' }}>
+          <TextInput
+            value={fullEmail}
+            editable
+            textContentType="username"
+            autoComplete="username"
+            importantForAutofill="yes"
+            autoCapitalize="none"
+            {...(Platform.OS === 'web' ? { tabIndex: -1 } : {})}
+            style={{ width: 1, height: 1 }}
+          />
+        </View>
+
         <Text style={[s.label, { color: colors.authLabelColor }]}>{t('forgot.newPassword')}</Text>
         <View style={inputBoxStyle('newPwd')}>
           <TextInput
             style={[s.textInput, { color: colors.text }]}
             value={newPwd}
-            onChangeText={setNewPwd}
+            onChangeText={(v) => { setNewPwd(v); if (error) setError(''); }}
             placeholder={t('forgot.newPasswordPlaceholder')}
             placeholderTextColor={colors.textTertiary}
             secureTextEntry={!showPwd}
+            // iOS strong-password suggestion + Keychain update; Android/web
+            // password managers offer to save the NEW password.
+            textContentType="newPassword"
+            autoComplete={Platform.OS === 'android' ? 'password-new' : 'new-password'}
+            passwordRules="minlength: 8;"
+            importantForAutofill="yes"
+            autoCapitalize="none"
+            autoCorrect={false}
+            returnKeyType="next"
+            accessibilityLabel={t('forgot.newPassword')}
             autoFocus
             onFocus={() => setFocused('newPwd')}
             onBlur={() => setFocused('')}
           />
-          <TouchableOpacity style={s.eyeBtn} onPress={() => setShowPwd(!showPwd)} activeOpacity={0.6}>
+          <TouchableOpacity style={s.eyeBtn} onPress={() => setShowPwd(!showPwd)} activeOpacity={0.6} accessibilityRole="button" accessibilityLabel={showPwd ? t('login.hidePassword') : t('login.showPassword')}>
             {showPwd ? <IconEyeOff size={18} color={colors.textSecondary} /> : <IconEye size={18} color={colors.textSecondary} />}
           </TouchableOpacity>
         </View>
@@ -612,14 +678,22 @@ export default function ForgotPassword() {
           <TextInput
             style={[s.textInput, { color: colors.text }]}
             value={confirmPwd}
-            onChangeText={setConfirmPwd}
+            onChangeText={(v) => { setConfirmPwd(v); if (error) setError(''); }}
             placeholder={t('forgot.repeatPassword')}
             placeholderTextColor={colors.textTertiary}
             secureTextEntry={!showConfirm}
+            textContentType="newPassword"
+            autoComplete={Platform.OS === 'android' ? 'password-new' : 'new-password'}
+            importantForAutofill="yes"
+            autoCapitalize="none"
+            autoCorrect={false}
+            returnKeyType="go"
+            onSubmitEditing={() => { if (!loading) handleReset(); }}
+            accessibilityLabel={t('forgot.confirmNewPassword')}
             onFocus={() => setFocused('confirmPwd')}
             onBlur={() => setFocused('')}
           />
-          <TouchableOpacity style={s.eyeBtn} onPress={() => setShowConfirm(!showConfirm)} activeOpacity={0.6}>
+          <TouchableOpacity style={s.eyeBtn} onPress={() => setShowConfirm(!showConfirm)} activeOpacity={0.6} accessibilityRole="button" accessibilityLabel={showConfirm ? t('login.hidePassword') : t('login.showPassword')}>
             {showConfirm ? <IconEyeOff size={18} color={colors.textSecondary} /> : <IconEye size={18} color={colors.textSecondary} />}
           </TouchableOpacity>
         </View>
@@ -714,12 +788,11 @@ export default function ForgotPassword() {
         </View>
       </TouchableOpacity>
 
-    <KeyboardAvoidingView
-      style={s.flex}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+    <LoginKeyboardScroll
+      contentContainerStyle={s.scroll}
+      bottomOffset={96}
       keyboardVerticalOffset={Platform.OS === 'ios' ? insets.top : 0}
     >
-      <ScrollView contentContainerStyle={s.scroll} keyboardShouldPersistTaps="handled">
         <View style={[s.center, { paddingBottom: 48 + insets.bottom }]}>
           <Animated.View style={[s.cardWrap, { opacity: fadeAnim, transform: [{ scale: entryScale }, { translateY: slideAnim }] }]}>
             <View style={[s.card, {
@@ -773,8 +846,7 @@ export default function ForgotPassword() {
             <TermsModal visible={showTerms} onClose={() => setShowTerms(false)} />
           </Animated.View>
         </View>
-      </ScrollView>
-    </KeyboardAvoidingView>
+    </LoginKeyboardScroll>
     </View>
   );
 }

@@ -1,4 +1,4 @@
-import { requireNativeModule } from 'expo';
+import { requireOptionalNativeModule } from 'expo';
 
 declare class ExpoAudioSessionClass {
   /**
@@ -43,4 +43,9 @@ declare class ExpoAudioSessionClass {
   enableProximitySensor(enabled: boolean): void;
 }
 
-export default requireNativeModule<ExpoAudioSessionClass>('ExpoAudioSession');
+// [2026-10-07 system-improve] requireNativeModule LANÇA no init do módulo quando o
+// nativo não existe (web, binário sem o módulo). Como os call sites fazem
+// require() preguiçoso, o throw vira erro fatal do Metro (try/catch não protege)
+// — visto em prod: "Cannot find native module 'ExpoAudioSession'" no web
+// (crashes/20261007.log). Todos os call sites já usam `?.` → null é seguro.
+export default requireOptionalNativeModule<ExpoAudioSessionClass>('ExpoAudioSession') as ExpoAudioSessionClass | null;

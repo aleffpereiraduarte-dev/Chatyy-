@@ -30,7 +30,6 @@ import * as api from '../services/api';
 import { firebasePhoneAvailable, fbSendCode, fbConfirm, fbSignOut } from '../services/firebasePhone';
 import { getDeviceId as getE2eDeviceId, getDevicePublicKey as getE2eDevicePublicKey } from '../services/e2e';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import useDebouncedCallback from '../hooks/useDebouncedCallback';
 // COUNTRIES (with masks/maxDigits) used to power format-as-you-type. The
 // local COUNTRY_CODES list above (dial-keyed) handles the picker chip; we
 // look up the matching mask from the canonical list at typing time.
@@ -39,6 +38,21 @@ import * as LocalAuthentication from 'expo-local-authentication';
 import * as SecureStore from 'expo-secure-store';
 import * as Haptics from 'expo-haptics';
 import Svg, { Path, Rect, Circle as SvgCircle, Defs, Pattern, Line, RadialGradient, Stop, Mask } from 'react-native-svg';
+// [2026-10-07 login-ux] Smart single-field login (phone / e-mail / @usuário),
+// remembered accounts, inline notices, keyboard-aware scroll.
+import { tap as hTap, selection as hSelection, success as hSuccess } from '../services/haptics';
+import { onNetworkChange } from '../services/networkInfo';
+import AvatarCircle from '../components/AvatarCircle';
+import PressableScale from '../components/PressableScale';
+import SmartIdentifierField from '../components/login/SmartIdentifierField';
+import RememberedAccounts, { BiometricGlyph } from '../components/login/RememberedAccounts';
+import LoginNotice, { SuggestionChip } from '../components/login/LoginNotice';
+import LoginKeyboardScroll from '../components/login/LoginKeyboardScroll';
+import {
+  classifyIdentifier, normalizeLoginEmail, isPlausibleEmail, identifierHints,
+  suggestEmailFix, splitInternational, detectDefaultCountry, passwordHints,
+  loadLastIdentifier, saveLastIdentifier, forgetLastIdentifier,
+} from '../components/login/loginSmart';
 
 // Tiny wrapper so haptic calls never throw on web or older devices.
 const safeHaptic = (fn) => { try { fn?.(); } catch {} };
@@ -59,7 +73,19 @@ export default function LoginScreen() {
   // Forced first-login password change (admin-provisioned mailbox w/ temp pwd).
   const [forcePwChange, setForcePwChange] = useState(false);
   const pendingGoRef = useRef(null);
-  const { login, completeLoginAfterChallenge, loginWithToken } = useAuth();
+  const { login, completeLoginAfterChallenge, loginWithToken, removeAccount } = useAuth();
+  // ── [2026-10-07 login-ux] smart identifier + device-aware state ──
+  const [identifier, setIdentifier] = useState('');
+  const [online, setOnline] = useState(true);
+  const [capsLockOn, setCapsLockOn] = useState(false); // web only (real CapsLock state)
+  const [pwHint, setPwHint] = useState(''); // shown after a failed password attempt
+  const [remembered, setRemembered] = useState([]); // [{ email, name, token }]
+  const [useAnother, setUseAnother] = useState(false); // user chose "Entrar com outra conta"
+  const [busyEmail, setBusyEmail] = useState(''); // remembered row doing a one-tap login
+  const [bioReadyEmail, setBioReadyEmail] = useState(''); // Face ID usable for THIS email
+  const [otpChannelNote, setOtpChannelNote] = useState(''); // "Enviamos por WhatsApp e SMS"
+  const identifierRef = useRef(null);
+  const goToPasswordRef = useRef(null);
   const { colors, isDark, toggle } = useAuthTheme();
   const insets = useSafeAreaInsets();
   const { t, language, changeLanguage } = useLanguage();
@@ -70,10 +96,13 @@ export default function LoginScreen() {
 
   // When re-logging into an existing account from the account switcher, the
   // email is passed as ?email=... so the user only has to type the password.
+  // [2026-10-07 login-ux] Was setEmail+setStep(2) only — but loginMode stayed
+  // 'phone' on mobile, so the password step never rendered and the user saw
+  // the phone form instead. goToPasswordRef switches mode + step together.
   useEffect(() => {
     const pre = typeof params?.email === 'string' ? params.email : (Array.isArray(params?.email) ? params.email[0] : '');
     if (isAddAccount && pre) {
-      try { setEmail(pre); setStep(2); } catch {}
+      try { goToPasswordRef.current?.(normalizeLoginEmail(pre)); } catch {}
     }
   }, [isAddAccount, params?.email]);
 
@@ -276,7 +305,10 @@ export default function LoginScreen() {
   // your phone), mobile opens to phone-OTP. Email/password becomes the
   // "advanced" tab for legacy accounts. Persists nothing — fresh load each
   // open is fine since there's no logged-in state at this point anyway.
-  const [loginMode, setLoginMode] = useState(isDesktop ? 'qr' : 'phone');
+  // [2026-10-07 login-ux] 'smart' = single identifier field (phone / e-mail /
+  // @usuário). 'phone' now only hosts the OTP step, 'email' only the password
+  // step — both are reached FROM 'smart'. Desktop still opens on QR.
+  const [loginMode, setLoginMode] = useState(isDesktop ? 'qr' : 'smart');
 
   // Telegram-style intro carousel — ONLY shown on the very first visit
   // per device. Once user dismisses (or completes), persist a flag so
@@ -310,6 +342,7 @@ export default function LoginScreen() {
     try {
       const raw = String(params?.phone || '').replace(/[^0-9]/g, '');
       if (!raw) return '';
+      if (raw.length >= 11) { const sp = splitInternational('+' + raw); if (sp && sp.national.length >= 8) return sp.national; }
       // Best-effort strip of country code: if it starts with 55 and is BR-shaped,
       // drop the 55 prefix. For other countries the full number is fine.
       if (raw.startsWith('55') && raw.length >= 12) return raw.slice(2);
@@ -317,7 +350,15 @@ export default function LoginScreen() {
       return raw;
     } catch { return ''; }
   });
-  const [phoneCountryCode, setPhoneCountryCode] = useState('+55');
+  // Default DDI from the device locale (pt-BR → +55, en-US → +1, es-MX → +52)
+  // instead of always +55. A "+…" bounce from signup-phone wins.
+  const [phoneCountryCode, setPhoneCountryCode] = useState(() => {
+    try {
+      const raw = String(params?.phone || '').replace(/[^0-9]/g, '');
+      if (raw.length >= 11) { const sp = splitInternational('+' + raw); if (sp) return sp.country.dial; }
+    } catch {}
+    try { return detectDefaultCountry().dial; } catch { return '+55'; }
+  });
   const [phoneOtp, setPhoneOtp] = useState(['', '', '', '', '', '']);
   const [phoneOtpFocused, setPhoneOtpFocused] = useState(false);
   const [phoneStep, setPhoneStep] = useState('input'); // 'input' or 'otp'
@@ -330,11 +371,6 @@ export default function LoginScreen() {
   const [phoneSending, setPhoneSending] = useState(false);
   const [phoneVerifying, setPhoneVerifying] = useState(false);
   const [phoneResendTimer, setPhoneResendTimer] = useState(0);
-  // Smart-detect: as the user types a phone, ping the backend to see
-  // whether that number already has a Chatyy account so we can swap the
-  // CTA copy ("Entrar" vs "Criar conta") and reassure the user that the
-  // SMS will reach the right inbox. WhatsApp/iMessage parity.
-  const [phoneAccountState, setPhoneAccountState] = useState({ status: 'idle', phone: '' });
   const phoneOtpRefs = useRef([]);
   const phoneResendRef = useRef(null);
   // Firebase Phone Auth (2026-06-18): when available (native), the OTP is sent
@@ -406,6 +442,7 @@ export default function LoginScreen() {
   // (Face ID vs Touch ID vs generic fingerprint for Android).
   const [bioType, setBioType] = useState('none'); // 'face' | 'touch' | 'fingerprint' | 'none'
 
+  const hasHwRef = useRef(false);
   // Check biometric availability on mount (native only)
   useEffect(() => {
     if (!isNative) return;
@@ -419,6 +456,7 @@ export default function LoginScreen() {
         // handleBiometricLogin) — matches Telegram/banking UX where Face ID
         // is always visible, not hidden behind "log in once first".
         if (hasHw && isEnrolled) {
+          hasHwRef.current = true;
           setBioAvailable(true);
           // Detect biometric kind for icon
           try {
@@ -444,6 +482,17 @@ export default function LoginScreen() {
       try {
         const savedEmail = await SecureStore.getItemAsync('bio_email');
         if (savedEmail) setShowIntro(false);
+        // [2026-10-07 login-ux] Quick unlock is offered ONLY when it can
+        // actually work: enrolled biometrics + bio_email + the per-account
+        // bearer twin (handleBiometricLogin refuses the global token without
+        // it). Before, the button showed for everyone and mostly answered
+        // "Token não salvo" — explicit logout wipes bio_email/bio_token.
+        if (savedEmail && hasHwRef.current) {
+          const { bioTokenKeyFor } = require('../context/BiometricContext');
+          const k = bioTokenKeyFor(savedEmail);
+          const tok = k ? await SecureStore.getItemAsync(k) : null;
+          if (tok && mountedRef.current) setBioReadyEmail(String(savedEmail));
+        }
       } catch {}
     })();
   }, []);
@@ -516,6 +565,8 @@ export default function LoginScreen() {
         const r = await loginWithToken(savedToken, savedEmail);
         if (!mountedRef.current) return;
         if (r.success) {
+          saveLastIdentifier(savedEmail);
+          showSuccessPop();
           goAfterLogin(r.data?.is_child || isChildAccount());
         } else {
           // Token expired — clear it but keep bio_email. Pre-fill + advance
@@ -530,9 +581,11 @@ export default function LoginScreen() {
             const k = bioTokenKeyFor(savedEmail);
             if (k) await SecureStore.deleteItemAsync(k);
           } catch {}
-          try { setEmail(savedEmail); setStep(2); } catch {}
-          const reason = r?.message ? ` (${r.message.slice(0, 60)})` : '';
-          setError((t('login.biometricExpired') || 'Sessão expirada. Digite a senha para reativar o Face ID.') + reason);
+          try { goToPasswordRef.current?.(savedEmail); } catch {}
+          setBioReadyEmail('');
+          // [2026-10-07 login-ux] friendly copy only — the raw server reason
+          // used to be appended here (diagnostic) and read as an error code.
+          setError(t('login.biometricExpired'));
         }
       } else if (legacyPassword) {
         setLoading(true);
@@ -555,7 +608,7 @@ export default function LoginScreen() {
           goAfterLogin(r.data?.is_child || isChildAccount());
         } else {
           try { await SecureStore.deleteItemAsync('bio_password'); } catch {}
-          try { setEmail(savedEmail); setStep(2); } catch {}
+          try { goToPasswordRef.current?.(savedEmail); } catch {}
         }
       } else {
         // Biometric OK but nothing to log in with — advance to password
@@ -563,8 +616,8 @@ export default function LoginScreen() {
         // (api.getToken() returned empty at save-time). User needs to login
         // with password ONCE so the token gets stashed in SecureStore for
         // next time.
-        try { setEmail(savedEmail); setStep(2); } catch {}
-        setError('Token não salvo. Entre com senha 1x para ativar o Face ID.');
+        try { goToPasswordRef.current?.(savedEmail); } catch {}
+        setError(t('login.biometricNotSaved'));
       }
     } catch {
       // Real exception only — user cancellation is the !result.success branch.
@@ -700,65 +753,82 @@ export default function LoginScreen() {
       }),
       Animated.timing(cardFadeAnim, { toValue: 1, duration: 250, easing: Easing.bezier(0.23, 1, 0.32, 1), useNativeDriver: true }),
       Animated.timing(cardSlideAnim, { toValue: 0, duration: 250, easing: Easing.bezier(0.23, 1, 0.32, 1), useNativeDriver: true }),
-    ]).start(() => {
-      // Start ambient loops after the entrance settles (avoids fighting the
-      // pop). Breath: 1 → 1.04 → 1 over 2.6s. Halo: opacity sine wave 0.3↔0.7
-      // over 2.6s, offset 1.3s so it pulses out-of-phase with the breath.
-      Animated.loop(
-        Animated.sequence([
-          Animated.timing(logoBreathAnim, { toValue: 1.04, duration: 1300, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
-          Animated.timing(logoBreathAnim, { toValue: 1, duration: 1300, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
-        ])
-      ).start();
-      Animated.loop(
-        Animated.sequence([
-          Animated.timing(haloAnim, { toValue: 0.75, duration: 1300, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
-          Animated.timing(haloAnim, { toValue: 0.35, duration: 1300, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
-        ])
-      ).start();
-      // Background orbs drift in opposite slow circles. Both run for the
-      // session lifetime — cheap (translate-only, native-driver friendly).
-      Animated.loop(
-        Animated.sequence([
-          Animated.timing(orb1Anim, { toValue: { x: 14, y: -10 }, duration: 5200, easing: Easing.inOut(Easing.quad), useNativeDriver: true }),
-          Animated.timing(orb1Anim, { toValue: { x: 0, y: 0 }, duration: 5200, easing: Easing.inOut(Easing.quad), useNativeDriver: true }),
-        ])
-      ).start();
-      Animated.loop(
-        Animated.sequence([
-          Animated.timing(orb2Anim, { toValue: { x: -16, y: 12 }, duration: 6400, easing: Easing.inOut(Easing.quad), useNativeDriver: true }),
-          Animated.timing(orb2Anim, { toValue: { x: 0, y: 0 }, duration: 6400, easing: Easing.inOut(Easing.quad), useNativeDriver: true }),
-        ])
-      ).start();
-    });
+    ]).start();
+    // [2026-10-07 login-ux] Ambient loops (logo breath, halo pulse, two
+    // drifting orbs) removed together with the orb hero — 4 infinite
+    // animations for the whole time the login was open, for decoration.
 
     return () => {
       mountedRef.current = false;
     };
   }, []);
 
-  const animateStep = (next) => {
-    // Telegram-grade horizontal slide: full ~140px shift instead of the
-    // subtle 30px so the transition feels like the screen is *traveling*
-    // forward (next=2) or back (next=1). Outgoing fades + slides off,
-    // then the incoming arrives from the opposite side with a spring
-    // settle. Ease-out on the outgoing side so it doesn't drag.
-    const SHIFT = 140;
-    const out = next === 2 ? -SHIFT : SHIFT;
+  // [2026-10-07 login-ux] Content swap between smart → password / OTP.
+  // The state change is applied IMMEDIATELY (the old animateStep only switched
+  // step inside the animation-finished callback — if the native driver
+  // hiccuped, the screen never advanced). The motion is cosmetic and starts
+  // from a visible value (opacity 0.6), so a stuck Animated value can never
+  // hide the form.
+  const swapTo = (apply, dir = 1) => {
+    try { apply(); } catch {}
+    slideAnim.setValue(22 * dir);
+    fadeAnim.setValue(0.6);
     Animated.parallel([
-      Animated.timing(fadeAnim, { toValue: 0, duration: 160, easing: Easing.bezier(0.4, 0, 1, 1), useNativeDriver: true }),
-      Animated.timing(slideAnim, { toValue: out, duration: 160, easing: Easing.bezier(0.4, 0, 1, 1), useNativeDriver: true }),
-    ]).start(() => {
-      setStep(next);
-      if (next === 1) setError('');
-      slideAnim.setValue(-out);
-      Animated.parallel([
-        Animated.spring(fadeAnim, { toValue: 1, tension: 80, friction: 10, useNativeDriver: true }),
-        Animated.spring(slideAnim, { toValue: 0, tension: 80, friction: 10, useNativeDriver: true }),
-      ]).start(() => {
-        if (next === 2) passwordRef.current?.focus();
-      });
-    });
+      Animated.spring(slideAnim, { toValue: 0, tension: 90, friction: 13, useNativeDriver: true }),
+      Animated.timing(fadeAnim, { toValue: 1, duration: 180, easing: Easing.out(Easing.quad), useNativeDriver: true }),
+    ]).start();
+  };
+
+  const goToPassword = (em) => {
+    swapTo(() => {
+      setEmail(em);
+      setPassword('');
+      setShowPassword(false);
+      setPwHint('');
+      setError('');
+      setStep(2);
+      setLoginMode('email');
+    }, 1);
+    setTimeout(() => { try { passwordRef.current?.focus(); } catch {} }, 280);
+  };
+  goToPasswordRef.current = goToPassword;
+
+  const backToSmart = () => {
+    hSelection();
+    swapTo(() => {
+      // Keep what the user typed so "voltar" is never destructive. Came from
+      // the remembered list (row tap, nothing typed)? → back to the list.
+      if (loginMode === 'email' && email) {
+        const fromRoster = !identifier && remembered.some(a => a.email === email);
+        if (!fromRoster) {
+          if (!identifier) setIdentifier(email);
+          setUseAnother(true);
+        }
+      }
+      setLoginMode('smart');
+      setStep(1);
+      setError('');
+      setPwHint('');
+      setPhoneStep('input');
+      setPhoneOtp(['', '', '', '', '', '']);
+      setPhoneRequiresLock(false);
+      setPhoneLockPin('');
+      setOtpChannelNote('');
+    }, -1);
+  };
+
+  // Big check pop between "auth OK" and the route change (password, Face ID,
+  // remembered-account and OTP logins all use it now).
+  const showSuccessPop = () => {
+    try {
+      hSuccess();
+      setLoginSuccess(true);
+      successAnim.setValue(0.6);
+      Animated.spring(successAnim, { toValue: 1, friction: 6, tension: 110, useNativeDriver: true }).start();
+      // Never let the (touch-blocking) overlay outlive a navigation that
+      // didn't happen (restore prompt, route guard bounce…).
+      setTimeout(() => { if (mountedRef.current) setLoginSuccess(false); }, 2500);
+    } catch {}
   };
 
   const shake = () => {
@@ -772,16 +842,158 @@ export default function LoginScreen() {
     ]).start();
   };
 
-  const handleContinue = () => {
-    safeHaptic(() => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light));
-    const trimmed = email.trim();
-    if (!trimmed) { setError(t('login.errorEmail')); shake(); return; }
-    if (trimmed.includes('@') && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed)) {
-      setError(t('login.errorEmail')); shake(); return;
+  // [2026-10-07 login-ux] Single smart entry: phone → OTP, e-mail / @handle
+  // → password. Replaces the separate phone form + "Entrar com email" step 1.
+  const handleSmartContinue = () => {
+    hTap('light');
+    const raw = identifier;
+    const kind = classifyIdentifier(raw);
+    if (kind === 'empty') {
+      setError(t('login.errorIdentifierEmpty'));
+      shake();
+      try { identifierRef.current?.focus(); } catch {}
+      return;
     }
+    if (kind === 'phone') {
+      let dial = phoneCountryCode;
+      let national = String(raw).replace(/\D/g, '');
+      if (String(raw).trim().startsWith('+')) {
+        const sp = splitInternational(raw);
+        if (!sp) { setError(t('login.phoneInvalid')); shake(); return; }
+        dial = sp.country.dial;
+        national = sp.national;
+      }
+      national = national.replace(/^0+/, '');
+      if (national.length < 8 || !/^\+[1-9]\d{7,14}$/.test(dial + national)) {
+        setError(t('login.phoneInvalid')); shake(); return;
+      }
+      if (!online) { setError(t('login.errorOffline')); shake(); return; }
+      setPhoneCountryCode(dial);
+      setPhoneNumber(national);
+      handlePhoneSendOtp('sms', { dial, national });
+      return;
+    }
+    const em = normalizeLoginEmail(raw);
+    if (!isPlausibleEmail(em)) { setError(t('login.errorEmailInvalid')); shake(); return; }
     setError('');
-    animateStep(2);
+    goToPassword(em);
   };
+
+  // One tap on a remembered account: Face ID (if bound to it) → stored session
+  // (other accounts still signed in on this device) → password prefilled.
+  const handleRememberedSelect = async (acc) => {
+    if (!acc?.email || busyEmail) return;
+    setError('');
+    if (bioAvailable && bioReadyEmail && bioReadyEmail === acc.email) {
+      handleBiometricLogin();
+      return;
+    }
+    if (acc.token && online) {
+      setBusyEmail(acc.email);
+      try {
+        const r = await loginWithToken(acc.token, acc.email);
+        if (!mountedRef.current) return;
+        if (r?.success) {
+          saveLastIdentifier(acc.email);
+          showSuccessPop();
+          goAfterLogin(r.data?.is_child || isChildAccount());
+          return;
+        }
+      } catch {}
+      finally { if (mountedRef.current) setBusyEmail(''); }
+    }
+    goToPassword(acc.email);
+  };
+
+  // "Remover deste aparelho": drops the roster row (AuthContext.removeAccount
+  // also revokes a still-stored bearer server-side), the Face ID binding and
+  // the remembered identifier if they point at this account.
+  const handleRememberedRemove = async (acc) => {
+    hSelection();
+    const em = acc?.email;
+    if (!em) return;
+    setRemembered(prev => prev.filter(a => a.email !== em));
+    try { await removeAccount?.(em); } catch { try { api.removeStoredAccount?.(em); } catch {} }
+    try {
+      const last = await loadLastIdentifier();
+      if (last && last.toLowerCase() === em.toLowerCase()) forgetLastIdentifier();
+    } catch {}
+    if (Platform.OS !== 'web' && bioReadyEmail === em) {
+      try {
+        const { bioTokenKeyFor } = require('../context/BiometricContext');
+        const k = bioTokenKeyFor(em);
+        if (k) await SecureStore.deleteItemAsync(k);
+        await SecureStore.deleteItemAsync('bio_email');
+        await SecureStore.deleteItemAsync('bio_token');
+      } catch {}
+      setBioReadyEmail('');
+    }
+  };
+
+  // ── [2026-10-07 login-ux] device-aware effects ──
+  // Remembered accounts (multi-account roster: email+name; token only for
+  // accounts still signed in). Native loads the roster from SecureStore
+  // asynchronously at module init → read again shortly after mount.
+  useEffect(() => {
+    let alive = true;
+    const read = () => {
+      try {
+        const list = api.getStoredAccounts?.() || [];
+        const seen = new Set();
+        const out = [];
+        for (const a of (Array.isArray(list) ? list : [])) {
+          const em = typeof a?.email === 'string' ? a.email.trim() : '';
+          if (!em || !em.includes('@')) continue;
+          const k = em.toLowerCase();
+          if (seen.has(k)) continue;
+          seen.add(k);
+          out.push({ email: em, name: typeof a.name === 'string' ? a.name : '', token: typeof a.token === 'string' ? a.token : '' });
+        }
+        return out.slice(0, 4);
+      } catch { return []; }
+    };
+    const apply = () => { if (alive) setRemembered(read()); };
+    apply();
+    const tm = setTimeout(apply, 600);
+    return () => { alive = false; clearTimeout(tm); };
+  }, []);
+
+  // Prefill the identifier: signup bounce (?phone=) > last successful identifier.
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      if (phoneNumber) { if (alive) setIdentifier(phoneNumber); return; }
+      if (isAddAccount) return;
+      const last = await loadLastIdentifier();
+      if (!alive || !last) return;
+      if (last.startsWith('+')) {
+        const sp = splitInternational(last);
+        if (sp) { setPhoneCountryCode(sp.country.dial); setIdentifier(sp.national); return; }
+      }
+      setIdentifier(prev => prev || last);
+    })();
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Offline banner — the old screen only said "Erro de conexão" after a tap.
+  useEffect(() => {
+    let off = null;
+    try { off = onNetworkChange((st) => { if (mountedRef.current) setOnline(st?.isConnected !== false); }); } catch {}
+    return () => { try { off && off(); } catch {} };
+  }, []);
+
+  // Web: real Caps Lock state (KeyboardEvent.getModifierState). Native has no
+  // API for it — there we only hint AFTER a failed attempt (passwordHints).
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof document === 'undefined') return;
+    const h = (e) => {
+      try { if (typeof e?.getModifierState === 'function') setCapsLockOn(!!e.getModifierState('CapsLock')); } catch {}
+    };
+    document.addEventListener('keydown', h);
+    document.addEventListener('keyup', h);
+    return () => { document.removeEventListener('keydown', h); document.removeEventListener('keyup', h); };
+  }, []);
 
   // ── Passkey (WebAuthn) login — FLAG-GATED, default OFF. ────────────────────
   // The button that calls this is only rendered when PASSKEYS_ENABLED is true
@@ -793,14 +1005,14 @@ export default function LoginScreen() {
   const handlePasskeyLogin = async () => {
     if (!PASSKEYS_ENABLED) return; // hard guard — never runs while gated off
     try {
-      const fullEmail = email.includes('@') ? email : `${email}@chatyy.com.br`;
-      if (!fullEmail || !fullEmail.includes('@')) { setError(t('login.errorEmail') || 'Informe o email'); shake(); return; }
+      const fullEmail = normalizeLoginEmail(email);
+      if (!fullEmail || !fullEmail.includes('@')) { setError(t('login.errorEmail')); shake(); return; }
 
       // Lazy-require the native passkey module. Absent today → graceful notice.
       let Passkey = null;
       try { Passkey = require('react-native-passkey').Passkey; } catch { Passkey = null; }
       if (!Passkey) {
-        Alert.alert(t('login.passkey') || 'Passkey', t('login.passkeyUnavailable') || 'Passkey ainda nao esta disponivel neste app.');
+        setError(t('login.passkeyUnavailable'));
         return;
       }
 
@@ -816,7 +1028,7 @@ export default function LoginScreen() {
       // 1) begin — get assertion options + challenge from the server.
       const begin = await pkFetch('passkey_login_begin', { email: fullEmail });
       if (!begin?.success || !begin?.data?.has_passkeys) {
-        Alert.alert(t('login.passkey') || 'Passkey', t('login.passkeyNone') || 'Nenhuma passkey cadastrada nesta conta.');
+        setError(t('login.passkeyNone'));
         setLoading(false); return;
       }
       // 2) platform authenticator (Face ID / Touch ID / Android biometrics).
@@ -849,12 +1061,18 @@ export default function LoginScreen() {
   };
 
   const handleLogin = async () => {
-    safeHaptic(() => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light));
+    if (loading) return; // return-key + button double fire
+    hTap('light');
     if (!password) { setError(t('login.errorPassword')); shake(); return; }
+    if (!online) { setError(t('login.errorOffline')); shake(); return; }
     setError('');
+    setPwHint('');
     setLoading(true);
     try {
-      const fullEmail = email.includes('@') ? email : `${email}@chatyy.com.br`;
+      // [2026-10-07 login-ux] trim/whitespace/case-normalised identifier
+      // (Dovecot lowercases on auth; a trailing space used to fail as
+      // "senha incorreta"). The password is NEVER altered.
+      const fullEmail = normalizeLoginEmail(email);
       const r = await login(fullEmail, password);
       if (!mountedRef.current) return;
       if (r.success) {
@@ -897,7 +1115,7 @@ export default function LoginScreen() {
           }
         }
         // Kids go to chat, adults go to inbox
-        safeHaptic(() => Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success));
+        saveLastIdentifier(fullEmail);
         const isKids = r.data?.is_child || isChildAccount();
         // Admin-provisioned mailbox with a temporary password: force the user
         // to set a new one before entering the app. Session/token are already
@@ -908,6 +1126,7 @@ export default function LoginScreen() {
           setLoading(false);
           return;
         }
+        showSuccessPop();
         maybePromptRestoreThenGo(isKids, fullEmail);
       } else {
         // Backend returns "Incorrect email or password" in English + various
@@ -915,10 +1134,22 @@ export default function LoginScreen() {
         // For any of those, show the translated credential error — only show
         // the raw backend message if it's a specific PT-BR one we don't know.
         const rawMsg = r.message || '';
+        // [2026-10-07 login-ux] Rate limit first (its text also contains
+        // "senha"/"email" and was shown as a wrong-password error). Wrong
+        // credentials stay ONE generic message — never says which part failed.
+        const isRateLimited = /too many|muitas tentativas|aguarde|try again later|bloquead|rate.?limit/i.test(rawMsg);
         const isCredError = /incorrect|invalid|wrong|credencia|senha|password|email/i.test(rawMsg);
         const isGeneric = /servidor|indispon|unavail|connection|login failed|tempo limite/i.test(rawMsg);
-        if (!rawMsg || isCredError || isGeneric) {
+        if (isRateLimited) {
+          setError(t('login.errorRateLimited'));
+        } else if (!rawMsg || isCredError || isGeneric) {
           setError(t('login.errorCredentials'));
+          // Smart, local-only hints about the most common self-inflicted
+          // failures. Nothing here comes from the server.
+          const ph = passwordHints(password);
+          if (Platform.OS === 'web' && capsLockOn) setPwHint(t('login.hintCapsLock'));
+          else if (ph.allCaps) setPwHint(t('login.hintAllCaps'));
+          else if (ph.outerSpace) setPwHint(t('login.hintPasswordSpace'));
         } else {
           setError(rawMsg);
         }
@@ -926,7 +1157,7 @@ export default function LoginScreen() {
       }
     } catch {
       if (!mountedRef.current) return;
-      setError(t('login.errorConnection'));
+      setError(online ? t('login.errorConnection') : t('login.errorOffline'));
       shake();
     } finally {
       if (mountedRef.current) setLoading(false);
@@ -1228,14 +1459,22 @@ export default function LoginScreen() {
     return COUNTRY_CODES.filter(c => c.name.toLowerCase().includes(q) || c.code.includes(q) || c.label.toLowerCase().includes(q));
   }, [countrySearch]);
 
-  const handlePhoneSendOtp = async (channel = 'sms') => {
-    safeHaptic(() => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light));
-    const cleaned = phoneNumber.replace(/[^0-9]/g, '').replace(/^0+/, '');
-    if (cleaned.length < 8 || !/^\+[1-9]\d{7,14}$/.test(phoneCountryCode + cleaned)) { setError(t('login.phoneInvalid')); shake(); return; }
+  // [2026-10-07 login-ux] `override` = { dial, national } from the smart field
+  // (React state set in the same tick isn't readable yet). channel 'backend'
+  // skips Firebase and asks OUR verify_send, which in BR delivers the SAME
+  // code by WhatsApp AND SMS (intl: WhatsApp first, SMS fallback) — this is
+  // the "Receber pelo WhatsApp" option on the code screen.
+  const handlePhoneSendOtp = async (channel = 'sms', override = null) => {
+    if (phoneSending) return;
+    hTap('light');
+    const dialUse = (override && override.dial) || phoneCountryCode;
+    const cleaned = String((override && override.national) ?? phoneNumber).replace(/[^0-9]/g, '').replace(/^0+/, '');
+    if (cleaned.length < 8 || !/^\+[1-9]\d{7,14}$/.test(dialUse + cleaned)) { setError(t('login.phoneInvalid')); shake(); return; }
+    if (!online) { setError(t('login.errorOffline')); shake(); return; }
     setError('');
     setPhoneSending(true);
     try {
-      const fullPhone = phoneCountryCode + cleaned;
+      const fullPhone = dialUse + cleaned;
       // Unified flow (user feedback 2026-05-07): just send the SMS — don't
       // pre-flight an exists check that interrupts with "não encontramos
       // sua conta, vamos criar uma" before the OTP screen. After the user
@@ -1251,6 +1490,7 @@ export default function LoginScreen() {
       // anything that isn't a known channel string back to 'sms'. The voice
       // channel asks Vonage to PLACE A CALL that reads the code aloud (PT-BR
       // Polly), so it must skip Firebase and go straight to the backend OTP.
+      const backendOnly = channel === 'backend';
       const ch = (channel === 'voice' || channel === 'force_sms') ? channel : 'sms';
       // Firebase Phone Auth first for SMS (Google sends it — best BR
       // deliverability). Reset any prior attempt's state, then try Firebase;
@@ -1261,7 +1501,7 @@ export default function LoginScreen() {
       fbIdTokenRef.current = null;
       phoneViaFirebaseRef.current = false;
       let r;
-      if (ch === 'sms' && firebasePhoneAvailable()) {
+      if (ch === 'sms' && !backendOnly && firebasePhoneAvailable()) {
         const fb = await fbSendCode(fullPhone);
         if (fb.ok) {
           phoneViaFirebaseRef.current = true;
@@ -1272,7 +1512,20 @@ export default function LoginScreen() {
       if (!r) r = await api.verifySend(fullPhone, ch);
       if (!mountedRef.current) return;
       if (r.success) {
-        setPhoneStep('otp');
+        // Tell the user WHERE the code went (verify_send reports both flags).
+        const wa = !!r.data?.whatsapp_sent; const sms = !!r.data?.sms_sent;
+        setOtpChannelNote(
+          phoneViaFirebaseRef.current ? t('login.otpSentSms')
+            : (wa && sms) ? t('login.otpSentBoth')
+            : wa ? t('login.otpSentWhatsapp')
+            : sms ? t('login.otpSentSms') : ''
+        );
+        setPhoneOtp(['', '', '', '', '', '']);
+        if (loginMode !== 'phone') {
+          swapTo(() => { setLoginMode('phone'); setPhoneStep('otp'); }, 1);
+        } else {
+          setPhoneStep('otp');
+        }
         setPhoneResendTimer(60);
         if (phoneResendRef.current) clearInterval(phoneResendRef.current);
         phoneResendRef.current = setInterval(() => {
@@ -1367,12 +1620,9 @@ export default function LoginScreen() {
       if (r.success && r.data?.token) {
         // The Chatyy bearer is now the real session — drop the Firebase one.
         if (phoneViaFirebaseRef.current) { fbSignOut(); }
-        safeHaptic(() => Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success));
         await loginWithToken(r.data.token, r.data.email);
-        setLoginSuccess(true);
-        Animated.spring(successAnim, {
-          toValue: 1, friction: 5, tension: 90, useNativeDriver: true,
-        }).start();
+        saveLastIdentifier(fullPhone);
+        showSuccessPop();
         setTimeout(() => {
           if (mountedRef.current) maybePromptRestoreThenGo(isChildAccount(), r.data.email);
         }, 800);
@@ -1437,34 +1687,12 @@ export default function LoginScreen() {
     }
   };
 
-  // Debounced live-check: tells the user "Já tem Chatyy" or "Vamos criar
-  // sua conta" before they tap the CTA. Reduces SMS waste on typos and
-  // signals the app is paying attention. Uses phone_login_request which
-  // is rate-limited but cheap enough to call once per stable input.
-  const runPhoneCheck = useDebouncedCallback(async (fullPhone, countryCode) => {
-    try {
-      setPhoneAccountState({ status: 'checking', phone: fullPhone });
-      const r = await api.phoneLoginRequest({ phone: fullPhone, country: _isoFromDial(countryCode), silent: true });
-      if (r?.success) {
-        const exists = r?.data?.exists !== false;
-        setPhoneAccountState({ status: exists ? 'exists' : 'new', phone: fullPhone });
-      } else {
-        setPhoneAccountState({ status: 'idle', phone: fullPhone });
-      }
-    } catch {
-      setPhoneAccountState({ status: 'idle', phone: fullPhone });
-    }
-  }, 700);
-
-  useEffect(() => {
-    const cleaned = phoneNumber.replace(/\D/g, '').replace(/^0+/, '');
-    if (phoneStep !== 'input' || cleaned.length < 8) {
-      setPhoneAccountState({ status: 'idle', phone: '' });
-      return;
-    }
-    const fullPhone = phoneCountryCode + cleaned;
-    runPhoneCheck(fullPhone, phoneCountryCode);
-  }, [phoneNumber, phoneCountryCode, phoneStep, runPhoneCheck]);
+  // [2026-10-07 login-ux] REMOVED the debounced "Conta encontrada / Vamos
+  // criar" live-check. It called api.phoneLoginRequest({phone,…}) with an
+  // OBJECT (api signature is (phone)) → backend 400 on every pause, so it never
+  // showed anything. Worse, "fixing" it would be harmful: phone_login_request
+  // SENDS an OTP and arms the per-number 60s cooldown, so each debounce would
+  // text the user and the real "Continuar" tap would hit "aguarde 60s".
 
   // Cleanup phone resend timer
   useEffect(() => {
@@ -1512,8 +1740,8 @@ export default function LoginScreen() {
                 style={{ marginTop: 20, padding: 10 }}
               >
                 <Text style={{ color: colors.primary, fontSize: 13, textAlign: 'center' }}>
-                  Nao tem acesso ao outro dispositivo?{'\n'}
-                  <Text style={{ fontWeight: '600' }}>Verificar por SMS, ligacao ou email</Text>
+                  {t('login.verifyNoAccess')}{'\n'}
+                  <Text style={{ fontWeight: '600' }}>{t('login.verifyAltMethods')}</Text>
                 </Text>
               </TouchableOpacity>
               <TouchableOpacity onPress={handleCancelVerification} style={[s.verifyBtn, { borderColor: colors.border, marginTop: 8 }]}>
@@ -1604,630 +1832,441 @@ export default function LoginScreen() {
     return <SignupIntro onFinish={dismissIntro} />;
   }
 
-  return (
-    <View style={[s.root, { backgroundColor: colors.authBg }]}>
+  // ── [2026-10-07 login-ux] derived view state (plain consts — after the
+  // early returns above, so NO hooks below this line) ──
+  const idKind = classifyIdentifier(identifier);
+  const idHints = identifierHints(identifier);
+  const emailSuggestion = idKind === 'email' ? suggestEmailFix(identifier) : null;
+  const idSoftHint = (idKind === 'email' || idKind === 'username')
+    ? (idHints.hasInnerSpace ? t('login.hintInnerSpace')
+      : idHints.hasOuterSpace ? t('login.hintOuterSpace')
+      : idHints.hasUppercase ? t('login.hintUppercase') : '')
+    : '';
+  const showAccounts = remembered.length > 0 && !useAnother && !isAddAccount;
+  const bioKind = bioType === 'face' ? 'face' : 'finger';
+  const bioMethodLabel = bioType === 'face' ? 'Face ID' : bioType === 'touch' ? 'Touch ID' : t('login.biometricShort');
+  const bioUsable = isNative && bioAvailable && !!bioReadyEmail;
+  const bioInRoster = bioUsable && remembered.some(a => a.email === bioReadyEmail);
+  const showBioQuick = bioUsable && !bioInRoster && !isAddAccount;
+  const rosterSorted = bioInRoster
+    ? [...remembered].sort((a, b) => (a.email === bioReadyEmail ? -1 : b.email === bioReadyEmail ? 1 : 0))
+    : remembered;
+  const rememberedForEmail = remembered.find(a => a.email.toLowerCase() === String(email || '').toLowerCase());
+  const displayName = String(rememberedForEmail?.name || '').trim();
+  const _cc = COUNTRIES_FULL.find(x => x.dial === phoneCountryCode) || COUNTRIES_FULL[0];
+  const smartCountry = { iso: _isoFromDial(phoneCountryCode), dial: phoneCountryCode, mask: _cc?.mask, maxDigits: _cc?.maxDigits || 15 };
+  const phoneDisplay = `${phoneCountryCode} ${formatPhone(String(phoneNumber || ''), _cc?.mask) || phoneNumber}`;
+  const otpWentViaWhatsapp = otpChannelNote === t('login.otpSentBoth') || otpChannelNote === t('login.otpSentWhatsapp');
+  const openForgot = () => {
+    hSelection();
+    const em = normalizeLoginEmail(email);
+    router.push(em ? `/forgot?email=${encodeURIComponent(em)}` : '/forgot');
+  };
 
-      {/* Tech-grade backdrop layers — faded grid pattern + radial purple wash
-          behind the card. Both pointerEvents=none so they never intercept
-          input. Hidden on mobile to match login-unified.html (clean white
-          background, no grid, no wash). Desktop keeps it as the tech
-          aesthetic for the QR-centered pairing flow. */}
-      {isDesktop && <View pointerEvents="none" style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, overflow: 'hidden' }}>
-        <Svg width="100%" height="100%" style={{ position: 'absolute' }}>
-          <Defs>
-            <Pattern id="techGrid" x="0" y="0" width="32" height="32" patternUnits="userSpaceOnUse">
-              <Path d="M 32 0 L 0 0 0 32" fill="none" stroke={isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.04)'} strokeWidth="1" />
-            </Pattern>
-            <RadialGradient id="techGridFade" cx="50%" cy="50%" r="55%">
-              <Stop offset="0%" stopColor="#fff" stopOpacity="1" />
-              <Stop offset="60%" stopColor="#fff" stopOpacity="0.6" />
-              <Stop offset="100%" stopColor="#fff" stopOpacity="0" />
-            </RadialGradient>
-            <Mask id="techGridMask">
-              <Rect x="0" y="0" width="100%" height="100%" fill="url(#techGridFade)" />
-            </Mask>
-          </Defs>
-          <Rect x="0" y="0" width="100%" height="100%" fill="url(#techGrid)" mask="url(#techGridMask)" />
-        </Svg>
-        {/* Radial purple wash — single colored circle, low opacity reads as
-            soft halo behind the card. */}
-        <View style={{
-          position: 'absolute',
-          width: 600, height: 600, borderRadius: 300,
-          backgroundColor: 'rgba(17, 17, 17,0.10)',
-          left: '50%', top: '50%',
-          marginLeft: -300, marginTop: -300,
-        }} />
-        {/* Drifting orb #1 — top-right, slow loop. Translate-only animation
-            so it stays cheap and on the native driver. Adds the
-            Telegram/WhatsApp "alive" feel without any heavy gradient lib. */}
-        <Animated.View
-          pointerEvents="none"
-          style={{
-            position: 'absolute',
-            width: 260, height: 260, borderRadius: 130,
-            top: -60, right: -60,
-            backgroundColor: 'rgba(17, 17, 17,0.16)',
-            transform: [{ translateX: orb1Anim.x }, { translateY: orb1Anim.y }],
-          }}
-        />
-        {/* Drifting orb #2 — bottom-left, opposite phase. */}
-        <Animated.View
-          pointerEvents="none"
-          style={{
-            position: 'absolute',
-            width: 320, height: 320, borderRadius: 160,
-            bottom: -80, left: -80,
-            backgroundColor: 'rgba(17, 17, 17,0.14)',
-            transform: [{ translateX: orb2Anim.x }, { translateY: orb2Anim.y }],
-          }}
-        />
-      </View>}
-
-      {/* Cancel button for add_account mode */}
-      {isAddAccount && (
-        <TouchableOpacity
-          onPress={() => router.back()}
-          style={{ position: 'absolute', top: insets.top + 12, left: 16, zIndex: 10 }}
-          activeOpacity={0.7}
+  const renderPrimary = ({ label, onPress, busy, disabled }) => {
+    const off = !!disabled && !busy;
+    return (
+      <Animated.View style={{ transform: [{ scale: ctaScaleAnim }], marginTop: 18 }}>
+        <Pressable
+          onPress={onPress}
+          onPressIn={onCtaPressIn}
+          onPressOut={onCtaPressOut}
+          disabled={!!busy || off}
           accessibilityRole="button"
-          accessibilityLabel={t('account.cancel')}
+          accessibilityLabel={label}
+          accessibilityState={{ disabled: !!busy || off, busy: !!busy }}
+          style={({ pressed }) => [s.igPrimaryBtn, {
+            marginTop: 0, height: 54, borderRadius: 14,
+            backgroundColor: off ? colors.border : colors.primary,
+            opacity: pressed && !off ? 0.9 : 1,
+          }, off && Platform.select({
+            web: { boxShadow: 'none', cursor: 'default' },
+            ios: { shadowOpacity: 0 },
+            android: { elevation: 0 },
+            default: {},
+          })]}
         >
-          <View style={[s.topBtn, { backgroundColor: colors.authCardBg, borderColor: colors.authInputBorder }]}>
-            <Text style={{ color: colors.primary, fontSize: 14, fontWeight: '600' }}>{t('account.cancel')}</Text>
+          {busy ? (
+            <View style={s.loadingBtnContent}>
+              <DotLoader color={colors.onPrimary} />
+              <Text style={[s.igPrimaryBtnText, { marginLeft: 10, color: colors.onPrimary }]}>{label}</Text>
+            </View>
+          ) : (
+            <Text style={[s.igPrimaryBtnText, { color: off ? colors.textTertiary : colors.onPrimary }]}>{label}</Text>
+          )}
+        </Pressable>
+      </Animated.View>
+    );
+  };
+
+  const renderBack = (onPress, label) => (
+    <TouchableOpacity
+      onPress={onPress}
+      activeOpacity={0.6}
+      accessibilityRole="button"
+      accessibilityLabel={label || t('login.back')}
+      hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+      style={{
+        alignSelf: 'flex-start', width: 40, height: 40, borderRadius: 20,
+        alignItems: 'center', justifyContent: 'center',
+        backgroundColor: colors.surfaceVariant, marginBottom: 14,
+      }}
+    >
+      <Svg width={20} height={20} viewBox="0 0 24 24">
+        <Path d="M15 18l-6-6 6-6" stroke={colors.text} strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round" fill="none" />
+      </Svg>
+    </TouchableOpacity>
+  );
+
+  // Clean brand hero — solid mark + wordmark + tagline. Replaces the 200pt
+  // orb with 2 halos + 4 perpetual loops (breath/halo/2 drifting orbs) that
+  // kept the JS/UI thread busy for the whole time the screen was open.
+  const renderHero = (compact = false) => (
+    <View style={{ alignItems: 'center', marginBottom: compact ? 20 : 28 }}>
+      <View style={{
+        width: compact ? 52 : 68, height: compact ? 52 : 68, borderRadius: compact ? 16 : 22,
+        backgroundColor: colors.primary,
+        alignItems: 'center', justifyContent: 'center',
+        ...Platform.select({
+          web: { boxShadow: isDark ? 'none' : '0 10px 28px rgba(17,17,17,0.16)' },
+          ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 8 }, shadowOpacity: isDark ? 0 : 0.16, shadowRadius: 16 },
+          android: { elevation: isDark ? 0 : 5 },
+          default: {},
+        }),
+      }}>
+        <Svg viewBox="0 0 64 64" width={compact ? 28 : 38} height={compact ? 28 : 38} fill="none">
+          <Path
+            d="M14 24 Q14 16 22 16 L42 16 Q50 16 50 24 L50 36 Q50 44 42 44 L30 44 L22 52 L22 44 Q14 44 14 36 Z"
+            stroke={colors.onPrimary} strokeWidth={3.4} strokeLinejoin="round" fill="none"
+          />
+          <SvgCircle cx="24" cy="30" r="2.6" fill={colors.onPrimary} />
+          <SvgCircle cx="32" cy="30" r="2.6" fill={colors.onPrimary} />
+          <SvgCircle cx="40" cy="30" r="2.6" fill={colors.onPrimary} />
+        </Svg>
+      </View>
+      <Text accessibilityRole="header" style={{ fontSize: compact ? 26 : 32, fontWeight: '800', letterSpacing: -1, color: colors.text, marginTop: compact ? 12 : 16 }}>
+        Chatyy
+      </Text>
+      <Text style={{ fontSize: 15, lineHeight: 21, color: colors.textSecondary, marginTop: 4, textAlign: 'center' }}>
+        {t('login.tagline')}
+      </Text>
+    </View>
+  );
+
+  const renderDivider = () => (
+    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, marginTop: 22, marginBottom: 14 }}>
+      <View style={{ flex: 1, height: StyleSheet.hairlineWidth, backgroundColor: colors.border }} />
+      <Text style={{ fontSize: 12, fontWeight: '600', color: colors.textTertiary, letterSpacing: 0.4 }}>{t('login.or')}</Text>
+      <View style={{ flex: 1, height: StyleSheet.hairlineWidth, backgroundColor: colors.border }} />
+    </View>
+  );
+
+  const renderSecondary = (label, onPress) => (
+    <TouchableOpacity
+      onPress={onPress}
+      activeOpacity={0.7}
+      accessibilityRole="button"
+      style={{
+        height: 52, borderRadius: 14, borderWidth: 1, borderColor: colors.border,
+        alignItems: 'center', justifyContent: 'center',
+        backgroundColor: colors.authCardBg || 'transparent',
+        ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
+      }}
+    >
+      <Text style={{ fontSize: 16, fontWeight: '700', color: colors.text }}>{label}</Text>
+    </TouchableOpacity>
+  );
+
+  // ── SMART ENTRY ── phone / e-mail / @usuário in ONE field.
+  const renderSmart = () => (
+    <View>
+      {!isDesktop && renderHero(false)}
+      {!online && <LoginNotice tone="offline" text={t('login.offlineBanner')} colors={colors} style={{ marginBottom: 16 }} />}
+
+      {showBioQuick && (
+        <PressableScale
+          onPress={handleBiometricLogin}
+          disabled={bioLoading}
+          haptic="light"
+          scaleTo={0.98}
+          accessibilityRole="button"
+          accessibilityLabel={t('login.bioContinue', { method: bioMethodLabel })}
+          style={{
+            flexDirection: 'row', alignItems: 'center', gap: 12,
+            paddingVertical: 12, paddingHorizontal: 14, borderRadius: 16,
+            borderWidth: Platform.OS === 'web' ? 1 : 0.5, borderColor: colors.border,
+            backgroundColor: colors.authCardBg || colors.surface, marginBottom: 18,
+          }}
+        >
+          <View style={{ width: 44, height: 44, borderRadius: 22, backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center' }}>
+            {bioLoading
+              ? <ActivityIndicator color={colors.onPrimary} size="small" />
+              : <BiometricGlyph kind={bioKind} color={colors.onPrimary} size={22} />}
           </View>
-        </TouchableOpacity>
+          <View style={{ flex: 1, minWidth: 0 }}>
+            <Text style={{ fontSize: 16, fontWeight: '700', color: colors.text }}>{t('login.bioContinue', { method: bioMethodLabel })}</Text>
+            <Text numberOfLines={1} style={{ fontSize: 13, color: colors.textSecondary, marginTop: 1 }}>{bioReadyEmail}</Text>
+          </View>
+        </PressableScale>
       )}
 
-      {/* Language selector + Theme toggle — top right */}
-      <View style={[s.topRightRow, { top: insets.top + 12 }]}>
-        <TouchableOpacity onPress={() => setShowLangModal(true)} activeOpacity={0.7} accessibilityRole="button" accessibilityLabel="Change language">
-          <View style={[s.langBtn, { backgroundColor: 'transparent' }]}>
-            <IconGlobe size={14} color={colors.textSecondary} />
-            <Text style={[s.langBtnText, { color: colors.text }]}>{langShort}</Text>
-            <View style={{ marginLeft: -1 }}>
-              <IconChevronDown size={12} color={colors.textSecondary} />
+      {showAccounts ? (
+        <>
+          <RememberedAccounts
+            accounts={rosterSorted}
+            onSelect={handleRememberedSelect}
+            onRemove={handleRememberedRemove}
+            onUseAnother={() => {
+              hSelection();
+              setError('');
+              swapTo(() => setUseAnother(true), 1);
+              setTimeout(() => { try { identifierRef.current?.focus(); } catch {} }, 280);
+            }}
+            colors={colors}
+            t={t}
+            busyEmail={busyEmail}
+            bioEmail={bioUsable ? bioReadyEmail : ''}
+            bioKind={bioKind}
+          />
+          {!!error && <LoginNotice tone="error" text={error} colors={colors} style={{ marginTop: 12 }} />}
+        </>
+      ) : (
+        <>
+          <Text accessibilityRole="header" style={[s.title, { color: colors.text }]}>{t('login.smartTitle')}</Text>
+          <Text style={[s.subtitle, { color: colors.textSecondary }]}>{t('login.smartSubtitle')}</Text>
+
+          <SmartIdentifierField
+            value={identifier}
+            onChangeText={(v) => { setIdentifier(v); if (error) setError(''); }}
+            country={smartCountry}
+            onPressCountry={() => { hSelection(); setCountrySearch(''); setShowCountryPicker(true); }}
+            onInternationalDetected={(sp) => { hSelection(); setPhoneCountryCode(sp.country.dial); }}
+            onSubmitEditing={handleSmartContinue}
+            inputRef={identifierRef}
+            colors={colors}
+            t={t}
+            invalid={!!error}
+            autoFocus={isDesktop || (Platform.OS !== 'web' && !identifier)}
+            showKindHint={!error && !emailSuggestion && !idSoftHint}
+          />
+
+          {!!emailSuggestion && !error && (
+            <View style={{ marginTop: 10 }}>
+              <SuggestionChip
+                label={t('login.didYouMean', { domain: emailSuggestion.split('@')[1] })}
+                onPress={() => { hSelection(); setIdentifier(emailSuggestion); }}
+                colors={colors}
+              />
             </View>
+          )}
+          {!!idSoftHint && !emailSuggestion && !error && (
+            <LoginNotice tone="hint" text={idSoftHint} colors={colors} style={{ marginTop: 6 }} />
+          )}
+          {!!error && <LoginNotice tone="error" text={error} colors={colors} style={{ marginTop: 10 }} />}
+
+          {renderPrimary({
+            label: idKind === 'phone' ? t('login.sendCodeCta') : t('login.continueCta'),
+            onPress: handleSmartContinue,
+            busy: phoneSending,
+            disabled: idKind === 'empty',
+          })}
+
+          {remembered.length > 0 && !isAddAccount && useAnother && (
+            <TouchableOpacity
+              onPress={() => { hSelection(); setError(''); swapTo(() => setUseAnother(false), -1); }}
+              activeOpacity={0.6}
+              accessibilityRole="button"
+              style={s.igGhostBtn}
+            >
+              <Text style={[s.igGhostBtnLabel, { color: colors.text, fontSize: 14 }]}>{t('login.backToAccounts')}</Text>
+            </TouchableOpacity>
+          )}
+          <TouchableOpacity
+            onPress={() => { hSelection(); router.push('/forgot?find=1'); }}
+            activeOpacity={0.6}
+            accessibilityRole="button"
+            style={s.igGhostBtn}
+          >
+            <Text style={[s.igGhostBtnLabel, { color: colors.textSecondary, fontSize: 14 }]}>{t('login.forgotEmail')}</Text>
+          </TouchableOpacity>
+        </>
+      )}
+
+      {!isAddAccount && (
+        <>
+          {renderDivider()}
+          {renderSecondary(t('login.createAccount'), () => { hSelection(); router.push('/signup-phone'); })}
+        </>
+      )}
+    </View>
+  );
+
+  // ── PASSWORD ── (e-mail / @usuário path)
+  const renderPassword = () => (
+    <View>
+      {renderBack(backToSmart)}
+      <View style={{ alignItems: 'center', marginBottom: 20 }}>
+        {rememberedForEmail ? (
+          <AvatarCircle name={displayName || email} email={email} size={72} />
+        ) : (
+          <View style={{ width: 72, height: 72, borderRadius: 36, backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center' }}>
+            <Text style={{ color: colors.onPrimary, fontSize: 28, fontWeight: '800' }}>{(email || '?')[0].toUpperCase()}</Text>
           </View>
-        </TouchableOpacity>
-        <TouchableOpacity onPress={toggle} activeOpacity={0.7} accessibilityRole="button" accessibilityLabel={isDark ? t('a11y.switchToLight') : t('a11y.switchToDark')}>
-          <View style={[s.topBtn, { backgroundColor: 'transparent' }]}>
-            {isDark ? <IconSun size={16} color={colors.warning} /> : <IconMoon size={16} color={colors.textSecondary} />}
-          </View>
+        )}
+        <Text accessibilityRole="header" style={[s.title, { color: colors.text, marginTop: 14, marginBottom: 6 }]} numberOfLines={1}>
+          {displayName ? t('login.helloName', { name: displayName.split(' ')[0] }) : t('login.welcomeBack')}
+        </Text>
+        <TouchableOpacity
+          onPress={backToSmart}
+          activeOpacity={0.7}
+          accessibilityRole="button"
+          accessibilityLabel={t('login.changeAccount')}
+          style={[s.userChip, { marginTop: 0, marginBottom: 0, paddingLeft: 14, borderColor: colors.border, backgroundColor: colors.surfaceVariant }]}
+        >
+          <Text style={[s.userEmail, { color: colors.text }]} numberOfLines={1}>{email}</Text>
+          <Text style={{ fontSize: 13, fontWeight: '700', color: colors.textSecondary, marginLeft: 8 }}>{t('login.change')}</Text>
         </TouchableOpacity>
       </View>
 
-      <KeyboardAvoidingView
-        style={s.flex}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        keyboardVerticalOffset={Platform.OS === 'ios' ? insets.top : 0}
+      {!online && <LoginNotice tone="offline" text={t('login.offlineBanner')} colors={colors} style={{ marginBottom: 14 }} />}
+
+      {/* Keychain / Autofill anchor: iOS + Chrome pair the saved password with
+          the username field in the SAME form. Invisible, not focusable, hidden
+          from screen readers. If the user picks another saved credential from
+          the QuickType bar, iOS fills this too → we follow that account. */}
+      <View pointerEvents="none" importantForAccessibility="no-hide-descendants" accessibilityElementsHidden style={{ position: 'absolute', width: 1, height: 1, opacity: 0, overflow: 'hidden' }}>
+        <TextInput
+          value={email}
+          onChangeText={(v) => { const n = normalizeLoginEmail(v); if (n && isPlausibleEmail(n) && n !== email) setEmail(n); }}
+          textContentType="username"
+          autoComplete="username"
+          importantForAutofill="yes"
+          autoCapitalize="none"
+          autoCorrect={false}
+          {...(Platform.OS === 'web' ? { tabIndex: -1 } : {})}
+          style={{ width: 1, height: 1 }}
+        />
+      </View>
+
+      <View style={{ position: 'relative' }}>
+        <TextInput
+          ref={passwordRef}
+          style={[s.igInput, {
+            height: 56, borderRadius: 14, fontSize: 17,
+            backgroundColor: colors.surfaceVariant,
+            borderWidth: focused === 'pass' || error ? 1.5 : 1,
+            borderColor: error ? colors.error : (focused === 'pass' ? colors.text : colors.authInputBorder),
+            color: colors.text,
+            paddingRight: 52,
+            ...(Platform.OS === 'web' && focused === 'pass' ? { boxShadow: `0 0 0 4px ${error ? colors.error : colors.text}14` } : {}),
+          }]}
+          value={password}
+          onChangeText={(text) => { setPassword(text); if (error) setError(''); if (pwHint) setPwHint(''); }}
+          secureTextEntry={!showPassword}
+          textContentType="password"
+          autoComplete={Platform.OS === 'android' ? 'password' : 'current-password'}
+          importantForAutofill="yes"
+          autoCapitalize="none"
+          autoCorrect={false}
+          spellCheck={false}
+          returnKeyType="go"
+          enterKeyHint="go"
+          placeholder={t('login.passwordInput')}
+          placeholderTextColor={colors.textTertiary}
+          onFocus={() => setFocused('pass')}
+          onBlur={() => setFocused('')}
+          onSubmitEditing={handleLogin}
+          accessibilityLabel={t('login.passwordPlaceholder')}
+        />
+        <TouchableOpacity
+          onPress={() => { hSelection(); setShowPassword(v => !v); }}
+          style={[s.igEyeBtn, { right: 4, width: 44, alignItems: 'center' }]}
+          activeOpacity={0.6}
+          hitSlop={{ top: 10, bottom: 10, left: 6, right: 6 }}
+          accessibilityRole="button"
+          accessibilityLabel={showPassword ? t('login.hidePassword') : t('login.showPassword')}
+        >
+          {showPassword
+            ? <IconEyeOff size={20} color={colors.textSecondary} />
+            : <IconEye size={20} color={colors.textSecondary} />}
+        </TouchableOpacity>
+      </View>
+
+      {focused === 'pass' && capsLockOn && !error && (
+        <LoginNotice tone="warning" text={t('login.hintCapsLock')} colors={colors} compact style={{ marginTop: 10 }} />
+      )}
+      {!!error && (
+        <LoginNotice
+          tone="error"
+          text={error}
+          actionLabel={error === t('login.errorCredentials') ? t('login.forgotPassword') : undefined}
+          onAction={openForgot}
+          colors={colors}
+          style={{ marginTop: 10 }}
+        />
+      )}
+      {!!pwHint && <LoginNotice tone="hint" text={pwHint} colors={colors} style={{ marginTop: 6 }} />}
+
+      <TouchableOpacity
+        style={[s.forgotLink, { alignSelf: 'flex-end', marginTop: 6, marginBottom: 0 }]}
+        activeOpacity={0.6}
+        onPress={openForgot}
+        hitSlop={{ top: 8, bottom: 8, left: 12, right: 12 }}
+        accessibilityRole="link"
       >
-        <ScrollView contentContainerStyle={s.scroll} keyboardShouldPersistTaps="handled">
-          <View style={[s.center, !isDesktop && {
-            // Mobile: anchor content to the TOP so the keyboard opening
-            // doesn't push the form ABOVE the viewport. Centering only
-            // works when there's enough vertical space — with the keyboard
-            // open on a phone there isn't, and the orb + form ended up
-            // hidden above the keyboard while the user saw a blank area.
-            justifyContent: 'flex-start', paddingTop: 56, paddingVertical: 24,
-          }]}>
-            <Animated.View style={[s.cardWrap, isDesktop && { maxWidth: 480 }, { opacity: cardFadeAnim, transform: [{ translateY: cardSlideAnim }] }]}>
-              {/* Login card — Google-style on desktop (purple-shadowed white
-                  card centered on the page) and floating-clean on mobile to
-                  match the unified Telegram flow (no card background, the
-                  form sits directly on the page background like the
-                  /mockups/login-unified.html). */}
-              <View style={[s.card, isDesktop ? {
-                backgroundColor: colors.authCardBg,
-                borderWidth: 1,
-                borderColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(17, 17, 17,0.08)',
-                borderRadius: 24,
-                paddingTop: 44, paddingBottom: 36,
-                paddingHorizontal: Platform.OS === 'web' ? 48 : 24,
-                ...(Platform.OS === 'web' ? {
-                  // Soft layered shadow — a tight close shadow for crispness +
-                  // a wide diffuse one for the "floating" depth Telegram Web has.
-                  boxShadow: isDark
-                    ? '0 2px 8px rgba(0,0,0,0.30), 0 18px 60px rgba(0,0,0,0.40)'
-                    : '0 1px 2px rgba(60,64,67,0.06), 0 6px 20px rgba(17, 17, 17,0.07), 0 24px 64px rgba(60,64,67,0.10)',
-                } : {
-                  shadowColor: colors.primary,
-                  shadowOffset: { width: 0, height: 6 },
-                  shadowOpacity: 0.08,
-                  shadowRadius: 18,
-                  elevation: 4,
-                }),
-              } : {
-                backgroundColor: 'transparent',
-                paddingTop: 24, paddingBottom: 16, paddingHorizontal: 24,
-              }]}>
-                <Animated.View style={{
-                  opacity: fadeAnim,
-                  transform: [{ translateX: slideAnim }, { translateX: shakeAnim }],
-                }}>
+        <Text style={[s.linkText, { color: colors.text }]}>{t('login.forgotPassword')}</Text>
+      </TouchableOpacity>
 
-                  {/* Single Chatyy brand orb — flat solid SVG. No halo, no
-                      glow, no shadow. Clean as the rest of the iconography.
-                      Entrance scale-pop only (one-time). */}
-                  <View style={s.logoRow}>
-                    {/* Brand hero — 3 stacked halos for premium depth.
-                        Outer (180): super-soft, slow breath, far halo.
-                        Middle (132): primary halo, sine-pulse with orb breath.
-                        Core (92): solid brand orb with inner highlight via
-                        gradient-like inset shadow on iOS/Android. Text gets
-                        a brand drop-shadow so the title feels glow-anchored
-                        to the orb (Telegram/iMessage hero pattern). */}
-                    <Animated.View style={{
-                      width: 200, height: 200,
-                      alignItems: 'center', justifyContent: 'center',
-                    }}>
-                      {/* Halos — replaced solid-color circles (which read as
-                          flat disks) with SVG radial gradients fading to
-                          transparent, matching login-unified.html mockup
-                          exactly. The mockup's `radial-gradient(rgba 0.18
-                          → transparent 70%)` reads as a soft glow; flat
-                          backgroundColor + opacity reads as a stacked ring,
-                          which is what user circled in the print. */}
-                      <Animated.View pointerEvents="none" style={{
-                        position: 'absolute', width: 200, height: 200,
-                        opacity: haloAnim.interpolate({ inputRange: [0.35, 0.75], outputRange: [0.55, 1] }),
-                        transform: [{ scale: logoBreathAnim.interpolate({ inputRange: [0.97, 1.03], outputRange: [0.95, 1.05] }) }],
-                      }}>
-                        <Svg width={200} height={200} viewBox="0 0 200 200" fill="none">
-                          <Defs>
-                            <RadialGradient id="halo1" cx="0.5" cy="0.5" r="0.5">
-                              <Stop offset="0" stopColor={colors.primary} stopOpacity="0.18" />
-                              <Stop offset="0.7" stopColor={colors.primary} stopOpacity="0" />
-                            </RadialGradient>
-                            <RadialGradient id="halo2" cx="0.5" cy="0.5" r="0.5">
-                              <Stop offset="0" stopColor={colors.primary} stopOpacity="0.32" />
-                              <Stop offset="0.7" stopColor={colors.primary} stopOpacity="0" />
-                            </RadialGradient>
-                          </Defs>
-                          {/* Outer halo — 200px soft */}
-                          <SvgCircle cx="100" cy="100" r="100" fill="url(#halo1)" />
-                          {/* Middle halo — 148px primary glow */}
-                          <SvgCircle cx="100" cy="100" r="74" fill="url(#halo2)" />
-                          {/* Inner ring removed — was reading as a hard
-                              border around the orb on print, breaking the
-                              soft glow look the mockup has. */}
-                        </Svg>
-                      </Animated.View>
-                      {/* Core brand orb — gradient + phone receiver SVG to
-                          match login-unified.html mockup. The phone icon is
-                          the inline path from the mockup (lucide-style
-                          receiver), rendered via react-native-svg so it
-                          matches pixel-for-pixel on web + native. */}
-                      {/* Core orb — plain View (not Animated) so the size is
-                          rock-solid across web/iOS/Android. The breath +
-                          entrance scale animations layered ABOVE were
-                          causing the orb to render at ~50px instead of 92
-                          on web (Animated.multiply through useNativeDriver
-                          + RN web's CSS transform pipeline produces
-                          inconsistent scale). The brand orb is critical —
-                          we'd rather have it always show at the right size
-                          than animate it. */}
-                      <View style={{
-                        width: 92, height: 92, borderRadius: 46,
-                        backgroundColor: colors.primary,
-                        alignItems: 'center', justifyContent: 'center',
-                        overflow: 'hidden',
-                        ...(Platform.OS === 'web' ? {
-                          // Degradê diagonal → esfera com profundidade (WhatsApp-grade).
-                          backgroundImage: `linear-gradient(145deg, ${colors.authBtnGradientStart} 0%, ${colors.authBtnGradientStart} 48%, ${colors.authBtnGradientEnd} 100%)`,
-                          boxShadow: '0 16px 40px rgba(17, 17, 17,0.48), inset 0 1px 0 rgba(255,255,255,0.28)',
-                        } : Platform.select({
-                          ios: { shadowColor: colors.primary, shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.45, shadowRadius: 16 },
-                          android: { elevation: 10 },
-                        })),
-                      }}>
-                        {/* Specular highlight — brilho suave no topo dá o look
-                            de esfera "vidro" premium (igual ícone WhatsApp).
-                            Cross-platform: View translúcida arredondada. */}
-                        <View pointerEvents="none" style={{
-                          position: 'absolute', top: -22, left: -10,
-                          width: 80, height: 56, borderRadius: 40,
-                          backgroundColor: 'rgba(255,255,255,0.22)',
-                          transform: [{ rotate: '-18deg' }],
-                        }} />
-                        {/* Chat bubble icon — on-brand Chatyy mark, cleaner
-                            than the phone receiver which printed weird at
-                            small sizes. White outline + 3 dots inside,
-                            mirrors the carousel slide 1 brand orb. */}
-                        <Svg viewBox="0 0 64 64" width={44} height={44} fill="none">
-                          <Path
-                            d="M14 24 Q14 16 22 16 L42 16 Q50 16 50 24 L50 36 Q50 44 42 44 L30 44 L22 52 L22 44 Q14 44 14 36 Z"
-                            stroke={colors.onPrimary} strokeWidth={3} strokeLinejoin="round" fill="none"
-                          />
-                          <SvgCircle cx="24" cy="30" r="2.5" fill={colors.onPrimary} />
-                          <SvgCircle cx="32" cy="30" r="2.5" fill={colors.onPrimary} />
-                          <SvgCircle cx="40" cy="30" r="2.5" fill={colors.onPrimary} />
-                        </Svg>
-                      </View>
-                    </Animated.View>
-                    {/* Brand "Chatyy" + tagline shown only on desktop. On
-                        mobile the unified flow already shows "Seu número"
-                        as the inner title (matches login-unified.html
-                        mockup). Showing both was duplicate stacked text. */}
-                    {isDesktop && <Animated.View style={{
-                      opacity: titleAnim,
-                      transform: [{ translateY: titleAnim.interpolate({ inputRange: [0, 1], outputRange: [12, 0] }) }],
-                      alignItems: 'center',
-                    }}>
-                      <Text style={{
-                        fontSize: 38, fontWeight: '900',
-                        color: colors.primary, marginTop: 14,
-                        letterSpacing: -1.1,
-                        ...(Platform.OS === 'web' ? {
-                          backgroundImage: `linear-gradient(135deg, ${colors.primaryDark} 0%, ${colors.primary} 60%, ${colors.brandSecondary} 100%)`,
-                          WebkitBackgroundClip: 'text',
-                          WebkitTextFillColor: 'transparent',
-                          backgroundClip: 'text',
-                          textShadow: '0 4px 18px rgba(17, 17, 17,0.32)',
-                        } : Platform.select({
-                          ios: { shadowColor: colors.primary, shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.28, shadowRadius: 10 },
-                          android: {},
-                        })),
-                      }}>
-                        Chatyy
-                      </Text>
-                      <Text style={{
-                        fontSize: 15, fontWeight: '500',
-                        color: colors.textSecondary,
-                        marginTop: 6, marginBottom: 4,
-                        letterSpacing: 0.1,
-                      }}>
-                        {t('login.tagline') || 'Tudo está aqui'}
-                      </Text>
-                    </Animated.View>}
-                  </View>
+      {renderPrimary({ label: t('login.enter'), onPress: handleLogin, busy: loading, disabled: !password })}
 
-                  {!isDesktop && (
-                    <View style={{ alignItems: 'center', marginTop: -8, marginBottom: 4 }}>
-                      <Text style={{ fontSize: 30, fontWeight: '900', letterSpacing: -0.8, color: colors.primary }}>Chatyy</Text>
-                      <Text style={{ fontSize: 14, color: colors.textSecondary, marginTop: 2 }}>{t('login.tagline')}</Text>
-                    </View>
-                  )}
+      {bioUsable && bioReadyEmail === email && (
+        <TouchableOpacity
+          onPress={handleBiometricLogin}
+          disabled={bioLoading || loading}
+          activeOpacity={0.7}
+          accessibilityRole="button"
+          style={[s.igGhostBtn, { flexDirection: 'row', gap: 8 }]}
+        >
+          {bioLoading ? <ActivityIndicator size="small" color={colors.text} /> : <BiometricGlyph kind={bioKind} color={colors.text} size={18} />}
+          <Text style={[s.igGhostBtnLabel, { color: colors.text, fontSize: 14 }]}>{t('login.bioContinue', { method: bioMethodLabel })}</Text>
+        </TouchableOpacity>
+      )}
 
-                  {/* Tab bar — pill segmented control (iOS style). Hidden on
-                      mobile to match the unified Telegram-style flow: just one
-                      phone entry, backend decides login vs signup. Desktop
-                      keeps the tabs because QR is the primary login there.
-                      A small "Entrar com email" link below the CTA gives
-                      mobile users a fallback to legacy email/password. */}
-                  {isDesktop && <View style={{
-                    flexDirection: 'row',
-                    backgroundColor: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(60,64,67,0.05)',
-                    borderWidth: 1,
-                    borderColor: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(60,64,67,0.05)',
-                    borderRadius: 14,
-                    padding: 4,
-                    marginTop: 28, marginBottom: 22,
-                    gap: 4,
-                  }}>
-                    <TouchableOpacity
-                      style={{
-                        flex: 1, paddingVertical: 11, borderRadius: 10,
-                        flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
-                        backgroundColor: loginMode === 'phone' ? (colors.surface) : 'transparent',
-                        ...(Platform.OS === 'web' ? { transition: 'background-color 160ms ease, box-shadow 160ms ease' } : {}),
-                        ...(loginMode === 'phone' && Platform.OS === 'web' ? { boxShadow: isDark ? '0 1px 4px rgba(0,0,0,0.45)' : '0 1px 4px rgba(60,64,67,0.16)' } : {}),
-                        ...(loginMode === 'phone' && Platform.OS !== 'web' ? {
-                          shadowColor: colors.shadow, shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.15, shadowRadius: 2, elevation: 2,
-                        } : {}),
-                      }}
-                      onPress={() => { safeHaptic(() => Haptics.selectionAsync()); setLoginMode('phone'); setError(''); setPhoneStep('input'); setPhoneOtp(['', '', '', '', '', '']); }}
-                      activeOpacity={0.7}
-                    >
-                      <IconPhone size={14} color={loginMode === 'phone' ? colors.primary : (colors.textSecondary)} />
-                      <Text style={{ fontSize: 13, fontWeight: '600', color: loginMode === 'phone' ? colors.primary : (colors.textSecondary) }}>
-                        {t('login.phoneNumber') || 'Telefone'}
-                      </Text>
-                    </TouchableOpacity>
-                    {isDesktop && (
-                      <TouchableOpacity
-                        style={{
-                          flex: 1, paddingVertical: 11, borderRadius: 10,
-                          flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
-                          backgroundColor: loginMode === 'qr' ? (colors.surface) : 'transparent',
-                          ...(Platform.OS === 'web' ? { transition: 'background-color 160ms ease, box-shadow 160ms ease' } : {}),
-                          ...(loginMode === 'qr' && Platform.OS === 'web' ? { boxShadow: isDark ? '0 1px 4px rgba(0,0,0,0.45)' : '0 1px 4px rgba(60,64,67,0.16)' } : {}),
-                          ...(loginMode === 'qr' && Platform.OS !== 'web' ? {
-                            shadowColor: colors.shadow, shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.15, shadowRadius: 2, elevation: 2,
-                          } : {}),
-                        }}
-                        onPress={() => { safeHaptic(() => Haptics.selectionAsync()); setLoginMode('qr'); setError(''); setStep(1); }}
-                        activeOpacity={0.7}
-                      >
-                        <IconGlobe size={14} color={loginMode === 'qr' ? colors.primary : (colors.textSecondary)} />
-                        <Text style={{ fontSize: 13, fontWeight: '600', color: loginMode === 'qr' ? colors.primary : (colors.textSecondary) }}>
-                          QR
-                        </Text>
-                      </TouchableOpacity>
-                    )}
-                    <TouchableOpacity
-                      style={{
-                        flex: 1, paddingVertical: 11, borderRadius: 10,
-                        flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
-                        backgroundColor: loginMode === 'email' ? (colors.surface) : 'transparent',
-                        ...(Platform.OS === 'web' ? { transition: 'background-color 160ms ease, box-shadow 160ms ease' } : {}),
-                        ...(loginMode === 'email' && Platform.OS === 'web' ? { boxShadow: isDark ? '0 1px 4px rgba(0,0,0,0.45)' : '0 1px 4px rgba(60,64,67,0.16)' } : {}),
-                        ...(loginMode === 'email' && Platform.OS !== 'web' ? {
-                          shadowColor: colors.shadow, shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.15, shadowRadius: 2, elevation: 2,
-                        } : {}),
-                      }}
-                      onPress={() => { safeHaptic(() => Haptics.selectionAsync()); setLoginMode('email'); setError(''); setStep(1); }}
-                      activeOpacity={0.7}
-                    >
-                      <IconMailLogo size={14} color={loginMode === 'email' ? colors.primary : (colors.textSecondary)} />
-                      <Text style={{ fontSize: 13, fontWeight: '600', color: loginMode === 'email' ? colors.primary : (colors.textSecondary) }}>
-                        Email
-                      </Text>
-                    </TouchableOpacity>
-                  </View>}
+      {/* Passkey (WebAuthn) login — FLAG-GATED (PASSKEYS_ENABLED, default
+          false) until react-native-passkey ships in a build. */}
+      {PASSKEYS_ENABLED && (
+        <TouchableOpacity
+          onPress={handlePasskeyLogin}
+          style={s.igGhostBtn}
+          activeOpacity={0.6}
+          disabled={loading}
+          accessibilityRole="button"
+        >
+          <Text style={[s.igGhostBtnLabel, { color: colors.text }]}>{t('login.passkeyCta')}</Text>
+        </TouchableOpacity>
+      )}
+    </View>
+  );
 
-                  {/* ── PHONE LOGIN ── */}
-                  {loginMode === 'phone' ? (
-                    <View style={{ paddingTop: 24 }}>
-                      {/* Single brand icon stays at the top of the page (the
-                          Chatyy orb above the tabs). No second hero here —
-                          one icon is enough. */}
-
-                      <Text style={[s.title, { color: colors.text, textAlign: phoneStep === 'input' ? 'center' : 'left' }]}>{t('login.phoneTitle')}</Text>
-                      <Text style={[s.subtitle, { color: colors.textSecondary, textAlign: phoneStep === 'input' ? 'center' : 'left', paddingHorizontal: phoneStep === 'input' ? 12 : 0 }]}>
-                        {phoneStep === 'otp'
-                          ? `${t('login.phoneOtpSubtitle')} ${phoneCountryCode}${phoneNumber}`
-                          : t('login.phoneSubtitle')}
-                      </Text>
-
-                      {!!error && (
-                        <View style={[s.errorBox, { backgroundColor: colors.errorBg, borderColor: colors.error }]}>
-                          <IconAlertTriangle size={14} color={colors.error} />
-                          <Text style={[s.errorText, { color: colors.error }]}>{error}</Text>
-                        </View>
-                      )}
-
-                      {phoneStep === 'input' ? (
-                        <>
-                          {/* Telegram-style stacked input: country row on top
-                              with bottom hairline + dial-code column + number
-                              column on the second row, divided by a vertical
-                              hairline. No box, no pill, no flag emoji jammed
-                              into the field \u2014 calmer and easier to scan. */}
-                          {(() => {
-                            const _country = COUNTRY_CODES.find(c => c.code === phoneCountryCode);
-                            const _countryName = _country?.name || _country?.label || (t('login.selectCountry') || 'Pa\u00EDs');
-                            const _hairline = colors.border;
-                            const _hairlineActive = colors.primary;
-                            const _isFocused = focused === 'phone';
-                            return (
-                              <View style={{ marginBottom: 16 }}>
-                                <TouchableOpacity
-                                  onPress={() => { setCountrySearch(''); setShowCountryPicker(true); }}
-                                  activeOpacity={0.6}
-                                  accessibilityRole="button"
-                                  accessibilityLabel={t('onb.countryLabel')}
-                                  style={{
-                                    flexDirection: 'row', alignItems: 'center',
-                                    paddingVertical: 13, paddingHorizontal: 14,
-                                    borderRadius: 14, borderWidth: 1,
-                                    borderColor: _hairline,
-                                    backgroundColor: colors.surfaceVariant,
-                                  }}
-                                >
-                                  {/* Country flag emoji — WhatsApp/Telegram pattern.
-                                      Renders crisply on iOS/Android (the primary
-                                      targets); Windows web falls back to ISO letters
-                                      which is still readable. The monospace "BR +55"
-                                      experiment was uglier and less recognizable. */}
-                                  {_country?.flag ? (
-                                    <Text style={{ fontSize: 22, marginRight: 12 }}>
-                                      {_country.flag}
-                                    </Text>
-                                  ) : null}
-                                  <Text style={{ flex: 1, fontSize: 16, fontWeight: '600', color: colors.text }} numberOfLines={1}>
-                                    {_countryName}
-                                  </Text>
-                                  <View style={{ paddingHorizontal: 9, paddingVertical: 3, borderRadius: 999, backgroundColor: `${colors.primary}1a`, marginRight: 8 }}>
-                                    <Text style={{ fontSize: 13, fontWeight: '700', color: colors.primary }}>{phoneCountryCode}</Text>
-                                  </View>
-                                  <IconChevronRight size={16} color={colors.textTertiary} />
-                                </TouchableOpacity>
-                                <View style={{
-                                  flexDirection: 'row', alignItems: 'center',
-                                  paddingHorizontal: 14, marginTop: 10,
-                                  borderRadius: 14,
-                                  borderWidth: _isFocused ? 2 : 1,
-                                  borderColor: _isFocused ? _hairlineActive : _hairline,
-                                  backgroundColor: colors.surfaceVariant,
-                                  ...(Platform.OS === 'web' && _isFocused ? { boxShadow: `0 0 0 4px ${colors.primary}22` } : {}),
-                                }}>
-                                  <View style={{ paddingVertical: 14, paddingRight: 8 }}>
-                                    <Text style={{ fontSize: 16, color: colors.text, fontWeight: '500' }}>
-                                      {phoneCountryCode}
-                                    </Text>
-                                  </View>
-                                  <View style={{ width: StyleSheet.hairlineWidth, height: 22, backgroundColor: _hairline, marginRight: 10 }} />
-                                  {(() => {
-                                    // Look up the mask from the canonical COUNTRIES list
-                                    // (constants/countries.js) by matching dial. Falls back
-                                    // to the BR mask if no match (e.g. country not in the
-                                    // canonical list). Used for format-as-you-type.
-                                    const _full = COUNTRIES_FULL.find(x => x.dial === phoneCountryCode) || COUNTRIES_FULL[0];
-                                    const _mask = _full?.mask || '(##) #####-####';
-                                    const _maxDigits = _full?.maxDigits || 15;
-                                    return (
-                                      <TextInput
-                                        style={[{
-                                          flex: 1, fontSize: 18, fontWeight: '600', letterSpacing: 0.3, paddingVertical: 14,
-                                          color: colors.text,
-                                        }, Platform.OS === 'web' && { outlineStyle: 'none' }]}
-                                        value={formatPhone(phoneNumber, _mask)}
-                                        onChangeText={(text) => {
-                                          // Smart paste: if user pastes a "+DDI..." number (e.g. from
-                                          // a contact card), auto-detect the country and strip the prefix
-                                          // so the dial code shown stays in sync with what they pasted.
-                                          if (/^\s*\+\d{1,3}/.test(text)) {
-                                            const allDigits = text.replace(/\D/g, '');
-                                            const match = COUNTRY_CODES.find(c => allDigits.startsWith(c.code.slice(1)));
-                                            if (match) {
-                                              setPhoneCountryCode(match.code);
-                                              const rest = allDigits.slice(match.code.length - 1);
-                                              setPhoneNumber(rest);
-                                              if (error) setError('');
-                                              return;
-                                            }
-                                          }
-                                          // Strip non-digits and cap at the country's maxDigits;
-                                          // the mask is re-applied on render via formatPhone().
-                                          const digits = text.replace(/\D/g, '').slice(0, _maxDigits);
-                                          setPhoneNumber(digits);
-                                          if (error) setError('');
-                                        }}
-                                        keyboardType="phone-pad"
-                                        placeholder={_mask ? _mask.replace(/#/g, '0') : t('login.phonePlaceholder')}
-                                        placeholderTextColor={colors.textTertiary}
-                                        onFocus={() => setFocused('phone')}
-                                        onBlur={() => setFocused('')}
-                                        onSubmitEditing={handlePhoneSendOtp}
-                                        accessibilityLabel={t('login.phoneNumber')}
-                                        autoFocus
-                                      />
-                                    );
-                                  })()}
-                                </View>
-                              </View>
-                            );
-                          })()}
-
-                          {/* Smart-detect hint: feedback live de que o app
-                              já encontrou (ou não) uma conta pra esse número.
-                              Reduz ansiedade e SMS desperdiçado em typo. */}
-                          {phoneAccountState.status === 'exists' && phoneAccountState.phone === (phoneCountryCode + phoneNumber.replace(/\D/g, '')) && (
-                            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, marginTop: 6, marginBottom: 4 }}>
-                              <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: colors.success }} />
-                              <Text style={{ color: colors.success, fontSize: 13, fontWeight: '600' }}>
-                                {t('login.smartHasAccount') || 'Conta encontrada — vamos enviar o código'}
-                              </Text>
-                            </View>
-                          )}
-                          {phoneAccountState.status === 'new' && phoneAccountState.phone === (phoneCountryCode + phoneNumber.replace(/\D/g, '')) && (
-                            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, marginTop: 6, marginBottom: 4 }}>
-                              <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: colors.primary }} />
-                              <Text style={{ color: colors.primary, fontSize: 13, fontWeight: '600' }}>
-                                {t('login.smartNewAccount') || 'Vamos criar sua conta no Chatyy'}
-                              </Text>
-                            </View>
-                          )}
-
-                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, justifyContent: 'center', marginTop: 4, marginBottom: 6 }}>
-                            <IconMessageCircle size={15} color={colors.textSecondary} />
-                            <Text style={{ fontSize: 13, color: colors.textSecondary }}>{t('onb.phoneHint')}</Text>
-                          </View>
-
-                          {(() => {
-                            // Match login-unified.html: disabled state uses
-                            // solid gray (#e5e7eb) with muted text — NOT a
-                            // washed-out version of the brand color. Reads
-                            // as "not yet ready" instead of "almost ready".
-                            const _disabled = phoneSending || phoneNumber.replace(/\D/g, '').length < 8;
-                            const _bg = phoneSending ? colors.primary : (_disabled ? (colors.border) : colors.primary);
-                            const _fg = phoneSending ? colors.onPrimary : (_disabled ? (colors.textTertiary) : colors.onPrimary);
-                            return (
-                              <TouchableOpacity
-                                style={[s.primaryBtn, {
-                                  backgroundColor: _bg,
-                                  opacity: phoneSending ? 0.7 : 1,
-                                  width: '100%', alignSelf: 'stretch',
-                                  alignItems: 'center', justifyContent: 'center',
-                                  marginTop: 8,
-                                  // Botão habilitado ganha degradê + sombra de marca
-                                  // (presença premium WhatsApp-grade). Desabilitado
-                                  // fica cinza chapado de propósito (não "quase pronto").
-                                  ...(!_disabled ? (Platform.OS === 'web' ? {
-                                    backgroundImage: `linear-gradient(135deg, ${colors.authBtnGradientStart} 0%, ${colors.authBtnGradientEnd} 100%)`,
-                                    boxShadow: '0 8px 22px rgba(17, 17, 17,0.34), 0 2px 6px rgba(17, 17, 17,0.18)',
-                                  } : Platform.select({
-                                    ios: { shadowColor: colors.primary, shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.32, shadowRadius: 14 },
-                                    android: { elevation: 6 },
-                                  })) : {}),
-                                }]}
-                                onPress={handlePhoneSendOtp}
-                                disabled={_disabled}
-                                activeOpacity={0.85}
-                              >
-                                {phoneSending ? (
-                                  <View style={s.loadingBtnContent}>
-                                    <DotLoader />
-                                    <Text style={[s.primaryBtnText, { marginLeft: 10, color: _fg }]}>{t('login.phoneSendCode')}</Text>
-                                  </View>
-                                ) : (
-                                  <Text style={[s.primaryBtnText, { color: _fg }]}>{t('login.continueCta') || t('login.phoneSendCode')}</Text>
-                                )}
-                              </TouchableOpacity>
-                            );
-                          })()}
-
-                          {/* Sem botão "Criar conta" aqui — fluxo é
-                              automático: tap no CTA chama handlePhoneSendOtp
-                              que detecta exists:false e roteia pro signup
-                              com phone+country pre-preenchidos. User pediu
-                              tela enxuta com só o input + CTA. */}
-
-                          {/* Helper text matching login-unified.html mockup:
-                              static reassurance that backend handles both
-                              cases automatically. Only on mobile (desktop
-                              has the QR/Email tabs to clarify the choice). */}
-                          {!isDesktop && (
-                            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, marginTop: 18 }}>
-                              <Text style={{ fontSize: 14, color: colors.textSecondary }}>{t('onb.noAccount')}</Text>
-                              <TouchableOpacity
-                                onPress={() => { safeHaptic(() => Haptics.selectionAsync()); router.push('/signup-phone'); }}
-                                activeOpacity={0.6}
-                                hitSlop={{ top: 14, bottom: 14, left: 12, right: 12 }}
-                                style={{ minHeight: 44, justifyContent: 'center' }}
-                                accessibilityRole="button"
-                              >
-                                <Text style={{ fontSize: 14, fontWeight: '700', color: colors.primary }}>{t('login.createAccount')}</Text>
-                              </TouchableOpacity>
-                            </View>
-                          )}
-                          {!isDesktop && (
-                            <Text style={{ fontSize: 13, color: colors.textTertiary, textAlign: 'center', lineHeight: 19, marginTop: 16 }}>
-                              <Text style={{ fontWeight: '600', color: colors.textSecondary }}>{t('login.helperHasAccount') || 'Já tem Chatyy?'}</Text>{' '}{t('login.helperHasAccountSub') || 'Você entra direto.'}
-                              {'\n'}
-                              <Text style={{ fontWeight: '600', color: colors.textSecondary }}>{t('login.helperFirstTime') || 'Primeiro acesso?'}</Text>{' '}{t('login.helperFirstTimeSub') || 'Criamos sua conta na hora.'}
-                            </Text>
-                          )}
-
-                          {/* Mobile fallback: tabs are hidden in the unified
-                              flow, so users who lost their phone (or are
-                              still on a legacy email account) need a way to
-                              reach email login. Tiny link below CTA, low
-                              visual weight — doesn't distract first-time
-                              signups but discoverable for the few who need
-                              it. Desktop already has the segmented tabs. */}
-                          {!isDesktop && (
-                            <TouchableOpacity
-                              onPress={() => { safeHaptic(() => Haptics.selectionAsync()); setLoginMode('email'); setError(''); setStep(1); }}
-                              activeOpacity={0.6}
-                              style={{
-                                alignSelf: 'stretch', marginTop: 12, paddingVertical: 14,
-                                flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
-                                borderRadius: 14, borderWidth: 1, borderColor: colors.border,
-                              }}
-                              accessibilityRole="button"
-                            >
-                              <IconMail size={17} color={colors.textSecondary} />
-                              <Text style={{ fontSize: 14, color: colors.text, fontWeight: '600' }}>
-                                {t('login.useEmailInstead') || 'Entrar com email'}
-                              </Text>
-                            </TouchableOpacity>
-                          )}
-
-                        </>
-                      ) : (
-                        <>
+  // ── OTP ── (phone path; code by SMS / WhatsApp)
+  const renderOtp = () => (
+    <View>
+      {renderBack(backToSmart, t('login.phoneChangeNumber'))}
+      <View style={{ alignItems: 'center', marginBottom: 4 }}>
+        <View style={{ width: 60, height: 60, borderRadius: 20, backgroundColor: colors.surfaceVariant, alignItems: 'center', justifyContent: 'center', marginBottom: 14 }}>
+          <IconMessageCircle size={26} color={colors.text} />
+        </View>
+        <Text accessibilityRole="header" style={[s.title, { color: colors.text }]}>{t('login.otpTitle')}</Text>
+        <Text style={[s.subtitle, { color: colors.textSecondary, marginBottom: otpChannelNote ? 4 : 22 }]}>
+          {t('login.phoneOtpSubtitle')}{' '}
+          <Text style={{ fontWeight: '700', color: colors.text }}>{phoneDisplay}</Text>
+        </Text>
+        {!!otpChannelNote && (
+          <Text style={{ fontSize: 13, color: colors.textSecondary, marginBottom: 20, textAlign: 'center' }}>{otpChannelNote}</Text>
+        )}
+      </View>
+      {!online && <LoginNotice tone="offline" text={t('login.offlineBanner')} colors={colors} style={{ marginBottom: 14 }} />}
+      {!!error && <LoginNotice tone="error" text={error} colors={colors} style={{ marginBottom: 14 }} />}
                           {/* OTP — single hidden TextInput overlays the 6
                               boxes (WhatsApp/Telegram pattern). One input is
                               the only way iOS oneTimeCode autofill actually
@@ -2365,7 +2404,7 @@ export default function LoginScreen() {
                           >
                             {phoneVerifying ? (
                               <View style={s.loadingBtnContent}>
-                                <DotLoader />
+                                <DotLoader color={colors.onPrimary} />
                                 <Text style={[s.primaryBtnText, { marginLeft: 10, color: colors.onPrimary }]}>{t('login.phoneVerify')}</Text>
                               </View>
                             ) : (
@@ -2373,13 +2412,12 @@ export default function LoginScreen() {
                             )}
                           </TouchableOpacity>
 
-                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, justifyContent: 'center', marginBottom: 4 }}>
-                            <IconMessageCircle size={15} color={colors.textSecondary} />
-                            <Text style={{ fontSize: 13, color: colors.textSecondary }}>{t('onb.codeChannels')}</Text>
-                          </View>
+                          {/* (generic "Código enviado por WhatsApp e SMS" row removed —
+                              it was false on the Firebase SMS-only path; the header
+                              now states the REAL channel from verify_send.) */}
                           <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 16 }}>
                             <TouchableOpacity
-                              onPress={() => { setPhoneStep('input'); setPhoneOtp(['', '', '', '', '', '']); setPhoneRequiresLock(false); setPhoneLockPin(''); setError(''); }}
+                              onPress={backToSmart}
                               activeOpacity={0.6}
                             >
                               <Text style={[s.linkText, { color: colors.primary }]}>{t('login.phoneChangeNumber')}</Text>
@@ -2397,15 +2435,170 @@ export default function LoginScreen() {
                             </TouchableOpacity>
                           </View>
 
+                          {/* [2026-10-07 login-ux] WhatsApp option: our verify_send
+                              delivers the SAME code by WhatsApp (+ SMS in BR). Hidden
+                              when the last send already went through WhatsApp. */}
+                          {!otpWentViaWhatsapp && (
+                            <TouchableOpacity
+                              onPress={() => handlePhoneSendOtp('backend')}
+                              disabled={phoneSending}
+                              activeOpacity={0.7}
+                              accessibilityRole="button"
+                              style={{
+                                alignSelf: 'center', marginTop: 20,
+                                flexDirection: 'row', alignItems: 'center', gap: 8,
+                                paddingVertical: 11, paddingHorizontal: 18, minHeight: 44,
+                                borderRadius: 999, borderWidth: 1, borderColor: colors.border,
+                                opacity: phoneSending ? 0.5 : 1,
+                              }}
+                            >
+                              <IconMessageCircle size={16} color={colors.text} />
+                              <Text style={{ fontSize: 14, fontWeight: '700', color: colors.text }}>{t('login.otpViaWhatsapp')}</Text>
+                            </TouchableOpacity>
+                          )}
+
                           {/* Fallback por ligação REMOVIDO (2026-06-26): o SMS agora vai
                               pelo Firebase (Google), que entrega bem no BR — não precisa
                               mais oferecer "receber por chamada" no login. */}
-                        </>
-                      )}
-                    </View>
+    </View>
+  );
 
-                  ) : loginMode === 'qr' && isDesktop ? (
-                    /* ── QR LOGIN ── */
+  const smartTabActive = loginMode !== 'qr';
+
+  return (
+    <View style={[s.root, { backgroundColor: colors.authBg }]}>
+
+      {/* Desktop only: faint grid behind the card (static — the drifting orbs
+          and purple wash were removed with the hero loops). */}
+      {isDesktop && <View pointerEvents="none" style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, overflow: 'hidden' }}>
+        <Svg width="100%" height="100%" style={{ position: 'absolute' }}>
+          <Defs>
+            <Pattern id="techGrid" x="0" y="0" width="32" height="32" patternUnits="userSpaceOnUse">
+              <Path d="M 32 0 L 0 0 0 32" fill="none" stroke={isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.04)'} strokeWidth="1" />
+            </Pattern>
+            <RadialGradient id="techGridFade" cx="50%" cy="50%" r="55%">
+              <Stop offset="0%" stopColor="#fff" stopOpacity="1" />
+              <Stop offset="60%" stopColor="#fff" stopOpacity="0.6" />
+              <Stop offset="100%" stopColor="#fff" stopOpacity="0" />
+            </RadialGradient>
+            <Mask id="techGridMask">
+              <Rect x="0" y="0" width="100%" height="100%" fill="url(#techGridFade)" />
+            </Mask>
+          </Defs>
+          <Rect x="0" y="0" width="100%" height="100%" fill="url(#techGrid)" mask="url(#techGridMask)" />
+        </Svg>
+      </View>}
+
+      {/* Cancel button for add_account mode */}
+      {isAddAccount && (
+        <TouchableOpacity
+          onPress={() => router.back()}
+          style={{ position: 'absolute', top: insets.top + 12, left: 16, zIndex: 10 }}
+          activeOpacity={0.7}
+          accessibilityRole="button"
+          accessibilityLabel={t('account.cancel')}
+        >
+          {/* [2026-10-07 login-ux] was s.topBtn (fixed 44pt width) → "Cancelar" overflowed. */}
+          <View style={{ height: 44, paddingHorizontal: 14, borderRadius: 22, justifyContent: 'center', backgroundColor: colors.surfaceVariant }}>
+            <Text style={{ color: colors.text, fontSize: 15, fontWeight: '600' }}>{t('account.cancel')}</Text>
+          </View>
+        </TouchableOpacity>
+      )}
+
+      {/* Language selector + Theme toggle — top right */}
+      <View style={[s.topRightRow, { top: insets.top + 12 }]}>
+        <TouchableOpacity onPress={() => setShowLangModal(true)} activeOpacity={0.7} accessibilityRole="button" accessibilityLabel="Change language">
+          <View style={[s.langBtn, { backgroundColor: 'transparent' }]}>
+            <IconGlobe size={14} color={colors.textSecondary} />
+            <Text style={[s.langBtnText, { color: colors.text }]}>{langShort}</Text>
+            <View style={{ marginLeft: -1 }}>
+              <IconChevronDown size={12} color={colors.textSecondary} />
+            </View>
+          </View>
+        </TouchableOpacity>
+        <TouchableOpacity onPress={toggle} activeOpacity={0.7} accessibilityRole="button" accessibilityLabel={isDark ? t('a11y.switchToLight') : t('a11y.switchToDark')}>
+          <View style={[s.topBtn, { backgroundColor: 'transparent' }]}>
+            {isDark ? <IconSun size={16} color={colors.warning} /> : <IconMoon size={16} color={colors.textSecondary} />}
+          </View>
+        </TouchableOpacity>
+      </View>
+
+      <LoginKeyboardScroll
+        contentContainerStyle={s.scroll}
+        bottomOffset={110}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? insets.top : 0}
+      >
+          <View style={[s.center, !isDesktop && {
+            // Mobile: anchor to the TOP (below the lang/theme row) so the
+            // keyboard never pushes the form out of view.
+            justifyContent: 'flex-start',
+            paddingTop: insets.top + 64,
+            paddingBottom: 24 + insets.bottom,
+          }]}>
+            <View style={[s.cardWrap, isDesktop && { maxWidth: 460 }]}>
+              <View style={[s.card, isDesktop ? {
+                backgroundColor: colors.authCardBg,
+                borderWidth: 1,
+                borderColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(17, 17, 17,0.08)',
+                borderRadius: 24,
+                paddingTop: 40, paddingBottom: 32,
+                paddingHorizontal: Platform.OS === 'web' ? 44 : 24,
+                ...(Platform.OS === 'web' ? {
+                  boxShadow: isDark
+                    ? '0 2px 8px rgba(0,0,0,0.30), 0 18px 60px rgba(0,0,0,0.40)'
+                    : '0 1px 2px rgba(60,64,67,0.06), 0 6px 20px rgba(17, 17, 17,0.07), 0 24px 64px rgba(60,64,67,0.10)',
+                } : {}),
+              } : {
+                backgroundColor: 'transparent',
+                paddingTop: 0, paddingBottom: 8, paddingHorizontal: 8,
+              }]}>
+                {isDesktop && renderHero(true)}
+
+                {/* Desktop: QR (pair with your phone) | Telefone ou e-mail */}
+                {isDesktop && (
+                  <View style={{
+                    flexDirection: 'row',
+                    backgroundColor: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(60,64,67,0.05)',
+                    borderRadius: 14, padding: 4, marginBottom: 24, gap: 4,
+                  }}>
+                    {[
+                      { key: 'qr', label: t('login.tabQr'), Icon: IconGlobe },
+                      { key: 'smart', label: t('login.tabPhoneEmail'), Icon: IconPhone },
+                    ].map(({ key, label, Icon }) => {
+                      const active = key === 'qr' ? !smartTabActive : smartTabActive;
+                      return (
+                        <TouchableOpacity
+                          key={key}
+                          onPress={() => {
+                            hSelection();
+                            setError('');
+                            if (key === 'qr') { setLoginMode('qr'); setStep(1); }
+                            else if (!smartTabActive) { setLoginMode('smart'); setStep(1); }
+                          }}
+                          activeOpacity={0.7}
+                          accessibilityRole="tab"
+                          accessibilityState={{ selected: active }}
+                          style={{
+                            flex: 1, paddingVertical: 11, borderRadius: 10,
+                            flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
+                            backgroundColor: active ? colors.surface : 'transparent',
+                            ...(Platform.OS === 'web' ? { transition: 'background-color 160ms ease, box-shadow 160ms ease', cursor: 'pointer' } : {}),
+                            ...(active && Platform.OS === 'web' ? { boxShadow: isDark ? '0 1px 4px rgba(0,0,0,0.45)' : '0 1px 4px rgba(60,64,67,0.16)' } : {}),
+                          }}
+                        >
+                          <Icon size={14} color={active ? colors.text : colors.textSecondary} />
+                          <Text style={{ fontSize: 13, fontWeight: '700', color: active ? colors.text : colors.textSecondary }}>{label}</Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+                )}
+
+                <Animated.View style={{
+                  opacity: fadeAnim,
+                  transform: [{ translateX: slideAnim }, { translateX: shakeAnim }],
+                }}>
+                  {loginMode === 'qr' && isDesktop ? (
                     (() => {
                       // Framed QR container — rounded card with a subtle border,
                       // generous inner padding, and four brand-purple corner
@@ -2540,343 +2733,12 @@ export default function LoginScreen() {
                     </View>
                       );
                     })()
-
-                  ) : step === 1 ? (
-                    /* ── EMAIL STEP 1 ── */
-                    <>
-                      {/* Mobile-only "back to phone" link, since the segmented
-                          tabs are hidden in the unified flow. Without this,
-                          mobile users who tap "Entrar com email" can't get
-                          back to the primary phone form. */}
-                      {!isDesktop && (
-                        <TouchableOpacity
-                          onPress={() => { safeHaptic(() => Haptics.selectionAsync()); setLoginMode('phone'); setError(''); setPhoneStep('input'); setPhoneOtp(['', '', '', '', '', '']); }}
-                          activeOpacity={0.6}
-                          style={{ alignSelf: 'flex-start', flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 10, marginBottom: 4 }}
-                        >
-                          <Text style={{ fontSize: 14, color: colors.primary, fontWeight: '600' }}>
-                            ‹ {t('login.backToPhone') || 'Voltar pra telefone'}
-                          </Text>
-                        </TouchableOpacity>
-                      )}
-                      <Text style={[s.title, { color: colors.text }]}>{t('login.title')}</Text>
-                      <Text style={[s.subtitle, { color: colors.textSecondary }]}>
-                        {t('login.subtitle')}
-                      </Text>
-
-                      {/* IG-style email input — flat 52pt rounded radius 10,
-                          label is the static placeholder. Border color toggles
-                          on focus. Shake animation applies to just the input
-                          row. Focus ring: web uses boxShadow ring-4 in brand
-                          purple (animated via CSS transition), native gets a
-                          4pt outer View with animated opacity. */}
-                      <Animated.View style={{ transform: [{ translateX: shakeAnim }], position: 'relative' }}>
-                        {Platform.OS !== 'web' && (
-                          <Animated.View pointerEvents="none" style={{
-                            position: 'absolute', top: -4, left: -4, right: -4, bottom: -4,
-                            borderRadius: 16, backgroundColor: colors.primary + '22',
-                            opacity: emailRingAnim, zIndex: -1,
-                          }} />
-                        )}
-                        <TextInput
-                          style={[s.igInput, {
-                            backgroundColor: colors.surfaceVariant,
-                            borderColor: focused === 'email'
-                              ? colors.primary
-                              : (colors.authInputBorder),
-                            color: colors.text,
-                            ...(Platform.OS === 'web' && focused === 'email'
-                              ? { boxShadow: `0 0 0 4px ${colors.primary}26` }
-                              : {}),
-                          }]}
-                          value={email}
-                          onChangeText={(text) => { setEmail(text); if (error) setError(''); }}
-                          autoCapitalize="none"
-                          keyboardType="email-address"
-                          autoComplete="email"
-                          returnKeyType="next"
-                          placeholder={t('login.emailPlaceholder')}
-                          placeholderTextColor={colors.textTertiary}
-                          onFocus={() => setFocused('email')}
-                          onBlur={() => setFocused('')}
-                          onSubmitEditing={handleContinue}
-                          accessibilityLabel={t('login.emailPlaceholder')}
-                        />
-                      </Animated.View>
-
-                      {/* Inline error directly under the input. IG kills the
-                          banner — surfaces only the field-level message. */}
-                      {!!error && (
-                        <Text style={{ color: colors.error, fontSize: 13, marginTop: 6 }}>{error}</Text>
-                      )}
-
-                      {/* Domain hint */}
-                      {!email.includes('@') && email.length > 0 && (
-                        <Text style={[s.domainHint, { color: colors.textSecondary }]}>
-                          {t('login.fullEmail')} <Text style={{ fontWeight: '600', color: colors.primary }}>{email}@chatyy.com.br</Text>
-                        </Text>
-                      )}
-                      {!email && (
-                        <Text style={[s.domainHint, { color: colors.textSecondary }]}>
-                          {t('login.domainHint')}
-                        </Text>
-                      )}
-
-                      <TouchableOpacity
-                        style={s.forgotLink}
-                        activeOpacity={0.6}
-                        onPress={() => setShowHelp(true)}
-                        hitSlop={{ top: 14, bottom: 14, left: 12, right: 12 }}
-                      >
-                        <Text style={[s.linkText, { color: colors.primary }]}>{t('login.forgotEmail')}</Text>
-                      </TouchableOpacity>
-
-                      {/* IG-style stacked CTA — full-width primary, ghost text
-                          link below. Drops the split row that paired tiny
-                          "Próximo" with a text-link. Disabled state is
-                          opacity 0.3 (keeps brand color presence). Press
-                          gives a 0.985 scale depression + web-only purple
-                          glow. */}
-                      <Animated.View style={{ transform: [{ scale: ctaScaleAnim }] }}>
-                        <Pressable
-                          style={({ pressed }) => [s.igPrimaryBtn, {
-                            backgroundColor: colors.primary,
-                            opacity: !email.trim() ? 0.3 : 1,
-                            ...(Platform.OS === 'web' && pressed && email.trim() ? {
-                              boxShadow: '0 8px 24px -8px rgba(17, 17, 17,0.6)',
-                            } : {}),
-                          }]}
-                          onPress={handleContinue}
-                          onPressIn={onCtaPressIn}
-                          onPressOut={onCtaPressOut}
-                          accessibilityRole="button"
-                        >
-                          <Text style={[s.igPrimaryBtnText, { color: colors.onPrimary }]}>{t('login.next')}</Text>
-                        </Pressable>
-                      </Animated.View>
-                      <TouchableOpacity
-                        onPress={() => { safeHaptic(() => Haptics.selectionAsync()); router.push('/signup-phone'); }}
-                        activeOpacity={0.6}
-                        style={s.igGhostBtn}
-                        accessibilityRole="button"
-                      >
-                        <Text style={[s.igGhostBtnLabel, { color: colors.primary }]}>{t('login.createAccount') || 'Criar conta'}</Text>
-                      </TouchableOpacity>
-
-                      {/* Biometric login (native only) — Animated.spring press
-                          scale 1→0.92 + Haptics.selectionAsync on press for
-                          tactile WhatsApp/Telegram parity. The press handler
-                          fires the haptic before the auth prompt so the user
-                          gets immediate feedback even while iOS spins up the
-                          Face ID sheet. */}
-                      {bioAvailable && (() => {
-                        const _bioScale = bioBtnScaleRef.current;
-                        const _bioIn = () => {
-                          Animated.spring(_bioScale, { toValue: 0.92, tension: 220, friction: 10, useNativeDriver: true }).start();
-                        };
-                        const _bioOut = () => {
-                          Animated.spring(_bioScale, { toValue: 1, tension: 220, friction: 10, useNativeDriver: true }).start();
-                        };
-                        const _onPress = () => {
-                          safeHaptic(() => Haptics.selectionAsync());
-                          handleBiometricLogin();
-                        };
-                        return (
-                        <Animated.View style={{ transform: [{ scale: _bioScale }] }}>
-                        <TouchableOpacity
-                          style={[s.biometricBtn, {
-                            borderColor: colors.primary + '40',
-                            backgroundColor: colors.primary + '08',
-                          }]}
-                          onPress={_onPress}
-                          onPressIn={_bioIn}
-                          onPressOut={_bioOut}
-                          disabled={bioLoading}
-                          activeOpacity={0.7}
-                          accessibilityRole="button"
-                          accessibilityLabel={
-                            bioType === 'face' ? 'Face ID'
-                              : bioType === 'touch' ? 'Touch ID'
-                              : (t('login.biometric') || 'Biometria')
-                          }
-                        >
-                          {bioLoading ? (
-                            <ActivityIndicator color={colors.primary} size="small" />
-                          ) : (
-                            <>
-                              <View style={[s.biometricIcon, { backgroundColor: colors.primary + '18' }]}>
-                                {bioType === 'face' ? (
-                                  <Svg width={24} height={24} viewBox="0 0 24 24" fill="none">
-                                    <Path d="M3 7V5a2 2 0 012-2h2" stroke={colors.primary} strokeWidth={2} strokeLinecap="round" />
-                                    <Path d="M17 3h2a2 2 0 012 2v2" stroke={colors.primary} strokeWidth={2} strokeLinecap="round" />
-                                    <Path d="M21 17v2a2 2 0 01-2 2h-2" stroke={colors.primary} strokeWidth={2} strokeLinecap="round" />
-                                    <Path d="M7 21H5a2 2 0 01-2-2v-2" stroke={colors.primary} strokeWidth={2} strokeLinecap="round" />
-                                    <SvgCircle cx="9" cy="10" r="0.9" fill={colors.primary} />
-                                    <SvgCircle cx="15" cy="10" r="0.9" fill={colors.primary} />
-                                    <Path d="M12 10v4" stroke={colors.primary} strokeWidth={1.5} strokeLinecap="round" />
-                                    <Path d="M9.5 16c.7.5 1.6.8 2.5.8s1.8-.3 2.5-.8" stroke={colors.primary} strokeWidth={1.5} strokeLinecap="round" />
-                                  </Svg>
-                                ) : (
-                                  <Svg width={24} height={24} viewBox="0 0 24 24" fill="none">
-                                    <Path d="M12 2a8 8 0 00-8 8v2" stroke={colors.primary} strokeWidth={1.8} strokeLinecap="round" />
-                                    <Path d="M20 12v-2a8 8 0 00-12.9-6.3" stroke={colors.primary} strokeWidth={1.8} strokeLinecap="round" />
-                                    <Path d="M5.5 17A9 9 0 015 14c0-3.9 3.1-7 7-7s7 3.1 7 7c0 1 .1 2 .3 3" stroke={colors.primary} strokeWidth={1.6} strokeLinecap="round" />
-                                    <Path d="M8 14a4 4 0 118 0c0 2-.5 3.5-1 5" stroke={colors.primary} strokeWidth={1.6} strokeLinecap="round" />
-                                    <Path d="M12 11v5c0 1 .2 2 .5 3" stroke={colors.primary} strokeWidth={1.6} strokeLinecap="round" />
-                                  </Svg>
-                                )}
-                              </View>
-                              <Text style={[s.biometricText, { color: colors.primary, fontWeight: '700' }]}>
-                                {bioType === 'face' ? 'Entrar com Face ID'
-                                  : bioType === 'touch' ? 'Entrar com Touch ID'
-                                  : (t('login.biometric') || 'Entrar com biometria')}
-                              </Text>
-                            </>
-                          )}
-                        </TouchableOpacity>
-                        </Animated.View>
-                        );
-                      })()}
-                    </>
-
+                  ) : loginMode === 'phone' && phoneStep === 'otp' ? (
+                    renderOtp()
+                  ) : loginMode === 'email' && step === 2 && !!email ? (
+                    renderPassword()
                   ) : (
-                    /* ── EMAIL STEP 2 — PASSWORD ── */
-                    <>
-                      <Text style={[s.title, { color: colors.text }]}>{t('login.welcome')}</Text>
-
-                      {/* User chip (email with avatar) — soft filled pill so it
-                          reads as a tappable "switch account" affordance,
-                          matching the filled pills used across the signup flow. */}
-                      <TouchableOpacity
-                        style={[s.userChip, { borderColor: colors.authInputBorder, backgroundColor: colors.surfaceVariant }]}
-                        onPress={() => animateStep(1)}
-                        activeOpacity={0.7}
-                        accessibilityRole="button"
-                        accessibilityLabel={t('login.changeAccount') || t('login.welcome')}
-                      >
-                        <View style={[s.userAvatar, { backgroundColor: colors.primary }]}>
-                          <Text style={s.userAvatarLetter}>{(email || '?')[0].toUpperCase()}</Text>
-                        </View>
-                        <Text style={[s.userEmail, { color: colors.text }]} numberOfLines={1}>
-                          {displayEmail}
-                        </Text>
-                        <View style={{ marginLeft: 6 }}>
-                          <IconChevronDown size={12} color={colors.textSecondary} />
-                        </View>
-                      </TouchableOpacity>
-
-                      {/* IG-style password input. Eye toggle stays at right.
-                          Shake animates only this row. Focus ring matches
-                          the email input pattern. */}
-                      <Animated.View style={{ transform: [{ translateX: shakeAnim }], position: 'relative' }}>
-                        {Platform.OS !== 'web' && (
-                          <Animated.View pointerEvents="none" style={{
-                            position: 'absolute', top: -4, left: -4, right: -4, bottom: -4,
-                            borderRadius: 16, backgroundColor: colors.primary + '22',
-                            opacity: passRingAnim, zIndex: -1,
-                          }} />
-                        )}
-                        <TextInput
-                          ref={passwordRef}
-                          style={[s.igInput, {
-                            backgroundColor: colors.surfaceVariant,
-                            borderColor: focused === 'pass'
-                              ? colors.primary
-                              : (colors.authInputBorder),
-                            color: colors.text,
-                            paddingRight: 44,
-                            ...(Platform.OS === 'web' && focused === 'pass'
-                              ? { boxShadow: `0 0 0 4px ${colors.primary}26` }
-                              : {}),
-                          }]}
-                          value={password}
-                          onChangeText={(text) => { setPassword(text); if (error) setError(''); }}
-                          secureTextEntry={!showPassword}
-                          returnKeyType="go"
-                          placeholder={t('login.passwordInput')}
-                          placeholderTextColor={colors.textTertiary}
-                          onFocus={() => setFocused('pass')}
-                          onBlur={() => setFocused('')}
-                          onSubmitEditing={handleLogin}
-                          accessibilityLabel={t('login.passwordPlaceholder')}
-                        />
-                        <TouchableOpacity
-                          onPress={() => setShowPassword(!showPassword)}
-                          style={s.igEyeBtn}
-                          activeOpacity={0.6}
-                          hitSlop={{ top: 14, bottom: 14, left: 12, right: 12 }}
-                          accessibilityRole="button"
-                          accessibilityLabel={showPassword ? t('login.hidePassword') : t('login.showPassword')}
-                        >
-                          {showPassword
-                            ? <IconEyeOff size={20} color={colors.textSecondary} />
-                            : <IconEye size={20} color={colors.textSecondary} />}
-                        </TouchableOpacity>
-                      </Animated.View>
-
-                      {!!error && (
-                        <Text style={{ color: colors.error, fontSize: 13, marginTop: 6 }}>{error}</Text>
-                      )}
-
-                      <TouchableOpacity style={s.forgotLink} activeOpacity={0.6} onPress={() => router.push('/forgot')} hitSlop={{ top: 14, bottom: 14, left: 12, right: 12 }}>
-                        <Text style={[s.linkText, { color: colors.primary }]}>{t('login.forgotPassword')}</Text>
-                      </TouchableOpacity>
-
-                      {/* IG-style stacked CTAs — primary "Entrar" full-width,
-                          ghost "Voltar" below. Disabled at opacity 0.3 keeps
-                          brand color while signalling state. Loading uses
-                          branded 3-dot pulse instead of ActivityIndicator. */}
-                      <Animated.View style={{ transform: [{ scale: ctaScaleAnim }] }}>
-                        <Pressable
-                          style={({ pressed }) => [s.igPrimaryBtn, {
-                            backgroundColor: colors.primary,
-                            opacity: (loading || !password) ? 0.3 : 1,
-                            ...(Platform.OS === 'web' && pressed && password && !loading ? {
-                              boxShadow: '0 8px 24px -8px rgba(17, 17, 17,0.6)',
-                            } : {}),
-                          }]}
-                          onPress={handleLogin}
-                          onPressIn={onCtaPressIn}
-                          onPressOut={onCtaPressOut}
-                          disabled={loading}
-                          accessibilityRole="button"
-                        >
-                          {loading ? (
-                            <View style={s.loadingBtnContent}>
-                              <DotLoader />
-                              <Text style={[s.igPrimaryBtnText, { marginLeft: 10, color: colors.onPrimary }]}>{t('login.enter')}</Text>
-                            </View>
-                          ) : (
-                            <Text style={[s.igPrimaryBtnText, { color: colors.onPrimary }]}>{t('login.enter')}</Text>
-                          )}
-                        </Pressable>
-                      </Animated.View>
-                      <TouchableOpacity
-                        onPress={() => { safeHaptic(() => Haptics.selectionAsync()); animateStep(1); }}
-                        style={s.igGhostBtn}
-                        activeOpacity={0.6}
-                        accessibilityRole="button"
-                      >
-                        <Text style={[s.igGhostBtnLabel, { color: colors.primary }]}>{t('login.back')}</Text>
-                      </TouchableOpacity>
-
-                      {/* Passkey (WebAuthn) login — FLAG-GATED, hidden in prod.
-                          Renders ONLY when PASSKEYS_ENABLED (default false in
-                          constants/featureFlags.js) so nothing changes until the
-                          native react-native-passkey bridge ships in a build.
-                          See handlePasskeyLogin above + /api/passkeys.php. */}
-                      {PASSKEYS_ENABLED && (
-                        <TouchableOpacity
-                          onPress={handlePasskeyLogin}
-                          style={s.igGhostBtn}
-                          activeOpacity={0.6}
-                          disabled={loading}
-                          accessibilityRole="button"
-                        >
-                          <Text style={[s.igGhostBtnLabel, { color: colors.primary }]}>{t('login.passkeyCta') || 'Entrar com passkey'}</Text>
-                        </TouchableOpacity>
-                      )}
-                    </>
+                    renderSmart()
                   )}
                 </Animated.View>
               </View>
@@ -2905,10 +2767,10 @@ export default function LoginScreen() {
                 </View>
               )}
 
-              {/* Footer — Privacy / Terms / Help. Hidden on mobile to match
-                  login-unified.html (clean form, no footer). Desktop keeps
-                  it for compliance + legacy login users who need help. */}
-              {isDesktop && <View style={s.footer}>
+              {/* Footer — Help / Privacy / Terms (+ build label, 5-tap reset).
+                  [2026-10-07 login-ux] now on mobile too: the phone login had
+                  no way to reach Help/Privacy/Terms before signing in. */}
+              <View style={s.footer}>
                 {/* (intentionally no Scan QR Code on initial login) */}
                 <View style={s.footerLinks}>
                   <TouchableOpacity activeOpacity={0.6} onPress={() => setShowHelp(true)} hitSlop={{ top: 14, bottom: 14, left: 8, right: 8 }}>
@@ -2965,11 +2827,10 @@ export default function LoginScreen() {
                     {buildLabel}
                   </Text>
                 </TouchableOpacity>
-              </View>}
-            </Animated.View>
+              </View>
+            </View>
           </View>
-        </ScrollView>
-      </KeyboardAvoidingView>
+      </LoginKeyboardScroll>
 
       <ChangePasswordModal
         visible={forcePwChange}
@@ -3012,10 +2873,17 @@ export default function LoginScreen() {
                 <TouchableOpacity
                   style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 14, paddingHorizontal: 16, borderBottomWidth: 0.5, borderBottomColor: colors.borderLight,
                     backgroundColor: item.code === phoneCountryCode ? (isDark ? 'rgba(255,255,255,0.12)' : 'rgba(17,17,17,0.06)') : 'transparent' }}
-                  onPress={() => { setPhoneCountryCode(item.code); setShowCountryPicker(false); }}
+                  onPress={() => { hSelection(); setPhoneCountryCode(item.code); setShowCountryPicker(false); setTimeout(() => { try { identifierRef.current?.focus(); } catch {} }, 250); }}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected: item.code === phoneCountryCode }}
                   activeOpacity={0.6}
                 >
-                  <Text style={{ fontSize: 24, marginRight: 12 }}>{item.flag}</Text>
+                  {/* [2026-10-07 login-ux] ISO badge instead of the flag emoji
+                      (founder rule: no emoji in UI; flags also render as letters
+                      on Windows web anyway). */}
+                  <View style={{ width: 40, height: 28, borderRadius: 8, backgroundColor: colors.surfaceVariant, alignItems: 'center', justifyContent: 'center', marginRight: 12 }}>
+                    <Text style={{ fontSize: 12, fontWeight: '800', color: colors.text, letterSpacing: 0.4 }}>{(item.label || '').slice(0, 2)}</Text>
+                  </View>
                   <View style={{ flex: 1 }}>
                     <Text style={{ fontSize: 16, color: colors.text, fontWeight: '500' }}>{item.name}</Text>
                     <Text style={{ fontSize: 13, color: colors.textSecondary }}>{item.label}</Text>
@@ -3049,7 +2917,7 @@ export default function LoginScreen() {
             }),
           }]} onPress={() => {}}>
             <Text style={[s.langModalTitle, { color: colors.text }]}>
-              {currentLang?.flag} {t('login.footerLanguage') || 'Language'}
+              {t('login.footerLanguage')}
             </Text>
             <FlatList
               data={LANGUAGES}
@@ -3063,10 +2931,10 @@ export default function LoginScreen() {
                   onPress={() => { changeLanguage(item.code); setShowLangModal(false); }}
                   activeOpacity={0.6}
                 >
-                  <Text style={s.langFlag}>{item.flag}</Text>
+                  <Text style={[s.langFlag, { fontSize: 11, fontWeight: '800', color: colors.textSecondary }]}>{String(item.code || '').split('-')[0].toUpperCase()}</Text>
                   <Text style={[s.langLabel, { color: colors.text }]}>{item.label}</Text>
                   {language === item.code && (
-                    <Text style={[s.langCheck, { color: colors.primary }]}>{'\u2713'}</Text>
+                    <IconCheck size={16} color={colors.text} />
                   )}
                 </TouchableOpacity>
               )}
@@ -3235,16 +3103,16 @@ export default function LoginScreen() {
         >
           <Animated.View style={{
             width: 132, height: 132, borderRadius: 66,
-            backgroundColor: colors.success,
+            backgroundColor: colors.primary,
             alignItems: 'center', justifyContent: 'center',
             transform: [{ scale: successAnim }],
             ...Platform.select({
-              ios: { shadowColor: colors.success, shadowOpacity: 0.45, shadowRadius: 24, shadowOffset: { width: 0, height: 8 } },
+              ios: { shadowColor: '#000', shadowOpacity: isDark ? 0 : 0.25, shadowRadius: 24, shadowOffset: { width: 0, height: 8 } },
               android: { elevation: 14 },
-              default: { boxShadow: '0 12px 40px -8px rgba(16,185,129,0.5)' },
+              default: { boxShadow: '0 12px 40px -8px rgba(0,0,0,0.35)' },
             }),
           }}>
-            <IconCheck size={64} color="#fff" strokeWidth={3.5} />
+            <IconCheck size={64} color={colors.onPrimary} strokeWidth={3.5} />
           </Animated.View>
         </Animated.View>
       ) : null}

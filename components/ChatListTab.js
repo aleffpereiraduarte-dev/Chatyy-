@@ -52,6 +52,7 @@ import StoryViewer from './status/StoryViewer';
 import LiveBar from './LiveBar';
 import { useLanguage } from '../context/LanguageContext';
 import ScreenEmptyState from './ScreenEmptyState';
+import ChatListSmartEmpty from './onboarding/ChatListSmartEmpty'; // [2026-10-07 welcome]
 import { ChatListSkeleton } from './SkeletonLoader';
 import { SkeletonRow as SkeletonRowPrimitive } from './Skeleton';
 import PressableScale from './PressableScale';
@@ -7161,14 +7162,15 @@ function ChatListTab({ colors, isDark, t, user, router, searchQuery = '', setAct
     );
   }, [searchQuery, messageHits, searchingMessages, isDark, colors, router, wsDownBanner, t, hasDraftSection, draftConversations.length, draftsSectionOpen]);
 
+  // [2026-10-07 welcome] Smart empty state: friends already on Chatyy +
+  // Nova conversa / Convidar + Saved Messages tip. With a filter/search (or
+  // conversations that are merely filtered out) it renders the old generic
+  // ScreenEmptyState inside ChatListSmartEmpty.
+  const _emptyIsFiltered = filter !== 'all' || !!String(searchQuery || '').trim()
+    || (Array.isArray(conversations) && conversations.length > 0);
   const ListEmptyComponent = useMemo(() => loading ? null : (
-    <ScreenEmptyState
-      kind="chat"
-      title={t('chat.empty') || 'Comece uma conversa'}
-      subtitle={t('chat.emptyDesc')}
-      cta={{ label: t('chat.newConversation') || 'Iniciar conversa', icon: 'plus', onPress: () => router.push('/chat-new') }}
-    />
-  ), [loading, t, router]);
+    <ChatListSmartEmpty router={router} t={t} filtered={_emptyIsFiltered} currentEmail={user?.email} />
+  ), [loading, t, router, _emptyIsFiltered, user?.email]);
 
   const ItemSeparatorComponent = useCallback(() => (
     <View style={[s.separator, { backgroundColor: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)', marginLeft: 84, marginRight: 0 }]} />
