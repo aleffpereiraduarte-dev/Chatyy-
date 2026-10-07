@@ -325,7 +325,13 @@
       "expo-image",
       "expo-speech-recognition",
       "expo-audio",
-      "expo-video",
+      [
+        "expo-video",
+        {
+          "supportsPictureInPicture": true,
+          "supportsBackgroundPlayback": true
+        }
+      ],
       "./plugins/withFixResourceSigning.js",
       "./plugins/withManualIosSigning.js",
       [

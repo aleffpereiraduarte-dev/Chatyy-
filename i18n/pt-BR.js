@@ -747,6 +747,11 @@ export default {
   'pushBanner.openSettings': 'Notificações desativadas — toque pra abrir os Ajustes',
   'pushBanner.a11y': 'Toque para reativar notificações de chamada',
   'pushBanner.dismiss': 'Fechar aviso',
+  // [2026-10-07 native-polish] push pre-permission primer
+  'pushPrimer.title': 'Ative as notificações',
+  'pushPrimer.body': 'Receba mensagens e chamadas mesmo com o Chatyy fechado, e deixe quem te escreve saber que a mensagem chegou.',
+  'pushPrimer.enable': 'Ativar notificações',
+  'pushPrimer.later': 'Agora não',
   'settings.cat.account': 'Conta',
   'settings.cat.accountSub': 'Perfil, foto, trocar conta',
   'settings.cat.appearance': 'Aparência',

@@ -5,6 +5,7 @@ import {
   Platform, Image, Pressable,
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
+import { useIsFocused } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
@@ -61,23 +62,74 @@ function VideoPane({ uri, poster, active }) {
       />
     );
   }
-  // Native: use expo-av if available (lazy)
-  let Video = null;
-  try { Video = require('expo-av').Video; } catch {}
-  if (!Video) {
-    return <Image source={{ uri: poster || uri }} style={{ width: SW, height: SH }} resizeMode="cover" />;
+  // [2026-10-07 native-polish] Native: expo-video. This used to require
+  // 'expo-av', which was removed in SDK 54+ (metro stubs it to {}), so on
+  // iOS/Android Spotlight only ever showed the poster — videos never played.
+  if (_ExpoVideo?.useVideoPlayer && _ExpoVideo?.VideoView) {
+    return <NativeVideoPane uri={uri} poster={poster} active={active} />;
   }
+  return <Image source={{ uri: poster || uri }} style={{ width: SW, height: SH }} resizeMode="cover" />;
+}
+
+// [2026-10-07 native-polish] One expo-video player per mounted item. The
+// FlatList keeps windowSize=3 (active ± 1), so the neighbours' players are
+// created paused and buffer ahead = instant start on swipe (TikTok-style
+// preload) while never holding more than 3 decoders.
+let _ExpoVideo = null;
+if (Platform.OS !== 'web') {
+  try { _ExpoVideo = require('expo-video'); } catch { _ExpoVideo = null; }
+}
+
+function NativeVideoPane({ uri, poster, active }) {
+  const focused = useIsFocused();
+  const player = _ExpoVideo.useVideoPlayer(uri || null, (p) => {
+    try { p.loop = true; p.muted = false; } catch {}
+  });
+  const [ready, setReady] = useState(false);
+
+  useEffect(() => {
+    setReady(false);
+    let sub = null;
+    try {
+      sub = player.addListener('statusChange', (ev) => {
+        if (ev?.status === 'readyToPlay') setReady(true);
+      });
+    } catch {}
+    return () => { try { sub?.remove?.(); } catch {} };
+  }, [player]);
+
+  // Play only the visible item while this screen owns focus (a pushed
+  // screen — comments, profile — must not keep the audio running).
+  const shouldPlay = !!active && focused;
+  useEffect(() => {
+    try {
+      if (shouldPlay) {
+        player.play();
+      } else {
+        player.pause();
+        if (!active) player.currentTime = 0;
+      }
+    } catch {}
+  }, [shouldPlay, active, player]);
+
+  const VideoView = _ExpoVideo.VideoView;
   return (
-    <Video
-      source={{ uri }}
-      rate={1.0}
-      volume={1.0}
-      isMuted={false}
-      resizeMode="cover"
-      shouldPlay={active}
-      isLooping
-      style={{ width: SW, height: SH, backgroundColor: '#000' }}
-    />
+    <View style={{ width: SW, height: SH, backgroundColor: '#000' }}>
+      <VideoView
+        player={player}
+        style={{ width: SW, height: SH }}
+        contentFit="cover"
+        nativeControls={false}
+        allowsPictureInPicture={false}
+      />
+      {!ready && poster ? (
+        <Image
+          source={{ uri: poster }}
+          style={{ position: 'absolute', top: 0, left: 0, width: SW, height: SH }}
+          resizeMode="cover"
+        />
+      ) : null}
+    </View>
   );
 }
 

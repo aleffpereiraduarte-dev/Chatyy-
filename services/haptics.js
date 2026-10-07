@@ -43,6 +43,18 @@ export function tap(intensity = 'medium') {
   }
 }
 
+// [2026-10-07 native-polish] Selection tick (picker / drag-start / toggle).
+// Replaces scattered `Vibration.vibrate(6..30)` calls: on iOS Vibration
+// IGNORES the duration and fires the full ~400 ms system buzz, which felt
+// broken next to WhatsApp's crisp ticks; on Android expo-haptics uses
+// performHapticFeedback (respects the user's touch-feedback setting).
+export function selection() {
+  if (_expoHaptics?.selectionAsync) {
+    try { _expoHaptics.selectionAsync(); return; } catch {}
+  }
+  tap('light');
+}
+
 export function success() {
   if (_native?.hapticNotification) {
     try { _native.hapticNotification('success'); return; } catch {}

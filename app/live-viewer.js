@@ -2648,7 +2648,7 @@ export default function LiveViewerScreen() {
     if (sent) {
       // Optimistic flip + a tiny haptic so the user feels the tap landed.
       setJoinRequested(true);
-      try { require('react-native').Vibration.vibrate(8); } catch {}
+      try { require('../services/haptics').selection(); /* [2026-10-07 native-polish] */ } catch {}
       fireToast(t('live.requestSent') || 'Pedido enviado ao host');
       if (joinSentResetTimerRef.current) clearTimeout(joinSentResetTimerRef.current);
       joinSentResetTimerRef.current = setTimeout(() => {
@@ -2661,7 +2661,7 @@ export default function LiveViewerScreen() {
       // join-requests Set already dedupes by email so a stale duplicate is a
       // no-op even if both attempts land.
       setJoinRequested(true);
-      try { require('react-native').Vibration.vibrate(8); } catch {}
+      try { require('../services/haptics').selection(); /* [2026-10-07 native-polish] */ } catch {}
       fireToast(t('live.requestSending') || 'Enviando pedido…');
       // Codex root cause #8 — store retry timers in refs so unmount can clear
       // them. Previously these leaked: viewer back-navigates → `setInterval`

@@ -300,6 +300,10 @@ final class CallViewController: UIViewController, @unchecked Sendable {
     private var outgoingConnectFallbackTimer: DispatchWorkItem?
     private var speakerTouchedByUser: Bool = false
     private var remoteEndObserver: NSObjectProtocol?
+    /// [2026-10-07 audio-route] AudioRouter.routeDidChangeNotification → keeps
+    /// the "Alto-falante" button in sync with the REAL output (AirPods
+    /// connect, BT drop, policy re-apply), not just the last tap.
+    private var audioRouteObserver: NSObjectProtocol?
     private static let kOutgoingRingTimeoutSeconds: Int = 45
     private static let kTerminalStatuses: Set<String> = [
         "Encerrada", "Recusada", "Ocupado", "Sem resposta",
@@ -506,6 +510,7 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         // override + the routeChange listener.
         AudioRouter.shared.configureForCall(hasVideo: hasVideo)
         self.session.speakerOn = AudioRouter.shared.speakerOn
+        installAudioRouteObserver()
 
         // [DTMF, 2026-05-19] Install the digit-publish bridge.
         installDTMFObserver()
@@ -1870,6 +1875,23 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         }
     }
 
+    /// [2026-10-07 audio-route] Reflect the router's real route in the
+    /// SwiftUI session + the UIKit "Alto-falante" button (tag 9003).
+    private func installAudioRouteObserver() {
+        guard audioRouteObserver == nil else { return }
+        audioRouteObserver = NotificationCenter.default.addObserver(
+            forName: AudioRouter.routeDidChangeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] note in
+            guard let self = self,
+                  let on = note.userInfo?["speakerOn"] as? Bool else { return }
+            if self.session.speakerOn != on { self.session.speakerOn = on }
+            let btn = self.view.viewWithTag(9003) as? UIButton
+            self.setControlActive(btn, active: on, symbol: on ? "speaker.wave.2.fill" : "speaker.slash.fill")
+        }
+    }
+
     /// [Wave B audio, 2026-05-18 / restored 2026-05-19] Speaker toggle now
     /// delegates to AudioRouter so route-change listener stays consistent
     /// with UI state. If a BT/wired headset is connected, the router will
@@ -2360,6 +2382,9 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         // drops. The flag keeps the Room (owned by NativeCallRoom.shared) alive
         // so restoreFromMinimize / PiP-restore can re-adopt the live session.
         isMinimizing = true
+        // [2026-10-07 audio-route] Chat UI is on screen now — no proximity
+        // blanking while the user browses (audio route itself unchanged).
+        AudioRouter.shared.setProximitySuspended(true)
         // Park a strong ref so this exact VC (the live Room's RoomDelegate)
         // survives the dismiss and can be re-presented intact on return.
         CallViewController.minimizedInstance = self
@@ -2415,6 +2440,7 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         // (deinit shouldn't run while we're re-presented, but reset defensively
         // so a real hangup after restore still tears the Room down correctly.)
         isMinimizing = false
+        AudioRouter.shared.setProximitySuspended(false)
         OngoingCallBarOverlayController.shared.uninstall()
         // Re-present over the current key VC. Walk the chain to find the
         // top-most so we don't get stuck behind a JS modal.
@@ -3269,7 +3295,15 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         // [Wave B audio, 2026-05-18 / restored 2026-05-19] Belt-and-braces —
         // handleHangup tears down the router on user-initiated end, deinit
         // covers room-disconnect / PiP dismiss paths.
-        AudioRouter.shared.teardown()
+        // [2026-10-07 audio-route] NOT while minimizing / ceding to JS: the
+        // call is still live (Room kept by NativeCallRoom.shared) and the
+        // router must keep owning LiveKit's audio-session hook, otherwise the
+        // next track start falls back to LiveKit's `.videoChat` = loudspeaker.
+        // The real end (handleHangup / module endCall paths) tears it down.
+        if let obs = audioRouteObserver { NotificationCenter.default.removeObserver(obs); audioRouteObserver = nil }
+        if !(isMinimizing || cededToJs) {
+            AudioRouter.shared.teardown()
+        }
     }
 
     // MARK: - Presentation helper
@@ -3296,6 +3330,11 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         // frame sees the user's background-blur toggle state. (RNNoise removed
         // 2026-10-04 — never-linked no-op; audio NS = WebRTC + VPIO.)
         _ = BackgroundProcessor.shared
+        // [2026-10-07 audio-route] Make sure LiveKit's AudioManager can never
+        // run its default (.videoChat / .playback = loudspeaker) configure for
+        // this call's tracks — the hook defers to AudioRouter once the answer
+        // path claims the session (prepareForCall / configureForCall).
+        AudioRouter.installLiveKitAudioHook()
         // [WAVE 115, 2026-05-21] Relay-first ICE — same policy as viewDidLoad path.
         let roomOptions = RoomOptions(
             defaultCameraCaptureOptions: Self.defaultCameraCaptureOptions(),
@@ -3570,6 +3609,9 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         let desired = !session.camEnabled
         session.camEnabled = desired
         applyCamEnabled(desired)
+        // [2026-10-07 audio-route] Camera on → loudspeaker (unless the user
+        // picked a route) + proximity sensor off; camera off → back.
+        AudioRouter.shared.setLocalVideoActive(desired)
         let btn = view.viewWithTag(9005) as? UIButton
         tapFeedback(btn)
         // Active (filled) when the camera is ON.
@@ -4778,12 +4820,18 @@ extension CallViewController: RoomDelegate {
             // now). overrideOutputAudioPort(.none) = system default, so a BT /
             // wired headset keeps winning. Skipped once the user touched the
             // speaker button.
-            if kind == "audio", self.isOutgoing, !self.hasVideo, !self.speakerTouchedByUser {
+            // [2026-10-07 audio-route] The real fix is AudioRouter's LiveKit
+            // AudioManager hook (LiveKit no longer flips the session to
+            // .videoChat on track start). This re-assert is kept as a cheap
+            // belt-and-braces, now via reapplyRoute() (category/mode AND
+            // override, respects a user's speaker choice and BT/AirPods) for
+            // incoming too, instead of a bare override(.none) that was a no-op
+            // under .videoChat.
+            if kind == "audio", !self.hasVideo, !self.speakerTouchedByUser {
                 for delayMs in [0, 400, 1200, 2500] {
                     DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(delayMs)) { [weak self] in
                         guard let self = self, !self.speakerTouchedByUser, !self.didHangup else { return }
-                        _ = AudioRouter.shared.setSpeaker(false)
-                        self.session.speakerOn = false
+                        AudioRouter.shared.reapplyRoute()
                     }
                 }
             }

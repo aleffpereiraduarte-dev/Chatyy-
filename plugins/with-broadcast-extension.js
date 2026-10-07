@@ -42,7 +42,7 @@
  *      — the keys LiveKit Swift (and react-native-webrtc) read to find the
  *      extension and present RPSystemBroadcastPickerView pre-targeted at it.
  *   5. Podfile: nested `target 'ChatyyBroadcastExtension'` inside the Chatyy
- *      target with `inherit! :complete` + `pod 'LiveKitClient', '~> 2.0'`,
+ *      target with `inherit! :complete` + `pod 'LiveKitClient', '2.0.18'`,
  *      and a post_install hook that drops the auto-generated
  *      ExpoModulesProvider.swift from the extension's Compile Sources.
  *
@@ -373,7 +373,7 @@ function withBroadcastPodTarget(config) {
         `# Top-level (sibling) target: only LiveKitClient is linked into the appex.`,
         `target '${EXT_NAME}' do`,
         `  platform :ios, '${DEPLOYMENT_TARGET}'`,
-        `  pod 'LiveKitClient', '~> 2.0'`,
+        `  pod 'LiveKitClient', '2.0.18'`,
         `end`,
         ``,
       ];

@@ -47,6 +47,7 @@ import { useRowOverlayStore, useOverlaySetter, useRowOverlayVersion, useComposer
 // [2026-10-06 keyboard-controller] Keyboard glued to the composer on the UI
 // thread (native) / RN KeyboardAvoidingView fallback (web + binaries without KC).
 import { ThreadKeyboardAvoider, ThreadKeyboardGestureArea, THREAD_LIST_KEYBOARD_DISMISS_MODE, THREAD_COMPOSER_NATIVE_ID } from '../utils/threadKeyboard';
+import SwipeReplyRow, { SWIPE_REPLY_UI_THREAD } from '../components/SwipeReplyRow'; // [2026-10-07 native-polish]
 // ─────────────────────────────────────────────────────────────────────────────
 // [2026-10-07 flashlist] Lista de MENSAGENS em FlashList v2 (JS-only, ≥2.3.3).
 // Motores (escolha por plataforma, FlatList invertida intacta como fallback):
@@ -2454,6 +2455,24 @@ if (Platform.OS !== 'web') {
 
 function SwipeReplyWrap({ children, onReply, onInfo, disabled, colors, style }) {
   const isNative = Platform.OS !== 'web';
+  // [2026-10-07 native-polish] UI-thread swipe (Reanimated worklets + RNGH
+  // Gesture.Pan) when this binary has Reanimated (runtime 2.6.0+). Module
+  // constant → hook order is stable; `disabled` only nulls the callbacks (the
+  // legacy branches below change hook count when a bubble flips to deleted).
+  if (SWIPE_REPLY_UI_THREAD && isNative) {
+    const iconColor = colors?.text || '#111b21';
+    return (
+      <SwipeReplyRow
+        style={style}
+        onReply={!disabled && onReply ? onReply : null}
+        onInfo={!disabled && onInfo ? onInfo : null}
+        iconReply={<IconReply size={18} color={iconColor} />}
+        iconInfo={<IconInfo size={18} color={iconColor} />}
+      >
+        {children}
+      </SwipeReplyRow>
+    );
+  }
   const swipeRef = useRef(null);
 
   // Native: use Swipeable for smooth 60fps swipe
@@ -8039,6 +8058,13 @@ function ChatConversationInner() {
   // remontava esta tela de 33k linhas) — ver o effect resolver abaixo.
   const [resolvedConvId, setResolvedConvId] = useState(0);
   const conversationId = parseInt(params.id, 10) || resolvedConvId || 0;
+  // [2026-10-07 native-polish] Push pre-permission primer (gap P0-6): the first
+  // chat open is the in-context moment to explain + ask (no-op once decided /
+  // in backoff / permission already resolved). Native only.
+  useEffect(() => {
+    if (Platform.OS === 'web' || !conversationId) return;
+    try { require('../services/pushPrimer').requestPushPrimer('chat_open'); } catch {}
+  }, [conversationId]);
   // Refs `enrichedMessages` and `messages` are still in scope by the time
   // safeScrollToMsg is called from event handlers, so we capture them via a
   // ref that updates on every render. Without this the helper would close

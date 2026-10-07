@@ -24,7 +24,7 @@ Pod::Spec.new do |s|
   # its own Room for the SwiftUI native call UI. API verified against
   # client-sdk-swift main (LocalParticipant.setMicrophone(enabled:), Room
   # init with delegate param, @objc optional RoomDelegate methods).
-  s.dependency 'LiveKitClient', '~> 2.0'
+  s.dependency 'LiveKitClient', '2.0.18' # [2026-10-07 audio-route] pin: AudioRouter usa customConfigureAudioSessionFunc (API da 2.0.18; depreciada nas novas)
 
   # [2026-05-17 MediaPipe background blur / virtual background]
   # Google open-source MediaPipe (Apache 2). BackgroundProcessor.swift wraps

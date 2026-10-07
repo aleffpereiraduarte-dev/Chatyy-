@@ -1439,7 +1439,7 @@ export default function LiveBroadcastScreen() {
   // `live_chat_remove` so other viewers' overlays drop the message client-side).
   const onLongPressComment = useCallback((m) => {
     if (!m || !m.id) return;
-    try { require('react-native').Vibration.vibrate(10); } catch {}
+    try { require('../services/haptics').selection(); /* [2026-10-07 native-polish] */ } catch {}
     Alert.alert(
       m.name || 'Comentário',
       m.content || '',
@@ -2751,7 +2751,7 @@ export default function LiveBroadcastScreen() {
     setInviteOpen(false);
     setInviteSelected(new Set());
     setInviteSearch('');
-    try { require('react-native').Vibration.vibrate(15); } catch {}
+    try { require('../services/haptics').selection(); /* [2026-10-07 native-polish] */ } catch {}
   }, [inviteSelected, titleInput]);
 
   // System share fallback — still useful for sharing to apps outside Chatyy.

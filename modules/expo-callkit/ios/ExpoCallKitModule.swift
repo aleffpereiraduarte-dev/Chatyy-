@@ -575,13 +575,12 @@ public class ExpoCallKitModule: Module {
     // Native default is earpiece (audio-call WhatsApp pattern); /call calls
     // this with true on mount when the call is video, or on the user's
     // explicit "speaker" button press.
+    // [2026-10-07 audio-route] Routed through AudioRouter (single owner):
+    // when a native call owns the session it also fixes the mode (.videoChat
+    // ignores override(.none)) and keeps the native button in sync; otherwise
+    // it falls back to the plain override as before.
     Function("setSpeakerEnabled") { (enabled: Bool) -> Void in
-      let session = AVAudioSession.sharedInstance()
-      do {
-        try session.overrideOutputAudioPort(enabled ? .speaker : .none)
-      } catch {
-        print("[ExpoCallKit] setSpeakerEnabled(\(enabled)) failed: \(error)")
-      }
+      _ = AudioRouter.shared.setSpeaker(enabled)
     }
 
     // ---------------------------------------------------------------------
@@ -1104,6 +1103,11 @@ public class ExpoCallKitModule: Module {
       //      used to re-configure the session after adopting the Room.
       NativeCallRoom.shared.addListener(self)
       LKAudioSessionCallKitBridge.armForOutgoingCall(callId: callId)
+      // [2026-10-07 audio-route] Claim the session BEFORE the native Room
+      // exists: installs the LiveKit AudioManager hook (else LiveKit flips the
+      // session to .videoChat = loudspeaker on the first track start) and sets
+      // .playAndRecord + .voiceChat (voice) / .videoChat (video). No setActive.
+      AudioRouter.shared.prepareForCall(hasVideo: isVideo)
 
       // Stash params for the delegate path AND register the callId↔UUID map
       // so callAnswered/callEnded/endCall route correctly once the callee
@@ -2609,6 +2613,10 @@ private class ProviderDelegate: NSObject, CXProviderDelegate {
     let callId = module?.callIdForUUID(actionUUID) ?? actionUUID.uuidString
     let snapshot = Self.collectAnswerSnapshot(callId: callId, uuid: actionUUID)
     nativeCallDiag("cxanswer_received", callId, "video=\(snapshot.hasVideo) caller=\(snapshot.callerEmail)")
+    // [2026-10-07 audio-route] Claim the session with the REAL call type
+    // before didActivate (configureForCall there reads AudioRouter.hasVideo).
+    // Category only — CallKit activates after fulfill().
+    AudioRouter.shared.prepareForCall(hasVideo: snapshot.hasVideo)
 
     // [2026-05-16 Stage 2 native WS signaling] Fire call_answered from
     // native immediately after CallKit hands us the answer action. This
@@ -2859,15 +2867,9 @@ private class ProviderDelegate: NSObject, CXProviderDelegate {
     // don't activate the session, just set the category. CallKit will
     // activate via provider:didActivate audioSession: once the system is
     // ready.
-    let session = AVAudioSession.sharedInstance()
-    do {
-      try session.setCategory(
-        .playAndRecord, mode: .voiceChat,
-        options: [.allowBluetoothA2DP, .allowBluetoothHFP]
-      )
-    } catch {
-      print("[ExpoCallKit] CXStartCallAction: audio category set failed (non-fatal): \(error)")
-    }
+    // [2026-10-07 audio-route] Via AudioRouter (voice → .voiceChat earpiece,
+    // video → .videoChat speaker) instead of a hard-coded .voiceChat.
+    AudioRouter.shared.prepareForCall(hasVideo: params.isVideo)
 
     // [Stage #996] Native WS invite fires from CallViewController.viewDidLoad
     // when isOutgoing=true — we do NOT fire here to avoid double-shipping
@@ -3207,12 +3209,11 @@ private class ProviderDelegate: NSObject, CXProviderDelegate {
       // Call resumed from hold — reactivate audio
       do {
         // [bug 2026-05-15 #10] aligned BT options with didActivate.
-        try session.setCategory(
-          .playAndRecord, mode: .voiceChat,
-          options: [.allowBluetoothA2DP, .allowBluetoothHFP]
-        )
+        // [2026-10-07 audio-route] category/mode/override via AudioRouter so
+        // resume keeps the call type + the user's speaker choice (the old
+        // hard-coded override(.none) dropped a video call to the earpiece).
         try session.setActive(true)
-        try session.overrideOutputAudioPort(.none)
+        AudioRouter.shared.reapplyRoute()
       } catch {
         print("[ExpoCallKit] Resume audio activation failed: \(error)")
         action.fail()

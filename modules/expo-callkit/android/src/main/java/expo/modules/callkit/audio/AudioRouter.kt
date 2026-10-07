@@ -29,6 +29,9 @@ import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
+import com.twilio.audioswitch.AudioDevice
+import io.livekit.android.audio.AudioSwitchHandler
+import io.livekit.android.room.Room
 
 class AudioRouter private constructor(private val appContext: Context) {
 
@@ -60,6 +63,78 @@ class AudioRouter private constructor(private val appContext: Context) {
         private set
 
     private var deviceCallback: AudioDeviceCallback? = null
+
+    // [2026-10-07 audio-route] LiveKit Android's AudioSwitchHandler (started by
+    // Room.connect → audioHandler.start()) activates AudioSwitch with its
+    // DEFAULT preferredDeviceList = [BluetoothHeadset, WiredHeadset,
+    // Speakerphone, Earpiece] (AudioSwitchHandler.kt v2.24.1
+    // defaultPreferredDeviceList) → it selects the LOUDSPEAKER on connect,
+    // silently overriding the earpiece configureForCall() picked at onCreate.
+    // We set an earpiece-first list for voice calls (speaker-first for video)
+    // BEFORE connect, and route the speaker toggle through AudioSwitch too so
+    // both layers agree.
+    @Volatile private var lkHandler: AudioSwitchHandler? = null
+
+    private val voicePreference: List<Class<out AudioDevice>> = listOf(
+        AudioDevice.BluetoothHeadset::class.java,
+        AudioDevice.WiredHeadset::class.java,
+        AudioDevice.Earpiece::class.java,
+        AudioDevice.Speakerphone::class.java,
+    )
+    private val videoPreference: List<Class<out AudioDevice>> = listOf(
+        AudioDevice.BluetoothHeadset::class.java,
+        AudioDevice.WiredHeadset::class.java,
+        AudioDevice.Speakerphone::class.java,
+        AudioDevice.Earpiece::class.java,
+    )
+
+    /**
+     * [2026-10-07 audio-route] Bind LiveKit's AudioSwitchHandler for this
+     * Room. Call right after LiveKit.create() (before connect) and again when
+     * the call type is known (warm adopt). If AudioSwitch is already running
+     * (preconnect connected during the ring), re-select the preferred device.
+     */
+    fun attachLiveKit(room: Room?, hasVideo: Boolean) {
+        val h = try { room?.audioSwitchHandler } catch (_: Throwable) { null } ?: return
+        lkHandler = h
+        this.hasVideo = hasVideo
+        val pref = if (hasVideo) videoPreference else voicePreference
+        try {
+            h.preferredDeviceList = pref
+            val avail = h.availableAudioDevices
+            if (avail.isNotEmpty()) {
+                val pick = pref.firstNotNullOfOrNull { cls -> avail.firstOrNull { cls.isInstance(it) } }
+                if (pick != null) h.selectDevice(pick)
+                Log.d(TAG, "attachLiveKit(hasVideo=$hasVideo): running — selected ${pick?.name}")
+            } else {
+                Log.d(TAG, "attachLiveKit(hasVideo=$hasVideo): preferredDeviceList set before start")
+            }
+        } catch (t: Throwable) {
+            Log.w(TAG, "attachLiveKit failed: ${t.message}")
+        }
+    }
+
+    /** Mirror a route decision into AudioSwitch (no-op when no Room bound). */
+    private fun selectLk(speaker: Boolean, preferBt: Boolean = false) {
+        val h = lkHandler ?: return
+        try {
+            val avail = h.availableAudioDevices
+            if (avail.isEmpty()) return
+            val order: List<Class<out AudioDevice>> = when {
+                speaker -> listOf(AudioDevice.Speakerphone::class.java)
+                preferBt -> listOf(AudioDevice.BluetoothHeadset::class.java)
+                else -> listOf(
+                    AudioDevice.BluetoothHeadset::class.java,
+                    AudioDevice.WiredHeadset::class.java,
+                    AudioDevice.Earpiece::class.java,
+                )
+            }
+            val pick = order.firstNotNullOfOrNull { cls -> avail.firstOrNull { cls.isInstance(it) } }
+            if (pick != null) h.selectDevice(pick)
+        } catch (t: Throwable) {
+            Log.w(TAG, "selectLk failed: ${t.message}")
+        }
+    }
 
     // [#1201 audio fix, 2026-05-19] Real audio focus listener + request handle.
     // Replaces the leaked `requestAudioFocus(null, …)` that IncomingCallActivity.onAccept
@@ -164,6 +239,7 @@ class AudioRouter private constructor(private val appContext: Context) {
      */
     fun setSpeaker(on: Boolean): Boolean {
         speakerOn = on
+        selectLk(on)
         try {
             am.isSpeakerphoneOn = on
             if (on) {
@@ -192,6 +268,7 @@ class AudioRouter private constructor(private val appContext: Context) {
             @Suppress("DEPRECATION")
             am.isBluetoothScoOn = true
             speakerOn = false
+            selectLk(speaker = false, preferBt = true)
             Log.d(TAG, "preferBluetooth: SCO requested")
         } catch (t: Throwable) {
             Log.w(TAG, "preferBluetooth failed: ${t.message}")
@@ -221,6 +298,7 @@ class AudioRouter private constructor(private val appContext: Context) {
             try { am.unregisterAudioDeviceCallback(cb) } catch (_: Throwable) {}
         }
         deviceCallback = null
+        lkHandler = null
         hasVideo = false
         speakerOn = false
         Log.d(TAG, "teardown")

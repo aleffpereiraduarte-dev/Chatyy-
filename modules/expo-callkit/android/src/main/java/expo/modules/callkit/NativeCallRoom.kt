@@ -799,6 +799,11 @@ object NativeCallRoom {
                 // + AEC/AGC/NS). buildCallRoomOptions folds e2ee in when present,
                 // so the no-key path == the old default + audio knobs.
                 val r = LiveKit.create(ctx.applicationContext, buildCallRoomOptions(ctx.applicationContext, e2ee))
+                // [2026-10-07 audio-route] Ring-time preconnect: call type not
+                // known here → voice policy (earpiece-first) in LiveKit's
+                // AudioSwitch before connect; adoptForCall re-applies with the
+                // real hasVideo.
+                try { expo.modules.callkit.audio.AudioRouter.get(ctx.applicationContext).attachLiveKit(r, false) } catch (_: Throwable) {}
                 // publish() here so events.collect is wired BEFORE we await
                 // connect — otherwise the first Connected event might fire
                 // before our listener attaches and JS would miss it.
@@ -878,6 +883,9 @@ object NativeCallRoom {
             // never reaches CallActivity (which owned this on the cold path), so
             // without it Android 14+ kills the mic ~5s after backgrounding.
             try { ensureForegroundServiceForWarmCall(ctx, callId, callerName, hasVideo) } catch (_: Throwable) {}
+            // [2026-10-07 audio-route] Re-bind LiveKit's AudioSwitch with the
+            // real call type (video → speaker-first) and re-select the device.
+            try { expo.modules.callkit.audio.AudioRouter.get(ctx.applicationContext).attachLiveKit(room, hasVideo) } catch (_: Throwable) {}
             try {
                 setMicEnabled(!startMuted)
                 if (hasVideo) setCameraEnabled(true)

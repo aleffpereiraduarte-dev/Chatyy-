@@ -1501,13 +1501,15 @@ function EmptyBubbles({ isDark }) {
 
   useEffect(() => {
     // Entry animation
-    Animated.spring(scale, { toValue: 1, tension: 40, friction: 7, useNativeDriver: false }).start();
+    // [2026-10-07 native-polish] native driver (transform only) — these 3 loops ran
+    // on the JS thread for as long as the empty state was visible.
+    Animated.spring(scale, { toValue: 1, tension: 40, friction: 7, useNativeDriver: Platform.OS !== 'web' }).start();
 
     // Floating animations
     const makeFloat = (anim, duration) => Animated.loop(
       Animated.sequence([
-        Animated.timing(anim, { toValue: -8, duration, useNativeDriver: false }),
-        Animated.timing(anim, { toValue: 8, duration, useNativeDriver: false }),
+        Animated.timing(anim, { toValue: -8, duration, useNativeDriver: Platform.OS !== 'web' }),
+        Animated.timing(anim, { toValue: 8, duration, useNativeDriver: Platform.OS !== 'web' }),
       ])
     );
     const f1 = makeFloat(float1, 2000);
@@ -2323,7 +2325,7 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab, reque
                   const doMute = async () => {
                     try { await api.statusMute(s.email); } catch {}
                     try { removeStatusGroup?.(s.email); } catch {}
-                    try { require('react-native').Vibration.vibrate(8); } catch {}
+                    try { haptic.select(); /* [2026-10-07 native-polish] was Vibration.vibrate(8): ~400ms buzz on iOS */ } catch {}
                   };
                   const buttons = [
                     { text: t('status.reply') || 'Responder', onPress: goReply },
@@ -4955,10 +4957,10 @@ function ChatListTab({ colors, isDark, t, user, router, searchQuery = '', setAct
 
   const toggleFabMenu = useCallback(() => {
     if (showFabMenu) {
-      Animated.timing(fabMenuAnim, { toValue: 0, duration: 200, useNativeDriver: false }).start(() => setShowFabMenu(false));
+      Animated.timing(fabMenuAnim, { toValue: 0, duration: 200, useNativeDriver: Platform.OS !== 'web' }).start(() => setShowFabMenu(false)); // [2026-10-07 native-polish] opacity+translateY only
     } else {
       setShowFabMenu(true);
-      Animated.spring(fabMenuAnim, { toValue: 1, tension: 100, friction: 12, useNativeDriver: false }).start();
+      Animated.spring(fabMenuAnim, { toValue: 1, tension: 100, friction: 12, useNativeDriver: Platform.OS !== 'web' }).start();
     }
   }, [showFabMenu, fabMenuAnim]);
 
@@ -6227,7 +6229,7 @@ function ChatListTab({ colors, isDark, t, user, router, searchQuery = '', setAct
           pinnedEditMode && Math.abs(g.dx) > 4 && Math.abs(g.dx) > Math.abs(g.dy),
         onPanResponderGrant: () => {
           setPinDraggingId(item.id);
-          try { require('react-native').Vibration.vibrate(8); } catch {}
+          try { haptic.select(); /* [2026-10-07 native-polish] was Vibration.vibrate(8): ~400ms buzz on iOS */ } catch {}
         },
         onPanResponderMove: (_, g) => {
           // Audit #6: re-resolver idx ATUAL pelo id em vez de usar o do
@@ -6335,7 +6337,7 @@ function ChatListTab({ colors, isDark, t, user, router, searchQuery = '', setAct
             {!pinnedEditMode ? (
               <Pressable
                 onPress={() => {
-                  try { require('react-native').Vibration.vibrate(8); } catch {}
+                  try { haptic.select(); /* [2026-10-07 native-polish] was Vibration.vibrate(8): ~400ms buzz on iOS */ } catch {}
                   setPinnedEditMode(true);
                 }}
                 accessibilityRole="button"
@@ -6366,7 +6368,7 @@ function ChatListTab({ colors, isDark, t, user, router, searchQuery = '', setAct
             ) : (
               <TouchableOpacity
                 onPress={() => {
-                  try { require('react-native').Vibration.vibrate(8); } catch {}
+                  try { haptic.select(); /* [2026-10-07 native-polish] was Vibration.vibrate(8): ~400ms buzz on iOS */ } catch {}
                   markPinnedHintSeen();
                   setPinnedEditMode(false);
                 }}
@@ -6446,7 +6448,7 @@ function ChatListTab({ colors, isDark, t, user, router, searchQuery = '', setAct
                       // Em edit mode: tap cicla S→M→L do PROPRIO pin (iMessage-like).
                       // Fora de edit mode: abre conversa.
                       if (pinnedEditMode) {
-                        try { require('react-native').Vibration.vibrate(6); } catch {}
+                        try { haptic.select(); /* [2026-10-07 native-polish] was Vibration.vibrate(8): ~400ms buzz on iOS */ } catch {}
                         cyclePinSize(item.id);
                         return;
                       }
@@ -6470,7 +6472,7 @@ function ChatListTab({ colors, isDark, t, user, router, searchQuery = '', setAct
                       {pinnedEditMode ? (
                         <Pressable
                           onPress={() => {
-                            try { require('react-native').Vibration.vibrate(8); } catch {}
+                            try { haptic.select(); /* [2026-10-07 native-polish] was Vibration.vibrate(8): ~400ms buzz on iOS */ } catch {}
                             handlePinConversation(item);
                           }}
                           hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}

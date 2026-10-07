@@ -641,7 +641,13 @@ async function _pushMentionsCurrentUser(data, content) {
   }
 }
 
-export async function registerForPushNotifications() {
+// [2026-10-07 native-polish] Set when the last registerForPushNotifications()
+// deliberately skipped the OS dialog (pre-permission primer pending), so
+// ensurePushTokenFresh doesn't count it as a failure (stale banner).
+let _lastRegisterDeferred = false;
+
+export async function registerForPushNotifications(opts = {}) {
+  _lastRegisterDeferred = false;
   _diagPush('register_start', Platform.OS);
   try {
     const loaded = await loadModules();
@@ -656,11 +662,52 @@ export async function registerForPushNotifications() {
       _diagPush('not_device_continuing', 'isDevice=' + String(Device.isDevice) + ' brand=' + String(Device.brand || '?') + ' modelName=' + String(Device.modelName || '?'));
     }
 
-    const { status: existingStatus } = await Notifications.getPermissionsAsync();
+    const _existingPerm = await Notifications.getPermissionsAsync();
+    const existingStatus = _existingPerm?.status;
     _diagPush('existing_perm', existingStatus);
     let finalStatus = existingStatus;
 
-    if (existingStatus !== 'granted') {
+    // [2026-10-07 native-polish] Pre-permission primer (gap P0-6: 56% of
+    // iPhones denied the raw dialog shown right after login). On the
+    // AUTOMATIC path (cold start / login / foreground) with the permission
+    // still undetermined, don't pop the OS dialog — the in-app primer
+    // (components/PushPermissionPrimer.js) asks first, in context.
+    // iOS: request PROVISIONAL meanwhile (no dialog; quiet delivery to
+    // Notification Center) so the token + NSE device-ack still work.
+    // iOS provisional reports status 'undetermined' with ios.status === 3.
+    const _iosProvisional = Platform.OS === 'ios' && _existingPerm?.ios?.status === 3;
+    const _userInitiated = !!(opts.userInitiated || opts.fromPrimer);
+    let _primerGate = false;
+    try {
+      const primer = require('./pushPrimer');
+      _primerGate = !!primer.PUSH_PRIMER_ENABLED
+        && !_userInitiated
+        && existingStatus === 'undetermined'
+        && _existingPerm?.canAskAgain !== false;
+      primer.markPushPrimerNeeded(_primerGate);
+    } catch {}
+    if (_primerGate) {
+      if (Platform.OS === 'ios') {
+        if (!_iosProvisional) {
+          try {
+            const prov = await Notifications.requestPermissionsAsync({
+              ios: { allowAlert: true, allowBadge: true, allowSound: true, allowProvisional: true },
+            });
+            _diagPush('primer_provisional', String(prov?.ios?.status ?? prov?.status));
+          } catch (e) {
+            _diagPush('primer_provisional_err', e?.message || String(e));
+          }
+        }
+        // Provisional (or still undetermined): fall through to token
+        // registration below — APNs registration doesn't need authorization.
+        finalStatus = 'granted';
+      } else {
+        // Android 13+: no quiet mode; wait for the primer.
+        _lastRegisterDeferred = true;
+        _diagPush('primer_deferred', existingStatus);
+        return null;
+      }
+    } else if (existingStatus !== 'granted') {
       const { status } = await Notifications.requestPermissionsAsync({
         ios: {
           allowAlert: true,
@@ -1563,10 +1610,22 @@ export async function ensurePushTokenFresh(opts = {}) {
   await _writeJsonKey(PUSH_REFRESH_LAST_KEY, now);
   let token = null;
   try {
-    token = await registerForPushNotifications();
+    // [2026-10-07 native-polish] ignoreMaster = explicit re-enable in Settings
+    // → user-initiated (goes straight to the OS dialog, no primer).
+    token = await registerForPushNotifications({
+      userInitiated: !!(opts.userInitiated || opts.ignoreMaster),
+      fromPrimer: !!opts.fromPrimer,
+    });
   } catch (e) {
     _diagPush('ensure_fresh_register_threw', e?.message || String(e));
     token = null;
+  }
+  if (!token && _lastRegisterDeferred) {
+    // Primer pending (Android 13+, permission undetermined): not a failure —
+    // don't count toward the stale banner, and allow the next foreground to
+    // re-check (the user may have granted via the primer meanwhile).
+    try { await _writeJsonKey(PUSH_REFRESH_LAST_KEY, 0); } catch {}
+    return { ok: false, needsPrimer: true };
   }
   if (!token) {
     const failCount = (await _readJsonKey(PUSH_REFRESH_FAIL_KEY, 0)) || 0;
@@ -1595,7 +1654,34 @@ export async function ensurePushTokenFresh(opts = {}) {
  * Manual retry from the PushTokenStaleBanner tap. Bypasses the 6h throttle.
  */
 export async function retryPushTokenRegistration() {
-  return ensurePushTokenFresh({ force: true });
+  return ensurePushTokenFresh({ force: true, userInitiated: true });
+}
+
+/**
+ * [2026-10-07 native-polish] "Ativar" tapped on the pre-permission primer:
+ * show the OS dialog now, then register the token. Returns the final
+ * permission status string ('granted' | 'denied' | 'undetermined').
+ */
+export async function enablePushFromPrimer() {
+  _diagPush('primer_accept', Platform.OS);
+  let r = null;
+  try {
+    r = await ensurePushTokenFresh({ force: true, fromPrimer: true });
+  } catch {}
+  let status = 'undetermined';
+  try {
+    const loaded = await loadModules();
+    if (loaded && Notifications) {
+      const p = await Notifications.getPermissionsAsync();
+      status = p?.status || status;
+    }
+  } catch {}
+  _diagPush('primer_result', status + (r?.ok ? ':token' : ':no_token'));
+  return status;
+}
+
+export function diagPushPrimer(step, info) {
+  _diagPush(step, info);
 }
 
 export async function removeTokenFromBackend(pushToken) {

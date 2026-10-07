@@ -1078,6 +1078,23 @@ extension VoipPushAppDelegateSubscriber: CXProviderDelegate {
         }()
         Self.rememberAccepted(uuid: uuid, callId: acceptedCallId)
 
+        // [2026-10-07 audio-route] Claim the AVAudioSession for this call with
+        // the REAL call type before CallKit's didActivate (whose
+        // configureForCall reads AudioRouter.hasVideo — a lock-screen answer of
+        // a video call used to start on the earpiece and a voice call could
+        // inherit the previous call's state). Installs the LiveKit AudioManager
+        // hook so the preconnected Room's track starts can't flip the session
+        // to .videoChat (= loudspeaker). Category/mode only, no setActive.
+        let answerHasVideo: Bool = {
+            guard let p = payload else { return false }
+            if let b = p["hasVideo"] as? Bool { return b }
+            if let b = p["video"] as? Bool { return b }
+            if let v = p["video"] as? String { return v == "1" || v == "true" }
+            if let t = p["call_type"] as? String { return t == "video" }
+            return false
+        }()
+        AudioRouter.shared.prepareForCall(hasVideo: answerHasVideo)
+
         // 4. Kick off the LiveKit Room connect in a Task — we MUST NOT block
         //    this CXAnswer callback. fulfill() runs synchronously below.
         if let p = payload {

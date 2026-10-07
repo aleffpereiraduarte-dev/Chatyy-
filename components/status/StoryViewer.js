@@ -3190,7 +3190,7 @@ export default function StoryViewer({
                       if (!replyText.trim() || replying) return;
                       setReplying(true);
                       try {
-                        try { require('react-native').Vibration.vibrate(8); } catch {}
+                        try { require('../../services/haptics').selection(); /* [2026-10-07 native-polish] */ } catch {}
                         await onReply?.(cur, replyText.trim());
                         setReplyText('');
                         setReplySent(true);
@@ -3206,7 +3206,7 @@ export default function StoryViewer({
                         if (!replyText.trim() || replying) return;
                         setReplying(true);
                         try {
-                          try { require('react-native').Vibration.vibrate(8); } catch {}
+                          try { require('../../services/haptics').selection(); /* [2026-10-07 native-polish] */ } catch {}
                           await onReply?.(cur, replyText.trim());
                           setReplyText('');
                           setReplySent(true);

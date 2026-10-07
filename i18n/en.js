@@ -767,6 +767,11 @@ export default {
   'pushBanner.openSettings': 'Notifications are off — tap to open Settings',
   'pushBanner.a11y': 'Tap to re-enable call notifications',
   'pushBanner.dismiss': 'Dismiss',
+  // [2026-10-07 native-polish] push pre-permission primer
+  'pushPrimer.title': 'Turn on notifications',
+  'pushPrimer.body': 'Get messages and calls even when Chatyy is closed, and let people know their message was delivered.',
+  'pushPrimer.enable': 'Turn on notifications',
+  'pushPrimer.later': 'Not now',
   'settings.cat.account': 'Account',
   'settings.cat.accountSub': 'Profile, photo, switch account',
   'settings.cat.appearance': 'Appearance',

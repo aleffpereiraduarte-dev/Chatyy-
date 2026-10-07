@@ -7531,4 +7531,9 @@ export default {
   'kids.sosButton': 'Botão de Emergência',
   'kids.sosButtonHint': 'Toque para alertar os seus pais',
   'viewer.photosPermissionHint': 'Vá a Definições > Chatyy > Fotografias e selecione "Todas as fotografias".',
+  // [2026-10-07 native-polish] push pre-permission primer
+  'pushPrimer.title': 'Ative as notificações',
+  'pushPrimer.body': 'Receba mensagens e chamadas mesmo com o Chatyy fechado, e deixe quem lhe escreve saber que a mensagem chegou.',
+  'pushPrimer.enable': 'Ativar notificações',
+  'pushPrimer.later': 'Agora não',
 };

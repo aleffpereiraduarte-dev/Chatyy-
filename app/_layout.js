@@ -374,6 +374,7 @@ import PhoneOfflineBanner from '../components/PhoneOfflineBanner';
 // tap-to-retry instead of going dark on incoming calls when their token
 // silently drops. Native-only; renders null on web.
 import PushTokenStaleBanner from '../components/PushTokenStaleBanner';
+import PushPermissionPrimer from '../components/PushPermissionPrimer'; // [2026-10-07 native-polish]
 import { registerBackgroundSync } from '../services/backgroundSync';
 // Side-effect import — patches expo-audio RecordingPresets.HIGH_QUALITY to
 // the WhatsApp Opus profile (32kbps mono 16/22kHz) before any chat screen
@@ -1891,6 +1892,8 @@ export default function RootLayout() {
                   <PushLoginRequestModal />
                 </Suspense>
                 <WhatsNewGate />
+                {/* [2026-10-07 native-polish] push pre-permission sheet (gap P0-6) */}
+                <PushPermissionPrimer />
                 <Suspense fallback={null}>
                   <PWAPromptsThemed />
                 </Suspense>

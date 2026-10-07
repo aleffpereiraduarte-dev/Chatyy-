@@ -1622,6 +1622,10 @@ class CallActivity : ComponentActivity() {
     }
     val r = LiveKit.create(applicationContext, options = roomOptionsFinal)
     room = r
+    // [2026-10-07 audio-route] Earpiece-first for voice / speaker-first for
+    // video in LiveKit's AudioSwitch BEFORE connect (its default list puts the
+    // loudspeaker before the earpiece and would override configureForCall).
+    try { expo.modules.callkit.audio.AudioRouter.get(applicationContext).attachLiveKit(r, hasVideo) } catch (_: Throwable) {}
     LiveKitRoomHolder.set(r)
     // [Wave 17.6 F2] Wire ScreenAudioMixer.mixInto() into the local mic
     // audio track so app audio captured by ScreenShareService gets merged

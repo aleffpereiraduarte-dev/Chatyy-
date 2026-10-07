@@ -500,7 +500,7 @@ function ParentalScreenInner() {
 
   const handleNextStep = async () => {
     triggerBounce();
-    if (Platform.OS !== 'web') { try { Vibration.vibrate(30); } catch {} }
+    if (Platform.OS !== 'web') { try { haptics.selection(); /* [2026-10-07 native-polish] */ } catch {} }
 
     if (step === 0) {
       if (!childName.trim()) return Alert.alert(t('parental.incomplete'), t('parental.enterChildName'));
@@ -967,7 +967,7 @@ function ParentalScreenInner() {
                   borderColor: selected ? g.color : (isDark ? '#2d3748' : '#e2e8f0'),
                   borderWidth: selected ? 2.5 : 1.5,
                 }]}
-                onPress={() => { setChildGender(g.key); if (Platform.OS !== 'web') try { Vibration.vibrate(15); } catch {} }}
+                onPress={() => { setChildGender(g.key); if (Platform.OS !== 'web') try { haptics.selection(); /* [2026-10-07 native-polish] */ } catch {} }}
                 activeOpacity={0.7}
               >
                 <View style={s.cardEmojiWrap}>{g.emoji}</View>
@@ -997,7 +997,7 @@ function ParentalScreenInner() {
                   borderColor: selected ? r.color : (isDark ? '#2d3748' : '#e2e8f0'),
                   borderWidth: selected ? 2.5 : 1.5,
                 }]}
-                onPress={() => { setRelationship(r.key); if (Platform.OS !== 'web') try { Vibration.vibrate(15); } catch {} }}
+                onPress={() => { setRelationship(r.key); if (Platform.OS !== 'web') try { haptics.selection(); /* [2026-10-07 native-polish] */ } catch {} }}
                 activeOpacity={0.7}
               >
                 <View style={s.cardEmojiWrap}>{r.emoji}</View>
@@ -1446,7 +1446,7 @@ function ParentalScreenInner() {
               style={[s.recommendedBtn, { backgroundColor: '#111111' + '12', borderColor: '#111111' + '40' }]}
               onPress={() => {
                 setQuickSetup({ bedtime: true, contacts: true, screenTime: true, safeSearch: true, filterAdult: true, filterViolence: true, filterProfanity: true });
-                if (Platform.OS !== 'web') try { Vibration.vibrate(30); } catch {}
+                if (Platform.OS !== 'web') try { haptics.selection(); /* [2026-10-07 native-polish] */ } catch {}
               }}
               activeOpacity={0.7}
             >
