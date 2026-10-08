@@ -32,7 +32,7 @@ function formatSize(bytes) {
 
 function resolveUrl(url) {
   if (!url) return url;
-  const absolute = url.startsWith('http') ? url : `${BASE_URL}${url}`;
+  const absolute = url.startsWith('http') ? url : api.getMediaUrl(url);
   // Prefer local cached file (disk) for instant render — falls back to remote
   if (Platform.OS !== 'web') {
     try {

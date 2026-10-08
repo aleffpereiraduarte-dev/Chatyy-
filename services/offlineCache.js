@@ -639,7 +639,7 @@ export async function replayOfflineQueue(api) {
               if (serverMsg.file_url) {
                 const mc = require('./mediaCache');
                 if (typeof mc.adoptLocalFileAsCache === 'function') {
-                  mc.adoptLocalFileAsCache(serverMsg.file_url, action.audio_uri).catch(() => {});
+                  mc.adoptLocalFileAsCache(serverMsg.file_url, action.audio_uri, { conversationId: action.conversation_id ?? action.conversationId, messageId: serverMsg.id, own: true }).catch(() => {});
                 }
                 // Also fire the official prefetch so the syncIndex
                 // entry is registered for both list + bubble consumers.

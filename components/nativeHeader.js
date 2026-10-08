@@ -13,7 +13,8 @@
 //   {USE_NATIVE_HEADER && <Stack.Screen options={nativeHeaderOptions({ colors, title, headerRight: () => ... })} />}
 //   <View style={{ paddingTop: USE_NATIVE_HEADER ? 0 : insets.top }}>
 import React from 'react';
-import { Platform, Pressable } from 'react-native';
+import { Platform, Pressable, ScrollView, View } from 'react-native';
+import { SafeAreaListener } from 'react-native-safe-area-context'; // [2026-10-08 header-inset-all] JS-only (usa o RNCSafeAreaProvider nativo já no binário)
 import { HeaderHeightContext } from '@react-navigation/elements'; // [2026-10-07 native-ui-build] (dep do expo-router, cópia única)
 import { haptic } from '../constants/theme';
 import { IconChevronLeft, IconArrowLeft } from './Icons';
@@ -36,6 +37,81 @@ export function useBlurHeaderInset(enabled = true) {
   const h = React.useContext(HeaderHeightContext);
   if (!enabled || !USE_BLUR_HEADER) return 0;
   return typeof h === 'number' && h > 0 ? h : 0;
+}
+
+// [2026-10-08 header-inset-all] Conteúdo CORTADO sob o header nativo no iOS.
+// O native-stack marca o header como `translucent` sempre que há busca nativa
+// (headerSearchBarOptions), título grande (headerLargeTitle) ou vidro
+// (headerTransparent/blur) → o RNS põe edgesForExtendedLayout=All e a view da
+// tela começa em y=0, POR BAIXO de status bar + nav bar + barra de busca
+// (~176pt num iPhone com Dynamic Island). Nenhum padding em JS acerta isso: o
+// HeaderHeightContext NÃO inclui a barra de busca e a altura muda quando o
+// título grande colapsa. Regra: o scrollable PRINCIPAL da tela (primeiro
+// filho, encostado no topo) usa contentInsetAdjustmentBehavior="automatic" →
+// o UIKit calcula o inset exato (e acompanha o colapso/expansão do header), e
+// a tela NÃO soma paddingTop manual. Também ajusta o inset de baixo (home
+// indicator) → não somar insets.bottom no paddingBottom.
+// Consequências:
+//  - estados sem lista (skeleton/erro/vazio) também ficam sob o header →
+//    usar <NativeInsetView> (ScrollView travado c/ o mesmo inset);
+//  - voltar ao topo: NÃO usar scrollTo({y:0}) (o RN clampa em -contentInset
+//    "cru" e ignora o ajustado → topo escondido); remonte a lista (key) ou
+//    use scrollToOffset({offset:-inset}).
+// Header opaco sem busca/título grande (translucent=false): a tela já começa
+// abaixo do header → o inset ajustado no topo é 0 (inofensivo); fica só o de
+// baixo. Android (Toolbar sólida) e web: no-op.
+export const IOS_NATIVE_INSET = USE_NATIVE_HEADER && Platform.OS === 'ios';
+export function nativeScrollInsetProps(enabled = true) {
+  if (!enabled || !IOS_NATIVE_INSET) return null;
+  return {
+    contentInsetAdjustmentBehavior: 'automatic',
+    automaticallyAdjustsScrollIndicatorInsets: true,
+  };
+}
+// Container p/ conteúdo NÃO rolável que fica no topo de uma tela com header
+// translúcido (skeleton, erro, estado vazio): ScrollView travado com o mesmo
+// inset automático, conteúdo com flexGrow 1 (centraliza igual a um View
+// flex:1). Fora do iOS nativo é um View flex:1 comum.
+export function NativeInsetView({ children, style, contentContainerStyle, enabled = true }) {
+  if (!enabled || !IOS_NATIVE_INSET) {
+    return <View style={[{ flex: 1 }, style, contentContainerStyle]}>{children}</View>;
+  }
+  return (
+    <ScrollView
+      style={[{ flex: 1 }, style]}
+      contentContainerStyle={[{ flexGrow: 1 }, contentContainerStyle]}
+      scrollEnabled={false}
+      {...nativeScrollInsetProps()}
+    >
+      {children}
+    </ScrollView>
+  );
+}
+
+// Telas cujo TOPO é chrome FIXO (abas, chips, barra de ações) acima da lista —
+// o inset automático do scroll não alcança esse chrome. Este wrapper é um
+// SafeAreaListener (view nativa RNCSafeAreaProvider, JS-only → vale p/ OTA)
+// que lê o safeAreaInsets.top DA PRÓPRIA VIEW: no UIKit isso já inclui status
+// bar + nav bar + barra de busca (e acompanha a busca ativando / título
+// grande colapsando). Aplica como marginTop num View interno (margin, não
+// padding → filhos position:absolute — menus, toasts — também ficam abaixo do
+// header) — sem loop (o listener mede a si mesmo, não o filho) e sem poluir o
+// contexto de safe-area dos filhos (useSafeAreaInsets() continua o da raiz).
+// Fora do iOS nativo é um View flex:1 comum. Header opaco (sem busca/título grande): top medido = 0.
+export function NativeHeaderSafeArea({ children, style, enabled = true }) {
+  const [top, setTop] = React.useState(0);
+  const onChange = React.useCallback((e) => {
+    const t = Math.max(0, Math.round(e?.insets?.top || 0));
+    setTop((p) => (p === t ? p : t));
+  }, []);
+  if (!enabled || !IOS_NATIVE_INSET || !SafeAreaListener) {
+    return <View style={[{ flex: 1 }, style]}>{children}</View>;
+  }
+  return (
+    <SafeAreaListener style={[{ flex: 1 }, style]} onChange={onChange}>
+      <View style={{ flex: 1, marginTop: top }}>{children}</View>
+    </SafeAreaListener>
+  );
 }
 
 // Opções comuns de header nativo, preto&branco (tint = cor do texto, sem azul).

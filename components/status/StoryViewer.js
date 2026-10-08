@@ -56,7 +56,7 @@ try { _mailWs = require('../../services/websocket').default; } catch {}
 function _resolveUrl(raw) {
   if (!raw) return '';
   const s = String(raw).split('\n')[0];
-  return s.startsWith('http') ? s : `${BASE_URL}${s}`;
+  return s.startsWith('http') ? s : api.getMediaUrl(s);
 }
 
 // Find the first link sticker attached to a status item, regardless of where
@@ -574,7 +574,7 @@ const StoryMedia = React.memo(function StoryMedia({
       // flash before the first decoded frame lands. Falls back gracefully if
       // the field is absent (older statuses).
       const posterUrl = cur.thumbnail_url
-        ? (cur.thumbnail_url.startsWith('http') ? cur.thumbnail_url : `${BASE_URL}${cur.thumbnail_url}`)
+        ? (cur.thumbnail_url.startsWith('http') ? cur.thumbnail_url : api.getMediaUrl(cur.thumbnail_url))
         : '';
       const PosterOverlay = posterUrl ? (
         <Image
@@ -662,7 +662,7 @@ const StoryMedia = React.memo(function StoryMedia({
     // dedupes by URL so this is essentially free (same bytes used by the
     // sharp foreground load).
     const imagePoster = cur.thumbnail_url
-      ? (cur.thumbnail_url.startsWith('http') ? cur.thumbnail_url : `${BASE_URL}${cur.thumbnail_url}`)
+      ? (cur.thumbnail_url.startsWith('http') ? cur.thumbnail_url : api.getMediaUrl(cur.thumbnail_url))
       : mediaUrl;
     const ImagePosterLayer = imagePoster ? (
       WEB ? (
@@ -1868,7 +1868,7 @@ export default function StoryViewer({
       }
       const rawUrl = story.media_url || (story.content || '').split('\n')[0] || '';
       const remoteUrl = rawUrl
-        ? (rawUrl.startsWith('http') ? rawUrl : `${BASE_URL}${rawUrl}`)
+        ? (rawUrl.startsWith('http') ? rawUrl : api.getMediaUrl(rawUrl))
         : '';
       if (!remoteUrl) { setSaving(false); return; }
       // Reuse the per-app media cache if it's already there — saves a
@@ -1954,7 +1954,7 @@ export default function StoryViewer({
     || ((isImage || isVideo) && legacyMediaInContent
         ? raw.split('\n')[0]
         : '');
-  const mediaUrl = rawMedia ? (rawMedia.startsWith('http') ? rawMedia : `${BASE_URL}${rawMedia}`) : '';
+  const mediaUrl = rawMedia ? (rawMedia.startsWith('http') ? rawMedia : api.getMediaUrl(rawMedia)) : '';
 
   // Voice status — an audio-only story. Detected by an explicit type OR by a
   // media_url that points at an audio file on a non-image/non-video status

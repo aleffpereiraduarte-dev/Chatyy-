@@ -1934,7 +1934,8 @@ export default function LoginScreen() {
     <View style={{ alignItems: 'center', marginBottom: compact ? 20 : 28 }}>
       <View style={{
         width: compact ? 52 : 68, height: compact ? 52 : 68, borderRadius: compact ? 16 : 22,
-        backgroundColor: colors.primary,
+        // [2026-10-08 login-appicon] real app icon instead of a generic glyph
+        backgroundColor: '#ffffff', overflow: Platform.OS === 'android' ? 'hidden' : 'visible',
         alignItems: 'center', justifyContent: 'center',
         ...Platform.select({
           web: { boxShadow: isDark ? 'none' : '0 10px 28px rgba(17,17,17,0.16)' },
@@ -1943,15 +1944,12 @@ export default function LoginScreen() {
           default: {},
         }),
       }}>
-        <Svg viewBox="0 0 64 64" width={compact ? 28 : 38} height={compact ? 28 : 38} fill="none">
-          <Path
-            d="M14 24 Q14 16 22 16 L42 16 Q50 16 50 24 L50 36 Q50 44 42 44 L30 44 L22 52 L22 44 Q14 44 14 36 Z"
-            stroke={colors.onPrimary} strokeWidth={3.4} strokeLinejoin="round" fill="none"
-          />
-          <SvgCircle cx="24" cy="30" r="2.6" fill={colors.onPrimary} />
-          <SvgCircle cx="32" cy="30" r="2.6" fill={colors.onPrimary} />
-          <SvgCircle cx="40" cy="30" r="2.6" fill={colors.onPrimary} />
-        </Svg>
+        <Image
+          source={require('../assets/icon.png')}
+          style={{ width: compact ? 52 : 68, height: compact ? 52 : 68, borderRadius: compact ? 16 : 22 }}
+          resizeMode="cover"
+          accessibilityIgnoresInvertColors
+        />
       </View>
       <Text accessibilityRole="header" style={{ fontSize: compact ? 26 : 32, fontWeight: '800', letterSpacing: -1, color: colors.text, marginTop: compact ? 12 : 16 }}>
         Chatyy

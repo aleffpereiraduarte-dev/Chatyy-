@@ -11,13 +11,13 @@ import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import { BorderRadius, FontSize, Spacing, haptic } from '../constants/theme';
 // [2026-10-08 apps-native] header nativo, células nativas, skeleton + empty canônicos
-import { USE_NATIVE_HEADER, nativeHeaderOptions, HeaderBackButton } from '../components/nativeHeader';
+import { USE_NATIVE_HEADER, nativeHeaderOptions, HeaderBackButton, nativeScrollInsetProps, NativeInsetView, IOS_NATIVE_INSET } from '../components/nativeHeader'; // inset [2026-10-08 header-inset-all]
 import PressableRow from '../components/PressableRow';
 import PressableScale from '../components/PressableScale';
 import ScreenEmptyState from '../components/ScreenEmptyState';
 import { ListSkeleton } from '../components/SkeletonLoader';
 import {
-  IconArrowLeft, IconPlus, IconFileText, IconBarChart, IconTrash,
+  IconArrowLeft, IconPlus, IconFileText, IconGrid, IconMonitor, IconStickyNote, IconPenTool, IconTrash,
   IconEdit, IconCopy, IconShare, IconSearch, IconMoreVert, IconFolder,
   IconX, IconRefresh, IconSparkles,
 } from '../components/Icons';
@@ -49,40 +49,41 @@ function formatSize(bytes) {
   return (bytes / 1048576).toFixed(1) + ' MB';
 }
 
-function DocTypeIcon({ type, size = 28 }) {
-  if (type === 'spreadsheet') {
-    return (
-      <View style={[iconStyles.badge, { backgroundColor: '#e8f5e9' }]}>
-        <IconBarChart size={size * 0.6} color="#34a853" />
-      </View>
-    );
-  }
-  if (type === 'presentation') {
-    return (
-      <View style={[iconStyles.badge, { backgroundColor: '#fff3e0' }]}>
-        <IconFileText size={size * 0.6} color="#ff9800" />
-      </View>
-    );
-  }
-  if (type === 'markdown') {
-    return (
-      <View style={[iconStyles.badge, { backgroundColor: '#f3e5f5' }]}>
-        <IconFileText size={size * 0.6} color="#111111" />
-      </View>
-    );
-  }
-  if (type === 'drawing') {
-    return (
-      <View style={[iconStyles.badge, { backgroundColor: '#fce4ec' }]}>
-        <IconEdit size={size * 0.6} color="#e91e63" />
-      </View>
-    );
-  }
+// [2026-10-08 header-inset-all] Ícones de tipo MONOCROMÁTICOS (padrão do app
+// preto&branco): tile neutro + ícone na cor do texto; o tipo se distingue
+// pelo glifo (texto / grade / monitor / nota / caneta), não por cor.
+const DOC_TYPE_GLYPH = {
+  document: IconFileText,
+  spreadsheet: IconGrid,
+  presentation: IconMonitor,
+  markdown: IconStickyNote,
+  drawing: IconPenTool,
+};
+function useNeutralTile() {
+  const { colors, isDark } = useTheme();
+  return {
+    bg: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.045)',
+    fg: colors.text,
+  };
+}
+function TypeTile({ Icon, tile = 44, iconSize }) {
+  const n = useNeutralTile();
   return (
-    <View style={[iconStyles.badge, { backgroundColor: '#e3f2fd' }]}>
-      <IconFileText size={size * 0.6} color="#4285f4" />
+    <View style={[iconStyles.badge, { width: tile, height: tile, borderRadius: Math.round(tile * 0.27), backgroundColor: n.bg }]}>
+      <Icon size={iconSize || Math.round(tile * 0.45)} color={n.fg} />
     </View>
   );
+}
+function DocTypeIcon({ type, tile = 44 }) {
+  return <TypeTile Icon={DOC_TYPE_GLYPH[type] || IconFileText} tile={tile} />;
+}
+
+// Meta "data · tamanho" montado SÓ com as partes presentes (antes: " · 1.6 KB"
+// com ponto solto quando o doc vinha sem updated_at).
+function docMetaText(item) {
+  return [formatDate(item?.updated_at), item?.file_size > 0 ? formatSize(item.file_size) : '']
+    .filter(Boolean)
+    .join(' \u00B7 ');
 }
 
 const iconStyles = StyleSheet.create({
@@ -419,21 +420,21 @@ function DocumentosScreenInner() {
           <Text style={[s.docTitle, { color: colors.text }]} numberOfLines={1}>
             {item.title || (t('docs.untitledDocument'))}
           </Text>
-          <View style={s.docMeta}>
-            <Text style={[s.docDate, { color: colors.textSecondary }]}>
-              {formatDate(item.updated_at)}
-            </Text>
-            {item.file_size > 0 && (
-              <Text style={[s.docSize, { color: colors.textSecondary }]}>
-                {' \u00B7 '}{formatSize(item.file_size)}
+          {(() => {
+            const meta = docMetaText(item);
+            const shared = item.my_permission && item.my_permission !== 'owner';
+            if (!meta && !shared) return null;
+            return (
+              <Text style={[s.docMetaLine, { color: colors.textSecondary }]} numberOfLines={1}>
+                {meta}
+                {shared ? (
+                  <Text style={{ color: colors.text, fontWeight: '600' }}>
+                    {meta ? ' \u00B7 ' : ''}{t('docs.shared')}
+                  </Text>
+                ) : null}
               </Text>
-            )}
-            {item.my_permission && item.my_permission !== 'owner' && (
-              <Text style={[s.docShared, { color: colors.primary }]}>
-                {' \u00B7 '}{t('docs.shared')}
-              </Text>
-            )}
-          </View>
+            );
+          })()}
         </View>
         <TouchableOpacity
           style={s.moreBtn}
@@ -462,9 +463,7 @@ function DocumentosScreenInner() {
       accessibilityRole="button"
       accessibilityLabel={item.name}
     >
-      <View style={[iconStyles.badge, { backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : '#f5f5f5' }]}>
-        <IconFolder size={22} color={colors.textSecondary} />
-      </View>
+      <TypeTile Icon={IconFolder} />
       <View style={s.docInfo}>
         <Text style={[s.docTitle, { color: colors.text }]} numberOfLines={1}>{item.name}</Text>
       </View>
@@ -588,20 +587,26 @@ function DocumentosScreenInner() {
 
       {/* Document list */}
       {loading && !refreshing ? (
-        <ListSkeleton count={8} />
+        <NativeInsetView><ListSkeleton count={8} /></NativeInsetView>
       ) : error ? (
-        <ScreenEmptyState
-          kind="files"
-          title={t('common.error')}
-          subtitle={error}
-          cta={{ label: tr('common.retry', 'Tentar novamente'), onPress: () => { haptic.light(); fetchDocs(); } }}
-        />
+        <NativeInsetView>
+          <ScreenEmptyState
+            kind="files"
+            title={t('common.error')}
+            subtitle={error}
+            cta={{ label: tr('common.retry', 'Tentar novamente'), onPress: () => { haptic.light(); fetchDocs(); } }}
+          />
+        </NativeInsetView>
       ) : (
         <FlatList
+          // [2026-10-08 header-inset-all] iOS: header translúcido (busca nativa)
+          // → UIKit ajusta o inset (status+nav+busca); sem paddingTop manual.
+          {...nativeScrollInsetProps()}
+          key={currentFolder ? `f-${currentFolder}` : 'root'}
           data={allItems}
           renderItem={renderItem}
           keyExtractor={keyExtractor}
-          contentContainerStyle={allItems.length === 0 ? { flex: 1 } : { paddingBottom: 96 }}
+          contentContainerStyle={allItems.length === 0 ? { flexGrow: 1 } : { paddingBottom: 96 + (IOS_NATIVE_INSET ? 0 : insets.bottom) }}
           keyboardDismissMode="on-drag"
           keyboardShouldPersistTaps="handled"
           initialNumToRender={14}
@@ -611,12 +616,12 @@ function DocumentosScreenInner() {
           ListHeaderComponent={!searchQuery && !currentFolder ? (
             <>
               {/* Quick Create — card-style buttons */}
-              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={s.quickCreateRow} contentContainerStyle={{ paddingHorizontal: 14, gap: 12 }}>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={s.quickCreateRow} contentContainerStyle={{ paddingHorizontal: 16, gap: 10 }}>
                 {[
-                  { type: 'document', label: t('docs.newDocument') || 'Documento', color: '#4285f4', Icon: IconFileText },
-                  { type: 'spreadsheet', label: t('docs.newSpreadsheet') || 'Planilha', color: '#34a853', Icon: IconBarChart },
-                  { type: 'presentation', label: t('docs.newPresentation') || 'Apresentação', color: '#ff9800', Icon: IconFileText },
-                  { type: 'markdown', label: t('docs.newMarkdown') || 'Nota', color: '#111111', Icon: IconFileText },
+                  { type: 'document', label: t('docs.newDocument') || 'Documento' },
+                  { type: 'spreadsheet', label: t('docs.newSpreadsheet') || 'Planilha' },
+                  { type: 'presentation', label: t('docs.newPresentation') || 'Apresentação' },
+                  { type: 'markdown', label: t('docs.newMarkdown') || 'Nota' },
                 ].map(item => (
                   <PressableScale
                     key={item.type}
@@ -628,9 +633,7 @@ function DocumentosScreenInner() {
                     accessibilityRole="button"
                     accessibilityLabel={item.label}
                   >
-                    <View style={[s.quickCreateIconWrap, { backgroundColor: item.color + '18' }]}>
-                      <item.Icon size={20} color={item.color} />
-                    </View>
+                    <DocTypeIcon type={item.type} tile={36} />
                     <Text style={[s.quickCreateText, { color: colors.text }]} numberOfLines={1}>{item.label}</Text>
                   </PressableScale>
                 ))}
@@ -642,7 +645,7 @@ function DocumentosScreenInner() {
                   <Text style={[s.recentTitle, { color: colors.textSecondary }]}>
                     {t('docs.recentDocuments') || 'Recent'}
                   </Text>
-                  <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 12, gap: 10 }}>
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 16, gap: 10 }}>
                     {recentDocs.map(doc => (
                       <PressableScale
                         key={doc.doc_id || doc.id}
@@ -652,12 +655,15 @@ function DocumentosScreenInner() {
                         accessibilityRole="button"
                         accessibilityLabel={doc.title || t('docs.untitledDocument')}
                       >
-                        <DocTypeIcon type={doc.type} size={24} />
-                        <Text style={[s.recentCardTitle, { color: colors.text }]} numberOfLines={2}>
+                        <DocTypeIcon type={doc.type} tile={36} />
+                        {/* [2026-10-08 header-inset-all] card de largura/altura FIXAS:
+                            título em até 2 linhas com reticências + meta sempre na
+                            base (cards alinhados mesmo sem data). */}
+                        <Text style={[s.recentCardTitle, { color: colors.text }]} numberOfLines={2} ellipsizeMode="tail">
                           {doc.title || t('docs.untitledDocument')}
                         </Text>
-                        <Text style={[s.recentCardDate, { color: colors.textSecondary }]}>
-                          {formatDate(doc.updated_at)}
+                        <Text style={[s.recentCardDate, { color: colors.textSecondary }]} numberOfLines={1}>
+                          {formatDate(doc.updated_at) || formatSize(doc.file_size) || ' '}
                         </Text>
                       </PressableScale>
                     ))}
@@ -687,9 +693,8 @@ function DocumentosScreenInner() {
 
       {/* FAB - Create new (Telegram-grade glass orb, blue tint) */}
       <BrandFab
-        style={{ position: 'absolute', bottom: 24, right: 16 }}
+        style={{ position: 'absolute', bottom: insets.bottom + 16, right: 16 }}
         size={56}
-        radius={16}
         color={isDark ? '#ffffff' : '#111111'}
         onPress={() => setShowCreateMenu(true)}
         accessibilityLabel={t('docs.createNew')}
@@ -709,9 +714,7 @@ function DocumentosScreenInner() {
               style={[s.menuItem, { borderBottomColor: colors.border }]}
               onPress={() => handleCreateDoc('document')}
             >
-              <View style={[iconStyles.badge, { backgroundColor: '#e3f2fd' }]}>
-                <IconFileText size={20} color="#4285f4" />
-              </View>
+              <DocTypeIcon type="document" />
               <View style={{ flex: 1 }}>
                 <Text style={[s.menuItemTitle, { color: colors.text }]}>{t('docs.newDocument')}</Text>
                 <Text style={[s.menuItemSub, { color: colors.textSecondary }]}>{t('docs.newDocumentDesc')}</Text>
@@ -721,9 +724,7 @@ function DocumentosScreenInner() {
               style={[s.menuItem, { borderBottomColor: colors.border }]}
               onPress={() => handleCreateDoc('spreadsheet')}
             >
-              <View style={[iconStyles.badge, { backgroundColor: '#e8f5e9' }]}>
-                <IconBarChart size={20} color="#34a853" />
-              </View>
+              <DocTypeIcon type="spreadsheet" />
               <View style={{ flex: 1 }}>
                 <Text style={[s.menuItemTitle, { color: colors.text }]}>{t('docs.newSpreadsheet')}</Text>
                 <Text style={[s.menuItemSub, { color: colors.textSecondary }]}>{t('docs.newSpreadsheetDesc')}</Text>
@@ -733,9 +734,7 @@ function DocumentosScreenInner() {
               style={[s.menuItem, { borderBottomColor: colors.border }]}
               onPress={() => handleCreateDoc('presentation')}
             >
-              <View style={[iconStyles.badge, { backgroundColor: '#fff3e0' }]}>
-                <IconFileText size={20} color="#ff9800" />
-              </View>
+              <DocTypeIcon type="presentation" />
               <View style={{ flex: 1 }}>
                 <Text style={[s.menuItemTitle, { color: colors.text }]}>{t('docs.newPresentation')}</Text>
                 <Text style={[s.menuItemSub, { color: colors.textSecondary }]}>{t('docs.newPresentationDesc')}</Text>
@@ -745,9 +744,7 @@ function DocumentosScreenInner() {
               style={[s.menuItem, { borderBottomColor: colors.border }]}
               onPress={() => handleCreateDoc('markdown')}
             >
-              <View style={[iconStyles.badge, { backgroundColor: '#f3e5f5' }]}>
-                <IconFileText size={20} color="#111111" />
-              </View>
+              <DocTypeIcon type="markdown" />
               <View style={{ flex: 1 }}>
                 <Text style={[s.menuItemTitle, { color: colors.text }]}>{t('docs.newMarkdown')}</Text>
                 <Text style={[s.menuItemSub, { color: colors.textSecondary }]}>{t('docs.newMarkdownDesc')}</Text>
@@ -757,9 +754,7 @@ function DocumentosScreenInner() {
               style={s.menuItem}
               onPress={() => handleCreateDoc('drawing')}
             >
-              <View style={[iconStyles.badge, { backgroundColor: '#fce4ec' }]}>
-                <IconEdit size={20} color="#e91e63" />
-              </View>
+              <DocTypeIcon type="drawing" />
               <View style={{ flex: 1 }}>
                 <Text style={[s.menuItemTitle, { color: colors.text }]}>{t('docs.newDrawing')}</Text>
                 <Text style={[s.menuItemSub, { color: colors.textSecondary }]}>{t('docs.newDrawingDesc')}</Text>
@@ -905,7 +900,7 @@ const s = StyleSheet.create({
     flexDirection: 'column', alignItems: 'flex-start', justifyContent: 'space-between',
     width: 132, height: 96,
     paddingHorizontal: 14, paddingVertical: 12,
-    borderRadius: 18, borderWidth: 1,
+    borderRadius: 18, borderWidth: StyleSheet.hairlineWidth,
     ...(Platform.OS === 'web' ? { boxShadow: '0 1px 4px rgba(0,0,0,0.04)', cursor: 'pointer', transition: 'transform 0.15s ease, box-shadow 0.15s ease' } : {}),
   },
   quickCreateIconWrap: {
@@ -919,12 +914,14 @@ const s = StyleSheet.create({
     letterSpacing: 1, paddingHorizontal: 16, marginBottom: 10,
   },
   recentCard: {
-    width: 156, padding: 14, borderRadius: 16, borderWidth: 1,
-    gap: 8,
+    // [2026-10-08 header-inset-all] largura E altura fixas (título 2 linhas
+    // c/ reticências; meta ancorada embaixo) → fileira alinhada.
+    width: 148, height: 132, padding: 12, borderRadius: 16, borderWidth: StyleSheet.hairlineWidth,
+    gap: 8, overflow: 'hidden',
     ...(Platform.OS === 'web' ? { boxShadow: '0 1px 6px rgba(0,0,0,0.05)', cursor: 'pointer', transition: 'transform 0.15s ease' } : {}),
   },
-  recentCardTitle: { fontSize: 14, fontWeight: '700', lineHeight: 18 },
-  recentCardDate: { fontSize: 11, fontWeight: '500' },
+  recentCardTitle: { fontSize: 14, fontWeight: '600', lineHeight: 18, flexShrink: 1 },
+  recentCardDate: { fontSize: 11.5, fontWeight: '500', marginTop: 'auto' },
   sectionLabel: {
     fontSize: 12, fontWeight: '700', textTransform: 'uppercase',
     letterSpacing: 0.5, paddingHorizontal: 16, paddingVertical: 8,
@@ -945,6 +942,7 @@ const s = StyleSheet.create({
   docInfo: { flex: 1 },
   docTitle: { fontSize: 15, fontWeight: '600', letterSpacing: -0.15 },
   docMeta: { flexDirection: 'row', alignItems: 'center', marginTop: 3 },
+  docMetaLine: { fontSize: 12.5, marginTop: 3 },
   docDate: { fontSize: 12 },
   docSize: { fontSize: 12 },
   docShared: { fontSize: 12 },

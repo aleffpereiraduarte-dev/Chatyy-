@@ -60,7 +60,7 @@ function resolveStatusMedia(u) {
   if (!u || typeof u !== 'string') return '';
   if (u.startsWith('http')) return u;
   if (u.startsWith('/data/')) return 'https://media.chatyy.com.br' + u;
-  return u.startsWith('/') ? BASE_URL + u : u;
+  return u.startsWith('/') ? api.getMediaUrl(u) : u;
 }
 
 // Stable component for native audio playback via hidden WebView
@@ -632,9 +632,9 @@ const AnimatedPeekPreview = React.memo(function AnimatedPeekPreview({ group, own
   if (!items.length) return null;
   const cur = items[activeIdx] || items[items.length - 1];
   const url = ((cur?.media_url || cur?.content || '').split('\n')[0] || '');
-  const fullUrl = url.startsWith('/') ? BASE_URL + url : url;
+  const fullUrl = url.startsWith('/') ? api.getMediaUrl(url) : url;
   const posterRaw = cur?.thumbnail_url;
-  const posterUrl = posterRaw ? (posterRaw.startsWith('/') ? BASE_URL + posterRaw : posterRaw) : '';
+  const posterUrl = posterRaw ? (posterRaw.startsWith('/') ? api.getMediaUrl(posterRaw) : posterRaw) : '';
 
   return (
     <View style={{ flex: 1 }}>
@@ -1712,7 +1712,7 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, openSta
         for (const it of statusGroup.items.slice(0, 3)) {
           if (it?.type !== 'video') continue;
           const raw = (it.media_url || it.content || '').split('\n')[0];
-          const fullUrl = raw.startsWith('/') ? BASE_URL + raw : raw;
+          const fullUrl = raw.startsWith('/') ? api.getMediaUrl(raw) : raw;
           if (fullUrl) cacheMedia(fullUrl, { force: true }).catch(() => {});
         }
       } catch {}
@@ -2043,7 +2043,7 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, openSta
     const item = viewerStatuses[viewerIndex];
     if (item?.type !== 'video') return;
     const raw = (item.media_url || item.content || '').split('\n')[0];
-    const fullUrl = raw.startsWith('/') ? BASE_URL + raw : raw;
+    const fullUrl = raw.startsWith('/') ? api.getMediaUrl(raw) : raw;
     if (!fullUrl) return;
     let i = 0;
     const id = setInterval(() => {
@@ -2104,7 +2104,7 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, openSta
     }
     for (const it of upcoming) {
       const raw = (it.media_url || it.content || '').split('\n')[0];
-      const fullUrl = raw.startsWith('/') ? BASE_URL + raw : raw;
+      const fullUrl = raw.startsWith('/') ? api.getMediaUrl(raw) : raw;
       if (!fullUrl) continue;
       try { cacheMedia(fullUrl, { force: true }).catch(() => {}); } catch {}
     }
@@ -2932,11 +2932,11 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, openSta
             const first = items[0];
             if (!first || first.type !== 'video') return;
             const raw = (first.media_url || first.content || '').split('\n')[0];
-            const fullUrl = raw.startsWith('/') ? BASE_URL + raw : raw;
+            const fullUrl = raw.startsWith('/') ? api.getMediaUrl(raw) : raw;
             if (fullUrl) cacheMedia(fullUrl, { force: true }).catch(() => {});
             const t = first.thumbnail_url;
             if (t) {
-              const posterUrl = t.startsWith('/') ? BASE_URL + t : t;
+              const posterUrl = t.startsWith('/') ? api.getMediaUrl(t) : t;
               try {
                 const { Image: ExpoImg } = require('expo-image');
                 ExpoImg?.prefetch?.([posterUrl]).catch(() => {});
@@ -4006,7 +4006,7 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, openSta
                       from different contacts). Falls back to plain Image
                       if the module isn't bundled for some reason. */}
                   {(() => {
-                    const url = (() => { const u = ((currentViewerItem?.media_url || currentViewerItem?.content || '')).split('\n')[0]; return u.startsWith('/') ? BASE_URL + u : u; })();
+                    const url = (() => { const u = ((currentViewerItem?.media_url || currentViewerItem?.content || '')).split('\n')[0]; return u.startsWith('/') ? api.getMediaUrl(u) : u; })();
                     let ExpoImg = null;
                     try { ExpoImg = require('expo-image').Image; } catch {}
                     if (ExpoImg) {
@@ -4649,7 +4649,7 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, openSta
                     const isVideo = item.type === 'video';
                     const isText = item.type === 'text';
                     const mediaUrl = (item.media_url || '').split('\n')[0];
-                    const fullUrl = mediaUrl.startsWith('/') ? `${BASE_URL}${mediaUrl}` : mediaUrl;
+                    const fullUrl = mediaUrl.startsWith('/') ? api.getMediaUrl(mediaUrl) : mediaUrl;
                     const dt = item.archived_at || item.created_at || '';
                     const dateLabel = (() => {
                       try {

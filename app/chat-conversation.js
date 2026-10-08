@@ -162,6 +162,7 @@ import {
   IconLink, IconAlertCircle, IconPenTool,
   IconChevronRight, IconLogOut, IconGrid, IconRefresh,
   IconFlag, // [2026-10-06 UX2] contact info sheet → Denunciar
+  IconStickyNote, // [2026-10-08 sticker-maker]
 } from '../components/Icons';
 import * as Clipboard from 'expo-clipboard';
 import { WebView } from 'react-native-webview';
@@ -185,6 +186,8 @@ import ReminderSheet from '../components/ReminderSheet';
 import { detectReminder as detectChatReminder, createReminder as createChatReminder, formatReminderWhen } from '../services/reminders';
 import GifPickerPanel from '../components/GifPicker';
 import StickerPicker from '../components/StickerPicker';
+// [2026-10-08 sticker-maker] toque longo numa foto → "Criar figurinha"
+import StickerMaker from '../components/stickers/StickerMaker';
 import MessageEffectPicker from '../components/MessageEffectPicker';
 import MessageScreenEffect, { SCREEN_EFFECT_IDS } from '../components/MessageScreenEffect';
 import MessageBubbleEffect from '../components/MessageBubbleEffect';
@@ -1913,6 +1916,10 @@ function _waMetaGhost({ time, own, edited, icons }) {
   if (icons > 0) s += _NB.repeat(icons * 4);
   s += String(time || '00:00').replace(/ /g, _NB);
   if (own) s += _NB.repeat(9);
+  // [2026-10-08 android-ghost] Android ignores color:'transparent' on nested
+  // Text spans in some cases → the ghost time was drawn on top of the real one
+  // ("04:39" twice). Use glyph-free spacing there: each visible char ≈ 2 NBSP.
+  if (Platform.OS === 'android') s = s.replace(/[^\u00A0 ]/g, _NB + _NB);
   return s;
 }
 function _hasBlockMarkdown(text) {
@@ -7779,7 +7786,35 @@ function ChatConversationInner() {
   // NEWEST-FIRST index (flatListData order) and is remapped.
   const flashListRef = useRef(null);
   const threadDataRef = useRef([]); // data in RENDER order of the mounted list
-  const threadScrollStateRef = useRef({ scrolledUp: false });
+  // [2026-10-08 open-at-bottom] `pinned` = a conversa está "grudada" no fim.
+  // Founder: "abrir um chat deveria estar embaixo na última conversa". O MVCP
+  // do FlashList v2 ancora a 1ª row VISÍVEL (topo): quando rows/mídias abaixo
+  // dela crescem depois do 1º layout (estimado → medido, imagem/preview de link
+  // carregando, digitando, delta do servidor, composer/teclado mudando a
+  // altura) o fim era empurrado p/ baixo da tela e a conversa abria no meio.
+  // Enquanto `pinned`, toda mudança de tamanho do conteúdo/viewport volta ao
+  // fim (pinSettle). Solta quando o usuário arrasta/rola p/ cima ou num salto
+  // programático (citação/busca/divisor "Não lidas"); volta a grudar ao chegar
+  // no fim. Abrir com alvo (scrollToMessageId/highlightMessageId) = solto.
+  const threadScrollStateRef = useRef({
+    scrolledUp: false,
+    pinned: !(params?.scrollToMessageId || params?.highlightMessageId),
+    pinCh: 0, pinVh: 0, pinQueued: false, dragging: false, openedAt: Date.now(),
+  });
+  // [2026-10-08 open-at-bottom] Teto de não-lidas p/ o divisor "Não lidas":
+  // param `unread` (ChatListTab sempre manda, inclusive 0) ou, sem ele (push/
+  // deep link/outras telas), o unread_count do cache da lista. null = sem info.
+  const unreadCapRef = useRef(
+    (params?.unread != null && params?.unread !== '') ? (parseInt(params.unread, 10) || 0) : null
+  );
+  // 'list' = contagem fresca do toque na lista (única fonte confiável o bastante
+  // p/ PUXAR a tela até o divisor); 'cache'/null = só mostra o divisor.
+  const unreadCapSrcRef = useRef(unreadCapRef.current != null ? 'list' : null);
+  // Abertura: o divisor só é decidido depois do 1º fetch do servidor (delta)
+  // — com só o cache local as não-lidas mais novas ainda não estão em
+  // `messages` e o divisor caía no lugar errado.
+  const openLoadDoneRef = useRef(false);
+  const [openLoadDone, setOpenLoadDone] = useState(false);
   const threadScroll = useMemo(() => {
     const inst = () => (THREAD_IS_FLASH ? flashListRef.current : flatListRef.current);
     const findIdx = (pred) => {
@@ -7792,6 +7827,7 @@ function ChatConversationInner() {
       toLatest({ animated = true } = {}) {
         const l = inst();
         if (!l) return;
+        threadScrollStateRef.current.pinned = true; // [2026-10-08 open-at-bottom]
         try {
           if (THREAD_OLDEST_FIRST) {
             l.scrollToEnd?.({ animated });
@@ -7809,6 +7845,7 @@ function ChatConversationInner() {
         const l = inst();
         const n = (threadDataRef.current || []).length;
         if (!l || !(index >= 0) || index >= n) return false;
+        threadScrollStateRef.current.pinned = false; // [2026-10-08 open-at-bottom] salto = solta do fim
         try {
           const p = l.scrollToIndex?.({ index, animated, viewPosition, ...(viewOffset != null ? { viewOffset } : {}) });
           if (p && typeof p.catch === 'function') p.catch(() => {}); // v2 returns a Promise
@@ -7847,6 +7884,7 @@ function ChatConversationInner() {
         if (t0 == null) return api.toIndex(index, { animated: true, viewPosition });
         try {
           threadScrollStateRef.current.jumpAt = Date.now();
+          threadScrollStateRef.current.pinned = false; // [2026-10-08 open-at-bottom]
           l.scrollToOffset({ offset: t0, animated: false, skipFirstItemOffset: true });
           const settle = (delay) => setTimeout(() => {
             try {
@@ -7878,6 +7916,7 @@ function ChatConversationInner() {
       jumpToLatest() {
         const l = inst();
         if (!l) return;
+        threadScrollStateRef.current.pinned = true; // [2026-10-08 open-at-bottom]
         const dist = threadScrollStateRef.current.lastDistance || 0;
         const winH = (THREAD_IS_FLASH && l.getWindowSize?.()?.height) || 800;
         if (dist <= winH * 1.5) { api.toLatest({ animated: true }); return; }
@@ -7910,6 +7949,28 @@ function ChatConversationInner() {
         return i < 0 ? false : api.toIndex(i, opts);
       },
       isNearLatest() { return !threadScrollStateRef.current.scrolledUp; },
+      // [2026-10-08 open-at-bottom] Mantém o fim visível enquanto `pinned`:
+      // coalescido em 1 frame (várias medições/onContentSizeChange seguidas =
+      // 1 scroll), instantâneo (sem animação = sem "pulo" visível) e nunca
+      // durante um arraste. Só no layout oldest-first (no invertido offset 0
+      // já é o fim e o conteúdo cresce p/ cima sozinho).
+      pinSettle() {
+        const st = threadScrollStateRef.current;
+        if (!THREAD_OLDEST_FIRST || !st.pinned || st.dragging || st.pinQueued) return;
+        st.pinQueued = true;
+        const raf = (typeof requestAnimationFrame === 'function') ? requestAnimationFrame : (cb) => setTimeout(cb, 16);
+        raf(() => {
+          st.pinQueued = false;
+          if (!st.pinned || st.dragging) return;
+          const l = inst();
+          if (!l) return;
+          try {
+            const sv = l.getNativeScrollRef?.();
+            if (sv && typeof sv.scrollToEnd === 'function') sv.scrollToEnd({ animated: false });
+            else l.scrollToEnd?.({ animated: false });
+          } catch {}
+        });
+      },
       distanceFromLatest(e) {
         const ne = e && e.nativeEvent;
         if (!ne || !ne.contentOffset) return 0;
@@ -8569,6 +8630,12 @@ function ChatConversationInner() {
     getCachedConversations().then(cached => {
       const conv = cached.find(c => c.id === conversationId || String(c.id) === String(conversationId));
       _applyConvName(conv);
+      // [2026-10-08 open-at-bottom] teto do divisor (antes do watermark → o
+      // effect do divisor já o enxerga no re-render que o setState dispara).
+      if (conv && unreadCapRef.current == null && conv.unread_count != null && Number.isFinite(Number(conv.unread_count))) {
+        unreadCapRef.current = Math.max(0, Number(conv.unread_count));
+        unreadCapSrcRef.current = 'cache';
+      }
       _applyConvWatermark(conv);
     }).catch(() => {});
     api.chatConversations().then(r => {
@@ -10113,6 +10180,7 @@ function ChatConversationInner() {
   const [forwardSearch, setForwardSearch] = useState('');
   const [showGifPicker, setShowGifPicker] = useState(false);
   const [showStickerPicker, setShowStickerPicker] = useState(false);
+  const [stickerMakerSrc, setStickerMakerSrc] = useState(null); // [2026-10-08 sticker-maker]
   // Snapshot for the Android hardware-back handler declared above (see
   // androidBackOverlayRef). Effect without deps = refreshed after every commit;
   // keeps the ref write out of render (React Compiler rule) and avoids TDZ.
@@ -12200,6 +12268,8 @@ function ChatConversationInner() {
       setLoading(false);
       loadingMoreRef.current = false;
       setLoadingMore(false);
+      // [2026-10-08 open-at-bottom] 1º fetch da abertura terminou (ok ou falha)
+      if (!beforeId && !openLoadDoneRef.current) { openLoadDoneRef.current = true; setOpenLoadDone(true); }
     }
   }, [conversationId]);
 
@@ -17700,7 +17770,7 @@ function ChatConversationInner() {
             const { adoptLocalFileAsCache } = require('../services/mediaCache');
             const remote = api.getMediaUrl(msg.file_url);
             // Fire-and-forget — failure just means the next load re-downloads.
-            adoptLocalFileAsCache(remote, audioData.uri).catch(() => {});
+            adoptLocalFileAsCache(remote, audioData.uri, { conversationId, messageId: msg.id, own: true }).catch(() => {});
           } catch {}
         }
       } else if (/\b41[35]\b|\b403\b|\b429\b|\b507\b|too large|size|mime|rejected|blocked|forbidden|unsupported|quota|storage/i.test(String(`${r?.status || ''} ${r?.error || ''} ${r?.message || ''}`))) {
@@ -20892,21 +20962,70 @@ function ChatConversationInner() {
   // object (cache + server chat_list, which now echo last_read_message_id).
   const [lastReadWatermark, setLastReadWatermark] = useState(null);
   const [convMetaResolved, setConvMetaResolved] = useState(false);
+  // [2026-10-08 open-at-bottom] O watermark do CACHE da lista de conversas fica
+  // velho (web: o IndexedDB não recebe o read local; nativo: lido em outro
+  // aparelho com o app fechado) → o divisor "Não lidas" caía em msgs JÁ
+  // lidas, fora da tela, e o auto-scroll do divisor abria a conversa NO MEIO
+  // do histórico (repro web: lido em outro aparelho → abria 1107 px acima do
+  // fim, última msg fora da tela). Esperar o watermark do SERVIDOR não serve:
+  // o "marca tudo lido" do mount (50 ms) chega antes do chat_list, que já volta
+  // com tudo lido. Regra: o watermark posiciona, mas o nº de não-lidas que o
+  // divisor pode cobrir é LIMITADO pela contagem conhecida (param `unread` da
+  // lista = fresca no toque; senão o unread_count do cache). Contagem 0 = sem
+  // divisor; watermark cobrindo mais msgs que a contagem = divisor na N-ésima
+  // do fim. Na dúvida, abre no fim (divisor ausente é inofensivo; divisor
+  // errado puxava a tela p/ o meio).
+  const [, setDividerRev] = useState(0); // re-render quando o divisor (ref) muda
+  const dividerDecidedRef = useRef(false); // decidido 1x na abertura (msgs ao vivo não ganham divisor)
   useEffect(() => {
-    if (firstUnreadIdRef.current !== null) return;
+    if (firstUnreadIdRef.current !== null || dividerDecidedRef.current) return;
     if (messages.length === 0) return;
+    const cap = unreadCapRef.current; // null = desconhecido
+    if (cap != null && cap <= 0) { dividerDecidedRef.current = true; return; } // contagem 0 → sem divisor
+    if (!openLoadDone) return; // espera o delta da abertura trazer as não-lidas novas
+    // Aberto pela lista: a contagem do toque é a verdade (a lista é viva via
+    // WS). O watermark do servidor já pode refletir o "marca tudo" do mount e
+    // o do cache pode estar velho → divisor = N-ésima recebida do fim.
+    if (unreadCapSrcRef.current === 'list') {
+      dividerDecidedRef.current = true;
+      let count = 0; let oldest = null;
+      for (let i = messages.length - 1; i >= 0; i--) {
+        const m = messages[i];
+        if (!m || m._type || m.type === 'system') continue;
+        if (m.sender_email === currentEmail) continue;
+        count++; oldest = m.id;
+        if (count >= cap) break;
+      }
+      // menos recebidas carregadas que a contagem → todas são não-lidas
+      if (oldest != null) { firstUnreadIdRef.current = oldest; setDividerRev(v => v + 1); }
+      return;
+    }
     // Preferred: divider sits above the first incoming message the server
     // still considers unread (id > watermark).
     if (lastReadWatermark != null && lastReadWatermark > 0) {
+      dividerDecidedRef.current = true;
+      let firstIdx = -1;
       for (let i = 0; i < messages.length; i++) {
         const m = messages[i];
         if (!m || m._type || m.type === 'system') continue;
         if (m.sender_email === currentEmail) continue;
-        if (Number(m.id) > lastReadWatermark) {
-          firstUnreadIdRef.current = m.id;
-          break;
-        }
+        if (Number(m.id) > lastReadWatermark) { firstIdx = i; break; }
       }
+      if (firstIdx < 0) return;
+      let nextId = messages[firstIdx].id;
+      if (cap != null) {
+        let count = 0; let nth = null;
+        for (let i = messages.length - 1; i >= firstIdx; i--) {
+          const m = messages[i];
+          if (!m || m._type || m.type === 'system') continue;
+          if (m.sender_email === currentEmail) continue;
+          count++;
+          if (count === cap) nth = m.id;
+        }
+        if (count > cap && nth != null) nextId = nth; // watermark velho → N-ésima do fim
+      }
+      firstUnreadIdRef.current = nextId;
+      setDividerRev(v => v + 1); // pinta o divisor já (o ref sozinho não re-renderiza)
       return; // watermark authoritative — never fall through to the count path
     }
     // Count fallback (compat): only once we've resolved conv meta WITHOUT a
@@ -20914,6 +21033,7 @@ function ChatConversationInner() {
     // resolve prevents a stale count from claiming the divider before the
     // watermark arrives.
     if (!convMetaResolved) return;
+    dividerDecidedRef.current = true;
     const unreadN = initialUnreadCountRef.current;
     if (unreadN <= 0) return;
     // Find the Nth-from-end incoming message (skip own + system)
@@ -20928,7 +21048,8 @@ function ChatConversationInner() {
         break;
       }
     }
-  }, [messages, currentEmail, lastReadWatermark, convMetaResolved]);
+    setDividerRev(v => v + 1); // [2026-10-08 open-at-bottom]
+  }, [messages, currentEmail, lastReadWatermark, convMetaResolved, openLoadDone]);
 
   // Cache of wrapped message objects so identical messages keep the same
   // reference across renders — critical for MemoizedMessageRow to skip work.
@@ -21946,7 +22067,7 @@ function ChatConversationInner() {
           if (i >= pending.length || !mountedRef.current) return;
           const m = pending[i++];
           const remote = (() => { try { return api.getMediaUrl(m.file_url); } catch { return m.file_url.startsWith('http') ? m.file_url : `https://chatyy.com.br${m.file_url}`; } })();
-          cacheMedia(remote).then(local => {
+          cacheMedia(remote, { conversationId, messageId: m.id }).then(local => {
             if (!mountedRef.current) return;
             if (local && local !== remote && typeof local === 'string' && local.startsWith('file://')) {
               setCachedUris(prev => prev[remote] === local ? prev : { ...prev, [remote]: local });
@@ -22116,6 +22237,16 @@ function ChatConversationInner() {
           const d = threadDataRef.current || [];
           const di = d.findIndex(m => m && m._type === 'unread_separator');
           if (di < 0) return;
+          // [2026-10-08 open-at-bottom] Só na ABERTURA: se o usuário já mexeu
+          // (arrastou / saiu do fim) ou a tela já está aberta há um tempo
+          // (divisor tardio = msg ao vivo), não puxa a lista p/ o divisor.
+          const _st = threadScrollStateRef.current;
+          // Sem contagem fresca da lista (push/deep link/outra tela) o divisor
+          // é só informativo: abre no fim.
+          if (_st.dragging || !_st.pinned || unreadCapSrcRef.current !== 'list' || Date.now() - (_st.openedAt || 0) > 5000) {
+            didScrollToUnreadRef.current = true;
+            return;
+          }
           let vis = null;
           try { vis = flashListRef.current?.computeVisibleIndices?.(); } catch {}
           if (!(vis && di >= vis.startIndex && di <= vis.endIndex)) {
@@ -22139,6 +22270,26 @@ function ChatConversationInner() {
     // (inverted: contentOffset.y; oldest-first: contentH - viewportH - y).
     const _distLatest = threadScroll.distanceFromLatest(e);
     threadScrollStateRef.current.lastDistance = _distLatest; // [2026-10-08 chat-gaps2] jumpToLatest
+    // [2026-10-08 open-at-bottom] Grudado no fim: o offset que "se afastou"
+    // junto com uma mudança de tamanho do conteúdo/viewport foi o LAYOUT (MVCP
+    // ancorando a row do topo, mídia/row medindo, teclado) → volta ao fim.
+    // Afastou com o tamanho igual = o usuário (ou um salto) rolou → solta.
+    // Chegou no fim de novo → gruda (WhatsApp: no fim, conteúdo novo/maior
+    // continua mostrando a última mensagem).
+    if (THREAD_OLDEST_FIRST) {
+      const _st = threadScrollStateRef.current;
+      const _ne = e && e.nativeEvent;
+      const _ch = (_ne && _ne.contentSize && _ne.contentSize.height) || 0;
+      const _vh = (_ne && _ne.layoutMeasurement && _ne.layoutMeasurement.height) || 0;
+      const _layoutMoved = Math.abs(_ch - (_st.pinCh || 0)) > 1 || Math.abs(_vh - (_st.pinVh || 0)) > 1;
+      _st.pinCh = _ch; _st.pinVh = _vh;
+      if (_distLatest <= 6) {
+        _st.pinned = true;
+      } else if (_st.pinned) {
+        if (_layoutMoved && !_st.dragging) threadScroll.pinSettle();
+        else if (_distLatest > 12) _st.pinned = false;
+      }
+    }
     const scrolledUp = _distLatest > 300;
     isScrolledUpRef.current = scrolledUp;
     threadScrollStateRef.current.scrolledUp = scrolledUp;
@@ -22148,6 +22299,30 @@ function ChatConversationInner() {
       setShowScrollDown(scrolledUp);
     }
     if (!scrolledUp) setNewMsgCount(0);
+  }, []);
+  // [2026-10-08 open-at-bottom] Conteúdo (rows medidas, imagem/preview que
+  // carregou, delta do servidor, digitando) ou viewport (composer/teclado)
+  // mudou de tamanho sem evento de scroll → se grudado, volta ao fim.
+  const onThreadContentSizeChange = useCallback((w, h) => {
+    const st = threadScrollStateRef.current;
+    if (!THREAD_OLDEST_FIRST || !st.pinned) return;
+    if (Math.abs((h || 0) - (st.pinCh || 0)) <= 1) return;
+    threadScroll.pinSettle();
+  }, []);
+  const onThreadViewportLayout = useCallback(() => {
+    if (THREAD_OLDEST_FIRST && threadScrollStateRef.current.pinned) threadScroll.pinSettle();
+  }, []);
+  // Arraste do usuário (nativo): nunca brigar com o dedo; ao soltar, o
+  // onScroll decide (no fim = gruda, longe = solto).
+  const onThreadScrollBeginDrag = useCallback(() => {
+    const st = threadScrollStateRef.current;
+    st.dragging = true;
+    st.pinned = false;
+  }, []);
+  const onThreadScrollEndDrag = useCallback(() => {
+    const st = threadScrollStateRef.current;
+    st.dragging = false;
+    if ((st.lastDistance || 0) <= 6) st.pinned = true;
   }, []);
 
   // ============================================================
@@ -22308,7 +22483,8 @@ function ChatConversationInner() {
                   : (m.file_url.startsWith('http') ? m.file_url : `https://chatyy.com.br${m.file_url}`);
                 const { getLocalUriIfCached, cacheMedia } = require('../services/mediaCache');
                 if (!getLocalUriIfCached(remote)) {
-                  cacheMedia(remote, { force: true, conversationId }).catch(() => {});
+                  // [2026-10-08 media-local-store] ids → store permanente media/<conta>/<conv>/<msgId>; recebida → galeria (se ligado)
+                  cacheMedia(remote, { force: true, conversationId, messageId: m.id, received: !isOwn, mediaType: m.type }).catch(() => {});
                 }
               } catch {}
             }}
@@ -22830,7 +23006,7 @@ function ChatConversationInner() {
                       if (mountedRef.current) {
                         setDownloadProgress(prev => prev[msg.id] === undefined ? { ...prev, [msg.id]: 0 } : prev);
                       }
-                      cacheMedia(remote, { conversationId }).then(local => {
+                      cacheMedia(remote, { conversationId, messageId: msg.id, received: !isOwn, mediaType: msg.type }).then(local => {
                         if (local && local !== remote && mountedRef.current) {
                           setCachedUris(p => ({ ...p, [remote]: local }));
                           setDownloadProgress(p => { if (p[msg.id] === undefined) return p; const n = { ...p }; delete n[msg.id]; return n; });
@@ -22871,7 +23047,7 @@ function ChatConversationInner() {
                     : (msg.file_url.startsWith('http') ? msg.file_url : `https://chatyy.com.br${msg.file_url}`);
                   const { getLocalUriIfCached, cacheMedia } = require('../services/mediaCache');
                   if (!getLocalUriIfCached(remote)) {
-                    cacheMedia(remote, { force: true, conversationId }).catch(() => {});
+                    cacheMedia(remote, { force: true, conversationId, messageId: msg.id, received: !isOwn, mediaType: msg.type }).catch(() => {});
                   }
                   // [WAVE 72 2026-05-21] Also seed expo-image's NATIVE memory
                   // cache via Image.prefetch. cacheMedia only writes disk;
@@ -23236,7 +23412,7 @@ function ChatConversationInner() {
                       setCachedUris(prev => ({ ...prev, [remote]: remote }));
                       try {
                         const { cacheMedia, requestRedownload } = require('../services/mediaCache');
-                        cacheMedia(remote, { force: true, conversationId }).then(local => {
+                        cacheMedia(remote, { force: true, conversationId, messageId: msg.id, received: !isOwn, mediaType: msg.type }).then(local => {
                           if (!mountedRef.current) return;
                           if (typeof local === 'string' && local.startsWith('file://')) {
                             setCachedUris(p => ({ ...p, [remote]: local }));
@@ -24821,7 +24997,7 @@ function ChatConversationInner() {
           }
           const st = payload.status;
           const mediaUrl = st.media_url
-            ? (st.media_url.startsWith('/') ? (api.BASE_URL || '') + st.media_url : st.media_url)
+            ? (st.media_url.startsWith('/') ? api.getMediaUrl(st.media_url) : st.media_url)
             : '';
           const snippet = (st.content || '').split('\n')[0] || '';
           const label = isOwn
@@ -25233,7 +25409,7 @@ function ChatConversationInner() {
             setDownloadProgress(prev => ({ ...prev, [msg.id]: 0 }));
             try {
               const { cacheMedia, requestRedownload } = require('../services/mediaCache');
-              return cacheMedia(remote, { force: true, conversationId }).then(local => {
+              return cacheMedia(remote, { force: true, conversationId, messageId: msg.id, received: !isOwn, mediaType: msg.type }).then(local => {
                 if (!mountedRef.current) return null;
                 if (typeof local === 'string' && local.startsWith('file://')) {
                   setCachedUris(prev => ({ ...prev, [remote]: local }));
@@ -28651,6 +28827,11 @@ function ChatConversationInner() {
             ? { onStartReached: onThreadReachedOldest, onStartReachedThreshold: 0.5 }
             : { onEndReached: onThreadReachedOldest, onEndReachedThreshold: 0.5 })}
           onScroll={handleFlatListScroll}
+          // [2026-10-08 open-at-bottom] grudar no fim (ver threadScroll.pinSettle)
+          onContentSizeChange={onThreadContentSizeChange}
+          onLayout={onThreadViewportLayout}
+          onScrollBeginDrag={onThreadScrollBeginDrag}
+          onScrollEndDrag={onThreadScrollEndDrag}
           scrollEventThrottle={16}
           viewabilityConfig={viewabilityConfig}
           onViewableItemsChanged={onViewableItemsChanged}
@@ -30512,6 +30693,16 @@ function ChatConversationInner() {
         />
       )}
 
+      {/* [2026-10-08 sticker-maker] criar figurinha a partir de uma foto do chat */}
+      {stickerMakerSrc ? (
+        <StickerMaker
+          visible
+          sourceUri={stickerMakerSrc}
+          onClose={() => setStickerMakerSrc(null)}
+          onSend={(absUrl) => { try { handleSendSticker(absUrl); } catch {} }}
+        />
+      ) : null}
+
       {/* Sticker Picker Panel */}
       {showStickerPicker && (
         <StickerPicker
@@ -31117,6 +31308,29 @@ function ChatConversationInner() {
                   <IconPin size={18} color={pinnedIdSet.has(String(selectedMsg?.id)) ? '#f59e0b' : colors.text} />
                   <Text style={[ctxS.ctxSecondaryText, { color: colors.text }]}>
                     {pinnedIdSet.has(String(selectedMsg?.id)) ? (t('chatConv.unpinMessage') || 'Unpin') : (t('chatConv.pinMessage') || 'Pin')}
+                  </Text>
+                </PressableRow>
+              )}
+
+              {/* [2026-10-08 sticker-maker] Criar figurinha a partir da foto
+                  (WhatsApp: segurar a foto → "Criar figurinha"). Não vale p/
+                  visualização única. */}
+              {!selectedMsg?.deleted_at && selectedMsg?.type === 'image' && selectedMsg?.file_url
+                && !(selectedMsg?.is_view_once || selectedMsg?.view_once || selectedMsg?.isViewOnce) && (
+                <PressableRow highlightColor={isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)'}
+                  style={ctxS.ctxSecondaryItem}
+                  onPress={() => {
+                    const fu = selectedMsg?.file_url;
+                    setSelectedMsg(null);
+                    let src = fu;
+                    try { src = api.getMediaUrl ? api.getMediaUrl(fu) : fu; } catch {}
+                    if (src) setStickerMakerSrc(src);
+                  }}
+                  activeOpacity={0.6}
+                >
+                  <IconStickyNote size={18} color={colors.text} />
+                  <Text style={[ctxS.ctxSecondaryText, { color: colors.text }]}>
+                    {(() => { const v = t('stickerMaker.createFromImage'); return v && v !== 'stickerMaker.createFromImage' ? v : 'Criar figurinha'; })()}
                   </Text>
                 </PressableRow>
               )}

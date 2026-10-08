@@ -53,7 +53,7 @@ const WEB = Platform.OS === 'web';
 function resolveMedia(url) {
   if (!url) return '';
   if (url.startsWith('http')) return url;
-  return `${BASE_URL}${url}`;
+  return api.getMediaUrl(url);
 }
 
 // Bold + tinted highlight of the matched substring within a result row.

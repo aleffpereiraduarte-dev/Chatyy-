@@ -9,7 +9,7 @@ import {
 } from 'react-native';
 // FlashList reverted to FlatList
 import { useRouter, Stack } from 'expo-router';
-import { USE_NATIVE_HEADER, nativeHeaderOptions, HeaderIconButton } from '../components/nativeHeader'; // [2026-10-07 app-feel-nav]
+import { USE_NATIVE_HEADER, nativeHeaderOptions, HeaderIconButton, NativeHeaderSafeArea } from '../components/nativeHeader'; // [2026-10-07 app-feel-nav]
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
@@ -1381,6 +1381,10 @@ function ContactsScreenInner() {
       </View>
       )}
 
+      {/* [2026-10-08 header-inset-all] iOS: header translúcido (busca nativa) →
+          abas/ações/lista começavam em y=0 SOB nav bar + busca. O wrapper mede o
+          safe-area real da view e empurra todo o bloco p/ baixo do header. */}
+      <NativeHeaderSafeArea>
       {/* Tabs */}
       <View style={[s.tabBar, { backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
         {TABS.map(tab => (
@@ -1640,6 +1644,7 @@ function ContactsScreenInner() {
         />
       )}
       </FadeSlideIn>
+      </NativeHeaderSafeArea>
 
       {/* Add/Edit Modal */}
       <Modal visible={showAdd} animationType="slide" transparent>

@@ -353,7 +353,8 @@ export async function onCommitted(p, serverMsg) {
     if (fileUrl && local && !p.view_once && Platform.OS !== 'web') {
       const api = _api();
       const remote = api?.getMediaUrl ? api.getMediaUrl(fileUrl) : fileUrl;
-      try { await require('./mediaCache').adoptLocalFileAsCache?.(remote, local); } catch {}
+      // [2026-10-08 media-local-store] original enviado → media/<conta>/<conv>/<msgId>.<ext>
+      try { await require('./mediaCache').adoptLocalFileAsCache?.(remote, local, { conversationId: p.conversation_id, messageId: serverMsg?.id, own: true }); } catch {}
     }
   } catch {}
   await _deleteDurable(p);

@@ -24,7 +24,7 @@ import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import { IconCheck, IconPlus, IconTrash, IconMail, IconChevronLeft } from '../components/Icons';
 import { taskList, taskCreate, taskUpdate, taskDelete } from '../services/api';
-import { USE_NATIVE_HEADER, nativeHeaderOptions } from '../components/nativeHeader';
+import { USE_NATIVE_HEADER, nativeHeaderOptions, nativeScrollInsetProps, IOS_NATIVE_INSET } from '../components/nativeHeader';
 import SettingsSegmented from '../components/SettingsSegmented';
 import ScreenEmptyState from '../components/ScreenEmptyState';
 import SwipeableRow from '../components/SwipeableRow';
@@ -286,8 +286,8 @@ export default function TasksScreen() {
               subtitle={emptySub}
             />
           )}
-        contentContainerStyle={[{ paddingBottom: 40 + insets.bottom }, !loading && tasks.length === 0 ? { flexGrow: 1 } : null]}
-        contentInsetAdjustmentBehavior="automatic"
+        contentContainerStyle={[{ paddingBottom: 40 + (IOS_NATIVE_INSET ? 0 : insets.bottom) }, !loading && tasks.length === 0 ? { flexGrow: 1 } : null]}
+        {...nativeScrollInsetProps() /* [2026-10-08 header-inset-all] título grande: UIKit ajusta topo+base */}
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
       />

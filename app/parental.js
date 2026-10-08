@@ -1,20 +1,22 @@
 import { androidTopInset } from '../utils/systemInsets'; // [2026-10-07 android-native] edge-to-edge
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, Platform, FlatList, Alert, ActivityIndicator, TextInput, ScrollView, Image, Animated, Easing, KeyboardAvoidingView, Modal, Vibration, Dimensions, RefreshControl, Linking, Share } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, Platform, FlatList, Alert, ActivityIndicator, TextInput, ScrollView, Image, Animated, Easing, KeyboardAvoidingView, Modal, Vibration, Dimensions, RefreshControl, Linking, Share, BackHandler, Keyboard } from 'react-native';
 import { useRouter, Stack } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Svg, { Circle, Path } from 'react-native-svg';
-import { USE_NATIVE_HEADER, nativeHeaderOptions, HeaderIconButton } from '../components/nativeHeader'; // [2026-10-08 parental-redesign]
+import { USE_NATIVE_HEADER, nativeHeaderOptions, HeaderIconButton, HeaderBackButton } from '../components/nativeHeader'; // [2026-10-08 parental-redesign]
+import { useGroupedColors, SettingsGroup, SettingsRow, SettingsSwitchRow } from '../components/settings/SettingsKit'; // [2026-10-08 parental-pages2]
+import { SegmentedControl, StepProgress, FieldLabel, FieldHelp, FilledField, MonoTile, BirthDateSheet, useInk } from '../components/parental/ParentalKit'; // [2026-10-08 parental-pages2]
+import { ThreadKeyboardAvoider } from '../utils/threadKeyboard'; // [2026-10-08 parental-pages2] CTA acima do teclado
 import PressableScale from '../components/PressableScale';
 import { Skeleton } from '../components/Skeleton';
 import { useTheme } from '../context/ThemeContext';
 import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
-import { IconArrowLeft, IconPlus, IconUser, IconShield, IconChevronRight, IconMessageSquare, IconCamera, IconCheck, IconX, IconAlertCircle, IconFileText, IconBarChart, IconClock, IconLock, IconPhone, IconEye, IconCopy, IconImage, IconHome, IconStar, IconSmartphone, IconSparkles, IconAlertTriangle, IconMoon, IconUsers, IconSearch, IconHeart, IconSmile, IconMapPin, IconPause, IconPlay, IconMoreHorizontal, IconRefresh } from '../components/Icons';
+import { IconArrowLeft, IconPlus, IconUser, IconShield, IconChevronRight, IconMessageSquare, IconCamera, IconCheck, IconX, IconAlertCircle, IconFileText, IconBarChart, IconClock, IconLock, IconPhone, IconEye, IconCopy, IconImage, IconHome, IconStar, IconSmartphone, IconSparkles, IconAlertTriangle, IconMoon, IconUsers, IconSearch, IconHeart, IconSmile, IconMapPin, IconPause, IconPlay, IconMoreHorizontal, IconRefresh, IconCalendar } from '../components/Icons';
 import * as api from '../services/api';
 import { getCached, setCache } from '../services/cache';
 import * as ImagePicker from 'expo-image-picker';
-import SmartDateInput from '../components/SmartDateInput';
 import AvatarCircle from '../components/AvatarCircle';
 import useIsMounted from '../hooks/useIsMounted';
 import * as haptics from '../services/haptics';
@@ -225,6 +227,18 @@ function ParentalScreenInner() {
   const [quickSetup, setQuickSetup] = useState({ bedtime: false, contacts: false, screenTime: false, safeSearch: false, filterAdult: false, filterViolence: false, filterProfanity: false });
   const [suggestedUser, setSuggestedUser] = useState('');
   const [mascotFrame, setMascotFrame] = useState(0);
+  // [2026-10-08 parental-pages2] seletor de data + foco do campo nome + cores agrupadas.
+  const [dateSheetOpen, setDateSheetOpen] = useState(false);
+  const [nameFocused, setNameFocused] = useState(false);
+  const gw = useGroupedColors();
+  const { ink, onInk } = useInk();
+  const wizardBackRef = useRef(null);
+  // Android: voltar do sistema volta um passo do wizard (antes saía da tela).
+  useEffect(() => {
+    if (!showWizard || Platform.OS !== 'android') return undefined;
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => { try { wizardBackRef.current?.(); } catch {} return true; });
+    return () => { try { sub.remove(); } catch {} };
+  }, [showWizard]);
 
   // Animations
   const fadeAnim = useRef(new Animated.Value(0)).current;
@@ -267,26 +281,8 @@ function ParentalScreenInner() {
     }).start();
   }, [step, fadeAnim, slideAnim, progressAnim]);
 
-  // Mascot bob animation (step 0). Cycles MASCOT_FRAMES_ICONS via state so
-  // the icon actually swaps in sync with the bob — previously the ref never
-  // advanced *and* React wouldn't have re-rendered if it had.
-  useEffect(() => {
-    if (step === 0 && showWizard) {
-      const frameTick = setInterval(() => {
-        if (!isMountedRef.current) return;
-        mascotFrameRef.current = (mascotFrameRef.current + 1) % MASCOT_FRAMES_ICONS.length;
-        setMascotFrame(mascotFrameRef.current);
-      }, 1600);
-      const loop = Animated.loop(
-        Animated.sequence([
-          Animated.timing(mascotAnim, { toValue: -8, duration: 800, easing: Easing.inOut(Easing.ease), useNativeDriver: false }),
-          Animated.timing(mascotAnim, { toValue: 0, duration: 800, easing: Easing.inOut(Easing.ease), useNativeDriver: false }),
-        ])
-      );
-      loop.start();
-      return () => { loop.stop(); clearInterval(frameTick); };
-    }
-  }, [step, showWizard, mascotAnim, isMountedRef]);
+  // [2026-10-08 parental-pages2] mascote animado saiu do passo 1 (re-render a
+  // cada 1.6s sem necessidade) — o wizard agora tem título + campos diretos.
 
   // Shield pulse animation (step 1)
   useEffect(() => {
@@ -483,16 +479,17 @@ function ParentalScreenInner() {
     return () => clearInterval(id);
   }, [showWizard, isMountedRef]);
 
+  // [2026-10-08 parental-pages2] Sem ícones coloridos: viram segmented control.
   const relationships = [
-    { key: 'mae', label: t('parental.relMom'), emoji: <IconUser size={24} color={colors.primary} />, color: '#111111' },
-    { key: 'pai', label: t('parental.relDad'), emoji: <IconUser size={24} color="#3B82F6" />, color: '#3B82F6' },
-    { key: 'tutor', label: t('parental.relGuardian'), emoji: <IconHome size={24} color={colors.primary} />, color: '#111111' },
+    { key: 'mae', label: t('parental.relMom') },
+    { key: 'pai', label: t('parental.relDad') },
+    { key: 'tutor', label: t('parental.relGuardian') },
   ];
 
   const genders = [
-    { key: 'male', label: t('parental.genderBoy'), emoji: <IconUser size={24} color="#3B82F6" />, color: '#3B82F6' },
-    { key: 'female', label: t('parental.genderGirl'), emoji: <IconUser size={24} color={colors.primary} />, color: '#111111' },
-    { key: 'other', label: t('parental.genderOther'), emoji: <IconStar size={24} color="#F59E0B" />, color: '#F59E0B' },
+    { key: 'male', label: t('parental.genderBoy') },
+    { key: 'female', label: t('parental.genderGirl') },
+    { key: 'other', label: t('parental.genderOther') },
   ];
 
   // Calculate age from birthday
@@ -789,8 +786,18 @@ function ParentalScreenInner() {
     }
   }, [t]);
 
-  // ─── Confetti Overlay ───
-  const CONFETTI_COLORS = ['#FF6B6B', '#4ECDC4', '#45B7D1', '#FED766', '#111111', '#111111', '#34D399', '#FB923C'];
+  // ─── [2026-10-08 parental-pages2] Wizard "Adicionar filho" redesenhado ───
+  // Mesma linguagem do SettingsKit: header nativo "Adicionar filho" + barra
+  // de progresso fina (1/4), campos com label acima + caixa preenchida e
+  // ícone SVG, data por seletor de rodas (DD/MM/AAAA, sem emoji), gênero e
+  // parentesco como segmented control, cartões monocromáticos e botão
+  // primário (preto no claro / branco no escuro) preso acima do teclado.
+  // Validação (idade 6–13), chamadas de API e fluxo dos 4 passos inalterados.
+
+  // ─── Confetti Overlay (tons neutros) ───
+  const CONFETTI_COLORS = isDark
+    ? ['#F5F5F7', '#8E8E93', '#C7C7CC', '#636366', '#FFFFFF', '#AEAEB2']
+    : ['#111111', '#8E8E93', '#C7C7CC', '#3A3A3C', '#D1D1D6', '#636366'];
   const renderConfetti = () => {
     if (!showConfetti) return null;
     return (
@@ -800,9 +807,9 @@ function ParentalScreenInner() {
             key={i}
             style={[s.confettiPiece, {
               backgroundColor: CONFETTI_COLORS[i % CONFETTI_COLORS.length],
-              width: 8 + Math.random() * 8,
-              height: 8 + Math.random() * 8,
-              borderRadius: Math.random() > 0.5 ? 50 : 2,
+              width: 7 + (i % 4) * 2,
+              height: 7 + ((i + 1) % 4) * 2,
+              borderRadius: i % 2 ? 50 : 2,
               transform: [
                 { translateX: anim.x },
                 { translateY: anim.y },
@@ -816,694 +823,327 @@ function ParentalScreenInner() {
     );
   };
 
-  // ─── Progress Steps Indicator ───
-  const STEP_ICONS_COMPONENTS = [
-    <IconUser size={16} color="#fff" />,
-    <IconShield size={16} color="#fff" />,
-    <IconClock size={16} color="#fff" />,
-    <IconStar size={16} color="#fff" />,
-  ];
   const STEP_LABELS_KEYS = ['parental.stepInfo', 'parental.stepVerify', 'parental.stepProcessing', 'parental.stepReady'];
+  const stripBullet = (txt) => String(txt || '').replace(/^\s*[••\-]\s*/, '');
 
-  const renderProgressSteps = () => (
-    <View style={s.stepsRow}>
-      {STEPS.map((_, i) => {
-        const isActive = i === step;
-        const isDone = i < step;
-        const stepColor = isDone ? '#fff' : isActive ? '#fff' : 'rgba(255,255,255,0.75)';
-        return (
-          <View key={i} style={s.stepItem}>
-            <View style={[s.stepCircle, {
-              backgroundColor: isDone ? ACCENT : isActive ? 'rgba(255,255,255,0.25)' : 'rgba(255,255,255,0.1)',
-              borderColor: isDone ? ACCENT : isActive ? '#fff' : 'rgba(255,255,255,0.2)',
-            }]}>
-              {isDone ? (
-                <IconCheck size={14} color="#fff" />
-              ) : (
-                STEP_ICONS_COMPONENTS[i]
-              )}
-            </View>
-            <Text style={[s.stepLabel, { color: stepColor }]} numberOfLines={1}>
-              {t(STEP_LABELS_KEYS[i])}
-            </Text>
-            {i < 3 && <View style={[s.stepLine, { backgroundColor: isDone ? ACCENT : 'rgba(255,255,255,0.15)' }]} />}
-          </View>
-        );
-      })}
+  // Nomes dos meses no idioma do app (rodas do seletor de data).
+  const monthNames = (() => {
+    try {
+      const loc = t('_locale');
+      const out = Array.from({ length: 12 }, (_, i) => {
+        const n = new Date(2000, i, 1).toLocaleDateString(loc && loc !== '_locale' ? loc : undefined, { month: 'long' });
+        return n ? n.charAt(0).toUpperCase() + n.slice(1) : '';
+      });
+      return out.every(n => n && !/^\d+$/.test(n)) ? out : null;
+    } catch { return null; }
+  })();
+
+  const wizTitle = (title, sub) => (
+    <View style={w.head}>
+      <Text style={[w.title, { color: gw.text }]} accessibilityRole="header" maxFontSizeMultiplier={1.3}>{title}</Text>
+      {!!sub && <Text style={[w.sub, { color: gw.secondary }]} maxFontSizeMultiplier={1.4}>{sub}</Text>}
     </View>
   );
 
-  // ─── Animated Progress Bar ───
-  const renderAnimatedProgress = () => {
-    const width = progressAnim.interpolate({ inputRange: [0, 1], outputRange: ['0%', '100%'] });
+  // ─── Wizard Step 1: Child Info ───
+  const renderStepInfo = () => {
+    const presets = isAgeValid ? getAgePresets(childAge) : null;
+    const ageHelp = childAge === null
+      ? (childBirthday ? '' : t('parentalWiz.birthHint'))
+      : isAgeValid
+        ? t('parentalWiz.ageOk', { age: childAge, min: presets.screenTime, bed: presets.bedtimeStart })
+        : t('parentalWiz.ageInvalid', { age: childAge });
     return (
-      <View style={[s.progressBar, { backgroundColor: 'rgba(255,255,255,0.15)' }]}>
-        <Animated.View style={[s.progressFill, { width, backgroundColor: '#fff' }]} />
-      </View>
+      <ScrollView
+        contentContainerStyle={w.content}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
+        showsVerticalScrollIndicator={false}
+      >
+        {wizTitle(t('parentalWiz.infoTitle'), t('parental.addChildDesc'))}
+
+        <View style={w.field}>
+          <FieldLabel>{t('parentalWiz.nameLabel')}</FieldLabel>
+          <FilledField Icon={IconUser} focused={nameFocused} error={!!nameError}>
+            <TextInput
+              ref={nameInputRef}
+              style={[w.input, { color: gw.text }]}
+              placeholder={t('parental.namePlaceholder')}
+              placeholderTextColor={gw.tertiary}
+              value={childName}
+              onChangeText={(v) => { setChildName(v); if (nameError) setNameError(''); }}
+              onFocus={() => setNameFocused(true)}
+              onBlur={() => {
+                setNameFocused(false);
+                if (childName.trim().length < 2) setNameError(t('parental.errorNameShort'));
+                else setNameError('');
+              }}
+              autoFocus
+              autoCapitalize="words"
+              autoComplete="name"
+              textContentType="name"
+              returnKeyType="next"
+              onSubmitEditing={() => { try { Keyboard.dismiss(); } catch {} if (!childBirthday) setDateSheetOpen(true); }}
+              accessibilityLabel={t('parentalWiz.nameLabel')}
+            />
+          </FilledField>
+          {nameError ? (
+            <FieldHelp error>{nameError}</FieldHelp>
+          ) : (childName.trim().length > 2 && suggestedUser ? (
+            <FieldHelp>{`${t('parental.suggestedUsername')}: ${suggestedUser}`}</FieldHelp>
+          ) : null)}
+        </View>
+
+        <View style={w.field}>
+          <FieldLabel>{t('parentalWiz.birthLabel')}</FieldLabel>
+          <FilledField
+            Icon={IconCalendar}
+            onPress={() => { try { Keyboard.dismiss(); } catch {} setDateSheetOpen(true); }}
+            error={childAge !== null && !isAgeValid}
+            accessibilityLabel={`${t('parentalWiz.birthLabel')}${childBirthday ? ', ' + childBirthday : ''}`}
+            right={<IconChevronRight size={17} color={gw.tertiary} />}
+          >
+            <View testID="birthdate-field">
+              <Text style={[w.input, { color: childBirthday ? gw.text : gw.tertiary, fontVariant: ['tabular-nums'] }]} numberOfLines={1}>
+                {childBirthday || t('parentalWiz.datePlaceholder')}
+              </Text>
+            </View>
+          </FilledField>
+          {birthdateError ? <FieldHelp error>{birthdateError}</FieldHelp> : (ageHelp ? <FieldHelp error={childAge !== null && !isAgeValid}>{ageHelp}</FieldHelp> : null)}
+        </View>
+
+        <View style={w.field}>
+          <FieldLabel>{t('parentalWiz.genderLabel')}</FieldLabel>
+          <SegmentedControl
+            size="lg"
+            options={genders.map(gd => ({ value: gd.key, label: gd.label }))}
+            value={childGender}
+            onChange={setChildGender}
+          />
+        </View>
+
+        <View style={w.field}>
+          <FieldLabel>{t('parentalWiz.relLabel')}</FieldLabel>
+          <SegmentedControl
+            size="lg"
+            options={relationships.map(r => ({ value: r.key, label: r.label }))}
+            value={relationship}
+            onChange={setRelationship}
+          />
+        </View>
+
+        <View style={[w.note, { backgroundColor: gw.fill }]}>
+          <IconShield size={16} color={gw.secondary} />
+          <Text style={[w.noteText, { color: gw.secondary }]} maxFontSizeMultiplier={1.4}>{t('parentalWiz.privacyNote')}</Text>
+        </View>
+      </ScrollView>
     );
   };
 
-  // ─── Wizard Step 1: Child Info ───
-  const renderStepInfo = () => (
-    <ScrollView contentContainerStyle={s.wizardContent} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
-      {/* Animated Mascot */}
-      <Animated.View style={[s.mascotWrap, { transform: [{ translateY: mascotAnim }] }]}>
-        <View style={s.mascotCircle}>
-          {(() => {
-            const icons = [IconShield, IconUser, IconStar, IconHeart, IconSparkles, IconSmile];
-            const Ico = icons[mascotFrame % icons.length];
-            return <Ico size={44} color={colors.primary} />;
-          })()}
-        </View>
-      </Animated.View>
-
-      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, marginBottom: 8 }}>
-        <Text style={[s.wizardTitle, { color: colors.text, marginBottom: 0 }]}>
-          {t('parental.addYourChild')}
-        </Text>
-        <IconUser size={24} color={colors.primary} />
-      </View>
-      <Text style={[s.wizardSubtitle, { color: colors.textSecondary }]}>
-        {t('parental.addChildDesc')}
-      </Text>
-
-      {/* Name Input with floating label feel */}
-      <View style={s.fieldGroup}>
-        <Text style={[s.fieldLabel, { color: colors.textSecondary }]}>{t('parental.childFullName')}</Text>
-        <View style={[s.inputWrap, { backgroundColor: isDark ? '#1c1c1e' : '#f8f9fb', borderColor: isDark ? '#2c2c2e' : '#e2e8f0' }]}>
-          <View style={{ marginRight: 12 }}><IconUser size={20} color={colors.primary} /></View>
-          <TextInput
-            ref={nameInputRef}
-            style={[s.input, { color: colors.text }]}
-            placeholder={t('parental.namePlaceholder')}
-            placeholderTextColor={colors.textSecondary + '80'}
-            value={childName}
-            onChangeText={(v) => { setChildName(v); if (nameError) setNameError(''); }}
-            onBlur={() => {
-              if (childName.trim().length < 2) setNameError(t('parental.errorNameShort'));
-              else setNameError('');
-            }}
-            autoFocus
-          />
-        </View>
-        {nameError ? (
-          <Text style={{ color: colors.error || '#dc2626', fontSize: 12, marginTop: 4 }}>{nameError}</Text>
-        ) : null}
-        {childName.trim().length > 2 && suggestedUser && (
-          <View style={s.usernameSuggest}>
-            <Text style={[s.usernameLabel, { color: colors.textSecondary }]}>{t('parental.suggestedUsername')}:</Text>
-            <Text style={[s.usernameValue, { color: ACCENT }]}>{suggestedUser}</Text>
-          </View>
-        )}
-      </View>
-
-      {/* Birthday with age display and verification */}
-      <View style={s.fieldGroup}>
-        <SmartDateInput
-          value={childBirthday}
-          onChange={setChildBirthday}
-          label={t('parental.birthday')}
-          placeholder="DD/MM/AAAA"
-          minAge={6}
-          maxAge={13}
-        />
-        {birthdateError ? (
-          <Text style={{ color: colors.error || '#dc2626', fontSize: 12, marginTop: 4 }}>{birthdateError}</Text>
-        ) : null}
-        {childAge !== null && (
-          <Animated.View style={[s.ageBadge, {
-            backgroundColor: isAgeValid ? ACCENT + '18' : '#ef4444' + '18',
-            opacity: fadeAnim,
-          }]}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, justifyContent: 'center' }}>
-              <Text style={[s.ageBadgeText, { color: isAgeValid ? ACCENT : '#ef4444' }]}>
-                {isAgeValid
-                  ? `${t('parental.perfect')} ${childAge} ${t('parental.yearsOld')}`
-                  : childAge < 6
-                    ? t('parental.tooYoung')
-                    : t('parental.tooOld')
-                }
-              </Text>
-              {isAgeValid && AGE_ICON(childAge)}
-            </View>
-          </Animated.View>
-        )}
-        {/* Age range visual indicator */}
-        {childAge !== null && (
-          <View style={s.ageRangeWrap}>
-            <View style={s.ageRangeBar}>
-              <View style={[s.ageRangeTrack, { backgroundColor: isDark ? '#1c1c1e' : '#f1f5f9' }]}>
-                <View style={[s.ageRangeValid, { left: '0%', width: '100%', backgroundColor: ACCENT + '20' }]} />
-                {isAgeValid && (
-                  <View style={[s.ageRangeDot, {
-                    left: `${Math.max(0, Math.min(100, ((childAge - 6) / 7) * 100))}%`,
-                    backgroundColor: ACCENT,
-                  }]} />
-                )}
-              </View>
-              <View style={s.ageRangeLabels}>
-                <Text style={[s.ageRangeLabel, { color: colors.textSecondary }]}>6</Text>
-                <Text style={[s.ageRangeLabel, { color: colors.textSecondary }]}>8</Text>
-                <Text style={[s.ageRangeLabel, { color: colors.textSecondary }]}>10</Text>
-                <Text style={[s.ageRangeLabel, { color: colors.textSecondary }]}>12</Text>
-                <Text style={[s.ageRangeLabel, { color: colors.textSecondary }]}>13</Text>
-              </View>
-            </View>
-            {isAgeValid && childAge && (
-              <View style={[s.agePresetPreview, { backgroundColor: isDark ? '#132218' : '#f0fdf4', borderColor: ACCENT + '30' }]}>
-                <Text style={[s.agePresetTitle, { color: ACCENT }]}>
-                  {t('parental.recommendedFor') || 'Recommended for'} {childAge} {t('parental.yearsOld') || 'years'}:
-                </Text>
-                <Text style={[s.agePresetItem, { color: colors.textSecondary }]}>
-                  {getAgePresets(childAge).screenTime} min/day  |  {t('parental.bedtime') || 'Bedtime'}: {getAgePresets(childAge).bedtimeStart}
-                </Text>
-              </View>
-            )}
-          </View>
-        )}
-      </View>
-
-      {/* Gender selector - illustrated buttons */}
-      <View style={s.fieldGroup}>
-        <Text style={[s.fieldLabel, { color: colors.textSecondary }]}>{t('parental.gender')}</Text>
-        <View style={s.cardGrid}>
-          {genders.map(g => {
-            const selected = childGender === g.key;
-            return (
-              <TouchableOpacity
-                key={g.key}
-                style={[s.illustratedCard, {
-                  backgroundColor: selected ? g.color + '15' : (isDark ? '#1c1c1e' : '#f8f9fb'),
-                  borderColor: selected ? g.color : (isDark ? '#2c2c2e' : '#e2e8f0'),
-                  borderWidth: selected ? 2.5 : 1.5,
-                }]}
-                onPress={() => { setChildGender(g.key); if (Platform.OS !== 'web') try { haptics.selection(); /* [2026-10-07 native-polish] */ } catch {} }}
-                activeOpacity={0.7}
-              >
-                <View style={s.cardEmojiWrap}>{g.emoji}</View>
-                <Text style={[s.cardLabel, { color: selected ? g.color : colors.text }]}>{g.label}</Text>
-                {selected && (
-                  <View style={[s.cardCheck, { backgroundColor: g.color }]}>
-                    <IconCheck size={10} color="#fff" />
-                  </View>
-                )}
-              </TouchableOpacity>
-            );
-          })}
-        </View>
-      </View>
-
-      {/* Relationship selector - illustrated cards */}
-      <View style={s.fieldGroup}>
-        <Text style={[s.fieldLabel, { color: colors.textSecondary }]}>{t('parental.iAm')}</Text>
-        <View style={s.cardGrid}>
-          {relationships.map(r => {
-            const selected = relationship === r.key;
-            return (
-              <TouchableOpacity
-                key={r.key}
-                style={[s.illustratedCard, {
-                  backgroundColor: selected ? r.color + '15' : (isDark ? '#1c1c1e' : '#f8f9fb'),
-                  borderColor: selected ? r.color : (isDark ? '#2c2c2e' : '#e2e8f0'),
-                  borderWidth: selected ? 2.5 : 1.5,
-                }]}
-                onPress={() => { setRelationship(r.key); if (Platform.OS !== 'web') try { haptics.selection(); /* [2026-10-07 native-polish] */ } catch {} }}
-                activeOpacity={0.7}
-              >
-                <View style={s.cardEmojiWrap}>{r.emoji}</View>
-                <Text style={[s.cardLabel, { color: selected ? r.color : colors.text }]}>{r.label}</Text>
-                {selected && (
-                  <View style={[s.cardCheck, { backgroundColor: r.color }]}>
-                    <IconCheck size={10} color="#fff" />
-                  </View>
-                )}
-              </TouchableOpacity>
-            );
-          })}
-        </View>
-      </View>
-
-      <View style={{ height: 40 }} />
-    </ScrollView>
-  );
-
   // ─── Wizard Step 2: Safety Verification ───
+  const VERIFY_METHODS = [
+    { key: 'document', Icon: IconFileText, title: t('parental.verifyDocTitle'), sub: t('parental.verifyDocDesc') },
+    { key: 'phone', Icon: IconSmartphone, title: t('parental.verifyPhoneTitle'), sub: t('parental.verifyPhoneDesc') },
+    { key: 'card', Icon: IconLock, title: t('parental.verifyCardTitle'), sub: t('parental.verifyCardDesc') },
+  ];
   const renderStepDocument = () => (
-    <ScrollView contentContainerStyle={s.wizardContent} showsVerticalScrollIndicator={false}>
-      {/* Shield with pulse */}
-      <View style={s.wizardHeader}>
-        <Animated.View style={[s.shieldCircle, { transform: [{ scale: pulseAnim }] }]}>
-          <IconShield size={44} color="#10B981" />
-        </Animated.View>
-        <Text style={[s.wizardTitle, { color: colors.text }]}>{t('parental.safetyVerification')}</Text>
-        <Text style={[s.wizardSubtitle, { color: colors.textSecondary }]}>
-          {t('parental.whyWeVerify')}
-        </Text>
-      </View>
+    <ScrollView contentContainerStyle={w.content} showsVerticalScrollIndicator={false}>
+      {wizTitle(t('parental.safetyVerification'), t('parental.whyWeVerify'))}
 
-      {/* Verification method cards */}
-      <View style={s.verifyMethods}>
-        {/* Option A: Document */}
-        <TouchableOpacity
-          style={[s.verifyCard, {
-            backgroundColor: verifyMethod === 'document' ? '#3B82F6' + '12' : (isDark ? '#1c1c1e' : '#f8f9fb'),
-            borderColor: verifyMethod === 'document' ? '#3B82F6' : (isDark ? '#2c2c2e' : '#e2e8f0'),
-            borderWidth: verifyMethod === 'document' ? 2.5 : 1.5,
-          }]}
-          onPress={() => setVerifyMethod('document')}
-          activeOpacity={0.7}
-        >
-          <View style={[s.verifyCardIcon, { backgroundColor: '#3B82F6' + '15' }]}>
-            <IconFileText size={28} color="#3B82F6" />
-          </View>
-          <View style={{ flex: 1 }}>
-            <Text style={[s.verifyCardTitle, { color: colors.text }]}>{t('parental.verifyDocTitle')}</Text>
-            <Text style={[s.verifyCardDesc, { color: colors.textSecondary }]}>{t('parental.verifyDocDesc')}</Text>
-          </View>
-          {verifyMethod === 'document' && (
-            <View style={[s.verifyCardCheck, { backgroundColor: '#3B82F6' }]}>
-              <IconCheck size={12} color="#fff" />
-            </View>
-          )}
-        </TouchableOpacity>
+      <SettingsGroup header={t('parentalWiz.methodHeader')} inset={58}>
+        {VERIFY_METHODS.map(m => (
+          <SettingsRow
+            key={m.key}
+            icon={m.Icon}
+            title={m.title}
+            subtitle={m.sub}
+            numberOfLines={2}
+            checked={verifyMethod === m.key}
+            accessibilityRole="radio"
+            onPress={() => { setVerifyMethod(m.key); if (Platform.OS !== 'web') { try { haptics.selection(); } catch {} } }}
+          />
+        ))}
+      </SettingsGroup>
 
-        {/* Option B: Phone */}
-        <TouchableOpacity
-          style={[s.verifyCard, {
-            backgroundColor: verifyMethod === 'phone' ? '#22C55E' + '12' : (isDark ? '#1c1c1e' : '#f8f9fb'),
-            borderColor: verifyMethod === 'phone' ? '#22C55E' : (isDark ? '#2c2c2e' : '#e2e8f0'),
-            borderWidth: verifyMethod === 'phone' ? 2.5 : 1.5,
-          }]}
-          onPress={() => setVerifyMethod('phone')}
-          activeOpacity={0.7}
-        >
-          <View style={[s.verifyCardIcon, { backgroundColor: '#22C55E' + '15' }]}>
-            <IconSmartphone size={28} color="#22C55E" />
-          </View>
-          <View style={{ flex: 1 }}>
-            <Text style={[s.verifyCardTitle, { color: colors.text }]}>{t('parental.verifyPhoneTitle')}</Text>
-            <Text style={[s.verifyCardDesc, { color: colors.textSecondary }]}>{t('parental.verifyPhoneDesc')}</Text>
-          </View>
-          {verifyMethod === 'phone' && (
-            <View style={[s.verifyCardCheck, { backgroundColor: '#22C55E' }]}>
-              <IconCheck size={12} color="#fff" />
-            </View>
-          )}
-        </TouchableOpacity>
-
-        {/* Option C: Credit card */}
-        <TouchableOpacity
-          style={[s.verifyCard, {
-            backgroundColor: verifyMethod === 'card' ? '#F59E0B' + '12' : (isDark ? '#1c1c1e' : '#f8f9fb'),
-            borderColor: verifyMethod === 'card' ? '#F59E0B' : (isDark ? '#2c2c2e' : '#e2e8f0'),
-            borderWidth: verifyMethod === 'card' ? 2.5 : 1.5,
-          }]}
-          onPress={() => setVerifyMethod('card')}
-          activeOpacity={0.7}
-        >
-          <View style={[s.verifyCardIcon, { backgroundColor: '#F59E0B' + '15' }]}>
-            <IconLock size={28} color="#F59E0B" />
-          </View>
-          <View style={{ flex: 1 }}>
-            <Text style={[s.verifyCardTitle, { color: colors.text }]}>{t('parental.verifyCardTitle')}</Text>
-            <Text style={[s.verifyCardDesc, { color: colors.textSecondary }]}>{t('parental.verifyCardDesc')}</Text>
-          </View>
-          {verifyMethod === 'card' && (
-            <View style={[s.verifyCardCheck, { backgroundColor: '#F59E0B' }]}>
-              <IconCheck size={12} color="#fff" />
-            </View>
-          )}
-        </TouchableOpacity>
-      </View>
-
-      {/* Document upload area (when document method selected) */}
       {verifyMethod === 'document' && (
-        <View style={s.docUploadSection}>
+        <View style={{ marginBottom: 26 }}>
           {docImage ? (
-            <View style={s.docPreview}>
-              <Image source={{ uri: docImage.uri }} style={s.docPreviewImage} resizeMode="contain" />
-              <View style={s.docPreviewOverlay}>
-                <View style={[s.docFrameCorner, s.docCornerTL]} />
-                <View style={[s.docFrameCorner, s.docCornerTR]} />
-                <View style={[s.docFrameCorner, s.docCornerBL]} />
-                <View style={[s.docFrameCorner, s.docCornerBR]} />
-              </View>
-              <TouchableOpacity style={s.docRemoveBtn} onPress={() => setDocImage(null)}>
+            <View style={[w.docPreview, { backgroundColor: gw.cardBg }]}>
+              <Image source={{ uri: docImage.uri }} style={w.docImage} resizeMode="contain" />
+              <TouchableOpacity style={w.docRemove} onPress={() => setDocImage(null)} accessibilityRole="button" accessibilityLabel={t('parentalDash.cancel')} hitSlop={8}>
                 <IconX size={16} color="#fff" />
               </TouchableOpacity>
-              <View style={s.docDetectedBadge}>
-                <IconCheck size={12} color="#fff" />
-                <Text style={s.docDetectedText}>{t('parental.documentDetected')}</Text>
+              <View style={[w.docBadge, { backgroundColor: ink }]}>
+                <IconCheck size={12} color={onInk} />
+                <Text style={[w.docBadgeText, { color: onInk }]}>{t('parental.documentDetected')}</Text>
               </View>
             </View>
           ) : (
-            <View style={s.docButtons}>
-              <TouchableOpacity
-                style={[s.docBtn, { backgroundColor: isDark ? '#1c1c1e' : '#f8f9fb', borderColor: isDark ? '#2c2c2e' : '#e2e8f0' }]}
-                onPress={() => pickDocument(true)}
-                activeOpacity={0.7}
-              >
-                <View style={[s.docBtnIconWrap, { backgroundColor: '#3B82F6' + '15' }]}>
-                  <IconCamera size={24} color="#3B82F6" />
-                </View>
-                <Text style={[s.docBtnText, { color: colors.text }]}>{t('parental.takePhoto')}</Text>
-                <Text style={[s.docBtnSub, { color: colors.textSecondary }]}>{t('parental.ofDocument')}</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={[s.docBtn, { backgroundColor: isDark ? '#1c1c1e' : '#f8f9fb', borderColor: isDark ? '#2c2c2e' : '#e2e8f0' }]}
-                onPress={() => pickDocument(false)}
-                activeOpacity={0.7}
-              >
-                <View style={[s.docBtnIconWrap, { backgroundColor: '#111111' + '15' }]}>
-                  <IconImage size={24} color={colors.primary} />
-                </View>
-                <Text style={[s.docBtnText, { color: colors.text }]}>{t('parental.gallery')}</Text>
-                <Text style={[s.docBtnSub, { color: colors.textSecondary }]}>{t('parental.selectPhoto')}</Text>
-              </TouchableOpacity>
+            <View style={{ flexDirection: 'row', gap: 8 }}>
+              <MonoTile Icon={IconCamera} label={t('parental.takePhoto')} a11y={`${t('parental.takePhoto')} ${t('parental.ofDocument')}`} onPress={() => pickDocument(true)} />
+              <MonoTile Icon={IconImage} label={t('parental.gallery')} a11y={`${t('parental.gallery')} — ${t('parental.selectPhoto')}`} onPress={() => pickDocument(false)} />
             </View>
           )}
-
-          {/* Accepted documents info */}
-          <View style={[s.docTypes, { backgroundColor: isDark ? '#1c1c1e' : '#f0f9ff', borderColor: isDark ? '#1e3a5f' : '#bae6fd' }]}>
-            <Text style={[s.docTypesTitle, { color: isDark ? '#7dd3fc' : '#0369a1' }]}>{t('parental.acceptedDocs')}</Text>
-            <Text style={[s.docTypeItem, { color: colors.textSecondary }]}>{t('parental.docType1')}</Text>
-            <Text style={[s.docTypeItem, { color: colors.textSecondary }]}>{t('parental.docType2')}</Text>
-            <Text style={[s.docTypeItem, { color: colors.textSecondary }]}>{t('parental.docType3')}</Text>
-          </View>
+          <Text style={[w.footnote, { color: gw.header }]}>
+            {`${String(t('parental.acceptedDocs')).replace(/:\s*$/, '')}: ${[t('parental.docType1'), t('parental.docType2'), t('parental.docType3')].map(stripBullet).join(' · ')}`}
+          </Text>
         </View>
       )}
 
-      {/* Trust badges */}
-      <View style={s.trustBadges}>
-        <View style={[s.trustBadge, { backgroundColor: isDark ? '#132218' : '#f0fdf4' }]}>
-          <IconShield size={14} color={isDark ? '#86efac' : '#166534'} />
-          <Text style={[s.trustText, { color: isDark ? '#86efac' : '#166534' }]}>{t('parental.trust256bit')}</Text>
-        </View>
-        <View style={[s.trustBadge, { backgroundColor: isDark ? '#1e1b2e' : '#faf5ff' }]}>
-          <IconLock size={14} color={isDark ? '#F1F3F5' : '#161618'} />
-          <Text style={[s.trustText, { color: isDark ? '#F1F3F5' : '#161618' }]}>{t('parental.trustDeleted')}</Text>
-        </View>
-        <View style={[s.trustBadge, { backgroundColor: isDark ? '#1c1c1e' : '#f0f9ff' }]}>
-          <IconCheck size={14} color={isDark ? '#7dd3fc' : '#0c4a6e'} />
-          <Text style={[s.trustText, { color: isDark ? '#7dd3fc' : '#0c4a6e' }]}>{t('parental.trustLGPD')}</Text>
-        </View>
-      </View>
-
-      <View style={{ height: 40 }} />
+      <SettingsGroup header={t('parentalWiz.privacyHeader')} inset={52}>
+        <SettingsRow icon={IconShield} iconTile={false} title={t('parental.trust256bit')} />
+        <SettingsRow icon={IconLock} iconTile={false} title={t('parental.trustDeleted')} />
+        <SettingsRow icon={IconCheck} iconTile={false} title={t('parental.trustLGPD')} />
+      </SettingsGroup>
     </ScrollView>
   );
 
   // ─── Wizard Step 3: Verification in Progress ───
   const renderStepVerifying = () => (
-    <View style={[s.wizardContent, { alignItems: 'center', justifyContent: 'center', flex: 1, paddingTop: 60 }]}>
-      {/* Animated loader */}
-      <View style={s.verifyLoaderWrap}>
-        <ActivityIndicator size="large" color={ACCENT} />
-        <View style={s.verifyLoaderRing} />
+    <ScrollView contentContainerStyle={[w.content, { paddingTop: 36 }]} showsVerticalScrollIndicator={false}>
+      <View style={{ alignItems: 'center', marginBottom: 22 }}>
+        <View style={[w.bigCircle, { backgroundColor: gw.cardBg }]}>
+          <ActivityIndicator size="large" color={ink} />
+        </View>
+        <Text style={[w.title, { color: gw.text, textAlign: 'center', marginTop: 16 }]} accessibilityLiveRegion="polite">{t(VERIFY_STAGE_KEYS[verifyStage])}</Text>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 6 }}>
+          <IconClock size={14} color={gw.secondary} />
+          <Text style={[w.sub, { color: gw.secondary, marginTop: 0 }]}>{t('parental.usuallyLessThan')}</Text>
+        </View>
       </View>
 
-      {/* Stage indicators */}
-      <View style={s.verifyStages}>
+      <SettingsGroup inset={52}>
         {VERIFY_STAGE_KEYS.map((key, i) => {
           const isActive = i === verifyStage;
           const isDone = i < verifyStage;
           return (
-            <View key={i} style={s.verifyStageRow}>
-              <View style={[s.verifyStageDot, {
-                backgroundColor: isDone ? ACCENT : isActive ? ACCENT : (isDark ? '#2c2c2e' : '#e2e8f0'),
-              }]}>
-                {isDone ? <IconCheck size={10} color="#fff" /> : isActive ? <ActivityIndicator size={10} color="#fff" /> : null}
+            <View key={key} style={w.stageRow}>
+              <View style={[w.stageDot, { backgroundColor: isDone ? ink : gw.fill }]}>
+                {isDone ? <IconCheck size={12} color={onInk} /> : isActive ? <ActivityIndicator size="small" color={gw.text} /> : null}
               </View>
-              <Text style={[s.verifyStageText, {
-                color: isDone ? ACCENT : isActive ? colors.text : colors.textSecondary,
-                fontWeight: isActive ? '700' : '400',
-              }]}>
-                {t(key)}
-              </Text>
+              <Text style={[w.stageText, { color: isDone || isActive ? gw.text : gw.secondary, fontWeight: isActive ? '600' : '400' }]}>{t(key)}</Text>
             </View>
           );
         })}
-      </View>
+      </SettingsGroup>
 
-      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 0 }}>
-        <IconClock size={16} color={colors.textSecondary} />
-        <Text style={[s.verifyTimeEst, { color: colors.textSecondary, marginBottom: 0 }]}>
-          {t('parental.usuallyLessThan')}
-        </Text>
-      </View>
-
-      {/* Safety fact carousel */}
-      <View style={[s.safetyFactBox, { backgroundColor: isDark ? '#1c1c1e' : '#f8f9fb', borderColor: isDark ? '#2c2c2e' : '#e2e8f0' }]}>
-        <View style={{ marginBottom: 8 }}><IconSparkles size={28} color="#F59E0B" /></View>
-        <Text style={[s.safetyFactTitle, { color: ACCENT }]}>{t('parental.didYouKnow')}</Text>
-        <Text style={[s.safetyFactText, { color: colors.text }]}>
-          {t(SAFETY_FACTS_KEYS[safetyFactIdx])}
-        </Text>
-      </View>
-    </View>
+      <SettingsGroup header={String(t('parental.didYouKnow')).replace(/[?:]\s*$/, '')} inset={52}>
+        <SettingsRow icon={IconSparkles} iconTile={false} title={t(SAFETY_FACTS_KEYS[safetyFactIdx])} numberOfLines={4} />
+      </SettingsGroup>
+    </ScrollView>
   );
 
   // ─── Wizard Step 4: Account Ready! ───
+  const copyText = (txt) => {
+    if (!txt) return;
+    if (Platform.OS === 'web') { try { navigator.clipboard.writeText(txt); } catch {} }
+  };
   const renderStepCredentials = () => {
     const approved = docVerdict?.verdict === 'approved';
     const presets = childAge ? getAgePresets(childAge) : null;
+    const QUICK = presets ? [
+      { key: 'bedtime', Icon: IconMoon, title: t('parental.setupBedtime'), sub: `${presets.bedtimeStart} – ${presets.bedtimeEnd}` },
+      { key: 'screenTime', Icon: IconClock, title: t('parental.setupScreenTime'), sub: `${presets.screenTime} ${t('parental.minutesPerDay')}` },
+      { key: 'contacts', Icon: IconUsers, title: t('parental.setupContacts'), sub: t('parental.setupContactsDesc') },
+      { key: 'safeSearch', Icon: IconSearch, title: t('parental.setupSafeSearch'), sub: t('parental.setupSafeSearchDesc') },
+      { key: 'filterAdult', Icon: IconAlertCircle, title: t('parental.filterAdult') || 'Block adult content', sub: t('parental.filterAdultDesc') || '' },
+      { key: 'filterViolence', Icon: IconShield, title: t('parental.filterViolence') || 'Block violence', sub: t('parental.filterViolenceDesc') || '' },
+      { key: 'filterProfanity', Icon: IconMessageSquare, title: t('parental.filterProfanity') || 'Filter profanity', sub: t('parental.filterProfanityDesc') || '' },
+    ] : [];
 
     return (
-      <ScrollView contentContainerStyle={s.wizardContent} showsVerticalScrollIndicator={false}>
+      <ScrollView contentContainerStyle={w.content} showsVerticalScrollIndicator={false}>
         {renderConfetti()}
 
-        {/* Celebration header */}
-        <View style={s.celebrationHeader}>
-          <View style={{ marginBottom: 12 }}>{approved ? <IconStar size={56} color="#F59E0B" /> : <IconClock size={56} color="#f59e0b" />}</View>
-          <Text style={[s.wizardTitle, { color: colors.text, fontSize: 26 }]}>
+        <View style={{ alignItems: 'center', marginTop: 8, marginBottom: 22 }}>
+          <View style={[w.bigCircle, { backgroundColor: approved ? ink : gw.cardBg }]}>
+            {approved ? <IconCheck size={30} color={onInk} /> : <IconClock size={30} color={gw.text} />}
+          </View>
+          <Text style={[w.title, { color: gw.text, textAlign: 'center', marginTop: 14 }]} accessibilityRole="header">
             {approved ? t('parental.accountReady') : t('parental.documentReview')}
           </Text>
-          <Text style={[s.wizardSubtitle, { color: colors.textSecondary }]}>
+          <Text style={[w.sub, { color: gw.secondary, textAlign: 'center' }]}>
             {approved ? t('parental.accountReadyDesc') : t('parental.documentReviewDesc')}
           </Text>
         </View>
 
-        {/* Child avatar card */}
         {newChild && approved && (
-          <View style={[s.childReadyCard, { backgroundColor: isDark ? '#132218' : '#f0fdf4', borderColor: '#22c55e40' }]}>
-            <View style={s.childReadyAvatar}>
-              {childGender === 'female' ? <IconUser size={40} color="#111111" /> : childGender === 'male' ? <IconUser size={40} color="#3B82F6" /> : <IconUser size={40} color="#F59E0B" />}
+          <SettingsGroup>
+            <View style={w.childRow}>
+              <AvatarCircle email={newChild.child_email} name={newChild.child_name} size={44} />
+              <View style={{ flex: 1, minWidth: 0, marginLeft: 12 }}>
+                <Text style={[w.childName, { color: gw.text }]} numberOfLines={1}>{newChild.child_name}</Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 2 }}>
+                  <IconShield size={13} color={gw.secondary} />
+                  <Text style={{ fontSize: 13, color: gw.secondary }}>{t('parental.protectedAccount')}</Text>
+                </View>
+              </View>
             </View>
-            <Text style={[s.childReadyName, { color: colors.text }]}>{newChild.child_name}</Text>
-            <View style={s.childReadyBadge}>
-              <IconShield size={12} color={ACCENT} />
-              <Text style={[s.childReadyBadgeText, { color: ACCENT }]}>{t('parental.protectedAccount')}</Text>
-            </View>
-          </View>
+          </SettingsGroup>
         )}
 
-        {/* Credentials */}
         {newChild && (
-          <View style={[s.credsBox, { backgroundColor: isDark ? '#1c1c1e' : '#f8f9fb', borderColor: isDark ? '#2c2c2e' : '#e2e8f0' }]}>
-            <Text style={[s.credsTitle, { color: colors.textSecondary }]}>{t('parental.accountCredentials')}</Text>
-            <View style={s.credRow}>
-              <View style={s.credInfo}>
-                <Text style={[s.credLabel, { color: colors.textSecondary }]}>{t('parental.email')}</Text>
-                <Text style={[s.credValue, { color: colors.text }]} selectable>{newChild.child_email}</Text>
+          <SettingsGroup header={t('parental.accountCredentials')} footer={t('parental.saveCredentials')}>
+            {[
+              { key: 'email', label: t('parental.email'), value: newChild.child_email, copy: newChild.child_email },
+              { key: 'pwd', label: t('parental.password'), value: newChild.child_password || '••••••••', copy: newChild.child_password },
+            ].map(c => (
+              <View key={c.key} style={w.credRow}>
+                <View style={{ flex: 1, minWidth: 0 }}>
+                  <Text style={{ fontSize: 13, color: gw.secondary }}>{c.label}</Text>
+                  <Text style={[w.credValue, { color: gw.text }]} selectable numberOfLines={1}>{c.value}</Text>
+                </View>
+                <TouchableOpacity
+                  style={[w.copyBtn, { backgroundColor: gw.fill }]}
+                  onPress={() => copyText(c.copy)}
+                  accessibilityRole="button"
+                  accessibilityLabel={`${t('parentalWiz.copy')} ${c.label}`}
+                  hitSlop={6}
+                >
+                  <IconCopy size={15} color={gw.text} />
+                </TouchableOpacity>
               </View>
-              <TouchableOpacity style={[s.credCopyBtn, { backgroundColor: ACCENT + '15' }]} onPress={() => {
-                if (Platform.OS === 'web') { try { navigator.clipboard.writeText(newChild.child_email); } catch {} }
-              }}>
-                <IconCopy size={14} color={ACCENT} />
-              </TouchableOpacity>
-            </View>
-            <View style={[s.credDivider, { borderColor: isDark ? '#2c2c2e' : '#e8ecf0' }]} />
-            <View style={s.credRow}>
-              <View style={s.credInfo}>
-                <Text style={[s.credLabel, { color: colors.textSecondary }]}>{t('parental.password')}</Text>
-                <Text style={[s.credValue, { color: colors.text }]} selectable>{newChild.child_password || '\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022'}</Text>
-              </View>
-              <TouchableOpacity style={[s.credCopyBtn, { backgroundColor: ACCENT + '15' }]} onPress={() => {
-                if (Platform.OS === 'web' && newChild.child_password) { try { navigator.clipboard.writeText(newChild.child_password); } catch {} }
-              }}>
-                <IconCopy size={14} color={ACCENT} />
-              </TouchableOpacity>
-            </View>
-          </View>
+            ))}
+          </SettingsGroup>
         )}
 
-        {/* Warning */}
-        <View style={[s.warningBox, { backgroundColor: isDark ? '#2d2314' : '#fffbeb', borderColor: '#f59e0b40' }]}>
-          <IconAlertTriangle size={20} color="#f59e0b" />
-          <Text style={[s.warningText, { color: isDark ? '#fbbf24' : '#92400e' }]}>
-            {t('parental.saveCredentials')}
-          </Text>
-        </View>
-
-        {/* Quick Setup Options */}
         {approved && presets && (
-          <View style={s.quickSetupSection}>
-            <Text style={[s.quickSetupTitle, { color: colors.text }]}>{t('parental.quickSetupTitle')}</Text>
-            <Text style={[s.quickSetupSub, { color: colors.textSecondary }]}>
-              {t('parental.recommendedFor')} {childAge} {t('parental.yearsOld')}
-            </Text>
-
-            <TouchableOpacity
-              style={[s.setupOption, {
-                backgroundColor: quickSetup.bedtime ? ACCENT + '12' : (isDark ? '#1c1c1e' : '#f8f9fb'),
-                borderColor: quickSetup.bedtime ? ACCENT : (isDark ? '#2c2c2e' : '#e2e8f0'),
-              }]}
-              onPress={() => setQuickSetup(p => ({ ...p, bedtime: !p.bedtime }))}
-              activeOpacity={0.7}
-            >
-              <View style={s.setupEmojiWrap}><IconMoon size={24} color={colors.primary} /></View>
-              <View style={{ flex: 1 }}>
-                <Text style={[s.setupLabel, { color: colors.text }]}>{t('parental.setupBedtime')}</Text>
-                <Text style={[s.setupDesc, { color: colors.textSecondary }]}>{presets.bedtimeStart} - {presets.bedtimeEnd}</Text>
-              </View>
-              <View style={[s.setupToggle, { backgroundColor: quickSetup.bedtime ? ACCENT : (isDark ? '#2c2c2e' : '#d1d5db') }]}>
-                <View style={[s.setupToggleDot, { transform: [{ translateX: quickSetup.bedtime ? 16 : 0 }] }]} />
-              </View>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={[s.setupOption, {
-                backgroundColor: quickSetup.screenTime ? ACCENT + '12' : (isDark ? '#1c1c1e' : '#f8f9fb'),
-                borderColor: quickSetup.screenTime ? ACCENT : (isDark ? '#2c2c2e' : '#e2e8f0'),
-              }]}
-              onPress={() => setQuickSetup(p => ({ ...p, screenTime: !p.screenTime }))}
-              activeOpacity={0.7}
-            >
-              <View style={s.setupEmojiWrap}><IconClock size={24} color="#3b82f6" /></View>
-              <View style={{ flex: 1 }}>
-                <Text style={[s.setupLabel, { color: colors.text }]}>{t('parental.setupScreenTime')}</Text>
-                <Text style={[s.setupDesc, { color: colors.textSecondary }]}>{presets.screenTime} {t('parental.minutesPerDay')}</Text>
-              </View>
-              <View style={[s.setupToggle, { backgroundColor: quickSetup.screenTime ? ACCENT : (isDark ? '#2c2c2e' : '#d1d5db') }]}>
-                <View style={[s.setupToggleDot, { transform: [{ translateX: quickSetup.screenTime ? 16 : 0 }] }]} />
-              </View>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={[s.setupOption, {
-                backgroundColor: quickSetup.contacts ? ACCENT + '12' : (isDark ? '#1c1c1e' : '#f8f9fb'),
-                borderColor: quickSetup.contacts ? ACCENT : (isDark ? '#2c2c2e' : '#e2e8f0'),
-              }]}
-              onPress={() => setQuickSetup(p => ({ ...p, contacts: !p.contacts }))}
-              activeOpacity={0.7}
-            >
-              <View style={s.setupEmojiWrap}><IconUsers size={24} color="#22c55e" /></View>
-              <View style={{ flex: 1 }}>
-                <Text style={[s.setupLabel, { color: colors.text }]}>{t('parental.setupContacts')}</Text>
-                <Text style={[s.setupDesc, { color: colors.textSecondary }]}>{t('parental.setupContactsDesc')}</Text>
-              </View>
-              <View style={[s.setupToggle, { backgroundColor: quickSetup.contacts ? ACCENT : (isDark ? '#2c2c2e' : '#d1d5db') }]}>
-                <View style={[s.setupToggleDot, { transform: [{ translateX: quickSetup.contacts ? 16 : 0 }] }]} />
-              </View>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={[s.setupOption, {
-                backgroundColor: quickSetup.safeSearch ? ACCENT + '12' : (isDark ? '#1c1c1e' : '#f8f9fb'),
-                borderColor: quickSetup.safeSearch ? ACCENT : (isDark ? '#2c2c2e' : '#e2e8f0'),
-              }]}
-              onPress={() => setQuickSetup(p => ({ ...p, safeSearch: !p.safeSearch }))}
-              activeOpacity={0.7}
-            >
-              <View style={s.setupEmojiWrap}><IconSearch size={24} color="#6366f1" /></View>
-              <View style={{ flex: 1 }}>
-                <Text style={[s.setupLabel, { color: colors.text }]}>{t('parental.setupSafeSearch')}</Text>
-                <Text style={[s.setupDesc, { color: colors.textSecondary }]}>{t('parental.setupSafeSearchDesc')}</Text>
-              </View>
-              <View style={[s.setupToggle, { backgroundColor: quickSetup.safeSearch ? ACCENT : (isDark ? '#2c2c2e' : '#d1d5db') }]}>
-                <View style={[s.setupToggleDot, { transform: [{ translateX: quickSetup.safeSearch ? 16 : 0 }] }]} />
-              </View>
-            </TouchableOpacity>
-
-            {/* Content filter toggles */}
-            <TouchableOpacity
-              style={[s.setupOption, {
-                backgroundColor: quickSetup.filterAdult ? '#ef4444' + '12' : (isDark ? '#1c1c1e' : '#f8f9fb'),
-                borderColor: quickSetup.filterAdult ? '#ef4444' : (isDark ? '#2c2c2e' : '#e2e8f0'),
-              }]}
-              onPress={() => setQuickSetup(p => ({ ...p, filterAdult: !p.filterAdult }))}
-              activeOpacity={0.7}
-            >
-              <View style={s.setupEmojiWrap}><IconAlertCircle size={24} color="#ef4444" /></View>
-              <View style={{ flex: 1 }}>
-                <Text style={[s.setupLabel, { color: colors.text }]}>{t('parental.filterAdult') || 'Block adult content'}</Text>
-                <Text style={[s.setupDesc, { color: colors.textSecondary }]}>{t('parental.filterAdultDesc') || 'Filter inappropriate content'}</Text>
-              </View>
-              <View style={[s.setupToggle, { backgroundColor: quickSetup.filterAdult ? '#ef4444' : (isDark ? '#2c2c2e' : '#d1d5db') }]}>
-                <View style={[s.setupToggleDot, { transform: [{ translateX: quickSetup.filterAdult ? 16 : 0 }] }]} />
-              </View>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={[s.setupOption, {
-                backgroundColor: quickSetup.filterViolence ? '#f59e0b' + '12' : (isDark ? '#1c1c1e' : '#f8f9fb'),
-                borderColor: quickSetup.filterViolence ? '#f59e0b' : (isDark ? '#2c2c2e' : '#e2e8f0'),
-              }]}
-              onPress={() => setQuickSetup(p => ({ ...p, filterViolence: !p.filterViolence }))}
-              activeOpacity={0.7}
-            >
-              <View style={s.setupEmojiWrap}><IconShield size={24} color="#f59e0b" /></View>
-              <View style={{ flex: 1 }}>
-                <Text style={[s.setupLabel, { color: colors.text }]}>{t('parental.filterViolence') || 'Block violence'}</Text>
-                <Text style={[s.setupDesc, { color: colors.textSecondary }]}>{t('parental.filterViolenceDesc') || 'Hide violent content'}</Text>
-              </View>
-              <View style={[s.setupToggle, { backgroundColor: quickSetup.filterViolence ? '#f59e0b' : (isDark ? '#2c2c2e' : '#d1d5db') }]}>
-                <View style={[s.setupToggleDot, { transform: [{ translateX: quickSetup.filterViolence ? 16 : 0 }] }]} />
-              </View>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={[s.setupOption, {
-                backgroundColor: quickSetup.filterProfanity ? '#111111' + '12' : (isDark ? '#1c1c1e' : '#f8f9fb'),
-                borderColor: quickSetup.filterProfanity ? '#111111' : (isDark ? '#2c2c2e' : '#e2e8f0'),
-              }]}
-              onPress={() => setQuickSetup(p => ({ ...p, filterProfanity: !p.filterProfanity }))}
-              activeOpacity={0.7}
-            >
-              <View style={s.setupEmojiWrap}><IconMessageSquare size={24} color={colors.primary} /></View>
-              <View style={{ flex: 1 }}>
-                <Text style={[s.setupLabel, { color: colors.text }]}>{t('parental.filterProfanity') || 'Filter profanity'}</Text>
-                <Text style={[s.setupDesc, { color: colors.textSecondary }]}>{t('parental.filterProfanityDesc') || 'Block bad language'}</Text>
-              </View>
-              <View style={[s.setupToggle, { backgroundColor: quickSetup.filterProfanity ? '#111111' : (isDark ? '#2c2c2e' : '#d1d5db') }]}>
-                <View style={[s.setupToggleDot, { transform: [{ translateX: quickSetup.filterProfanity ? 16 : 0 }] }]} />
-              </View>
-            </TouchableOpacity>
-
-            {/* One-tap recommended */}
-            <TouchableOpacity
-              style={[s.recommendedBtn, { backgroundColor: '#111111' + '12', borderColor: '#111111' + '40' }]}
+          <SettingsGroup header={t('parental.quickSetupTitle')} footer={`${t('parental.recommendedFor')} ${childAge} ${t('parental.yearsOld')}`}>
+            {QUICK.map(q => (
+              <SettingsSwitchRow
+                key={q.key}
+                icon={q.Icon}
+                title={q.title}
+                subtitle={q.sub}
+                value={!!quickSetup[q.key]}
+                onValueChange={() => setQuickSetup(p => ({ ...p, [q.key]: !p[q.key] }))}
+              />
+            ))}
+            <SettingsRow
+              title={t('parental.applyRecommended')}
+              center
+              chevron={false}
+              titleStyle={{ fontWeight: '600' }}
               onPress={() => {
                 setQuickSetup({ bedtime: true, contacts: true, screenTime: true, safeSearch: true, filterAdult: true, filterViolence: true, filterProfanity: true });
                 if (Platform.OS !== 'web') try { haptics.selection(); /* [2026-10-07 native-polish] */ } catch {}
               }}
-              activeOpacity={0.7}
-            >
-              <IconSparkles size={18} color={colors.primary} />
-              <Text style={[s.recommendedText, { color: colors.primary }]}>{t('parental.applyRecommended')}</Text>
-            </TouchableOpacity>
-          </View>
+            />
+          </SettingsGroup>
         )}
 
-        {/* Verification result */}
         {docVerdict && (
-          <View style={[s.verdictBox, { backgroundColor: isDark ? '#1c1c1e' : '#f8fafc', borderColor: isDark ? '#2c2c2e' : '#e2e8f0' }]}>
-            <Text style={[s.verdictTitle, { color: colors.textSecondary }]}>{t('parental.verificationResult')}</Text>
-            <Text style={[s.verdictValue, { color: approved ? '#22c55e' : '#f59e0b' }]}>
-              {approved ? t('parental.approved') : docVerdict.verdict === 'rejected' ? t('parental.rejected') : t('parental.manualReview')}
-            </Text>
-            <Text style={[s.verdictConf, { color: colors.textSecondary }]}>
-              {t('parental.confidence')}: {Math.round((docVerdict.confidence || 0) * 100)}%
-            </Text>
-          </View>
+          <SettingsGroup header={t('parental.verificationResult')}>
+            <SettingsRow
+              title={t('parentalWiz.status')}
+              value={approved ? t('parental.approved') : docVerdict.verdict === 'rejected' ? t('parental.rejected') : t('parental.manualReview')}
+            />
+            <SettingsRow title={t('parental.confidence')} value={`${Math.round((docVerdict.confidence || 0) * 100)}%`} />
+          </SettingsGroup>
         )}
-
-        <View style={{ height: 40 }} />
       </ScrollView>
     );
   };
-
   // [2026-10-08 parental-redesign] Tokens do painel (grouped bg + cards brancos, hairline).
   const PAGE_BG = isDark ? colors.background : '#F4F5F7';
   const CARD_BG = isDark ? colors.surface : '#FFFFFF';
@@ -1750,6 +1390,9 @@ function ParentalScreenInner() {
   };
 
   // ─── Main Wizard Render ───
+  // [2026-10-08 parental-pages2] header nativo + progresso fino + CTA acima do teclado.
+  const wizardBack = () => (step > 0 && step < 3 ? setStep(step - 1) : resetWizard());
+  wizardBackRef.current = wizardBack;
   if (showWizard) {
     const stepViews = [renderStepInfo, renderStepDocument, renderStepVerifying, renderStepCredentials];
     const isLast = step === 3;
@@ -1758,75 +1401,82 @@ function ParentalScreenInner() {
       : step === 1
         ? (verifyMethod === 'document' ? !!docImage : !!verifyMethod)
         : false;
-
-    const gradient = STEP_GRADIENTS[step];
-    const headerBg = Platform.OS === 'web' ? { background: gradient.web } : { backgroundColor: gradient.native };
+    const footerPad = Platform.OS === 'web' ? Math.max(insets.bottom, 0) + 16 : Math.max(insets.bottom + 8, 16);
+    const stepCount = `${step + 1}/4`;
+    const ctaLabel = isLast ? t('parental.finish') : (step === 0 ? t('parental.next') : t('parental.startVerification'));
 
     return (
-      <KeyboardAvoidingView style={[s.container, { backgroundColor: colors.background }]} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-        {/* [2026-10-08 parental-redesign] o wizard tem header próprio → esconde o nativo */}
-        {USE_NATIVE_HEADER && <Stack.Screen options={{ headerShown: false }} />}
-        {/* Gradient Header with steps */}
-        <View style={[s.wizardHeaderBar, headerBg]}>
-          <View style={s.wizardHeaderRow}>
-            <TouchableOpacity onPress={() => step > 0 && step < 3 ? setStep(step - 1) : resetWizard()} style={s.backBtn} accessibilityLabel="Back" accessibilityRole="button">
-              <IconArrowLeft size={22} color="#fff" />
+      <ThreadKeyboardAvoider style={[s.container, { backgroundColor: gw.pageBg }]} bottomInset={footerPad - 12}>
+        {USE_NATIVE_HEADER ? (
+          <Stack.Screen options={nativeHeaderOptions({
+            colors,
+            isDark,
+            title: t('parentalDash.addChild'),
+            headerShown: true,
+            headerLargeTitle: false,
+            headerShadowVisible: false,
+            headerStyle: { backgroundColor: gw.pageBg },
+            contentStyle: { backgroundColor: gw.pageBg },
+            headerLeft: () => <HeaderBackButton onPress={() => wizardBackRef.current?.()} color={colors.text} accessibilityLabel={t('parentalDash.back')} />,
+            headerRight: () => <Text style={[w.stepCount, { color: gw.secondary }]}>{stepCount}</Text>,
+          })} />
+        ) : (
+          <View style={[w.webHeader, { paddingTop: insets.top, backgroundColor: gw.pageBg }]}>
+            <TouchableOpacity onPress={wizardBack} style={w.webBack} accessibilityLabel={t('parentalDash.back')} accessibilityRole="button" hitSlop={8}>
+              <IconArrowLeft size={24} color={gw.text} />
             </TouchableOpacity>
-            <View style={{ flex: 1 }}>
-              <Text style={s.wizardHeaderTitle} numberOfLines={1} ellipsizeMode="tail">
-                {t(STEP_LABELS_KEYS[step])}
-              </Text>
+            <Text style={[w.webTitle, { color: gw.text }]} numberOfLines={1} accessibilityRole="header">{t('parentalDash.addChild')}</Text>
+            <View style={[w.webBack, { alignItems: 'flex-end' }]}>
+              <Text style={[w.stepCount, { color: gw.secondary }]}>{stepCount}</Text>
             </View>
-            <Text style={s.wizardStepCount}>{step + 1}/4</Text>
           </View>
-          {renderProgressSteps()}
-          {renderAnimatedProgress()}
+        )}
+
+        <View style={w.progressWrap}>
+          <StepProgress step={step} total={4} />
+          <Text style={[w.progressLabel, { color: gw.secondary }]} numberOfLines={1}>
+            {t('parentalWiz.stepOf', { n: step + 1, total: 4, label: t(STEP_LABELS_KEYS[step]) })}
+          </Text>
         </View>
 
-        {/* Step content with slide animation */}
         <Animated.View style={{ flex: 1, opacity: fadeAnim, transform: [{ translateY: slideAnim }] }}>
           {stepViews[step]()}
         </Animated.View>
 
-        {/* Bottom action button */}
         {step !== 2 && (
-          <View style={[s.bottomBar, { backgroundColor: colors.surface, borderTopColor: colors.border }]}>
-            {isLast ? (
+          <View style={[w.footer, { paddingBottom: footerPad, backgroundColor: gw.pageBg }]}>
+            <Animated.View style={{ transform: [{ scale: bounceAnim }] }}>
               <TouchableOpacity
-                style={[s.nextBtn, { backgroundColor: '#F59E0B' }]}
-                onPress={resetWizard}
+                style={[w.cta, { backgroundColor: ink, opacity: (isLast || canNext) ? 1 : 0.35 }]}
+                onPress={isLast ? resetWizard : handleNextStep}
+                disabled={isLast ? false : (!canNext || creating)}
                 activeOpacity={0.8}
+                accessibilityRole="button"
+                accessibilityLabel={ctaLabel}
+                accessibilityState={{ disabled: isLast ? false : (!canNext || creating), busy: creating }}
+                testID="wizard-cta"
               >
-                <IconStar size={20} color="#fff" />
-                <Text style={s.nextBtnText}>{t('parental.finish')}</Text>
+                {creating ? <ActivityIndicator color={onInk} /> : (
+                  <Text style={[w.ctaText, { color: onInk }]}>{ctaLabel}</Text>
+                )}
               </TouchableOpacity>
-            ) : (
-              <Animated.View style={{ transform: [{ scale: bounceAnim }] }}>
-                <TouchableOpacity
-                  style={[s.nextBtn, {
-                    backgroundColor: canNext ? (step === 0 ? '#111111' : ACCENT) : (isDark ? '#2c2c2e' : '#e2e8f0'),
-                  }]}
-                  onPress={handleNextStep}
-                  disabled={!canNext || creating}
-                  activeOpacity={0.8}
-                >
-                  {creating ? <ActivityIndicator color="#fff" /> : (
-                    <>
-                      <Text style={[s.nextBtnText, { color: canNext ? '#fff' : colors.textSecondary }]}>
-                        {step === 0 ? t('parental.next') : t('parental.startVerification')}
-                      </Text>
-                      {canNext && <Text style={s.nextBtnArrow}>{'\u2192'}</Text>}
-                    </>
-                  )}
-                </TouchableOpacity>
-              </Animated.View>
-            )}
+            </Animated.View>
           </View>
         )}
-      </KeyboardAvoidingView>
+
+        <BirthDateSheet
+          visible={dateSheetOpen}
+          value={childBirthday}
+          title={t('parentalWiz.birthLabel')}
+          doneLabel={t('parentalWiz.done')}
+          cancelLabel={t('parentalDash.cancel')}
+          monthNames={monthNames}
+          onClose={() => setDateSheetOpen(false)}
+          onConfirm={(v) => { setChildBirthday(v); setBirthdateError(''); setDateSheetOpen(false); }}
+        />
+      </ThreadKeyboardAvoider>
     );
   }
-
   // ─── AI Summary Modal ───
   // Compose a shareable plain-text summary so parents can forward it to a
   // co-parent / pediatrician / school via the OS share sheet.
@@ -2279,7 +1929,7 @@ function ParentalScreenInner() {
   return (
     <View style={[s.container, { backgroundColor: PAGE_BG }]}>
       {USE_NATIVE_HEADER ? (
-        <Stack.Screen options={nativeHeaderOptions({
+        <Stack.Screen options={{ ...nativeHeaderOptions({
           colors,
           isDark,
           title: t('parental.dashboard'),
@@ -2293,7 +1943,11 @@ function ParentalScreenInner() {
               <IconPlus size={24} color={colors.text} />
             </HeaderIconButton>
           ),
-        })} />
+          // [2026-10-08 parental-pages2] as options do Stack.Screen se MESCLAM: limpa o
+          // back custom do wizard ao voltar pro painel (senão o chevron continuaria
+          // chamando o "voltar passo" e o back do sistema ficaria escondido).
+          headerBackVisible: true,
+        }), headerLeft: undefined }} />
       ) : (
         <View style={[s.webHeader, { paddingTop: insets.top + 6, backgroundColor: PAGE_BG }]}>
           <View style={s.webHeaderBar}>
@@ -2658,4 +2312,40 @@ const s = StyleSheet.create({
   // Hero illustration (empty state)
 
   // Skeleton loader (initial load, no cache)
+});
+
+// [2026-10-08 parental-pages2] Estilos do wizard "Adicionar filho".
+const w = StyleSheet.create({
+  webHeader: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 8, minHeight: 52 },
+  webBack: { width: 56, height: 44, justifyContent: 'center', paddingHorizontal: 8, ...Platform.select({ web: { cursor: 'pointer' }, default: {} }) },
+  webTitle: { flex: 1, textAlign: 'center', fontSize: 17, fontWeight: '600' },
+  stepCount: { fontSize: 15, fontWeight: '500', fontVariant: ['tabular-nums'] },
+  progressWrap: { paddingHorizontal: 16, paddingTop: 4, paddingBottom: 6, width: '100%', maxWidth: 720, alignSelf: 'center' },
+  progressLabel: { fontSize: 12, fontWeight: '500', marginTop: 7 },
+  content: { paddingHorizontal: 16, paddingTop: 14, paddingBottom: 24, width: '100%', maxWidth: 720, alignSelf: 'center' },
+  head: { marginBottom: 22 },
+  title: { fontSize: 24, fontWeight: '700', letterSpacing: -0.4 },
+  sub: { fontSize: 15, lineHeight: 21, marginTop: 6 },
+  field: { marginBottom: 20 },
+  input: { fontSize: 17, paddingVertical: Platform.OS === 'ios' ? 14 : 12, ...Platform.select({ web: { outlineStyle: 'none', outlineWidth: 0 }, default: {} }) },
+  note: { flexDirection: 'row', alignItems: 'flex-start', gap: 8, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 10, marginTop: 4 },
+  noteText: { flex: 1, fontSize: 13, lineHeight: 18 },
+  footnote: { fontSize: 13, lineHeight: 18, paddingHorizontal: 16, marginTop: 8 },
+  docPreview: { borderRadius: 12, overflow: 'hidden', height: 190, alignItems: 'center', justifyContent: 'center' },
+  docImage: { width: '100%', height: '100%' },
+  docRemove: { position: 'absolute', top: 10, right: 10, width: 30, height: 30, borderRadius: 15, backgroundColor: 'rgba(0,0,0,0.55)', alignItems: 'center', justifyContent: 'center' },
+  docBadge: { position: 'absolute', left: 10, bottom: 10, flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 10, paddingVertical: 5, borderRadius: 12 },
+  docBadgeText: { fontSize: 12, fontWeight: '600' },
+  bigCircle: { width: 72, height: 72, borderRadius: 36, alignItems: 'center', justifyContent: 'center' },
+  stageRow: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 12, gap: 12, minHeight: 48 },
+  stageDot: { width: 24, height: 24, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
+  stageText: { fontSize: 15, flex: 1 },
+  childRow: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 12 },
+  childName: { fontSize: 17, fontWeight: '600' },
+  credRow: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 11, gap: 12 },
+  credValue: { fontSize: 16, fontWeight: '500', marginTop: 2, fontFamily: Platform.select({ ios: 'Menlo', android: 'monospace', default: 'monospace' }) },
+  copyBtn: { width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center' },
+  footer: { paddingHorizontal: 16, paddingTop: 10, width: '100%', maxWidth: 720, alignSelf: 'center' },
+  cta: { height: 52, borderRadius: 14, alignItems: 'center', justifyContent: 'center', ...Platform.select({ web: { cursor: 'pointer' }, default: {} }) },
+  ctaText: { fontSize: 17, fontWeight: '600', letterSpacing: -0.2 },
 });

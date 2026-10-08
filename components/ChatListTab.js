@@ -2067,7 +2067,7 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab, reque
       if (!it || it._placeholder) return;
       const raw = it.media_url || ((it.type === 'image' || it.type === 'video') && /^(\/|https?:\/\/)/.test(String(it.content || '')) ? String(it.content).split('\n')[0] : '');
       if (!raw) return;
-      const url = raw.startsWith('http') ? raw : `${api.BASE_URL}${raw}`;
+      const url = raw.startsWith('http') ? raw : api.getMediaUrl(raw);
       if (stripPrefetchedRef.current.has(url)) return;
       stripPrefetchedRef.current.add(url);
       urls.push({ url, isVideo: it.type === 'video' });
@@ -2075,7 +2075,7 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab, reque
       // instantly when the viewer mounts — kills the black-flash gap.
       if (it.thumbnail_url) {
         const traw = String(it.thumbnail_url);
-        const turl = traw.startsWith('http') ? traw : `${api.BASE_URL}${traw}`;
+        const turl = traw.startsWith('http') ? traw : api.getMediaUrl(traw);
         if (!stripPrefetchedRef.current.has(turl)) {
           stripPrefetchedRef.current.add(turl);
           urls.push({ url: turl, isVideo: false });
@@ -2311,12 +2311,12 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab, reque
                       || ((first.type === 'image' || first.type === 'video') && /^(\/|https?:\/\/)/.test(String(first.content || ''))
                           ? first.content : '');
                     if (raw) {
-                      const url = raw.startsWith('http') ? raw : `${api.BASE_URL}${raw}`;
+                      const url = raw.startsWith('http') ? raw : api.getMediaUrl(raw);
                       cacheMedia(url, { force: true }).catch(() => {});
                     }
                     if (first.thumbnail_url) {
                       const _thumb = first.thumbnail_url;
-                      const turl = _thumb.startsWith('http') ? _thumb : `${api.BASE_URL}${_thumb}`;
+                      const turl = _thumb.startsWith('http') ? _thumb : api.getMediaUrl(_thumb);
                       cacheMedia(turl, { force: true }).catch(() => {});
                     }
                   } catch {}
@@ -2538,7 +2538,7 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab, reque
               try {
                 const rawUrl = (story.media_url || story.content || '').split('\n')[0];
                 const fullUrl = rawUrl
-                  ? (rawUrl.startsWith('http') ? rawUrl : (BASE_URL + rawUrl))
+                  ? (rawUrl.startsWith('http') ? rawUrl : (api.getMediaUrl(rawUrl)))
                   : null;
                 if (fullUrl && typeof setRepostSeed === 'function') {
                   setRepostSeed({
@@ -4970,7 +4970,10 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
     const emailParam = otherEmail ? `&email=${encodeURIComponent(otherEmail)}` : '';
     let displayName = conv.display_name || conv.name || '';
     displayName = emailToDisplayName(displayName);
-    const unreadParam = (conv.unread_count > 0) ? `&unread=${conv.unread_count}` : '';
+    // [2026-10-08 open-at-bottom] sempre manda (inclusive 0): a conversa usa a
+    // contagem fresca do toque como teto do divisor "Não lidas" — 0 = abre no
+    // fim mesmo se o watermark do cache estiver velho.
+    const unreadParam = `&unread=${Math.max(0, Number(conv.unread_count) || 0)}`;
     // Saved Messages — self-chat conversation gets routed to the dedicated
     // /saved-messages screen (Telegram-parity: tabs, search-within, header
     // reminders, "Cabeçalho" insert). The conv itself is the same backend
@@ -7006,7 +7009,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
         <View style={{
           flexDirection: 'row', alignItems: 'center', gap: 12,
           paddingHorizontal: 14, paddingVertical: 10,
-          backgroundColor: isDark ? 'rgba(34,197,94,0.10)' : 'rgba(34,197,94,0.08)',
+          backgroundColor: isDark ? '#1c1c1e' : '#F2F2F4', // [2026-10-08] neutral (was green)
           borderBottomWidth: StyleSheet.hairlineWidth,
           borderBottomColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)',
         }}>
@@ -7052,7 +7055,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
               <Text style={{ fontSize: 12, color: colors.textSecondary, marginTop: 1 }} numberOfLines={1}>
                 {contactBanner === 'cta'
                   ? (t?.('chat.findFriendsHint') || 'Achamos quem já tá no Chatyy pelo número salvo')
-                  : (t?.('chat.foundFriendsHint') || `${contactBanner.count} contato${contactBanner.count === 1 ? '' : 's'} já no Chatyy — toque pra ver`)}
+                  : String(t?.('chat.foundFriendsHint', { count: contactBanner.count }) || '').replace(/\{count\}/g, String(contactBanner.count))}
               </Text>
             </View>
             {contactBannerSyncing ? <ActivityIndicator size="small" color={colors.textSecondary} /> : null}

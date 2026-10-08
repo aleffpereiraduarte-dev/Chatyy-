@@ -22,7 +22,7 @@ import { getCached, setCache } from '../services/cache';
 import { queueOfflineAction, isOnline } from '../services/offlineCache';
 import BrandFab from '../components/BrandFab';
 import PressableScale from '../components/PressableScale'; // [2026-10-08 apps-native]
-import { USE_NATIVE_HEADER, nativeHeaderOptions, HeaderIconButton } from '../components/nativeHeader'; // [2026-10-08 apps-native]
+import { USE_NATIVE_HEADER, nativeHeaderOptions, HeaderIconButton, NativeHeaderSafeArea } from '../components/nativeHeader'; // [2026-10-08 apps-native]
 let NoteGridSkeleton = null; try { NoteGridSkeleton = require('../components/SkeletonLoader').NoteGridSkeleton; } catch {}
 // J.2 — native date/time picker for the "Lembrar" reminder. Optional require
 // so web (which uses <input type="datetime-local">) and any build without the
@@ -1906,6 +1906,10 @@ export default function NotesScreen() {
       </View>
       )}
 
+      {/* [2026-10-08 header-inset-all] iOS: header translúcido (busca nativa) →
+          abas/chips/lista começavam em y=0 SOB nav bar + busca. O wrapper mede o
+          safe-area real da view e desloca o bloco p/ baixo do header. */}
+      <NativeHeaderSafeArea>
       {/* ---- Tabs ---- */}
       <View style={[s.tabRow, { borderBottomColor: isDark ? 'rgba(255,255,255,0.06)' : colors.borderLight }]}>
         {[
@@ -2214,7 +2218,7 @@ export default function NotesScreen() {
 
       {/* ---- Quick Note FAB ---- */}
       {!editorVisible && viewMode === 'list' && (
-        <Animated.View style={[s.quickNoteFab, { transform: [{ scale: quickNoteAnim }] }]}>
+        <Animated.View style={[s.quickNoteFab, { bottom: insets.bottom + 86, transform: [{ scale: quickNoteAnim }] }]}>
           <TouchableOpacity
             onPress={handleQuickNote}
             disabled={quickNoteLoading}
@@ -2244,7 +2248,7 @@ export default function NotesScreen() {
       {/* ---- Main FAB (Telegram-grade glass orb) ---- */}
       {!isDesktop && !editorVisible && viewMode === 'list' && (
         <BrandFab
-          style={{ position: 'absolute', right: 20, bottom: 20 }}
+          style={{ position: 'absolute', right: 20, bottom: insets.bottom + 16 }} /* [2026-10-08 header-inset-all] safe-area */
           size={60}
           color={colors.primary}
           onPress={() => openEditor()}
@@ -2256,7 +2260,7 @@ export default function NotesScreen() {
 
       {viewMode === 'board' && !editorVisible && (
         <BrandFab
-          style={{ position: 'absolute', right: 20, bottom: 20 }}
+          style={{ position: 'absolute', right: 20, bottom: insets.bottom + 16 }} /* [2026-10-08 header-inset-all] safe-area */
           size={60}
           color={colors.primary}
           onPress={() => openEditor()}
@@ -2265,6 +2269,8 @@ export default function NotesScreen() {
           <IconPlus size={28} color={colors.onPrimary} />
         </BrandFab>
       )}
+
+      </NativeHeaderSafeArea>
 
       {/* ---- Note Editor Modal ---- */}
       <Modal visible={editorVisible} animationType="slide" transparent={false} onRequestClose={closeEditor}>

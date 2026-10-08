@@ -678,12 +678,31 @@ export function AuthProvider({ children }) {
       // Also: a successful hydrate kicks WS.resurrect() so the socket
       // doesn't sit in destroyed=true state until next watchdog tick.
       const hydrateOffline = async () => {
-        if (Platform.OS === 'web') return false;
+        // [2026-10-08 offline-first] Web used to bail here unconditionally, so
+        // an OFFLINE reload of chatyy.com.br always landed on /login (account
+        // picker) even with the bearer + every cache on disk — QA repro:
+        // online load → setOffline → reload = "Contas neste aparelho". Web now
+        // hydrates too, but ONLY with a real stored bearer AND a cached user
+        // blob that belongs to the active account (never a token-less stub —
+        // the original reason for the bail-out). The 1.5 s background
+        // checkAuth guard below still logs out on an explicit rejection.
+        let _webTok = '';
+        if (Platform.OS === 'web') {
+          try { _webTok = String(api.getAuthToken?.() || ''); } catch {}
+          if (!_webTok) return false;
+        }
         try {
           const cachedUser = await AsyncStorage.getItem('chatyy_offline_user');
           if (cachedUser) {
             const userData = JSON.parse(cachedUser);
-            if (userData?.email) {
+            let _webOk = true;
+            if (Platform.OS === 'web') {
+              try {
+                const _act = String(api.getActiveAccountEmail?.() || '').toLowerCase();
+                _webOk = !!_act && String(userData?.email || '').toLowerCase() === _act;
+              } catch { _webOk = false; }
+            }
+            if (userData?.email && _webOk) {
               await clearMmkvIfAccountChanged(userData.email);
               setCacheUser(userData.email);
               // [2026-10-07 bgsync] scope the chat store BEFORE the list mounts.
@@ -784,7 +803,7 @@ export function AuthProvider({ children }) {
         // and the user lands on /login as intended.
         try {
           const active = api.getActiveAccountEmail?.() || '';
-          if (active) {
+          if (active && (Platform.OS !== 'web' || _webTok)) {
             const accts = api.getStoredAccounts?.() || [];
             const a = accts.find(x => x.email === active);
             if (a?.email) {
@@ -805,9 +824,11 @@ export function AuthProvider({ children }) {
         // first (up to 300ms) only delayed the first paint — index.js gates
         // routing on `loading`. Hydrate straight away; NetInfo is no longer
         // on the critical path. Web keeps the navigator.onLine fast-path.
-        if (Platform.OS !== 'web') {
-          if (await hydrateOffline()) return;
-        }
+        // [2026-10-08 offline-first] Web too: with a stored bearer + this
+        // account's cached user, paint from local data first (no checkAuth
+        // round-trip before the chat list) and revalidate in the background —
+        // same contract as native. hydrateOffline refuses without a bearer.
+        if (await hydrateOffline()) return;
         // Offline fast-path (web): if the browser already knows we're
         // offline, skip the 15s checkAuth timeout and hydrate from cache.
         try {
@@ -881,10 +902,10 @@ export function AuthProvider({ children }) {
               }
             }
           } catch {}
-          // Cache user data for offline access (WhatsApp-style)
-          if (Platform.OS !== 'web') {
-            AsyncStorage.setItem('chatyy_offline_user', JSON.stringify(r.data)).catch(() => {});
-          }
+          // Cache user data for offline access (WhatsApp-style). [2026-10-08
+          // offline-first] web too — hydrateOffline only trusts it alongside a
+          // stored bearer for the same active account.
+          AsyncStorage.setItem('chatyy_offline_user', JSON.stringify(r.data)).catch(() => {});
           loadAccounts();
           _syncShareExtAuth(r.data.email);
           prefetchAvatar(r.data.email);
@@ -1211,6 +1232,9 @@ export function AuthProvider({ children }) {
       // setUser paints the chat UI, so frame-1 reads are already scoped.
       _chatStoreSetActiveAccount(r.data?.email || email);
       setUser(r.data);
+      // [2026-10-08 offline-first] Seed the offline user right at login so an
+      // offline relaunch before the next online cold start still opens the app.
+      try { if (r.data?.email) AsyncStorage.setItem('chatyy_offline_user', JSON.stringify(r.data)).catch(() => {}); } catch {}
       try {
         const { setReporterIdentity, reportStep } = require('../services/crashReporter');
         const tok = (r.data?.token || api.getAuthToken?.() || '').toString();
@@ -1866,6 +1890,10 @@ export function AuthProvider({ children }) {
             // BEFORE setUser so frame-1 reads never serve the prior account.
             _chatStoreSetActiveAccount(check.data.email);
             setUser(check.data);
+            // [2026-10-08 offline-first] re-seed the offline user for the NEW
+            // identity (the old one was removed above) so an offline relaunch
+            // right after a switch opens this account, not /login.
+            try { AsyncStorage.setItem('chatyy_offline_user', JSON.stringify(check.data)).catch(() => {}); } catch {}
             // SECURITY (P1): identity changed → force the biometric app-lock
             // to re-fire so the new account can't ride in on the previous
             // user's already-unlocked overlay. No-op if biometrics are off.

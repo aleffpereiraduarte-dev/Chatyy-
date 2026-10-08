@@ -579,6 +579,8 @@ function SettingsScreenInner() {
   const saveNotifPref = useCallback((patch) => {
     try { api.chatSetNotifPrefs?.(patch).catch(() => {}); } catch {}
   }, []);
+  // [2026-10-08 contact-joined-push] "Contatos que entraram no Chatyy" (default ON).
+  const [contactJoinedPush, setContactJoinedPush] = useState(true);
   useEffect(() => {
     let alive = true;
     api.chatGetNotifPrefs?.().then(r => {
@@ -590,6 +592,7 @@ function SettingsScreenInner() {
       if (d.hide_reactions_in_notifs !== undefined && d.hide_reactions_in_notifs !== null) {
         setChatPrivacy(prev => ({ ...prev, hide_reactions_in_notifs: !!d.hide_reactions_in_notifs }));
       }
+      if (d.contact_joined_push !== undefined && d.contact_joined_push !== null) setContactJoinedPush(!!d.contact_joined_push);
       setSettings(prev => {
         const next = { ...prev };
         if (d.morning_briefing !== undefined && d.morning_briefing !== null) next.morning_briefing = !!d.morning_briefing;
@@ -1009,6 +1012,11 @@ function SettingsScreenInner() {
   // here.
   const [storageStats, setStorageStats] = useState(null);
   const [storageBusy, setStorageBusy] = useState(false);
+  // [2026-10-08 media-local-store] nomes das conversas p/ "Mídia por conversa"
+  // (lista local da conta ativa) + expandir lista + limpeza em andamento.
+  const [storageConvNames, setStorageConvNames] = useState({});
+  const [storageShowAllChats, setStorageShowAllChats] = useState(false);
+  const [storageClearingConv, setStorageClearingConv] = useState(null);
 
   const refreshStorageStats = useCallback(async () => {
     if (Platform.OS === 'web') return;
@@ -1017,6 +1025,19 @@ function SettingsScreenInner() {
       if (typeof mc.getStorageStats !== 'function') return;
       const stats = await mc.getStorageStats();
       setStorageStats(stats);
+      if (stats && Array.isArray(stats.conversations) && stats.conversations.length) {
+        try {
+          const cc = require('../services/chatCache');
+          const list = (await cc.getCachedConversations?.()) || [];
+          const names = {};
+          for (const c of list) {
+            if (!c || c.id == null) continue;
+            const nm = c.display_name || c.name || c.title || c.other_name || c.peer_name || c.other_email || '';
+            if (nm) names[String(c.id)] = String(nm);
+          }
+          setStorageConvNames(names);
+        } catch {}
+      }
     } catch {}
   }, []);
 
@@ -2620,7 +2641,7 @@ function SettingsScreenInner() {
           ))}
         </SettingsGroup>
         )}
-        {(searching || activeCategory === 'notifications') && sectionMatches(t('settings.privacyHideReactions'), t('settings.rd2.muteCalls') || 'Modo silencioso para ligações', t('settings.rd2.chatsAndCalls') || 'Conversas e chamadas') && (
+        {(searching || activeCategory === 'notifications') && sectionMatches(t('settings.privacyHideReactions'), t('settings.rd2.muteCalls') || 'Modo silencioso para ligações', t('settings.rd2.chatsAndCalls') || 'Conversas e chamadas', t('settings.contactJoinedPush')) && (
         <SettingsGroup header={t('settings.rd2.chatsAndCalls') || 'Conversas e chamadas'}>
           <SettingsSwitchRow
             title={t('settings.privacyHideReactions')}
@@ -2638,6 +2659,14 @@ function SettingsScreenInner() {
             subtitle={t('settings.rd2.muteCallsDesc') || 'Silencia o toque e a vibração de chamadas recebidas. A tela continua aparecendo.'}
             value={!!chatPrivacy.mute_call_ringtone}
             onValueChange={(v) => saveChatPrivacy({ mute_call_ringtone: !!v })}
+          />
+          {/* [2026-10-08 contact-joined-push] push "Fulano entrou no Chatyy!" quando
+              alguém da agenda cria conta. chat_user_notif_prefs_set.contact_joined_push. */}
+          <SettingsSwitchRow
+            title={t('settings.contactJoinedPush')}
+            subtitle={t('settings.contactJoinedPushDesc')}
+            value={!!contactJoinedPush}
+            onValueChange={(v) => { setContactJoinedPush(!!v); saveNotifPref({ contact_joined_push: !!v }); }}
           />
         </SettingsGroup>
         )}
@@ -2823,6 +2852,59 @@ function SettingsScreenInner() {
               ))}
               <SettingsRow title={t('settings.storage.appCache')} value={fmtBytes(stats.totalBytes)} />
             </SettingsGroup>
+
+            {/* [2026-10-08 media-local-store] Mídia por conversa (store
+                permanente da conta ativa) com "Limpar mídia" por conversa. */}
+            {Array.isArray(stats.conversations) && stats.conversations.length > 0 && (() => {
+              const all = stats.conversations;
+              const shown = storageShowAllChats ? all : all.slice(0, 8);
+              const onClearConv = async (convId, label) => {
+                const ok = await confirm({
+                  title: t('settings.storage.clearChatConfirmTitle') || 'Limpar mídia desta conversa?',
+                  message: (label ? label + '\n\n' : '') + (t('settings.storage.clearChatConfirm') || ''),
+                  confirmLabel: t('settings.storage.clearChatMedia') || 'Limpar mídia',
+                  destructive: true,
+                });
+                if (!ok) return;
+                setStorageClearingConv(convId);
+                try {
+                  const mc = require('../services/mediaCache');
+                  await mc.clearConversationLocalMedia?.(convId === '_' ? '_' : convId);
+                } catch {}
+                await refreshStorageStats();
+                setStorageClearingConv(null);
+              };
+              return (
+                <SettingsGroup header={t('settings.storage.byChat') || 'Mídia por conversa'} footer={t('settings.storage.byChatFooter')}>
+                  {shown.map((row) => {
+                    const cid = String(row.conversationId);
+                    const label = cid === '_'
+                      ? (t('settings.storage.unknownChat') || 'Outras mídias')
+                      : (storageConvNames[cid] || ('#' + cid));
+                    const busy = storageClearingConv === row.conversationId;
+                    return (
+                      <SettingsRow
+                        key={'cm_' + cid}
+                        title={label}
+                        subtitle={`${fmtBytes(row.bytes)} · ${fmtCount(row.count)}`}
+                        chevron={false}
+                        accessibilityLabel={`${t('settings.storage.clearChatMedia') || 'Limpar mídia'} ${label}`}
+                        onPress={busy ? undefined : () => onClearConv(row.conversationId, label)}
+                        right={busy
+                          ? <ActivityIndicator size="small" color={colors.text} />
+                          : <Text style={{ fontSize: 15, color: gc.destructive || '#FF3B30' }}>{t('settings.storage.clearChatMedia') || 'Limpar mídia'}</Text>}
+                      />
+                    );
+                  })}
+                  {!storageShowAllChats && all.length > shown.length && (
+                    <SettingsRow
+                      title={(t('settings.storage.showAllChats') || 'Ver todas ({n})').replace('{n}', String(all.length))}
+                      onPress={() => setStorageShowAllChats(true)}
+                    />
+                  )}
+                </SettingsGroup>
+              );
+            })()}
 
             {/* History completeness (#1240) — own group. */}
             <HistoryDownloadRow />

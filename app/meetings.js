@@ -13,7 +13,7 @@ import { useLanguage } from '../context/LanguageContext';
 import { useAuth } from '../context/AuthContext';
 import { BorderRadius, FontSize, Spacing, Shadow, haptic } from '../constants/theme';
 import PressableScale from '../components/PressableScale'; // [2026-10-08 apps-native]
-import { USE_NATIVE_HEADER, nativeHeaderOptions, HeaderIconButton } from '../components/nativeHeader'; // [2026-10-08 apps-native]
+import { USE_NATIVE_HEADER, nativeHeaderOptions, HeaderIconButton, nativeScrollInsetProps } from '../components/nativeHeader'; // [2026-10-08 apps-native]
 import * as api from '../services/api';
 import { getCached, getCachedSync, setCache } from '../services/cache';
 import { syncMeetingReminders } from '../services/meetingReminders';
@@ -810,7 +810,7 @@ function MeetingsScreenInner() {
           ListHeaderComponent={ListHeader}
           ListEmptyComponent={otherMeetings.length === 0 && !showHero && !showSoon ? renderEmpty : null}
           contentContainerStyle={[styles.list, (otherMeetings.length === 0 && !showHero && !showSoon) && styles.listEmpty]}
-          contentInsetAdjustmentBehavior="automatic"
+          {...nativeScrollInsetProps() /* [2026-10-08 header-inset-all] */}
           initialNumToRender={8}
           maxToRenderPerBatch={8}
           windowSize={7}

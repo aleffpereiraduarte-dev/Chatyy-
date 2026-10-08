@@ -2270,8 +2270,11 @@ function _navigateForNotification(data) {
     // "X entrou no Chatyy" — someone whose number you had saved just joined.
     // Tap navigates to their public profile so the user can start a chat
     // right away. Same deep_link that lands in the notification payload.
+    // [2026-10-08 contact-joined-push] Tap → abre direto a conversa nova com a
+    // pessoa (chat-conversation cria o direct via params.email), não o perfil.
     if (data.type === 'contact_joined' && data.email) {
-      router.push(`/u/${encodeURIComponent(data.email)}`);
+      const nm = data.name ? `&name=${encodeURIComponent(data.name)}` : '';
+      openConversation(`/chat-conversation?email=${encodeURIComponent(data.email)}&type=direct${nm}`);
       return;
     }
     if ((data.type === 'live' || data.type === 'live_start') && data.session_id) {

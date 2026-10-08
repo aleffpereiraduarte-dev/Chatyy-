@@ -29,7 +29,7 @@ import { ListSkeleton } from '../components/SkeletonLoader';
 import EmptyStateCard from '../components/EmptyStateCard';
 import ScreenEmptyState from '../components/ScreenEmptyState';
 // [2026-10-08 apps-native] header nativo + células com feedback nativo + boundary padrão
-import { USE_NATIVE_HEADER, nativeHeaderOptions, HeaderIconButton, HeaderBackButton } from '../components/nativeHeader';
+import { USE_NATIVE_HEADER, nativeHeaderOptions, HeaderIconButton, HeaderBackButton, NativeHeaderSafeArea } from '../components/nativeHeader';
 import PressableRow from '../components/PressableRow';
 import ErrorBoundary from '../components/ErrorBoundary';
 import Svg, { Defs, LinearGradient as SvgLinearGradient, Stop, Path, Circle as SvgCircle, Rect as SvgRect } from 'react-native-svg';
@@ -2696,6 +2696,11 @@ function FilesScreenInner() {
       </View>
       )}
 
+      {/* [2026-10-08 header-inset-all] iOS: header translúcido (busca nativa) →
+          modo/abas/breadcrumb/lista começavam em y=0 SOB nav bar + busca. O
+          wrapper mede o safe-area real da view e desloca todo o bloco (inclusive
+          menu de ordenação e toast, que são absolutos) p/ baixo do header. */}
+      <NativeHeaderSafeArea>
       {/* Sort menu dropdown */}
       {showSortMenu && (
         <>
@@ -3067,6 +3072,7 @@ function FilesScreenInner() {
           </TouchableOpacity>
         </Animated.View>
       </View>}
+      </NativeHeaderSafeArea>
 
       {/* ============ ACTION MENU MODAL ============ */}
       <Modal visible={!!actionMenu} transparent animationType="slide" onRequestClose={() => setActionMenu(null)}>

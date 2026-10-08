@@ -1,19 +1,29 @@
-import { androidTopInset } from '../utils/systemInsets'; // [2026-10-07 android-native] edge-to-edge
+// [2026-10-08 parental-pages2] Monitor do filho redesenhado no padrão B&W
+// premium do resto do app (SettingsKit): header NATIVO com avatar + nome +
+// "Visto há X · Offline/Online" (sai o bloco preto com escudo solto), card de
+// resumo (tempo de tela vs limite com barra fina, liberar/pausar, +15 min),
+// 4 ações monocromáticas (Localizar, Mensagens, Pausar, Mais), abas como
+// segmented control nativo, listas agrupadas e empty states compactos.
+// Vermelho só p/ alerta/destrutivo. Loaders/handlers/API inalterados.
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, FlatList, ActivityIndicator, Platform, ScrollView, TextInput, Switch, Alert, Animated, AppState, RefreshControl } from 'react-native';
-import { useRouter, useLocalSearchParams } from 'expo-router';
+import { View, Text, StyleSheet, ActivityIndicator, Platform, ScrollView, TextInput, Alert, Animated, AppState, RefreshControl, Linking, BackHandler, Pressable } from 'react-native';
+import { useRouter, useLocalSearchParams, Stack } from 'expo-router';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
-import { IconArrowLeft, IconMessageSquare, IconPhone, IconPhoneOff, IconAlertCircle, IconChevronRight, IconShield, IconEye, IconLock, IconClock, IconBarChart, IconX, IconPlus, IconUser, IconMail, IconTrash, IconAlertTriangle, IconFilter, IconSmartphone, IconCheck, IconSparkles, IconHeart, IconImage, IconVideo, IconZap } from '../components/Icons';
-import EmptyStateCard from '../components/EmptyStateCard';
+import { IconArrowLeft, IconMessageSquare, IconPhone, IconPhoneOff, IconShield, IconEye, IconLock, IconClock, IconBarChart, IconX, IconPlus, IconUser, IconUsers, IconMail, IconTrash, IconAlertTriangle, IconFilter, IconSparkles, IconHeart, IconImage, IconVideo, IconZap, IconMapPin, IconPause, IconPlay, IconMoreHorizontal, IconRefresh, IconSliders, IconMoon, IconSmartphone } from '../components/Icons';
 import AvatarCircle from '../components/AvatarCircle';
-import Svg, { Circle as SvgCircle } from 'react-native-svg';
+import PressableRow from '../components/PressableRow';
+import { USE_NATIVE_HEADER, nativeHeaderOptions, HeaderBackButton } from '../components/nativeHeader';
+import { useGroupedColors, SettingsGroup, SettingsRow, SettingsSwitchRow, SettingsPickerRow, SettingsCardContent, useSettingsInputStyle } from '../components/settings/SettingsKit';
+import { SegmentedControl, MonoTile, CompactEmpty, ActionSheet, useInk } from '../components/parental/ParentalKit';
+import NativeSwitch from '../components/NativeSwitch';
 import * as api from '../services/api';
 import ErrorBoundary from '../components/ErrorBoundary';
 import { getCached, setCache } from '../services/cache';
 import useIsMounted from '../hooks/useIsMounted';
+import * as haptics from '../services/haptics';
 
-const ACCENT = '#111111';
 const TIME_LIMITS = [
   { value: 30, label: '30 min' },
   { value: 60, label: '1h' },
@@ -30,7 +40,6 @@ const safeDate = (d) => {
   const x = new Date(d);
   return isNaN(x.getTime()) ? null : x;
 };
-const fmtDateTime = (d) => { const x = safeDate(d); return x ? x.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : ''; };
 const fmtTime = (d) => { const x = safeDate(d); return x ? x.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''; };
 const minsAgo = (d) => {
   const x = safeDate(d);
@@ -38,40 +47,53 @@ const minsAgo = (d) => {
   const diff = Math.floor((Date.now() - x.getTime()) / 60000);
   return diff < 0 ? 0 : diff;
 };
-const fmtRelative = (d) => {
+const fmtRelative = (d, t) => {
   const m = minsAgo(d);
   if (m === null) return '';
-  if (m < 1) return 'agora';
+  if (m < 1) return t ? t('parentalMon.now') : 'agora';
   if (m < 60) return `${m} min`;
   const h = Math.floor(m / 60);
-  if (h < 24) return `${h}h`;
+  if (h < 24) return `${h} h`;
   const days = Math.floor(h / 24);
-  return `${days}d`;
+  return `${days} d`;
+};
+// 74 → "1 h 14 min"; 45 → "45 min"; 120 → "2 h".
+const fmtDur = (mins) => {
+  const m = Math.max(0, Math.round(Number(mins) || 0));
+  if (m < 60) return `${m} min`;
+  const h = Math.floor(m / 60);
+  const r = m % 60;
+  return r ? `${h} h ${r} min` : `${h} h`;
 };
 
 // Skeleton block — minimal shimmer used while a tab loads.
 function Skel({ w = '100%', h = 14, mt = 0, br = 8, dark }) {
   const anim = useRef(new Animated.Value(0)).current;
   useEffect(() => {
-    Animated.loop(
+    const loop = Animated.loop(
       Animated.sequence([
         Animated.timing(anim, { toValue: 1, duration: 700, useNativeDriver: false }),
         Animated.timing(anim, { toValue: 0, duration: 700, useNativeDriver: false }),
       ])
-    ).start();
+    );
+    loop.start();
+    return () => loop.stop();
   }, [anim]);
-  const bg = anim.interpolate({ inputRange: [0, 1], outputRange: [dark ? '#1c1c1e' : '#e5e7eb', dark ? '#2c2c2e' : '#f3f4f6'] });
+  const bg = anim.interpolate({ inputRange: [0, 1], outputRange: [dark ? '#1c1c1e' : '#e5e5ea', dark ? '#2c2c2e' : '#f2f2f7'] });
   return <Animated.View style={{ width: w, height: h, marginTop: mt, borderRadius: br, backgroundColor: bg }} />;
 }
 
 function TabSkeleton({ dark }) {
   return (
-    <View style={{ padding: 18, gap: 14 }}>
-      <Skel dark={dark} h={88} br={20} />
-      <Skel dark={dark} h={160} br={20} mt={10} />
-      <Skel dark={dark} h={20} w="40%" mt={14} />
-      <Skel dark={dark} h={64} br={16} mt={4} />
-      <Skel dark={dark} h={64} br={16} mt={6} />
+    <View style={{ padding: 16 }}>
+      <Skel dark={dark} h={150} br={12} />
+      <View style={{ flexDirection: 'row', gap: 8, marginTop: 12 }}>
+        {[0, 1, 2, 3].map(i => <View key={i} style={{ flex: 1 }}><Skel dark={dark} h={64} br={12} /></View>)}
+      </View>
+      <Skel dark={dark} h={34} br={9} mt={20} />
+      <Skel dark={dark} h={14} w="35%" mt={24} />
+      <Skel dark={dark} h={56} br={12} mt={8} />
+      <Skel dark={dark} h={56} br={12} mt={8} />
     </View>
   );
 }
@@ -118,9 +140,17 @@ function ParentalMonitorScreenInner() {
   const [newContact, setNewContact] = useState('');
   const [sosLoading, setSosLoading] = useState(false);
   const [contactBusy, setContactBusy] = useState({}); // email -> 'approving'|'blocking'
+  // [2026-10-08 parental-pages2] UI nova: sheet "Mais", pausar/liberar, +15 min, timeline.
+  const [moreOpen, setMoreOpen] = useState(false);
+  const [lockBusy, setLockBusy] = useState(false);
+  const [bonusBusy, setBonusBusy] = useState(false);
+  const [bonusMinutes, setBonusMinutes] = useState(0);
+  const [showAllTimeline, setShowAllTimeline] = useState(false);
+  const g = useGroupedColors();
+  const { ink, onInk } = useInk();
+  const insets = useSafeAreaInsets();
 
   const slideAnim = useRef(new Animated.Value(0)).current;
-  const livePulse = useRef(new Animated.Value(0)).current;
 
   // Saved-msg + debounce timers we have to clean up on unmount.
   const updateDebounceRef = useRef(null);
@@ -253,16 +283,6 @@ function ParentalMonitorScreenInner() {
     return () => { try { sub.remove(); } catch {} };
   }, [loadAll, loading, mounted]);
 
-  // Live status pulse animation.
-  useEffect(() => {
-    Animated.loop(
-      Animated.sequence([
-        Animated.timing(livePulse, { toValue: 1, duration: 900, useNativeDriver: true }),
-        Animated.timing(livePulse, { toValue: 0, duration: 900, useNativeDriver: true }),
-      ])
-    ).start();
-  }, [livePulse]);
-
   // Tab change crossfade
   useEffect(() => {
     slideAnim.setValue(0);
@@ -356,20 +376,126 @@ function ParentalMonitorScreenInner() {
     }
   };
 
+  // ─── [2026-10-08 parental-pages2] Ações do card de resumo / tiles ───
+
+  // Android: botão voltar fecha a tela de restrições antes de sair do monitor.
+  useEffect(() => {
+    if (!showRestrictions || Platform.OS !== 'android') return undefined;
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => { setShowRestrictions(false); return true; });
+    return () => { try { sub.remove(); } catch {} };
+  }, [showRestrictions]);
+
+  const isLocked = restrictions.locked === true || restrictions.locked === 1 || restrictions.locked === '1';
+
+  const setLocked = async (next) => {
+    if (lockBusy) return;
+    setLockBusy(true);
+    const prev = restrictions.locked;
+    setRestrictions(r => ({ ...r, locked: next }));
+    try {
+      const r = next ? await api.parentalLockChild(childEmail) : await api.parentalUnlockChild(childEmail);
+      if (!r?.success) throw new Error('lock failed');
+      if (next) { try { haptics.warning(); } catch {} } else { try { haptics.success(); } catch {} }
+    } catch {
+      if (mounted.current) {
+        setRestrictions(r => ({ ...r, locked: prev }));
+        Alert.alert(t('parental.error'), t('parental.connectionError'));
+      }
+    } finally {
+      if (mounted.current) setLockBusy(false);
+    }
+  };
+
+  // Pausar pede confirmação (a criança fica bloqueada); retomar é imediato.
+  const toggleLock = (next) => {
+    if (!next) { setLocked(false); return; }
+    Alert.alert(
+      t('parental.lockNowTitle') || 'Pausar app agora?',
+      `${t('parental.lockNowDesc') || 'A criança vai ver a tela de bloqueio até você liberar.'} (${childName})`,
+      [
+        { text: t('parental.cancel') || 'Cancelar', style: 'cancel' },
+        { text: t('parental.lockNow') || 'Pausar', style: 'destructive', onPress: () => setLocked(true) },
+      ]
+    );
+  };
+
+  const grantBonus = async () => {
+    if (bonusBusy) return;
+    setBonusBusy(true);
+    try {
+      const r = await api.parentalGrantExtraTime(childEmail, 15);
+      if (!mounted.current) return;
+      if (r?.success) {
+        try { haptics.success(); } catch {}
+        setBonusMinutes(b => b + 15);
+        Alert.alert(
+          t('parental.bonusGranted') || 'Tempo concedido!',
+          (t('parental.bonusGrantedDesc') || '+15 minutos liberados para').concat(' ', childName)
+        );
+      } else {
+        Alert.alert(t('parental.error'), r?.message || t('parental.connectionError'));
+      }
+    } catch {
+      if (mounted.current) Alert.alert(t('parental.error'), t('parental.connectionError'));
+    } finally {
+      if (mounted.current) setBonusBusy(false);
+    }
+  };
+
+  // Localizar: abre o último local conhecido no app de mapas (antes era um
+  // Alert com coordenadas cruas). Aceita os 2 formatos do backend.
+  const locateChild = async () => {
+    if (sosLoading) return;
+    setSosLoading(true);
+    try { haptics.tap('light'); } catch {}
+    try {
+      const r = await api.parentalGetLocation(childEmail);
+      if (!mounted.current) return;
+      const loc = r?.data?.location || r?.data || {};
+      const lat = Number(loc.latitude ?? loc.lat);
+      const lng = Number(loc.longitude ?? loc.lng);
+      if (!r?.success || !Number.isFinite(lat) || !Number.isFinite(lng)) {
+        Alert.alert(
+          t('parental.locationUnavailable') || 'Localização indisponível',
+          t('parental.locationUnavailableDesc') || 'Não foi possível obter a localização.'
+        );
+        return;
+      }
+      const label = encodeURIComponent(childName || '');
+      const url = Platform.select({
+        ios: `https://maps.apple.com/?ll=${lat},${lng}&q=${label}`,
+        android: `geo:${lat},${lng}?q=${lat},${lng}(${label})`,
+        default: `https://www.google.com/maps?q=${lat},${lng}`,
+      });
+      Linking.openURL(url).catch(() => { Linking.openURL(`https://www.google.com/maps?q=${lat},${lng}`).catch(() => {}); });
+    } catch {
+      if (mounted.current) Alert.alert(t('parental.error') || 'Error', t('parental.connectionError') || 'Connection error');
+    } finally { if (mounted.current) setSosLoading(false); }
+  };
+
+  const onMoreSelect = (key) => {
+    setMoreOpen(false);
+    if (key === 'restrictions') setTimeout(() => { if (mounted.current) setShowRestrictions(true); }, Platform.OS === 'ios' ? 250 : 0);
+    else if (key === 'refresh') onRefresh();
+  };
+
   // ─── Tab Config (4 monitor tabs) ───
 
+  const pendingContacts = monitorContacts.filter(c => c.approval_status === 'pending').length;
   const tabs = [
-    { key: 'today',    label: 'Hoje',     icon: IconClock },
-    { key: 'week',     label: 'Semana',   icon: IconBarChart },
-    { key: 'apps',     label: 'Apps',     icon: IconSmartphone },
-    { key: 'contacts', label: 'Contatos', icon: IconUser, badge: monitorContacts.filter(c => c.approval_status === 'pending').length },
+    { value: 'today', label: t('parentalMon.tabToday') },
+    { value: 'week', label: t('parentalMon.tabWeek') },
+    { value: 'apps', label: t('parentalMon.tabApps') },
+    { value: 'contacts', label: t('parentalMon.tabContacts'), badge: pendingContacts },
   ];
 
   // ─── Derived (Today) ───
 
   const todayMinutes = todayData?.today_minutes ?? screenTime?.today_minutes ?? 0;
   const dailyLimit = restrictions.daily_limit_minutes || 0;
-  const todayProgress = dailyLimit > 0 ? Math.min(todayMinutes / Math.max(dailyLimit, 1), 1) : (todayMinutes > 0 ? 0.5 : 0);
+  const effLimit = dailyLimit > 0 ? dailyLimit + bonusMinutes : 0;
+  const todayProgress = effLimit > 0 ? Math.min(todayMinutes / Math.max(effLimit, 1), 1) : 0;
+  const overLimit = effLimit > 0 && todayMinutes >= effLimit;
   const lastSeenAt = todayData?.last_seen_at || screenTime?.last_seen_at;
   const lastSeenMins = minsAgo(lastSeenAt);
   const isOnline = todayData?.online === true || (lastSeenMins !== null && lastSeenMins < 5);
@@ -382,11 +508,25 @@ function ParentalMonitorScreenInner() {
     return out.slice(0, 3);
   }, [aiSummary]);
 
-  // Activity timeline grouped by hour.
-  const groupedActivity = useMemo(() => {
-    const events = (activity && activity.length)
-      ? activity
-      : []; // fallback synth from chats[] last_message
+  // "Online agora" / "Visto há 42 min · Offline" / "Offline" (+ "· Pausado").
+  const statusLine = (() => {
+    let s;
+    if (isOnline) s = t('parentalMon.onlineUsing', { app: currentApp });
+    else if (lastSeenMins !== null) {
+      const seen = lastSeenMins < 60
+        ? t('parentalDash.seenMin', { n: Math.max(1, lastSeenMins) })
+        : lastSeenMins < 1440
+          ? t('parentalDash.seenHour', { n: Math.floor(lastSeenMins / 60) })
+          : t('parentalDash.seenDay', { n: Math.floor(lastSeenMins / 1440) });
+      s = `${seen} · ${t('parentalMon.offline')}`;
+    } else s = t('parentalMon.offline');
+    if (isLocked) s += ` · ${t('parentalDash.statusPaused')}`;
+    return s;
+  })();
+
+  // Activity timeline (mais recente primeiro).
+  const timelineEvents = useMemo(() => {
+    const events = (activity && activity.length) ? [...activity] : [];
     if (!events.length && chats?.length) {
       // Build a minimal pseudo-timeline from last messages — keeps the tab
       // useful even before the activity endpoint ships.
@@ -396,25 +536,16 @@ function ParentalMonitorScreenInner() {
           events.push({
             id: 'chat_' + (c.id || i),
             type: 'chat_message',
-            label: c.last_message || (c.name || 'mensagem'),
+            label: c.last_message || (c.name || ''),
             target: c.name || c.email,
             created_at: c.last_message_at || new Date(now - i * 600000).toISOString(),
           });
         }
       });
     }
-    const buckets = {};
-    events.forEach(ev => {
-      const d = safeDate(ev.created_at || ev.ts);
-      if (!d) return;
-      const hk = d.getHours();
-      const key = String(hk).padStart(2, '0') + ':00';
-      if (!buckets[key]) buckets[key] = [];
-      buckets[key].push(ev);
-    });
-    return Object.entries(buckets)
-      .sort(([a], [b]) => Number(b.split(':')[0]) - Number(a.split(':')[0]))
-      .map(([hour, items]) => ({ hour, items: items.sort((a, b) => new Date(b.created_at || b.ts) - new Date(a.created_at || a.ts)) }));
+    return events
+      .filter(ev => safeDate(ev.created_at || ev.ts))
+      .sort((a, b) => new Date(b.created_at || b.ts) - new Date(a.created_at || a.ts));
   }, [activity, chats]);
 
   // ─── Derived (Week) ───
@@ -439,176 +570,160 @@ function ParentalMonitorScreenInner() {
   const appsBreakdown = useMemo(() => {
     const f = todayData?.feature_usage || weekData?.feature_usage || screenTime?.feature_usage || {};
     return [
-      { key: 'chat',   label: 'Chat',     value: f.chat ?? f.messages ?? screenTime?.today_minutes ?? 0, color: '#111111', Icon: IconMessageSquare },
-      { key: 'status', label: 'Status',   value: f.status ?? 0,    color: '#22c55e', Icon: IconImage },
-      { key: 'reels',  label: 'Reels',    value: f.reels ?? 0,     color: '#111111', Icon: IconVideo },
-      { key: 'feed',   label: 'Feed',     value: f.feed ?? 0,      color: '#f59e0b', Icon: IconHeart },
-      { key: 'calls',  label: 'Chamadas', value: f.calls ?? calls.length, color: '#3b82f6', Icon: IconPhone },
+      { key: 'chat',   label: t('parentalMon.areaChat'),   value: f.chat ?? f.messages ?? screenTime?.today_minutes ?? 0, Icon: IconMessageSquare },
+      { key: 'status', label: t('parentalMon.areaStatus'), value: f.status ?? 0, Icon: IconImage },
+      { key: 'reels',  label: t('parentalMon.areaReels'),  value: f.reels ?? 0, Icon: IconVideo },
+      { key: 'feed',   label: t('parentalMon.areaFeed'),   value: f.feed ?? 0, Icon: IconHeart },
+      { key: 'calls',  label: t('parentalMon.areaCalls'),  value: f.calls ?? calls.length, Icon: IconPhone },
     ];
-  }, [todayData, weekData, screenTime, calls]);
+  }, [todayData, weekData, screenTime, calls, t]);
   const appsMax = Math.max(...appsBreakdown.map(a => Number(a.value) || 0), 1);
 
-  // ─── Render: AI Cards ───
-  const renderAICard = (card) => {
-    const tone = card.risk === 'high' ? '#ef4444' : card.risk === 'warning' ? '#f59e0b' : card.risk === 'medium' ? '#f59e0b' : '#111111';
-    return (
-      <TouchableOpacity
-        key={card.id}
-        style={[s.aiCard, { backgroundColor: isDark ? '#1c1c1e' : '#fff', borderColor: tone + '55' }]}
-        activeOpacity={0.85}
-        onPress={() => setTab('today')}
-        accessibilityLabel={`AI insight: ${card.title}`}
-        accessibilityRole="button"
-      >
-        <View style={[s.aiCardIcon, { backgroundColor: tone + '20' }]}>
-          <IconSparkles size={16} color={tone} />
+  const dayShort = (i) => t('parentalMon.day' + i);
+
+  // ─── Shared row pieces ───
+
+  const refresh = <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={g.text} colors={[g.text]} />;
+
+  const MutedIcon = ({ Icon, danger }) => (
+    <View style={[s.mutedIcon, { backgroundColor: danger ? 'rgba(239,68,68,0.12)' : g.fill }]}>
+      <Icon size={16} color={danger ? g.destructive : g.text} />
+    </View>
+  );
+
+  // ─── Render: Summary card + actions (topo do monitor) ───
+
+  const renderSummary = () => (
+    <View>
+      <View style={[s.card, { backgroundColor: g.cardBg }]}>
+        <View style={s.sumTop}>
+          <View style={{ flex: 1, minWidth: 0 }}>
+            <Text style={[s.caption, { color: g.secondary }]} maxFontSizeMultiplier={1.4}>{t('parentalMon.screenTimeToday')}</Text>
+            <View style={s.sumValueRow}>
+              <Text style={[s.sumValue, { color: overLimit ? g.destructive : g.text }]} numberOfLines={1} adjustsFontSizeToFit maxFontSizeMultiplier={1.3}>{fmtDur(todayMinutes)}</Text>
+              {effLimit > 0 && (
+                <Text style={[s.sumOf, { color: g.secondary }]} numberOfLines={1} maxFontSizeMultiplier={1.3}>{t('parentalMon.ofLimit', { limit: fmtDur(effLimit) })}</Text>
+              )}
+            </View>
+          </View>
+          <Pressable
+            onPress={grantBonus}
+            disabled={bonusBusy}
+            style={({ pressed }) => [s.bonusBtn, { backgroundColor: g.fill, opacity: pressed || bonusBusy ? 0.6 : 1 }]}
+            accessibilityRole="button"
+            accessibilityLabel={t('parentalDash.actBonusA11y')}
+            hitSlop={6}
+          >
+            {bonusBusy ? <ActivityIndicator size="small" color={g.text} /> : <IconPlus size={15} color={g.text} />}
+            <Text style={[s.bonusText, { color: g.text }]} maxFontSizeMultiplier={1.3}>{t('parentalMon.addMinutes')}</Text>
+          </Pressable>
         </View>
-        <View style={{ flex: 1 }}>
-          <Text style={[s.aiCardTitle, { color: colors.text }]} numberOfLines={3}>{card.title}</Text>
-          {!!card.flags?.length && (
-            <Text style={[s.aiCardSub, { color: colors.textSecondary }]} numberOfLines={1}>{card.flags.slice(0, 3).join(' · ')}</Text>
-          )}
+        {effLimit > 0 && (
+          <View style={[s.track, { backgroundColor: g.fill }]}>
+            <View style={[s.trackFill, { width: `${Math.max(todayProgress * 100, todayMinutes > 0 ? 2 : 0)}%`, backgroundColor: overLimit ? g.destructive : ink }]} />
+          </View>
+        )}
+        <Text style={[s.sumFoot, { color: overLimit ? g.destructive : g.secondary }]} maxFontSizeMultiplier={1.4}>
+          {effLimit > 0
+            ? (overLimit ? t('parentalMon.limitReached') : t('parentalMon.remaining', { time: fmtDur(effLimit - todayMinutes) }))
+            : t('parentalMon.noLimit')}
+        </Text>
+        <View style={[s.hair, { backgroundColor: g.separator }]} />
+        <View style={s.lockRow}>
+          <View style={{ marginRight: 12 }}><MutedIcon Icon={isLocked ? IconLock : IconSmartphone} /></View>
+          <View style={{ flex: 1, minWidth: 0 }}>
+            <Text style={[s.rowTitle, { color: g.text }]} numberOfLines={1} maxFontSizeMultiplier={1.4}>{isLocked ? t('parentalMon.accessPaused') : t('parentalMon.accessAllowed')}</Text>
+            <Text style={[s.rowSub, { color: g.secondary }]} numberOfLines={2} maxFontSizeMultiplier={1.4}>{isLocked ? t('parentalMon.accessPausedSub') : t('parentalMon.accessAllowedSub')}</Text>
+          </View>
+          <NativeSwitch value={!isLocked} onValueChange={(v) => toggleLock(!v)} disabled={lockBusy} accessibilityLabel={t('parentalMon.appAccess')} />
         </View>
-        <IconChevronRight size={16} color={colors.textSecondary} />
-      </TouchableOpacity>
-    );
-  };
+      </View>
+
+      <View style={s.actRow}>
+        <MonoTile Icon={IconMapPin} label={t('parentalMon.actLocate')} onPress={locateChild} busy={sosLoading} disabled={sosLoading} />
+        <MonoTile Icon={IconMessageSquare} label={t('parentalDash.actMessages')} onPress={() => { try { haptics.tap('light'); } catch {} setTab('contacts'); }} badge={pendingContacts} />
+        <MonoTile Icon={isLocked ? IconPlay : IconPause} label={isLocked ? t('parentalDash.actResume') : t('parentalDash.actPause')} active={isLocked} onPress={() => toggleLock(!isLocked)} disabled={lockBusy} />
+        <MonoTile Icon={IconMoreHorizontal} label={t('parentalDash.actMore')} a11y={t('parentalDash.moreA11y')} onPress={() => setMoreOpen(true)} />
+      </View>
+    </View>
+  );
 
   // ─── Render: Today Tab ───
 
   const renderTodayTab = () => {
-    const ringColor = todayProgress > 0.8 ? '#ef4444' : todayProgress > 0.5 ? '#f59e0b' : ACCENT;
-    const ringSize = 160;
-    const strokeWidth = 12;
-    const radius = (ringSize - strokeWidth) / 2;
-    const circumference = 2 * Math.PI * radius;
-    const strokeDashoffset = circumference * (1 - todayProgress);
-    const hours = Math.floor(todayMinutes / 60);
-    const mins = todayMinutes % 60;
-    const pulseOpacity = livePulse.interpolate({ inputRange: [0, 1], outputRange: [0.55, 1] });
-
+    const shown = showAllTimeline ? timelineEvents : timelineEvents.slice(0, 12);
     return (
-      <ScrollView
-        contentContainerStyle={s.listContent}
-        showsVerticalScrollIndicator={false}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={ACCENT} colors={[ACCENT]} />}
-      >
-        {/* Live status pill */}
-        <View style={[s.livePill, { backgroundColor: isOnline ? '#22c55e15' : (isDark ? '#1c1c1e' : '#f1f5f9'), borderColor: isOnline ? '#22c55e55' : (isDark ? '#2c2c2e' : '#e2e8f0') }]}>
-          {isOnline ? (
-            <Animated.View style={[s.liveDot, { backgroundColor: '#22c55e', opacity: pulseOpacity }]} />
-          ) : (
-            <View style={[s.liveDot, { backgroundColor: colors.textSecondary }]} />
-          )}
-          <Text style={[s.livePillText, { color: isOnline ? '#16a34a' : colors.textSecondary }]} numberOfLines={1}>
-            {isOnline
-              ? `Online agora — usando ${currentApp}`
-              : (lastSeenMins !== null ? `Offline há ${fmtRelative(lastSeenAt)}` : 'Offline')}
-          </Text>
-        </View>
-
-        {/* AI insight cards */}
+      <View>
         {aiCards.length > 0 && (
-          <View style={{ gap: 10, marginTop: 14 }}>
-            <Text style={[s.sectionLabel, { color: colors.textSecondary, marginBottom: 0 }]}>{t('parental.aiSummary').toUpperCase()}</Text>
-            {aiCards.map(renderAICard)}
-          </View>
-        )}
-
-        {/* Donut chart for today screen time */}
-        <Text style={[s.sectionLabel, { color: colors.textSecondary, marginTop: 18 }]}>{t('parental.todayUsage')?.toUpperCase() || 'HOJE'}</Text>
-        <View style={[s.screenTimeCard, { backgroundColor: isDark ? '#1c1c1e' : '#fff', borderColor: isDark ? '#2c2c2e' : '#e2e8f0', alignItems: 'center', paddingVertical: 28 }]} accessibilityLabel={`Tempo de tela: ${hours}h${mins}min de ${dailyLimit} minutos`}>
-          <View style={{ width: ringSize, height: ringSize, justifyContent: 'center', alignItems: 'center' }}>
-            <Svg width={ringSize} height={ringSize} style={{ position: 'absolute' }}>
-              <SvgCircle cx={ringSize/2} cy={ringSize/2} r={radius} stroke={isDark ? '#0b0b0b' : '#f1f5f9'} strokeWidth={strokeWidth} fill="none" />
-              <SvgCircle cx={ringSize/2} cy={ringSize/2} r={radius} stroke={ringColor} strokeWidth={strokeWidth} fill="none"
-                strokeDasharray={`${circumference}`} strokeDashoffset={strokeDashoffset}
-                strokeLinecap="round" rotation="-90" origin={`${ringSize/2}, ${ringSize/2}`} />
-            </Svg>
-            <View style={{ alignItems: 'center' }}>
-              <Text style={{ fontSize: 36, fontWeight: '800', color: colors.text }}>{hours > 0 ? `${hours}h${mins > 0 ? mins : ''}` : `${mins}`}</Text>
-              <Text style={{ fontSize: 12, color: colors.textSecondary, marginTop: -2 }}>{hours > 0 ? '' : t('parental.minutesToday')}</Text>
-            </View>
-          </View>
-          {dailyLimit > 0 && (
-            <Text style={{ color: colors.textSecondary, marginTop: 12, fontSize: 13 }}>
-              {t('parental.dailyLimit')}: {dailyLimit >= 60 ? `${Math.floor(dailyLimit/60)}h${dailyLimit%60 > 0 ? dailyLimit%60 + 'min' : ''}` : `${dailyLimit} min`}
-            </Text>
-          )}
-          {todayProgress > 0.8 && dailyLimit > 0 && (
-            <View style={{ backgroundColor: '#ef444420', borderRadius: 8, paddingHorizontal: 12, paddingVertical: 4, marginTop: 8, flexDirection: 'row', alignItems: 'center', gap: 4, justifyContent: 'center' }}>
-              {todayMinutes >= dailyLimit
-                ? <><IconAlertCircle size={16} color="#ef4444" /><Text style={{ color: '#ef4444', fontSize: 12, fontWeight: '600' }}>{t('parental.limitReached') || 'Limite atingido'}</Text></>
-                : <><IconAlertTriangle size={16} color="#f59e0b" /><Text style={{ color: '#ef4444', fontSize: 12, fontWeight: '600' }}>{t('parental.almostLimit') || 'Quase no limite'}</Text></>
-              }
-            </View>
-          )}
-        </View>
-
-        {/* Top 3 contacts today */}
-        {todayTopContacts.length > 0 && (
-          <>
-            <Text style={[s.sectionLabel, { color: colors.textSecondary, marginTop: 20 }]}>{t('parental.mostContacted').toUpperCase()}</Text>
-            <View style={[s.settingsGroup, { backgroundColor: isDark ? '#1c1c1e' : '#fff', borderColor: isDark ? '#2c2c2e' : '#e2e8f0' }]}>
-              {todayTopContacts.map((c, idx) => (
-                <View key={c.email || idx} style={[s.contactRow, idx < todayTopContacts.length - 1 && { borderBottomWidth: 1, borderBottomColor: isDark ? '#2c2c2e' : '#f1f5f9' }]}>
-                  <AvatarCircle name={c.name || c.email} email={c.email} size={36} />
-                  <View style={{ flex: 1, marginLeft: 12 }}>
-                    <Text style={[s.contactName, { color: colors.text }]}>{c.name || c.email}</Text>
-                    <Text style={[s.contactMeta, { color: colors.textSecondary }]}>{c.message_count || c.count || 0} msgs</Text>
+          <SettingsGroup header={t('parental.aiSummary')} inset={60}>
+            {aiCards.map(card => {
+              const danger = card.risk === 'high';
+              return (
+                <View key={card.id} style={s.listRow} accessibilityLabel={card.title}>
+                  <View style={{ marginRight: 12 }}><MutedIcon Icon={danger ? IconAlertTriangle : IconSparkles} danger={danger} /></View>
+                  <View style={{ flex: 1, minWidth: 0 }}>
+                    <Text style={[s.rowTitle, { color: g.text }]} numberOfLines={4} maxFontSizeMultiplier={1.4}>{card.title}</Text>
+                    {!!card.flags?.length && (
+                      <Text style={[s.rowSub, { color: g.secondary }]} numberOfLines={1}>{card.flags.slice(0, 3).map(f => (typeof f === 'string' ? f : f?.title || '')).join(' · ')}</Text>
+                    )}
                   </View>
-                  <IconChevronRight size={16} color={colors.textSecondary} />
                 </View>
-              ))}
-            </View>
-          </>
+              );
+            })}
+          </SettingsGroup>
         )}
 
-        {/* Activity timeline grouped by hour */}
-        <Text style={[s.sectionLabel, { color: colors.textSecondary, marginTop: 20 }]}>LINHA DO TEMPO</Text>
-        {groupedActivity.length === 0 ? (
-          <EmptyStateCard Icon={IconClock} title="Sem atividade hoje" tone="neutral" />
-        ) : (
-          <View style={[s.settingsGroup, { backgroundColor: isDark ? '#1c1c1e' : '#fff', borderColor: isDark ? '#2c2c2e' : '#e2e8f0' }]}>
-            {groupedActivity.map(({ hour, items }, gi) => (
-              <View key={hour} style={[s.timelineGroup, gi > 0 && { borderTopWidth: 1, borderTopColor: isDark ? '#2c2c2e' : '#f1f5f9' }]}>
-                <Text style={[s.timelineHour, { color: colors.textSecondary }]}>{hour}</Text>
-                <View style={{ flex: 1 }}>
-                  {items.map((ev, i) => {
-                    const cfg = activityIconFor(ev.type);
-                    return (
-                      <View key={ev.id || i} style={s.timelineItem} accessibilityLabel={`${cfg.label}: ${ev.label || ev.target || ''} às ${fmtTime(ev.created_at || ev.ts)}`}>
-                        <View style={[s.timelineDot, { backgroundColor: cfg.color + '22' }]}>
-                          <cfg.Icon size={12} color={cfg.color} />
-                        </View>
-                        <View style={{ flex: 1 }}>
-                          <Text style={[s.timelineText, { color: colors.text }]} numberOfLines={2}>
-                            <Text style={{ fontWeight: '700' }}>{cfg.label}</Text>
-                            {ev.target ? <Text style={{ color: colors.textSecondary }}> · {ev.target}</Text> : null}
-                          </Text>
-                          {!!ev.label && ev.label !== ev.target && (
-                            <Text style={[s.timelineSub, { color: colors.textSecondary }]} numberOfLines={2}>{ev.label}</Text>
-                          )}
-                        </View>
-                        <Text style={[s.timelineTime, { color: colors.textSecondary }]}>{fmtTime(ev.created_at || ev.ts)}</Text>
-                      </View>
-                    );
-                  })}
+        {todayTopContacts.length > 0 && (
+          <SettingsGroup header={t('parental.mostContacted')} inset={64}>
+            {todayTopContacts.map((c, idx) => (
+              <View key={c.email || idx} style={s.listRow}>
+                <AvatarCircle name={c.name || c.email} email={c.email} size={36} />
+                <View style={{ flex: 1, minWidth: 0, marginLeft: 12 }}>
+                  <Text style={[s.rowTitle, { color: g.text }]} numberOfLines={1}>{c.name || c.email}</Text>
+                  <Text style={[s.rowSub, { color: g.secondary }]} numberOfLines={1}>{t('parentalMon.msgsCount', { n: c.message_count || c.count || 0 })}</Text>
                 </View>
               </View>
             ))}
-          </View>
+          </SettingsGroup>
         )}
 
-        <View style={{ height: 30 }} />
-      </ScrollView>
+        {timelineEvents.length === 0 ? (
+          <View style={{ marginBottom: 26 }}>
+            <Text style={[s.groupHeader, { color: g.header }]}>{t('parentalMon.timeline').toUpperCase()}</Text>
+            <CompactEmpty Icon={IconClock} title={t('parentalMon.noActivity')} subtitle={t('parentalMon.noActivitySub', { name: childName })} />
+          </View>
+        ) : (
+          <SettingsGroup header={t('parentalMon.timeline')} inset={60}>
+            {shown.map((ev, i) => {
+              const cfg = activityIconFor(ev.type, t);
+              const when = fmtTime(ev.created_at || ev.ts);
+              return (
+                <View key={ev.id || i} style={s.listRow} accessibilityLabel={`${cfg.label}: ${ev.label || ev.target || ''} ${when}`}>
+                  <View style={{ marginRight: 12 }}><MutedIcon Icon={cfg.Icon} danger={cfg.danger} /></View>
+                  <View style={{ flex: 1, minWidth: 0 }}>
+                    <Text style={[s.rowTitle, { color: g.text }]} numberOfLines={1}>
+                      {cfg.label}{ev.target ? <Text style={{ color: g.secondary }}>{` · ${ev.target}`}</Text> : null}
+                    </Text>
+                    {!!ev.label && ev.label !== ev.target && (
+                      <Text style={[s.rowSub, { color: g.secondary }]} numberOfLines={2}>{ev.label}</Text>
+                    )}
+                  </View>
+                  <Text style={[s.rowValue, { color: g.secondary }]}>{when}</Text>
+                </View>
+              );
+            })}
+            {timelineEvents.length > shown.length && (
+              <SettingsRow title={t('parentalMon.showAll', { n: timelineEvents.length })} onPress={() => setShowAllTimeline(true)} center chevron={false} titleStyle={{ fontWeight: '600' }} />
+            )}
+          </SettingsGroup>
+        )}
+      </View>
     );
   };
 
   // ─── Render: Week Tab ───
 
   const renderWeekTab = () => {
-    const dayLabels = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sab'];
     const days7 = weekDays.length === 7 ? weekDays : (() => {
       // Pad to 7 — current weekday last.
       const seq = Array.from({ length: 7 }).map((_, i) => ({ day: i, minutes: 0, messages: 0, calls: 0 }));
@@ -616,187 +731,162 @@ function ParentalMonitorScreenInner() {
       return seq;
     })();
     const maxBar = Math.max(...days7.map(d => d.minutes || 0), 1);
-    const totalMessages = days7.reduce((s, d) => s + (d.messages || 0), 0);
-    const totalCalls = days7.reduce((s, d) => s + (d.calls || 0), 0);
+    const totalMessages = days7.reduce((acc, d) => acc + (d.messages || 0), 0);
+    const totalCalls = days7.reduce((acc, d) => acc + (d.calls || 0), 0);
+    const todayIdx = new Date().getDay();
 
     return (
-      <ScrollView
-        contentContainerStyle={s.listContent}
-        showsVerticalScrollIndicator={false}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={ACCENT} colors={[ACCENT]} />}
-      >
-        {/* Week summary header */}
-        <View style={[s.screenTimeCard, { backgroundColor: isDark ? '#1c1c1e' : '#fff', borderColor: isDark ? '#2c2c2e' : '#e2e8f0' }]}>
-          <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 10 }}>
-            <Text style={{ fontSize: 30, fontWeight: '800', color: colors.text }}>
-              {Math.floor(weekTotalMinutes / 60)}h{weekTotalMinutes % 60 > 0 ? (weekTotalMinutes % 60) : ''}
-            </Text>
-            <Text style={{ color: colors.textSecondary, fontSize: 13 }}>esta semana</Text>
-            {weekTrend !== null && (
-              <View style={[s.trendChip, { backgroundColor: weekTrend > 0 ? '#ef444420' : '#22c55e20' }]} accessibilityLabel={`Tendência ${weekTrend > 0 ? 'subindo' : 'caindo'} ${Math.abs(weekTrend)}%`}>
-                <Text style={{ color: weekTrend > 0 ? '#ef4444' : '#16a34a', fontSize: 12, fontWeight: '700' }}>
-                  {weekTrend > 0 ? '↑' : '↓'} {Math.abs(weekTrend)}%
+      <View>
+        <View style={[s.card, { backgroundColor: g.cardBg, marginBottom: 26 }]}>
+          <View style={{ paddingHorizontal: 16, paddingTop: 14 }}>
+            <Text style={[s.caption, { color: g.secondary }]}>{t('parentalMon.thisWeek')}</Text>
+            <View style={s.sumValueRow}>
+              <Text style={[s.sumValue, { color: g.text }]} numberOfLines={1}>{fmtDur(weekTotalMinutes)}</Text>
+              {weekTrend !== null && (
+                <Text style={[s.sumOf, { color: g.secondary }]} numberOfLines={1} accessibilityLabel={t('parentalMon.vsLastWeek', { pct: (weekTrend > 0 ? '+' : '') + weekTrend })}>
+                  {t('parentalMon.vsLastWeek', { pct: (weekTrend > 0 ? '+' : '') + weekTrend })}
                 </Text>
-              </View>
-            )}
+              )}
+            </View>
+            <Text style={[s.rowSub, { color: g.secondary, marginTop: 2 }]}>{t('parentalMon.weekCounts', { msgs: totalMessages, calls: totalCalls })}</Text>
           </View>
-          <Text style={{ color: colors.textSecondary, fontSize: 12, marginTop: 4 }}>
-            {totalMessages} mensagens · {totalCalls} chamadas
-          </Text>
-        </View>
-
-        {/* 7-day bar chart */}
-        <Text style={[s.sectionLabel, { color: colors.textSecondary, marginTop: 20 }]}>{t('parental.weeklyUsage').toUpperCase()}</Text>
-        <View style={[s.screenTimeCard, { backgroundColor: isDark ? '#1c1c1e' : '#fff', borderColor: isDark ? '#2c2c2e' : '#e2e8f0' }]}>
-          <View style={s.barChartContainer}>
+          <View style={s.barChart}>
             {days7.map((item, idx) => {
-              const barHeight = Math.max((item.minutes / maxBar) * 130, 4);
-              const isToday = idx === new Date().getDay();
+              const barHeight = Math.max(((item.minutes || 0) / maxBar) * 110, 4);
+              const isToday = idx === todayIdx;
               return (
-                <View key={idx} style={s.barCol} accessibilityLabel={`${dayLabels[idx]}: ${item.minutes} minutos`}>
-                  <Text style={[s.barValue, { color: colors.textSecondary }]}>{item.minutes > 0 ? item.minutes : ''}</Text>
-                  <View style={[s.bar, { height: barHeight, backgroundColor: isToday ? ACCENT : (isDark ? '#5A5A5E' : '#cbd5e1'), borderRadius: 6 }]} />
-                  <Text style={[s.barLabel, { color: isToday ? ACCENT : colors.textSecondary, fontWeight: isToday ? '700' : '500' }]}>{dayLabels[idx]}</Text>
+                <View key={idx} style={s.barCol} accessibilityLabel={`${dayShort(idx)}: ${fmtDur(item.minutes)}`}>
+                  <View style={[s.bar, { height: barHeight, backgroundColor: isToday ? ink : (g.isDark ? '#3A3A3C' : '#D1D1D6') }]} />
+                  <Text style={[s.barLabel, { color: isToday ? g.text : g.secondary, fontWeight: isToday ? '700' : '500' }]}>{dayShort(idx)}</Text>
                 </View>
               );
             })}
           </View>
         </View>
 
-        {/* Daily breakdown */}
-        <Text style={[s.sectionLabel, { color: colors.textSecondary, marginTop: 20 }]}>POR DIA</Text>
-        <View style={[s.settingsGroup, { backgroundColor: isDark ? '#1c1c1e' : '#fff', borderColor: isDark ? '#2c2c2e' : '#e2e8f0' }]}>
+        <SettingsGroup header={t('parentalMon.byDay')}>
           {days7.map((d, idx) => (
-            <View key={idx} style={[s.contactRow, idx < days7.length - 1 && { borderBottomWidth: 1, borderBottomColor: isDark ? '#2c2c2e' : '#f1f5f9' }]}>
-              <View style={[s.cardIcon, { backgroundColor: ACCENT + '15', width: 36, height: 36, borderRadius: 12 }]}>
-                <Text style={{ color: ACCENT, fontWeight: '800', fontSize: 12 }}>{dayLabels[idx]}</Text>
-              </View>
-              <View style={{ flex: 1, marginLeft: 12 }}>
-                <Text style={[s.contactName, { color: colors.text }]}>
-                  {d.minutes > 0 ? `${Math.floor(d.minutes / 60) > 0 ? Math.floor(d.minutes / 60) + 'h' : ''}${d.minutes % 60 ? (d.minutes % 60) + 'min' : (d.minutes < 60 ? d.minutes + 'min' : '')}` : '—'}
-                </Text>
-                <Text style={[s.contactMeta, { color: colors.textSecondary }]}>{d.messages || 0} msgs · {d.calls || 0} chamadas</Text>
-              </View>
-            </View>
+            <SettingsRow
+              key={idx}
+              title={dayShort(idx)}
+              subtitle={t('parentalMon.dayCounts', { msgs: d.messages || 0, calls: d.calls || 0 })}
+              value={d.minutes > 0 ? fmtDur(d.minutes) : '—'}
+            />
           ))}
-        </View>
-
-        <View style={{ height: 30 }} />
-      </ScrollView>
+        </SettingsGroup>
+      </View>
     );
   };
 
   // ─── Render: Apps Tab ───
 
   const renderAppsTab = () => {
+    const hours = (todayData?.active_hours || screenTime?.active_hours || []).slice(0, 6);
     return (
-      <ScrollView
-        contentContainerStyle={s.listContent}
-        showsVerticalScrollIndicator={false}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={ACCENT} colors={[ACCENT]} />}
-      >
-        <Text style={[s.sectionLabel, { color: colors.textSecondary }]}>USO POR ÁREA</Text>
-        <View style={[s.screenTimeCard, { backgroundColor: isDark ? '#1c1c1e' : '#fff', borderColor: isDark ? '#2c2c2e' : '#e2e8f0' }]}>
-          {appsBreakdown.map((a, i) => {
+      <View>
+        <SettingsGroup header={t('parentalMon.byArea')} inset={60}>
+          {appsBreakdown.map((a) => {
             const pct = (Number(a.value) || 0) / appsMax;
             return (
-              <View key={a.key} style={[s.appRow, i > 0 && { marginTop: 14 }]} accessibilityLabel={`${a.label}: ${a.value}`}>
-                <View style={[s.appIcon, { backgroundColor: a.color + '18' }]}>
-                  <a.Icon size={18} color={a.color} />
-                </View>
-                <View style={{ flex: 1 }}>
-                  <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
-                    <Text style={[s.appLabel, { color: colors.text }]}>{a.label}</Text>
-                    <Text style={[s.appValue, { color: colors.textSecondary }]}>{a.value}</Text>
+              <View key={a.key} style={s.listRow} accessibilityLabel={`${a.label}: ${a.value}`}>
+                <View style={{ marginRight: 12 }}><MutedIcon Icon={a.Icon} /></View>
+                <View style={{ flex: 1, minWidth: 0 }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                    <Text style={[s.rowTitle, { color: g.text, flex: 1 }]} numberOfLines={1}>{a.label}</Text>
+                    <Text style={[s.rowValue, { color: g.secondary }]}>{a.value}</Text>
                   </View>
-                  <View style={[s.appBarBg, { backgroundColor: isDark ? '#0b0b0b' : '#f1f5f9' }]}>
-                    <View style={[s.appBarFill, { width: `${Math.max(pct * 100, 4)}%`, backgroundColor: a.color }]} />
+                  <View style={[s.track, { backgroundColor: g.fill, marginTop: 8, height: 4 }]}>
+                    <View style={[s.trackFill, { width: `${Math.max(pct * 100, (Number(a.value) || 0) > 0 ? 3 : 0)}%`, backgroundColor: ink }]} />
                   </View>
                 </View>
               </View>
             );
           })}
-        </View>
+        </SettingsGroup>
 
-        {/* Active hours strip from backend */}
-        {(todayData?.active_hours || screenTime?.active_hours || []).length > 0 && (
-          <>
-            <Text style={[s.sectionLabel, { color: colors.textSecondary, marginTop: 20 }]}>{t('parental.mostActive').toUpperCase()}</Text>
-            <View style={[s.screenTimeCard, { backgroundColor: isDark ? '#1c1c1e' : '#fff', borderColor: isDark ? '#2c2c2e' : '#e2e8f0' }]}>
+        {hours.length > 0 && (
+          <SettingsGroup header={t('parental.mostActive')}>
+            <SettingsCardContent>
               <View style={s.hoursGrid}>
-                {(todayData?.active_hours || screenTime?.active_hours || []).slice(0, 6).map((h, i) => (
-                  <View key={i} style={[s.hourChip, { backgroundColor: ACCENT + (Math.round((h.percentage || 0.5) * 40 + 10).toString(16)) }]}>
-                    <Text style={[s.hourText, { color: colors.text }]}>{String(h.hour).padStart(2, '0')}:00</Text>
-                    <Text style={[s.hourPct, { color: colors.textSecondary }]}>{Math.round((h.percentage || 0) * 100)}%</Text>
+                {hours.map((h, i) => (
+                  <View key={i} style={[s.hourChip, { backgroundColor: i === 0 ? ink : g.fill }]}>
+                    <Text style={[s.hourText, { color: i === 0 ? onInk : g.text }]}>{String(h.hour).padStart(2, '0')}:00</Text>
+                    <Text style={[s.hourPct, { color: i === 0 ? onInk : g.secondary }]}>{Math.round((h.percentage || 0) * 100)}%</Text>
                   </View>
                 ))}
               </View>
-            </View>
-          </>
+            </SettingsCardContent>
+          </SettingsGroup>
         )}
-
-        <View style={{ height: 30 }} />
-      </ScrollView>
+      </View>
     );
   };
 
   // ─── Render: Contacts Tab ───
 
-  const renderContactItem = ({ item }) => {
+  const renderContactItem = (item) => {
     const newThisWeek = isNewThisWeek(item);
     const unknown = isUnknownContact(item);
     const ageUnknown = item.age_known === false;
     const status = item.approval_status; // 'approved' | 'pending' | 'blocked'
     const busy = contactBusy[item.email];
+    const tags = [];
+    if (status === 'approved') tags.push({ k: 'ok', label: t('parentalMon.approved') });
+    if (status === 'blocked') tags.push({ k: 'bl', label: t('parentalMon.blocked'), danger: true });
+    if (status === 'pending') tags.push({ k: 'pe', label: t('parentalMon.pendingApproval') });
+    if (newThisWeek) tags.push({ k: 'nw', label: t('parentalMon.newThisWeek') });
+    if (unknown) tags.push({ k: 'un', label: t('parentalMon.unknown'), danger: true });
+    if (ageUnknown) tags.push({ k: 'ag', label: t('parentalMon.ageUnknown') });
+    const name = item.name || item.email || t('parental.unknown');
     return (
-      <TouchableOpacity
-        style={[s.contactCard, { backgroundColor: isDark ? '#1c1c1e' : '#fff', borderColor: isDark ? '#2c2c2e' : '#e2e8f0' }]}
+      <PressableRow
+        key={String(item.email || item.conversation_id)}
         onPress={() => router.push(`/parental-child-chat?child_email=${encodeURIComponent(childEmail)}&conversation_id=${encodeURIComponent(item.conversation_id || '')}&chat_name=${encodeURIComponent(item.name || item.email || '')}`)}
-        activeOpacity={0.85}
-        accessibilityLabel={`Contato ${item.name || item.email}, ${item.message_count || 0} mensagens. Toque para revisar.`}
         accessibilityRole="button"
+        accessibilityLabel={`${name}, ${t('parentalMon.msgsCount', { n: item.message_count || 0 })}`}
       >
-        <AvatarCircle name={item.name || item.email} email={item.email} size={44} />
-        <View style={{ flex: 1, marginLeft: 12 }}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-            <Text style={[s.cardTitle, { color: colors.text, fontSize: 15 }]} numberOfLines={1}>{item.name || item.email || t('parental.unknown')}</Text>
-            {status === 'blocked' && <View style={[s.riskTag, { backgroundColor: '#ef444420' }]}><Text style={[s.riskTagText, { color: '#ef4444' }]}>Bloqueado</Text></View>}
-            {status === 'approved' && <View style={[s.riskTag, { backgroundColor: '#22c55e20' }]}><Text style={[s.riskTagText, { color: '#16a34a' }]}>Aprovado</Text></View>}
-          </View>
-          <Text style={[s.cardSub, { color: colors.textSecondary, fontSize: 12 }]} numberOfLines={1}>
-            {item.message_count || 0} msgs · {item.last_interaction_at ? fmtRelative(item.last_interaction_at) : '—'}
-          </Text>
-          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 6 }}>
-            {newThisWeek && <View style={[s.riskTag, { backgroundColor: '#f59e0b20' }]}><Text style={[s.riskTagText, { color: '#d97706' }]}>Novo esta semana</Text></View>}
-            {unknown && <View style={[s.riskTag, { backgroundColor: '#ef444415' }]}><Text style={[s.riskTagText, { color: '#ef4444' }]}>Desconhecido</Text></View>}
-            {ageUnknown && <View style={[s.riskTag, { backgroundColor: '#11111120' }]}><Text style={[s.riskTagText, { color: colors.primary }]}>Idade ?</Text></View>}
-          </View>
-          {/* Approve / Block inline actions */}
-          {status !== 'approved' && status !== 'blocked' && (
-            <View style={{ flexDirection: 'row', gap: 8, marginTop: 10 }}>
-              <TouchableOpacity
-                onPress={(e) => { e.stopPropagation?.(); handleApproveContact(item.email); }}
-                disabled={!!busy}
-                style={[s.inlineBtn, { backgroundColor: '#22c55e' }]}
-                accessibilityLabel={`Aprovar contato ${item.name || item.email}`}
-                accessibilityRole="button"
-              >
-                {busy === 'approving' ? <ActivityIndicator size="small" color="#fff" /> : <><IconCheck size={14} color="#fff" /><Text style={s.inlineBtnText}>Aprovar</Text></>}
-              </TouchableOpacity>
-              <TouchableOpacity
-                onPress={(e) => { e.stopPropagation?.(); handleBlockContact(item.email); }}
-                disabled={!!busy}
-                style={[s.inlineBtn, { backgroundColor: '#ef4444' }]}
-                accessibilityLabel={`Bloquear contato ${item.name || item.email}`}
-                accessibilityRole="button"
-              >
-                {busy === 'blocking' ? <ActivityIndicator size="small" color="#fff" /> : <><IconX size={14} color="#fff" /><Text style={s.inlineBtnText}>Bloquear</Text></>}
-              </TouchableOpacity>
+        <View style={[s.listRow, { alignItems: 'flex-start' }]}>
+          <AvatarCircle name={item.name || item.email} email={item.email} size={40} />
+          <View style={{ flex: 1, minWidth: 0, marginLeft: 12 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+              <Text style={[s.rowTitle, { color: g.text, flex: 1, fontWeight: '600' }]} numberOfLines={1}>{name}</Text>
+              <Text style={[s.rowValue, { color: g.secondary }]}>{item.last_interaction_at ? fmtRelative(item.last_interaction_at, t) : ''}</Text>
             </View>
-          )}
+            <Text style={[s.rowSub, { color: g.secondary }]} numberOfLines={1}>{t('parentalMon.msgsCount', { n: item.message_count || 0 })}</Text>
+            {tags.length > 0 && (
+              <View style={s.tagRow}>
+                {tags.map(tg => (
+                  <View key={tg.k} style={[s.tag, { backgroundColor: tg.danger ? 'rgba(239,68,68,0.12)' : g.fill }]}>
+                    <Text style={[s.tagText, { color: tg.danger ? g.destructive : g.text }]}>{tg.label}</Text>
+                  </View>
+                ))}
+              </View>
+            )}
+            {status !== 'approved' && status !== 'blocked' && (
+              <View style={{ flexDirection: 'row', gap: 8, marginTop: 10 }}>
+                <Pressable
+                  onPress={(e) => { e?.stopPropagation?.(); handleApproveContact(item.email); }}
+                  disabled={!!busy}
+                  style={({ pressed }) => [s.inlineBtn, { backgroundColor: ink, opacity: pressed ? 0.7 : 1 }]}
+                  accessibilityLabel={`${t('parentalDash.approve')} ${name}`}
+                  accessibilityRole="button"
+                >
+                  {busy === 'approving' ? <ActivityIndicator size="small" color={onInk} /> : <Text style={[s.inlineBtnText, { color: onInk }]}>{t('parentalDash.approve')}</Text>}
+                </Pressable>
+                <Pressable
+                  onPress={(e) => { e?.stopPropagation?.(); handleBlockContact(item.email); }}
+                  disabled={!!busy}
+                  style={({ pressed }) => [s.inlineBtn, { backgroundColor: g.fill, opacity: pressed ? 0.7 : 1 }]}
+                  accessibilityLabel={`${t('parentalMon.block')} ${name}`}
+                  accessibilityRole="button"
+                >
+                  {busy === 'blocking' ? <ActivityIndicator size="small" color={g.destructive} /> : <Text style={[s.inlineBtnText, { color: g.destructive }]}>{t('parentalMon.block')}</Text>}
+                </Pressable>
+              </View>
+            )}
+          </View>
         </View>
-        <IconChevronRight size={16} color={colors.textSecondary} />
-      </TouchableOpacity>
+      </PressableRow>
     );
   };
 
@@ -811,150 +901,120 @@ function ParentalMonitorScreenInner() {
           message_count: c.total_messages,
           last_interaction_at: c.last_message_at,
         }));
-
+    if (!data.length) {
+      return (
+        <View style={{ marginBottom: 26 }}>
+          <Text style={[s.groupHeader, { color: g.header }]}>{t('parentalMon.interactions').toUpperCase()}</Text>
+          <CompactEmpty Icon={IconUsers} title={t('parentalMon.noContacts')} subtitle={t('parentalMon.noContactsSub', { name: childName })} />
+        </View>
+      );
+    }
     return (
-      <FlatList
-        data={data}
-        keyExtractor={(item, i) => String(item.email || item.conversation_id || i)}
-        renderItem={renderContactItem}
-        contentContainerStyle={s.listContent}
-        ListHeaderComponent={
-          <View style={{ marginBottom: 6 }}>
-            <Text style={[s.sectionLabel, { color: colors.textSecondary }]}>INTERAÇÕES</Text>
-            <Text style={{ color: colors.textSecondary, fontSize: 12, paddingHorizontal: 4, marginBottom: 8 }}>
-              Toque em um contato para revisar a conversa.
-            </Text>
-          </View>
-        }
-        ListEmptyComponent={<EmptyStateCard Icon={IconUser} title="Sem contatos ainda" tone="neutral" />}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={ACCENT} colors={[ACCENT]} />}
-      />
+      <SettingsGroup header={t('parentalMon.interactions')} footer={t('parentalMon.contactsHint')} inset={68}>
+        {data.map(renderContactItem)}
+      </SettingsGroup>
     );
   };
 
-  // ─── Render: Restrictions sheet (kept for parent admin) ───
+  // ─── Render: Restrições (sub-tela) ───
 
+  const inputStyle = useSettingsInputStyle();
   const timeLimitIndex = TIME_LIMITS.findIndex(tl => tl.value === (restrictions.daily_limit_minutes || 0));
-  const currentLimitIdx = timeLimitIndex >= 0 ? timeLimitIndex : TIME_LIMITS.length - 1;
+  const currentLimit = TIME_LIMITS[timeLimitIndex >= 0 ? timeLimitIndex : TIME_LIMITS.length - 1].value;
+  const limitOptions = TIME_LIMITS.map(tl => ({ value: tl.value, label: tl.value === 0 ? t('parental.unlimited') : tl.label }));
 
-  const renderRestrictionsSheet = () => (
-    <ScrollView contentContainerStyle={s.listContent} showsVerticalScrollIndicator={false}>
-      {(saving || savedMsg) && (
-        <View style={[s.saveIndicator, { backgroundColor: saving ? '#f59e0b20' : '#22c55e20' }]}>
-          {saving ? <ActivityIndicator size="small" color="#f59e0b" /> : null}
-          <Text style={{ color: saving ? '#f59e0b' : '#22c55e', fontWeight: '600', fontSize: 13 }}>
-            {saving ? t('parental.saving') : savedMsg}
-          </Text>
+  const renderRestrictions = () => (
+    <View>
+      {(saving || !!savedMsg) && (
+        <View style={s.saveRow}>
+          {saving ? <ActivityIndicator size="small" color={g.secondary} /> : null}
+          <Text style={[s.rowSub, { color: g.secondary, marginTop: 0 }]}>{saving ? t('parental.saving') : savedMsg}</Text>
         </View>
       )}
 
-      <Text style={[s.sectionLabel, { color: colors.textSecondary }]}>{t('parental.restrictions').toUpperCase()}</Text>
-      <View style={[s.settingsGroup, { backgroundColor: isDark ? '#1c1c1e' : '#fff', borderColor: isDark ? '#2c2c2e' : '#e2e8f0' }]}>
-        <SettingRow icon={<IconMail size={18} color={colors.primary} />} label={t('parental.canSendEmail')} colors={colors}
-          right={<Switch value={restrictions.can_send_email !== false} onValueChange={(v) => updateRestriction('can_send_email', v)} trackColor={{ false: '#767577', true: ACCENT + '60' }} thumbColor={restrictions.can_send_email !== false ? ACCENT : '#f4f3f4'} />} />
-        <View style={[s.divider, { backgroundColor: isDark ? '#2c2c2e' : '#f1f5f9' }]} />
-        <SettingRow icon={<IconTrash size={18} color="#ef4444" />} label={t('parental.canDeleteMessages')} colors={colors}
-          right={<Switch value={restrictions.can_delete_messages !== false} onValueChange={(v) => updateRestriction('can_delete_messages', v)} trackColor={{ false: '#767577', true: ACCENT + '60' }} thumbColor={restrictions.can_delete_messages !== false ? ACCENT : '#f4f3f4'} />} />
-        <View style={[s.divider, { backgroundColor: isDark ? '#2c2c2e' : '#f1f5f9' }]} />
-        <SettingRow icon={<IconLock size={18} color="#f59e0b" />} label={t('parental.canChangePassword')} colors={colors}
-          right={<Switch value={restrictions.can_change_password !== false} onValueChange={(v) => updateRestriction('can_change_password', v)} trackColor={{ false: '#767577', true: ACCENT + '60' }} thumbColor={restrictions.can_change_password !== false ? ACCENT : '#f4f3f4'} />} />
-      </View>
+      <SettingsGroup header={t('parental.restrictions')}>
+        <SettingsSwitchRow icon={IconMail} title={t('parental.canSendEmail')} value={restrictions.can_send_email !== false} onValueChange={(v) => updateRestriction('can_send_email', v)} />
+        <SettingsSwitchRow icon={IconTrash} title={t('parental.canDeleteMessages')} value={restrictions.can_delete_messages !== false} onValueChange={(v) => updateRestriction('can_delete_messages', v)} />
+        <SettingsSwitchRow icon={IconLock} title={t('parental.canChangePassword')} value={restrictions.can_change_password !== false} onValueChange={(v) => updateRestriction('can_change_password', v)} />
+      </SettingsGroup>
 
-      <Text style={[s.sectionLabel, { color: colors.textSecondary, marginTop: 24 }]}>{t('parental.dailyLimit').toUpperCase()}</Text>
-      <View style={[s.settingsGroup, { backgroundColor: isDark ? '#1c1c1e' : '#fff', borderColor: isDark ? '#2c2c2e' : '#e2e8f0', padding: 16 }]}>
-        <View style={s.timeLimitRow}>
-          {TIME_LIMITS.map((tl, idx) => {
-            const isActive = idx === currentLimitIdx;
-            const label = tl.value === 0 ? t('parental.unlimited') : tl.label;
-            return (
-              <TouchableOpacity key={idx}
-                style={[s.timeLimitChip, { backgroundColor: isActive ? ACCENT : (isDark ? '#0b0b0b' : '#f1f5f9'), borderColor: isActive ? ACCENT : (isDark ? '#5A5A5E' : '#e2e8f0') }]}
-                onPress={() => updateRestriction('daily_limit_minutes', tl.value)}
-                accessibilityLabel={`Limite diário ${label}${isActive ? ' selecionado' : ''}`}
-                accessibilityRole="button"
-              >
-                <Text style={[s.timeLimitText, { color: isActive ? '#fff' : colors.text }]}>{label}</Text>
-              </TouchableOpacity>
-            );
-          })}
-        </View>
-      </View>
+      <SettingsGroup header={t('parentalMon.screenTime')}>
+        <SettingsPickerRow
+          icon={IconClock}
+          title={t('parental.dailyLimit')}
+          options={limitOptions}
+          value={currentLimit}
+          onChange={(v) => updateRestriction('daily_limit_minutes', v)}
+          cancelLabel={t('parental.cancel')}
+        />
+      </SettingsGroup>
 
-      <Text style={[s.sectionLabel, { color: colors.textSecondary, marginTop: 24 }]}>{t('parental.bedtime').toUpperCase()}</Text>
-      <View style={[s.settingsGroup, { backgroundColor: isDark ? '#1c1c1e' : '#fff', borderColor: isDark ? '#2c2c2e' : '#e2e8f0', padding: 16 }]}>
-        <View style={{ flexDirection: 'row', gap: 12 }}>
-          <View style={{ flex: 1 }}>
-            <Text style={[s.bedtimeLabel, { color: colors.textSecondary }]}>{t('parental.bedtimeStart')}</Text>
-            <TextInput style={[s.bedtimeInput, { backgroundColor: isDark ? '#0b0b0b' : '#f8fafc', color: colors.text, borderColor: isDark ? '#5A5A5E' : '#e2e8f0' }]}
-              value={restrictions.bedtime_start || '22:00'}
-              onChangeText={(v) => setRestrictions(prev => ({ ...prev, bedtime_start: v }))}
-              onBlur={() => updateRestriction('bedtime_start', restrictions.bedtime_start || '22:00')}
-              placeholder="22:00" placeholderTextColor={colors.textSecondary} keyboardType="numbers-and-punctuation" maxLength={5}
-              accessibilityLabel={t('parental.bedtimeStart')}
-            />
-          </View>
-          <View style={{ flex: 1 }}>
-            <Text style={[s.bedtimeLabel, { color: colors.textSecondary }]}>{t('parental.bedtimeEnd')}</Text>
-            <TextInput style={[s.bedtimeInput, { backgroundColor: isDark ? '#0b0b0b' : '#f8fafc', color: colors.text, borderColor: isDark ? '#5A5A5E' : '#e2e8f0' }]}
-              value={restrictions.bedtime_end || '07:00'}
-              onChangeText={(v) => setRestrictions(prev => ({ ...prev, bedtime_end: v }))}
-              onBlur={() => updateRestriction('bedtime_end', restrictions.bedtime_end || '07:00')}
-              placeholder="07:00" placeholderTextColor={colors.textSecondary} keyboardType="numbers-and-punctuation" maxLength={5}
-              accessibilityLabel={t('parental.bedtimeEnd')}
-            />
-          </View>
-        </View>
-      </View>
-
-      <Text style={[s.sectionLabel, { color: colors.textSecondary, marginTop: 24 }]}>{t('parental.whitelist').toUpperCase()}</Text>
-      <View style={[s.settingsGroup, { backgroundColor: isDark ? '#1c1c1e' : '#fff', borderColor: isDark ? '#2c2c2e' : '#e2e8f0', padding: 16 }]}>
-        <View style={s.addContactRow}>
-          <TextInput style={[s.addContactInput, { backgroundColor: isDark ? '#0b0b0b' : '#f8fafc', color: colors.text, borderColor: isDark ? '#5A5A5E' : '#e2e8f0' }]}
-            value={newContact} onChangeText={setNewContact} placeholder={t('parental.contactEmail')} placeholderTextColor={colors.textSecondary}
-            keyboardType="email-address" autoCapitalize="none" onSubmitEditing={handleAddContact}
-            accessibilityLabel={t('parental.contactEmail')}
-          />
-          <TouchableOpacity style={[s.addContactBtn, { backgroundColor: ACCENT }]} onPress={handleAddContact} accessibilityLabel={t('parental.addContact')} accessibilityRole="button">
-            <IconPlus size={18} color="#fff" />
-          </TouchableOpacity>
-        </View>
-        {whitelist.length === 0 ? (
-          <Text style={[s.emptyInline, { color: colors.textSecondary }]}>{t('parental.noContacts')}</Text>
-        ) : (
-          whitelist.map((contact, idx) => (
-            <View key={contact.email || idx} style={[s.whitelistItem, idx < whitelist.length - 1 && { borderBottomWidth: 1, borderBottomColor: isDark ? '#2c2c2e' : '#f1f5f9' }]}>
-              <View style={[s.whitelistAvatar, { backgroundColor: ACCENT + '15' }]}>
-                <IconUser size={16} color={ACCENT} />
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={[s.whitelistName, { color: colors.text }]}>{contact.name || contact.email}</Text>
-                {contact.name && <Text style={[s.whitelistEmail, { color: colors.textSecondary }]}>{contact.email}</Text>}
-              </View>
-              <TouchableOpacity onPress={() => handleRemoveContact(contact.email)} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} accessibilityLabel={`${t('parental.removeContact')} ${contact.email}`} accessibilityRole="button">
-                <IconX size={16} color="#ef4444" />
-              </TouchableOpacity>
+      <SettingsGroup header={t('parental.bedtime')}>
+        <SettingsCardContent>
+          <View style={{ flexDirection: 'row', gap: 12 }}>
+            <View style={{ flex: 1 }}>
+              <Text style={[s.inputLabel, { color: g.secondary }]}>{t('parental.bedtimeStart')}</Text>
+              <TextInput
+                style={[inputStyle, s.timeInput]}
+                value={restrictions.bedtime_start || '22:00'}
+                onChangeText={(v) => setRestrictions(prev => ({ ...prev, bedtime_start: v }))}
+                onBlur={() => updateRestriction('bedtime_start', restrictions.bedtime_start || '22:00')}
+                placeholder="22:00" placeholderTextColor={g.secondary} keyboardType="numbers-and-punctuation" maxLength={5}
+                accessibilityLabel={t('parental.bedtimeStart')}
+              />
             </View>
-          ))
-        )}
-      </View>
+            <View style={{ flex: 1 }}>
+              <Text style={[s.inputLabel, { color: g.secondary }]}>{t('parental.bedtimeEnd')}</Text>
+              <TextInput
+                style={[inputStyle, s.timeInput]}
+                value={restrictions.bedtime_end || '07:00'}
+                onChangeText={(v) => setRestrictions(prev => ({ ...prev, bedtime_end: v }))}
+                onBlur={() => updateRestriction('bedtime_end', restrictions.bedtime_end || '07:00')}
+                placeholder="07:00" placeholderTextColor={g.secondary} keyboardType="numbers-and-punctuation" maxLength={5}
+                accessibilityLabel={t('parental.bedtimeEnd')}
+              />
+            </View>
+          </View>
+        </SettingsCardContent>
+      </SettingsGroup>
 
-      <Text style={[s.sectionLabel, { color: colors.textSecondary, marginTop: 24 }]}>{t('parental.contentFilters') || 'CONTENT FILTERS'}</Text>
-      <View style={[s.settingsGroup, { backgroundColor: isDark ? '#1c1c1e' : '#fff', borderColor: isDark ? '#2c2c2e' : '#e2e8f0' }]}>
-        <SettingRow icon={<IconShield size={18} color="#ef4444" />} label={t('parental.filterAdult') || 'Block adult content'} colors={colors}
-          right={<Switch value={restrictions.filter_adult !== false} onValueChange={(v) => updateRestriction('filter_adult', v)} trackColor={{ false: '#767577', true: ACCENT + '60' }} thumbColor={restrictions.filter_adult !== false ? ACCENT : '#f4f3f4'} />} />
-        <View style={[s.divider, { backgroundColor: isDark ? '#2c2c2e' : '#f1f5f9' }]} />
-        <SettingRow icon={<IconAlertTriangle size={18} color="#f59e0b" />} label={t('parental.filterViolence') || 'Block violence'} colors={colors}
-          right={<Switch value={restrictions.filter_violence === true} onValueChange={(v) => updateRestriction('filter_violence', v)} trackColor={{ false: '#767577', true: ACCENT + '60' }} thumbColor={restrictions.filter_violence === true ? ACCENT : '#f4f3f4'} />} />
-        <View style={[s.divider, { backgroundColor: isDark ? '#2c2c2e' : '#f1f5f9' }]} />
-        <SettingRow icon={<IconFilter size={18} color={colors.primary} />} label={t('parental.filterProfanity') || 'Filter profanity'} colors={colors}
-          right={<Switch value={restrictions.filter_profanity === true} onValueChange={(v) => updateRestriction('filter_profanity', v)} trackColor={{ false: '#767577', true: ACCENT + '60' }} thumbColor={restrictions.filter_profanity === true ? ACCENT : '#f4f3f4'} />} />
-        <View style={[s.divider, { backgroundColor: isDark ? '#2c2c2e' : '#f1f5f9' }]} />
-        <SettingRow icon={<IconEye size={18} color={colors.primary} />} label={t('parental.safeSearch') || 'Safe search'} colors={colors}
-          right={<Switch value={restrictions.safe_search === true} onValueChange={(v) => updateRestriction('safe_search', v)} trackColor={{ false: '#767577', true: ACCENT + '60' }} thumbColor={restrictions.safe_search === true ? ACCENT : '#f4f3f4'} />} />
-      </View>
+      <SettingsGroup header={t('parental.whitelist')} inset={60}>
+        <SettingsCardContent>
+          <View style={{ flexDirection: 'row', gap: 8 }}>
+            <TextInput
+              style={[inputStyle, { flex: 1 }]}
+              value={newContact} onChangeText={setNewContact} placeholder={t('parental.contactEmail')} placeholderTextColor={g.secondary}
+              keyboardType="email-address" autoCapitalize="none" onSubmitEditing={handleAddContact}
+              accessibilityLabel={t('parental.contactEmail')}
+            />
+            <Pressable onPress={handleAddContact} style={({ pressed }) => [s.addBtn, { backgroundColor: ink, opacity: pressed ? 0.7 : 1 }]} accessibilityLabel={t('parental.addContact')} accessibilityRole="button">
+              <IconPlus size={18} color={onInk} />
+            </Pressable>
+          </View>
+        </SettingsCardContent>
+        {whitelist.length === 0 ? (
+          <SettingsRow title={t('parental.noContacts')} titleStyle={{ color: g.secondary, fontSize: 14 }} />
+        ) : whitelist.map((contact, idx) => (
+          <View key={contact.email || idx} style={s.listRow}>
+            <View style={{ marginRight: 12 }}><MutedIcon Icon={IconUser} /></View>
+            <View style={{ flex: 1, minWidth: 0 }}>
+              <Text style={[s.rowTitle, { color: g.text }]} numberOfLines={1}>{contact.name || contact.email}</Text>
+              {!!contact.name && <Text style={[s.rowSub, { color: g.secondary }]} numberOfLines={1}>{contact.email}</Text>}
+            </View>
+            <Pressable onPress={() => handleRemoveContact(contact.email)} hitSlop={10} accessibilityLabel={`${t('parental.removeContact')} ${contact.email}`} accessibilityRole="button" style={s.removeBtn}>
+              <IconX size={16} color={g.destructive} />
+            </Pressable>
+          </View>
+        ))}
+      </SettingsGroup>
 
-      <View style={{ height: 40 }} />
-    </ScrollView>
+      <SettingsGroup header={t('parental.contentFilters') || 'Content filters'}>
+        <SettingsSwitchRow icon={IconShield} title={t('parental.filterAdult') || 'Block adult content'} value={restrictions.filter_adult !== false} onValueChange={(v) => updateRestriction('filter_adult', v)} />
+        <SettingsSwitchRow icon={IconAlertTriangle} title={t('parental.filterViolence') || 'Block violence'} value={restrictions.filter_violence === true} onValueChange={(v) => updateRestriction('filter_violence', v)} />
+        <SettingsSwitchRow icon={IconFilter} title={t('parental.filterProfanity') || 'Filter profanity'} value={restrictions.filter_profanity === true} onValueChange={(v) => updateRestriction('filter_profanity', v)} />
+        <SettingsSwitchRow icon={IconEye} title={t('parental.safeSearch') || 'Safe search'} value={restrictions.safe_search === true} onValueChange={(v) => updateRestriction('safe_search', v)} />
+      </SettingsGroup>
+    </View>
   );
 
   // ─── Tab Content Map ───
@@ -966,124 +1026,104 @@ function ParentalMonitorScreenInner() {
     contacts: renderContactsTab,
   };
 
+  // ─── Header ───
+
+  const HeaderTitle = () => (
+    <View style={s.hTitle} accessibilityRole="header" accessibilityLabel={`${childName}, ${statusLine}`}>
+      <View>
+        <AvatarCircle email={childEmail} name={childName} size={32} />
+        {isOnline && <View style={[s.hDot, { borderColor: g.pageBg }]} />}
+      </View>
+      <View style={{ flexShrink: 1, minWidth: 0, marginLeft: 10 }}>
+        <Text style={[s.hName, { color: g.text }]} numberOfLines={1} maxFontSizeMultiplier={1.3}>{childName}</Text>
+        <Text style={[s.hSub, { color: g.secondary }]} numberOfLines={1} maxFontSizeMultiplier={1.3}>{statusLine}</Text>
+      </View>
+    </View>
+  );
+
+  const onBack = () => {
+    if (showRestrictions) { setShowRestrictions(false); return; }
+    try { if (router.canGoBack?.()) { router.back(); return; } } catch {}
+    try { router.replace('/parental'); } catch {}
+  };
+
   // ─── Main Render ───
 
+  const bottomPad = 32 + (USE_NATIVE_HEADER && Platform.OS === 'ios' ? 0 : insets.bottom);
+
   return (
-    <View style={[s.container, { backgroundColor: colors.background }]}>
-      {/* Modern gradient header */}
-      <View style={[s.header,
-        Platform.OS === 'web'
-          ? { background: 'linear-gradient(135deg, #059669 0%, #10b981 50%, #34d399 100%)' }
-          : { backgroundColor: ACCENT }
-      ]}>
-        <TouchableOpacity onPress={() => router.back()} style={s.backBtn} accessibilityLabel="Voltar" accessibilityRole="button">
-          <IconArrowLeft size={24} color="#fff" />
-        </TouchableOpacity>
-        <View style={{ flex: 1 }}>
-          <Text style={[s.headerTitle, { color: '#fff' }]} numberOfLines={1}>{childName}</Text>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-            <IconEye size={13} color="rgba(255,255,255,0.8)" />
-            <Text style={[s.headerSub, { color: 'rgba(255,255,255,0.8)' }]}>Modo monitoramento</Text>
-          </View>
-        </View>
-        <TouchableOpacity
-          onPress={() => setShowRestrictions(v => !v)}
-          style={s.headerSettingsBtn}
-          accessibilityLabel="Restrições e configurações"
-          accessibilityRole="button"
-        >
-          <IconShield size={22} color="#fff" />
-        </TouchableOpacity>
-      </View>
-
-      {/* 4-tab segmented control */}
-      <View style={[s.tabsBar, { backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
-        {tabs.map(t2 => (
-          <TouchableOpacity
-            key={t2.key}
-            style={[s.tab, tab === t2.key && { borderBottomColor: ACCENT }]}
-            onPress={() => setTab(t2.key)}
-            accessibilityLabel={`Aba ${t2.label}${tab === t2.key ? ' selecionada' : ''}`}
-            accessibilityRole="tab"
-            accessibilityState={{ selected: tab === t2.key }}
-          >
-            <t2.icon size={15} color={tab === t2.key ? ACCENT : colors.textSecondary} />
-            <Text style={[s.tabText, { color: tab === t2.key ? ACCENT : colors.textSecondary }]}>{t2.label}</Text>
-            {t2.badge > 0 && <View style={s.tabBadge}><Text style={s.tabBadgeText}>{t2.badge}</Text></View>}
-          </TouchableOpacity>
-        ))}
-      </View>
-
-      {/* SOS Emergency Button */}
-      {!loading && !showRestrictions && (
-        <View style={[s.sosContainer, { backgroundColor: isDark ? '#1c1c1e' : '#fff', borderBottomColor: isDark ? '#2c2c2e' : '#f1f5f9' }]}>
-          <TouchableOpacity
-            style={s.sosButton}
-            onPress={async () => {
-              if (sosLoading) return;
-              setSosLoading(true);
-              try {
-                const r = await api.parentalGetLocation(childEmail);
-                if (!mounted.current) return;
-                const lat = Number(r?.data?.latitude);
-                const lng = Number(r?.data?.longitude);
-                const hasCoords = r?.success && r?.data && Number.isFinite(lat) && Number.isFinite(lng);
-                if (hasCoords) {
-                  const ts = r.data.updated_at ? fmtTime(r.data.updated_at) : '--';
-                  Alert.alert(
-                    t('parental.childLocation') || 'Child Location',
-                    `${lat.toFixed(5)}, ${lng.toFixed(5)}\n${t('parental.lastUpdated') || 'Updated'}: ${ts}`,
-                    [{ text: 'OK' }]
-                  );
-                } else {
-                  Alert.alert(
-                    t('parental.locationUnavailable') || 'Localização indisponível',
-                    t('parental.locationUnavailableDesc') || 'Não foi possível obter a localização. O dispositivo pode estar offline ou a permissão de localização desligada.'
-                  );
-                }
-              } catch {
-                if (mounted.current) Alert.alert(t('parental.error') || 'Error', t('parental.connectionError') || 'Connection error');
-              } finally { if (mounted.current) setSosLoading(false); }
-            }}
-            activeOpacity={0.7}
-            accessibilityLabel="SOS - Localizar criança"
-            accessibilityRole="button"
-          >
-            {sosLoading ? <ActivityIndicator size="small" color="#fff" /> : (
-              <>
-                <IconAlertCircle size={18} color="#fff" />
-                <Text style={s.sosButtonText}>{t('parental.findChild') || 'Find Child'}</Text>
-              </>
-            )}
-          </TouchableOpacity>
-
-          {todayMinutes !== undefined && todayMinutes !== null && (
-            <View style={s.quickTimeBar}>
-              <IconClock size={14} color={colors.textSecondary} />
-              <View style={[s.quickTimeBg, { backgroundColor: isDark ? '#0b0b0b' : '#f1f5f9' }]}>
-                <View style={[s.quickTimeFill, {
-                  width: `${Math.min((todayMinutes / Math.max(restrictions.daily_limit_minutes || 180, 1)) * 100, 100)}%`,
-                  backgroundColor: (todayMinutes / Math.max(restrictions.daily_limit_minutes || 180, 1)) > 0.8 ? '#ef4444' : ACCENT,
-                }]} />
-              </View>
-              <Text style={[s.quickTimeText, { color: colors.textSecondary }]}>{todayMinutes}m</Text>
-            </View>
-          )}
+    <View style={[s.container, { backgroundColor: g.pageBg }]}>
+      {USE_NATIVE_HEADER ? (
+        // As options do Stack.Screen se MESCLAM entre renders: headerLeft/headerTitle
+        // são sempre passados explicitamente (undefined limpa) p/ não "vazar" entre
+        // o monitor e a sub-tela de restrições.
+        <Stack.Screen options={{
+          ...nativeHeaderOptions({
+            colors,
+            isDark,
+            title: showRestrictions ? t('parentalMon.restrictionsTitle') : childName,
+            headerTitleAlign: 'left',
+            headerShadowVisible: false,
+            headerStyle: { backgroundColor: g.pageBg },
+            contentStyle: { backgroundColor: g.pageBg },
+          }),
+          headerTitle: showRestrictions ? undefined : () => <HeaderTitle />,
+          headerLeft: showRestrictions ? () => <HeaderBackButton onPress={() => setShowRestrictions(false)} color={g.text} /> : undefined,
+          headerBackVisible: !showRestrictions,
+        }} />
+      ) : (
+        <View style={[s.webHeader, { paddingTop: insets.top, backgroundColor: g.pageBg }]}>
+          <Pressable onPress={onBack} style={s.webBack} accessibilityRole="button" accessibilityLabel={t('parentalDash.back')} hitSlop={8}>
+            <IconArrowLeft size={24} color={g.text} />
+          </Pressable>
+          {showRestrictions
+            ? <Text style={[s.hName, { color: g.text, fontSize: 17, flex: 1 }]} numberOfLines={1} accessibilityRole="header">{t('parentalMon.restrictionsTitle')}</Text>
+            : <View style={{ flex: 1, minWidth: 0 }}><HeaderTitle /></View>}
         </View>
       )}
 
-      {/* Content */}
       {loading ? (
         <TabSkeleton dark={isDark} />
       ) : showRestrictions ? (
-        <Animated.View style={{ flex: 1, opacity: slideAnim }}>
-          {renderRestrictionsSheet()}
-        </Animated.View>
+        <ScrollView
+          contentContainerStyle={[s.content, { paddingBottom: bottomPad }]}
+          keyboardShouldPersistTaps="handled"
+          automaticallyAdjustKeyboardInsets={Platform.OS === 'ios'}
+          keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
+          showsVerticalScrollIndicator={false}
+        >
+          {renderRestrictions()}
+        </ScrollView>
       ) : (
-        <Animated.View style={{ flex: 1, opacity: slideAnim }}>
-          {tabContent[tab]()}
-        </Animated.View>
+        <ScrollView
+          contentContainerStyle={{ paddingBottom: bottomPad }}
+          stickyHeaderIndices={[1]}
+          showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+          refreshControl={refresh}
+        >
+          <View style={[s.content, { paddingBottom: 0 }]}>{renderSummary()}</View>
+          <View style={[s.segWrap, { backgroundColor: g.pageBg }]}>
+            <SegmentedControl options={tabs} value={tab} onChange={setTab} testID="monitor-tabs" />
+          </View>
+          <Animated.View style={[s.content, { paddingTop: 14, opacity: slideAnim }]}>
+            {tabContent[tab]()}
+          </Animated.View>
+        </ScrollView>
       )}
+
+      <ActionSheet
+        visible={moreOpen}
+        title={childName}
+        subtitle={childEmail}
+        items={[
+          { key: 'restrictions', Icon: IconSliders, label: t('parentalMon.moreRestrictions') },
+          { key: 'refresh', Icon: IconRefresh, label: t('parentalMon.moreRefresh') },
+        ]}
+        onSelect={onMoreSelect}
+        onClose={() => setMoreOpen(false)}
+        cancelLabel={t('parentalDash.cancel')}
+      />
     </View>
   );
 }
@@ -1094,174 +1134,88 @@ export default function ParentalMonitorScreen() {
   return <ErrorBoundary><ParentalMonitorScreenInner /></ErrorBoundary>;
 }
 
-// ─── Activity icon resolver ───
-function activityIconFor(type) {
+// ─── Activity icon resolver (monocromático; vermelho só p/ chamada perdida) ───
+function activityIconFor(type, t) {
   switch (type) {
     case 'message_sent':
-    case 'message_received':
     case 'chat_message':
-      return { Icon: IconMessageSquare, color: '#111111', label: type === 'message_received' ? 'Recebeu mensagem' : 'Mensagem' };
-    case 'call_outgoing': return { Icon: IconPhone, color: '#22c55e', label: 'Ligação' };
-    case 'call_incoming': return { Icon: IconPhone, color: '#3b82f6', label: 'Chamada recebida' };
-    case 'call_missed':   return { Icon: IconPhoneOff, color: '#ef4444', label: 'Chamada perdida' };
-    case 'status_post':   return { Icon: IconImage, color: '#22c55e', label: 'Publicou status' };
+      return { Icon: IconMessageSquare, label: t('parentalMon.evMessage') };
+    case 'message_received':
+      return { Icon: IconMessageSquare, label: t('parentalMon.evReceived') };
+    case 'call_outgoing': return { Icon: IconPhone, label: t('parentalMon.evCall') };
+    case 'call_incoming': return { Icon: IconPhone, label: t('parentalMon.evCallIn') };
+    case 'call_missed':   return { Icon: IconPhoneOff, label: t('parentalMon.evCallMissed'), danger: true };
+    case 'status_post':   return { Icon: IconImage, label: t('parentalMon.evStatus') };
     case 'video_played':
-    case 'reel_view':     return { Icon: IconVideo, color: '#111111', label: 'Reels' };
-    case 'feed_post':     return { Icon: IconHeart, color: '#f59e0b', label: 'Postou no feed' };
-    case 'app_open':      return { Icon: IconZap, color: '#111111', label: 'Abriu o app' };
-    default:              return { Icon: IconClock, color: '#94a3b8', label: 'Atividade' };
+    case 'reel_view':     return { Icon: IconVideo, label: t('parentalMon.evReels') };
+    case 'feed_post':     return { Icon: IconHeart, label: t('parentalMon.evFeed') };
+    case 'app_open':      return { Icon: IconZap, label: t('parentalMon.evAppOpen') };
+    case 'bedtime':       return { Icon: IconMoon, label: t('parentalMon.evOther') };
+    default:              return { Icon: IconClock, label: t('parentalMon.evOther') };
   }
-}
-
-// ─── Shared Components ───
-
-function SettingRow({ icon, label, right, colors }) {
-  return (
-    <View style={s.settingRow} accessibilityLabel={label} accessibilityRole="switch">
-      <View style={s.settingLeft}>
-        {icon}
-        <Text style={[s.settingLabel, { color: colors.text }]}>{label}</Text>
-      </View>
-      {right}
-    </View>
-  );
 }
 
 // ─── Styles ───
 
 const s = StyleSheet.create({
   container: { flex: 1 },
-  header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 18, paddingTop: Platform.OS === 'ios' ? 56 : androidTopInset(20), paddingBottom: 16, gap: 14 },
-  backBtn: { padding: 6, minWidth: 48, minHeight: 48, alignItems: 'center', justifyContent: 'center' },
-  headerSettingsBtn: { width: 44, height: 44, borderRadius: 14, backgroundColor: 'rgba(255,255,255,0.2)', alignItems: 'center', justifyContent: 'center' },
-  headerTitle: { fontSize: 22, fontWeight: '800' },
-  headerSub: { fontSize: 13, fontWeight: '500' },
+  content: { paddingHorizontal: 16, paddingTop: 12, width: '100%', maxWidth: 720, alignSelf: 'center' },
 
-  // Tabs (now segmented, full-width row)
-  tabsBar: { flexDirection: 'row', borderBottomWidth: 1, paddingHorizontal: 4 },
-  tab: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: 12, paddingHorizontal: 8, gap: 5, borderBottomWidth: 2.5, borderBottomColor: 'transparent', minHeight: 48 },
-  tabText: { fontSize: 12, fontWeight: '600' },
-  tabBadge: { backgroundColor: '#ef4444', minWidth: 18, height: 18, borderRadius: 9, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 4 },
-  tabBadgeText: { color: '#fff', fontSize: 10, fontWeight: '700' },
+  // Header (título nativo customizado + header web)
+  hTitle: { flexDirection: 'row', alignItems: 'center', maxWidth: 280 },
+  hDot: { position: 'absolute', right: -1, bottom: -1, width: 11, height: 11, borderRadius: 6, backgroundColor: '#22c55e', borderWidth: 2 },
+  hName: { fontSize: 16, fontWeight: '600', letterSpacing: -0.2 },
+  hSub: { fontSize: 12, marginTop: 1 },
+  webHeader: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 8, minHeight: 56, gap: 4 },
+  webBack: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center', ...Platform.select({ web: { cursor: 'pointer' }, default: {} }) },
 
-  // Cards (shared)
-  card: { flexDirection: 'row', alignItems: 'center', padding: 16, borderRadius: 20, borderWidth: 1, marginBottom: 12, gap: 14 },
-  cardIcon: { width: 48, height: 48, borderRadius: 16, alignItems: 'center', justifyContent: 'center' },
-  cardTitle: { fontSize: 16, fontWeight: '700' },
-  cardSub: { fontSize: 14, marginTop: 3 },
-  cardMeta: { fontSize: 12 },
-  cardMetaSm: { fontSize: 11, marginTop: 2 },
-  listContent: { padding: 18, paddingBottom: 30 },
+  // Summary card
+  card: { borderRadius: 12, overflow: 'hidden' },
+  sumTop: { flexDirection: 'row', alignItems: 'flex-start', paddingHorizontal: 16, paddingTop: 14, gap: 12 },
+  caption: { fontSize: 13, fontWeight: '500' },
+  sumValueRow: { flexDirection: 'row', alignItems: 'baseline', flexWrap: 'wrap', marginTop: 2, columnGap: 8 },
+  sumValue: { fontSize: 28, fontWeight: '700', letterSpacing: -0.6, fontVariant: ['tabular-nums'] },
+  sumOf: { fontSize: 15, fontWeight: '500' },
+  bonusBtn: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 12, minHeight: 32, borderRadius: 16, marginTop: 2, ...Platform.select({ web: { cursor: 'pointer' }, default: {} }) },
+  bonusText: { fontSize: 13, fontWeight: '600' },
+  track: { height: 6, borderRadius: 3, overflow: 'hidden', marginHorizontal: 16, marginTop: 12 },
+  trackFill: { height: '100%', borderRadius: 3 },
+  sumFoot: { fontSize: 13, paddingHorizontal: 16, marginTop: 8, marginBottom: 14 },
+  hair: { height: StyleSheet.hairlineWidth, marginLeft: 16 },
+  lockRow: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 12, minHeight: 56 },
 
-  // Live status pill
-  livePill: { flexDirection: 'row', alignItems: 'center', alignSelf: 'flex-start', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 999, borderWidth: 1, gap: 8, maxWidth: '100%' },
-  liveDot: { width: 8, height: 8, borderRadius: 4 },
-  livePillText: { fontSize: 13, fontWeight: '700', flexShrink: 1 },
+  actRow: { flexDirection: 'row', gap: 8, marginTop: 12, marginBottom: 6 },
+  segWrap: { paddingHorizontal: 16, paddingTop: 10, paddingBottom: 6, width: '100%', maxWidth: 720, alignSelf: 'center' },
 
-  // AI cards
-  aiCard: { flexDirection: 'row', alignItems: 'center', padding: 14, borderRadius: 16, borderWidth: 1, gap: 12 },
-  aiCardIcon: { width: 32, height: 32, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
-  aiCardTitle: { fontSize: 14, fontWeight: '700', lineHeight: 19 },
-  aiCardSub: { fontSize: 12, marginTop: 3 },
+  // Rows
+  groupHeader: { fontSize: 13, fontWeight: '500', letterSpacing: 0.2, paddingHorizontal: 16, marginBottom: 7 },
+  listRow: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 11, minHeight: 52 },
+  mutedIcon: { width: 32, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center' },
+  rowTitle: { fontSize: 15, letterSpacing: -0.2 },
+  rowSub: { fontSize: 13, lineHeight: 17, marginTop: 2 },
+  rowValue: { fontSize: 13, marginLeft: 10, fontVariant: ['tabular-nums'] },
+  tagRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 7 },
+  tag: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6 },
+  tagText: { fontSize: 11, fontWeight: '600' },
+  inlineBtn: { minWidth: 92, minHeight: 32, paddingHorizontal: 14, borderRadius: 16, alignItems: 'center', justifyContent: 'center', ...Platform.select({ web: { cursor: 'pointer' }, default: {} }) },
+  inlineBtnText: { fontSize: 13, fontWeight: '600' },
 
-  // Trend chip
-  trendChip: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 999 },
-
-  // Pills
-  pill: { paddingHorizontal: 8, paddingVertical: 2, borderRadius: 8 },
-  pillText: { fontSize: 11, fontWeight: '600' },
-
-  // Risk tag
-  riskTag: { paddingHorizontal: 8, paddingVertical: 2, borderRadius: 999 },
-  riskTagText: { fontSize: 10, fontWeight: '700' },
-
-  // Unread dot
-  unreadDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: '#111111' },
-
-  // Settings group
-  sectionLabel: { fontSize: 12, fontWeight: '800', letterSpacing: 0.8, marginBottom: 10, paddingHorizontal: 4 },
-  settingsGroup: { borderRadius: 20, borderWidth: 1, overflow: 'hidden' },
-  settingRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 18, paddingVertical: 16, minHeight: 56 },
-  settingLeft: { flexDirection: 'row', alignItems: 'center', gap: 14, flex: 1 },
-  settingLabel: { fontSize: 16, fontWeight: '600' },
-  divider: { height: 1, marginHorizontal: 16 },
-
-  // Time limit chips
-  timeLimitRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
-  timeLimitChip: { paddingHorizontal: 18, paddingVertical: 12, borderRadius: 16, borderWidth: 2, minHeight: 48, alignItems: 'center', justifyContent: 'center' },
-  timeLimitText: { fontSize: 15, fontWeight: '700' },
-
-  // Bedtime
-  bedtimeLabel: { fontSize: 13, fontWeight: '700', marginBottom: 8 },
-  bedtimeInput: { height: 54, borderRadius: 16, paddingHorizontal: 18, fontSize: 20, fontWeight: '800', textAlign: 'center', borderWidth: 2, fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace' },
-  bedtimeHint: { fontSize: 13, marginTop: 14, textAlign: 'center' },
-
-  // Whitelist
-  addContactRow: { flexDirection: 'row', gap: 8, marginBottom: 12 },
-  addContactInput: { flex: 1, height: 44, borderRadius: 12, paddingHorizontal: 14, fontSize: 14, borderWidth: 1 },
-  addContactBtn: { width: 44, height: 44, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
-  whitelistItem: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 10 },
-  whitelistAvatar: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
-  whitelistName: { fontSize: 14, fontWeight: '600' },
-  whitelistEmail: { fontSize: 12, marginTop: 1 },
-  emptyInline: { fontSize: 13, textAlign: 'center', paddingVertical: 16 },
-
-  // Screen time
-  screenTimeCard: { borderRadius: 20, borderWidth: 1, padding: 18 },
-
-  // Bar chart
-  barChartContainer: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-end', height: 180, paddingTop: 10 },
-  barCol: { alignItems: 'center', flex: 1, justifyContent: 'flex-end', gap: 5 },
-  bar: { width: 28, minHeight: 4 },
-  barValue: { fontSize: 11, fontWeight: '700' },
-  barLabel: { fontSize: 12, marginTop: 5 },
+  // Week chart
+  barChart: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-end', height: 150, paddingHorizontal: 12, paddingTop: 12, paddingBottom: 12 },
+  barCol: { alignItems: 'center', flex: 1, justifyContent: 'flex-end' },
+  bar: { width: 22, minHeight: 4, borderRadius: 5 },
+  barLabel: { fontSize: 11, marginTop: 6 },
 
   // Active hours
   hoursGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  hourChip: { paddingHorizontal: 14, paddingVertical: 8, borderRadius: 10 },
-  hourText: { fontSize: 14, fontWeight: '700' },
+  hourChip: { paddingHorizontal: 12, paddingVertical: 7, borderRadius: 10, alignItems: 'center', minWidth: 64 },
+  hourText: { fontSize: 14, fontWeight: '600', fontVariant: ['tabular-nums'] },
   hourPct: { fontSize: 11, marginTop: 1 },
 
-  // Apps tab
-  appRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-  appIcon: { width: 40, height: 40, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
-  appLabel: { fontSize: 14, fontWeight: '700' },
-  appValue: { fontSize: 13, fontWeight: '600' },
-  appBarBg: { height: 8, borderRadius: 4, marginTop: 6, overflow: 'hidden' },
-  appBarFill: { height: 8, borderRadius: 4 },
-
-  // Contacts list
-  contactRow: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 16, paddingVertical: 12 },
-  contactAvatar: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
-  contactName: { fontSize: 14, fontWeight: '600' },
-  contactMeta: { fontSize: 12, marginTop: 1 },
-  contactCard: { flexDirection: 'row', alignItems: 'flex-start', padding: 14, borderRadius: 18, borderWidth: 1, marginBottom: 10 },
-  inlineBtn: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 12, paddingVertical: 7, borderRadius: 10, minHeight: 32, justifyContent: 'center' },
-  inlineBtnText: { color: '#fff', fontSize: 12, fontWeight: '700' },
-
-  // Timeline
-  timelineGroup: { flexDirection: 'row', paddingHorizontal: 14, paddingVertical: 12, gap: 10 },
-  timelineHour: { width: 48, fontSize: 12, fontWeight: '800', letterSpacing: 0.4 },
-  timelineItem: { flexDirection: 'row', alignItems: 'flex-start', gap: 10, paddingVertical: 6 },
-  timelineDot: { width: 22, height: 22, borderRadius: 11, alignItems: 'center', justifyContent: 'center' },
-  timelineText: { fontSize: 13, lineHeight: 17 },
-  timelineSub: { fontSize: 12, marginTop: 1 },
-  timelineTime: { fontSize: 11, marginLeft: 8, marginTop: 2 },
-
-  // Save indicator
-  saveIndicator: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingVertical: 8, borderRadius: 10, marginBottom: 12 },
-
-  // Loading / Empty
-  loadingContainer: { flex: 1, alignItems: 'center', justifyContent: 'center' },
-  emptyContainer: { alignItems: 'center', justifyContent: 'center', paddingTop: 60, gap: 12 },
-  emptyText: { textAlign: 'center', fontSize: 14, color: '#94a3b8' },
-
-  // SOS button
-  sosContainer: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 18, paddingVertical: 10, gap: 12, borderBottomWidth: 1 },
-  sosButton: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, backgroundColor: '#ef4444', paddingHorizontal: 18, paddingVertical: 10, borderRadius: 14, minHeight: 40, minWidth: 120 },
-  sosButtonText: { color: '#fff', fontSize: 14, fontWeight: '800' },
-  quickTimeBar: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 8 },
-  quickTimeBg: { flex: 1, height: 8, borderRadius: 4, overflow: 'hidden' },
-  quickTimeFill: { height: 8, borderRadius: 4 },
-  quickTimeText: { fontSize: 12, fontWeight: '700', minWidth: 30, textAlign: 'right' },
+  // Restrições
+  saveRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingBottom: 12 },
+  inputLabel: { fontSize: 13, fontWeight: '500', marginBottom: 6 },
+  timeInput: { textAlign: 'center', fontSize: 17, fontWeight: '600', fontVariant: ['tabular-nums'] },
+  addBtn: { width: 44, height: 44, borderRadius: 10, alignItems: 'center', justifyContent: 'center', ...Platform.select({ web: { cursor: 'pointer' }, default: {} }) },
+  removeBtn: { width: 32, height: 32, alignItems: 'center', justifyContent: 'center', ...Platform.select({ web: { cursor: 'pointer' }, default: {} }) },
 });

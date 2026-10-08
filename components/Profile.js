@@ -172,7 +172,7 @@ function formatCount(n) {
 function resolveMedia(url) {
   if (!url) return '';
   if (url.startsWith('http')) return url;
-  return `${BASE_URL}${url}`;
+  return api.getMediaUrl(url);
 }
 
 // Row style for the three-dot action sheet (Share/Block/Report).

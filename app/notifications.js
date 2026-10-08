@@ -12,7 +12,7 @@ import { useLanguage } from '../context/LanguageContext';
 import { FontSize, Spacing, BorderRadius, haptic } from '../constants/theme';
 import PressableRow from '../components/PressableRow'; // [2026-10-08 apps-native]
 import PressableScale from '../components/PressableScale';
-import { USE_NATIVE_HEADER, nativeHeaderOptions } from '../components/nativeHeader';
+import { USE_NATIVE_HEADER, nativeHeaderOptions, nativeScrollInsetProps } from '../components/nativeHeader';
 import { ListSkeleton } from '../components/SkeletonLoader';
 import AvatarCircle from '../components/AvatarCircle';
 import {
@@ -71,7 +71,7 @@ function tl(t, key, fb, params) {
 //   - Você:     direct interactions on my content (mentions + comments + likes)
 const TABS = [
   { key: 'all',       labelKey: 'notifications.tabAll',       label: 'Todas',     types: null },
-  { key: 'foryou',    labelKey: 'notifications.tabForYou',    label: 'Pra você',  types: ['like', 'comment', 'mention', 'follow'] },
+  { key: 'foryou',    labelKey: 'notifications.tabForYou',    label: 'Pra você',  types: ['like', 'comment', 'mention', 'follow', 'contact_joined'] },
   { key: 'following', labelKey: 'notifications.tabFollowing', label: 'Seguindo',  types: ['chat', 'live', 'email'] },
   { key: 'you',       labelKey: 'notifications.tabYou',       label: 'Você',      types: ['mention', 'comment', 'like'] },
 ];
@@ -85,6 +85,7 @@ function TypeBadge({ type, size = 18, ringColor = '#fff' }) {
     like:    { Icon: IconHeart,         bg: '#ef4444', color: '#fff' },
     comment: { Icon: IconMessageSquare, bg: '#f59e0b', color: '#fff' },
     follow:  { Icon: IconUser,          bg: '#10b981', color: '#fff' },
+    contact_joined: { Icon: IconUser,   bg: BRAND,    color: '#fff' }, // [2026-10-08 contact-joined-push]
     live:    { Icon: IconFilm,          bg: '#111111', color: '#fff' },
   };
   const cfg = map[type] || { Icon: IconBell, bg: '#6b7280', color: '#fff' };
@@ -194,6 +195,16 @@ function NotifRow({ item, colors, isDark, onPress, onAction, t }) {
     title = name ? tl(t, 'notifications.startedFollowing', { pt: '{name} começou a seguir você', en: '{name} started following you', es: '{name} comenzó a seguirte' }, { name }) : title;
   }
 
+  // [2026-10-08 contact-joined-push] "Fulano entrou no Chatyy!" · botão "Dizer oi".
+  const isContactJoined = item.type === 'contact_joined';
+  if (isContactJoined) {
+    let cjData = item.data || {};
+    if (typeof cjData === 'string') { try { cjData = JSON.parse(cjData || '{}'); } catch { cjData = {}; } }
+    const name = cjData.name || item.author_name || (item.author_email || '').split('@')[0];
+    if (name) title = tl(t, 'notifications.contactJoined', { pt: '{name} entrou no Chatyy!', en: '{name} joined Chatyy!', es: '{name} se unió a Chatyy!' }, { name });
+    body = '';
+  }
+
   const unreadBg = isDark ? 'rgba(17, 17, 17,0.10)' : 'rgba(17, 17, 17,0.05)';
 
   // Right-side thumbnail (post preview) for likes/comments referencing a post
@@ -270,6 +281,22 @@ function NotifRow({ item, colors, isDark, onPress, onAction, t }) {
             >
               <Text style={[styles.pillSecondaryText, { color: colors.text }]}>
                 {t('notifications.message')}
+              </Text>
+            </PressableScale>
+          </View>
+        )}
+
+        {isContactJoined && !!item.author_email && (
+          <View style={styles.actionRow}>
+            <PressableScale
+              onPress={(e) => { e?.stopPropagation?.(); onAction?.(item, 'say_hi'); }}
+              style={[styles.pillPrimary, { backgroundColor: BRAND }]}
+              haptic="medium"
+              accessibilityRole="button"
+              accessibilityLabel={tl(t, 'notifications.sayHi', { pt: 'Dizer oi', en: 'Say hi', es: 'Saludar' })}
+            >
+              <Text style={styles.pillPrimaryText}>
+                {tl(t, 'notifications.sayHi', { pt: 'Dizer oi', en: 'Say hi', es: 'Saludar' })}
               </Text>
             </PressableScale>
           </View>
@@ -600,8 +627,13 @@ function NotificationsScreenInner() {
         setNotifications(prev => prev.map(tagAction(null)));
         showToast(t('notifications.followBackError') || 'Não foi possível seguir agora. Tente de novo.');
       }
-    } else if (kind === 'message') {
-      router.push({ pathname: '/chat-conversation', params: { peer: notif.author_email } });
+    } else if (kind === 'message' || kind === 'say_hi') {
+      // [2026-10-08 contact-joined-push] chat-conversation lê params.email (+type)
+      // p/ criar/abrir o direct — `peer` não era lido (abria conversa vazia).
+      let d = notif.data || {};
+      if (typeof d === 'string') { try { d = JSON.parse(d || '{}'); } catch { d = {}; } }
+      if (kind === 'say_hi' && !notif.read) { api.notificationsMarkRead(notif.id).catch(() => {}); }
+      router.push({ pathname: '/chat-conversation', params: { email: notif.author_email, type: 'direct', ...(d.name ? { name: d.name } : {}) } });
     }
   }, [router, showToast, t]);
 
@@ -640,6 +672,9 @@ function NotificationsScreenInner() {
         break;
       case 'follow':
         router.push(`/u/${encodeURIComponent(notif.author_email)}`);
+        break;
+      case 'contact_joined':
+        router.push({ pathname: '/chat-conversation', params: { email: notif.author_email, type: 'direct', ...(data.name ? { name: data.name } : {}) } });
         break;
       case 'live':
         router.push({ pathname: '/live-viewer', params: {
@@ -795,7 +830,7 @@ function NotificationsScreenInner() {
         }
         contentContainerStyle={notifications.length === 0 ? styles.listEmpty : styles.listContent}
         ItemSeparatorComponent={Separator}
-        contentInsetAdjustmentBehavior="automatic"
+        {...nativeScrollInsetProps() /* [2026-10-08 header-inset-all] */}
         initialNumToRender={14}
         maxToRenderPerBatch={10}
         removeClippedSubviews={Platform.OS === 'android'}

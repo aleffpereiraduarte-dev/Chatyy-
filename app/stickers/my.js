@@ -26,11 +26,8 @@ function resolveCoverUri(url) {
   if (!url || typeof url !== 'string') return null;
   if (/^https?:\/\//.test(url)) return url;
   if (url.startsWith('/data/')) {
-    let base = '';
-    try { base = (typeof api.getCurrentBaseUrl === 'function' ? api.getCurrentBaseUrl() : api.BASE_URL) || ''; } catch {}
-    if (!base) base = api.BASE_URL || '';
-    base = String(base).replace(/\/$/, '');
-    return base ? base + url : 'https://chatyy.com.br' + url;
+    // [2026-10-08 sticker-maker] /data/sticker-files só no US (getMediaUrl → CDN_URL)
+    try { return api.getMediaUrl(url); } catch { return 'https://chatyy.com.br' + url; }
   }
   return `https://media.chatyy.com.br/${url.replace(/^\/+/, '')}`;
 }

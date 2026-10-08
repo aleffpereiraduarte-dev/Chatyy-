@@ -26,7 +26,7 @@ function resolveMediaUrl(u) {
   // origin (chatyy.com.br) 404s for them. Route relative media paths to the
   // CDN so a path that escaped backend CDN-ification still resolves.
   if (u.startsWith('/data/')) return 'https://media.chatyy.com.br' + u;
-  return BASE_URL + (u.startsWith('/') ? '' : '/') + u;
+  return api.getMediaUrl(u.startsWith('/') ? u : '/' + u);
 }
 import {
   IconArrowLeft, IconHeart, IconHeartOutline, IconMessageCircle,

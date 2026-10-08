@@ -529,7 +529,7 @@ function NativeImageViewerWithLoading({ url }) {
 // crashing). Defined at module scope so it isn't remounted each render.
 function _PinchPassthrough({ children }) { return children; }
 
-function ImageViewer({ url, messageId, fileSize, createdAt, t, placeholderUri, blurhash, thumbUri, onDismissMove, onDismissEnd, dismissSV, onDismissStart, onZoomChange }) {
+function ImageViewer({ url, messageId, conversationId, fileSize, createdAt, t, placeholderUri, blurhash, thumbUri, onDismissMove, onDismissEnd, dismissSV, onDismissStart, onZoomChange }) {
   // [2026-10-08 photo-editor] tamanho natural (limites do pan no zoom UI-thread)
   const [_nat, _setNat] = useState(null);
   // We deliberately DO NOT use `_NativeImageZoomView` here even on iOS. The
@@ -556,6 +556,9 @@ function ImageViewer({ url, messageId, fileSize, createdAt, t, placeholderUri, b
   // the `key` prop is the only reliable way; setting state alone won't
   // re-trigger the network request after onError fired).
   const [retryEpoch, setRetryEpoch] = useState(0);
+  // [2026-10-08 media-local-store] URLs já tentadas nesta abertura (fallback
+  // automático de host: origem US → CDN R2) — cada uma no máximo 1×.
+  const _triedRef = useRef(new Set());
   // Reset state whenever the URL changes so the spinner stops spinning on
   // the previous image when the modal is opened for a new one.
   useEffect(() => {
@@ -564,8 +567,11 @@ function ImageViewer({ url, messageId, fileSize, createdAt, t, placeholderUri, b
     setFreshUrl(null);
     setRedownloading(false);
     setRedownloadFailed(null);
+    _triedRef.current = new Set();
   }, [url]);
   const handleRetry = useCallback(() => {
+    _triedRef.current = new Set();
+    setFreshUrl(null);
     setLoading(true);
     setImageError(null);
     setRetryEpoch(e => e + 1);
@@ -576,8 +582,9 @@ function ImageViewer({ url, messageId, fileSize, createdAt, t, placeholderUri, b
     setRedownloadFailed(null);
     try {
       const { requestRedownload } = require('../services/mediaCache');
-      const r = await requestRedownload(messageId, url);
+      const r = await requestRedownload(messageId, url, { conversationId });
       if (r?.ok && (r.localUri || r.url)) {
+        _triedRef.current = new Set();
         setFreshUrl(r.localUri || r.url);
         setImageError(null);
         setLoading(true);
@@ -590,8 +597,15 @@ function ImageViewer({ url, messageId, fileSize, createdAt, t, placeholderUri, b
     } finally {
       setRedownloading(false);
     }
-  }, [messageId, redownloading, url]);
-  const effectiveUrl = freshUrl || url;
+  }, [messageId, redownloading, url, conversationId]);
+  // [2026-10-08 media-local-store] Cópia LOCAL da mensagem (store permanente)
+  // vence a URL remota — mesmo se a URL mudou ou o servidor perdeu o arquivo.
+  const _localForMsg = useMemo(() => {
+    if (Platform.OS === 'web' || !messageId) return null;
+    if (typeof url === 'string' && (url.startsWith('file://') || url.startsWith('content://'))) return null;
+    try { return require('../services/mediaCache').getLocalUriForMessage?.(messageId) || null; } catch { return null; }
+  }, [messageId, url]);
+  const effectiveUrl = freshUrl || _localForMsg || url;
   const lastScale = useRef(1);
   const lastTranslateX = useRef(0);
   const lastTranslateY = useRef(0);
@@ -765,30 +779,38 @@ function ImageViewer({ url, messageId, fileSize, createdAt, t, placeholderUri, b
           onLoadEnd={() => setLoading(false)}
           onError={(e) => {
             setLoading(false);
-            // OFFLINE-FIRST: if the URL we tried IS a remote URL (i.e. cache
-            // missed BEFORE getFullUrl), one more sync check — the syncIndex
-            // may have been populated by a parallel cacheMedia that finished
-            // between mount and the Image fetch. Same for retry storms.
+            // [2026-10-08 media-local-store] Ordem de recuperação ANTES de
+            // mostrar erro: (1) cópia local (por URL ou pela mensagem);
+            // (2) se o local falhou, a URL remota original; (3) hosts
+            // alternativos (origem US → CDN R2), 1× cada.
+            try { _triedRef.current.add(effectiveUrl); } catch {}
+            const _switchTo = (next) => {
+              _triedRef.current.add(next);
+              setFreshUrl(next);
+              setImageError(null);
+              setLoading(true);
+              setRetryEpoch(epc => epc + 1);
+            };
             try {
-              const { getLocalUriIfCached } = require('../services/mediaCache');
-              if (effectiveUrl && !effectiveUrl.startsWith('file://')) {
-                const local = getLocalUriIfCached(effectiveUrl);
-                if (local && local !== effectiveUrl) {
-                  // We have it on disk — switch source and clear error.
-                  setFreshUrl(local);
-                  setImageError(null);
-                  setLoading(true);
-                  setRetryEpoch(epc => epc + 1);
-                  return;
-                }
+              const mc = require('../services/mediaCache');
+              const isLocal = typeof effectiveUrl === 'string' && effectiveUrl.startsWith('file://');
+              if (!isLocal) {
+                const local = (effectiveUrl && mc.getLocalUriIfCached(effectiveUrl))
+                  || (messageId ? mc.getLocalUriForMessage?.(messageId) : null);
+                if (local && local !== effectiveUrl && !_triedRef.current.has(local)) { _switchTo(local); return; }
+              }
+              const remoteOrig = (typeof url === 'string' && /^https?:/i.test(url)) ? url : null;
+              if (isLocal && remoteOrig && !_triedRef.current.has(remoteOrig)) { _switchTo(remoteOrig); return; }
+              const base = remoteOrig || (!isLocal ? effectiveUrl : null);
+              if (base) {
+                const alts = require('../services/api').getMediaFallbackUrls?.(base) || [];
+                const next = alts.find(a => a && !_triedRef.current.has(a));
+                if (next) { _switchTo(next); return; }
               }
             } catch {}
             const raw = e?.nativeEvent?.error || '';
-            // iOS WKWebView/NSURLSession surfaces NSURLErrorNotConnectedToInternet
-            // as the English string "The Internet connection appears to be
-            // offline." We catch known offline phrasings (also Android's "Unable
-            // to resolve host" etc.) and substitute the localized cache-miss
-            // copy. Anything else falls through to the original native message.
+            // NUNCA mostrar o texto cru do servidor/SO (vinha "The requested URL
+            // was not found on this server." em inglês). Classifica e traduz.
             const lower = String(raw).toLowerCase();
             const offlineLike = !raw
               || lower.includes('offline')
@@ -800,10 +822,15 @@ function ImageViewer({ url, messageId, fileSize, createdAt, t, placeholderUri, b
               || lower.includes('network connection was lost')
               || lower.includes('-1009')
               || lower.includes('econnreset');
-            if (offlineLike) {
+            let _offlineNow = false;
+            try { const ni = require('../services/networkInfo'); const tp = ni.getNetworkType?.(); _offlineNow = tp === 'none'; } catch {}
+            const notFound = /not found|404|410|gone|no such/.test(lower);
+            if (notFound) {
+              setImageError(t?.('media.notOnServer') || 'Este arquivo não está mais no servidor e não há cópia salva neste aparelho.');
+            } else if (offlineLike && (_offlineNow || !raw || !lower.includes('http'))) {
               setImageError(t?.('media.offlineCacheMiss') || 'Sem internet — esta mídia ainda não foi baixada.');
             } else {
-              setImageError(String(raw));
+              setImageError(t?.('media.loadFailedHint') || 'Não foi possível carregar agora. Verifique a conexão e tente de novo.');
             }
           }}
         />
@@ -896,18 +923,26 @@ function ImageViewer({ url, messageId, fileSize, createdAt, t, placeholderUri, b
                 {!redownloading && fileSize > 0 ? ` (${formatSize(fileSize)})` : ''}
               </Text>
             </TouchableOpacity>
-          ) : (
+          ) : null}
+          {messageId && redownloadFailed && !redownloadFailed.deleted && !redownloading ? (
+            <Text style={{ color: 'rgba(255,255,255,0.6)', fontSize: 12, marginTop: 10, textAlign: 'center' }}>
+              {t?.('media.redownloadFailed') || 'Não deu para baixar agora. Tente de novo em instantes.'}
+            </Text>
+          ) : null}
+          {!redownloadFailed?.deleted ? (
             <TouchableOpacity
               onPress={handleRetry}
-              style={{ backgroundColor: '#111111', paddingHorizontal: 20, paddingVertical: 10, borderRadius: 10 }}
-              accessibilityLabel="Tentar novamente"
+              style={messageId
+                ? { marginTop: 8, paddingHorizontal: 16, paddingVertical: 8, borderRadius: 10 }
+                : { backgroundColor: '#111111', paddingHorizontal: 20, paddingVertical: 10, borderRadius: 10 }}
+              accessibilityLabel={t?.('chat.retry') || 'Tentar novamente'}
               accessibilityRole="button"
             >
-              <Text style={{ color: '#fff', fontSize: 14, fontWeight: '600' }}>
+              <Text style={{ color: messageId ? 'rgba(255,255,255,0.8)' : '#fff', fontSize: 14, fontWeight: '600' }}>
                 {t?.('chat.retry') || 'Tentar novamente'}
               </Text>
             </TouchableOpacity>
-          )}
+          ) : null}
         </View>
       )}
       {_UI_ZOOM ? (
@@ -1980,6 +2015,8 @@ export default function ChatMediaViewer({ visible, onClose, fileUrl, hlsUrl, fil
       const _mid = (it && (it.messageId ?? it.message_id)) ?? messageId ?? null;
       mediaCache.saveMediaPermanent(absolute, {
         conversationId: conversationId != null ? conversationId : undefined,
+        // [2026-10-08 media-local-store] → media/<conta>/<conv>/<msgId>.<ext>
+        messageId: _mid != null ? _mid : undefined,
       }).then((local) => {
         // Best-effort: write the local file path back into SQLite so a cold
         // open resolves from disk without waiting on the in-memory syncIndex.
@@ -2426,7 +2463,7 @@ export default function ChatMediaViewer({ visible, onClose, fileUrl, hlsUrl, fil
               const isPrv = PREVIEWABLE_EXTS.includes(e);
               return (
                 <View style={{ width: SCREEN_W, flex: 1 }}>
-                  {isImg ? <ImageViewer url={u} messageId={item?.messageId || item?.id || 0} fileSize={item?.fileSize} createdAt={item?.createdAt || item?.created_at} t={t} placeholderUri={item?.placeholderUri || item?.thumbB64Uri} blurhash={item?.blurhash} thumbUri={item?.thumbUri} onDismissMove={_onDismissMove} onDismissEnd={_onDismissEnd} dismissSV={_dismissSV} onDismissStart={_onDismissStart} onZoomChange={_onZoomChange} /> :
+                  {isImg ? <ImageViewer url={u} messageId={item?.messageId || item?.id || 0} conversationId={conversationId} fileSize={item?.fileSize} createdAt={item?.createdAt || item?.created_at} t={t} placeholderUri={item?.placeholderUri || item?.thumbB64Uri} blurhash={item?.blurhash} thumbUri={item?.thumbUri} onDismissMove={_onDismissMove} onDismissEnd={_onDismissEnd} dismissSV={_dismissSV} onDismissStart={_onDismissStart} onZoomChange={_onZoomChange} /> :
                    isVid ? <VideoPlayer url={u} isActive={index === _currentIdx} allowPip={!viewOnce} /> :
                    isPrv ? <PreviewViewer url={u} filename={item?.fileName} messageId={item?.messageId || item?.id || 0} fileSize={item?.fileSize} t={t} /> :
                    <GenericFileViewer url={u} filename={item?.fileName} fileSize={item?.fileSize} messageId={item?.messageId || item?.id || 0} t={t} />}
@@ -2455,6 +2492,7 @@ export default function ChatMediaViewer({ visible, onClose, fileUrl, hlsUrl, fil
               <ImageViewer
                 url={url}
                 messageId={_active?.messageId || _active?.id || messageId || 0}
+                conversationId={conversationId}
                 fileSize={_activeFileSize}
                 createdAt={_active?.createdAt || _active?.created_at}
                 t={typeof t === 'function' ? t : undefined}

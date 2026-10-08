@@ -13,6 +13,22 @@ const MAX_CACHE_MB_DEFAULT = 500;
 const MAX_CACHE_MB_CEILING = 64 * 1024;
 let FileSystem = null;
 
+// [2026-10-08 media-local-store] Store permanente por conta/conversa
+// (documentDirectory/media/<conta>/<conv>/<msgId>.<ext>) — ver services/mediaStore.js.
+let _mediaStoreMod = null;
+function _store() {
+  if (Platform.OS === 'web') return null;
+  if (_mediaStoreMod) return _mediaStoreMod;
+  try { _mediaStoreMod = require('./mediaStore'); } catch { _mediaStoreMod = null; }
+  return _mediaStoreMod;
+}
+// Mídia de CONVERSA (vai pro store permanente mesmo sem conversationId).
+// Status/feed/reels/GIF externos seguem no cacheDirectory (transitório).
+function _isChatMediaUrl(url) {
+  if (typeof url !== 'string') return false;
+  return /\/data\/chat-files\//.test(url) || /^https?:\/\/media\.chatyy\.com\.br\/chat\//i.test(url);
+}
+
 // ── Sync in-memory index: url → local file:// path ─────────────────────
 // Populated from MMKV at module-load (instant, survives restarts) + a
 // post-splash disk scan that adds anything not yet recorded. Lets
@@ -41,7 +57,8 @@ function _loadIndexFromMmkv() {
       let okPrefixes = null;
       try {
         const c = getCacheDir(); const sdir = getSavedDir();
-        okPrefixes = [c, sdir].filter(Boolean);
+        let sroot = null; try { sroot = _store()?.rootDir?.() || null; } catch {}
+        okPrefixes = [c, sdir, sroot].filter(Boolean);
         if (!okPrefixes.length) okPrefixes = null;
       } catch { okPrefixes = null; }
       let n = 0;
@@ -164,7 +181,10 @@ function _normalizeForKey(url) {
       host === 'media.chatyy.com.br' ||
       host === 'chatyy.com.br' ||
       host === 'www.chatyy.com.br' ||
-      host === 'mail.onemundo.com.br'
+      host === 'mail.onemundo.com.br' ||
+      // [2026-10-08 media-local-store] edges regionais servem o MESMO arquivo
+      // (/data/* via proxy) → mesma chave que a origem/CDN.
+      /^api(-[a-z]+)?(-edge)?\.chatyy\.com\.br$/.test(host)
     ) {
       // Path-only key — host stripped, query/fragment dropped by the caller.
       return u.pathname;
@@ -234,7 +254,25 @@ function urlToKey(url) {
 export function getLocalUriSyncJs(url) {
   if (!url || Platform.OS === 'web') return null;
   const key = urlToKey(url);
-  return syncIndex.get(key) || null;
+  // [2026-10-08 media-local-store] 1º o store permanente DA CONTA ATIVA; depois
+  // o syncIndex legado — ignorando arquivo do store de OUTRA conta.
+  const st = _store();
+  if (st) {
+    try {
+      const p = st.lookupByUrlKey(key);
+      if (p) return p;
+    } catch {}
+  }
+  const p2 = syncIndex.get(key) || null;
+  if (p2 && st) { try { if (st.isForeignPath(p2)) return null; } catch {} }
+  return p2;
+}
+
+// Arquivo local de uma MENSAGEM (store permanente da conta ativa), mesmo se a
+// URL mudou (ex.: "Baixar de novo" devolveu URL nova). Sync, zero I/O.
+export function getLocalUriForMessage(messageId) {
+  if (messageId == null || Platform.OS === 'web') return null;
+  try { return _store()?.lookupByMessage(messageId) || null; } catch { return null; }
 }
 
 // Public alias — same semantics as getLocalUriSyncJs but with the name the
@@ -277,13 +315,30 @@ export function initSyncCache() {
     // If the index points to a file that no longer exists, render would
     // hand ExpoImage a broken file:// path and the image stays blank.
     // This sweep evicts those entries so cacheMedia re-downloads cleanly.
+    // [2026-10-08 media-local-store] Só varre entradas dos dirs planos
+    // (cache/saved). Entradas do store permanente (media/<conta>/...) têm nome
+    // <msgId>.<ext> ≠ chave → antes seriam apagadas aqui por engano.
+    const _flatDirs = [getCacheDir(), getSavedDir()].filter(Boolean);
     for (const key of [...syncIndex.keys()]) {
-      if (!liveKeys.has(key)) {
+      const v = syncIndex.get(key);
+      const inFlat = typeof v === 'string' && _flatDirs.some(d => v.startsWith(d));
+      if (inFlat && !liveKeys.has(key)) {
         syncIndex.delete(key);
         changed = true;
       }
     }
+    try {
+      const st = _store();
+      if (st) {
+        for (const [k, p] of st.entriesForSyncIndex()) {
+          if (syncIndex.get(k) !== p) { syncIndex.set(k, p); changed = true; }
+        }
+      }
+    } catch {}
     if (changed) _schedulePersistIndex();
+    // Promove (1×, em background) mídia de conversa que ainda está no
+    // cacheDirectory purgável p/ o store permanente.
+    try { setTimeout(() => { _migrateLegacyCacheToStore().catch(() => {}); }, 8000); } catch {}
   })();
   return syncInitPromise;
 }
@@ -303,11 +358,12 @@ export async function getCachedUri(url) {
   if (!fs) return url;
 
   const key = urlToKey(url);
+  try { const sp = _store()?.lookupByUrlKey(key); if (sp) return sp; } catch {}
   // Fast path: if syncIndex already knows where the file lives (e.g. scanned
   // by initSyncCache at boot or registered by cacheMedia mid-session), skip
   // the fs.getInfoAsync round-trip and the getSavedDir fallback below.
   const indexed = syncIndex.get(key);
-  if (indexed) return indexed;
+  if (indexed && !_store()?.isForeignPath?.(indexed)) return indexed;
 
   // Check BOTH locations — saveMediaPermanent writes to documentDirectory
   // while cacheMedia writes to cacheDirectory. Only checking the cache dir
@@ -1274,6 +1330,104 @@ function _shouldAutoDownload(url) {
   return shouldAutoDownload(matrixType);
 }
 
+// ── [2026-10-08 media-local-store] helpers do store permanente ─────────
+// Decide se este download vai pro store permanente e onde. null = legado
+// (cacheDirectory transitório: status/feed/GIF externo sem conversa).
+function _planStore(url, key, opts) {
+  if (Platform.OS === 'web') return null;
+  if (opts && opts.viewOnce) return null;
+  const st = _store();
+  if (!st) return null;
+  try {
+    let conv = (opts && opts.conversationId != null && opts.conversationId !== '') ? opts.conversationId : null;
+    if (conv == null) {
+      try { _hydrateUrlConvOwner(); const o = _urlConvOwner.get(key); if (o != null) conv = o; } catch {}
+    }
+    const mid = (opts && opts.messageId != null && opts.messageId !== '') ? opts.messageId : null;
+    if (conv == null && mid == null && !_isChatMediaUrl(url) && !st.lookupByUrlKey(key)) return null;
+    return st.planPath({ urlKey: key, conversationId: conv, messageId: mid });
+  } catch { return null; }
+}
+
+// Move (ou copia) um arquivo já baixado p/ o destino do store e registra.
+async function _promoteToStore(fs, fromPath, plan, url, key, opts) {
+  const st = _store();
+  if (!st || !plan || !fromPath || fromPath === plan.abs) return null;
+  try {
+    const src = await fs.getInfoAsync(fromPath);
+    if (!src.exists || !(src.size > 0)) return null;
+    try { await fs.makeDirectoryAsync(plan.dir, { intermediates: true }); } catch {}
+    try { await fs.moveAsync({ from: fromPath, to: plan.abs }); }
+    catch { await fs.copyAsync({ from: fromPath, to: plan.abs }); }
+    st.record(plan, { urlKey: key, messageId: opts && opts.messageId, size: src.size, own: !!(opts && opts.own) });
+    registerSyncKey(url, plan.abs);
+    return plan.abs;
+  } catch { return null; }
+}
+
+// Hosts alternativos p/ a MESMA mídia (ordem: origem US → CDN R2). Vazio p/
+// URLs de terceiros. Delegado ao api.getMediaFallbackUrls (fonte única).
+function _fallbackUrls(url) {
+  try {
+    const api = require('./api');
+    const list = api.getMediaFallbackUrls ? api.getMediaFallbackUrls(url) : [];
+    return Array.isArray(list) ? list.filter(u => u && u !== url) : [];
+  } catch { return []; }
+}
+
+function _headerCI(headers, name) {
+  if (!headers || typeof headers !== 'object') return '';
+  const want = String(name).toLowerCase();
+  for (const k of Object.keys(headers)) {
+    if (String(k).toLowerCase() === want) return String(headers[k] || '');
+  }
+  return '';
+}
+// Resposta HTML p/ uma URL de mídia = SPA/página de erro, não o arquivo.
+function _isHtmlForMedia(headers, url) {
+  const ct = _headerCI(headers, 'content-type').toLowerCase();
+  if (!ct.includes('text/html')) return false;
+  const base = String(url || '').split('?')[0].split('#')[0].toLowerCase();
+  return !/\.(html?|xhtml)$/.test(base);
+}
+
+// Promove (em lotes, fire-and-forget) arquivos de conversa que ficaram no
+// cacheDirectory purgável (versões antigas do app) p/ o store permanente.
+// Só arquivos com dono conhecido (_urlConvOwner) — sem dono não dá p/ saber a
+// conversa nem a conta. Limite por execução p/ não pesar no boot.
+let _legacyMigrateDone = false;
+async function _migrateLegacyCacheToStore() {
+  if (_legacyMigrateDone || Platform.OS === 'web') return;
+  _legacyMigrateDone = true;
+  const fs = getFS(); const st = _store(); const dir = getCacheDir();
+  if (!fs || !st || !dir || !st.isEnabled()) return;
+  try {
+    _hydrateUrlConvOwner();
+    const info = await fs.getInfoAsync(dir);
+    if (!info.exists) return;
+    const names = await fs.readDirectoryAsync(dir);
+    let moved = 0;
+    for (const name of names) {
+      if (moved >= 300) break;
+      const conv = _urlConvOwner.get(name);
+      if (conv == null) continue;
+      if (st.lookupByUrlKey(name)) continue;
+      const plan = st.planPath({ urlKey: name, conversationId: conv, messageId: null });
+      if (!plan) continue;
+      try {
+        const src = await fs.getInfoAsync(dir + name);
+        if (!src.exists || !(src.size > 0)) continue;
+        try { await fs.makeDirectoryAsync(plan.dir, { intermediates: true }); } catch {}
+        await fs.moveAsync({ from: dir + name, to: plan.abs });
+        st.record(plan, { urlKey: name, size: src.size });
+        syncIndex.set(name, plan.abs);
+        moved++;
+      } catch {}
+    }
+    if (moved) _schedulePersistIndex();
+  } catch {}
+}
+
 // Download and cache a URL, return local URI.
 // `opts.force` (default false): bypass the cellular gate. Use this for the
 // user's explicit "tap to download" gesture on a media bubble — the
@@ -1334,7 +1488,26 @@ export async function cacheMedia(url, opts = {}) {
       _scheduleUrlConvOwnerPersist();
     } catch {}
   }
-  const indexed = syncIndex.get(key);
+  // [2026-10-08 media-local-store] Store permanente da conta ativa primeiro.
+  const _st = _store();
+  const _plan = _planStore(url, key, opts);
+  try {
+    const storeHit = _st ? _st.lookupByUrlKey(key) : null;
+    if (storeHit) {
+      try {
+        const info = await fs.getInfoAsync(storeHit);
+        if (info.exists && info.size > 0) { registerSyncKey(url, storeHit); return storeHit; }
+      } catch {}
+      try { _st.forgetUrlKey(key); } catch {}
+    }
+  } catch {}
+  let indexed = syncIndex.get(key);
+  if (indexed && _st) { try { if (_st.isForeignPath(indexed)) indexed = null; } catch {} }
+  if (indexed && _plan && getCacheDir() && indexed.startsWith(getCacheDir())) {
+    // Mídia de conversa ainda no cacheDirectory purgável → promove ao store.
+    const promoted = await _promoteToStore(fs, indexed, _plan, url, key, opts);
+    if (promoted) return promoted;
+  }
   if (indexed) {
     // [HOT PATH 2026-05-26] If the index points at the PERMANENT dir
     // (getSavedDir), the file cannot have been auto-evicted — the LRU sweep
@@ -1358,7 +1531,13 @@ export async function cacheMedia(url, opts = {}) {
     const p = d + key;
     try {
       const info = await fs.getInfoAsync(p);
-      if (info.exists) { registerSyncKey(url, p); return p; }
+      if (info.exists) {
+        if (_plan && d === getCacheDir()) {
+          const promoted = await _promoteToStore(fs, p, _plan, url, key, opts);
+          if (promoted) return promoted;
+        }
+        registerSyncKey(url, p); return p;
+      }
     } catch {}
   }
 
@@ -1379,8 +1558,12 @@ export async function cacheMedia(url, opts = {}) {
   // lookup loop above, so this only picks the destination for a fresh
   // download — no existing file is moved or orphaned.
   const _keepAlways = !!(opts && opts.conversationId != null && isConversationKeepAlways(opts.conversationId));
-  const dir = _keepAlways ? getSavedDir() : getCacheDir();
-  const localPath = dir + key;
+  // [2026-10-08 media-local-store] Mídia de CONVERSA → store permanente
+  // (documentDirectory/media/<conta>/<conv>/<msgId>.<ext>): nem o iOS nem o LRU
+  // apagam. Só status/feed/GIF externo (sem conversa) segue no cache purgável.
+  const dir = _plan ? _plan.dir : (_keepAlways ? getSavedDir() : getCacheDir());
+  const localPath = _plan ? _plan.abs : dir + key;
+  const _candidates = [url, ..._fallbackUrls(url)];
   // [PRIORITY LANES 2026-05-26] Pick the download lane. Background prefetch —
   // WS auto-download (opts.received), or any caller that explicitly opts into
   // 'low' — yields to foreground/on-demand requests. An explicit user tap
@@ -1423,6 +1606,13 @@ export async function cacheMedia(url, opts = {}) {
       const SMALL_TIMEOUT_MS = 20000;
       const timeoutMs = isBig ? BIG_TIMEOUT_MS : SMALL_TIMEOUT_MS;
       let resumable = null; // persisted across retries so resume works
+      // [2026-10-08 media-local-store] Hosts alternativos: se o 1º devolve
+      // 404/HTML (ex.: edge sem proxy de /data/*), tenta o próximo (origem US,
+      // depois CDN R2) antes de desistir. Falha de rede NÃO troca de host.
+      for (let ci = 0; ci < _candidates.length; ci++) {
+      const srcUrl = _candidates[ci];
+      resumable = null;
+      lastStatus = 0;
       for (let attempt = 0; attempt < BACKOFFS_MS.length; attempt++) {
         if (BACKOFFS_MS[attempt] > 0) {
           await new Promise(r => setTimeout(r, BACKOFFS_MS[attempt]));
@@ -1434,7 +1624,7 @@ export async function cacheMedia(url, opts = {}) {
             // attempt calls downloadAsync(); subsequent attempts call
             // resumeAsync() to continue from the partial file on disk.
             if (!resumable) {
-              resumable = fs.createDownloadResumable(url, localPath);
+              resumable = fs.createDownloadResumable(srcUrl, localPath);
             }
             let timer = null;
             const timeout = new Promise((_, rej) => {
@@ -1455,9 +1645,17 @@ export async function cacheMedia(url, opts = {}) {
             // 20s timeout so a stuck CDN (slow 3G, dead edge node) doesn't hold
             // the promise forever and freeze downstream awaits.
             download = await Promise.race([
-              fs.downloadAsync(url, localPath),
+              fs.downloadAsync(srcUrl, localPath),
               new Promise((_, rej) => setTimeout(() => rej(new Error('download_timeout')), timeoutMs)),
             ]);
+          }
+          if (download?.status === 200 && _isHtmlForMedia(download.headers, url)) {
+            // 200 com o index.html do SPA (edge/origem sem o arquivo) — nunca
+            // gravar isso como "foto". Trata como ausente → próximo host.
+            try { await fs.deleteAsync(localPath, { idempotent: true }); } catch {}
+            resumable = null;
+            lastStatus = 404;
+            break;
           }
           if (download?.status === 200) {
             // Integrity guard: a 200 with an empty/truncated body would
@@ -1466,9 +1664,11 @@ export async function cacheMedia(url, opts = {}) {
             // accepting it; a zero-byte (or unstattable) result is dropped and
             // the retry loop tries again.
             let okSize = true;
+            let _gotSize = 0;
             try {
               const st = await fs.getInfoAsync(localPath);
               okSize = !!(st && st.exists && st.size > 0);
+              _gotSize = (st && st.size) || 0;
               // Truncated 200 (stream cut mid-body): size>0 but short of the
               // declared Content-Length → reject so the retry loop re-fetches
               // instead of poisoning the cache with a half-white photo.
@@ -1477,6 +1677,7 @@ export async function cacheMedia(url, opts = {}) {
             } catch { okSize = false; }
             if (okSize) {
               registerSyncKey(url, localPath);
+              if (_plan && _st) { try { _st.record(_plan, { urlKey: key, messageId: opts.messageId, size: _gotSize, own: !!opts.own }); } catch {} }
               // Count the downloaded bytes toward the network-usage total
               // (settings.js getNetStats). Fire-and-forget stat.
               _countDownloadedBytes(fs, localPath);
@@ -1502,6 +1703,10 @@ export async function cacheMedia(url, opts = {}) {
             try { await fs.deleteAsync(localPath, { idempotent: true }); } catch {}
           }
         }
+      }
+      // Só 4xx/HTML justificam outro host; rede/5xx esgotados → para.
+      if (!(lastStatus >= 400 && lastStatus < 500)) break;
+      if (isBig) { try { await fs.deleteAsync(localPath, { idempotent: true }); } catch {} }
       }
       // Exhausted retries on a big-media transfer — clean up the partial so a
       // half-written video isn't mistaken for a complete cached file later.
@@ -1599,20 +1804,37 @@ export async function saveMediaPermanent(url, opts = {}) {
   const fs = getFS();
   if (!fs) return url;
 
-  const dir = getSavedDir();
+  if (opts && opts.viewOnce) return url;
   const key = urlToKey(url);
-  const localPath = dir + key;
+  // [2026-10-08 media-local-store] Mídia de conversa → store permanente por
+  // conta/conversa; o dir plano "saved" fica só p/ o que não tem conversa.
+  const _st = _store();
+  const _plan = _planStore(url, key, opts);
+  const flatDir = getSavedDir();
+  const dir = _plan ? _plan.dir : flatDir;
+  const localPath = _plan ? _plan.abs : flatDir + key;
+
+  try {
+    const sp = _st ? _st.lookupByUrlKey(key) : null;
+    if (sp) {
+      try {
+        const info = await fs.getInfoAsync(sp);
+        if (info.exists && info.size > 0) { registerSyncKey(url, sp); return sp; }
+      } catch {}
+      try { _st.forgetUrlKey(key); } catch {}
+    }
+  } catch {}
 
   // [HOT PATH 2026-05-26] In-memory index hit → file is in the permanent dir
   // (this function only ever writes there) which the LRU sweep never touches,
   // so it can't have been auto-evicted. Return it without the getInfoAsync
   // round-trip. Keeps the prefetch/adopt callers' fast cache-hit path zero-I/O.
   const indexedSave = syncIndex.get(key);
-  if (indexedSave && indexedSave.startsWith(dir)) return indexedSave;
+  if (indexedSave && flatDir && indexedSave.startsWith(flatDir)) return indexedSave;
 
   try {
-    const info = await fs.getInfoAsync(localPath);
-    if (info.exists) { registerSyncKey(url, localPath); return localPath; }
+    const info = await fs.getInfoAsync(flatDir + key);
+    if (info.exists && info.size > 0) { registerSyncKey(url, flatDir + key); return flatDir + key; }
   } catch {}
 
   try {
@@ -1624,6 +1846,10 @@ export async function saveMediaPermanent(url, opts = {}) {
     try {
       const cachedInfo = await fs.getInfoAsync(cachedPath);
       if (cachedInfo.exists) {
+        if (_plan) {
+          const promoted = await _promoteToStore(fs, cachedPath, _plan, url, key, opts);
+          if (promoted) return promoted;
+        }
         await fs.copyAsync({ from: cachedPath, to: localPath });
         registerSyncKey(url, localPath);
         return localPath;
@@ -1636,17 +1862,34 @@ export async function saveMediaPermanent(url, opts = {}) {
     // back. _MAX_CONCURRENT_DOWNLOADS is shared across both code paths.
     await _acquireDownloadSlot(opts.priority === 'low' ? 'low' : 'high');
     try {
-      const download = await fs.downloadAsync(url, localPath);
-      if (download.status === 200) {
+      // [2026-10-08 media-local-store] host original → alternativos em 404/HTML.
+      const cands = [url, ..._fallbackUrls(url)];
+      let download = null;
+      for (const src of cands) {
+        try { download = await fs.downloadAsync(src, localPath); } catch { download = null; break; }
+        if (download && download.status === 200 && _isHtmlForMedia(download.headers, url)) {
+          try { await fs.deleteAsync(localPath, { idempotent: true }); } catch {}
+          download = { status: 404 };
+          continue;
+        }
+        if (download && download.status >= 400 && download.status < 500) {
+          try { await fs.deleteAsync(localPath, { idempotent: true }); } catch {}
+          continue;
+        }
+        break;
+      }
+      if (download && download.status === 200) {
         // Integrity guard (mirror cacheMedia ~1413): a 200 with an empty/
         // truncated body would otherwise be registered as a "valid" file and
         // served forever as a blank photo / silent audio. Only accept a
         // non-zero on-disk file; drop a zero-byte (or unstattable) result and
         // fall through to returning the remote URL.
         let okSize = true;
+        let _gotSize = 0;
         try {
           const st = await fs.getInfoAsync(localPath);
           okSize = !!(st && st.exists && st.size > 0);
+          _gotSize = (st && st.size) || 0;
           // Same truncation guard as cacheMedia above — a 200 whose body was
           // cut mid-stream must not be registered as a valid permanent copy.
           const _expected = _expectedBytesFromHeaders(download.headers);
@@ -1654,6 +1897,7 @@ export async function saveMediaPermanent(url, opts = {}) {
         } catch { okSize = false; }
         if (okSize) {
           registerSyncKey(url, localPath);
+          if (_plan && _st) { try { _st.record(_plan, { urlKey: key, messageId: opts.messageId, size: _gotSize, own: !!opts.own }); } catch {} }
           _countDownloadedBytes(fs, localPath); // network-usage counter (getNetStats)
           return localPath;
         }
@@ -1676,13 +1920,39 @@ export async function saveMediaPermanent(url, opts = {}) {
 //
 // Idempotent: if the destination already exists we skip the copy. Returns
 // the local path on success or null on failure / unsupported (web).
-export async function adoptLocalFileAsCache(remoteUrl, localUri) {
+export async function adoptLocalFileAsCache(remoteUrl, localUri, opts = {}) {
   if (Platform.OS === 'web' || !remoteUrl || !localUri) return null;
   if (typeof localUri !== 'string' || !localUri.startsWith('file://')) return null;
   const fs = getFS();
   if (!fs) return null;
-  const dir = getSavedDir();
   const key = urlToKey(remoteUrl);
+  // [2026-10-08 media-local-store] Mídia ENVIADA: o original local vai pro
+  // store permanente da conversa (media/<conta>/<conv>/<msgId>.<ext>), marcado
+  // como "minha" — nunca re-baixa nem some se o servidor falhar.
+  const _st = _store();
+  const _plan = _planStore(remoteUrl, key, { ...(opts || {}), viewOnce: false });
+  if (_plan && _st) {
+    if (_plan.existing) {
+      try {
+        const ex = await fs.getInfoAsync(_plan.abs);
+        if (ex.exists && ex.size > 0) { registerSyncKey(remoteUrl, _plan.abs); return _plan.abs; }
+      } catch {}
+    }
+    if (localUri === _plan.abs) { registerSyncKey(remoteUrl, _plan.abs); return _plan.abs; }
+    try {
+      const src = await fs.getInfoAsync(localUri);
+      if (src.exists && src.size > 0) {
+        try { await fs.makeDirectoryAsync(_plan.dir, { intermediates: true }); } catch {}
+        await fs.copyAsync({ from: localUri, to: _plan.abs });
+        _st.record(_plan, { urlKey: key, messageId: opts && opts.messageId, size: src.size, own: true });
+        registerSyncKey(remoteUrl, _plan.abs);
+        return _plan.abs;
+      }
+    } catch {
+      try { await fs.deleteAsync(_plan.abs, { idempotent: true }); } catch {}
+    }
+  }
+  const dir = getSavedDir();
   const destPath = dir + key;
   try {
     // Skip if already adopted (deterministic key — same URL → same path).
@@ -1845,7 +2115,11 @@ export function prefetchAudioMessage(remoteUrl, opts = {}) {
   // preview. No cellular gate inside saveMediaPermanent → safe for audio.
   // Background prefetch → low lane so a burst of inbound voice notes never
   // out-competes the image/video the user is actively viewing.
-  return saveMediaPermanent(remoteUrl, { priority: 'low' }).then(async (local) => {
+  return saveMediaPermanent(remoteUrl, {
+    priority: 'low',
+    conversationId: opts && opts.conversationId != null ? opts.conversationId : undefined,
+    messageId: opts && opts.messageId != null ? opts.messageId : undefined,
+  }).then(async (local) => {
     // [#1218 2026-05-20 BUG#6 fix] Write the file:// path back into
     // messages.local_path so a cold-open of the bubble doesn't re-resolve
     // from the syncIndex (which can be stale after an account swap or
@@ -2008,7 +2282,13 @@ export async function saveConversationMedia(messages, convIdHint) {
       // disk on cold-open. Same hook image/video already had on the WS path;
       // it was missing on the conversation-load sweep, leaving files on disk
       // but msg.local_path NULL — bubble showed "mídia não foi baixada".
-      return saveMediaPermanent(url, { priority: 'low' }).then((local) => {
+      const _cid = msg.conversation_id || msg.conversationId || convIdHint;
+      if (msg.is_view_once || msg.view_once || msg.isViewOnce) return Promise.resolve(url);
+      return saveMediaPermanent(url, {
+        priority: 'low',
+        conversationId: _cid != null ? _cid : undefined,
+        messageId: msg.id != null ? msg.id : undefined,
+      }).then((local) => {
         try {
           // [WAVE 36 2026-05-20] Coerce file path → file:// URI form before
           // checking. saveMediaPermanent returns whatever path expo-fs gave
@@ -2214,6 +2494,11 @@ export async function deleteCachedUrl(url) {
   for (const dir of [getCacheDir(), getSavedDir()]) {
     try { await fs.deleteAsync(dir + key, { idempotent: true }); } catch {}
   }
+  try {
+    const st = _store();
+    const sp = st ? st.lookupByUrlKey(key) : null;
+    if (sp) { try { await fs.deleteAsync(sp, { idempotent: true }); } catch {} st.forgetUrlKey(key); }
+  } catch {}
   syncIndex.delete(urlToKey(url));
 }
 
@@ -2221,6 +2506,12 @@ export async function deleteCachedUrl(url) {
 // (from the SmartCache / server) before the DB rows are wiped.
 export async function deleteConversationMedia(messages) {
   if (Platform.OS === 'web' || !Array.isArray(messages) || messages.length === 0) return;
+  // [2026-10-08 media-local-store] apaga também a pasta da conversa no store.
+  try {
+    const cid = messages.find(m => m && (m.conversation_id != null || m.conversationId != null));
+    const conv = cid ? (cid.conversation_id != null ? cid.conversation_id : cid.conversationId) : null;
+    if (conv != null) await clearConversationLocalMedia(conv);
+  } catch {}
   const urls = new Set();
   for (const m of messages) {
     if (!m?.file_url) continue;
@@ -2312,6 +2603,24 @@ export async function getStorageStats() {
     } catch {}
   }
 
+  // [2026-10-08 media-local-store] Store permanente (media/<conta>/<conv>/…)
+  // — SÓ a pasta da conta ativa (outra conta no mesmo aparelho não aparece).
+  let storeBytes = 0;
+  let conversations = [];
+  try {
+    const st = _store();
+    if (st) {
+      const scan = await st.scanAccountDisk(_bucketForFilename);
+      for (const f of scan.files) {
+        const b = f.bucket || 'document';
+        byType[b] += f.size; counts[b] += 1;
+      }
+      storeBytes = scan.bytes;
+      savedBytes += scan.bytes;
+      conversations = st.listConversations();
+    }
+  } catch {}
+
   // [#1239 2026-05-26] Fold the HLS offline tree
   // (documentDirectory/video-offline/<videoId>/*.ts) into the stats so the
   // Storage UI reflects ALL on-disk media. Previously this multi-GB tree was
@@ -2352,6 +2661,8 @@ export async function getStorageStats() {
     totalBytes: cacheBytes + savedBytes,
     cacheBytes,
     savedBytes,
+    storeBytes,
+    conversations,
     byType,
     counts,
     capBytes,
@@ -2406,9 +2717,87 @@ export async function clearAllCache() {
       }
     } catch {}
   }
+  // [2026-10-08 media-local-store] store permanente — SÓ da conta ativa.
+  try {
+    const st = _store();
+    if (st) {
+      const r = await st.clearAccount();
+      if (r && r.relNames && r.relNames.length) {
+        try { require('./db').dbClearLocalPathByFilenames?.(r.relNames)?.catch?.(() => {}); } catch {}
+      }
+    }
+  } catch {}
   syncIndex.clear();
+  // Re-semeia entradas de OUTRAS contas? Não: o syncIndex é só um atalho; o
+  // store de cada conta re-semeia ao ser ativado (subscribe abaixo).
   _schedulePersistIndex();
 }
+
+// ── [2026-10-08 media-local-store] Limpar mídia de UMA conversa ────────────
+// Apaga a pasta da conversa no store permanente (conta ativa) + arquivos
+// legados (cache/saved) marcados como dessa conversa. Retorna bytes liberados.
+export async function clearConversationLocalMedia(conversationId) {
+  if (Platform.OS === 'web' || conversationId == null) return 0;
+  const fs = getFS();
+  if (!fs) return 0;
+  let freed = 0;
+  const relNames = [];
+  try {
+    const st = _store();
+    if (st) {
+      const r = await st.clearConversation(conversationId);
+      freed += r.freedBytes || 0;
+      for (const k of r.urlKeys || []) syncIndex.delete(k);
+      relNames.push(...(r.relNames || []));
+    }
+  } catch {}
+  try {
+    _hydrateUrlConvOwner();
+    const want = String(conversationId);
+    for (const [k, c] of Array.from(_urlConvOwner.entries())) {
+      if (String(c) !== want) continue;
+      for (const d of [getCacheDir(), getSavedDir()]) {
+        if (!d) continue;
+        try {
+          const st2 = await fs.getInfoAsync(d + k);
+          if (st2.exists) { freed += st2.size || 0; await fs.deleteAsync(d + k, { idempotent: true }); relNames.push(k); }
+        } catch {}
+      }
+      syncIndex.delete(k);
+      _urlConvOwner.delete(k);
+    }
+    _scheduleUrlConvOwnerPersist();
+  } catch {}
+  if (relNames.length) {
+    try { require('./db').dbClearLocalPathByFilenames?.(relNames)?.catch?.(() => {}); } catch {}
+  }
+  _schedulePersistIndex();
+  return freed;
+}
+
+// Lista p/ Ajustes → Armazenamento: [{ conversationId, bytes, count }].
+export function listLocalMediaByConversation() {
+  if (Platform.OS === 'web') return [];
+  try { return _store()?.listConversations() || []; } catch { return []; }
+}
+
+// Ao ativar/trocar de conta (ou o MMKV terminar de hidratar), semeia o
+// syncIndex com o store DESSA conta. Entradas de outras contas ficam no
+// syncIndex mas são ignoradas na leitura (isForeignPath).
+try {
+  if (Platform.OS !== 'web') {
+    _store()?.subscribe?.(() => {
+      try {
+        const st = _store();
+        let changed = false;
+        for (const [k, p] of st.entriesForSyncIndex()) {
+          if (syncIndex.get(k) !== p) { syncIndex.set(k, p); changed = true; }
+        }
+        if (changed) _schedulePersistIndex();
+      } catch {}
+    });
+  }
+} catch {}
 
 // ── Keep-Always set (per-conversation favorites) ─────────────────────────
 // Conversations flagged "Manter sempre" never have their media evicted by
@@ -2638,6 +3027,13 @@ export function bindLocalUriToRemoteUrl(localUri, remoteUrl) {
     if (syncIndex.has(key)) return; // already mapped
     syncIndex.set(key, localUri);
     _schedulePersistIndex();
+    // [2026-10-08 media-local-store] O arquivo do picker/compressor costuma
+    // viver no cacheDirectory (purgável) → copia p/ o store permanente. Adiado
+    // p/ o onCommitted (que sabe conversa+messageId) ganhar a corrida; se ele já
+    // gravou, o adopt aqui é no-op (planPath reaproveita a entrada existente).
+    if (typeof localUri === 'string' && localUri.startsWith('file://') && !(_store()?.isStorePath?.(localUri))) {
+      setTimeout(() => { adoptLocalFileAsCache(remoteUrl, localUri, { own: true }).catch(() => {}); }, 4000);
+    }
   } catch {}
 }
 
@@ -2745,13 +3141,31 @@ const _inflightRedl = new Map(); // messageId → Promise<{ ok, url, ... }>
  *   - network: surfaced as { ok: false, error: 'network' } so the bubble
  *     can show a retry button instead of a permanent "unavailable" state.
  */
-export async function requestRedownload(messageId, fileUrl = '') {
+export async function requestRedownload(messageId, fileUrl = '', opts = {}) {
   const mid = Number(messageId) || 0;
   if (!mid) return { ok: false, error: 'invalid_message_id' };
 
   if (_inflightRedl.has(mid)) return _inflightRedl.get(mid);
+  const _ids = { messageId: mid };
+  if (opts && opts.conversationId != null) _ids.conversationId = opts.conversationId;
 
   const work = (async () => {
+    // ── Step -1 [2026-10-08 media-local-store]: cópia LOCAL da mensagem no
+    // store permanente (mesmo que a URL tenha mudado) — sem rede.
+    if (Platform.OS !== 'web') {
+      try {
+        const lp = getLocalUriForMessage(mid);
+        const fs = getFS();
+        if (lp && fs) {
+          const info = await fs.getInfoAsync(lp);
+          if (info.exists && info.size > 0) {
+            const payloadL = { ok: true, messageId: mid, url: lp, localUri: lp, kind: 'local', type: '', fileName: '', fileSize: info.size || 0, createdAt: null, originalUrl: fileUrl };
+            _emitRedownload(payloadL);
+            return payloadL;
+          }
+        }
+      } catch {}
+    }
     // ── Step 0: try the ORIGINAL file_url directly (WhatsApp-first) ────────
     // The overwhelmingly common reason a bubble shows "baixar de novo" is
     // that the LOCAL copy was evicted (iOS purged cacheDirectory, or our LRU
@@ -2775,7 +3189,7 @@ export async function requestRedownload(messageId, fileUrl = '') {
           absolute = absolute.startsWith('/') ? `https://chatyy.com.br${absolute}` : absolute;
         }
         if (/^https?:/i.test(absolute)) {
-          const local = await cacheMedia(absolute, { force: true });
+          const local = await cacheMedia(absolute, { force: true, ..._ids });
           if (typeof local === 'string' && local.startsWith('file://')) {
             // Got it straight from the origin — bind the original URL too so
             // every bubble in the thread resolves to the same local file.
@@ -2834,7 +3248,7 @@ export async function requestRedownload(messageId, fileUrl = '') {
     let localUri = null;
     if (Platform.OS !== 'web') {
       try {
-        localUri = await cacheMedia(freshUrl, { force: true });
+        localUri = await cacheMedia(freshUrl, { force: true, ..._ids });
         // Also bind the ORIGINAL fileUrl to the same local path so other
         // bubbles in the conversation that still reference the stale URL
         // pick up the local file on their next render — avoids forcing

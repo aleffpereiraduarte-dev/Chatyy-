@@ -388,79 +388,86 @@ export function getBaseUrl() {
 
 // API_URL, BASE_URL, CDN_URL, TIMEOUT_MS declared above (before _restoreCachedServer)
 
+// [2026-10-08 media-local-store] Hosts que servem /data/* da MESMA origem:
+// a origem US (disco + fallback R2 no nginx @r2_fallback) é a fonte canônica.
+// Edges regionais (api-br/api-eu/…) só servem /data/* se tiverem proxy — o BR
+// devolvia o index.html do SPA ("Arquivo indisponível"). Por isso NENHUMA mídia
+// /data/* é resolvida contra BASE_URL (host da região escolhida).
+const MEDIA_ORIGIN = 'https://chatyy.com.br';
+const MEDIA_CDN = 'https://media.chatyy.com.br';
+function _isOwnMediaHost(host) {
+  const h = String(host || '').toLowerCase();
+  return h === 'chatyy.com.br' || h === 'www.chatyy.com.br' || h === 'mail.onemundo.com.br'
+    || /^api(-[a-z]+)?(-edge)?\.chatyy\.com\.br$/.test(h);
+}
+
 /**
  * Convert a file URL to the best available URL.
- * New messages already have CDN URLs (https://media.chatyy.com.br/...).
- * Legacy messages with /data/... paths get routed through the main server.
+ *  • local (file:, content:, blob:, data:, ph:) → unchanged
+ *  • media.chatyy.com.br/<R2-native> (/chat/, /status/…) → unchanged (R2 CDN)
+ *  • qualquer /data/* (relativo, origem, edge regional ou media.*) → origem US
+ *    https://chatyy.com.br/data/* (disco + fallback R2; nunca o edge)
+ *  • outros relativos (ex. /api/…) → BASE_URL (região) como antes
+ *  • terceiros (Tenor etc.) → unchanged
  */
 export function getMediaUrl(fileUrl) {
   if (!fileUrl) return '';
   if (typeof fileUrl !== 'string') return '';
-  // [2026-05-26] CRITICAL: pass LOCAL / already-resolved URIs through
-  // untouched. Callers like ChatMedia (and the chat image bubble's `fullUri`)
-  // can hand us a value that resolveMediaUri/syncIndex already turned into a
-  // `file://` (cached photo on disk), or a picker `content://`/`ph://`, or a
-  // web `blob:`/`data:` preview. None of these start with `http` nor `/data/`,
-  // so the BASE_URL fallback at the bottom would glue the origin host in front
-  // of them → `https://chatyy.com.brfile:///var/...` = a broken URL that
-  // ExpoImage can't load. On iOS that failed load painted transparent and
-  // never reliably fired onError, leaving the chat photo bubble as an empty
-  // gray skeleton box (timestamp + ✓✓ overlaid). Stickers/GIFs were fine
-  // because they pass a raw http/CDN URL straight through. Guard it here so
-  // the function is idempotent on local/absolute inputs.
+  // [2026-05-26] Local / already-resolved URIs pass through untouched (see
+  // history: gluing the origin in front of file:// broke iOS bubbles).
   if (/^(file|content|ph|asset|assets-library|blob|data):/i.test(fileUrl)) {
     return fileUrl;
   }
-  // Already a full URL — rewrite self-hosted paths to the CDN so feed/reels
-  // load from Cloudflare edge instead of the origin (60-80% faster TTFB on
-  // mobile). External third-party URLs pass through untouched.
-  if (fileUrl.startsWith('http')) {
+  let raw = fileUrl.trim();
+  // Protocol-relative ("//host/path") → https.
+  if (raw.startsWith('//')) raw = 'https:' + raw;
+  if (/^https?:\/\//i.test(raw)) {
     try {
-      const u = new URL(fileUrl);
-      // [2026-05-31] media.chatyy.com.br is BACK to serving R2 objects (verified:
-      // /chat/*.mp4 → 200 video/mp4, /status/*.mp4 → 200). So the host split now
-      // matters and a blanket rewrite-to-origin BREAKS R2-native media:
-      //  • `/data/*`  → physical files on the ORIGIN disk. R2 lacks these keys, so
-      //    media.* 404s them → rewrite to chatyy.com.br (origin serves 200).
-      //  • everything else (`/chat/`, `/status/`, `/reels/`, `/stickers/`, …) is
-      //    R2-NATIVE — media.* serves it 200, but the ORIGIN has no such path and
-      //    returns the SPA index.html shell (HTTP 200, ~1KB text/html). A video/
-      //    image decoder handed that HTML can't open it → "o vídeo não carrega/
-      //    não abre". So KEEP those on media.*. (Root cause of the received-video
-      //    bug, 2026-05-31.)
-      if (u.hostname === 'media.chatyy.com.br') {
-        if (u.pathname.startsWith('/data/')) {
-          return 'https://chatyy.com.br' + u.pathname + (u.search || '');
-        }
-        return fileUrl; // R2-native path — media.chatyy.com.br serves it directly
+      const u = new URL(raw);
+      const host = u.hostname.toLowerCase();
+      // [2026-05-31] media.chatyy.com.br serves R2-native keys (/chat/, /status/,
+      // /reels/, /stickers/ …) — the origin has no such paths (returns the SPA
+      // shell). Keep those on media.*; only /data/* goes to the origin.
+      if (host === 'media.chatyy.com.br') {
+        if (u.pathname.startsWith('/data/')) return MEDIA_ORIGIN + u.pathname + (u.search || '');
+        return raw;
       }
-      if (u.hostname === 'chatyy.com.br' || u.hostname === 'www.chatyy.com.br' || u.hostname === 'mail.onemundo.com.br') {
-        const p = u.pathname;
-        // /data/status/ added so status fotos/videos + reels/feed bytes
-        // route through the Cloudflare edge globally (was hitting US origin
-        // ~2-4s pre-fix). Mirrors the relative-path branch below.
-        if (p.startsWith('/data/feed-files/')
-            || p.startsWith('/data/chat-files/')
-            || p.startsWith('/data/drive-files/')
-            || p.startsWith('/data/status/')
-            || p.startsWith('/data/reels/')
-            || p.startsWith('/data/highlights/')) {
-          return CDN_URL + p + (u.search || '');
-        }
+      if (_isOwnMediaHost(host) && u.pathname.startsWith('/data/')) {
+        return MEDIA_ORIGIN + u.pathname + (u.search || '');
       }
     } catch {}
-    return fileUrl;
+    return raw;
   }
-  // Relative path — always go CDN for media dirs.
-  if (fileUrl.startsWith('/data/feed-files/')
-      || fileUrl.startsWith('/data/chat-files/')
-      || fileUrl.startsWith('/data/drive-files/')
-      || fileUrl.startsWith('/data/status/')
-      || fileUrl.startsWith('/data/reels/')
-      || fileUrl.startsWith('/data/highlights/')) {
-    return CDN_URL + fileUrl;
-  }
-  return BASE_URL + fileUrl;
+  // Relative path. Tolerate a missing leading slash ("data/chat-files/…").
+  if (raw.startsWith('data/')) raw = '/' + raw;
+  if (raw.startsWith('/data/')) return MEDIA_ORIGIN + raw;
+  return BASE_URL + (raw.startsWith('/') ? '' : '/') + raw;
+}
+
+/**
+ * [2026-10-08 media-local-store] Hosts ALTERNATIVOS para a mesma mídia, em
+ * ordem, para quando o primário der 404/HTML: origem US → CDN R2. Nunca
+ * inclui a própria URL. Vazio para URLs locais/de terceiros.
+ */
+export function getMediaFallbackUrls(fileUrl) {
+  const out = [];
+  try {
+    const primary = getMediaUrl(fileUrl);
+    if (!/^https?:\/\//i.test(primary)) return out;
+    const u = new URL(primary);
+    const host = u.hostname.toLowerCase();
+    const path = u.pathname + (u.search || '');
+    if (u.pathname.startsWith('/data/') && (_isOwnMediaHost(host) || host === 'media.chatyy.com.br')) {
+      for (const cand of [MEDIA_ORIGIN + path, MEDIA_CDN + path]) {
+        if (cand !== primary && !out.includes(cand)) out.push(cand);
+      }
+    }
+    // URL original (pré-normalização) num edge que hoje tem proxy: última opção.
+    if (typeof fileUrl === 'string' && /^https?:\/\//i.test(fileUrl) && fileUrl !== primary && !out.includes(fileUrl)) {
+      out.push(fileUrl);
+    }
+  } catch {}
+  return out;
 }
 
 let sessionCookie = '';
@@ -10591,7 +10598,7 @@ export async function chatUserStickers() {
 }
 
 // ─── Custom sticker creation (WhatsApp/Telegram-level) ───
-export async function chatStickerCreate(file, { packId = null, emoji = '', emojiTags = '' } = {}) {
+export async function chatStickerCreate(file, { packId = null, emoji = '', emojiTags = '', normalize = false } = {}) {
   const formData = new FormData();
   if (Platform.OS === 'web') {
     if (file instanceof Blob || file instanceof File) formData.append('file', file, file.name || 'sticker.png');
@@ -10608,6 +10615,8 @@ export async function chatStickerCreate(file, { packId = null, emoji = '', emoji
   if (packId) formData.append('pack_id', String(packId));
   if (emoji) formData.append('emoji', emoji);
   if (emojiTags) formData.append('emoji_tags', emojiTags);
+  // [2026-10-08 sticker-maker] servidor converte p/ WebP 512×512 transparente ≤100 KB
+  if (normalize) formData.append('normalize', '1');
   const headers = {};
   if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
   if (csrfToken) headers['X-CSRF-Token'] = csrfToken;
@@ -10646,6 +10655,59 @@ export async function chatStickerCreateAnimated(file, { packId = null, emoji = '
     clearTimeout(timer);
     return resp.json();
   } catch (e) { return { success: false, message: e?.message || 'upload_failed' }; }
+}
+// [2026-10-08 sticker-maker] Recorte do objeto (remoção de fundo) no servidor
+// — usado quando o aparelho não recorta sozinho (web, binário sem o módulo
+// nativo ExpoStickerCutout, iOS < 17). O ML roda no edge BR; nada é gravado.
+// file: { uri, name, type } (nativo) | Blob/File | { blob } (web).
+// Retorna { processed: true, dataUri, width, height, ms } | { processed: false, reason }.
+export async function chatStickerCutout(file, { max = 768 } = {}) {
+  const formData = new FormData();
+  try {
+    if (Platform.OS === 'web') {
+      if (file instanceof Blob) formData.append('file', file, file.name || 'photo.png');
+      else if (file?.blob instanceof Blob) formData.append('file', file.blob, file.name || 'photo.png');
+      else if (file?.uri) {
+        const blob = await fetch(file.uri).then(r => r.blob());
+        formData.append('file', blob, file.name || 'photo.png');
+      } else return { processed: false, reason: 'bad_image' };
+    } else {
+      if (!file?.uri) return { processed: false, reason: 'bad_image' };
+      formData.append('file', { uri: file.uri, name: file.name || 'photo.jpg', type: file.type || 'image/jpeg' });
+    }
+  } catch { return { processed: false, reason: 'bad_image' }; }
+  formData.append('max', String(max));
+  const headers = {};
+  if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
+  if (csrfToken) headers['X-CSRF-Token'] = csrfToken;
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 60000);
+  try {
+    const resp = await fetch(`${API_URL}?action=chat_sticker_cutout`, { method: 'POST', body: formData, credentials: 'include', headers, signal: ctrl.signal });
+    let j = null;
+    try { j = await resp.json(); } catch { j = null; }
+    const d = (j && (j.data || j)) || {};
+    if (resp.status === 429) return { processed: false, reason: 'rate_limited' };
+    if (!j || j.success === false) return { processed: false, reason: d.reason || 'unavailable' };
+    if (!d.processed || !d.png_base64) return { processed: false, reason: d.reason || 'no_subject' };
+    return {
+      processed: true,
+      dataUri: `data:image/png;base64,${d.png_base64}`,
+      base64: d.png_base64,
+      width: Number(d.width) || 0,
+      height: Number(d.height) || 0,
+      ms: Number(d.ms) || 0,
+      method: d.method || 'server',
+    };
+  } catch (e) {
+    return { processed: false, reason: e?.name === 'AbortError' ? 'timeout' : 'network' };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+// [2026-10-08 sticker-maker] Ordem de "Minhas figurinhas" (1º id = topo).
+export async function chatStickerReorder(ids) {
+  return apiCall('chat_sticker_reorder', { ids: (ids || []).map(Number).filter(Boolean) }, 'POST');
 }
 export async function chatStickerDelete(stickerId) {
   return apiCall('chat_sticker_delete', { sticker_id: stickerId }, 'POST');

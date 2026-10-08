@@ -1,13 +1,56 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import {
   View, Text, TouchableOpacity, FlatList, ScrollView, Platform, Image,
-  Alert, ActivityIndicator, TextInput, Animated, Modal, Pressable,
+  Alert, ActivityIndicator, TextInput, Animated, Modal, Pressable, StyleSheet,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import CachedImage from './CachedImage';
 import { IconX, IconPlus, IconSearch, IconHeart, IconStar, IconTrash } from './Icons';
 import * as api from '../services/api';
-import StickerEditor from './StickerEditor';
+// [2026-10-08 sticker-maker] criador novo (recorte automático + contorno +
+// texto/desenho/emoji + WebP 512) substitui o StickerEditor antigo aqui.
+import StickerMaker, { pickStickerSourceImage } from './stickers/StickerMaker';
+import Svg, { Path as SvgPath } from 'react-native-svg';
+
+function _tr(t, key, fb) {
+  try { const v = t ? t(key) : ''; return v && v !== key ? v : fb; } catch { return fb; }
+}
+const CREATE_TILE = '__chatyy_create_sticker__';
+// figurinha é transparente: sem o fundo pastel (LQIP) do CachedImage atrás dela
+const STICKER_CLEAR_PLACEHOLDER = { uri: 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7' };
+function IconStickerPlus({ size = 26, color = '#111' }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
+      <SvgPath d="M15.5 3H6a3 3 0 0 0-3 3v12a3 3 0 0 0 3 3h7l8-8V6.5" />
+      <SvgPath d="M13 21v-5a3 3 0 0 1 3-3h5" />
+      <SvgPath d="M19 2v6M16 5h6" />
+    </Svg>
+  );
+}
+
+// Folha de opções simples (funciona igual no web — Alert do web só tem OK/Cancelar).
+function ChoiceSheet({ visible, title, options, onClose, colors }) {
+  if (!visible) return null;
+  return (
+    <Modal visible transparent animationType="fade" onRequestClose={onClose}>
+      <Pressable onPress={onClose} style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.45)', justifyContent: 'flex-end' }}>
+        <Pressable onPress={() => {}} style={{ backgroundColor: colors.surface || '#fff', borderTopLeftRadius: 18, borderTopRightRadius: 18, paddingTop: 10, paddingBottom: 24 }}>
+          {title ? <Text style={{ textAlign: 'center', fontSize: 13, fontWeight: '700', color: colors.textSecondary, paddingVertical: 8 }}>{title}</Text> : null}
+          {options.map((o) => (
+            <TouchableOpacity
+              key={o.key}
+              onPress={() => { onClose(); setTimeout(() => o.onPress && o.onPress(), 60); }}
+              style={{ paddingVertical: 15, paddingHorizontal: 22, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border }}
+              accessibilityRole="button"
+            >
+              <Text style={{ fontSize: 16, fontWeight: o.destructive ? '700' : '600', color: o.destructive ? (colors.error || '#EF4444') : colors.text, textAlign: 'center' }}>{o.label}</Text>
+            </TouchableOpacity>
+          ))}
+        </Pressable>
+      </Pressable>
+    </Modal>
+  );
+}
 
 // ============================================================
 // STICKER PACKS — WhatsApp-style emoji packs + image packs
@@ -270,14 +313,11 @@ export default function StickerPicker({ onSelect, onClose, colors, t, userEmail 
     // For server-relative URLs, hand the absolute form to the sender so the
     // recipient's client can fetch the image regardless of its own base URL.
     let toSend = item;
+    // [2026-10-08 sticker-maker] /data/sticker-files só existe no US (CDN_URL);
+    // BASE_URL pode ser um edge (api-br/eu) que devolve index.html → figurinha
+    // quebrada pra quem recebe. getMediaUrl roteia /data/sticker-files → US.
     if (typeof item === 'string' && item.startsWith('/data/')) {
-      let base = '';
-      try { base = (typeof api.getCurrentBaseUrl === 'function' ? api.getCurrentBaseUrl() : api.BASE_URL) || ''; } catch {}
-      if (!base) base = api.BASE_URL || '';
-      base = String(base).replace(/\/$/, '');
-      if (base) toSend = base + item;
-      else if (Platform.OS === 'web' && typeof window !== 'undefined' && window.location) toSend = window.location.origin + item;
-      else toSend = 'https://chatyy.com.br' + item;
+      try { toSend = api.getMediaUrl(item); } catch { toSend = 'https://chatyy.com.br' + item; }
     }
     onSelect(toSend);
   }, [recents, onSelect]);
@@ -346,35 +386,8 @@ export default function StickerPicker({ onSelect, onClose, colors, t, userEmail 
 
   const pickImageForEditor = useCallback(async (source) => {
     try {
-      if (Platform.OS === 'web') {
-        const f = await new Promise((resolve) => {
-          const input = document.createElement('input');
-          input.type = 'file';
-          input.accept = 'image/png,image/jpeg,image/webp';
-          input.onchange = (e) => {
-            const file = e.target.files?.[0];
-            resolve(file ? URL.createObjectURL(file) : null);
-          };
-          input.click();
-        });
-        if (f) setEditorUri(f);
-        return;
-      }
-      const ImagePicker = require('expo-image-picker');
-      const permFn = source === 'camera'
-        ? ImagePicker.requestCameraPermissionsAsync
-        : ImagePicker.requestMediaLibraryPermissionsAsync;
-      const perm = await permFn();
-      if (!perm.granted) return;
-      const launch = source === 'camera' ? ImagePicker.launchCameraAsync : ImagePicker.launchImageLibraryAsync;
-      const result = await launch({
-        mediaTypes: ['images'],
-        quality: 0.85,
-        allowsEditing: true,
-        aspect: [1, 1],
-      });
-      if (result.canceled || !result.assets?.[0]) return;
-      setEditorUri(result.assets[0].uri);
+      const uri = await pickStickerSourceImage(source);
+      if (uri) setEditorUri(uri);
     } catch (e) {
       Alert.alert(t?.('common.error') || 'Erro', e?.message || 'Erro');
     }
@@ -442,36 +455,50 @@ export default function StickerPicker({ onSelect, onClose, colors, t, userEmail 
     }
   }, [t, mine]);
 
-  const createSticker = useCallback(async () => {
+  // [2026-10-08 sticker-maker] "+ Criar" → folha: Galeria / Câmera / Vídeo (animada)
+  const [createSheet, setCreateSheet] = useState(false);
+  const [mineSheet, setMineSheet] = useState(null); // url da figurinha (Minhas)
+  const createSticker = useCallback(() => {
     if (creating) return;
-    if (Platform.OS === 'web') {
-      Alert.alert(
-        t?.('chat.createSticker') || 'Criar figurinha',
-        '',
-        [
-          { text: t?.('chat.stickerStatic') || 'Imagem (estática)', onPress: () => pickImageForEditor('gallery') },
-          { text: t?.('chat.stickerAnimated') || 'Vídeo (animada)', onPress: () => pickVideoForAnimatedSticker() },
-          { text: t?.('common.cancel') || 'Cancelar', style: 'cancel' },
-        ],
-      );
-      return;
-    }
-    Alert.alert(
-      t?.('chat.createSticker') || 'Criar figurinha',
-      t?.('status.pickSource') || 'De onde?',
-      [
-        { text: t?.('status.camera') || 'Camera', onPress: () => pickImageForEditor('camera') },
-        { text: t?.('status.gallery') || 'Galeria', onPress: () => pickImageForEditor('gallery') },
-        { text: t?.('chat.stickerAnimated') || 'Vídeo (animada)', onPress: () => pickVideoForAnimatedSticker() },
-        { text: t?.('common.cancel') || 'Cancelar', style: 'cancel' },
-      ],
-    );
-  }, [creating, pickImageForEditor, pickVideoForAnimatedSticker, t]);
+    setCreateSheet(true);
+  }, [creating]);
 
   // Called by StickerEditor when user confirms the edit. StickerEditor
   // already hit chat_sticker_create so `file.cdn_url` / `file.sticker_id` are
   // the server-assigned values. Fall back to rustUpload if somehow the
   // editor handed us a raw file (legacy path / offline).
+  // [2026-10-08 sticker-maker] figurinha criada no StickerMaker (já salva no servidor)
+  const handleMakerSaved = useCallback((row) => {
+    if (!row?.url) return;
+    const finalUrl = row.url;
+    setMine(prev => {
+      const next = [finalUrl, ...prev.filter(u => u !== finalUrl)].slice(0, 200);
+      storageSet(MINE_KEY, next);
+      return next;
+    });
+    if (row.id) setMineFull(prev => [{ id: row.id, pack_id: row.pack_id, url: finalUrl, emoji: row.emoji || '', emoji_tags: row.emoji_tags || '' }, ...prev.filter(x => x.id !== row.id)]);
+    setActivePack('mine');
+    setSelectedMyPack(null);
+    (async () => {
+      try {
+        const p = await api.chatStickerMyPacks();
+        if (p?.success) setMyPacks(p.items || p.data?.items || []);
+      } catch {}
+    })();
+  }, []);
+
+  // Mover figurinha para o início de "Minhas figurinhas" (ordem salva no servidor)
+  const moveMineToFront = useCallback(async (url) => {
+    const row = mineFull.find(s0 => s0.url === url);
+    const nextFull = row ? [row, ...mineFull.filter(x => x.id !== row.id)] : mineFull;
+    setMineFull(nextFull);
+    const nextUrls = [url, ...mine.filter(u => u !== url)];
+    setMine(nextUrls);
+    storageSet(MINE_KEY, nextUrls);
+    const ids = nextFull.map(x => x.id).filter(Boolean);
+    if (ids.length) { try { await api.chatStickerReorder(ids); } catch {} }
+  }, [mineFull, mine]);
+
   const handleEditorSave = useCallback(async (file) => {
     setEditorUri(null);
     if (!file) return;
@@ -622,30 +649,50 @@ export default function StickerPicker({ onSelect, onClose, colors, t, userEmail 
     if (typeof s !== 'string') return s;
     if (/^https?:\/\//.test(s)) return s;
     if (s.startsWith('/data/')) {
-      // Reuse the chat app's configured API base. Fallback to hostname.
-      let base = '';
-      try { base = (typeof api.getCurrentBaseUrl === 'function' ? api.getCurrentBaseUrl() : api.BASE_URL) || ''; } catch {}
-      if (!base) base = api.BASE_URL || '';
-      base = String(base).replace(/\/$/, '');
-      if (base) return base + s;
-      if (Platform.OS === 'web' && typeof window !== 'undefined' && window.location) {
-        return window.location.origin + s;
-      }
-      return 'https://chatyy.com.br' + s;
+      try { return api.getMediaUrl(s); } catch { return 'https://chatyy.com.br' + s; }
     }
     return s;
   }, []);
 
   return (
     <View style={{ height: 340, backgroundColor: colors.surface, borderTopWidth: 1, borderTopColor: colors.border }}>
-      <StickerEditor
+      <StickerMaker
         visible={!!editorUri}
-        imageUri={editorUri}
-        onCancel={() => setEditorUri(null)}
-        onSave={handleEditorSave}
-        t={t}
+        sourceUri={editorUri}
+        onClose={() => setEditorUri(null)}
+        onSaved={handleMakerSaved}
+        onSend={(absUrl) => { try { onSelect(absUrl); } catch {} }}
+      />
+      <ChoiceSheet
+        visible={createSheet}
+        title={_tr(t, 'stickerMaker.pickTitle', 'Criar figurinha')}
         colors={colors}
-        userEmail={userEmail}
+        onClose={() => setCreateSheet(false)}
+        options={[
+          { key: 'gallery', label: _tr(t, 'stickerMaker.fromGallery', 'Escolher foto'), onPress: () => pickImageForEditor('gallery') },
+          ...(Platform.OS !== 'web' ? [{ key: 'camera', label: _tr(t, 'stickerMaker.fromCamera', 'Tirar foto'), onPress: () => pickImageForEditor('camera') }] : []),
+          { key: 'video', label: _tr(t, 'stickerMaker.fromVideo', 'Vídeo ou GIF (animada)'), onPress: () => pickVideoForAnimatedSticker() },
+          { key: 'cancel', label: _tr(t, 'common.cancel', 'Cancelar'), onPress: () => {} },
+        ]}
+      />
+      <ChoiceSheet
+        visible={!!mineSheet}
+        colors={colors}
+        onClose={() => setMineSheet(null)}
+        options={[
+          { key: 'send', label: _tr(t, 'stickerMaker.send', 'Enviar'), onPress: () => { const u = mineSheet; if (u) handleSelect(u); } },
+          { key: 'front', label: _tr(t, 'stickerMaker.moveToFront', 'Mover para o início'), onPress: () => { const u = mineSheet; if (u) moveMineToFront(u); } },
+          { key: 'fav', label: (mineSheet && favorites.includes(mineSheet)) ? _tr(t, 'stickerMaker.unfavorite', 'Remover dos favoritos') : _tr(t, 'stickerMaker.favorite', 'Adicionar aos favoritos'), onPress: () => { const u = mineSheet; if (u) toggleFavorite(u); } },
+          { key: 'del', destructive: true, label: _tr(t, 'stickerMaker.deleteSticker', 'Apagar figurinha'), onPress: () => {
+            const u = mineSheet;
+            if (!u) return;
+            const next = mine.filter(x => x !== u);
+            setMine(next);
+            storageSet(MINE_KEY, next);
+            deleteServerSticker(u);
+          } },
+          { key: 'cancel', label: _tr(t, 'common.cancel', 'Cancelar'), onPress: () => {} },
+        ]}
       />
       {/* Header with search */}
       <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 10, paddingVertical: 6, gap: 8 }}>
@@ -832,7 +879,7 @@ export default function StickerPicker({ onSelect, onClose, colors, t, userEmail 
       )}
 
       {/* Sticker grid */}
-      {currentStickers.length === 0 ? (
+      {currentStickers.length === 0 && !(activePack === 'mine' && !showSearch) ? (
         <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 24 }}>
           <Text style={{ fontSize: 32, marginBottom: 8 }}>
             {showSearch && searchQuery.trim() ? '🔍' : activePack === 'recent' ? '🕐' : activePack === 'favorites' ? '⭐' : activePack === 'mine' ? '🎨' : '📦'}
@@ -851,17 +898,32 @@ export default function StickerPicker({ onSelect, onClose, colors, t, userEmail 
         </View>
       ) : (
         <FlatList
-          data={currentStickers}
+          data={(activePack === 'mine' && !showSearch) ? [CREATE_TILE, ...currentStickers] : currentStickers}
           numColumns={5}
           keyExtractor={(item, i) => `${activePack}-${i}-${typeof item === 'string' ? item.slice(0, 32) : i}`}
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
           contentContainerStyle={{ paddingHorizontal: 2, paddingVertical: 2 }}
-          renderItem={({ item }) => (
+          renderItem={({ item }) => (item === CREATE_TILE ? (
+            <TouchableOpacity
+              onPress={createSticker}
+              disabled={creating}
+              style={{
+                flex: 1 / 5, aspectRatio: 1, alignItems: 'center', justifyContent: 'center',
+                borderRadius: 12, margin: 4, borderWidth: 1.5, borderStyle: 'dashed', borderColor: colors.textTertiary,
+              }}
+              accessibilityRole="button"
+              accessibilityLabel={_tr(t, 'stickerMaker.pickTitle', 'Criar figurinha')}
+              activeOpacity={0.6}
+            >
+              {creating ? <ActivityIndicator size="small" color={colors.text} /> : <IconStickerPlus size={24} color={colors.text} />}
+              <Text style={{ fontSize: 10, fontWeight: '700', color: colors.text, marginTop: 3 }} numberOfLines={1}>{_tr(t, 'stickerMaker.createTile', 'Criar')}</Text>
+            </TouchableOpacity>
+          ) : (
             <TouchableOpacity
               onPress={() => handleSelect(item)}
               onLongPress={() => {
-                if (activePack === 'mine' && isImg(item)) removeMyStickerLong(item);
+                if (activePack === 'mine' && isImg(item)) setMineSheet(item);
                 else openStickerPreview(item);
               }}
               delayLongPress={350}
@@ -873,7 +935,7 @@ export default function StickerPicker({ onSelect, onClose, colors, t, userEmail 
               activeOpacity={0.5}
             >
               {isImg(item) ? (
-                <CachedImage source={{ uri: resolveStickerUri(item) }} style={{ width: '90%', height: '90%', borderRadius: 6 }} resizeMode="contain" />
+                <CachedImage source={{ uri: resolveStickerUri(item) }} style={{ width: '90%', height: '90%', borderRadius: 6 }} resizeMode="contain" placeholder={STICKER_CLEAR_PLACEHOLDER} />
               ) : (
                 <Text style={{ fontSize: 36 }}>{item}</Text>
               )}
@@ -883,7 +945,7 @@ export default function StickerPicker({ onSelect, onClose, colors, t, userEmail 
                 </View>
               )}
             </TouchableOpacity>
-          )}
+          ))}
         />
       )}
 
@@ -924,11 +986,8 @@ export default function StickerPicker({ onSelect, onClose, colors, t, userEmail 
             if (!u) return null;
             if (/^https?:\/\//.test(u)) return u;
             if (u.startsWith('/data/')) {
-              let base = '';
-              try { base = (typeof api.getCurrentBaseUrl === 'function' ? api.getCurrentBaseUrl() : api.BASE_URL) || ''; } catch {}
-              if (!base) base = api.BASE_URL || '';
-              base = String(base).replace(/\/$/, '');
-              return base ? base + u : 'https://chatyy.com.br' + u;
+              // [2026-10-08 sticker-maker] /data/* de figurinha só no US (edge devolve index.html)
+              try { return api.getMediaUrl(u); } catch { return 'https://chatyy.com.br' + u; }
             }
             return `https://media.chatyy.com.br/${u.replace(/^\/+/, '')}`;
           })();

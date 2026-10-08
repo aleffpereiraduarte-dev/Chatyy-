@@ -174,7 +174,7 @@ function _prefetchAvatars(users) {
     const urls = [];
     for (const u of users.slice(0, 30)) {
       const a = u?.avatar_url || u?.avatarUrl;
-      if (a && typeof a === 'string') urls.push(a.startsWith('http') ? a : (BASE_URL + a));
+      if (a && typeof a === 'string') urls.push(a.startsWith('http') ? a : (api.getMediaUrl(a)));
     }
     if (urls.length) ExpoImg.prefetch(urls).catch(() => {});
   } catch {}
@@ -306,7 +306,7 @@ function _warmCacheVideos(mine, others) {
     }
     for (const it of candidates) {
       const raw = (it.media_url || it.content || '').split('\n')[0];
-      const fullUrl = raw.startsWith('/') ? BASE_URL + raw : raw;
+      const fullUrl = raw.startsWith('/') ? api.getMediaUrl(raw) : raw;
       if (fullUrl) _cacheMedia(fullUrl, { force: true }).catch(() => {});
     }
   } catch {}

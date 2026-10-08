@@ -59,7 +59,7 @@ const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get('window');
 function resolveMedia(url) {
   if (!url) return '';
   if (url.startsWith('http')) return url;
-  return `${BASE_URL}${url}`;
+  return api.getMediaUrl(url);
 }
 
 // Full post item: image/video + caption + actions

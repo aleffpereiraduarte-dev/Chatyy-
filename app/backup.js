@@ -5,7 +5,7 @@ import {
   RefreshControl, Switch,
 } from 'react-native';
 import { useRouter, Stack } from 'expo-router';
-import { USE_NATIVE_HEADER, nativeHeaderOptions, HeaderIconButton } from '../components/nativeHeader'; // [2026-10-08 apps-native]
+import { USE_NATIVE_HEADER, nativeHeaderOptions, HeaderIconButton, nativeScrollInsetProps, IOS_NATIVE_INSET } from '../components/nativeHeader'; // [2026-10-08 apps-native]
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
@@ -473,7 +473,8 @@ export default function BackupScreen() {
 
       <FadeSlideIn>
       <ScrollView
-        contentContainerStyle={[s.scrollContent, { alignItems: 'center', paddingBottom: 40 + insets.bottom }]}
+        {...nativeScrollInsetProps() /* [2026-10-08 header-inset-all] */}
+        contentContainerStyle={[s.scrollContent, { alignItems: 'center', paddingBottom: 40 + (IOS_NATIVE_INSET ? 0 : insets.bottom) }]}
         showsVerticalScrollIndicator={false}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.text} colors={[colors.text]} />}
       >
