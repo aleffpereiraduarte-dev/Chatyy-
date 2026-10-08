@@ -777,7 +777,7 @@ function MeetingsScreenInner() {
               accessibilityRole="tab"
               accessibilityState={{ selected: active }}
             >
-              <Text style={[styles.tabText, { color: active ? '#fff' : colors.textSecondary }]} numberOfLines={1}>
+              <Text style={[styles.tabText, { color: active ? (colors.onPrimary || '#fff') : colors.textSecondary }]} numberOfLines={1}>
                 {tabLabels[key]}
                 {typeof cnt === 'number' && cnt > 0 ? (
                   <Text style={{ color: active ? 'rgba(255,255,255,0.85)' : colors.textTertiary, fontWeight: '600' }}>{`  ${cnt}`}</Text>

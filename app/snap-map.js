@@ -215,7 +215,7 @@ function buildMapHtml({ center, zoom, isDark, initialPins, initialMe }) {
   #btn3d.on{background:#111111;color:#fff;border-color:#111111}
   #compass{position:absolute;right:12px;top:12px;z-index:5;width:44px;height:44px;border-radius:50%;background:${glassBg};border:1px solid ${glassBorder};backdrop-filter:blur(16px) saturate(150%);-webkit-backdrop-filter:blur(16px) saturate(150%);box-shadow:0 6px 18px rgba(0,0,0,0.22);display:flex;align-items:center;justify-content:center;cursor:pointer}
   #compass .needle{width:0;height:0;border-left:6px solid transparent;border-right:6px solid transparent;border-bottom:15px solid #ef4444;position:relative;transition:transform .12s linear}
-  #compass .needle::after{content:'';position:absolute;left:-6px;top:15px;width:0;height:0;border-left:6px solid transparent;border-right:6px solid transparent;border-top:15px solid ${isDark ? '#64748b' : '#94a3b8'}}
+  #compass .needle::after{content:'';position:absolute;left:-6px;top:15px;width:0;height:0;border-left:6px solid transparent;border-right:6px solid transparent;border-top:15px solid ${isDark ? '#6C6C70' : '#94a3b8'}}
 </style>
 </head><body>
 <div id="map"></div>
@@ -242,7 +242,7 @@ var INITIAL_PINS = ${pinsJson};
 var INITIAL_ME = ${meJson};
 var STYLE_URL = ${JSON.stringify(styleUrl)};
 // Theme-aware 3D building extrusion color (dark = slate ink, light = pale gray).
-var B3D_COLOR = ${JSON.stringify(isDark ? '#2b303c' : '#dfe3ea')};
+var B3D_COLOR = ${JSON.stringify(isDark ? '#2c2c2e' : '#dfe3ea')};
 
 var __map = null;
 var __overlays = {};       // email → maplibregl.Marker (avatar pin)
@@ -1849,9 +1849,9 @@ export default function SnapMapScreen() {
                   accessibilityState={{ selected: active }}
                 >
                   {p.icon === 'live' && (
-                    <View style={{ width: 7, height: 7, borderRadius: 4, backgroundColor: active ? '#fff' : colors.primary }} />
+                    <View style={{ width: 7, height: 7, borderRadius: 4, backgroundColor: active ? (colors.onPrimary || '#fff') : colors.primary }} />
                   )}
-                  <Text style={{ color: active ? '#fff' : colors.text, fontSize: 12, fontWeight: '700' }}>
+                  <Text style={{ color: active ? (colors.onPrimary || '#fff') : colors.text, fontSize: 12, fontWeight: '700' }}>
                     {p.label}
                   </Text>
                 </TouchableOpacity>
@@ -2080,7 +2080,7 @@ export default function SnapMapScreen() {
                 }}
                 accessibilityLabel={t?.('snapmap.enableLocation') || 'Ativar localização'}
               >
-                <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700' }}>
+                <Text style={{ color: colors.onPrimary || '#fff', fontSize: 12, fontWeight: '700' }}>
                   {t?.('snapmap.enableLocation') || 'Ativar'}
                 </Text>
               </TouchableOpacity>
@@ -2360,15 +2360,15 @@ export default function SnapMapScreen() {
                     onPress={() => { setSelected(null); router.push(`/chat-conversation?email=${encodeURIComponent(selected.email)}`); }}
                     style={{ flex: 1, paddingVertical: 14, borderRadius: 22, backgroundColor: colors.primary, alignItems: 'center', flexDirection: 'row', justifyContent: 'center', gap: 8 }}
                   >
-                    <IconMessageSquare size={18} color="#fff" />
-                    <Text style={{ color: '#fff', fontWeight: '700' }}>{t?.('snapmap.message') || 'Conversar'}</Text>
+                    <IconMessageSquare size={18} color={colors.onPrimary || '#fff'} />
+                    <Text style={{ color: colors.onPrimary || '#fff', fontWeight: '700' }}>{t?.('snapmap.message') || 'Conversar'}</Text>
                   </TouchableOpacity>
                   <TouchableOpacity
                     onPress={() => { setSelected(null); router.push(`/chat-conversation?email=${encodeURIComponent(selected.email)}&autoCall=1`); }}
                     style={{ paddingVertical: 14, paddingHorizontal: 18, borderRadius: 22, backgroundColor: colors.primary, alignItems: 'center', flexDirection: 'row', justifyContent: 'center', gap: 8 }}
                     accessibilityLabel={t?.('snapmap.call') || 'Ligar'}
                   >
-                    <IconPhone size={18} color="#fff" />
+                    <IconPhone size={18} color={colors.onPrimary || '#fff'} />
                   </TouchableOpacity>
                 </View>
 

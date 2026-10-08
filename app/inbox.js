@@ -1679,7 +1679,7 @@ function InboxScreenInner() {
                   alignItems: 'center', justifyContent: 'center',
                   paddingHorizontal: 4,
                 }}>
-                  <Text style={{ color: colors.onPrimary, fontSize: 10, fontWeight: '800' }}>
+                  <Text style={{ color: colors.onPrimary || '#fff', fontSize: 10, fontWeight: '800' }}>
                     {savedSearches.length}
                   </Text>
                 </View>
@@ -2001,8 +2001,8 @@ function InboxScreenInner() {
                       : { shadowColor: colors.primary, shadowOpacity: 0.35, shadowRadius: 10, shadowOffset: { width: 0, height: 4 }, elevation: 4 }),
                   }}
                 >
-                  <IconCompose size={16} color="#fff" />
-                  <Text style={{ color: '#fff', fontSize: 14, fontWeight: '700', letterSpacing: 0.1 }}>
+                  <IconCompose size={16} color={colors.onPrimary || '#fff'} />
+                  <Text style={{ color: colors.onPrimary || '#fff', fontSize: 14, fontWeight: '700', letterSpacing: 0.1 }}>
                     {t('compose.new') || 'New email'}
                   </Text>
                 </TouchableOpacity>

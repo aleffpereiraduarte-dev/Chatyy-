@@ -5472,8 +5472,14 @@ export async function channelCreate(name, description = '', category = 'general'
 export async function channelMyChannels() {
   return apiCall('channel_my_channels', {});
 }
-export async function channelDiscover(category = '', search = '', limit = 50, offset = 0) {
-  return apiCall('chat_discover_channels', { category, search, limit, offset });
+export async function channelDiscover(category = '', search = '', limit = 30, offset = 0, opts = {}) {
+  // [2026-10-08 trust-channels] Backend now really lists public channels.
+  // opts.includeFollowing → also return channels I already follow (is_member);
+  // opts.sort → 'members' (default) | 'recent'. Response: {channels, has_more, next_offset}.
+  const params = { category, search, limit, offset };
+  if (opts.includeFollowing) params.include_following = 1;
+  if (opts.sort) params.sort = opts.sort;
+  return apiCall('chat_discover_channels', params);
 }
 export async function channelFollow(channelId) {
   return apiCall('chat_join_channel', { conversation_id: channelId }, 'POST');
@@ -6978,8 +6984,9 @@ export async function chatCreateChannel(name, description = '', isPublic = false
   // were always created private regardless of the toggle. Forward is_public.
   return apiCall('chat_create_channel', { name, description, is_public: isPublic ? 1 : 0 }, 'POST');
 }
-export async function chatDiscoverChannels() {
-  return apiCall('chat_discover_channels', {});
+export async function chatDiscoverChannels(search = '', limit = 50, offset = 0) {
+  // [2026-10-08 trust-channels] callers passed (search, limit, offset) but they were dropped.
+  return apiCall('chat_discover_channels', { search, limit, offset });
 }
 export async function chatJoinChannel(conversationId) {
   return apiCall('chat_join_channel', { conversation_id: conversationId }, 'POST');

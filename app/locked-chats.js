@@ -123,7 +123,7 @@ export default function LockedChatsScreen() {
         <TouchableOpacity
           onPress={() => setSheetConv(item)}
           hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-          style={[styles.lockBtn, { backgroundColor: isDark ? '#2a2e3a' : '#eceef3' }]}
+          style={[styles.lockBtn, { backgroundColor: isDark ? '#2c2c2e' : '#eceef3' }]}
         >
           <IconLock size={16} color={colors.text} />
         </TouchableOpacity>
@@ -133,7 +133,7 @@ export default function LockedChatsScreen() {
 
   return (
     <View style={[styles.container, { backgroundColor: colors.background, paddingTop: insets.top }]}>
-      <View style={[styles.header, { borderBottomColor: isDark ? '#2a2e3a' : '#e5e6ea' }]}>
+      <View style={[styles.header, { borderBottomColor: isDark ? '#2c2c2e' : '#e5e6ea' }]}>
         <TouchableOpacity onPress={() => router.back()} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
           <IconArrowLeft size={24} color={colors.text} />
         </TouchableOpacity>
@@ -145,7 +145,7 @@ export default function LockedChatsScreen() {
 
       {phase === 'auth' && (
         <View style={styles.center}>
-          <View style={[styles.bigBadge, { backgroundColor: isDark ? '#2a2e3a' : '#eceef3' }]}>
+          <View style={[styles.bigBadge, { backgroundColor: isDark ? '#2c2c2e' : '#eceef3' }]}>
             <IconShield size={34} color={colors.text} />
           </View>
           <Text style={[styles.centerText, { color: colors.textTertiary || '#888' }]}>
@@ -156,7 +156,7 @@ export default function LockedChatsScreen() {
 
       {phase === 'denied' && (
         <View style={styles.center}>
-          <View style={[styles.bigBadge, { backgroundColor: isDark ? '#2a2e3a' : '#eceef3' }]}>
+          <View style={[styles.bigBadge, { backgroundColor: isDark ? '#2c2c2e' : '#eceef3' }]}>
             <IconLock size={34} color={colors.text} />
           </View>
           <Text style={[styles.centerTitle, { color: colors.text }]}>
@@ -176,7 +176,7 @@ export default function LockedChatsScreen() {
           <View style={styles.center}><ActivityIndicator color={colors.text} /></View>
         ) : convs.length === 0 ? (
           <View style={styles.center}>
-            <View style={[styles.bigBadge, { backgroundColor: isDark ? '#2a2e3a' : '#eceef3' }]}>
+            <View style={[styles.bigBadge, { backgroundColor: isDark ? '#2c2c2e' : '#eceef3' }]}>
               <IconLock size={34} color={colors.text} />
             </View>
             <Text style={[styles.centerTitle, { color: colors.text }]}>

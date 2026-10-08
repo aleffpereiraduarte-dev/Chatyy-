@@ -97,6 +97,7 @@ export const Colors = {
   folderActive: '#F2F3F5',
   folderHover: '#F2F3F5',
   badge: '#111111',
+  onBadge: '#ffffff',
 
   // Avatar — neutral gray tones only (no violet)
   avatarBg: '#8A9099',
@@ -231,46 +232,48 @@ export const DarkColors = {
   // Primary — SAME single action green as light (sober teal), so it stays
   // consistent everywhere. ThemeContext's accent override applies one hex to
   // both modes, so light and dark must share it. Kept muted/"sóbrio" per brief.
-  primary: '#111111',
-  primaryLight: '#202022',
-  primaryDark: '#3A3A3D',
-  primaryContainer: '#202022',
-  onPrimary: '#ffffff',
-  onPrimaryContainer: '#F0F1F3',
+  // [2026-10-08 dark-black] Dark primary = WHITE ink (inverted). '#111111' was
+  // literally invisible on the black surfaces (calls chips, empty-state CTAs,
+  // feed search...). CTAs filled with `primary` must use `onPrimary` (black).
+  primary: '#F5F5F7',
+  primaryLight: '#2C2C2E',
+  primaryDark: '#E5E5EA',
+  primaryContainer: '#2C2C2E',
+  onPrimary: '#000000',
+  onPrimaryContainer: '#F5F5F7',
 
-  // Background / Surface — WhatsApp-dark blue-charcoal (2026-09-30): page
-  // #0e1621 → surface #111b21, so dark mode matches the new light palette's
-  // cool neutral (not pure black).
-  background: '#0e1621',
-  surface: '#111b21',
-  surfaceVariant: '#1c2a35',
-  surfaceHover: '#18222c',
-  surfaceElevated: '#1c2a35',
-  surfaceGlass: 'rgba(17, 27, 33, 0.78)',
+  // Background / Surface — [2026-10-08 dark-black] TRUE black/neutral (no navy):
+  // page #000, surface #0b0b0b (chat list), cards/elevated #1c1c1e → #2c2c2e.
+  background: '#000000',
+  surface: '#0b0b0b',
+  surfaceVariant: '#1c1c1e',
+  surfaceHover: '#161618',
+  surfaceElevated: '#1c1c1e',
+  surfaceGlass: 'rgba(11, 11, 11, 0.78)',
   surfaceGlassBorder: 'rgba(255, 255, 255, 0.08)',
 
-  // Header dark — surface #111b21 with light text/icons.
-  headerBg: 'rgba(17, 27, 33, 0.97)',
-  headerBgSolid: '#111b21',
-  headerBorder: '#1a2730',
-  sidebarActiveBg: 'rgba(233, 237, 239, 0.08)',
+  // Header dark — neutral #0b0b0b with light text/icons.
+  headerBg: 'rgba(11, 11, 11, 0.97)',
+  headerBgSolid: '#0b0b0b',
+  headerBorder: 'rgba(255, 255, 255, 0.1)',
+  sidebarActiveBg: 'rgba(255, 255, 255, 0.08)',
 
-  // Text — WhatsApp dark ink ramp. text #e9edef, muted #8696a0.
-  text: '#e9edef',
-  textSecondary: '#8696a0',
-  textTertiary: '#6b7b88',
-  textOnPrimary: '#ffffff',
+  // Text — Apple-dark neutral ink ramp. text #F5F5F7, muted #8E8E93.
+  text: '#F5F5F7',
+  textSecondary: '#8E8E93',
+  textTertiary: '#6C6C70',
+  textOnPrimary: '#000000',
 
-  // Border — cool hairline #1a2730 (matches WhatsApp dark dividers).
-  border: '#1a2730',
-  borderLight: 'rgba(255, 255, 255, 0.04)',
-  divider: '#1a2730',
+  // Border — neutral white hairlines (no blue cast).
+  border: '#2C2C2E',
+  borderLight: 'rgba(255, 255, 255, 0.06)',
+  divider: 'rgba(255, 255, 255, 0.1)',
 
   // Chips — inactive = dark surface, active = light accent (small).
-  chipBg: '#1c2a35',
-  chipText: '#8696a0',
-  chipActiveBg: '#e9edef',
-  chipActiveText: '#0e1621',
+  chipBg: '#1c1c1e',
+  chipText: '#8E8E93',
+  chipActiveBg: '#F5F5F7',
+  chipActiveText: '#000000',
 
   // Status — functional
   error: '#f87171',
@@ -282,38 +285,37 @@ export const DarkColors = {
 
   // Email states — active/selected = subtle green; star = action green
   unreadBg: '#161618',
-  unreadAccent: '#111111',
-  selectedBg: '#202022',
-  starColor: '#111111',
+  unreadAccent: '#F5F5F7',
+  selectedBg: '#1c1c1e',
+  starColor: '#F5F5F7',
   starEmpty: '#4A4D52',
 
   // Compose
-  composeBg: '#111111',
+  composeBg: '#1c1c1e',
   composeText: '#ffffff',
 
   // Sidebar — badge = action green
-  sidebarBg: '#0a0a0a',
-  folderActive: '#141414',
-  folderHover: '#111111',
-  badge: '#111111',
+  sidebarBg: '#0b0b0b',
+  folderActive: '#1c1c1e',
+  folderHover: '#161618',
+  badge: '#F5F5F7',
+  onBadge: '#000000', // [2026-10-08 dark-black] ink on the white dark badge
 
   // Avatar — neutral gray tones only (no violet)
   avatarBg: '#7C828A',
   avatarColors: ['#7C828A', '#8B95A3', '#9AA0A6', '#A09488'],
 
-  // Chat — NEUTRAL bubbles (2026-10-03): paleta WhatsApp-dark blue-charcoal
-  // (harmoniza com bg #0b141a). ENVIADO = tom elevado/mais claro (#2A3942),
-  // RECEBIDO = tom mais escuro (#1F2C33) → distinção clara à primeira vista,
-  // mantendo neutro. Texto claro (#E9EDEF) legível nos dois.
-  chatPrimary: '#111111',
-  chatBubbleOwn: '#2A3942',
+  // Chat — NEUTRAL bubbles [2026-10-08 dark-black]: preto/cinza Apple (sem azul).
+  // ENVIADO #333336 (mais claro), RECEBIDO #1C1C1E, texto #F5F5F7.
+  chatPrimary: '#F5F5F7',
+  chatBubbleOwn: '#333336',
   chatBubbleOwnBorder: 'rgba(255,255,255,0.05)',
-  chatBubbleOther: '#1F2C33',
+  chatBubbleOther: '#1C1C1E',
   chatBubbleOtherBorder: 'rgba(255,255,255,0.06)',
-  chatBubbleOwnText: '#E9EDEF',
-  chatBackground: '#0B0B0D',
-  chatInputBg: '#161618',
-  chatInputBorder: 'rgba(255,255,255,0.08)',
+  chatBubbleOwnText: '#F5F5F7',
+  chatBackground: '#000000',
+  chatInputBg: '#1c1c1e',
+  chatInputBorder: 'rgba(255,255,255,0.1)',
 
   // Overlay
   overlay: 'rgba(0, 0, 0, 0.6)',
@@ -321,31 +323,31 @@ export const DarkColors = {
 
   // Features
   hoverActionBg: 'rgba(255, 255, 255, 0.06)',
-  toastBg: '#F0F1F3',
-  toastText: '#1C1E21',
-  checkboxColor: '#9BA0A6',
-  selectedCheckbox: '#111111',
-  focusBorder: '#111111',
-  bulkToolbarBg: '#202022',
-  gradientStart: '#111111',
-  gradientEnd: '#111111',
+  toastBg: '#F5F5F7',
+  toastText: '#000000',
+  checkboxColor: '#8E8E93',
+  selectedCheckbox: '#F5F5F7',
+  focusBorder: '#F5F5F7',
+  bulkToolbarBg: '#1c1c1e',
+  gradientStart: '#2C2C2E',
+  gradientEnd: '#1c1c1e',
   loginPanelBg: '#000000',
 
   // Focus glow — action green, softened
-  focusGlow: 'rgba(17, 17, 17, 0.16)',
+  focusGlow: 'rgba(255, 255, 255, 0.16)',
 
   // Secondary & Tertiary accents — collapsed onto the single action green
-  secondary: '#111111',
-  secondaryLight: '#202022',
-  secondaryDark: '#3A3A3D',
-  tertiary: '#111111',
-  tertiaryLight: '#202022',
-  tertiaryDark: '#3A3A3D',
+  secondary: '#F5F5F7',
+  secondaryLight: '#2C2C2E',
+  secondaryDark: '#E5E5EA',
+  tertiary: '#F5F5F7',
+  tertiaryLight: '#2C2C2E',
+  tertiaryDark: '#E5E5EA',
 
   // Brand colors — all point at the action green; danger stays
-  brandPrimary: '#111111',
-  brandSecondary: '#111111',
-  brandAccent: '#111111',
+  brandPrimary: '#F5F5F7',
+  brandSecondary: '#F5F5F7',
+  brandAccent: '#F5F5F7',
   brandDanger: '#f87171',
 
   // Folder colors — UNIFIED to one neutral gray
@@ -373,8 +375,8 @@ export const DarkColors = {
   meetBtnBg: 'rgba(255, 255, 255, 0.1)',
   meetBtnActive: '#f87171',
   meetEndCall: '#f87171',
-  meetScreenShare: '#111111',
-  meetHandRaised: '#111111',
+  meetScreenShare: '#2C2C2E', // white-ink banners sit on it (meet is dark-only)
+  meetHandRaised: '#2C2C2E',
 
   // Connection status — functional
   connectionGood: '#4ade80',
@@ -396,31 +398,31 @@ export const DarkColors = {
   authCardShadow: 'rgba(0, 0, 0, 0.5)',
   authInputBg: '#000000',
   authInputBorder: 'rgba(255, 255, 255, 0.08)',
-  authInputFocusBorder: '#e9edef',
+  authInputFocusBorder: '#F5F5F7',
   authInputFocusGlow: 'rgba(255, 255, 255, 0.12)',
   authLabelColor: '#9BA0A6',
-  authLabelFloatColor: '#e9edef',
+  authLabelFloatColor: '#F5F5F7',
   authDividerColor: 'rgba(255, 255, 255, 0.08)',
-  authFooterText: '#8696a0',
-  authFooterLink: '#e9edef',
+  authFooterText: '#8E8E93',
+  authFooterLink: '#F5F5F7',
   authBtnGradientStart: '#ffffff',
-  authBtnGradientEnd: '#e9edef',
+  authBtnGradientEnd: '#F5F5F7',
   authSecondaryBtn: 'rgba(255, 255, 255, 0.06)',
   authSecondaryBtnBorder: 'rgba(255, 255, 255, 0.2)',
   authSecondaryBtnHover: 'rgba(255, 255, 255, 0.12)',
   authAccentGlow: 'rgba(255, 255, 255, 0.08)',
   authAccentLine: 'rgba(255, 255, 255, 0.15)',
-  authStepDoneBg: '#e9edef',
+  authStepDoneBg: '#F5F5F7',
   authStepActiveBg: '#ffffff',
   authStepPendingBg: '#4A4D52',
   authStepConnector: 'rgba(255, 255, 255, 0.08)',
-  authStepConnectorDone: '#e9edef',
+  authStepConnectorDone: '#F5F5F7',
   authSuccessGreen: '#34d399',
-  authChipBg: 'rgba(17, 17, 17, 0.1)',
-  authChipBorder: 'rgba(17, 17, 17, 0.2)',
-  authLeftPanelBg: '#1C1E22',
-  authLeftPanelAccent: '#111111',
-  authGridColor: 'rgba(17, 17, 17, 0.04)',
+  authChipBg: 'rgba(255, 255, 255, 0.08)',
+  authChipBorder: 'rgba(255, 255, 255, 0.16)',
+  authLeftPanelBg: '#1c1c1e',
+  authLeftPanelAccent: '#F5F5F7',
+  authGridColor: 'rgba(255, 255, 255, 0.04)',
 };
 
 // Espaçamento — escala PARCIAL (moderateScale) com a tela. Em celular pequeno

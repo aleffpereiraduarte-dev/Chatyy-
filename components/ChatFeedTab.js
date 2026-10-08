@@ -18,6 +18,7 @@ import FeedComments from './FeedComments';
 import CreatePostModal from './CreatePostModal';
 import LiveIndicator from './LiveIndicator';
 import ReelsViewer from './ReelsViewer';
+import ReelPublishProgress from './ReelPublishProgress'; // [2026-10-08 reels-publish]
 import UnifiedComposeFab from './UnifiedComposeFab';
 import Profile from './Profile';
 import { IconPlus, IconVideo, IconSearch, IconX, IconBell, IconChevronUp } from './Icons';
@@ -247,12 +248,12 @@ function FeedSkeleton({ isDark }) {
 function EmptyFeedIllustration({ isDark }) {
   return (
     <Svg width={100} height={100} viewBox="0 0 100 100" fill="none">
-      <Rect x="20" y="15" width="60" height="70" rx="8" stroke={isDark ? '#374151' : '#e5e7eb'} strokeWidth="2" fill="none" />
-      <Rect x="28" y="25" width="44" height="30" rx="4" stroke={isDark ? '#4b5563' : '#9ca3af'} strokeWidth="1.5" fill="none" />
-      <Circle cx="50" cy="37" r="6" stroke={isDark ? '#4b5563' : '#9ca3af'} strokeWidth="1.5" fill="none" />
-      <Path d="M28 50 L38 42 L45 48 L55 38 L72 50" stroke={isDark ? '#4b5563' : '#9ca3af'} strokeWidth="1.5" fill="none" strokeLinejoin="round" />
-      <Rect x="28" y="60" width="30" height="3" rx="1.5" fill={isDark ? '#374151' : '#e5e7eb'} />
-      <Rect x="28" y="67" width="20" height="3" rx="1.5" fill={isDark ? '#374151' : '#e5e7eb'} />
+      <Rect x="20" y="15" width="60" height="70" rx="8" stroke={isDark ? '#2c2c2e' : '#e5e7eb'} strokeWidth="2" fill="none" />
+      <Rect x="28" y="25" width="44" height="30" rx="4" stroke={isDark ? '#48484a' : '#9ca3af'} strokeWidth="1.5" fill="none" />
+      <Circle cx="50" cy="37" r="6" stroke={isDark ? '#48484a' : '#9ca3af'} strokeWidth="1.5" fill="none" />
+      <Path d="M28 50 L38 42 L45 48 L55 38 L72 50" stroke={isDark ? '#48484a' : '#9ca3af'} strokeWidth="1.5" fill="none" strokeLinejoin="round" />
+      <Rect x="28" y="60" width="30" height="3" rx="1.5" fill={isDark ? '#2c2c2e' : '#e5e7eb'} />
+      <Rect x="28" y="67" width="20" height="3" rx="1.5" fill={isDark ? '#2c2c2e' : '#e5e7eb'} />
       <Circle cx="70" cy="65" r="4" stroke={ACCENT} strokeWidth="1.5" fill="none" />
       <Path d="M68 65 L72 65" stroke={ACCENT} strokeWidth="1.5" strokeLinecap="round" />
       <Path d="M70 63 L70 67" stroke={ACCENT} strokeWidth="1.5" strokeLinecap="round" />
@@ -446,7 +447,9 @@ function ChatFeedTab({ colors, isDark, t, user, router, initialFeedMode, onFeedM
   const [feedError, setFeedError] = useState(false);
   const [createVisible, setCreateVisible] = useState(false);
   // [2026-10-08 apps-native] câmera do Reels → volta p/ posts e abre o composer (estável p/ não invalidar renderItem).
-  const openCreateFromReels = useCallback(() => { setFeedMode('posts'); setCreateVisible(true); }, []);
+  // [2026-10-08 reels-publish] câmera / "Criar reel" do Reels abre o compositor de reels
+  // (galeria ou câmera → corte/capa/legenda → Publicar em segundo plano).
+  const openCreateFromReels = useCallback(() => { try { router?.push('/reels-compose'); } catch {} }, [router]);
   // [Bug-hunt P2 2026-05-30] Repost wiring. FeedPost.handleRepost calls
   // onPostUpdated(post, { repostOf, originalPost }) expecting the container to
   // open the composer preloaded. ChatFeedTab was passing a NO-OP, so Repostar
@@ -862,6 +865,18 @@ function ChatFeedTab({ colors, isDark, t, user, router, initialFeedMode, onFeedM
       loadPosts(1, true);
     }
   }, [loadPosts]);
+
+  // [2026-10-08 reels-publish] reel publicado em 2º plano → entra no topo do feed.
+  useEffect(() => {
+    let unsub = null;
+    try {
+      unsub = require('../services/reelPublishQueue').onReelPublished((p) => {
+        if (!p?.id) return;
+        setPosts(prev => (prev.some(x => String(x.id) === String(p.id)) ? prev : [p, ...prev]));
+      });
+    } catch {}
+    return () => { try { unsub && unsub(); } catch {} };
+  }, []);
 
   const handleDeletePost = useCallback((postId) => {
     setPosts(prev => {
@@ -1555,6 +1570,8 @@ function ChatFeedTab({ colors, isDark, t, user, router, initialFeedMode, onFeedM
             CreatePostModal só monta no modo posts → volta pra posts e abre o composer. */}
         <ReelsViewer colors={colors} isDark={isDark} t={t} user={user} router={router} parentActive={parentActive}
           onCreate={openCreateFromReels} />
+        {/* [2026-10-08 reels-publish] progresso do reel sendo publicado em 2º plano */}
+        <ReelPublishProgress email={user?.email} t={t} top={safeTopPill + 44} />
         {/* Small back-to-posts pill at top-left */}
         <TouchableOpacity
           style={[styles.backToPostsPill, { top: safeTopPill }]}
@@ -1656,6 +1673,9 @@ function ChatFeedTab({ colors, isDark, t, user, router, initialFeedMode, onFeedM
           "tech" feel. Pulse signals "ready to broadcast" without being
           distracting (1 cycle per 1.6s, max scale 1.45). */}
       <LiveFab onPress={() => router.push('/live-broadcast')} t={t} isWeb={isWeb} styles={styles} />
+
+      {/* [2026-10-08 reels-publish] progresso do reel em 2º plano + "Ver" → aba Reels */}
+      <ReelPublishProgress email={user?.email} t={t} bottom={96} onView={() => setFeedMode('reels')} />
 
       {/* Unified compose FAB (replaces the old per-tab "new post" FAB) */}
       <UnifiedComposeFab

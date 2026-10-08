@@ -329,10 +329,10 @@ export default function ForgotPassword() {
             disabled={loading}
             activeOpacity={0.85}
           >
-            {loading ? <ActivityIndicator color="#fff" size="small" /> : (
+            {loading ? <ActivityIndicator color={colors.onPrimary || '#fff'} size="small" /> : (
               <>
-                <Text style={[s.primaryBtnText, { color: colors.onPrimary }]}>{t('forgot.continue')}</Text>
-                <IconArrowRight size={15} color="#fff" style={{ marginLeft: 6 }} />
+                <Text style={[s.primaryBtnText, { color: colors.onPrimary || '#fff' }]}>{t('forgot.continue')}</Text>
+                <IconArrowRight size={15} color={colors.onPrimary || '#fff'} style={{ marginLeft: 6 }} />
               </>
             )}
           </TouchableOpacity>
@@ -419,8 +419,8 @@ export default function ForgotPassword() {
             disabled={loading || !findQuery.trim()}
             activeOpacity={0.85}
           >
-            {loading ? <ActivityIndicator color="#fff" size="small" /> : (
-              <Text style={[s.primaryBtnText, { color: colors.onPrimary }]}>{t('forgot.findCta')}</Text>
+            {loading ? <ActivityIndicator color={colors.onPrimary || '#fff'} size="small" /> : (
+              <Text style={[s.primaryBtnText, { color: colors.onPrimary || '#fff' }]}>{t('forgot.findCta')}</Text>
             )}
           </TouchableOpacity>
           <TouchableOpacity style={s.backBtn} onPress={() => { setStep(1); setFindQuery(''); setFoundEmails([]); }} activeOpacity={0.6}>
@@ -455,7 +455,7 @@ export default function ForgotPassword() {
               activeOpacity={0.85}
             >
               <IconMail size={16} color="#fff" style={{ marginRight: 8 }} />
-              <Text style={[s.primaryBtnText, { color: colors.onPrimary }]}>{t('forgot.contactSupportBtn')}</Text>
+              <Text style={[s.primaryBtnText, { color: colors.onPrimary || '#fff' }]}>{t('forgot.contactSupportBtn')}</Text>
             </TouchableOpacity>
           </View>
         ) : (
@@ -599,10 +599,10 @@ export default function ForgotPassword() {
           disabled={loading}
           activeOpacity={0.85}
         >
-          {loading ? <ActivityIndicator color="#fff" size="small" /> : (
+          {loading ? <ActivityIndicator color={colors.onPrimary || '#fff'} size="small" /> : (
             <>
-              <IconCheckCircle size={16} color="#fff" style={{ marginRight: 8 }} />
-              <Text style={[s.primaryBtnText, { color: colors.onPrimary }]}>{t('forgot.verifyCode')}</Text>
+              <IconCheckCircle size={16} color={colors.onPrimary || '#fff'} style={{ marginRight: 8 }} />
+              <Text style={[s.primaryBtnText, { color: colors.onPrimary || '#fff' }]}>{t('forgot.verifyCode')}</Text>
             </>
           )}
         </TouchableOpacity>
@@ -718,10 +718,10 @@ export default function ForgotPassword() {
             disabled={loading}
             activeOpacity={0.85}
           >
-            {loading ? <ActivityIndicator color="#fff" size="small" /> : (
+            {loading ? <ActivityIndicator color={colors.onPrimary || '#fff'} size="small" /> : (
               <>
-                <IconLock size={16} color="#fff" style={{ marginRight: 8 }} />
-                <Text style={[s.primaryBtnText, { color: colors.onPrimary }]}>{t('forgot.changePassword')}</Text>
+                <IconLock size={16} color={colors.onPrimary || '#fff'} style={{ marginRight: 8 }} />
+                <Text style={[s.primaryBtnText, { color: colors.onPrimary || '#fff' }]}>{t('forgot.changePassword')}</Text>
               </>
             )}
           </TouchableOpacity>
@@ -744,7 +744,7 @@ export default function ForgotPassword() {
             onPress={() => router.replace('/login')}
             activeOpacity={0.85}
           >
-            <Text style={[s.primaryBtnText, { color: colors.onPrimary }]}>{t('forgot.goToLogin')}</Text>
+            <Text style={[s.primaryBtnText, { color: colors.onPrimary || '#fff' }]}>{t('forgot.goToLogin')}</Text>
           </TouchableOpacity>
         </Animated.View>
       );

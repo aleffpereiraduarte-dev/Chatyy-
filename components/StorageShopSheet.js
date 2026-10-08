@@ -144,8 +144,8 @@ export default function StorageShopSheet({ visible, onClose, currentTier = 'free
 
   const tiers = useMemo(() => STORAGE_TIERS, []);
   const tint = colors.tint || '#0a84ff';
-  const cardBg = colors.cardBackground || colors.surface || (isDark ? '#111827' : '#fff');
-  const soft = isDark ? '#1f2937' : '#f1f5f9';
+  const cardBg = colors.cardBackground || colors.surface || (isDark ? '#0b0b0b' : '#fff');
+  const soft = isDark ? '#1c1c1e' : '#f1f5f9';
   const selected = tiers.find((x) => x.id === selectedId) || tiers[0];
   const selectedIsCurrent = currentTier === selected.id;
   const selectedPending = pendingTier === selected.id;

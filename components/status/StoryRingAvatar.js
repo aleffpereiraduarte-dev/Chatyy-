@@ -67,7 +67,7 @@ function StoryRingAvatar({
   const _dim = dimmedColor || (isDark ? 'rgba(255,255,255,0.25)' : 'rgba(0,0,0,0.2)');
   const _badgeBorder = isDark ? '#0d0d0d' : '#fff';
   const _avatarText = colors?.text || (isDark ? '#fff' : '#0f172a');
-  const _notePillBg = isDark ? '#2a2a3e' : '#fff';
+  const _notePillBg = isDark ? '#2c2c2e' : '#fff';
   const _notePillBorder = isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.08)';
 
   // Scale-based "live" pulse for unviewed rings. Native-driven (transform

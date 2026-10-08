@@ -1,10 +1,9 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet, FlatList, ScrollView,
-  ActivityIndicator, Platform, Alert, useWindowDimensions, Modal, TextInput,
+  ActivityIndicator, Platform, Alert, useWindowDimensions,
   RefreshControl, Switch,
 } from 'react-native';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRouter, Stack } from 'expo-router';
 import { USE_NATIVE_HEADER, nativeHeaderOptions, HeaderIconButton } from '../components/nativeHeader'; // [2026-10-08 apps-native]
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -50,14 +49,9 @@ export default function BackupScreen() {
   const [restoring, setRestoring] = useState(null);
   const [deleting, setDeleting] = useState(null);
 
-  // E2E Backup encryption state
-  const [e2eEnabled, setE2eEnabled] = useState(false);
-  const [showE2eModal, setShowE2eModal] = useState(false);
-  const [e2eMode, setE2eMode] = useState('enable'); // 'enable' | 'change' | 'disable'
-  const [e2ePass1, setE2ePass1] = useState('');
-  const [e2ePass2, setE2ePass2] = useState('');
-  const [e2eErr, setE2eErr] = useState('');
-  const [e2eSaving, setE2eSaving] = useState(false);
+  // [2026-10-08 trust-channels] The old "end-to-end encrypted backup" card
+  // stored a flag (backup_e2e_enabled) that no code ever read — backups were
+  // never client-side encrypted. Removed; replaced by an honest info card.
 
   // Originals quality toggle. When ON the engine skips ImageManipulator
   // compression and uploads the raw photo bytes (engine already accepts
@@ -110,7 +104,6 @@ export default function BackupScreen() {
   }, [t]);
 
   useEffect(() => {
-    AsyncStorage.getItem('backup_e2e_enabled').then(v => setE2eEnabled(v === '1')).catch(() => {});
     // Load current engine quality preference. The engine reads `settings.quality`
     // every time it queues a batch, so reflecting the persisted value here
     // keeps the toggle truthful even after an app restart.
@@ -208,44 +201,6 @@ export default function BackupScreen() {
       setNotifSaving(false);
     }
   }, [t]);
-
-  const passwordStrength = (pw) => {
-    let score = 0;
-    if (pw.length >= 8) score++;
-    if (pw.length >= 12) score++;
-    if (/[A-Z]/.test(pw) && /[a-z]/.test(pw)) score++;
-    if (/\d/.test(pw)) score++;
-    if (/[^A-Za-z0-9]/.test(pw)) score++;
-    return score; // 0-5
-  };
-
-  const handleE2eSubmit = async () => {
-    setE2eErr('');
-    if (e2eMode === 'disable') {
-      setE2eSaving(true);
-      try {
-        await AsyncStorage.removeItem('backup_e2e_enabled');
-        setE2eEnabled(false);
-        setShowE2eModal(false);
-      } finally { setE2eSaving(false); }
-      return;
-    }
-    if (e2ePass1.length < 8) { setE2eErr(t('backup.e2eMinChars') || 'Mínimo 8 caracteres'); return; }
-    if (e2ePass1 !== e2ePass2) { setE2eErr(t('backup.e2eMismatch') || 'Senhas não conferem'); return; }
-    if (passwordStrength(e2ePass1) < 3) { setE2eErr(t('backup.e2eWeak') || 'Senha muito fraca'); return; }
-    setE2eSaving(true);
-    try {
-      // NOTE: Real key derivation happens on first encrypted backup write.
-      // Here we just mark as enabled — the actual password is held in memory
-      // for this session only and re-asked on next app open.
-      await AsyncStorage.setItem('backup_e2e_enabled', '1');
-      setE2eEnabled(true);
-      setShowE2eModal(false);
-      setE2ePass1(''); setE2ePass2('');
-      safeAlert(t('backup.e2eEnabledTitle') || 'Backup criptografado ativado',
-        t('backup.e2eEnabledMsg') || 'Guarde sua senha em local seguro. Sem ela, seus backups não poderão ser restaurados.');
-    } finally { setE2eSaving(false); }
-  };
 
   const currentPlan = planInfo?.plan || 'free';
   // Server returns storage_used in BYTES. Without dividing, .toFixed(1) prints
@@ -592,55 +547,21 @@ export default function BackupScreen() {
             </View>
           </View>
 
-          {/* E2E Encryption Card */}
+          {/* [2026-10-08 trust-channels] Honest "how your backup is protected"
+              card. Real behavior (verified in plans.php runHistorySnapshot +
+              backup engine): data is stored on Chatyy servers tied to the
+              account, reachable only with the account login, transferred
+              over TLS. It is NOT end-to-end encrypted, so we don't say so. */}
           <View style={[s.statusCard, { backgroundColor: colors.surface, borderColor: colors.border, marginTop: -8 }]}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 10 }}>
-              <IconLock size={18} color={e2eEnabled ? '#22c55e' : '#f59e0b'} />
+              <IconShield size={18} color={ACCENT} />
               <Text style={{ color: colors.text, fontSize: FontSize.lg, fontWeight: '600', flex: 1 }}>
-                {t('backup.e2eTitle') || 'Backup criptografado de ponta a ponta'}
+                {t('backup.protectionTitle')}
               </Text>
-              <View style={{
-                paddingHorizontal: 8, paddingVertical: 3, borderRadius: 10,
-                backgroundColor: e2eEnabled ? 'rgba(34,197,94,0.15)' : 'rgba(245,158,11,0.15)',
-              }}>
-                <Text style={{
-                  color: e2eEnabled ? '#16a34a' : '#d97706', fontSize: FontSize.xs, fontWeight: '700',
-                }}>
-                  {e2eEnabled ? (t('backup.e2eOn') || 'ATIVO') : (t('backup.e2eOff') || 'DESATIVADO')}
-                </Text>
-              </View>
             </View>
-            <Text style={{ color: colors.textSecondary, fontSize: FontSize.sm, lineHeight: 19, marginBottom: 14 }}>
-              {t('backup.e2eDesc') || 'Sua senha protege seus backups na nuvem. Nem a Chatyy pode acessá-los sem ela. Se esquecer a senha, perderá acesso aos backups.'}
+            <Text style={{ color: colors.textSecondary, fontSize: FontSize.sm, lineHeight: 19 }}>
+              {t('backup.protectionDesc')}
             </Text>
-            <View style={{ flexDirection: 'row', gap: 8 }}>
-              {!e2eEnabled ? (
-                <TouchableOpacity
-                  style={{ flex: 1, height: 42, borderRadius: 10, backgroundColor: ACCENT, alignItems: 'center', justifyContent: 'center' }}
-                  onPress={() => { setE2eMode('enable'); setE2ePass1(''); setE2ePass2(''); setE2eErr(''); setShowE2eModal(true); }}
-                  accessibilityRole="button"
-                >
-                  <Text style={{ color: ON_ACCENT, fontWeight: '700' }}>{t('backup.e2eEnable') || 'Ativar criptografia'}</Text>
-                </TouchableOpacity>
-              ) : (
-                <>
-                  <TouchableOpacity
-                    style={{ flex: 1, height: 42, borderRadius: 10, backgroundColor: isDark ? 'rgba(255,255,255,0.10)' : 'rgba(17,17,17,0.06)', alignItems: 'center', justifyContent: 'center' }}
-                    onPress={() => { setE2eMode('change'); setE2ePass1(''); setE2ePass2(''); setE2eErr(''); setShowE2eModal(true); }}
-                    accessibilityRole="button"
-                  >
-                    <Text style={{ color: ACCENT, fontWeight: '700' }}>{t('backup.e2eChange') || 'Alterar senha'}</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={{ flex: 1, height: 42, borderRadius: 10, backgroundColor: isDark ? 'rgba(248,113,113,0.12)' : 'rgba(220,38,38,0.08)', alignItems: 'center', justifyContent: 'center' }}
-                    onPress={() => { setE2eMode('disable'); setE2eErr(''); setShowE2eModal(true); }}
-                    accessibilityRole="button"
-                  >
-                    <Text style={{ color: colors.error, fontWeight: '700' }}>{t('backup.e2eDisable') || 'Desativar'}</Text>
-                  </TouchableOpacity>
-                </>
-              )}
-            </View>
           </View>
 
           {/* Originals quality toggle. OFF (default) = 1600 px / 0.78 JPEG
@@ -917,100 +838,6 @@ export default function BackupScreen() {
       </ScrollView>
       </FadeSlideIn>
 
-      {/* E2E Password Modal */}
-      <Modal visible={showE2eModal} animationType="slide" transparent onRequestClose={() => setShowE2eModal(false)}>
-        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.55)', justifyContent: 'center', padding: 20 }}>
-          <View style={{ backgroundColor: colors.surface, borderRadius: 18, padding: 22 }}>
-            <Text style={{ fontSize: 19, fontWeight: '700', color: colors.text, marginBottom: 6 }}>
-              {e2eMode === 'enable' ? (t('backup.e2eEnableTitle') || 'Ativar criptografia')
-                : e2eMode === 'change' ? (t('backup.e2eChangeTitle') || 'Alterar senha de backup')
-                : (t('backup.e2eDisableTitle') || 'Desativar criptografia')}
-            </Text>
-            <Text style={{ fontSize: 13, color: colors.textSecondary, marginBottom: 18, lineHeight: 19 }}>
-              {e2eMode === 'disable'
-                ? (t('backup.e2eDisableMsg') || 'Tem certeza? Backups futuros não serão criptografados.')
-                : (t('backup.e2eModalMsg') || 'Crie uma senha forte. Sem ela, não há como recuperar seus backups. A Chatyy NUNCA terá acesso a essa senha.')}
-            </Text>
-
-            {e2eMode !== 'disable' && (
-              <>
-                <TextInput
-                  value={e2ePass1}
-                  onChangeText={(v) => { setE2ePass1(v); setE2eErr(''); }}
-                  placeholder={t('backup.e2ePassword') || 'Senha'}
-                  placeholderTextColor={colors.textTertiary}
-                  secureTextEntry
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                  style={{
-                    borderWidth: 1, borderColor: colors.border, borderRadius: 10,
-                    paddingHorizontal: 14, height: 48, fontSize: 16, color: colors.text,
-                    backgroundColor: colors.background, marginBottom: 10,
-                  }}
-                />
-                {/* Strength bar */}
-                {e2ePass1.length > 0 && (
-                  <View style={{ flexDirection: 'row', gap: 4, marginBottom: 10 }}>
-                    {[0,1,2,3,4].map(i => {
-                      const score = passwordStrength(e2ePass1);
-                      const color = score <= 1 ? '#ef4444' : score <= 2 ? '#f59e0b' : score <= 3 ? '#eab308' : '#22c55e';
-                      return (
-                        <View key={i} style={{
-                          flex: 1, height: 4, borderRadius: 2,
-                          backgroundColor: i < score ? color : (isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.08)'),
-                        }} />
-                      );
-                    })}
-                  </View>
-                )}
-                <TextInput
-                  value={e2ePass2}
-                  onChangeText={(v) => { setE2ePass2(v); setE2eErr(''); }}
-                  placeholder={t('backup.e2ePasswordConfirm') || 'Confirmar senha'}
-                  placeholderTextColor={colors.textTertiary}
-                  secureTextEntry
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                  style={{
-                    borderWidth: 1, borderColor: colors.border, borderRadius: 10,
-                    paddingHorizontal: 14, height: 48, fontSize: 16, color: colors.text,
-                    backgroundColor: colors.background,
-                  }}
-                />
-              </>
-            )}
-
-            {!!e2eErr && <Text style={{ color: '#ef4444', fontSize: 12, marginTop: 10 }}>{e2eErr}</Text>}
-
-            <View style={{ flexDirection: 'row', gap: 10, marginTop: 22 }}>
-              <TouchableOpacity
-                onPress={() => setShowE2eModal(false)}
-                disabled={e2eSaving}
-                style={{ flex: 1, height: 46, borderRadius: 10, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.background, borderWidth: 1, borderColor: colors.border }}
-              >
-                <Text style={{ color: colors.text, fontWeight: '600' }}>{t('compose.cancel') || 'Cancelar'}</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                onPress={handleE2eSubmit}
-                disabled={e2eSaving}
-                style={{
-                  flex: 1, height: 46, borderRadius: 10, alignItems: 'center', justifyContent: 'center',
-                  backgroundColor: e2eMode === 'disable' ? colors.error : ACCENT,
-                  opacity: e2eSaving ? 0.6 : 1,
-                }}
-              >
-                {e2eSaving ? (
-                  <ActivityIndicator color={e2eMode === 'disable' ? '#fff' : ON_ACCENT} />
-                ) : (
-                  <Text style={{ color: e2eMode === 'disable' ? '#fff' : ON_ACCENT, fontWeight: '700' }}>
-                    {e2eMode === 'disable' ? (t('backup.e2eConfirmDisable') || 'Desativar') : (t('backup.e2eConfirm') || 'Confirmar')}
-                  </Text>
-                )}
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      </Modal>
     </View>
   );
 }

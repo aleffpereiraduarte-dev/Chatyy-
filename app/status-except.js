@@ -150,7 +150,7 @@ export default function StatusExceptScreen() {
                   backgroundColor: isIn ? (colors.primary || '#111111') : 'transparent',
                   alignItems: 'center', justifyContent: 'center',
                 }}>
-                  {isIn && <IconCheck size={15} color="#fff" strokeWidth={3} />}
+                  {isIn && <IconCheck size={15} color={colors.onPrimary || '#fff'} strokeWidth={3} />}
                 </View>
               </TouchableOpacity>
             );

@@ -410,7 +410,7 @@ function ThemedStatusBar() {
   return (
     <StatusBar
       style={isDark ? 'light' : 'dark'}
-      backgroundColor={isDark ? '#0d0d0d' : '#ffffff'}
+      backgroundColor={isDark ? (colors?.background || '#000000') : '#ffffff'}
       translucent={Platform.OS === 'android'}
     />
   );
@@ -1633,7 +1633,8 @@ export default function RootLayout() {
     })();
     return () => { alive = false; };
   }, [_osScheme]);
-  const _navBg = _navIsDark ? '#0d0d0d' : '#ffffff';
+  // [2026-10-08 dark-black] = DarkColors.background (true black, no navy).
+  const _navBg = _navIsDark ? '#000000' : '#ffffff';
   // [2026-10-04] Reduce Motion: swap directional slides for a quick cross-fade
   // (Apple HIG: replace slide transitions with a dissolve under Reduce Motion).
   const _reduceMotion = useReducedMotion();
@@ -1657,8 +1658,9 @@ export default function RootLayout() {
   // conteúdo pula). Título/cores finais vêm do setOptions da própria tela.
   const _NATIVE_HDR = Platform.OS === 'web' ? {} : {
     headerShown: true, title: '', headerBackButtonDisplayMode: 'minimal', headerShadowVisible: true,
-    headerStyle: { backgroundColor: _navIsDark ? '#111b21' : '#ffffff' },
-    headerTintColor: _navIsDark ? '#e9edef' : '#111b21',
+    // [2026-10-08 dark-black] dark = DarkColors.headerBgSolid/text (neutral, no navy).
+    headerStyle: { backgroundColor: _navIsDark ? '#0b0b0b' : '#ffffff' },
+    headerTintColor: _navIsDark ? '#F5F5F7' : '#111b21',
   };
   // Cache-ready gate: services/mmkv.js hydrates the in-memory cache from
   // AsyncStorage asynchronously at module load. Before that finishes,
@@ -1895,6 +1897,8 @@ export default function RootLayout() {
                   <Stack.Screen name="reels-recorder" options={{ headerShown: false, presentation: 'fullScreenModal', animation: _navAnim('slide_from_bottom') }} />
                   {/* Reels drafts — grid of persisted drafts; tap to resume. */}
                   <Stack.Screen name="reels-drafts" options={{ headerShown: false, ..._FULL_MODAL }} />
+                  {/* [2026-10-08 reels-publish] Reels composer — galeria/câmera → corte/capa/legenda → Publicar (2º plano). */}
+                  <Stack.Screen name="reels-compose" options={{ headerShown: false, presentation: 'fullScreenModal', animation: _navAnim('slide_from_bottom'), gestureEnabled: false }} />
                   <Stack.Screen name="post-create" options={{ headerShown: false, presentation: 'fullScreenModal', animation: _navAnim('slide_from_bottom') }} />
                   <Stack.Screen name="community/[id]" options={{ headerShown: false, presentation: 'card', animation: _PUSH }} />
                   <Stack.Screen name="community/create" options={{ headerShown: false, presentation: 'card', animation: _PUSH }} />

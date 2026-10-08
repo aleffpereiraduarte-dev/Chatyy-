@@ -407,7 +407,7 @@ const ContactRow = React.memo(function ContactRow({
           backgroundColor: selected ? colors.primary : 'transparent',
           borderColor: selected ? colors.primary : colors.border,
         }]}>
-          {selected && <IconCheck size={14} color="#fff" />}
+          {selected && <IconCheck size={14} color={colors.onPrimary || '#fff'} />}
         </View>
       )}
     </PressableRow>
@@ -1990,7 +1990,7 @@ export default function ChatNewScreen() {
                           style={[sty.emptyActionBtn, { backgroundColor: colors.primary }]}
                           onPress={handleAddEmail}
                         >
-                          <IconPlus size={16} color="#fff" />
+                          <IconPlus size={16} color={colors.onPrimary || '#fff'} />
                           <Text style={sty.emptyActionText}>{t('chat.addEmail', { email: searchText })}</Text>
                         </TouchableOpacity>
                       )}
@@ -2097,7 +2097,7 @@ export default function ChatNewScreen() {
                           borderRadius: 999,
                         }}
                       >
-                        <Text style={{ color: '#fff', fontSize: 12, fontWeight: '600' }}>
+                        <Text style={{ color: colors.onPrimary || '#fff', fontSize: 12, fontWeight: '600' }}>
                           {(t('chat.contactsOnChatyyCount') ||
                             `${phoneContacts.length} dos seus ${(phoneContacts.length + otherContacts.length) || phoneContacts.length} contatos estão no Chatyy`)
                             .replace('{count}', String(phoneContacts.length))
@@ -2383,9 +2383,9 @@ export default function ChatNewScreen() {
             onPress={handleCreateGroup}
             disabled={creating}
           >
-            {creating ? <ActivityIndicator size="small" color="#fff" /> : (
+            {creating ? <ActivityIndicator size="small" color={colors.onPrimary || '#fff'} /> : (
               <>
-                <IconUsers size={18} color="#fff" />
+                <IconUsers size={18} color={colors.onPrimary || '#fff'} />
                 <Text style={sty.createBtnText}>{t('chat.createGroup', { count: selectedMembers.length })}</Text>
               </>
             )}
@@ -2401,7 +2401,7 @@ export default function ChatNewScreen() {
             onPress={handleCreateChannel}
             disabled={creating}
           >
-            {creating ? <ActivityIndicator size="small" color="#fff" /> : (
+            {creating ? <ActivityIndicator size="small" color={colors.onPrimary || '#fff'} /> : (
               <>
                 <Text style={{ fontSize: 16, marginRight: 6 }}>{'#'}</Text>
                 <Text style={sty.createBtnText}>{t('chat.createChannel')}</Text>

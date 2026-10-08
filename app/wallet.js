@@ -119,7 +119,7 @@ function CardChip({ card, isDark, colors, onPress }) {
       activeOpacity={0.88}
       onPress={onPress}
       style={[styles.cardChip, {
-        backgroundColor: isDark ? '#16161E' : '#FFFFFF',
+        backgroundColor: isDark ? '#161618' : '#FFFFFF',
         borderColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(15,23,42,0.06)',
       }]}
     >

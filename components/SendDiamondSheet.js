@@ -203,7 +203,7 @@ export default function SendDiamondSheet({
     <>
       <Modal visible={visible && !showTopUp} animationType="slide" transparent onRequestClose={onClose}>
         <View style={styles.scrim}>
-          <View style={[styles.sheet, { backgroundColor: isDark ? '#0F172A' : '#F8FAFC' }]}>
+          <View style={[styles.sheet, { backgroundColor: isDark ? '#0b0b0b' : '#F8FAFC' }]}>
             <View style={styles.head}>
               <Text style={[styles.title, { color: colors.text }]}>
                 {t('walletSend.title') || 'Enviar diamantes'}

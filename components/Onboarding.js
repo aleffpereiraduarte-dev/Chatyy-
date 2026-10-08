@@ -31,7 +31,7 @@ const SLIDES = [
     key: 'chat',
     Icon: IconMessageSquare,
     titleKey: 'onboarding.slideChatTitle',
-    descKey: 'onboarding.slideChatDesc',
+    descKey: 'onboarding.slideChatDescV2', // [2026-10-08 trust-channels] old key claimed E2EE (flag OFF)
     accent: '#25D366',
     accent2: '#1EBE5A',
   },

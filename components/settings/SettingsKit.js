@@ -23,23 +23,23 @@ import NativeSwitch from '../NativeSwitch';
 import { IconChevronRight, IconCheck } from '../Icons';
 
 // Palette for grouped lists. Light = iOS systemGroupedBackground; dark keeps
-// the app's navy page and lifts the cards one step so groups read as groups.
+// the app's true-black page [2026-10-08 dark-black] and lifts the cards one step so groups read as groups.
 export function useGroupedColors() {
   const { colors = {}, isDark } = useTheme() || {};
   return {
     isDark: !!isDark,
-    pageBg: isDark ? (colors.background || '#0e1621') : '#F2F2F7',
-    cardBg: isDark ? '#17242D' : '#FFFFFF',
+    pageBg: isDark ? (colors.background || '#000000') : '#F2F2F7',
+    cardBg: isDark ? '#1C1C1E' : '#FFFFFF',
     separator: isDark ? 'rgba(255,255,255,0.09)' : 'rgba(60,60,67,0.16)',
-    header: isDark ? '#8B9AA5' : '#6D6D72',
-    text: colors.text || (isDark ? '#E9EDEF' : '#111111'),
-    secondary: isDark ? '#8B9AA5' : '#8A8A8E',
-    tertiary: isDark ? '#5E6D78' : '#C4C4C7',
-    ink: colors.text || (isDark ? '#E9EDEF' : '#111111'),
-    onInk: isDark ? '#0e1621' : '#FFFFFF',
+    header: isDark ? '#8E8E93' : '#6D6D72',
+    text: colors.text || (isDark ? '#F5F5F7' : '#111111'),
+    secondary: isDark ? '#8E8E93' : '#8A8A8E',
+    tertiary: isDark ? '#636366' : '#C4C4C7',
+    ink: colors.text || (isDark ? '#F5F5F7' : '#111111'),
+    onInk: isDark ? '#000000' : '#FFFFFF',
     destructive: colors.error || '#dc2626',
-    tileBg: isDark ? '#E9EDEF' : '#111111',
-    tileFg: isDark ? '#111b21' : '#FFFFFF',
+    tileBg: isDark ? '#F5F5F7' : '#111111',
+    tileFg: isDark ? '#0b0b0b' : '#FFFFFF',
     fill: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(118,118,128,0.12)',
   };
 }

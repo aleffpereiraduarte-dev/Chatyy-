@@ -156,7 +156,7 @@ export default function KidsAchievementsModal({ visible, onClose, colors, isDark
                 ))}
               </View>
               {achievements.length === 0 && (
-                <Text style={{ textAlign: 'center', color: isDark ? '#9ca3af' : '#6b7280', marginTop: 40 }}>
+                <Text style={{ textAlign: 'center', color: isDark ? '#A1A1A6' : '#6b7280', marginTop: 40 }}>
                   {t?.('kids.achievements.empty') || 'Responda perguntas pra desbloquear conquistas!'}
                 </Text>
               )}

@@ -1498,7 +1498,7 @@ export default function SignupPhone() {
                         alignItems: 'center', justifyContent: 'center',
                         borderWidth: 2, borderColor: colors.background,
                       }}>
-                        <IconCamera size={15} color="#fff" />
+                        <IconCamera size={15} color={colors.onPrimary || '#fff'} />
                       </View>
                     </TouchableOpacity>
                     <Text style={{ fontSize: 12, color: colors.textTertiary, marginTop: 10 }}>{t('onb.photoHint')}</Text>
@@ -1806,8 +1806,8 @@ export default function SignupPhone() {
                       activeOpacity={0.85}
                       style={[styles.cta, { alignSelf: 'stretch', marginTop: 24, backgroundColor: colors.primary }]}
                     >
-                      <Text style={[styles.ctaText, { color: colors.onPrimary }]}>{t('onb.doneStart')}</Text>
-                      <IconArrowRight size={18} color={colors.onPrimary} style={{ marginLeft: 8 }} />
+                      <Text style={[styles.ctaText, { color: colors.onPrimary || '#fff' }]}>{t('onb.doneStart')}</Text>
+                      <IconArrowRight size={18} color={colors.onPrimary || '#fff'} style={{ marginLeft: 8 }} />
                     </TouchableOpacity>
                   )}
                 </View>
@@ -1891,8 +1891,8 @@ export default function SignupPhone() {
           >
             {busy ? (
               <>
-                <ActivityIndicator color={colors.onPrimary} />
-                <Text style={[styles.ctaText, { marginLeft: 10, color: colors.onPrimary }]}>
+                <ActivityIndicator color={colors.onPrimary || '#fff'} />
+                <Text style={[styles.ctaText, { marginLeft: 10, color: colors.onPrimary || '#fff' }]}>
                   {/* Per-step loading copy — "Enviando..." for the OTP send,
                       "Verificando..." for code check, "Criando conta..." for
                       final signup. Tells the user the spinner means *what*,
@@ -1905,11 +1905,11 @@ export default function SignupPhone() {
               </>
             ) : (
               <>
-                <Text style={[styles.ctaText, { color: colors.onPrimary }]}>
+                <Text style={[styles.ctaText, { color: colors.onPrimary || '#fff' }]}>
                   {step === 'handle' ? (t('signupPhone.finish') || 'Criar conta')
                   : (t('onb.continue') || 'Continuar')}
                 </Text>
-                {step !== 'handle' && <IconArrowRight size={18} color={colors.onPrimary} style={{ marginLeft: 8 }} />}
+                {step !== 'handle' && <IconArrowRight size={18} color={colors.onPrimary || '#fff'} style={{ marginLeft: 8 }} />}
               </>
             )}
           </TouchableOpacity>

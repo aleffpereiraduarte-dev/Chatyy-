@@ -1949,7 +1949,7 @@ function SettingsScreenInner() {
                 >
                   <Text style={[
                     s.perPageText, { color: colors.text },
-                    voiceSpeedDefault === opt.val && { color: '#fff' },
+                    voiceSpeedDefault === opt.val && { color: colors.onPrimary || '#fff' },
                   ]}>
                     {opt.label}
                   </Text>
@@ -1983,7 +1983,7 @@ function SettingsScreenInner() {
                 >
                   <Text style={[
                     s.perPageText, { color: colors.text },
-                    bubbleShape === opt.val && { color: '#fff' },
+                    bubbleShape === opt.val && { color: colors.onPrimary || '#fff' },
                   ]}>
                     {opt.label}
                   </Text>
@@ -2404,7 +2404,7 @@ function SettingsScreenInner() {
                       setStorage('one_notif_level', opt.val);
                     }}
                   >
-                    <opt.Icon size={14} color={isSel ? '#fff' : colors.text} />
+                    <opt.Icon size={14} color={isSel ? (colors.onPrimary || '#fff') : colors.text} />
                     <Text style={[
                       s.perPageText, { color: colors.text, textAlign: 'center' },
                       isSel && { color: '#fff' },
@@ -3450,7 +3450,7 @@ function SettingsScreenInner() {
               accessibilityRole="button"
               accessibilityLabel={t('common.add') || 'Adicionar'}
             >
-              <Text style={{ color: '#fff', fontWeight: '700', fontSize: 14 }}>
+              <Text style={{ color: colors.onPrimary || '#fff', fontWeight: '700', fontSize: 14 }}>
                 {t('common.add') || 'Adicionar'}
               </Text>
             </TouchableOpacity>
@@ -4054,8 +4054,8 @@ function SettingsScreenInner() {
                 style={{ flex: 1, paddingVertical: 12, borderRadius: 10, backgroundColor: colors.primary, alignItems: 'center', opacity: e2eBackupBusy ? 0.5 : 1 }}
               >
                 {e2eBackupBusy
-                  ? <ActivityIndicator size="small" color="#fff" />
-                  : <Text style={{ color: '#fff', fontWeight: '700' }}>{t('common.save') || 'Salvar'}</Text>}
+                  ? <ActivityIndicator size="small" color={colors.onPrimary || '#fff'} />
+                  : <Text style={{ color: colors.onPrimary || '#fff', fontWeight: '700' }}>{t('common.save') || 'Salvar'}</Text>}
               </TouchableOpacity>
             </View>
           </Pressable>
@@ -4251,9 +4251,9 @@ function SettingsScreenInner() {
                 }}
               >
                 {cpLoading ? (
-                  <ActivityIndicator size="small" color="#fff" />
+                  <ActivityIndicator size="small" color={colors.onPrimary || '#fff'} />
                 ) : (
-                  <Text style={{ color: '#fff', fontWeight: '700' }}>
+                  <Text style={{ color: colors.onPrimary || '#fff', fontWeight: '700' }}>
                     {t('settings.save') || t('common.save') || 'Salvar'}
                   </Text>
                 )}
@@ -4391,9 +4391,9 @@ function SettingsScreenInner() {
                 }}
               >
                 {twoFALoading ? (
-                  <ActivityIndicator size="small" color="#fff" />
+                  <ActivityIndicator size="small" color={colors.onPrimary || '#fff'} />
                 ) : (
-                  <Text style={{ color: '#fff', fontWeight: '700' }}>
+                  <Text style={{ color: colors.onPrimary || '#fff', fontWeight: '700' }}>
                     {t('settings.twoFactorEnable') || 'Ativar PIN'}
                   </Text>
                 )}
@@ -4534,9 +4534,9 @@ function SettingsScreenInner() {
                 }}
               >
                 {regLockLoading ? (
-                  <ActivityIndicator size="small" color="#fff" />
+                  <ActivityIndicator size="small" color={colors.onPrimary || '#fff'} />
                 ) : (
-                  <Text style={{ color: '#fff', fontWeight: '700' }}>
+                  <Text style={{ color: colors.onPrimary || '#fff', fontWeight: '700' }}>
                     {t('settings.registrationLockEnable') || 'Ativar PIN'}
                   </Text>
                 )}
@@ -4601,7 +4601,7 @@ function SettingsScreenInner() {
               onPress={() => setAboutOpen(false)}
               style={{ marginTop: 16, paddingVertical: 12, borderRadius: 10, backgroundColor: colors.primary, alignItems: 'center' }}
             >
-              <Text style={{ color: '#fff', fontWeight: '700' }}>{t('common.close') || 'Fechar'}</Text>
+              <Text style={{ color: colors.onPrimary || '#fff', fontWeight: '700' }}>{t('common.close') || 'Fechar'}</Text>
             </TouchableOpacity>
           </Pressable>
         </Pressable>
@@ -4722,8 +4722,8 @@ function SettingsScreenInner() {
                 style={{ flex: 1, paddingVertical: 12, borderRadius: 10, backgroundColor: colors.primary, alignItems: 'center', opacity: backupKeyBusy ? 0.5 : 1 }}
               >
                 {backupKeyBusy
-                  ? <ActivityIndicator size="small" color="#fff" />
-                  : <Text style={{ color: '#fff', fontWeight: '700' }}>{t('common.save') || 'Salvar'}</Text>}
+                  ? <ActivityIndicator size="small" color={colors.onPrimary || '#fff'} />
+                  : <Text style={{ color: colors.onPrimary || '#fff', fontWeight: '700' }}>{t('common.save') || 'Salvar'}</Text>}
               </TouchableOpacity>
             </View>
           </Pressable>

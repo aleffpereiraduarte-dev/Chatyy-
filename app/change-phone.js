@@ -330,8 +330,8 @@ export default function ChangePhone() {
               <View style={styles.heroWrap}>
                 <View style={[styles.heroOrb, { backgroundColor: colors.primary + '15' }]}>
                   <View style={[styles.heroOrbInner, { backgroundColor: colors.primary }]}>
-                    {step === 'confirm' && <IconPhone size={36} color="#fff" />}
-                    {step === 'otp' && <IconShield size={36} color="#fff" />}
+                    {step === 'confirm' && <IconPhone size={36} color={colors.onPrimary || '#fff'} />}
+                    {step === 'otp' && <IconShield size={36} color={colors.onPrimary || '#fff'} />}
                   </View>
                 </View>
               </View>
@@ -359,7 +359,7 @@ export default function ChangePhone() {
                 <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>
                   {t('changePhone.currentLabel') || 'Número atual'}
                 </Text>
-                <View style={[styles.readonlyBox, { backgroundColor: isDark ? '#1f2229' : '#f3f4f6', borderColor: _hairline }]}>
+                <View style={[styles.readonlyBox, { backgroundColor: isDark ? '#1c1c1e' : '#f3f4f6', borderColor: _hairline }]}>
                   {loadingProfile
                     ? <ActivityIndicator size="small" color={colors.primary} />
                     : (
@@ -644,7 +644,7 @@ export default function ChangePhone() {
                 style={[
                   {
                     fontSize: 15, paddingVertical: 12, paddingHorizontal: 14,
-                    borderRadius: 10, backgroundColor: isDark ? '#1f2229' : '#f3f4f6',
+                    borderRadius: 10, backgroundColor: isDark ? '#1c1c1e' : '#f3f4f6',
                     color: colors.text,
                   },
                   Platform.OS === 'web' && { outlineStyle: 'none' },

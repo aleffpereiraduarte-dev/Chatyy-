@@ -101,7 +101,7 @@ export default function EmptyState({ search, message, folder, onRefresh }) {
             onPress={() => router.push('/compose')}
             activeOpacity={0.8}
           >
-            <IconCompose size={16} color="#fff" style={{ marginRight: 8 }} />
+            <IconCompose size={16} color={colors.onPrimary || '#fff'} style={{ marginRight: 8 }} />
             <Text style={s.ctaBtnText}>{t('empty.compose')}</Text>
           </TouchableOpacity>
         )}

@@ -173,8 +173,13 @@ export default function ScreenEmptyState({
   compact = false,
   style,
 }) {
-  const { colors } = useTheme();
-  const A = accent || colors.primary || AC;
+  const { colors, isDark } = useTheme();
+  // [2026-10-08 dark-black] A near-black accent (the default ink, or an explicit
+  // '#111' from a caller) is invisible on the black dark surfaces → fall back to
+  // the theme primary (white in dark) and paint the CTA ink with onPrimary.
+  const _rawA = accent || colors.primary || AC;
+  const A = (isDark && /^#(?:[0-2][0-9a-f]){3}$/i.test(String(_rawA))) ? (colors.primary || '#F5F5F7') : _rawA;
+  const ink = A === colors.primary ? (colors.onPrimary || '#fff') : '#fff';
 
   const fade = useRef(new Animated.Value(0)).current;
   const slide = useRef(new Animated.Value(16)).current;
@@ -233,8 +238,8 @@ export default function ScreenEmptyState({
           onPress={cta.onPress}
           style={[styles.cta, { backgroundColor: A }, Shadow.purpleGlow]}
         >
-          {!!cta.icon && <View style={{ marginRight: 8 }}><TipIcon name={cta.icon} color="#fff" /></View>}
-          <Text style={styles.ctaText}>{cta.label}</Text>
+          {!!cta.icon && <View style={{ marginRight: 8 }}><TipIcon name={cta.icon} color={ink} /></View>}
+          <Text style={[styles.ctaText, { color: ink }]}>{cta.label}</Text>
         </TouchableOpacity>
       )}
 

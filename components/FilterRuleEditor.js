@@ -263,7 +263,7 @@ export default function FilterRuleEditor({ visible, onClose }) {
                     onPress={() => setConditionOp('AND')}
                     style={[s.combineBtn, conditionOp === 'AND' && { backgroundColor: colors.primary }]}
                   >
-                    <Text style={[s.combineBtnText, { color: conditionOp === 'AND' ? '#fff' : colors.text }]}>
+                    <Text style={[s.combineBtnText, { color: conditionOp === 'AND' ? (colors.onPrimary || '#fff') : colors.text }]}>
                       {t('filters.combineAnd') || 'E (todos)'}
                     </Text>
                   </TouchableOpacity>
@@ -271,7 +271,7 @@ export default function FilterRuleEditor({ visible, onClose }) {
                     onPress={() => setConditionOp('OR')}
                     style={[s.combineBtn, conditionOp === 'OR' && { backgroundColor: colors.primary }]}
                   >
-                    <Text style={[s.combineBtnText, { color: conditionOp === 'OR' ? '#fff' : colors.text }]}>
+                    <Text style={[s.combineBtnText, { color: conditionOp === 'OR' ? (colors.onPrimary || '#fff') : colors.text }]}>
                       {t('filters.combineOr') || 'OU (qualquer)'}
                     </Text>
                   </TouchableOpacity>
@@ -416,7 +416,7 @@ export default function FilterRuleEditor({ visible, onClose }) {
                   )}
                 </TouchableOpacity>
                 <TouchableOpacity style={[s.saveBtn, { backgroundColor: colors.primary, flex: 2, marginTop: 0 }]} onPress={handleSave}>
-                  <IconCheck size={18} color="#fff" style={{ marginRight: 6 }} />
+                  <IconCheck size={18} color={colors.onPrimary || '#fff'} style={{ marginRight: 6 }} />
                   <Text style={s.saveBtnText}>{t('filters.saveRule') || 'Salvar filtro'}</Text>
                 </TouchableOpacity>
               </View>

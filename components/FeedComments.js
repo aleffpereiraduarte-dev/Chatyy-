@@ -938,7 +938,7 @@ export default function FeedComments({ visible, post, colors, isDark, t, user, o
   // [2026-10-08 apps-native] Dark mode: icons/spinners were ACCENT (#111) on a
   // dark sheet → invisible send/mic/GIF/video buttons. B&W: white on dark.
   const accent = isDark ? '#ffffff' : ACCENT;
-  const sheetBg = isDark ? (colors?.surface || '#111b21') : '#ffffff';
+  const sheetBg = isDark ? (colors?.surface || '#0b0b0b') : '#ffffff';
 
   return (
     <Modal

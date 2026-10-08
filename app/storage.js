@@ -154,7 +154,7 @@ export default function StorageScreen() {
                 </View>
               </View>
 
-              <View style={[styles.barWrap, { backgroundColor: isDark ? '#1f2937' : '#f1f5f9' }]}>
+              <View style={[styles.barWrap, { backgroundColor: isDark ? '#1c1c1e' : '#f1f5f9' }]}>
                 <View style={[styles.bar, { width: `${pct}%`, backgroundColor: barColor }]} />
               </View>
 

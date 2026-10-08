@@ -58,6 +58,10 @@ const ACCENT_HEX_SET = new Set(ACCENT_PRESETS.map(p => p.hex));
 // a consumer.
 const THEME_MODES = new Set(['light', 'dark', 'system']);
 
+// Near-black hex (#000000–#2f2f2f): the default ink accent. Used to keep the
+// dark palette's inverted (white) primary — see ThemeProvider + useAuthTheme.
+const _NEAR_BLACK = /^#(0[0-9a-f]|1[0-9a-f]|2[0-9a-f])(0[0-9a-f]|1[0-9a-f]|2[0-9a-f])(0[0-9a-f]|1[0-9a-f]|2[0-9a-f])$/i;
+
 export function ThemeProvider({ children }) {
   const [systemIsDark, setSystemIsDark] = useState(false);
   // 3-state source of truth. Defaults to 'system' so a fresh install follows
@@ -360,11 +364,19 @@ export function ThemeProvider({ children }) {
   // and the OS-scheme watcher that left web rendering light under forced dark.
   const isDark = themeMode === 'system' ? systemIsDark : themeMode === 'dark';
   const baseColors = isDark ? DarkColors : Colors;
-  const colors = useMemo(() => ({
-    ...baseColors,
-    primary: accentColor,
-    chatPrimary: accentColor,
-  }), [baseColors, accentColor]);
+  // [2026-10-08 dark-black] The default accent is near-black ink (#111111). In
+  // dark mode that is invisible on the black surfaces, so a near-black accent
+  // keeps DarkColors' inverted (white) primary + black onPrimary. Colored
+  // accents (blue/orange/slate) still apply in both modes with white ink.
+  const colors = useMemo(() => {
+    if (isDark && _NEAR_BLACK.test(String(accentColor || ''))) return baseColors;
+    return {
+      ...baseColors,
+      primary: accentColor,
+      chatPrimary: accentColor,
+      ...(isDark ? { onPrimary: '#ffffff', textOnPrimary: '#ffffff' } : null),
+    };
+  }, [baseColors, accentColor, isDark]);
   const densityConfig = DENSITY_CONFIG[density];
 
   // Memoize context value to prevent re-renders in all consumers when an
@@ -396,7 +408,6 @@ export function useTheme() {
 // context but, in dark mode with a near-black accent, remaps the accent family
 // to the `authAccent` tokens (white ink) so the ~170 existing `colors.primary`
 // usages in those files light up without touching the rest of the app.
-const _NEAR_BLACK = /^#(0[0-9a-f]|1[0-9a-f]|2[0-9a-f])(0[0-9a-f]|1[0-9a-f]|2[0-9a-f])(0[0-9a-f]|1[0-9a-f]|2[0-9a-f])$/i;
 export function useAuthTheme() {
   const ctx = useTheme();
   const { colors, isDark } = ctx;

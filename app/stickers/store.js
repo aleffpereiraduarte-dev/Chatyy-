@@ -111,10 +111,10 @@ function PackCard({ pack, installedSet, onInstall, onUninstall, onPress, colors,
           >
             {installed
               ? <IconCheck size={12} color={colors.text} />
-              : <IconPlus size={12} color="#fff" />}
+              : <IconPlus size={12} color={colors.onPrimary || '#fff'} />}
             <Text style={{
               fontSize: 12, fontWeight: '700',
-              color: installed ? colors.text : '#fff',
+              color: installed ? colors.text : colors.onPrimary,
             }}>
               {installed ? (t?.('chat.installed') || 'Instalado') : (t?.('chat.install') || 'Instalar')}
             </Text>
@@ -322,7 +322,7 @@ function PackDetailModal({ pack, visible, onClose, installedSet, onInstall, onUn
             >
               <Text style={{
                 fontSize: 15, fontWeight: '800',
-                color: installed ? colors.text : '#fff',
+                color: installed ? colors.text : colors.onPrimary,
               }}>
                 {installed
                   ? (t?.('chat.uninstallPack') || 'Remover pacote')

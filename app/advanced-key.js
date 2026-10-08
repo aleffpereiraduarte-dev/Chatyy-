@@ -158,7 +158,7 @@ export default function AdvancedKeyScreen() {
         onPress={handleGenerate}
         disabled={busy}
       >
-        {busy ? <ActivityIndicator color="#fff" /> :
+        {busy ? <ActivityIndicator color={colors.onPrimary || '#fff'} /> :
           <Text style={styles.ctaText}>{t('byok.generate') || 'Gerar chave personalizada'}</Text>}
       </TouchableOpacity>
     </View>

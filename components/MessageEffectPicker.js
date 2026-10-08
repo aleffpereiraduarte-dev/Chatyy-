@@ -130,7 +130,7 @@ export default function MessageEffectPicker({ visible, onClose, onPick, t, isDar
 
   const sheetBg = isDark ? '#1c1c1e' : '#fff';
   const text = isDark ? '#fff' : '#0f172a';
-  const subText = isDark ? '#9ca3af' : '#64748b';
+  const subText = isDark ? '#A1A1A6' : '#64748b';
   const tileBg = isDark ? '#2c2c2e' : '#f3f4f6';
   const tileBorder = isDark ? '#3a3a3c' : '#e5e7eb';
   const bubbleColor = '#111111';

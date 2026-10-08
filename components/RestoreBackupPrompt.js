@@ -621,7 +621,7 @@ function buildStyles(colors, isDark) {
       marginTop: Spacing.md,
     },
     primaryBtnText: {
-      color: '#fff',
+      color: colors.onPrimary || '#fff',
       fontSize: FontSize.md,
       fontWeight: '700',
     },

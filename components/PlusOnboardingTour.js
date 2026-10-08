@@ -24,7 +24,7 @@ const SLIDES = [
   { Icon: IconSparkles, color: '#8B5CF6', titleKey: 'plusTour.aiTitle',     bodyKey: 'plusTour.aiDesc' },
   { Icon: IconVideo,    color: '#EC4899', titleKey: 'plusTour.reelsTitle',  bodyKey: 'plusTour.reelsDesc' },
   { Icon: IconStar,     color: '#f59e0b', titleKey: 'plusTour.vipTitle',    bodyKey: 'plusTour.vipDesc' },
-  { Icon: IconShield,   color: '#10b981', titleKey: 'plusTour.backupTitle', bodyKey: 'plusTour.backupDesc' },
+  { Icon: IconShield,   color: '#10b981', titleKey: 'plusTour.backupTitle', bodyKey: 'plusTour.backupDescV2' },
 ];
 
 export async function checkShouldShowPlusOnboarding() {

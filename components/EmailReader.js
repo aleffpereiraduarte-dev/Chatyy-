@@ -1421,8 +1421,8 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onF
           accessibilityLabel={t('reader.reply')}
           accessibilityRole="button"
         >
-          <IconReply size={16} color="#fff" style={{ marginRight: 8 }} />
-          <Text style={[s.actionText, { color: '#fff' }]}>{t('reader.reply')}</Text>
+          <IconReply size={16} color={colors.onPrimary || '#fff'} style={{ marginRight: 8 }} />
+          <Text style={[s.actionText, { color: colors.onPrimary || '#fff' }]}>{t('reader.reply')}</Text>
         </TouchableOpacity>
         {onReplyAll && (
           <TouchableOpacity

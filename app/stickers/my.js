@@ -270,7 +270,7 @@ export default function StickerMyPacksScreen() {
               borderRadius: 12, backgroundColor: colors.primary,
             }}
           >
-            <Text style={{ color: '#fff', fontWeight: '800', fontSize: 14 }}>
+            <Text style={{ color: colors.onPrimary || '#fff', fontWeight: '800', fontSize: 14 }}>
               {t?.('chat.openStore') || 'Abrir loja'}
             </Text>
           </TouchableOpacity>
@@ -435,9 +435,9 @@ export default function StickerMyPacksScreen() {
               }}
             >
               {creating ? (
-                <ActivityIndicator size="small" color="#fff" />
+                <ActivityIndicator size="small" color={colors.onPrimary || '#fff'} />
               ) : (
-                <Text style={{ color: '#fff', fontSize: 14, fontWeight: '800' }}>
+                <Text style={{ color: colors.onPrimary || '#fff', fontSize: 14, fontWeight: '800' }}>
                   {!['pro', 'family'].includes(planTier)
                     ? (t?.('chat.upgradeToCreate') || 'Fazer upgrade')
                     : (t?.('common.create') || 'Criar')}

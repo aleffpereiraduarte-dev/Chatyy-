@@ -220,7 +220,7 @@ function PostCard({ item, isAdmin, colors, isDark, t, onReact, onDelete }) {
                   {
                     backgroundColor: item.my_reaction === r.emoji
                       ? (isDark ? 'rgba(17, 17, 17,0.22)' : 'rgba(17, 17, 17,0.1)')
-                      : (isDark ? '#1a1a24' : '#f3f4f6'),
+                      : (isDark ? '#1c1c1e' : '#f3f4f6'),
                     borderColor: item.my_reaction === r.emoji ? ACCENT : 'transparent',
                   },
                 ]}
@@ -661,7 +661,7 @@ export default function ChannelView({ channel, onBack, colors: propColors, isDar
             placeholderTextColor={isDark ? '#555' : '#9ca3af'}
             style={[styles.composeInput, {
               color: colors.text,
-              backgroundColor: isDark ? '#1a1a24' : '#f3f4f6',
+              backgroundColor: isDark ? '#1c1c1e' : '#f3f4f6',
             }]}
             multiline
             maxLength={5000}

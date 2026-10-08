@@ -341,7 +341,7 @@ export default function SafetyNumberSheet({ visible, onClose, peerEmail, peerNam
                   }}
                   style={[s.primaryBtn, { backgroundColor: colors.primary, marginTop: 18 }]}
                 >
-                  <IconCamera size={16} color="#fff" />
+                  <IconCamera size={16} color={colors.onPrimary || '#fff'} />
                   <Text style={s.primaryBtnText}>
                     {t('chatConv.safetyNumberScan') || 'Escanear'}
                   </Text>

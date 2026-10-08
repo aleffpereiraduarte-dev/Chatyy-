@@ -123,7 +123,7 @@ function HubTile({ tile, colors, isDark, t, badge, onPress }) {
         <Glyph kind={tile.kind} color={glyphColor} />
         {hasBadge && (
           <View style={[styles.badge, { backgroundColor: colors.badge, borderColor: colors.surface }]}>
-            <Text style={styles.badgeText} numberOfLines={1}>{badge > 99 ? '99+' : badge}</Text>
+            <Text style={[styles.badgeText, { color: colors.onBadge || '#fff' }]} numberOfLines={1}>{badge > 99 ? '99+' : badge}</Text>
           </View>
         )}
       </Animated.View>

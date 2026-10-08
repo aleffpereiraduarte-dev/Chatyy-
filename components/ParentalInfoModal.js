@@ -106,8 +106,8 @@ export default function ParentalInfoModal({ visible, onClose, onStartCreate }) {
   const orangeAccent = '#ea580c';
   const tealAccent = '#0d9488';
 
-  const bgGradient = isDark ? '#0f172a' : '#f0fdf4';
-  const cardBg = isDark ? '#1e293b' : '#ffffff';
+  const bgGradient = isDark ? '#0b0b0b' : '#f0fdf4';
+  const cardBg = isDark ? '#1c1c1e' : '#ffffff';
 
   return (
     <View style={[styles.overlay, { backgroundColor: isDark ? '#000000ee' : '#000000aa' }]}>

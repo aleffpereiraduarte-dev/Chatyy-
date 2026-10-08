@@ -266,25 +266,60 @@ function DiscoverList({ colors, isDark, t, onOpenChannel }) {
   const [refreshing, setRefreshing] = useState(false);
   const searchTimeout = useRef(null);
 
-  const load = useCallback(async (cat, q) => {
+  // [2026-10-08 trust-channels] Backend chat_discover_channels now really
+  // lists public channels (paginated). Top-level filter maps to the server:
+  // subscribed → include_following (then keep only is_member), recent →
+  // sort=recent, discover/suggested → default (excludes channels I follow).
+  const PAGE = 30;
+  const reqSeq = useRef(0);
+  const [hasMore, setHasMore] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const nextOffsetRef = useRef(0);
+
+  const load = useCallback(async (cat, q, flt, append = false) => {
+    const seq = ++reqSeq.current;
+    const offset = append ? nextOffsetRef.current : 0;
     try {
-      const res = await api.channelDiscover(cat === 'all' ? '' : cat, q);
-      if (api.apiOk(res)) setChannels(api.apiList(res, 'channels', 'conversations', 'items'));
-    } catch {} finally { setLoading(false); setRefreshing(false); }
+      const res = await api.channelDiscover(cat === 'all' ? '' : cat, q, PAGE, offset, {
+        includeFollowing: flt === 'subscribed',
+        sort: flt === 'recent' ? 'recent' : 'members',
+      });
+      if (seq !== reqSeq.current) return; // stale (filter/search changed meanwhile)
+      if (api.apiOk(res)) {
+        const rows = api.apiList(res, 'channels', 'conversations', 'items') || [];
+        const payload = api.apiPayload(res) || {};
+        nextOffsetRef.current = typeof payload.next_offset === 'number' ? payload.next_offset : offset + rows.length;
+        setHasMore(!!payload.has_more);
+        setChannels(prev => {
+          if (!append) return rows;
+          const seen = new Set(prev.map(c => c.id));
+          return prev.concat(rows.filter(c => !seen.has(c.id)));
+        });
+      }
+    } catch {} finally {
+      if (seq === reqSeq.current) { setLoading(false); setRefreshing(false); setLoadingMore(false); }
+    }
   }, []);
 
   useEffect(() => {
-    load(category, search);
+    setLoading(true);
+    load(category, search, filter);
     return () => { if (searchTimeout.current) clearTimeout(searchTimeout.current); };
-  }, [category, load]);
+  }, [category, filter, load]);
 
   const onSearchChange = useCallback((text) => {
     setSearch(text);
     if (searchTimeout.current) clearTimeout(searchTimeout.current);
-    searchTimeout.current = setTimeout(() => load(category, text), 400);
-  }, [category, load]);
+    searchTimeout.current = setTimeout(() => load(category, text, filter), 400);
+  }, [category, filter, load]);
 
-  const onRefresh = useCallback(() => { setRefreshing(true); load(category, search); }, [category, search, load]);
+  const onRefresh = useCallback(() => { setRefreshing(true); load(category, search, filter); }, [category, search, filter, load]);
+
+  const onEndReached = useCallback(() => {
+    if (!hasMore || loadingMore || loading) return;
+    setLoadingMore(true);
+    load(category, search, filter, true);
+  }, [hasMore, loadingMore, loading, category, search, filter, load]);
 
   // [2026-10-08 apps-native] otimista + haptic (antes: espera rede + reload
   // inteiro, e erro engolido sem reverter).
@@ -301,19 +336,13 @@ function DiscoverList({ colors, isDark, t, onOpenChannel }) {
     }
   }, []);
 
-  // Apply top-level filter (client-side; backend doesn't yet split by these keys)
+  // Server already filters/sorts per top-level filter; 'subscribed' asks for
+  // include_following, so keep only the ones I follow. Channels followed from
+  // this list stay visible (optimistic is_member) until the next reload.
   const displayed = React.useMemo(() => {
     if (!Array.isArray(channels)) return [];
     if (filter === 'subscribed') return channels.filter(c => c.is_member);
-    if (filter === 'suggested') return channels.filter(c => !c.is_member);
-    if (filter === 'recent') {
-      return [...channels].sort((a, b) => {
-        const ta = new Date(a.latest_post_at || a.created_at || 0).getTime();
-        const tb = new Date(b.latest_post_at || b.created_at || 0).getTime();
-        return tb - ta;
-      });
-    }
-    return channels; // 'discover' shows all
+    return channels;
   }, [channels, filter]);
 
   return (
@@ -416,6 +445,9 @@ function DiscoverList({ colors, isDark, t, onOpenChannel }) {
           keyboardShouldPersistTaps="handled"
           initialNumToRender={6}
           windowSize={7}
+          onEndReached={onEndReached}
+          onEndReachedThreshold={0.5}
+          ListFooterComponent={loadingMore ? <ActivityIndicator color={colors.text} style={{ marginVertical: 12 }} /> : null}
           renderItem={({ item }) => {
             const subCountNum = channelCount(item);
             // [2026-10-08 apps-native] era ' membro'/' membros' fixo em PT

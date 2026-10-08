@@ -496,13 +496,13 @@ export default function LiveDiscoverScreen() {
         onRequestClose={() => setPopoverItem(null)}
       >
         <Pressable style={styles.popoverBackdrop} onPress={() => setPopoverItem(null)}>
-          <View style={[styles.popoverCard, { backgroundColor: isDark ? '#1F2937' : '#FFFFFF' }]}>
+          <View style={[styles.popoverCard, { backgroundColor: isDark ? '#1c1c1e' : '#FFFFFF' }]}>
             <TouchableOpacity style={styles.popoverBtn} onPress={() => setPopoverItem(null)} activeOpacity={0.7}>
               <Text style={[styles.popoverBtnText, { color: colors.text }]}>
                 {t('common.share') || 'Compartilhar'}
               </Text>
             </TouchableOpacity>
-            <View style={[styles.popoverDivider, { backgroundColor: isDark ? '#374151' : '#E5E7EB' }]} />
+            <View style={[styles.popoverDivider, { backgroundColor: isDark ? '#2c2c2e' : '#E5E7EB' }]} />
             <TouchableOpacity style={styles.popoverBtn} onPress={() => setPopoverItem(null)} activeOpacity={0.7}>
               <Text style={[styles.popoverBtnText, { color: '#EF4444' }]}>
                 {t('common.report') || 'Reportar'}
@@ -567,7 +567,7 @@ function LiveCard({ item, index, isDark, t, onPress, onLongPress }) {
         onLongPress={() => onLongPress(item)}
         delayLongPress={350}
         activeOpacity={0.9}
-        style={[styles.card, { backgroundColor: isDark ? '#0F172A' : '#F1F5F9' }]}
+        style={[styles.card, { backgroundColor: isDark ? '#0b0b0b' : '#F1F5F9' }]}
         accessibilityRole="button"
         accessibilityLabel={`${title} — ${creatorName} — ${viewerCount} viewers`}
       >

@@ -283,7 +283,7 @@ export default function SignupUsername() {
                   ...(Platform.OS === 'web' ? { boxShadow: `0 14px 36px ${colors.primary}66, inset 0 1px 0 rgba(255,255,255,0.18)` } : {}),
                 }}>
                   <Animated.View style={{ opacity: heroIconFade, transform: [{ scale: heroIconFade.interpolate({ inputRange: [0, 1], outputRange: [0.7, 1] }) }] }}>
-                    <IconAtSign size={42} color="#fff" />
+                    <IconAtSign size={42} color={colors.onPrimary || '#fff'} />
                   </Animated.View>
                 </View>
               </Animated.View>
@@ -547,13 +547,13 @@ export default function SignupUsername() {
             activeOpacity={0.85}
           >
             {busy ? (
-              <ActivityIndicator color={colors.onPrimary} />
+              <ActivityIndicator color={colors.onPrimary || '#fff'} />
             ) : (
               <>
-                <Text style={[styles.ctaText, { color: colors.onPrimary }]}>
+                <Text style={[styles.ctaText, { color: colors.onPrimary || '#fff' }]}>
                   {step === 'name' ? (t('signupPhone.finish') || 'Criar conta') : (t('common.next') || 'Próximo')}
                 </Text>
-                {step !== 'name' && <IconArrowRight size={18} color={colors.onPrimary} style={{ marginLeft: 8 }} />}
+                {step !== 'name' && <IconArrowRight size={18} color={colors.onPrimary || '#fff'} style={{ marginLeft: 8 }} />}
               </>
             )}
           </TouchableOpacity>

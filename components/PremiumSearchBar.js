@@ -141,7 +141,7 @@ export default function PremiumSearchBar({
 
   // Spec colors: muted gray-ish background unfocused, surface (white/dark)
   // when focused. We interpolate so the swap animates instead of jumping.
-  const mutedBg = colors.surfaceMuted || (isDark ? '#1f2937' : '#f3f4f6');
+  const mutedBg = colors.surfaceMuted || (isDark ? '#1c1c1e' : '#f3f4f6');
   const focusedBg = colors.surface || (isDark ? '#0d0d0d' : '#ffffff');
   const bgColor = focusAnim.interpolate({
     inputRange: [0, 1],

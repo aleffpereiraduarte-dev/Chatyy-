@@ -259,7 +259,7 @@ export default function CompanionQRScreen() {
 
   return (
     <View style={[s.root, { backgroundColor: colors.background, paddingTop: insets.top }]}>
-      <View style={[s.header, { backgroundColor: isDark ? '#1a1a2e' : '#111111', paddingTop: 10 }]}>
+      <View style={[s.header, { backgroundColor: isDark ? '#1c1c1e' : '#111111', paddingTop: 10 }]}>
         <TouchableOpacity onPress={() => router.back()} style={s.backBtn}>
           <IconArrowLeft size={24} color="#fff" />
         </TouchableOpacity>

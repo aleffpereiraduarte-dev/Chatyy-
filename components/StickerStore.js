@@ -285,7 +285,7 @@ function PackDetailModal({ pack, colors, onClose, onInstall, onUninstall, instal
           activeOpacity={0.8}
         >
           {installing ? (
-            <ActivityIndicator size={14} color={isInstalled ? colors.error : '#fff'} />
+            <ActivityIndicator size={14} color={isInstalled ? colors.error : colors.onPrimary} />
           ) : isInstalled ? (
             <>
               <IconTrash size={14} color={colors.error || '#dc2626'} />
@@ -295,8 +295,8 @@ function PackDetailModal({ pack, colors, onClose, onInstall, onUninstall, instal
             </>
           ) : (
             <>
-              <IconPlus size={14} color="#fff" />
-              <Text style={{ fontSize: 13, fontWeight: '700', color: '#fff' }}>
+              <IconPlus size={14} color={colors.onPrimary || '#fff'} />
+              <Text style={{ fontSize: 13, fontWeight: '700', color: colors.onPrimary || '#fff' }}>
                 Adicionar
               </Text>
             </>
@@ -760,7 +760,7 @@ function CreatePackModal({ colors, onClose, onCreated, t }) {
               disabled={!packName.trim()}
               activeOpacity={0.8}
             >
-              <Text style={{ fontSize: 15, fontWeight: '700', color: '#fff' }}>
+              <Text style={{ fontSize: 15, fontWeight: '700', color: colors.onPrimary || '#fff' }}>
                 Próximo: Adicionar figurinhas →
               </Text>
             </TouchableOpacity>

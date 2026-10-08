@@ -318,7 +318,7 @@ export default function PhotoNew() {
       backgroundColor: colors.primary, minWidth: 90, alignItems: 'center',
     },
     publishBtnDisabled: { opacity: 0.5 },
-    publishText: { color: '#fff', fontWeight: '700', fontSize: FontSize.sm },
+    publishText: { color: colors.onPrimary || '#fff', fontWeight: '700', fontSize: FontSize.sm },
     carouselWrap: { width: '100%', aspectRatio: 1, backgroundColor: '#000' },
     slide: { width: '100%', height: '100%', justifyContent: 'center', alignItems: 'center' },
     slideMedia: { width: '100%', height: '100%' },

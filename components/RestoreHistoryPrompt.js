@@ -207,7 +207,7 @@ export default function RestoreHistoryPrompt({ visible, onClose, email, inventor
                   accessibilityRole="button"
                 >
                   {busy
-                    ? <ActivityIndicator color="#fff" />
+                    ? <ActivityIndicator color={colors.onPrimary || '#fff'} />
                     : <Text style={s.btnPrimaryText}>{t('restoreHistory.startNow') || 'Baixar agora'}</Text>}
                 </TouchableOpacity>
                 <TouchableOpacity

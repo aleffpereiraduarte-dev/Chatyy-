@@ -322,7 +322,7 @@ function CreateListingModal({ visible, onClose, onCreated }) {
             </TouchableOpacity>
             <Text style={[s.modalTitle, { color: colors.text }]}>{t('marketplace.createTitle')}</Text>
             <TouchableOpacity onPress={handleCreate} disabled={loading} style={[s.modalSaveBtn, { backgroundColor: colors.primary }]} accessibilityLabel={t('marketplace.publish')}>
-              {loading ? <ActivityIndicator size="small" color="#fff" /> : <Text style={{ color: '#fff', fontWeight: '700', fontSize: 14 }}>{t('marketplace.publish')}</Text>}
+              {loading ? <ActivityIndicator size="small" color={colors.onPrimary || '#fff'} /> : <Text style={{ color: colors.onPrimary || '#fff', fontWeight: '700', fontSize: 14 }}>{t('marketplace.publish')}</Text>}
             </TouchableOpacity>
           </View>
 
@@ -486,7 +486,7 @@ function OfferModal({ visible, listing, onClose, onSent }) {
             disabled={loading}
             accessibilityLabel={t('marketplace.sendOffer')}
           >
-            {loading ? <ActivityIndicator color="#fff" /> : <Text style={{ color: '#fff', fontWeight: '700', fontSize: 15 }}>{t('marketplace.sendOffer')}</Text>}
+            {loading ? <ActivityIndicator color={colors.onPrimary || '#fff'} /> : <Text style={{ color: colors.onPrimary || '#fff', fontWeight: '700', fontSize: 15 }}>{t('marketplace.sendOffer')}</Text>}
           </TouchableOpacity>
         </View>
       </View>
@@ -616,8 +616,8 @@ function ListingDetail({ listing: initial, onClose, savedIds, onToggleSave }) {
           onPress={handleChatSeller}
           accessibilityLabel={t('marketplace.chatSeller')}
         >
-          <IconMessageSquare size={18} color="#fff" />
-          <Text style={{ color: '#fff', fontWeight: '700', fontSize: 14, marginLeft: 6 }}>{t('marketplace.chatSeller')}</Text>
+          <IconMessageSquare size={18} color={colors.onPrimary || '#fff'} />
+          <Text style={{ color: colors.onPrimary || '#fff', fontWeight: '700', fontSize: 14, marginLeft: 6 }}>{t('marketplace.chatSeller')}</Text>
         </TouchableOpacity>
       </View>
 
@@ -1009,8 +1009,8 @@ export default function MarketplaceScreen() {
         accessibilityLabel={t('marketplace.sell')}
         accessibilityRole="button"
       >
-        <IconPlus size={22} color="#fff" />
-        <Text style={{ color: '#fff', fontWeight: '700', fontSize: 14, marginLeft: 6 }}>{t('marketplace.sell')}</Text>
+        <IconPlus size={22} color={colors.onPrimary || '#fff'} />
+        <Text style={{ color: colors.onPrimary || '#fff', fontWeight: '700', fontSize: 14, marginLeft: 6 }}>{t('marketplace.sell')}</Text>
       </TouchableOpacity>
 
       <CreateListingModal

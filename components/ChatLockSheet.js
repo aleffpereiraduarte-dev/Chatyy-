@@ -78,7 +78,7 @@ export default function ChatLockSheet({ visible, conversation, locked, onClose, 
     }
   };
 
-  const panelBg = isDark ? '#1c1c24' : '#ffffff';
+  const panelBg = isDark ? '#1c1c1e' : '#ffffff';
   const subColor = colors.textSecondary || colors.textTertiary || (isDark ? 'rgba(255,255,255,0.6)' : 'rgba(0,0,0,0.55)');
 
   return (
@@ -116,7 +116,7 @@ export default function ChatLockSheet({ visible, conversation, locked, onClose, 
               <PressableScale
                 onPress={doUnlock}
                 disabled={busy}
-                style={[styles.primaryBtn, { backgroundColor: isDark ? '#2a2e3a' : '#ecedf2' }]}
+                style={[styles.primaryBtn, { backgroundColor: isDark ? '#2c2c2e' : '#ecedf2' }]}
               >
                 {busy ? <ActivityIndicator color={colors.text} />
                   : <>

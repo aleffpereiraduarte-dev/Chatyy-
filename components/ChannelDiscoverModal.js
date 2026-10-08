@@ -227,7 +227,7 @@ export default function ChannelDiscoverModal({ visible, onClose, onJoined }) {
     <Modal visible={visible} animationType="slide" onRequestClose={onClose} transparent={false}>
       <View style={[sty.container, { backgroundColor: colors.background }]}>
         {/* Header */}
-        <View style={[sty.header, { backgroundColor: isDark ? '#1F2C33' : '#111111', paddingTop: headerPadTop }]}>
+        <View style={[sty.header, { backgroundColor: isDark ? '#1c1c1e' : '#111111', paddingTop: headerPadTop }]}>
           <TouchableOpacity onPress={onClose} style={sty.headerBtn}>
             <IconArrowLeft size={22} color="#fff" />
           </TouchableOpacity>

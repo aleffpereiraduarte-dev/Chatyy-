@@ -291,7 +291,7 @@ export default function CompleteProfileModal({ visible, onDone, onSkip, profile 
             disabled={sendingCode}
           >
             {sendingCode ? (
-              <ActivityIndicator size="small" color="#fff" />
+              <ActivityIndicator size="small" color={colors.onPrimary || '#fff'} />
             ) : (
               <Text style={s.sendCodeBtnText}>
                 {t('completeProfile.sendCode') || 'Enviar codigo'}
@@ -388,7 +388,7 @@ export default function CompleteProfileModal({ visible, onDone, onSkip, profile 
                 disabled={saving || !canSave}
               >
                 {saving ? (
-                  <ActivityIndicator size="small" color="#fff" />
+                  <ActivityIndicator size="small" color={colors.onPrimary || '#fff'} />
                 ) : (
                   <Text style={s.saveBtnText}>{t('completeProfile.save')}</Text>
                 )}

@@ -510,10 +510,10 @@ export default function ChatBackupScreen() {
           style={[styles.primaryBtn, { backgroundColor: colors.primary, opacity: working ? 0.5 : 1 }]}
         >
           {busyAction === 'backup' ? (
-            <ActivityIndicator color="#fff" />
+            <ActivityIndicator color={colors.onPrimary || '#fff'} />
           ) : (
             <>
-              <IconUpload size={18} color="#fff" />
+              <IconUpload size={18} color={colors.onPrimary || '#fff'} />
               <Text style={styles.primaryBtnText}>{t('backup.backupNowCta') || 'Backup now'}</Text>
             </>
           )}

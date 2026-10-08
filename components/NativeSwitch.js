@@ -28,11 +28,11 @@ export default function NativeSwitch({
   ...props
 }) {
   const { isDark } = useTheme() || {};
-  const onTrack = isDark ? '#E9EDEF' : '#111111';
+  const onTrack = isDark ? '#F5F5F7' : '#111111';
   const offTrack = Platform.OS === 'ios'
     ? (isDark ? '#39393D' : '#E9E9EA')
     : (isDark ? '#3A3D40' : '#C7C9CC');
-  const onThumb = isDark ? '#111b21' : '#ffffff';
+  const onThumb = isDark ? '#0b0b0b' : '#ffffff';
   const offThumb = Platform.OS === 'android' ? (isDark ? '#9AA0A6' : '#ffffff') : '#ffffff';
 
   const handleChange = (v) => {

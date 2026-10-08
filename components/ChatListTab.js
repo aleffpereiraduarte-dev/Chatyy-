@@ -2388,7 +2388,7 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab, reque
             <View style={{ padding: 2.5, position: 'relative' }}>
               <AvatarCircle name={n.name || n.email} email={n.email} size={54} />
               {n.content && (
-                <View style={{ position: 'absolute', top: -4, left: -6, right: -6, backgroundColor: isDark ? '#2a2a3e' : '#fff', borderRadius: 14, paddingHorizontal: 7, paddingVertical: 3, borderWidth: 1, borderColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.08)' }}>
+                <View style={{ position: 'absolute', top: -4, left: -6, right: -6, backgroundColor: isDark ? '#2c2c2e' : '#fff', borderRadius: 14, paddingHorizontal: 7, paddingVertical: 3, borderWidth: 1, borderColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.08)' }}>
                   <Text style={{ fontSize: 10, color: colors.text, textAlign: 'center' }} numberOfLines={2}>{n.content}</Text>
                 </View>
               )}
@@ -2404,7 +2404,7 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab, reque
       {/* Note create/edit modal */}
       {showNoteModal && (
         <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center', zIndex: 1000 }}>
-          <View style={{ backgroundColor: isDark ? '#1a1a2e' : '#fff', borderRadius: 20, padding: 20, margin: 20, width: '88%', maxWidth: 400 }}>
+          <View style={{ backgroundColor: isDark ? '#1c1c1e' : '#fff', borderRadius: 20, padding: 20, margin: 20, width: '88%', maxWidth: 400 }}>
             <Text style={{ fontSize: 18, fontWeight: '700', color: colors.text, marginBottom: 12 }}>
               {t('notes.newNote') || 'Nova nota'}
             </Text>
@@ -2439,7 +2439,7 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab, reque
       {showStatusComposer && (
         <View style={{ position:'absolute', top:0, left:0, right:0, bottom:0, backgroundColor:'rgba(0,0,0,0.55)', justifyContent:'flex-end', zIndex:1200 }}>
           <TouchableOpacity activeOpacity={1} style={{ flex:1 }} onPress={() => setShowStatusComposer(false)} />
-          <View style={{ backgroundColor: isDark ? '#1F2C33' : '#fff', borderTopLeftRadius:22, borderTopRightRadius:22, paddingTop:12, paddingBottom:34, paddingHorizontal:18 }}>
+          <View style={{ backgroundColor: isDark ? '#1c1c1e' : '#fff', borderTopLeftRadius:22, borderTopRightRadius:22, paddingTop:12, paddingBottom:34, paddingHorizontal:18 }}>
             <View style={{ alignSelf:'center', width:36, height:4, backgroundColor: isDark?'rgba(255,255,255,0.15)':'rgba(0,0,0,0.12)', borderRadius:2, marginBottom:14 }} />
             <Text style={{ fontSize:17, fontWeight:'700', color: colors.text, textAlign:'center', marginBottom:14 }}>
               {t('status.createStatus') || 'Criar status'}
@@ -6501,7 +6501,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
                           style={({ pressed }) => ({
                             position: 'absolute', top: -4, left: -4,
                             width: 24, height: 24, borderRadius: 12,
-                            backgroundColor: isDark ? '#0d1117' : '#fff',
+                            backgroundColor: isDark ? '#0b0b0b' : '#fff',
                             borderWidth: 1.5, borderColor: isDark ? 'rgba(255,255,255,0.2)' : 'rgba(0,0,0,0.12)',
                             alignItems: 'center', justifyContent: 'center',
                             zIndex: 5,
@@ -6523,8 +6523,8 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
                         <View style={{
                           position: 'absolute', bottom: -2, right: -2,
                           width: 22, height: 22, borderRadius: 11,
-                          backgroundColor: isDark ? '#0d1117' : '#fff',
-                          borderWidth: 2, borderColor: isDark ? '#0d1117' : '#fff',
+                          backgroundColor: isDark ? '#0b0b0b' : '#fff',
+                          borderWidth: 2, borderColor: isDark ? '#0b0b0b' : '#fff',
                           alignItems: 'center', justifyContent: 'center',
                         }}>
                           <View style={{
@@ -6542,7 +6542,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
                           minWidth: 22, height: 22, borderRadius: 11,
                           paddingHorizontal: 5,
                           backgroundColor: isDark ? '#F2F3F5' : '#111111',
-                          borderWidth: 2, borderColor: isDark ? '#0d1117' : '#fff',
+                          borderWidth: 2, borderColor: isDark ? '#0b0b0b' : '#fff',
                           alignItems: 'center', justifyContent: 'center',
                         }}>
                           <Text style={{ color: isDark ? '#111111' : '#fff', fontSize: 11, fontWeight: '800' }}>
@@ -7444,7 +7444,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
             {/* New Chat */}
             <TouchableOpacity
               style={[s.fabMenuItem, {
-                backgroundColor: isDark ? '#1F2C33' : '#fff',
+                backgroundColor: isDark ? '#1c1c1e' : '#fff',
                 ...(isWeb ? { boxShadow: '0 2px 12px rgba(0,0,0,0.15)' } : {}),
               }]}
               onPress={() => { toggleFabMenu(); router.push('/chat-new'); }}
@@ -7459,7 +7459,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
             {/* New Group */}
             <TouchableOpacity
               style={[s.fabMenuItem, {
-                backgroundColor: isDark ? '#1F2C33' : '#fff',
+                backgroundColor: isDark ? '#1c1c1e' : '#fff',
                 ...(isWeb ? { boxShadow: '0 2px 12px rgba(0,0,0,0.15)' } : {}),
               }]}
               onPress={() => { toggleFabMenu(); setShowCreateGroup(true); }}
@@ -7479,7 +7479,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
             {/* New Channel */}
             <TouchableOpacity
               style={[s.fabMenuItem, {
-                backgroundColor: isDark ? '#1F2C33' : '#fff',
+                backgroundColor: isDark ? '#1c1c1e' : '#fff',
                 ...(isWeb ? { boxShadow: '0 2px 12px rgba(0,0,0,0.15)' } : {}),
               }]}
               onPress={() => { toggleFabMenu(); setShowCreateChannel(true); }}
@@ -7497,7 +7497,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
             {/* Discover Channels */}
             <TouchableOpacity
               style={[s.fabMenuItem, {
-                backgroundColor: isDark ? '#1F2C33' : '#fff',
+                backgroundColor: isDark ? '#1c1c1e' : '#fff',
                 ...(isWeb ? { boxShadow: '0 2px 12px rgba(0,0,0,0.15)' } : {}),
               }]}
               onPress={() => { toggleFabMenu(); setShowDiscoverChannels(true); }}
@@ -7529,7 +7529,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
       {secretCodeModalVisible && (
         <Modal visible transparent animationType="fade" statusBarTranslucent onRequestClose={() => setSecretCodeModalVisible(false)}>
           <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.55)', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 28 }}>
-            <View style={{ width: '100%', maxWidth: 380, backgroundColor: isDark ? '#1c1c24' : '#fff', borderRadius: 18, padding: 22 }}>
+            <View style={{ width: '100%', maxWidth: 380, backgroundColor: isDark ? '#1c1c1e' : '#fff', borderRadius: 18, padding: 22 }}>
               <Text style={{ color: colors.text, fontSize: 17, fontWeight: '700', marginBottom: 6 }}>
                 {t?.('chat.secretCode') || 'Código secreto'}
               </Text>
@@ -7623,7 +7623,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
           <TouchableOpacity style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }} activeOpacity={1} onPress={() => setShowNoteModal(false)} />
           <View style={{
             width: 300, borderRadius: 20, padding: 24,
-            backgroundColor: isDark ? '#1F2C33' : '#fff',
+            backgroundColor: isDark ? '#1c1c1e' : '#fff',
             ...(isWeb ? { boxShadow: '0 12px 40px rgba(0,0,0,0.3)' } : { elevation: 10 }),
           }}>
             <Text style={{ fontSize: 18, fontWeight: '800', color: colors.text, textAlign: 'center', marginBottom: 4 }}>
@@ -7843,10 +7843,10 @@ function ChatLongPressSheet({ conv, onClose, actions, colors, isDark, t, current
     return byDot && byDot.length >= 2 ? byDot : raw;
   })();
 
-  const cardBg = isDark ? '#1f2937' : '#ffffff';
+  const cardBg = isDark ? '#1c1c1e' : '#ffffff';
   const text = isDark ? '#f9fafb' : '#0f172a';
-  const subText = isDark ? '#9ca3af' : '#6b7280';
-  const divider = isDark ? '#374151' : '#e5e7eb';
+  const subText = isDark ? '#A1A1A6' : '#6b7280';
+  const divider = isDark ? '#2c2c2e' : '#e5e7eb';
   const danger = '#ef4444';
 
   // Inline SVG renderers for icons we don't already have. Kept tiny —
@@ -8008,7 +8008,7 @@ function ChatLongPressSheet({ conv, onClose, actions, colors, isDark, t, current
           }}>
             {items.map((it, i) => {
               if (it.divider) {
-                return <View key={`div-${i}`} style={{ height: 7, backgroundColor: isDark ? '#0f172a' : '#f3f4f6' }} />;
+                return <View key={`div-${i}`} style={{ height: 7, backgroundColor: isDark ? '#0b0b0b' : '#f3f4f6' }} />;
               }
               const Ico = it.icon;
               const isLast = i === items.length - 1;
@@ -8024,7 +8024,7 @@ function ChatLongPressSheet({ conv, onClose, actions, colors, isDark, t, current
                 <PressableRow
                   key={i}
                   onPress={() => handleTap(it.onPress)}
-                  highlightColor={isDark ? '#2b3644' : '#f1f2f4'}
+                  highlightColor={isDark ? '#2c2c2e' : '#f1f2f4'}
                   style={{
                     flexDirection: 'row', alignItems: 'center', gap: 14,
                     paddingHorizontal: 14, paddingVertical: 10,
@@ -8059,12 +8059,12 @@ function ChatLongPressSheet({ conv, onClose, actions, colors, isDark, t, current
 // Tapping the card navigates into the full conversation. Falls back to
 // a single bubble built from `last_message` if nothing is cached yet.
 function ConversationPeekCard({ conv, previewMsgs, currentUserEmail, colors, isDark, t, onOpen, loading, typingUsers, presencesRef }) {
-  const cardBg = isDark ? '#0b141a' : '#efeae2';
-  const headerBg = isDark ? '#1f2c33' : '#111111';
+  const cardBg = isDark ? '#000000' : '#efeae2';
+  const headerBg = isDark ? '#1c1c1e' : '#111111';
   const ownBubble = '#111111';
-  const peerBubble = isDark ? '#202c33' : '#ffffff';
+  const peerBubble = isDark ? '#1c1c1e' : '#ffffff';
   const ownText = '#ffffff';
-  const peerText = isDark ? '#e9edef' : '#0f172a';
+  const peerText = isDark ? '#F5F5F7' : '#0f172a';
   const meta = isDark ? 'rgba(255,255,255,0.55)' : '#6b7280';
   const peerEmail = conv?.other_email || conv?.contact_email || conv?.email || '';
   const peerName = conv?.display_name || conv?.name || (peerEmail ? peerEmail.split('@')[0] : '');
@@ -8521,13 +8521,13 @@ function ConversationPeekCard({ conv, previewMsgs, currentUserEmail, colors, isD
         <View style={{
           flexDirection: 'row', alignItems: 'center', gap: 8,
           paddingHorizontal: 12, paddingVertical: 10,
-          backgroundColor: isDark ? '#0a1014' : '#f0f2f5',
+          backgroundColor: isDark ? '#000000' : '#f0f2f5',
           borderTopWidth: StyleSheet.hairlineWidth,
           borderTopColor: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)',
         }}>
           <View style={{
             flex: 1, height: 32, borderRadius: 16,
-            backgroundColor: isDark ? '#1f2c33' : '#fff',
+            backgroundColor: isDark ? '#1c1c1e' : '#fff',
             flexDirection: 'row', alignItems: 'center',
             paddingHorizontal: 10, gap: 8,
           }}>

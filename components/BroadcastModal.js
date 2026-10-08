@@ -156,7 +156,7 @@ export default function BroadcastModal({ visible, onClose, onCreated, colors, t,
                       borderWidth: isSelected ? 0 : 2, borderColor: colors.border,
                       alignItems: 'center', justifyContent: 'center',
                     }}>
-                      {isSelected && <IconCheck size={14} color="#fff" />}
+                      {isSelected && <IconCheck size={14} color={colors.onPrimary || '#fff'} />}
                     </View>
                   </TouchableOpacity>
                 );

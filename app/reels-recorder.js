@@ -13,35 +13,19 @@
 import React, { useCallback } from 'react';
 import { StyleSheet, View } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import ReelsRecorder from '../components/ReelsRecorder';
+// [2026-10-08 reels-publish] drafts now live in services/reelDrafts.js (durable
+// copies + compose metadata). Re-exported here for backwards compatibility.
+import { saveReelDraft as _saveDraft, REEL_DRAFTS_KEY, MAX_REEL_DRAFTS } from '../services/reelDrafts';
 
-export const REEL_DRAFTS_KEY = 'reel_drafts';
-export const MAX_REEL_DRAFTS = 5;
+export { REEL_DRAFTS_KEY, MAX_REEL_DRAFTS };
 
 /**
- * Persist a new draft to AsyncStorage. Drafts are stored newest-first,
- * trimmed to MAX_REEL_DRAFTS to avoid unbounded disk usage from abandoned
- * recordings. Returns the persisted record (with id + savedAt).
+ * Persist a new draft (see services/reelDrafts.js). Returns the persisted
+ * record (with id + savedAt) or null.
  */
 export async function saveReelDraft(payload) {
-  try {
-    const raw = await AsyncStorage.getItem(REEL_DRAFTS_KEY);
-    const list = raw ? JSON.parse(raw) : [];
-    const safeList = Array.isArray(list) ? list : [];
-    const record = {
-      id: `draft_${Date.now()}_${Math.floor(Math.random() * 1e6)}`,
-      savedAt: Date.now(),
-      clips: payload?.clips || [],
-      music: payload?.music || null,
-      totalDurationMs: payload?.totalDurationMs || 0,
-    };
-    const next = [record, ...safeList].slice(0, MAX_REEL_DRAFTS);
-    await AsyncStorage.setItem(REEL_DRAFTS_KEY, JSON.stringify(next));
-    return record;
-  } catch {
-    return null;
-  }
+  return _saveDraft(payload);
 }
 
 export default function ReelsRecorderScreen() {
@@ -62,21 +46,31 @@ export default function ReelsRecorderScreen() {
     try { router.back(); } catch {}
   }, [router]);
 
+  // [2026-10-08 reels-publish] Recorder → draft → /reels-compose. The draft is
+  // persisted first (cold-kill safe); when the recorder was opened FROM the
+  // composer (?from=compose) we hand the clips back via
+  // globalThis.__pendingReelDraft + back(); otherwise we replace this screen
+  // with the composer resuming that draft.
+  const fromCompose = String(params?.from || '') === 'compose';
   const handleComplete = useCallback(async (payload) => {
-    // Persist a recoverable draft AND keep the in-memory ref so the next
-    // composer cut (router.push('/reels-compose')) can pick the clip stack
-    // up immediately without re-reading AsyncStorage.
+    let rec = null;
+    try { rec = await saveReelDraft(payload); } catch {}
     try {
       // eslint-disable-next-line no-undef
-      globalThis.__pendingReelDraft = payload;
+      globalThis.__pendingReelDraft = { ...payload, ...(rec ? { clips: rec.clips, draftId: rec.id } : {}) };
     } catch {}
-    try { await saveReelDraft(payload); } catch {}
-    try { router.back(); } catch {}
-  }, [router]);
+    if (fromCompose) {
+      try { router.back(); } catch {}
+      return;
+    }
+    try {
+      router.replace(rec?.id ? `/reels-compose?draft=${encodeURIComponent(rec.id)}` : '/reels-compose');
+    } catch { try { router.back(); } catch {} }
+  }, [router, fromCompose]);
 
   const handleOpenDrafts = useCallback(() => {
-    try { router.push('/reels-drafts'); } catch {}
-  }, [router]);
+    try { router.push(fromCompose ? '/reels-drafts?from=compose' : '/reels-drafts'); } catch {}
+  }, [router, fromCompose]);
 
   return (
     <View style={styles.root}>

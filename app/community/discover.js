@@ -130,7 +130,7 @@ export default function CommunityDiscoverScreen() {
           <Image source={{ uri: item.photo_url }} style={sty.avatar} />
         ) : (
           <View style={[sty.avatar, { backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center' }]}>
-            <Text style={{ color: '#fff', fontWeight: '700', fontSize: 18 }}>
+            <Text style={{ color: colors.onPrimary || '#fff', fontWeight: '700', fontSize: 18 }}>
               {(item.name || '?').slice(0, 1).toUpperCase()}
             </Text>
           </View>
@@ -216,7 +216,7 @@ export default function CommunityDiscoverScreen() {
                   <Image source={{ uri: c.photo_url }} style={sty.avatar} />
                 ) : (
                   <View style={[sty.avatar, { backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center' }]}>
-                    <Text style={{ color: '#fff', fontWeight: '700' }}>{(c.name || '?').slice(0, 1).toUpperCase()}</Text>
+                    <Text style={{ color: colors.onPrimary || '#fff', fontWeight: '700' }}>{(c.name || '?').slice(0, 1).toUpperCase()}</Text>
                   </View>
                 )}
               </View>

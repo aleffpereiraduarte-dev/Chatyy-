@@ -107,7 +107,7 @@ function ReminderSheetInner({ onClose, text, initialWhen, colors, t, onConfirm }
               return (
                 <TouchableOpacity key={c.key} onPress={() => setWhen(c.date)} disabled={busy} activeOpacity={0.7}
                   style={[st.chip, { backgroundColor: on ? colors.primary : colors.primary + '14', borderColor: on ? colors.primary : colors.primary + '40' }]}>
-                  <Text style={{ fontSize: 12.5, fontWeight: '600', color: on ? '#fff' : colors.primary }}>{c.label}</Text>
+                  <Text style={{ fontSize: 12.5, fontWeight: '600', color: on ? (colors.onPrimary || '#fff') : colors.primary }}>{c.label}</Text>
                 </TouchableOpacity>
               );
             })}
@@ -137,8 +137,8 @@ function ReminderSheetInner({ onClose, text, initialWhen, colors, t, onConfirm }
             <TouchableOpacity onPress={confirm} disabled={busy || isPast} activeOpacity={0.8}
               accessibilityRole="button"
               style={[st.btnPrimary, { backgroundColor: colors.primary, opacity: (busy || isPast) ? 0.6 : 1 }]}>
-              {busy ? <ActivityIndicator color="#fff" size="small" /> : (
-                <Text style={{ color: '#fff', fontWeight: '700' }}>{tt('reminder.create', null, 'Criar lembrete')}</Text>
+              {busy ? <ActivityIndicator color={colors.onPrimary || '#fff'} size="small" /> : (
+                <Text style={{ color: colors.onPrimary || '#fff', fontWeight: '700' }}>{tt('reminder.create', null, 'Criar lembrete')}</Text>
               )}
             </TouchableOpacity>
           </View>

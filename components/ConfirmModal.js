@@ -129,7 +129,7 @@ export default function ConfirmModal({
                 opacity: pressed ? 0.85 : 1,
               })}
             >
-              <Text style={{ fontSize: 15, fontWeight: '700', color: '#fff' }}>{ok}</Text>
+              <Text style={{ fontSize: 15, fontWeight: '700', color: colors.onPrimary || '#fff' }}>{ok}</Text>
             </Pressable>
           </View>
         </Animated.View>

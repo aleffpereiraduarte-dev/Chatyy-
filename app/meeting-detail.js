@@ -408,7 +408,7 @@ export default function MeetingDetailScreen() {
               <View pointerEvents="none" style={[StyleSheet.absoluteFillObject, { backgroundColor: 'rgba(17, 17, 17,0.08)', borderRadius: 18 }]} />
               <View pointerEvents="none" style={[styles.recapGradientBlob]} />
               <View style={[styles.recapIconWrap, { backgroundColor: colors.primary }]}>
-                <IconSparkles size={22} color="#fff" />
+                <IconSparkles size={22} color={colors.onPrimary || '#fff'} />
               </View>
               <View style={{ flex: 1 }}>
                 <Text style={[styles.recapTitle, { color: isDark ? '#fff' : colors.primaryDark }]}>
@@ -527,7 +527,7 @@ export default function MeetingDetailScreen() {
                     <AvatarCircle name={p.display_name || p.email} email={p.email} size={48} />
                     {p.role === 'host' && (
                       <View style={[styles.hostStar, { backgroundColor: colors.primary, borderColor: colors.background }]}>
-                        <IconStarFilled size={10} color="#fff" />
+                        <IconStarFilled size={10} color={colors.onPrimary || '#fff'} />
                       </View>
                     )}
                   </View>
@@ -558,7 +558,7 @@ export default function MeetingDetailScreen() {
                   onPress={() => router.push('/contacts?pick=1&room_id=' + (meeting.room_id || room_id))}
                 >
                   <View style={[styles.inviteIconWrap, { backgroundColor: colors.primary }]}>
-                    <IconPlus size={22} color="#fff" />
+                    <IconPlus size={22} color={colors.onPrimary || '#fff'} />
                   </View>
                   <Text style={[styles.inviteLabel, { color: colors.primary }]} numberOfLines={1}>
                     {t('meetingDetail.invite') || 'Convidar'}
@@ -683,10 +683,10 @@ export default function MeetingDetailScreen() {
           activeOpacity={0.85}
         >
           {joining ? (
-            <ActivityIndicator size="small" color="#fff" />
+            <ActivityIndicator size="small" color={colors.onPrimary || '#fff'} />
           ) : (
             <>
-              <IconVideo size={20} color="#fff" style={{ marginRight: Spacing.sm }} />
+              <IconVideo size={20} color={colors.onPrimary || '#fff'} style={{ marginRight: Spacing.sm }} />
               <Text style={styles.primaryCtaText}>{t('meetingDetail.joinMeeting') || 'Entrar na reunião'}</Text>
             </>
           )}

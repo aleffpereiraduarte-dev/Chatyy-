@@ -138,7 +138,7 @@ function CashoutDetailModal({ visible, row, onClose, colors, isDark, t }) {
   return (
     <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
       <View style={styles.scrim}>
-        <View style={[styles.detailSheet, { backgroundColor: isDark ? '#0F172A' : '#fff' }]}>
+        <View style={[styles.detailSheet, { backgroundColor: isDark ? '#0b0b0b' : '#fff' }]}>
           <View style={styles.detailHead}>
             <Text style={[styles.detailTitle, { color: colors.text }]} numberOfLines={1}>
               {t('wallet.cashoutDetailTitle') || 'Detalhes do saque'}

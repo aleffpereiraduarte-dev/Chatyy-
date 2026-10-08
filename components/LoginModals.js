@@ -98,7 +98,7 @@ export function HelpModal({ visible, onClose }) {
     }
   };
 
-  const cardBg = isDark ? '#1e293b' : '#ffffff';
+  const cardBg = isDark ? '#1c1c1e' : '#ffffff';
   const cardBorder = isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)';
   const itemBg = isDark ? 'rgba(255,255,255,0.04)' : '#f8fafc';
   const itemBorder = isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.05)';
@@ -437,7 +437,7 @@ export function PrivacyModal({ visible, onClose }) {
     ]).start(() => onClose());
   }, [onClose]);
 
-  const cardBg = isDark ? '#1e293b' : '#ffffff';
+  const cardBg = isDark ? '#1c1c1e' : '#ffffff';
   const cardBorder = isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)';
   const sectionBg = isDark ? 'rgba(255,255,255,0.03)' : '#f8fafc';
 
@@ -542,7 +542,7 @@ export function TermsModal({ visible, onClose }) {
     ]).start(() => onClose());
   }, [onClose]);
 
-  const cardBg = isDark ? '#1e293b' : '#ffffff';
+  const cardBg = isDark ? '#1c1c1e' : '#ffffff';
   const cardBorder = isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)';
   const sectionBg = isDark ? 'rgba(255,255,255,0.03)' : '#f8fafc';
 

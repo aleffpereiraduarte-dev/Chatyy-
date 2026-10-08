@@ -137,7 +137,7 @@ function OnlineDot({ dark, justWentOnline, ringColor }) {
         }}
       />
       <Animated.View style={{ transform: [{ scale: popScale }] }}>
-        <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: '#22c55e', borderWidth: 2, borderColor: ringColor || (dark ? '#1a2332' : '#fff') }} />
+        <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: '#22c55e', borderWidth: 2, borderColor: ringColor || (dark ? '#1c1c1e' : '#fff') }} />
       </Animated.View>
     </View>
   );
@@ -655,7 +655,7 @@ function ParentalScreenInner() {
   // itself is already grayscale. Kept as a function (same call site) so this
   // stays a pure style change.
   const childGradient = (email) => {
-    const neutral = isDark ? '#2d3748' : '#eef0f1';
+    const neutral = isDark ? '#2c2c2e' : '#eef0f1';
     return [neutral, neutral];
   };
 
@@ -890,7 +890,7 @@ function ParentalScreenInner() {
       {/* Name Input with floating label feel */}
       <View style={s.fieldGroup}>
         <Text style={[s.fieldLabel, { color: colors.textSecondary }]}>{t('parental.childFullName')}</Text>
-        <View style={[s.inputWrap, { backgroundColor: isDark ? '#1a2332' : '#f8f9fb', borderColor: isDark ? '#2d3748' : '#e2e8f0' }]}>
+        <View style={[s.inputWrap, { backgroundColor: isDark ? '#1c1c1e' : '#f8f9fb', borderColor: isDark ? '#2c2c2e' : '#e2e8f0' }]}>
           <View style={{ marginRight: 12 }}><IconUser size={20} color="#111111" /></View>
           <TextInput
             ref={nameInputRef}
@@ -952,7 +952,7 @@ function ParentalScreenInner() {
         {childAge !== null && (
           <View style={s.ageRangeWrap}>
             <View style={s.ageRangeBar}>
-              <View style={[s.ageRangeTrack, { backgroundColor: isDark ? '#1a2332' : '#f1f5f9' }]}>
+              <View style={[s.ageRangeTrack, { backgroundColor: isDark ? '#1c1c1e' : '#f1f5f9' }]}>
                 <View style={[s.ageRangeValid, { left: '0%', width: '100%', backgroundColor: ACCENT + '20' }]} />
                 {isAgeValid && (
                   <View style={[s.ageRangeDot, {
@@ -993,8 +993,8 @@ function ParentalScreenInner() {
               <TouchableOpacity
                 key={g.key}
                 style={[s.illustratedCard, {
-                  backgroundColor: selected ? g.color + '15' : (isDark ? '#1a2332' : '#f8f9fb'),
-                  borderColor: selected ? g.color : (isDark ? '#2d3748' : '#e2e8f0'),
+                  backgroundColor: selected ? g.color + '15' : (isDark ? '#1c1c1e' : '#f8f9fb'),
+                  borderColor: selected ? g.color : (isDark ? '#2c2c2e' : '#e2e8f0'),
                   borderWidth: selected ? 2.5 : 1.5,
                 }]}
                 onPress={() => { setChildGender(g.key); if (Platform.OS !== 'web') try { haptics.selection(); /* [2026-10-07 native-polish] */ } catch {} }}
@@ -1023,8 +1023,8 @@ function ParentalScreenInner() {
               <TouchableOpacity
                 key={r.key}
                 style={[s.illustratedCard, {
-                  backgroundColor: selected ? r.color + '15' : (isDark ? '#1a2332' : '#f8f9fb'),
-                  borderColor: selected ? r.color : (isDark ? '#2d3748' : '#e2e8f0'),
+                  backgroundColor: selected ? r.color + '15' : (isDark ? '#1c1c1e' : '#f8f9fb'),
+                  borderColor: selected ? r.color : (isDark ? '#2c2c2e' : '#e2e8f0'),
                   borderWidth: selected ? 2.5 : 1.5,
                 }]}
                 onPress={() => { setRelationship(r.key); if (Platform.OS !== 'web') try { haptics.selection(); /* [2026-10-07 native-polish] */ } catch {} }}
@@ -1066,8 +1066,8 @@ function ParentalScreenInner() {
         {/* Option A: Document */}
         <TouchableOpacity
           style={[s.verifyCard, {
-            backgroundColor: verifyMethod === 'document' ? '#3B82F6' + '12' : (isDark ? '#1a2332' : '#f8f9fb'),
-            borderColor: verifyMethod === 'document' ? '#3B82F6' : (isDark ? '#2d3748' : '#e2e8f0'),
+            backgroundColor: verifyMethod === 'document' ? '#3B82F6' + '12' : (isDark ? '#1c1c1e' : '#f8f9fb'),
+            borderColor: verifyMethod === 'document' ? '#3B82F6' : (isDark ? '#2c2c2e' : '#e2e8f0'),
             borderWidth: verifyMethod === 'document' ? 2.5 : 1.5,
           }]}
           onPress={() => setVerifyMethod('document')}
@@ -1090,8 +1090,8 @@ function ParentalScreenInner() {
         {/* Option B: Phone */}
         <TouchableOpacity
           style={[s.verifyCard, {
-            backgroundColor: verifyMethod === 'phone' ? '#22C55E' + '12' : (isDark ? '#1a2332' : '#f8f9fb'),
-            borderColor: verifyMethod === 'phone' ? '#22C55E' : (isDark ? '#2d3748' : '#e2e8f0'),
+            backgroundColor: verifyMethod === 'phone' ? '#22C55E' + '12' : (isDark ? '#1c1c1e' : '#f8f9fb'),
+            borderColor: verifyMethod === 'phone' ? '#22C55E' : (isDark ? '#2c2c2e' : '#e2e8f0'),
             borderWidth: verifyMethod === 'phone' ? 2.5 : 1.5,
           }]}
           onPress={() => setVerifyMethod('phone')}
@@ -1114,8 +1114,8 @@ function ParentalScreenInner() {
         {/* Option C: Credit card */}
         <TouchableOpacity
           style={[s.verifyCard, {
-            backgroundColor: verifyMethod === 'card' ? '#F59E0B' + '12' : (isDark ? '#1a2332' : '#f8f9fb'),
-            borderColor: verifyMethod === 'card' ? '#F59E0B' : (isDark ? '#2d3748' : '#e2e8f0'),
+            backgroundColor: verifyMethod === 'card' ? '#F59E0B' + '12' : (isDark ? '#1c1c1e' : '#f8f9fb'),
+            borderColor: verifyMethod === 'card' ? '#F59E0B' : (isDark ? '#2c2c2e' : '#e2e8f0'),
             borderWidth: verifyMethod === 'card' ? 2.5 : 1.5,
           }]}
           onPress={() => setVerifyMethod('card')}
@@ -1159,7 +1159,7 @@ function ParentalScreenInner() {
           ) : (
             <View style={s.docButtons}>
               <TouchableOpacity
-                style={[s.docBtn, { backgroundColor: isDark ? '#1a2332' : '#f8f9fb', borderColor: isDark ? '#2d3748' : '#e2e8f0' }]}
+                style={[s.docBtn, { backgroundColor: isDark ? '#1c1c1e' : '#f8f9fb', borderColor: isDark ? '#2c2c2e' : '#e2e8f0' }]}
                 onPress={() => pickDocument(true)}
                 activeOpacity={0.7}
               >
@@ -1171,7 +1171,7 @@ function ParentalScreenInner() {
               </TouchableOpacity>
 
               <TouchableOpacity
-                style={[s.docBtn, { backgroundColor: isDark ? '#1a2332' : '#f8f9fb', borderColor: isDark ? '#2d3748' : '#e2e8f0' }]}
+                style={[s.docBtn, { backgroundColor: isDark ? '#1c1c1e' : '#f8f9fb', borderColor: isDark ? '#2c2c2e' : '#e2e8f0' }]}
                 onPress={() => pickDocument(false)}
                 activeOpacity={0.7}
               >
@@ -1185,7 +1185,7 @@ function ParentalScreenInner() {
           )}
 
           {/* Accepted documents info */}
-          <View style={[s.docTypes, { backgroundColor: isDark ? '#1a2332' : '#f0f9ff', borderColor: isDark ? '#1e3a5f' : '#bae6fd' }]}>
+          <View style={[s.docTypes, { backgroundColor: isDark ? '#1c1c1e' : '#f0f9ff', borderColor: isDark ? '#1e3a5f' : '#bae6fd' }]}>
             <Text style={[s.docTypesTitle, { color: isDark ? '#7dd3fc' : '#0369a1' }]}>{t('parental.acceptedDocs')}</Text>
             <Text style={[s.docTypeItem, { color: colors.textSecondary }]}>{t('parental.docType1')}</Text>
             <Text style={[s.docTypeItem, { color: colors.textSecondary }]}>{t('parental.docType2')}</Text>
@@ -1204,7 +1204,7 @@ function ParentalScreenInner() {
           <IconLock size={14} color={isDark ? '#F1F3F5' : '#161618'} />
           <Text style={[s.trustText, { color: isDark ? '#F1F3F5' : '#161618' }]}>{t('parental.trustDeleted')}</Text>
         </View>
-        <View style={[s.trustBadge, { backgroundColor: isDark ? '#1a2332' : '#f0f9ff' }]}>
+        <View style={[s.trustBadge, { backgroundColor: isDark ? '#1c1c1e' : '#f0f9ff' }]}>
           <IconCheck size={14} color={isDark ? '#7dd3fc' : '#0c4a6e'} />
           <Text style={[s.trustText, { color: isDark ? '#7dd3fc' : '#0c4a6e' }]}>{t('parental.trustLGPD')}</Text>
         </View>
@@ -1231,7 +1231,7 @@ function ParentalScreenInner() {
           return (
             <View key={i} style={s.verifyStageRow}>
               <View style={[s.verifyStageDot, {
-                backgroundColor: isDone ? ACCENT : isActive ? ACCENT : (isDark ? '#2d3748' : '#e2e8f0'),
+                backgroundColor: isDone ? ACCENT : isActive ? ACCENT : (isDark ? '#2c2c2e' : '#e2e8f0'),
               }]}>
                 {isDone ? <IconCheck size={10} color="#fff" /> : isActive ? <ActivityIndicator size={10} color="#fff" /> : null}
               </View>
@@ -1254,7 +1254,7 @@ function ParentalScreenInner() {
       </View>
 
       {/* Safety fact carousel */}
-      <View style={[s.safetyFactBox, { backgroundColor: isDark ? '#1a2332' : '#f8f9fb', borderColor: isDark ? '#2d3748' : '#e2e8f0' }]}>
+      <View style={[s.safetyFactBox, { backgroundColor: isDark ? '#1c1c1e' : '#f8f9fb', borderColor: isDark ? '#2c2c2e' : '#e2e8f0' }]}>
         <View style={{ marginBottom: 8 }}><IconSparkles size={28} color="#F59E0B" /></View>
         <Text style={[s.safetyFactTitle, { color: ACCENT }]}>{t('parental.didYouKnow')}</Text>
         <Text style={[s.safetyFactText, { color: colors.text }]}>
@@ -1300,7 +1300,7 @@ function ParentalScreenInner() {
 
         {/* Credentials */}
         {newChild && (
-          <View style={[s.credsBox, { backgroundColor: isDark ? '#1a2332' : '#f8f9fb', borderColor: isDark ? '#2d3748' : '#e2e8f0' }]}>
+          <View style={[s.credsBox, { backgroundColor: isDark ? '#1c1c1e' : '#f8f9fb', borderColor: isDark ? '#2c2c2e' : '#e2e8f0' }]}>
             <Text style={[s.credsTitle, { color: colors.textSecondary }]}>{t('parental.accountCredentials')}</Text>
             <View style={s.credRow}>
               <View style={s.credInfo}>
@@ -1313,7 +1313,7 @@ function ParentalScreenInner() {
                 <IconCopy size={14} color={ACCENT} />
               </TouchableOpacity>
             </View>
-            <View style={[s.credDivider, { borderColor: isDark ? '#2d3748' : '#e8ecf0' }]} />
+            <View style={[s.credDivider, { borderColor: isDark ? '#2c2c2e' : '#e8ecf0' }]} />
             <View style={s.credRow}>
               <View style={s.credInfo}>
                 <Text style={[s.credLabel, { color: colors.textSecondary }]}>{t('parental.password')}</Text>
@@ -1346,8 +1346,8 @@ function ParentalScreenInner() {
 
             <TouchableOpacity
               style={[s.setupOption, {
-                backgroundColor: quickSetup.bedtime ? ACCENT + '12' : (isDark ? '#1a2332' : '#f8f9fb'),
-                borderColor: quickSetup.bedtime ? ACCENT : (isDark ? '#2d3748' : '#e2e8f0'),
+                backgroundColor: quickSetup.bedtime ? ACCENT + '12' : (isDark ? '#1c1c1e' : '#f8f9fb'),
+                borderColor: quickSetup.bedtime ? ACCENT : (isDark ? '#2c2c2e' : '#e2e8f0'),
               }]}
               onPress={() => setQuickSetup(p => ({ ...p, bedtime: !p.bedtime }))}
               activeOpacity={0.7}
@@ -1357,15 +1357,15 @@ function ParentalScreenInner() {
                 <Text style={[s.setupLabel, { color: colors.text }]}>{t('parental.setupBedtime')}</Text>
                 <Text style={[s.setupDesc, { color: colors.textSecondary }]}>{presets.bedtimeStart} - {presets.bedtimeEnd}</Text>
               </View>
-              <View style={[s.setupToggle, { backgroundColor: quickSetup.bedtime ? ACCENT : (isDark ? '#374151' : '#d1d5db') }]}>
+              <View style={[s.setupToggle, { backgroundColor: quickSetup.bedtime ? ACCENT : (isDark ? '#2c2c2e' : '#d1d5db') }]}>
                 <View style={[s.setupToggleDot, { transform: [{ translateX: quickSetup.bedtime ? 16 : 0 }] }]} />
               </View>
             </TouchableOpacity>
 
             <TouchableOpacity
               style={[s.setupOption, {
-                backgroundColor: quickSetup.screenTime ? ACCENT + '12' : (isDark ? '#1a2332' : '#f8f9fb'),
-                borderColor: quickSetup.screenTime ? ACCENT : (isDark ? '#2d3748' : '#e2e8f0'),
+                backgroundColor: quickSetup.screenTime ? ACCENT + '12' : (isDark ? '#1c1c1e' : '#f8f9fb'),
+                borderColor: quickSetup.screenTime ? ACCENT : (isDark ? '#2c2c2e' : '#e2e8f0'),
               }]}
               onPress={() => setQuickSetup(p => ({ ...p, screenTime: !p.screenTime }))}
               activeOpacity={0.7}
@@ -1375,15 +1375,15 @@ function ParentalScreenInner() {
                 <Text style={[s.setupLabel, { color: colors.text }]}>{t('parental.setupScreenTime')}</Text>
                 <Text style={[s.setupDesc, { color: colors.textSecondary }]}>{presets.screenTime} {t('parental.minutesPerDay')}</Text>
               </View>
-              <View style={[s.setupToggle, { backgroundColor: quickSetup.screenTime ? ACCENT : (isDark ? '#374151' : '#d1d5db') }]}>
+              <View style={[s.setupToggle, { backgroundColor: quickSetup.screenTime ? ACCENT : (isDark ? '#2c2c2e' : '#d1d5db') }]}>
                 <View style={[s.setupToggleDot, { transform: [{ translateX: quickSetup.screenTime ? 16 : 0 }] }]} />
               </View>
             </TouchableOpacity>
 
             <TouchableOpacity
               style={[s.setupOption, {
-                backgroundColor: quickSetup.contacts ? ACCENT + '12' : (isDark ? '#1a2332' : '#f8f9fb'),
-                borderColor: quickSetup.contacts ? ACCENT : (isDark ? '#2d3748' : '#e2e8f0'),
+                backgroundColor: quickSetup.contacts ? ACCENT + '12' : (isDark ? '#1c1c1e' : '#f8f9fb'),
+                borderColor: quickSetup.contacts ? ACCENT : (isDark ? '#2c2c2e' : '#e2e8f0'),
               }]}
               onPress={() => setQuickSetup(p => ({ ...p, contacts: !p.contacts }))}
               activeOpacity={0.7}
@@ -1393,15 +1393,15 @@ function ParentalScreenInner() {
                 <Text style={[s.setupLabel, { color: colors.text }]}>{t('parental.setupContacts')}</Text>
                 <Text style={[s.setupDesc, { color: colors.textSecondary }]}>{t('parental.setupContactsDesc')}</Text>
               </View>
-              <View style={[s.setupToggle, { backgroundColor: quickSetup.contacts ? ACCENT : (isDark ? '#374151' : '#d1d5db') }]}>
+              <View style={[s.setupToggle, { backgroundColor: quickSetup.contacts ? ACCENT : (isDark ? '#2c2c2e' : '#d1d5db') }]}>
                 <View style={[s.setupToggleDot, { transform: [{ translateX: quickSetup.contacts ? 16 : 0 }] }]} />
               </View>
             </TouchableOpacity>
 
             <TouchableOpacity
               style={[s.setupOption, {
-                backgroundColor: quickSetup.safeSearch ? ACCENT + '12' : (isDark ? '#1a2332' : '#f8f9fb'),
-                borderColor: quickSetup.safeSearch ? ACCENT : (isDark ? '#2d3748' : '#e2e8f0'),
+                backgroundColor: quickSetup.safeSearch ? ACCENT + '12' : (isDark ? '#1c1c1e' : '#f8f9fb'),
+                borderColor: quickSetup.safeSearch ? ACCENT : (isDark ? '#2c2c2e' : '#e2e8f0'),
               }]}
               onPress={() => setQuickSetup(p => ({ ...p, safeSearch: !p.safeSearch }))}
               activeOpacity={0.7}
@@ -1411,7 +1411,7 @@ function ParentalScreenInner() {
                 <Text style={[s.setupLabel, { color: colors.text }]}>{t('parental.setupSafeSearch')}</Text>
                 <Text style={[s.setupDesc, { color: colors.textSecondary }]}>{t('parental.setupSafeSearchDesc')}</Text>
               </View>
-              <View style={[s.setupToggle, { backgroundColor: quickSetup.safeSearch ? ACCENT : (isDark ? '#374151' : '#d1d5db') }]}>
+              <View style={[s.setupToggle, { backgroundColor: quickSetup.safeSearch ? ACCENT : (isDark ? '#2c2c2e' : '#d1d5db') }]}>
                 <View style={[s.setupToggleDot, { transform: [{ translateX: quickSetup.safeSearch ? 16 : 0 }] }]} />
               </View>
             </TouchableOpacity>
@@ -1419,8 +1419,8 @@ function ParentalScreenInner() {
             {/* Content filter toggles */}
             <TouchableOpacity
               style={[s.setupOption, {
-                backgroundColor: quickSetup.filterAdult ? '#ef4444' + '12' : (isDark ? '#1a2332' : '#f8f9fb'),
-                borderColor: quickSetup.filterAdult ? '#ef4444' : (isDark ? '#2d3748' : '#e2e8f0'),
+                backgroundColor: quickSetup.filterAdult ? '#ef4444' + '12' : (isDark ? '#1c1c1e' : '#f8f9fb'),
+                borderColor: quickSetup.filterAdult ? '#ef4444' : (isDark ? '#2c2c2e' : '#e2e8f0'),
               }]}
               onPress={() => setQuickSetup(p => ({ ...p, filterAdult: !p.filterAdult }))}
               activeOpacity={0.7}
@@ -1430,15 +1430,15 @@ function ParentalScreenInner() {
                 <Text style={[s.setupLabel, { color: colors.text }]}>{t('parental.filterAdult') || 'Block adult content'}</Text>
                 <Text style={[s.setupDesc, { color: colors.textSecondary }]}>{t('parental.filterAdultDesc') || 'Filter inappropriate content'}</Text>
               </View>
-              <View style={[s.setupToggle, { backgroundColor: quickSetup.filterAdult ? '#ef4444' : (isDark ? '#374151' : '#d1d5db') }]}>
+              <View style={[s.setupToggle, { backgroundColor: quickSetup.filterAdult ? '#ef4444' : (isDark ? '#2c2c2e' : '#d1d5db') }]}>
                 <View style={[s.setupToggleDot, { transform: [{ translateX: quickSetup.filterAdult ? 16 : 0 }] }]} />
               </View>
             </TouchableOpacity>
 
             <TouchableOpacity
               style={[s.setupOption, {
-                backgroundColor: quickSetup.filterViolence ? '#f59e0b' + '12' : (isDark ? '#1a2332' : '#f8f9fb'),
-                borderColor: quickSetup.filterViolence ? '#f59e0b' : (isDark ? '#2d3748' : '#e2e8f0'),
+                backgroundColor: quickSetup.filterViolence ? '#f59e0b' + '12' : (isDark ? '#1c1c1e' : '#f8f9fb'),
+                borderColor: quickSetup.filterViolence ? '#f59e0b' : (isDark ? '#2c2c2e' : '#e2e8f0'),
               }]}
               onPress={() => setQuickSetup(p => ({ ...p, filterViolence: !p.filterViolence }))}
               activeOpacity={0.7}
@@ -1448,15 +1448,15 @@ function ParentalScreenInner() {
                 <Text style={[s.setupLabel, { color: colors.text }]}>{t('parental.filterViolence') || 'Block violence'}</Text>
                 <Text style={[s.setupDesc, { color: colors.textSecondary }]}>{t('parental.filterViolenceDesc') || 'Hide violent content'}</Text>
               </View>
-              <View style={[s.setupToggle, { backgroundColor: quickSetup.filterViolence ? '#f59e0b' : (isDark ? '#374151' : '#d1d5db') }]}>
+              <View style={[s.setupToggle, { backgroundColor: quickSetup.filterViolence ? '#f59e0b' : (isDark ? '#2c2c2e' : '#d1d5db') }]}>
                 <View style={[s.setupToggleDot, { transform: [{ translateX: quickSetup.filterViolence ? 16 : 0 }] }]} />
               </View>
             </TouchableOpacity>
 
             <TouchableOpacity
               style={[s.setupOption, {
-                backgroundColor: quickSetup.filterProfanity ? '#111111' + '12' : (isDark ? '#1a2332' : '#f8f9fb'),
-                borderColor: quickSetup.filterProfanity ? '#111111' : (isDark ? '#2d3748' : '#e2e8f0'),
+                backgroundColor: quickSetup.filterProfanity ? '#111111' + '12' : (isDark ? '#1c1c1e' : '#f8f9fb'),
+                borderColor: quickSetup.filterProfanity ? '#111111' : (isDark ? '#2c2c2e' : '#e2e8f0'),
               }]}
               onPress={() => setQuickSetup(p => ({ ...p, filterProfanity: !p.filterProfanity }))}
               activeOpacity={0.7}
@@ -1466,7 +1466,7 @@ function ParentalScreenInner() {
                 <Text style={[s.setupLabel, { color: colors.text }]}>{t('parental.filterProfanity') || 'Filter profanity'}</Text>
                 <Text style={[s.setupDesc, { color: colors.textSecondary }]}>{t('parental.filterProfanityDesc') || 'Block bad language'}</Text>
               </View>
-              <View style={[s.setupToggle, { backgroundColor: quickSetup.filterProfanity ? '#111111' : (isDark ? '#374151' : '#d1d5db') }]}>
+              <View style={[s.setupToggle, { backgroundColor: quickSetup.filterProfanity ? '#111111' : (isDark ? '#2c2c2e' : '#d1d5db') }]}>
                 <View style={[s.setupToggleDot, { transform: [{ translateX: quickSetup.filterProfanity ? 16 : 0 }] }]} />
               </View>
             </TouchableOpacity>
@@ -1488,7 +1488,7 @@ function ParentalScreenInner() {
 
         {/* Verification result */}
         {docVerdict && (
-          <View style={[s.verdictBox, { backgroundColor: isDark ? '#1a2332' : '#f8fafc', borderColor: isDark ? '#2d3748' : '#e2e8f0' }]}>
+          <View style={[s.verdictBox, { backgroundColor: isDark ? '#1c1c1e' : '#f8fafc', borderColor: isDark ? '#2c2c2e' : '#e2e8f0' }]}>
             <Text style={[s.verdictTitle, { color: colors.textSecondary }]}>{t('parental.verificationResult')}</Text>
             <Text style={[s.verdictValue, { color: approved ? '#22c55e' : '#f59e0b' }]}>
               {approved ? t('parental.approved') : docVerdict.verdict === 'rejected' ? t('parental.rejected') : t('parental.manualReview')}
@@ -1804,7 +1804,7 @@ function ParentalScreenInner() {
               <Animated.View style={{ transform: [{ scale: bounceAnim }] }}>
                 <TouchableOpacity
                   style={[s.nextBtn, {
-                    backgroundColor: canNext ? (step === 0 ? '#111111' : ACCENT) : (isDark ? '#2d3748' : '#e2e8f0'),
+                    backgroundColor: canNext ? (step === 0 ? '#111111' : ACCENT) : (isDark ? '#2c2c2e' : '#e2e8f0'),
                   }]}
                   onPress={handleNextStep}
                   disabled={!canNext || creating}
@@ -1892,7 +1892,7 @@ function ParentalScreenInner() {
   const renderSummaryModal = () => (
     <Modal visible={summaryModal} transparent animationType="fade" onRequestClose={() => setSummaryModal(false)}>
       <View style={s.modalOverlay}>
-        <View style={[s.modalContent, { backgroundColor: isDark ? '#1a2332' : '#fff' }]}>
+        <View style={[s.modalContent, { backgroundColor: isDark ? '#1c1c1e' : '#fff' }]}>
           <View style={s.modalHeader}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1 }}>
               {summaryChild && <AvatarCircle email={summaryChild.child_email} name={summaryChild.child_name} size={36} />}
@@ -1935,7 +1935,7 @@ function ParentalScreenInner() {
                 )}
 
                 {summaryData.summary && (
-                  <View style={[s.summarySection, { borderColor: isDark ? '#334155' : '#e2e8f0' }]}>
+                  <View style={[s.summarySection, { borderColor: isDark ? '#2c2c2e' : '#e2e8f0' }]}>
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 8 }}>
                       <IconSparkles size={14} color={ACCENT} />
                       <Text style={[s.summarySectionTitle, { color: colors.textSecondary, marginBottom: 0 }]}>{t('parental.summary')}</Text>
@@ -1962,19 +1962,19 @@ function ParentalScreenInner() {
                 {summaryData.stats && (
                   <View style={s.summaryStats}>
                     {summaryData.stats.messages_today !== undefined && (
-                      <View style={[s.statBox, { backgroundColor: isDark ? '#0f172a' : '#f8fafc' }]}>
+                      <View style={[s.statBox, { backgroundColor: isDark ? '#0b0b0b' : '#f8fafc' }]}>
                         <Text style={[s.statValue, { color: colors.text }]}>{summaryData.stats.messages_today}</Text>
                         <Text style={[s.statLabel, { color: colors.textSecondary }]}>{t('parental.msgsToday')}</Text>
                       </View>
                     )}
                     {summaryData.stats.calls_today !== undefined && (
-                      <View style={[s.statBox, { backgroundColor: isDark ? '#0f172a' : '#f8fafc' }]}>
+                      <View style={[s.statBox, { backgroundColor: isDark ? '#0b0b0b' : '#f8fafc' }]}>
                         <Text style={[s.statValue, { color: colors.text }]}>{summaryData.stats.calls_today}</Text>
                         <Text style={[s.statLabel, { color: colors.textSecondary }]}>{t('parental.calls')}</Text>
                       </View>
                     )}
                     {summaryData.stats.screen_time_minutes !== undefined && (
-                      <View style={[s.statBox, { backgroundColor: isDark ? '#0f172a' : '#f8fafc' }]}>
+                      <View style={[s.statBox, { backgroundColor: isDark ? '#0b0b0b' : '#f8fafc' }]}>
                         <Text style={[s.statValue, { color: colors.text }]}>{summaryData.stats.screen_time_minutes}m</Text>
                         <Text style={[s.statLabel, { color: colors.textSecondary }]}>{t('parental.screenTime')}</Text>
                       </View>
@@ -1995,7 +1995,7 @@ function ParentalScreenInner() {
                 )}
 
                 {summaryData.recommendations?.length > 0 && (
-                  <View style={[s.summarySection, { borderColor: isDark ? '#334155' : '#e2e8f0' }]}>
+                  <View style={[s.summarySection, { borderColor: isDark ? '#2c2c2e' : '#e2e8f0' }]}>
                     <Text style={[s.summarySectionTitle, { color: ACCENT }]}>{t('parental.recommendations')}</Text>
                     {summaryData.recommendations.map((rec, i) => (
                       <View key={i} style={s.flaggedItem}>

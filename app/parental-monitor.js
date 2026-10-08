@@ -60,7 +60,7 @@ function Skel({ w = '100%', h = 14, mt = 0, br = 8, dark }) {
       ])
     ).start();
   }, [anim]);
-  const bg = anim.interpolate({ inputRange: [0, 1], outputRange: [dark ? '#1e293b' : '#e5e7eb', dark ? '#334155' : '#f3f4f6'] });
+  const bg = anim.interpolate({ inputRange: [0, 1], outputRange: [dark ? '#1c1c1e' : '#e5e7eb', dark ? '#2c2c2e' : '#f3f4f6'] });
   return <Animated.View style={{ width: w, height: h, marginTop: mt, borderRadius: br, backgroundColor: bg }} />;
 }
 
@@ -454,7 +454,7 @@ function ParentalMonitorScreenInner() {
     return (
       <TouchableOpacity
         key={card.id}
-        style={[s.aiCard, { backgroundColor: isDark ? '#1e293b' : '#fff', borderColor: tone + '55' }]}
+        style={[s.aiCard, { backgroundColor: isDark ? '#1c1c1e' : '#fff', borderColor: tone + '55' }]}
         activeOpacity={0.85}
         onPress={() => setTab('today')}
         accessibilityLabel={`AI insight: ${card.title}`}
@@ -494,7 +494,7 @@ function ParentalMonitorScreenInner() {
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={ACCENT} colors={[ACCENT]} />}
       >
         {/* Live status pill */}
-        <View style={[s.livePill, { backgroundColor: isOnline ? '#22c55e15' : (isDark ? '#1e293b' : '#f1f5f9'), borderColor: isOnline ? '#22c55e55' : (isDark ? '#334155' : '#e2e8f0') }]}>
+        <View style={[s.livePill, { backgroundColor: isOnline ? '#22c55e15' : (isDark ? '#1c1c1e' : '#f1f5f9'), borderColor: isOnline ? '#22c55e55' : (isDark ? '#2c2c2e' : '#e2e8f0') }]}>
           {isOnline ? (
             <Animated.View style={[s.liveDot, { backgroundColor: '#22c55e', opacity: pulseOpacity }]} />
           ) : (
@@ -517,10 +517,10 @@ function ParentalMonitorScreenInner() {
 
         {/* Donut chart for today screen time */}
         <Text style={[s.sectionLabel, { color: colors.textSecondary, marginTop: 18 }]}>{t('parental.todayUsage')?.toUpperCase() || 'HOJE'}</Text>
-        <View style={[s.screenTimeCard, { backgroundColor: isDark ? '#1e293b' : '#fff', borderColor: isDark ? '#334155' : '#e2e8f0', alignItems: 'center', paddingVertical: 28 }]} accessibilityLabel={`Tempo de tela: ${hours}h${mins}min de ${dailyLimit} minutos`}>
+        <View style={[s.screenTimeCard, { backgroundColor: isDark ? '#1c1c1e' : '#fff', borderColor: isDark ? '#2c2c2e' : '#e2e8f0', alignItems: 'center', paddingVertical: 28 }]} accessibilityLabel={`Tempo de tela: ${hours}h${mins}min de ${dailyLimit} minutos`}>
           <View style={{ width: ringSize, height: ringSize, justifyContent: 'center', alignItems: 'center' }}>
             <Svg width={ringSize} height={ringSize} style={{ position: 'absolute' }}>
-              <SvgCircle cx={ringSize/2} cy={ringSize/2} r={radius} stroke={isDark ? '#0f172a' : '#f1f5f9'} strokeWidth={strokeWidth} fill="none" />
+              <SvgCircle cx={ringSize/2} cy={ringSize/2} r={radius} stroke={isDark ? '#0b0b0b' : '#f1f5f9'} strokeWidth={strokeWidth} fill="none" />
               <SvgCircle cx={ringSize/2} cy={ringSize/2} r={radius} stroke={ringColor} strokeWidth={strokeWidth} fill="none"
                 strokeDasharray={`${circumference}`} strokeDashoffset={strokeDashoffset}
                 strokeLinecap="round" rotation="-90" origin={`${ringSize/2}, ${ringSize/2}`} />
@@ -549,9 +549,9 @@ function ParentalMonitorScreenInner() {
         {todayTopContacts.length > 0 && (
           <>
             <Text style={[s.sectionLabel, { color: colors.textSecondary, marginTop: 20 }]}>{t('parental.mostContacted').toUpperCase()}</Text>
-            <View style={[s.settingsGroup, { backgroundColor: isDark ? '#1e293b' : '#fff', borderColor: isDark ? '#334155' : '#e2e8f0' }]}>
+            <View style={[s.settingsGroup, { backgroundColor: isDark ? '#1c1c1e' : '#fff', borderColor: isDark ? '#2c2c2e' : '#e2e8f0' }]}>
               {todayTopContacts.map((c, idx) => (
-                <View key={c.email || idx} style={[s.contactRow, idx < todayTopContacts.length - 1 && { borderBottomWidth: 1, borderBottomColor: isDark ? '#334155' : '#f1f5f9' }]}>
+                <View key={c.email || idx} style={[s.contactRow, idx < todayTopContacts.length - 1 && { borderBottomWidth: 1, borderBottomColor: isDark ? '#2c2c2e' : '#f1f5f9' }]}>
                   <AvatarCircle name={c.name || c.email} email={c.email} size={36} />
                   <View style={{ flex: 1, marginLeft: 12 }}>
                     <Text style={[s.contactName, { color: colors.text }]}>{c.name || c.email}</Text>
@@ -569,9 +569,9 @@ function ParentalMonitorScreenInner() {
         {groupedActivity.length === 0 ? (
           <EmptyStateCard Icon={IconClock} title="Sem atividade hoje" tone="neutral" />
         ) : (
-          <View style={[s.settingsGroup, { backgroundColor: isDark ? '#1e293b' : '#fff', borderColor: isDark ? '#334155' : '#e2e8f0' }]}>
+          <View style={[s.settingsGroup, { backgroundColor: isDark ? '#1c1c1e' : '#fff', borderColor: isDark ? '#2c2c2e' : '#e2e8f0' }]}>
             {groupedActivity.map(({ hour, items }, gi) => (
-              <View key={hour} style={[s.timelineGroup, gi > 0 && { borderTopWidth: 1, borderTopColor: isDark ? '#334155' : '#f1f5f9' }]}>
+              <View key={hour} style={[s.timelineGroup, gi > 0 && { borderTopWidth: 1, borderTopColor: isDark ? '#2c2c2e' : '#f1f5f9' }]}>
                 <Text style={[s.timelineHour, { color: colors.textSecondary }]}>{hour}</Text>
                 <View style={{ flex: 1 }}>
                   {items.map((ev, i) => {
@@ -626,7 +626,7 @@ function ParentalMonitorScreenInner() {
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={ACCENT} colors={[ACCENT]} />}
       >
         {/* Week summary header */}
-        <View style={[s.screenTimeCard, { backgroundColor: isDark ? '#1e293b' : '#fff', borderColor: isDark ? '#334155' : '#e2e8f0' }]}>
+        <View style={[s.screenTimeCard, { backgroundColor: isDark ? '#1c1c1e' : '#fff', borderColor: isDark ? '#2c2c2e' : '#e2e8f0' }]}>
           <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 10 }}>
             <Text style={{ fontSize: 30, fontWeight: '800', color: colors.text }}>
               {Math.floor(weekTotalMinutes / 60)}h{weekTotalMinutes % 60 > 0 ? (weekTotalMinutes % 60) : ''}
@@ -647,7 +647,7 @@ function ParentalMonitorScreenInner() {
 
         {/* 7-day bar chart */}
         <Text style={[s.sectionLabel, { color: colors.textSecondary, marginTop: 20 }]}>{t('parental.weeklyUsage').toUpperCase()}</Text>
-        <View style={[s.screenTimeCard, { backgroundColor: isDark ? '#1e293b' : '#fff', borderColor: isDark ? '#334155' : '#e2e8f0' }]}>
+        <View style={[s.screenTimeCard, { backgroundColor: isDark ? '#1c1c1e' : '#fff', borderColor: isDark ? '#2c2c2e' : '#e2e8f0' }]}>
           <View style={s.barChartContainer}>
             {days7.map((item, idx) => {
               const barHeight = Math.max((item.minutes / maxBar) * 130, 4);
@@ -655,7 +655,7 @@ function ParentalMonitorScreenInner() {
               return (
                 <View key={idx} style={s.barCol} accessibilityLabel={`${dayLabels[idx]}: ${item.minutes} minutos`}>
                   <Text style={[s.barValue, { color: colors.textSecondary }]}>{item.minutes > 0 ? item.minutes : ''}</Text>
-                  <View style={[s.bar, { height: barHeight, backgroundColor: isToday ? ACCENT : (isDark ? '#475569' : '#cbd5e1'), borderRadius: 6 }]} />
+                  <View style={[s.bar, { height: barHeight, backgroundColor: isToday ? ACCENT : (isDark ? '#5A5A5E' : '#cbd5e1'), borderRadius: 6 }]} />
                   <Text style={[s.barLabel, { color: isToday ? ACCENT : colors.textSecondary, fontWeight: isToday ? '700' : '500' }]}>{dayLabels[idx]}</Text>
                 </View>
               );
@@ -665,9 +665,9 @@ function ParentalMonitorScreenInner() {
 
         {/* Daily breakdown */}
         <Text style={[s.sectionLabel, { color: colors.textSecondary, marginTop: 20 }]}>POR DIA</Text>
-        <View style={[s.settingsGroup, { backgroundColor: isDark ? '#1e293b' : '#fff', borderColor: isDark ? '#334155' : '#e2e8f0' }]}>
+        <View style={[s.settingsGroup, { backgroundColor: isDark ? '#1c1c1e' : '#fff', borderColor: isDark ? '#2c2c2e' : '#e2e8f0' }]}>
           {days7.map((d, idx) => (
-            <View key={idx} style={[s.contactRow, idx < days7.length - 1 && { borderBottomWidth: 1, borderBottomColor: isDark ? '#334155' : '#f1f5f9' }]}>
+            <View key={idx} style={[s.contactRow, idx < days7.length - 1 && { borderBottomWidth: 1, borderBottomColor: isDark ? '#2c2c2e' : '#f1f5f9' }]}>
               <View style={[s.cardIcon, { backgroundColor: ACCENT + '15', width: 36, height: 36, borderRadius: 12 }]}>
                 <Text style={{ color: ACCENT, fontWeight: '800', fontSize: 12 }}>{dayLabels[idx]}</Text>
               </View>
@@ -696,7 +696,7 @@ function ParentalMonitorScreenInner() {
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={ACCENT} colors={[ACCENT]} />}
       >
         <Text style={[s.sectionLabel, { color: colors.textSecondary }]}>USO POR ÁREA</Text>
-        <View style={[s.screenTimeCard, { backgroundColor: isDark ? '#1e293b' : '#fff', borderColor: isDark ? '#334155' : '#e2e8f0' }]}>
+        <View style={[s.screenTimeCard, { backgroundColor: isDark ? '#1c1c1e' : '#fff', borderColor: isDark ? '#2c2c2e' : '#e2e8f0' }]}>
           {appsBreakdown.map((a, i) => {
             const pct = (Number(a.value) || 0) / appsMax;
             return (
@@ -709,7 +709,7 @@ function ParentalMonitorScreenInner() {
                     <Text style={[s.appLabel, { color: colors.text }]}>{a.label}</Text>
                     <Text style={[s.appValue, { color: colors.textSecondary }]}>{a.value}</Text>
                   </View>
-                  <View style={[s.appBarBg, { backgroundColor: isDark ? '#0f172a' : '#f1f5f9' }]}>
+                  <View style={[s.appBarBg, { backgroundColor: isDark ? '#0b0b0b' : '#f1f5f9' }]}>
                     <View style={[s.appBarFill, { width: `${Math.max(pct * 100, 4)}%`, backgroundColor: a.color }]} />
                   </View>
                 </View>
@@ -722,7 +722,7 @@ function ParentalMonitorScreenInner() {
         {(todayData?.active_hours || screenTime?.active_hours || []).length > 0 && (
           <>
             <Text style={[s.sectionLabel, { color: colors.textSecondary, marginTop: 20 }]}>{t('parental.mostActive').toUpperCase()}</Text>
-            <View style={[s.screenTimeCard, { backgroundColor: isDark ? '#1e293b' : '#fff', borderColor: isDark ? '#334155' : '#e2e8f0' }]}>
+            <View style={[s.screenTimeCard, { backgroundColor: isDark ? '#1c1c1e' : '#fff', borderColor: isDark ? '#2c2c2e' : '#e2e8f0' }]}>
               <View style={s.hoursGrid}>
                 {(todayData?.active_hours || screenTime?.active_hours || []).slice(0, 6).map((h, i) => (
                   <View key={i} style={[s.hourChip, { backgroundColor: ACCENT + (Math.round((h.percentage || 0.5) * 40 + 10).toString(16)) }]}>
@@ -750,7 +750,7 @@ function ParentalMonitorScreenInner() {
     const busy = contactBusy[item.email];
     return (
       <TouchableOpacity
-        style={[s.contactCard, { backgroundColor: isDark ? '#1e293b' : '#fff', borderColor: isDark ? '#334155' : '#e2e8f0' }]}
+        style={[s.contactCard, { backgroundColor: isDark ? '#1c1c1e' : '#fff', borderColor: isDark ? '#2c2c2e' : '#e2e8f0' }]}
         onPress={() => router.push(`/parental-child-chat?child_email=${encodeURIComponent(childEmail)}&conversation_id=${encodeURIComponent(item.conversation_id || '')}&chat_name=${encodeURIComponent(item.name || item.email || '')}`)}
         activeOpacity={0.85}
         accessibilityLabel={`Contato ${item.name || item.email}, ${item.message_count || 0} mensagens. Toque para revisar.`}
@@ -849,26 +849,26 @@ function ParentalMonitorScreenInner() {
       )}
 
       <Text style={[s.sectionLabel, { color: colors.textSecondary }]}>{t('parental.restrictions').toUpperCase()}</Text>
-      <View style={[s.settingsGroup, { backgroundColor: isDark ? '#1e293b' : '#fff', borderColor: isDark ? '#334155' : '#e2e8f0' }]}>
+      <View style={[s.settingsGroup, { backgroundColor: isDark ? '#1c1c1e' : '#fff', borderColor: isDark ? '#2c2c2e' : '#e2e8f0' }]}>
         <SettingRow icon={<IconMail size={18} color="#111111" />} label={t('parental.canSendEmail')} colors={colors}
           right={<Switch value={restrictions.can_send_email !== false} onValueChange={(v) => updateRestriction('can_send_email', v)} trackColor={{ false: '#767577', true: ACCENT + '60' }} thumbColor={restrictions.can_send_email !== false ? ACCENT : '#f4f3f4'} />} />
-        <View style={[s.divider, { backgroundColor: isDark ? '#334155' : '#f1f5f9' }]} />
+        <View style={[s.divider, { backgroundColor: isDark ? '#2c2c2e' : '#f1f5f9' }]} />
         <SettingRow icon={<IconTrash size={18} color="#ef4444" />} label={t('parental.canDeleteMessages')} colors={colors}
           right={<Switch value={restrictions.can_delete_messages !== false} onValueChange={(v) => updateRestriction('can_delete_messages', v)} trackColor={{ false: '#767577', true: ACCENT + '60' }} thumbColor={restrictions.can_delete_messages !== false ? ACCENT : '#f4f3f4'} />} />
-        <View style={[s.divider, { backgroundColor: isDark ? '#334155' : '#f1f5f9' }]} />
+        <View style={[s.divider, { backgroundColor: isDark ? '#2c2c2e' : '#f1f5f9' }]} />
         <SettingRow icon={<IconLock size={18} color="#f59e0b" />} label={t('parental.canChangePassword')} colors={colors}
           right={<Switch value={restrictions.can_change_password !== false} onValueChange={(v) => updateRestriction('can_change_password', v)} trackColor={{ false: '#767577', true: ACCENT + '60' }} thumbColor={restrictions.can_change_password !== false ? ACCENT : '#f4f3f4'} />} />
       </View>
 
       <Text style={[s.sectionLabel, { color: colors.textSecondary, marginTop: 24 }]}>{t('parental.dailyLimit').toUpperCase()}</Text>
-      <View style={[s.settingsGroup, { backgroundColor: isDark ? '#1e293b' : '#fff', borderColor: isDark ? '#334155' : '#e2e8f0', padding: 16 }]}>
+      <View style={[s.settingsGroup, { backgroundColor: isDark ? '#1c1c1e' : '#fff', borderColor: isDark ? '#2c2c2e' : '#e2e8f0', padding: 16 }]}>
         <View style={s.timeLimitRow}>
           {TIME_LIMITS.map((tl, idx) => {
             const isActive = idx === currentLimitIdx;
             const label = tl.value === 0 ? t('parental.unlimited') : tl.label;
             return (
               <TouchableOpacity key={idx}
-                style={[s.timeLimitChip, { backgroundColor: isActive ? ACCENT : (isDark ? '#0f172a' : '#f1f5f9'), borderColor: isActive ? ACCENT : (isDark ? '#475569' : '#e2e8f0') }]}
+                style={[s.timeLimitChip, { backgroundColor: isActive ? ACCENT : (isDark ? '#0b0b0b' : '#f1f5f9'), borderColor: isActive ? ACCENT : (isDark ? '#5A5A5E' : '#e2e8f0') }]}
                 onPress={() => updateRestriction('daily_limit_minutes', tl.value)}
                 accessibilityLabel={`Limite diário ${label}${isActive ? ' selecionado' : ''}`}
                 accessibilityRole="button"
@@ -881,11 +881,11 @@ function ParentalMonitorScreenInner() {
       </View>
 
       <Text style={[s.sectionLabel, { color: colors.textSecondary, marginTop: 24 }]}>{t('parental.bedtime').toUpperCase()}</Text>
-      <View style={[s.settingsGroup, { backgroundColor: isDark ? '#1e293b' : '#fff', borderColor: isDark ? '#334155' : '#e2e8f0', padding: 16 }]}>
+      <View style={[s.settingsGroup, { backgroundColor: isDark ? '#1c1c1e' : '#fff', borderColor: isDark ? '#2c2c2e' : '#e2e8f0', padding: 16 }]}>
         <View style={{ flexDirection: 'row', gap: 12 }}>
           <View style={{ flex: 1 }}>
             <Text style={[s.bedtimeLabel, { color: colors.textSecondary }]}>{t('parental.bedtimeStart')}</Text>
-            <TextInput style={[s.bedtimeInput, { backgroundColor: isDark ? '#0f172a' : '#f8fafc', color: colors.text, borderColor: isDark ? '#475569' : '#e2e8f0' }]}
+            <TextInput style={[s.bedtimeInput, { backgroundColor: isDark ? '#0b0b0b' : '#f8fafc', color: colors.text, borderColor: isDark ? '#5A5A5E' : '#e2e8f0' }]}
               value={restrictions.bedtime_start || '22:00'}
               onChangeText={(v) => setRestrictions(prev => ({ ...prev, bedtime_start: v }))}
               onBlur={() => updateRestriction('bedtime_start', restrictions.bedtime_start || '22:00')}
@@ -895,7 +895,7 @@ function ParentalMonitorScreenInner() {
           </View>
           <View style={{ flex: 1 }}>
             <Text style={[s.bedtimeLabel, { color: colors.textSecondary }]}>{t('parental.bedtimeEnd')}</Text>
-            <TextInput style={[s.bedtimeInput, { backgroundColor: isDark ? '#0f172a' : '#f8fafc', color: colors.text, borderColor: isDark ? '#475569' : '#e2e8f0' }]}
+            <TextInput style={[s.bedtimeInput, { backgroundColor: isDark ? '#0b0b0b' : '#f8fafc', color: colors.text, borderColor: isDark ? '#5A5A5E' : '#e2e8f0' }]}
               value={restrictions.bedtime_end || '07:00'}
               onChangeText={(v) => setRestrictions(prev => ({ ...prev, bedtime_end: v }))}
               onBlur={() => updateRestriction('bedtime_end', restrictions.bedtime_end || '07:00')}
@@ -907,9 +907,9 @@ function ParentalMonitorScreenInner() {
       </View>
 
       <Text style={[s.sectionLabel, { color: colors.textSecondary, marginTop: 24 }]}>{t('parental.whitelist').toUpperCase()}</Text>
-      <View style={[s.settingsGroup, { backgroundColor: isDark ? '#1e293b' : '#fff', borderColor: isDark ? '#334155' : '#e2e8f0', padding: 16 }]}>
+      <View style={[s.settingsGroup, { backgroundColor: isDark ? '#1c1c1e' : '#fff', borderColor: isDark ? '#2c2c2e' : '#e2e8f0', padding: 16 }]}>
         <View style={s.addContactRow}>
-          <TextInput style={[s.addContactInput, { backgroundColor: isDark ? '#0f172a' : '#f8fafc', color: colors.text, borderColor: isDark ? '#475569' : '#e2e8f0' }]}
+          <TextInput style={[s.addContactInput, { backgroundColor: isDark ? '#0b0b0b' : '#f8fafc', color: colors.text, borderColor: isDark ? '#5A5A5E' : '#e2e8f0' }]}
             value={newContact} onChangeText={setNewContact} placeholder={t('parental.contactEmail')} placeholderTextColor={colors.textSecondary}
             keyboardType="email-address" autoCapitalize="none" onSubmitEditing={handleAddContact}
             accessibilityLabel={t('parental.contactEmail')}
@@ -922,7 +922,7 @@ function ParentalMonitorScreenInner() {
           <Text style={[s.emptyInline, { color: colors.textSecondary }]}>{t('parental.noContacts')}</Text>
         ) : (
           whitelist.map((contact, idx) => (
-            <View key={contact.email || idx} style={[s.whitelistItem, idx < whitelist.length - 1 && { borderBottomWidth: 1, borderBottomColor: isDark ? '#334155' : '#f1f5f9' }]}>
+            <View key={contact.email || idx} style={[s.whitelistItem, idx < whitelist.length - 1 && { borderBottomWidth: 1, borderBottomColor: isDark ? '#2c2c2e' : '#f1f5f9' }]}>
               <View style={[s.whitelistAvatar, { backgroundColor: ACCENT + '15' }]}>
                 <IconUser size={16} color={ACCENT} />
               </View>
@@ -939,16 +939,16 @@ function ParentalMonitorScreenInner() {
       </View>
 
       <Text style={[s.sectionLabel, { color: colors.textSecondary, marginTop: 24 }]}>{t('parental.contentFilters') || 'CONTENT FILTERS'}</Text>
-      <View style={[s.settingsGroup, { backgroundColor: isDark ? '#1e293b' : '#fff', borderColor: isDark ? '#334155' : '#e2e8f0' }]}>
+      <View style={[s.settingsGroup, { backgroundColor: isDark ? '#1c1c1e' : '#fff', borderColor: isDark ? '#2c2c2e' : '#e2e8f0' }]}>
         <SettingRow icon={<IconShield size={18} color="#ef4444" />} label={t('parental.filterAdult') || 'Block adult content'} colors={colors}
           right={<Switch value={restrictions.filter_adult !== false} onValueChange={(v) => updateRestriction('filter_adult', v)} trackColor={{ false: '#767577', true: ACCENT + '60' }} thumbColor={restrictions.filter_adult !== false ? ACCENT : '#f4f3f4'} />} />
-        <View style={[s.divider, { backgroundColor: isDark ? '#334155' : '#f1f5f9' }]} />
+        <View style={[s.divider, { backgroundColor: isDark ? '#2c2c2e' : '#f1f5f9' }]} />
         <SettingRow icon={<IconAlertTriangle size={18} color="#f59e0b" />} label={t('parental.filterViolence') || 'Block violence'} colors={colors}
           right={<Switch value={restrictions.filter_violence === true} onValueChange={(v) => updateRestriction('filter_violence', v)} trackColor={{ false: '#767577', true: ACCENT + '60' }} thumbColor={restrictions.filter_violence === true ? ACCENT : '#f4f3f4'} />} />
-        <View style={[s.divider, { backgroundColor: isDark ? '#334155' : '#f1f5f9' }]} />
+        <View style={[s.divider, { backgroundColor: isDark ? '#2c2c2e' : '#f1f5f9' }]} />
         <SettingRow icon={<IconFilter size={18} color="#111111" />} label={t('parental.filterProfanity') || 'Filter profanity'} colors={colors}
           right={<Switch value={restrictions.filter_profanity === true} onValueChange={(v) => updateRestriction('filter_profanity', v)} trackColor={{ false: '#767577', true: ACCENT + '60' }} thumbColor={restrictions.filter_profanity === true ? ACCENT : '#f4f3f4'} />} />
-        <View style={[s.divider, { backgroundColor: isDark ? '#334155' : '#f1f5f9' }]} />
+        <View style={[s.divider, { backgroundColor: isDark ? '#2c2c2e' : '#f1f5f9' }]} />
         <SettingRow icon={<IconEye size={18} color="#111111" />} label={t('parental.safeSearch') || 'Safe search'} colors={colors}
           right={<Switch value={restrictions.safe_search === true} onValueChange={(v) => updateRestriction('safe_search', v)} trackColor={{ false: '#767577', true: ACCENT + '60' }} thumbColor={restrictions.safe_search === true ? ACCENT : '#f4f3f4'} />} />
       </View>
@@ -1016,7 +1016,7 @@ function ParentalMonitorScreenInner() {
 
       {/* SOS Emergency Button */}
       {!loading && !showRestrictions && (
-        <View style={[s.sosContainer, { backgroundColor: isDark ? '#1e293b' : '#fff', borderBottomColor: isDark ? '#334155' : '#f1f5f9' }]}>
+        <View style={[s.sosContainer, { backgroundColor: isDark ? '#1c1c1e' : '#fff', borderBottomColor: isDark ? '#2c2c2e' : '#f1f5f9' }]}>
           <TouchableOpacity
             style={s.sosButton}
             onPress={async () => {
@@ -1060,7 +1060,7 @@ function ParentalMonitorScreenInner() {
           {todayMinutes !== undefined && todayMinutes !== null && (
             <View style={s.quickTimeBar}>
               <IconClock size={14} color={colors.textSecondary} />
-              <View style={[s.quickTimeBg, { backgroundColor: isDark ? '#0f172a' : '#f1f5f9' }]}>
+              <View style={[s.quickTimeBg, { backgroundColor: isDark ? '#0b0b0b' : '#f1f5f9' }]}>
                 <View style={[s.quickTimeFill, {
                   width: `${Math.min((todayMinutes / Math.max(restrictions.daily_limit_minutes || 180, 1)) * 100, 100)}%`,
                   backgroundColor: (todayMinutes / Math.max(restrictions.daily_limit_minutes || 180, 1)) > 0.8 ? '#ef4444' : ACCENT,

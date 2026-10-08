@@ -1995,8 +1995,9 @@ const ReelItem = memo(function ReelItem({ onCreate, reel, isActive, colors, isDa
 
         {/* Comment — [2026-10-08 apps-native] PressableScale (scale + haptic nativo) */}
         <PressableScale
-          style={styles.sidebarBtn}
-          onPress={() => onOpenComments?.(reel)}
+          style={[styles.sidebarBtn, (reel.allow_comments === false && String(reel.author_email || '').toLowerCase() !== String(user?.email || '').toLowerCase()) && { opacity: 0.4 }]}
+          // [2026-10-08 reels-publish] autor desligou os comentários → botão inativo.
+          onPress={() => { if (reel.allow_comments === false && String(reel.author_email || '').toLowerCase() !== String(user?.email || '').toLowerCase()) return; onOpenComments?.(reel); }}
           activeOpacity={0.85}
           scaleTo={0.88}
           accessibilityLabel={t('feed.comment') || 'Comment'}
@@ -2352,7 +2353,7 @@ const ReelItem = memo(function ReelItem({ onCreate, reel, isActive, colors, isDa
 // ── Empty state ──
 // [2026-10-08 apps-native] variante de ERRO + botão "Tentar novamente" (antes
 // o vazio era um beco sem saída: early-return sem FlatList = sem pull-to-refresh).
-function EmptyReels({ colors, isDark, t, error = false, following = false, onRetry, height }) {
+function EmptyReels({ colors, isDark, t, error = false, following = false, onRetry, height, onCreate }) {
   const title = error
     ? (t('feed.loadError') || 'Erro ao carregar')
     : following
@@ -2380,6 +2381,19 @@ function EmptyReels({ colors, isDark, t, error = false, following = false, onRet
           accessibilityLabel={t('common.retry') || 'Tentar novamente'}
         >
           <Text style={styles.emptyRetryText}>{error ? (t('common.retry') || 'Tentar novamente') : (t('common.refresh') || 'Atualizar')}</Text>
+        </PressableScale>
+      )}
+      {/* [2026-10-08 reels-publish] sem reels → atalho pro compositor */}
+      {!error && !!onCreate && (
+        <PressableScale
+          onPress={onCreate}
+          style={[styles.emptyRetryBtn, { backgroundColor: 'transparent', borderWidth: 1.5, borderColor: '#fff', flexDirection: 'row', alignItems: 'center', gap: 8 }]}
+          accessibilityRole="button"
+          accessibilityLabel={(t('reels.create') && t('reels.create') !== 'reels.create') ? t('reels.create') : 'Criar reel'}
+          testID="reels-empty-create"
+        >
+          <IconCamera size={18} color="#fff" />
+          <Text style={[styles.emptyRetryText, { color: '#fff' }]}>{(t('reels.create') && t('reels.create') !== 'reels.create') ? t('reels.create') : 'Criar reel'}</Text>
         </PressableScale>
       )}
     </View>
@@ -2489,6 +2503,22 @@ export default function ReelsViewer({ colors, isDark, t, user, router, feedMode:
   }, [feedModeProp]); // eslint-disable-line react-hooks/exhaustive-deps
   const [reels, setReels] = useState([]);
   const [followingReels, setFollowingReels] = useState([]);
+  // [2026-10-08 reels-publish] reel publicado em 2º plano (reelPublishQueue) →
+  // entra no topo de "Seguindo" e "Pra você" sem esperar o próximo refresh.
+  useEffect(() => {
+    if (soundIdProp) return undefined;
+    let unsub = null;
+    try {
+      unsub = require('../services/reelPublishQueue').onReelPublished((p) => {
+        if (!p?.id) return;
+        const add = (prev) => (prev.some(x => String(x.id) === String(p.id)) ? prev : [p, ...prev]);
+        setFollowingReels(add);
+        setReels(add);
+        setLoading(false);
+      });
+    } catch {}
+    return () => { try { unsub && unsub(); } catch {} };
+  }, [soundIdProp]);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -2900,7 +2930,7 @@ export default function ReelsViewer({ colors, isDark, t, user, router, feedMode:
   if (reels.length === 0 && followingReels.length === 0) {
     return (
       <View style={styles.loadingContainer}>
-        <EmptyReels colors={colors} isDark={isDark} t={t} error={loadError} onRetry={() => loadReels(false)} />
+        <EmptyReels colors={colors} isDark={isDark} t={t} error={loadError} onRetry={() => loadReels(false)} onCreate={onCreate} />
       </View>
     );
   }
@@ -2976,7 +3006,7 @@ export default function ReelsViewer({ colors, isDark, t, user, router, feedMode:
           // null on Discover/For You looked like a hung load.
           // [2026-10-08 apps-native] EmptyReels unificado + retry/erro.
           <View style={[styles.loadingContainer, { height: containerHeight }]}>
-            <EmptyReels t={t} error={loadError} following={reelTab === 'following'} onRetry={() => loadReels(false)} />
+            <EmptyReels t={t} error={loadError} following={reelTab === 'following'} onRetry={() => loadReels(false)} onCreate={onCreate} />
           </View>
         }
       />

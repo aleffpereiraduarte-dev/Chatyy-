@@ -784,8 +784,8 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
   };
 
   // Shared surface color for section cards
-  const surfaceBg = isDark ? '#161b22' : '#ffffff';
-  const screenBg = isDark ? '#0d1117' : '#f0f2f5';
+  const surfaceBg = isDark ? '#1c1c1e' : '#ffffff';
+  const screenBg = isDark ? '#0b0b0b' : '#f0f2f5';
 
   if (loading) {
     return (
@@ -809,7 +809,7 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
       { label: 'Trocar senha', allowed: !!restrictions.can_change_password, Icon: KidsIconKeyPerm },
     ];
     return (
-      <View style={[styles.container, { backgroundColor: isDark ? '#0e1621' : '#f6f8fa' }]}>
+      <View style={[styles.container, { backgroundColor: isDark ? '#000000' : '#f6f8fa' }]}>
         <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 100 }}>
           {/* Profile card with gradient */}
           <View style={{ margin: 16, borderRadius: 24, overflow: 'hidden', backgroundColor: isDark ? '#161618' : '#fff',
@@ -935,7 +935,7 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
   // ─── Sub-screen header ───
   const SubHeader = ({ title, right }) => (
     <View style={[styles.subHeader, {
-      backgroundColor: isDark ? '#1F2C33' : '#111111',
+      backgroundColor: isDark ? '#1c1c1e' : '#111111',
       borderBottomWidth: 0,
     }]}>
       <TouchableOpacity onPress={() => setSubScreen(null)} style={styles.subBackBtn} activeOpacity={0.7}>
@@ -957,7 +957,7 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
 
   // ─── Section Header text ───
   const SectionLabel = ({ label }) => (
-    <Text style={[styles.sectionLabel, { color: isDark ? '#6b7280' : '#6b7280' }]}>{label}</Text>
+    <Text style={[styles.sectionLabel, { color: isDark ? '#6C6C70' : '#6b7280' }]}>{label}</Text>
   );
 
   // ─── Caller ID verify sub-screen ───
@@ -990,13 +990,13 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
         <ScrollView contentContainerStyle={{ paddingBottom: 100 }}>
           <SectionCard style={{ marginTop: 16 }}>
             {/* Last seen */}
-            <Text style={[styles.privacyLabel, { color: isDark ? '#6b7280' : '#6b7280' }]}>
+            <Text style={[styles.privacyLabel, { color: isDark ? '#6C6C70' : '#6b7280' }]}>
               {t?.('config.lastSeen') || 'Visto por ultimo e online'}
             </Text>
             <View style={styles.radioGroup}>
               {privacyOptions.map(opt => (
                 <TouchableOpacity key={opt.value} style={styles.radioRow} onPress={() => saveSettings({ last_seen_privacy: opt.value })} activeOpacity={0.7}>
-                  <View style={[styles.radio, { borderColor: isDark ? '#374151' : '#d1d5db' }, settings.last_seen_privacy === opt.value && styles.radioActive]}>
+                  <View style={[styles.radio, { borderColor: isDark ? '#2c2c2e' : '#d1d5db' }, settings.last_seen_privacy === opt.value && styles.radioActive]}>
                     {settings.last_seen_privacy === opt.value && <View style={styles.radioDot} />}
                   </View>
                   <Text style={[styles.radioLabel, { color: colors.text }]}>{opt.label}</Text>
@@ -1007,13 +1007,13 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
             <View style={[styles.dividerFull, { backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.05)' }]} />
 
             {/* Profile photo */}
-            <Text style={[styles.privacyLabel, { color: isDark ? '#6b7280' : '#6b7280' }]}>
+            <Text style={[styles.privacyLabel, { color: isDark ? '#6C6C70' : '#6b7280' }]}>
               {t?.('config.profilePhoto') || 'Foto do perfil'}
             </Text>
             <View style={styles.radioGroup}>
               {privacyOptions.map(opt => (
                 <TouchableOpacity key={opt.value} style={styles.radioRow} onPress={() => saveSettings({ profile_photo_privacy: opt.value })} activeOpacity={0.7}>
-                  <View style={[styles.radio, { borderColor: isDark ? '#374151' : '#d1d5db' }, settings.profile_photo_privacy === opt.value && styles.radioActive]}>
+                  <View style={[styles.radio, { borderColor: isDark ? '#2c2c2e' : '#d1d5db' }, settings.profile_photo_privacy === opt.value && styles.radioActive]}>
                     {settings.profile_photo_privacy === opt.value && <View style={styles.radioDot} />}
                   </View>
                   <Text style={[styles.radioLabel, { color: colors.text }]}>{opt.label}</Text>
@@ -1024,13 +1024,13 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
             <View style={[styles.dividerFull, { backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.05)' }]} />
 
             {/* About */}
-            <Text style={[styles.privacyLabel, { color: isDark ? '#6b7280' : '#6b7280' }]}>
+            <Text style={[styles.privacyLabel, { color: isDark ? '#6C6C70' : '#6b7280' }]}>
               {t?.('config.aboutVisibility') || 'Recado'}
             </Text>
             <View style={styles.radioGroup}>
               {privacyOptions.map(opt => (
                 <TouchableOpacity key={opt.value} style={styles.radioRow} onPress={() => saveSettings({ about_privacy: opt.value })} activeOpacity={0.7}>
-                  <View style={[styles.radio, { borderColor: isDark ? '#374151' : '#d1d5db' }, settings.about_privacy === opt.value && styles.radioActive]}>
+                  <View style={[styles.radio, { borderColor: isDark ? '#2c2c2e' : '#d1d5db' }, settings.about_privacy === opt.value && styles.radioActive]}>
                     {settings.about_privacy === opt.value && <View style={styles.radioDot} />}
                   </View>
                   <Text style={[styles.radioLabel, { color: colors.text }]}>{opt.label}</Text>
@@ -1039,13 +1039,13 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
             </View>
 
             {/* Groups privacy */}
-            <Text style={[styles.privacyLabel, { color: isDark ? '#6b7280' : '#6b7280' }]}>
+            <Text style={[styles.privacyLabel, { color: isDark ? '#6C6C70' : '#6b7280' }]}>
               {t?.('config.groupsPrivacy') || 'Quem pode me adicionar a grupos'}
             </Text>
             <View style={styles.radioGroup}>
               {privacyOptions.map(opt => (
                 <TouchableOpacity key={opt.value} style={styles.radioRow} onPress={() => saveSettings({ groups_privacy: opt.value })} activeOpacity={0.7}>
-                  <View style={[styles.radio, { borderColor: isDark ? '#374151' : '#d1d5db' }, (settings.groups_privacy || 'everyone') === opt.value && styles.radioActive]}>
+                  <View style={[styles.radio, { borderColor: isDark ? '#2c2c2e' : '#d1d5db' }, (settings.groups_privacy || 'everyone') === opt.value && styles.radioActive]}>
                     {(settings.groups_privacy || 'everyone') === opt.value && <View style={styles.radioDot} />}
                   </View>
                   <Text style={[styles.radioLabel, { color: colors.text }]}>{opt.label}</Text>
@@ -1056,7 +1056,7 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
             <View style={[styles.dividerFull, { backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.05)' }]} />
 
             {/* Default disappearing messages timer */}
-            <Text style={[styles.privacyLabel, { color: isDark ? '#6b7280' : '#6b7280' }]}>
+            <Text style={[styles.privacyLabel, { color: isDark ? '#6C6C70' : '#6b7280' }]}>
               {t?.('config.defaultDisappearing') || 'Mensagens temporarias por padrao'}
             </Text>
             <View style={styles.radioGroup}>
@@ -1070,14 +1070,14 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
                   try { api.chatSetDefaultDisappearing?.(opt.value); } catch {}
                   saveSettings({ default_disappearing_seconds: opt.value });
                 }} activeOpacity={0.7}>
-                  <View style={[styles.radio, { borderColor: isDark ? '#374151' : '#d1d5db' }, (settings.default_disappearing_seconds || 0) === opt.value && styles.radioActive]}>
+                  <View style={[styles.radio, { borderColor: isDark ? '#2c2c2e' : '#d1d5db' }, (settings.default_disappearing_seconds || 0) === opt.value && styles.radioActive]}>
                     {(settings.default_disappearing_seconds || 0) === opt.value && <View style={styles.radioDot} />}
                   </View>
                   <Text style={[styles.radioLabel, { color: colors.text }]}>{opt.label}</Text>
                 </TouchableOpacity>
               ))}
             </View>
-            <Text style={{ fontSize: 12, color: isDark ? '#6b7280' : '#9ca3af', paddingHorizontal: 16, marginTop: -4, marginBottom: 12 }}>
+            <Text style={{ fontSize: 12, color: isDark ? '#6C6C70' : '#9ca3af', paddingHorizontal: 16, marginTop: -4, marginBottom: 12 }}>
               {t?.('config.defaultDisappearingHint') || 'Aplica-se apenas a novas conversas'}
             </Text>
 
@@ -1087,12 +1087,12 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
             <View style={styles.switchRowModern}>
               <View style={{ flex: 1 }}>
                 <Text style={[styles.switchLabel, { color: colors.text }]}>{t?.('config.readReceipts') || 'Confirmação de leitura'}</Text>
-                <Text style={[styles.switchDesc, { color: isDark ? '#6b7280' : '#9ca3af' }]}>{t?.('config.readReceiptsDesc') || 'Mostrar quando você leu mensagens'}</Text>
+                <Text style={[styles.switchDesc, { color: isDark ? '#6C6C70' : '#9ca3af' }]}>{t?.('config.readReceiptsDesc') || 'Mostrar quando você leu mensagens'}</Text>
               </View>
               <NativeSwitch
                 value={settings.read_receipts}
                 onValueChange={(v) => saveSettings({ read_receipts: v })}
-                trackColor={{ false: isDark ? '#374151' : '#d1d5db', true: 'rgba(17, 17, 17,0.4)' }}
+                trackColor={{ false: isDark ? '#2c2c2e' : '#d1d5db', true: 'rgba(17, 17, 17,0.4)' }}
                 thumbColor={settings.read_receipts ? ACCENT : isDark ? '#555' : '#ccc'}
               />
             </View>
@@ -1102,12 +1102,12 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
             <View style={styles.switchRowModern}>
               <View style={{ flex: 1 }}>
                 <Text style={[styles.switchLabel, { color: colors.text }]}>{t?.('config.smartPin') || 'Fixar conversas mais ativas'}</Text>
-                <Text style={[styles.switchDesc, { color: isDark ? '#6b7280' : '#9ca3af' }]}>{t?.('config.smartPinDesc') || 'Top 3 conversas dos últimos 30 dias aparecem fixadas automaticamente'}</Text>
+                <Text style={[styles.switchDesc, { color: isDark ? '#6C6C70' : '#9ca3af' }]}>{t?.('config.smartPinDesc') || 'Top 3 conversas dos últimos 30 dias aparecem fixadas automaticamente'}</Text>
               </View>
               <NativeSwitch
                 value={!!settings.smart_pin_enabled}
                 onValueChange={(v) => saveSettings({ smart_pin_enabled: v })}
-                trackColor={{ false: isDark ? '#374151' : '#d1d5db', true: 'rgba(17,17,17,0.45)' }}
+                trackColor={{ false: isDark ? '#2c2c2e' : '#d1d5db', true: 'rgba(17,17,17,0.45)' }}
                 thumbColor={settings.smart_pin_enabled ? '#111111' : isDark ? '#555' : '#ccc'}
               />
             </View>
@@ -1117,12 +1117,12 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
             <View style={styles.switchRowModern}>
               <View style={{ flex: 1 }}>
                 <Text style={[styles.switchLabel, { color: colors.text }]}>{t?.('config.hdMediaQuality') || 'Qualidade HD de mídia'}</Text>
-                <Text style={[styles.switchDesc, { color: isDark ? '#6b7280' : '#9ca3af' }]}>{t?.('config.hdMediaQualityDesc') || 'Enviar fotos e vídeos em qualidade HD (usa mais dados)'}</Text>
+                <Text style={[styles.switchDesc, { color: isDark ? '#6C6C70' : '#9ca3af' }]}>{t?.('config.hdMediaQualityDesc') || 'Enviar fotos e vídeos em qualidade HD (usa mais dados)'}</Text>
               </View>
               <NativeSwitch
                 value={!!settings.hd_media_quality}
                 onValueChange={(v) => saveSettings({ hd_media_quality: v })}
-                trackColor={{ false: isDark ? '#374151' : '#d1d5db', true: 'rgba(17, 17, 17,0.4)' }}
+                trackColor={{ false: isDark ? '#2c2c2e' : '#d1d5db', true: 'rgba(17, 17, 17,0.4)' }}
                 thumbColor={settings.hd_media_quality ? ACCENT : isDark ? '#555' : '#ccc'}
               />
             </View>
@@ -1134,12 +1134,12 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
                 <View style={styles.switchRowModern}>
                   <View style={{ flex: 1 }}>
                     <Text style={[styles.switchLabel, { color: colors.text }]}>{t?.('config.appLock') || 'Bloqueio do app'}</Text>
-                    <Text style={[styles.switchDesc, { color: isDark ? '#6b7280' : '#9ca3af' }]}>{t?.('config.appLockDesc') || 'Usar biometria para desbloquear'}</Text>
+                    <Text style={[styles.switchDesc, { color: isDark ? '#6C6C70' : '#9ca3af' }]}>{t?.('config.appLockDesc') || 'Usar biometria para desbloquear'}</Text>
                   </View>
                   <NativeSwitch
                     value={biometricEnabled}
                     onValueChange={toggleBiometric}
-                    trackColor={{ false: isDark ? '#374151' : '#d1d5db', true: 'rgba(17, 17, 17,0.4)' }}
+                    trackColor={{ false: isDark ? '#2c2c2e' : '#d1d5db', true: 'rgba(17, 17, 17,0.4)' }}
                     thumbColor={biometricEnabled ? ACCENT : isDark ? '#555' : '#ccc'}
                   />
                 </View>
@@ -1158,7 +1158,7 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
                 <IconSparkles size={14} color="#111111" />
               </View>
               <Text style={[styles.linkText, { color: colors.text }]}>{t?.('bots.title') || 'Bots'}</Text>
-              <IconChevronRight size={16} color={isDark ? '#4b5563' : '#c5c5c5'} />
+              <IconChevronRight size={16} color={isDark ? '#48484a' : '#c5c5c5'} />
             </TouchableOpacity>
 
             {/* Close Friends */}
@@ -1171,7 +1171,7 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
                 <IconStar size={16} color="#22C55E" />
               </View>
               <Text style={[styles.linkText, { color: colors.text }]}>{t?.('closeFriends.title') || 'Amigos proximos'}</Text>
-              <IconChevronRight size={16} color={isDark ? '#4b5563' : '#c5c5c5'} />
+              <IconChevronRight size={16} color={isDark ? '#48484a' : '#c5c5c5'} />
             </TouchableOpacity>
 
             {/* Starred Messages */}
@@ -1184,7 +1184,7 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
                 <IconStar size={16} color="#FFC107" />
               </View>
               <Text style={[styles.linkText, { color: colors.text }]}>{t?.('starred.title') || 'Mensagens favoritas'}</Text>
-              <IconChevronRight size={16} color={isDark ? '#4b5563' : '#c5c5c5'} />
+              <IconChevronRight size={16} color={isDark ? '#48484a' : '#c5c5c5'} />
             </TouchableOpacity>
 
             {/* Linked Devices — show current device type as subtitle so the
@@ -1201,7 +1201,7 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
               </View>
               <View style={{ flex: 1 }}>
                 <Text style={[styles.linkText, { color: colors.text, flex: undefined }]}>{t?.('devices.title') || 'Dispositivos conectados'}</Text>
-                <Text style={[styles.deviceSubLine, { color: isDark ? '#6b7280' : '#9ca3af' }]}>
+                <Text style={[styles.deviceSubLine, { color: isDark ? '#6C6C70' : '#9ca3af' }]}>
                   {(t?.('devices.thisDevice') || 'Este dispositivo')}
                   {' · '}
                   {Platform.OS === 'web' ? 'Web' : (Platform.OS === 'ios' ? 'iOS' : 'Android')}
@@ -1209,7 +1209,7 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
                   {t?.('time.now') || 'agora'}
                 </Text>
               </View>
-              <IconChevronRight size={16} color={isDark ? '#4b5563' : '#c5c5c5'} />
+              <IconChevronRight size={16} color={isDark ? '#48484a' : '#c5c5c5'} />
             </TouchableOpacity>
 
             {/* Verify Caller ID */}
@@ -1222,7 +1222,7 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
                 <IconPhone size={16} color={colors.text} />
               </View>
               <Text style={[styles.linkText, { color: colors.text }]}>{t?.('callerId.title') || 'Verificar Caller ID'}</Text>
-              <IconChevronRight size={16} color={isDark ? '#4b5563' : '#c5c5c5'} />
+              <IconChevronRight size={16} color={isDark ? '#48484a' : '#c5c5c5'} />
             </TouchableOpacity>
 
             {/* Blocked contacts */}
@@ -1235,8 +1235,8 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
                 <IconX size={16} color="#dc2626" />
               </View>
               <Text style={[styles.linkText, { color: '#dc2626' }]}>{t?.('config.blocked') || 'Contatos bloqueados'}</Text>
-              <Text style={[styles.linkCount, { color: isDark ? '#6b7280' : '#9ca3af' }]}>{blockedCount}</Text>
-              <IconChevronRight size={16} color={isDark ? '#4b5563' : '#c5c5c5'} />
+              <Text style={[styles.linkCount, { color: isDark ? '#6C6C70' : '#9ca3af' }]}>{blockedCount}</Text>
+              <IconChevronRight size={16} color={isDark ? '#48484a' : '#c5c5c5'} />
             </TouchableOpacity>
           </SectionCard>
         </ScrollView>
@@ -1254,12 +1254,12 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
             <View style={styles.switchRowModern}>
               <View style={{ flex: 1 }}>
                 <Text style={[styles.switchLabel, { color: colors.text }]}>{t?.('config.notifMessages') || 'Notificacoes de mensagens'}</Text>
-                <Text style={[styles.switchDesc, { color: isDark ? '#6b7280' : '#9ca3af' }]}>{t?.('config.notifMessagesDesc') || 'Receber notificacoes de novas mensagens'}</Text>
+                <Text style={[styles.switchDesc, { color: isDark ? '#6C6C70' : '#9ca3af' }]}>{t?.('config.notifMessagesDesc') || 'Receber notificacoes de novas mensagens'}</Text>
               </View>
               <NativeSwitch
                 value={settings.notifications}
                 onValueChange={(v) => saveSettings({ notifications: v })}
-                trackColor={{ false: isDark ? '#374151' : '#d1d5db', true: 'rgba(17, 17, 17,0.4)' }}
+                trackColor={{ false: isDark ? '#2c2c2e' : '#d1d5db', true: 'rgba(17, 17, 17,0.4)' }}
                 thumbColor={settings.notifications ? ACCENT : isDark ? '#555' : '#ccc'}
               />
             </View>
@@ -1270,12 +1270,12 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
                 <View style={[styles.switchRowModern, { paddingLeft: 36 }]}>
                   <View style={{ flex: 1 }}>
                     <Text style={[styles.switchLabel, { color: colors.text }]}>{t?.('config.notifSound') || 'Sons'}</Text>
-                    <Text style={[styles.switchDesc, { color: isDark ? '#6b7280' : '#9ca3af' }]}>{t?.('config.notifSoundDesc') || 'Tocar som ao receber mensagem'}</Text>
+                    <Text style={[styles.switchDesc, { color: isDark ? '#6C6C70' : '#9ca3af' }]}>{t?.('config.notifSoundDesc') || 'Tocar som ao receber mensagem'}</Text>
                   </View>
                   <NativeSwitch
                     value={settings.notification_sound}
                     onValueChange={(v) => saveSettings({ notification_sound: v })}
-                    trackColor={{ false: isDark ? '#374151' : '#d1d5db', true: 'rgba(17, 17, 17,0.4)' }}
+                    trackColor={{ false: isDark ? '#2c2c2e' : '#d1d5db', true: 'rgba(17, 17, 17,0.4)' }}
                     thumbColor={settings.notification_sound ? ACCENT : isDark ? '#555' : '#ccc'}
                   />
                 </View>
@@ -1285,12 +1285,12 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
                     <View style={[styles.switchRowModern, { paddingLeft: 36 }]}>
                       <View style={{ flex: 1 }}>
                         <Text style={[styles.switchLabel, { color: colors.text }]}>{t?.('config.notifVibration') || 'Vibracao'}</Text>
-                        <Text style={[styles.switchDesc, { color: isDark ? '#6b7280' : '#9ca3af' }]}>{t?.('config.notifVibrationDesc') || 'Vibrar ao receber mensagem'}</Text>
+                        <Text style={[styles.switchDesc, { color: isDark ? '#6C6C70' : '#9ca3af' }]}>{t?.('config.notifVibrationDesc') || 'Vibrar ao receber mensagem'}</Text>
                       </View>
                       <NativeSwitch
                         value={settings.notification_vibration}
                         onValueChange={(v) => saveSettings({ notification_vibration: v })}
-                        trackColor={{ false: isDark ? '#374151' : '#d1d5db', true: 'rgba(17, 17, 17,0.4)' }}
+                        trackColor={{ false: isDark ? '#2c2c2e' : '#d1d5db', true: 'rgba(17, 17, 17,0.4)' }}
                         thumbColor={settings.notification_vibration ? ACCENT : isDark ? '#555' : '#ccc'}
                       />
                     </View>
@@ -1304,12 +1304,12 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
             <View style={styles.switchRowModern}>
               <View style={{ flex: 1 }}>
                 <Text style={[styles.switchLabel, { color: colors.text }]}>{t?.('config.notifGroups') || 'Notificacoes de grupos'}</Text>
-                <Text style={[styles.switchDesc, { color: isDark ? '#6b7280' : '#9ca3af' }]}>{t?.('config.notifGroupsDesc') || 'Receber notificacoes de mensagens em grupos'}</Text>
+                <Text style={[styles.switchDesc, { color: isDark ? '#6C6C70' : '#9ca3af' }]}>{t?.('config.notifGroupsDesc') || 'Receber notificacoes de mensagens em grupos'}</Text>
               </View>
               <NativeSwitch
                 value={settings.notification_groups}
                 onValueChange={(v) => saveSettings({ notification_groups: v })}
-                trackColor={{ false: isDark ? '#374151' : '#d1d5db', true: 'rgba(17, 17, 17,0.4)' }}
+                trackColor={{ false: isDark ? '#2c2c2e' : '#d1d5db', true: 'rgba(17, 17, 17,0.4)' }}
                 thumbColor={settings.notification_groups ? ACCENT : isDark ? '#555' : '#ccc'}
               />
             </View>
@@ -1319,12 +1319,12 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
             <View style={styles.switchRowModern}>
               <View style={{ flex: 1 }}>
                 <Text style={[styles.switchLabel, { color: colors.text }]}>{t?.('config.notifCalls') || 'Notificacoes de chamadas'}</Text>
-                <Text style={[styles.switchDesc, { color: isDark ? '#6b7280' : '#9ca3af' }]}>{t?.('config.notifCallsDesc') || 'Receber notificacoes de chamadas de voz e video'}</Text>
+                <Text style={[styles.switchDesc, { color: isDark ? '#6C6C70' : '#9ca3af' }]}>{t?.('config.notifCallsDesc') || 'Receber notificacoes de chamadas de voz e video'}</Text>
               </View>
               <NativeSwitch
                 value={settings.notification_calls}
                 onValueChange={(v) => saveSettings({ notification_calls: v })}
-                trackColor={{ false: isDark ? '#374151' : '#d1d5db', true: 'rgba(17, 17, 17,0.4)' }}
+                trackColor={{ false: isDark ? '#2c2c2e' : '#d1d5db', true: 'rgba(17, 17, 17,0.4)' }}
                 thumbColor={settings.notification_calls ? ACCENT : isDark ? '#555' : '#ccc'}
               />
             </View>
@@ -1344,7 +1344,7 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
                   <TouchableOpacity
                     key={s2.val}
                     style={[styles.btnOption, {
-                      borderColor: settings.notification_tone === s2.val ? ACCENT : (isDark ? '#374151' : '#d1d5db'),
+                      borderColor: settings.notification_tone === s2.val ? ACCENT : (isDark ? '#2c2c2e' : '#d1d5db'),
                       backgroundColor: settings.notification_tone === s2.val ? (isDark ? 'rgba(17, 17, 17,0.1)' : '#ecfdf5') : 'transparent',
                     }]}
                     onPress={() => saveSettings({ notification_tone: s2.val })}
@@ -1365,7 +1365,7 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
                 <View style={styles.switchRowModern}>
                   <View style={{ flex: 1 }}>
                     <Text style={[styles.switchLabel, { color: colors.text }]}>{t?.('config.desktopNotifs') || 'Notificacoes do desktop'}</Text>
-                    <Text style={[styles.switchDesc, { color: isDark ? '#6b7280' : '#9ca3af' }]}>
+                    <Text style={[styles.switchDesc, { color: isDark ? '#6C6C70' : '#9ca3af' }]}>
                       {Notification.permission === 'granted' ? (t?.('config.notifsEnabled') || 'Ativadas') : (t?.('config.notifsDisabled') || 'Desativadas')}
                     </Text>
                   </View>
@@ -1425,12 +1425,12 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
             <View style={styles.switchRowModern}>
               <View style={{ flex: 1 }}>
                 <Text style={[styles.switchLabel, { color: colors.text }]}>{t?.('config.darkMode') || 'Modo escuro'}</Text>
-                <Text style={[styles.switchDesc, { color: isDark ? '#6b7280' : '#9ca3af' }]}>{t?.('config.darkModeDesc') || 'Alternar tema claro/escuro'}</Text>
+                <Text style={[styles.switchDesc, { color: isDark ? '#6C6C70' : '#9ca3af' }]}>{t?.('config.darkModeDesc') || 'Alternar tema claro/escuro'}</Text>
               </View>
               <NativeSwitch
                 value={isDark}
                 onValueChange={toggleTheme}
-                trackColor={{ false: isDark ? '#374151' : '#d1d5db', true: 'rgba(17, 17, 17,0.4)' }}
+                trackColor={{ false: isDark ? '#2c2c2e' : '#d1d5db', true: 'rgba(17, 17, 17,0.4)' }}
                 thumbColor={isDark ? ACCENT : '#ccc'}
               />
             </View>
@@ -1450,7 +1450,7 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
                 ].map(f => (
                   <TouchableOpacity
                     key={f.val}
-                    style={[styles.btnOption, { borderColor: isDark ? '#374151' : '#d1d5db' }, settings.font_size === f.val && styles.btnOptionActive]}
+                    style={[styles.btnOption, { borderColor: isDark ? '#2c2c2e' : '#d1d5db' }, settings.font_size === f.val && styles.btnOptionActive]}
                     onPress={() => saveSettings({ font_size: f.val })}
                     activeOpacity={0.7}
                   >
@@ -1476,7 +1476,7 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
                 ].map(d => (
                   <TouchableOpacity
                     key={d.val}
-                    style={[styles.btnOption, { borderColor: isDark ? '#374151' : '#d1d5db' }, density === d.val && styles.btnOptionActive]}
+                    style={[styles.btnOption, { borderColor: isDark ? '#2c2c2e' : '#d1d5db' }, density === d.val && styles.btnOptionActive]}
                     onPress={() => setDensity(d.val)}
                     activeOpacity={0.7}
                   >
@@ -1497,9 +1497,9 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
               </View>
               <Text style={[styles.linkText, { color: colors.text }]}>{t?.('config.wallpaper') || 'Papel de parede do chat'}</Text>
               {settings.wallpaper && settings.wallpaper !== 'none' && (
-                <View style={{ width: 22, height: 22, borderRadius: 11, backgroundColor: settings.wallpaper.startsWith('#') ? settings.wallpaper : ACCENT, marginRight: 4, borderWidth: 2, borderColor: isDark ? '#374151' : '#e5e7eb' }} />
+                <View style={{ width: 22, height: 22, borderRadius: 11, backgroundColor: settings.wallpaper.startsWith('#') ? settings.wallpaper : ACCENT, marginRight: 4, borderWidth: 2, borderColor: isDark ? '#2c2c2e' : '#e5e7eb' }} />
               )}
-              <IconChevronRight size={16} color={isDark ? '#4b5563' : '#c5c5c5'} />
+              <IconChevronRight size={16} color={isDark ? '#48484a' : '#c5c5c5'} />
             </TouchableOpacity>
           </SectionCard>
         </ScrollView>
@@ -1655,7 +1655,7 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
             <Text style={[styles.sectionTitle, { color: colors.text, marginBottom: 4 }]}>
               {t?.('settings.autoDownload.title') || t?.('config.autoDownload') || 'Download automático'}
             </Text>
-            <Text style={{ fontSize: 12, color: isDark ? '#6b7280' : '#9ca3af', marginBottom: 12, paddingHorizontal: 4 }}>
+            <Text style={{ fontSize: 12, color: isDark ? '#6C6C70' : '#9ca3af', marginBottom: 12, paddingHorizontal: 4 }}>
               {t?.('settings.autoDownload.subtitle') || t?.('config.autoDownloadDesc') || 'Escolha quando o app baixa mídias automaticamente'}
             </Text>
             {autoDownloadItems.map((item, idx) => {
@@ -1700,7 +1700,7 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
               {storageLoading ? (
                 <ActivityIndicator size="small" color={ACCENT} style={{ marginTop: 8 }} />
               ) : (
-                <Text style={[styles.storageDesc, { color: isDark ? '#6b7280' : '#9ca3af', fontSize: 13, fontWeight: '600' }]}>
+                <Text style={[styles.storageDesc, { color: isDark ? '#6C6C70' : '#9ca3af', fontSize: 13, fontWeight: '600' }]}>
                   {formatSize(totalSize)} {t?.('config.storageDesc2') || 'em cache local'}
                 </Text>
               )}
@@ -1709,7 +1709,7 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
             {/* Media breakdown bar */}
             {totalSize > 0 && (
               <View style={{ paddingHorizontal: 20, paddingBottom: 16 }}>
-                <View style={{ flexDirection: 'row', height: 8, borderRadius: 4, overflow: 'hidden', backgroundColor: isDark ? '#1f2937' : '#f3f4f6' }}>
+                <View style={{ flexDirection: 'row', height: 8, borderRadius: 4, overflow: 'hidden', backgroundColor: isDark ? '#1c1c1e' : '#f3f4f6' }}>
                   {mediaItems.filter(m => m.size > 0).map((m, i) => (
                     <View key={i} style={{ flex: m.size, backgroundColor: m.color, borderRadius: i === 0 ? 4 : 0 }} />
                   ))}
@@ -1726,7 +1726,7 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
                     {m.icon}
                   </View>
                   <Text style={[styles.linkText, { color: colors.text, flex: 1 }]}>{m.label}</Text>
-                  <Text style={{ color: isDark ? '#6b7280' : '#9ca3af', fontSize: 13, fontWeight: '500' }}>{formatSize(m.size)}</Text>
+                  <Text style={{ color: isDark ? '#6C6C70' : '#9ca3af', fontSize: 13, fontWeight: '500' }}>{formatSize(m.size)}</Text>
                 </View>
               </View>
             ))}
@@ -1762,7 +1762,7 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
                 <IconTrash size={16} color="#E17055" />
               </View>
               <Text style={[styles.linkText, { color: colors.text }]}>{t?.('config.clearCache') || 'Limpar cache'}</Text>
-              <IconChevronRight size={16} color={isDark ? '#4b5563' : '#c5c5c5'} />
+              <IconChevronRight size={16} color={isDark ? '#48484a' : '#c5c5c5'} />
             </TouchableOpacity>
 
             <View style={[styles.rowSeparator, { backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.05)', marginLeft: 56 }]} />
@@ -1791,7 +1791,7 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
                 <IconTrash size={16} color="#6C5CE7" />
               </View>
               <Text style={[styles.linkText, { color: colors.text }]}>{t?.('config.clearAudioCache') || 'Limpar cache de audio'}</Text>
-              <IconChevronRight size={16} color={isDark ? '#4b5563' : '#c5c5c5'} />
+              <IconChevronRight size={16} color={isDark ? '#48484a' : '#c5c5c5'} />
             </TouchableOpacity>
           </SectionCard>
         </ScrollView>
@@ -1816,9 +1816,9 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
               </View>
               <View style={{ flex: 1 }}>
                 <Text style={[styles.switchLabel, { color: colors.text }]}>{t?.('config.contactUs') || 'Fale conosco'}</Text>
-                <Text style={[styles.switchDesc, { color: isDark ? '#6b7280' : '#9ca3af' }]}>contato@chatyy.com.br</Text>
+                <Text style={[styles.switchDesc, { color: isDark ? '#6C6C70' : '#9ca3af' }]}>contato@chatyy.com.br</Text>
               </View>
-              <IconChevronRight size={16} color={isDark ? '#4b5563' : '#c5c5c5'} />
+              <IconChevronRight size={16} color={isDark ? '#48484a' : '#c5c5c5'} />
             </TouchableOpacity>
 
             <View style={[styles.rowSeparator, { backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.05)', marginLeft: 56 }]} />
@@ -1833,9 +1833,9 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
               </View>
               <View style={{ flex: 1 }}>
                 <Text style={[styles.switchLabel, { color: colors.text }]}>{t?.('config.website') || 'Site'}</Text>
-                <Text style={[styles.switchDesc, { color: isDark ? '#6b7280' : '#9ca3af' }]}>chatyy.com.br</Text>
+                <Text style={[styles.switchDesc, { color: isDark ? '#6C6C70' : '#9ca3af' }]}>chatyy.com.br</Text>
               </View>
-              <IconChevronRight size={16} color={isDark ? '#4b5563' : '#c5c5c5'} />
+              <IconChevronRight size={16} color={isDark ? '#48484a' : '#c5c5c5'} />
             </TouchableOpacity>
 
             <View style={[styles.rowSeparator, { backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.05)', marginLeft: 56 }]} />
@@ -1851,15 +1851,15 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
               <View style={{ flex: 1 }}>
                 <Text style={[styles.switchLabel, { color: colors.text }]}>{t?.('config.terms') || 'Termos e privacidade'}</Text>
               </View>
-              <IconChevronRight size={16} color={isDark ? '#4b5563' : '#c5c5c5'} />
+              <IconChevronRight size={16} color={isDark ? '#48484a' : '#c5c5c5'} />
             </TouchableOpacity>
           </SectionCard>
 
           <SectionCard style={{ marginTop: 12 }}>
             <View style={styles.storageInfoModern}>
               <Text style={[styles.appNameBig, { color: ACCENT }]}>Chatyy</Text>
-              <Text style={[styles.storageDesc, { color: isDark ? '#6b7280' : '#9ca3af' }]}>by Chatyy</Text>
-              <Text style={[styles.storageDesc, { color: isDark ? '#4b5563' : '#c5c5c5', marginTop: 4, fontSize: 12 }]}>v1.4.0</Text>
+              <Text style={[styles.storageDesc, { color: isDark ? '#6C6C70' : '#9ca3af' }]}>by Chatyy</Text>
+              <Text style={[styles.storageDesc, { color: isDark ? '#48484a' : '#c5c5c5', marginTop: 4, fontSize: 12 }]}>v1.4.0</Text>
             </View>
           </SectionCard>
         </ScrollView>
@@ -1903,7 +1903,7 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
           <SectionLabel label={t?.('config.email') || 'INFORMACOES'} />
           <SectionCard>
             <View style={{ paddingHorizontal: 20, paddingVertical: 16 }}>
-              <Text style={[styles.privacyLabelInline, { color: isDark ? '#6b7280' : '#6b7280' }]}>
+              <Text style={[styles.privacyLabelInline, { color: isDark ? '#6C6C70' : '#6b7280' }]}>
                 {t?.('config.email') || 'E-mail'}
               </Text>
               <Text style={[{ fontSize: 16, color: colors.text, marginTop: 4, fontWeight: '500' }]}>{currentEmail}</Text>
@@ -1912,7 +1912,7 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
               <>
                 <View style={[styles.rowSeparator, { backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.05)' }]} />
                 <View style={{ paddingHorizontal: 20, paddingVertical: 16 }}>
-                  <Text style={[styles.privacyLabelInline, { color: isDark ? '#6b7280' : '#6b7280' }]}>
+                  <Text style={[styles.privacyLabelInline, { color: isDark ? '#6C6C70' : '#6b7280' }]}>
                     {t?.('config.phone') || 'Telefone'}
                   </Text>
                   <Text style={[{ fontSize: 16, color: colors.text, marginTop: 4, fontWeight: '500' }]}>{phone}</Text>
@@ -1927,9 +1927,9 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
             <View style={{ paddingHorizontal: 20, gap: 12, paddingVertical: 20 }}>
               <View style={{ position: 'relative' }}>
                 <TextInput
-                  style={[styles.pwInputModern, { color: colors.text, borderColor: isDark ? '#374151' : '#e5e7eb', backgroundColor: isDark ? '#0d1117' : '#f9fafb' }]}
+                  style={[styles.pwInputModern, { color: colors.text, borderColor: isDark ? '#2c2c2e' : '#e5e7eb', backgroundColor: isDark ? '#0b0b0b' : '#f9fafb' }]}
                   placeholder={t?.('config.currentPassword') || 'Senha atual'}
-                  placeholderTextColor={isDark ? '#4b5563' : '#9ca3af'}
+                  placeholderTextColor={isDark ? '#48484a' : '#9ca3af'}
                   secureTextEntry={!showPw}
                   value={currentPw}
                   onChangeText={setCurrentPw}
@@ -1937,26 +1937,26 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
                 />
               </View>
               <TextInput
-                style={[styles.pwInputModern, { color: colors.text, borderColor: isDark ? '#374151' : '#e5e7eb', backgroundColor: isDark ? '#0d1117' : '#f9fafb' }]}
+                style={[styles.pwInputModern, { color: colors.text, borderColor: isDark ? '#2c2c2e' : '#e5e7eb', backgroundColor: isDark ? '#0b0b0b' : '#f9fafb' }]}
                 placeholder={t?.('config.newPassword') || 'Nova senha'}
-                placeholderTextColor={isDark ? '#4b5563' : '#9ca3af'}
+                placeholderTextColor={isDark ? '#48484a' : '#9ca3af'}
                 secureTextEntry={!showPw}
                 value={newPw}
                 onChangeText={setNewPw}
                 autoCapitalize="none"
               />
               <TextInput
-                style={[styles.pwInputModern, { color: colors.text, borderColor: isDark ? '#374151' : '#e5e7eb', backgroundColor: isDark ? '#0d1117' : '#f9fafb' }]}
+                style={[styles.pwInputModern, { color: colors.text, borderColor: isDark ? '#2c2c2e' : '#e5e7eb', backgroundColor: isDark ? '#0b0b0b' : '#f9fafb' }]}
                 placeholder={t?.('config.confirmPassword') || 'Confirmar nova senha'}
-                placeholderTextColor={isDark ? '#4b5563' : '#9ca3af'}
+                placeholderTextColor={isDark ? '#48484a' : '#9ca3af'}
                 secureTextEntry={!showPw}
                 value={confirmPw}
                 onChangeText={setConfirmPw}
                 autoCapitalize="none"
               />
               <TouchableOpacity onPress={() => setShowPw(!showPw)} style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 4 }} activeOpacity={0.7}>
-                {showPw ? <IconEyeOff size={16} color={isDark ? '#6b7280' : '#9ca3af'} /> : <IconEye size={16} color={isDark ? '#6b7280' : '#9ca3af'} />}
-                <Text style={{ color: isDark ? '#6b7280' : '#9ca3af', fontSize: 13 }}>{showPw ? (t?.('config.hidePassword') || 'Ocultar senhas') : (t?.('config.showPassword') || 'Mostrar senhas')}</Text>
+                {showPw ? <IconEyeOff size={16} color={isDark ? '#6C6C70' : '#9ca3af'} /> : <IconEye size={16} color={isDark ? '#6C6C70' : '#9ca3af'} />}
+                <Text style={{ color: isDark ? '#6C6C70' : '#9ca3af', fontSize: 13 }}>{showPw ? (t?.('config.hidePassword') || 'Ocultar senhas') : (t?.('config.showPassword') || 'Mostrar senhas')}</Text>
               </TouchableOpacity>
               <TouchableOpacity
                 style={[styles.changePwBtn, { opacity: changingPw ? 0.6 : 1 }]}
@@ -2100,12 +2100,12 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
                 </TouchableOpacity>
               </View>
               <View style={{ flexDirection: 'row', alignItems: 'center', margin: 16, paddingHorizontal: 12, borderRadius: 10, backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : '#f3f4f6' }}>
-                <IconSearch size={16} color={isDark ? '#6b7280' : '#9ca3af'} />
+                <IconSearch size={16} color={isDark ? '#6C6C70' : '#9ca3af'} />
                 <TextInput
                   value={addBlockQuery}
                   onChangeText={setAddBlockQuery}
                   placeholder={t?.('config.searchContact') || 'Buscar ou digitar e-mail'}
-                  placeholderTextColor={isDark ? '#6b7280' : '#9ca3af'}
+                  placeholderTextColor={isDark ? '#6C6C70' : '#9ca3af'}
                   autoCapitalize="none"
                   keyboardType="email-address"
                   style={{ flex: 1, paddingVertical: 10, paddingHorizontal: 8, color: colors.text, fontSize: 15 }}
@@ -2137,7 +2137,7 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
                       <AvatarCircle name={emailToDisplayName(addBlockManualEmail)} email={addBlockManualEmail} size={42} />
                       <View style={{ flex: 1 }}>
                         <Text style={[styles.blockedEmail, { color: colors.text }]} numberOfLines={1}>{addBlockManualEmail}</Text>
-                        <Text style={{ color: isDark ? '#6b7280' : '#9ca3af', fontSize: 12, marginTop: 2 }}>{t?.('config.blockThis') || 'Bloquear este e-mail'}</Text>
+                        <Text style={{ color: isDark ? '#6C6C70' : '#9ca3af', fontSize: 12, marginTop: 2 }}>{t?.('config.blockThis') || 'Bloquear este e-mail'}</Text>
                       </View>
                       {addBlockBusy === addBlockManualEmail
                         ? <ActivityIndicator color="#dc2626" />
@@ -2145,7 +2145,7 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
                     </TouchableOpacity>
                   ) : null}
                   ListEmptyComponent={!addBlockManualEmail ? (
-                    <Text style={{ color: isDark ? '#6b7280' : '#9ca3af', textAlign: 'center', padding: 30 }}>
+                    <Text style={{ color: isDark ? '#6C6C70' : '#9ca3af', textAlign: 'center', padding: 30 }}>
                       {t?.('config.noContacts') || 'Nenhum contato'}
                     </Text>
                   ) : null}
@@ -2161,7 +2161,7 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
                         <AvatarCircle name={c.name || emailToDisplayName(em)} email={em} size={42} />
                         <View style={{ flex: 1 }}>
                           <Text style={[styles.blockedEmail, { color: colors.text }]} numberOfLines={1}>{c.name || emailToDisplayName(em)}</Text>
-                          <Text style={{ color: isDark ? '#6b7280' : '#9ca3af', fontSize: 12, marginTop: 2 }} numberOfLines={1}>{em}</Text>
+                          <Text style={{ color: isDark ? '#6C6C70' : '#9ca3af', fontSize: 12, marginTop: 2 }} numberOfLines={1}>{em}</Text>
                         </View>
                         {addBlockBusy === em
                           ? <ActivityIndicator color="#dc2626" />
@@ -2181,10 +2181,10 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
             ) : blocked.length === 0 ? (
               <View style={styles.storageInfoModern}>
                 <View style={[styles.storageIconCircle, { backgroundColor: isDark ? 'rgba(107,114,128,0.1)' : '#f3f4f6' }]}>
-                  <IconShield size={32} color={isDark ? '#4b5563' : '#9ca3af'} />
+                  <IconShield size={32} color={isDark ? '#48484a' : '#9ca3af'} />
                 </View>
                 <Text style={[styles.storageTitle, { color: colors.text }]}>{t?.('config.noBlocked') || 'Nenhum contato bloqueado'}</Text>
-                <Text style={[styles.storageDesc, { color: isDark ? '#6b7280' : '#9ca3af' }]}>
+                <Text style={[styles.storageDesc, { color: isDark ? '#6C6C70' : '#9ca3af' }]}>
                   {t?.('config.noBlockedDesc') || 'Contatos bloqueados não podem enviar mensagens para você no Chatyy'}
                 </Text>
               </View>
@@ -2195,7 +2195,7 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
                     <AvatarCircle name={emailToDisplayName(email)} email={email} size={42} />
                     <View style={{ flex: 1 }}>
                       <Text style={[styles.blockedEmail, { color: colors.text }]} numberOfLines={1}>{emailToDisplayName(email)}</Text>
-                      <Text style={{ color: isDark ? '#6b7280' : '#9ca3af', fontSize: 12, marginTop: 2 }} numberOfLines={1}>{email}</Text>
+                      <Text style={{ color: isDark ? '#6C6C70' : '#9ca3af', fontSize: 12, marginTop: 2 }} numberOfLines={1}>{email}</Text>
                     </View>
                     <TouchableOpacity onPress={() => handleUnblock(email)} style={styles.unblockBtn} activeOpacity={0.7}>
                       <Text style={{ color: '#dc2626', fontWeight: '600', fontSize: 12 }}>{t?.('config.unblock') || 'Desbloquear'}</Text>
@@ -2264,24 +2264,24 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
                     {saving ? <ActivityIndicator size="small" color={ACCENT} /> : <IconCheck size={18} color={ACCENT} />}
                   </TouchableOpacity>
                   <TouchableOpacity onPress={() => { setEditing(null); setEditValue(''); }} style={styles.editActionBtn}>
-                    <IconX size={18} color={isDark ? '#6b7280' : '#9ca3af'} />
+                    <IconX size={18} color={isDark ? '#6C6C70' : '#9ca3af'} />
                   </TouchableOpacity>
                 </View>
               ) : (
                 <TouchableOpacity onPress={() => { setEditing('name'); setEditValue(name); }} activeOpacity={0.7} style={styles.editableTouchable}>
                   <Text style={[styles.profileNameModern, { color: colors.text }]}>{name}</Text>
-                  <IconEdit size={14} color={isDark ? '#4b5563' : '#c5c5c5'} />
+                  <IconEdit size={14} color={isDark ? '#48484a' : '#c5c5c5'} />
                 </TouchableOpacity>
               )}
 
-              <Text style={[styles.profileEmailModern, { color: isDark ? '#4b5563' : '#9ca3af' }]} numberOfLines={1}>{currentEmail}</Text>
+              <Text style={[styles.profileEmailModern, { color: isDark ? '#48484a' : '#9ca3af' }]} numberOfLines={1}>{currentEmail}</Text>
 
               {/* Username (@handle) - inline in profile card */}
               {editing === 'username' ? (
                 <View style={[styles.editRow, { marginTop: 6 }]}>
                   <View style={{ flex: 1 }}>
                     <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                      <Text style={{ color: isDark ? '#6b7280' : '#9ca3af', fontSize: 14, fontWeight: '600' }}>@</Text>
+                      <Text style={{ color: isDark ? '#6C6C70' : '#9ca3af', fontSize: 14, fontWeight: '600' }}>@</Text>
                       <TextInput
                         style={[styles.editInputModern, { color: colors.text, borderColor: ACCENT, fontSize: 14, flex: 1, marginLeft: 2 }]}
                         value={usernameInput}
@@ -2291,11 +2291,11 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
                         autoCapitalize="none"
                         autoCorrect={false}
                         placeholder={t?.('profile.usernameAdd') || 'Add username'}
-                        placeholderTextColor={isDark ? '#374151' : '#d1d5db'}
+                        placeholderTextColor={isDark ? '#2c2c2e' : '#d1d5db'}
                       />
                     </View>
                     {usernameStatus === 'checking' && (
-                      <Text style={{ fontSize: 11, color: isDark ? '#6b7280' : '#9ca3af', marginTop: 2 }}>{t?.('profile.usernameChecking') || 'Checking...'}</Text>
+                      <Text style={{ fontSize: 11, color: isDark ? '#6C6C70' : '#9ca3af', marginTop: 2 }}>{t?.('profile.usernameChecking') || 'Checking...'}</Text>
                     )}
                     {usernameStatus === 'available' && (
                       <Text style={{ fontSize: 11, color: '#22c55e', marginTop: 2 }}>{t?.('profile.usernameAvailable') || 'Available'}</Text>
@@ -2318,7 +2318,7 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
                     {savingUsername ? <ActivityIndicator size="small" color={ACCENT} /> : <IconCheck size={18} color={usernameStatus === 'available' || usernameStatus === null ? ACCENT : '#9ca3af'} />}
                   </TouchableOpacity>
                   <TouchableOpacity onPress={() => { setEditing(null); setUsernameStatus(null); }} style={styles.editActionBtn}>
-                    <IconX size={18} color={isDark ? '#6b7280' : '#9ca3af'} />
+                    <IconX size={18} color={isDark ? '#6C6C70' : '#9ca3af'} />
                   </TouchableOpacity>
                 </View>
               ) : (
@@ -2327,18 +2327,18 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
                   activeOpacity={0.7}
                   style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4 }}
                 >
-                  <Text style={{ fontSize: 14, color: profile?.username ? (isDark ? '#111111' : ACCENT) : (isDark ? '#374151' : '#d1d5db'), fontWeight: profile?.username ? '600' : '400' }}>
+                  <Text style={{ fontSize: 14, color: profile?.username ? (isDark ? '#111111' : ACCENT) : (isDark ? '#2c2c2e' : '#d1d5db'), fontWeight: profile?.username ? '600' : '400' }}>
                     {profile?.username ? `@${profile.username}` : (t?.('profile.usernameAdd') || 'Add username')}
                   </Text>
-                  <IconEdit size={12} color={isDark ? '#374151' : '#d1d5db'} style={{ marginLeft: 6 }} />
+                  <IconEdit size={12} color={isDark ? '#2c2c2e' : '#d1d5db'} style={{ marginLeft: 6 }} />
                 </TouchableOpacity>
               )}
 
               {/* Phone number - inline in profile card */}
               {phone ? (
                 <View style={styles.profilePhoneRow}>
-                  <IconPhone size={13} color={isDark ? '#4b5563' : '#9ca3af'} />
-                  <Text style={[styles.profilePhoneText, { color: isDark ? '#4b5563' : '#9ca3af' }]} numberOfLines={1}>{phone}</Text>
+                  <IconPhone size={13} color={isDark ? '#48484a' : '#9ca3af'} />
+                  <Text style={[styles.profilePhoneText, { color: isDark ? '#48484a' : '#9ca3af' }]} numberOfLines={1}>{phone}</Text>
                   <View style={[styles.verifiedDot, { backgroundColor: ACCENT }]} />
                 </View>
               ) : null}
@@ -2357,14 +2357,14 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
                     {saving ? <ActivityIndicator size="small" color={ACCENT} /> : <IconCheck size={18} color={ACCENT} />}
                   </TouchableOpacity>
                   <TouchableOpacity onPress={() => { setEditing(null); setEditValue(''); }} style={styles.editActionBtn}>
-                    <IconX size={18} color={isDark ? '#6b7280' : '#9ca3af'} />
+                    <IconX size={18} color={isDark ? '#6C6C70' : '#9ca3af'} />
                   </TouchableOpacity>
                 </View>
               ) : (
                 <TouchableOpacity onPress={() => { setEditing('about'); setEditValue(about); }} activeOpacity={0.7} style={[styles.aboutTouchable, { marginTop: 6 }]}>
                   <View style={[styles.aboutPill, { backgroundColor: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.03)' }]}>
-                    <Text style={[styles.profileAboutModern, { color: isDark ? '#6b7280' : '#6b7280' }]} numberOfLines={1}>{about}</Text>
-                    <IconEdit size={11} color={isDark ? '#374151' : '#d1d5db'} />
+                    <Text style={[styles.profileAboutModern, { color: isDark ? '#6C6C70' : '#6b7280' }]} numberOfLines={1}>{about}</Text>
+                    <IconEdit size={11} color={isDark ? '#2c2c2e' : '#d1d5db'} />
                   </View>
                 </TouchableOpacity>
               )}
@@ -2377,17 +2377,17 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
           <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-around', paddingBottom: 14 }}>
             <View style={{ alignItems: 'center', flex: 1 }}>
               <Text style={{ fontSize: 20, fontWeight: '800', color: colors.text }}>{igStats.posts}</Text>
-              <Text style={{ fontSize: 12, color: isDark ? '#9ca3af' : '#6b7280', marginTop: 2 }}>{t?.('profile.posts') || 'Posts'}</Text>
+              <Text style={{ fontSize: 12, color: isDark ? '#A1A1A6' : '#6b7280', marginTop: 2 }}>{t?.('profile.posts') || 'Posts'}</Text>
             </View>
             <View style={{ width: StyleSheet.hairlineWidth, height: 32, backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)' }} />
             <TouchableOpacity activeOpacity={0.7} style={{ alignItems: 'center', flex: 1 }} onPress={() => router?.push?.('/profile')}>
               <Text style={{ fontSize: 20, fontWeight: '800', color: colors.text }}>{igStats.followers}</Text>
-              <Text style={{ fontSize: 12, color: isDark ? '#9ca3af' : '#6b7280', marginTop: 2 }}>{t?.('profile.followers') || 'Seguidores'}</Text>
+              <Text style={{ fontSize: 12, color: isDark ? '#A1A1A6' : '#6b7280', marginTop: 2 }}>{t?.('profile.followers') || 'Seguidores'}</Text>
             </TouchableOpacity>
             <View style={{ width: StyleSheet.hairlineWidth, height: 32, backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)' }} />
             <TouchableOpacity activeOpacity={0.7} style={{ alignItems: 'center', flex: 1 }} onPress={() => router?.push?.('/profile')}>
               <Text style={{ fontSize: 20, fontWeight: '800', color: colors.text }}>{igStats.following}</Text>
-              <Text style={{ fontSize: 12, color: isDark ? '#9ca3af' : '#6b7280', marginTop: 2 }}>{t?.('profile.following') || 'Seguindo'}</Text>
+              <Text style={{ fontSize: 12, color: isDark ? '#A1A1A6' : '#6b7280', marginTop: 2 }}>{t?.('profile.following') || 'Seguindo'}</Text>
             </TouchableOpacity>
           </View>
           {/* Action buttons row — brand Edit pill (press scale 0.97) + outlined Share */}
@@ -2422,7 +2422,7 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
               activeOpacity={0.85}
               style={{
                 flex: 1, borderRadius: 8, borderWidth: 1,
-                borderColor: isDark ? '#374151' : '#dbdbdb',
+                borderColor: isDark ? '#2c2c2e' : '#dbdbdb',
                 paddingVertical: 9, alignItems: 'center', justifyContent: 'center',
               }}
             >
@@ -2440,7 +2440,7 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
               <IconPhone size={16} color={ACCENT} />
             </View>
             <View style={{ flex: 1 }}>
-              <Text style={[styles.phoneLabelModern, { color: isDark ? '#6b7280' : '#6b7280' }]}>
+              <Text style={[styles.phoneLabelModern, { color: isDark ? '#6C6C70' : '#6b7280' }]}>
                 {t?.('config.phoneNumber') || 'Numero de telefone'}
               </Text>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 3 }}>
@@ -2458,7 +2458,7 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
               </View>
             </View>
           </View>
-          <Text style={[styles.phoneHintModern, { color: isDark ? '#374151' : '#9ca3af' }]}>
+          <Text style={[styles.phoneHintModern, { color: isDark ? '#2c2c2e' : '#9ca3af' }]}>
             {t?.('config.phoneHint') || 'Seus contatos com este numero poderao encontra-lo no Chatyy'}
           </Text>
         </SectionCard>
@@ -2496,13 +2496,13 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
                     ? (t?.('config.callerIdVerifiedTitle') || 'Numero verificado')
                     : (t?.('config.callerIdCtaTitle') || 'Verifique seu número')}
                 </Text>
-                <Text style={{ fontSize: 12, color: isDark ? '#9ca3af' : '#6b7280', lineHeight: 17 }}>
+                <Text style={{ fontSize: 12, color: isDark ? '#A1A1A6' : '#6b7280', lineHeight: 17 }}>
                   {callerVerified
                     ? (t?.('config.callerIdVerifiedDesc') || 'Seus amigos verao seu número quando você ligar — mesmo se ainda nao usarem o Chatyy.')
                     : (t?.('config.callerIdCtaDesc') || 'Quer que seus amigos que ainda não têm Chatyy vejam seu número quando você ligar? Verifique seu número aqui.')}
                 </Text>
               </View>
-              {!callerVerified && <IconChevronRight size={20} color={isDark ? '#9ca3af' : '#6b7280'} />}
+              {!callerVerified && <IconChevronRight size={20} color={isDark ? '#A1A1A6' : '#6b7280'} />}
             </TouchableOpacity>
           );
         })()}
@@ -2599,7 +2599,7 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
                     : (t?.('chat.backupNow') || 'Fazer backup agora')}
               </Text>
               {backupRunning ? (
-                <Text style={[styles.switchDesc, { color: isDark ? '#6b7280' : '#9ca3af' }]}>
+                <Text style={[styles.switchDesc, { color: isDark ? '#6C6C70' : '#9ca3af' }]}>
                   {t?.('chat.backupPreparing') || 'Isso pode levar alguns segundos...'}
                 </Text>
               ) : backupResult?.success ? (
@@ -2611,13 +2611,13 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
                   {t?.('chat.backupErrorDesc') || 'Erro ao fazer backup. Tente novamente.'}
                 </Text>
               ) : (
-                <Text style={[styles.switchDesc, { color: isDark ? '#6b7280' : '#9ca3af' }]}>
+                <Text style={[styles.switchDesc, { color: isDark ? '#6C6C70' : '#9ca3af' }]}>
                   {t?.('chat.backupDescWeb') || 'Criar backup das suas conversas'}
                 </Text>
               )}
             </View>
             {!backupRunning && !backupResult?.success && (
-              <IconChevronRight size={16} color={isDark ? '#4b5563' : '#c5c5c5'} />
+              <IconChevronRight size={16} color={isDark ? '#48484a' : '#c5c5c5'} />
             )}
           </TouchableOpacity>
 
@@ -2642,7 +2642,7 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
                   ? (t?.('chat.restoreInProgress') || 'Restaurando...')
                   : (t?.('chat.restoreBackup') || 'Restaurar backup')}
               </Text>
-              <Text style={[styles.switchDesc, { color: isDark ? '#6b7280' : '#9ca3af' }]}>
+              <Text style={[styles.switchDesc, { color: isDark ? '#6C6C70' : '#9ca3af' }]}>
                 {restoreResult
                   ? (t?.('chat.restoreSuccessMsg') || '{convs} conversas e {msgs} mensagens restauradas')
                       .replace('{convs}', restoreResult.conversations)
@@ -2651,7 +2651,7 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
               </Text>
             </View>
             {!restoreRunning && (
-              <IconChevronRight size={16} color={isDark ? '#4b5563' : '#c5c5c5'} />
+              <IconChevronRight size={16} color={isDark ? '#48484a' : '#c5c5c5'} />
             )}
           </TouchableOpacity>
         </SectionCard>
@@ -2681,14 +2681,14 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
               {restoreLoading ? (
                 <View style={{ padding: 40, alignItems: 'center' }}>
                   <ActivityIndicator size="large" color={ACCENT} />
-                  <Text style={{ color: isDark ? '#6b7280' : '#9ca3af', marginTop: 12 }}>
+                  <Text style={{ color: isDark ? '#6C6C70' : '#9ca3af', marginTop: 12 }}>
                     {t?.('common.loading') || 'Carregando...'}
                   </Text>
                 </View>
               ) : backupsList.length === 0 ? (
                 <View style={{ padding: 40, alignItems: 'center' }}>
-                  <IconUpload size={40} color={isDark ? '#374151' : '#d1d5db'} />
-                  <Text style={{ color: isDark ? '#6b7280' : '#9ca3af', marginTop: 12, textAlign: 'center' }}>
+                  <IconUpload size={40} color={isDark ? '#2c2c2e' : '#d1d5db'} />
+                  <Text style={{ color: isDark ? '#6C6C70' : '#9ca3af', marginTop: 12, textAlign: 'center' }}>
                     {t?.('chat.noBackups') || 'Nenhum backup'}
                   </Text>
                 </View>
@@ -2716,11 +2716,11 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
                           </View>
                           <View style={{ flex: 1 }}>
                             <Text style={{ color: colors.text, fontSize: 15, fontWeight: '500' }}>{dateStr}</Text>
-                            <Text style={{ color: isDark ? '#6b7280' : '#9ca3af', fontSize: 12, marginTop: 2 }}>
+                            <Text style={{ color: isDark ? '#6C6C70' : '#9ca3af', fontSize: 12, marginTop: 2 }}>
                               {convCount} {t?.('chat.conversations') || 'conversas'} · {msgCount} {t?.('chat.messagesCount') || 'mensagens'} · {sizeStr}
                             </Text>
                           </View>
-                          <IconChevronRight size={16} color={isDark ? '#4b5563' : '#c5c5c5'} />
+                          <IconChevronRight size={16} color={isDark ? '#48484a' : '#c5c5c5'} />
                         </TouchableOpacity>
                         {index < backupsList.length - 1 && (
                           <View style={[styles.rowSeparator, { backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.05)', marginLeft: 66 }]} />
@@ -2749,8 +2749,8 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
           <View style={styles.appLogoWrap}>
             <Text style={[styles.appLogoText, { color: ACCENT }]}>C</Text>
           </View>
-          <Text style={[styles.appNameModern, { color: isDark ? '#374151' : '#d1d5db' }]}>Chatyy</Text>
-          <Text style={[styles.appVersionModern, { color: isDark ? '#1f2937' : '#e5e7eb' }]}>by Chatyy · v1.4.0</Text>
+          <Text style={[styles.appNameModern, { color: isDark ? '#2c2c2e' : '#d1d5db' }]}>Chatyy</Text>
+          <Text style={[styles.appVersionModern, { color: isDark ? '#1c1c1e' : '#e5e7eb' }]}>by Chatyy · v1.4.0</Text>
         </View>
       </Animated.ScrollView>
 
@@ -2799,9 +2799,9 @@ function SettingItem({ icon, iconBg, title, subtitle, colors, isDark, onPress, l
           </View>
           <View style={styles.settingContent}>
             <Text style={[styles.settingTitleModern, { color: colors.text }]}>{title}</Text>
-            {subtitle ? <Text style={[styles.settingSubtitleModern, { color: isDark ? '#6b7280' : '#9ca3af' }]} numberOfLines={1}>{subtitle}</Text> : null}
+            {subtitle ? <Text style={[styles.settingSubtitleModern, { color: isDark ? '#6C6C70' : '#9ca3af' }]} numberOfLines={1}>{subtitle}</Text> : null}
           </View>
-          <IconChevronRight size={16} color={isDark ? '#4b5563' : '#c5c5c5'} />
+          <IconChevronRight size={16} color={isDark ? '#48484a' : '#c5c5c5'} />
         </Animated.View>
       </TouchableOpacity>
       {!last && (

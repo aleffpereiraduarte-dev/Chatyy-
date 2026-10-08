@@ -181,7 +181,7 @@ export function DateTimePickerModal({ visible, onClose, initial, onConfirm, colo
               }}
               style={{ paddingVertical: 10, paddingHorizontal: 20, borderRadius: 8, backgroundColor: colors.primary }}
             >
-              <Text style={{ color: '#fff', fontWeight: '600' }}>{t('common.ok') || t('common.confirm') || 'OK'}</Text>
+              <Text style={{ color: colors.onPrimary || '#fff', fontWeight: '600' }}>{t('common.ok') || t('common.confirm') || 'OK'}</Text>
             </TouchableOpacity>
           </View>
         </Pressable>
@@ -239,7 +239,7 @@ export function CustomScheduleModal({ visible, onClose, customDate, setCustomDat
               }}
               style={{ paddingVertical: 10, paddingHorizontal: 20, borderRadius: 8, backgroundColor: colors.primary }}
             >
-              <Text style={{ color: '#fff', fontWeight: '600' }}>{t('chat.schedule')}</Text>
+              <Text style={{ color: colors.onPrimary || '#fff', fontWeight: '600' }}>{t('chat.schedule')}</Text>
             </TouchableOpacity>
           </View>
         </Pressable>

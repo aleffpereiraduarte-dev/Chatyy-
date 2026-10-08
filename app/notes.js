@@ -611,7 +611,7 @@ function BoardView({
             style={[boardStyles.canvas, {
               width: BOARD_WIDTH * boardScale,
               height: BOARD_HEIGHT * boardScale,
-              backgroundColor: isDark ? '#12121e' : '#f0ebe3',
+              backgroundColor: isDark ? '#121212' : '#f0ebe3',
             }]}
           >
             {Platform.OS === 'web' && (
@@ -698,7 +698,7 @@ function BoardView({
         }]}
         activeOpacity={0.8}
       >
-        <IconPlus size={24} color="#fff" />
+        <IconPlus size={24} color={colors.onPrimary || '#fff'} />
       </TouchableOpacity>
     </View>
   );
@@ -1900,7 +1900,7 @@ export default function NotesScreen() {
               boxShadow: `0 3px 12px ${colors.primary}44`,
             } : {}),
           }]}>
-            <IconPlus size={20} color="#fff" />
+            <IconPlus size={20} color={colors.onPrimary || '#fff'} />
           </TouchableOpacity>
         </View>
       </View>
@@ -2076,7 +2076,7 @@ export default function NotesScreen() {
               <View style={[s.floatingNoteLine, { backgroundColor: isDark ? 'rgba(255,249,196,0.15)' : 'rgba(0,0,0,0.04)', width: '40%' }]} />
             </Animated.View>
             <Animated.View style={[s.floatingNote, s.floatingNote2, {
-              backgroundColor: isDark ? '#1E2A3E' : '#BBDEFB',
+              backgroundColor: isDark ? '#1c1c1e' : '#BBDEFB',
               ...(Platform.OS === 'web' ? {
                 background: isDark
                   ? 'linear-gradient(135deg, #1E2A3E, #25354A)'
@@ -2145,7 +2145,7 @@ export default function NotesScreen() {
               } : {}),
             }]}
           >
-            <IconPlus size={18} color="#fff" />
+            <IconPlus size={18} color={colors.onPrimary || '#fff'} />
             <Text style={s.emptyBtnText}>{t('notes.newNote')}</Text>
           </PressableScale>
         </Animated.View>
@@ -2496,7 +2496,7 @@ export default function NotesScreen() {
                   boxShadow: `0 4px 12px ${colors.primary}44`,
                 } : {}),
               }]}>
-                <Text style={{ color: '#fff', fontWeight: '600' }}>{t('common.save') || 'Save'}</Text>
+                <Text style={{ color: colors.onPrimary || '#fff', fontWeight: '600' }}>{t('common.save') || 'Save'}</Text>
               </TouchableOpacity>
             </View>
           </Pressable>
@@ -2545,9 +2545,9 @@ export default function NotesScreen() {
                 }]}
               >
                 {emailSending ? (
-                  <ActivityIndicator size="small" color="#fff" />
+                  <ActivityIndicator size="small" color={colors.onPrimary || '#fff'} />
                 ) : (
-                  <Text style={{ color: '#fff', fontWeight: '600' }}>{t('notes.send')}</Text>
+                  <Text style={{ color: colors.onPrimary || '#fff', fontWeight: '600' }}>{t('notes.send')}</Text>
                 )}
               </TouchableOpacity>
             </View>
@@ -2560,7 +2560,7 @@ export default function NotesScreen() {
         <View style={{
           position: 'absolute', bottom: 80, left: 16, right: 16,
           flexDirection: 'row', alignItems: 'center',
-          backgroundColor: isDark ? '#1f2229' : '#202124',
+          backgroundColor: isDark ? '#1c1c1e' : '#202124',
           padding: 14, borderRadius: 14, gap: 12,
           ...(Platform.OS === 'web' ? { boxShadow: '0 8px 24px rgba(0,0,0,0.25)' } : { elevation: 8 }),
         }}>
@@ -2858,7 +2858,7 @@ function NoteEditor({ note, colors, isDark, t, notebooks, titleRef, contentRef, 
             updateAndSave('content', newContent.join('\n'));
           }}>
             <View style={[editorStyles.checkbox, editorStyles.checkboxChecked, { backgroundColor: colors.primary, borderColor: colors.primary }]}>
-              <IconCheck size={10} color="#fff" />
+              <IconCheck size={10} color={colors.onPrimary || '#fff'} />
             </View>
             <Text style={[editorStyles.checkText, editorStyles.checkTextDone, { color: secondaryText }]}>{text}</Text>
           </TouchableOpacity>

@@ -72,9 +72,9 @@ export default function PushPermissionPrimer() {
 
   if (Platform.OS === 'web' || !visible) return null;
 
-  const bg = isDark ? '#1f2c33' : '#ffffff';
-  const fg = isDark ? '#e9edef' : '#111b21';
-  const sub = isDark ? '#8696a0' : '#667781';
+  const bg = isDark ? '#1c1c1e' : '#ffffff';
+  const fg = isDark ? '#F5F5F7' : '#111b21';
+  const sub = isDark ? '#8E8E93' : '#667781';
   const ctaBg = isDark ? '#ffffff' : '#111111';
   const ctaFg = isDark ? '#111111' : '#ffffff';
   const translateY = slide.interpolate({ inputRange: [0, 1], outputRange: [320, 0] });

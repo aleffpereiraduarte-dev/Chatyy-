@@ -251,7 +251,7 @@ function MentionDropdown({ query, onSelect, colors, isDark }) {
 
   return (
     <View style={[gs.mentionDrop, {
-      backgroundColor: isDark ? '#1e293b' : '#fff',
+      backgroundColor: isDark ? '#1c1c1e' : '#fff',
       borderColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)',
     }]}>
       {loading && <ActivityIndicator size="small" color={ACCENT} style={{ paddingVertical: 8 }} />}
@@ -324,7 +324,7 @@ function AudienceModal({ visible, onClose, selected, onSelect, colors, isDark, t
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
       <Pressable style={gs.overlay} onPress={onClose}>
-        <View style={[gs.audienceSheet, { backgroundColor: isDark ? '#1e293b' : '#fff' }]}>
+        <View style={[gs.audienceSheet, { backgroundColor: isDark ? '#1c1c1e' : '#fff' }]}>
           <Text style={[gs.audienceTitle, { color: colors.text }]}>
             {t('post.audience') || 'Audience'}
           </Text>
@@ -424,7 +424,7 @@ function TagPeopleModal({ visible, onClose, tagged, onTag, colors, isDark, t }) 
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <View style={[gs.tagModal, { backgroundColor: isDark ? '#0f172a' : '#fff' }]}>
+      <View style={[gs.tagModal, { backgroundColor: isDark ? '#0b0b0b' : '#fff' }]}>
         <View style={[gs.tagHeader, { borderBottomColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)' }]}>
           <TouchableOpacity onPress={onClose} style={{ padding: 6 }}>
             <IconX size={24} color={colors.text} />
@@ -1017,8 +1017,8 @@ export default function CreatePostModal({
     }
   }, [publishing, mediaFiles, caption, location, locationCoords, audience, scheduleDate, taggedPeople, isWeb, handleClose, onPostCreated, t, activeFilter, repostOf, postAsReel, duetMode, duetParent, stitchTrim, selectedSound]);
 
-  const bgColor = isDark ? '#0f172a' : '#ffffff';
-  const surfaceColor = isDark ? '#1e293b' : '#f8fafc';
+  const bgColor = isDark ? '#0b0b0b' : '#ffffff';
+  const surfaceColor = isDark ? '#1c1c1e' : '#f8fafc';
   const borderColor = isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)';
   const captionRemaining = MAX_CAPTION - caption.length;
 
@@ -1731,7 +1731,7 @@ export default function CreatePostModal({
         >
           <Pressable
             style={{
-              backgroundColor: isDark ? '#0f172a' : '#fff',
+              backgroundColor: isDark ? '#0b0b0b' : '#fff',
               borderTopLeftRadius: 18,
               borderTopRightRadius: 18,
               paddingBottom: 28,

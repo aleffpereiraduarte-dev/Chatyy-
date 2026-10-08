@@ -342,7 +342,7 @@ export default function CommunityScreen() {
               <Image source={{ uri: community.photo_url }} style={sty.photo} />
             ) : (
               <View style={[sty.photo, { backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center' }]}>
-                <Text style={{ color: '#fff', fontSize: 32, fontWeight: '700' }}>
+                <Text style={{ color: colors.onPrimary || '#fff', fontSize: 32, fontWeight: '700' }}>
                   {(community.name || '?').slice(0, 1).toUpperCase()}
                 </Text>
               </View>
@@ -432,7 +432,7 @@ export default function CommunityScreen() {
                     hitSlop={6}
                     style={{ paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12, backgroundColor: announcePreview ? colors.primary : 'transparent', borderWidth: 1, borderColor: colors.primary }}
                   >
-                    <Text style={{ color: announcePreview ? '#fff' : colors.primary, fontSize: 12, fontWeight: '700' }}>
+                    <Text style={{ color: announcePreview ? (colors.onPrimary || '#fff') : colors.primary, fontSize: 12, fontWeight: '700' }}>
                       {announcePreview ? (t('common.edit') || 'Editar') : (t('common.preview') || 'Preview')}
                     </Text>
                   </TouchableOpacity>

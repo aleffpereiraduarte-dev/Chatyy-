@@ -110,7 +110,7 @@ export function WallpaperBackground({ value, isDark, preview = false, style }) {
       );
     }
     if (preview) {
-      return <View style={[{ flex: 1, backgroundColor: isDark ? '#0B141A' : '#ECE5DD' }, style]} pointerEvents="none" />;
+      return <View style={[{ flex: 1, backgroundColor: isDark ? '#000000' : '#ECE5DD' }, style]} pointerEvents="none" />;
     }
     return null;
   }
@@ -148,7 +148,7 @@ function PresetTile({ item, size, selected, onPress, isDark, t }) {
         flex: 1, borderRadius: 16, overflow: 'hidden',
         borderWidth: selected ? 2.5 : StyleSheet.hairlineWidth,
         borderColor: selected ? '#25D366' : (isDark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.10)'),
-        backgroundColor: isDark ? '#111B21' : '#ECE5DD',
+        backgroundColor: isDark ? '#0b0b0b' : '#ECE5DD',
       }}>
         {item.id === 'none'
           ? <WallpaperBackground value="none" isDark={isDark} preview />
@@ -325,7 +325,7 @@ export default function WallpaperPicker({
     <Modal visible={!!visible} transparent animationType="slide" onRequestClose={onClose}>
       <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' }}>
         <TouchableOpacity activeOpacity={1} style={{ flex: 1 }} onPress={onClose} />
-        <View style={{ backgroundColor: C.background || (isDark ? '#0B141A' : '#F7F7F7'), borderTopLeftRadius: 22, borderTopRightRadius: 22, maxHeight: '92%', overflow: 'hidden' }}>
+        <View style={{ backgroundColor: C.background || (isDark ? '#000000' : '#F7F7F7'), borderTopLeftRadius: 22, borderTopRightRadius: 22, maxHeight: '92%', overflow: 'hidden' }}>
           {/* Header */}
           <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingTop: 10, paddingBottom: 10, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: rowBorder }}>
             <TouchableOpacity onPress={onClose} style={{ width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center' }} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
@@ -424,7 +424,7 @@ export default function WallpaperPicker({
           </ScrollView>
 
           {/* Done bar */}
-          <View style={{ padding: 16, paddingBottom: Platform.OS === 'ios' ? 30 : androidBottomInset(16), borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: rowBorder, backgroundColor: C.background || (isDark ? '#0B141A' : '#F7F7F7') }}>
+          <View style={{ padding: 16, paddingBottom: Platform.OS === 'ios' ? 30 : androidBottomInset(16), borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: rowBorder, backgroundColor: C.background || (isDark ? '#000000' : '#F7F7F7') }}>
             <TouchableOpacity onPress={onClose} activeOpacity={0.85} style={{ backgroundColor: '#25D366', borderRadius: 13, paddingVertical: 14, alignItems: 'center' }}>
               <Text style={{ color: '#fff', fontWeight: '700', fontSize: 16 }}>{t?.('common.done') || 'Concluído'}</Text>
             </TouchableOpacity>

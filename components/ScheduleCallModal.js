@@ -407,7 +407,7 @@ export default function ScheduleCallModal({ visible, onClose, onScheduled }) {
                     ]}
                   >
                     <Text style={{
-                      color: sel ? '#fff' : colors.text,
+                      color: sel ? (colors.onPrimary || '#fff') : colors.text,
                       fontSize: FontSize.sm, fontWeight: '600',
                     }}>{opt.label}</Text>
                   </TouchableOpacity>
@@ -435,7 +435,7 @@ export default function ScheduleCallModal({ visible, onClose, onScheduled }) {
                     ]}
                   >
                     <Text style={{
-                      color: sel ? '#fff' : colors.text,
+                      color: sel ? (colors.onPrimary || '#fff') : colors.text,
                       fontSize: FontSize.sm, fontWeight: '600',
                     }}>
                       {d < 60 ? `${d}min` : `${Math.round(d/60)}h${d % 60 ? ` ${d % 60}m` : ''}`}
@@ -476,7 +476,7 @@ export default function ScheduleCallModal({ visible, onClose, onScheduled }) {
                 style={[styles.input, { flex: 1, color: colors.text, backgroundColor: colors.surface, borderColor: colors.border, marginBottom: 0 }]}
               />
               <TouchableOpacity onPress={handleParticipantSubmit} style={[styles.addBtn, { backgroundColor: colors.primary }]}>
-                <IconUserPlus size={16} color="#fff" />
+                <IconUserPlus size={16} color={colors.onPrimary || '#fff'} />
               </TouchableOpacity>
             </View>
             {suggesting && (
@@ -513,7 +513,7 @@ export default function ScheduleCallModal({ visible, onClose, onScheduled }) {
                 style={[styles.cta, { backgroundColor: submitting ? colors.surfaceVariant : colors.primary }]}
               >
                 {submitting ? (
-                  <ActivityIndicator color="#fff" />
+                  <ActivityIndicator color={colors.onPrimary || '#fff'} />
                 ) : (
                   <Text style={styles.ctaText}>{t('calls.schedule') || 'Agendar'}</Text>
                 )}

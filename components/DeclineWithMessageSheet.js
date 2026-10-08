@@ -108,7 +108,7 @@ export default function DeclineWithMessageSheet() {
     <Modal visible transparent animationType="fade" onRequestClose={onClose}>
       <Pressable style={styles.overlay} onPress={onClose}>
         <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ width: '100%' }}>
-          <Pressable onPress={(e) => e.stopPropagation?.()} style={[styles.sheet, { backgroundColor: isDark ? '#1F2937' : '#fff' }]}>
+          <Pressable onPress={(e) => e.stopPropagation?.()} style={[styles.sheet, { backgroundColor: isDark ? '#1c1c1e' : '#fff' }]}>
             <View style={styles.handle} />
             <Text style={[styles.title, { color: colors.text }]}>
               {t('call.declineWithMessageTitle') || 'Responder com mensagem'}
@@ -118,7 +118,7 @@ export default function DeclineWithMessageSheet() {
                 key={p}
                 onPress={() => onSend(p)}
                 disabled={busy}
-                style={[styles.row, { borderBottomColor: isDark ? '#374151' : '#E5E7EB' }]}
+                style={[styles.row, { borderBottomColor: isDark ? '#2c2c2e' : '#E5E7EB' }]}
                 activeOpacity={0.7}
               >
                 <Text style={[styles.rowText, { color: colors.tint || '#1976d2' }]}>{p}</Text>
@@ -129,8 +129,8 @@ export default function DeclineWithMessageSheet() {
                 value={customText}
                 onChangeText={setCustomText}
                 placeholder={t('call.declineCustomHint') || 'Mensagem personalizada'}
-                placeholderTextColor={isDark ? '#9CA3AF' : '#6B7280'}
-                style={[styles.input, { color: colors.text, borderColor: isDark ? '#374151' : '#D1D5DB' }]}
+                placeholderTextColor={isDark ? '#A1A1A6' : '#6B7280'}
+                style={[styles.input, { color: colors.text, borderColor: isDark ? '#2c2c2e' : '#D1D5DB' }]}
                 maxLength={240}
                 editable={!busy}
                 returnKeyType="send"

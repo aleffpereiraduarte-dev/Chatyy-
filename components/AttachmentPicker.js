@@ -493,7 +493,7 @@ export default function AttachmentPicker({
                 disabled={Object.values(driveSelection).filter(Boolean).length === 0}
                 style={{ flex: 1, paddingVertical: 12, borderRadius: 10, alignItems: 'center', backgroundColor: colors.primary, opacity: Object.values(driveSelection).filter(Boolean).length === 0 ? 0.5 : 1 }}
               >
-                <Text style={{ color: '#fff', fontWeight: '700' }}>
+                <Text style={{ color: colors.onPrimary || '#fff', fontWeight: '700' }}>
                   {t('attachment.attachSelected') || 'Anexar selecionados'} ({Object.values(driveSelection).filter(Boolean).length})
                 </Text>
               </TouchableOpacity>

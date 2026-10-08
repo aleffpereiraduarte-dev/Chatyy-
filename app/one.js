@@ -1086,8 +1086,8 @@ function QuickActionsBar({ onSend, colors, isDark, t }) {
             } : undefined}
             activeOpacity={0.7}
           >
-            <Icon size={13} color={a.custom ? '#111111' : (isDark ? '#8696a0' : '#667781')} />
-            <Text style={[st.quickActionText, { color: a.custom ? '#111111' : (isDark ? '#8696a0' : '#667781') }]} numberOfLines={1}>{a.label}</Text>
+            <Icon size={13} color={a.custom ? '#111111' : (isDark ? '#8E8E93' : '#667781')} />
+            <Text style={[st.quickActionText, { color: a.custom ? '#111111' : (isDark ? '#8E8E93' : '#667781') }]} numberOfLines={1}>{a.label}</Text>
           </TouchableOpacity>
         );
       })}
@@ -1235,7 +1235,7 @@ function ThinkingIndicator({ colors, isDark, t, toolStatus }) {
           <Text style={st.aiBubbleAvatarText}>O</Text>
         </View>
       </View>
-      <View style={[st.aiBubble, { backgroundColor: isDark ? '#1f2c34' : '#fff' }]}>
+      <View style={[st.aiBubble, { backgroundColor: isDark ? '#1c1c1e' : '#fff' }]}>
         {toolStatus ? (
           <View style={[st.toolChip, {
             backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)',
@@ -1248,7 +1248,7 @@ function ThinkingIndicator({ colors, isDark, t, toolStatus }) {
           </View>
         ) : null}
         <TypingDots isDark={isDark} />
-        <View style={[st.aiBubbleTail, { borderRightColor: isDark ? '#1f2c34' : '#fff' }]} />
+        <View style={[st.aiBubbleTail, { borderRightColor: isDark ? '#1c1c1e' : '#fff' }]} />
       </View>
     </View>
   );
@@ -1366,7 +1366,7 @@ function ToolTypingIndicator({ toolName, isDark, t }) {
       <Animated.View style={[dotBase, animStyle(dot2)]} />
       <Animated.View style={[dotBase, animStyle(dot3)]} />
       {toolName ? (
-        <Text style={{ marginLeft: 8, fontSize: 11, color: isDark ? '#8696a0' : '#9ba5ab' }}>
+        <Text style={{ marginLeft: 8, fontSize: 11, color: isDark ? '#8E8E93' : '#9ba5ab' }}>
           {toolName.replace(/_/g, ' ')}
         </Text>
       ) : null}
@@ -1390,7 +1390,7 @@ function InlineStreamingDots({ isDark }) {
     a1.start(); a2.start(); a3.start();
     return () => { a1.stop(); a2.stop(); a3.stop(); };
   }, []);
-  const c = isDark ? '#9ca3af' : '#6b7280';
+  const c = isDark ? '#A1A1A6' : '#6b7280';
   const dot = { width: 5, height: 5, borderRadius: 2.5, backgroundColor: c, marginHorizontal: 2 };
   return (
     <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 6 }}>
@@ -1479,7 +1479,7 @@ function PromptChip({ label, sub, onPress, isDark, icon: Icon }) {
   const handleIn = () => Animated.spring(scale, { toValue: 0.975, tension: 320, friction: 14, useNativeDriver: true }).start();
   const handleOut = () => Animated.spring(scale, { toValue: 1, tension: 280, friction: 12, useNativeDriver: true }).start();
   const fg = isDark ? '#ECECEC' : '#0D0D0D';
-  const muted = isDark ? '#9CA3AF' : '#6B7280';
+  const muted = isDark ? '#A1A1A6' : '#6B7280';
   return (
     <TouchableOpacity
       onPress={onPress}
@@ -1503,7 +1503,7 @@ function PromptChip({ label, sub, onPress, isDark, icon: Icon }) {
             <Text style={[st.promptCardSub, { color: muted }]} numberOfLines={1}>{sub}</Text>
           ) : null}
         </View>
-        <IconChevronRight size={16} color={isDark ? '#6B7280' : '#B8BBC2'} />
+        <IconChevronRight size={16} color={isDark ? '#6C6C70' : '#B8BBC2'} />
       </Animated.View>
     </TouchableOpacity>
   );
@@ -1559,7 +1559,7 @@ function MessageRow({ item, colors, isDark, onSpeak, speakingId, t, onCopy, onRe
         {/* WAVE 46 (2026-05-21): real app icon avatar w/ blinking eyes (random 4-8s).
             Sized 18px to match the existing aiHeaderAvatar footprint. */}
         <ChatyyOneAvatar size={18} />
-        <Text style={[st.aiHeaderLabel, { color: isDark ? '#9CA3AF' : '#6B7280' }]}>Bia</Text>
+        <Text style={[st.aiHeaderLabel, { color: isDark ? '#A1A1A6' : '#6B7280' }]}>Bia</Text>
       </TouchableOpacity>
 
       {/* Tool chips only while AI is mid-flight. After the response lands we hide
@@ -1642,7 +1642,7 @@ function MessageRow({ item, colors, isDark, onSpeak, speakingId, t, onCopy, onRe
               style={st.aiActionBtn}
               accessibilityLabel={t?.('common.copy') || 'Copy'}
             >
-              <IconCopy size={14} color={isDark ? '#9CA3AF' : '#6B7280'} />
+              <IconCopy size={14} color={isDark ? '#A1A1A6' : '#6B7280'} />
             </TouchableOpacity>
           )}
           <TouchableOpacity
@@ -1654,7 +1654,7 @@ function MessageRow({ item, colors, isDark, onSpeak, speakingId, t, onCopy, onRe
             {isSpeaking ? (
               <IconVolumeX size={14} color={ACCENT_DARK} />
             ) : (
-              <IconVolume2 size={14} color={isDark ? '#9CA3AF' : '#6B7280'} />
+              <IconVolume2 size={14} color={isDark ? '#A1A1A6' : '#6B7280'} />
             )}
           </TouchableOpacity>
           {isLastAI && onRegenerate && (
@@ -1664,7 +1664,7 @@ function MessageRow({ item, colors, isDark, onSpeak, speakingId, t, onCopy, onRe
               style={st.aiActionBtn}
               accessibilityLabel={t?.('one.regenerate') || 'Regenerate'}
             >
-              <IconRepeat size={14} color={isDark ? '#9CA3AF' : '#6B7280'} />
+              <IconRepeat size={14} color={isDark ? '#A1A1A6' : '#6B7280'} />
             </TouchableOpacity>
           )}
         </View>
@@ -1690,10 +1690,10 @@ function ModelPickerPill({ isDark, onPress, modelLabel }) {
       }]}
       accessibilityLabel="Pick model"
     >
-      <Text style={[st.modelPillText, { color: isDark ? '#9CA3AF' : '#6B7280' }]}>
+      <Text style={[st.modelPillText, { color: isDark ? '#A1A1A6' : '#6B7280' }]}>
         {`One · ${modelLabel}`}
       </Text>
-      <IconChevronDown size={13} color={isDark ? '#9CA3AF' : '#6B7280'} />
+      <IconChevronDown size={13} color={isDark ? '#A1A1A6' : '#6B7280'} />
     </TouchableOpacity>
   );
 }
@@ -1719,7 +1719,7 @@ function ModelPickerSheet({ visible, onClose, isDark, t, currentModelId, onPick 
               >
                 <View style={{ flex: 1 }}>
                   <Text style={[st.sheetItemTitle, { color: isDark ? '#ECECEC' : '#0D0D0D' }]}>{m.label}</Text>
-                  <Text style={[st.sheetItemSub, { color: isDark ? '#9CA3AF' : '#6B7280' }]}>
+                  <Text style={[st.sheetItemSub, { color: isDark ? '#A1A1A6' : '#6B7280' }]}>
                     {t(m.sub) || ''}
                   </Text>
                 </View>
@@ -3528,7 +3528,7 @@ export default function OneScreen() {
           </View>
           {/* Personalized greeting eyebrow above the big question. */}
           {firstName ? (
-            <Text style={[st.emptyEyebrow, { color: isDark ? '#9CA3AF' : '#6B7280' }]}>
+            <Text style={[st.emptyEyebrow, { color: isDark ? '#A1A1A6' : '#6B7280' }]}>
               {`${getGreeting(t)}, ${firstName}`}
             </Text>
           ) : null}
@@ -3639,7 +3639,7 @@ export default function OneScreen() {
                 <View style={{ paddingHorizontal: 4, marginTop: 8 }}>
                   <View style={st.aiHeaderRow}>
                     <ChatyyOneAvatar size={18} />
-                    <Text style={[st.aiHeaderLabel, { color: isDark ? '#9CA3AF' : '#6B7280' }]}>Bia</Text>
+                    <Text style={[st.aiHeaderLabel, { color: isDark ? '#A1A1A6' : '#6B7280' }]}>Bia</Text>
                   </View>
                   <InlineStreamingDots isDark={isDark} />
                 </View>
@@ -3702,7 +3702,7 @@ export default function OneScreen() {
                 activeOpacity={0.7}
                 accessibilityLabel={t('one.attachPhoto')}
               >
-                <IconPlus size={20} color={isDark ? '#9CA3AF' : '#6B7280'} />
+                <IconPlus size={20} color={isDark ? '#A1A1A6' : '#6B7280'} />
               </TouchableOpacity>
               <TouchableOpacity
                 style={st.inputIconBtn}
@@ -3713,7 +3713,7 @@ export default function OneScreen() {
                 {isListening ? (
                   <IconMicOff size={20} color="#ef4444" />
                 ) : (
-                  <IconMic size={20} color={isDark ? '#9CA3AF' : '#6B7280'} />
+                  <IconMic size={20} color={isDark ? '#A1A1A6' : '#6B7280'} />
                 )}
               </TouchableOpacity>
             </View>
@@ -3721,7 +3721,7 @@ export default function OneScreen() {
             <TextInput
               style={[st.inputClean, { color: isDark ? '#ECECEC' : '#0D0D0D' }]}
               placeholder={isListening ? (t('one.voiceListening') || 'Listening…') : (t('one.placeholder') || 'Message Bia…')}
-              placeholderTextColor={isDark ? '#6B7280' : '#9CA3AF'}
+              placeholderTextColor={isDark ? '#6C6C70' : '#9CA3AF'}
               value={inputText}
               onChangeText={setInputText}
               onSubmitEditing={() => sendMessage()}

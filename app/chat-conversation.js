@@ -846,7 +846,7 @@ function ScrollDownFabAnim({ onPress, isDark, colors, newMsgCount, t }) {
         {newMsgCount > 0 && (
           <Animated.View style={[styles.scrollDownBadge, {
             backgroundColor: isDark ? '#ffffff' : '#111111',
-            borderColor: isDark ? '#0b141a' : '#f0f2f5',
+            borderColor: isDark ? '#000000' : '#f0f2f5',
             transform: [{ scale: badgeScale }],
           }]}>
             <Text style={[styles.scrollDownBadgeText, { color: isDark ? '#111111' : '#ffffff' }]}>{newMsgCount > 99 ? '99+' : newMsgCount}</Text>
@@ -4183,7 +4183,7 @@ function CallMessage({ content, isOwn, colors, currentEmail, isDarkMode }) {
   const isVideo = callData.call_type === 'video';
   const isCaller = callData.caller_email === currentEmail;
   const isIncoming = !isCaller;
-  const ownTextColor = isDarkMode ? '#E9EDEF' : '#111B21';
+  const ownTextColor = isDarkMode ? '#F5F5F7' : '#111B21';
   const ownMetaColor = isDarkMode ? 'rgba(233,237,239,0.7)' : 'rgba(17,27,33,0.55)';
 
   return (
@@ -7085,7 +7085,7 @@ function AudioRecorder({ onSend, onCancel, colors, t, conversationId, holdMode =
                   recStyles.waveBar,
                   {
                     height: Math.max(4, level * 30),
-                    backgroundColor: played ? '#111111' : (isDarkBg ? '#374151' : '#9ca3af'),
+                    backgroundColor: played ? '#111111' : (isDarkBg ? '#2c2c2e' : '#9ca3af'),
                     opacity: played ? 1 : 0.55,
                   },
                 ]}
@@ -21626,7 +21626,7 @@ function ChatConversationInner() {
         </View>
         <Text style={{
           fontSize: 16, fontWeight: '800', textAlign: 'center',
-          color: isDark ? '#e9edef' : '#111b21',
+          color: isDark ? '#F5F5F7' : '#111b21',
           marginBottom: 6, letterSpacing: -0.2,
         }}>
           {e2eEnabled
@@ -23698,7 +23698,7 @@ function ChatConversationInner() {
               style={{ marginHorizontal: -13, marginTop: -8, marginBottom: -8 }}
             >
               <View style={{ width: vmSize, height: vmSize, borderRadius: vmSize / 2, overflow: 'hidden', backgroundColor: '#000',
-                borderWidth: 3, borderColor: isOwn ? (isDark ? '#111111' : '#111111') : (isDark ? '#374151' : '#e5e7eb'),
+                borderWidth: 3, borderColor: isOwn ? (isDark ? '#111111' : '#111111') : (isDark ? '#2c2c2e' : '#e5e7eb'),
                 ...Platform.select({ ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.15, shadowRadius: 8 }, android: { elevation: 4 } }),
               }}>
                 {Platform.OS === 'web' ? (
@@ -23938,13 +23938,13 @@ function ChatConversationInner() {
           // 2026-05-12: "ta muito grande").
           const MAP_H = Platform.OS === 'android' ? 140 : 170;
           const cardBg = isOwn
-            ? (isDark ? '#1F2C34' : '#D9FDD3')
-            : (isDark ? '#1F2C34' : '#FFFFFF');
+            ? (isDark ? '#1c1c1e' : '#D9FDD3')
+            : (isDark ? '#1c1c1e' : '#FFFFFF');
           const titleColor = isOwn
-            ? (isDark ? '#E9EDEF' : '#111B21')
+            ? (isDark ? '#F5F5F7' : '#111B21')
             : colors.text;
           const subColor = isOwn
-            ? (isDark ? '#8696A0' : '#667781')
+            ? (isDark ? '#8E8E93' : '#667781')
             : colors.textSecondary;
 
           // Map thumbnail — tile server self-hosted do BoraUm (OpenStreetMap),
@@ -24003,7 +24003,7 @@ function ChatConversationInner() {
                   Plain <Image> source (no iframe / WebView), taps fall
                   through naturally to the outer TouchableOpacity. */}
               {hasCoords ? (
-                <View style={{ position: 'relative', width: '100%', height: MAP_H, backgroundColor: isDark ? '#0B141A' : '#E5E7EB' }}>
+                <View style={{ position: 'relative', width: '100%', height: MAP_H, backgroundColor: isDark ? '#000000' : '#E5E7EB' }}>
                   {/* [fix 2026-10-01] BoraUm STATIC-map endpoint died (404) → the
                       thumbnail was gray. Render the still-healthy interactive
                       MapLibre VECTOR map as a non-interactive WebView instead
@@ -24019,7 +24019,7 @@ function ChatConversationInner() {
                     fallback={(
                       <WebView
                         source={_locMapSource(lat, lng) /* [2026-10-06 thread-tech] stable, memoized per coord */}
-                        style={{ width: '100%', height: '100%', backgroundColor: isDark ? '#0B141A' : '#E5E7EB' }}
+                        style={{ width: '100%', height: '100%', backgroundColor: isDark ? '#000000' : '#E5E7EB' }}
                         originWhitelist={['*']}
                         scrollEnabled={false}
                         pointerEvents="none"
@@ -24085,8 +24085,8 @@ function ChatConversationInner() {
                   })()}
                 </View>
               ) : (
-                <View style={{ width: '100%', height: MAP_H, backgroundColor: isDark ? '#0B141A' : '#E5E7EB', alignItems: 'center', justifyContent: 'center' }}>
-                  <IconMapPin size={32} color={isDark ? '#54656F' : '#9CA3AF'} />
+                <View style={{ width: '100%', height: MAP_H, backgroundColor: isDark ? '#000000' : '#E5E7EB', alignItems: 'center', justifyContent: 'center' }}>
+                  <IconMapPin size={32} color={isDark ? '#636366' : '#9CA3AF'} />
                 </View>
               )}
 
@@ -25011,7 +25011,7 @@ function ChatConversationInner() {
               delayLongPress={350}
               style={{
                 minWidth: 210, maxWidth: 270, padding: 10, borderRadius: 12,
-                backgroundColor: isDark ? '#1f1f29' : '#ffffff',
+                backgroundColor: isDark ? '#1c1c1e' : '#ffffff',
                 borderWidth: 1, borderColor: isDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.08)',
                 ...Platform.select({
                   ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.10, shadowRadius: 6 },
@@ -25545,7 +25545,7 @@ function ChatConversationInner() {
           // "se mistura" com o balão lilás. Agora o card tem fundo branco
           // (light) ou cinza escuro (dark) com borda sólida, e o accent
           // fica vibrante. Bar fill usa o accent direto pra leitura fácil.
-          const cardBg = isDark ? '#1f1f29' : '#ffffff';
+          const cardBg = isDark ? '#1c1c1e' : '#ffffff';
           const cardBorder = isDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.08)';
           const cardText = isDark ? '#f5f5f5' : '#111827';
           const cardSubtext = isDark ? 'rgba(255,255,255,0.55)' : '#64748b';
@@ -26239,7 +26239,7 @@ function ChatConversationInner() {
                 borderColor: colors.border,
                 justifyContent: 'center', alignItems: 'center',
               }}>
-                {selectedIds.has(msg.id) && <IconCheck size={16} color="#fff" />}
+                {selectedIds.has(msg.id) && <IconCheck size={16} color={colors.onPrimary || '#fff'} />}
               </View>
             </View>
           )}
@@ -27202,7 +27202,7 @@ function ChatConversationInner() {
   if (chatLocked && !chatUnlocked) {
     return (
       <View style={[styles.container, { backgroundColor: colors.background, justifyContent: 'center', alignItems: 'center' }]}>
-        <View style={[styles.header, { backgroundColor: isDark ? '#111b21' : '#ffffff', borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: isDark ? '#1a2730' : 'rgba(0,0,0,0.10)', paddingTop: insets.top + 6, position: 'absolute', top: 0, left: 0, right: 0 }]}>
+        <View style={[styles.header, { backgroundColor: isDark ? '#0b0b0b' : '#ffffff', borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: isDark ? '#262628' : 'rgba(0,0,0,0.10)', paddingTop: insets.top + 6, position: 'absolute', top: 0, left: 0, right: 0 }]}>
           <TouchableOpacity onPress={goBack} style={styles.headerBtn}>
             <IconArrowLeft size={22} color={colors.text} />
           </TouchableOpacity>
@@ -27234,7 +27234,7 @@ function ChatConversationInner() {
           style={{ marginTop: 16, backgroundColor: colors.primary, paddingHorizontal: 32, paddingVertical: 12, borderRadius: 12 }}
           onPress={() => handleUnlockChat(lockPassInput)}
         >
-          <Text style={{ color: '#fff', fontWeight: '600', fontSize: 15 }}>{t('chatConv.unlock') || 'Unlock'}</Text>
+          <Text style={{ color: colors.onPrimary || '#fff', fontWeight: '600', fontSize: 15 }}>{t('chatConv.unlock') || 'Unlock'}</Text>
         </TouchableOpacity>
       </View>
     );
@@ -27296,9 +27296,9 @@ function ChatConversationInner() {
       {/* Selection header (replaces main header when in multi-select mode) */}
       {selectionMode ? (
         <View style={[styles.header, {
-          backgroundColor: isDark ? '#111b21' : '#ffffff',
+          backgroundColor: isDark ? '#0b0b0b' : '#ffffff',
           borderBottomWidth: StyleSheet.hairlineWidth,
-          borderBottomColor: isDark ? '#1a2730' : 'rgba(0,0,0,0.10)',
+          borderBottomColor: isDark ? '#262628' : 'rgba(0,0,0,0.10)',
           paddingTop: insets.top + 6,
         }]}>
           <TouchableOpacity onPress={handleClearSelection} style={styles.headerBtn} accessibilityLabel={t('common.cancel') || 'Cancelar'} accessibilityRole="button">
@@ -27341,13 +27341,13 @@ function ChatConversationInner() {
       ) : (
       /* Header with presence — gradient on web for premium feel */
       <View style={[styles.header, {
-        backgroundColor: isDark ? '#111b21' : '#ffffff',
+        backgroundColor: isDark ? '#0b0b0b' : '#ffffff',
         borderBottomWidth: StyleSheet.hairlineWidth,
-        borderBottomColor: isDark ? '#1a2730' : 'rgba(0,0,0,0.10)',
+        borderBottomColor: isDark ? '#262628' : 'rgba(0,0,0,0.10)',
         paddingTop: insets.top + 6,
         ...(Platform.OS === 'web'
           ? {
-              background: isDark ? '#111b21' : '#ffffff',
+              background: isDark ? '#0b0b0b' : '#ffffff',
               boxShadow: 'none', // [2026-10-08 chat-beauty-chrome] só a hairline (era linha dupla)
             }
           : {}),
@@ -27965,8 +27965,8 @@ function ChatConversationInner() {
           // [2026-10-08 chat-beauty-chrome] barra fixada monocromática (era
           // âmbar): superfície do header + hairline, pin e barra lateral na cor
           // do texto, sem emoji no preview de mídia.
-          backgroundColor: isDark ? '#111b21' : '#ffffff',
-          borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: isDark ? '#1a2730' : 'rgba(0,0,0,0.10)',
+          backgroundColor: isDark ? '#0b0b0b' : '#ffffff',
+          borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: isDark ? '#262628' : 'rgba(0,0,0,0.10)',
           paddingVertical: 6,
         }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, paddingBottom: 2 }}>
@@ -28053,7 +28053,7 @@ function ChatConversationInner() {
           })()}
           ownBubbleColor={colors.chatBubbleOwn}
           otherBubbleColor={colors.chatBubbleOther}
-          listBackgroundColor={isDark ? '#0b141a' : '#f0f2f5'}
+          listBackgroundColor={isDark ? '#000000' : '#f0f2f5'}
           textColor={isDark ? '#f0f2f5' : '#111b21'}
           metaColor={isDark ? 'rgba(240,242,245,0.55)' : 'rgba(17, 17, 17,0.55)'}
           isGroupChat={conversationType === 'group'}
@@ -28481,7 +28481,7 @@ function ChatConversationInner() {
                         backgroundColor: sel ? colors.primary : colors.surfaceVariant,
                       }}>
                       <Text style={{
-                        color: sel ? '#fff' : colors.text,
+                        color: sel ? (colors.onPrimary || '#fff') : colors.text,
                         fontSize: 13, fontWeight: '600',
                       }}>{tab.label}</Text>
                     </TouchableOpacity>
@@ -28669,8 +28669,8 @@ function ChatConversationInner() {
           <View style={{
             flexDirection: 'row', alignItems: 'center', gap: 12,
             paddingHorizontal: 16, paddingVertical: 12,
-            borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: isDark ? '#1a2730' : '#eef0f1',
-            backgroundColor: isDark ? '#111b21' : '#ffffff',
+            borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: isDark ? '#262628' : '#eef0f1',
+            backgroundColor: isDark ? '#0b0b0b' : '#ffffff',
           }}>
             <TouchableOpacity onPress={() => setShowContactPicker(false)} hitSlop={12}>
               <IconArrowLeft size={22} color={colors.text} />
@@ -28879,7 +28879,7 @@ function ChatConversationInner() {
                   }}
                   style={{ paddingHorizontal: 18, paddingVertical: 10, borderRadius: 22, backgroundColor: colors.primary }}
                 >
-                  <Text style={{ color: '#fff', fontWeight: '700' }}>{t('chatConv.quote') || 'Citar'}</Text>
+                  <Text style={{ color: colors.onPrimary || '#fff', fontWeight: '700' }}>{t('chatConv.quote') || 'Citar'}</Text>
                 </TouchableOpacity>
               </View>
             </View>
@@ -28953,7 +28953,7 @@ function ChatConversationInner() {
                   <View style={{ flex: 1, paddingVertical: 8, paddingLeft: 10 }}>
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 }}>
                       <View style={{ backgroundColor: colors.primary, paddingHorizontal: 8, paddingVertical: 2, borderRadius: 8 }}>
-                        <Text style={{ fontSize: 10, color: '#fff', fontWeight: '700', letterSpacing: 0.3 }}>
+                        <Text style={{ fontSize: 10, color: colors.onPrimary || '#fff', fontWeight: '700', letterSpacing: 0.3 }}>
                           {t('chatConv.editHistoryCurrent') || 'ATUAL'}
                         </Text>
                       </View>
@@ -29178,7 +29178,7 @@ function ChatConversationInner() {
             position: 'absolute', left: 0, right: 72, top: 0, bottom: 0, // [2026-10-08 chat-beauty-chrome] mic 58→44 (+room p/ o scale do hold)
             zIndex: 30, elevation: 10,
             justifyContent: 'flex-end',
-            backgroundColor: isDark ? '#111b21' : '#ffffff',
+            backgroundColor: isDark ? '#0b0b0b' : '#ffffff',
             paddingBottom: composerBottomPad,
           } : { paddingBottom: composerBottomPad }}
         >
@@ -29313,7 +29313,7 @@ function ChatConversationInner() {
             {iBlockedThem && (
               <TouchableOpacity
                 onPress={() => handleUnblockUser(params.email || '')}
-                style={{ paddingHorizontal: 20, paddingVertical: 8, borderRadius: 20, backgroundColor: isDark ? '#2a3942' : '#e5e7eb' }}
+                style={{ paddingHorizontal: 20, paddingVertical: 8, borderRadius: 20, backgroundColor: isDark ? '#2c2c2e' : '#e5e7eb' }}
               >
                 <Text style={{ color: '#111111', fontWeight: '600', fontSize: 14 }}>
                   {t('chat.unblockUser')}
@@ -29447,8 +29447,8 @@ function ChatConversationInner() {
         )}
         <View pointerEvents={(blockedByPeer || iBlockedPeer) && conversationType === 'direct' ? 'none' : 'auto'} style={[styles.inputBar, {
           // [2026-10-08 chat-beauty-chrome] same surface as the header + hairline
-          backgroundColor: isDark ? '#111b21' : '#ffffff',
-          borderTopColor: isDark ? '#1a2730' : 'rgba(0,0,0,0.10)',
+          backgroundColor: isDark ? '#0b0b0b' : '#ffffff',
+          borderTopColor: isDark ? '#262628' : 'rgba(0,0,0,0.10)',
           opacity: (blockedByPeer || iBlockedPeer) && conversationType === 'direct' ? 0.4 : 1,
           // Bottom safe-area so the composer clears the system bar on BOTH
           // platforms: Android nav/gesture bar (insets.bottom ≈ 48px) and iOS
@@ -29869,7 +29869,7 @@ function ChatConversationInner() {
                     </Text>
                     {stagedEffect ? (
                       <View style={{ marginLeft: 'auto', backgroundColor: colors.primary, paddingHorizontal: 8, paddingVertical: 2, borderRadius: 8 }}>
-                        <Text style={{ color: '#fff', fontSize: 11, fontWeight: '700' }}>{stagedEffect}</Text>
+                        <Text style={{ color: colors.onPrimary || '#fff', fontSize: 11, fontWeight: '700' }}>{stagedEffect}</Text>
                       </View>
                     ) : null}
                   </TouchableOpacity>
@@ -30281,7 +30281,7 @@ function ChatConversationInner() {
                     onPress={useSuggestion}
                     style={{ flex: 1, paddingVertical: 12, borderRadius: 14, backgroundColor: colors.primary, alignItems: 'center' }}
                   >
-                    <Text style={{ color: '#fff', fontWeight: '700', fontSize: 14 }}>{t('chat.toneUseSuggestion') || 'Reescrever'}</Text>
+                    <Text style={{ color: colors.onPrimary || '#fff', fontWeight: '700', fontSize: 14 }}>{t('chat.toneUseSuggestion') || 'Reescrever'}</Text>
                   </TouchableOpacity>
                 ) : (
                   <TouchableOpacity
@@ -31176,7 +31176,7 @@ function ChatConversationInner() {
       {/* Message Info Modal (delivered to / read by) */}
       <Modal visible={!!messageInfo} transparent animationType="slide" onRequestClose={() => setMessageInfo(null)}>
         <Pressable style={styles.modalOverlay} onPress={() => setMessageInfo(null)}>
-          <Pressable style={{ backgroundColor: isDark ? '#1a1a2e' : '#fff', borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 20, width: '100%', position: 'absolute', bottom: 0, maxHeight: '75%' }}>
+          <Pressable style={{ backgroundColor: isDark ? '#1c1c1e' : '#fff', borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 20, width: '100%', position: 'absolute', bottom: 0, maxHeight: '75%' }}>
             <View style={{ width: 40, height: 4, borderRadius: 2, backgroundColor: 'rgba(128,128,128,0.3)', alignSelf: 'center', marginBottom: 12 }} />
             <Text style={{ fontSize: 18, fontWeight: '700', color: colors.text, marginBottom: 16 }}>
               {t('chatConv.messageInfo') || 'Informações da mensagem'}
@@ -31304,7 +31304,7 @@ function ChatConversationInner() {
                     }}
                     style={{ backgroundColor: colors.primary, paddingHorizontal: 22, paddingVertical: 10, borderRadius: 22 }}
                   >
-                    <Text style={{ color: '#fff', fontWeight: '700' }}>
+                    <Text style={{ color: colors.onPrimary || '#fff', fontWeight: '700' }}>
                       {t('chatConv.myEmojiCreateCta') || 'Criar emoji'}
                     </Text>
                   </TouchableOpacity>
@@ -31348,7 +31348,7 @@ function ChatConversationInner() {
                     onPress={() => { setShowFullEmojiPicker(false); setReactionPickerTab('emoji'); try { router.push('/plans'); } catch {} }}
                     style={{ backgroundColor: colors.primary, paddingHorizontal: 22, paddingVertical: 10, borderRadius: 22 }}
                   >
-                    <Text style={{ color: '#fff', fontWeight: '700' }}>{t('chatConv.upgradePremium') || 'Ver Premium'}</Text>
+                    <Text style={{ color: colors.onPrimary || '#fff', fontWeight: '700' }}>{t('chatConv.upgradePremium') || 'Ver Premium'}</Text>
                   </TouchableOpacity>
                 </View>
               ) : stickerReactionLoading ? (
@@ -32010,7 +32010,7 @@ function ChatConversationInner() {
                           t('chatConv.e2eTitle') || 'Criptografia',
                           e2eEnabled
                             ? (t('chatConv.e2eActiveDesc') || 'Suas mensagens são protegidas com criptografia ponta-a-ponta. Nem o Chatyy pode ler.')
-                            : (t('chatConv.e2eInactiveDesc') || 'A criptografia será ativada automaticamente quando ambos os participantes estiverem com chaves configuradas.')
+                            : (t('chatConv.e2eInactiveDescV2') || 'Esta conversa usa conexão criptografada (TLS), mas não é criptografada de ponta a ponta. Para isso, inicie um Chat secreto pelo menu da conversa.')
                         )} />
                     </GroupCard>
 
@@ -32168,14 +32168,14 @@ function ChatConversationInner() {
                     if (chatLocked) { safeAlert(t('chatConv.chatLockTitle') || 'Chat Lock', t('chatConv.removeLockConfirm') || 'Remove password lock?', [{ text: t('common.cancel'), style: 'cancel' }, { text: t('chatConv.removeLock') || 'Remove', style: 'destructive', onPress: handleRemoveChatLock }]); }
                     else { setShowLockSetup(true); setLockPassInput(''); }
                   }},
-                  // E2E is always ON for direct chats — show status only, no toggle
+                  // E2E is OPT-IN (Secret chat); regular chats are TLS-only — show status only, no toggle
                   { Icon: IconShield, tint: e2eEnabled ? '#10b981' : '#6B7280', label: e2eEnabled ? (t('chatConv.e2eActive') || 'Criptografia ponta-a-ponta ativa') : (t('chatConv.e2eInactive') || 'Criptografia desativada'), badge: e2eEnabled, onPress: () => {
                     setShowHeaderMenu(false);
                     safeAlert(
                       t('chatConv.e2eTitle') || 'Criptografia',
                       e2eEnabled
                         ? (t('chatConv.e2eActiveDesc') || 'Suas mensagens são protegidas com criptografia ponta-a-ponta. Nem o Chatyy pode ler.')
-                        : (t('chatConv.e2eInactiveDesc') || 'A criptografia será ativada automaticamente quando ambos os participantes estiverem com chaves configuradas.')
+                        : (t('chatConv.e2eInactiveDescV2') || 'Esta conversa usa conexão criptografada (TLS), mas não é criptografada de ponta a ponta. Para isso, inicie um Chat secreto pelo menu da conversa.')
                     );
                   }},
                   { Icon: IconBell, tint: mutedUntil ? '#f59e0b' : '#6B7280', label: mutedUntil ? (t('chatConv.unmute') || 'Remover silêncio') : (t('chatConv.muteChat') || 'Silenciar conversa'), badge: !!mutedUntil, onPress: () => { setShowHeaderMenu(false); if (mutedUntil) { handleMuteChat(null); } else { setShowMuteModal(true); } }},
@@ -33414,8 +33414,8 @@ function ChatConversationInner() {
                         style={{ paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8, backgroundColor: colors.primary, opacity: inflight ? 0.5 : 1 }}
                       >
                         {inflight
-                          ? <ActivityIndicator size="small" color="#fff" />
-                          : <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700' }}>
+                          ? <ActivityIndicator size="small" color={colors.onPrimary || '#fff'} />
+                          : <Text style={{ color: colors.onPrimary || '#fff', fontSize: 12, fontWeight: '700' }}>
                               {t('chatConv.approve') || 'Aprovar'}
                             </Text>}
                       </TouchableOpacity>
@@ -33565,7 +33565,7 @@ function ChatConversationInner() {
                     }}
                     style={{ height: 40, paddingHorizontal: 14, borderRadius: 8, backgroundColor: colors.primary, justifyContent: 'center' }}
                   >
-                    <Text style={{ color: '#fff', fontWeight: '700' }}>+</Text>
+                    <Text style={{ color: colors.onPrimary || '#fff', fontWeight: '700' }}>+</Text>
                   </TouchableOpacity>
                 </View>
               </View>
@@ -33673,7 +33673,7 @@ function ChatConversationInner() {
               }}
               style={{ height: 48, borderRadius: 12, backgroundColor: newTopicName.trim() ? colors.primary : colors.border, alignItems: 'center', justifyContent: 'center' }}
             >
-              <Text style={{ color: '#fff', fontWeight: '700', fontSize: 15 }}>
+              <Text style={{ color: colors.onPrimary || '#fff', fontWeight: '700', fontSize: 15 }}>
                 {t('common.save') || 'Salvar'}
               </Text>
             </TouchableOpacity>
@@ -33774,7 +33774,7 @@ function ChatConversationInner() {
                 }}
                 style={{ flex: 1, height: 46, borderRadius: 12, backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center' }}
               >
-                <Text style={{ color: '#fff', fontWeight: '700' }}>{t('common.save') || 'Salvar'}</Text>
+                <Text style={{ color: colors.onPrimary || '#fff', fontWeight: '700' }}>{t('common.save') || 'Salvar'}</Text>
               </TouchableOpacity>
             </View>
           </Pressable>
@@ -33875,7 +33875,7 @@ function ChatConversationInner() {
                 style={{ flex: 1, paddingVertical: 11, borderRadius: 10, backgroundColor: colors.primary, alignItems: 'center' }}
                 onPress={() => handleSetChatLock(lockPassInput)}
               >
-                <Text style={{ color: '#fff', fontWeight: '600' }}>{t('chatConv.setLock') || 'Set Lock'}</Text>
+                <Text style={{ color: colors.onPrimary || '#fff', fontWeight: '600' }}>{t('chatConv.setLock') || 'Set Lock'}</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -34067,7 +34067,7 @@ function ChatConversationInner() {
                   }}
                   style={{ flex: 1, paddingVertical: 12, borderRadius: 10, backgroundColor: colors.primary, alignItems: 'center' }}
                 >
-                  <Text style={{ color: '#fff', fontWeight: '600', fontSize: 14 }}>
+                  <Text style={{ color: colors.onPrimary || '#fff', fontWeight: '600', fontSize: 14 }}>
                     {t('chatConv.shareLink') || 'Compartilhar link'}
                   </Text>
                 </TouchableOpacity>
@@ -34111,7 +34111,7 @@ function ChatConversationInner() {
             <View style={{ paddingHorizontal: 22, paddingTop: 20, paddingBottom: 16, backgroundColor: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(17,17,17,0.03)', borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)' }}>
               <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                 <View style={{ width: 38, height: 38, borderRadius: 19, backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center', marginRight: 12 }}>
-                  <IconBarChart size={20} color="#fff" />
+                  <IconBarChart size={20} color={colors.onPrimary || '#fff'} />
                 </View>
                 <Text style={{ flex: 1, fontSize: 18, fontWeight: '800', color: colors.text, letterSpacing: -0.3 }}>
                   {t('chatConv.stats') || 'Estatísticas'}

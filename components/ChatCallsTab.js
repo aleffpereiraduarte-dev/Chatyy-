@@ -1548,7 +1548,7 @@ const activeCallStyles = StyleSheet.create({
   gradientBottom: {
     position: 'absolute', bottom: 0, left: 0, right: 0,
     height: '55%',
-    backgroundColor: '#0d1b2a',
+    backgroundColor: '#0b0b0b', // [2026-10-08 dark-black] was navy #0d1b2a
     opacity: 0.9,
   },
   qualityContainer: {
@@ -3547,12 +3547,12 @@ function ChatCallsTab({ colors, isDark, t, user, router }) {
             style={{
               flexDirection: 'row', alignItems: 'center', gap: 5,
               paddingHorizontal: 11, paddingVertical: 6, borderRadius: 14,
-              backgroundColor: isDark ? 'rgba(17, 17, 17,0.18)' : 'rgba(17, 17, 17,0.10)',
+              backgroundColor: isDark ? 'rgba(255, 255, 255,0.12)' : 'rgba(17, 17, 17,0.10)',
             }}
             accessibilityLabel={t?.('calls.schedule') || 'Agendar'}
           >
-            <IconCalendar size={13} color="#111111" />
-            <Text style={{ color: '#111111', fontSize: 13, fontWeight: '600' }}>
+            <IconCalendar size={13} color={isDark ? '#F5F5F7' : '#111111'} />
+            <Text style={{ color: isDark ? '#F5F5F7' : '#111111', fontSize: 13, fontWeight: '600' }}>
               {t?.('calls.schedule') || 'Agendar'}
             </Text>
           </TouchableOpacity>
@@ -3563,11 +3563,11 @@ function ChatCallsTab({ colors, isDark, t, user, router }) {
               style={{
                 flexDirection: 'row', alignItems: 'center', gap: 5,
                 paddingHorizontal: 11, paddingVertical: 6, borderRadius: 14,
-                backgroundColor: isDark ? 'rgba(17, 17, 17,0.10)' : 'rgba(17, 17, 17,0.06)',
+                backgroundColor: isDark ? 'rgba(255, 255, 255,0.08)' : 'rgba(17, 17, 17,0.06)',
               }}
               accessibilityLabel={t?.('calls.scheduled') || 'Agendadas'}
             >
-              <Text style={{ color: '#111111', fontSize: 13, fontWeight: '600' }}>
+              <Text style={{ color: isDark ? '#F5F5F7' : '#111111', fontSize: 13, fontWeight: '600' }}>
                 {t?.('calls.scheduled') || 'Agendadas'}
               </Text>
             </TouchableOpacity>
@@ -3639,14 +3639,14 @@ function ChatCallsTab({ colors, isDark, t, user, router }) {
         <View style={{
           width: 40, height: 40, borderRadius: 20, marginRight: 12,
           alignItems: 'center', justifyContent: 'center',
-          backgroundColor: 'rgba(17, 17, 17,0.15)',
+          backgroundColor: isDark ? 'rgba(255, 255, 255,0.10)' : 'rgba(17, 17, 17,0.15)',
         }}>
           {creatingLink
-            ? <ActivityIndicator size="small" color="#111111" />
-            : <IconLink size={20} color="#111111" />}
+            ? <ActivityIndicator size="small" color={isDark ? '#F5F5F7' : '#111111'} />
+            : <IconLink size={20} color={isDark ? '#F5F5F7' : '#111111'} />}
         </View>
         <View style={{ flex: 1 }}>
-          <Text style={{ fontSize: 15, fontWeight: '600', color: '#111111' }}>
+          <Text style={{ fontSize: 15, fontWeight: '600', color: isDark ? '#F5F5F7' : '#111111' }}>
             {t?.('calls.createCallLink') || 'Criar link de chamada'}
           </Text>
           <Text style={{ fontSize: 11, color: isDark ? '#8e8e93' : '#8e8e93', marginTop: 2 }}>

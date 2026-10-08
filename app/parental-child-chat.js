@@ -179,7 +179,7 @@ function ParentalChildChatScreenInner() {
           s.msgBubble,
           fromChild
             ? { backgroundColor: isDark ? '#111111' : '#F1F3F5', borderBottomRightRadius: 4 }
-            : { backgroundColor: isDark ? '#1e293b' : '#fff', borderBottomLeftRadius: 4 },
+            : { backgroundColor: isDark ? '#1c1c1e' : '#fff', borderBottomLeftRadius: 4 },
           flagged && { borderWidth: 2, borderColor: '#ef4444' },
         ]}>
           {!fromChild && <Text style={[s.msgSender, { color: ACCENT }]}>{senderName}</Text>}
@@ -272,7 +272,7 @@ function ParentalChildChatScreenInner() {
               style={[
                 s.filterChip,
                 {
-                  backgroundColor: active ? ACCENT + '22' : (isDark ? '#1e293b' : '#f3f4f6'),
+                  backgroundColor: active ? ACCENT + '22' : (isDark ? '#1c1c1e' : '#f3f4f6'),
                   borderColor: active ? ACCENT : 'transparent',
                 },
               ]}
@@ -291,7 +291,7 @@ function ParentalChildChatScreenInner() {
       </View>
 
       {/* Monitoring Banner */}
-      <View style={[s.banner, { backgroundColor: isDark ? '#1a2332' : '#fef3cd' }]}>
+      <View style={[s.banner, { backgroundColor: isDark ? '#1c1c1e' : '#fef3cd' }]}>
         <IconShield size={14} color="#f59e0b" />
         <Text style={[s.bannerText, { color: isDark ? '#fbbf24' : '#856404' }]}>{t('parental.viewingChild')}</Text>
         <Text style={{ fontSize: 11, color: isDark ? '#fbbf24' : '#856404', opacity: 0.85 }}>

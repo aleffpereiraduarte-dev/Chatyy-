@@ -24,13 +24,12 @@ import {
   Alert,
   Platform,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useLanguage } from '../context/LanguageContext';
 import { IconX, IconTrash } from '../components/Icons';
 import FadeSlideIn from '../components/FadeSlideIn';
-import { REEL_DRAFTS_KEY } from './reels-recorder';
+import { listReelDrafts, deleteReelDraft as _deleteDraft } from '../services/reelDrafts';
 
 const { width: SCREEN_W } = Dimensions.get('window');
 const TILE_GAP = 4;
@@ -59,41 +58,40 @@ export default function ReelsDraftsScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { t } = useLanguage();
+  const params = useLocalSearchParams();
+  const fromCompose = String(params?.from || '') === 'compose';
   const [drafts, setDrafts] = useState(null); // null = loading, [] = empty
 
   const load = useCallback(async () => {
-    try {
-      const raw = await AsyncStorage.getItem(REEL_DRAFTS_KEY);
-      const list = raw ? JSON.parse(raw) : [];
-      setDrafts(Array.isArray(list) ? list : []);
-    } catch {
-      setDrafts([]);
-    }
+    setDrafts(await listReelDrafts());
   }, []);
 
   useEffect(() => { load(); }, [load]);
 
+  // [2026-10-08 reels-publish] Tap → resume in /reels-compose (caption,
+  // cover, trim, audience come back too). Opened from the composer → hand the
+  // draft back via globalThis + back(); otherwise open the composer on it.
   const resumeDraft = useCallback((draft) => {
     if (!draft) return;
-    try {
-      // eslint-disable-next-line no-undef
-      globalThis.__pendingReelDraft = {
-        clips: draft.clips || [],
-        music: draft.music || null,
-        totalDurationMs: draft.totalDurationMs || 0,
-      };
-    } catch {}
-    try { router.back(); } catch {}
-  }, [router]);
+    if (fromCompose) {
+      try {
+        // eslint-disable-next-line no-undef
+        globalThis.__pendingReelDraft = {
+          draftId: draft.id,
+          clips: draft.clips || [],
+          music: draft.music || null,
+          totalDurationMs: draft.totalDurationMs || 0,
+          compose: draft.compose || null,
+        };
+      } catch {}
+      try { router.back(); } catch {}
+      return;
+    }
+    try { router.replace(`/reels-compose?draft=${encodeURIComponent(draft.id)}`); } catch {}
+  }, [router, fromCompose]);
 
   const deleteDraft = useCallback(async (draftId) => {
-    try {
-      const raw = await AsyncStorage.getItem(REEL_DRAFTS_KEY);
-      const list = raw ? JSON.parse(raw) : [];
-      const next = (Array.isArray(list) ? list : []).filter(d => d.id !== draftId);
-      await AsyncStorage.setItem(REEL_DRAFTS_KEY, JSON.stringify(next));
-      setDrafts(next);
-    } catch {}
+    try { setDrafts(await _deleteDraft(draftId)); } catch {}
   }, []);
 
   const confirmDelete = useCallback((draft) => {

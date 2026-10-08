@@ -201,7 +201,7 @@ export default function ChangePasswordModal({ visible, onClose, forced = false, 
                 disabled={loading || !currentPassword || !newPassword || !confirmPassword}
               >
                 {loading ? (
-                  <ActivityIndicator size="small" color="#fff" />
+                  <ActivityIndicator size="small" color={colors.onPrimary || '#fff'} />
                 ) : (
                   <Text style={s.submitBtnText}>{t('changePassword.submit')}</Text>
                 )}

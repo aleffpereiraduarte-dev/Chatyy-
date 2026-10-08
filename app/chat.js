@@ -235,6 +235,13 @@ function ChatHub() {
   const params = useLocalSearchParams();
   const insets = useSafeAreaInsets();
   const isKids = isChildAccount();
+  // [2026-10-08 reels-publish] retoma reels que ficaram publicando quando o app
+  // foi fechado (fila durável no nativo). Atrasado p/ não competir com o boot.
+  useEffect(() => {
+    if (!user?.email || Platform.OS === 'web') return undefined;
+    const id = setTimeout(() => { try { require('../services/reelPublishQueue').resumeReelPublishes(user.email); } catch {} }, 6000);
+    return () => clearTimeout(id);
+  }, [user?.email]);
   // Valid tabs — anything else (legacy 'config'/'settings' deep links) falls back to 'chats' to avoid a blank page.
   // [2026-10-01 STATUS CONSOLIDATION] 'status' is NO LONGER a navigable full-screen
   // tab. The separate (ugly, redundant) Status screen is retired: status now lives
@@ -1049,7 +1056,7 @@ function ChatHub() {
                   activeOpacity={0.6}
                   style={{ paddingHorizontal: 9, paddingVertical: 4, marginRight: 4, borderRadius: 12, backgroundColor: isDark ? 'rgba(233,237,239,0.14)' : 'rgba(17,17,17,0.07)' }}
                 >
-                  <Text style={{ fontSize: 11, fontWeight: '700', letterSpacing: 0.2, color: isDark ? '#e9edef' : '#111111' }}>{t('common.searchAll') || 'Tudo'}</Text>
+                  <Text style={{ fontSize: 11, fontWeight: '700', letterSpacing: 0.2, color: isDark ? '#F5F5F7' : '#111111' }}>{t('common.searchAll') || 'Tudo'}</Text>
                 </TouchableOpacity>
                 <TouchableOpacity onPress={toggleSearch} activeOpacity={0.6} style={styles.searchCloseBtn}>
                   <IconClose size={16} color={searchIconC} />
@@ -1293,7 +1300,7 @@ function ChatHub() {
             />
             <TabBarItem
               icon={(active) => {
-                const c = active ? '#f59e0b' : (isDark ? '#5a6270' : '#a0a8b4');
+                const c = active ? '#f59e0b' : (isDark ? '#636366' : '#a0a8b4');
                 return (
                   <Svg width={25} height={25} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth={active ? 2.2 : 1.8} strokeLinecap="round" strokeLinejoin="round">
                     <Rect x="2" y="7" width="20" height="15" rx="2" ry="2" />
@@ -1310,7 +1317,7 @@ function ChatHub() {
                 separate ChatProfileTab duplicate. */}
             <TabBarItem
               icon={(active) => {
-                const c = active ? '#10b981' : (isDark ? '#5a6270' : '#a0a8b4');
+                const c = active ? '#10b981' : (isDark ? '#636366' : '#a0a8b4');
                 return (
                   <Svg width={25} height={25} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth={active ? 2.2 : 1.8} strokeLinecap="round" strokeLinejoin="round">
                     <SvgCircle cx="12" cy="8" r="5" />
@@ -1526,8 +1533,8 @@ function AppTile({ item, badge, onPress, colors, isDark, t }) {
   }, [badge, rollY, rollOpacity]);
   // [2026-10-07 apps-menu mono] Founder: manter preto e branco (identidade [MONO]),
   // só mais bonito — ladrilho neutro com borda fina + sombra suave, ícone em tinta.
-  const tileBg = isDark ? '#1f2a30' : '#ffffff';
-  const glyph = isDark ? '#e9edef' : '#111111';
+  const tileBg = isDark ? '#1c1c1e' : '#ffffff';
+  const glyph = isDark ? '#F5F5F7' : '#111111';
   const a11y = item.label + (badge ? ', ' + (t('apps.badgeNew', { count: badge > 99 ? '99+' : badge })) : '');
   return (
     <View style={{ width: '25%', paddingVertical: 8 }}>
@@ -1547,7 +1554,7 @@ function AppTile({ item, badge, onPress, colors, isDark, t }) {
             backgroundColor: tileBg,
             alignItems: 'center', justifyContent: 'center',
             borderWidth: StyleSheet.hairlineWidth,
-            borderColor: isDark ? '#2f3b42' : '#e3e6ea',
+            borderColor: isDark ? '#2c2c2e' : '#e3e6ea',
             shadowColor: '#000', shadowOpacity: isDark ? 0 : 0.06, shadowRadius: 6, shadowOffset: { width: 0, height: 2 },
             elevation: isDark ? 0 : 1,
           }}>
@@ -1557,14 +1564,14 @@ function AppTile({ item, badge, onPress, colors, isDark, t }) {
             <Animated.View style={{
               position: 'absolute', top: -5, right: -7,
               minWidth: 20, height: 20, paddingHorizontal: 5,
-              borderRadius: 10, backgroundColor: isDark ? '#e9edef' : (colors.badge || '#111111'),
+              borderRadius: 10, backgroundColor: isDark ? '#F5F5F7' : (colors.badge || '#111111'),
               alignItems: 'center', justifyContent: 'center',
-              borderWidth: 2, borderColor: isDark ? '#1b2329' : '#f6f7f9',
+              borderWidth: 2, borderColor: isDark ? '#1c1c1e' : '#f6f7f9',
               transform: [{ scale: badgePulse }],
               overflow: 'hidden',
             }}>
               <Animated.Text
-                style={{ color: isDark ? '#111b21' : '#fff', fontSize: 10, fontWeight: '800', transform: [{ translateY: rollY }], opacity: rollOpacity }}
+                style={{ color: isDark ? '#0b0b0b' : '#fff', fontSize: 10, fontWeight: '800', transform: [{ translateY: rollY }], opacity: rollOpacity }}
                 numberOfLines={1}
               >
                 {badge > 99 ? '99+' : String(badge)}
@@ -1588,7 +1595,7 @@ function AppsSection({ title, items, badges, onItemPress, colors, isDark, t }) {
   return (
     <View style={{ marginBottom: 16 }} accessibilityRole="none">
       <Text
-        style={{ fontSize: 13, fontWeight: '700', color: colors.textSecondary || (isDark ? '#9ca3af' : '#667781'), letterSpacing: 0.2, marginBottom: 8, paddingHorizontal: 6 }}
+        style={{ fontSize: 13, fontWeight: '700', color: colors.textSecondary || (isDark ? '#A1A1A6' : '#667781'), letterSpacing: 0.2, marginBottom: 8, paddingHorizontal: 6 }}
         accessibilityRole="header"
       >
         {title}
@@ -1782,7 +1789,7 @@ const AppsDrawerModal = React.memo(function AppsDrawerModal({ visible, onClose, 
 
   if (!mounted) return null;
 
-  const sheetBg = isDark ? '#111b21' : '#ffffff';
+  const sheetBg = isDark ? '#0b0b0b' : '#ffffff';
   const fieldBg = isDark ? 'rgba(255,255,255,0.07)' : '#f0f2f5';
   const muted = colors.textSecondary || '#667781';
 
@@ -1853,7 +1860,7 @@ const AppsDrawerModal = React.memo(function AppsDrawerModal({ visible, onClose, 
               value={q}
               onChangeText={setQ}
               placeholder={t('apps.searchPlaceholder')}
-              placeholderTextColor={isDark ? '#6b7a84' : '#8696a0'}
+              placeholderTextColor={isDark ? '#8E8E93' : '#8696a0'}
               style={{ flex: 1, paddingVertical: 0, paddingHorizontal: 8, color: colors.text, fontSize: 15, height: 42, ...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {}) }}
               autoCorrect={false}
               autoCapitalize="none"
@@ -1863,7 +1870,7 @@ const AppsDrawerModal = React.memo(function AppsDrawerModal({ visible, onClose, 
             {!!q && (
               <Pressable onPress={() => setQ('')} hitSlop={10} accessibilityRole="button" accessibilityLabel={t('apps.clearSearch')}
                 style={{ width: 20, height: 20, borderRadius: 10, backgroundColor: isDark ? 'rgba(255,255,255,0.22)' : 'rgba(0,0,0,0.22)', alignItems: 'center', justifyContent: 'center' }}>
-                <IconClose size={12} color={isDark ? '#111b21' : '#ffffff'} />
+                <IconClose size={12} color={isDark ? '#0b0b0b' : '#ffffff'} />
               </Pressable>
             )}
           </View>
@@ -1881,23 +1888,23 @@ const AppsDrawerModal = React.memo(function AppsDrawerModal({ visible, onClose, 
                 scaleTo={0.98}
                 style={{
                   flexDirection: 'row', alignItems: 'center', gap: 14,
-                  backgroundColor: isDark ? '#e9edef' : '#111111',
+                  backgroundColor: isDark ? '#F5F5F7' : '#111111',
                   borderRadius: 20, paddingVertical: 14, paddingHorizontal: 16, marginBottom: 18,
                 }}
                 accessibilityRole="button"
                 accessibilityLabel={'Bia, ' + t('one.subtitle')}
               >
-                <View style={{ width: 46, height: 46, borderRadius: 23, backgroundColor: isDark ? '#111b21' : '#ffffff', alignItems: 'center', justifyContent: 'center' }}>
+                <View style={{ width: 46, height: 46, borderRadius: 23, backgroundColor: isDark ? '#0b0b0b' : '#ffffff', alignItems: 'center', justifyContent: 'center' }}>
                   <View style={{ flexDirection: 'row', gap: 6 }}>
-                    <View style={{ width: 5, height: 9, borderRadius: 3, backgroundColor: isDark ? '#e9edef' : '#111111' }} />
-                    <View style={{ width: 5, height: 9, borderRadius: 3, backgroundColor: isDark ? '#e9edef' : '#111111' }} />
+                    <View style={{ width: 5, height: 9, borderRadius: 3, backgroundColor: isDark ? '#F5F5F7' : '#111111' }} />
+                    <View style={{ width: 5, height: 9, borderRadius: 3, backgroundColor: isDark ? '#F5F5F7' : '#111111' }} />
                   </View>
                 </View>
                 <View style={{ flex: 1 }}>
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                    <Text style={{ fontSize: 17, fontWeight: '700', color: isDark ? '#111b21' : '#ffffff', letterSpacing: -0.2 }}>Bia</Text>
+                    <Text style={{ fontSize: 17, fontWeight: '700', color: isDark ? '#0b0b0b' : '#ffffff', letterSpacing: -0.2 }}>Bia</Text>
                     <View style={{ backgroundColor: isDark ? 'rgba(17,27,33,0.12)' : 'rgba(255,255,255,0.20)', borderRadius: 6, paddingHorizontal: 6, paddingVertical: 2 }}>
-                      <Text style={{ fontSize: 9, fontWeight: '800', letterSpacing: 0.5, color: isDark ? '#111b21' : '#ffffff' }}>AI</Text>
+                      <Text style={{ fontSize: 9, fontWeight: '800', letterSpacing: 0.5, color: isDark ? '#0b0b0b' : '#ffffff' }}>AI</Text>
                     </View>
                   </View>
                   <Text style={{ fontSize: 13, color: isDark ? 'rgba(17,27,33,0.7)' : 'rgba(255,255,255,0.75)', marginTop: 2 }} numberOfLines={1}>

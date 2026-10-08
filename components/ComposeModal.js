@@ -395,7 +395,7 @@ export default function ComposeModal({ params, onClose }) {
     <View style={[cm.modal, modalStyle, { backgroundColor: colors.surface }]}>
       {/* Header Bar */}
       <TouchableOpacity
-        style={[cm.header, { backgroundColor: isDark ? '#2d3142' : '#404040' }]}
+        style={[cm.header, { backgroundColor: isDark ? '#2c2c2e' : '#404040' }]}
         onPress={() => setMinimized(prev => !prev)}
         activeOpacity={0.9}
         accessibilityRole="button"
@@ -621,7 +621,7 @@ export default function ComposeModal({ params, onClose }) {
                   accessibilityRole="button"
                 >
                   {sending ? (
-                    <ActivityIndicator size="small" color="#fff" />
+                    <ActivityIndicator size="small" color={colors.onPrimary || '#fff'} />
                   ) : (
                     <>
                       <IconSend size={14} color="#fff" />

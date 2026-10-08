@@ -271,7 +271,7 @@ export default function CreateGroupFlow({ visible, onClose, onCreated, mode = 'g
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       >
         {/* Header */}
-        <View style={[sty.header, { backgroundColor: isDark ? '#1F2C33' : '#111111', paddingTop: headerPadTop }]}>
+        <View style={[sty.header, { backgroundColor: isDark ? '#1c1c1e' : '#111111', paddingTop: headerPadTop }]}>
           <TouchableOpacity onPress={handleBack} style={sty.headerBtn}>
             <IconArrowLeft size={22} color="#fff" />
           </TouchableOpacity>

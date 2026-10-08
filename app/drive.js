@@ -1317,7 +1317,7 @@ function DriveScreenInner() {
         {selectMode && (
           <TouchableOpacity style={styles.checkboxArea} onPress={() => toggleSelect(item)}>
             <View style={[styles.checkbox, isSelected && { backgroundColor: colors.primary, borderColor: colors.primary }, { borderColor: colors.textTertiary }]}>
-              {isSelected && <IconCheck size={14} color="#fff" />}
+              {isSelected && <IconCheck size={14} color={colors.onPrimary || '#fff'} />}
             </View>
           </TouchableOpacity>
         )}
@@ -1431,7 +1431,7 @@ function DriveScreenInner() {
           {selectMode && (
             <TouchableOpacity style={styles.gridCheckbox} onPress={() => toggleSelect(item)}>
               <View style={[styles.checkbox, isSelected && { backgroundColor: colors.primary, borderColor: colors.primary }, { borderColor: colors.textTertiary }]}>
-                {isSelected && <IconCheck size={12} color="#fff" />}
+                {isSelected && <IconCheck size={12} color={colors.onPrimary || '#fff'} />}
               </View>
             </TouchableOpacity>
           )}
@@ -1501,7 +1501,7 @@ function DriveScreenInner() {
           <Text style={[styles.emptyTitle, { color: colors.text }]}>{t('drive.emptyPhotos')}</Text>
           <Text style={[styles.emptyDesc, { color: colors.textSecondary }]}>{t('drive.emptyPhotosDesc')}</Text>
           <TouchableOpacity style={[styles.emptyBtn, { backgroundColor: colors.primary }]} onPress={handleUploadPhotos}>
-            <IconCamera size={18} color="#fff" />
+            <IconCamera size={18} color={colors.onPrimary || '#fff'} />
             <Text style={styles.emptyBtnText}>{t('drive.backupPhotos')}</Text>
           </TouchableOpacity>
         </View>
@@ -1573,7 +1573,7 @@ function DriveScreenInner() {
         <Text style={[styles.emptyDesc, { color: colors.textSecondary }]}>{cfg.desc}</Text>
         {activeTab === 'files' && (
           <TouchableOpacity style={[styles.emptyBtn, { backgroundColor: colors.primary }]} onPress={handleUploadFile}>
-            <IconUpload size={18} color="#fff" />
+            <IconUpload size={18} color={colors.onPrimary || '#fff'} />
             <Text style={styles.emptyBtnText}>{t('drive.uploadFile')}</Text>
           </TouchableOpacity>
         )}
@@ -1711,7 +1711,7 @@ function DriveScreenInner() {
               <Text style={[styles.modalBtnText, { color: colors.textSecondary }]}>{t('drive.cancel')}</Text>
             </TouchableOpacity>
             <TouchableOpacity style={[styles.modalBtn, { backgroundColor: colors.primary }]} onPress={handleCreateFolder}>
-              <Text style={[styles.modalBtnText, { color: '#fff' }]}>{t('drive.create')}</Text>
+              <Text style={[styles.modalBtnText, { color: colors.onPrimary || '#fff' }]}>{t('drive.create')}</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -1738,7 +1738,7 @@ function DriveScreenInner() {
               <Text style={[styles.modalBtnText, { color: colors.textSecondary }]}>{t('drive.cancel')}</Text>
             </TouchableOpacity>
             <TouchableOpacity style={[styles.modalBtn, { backgroundColor: colors.primary }]} onPress={handleRename}>
-              <Text style={[styles.modalBtnText, { color: '#fff' }]}>{t('drive.save')}</Text>
+              <Text style={[styles.modalBtnText, { color: colors.onPrimary || '#fff' }]}>{t('drive.save')}</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -1798,7 +1798,7 @@ function DriveScreenInner() {
               <Text style={[styles.modalBtnText, { color: colors.textSecondary }]}>{t('drive.cancel')}</Text>
             </TouchableOpacity>
             <TouchableOpacity style={[styles.modalBtn, { backgroundColor: colors.primary }]} onPress={handleShare}>
-              <Text style={[styles.modalBtnText, { color: '#fff' }]}>{t('drive.share')}</Text>
+              <Text style={[styles.modalBtnText, { color: colors.onPrimary || '#fff' }]}>{t('drive.share')}</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -1875,7 +1875,7 @@ function DriveScreenInner() {
               ))}
               <View style={styles.storageDivider} />
               <View style={styles.storageSegmentRow}>
-                <View style={[styles.storageColorDot, { backgroundColor: isDark ? '#374151' : '#d1d5db' }]} />
+                <View style={[styles.storageColorDot, { backgroundColor: isDark ? '#2c2c2e' : '#d1d5db' }]} />
                 <Text style={[styles.storageSegLabel, { color: colors.text }]}>{t('drive.free')}</Text>
                 <Text style={[styles.storageSegValue, { color: colors.textSecondary }]}>{formatBytes(Math.max(freeBytes, 0))}</Text>
               </View>
@@ -1886,7 +1886,7 @@ function DriveScreenInner() {
             </Text>
 
             <TouchableOpacity style={[styles.modalBtn, { backgroundColor: colors.primary, marginTop: 16, alignSelf: 'center' }]} onPress={() => setStorageModal(false)}>
-              <Text style={[styles.modalBtnText, { color: '#fff' }]}>{t('drive.close')}</Text>
+              <Text style={[styles.modalBtnText, { color: colors.onPrimary || '#fff' }]}>{t('drive.close')}</Text>
             </TouchableOpacity>
           </View>
         </Pressable>
@@ -2007,8 +2007,8 @@ function DriveScreenInner() {
                 style={[styles.detailsActionBtn, { backgroundColor: colors.primary }]}
                 onPress={() => { setDetailsFile(null); setPreviewFile(item); }}
               >
-                <IconFileText size={16} color="#fff" />
-                <Text style={{ color: '#fff', fontSize: 13, fontWeight: '600' }}>{t('drive.open')}</Text>
+                <IconFileText size={16} color={colors.onPrimary || '#fff'} />
+                <Text style={{ color: colors.onPrimary || '#fff', fontSize: 13, fontWeight: '600' }}>{t('drive.open')}</Text>
               </TouchableOpacity>
               <TouchableOpacity
                 style={[styles.detailsActionBtn, { backgroundColor: isDark ? colors.surfaceVariant : '#f1f5f9' }]}
@@ -2225,8 +2225,8 @@ function DriveScreenInner() {
         {/* Actions */}
         <View style={[styles.previewPanelActions, { borderTopColor: colors.border }]}>
           <TouchableOpacity style={[styles.previewActionBtn, { backgroundColor: colors.primary }]} onPress={() => { setPreviewPanelFile(null); setPreviewFile(item); }}>
-            <IconFileText size={16} color="#fff" />
-            <Text style={{ color: '#fff', fontSize: 12, fontWeight: '600' }}>{t('drive.open')}</Text>
+            <IconFileText size={16} color={colors.onPrimary || '#fff'} />
+            <Text style={{ color: colors.onPrimary || '#fff', fontSize: 12, fontWeight: '600' }}>{t('drive.open')}</Text>
           </TouchableOpacity>
           <TouchableOpacity style={[styles.previewActionBtn, { backgroundColor: isDark ? colors.surfaceVariant : '#f1f5f9' }]} onPress={() => handleDownload(item)}>
             <IconDownload size={16} color={colors.text} />

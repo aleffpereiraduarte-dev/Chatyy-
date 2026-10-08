@@ -228,9 +228,9 @@ export default function PgpKeysScreen() {
                 style={[s.primaryBtn, { backgroundColor: colors.primary, opacity: busy ? 0.7 : 1 }]}
                 onPress={generate}
               >
-                {busy ? <ActivityIndicator color="#fff" /> : (
+                {busy ? <ActivityIndicator color={colors.onPrimary || '#fff'} /> : (
                   <>
-                    <IconLock size={18} color="#fff" />
+                    <IconLock size={18} color={colors.onPrimary || '#fff'} />
                     <Text style={s.primaryBtnLabel}>{t('pgp.generate') || 'Gerar chave PGP'}</Text>
                   </>
                 )}

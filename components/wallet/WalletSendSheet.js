@@ -164,7 +164,7 @@ export default function WalletSendSheet({ visible, onClose, balance, onSent }) {
   }, [target, finalAmount, note, balance, t, language, onSent, onClose]);
 
   const surface = isDark ? '#0B0B0F' : '#F7F7FB';
-  const cardBg  = isDark ? '#16161E' : '#FFFFFF';
+  const cardBg  = isDark ? '#161618' : '#FFFFFF';
   const border  = isDark ? 'rgba(255,255,255,0.07)' : 'rgba(15,23,42,0.06)';
   const subtle  = isDark ? 'rgba(255,255,255,0.55)' : 'rgba(15,23,42,0.55)';
   const chipBg  = isDark ? 'rgba(255,255,255,0.06)' : 'rgba(15,23,42,0.05)';

@@ -101,7 +101,7 @@ export default function AccountSwitcherSheet({ visible, onClose }) {
                 <Text style={[s.email, { color: colors.textTertiary }]} numberOfLines={1}>{user?.email}</Text>
               </View>
               <View style={[s.checkBadge, { backgroundColor: colors.primary }]}>
-                <IconCheck size={14} color="#fff" strokeWidth={3} />
+                <IconCheck size={14} color={colors.onPrimary || '#fff'} strokeWidth={3} />
               </View>
             </View>
 

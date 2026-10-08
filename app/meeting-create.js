@@ -580,7 +580,7 @@ const styles = (colors) => StyleSheet.create({
   },
   pillActive: { backgroundColor: colors.primary, borderColor: colors.primary },
   pillText: { fontSize: FontSize.sm, color: colors.textSecondary, fontWeight: '500' },
-  pillTextActive: { color: '#fff' },
+  pillTextActive: { color: colors.onPrimary || '#fff' },
   section: {
     marginTop: Spacing.xl, backgroundColor: colors.surface,
     borderRadius: BorderRadius.lg, borderWidth: 1, borderColor: colors.border,
@@ -599,7 +599,7 @@ const styles = (colors) => StyleSheet.create({
     backgroundColor: colors.primary, borderRadius: BorderRadius.md,
     paddingHorizontal: Spacing.md, paddingVertical: Spacing.md,
   },
-  addBtnText: { color: '#fff', fontWeight: '600', fontSize: FontSize.sm },
+  addBtnText: { color: colors.onPrimary || '#fff', fontWeight: '600', fontSize: FontSize.sm },
   inviteeChip: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
     backgroundColor: colors.surfaceVariant, borderRadius: BorderRadius.md,
@@ -616,7 +616,7 @@ const styles = (colors) => StyleSheet.create({
     backgroundColor: colors.primary, borderRadius: BorderRadius.lg,
     paddingVertical: Spacing.lg, marginTop: Spacing.xxxl, ...Shadow.md,
   },
-  submitText: { color: '#fff', fontSize: FontSize.xl, fontWeight: '700' },
+  submitText: { color: colors.onPrimary || '#fff', fontSize: FontSize.xl, fontWeight: '700' },
   modalOverlay: {
     flex: 1, backgroundColor: colors.overlay,
     alignItems: 'center', justifyContent: 'center', padding: Spacing.xl,
@@ -643,5 +643,5 @@ const styles = (colors) => StyleSheet.create({
     marginTop: Spacing.xl, backgroundColor: colors.primary, borderRadius: BorderRadius.md,
     paddingHorizontal: Spacing.xxxl, paddingVertical: Spacing.md,
   },
-  modalDoneBtnText: { color: '#fff', fontSize: FontSize.base, fontWeight: '600' },
+  modalDoneBtnText: { color: colors.onPrimary || '#fff', fontSize: FontSize.base, fontWeight: '600' },
 });

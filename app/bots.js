@@ -370,7 +370,7 @@ export default function BotsScreen() {
                 backgroundColor: colors.primary,
               }}
             >
-              <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700' }}>
+              <Text style={{ color: colors.onPrimary || '#fff', fontSize: 12, fontWeight: '700' }}>
                 {t?.('bots.test') || 'Testar bot'}
               </Text>
             </TouchableOpacity>
@@ -418,7 +418,7 @@ export default function BotsScreen() {
                 onPress={handleCreate}
                 style={{ backgroundColor: colors.primary, padding: 14, borderRadius: 12, alignItems: 'center', opacity: busy ? 0.6 : 1 }}
               >
-                <Text style={{ color: '#fff', fontWeight: '700' }}>
+                <Text style={{ color: colors.onPrimary || '#fff', fontWeight: '700' }}>
                   {busy ? (t?.('common.loading') || 'Carregando...') : (t?.('bots.create') || 'Criar bot')}
                 </Text>
               </TouchableOpacity>
@@ -460,8 +460,8 @@ export default function BotsScreen() {
                     onPress={() => copyToken(tokenReveal.token)}
                     style={{ flex: 1, backgroundColor: colors.primary, padding: 12, borderRadius: 10, alignItems: 'center', flexDirection: 'row', justifyContent: 'center', gap: 6 }}
                   >
-                    <IconCopy size={16} color="#fff" />
-                    <Text style={{ color: '#fff', fontWeight: '700' }}>{t?.('common.copy') || 'Copiar'}</Text>
+                    <IconCopy size={16} color={colors.onPrimary || '#fff'} />
+                    <Text style={{ color: colors.onPrimary || '#fff', fontWeight: '700' }}>{t?.('common.copy') || 'Copiar'}</Text>
                   </TouchableOpacity>
                   <TouchableOpacity
                     onPress={() => setTokenReveal(null)}

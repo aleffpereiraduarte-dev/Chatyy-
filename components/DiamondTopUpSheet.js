@@ -161,7 +161,7 @@ export default function DiamondTopUpSheet({ visible, onClose, onBalanceChange })
   return (
     <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
       <View style={styles.scrim}>
-        <View style={[styles.sheet, { backgroundColor: isDark ? '#0F172A' : '#F8FAFC' }]}>
+        <View style={[styles.sheet, { backgroundColor: isDark ? '#0b0b0b' : '#F8FAFC' }]}>
           <View style={styles.head}>
             <Text style={[styles.title, { color: colors.text }]}>
               {t('wallet.topup') || 'Comprar diamantes'}

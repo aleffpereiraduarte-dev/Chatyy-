@@ -228,7 +228,7 @@ export default function CommunityCreateScreen() {
             />
             <TouchableOpacity onPress={() => setDiscoverable(!discoverable)} style={{ flexDirection: 'row', alignItems: 'center', marginTop: 16, gap: 10 }} accessibilityRole="checkbox" accessibilityState={{ checked: discoverable }}>
               <View style={[sty.checkbox, discoverable && { backgroundColor: colors.primary, borderColor: colors.primary }]}>
-                {discoverable && <IconCheck size={14} color="#fff" />}
+                {discoverable && <IconCheck size={14} color={colors.onPrimary || '#fff'} />}
               </View>
               <Text style={{ color: colors.text, flex: 1 }}>
                 {t('community.discoverable') || 'Mostrar em Descobrir comunidades'}
@@ -246,7 +246,7 @@ export default function CommunityCreateScreen() {
           style={[sty.primaryBtn, { backgroundColor: colors.primary, opacity: (!canAdvance() || submitting) ? 0.5 : 1 }]}
         >
           {submitting ? (
-            <ActivityIndicator color="#fff" />
+            <ActivityIndicator color={colors.onPrimary || '#fff'} />
           ) : (
             <Text style={sty.primaryBtnText}>
               {step < STEPS.length - 1

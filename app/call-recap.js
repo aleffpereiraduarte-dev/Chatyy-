@@ -91,7 +91,7 @@ export default function CallRecapScreen() {
 
   return (
     <View style={[styles.root, { backgroundColor: colors.background }]}>
-      <View style={[styles.header, { paddingTop: insets.top + 8, borderBottomColor: isDark ? '#1F2937' : '#E5E7EB' }]}>
+      <View style={[styles.header, { paddingTop: insets.top + 8, borderBottomColor: isDark ? '#1c1c1e' : '#E5E7EB' }]}>
         <TouchableOpacity onPress={() => router.back()} style={styles.backBtn} activeOpacity={0.7}>
           <IconArrowLeft size={22} color={colors.text} />
         </TouchableOpacity>
@@ -127,7 +127,7 @@ export default function CallRecapScreen() {
               </View>
             )}
 
-            <View style={[styles.card, { backgroundColor: isDark ? '#1F2937' : '#F9FAFB' }]}>
+            <View style={[styles.card, { backgroundColor: isDark ? '#1c1c1e' : '#F9FAFB' }]}>
               <Text style={[styles.cardTitle, { color: colors.text }]}>
                 {t('callRecap.summary') || 'Resumo'}
               </Text>
@@ -137,7 +137,7 @@ export default function CallRecapScreen() {
             </View>
 
             {!!recap.transcript && (
-              <View style={[styles.card, { backgroundColor: isDark ? '#1F2937' : '#F9FAFB' }]}>
+              <View style={[styles.card, { backgroundColor: isDark ? '#1c1c1e' : '#F9FAFB' }]}>
                 <TouchableOpacity
                   onPress={() => setShowFullTranscript(!showFullTranscript)}
                   style={styles.transcriptHeader}

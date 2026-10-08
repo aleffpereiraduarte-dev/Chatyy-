@@ -188,10 +188,10 @@ export default function KidsAskParentModal({ visible, onClose, isDark, t }) {
               ) : historyItems.length === 0 ? (
                 <View style={{ alignItems: 'center', paddingVertical: 40 }}>
                   <Svg width={44} height={44} viewBox="0 0 24 24" fill="none" style={{ marginBottom: 10, opacity: 0.35 }}>
-                    <Path d="M3 12l2-7h14l2 7v6a1 1 0 01-1 1H4a1 1 0 01-1-1v-6z" stroke={isDark ? '#9ca3af' : '#6b7280'} strokeWidth={1.6} strokeLinejoin="round" />
-                    <Path d="M3 12h5l1 2h6l1-2h5" stroke={isDark ? '#9ca3af' : '#6b7280'} strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" />
+                    <Path d="M3 12l2-7h14l2 7v6a1 1 0 01-1 1H4a1 1 0 01-1-1v-6z" stroke={isDark ? '#A1A1A6' : '#6b7280'} strokeWidth={1.6} strokeLinejoin="round" />
+                    <Path d="M3 12h5l1 2h6l1-2h5" stroke={isDark ? '#A1A1A6' : '#6b7280'} strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" />
                   </Svg>
-                  <Text style={{ fontSize: 14, color: isDark ? '#9ca3af' : '#6b7280', textAlign: 'center' }}>
+                  <Text style={{ fontSize: 14, color: isDark ? '#A1A1A6' : '#6b7280', textAlign: 'center' }}>
                     {t?.('kids.askParent.empty') || 'Você ainda não fez nenhum pedido.'}
                   </Text>
                 </View>
@@ -302,7 +302,7 @@ export default function KidsAskParentModal({ visible, onClose, isDark, t }) {
                         <Text style={{ fontSize: 15, fontWeight: '800', color: selected ? rt.color : (isDark ? '#F1F3F5' : '#111') }}>
                           {t?.('kids.askParent.type.'+rt.key) || rt.name}
                         </Text>
-                        <Text style={{ fontSize: 12, color: isDark ? '#9ca3af' : '#6b7280', marginTop: 2 }}>
+                        <Text style={{ fontSize: 12, color: isDark ? '#A1A1A6' : '#6b7280', marginTop: 2 }}>
                           {t?.('kids.askParent.typeDesc.'+rt.key) || rt.desc}
                         </Text>
                       </View>

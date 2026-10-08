@@ -2887,7 +2887,7 @@ function PhotosScreenInner() {
 
     if (!backupEnabled) {
       return (
-        <View style={[s.backupBanner, { backgroundColor: isDark ? '#1e293b' : '#f8fafc', borderColor: colors.border }]}>
+        <View style={[s.backupBanner, { backgroundColor: isDark ? '#1c1c1e' : '#f8fafc', borderColor: colors.border }]}>
           <View style={s.backupBannerLeft}>
             <IconCloudOff size={20} color={colors.textSecondary} />
             <View style={{ marginLeft: 10, flex: 1 }}>
@@ -3985,7 +3985,7 @@ function PhotosScreenInner() {
               disabled={analyzing}
             >
               {analyzing ? (
-                <ActivityIndicator size="small" color="#fff" />
+                <ActivityIndicator size="small" color={colors.onPrimary || '#fff'} />
               ) : (
                 <Text style={s.backupBtnText}>{tr(t, 'photos.ux.analyze', 'Analisar fotos')}</Text>
               )}
@@ -4397,7 +4397,7 @@ function PhotosScreenInner() {
                             backgroundColor: selectedMonths.has(month.month_key) ? colors.primary : 'transparent',
                             alignItems: 'center', justifyContent: 'center',
                           }}>
-                            {selectedMonths.has(month.month_key) && <IconCheck size={14} color="#fff" />}
+                            {selectedMonths.has(month.month_key) && <IconCheck size={14} color={colors.onPrimary || '#fff'} />}
                           </View>
                           <View style={{ flex: 1 }}>
                             <Text style={{ color: colors.text, fontSize: 15 }}>{month.month_label || month.month_key}</Text>
@@ -5089,14 +5089,14 @@ function PhotosScreenInner() {
             onPress={() => setShowFavorites(false)}
             style={[s.filterChip, !showFavorites && { backgroundColor: colors.primary }]}
           >
-            <Text style={[s.filterChipText, !showFavorites && { color: '#fff' }]}>{t('photos.allPhotos')}</Text>
+            <Text style={[s.filterChipText, !showFavorites && { color: colors.onPrimary || '#fff' }]}>{t('photos.allPhotos')}</Text>
           </TouchableOpacity>
           <TouchableOpacity
             onPress={() => setShowFavorites(true)}
             style={[s.filterChip, showFavorites && { backgroundColor: colors.primary }]}
           >
-            <IconStarFilled size={12} color={showFavorites ? '#fff' : '#f59e0b'} />
-            <Text style={[s.filterChipText, showFavorites && { color: '#fff' }]}>{t('photos.favorites')}</Text>
+            <IconStarFilled size={12} color={showFavorites ? (colors.onPrimary || '#fff') : '#f59e0b'} />
+            <Text style={[s.filterChipText, showFavorites && { color: colors.onPrimary || '#fff' }]}>{t('photos.favorites')}</Text>
           </TouchableOpacity>
         </View>
       )}
@@ -5365,7 +5365,7 @@ function PhotosScreenInner() {
                 <Text style={{ color: colors.textSecondary }}>{t('common.cancel')}</Text>
               </TouchableOpacity>
               <TouchableOpacity onPress={createAlbum} style={[s.modalBtn, { backgroundColor: colors.primary, borderRadius: 8 }]}>
-                <Text style={{ color: '#fff', fontWeight: '600' }}>{t('photos.createAlbum')}</Text>
+                <Text style={{ color: colors.onPrimary || '#fff', fontWeight: '600' }}>{t('photos.createAlbum')}</Text>
               </TouchableOpacity>
             </View>
           </Pressable>
@@ -5393,7 +5393,7 @@ function PhotosScreenInner() {
                 <Text style={{ color: colors.textSecondary }}>{t('common.cancel') || 'Cancelar'}</Text>
               </TouchableOpacity>
               <TouchableOpacity onPress={submitClusterRename} style={[s.modalBtn, { backgroundColor: colors.primary, borderRadius: 8 }]}>
-                <Text style={{ color: '#fff', fontWeight: '600' }}>{t('common.save') || 'Salvar'}</Text>
+                <Text style={{ color: colors.onPrimary || '#fff', fontWeight: '600' }}>{t('common.save') || 'Salvar'}</Text>
               </TouchableOpacity>
             </View>
           </Pressable>
@@ -5428,7 +5428,7 @@ function PhotosScreenInner() {
                   ]}
                 >
                   <Text style={{
-                    color: photobookLayout === layout ? '#fff' : colors.text,
+                    color: photobookLayout === layout ? (colors.onPrimary || '#fff') : colors.text,
                     fontWeight: '600', fontSize: 13,
                   }}>
                     {layout === 'grid' ? (t('photos.layoutGrid') || 'Grade')
@@ -5466,7 +5466,7 @@ function PhotosScreenInner() {
                   }}
                   style={[s.modalBtn, { backgroundColor: colors.primary, borderRadius: 8, paddingHorizontal: 16 }]}
                 >
-                  <Text style={{ color: '#fff', fontWeight: '600' }}>
+                  <Text style={{ color: colors.onPrimary || '#fff', fontWeight: '600' }}>
                     {t('photos.downloadPdf') || 'Baixar PDF'}
                   </Text>
                 </TouchableOpacity>
@@ -5477,7 +5477,7 @@ function PhotosScreenInner() {
                   <Text style={{ color: colors.textSecondary }}>{t('common.cancel') || 'Cancelar'}</Text>
                 </TouchableOpacity>
                 <TouchableOpacity onPress={generatePhotobook} style={[s.modalBtn, { backgroundColor: colors.primary, borderRadius: 8 }]}>
-                  <Text style={{ color: '#fff', fontWeight: '600' }}>{t('photos.generate') || 'Gerar'}</Text>
+                  <Text style={{ color: colors.onPrimary || '#fff', fontWeight: '600' }}>{t('photos.generate') || 'Gerar'}</Text>
                 </TouchableOpacity>
               </View>
             )}
@@ -5605,7 +5605,7 @@ function PhotosMapTab({ colors, isDark, insets, t, api, allPhotos, openViewer })
     const markersJson = JSON.stringify(clusters.map(c => ({
       lat: c.lat, lng: c.lon, count: c.count, id: c.sample_id,
     })));
-    const bg = isDark ? '#0b0f17' : '#e5e7eb';
+    const bg = isDark ? '#0b0b0b' : '#e5e7eb';
     return `<!doctype html><html><head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"/>

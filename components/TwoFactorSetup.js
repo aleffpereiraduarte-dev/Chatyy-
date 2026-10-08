@@ -131,10 +131,10 @@ export default function TwoFactorSetup({ visible, onClose }) {
         disabled={loading}
       >
         {loading ? (
-          <ActivityIndicator size="small" color="#fff" />
+          <ActivityIndicator size="small" color={colors.onPrimary || '#fff'} />
         ) : (
           <>
-            <IconShield size={18} color="#fff" style={{ marginRight: 8 }} />
+            <IconShield size={18} color={colors.onPrimary || '#fff'} style={{ marginRight: 8 }} />
             <Text style={s.primaryBtnText}>{t('twoFactor.enable')}</Text>
           </>
         )}
@@ -189,10 +189,10 @@ export default function TwoFactorSetup({ visible, onClose }) {
         disabled={loading || code.length !== 6}
       >
         {loading ? (
-          <ActivityIndicator size="small" color="#fff" />
+          <ActivityIndicator size="small" color={colors.onPrimary || '#fff'} />
         ) : (
           <>
-            <IconCheck size={18} color="#fff" style={{ marginRight: 8 }} />
+            <IconCheck size={18} color={colors.onPrimary || '#fff'} style={{ marginRight: 8 }} />
             <Text style={s.primaryBtnText}>{t('twoFactor.verify')}</Text>
           </>
         )}

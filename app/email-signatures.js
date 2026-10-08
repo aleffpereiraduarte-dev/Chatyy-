@@ -194,8 +194,8 @@ export default function EmailSignaturesScreen() {
                     accessibilityRole="button"
                     accessibilityLabel={t('signatures.createFirst') || 'Criar primeira assinatura'}
                   >
-                    <IconPlus size={16} color="#fff" />
-                    <Text style={{ color: '#fff', fontWeight: '700', fontSize: 14 }}>
+                    <IconPlus size={16} color={colors.onPrimary || '#fff'} />
+                    <Text style={{ color: colors.onPrimary || '#fff', fontWeight: '700', fontSize: 14 }}>
                       {t('signatures.createFirst') || 'Criar primeira assinatura'}
                     </Text>
                   </TouchableOpacity>

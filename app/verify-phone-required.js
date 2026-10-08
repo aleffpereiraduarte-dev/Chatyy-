@@ -130,8 +130,8 @@ export default function VerifyPhoneRequiredScreen() {
                 opacity: loading ? 0.6 : 1,
               }}
             >
-              {loading ? <ActivityIndicator color="#fff" /> : (
-                <Text style={{ color: '#fff', fontWeight: '700', fontSize: 16 }}>Enviar código</Text>
+              {loading ? <ActivityIndicator color={colors.onPrimary || '#fff'} /> : (
+                <Text style={{ color: colors.onPrimary || '#fff', fontWeight: '700', fontSize: 16 }}>Enviar código</Text>
               )}
             </TouchableOpacity>
           </>
@@ -173,8 +173,8 @@ export default function VerifyPhoneRequiredScreen() {
                 opacity: (loading || code.length !== 6) ? 0.6 : 1,
               }}
             >
-              {loading ? <ActivityIndicator color="#fff" /> : (
-                <Text style={{ color: '#fff', fontWeight: '700', fontSize: 16 }}>Verificar</Text>
+              {loading ? <ActivityIndicator color={colors.onPrimary || '#fff'} /> : (
+                <Text style={{ color: colors.onPrimary || '#fff', fontWeight: '700', fontSize: 16 }}>Verificar</Text>
               )}
             </TouchableOpacity>
             <TouchableOpacity onPress={() => setStep('phone')} style={{ marginTop: 12, alignItems: 'center' }}>

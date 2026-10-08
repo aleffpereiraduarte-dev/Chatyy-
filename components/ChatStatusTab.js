@@ -717,10 +717,10 @@ const AnimatedPeekPreview = React.memo(function AnimatedPeekPreview({ group, own
 function EmptyStatusIllustration({ isDark }) {
   return (
     <Svg width={120} height={120} viewBox="0 0 100 100" fill="none">
-      <SvgCircle cx="50" cy="50" r="35" stroke={isDark ? '#374151' : '#e5e7eb'} strokeWidth="2" strokeDasharray="8 4" />
-      <Rect x="38" y="35" width="24" height="30" rx="4" stroke={isDark ? '#4b5563' : '#9ca3af'} strokeWidth="2" fill="none" />
-      <SvgCircle cx="50" cy="47" r="5" stroke={isDark ? '#4b5563' : '#9ca3af'} strokeWidth="1.5" fill="none" />
-      <Path d="M38 58 L44 52 L48 56 L54 48 L62 58" stroke={isDark ? '#4b5563' : '#9ca3af'} strokeWidth="1.5" fill="none" strokeLinejoin="round" />
+      <SvgCircle cx="50" cy="50" r="35" stroke={isDark ? '#2c2c2e' : '#e5e7eb'} strokeWidth="2" strokeDasharray="8 4" />
+      <Rect x="38" y="35" width="24" height="30" rx="4" stroke={isDark ? '#48484a' : '#9ca3af'} strokeWidth="2" fill="none" />
+      <SvgCircle cx="50" cy="47" r="5" stroke={isDark ? '#48484a' : '#9ca3af'} strokeWidth="1.5" fill="none" />
+      <Path d="M38 58 L44 52 L48 56 L54 48 L62 58" stroke={isDark ? '#48484a' : '#9ca3af'} strokeWidth="1.5" fill="none" strokeLinejoin="round" />
       <Path d="M68 30 L72 26" stroke={ACCENT} strokeWidth="2" strokeLinecap="round" />
       <Path d="M72 34 L76 34" stroke={ACCENT} strokeWidth="2" strokeLinecap="round" />
       <Path d="M68 38 L72 42" stroke={ACCENT} strokeWidth="2" strokeLinecap="round" />
@@ -2975,7 +2975,7 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, openSta
           <View style={styles.statusMeta}>
             <Text style={[styles.statusTime, { color: colors.textSecondary }]}>{time}</Text>
             {count > 1 && (
-              <View style={[styles.countPill, { backgroundColor: isDark ? '#2d3748' : '#f0f0f0' }]}>
+              <View style={[styles.countPill, { backgroundColor: isDark ? '#2c2c2e' : '#f0f0f0' }]}>
                 <Text style={[styles.countPillText, { color: colors.textSecondary }]}>{count}</Text>
               </View>
             )}
@@ -4531,7 +4531,7 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, openSta
           onPress={() => setAnalyticsModalOpen(false)}
         >
           <Pressable style={{
-            backgroundColor: isDark ? '#1a1a2e' : '#fff',
+            backgroundColor: isDark ? '#1c1c1e' : '#fff',
             borderTopLeftRadius: 20, borderTopRightRadius: 20,
             paddingHorizontal: 20, paddingTop: 12, paddingBottom: 36,
             minHeight: 360,
@@ -4546,7 +4546,7 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, openSta
             {analyticsLoading ? (
               <View style={{ paddingVertical: 32, alignItems: 'center' }}>
                 <ActivityIndicator size="large" color={ACCENT} />
-                <Text style={{ marginTop: 12, color: isDark ? '#9ca3af' : '#6b7280', fontSize: 13 }}>
+                <Text style={{ marginTop: 12, color: isDark ? '#A1A1A6' : '#6b7280', fontSize: 13 }}>
                   {t?.('status.analyticsLoading') || 'Carregando...'}
                 </Text>
               </View>
@@ -4586,7 +4586,7 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, openSta
                         backgroundColor: isDark ? 'rgba(255,255,255,0.05)' : '#f3f4f6',
                       }}
                     >
-                      <Text style={{ fontSize: 12, color: isDark ? '#9ca3af' : '#6b7280', marginBottom: 6, fontWeight: '600' }} numberOfLines={1}>
+                      <Text style={{ fontSize: 12, color: isDark ? '#A1A1A6' : '#6b7280', marginBottom: 6, fontWeight: '600' }} numberOfLines={1}>
                         {k.label}
                       </Text>
                       <Text style={{ fontSize: 22, fontWeight: '900', color: isDark ? '#fff' : '#111' }}>
@@ -4595,7 +4595,7 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, openSta
                     </View>
                   ))}
                 </View>
-                <Text style={{ marginTop: 16, fontSize: 11, color: isDark ? '#6b7280' : '#9ca3af', textAlign: 'center', lineHeight: 16 }}>
+                <Text style={{ marginTop: 16, fontSize: 11, color: isDark ? '#6C6C70' : '#9ca3af', textAlign: 'center', lineHeight: 16 }}>
                   {t?.('status.analyticsNote') || 'Atualizado em tempo real. Estatísticas privadas — só você vê.'}
                 </Text>
               </View>
@@ -4616,7 +4616,7 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, openSta
           onPress={() => setArchiveSheetOpen(false)}
         >
           <Pressable style={{
-            backgroundColor: isDark ? '#1a1a2e' : '#fff',
+            backgroundColor: isDark ? '#1c1c1e' : '#fff',
             borderTopLeftRadius: 20, borderTopRightRadius: 20,
             paddingHorizontal: 16, paddingTop: 12, paddingBottom: 28,
             maxHeight: '78%',
@@ -4628,13 +4628,13 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, openSta
                 {t?.('status.archiveTitle2') || 'Arquivo'}
               </Text>
             </View>
-            <Text style={{ fontSize: 12, color: isDark ? '#9ca3af' : '#6b7280', marginBottom: 12, paddingHorizontal: 4 }}>
+            <Text style={{ fontSize: 12, color: isDark ? '#A1A1A6' : '#6b7280', marginBottom: 12, paddingHorizontal: 4 }}>
               {t?.('status.archiveHint') || 'Toque longo em um status para repostar.'}
             </Text>
             {archiveLoading ? (
               <ActivityIndicator size="large" color={ACCENT} style={{ marginVertical: 32 }} />
             ) : archiveItems.length === 0 ? (
-              <Text style={{ textAlign: 'center', color: isDark ? '#6b7280' : '#9ca3af', marginVertical: 32, fontSize: 14 }}>
+              <Text style={{ textAlign: 'center', color: isDark ? '#6C6C70' : '#9ca3af', marginVertical: 32, fontSize: 14 }}>
                 {t?.('status.archiveEmpty') || 'Nenhum status arquivado'}
               </Text>
             ) : (
@@ -4739,7 +4739,7 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, openSta
       {/* ─── Forward to Chat Modal ─── */}
       <Modal visible={forwardModalVisible} transparent animationType="slide" onRequestClose={() => { setForwardModalVisible(false); setIsPaused(false); }}>
         <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' }} onPress={() => { setForwardModalVisible(false); setIsPaused(false); }}>
-          <Pressable style={{ backgroundColor: isDark ? '#1a1a2e' : '#fff', borderTopLeftRadius: 20, borderTopRightRadius: 20, maxHeight: '60%', paddingBottom: 34 }}>
+          <Pressable style={{ backgroundColor: isDark ? '#1c1c1e' : '#fff', borderTopLeftRadius: 20, borderTopRightRadius: 20, maxHeight: '60%', paddingBottom: 34 }}>
             <View style={{ alignItems: 'center', paddingVertical: 16, borderBottomWidth: 1, borderBottomColor: isDark ? 'rgba(255,255,255,0.1)' : '#e5e7eb' }}>
               <View style={{ width: 36, height: 4, borderRadius: 2, backgroundColor: isDark ? 'rgba(255,255,255,0.2)' : '#d1d5db', marginBottom: 12 }} />
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
@@ -4752,7 +4752,7 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, openSta
             {forwardLoading ? (
               <ActivityIndicator size="large" color={ACCENT} style={{ marginVertical: 32 }} />
             ) : forwardConversations.length === 0 ? (
-              <Text style={{ textAlign: 'center', color: isDark ? '#6b7280' : '#9ca3af', marginVertical: 32, fontSize: 15 }}>
+              <Text style={{ textAlign: 'center', color: isDark ? '#6C6C70' : '#9ca3af', marginVertical: 32, fontSize: 15 }}>
                 {t?.('status.noConversations') || 'Nenhuma conversa'}
               </Text>
             ) : (
@@ -4774,7 +4774,7 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, openSta
                         {conv.name || conv.other_name || emailToDisplayName(conv.other_email || '')}
                       </Text>
                       {conv.last_message && (
-                        <Text style={{ fontSize: 12, color: isDark ? '#6b7280' : '#9ca3af', marginTop: 2 }} numberOfLines={1}>
+                        <Text style={{ fontSize: 12, color: isDark ? '#6C6C70' : '#9ca3af', marginTop: 2 }} numberOfLines={1}>
                           {conv.last_message}
                         </Text>
                       )}
@@ -4799,7 +4799,7 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, openSta
         <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
           {/* ─── Music Picker (rendered INSIDE creator modal to avoid iOS stacking issues) ─── */}
           {musicPickerVisible ? (
-            <View style={{ flex: 1, backgroundColor: isDark ? '#1a1a2e' : '#fff' }}>
+            <View style={{ flex: 1, backgroundColor: isDark ? '#1c1c1e' : '#fff' }}>
               {/* Header with back button — same Android translucent fix as
                   the parent composer header. Uses runtime insets.top instead
                   of the stale ANDROID_TOP_INSET module-load constant. */}
@@ -4813,12 +4813,12 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, openSta
               </View>
 
               {/* Search input */}
-              <View style={{ flexDirection: 'row', alignItems: 'center', marginHorizontal: 16, marginVertical: 12, backgroundColor: isDark ? '#2d3748' : '#f3f4f6', borderRadius: 12, paddingHorizontal: 12, paddingVertical: 8 }}>
-                <IconSearch size={18} color={isDark ? '#6b7280' : '#9ca3af'} />
+              <View style={{ flexDirection: 'row', alignItems: 'center', marginHorizontal: 16, marginVertical: 12, backgroundColor: isDark ? '#2c2c2e' : '#f3f4f6', borderRadius: 12, paddingHorizontal: 12, paddingVertical: 8 }}>
+                <IconSearch size={18} color={isDark ? '#6C6C70' : '#9ca3af'} />
                 <TextInput
                   style={{ flex: 1, marginLeft: 8, fontSize: 15, color: isDark ? '#fff' : '#111', paddingVertical: 0 }}
                   placeholder={t?.('status.searchMusic') || 'Buscar musica ou artista...'}
-                  placeholderTextColor={isDark ? '#6b7280' : '#9ca3af'}
+                  placeholderTextColor={isDark ? '#6C6C70' : '#9ca3af'}
                   value={musicQuery}
                   onChangeText={(q) => {
                     setMusicQuery(q);
@@ -4845,7 +4845,7 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, openSta
                 />
                 {musicQuery.length > 0 && (
                   <TouchableOpacity onPress={() => { setMusicQuery(''); setMusicResults([]); }}>
-                    <IconX size={18} color={isDark ? '#6b7280' : '#9ca3af'} />
+                    <IconX size={18} color={isDark ? '#6C6C70' : '#9ca3af'} />
                   </TouchableOpacity>
                 )}
               </View>
@@ -4855,15 +4855,15 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, openSta
 
               <ScrollView style={{ flex: 1 }}>
                 {!musicSearching && musicResults.length === 0 && musicQuery.length >= 2 && (
-                  <Text style={{ textAlign: 'center', color: isDark ? '#6b7280' : '#9ca3af', marginVertical: 24, fontSize: 14 }}>
+                  <Text style={{ textAlign: 'center', color: isDark ? '#6C6C70' : '#9ca3af', marginVertical: 24, fontSize: 14 }}>
                     {t?.('status.noMusicResults') || 'Nenhum resultado encontrado'}
                   </Text>
                 )}
 
                 {!musicSearching && musicResults.length === 0 && musicQuery.length < 2 && (
                   <View style={{ alignItems: 'center', marginTop: 60 }}>
-                    <IconMusicNote size={48} color={isDark ? '#374151' : '#d1d5db'} />
-                    <Text style={{ color: isDark ? '#6b7280' : '#9ca3af', marginTop: 16, fontSize: 15 }}>
+                    <IconMusicNote size={48} color={isDark ? '#2c2c2e' : '#d1d5db'} />
+                    <Text style={{ color: isDark ? '#6C6C70' : '#9ca3af', marginTop: 16, fontSize: 15 }}>
                       {t?.('status.searchMusicHint') || 'Pesquise uma musica para adicionar'}
                     </Text>
                   </View>
@@ -4886,8 +4886,8 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, openSta
                     {track.coverUrl ? (
                       <CachedImage source={{ uri: track.coverUrl }} style={{ width: 50, height: 50, borderRadius: 6 }} />
                     ) : (
-                      <View style={{ width: 50, height: 50, borderRadius: 6, backgroundColor: isDark ? '#374151' : '#e5e7eb', alignItems: 'center', justifyContent: 'center' }}>
-                        <IconMusicNote size={20} color={isDark ? '#6b7280' : '#9ca3af'} />
+                      <View style={{ width: 50, height: 50, borderRadius: 6, backgroundColor: isDark ? '#2c2c2e' : '#e5e7eb', alignItems: 'center', justifyContent: 'center' }}>
+                        <IconMusicNote size={20} color={isDark ? '#6C6C70' : '#9ca3af'} />
                       </View>
                     )}
 
@@ -4896,7 +4896,7 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, openSta
                       <Text style={{ fontSize: 15, fontWeight: '600', color: isDark ? '#fff' : '#111' }} numberOfLines={1}>
                         {track.title}
                       </Text>
-                      <Text style={{ fontSize: 13, color: isDark ? '#6b7280' : '#9ca3af', marginTop: 2 }} numberOfLines={1}>
+                      <Text style={{ fontSize: 13, color: isDark ? '#6C6C70' : '#9ca3af', marginTop: 2 }} numberOfLines={1}>
                         {track.artist}
                       </Text>
                     </View>

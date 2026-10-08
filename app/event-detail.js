@@ -428,7 +428,7 @@ function EditEventView({ event, onSave, onCancel, colors, t }) {
               }]}
               onPress={() => setReminder(opt.value)}
             >
-              <Text style={[styles.editChipText, { color: reminder === opt.value ? '#fff' : colors.text }]}>
+              <Text style={[styles.editChipText, { color: reminder === opt.value ? (colors.onPrimary || '#fff') : colors.text }]}>
                 {t(`eventDetail.reminder_${opt.value}`)}
               </Text>
             </TouchableOpacity>
@@ -454,7 +454,7 @@ function EditEventView({ event, onSave, onCancel, colors, t }) {
               }]}
               onPress={() => setRecurrence(opt.value)}
             >
-              <Text style={[styles.editChipText, { color: recurrence === opt.value ? '#fff' : colors.text }]}>
+              <Text style={[styles.editChipText, { color: recurrence === opt.value ? (colors.onPrimary || '#fff') : colors.text }]}>
                 {opt.label}
               </Text>
             </TouchableOpacity>
@@ -523,7 +523,7 @@ function EditEventView({ event, onSave, onCancel, colors, t }) {
                       onPress={() => applyFreeSlot(sl)}
                       style={{ backgroundColor: colors.primary, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 14 }}
                     >
-                      <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700' }}>{label}</Text>
+                      <Text style={{ color: colors.onPrimary || '#fff', fontSize: 12, fontWeight: '700' }}>{label}</Text>
                     </TouchableOpacity>
                   );
                 })}
@@ -541,10 +541,10 @@ function EditEventView({ event, onSave, onCancel, colors, t }) {
           style={[styles.editSaveBtn, { backgroundColor: colors.primary }]}
         >
           {saving ? (
-            <ActivityIndicator size="small" color="#fff" />
+            <ActivityIndicator size="small" color={colors.onPrimary || '#fff'} />
           ) : saveSuccess ? (
             <>
-              <IconCheck size={18} color="#fff" />
+              <IconCheck size={18} color={colors.onPrimary || '#fff'} />
               <Text style={styles.editSaveBtnText}>{t('eventDetail.saved')}</Text>
             </>
           ) : (
@@ -969,7 +969,7 @@ function EventDetailScreenInner() {
                 style={[styles.prominentEditBtn, { backgroundColor: colors.primary }]}
                 activeOpacity={0.7}
               >
-                <IconEdit size={18} color="#fff" />
+                <IconEdit size={18} color={colors.onPrimary || '#fff'} />
                 <Text style={styles.prominentEditBtnText}>{t('eventDetail.editEvent')}</Text>
               </TouchableOpacity>
             </View>

@@ -118,7 +118,7 @@ export default function DocumentosViewerScreen() {
             onPress={() => { setError(false); setLoading(true); setReloadKey((k) => k + 1); }}
             style={{ paddingHorizontal: 24, paddingVertical: 10, backgroundColor: colors.primary, borderRadius: BorderRadius.md }}
           >
-            <Text style={{ color: '#fff', fontWeight: '600', fontSize: FontSize.md }}>
+            <Text style={{ color: colors.onPrimary || '#fff', fontWeight: '600', fontSize: FontSize.md }}>
               {t('common.retry') || 'Retry'}
             </Text>
           </TouchableOpacity>

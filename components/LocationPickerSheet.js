@@ -198,7 +198,7 @@ function MapPreviewCard({ lat, lng, accuracy, height, radius = 18, colors, isDar
     <View style={{
       height, borderRadius: radius, overflow: 'hidden', marginBottom: 16,
       borderWidth: 1, borderColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(17,27,33,0.06)',
-      backgroundColor: isDark ? '#101c24' : '#eef6f0',
+      backgroundColor: isDark ? '#1c1c1e' : '#eef6f0',
     }}>
       {/* premium gradient backdrop — always behind the map */}
       <View style={{ position: 'absolute', inset: 0 }}>
@@ -322,7 +322,7 @@ function NativePickerMap({ gps, height, colors, isDark, t, onPick }) {
     <View style={{
       height, borderRadius: 18, overflow: 'hidden', marginBottom: 14,
       borderWidth: 1, borderColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(17,27,33,0.06)',
-      backgroundColor: isDark ? '#101c24' : '#eef6f0',
+      backgroundColor: isDark ? '#1c1c1e' : '#eef6f0',
     }}>
       <ChatyyMap
         style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}

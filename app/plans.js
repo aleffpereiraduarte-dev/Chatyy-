@@ -807,8 +807,8 @@ export default function PlansScreen() {
               color: isDark ? '#e5e7eb' : '#1f2937',
               fontFamily: '"SF Mono", "Fira Code", "Cascadia Code", Menlo, Consolas, monospace',
               letterSpacing: '1px',
-              '::placeholder': { color: isDark ? '#6b7280' : '#9ca3af' },
-              iconColor: isDark ? '#9ca3af' : '#6b7280',
+              '::placeholder': { color: isDark ? '#6C6C70' : '#9ca3af' },
+              iconColor: isDark ? '#A1A1A6' : '#6b7280',
             },
             invalid: { color: '#ef4444', iconColor: '#ef4444' },
           },
@@ -1405,7 +1405,7 @@ export default function PlansScreen() {
     { q: t('plans.faqHowFamily'), a: t('plans.faqHowFamilyAnswer') },
     { q: t('plans.changePlan'), a: t('plans.faqChangePlanAnswer') },
     { q: t('plans.faqCardDeclined'), a: t('plans.faqCardDeclinedAnswer') },
-    { q: t('plans.faqDataSafe'), a: t('plans.faqDataSafeAnswer') },
+    { q: t('plans.faqDataSafe'), a: t('plans.faqDataSafeAnswerV2') },
   ];
 
   const contentWidth = isDesktop ? Math.min(640, width - 80) : width;
@@ -2752,7 +2752,7 @@ export default function PlansScreen() {
                     width: 28, height: 28, borderRadius: 14,
                     backgroundColor: c, alignItems: 'center', justifyContent: 'center',
                     marginLeft: i > 0 ? -8 : 0, borderWidth: 2,
-                    borderColor: isDark ? '#151e2e' : '#fff',
+                    borderColor: isDark ? '#1c1c1e' : '#fff',
                   }}>
                     <IconUsers size={12} color="#fff" />
                   </View>

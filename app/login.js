@@ -1789,7 +1789,7 @@ export default function LoginScreen() {
                 onPress={handleRetryDenied}
                 style={[s.verifyBtnPrimary, { backgroundColor: colors.primary }]}
               >
-                <Text style={[s.verifyBtnPrimaryText, { color: colors.onPrimary }]}>
+                <Text style={[s.verifyBtnPrimaryText, { color: colors.onPrimary || '#fff' }]}>
                   {t('login.verifyTryAgain')}
                 </Text>
               </TouchableOpacity>
@@ -1897,8 +1897,8 @@ export default function LoginScreen() {
         >
           {busy ? (
             <View style={s.loadingBtnContent}>
-              <DotLoader color={colors.onPrimary} />
-              <Text style={[s.igPrimaryBtnText, { marginLeft: 10, color: colors.onPrimary }]}>{label}</Text>
+              <DotLoader color={colors.onPrimary || '#fff'} />
+              <Text style={[s.igPrimaryBtnText, { marginLeft: 10, color: colors.onPrimary || '#fff' }]}>{label}</Text>
             </View>
           ) : (
             <Text style={[s.igPrimaryBtnText, { color: off ? colors.textTertiary : colors.onPrimary }]}>{label}</Text>
@@ -2009,8 +2009,8 @@ export default function LoginScreen() {
         >
           <View style={{ width: 44, height: 44, borderRadius: 22, backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center' }}>
             {bioLoading
-              ? <ActivityIndicator color={colors.onPrimary} size="small" />
-              : <BiometricGlyph kind={bioKind} color={colors.onPrimary} size={22} />}
+              ? <ActivityIndicator color={colors.onPrimary || '#fff'} size="small" />
+              : <BiometricGlyph kind={bioKind} color={colors.onPrimary || '#fff'} size={22} />}
           </View>
           <View style={{ flex: 1, minWidth: 0 }}>
             <Text style={{ fontSize: 16, fontWeight: '700', color: colors.text }}>{t('login.bioContinue', { method: bioMethodLabel })}</Text>
@@ -2119,7 +2119,7 @@ export default function LoginScreen() {
           <AvatarCircle name={displayName || email} email={email} size={72} />
         ) : (
           <View style={{ width: 72, height: 72, borderRadius: 36, backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center' }}>
-            <Text style={{ color: colors.onPrimary, fontSize: 28, fontWeight: '800' }}>{(email || '?')[0].toUpperCase()}</Text>
+            <Text style={{ color: colors.onPrimary || '#fff', fontSize: 28, fontWeight: '800' }}>{(email || '?')[0].toUpperCase()}</Text>
           </View>
         )}
         <Text accessibilityRole="header" style={[s.title, { color: colors.text, marginTop: 14, marginBottom: 6 }]} numberOfLines={1}>
@@ -2413,11 +2413,11 @@ export default function LoginScreen() {
                           >
                             {phoneVerifying ? (
                               <View style={s.loadingBtnContent}>
-                                <DotLoader color={colors.onPrimary} />
-                                <Text style={[s.primaryBtnText, { marginLeft: 10, color: colors.onPrimary }]}>{t('login.phoneVerify')}</Text>
+                                <DotLoader color={colors.onPrimary || '#fff'} />
+                                <Text style={[s.primaryBtnText, { marginLeft: 10, color: colors.onPrimary || '#fff' }]}>{t('login.phoneVerify')}</Text>
                               </View>
                             ) : (
-                              <Text style={[s.primaryBtnText, { color: colors.onPrimary }]}>{phoneRequiresLock ? (t('login.phoneLockPinSubmit') || 'Confirmar PIN') : t('login.phoneVerify')}</Text>
+                              <Text style={[s.primaryBtnText, { color: colors.onPrimary || '#fff' }]}>{phoneRequiresLock ? (t('login.phoneLockPinSubmit') || 'Confirmar PIN') : t('login.phoneVerify')}</Text>
                             )}
                           </TouchableOpacity>
 
@@ -3047,9 +3047,9 @@ export default function LoginScreen() {
                   activeOpacity={0.85}
                 >
                   {qrScanLoading ? (
-                    <ActivityIndicator color={colors.onPrimary} size="small" />
+                    <ActivityIndicator color={colors.onPrimary || '#fff'} size="small" />
                   ) : (
-                    <Text style={[s.primaryBtnText, { color: colors.onPrimary }]}>{t('login.qrScanConfirm')}</Text>
+                    <Text style={[s.primaryBtnText, { color: colors.onPrimary || '#fff' }]}>{t('login.qrScanConfirm')}</Text>
                   )}
                 </TouchableOpacity>
               </View>
@@ -3121,7 +3121,7 @@ export default function LoginScreen() {
               default: { boxShadow: '0 12px 40px -8px rgba(0,0,0,0.35)' },
             }),
           }}>
-            <IconCheck size={64} color={colors.onPrimary} strokeWidth={3.5} />
+            <IconCheck size={64} color={colors.onPrimary || '#fff'} strokeWidth={3.5} />
           </Animated.View>
         </Animated.View>
       ) : null}
@@ -3539,7 +3539,7 @@ function LoginQRScannerView({ onScan, onClose, t, colors, isDark, qrScanToken, s
             disabled={qrScanLoading}
           >
             {qrScanLoading ? (
-              <ActivityIndicator color={colors.onPrimary} size="small" />
+              <ActivityIndicator color={colors.onPrimary || '#fff'} size="small" />
             ) : (
               <Text style={{ color: colors.onPrimary || '#fff', fontWeight: '600' }}>{t('login.qrScanConfirm')}</Text>
             )}
@@ -3574,7 +3574,7 @@ function LoginQRScannerView({ onScan, onClose, t, colors, isDark, qrScanToken, s
           onPress={() => setShowManual(true)}
           style={{ marginTop: 24, padding: 14, backgroundColor: colors.primary, borderRadius: 12, paddingHorizontal: 32 }}
         >
-          <Text style={{ color: '#fff', fontWeight: '600' }}>{t('login.qrManualEntry') || 'Enter code manually'}</Text>
+          <Text style={{ color: colors.onPrimary || '#fff', fontWeight: '600' }}>{t('login.qrManualEntry') || 'Enter code manually'}</Text>
         </TouchableOpacity>
         <TouchableOpacity onPress={onClose} style={{ marginTop: 16, padding: 12 }}>
           <Text style={{ color: '#aaa', fontWeight: '500' }}>{t('common.cancel')}</Text>
@@ -3594,7 +3594,7 @@ function LoginQRScannerView({ onScan, onClose, t, colors, isDark, qrScanToken, s
           onPress={() => setShowManual(true)}
           style={{ marginTop: 24, padding: 14, backgroundColor: colors.primary, borderRadius: 12, paddingHorizontal: 32 }}
         >
-          <Text style={{ color: '#fff', fontWeight: '600' }}>{t('login.qrManualEntry') || 'Enter code manually'}</Text>
+          <Text style={{ color: colors.onPrimary || '#fff', fontWeight: '600' }}>{t('login.qrManualEntry') || 'Enter code manually'}</Text>
         </TouchableOpacity>
         <TouchableOpacity onPress={onClose} style={{ marginTop: 16, padding: 12 }}>
           <Text style={{ color: '#aaa', fontWeight: '500' }}>{t('common.cancel')}</Text>

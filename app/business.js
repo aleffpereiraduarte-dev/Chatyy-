@@ -289,7 +289,7 @@ function ProfileTab({ colors, isDark, user }) {
           </View>
 
           {!profile?.is_verified && (
-            <View style={[styles.verifyBanner, { backgroundColor: isDark ? '#1e293b' : '#f0f9ff', borderColor: '#bae6fd' }]}>
+            <View style={[styles.verifyBanner, { backgroundColor: isDark ? '#1c1c1e' : '#f0f9ff', borderColor: '#bae6fd' }]}>
               <IconVerified size={16} color={VERIFIED_COLOR} />
               <Text style={[styles.verifyText, { color: isDark ? '#7dd3fc' : '#0369a1' }]}>
                 Verifique sua conta para obter o selo de negócio verificado

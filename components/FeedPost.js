@@ -1950,10 +1950,10 @@ function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated
         <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' }} onPress={() => setAnalyticsOpen(false)}>
           <Pressable
             onPress={(e) => e.stopPropagation?.()}
-            style={{ backgroundColor: isDark ? '#0f172a' : '#fff', borderTopLeftRadius: 18, borderTopRightRadius: 18, paddingTop: 12, paddingBottom: 24, maxHeight: '80%' }}
+            style={{ backgroundColor: isDark ? '#0b0b0b' : '#fff', borderTopLeftRadius: 18, borderTopRightRadius: 18, paddingTop: 12, paddingBottom: 24, maxHeight: '80%' }}
           >
             <View style={{ alignItems: 'center', marginBottom: 10 }}>
-              <View style={{ width: 36, height: 4, borderRadius: 2, backgroundColor: isDark ? '#334155' : '#e5e7eb' }} />
+              <View style={{ width: 36, height: 4, borderRadius: 2, backgroundColor: isDark ? '#2c2c2e' : '#e5e7eb' }} />
             </View>
             <Text style={{ fontSize: 17, fontWeight: '700', textAlign: 'center', color: colors.text, marginBottom: 16 }}>
               {t('feed.analytics') || 'Análises do post'}
@@ -1972,7 +1972,7 @@ function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated
                     { k: 'shares',      label: t('feed.shares') || 'Shares' },
                     { k: 'saves',       label: t('feed.saves') || 'Saves' },
                   ].map(({ k, label }) => (
-                    <View key={k} style={{ width: '47%', backgroundColor: isDark ? '#1e293b' : '#f8fafc', borderRadius: 12, padding: 12 }}>
+                    <View key={k} style={{ width: '47%', backgroundColor: isDark ? '#1c1c1e' : '#f8fafc', borderRadius: 12, padding: 12 }}>
                       <Text style={{ color: colors.textSecondary, fontSize: 11, fontWeight: '700', textTransform: 'uppercase' }}>{label}</Text>
                       <Text style={{ color: colors.text, fontSize: 22, fontWeight: '800', marginTop: 4 }}>
                         {Number(analyticsData[k] || 0).toLocaleString()}
@@ -1982,7 +1982,7 @@ function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated
                 </View>
                 {/* 7-day SVG chart */}
                 {Array.isArray(analyticsData.series) && analyticsData.series.length > 0 ? (
-                  <View style={{ backgroundColor: isDark ? '#1e293b' : '#f8fafc', borderRadius: 12, padding: 14, marginBottom: 16 }}>
+                  <View style={{ backgroundColor: isDark ? '#1c1c1e' : '#f8fafc', borderRadius: 12, padding: 14, marginBottom: 16 }}>
                     <Text style={{ color: colors.textSecondary, fontSize: 11, fontWeight: '700', textTransform: 'uppercase', marginBottom: 8 }}>
                       {t('feed.last7Days') || 'Últimos 7 dias'}
                     </Text>
@@ -2005,7 +2005,7 @@ function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated
                 ) : null}
                 {/* Audience breakdown */}
                 {Array.isArray(analyticsData.audience) && analyticsData.audience.length > 0 ? (
-                  <View style={{ backgroundColor: isDark ? '#1e293b' : '#f8fafc', borderRadius: 12, padding: 14 }}>
+                  <View style={{ backgroundColor: isDark ? '#1c1c1e' : '#f8fafc', borderRadius: 12, padding: 14 }}>
                     <Text style={{ color: colors.textSecondary, fontSize: 11, fontWeight: '700', textTransform: 'uppercase', marginBottom: 6 }}>
                       {t('feed.audience') || 'Audiência'}
                     </Text>
@@ -2110,7 +2110,7 @@ function PromotePostModal({ visible, onClose, post, onPromoted, colors, isDark, 
         <Pressable
           onPress={(e) => e.stopPropagation && e.stopPropagation()}
           style={{
-            backgroundColor: isDark ? '#0F172A' : '#fff',
+            backgroundColor: isDark ? '#0b0b0b' : '#fff',
             borderTopLeftRadius: 18, borderTopRightRadius: 18,
             paddingHorizontal: 18, paddingTop: 14, paddingBottom: 28,
           }}

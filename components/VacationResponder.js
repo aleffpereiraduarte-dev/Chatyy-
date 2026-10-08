@@ -204,7 +204,7 @@ export default function VacationResponder({ visible, onClose }) {
                 disabled={saving}
               >
                 {saving ? (
-                  <ActivityIndicator size="small" color="#fff" />
+                  <ActivityIndicator size="small" color={colors.onPrimary || '#fff'} />
                 ) : (
                   <Text style={s.saveBtnText}>{t('settings.save')}</Text>
                 )}
