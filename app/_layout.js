@@ -1846,7 +1846,7 @@ export default function RootLayout() {
                   <Stack.Screen name="email-outbox" options={{ headerShown: false, presentation: 'card', animation: _PUSH }} />
                   <Stack.Screen name="email-import" options={{ presentation: 'card', animation: _PUSH }} />
                   <Stack.Screen name="pgp-keys" options={{ presentation: 'card', animation: _PUSH }} />
-                  <Stack.Screen name="tasks" options={{ presentation: 'card', animation: _PUSH }} />
+                  <Stack.Screen name="tasks" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR }} />{/* [2026-10-08 settings-redesign] header nativo (título grande) */}
                   <Stack.Screen name="notification-preferences" options={{ presentation: 'card', animation: _PUSH }} />
                   <Stack.Screen name="spotlight" options={{ presentation: 'card', animation: _navAnim('slide_from_bottom') }} />
                   <Stack.Screen name="bots" options={{ presentation: 'card', animation: _PUSH }} />

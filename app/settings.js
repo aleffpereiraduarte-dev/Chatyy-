@@ -13,6 +13,9 @@ import AccountSwitcherSheet from '../components/AccountSwitcherSheet';
 import FadeSlideIn from '../components/FadeSlideIn';
 import PressableScale from '../components/PressableScale';
 import PressableRow from '../components/PressableRow'; // [2026-10-07 app-feel-ui] native cell feedback
+// [2026-10-08 settings-redesign] grouped inset lists (iOS/WhatsApp Settings)
+import { SettingsGroup, SettingsRow, SettingsSwitchRow, SettingsPickerRow, SettingsCardContent, SettingsIconTile, useGroupedColors } from '../components/settings/SettingsKit';
+import SettingsSegmented from '../components/SettingsSegmented';
 import { useRouter, useLocalSearchParams, useFocusEffect, Stack } from 'expo-router';
 import { USE_NATIVE_HEADER, nativeHeaderOptions, HeaderBackButton, useBlurHeaderInset } from '../components/nativeHeader'; // [2026-10-07 app-feel-nav] · blur [2026-10-07 native-ui-build]
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -26,7 +29,7 @@ import {
   IconFilter, IconChevronRight, IconGlobe, IconTrash, IconBell, IconForward,
   IconShield, IconFileText, IconUser, IconUsers, IconPlus, IconShare, IconCheck,
   IconMail, IconPhone, IconAlertTriangle, IconCopy, IconDatabase, IconRefresh,
-  IconX, IconChevronDown, IconBrush, IconHelpCircle,
+  IconX, IconChevronDown, IconBrush, IconHelpCircle, IconSearch, IconDownload,
 } from '../components/Icons';
 import Svg, { Defs, LinearGradient as SvgLinearGradient, Stop, Rect as SvgRect, Circle as SvgCircle } from 'react-native-svg';
 import { useBiometric } from '../context/BiometricContext';
@@ -176,101 +179,59 @@ const HistoryDownloadRow = memo(function HistoryDownloadRow() {
   const autoSyncing = autoSync?.phase === 'syncing' && (autoSync?.total || 0) > 0;
   const allSynced = mediaPending === 0 && !autoSyncing;
 
+  // [2026-10-08 settings-redesign] grouped list (was ad-hoc rows inside the storage card)
+  const syncValue = autoSyncing
+    ? `${(autoSync?.loaded || 0).toLocaleString()}/${(autoSync?.total || 0).toLocaleString()}`
+    : allSynced
+      ? (t('settings.storage.allSynced') || 'Sincronizado')
+      : `${mediaPending.toLocaleString()} ${t('settings.storage.pending') || 'pendentes'}`;
   return (
-    <View style={{ marginTop: Spacing.sm }}>
-      <View style={[s.settingRow, { borderBottomColor: colors.borderLight, borderBottomWidth: StyleSheet.hairlineWidth, paddingVertical: Spacing.sm }]}>
-        <View style={s.settingInfo}>
-          <Text style={[s.settingLabel, { color: colors.text }]}>
-            {t('settings.storage.msgsOnDevice') || 'Mensagens no celular'}
-          </Text>
-        </View>
-        <Text style={[s.settingLabel, { color: colors.textSecondary, fontVariant: ['tabular-nums'] }]}>
-          {msgsTotal.toLocaleString()}
-        </Text>
-      </View>
-      {/* [#1247] WhatsApp-grade auto-sync status row. Replaces the old
-          "Mídias faltantes: 47" warning (which scared users) with a tri-state
-          indicator the background loop drives:
-            - syncing → "<spinner> 12/47" (live)
-            - pending → "47 pendentes" (idle — cellular-gated or paused)
-            - synced  → "✓ Sincronizado" (everything on disk)
-          Updates live via WS event 'media_auto_sync_progress'. */}
-      <View style={[s.settingRow, { borderBottomColor: colors.borderLight, borderBottomWidth: 0, paddingVertical: Spacing.sm }]}>
-        <View style={s.settingInfo}>
-          <Text style={[s.settingLabel, { color: colors.text }]}>
-            {t('settings.storage.mediaSyncStatus') || 'Mídias'}
-          </Text>
-        </View>
-        {autoSyncing ? (
+    <SettingsGroup header={t('settings.rd.history') || 'Histórico'}>
+      <SettingsRow
+        title={t('settings.storage.msgsOnDevice') || 'Mensagens no celular'}
+        value={msgsTotal.toLocaleString()}
+      />
+      <SettingsRow
+        title={t('settings.storage.mediaSyncStatus') || 'Mídias'}
+        right={autoSyncing ? (
           <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-            <ActivityIndicator size="small" color={colors.primary} style={{ marginRight: 6 }} />
-            <Text style={[s.settingLabel, { color: colors.primary, fontVariant: ['tabular-nums'] }]}>
-              {`${(autoSync?.loaded || 0).toLocaleString()}/${(autoSync?.total || 0).toLocaleString()}`}
-            </Text>
+            <ActivityIndicator size="small" color={colors.text} style={{ marginRight: 6 }} />
+            <Text style={{ fontSize: 16, color: colors.textSecondary, fontVariant: ['tabular-nums'] }}>{syncValue}</Text>
           </View>
         ) : allSynced ? (
           <View style={{ flexDirection: 'row', alignItems: 'center' }}>
             <IconCheck size={16} color={colors.success || '#10b981'} style={{ marginRight: 4 }} />
-            <Text style={[s.settingLabel, { color: colors.success || '#10b981' }]}>
-              {t('settings.storage.allSynced') || 'Sincronizado'}
-            </Text>
+            <Text style={{ fontSize: 16, color: colors.textSecondary }}>{syncValue}</Text>
           </View>
         ) : (
-          <Text style={[s.settingLabel, { color: colors.textSecondary, fontVariant: ['tabular-nums'] }]}>
-            {`${mediaPending.toLocaleString()} ${t('settings.storage.pending') || 'pendentes'}`}
-          </Text>
+          <Text style={{ fontSize: 16, color: colors.textSecondary, fontVariant: ['tabular-nums'] }}>{syncValue}</Text>
         )}
-      </View>
-
-      <PressableRow
+      />
+      <SettingsRow
+        title={busyHistory
+          ? (historyProgress && historyProgress.convTotal
+              ? `${t('settings.storage.downloadingMsgs') || 'Baixando histórico…'} ${historyProgress.convDone}/${historyProgress.convTotal}`
+              : (t('settings.storage.downloadingMsgs') || 'Baixando histórico…'))
+          : (t('settings.storage.downloadAll') || 'Baixar histórico completo')}
         onPress={onDownloadAll}
         disabled={busyHistory}
-        style={[s.settingRow, { borderBottomColor: colors.borderLight, borderBottomWidth: 0, marginTop: Spacing.sm, opacity: busyHistory ? 0.5 : 1 }]}
-        accessibilityRole="button"
+        chevron={false}
+        right={busyHistory ? <ActivityIndicator size="small" color={colors.text} /> : <IconDownload size={18} color={colors.textTertiary} />}
         accessibilityLabel={t('settings.storage.downloadAll')}
-      >
-        <View style={s.settingInfo}>
-          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-            {busyHistory
-              ? <ActivityIndicator size="small" color={colors.primary} style={{ marginRight: Spacing.sm }} />
-              : <IconRefresh size={18} color={colors.primary} style={{ marginRight: Spacing.sm }} />}
-            <Text style={[s.settingLabel, { color: colors.primary, fontWeight: '600' }]}>
-              {busyHistory
-                ? (historyProgress && historyProgress.convTotal
-                    ? `${t('settings.storage.downloadingMsgs') || 'Baixando histórico…'} ${historyProgress.convDone}/${historyProgress.convTotal}`
-                    : (t('settings.storage.downloadingMsgs') || 'Baixando histórico…'))
-                : (t('settings.storage.downloadAll') || 'Baixar histórico completo')}
-            </Text>
-          </View>
-        </View>
-      </PressableRow>
-
-      {/* [#1247] "Sincronizar agora" — manual nudge for users who want it
-          forced past any cellular gate (e.g. about to leave wifi). Always
-          enabled so they can re-verify even when allSynced. */}
-      <PressableRow
+      />
+      <SettingsRow
+        title={busyMedia
+          ? (mediaProgress && mediaProgress.total
+              ? `${t('settings.storage.downloadingMedia') || 'Baixando mídias…'} ${mediaProgress.loaded}/${mediaProgress.total} (${mediaProgress.percent || 0}%)`
+              : (t('settings.storage.downloadingMedia') || 'Baixando mídias…'))
+          : (t('settings.storage.syncNow') || 'Sincronizar agora')}
         onPress={onDownloadMissing}
         disabled={busyMedia}
-        style={[s.settingRow, { borderBottomColor: colors.borderLight, borderBottomWidth: 0, paddingTop: 0, opacity: busyMedia ? 0.5 : 1 }]}
-        accessibilityRole="button"
+        chevron={false}
+        right={busyMedia ? <ActivityIndicator size="small" color={colors.text} /> : <IconRefresh size={18} color={colors.textTertiary} />}
         accessibilityLabel={t('settings.storage.syncNow') || t('settings.storage.downloadMedia')}
-      >
-        <View style={s.settingInfo}>
-          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-            {busyMedia
-              ? <ActivityIndicator size="small" color={colors.textSecondary} style={{ marginRight: Spacing.sm }} />
-              : <IconRefresh size={18} color={colors.textSecondary} style={{ marginRight: Spacing.sm }} />}
-            <Text style={[s.settingLabel, { color: colors.textSecondary }]}>
-              {busyMedia
-                ? (mediaProgress && mediaProgress.total
-                    ? `${t('settings.storage.downloadingMedia') || 'Baixando mídias…'} ${mediaProgress.loaded}/${mediaProgress.total} (${mediaProgress.percent || 0}%)`
-                    : (t('settings.storage.downloadingMedia') || 'Baixando mídias…'))
-                : (t('settings.storage.syncNow') || 'Sincronizar agora')}
-            </Text>
-          </View>
-        </View>
-      </PressableRow>
-    </View>
+      />
+    </SettingsGroup>
   );
 });
 
@@ -278,10 +239,14 @@ const HistoryDownloadRow = memo(function HistoryDownloadRow() {
 // useState. When `forceOpen` is true (search query active) it ignores the
 // collapsed state so search results stay visible. SVG chevron rotates via a
 // simple conditional (no Animated dep — keeps the in-file component light).
-function CollapsibleGroup({ title, icon: Icon, defaultOpen = false, forceOpen = false, children }) {
+function CollapsibleGroup({ title, icon: Icon, defaultOpen = false, forceOpen = false, hideHeader = false, children }) {
   const { colors } = useTheme();
   const [open, setOpen] = useState(defaultOpen);
   const visible = forceOpen || open;
+  // [2026-10-08 settings-redesign] Inside a category sub-page the native
+  // header already carries the title — a second collapsible "Email ⌄"
+  // header duplicated it. Only search results keep the group header.
+  if (hideHeader) return <View>{children}</View>;
   return (
     <View style={{ marginBottom: Spacing.md }}>
       <TouchableOpacity
@@ -311,6 +276,7 @@ function CollapsibleGroup({ title, icon: Icon, defaultOpen = false, forceOpen = 
 
 function SettingsScreenInner() {
   const { colors, isDark, toggle, density, setDensity, themeMode, setThemeMode: setThemeModeCtx } = useTheme();
+  const gc = useGroupedColors(); // [2026-10-08 settings-redesign]
   const { t, language, changeLanguage } = useLanguage();
   const { currency: userCurrency, setCurrency: setUserCurrency, resetCurrency: resetUserCurrency, autoDetected: currencyAutoDetected, supported: supportedCurrencies, symbols: currencySymbols } = useCurrency();
   const { biometricEnabled, biometricAvailable, toggleBiometric, autoLockInterval, setAutoLockInterval } = useBiometric();
@@ -334,7 +300,7 @@ function SettingsScreenInner() {
   const params = useLocalSearchParams();
   const insets = useSafeAreaInsets();
   // [2026-10-07 native-ui-build] iOS: header de vidro (transparente+blur) → conteúdo começa abaixo dele via padding.
-  const blurTop = useBlurHeaderInset(USE_NATIVE_HEADER);
+  const blurTopRaw = useBlurHeaderInset(USE_NATIVE_HEADER); // [2026-10-08 settings-redesign] só sub-páginas usam vidro
   // Responsividade: em tablet/desktop/web centraliza a coluna de settings numa
   // largura confortável (contentMaxWidth) em vez de esticar de ponta a ponta.
   const { contentMaxWidth } = useResponsive();
@@ -346,7 +312,7 @@ function SettingsScreenInner() {
   // so we get an absolute offset. Runs once the node is mounted *and* the
   // requested section matches.
   const scrollRef = useRef(null);
-  const blurTopRef = useRef(0); blurTopRef.current = blurTop; // [2026-10-07 native-ui-build] anchor scroll desconta o header de vidro
+  const blurTopRef = useRef(0); // [2026-10-07 native-ui-build] anchor scroll desconta o header de vidro
   const sectionRefs = useRef({});
   const requestedSection = typeof params?.section === 'string' ? params.section : null;
   const registerSectionRef = useCallback((key) => (node) => {
@@ -518,6 +484,9 @@ function SettingsScreenInner() {
   // Category navigation (WhatsApp/iOS style). null = show the category LIST
   // (home). A value = show only the sections that belong to that category.
   const [activeCategory, setActiveCategory] = useState(null);
+  // [2026-10-08 settings-redesign] Raiz = header opaco c/ busca nativa (sem inset); sub-páginas = vidro.
+  const blurTop = activeCategory !== null ? blurTopRaw : 0;
+  blurTopRef.current = blurTop;
   // Collect every label string we know about (gathered DURING render via
   // sectionMatches calls below) so the next render can show a flat
   // "results" strip at the top of the scroll. We use useRef to span
@@ -1335,30 +1304,64 @@ function SettingsScreenInner() {
   ];
   const activeCategoryTitle = (categoryList.find(c => c.key === activeCategory) || {}).title || t('settings.title');
 
+  // [2026-10-08 settings-redesign] Root groups (iOS Settings layout): the
+  // profile card on top, then the categories split into three inset groups.
+  const categoryGroups = [
+    ['account', 'privacy', 'notifications', 'appearance'],
+    ['chat', 'email', 'storage_data'],
+    ['bia', 'help'],
+  ].map(keys => keys.map(k => categoryList.find(c => c.key === k)).filter(Boolean));
+  const displayName = (user?.name || user?.display_name || '').trim()
+    || (user?.email ? user.email.split('@')[0] : '');
+  const openCategory = (key) => {
+    setActiveCategory(key);
+    try { scrollRef.current?.scrollTo?.({ y: 0, animated: false }); } catch {}
+  };
+  const currencyName = (code) => {
+    const k = 'settings.currency.' + code;
+    const v = t(k);
+    return v && v !== k ? v : code;
+  };
+  const LANG_OPTIONS = [
+    { value: 'pt-BR', label: 'Português (Brasil)' },
+    { value: 'en', label: 'English' },
+    { value: 'es', label: 'Español' },
+  ];
+
   return (
-    <View style={[s.container, { backgroundColor: colors.background, paddingTop: USE_NATIVE_HEADER ? 0 : insets.top }]}>
+    <View style={[s.container, { backgroundColor: gc.pageBg, paddingTop: USE_NATIVE_HEADER ? 0 : insets.top }]}>
       {/* [2026-10-07 app-feel-nav] Nativo: UINavigationBar/Toolbar do
-          react-native-screens (título anima com o push, chevron do sistema).
-          Dentro de uma categoria o back volta p/ a LISTA (headerLeft custom) e
-          o swipe-back fica desligado p/ não sair da tela inteira sem querer
-          (Android: BackHandler acima já faz o mesmo). Web: header antigo. */}
+          react-native-screens. Dentro de uma categoria o back volta p/ a
+          LISTA (headerLeft custom) e o swipe-back fica desligado.
+          [2026-10-08 settings-redesign] A busca vive SÓ na raiz, como barra
+          de busca NATIVA do header (UISearchController / SearchView) — header
+          opaco na raiz (o conteúdo começa abaixo da barra sem cálculo de
+          inset); vidro (blur) só nas sub-páginas. Web: header antigo. */}
       {USE_NATIVE_HEADER ? (
         <Stack.Screen options={nativeHeaderOptions({
           colors,
           isDark,
-          blur: true, // [2026-10-07 native-ui-build] iOS: vidro do sistema; Android sólido
+          blur: activeCategory !== null, // [2026-10-07 native-ui-build] iOS: vidro do sistema; Android sólido
           title: activeCategory !== null ? activeCategoryTitle : (t('settings.title') || 'Configurações'),
           gestureEnabled: activeCategory === null,
+          contentStyle: { backgroundColor: gc.pageBg },
           ...(activeCategory !== null ? {
             headerLeft: () => <HeaderBackButton onPress={handleBack} color={colors.text} accessibilityLabel={t('common.back') || 'Voltar'} />,
-          } : {}),
+          } : {
+            search: {
+              placeholder: t('settings.searchPlaceholder') || 'Buscar configuração...',
+              onChangeText: (e) => setSearchQuery(e?.nativeEvent?.text ?? ''),
+              onCancelButtonPress: () => setSearchQuery(''),
+              onClose: () => setSearchQuery(''),
+            },
+          }),
         })} />
       ) : (
-      <View style={[s.header, { backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
+      <View style={[s.header, { backgroundColor: gc.pageBg, borderBottomColor: colors.border }]}>
         <TouchableOpacity onPress={handleBack} style={s.backBtn} accessibilityLabel={t('common.back') || 'Voltar'} accessibilityRole="button">
-          <IconArrowLeft size={24} color={colors.textSecondary} />
+          <IconArrowLeft size={24} color={colors.text} />
         </TouchableOpacity>
-        <Text style={[s.headerTitle, { color: colors.text }]} numberOfLines={1}>{activeCategory !== null ? activeCategoryTitle : t('settings.title')}</Text>
+        <Text style={[s.headerTitle, { color: colors.text }]} numberOfLines={1} accessibilityRole="header">{activeCategory !== null ? activeCategoryTitle : t('settings.title')}</Text>
         {/* Save button removed — settings now persist automatically (see the
             auto-save effect). Spacer keeps the title centered. */}
         <View style={s.backBtn} />
@@ -1369,679 +1372,393 @@ function SettingsScreenInner() {
         <View style={{ flex: 1, paddingTop: blurTop }}><SettingsSkeleton sections={4} rows={3} /></View>
       ) : (
       <FadeSlideIn>
-      <ScrollView ref={scrollRef} keyboardShouldPersistTaps="handled" keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'} scrollIndicatorInsets={blurTop ? { top: blurTop } : undefined} contentContainerStyle={[s.scroll, { paddingBottom: 80 + insets.bottom, maxWidth: contentMaxWidth, width: '100%', alignSelf: 'center' }, blurTop ? { paddingTop: blurTop + Spacing.md } : null]}>
-        {/* Search bar — filtra sections em tempo real por título/label.
-            Empty query mostra tudo; clear (✕) reseta. Sticky-ish topo da
-            scroll, não é absolute pra não brigar com keyboard. */}
-        <View style={{
-          flexDirection: 'row', alignItems: 'center',
-          backgroundColor: colors.surface,
-          borderColor: colors.borderLight, borderWidth: 1,
-          borderRadius: BorderRadius.xl, paddingHorizontal: 12, paddingVertical: 4,
-          marginBottom: Spacing.lg,
-        }}>
-          <TextInput
-            value={searchQuery}
-            onChangeText={setSearchQuery}
-            placeholder={t('settings.searchPlaceholder') || 'Buscar configuração...'}
-            placeholderTextColor={colors.textTertiary}
-            style={{
-              flex: 1, color: colors.text, fontSize: FontSize.base,
-              paddingVertical: 8, paddingHorizontal: 4,
-              ...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {}),
-            }}
-            autoCorrect={false}
-            autoCapitalize="none"
-            accessibilityLabel={t('settings.searchPlaceholder') || 'Buscar configuração'}
-          />
-          {!!searchQuery && (
-            <TouchableOpacity
-              onPress={() => setSearchQuery('')}
-              style={{ padding: 6, borderRadius: 12 }}
-              accessibilityLabel={t('common.clear') || 'Limpar'}
-              accessibilityRole="button"
-            >
-              <IconX size={16} color={colors.textTertiary} />
-            </TouchableOpacity>
-          )}
-        </View>
-
-        {/* Flat matches strip — when user is searching, surface matched
-            section labels as pill chips in primary color. Sits above the
-            (already-filtered) section bodies so the user gets an overview
-            of where matches live without scrolling through every card.
-            Read-only summary; tapping a pill is a no-op (sections render
-            inline below) — keeps the impl edit-only without rewiring
-            scroll-to-section logic. The catalog of labels is gathered
-            cumulatively as sectionMatches is called, so the strip needs
-            one render to "warm up" — invisible because RN batches. */}
-        {!!_q && _matchedLabels.length > 0 && (
-          <View style={{
-            flexDirection: 'row', flexWrap: 'wrap', gap: 6,
-            marginBottom: Spacing.lg,
-            paddingHorizontal: 4,
-          }}>
-            <Text style={{ color: colors.textTertiary, fontSize: 12, fontWeight: '600', width: '100%', marginBottom: 4 }}>
-              {(t('settings.matchesFound') || 'Resultados') + ` (${_matchedLabels.length})`}
-            </Text>
-            {_matchedLabels.map((lbl, i) => (
-              <View key={`${lbl}-${i}`} style={{
-                backgroundColor: colors.primary + '14',
-                borderColor: colors.primary + '40', borderWidth: 1,
-                borderRadius: 14,
-                paddingHorizontal: 10, paddingVertical: 4,
-              }}>
-                <Text style={{ color: colors.primary, fontSize: 12, fontWeight: '700' }} numberOfLines={1}>
-                  {String(lbl)}
-                </Text>
-              </View>
-            ))}
+      <ScrollView ref={scrollRef} keyboardShouldPersistTaps="handled" keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'} scrollIndicatorInsets={blurTop ? { top: blurTop } : undefined} contentContainerStyle={[s.scroll, { paddingBottom: 80 + insets.bottom, maxWidth: contentMaxWidth, width: '100%', alignSelf: 'center' }, blurTop ? { paddingTop: blurTop + Spacing.lg } : null]}>
+        {/* Web: busca inline (estilo barra de busca iOS) — SÓ na raiz. No
+            nativo a busca é a barra do header (acima). */}
+        {!USE_NATIVE_HEADER && activeCategory === null && (
+          <View style={[s.searchBar, { backgroundColor: gc.fill }]}>
+            <IconSearch size={17} color={gc.secondary} />
+            <TextInput
+              value={searchQuery}
+              onChangeText={setSearchQuery}
+              placeholder={t('settings.searchPlaceholder') || 'Buscar configuração...'}
+              placeholderTextColor={gc.secondary}
+              style={[s.searchInput, { color: colors.text }]}
+              autoCorrect={false}
+              autoCapitalize="none"
+              returnKeyType="search"
+              accessibilityLabel={t('settings.searchPlaceholder') || 'Buscar configuração'}
+            />
+            {!!searchQuery && (
+              <TouchableOpacity
+                onPress={() => setSearchQuery('')}
+                style={{ padding: 4 }}
+                accessibilityLabel={t('common.clear') || 'Limpar'}
+                accessibilityRole="button"
+              >
+                <IconX size={15} color={gc.secondary} />
+              </TouchableOpacity>
+            )}
           </View>
         )}
+
+        {/* Search summary — one quiet line instead of a chip cloud. */}
+        {!!_q && _matchedLabels.length > 0 && (
+          <Text style={[s.searchSummary, { color: gc.header }]} numberOfLines={2}>
+            {(t('settings.matchesFound') || 'Resultados') + ` (${_matchedLabels.length})`}
+          </Text>
+        )}
         {!!_q && _matchedLabels.length === 0 && _allLabelsRef.current.length > 0 && (
-          <View style={{ paddingVertical: 24, alignItems: 'center' }}>
-            <Text style={{ color: colors.textTertiary, fontSize: 13 }}>
+          <View style={{ paddingVertical: 32, alignItems: 'center' }}>
+            <IconSearch size={28} color={gc.tertiary} />
+            <Text style={{ color: gc.secondary, fontSize: 15, marginTop: 10 }}>
               {t('settings.noMatches') || 'Nenhum resultado'}
             </Text>
           </View>
         )}
 
-        {/* ── Category home list. Shown only when no category is selected and
-            the user isn't searching. Tapping a row opens that category's
-            sub-page (sets activeCategory); the section gates below then
-            reveal only that category's blocks. ── */}
+        {/* ── Category home list (iOS Settings): profile card + inset groups.
+            Tapping a row opens that category's sub-page (sets
+            activeCategory); the section gates below reveal its blocks. ── */}
         {activeCategory === null && !searching && (
           <View>
-            {categoryList.map((cat) => {
-              const CatIcon = cat.Icon;
-              return (
-                <PressableScale
-                  key={cat.key}
-                  onPress={() => { setActiveCategory(cat.key); try { scrollRef.current?.scrollTo?.({ y: 0, animated: false }); } catch {} }}
-                  accessibilityRole="button"
-                  accessibilityLabel={cat.title}
-                  style={[s.settingRow, {
-                    backgroundColor: colors.surface,
-                    borderColor: colors.borderLight,
-                    borderWidth: 1,
-                    borderRadius: BorderRadius.xl,
-                    paddingVertical: 10,
-                    paddingHorizontal: 12,
-                    marginBottom: 7,
-                  }]}
-                >
-                  <View style={{
-                    width: 32, height: 32, borderRadius: 16,
-                    backgroundColor: colors.primary + '18',
-                    alignItems: 'center', justifyContent: 'center',
-                    marginRight: 11,
-                  }}>
-                    <CatIcon size={18} color={colors.primary} />
+            <SettingsGroup>
+              <PressableRow
+                onPress={() => openCategory('account')}
+                accessibilityRole="button"
+                accessibilityLabel={`${displayName || ''} ${user?.email || ''}`.trim()}
+              >
+                <View style={s.profileCardRow}>
+                  <AvatarCircle key={avatarKey} email={user?.email} name={displayName || user?.email} size={58} />
+                  <View style={{ flex: 1, minWidth: 0, marginLeft: 14 }}>
+                    <Text style={[s.profileCardName, { color: colors.text }]} numberOfLines={1}>{displayName}</Text>
+                    <Text style={[s.profileCardEmail, { color: gc.secondary }]} numberOfLines={1}>{user?.email}</Text>
                   </View>
-                  <View style={{ flex: 1 }}>
-                    <Text style={[s.settingLabel, { color: colors.text, fontWeight: '700' }]}>{cat.title}</Text>
-                    <Text style={[s.settingDesc, { color: colors.textTertiary }]} numberOfLines={1}>{cat.sub}</Text>
-                  </View>
-                  <IconChevronRight size={20} color={colors.textTertiary} />
-                </PressableScale>
-              );
-            })}
-          </View>
-        )}
-
-        {/* Profile Photo — wrap avatar in a subtle brand-color ring so the
-            account header reads as the "you" anchor on the settings screen
-            (matches the /u/[username] header treatment). */}
-        {(searching || activeCategory === 'account') && sectionMatches(t('settings.profile') || 'profile', user?.email) && (
-        <View style={[s.section, s.profileSection, { backgroundColor: colors.surface, borderColor: colors.borderLight, borderWidth: 1 }]}>
-          <View style={{
-            padding: 3, borderRadius: 50, borderWidth: 2, borderColor: colors.primary + '55',
-            ...(Platform.OS === 'web' ? { boxShadow: `0 0 0 4px ${colors.primary}10` } : {}),
-          }}>
-            <AvatarCircle key={avatarKey} email={user?.email} name={user?.email} size={80} />
-          </View>
-          <Text style={[s.profileEmail, { color: colors.text }]}>{user?.email}</Text>
-          <TouchableOpacity
-            style={[s.changePhotoBtn, { borderColor: colors.primary }]}
-            onPress={handleChangePhoto}
-            activeOpacity={0.7}
-            accessibilityRole="button"
-          >
-            <Text style={[s.changePhotoBtnText, { color: colors.primary }]}>{t('settings.changePhoto')}</Text>
-          </TouchableOpacity>
-
-          {/* Multi-account switcher — browser/WhatsApp-style. Opens a sheet
-              listing every signed-in account (active one focused) + add/remove.
-              The engine already exists (AuthContext.switchAccount); this just
-              surfaces it in the main app, not only the email inbox menu. */}
-          <TouchableOpacity
-            style={[s.switchAccountBtn, { backgroundColor: colors.primary + '12', borderColor: colors.primary + '30' }]}
-            onPress={() => setAccountSwitcherOpen(true)}
-            activeOpacity={0.7}
-            accessibilityRole="button"
-          >
-            <View style={s.switchAccountLeft}>
-              <IconUsers size={18} color={colors.primary} />
-              <Text style={[s.switchAccountText, { color: colors.primary }]}>
-                {t('account.switch') || 'Trocar conta'}
-              </Text>
-            </View>
-            <View style={s.switchAccountRight}>
-              {(accounts?.length || 0) > 1 && (
-                <View style={[s.accountCountBadge, { backgroundColor: colors.primary }]}>
-                  <Text style={s.accountCountText}>{accounts.length}</Text>
+                  <IconChevronRight size={17} color={gc.tertiary} />
                 </View>
-              )}
-              <IconChevronRight size={18} color={colors.primary} />
-            </View>
-          </TouchableOpacity>
-        </View>
+              </PressableRow>
+            </SettingsGroup>
+            {categoryGroups.map((grp, gi) => (
+              <SettingsGroup key={gi} inset={58}>
+                {grp.map((cat) => (
+                  <SettingsRow
+                    key={cat.key}
+                    icon={cat.Icon}
+                    title={cat.title}
+                    onPress={() => openCategory(cat.key)}
+                  />
+                ))}
+              </SettingsGroup>
+            ))}
+          </View>
         )}
 
-        {/* Appearance */}
+        {/* ── Conta: cabeçalho limpo (avatar, nome, email) + linhas normais.
+            "Trocar conta" deixou de ser pílula cinza com borda. ── */}
+        {(searching || activeCategory === 'account') && sectionMatches(t('settings.profile') || 'profile', user?.email) && (
+        <SettingsGroup>
+          <View style={s.accountHeader}>
+            <Pressable onPress={handleChangePhoto} accessibilityRole="button" accessibilityLabel={t('settings.changePhoto') || 'Alterar foto'}>
+              <AvatarCircle key={avatarKey} email={user?.email} name={displayName || user?.email} size={84} />
+            </Pressable>
+            {!!displayName && <Text style={[s.accountHeaderName, { color: colors.text }]} numberOfLines={1}>{displayName}</Text>}
+            <Text style={[s.accountHeaderEmail, { color: gc.secondary }]} numberOfLines={1}>{user?.email}</Text>
+          </View>
+          <SettingsRow title={t('settings.changePhoto') || 'Alterar foto'} onPress={handleChangePhoto} />
+          {/* Multi-account switcher — opens the sheet listing every signed-in
+              account (AuthContext.switchAccount). */}
+          <SettingsRow
+            title={t('account.switch') || 'Trocar conta'}
+            value={(accounts?.length || 0) > 1 ? String(accounts.length) : undefined}
+            onPress={() => setAccountSwitcherOpen(true)}
+          />
+        </SettingsGroup>
+        )}
+
+        {/* Aparência — Tema = segmented (3 opções curtas). ThemeContext owns
+            the 3-state mode + persistence (theme_mode). */}
         {(searching || activeCategory === 'appearance') && sectionMatches(t('settings.appearance'), t('settings.theme.light'), t('settings.theme.dark'), t('settings.theme.system')) && (
-        <View style={[s.section, { backgroundColor: colors.surface, borderColor: colors.borderLight, borderWidth: 1 }]}>
-          <Text style={[s.sectionTitle, { color: colors.text }]}>{t('settings.appearance')}</Text>
-
-          {/* Theme tri-state — Light / Dark / System. `system` defers to
-              ThemeContext's auto-detect (we just clear the override so the
-              existing toggle keeps the user's last manual choice without
-              forcing). `light`/`dark` set the toggle directly via isDark
-              comparison. Storage key is `theme_mode` so other surfaces
-              (Profile theme picker, future bootstrap) can read it. */}
-          <View style={[s.settingRowColumn, { borderBottomColor: colors.borderLight }]}>
-            <View style={{ width: '100%' }}>
-              <Text style={[s.settingLabel, { color: colors.text }]}>{t('settings.theme.label') || 'Tema'}</Text>
-              <Text style={[s.settingDesc, { color: colors.textTertiary }]}>
-                {t('settings.darkModeDesc')}
-              </Text>
-            </View>
-            <View style={[s.perPageBtns, { marginTop: 8, flexWrap: 'wrap' }]}>
-              {[
-                { val: 'light',  label: t('settings.theme.light') || 'Claro' },
-                { val: 'dark',   label: t('settings.theme.dark') || 'Escuro' },
-                { val: 'system', label: t('settings.theme.system') || 'Sistema' },
-              ].map(opt => (
-                <TouchableOpacity
-                  key={opt.val}
-                  style={[
-                    s.perPageBtn,
-                    { borderColor: colors.divider },
-                    themeMode === opt.val && { backgroundColor: colors.primary, borderColor: colors.primary },
-                  ]}
-                  onPress={() => {
-                    // ThemeContext owns the 3-state mode + persistence.
-                    setThemeModeCtx(opt.val);
-                  }}
-                >
-                  <Text style={[
-                    s.perPageText, { color: colors.text },
-                    themeMode === opt.val && { color: '#fff' },
-                  ]}>
-                    {opt.label}
-                  </Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-          </View>
-
-          {/* Density */}
-          {false && (
-          <View style={[s.settingRowColumn, { borderBottomColor: colors.borderLight }]}>
-            <View style={{ width: '100%' }}>
-              <Text style={[s.settingLabel, { color: colors.text }]}>{t('settings.density')}</Text>
-              <Text style={[s.settingDesc, { color: colors.textTertiary }]}>
-                {t('settings.densityDesc')}
-              </Text>
-            </View>
-            <View style={[s.perPageBtns, { marginTop: 8, flexWrap: 'wrap' }]}>
-              {[
-                { val: 'compact', label: t('settings.densityCompact') },
-                { val: 'comfortable', label: t('settings.densityComfortable') },
-                { val: 'spacious', label: t('settings.densitySpacious') },
-              ].map(d => (
-                <TouchableOpacity
-                  key={d.val}
-                  style={[
-                    s.perPageBtn,
-                    { borderColor: colors.divider },
-                    density === d.val && { backgroundColor: colors.primary, borderColor: colors.primary },
-                  ]}
-                  onPress={() => setDensity(d.val)}
-                >
-                  <Text style={[
-                    s.perPageText, { color: colors.text },
-                    density === d.val && { color: '#fff' },
-                  ]}>
-                    {d.label}
-                  </Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-          </View>
-          )}
-        </View>
+        <SettingsGroup header={t('settings.theme.label') || 'Tema'} footer={t('settings.rd.themeFooter') || 'Sistema acompanha o modo claro/escuro do aparelho.'}>
+          <SettingsCardContent>
+            <SettingsSegmented
+              colors={colors}
+              isDark={isDark}
+              value={themeMode}
+              onChange={(v) => setThemeModeCtx(v)}
+              options={[
+                { value: 'light',  label: t('settings.theme.light') || 'Claro' },
+                { value: 'dark',   label: t('settings.theme.dark') || 'Escuro' },
+                { value: 'system', label: t('settings.theme.system') || 'Sistema' },
+              ]}
+            />
+          </SettingsCardContent>
+        </SettingsGroup>
         )}
 
-        {/* ── GROUP: Email (Phase-1 collapsible). Wraps the contiguous
-            email-related blocks: Undo Send, Email prefs, Morning Briefing,
-            Signatures, Email tools. forceOpen when searching. ── */}
+        {/* ── GROUP: Email. [2026-10-08 settings-redesign] Inset grouped lists:
+            Envio / Caixa de entrada / Notificações / Assinaturas / Ferramentas.
+            Choices with >3 options open a checkmark sheet (SettingsPickerRow)
+            instead of a chip row. Collapsible header only shows in search. ── */}
         {(searching || activeCategory === 'email') && (
-        <CollapsibleGroup title={t('settings.group.email') || 'Email'} icon={IconMail} forceOpen={!!_q || activeCategory === 'email'}>
+        <CollapsibleGroup title={t('settings.group.email') || 'Email'} icon={IconMail} forceOpen={!!_q || activeCategory === 'email'} hideHeader={activeCategory === 'email' && !searching}>
 
         {/* Undo Send */}
         {sectionMatches(t('settings.undoSend'), t('settings.undoSendDesc')) && (
-        <View style={[s.section, { backgroundColor: colors.surface, borderColor: colors.borderLight, borderWidth: 1 }]}>
-          <Text style={[s.sectionTitle, { color: colors.text }]}>{t('settings.undoSend')}</Text>
-          <Text style={[s.settingDesc, { color: colors.textTertiary, marginBottom: Spacing.md }]}>
-            {t('settings.undoSendDesc')}
-          </Text>
-          <View style={s.perPageBtns}>
-            {[0, 5, 10, 15, 30].map(n => (
-              <TouchableOpacity
-                key={n}
-                style={[
-                  s.perPageBtn,
-                  { borderColor: colors.divider },
-                  undoDelay === n && { backgroundColor: colors.primary, borderColor: colors.primary },
-                ]}
-                onPress={() => { setUndoDelay(n); setStorage('undo_send_delay', String(n)); }}
-              >
-                <Text style={[
-                  s.perPageText, { color: colors.text },
-                  undoDelay === n && { color: '#fff' },
-                ]}>
-                  {n === 0 ? (t('settings.undoSendOff') || 'Desligado') : t('settings.undoSendSeconds', { n })}
-                </Text>
-              </TouchableOpacity>
-            ))}
-          </View>
-        </View>
+        <SettingsGroup header={t('settings.rd.sending') || 'Envio'} footer={t('settings.undoSendDesc')}>
+          <SettingsPickerRow
+            title={t('settings.undoSend')}
+            value={undoDelay}
+            cancelLabel={t('common.cancel') || 'Cancelar'}
+            options={[0, 5, 10, 15, 30].map(n => ({
+              value: n,
+              label: n === 0 ? (t('settings.undoSendOff') || 'Desligado') : t('settings.undoSendSeconds', { n }),
+            }))}
+            onChange={(n) => { setUndoDelay(n); setStorage('undo_send_delay', String(n)); }}
+          />
+        </SettingsGroup>
         )}
 
-        {/* Email */}
-        {sectionMatches(t('settings.email'), t('settings.perPage'), t('settings.notifications'), t('settings.notifSound'), t('settings.notifVibration')) && (
-        <View style={[s.section, { backgroundColor: colors.surface, borderColor: colors.borderLight, borderWidth: 1 }]}>
-          <Text style={[s.sectionTitle, { color: colors.text }]}>{t('settings.email')}</Text>
+        {/* Caixa de entrada */}
+        {sectionMatches(t('settings.email'), t('settings.perPage')) && (
+        <SettingsGroup header={t('settings.rd.inbox') || 'Caixa de entrada'}>
+          <SettingsPickerRow
+            title={t('settings.perPage')}
+            value={settings.emails_per_page}
+            cancelLabel={t('common.cancel') || 'Cancelar'}
+            sheetMessage={t('settings.perPageDesc')}
+            options={[20, 50, 100].map(n => ({ value: n, label: String(n) }))}
+            onChange={(n) => setSettings(prev => ({ ...prev, emails_per_page: n }))}
+          />
+        </SettingsGroup>
+        )}
 
-          <View style={[s.settingRow, { borderBottomColor: colors.borderLight }]}>
-            <View style={s.settingInfo}>
-              <Text style={[s.settingLabel, { color: colors.text }]}>{t('settings.perPage')}</Text>
-              <Text style={[s.settingDesc, { color: colors.textTertiary }]}>
-                {t('settings.perPageDesc')}
-              </Text>
-            </View>
-            <View style={s.perPageBtns}>
-              {[20, 50, 100].map(n => (
-                <TouchableOpacity
-                  key={n}
-                  style={[
-                    s.perPageBtn,
-                    { borderColor: colors.divider },
-                    settings.emails_per_page === n && { backgroundColor: colors.primary, borderColor: colors.primary },
-                  ]}
-                  onPress={() => setSettings(prev => ({ ...prev, emails_per_page: n }))}
-                >
-                  <Text style={[
-                    s.perPageText,
-                    { color: colors.text },
-                    settings.emails_per_page === n && { color: '#fff' },
-                  ]}>
-                    {n}
-                  </Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-          </View>
-
-          <View ref={registerSectionRef('notifications')} style={[s.settingRow, { borderBottomColor: colors.borderLight }]}>
-            <View style={s.settingInfo}>
-              <Text style={[s.settingLabel, { color: colors.text }]}>{t('settings.notifications')}</Text>
-              <Text style={[s.settingDesc, { color: colors.textTertiary }]}>
-                {t('settings.notificationsDesc')}
-              </Text>
-            </View>
-            <NativeSwitch
-              value={settings.notifications}
-              onValueChange={(v) => setSettings(prev => ({ ...prev, notifications: v }))}
-              trackColor={{ false: colors.divider, true: colors.primaryLight }}
-              thumbColor={settings.notifications ? colors.primary : '#fff'}
-            />
-          </View>
-
+        {/* Notificações de email */}
+        {sectionMatches(t('settings.notifications'), t('settings.notifSound'), t('settings.notifVibration'), t('settings.dndTitle') || 'Não perturbe') && (
+        <View ref={registerSectionRef('notifications')}>
+        <SettingsGroup header={t('settings.rd.emailNotifs') || 'Notificações de email'}>
+          <SettingsSwitchRow
+            title={t('settings.notifications')}
+            subtitle={t('settings.notificationsDesc')}
+            value={settings.notifications}
+            onValueChange={(v) => setSettings(prev => ({ ...prev, notifications: v }))}
+          />
           {settings.notifications && (
-            <>
-              {/* [notif-p0p1] Link to dedicated notifications fine-tuning screen
-                  with global mention_only toggle + per-keyword highlights. */}
-              <PressableRow
-                style={[s.settingRow, { borderBottomColor: colors.borderLight, paddingLeft: Spacing.xl }]}
-                onPress={() => router.push('/notification-preferences')}
-                accessibilityRole="button"
-                accessibilityLabel="Preferências avançadas de notificação"
-              >
-                <View style={s.settingInfo}>
-                  <Text style={[s.settingLabel, { color: colors.text }]}>Notificações avançadas</Text>
-                  <Text style={[s.settingDesc, { color: colors.textTertiary }]}>
-                    Só de menções, palavras-chave, soneca...
-                  </Text>
-                </View>
-                <IconChevronRight size={18} color={colors.textTertiary} />
-              </PressableRow>
-
-              <View style={[s.settingRow, { borderBottomColor: colors.borderLight, paddingLeft: Spacing.xl }]}>
-                <View style={s.settingInfo}>
-                  <Text style={[s.settingLabel, { color: colors.text }]}>{t('settings.notifSound')}</Text>
-                  <Text style={[s.settingDesc, { color: colors.textTertiary }]}>
-                    {t('settings.notifSoundDesc')}
-                  </Text>
-                </View>
-                <NativeSwitch
-                  value={settings.notification_sound}
-                  onValueChange={(v) => setSettings(prev => ({ ...prev, notification_sound: v }))}
-                  trackColor={{ false: colors.divider, true: colors.primaryLight }}
-                  thumbColor={settings.notification_sound ? colors.primary : '#fff'}
-                />
-              </View>
-
-              <View style={[s.settingRow, { borderBottomColor: colors.borderLight, paddingLeft: Spacing.xl }]}>
-                <View style={s.settingInfo}>
-                  <Text style={[s.settingLabel, { color: colors.text }]}>{t('settings.notifVibration')}</Text>
-                  <Text style={[s.settingDesc, { color: colors.textTertiary }]}>
-                    {t('settings.notifVibrationDesc')}
-                  </Text>
-                </View>
-                <NativeSwitch
-                  value={settings.notification_vibration}
-                  onValueChange={(v) => setSettings(prev => ({ ...prev, notification_vibration: v }))}
-                  trackColor={{ false: colors.divider, true: colors.primaryLight }}
-                  thumbColor={settings.notification_vibration ? colors.primary : '#fff'}
-                />
-              </View>
-
-              {/* Wave 4 — Do-Not-Disturb schedule. WhatsApp-grade "quiet
-                  hours" toggle plus HH:MM start/end inputs. Backend mutes
-                  ALL chat push fanout when current local time falls in
-                  the window. TextInput avoids extra deps + keeps web +
-                  native parity. Format is HH:MM so the server validator
-                  rejects anything else before it ever touches PG. */}
-              <View style={[s.settingRow, { borderBottomColor: colors.borderLight, paddingLeft: Spacing.xl }]}>
-                <View style={s.settingInfo}>
-                  <Text style={[s.settingLabel, { color: colors.text }]}>
-                    {t('settings.dndTitle') || 'Não perturbe (horário)'}
-                  </Text>
-                  <Text style={[s.settingDesc, { color: colors.textTertiary }]}>
-                    {t('settings.dndDesc') || 'Silencia notificações de chat dentro do horário definido.'}
-                  </Text>
-                </View>
-                <NativeSwitch
-                  value={dnd.enabled}
-                  onValueChange={(v) => saveDnd({ enabled: v })}
-                  trackColor={{ false: colors.divider, true: colors.primaryLight }}
-                  thumbColor={dnd.enabled ? colors.primary : '#fff'}
-                  disabled={dndSaving}
-                />
-              </View>
-              {dnd.enabled && (
-                <View style={{ flexDirection: 'row', gap: 12, paddingHorizontal: Spacing.xl, paddingBottom: Spacing.md }}>
-                  <View style={{ flex: 1 }}>
-                    <Text style={[s.settingDesc, { color: colors.textTertiary, marginBottom: 4 }]}>
-                      {t('settings.dndStart') || 'Início'}
-                    </Text>
-                    <TextInput
-                      value={dnd.start_time}
-                      onChangeText={(v) => setDnd(prev => ({ ...prev, start_time: v }))}
-                      onBlur={() => {
-                        const m = /^([01]\d|2[0-3]):([0-5]\d)$/.exec((dnd.start_time || '').trim());
-                        if (m) saveDnd({ start_time: dnd.start_time.trim() });
-                        else setDnd(prev => ({ ...prev, start_time: '22:00' }));
-                      }}
-                      placeholder="22:00"
-                      placeholderTextColor={colors.textTertiary}
-                      style={{
-                        borderWidth: 1, borderColor: colors.divider, borderRadius: 10,
-                        paddingVertical: 10, paddingHorizontal: 12, color: colors.text,
-                        backgroundColor: colors.surfaceVariant, fontFamily: 'monospace',
-                      }}
-                      keyboardType="numbers-and-punctuation"
-                      maxLength={5}
-                      accessibilityLabel={t('settings.dndStart') || 'Início'}
-                    />
-                  </View>
-                  <View style={{ flex: 1 }}>
-                    <Text style={[s.settingDesc, { color: colors.textTertiary, marginBottom: 4 }]}>
-                      {t('settings.dndEnd') || 'Fim'}
-                    </Text>
-                    <TextInput
-                      value={dnd.end_time}
-                      onChangeText={(v) => setDnd(prev => ({ ...prev, end_time: v }))}
-                      onBlur={() => {
-                        const m = /^([01]\d|2[0-3]):([0-5]\d)$/.exec((dnd.end_time || '').trim());
-                        if (m) saveDnd({ end_time: dnd.end_time.trim() });
-                        else setDnd(prev => ({ ...prev, end_time: '07:00' }));
-                      }}
-                      placeholder="07:00"
-                      placeholderTextColor={colors.textTertiary}
-                      style={{
-                        borderWidth: 1, borderColor: colors.divider, borderRadius: 10,
-                        paddingVertical: 10, paddingHorizontal: 12, color: colors.text,
-                        backgroundColor: colors.surfaceVariant, fontFamily: 'monospace',
-                      }}
-                      keyboardType="numbers-and-punctuation"
-                      maxLength={5}
-                      accessibilityLabel={t('settings.dndEnd') || 'Fim'}
-                    />
-                  </View>
-                </View>
-              )}
-            </>
-          )}
-        </View>
-        )}
-
-        {/* Morning Briefing */}
-        {/* "Bom dia diário" removido da UI por decisão do founder (nicho).
-            Mantido fora da renderização; conteúdo preservado abaixo. */}
-        {false && (
-        <View style={[s.section, { backgroundColor: colors.surface, borderColor: colors.borderLight, borderWidth: 1 }]}>
-          <Text style={[s.sectionTitle, { color: colors.text }]}>{t('settings.morningBriefing') || 'Bom dia diário'}</Text>
-          <View style={[s.settingRow, { borderBottomColor: colors.borderLight }]}>
-            <View style={s.settingInfo}>
-              <Text style={[s.settingLabel, { color: colors.text }]}>{t('settings.morningEnabled') || 'Resumo matinal da ONE'}</Text>
-              <Text style={[s.settingDesc, { color: colors.textTertiary }]}>
-                {t('settings.morningEnabledDesc') || 'Receba um resumo do dia com emails, eventos e clima às 8h'}
-              </Text>
-            </View>
-            <NativeSwitch
-              value={settings.morning_briefing !== false}
-              onValueChange={(v) => { setSettings(prev => ({ ...prev, morning_briefing: v })); saveNotifPref({ morning_briefing: v }); }}
-              trackColor={{ false: colors.divider, true: colors.primaryLight }}
-              thumbColor={settings.morning_briefing !== false ? colors.primary : '#fff'}
+            <SettingsRow
+              title={t('settings.rd.advancedNotifs') || 'Notificações avançadas'}
+              subtitle={t('settings.rd.advancedNotifsDesc') || 'Só menções, palavras-chave, soneca…'}
+              onPress={() => router.push('/notification-preferences')}
             />
-          </View>
-        </View>
-        )}
-
-        {/* Signatures */}
-        {sectionMatches(t('settings.signatures'), t('settings.signatureDesc')) && (
-        <View style={[s.section, { backgroundColor: colors.surface, borderColor: colors.borderLight, borderWidth: 1 }]}>
-          <Text style={[s.sectionTitle, { color: colors.text }]}>{t('settings.signatures')}</Text>
-          <Text style={[s.settingDesc, { color: colors.textTertiary, marginBottom: Spacing.md }]}>
-            {t('settings.signatureDesc')}
-          </Text>
-          {(settings.signatures || [{ name: t('settings.signatureDefault'), content: settings.signature || '', isDefault: true }]).map((sig, idx) => (
-            <View key={idx} style={[s.sigCard, { borderColor: colors.divider, backgroundColor: colors.surfaceVariant }]}>
-              <View style={s.sigHeader}>
+          )}
+          {settings.notifications && (
+            <SettingsSwitchRow
+              title={t('settings.notifSound')}
+              value={settings.notification_sound}
+              onValueChange={(v) => setSettings(prev => ({ ...prev, notification_sound: v }))}
+            />
+          )}
+          {settings.notifications && (
+            <SettingsSwitchRow
+              title={t('settings.notifVibration')}
+              value={settings.notification_vibration}
+              onValueChange={(v) => setSettings(prev => ({ ...prev, notification_vibration: v }))}
+            />
+          )}
+          {/* Do-Not-Disturb schedule — backend mutes chat push fanout inside
+              the HH:MM window (validated before save). */}
+          {settings.notifications && (
+            <SettingsSwitchRow
+              title={t('settings.dndTitle') || 'Não perturbe (horário)'}
+              subtitle={t('settings.dndDesc') || 'Silencia notificações de chat dentro do horário definido.'}
+              value={dnd.enabled}
+              onValueChange={(v) => saveDnd({ enabled: v })}
+              disabled={dndSaving}
+            />
+          )}
+          {settings.notifications && dnd.enabled && (
+            <SettingsRow
+              title={t('settings.dndStart') || 'Início'}
+              right={(
                 <TextInput
-                  style={[s.sigNameInput, { color: colors.text, borderColor: colors.divider }]}
-                  value={sig.name}
-                  onChangeText={(v) => {
-                    const sigs = [...(settings.signatures || [{ name: t('settings.signatureDefault'), content: settings.signature || '', isDefault: true }])];
-                    sigs[idx] = { ...sigs[idx], name: v };
-                    setSettings(prev => ({ ...prev, signatures: sigs }));
+                  value={dnd.start_time}
+                  onChangeText={(v) => setDnd(prev => ({ ...prev, start_time: v }))}
+                  onBlur={() => {
+                    const m = /^([01]\d|2[0-3]):([0-5]\d)$/.exec((dnd.start_time || '').trim());
+                    if (m) saveDnd({ start_time: dnd.start_time.trim() });
+                    else setDnd(prev => ({ ...prev, start_time: '22:00' }));
                   }}
-                  placeholder={t('settings.signatureName')}
-                  placeholderTextColor={colors.textTertiary}
+                  placeholder="22:00"
+                  placeholderTextColor={gc.secondary}
+                  style={[s.timeInput, { color: colors.text, backgroundColor: gc.fill }]}
+                  keyboardType="numbers-and-punctuation"
+                  maxLength={5}
+                  accessibilityLabel={t('settings.dndStart') || 'Início'}
                 />
-                <TouchableOpacity
-                  onPress={() => {
-                    const sigs = [...(settings.signatures || [{ name: t('settings.signatureDefault'), content: settings.signature || '', isDefault: true }])];
-                    sigs.forEach((s, i) => { s.isDefault = i === idx; });
-                    setSettings(prev => ({ ...prev, signatures: sigs }));
+              )}
+            />
+          )}
+          {settings.notifications && dnd.enabled && (
+            <SettingsRow
+              title={t('settings.dndEnd') || 'Fim'}
+              right={(
+                <TextInput
+                  value={dnd.end_time}
+                  onChangeText={(v) => setDnd(prev => ({ ...prev, end_time: v }))}
+                  onBlur={() => {
+                    const m = /^([01]\d|2[0-3]):([0-5]\d)$/.exec((dnd.end_time || '').trim());
+                    if (m) saveDnd({ end_time: dnd.end_time.trim() });
+                    else setDnd(prev => ({ ...prev, end_time: '07:00' }));
                   }}
-                  style={[s.defaultBtn, sig.isDefault && { backgroundColor: colors.primaryLight }]}
-                >
-                  <Text style={{ fontSize: FontSize.xs, color: sig.isDefault ? colors.primary : colors.textTertiary, fontWeight: '600' }}>
-                    {t('settings.signatureDefault')}
-                  </Text>
-                </TouchableOpacity>
-                {(settings.signatures || []).length > 1 && (
-                  <TouchableOpacity onPress={() => {
-                    const sigs = (settings.signatures || []).filter((_, i) => i !== idx);
-                    if (sig.isDefault && sigs.length > 0) sigs[0].isDefault = true;
-                    setSettings(prev => ({ ...prev, signatures: sigs }));
-                  }}>
-                    <IconTrash size={16} color={colors.error} />
-                  </TouchableOpacity>
-                )}
-              </View>
-              <TextInput
-                style={[s.signatureInput, { color: colors.text, borderColor: colors.divider, backgroundColor: colors.surface, marginTop: 8, minHeight: 60 }]}
-                value={sig.content}
-                onChangeText={(v) => {
-                  const sigs = [...(settings.signatures || [{ name: t('settings.signatureDefault'), content: settings.signature || '', isDefault: true }])];
-                  sigs[idx] = { ...sigs[idx], content: v };
-                  setSettings(prev => ({ ...prev, signatures: sigs, signature: sigs.find(s => s.isDefault)?.content || '' }));
-                }}
-                placeholder={t('settings.signaturePlaceholder')}
-                placeholderTextColor={colors.textTertiary}
-                multiline
-                numberOfLines={3}
-                textAlignVertical="top"
-              />
-            </View>
-          ))}
-          <TouchableOpacity
-            onPress={() => {
-              const sigs = [...(settings.signatures || [{ name: t('settings.signatureDefault'), content: settings.signature || '', isDefault: true }])];
-              sigs.push({ name: '', content: '', isDefault: false });
-              setSettings(prev => ({ ...prev, signatures: sigs }));
-            }}
-            style={[s.addSigBtn, { borderColor: colors.primary }]}
-          >
-            <Text style={{ color: colors.primary, fontSize: FontSize.sm, fontWeight: '600' }}>+ {t('settings.addSignature')}</Text>
-          </TouchableOpacity>
+                  placeholder="07:00"
+                  placeholderTextColor={gc.secondary}
+                  style={[s.timeInput, { color: colors.text, backgroundColor: gc.fill }]}
+                  keyboardType="numbers-and-punctuation"
+                  maxLength={5}
+                  accessibilityLabel={t('settings.dndEnd') || 'Fim'}
+                />
+              )}
+            />
+          )}
+        </SettingsGroup>
         </View>
         )}
 
-        {/* Email tools — Importar / PGP / Tarefas (round-6 gap-closer) */}
+        {/* "Bom dia diário" removido da UI por decisão do founder (nicho). */}
+
+        {/* Signatures — each signature = name + body, edited in place.
+            "Adicionar assinatura" is a normal list row (no dashed web box). */}
+        {sectionMatches(t('settings.signatures'), t('settings.signatureDesc')) && (() => {
+          const baseSigs = () => [...(settings.signatures || [{ name: t('settings.signatureDefault'), content: settings.signature || '', isDefault: true }])];
+          const sigList = settings.signatures || [{ name: t('settings.signatureDefault'), content: settings.signature || '', isDefault: true }];
+          return (
+          <SettingsGroup header={t('settings.signatures')} footer={t('settings.signatureDesc')}>
+            {sigList.map((sig, idx) => (
+              <View key={`sig-${idx}`} style={s.sigBlock}>
+                <View style={s.sigHeader}>
+                  <TextInput
+                    style={[s.sigNameInput, { color: colors.text }]}
+                    value={sig.name}
+                    onChangeText={(v) => {
+                      const sigs = baseSigs();
+                      sigs[idx] = { ...sigs[idx], name: v };
+                      setSettings(prev => ({ ...prev, signatures: sigs }));
+                    }}
+                    placeholder={t('settings.signatureName')}
+                    placeholderTextColor={gc.secondary}
+                  />
+                  <TouchableOpacity
+                    onPress={() => {
+                      const sigs = baseSigs();
+                      sigs.forEach((s, i) => { s.isDefault = i === idx; });
+                      setSettings(prev => ({ ...prev, signatures: sigs }));
+                    }}
+                    style={[s.defaultBtn, sig.isDefault ? { backgroundColor: gc.ink } : { backgroundColor: gc.fill }]}
+                    accessibilityRole="button"
+                    accessibilityState={{ selected: !!sig.isDefault }}
+                    accessibilityLabel={t('settings.signatureDefault')}
+                  >
+                    <Text style={{ fontSize: 12, color: sig.isDefault ? gc.onInk : gc.secondary, fontWeight: '600' }}>
+                      {t('settings.signatureDefault')}
+                    </Text>
+                  </TouchableOpacity>
+                  {(settings.signatures || []).length > 1 && (
+                    <TouchableOpacity
+                      onPress={() => {
+                        const sigs = (settings.signatures || []).filter((_, i) => i !== idx);
+                        if (sig.isDefault && sigs.length > 0) sigs[0].isDefault = true;
+                        setSettings(prev => ({ ...prev, signatures: sigs }));
+                      }}
+                      hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                      accessibilityRole="button"
+                      accessibilityLabel={t('common.delete') || 'Excluir'}
+                      style={{ marginLeft: 10 }}
+                    >
+                      <IconTrash size={18} color={colors.error} />
+                    </TouchableOpacity>
+                  )}
+                </View>
+                <TextInput
+                  style={[s.signatureInput, { color: colors.text, backgroundColor: gc.fill }]}
+                  value={sig.content}
+                  onChangeText={(v) => {
+                    const sigs = baseSigs();
+                    sigs[idx] = { ...sigs[idx], content: v };
+                    setSettings(prev => ({ ...prev, signatures: sigs, signature: sigs.find(s => s.isDefault)?.content || '' }));
+                  }}
+                  placeholder={t('settings.signaturePlaceholder')}
+                  placeholderTextColor={gc.secondary}
+                  multiline
+                  numberOfLines={3}
+                  textAlignVertical="top"
+                />
+              </View>
+            ))}
+            <SettingsRow
+              icon={IconPlus}
+              iconTile={false}
+              title={t('settings.addSignature')}
+              chevron={false}
+              onPress={() => {
+                const sigs = baseSigs();
+                sigs.push({ name: '', content: '', isDefault: false });
+                setSettings(prev => ({ ...prev, signatures: sigs }));
+              }}
+            />
+          </SettingsGroup>
+          );
+        })()}
+
+        {/* Email tools — Importar / PGP / Tarefas / Bia */}
         {(searching || activeCategory === 'email') && sectionMatches(
           t('settings.emailToolsTitle') || 'Ferramentas de email',
           t('settings.importFromOthers') || 'Importar de outras contas',
           t('settings.pgpKeys') || 'Chave PGP',
           t('settings.tasks') || 'Tarefas',
         ) && (
-        <View style={[s.section, { backgroundColor: colors.surface, borderColor: colors.borderLight, borderWidth: 1 }]}>
-          <Text style={[s.sectionTitle, { color: colors.text }]}>
-            {t('settings.emailToolsTitle') || 'Ferramentas de email'}
-          </Text>
-          <PressableRow
-            style={[s.settingRow, { borderBottomColor: colors.borderLight }]}
+        <SettingsGroup header={t('settings.emailToolsTitle') || 'Ferramentas de email'}>
+          <SettingsRow
+            title={t('settings.importFromOthers') || 'Importar de outras contas'}
+            subtitle={t('settings.importFromOthersDesc') || 'Gmail, Outlook ou Microsoft 365'}
             onPress={() => router.push('/email-import')}
-            accessibilityRole="button"
-          >
-            <View style={s.settingInfo}>
-              <Text style={[s.settingLabel, { color: colors.text }]}>
-                {t('settings.importFromOthers') || 'Importar de outras contas'}
-              </Text>
-              <Text style={[s.settingDesc, { color: colors.textTertiary }]}>
-                {t('settings.importFromOthersDesc') || 'Gmail, Outlook ou Microsoft 365'}
-              </Text>
-            </View>
-            <IconChevronRight size={18} color={colors.textTertiary} />
-          </PressableRow>
-
-          <PressableRow
-            style={[s.settingRow, { borderBottomColor: colors.borderLight }]}
+          />
+          <SettingsRow
+            title={t('settings.pgpKeys') || 'Chave PGP'}
+            subtitle={t('settings.pgpKeysDesc') || 'Criptografia ponta-a-ponta de emails'}
             onPress={() => router.push('/pgp-keys')}
-            accessibilityRole="button"
-          >
-            <View style={s.settingInfo}>
-              <Text style={[s.settingLabel, { color: colors.text }]}>
-                {t('settings.pgpKeys') || 'Chave PGP'}
-              </Text>
-              <Text style={[s.settingDesc, { color: colors.textTertiary }]}>
-                {t('settings.pgpKeysDesc') || 'Criptografia ponta-a-ponta de emails'}
-              </Text>
-            </View>
-            <IconChevronRight size={18} color={colors.textTertiary} />
-          </PressableRow>
-
-          <PressableRow
-            style={[s.settingRow, { borderBottomColor: colors.borderLight }]}
+          />
+          <SettingsRow
+            title={t('settings.tasks') || 'Tarefas'}
+            subtitle={t('settings.tasksDesc') || 'Tarefas pessoais e convertidas de emails'}
             onPress={() => router.push('/tasks')}
-            accessibilityRole="button"
-          >
-            <View style={s.settingInfo}>
-              <Text style={[s.settingLabel, { color: colors.text }]}>
-                {t('settings.tasks') || 'Tarefas'}
-              </Text>
-              <Text style={[s.settingDesc, { color: colors.textTertiary }]}>
-                {t('settings.tasksDesc') || 'Tarefas pessoais e convertidas de emails'}
-              </Text>
-            </View>
-            <IconChevronRight size={18} color={colors.textTertiary} />
-          </PressableRow>
-
+          />
           {/* [2026-09-24] Bia — assistente de IA (memória/personalização) */}
-          <PressableRow
-            style={[s.settingRow, { borderBottomColor: colors.borderLight }]}
+          <SettingsRow
+            title={t('settings.bia') || 'Bia — Assistente de IA'}
+            subtitle={t('settings.biaDesc') || 'Ensine seu tom e assinatura pra ela escrever na sua voz'}
             onPress={() => router.push('/bia-settings')}
-            accessibilityRole="button"
-          >
-            <View style={s.settingInfo}>
-              <Text style={[s.settingLabel, { color: colors.text }]}>
-                {t('settings.bia') || 'Bia — Assistente de IA'}
-              </Text>
-              <Text style={[s.settingDesc, { color: colors.textTertiary }]}>
-                {t('settings.biaDesc') || 'Ensine seu tom e assinatura pra ela escrever na sua voz'}
-              </Text>
-            </View>
-            <IconChevronRight size={18} color={colors.textTertiary} />
-          </PressableRow>
-        </View>
+          />
+        </SettingsGroup>
         )}
 
         </CollapsibleGroup>
         )}
         {/* ── END GROUP: Email ── */}
 
-        {/* Language */}
+        {/* Idioma — follow-system switch + picker row (sheet) for the app
+            language; Moeda = picker row with "Automático" as first option
+            (no chip cloud, no green badge). */}
         {(searching || activeCategory === 'appearance') && sectionMatches(t('settings.language'), t('settings.languageLabel'), t('settings.language.autoDetect')) && (
-        <View ref={registerSectionRef('language')} style={[s.section, { backgroundColor: colors.surface, borderColor: colors.borderLight, borderWidth: 1 }]}>
-          <View style={s.sectionTitleRow}>
-            <IconGlobe size={18} color={colors.primary} style={{ marginRight: 8 }} />
-            <Text style={[s.sectionTitle, { color: colors.text, marginBottom: 0 }]}>{t('settings.language')}</Text>
-          </View>
-
-          {/* Auto-detect — when ON, clears the manual override key so the
-              app picks up navigator.languages / device locale on next
-              cold start. Persists `language_auto` so future visits to this
-              screen render the checkbox correctly. */}
-          <View style={[s.settingRow, { borderBottomColor: colors.borderLight, marginTop: Spacing.md }]}>
-            <View style={s.settingInfo}>
-              <Text style={[s.settingLabel, { color: colors.text }]}>{t('settings.language.autoDetect') || 'Seguir idioma do sistema'}</Text>
-              <Text style={[s.settingDesc, { color: colors.textTertiary }]}>
-                {t('settings.language.autoDetectDesc') || 'Detecta o idioma a partir do seu aparelho.'}
-              </Text>
-            </View>
-            <NativeSwitch
+        <View ref={registerSectionRef('language')}>
+          <SettingsGroup header={t('settings.language')}>
+            {/* Auto-detect — when ON, clears the manual override key so the
+                app picks up the device locale on next cold start. */}
+            <SettingsSwitchRow
+              title={t('settings.language.autoDetect') || 'Seguir idioma do sistema'}
+              subtitle={t('settings.language.autoDetectDesc') || 'Detecta o idioma a partir do seu aparelho.'}
               value={languageAuto}
               onValueChange={(v) => {
                 setLanguageAuto(v);
                 setStorage('language_auto', String(v));
                 if (v) {
-                  // Clear the manual override so LanguageContext re-detects
-                  // on next mount. AsyncStorage path handled via dynamic import.
                   if (Platform.OS === 'web') {
                     try { if (typeof localStorage !== 'undefined') localStorage.removeItem('app_language_manual'); } catch {}
                   } else {
@@ -2051,238 +1768,110 @@ function SettingsScreenInner() {
                   }
                 }
               }}
-              trackColor={{ false: colors.divider, true: colors.primaryLight }}
-              thumbColor={languageAuto ? colors.primary : '#fff'}
             />
-          </View>
+            <SettingsPickerRow
+              title={t('settings.languageLabel')}
+              value={language}
+              disabled={languageAuto}
+              cancelLabel={t('common.cancel') || 'Cancelar'}
+              options={LANG_OPTIONS}
+              displayValue={(LANG_OPTIONS.find(o => o.value === language) || {}).label || String(language || '').toUpperCase()}
+              onChange={(v) => {
+                if (languageAuto) return;
+                changeLanguage(v);
+                setSettings(prev => ({ ...prev, language: v }));
+              }}
+            />
+          </SettingsGroup>
 
-          <View style={[s.settingRow, { borderBottomColor: colors.borderLight }]}>
-            <View style={s.settingInfo}>
-              <Text style={[s.settingLabel, { color: colors.text }]}>{t('settings.languageLabel')}</Text>
-              <Text style={[s.settingDesc, { color: colors.textTertiary }]}>
-                {t('settings.languageDesc')}
-              </Text>
-            </View>
-            <View style={s.perPageBtns}>
-              {[{ val: 'pt-BR', label: 'PT' }, { val: 'en', label: 'EN' }, { val: 'es', label: 'ES' }].map(l => (
-                <TouchableOpacity
-                  key={l.val}
-                  disabled={languageAuto}
-                  style={[
-                    s.perPageBtn,
-                    { borderColor: colors.divider, opacity: languageAuto ? 0.45 : 1 },
-                    language === l.val && { backgroundColor: colors.primary, borderColor: colors.primary },
-                  ]}
-                  onPress={() => {
-                    if (languageAuto) return;
-                    changeLanguage(l.val);
-                    setSettings(prev => ({ ...prev, language: l.val }));
-                  }}
-                >
-                  <Text style={[
-                    s.perPageText, { color: colors.text },
-                    language === l.val && { color: '#fff' },
-                  ]}>
-                    {l.label}
-                  </Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-          </View>
-
-          {/* Currency picker (2026-05-22 — issue #1355). Lives inside the
-              language section because the two settings travel together
-              conceptually ("Idioma e moeda"). FX rates fetched from
-              chat_currency_rates and cached 24h; first launch auto-detects
-              from device locale. */}
-          <View style={{ paddingVertical: Spacing.md, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.borderLight, marginTop: Spacing.sm }}>
-            {/* Header: label + auto-detect badge */}
-            <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4 }}>
-              <IconGlobe size={15} color={colors.textSecondary} style={{ marginRight: 6 }} />
-              <Text style={[s.settingLabel, { color: colors.text, flex: 1 }]}>
-                {t('settings.currencyLabel') || 'Moeda'}
-              </Text>
-              {currencyAutoDetected && (
-                <View style={{
-                  flexDirection: 'row', alignItems: 'center',
-                  backgroundColor: (colors.success || '#10B981') + '1F',
-                  borderRadius: 999, paddingHorizontal: 9, paddingVertical: 3,
-                }}>
-                  <IconCheck size={12} color={colors.success || '#10B981'} style={{ marginRight: 3 }} />
-                  <Text style={{ fontSize: 11, fontWeight: '700', color: colors.success || '#10B981' }}>
-                    {t('settings.currencyAuto') || 'Auto'}
-                  </Text>
-                </View>
-              )}
-            </View>
-            <Text style={[s.settingDesc, { color: colors.textTertiary, marginBottom: Spacing.md }]}>
-              {(t('settings.currencyDesc') || 'Usada para exibir valores no app.') + ' · ' + userCurrency}
-            </Text>
-            {/* Currency swatch chips — symbol prominent, selected highlight */}
-            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
-              {supportedCurrencies.map(code => {
-                const selected = userCurrency === code;
-                return (
-                  <TouchableOpacity
-                    key={code}
-                    activeOpacity={0.8}
-                    style={{
-                      flexDirection: 'row', alignItems: 'center',
-                      paddingHorizontal: 14, paddingVertical: 9,
-                      borderRadius: 12, borderWidth: selected ? 1.5 : 1,
-                      borderColor: selected ? colors.primary : colors.borderLight,
-                      backgroundColor: selected ? colors.primary + '14' : 'transparent',
-                    }}
-                    onPress={() => setUserCurrency(code)}
-                    accessibilityRole="button"
-                    accessibilityState={{ selected }}
-                    accessibilityLabel={`${t('settings.currency.' + code) || code} (${currencySymbols[code] || ''})`}
-                  >
-                    <Text style={{
-                      fontSize: 15, fontWeight: '800', marginRight: 6,
-                      color: selected ? colors.primary : colors.textSecondary,
-                    }}>
-                      {currencySymbols[code] || ''}
-                    </Text>
-                    <Text style={{
-                      fontSize: 13, fontWeight: selected ? '700' : '600',
-                      color: selected ? colors.primary : colors.text,
-                      letterSpacing: 0.3,
-                    }}>
-                      {code}
-                    </Text>
-                    {selected && (
-                      <IconCheck size={14} color={colors.primary} style={{ marginLeft: 6 }} />
-                    )}
-                  </TouchableOpacity>
-                );
-              })}
-            </View>
-          </View>
+          {/* Currency (issue #1355) — FX rates cached 24h; first launch
+              auto-detects from device locale. "Automático" = resetCurrency. */}
+          <SettingsGroup footer={t('settings.currencyDesc') || 'Usada para exibir valores no app.'}>
+            <SettingsPickerRow
+              title={t('settings.currencyLabel') || 'Moeda'}
+              value={currencyAutoDetected ? '__auto__' : userCurrency}
+              displayValue={currencyAutoDetected
+                ? `${t('settings.rd.auto') || 'Automático'} · ${userCurrency}`
+                : `${currencySymbols[userCurrency] || ''} ${userCurrency}`.trim()}
+              cancelLabel={t('common.cancel') || 'Cancelar'}
+              options={[
+                { value: '__auto__', label: t('settings.rd.auto') || 'Automático', sub: (t('settings.rd.currencyAutoSub') || 'Pela região do aparelho') + ` · ${userCurrency}` },
+                ...supportedCurrencies.map(code => ({
+                  value: code,
+                  label: currencyName(code),
+                  hint: `${currencySymbols[code] || ''} ${code}`.trim(),
+                })),
+              ]}
+              onChange={(v) => {
+                if (v === '__auto__') { try { resetUserCurrency?.(); } catch {} }
+                else setUserCurrency(v);
+              }}
+            />
+          </SettingsGroup>
         </View>
         )}
 
         {/* Auto-reply */}
         {(searching || activeCategory === 'email') && sectionMatches(t('settings.autoReply'), t('settings.autoReplyEnable'), t('settings.autoReplyDesc')) && (
-        <View style={[s.section, { backgroundColor: colors.surface, borderColor: colors.borderLight, borderWidth: 1 }]}>
-          <Text style={[s.sectionTitle, { color: colors.text }]}>{t('settings.autoReply')}</Text>
-          <Text style={[s.settingDesc, { color: colors.textTertiary, marginBottom: Spacing.md }]}>
-            {t('settings.autoReplyDesc')}
-          </Text>
-          <View style={[s.settingRow, { borderBottomColor: colors.borderLight }]}>
-            <View style={s.settingInfo}>
-              <Text style={[s.settingLabel, { color: colors.text }]}>{t('settings.autoReplyEnable')}</Text>
-            </View>
-            <NativeSwitch
-              value={vacation.enabled}
-              onValueChange={(v) => saveVacation({ enabled: v })}
-              trackColor={{ false: colors.divider, true: colors.primaryLight }}
-              thumbColor={vacation.enabled ? colors.primary : '#fff'}
-            />
-          </View>
+        <SettingsGroup header={t('settings.autoReply')} footer={t('settings.autoReplyDesc')}>
+          <SettingsSwitchRow
+            title={t('settings.autoReplyEnable')}
+            value={vacation.enabled}
+            onValueChange={(v) => saveVacation({ enabled: v })}
+          />
           {vacation.enabled && (
-            <>
+            <View style={s.cardInputWrap}>
               <TextInput
-                style={[
-                  s.signatureInput,
-                  { color: colors.text, borderColor: colors.divider, backgroundColor: colors.surfaceVariant, marginTop: Spacing.md, minHeight: 44 },
-                ]}
+                style={[s.cardInput, { color: colors.text, backgroundColor: gc.fill }]}
                 value={vacation.subject}
                 onChangeText={(v) => saveVacation({ subject: v })}
                 placeholder={t('settings.autoReplySubjectPlaceholder') || 'Assunto (opcional)'}
-                placeholderTextColor={colors.textTertiary}
+                placeholderTextColor={gc.secondary}
               />
               <TextInput
-                style={[
-                  s.signatureInput,
-                  { color: colors.text, borderColor: colors.divider, backgroundColor: colors.surfaceVariant, marginTop: Spacing.md },
-                ]}
+                style={[s.cardInput, { color: colors.text, backgroundColor: gc.fill, minHeight: 88, marginTop: 8 }]}
                 value={vacation.body}
                 onChangeText={(v) => saveVacation({ body: v })}
                 placeholder={t('settings.autoReplyPlaceholder')}
-                placeholderTextColor={colors.textTertiary}
+                placeholderTextColor={gc.secondary}
                 multiline
                 numberOfLines={3}
                 textAlignVertical="top"
               />
-            </>
+            </View>
           )}
-        </View>
+        </SettingsGroup>
         )}
 
         {/* Filters & Rules */}
         {(searching || activeCategory === 'email') && sectionMatches(t('settings.filters'), t('settings.manageFilters')) && (
-        <View style={[s.section, { backgroundColor: colors.surface, borderColor: colors.borderLight, borderWidth: 1 }]}>
-          <Text style={[s.sectionTitle, { color: colors.text }]}>{t('settings.filters')}</Text>
-          <Text style={[s.settingDesc, { color: colors.textTertiary, marginBottom: Spacing.md }]}>
-            {t('settings.filtersDesc')}
-          </Text>
-          <PressableRow
-            style={[s.settingRow, { borderBottomColor: colors.borderLight }]}
+        <SettingsGroup header={t('settings.filters')} footer={t('settings.filtersDesc')}>
+          <SettingsRow
+            title={t('settings.manageFilters')}
+            subtitle={t('settings.manageFiltersDesc')}
             onPress={() => setShowFilters(true)}
-          >
-            <View style={s.settingInfo}>
-              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                <IconFilter size={18} color={colors.primary} style={{ marginRight: Spacing.sm }} />
-                <Text style={[s.settingLabel, { color: colors.text }]}>{t('settings.manageFilters')}</Text>
-              </View>
-              <Text style={[s.settingDesc, { color: colors.textTertiary }]}>
-                {t('settings.manageFiltersDesc')}
-              </Text>
-            </View>
-            <IconChevronRight size={20} color={colors.textTertiary} />
-          </PressableRow>
-        </View>
+          />
+        </SettingsGroup>
         )}
 
-        {/* AI Features */}
+        {/* AI Features — what the assistant does (info rows) + Smart Compose
+            switch (was a hand-made toggle; now NativeSwitch). */}
         {(searching || activeCategory === 'email') && sectionMatches(t('settings.ai'), t('settings.aiSmartReply'), t('settings.aiDrafts'), t('settings.aiSummary'), t('settings.aiEnhance'), t('settings.smartCompose')) && (
-        <View style={[s.section, { backgroundColor: colors.surface, borderColor: colors.borderLight, borderWidth: 1 }]}>
-          <View style={s.sectionTitleRow}>
-            <IconSparkles size={18} color={colors.primary} style={{ marginRight: 8 }} />
-            <Text style={[s.sectionTitle, { color: colors.text, marginBottom: 0 }]}>{t('settings.ai')}</Text>
-          </View>
-          <Text style={[s.settingDesc, { color: colors.textTertiary, marginTop: Spacing.sm }]}>
-            {t('settings.aiDesc')}
-          </Text>
-          <View style={s.aiFeatures}>
-            <View style={s.aiFeatureRow}>
-              <View style={s.aiFeatureIconWrap}><IconMessageSquare size={18} color={colors.primary} /></View>
-              <Text style={[s.aiFeatureText, { color: colors.text }]}>{t('settings.aiSmartReply')}</Text>
-            </View>
-            <View style={s.aiFeatureRow}>
-              <View style={s.aiFeatureIconWrap}><IconPenTool size={18} color={colors.primary} /></View>
-              <Text style={[s.aiFeatureText, { color: colors.text }]}>{t('settings.aiDrafts')}</Text>
-            </View>
-            <View style={s.aiFeatureRow}>
-              <View style={s.aiFeatureIconWrap}><IconDraft size={18} color={colors.primary} /></View>
-              <Text style={[s.aiFeatureText, { color: colors.text }]}>{t('settings.aiSummary')}</Text>
-            </View>
-            <View style={s.aiFeatureRow}>
-              <View style={s.aiFeatureIconWrap}><IconSparkles size={18} color={colors.primary} /></View>
-              <Text style={[s.aiFeatureText, { color: colors.text }]}>{t('settings.aiEnhance')}</Text>
-            </View>
-          </View>
-          <View style={[s.settingRow, { borderTopColor: colors.borderLight, borderTopWidth: 1, paddingTop: Spacing.md, marginTop: Spacing.md }]}>
-            <View style={{ flex: 1 }}>
-              <Text style={[s.settingLabel, { color: colors.text }]}>{t('settings.smartCompose')}</Text>
-              <Text style={[s.settingDesc, { color: colors.textTertiary }]}>{t('settings.smartComposeDesc')}</Text>
-            </View>
-            <TouchableOpacity
-              onPress={() => {
-                const next = !smartComposeOn;
-                setSmartComposeOn(next);
-                setStorage('smart_compose', String(next));
-              }}
-              style={[
-                s.toggleTrack,
-                { backgroundColor: smartComposeOn ? colors.primary : colors.borderLight },
-              ]}
-            >
-              <View style={[s.toggleThumb, smartComposeOn && s.toggleThumbActive]} />
-            </TouchableOpacity>
-          </View>
-        </View>
+        <SettingsGroup header={t('settings.ai')} footer={t('settings.aiDesc')} inset={52}>
+          <SettingsRow icon={IconMessageSquare} iconTile={false} title={t('settings.aiSmartReply')} />
+          <SettingsRow icon={IconPenTool} iconTile={false} title={t('settings.aiDrafts')} />
+          <SettingsRow icon={IconDraft} iconTile={false} title={t('settings.aiSummary')} />
+          <SettingsRow icon={IconSparkles} iconTile={false} title={t('settings.aiEnhance')} />
+          <SettingsSwitchRow
+            title={t('settings.smartCompose')}
+            subtitle={t('settings.smartComposeDesc')}
+            value={smartComposeOn}
+            onValueChange={(next) => {
+              setSmartComposeOn(next);
+              setStorage('smart_compose', String(next));
+            }}
+          />
+        </SettingsGroup>
         )}
 
         {/* Chat preferences — Enter sends / Auto-correct / Voice speed /
@@ -2299,7 +1888,7 @@ function SettingsScreenInner() {
           t('settings.dataSaver.title') || 'Modo economia',
           t('settings.beta.title') || 'Recursos beta',
         ) && (
-        <View style={[s.section, { backgroundColor: colors.surface, borderColor: colors.borderLight, borderWidth: 1 }]}>
+        <View style={[s.section, { backgroundColor: gc.cardBg }]}>
           <Text style={[s.sectionTitle, { color: colors.text }]}>{t('settings.chatPrefs.title') || 'Preferências do chat'}</Text>
 
           {/* Enter sends — desktop default ON, mobile default OFF. */}
@@ -2445,7 +2034,7 @@ function SettingsScreenInner() {
           t('settings.led.title') || 'Cor do LED',
           'led',
         ) && (
-        <View style={[s.section, { backgroundColor: colors.surface, borderColor: colors.borderLight, borderWidth: 1 }]}>
+        <View style={[s.section, { backgroundColor: gc.cardBg }]}>
           <Text style={[s.sectionTitle, { color: colors.text }]}>{t('settings.led.title') || 'Cor do LED (Android)'}</Text>
           <Text style={[s.settingDesc, { color: colors.textTertiary, marginBottom: Spacing.md }]}>
             {t('settings.led.desc') || 'Cor do LED de notificação no Android.'}
@@ -2531,7 +2120,7 @@ function SettingsScreenInner() {
             gradient swatches here are visual previews only. Custom photo
             upload remains supported (stored as the image URI). */}
         {false && (searching || activeCategory === 'chat') && sectionMatches(t('settings.wallpaperDefault.title') || 'Papel de parede padrão', 'wallpaper', 'papel de parede') && (
-        <View style={[s.section, { backgroundColor: colors.surface, borderColor: colors.borderLight, borderWidth: 1 }]}>
+        <View style={[s.section, { backgroundColor: gc.cardBg }]}>
           <Text style={[s.sectionTitle, { color: colors.text }]}>{t('settings.wallpaperDefault.title') || 'Papel de parede padrão'}</Text>
           <Text style={[s.settingDesc, { color: colors.textTertiary, marginBottom: Spacing.md }]}>
             {t('settings.wallpaperDefault.desc') || 'Aplica em conversas novas. Cada chat pode ter o seu próprio.'}
@@ -2648,7 +2237,7 @@ function SettingsScreenInner() {
 
         {/* Network usage stats — lifetime up/down bytes for chat media. */}
         {false && (searching || activeCategory === 'storage_data') && sectionMatches(t('settings.networkUsage.title') || 'Uso de rede', 'network usage', 'uso de rede') && (
-        <View style={[s.section, { backgroundColor: colors.surface, borderColor: colors.borderLight, borderWidth: 1 }]}>
+        <View style={[s.section, { backgroundColor: gc.cardBg }]}>
           <View style={s.sectionTitleRow}>
             <IconDatabase size={18} color={colors.primary} style={{ marginRight: 8 }} />
             <Text style={[s.sectionTitle, { color: colors.text, marginBottom: 0 }]}>{t('settings.networkUsage.title') || 'Uso de rede'}</Text>
@@ -2690,7 +2279,7 @@ function SettingsScreenInner() {
 
         {/* Help center — opens the support page via Linking. */}
         {(searching || activeCategory === 'help') && sectionMatches(t('settings.help.title') || 'Central de ajuda', 'help', 'ajuda', 'support') && (
-        <View style={[s.section, { backgroundColor: colors.surface, borderColor: colors.borderLight, borderWidth: 1 }]}>
+        <View style={[s.section, { backgroundColor: gc.cardBg }]}>
           <View style={s.sectionTitleRow}>
             <IconMail size={18} color={colors.primary} style={{ marginRight: 8 }} />
             <Text style={[s.sectionTitle, { color: colors.text, marginBottom: 0 }]}>{t('settings.help.title') || 'Central de ajuda'}</Text>
@@ -2722,7 +2311,7 @@ function SettingsScreenInner() {
 
         {/* About — opens a modal with app version, build, and legal links. */}
         {(searching || activeCategory === 'help') && sectionMatches(t('settings.about.title') || 'Sobre', 'about', 'sobre', 'version') && (
-        <View style={[s.section, { backgroundColor: colors.surface, borderColor: colors.borderLight, borderWidth: 1 }]}>
+        <View style={[s.section, { backgroundColor: gc.cardBg }]}>
           <View style={s.sectionTitleRow}>
             <IconFileText size={18} color={colors.primary} style={{ marginRight: 8 }} />
             <Text style={[s.sectionTitle, { color: colors.text, marginBottom: 0 }]}>{t('settings.about.title') || 'Sobre'}</Text>
@@ -2764,7 +2353,7 @@ function SettingsScreenInner() {
 
         {/* One AI Assistant */}
         {(searching || activeCategory === 'bia') && sectionMatches('Bia', t('settings.oneAssistant'), t('settings.oneEnabled'), t('settings.oneNotifPrefs'), 'one ai', 'assistant', 'bia') && (
-        <View style={[s.section, { backgroundColor: colors.surface, borderColor: colors.borderLight, borderWidth: 1 }]}>
+        <View style={[s.section, { backgroundColor: gc.cardBg }]}>
           <View style={s.sectionTitleRow}>
             <View style={{ width: 28, height: 28, borderRadius: 14, backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center', marginRight: 8 }}>
               <Text style={{ color: colors.onPrimary || '#fff', fontSize: 12, fontWeight: '800' }}>B</Text>
@@ -2833,7 +2422,7 @@ function SettingsScreenInner() {
 
         {/* Desktop Notifications */}
         {(searching || activeCategory === 'notifications') && Platform.OS === 'web' && sectionMatches(t('settings.desktopNotifs'), t('settings.desktopNotifsDesc'), 'desktop', 'browser') && (
-          <View ref={registerSectionRef('notifications')} style={[s.section, { backgroundColor: colors.surface, borderColor: colors.borderLight, borderWidth: 1 }]}>
+          <View ref={registerSectionRef('notifications')} style={[s.section, { backgroundColor: gc.cardBg }]}>
             <View style={s.sectionTitleRow}>
               <IconBell size={18} color={colors.primary} style={{ marginRight: 8 }} />
               <Text style={[s.sectionTitle, { color: colors.text, marginBottom: 0 }]}>{t('settings.desktopNotifs')}</Text>
@@ -2874,7 +2463,7 @@ function SettingsScreenInner() {
             trocar a senha. Este bloco web-only reusa o MESMO ChangePasswordModal
             (RN Modal puro, web-safe, já montado no fim da tela). */}
         {(searching || activeCategory === 'privacy') && Platform.OS === 'web' && sectionMatches(t('settings.security'), 'segurança', 'senha', 'password', t('settings.changePassword')) && (
-          <View style={[s.section, { backgroundColor: colors.surface, borderColor: colors.borderLight, borderWidth: 1 }]}>
+          <View style={[s.section, { backgroundColor: gc.cardBg }]}>
             <Text style={[s.sectionTitle, { color: colors.text }]}>{t('settings.security') || 'Segurança'}</Text>
             <PressableRow
               style={[s.settingRow, { borderBottomColor: colors.borderLight, borderBottomWidth: 0 }]}
@@ -2896,7 +2485,7 @@ function SettingsScreenInner() {
 
         {/* Security — Biometric Lock + Parental Controls (native only; biometric items below self-gate on biometricAvailable) */}
         {(searching || activeCategory === 'privacy') && Platform.OS !== 'web' && sectionMatches(t('settings.security'), 'biometric', 'face id', 'parental', 'família', 'family', 'segurança', 'senha', 'password', t('settings.changePassword'), '2fa', t('settings.twoFactor'), 'pin', 'backup', t('settings.e2eBackup'), t('settings.backupKey.rotate'), t('settings.activityLog'), 'byok', t('settings.advancedKey')) && (
-          <View ref={registerSectionRef('security')} style={[s.section, { backgroundColor: colors.surface, borderColor: colors.borderLight, borderWidth: 1 }]}>
+          <View ref={registerSectionRef('security')} style={[s.section, { backgroundColor: gc.cardBg }]}>
             {/* Família — Apple Family Sharing-style hub */}
             <PressableRow
               style={[s.settingRow, { borderBottomColor: colors.borderLight, marginBottom: Spacing.sm, backgroundColor: colors.primaryLight, borderRadius: 14, padding: 14 }]}
@@ -3232,7 +2821,7 @@ function SettingsScreenInner() {
 
         {/* Forwarding */}
         {(searching || activeCategory === 'privacy') && sectionMatches(t('settings.forwarding'), t('settings.forwardingEnable'), t('settings.forwardingDesc')) && (
-        <View style={[s.section, { backgroundColor: colors.surface, borderColor: colors.borderLight, borderWidth: 1 }]}>
+        <View style={[s.section, { backgroundColor: gc.cardBg }]}>
           <View style={s.sectionTitleRow}>
             <IconForward size={18} color={colors.primary} style={{ marginRight: 8 }} />
             <Text style={[s.sectionTitle, { color: colors.text, marginBottom: 0 }]}>{t('settings.forwarding')}</Text>
@@ -3268,42 +2857,20 @@ function SettingsScreenInner() {
         </View>
         )}
 
-        {/* Reading */}
+        {/* Reading — font size picker (3 options, labels can be long → sheet). */}
         {(searching || activeCategory === 'email') && sectionMatches(t('settings.reading'), t('settings.fontSize'), t('settings.readReceipts'), t('settings.referrals') || 'referral') && (
-        <View ref={registerSectionRef('reading')} style={[s.section, { backgroundColor: colors.surface, borderColor: colors.borderLight, borderWidth: 1 }]}>
-          <Text style={[s.sectionTitle, { color: colors.text }]}>{t('settings.reading')}</Text>
-
-          <View style={[s.settingRow, { borderBottomColor: colors.borderLight }]}>
-            <View style={s.settingInfo}>
-              <Text style={[s.settingLabel, { color: colors.text }]}>{t('settings.fontSize')}</Text>
-              <Text style={[s.settingDesc, { color: colors.textTertiary }]}>
-                {t('settings.fontSizeDesc')}
-              </Text>
-            </View>
-            <View style={s.perPageBtns}>
-              {[{ val: 'small', label: t('settings.fontSmall') }, { val: 'medium', label: t('settings.fontMedium') }, { val: 'large', label: t('settings.fontLarge') }].map(f => (
-                <TouchableOpacity
-                  key={f.val}
-                  style={[
-                    s.perPageBtn,
-                    { borderColor: colors.divider },
-                    settings.font_size === f.val && { backgroundColor: colors.primary, borderColor: colors.primary },
-                  ]}
-                  onPress={() => { setSettings(prev => ({ ...prev, font_size: f.val })); saveNotifPref({ font_size: f.val }); }}
-                >
-                  <Text style={[
-                    s.perPageText, { color: colors.text },
-                    settings.font_size === f.val && { color: '#fff' },
-                  ]}>
-                    {f.label}
-                  </Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-          </View>
-
-          {/* Read-receipts moved to the single Privacy-section copy below
-              (dedupe — was duplicated here). */}
+        <View ref={registerSectionRef('reading')}>
+          <SettingsGroup header={t('settings.reading')}>
+            <SettingsPickerRow
+              title={t('settings.fontSize')}
+              value={settings.font_size}
+              cancelLabel={t('common.cancel') || 'Cancelar'}
+              sheetMessage={t('settings.fontSizeDesc')}
+              options={[{ value: 'small', label: t('settings.fontSmall') }, { value: 'medium', label: t('settings.fontMedium') }, { value: 'large', label: t('settings.fontLarge') }]}
+              onChange={(v) => { setSettings(prev => ({ ...prev, font_size: v })); saveNotifPref({ font_size: v }); }}
+            />
+          </SettingsGroup>
+          {/* Read-receipts live in the Privacy section (dedupe). */}
         </View>
         )}
 
@@ -3312,7 +2879,7 @@ function SettingsScreenInner() {
             (last_seen / profile_photo / status / groups) open a bottom-sheet
             picker; read_receipts is a simple Switch since it's boolean. */}
         {(searching || activeCategory === 'privacy') && sectionMatches(t('settings.privacyTitle'), t('settings.privacyLastSeen'), t('settings.privacyProfilePhoto'), t('settings.privacyReadReceipts'), t('settings.privacyStatus'), t('settings.privacyGroups'), 'privacy', 'privacidade') && (
-        <View ref={registerSectionRef('privacy_granular')} style={[s.section, { backgroundColor: colors.surface, borderColor: colors.borderLight, borderWidth: 1 }]}>
+        <View ref={registerSectionRef('privacy_granular')} style={[s.section, { backgroundColor: gc.cardBg }]}>
           <View style={s.sectionTitleRow}>
             <IconShield size={18} color={colors.primary} style={{ marginRight: 8 }} />
             <Text style={[s.sectionTitle, { color: colors.text, marginBottom: 0 }]}>{t('settings.privacyTitle')}</Text>
@@ -3532,7 +3099,7 @@ function SettingsScreenInner() {
 
         {/* Legal — Privacy & Terms */}
         {(searching || activeCategory === 'help') && sectionMatches(t('settings.legal'), t('settings.privacyPolicy'), t('settings.termsOfService')) && (
-        <View style={[s.section, { backgroundColor: colors.surface, borderColor: colors.borderLight, borderWidth: 1 }]}>
+        <View style={[s.section, { backgroundColor: gc.cardBg }]}>
           <View style={s.sectionTitleRow}>
             <IconFileText size={18} color={colors.primary} style={{ marginRight: 8 }} />
             <Text style={[s.sectionTitle, { color: colors.text, marginBottom: 0 }]}>{t('settings.legal')}</Text>
@@ -3563,7 +3130,7 @@ function SettingsScreenInner() {
             all / urgent / silent. Persisted via setStorage (mirrors One
             Assistant section pattern). */}
         {(searching || activeCategory === 'notifications') && sectionMatches(t('settings.notificationsTitle'), t('settings.notifAll'), t('settings.notifUrgent'), t('settings.notifSilent')) && (
-        <View style={[s.section, { backgroundColor: colors.surface, borderColor: colors.borderLight, borderWidth: 1 }]}>
+        <View style={[s.section, { backgroundColor: gc.cardBg }]}>
           <View style={s.sectionTitleRow}>
             <IconBell size={18} color={colors.primary} style={{ marginRight: 8 }} />
             <Text style={[s.sectionTitle, { color: colors.text, marginBottom: 0 }]}>{t('settings.notificationsTitle')}</Text>
@@ -3603,126 +3170,49 @@ function SettingsScreenInner() {
         </View>
         )}
 
-        {/* ── GROUP: Armazenamento e dados (native only — both child blocks
-            are Platform.OS !== 'web'). Wraps Media auto-download + Storage. ── */}
+        {/* ── GROUP: Armazenamento e dados (native only — web has no cellular
+            concept nor an on-disk media store). [2026-10-08 settings-redesign]
+            WhatsApp "Armazenamento e dados" layout: auto-download = 4 picker
+            rows (Wi-Fi e dados móveis / Só Wi-Fi / Nunca) — the old 3-pill
+            control rendered as blank pills on iOS. ── */}
         {(searching || activeCategory === 'storage_data') && Platform.OS !== 'web' && (
-        <CollapsibleGroup title={t('settings.group.storage') || 'Armazenamento e dados'} icon={IconDatabase} forceOpen={!!_q || activeCategory === 'storage_data'}>
+        <CollapsibleGroup title={t('settings.group.storage') || 'Armazenamento e dados'} icon={IconDatabase} forceOpen={!!_q || activeCategory === 'storage_data'} hideHeader={activeCategory === 'storage_data' && !searching}>
 
-        {/* Mídia automática — WhatsApp Settings → Storage and Data parity.
-            4 buckets (photos, audio, videos, docs) × 3 modes (Wi-Fi / Wi-Fi+Móvel
-            / Nunca). Reads/writes chat_user_defaults via debounced PATCH; mirrors
-            into mediaCache.setMediaDownloadPrefs so the cellular gate respects
-            the new pref without an app restart. Mobile-only (web has no
-            cellular concept). */}
-        {Platform.OS !== 'web' && sectionMatches(t('settings.mediaAutoDownload'), t('settings.mediaPhotos'), t('settings.mediaAudio'), t('settings.mediaVideos'), t('settings.mediaDocs'), t('settings.roaming.title'), t('settings.autoSaveGallery'), 'storage', 'auto-download', 'roaming', 'galeria', 'gallery') && (
-        <View ref={registerSectionRef('mediaAutoDownload')} style={[s.section, { backgroundColor: colors.surface, borderColor: colors.borderLight, borderWidth: 1 }]}>
-          <Text style={[s.sectionTitle, { color: colors.text }]}>{t('settings.mediaAutoDownload')}</Text>
-          <Text style={[s.settingDesc, { color: colors.textTertiary, marginBottom: Spacing.md }]}>
-            {t('settings.mediaAutoDownloadDesc')}
-          </Text>
-          {[
-            { key: 'media_auto_dl_photos', label: t('settings.mediaPhotos') },
-            { key: 'media_auto_dl_audio',  label: t('settings.mediaAudio') },
-            { key: 'media_auto_dl_videos', label: t('settings.mediaVideos') },
-            { key: 'media_auto_dl_docs',   label: t('settings.mediaDocs') },
-          ].map((row, rowIdx, rowArr) => {
-            const cur = chatDefaults[row.key];
-            const isLast = rowIdx === rowArr.length - 1;
-            return (
-              <View
+        {/* Mídia automática — 4 buckets × 3 modes. Writes chat_user_defaults
+            via updateChatDefault (debounced PATCH) and mirrors into
+            mediaCache so the cellular gate applies without a restart. */}
+        {sectionMatches(t('settings.mediaAutoDownload'), t('settings.mediaPhotos'), t('settings.mediaAudio'), t('settings.mediaVideos'), t('settings.mediaDocs'), t('settings.roaming.title'), t('settings.autoSaveGallery'), 'storage', 'auto-download', 'roaming', 'galeria', 'gallery') && (
+        <View ref={registerSectionRef('mediaAutoDownload')}>
+          <SettingsGroup header={t('settings.mediaAutoDownload')} footer={t('settings.mediaAutoDownloadDesc')}>
+            {[
+              { key: 'media_auto_dl_photos', label: t('settings.mediaPhotos') },
+              { key: 'media_auto_dl_audio',  label: t('settings.mediaAudio') },
+              { key: 'media_auto_dl_videos', label: t('settings.mediaVideos') },
+              { key: 'media_auto_dl_docs',   label: t('settings.mediaDocs') },
+            ].map((row) => (
+              <SettingsPickerRow
                 key={row.key}
-                style={[
-                  s.settingRow,
-                  {
-                    borderBottomColor: colors.borderLight,
-                    borderBottomWidth: isLast ? 0 : StyleSheet.hairlineWidth,
-                    flexDirection: 'column',
-                    alignItems: 'stretch',
-                    paddingVertical: Spacing.md,
-                  },
+                title={row.label}
+                value={chatDefaults[row.key]}
+                sheetTitle={row.label}
+                sheetMessage={t('settings.rd.autoDownloadSheet') || 'Baixar automaticamente quando estiver em'}
+                cancelLabel={t('common.cancel') || 'Cancelar'}
+                options={[
+                  { value: 'mobile', label: t('settings.rd.dlWifiMobile') || 'Wi-Fi e dados móveis' },
+                  { value: 'wifi',   label: t('settings.rd.dlWifi') || 'Só Wi-Fi' },
+                  { value: 'never',  label: t('settings.mediaNever') || 'Nunca' },
                 ]}
-              >
-                <Text style={[s.settingLabel, { color: colors.text, marginBottom: Spacing.sm }]}>{row.label}</Text>
-                {/* [2026-05-21] Pills got reported as "empty" on Print 6 —
-                    `perPageBtn` had no alignItems/justifyContent so the
-                    `Text` rendered top-left and "Wi-Fi + Móvel" wrapped to
-                    2 lines while "Nunca"/"Wi-Fi" looked centered. On a
-                    412×915 device the per-pill width is ~110px so the
-                    label was overflowing visually. Now: explicit center +
-                    minHeight + numberOfLines=1 + subtle inactive bg so the
-                    user always sees the option name + which one is on. */}
-                <View style={s.perPageBtns}>
-                  {[
-                    { val: 'wifi',   label: t('settings.mediaWifi') },
-                    { val: 'mobile', label: t('settings.mediaWifiMobile') },
-                    { val: 'never',  label: t('settings.mediaNever') },
-                  ].map(opt => {
-                    const selected = cur === opt.val;
-                    return (
-                      <TouchableOpacity
-                        key={opt.val}
-                        style={[
-                          s.perPageBtn,
-                          {
-                            borderColor: colors.divider,
-                            backgroundColor: colors.backgroundSecondary || colors.background,
-                            flex: 1,
-                            minHeight: 38,
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                          },
-                          selected && { backgroundColor: colors.primary, borderColor: colors.primary },
-                        ]}
-                        onPress={() => updateChatDefault({ [row.key]: opt.val })}
-                        accessibilityRole="radio"
-                        accessibilityState={{ selected }}
-                        accessibilityLabel={`${row.label} — ${opt.label}`}
-                      >
-                        <Text
-                          numberOfLines={1}
-                          adjustsFontSizeToFit
-                          minimumFontScale={0.85}
-                          style={[
-                            s.perPageText,
-                            { color: colors.text, textAlign: 'center', fontSize: 13 },
-                            selected && { color: '#fff' },
-                          ]}
-                        >
-                          {opt.label}
-                        </Text>
-                      </TouchableOpacity>
-                    );
-                  })}
-                </View>
-              </View>
-            );
-          })}
+                onChange={(v) => updateChatDefault({ [row.key]: v })}
+              />
+            ))}
+          </SettingsGroup>
 
-          {/* Roaming gate — separate toggle that scopes the "mobile" mode
-              to also fire while roaming. When OFF, the mediaCache cellular
-              gate treats `mobile` as "Wi-Fi + home carrier" and skips
-              downloads on roaming. Persisted via local storage; read by
-              services/mediaCache on bootstrap. */}
-          <View
-            style={[
-              s.settingRow,
-              {
-                borderBottomColor: colors.borderLight,
-                borderBottomWidth: 0,
-                marginTop: Spacing.sm,
-                paddingTop: Spacing.md,
-                borderTopWidth: StyleSheet.hairlineWidth,
-                borderTopColor: colors.borderLight,
-              },
-            ]}
-          >
-            <View style={s.settingInfo}>
-              <Text style={[s.settingLabel, { color: colors.text }]}>{t('settings.roaming.title') || 'Permitir em roaming'}</Text>
-              <Text style={[s.settingDesc, { color: colors.textTertiary }]}>
-                {t('settings.roaming.desc') || 'Permite baixar mídia quando estiver em roaming. Desligue pra economizar dados internacionais.'}
-              </Text>
-            </View>
-            <NativeSwitch
+          <SettingsGroup>
+            {/* Roaming gate — when OFF, `mobile` mode skips downloads while
+                roaming. Read by services/mediaCache on bootstrap. */}
+            <SettingsSwitchRow
+              title={t('settings.roaming.title') || 'Permitir em roaming'}
+              subtitle={t('settings.roaming.desc') || 'Permite baixar mídia quando estiver em roaming. Desligue pra economizar dados internacionais.'}
               value={mediaRoaming}
               onValueChange={(v) => {
                 setMediaRoaming(v);
@@ -3732,38 +3222,11 @@ function SettingsScreenInner() {
                   mc.setMediaDownloadPrefs?.({ media_auto_dl_roaming: v });
                 } catch {}
               }}
-              trackColor={{ false: colors.divider, true: colors.primaryLight }}
-              thumbColor={mediaRoaming ? colors.primary : '#fff'}
             />
-          </View>
-
-          {/* [WhatsApp "Media visibility" 2026-05-26] Auto-save received
-              photos + videos into the phone gallery / camera roll. Default ON.
-              Persists under `autoSaveMediaToGallery`; mediaCache reads the same
-              key and saves on each successful inbound download (de-duped +
-              permission-gated inside the service). */}
-          <View
-            style={[
-              s.settingRow,
-              {
-                borderBottomColor: colors.borderLight,
-                borderBottomWidth: 0,
-                marginTop: Spacing.sm,
-                paddingTop: Spacing.md,
-                borderTopWidth: StyleSheet.hairlineWidth,
-                borderTopColor: colors.borderLight,
-              },
-            ]}
-          >
-            <View style={s.settingInfo}>
-              <Text style={[s.settingLabel, { color: colors.text }]}>
-                {t('settings.autoSaveGallery') || 'Salvar na galeria'}
-              </Text>
-              <Text style={[s.settingDesc, { color: colors.textTertiary }]}>
-                {t('settings.autoSaveGalleryDesc') || 'Fotos e vídeos recebidos vão para o app Fotos automaticamente.'}
-              </Text>
-            </View>
-            <NativeSwitch
+            {/* Auto-save received photos/videos into the gallery (default ON). */}
+            <SettingsSwitchRow
+              title={t('settings.autoSaveGallery') || 'Salvar na galeria'}
+              subtitle={t('settings.autoSaveGalleryDesc') || 'Fotos e vídeos recebidos vão para o app Fotos automaticamente.'}
               value={autoSaveGallery}
               onValueChange={(v) => {
                 setAutoSaveGallery(v);
@@ -3773,242 +3236,125 @@ function SettingsScreenInner() {
                   mc.setAutoSaveMediaToGallery?.(v);
                 } catch {}
               }}
-              trackColor={{ false: colors.divider, true: colors.primaryLight }}
-              thumbColor={autoSaveGallery ? colors.primary : '#fff'}
             />
-          </View>
+          </SettingsGroup>
 
-          {/* [gap C3 2026-05-20] Low-data mode em chamadas — when ON, caps
-              video at 200kbps/15fps/360p so the call burns ~25% the bytes
-              of the default ladder. Auto-applies on roaming/expensive
-              cellular even when OFF (gate lives in app/call.js right
-              before setCameraEnabled). */}
-          <View
-            style={[
-              s.settingRow,
-              {
-                borderBottomColor: colors.borderLight,
-                borderBottomWidth: 0,
-                marginTop: Spacing.sm,
-                paddingTop: Spacing.md,
-                borderTopWidth: StyleSheet.hairlineWidth,
-                borderTopColor: colors.borderLight,
-              },
-            ]}
-          >
-            <View style={s.settingInfo}>
-              <Text style={[s.settingLabel, { color: colors.text }]}>
-                {t('settings.lowDataCalls.title') || 'Usar menos dados em chamadas'}
-              </Text>
-              <Text style={[s.settingDesc, { color: colors.textTertiary }]}>
-                {t('settings.lowDataCalls.desc') || 'Limita o vídeo a 360p / 15 fps. Útil em redes lentas ou móveis. Ativa automaticamente em roaming.'}
-              </Text>
-            </View>
-            <NativeSwitch
+          <SettingsGroup header={t('settings.rd.calls') || 'Chamadas'}>
+            {/* [gap C3] Low-data calls — caps video at 360p/15fps. */}
+            <SettingsSwitchRow
+              title={t('settings.lowDataCalls.title') || 'Usar menos dados em chamadas'}
+              subtitle={t('settings.lowDataCalls.desc') || 'Limita o vídeo a 360p / 15 fps. Útil em redes lentas ou móveis. Ativa automaticamente em roaming.'}
               value={lowDataCalls}
               onValueChange={(v) => {
                 setLowDataCalls(v);
                 setStorage('chatyy_low_data_calls', String(v));
               }}
-              trackColor={{ false: colors.divider, true: colors.primaryLight }}
-              thumbColor={lowDataCalls ? colors.primary : '#fff'}
             />
-          </View>
-
-          {/* [2026-10-06 UX2] Qualidade HD (1080p) em chamadas de vídeo. Flips
-              the native pref CallVideoQuality reads when publishing the camera
-              (Android had no UI for it — CallActivity has no "more" menu; iOS
-              mirrors its in-call menu toggle). Only honoured on Wi-Fi/good
-              network by the engine; hidden when the binary lacks the bridge. */}
-          {hdCallsAvailable && (
-          <View
-            style={[
-              s.settingRow,
-              {
-                borderBottomColor: colors.borderLight,
-                borderBottomWidth: 0,
-                marginTop: Spacing.sm,
-                paddingTop: Spacing.md,
-                borderTopWidth: StyleSheet.hairlineWidth,
-                borderTopColor: colors.borderLight,
-              },
-            ]}
-          >
-            <View style={s.settingInfo}>
-              <Text style={[s.settingLabel, { color: colors.text }]}>
-                {t('settings.hdCalls.title') || 'Qualidade HD (1080p)'}
-              </Text>
-              <Text style={[s.settingDesc, { color: colors.textTertiary }]}>
-                {t('settings.hdCalls.desc') || 'Usa mais dados; só em Wi-Fi/rede boa'}
-              </Text>
-            </View>
-            <NativeSwitch
-              value={hdCalls}
-              onValueChange={(v) => {
-                setHdCalls(v);
-                try { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); } catch {}
-                try {
-                  const ck = require('../modules/expo-callkit');
-                  if (typeof ck.setCallHdPreferred === 'function') ck.setCallHdPreferred(v);
-                } catch {}
-              }}
-              trackColor={{ false: colors.divider, true: colors.primaryLight }}
-              thumbColor={hdCalls ? colors.primary : '#fff'}
-            />
-          </View>
-          )}
+            {/* [2026-10-06 UX2] HD (1080p) — native pref via expo-callkit;
+                hidden when the binary lacks the bridge. */}
+            {hdCallsAvailable && (
+              <SettingsSwitchRow
+                title={t('settings.hdCalls.title') || 'Qualidade HD (1080p)'}
+                subtitle={t('settings.hdCalls.desc') || 'Usa mais dados; só em Wi-Fi/rede boa'}
+                value={hdCalls}
+                onValueChange={(v) => {
+                  setHdCalls(v);
+                  try { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); } catch {}
+                  try {
+                    const ck = require('../modules/expo-callkit');
+                    if (typeof ck.setCallHdPreferred === 'function') ck.setCallHdPreferred(v);
+                  } catch {}
+                }}
+              />
+            )}
+          </SettingsGroup>
         </View>
         )}
 
-        {/* Storage — WhatsApp Settings → Storage parity.
-            Shows per-bucket usage (photos / videos / audios / docs) plus a
-            "Clear cache" button at the bottom. Stats are read once on mount
-            via mediaCache.getStorageStats() and refreshed after a clear so
-            users get instant feedback. Mobile-only (web has no on-disk
-            store the user cares about). */}
-        {Platform.OS !== 'web' && sectionMatches(t('settings.storage.title'), t('settings.storage.photos'), t('settings.storage.videos'), t('settings.storage.audios'), t('settings.storage.documents'), 'storage', 'cache', 'armazenamento', 'cache') && (
-        <View ref={registerSectionRef('storage')} style={[s.section, { backgroundColor: colors.surface, borderColor: colors.borderLight, borderWidth: 1 }]}>
-          {/* [2026-05-18] Manual refresh button — storage stats used to only
-              hydrate at mount, so toggling auto-DL or clearing a chat
-              elsewhere left the breakdown stale. User reported "armazenamento
-              nao ta sincronizado". Tap re-scans cache+saved dirs. */}
-          <View style={[s.sectionTitleRow, { justifyContent: 'space-between' }]}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
-              <IconDatabase size={18} color={colors.primary} style={{ marginRight: 8 }} />
-              <Text style={[s.sectionTitle, { color: colors.text, marginBottom: 0 }]}>{t('settings.storage.title')}</Text>
-            </View>
-            <TouchableOpacity
-              onPress={refreshStorageStats}
-              disabled={storageBusy}
-              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-              accessibilityRole="button"
-              accessibilityLabel={t('common.refresh') || 'Atualizar'}
-              style={{ padding: 6, opacity: storageBusy ? 0.4 : 1 }}
-            >
-              <IconRefresh size={18} color={colors.textSecondary} />
-            </TouchableOpacity>
-          </View>
-          {(() => {
-            // Inline helper to format bytes WhatsApp-style: < 1KB shows
-            // 0 KB so very small caches don't read as "0 B" awkwardly.
-            // Threshold-based (KB → MB → GB) with one decimal under 100.
-            const fmtBytes = (b) => {
-              const bytes = Math.max(0, Number(b) || 0);
-              if (bytes < 1024) return bytes === 0 ? '0 KB' : '< 1 KB';
-              const kb = bytes / 1024;
-              if (kb < 1024) return `${kb < 10 ? kb.toFixed(1) : Math.round(kb)} KB`;
-              const mb = kb / 1024;
-              if (mb < 1024) return `${mb < 10 ? mb.toFixed(1) : Math.round(mb)} MB`;
-              const gb = mb / 1024;
-              return `${gb < 10 ? gb.toFixed(2) : gb.toFixed(1)} GB`;
+        {/* Storage — per-bucket usage + app cache + history + clear cache.
+            Stats via mediaCache.getStorageStats(); refreshed after clear. */}
+        {sectionMatches(t('settings.storage.title'), t('settings.storage.photos'), t('settings.storage.videos'), t('settings.storage.audios'), t('settings.storage.documents'), 'storage', 'cache', 'armazenamento', 'cache') && (() => {
+          const fmtBytes = (b) => {
+            const bytes = Math.max(0, Number(b) || 0);
+            if (bytes < 1024) return bytes === 0 ? '0 KB' : '< 1 KB';
+            const kb = bytes / 1024;
+            if (kb < 1024) return `${kb < 10 ? kb.toFixed(1) : Math.round(kb)} KB`;
+            const mb = kb / 1024;
+            if (mb < 1024) return `${mb < 10 ? mb.toFixed(1) : Math.round(mb)} MB`;
+            const gb = mb / 1024;
+            return `${gb < 10 ? gb.toFixed(2) : gb.toFixed(1)} GB`;
+          };
+          const fmtCount = (n) => {
+            const num = Number(n) || 0;
+            const key = num === 1 ? 'settings.storage.itemsSingular' : 'settings.storage.items';
+            return (t(key) || `${num} items`).replace('{n}', String(num));
+          };
+          const stats = storageStats || { totalBytes: 0, cacheBytes: 0, savedBytes: 0, byType: { image: 0, video: 0, audio: 0, document: 0 }, counts: { image: 0, video: 0, audio: 0, document: 0 } };
+          const mediaTotal = (stats.byType.image || 0) + (stats.byType.video || 0) + (stats.byType.audio || 0) + (stats.byType.document || 0);
+          const rows = [
+            { key: 'image',    label: t('settings.storage.photos'),    bytes: stats.byType.image    || 0, count: stats.counts.image    || 0 },
+            { key: 'video',    label: t('settings.storage.videos'),    bytes: stats.byType.video    || 0, count: stats.counts.video    || 0 },
+            { key: 'audio',    label: t('settings.storage.audios'),    bytes: stats.byType.audio    || 0, count: stats.counts.audio    || 0 },
+            { key: 'document', label: t('settings.storage.documents'), bytes: stats.byType.document || 0, count: stats.counts.document || 0 },
+          ];
+          const onClear = async () => {
+            const doClear = async () => {
+              setStorageBusy(true);
+              try {
+                const mc = require('../services/mediaCache');
+                if (typeof mc.clearAllCache === 'function') await mc.clearAllCache();
+              } catch {}
+              await refreshStorageStats();
+              setStorageBusy(false);
             };
-            const fmtCount = (n) => {
-              const num = Number(n) || 0;
-              const key = num === 1 ? 'settings.storage.itemsSingular' : 'settings.storage.items';
-              return (t(key) || `${num} items`).replace('{n}', String(num));
-            };
-            const stats = storageStats || { totalBytes: 0, cacheBytes: 0, savedBytes: 0, byType: { image: 0, video: 0, audio: 0, document: 0 }, counts: { image: 0, video: 0, audio: 0, document: 0 } };
-            const mediaTotal = (stats.byType.image || 0) + (stats.byType.video || 0) + (stats.byType.audio || 0) + (stats.byType.document || 0);
-            const summary = (t('settings.storage.usedSummary') || 'You have used {size} of media').replace('{size}', fmtBytes(mediaTotal));
-            const rows = [
-              { key: 'image',    label: t('settings.storage.photos'),    bytes: stats.byType.image    || 0, count: stats.counts.image    || 0 },
-              { key: 'video',    label: t('settings.storage.videos'),    bytes: stats.byType.video    || 0, count: stats.counts.video    || 0 },
-              { key: 'audio',    label: t('settings.storage.audios'),    bytes: stats.byType.audio    || 0, count: stats.counts.audio    || 0 },
-              { key: 'document', label: t('settings.storage.documents'), bytes: stats.byType.document || 0, count: stats.counts.document || 0 },
-            ];
-            return (
-              <>
-                {/* Summary row — total media size */}
-                <Text style={[s.settingDesc, { color: colors.text, fontSize: FontSize.md, fontWeight: '600', marginTop: Spacing.xs, marginBottom: Spacing.sm }]}>
-                  {summary}
-                </Text>
-                {/* Per-bucket breakdown — 4 rows (photos / videos / audios / docs).
-                    Each shows size + count. Empty buckets still render so the
-                    layout stays consistent and users see "0 KB / 0 items" rather
-                    than wondering if the section is broken. */}
-                {rows.map((row, idx) => (
-                  <View
-                    key={row.key}
-                    style={[
-                      s.settingRow,
-                      {
-                        borderBottomColor: colors.borderLight,
-                        borderBottomWidth: idx === rows.length - 1 ? 0 : StyleSheet.hairlineWidth,
-                        paddingVertical: Spacing.sm,
-                      },
-                    ]}
-                  >
-                    <View style={s.settingInfo}>
-                      <Text style={[s.settingLabel, { color: colors.text }]}>{row.label}</Text>
-                      <Text style={[s.settingDesc, { color: colors.textTertiary }]}>
-                        {fmtCount(row.count)}
-                      </Text>
-                    </View>
-                    <Text style={[s.settingLabel, { color: colors.textSecondary }]}>{fmtBytes(row.bytes)}</Text>
+            const ok = Platform.OS === 'web'
+              ? (typeof window !== 'undefined' && window.confirm(t('settings.storage.clearConfirm')))
+              : await confirm({
+                  title: t('settings.storage.clearConfirmTitle'),
+                  message: t('settings.storage.clearConfirm'),
+                  confirmLabel: t('settings.storage.clearCache'),
+                  destructive: true,
+                });
+            if (ok) doClear();
+          };
+          return (
+          <View ref={registerSectionRef('storage')}>
+            <SettingsGroup header={t('settings.storage.title')}>
+              {/* Total + manual refresh (stats only hydrate on mount). */}
+              <SettingsRow
+                title={t('settings.rd.mediaTotal') || 'Mídia no aparelho'}
+                onPress={storageBusy ? undefined : refreshStorageStats}
+                chevron={false}
+                accessibilityLabel={t('common.refresh') || 'Atualizar'}
+                right={(
+                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                    <Text style={{ fontSize: 16, color: gc.secondary, marginRight: 8 }}>{fmtBytes(mediaTotal)}</Text>
+                    {storageBusy ? <ActivityIndicator size="small" color={colors.text} /> : <IconRefresh size={16} color={gc.tertiary} />}
                   </View>
-                ))}
-                {/* App cache row — separate visual indicator for the
-                    OS-purgeable cache dir (informational, not actionable on
-                    its own; the button below clears EVERYTHING). */}
-                <View style={[s.settingRow, { borderBottomColor: colors.borderLight, borderBottomWidth: 0, paddingVertical: Spacing.sm, marginTop: Spacing.xs }]}>
-                  <View style={s.settingInfo}>
-                    <Text style={[s.settingLabel, { color: colors.text }]}>{t('settings.storage.appCache')}</Text>
-                  </View>
-                  <Text style={[s.settingLabel, { color: colors.textSecondary }]}>{fmtBytes(stats.totalBytes)}</Text>
-                </View>
+                )}
+              />
+              {rows.map((row) => (
+                <SettingsRow key={row.key} title={row.label} subtitle={fmtCount(row.count)} value={fmtBytes(row.bytes)} />
+              ))}
+              <SettingsRow title={t('settings.storage.appCache')} value={fmtBytes(stats.totalBytes)} />
+            </SettingsGroup>
 
-                {/* SQLite + media completeness block (#1240, 2026-05-20).
-                    Shows the user "Mensagens no celular: 12,345" and
-                    "Mídias faltantes: 78" with two CTAs to (a) re-trigger the
-                    full-history bootstrap or (b) just re-pull missing media.
-                    Counters come from services/db.getSyncStats() (SQLite
-                    truth, not just on-disk file pool). */}
-                <HistoryDownloadRow />
-                {/* Destructive action — confirm dialog before nuking. Reuses the
-                    Empty-Trash / Delete-Account pattern: web uses window.confirm
-                    (no native Alert), native uses the useConfirm() modal with
-                    destructive styling. Refreshes stats after clearing so the
-                    card flips to the empty state without a re-mount. */}
-                <PressableRow
-                  style={[s.settingRow, { borderBottomColor: colors.borderLight, borderBottomWidth: 0, marginTop: Spacing.sm, opacity: storageBusy ? 0.5 : 1 }]}
-                  disabled={storageBusy}
-                  onPress={async () => {
-                    const doClear = async () => {
-                      setStorageBusy(true);
-                      try {
-                        const mc = require('../services/mediaCache');
-                        if (typeof mc.clearAllCache === 'function') await mc.clearAllCache();
-                      } catch {}
-                      await refreshStorageStats();
-                      setStorageBusy(false);
-                    };
-                    const ok = Platform.OS === 'web'
-                      ? (typeof window !== 'undefined' && window.confirm(t('settings.storage.clearConfirm')))
-                      : await confirm({
-                          title: t('settings.storage.clearConfirmTitle'),
-                          message: t('settings.storage.clearConfirm'),
-                          confirmLabel: t('settings.storage.clearCache'),
-                          destructive: true,
-                        });
-                    if (ok) doClear();
-                  }}
-                  accessibilityRole="button"
-                  accessibilityLabel={t('settings.storage.clearCache')}
-                >
-                  <View style={s.settingInfo}>
-                    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                      <IconTrash size={18} color={colors.error} style={{ marginRight: Spacing.sm }} />
-                      <Text style={[s.settingLabel, { color: colors.error }]}>
-                        {storageBusy ? '…' : t('settings.storage.clearCache')}
-                      </Text>
-                    </View>
-                  </View>
-                </PressableRow>
-              </>
-            );
-          })()}
-        </View>
-        )}
+            {/* History completeness (#1240) — own group. */}
+            <HistoryDownloadRow />
+
+            {/* Destructive action at the bottom — confirm before nuking. */}
+            <SettingsGroup>
+              <SettingsRow
+                title={storageBusy ? '…' : t('settings.storage.clearCache')}
+                destructive
+                disabled={storageBusy}
+                onPress={onClear}
+                accessibilityLabel={t('settings.storage.clearCache')}
+              />
+            </SettingsGroup>
+          </View>
+          );
+        })()}
 
         </CollapsibleGroup>
         )}
@@ -4018,7 +3364,7 @@ function SettingsScreenInner() {
             Default Disappearing Messages. Applied at chat_create time only
             (existing convs unaffected). 4 options: Off / 24h / 7d / 90d. */}
         {(searching || activeCategory === 'chat') && sectionMatches(t('settings.defaultDisappearing'), t('settings.disappearingOff'), t('settings.disappearing24h'), t('settings.disappearing7d'), t('settings.disappearing90d'), 'privacy', 'disappearing') && (
-        <View ref={registerSectionRef('defaultDisappearing')} style={[s.section, { backgroundColor: colors.surface, borderColor: colors.borderLight, borderWidth: 1 }]}>
+        <View ref={registerSectionRef('defaultDisappearing')} style={[s.section, { backgroundColor: gc.cardBg }]}>
           <View style={s.sectionTitleRow}>
             <IconShield size={18} color={colors.primary} style={{ marginRight: 8 }} />
             <Text style={[s.sectionTitle, { color: colors.text, marginBottom: 0 }]}>{t('settings.defaultDisappearing')}</Text>
@@ -4061,7 +3407,7 @@ function SettingsScreenInner() {
             feed_list via LOWER(caption) NOT LIKE '%word%'. Soft-fails on
             backend down: an empty list shows the empty hint. */}
         {(searching || activeCategory === 'chat') && sectionMatches(t('settings.mutedWords') || 'Palavras silenciadas', 'muted words', 'palavras silenciadas', 'mute', 'silenciar', 'privacy') && (
-        <View ref={registerSectionRef('mutedWords')} style={[s.section, { backgroundColor: colors.surface, borderColor: colors.borderLight, borderWidth: 1 }]}>
+        <View ref={registerSectionRef('mutedWords')} style={[s.section, { backgroundColor: gc.cardBg }]}>
           <View style={s.sectionTitleRow}>
             <IconShield size={18} color={colors.primary} style={{ marginRight: 8 }} />
             <Text style={[s.sectionTitle, { color: colors.text, marginBottom: 0 }]}>{t('settings.mutedWords') || 'Palavras silenciadas'}</Text>
@@ -4147,188 +3493,93 @@ function SettingsScreenInner() {
         </View>
         )}
 
-        {/* Convidar amigos — hero card. Reescrita: header gigante com
-            título + descrição + GB ganhos, código grande tappable, botão
-            Compartilhar largo, contador no rodapé. Saiu de "uma row apertada"
-            pra um card que parece feature de growth. */}
+        {/* Convidar amigos — [2026-10-08 settings-redesign] grouped list
+            (código + compartilhar) instead of the black hero card. */}
         {(searching || activeCategory === 'account') && sectionMatches(t('referral.inviteFriends') || 'Convidar amigos', t('referral.subtitle') || 'GB grátis', 'invite', 'amigos', 'referral') && (
-        <View style={{
-          marginBottom: Spacing.lg,
-          borderRadius: 18,
-          overflow: 'hidden',
-          backgroundColor: colors.primary,
-          ...Platform.select({
-            ios: { shadowColor: colors.primary, shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.18, shadowRadius: 16 },
-            android: { elevation: 4 },
-            web: { boxShadow: `0 8px 24px ${colors.primary}33` },
-          }),
-        }}>
-          <View style={{ padding: 20, gap: 14 }}>
-            {/* Header com ícone + título */}
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
-              <View style={{
-                width: 42, height: 42, borderRadius: 21,
-                backgroundColor: 'rgba(255,255,255,0.2)',
-                alignItems: 'center', justifyContent: 'center',
-              }}>
-                <IconUsers size={22} color="#fff" />
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={{ fontSize: 17, fontWeight: '800', color: '#fff', letterSpacing: -0.2 }}>
-                  {t('referral.inviteFriends') || 'Convidar amigos'}
-                </Text>
-                <Text style={{ fontSize: 12, color: 'rgba(255,255,255,0.82)', marginTop: 2, fontWeight: '500' }}>
-                  {t('referral.subtitle') || '1 GB grátis pra cada amigo que entrar'}
-                </Text>
-              </View>
-            </View>
-
-            {/* Code box — grande, copia long-press */}
-            {referralCode ? (
-              <View style={{ gap: 10 }}>
-                <TouchableOpacity
-                  onPress={async () => {
-                    try {
-                      const Clipboard = require('expo-clipboard');
-                      await Clipboard.setStringAsync(referralCode);
-                      Alert.alert(t('referral.copied') || 'Código copiado');
-                    } catch {}
-                  }}
-                  activeOpacity={0.7}
-                  accessibilityLabel={t('referral.copyCode') || 'Tocar pra copiar código'}
-                  accessibilityRole="button"
-                  style={{
-                    backgroundColor: 'rgba(255,255,255,0.18)',
-                    borderRadius: 14,
-                    paddingVertical: 16,
-                    paddingHorizontal: 18,
-                    alignItems: 'center',
-                    flexDirection: 'row',
-                    justifyContent: 'space-between',
-                    borderWidth: 1.5,
-                    borderColor: 'rgba(255,255,255,0.25)',
-                  }}
-                >
-                  <View style={{ flex: 1 }}>
-                    <Text style={{ fontSize: 10, fontWeight: '700', color: 'rgba(255,255,255,0.7)', letterSpacing: 1.2, textTransform: 'uppercase' }}>
-                      {t('referral.yourCode') || 'Seu código'}
-                    </Text>
-                    <Text style={{ fontSize: 24, fontWeight: '900', color: '#fff', letterSpacing: 4, marginTop: 2 }}>
-                      {referralCode}
-                    </Text>
-                  </View>
-                  <View style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: 'rgba(255,255,255,0.2)', alignItems: 'center', justifyContent: 'center' }}>
-                    <IconCopy size={18} color="#fff" />
-                  </View>
-                </TouchableOpacity>
-
-                {/* Botão compartilhar — largo */}
-                <TouchableOpacity
-                  onPress={handleShareReferral}
-                  activeOpacity={0.85}
-                  style={{
-                    backgroundColor: '#fff',
-                    borderRadius: 14,
-                    paddingVertical: 14,
-                    alignItems: 'center',
-                    flexDirection: 'row',
-                    justifyContent: 'center',
-                    gap: 8,
-                  }}
-                >
-                  <IconShare size={18} color={colors.primary} />
-                  <Text style={{ fontSize: 15, fontWeight: '700', color: colors.primary }}>
-                    {t('referral.share') || 'Compartilhar'}
-                  </Text>
-                </TouchableOpacity>
-
-                {/* Stats footer */}
-                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingTop: 6 }}>
-                  <Text style={{ fontSize: 12, color: 'rgba(255,255,255,0.85)', fontWeight: '600' }}>
-                    {referralCount === 1
-                      ? '1 amigo convidado'
-                      : `${referralCount} amigos convidados`}
-                  </Text>
-                  <Text style={{ fontSize: 12, color: 'rgba(255,255,255,0.85)', fontWeight: '700' }}>
-                    {`+${referralCount} GB`}
-                  </Text>
+        <SettingsGroup
+          header={t('referral.inviteFriends') || 'Convidar amigos'}
+          footer={`${t('referral.subtitle') || '1 GB grátis pra cada amigo que entrar'} · ${(referralCount === 1
+            ? (t('settings.rd.referralStatsOne') || '1 amigo convidado · +1 GB')
+            : (t('settings.rd.referralStats') || '{n} amigos convidados · +{n} GB')).split('{n}').join(String(referralCount || 0))}`}
+        >
+          {referralCode ? (
+            <SettingsRow
+              title={t('referral.yourCode') || 'Seu código'}
+              accessibilityLabel={t('referral.copyCode') || 'Tocar pra copiar código'}
+              onPress={async () => {
+                try {
+                  const Clipboard = require('expo-clipboard');
+                  await Clipboard.setStringAsync(referralCode);
+                  Alert.alert(t('referral.copied') || 'Código copiado');
+                } catch {}
+              }}
+              right={(
+                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                  <Text style={[s.referralCode, { color: colors.text }]}>{referralCode}</Text>
+                  <IconCopy size={17} color={gc.secondary} style={{ marginLeft: 10 }} />
                 </View>
-              </View>
-            ) : (
-              <View style={{ paddingVertical: 30, alignItems: 'center' }}>
-                <ActivityIndicator size="small" color="#fff" />
-              </View>
-            )}
-          </View>
-        </View>
+              )}
+            />
+          ) : (
+            <SettingsRow title={t('referral.yourCode') || 'Seu código'} right={<ActivityIndicator size="small" color={colors.text} />} />
+          )}
+          {!!referralCode && (
+            <SettingsRow
+              title={t('settings.rd.shareInvite') || 'Compartilhar convite'}
+              onPress={handleShareReferral}
+              chevron={false}
+              right={<IconShare size={18} color={gc.secondary} />}
+            />
+          )}
+        </SettingsGroup>
         )}
 
-        {/* Danger Zone */}
+        {/* Danger Zone — last group of the Conta page: red text rows. */}
         {(searching || activeCategory === 'account') && sectionMatches(t('settings.dangerZone'), t('settings.emptyTrash'), t('settings.deleteAccount')) && (
-        <View style={[s.section, { backgroundColor: colors.surface, borderColor: colors.borderLight, borderWidth: 1 }]}>
-          <Text style={[s.sectionTitle, { color: colors.error }]}>{t('settings.dangerZone')}</Text>
-          <PressableRow
-            style={[s.settingRow, { borderBottomColor: colors.borderLight }]}
-            onPress={async () => {
-              const doEmpty = async () => {
-                const { emptyTrash } = await import('../services/api');
-                await emptyTrash();
-              };
-              const ok = Platform.OS === 'web'
-                ? (typeof window !== 'undefined' && window.confirm(t('settings.emptyTrashConfirmWeb')))
-                : await confirm({
-                    title: t('settings.emptyTrashTitle'),
-                    message: t('settings.emptyTrashConfirmNative'),
-                    confirmLabel: t('common.confirm'),
-                    destructive: true,
-                  });
-              if (ok) doEmpty();
-            }}
-          >
-            <View style={s.settingInfo}>
-              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                <IconTrash size={18} color={colors.error} style={{ marginRight: Spacing.sm }} />
-                <Text style={[s.settingLabel, { color: colors.error }]}>{t('settings.emptyTrash')}</Text>
-              </View>
-              <Text style={[s.settingDesc, { color: colors.textTertiary }]}>
-                {t('settings.emptyTrashDesc')}
-              </Text>
-            </View>
-            <IconChevronRight size={20} color={colors.textTertiary} />
-          </PressableRow>
-
-          {/* Account Deletion — Apple Requirement */}
-          <PressableRow
-            style={[s.settingRow, { borderBottomColor: colors.borderLight }]}
-            onPress={async () => {
-              const openSheet = () => {
-                setDeleteConfirm(true);
-                setDeletePassword('');
-                setDeleteError('');
-                setDeleteAcknowledged(false);
-                setDeleteTypedWord('');
-              };
-              if (Platform.OS === 'web') { openSheet(); return; }
-              const ok = await confirm({
-                title: t('settings.deleteAccountConfirmTitle'),
-                message: t('settings.deleteAccountConfirmMessage'),
-                confirmLabel: t('settings.deleteAccount'),
-                destructive: true,
-              });
-              if (ok) openSheet();
-            }}
-          >
-            <View style={s.settingInfo}>
-              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                <IconUser size={18} color={colors.error} style={{ marginRight: Spacing.sm }} />
-                <Text style={[s.settingLabel, { color: colors.error }]}>{t('settings.deleteAccount')}</Text>
-              </View>
-              <Text style={[s.settingDesc, { color: colors.textTertiary }]}>
-                {t('settings.deleteAccountDesc')}
-              </Text>
-            </View>
-            <IconChevronRight size={20} color={colors.textTertiary} />
-          </PressableRow>
+        <View>
+          <SettingsGroup footer={t('settings.deleteAccountDesc')}>
+            <SettingsRow
+              title={t('settings.emptyTrash')}
+              destructive
+              onPress={async () => {
+                const doEmpty = async () => {
+                  const { emptyTrash } = await import('../services/api');
+                  await emptyTrash();
+                };
+                const ok = Platform.OS === 'web'
+                  ? (typeof window !== 'undefined' && window.confirm(t('settings.emptyTrashConfirmWeb')))
+                  : await confirm({
+                      title: t('settings.emptyTrashTitle'),
+                      message: t('settings.emptyTrashConfirmNative'),
+                      confirmLabel: t('common.confirm'),
+                      destructive: true,
+                    });
+                if (ok) doEmpty();
+              }}
+            />
+            {/* Account Deletion — Apple Requirement */}
+            <SettingsRow
+              title={t('settings.deleteAccount')}
+              destructive
+              onPress={async () => {
+                const openSheet = () => {
+                  setDeleteConfirm(true);
+                  setDeletePassword('');
+                  setDeleteError('');
+                  setDeleteAcknowledged(false);
+                  setDeleteTypedWord('');
+                };
+                if (Platform.OS === 'web') { openSheet(); return; }
+                const ok = await confirm({
+                  title: t('settings.deleteAccountConfirmTitle'),
+                  message: t('settings.deleteAccountConfirmMessage'),
+                  confirmLabel: t('settings.deleteAccount'),
+                  destructive: true,
+                });
+                if (ok) openSheet();
+              }}
+            />
+          </SettingsGroup>
 
           {deleteConfirm && (() => {
             const confirmWord = t('settings.deleteAccountTypeWord') || 'DELETE';
@@ -5527,8 +4778,8 @@ const s = StyleSheet.create({
   // separating (shadow dropped to none), calmer radius, tighter inner
   // padding + smaller inter-card gap for an iOS-Settings density.
   section: {
-    borderRadius: BorderRadius.xl, paddingHorizontal: Spacing.lg + 1, paddingVertical: Spacing.sm,
-    marginBottom: Spacing.sm,
+    borderRadius: 12, paddingHorizontal: Spacing.lg, paddingVertical: Spacing.sm,
+    marginBottom: 22,
     ...Platform.select({
       web: { boxShadow: 'none' },
       ios: { shadowOpacity: 0 },
@@ -5572,7 +4823,9 @@ const s = StyleSheet.create({
   // -0.5) so it doesn't look squashed at this size.
   // [beauty2 2026-05-31] dialed the card heading down to 18px/700 — closer to
   // iOS Settings group-header weight; calmer, less shouty than 20/800.
-  sectionTitle: { fontSize: FontSize.xl, fontWeight: '700', marginBottom: Spacing.sm, letterSpacing: LetterSpacing.tighter },
+  // [2026-10-08 settings-redesign] calmer card heading for the categories
+  // that still use cards (chat/privacy/notificações/ajuda).
+  sectionTitle: { fontSize: 17, fontWeight: '600', marginBottom: Spacing.sm, letterSpacing: -0.2 },
   // Eyebrow label — small uppercase brand-color tag rendered above a section
   // title for screens that want extra navigability (iOS Settings pattern).
   // Currently only used internally; rows opt in via <Text style={[s.sectionEyebrow, { color: colors.primary }]}/>.
@@ -5615,19 +4868,42 @@ const s = StyleSheet.create({
   },
   perPageText: { fontSize: FontSize.base, fontWeight: '600', letterSpacing: -0.1 },
   // Signature
-  sigCard: { borderWidth: 1, borderRadius: BorderRadius.xl, padding: Spacing.md, marginBottom: Spacing.sm },
+  // [2026-10-08 settings-redesign] signature block inside a grouped card
+  sigBlock: { paddingHorizontal: 16, paddingTop: 12, paddingBottom: 14 },
   sigHeader: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   sigNameInput: {
-    flex: 1, fontSize: FontSize.sm, borderBottomWidth: 1, paddingVertical: 2, fontWeight: '500',
+    flex: 1, fontSize: 16, fontWeight: '600', paddingVertical: 4,
     ...Platform.select({ web: { outlineStyle: 'none' }, default: {} }),
   },
-  defaultBtn: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: BorderRadius.xxl },
-  addSigBtn: { borderWidth: 1.5, borderStyle: 'dashed', borderRadius: BorderRadius.xl, paddingVertical: 12, alignItems: 'center' },
+  defaultBtn: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 999 },
   signatureInput: {
-    borderWidth: 1, borderRadius: BorderRadius.md,
-    padding: Spacing.md, fontSize: FontSize.base,
-    minHeight: 100, ...Platform.select({ web: { outlineStyle: 'none' }, default: {} }),
+    borderRadius: 10, marginTop: 8,
+    paddingHorizontal: 12, paddingVertical: 10, fontSize: 15, lineHeight: 20,
+    minHeight: 72, ...Platform.select({ web: { outlineStyle: 'none' }, default: {} }),
   },
+  addSigBtn: { borderWidth: 1.5, borderStyle: 'dashed', borderRadius: BorderRadius.xl, paddingVertical: 12, alignItems: 'center' },
+  cardInputWrap: { paddingHorizontal: 16, paddingVertical: 12 },
+  cardInput: {
+    borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, fontSize: 15, minHeight: 44,
+    ...Platform.select({ web: { outlineStyle: 'none' }, default: {} }),
+  },
+  timeInput: {
+    minWidth: 76, textAlign: 'center', fontSize: 16, fontVariant: ['tabular-nums'],
+    borderRadius: 8, paddingHorizontal: 10, paddingVertical: 6,
+    ...Platform.select({ web: { outlineStyle: 'none' }, default: {} }),
+  },
+  // Root search (web only — native uses the header search bar)
+  searchBar: { flexDirection: 'row', alignItems: 'center', borderRadius: 10, paddingHorizontal: 10, height: 38, marginBottom: 20, gap: 6 },
+  searchInput: { flex: 1, fontSize: 16, paddingVertical: 0, height: 38, ...Platform.select({ web: { outlineStyle: 'none' }, default: {} }) },
+  searchSummary: { fontSize: 13, paddingHorizontal: 16, marginBottom: 8, textTransform: 'uppercase', letterSpacing: 0.2 },
+  // Root profile card / Conta header
+  profileCardRow: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 12 },
+  profileCardName: { fontSize: 20, fontWeight: '600', letterSpacing: -0.3 },
+  profileCardEmail: { fontSize: 14, marginTop: 2 },
+  accountHeader: { alignItems: 'center', paddingTop: 22, paddingBottom: 18, paddingHorizontal: 16 },
+  accountHeaderName: { fontSize: 22, fontWeight: '600', letterSpacing: -0.3, marginTop: 12 },
+  accountHeaderEmail: { fontSize: 15, marginTop: 3 },
+  referralCode: { fontSize: 16, fontWeight: '600', letterSpacing: 1.5, fontVariant: ['tabular-nums'] },
   // AI Features
   aiFeatures: { marginTop: Spacing.md, gap: 2 },
   aiFeatureRow: {
