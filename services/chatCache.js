@@ -31,6 +31,7 @@ function _scopedConvsKey() {
 import { Platform, AppState } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getString, setString, remove, getAllKeys, isKeyPending, ensureLoaded } from './mmkv';
+import { accountKeyHash } from './chatStore/schema';
 import {
   dbSaveMessages, dbGetMessages, dbGetLastMessageId, dbDeleteMessage, dbUpdateMessage,
   dbSaveConversations, dbGetConversations,
@@ -221,7 +222,7 @@ export async function cacheMessages(conversationId, messages) {
 
   // Also save to MMKV as fallback
   try {
-    const key = `chat_msgs_${conversationId}`;
+    const key = _msgsKey(conversationId);
     const existing = _readMessages(key);
     const merged = mergeMessages(existing, filtered);
     _writeMessages(key, merged);
@@ -259,7 +260,7 @@ export async function cacheSingleMessage(conversationId, msg) {
   }
 
   // Always write to MMKV/localStorage fallback (works on all platforms)
-  const key = `chat_msgs_${conversationId}`;
+  const key = _msgsKey(conversationId);
   try {
     const existing = _readMessages(key);
     const idx = existing.findIndex(m => m.id === msg.id);
@@ -358,7 +359,7 @@ export async function getCachedMessages(conversationId, limit = 50, beforeId = n
   }
 
   // Fallback to MMKV (native non-DB) / localStorage (web)
-  const key = `chat_msgs_${conversationId}`;
+  const key = _msgsKey(conversationId);
   try {
     let msgs = _readMessages(key);
     if (beforeId != null) msgs = _filterBeforeId(msgs, beforeId);
@@ -377,7 +378,7 @@ export async function getLastSyncId(conversationId) {
   }
 
   // Fallback to MMKV
-  const key = `chat_msgs_${conversationId}`;
+  const key = _msgsKey(conversationId);
   try {
     const msgs = _readMessages(key);
     if (!msgs.length) return 0;
@@ -393,6 +394,19 @@ function _convAcct() {
   try { const { getActiveAccountEmail } = require('./api'); const e = getActiveAccountEmail && getActiveAccountEmail(); return e ? String(e).toLowerCase() : '_noacct'; } catch { return '_noacct'; }
 }
 function _convKey() { return 'chat_conversations_' + _convAcct(); }
+// [2026-10-08 offline-first] The per-conversation MMKV/localStorage message
+// mirror was keyed by conversation id ONLY → with two accounts on one device a
+// switch that skipped the wipe (or a shared conversation) let account B paint
+// account A's cached thread (QA repro: web offline, active account flipped →
+// conv 870 showed A's messages). Now namespaced by a hash of the active account
+// (prefix stays `chat_msgs_` so the Android lazy-load/truncation rules apply).
+// No fallback to the legacy unscoped key — fail-closed (native reads SQLite,
+// web reads the account-stamped IndexedDB first anyway).
+function _msgsKey(conversationId) {
+  const a = _convAcct();
+  if (!a || a === '_noacct') return `chat_msgs_${conversationId}`;
+  return `chat_msgs_a${accountKeyHash(a)}_${conversationId}`;
+}
 try { remove('chat_conversations'); } catch {}
 
 // Cache conversation list
@@ -530,8 +544,8 @@ export async function removeConversationFromCache(conversationId) {
     }
   } catch {}
   // Drop any cached messages + pending for that conversation too.
-  try { _hotCache.delete(`chat_msgs_${cid}`); } catch {}
-  try { _kvRemove(`chat_msgs_${cid}`); } catch {}
+  try { _hotCache.delete(_msgsKey(cid)); _hotCache.delete(`chat_msgs_${cid}`); } catch {}
+  try { _kvRemove(_msgsKey(cid)); _kvRemove(`chat_msgs_${cid}`); } catch {}
   try { await clearPendingMessages(cid); } catch {}
   // Web: IndexedDB + localStorage scoped mirror.
   if (Platform.OS === 'web') {
@@ -564,7 +578,7 @@ export async function deleteCachedMessage(conversationId, messageId) {
     try { await dbDeleteMessage(conversationId, messageId); } catch {}
   }
 
-  const key = `chat_msgs_${conversationId}`;
+  const key = _msgsKey(conversationId);
   try {
     const msgs = _readMessages(key);
     _writeMessages(key, msgs.filter(m => m.id !== messageId));
@@ -577,7 +591,7 @@ export async function updateCachedMessage(conversationId, messageId, updates, op
     try { await dbUpdateMessage(messageId, updates, opts); } catch {}
   }
 
-  const key = `chat_msgs_${conversationId}`;
+  const key = _msgsKey(conversationId);
   try {
     const msgs = _readMessages(key);
     const idx = msgs.findIndex(m => m.id === messageId);
@@ -606,8 +620,8 @@ export async function clearConversationMessages(conversationId) {
   if (isNative && isDbReady()) {
     try { await dbSaveMessages(cid, []); } catch {}
   }
-  try { _hotCache.delete(`chat_msgs_${cid}`); } catch {}
-  try { _kvRemove(`chat_msgs_${cid}`); } catch {}
+  try { _hotCache.delete(_msgsKey(cid)); _hotCache.delete(`chat_msgs_${cid}`); } catch {}
+  try { _kvRemove(_msgsKey(cid)); _kvRemove(`chat_msgs_${cid}`); } catch {}
   try { await clearPendingMessages(cid); } catch {}
   if (Platform.OS === 'web') {
     try {
@@ -1008,7 +1022,15 @@ export async function maybeRunRetention() {
       try { await Promise.race([waitForDb(), new Promise(r => setTimeout(r, 2000))]); } catch {}
     }
     if (!isDbReady()) return;
-    try { await dbPruneOldMessages(null, PRUNE_MAX_AGE_DAYS); } catch {}
+    // [2026-10-08 offline-first] NO age-based deletion of chat history —
+    // WhatsApp parity: everything the phone received stays on the phone so it
+    // opens offline. (The old 90-day prune compared a TEXT ISO created_at with
+    // an epoch number and so never matched in practice — "fixing" it would
+    // have silently wiped history.) Only reclaim space after real deletes.
+    // Opt-in kept for a future "Gerenciar armazenamento" screen.
+    if (globalThis.__chatyy_allow_age_prune === true) {
+      try { await dbPruneOldMessages(null, PRUNE_MAX_AGE_DAYS); } catch {}
+    }
     try { await dbVacuum(); } catch {}
     try { await AsyncStorage.setItem(PRUNE_FLAG_KEY, String(now)); } catch {}
   } finally {

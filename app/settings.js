@@ -705,6 +705,9 @@ function SettingsScreenInner() {
     })();
   }, []);
 
+  const [_settingsLastKnown] = useState(() => {
+    try { return require('../services/api').getOfflineLastKnown?.('get_settings') || null; } catch { return null; }
+  });
   const [settings, setSettings] = useState({
     signature: '',
     emails_per_page: 20,
@@ -717,8 +720,12 @@ function SettingsScreenInner() {
     forwarding_email: '',
     forwarding_enabled: false,
     font_size: 'medium',
+    // [2026-10-08 offline-first] Paint the last-known server settings for
+    // THIS account on frame 1 (api.js offline last-known store) instead of a
+    // skeleton → defaults; the network refresh below still wins.
+    ...(_settingsLastKnown && _settingsLastKnown.data && typeof _settingsLastKnown.data === 'object' ? _settingsLastKnown.data : {}),
   });
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(() => !(_settingsLastKnown && _settingsLastKnown.data));
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const savedTimerRef = require('react').useRef(null);

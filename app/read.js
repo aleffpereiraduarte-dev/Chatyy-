@@ -3,7 +3,7 @@ import { View, Text, TouchableOpacity, ActivityIndicator, StyleSheet, Platform, 
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { getMessage, deleteEmail as apiDelete, starEmail, unstarEmail, addLabel, removeLabel, getThread, archiveEmail, aiFollowupReminder } from '../services/api';
-import { getMessageFromCache, saveMessageToCache } from '../services/offlineCache';
+import { getMessageFromCache, getMessageFromCacheSync, saveMessageToCache } from '../services/offlineCache';
 import { useMail } from '../context/MailContext';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
@@ -16,9 +16,14 @@ import { MessageSkeleton } from '../components/SkeletonLoader';
 
 export default function ReadScreen() {
   const { uid, folder = 'INBOX', prevUid, nextUid } = useLocalSearchParams();
-  const [email, setEmail] = useState(null);
+  // [2026-10-08 offline-first] Frame-1 paint from the local body cache (no
+  // skeleton flash on a cache hit; works in airplane mode). The network fetch
+  // below still runs and replaces it with the fresh copy.
+  const [email, setEmail] = useState(() => {
+    try { const c = uid ? getMessageFromCacheSync(uid, folder) : null; return c ? { ...c, seen: true, read: true } : null; } catch { return null; }
+  });
   const [thread, setThread] = useState(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(() => !email);
   // [offline] Bumped by the "Tentar novamente" button on the offline/failed
   // state so the load effect (deps include retryEpoch) re-runs the fetch
   // without a full screen remount.

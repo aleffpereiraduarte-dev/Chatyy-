@@ -49,7 +49,7 @@ import messageOutbox, {
 // ─── Tunables ────────────────────────────────────────────────────────────────
 // WhatsApp-like defaults (see report for sources). Longest edge, JPEG quality.
 export const IMAGE_PROFILES = {
-  standard: { maxDim: 1600, quality: 0.75 },
+  standard: { maxDim: 1600, quality: 0.8 },   // [2026-10-08 upload-br] WhatsApp-like ~0.8
   lite:     { maxDim: 1280, quality: 0.65 }, // 2g/3g
   hd:       { maxDim: 4096, quality: 0.85 }, // HD toggle
 };
@@ -307,7 +307,13 @@ async function _prepare(row, p, signal) {
 }
 
 // ─── Upload ──────────────────────────────────────────────────────────────────
-const HARD_RE = /\b41[35]\b|\b403\b|too large|exceeds|mime|unsupported|not allowed|blocked|forbidden|rejected|parental|admins? only|only admins|not.?a.?member|permission|conversation.?deleted/i;
+// [2026-10-08 upload-br] 413 / file_too_large never heal by retrying ("muito
+// grande") — `_413` covers the Rust error strings (http_413 / chunk_http_413).
+// Reason text: Portuguese label for the bubble + 'too large'/413 so errorMap,
+// sendWorker and offlineCache classifiers keep treating it as hard.
+export const TOO_LARGE_REASON = 'muito grande (413 too large)';
+const TOO_LARGE_RE = /file_too_large|\b413\b|_413\b|too large|muito grande|exceeds/i;
+const HARD_RE = /\b41[35]\b|_41[35]\b|\b403\b|too large|exceeds|mime|unsupported|not allowed|blocked|forbidden|rejected|parental|admins? only|only admins|not.?a.?member|permission|conversation.?deleted/i;
 // Rust failures that mean "network blipped" — keep the resumable session and
 // retry later instead of re-sending the whole file through PHP right now.
 const RUST_RETRYABLE_RE = /chunk_\d|network|timeout|read_chunk|complete_/i;
@@ -395,7 +401,7 @@ async function _process(row) {
     }
     const size = info.size || Number(p.file_size) || 0;
     if (size > MAX_MEDIA_BYTES) {
-      await markFailed(cmi, 'File too large (max 200MB)', { kind: 'hard' });
+      await markFailed(cmi, TOO_LARGE_REASON, { kind: 'hard' });
       _emit(p, cmi, 0, 'failed');
       return;
     }
@@ -439,7 +445,9 @@ async function _process(row) {
           if (size > CHUNKED_MIN_BYTES && api.rustChunkedUpload) {
             const resume = {
               uploadId: (p.rust_upload_id && Number(p.rust_upload_size) === size) ? p.rust_upload_id : null,
-              onUploadId: (id) => { updatePayload(cmi, { rust_upload_id: id, rust_upload_size: size }).catch(() => {}); },
+              // [2026-10-08 upload-br] sessions are host-local (BR edge vs US): persist the base.
+              base: p.rust_upload_base || null,
+              onUploadId: (id, base) => { updatePayload(cmi, { rust_upload_id: id, rust_upload_size: size, rust_upload_base: base || null }).catch(() => {}); },
             };
             rr = await api.rustChunkedUpload(file, p.sender_email || null, 'chat', onPct, ctrl.signal, resume);
           } else if (api.rustUpload) {
@@ -447,6 +455,14 @@ async function _process(row) {
           }
         } catch (e) { rr = { success: false, error: e?.message || 'rust_exception' }; }
         if (ctrl.signal.aborted || rr?.aborted) return;
+        // [2026-10-08 upload-br] Over the server cap → permanent, never retried
+        // (neither here nor via the PHP fallback, which would 413 the same bytes).
+        if (!rr?.success && (rr?.code === 'file_too_large' || Number(rr?.status) === 413 || TOO_LARGE_RE.test(String(rr?.error || '')))) {
+          await markFailed(cmi, TOO_LARGE_REASON, { kind: 'hard' });
+          _emit(p, cmi, 0, 'failed');
+          try { await promoteReady(conv); } catch {}
+          return;
+        }
         // Network-ish Rust failure → keep the resumable session, retry later
         // (offline-aware backoff). After a few attempts give PHP a chance.
         if (!rr?.success && (row.attempts | 0) < 4 && RUST_RETRYABLE_RE.test(String(rr?.error || ''))) {
@@ -482,9 +498,11 @@ async function _process(row) {
           return;
         }
         const k = _kindFor(r, null);
-        await markFailed(cmi, r?.message || r?.error || 'upload_failed', { kind: k });
-        _emit(p, cmi, 0, k === 'hard' ? 'failed' : 'queued');
-        if (k === 'hard') { try { await promoteReady(conv); } catch {} }
+        const _why = String(r?.message || r?.error || 'upload_failed');
+        const _tooBig = r?.data?.code === 'file_too_large' || TOO_LARGE_RE.test(_why);
+        await markFailed(cmi, _tooBig ? TOO_LARGE_REASON : _why, { kind: _tooBig ? 'hard' : k });
+        _emit(p, cmi, 0, (k === 'hard' || _tooBig) ? 'failed' : 'queued');
+        if (k === 'hard' || _tooBig) { try { await promoteReady(conv); } catch {} }
         return;
       }
     } else {
@@ -571,6 +589,8 @@ export async function kick() {
  */
 export async function enqueueMedia(payload) {
   if (Platform.OS === 'web' || !payload) return null;
+  // [2026-10-08 upload-br] user is chatting → photo backup yields (governor).
+  try { require('./backup/uploadGovernor').noteChatActivity?.(); } catch {}
   const r = await enqueue(payload, { lane: 'upload' });
   if (r) {
     _emit(payload, payload.client_message_id, 0, 'queued');
@@ -626,6 +646,8 @@ export async function retry(cmi) {
 }
 
 export function isUploading(cmi) { return _running.has(String(cmi)); }
+/** [2026-10-08 upload-br] In-flight chat media uploads (backup governor signal). */
+export function activeUploadCount() { return _running.size; }
 
 export function start() {
   _stopped = false;
@@ -649,6 +671,7 @@ export default {
   subscribeProgress,
   getProgress,
   isUploading,
+  activeUploadCount,
   onCommitted,
   resolveLocalUri,
   compressImage,

@@ -35,7 +35,9 @@ const ENFORCE_CAP = Platform.OS === 'android';
 // Keys loaded on demand instead of at boot. Per-conversation message blobs
 // (smartChatCache `chat_msgs_v2_*` + chatCache legacy `chat_msgs_*`) and cached
 // email bodies (`omc_msg_<acct>_<id>`, NOT the `omc_msg_index_*` LRU index).
-const LAZY_PREFIXES = [PFX + 'chat_msgs_', PFX + 'omc_msg_'];
+// [2026-10-08 offline-first] + api.js offline last-known bodies (`apiofl1_*`):
+// only read on a network failure (async, ensureLoaded) → never on the boot path.
+const LAZY_PREFIXES = [PFX + 'chat_msgs_', PFX + 'omc_msg_', PFX + 'apiofl1_'];
 const LAZY_EXCEPT_PREFIXES = [PFX + 'omc_msg_index_'];
 export function isLazyKey(fullKey) {
   // [2026-10-06] Só Android (CursorWindow/6 MB). iOS fica intocado: sem lazy, mesmo boot de antes.

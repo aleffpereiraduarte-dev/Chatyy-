@@ -67,6 +67,42 @@ let _stopFlag = false;
 let _nativeIsRunning = false;
 function nativeRunningSet(v) { _nativeIsRunning = !!v; }
 function isNativeRunning() { return _nativeIsRunning; }
+/** [2026-10-08 upload-br] used by backup/uploadGovernor to stop a native pass. */
+export function isNativeBackupRunning() { return !!_nativeIsRunning; }
+
+// ─── [2026-10-08 upload-br] Automatic-run gates ─────────────
+// Automatic entries (boot, app resume, new-photo listener, BG fetch) honour
+// wifiOnly (default ON) + chargingPreferred, and yield to calls / active
+// chatting (uploadGovernor). A user tap ("Fazer backup agora") bypasses all.
+let _lastSkipReason = null;
+export function getLastSkipReason() { return _lastSkipReason; }
+async function _isOnWifi() {
+  try {
+    const NetInfo = require('@react-native-community/netinfo').default;
+    const st = await NetInfo.fetch();
+    if (st?.type === 'wifi' || st?.type === 'ethernet') return !st?.details?.isConnectionExpensive;
+    return false;
+  } catch { return true; } // dep missing → don't block
+}
+async function _isCharging() {
+  try {
+    const Battery = require('expo-battery');
+    const st = await Battery.getBatteryStateAsync();
+    return st === Battery.BatteryState?.CHARGING || st === Battery.BatteryState?.FULL;
+  } catch { return true; } // dep missing → don't block
+}
+async function _autoRunBlocked(settings) {
+  try {
+    const s = settings || await getSettings();
+    if (s.wifiOnly && !(await _isOnWifi())) return 'wifi';
+    if (s.chargingPreferred && !(await _isCharging())) return 'charging';
+  } catch {}
+  try {
+    const why = require('./backup/uploadGovernor').currentBusyReason?.();
+    if (why) return why;
+  } catch {}
+  return null;
+}
 
 // Lock with timestamp + auto-expiry. Bare string lock left stuck whenever a
 // JS error escaped the upload loop — every subsequent backup attempt was
@@ -150,6 +186,8 @@ TaskManager.defineTask(TASK_NAME, async () => {
         if (netState.type !== 'wifi') return BackgroundFetch.BackgroundFetchResult.NoData;
       } catch (e) { console.warn('[AutoBackup] Error checking network:', e.message); }
     }
+    // [2026-10-08 upload-br] "preferir carregando": BG runs wait for the charger.
+    if (settings.chargingPreferred && !(await _isCharging())) return BackgroundFetch.BackgroundFetchResult.NoData;
 
     if (!api.getAuthToken()) return BackgroundFetch.BackgroundFetchResult.NoData;
 
@@ -290,6 +328,17 @@ export async function startForegroundBackup(onProgress, options = {}) {
     }
   } catch {}
 
+  // [2026-10-08 upload-br] automatic runs: Wi-Fi-only / charging / call-chat gates.
+  if (options.auto && !userInitiated) {
+    const why = await _autoRunBlocked();
+    if (why) {
+      _lastSkipReason = why;
+      console.log('[backup] startForegroundBackup: auto run held — ' + why);
+      return { uploaded: 0, total: 0, skipped: why };
+    }
+  }
+  _lastSkipReason = null;
+
   // Pre-flight pending count gate (2026-05-18). The boot fire in initAutoBackup
   // already does this, but every OTHER entry point (MediaLibrary listener
   // burst, AppState resume, internal restart) used to call straight into
@@ -324,6 +373,9 @@ export async function startForegroundBackup(onProgress, options = {}) {
   }
 
   if (!acquireLock('foreground')) return { uploaded: 0, total: 0, error: 'lock_contention' };
+  // [2026-10-08 upload-br] watch calls / chat activity while this run lasts
+  // (pauses the JS engine, stops+restarts a native iOS pass; self-cleans).
+  try { require('./backup/uploadGovernor').start?.(); } catch {}
 
   // Wrap the caller's progress callback so we ALSO drive the persistent
   // ongoing notification on every tick. Cheap — the wrapper is created once
@@ -861,7 +913,7 @@ function setupMediaListener() {
             const now = Date.now();
             if (now - mlLastTrigger < MIN_GAP_MS) return;
             mlLastTrigger = now;
-            startForegroundBackup(null).catch((e) => {
+            startForegroundBackup(null, { auto: true }).catch((e) => {
               console.warn('[AutoBackup] Error in media listener backup:', e.message);
             });
           }, 1500);
@@ -896,7 +948,7 @@ function setupAppStateListener() {
           console.log('[AutoBackup] skipped backup — app is locked');
           return;
         }
-        startForegroundBackup(null).catch((e) => {
+        startForegroundBackup(null, { auto: true }).catch((e) => {
           console.warn('[AutoBackup] Error starting foreground backup on app active:', e.message);
         });
       }, 3000); // 3s delay — was 15s, cut tighter so backup resumes almost immediately after iOS kills the background session
@@ -1110,13 +1162,13 @@ export async function initAutoBackup() {
     try {
       const pending = await getPendingCount().catch(() => 0);
       if (pending > 0) {
-        startForegroundBackup(null).catch((e) => console.warn('[backup] Foreground start error:', e?.message));
+        startForegroundBackup(null, { auto: true }).catch((e) => console.warn('[backup] Foreground start error:', e?.message));
       } else {
         console.log('[backup] Skipping boot fire — 0 pending photos');
       }
     } catch {
       // If pending check fails, fall back to old behavior
-      startForegroundBackup(null).catch((e) => console.warn('[backup] Foreground start error:', e?.message));
+      startForegroundBackup(null, { auto: true }).catch((e) => console.warn('[backup] Foreground start error:', e?.message));
     }
   }
 }

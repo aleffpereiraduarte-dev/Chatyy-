@@ -160,6 +160,8 @@ function _mediaQueue() {
  * for new callers that want full state-machine visibility).
  */
 export async function send(payload) {
+  // [2026-10-08 upload-br] user is chatting → photo backup yields (governor).
+  try { require('./backup/uploadGovernor').noteChatActivity?.(); } catch {}
   const r = await enqueue(payload);
   if (r) poke(payload.conversation_id);
   return r;

@@ -1,5 +1,5 @@
 import { Platform } from 'react-native';
-import { getString, setString, remove, getAllKeys, getJSON, setJSON, ensureLoaded } from './mmkv';
+import { getString, setString, remove, getAllKeys, getJSON, setJSON, ensureLoaded, isKeyPending } from './mmkv';
 import { isConnected as networkIsConnected } from './networkInfo';
 
 // Offline Cache v2 — powered by MMKV (<1ms sync reads)
@@ -274,6 +274,18 @@ export async function getMessageFromCache(uid, folder) {
     return null;
   }
   return m;
+}
+
+// [2026-10-08 offline-first] SYNCHRONOUS body read for frame-1 paint (read.js
+// useState initializer). Returns null when the key is still lazily pending on
+// Android (caller falls back to the async getMessageFromCache) or has no body.
+export function getMessageFromCacheSync(uid, folder) {
+  try {
+    const key = _msgKey(uid, folder);
+    try { if (isKeyPending && isKeyPending(key)) return null; } catch {}
+    const m = getJSON(key);
+    return _msgHasBody(m) ? m : null;
+  } catch { return null; }
 }
 
 // ─── Calendar Cache ───

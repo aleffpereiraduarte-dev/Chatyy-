@@ -152,9 +152,14 @@ const LEGACY = {
 };
 
 // ─── Default settings ───────────────────────────────────────
+// [2026-10-08 upload-br] wifiOnly default ON (WhatsApp/Google Photos default —
+// automatic backup never eats the mobile plan unless the user opts in). An
+// explicit choice already persisted in KEYS.SETTINGS still wins (merge below).
+// chargingPreferred: automatic (non user-initiated) runs wait for the charger.
 const DEFAULT_SETTINGS = {
   enabled: false,
-  wifiOnly: false,
+  wifiOnly: true,
+  chargingPreferred: false,
   includeVideos: true,
   quality: 'economy',
 };
@@ -339,6 +344,31 @@ export async function saveSettings(settings) {
   return merged;
 }
 
+// ─── "Muito grande" skip-set ([2026-10-08 upload-br]) ───────
+// Assets the server rejected with 413 / data.code==='file_too_large' (over the
+// plan's per-file cap). Retrying only repeats the 413 — they are skipped on
+// every future pass until the user resets history or the plan changes.
+const TOO_LARGE_KEY = '@chatyy_backup/too_large';
+let _tooLargeCache = null;
+export async function getTooLargeMap() {
+  if (_tooLargeCache) return _tooLargeCache;
+  try {
+    const raw = await AsyncStorage.getItem(TOO_LARGE_KEY);
+    _tooLargeCache = raw ? (JSON.parse(raw) || {}) : {};
+  } catch { _tooLargeCache = {}; }
+  return _tooLargeCache;
+}
+export async function markAssetTooLarge(assetId, info = {}) {
+  if (!assetId) return;
+  const m = await getTooLargeMap();
+  m[assetId] = { at: Date.now(), size: Number(info.size) || 0, max: Number(info.max) || 0 };
+  try { await AsyncStorage.setItem(TOO_LARGE_KEY, JSON.stringify(m)); } catch {}
+}
+export async function clearTooLargeMap() {
+  _tooLargeCache = {};
+  try { await AsyncStorage.removeItem(TOO_LARGE_KEY); } catch {}
+}
+
 // ─── Last Sync / Last Run ───────────────────────────────────
 export async function getLastSync() {
   try {
@@ -425,7 +455,9 @@ export async function resetAllBackupState() {
     LEGACY.PHOTO_LAST, LEGACY.AUTO_LAST, LEGACY.PHOTO_SETTINGS,
     LEGACY.AUTO_ENABLED, LEGACY.AUTO_WIFI, LEGACY.AUTO_VIDEO,
     LEGACY.AUTO_QUALITY, LEGACY.ENGINE_SESSIONS,
+    TOO_LARGE_KEY,
   ]).catch(() => {});
+  _tooLargeCache = {};
 }
 
 export { DEFAULT_SETTINGS };

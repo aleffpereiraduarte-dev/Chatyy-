@@ -14,7 +14,8 @@ import { Platform, AppState } from 'react-native';
 // ─── Web no-ops ──────────────────────────────────────────────
 const DEFAULT_SETTINGS = {
   enabled: false,
-  wifiOnly: false,
+  wifiOnly: true,             // [2026-10-08 upload-br] Wi-Fi-only by default
+  chargingPreferred: false,
   includeVideos: true,
 };
 
@@ -168,7 +169,8 @@ export async function registerBackgroundBackup() {
       const native = require('../modules/expo-background-upload').default;
       if (native && typeof native.scheduleBackup === 'function') {
         const settings = await getBackupSettings();
-        await native.scheduleBackup(!!settings?.wifiOnly, false /* chargingOnly */);
+        // [2026-10-08 upload-br] honour "preferir carregando" (was hard-coded false).
+        await native.scheduleBackup(!!settings?.wifiOnly, !!settings?.chargingPreferred /* chargingOnly */);
 
         // Stash creds for the worker to use after process death.
         if (typeof native.setBackupCreds === 'function') {
@@ -239,7 +241,18 @@ export async function getBackupSettings() {
 export async function setBackupSettings(settings) {
   try {
     const backup = getUnifiedAPI();
-    await backup.setBackupSettings(settings);
+    const merged = await backup.setBackupSettings(settings);
+    // [2026-10-08 upload-br] Android WorkManager constraints (UNMETERED /
+    // charging) are fixed at schedule time → re-schedule when they change.
+    if (Platform.OS === 'android' && merged?.enabled && settings
+        && ('wifiOnly' in settings || 'chargingPreferred' in settings)) {
+      try {
+        const native = require('../modules/expo-background-upload').default;
+        if (native && typeof native.scheduleBackup === 'function') {
+          await native.scheduleBackup(!!merged.wifiOnly, !!merged.chargingPreferred);
+        }
+      } catch {}
+    }
   } catch (err) {
     console.warn('[photoBackup] setBackupSettings error:', err);
   }

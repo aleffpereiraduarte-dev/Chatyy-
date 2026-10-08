@@ -3058,6 +3058,19 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
   // WhatsApp's reconnect-pill dismiss animation).
   const [wsDownBanner, setWsDownBanner] = useState(false);
   const wsDownBannerOpacity = useRef(new Animated.Value(1)).current;
+  // [2026-10-08 offline-first] Device has NO network → the root <OfflineNotice/>
+  // already says "Sem conexão"; a second spinning "Reconectando…" row here made
+  // the list look broken while it is in fact painting everything from disk.
+  const [netOffline, setNetOffline] = useState(false);
+  useEffect(() => {
+    let unsub = null;
+    try {
+      unsub = require('../services/networkInfo').onNetworkChange((st) => {
+        setNetOffline(!!st && st.isConnected === false);
+      });
+    } catch {}
+    return () => { try { unsub && unsub(); } catch {} };
+  }, []);
   // Auto-sync badge — fires from onlineRecoveryOrchestrator when an outbox
   // flush + delta sync round is running after coming back online. WhatsApp
   // shows the same kind of subtle "Connecting..." → "Updating..." hint at
@@ -6900,7 +6913,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
           since this is informational, not an error — most reconnects succeed
           in seconds and the user shouldn't feel the app is broken. Fades
           out over 500ms on reconnect instead of flipping abruptly. */}
-      {wsDownBanner && (
+      {wsDownBanner && !netOffline && (
         <Animated.View
           accessibilityRole="alert"
           accessibilityLiveRegion="polite"
@@ -7078,7 +7091,10 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
         </View>
       )}
     </>
-  ), [filter, pinnedCount, isDark, colors, t, archivedCount, lockedCount, searchQuery, debouncedQuery, secretCode, filteredConversations.length, user, router, pinnedAvatarsMode, pinnedConversations, selectionMode, selectedIds, handleConversationPress, enterSelectionMode, toggleSelected, contactBanner, contactBannerSyncing, handleContactBannerPress, dismissContactBanner, pinnedEditMode, pinnedSize, pinnedSizes, pinDraggingId, typingUsers, lockedIds, unlockedIds]);
+  ), [filter, pinnedCount, isDark, colors, t, archivedCount, lockedCount, searchQuery, debouncedQuery, secretCode, filteredConversations.length, user, router, pinnedAvatarsMode, pinnedConversations, selectionMode, selectedIds, handleConversationPress, enterSelectionMode, toggleSelected, contactBanner, contactBannerSyncing, handleContactBannerPress, dismissContactBanner, pinnedEditMode, pinnedSize, pinnedSizes, pinDraggingId, typingUsers, lockedIds, unlockedIds,
+    // [2026-10-08 offline-first] banners rendered inside this header were missing
+    // from the deps → their show/hide only landed on an unrelated re-render.
+    wsDownBanner, netOffline, syncingBadge, loadError, loading, reactionToast]);
 
   // Footer: "MENSAGENS" section with chat_search hits, shown when searching
   const ListFooterComponent = useMemo(() => {

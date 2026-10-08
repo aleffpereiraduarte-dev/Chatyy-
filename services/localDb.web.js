@@ -198,12 +198,27 @@ export async function webGetEmails(folder) {
   } catch { return null; }
 }
 
+// [2026-10-08 offline-first] Account stamp for the chat stores. The IndexedDB
+// is per-origin (shared by every account signed in on this browser) and is
+// only wiped on switch/logout — so rows are now stamped with the active
+// account and reads drop rows stamped for a DIFFERENT account (fail-closed if
+// a wipe was skipped). Unstamped legacy rows stay visible (they were written
+// before stamping, by the account that was active then; the switch wipe
+// already purged them for anyone else).
+function _idbAcct() {
+  try { const e = require('./api').getActiveAccountEmail?.(); return e ? String(e).toLowerCase() : ''; } catch { return ''; }
+}
+function _idbMine(row, acct) {
+  return !row || !row._acct || !acct || row._acct === acct;
+}
+
 // ── Conversations ──
 export async function webSaveConversations(convs) {
   try {
     const d = await getIDB(); if (!d) return;
     await _quotaAwareWrite(d, 'conversations', (store, track) => {
-      convs.forEach(c => track(store.put({ ...c, _ts: Date.now() })));
+      const _a = _idbAcct();
+      convs.forEach(c => track(store.put({ ...c, _acct: _a || undefined, _ts: Date.now() })));
     });
   } catch {}
 }
@@ -213,7 +228,8 @@ export async function webGetConversations() {
     return new Promise((r) => {
       const req = d.transaction('conversations', 'readonly').objectStore('conversations').getAll();
       req.onsuccess = () => {
-        const c = req.result;
+        const _a = _idbAcct();
+        const c = Array.isArray(req.result) ? req.result.filter(x => _idbMine(x, _a)) : req.result;
         if (c?.length > 0) {
           r(c.sort((a, b) => new Date(b.last_message_at || b.updated_at) - new Date(a.last_message_at || a.updated_at)));
         } else r(null);
@@ -228,7 +244,8 @@ export async function webSaveMessages(convId, msgs) {
   try {
     const d = await getIDB(); if (!d) return;
     await _quotaAwareWrite(d, 'messages', (store, track) => {
-      msgs.forEach(m => track(store.put({ ...m, conversation_id: convId, _ts: Date.now() })));
+      const _a = _idbAcct();
+      msgs.forEach(m => track(store.put({ ...m, conversation_id: convId, _acct: _a || undefined, _ts: Date.now() })));
     });
   } catch {}
 }
@@ -238,7 +255,8 @@ export async function webGetMessages(convId) {
     return new Promise((r) => {
       const req = d.transaction('messages', 'readonly').objectStore('messages').index('cid').getAll(convId);
       req.onsuccess = () => {
-        const m = req.result;
+        const _a = _idbAcct();
+        const m = Array.isArray(req.result) ? req.result.filter(x => _idbMine(x, _a)) : req.result;
         if (m?.length > 0) {
           r(m.sort((a, b) => {
             const ta = Date.parse(a.created_at || 0) || 0;

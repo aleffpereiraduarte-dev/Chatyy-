@@ -550,6 +550,9 @@ async function clearAllPerAccountCaches() {
   // (now account-namespaced, but we still purge every account's entries on a
   // full wipe so nothing lingers).
   try { require('../services/offlineCache').purgeEmailCaches?.(); } catch {}
+  // [2026-10-08 offline-first] api.js last-known offline copies (per-account
+  // hashed keys, but a full wipe removes every account's).
+  try { api.purgeOfflineLastKnown?.(); } catch {}
 
   // 2. AsyncStorage sweep — anything that smells user-scoped
   try {
@@ -677,7 +680,7 @@ export function AuthProvider({ children }) {
       // on a server response that *explicitly* says auth is dead.
       // Also: a successful hydrate kicks WS.resurrect() so the socket
       // doesn't sit in destroyed=true state until next watchdog tick.
-      const hydrateOffline = async () => {
+      const hydrateOffline = async (hopts = null) => {
         // [2026-10-08 offline-first] Web used to bail here unconditionally, so
         // an OFFLINE reload of chatyy.com.br always landed on /login (account
         // picker) even with the bearer + every cache on disk — QA repro:
@@ -803,7 +806,11 @@ export function AuthProvider({ children }) {
         // and the user lands on /login as intended.
         try {
           const active = api.getActiveAccountEmail?.() || '';
-          if (active && (Platform.OS !== 'web' || _webTok)) {
+          // [2026-10-08 offline-first] The token-backed STUB (no cached user
+          // blob) is a last resort for a real network failure only — the web
+          // cache-first boot must not take it (it would skip checkAuth forever
+          // and never seed chatyy_offline_user).
+          if (active && (Platform.OS !== 'web' || _webTok) && !(hopts && hopts.noStub)) {
             const accts = api.getStoredAccounts?.() || [];
             const a = accts.find(x => x.email === active);
             if (a?.email) {
@@ -811,6 +818,24 @@ export function AuthProvider({ children }) {
               setUser({ email: a.email, name: a.name || a.email.split('@')[0] });
               loadAccounts();
               setLoading(false);
+              // [2026-10-08 offline-first] Stub session (no cached user blob):
+              // once the network is back, upgrade it to the real server user
+              // and seed chatyy_offline_user so the next offline boot paints
+              // the full profile. Success-only; never logs out from here.
+              try {
+                let _tries = 0;
+                const _revalidate = () => {
+                  _tries++;
+                  api.checkAuth().then((r) => {
+                    if (r && r.success && r.data?.email &&
+                        String(r.data.email).toLowerCase() === String(a.email).toLowerCase()) {
+                      AsyncStorage.setItem('chatyy_offline_user', JSON.stringify(r.data)).catch(() => {});
+                      setUser(r.data);
+                    } else if (_tries < 6) setTimeout(_revalidate, 10000 * _tries);
+                  }).catch(() => { if (_tries < 6) setTimeout(_revalidate, 10000 * _tries); });
+                };
+                setTimeout(_revalidate, 2000);
+              } catch {}
               return true;
             }
           }
@@ -828,7 +853,7 @@ export function AuthProvider({ children }) {
         // account's cached user, paint from local data first (no checkAuth
         // round-trip before the chat list) and revalidate in the background —
         // same contract as native. hydrateOffline refuses without a bearer.
-        if (await hydrateOffline()) return;
+        if (await hydrateOffline(Platform.OS === 'web' ? { noStub: true } : null)) return;
         // Offline fast-path (web): if the browser already knows we're
         // offline, skip the 15s checkAuth timeout and hydrate from cache.
         try {
@@ -1863,6 +1888,7 @@ export function AuthProvider({ children }) {
             // so the previous account's inbox/bodies can't paint under the new
             // one on the first render (belt-and-suspenders alongside the NS).
             try { require('../services/offlineCache').purgeEmailCaches?.(); } catch {}
+            try { api.purgeOfflineLastKnown?.(); } catch {}
             // P0 PRIVACY: clearChatCache() deliberately does NOT touch the
             // native SQLite store (see its "SQLite cleared separately via
             // dbClearAll()" note). switchAccount NEVER wiped it — so the

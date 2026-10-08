@@ -46,6 +46,9 @@ class BackupWorker(
     private const val TAG = "BgUpWorker"
     private const val PREFS = "expo_bg_upload_prefs"
     private const val BACKED_UP_KEY = "backed_up_ids"
+    // [2026-10-08 upload-br] ids the server rejected with 413 / code
+    // file_too_large (over the plan's per-file cap) — skipped forever.
+    private const val TOO_LARGE_KEY = "too_large_ids"
     private const val MAX_FILES_PER_RUN = 50
     // Skip files larger than 100MB in the background path — those go through
     // the foreground multipart flow that JS still drives. Trying to push a
@@ -81,6 +84,7 @@ class BackupWorker(
     try {
       val rows = MediaStoreHelper.scan(applicationContext, sinceMs = null)
       val backedUp = loadBackedUpIds(prefs)
+      val tooLarge = loadIdSet(prefs, TOO_LARGE_KEY)
 
       var uploaded = 0
       var failed = 0
@@ -96,6 +100,7 @@ class BackupWorker(
       for (row in rows) {
         if (uploaded + failed >= MAX_FILES_PER_RUN) break
         if (backedUp.contains(row.id)) continue
+        if (tooLarge.contains(row.id)) continue
         if (row.size > MAX_FILE_SIZE_BG) continue
         if (row.size <= 0) continue
 
@@ -120,6 +125,11 @@ class BackupWorker(
           }
 
           val data = initResp.optJSONObject("data")
+          if ((data?.optString("code", "") ?: "") == "file_too_large") {
+            tooLarge.add(row.id)
+            prefs.edit().putString(TOO_LARGE_KEY, JSONArray(tooLarge.toList()).toString()).apply()
+            continue
+          }
           val uploadUrl = data?.optString("upload_url", "") ?: ""
           if (uploadUrl.isEmpty()) {
             failed++; continue
@@ -241,6 +251,14 @@ class BackupWorker(
   // ── Backed-up-id set persistence ────────────────────────────────────
   private fun loadBackedUpIds(prefs: android.content.SharedPreferences): MutableSet<String> {
     val raw = prefs.getString(BACKED_UP_KEY, "[]") ?: "[]"
+    val arr = try { JSONArray(raw) } catch (_: Exception) { JSONArray() }
+    val out = HashSet<String>(arr.length())
+    for (i in 0 until arr.length()) out.add(arr.optString(i))
+    return out
+  }
+
+  private fun loadIdSet(prefs: android.content.SharedPreferences, key: String): MutableSet<String> {
+    val raw = prefs.getString(key, "[]") ?: "[]"
     val arr = try { JSONArray(raw) } catch (_: Exception) { JSONArray() }
     val out = HashSet<String>(arr.length())
     for (i in 0 until arr.length()) out.add(arr.optString(i))

@@ -1337,7 +1337,14 @@ function _withHttpStatus(data, status) {
 // spawning a duplicate network request. Mutations (POST) never dedup.
 const _inflight = new Map();
 function _inflightKey(action, params) {
-  try { return action + '|' + JSON.stringify(params || {}); } catch { return action; }
+  // [2026-10-08 offline-first] The SWR copy is now also served OFFLINE (web
+  // offline gate) and survives reloads via sessionStorage, so the key carries
+  // the active account — a response cached for account A can never answer
+  // the same read for account B (even if a switch skipped swrInvalidate).
+  // Suffix (not prefix) so swrInvalidate(action) prefix matching still works.
+  let a = '';
+  try { a = String(getActiveAccountEmail() || '').toLowerCase(); } catch {}
+  try { return action + '|' + JSON.stringify(params || {}) + '|@' + a; } catch { return action + '|@' + a; }
 }
 
 // Stale-While-Revalidate memory cache for GETs. Returns cached payload
@@ -1533,7 +1540,133 @@ export function apiList(r, ...keys) {
   return [];
 }
 
+// ─────────────────────────────────────────────────────────────────────────
+// [2026-10-08 offline-first] Durable LAST-KNOWN copy for a small allowlist of
+// read actions whose screens had NO local persistence (group info/members,
+// settings, own profile, contacts, Drive folder list, pinned messages, conv
+// settings…). On every successful read the body is written to MMKV (native:
+// AsyncStorage-backed mirror; web: localStorage) under a key namespaced by a
+// hash of the ACTIVE account — never readable by another account. It is served
+// ONLY when the network call fails at the transport level (offline / timeout /
+// connection error) — never instead of a fresh answer, never on a 4xx/5xx
+// that the server actually returned. Marked `_offline: true` so a caller can
+// tell. purgeOfflineLastKnown() wipes every account's copies (logout/switch).
+const OFFLINE_LAST_KNOWN = new Set([
+  'chat_info', 'chat_group_info', 'chat_pinned_messages',
+  'chat_user_conv_settings_get', 'get_settings', 'chat_get_settings',
+  'get_profile', 'get_public_profile', 'contacts_list', 'get_contacts',
+  'drive_list', 'chat_privacy_get', 'chat_blocked_list', 'chat_starred_messages',
+  'chat_dnd_get', 'chat_user_defaults_get', 'get_folders', 'folders',
+]);
+const _OFL_PREFIX = 'apiofl1_';
+const _OFL_MAX_BYTES = 64 * 1024; // skip giant bodies (localStorage quota on web / Android row cap)
+const _OFL_MAX_KEYS = 150;          // LRU bound across all accounts on this device
+const _OFL_INDEX_KEY = 'apioflidx1'; // eager (tiny) MRU list of last-known keys
+const _oflLastBody = new Map();
+function _oflHash(str) {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < str.length; i++) {
+    h ^= str.charCodeAt(i);
+    h = (h + ((h << 1) + (h << 4) + (h << 7) + (h << 8) + (h << 24))) >>> 0;
+  }
+  return h.toString(16);
+}
+function _oflKey(action, params) {
+  let acct = '';
+  try { acct = String(getActiveAccountEmail() || '').trim().toLowerCase(); } catch {}
+  if (!acct) return null; // no account → never persist/serve (no unscoped slot)
+  let p = '';
+  try { p = JSON.stringify(params || {}); } catch { p = ''; }
+  return _OFL_PREFIX + _oflHash(acct) + '_' + action + '_' + _oflHash(p);
+}
+function _oflIsTransportFailure(r) {
+  if (!r || r.success !== false) return false;
+  const m = String(r.message || (r.data && r.data.message) || '');
+  return m === 'Connection error' || m === 'Tempo limite excedido' || m === 'offline' || m === 'Servidor indisponivel';
+}
+function _oflSave(action, params, r) {
+  if (!OFFLINE_LAST_KNOWN.has(action) || !_swrCacheable(r)) return;
+  try {
+    const k = _oflKey(action, params); if (!k) return;
+    let body; try { body = JSON.stringify(r); } catch { return; }
+    if (!body || body.length > _OFL_MAX_BYTES) return;
+    // Skip the disk write when the body is unchanged (hot reads like
+    // chat_info fire on every open) — only the timestamp would differ.
+    if (_oflLastBody.get(k) === body) return;
+    _oflLastBody.set(k, body);
+    if (_oflLastBody.size > 300) _oflLastBody.clear();
+    const mm = require('./mmkv');
+    mm.setString(k, '{"at":' + Date.now() + ',"r":' + body + '}');
+    // MRU index → bounded footprint (Android AsyncStorage ceiling).
+    try {
+      let idx = [];
+      try { idx = JSON.parse(mm.getString(_OFL_INDEX_KEY) || '[]'); } catch { idx = []; }
+      if (!Array.isArray(idx)) idx = [];
+      if (idx[0] !== k) {
+        idx = [k, ...idx.filter(x => x !== k)];
+        if (idx.length > _OFL_MAX_KEYS) {
+          for (const old of idx.splice(_OFL_MAX_KEYS)) { try { mm.remove(old); } catch {} _oflLastBody.delete(old); }
+        }
+        mm.setString(_OFL_INDEX_KEY, JSON.stringify(idx));
+      }
+    } catch {}
+  } catch {}
+}
+// Sync read (null when the key is still lazily pending on Android).
+function _oflGet(action, params) {
+  if (!OFFLINE_LAST_KNOWN.has(action)) return null;
+  try {
+    const k = _oflKey(action, params); if (!k) return null;
+    const raw = require('./mmkv').getString(k);
+    if (!raw) return null;
+    const o = JSON.parse(raw);
+    if (!o || !o.r || typeof o.r !== 'object') return null;
+    return { ...o.r, _offline: true, _offlineAt: o.at || 0 };
+  } catch { return null; }
+}
+// Async read — waits for the lazy (Android) key to load before reading.
+async function _oflGetAsync(action, params) {
+  if (!OFFLINE_LAST_KNOWN.has(action)) return null;
+  try {
+    const k = _oflKey(action, params); if (!k) return null;
+    const mm = require('./mmkv');
+    try { if (mm.ensureLoaded) await mm.ensureLoaded(k); } catch {}
+  } catch {}
+  return _oflGet(action, params);
+}
+export function getOfflineLastKnown(action, params = {}) { return _oflGet(action, params); }
+export function purgeOfflineLastKnown() {
+  try {
+    const mm = require('./mmkv');
+    const keys = mm.getAllKeys() || [];
+    for (const k of keys) { if (typeof k === 'string' && k.startsWith(_OFL_PREFIX)) { try { mm.remove(k); } catch {} } }
+    try { mm.remove(_OFL_INDEX_KEY); } catch {}
+  } catch {}
+  _oflLastBody.clear();
+}
+
 export async function apiCall(action, params = {}, method = 'GET', opts = {}) {
+  if (OFFLINE_LAST_KNOWN.has(action)) {
+    let _r;
+    try {
+      _r = await _apiCallCore(action, params, method, opts);
+    } catch (e) {
+      const lk = (e && e.offline) ? await _oflGetAsync(action, params) : null;
+      if (lk) return lk;
+      throw e;
+    }
+    if (_oflIsTransportFailure(_r)) {
+      const lk = await _oflGetAsync(action, params);
+      if (lk) return lk;
+    } else {
+      _oflSave(action, params, _r);
+    }
+    return _r;
+  }
+  return _apiCallCore(action, params, method, opts);
+}
+
+async function _apiCallCore(action, params = {}, method = 'GET', opts = {}) {
   // [2026-07-02] Offline gate (web). When the browser reports no connectivity,
   // DON'T fire the request — it just fails and spams the console with
   // ERR_INTERNET_DISCONNECTED for every poller (chat_sync, inbox, unread). Like
@@ -6544,33 +6677,102 @@ export async function chatTopActive(limit = 3) {
 // retry). Bytes go to R2 either way, and the bearer is validated against PG
 // auth_tokens (shared), so always target the US origin for Rust uploads; the
 // commit (chat_send with the cdn_url) still goes to the user's regional base.
-function _rustUploadBase() { return US_FALLBACK_BASE || BASE_URL; }
+// [2026-10-08 upload-br] The BR edge now serves the Rust-compatible upload
+// routes LOCALLY (phone→SP→R2, processing in Brazil). A regional base is used
+// only after it ADVERTISES local media (OPTIONS /api/rust/upload → 2xx; EU and
+// any edge without the pipeline answer 405 → US origin, today's behaviour).
+// Result cached 10 min per base; any regional init/transport failure marks it
+// bad (→ US) until the next probe. Web stays on the US origin (cross-origin
+// OPTIONS from the browser isn't a reliable capability probe).
+const _REGION_MEDIA_TTL_MS = 10 * 60 * 1000;
+const _regionMedia = { base: null, ok: null, at: 0 };
+let _rustBaseChosen = null;
+function _isUsUploadBase(b) { return !b || String(b).replace(/\/+$/, '') === US_FALLBACK_BASE; }
+function _rustUploadBase() { return _rustBaseChosen || US_FALLBACK_BASE; }
+function _markRegionMediaBad(base) {
+  if (!base || _isUsUploadBase(base)) return;
+  if (_regionMedia.base === base) { _regionMedia.ok = false; _regionMedia.at = Date.now(); }
+  if (_rustBaseChosen === base) _rustBaseChosen = US_FALLBACK_BASE;
+}
+async function _pickRustUploadBase() {
+  const b = (BASE_URL || '').replace(/\/+$/, '');
+  if (Platform.OS === 'web' || _isUsUploadBase(b)) { _rustBaseChosen = US_FALLBACK_BASE; return _rustBaseChosen; }
+  const now = Date.now();
+  if (_regionMedia.base === b && _regionMedia.ok !== null && (now - _regionMedia.at) < _REGION_MEDIA_TTL_MS) {
+    _rustBaseChosen = _regionMedia.ok ? b : US_FALLBACK_BASE;
+    return _rustBaseChosen;
+  }
+  let ok = false;
+  try {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), 2500);
+    const r = await fetch(`${b}/api/rust/upload`, { method: 'OPTIONS', signal: ctrl.signal });
+    clearTimeout(t);
+    ok = r.status >= 200 && r.status < 300;
+  } catch { ok = false; }
+  _regionMedia.base = b; _regionMedia.ok = ok; _regionMedia.at = now;
+  _rustBaseChosen = ok ? b : US_FALLBACK_BASE;
+  return _rustBaseChosen;
+}
+/** Base the next Rust upload will use (after a probe). Exposed for diagnostics. */
+export function getRustUploadBase() { return _rustUploadBase(); }
 let _rustUploadAvailable = null;
 let _rustUploadProbedAt = 0;
+let _rustUploadProbedBase = null;
 // Force a fresh probe on next call — used when the user taps "Start backup"
 // so a stale "unavailable" from an earlier session doesn't block them.
 export function _resetRustUploadProbe() {
   _rustUploadAvailable = null;
   _rustUploadProbedAt = 0;
+  _regionMedia.ok = null; _regionMedia.at = 0;
 }
 async function _probeRustUpload() {
   const now = Date.now();
-  if (_rustUploadAvailable !== null && (now - _rustUploadProbedAt) < 120000) {
+  const base = await _pickRustUploadBase();
+  if (_rustUploadAvailable !== null && _rustUploadProbedBase === base && (now - _rustUploadProbedAt) < 120000) {
     return _rustUploadAvailable;
+  }
+  if (base !== US_FALLBACK_BASE) {
+    // The regional probe above already got a 2xx from this very route.
+    _rustUploadAvailable = true; _rustUploadProbedAt = now; _rustUploadProbedBase = base;
+    return true;
   }
   try {
     const ctrl = new AbortController();
     const t = setTimeout(() => ctrl.abort(), 2500);
-    const r = await fetch(`${_rustUploadBase()}/api/rust/upload`, { method: 'OPTIONS', signal: ctrl.signal });
+    const r = await fetch(`${base}/api/rust/upload`, { method: 'OPTIONS', signal: ctrl.signal });
     clearTimeout(t);
     _rustUploadAvailable = r.status >= 200 && r.status < 300;
   } catch { _rustUploadAvailable = false; }
   _rustUploadProbedAt = now;
+  _rustUploadProbedBase = base;
   return _rustUploadAvailable;
+}
+// A regional-base failure that a retry on the US origin can heal (route
+// missing / gateway / network) — NOT 4xx business errors like 413/400/401.
+function _regionRetryable(status, err) {
+  if (status === 404 || status === 405 || status === 502 || status === 503 || status === 504) return true;
+  return !status && !!err && !/abort|timeout/i.test(String(err));
 }
 
 export async function rustUpload(file, userEmail, context = 'chat', externalSignal = null, onProgress = null) {
   if ((await _probeRustUpload()) === false) return { success: false, error: 'unavailable' };
+  const base = _rustUploadBase();
+  const r = await _rustUploadAt(base, file, userEmail, context, externalSignal, onProgress);
+  // [2026-10-08 upload-br] Regional edge hiccup (route gone / gateway / network)
+  // → one retry on the US origin, and stop using the region until re-probed.
+  if (base !== US_FALLBACK_BASE && r && !r.success && !r.aborted && !(externalSignal && externalSignal.aborted)) {
+    const m = /^http_(\d{3})$/.exec(String(r.error || ''));
+    const st = m ? Number(m[1]) : 0;
+    if (_regionRetryable(st, st ? null : (r.error || 'network'))) {
+      _markRegionMediaBad(base);
+      return _rustUploadAt(US_FALLBACK_BASE, file, userEmail, context, externalSignal, onProgress);
+    }
+  }
+  return r;
+}
+
+async function _rustUploadAt(base, file, userEmail, context, externalSignal, onProgress) {
   try {
     const formData = new FormData();
     // CRITICAL: web check FIRST. On web `file` is wrapped as { uri: blobUrl, blob, name }.
@@ -6612,7 +6814,7 @@ export async function rustUpload(file, userEmail, context = 'chat', externalSign
     if (onProgress && typeof XMLHttpRequest !== 'undefined') {
       return await new Promise((resolve) => {
         const xhr = new XMLHttpRequest();
-        xhr.open('POST', `${_rustUploadBase()}/api/rust/upload`);
+        xhr.open('POST', `${base}/api/rust/upload`);
         xhr.setRequestHeader('Authorization', `Bearer ${authToken}`);
         if (Platform.OS === 'web') xhr.withCredentials = true;
         xhr.timeout = 90000;
@@ -6651,7 +6853,7 @@ export async function rustUpload(file, userEmail, context = 'chat', externalSign
       else externalSignal.addEventListener('abort', onExternalAbort, { once: true });
     }
     try {
-      const resp = await fetch(`${_rustUploadBase()}/api/rust/upload`, {
+      const resp = await fetch(`${base}/api/rust/upload`, {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${authToken}` },
         body: formData,
@@ -6818,14 +7020,19 @@ async function rustChunkedUploadNative(file, userEmail, context, onProgress, ext
     // persisted session it already holds. 404 (expired / other owner) → new
     // session; a network error is surfaced so the caller retries later with
     // the SAME session instead of opening a new one.
+    // [2026-10-08 upload-br] Sessions are host-local (BR edge ids don't exist
+    // on the US and vice-versa): a session sticks to the base that created it
+    // (resume.base; legacy rows without it were always created on the US).
+    let base = _rustUploadBase();
     let uploadId = null;
     const alreadyHave = new Set();
     if (resume && resume.uploadId && /^[0-9a-f]{32}$/.test(String(resume.uploadId))) {
+      const resBase = (resume.base && /^https:\/\//.test(String(resume.base))) ? String(resume.base).replace(/\/+$/, '') : US_FALLBACK_BASE;
       const stCtrl = new AbortController();
       const stTimer = setTimeout(() => stCtrl.abort(), 15000);
       let stResp = null;
       try {
-        stResp = await fetch(`${_rustUploadBase()}/api/rust/upload/status`, {
+        stResp = await fetch(`${resBase}/api/rust/upload/status`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${authToken}` },
           body: JSON.stringify({ upload_id: String(resume.uploadId) }),
@@ -6833,10 +7040,16 @@ async function rustChunkedUploadNative(file, userEmail, context, onProgress, ext
         });
       } catch { stResp = null; }
       clearTimeout(stTimer);
-      if (!stResp) return { success: false, error: 'status_network' };
-      if (stResp.ok) {
+      if (!stResp) {
+        // Regional edge unreachable → abandon its session, start over on the
+        // current pick (the region gets marked bad → US). US blip → retry later.
+        if (resBase === US_FALLBACK_BASE) return { success: false, error: 'status_network' };
+        _markRegionMediaBad(resBase);
+        base = _rustUploadBase();
+      } else if (stResp.ok) {
         const st = await stResp.json().catch(() => null);
         if (st && Array.isArray(st.received_chunks)) {
+          base = resBase;
           uploadId = String(resume.uploadId);
           for (const i of st.received_chunks) if (Number.isInteger(i) && i >= 0 && i < totalChunks) alreadyHave.add(i);
         }
@@ -6845,21 +7058,36 @@ async function rustChunkedUploadNative(file, userEmail, context, onProgress, ext
 
     // 1. Init the upload (new session)
     if (!uploadId) {
-      const initCtrl = new AbortController();
-      const initTimer = setTimeout(() => initCtrl.abort(), 15000);
-      const initResp = await fetch(`${_rustUploadBase()}/api/rust/upload/init`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${authToken}` },
-        body: JSON.stringify({ filename, total_size: totalSize, total_chunks: totalChunks, content_type: contentType, user_email: userEmail, context }),
-        signal: initCtrl.signal,
-      }).catch(e => null);
-      clearTimeout(initTimer);
+      const _init = async (b) => {
+        const initCtrl = new AbortController();
+        const initTimer = setTimeout(() => initCtrl.abort(), 15000);
+        const r = await fetch(`${b}/api/rust/upload/init`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${authToken}` },
+          body: JSON.stringify({ filename, total_size: totalSize, total_chunks: totalChunks, content_type: contentType, user_email: userEmail, context }),
+          signal: initCtrl.signal,
+        }).catch(e => null);
+        clearTimeout(initTimer);
+        return r;
+      };
+      let initResp = await _init(base);
+      // Regional init failed in a way the US can heal → once on the US origin.
+      if (base !== US_FALLBACK_BASE && _regionRetryable(initResp ? initResp.status : 0, initResp ? null : 'network')
+          && !(externalSignal && externalSignal.aborted)) {
+        _markRegionMediaBad(base);
+        base = US_FALLBACK_BASE;
+        initResp = await _init(base);
+      }
       if (!initResp) return { success: false, error: 'init_network' };
-      if (!initResp.ok) return { success: false, error: 'init_failed_' + initResp.status };
+      if (!initResp.ok) {
+        const ej = await initResp.json().catch(() => null);
+        if (initResp.status === 413 || ej?.code === 'file_too_large') return { success: false, error: 'file_too_large', status: 413, code: 'file_too_large' };
+        return { success: false, error: 'init_failed_' + initResp.status };
+      }
       const initData = await initResp.json().catch(() => null);
       uploadId = initData?.upload_id;
       if (!uploadId) return { success: false, error: 'no_upload_id' };
-      try { resume?.onUploadId?.(uploadId); } catch {}
+      try { resume?.onUploadId?.(uploadId, base); } catch {}
     }
 
     // 2. Upload each 1 MB chunk as multipart/form-data — Rust expects that format.
@@ -6938,7 +7166,7 @@ async function rustChunkedUploadNative(file, userEmail, context, onProgress, ext
           // auth_request + Rust resolve_bearer_email 401'd every native chunk
           // (5 retries each), so every >2MB native upload burned ~10s and then
           // re-sent the whole file through PHP.
-          const resp = await fetch(`${_rustUploadBase()}/api/rust/upload/chunk`, {
+          const resp = await fetch(`${base}/api/rust/upload/chunk`, {
             method: 'POST',
             headers: { 'Authorization': `Bearer ${authToken}` },
             body: fd,
@@ -6949,7 +7177,7 @@ async function rustChunkedUploadNative(file, userEmail, context, onProgress, ext
           if (!chunkOk && (resp.status === 401 || resp.status === 404 || resp.status === 413 || resp.status === 400)) {
             clearTimeout(timer);
             if (externalSignal) externalSignal.removeEventListener?.('abort', onExt);
-            firstError = firstError || `chunk_http_${resp.status}`;
+            firstError = firstError || (resp.status === 413 ? 'file_too_large' : `chunk_http_${resp.status}`);
             aborted = true;
             break;
           }
@@ -6993,13 +7221,14 @@ async function rustChunkedUploadNative(file, userEmail, context, onProgress, ext
     // 3. Complete
     const completeCtrl = new AbortController();
     const completeTimer = setTimeout(() => completeCtrl.abort(), 30000);
-    const completeResp = await fetch(`${_rustUploadBase()}/api/rust/upload/complete`, {
+    const completeResp = await fetch(`${base}/api/rust/upload/complete`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${authToken}` },
       body: JSON.stringify({ upload_id: uploadId, filename, content_type: contentType, user_email: userEmail, context }),
       signal: completeCtrl.signal,
     }).catch(() => null);
     clearTimeout(completeTimer);
+    if (completeResp && completeResp.status === 413) return { success: false, error: 'file_too_large', status: 413, code: 'file_too_large' };
     if (!completeResp || !completeResp.ok) return { success: false, error: 'complete_failed' };
     return await completeResp.json().catch(() => ({ success: false, error: 'complete_parse_failed' }));
   } catch (e) {

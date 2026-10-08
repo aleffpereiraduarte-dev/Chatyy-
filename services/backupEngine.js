@@ -71,6 +71,7 @@ import {
   getLastSync, setLastSync,
   getUploadSessions, saveUploadSessions,
   KEYS,
+  getTooLargeMap, markAssetTooLarge,
 } from './backup/backupStorage';
 
 // ─── Constants ───────────────────────────────────────────────
@@ -470,6 +471,10 @@ export class BackupEngine {
   // This avoids loading the entire photo library into memory at once.
   async *getNewPhotosIterator(includeVideos = true) {
     if (Platform.OS === 'web') return;
+    // [2026-10-08 upload-br] assets the server 413'd ("muito grande") are
+    // skipped forever — retrying only repeats the same rejection.
+    try { this._tooLarge = await getTooLargeMap(); } catch { this._tooLarge = {}; }
+    const _skipTooLarge = (id) => !!(this._tooLarge && this._tooLarge[id]);
 
     // ── Android native fast path ────────────────────────────
     // The Kotlin MediaStoreHelper paginates internally in 500-row chunks
@@ -482,6 +487,7 @@ export class BackupEngine {
         const rows = await _nativeMod().scanMediaStore(sinceMs);
         const filtered = (rows || []).filter(r => {
           if (this.backedUpIds[r.id]) return false;
+          if (_skipTooLarge(r.id)) return false;
           if (!includeVideos && r.mediaType === 'video') return false;
           return true;
         });
@@ -540,7 +546,7 @@ export class BackupEngine {
       if (page?.assets?.length > 0) {
         // Dedup ONLY by asset.id (stable per-photo on iOS/Android).
         const totalInPage = page.assets.length;
-        const newAssets = page.assets.filter(a => !this.backedUpIds[a.id]);
+        const newAssets = page.assets.filter(a => !this.backedUpIds[a.id] && !_skipTooLarge(a.id));
         // Log scan stats only every 20 pages to avoid flooding the debug endpoint
         // (was one POST per page = 218 posts per scan on a 43k library).
         this._scanPageCount = (this._scanPageCount || 0) + 1;
@@ -733,8 +739,20 @@ export class BackupEngine {
     let idx = 0;
     let consecutiveBatchAllFail = 0;
     _bdbg('engine.loop.start', { queueLen: this.queue.length, initialBackedUp: this._initialBackedUp });
+    // [2026-10-08 upload-br] Small batches on mobile data: at most
+    // CELLULAR_RUN_CAP uploads per run, then yield (the next trigger picks up
+    // the rest) — the backup never monopolises a metered uplink/battery.
+    const CELLULAR_RUN_CAP = 20;
+    let _runUploads = 0;
+    const _onCellular = () => {
+      try { const t = require('./networkInfo').getNetworkType?.(); return t === 'mobile' || t === 'roaming'; } catch { return false; }
+    };
     while (idx < this.queue.length && !this._aborted) {
       if (this.isPaused) { await new Promise(r => setTimeout(r, 500)); continue; }
+      if (_runUploads >= CELLULAR_RUN_CAP && _onCellular()) {
+        _bdbg('engine.loop.cellular_cap', { uploads: _runUploads, left: this.queue.length - idx });
+        break;
+      }
       const chunk = [];
       for (let b = 0; b < BATCH && idx < this.queue.length; b++, idx++) {
         const item = this.queue[idx];
@@ -742,6 +760,7 @@ export class BackupEngine {
         chunk.push(item);
       }
       if (chunk.length === 0) break;
+      _runUploads += chunk.length;
 
       // Track per-batch results so we can detect total network outage
       let batchSuccesses = 0;
@@ -801,6 +820,7 @@ export class BackupEngine {
           item.status = 'failed';
           this.failed.push(item);
           this.stats.failedFiles++;
+          this._noteTooLarge(item, err);
         } finally {
           this.active.delete(item.id || idx);
         }
@@ -943,7 +963,13 @@ export class BackupEngine {
 
       // ADAPTIVE: if too many workers are already active, this worker sleeps
       // briefly so the "active concurrency" ceiling is respected without killing workers.
-      if (this.active.size >= this._activeConcurrency) {
+      // [2026-10-08 upload-br] network-aware ceiling: 3 on mobile data, 6 on Wi-Fi.
+      let _cap = this._activeConcurrency;
+      try {
+        const t = require('./networkInfo').getNetworkType?.();
+        _cap = Math.min(_cap, (t === 'mobile' || t === 'roaming') ? 3 : 6);
+      } catch {}
+      if (this.active.size >= _cap) {
         await new Promise(r => setTimeout(r, 200));
         continue;
       }
@@ -991,6 +1017,7 @@ export class BackupEngine {
           item.status = 'failed';
           this.failed.push(item);
           this.stats.failedFiles++;
+          this._noteTooLarge(item, err);
           if (this.onError) this.onError(err, item);
           continue;
         }
@@ -1050,12 +1077,31 @@ export class BackupEngine {
   //       under the current account.
   //   413 "acima do limite do seu plano" — this file is over the plan cap:
   //       fail THIS item only, no retries.
+  // [2026-10-08 upload-br] 413 / file_too_large → persisted skip-set: the
+  // asset is never queued again ("muito grande"), no retry storms on every
+  // app open.
+  _noteTooLarge(item, err) {
+    if (!err?.tooLarge) return;
+    const id = item?.asset?.id || item?.id;
+    if (!id) return;
+    this.stats.tooLargeFiles = (this.stats.tooLargeFiles || 0) + 1;
+    if (this._tooLarge) this._tooLarge[id] = { at: Date.now() };
+    markAssetTooLarge(id, { size: item?.size || 0 }).catch(() => {});
+  }
+
+  _tooLargeError(message) {
+    const e = new Error(message || 'file_too_large');
+    e.nonRetryable = true;
+    e.tooLarge = true;
+    return e;
+  }
+
   _classifyRegisterError(message, status) {
     const err = new Error(message);
     const m = String(message || '').toLowerCase();
     const st = Number(status) || 0;
     const namespace = st === 403 || /outside user namespace|access denied|does not match object_key/.test(m);
-    const tooBig = st === 413 || /acima do limite|limite do seu plano|payload too large/.test(m);
+    const tooBig = st === 413 || /acima do limite|limite do seu plano|payload too large|file_too_large|too large|http_413/.test(m);
     if (namespace) {
       err.nonRetryable = true;
       err.accountMismatch = true;
@@ -1063,6 +1109,7 @@ export class BackupEngine {
       try { api.apiCall('drive_backup_debug', { msg: 'register_forbidden_abort', data: String(message).slice(0, 160) }, 'POST').catch(() => {}); } catch {}
     } else if (tooBig) {
       err.nonRetryable = true;
+      err.tooLarge = true;
     }
     return err;
   }
@@ -1251,6 +1298,10 @@ export class BackupEngine {
         if (r && !r.success && (r.error === 'timeout' || /network/i.test(r.error || ''))) {
           throw new Error(`rust_net_fail|${r.error}`);
         }
+        // [2026-10-08 upload-br] 413 from the Rust route → permanent skip.
+        if (r && !r.success && (r.code === 'file_too_large' || Number(r.status) === 413 || /file_too_large|http_413/.test(String(r.error || '')))) {
+          throw this._tooLargeError(`file_too_large|${r.error || ''}`);
+        }
         if (r?.success && cdn) {
           // Register the row in drive_files so the photo shows up in the Cloud.
           // Pass asset_id so the server can disambiguate photos that share a filename
@@ -1321,6 +1372,9 @@ export class BackupEngine {
         if (/network|timeout|aborted|rust_net_fail/i.test(msg)) {
           throw err;
         }
+        // [2026-10-08 upload-br] Definitive rejections (413 "muito grande",
+        // 403 namespace, quota) would only repeat on the legacy path.
+        if (err?.nonRetryable || err?.quotaFull || err?.tooLarge) throw err;
       }
     }
 
@@ -1377,6 +1431,13 @@ export class BackupEngine {
       const qe = new Error('storage_quota_full');
       qe.quotaFull = true;
       throw qe;
+    }
+
+    // [2026-10-08 upload-br] Over the plan's per-file cap → permanent skip
+    // (the legacy fileUpload fallback below would only 413 again).
+    if (presigned?.success === false && (Number(presigned?.status) === 413 || presigned?.data?.code === 'file_too_large'
+        || /acima do limite|file_too_large/i.test(String(presigned?.message || '')))) {
+      throw this._tooLargeError('file_too_large|presign');
     }
 
     // Handle server-side duplicate detection
@@ -1658,6 +1719,11 @@ export class BackupEngine {
       } catch (err) {
         api.apiCall('drive_backup_debug', { msg: 'multipart_init_throw', data: `${err?.message}|${filename}` }, 'POST').catch(() => {});
         return false;
+      }
+      if (init?.success === false && (init?.data?.code === 'file_too_large' || Number(init?.status) === 413
+          || /acima do limite|file_too_large/i.test(String(init?.message || '')))) {
+        // [2026-10-08 upload-br] over the plan cap → permanent skip, no retry.
+        throw this._tooLargeError('file_too_large|multipart');
       }
       if (!init?.success || !init?.data?.upload_id) {
         api.apiCall('drive_backup_debug', { msg: 'multipart_init_fail', data: `${init?.message || 'unknown'}|${filename}` }, 'POST').catch(() => {});

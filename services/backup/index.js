@@ -18,6 +18,7 @@ import {
   resetAllBackupState, DEFAULT_SETTINGS,
   isBackupKilled, setBackupKilled,
   isBackupNotificationsEnabled, setBackupNotificationsEnabled,
+  getTooLargeMap, clearTooLargeMap,
 } from './backupStorage';
 
 // Lazy imports to avoid circular deps at module level
@@ -157,10 +158,16 @@ export async function getBackupStats() {
     // typed query counts on the device.
     const backedUp = Math.min(Object.keys(backedUpMap).length, totalOnDevice);
 
+    // [2026-10-08 upload-br] "muito grande" (413, skipped forever) + why the
+    // backup is held right now ('call' | 'chat' | 'wifi' | 'charging' | null).
+    let tooLarge = 0;
+    try { tooLarge = Object.keys(await getTooLargeMap()).length; } catch {}
     return {
       totalOnDevice,
       backedUp,
-      remaining: Math.max(0, totalOnDevice - backedUp),
+      remaining: Math.max(0, totalOnDevice - backedUp - tooLarge),
+      tooLarge,
+      pausedReason: _currentPauseReason(),
       lastBackupDate,
     };
   } catch (err) {
@@ -174,6 +181,27 @@ export async function getBackupStats() {
       lastBackupDate,
     };
   }
+}
+
+function _currentPauseReason() {
+  try {
+    const g = require('./uploadGovernor');
+    const r = g.getPauseReason?.();
+    if (r) return r;
+  } catch {}
+  try { return require('../autoBackup').getLastSkipReason?.() || null; } catch { return null; }
+}
+
+/**
+ * Live progress for Settings → Backup. Merges the JS engine progress (Android /
+ * fallback) with the governor pause reason. fn(progress) on every engine tick;
+ * returns unsubscribe. iOS native progress keeps flowing through the
+ * onProgress callback of startForegroundBackup / NativeUpload events.
+ */
+export function getBackupProgress() {
+  let p = null;
+  try { p = getEngine().getProgress?.() || null; } catch {}
+  return { ...(p || {}), pausedReason: _currentPauseReason() };
 }
 
 /**
@@ -210,6 +238,7 @@ export async function resetBackupHistory() {
 
   // Clear unified storage
   await clearBackedUpMap();
+  await clearTooLargeMap();
 
   // Reset last sync
   await setLastSync('');
@@ -257,6 +286,7 @@ export {
   setBackupKilled,
   isBackupNotificationsEnabled,
   setBackupNotificationsEnabled,
+  getTooLargeMap,
 };
 
 /**
