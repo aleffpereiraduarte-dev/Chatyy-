@@ -19,7 +19,10 @@ const EDGE_SERVERS = [
 const US_FALLBACK_BASE = 'https://chatyy.com.br';
 // Bump whenever EDGE_SERVERS changes so upgrading clients re-probe instead of
 // restoring a stale/dead edge. v11 = 3 regional edges (us/br/eu).
-const EDGE_CACHE_VERSION = 11;
+// v12 [2026-10-08 region-pick] = escolha com dica do servidor + probe aquecido
+// + histerese. Sobe a versão para descartar as escolhas v11 (1 probe frio) —
+// ~20% dos clientes nos EUA estavam presos em EU/BR (+150-300ms por escrita).
+const EDGE_CACHE_VERSION = 12;
 const VALID_REGIONS = ['us', 'br', 'eu'];
 
 let _bestServer = null;
@@ -136,6 +139,54 @@ export const CDN_URL = 'https://chatyy.com.br';
 // thought send was broken. 25s aligns with WhatsApp/Telegram's tolerance.
 const TIMEOUT_MS = 25000;
 
+// ─── [2026-10-08 region-pick] Seleção de região (us/br/eu) ───
+// Antes: 1 fetch FRIO por host, em paralelo, sem histerese → o 1º request paga
+// DNS+TLS (e no iOS o rádio acordando), então ~20% dos clientes nos EUA caíam
+// em EU/BR e pagavam +150-300ms em toda escrita (edges encaminham escritas ao
+// US). Agora:
+//  1. DICA do servidor: email.php?action=region_hint no US (proxied pelo
+//     Cloudflare → CF-IPCountry). América do Sul → br; Europa/África/Oriente
+//     Médio/Sul da Ásia → eu; resto → us. Cache 24h por tipo de rede. Vira o
+//     DEFAULT imediatamente quando ainda não há escolha validada nesta rede.
+//  2. PROBE AQUECIDO: por host 1 warm-up (paga DNS/TLS) + 2 medições na conexão
+//     já aberta; latência = mediana. Hosts em paralelo.
+//  3. HISTERESE: só troca da região base (escolha atual nesta rede, senão a
+//     dica, senão US) se a candidata for >25% E >40ms mais rápida. Empate → US.
+//  4. Persistência com TTL (30 min) e reavaliação na troca de rede (NetInfo).
+// Login/auth NÃO mudam: as ações de credencial seguem o mesmo API_URL e os
+// edges as encaminham ao US no servidor (vide conectando_authurl_edge_misconfig).
+const REGION_HINT_URL = US_FALLBACK_BASE + '/api/email.php?action=region_hint';
+const EDGE_CHOICE_TTL_MS = 30 * 60 * 1000;
+const REGION_HINT_TTL_MS = 24 * 60 * 60 * 1000;
+const EDGE_PROBE_TIMEOUT_MS = 2500;
+const EDGE_SWITCH_MIN_RATIO = 0.25; // candidata precisa ser >25% mais rápida…
+const EDGE_SWITCH_MIN_MS = 40;      // …E >40ms mais rápida que a base
+let _regionHint = null; // { region, country, ts, net }
+
+function _edgeMmkv() { try { return require('./mmkv'); } catch { return null; } }
+
+// Chave da rede atual ('wifi' | 'cellular' | 'ethernet' …) ou null quando ainda
+// desconhecida (boot antes do NetInfo responder / web sem tipo).
+function _edgeNetKey() {
+  try {
+    const st = require('./networkInfo').getNetworkState();
+    if (!st || st.isConnected === false) return null;
+    const t = st.type;
+    return (t && t !== 'unknown' && t !== 'none') ? String(t) : null;
+  } catch { return null; }
+}
+
+function _persistBestServer() {
+  if (!_bestServer) return;
+  try {
+    const mm = _edgeMmkv();
+    mm && mm.setString('edge_best_server', JSON.stringify({
+      region: _bestServer.region, latency: _bestServer.latency, v: EDGE_CACHE_VERSION,
+      ts: _bestServer.ts || 0, net: _bestServer.net || null, src: _bestServer.src || 'probe',
+    }));
+  } catch {}
+}
+
 // Restore last known best server from MMKV (instant, <1ms)
 function _restoreCachedServer() {
   try {
@@ -143,13 +194,20 @@ function _restoreCachedServer() {
     const cached = mmkv.getString('edge_best_server');
     if (cached) {
       const parsed = JSON.parse(cached);
-      // Invalidate cache if edge list changed (v11 = us/br/eu regional edges).
+      // Invalidate cache if edge list / selection logic changed.
       if (parsed.v !== EDGE_CACHE_VERSION) { try { (mmkv.remove || mmkv.delete)?.('edge_best_server'); } catch {} return; }
       const match = EDGE_SERVERS.find(s => s.region === parsed.region);
       if (match) {
-        _bestServer = { ...match, latency: parsed.latency };
+        _bestServer = { ...match, latency: parsed.latency, ts: Number(parsed.ts) || 0, net: parsed.net || null, src: parsed.src || 'probe' };
         _applySelectedServer(match);
         if (__DEV__) console.log('[API] Restored edge: ' + match.region + ' (' + parsed.latency + 'ms cached)');
+      }
+    }
+    if (!_regionHint) {
+      const h = mmkv.getString('edge_region_hint');
+      if (h) {
+        const ph = JSON.parse(h);
+        if (ph && VALID_REGIONS.includes(ph.region)) _regionHint = ph;
       }
     }
   } catch {}
@@ -167,47 +225,125 @@ try {
   }
 } catch {}
 
-async function detectFastestServer() {
+async function _fetchWithTimeout(url, ms) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), ms);
+  try {
+    return await fetch(url, { signal: controller.signal, cache: 'no-store' });
+  } finally { clearTimeout(timer); }
+}
+
+// Dica de região do servidor (cache 24h por rede). null = sem dica confiável.
+async function _getRegionHint(net, force) {
+  const h = _regionHint;
+  if (h && VALID_REGIONS.includes(h.region) && (Date.now() - (h.ts || 0)) < REGION_HINT_TTL_MS
+      && (!force || !net || !h.net || h.net === net)) {
+    return h.region;
+  }
+  try {
+    const res = await _fetchWithTimeout(REGION_HINT_URL, 3000);
+    const j = await res.json();
+    if (j && j.success && VALID_REGIONS.includes(j.region) && j.source && j.source !== 'none') {
+      _regionHint = { region: j.region, country: j.country || null, ts: Date.now(), net: net || null };
+      try { const mm = _edgeMmkv(); mm && mm.setString('edge_region_hint', JSON.stringify(_regionHint)); } catch {}
+      return j.region;
+    }
+  } catch {}
+  return (h && VALID_REGIONS.includes(h.region)) ? h.region : null;
+}
+
+// 1 warm-up (abre conexão: DNS+TLS) + 2 medições na conexão quente → mediana.
+async function _probeEdge(s) {
+  const once = async () => {
+    const t0 = Date.now();
+    try { await _fetchWithTimeout(s.url + '/health', EDGE_PROBE_TIMEOUT_MS); return Date.now() - t0; } catch { return null; }
+  };
+  if ((await once()) == null) return { ...s, latency: 99999 };
+  const a = await once();
+  const b = await once();
+  const vals = [a, b].filter(v => v != null).sort((x, y) => x - y);
+  if (!vals.length) return { ...s, latency: 99999 };
+  return { ...s, latency: vals.length === 2 ? Math.round((vals[0] + vals[1]) / 2) : vals[0] };
+}
+
+function _edgeBeats(cand, cur) {
+  return cand.latency < cur.latency * (1 - EDGE_SWITCH_MIN_RATIO) && (cur.latency - cand.latency) > EDGE_SWITCH_MIN_MS;
+}
+
+// Escolha com histerese a partir da região base. Exportada p/ teste.
+export function _pickEdgeRegion(results, baseRegion) {
+  const by = {};
+  for (const r of results) by[r.region] = r;
+  const ok = results.filter(r => r.latency < EDGE_PROBE_TIMEOUT_MS).sort((a, b) => a.latency - b.latency);
+  if (!ok.length) return null;
+  const usOk = by.us && by.us.latency < EDGE_PROBE_TIMEOUT_MS ? by.us : null;
+  let base = by[baseRegion];
+  if (!base || base.latency >= EDGE_PROBE_TIMEOUT_MS) base = usOk || ok[0];
+  let pick = base;
+  if (ok[0].region !== base.region && _edgeBeats(ok[0], base)) pick = ok[0];
+  // Empate técnico → US (origem/master: escritas sem o salto edge→US).
+  if (pick.region !== 'us' && usOk && !_edgeBeats(pick, usOk)) pick = usOk;
+  return pick;
+}
+
+async function detectFastestServer(opts) {
   if (_detecting) return;
+  const force = !!(opts && opts.force);
+  const net = _edgeNetKey();
+  if (!force && _bestServer && _bestServer.ts && (Date.now() - _bestServer.ts) < EDGE_CHOICE_TTL_MS
+      && (!net || !_bestServer.net || _bestServer.net === net)) {
+    return; // escolha validada recente nesta rede
+  }
   _detecting = true;
   try {
-    const results = await Promise.allSettled(
-      EDGE_SERVERS.map(async (s) => {
-        const start = Date.now();
-        const controller = new AbortController();
-        // Short probe: an edge that doesn't answer /health within 2.5s is
-        // treated as unreachable (latency 99999) so it can NEVER become the
-        // selected server — detection then prefers a healthy edge or US.
-        const timeout = setTimeout(() => controller.abort(), 2500);
-        try {
-          await fetch(s.url + '/health', { signal: controller.signal, cache: 'no-store' });
-          clearTimeout(timeout);
-          return { ...s, latency: Date.now() - start };
-        } catch { clearTimeout(timeout); return { ...s, latency: 99999 }; }
-      })
-    );
-    const sorted = results
-      .filter(r => r.status === 'fulfilled')
-      .map(r => r.value)
-      .sort((a, b) => a.latency - b.latency);
-    if (sorted.length > 0 && sorted[0].latency < 2500) {
-      _bestServer = sorted[0];
-      _applySelectedServer(_bestServer);
-      if (__DEV__) console.log(`[API] Best server: ${_bestServer.region} (${_bestServer.latency}ms)`);
-      // Save to MMKV for instant restore on next app open
-      try {
-        const mmkv = require('./mmkv');
-        mmkv.setString('edge_best_server', JSON.stringify({ region: _bestServer.region, latency: _bestServer.latency, v: EDGE_CACHE_VERSION }));
-      } catch {}
+    const hint = await _getRegionHint(net, force);
+    const sameNet = _bestServer && (!net || !_bestServer.net || _bestServer.net === net);
+    const baseRegion = (sameNet && _bestServer.src === 'probe' && _bestServer.region) || hint || 'us';
+    // Sem escolha validada nesta rede → aplica a dica JÁ (o probe leva ~1s).
+    if (hint && !(sameNet && _bestServer.src === 'probe')) {
+      const hs = EDGE_SERVERS.find(s => s.region === hint);
+      if (hs && (!_bestServer || _bestServer.region !== hint)) {
+        _bestServer = { ...hs, latency: null, ts: 0, net, src: 'hint' };
+        _applySelectedServer(hs);
+      }
+    }
+    const results = await Promise.all(EDGE_SERVERS.map(_probeEdge));
+    const pick = _pickEdgeRegion(results, baseRegion);
+    if (pick) {
+      const changed = !_bestServer || _bestServer.region !== pick.region;
+      _bestServer = { ...pick, ts: Date.now(), net, src: 'probe' };
+      if (changed) _applySelectedServer(_bestServer);
+      if (__DEV__) console.log('[API] Edge pick: ' + pick.region + ' (base ' + baseRegion + ', hint ' + (hint || '-') + ') ' + results.map(r => r.region + '=' + r.latency).join(' '));
+      _persistBestServer();
     }
   } catch {} finally { _detecting = false; }
 }
 
-// Detect immediately (don't wait 2s)
+// Detect immediately (don't wait 2s) — sai cedo se a escolha persistida for recente.
 detectFastestServer();
 
-// Re-detect every 5 min in case network changes. Stored so we can cancel
-// on logout / app background to avoid battery drain.
+// Reavalia na troca de rede (wifi ↔ celular, volta do offline), com debounce.
+let _edgeNetTimer = null;
+let _edgeLastNet;
+try {
+  require('./networkInfo').onNetworkChange((st) => {
+    const key = (st && st.isConnected !== false && st.type && st.type !== 'unknown' && st.type !== 'none') ? String(st.type) : null;
+    const prev = _edgeLastNet;
+    _edgeLastNet = key;
+    if (prev === undefined || !key || key === prev) return; // 1º disparo / offline / mesma rede
+    if (prev === null) {
+      // 1ª rede conhecida após boot/offline: só reavalia se a escolha persistida
+      // veio de OUTRA rede; se foi feita com rede desconhecida, carimba esta.
+      if (_bestServer && !_bestServer.net) { _bestServer.net = key; _persistBestServer(); return; }
+      if (!_bestServer || _bestServer.net === key) return;
+    }
+    if (_edgeNetTimer) clearTimeout(_edgeNetTimer);
+    _edgeNetTimer = setTimeout(() => { _edgeNetTimer = null; detectFastestServer({ force: true }); }, 3000);
+  });
+} catch {}
+
+// Checa a cada 5 min (barato: só re-probe quando o TTL de 30 min expira).
+// Stored so we can cancel on logout / app background to avoid battery drain.
 let _edgeDetectInterval = setInterval(detectFastestServer, 300000);
 export function stopEdgeDetection() {
   if (_edgeDetectInterval) { clearInterval(_edgeDetectInterval); _edgeDetectInterval = null; }
