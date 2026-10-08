@@ -169,6 +169,25 @@ public enum NativeCallRoomEvent {
 
     public func currentCallId() -> String? { return _callId }
 
+    /// [2026-10-08 call-video-fix] The peer cancelled/ended a call we were
+    /// still only RINGING for (never answered here). The ring-window
+    /// preconnect Room (CallViewController.preconnectRoom) has no VC to tear
+    /// it down, so it stayed joined to the SFU as a zombie: SFU log
+    /// call_1791487864001 — caller cancelled at 19:31:05, the iPhone stayed in
+    /// the room alone for 42 s, then auto-REJOINED (19:32:05→19:32:41) while
+    /// the next call was already up — two Rooms fighting over the shared
+    /// LKRTCAudioSession, and the new call's screen died 2 s after the zombie
+    /// dropped. Disconnect + clear it. MAIN THREAD. No-op if the call was
+    /// answered on this device (the CallViewController owns that teardown) or
+    /// the singleton already points at another call.
+    public func teardownUnansweredPreconnect(callId: String, reason: String) {
+        guard !callId.isEmpty, let r = room, let active = _callId, active == callId else { return }
+        guard answeredIncomingCallId != callId else { return }
+        nativeCallDiag("preconnect_teardown", callId, "reason=\(reason) state=\(state.rawValue)")
+        clear()
+        Task { await r.disconnect() }
+    }
+
     // [2026-10-08 call-connect-fast] See `answeredIncomingCallId` docs.
     /// Called from the CXAnswer handlers (stub + module) BEFORE/around
     /// action.fulfill(). Safe from any thread.

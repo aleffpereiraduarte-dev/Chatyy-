@@ -282,6 +282,12 @@ extension VoipPushAppDelegateSubscriber: PKPushRegistryDelegate {
                     provider.reportCall(with: throwaway, endedAt: Date(), reason: .remoteEnded)
                 }
             }
+            // [2026-10-08 call-video-fix] Also drop the ring-window preconnect
+            // Room (zombie SFU participant otherwise; see
+            // NativeCallRoom.teardownUnansweredPreconnect).
+            DispatchQueue.main.async {
+                NativeCallRoom.shared.teardownUnansweredPreconnect(callId: callId, reason: "cancel_push_\(pushType)")
+            }
             completion()
             return
         }
@@ -697,6 +703,10 @@ extension VoipPushAppDelegateSubscriber: PKPushRegistryDelegate {
             // reportCall on the same provider that did reportNewIncomingCall.
             // CallKit auto-dismisses the ring UI and logs the missed call.
             provider.reportCall(with: uuid, endedAt: Date(), reason: .unanswered)
+            // [2026-10-08 call-video-fix] Unanswered → leave the SFU too.
+            DispatchQueue.main.async {
+                NativeCallRoom.shared.teardownUnansweredPreconnect(callId: callId, reason: "ring_timeout")
+            }
             // Drop the stashed payload too so the answer path won't reactivate
             // the LK pre-connect on a dead UUID.
             kPendingAnswerPayloadsLock.lock()

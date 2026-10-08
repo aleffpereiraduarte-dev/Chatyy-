@@ -743,6 +743,10 @@ final class CallSignalWs: NSObject {
             // the user just answered. Root cause of "atende no nativo e a
             // ligação fecha".
             ExpoCallKitModule.dismissActiveCallSurfacesFromVC(reason: "ws_call_end_\(callId)", forCallId: callId)
+            // 5. [2026-10-08 call-video-fix] Kill the ring-window preconnect
+            //    Room of a call that was never answered here (zombie SFU
+            //    participant that later re-joined and broke the next call).
+            NativeCallRoom.shared.teardownUnansweredPreconnect(callId: callId, reason: "ws_call_end")
         }
     }
 

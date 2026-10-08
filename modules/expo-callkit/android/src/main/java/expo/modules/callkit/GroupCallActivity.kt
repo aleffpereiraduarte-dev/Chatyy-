@@ -39,6 +39,8 @@ import io.livekit.android.room.track.LocalVideoTrackOptions
 import io.livekit.android.room.track.VideoCaptureParameter
 import io.livekit.android.room.track.VideoPreset169
 import io.livekit.android.room.track.VideoTrack
+import io.livekit.android.room.track.Track
+import io.livekit.android.room.participant.LocalParticipant
 import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.GlobalScope
@@ -130,7 +132,19 @@ class GroupCallActivity : ComponentActivity() {
     val nameLabel: TextView,
     val micBadge: TextView,
     var hasVideo: Boolean = false,
+    // [2026-10-08 call-video-fix] The opaque initial-letter placeholder. It
+    // used to be added ON TOP of the renderer and never hidden → the remote
+    // video in a native Android group call was always covered by the avatar.
+    val avatar: TextView? = null,
   )
+
+  /** [2026-10-08 call-video-fix] Show the live video (true) or the avatar
+   *  placeholder (false: no track yet, camera muted/unpublished). */
+  private fun setTileVideo(tile: Tile, on: Boolean) {
+    tile.hasVideo = on
+    tile.avatar?.visibility = if (on) View.GONE else View.VISIBLE
+    if (!on) { try { tile.renderer.clearImage() } catch (_: Throwable) {} }
+  }
   private val tilesByIdentity: LinkedHashMap<String, Tile> = LinkedHashMap()
 
   // Local controls state — mirrors CallActivity.
@@ -358,7 +372,8 @@ class GroupCallActivity : ComponentActivity() {
               }
               tile?.let { tt ->
                 t.addRenderer(tt.renderer)
-                tt.hasVideo = true
+                // Arrived muted (camera already off) → keep the avatar.
+                setTileVideo(tt, !event.publication.muted)
               }
             } else {
               Log.d(TAG, "TrackSubscribed (audio) participant=$id sid=${event.publication.sid}")
@@ -370,8 +385,23 @@ class GroupCallActivity : ComponentActivity() {
             if (t is VideoTrack) {
               tilesByIdentity[id]?.let { tile ->
                 try { t.removeRenderer(tile.renderer) } catch (_: Throwable) {}
-                tile.hasVideo = false
+                setTileVideo(tile, false)
               }
+            }
+          }
+          // [2026-10-08 call-video-fix] Remote camera off/on WITHOUT
+          // unsubscribe (mute) — swap the tile to the avatar and back. Before,
+          // TrackMuted was ignored here → frozen last frame.
+          is RoomEvent.TrackMuted -> if (event.participant !is LocalParticipant) {
+            val pub = event.publication
+            if (pub.source == Track.Source.CAMERA || pub.track is VideoTrack) {
+              tilesByIdentity[event.participant.identity?.value ?: ""]?.let { setTileVideo(it, false) }
+            }
+          }
+          is RoomEvent.TrackUnmuted -> if (event.participant !is LocalParticipant) {
+            val pub = event.publication
+            if (pub.source == Track.Source.CAMERA || pub.track is VideoTrack) {
+              tilesByIdentity[event.participant.identity?.value ?: ""]?.let { setTileVideo(it, pub.track is VideoTrack) }
             }
           }
           else -> { /* no-op for skeleton */ }
@@ -522,7 +552,7 @@ class GroupCallActivity : ComponentActivity() {
     }
     frame.addView(mic)
 
-    tilesByIdentity[identity] = Tile(frame, renderer, name, mic, hasVideo = false)
+    tilesByIdentity[identity] = Tile(frame, renderer, name, mic, hasVideo = false, avatar = avatar)
     grid.addView(frame)
   }
 
@@ -697,8 +727,10 @@ class GroupCallActivity : ComponentActivity() {
             val r = room ?: return@launch
             val track = (r.localParticipant.getTrackPublication(io.livekit.android.room.track.Track.Source.CAMERA)?.track as? io.livekit.android.room.track.LocalVideoTrack)
             if (track != null) {
-              if (camEnabled) { track.startCapture(); track.enabled = true }
-              else { track.enabled = false; track.stopCapture() }
+              // [2026-10-08 call-video-fix] Mute the PUBLICATION (signalled to
+              // the SFU → peers swap to the avatar) instead of track.enabled,
+              // which froze the last frame on every other participant.
+              r.localParticipant.setCameraEnabled(camEnabled)
               Log.d(TAG, "group camera ${if (camEnabled) "unmute" else "mute"} (no republish)")
             } else if (camEnabled) {
               r.localParticipant.setCameraEnabled(true)
@@ -735,10 +767,19 @@ class GroupCallActivity : ComponentActivity() {
         // Switch camera (front/back). LiveKit 2.x exposes this off the
         // local video track; we no-op in the skeleton and just bounce
         // setCameraEnabled which forces a track-republish path.
+        // [2026-10-08 call-video-fix] setCameraEnabled(false→true) only
+        // muted/unmuted the same camera (never flipped). Swap the device on
+        // the same published track by explicit position.
         lifecycleScope.launch {
           try {
-            room?.localParticipant?.setCameraEnabled(false)
-            room?.localParticipant?.setCameraEnabled(true)
+            val lt = room?.localParticipant?.getTrackPublication(Track.Source.CAMERA)?.track
+              as? io.livekit.android.room.track.LocalVideoTrack
+            if (lt != null) {
+              val target = if (lt.options.position == io.livekit.android.room.track.CameraPosition.BACK)
+                io.livekit.android.room.track.CameraPosition.FRONT
+              else io.livekit.android.room.track.CameraPosition.BACK
+              lt.switchCamera(position = target)
+            }
           } catch (t: Throwable) {
             Log.w(TAG, "switch camera failed: ${t.message}")
           }

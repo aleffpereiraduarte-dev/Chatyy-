@@ -4898,9 +4898,20 @@ extension CallViewController: RoomDelegate {
             print("[CallVC] didSubscribeTrack — video pub but track cast failed")
             return
         }
-        print("[CallVC] didSubscribeTrack — remote video, identity=\(identity)")
+        print("[CallVC] didSubscribeTrack — remote video, identity=\(identity) muted=\(publication.isMuted)")
+        let arrivedMuted = publication.isMuted
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
+            // [2026-10-08 call-video-fix] A camera that arrives already MUTED
+            // (peer turned it off before we subscribed / re-subscribe after a
+            // reconnect) must show the avatar placeholder, not a black tile.
+            // Stash it so didUpdateIsMuted(false) re-binds the same track.
+            if arrivedMuted {
+                self.remoteVideoMuted = true
+                self.mutedRemoteVideoTrack = track
+                self.stopRingbackTone(reason: "didSubscribeTrack")
+                return
+            }
             // 1:1 path: keep remoteVideoTrack for the full-bleed background.
             self.session.remoteVideoTrack = track
             self.stopRingbackTone(reason: "didSubscribeTrack")
@@ -5107,9 +5118,19 @@ extension CallViewController: RoomDelegate {
             if action == "request" {
                 DispatchQueue.main.async { [weak self] in
                     guard let self = self else { return }
-                    if !self.session.camEnabled {
+                    if !self.session.camEnabled, !self.isTogglingCamera {
+                        // [2026-10-08 call-video-fix] Same bookkeeping as a
+                        // user tap (uikitOnVideoToggle): serialise with the
+                        // toggle guard, flip the "Vídeo" button to ON and move
+                        // audio to the loudspeaker — before, the auto-accept
+                        // left the button showing OFF while the camera was
+                        // live, so the next tap "did nothing" (it turned the
+                        // already-live camera off).
+                        self.isTogglingCamera = true
                         self.session.camEnabled = true
                         self.applyCamEnabled(true)
+                        AudioRouter.shared.setLocalVideoActive(true)
+                        self.setControlActive(self.view.viewWithTag(9005) as? UIButton, active: true, symbol: "video.fill")
                         // ACK so the requester's "waiting for video" UI clears.
                         self.sendVideoRequest(action: "accepted")
                     }

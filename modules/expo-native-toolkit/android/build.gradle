@@ -49,6 +49,12 @@ dependencies {
   // expo-chat-backup / firebase auth); declared explicitly so this module
   // compiles on its own. Pinned to the version already in the graph (no bump).
   implementation 'com.google.android.gms:play-services-auth-api-phone:18.0.2'
+
+  // [2026-10-08 sticker-maker] ExpoStickerCutoutModule — recorte do objeto
+  // (subject segmentation) p/ o criador de figurinhas. Modelo NÃO vai no APK:
+  // o Play services baixa sob demanda (ModuleInstall). ModuleInstall vem do
+  // play-services-base (já no grafo).
+  implementation 'com.google.android.gms:play-services-mlkit-subject-segmentation:16.0.0-beta1'
 }
 
 def safeExtGet(prop, fallback) {

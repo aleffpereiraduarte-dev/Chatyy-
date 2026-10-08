@@ -238,6 +238,19 @@ final class GroupCallViewController: UIViewController, @unchecked Sendable {
         currentCameraPosition = next
         Task { [weak self] in
             guard let self = self else { return }
+            // [2026-10-08 call-video-fix] setCamera(enabled:true,captureOptions:)
+            // on an ALREADY-published camera only unmutes it (LK Swift 2.0.18
+            // ignores the new options) → flip never changed lens. Swap the
+            // device in place on the same track via CameraCapturer.
+            if let lt = r.localParticipant.localVideoTracks.first(where: { $0.source == .camera })?.track as? LocalVideoTrack,
+               let cap = lt.capturer as? CameraCapturer {
+                do {
+                    _ = try await cap.set(cameraPosition: next)
+                    return
+                } catch {
+                    print("[GroupCallVC] in-place camera flip failed: \(error) — republish fallback")
+                }
+            }
             do {
                 let opts = CallViewController.defaultCameraCaptureOptions(position: next, profile: .group540)
                 let pub = try await r.localParticipant.setCamera(enabled: true, captureOptions: opts)
@@ -388,7 +401,9 @@ final class GroupCallViewController: UIViewController, @unchecked Sendable {
                 id: cur.id,
                 identity: cur.identity,
                 name: cur.name,
-                videoTrack: videoTrack ?? cur.videoTrack,
+                // [2026-10-08 call-video-fix] `nil ?? cur` could never CLEAR
+                // the tile → unsubscribe/camera-off kept a frozen frame.
+                videoTrack: clearVideo ? nil : (videoTrack ?? cur.videoTrack),
                 audioMuted: audioMuted ?? cur.audioMuted,
                 isLocal: true,
                 isSpeaking: isSpeaking ?? cur.isSpeaking,
@@ -416,6 +431,7 @@ final class GroupCallViewController: UIViewController, @unchecked Sendable {
     private func upsertRemote(identity: String,
                               name: String? = nil,
                               videoTrack: VideoTrack? = nil,
+                              clearVideo: Bool = false,
                               audioMuted: Bool? = nil,
                               isSpeaking: Bool? = nil,
                               handRaised: Bool? = nil,
@@ -561,8 +577,14 @@ extension GroupCallViewController: RoomDelegate {
         guard publication.kind == .video else { return }
         guard let track = publication.track as? VideoTrack else { return }
         let identity = participant.identity?.stringValue ?? "?"
+        // [2026-10-08 call-video-fix] Arrived muted (camera off) → avatar.
+        let muted = publication.isMuted
         Task { @MainActor [weak self] in
-            self?.upsertRemote(identity: identity, videoTrack: track)
+            if muted {
+                self?.upsertRemote(identity: identity, clearVideo: true)
+            } else {
+                self?.upsertRemote(identity: identity, videoTrack: track)
+            }
         }
     }
 
@@ -572,7 +594,7 @@ extension GroupCallViewController: RoomDelegate {
         guard publication.kind == .video else { return }
         let identity = participant.identity?.stringValue ?? "?"
         Task { @MainActor [weak self] in
-            self?.upsertRemote(identity: identity, videoTrack: nil)
+            self?.upsertRemote(identity: identity, clearVideo: true)
         }
     }
 
@@ -580,6 +602,22 @@ extension GroupCallViewController: RoomDelegate {
               participant: Participant,
               trackPublication: TrackPublication,
               didUpdateIsMuted isMuted: Bool) {
+        // [2026-10-08 call-video-fix] Remote CAMERA off/on (mute, no
+        // unsubscribe): swap the tile to the avatar and back. Before, only
+        // audio mutes were handled → frozen last frame on camera-off.
+        if trackPublication.kind == .video {
+            guard (participant as? RemoteParticipant) != nil else { return }
+            let identity = participant.identity?.stringValue ?? "?"
+            let track = trackPublication.track as? VideoTrack
+            Task { @MainActor [weak self] in
+                if isMuted || track == nil {
+                    self?.upsertRemote(identity: identity, clearVideo: true)
+                } else {
+                    self?.upsertRemote(identity: identity, videoTrack: track)
+                }
+            }
+            return
+        }
         guard trackPublication.kind == .audio else { return }
         let identity = participant.identity?.stringValue ?? "?"
         let isLocal = (participant as? LocalParticipant) != nil

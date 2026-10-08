@@ -141,6 +141,7 @@ import io.livekit.android.events.RoomEvent
 import io.livekit.android.events.collect
 import io.livekit.android.room.participant.LocalParticipant
 import io.livekit.android.room.participant.VideoTrackPublishDefaults
+import io.livekit.android.room.track.CameraPosition
 import io.livekit.android.room.track.LocalVideoTrack
 import io.livekit.android.room.track.LocalVideoTrackOptions
 import io.livekit.android.room.track.VideoCaptureParameter
@@ -339,6 +340,9 @@ class CallActivity : ComponentActivity() {
    *  the lifecycle of the underlying WebRTC view. */
   private var remoteRenderer: SurfaceViewRenderer? = null
   private var localRenderer: SurfaceViewRenderer? = null
+  /** [2026-10-08 call-video-fix] Remote VideoTrack currently feeding the 1:1
+   *  full-bleed remoteRenderer (so unsubscribe/unmute can rebind precisely). */
+  private var boundRemoteVideoTrack: VideoTrack? = null
 
   private val closeReceiver = object : BroadcastReceiver() {
     override fun onReceive(ctx: Context?, intent: Intent?) {
@@ -655,12 +659,19 @@ class CallActivity : ComponentActivity() {
                 val r = room ?: return@launch
                 val track = (r.localParticipant.getTrackPublication(Track.Source.CAMERA)?.track as? LocalVideoTrack)
                 if (track != null) {
+                  // [2026-10-08 call-video-fix] MUTE THE PUBLICATION, not just
+                  // the rtc track. `track.enabled=false` only sends black/no
+                  // frames — the SFU never learns the camera is off, so the
+                  // iPhone never gets didUpdateIsMuted and keeps the last
+                  // (frozen/black) frame instead of the avatar ("desliguei a
+                  // câmera e o outro lado fica com a imagem congelada").
+                  // setCameraEnabled(x) on an existing publication = pub.muted
+                  // (signalled to the SFU → TrackMuted/Unmuted on the peer) +
+                  // stop/startCapture. Same track, no republish.
+                  r.localParticipant.setCameraEnabled(desired)
                   if (desired) {
-                    track.startCapture()
-                    track.enabled = true
+                    bindLocalCameraIfReady(r)
                   } else {
-                    track.enabled = false
-                    track.stopCapture()
                     // [2026-05-27] Blank the local self-preview surface. Without
                     // this the SurfaceViewRenderer keeps the LAST captured frame
                     // buffered, so turning the camera OFF leaves the frozen image
@@ -1552,10 +1563,11 @@ class CallActivity : ComponentActivity() {
         }
         for (pub in rp.trackPublications.values) {
           val vt = pub.track as? VideoTrack ?: continue
-          state.hasRemoteVideo = true
+          // [2026-10-08 call-video-fix] muted at adopt time → avatar.
+          state.hasRemoteVideo = !pub.muted
           if (!state.isVideo) state.isVideo = true
           remoteRenderer?.let { rv ->
-            try { vt.addRenderer(rv) } catch (e: Throwable) { Log.w(TAG, "warm backfill addRenderer failed: ${e.message}") }
+            try { vt.addRenderer(rv); boundRemoteVideoTrack = vt } catch (e: Throwable) { Log.w(TAG, "warm backfill addRenderer failed: ${e.message}") }
           }
           lifecycleScope.launch {
             delay(180)
@@ -1723,7 +1735,17 @@ class CallActivity : ComponentActivity() {
     }
     val roomOptions = try {
       RoomOptions(
-        adaptiveStream = true,
+        // [2026-10-08 call-video-fix] adaptiveStream OFF for the 1:1 screen
+        // (same as the warm/preconnect Room the callee adopts). With it ON,
+        // RemoteVideoTrack.addRenderer(SurfaceViewRenderer) wraps the view in
+        // a ViewVisibility; our renderer is bound while still DETACHED (the
+        // Crossfade mounts it ~180ms later), so the SDK immediately tells the
+        // SFU "not visible → pause this video" and only re-enables 2s after
+        // the next global-layout pass (or never, if no layout happens, e.g.
+        // PiP/locked screen). The SFU log of 2026-10-08 also shows the only
+        // Android SUBSCRIBER negotiation timeout on this adaptive path
+        // (call_1791487687822). 1:1 = one remote video; nothing to adapt.
+        adaptiveStream = false,
         dynacast = true,
         videoTrackPublishDefaults = publishDefaults,
         videoTrackCaptureDefaults = CallVideoQuality.captureDefaults(applicationContext, isGroup = false, localQualityScore = 3),
@@ -2084,8 +2106,21 @@ class CallActivity : ComponentActivity() {
           // [2026-10-06 android-incoming] Trace: remote camera arrived (peer
           // turned video on). If this prints but the screen stays on the
           // avatar, the renderer bind below is the suspect, not the network.
-          Log.i("CallTrace", "[11/12] remote video subscribed callId=$callId sid=${event.publication.sid} wasVideoCall=${state.isVideo} rendererReady=${remoteRenderer != null}")
-          state.hasRemoteVideo = true
+          Log.i("CallTrace", "[11/12] remote video subscribed callId=$callId sid=${event.publication.sid} wasVideoCall=${state.isVideo} rendererReady=${remoteRenderer != null} muted=${event.publication.muted}")
+          // [2026-10-08 call-video-fix] A track that arrives already MUTED
+          // (peer turned the camera off before we subscribed / re-subscribe
+          // after a reconnect) must show the avatar, not a black surface.
+          // TrackUnmuted flips it back on (same bound renderer).
+          state.hasRemoteVideo = !event.publication.muted
+          // Track this as THE remote camera sink so TrackUnsubscribed can
+          // unbind exactly it (flip/republish on the peer = new track).
+          // One sink per 1:1 renderer: detach the previous remote track first
+          // so two tracks never draw into the same SurfaceViewRenderer.
+          val prevBound = boundRemoteVideoTrack
+          if (prevBound != null && prevBound !== track) {
+            try { remoteRenderer?.let { rv -> prevBound.removeRenderer(rv) } } catch (_: Throwable) {}
+          }
+          boundRemoteVideoTrack = track
           // [video-upgrade 2026-05-25] CRITICAL: a remote VIDEO track means the
           // peer enabled their camera (initial video call OR a mid-call audio→
           // video upgrade). The remote-video Crossfade in CallScreen is gated on
@@ -2161,6 +2196,31 @@ class CallActivity : ComponentActivity() {
       }
       is RoomEvent.TrackUnsubscribed -> {
         val track = event.track
+        // [2026-10-08 call-video-fix] 1:1 full-bleed: the peer UNPUBLISHED its
+        // camera (camera-off via unpublish, republish on camera flip, screen
+        // share ended, reconnect). Before, nothing handled this for 1:1 → the
+        // SurfaceViewRenderer kept the last frame frozen forever and the
+        // renderer stayed bound to a dead track. Unbind, blank, fall back to
+        // another live remote video (camera ↔ screen share) or the avatar.
+        if (track is VideoTrack && state.groupParticipants.size < 2) {
+          try { remoteRenderer?.let { rv -> track.removeRenderer(rv) } } catch (_: Throwable) {}
+          if (boundRemoteVideoTrack === track) boundRemoteVideoTrack = null
+          val fallback = try {
+            event.participant.trackPublications.values
+              .firstOrNull { it.sid != event.publications.sid && it.track is VideoTrack && it.track !== track && !it.muted }
+              ?.track as? VideoTrack
+          } catch (_: Throwable) { null }
+          if (fallback != null) {
+            remoteRenderer?.let { rv -> try { fallback.addRenderer(rv) } catch (_: Throwable) {} }
+            boundRemoteVideoTrack = fallback
+            state.hasRemoteVideo = true
+            Log.d(TAG, "remote video unsubscribed → fallback to other remote video sid=${event.publications.sid}")
+          } else {
+            state.hasRemoteVideo = false
+            try { remoteRenderer?.clearImage() } catch (_: Throwable) {}
+            Log.d(TAG, "remote video unsubscribed → avatar placeholder sid=${event.publications.sid}")
+          }
+        }
         if (track is VideoTrack) {
           // [Wave C-2] Clear the video renderer for this participant but keep
           // them in the group grid (they're still in the call, just muted/video-off).
@@ -2218,7 +2278,17 @@ class CallActivity : ComponentActivity() {
               ?: (rp.getTrackPublication(Track.Source.CAMERA)?.track as? VideoTrack)
             vTrack?.let { vt -> remoteRenderer?.let { rv ->
               try { vt.addRenderer(rv) } catch (_: Throwable) {}
+              boundRemoteVideoTrack = vt
             } }
+          } else if (state.groupParticipants.size < 2) {
+            // [2026-10-08 call-video-fix] Make sure the unmuted track is the
+            // one feeding the full-bleed renderer (it may have been unbound by
+            // a TrackUnsubscribed/fallback in between).
+            val vt = pub.track as? VideoTrack
+            if (vt != null && vt !== boundRemoteVideoTrack) {
+              remoteRenderer?.let { rv -> try { vt.addRenderer(rv) } catch (_: Throwable) {} }
+              boundRemoteVideoTrack = vt
+            }
           }
           state.hasRemoteVideo = true
           state.remoteFirstFrame = true
@@ -2589,11 +2659,23 @@ class CallActivity : ComponentActivity() {
         val pub = r.localParticipant.getTrackPublication(Track.Source.CAMERA)
         val track = pub?.track as? LocalVideoTrack
         if (track != null) {
-          // LK 2.x exposes switchCamera() on LocalVideoTrack which forwards
-          // to the underlying CameraCapturer. Falls back to disable/enable
-          // if the capturer is in a state that rejects the swap.
-          track.switchCamera()
-          state.isFrontCamera = !state.isFrontCamera
+          // [2026-10-08 call-video-fix] Flip by EXPLICIT position. The no-arg
+          // switchCamera() cycles `enumerator.deviceNames` starting from
+          // options.deviceId — null for a track built from position=FRONT, so
+          // the first tap jumped to deviceNames[0] and further taps walked the
+          // Pixel's extra logical/physical lenses (wide → tele → …) instead of
+          // front↔back ("virar a câmera não funciona"). findCamera(position)
+          // targets the real opposite-facing camera. Same track, no republish:
+          // CameraVideoCapturer.switchCamera swaps the device under the same
+          // VideoSource, so the peer keeps receiving the same RTP stream.
+          val curFront = when (track.options.position) {
+            CameraPosition.BACK -> false
+            CameraPosition.FRONT -> true
+            else -> state.isFrontCamera
+          }
+          val target = if (curFront) CameraPosition.BACK else CameraPosition.FRONT
+          track.switchCamera(position = target)
+          state.isFrontCamera = (target == CameraPosition.FRONT)
           Log.d(TAG, "flipCamera: front=${state.isFrontCamera}")
           // __chatyy_native_call_sync — JS local-preview mirror flag follows
           // the native camera position so the on-screen avatar/PiP renderer
@@ -2603,12 +2685,17 @@ class CallActivity : ComponentActivity() {
           Log.w(TAG, "flipCamera: no local camera publication")
         }
       } catch (t: Throwable) {
-        Log.w(TAG, "flipCamera failed: ${t.message} — fallback to off/on cycle")
+        Log.w(TAG, "flipCamera failed: ${t.message} — fallback to restartTrack(position)")
         try {
-          r.localParticipant.setCameraEnabled(false)
-          delay(150)
-          r.localParticipant.setCameraEnabled(true)
-          state.isFrontCamera = !state.isFrontCamera
+          // [2026-10-08 call-video-fix] The old fallback (setCameraEnabled
+          // false→true) only muted/unmuted the SAME camera — it never flipped.
+          // restartTrack re-creates the capturer for the target position on
+          // the same published track.
+          val lt = r.localParticipant.getTrackPublication(Track.Source.CAMERA)?.track as? LocalVideoTrack
+            ?: throw IllegalStateException("no camera track")
+          val target = if (state.isFrontCamera) CameraPosition.BACK else CameraPosition.FRONT
+          lt.restartTrack(lt.options.copy(deviceId = null, position = target))
+          state.isFrontCamera = (target == CameraPosition.FRONT)
           // [2026-05-19] Bug #989: off/on cycle creates a NEW LocalVideoTrack;
           // the previous renderer binding is on the (now released) old track.
           // Re-bind to the freshly published one.
@@ -2807,8 +2894,11 @@ class CallActivity : ComponentActivity() {
       val pub = rp?.getTrackPublication(Track.Source.CAMERA)
       val rTrack = pub?.track as? VideoTrack
       if (rTrack != null) {
-        remoteRenderer?.let { rv -> rTrack.addRenderer(rv) }
-        state.hasRemoteVideo = true
+        if (rTrack !== boundRemoteVideoTrack) {
+          remoteRenderer?.let { rv -> rTrack.addRenderer(rv) }
+          boundRemoteVideoTrack = rTrack
+        }
+        state.hasRemoteVideo = !(pub?.muted ?: false)
         lifecycleScope.launch { delay(180); state.remoteFirstFrame = true }
       }
     } catch (t: Throwable) {
