@@ -839,6 +839,12 @@ object NativeCallRoom {
         }
     }
 
+    /** [2026-10-08 call-connect-fast] The warm ring-window Room for [callId]
+     *  (CONNECTING/CONNECTED/RECONNECTING), or null. CallActivity adopts it
+     *  instead of tearing it down and re-joining the SFU from scratch. */
+    fun preconnectedRoomFor(callId: String): Room? =
+        if (isPreconnected(callId)) room else null
+
     /**
      * [STAGE-B] Called from ChatyyConnection.onAnswer. By the time we get
      * here:
@@ -913,10 +919,10 @@ object NativeCallRoom {
             // and RETURNED — no in-call UI ever appeared when the answer came
             // through Telecom (Bluetooth headset / Android Auto / Wear /
             // system call UI): audio flowed, screen showed nothing ("o módulo
-            // de ligação não abre"). Launch CallActivity here too. It builds
-            // its own Room; NativeCallRoom.publish() disconnects this warm
-            // Room first (DUPLICATE_IDENTITY guard) so the hand-off is clean
-            // — same end state as the cold path below.
+            // de ligação não abre"). Launch CallActivity here too.
+            // [2026-10-08 call-connect-fast] CallActivity now ADOPTS this warm
+            // Room (preconnectedRoomFor) — the mic we just published keeps
+            // flowing, no leave/re-join.
             launchCallActivityFor(
                 ctx, callId, lkUrl, lkToken, callerName, callerEmail,
                 conversationId, hasVideo, callerAvatar, origin = "warm"

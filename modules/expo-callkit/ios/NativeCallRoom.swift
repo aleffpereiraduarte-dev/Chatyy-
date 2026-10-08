@@ -103,6 +103,23 @@ public enum NativeCallRoomEvent {
     // outgoing VC whose gate is still closed; cleared with the Room.
     private var outgoingAnswerWatcher: OutgoingAnswerWatcher?
 
+    // [2026-10-08 call-connect-fast] Incoming publish-on-answer, single-flight.
+    // Before: the callee's mic was published ONLY from CallViewController
+    // .viewDidLoad (adopt branch), i.e. after the VC presentation finished —
+    // voip_diag shows voipstub_present_autoaccept → present_completion
+    // ~1.2-1.7 s after the CXAnswer tap, and the SFU log shows the callee's
+    // MICROPHONE published ~1.5 s after call_answered. The caller hears
+    // nothing until that publish lands. Now both CXAnswer handlers arm
+    // `markIncomingAnswered`; the mic publishes as soon as CallKit activates
+    // the audio session (didActivate → ExpoCallKitAudioSessionActivated — the
+    // "session already live" ordering incoming always relied on), with a 1 s
+    // safety timer. The VC adopt path joins the SAME Task (no 2nd publish).
+    // All four members are touched on the main thread only.
+    private var answeredIncomingCallId: String?
+    private var answeredAudioObserver: NSObjectProtocol?
+    private var micPublishCallId: String?
+    private var micPublishTask: Task<LocalTrackPublication?, Never>?
+
     // --- Publication API (called from CallViewController) ---------------------
 
     /// CallViewController calls this AFTER its own Room.connect await
@@ -130,6 +147,19 @@ public enum NativeCallRoomEvent {
         // restore automatic LK audio mode with the Room (idempotent).
         disarmOutgoingAnswerWatcher()
         LKAudioSessionCallKitBridge.disarm(reason: "room_clear")
+        // [2026-10-08 call-connect-fast] Forget the per-call answer state
+        // (main-thread-only members).
+        if Thread.isMainThread {
+            self.answeredIncomingCallId = nil
+            self.micPublishCallId = nil
+            self.micPublishTask = nil
+        } else {
+            DispatchQueue.main.async {
+                self.answeredIncomingCallId = nil
+                self.micPublishCallId = nil
+                self.micPublishTask = nil
+            }
+        }
         self.room = nil
         self._callId = nil
         self.lastRoomName = nil
@@ -138,6 +168,84 @@ public enum NativeCallRoomEvent {
     }
 
     public func currentCallId() -> String? { return _callId }
+
+    // [2026-10-08 call-connect-fast] See `answeredIncomingCallId` docs.
+    /// Called from the CXAnswer handlers (stub + module) BEFORE/around
+    /// action.fulfill(). Safe from any thread.
+    public func markIncomingAnswered(callId: String) {
+        guard !callId.isEmpty else { return }
+        if !Thread.isMainThread {
+            DispatchQueue.main.async { self.markIncomingAnswered(callId: callId) }
+            return
+        }
+        answeredIncomingCallId = callId
+        let pre = isPreconnected(callId: callId)
+        nativeCallDiag("fast_answer_armed", callId, "preconnected=\(pre) state=\(state.rawValue)")
+        if answeredAudioObserver == nil {
+            answeredAudioObserver = NotificationCenter.default.addObserver(
+                forName: Notification.Name("ExpoCallKitAudioSessionActivated"),
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                guard let self = self else { return }
+                guard let cid = self.answeredIncomingCallId else { return }
+                self.ensureIncomingMicPublished(callId: cid, reason: "didactivate")
+            }
+        }
+        // Safety net: didActivate normally lands 100-500 ms after fulfill();
+        // the old VC path published at ~1.5 s, so 1 s is never worse.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+            guard let self = self else { return }
+            guard self.answeredIncomingCallId == callId else { return }
+            self.ensureIncomingMicPublished(callId: callId, reason: "answer_fallback_1s")
+        }
+    }
+
+    /// Single-flight mic publish on the preconnected incoming Room. MAIN
+    /// THREAD ONLY. Returns the shared Task (nil when there is no Room for
+    /// `callId` — the caller then publishes on its own Room as before).
+    @discardableResult
+    public func ensureIncomingMicPublished(callId: String, reason: String) -> Task<LocalTrackPublication?, Never>? {
+        guard let r = room, let active = _callId, active == callId else {
+            return nil
+        }
+        if micPublishCallId == callId, let existing = micPublishTask {
+            return existing
+        }
+        micPublishCallId = callId
+        let t0 = Date()
+        nativeCallDiag("fast_mic_publish_start", callId, "reason=\(reason) connected=\(r.connectionState == .connected)")
+        let task = Task<LocalTrackPublication?, Never> {
+            // A Room still finishing its ring-window connect throws
+            // "Publisher is nil" on publish — wait (bounded) for .connected.
+            var waitedMs = 0
+            while r.connectionState != .connected && waitedMs < 10_000 {
+                try? await Task.sleep(nanoseconds: 50_000_000)
+                waitedMs += 50
+            }
+            do {
+                let pub = try await r.localParticipant.setMicrophone(
+                    enabled: true,
+                    captureOptions: CallViewController.defaultAudioCaptureOptions()
+                )
+                let ms = Int(Date().timeIntervalSince(t0) * 1000)
+                nativeCallDiag("fast_mic_published", callId, "reason=\(reason) ms=\(ms) waitedMs=\(waitedMs)")
+                return pub
+            } catch {
+                nativeCallDiag("fast_mic_publish_failed", callId, "reason=\(reason) err=\(error)")
+                // Let a later caller (CallViewController adopt path) retry.
+                DispatchQueue.main.async {
+                    if self.micPublishCallId == callId {
+                        self.micPublishCallId = nil
+                        self.micPublishTask = nil
+                    }
+                }
+                return nil
+            }
+        }
+        micPublishTask = task
+        return task
+    }
 
     // [2026-10-06 native-only outgoing] See `outgoingAnswerWatcher` docs.
     public func armOutgoingPublishOnAnswer(callId: String, hasVideo: Bool, micDesired: Bool) {

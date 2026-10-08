@@ -2613,6 +2613,9 @@ private class ProviderDelegate: NSObject, CXProviderDelegate {
     let callId = module?.callIdForUUID(actionUUID) ?? actionUUID.uuidString
     let snapshot = Self.collectAnswerSnapshot(callId: callId, uuid: actionUUID)
     nativeCallDiag("cxanswer_received", callId, "video=\(snapshot.hasVideo) caller=\(snapshot.callerEmail)")
+    // [2026-10-08 call-connect-fast] Mic publish on didActivate for the
+    // preconnected Room (see NativeCallRoom.markIncomingAnswered).
+    NativeCallRoom.shared.markIncomingAnswered(callId: callId)
     // [2026-10-07 audio-route] Claim the session with the REAL call type
     // before didActivate (configureForCall there reads AudioRouter.hasVideo).
     // Category only — CallKit activates after fulfill().

@@ -660,6 +660,25 @@ class IncomingCallActivity : AppCompatActivity() {
     CallNotificationService.cancelNotification(this, callId ?: "")
     stopRingingService()
 
+    // [2026-10-08 call-connect-fast] Publish the mic on the warm ring-window
+    // Room RIGHT NOW (this Activity is visible = mic capture allowed), in
+    // parallel with the CallActivity launch — CallActivity adopts the same
+    // Room and its own publish is then a no-op. Saves the Activity launch +
+    // compose time (~300-800 ms) from "Atender" to the caller hearing us.
+    try {
+      val cid = callId ?: ""
+      val micGranted = androidx.core.content.ContextCompat.checkSelfPermission(
+        this, android.Manifest.permission.RECORD_AUDIO
+      ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+      val startMuted = getSharedPreferences("expo_callkit_prefs", Context.MODE_PRIVATE)
+        .getBoolean("pending_call_mic_muted", false)
+      if (!isGroup && cid.isNotEmpty() && micGranted && !startMuted &&
+          NativeCallRoom.isConnected() && NativeCallRoom.currentCallId() == cid) {
+        Log.i("CallTrace", "[7d/12] IncomingCallActivity accept: early mic publish on warm Room callId=$cid ts=${System.currentTimeMillis()}")
+        NativeCallRoom.setMicEnabled(true)
+      }
+    } catch (_: Throwable) {}
+
     // [2026-05-16 Stage 4 full-native] Jump STRAIGHT to CallActivity.
     //   - Cache hit (JS pre-stashed via persistPendingLkToken on call_invite
     //     WS event) → launch synchronously, audio publishes ~500ms.

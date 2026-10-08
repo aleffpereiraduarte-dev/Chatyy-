@@ -933,7 +933,17 @@ class CallActivity : ComponentActivity() {
     // Bring up LiveKit. If url/token missing, try the 4-source fallback
     // (LkTokenFetcher.fetchToken with intentExtras) before giving up. Only
     // if NO source has the bearer do we surface the humanized banner.
-    if (!lkUrl.isNullOrEmpty() && !lkToken.isNullOrEmpty()) {
+    // [2026-10-08 call-connect-fast] INCOMING: adopt the ring-window warm Room
+    // (NativeCallRoom.preconnect, connected subscribe-only while ringing)
+    // instead of building a 2nd Room. Before, every accept tore the warm Room
+    // down (NativeCallRoom.publish → CLIENT_REQUEST_LEAVE) and re-joined from
+    // zero: SFU log call_1791275715388 — leave 08:35:22.31, re-join 22.67,
+    // active 24.25, mic only at 37.10 (the caller heard NOTHING for ~15 s).
+    // Adopting keeps the live PeerConnection: accept → mic publish ≈ 1 SFU RTT.
+    val warmRoom: Room? = if (!isOutgoing) NativeCallRoom.preconnectedRoomFor(callId) else null
+    if (warmRoom != null && adoptWarmRoom(warmRoom)) {
+      Log.i(TAG, "onCreate: adopted warm preconnected Room for $callId — no re-join")
+    } else if (!lkUrl.isNullOrEmpty() && !lkToken.isNullOrEmpty()) {
       bringUpRoom(lkUrl!!, lkToken!!)
     } else {
       Log.w(TAG, "missing lk_url or lk_token — attempting LkTokenFetcher fallback")
@@ -1449,6 +1459,221 @@ class CallActivity : ComponentActivity() {
 
   // ────────────── LiveKit room lifecycle
 
+  /**
+   * [2026-10-08 call-connect-fast] Adopt the warm ring-window Room built by
+   * NativeCallRoom.preconnect (same token/identity, same RoomOptions ladder,
+   * already CONNECTED subscribe-only while ringing). Mirrors bringUpRoom's
+   * wiring minus LiveKit.create/connect. Returns false (caller falls back to a
+   * fresh bringUpRoom) if anything throws before the Room is taken over.
+   */
+  private fun adoptWarmRoom(r: Room): Boolean {
+    return try {
+      Log.i("CallTrace", "[8w/12] CallActivity ADOPT warm Room callId=$callId state=${r.state} ts=${System.currentTimeMillis()}")
+      room = r
+      try { expo.modules.callkit.audio.AudioRouter.get(applicationContext).attachLiveKit(r, hasVideo) } catch (_: Throwable) {}
+      LiveKitRoomHolder.set(r)
+      wireScreenAudioMixer(r)
+      // Same Room instance → NativeCallRoom.publish keeps it (no orphan
+      // disconnect) and just re-arms its JS event forwarder.
+      NativeCallRoom.publish(r, callId, callId, applicationContext)
+      remoteRenderer?.let { r.initVideoRenderer(it) }
+      localRenderer?.let {
+        r.initVideoRenderer(it)
+        try { it.setZOrderMediaOverlay(true) } catch (_: Throwable) {}
+      }
+      eventsJob = lifecycleScope.launch {
+        r.events.collect { event ->
+          try {
+            Log.i("CallTrace", "[9/12] RoomEvent type=${event.javaClass.simpleName} state=${r.state} ts=${System.currentTimeMillis()}")
+          } catch (_: Throwable) {}
+          handleRoomEvent(r, event)
+        }
+      }
+      connectJob = lifecycleScope.launch { finishWarmAdopt(r) }
+      true
+    } catch (t: Throwable) {
+      Log.w(TAG, "adoptWarmRoom failed: ${t.message} — fresh bringUpRoom")
+      try { eventsJob?.cancel() } catch (_: Throwable) {}
+      eventsJob = null
+      room = null
+      false
+    }
+  }
+
+  /** [2026-10-08 call-connect-fast] Wait (bounded) for the warm Room to be
+   *  CONNECTED, back-fill what arrived during the ring (RoomEvent.Connected /
+   *  TrackSubscribed already fired before we collected), then publish mic →
+   *  camera. If the warm Room died, fall back to a fresh connect. */
+  private suspend fun finishWarmAdopt(r: Room) {
+    val t0 = System.currentTimeMillis()
+    var waited = 0L
+    while (r.state != Room.State.CONNECTED && waited < 10_000L) {
+      delay(50)
+      waited += 50
+    }
+    if (isFinishing || isDestroyed) return
+    if (r.state != Room.State.CONNECTED) {
+      Log.w(TAG, "warm Room not CONNECTED after ${waited}ms (state=${r.state}) — fresh connect")
+      try { eventsJob?.cancel() } catch (_: Throwable) {}
+      eventsJob = null
+      var u = lkUrl
+      var t = lkToken
+      if (u.isNullOrEmpty() || t.isNullOrEmpty()) {
+        val tk = try {
+          LkTokenFetcher.getCached(applicationContext, callId)
+            ?: LkTokenFetcher.fetchToken(applicationContext, callId, hasVideo, intent?.extras)
+        } catch (_: Throwable) { null }
+        u = tk?.url
+        t = tk?.token
+      }
+      if (!u.isNullOrEmpty() && !t.isNullOrEmpty()) {
+        lkUrl = u
+        lkToken = t
+        room = null
+        bringUpRoom(u, t)
+      } else {
+        state.status = "Erro de conexão"
+      }
+      return
+    }
+    try { IncomingRinger.stop() } catch (_: Throwable) {}
+    state.status = "Conectado"
+    state.isReconnecting = false
+    if (state.connectionStartedAt == 0L) {
+      state.connectionStartedAt = System.currentTimeMillis()
+    }
+    // Back-fill remote participants / video tracks subscribed during the ring.
+    try {
+      for (rp in r.remoteParticipants.values) {
+        val identity = rp.identity?.value ?: ""
+        if (identity.isNotEmpty()) state.peerIdentity = identity
+        if (state.groupParticipants.none { it.identity == identity }) {
+          state.groupParticipants.add(GroupParticipantAndroid(identity = identity, name = rp.name ?: ""))
+        }
+        for (pub in rp.trackPublications.values) {
+          val vt = pub.track as? VideoTrack ?: continue
+          state.hasRemoteVideo = true
+          if (!state.isVideo) state.isVideo = true
+          remoteRenderer?.let { rv ->
+            try { vt.addRenderer(rv) } catch (e: Throwable) { Log.w(TAG, "warm backfill addRenderer failed: ${e.message}") }
+          }
+          lifecycleScope.launch {
+            delay(180)
+            state.remoteFirstFrame = true
+          }
+        }
+      }
+      if (state.groupParticipants.size >= 2) wireGroupTiles(r)
+    } catch (e: Throwable) {
+      Log.w(TAG, "warm backfill failed: ${e.message}")
+    }
+    try {
+      publishLocalMediaAfterConnect(r)
+    } catch (e: Throwable) {
+      Log.w(TAG, "warm adopt publish failed: ${e.message}")
+    }
+    reconnectAttempts = 0
+    Log.i("CallTrace", "[8x/12] warm adopt publish done callId=$callId waitedMs=$waited totalMs=${System.currentTimeMillis() - t0}")
+  }
+
+  // [2026-10-08 call-connect-fast] Extracted from bringUpRoom so the warm
+  // adopt path (adoptWarmRoom) wires the same app-audio mixer.
+  private fun wireScreenAudioMixer(r: Room) {
+    // [Wave 17.6 F2] Wire ScreenAudioMixer.mixInto() into the local mic
+    // audio track so app audio captured by ScreenShareService gets merged
+    // into the published mic stream. LK Android 2.10.3 doesn't expose a
+    // public AudioCustomSource — but it DOES expose audio processing via
+    // reflection on AudioBufferCallback / MixerAudioBufferCallback against
+    // Room's javaAudioDeviceModule. We do this best-effort; if the SDK
+    // surface changes the screen-share still works (just no app-audio
+    // merge), so we never throw.
+    try {
+      val adm = r.javaClass.getDeclaredField("audioDeviceModule")
+        .apply { isAccessible = true }
+        .get(r)
+      val setMixerMethod = adm?.javaClass?.methods?.firstOrNull {
+        it.name.contains("setLocalMixerCallback", ignoreCase = true) ||
+        it.name.contains("setSamplesReadyCallback", ignoreCase = true) ||
+        it.name.contains("audioMixer", ignoreCase = true)
+      }
+      if (setMixerMethod != null && adm != null) {
+        // We pass a lambda compatible with LK 2.10's MixerAudioBufferCallback,
+        // which mixes our PCM16 into the mic capture buffer.
+        val cb = java.lang.reflect.Proxy.newProxyInstance(
+          adm.javaClass.classLoader,
+          arrayOf(setMixerMethod.parameterTypes.firstOrNull() ?: Any::class.java)
+        ) { _, _, args ->
+          if (!expo.modules.screenshare.ScreenAudioMixer.isEnabled() || args.isNullOrEmpty()) {
+            return@newProxyInstance null
+          }
+          val maybeShortArr = args.firstOrNull { it is ShortArray } as? ShortArray
+          val maybeByteBuf = args.firstOrNull { it is java.nio.ByteBuffer } as? java.nio.ByteBuffer
+          if (maybeShortArr != null) {
+            expo.modules.screenshare.ScreenAudioMixer.mixInto(maybeShortArr, 0, maybeShortArr.size)
+          } else if (maybeByteBuf != null) {
+            expo.modules.screenshare.ScreenAudioMixer.drainInto(maybeByteBuf, maybeByteBuf.remaining())
+          }
+          null
+        }
+        setMixerMethod.invoke(adm, cb)
+        Log.d(TAG, "ScreenAudioMixer wired via ADM.${setMixerMethod.name}")
+      } else {
+        Log.d(TAG, "ScreenAudioMixer wire skipped — no mixer hook on this LK SDK version")
+      }
+    } catch (t: Throwable) {
+      Log.w(TAG, "ScreenAudioMixer wire failed: ${t.message}")
+    }
+  }
+
+  // [2026-10-08 call-connect-fast] Extracted from attemptConnect (unchanged
+  // body) so the warm adopt path publishes mic → camera identically.
+  private suspend fun publishLocalMediaAfterConnect(r: Room) {
+    // [#1191 audio fix, 2026-05-19] Only publish mic if RECORD_AUDIO is
+    // actually granted. Calling setMicrophoneEnabled(true) without the
+    // perm silently publishes a muted/empty track — call looks connected
+    // but no voice flows. onRequestPermissionsResult re-publishes the
+    // mic if the user grants the perm after this point.
+    if (state.micPermissionGranted) {
+      r.localParticipant.setMicrophoneEnabled(!state.isMuted)
+      // [Wave 15 gap B2] Attach HW audio effects (AEC/NS/AGC) post-publish.
+      // WhatsApp parity — kills speakerphone echo no Android low-end.
+      try { installHwAudioEffects() } catch (t: Throwable) { Log.w(TAG, "installHwAudioEffects: ${t.message}") }
+    } else {
+      Log.w(TAG, "LK connected but RECORD_AUDIO denied — mic NOT published")
+    }
+    if (hasVideo) {
+      // [2026-10-06 android-incoming] Publish the camera ONLY once CAMERA is
+      // granted. ensureCameraPermission() in onCreate is async; on a first
+      // video call the grant dialog is still up when we reach here, and
+      // setCameraEnabled(true) before the grant builds a dead capturer that
+      // a later grant can't revive (it only "unmutes"). The grant handler
+      // (onRequestPermissionsResult → REQ_CODE_CAMERA) publishes instead.
+      val camGranted = ContextCompat.checkSelfPermission(
+        this@CallActivity, Manifest.permission.CAMERA
+      ) == PackageManager.PERMISSION_GRANTED
+      if (!camGranted) {
+        Log.w(TAG, "[camera] LK connected but CAMERA not granted yet — publish deferred to onRequestPermissionsResult")
+      } else {
+        r.localParticipant.setCameraEnabled(state.isCameraOn)
+        // [2026-05-19] Bug #989 fix: LK Android 2.x doesn't always emit
+        // RoomEvent.TrackPublished for the local participant — depending on
+        // the SDK rev, local publish surfaces as RoomEvent.LocalTrackPublished
+        // (a different event type) or only via the participant's track
+        // publication map. Without an explicit bind here, `localRenderer` stays
+        // unattached → state.hasLocalVideo never flips → LocalPreviewTile is
+        // gated out → user sees the peer's video but their own preview is
+        // blank. The peer still sees the local user (track publishes fine over
+        // the SFU) so the bug masquerades as a render-only issue.
+        // Mirrors the iOS pattern (CallViewController.swift line ~447 polls
+        // localParticipant after setCameraEnabled returns).
+        if (state.isCameraOn) {
+          bindLocalCameraIfReady(r)
+          verifyCameraPublished(r, "connect")
+        }
+      }
+    }
+  }
+
   private fun bringUpRoom(url: String, token: String) {
     // [Wave C, 2026-05-18] RoomOptions wired for adaptive bitrate.
     //   - adaptiveStream=true: SFU picks best simulcast tier per subscriber
@@ -1627,50 +1852,7 @@ class CallActivity : ComponentActivity() {
     // loudspeaker before the earpiece and would override configureForCall).
     try { expo.modules.callkit.audio.AudioRouter.get(applicationContext).attachLiveKit(r, hasVideo) } catch (_: Throwable) {}
     LiveKitRoomHolder.set(r)
-    // [Wave 17.6 F2] Wire ScreenAudioMixer.mixInto() into the local mic
-    // audio track so app audio captured by ScreenShareService gets merged
-    // into the published mic stream. LK Android 2.10.3 doesn't expose a
-    // public AudioCustomSource — but it DOES expose audio processing via
-    // reflection on AudioBufferCallback / MixerAudioBufferCallback against
-    // Room's javaAudioDeviceModule. We do this best-effort; if the SDK
-    // surface changes the screen-share still works (just no app-audio
-    // merge), so we never throw.
-    try {
-      val adm = r.javaClass.getDeclaredField("audioDeviceModule")
-        .apply { isAccessible = true }
-        .get(r)
-      val setMixerMethod = adm?.javaClass?.methods?.firstOrNull {
-        it.name.contains("setLocalMixerCallback", ignoreCase = true) ||
-        it.name.contains("setSamplesReadyCallback", ignoreCase = true) ||
-        it.name.contains("audioMixer", ignoreCase = true)
-      }
-      if (setMixerMethod != null && adm != null) {
-        // We pass a lambda compatible with LK 2.10's MixerAudioBufferCallback,
-        // which mixes our PCM16 into the mic capture buffer.
-        val cb = java.lang.reflect.Proxy.newProxyInstance(
-          adm.javaClass.classLoader,
-          arrayOf(setMixerMethod.parameterTypes.firstOrNull() ?: Any::class.java)
-        ) { _, _, args ->
-          if (!expo.modules.screenshare.ScreenAudioMixer.isEnabled() || args.isNullOrEmpty()) {
-            return@newProxyInstance null
-          }
-          val maybeShortArr = args.firstOrNull { it is ShortArray } as? ShortArray
-          val maybeByteBuf = args.firstOrNull { it is java.nio.ByteBuffer } as? java.nio.ByteBuffer
-          if (maybeShortArr != null) {
-            expo.modules.screenshare.ScreenAudioMixer.mixInto(maybeShortArr, 0, maybeShortArr.size)
-          } else if (maybeByteBuf != null) {
-            expo.modules.screenshare.ScreenAudioMixer.drainInto(maybeByteBuf, maybeByteBuf.remaining())
-          }
-          null
-        }
-        setMixerMethod.invoke(adm, cb)
-        Log.d(TAG, "ScreenAudioMixer wired via ADM.${setMixerMethod.name}")
-      } else {
-        Log.d(TAG, "ScreenAudioMixer wire skipped — no mixer hook on this LK SDK version")
-      }
-    } catch (t: Throwable) {
-      Log.w(TAG, "ScreenAudioMixer wire failed: ${t.message}")
-    }
+    wireScreenAudioMixer(r)
     // [#1207, 2026-05-19] Hand the Room to NativeCallRoom so JS
     // `adoptNativeRoom(callId)` returns a real snapshot and skips its own
     // Room.connect. Without this, /call.js spawns a second Room with the
@@ -1722,50 +1904,7 @@ class CallActivity : ComponentActivity() {
       Log.i("CallTrace", "[8/12] LK Room.connect roomName=$callId serverUrl=$url attempt=$attempt tokenLen=${token.length}")
       r.connect(url, token)
       Log.i("CallTrace", "[8b/12] LK Room state=${r.state} after connect (attempt=$attempt)")
-      // [#1191 audio fix, 2026-05-19] Only publish mic if RECORD_AUDIO is
-      // actually granted. Calling setMicrophoneEnabled(true) without the
-      // perm silently publishes a muted/empty track — call looks connected
-      // but no voice flows. onRequestPermissionsResult re-publishes the
-      // mic if the user grants the perm after this point.
-      if (state.micPermissionGranted) {
-        r.localParticipant.setMicrophoneEnabled(!state.isMuted)
-        // [Wave 15 gap B2] Attach HW audio effects (AEC/NS/AGC) post-publish.
-        // WhatsApp parity — kills speakerphone echo no Android low-end.
-        try { installHwAudioEffects() } catch (t: Throwable) { Log.w(TAG, "installHwAudioEffects: ${t.message}") }
-      } else {
-        Log.w(TAG, "LK connected but RECORD_AUDIO denied — mic NOT published")
-      }
-      if (hasVideo) {
-        // [2026-10-06 android-incoming] Publish the camera ONLY once CAMERA is
-        // granted. ensureCameraPermission() in onCreate is async; on a first
-        // video call the grant dialog is still up when we reach here, and
-        // setCameraEnabled(true) before the grant builds a dead capturer that
-        // a later grant can't revive (it only "unmutes"). The grant handler
-        // (onRequestPermissionsResult → REQ_CODE_CAMERA) publishes instead.
-        val camGranted = ContextCompat.checkSelfPermission(
-          this@CallActivity, Manifest.permission.CAMERA
-        ) == PackageManager.PERMISSION_GRANTED
-        if (!camGranted) {
-          Log.w(TAG, "[camera] LK connected but CAMERA not granted yet — publish deferred to onRequestPermissionsResult")
-        } else {
-          r.localParticipant.setCameraEnabled(state.isCameraOn)
-          // [2026-05-19] Bug #989 fix: LK Android 2.x doesn't always emit
-          // RoomEvent.TrackPublished for the local participant — depending on
-          // the SDK rev, local publish surfaces as RoomEvent.LocalTrackPublished
-          // (a different event type) or only via the participant's track
-          // publication map. Without an explicit bind here, `localRenderer` stays
-          // unattached → state.hasLocalVideo never flips → LocalPreviewTile is
-          // gated out → user sees the peer's video but their own preview is
-          // blank. The peer still sees the local user (track publishes fine over
-          // the SFU) so the bug masquerades as a render-only issue.
-          // Mirrors the iOS pattern (CallViewController.swift line ~447 polls
-          // localParticipant after setCameraEnabled returns).
-          if (state.isCameraOn) {
-            bindLocalCameraIfReady(r)
-            verifyCameraPublished(r, "connect")
-          }
-        }
-      }
+      publishLocalMediaAfterConnect(r)
       reconnectAttempts = 0
       Log.d(TAG, "LK connect + publish OK (attempt=$attempt)")
       // [WAVE 115, 2026-05-21 / WAVE 119, 2026-05-22] Relay-first Phase-2:

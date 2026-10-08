@@ -1095,6 +1095,12 @@ extension VoipPushAppDelegateSubscriber: CXProviderDelegate {
         }()
         AudioRouter.shared.prepareForCall(hasVideo: answerHasVideo)
 
+        // [2026-10-08 call-connect-fast] Publish the callee mic on the
+        // ring-window preconnected Room the moment CallKit activates the
+        // session (not ~1.5 s later when CallViewController finishes
+        // presenting). No-op when there is no preconnected Room for this call.
+        NativeCallRoom.shared.markIncomingAnswered(callId: acceptedCallId)
+
         // 4. Kick off the LiveKit Room connect in a Task — we MUST NOT block
         //    this CXAnswer callback. fulfill() runs synchronously below.
         if let p = payload {

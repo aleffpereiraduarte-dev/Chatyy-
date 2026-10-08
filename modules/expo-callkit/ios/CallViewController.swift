@@ -128,6 +128,10 @@ final class CallSessionState: ObservableObject {
 // the `Room(delegate: self, ...)` call fails to compile. We control all
 // cross-actor access manually via Tasks + MainActor.run + the room/session
 // state mutations are already serialized through the main thread.
+/// [2026-10-08 call-connect-fast] Serialises CallViewController.preconnectRoom's
+/// check-and-publish (called concurrently from Task.detached ring-window kicks).
+private let kPreconnectRoomLock = NSLock()
+
 final class CallViewController: UIViewController, @unchecked Sendable {
 
     static let callEndedNotification = Notification.Name("ExpoCallKitNativeCallEnded")
@@ -1148,13 +1152,25 @@ final class CallViewController: UIViewController, @unchecked Sendable {
             // in <500ms because Room.connect already completed during the
             // ring window; we only have to negotiate the outbound track now.
             if let r = self.room {
+                // [2026-10-08 call-connect-fast] Join the single-flight publish
+                // the CXAnswer/didActivate path already started (usually
+                // finished by now) instead of a 2nd setMicrophone. nil = no
+                // shared Task for this callId → publish inline as before.
+                let sharedMicTask = NativeCallRoom.shared.ensureIncomingMicPublished(
+                    callId: callId, reason: "callvc_adopt")
                 Task { [weak self] in
                     guard let self = self else { return }
                     do {
-                        let micPub = try await r.localParticipant.setMicrophone(
-                            enabled: true,
-                            captureOptions: Self.defaultAudioCaptureOptions()
-                        )
+                        var micPub: LocalTrackPublication? = nil
+                        if let shared = sharedMicTask {
+                            micPub = await shared.value
+                        }
+                        if micPub == nil {
+                            micPub = try await r.localParticipant.setMicrophone(
+                                enabled: true,
+                                captureOptions: Self.defaultAudioCaptureOptions()
+                            )
+                        }
                         if let track = micPub?.track as? LocalAudioTrack {
                             await MainActor.run { self.localAudioTrackRef = track }
                         }
@@ -3343,8 +3359,20 @@ final class CallViewController: UIViewController, @unchecked Sendable {
             print("[CallVC] preconnectRoom: missing url/token/callId — skip")
             return
         }
+        // [2026-10-08 call-connect-fast] The check below and the
+        // NativeCallRoom.publish further down used to be NON-atomic. Both
+        // ring-window kicks (VoIP push + WS-invite UUID reuse) run this from
+        // Task.detached threads, so two Rooms could pass the check together →
+        // the SFU saw DUPLICATE_IDENTITY, the evicted Room's connect threw and
+        // its catch cleared the singleton (which by then pointed at the OTHER,
+        // healthy Room) → at answer isPreconnected()==false → CallViewController
+        // built a 3rd Room and re-joined from scratch (+1.7-3 s until the caller
+        // heard anything; SFU log call_1791387719490 15:42:02/15:42:07).
+        // Serialise check-and-publish with a process-wide lock.
+        kPreconnectRoomLock.lock()
         // Bail if a Room is already mid-connect for this call (idempotent).
         if NativeCallRoom.shared.isPreconnected(callId: callId) {
+            kPreconnectRoomLock.unlock()
             print("[CallVC] preconnectRoom: already pre-connected for \(callId) — skip")
             return
         }
@@ -3375,6 +3403,7 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         // .didConnect forwarders fire via the JS adoptNativeRoom listener bag.
         let r = Room(delegate: nil, roomOptions: roomOptions)
         NativeCallRoom.shared.publish(room: r, callId: callId, roomName: callId)
+        kPreconnectRoomLock.unlock()
         Task.detached(priority: .userInitiated) {
             do {
                 // [CALL-TRACE 2026-05-20 WAVE42] Step 8/12 — iOS dials the
@@ -3408,7 +3437,13 @@ final class CallViewController: UIViewController, @unchecked Sendable {
             } catch {
                 NSLog("[CallTrace][8b/12] LK Room connect FAILED err=\(error) (path=preconnect)")
                 print("[CallVC] preconnectRoom: failed callId=\(callId) err=\(error)")
-                NativeCallRoom.shared.clear()
+                // [2026-10-08 call-connect-fast] Only drop the singleton if it
+                // still points at THIS Room — never clobber a newer/healthy one.
+                if NativeCallRoom.shared.currentRoom() === r {
+                    NativeCallRoom.shared.clear()
+                } else {
+                    nativeCallDiag("preconnect_failed_not_current", callId, "\(error)")
+                }
             }
         }
     }
