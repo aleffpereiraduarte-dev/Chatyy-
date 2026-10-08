@@ -380,6 +380,10 @@ import PhoneOfflineBanner from '../components/PhoneOfflineBanner';
 import PushTokenStaleBanner from '../components/PushTokenStaleBanner';
 import PushPermissionPrimer from '../components/PushPermissionPrimer'; // [2026-10-07 native-polish]
 import { registerBackgroundSync } from '../services/backgroundSync';
+// [2026-10-08 receipts-speed] Side-effect: define+registra a task de push em 2º
+// plano que manda o ✓✓ cinza (chat_push_delivered com o d_ack do push) — cobre
+// binários antigos sem device-ack nativo. Precisa ser top-level (headless).
+import '../services/pushDeliveryTask';
 // Side-effect import — patches expo-audio RecordingPresets.HIGH_QUALITY to
 // the WhatsApp Opus profile (32kbps mono 16/22kHz) before any chat screen
 // reads it. Mutates the live preset object so chat-conversation's inline

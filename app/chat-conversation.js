@@ -5300,13 +5300,93 @@ function PlaylistEditorModal({ colors, isDark, t, editor, onClose, onUpdated }) 
 // ou poster_url (status video pipeline). Sem isso o bubble ficava só
 // com o play button sobre fundo cinza — user reportou "deveria mostrar
 // um frame do video".
-function VideoThumbImage({ url, thumbnailUrl, posterUrl, videoThumb, imageVariantsThumb, thumbB64, style }) {
+// [2026-10-08 video-thumb] Percent-encode a remote media URL for the image /
+// video loaders. Rust-upload keys kept the raw filename, so iOS screen
+// recordings landed as ".../chat/9b0bc01d_ScreenRecording_10-07-2026 20-27-45_1.mp4"
+// (literal spaces) — a URL native loaders reject or mangle. decodeURI first so
+// an already-encoded URL is never double-encoded. Local/data URIs untouched.
+function _encMediaUri(u) {
+  if (!u || typeof u !== 'string' || !/^https?:/i.test(u)) return u || '';
+  try { return encodeURI(decodeURI(u)); } catch { return u.replace(/ /g, '%20'); }
+}
+// [2026-10-08 video-thumb] Frame-grab poster via expo-video
+// (player.generateThumbnailsAsync — iOS/Android). Used (a) for the sender's own
+// just-sent / locally cached video so the bubble shows a real frame at once,
+// and (b) as the LAST fallback when every server poster candidate 404s, instead
+// of the empty dark box. Results cached per URI (incl. failures); at most 2
+// grabs in flight so a long history of broken posters can't spawn N players.
+const _vfgCache = new Map(); // uri -> VideoThumbnail | null (null = failed)
+const _vfgInflight = new Map(); // uri -> Promise
+let _vfgActive = 0;
+const _vfgWaiters = [];
+function _vfgAcquire() {
+  if (_vfgActive < 2) { _vfgActive++; return Promise.resolve(); }
+  return new Promise(res => _vfgWaiters.push(res)).then(() => { _vfgActive++; });
+}
+function _vfgRelease() { _vfgActive = Math.max(0, _vfgActive - 1); const w = _vfgWaiters.shift(); if (w) w(); }
+function _grabVideoFrame(uri) {
+  if (_vfgCache.has(uri)) return Promise.resolve(_vfgCache.get(uri));
+  if (_vfgInflight.has(uri)) return _vfgInflight.get(uri);
+  const p = (async () => {
+    let player = null;
+    await _vfgAcquire();
+    try {
+      const mod = require('expo-video');
+      if (!mod?.createVideoPlayer) return null;
+      player = mod.createVideoPlayer(uri);
+      try { player.muted = true; } catch {}
+      if (typeof player?.generateThumbnailsAsync !== 'function') return null;
+      const grab = async (at) => {
+        const r = await Promise.race([
+          player.generateThumbnailsAsync([at], { maxWidth: 640, maxHeight: 640 }),
+          new Promise((_, rej) => setTimeout(() => rej(new Error('vfg_timeout')), 12000)),
+        ]);
+        return Array.isArray(r) && r[0] ? r[0] : null;
+      };
+      let thumb = null;
+      try { thumb = await grab(0.5); } catch {}
+      if (!thumb) { try { thumb = await grab(0); } catch {} }
+      return thumb;
+    } catch { return null; }
+    finally {
+      try { player && player.release && player.release(); } catch {}
+      _vfgRelease();
+    }
+  })().then((thumb) => {
+    _vfgCache.set(uri, thumb || null);
+    if (_vfgCache.size > 150) { try { _vfgCache.delete(_vfgCache.keys().next().value); } catch {} }
+    _vfgInflight.delete(uri);
+    return thumb || null;
+  });
+  _vfgInflight.set(uri, p);
+  return p;
+}
+function VideoFrameGrab({ uri, style }) {
+  const [thumb, setThumb] = React.useState(() => (uri && _vfgCache.get(uri)) || null);
+  React.useEffect(() => {
+    if (!uri || Platform.OS === 'web') return undefined;
+    let alive = true;
+    _grabVideoFrame(uri).then((t) => { if (alive && t) setThumb(t); }).catch(() => {});
+    return () => { alive = false; };
+  }, [uri]);
+  if (!thumb) return null;
+  return (
+    <ExpoImage
+      source={thumb}
+      style={style}
+      contentFit="cover"
+      transition={{ duration: 180, effect: 'cross-dissolve' }}
+    />
+  );
+}
+
+function VideoThumbImage({ url, thumbnailUrl, posterUrl, videoThumb, imageVariantsThumb, thumbB64, localUri, style }) {
   const candidates = React.useMemo(() => {
     const out = [];
     const abs = (u) => {
       if (!u) return '';
-      if (u.startsWith('http') || u.startsWith('data:') || u.startsWith('blob:')) return u;
-      try { return api.getMediaUrl(u); } catch { return `https://chatyy.com.br${u}`; }
+      if (u.startsWith('http') || u.startsWith('data:') || u.startsWith('blob:')) return _encMediaUri(u);
+      try { return _encMediaUri(api.getMediaUrl(u)); } catch { return _encMediaUri(`https://chatyy.com.br${u}`); }
     };
     // Highest-quality / server-curated poster first.
     if (thumbnailUrl) {
@@ -5334,10 +5414,10 @@ function VideoThumbImage({ url, thumbnailUrl, posterUrl, videoThumb, imageVarian
         // Only pure path → prepend origin (skip http URLs that already
         // include scheme since abs() handled those).
         if (u && !u.startsWith('http') && !u.startsWith('data:') && !u.startsWith('blob:')) {
-          out.push(`https://chatyy.com.br${u.startsWith('/') ? '' : '/'}${u}.thumb.jpg`);
+          out.push(_encMediaUri(`https://chatyy.com.br${u.startsWith('/') ? '' : '/'}${u}.thumb.jpg`));
         } else if (u.startsWith('https://media.chatyy.com.br/')) {
           const path = u.replace('https://media.chatyy.com.br', '');
-          out.push(`https://chatyy.com.br${path}.thumb.jpg`);
+          out.push(_encMediaUri(`https://chatyy.com.br${path}.thumb.jpg`));
         }
       } catch {}
     }
@@ -5351,18 +5431,35 @@ function VideoThumbImage({ url, thumbnailUrl, posterUrl, videoThumb, imageVarian
   // `candidates` (a useMemo) recomputes but `idx` may be stuck past the end
   // from prior onError increments → poster never shows. Reset on identity change.
   React.useEffect(() => { setIdx(0); }, [candidates]);
-  if (idx >= candidates.length) return null;
+  // [2026-10-08 video-thumb] Local file (sender's own send / downloaded copy)
+  // → real frame under the remote poster right away; remote video → frame
+  // grab only once every poster candidate failed (was: return null = dark box).
+  const _localSrc = (typeof localUri === 'string' && /^(file|content):/i.test(localUri)) ? localUri : '';
+  const _exhausted = idx >= candidates.length;
+  let _grabSrc = _localSrc;
+  if (!_grabSrc && _exhausted && url) {
+    const _u = String(url);
+    if (/^(file|content):/i.test(_u)) _grabSrc = _u;
+    else if (!/^(data|blob):/i.test(_u)) {
+      try { _grabSrc = _encMediaUri(_u.startsWith('http') ? _u : api.getMediaUrl(_u)); } catch { _grabSrc = ''; }
+    }
+  }
   return (
-    <ExpoImage
-      key={candidates[idx]}
-      source={{ uri: candidates[idx] }}
-      style={style}
-      contentFit="cover"
-      // Cross-dissolve the poster in like photos do ("focuses in") instead of
-      // the hard pop a plain <Image> gave. 220ms matches the photo bubble feel.
-      transition={{ duration: 220, effect: 'cross-dissolve' }}
-      onError={() => setIdx(i => i + 1)}
-    />
+    <>
+      {_grabSrc ? <VideoFrameGrab uri={_grabSrc} style={style} /> : null}
+      {_exhausted ? null : (
+        <ExpoImage
+          key={candidates[idx]}
+          source={{ uri: candidates[idx] }}
+          style={style}
+          contentFit="cover"
+          // Cross-dissolve the poster in like photos do ("focuses in") instead of
+          // the hard pop a plain <Image> gave. 220ms matches the photo bubble feel.
+          transition={{ duration: 220, effect: 'cross-dissolve' }}
+          onError={() => setIdx(i => i + 1)}
+        />
+      )}
+    </>
   );
 }
 
@@ -8266,7 +8363,11 @@ function ChatConversationInner() {
         return;
       }
       api.chatRead?.(conversationId, 0).catch(() => {});
-    }, 250);
+      // [2026-10-08 receipts-speed] 250ms → 50ms: message_id=0 o servidor já
+      // resolve pro MAX(id) — não precisa esperar as msgs carregarem. Eram
+      // 200ms parados no caminho "abri a conversa → azul no remetente". O gate
+      // de visibilidade acima continua valendo (senão defere e flusha no foco).
+    }, 50);
     return () => clearTimeout(t);
   }, [conversationId, user?.email]);
 
@@ -13473,6 +13574,17 @@ function ChatConversationInner() {
           const _rcGroup = conversationType === 'group';
           const _rcWho = String(data?.email || (typeof data?.delivered_to === 'string' ? data.delivered_to : '') || '').toLowerCase();
           if (_rcGroup && !_rcWho) return;
+          // [2026-10-08 receipts-speed] O fast-path do hub (message_delivered,
+          // ~60-150ms) chega ANTES da resposta HTTP/ack do chat_send no celular
+          // (RTT 300-800ms) → a bolha ainda é tmp_… e o ✓✓ se perdia até o
+          // chat_delivered do PHP (ou um refetch). Bufferiza como o chat_delivered
+          // faz: a troca temp→id do servidor aplica o ✓✓ na hora.
+          if (!_rcGroup) {
+            try {
+              const buf = deliveredIdBufferRef.current;
+              if (buf) { deliveredSet.forEach(id => buf.add(id)); if (buf.size > 600) buf.clear(); }
+            } catch {}
+          }
           setMessages(prev => prev.map(m => {
             if (m.status === 'read') return m;
             const numId = Number(m.id);
@@ -15553,7 +15665,7 @@ function ChatConversationInner() {
         // id already arrived during the instant-✓ window (bubble still had its
         // temp id), graft ✓✓ on now so the receipt isn't lost.
         const _alreadyDelivered = (() => {
-          try { return serverMsg.id != null && deliveredIdBufferRef.current?.has(serverMsg.id); } catch { return false; }
+          try { const _b = deliveredIdBufferRef.current; return serverMsg.id != null && !!_b && (_b.has(serverMsg.id) || _b.has(Number(serverMsg.id))); } catch { return false; }
         })();
         setMessages(prev => prev.map(m => {
           if (m.id !== tempId) return m;
@@ -17060,7 +17172,7 @@ function ChatConversationInner() {
         // itself via the readReceipts maxReadId render fallback once the
         // numeric server id is on the row.
         const _alreadyDeliveredM = (() => {
-          try { return msg.id != null && deliveredIdBufferRef.current?.has(msg.id); } catch { return false; }
+          try { const _b = deliveredIdBufferRef.current; return msg.id != null && !!_b && (_b.has(msg.id) || _b.has(Number(msg.id))); } catch { return false; }
         })();
         setMessages(prev => prev.map(m => {
           if (String(m.id) !== String(tempId)) return m;
@@ -23347,10 +23459,19 @@ function ChatConversationInner() {
                         videoThumb={msg.video_thumb}
                         imageVariantsThumb={_ivThumb}
                         thumbB64={_vidLqipB64}
+                        localUri={vidIsLocal ? videoUrl : undefined}
                         style={{ position: 'absolute', top: 0, left: 0, width: _vbW, height: _vbH }}
                       />
                     );
                   })()}
+                  {/* [2026-10-08 video-thumb] While UPLOADING, the server poster
+                      layer above is skipped; if the native preparePoster() didn't
+                      stamp _posterUri (module absent in this binary / decode error),
+                      grab the first frame of the LOCAL file via expo-video so the
+                      sender sees the real video at once instead of the dark box. */}
+                  {vidUploading && !msg._posterUri && vidIsLocal && typeof videoUrl === 'string' && /^(file|content):/i.test(videoUrl) ? (
+                    <VideoFrameGrab uri={videoUrl} style={{ position: 'absolute', top: 0, left: 0, width: _vbW, height: _vbH }} />
+                  ) : null}
                   {/* [POSTER 2026-09-30] Instant LOCAL poster frame for an
                       OUTGOING video — set by uploadAndSendFile via
                       _videoSendPipeline.preparePoster() before/while upload runs.
