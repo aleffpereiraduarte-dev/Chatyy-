@@ -401,9 +401,7 @@ final class GroupCallViewController: UIViewController, @unchecked Sendable {
                 id: cur.id,
                 identity: cur.identity,
                 name: cur.name,
-                // [2026-10-08 call-video-fix] `nil ?? cur` could never CLEAR
-                // the tile → unsubscribe/camera-off kept a frozen frame.
-                videoTrack: clearVideo ? nil : (videoTrack ?? cur.videoTrack),
+                videoTrack: videoTrack ?? cur.videoTrack,
                 audioMuted: audioMuted ?? cur.audioMuted,
                 isLocal: true,
                 isSpeaking: isSpeaking ?? cur.isSpeaking,
@@ -443,7 +441,9 @@ final class GroupCallViewController: UIViewController, @unchecked Sendable {
                 id: cur.id,
                 identity: cur.identity,
                 name: name ?? cur.name,
-                videoTrack: videoTrack ?? cur.videoTrack,
+                // [2026-10-08 call-video-fix] `nil ?? cur` could never CLEAR
+                // the tile → unsubscribe/camera-off kept a frozen frame.
+                videoTrack: clearVideo ? nil : (videoTrack ?? cur.videoTrack),
                 audioMuted: audioMuted ?? cur.audioMuted,
                 isLocal: false,
                 isSpeaking: isSpeaking ?? cur.isSpeaking,
