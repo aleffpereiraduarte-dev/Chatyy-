@@ -12,27 +12,24 @@
 //
 // 2026-05-17 — gap_notifications P0+P1 steps 3, 4, 7, 8, 9, 10.
 
-import NativeSwitch from '../components/NativeSwitch'; // [2026-10-07 app-feel-ui] themed native toggle
 import { useEffect, useState, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
   TextInput,
   TouchableOpacity,
-  ScrollView,
-  Switch,
   Alert,
   StyleSheet,
-  Modal,
-  Pressable,
+  Platform,
 } from 'react-native';
-import { useRouter } from 'expo-router';
-import { IconCheck } from '../components/Icons';
+import { IconTrash } from '../components/Icons';
 import FadeSlideIn from '../components/FadeSlideIn';
-import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import { apiCall } from '../services/api';
-import { Spacing, FontSize, BorderRadius } from '../constants/theme';
+import {
+  SettingsScreen, SettingsGroup, SettingsRow, SettingsSwitchRow, SettingsPickerRow,
+  OptionSheet, useGroupedColors, useSettingsInputStyle,
+} from '../components/settings/SettingsKit';
 
 // Same 16-name catalog used by ChatNotificationSettingsSheet so per-keyword
 // and per-conversation pickers stay aligned. 'default' falls through to
@@ -79,8 +76,6 @@ const VISIBILITY_OPTIONS = [
 ];
 
 export default function NotificationPreferences() {
-  const router = useRouter();
-  const { colors } = useTheme();
   const { t } = useLanguage();
 
   // Global prefs (mention_only, dnd, preview, visibility, respect_system_dnd)
@@ -238,117 +233,81 @@ export default function NotificationPreferences() {
   const visibilityOpts = useMemo(
     () => VISIBILITY_OPTIONS.map(o => ({ value: o.value, label: t(o.labelKey) })), [t]);
 
+  const gc = useGroupedColors();
+  const inputStyle = useSettingsInputStyle();
+  const editingKw = keywords.find(k => k.id === editingSoundForId);
+  const soundOptions = useMemo(
+    () => SYSTEM_SOUNDS.map(o => ({ value: o.value, label: soundLabel(o, t) })), [t]);
+
+  // [2026-10-08 settings-redesign2] Listas agrupadas (SettingsKit) + header
+  // nativo único (SettingsScreen). Pré-visualização / tela de bloqueio viram
+  // linhas com valor → sheet com checkmark; som por palavra-chave idem.
+  // Mesmas APIs: chat_user_notif_prefs_set, chat_user_snooze_*,
+  // chat_user_keywords_*.
   return (
-    <View style={[s.container, { backgroundColor: colors.background }]}>
-      <View style={[s.header, { borderBottomColor: colors.borderLight }]}>
-        <TouchableOpacity onPress={() => router.back()} style={s.backBtn}>
-          <Text style={[s.backBtnText, { color: colors.primary }]}>{t('common.back') || 'Voltar'}</Text>
-        </TouchableOpacity>
-        <Text style={[s.headerTitle, { color: colors.text }]}>{t('notifPref.title')}</Text>
-        <View style={s.backBtn} />
-      </View>
-
+    <SettingsScreen title={t('notifPref.title')}>
       <FadeSlideIn>
-      <ScrollView style={s.scroll} contentContainerStyle={{ paddingBottom: 40 }}>
-        {/* ─── Mention-only ──────────────────────────────────────────── */}
-        <View style={[s.section, { backgroundColor: colors.surface, borderColor: colors.borderLight }]}>
-          <Text style={[s.sectionTitle, { color: colors.text }]}>{t('notifPref.chatSection')}</Text>
-          <View style={[s.row, { borderBottomColor: colors.borderLight }]}>
-            <View style={s.rowInfo}>
-              <Text style={[s.rowLabel, { color: colors.text }]}>{t('notifPref.mentionOnly')}</Text>
-              <Text style={[s.rowDesc, { color: colors.textTertiary }]}>
-                {t('notifPref.mentionOnlyDesc')}
-              </Text>
-            </View>
-            <NativeSwitch
-              value={prefs.mention_only}
-              onValueChange={(v) => savePref({ mention_only: v })}
-              disabled={loading}
-              trackColor={{ false: colors.divider, true: colors.primaryLight }}
-              thumbColor={prefs.mention_only ? colors.primary : '#fff'}
-            />
-          </View>
-
-          {/* Snooze 1h shortcut */}
-          <View style={[s.row, { borderBottomColor: colors.borderLight }]}>
-            <View style={s.rowInfo}>
-              <Text style={[s.rowLabel, { color: colors.text }]}>{t('notifPref.snooze1h')}</Text>
-              <Text style={[s.rowDesc, { color: colors.textTertiary }]}>
-                {snoozeLabel ? t('notifPref.snoozeActiveDesc', { label: snoozeLabel }) : t('notifPref.snoozeIdleDesc')}
-              </Text>
-            </View>
-            {snoozeLabel ? (
-              <TouchableOpacity onPress={clearSnooze} style={[s.pill, { backgroundColor: '#ef4444' }]}>
-                <Text style={s.pillText}>{t('notifPref.turnOff')}</Text>
+        {/* ─── Conversas: só menções + soneca ─── */}
+        <SettingsGroup header={t('notifPref.chatSection')}>
+          <SettingsSwitchRow
+            title={t('notifPref.mentionOnly')}
+            subtitle={t('notifPref.mentionOnlyDesc')}
+            value={prefs.mention_only}
+            disabled={loading}
+            onValueChange={(v) => savePref({ mention_only: v })}
+          />
+          <SettingsRow
+            title={t('notifPref.snooze1h')}
+            subtitle={snoozeLabel ? t('notifPref.snoozeActiveDesc', { label: snoozeLabel }) : t('notifPref.snoozeIdleDesc')}
+            subtitleLines={3}
+            right={snoozeLabel ? (
+              <TouchableOpacity onPress={clearSnooze} style={[s.pill, { backgroundColor: gc.fill }]} accessibilityRole="button" accessibilityLabel={t('notifPref.turnOff')}>
+                <Text style={[s.pillText, { color: gc.destructive }]}>{t('notifPref.turnOff')}</Text>
               </TouchableOpacity>
             ) : (
-              <TouchableOpacity onPress={() => snoozeFor(60)} style={[s.pill, { backgroundColor: colors.primary }]}>
-                <Text style={s.pillText}>1h</Text>
+              <TouchableOpacity onPress={() => snoozeFor(60)} style={[s.pill, { backgroundColor: gc.ink }]} accessibilityRole="button" accessibilityLabel={t('notifPref.snooze1h')}>
+                <Text style={[s.pillText, { color: gc.onInk }]}>1h</Text>
               </TouchableOpacity>
             )}
-          </View>
-        </View>
+          />
+        </SettingsGroup>
 
-        {/* ─── Privacy / Preview ─────────────────────────────────────── */}
-        <View style={[s.section, { backgroundColor: colors.surface, borderColor: colors.borderLight }]}>
-          <Text style={[s.sectionTitle, { color: colors.text }]}>{t('notifPref.privacySection')}</Text>
-          <Text style={[s.sectionDesc, { color: colors.textTertiary }]}>
-            {t('notifPref.privacyDesc')}
-          </Text>
-
-          <Text style={[s.subLabel, { color: colors.textSecondary }]}>{t('notifPref.showPreview')}</Text>
-          <SegmentedPicker
-            options={previewOpts}
+        {/* ─── Privacidade: prévia + tela de bloqueio + DND do sistema ─── */}
+        <SettingsGroup header={t('notifPref.privacySection')} footer={t('notifPref.privacyDesc')}>
+          <SettingsPickerRow
+            title={t('notifPref.showPreview')}
             value={prefs.preview_global}
+            options={previewOpts}
+            cancelLabel={t('common.cancel') || 'Cancelar'}
             onChange={(v) => savePref({ preview_global: v })}
-            colors={colors}
           />
-
-          <Text style={[s.subLabel, { color: colors.textSecondary, marginTop: Spacing.md }]}>{t('notifPref.lockscreen')}</Text>
-          <SegmentedPicker
-            options={visibilityOpts}
+          <SettingsPickerRow
+            title={t('notifPref.lockscreen')}
             value={prefs.lockscreen_visibility}
+            options={visibilityOpts}
+            cancelLabel={t('common.cancel') || 'Cancelar'}
             onChange={(v) => savePref({ lockscreen_visibility: v })}
-            colors={colors}
           />
+          <SettingsSwitchRow
+            title={t('notifPref.respectSystemDnd')}
+            subtitle={t('notifPref.respectSystemDndDesc')}
+            value={prefs.respect_system_dnd}
+            onValueChange={(v) => savePref({ respect_system_dnd: v })}
+          />
+        </SettingsGroup>
 
-          <View style={[s.row, { borderBottomColor: colors.borderLight, marginTop: Spacing.md }]}>
-            <View style={s.rowInfo}>
-              <Text style={[s.rowLabel, { color: colors.text }]}>{t('notifPref.respectSystemDnd')}</Text>
-              <Text style={[s.rowDesc, { color: colors.textTertiary }]}>
-                {t('notifPref.respectSystemDndDesc')}
-              </Text>
-            </View>
-            <NativeSwitch
-              value={prefs.respect_system_dnd}
-              onValueChange={(v) => savePref({ respect_system_dnd: v })}
-              trackColor={{ false: colors.divider, true: colors.primaryLight }}
-              thumbColor={prefs.respect_system_dnd ? colors.primary : '#fff'}
-            />
-          </View>
-        </View>
-
-        {/* ─── DND schedule ─────────────────────────────────────────── */}
-        <View style={[s.section, { backgroundColor: colors.surface, borderColor: colors.borderLight }]}>
-          <Text style={[s.sectionTitle, { color: colors.text }]}>{t('notifPref.dndSection')}</Text>
-          <View style={[s.row, { borderBottomColor: colors.borderLight }]}>
-            <View style={s.rowInfo}>
-              <Text style={[s.rowLabel, { color: colors.text }]}>{t('notifPref.dndEnable')}</Text>
-              <Text style={[s.rowDesc, { color: colors.textTertiary }]}>
-                {t('notifPref.dndEnableDesc')}
-              </Text>
-            </View>
-            <NativeSwitch
-              value={prefs.dnd_enabled}
-              onValueChange={(v) => savePref({ dnd_enabled: v })}
-              trackColor={{ false: colors.divider, true: colors.primaryLight }}
-              thumbColor={prefs.dnd_enabled ? colors.primary : '#fff'}
-            />
-          </View>
+        {/* ─── Não perturbe (horário) ─── */}
+        <SettingsGroup header={t('notifPref.dndSection')}>
+          <SettingsSwitchRow
+            title={t('notifPref.dndEnable')}
+            subtitle={t('notifPref.dndEnableDesc')}
+            value={prefs.dnd_enabled}
+            onValueChange={(v) => savePref({ dnd_enabled: v })}
+          />
           {prefs.dnd_enabled && (
-            <View style={{ flexDirection: 'row', gap: 12, paddingTop: Spacing.md }}>
-              <View style={{ flex: 1 }}>
-                <Text style={[s.rowDesc, { color: colors.textTertiary, marginBottom: 4 }]}>{t('settings.dndStart') || 'Início'}</Text>
+            <SettingsRow
+              title={t('settings.dndStart') || 'Início'}
+              right={(
                 <TextInput
                   value={prefs.dnd_start_time || ''}
                   onChangeText={(v) => setPrefs(p => ({ ...p, dnd_start_time: v }))}
@@ -362,14 +321,19 @@ export default function NotificationPreferences() {
                     }
                   }}
                   placeholder="22:00"
-                  placeholderTextColor={colors.textTertiary}
-                  style={[s.timeInput, { color: colors.text, borderColor: colors.divider, backgroundColor: colors.background }]}
+                  placeholderTextColor={gc.secondary}
+                  style={[s.timeInput, { color: gc.text, backgroundColor: gc.fill }]}
                   maxLength={5}
                   keyboardType="numbers-and-punctuation"
+                  accessibilityLabel={t('settings.dndStart') || 'Início'}
                 />
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={[s.rowDesc, { color: colors.textTertiary, marginBottom: 4 }]}>{t('settings.dndEnd') || 'Fim'}</Text>
+              )}
+            />
+          )}
+          {prefs.dnd_enabled && (
+            <SettingsRow
+              title={t('settings.dndEnd') || 'Fim'}
+              right={(
                 <TextInput
                   value={prefs.dnd_end_time || ''}
                   onChangeText={(v) => setPrefs(p => ({ ...p, dnd_end_time: v }))}
@@ -383,244 +347,96 @@ export default function NotificationPreferences() {
                     }
                   }}
                   placeholder="07:00"
-                  placeholderTextColor={colors.textTertiary}
-                  style={[s.timeInput, { color: colors.text, borderColor: colors.divider, backgroundColor: colors.background }]}
+                  placeholderTextColor={gc.secondary}
+                  style={[s.timeInput, { color: gc.text, backgroundColor: gc.fill }]}
                   maxLength={5}
                   keyboardType="numbers-and-punctuation"
+                  accessibilityLabel={t('settings.dndEnd') || 'Fim'}
                 />
-              </View>
-            </View>
+              )}
+            />
           )}
-        </View>
+        </SettingsGroup>
 
-        {/* ─── Keywords (with per-keyword sound) ─────────────────────── */}
-        <View style={[s.section, { backgroundColor: colors.surface, borderColor: colors.borderLight }]}>
-          <Text style={[s.sectionTitle, { color: colors.text }]}>{t('notifPref.keywordsSection')}</Text>
-          <Text style={[s.sectionDesc, { color: colors.textTertiary }]}>
-            {t('notifPref.keywordsDesc')}
-          </Text>
-
-          <View style={[s.inputRow, { borderBottomColor: colors.borderLight }]}>
+        {/* ─── Palavras-chave (com som por palavra) ─── */}
+        <SettingsGroup header={t('notifPref.keywordsSection')} footer={t('notifPref.keywordsDesc')}>
+          <View style={s.inputRow}>
             <TextInput
-              style={[s.input, { color: colors.text, borderColor: colors.divider, backgroundColor: colors.background }]}
+              style={[inputStyle, { flex: 1 }]}
               value={newKeyword}
               onChangeText={setNewKeyword}
               placeholder={t('notifPref.keywordPlaceholder')}
-              placeholderTextColor={colors.textTertiary}
+              placeholderTextColor={gc.secondary}
               maxLength={64}
               returnKeyType="done"
+              autoCapitalize="none"
+              autoCorrect={false}
               onSubmitEditing={addKeyword}
             />
             <TouchableOpacity
-              style={[s.addBtn, { backgroundColor: colors.primary, opacity: newKeyword.trim() ? 1 : 0.5 }]}
+              style={[s.addBtn, { backgroundColor: gc.ink, opacity: newKeyword.trim() ? 1 : 0.35 }]}
               onPress={addKeyword}
               disabled={!newKeyword.trim()}
+              accessibilityRole="button"
+              accessibilityLabel={t('notifPref.add')}
             >
-              <Text style={s.addBtnText}>{t('notifPref.add')}</Text>
+              <Text style={[s.addBtnText, { color: gc.onInk }]}>{t('notifPref.add')}</Text>
             </TouchableOpacity>
           </View>
-
           {keywords.length === 0 && !loading && (
-            <Text style={[s.empty, { color: colors.textTertiary }]}>{t('notifPref.noKeywords')}</Text>
+            <SettingsRow title={t('notifPref.noKeywords')} titleStyle={{ color: gc.secondary, fontSize: 15 }} numberOfLines={2} />
           )}
           {keywords.map(k => {
             const sndLabel = soundLabel(SYSTEM_SOUNDS.find(x => x.value === (k.sound || 'default')) || SYSTEM_SOUNDS[0], t);
             return (
-              <View key={k.id} style={[s.kwRow, { borderBottomColor: colors.borderLight }]}>
-                <View style={{ flex: 1 }}>
-                  <Text style={[s.kwText, { color: colors.text }]}>{k.keyword}</Text>
-                  <TouchableOpacity onPress={() => setEditingSoundForId(k.id)}>
-                    <Text style={[s.kwSound, { color: colors.primary }]}>{t('notifPref.soundRow', { sound: sndLabel })}</Text>
+              <SettingsRow
+                key={k.id}
+                title={k.keyword}
+                subtitle={t('notifPref.soundRow', { sound: sndLabel })}
+                accessibilityLabel={`${k.keyword}, ${t('notifPref.soundRow', { sound: sndLabel })}`}
+                onPress={() => setEditingSoundForId(k.id)}
+                right={(
+                  <TouchableOpacity
+                    onPress={() => removeKeyword(k.id)}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                    accessibilityRole="button"
+                    accessibilityLabel={`${t('notifPref.remove')} ${k.keyword}`}
+                  >
+                    <IconTrash size={18} color={gc.destructive} />
                   </TouchableOpacity>
-                </View>
-                <TouchableOpacity onPress={() => removeKeyword(k.id)}>
-                  <Text style={[s.kwRemove, { color: '#ef4444' }]}>{t('notifPref.remove')}</Text>
-                </TouchableOpacity>
-              </View>
+                )}
+              />
             );
           })}
-        </View>
-      </ScrollView>
+        </SettingsGroup>
       </FadeSlideIn>
 
-      {/* Sound picker modal — full bottom sheet so all 16 options are
-          scrollable on small phones. */}
-      <SoundPickerModal
-        visible={!!editingSoundForId}
-        keyword={keywords.find(k => k.id === editingSoundForId)?.keyword || ''}
-        value={keywords.find(k => k.id === editingSoundForId)?.sound || 'default'}
-        onClose={() => setEditingSoundForId(null)}
-        onPick={(sound) => updateKeywordSound(editingSoundForId, sound)}
-        colors={colors}
-        t={t}
-      />
-    </View>
-  );
-}
-
-// Horizontal segmented picker (3-button row). Used for preview privacy
-// + lockscreen visibility — both 3-option enums.
-function SegmentedPicker({ options, value, onChange, colors }) {
-  return (
-    <View style={{ flexDirection: 'row', gap: 6, marginTop: 6 }}>
-      {options.map(opt => {
-        const active = opt.value === value;
-        return (
-          <TouchableOpacity
-            key={opt.value}
-            onPress={() => onChange(opt.value)}
-            style={{
-              flex: 1,
-              paddingVertical: Spacing.sm,
-              paddingHorizontal: Spacing.xs,
-              borderRadius: BorderRadius.md,
-              borderWidth: 1,
-              borderColor: active ? colors.primary : colors.divider,
-              backgroundColor: active ? (colors.primaryLight || colors.primary + '22') : 'transparent',
-              alignItems: 'center',
-            }}
-          >
-            <Text style={{
-              fontSize: FontSize.sm,
-              color: active ? colors.primary : colors.text,
-              fontWeight: active ? '600' : '500',
-              textAlign: 'center',
-            }}>
-              {opt.label}
-            </Text>
-          </TouchableOpacity>
-        );
-      })}
-    </View>
-  );
-}
-
-function SoundPickerModal({ visible, keyword, value, onClose, onPick, colors, t }) {
-  if (!visible) return null;
-  return (
-    <Modal visible transparent animationType="slide" onRequestClose={onClose}>
-      <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)' }} onPress={onClose}>
-        <Pressable
-          onPress={e => e.stopPropagation?.()}
-          style={{
-            position: 'absolute', left: 0, right: 0, bottom: 0,
-            backgroundColor: colors.background,
-            borderTopLeftRadius: 18, borderTopRightRadius: 18,
-            maxHeight: '80%',
-            paddingBottom: 24,
-          }}
-        >
-          <View style={{ alignItems: 'center', paddingTop: 10 }}>
-            <View style={{ width: 40, height: 4, borderRadius: 2, backgroundColor: colors.divider }} />
-          </View>
-          <View style={{ paddingHorizontal: 18, paddingVertical: 12 }}>
-            <Text style={{ fontSize: 17, fontWeight: '700', color: colors.text }}>{t('notifPref.soundForTitle', { keyword })}</Text>
-            <Text style={{ fontSize: 12, color: colors.textTertiary, marginTop: 4 }}>
-              {t('notifPref.soundPickerDesc')}
-            </Text>
-          </View>
-          <ScrollView style={{ maxHeight: 480 }}>
-            {SYSTEM_SOUNDS.map((opt, idx) => {
-              const active = opt.value === value;
-              return (
-                <TouchableOpacity
-                  key={opt.value}
-                  onPress={() => onPick(opt.value)}
-                  style={{
-                    flexDirection: 'row', alignItems: 'center',
-                    paddingHorizontal: 18, paddingVertical: 14,
-                    borderBottomWidth: idx === SYSTEM_SOUNDS.length - 1 ? 0 : StyleSheet.hairlineWidth,
-                    borderBottomColor: colors.borderLight,
-                  }}
-                >
-                  <Text style={{ flex: 1, fontSize: 15, color: colors.text }}>{soundLabel(opt, t)}</Text>
-                  {active && (
-                    <IconCheck size={18} color={colors.primary} strokeWidth={2.5} />
-                  )}
-                </TouchableOpacity>
-              );
-            })}
-          </ScrollView>
-        </Pressable>
-      </Pressable>
-    </Modal>
+      {/* Som por palavra-chave — sheet com checkmark (16 opções, rolável). */}
+      {!!editingSoundForId && (
+        <OptionSheet
+          visible={!!editingSoundForId}
+          title={t('notifPref.soundForTitle', { keyword: editingKw?.keyword || '' })}
+          message={t('notifPref.soundPickerDesc')}
+          options={soundOptions}
+          value={editingKw?.sound || 'default'}
+          cancelLabel={t('common.cancel') || 'Cancelar'}
+          onSelect={(sound) => updateKeywordSound(editingSoundForId, sound)}
+          onClose={() => setEditingSoundForId(null)}
+        />
+      )}
+    </SettingsScreen>
   );
 }
 
 const s = StyleSheet.create({
-  container: { flex: 1 },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: Spacing.lg,
-    paddingTop: Spacing.xl,
-    paddingBottom: Spacing.md,
-    borderBottomWidth: 1,
-  },
-  backBtn: { minWidth: 64, paddingVertical: Spacing.xs },
-  backBtnText: { fontSize: FontSize.md },
-  headerTitle: { fontSize: FontSize.lg, fontWeight: '600' },
-  scroll: { flex: 1 },
-  section: {
-    marginHorizontal: Spacing.md,
-    marginTop: Spacing.lg,
-    padding: Spacing.lg,
-    borderRadius: BorderRadius.lg,
-    borderWidth: 1,
-  },
-  sectionTitle: { fontSize: FontSize.md, fontWeight: '600', marginBottom: Spacing.sm },
-  sectionDesc: { fontSize: FontSize.sm, marginBottom: Spacing.md, lineHeight: 18 },
-  subLabel: { fontSize: FontSize.sm, fontWeight: '600', marginTop: Spacing.sm },
-  row: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: Spacing.md,
-    borderBottomWidth: 1,
-  },
-  rowInfo: { flex: 1, paddingRight: Spacing.md },
-  rowLabel: { fontSize: FontSize.md, fontWeight: '500', marginBottom: 2 },
-  rowDesc: { fontSize: FontSize.sm, lineHeight: 18 },
-  pill: { paddingHorizontal: 14, paddingVertical: 8, borderRadius: 18 },
-  pillText: { color: '#fff', fontWeight: '600', fontSize: FontSize.sm },
-  inputRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: Spacing.md,
-    borderBottomWidth: 1,
-    gap: Spacing.sm,
-  },
-  input: {
-    flex: 1,
-    paddingHorizontal: Spacing.md,
-    paddingVertical: Spacing.sm,
-    borderWidth: 1,
-    borderRadius: BorderRadius.md,
-    fontSize: FontSize.md,
-  },
+  pill: { paddingHorizontal: 14, paddingVertical: 7, borderRadius: 16, minWidth: 48, alignItems: 'center' },
+  pillText: { fontWeight: '600', fontSize: 14 },
+  inputRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 16, paddingVertical: 12 },
+  addBtn: { minHeight: 44, paddingHorizontal: 16, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
+  addBtnText: { fontWeight: '600', fontSize: 15 },
   timeInput: {
-    paddingHorizontal: Spacing.md,
-    paddingVertical: Spacing.sm,
-    borderWidth: 1,
-    borderRadius: BorderRadius.md,
-    fontSize: FontSize.md,
-    fontFamily: 'monospace',
+    minWidth: 76, textAlign: 'center', fontSize: 16, fontVariant: ['tabular-nums'],
+    borderRadius: 8, paddingHorizontal: 10, paddingVertical: 6,
+    ...Platform.select({ web: { outlineStyle: 'none' }, default: {} }),
   },
-  addBtn: {
-    paddingHorizontal: Spacing.md,
-    paddingVertical: Spacing.sm,
-    borderRadius: BorderRadius.md,
-  },
-  addBtnText: { color: '#fff', fontWeight: '600' },
-  empty: { fontSize: FontSize.sm, paddingVertical: Spacing.md, fontStyle: 'italic' },
-  kwRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingVertical: Spacing.md,
-    borderBottomWidth: 1,
-  },
-  kwText: { fontSize: FontSize.md, fontWeight: '500' },
-  kwSound: { fontSize: FontSize.sm, marginTop: 2 },
-  kwRemove: { fontSize: FontSize.sm, fontWeight: '500' },
 });

@@ -14,7 +14,7 @@ import FadeSlideIn from '../components/FadeSlideIn';
 import PressableScale from '../components/PressableScale';
 import PressableRow from '../components/PressableRow'; // [2026-10-07 app-feel-ui] native cell feedback
 // [2026-10-08 settings-redesign] grouped inset lists (iOS/WhatsApp Settings)
-import { SettingsGroup, SettingsRow, SettingsSwitchRow, SettingsPickerRow, SettingsCardContent, SettingsIconTile, useGroupedColors } from '../components/settings/SettingsKit';
+import { SettingsGroup, SettingsRow, SettingsSwitchRow, SettingsPickerRow, SettingsCardContent, SettingsIconTile, OptionSheet, useGroupedColors } from '../components/settings/SettingsKit';
 import SettingsSegmented from '../components/SettingsSegmented';
 import { useRouter, useLocalSearchParams, useFocusEffect, Stack } from 'expo-router';
 import { USE_NATIVE_HEADER, nativeHeaderOptions, HeaderBackButton, useBlurHeaderInset } from '../components/nativeHeader'; // [2026-10-07 app-feel-nav] · blur [2026-10-07 native-ui-build]
@@ -485,8 +485,19 @@ function SettingsScreenInner() {
   // (home). A value = show only the sections that belong to that category.
   const [activeCategory, setActiveCategory] = useState(null);
   // [2026-10-08 settings-redesign] Raiz = header opaco c/ busca nativa (sem inset); sub-páginas = vidro.
-  const blurTop = activeCategory !== null ? blurTopRaw : 0;
-  blurTopRef.current = blurTop;
+  // [2026-10-08 settings-cut-fix] iOS: o conteúdo era CORTADO sob o header
+  // nativo da raiz (título + barra de busca UISearchController). A raiz
+  // assumia header opaco → paddingTop 0; mas no iOS 26 o UINavigationBar é
+  // translúcido (scroll-edge "liquid glass") e a view da tela começa em y=0,
+  // POR BAIXO do header — e a altura real inclui a barra de busca (~52pt),
+  // que o HeaderHeightContext nem reporta. Fix: o ScrollView usa
+  // contentInsetAdjustmentBehavior="automatic" → o UIKit calcula o inset
+  // (status bar + nav bar + search bar, e acompanha a barra encolhendo) em
+  // TODAS as páginas (raiz e categorias). Sem padding manual. A troca de
+  // categoria remonta o ScrollView (key) em vez de scrollTo({y:0}) — o
+  // scrollTo do RN ignora o inset ajustado e esconderia o topo.
+  const IOS_AUTO_INSET = USE_NATIVE_HEADER && Platform.OS === 'ios';
+  blurTopRef.current = IOS_AUTO_INSET ? blurTopRaw : 0;
   // Collect every label string we know about (gathered DURING render via
   // sectionMatches calls below) so the next render can show a flat
   // "results" strip at the top of the scroll. We use useRef to span
@@ -1315,12 +1326,74 @@ function SettingsScreenInner() {
     || (user?.email ? user.email.split('@')[0] : '');
   const openCategory = (key) => {
     setActiveCategory(key);
-    try { scrollRef.current?.scrollTo?.({ y: 0, animated: false }); } catch {}
+    if (!IOS_AUTO_INSET) { try { scrollRef.current?.scrollTo?.({ y: 0, animated: false }); } catch {} }
   };
   const currencyName = (code) => {
     const k = 'settings.currency.' + code;
     const v = t(k);
     return v && v !== k ? v : code;
+  };
+  // [2026-10-08 settings-redesign2] Rótulos/opções das linhas de privacidade
+  // (valor à direita + sheet com checkmark). Mesmo mapeamento do picker antigo.
+  const privacyValueLabel = (field) => {
+    const v = chatPrivacy[field];
+    if (field === 'story_privacy') {
+      if (v === 'all' || v === 'everyone') return t('settings.privacyEveryone');
+      if (v === 'contacts') return t('settings.privacyContacts');
+      if (v === 'close_friends') return t('settings.privacyCloseFriends');
+      if (v === 'except') return t('settings.privacyStatusExcept');
+      return t('settings.privacyNobody');
+    }
+    if (v === 'everyone') return t('settings.privacyEveryone');
+    if (v === 'contacts') return t('settings.privacyContacts');
+    return field === 'online' ? t('settings.privacyInvisible') : t('settings.privacyNobody');
+  };
+  const privacyOptionsFor = (field) => (
+    field === 'online' ? [
+      { value: 'everyone', label: t('settings.privacyEveryone') },
+      { value: 'contacts', label: t('settings.privacyContacts') },
+      { value: 'nobody',   label: t('settings.privacyInvisible') },
+    ] : field === 'story_privacy' ? [
+      { value: 'all',           label: t('settings.privacyEveryone') },
+      { value: 'contacts',      label: t('settings.privacyContacts') },
+      { value: 'close_friends', label: t('settings.privacyCloseFriends') },
+      { value: 'except',        label: t('settings.privacyStatusExcept') },
+    ] : [
+      { value: 'everyone', label: t('settings.privacyEveryone') },
+      { value: 'contacts', label: t('settings.privacyContacts') },
+      { value: 'nobody',   label: t('settings.privacyNobody') },
+    ]
+  );
+  const privacyFieldTitle = (field) => (
+    field === 'last_seen' ? t('settings.privacyLastSeen')
+      : field === 'profile_photo' ? t('settings.privacyProfilePhoto')
+      : field === 'online' ? t('settings.privacyOnline')
+      : field === 'story_privacy' ? t('settings.privacyStatus')
+      : field === 'group_add' ? t('settings.privacyGroups')
+      : ''
+  );
+  const AUTO_LOCK_OPTIONS = [
+    { value: '0',     label: t('biometric.lockImmediate') || 'Imediatamente' },
+    { value: '60',    label: t('biometric.lock1Min')      || 'Após 1 minuto' },
+    { value: '300',   label: t('biometric.lock5Min')      || 'Após 5 minutos' },
+    { value: '900',   label: t('biometric.lock15Min')     || 'Após 15 minutos' },
+    { value: 'never', label: t('biometric.lockNever')     || 'Nunca' },
+  ];
+  const appVersionLabel = (() => {
+    const ver = Constants?.expoConfig?.version || Constants?.manifest?.version || '?';
+    const build = Constants?.expoConfig?.ios?.buildNumber || Constants?.expoConfig?.android?.versionCode || '';
+    return build ? `${ver} (${build})` : String(ver);
+  })();
+  const openLoginHistory = async () => {
+    setLoginHistoryOpen(true);
+    setLoginHistoryLoading(true);
+    try {
+      const r = await api.getLoginHistory?.();
+      if (r?.success && Array.isArray(r?.data?.events)) setLoginHistory(r.data.events);
+      else if (Array.isArray(r?.data)) setLoginHistory(r.data);
+      else setLoginHistory([]);
+    } catch { setLoginHistory([]); }
+    finally { setLoginHistoryLoading(false); }
   };
   const LANG_OPTIONS = [
     { value: 'pt-BR', label: 'Português (Brasil)' },
@@ -1369,10 +1442,17 @@ function SettingsScreenInner() {
       )}
 
       {loading ? (
-        <View style={{ flex: 1, paddingTop: blurTop }}><SettingsSkeleton sections={4} rows={3} /></View>
+        <ScrollView scrollEnabled={false} contentInsetAdjustmentBehavior={IOS_AUTO_INSET ? 'automatic' : undefined}><SettingsSkeleton sections={4} rows={3} /></ScrollView>
       ) : (
       <FadeSlideIn>
-      <ScrollView ref={scrollRef} keyboardShouldPersistTaps="handled" keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'} scrollIndicatorInsets={blurTop ? { top: blurTop } : undefined} contentContainerStyle={[s.scroll, { paddingBottom: 80 + insets.bottom, maxWidth: contentMaxWidth, width: '100%', alignSelf: 'center' }, blurTop ? { paddingTop: blurTop + Spacing.lg } : null]}>
+      <ScrollView
+        key={activeCategory || 'root'}
+        ref={scrollRef}
+        contentInsetAdjustmentBehavior={IOS_AUTO_INSET ? 'automatic' : undefined}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
+        contentContainerStyle={[s.scroll, { paddingBottom: (IOS_AUTO_INSET ? 40 : 80 + insets.bottom), maxWidth: contentMaxWidth, width: '100%', alignSelf: 'center' }]}
+      >
         {/* Web: busca inline (estilo barra de busca iOS) — SÓ na raiz. No
             nativo a busca é a barra do header (acima). */}
         {!USE_NATIVE_HEADER && activeCategory === null && (
@@ -1874,155 +1954,59 @@ function SettingsScreenInner() {
         </SettingsGroup>
         )}
 
-        {/* Chat preferences — Enter sends / Auto-correct / Voice speed /
-            Bubble shape / Data saver / Beta. All are device-local prefs
-            persisted via setStorage; consumers (chat-conversation, voice
-            player, message bubbles, image upload pipeline) read these on
-            mount. Beta gates experimental features behind a flag. */}
+        {/* Chat — [2026-10-08 settings-redesign2] grouped lists. Same
+            device-local keys (enter_sends / autocorrect_enabled /
+            voice_speed_default / bubble_shape); consumers read them on mount.
+            Data saver + beta live at the bottom of the page (see below). */}
         {(searching || activeCategory === 'chat') && sectionMatches(
           t('settings.chatPrefs.title') || 'Preferências do chat',
           t('settings.enterSends.title') || 'Enter envia',
           t('settings.autocorrect.title') || 'Auto-correção',
           t('settings.voiceSpeed.title') || 'Velocidade dos áudios',
           t('settings.bubble.title') || 'Estilo dos balões',
-          t('settings.dataSaver.title') || 'Modo economia',
-          t('settings.beta.title') || 'Recursos beta',
         ) && (
-        <View style={[s.section, { backgroundColor: gc.cardBg }]}>
-          <Text style={[s.sectionTitle, { color: colors.text }]}>{t('settings.chatPrefs.title') || 'Preferências do chat'}</Text>
-
-          {/* Enter sends — desktop default ON, mobile default OFF. */}
-          <View style={[s.settingRow, { borderBottomColor: colors.borderLight }]}>
-            <View style={s.settingInfo}>
-              <Text style={[s.settingLabel, { color: colors.text }]}>{t('settings.enterSends.title') || 'Enter envia mensagem'}</Text>
-              <Text style={[s.settingDesc, { color: colors.textTertiary }]}>
-                {t('settings.enterSends.subtitle') || 'Pressione Enter pra enviar. Shift+Enter quebra linha.'}
-              </Text>
-            </View>
-            <NativeSwitch
+        <View>
+          <SettingsGroup header={t('settings.rd2.typing') || 'Digitação'}>
+            <SettingsSwitchRow
+              title={t('settings.enterSends.title') || 'Enter envia mensagem'}
+              subtitle={t('settings.enterSends.subtitle') || 'Pressione Enter pra enviar. Shift+Enter quebra linha.'}
               value={enterSends}
               onValueChange={(v) => { setEnterSends(v); setStorage('enter_sends', String(v)); }}
-              trackColor={{ false: colors.divider, true: colors.primaryLight }}
-              thumbColor={enterSends ? colors.primary : '#fff'}
             />
-          </View>
-
-          {/* Auto-correct — wired into TextInputs via context (set elsewhere). */}
-          <View style={[s.settingRow, { borderBottomColor: colors.borderLight }]}>
-            <View style={s.settingInfo}>
-              <Text style={[s.settingLabel, { color: colors.text }]}>{t('settings.autocorrect.title') || 'Auto-correção'}</Text>
-              <Text style={[s.settingDesc, { color: colors.textTertiary }]}>
-                {t('settings.autocorrect.subtitle') || 'Corrige palavras automaticamente enquanto você digita.'}
-              </Text>
-            </View>
-            <NativeSwitch
+            <SettingsSwitchRow
+              title={t('settings.autocorrect.title') || 'Auto-correção'}
+              subtitle={t('settings.autocorrect.subtitle') || 'Corrige palavras automaticamente enquanto você digita.'}
               value={autocorrectOn}
               onValueChange={(v) => { setAutocorrectOn(v); setStorage('autocorrect_enabled', String(v)); }}
-              trackColor={{ false: colors.divider, true: colors.primaryLight }}
-              thumbColor={autocorrectOn ? colors.primary : '#fff'}
             />
-          </View>
-
-          {/* Voice playback speed — 4 options. Defaults to 1×. */}
-          <View style={[s.settingRowColumn, { borderBottomColor: colors.borderLight }]}>
-            <View style={{ width: '100%' }}>
-              <Text style={[s.settingLabel, { color: colors.text }]}>{t('settings.voiceSpeed.title') || 'Velocidade padrão dos áudios'}</Text>
-              <Text style={[s.settingDesc, { color: colors.textTertiary }]}>
-                {t('settings.voiceSpeed.subtitle') || 'Aplica a todos os áudios recebidos. Você pode trocar individual no chat.'}
-              </Text>
-            </View>
-            <View style={[s.perPageBtns, { marginTop: 8, flexWrap: 'wrap' }]}>
-              {[
-                { val: 0.5, label: t('settings.voiceSpeed.option_0_5') || '0.5×' },
-                { val: 1,   label: t('settings.voiceSpeed.option_1')   || '1×' },
-                { val: 1.5, label: t('settings.voiceSpeed.option_1_5') || '1.5×' },
-                { val: 2,   label: t('settings.voiceSpeed.option_2')   || '2×' },
-              ].map(opt => (
-                <TouchableOpacity
-                  key={String(opt.val)}
-                  style={[
-                    s.perPageBtn,
-                    { borderColor: colors.divider },
-                    voiceSpeedDefault === opt.val && { backgroundColor: colors.primary, borderColor: colors.primary },
-                  ]}
-                  onPress={() => { setVoiceSpeedDefault(opt.val); setStorage('voice_speed_default', String(opt.val)); }}
-                >
-                  <Text style={[
-                    s.perPageText, { color: colors.text },
-                    voiceSpeedDefault === opt.val && { color: colors.onPrimary || '#fff' },
-                  ]}>
-                    {opt.label}
-                  </Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-          </View>
-
-          {/* Bubble shape — rounded / square / classic. */}
-          <View style={[s.settingRowColumn, { borderBottomColor: colors.borderLight }]}>
-            <View style={{ width: '100%' }}>
-              <Text style={[s.settingLabel, { color: colors.text }]}>{t('settings.bubble.title') || 'Estilo dos balões'}</Text>
-              <Text style={[s.settingDesc, { color: colors.textTertiary }]}>
-                {t('settings.bubble.subtitle') || 'Formato visual das mensagens.'}
-              </Text>
-            </View>
-            <View style={[s.perPageBtns, { marginTop: 8, flexWrap: 'wrap' }]}>
-              {[
-                { val: 'rounded', label: t('settings.bubble.rounded') || 'Arredondado' },
-                { val: 'square',  label: t('settings.bubble.square')  || 'Quadrado' },
-                { val: 'classic', label: t('settings.bubble.classic') || 'Clássico' },
-              ].map(opt => (
-                <TouchableOpacity
-                  key={opt.val}
-                  style={[
-                    s.perPageBtn,
-                    { borderColor: colors.divider },
-                    bubbleShape === opt.val && { backgroundColor: colors.primary, borderColor: colors.primary },
-                  ]}
-                  onPress={() => { setBubbleShape(opt.val); setStorage('bubble_shape', opt.val); }}
-                >
-                  <Text style={[
-                    s.perPageText, { color: colors.text },
-                    bubbleShape === opt.val && { color: colors.onPrimary || '#fff' },
-                  ]}>
-                    {opt.label}
-                  </Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-          </View>
-
-          {/* Data saver — flips a global flag that other surfaces read. */}
-          <View style={[s.settingRow, { borderBottomColor: colors.borderLight }]}>
-            <View style={s.settingInfo}>
-              <Text style={[s.settingLabel, { color: colors.text }]}>{t('settings.dataSaver.title') || 'Modo economia de dados'}</Text>
-              <Text style={[s.settingDesc, { color: colors.textTertiary }]}>
-                {t('settings.dataSaver.subtitle') || 'Comprime mídia e reduz pré-carregamento de vídeos.'}
-              </Text>
-            </View>
-            <NativeSwitch
-              value={dataSaver}
-              onValueChange={(v) => { setDataSaver(v); setStorage('data_saver', String(v)); }}
-              trackColor={{ false: colors.divider, true: colors.primaryLight }}
-              thumbColor={dataSaver ? colors.primary : '#fff'}
+          </SettingsGroup>
+          <SettingsGroup header={t('settings.rd2.messages') || 'Mensagens'}>
+            <SettingsPickerRow
+              title={t('settings.voiceSpeed.title') || 'Velocidade padrão dos áudios'}
+              value={voiceSpeedDefault}
+              sheetMessage={t('settings.voiceSpeed.subtitle') || 'Aplica a todos os áudios recebidos. Você pode trocar individual no chat.'}
+              cancelLabel={t('common.cancel') || 'Cancelar'}
+              options={[
+                { value: 0.5, label: t('settings.voiceSpeed.option_0_5') || '0.5×' },
+                { value: 1,   label: t('settings.voiceSpeed.option_1')   || '1×' },
+                { value: 1.5, label: t('settings.voiceSpeed.option_1_5') || '1.5×' },
+                { value: 2,   label: t('settings.voiceSpeed.option_2')   || '2×' },
+              ]}
+              onChange={(v) => { setVoiceSpeedDefault(v); setStorage('voice_speed_default', String(v)); }}
             />
-          </View>
-
-          {/* Beta features — opts the device into experimental flows. */}
-          <View style={[s.settingRow, { borderBottomColor: colors.borderLight, borderBottomWidth: 0 }]}>
-            <View style={s.settingInfo}>
-              <Text style={[s.settingLabel, { color: colors.text }]}>{t('settings.beta.title') || 'Recursos beta'}</Text>
-              <Text style={[s.settingDesc, { color: colors.textTertiary }]}>
-                {t('settings.beta.subtitle') || 'Ative pra testar funcionalidades em desenvolvimento. Podem ter bugs.'}
-              </Text>
-            </View>
-            <NativeSwitch
-              value={betaFeatures}
-              onValueChange={(v) => { setBetaFeatures(v); setStorage('beta_features', String(v)); }}
-              trackColor={{ false: colors.divider, true: colors.primaryLight }}
-              thumbColor={betaFeatures ? colors.primary : '#fff'}
+            <SettingsPickerRow
+              title={t('settings.bubble.title') || 'Estilo dos balões'}
+              value={bubbleShape}
+              sheetMessage={t('settings.bubble.subtitle') || 'Formato visual das mensagens.'}
+              cancelLabel={t('common.cancel') || 'Cancelar'}
+              options={[
+                { value: 'rounded', label: t('settings.bubble.rounded') || 'Arredondado' },
+                { value: 'square',  label: t('settings.bubble.square')  || 'Quadrado' },
+                { value: 'classic', label: t('settings.bubble.classic') || 'Clássico' },
+              ]}
+              onChange={(v) => { setBubbleShape(v); setStorage('bubble_shape', v); }}
             />
-          </View>
+          </SettingsGroup>
         </View>
         )}
 
@@ -2277,584 +2261,107 @@ function SettingsScreenInner() {
         </View>
         )}
 
-        {/* Help center — opens the support page via Linking. */}
-        {(searching || activeCategory === 'help') && sectionMatches(t('settings.help.title') || 'Central de ajuda', 'help', 'ajuda', 'support') && (
-        <View style={[s.section, { backgroundColor: gc.cardBg }]}>
-          <View style={s.sectionTitleRow}>
-            <IconMail size={18} color={colors.primary} style={{ marginRight: 8 }} />
-            <Text style={[s.sectionTitle, { color: colors.text, marginBottom: 0 }]}>{t('settings.help.title') || 'Central de ajuda'}</Text>
-          </View>
-          {/* /ajuda loads the SPA 404 — repointed to the working support
-              mailto (same target as the row below). */}
-          <PressableRow
-            style={[s.settingRow, { borderBottomColor: colors.borderLight, marginTop: Spacing.md }]}
+        {/* Ajuda e sobre — [2026-10-08 settings-redesign2] Ajuda / Sobre /
+            Legal em listas agrupadas (os 2 itens "Central de ajuda" e "Falar
+            com o suporte" abriam o MESMO mailto → uma linha só). */}
+        {(searching || activeCategory === 'help') && sectionMatches(t('settings.help.title') || 'Central de ajuda', t('settings.help.contactSupport') || 'Falar com o suporte', 'help', 'ajuda', 'support') && (
+        <SettingsGroup header={t('settings.rd2.help') || 'Ajuda'}>
+          <SettingsRow
+            title={t('settings.help.contactSupport') || 'Falar com o suporte'}
+            subtitle="support@chatyy.com.br"
             onPress={() => { Linking.openURL('mailto:support@chatyy.com.br').catch(() => {}); }}
-          >
-            <View style={s.settingInfo}>
-              <Text style={[s.settingLabel, { color: colors.text }]}>{t('settings.help.title') || 'Central de ajuda'}</Text>
-              <Text style={[s.settingDesc, { color: colors.textTertiary }]}>support@chatyy.com.br</Text>
-            </View>
-            <IconChevronRight size={20} color={colors.textTertiary} />
-          </PressableRow>
-          <PressableRow
-            style={[s.settingRow, { borderBottomColor: colors.borderLight, borderBottomWidth: 0 }]}
-            onPress={() => { Linking.openURL('mailto:support@chatyy.com.br').catch(() => {}); }}
-          >
-            <View style={s.settingInfo}>
-              <Text style={[s.settingLabel, { color: colors.text }]}>{t('settings.help.contactSupport') || 'Falar com o suporte'}</Text>
-              <Text style={[s.settingDesc, { color: colors.textTertiary }]}>support@chatyy.com.br</Text>
-            </View>
-            <IconChevronRight size={20} color={colors.textTertiary} />
-          </PressableRow>
-        </View>
+          />
+        </SettingsGroup>
         )}
-
-        {/* About — opens a modal with app version, build, and legal links. */}
         {(searching || activeCategory === 'help') && sectionMatches(t('settings.about.title') || 'Sobre', 'about', 'sobre', 'version') && (
-        <View style={[s.section, { backgroundColor: gc.cardBg }]}>
-          <View style={s.sectionTitleRow}>
-            <IconFileText size={18} color={colors.primary} style={{ marginRight: 8 }} />
-            <Text style={[s.sectionTitle, { color: colors.text, marginBottom: 0 }]}>{t('settings.about.title') || 'Sobre'}</Text>
-          </View>
-          <PressableRow
-            style={[s.settingRow, { borderBottomColor: colors.borderLight, borderBottomWidth: 0, marginTop: Spacing.md }]}
+        <SettingsGroup header={t('settings.about.title') || 'Sobre'}>
+          <SettingsRow
+            title={t('settings.rd2.aboutApp') || 'Sobre o Chatyy'}
+            value={appVersionLabel}
             onPress={() => setAboutOpen(true)}
-          >
-            <View style={s.settingInfo}>
-              <Text style={[s.settingLabel, { color: colors.text }]}>{t('settings.about.title') || 'Sobre'}</Text>
-              <Text style={[s.settingDesc, { color: colors.textTertiary }]}>
-                {(() => {
-                  const ver = Constants?.expoConfig?.version || Constants?.manifest?.version || '?';
-                  const build = Constants?.expoConfig?.ios?.buildNumber
-                    || Constants?.expoConfig?.android?.versionCode
-                    || '';
-                  const label = (t('settings.about.version') || 'Versão {ver}').replace('{ver}', ver);
-                  return build ? `${label} (${build})` : label;
-                })()}
-              </Text>
-            </View>
-            <IconChevronRight size={20} color={colors.textTertiary} />
-          </PressableRow>
+          />
           {/* [WAVE 104F] Call diagnostics — visible in __DEV__ or developer_mode */}
           {(__DEV__ || settings?.developer_mode) && (
-          <PressableRow
-            style={[s.settingRow, { borderBottomColor: colors.borderLight, borderBottomWidth: 0 }]}
-            onPress={() => router.push('/call-diagnose')}
-          >
-            <View style={s.settingInfo}>
-              <Text style={[s.settingLabel, { color: colors.text }]}>Diagnóstico de chamadas</Text>
-              <Text style={[s.settingDesc, { color: colors.textTertiary }]}>Ring buffer dos últimos 100 eventos de call lifecycle</Text>
-            </View>
-            <IconChevronRight size={20} color={colors.textTertiary} />
-          </PressableRow>
+            <SettingsRow
+              title={t('settings.rd2.callDiag') || 'Diagnóstico de chamadas'}
+              subtitle={t('settings.rd2.callDiagDesc') || 'Últimos 100 eventos do ciclo de vida das chamadas'}
+              onPress={() => router.push('/call-diagnose')}
+            />
           )}
-        </View>
+        </SettingsGroup>
+        )}
+        {(searching || activeCategory === 'help') && sectionMatches(t('settings.legal'), t('settings.privacyPolicy'), t('settings.termsOfService')) && (
+        <SettingsGroup header={t('settings.legal')}>
+          <SettingsRow title={t('settings.privacyPolicy')} onPress={() => setShowPrivacy(true)} />
+          <SettingsRow title={t('settings.termsOfService')} onPress={() => setShowTerms(true)} />
+        </SettingsGroup>
         )}
 
-        {/* One AI Assistant */}
+        {/* Bia — [2026-10-08 settings-redesign2] cabeçalho (ícone + nome +
+            descrição), switch nativo, canal de aviso com checkmark e atalho
+            pra personalização (/bia-settings). Chaves: one_enabled /
+            one_notif_level. */}
         {(searching || activeCategory === 'bia') && sectionMatches('Bia', t('settings.oneAssistant'), t('settings.oneEnabled'), t('settings.oneNotifPrefs'), 'one ai', 'assistant', 'bia') && (
-        <View style={[s.section, { backgroundColor: gc.cardBg }]}>
-          <View style={s.sectionTitleRow}>
-            <View style={{ width: 28, height: 28, borderRadius: 14, backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center', marginRight: 8 }}>
-              <Text style={{ color: colors.onPrimary || '#fff', fontSize: 12, fontWeight: '800' }}>B</Text>
+        <View>
+          <SettingsGroup>
+            <View style={s.accountHeader}>
+              <SettingsIconTile Icon={IconSparkles} size={64} />
+              <Text style={[s.accountHeaderName, { color: colors.text }]} numberOfLines={1}>Bia</Text>
+              <Text style={[s.biaHeroDesc, { color: gc.secondary }]}>{t('settings.oneAssistantDesc')}</Text>
             </View>
-            <Text style={[s.sectionTitle, { color: colors.text, marginBottom: 0 }]}>Bia</Text>
-          </View>
-          <Text style={[s.settingDesc, { color: colors.textSecondary, marginTop: Spacing.sm }]}>
-            {t('settings.oneAssistantDesc')}
-          </Text>
-
-          <View style={[s.settingRow, { borderBottomColor: colors.borderLight, marginTop: Spacing.md }]}>
-            <View style={s.settingInfo}>
-              <Text style={[s.settingLabel, { color: colors.text }]}>{t('settings.oneEnabled')}</Text>
-              <Text style={[s.settingDesc, { color: colors.textTertiary }]}>{t('settings.oneEnabledDesc')}</Text>
-            </View>
-            <NativeSwitch
+          </SettingsGroup>
+          <SettingsGroup footer={t('settings.oneEnabledDesc')}>
+            <SettingsSwitchRow
+              title={t('settings.oneEnabled')}
               value={oneEnabled}
-              onValueChange={(v) => {
-                setOneEnabled(v);
-                setStorage('one_enabled', String(v));
-              }}
-              trackColor={{ false: colors.divider, true: colors.primary + '66' }}
-              thumbColor={oneEnabled ? colors.primary : '#fff'}
+              onValueChange={(v) => { setOneEnabled(v); setStorage('one_enabled', String(v)); }}
             />
-          </View>
-
+          </SettingsGroup>
           {oneEnabled && (
-            <>
-              <Text style={[s.settingLabel, { color: colors.text, paddingHorizontal: Spacing.md, paddingTop: Spacing.md }]}>{t('settings.oneNotifPrefs')}</Text>
-              <Text style={[s.settingDesc, { color: colors.textTertiary, paddingHorizontal: Spacing.md, marginBottom: Spacing.sm }]}>{t('settings.oneNotifUrgentDesc')}</Text>
-              <View style={{ flexDirection: 'row', gap: 8, paddingHorizontal: Spacing.md, paddingBottom: Spacing.md }}>
-                {[
-                  { val: 'email', label: t('settings.oneNotifEmail'), Icon: IconMail },
-                  { val: 'push', label: t('settings.oneNotifPush'), Icon: IconBell },
-                  { val: 'urgent', label: t('settings.oneNotifUrgent'), Icon: IconPhone },
-                ].map(opt => {
-                  const isSel = oneNotifLevel === opt.val;
-                  return (
-                  <TouchableOpacity
-                    key={opt.val}
-                    style={[
-                      s.perPageBtn,
-                      { borderColor: colors.divider, flex: 1, paddingVertical: 10, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6 },
-                      isSel && { backgroundColor: colors.primary, borderColor: colors.primary },
-                    ]}
-                    onPress={() => {
-                      setOneNotifLevel(opt.val);
-                      setStorage('one_notif_level', opt.val);
-                    }}
-                  >
-                    <opt.Icon size={14} color={isSel ? (colors.onPrimary || '#fff') : colors.text} />
-                    <Text style={[
-                      s.perPageText, { color: colors.text, textAlign: 'center' },
-                      isSel && { color: '#fff' },
-                    ]}>
-                      {opt.label}
-                    </Text>
-                  </TouchableOpacity>
-                  );
-                })}
-              </View>
-            </>
-          )}
-        </View>
-        )}
-
-        {/* Desktop Notifications */}
-        {(searching || activeCategory === 'notifications') && Platform.OS === 'web' && sectionMatches(t('settings.desktopNotifs'), t('settings.desktopNotifsDesc'), 'desktop', 'browser') && (
-          <View ref={registerSectionRef('notifications')} style={[s.section, { backgroundColor: gc.cardBg }]}>
-            <View style={s.sectionTitleRow}>
-              <IconBell size={18} color={colors.primary} style={{ marginRight: 8 }} />
-              <Text style={[s.sectionTitle, { color: colors.text, marginBottom: 0 }]}>{t('settings.desktopNotifs')}</Text>
-            </View>
-            <Text style={[s.settingDesc, { color: colors.textTertiary, marginTop: Spacing.sm }]}>
-              {t('settings.desktopNotifsDesc')}
-            </Text>
-            <View style={[s.settingRow, { borderBottomColor: colors.borderLight, marginTop: Spacing.md }]}>
-              <View style={s.settingInfo}>
-                <Text style={[s.settingLabel, { color: colors.text }]}>
-                  {notifPermission === 'granted' ? t('settings.notifsEnabled') : notifPermission === 'denied' ? t('settings.notifsBlocked') : t('settings.notifsEnable')}
-                </Text>
-                <Text style={[s.settingDesc, { color: colors.textTertiary }]}>
-                  {notifPermission === 'denied' ? t('settings.notifsBlockedDesc') : t('settings.notifsAlertDesc')}
-                </Text>
-              </View>
-              {notifPermission !== 'granted' && notifPermission !== 'denied' && (
-                <TouchableOpacity
-                  style={[s.perPageBtn, { borderColor: colors.primary, backgroundColor: colors.primaryLight }]}
-                  onPress={async () => {
-                    const perm = await Notification.requestPermission();
-                    setNotifPermission(perm);
-                  }}
-                >
-                  <Text style={[s.perPageText, { color: colors.primary }]}>{t('settings.notifsEnable')}</Text>
-                </TouchableOpacity>
-              )}
-              {notifPermission === 'granted' && (
-                <Text style={[s.perPageText, { color: colors.success || '#34a853' }]}>{t('settings.notifsActive')}</Text>
-              )}
-            </View>
-          </View>
-        )}
-
-        {/* [2026-07-05] Alterar senha no WEB — a seção Segurança nativa logo
-            abaixo é `Platform.OS !== 'web'` (biometria/família/parental só
-            existem no app), então quem usa o chatyy.com.br não tinha COMO
-            trocar a senha. Este bloco web-only reusa o MESMO ChangePasswordModal
-            (RN Modal puro, web-safe, já montado no fim da tela). */}
-        {(searching || activeCategory === 'privacy') && Platform.OS === 'web' && sectionMatches(t('settings.security'), 'segurança', 'senha', 'password', t('settings.changePassword')) && (
-          <View style={[s.section, { backgroundColor: gc.cardBg }]}>
-            <Text style={[s.sectionTitle, { color: colors.text }]}>{t('settings.security') || 'Segurança'}</Text>
-            <PressableRow
-              style={[s.settingRow, { borderBottomColor: colors.borderLight, borderBottomWidth: 0 }]}
-              onPress={() => setChangePasswordOpen(true)}
-              activeOpacity={0.65}
-            >
-              <View style={s.settingInfo}>
-                <Text style={[s.settingLabel, { color: colors.text }]}>
-                  {t('settings.changePassword') || 'Alterar senha'}
-                </Text>
-                <Text style={[s.settingDesc, { color: colors.textTertiary }]}>
-                  {t('settings.changePasswordDesc') || 'Atualize sua senha de acesso a qualquer momento'}
-                </Text>
-              </View>
-              <IconChevronRight size={18} color={colors.textTertiary} />
-            </PressableRow>
-          </View>
-        )}
-
-        {/* Security — Biometric Lock + Parental Controls (native only; biometric items below self-gate on biometricAvailable) */}
-        {(searching || activeCategory === 'privacy') && Platform.OS !== 'web' && sectionMatches(t('settings.security'), 'biometric', 'face id', 'parental', 'família', 'family', 'segurança', 'senha', 'password', t('settings.changePassword'), '2fa', t('settings.twoFactor'), 'pin', 'backup', t('settings.e2eBackup'), t('settings.backupKey.rotate'), t('settings.activityLog'), 'byok', t('settings.advancedKey')) && (
-          <View ref={registerSectionRef('security')} style={[s.section, { backgroundColor: gc.cardBg }]}>
-            {/* Família — Apple Family Sharing-style hub */}
-            <PressableRow
-              style={[s.settingRow, { borderBottomColor: colors.borderLight, marginBottom: Spacing.sm, backgroundColor: colors.primaryLight, borderRadius: 14, padding: 14 }]}
-              onPress={() => router.push('/family')}
-            >
-              <View style={s.settingInfo}>
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                  <IconShield size={20} color={colors.primary} />
-                  <Text style={[s.settingLabel, { color: colors.text, fontWeight: '700' }]}>Família</Text>
-                </View>
-                <Text style={[s.settingDesc, { color: colors.textTertiary }]}>Compartilhe plano, álbum, calendário e mais com a família</Text>
-              </View>
-              <IconChevronRight size={18} color={colors.textSecondary} />
-            </PressableRow>
-
-            {/* Parental Controls */}
-            <PressableRow
-              style={[s.settingRow, { borderBottomColor: colors.borderLight, marginBottom: Spacing.lg, backgroundColor: colors.successBg, borderRadius: 14, padding: 14 }]}
-              onPress={() => router.push('/parental')}
-            >
-              <View style={s.settingInfo}>
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                  <IconShield size={20} color={colors.primary} />
-                  <Text style={[s.settingLabel, { color: colors.text, fontWeight: '700' }]}>Controle Parental</Text>
-                </View>
-                <Text style={[s.settingDesc, { color: colors.textTertiary }]}>Crie contas monitoradas para seus filhos</Text>
-              </View>
-              <IconChevronRight size={18} color={colors.textSecondary} />
-            </PressableRow>
-
-            <View style={s.sectionTitleRow}>
-              <IconShield size={18} color={colors.primary} style={{ marginRight: 8 }} />
-              <Text style={[s.sectionTitle, { color: colors.text, marginBottom: 0 }]}>{t('settings.security')}</Text>
-            </View>
-            {biometricAvailable && (
-              <View style={[s.settingRow, { borderBottomColor: colors.borderLight, marginTop: Spacing.md }]}>
-                <View style={s.settingInfo}>
-                  <Text style={[s.settingLabel, { color: colors.text }]}>{t('settings.biometricLock')}</Text>
-                  <Text style={[s.settingDesc, { color: colors.textTertiary }]}>
-                    {t('settings.biometricDesc')}
-                  </Text>
-                </View>
-                <NativeSwitch
-                  value={biometricEnabled}
-                  onValueChange={toggleBiometric}
-                  trackColor={{ false: colors.divider, true: colors.primaryLight }}
-                  thumbColor={biometricEnabled ? colors.primary : '#fff'}
+            <SettingsGroup header={t('settings.oneNotifPrefs')} footer={t('settings.oneNotifUrgentDesc')} inset={52}>
+              {[
+                { val: 'email', label: t('settings.oneNotifEmail'), Icon: IconMail },
+                { val: 'push', label: t('settings.oneNotifPush'), Icon: IconBell },
+                { val: 'urgent', label: t('settings.oneNotifUrgent'), Icon: IconPhone },
+              ].map(opt => (
+                <SettingsRow
+                  key={opt.val}
+                  icon={opt.Icon}
+                  iconTile={false}
+                  title={opt.label}
+                  checked={oneNotifLevel === opt.val}
+                  accessibilityRole="radio"
+                  onPress={() => { setOneNotifLevel(opt.val); setStorage('one_notif_level', opt.val); }}
                 />
-              </View>
-            )}
-
-            {/* Auto-lock interval picker — only relevant when biometric is on.
-                Lets users widen the 5 s default (good for "I unlock my phone
-                in the kitchen and come back to my desk") or tighten it to
-                immediate (for shared devices). 'never' disables the timer
-                entirely; the lock still triggers when the user manually
-                taps the chat-lock or restarts the app. */}
-            {biometricAvailable && biometricEnabled && (
-              <PressableRow
-                style={[s.settingRow, { borderBottomColor: colors.borderLight }]}
-                onPress={() => setAutoLockOpen(true)}
-                activeOpacity={0.65}
-              >
-                <View style={s.settingInfo}>
-                  <Text style={[s.settingLabel, { color: colors.text }]}>
-                    {t('settings.autoLockInterval') || 'Bloqueio automático'}
-                  </Text>
-                  <Text style={[s.settingDesc, { color: colors.textTertiary }]}>
-                    {(() => {
-                      // Translate the stored value into a human-readable label.
-                      if (autoLockInterval === 'never') return t('biometric.lockNever') || 'Nunca';
-                      const n = Number(autoLockInterval);
-                      if (n === 0)   return t('biometric.lockImmediate') || 'Imediatamente';
-                      if (n === 60)  return t('biometric.lock1Min') || 'Apos 1 minuto';
-                      if (n === 300) return t('biometric.lock5Min') || 'Apos 5 minutos';
-                      if (n === 900) return t('biometric.lock15Min') || 'Apos 15 minutos';
-                      return `${n}s`;
-                    })()}
-                  </Text>
-                </View>
-                <IconChevronRight size={18} color={colors.textTertiary} />
-              </PressableRow>
-            )}
-
-            {/* Alterar senha — abre modal com senha atual + nova senha + confirmar */}
-            <PressableRow
-              style={[s.settingRow, { borderBottomColor: colors.borderLight }]}
-              onPress={() => setChangePasswordOpen(true)}
-              activeOpacity={0.65}
-            >
-              <View style={s.settingInfo}>
-                <Text style={[s.settingLabel, { color: colors.text }]}>
-                  {t('settings.changePassword') || 'Alterar senha'}
-                </Text>
-                <Text style={[s.settingDesc, { color: colors.textTertiary }]}>
-                  {t('settings.changePasswordDesc') || 'Atualize sua senha de acesso a qualquer momento'}
-                </Text>
-              </View>
-              <IconChevronRight size={18} color={colors.textTertiary} />
-            </PressableRow>
-
-            {/* End-to-end encrypted backup — opens the escrow flow. The
-                user picks a passphrase, the app encrypts every locally
-                stored chat key + identity key with it, and uploads only
-                the ciphertext. Restore on a new device asks for the
-                passphrase. Server never sees the plaintext. */}
-            <PressableRow
-              style={[s.settingRow, { borderBottomColor: colors.borderLight }]}
-              onPress={() => setE2eBackupOpen(true)}
-              activeOpacity={0.65}
-            >
-              <View style={s.settingInfo}>
-                <Text style={[s.settingLabel, { color: colors.text }]}>
-                  {t('settings.e2eBackup') || 'Backup com criptografia'}
-                </Text>
-                <Text style={[s.settingDesc, { color: colors.textTertiary }]}>
-                  {t('settings.e2eBackupDesc') || 'Salve suas chaves protegidas por uma frase secreta'}
-                </Text>
-              </View>
-              <IconChevronRight size={18} color={colors.textTertiary} />
-            </PressableRow>
-
-            {/* Redefinir senha do backup — merged here from the old standalone
-                "Senha do backup" section (dedupe). Opens the rotate modal,
-                which versions the new escrow blob and revokes prior ones. */}
-            <PressableRow
-              style={[s.settingRow, { borderBottomColor: colors.borderLight }]}
-              onPress={() => { setBackupKeyPass(''); setBackupKeyPass2(''); setBackupKeyMsg(''); setBackupKeyOpen(true); }}
-              activeOpacity={0.65}
-            >
-              <View style={s.settingInfo}>
-                <Text style={[s.settingLabel, { color: colors.text }]}>
-                  {t('settings.backupKey.rotate') || 'Redefinir senha do backup'}
-                </Text>
-                <Text style={[s.settingDesc, { color: colors.textTertiary }]}>
-                  {t('settings.backupKey.subtitle') || 'Troque a frase secreta que protege seu backup criptografado. Backups antigos deixam de ser restauráveis.'}
-                </Text>
-              </View>
-              <IconChevronRight size={18} color={colors.textTertiary} />
-            </PressableRow>
-
-            {/* 2FA PIN — opens 4-digit entry modal */}
-            <PressableRow
-              style={[s.settingRow, { borderBottomColor: colors.borderLight }]}
-              onPress={() => {
-                setTwoFADigits(['', '', '', '']);
-                setTwoFAError('');
-                setTwoFASuccess(false);
-                setTwoFAOpen(true);
-                setTimeout(() => { try { twoFARefs.current[0]?.focus?.(); } catch {} }, 250);
-              }}
-              activeOpacity={0.65}
-            >
-              <View style={[s.settingInfo, { flexDirection: 'row', alignItems: 'center', gap: 10 }]}>
-                <IconShield size={18} color={colors.primary} />
-                <View style={{ flex: 1 }}>
-                  <Text style={[s.settingLabel, { color: colors.text }]}>
-                    {t('settings.twoFactor') || 'Verificação em duas etapas'}
-                  </Text>
-                  <Text style={[s.settingDesc, { color: colors.textTertiary }]}>
-                    {t('settings.twoFactorDesc') || 'Adicione uma camada extra de segurança ao seu Chatyy'}
-                  </Text>
-                </View>
-              </View>
-              <IconChevronRight size={18} color={colors.textTertiary} />
-            </PressableRow>
-
-            {/* Registration Lock (anti-SIM-swap) — separate concept from 2FA.
-                A short PIN that adds a second factor to phone-OTP login,
-                defeating SIM-swap attacks where the attacker steals the
-                number, gets the OTP, and takes over the account. Same
-                4-digit PIN UI as 2FA but writes to a different backend key. */}
-            <PressableRow
-              style={[s.settingRow, { borderBottomColor: colors.borderLight }]}
-              onPress={() => {
-                setRegLockDigits(['', '', '', '']);
-                setRegLockError('');
-                setRegLockSuccess(false);
-                setRegLockOpen(true);
-                setTimeout(() => { try { regLockRefs.current[0]?.focus?.(); } catch {} }, 250);
-              }}
-              activeOpacity={0.65}
-            >
-              <View style={[s.settingInfo, { flexDirection: 'row', alignItems: 'center', gap: 10 }]}>
-                <IconShield size={18} color={colors.primary} />
-                <View style={{ flex: 1 }}>
-                  <Text style={[s.settingLabel, { color: colors.text }]}>
-                    {t('settings.registrationLock') || 'PIN de segurança (anti-SIM-swap)'}
-                  </Text>
-                  <Text style={[s.settingDesc, { color: colors.textTertiary }]}>
-                    {t('settings.registrationLockDesc') || 'PIN extra no login por telefone — protege se trocarem seu chip.'}
-                  </Text>
-                </View>
-              </View>
-              <IconChevronRight size={18} color={colors.textTertiary} />
-            </PressableRow>
-
-            {/* Alterar número de telefone (SIM swap recovery, WhatsApp pattern).
-                Migrates the account to a NEW phone while keeping all chats /
-                contacts / handle. Routes to /change-phone for the multi-step
-                flow (confirm old → pick new → OTP → success). */}
-            <PressableRow
-              style={[s.settingRow, { borderBottomColor: colors.borderLight }]}
-              onPress={() => safeNav('/change-phone')}
-              activeOpacity={0.65}
-            >
-              <View style={[s.settingInfo, { flexDirection: 'row', alignItems: 'center', gap: 10 }]}>
-                <IconPhone size={18} color={colors.primary} />
-                <View style={{ flex: 1 }}>
-                  <Text style={[s.settingLabel, { color: colors.text }]}>
-                    {t('settings.changePhone') || 'Alterar número de telefone'}
-                  </Text>
-                  <Text style={[s.settingDesc, { color: colors.textTertiary }]}>
-                    {t('settings.changePhoneDesc') || 'Migre sua conta para um novo número mantendo seus chats e contatos.'}
-                  </Text>
-                </View>
-              </View>
-              <IconChevronRight size={18} color={colors.textTertiary} />
-            </PressableRow>
-
-            {/* Histórico de atividades — unified audit log surface. The list
-                screen reads user_activity_log_list and renders security-
-                relevant events (login, password change, 2FA, device link,
-                BYOK set, chat delete, message delete-for-all, etc.). */}
-            <PressableRow
-              style={[s.settingRow, { borderBottomColor: colors.borderLight }]}
-              onPress={() => safeNav('/activity-log')}
-              activeOpacity={0.65}
-            >
-              <View style={[s.settingInfo, { flexDirection: 'row', alignItems: 'center', gap: 10 }]}>
-                <IconShield size={18} color={colors.primary} />
-                <View style={{ flex: 1 }}>
-                  <Text style={[s.settingLabel, { color: colors.text }]}>
-                    {t('settings.activityLog') || 'Histórico de atividades'}
-                  </Text>
-                  <Text style={[s.settingDesc, { color: colors.textTertiary }]}>
-                    {t('settings.activityLogDesc') || 'Veja logins, mudanças de senha, novos dispositivos e outras ações de segurança.'}
-                  </Text>
-                </View>
-              </View>
-              <IconChevronRight size={18} color={colors.textTertiary} />
-            </PressableRow>
-
-            {/* Chave avançada (BYOK) — opt-in per-user master key, generated
-                client-side. Server stores only the fingerprint. Power-user
-                feature surfaced here so it's a "Segurança" decision, not a
-                privacy preference. */}
-            <PressableRow
-              style={[s.settingRow, { borderBottomColor: colors.borderLight }]}
-              onPress={() => safeNav('/advanced-key')}
-              activeOpacity={0.65}
-            >
-              <View style={[s.settingInfo, { flexDirection: 'row', alignItems: 'center', gap: 10 }]}>
-                <IconShield size={18} color={colors.primary} />
-                <View style={{ flex: 1 }}>
-                  <Text style={[s.settingLabel, { color: colors.text }]}>
-                    {t('settings.advancedKey') || 'Chave avançada (BYOK)'}
-                  </Text>
-                  <Text style={[s.settingDesc, { color: colors.textTertiary }]}>
-                    {t('settings.advancedKeyDesc') || 'Gere uma chave mestre que só existe no seu aparelho. Frase de segurança mostrada uma única vez.'}
-                  </Text>
-                </View>
-              </View>
-              <IconChevronRight size={18} color={colors.textTertiary} />
-            </PressableRow>
-
-            {/* Alertas de login — notify when a NEW device signs into this
-                account. Tap opens the history modal (last 30d of sign-ins),
-                toggle persists via chat_user_defaults.login_alerts_enabled. */}
-            <View style={[s.settingRow, { borderBottomColor: colors.borderLight }]}>
-              <TouchableOpacity
-                style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 10 }}
-                onPress={async () => {
-                  setLoginHistoryOpen(true);
-                  setLoginHistoryLoading(true);
-                  try {
-                    const r = await api.getLoginHistory?.();
-                    if (r?.success && Array.isArray(r?.data?.events)) setLoginHistory(r.data.events);
-                    else if (Array.isArray(r?.data)) setLoginHistory(r.data);
-                    else setLoginHistory([]);
-                  } catch { setLoginHistory([]); }
-                  finally { setLoginHistoryLoading(false); }
-                }}
-                activeOpacity={0.65}
-              >
-                <IconShield size={18} color={colors.primary} />
-                <View style={{ flex: 1 }}>
-                  <Text style={[s.settingLabel, { color: colors.text }]}>
-                    {t('settings.loginAlerts.title') || 'Alertas de login'}
-                  </Text>
-                  <Text style={[s.settingDesc, { color: colors.textTertiary }]}>
-                    {t('settings.loginAlerts.subtitle') || 'Receba notif quando novo dispositivo logar'}
-                  </Text>
-                </View>
-              </TouchableOpacity>
-              <NativeSwitch
-                value={loginAlertsEnabled}
-                onValueChange={(v) => {
-                  setLoginAlertsEnabled(v);
-                  // Persist via chat_user_defaults_set — same blob the rest
-                  // of this section already uses for media auto-download
-                  // prefs, so we don't introduce a new endpoint.
-                  try { api.chatUserDefaultsSet?.({ login_alerts_enabled: v }).catch(() => {}); } catch {}
-                }}
-                trackColor={{ false: colors.divider, true: colors.primaryLight }}
-                thumbColor={loginAlertsEnabled ? colors.primary : '#fff'}
-              />
-            </View>
-
-            {/* Privacidade avançada — proxy/Tor, screen-capture block,
-                discoverable opt-out, VPN suggestion. Grouped behind one
-                row so the main Security section stays scannable. */}
-            <PressableRow
-              style={[s.settingRow, { borderBottomColor: colors.borderLight }]}
-              onPress={() => safeNav('/advanced-privacy')}
-              activeOpacity={0.65}
-            >
-              <View style={[s.settingInfo, { flexDirection: 'row', alignItems: 'center', gap: 10 }]}>
-                <IconShield size={18} color={colors.primary} />
-                <View style={{ flex: 1 }}>
-                  <Text style={[s.settingLabel, { color: colors.text }]}>
-                    {t('settings.advancedPrivacy') || 'Privacidade avançada'}
-                  </Text>
-                  <Text style={[s.settingDesc, { color: colors.textTertiary }]}>
-                    {t('settings.advancedPrivacyDesc') || 'Proxy/Tor, bloqueio de captura de tela, descoberta por número, sugestão de VPN.'}
-                  </Text>
-                </View>
-              </View>
-              <IconChevronRight size={18} color={colors.textTertiary} />
-            </PressableRow>
-          </View>
+              ))}
+            </SettingsGroup>
+          )}
+          <SettingsGroup header={t('settings.rd2.personalization') || 'Personalização'}>
+            <SettingsRow
+              title={t('settings.rd2.biaVoice') || 'Tom, assinatura e estilo'}
+              subtitle={t('settings.biaDesc') || 'Ensine seu tom e assinatura pra ela escrever na sua voz'}
+              onPress={() => router.push('/bia-settings')}
+            />
+          </SettingsGroup>
+        </View>
         )}
 
-        {/* Forwarding */}
-        {(searching || activeCategory === 'privacy') && sectionMatches(t('settings.forwarding'), t('settings.forwardingEnable'), t('settings.forwardingDesc')) && (
-        <View style={[s.section, { backgroundColor: gc.cardBg }]}>
-          <View style={s.sectionTitleRow}>
-            <IconForward size={18} color={colors.primary} style={{ marginRight: 8 }} />
-            <Text style={[s.sectionTitle, { color: colors.text, marginBottom: 0 }]}>{t('settings.forwarding')}</Text>
+        {/* Desktop Notifications (web) — grouped list. */}
+        {(searching || activeCategory === 'notifications') && Platform.OS === 'web' && sectionMatches(t('settings.desktopNotifs'), t('settings.desktopNotifsDesc'), 'desktop', 'browser') && (
+          <View ref={registerSectionRef('notifications')}>
+            <SettingsGroup header={t('settings.desktopNotifs')} footer={t('settings.desktopNotifsDesc')}>
+              <SettingsRow
+                title={notifPermission === 'granted' ? t('settings.notifsEnabled') : notifPermission === 'denied' ? t('settings.notifsBlocked') : t('settings.notifsEnable')}
+                subtitle={notifPermission === 'denied' ? t('settings.notifsBlockedDesc') : t('settings.notifsAlertDesc')}
+                value={notifPermission === 'granted' ? t('settings.notifsActive') : undefined}
+                chevron={false}
+                onPress={notifPermission !== 'granted' && notifPermission !== 'denied' ? async () => {
+                  const perm = await Notification.requestPermission();
+                  setNotifPermission(perm);
+                } : undefined}
+              />
+            </SettingsGroup>
           </View>
-          <Text style={[s.settingDesc, { color: colors.textTertiary, marginTop: Spacing.sm, marginBottom: Spacing.md }]}>
-            {t('settings.forwardingDesc')}
-          </Text>
-          <View style={[s.settingRow, { borderBottomColor: colors.borderLight }]}>
-            <View style={s.settingInfo}>
-              <Text style={[s.settingLabel, { color: colors.text }]}>{t('settings.forwardingEnable')}</Text>
-            </View>
-            <NativeSwitch
-              value={settings.forwarding_enabled}
-              onValueChange={(v) => setSettings(prev => ({ ...prev, forwarding_enabled: v }))}
-              trackColor={{ false: colors.divider, true: colors.primaryLight }}
-              thumbColor={settings.forwarding_enabled ? colors.primary : '#fff'}
-            />
-          </View>
-          {settings.forwarding_enabled && (
-            <TextInput
-              style={[
-                s.signatureInput,
-                { color: colors.text, borderColor: colors.divider, backgroundColor: colors.surfaceVariant, marginTop: Spacing.md, minHeight: 44 },
-              ]}
-              value={settings.forwarding_email}
-              onChangeText={(v) => setSettings(prev => ({ ...prev, forwarding_email: v }))}
-              placeholder={t('settings.forwardingPlaceholder')}
-              placeholderTextColor={colors.textTertiary}
-              keyboardType="email-address"
-              autoCapitalize="none"
-            />
-          )}
-        </View>
         )}
 
         {/* Reading — font size picker (3 options, labels can be long → sheet). */}
@@ -2874,300 +2381,278 @@ function SettingsScreenInner() {
         </View>
         )}
 
-        {/* Privacy — granular chat controls. Persists to backend
-            chat_user_privacy via chat_privacy_get/set. The 4 dropdown rows
-            (last_seen / profile_photo / status / groups) open a bottom-sheet
-            picker; read_receipts is a simple Switch since it's boolean. */}
-        {(searching || activeCategory === 'privacy') && sectionMatches(t('settings.privacyTitle'), t('settings.privacyLastSeen'), t('settings.privacyProfilePhoto'), t('settings.privacyReadReceipts'), t('settings.privacyStatus'), t('settings.privacyGroups'), 'privacy', 'privacidade') && (
-        <View ref={registerSectionRef('privacy_granular')} style={[s.section, { backgroundColor: gc.cardBg }]}>
-          <View style={s.sectionTitleRow}>
-            <IconShield size={18} color={colors.primary} style={{ marginRight: 8 }} />
-            <Text style={[s.sectionTitle, { color: colors.text, marginBottom: 0 }]}>{t('settings.privacyTitle')}</Text>
-          </View>
-
-          {/* Last seen */}
-          <PressableRow
-            style={[s.settingRow, { borderBottomColor: colors.borderLight, marginTop: Spacing.md }]}
-            onPress={() => setPrivacyPickerOpen('last_seen')}
-            activeOpacity={0.7}
-          >
-            <View style={s.settingInfo}>
-              <Text style={[s.settingLabel, { color: colors.text }]}>{t('settings.privacyLastSeen')}</Text>
-              <Text style={[s.settingDesc, { color: colors.textTertiary }]}>
-                {chatPrivacy.last_seen === 'everyone' ? t('settings.privacyEveryone')
-                  : chatPrivacy.last_seen === 'contacts' ? t('settings.privacyContacts')
-                  : t('settings.privacyNobody')}
-              </Text>
-            </View>
-            <IconChevronRight size={20} color={colors.textTertiary} />
-          </PressableRow>
-
-          {/* Profile photo */}
-          <PressableRow
-            style={[s.settingRow, { borderBottomColor: colors.borderLight }]}
-            onPress={() => setPrivacyPickerOpen('profile_photo')}
-            activeOpacity={0.7}
-          >
-            <View style={s.settingInfo}>
-              <Text style={[s.settingLabel, { color: colors.text }]}>{t('settings.privacyProfilePhoto')}</Text>
-              <Text style={[s.settingDesc, { color: colors.textTertiary }]}>
-                {chatPrivacy.profile_photo === 'everyone' ? t('settings.privacyEveryone')
-                  : chatPrivacy.profile_photo === 'contacts' ? t('settings.privacyContacts')
-                  : t('settings.privacyNobody')}
-              </Text>
-            </View>
-            <IconChevronRight size={20} color={colors.textTertiary} />
-          </PressableRow>
-
-          {/* Read receipts — boolean Switch (chat-side, distinct from the
-              email-side settings.read_receipts above). */}
-          <View style={[s.settingRow, { borderBottomColor: colors.borderLight }]}>
-            <View style={s.settingInfo}>
-              <Text style={[s.settingLabel, { color: colors.text }]}>{t('settings.privacyReadReceipts')}</Text>
-              <Text style={[s.settingDesc, { color: colors.textTertiary }]}>
-                {t('settings.privacyReadReceiptsDesc')}
-              </Text>
-            </View>
-            <NativeSwitch
+        {/* ── Privacidade e segurança — [2026-10-08 settings-redesign2]
+            Listas agrupadas estilo Ajustes do iOS / WhatsApp. Os campos de
+            visibilidade mostram o valor atual à direita e abrem um sheet com
+            checkmark (OptionSheet, no fim da tela). Mesmas chaves/APIs:
+            chat_privacy_set, chat_user_defaults_set, rotas /change-phone,
+            /activity-log, /advanced-key, /advanced-privacy, /family, /parental. ── */}
+        {(searching || activeCategory === 'privacy') && sectionMatches(t('settings.privacyTitle'), t('settings.privacyLastSeen'), t('settings.privacyProfilePhoto'), t('settings.privacyReadReceipts'), t('settings.privacyStatus'), t('settings.privacyGroups'), t('settings.privacyOnline'), t('settings.privacyKeepArchived'), 'privacy', 'privacidade') && (
+        <View ref={registerSectionRef('privacy_granular')}>
+          <SettingsGroup header={t('settings.rd2.whoCanSee') || 'Quem pode ver'} footer={t('settings.rd2.whoCanSeeFooter') || 'Escolha quem vê suas informações no Chatyy.'}>
+            {['last_seen', 'online', 'profile_photo', 'story_privacy', 'group_add'].map(field => (
+              <SettingsRow
+                key={field}
+                title={privacyFieldTitle(field)}
+                value={privacyValueLabel(field)}
+                onPress={() => setPrivacyPickerOpen(field)}
+              />
+            ))}
+          </SettingsGroup>
+          <SettingsGroup footer={t('settings.privacyReadReceiptsDesc')}>
+            <SettingsSwitchRow
+              title={t('settings.privacyReadReceipts')}
               value={!!chatPrivacy.read_receipts}
               onValueChange={(v) => saveChatPrivacy({ read_receipts: !!v })}
-              trackColor={{ false: colors.divider, true: colors.primaryLight }}
-              thumbColor={chatPrivacy.read_receipts ? colors.primary : '#fff'}
             />
-          </View>
-
-          {/* Online / last-seen visibility — backend column `online`. The
-              'nobody' option = invisible mode (appear offline). Distinct from
-              `last_seen` above so the two can diverge. */}
-          <PressableRow
-            style={[s.settingRow, { borderBottomColor: colors.borderLight }]}
-            onPress={() => setPrivacyPickerOpen('online')}
-            activeOpacity={0.7}
-          >
-            <View style={s.settingInfo}>
-              <Text style={[s.settingLabel, { color: colors.text }]}>{t('settings.privacyOnline')}</Text>
-              <Text style={[s.settingDesc, { color: colors.textTertiary }]}>
-                {chatPrivacy.online === 'everyone' ? t('settings.privacyEveryone')
-                  : chatPrivacy.online === 'contacts' ? t('settings.privacyContacts')
-                  : t('settings.privacyInvisible')}
-              </Text>
-            </View>
-            <IconChevronRight size={20} color={colors.textTertiary} />
-          </PressableRow>
-
-          {/* Status — backend column is `story_privacy`. Now also supports
-              'close_friends' (link to manage list below) and 'except' (the
-              "hide from…" picker below). */}
-          <PressableRow
-            style={[s.settingRow, { borderBottomColor: colors.borderLight }]}
-            onPress={() => setPrivacyPickerOpen('story_privacy')}
-            activeOpacity={0.7}
-          >
-            <View style={s.settingInfo}>
-              <Text style={[s.settingLabel, { color: colors.text }]}>{t('settings.privacyStatus')}</Text>
-              <Text style={[s.settingDesc, { color: colors.textTertiary }]}>
-                {chatPrivacy.story_privacy === 'all' || chatPrivacy.story_privacy === 'everyone' ? t('settings.privacyEveryone')
-                  : chatPrivacy.story_privacy === 'contacts' ? t('settings.privacyContacts')
-                  : chatPrivacy.story_privacy === 'close_friends' ? t('settings.privacyCloseFriends')
-                  : chatPrivacy.story_privacy === 'except' ? t('settings.privacyStatusExcept')
-                  : t('settings.privacyNobody')}
-              </Text>
-            </View>
-            <IconChevronRight size={20} color={colors.textTertiary} />
-          </PressableRow>
-
-          {/* Manage close-friends list — reuses the canonical close-friends
-              screen (app/close-friends.js, chat_close_friends table). Only
-              relevant when story_privacy is 'close_friends', but always shown
-              so the user can curate the list ahead of time. */}
-          <PressableRow
-            style={[s.settingRow, { borderBottomColor: colors.borderLight }]}
-            onPress={() => { try { router.push('/close-friends'); } catch {} }}
-            activeOpacity={0.7}
-          >
-            <View style={s.settingInfo}>
-              <Text style={[s.settingLabel, { color: colors.text }]}>{t('settings.privacyCloseFriends')}</Text>
-              <Text style={[s.settingDesc, { color: colors.textTertiary }]}>
-                {t('settings.privacyCloseFriendsDesc')}
-              </Text>
-            </View>
-            <IconChevronRight size={20} color={colors.textTertiary} />
-          </PressableRow>
-
-          {/* Hide status from… — global status_except list (array of emails),
-              persisted via chat_privacy_set { status_except }. Opens the
-              contact-picker screen which reuses the close-friends layout. */}
-          <PressableRow
-            style={[s.settingRow, { borderBottomColor: colors.borderLight }]}
-            onPress={() => { try { router.push('/status-except'); } catch {} }}
-            activeOpacity={0.7}
-          >
-            <View style={s.settingInfo}>
-              <Text style={[s.settingLabel, { color: colors.text }]}>{t('settings.privacyStatusExcept')}</Text>
-              <Text style={[s.settingDesc, { color: colors.textTertiary }]}>
-                {(chatPrivacy.status_except?.length || 0) > 0
-                  ? (t('settings.privacyStatusExceptCount') || '{n} ocultos').replace('{n}', chatPrivacy.status_except.length)
-                  : t('settings.privacyStatusExceptDesc')}
-              </Text>
-            </View>
-            <IconChevronRight size={20} color={colors.textTertiary} />
-          </PressableRow>
-
-          {/* Keep archived chats archived — WhatsApp parity. ON (default) =
-              archived chats stay archived even when a new message arrives.
-              Boolean Switch persisted via chat_privacy_set { keep_archived }. */}
-          <View style={[s.settingRow, { borderBottomColor: colors.borderLight }]}>
-            <View style={s.settingInfo}>
-              <Text style={[s.settingLabel, { color: colors.text }]}>{t('settings.privacyKeepArchived')}</Text>
-              <Text style={[s.settingDesc, { color: colors.textTertiary }]}>
-                {t('settings.privacyKeepArchivedDesc')}
-              </Text>
-            </View>
-            <NativeSwitch
+          </SettingsGroup>
+          <SettingsGroup header={t('settings.rd2.status') || 'Status'}>
+            <SettingsRow
+              title={t('settings.privacyCloseFriends')}
+              subtitle={t('settings.privacyCloseFriendsDesc')}
+              onPress={() => { try { router.push('/close-friends'); } catch {} }}
+            />
+            <SettingsRow
+              title={t('settings.privacyStatusExcept')}
+              value={(chatPrivacy.status_except?.length || 0) > 0 ? String(chatPrivacy.status_except.length) : undefined}
+              subtitle={(chatPrivacy.status_except?.length || 0) > 0 ? undefined : t('settings.privacyStatusExceptDesc')}
+              onPress={() => { try { router.push('/status-except'); } catch {} }}
+            />
+          </SettingsGroup>
+          <SettingsGroup header={t('settings.rd2.chats') || 'Conversas'} footer={t('settings.privacyKeepArchivedDesc')}>
+            <SettingsSwitchRow
+              title={t('settings.privacyKeepArchived')}
               value={chatPrivacy.keep_archived !== false}
               onValueChange={(v) => saveChatPrivacy({ keep_archived: !!v })}
-              trackColor={{ false: colors.divider, true: colors.primaryLight }}
-              thumbColor={chatPrivacy.keep_archived !== false ? colors.primary : '#fff'}
             />
-          </View>
-
-          {/* Groups — backend column is `group_add` (who can add this user
-              to a group). */}
-          <PressableRow
-            style={[s.settingRow, { borderBottomColor: colors.borderLight }]}
-            onPress={() => setPrivacyPickerOpen('group_add')}
-            activeOpacity={0.7}
-          >
-            <View style={s.settingInfo}>
-              <Text style={[s.settingLabel, { color: colors.text }]}>{t('settings.privacyGroups')}</Text>
-              <Text style={[s.settingDesc, { color: colors.textTertiary }]}>
-                {chatPrivacy.group_add === 'everyone' ? t('settings.privacyEveryone')
-                  : chatPrivacy.group_add === 'contacts' ? t('settings.privacyContacts')
-                  : t('settings.privacyNobody')}
-              </Text>
-            </View>
-            <IconChevronRight size={20} color={colors.textTertiary} />
-          </PressableRow>
-
-          {/* Hide reactions in notifications — boolean Switch. When ON the
-              server skips push for chat_reaction events (the in-app badge
-              still increments). Closes #gap_notifications 2026-05-19. */}
-          <View style={[s.settingRow, { borderBottomColor: colors.borderLight }]}>
-            <View style={s.settingInfo}>
-              <Text style={[s.settingLabel, { color: colors.text }]}>{t('settings.privacyHideReactions')}</Text>
-              <Text style={[s.settingDesc, { color: colors.textTertiary }]}>
-                {t('settings.privacyHideReactionsDesc')}
-              </Text>
-            </View>
-            <NativeSwitch
-              value={!!chatPrivacy.hide_reactions_in_notifs}
-              onValueChange={(v) => {
-                // Keep local UI state in sync, and route the persisted value
-                // through chat_user_notif_prefs_set (the push-gate source).
-                setChatPrivacy(prev => ({ ...prev, hide_reactions_in_notifs: !!v }));
-                saveNotifPref({ hide_reactions_in_notifs: !!v });
-              }}
-              trackColor={{ false: colors.divider, true: colors.primaryLight }}
-              thumbColor={chatPrivacy.hide_reactions_in_notifs ? colors.primary : '#fff'}
-            />
-          </View>
-
-          {/* [mute-call-ringtone, 2026-05-19] Modo silencioso para ligações
-              — silences the call ringtone + vibration on incoming calls
-              (the UI modal still appears so the user can choose to answer).
-              Persists server-side on chat_user_defaults via chat_privacy_set
-              and mirrors to local storage so services/ringtone.js picks up
-              the change without a round-trip. */}
-          <View style={[s.settingRow, { borderBottomColor: colors.borderLight }]}>
-            <View style={s.settingInfo}>
-              <Text style={[s.settingLabel, { color: colors.text }]}>
-                Modo silencioso para ligações
-              </Text>
-              <Text style={[s.settingDesc, { color: colors.textTertiary }]}>
-                Silencia o toque e a vibração de chamadas recebidas. A tela continua aparecendo.
-              </Text>
-            </View>
-            <NativeSwitch
-              value={!!chatPrivacy.mute_call_ringtone}
-              onValueChange={(v) => saveChatPrivacy({ mute_call_ringtone: !!v })}
-              trackColor={{ false: colors.divider, true: colors.primaryLight }}
-              thumbColor={chatPrivacy.mute_call_ringtone ? colors.primary : '#fff'}
-            />
-          </View>
+          </SettingsGroup>
         </View>
         )}
 
-        {/* Legal — Privacy & Terms */}
-        {(searching || activeCategory === 'help') && sectionMatches(t('settings.legal'), t('settings.privacyPolicy'), t('settings.termsOfService')) && (
-        <View style={[s.section, { backgroundColor: gc.cardBg }]}>
-          <View style={s.sectionTitleRow}>
-            <IconFileText size={18} color={colors.primary} style={{ marginRight: 8 }} />
-            <Text style={[s.sectionTitle, { color: colors.text, marginBottom: 0 }]}>{t('settings.legal')}</Text>
-          </View>
-          <PressableRow
-            style={[s.settingRow, { borderBottomColor: colors.borderLight, marginTop: Spacing.md }]}
-            onPress={() => setShowPrivacy(true)}
-          >
-            <View style={s.settingInfo}>
-              <Text style={[s.settingLabel, { color: colors.text }]}>{t('settings.privacyPolicy')}</Text>
-            </View>
-            <IconChevronRight size={20} color={colors.textTertiary} />
-          </PressableRow>
-          <PressableRow
-            style={[s.settingRow, { borderBottomColor: colors.borderLight }]}
-            onPress={() => setShowTerms(true)}
-          >
-            <View style={s.settingInfo}>
-              <Text style={[s.settingLabel, { color: colors.text }]}>{t('settings.termsOfService')}</Text>
-            </View>
-            <IconChevronRight size={20} color={colors.textTertiary} />
-          </PressableRow>
+        {/* Segurança — bloqueio do app, acesso à conta, atividade, criptografia,
+            privacidade avançada, família. Web: só "Alterar senha" (o resto
+            depende de recursos nativos). */}
+        {(searching || activeCategory === 'privacy') && sectionMatches(t('settings.security'), 'biometric', 'face id', 'parental', 'família', 'family', 'segurança', 'senha', 'password', t('settings.changePassword'), '2fa', t('settings.twoFactor'), 'pin', 'backup', t('settings.e2eBackup'), t('settings.backupKey.rotate'), t('settings.activityLog'), 'byok', t('settings.advancedKey'), t('settings.loginAlerts.title') || 'Alertas de login', t('settings.advancedPrivacy') || 'Privacidade avançada') && (
+        <View ref={registerSectionRef('security')}>
+          {Platform.OS !== 'web' && biometricAvailable && (
+            <SettingsGroup header={t('settings.rd2.appLock') || 'Bloqueio do app'} footer={t('settings.biometricDesc')}>
+              <SettingsSwitchRow
+                title={t('settings.biometricLock')}
+                value={biometricEnabled}
+                onValueChange={toggleBiometric}
+              />
+              {biometricEnabled && (
+                <SettingsPickerRow
+                  title={t('settings.autoLockInterval') || 'Bloqueio automático'}
+                  value={String(autoLockInterval)}
+                  sheetMessage={t('settings.autoLockDesc') || 'Quanto tempo o app espera em segundo plano antes de pedir autenticação.'}
+                  cancelLabel={t('common.cancel') || 'Cancelar'}
+                  options={AUTO_LOCK_OPTIONS}
+                  displayValue={(AUTO_LOCK_OPTIONS.find(o => o.value === String(autoLockInterval)) || {}).label || `${autoLockInterval}s`}
+                  onChange={(v) => { setAutoLockInterval(v === 'never' ? 'never' : Number(v)); }}
+                />
+              )}
+            </SettingsGroup>
+          )}
+
+          <SettingsGroup header={t('settings.rd2.accountAccess') || 'Acesso à conta'}>
+            <SettingsRow
+              title={t('settings.changePassword') || 'Alterar senha'}
+              subtitle={t('settings.changePasswordDesc') || 'Atualize sua senha de acesso a qualquer momento'}
+              onPress={() => setChangePasswordOpen(true)}
+            />
+            {Platform.OS !== 'web' && (
+              <SettingsRow
+                title={t('settings.twoFactor') || 'Verificação em duas etapas'}
+                subtitle={t('settings.twoFactorDesc') || 'Adicione uma camada extra de segurança ao seu Chatyy'}
+                onPress={() => {
+                  setTwoFADigits(['', '', '', '']);
+                  setTwoFAError('');
+                  setTwoFASuccess(false);
+                  setTwoFAOpen(true);
+                  setTimeout(() => { try { twoFARefs.current[0]?.focus?.(); } catch {} }, 250);
+                }}
+              />
+            )}
+            {Platform.OS !== 'web' && (
+              <SettingsRow
+                title={t('settings.registrationLock') || 'PIN de segurança (anti-SIM-swap)'}
+                subtitle={t('settings.registrationLockDesc') || 'PIN extra no login por telefone — protege se trocarem seu chip.'}
+                onPress={() => {
+                  setRegLockDigits(['', '', '', '']);
+                  setRegLockError('');
+                  setRegLockSuccess(false);
+                  setRegLockOpen(true);
+                  setTimeout(() => { try { regLockRefs.current[0]?.focus?.(); } catch {} }, 250);
+                }}
+              />
+            )}
+            {Platform.OS !== 'web' && (
+              <SettingsRow
+                title={t('settings.changePhone') || 'Alterar número de telefone'}
+                subtitle={t('settings.changePhoneDesc') || 'Migre sua conta para um novo número mantendo seus chats e contatos.'}
+                onPress={() => safeNav('/change-phone')}
+              />
+            )}
+          </SettingsGroup>
+
+          {Platform.OS !== 'web' && (
+            <SettingsGroup header={t('settings.rd2.activity') || 'Atividade'}>
+              {/* Alertas de login — chat_user_defaults.login_alerts_enabled */}
+              <SettingsSwitchRow
+                title={t('settings.loginAlerts.title') || 'Alertas de login'}
+                subtitle={t('settings.loginAlerts.subtitle') || 'Receba notif quando novo dispositivo logar'}
+                value={loginAlertsEnabled}
+                onValueChange={(v) => {
+                  setLoginAlertsEnabled(v);
+                  try { api.chatUserDefaultsSet?.({ login_alerts_enabled: v }).catch(() => {}); } catch {}
+                }}
+              />
+              <SettingsRow
+                title={t('settings.loginAlerts.history') || 'Histórico de logins'}
+                onPress={openLoginHistory}
+              />
+              <SettingsRow
+                title={t('settings.activityLog') || 'Histórico de atividades'}
+                subtitle={t('settings.activityLogDesc') || 'Veja logins, mudanças de senha, novos dispositivos e outras ações de segurança.'}
+                onPress={() => safeNav('/activity-log')}
+              />
+            </SettingsGroup>
+          )}
+
+          {Platform.OS !== 'web' && (
+            <SettingsGroup header={t('settings.rd2.encryption') || 'Criptografia e backup'}>
+              <SettingsRow
+                title={t('settings.e2eBackup') || 'Backup com criptografia'}
+                subtitle={t('settings.e2eBackupDesc') || 'Salve suas chaves protegidas por uma frase secreta'}
+                onPress={() => setE2eBackupOpen(true)}
+              />
+              <SettingsRow
+                title={t('settings.backupKey.rotate') || 'Redefinir senha do backup'}
+                subtitle={t('settings.backupKey.subtitle') || 'Troque a frase secreta que protege seu backup criptografado. Backups antigos deixam de ser restauráveis.'}
+                subtitleLines={3}
+                onPress={() => { setBackupKeyPass(''); setBackupKeyPass2(''); setBackupKeyMsg(''); setBackupKeyOpen(true); }}
+              />
+              <SettingsRow
+                title={t('settings.advancedKey') || 'Chave avançada (BYOK)'}
+                subtitle={t('settings.advancedKeyDesc') || 'Gere uma chave mestre que só existe no seu aparelho. Frase de segurança mostrada uma única vez.'}
+                subtitleLines={3}
+                onPress={() => safeNav('/advanced-key')}
+              />
+            </SettingsGroup>
+          )}
+
+          {Platform.OS !== 'web' && (
+            <SettingsGroup footer={t('settings.advancedPrivacyDesc') || 'Proxy/Tor, bloqueio de captura de tela, descoberta por número, sugestão de VPN.'}>
+              <SettingsRow
+                title={t('settings.advancedPrivacy') || 'Privacidade avançada'}
+                onPress={() => safeNav('/advanced-privacy')}
+              />
+            </SettingsGroup>
+          )}
+
+          {Platform.OS !== 'web' && (
+            <SettingsGroup header={t('settings.rd2.family') || 'Família'}>
+              <SettingsRow
+                title={t('settings.rd2.family') || 'Família'}
+                subtitle={t('settings.rd2.familyDesc') || 'Compartilhe plano, álbum, calendário e mais com a família'}
+                onPress={() => router.push('/family')}
+              />
+              <SettingsRow
+                title={t('settings.rd2.parental') || 'Controle parental'}
+                subtitle={t('settings.rd2.parentalDesc') || 'Crie contas monitoradas para seus filhos'}
+                onPress={() => router.push('/parental')}
+              />
+            </SettingsGroup>
+          )}
         </View>
         )}
 
-        {/* Notifications — push delivery level. Surfaces oneNotifLevel state
-            (was set in code but no UI exposed it — GAP 11). Three radio rows:
-            all / urgent / silent. Persisted via setStorage (mirrors One
-            Assistant section pattern). */}
+        {/* Encaminhamento de email (privacy page, all platforms). */}
+        {(searching || activeCategory === 'privacy') && sectionMatches(t('settings.forwarding'), t('settings.forwardingEnable'), t('settings.forwardingDesc')) && (
+        <SettingsGroup header={t('settings.forwarding')} footer={t('settings.forwardingDesc')}>
+          <SettingsSwitchRow
+            title={t('settings.forwardingEnable')}
+            value={settings.forwarding_enabled}
+            onValueChange={(v) => setSettings(prev => ({ ...prev, forwarding_enabled: v }))}
+          />
+          {settings.forwarding_enabled && (
+            <View style={s.cardInputWrap}>
+              <TextInput
+                style={[s.cardInput, { color: colors.text, backgroundColor: gc.fill }]}
+                value={settings.forwarding_email}
+                onChangeText={(v) => setSettings(prev => ({ ...prev, forwarding_email: v }))}
+                placeholder={t('settings.forwardingPlaceholder')}
+                placeholderTextColor={gc.secondary}
+                keyboardType="email-address"
+                autoCapitalize="none"
+                autoCorrect={false}
+              />
+            </View>
+          )}
+        </SettingsGroup>
+        )}
+
+        {/* ── Notificações — [2026-10-08 settings-redesign2] nível de entrega
+            (lista com checkmark), conversas/chamadas (switches) e atalhos.
+            "Ocultar reações" e "Modo silencioso p/ ligações" vieram da página
+            de Privacidade (são preferências de notificação); mesmas chaves:
+            chat_user_notif_prefs_set / chat_privacy_set. ── */}
         {(searching || activeCategory === 'notifications') && sectionMatches(t('settings.notificationsTitle'), t('settings.notifAll'), t('settings.notifUrgent'), t('settings.notifSilent')) && (
-        <View style={[s.section, { backgroundColor: gc.cardBg }]}>
-          <View style={s.sectionTitleRow}>
-            <IconBell size={18} color={colors.primary} style={{ marginRight: 8 }} />
-            <Text style={[s.sectionTitle, { color: colors.text, marginBottom: 0 }]}>{t('settings.notificationsTitle')}</Text>
-          </View>
+        <SettingsGroup header={t('settings.notificationsTitle')} footer={t('settings.rd2.pushFooter') || 'Vale para todas as notificações push do app.'}>
           {[
             { val: 'all', label: t('settings.notifAll'), sub: t('settings.notifAllSub') },
             { val: 'urgent', label: t('settings.notifUrgent'), sub: t('settings.notifUrgentSub') },
             { val: 'silent', label: t('settings.notifSilent'), sub: t('settings.notifSilentSub') },
-          ].map((opt, idx, arr) => {
-            const selected = pushNotifLevel === opt.val;
-            const isLast = idx === arr.length - 1;
-            return (
-              <TouchableOpacity
-                key={opt.val}
-                onPress={() => {
-                  setPushNotifLevel(opt.val);
-                  setStorage('push_notif_level', opt.val);
-                  saveNotifPref({ push_notif_level: opt.val });
-                }}
-                style={[
-                  s.settingRow,
-                  { borderBottomColor: colors.borderLight, borderBottomWidth: isLast ? 0 : StyleSheet.hairlineWidth },
-                ]}
-                accessibilityRole="radio"
-                accessibilityState={{ selected }}
-                accessibilityLabel={opt.label}
-              >
-                <IconBell size={20} color={selected ? colors.primary : colors.textSecondary} style={{ marginRight: 12 }} />
-                <View style={s.settingInfo}>
-                  <Text style={[s.settingLabel, { color: colors.text }]}>{opt.label}</Text>
-                  <Text style={[s.settingDesc, { color: colors.textTertiary }]}>{opt.sub}</Text>
-                </View>
-                {selected && <IconCheck size={20} color={colors.primary} />}
-              </TouchableOpacity>
-            );
-          })}
-        </View>
+          ].map(opt => (
+            <SettingsRow
+              key={opt.val}
+              title={opt.label}
+              subtitle={opt.sub}
+              checked={pushNotifLevel === opt.val}
+              accessibilityRole="radio"
+              onPress={() => {
+                setPushNotifLevel(opt.val);
+                setStorage('push_notif_level', opt.val);
+                saveNotifPref({ push_notif_level: opt.val });
+              }}
+            />
+          ))}
+        </SettingsGroup>
+        )}
+        {(searching || activeCategory === 'notifications') && sectionMatches(t('settings.privacyHideReactions'), t('settings.rd2.muteCalls') || 'Modo silencioso para ligações', t('settings.rd2.chatsAndCalls') || 'Conversas e chamadas') && (
+        <SettingsGroup header={t('settings.rd2.chatsAndCalls') || 'Conversas e chamadas'}>
+          <SettingsSwitchRow
+            title={t('settings.privacyHideReactions')}
+            subtitle={t('settings.privacyHideReactionsDesc')}
+            value={!!chatPrivacy.hide_reactions_in_notifs}
+            onValueChange={(v) => {
+              // Local UI state + persisted via chat_user_notif_prefs_set (push gate).
+              setChatPrivacy(prev => ({ ...prev, hide_reactions_in_notifs: !!v }));
+              saveNotifPref({ hide_reactions_in_notifs: !!v });
+            }}
+          />
+          {/* [mute-call-ringtone, 2026-05-19] chat_privacy_set + local mirror (services/ringtone.js). */}
+          <SettingsSwitchRow
+            title={t('settings.rd2.muteCalls') || 'Modo silencioso para ligações'}
+            subtitle={t('settings.rd2.muteCallsDesc') || 'Silencia o toque e a vibração de chamadas recebidas. A tela continua aparecendo.'}
+            value={!!chatPrivacy.mute_call_ringtone}
+            onValueChange={(v) => saveChatPrivacy({ mute_call_ringtone: !!v })}
+          />
+        </SettingsGroup>
+        )}
+        {(searching || activeCategory === 'notifications') && sectionMatches(t('settings.rd.advancedNotifs') || 'Notificações avançadas', t('settings.rd.emailNotifs') || 'Notificações de email') && (
+        <SettingsGroup header={t('settings.rd2.more') || 'Mais'}>
+          <SettingsRow
+            title={t('settings.rd.advancedNotifs') || 'Notificações avançadas'}
+            subtitle={t('settings.rd.advancedNotifsDesc') || 'Só menções, palavras-chave, soneca…'}
+            onPress={() => router.push('/notification-preferences')}
+          />
+          <SettingsRow
+            title={t('settings.rd.emailNotifs') || 'Notificações de email'}
+            onPress={() => openCategory('email')}
+          />
+        </SettingsGroup>
         )}
 
         {/* ── GROUP: Armazenamento e dados (native only — web has no cellular
@@ -3360,137 +2845,94 @@ function SettingsScreenInner() {
         )}
         {/* ── END GROUP: Armazenamento e dados ── */}
 
-        {/* Mensagens temporárias por padrão — WhatsApp Settings → Privacy →
-            Default Disappearing Messages. Applied at chat_create time only
-            (existing convs unaffected). 4 options: Off / 24h / 7d / 90d. */}
+        {/* Mensagens temporárias por padrão — applied at chat_create time
+            only (existing convs unaffected). [2026-10-08 settings-redesign2]
+            picker row (sheet c/ checkmark) em vez de 4 linhas de rádio. */}
         {(searching || activeCategory === 'chat') && sectionMatches(t('settings.defaultDisappearing'), t('settings.disappearingOff'), t('settings.disappearing24h'), t('settings.disappearing7d'), t('settings.disappearing90d'), 'privacy', 'disappearing') && (
-        <View ref={registerSectionRef('defaultDisappearing')} style={[s.section, { backgroundColor: gc.cardBg }]}>
-          <View style={s.sectionTitleRow}>
-            <IconShield size={18} color={colors.primary} style={{ marginRight: 8 }} />
-            <Text style={[s.sectionTitle, { color: colors.text, marginBottom: 0 }]}>{t('settings.defaultDisappearing')}</Text>
-          </View>
-          <Text style={[s.settingDesc, { color: colors.textTertiary, marginTop: Spacing.xs, marginBottom: Spacing.sm }]}>
-            {t('settings.defaultDisappearingDesc')}
-          </Text>
-          {[
-            { val: 0,       label: t('settings.disappearingOff') },
-            { val: 86400,   label: t('settings.disappearing24h') },
-            { val: 604800,  label: t('settings.disappearing7d') },
-            { val: 7776000, label: t('settings.disappearing90d') },
-          ].map((opt, idx, arr) => {
-            const selected = Number(chatDefaults.default_disappearing) === opt.val;
-            const isLast = idx === arr.length - 1;
-            return (
-              <TouchableOpacity
-                key={opt.val}
-                onPress={() => updateChatDefault({ default_disappearing: opt.val })}
-                style={[
-                  s.settingRow,
-                  { borderBottomColor: colors.borderLight, borderBottomWidth: isLast ? 0 : StyleSheet.hairlineWidth },
-                ]}
-                accessibilityRole="radio"
-                accessibilityState={{ selected }}
-                accessibilityLabel={opt.label}
-              >
-                <View style={s.settingInfo}>
-                  <Text style={[s.settingLabel, { color: colors.text }]}>{opt.label}</Text>
-                </View>
-                {selected && <IconCheck size={20} color={colors.primary} />}
-              </TouchableOpacity>
-            );
-          })}
+        <View ref={registerSectionRef('defaultDisappearing')}>
+          <SettingsGroup header={t('settings.defaultDisappearing')} footer={t('settings.defaultDisappearingDesc')}>
+            <SettingsPickerRow
+              title={t('settings.rd2.defaultTimer') || 'Temporizador padrão'}
+              value={Number(chatDefaults.default_disappearing) || 0}
+              cancelLabel={t('common.cancel') || 'Cancelar'}
+              options={[
+                { value: 0,       label: t('settings.disappearingOff') },
+                { value: 86400,   label: t('settings.disappearing24h') },
+                { value: 604800,  label: t('settings.disappearing7d') },
+                { value: 7776000, label: t('settings.disappearing90d') },
+              ]}
+              onChange={(v) => updateChatDefault({ default_disappearing: v })}
+            />
+          </SettingsGroup>
         </View>
         )}
 
-        {/* Palavras silenciadas — feed muted words. Filters feed posts whose
-            caption contains any of the listed words. Matched server-side in
-            feed_list via LOWER(caption) NOT LIKE '%word%'. Soft-fails on
-            backend down: an empty list shows the empty hint. */}
+        {/* Palavras silenciadas — feed muted words (feed_muted_words_*).
+            Campo + botão dentro do card; cada palavra é uma linha com lixeira. */}
         {(searching || activeCategory === 'chat') && sectionMatches(t('settings.mutedWords') || 'Palavras silenciadas', 'muted words', 'palavras silenciadas', 'mute', 'silenciar', 'privacy') && (
-        <View ref={registerSectionRef('mutedWords')} style={[s.section, { backgroundColor: gc.cardBg }]}>
-          <View style={s.sectionTitleRow}>
-            <IconShield size={18} color={colors.primary} style={{ marginRight: 8 }} />
-            <Text style={[s.sectionTitle, { color: colors.text, marginBottom: 0 }]}>{t('settings.mutedWords') || 'Palavras silenciadas'}</Text>
-          </View>
-          <Text style={[s.settingDesc, { color: colors.textTertiary, marginTop: Spacing.xs, marginBottom: Spacing.sm }]}>
-            {t('settings.mutedWordsDesc') || 'Posts cujo texto contenha qualquer dessas palavras não aparecem no seu feed.'}
-          </Text>
-          <View style={{ flexDirection: 'row', gap: 8, marginBottom: Spacing.sm }}>
-            <TextInput
-              value={mutedWordsInput}
-              onChangeText={setMutedWordsInput}
-              placeholder={t('settings.mutedWordsAdd') || 'Adicionar palavra…'}
-              placeholderTextColor={colors.textTertiary}
-              onSubmitEditing={handleAddMutedWord}
-              returnKeyType="done"
-              autoCorrect={false}
-              autoCapitalize="none"
-              style={{
-                flex: 1,
-                paddingHorizontal: 12,
-                paddingVertical: 10,
-                borderWidth: StyleSheet.hairlineWidth,
-                borderColor: colors.divider,
-                borderRadius: 10,
-                color: colors.text,
-                fontSize: 15,
-                ...Platform.select({ web: { outlineStyle: 'none' }, default: {} }),
-              }}
-              accessibilityLabel={t('settings.mutedWordsAdd') || 'Adicionar palavra'}
-            />
-            <TouchableOpacity
-              onPress={handleAddMutedWord}
-              disabled={mutedWordsLoading || !mutedWordsInput.trim()}
-              style={{
-                paddingHorizontal: 16,
-                justifyContent: 'center',
-                borderRadius: 10,
-                backgroundColor: mutedWordsLoading || !mutedWordsInput.trim() ? colors.divider : colors.primary,
-              }}
-              accessibilityRole="button"
-              accessibilityLabel={t('common.add') || 'Adicionar'}
-            >
-              <Text style={{ color: colors.onPrimary || '#fff', fontWeight: '700', fontSize: 14 }}>
-                {t('common.add') || 'Adicionar'}
-              </Text>
-            </TouchableOpacity>
-          </View>
-          {mutedWords.length === 0 ? (
-            <Text style={[s.settingDesc, { color: colors.textTertiary }]}>
-              {t('settings.mutedWordsEmpty') || 'Nenhuma palavra silenciada ainda.'}
-            </Text>
-          ) : (
-            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
-              {mutedWords.map(w => (
-                <View
-                  key={w}
-                  style={{
-                    flexDirection: 'row',
-                    alignItems: 'center',
-                    paddingLeft: 12,
-                    paddingRight: 6,
-                    paddingVertical: 6,
-                    backgroundColor: colors.surface,
-                    borderWidth: StyleSheet.hairlineWidth,
-                    borderColor: colors.divider,
-                    borderRadius: 999,
-                    gap: 4,
-                  }}
-                >
-                  <Text style={{ color: colors.text, fontSize: 13 }}>{w}</Text>
+        <View ref={registerSectionRef('mutedWords')}>
+          <SettingsGroup header={t('settings.mutedWords') || 'Palavras silenciadas'} footer={t('settings.mutedWordsDesc') || 'Posts cujo texto contenha qualquer dessas palavras não aparecem no seu feed.'}>
+            <View style={[s.cardInputWrap, { flexDirection: 'row', alignItems: 'center', gap: 8 }]}>
+              <TextInput
+                value={mutedWordsInput}
+                onChangeText={setMutedWordsInput}
+                placeholder={t('settings.mutedWordsAdd') || 'Adicionar palavra…'}
+                placeholderTextColor={gc.secondary}
+                onSubmitEditing={handleAddMutedWord}
+                returnKeyType="done"
+                autoCorrect={false}
+                autoCapitalize="none"
+                style={[s.cardInput, { flex: 1, color: colors.text, backgroundColor: gc.fill }]}
+                accessibilityLabel={t('settings.mutedWordsAdd') || 'Adicionar palavra'}
+              />
+              <TouchableOpacity
+                onPress={handleAddMutedWord}
+                disabled={mutedWordsLoading || !mutedWordsInput.trim()}
+                style={[s.inkBtn, { backgroundColor: gc.ink, opacity: mutedWordsLoading || !mutedWordsInput.trim() ? 0.35 : 1 }]}
+                accessibilityRole="button"
+                accessibilityLabel={t('common.add') || 'Adicionar'}
+              >
+                <Text style={[s.inkBtnText, { color: gc.onInk }]}>{t('common.add') || 'Adicionar'}</Text>
+              </TouchableOpacity>
+            </View>
+            {mutedWords.length === 0 ? (
+              <SettingsRow title={t('settings.mutedWordsEmpty') || 'Nenhuma palavra silenciada ainda.'} titleStyle={{ color: gc.secondary, fontSize: 15 }} />
+            ) : mutedWords.map(w => (
+              <SettingsRow
+                key={w}
+                title={w}
+                right={(
                   <TouchableOpacity
                     onPress={() => handleRemoveMutedWord(w)}
-                    hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                     accessibilityRole="button"
                     accessibilityLabel={(t('settings.mutedWordsRemove') || 'Remover {w}').replace('{w}', w)}
                   >
-                    <IconTrash size={14} color={colors.textSecondary} />
+                    <IconTrash size={18} color={gc.destructive} />
                   </TouchableOpacity>
-                </View>
-              ))}
-            </View>
-          )}
+                )}
+              />
+            ))}
+          </SettingsGroup>
         </View>
+        )}
+
+        {/* Dados e recursos (chat page, bottom) — data_saver / beta_features. */}
+        {(searching || activeCategory === 'chat') && sectionMatches(t('settings.dataSaver.title') || 'Modo economia', t('settings.beta.title') || 'Recursos beta') && (
+        <SettingsGroup header={t('settings.rd2.dataLabs') || 'Dados e recursos'}>
+          <SettingsSwitchRow
+            title={t('settings.dataSaver.title') || 'Modo economia de dados'}
+            subtitle={t('settings.dataSaver.subtitle') || 'Comprime mídia e reduz pré-carregamento de vídeos.'}
+            value={dataSaver}
+            onValueChange={(v) => { setDataSaver(v); setStorage('data_saver', String(v)); }}
+          />
+          <SettingsSwitchRow
+            title={t('settings.beta.title') || 'Recursos beta'}
+            subtitle={t('settings.beta.subtitle') || 'Ative pra testar funcionalidades em desenvolvimento. Podem ter bugs.'}
+            value={betaFeatures}
+            onValueChange={(v) => { setBetaFeatures(v); setStorage('beta_features', String(v)); }}
+          />
+        </SettingsGroup>
         )}
 
         {/* Convidar amigos — [2026-10-08 settings-redesign] grouped list
@@ -3787,146 +3229,30 @@ function SettingsScreenInner() {
         </Pressable>
       </Modal>
 
-      {/* Auto-lock interval picker. Each row tags the active choice so the
-          user sees what's currently in effect; tapping a row persists the
-          new value and closes the sheet. */}
-      <Modal
-        visible={autoLockOpen}
-        transparent
-        animationType="slide"
-        onRequestClose={() => setAutoLockOpen(false)}
-      >
-        <Pressable
-          style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' }}
-          onPress={() => setAutoLockOpen(false)}
-        >
-          <Pressable
-            onPress={(e) => e.stopPropagation()}
-            style={{
-              backgroundColor: colors.surface,
-              borderTopLeftRadius: 20, borderTopRightRadius: 20,
-              paddingHorizontal: 20, paddingTop: 18, paddingBottom: 28 + insets.bottom,
-            }}
-          >
-            <Text style={{ color: colors.text, fontWeight: '700', fontSize: 17, marginBottom: 6 }}>
-              {t('settings.autoLockInterval') || 'Bloqueio automático'}
-            </Text>
-            <Text style={{ color: colors.textTertiary, fontSize: 13, marginBottom: 18 }}>
-              {t('settings.autoLockDesc') || 'Quanto tempo o app espera em segundo plano antes de pedir autenticação.'}
-            </Text>
-            {[
-              { value: 0,       label: t('biometric.lockImmediate') || 'Imediatamente' },
-              { value: 60,      label: t('biometric.lock1Min')      || 'Apos 1 minuto' },
-              { value: 300,     label: t('biometric.lock5Min')      || 'Apos 5 minutos' },
-              { value: 900,     label: t('biometric.lock15Min')     || 'Apos 15 minutos' },
-              { value: 'never', label: t('biometric.lockNever')     || 'Nunca' },
-            ].map((opt) => {
-              const active = String(autoLockInterval) === String(opt.value);
-              return (
-                <TouchableOpacity
-                  key={String(opt.value)}
-                  onPress={async () => { await setAutoLockInterval(opt.value); setAutoLockOpen(false); }}
-                  style={{
-                    paddingVertical: 14,
-                    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-                    borderBottomWidth: 0.5, borderBottomColor: colors.borderLight,
-                  }}
-                  activeOpacity={0.6}
-                >
-                  <Text style={{ color: colors.text, fontSize: 15 }}>{opt.label}</Text>
-                  {active && <IconCheck size={18} color={colors.primary} />}
-                </TouchableOpacity>
-              );
-            })}
-          </Pressable>
-        </Pressable>
-      </Modal>
-
-      {/* Privacy picker bottom-sheet — single Modal reused for all 4
-          dropdown rows (last_seen / profile_photo / story_privacy /
-          group_add). `privacyPickerOpen` carries the field key; closing
-          via tap-outside or selection sets it back to null. Selected
-          value is fire-and-forget saved via saveChatPrivacy(). */}
-      <Modal
-        visible={!!privacyPickerOpen}
-        transparent
-        animationType="slide"
-        onRequestClose={() => setPrivacyPickerOpen(null)}
-      >
-        <Pressable
-          style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' }}
-          onPress={() => setPrivacyPickerOpen(null)}
-        >
-          <Pressable
-            onPress={(e) => e.stopPropagation()}
-            style={{
-              backgroundColor: colors.surface,
-              borderTopLeftRadius: 20, borderTopRightRadius: 20,
-              paddingHorizontal: 20, paddingTop: 18, paddingBottom: 28 + insets.bottom,
-            }}
-          >
-            <Text style={{ color: colors.text, fontWeight: '700', fontSize: 17, marginBottom: 12 }}>
-              {privacyPickerOpen === 'last_seen'     ? t('settings.privacyLastSeen')
-               : privacyPickerOpen === 'profile_photo' ? t('settings.privacyProfilePhoto')
-               : privacyPickerOpen === 'online'        ? t('settings.privacyOnline')
-               : privacyPickerOpen === 'story_privacy' ? t('settings.privacyStatus')
-               : privacyPickerOpen === 'group_add'     ? t('settings.privacyGroups')
-               : ''}
-            </Text>
-            {(
-              // Per-field option sets. `online` swaps the third option to
-              // "invisible" (writes 'nobody'). `story_privacy` adds close
-              // friends + the "hide from…" (except) options. Everything else
-              // uses the classic everyone/contacts/nobody trio.
-              privacyPickerOpen === 'online' ? [
-                { value: 'everyone', label: t('settings.privacyEveryone') },
-                { value: 'contacts', label: t('settings.privacyContacts') },
-                { value: 'nobody',   label: t('settings.privacyInvisible') },
-              ] : privacyPickerOpen === 'story_privacy' ? [
-                { value: 'all',           label: t('settings.privacyEveryone') },
-                { value: 'contacts',      label: t('settings.privacyContacts') },
-                { value: 'close_friends', label: t('settings.privacyCloseFriends') },
-                { value: 'except',        label: t('settings.privacyStatusExcept') },
-              ] : [
-                { value: 'everyone', label: t('settings.privacyEveryone') },
-                { value: 'contacts', label: t('settings.privacyContacts') },
-                { value: 'nobody',   label: t('settings.privacyNobody') },
-              ]
-            ).map((opt) => {
-              // story_privacy 'all' and legacy 'everyone' are equivalent —
-              // treat both as the same selected state for the checkmark.
-              const currentVal = privacyPickerOpen ? chatPrivacy[privacyPickerOpen] : '';
-              const active = currentVal === opt.value
-                || (privacyPickerOpen === 'story_privacy' && opt.value === 'all' && currentVal === 'everyone');
-              return (
-                <TouchableOpacity
-                  key={opt.value}
-                  onPress={() => {
-                    if (privacyPickerOpen) saveChatPrivacy({ [privacyPickerOpen]: opt.value });
-                    // 'close_friends' / 'except' need a follow-up list to be
-                    // meaningful — route the user straight to the manager.
-                    if (privacyPickerOpen === 'story_privacy' && opt.value === 'close_friends') {
-                      try { router.push('/close-friends'); } catch {}
-                    } else if (privacyPickerOpen === 'story_privacy' && opt.value === 'except') {
-                      try { router.push('/status-except'); } catch {}
-                    }
-                    setPrivacyPickerOpen(null);
-                  }}
-                  style={{
-                    paddingVertical: 14,
-                    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-                    borderBottomWidth: 0.5, borderBottomColor: colors.borderLight,
-                  }}
-                  activeOpacity={0.6}
-                >
-                  <Text style={{ color: colors.text, fontSize: 15 }}>{opt.label}</Text>
-                  {active && <IconCheck size={18} color={colors.primary} />}
-                </TouchableOpacity>
-              );
-            })}
-          </Pressable>
-        </Pressable>
-      </Modal>
+      {/* Privacy picker — [2026-10-08 settings-redesign2] OptionSheet (lista
+          com checkmark) reutilizado pelos 5 campos de visibilidade. Mesmo
+          comportamento: salva via saveChatPrivacy e, p/ status
+          'close_friends'/'except', abre a tela da lista. (O sheet antigo de
+          "Bloqueio automático" virou SettingsPickerRow na página.) */}
+      {!!privacyPickerOpen && (
+        <OptionSheet
+          visible={!!privacyPickerOpen}
+          title={privacyFieldTitle(privacyPickerOpen)}
+          options={privacyOptionsFor(privacyPickerOpen)}
+          value={privacyPickerOpen === 'story_privacy' && chatPrivacy.story_privacy === 'everyone' ? 'all' : chatPrivacy[privacyPickerOpen]}
+          cancelLabel={t('common.cancel') || 'Cancelar'}
+          onSelect={(v) => {
+            const field = privacyPickerOpen;
+            if (field) saveChatPrivacy({ [field]: v });
+            if (field === 'story_privacy' && v === 'close_friends') {
+              try { router.push('/close-friends'); } catch {}
+            } else if (field === 'story_privacy' && v === 'except') {
+              try { router.push('/status-except'); } catch {}
+            }
+          }}
+          onClose={() => setPrivacyPickerOpen(null)}
+        />
+      )}
 
       {/* E2E backup escrow modal — passphrase entry + upload trigger. The
           user types the passphrase twice; on submit we derive an
@@ -4903,6 +4229,9 @@ const s = StyleSheet.create({
   accountHeader: { alignItems: 'center', paddingTop: 22, paddingBottom: 18, paddingHorizontal: 16 },
   accountHeaderName: { fontSize: 22, fontWeight: '600', letterSpacing: -0.3, marginTop: 12 },
   accountHeaderEmail: { fontSize: 15, marginTop: 3 },
+  biaHeroDesc: { fontSize: 14, lineHeight: 19, marginTop: 6, textAlign: 'center', maxWidth: 320 },
+  inkBtn: { minHeight: 44, paddingHorizontal: 16, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
+  inkBtnText: { fontSize: 15, fontWeight: '600' },
   referralCode: { fontSize: 16, fontWeight: '600', letterSpacing: 1.5, fontVariant: ['tabular-nums'] },
   // AI Features
   aiFeatures: { marginTop: Spacing.md, gap: 2 },

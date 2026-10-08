@@ -17,10 +17,12 @@
 import React, { useState } from 'react';
 import { View, Text, Modal, Pressable, ScrollView, StyleSheet, Platform } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { Stack, useRouter } from 'expo-router';
 import { useTheme } from '../../context/ThemeContext';
 import PressableRow from '../PressableRow';
 import NativeSwitch from '../NativeSwitch';
-import { IconChevronRight, IconCheck } from '../Icons';
+import { IconChevronRight, IconCheck, IconArrowLeft } from '../Icons';
+import { USE_NATIVE_HEADER, nativeHeaderOptions } from '../nativeHeader';
 
 // Palette for grouped lists. Light = iOS systemGroupedBackground; dark keeps
 // the app's true-black page [2026-10-08 dark-black] and lifts the cards one step so groups read as groups.
@@ -229,12 +231,77 @@ export function SettingsPickerRow({ title, subtitle, options = [], value, onChan
   );
 }
 
+// [2026-10-08 settings-redesign2] Moldura de uma sub-tela de Ajustes pushada
+// (ex. /notification-preferences, /advanced-privacy, /bia-settings): header
+// NATIVO (UINavigationBar de vidro no iOS / Toolbar no Android) com um único
+// título, fundo agrupado e ScrollView com contentInsetAdjustmentBehavior
+// "automatic" no iOS — o UIKit calcula o inset do header translúcido (nada
+// fica cortado por baixo dele) e o do teclado (automaticallyAdjustKeyboardInsets).
+// Web: header simples (voltar + título) acima do scroll.
+const IOS_NATIVE = USE_NATIVE_HEADER && Platform.OS === 'ios';
+export function SettingsScreen({ title, children, headerRight, onBack, contentStyle, overlay, testID }) {
+  const g = useGroupedColors();
+  const { colors = {}, isDark } = useTheme() || {};
+  const insets = useSafeAreaInsets();
+  const router = useRouter();
+  const goBack = onBack || (() => {
+    try { if (router.canGoBack?.()) { router.back(); return; } } catch {}
+    try { router.replace('/settings'); } catch {}
+  });
+  return (
+    <View style={{ flex: 1, backgroundColor: g.pageBg }} testID={testID}>
+      {USE_NATIVE_HEADER ? (
+        <Stack.Screen options={nativeHeaderOptions({
+          colors,
+          isDark,
+          title,
+          blur: true,
+          contentStyle: { backgroundColor: g.pageBg },
+          ...(headerRight ? { headerRight } : {}),
+        })} />
+      ) : (
+        <View style={[st.webHeader, { paddingTop: insets.top, backgroundColor: g.pageBg }]}>
+          <Pressable onPress={goBack} style={st.webBack} accessibilityRole="button" accessibilityLabel="Voltar" hitSlop={8}>
+            <IconArrowLeft size={24} color={g.text} />
+          </Pressable>
+          <Text style={[st.webTitle, { color: g.text }]} numberOfLines={1} accessibilityRole="header">{title}</Text>
+          <View style={st.webBack}>{headerRight ? headerRight() : null}</View>
+        </View>
+      )}
+      <ScrollView
+        contentInsetAdjustmentBehavior={IOS_NATIVE ? 'automatic' : undefined}
+        automaticallyAdjustKeyboardInsets={IOS_NATIVE}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
+        contentContainerStyle={[st.screenContent, { paddingBottom: IOS_NATIVE ? 32 : 32 + insets.bottom }, contentStyle]}
+      >
+        {children}
+      </ScrollView>
+      {overlay || null}
+    </View>
+  );
+}
+
+// Text input that lives inside a grouped card (full-width, filled).
+export function useSettingsInputStyle() {
+  const g = useGroupedColors();
+  return [st.cardInput, { color: g.text, backgroundColor: g.fill }];
+}
+
 // Content padded inside a card (segmented control, text inputs, etc.).
 export function SettingsCardContent({ children, style }) {
   return <View style={[{ paddingHorizontal: 16, paddingVertical: 12 }, style]}>{children}</View>;
 }
 
 const st = StyleSheet.create({
+  webHeader: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 8, minHeight: 52 },
+  webBack: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center', ...Platform.select({ web: { cursor: 'pointer' }, default: {} }) },
+  webTitle: { flex: 1, textAlign: 'center', fontSize: 17, fontWeight: '600' },
+  screenContent: { paddingHorizontal: 16, paddingTop: 16, width: '100%', maxWidth: 720, alignSelf: 'center' },
+  cardInput: {
+    borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, fontSize: 15, minHeight: 44,
+    ...Platform.select({ web: { outlineStyle: 'none' }, default: {} }),
+  },
   header: { fontSize: 13, fontWeight: '500', letterSpacing: 0.2, paddingHorizontal: 16, marginBottom: 7 },
   footer: { fontSize: 13, lineHeight: 18, paddingHorizontal: 16, marginTop: 7 },
   card: { borderRadius: 12, overflow: 'hidden' },
