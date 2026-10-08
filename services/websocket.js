@@ -2194,7 +2194,23 @@ class MailWebSocket {
       // Message delivery acknowledgment from server
       case 'message_ack': {
         // Resolve pending outgoing message by msg_id or temp_id
-        const resolveId = msg.msg_id || msg.temp_id || '';
+        let resolveId = msg.msg_id || msg.temp_id || '';
+        // [2026-10-08 chat-ab-test] O pendente é indexado pelo msg_id (c_…) mas o
+        // hub antigo só ecoava temp_id/message_id → nenhum relay era confirmado
+        // e cada um era re-enviado 3x (a cada 3s), inclusive com o conteúdo
+        // ORIGINAL depois de editar/apagar. Fallback: casa pelo par
+        // (temp_id, message.id) do frame enviado.
+        if (resolveId && !this._pendingOutgoing.has(resolveId) && !msg.msg_id) {
+          for (const [k, e] of this._pendingOutgoing) {
+            const d = e && e.data;
+            if (!d || d.type !== 'chat_message_relay') continue;
+            if (String(d.temp_id || '') !== String(msg.temp_id || '')) continue;
+            const mid = d.message && d.message.id;
+            if (msg.message_id != null && mid != null && String(mid) !== String(msg.message_id)) continue;
+            resolveId = k;
+            break;
+          }
+        }
         if (resolveId && this._pendingOutgoing.has(resolveId)) {
           const entry = this._pendingOutgoing.get(resolveId);
           clearTimeout(entry.timer);

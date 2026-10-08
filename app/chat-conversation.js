@@ -9239,6 +9239,9 @@ function ChatConversationInner() {
   // exact phrase to quote. Confirm → setReplyTo with `quoteText` populated.
   const [quoteSelectModal, setQuoteSelectModal] = useState(null); // { msg, draft }
   const [editingMsg, setEditingMsg] = useState(null);
+  // [2026-10-08 chat-ab-test] espelho p/ o autosave de rascunho (closure longa).
+  const editingMsgRef = useRef(null);
+  editingMsgRef.current = editingMsg;
   const [selectedMsg, setSelectedMsg] = useState(null);
 
   // Web-only floating "Citar" pill — when the user drags-selects a span of
@@ -9466,6 +9469,11 @@ function ChatConversationInner() {
         // otherwise sync to other devices and resurface as a fake draft.
         const aiThinking = (t?.('chatConv.aiThinking') || 'Pensando...').trim();
         if (trimmed === aiThinking) return;
+        // [2026-10-08 chat-ab-test] Em modo "Editando" o composer contém o texto
+        // da msg JÁ ENVIADA — não é rascunho. Antes ele ia p/ chat_draft_set e,
+        // após um reload/saída, voltava no composer SEM o contexto de edição →
+        // tocar Enviar criava uma msg NOVA duplicada.
+        if (editingMsgRef.current) return;
         if (trimmed !== draftSavedRef.current) {
           if (trimmed) {
             await AsyncStorage.setItem(userScopedKey(`chat_draft_${conversationId}`), trimmed);
@@ -13534,7 +13542,21 @@ function ChatConversationInner() {
           // restored pending stays "pending" forever.
           if ((tempId && m.id === tempId) || (cid && m._client_id === cid)) {
             if (typeof m.id === 'string' && m.id.startsWith('tmp_')) matchedTempId = m.id;
-            return { ...m, _pending: false, _failed: false, _queued: false, _delivered: data.delivered_to || 0 };
+            // [2026-10-08 chat-ab-test] O ack do RELAY do hub (message_id ainda
+            // tmp_…, sem client_message_id) só prova que o hub repassou o eco —
+            // NÃO que o PG gravou. Antes ele tirava o relógio (✓ em ~60ms) e
+            // ainda marcava ✓✓ com delivered_to = sockets do PRÓPRIO usuário
+            // (web+celular) → ✓/✓✓ falsos. WhatsApp: ✓ = servidor gravou,
+            // ✓✓ = aparelho do outro recebeu. Agora: ack de relay só guarda
+            // "entregue ao par" (hub novo conta só sockets do par); o ✓ vem da
+            // resposta do chat_send (troca tmp→id do servidor) ou de um ack de
+            // persistência (com client_message_id / id numérico).
+            const _peerDelivered = Number(data.delivered_to) > 0;
+            const _isRelayAck = !cid && (data.message_id == null || String(data.message_id).startsWith('tmp_'));
+            if (_isRelayAck && m._pending) {
+              return _peerDelivered ? { ...m, _delivered: true } : m;
+            }
+            return { ...m, _pending: false, _failed: false, _queued: false, _delivered: _peerDelivered || !!m._delivered };
           }
           return m;
         }));
@@ -15073,6 +15095,9 @@ function ChatConversationInner() {
           t('chatConv.editExpiredMsg') || 'Só é possível editar mensagens nos primeiros 15 minutos',
           [{ text: t('common.ok') || 'OK', onPress: () => { setEditingMsg(null); setInputText(text); } }]
         );
+        // [2026-10-08 chat-ab-test] libera a trava síncrona (senão TODO envio
+        // seguinte nesta conversa era ignorado em silêncio).
+        sendingRef.current = false;
         return;
       }
 
@@ -15157,6 +15182,11 @@ function ChatConversationInner() {
         safeAlert(t('common.error') || 'Error', t('chatConv.editFailed') || 'Failed to edit message');
       } finally {
         setSending(false);
+        // [2026-10-08 chat-ab-test] P0: o ramo de edição setava a trava síncrona
+        // sendingRef no topo do handleSend e NUNCA a soltava → depois de editar
+        // uma msg, todo envio seguinte na conversa era engolido (sem chat_send,
+        // texto preso no composer) até sair da tela.
+        sendingRef.current = false;
       }
       return;
     }
@@ -18562,7 +18592,10 @@ function ChatConversationInner() {
   // MESSAGE ACTIONS
   // ============================================================
 
-  const handleDelete = async (msgId) => {
+  const handleDelete = async (msgId, opts) => {
+    // [2026-10-08 chat-ab-test] opts.forAll = veio da linha explícita
+    // "Apagar para todos" do menu (web: confirma SÓ isso; Cancelar = nada).
+    const _wantForAll = !!(opts && opts.forAll);
     try { if (Platform.OS !== 'web') Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning); } catch {}
     // String-compare so tmp_xxx strings and numeric server IDs both match.
     const msg = messages.find(m => String(m.id) === String(msgId));
@@ -18760,10 +18793,14 @@ function ChatConversationInner() {
       } catch {}
     };
     if (Platform.OS === 'web') {
-      if (canDeleteForAll) {
-        const choice = window.confirm(t('chatConv.deleteForEveryone') || 'Delete for everyone? (Cancel = delete for me only)');
-        if (choice) deleteForEveryone();
-        else deleteForMe();
+      // [2026-10-08 chat-ab-test] Antes: confirm("Apagar para todos") com
+      // Cancelar = APAGAR PARA MIM — quem desistia perdia a msg (e quem tocava
+      // "Apagar para todos" e cancelava achava que nada tinha acontecido).
+      // WhatsApp: Cancelar nunca apaga. Agora a linha "Apagar para todos"
+      // confirma só isso; o ícone "Apagar" genérico confirma "para mim".
+      if (canDeleteForAll && _wantForAll) {
+        const _q = `${t('chatConv.deleteForEveryone') || 'Apagar para todos'}?`;
+        if (window.confirm(_q)) deleteForEveryone();
       } else {
         if (window.confirm(t('chatConv.deleteForMe') || 'Delete this message for you?')) {
           deleteForMe();
@@ -30889,7 +30926,10 @@ function ChatConversationInner() {
                 // 1h delete-for-everyone window in both DMs and groups
                 // (DM was 5 min before 2026-05-18 — see handleDelete).
                 const isGroupChat = conversationType === 'group';
-                const winMs = 3600 * 1000;
+                // [2026-10-08 chat-ab-test] 3600→10800: igual ao handleDelete e ao
+                // servidor (chat.php age > 10800s). Com 1h a linha virava
+                // "(expirado)" entre 1h e 3h embora o servidor ainda aceitasse.
+                const winMs = 10800 * 1000;
                 const cAt = (() => {
                   try {
                     if (!selectedMsg?.created_at) return 0;
@@ -30911,7 +30951,7 @@ function ChatConversationInner() {
                   return (
                     <PressableRow highlightColor={isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)'}
                       style={ctxS.ctxSecondaryItem}
-                      onPress={() => handleDelete(selectedMsg?.id)}
+                      onPress={() => handleDelete(selectedMsg?.id, { forAll: true })}
                       activeOpacity={0.6}
                     >
                       <IconTrash size={18} color={colors.error || '#EF4444'} />
