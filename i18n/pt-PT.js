@@ -3573,6 +3573,7 @@ export default {
   'chatConv.mutedUntil': 'Silenciado até',
   'chatConv.lastSeen': 'visto por último',
   'chatConv.lastSeenShort': 'visto',
+  'chatConv.seenMinAgo': 'visto há {n}m',
   'time.hAgo': 'há',
   'chatConv.online': 'online',
   'chatConv.away': 'ausente',

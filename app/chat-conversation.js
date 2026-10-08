@@ -2729,14 +2729,25 @@ function formatLastSeenCompact(dateStr, t) {
   const diffMin = Math.floor((now - d) / 60000);
   const seenWord = _t('chatConv.lastSeenShort') || 'visto';
   if (diffMin < 1) return `${seenWord} ${_t('chat.justNow') || 'agora'}`;
-  if (diffMin < 60) return `${seenWord} ${_t('time.hAgo') || 'há'} ${diffMin}m`;
+  if (diffMin < 60) {
+    // [2026-10-08 web-receipts-i18n] Era `${visto} ${time.hAgo || 'há'} Nm`: em
+    // inglês time.hAgo é '' (falsy) → caía no 'há' → "seen há 8m" (misturado).
+    // Template por idioma; sem a chave (idiomas remotos) cai na montagem antiga
+    // respeitando hAgo vazio ("seen 8m ago").
+    const _tpl = _t('chatConv.seenMinAgo', { n: diffMin });
+    if (typeof _tpl === 'string' && _tpl && _tpl !== 'chatConv.seenMinAgo') return _tpl;
+    const _hAgo = _t('time.hAgo');
+    if (_hAgo === '') return `${seenWord} ${diffMin}m ${_t('time.ago') || 'ago'}`;
+    return `${seenWord} ${(_hAgo && _hAgo !== 'time.hAgo') ? _hAgo : 'há'} ${diffMin}m`;
+  }
   const diffH = Math.floor(diffMin / 60);
   const timeStr = d.toLocaleTimeString(_appLocale || undefined, { hour: '2-digit', minute: '2-digit' });
   if (d.toDateString() === now.toDateString()) return `${seenWord} ${timeStr}`;
   const yest = new Date(now); yest.setDate(yest.getDate() - 1);
   if (d.toDateString() === yest.toDateString()) return `${seenWord} ${_t('time.yesterday') || 'ontem'} ${timeStr}`;
-  if (diffH < 24 * 7) return `${seenWord} ${d.toLocaleDateString([], { weekday: 'short' })} ${timeStr}`;
-  return `${seenWord} ${d.toLocaleDateString([], { month: 'short', day: 'numeric' })} ${timeStr}`;
+  // Dia/mês no idioma do APP (antes `[]` = idioma do navegador → "Mon"/"Oct" com UI em pt).
+  if (diffH < 24 * 7) return `${seenWord} ${d.toLocaleDateString(_appLocale || undefined, { weekday: 'short' })} ${timeStr}`;
+  return `${seenWord} ${d.toLocaleDateString(_appLocale || undefined, { month: 'short', day: 'numeric' })} ${timeStr}`;
 }
 
 function formatLastSeen(dateStr, t) {
@@ -3235,6 +3246,7 @@ const MemoizedMessageRow = React.memo(function MemoizedMessageRow({ item, render
   // resolved (or before a theme switch with the chat open) kept LIGHT colors
   // forever because nothing here looked at the theme. Repaint on change.
   if (prev.isDark !== next.isDark || prev.themeColors !== next.themeColors) return false;
+  if (prev.lang !== next.lang) return false; // [2026-10-08 web-receipts-i18n] hora/rótulos no idioma novo
   const a = prev.item;
   const b = next.item;
   // Date separators — compare by date string
@@ -11579,7 +11591,49 @@ function ChatConversationInner() {
           const _storeHasMsgs = Array.isArray(_have) && _have.length > 0;
           const _cur = _cs.getCursor('conv:' + conversationId);
           const _lastId = Number(_cur?.last_msg_id || 0);
-          if (_storeHasMsgs && _lastId > 0) sinceId = _lastId; // delta-only
+          if (_storeHasMsgs && _lastId > 0) {
+            sinceId = _lastId; // delta-only
+            // [2026-10-08 web-receipts-i18n] RECIBOS no delta-open. O delta só
+            // traz id > cursor, então os balões MEUS já guardados no store local
+            // (IndexedDB/localStorage no web) ficavam com o recibo da hora do
+            // envio (✓) se o evento ao vivo de entregue/lido se perdeu (WS caiu,
+            // aba em 2º plano, outro aparelho enviou) — print do founder: web com
+            // ✓ cinza em msgs que o iPhone mostrava ✓✓ azul. Recua o since_id até
+            // a msg minha MAIS ANTIGA ainda não-lida dentre as 30 mais recentes do
+            // store: o servidor devolve essas linhas com delivered_to/read_by
+            // frescos e o merge (_rcptSig) atualiza os tiques. Janela limitada
+            // (≤30 linhas, o mesmo que o fetch cheio antigo); quando tudo já está
+            // lido, segue delta puro.
+            try {
+              const _meLc = String(currentEmailRef.current || '').toLowerCase();
+              const _isGrp = conversationType === 'group';
+              const _recent = _cs.getMessagesSync(conversationId, 30);
+              // BURACO cursor > store: o chat_sync (setLastPts) avança o
+              // last_msg_id do cursor com as linhas que HIDRATOU, mas essas
+              // linhas nem sempre chegam ao store durável (web: chegaram pelo
+              // WS com a conversa aberta e a aba fechou). Reabrir pedia
+              // id > cursor → as msgs do buraco SUMIAM da conversa e nunca
+              // ganhavam recibo (repro QA: 3 msgs enviadas com o web aberto,
+              // reabrir = conversa sem elas). Delta nunca começa depois do
+              // maior id que o store realmente tem.
+              let _storeMax = 0;
+              if (Array.isArray(_recent)) {
+                for (const m of _recent) { const n = Number(m && m.id); if (Number.isFinite(n) && n > _storeMax) _storeMax = n; }
+              }
+              if (_storeMax > 0 && _storeMax < sinceId) sinceId = _storeMax;
+              let _floor = 0;
+              if (_meLc && Array.isArray(_recent)) {
+                for (const m of _recent) {
+                  if (!m || typeof m.id !== 'number' || m.id <= 0 || m.deleted_at) continue;
+                  if (String(m.sender_email || '').toLowerCase() !== _meLc) continue;
+                  const _done = m._read === true || (!_isGrp && (!!m.read_at || (Array.isArray(m.read_by) && m.read_by.length > 0)));
+                  if (_done) continue;
+                  if (_floor === 0 || m.id < _floor) _floor = m.id;
+                }
+              }
+              if (_floor > 0 && (_floor - 1) < sinceId) sinceId = _floor - 1;
+            } catch {}
+          }
         }
       } catch {}
       if (showLoader && !alreadyHasVisible) setLoading(true);
@@ -22601,6 +22655,14 @@ function ChatConversationInner() {
     // switches to absolute positioning. renderContent() runs before the meta
     // JSX is evaluated (children are evaluated in order), so the flag is set.
     let _waInlineMeta = false;
+    // [2026-10-08 location-bubble-fast] Emoji-only (1–3 emoji, sem texto):
+    // WhatsApp mostra GRANDE e SEM bolha, hora/✓ numa pílula pequena embaixo.
+    // Mesmas condições do ramo jumbo do renderContent (sem resposta/encaminhada/
+    // tradução/apagada) — senão a bolha vazia ficaria transparente.
+    const _jumboNoBubble = (msg.type === 'text' || !msg.type) && !isDeleted
+      && !msg.reply_to_id && !msg.reply_to && !msg.forwarded_from
+      && !(__ov && __ov.tr) && !(msg._filtered && msg._hidden)
+      && typeof msg.content === 'string' && jumboEmojiSize(msg.content) > 0;
     const renderContent = () => {
       // Non-view-once deleted → show tombstone early. View-once deleted
       // continues through the ViewOnceMessage path so the component's hook
@@ -24041,34 +24103,25 @@ function ChatConversationInner() {
           const isLiveExpired = isLiveLocation && !isUnlimited && liveUntilTs && nowSec >= liveUntilTs;
           const isLiveActive = isLiveLocation && (isUnlimited || (liveUntilTs && nowSec < liveUntilTs));
 
-          // Card dimensions (WhatsApp-ish). Map height ~180 like WhatsApp.
+          // [2026-10-08 location-bubble-fast] Card P&B, mapa ESTÁTICO instantâneo.
+          // Antes: WebView MapLibre por balão (segundos p/ aparecer; na web
+          // "React Native WebView does not support this platform") ou o lite
+          // nativo (só binários novos, cinza até o MapKit carregar) + faixa
+          // verde #D9FDD3 + pin vermelho. Agora: JPEG gerado no servidor
+          // (static-map.php → MapLibre headless no edge BR, mesmos styles
+          // BoraUm), servido do CDN com cache imutável + expo-image
+          // memória/disco, pin monocromático já desenhado na imagem. Igual em
+          // TODA plataforma (iOS/Android/web, binário velho ou novo). O mapa
+          // vivo/nativo fica só no viewer de tela cheia (toque).
           const CARD_W = 260;
-          // Live location bubble height — slightly smaller on Android because the
-          // 170px on a 1080×2340 portrait phone leaves the bubble feeling
-          // dominant and pushes other content off-screen (user feedback
-          // 2026-05-12: "ta muito grande").
-          const MAP_H = Platform.OS === 'android' ? 140 : 170;
-          const cardBg = isOwn
-            ? (isDark ? '#1c1c1e' : '#D9FDD3')
-            : (isDark ? '#1c1c1e' : '#FFFFFF');
-          const titleColor = isOwn
-            ? (isDark ? '#F5F5F7' : '#111B21')
-            : colors.text;
-          const subColor = isOwn
-            ? (isDark ? '#8E8E93' : '#667781')
-            : colors.textSecondary;
-
-          // Map thumbnail — tile server self-hosted do BoraUm (OpenStreetMap),
-          // ZERO Google Maps (sem billing). [2026-06-24 DE-GOOGLE]
-          // boraStaticMapUrl(lat, lng, zoom, w, h) resolve o styleId por país
-          // e devolve um PNG estático do tileserver-gl. O servidor NÃO desenha
-          // pin → a imagem é centrada nas coords e o pin vermelho sobreposto
-          // (View absoluto centralizado, abaixo) marca a localização exata.
-          // z=15 = street-level, casando com o zoom inicial do MapModal.
+          const MAP_H = Platform.OS === 'android' ? 140 : 160;
+          // Texto nas cores da PRÓPRIA bolha (enviada = escura nos 2 temas).
+          const titleColor = isOwn ? ownTextColor : colors.text;
+          const subColor = isOwn ? ownMetaColor : otherMetaColor;
           const hasCoords = (lat != null && lng != null);
-          const mapStaticUrl = hasCoords
-            ? boraStaticMapUrl(lat, lng, 15, CARD_W, MAP_H)
-            : null;
+          const _mapRadius = Math.max(4, bubbleRadius - 4);
+          const _locAge = Date.now() - Date.parse(msg.created_at || '');
+          const _warmOther = isOwn && (!!msg._pending || !(_locAge > 10 * 60 * 1000));
 
           return (
             <TouchableOpacity
@@ -24080,12 +24133,9 @@ function ChatConversationInner() {
               onPress={() => {
                 // [WAVE 43D 2026-05-21] Multi-select sticky: in selection mode
                 // taps on inner cards must toggle the row, not fire the card
-                // action. Without this, tapping a location bubble in
-                // selectionMode would open the map and silently leave the
-                // selection intact (user perceived as "saiu da seleção").
+                // action.
                 if (selectionMode) return toggleSelection(msg.id);
-                // Abre MapModal — Google Maps JS API + WS subscription pra
-                // live location se a mensagem ainda estiver ativa.
+                // Abre o viewer de tela cheia (mapa vivo + WS p/ live location).
                 setMapModalData({
                   lat, lng,
                   label: addr,
@@ -24098,57 +24148,26 @@ function ChatConversationInner() {
               }}
               onLongPress={() => { if (selectionMode) toggleSelection(msg.id); else handleLongPress(msg); }}
               delayLongPress={350}
-              style={{
-                width: CARD_W,
-                borderRadius: 12,
-                overflow: 'hidden',
-                backgroundColor: cardBg,
-                ...Platform.select({
-                  ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.12, shadowRadius: 3 },
-                  android: { elevation: 2 },
-                  web: { boxShadow: '0 1px 2px rgba(0,0,0,0.13)' },
-                }),
-              }}
+              style={{ width: CARD_W, maxWidth: '100%', backgroundColor: 'transparent' }}
             >
-              {/* Map preview — Google Static Maps PNG via the server proxy.
-                  Plain <Image> source (no iframe / WebView), taps fall
-                  through naturally to the outer TouchableOpacity. */}
               {hasCoords ? (
-                <View style={{ position: 'relative', width: '100%', height: MAP_H, backgroundColor: isDark ? '#000000' : '#E5E7EB' }}>
-                  {/* [fix 2026-10-01] BoraUm STATIC-map endpoint died (404) → the
-                      thumbnail was gray. Render the still-healthy interactive
-                      MapLibre VECTOR map as a non-interactive WebView instead
-                      (react-native-webview already bundled; location bubbles are
-                      rare so no list-jank concern). It draws its own red marker. */}
-                  {/* [2026-10-07 native-maps] native lite snapshot when the binary has
-                      ChatyyMapView; old binaries/web keep this exact WebView. */}
+                <View style={{ position: 'relative', width: '100%', height: MAP_H, borderRadius: _mapRadius, overflow: 'hidden', backgroundColor: isDark ? '#2C2C2E' : '#E5E5EA' }}>
                   <LocationMapPreview
                     lat={lat}
                     lng={lng}
                     isDark={isDark}
                     showPin={!isLiveActive}
-                    fallback={(
-                      <WebView
-                        source={_locMapSource(lat, lng) /* [2026-10-06 thread-tech] stable, memoized per coord */}
-                        style={{ width: '100%', height: '100%', backgroundColor: isDark ? '#000000' : '#E5E7EB' }}
-                        originWhitelist={['*']}
-                        scrollEnabled={false}
-                        pointerEvents="none"
-                        androidLayerType="hardware"
-                        javaScriptEnabled
-                        domStorageEnabled
-                      />
-                    )}
+                    warmOther={_warmOther}
                   />
-                  {/* LIVE pulsing dot at center of map */}
+                  {/* LIVE: pulso monocromático no centro (imagem sem pin) */}
                   {isLiveActive && (
                     <View pointerEvents="none" style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center' }}>
-                      <LiveLocationPulse size={16} color="#22c55e" />
+                      <LiveLocationPulse size={16} color={isDark ? '#FFFFFF' : '#111111'} />
                     </View>
                   )}
-                  {/* AO VIVO badge top-left */}
+                  {/* Selo "Ao vivo" (P&B) */}
                   {isLiveActive && (
-                    <View style={{ position: 'absolute', top: 8, left: 8, flexDirection: 'row', alignItems: 'center', backgroundColor: '#22c55e', borderRadius: 12, paddingHorizontal: 8, paddingVertical: 3, gap: 4 }}>
+                    <View style={{ position: 'absolute', top: 8, left: 8, flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.78)', borderRadius: 12, paddingHorizontal: 8, paddingVertical: 3, gap: 5 }}>
                       <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: '#fff' }} />
                       <Text style={{ fontSize: 10, fontWeight: '800', color: '#fff', letterSpacing: 0.3 }}>
                         {t('chatConv.liveBadge') || 'AO VIVO'}
@@ -24156,25 +24175,20 @@ function ChatConversationInner() {
                     </View>
                   )}
                   {isLiveExpired && (
-                    <View style={{ position: 'absolute', top: 8, left: 8, backgroundColor: 'rgba(107,114,128,0.95)', borderRadius: 12, paddingHorizontal: 8, paddingVertical: 3 }}>
+                    <View style={{ position: 'absolute', top: 8, left: 8, backgroundColor: 'rgba(60,60,67,0.85)', borderRadius: 12, paddingHorizontal: 8, paddingVertical: 3 }}>
                       <Text style={{ fontSize: 10, fontWeight: '800', color: '#fff', letterSpacing: 0.3 }}>
                         {t('chatConv.liveEndedBadge') || 'ENCERRADA'}
                       </Text>
                     </View>
                   )}
                   {/* Live-share countdown overlay — bottom strip on the map.
-                      Hidden once expires_at < now. Re-renders every 30s via
-                      vanishTickNow tick (declared higher up). Format follows
-                      WhatsApp/Telegram parity: "Acaba em XmYs" when <1h,
-                      otherwise "Compartilhamento ao vivo até HH:MM". */}
+                      Re-renders every 30s via vanishTickNow. */}
                   {isLiveActive && liveUntilTs && (() => {
                     const _now = Math.floor(vanishTickNow / 1000);
                     const remaining = Number(liveUntilTs) - _now;
                     if (remaining <= 0) return null;
                     let label;
                     if (isUnlimited) {
-                      // No countdown for sempre-ativo — show an explicit
-                      // "until I stop" hint instead of a fake 87600h timer.
                       label = `∞ ${t('snapmap.alwaysOn') || 'sempre ativo'}`;
                     } else if (remaining < 3600) {
                       const m = Math.floor(remaining / 60);
@@ -24196,19 +24210,14 @@ function ChatConversationInner() {
                   })()}
                 </View>
               ) : (
-                <View style={{ width: '100%', height: MAP_H, backgroundColor: isDark ? '#000000' : '#E5E7EB', alignItems: 'center', justifyContent: 'center' }}>
-                  <IconMapPin size={32} color={isDark ? '#636366' : '#9CA3AF'} />
+                <View style={{ width: '100%', height: MAP_H, borderRadius: _mapRadius, backgroundColor: isDark ? '#2C2C2E' : '#E5E5EA', alignItems: 'center', justifyContent: 'center' }}>
+                  <IconMapPin size={32} color={isDark ? '#8E8E93' : '#8E8E93'} />
                 </View>
               )}
 
-              {/* Footer: title + subtitle (WhatsApp-style) */}
-              <View style={{ paddingHorizontal: 12, paddingVertical: 10, flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-                {/* Left circle icon */}
-                <View style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: isLiveActive ? '#22c55e' : '#111111', alignItems: 'center', justifyContent: 'center' }}>
-                  {isLiveActive
-                    ? <IconNavigation size={18} color="#fff" />
-                    : <IconMapPin size={18} color="#fff" />}
-                </View>
+              {/* Footer: endereço + "Toque para abrir" nas cores da bolha
+                  (sem faixa verde, sem círculo de ícone). */}
+              <View style={{ paddingHorizontal: 6, paddingTop: 7, paddingBottom: 0, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
                 <View style={{ flex: 1, minWidth: 0 }}>
                   <Text
                     style={{ fontSize: 14, fontWeight: '600', color: titleColor }}
@@ -24274,11 +24283,11 @@ function ChatConversationInner() {
                     accessibilityRole="button"
                     style={{
                       paddingHorizontal: 12, paddingVertical: 6, borderRadius: 14,
-                      backgroundColor: '#EF4444', marginLeft: 8,
+                      backgroundColor: '#FFFFFF', marginLeft: 4,
                     }}
                     hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                   >
-                    <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700' }}>
+                    <Text style={{ color: '#111111', fontSize: 12, fontWeight: '700' }}>
                       {t('chatConv.stopSharing') || 'Parar'}
                     </Text>
                   </TouchableOpacity>
@@ -26053,7 +26062,9 @@ function ChatConversationInner() {
                     <Text style={{
                       fontSize: jumbo,
                       lineHeight: jumbo + 8,
-                      color: isOwn ? ownTextColor : colors.text,
+                      // [2026-10-08 location-bubble-fast] sem bolha → tinta do FUNDO da conversa
+                      // (fonte de emoji monocromática na web sumia: branco sobre branco).
+                      color: _jumboNoBubble ? colors.text : (isOwn ? ownTextColor : colors.text),
                       paddingVertical: 2,
                     }}>{msg.content}</Text>
                   );
@@ -26419,6 +26430,9 @@ function ChatConversationInner() {
             !isFirstInGroup && (isOwn ? { borderTopRightRadius: bubbleTailRadius } : { borderTopLeftRadius: bubbleTailRadius }),
             isDeleted && styles.bubbleDeleted,
             (msg.type === 'sticker' || msg.type === 'gif') && { backgroundColor: 'transparent', borderWidth: 0, paddingHorizontal: 0, paddingVertical: 0, elevation: 0, shadowOpacity: 0 },
+            // [2026-10-08 location-bubble-fast] emoji-only = sem bolha; localização = mapa rente à bolha (inset 4).
+            _jumboNoBubble && { backgroundColor: 'transparent', borderWidth: 0, paddingHorizontal: 0, paddingTop: 0, paddingBottom: 0, elevation: 0, shadowOpacity: 0, minWidth: 0 },
+            msg.type === 'location' && !isDeleted && { paddingHorizontal: 4, paddingTop: 4, paddingBottom: 5 },
             (msg.type === 'image' || msg.type === 'video') && { paddingHorizontal: 3, paddingTop: 3, paddingBottom: 4, overflow: 'hidden' },
             msg._pending && { opacity: 0.7 },
             msg._failed && { opacity: 0.5 },
@@ -26738,7 +26752,10 @@ function ChatConversationInner() {
               legenda = selo sobre a foto; com legenda = linha própria sob a
               legenda (antes a hora saía DUAS vezes). */}
           {msg.type !== 'sticker' && msg.type !== 'gif' && msg.type !== 'image' && msg.type !== 'video' && (
-            <View style={[styles.msgMeta, _waInlineMeta && styles.msgMetaInline]}>
+            <View style={[styles.msgMeta, _waInlineMeta && styles.msgMetaInline,
+              // [2026-10-08 location-bubble-fast] emoji-only: pílula com o fundo da bolha (hora/✓ legíveis no tema).
+              _jumboNoBubble && { alignSelf: isOwn ? 'flex-end' : 'flex-start', backgroundColor: isOwn ? ownBubbleBg : otherBubbleBg, borderRadius: 10, paddingHorizontal: 7, paddingVertical: 2, marginTop: 0 },
+              msg.type === 'location' && !isDeleted && { paddingHorizontal: 6 }]}>
               {(() => {
                 // Disappearing clock indicator — show ONLY on messages that
                 // actually vanish: those sent at/after the timer was enabled
@@ -27216,10 +27233,13 @@ function ChatConversationInner() {
     // socando main-thread + rede no meio do gesto = rolagem picotada. Agora o
     // prefetch acontece no onViewableItemsChanged (dispara só quando um item
     // fica visível, não a cada render). renderItem volta a ser barato: só a row.
-    return <MemoizedMessageRow item={item} renderRef={renderMessageRef} overlayStore={rowOverlayStore} isDark={isDark} themeColors={colors} />;
+    return <MemoizedMessageRow item={item} renderRef={renderMessageRef} overlayStore={rowOverlayStore} isDark={isDark} themeColors={colors} lang={language} />;
     // [2026-10-06 thread-tech] theme deps: a new renderItem makes the FlatList
     // re-run renderItem for mounted cells; the comparator then repaints them.
-  }, [isDark, colors]); // eslint-disable-line react-hooks/exhaustive-deps
+    // [2026-10-08 web-receipts-i18n] idem p/ idioma: no web o idioma da conta
+    // chega após o 1º paint → balões montados ficavam com hora "02:04 PM"
+    // (en) ao lado de "14:04" (pt) até recarregar.
+  }, [isDark, colors, language]); // eslint-disable-line react-hooks/exhaustive-deps
   // [2026-10-07 flashlist] FlashList renderItem. With THREAD_FLASH_RECYCLE off
   // the row gets a per-message key, so a recycled cell REMOUNTS the row instead
   // of handing one message's mount-state (fade/scale Animated values, audio

@@ -1238,7 +1238,7 @@ function ChatHub() {
           na borda com hairline no topo (UITabBar / Material NavigationBar) —
           antes era um "card flutuante" (cantos 22 + sombra -4/elevation 16),
           padrão de site. Altura = 49pt iOS / 64-80dp Android + home indicator. */}
-      <View accessibilityRole="tabbar" onLayout={GLASS_TAB_BAR ? onTabBarLayout : undefined} style={[styles.tabBar, {
+      <View accessibilityRole={Platform.OS === 'ios' ? 'tabbar' : 'tablist'} onLayout={GLASS_TAB_BAR ? onTabBarLayout : undefined} style={[styles.tabBar, {
         backgroundColor: GLASS_TAB_BAR ? 'transparent' : (isDark ? SHELL_DARK : '#ffffff'),
         ...(GLASS_TAB_BAR ? { position: 'absolute', left: 0, right: 0, bottom: 0 } : {}),
         paddingBottom: Platform.OS === 'web' ? (insets.bottom || 10) : Math.max(insets.bottom, Platform.OS === 'android' ? 12 : 8),

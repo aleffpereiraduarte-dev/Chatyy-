@@ -68,17 +68,40 @@ export function boraStyleUrl(lon, lat) {
  * @param {number} h    altura CSS (base)
  * @param {boolean} retina  @2x (default true)
  */
-export function boraStaticMapUrl(lat, lng, zoom = 15, w = 280, h = 160, retina = true) {
-  const la = Number(lat);
-  const lo = Number(lng);
-  if (!Number.isFinite(la) || !Number.isFinite(lo)) return null;
-  const styleId = coverageStyleFor(lo, la);
-  const W = Math.max(1, Math.round(w));
-  const H = Math.max(1, Math.round(h));
-  const z = Math.max(0, Math.min(20, Number(zoom) || 15));
-  const suffix = retina ? '@2x.png' : '.png';
-  // 6 casas decimais bastam (~11cm) e mantêm a URL estável p/ cache.
-  return `${BORA_TILES_BASE}/styles/${styleId}/static/${lo.toFixed(6)},${la.toFixed(6)},${z}/${W}x${H}${suffix}`;
+// [2026-10-08 location-bubble-fast] A Static Image API do tileserver BoraUm
+// morreu (404 desde 2026-10-01). Agora boraStaticMapUrl aponta pro NOSSO
+// renderizador (chatyyStaticMap → api.php que gera/redireciona p/ o CDN).
+// w/h/retina são ignorados (imagem canônica 600x360, use contentFit cover).
+export function boraStaticMapUrl(lat, lng, zoom = 15, w = 280, h = 160, retina = true) { // eslint-disable-line no-unused-vars
+  const u = chatyyStaticMap(lat, lng, { zoom });
+  return u ? u.api : null;
+}
+
+/**
+ * [2026-10-08 location-bubble-fast] Mapa estático do balão de localização.
+ * Servidor: /api/static-map.php (renderiza no edge BR com MapLibre headless nos
+ * MESMOS styles BoraUm do app, grava no R2) → imagem JPEG 600x360 (300x180 @2x)
+ * com pin monocromático no centro exato (preto no claro, branco no escuro).
+ * Chave estável = mesma regra do PHP (lat/lng 5 casas, zoom, tema, pin).
+ * Retorna { cdn, api, key }: use `cdn` primeiro (imutável, edge-cached) e caia
+ * pro `api` no onError (1º acesso a uma coordenada nunca gerada).
+ */
+export const CHATYY_STATIC_MAP_API = 'https://chatyy.com.br/api/static-map.php';
+export const CHATYY_MEDIA_CDN = 'https://media.chatyy.com.br/';
+export function chatyyStaticMap(lat, lng, { zoom = 15, dark = false, pin = true } = {}) {
+  const la = Math.round(Number(lat) * 1e5) / 1e5;
+  const lo = Math.round(Number(lng) * 1e5) / 1e5;
+  if (!Number.isFinite(la) || !Number.isFinite(lo) || Math.abs(la) > 85 || Math.abs(lo) > 180) return null;
+  const z = Math.max(3, Math.min(18, Math.round(Number(zoom) || 15)));
+  const theme = dark ? 'dark' : 'light';
+  const sLa = la.toFixed(5);
+  const sLo = lo.toFixed(5);
+  const key = `sm/v1/${theme}/${z}/${sLa},${sLo}${pin ? '' : '_np'}.jpg`;
+  return {
+    key,
+    cdn: CHATYY_MEDIA_CDN + key,
+    api: `${CHATYY_STATIC_MAP_API}?lat=${sLa}&lng=${sLo}&z=${z}&theme=${theme}&pin=${pin ? 1 : 0}`,
+  };
 }
 
 /**

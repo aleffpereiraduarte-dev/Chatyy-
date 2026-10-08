@@ -1523,6 +1523,30 @@ function WhatsNewGate() {
 // pick the wrong voice, browsers offer to "translate" a page already in the
 // user's language and hyphenation/quotes follow English rules. Must live
 // INSIDE LanguageProvider (reads useLanguage); renders nothing.
+// [2026-10-08 web-receipts-i18n] Idioma da CONTA: ao logar/trocar de conta,
+// busca chat_get_settings (app_language / device_language) e aplica via
+// LanguageContext. Web com navegador en-US + conta usada em pt-BR → UI pt-BR.
+// Mora DENTRO do AuthProvider (useAuth) e do LanguageProvider; não renderiza.
+function AccountLanguageSync() {
+  const auth = useAuth();
+  const { applyAccountLanguage } = useLanguage();
+  const doneForRef = useRef(null);
+  const email = auth?.user?.email || null;
+  useEffect(() => {
+    if (!email) { doneForRef.current = null; return; }
+    if (auth?.loading || doneForRef.current === email || typeof applyAccountLanguage !== 'function') return;
+    doneForRef.current = email;
+    try {
+      const { chatGetSettings } = require('../services/api');
+      Promise.resolve(chatGetSettings?.()).then((r) => {
+        // Só aplica se ainda é a mesma conta (troca rápida de conta).
+        if (doneForRef.current === email && r && r.success && r.data) applyAccountLanguage(r.data);
+      }).catch(() => {});
+    } catch {}
+  }, [email, auth?.loading, applyAccountLanguage]);
+  return null;
+}
+
 function HtmlLangSync() {
   const { language } = useLanguage();
   useEffect(() => {
@@ -1734,6 +1758,7 @@ export default function RootLayout() {
                 <AppInit onNotification={handleNotification} setOtaToast={setOtaToast} />
                 <ShareIntentWatcher />
                 <HtmlLangSync />
+                <AccountLanguageSync />
                 <OfflineNotice />
                 {otaToast ? (() => {
                   const _Pressable = require('react-native').Pressable;

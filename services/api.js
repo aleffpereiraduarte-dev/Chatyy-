@@ -115,7 +115,29 @@ export function getChatBase() { return CHAT_BASE_URL || US_FALLBACK_BASE; }
 // Keeps API_URL / BASE_URL / CHAT_BASE_URL pointing at the SAME region so chat
 // and the rest of the API stay co-located. A missing/invalid base degrades to
 // the US origin so no caller is ever left without a host.
+// [2026-10-08 web-receipts-i18n] WEB + edge com CORS quebrado. O web chama a
+// API com fetch(credentials:'include'); o api-br respondia o preflight com
+// ACAO "*" e a resposta real com DOIS ACAO ("*" do nginx + a origem do PHP) →
+// o Chrome rejeita TODA chamada (TypeError/ERR_FAILED) e o probe de latência
+// (/health, sem credenciais) continuava elegendo o edge. Resultado: web na
+// região br com chat_messages falhando em silêncio → tela pintada só do cache
+// local + WS → vistos presos em 1 tique cinza (print do founder), recibos sem
+// hidratar. Defesa no cliente: no web, a 1ª falha de transporte (não-timeout)
+// num edge bloqueia edges por 6h, volta pro US e refaz a chamada uma vez.
+const _WEB_EDGE_BLOCK_KEY = 'edge_web_block_ts';
+const _WEB_EDGE_BLOCK_MS = 6 * 60 * 60 * 1000;
+let _webEdgeBlocked = false;
+try {
+  if (Platform.OS === 'web' && typeof localStorage !== 'undefined') {
+    const ts = Number(localStorage.getItem(_WEB_EDGE_BLOCK_KEY) || 0);
+    if (ts > 0 && (Date.now() - ts) < _WEB_EDGE_BLOCK_MS) _webEdgeBlocked = true;
+  }
+} catch {}
+
 function _applySelectedServer(server) {
+  if (_webEdgeBlocked && Platform.OS === 'web' && server && server.region && server.region !== 'us') {
+    server = EDGE_SERVERS.find(s => s.region === 'us') || null;
+  }
   const base = (server && server.base) ? server.base : US_FALLBACK_BASE;
   const url = (server && server.url) ? server.url : US_FALLBACK_BASE;
   API_URL = url + '/api/email.php';
@@ -288,6 +310,8 @@ export function _pickEdgeRegion(results, baseRegion) {
 
 async function detectFastestServer(opts) {
   if (_detecting) return;
+  // [2026-10-08 web-receipts-i18n] web com edge bloqueado (CORS) → fica no US.
+  if (_webEdgeBlocked && Platform.OS === 'web') return;
   const force = !!(opts && opts.force);
   const net = _edgeNetKey();
   if (!force && _bestServer && _bestServer.ts && (Date.now() - _bestServer.ts) < EDGE_CHOICE_TTL_MS
@@ -1228,6 +1252,7 @@ async function _rawApiCall(action, params = {}, method = 'GET') {
   // while the bubble sits on the clock and later messages queue behind it.
   const timeout = setTimeout(() => controller.abort(), _ACTION_TIMEOUT_MS[action] || TIMEOUT_MS);
 
+  const _fetchT0 = Date.now();
   try {
     const res = await fetch(url, options);
     clearTimeout(timeout);
@@ -1260,6 +1285,26 @@ async function _rawApiCall(action, params = {}, method = 'GET') {
     clearTimeout(timeout);
     if (err.name === 'AbortError') {
       return { data: _withHttpStatus({ success: false, message: 'Tempo limite excedido' }, 0), status: 0 };
+    }
+    // [2026-10-08 web-receipts-i18n] Web: falha de transporte num EDGE (CORS
+    // quebrado = rejeição imediata, a request nem sai do preflight) → bloqueia
+    // edges, volta pro US e refaz UMA vez (a URL nova já é do US → sem loop).
+    // POST só quando falhou rápido (<3s = preflight), p/ não duplicar um POST
+    // que possa ter chegado ao servidor antes de a conexão cair.
+    if (Platform.OS === 'web' && typeof url === 'string' && !url.startsWith(US_FALLBACK_BASE + '/')
+        && (method === 'GET' || (Date.now() - _fetchT0) < 3000)) {
+      if (!_webEdgeBlocked) {
+        _webEdgeBlocked = true;
+        try { if (typeof localStorage !== 'undefined') localStorage.setItem(_WEB_EDGE_BLOCK_KEY, String(Date.now())); } catch {}
+        try { console.warn('[API] edge falhou no web (' + url.split('/api/')[0] + ') → US por 6h'); } catch {}
+      }
+      const us = EDGE_SERVERS.find(s => s.region === 'us');
+      if (us) {
+        _bestServer = { ...us, latency: null, ts: Date.now(), net: _edgeNetKey(), src: 'web-edge-fail' };
+        _applySelectedServer(us);
+        _persistBestServer();
+      }
+      if (API_URL.startsWith(US_FALLBACK_BASE + '/')) return _rawApiCall(action, params, method);
     }
     return { data: _withHttpStatus({ success: false, message: 'Connection error' }, 0), status: 0 };
   }

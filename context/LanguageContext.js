@@ -2,7 +2,42 @@ import { createContext, useContext, useState, useEffect, useCallback, useMemo, u
 import { Platform, NativeModules, AppState } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { translations, DEFAULT_LANGUAGE, ensureLocaleLoaded, onLocaleLoaded, isLocaleSupported } from '../i18n';
-import { setUserLanguage as apiSetUserLanguage } from '../services/api';
+import { setUserLanguage as apiSetUserLanguage, chatUpdateSettings as apiChatUpdateSettings } from '../services/api';
+
+// [2026-10-08 web-receipts-i18n] Idioma da CONTA. Antes o web usava SÓ o
+// navigator.language (Chrome en-US → UI em inglês, "Mark as read", AM/PM) mesmo
+// com o usuário usando o app em pt-BR — e o iPhone, sem escolha manual, segue o
+// idioma do aparelho. Agora a ordem é:
+//   1. escolha MANUAL local (app_language_manual) — a mais nova entre local e
+//      conta vence (timestamps app_language_manual_at × app_language_at);
+//   2. escolha explícita da CONTA (chat_get_settings.app_language, gravada por
+//      qualquer aparelho ao trocar o idioma em Configurações);
+//   3. idioma do APARELHO nativo da conta (chat_get_settings.device_language,
+//      derivado do lang do push token) — só no web;
+//   4. idioma do navegador/aparelho (detectLanguage).
+// O resultado de 2/3 fica em cache local (app_language_account) p/ o 1º render
+// do próximo boot já sair no idioma certo (sem piscar inglês → português).
+const LANG_MANUAL_KEY = 'app_language_manual';
+const LANG_MANUAL_AT_KEY = 'app_language_manual_at';
+const LANG_ACCOUNT_KEY = 'app_language_account';
+
+function _webGet(key) {
+  try { return (typeof localStorage !== 'undefined') ? localStorage.getItem(key) : null; } catch { return null; }
+}
+function _webSet(key, val) {
+  try { if (typeof localStorage !== 'undefined') { if (val == null) localStorage.removeItem(key); else localStorage.setItem(key, String(val)); } } catch {}
+}
+async function _kvGet(key) {
+  if (Platform.OS === 'web') return _webGet(key);
+  try { return await AsyncStorage.getItem(key); } catch { return null; }
+}
+function _kvSet(key, val) {
+  if (Platform.OS === 'web') { _webSet(key, val); return; }
+  try {
+    if (val == null) AsyncStorage.removeItem(key).catch(() => {});
+    else AsyncStorage.setItem(key, String(val)).catch(() => {});
+  } catch {}
+}
 
 const LanguageContext = createContext(null);
 
@@ -98,8 +133,17 @@ export function LanguageProvider({ children }) {
   // is a no-op for the ~99% without a manual override (saves one full-tree
   // re-render at boot). Manual choice still wins once read below.
   const [language, setLanguage] = useState(() => {
+    // Web: localStorage é síncrono → manual/conta já no 1º render.
+    if (Platform.OS === 'web') {
+      const m = _webGet(LANG_MANUAL_KEY);
+      if (m && isLocaleSupported(m)) return m;
+      const a = _webGet(LANG_ACCOUNT_KEY);
+      if (a && isLocaleSupported(a)) return a;
+    }
     try { return detectLanguage() || DEFAULT_LANGUAGE; } catch { return DEFAULT_LANGUAGE; }
   });
+  // Escolha manual local vigente (null = nunca escolheu neste aparelho).
+  const manualRef = useRef(Platform.OS === 'web' ? (() => { const m = _webGet(LANG_MANUAL_KEY); return (m && isLocaleSupported(m)) ? m : null; })() : null);
   // Bumped quando um idioma lazy termina de carregar → força o t() a recomputar
   // (e os consumidores a re-renderizarem) com as traduções recém-injetadas.
   const [loadedTick, setLoadedTick] = useState(0);
@@ -145,25 +189,20 @@ export function LanguageProvider({ children }) {
 
   useEffect(() => {
     const loadLanguage = async () => {
-      let manualChoice = null;
-
       // Only respect saved preference if user explicitly chose a language
-      if (Platform.OS === 'web') {
-        try {
-          if (typeof localStorage !== 'undefined') {
-            manualChoice = localStorage.getItem('app_language_manual');
-          }
-        } catch {}
-      } else {
-        try {
-          manualChoice = await AsyncStorage.getItem('app_language_manual');
-        } catch {}
-      }
+      const manualChoice = await _kvGet(LANG_MANUAL_KEY);
 
       if (manualChoice && isLocaleSupported(manualChoice)) {
         // User explicitly chose this language — respect it
+        manualRef.current = manualChoice;
         setLanguage(manualChoice);
       } else {
+        manualRef.current = null;
+        // [2026-10-08 web-receipts-i18n] Web: idioma da conta (cache do último
+        // chat_get_settings) antes do navegador. Nativo segue o aparelho, a
+        // menos que a conta tenha escolha explícita (applyAccountLanguage).
+        const acct = Platform.OS === 'web' ? _webGet(LANG_ACCOUNT_KEY) : null;
+        if (acct && isLocaleSupported(acct)) { setLanguage(acct); return; }
         // Auto-detect from device locale (always re-detect, never cache)
         const detected = detectLanguage();
         setLanguage(detected);
@@ -177,12 +216,20 @@ export function LanguageProvider({ children }) {
   // forever. Ref (not state) so the gate is synchronous within one tick.
   const _suppressBroadcast = useRef(false);
 
-  const _persistLanguage = useCallback((code) => {
-    if (Platform.OS === 'web') {
-      try { if (typeof localStorage !== 'undefined') localStorage.setItem('app_language_manual', code); } catch {}
-    } else {
-      AsyncStorage.setItem('app_language_manual', code).catch(() => {});
-    }
+  const _persistLanguage = useCallback((code, at) => {
+    manualRef.current = code;
+    _kvSet(LANG_MANUAL_KEY, code);
+    _kvSet(LANG_MANUAL_AT_KEY, String(Number(at) > 0 ? Number(at) : Date.now()));
+  }, []);
+
+  // [2026-10-08 web-receipts-i18n] Escolha explícita vira preferência da CONTA
+  // (chat_chatyy_settings, merge parcial no servidor) → web/outros aparelhos
+  // abrem no mesmo idioma mesmo com navegador em outra língua.
+  const _pushAccountLanguage = useCallback((code, at) => {
+    try {
+      const p = apiChatUpdateSettings({ app_language: code, app_language_at: Number(at) > 0 ? Number(at) : Date.now() });
+      if (p && typeof p.catch === 'function') p.catch(() => {});
+    } catch {}
   }, []);
 
   const changeLanguage = useCallback((code) => {
@@ -191,9 +238,51 @@ export function LanguageProvider({ children }) {
     // render) → o JSON chega alguns ms mais cedo; idempotente/single-flight.
     ensureLocaleLoaded(code).catch(() => {});
     setLanguage(code);
-    _persistLanguage(code);
+    const now = Date.now();
+    _persistLanguage(code, now);
+    _kvSet(LANG_ACCOUNT_KEY, code);
+    _pushAccountLanguage(code, now);
     if (!_suppressBroadcast.current) _broadcastLanguage(code);
-  }, [_persistLanguage]);
+  }, [_persistLanguage, _pushAccountLanguage]);
+
+  // [2026-10-08 web-receipts-i18n] Aplica o idioma da CONTA vindo de
+  // chat_get_settings ({ app_language, app_language_at, device_language }).
+  // Chamado após login/troca de conta (AccountLanguageSync em _layout.js).
+  const applyAccountLanguage = useCallback(async (settings) => {
+    try {
+      if (!settings || typeof settings !== 'object') return;
+      const acct = (typeof settings.app_language === 'string' && isLocaleSupported(settings.app_language)) ? settings.app_language : null;
+      const acctAt = Number(settings.app_language_at || 0) || 0;
+      const localManual = manualRef.current || (await _kvGet(LANG_MANUAL_KEY));
+      const localManualOk = !!(localManual && isLocaleSupported(localManual));
+      const localAt = Number((await _kvGet(LANG_MANUAL_AT_KEY)) || 0) || 0;
+      if (acct) {
+        _kvSet(LANG_ACCOUNT_KEY, acct);
+        if (!localManualOk || (acct !== localManual && acctAt > localAt)) {
+          ensureLocaleLoaded(acct).catch(() => {});
+          setLanguage(acct);
+          if (localManualOk) _persistLanguage(acct, acctAt); // escolha mais nova veio de outro aparelho
+        }
+        return;
+      }
+      if (localManualOk) {
+        // Escolha manual feita antes de existir a preferência da conta → sobe.
+        _pushAccountLanguage(localManual, localAt || Date.now());
+        return;
+      }
+      if (Platform.OS === 'web') {
+        const dev = resolveLocale(settings.device_language);
+        if (dev) {
+          _webSet(LANG_ACCOUNT_KEY, dev);
+          ensureLocaleLoaded(dev).catch(() => {});
+          setLanguage(dev);
+        } else {
+          _webSet(LANG_ACCOUNT_KEY, null);
+          setLanguage(detectLanguage());
+        }
+      }
+    } catch {}
+  }, [_persistLanguage, _pushAccountLanguage]);
 
   // Subscribe to incoming user_setting_update frames so a language switch
   // on web reaches mobile (and vice-versa). Ignore our own echo via the
@@ -245,7 +334,7 @@ export function LanguageProvider({ children }) {
 
   // Memoize context value — `t` is already stable (useCallback on language),
   // so this only creates a new object when language actually changes.
-  const contextValue = useMemo(() => ({ language, changeLanguage, t }), [language, changeLanguage, t]);
+  const contextValue = useMemo(() => ({ language, changeLanguage, t, applyAccountLanguage }), [language, changeLanguage, t, applyAccountLanguage]);
 
   return (
     <LanguageContext.Provider value={contextValue}>
