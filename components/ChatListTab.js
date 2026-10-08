@@ -6379,7 +6379,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
                 <Svg width={18} height={18} viewBox="0 0 24 24" fill="none">
                   <Path
                     d="M16.475 5.408l2.117 2.117M14.69 7.193l-9.39 9.39a1.5 1.5 0 00-.421.815l-.5 2.5a.5.5 0 00.59.59l2.5-.5a1.5 1.5 0 00.815-.42l9.39-9.39M14.69 7.193l1.785-1.785a1.5 1.5 0 012.117 0l0 0a1.5 1.5 0 010 2.117l-1.785 1.785M14.69 7.193l2.117 2.117"
-                    stroke={isDark ? '#111111' : '#111111'}
+                    stroke={isDark ? '#F5F5F7' : '#111111'}
                     strokeWidth={1.8}
                     strokeLinecap="round"
                     strokeLinejoin="round"
@@ -6786,7 +6786,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
                 : (t?.('chat.secretCodeOff') || 'Defina um código para ocultar esta pasta')}
             </Text>
           </View>
-          <Text style={{ color: '#111111', fontSize: 13, fontWeight: '700' }}>
+          <Text style={{ color: colors.primary, fontSize: 13, fontWeight: '700' }}>
             {secretCode ? (t?.('common.edit') || 'Editar') : (t?.('common.set') || 'Definir')}
           </Text>
         </TouchableOpacity>
@@ -8448,7 +8448,7 @@ function ConversationPeekCard({ conv, previewMsgs, currentUserEmail, colors, isD
                   ...(isDark ? {} : (isOwn ? {} : { borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(0,0,0,0.05)' })),
                 }}>
                   {senderLabel ? (
-                    <Text style={{ fontSize: 11, fontWeight: '700', color: '#111111', marginBottom: 1, paddingHorizontal: hasThumb ? 6 : 0 }} numberOfLines={1}>
+                    <Text style={{ fontSize: 11, fontWeight: '700', color: colors.primary, marginBottom: 1, paddingHorizontal: hasThumb ? 6 : 0 }} numberOfLines={1}>
                       {senderLabel}
                     </Text>
                   ) : null}

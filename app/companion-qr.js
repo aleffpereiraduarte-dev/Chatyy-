@@ -269,7 +269,7 @@ export default function CompanionQRScreen() {
       <View style={s.body}>
         {status === 'loading' ? (
           <View style={s.loadingBox}>
-            <ActivityIndicator color="#111111" size="large" />
+            <ActivityIndicator color={colors.primary} size="large" />
           </View>
         ) : status === 'approved' ? (
           <View style={s.approvedBox}>
@@ -291,7 +291,7 @@ export default function CompanionQRScreen() {
                 keeps running on the singleton WS. */}
             {bootstrapProgress && !bootstrapDone && (
               <View style={s.bootstrapBox}>
-                <ActivityIndicator color="#111111" size="small" />
+                <ActivityIndicator color={colors.primary} size="small" />
                 <View style={{ flex: 1 }}>
                   <Text style={[s.bootstrapTitle, { color: colors.text }]}>
                     {t?.('pair.bootstrapping') || 'Sincronizando histórico...'}
@@ -332,7 +332,7 @@ export default function CompanionQRScreen() {
         ) : (
           <>
             <View style={[s.iconBox, { backgroundColor: isDark ? 'rgba(17, 17, 17,0.15)' : 'rgba(17, 17, 17,0.1)' }]}>
-              <IconSmartphone size={32} color="#111111" />
+              <IconSmartphone size={32} color={colors.primary} />
             </View>
             <Text style={[s.heroTitle, { color: colors.text }]}>
               {t?.('devices.companionHero') || 'Mostre este QR no outro celular'}
@@ -350,7 +350,7 @@ export default function CompanionQRScreen() {
             </Text>
 
             <TouchableOpacity onPress={() => router.back()} style={[s.cta, s.cancelCta]}>
-              <Text style={[s.ctaText, { color: '#111111' }]}>
+              <Text style={[s.ctaText, { color: colors.primary }]}>
                 {t?.('common.cancel') || 'Cancelar'}
               </Text>
             </TouchableOpacity>

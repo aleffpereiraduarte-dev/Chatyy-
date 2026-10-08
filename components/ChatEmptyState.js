@@ -145,7 +145,7 @@ export default function ChatEmptyState({ type = 'no-chats', title, subtitle, act
           style={[styles.button, { backgroundColor: accent }]}
           activeOpacity={0.85}
         >
-          <Text style={styles.buttonText}>{action.label}</Text>
+          <Text style={[styles.buttonText, { color: colors.onPrimary }]}>{action.label}</Text>
         </TouchableOpacity>
       )}
     </Animated.View>

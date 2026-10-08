@@ -1901,11 +1901,18 @@ const _NUM_LINE_RE = /^(\s*)(\d+)\.\s+(.*)$/;
 // absorbs the rest of the tick width -> ~6px text-to-time gap, like WA).
 const _NB = '\u00A0';
 function _waMetaGhost({ time, own, edited, icons }) {
-  let s = ' ' + _NB + _NB + _NB; // ~8px text-to-time gap
+  // [2026-10-08 chat-fix-composer-location] Reserva recalibrada. A meta real
+  // (absoluta, right:10) termina 5px à DIREITA do fim do texto (bolha pad 12 +
+  // msgText paddingRight 3), e os ✓✓ ocupam ~30px (2×15 −6 sobreposição +
+  // marginLeft 3 + gap 3). A reserva antiga das enviadas era 5 NBSP@11px ≈ 14px
+  // → a hora encostava no texto ("Atrasou ?11:00"). Agora 9 NBSP ≈ 25px; o
+  // ghost usa o MESMO peso/tabular-nums da hora (styles.metaGhost), então o
+  // vão texto→hora fica ~9-13px nas duas direções (WhatsApp ~8–12).
+  let s = ' ' + _NB + _NB; // ~8px + 5px de deslocamento da meta = ~13px de vão
   if (edited) s += String(edited).replace(/ /g, _NB) + _NB;
   if (icons > 0) s += _NB.repeat(icons * 4);
   s += String(time || '00:00').replace(/ /g, _NB);
-  if (own) s += _NB.repeat(5);
+  if (own) s += _NB.repeat(9);
   return s;
 }
 function _hasBlockMarkdown(text) {
@@ -7796,6 +7803,86 @@ function ChatConversationInner() {
           return true;
         } catch { return false; }
       },
+      // [2026-10-08 chat-gaps2] Salto RÁPIDO (citação / pin / busca): o
+      // scrollToIndex do FlashList v2 faz 5 passes de render (1 re-render da
+      // lista inteira por passo) + scroll animado longo = 0,9-1,3 s medidos.
+      // Aqui: offset do layout (medido ou estimado) → scrollTo INSTANTÂNEO + 2
+      // correções baratas depois que as rows ao redor medem (estimativa → real).
+      // Sem animação de propósito: o MVCP do FlashList (autoscrollToBottom,
+      // flag "perto do fim" pegajosa) só é zerado pelo onScroll; um scroll
+      // animado deixava o 1º re-render (destaque) disparar scrollToEnd e a
+      // lista voltava sozinha pro fim. O chamador deve destacar DEPOIS do
+      // onScroll (afterScrollSettled).
+      // Sem layout (engine flatlist / ref sem getLayout) → toIndex clássico.
+      jumpToIndex(index, { viewPosition = 0.5 } = {}) {
+        const l = inst();
+        const n = (threadDataRef.current || []).length;
+        if (!l || !(index >= 0) || index >= n) return false;
+        if (!THREAD_IS_FLASH || typeof l.getLayout !== 'function' || typeof l.scrollToOffset !== 'function') {
+          return api.toIndex(index, { animated: true, viewPosition });
+        }
+        const target = () => {
+          const lay = l.getLayout(index);
+          const win = l.getWindowSize?.();
+          if (!lay || !win || !(win.height > 0)) return null;
+          const first = l.getFirstItemOffset?.() || 0;
+          const raw = THREAD_OLDEST_FIRST
+            ? lay.y - (win.height - lay.height) * viewPosition
+            : lay.y - (win.height - lay.height) * (1 - viewPosition);
+          return Math.max(0, raw + first);
+        };
+        const t0 = target();
+        if (t0 == null) return api.toIndex(index, { animated: true, viewPosition });
+        try {
+          threadScrollStateRef.current.jumpAt = Date.now();
+          l.scrollToOffset({ offset: t0, animated: false, skipFirstItemOffset: true });
+          const settle = (delay) => setTimeout(() => {
+            try {
+              const t1 = target();
+              const now = l.getAbsoluteLastScrollOffset?.() || 0;
+              if (t1 != null && Math.abs(t1 - now) > 6) l.scrollToOffset({ offset: t1, animated: false, skipFirstItemOffset: true });
+            } catch {}
+          }, delay);
+          settle(34); settle(160);
+          return true;
+        } catch {
+          return api.toIndex(index, { animated: true, viewPosition });
+        }
+      },
+      jumpToMessage(id, opts) {
+        const i = api.indexOfMessage(id);
+        return i < 0 ? false : api.jumpToIndex(i, opts);
+      },
+      // Roda fn depois que o onScroll do salto foi processado (2 frames): no
+      // web o evento scroll sai antes dos rAF do frame seguinte; no nativo o
+      // onScroll do scrollTo chega em ~1 frame. Ver nota do MVCP acima.
+      afterScrollSettled(fn) {
+        const raf = (typeof requestAnimationFrame === 'function') ? requestAnimationFrame : (cb) => setTimeout(cb, 16);
+        raf(() => raf(() => { try { fn(); } catch {} }));
+      },
+      // [2026-10-08 chat-gaps2] "Ir para o fim": longe → salto instantâneo
+      // (o scrollToEnd animado do FlashList passava por centenas de rows +
+      // 5 passes do scrollToIndex interno); perto (< ~1,5 tela) → animado curto.
+      jumpToLatest() {
+        const l = inst();
+        if (!l) return;
+        const dist = threadScrollStateRef.current.lastDistance || 0;
+        const winH = (THREAD_IS_FLASH && l.getWindowSize?.()?.height) || 800;
+        if (dist <= winH * 1.5) { api.toLatest({ animated: true }); return; }
+        if (THREAD_OLDEST_FIRST) {
+          try {
+            const sv = l.getNativeScrollRef?.();
+            if (sv && typeof sv.scrollToEnd === 'function') {
+              sv.scrollToEnd({ animated: false });
+              // rows do fim medem no próximo frame (estimado → real): fixa.
+              setTimeout(() => { try { (inst()?.getNativeScrollRef?.() || sv).scrollToEnd({ animated: false }); } catch {} }, 34);
+              setTimeout(() => { try { (inst()?.getNativeScrollRef?.() || sv).scrollToEnd({ animated: false }); } catch {} }, 180);
+              return;
+            }
+          } catch {}
+        }
+        api.toLatest({ animated: false });
+      },
       indexOfMessage(id) {
         const s = String(id ?? '');
         if (!s) return -1;
@@ -7877,46 +7964,60 @@ function ChatConversationInner() {
       try {
         const idNum = Number.isFinite(numericId) ? numericId : msg.id;
         setReplyJumpHighlightId(idNum);
-        setTimeout(() => setReplyJumpHighlightId(prev => (prev === idNum ? null : prev)), 1500);
+        // [2026-10-08 chat-gaps2] destaque curto (WhatsApp ~1 s)
+        setTimeout(() => setReplyJumpHighlightId(prev => (prev === idNum ? null : prev)), 1100);
       } catch {}
     };
     // [2026-10-07 flashlist] Resolve the row in the RENDERED data (threadDataRef,
     // any engine/orientation; matches album cells too) — the old findIndex over
     // enrichedMessages drifted from the list index whenever the Saved filter /
     // disappearing filter removed rows.
+    // [2026-10-08 chat-gaps2] jumpToMessage = salto direto pelo layout (sem os
+    // 5 passes do scrollToIndex + animação longa): 0,9-1,3 s → 1-2 frames.
     const tryScroll = () => {
-      if (!threadScroll.toMessage(targetId, { animated: true, viewPosition: 0.5 })) return false;
-      flashHighlight();
+      if (!threadScroll.jumpToMessage(targetId, { viewPosition: 0.5 })) return false;
+      threadScroll.afterScrollSettled(flashHighlight);
       return true;
     };
     if (tryScroll()) return;
-    // Not in current window — load a slice around the target id from backend.
+    // Not in current window — load a slice around the target id.
     if (!conversationId || !Number.isFinite(numericId) || numericId <= 0) return;
-    try {
-      const r = await api.chatLoadAround?.(conversationId, numericId, 30, 10);
-      const slice = r?.data?.messages;
-      if (!Array.isArray(slice) || slice.length === 0) return;
+    const spliceAndScroll = (slice) => {
+      if (!Array.isArray(slice) || slice.length === 0) return false;
       // Splice into messages by id; keep order ascending. Avoid duplicates.
       setMessages(prev => {
         const map = new Map();
         for (const m of prev) {
           if (m && m.id != null) map.set(String(m.id), m);
         }
+        let added = 0;
         for (const m of slice) {
           if (m && m.id != null) {
             const k = String(m.id);
             // Don't clobber an existing in-memory copy with possibly less
             // enriched server row (read flags, _pending, etc.).
-            if (!map.has(k)) map.set(k, m);
+            if (!map.has(k)) { map.set(k, m); added++; }
           }
         }
+        if (!added) return prev;
         const out = Array.from(map.values()).sort((a, b) => Number(a.id) - Number(b.id));
         return out;
       });
       // Wait a tick for state to flush, then scroll. [2026-10-07 flashlist]
       // retry once — the list data (threadDataRef) refreshes on the next
       // render, which can land after 60ms on a busy JS thread.
-      setTimeout(() => { if (!tryScroll()) setTimeout(() => { tryScroll(); }, 240); }, 60);
+      setTimeout(() => { if (!tryScroll()) setTimeout(() => { tryScroll(); }, 160); }, 30);
+      return true;
+    };
+    // [2026-10-08 chat-gaps2] 1º o SQLite local (síncrono, sem rede) — só
+    // vai ao servidor se o alvo não estiver no aparelho (web: sempre servidor).
+    try {
+      const local = require('../services/sqliteStore').getMessagesAroundSync?.(conversationId, numericId, 30, 10);
+      if (Array.isArray(local) && local.length > 0 && spliceAndScroll(local)) return;
+    } catch {}
+    try {
+      const r = await api.chatLoadAround?.(conversationId, numericId, 30, 10);
+      spliceAndScroll(r?.data?.messages);
     } catch (e) {
       // Best-effort — silent on failure (no banner spam for a tap miss).
       try { console.warn?.('[safeScrollToMsg] load_around failed:', e?.message || e); } catch {}
@@ -21536,7 +21637,15 @@ function ChatConversationInner() {
   // (onEndReached). The ref keeps the prop stable for FlashList.
   const handleLoadMoreRef = useRef(null);
   handleLoadMoreRef.current = handleLoadMore;
-  const onThreadReachedOldest = useCallback(() => { try { handleLoadMoreRef.current?.(); } catch {} }, []);
+  // [2026-10-08 chat-gaps2] Salto p/ citação perto do topo dispara o
+  // onStartReached no MESMO frame → setState de "carregando antigas" re-renderiza
+  // a tela inteira antes das rows do alvo pintarem (+~300 ms). Adia a página
+  // antiga p/ depois do alvo aparecer (o carregamento continua acontecendo).
+  const onThreadReachedOldest = useCallback(() => {
+    const since = Date.now() - (threadScrollStateRef.current.jumpAt || 0);
+    if (since < 700) { setTimeout(() => { try { handleLoadMoreRef.current?.(); } catch {} }, 700 - since); return; }
+    try { handleLoadMoreRef.current?.(); } catch {}
+  }, []);
 
   // PERF: ListHeaderComponent was inline JSX — recreated every parent render
   // (and the parent re-renders on EVERY keystroke via setInputText). That
@@ -21974,7 +22083,9 @@ function ChatConversationInner() {
   const handleFlatListScroll = useCallback((e) => {
     // [2026-10-07 flashlist] distance from the NEWEST message, engine-agnostic
     // (inverted: contentOffset.y; oldest-first: contentH - viewportH - y).
-    const scrolledUp = threadScroll.distanceFromLatest(e) > 300;
+    const _distLatest = threadScroll.distanceFromLatest(e);
+    threadScrollStateRef.current.lastDistance = _distLatest; // [2026-10-08 chat-gaps2] jumpToLatest
+    const scrolledUp = _distLatest > 300;
     isScrolledUpRef.current = scrolledUp;
     threadScrollStateRef.current.scrolledUp = scrolledUp;
     // Only trigger setState when the value actually changes
@@ -26879,10 +26990,11 @@ function ChatConversationInner() {
                       );
                     }}
                     style={{ flexDirection: 'row', alignItems: 'center', marginLeft: 3, gap: 2, opacity: 0.7 }}
-                    accessibilityLabel="Queued - tap for details"
+                    accessibilityLabel={t('chat.sending') || 'Enviando...'}
                   >
-                    <SendStatusText msg={msg} color={ownMetaColor} fontSize={10} />
-                    <IconClock size={11} color={ownMetaColor} />
+                    {/* [2026-10-08 chat-gaps2] WhatsApp: offline = só o relógio (sem "Enviando…"); falha ainda aparece. */}
+                    <SendStatusText msg={msg} color={ownMetaColor} fontSize={10} quietPending />
+                    <IconClock size={13} color={ownMetaColor} />
                   </TouchableOpacity>
                 );
                 // WhatsApp ⏱ pending state — show clock BEFORE any checkmark.
@@ -27419,9 +27531,10 @@ function ChatConversationInner() {
                 setAvatarLightbox({ name: conversationName, email: friendEmail, uri: null });
               }}
             />
-            {presence?.status === 'online' && wsConnected && conversationType === 'direct' && (
-              <PresencePulse isDark={isDark} />
-            )}
+            {/* [2026-10-08 chat-fix-composer-location] bolinha verde do avatar
+                REMOVIDA: o header mostrava 2 bolinhas verdes (avatar + antes de
+                "online"). Igual ao WhatsApp, o status é só o TEXTO "online"
+                (P&B). PresencePulse segue definido p/ outros usos. */}
           </View>
           <View style={{ flex: 1 }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
@@ -27439,16 +27552,12 @@ function ChatConversationInner() {
                 {/* Green pip ONLY when our socket is up (live online). When our
                     WS is down we can't trust "online" — render a muted gray dot
                     instead so we never falsely signal availability. */}
-                {presence?.status === 'online' && (
-                  <HeaderPresencePip
-                    online={wsConnected}
-                    dimmedOnline={!wsConnected}
-                    hidden={isTyping}
-                  />
-                )}
+                {/* [2026-10-08 chat-fix-composer-location] pip verde antes de
+                    "online" REMOVIDO (duplicava a bolinha do avatar). Status =
+                    só texto, como no WhatsApp. */}
                 {/* [2026-10-08 chat-beauty-chrome] monocromático: status em
                     cinza secundário; "digitando…" sobe pra cor do texto (sem
-                    itálico) — o pip verde continua sendo o único sinal de cor. */}
+                    itálico). */}
                 <PresenceTextFade
                   text={presenceText}
                   style={[styles.headerSubtitle, {
@@ -29106,7 +29215,7 @@ function ChatConversationInner() {
       {showScrollDown && (
         <ScrollDownFabAnim
           onPress={() => {
-            threadScroll.toLatest({ animated: true }); // [2026-10-07 flashlist]
+            threadScroll.jumpToLatest(); // [2026-10-08 chat-gaps2] longe = salto instantâneo
             setShowScrollDown(false);
             setNewMsgCount(0);
             try { if (Platform.OS !== 'web') Haptics.selectionAsync(); } catch {}
@@ -34907,7 +35016,7 @@ const styles = StyleSheet.create({
   msgMetaInline: { position: 'absolute', right: 10, bottom: 6, marginTop: 0 },
   // Same font size/letter-spacing as msgTime so the mirrored width matches;
   // transparent ink, never selectable.
-  metaGhost: { fontSize: 11, letterSpacing: 0.1, color: 'transparent', ...(Platform.OS === 'web' ? { userSelect: 'none' } : {}) },
+  metaGhost: { fontSize: 11, fontWeight: '500', fontVariant: ['tabular-nums'], letterSpacing: 0.1, color: 'transparent', /* [2026-10-08 chat-fix-composer-location] = msgTime */ ...(Platform.OS === 'web' ? { userSelect: 'none' } : {}) },
   videoOverlayAbsolute: {
     position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
     alignItems: 'center', justifyContent: 'center',

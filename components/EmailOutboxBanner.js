@@ -31,7 +31,7 @@ export default function EmailOutboxBanner({ variant = 'banner', onPress }) {
         <View style={st.sideIcon}><Icon size={18} color={tint} /></View>
         <Text style={[st.sideLabel, { color: colors.text }]} numberOfLines={1}>{t('emailOutbox.title')}</Text>
         <View style={[st.badge, { backgroundColor: tint }]}>
-          <Text style={st.badgeText}>{items.length}</Text>
+          <Text style={[st.badgeText, !failed && colors.onPrimary ? { color: colors.onPrimary } : null]}>{items.length}</Text>
         </View>
       </TouchableOpacity>
     );

@@ -12,6 +12,7 @@ import { callHistoryList, callHistoryAdd, callHistoryDelete, callHistoryClear, v
 import { getCached, setCache } from '../services/cache';
 import { useCall } from '../context/CallContext';
 import { useLanguage } from '../context/LanguageContext';
+import { useTheme } from '../context/ThemeContext'; // [2026-10-08 polish-leftovers]
 import { ensureContactIndex, lookupName as lookupDeviceContactName } from '../services/deviceContactLookup';
 import { CallListSkeleton } from './SkeletonLoader';
 import { haptic } from '../constants/theme';
@@ -47,6 +48,9 @@ const GREEN = '#16a34a';
 const GREEN_DARK = '#15803d';
 const RED = '#E53935';
 const BLUE = '#111111';
+// [2026-10-08 polish-leftovers] link/info ink: BLUE (#111) vanished on the dark
+// surfaces — dark mode uses the theme's white primary instead.
+const blueInk = (isDark) => (isDark ? '#F5F5F7' : BLUE);
 const ACCENT = '#111111';
 const SCREEN_WIDTH = Dimensions.get('window').width;
 const MAX_DIALER_WIDTH = 400;
@@ -877,7 +881,7 @@ const CallHistoryRow = memo(function CallHistoryRow({ item, isDark, t, language,
           accessibilityLabel={t?.('calls.callInfo') || 'Info'}
           accessibilityRole="button"
         >
-          <IconInfoCircle size={20} color={BLUE} />
+          <IconInfoCircle size={20} color={blueInk(isDark)} />
         </TouchableOpacity>
       </View>
     </TouchableOpacity>
@@ -908,7 +912,7 @@ const CallHistoryRow = memo(function CallHistoryRow({ item, isDark, t, language,
 // that the screen is "live, just waiting" rather than a dead zone, and the
 // violet matches the rest of the app's brand polish from R14/R17.
 // ============================================================
-function CallEmptyIllustration({ isDark }) {
+function CallEmptyIllustration({ isDark, ink = '#111111', onInk = '#fff' }) {
   const ring1 = useRef(new Animated.Value(0)).current;
   const ring2 = useRef(new Animated.Value(0)).current;
   const ring3 = useRef(new Animated.Value(0)).current;
@@ -932,7 +936,7 @@ function CallEmptyIllustration({ isDark }) {
   const ringStyle = (anim) => ({
     position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
     borderRadius: 999, borderWidth: 2,
-    borderColor: isDark ? 'rgba(17, 17, 17,0.55)' : 'rgba(17, 17, 17,0.45)',
+    borderColor: isDark ? 'rgba(245,245,247,0.45)' : 'rgba(17, 17, 17,0.45)',
     transform: [
       { scale: anim.interpolate({ inputRange: [0, 1], outputRange: [0.7, 2.4] }) },
     ],
@@ -952,13 +956,14 @@ function CallEmptyIllustration({ isDark }) {
         width: 64, height: 64, borderRadius: 32,
         alignItems: 'center', justifyContent: 'center',
         ...Platform.select({
-          ios: { shadowColor: '#111111', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.32, shadowRadius: 14 },
+          ios: { shadowColor: isDark ? '#000' : ink, shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.32, shadowRadius: 14 },
           android: { elevation: 6 },
-          web: { boxShadow: '0 6px 20px rgba(17, 17, 17,0.32)', background: 'linear-gradient(135deg, #111111 0%, #111111 100%)' },
+          web: { boxShadow: isDark ? '0 6px 20px rgba(0,0,0,0.5)' : '0 6px 20px rgba(17, 17, 17,0.32)' },
         }),
-        backgroundColor: '#111111',
+        // [2026-10-08 polish-leftovers] theme ink (white disc + black glyph in dark)
+        backgroundColor: ink,
       }}>
-        <IconPhone size={26} color="#fff" />
+        <IconPhone size={26} color={onInk} />
       </View>
     </View>
   );
@@ -1029,7 +1034,7 @@ function CallInfoModal({ item, visible, onClose, isDark, t, onCallAgain }) {
           {/* Header */}
           <View style={s.modalHeader}>
             <TouchableOpacity onPress={onClose} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
-              <Text style={{ color: BLUE, fontSize: 17 }}>{t?.('common.close') || 'Fechar'}</Text>
+              <Text style={{ color: blueInk(isDark), fontSize: 17 }}>{t?.('common.close') || 'Fechar'}</Text>
             </TouchableOpacity>
             <Text style={[s.modalTitle, { color: textColor }]}>{t?.('calls.callInfo') || 'Info'}</Text>
             <View style={{ width: 60 }} />
@@ -1749,6 +1754,12 @@ export function CallerIdVerifyContent({ onClose, onVerified, isDark, t }) {
   const bg = isDark ? '#1c1c1e' : '#fff';
   const txt = isDark ? '#fff' : '#000';
   const sub = isDark ? '#8e8e93' : '#636366';
+  // [2026-10-08 polish-leftovers] brand ink follows the theme: dark primary is
+  // white (#F5F5F7) with black content on it; the old '#111111' fills/labels
+  // were dark-on-dark here (PIN input text, "POR QUE ISSO?", step dots, CTAs).
+  const { colors: tc } = useTheme();
+  const ink = tc.primary;
+  const onInk = tc.onPrimary || '#fff';
 
   // Request step: asks Telnyx to send the user a 6-digit code (SMS by default,
   // voice call if method='call'). User then types the code back into the app
@@ -1806,28 +1817,28 @@ export function CallerIdVerifyContent({ onClose, onVerified, isDark, t }) {
           {/* Hero header */}
           <View style={{
             paddingHorizontal: 24, paddingTop: 28, paddingBottom: 22,
-            backgroundColor: step === 'done' ? '#16a34a' : '#111111',
+            backgroundColor: step === 'done' ? '#16a34a' : ink,
             alignItems: 'center',
           }}>
             <View style={{
               width: 76, height: 76, borderRadius: 38,
-              backgroundColor: 'rgba(255,255,255,0.18)',
-              borderWidth: 2, borderColor: 'rgba(255,255,255,0.4)',
+              backgroundColor: step === 'done' || !isDark ? 'rgba(255,255,255,0.18)' : 'rgba(0,0,0,0.08)',
+              borderWidth: 2, borderColor: step === 'done' || !isDark ? 'rgba(255,255,255,0.4)' : 'rgba(0,0,0,0.25)',
               alignItems: 'center', justifyContent: 'center', marginBottom: 14,
             }}>
               {step === 'done' ? (
                 <IconCheck size={38} color="#fff" />
               ) : step === 'pin' ? (
-                <IconSmartphone size={38} color="#fff" />
+                <IconSmartphone size={38} color={onInk} />
               ) : (
-                <IconPhone size={38} color="#fff" />
+                <IconPhone size={38} color={onInk} />
               )}
             </View>
-            <Text style={{ fontSize: 20, fontWeight: '800', color: '#fff', textAlign: 'center', letterSpacing: -0.3 }}>
+            <Text style={{ fontSize: 20, fontWeight: '800', color: step === 'done' ? '#fff' : onInk, textAlign: 'center', letterSpacing: -0.3 }}>
               {step === 'done' ? 'Número verificado!' : step === 'pin' ? 'Atenda a ligação' : 'Verificar seu número'}
             </Text>
             {step !== 'done' && (
-              <Text style={{ fontSize: 13, color: 'rgba(255,255,255,0.92)', textAlign: 'center', marginTop: 6, lineHeight: 18 }}>
+              <Text style={{ fontSize: 13, color: onInk, opacity: 0.88, textAlign: 'center', marginTop: 6, lineHeight: 18 }}>
                 {step === 'pin' ? 'Digite o PIN abaixo no teclado do telefone' : 'Mostre seu número de verdade nas ligações'}
               </Text>
             )}
@@ -1854,11 +1865,11 @@ export function CallerIdVerifyContent({ onClose, onVerified, isDark, t }) {
             <>
               {/* Why card */}
               <View style={{
-                backgroundColor: isDark ? 'rgba(0,122,255,0.10)' : 'rgba(0,122,255,0.07)',
+                backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)',
                 borderRadius: 12, padding: 14, marginBottom: 14,
-                borderLeftWidth: 3, borderLeftColor: '#111111',
+                borderLeftWidth: 3, borderLeftColor: ink,
               }}>
-                <Text style={{ fontSize: 12, fontWeight: '800', color: '#111111', marginBottom: 4, letterSpacing: 0.4 }}>
+                <Text style={{ fontSize: 12, fontWeight: '800', color: ink, marginBottom: 4, letterSpacing: 0.4 }}>
                   POR QUE ISSO?
                 </Text>
                 <Text style={{ fontSize: 13, color: txt, lineHeight: 19 }}>
@@ -1869,24 +1880,24 @@ export function CallerIdVerifyContent({ onClose, onVerified, isDark, t }) {
               {/* How it works */}
               <View style={{ marginBottom: 14 }}>
                 <View style={{ flexDirection: 'row', alignItems: 'flex-start', marginBottom: 10 }}>
-                  <View style={{ width: 22, height: 22, borderRadius: 11, backgroundColor: '#111111', alignItems: 'center', justifyContent: 'center', marginRight: 10, marginTop: 1 }}>
-                    <Text style={{ color: '#fff', fontSize: 12, fontWeight: '800' }}>1</Text>
+                  <View style={{ width: 22, height: 22, borderRadius: 11, backgroundColor: ink, alignItems: 'center', justifyContent: 'center', marginRight: 10, marginTop: 1 }}>
+                    <Text style={{ color: onInk, fontSize: 12, fontWeight: '800' }}>1</Text>
                   </View>
                   <Text style={{ flex: 1, fontSize: 13, color: txt, lineHeight: 19 }}>
                     Você vai receber {method === 'call' ? <Text style={{ fontWeight: '700' }}>uma ligação</Text> : <Text style={{ fontWeight: '700' }}>um SMS</Text>} com um código de 6 dígitos.
                   </Text>
                 </View>
                 <View style={{ flexDirection: 'row', alignItems: 'flex-start', marginBottom: 10 }}>
-                  <View style={{ width: 22, height: 22, borderRadius: 11, backgroundColor: '#111111', alignItems: 'center', justifyContent: 'center', marginRight: 10, marginTop: 1 }}>
-                    <Text style={{ color: '#fff', fontSize: 12, fontWeight: '800' }}>2</Text>
+                  <View style={{ width: 22, height: 22, borderRadius: 11, backgroundColor: ink, alignItems: 'center', justifyContent: 'center', marginRight: 10, marginTop: 1 }}>
+                    <Text style={{ color: onInk, fontSize: 12, fontWeight: '800' }}>2</Text>
                   </View>
                   <Text style={{ flex: 1, fontSize: 13, color: txt, lineHeight: 19 }}>
                     Digite o código aqui no app pra confirmar que esse número é seu.
                   </Text>
                 </View>
                 <View style={{ flexDirection: 'row', alignItems: 'flex-start' }}>
-                  <View style={{ width: 22, height: 22, borderRadius: 11, backgroundColor: '#111111', alignItems: 'center', justifyContent: 'center', marginRight: 10, marginTop: 1 }}>
-                    <Text style={{ color: '#fff', fontSize: 12, fontWeight: '800' }}>3</Text>
+                  <View style={{ width: 22, height: 22, borderRadius: 11, backgroundColor: ink, alignItems: 'center', justifyContent: 'center', marginRight: 10, marginTop: 1 }}>
+                    <Text style={{ color: onInk, fontSize: 12, fontWeight: '800' }}>3</Text>
                   </View>
                   <Text style={{ flex: 1, fontSize: 13, color: txt, lineHeight: 19 }}>
                     Pronto — <Text style={{ fontWeight: '700' }}>verificado pra sempre</Text>. Suas ligações vão mostrar seu número real.
@@ -1932,9 +1943,9 @@ export function CallerIdVerifyContent({ onClose, onVerified, isDark, t }) {
                 <TouchableOpacity
                   disabled={loading}
                   onPress={handleStartVerify}
-                  style={{ flex: 1.4, height: 50, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: '#111111', opacity: loading ? 0.6 : 1 }}
+                  style={{ flex: 1.4, height: 50, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: ink, opacity: loading ? 0.6 : 1 }}
                 >
-                  {loading ? <ActivityIndicator color="#fff" /> : <Text style={{ color: '#fff', fontWeight: '700', fontSize: 15 }}>Iniciar verificação</Text>}
+                  {loading ? <ActivityIndicator color={onInk} /> : <Text style={{ color: onInk, fontWeight: '700', fontSize: 15 }}>Iniciar verificação</Text>}
                 </TouchableOpacity>
               </View>
             </>
@@ -1962,8 +1973,8 @@ export function CallerIdVerifyContent({ onClose, onVerified, isDark, t }) {
                   backgroundColor: isDark ? '#1c1c1e' : '#f2f2f7',
                   borderRadius: 16, paddingVertical: 22, paddingHorizontal: 20,
                   textAlign: 'center', marginBottom: 16,
-                  borderWidth: 2, borderColor: '#111111',
-                  fontSize: 36, fontWeight: '900', color: '#111111',
+                  borderWidth: 2, borderColor: ink,
+                  fontSize: 36, fontWeight: '900', color: ink,
                   letterSpacing: 8, fontVariant: ['tabular-nums'],
                 }}
               />
@@ -1980,9 +1991,9 @@ export function CallerIdVerifyContent({ onClose, onVerified, isDark, t }) {
                 <TouchableOpacity
                   disabled={loading || pin.length !== 6}
                   onPress={handleSubmitPin}
-                  style={{ flex: 1.4, height: 50, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: '#111111', opacity: (loading || pin.length !== 6) ? 0.4 : 1 }}
+                  style={{ flex: 1.4, height: 50, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: ink, opacity: (loading || pin.length !== 6) ? 0.4 : 1 }}
                 >
-                  {loading ? <ActivityIndicator color="#fff" /> : <Text style={{ color: '#fff', fontWeight: '700', fontSize: 15 }}>Confirmar</Text>}
+                  {loading ? <ActivityIndicator color={onInk} /> : <Text style={{ color: onInk, fontWeight: '700', fontSize: 15 }}>Confirmar</Text>}
                 </TouchableOpacity>
               </View>
             </>
@@ -2473,11 +2484,11 @@ function DialerModal({ visible, onClose, isDark, t, minutesInfo, onCallPlaced, c
             style={{
               flexDirection: 'row', alignItems: 'center', gap: 6,
               paddingHorizontal: 12, paddingVertical: 6, borderRadius: 14,
-              backgroundColor: callerIdVerified ? 'rgba(52,199,89,0.14)' : 'rgba(0,122,255,0.12)',
+              backgroundColor: callerIdVerified ? 'rgba(52,199,89,0.14)' : (isDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,122,255,0.12)'),
             }}
           >
             {callerIdVerified ? <IconVerifiedBadge size={13} color="#16a34a" /> : null}
-            <Text style={{ fontSize: 13, fontWeight: '700', color: callerIdVerified ? '#16a34a' : BLUE }}>
+            <Text style={{ fontSize: 13, fontWeight: '700', color: callerIdVerified ? '#16a34a' : blueInk(isDark) }}>
               {callerIdVerified ? 'Verificado' : 'Verificar nº'}
             </Text>
           </TouchableOpacity>
@@ -2624,8 +2635,8 @@ function DialerModal({ visible, onClose, isDark, t, minutesInfo, onCallPlaced, c
               onPress={() => setShowContacts(!showContacts)}
               activeOpacity={0.7}
             >
-              <IconUserPlus size={16} color={BLUE} />
-              <Text style={{ color: BLUE, fontSize: 14, fontWeight: '500' }}>
+              <IconUserPlus size={16} color={blueInk(isDark)} />
+              <Text style={{ color: blueInk(isDark), fontSize: 14, fontWeight: '500' }}>
                 {showContacts ? (t?.('calls.hideContacts') || 'Esconder contatos') : (t?.('calls.showContacts') || 'Contatos do celular')}
               </Text>
             </TouchableOpacity>
@@ -3666,7 +3677,7 @@ function ChatCallsTab({ colors, isDark, t, user, router }) {
           <CallListSkeleton count={6} />
         ) : filteredHistory.length === 0 ? (
           <View style={s.emptyState}>
-            <CallEmptyIllustration isDark={isDark} />
+            <CallEmptyIllustration isDark={isDark} ink={colors?.primary || '#111111'} onInk={colors?.onPrimary || '#fff'} />
             <Text style={[s.emptyTitle, { color: textColor }]}>
               {t?.('calls.noCallsTitle') || 'Nenhuma ligacao recente'}
             </Text>
@@ -3675,13 +3686,13 @@ function ChatCallsTab({ colors, isDark, t, user, router }) {
             </Text>
             {/* CTA — primes the user to make a call instead of staring at nothing. */}
             <TouchableOpacity
-              style={s.emptyCtaBtn}
+              style={[s.emptyCtaBtn, colors?.primary ? { backgroundColor: colors.primary, ...(Platform.OS === 'web' ? { backgroundImage: 'none', boxShadow: isDark ? 'none' : '0 6px 18px rgba(17, 17, 17,0.35)' } : null) } : null]}
               onPress={() => setDialerVisible(true)}
               activeOpacity={0.85}
               accessibilityLabel={t?.('calls.dialer') || 'Teclado'}
               accessibilityRole="button"
             >
-              <Text style={s.emptyCtaText}>
+              <Text style={[s.emptyCtaText, colors?.onPrimary ? { color: colors.onPrimary } : null]}>
                 {t?.('calls.openDialer') || 'Abrir teclado'}
               </Text>
             </TouchableOpacity>

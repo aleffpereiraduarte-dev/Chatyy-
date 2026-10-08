@@ -2146,7 +2146,7 @@ export default function NotesScreen() {
             }]}
           >
             <IconPlus size={18} color={colors.onPrimary || '#fff'} />
-            <Text style={s.emptyBtnText}>{t('notes.newNote')}</Text>
+            <Text style={[s.emptyBtnText, { color: colors.onPrimary }]}>{t('notes.newNote')}</Text>
           </PressableScale>
         </Animated.View>
       ) : viewMode === 'board' ? (
@@ -2250,7 +2250,7 @@ export default function NotesScreen() {
           onPress={() => openEditor()}
           accessibilityLabel={t('notes.newNote')}
         >
-          <IconPlus size={28} color="#fff" />
+          <IconPlus size={28} color={colors.onPrimary} />
         </BrandFab>
       )}
 
@@ -2262,7 +2262,7 @@ export default function NotesScreen() {
           onPress={() => openEditor()}
           accessibilityLabel={t('notes.newNote')}
         >
-          <IconPlus size={28} color="#fff" />
+          <IconPlus size={28} color={colors.onPrimary} />
         </BrandFab>
       )}
 

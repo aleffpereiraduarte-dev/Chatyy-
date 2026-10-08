@@ -68,7 +68,7 @@ export default function SavedMessagesScreen() {
         <>
           <Text style={[styles.errText, { color: colors.text }]}>{err}</Text>
           <TouchableOpacity onPress={() => router.back()} style={[styles.btn, { backgroundColor: colors.primary }]}>
-            <Text style={styles.btnText}>{t('common.back') || 'Voltar'}</Text>
+            <Text style={[styles.btnText, { color: colors.onPrimary }]}>{t('common.back') || 'Voltar'}</Text>
           </TouchableOpacity>
         </>
       ) : (

@@ -557,7 +557,7 @@ export default function ChildRestrictionGuard({ children }) {
       <Animated.View style={[sty.bedtime, { opacity: fadeAnim, backgroundColor: '#1e1b4b' }]}>
         <Animated.View style={{ alignItems: 'center', zIndex: 1, transform: [{ scale: bounceAnim }] }}>
           <View style={{ width: 110, height: 110, borderRadius: 55, backgroundColor: 'rgba(17, 17, 17,0.18)', alignItems: 'center', justifyContent: 'center', marginBottom: 18 }}>
-            <IconLock size={64} color="#111111" />
+            <IconLock size={64} color="#fff" />
           </View>
           <Text style={[sty.bedTitle, { color: '#fff' }]}>
             {t('kids.restriction.locked') || 'App pausado pelos pais'}
@@ -744,7 +744,7 @@ const sty = StyleSheet.create({
     ...(Platform.OS === 'web' ? { background: 'linear-gradient(135deg, #0f0720 0%, #161618 40%, #161618 70%, #111111 100%)' } : {}),
   },
   gradTitle: { fontSize: 34, fontWeight: '800', color: '#fff', marginTop: 12, marginBottom: 4 },
-  gradSub: { fontSize: 22, color: '#111111', marginBottom: 24, fontWeight: '700' },
+  gradSub: { fontSize: 22, color: '#E5E5EA', marginBottom: 24, fontWeight: '700' },
   gradCard: {
     backgroundColor: 'rgba(255,255,255,0.08)', borderRadius: 24, padding: 28, width: '100%', maxWidth: 360,
     borderWidth: 1, borderColor: 'rgba(17, 17, 17,0.25)',

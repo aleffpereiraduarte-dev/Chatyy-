@@ -238,11 +238,11 @@ export default function EmailSignaturesScreen() {
           <BrandFab
             style={{ position: 'absolute', right: 20, bottom: 24 }}
             size={52}
-            color="#111111"
+            color={colors.primary}
             onPress={() => { setEditing('new'); setName(''); setBodyHtml(''); setAliasEmail(''); setIsDefault(items.length === 0); }}
             accessibilityLabel="New signature"
           >
-            <IconPlus size={22} color="#fff" />
+            <IconPlus size={22} color={colors.onPrimary} />
           </BrandFab>
         </>
       )}

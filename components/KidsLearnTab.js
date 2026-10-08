@@ -283,10 +283,10 @@ export default function KidsLearnTab() {
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 10 }}>
               <AvatarIcon size={36} />
               <View style={{ flex: 1 }}>
-                <Text style={{ fontSize: 15, fontWeight: '800', color: '#111111' }}>{t('kids.teacherOne')}</Text>
+                <Text style={{ fontSize: 15, fontWeight: '800', color: colors.primary }}>{t('kids.teacherOne')}</Text>
                 {level > 1 && (
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 2 }}>
-                    <Text style={{ fontSize: 11, color: '#111111', fontWeight: '700' }}>Lv.{level}</Text>
+                    <Text style={{ fontSize: 11, color: colors.primary, fontWeight: '700' }}>Lv.{level}</Text>
                     <StarProgress stars={Math.min(stars, 5)} maxStars={5} size={12} />
                   </View>
                 )}
@@ -384,7 +384,7 @@ export default function KidsLearnTab() {
           <View style={[s.bubble, s.aiBubble, { backgroundColor: isDark ? '#161618' : '#fff' }]}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 4 }}>
               <AvatarIcon size={36} />
-              <Text style={{ fontSize: 15, fontWeight: '800', color: '#111111' }}>{t('kids.teacherOne')}</Text>
+              <Text style={{ fontSize: 15, fontWeight: '800', color: colors.primary }}>{t('kids.teacherOne')}</Text>
             </View>
             <TypingDots />
           </View>
@@ -504,13 +504,13 @@ export default function KidsLearnTab() {
               if (!r.canceled && r.assets?.[0]) sendMessage(input.trim() || 'Me ajuda com esse dever de casa!');
             } catch {}
           }} activeOpacity={0.7} accessibilityLabel="Photo" accessibilityRole="button">
-            <IconCamera size={24} color={isDark ? '#111111' : '#111111'} />
+            <IconCamera size={24} color={isDark ? '#F5F5F7' : '#111111'} />
           </TouchableOpacity>
         )}
         <TextInput
           style={[s.input, { backgroundColor: isDark ? '#161618' : '#f3e8ff', color: isDark ? '#F1F3F5' : '#1e1b4b' }]}
           placeholder={t('kids.homeworkPlaceholder') || 'Qual sua duvida?'}
-          placeholderTextColor={isDark ? '#111111' : '#111111'}
+          placeholderTextColor={isDark ? '#8E8E93' : '#111111'}
           value={input} onChangeText={setInput}
           onSubmitEditing={() => sendMessage(input)} returnKeyType="send" maxLength={500} editable={!loading}
         />
@@ -523,7 +523,7 @@ export default function KidsLearnTab() {
           accessibilityLabel="Send" accessibilityRole="button"
         >
           {loading
-            ? <ActivityIndicator size="small" color="#111111" />
+            ? <ActivityIndicator size="small" color={colors.primary} />
             : <IconSend size={20} color={input.trim() ? '#fff' : '#111111'} />
           }
         </TouchableOpacity>

@@ -176,10 +176,10 @@ export default function DiamondTopUpSheet({ visible, onClose, onBalanceChange })
               {t('wallet.currentBalance') || 'Saldo atual'}:
             </Text>
             {loadingBal ? (
-              <ActivityIndicator size="small" color="#111111" />
+              <ActivityIndicator size="small" color={colors.primary} />
             ) : (
               <View style={styles.balValRow}>
-                <IconDiamond size={14} color="#111111" />
+                <IconDiamond size={14} color={colors.primary} />
                 <Text style={[styles.balanceVal, { color: colors.text }]}>{formatInt(balance, language)}</Text>
               </View>
             )}
@@ -203,7 +203,7 @@ export default function DiamondTopUpSheet({ visible, onClose, onBalanceChange })
                   accessibilityLabel={`${p.diamonds} ${t('wallet.diamondsLabel') || 'diamantes'} ${priceLabel}`}
                 >
                   <View style={styles.packLeft}>
-                    <IconDiamond size={18} color="#111111" />
+                    <IconDiamond size={18} color={colors.primary} />
                     <Text style={[styles.packDiamonds, { color: colors.text }]}>
                       {formatInt(p.diamonds, language)}
                     </Text>
@@ -215,7 +215,7 @@ export default function DiamondTopUpSheet({ visible, onClose, onBalanceChange })
                   </View>
                   <View style={styles.packRight}>
                     {isLoading ? (
-                      <ActivityIndicator color="#111111" />
+                      <ActivityIndicator color={colors.primary} />
                     ) : (
                       <Text style={[styles.packPrice, { color: colors.text }]}>{priceLabel}</Text>
                     )}

@@ -223,7 +223,7 @@ export default function ShortVideoBubble({
       {/* "Posted to Reels" indicator (subtle bottom bar). */}
       {reelsCrossPosted && (
         <View pointerEvents="none" style={[shortStyles.reelsBar, { backgroundColor: colors.primary }]}>
-          <Text style={shortStyles.reelsBarText}>Reels</Text>
+          <Text style={[shortStyles.reelsBarText, { color: colors.onPrimary }]}>Reels</Text>
         </View>
       )}
     </TouchableOpacity>

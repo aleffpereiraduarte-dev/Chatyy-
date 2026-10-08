@@ -210,7 +210,7 @@ export default function LinkedPhones() {
         style={[s.row, { backgroundColor: colors.surface, borderColor: colors.borderLight }]}
       >
         <View style={[s.iconWrap, { backgroundColor: isDark ? '#11111122' : '#11111114' }]}>
-          <IconPhone size={18} color="#111111" />
+          <IconPhone size={18} color={colors.primary} />
         </View>
         <View style={{ flex: 1, minWidth: 0 }}>
           <Text style={[s.rowPhone, { color: colors.text }]} numberOfLines={1}>{display}</Text>

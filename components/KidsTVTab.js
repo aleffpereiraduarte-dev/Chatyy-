@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, FlatList, ActivityIndicator, ScrollView, Platform, Dimensions, Animated } from 'react-native';
 import { Image } from 'expo-image';
+import CachedImage from './CachedImage'; // [2026-10-08 polish-leftovers] was used but never imported
 import Svg, { Path, Circle as SvgCircle, Rect, Polygon, Line, G, Defs, LinearGradient, Stop } from 'react-native-svg';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
@@ -217,7 +218,7 @@ export default function KidsTVTab() {
           </View>
         </View>
         {loadingVideos ? (
-          <View style={st.center}><ActivityIndicator size="large" color="#111111" /></View>
+          <View style={st.center}><ActivityIndicator size="large" color={colors.primary} /></View>
         ) : (
           <FlatList data={videos} keyExtractor={item => item.id} contentContainerStyle={{ padding: 14 }}
             renderItem={({ item, index }) => (
@@ -272,7 +273,7 @@ export default function KidsTVTab() {
       </View>
 
       {loading ? (
-        <View style={st.center}><ActivityIndicator size="large" color="#111111" /></View>
+        <View style={st.center}><ActivityIndicator size="large" color={colors.primary} /></View>
       ) : (
         <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 80 }}>
           {/* Category pills */}
@@ -305,7 +306,7 @@ export default function KidsTVTab() {
           {featured.length > 0 && (
             <View style={{ marginTop: 4 }}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 18, marginBottom: 14 }}>
-                <IconStar size={18} color={isDark ? '#111111' : '#111111'} />
+                <IconStar size={18} color={isDark ? '#F5F5F7' : '#111111'} />
                 <Text style={[st.sectionTitle, { color: textColor, marginBottom: 0, paddingHorizontal: 0 }]}>{t('kids.featured')}</Text>
               </View>
               <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 14, gap: 14 }}>

@@ -433,7 +433,7 @@ export default function SearchBar({ value, onChange, onSubmit, onClear, onFocus 
                     </View>
                   </View>
                   <TouchableOpacity onPress={applyAdvancedFilters} style={[st.applyBtn, { backgroundColor: colors.primary }]} activeOpacity={0.8}>
-                    <Text style={st.applyBtnText}>{t('search.apply')}</Text>
+                    <Text style={[st.applyBtnText, { color: colors.onPrimary }]}>{t('search.apply')}</Text>
                   </TouchableOpacity>
                 </View>
               )}

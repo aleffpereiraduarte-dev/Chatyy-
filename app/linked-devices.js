@@ -274,7 +274,7 @@ export default function LinkedDevicesScreen() {
     return (
       <View style={[styles.row, { borderBottomColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)' }]}>
         <View style={[styles.iconBox, { backgroundColor: isDark ? 'rgba(17, 17, 17,0.15)' : 'rgba(17, 17, 17,0.1)' }]}>
-          <Icon size={22} color="#111111" />
+          <Icon size={22} color={colors.primary} />
         </View>
         <View style={styles.rowBody}>
           <View style={styles.rowHead}>
@@ -320,7 +320,7 @@ export default function LinkedDevicesScreen() {
 
       <FadeSlideIn>
       <View style={[styles.hero, { backgroundColor: isDark ? 'rgba(17, 17, 17,0.1)' : 'rgba(17, 17, 17,0.06)' }]}>
-        <IconShield size={40} color="#111111" />
+        <IconShield size={40} color={colors.primary} />
         <Text style={[styles.heroTitle, { color: colors.text }]}>
           {t('devices.heroTitle') || 'Keep your account secure'}
         </Text>
@@ -350,15 +350,15 @@ export default function LinkedDevicesScreen() {
           style={[styles.ctaBtn, styles.ctaBtnSecondary, { borderColor: '#111111' }]}
           onPress={openScanner}
         >
-          <IconCamera size={18} color="#111111" />
-          <Text style={[styles.ctaBtnText, { color: '#111111' }]}>
+          <IconCamera size={18} color={colors.primary} />
+          <Text style={[styles.ctaBtnText, { color: colors.primary }]}>
             {t('devices.scanCompanion') || 'Escanear QR'}
           </Text>
         </TouchableOpacity>
       </View>
 
       {loading ? (
-        <View style={styles.loading}><ActivityIndicator color="#111111" size="large" /></View>
+        <View style={styles.loading}><ActivityIndicator color={colors.primary} size="large" /></View>
       ) : (
         <>
           <FlatList
@@ -370,7 +370,7 @@ export default function LinkedDevicesScreen() {
             ListEmptyComponent={
               <View style={styles.emptyWrap}>
                 <View style={[styles.emptyIconBox, { backgroundColor: isDark ? 'rgba(17, 17, 17,0.15)' : 'rgba(17, 17, 17,0.1)' }]}>
-                  <IconMonitor size={34} color="#111111" />
+                  <IconMonitor size={34} color={colors.primary} />
                 </View>
                 <Text style={[styles.emptyTitle, { color: colors.text }]}>
                   {t('devices.emptyTitle') || 'Apenas este dispositivo'}

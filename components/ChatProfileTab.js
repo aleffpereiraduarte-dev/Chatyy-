@@ -1,5 +1,5 @@
 import NativeSwitch from './NativeSwitch'; // [2026-10-07 app-feel-ui] themed native toggle
-import { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react'; // [2026-10-08 polish-leftovers] React.cloneElement used below
 import {
   View, Text, TouchableOpacity, StyleSheet, ScrollView, Platform,
   TextInput, Alert, ActivityIndicator, Switch, Image as RNImage, Share, Modal, Linking, Animated, FlatList,
@@ -823,8 +823,8 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
             <View style={{ alignItems: 'center', padding: 16 }}>
               <Text style={{ fontSize: 22, fontWeight: '800', color: isDark ? '#F1F3F5' : '#111111' }}>{name}</Text>
               <View style={{ marginTop: 8, flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: isDark ? 'rgba(17, 17, 17,0.15)' : '#F1F3F5', paddingHorizontal: 12, paddingVertical: 5, borderRadius: 20 }}>
-                <KidsIconShieldUser size={14} color="#111111" />
-                <Text style={{ fontSize: 13, fontWeight: '700', color: '#111111' }}>Chatyy Kids</Text>
+                <KidsIconShieldUser size={14} color={colors.primary} />
+                <Text style={{ fontSize: 13, fontWeight: '700', color: colors.primary }}>Chatyy Kids</Text>
               </View>
             </View>
           </View>
@@ -873,13 +873,13 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
             <View style={{ marginHorizontal: 16, marginTop: 12, borderRadius: 20, padding: 16, backgroundColor: isDark ? '#161618' : '#fff', flexDirection: 'row', alignItems: 'center', gap: 14,
               ...Platform.select({ ios: { shadowColor: '#111111', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.06, shadowRadius: 8 }, android: { elevation: 2 }, web: { boxShadow: '0 2px 12px rgba(17, 17, 17,0.06)' } }) }}>
               <View style={{ width: 40, height: 40, borderRadius: 14, backgroundColor: isDark ? 'rgba(17, 17, 17,0.15)' : '#F1F3F5', alignItems: 'center', justifyContent: 'center' }}>
-                <KidsIconFamily size={20} color="#111111" />
+                <KidsIconFamily size={20} color={colors.primary} />
               </View>
               <View style={{ flex: 1 }}>
                 <Text style={{ fontSize: 12, fontWeight: '600', color: '#6b7280', textTransform: 'uppercase', letterSpacing: 0.5 }}>Responsavel</Text>
                 <Text style={{ fontSize: 15, fontWeight: '600', color: isDark ? '#F1F3F5' : '#111111', marginTop: 2 }}>{parentEmail}</Text>
               </View>
-              <IconShield size={20} color="#111111" />
+              <IconShield size={20} color={colors.primary} />
             </View>
           ) : null}
 
@@ -892,7 +892,7 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
             {PERM_ITEMS.map((item, idx) => (
               <View key={idx} style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 12, borderTopWidth: idx > 0 ? 0.5 : 0, borderTopColor: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)' }}>
                 <View style={{ width: 32, height: 32, borderRadius: 10, backgroundColor: isDark ? 'rgba(17, 17, 17,0.12)' : 'rgba(17,17,17,0.06)', alignItems: 'center', justifyContent: 'center', marginRight: 12 }}>
-                  <item.Icon size={16} color={isDark ? '#111111' : '#111111'} />
+                  <item.Icon size={16} color={isDark ? '#F5F5F7' : '#111111'} />
                 </View>
                 <Text style={{ flex: 1, fontSize: 15, fontWeight: '500', color: isDark ? '#F1F3F5' : '#111111' }}>{item.label}</Text>
                 <View style={{ width: 28, height: 28, borderRadius: 14, backgroundColor: item.allowed ? (isDark ? 'rgba(16,185,129,0.15)' : '#dcfce7') : (isDark ? 'rgba(239,68,68,0.15)' : '#fee2e2'), alignItems: 'center', justifyContent: 'center' }}>
@@ -903,16 +903,16 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
             {restrictions.bedtime_start && (
               <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 12, borderTopWidth: 0.5, borderTopColor: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)' }}>
                 <View style={{ width: 32, height: 32, borderRadius: 10, backgroundColor: isDark ? 'rgba(17, 17, 17,0.12)' : 'rgba(17,17,17,0.06)', alignItems: 'center', justifyContent: 'center', marginRight: 12 }}>
-                  <KidsIconMoon size={16} color={isDark ? '#111111' : '#111111'} />
+                  <KidsIconMoon size={16} color={isDark ? '#F5F5F7' : '#111111'} />
                 </View>
                 <Text style={{ flex: 1, fontSize: 15, fontWeight: '500', color: isDark ? '#F1F3F5' : '#111111' }}>Hora de dormir</Text>
-                <Text style={{ fontSize: 13, fontWeight: '600', color: '#111111' }}>{restrictions.bedtime_start} - {restrictions.bedtime_end}</Text>
+                <Text style={{ fontSize: 13, fontWeight: '600', color: colors.primary }}>{restrictions.bedtime_start} - {restrictions.bedtime_end}</Text>
               </View>
             )}
           </View>
 
           <View style={{ alignItems: 'center', marginTop: 24 }}>
-            <KidsIconShieldProtected size={28} color={isDark ? '#111111' : '#111111'} />
+            <KidsIconShieldProtected size={28} color={isDark ? '#F5F5F7' : '#111111'} />
             <Text style={{ fontSize: 13, color: '#9ca3af', textAlign: 'center', marginTop: 8, fontWeight: '500' }}>Sua conta e protegida pelo seu responsavel</Text>
           </View>
 
@@ -1155,7 +1155,7 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
               activeOpacity={0.7}
             >
               <View style={[styles.iconCircle, { backgroundColor: isDark ? 'rgba(17, 17, 17,0.1)' : '#F1F3F5' }]}>
-                <IconSparkles size={14} color="#111111" />
+                <IconSparkles size={14} color={colors.primary} />
               </View>
               <Text style={[styles.linkText, { color: colors.text }]}>{t?.('bots.title') || 'Bots'}</Text>
               <IconChevronRight size={16} color={isDark ? '#48484a' : '#c5c5c5'} />
@@ -1636,7 +1636,7 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
     };
 
     const mediaItems = [
-      { label: t?.('config.storageImages') || 'Imagens', size: storageStats?.images || 0, color: '#111111', icon: <IconImage size={16} color="#111111" /> },
+      { label: t?.('config.storageImages') || 'Imagens', size: storageStats?.images || 0, color: '#111111', icon: <IconImage size={16} color={colors.primary} /> },
       { label: t?.('config.storageVideos') || 'Videos', size: storageStats?.videos || 0, color: '#ef4444', icon: <IconImage size={16} color="#ef4444" /> },
       { label: t?.('config.storageAudio') || 'Audio', size: storageStats?.audio || 0, color: '#f59e0b', icon: <IconImage size={16} color="#f59e0b" /> },
       { label: t?.('config.storageDocs') || 'Documentos', size: storageStats?.docs || 0, color: '#10b981', icon: <IconFileText size={16} color="#10b981" /> },
@@ -2510,11 +2510,11 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
         {/* Account & Privacy Section */}
         <SectionLabel label={t?.('config.account') || 'CONTA'} />
         <SectionCard>
-          <SettingItem icon={<IconKey size={18} color="#111111" />} iconBg={isDark ? 'rgba(59,130,246,0.1)' : '#F1F3F5'}
+          <SettingItem icon={<IconKey size={18} color={colors.primary} />} iconBg={isDark ? 'rgba(59,130,246,0.1)' : '#F1F3F5'}
             title={t?.('config.account') || 'Conta'}
             subtitle={t?.('config.accountDesc') || 'Seguranca, alterar senha, excluir conta'}
             colors={colors} isDark={isDark} onPress={() => setSubScreen('account')} />
-          <SettingItem icon={<IconLock size={18} color="#111111" />} iconBg={isDark ? 'rgba(17, 17, 17,0.1)' : '#F1F3F5'}
+          <SettingItem icon={<IconLock size={18} color={colors.primary} />} iconBg={isDark ? 'rgba(17, 17, 17,0.1)' : '#F1F3F5'}
             title={t?.('config.privacy') || 'Privacidade'}
             subtitle={t?.('config.privacyDesc') || 'Visto por ultimo, foto de perfil, recado'}
             colors={colors} isDark={isDark} onPress={() => setSubScreen('privacy')} />
@@ -2631,9 +2631,9 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
           >
             <View style={[styles.iconCircle, { backgroundColor: isDark ? 'rgba(59,130,246,0.1)' : '#F1F3F5' }]}>
               {restoreRunning ? (
-                <ActivityIndicator size="small" color="#111111" />
+                <ActivityIndicator size="small" color={colors.primary} />
               ) : (
-                <IconDownload size={18} color="#111111" />
+                <IconDownload size={18} color={colors.primary} />
               )}
             </View>
             <View style={{ flex: 1 }}>
@@ -2712,7 +2712,7 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
                           activeOpacity={0.7}
                         >
                           <View style={[styles.iconCircle, { backgroundColor: isDark ? 'rgba(59,130,246,0.1)' : '#F1F3F5' }]}>
-                            <IconFileText size={18} color="#111111" />
+                            <IconFileText size={18} color={colors.primary} />
                           </View>
                           <View style={{ flex: 1 }}>
                             <Text style={{ color: colors.text, fontSize: 15, fontWeight: '500' }}>{dateStr}</Text>

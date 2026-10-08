@@ -110,7 +110,7 @@ export default function AttachmentPreviewModal({ visible, attachments, initialIn
               <Text style={s.noPreviewText}>{t('attachment.cannotPreview')}</Text>
               <TouchableOpacity onPress={handleDownload} style={[s.downloadBtn, { backgroundColor: colors.primary }]}>
                 <IconDownload size={16} color={colors.onPrimary || '#fff'} />
-                <Text style={s.downloadBtnText}>{t('attachment.download')}</Text>
+                <Text style={[s.downloadBtnText, { color: colors.onPrimary }]}>{t('attachment.download')}</Text>
               </TouchableOpacity>
             </View>
           )}

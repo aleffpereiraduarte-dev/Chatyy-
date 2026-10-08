@@ -198,7 +198,7 @@ export default function LocationMessage({ content, isOwn, colors = {}, onOpenMap
         {showSolidFallback ? (
           /* Final fallback: solid bg + centered pin */
           <View style={[styles.mapContainerInner, { backgroundColor: isOwn ? '#111111' : safeColors.primary, justifyContent: 'center', alignItems: 'center' }]}>
-            <IconMapPin size={36} color="#fff" />
+            <IconMapPin size={36} color={isOwn ? '#fff' : (safeColors.onPrimary || '#fff')} />
           </View>
         ) : Platform.OS === 'web' && grid ? (
           <View style={[styles.mapContainerInner, { overflow: 'hidden', backgroundColor: '#e5e7eb' }]}>
@@ -251,7 +251,7 @@ export default function LocationMessage({ content, isOwn, colors = {}, onOpenMap
           </View>
         ) : (
           <View style={[styles.mapContainerInner, { backgroundColor: isOwn ? '#111111' : safeColors.primary, justifyContent: 'center', alignItems: 'center' }]}>
-            <IconMapPin size={36} color="#fff" />
+            <IconMapPin size={36} color={isOwn ? '#fff' : (safeColors.onPrimary || '#fff')} />
           </View>
         )}
 

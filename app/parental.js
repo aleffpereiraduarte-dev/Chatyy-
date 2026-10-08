@@ -484,14 +484,14 @@ function ParentalScreenInner() {
   }, [showWizard, isMountedRef]);
 
   const relationships = [
-    { key: 'mae', label: t('parental.relMom'), emoji: <IconUser size={24} color="#111111" />, color: '#111111' },
+    { key: 'mae', label: t('parental.relMom'), emoji: <IconUser size={24} color={colors.primary} />, color: '#111111' },
     { key: 'pai', label: t('parental.relDad'), emoji: <IconUser size={24} color="#3B82F6" />, color: '#3B82F6' },
-    { key: 'tutor', label: t('parental.relGuardian'), emoji: <IconHome size={24} color="#111111" />, color: '#111111' },
+    { key: 'tutor', label: t('parental.relGuardian'), emoji: <IconHome size={24} color={colors.primary} />, color: '#111111' },
   ];
 
   const genders = [
     { key: 'male', label: t('parental.genderBoy'), emoji: <IconUser size={24} color="#3B82F6" />, color: '#3B82F6' },
-    { key: 'female', label: t('parental.genderGirl'), emoji: <IconUser size={24} color="#111111" />, color: '#111111' },
+    { key: 'female', label: t('parental.genderGirl'), emoji: <IconUser size={24} color={colors.primary} />, color: '#111111' },
     { key: 'other', label: t('parental.genderOther'), emoji: <IconStar size={24} color="#F59E0B" />, color: '#F59E0B' },
   ];
 
@@ -612,7 +612,7 @@ function ParentalScreenInner() {
     active: { color: '#22c55e', label: t('parental.active'), icon: <IconCheck size={24} color="#22c55e" /> },
     suspended: { color: '#ef4444', label: t('parental.suspended'), icon: <IconAlertCircle size={24} color="#ef4444" /> },
     revoked: { color: '#6b7280', label: t('parental.revoked'), icon: <IconX size={24} color="#6b7280" /> },
-    graduated: { color: '#111111', label: t('parental.graduated'), icon: <IconStar size={24} color="#111111" /> },
+    graduated: { color: '#111111', label: t('parental.graduated'), icon: <IconStar size={24} color={colors.primary} /> },
   };
 
   const formatLastActive = (dateStr) => {
@@ -872,7 +872,7 @@ function ParentalScreenInner() {
           {(() => {
             const icons = [IconShield, IconUser, IconStar, IconHeart, IconSparkles, IconSmile];
             const Ico = icons[mascotFrame % icons.length];
-            return <Ico size={44} color="#111111" />;
+            return <Ico size={44} color={colors.primary} />;
           })()}
         </View>
       </Animated.View>
@@ -881,7 +881,7 @@ function ParentalScreenInner() {
         <Text style={[s.wizardTitle, { color: colors.text, marginBottom: 0 }]}>
           {t('parental.addYourChild')}
         </Text>
-        <IconUser size={24} color="#111111" />
+        <IconUser size={24} color={colors.primary} />
       </View>
       <Text style={[s.wizardSubtitle, { color: colors.textSecondary }]}>
         {t('parental.addChildDesc')}
@@ -891,7 +891,7 @@ function ParentalScreenInner() {
       <View style={s.fieldGroup}>
         <Text style={[s.fieldLabel, { color: colors.textSecondary }]}>{t('parental.childFullName')}</Text>
         <View style={[s.inputWrap, { backgroundColor: isDark ? '#1c1c1e' : '#f8f9fb', borderColor: isDark ? '#2c2c2e' : '#e2e8f0' }]}>
-          <View style={{ marginRight: 12 }}><IconUser size={20} color="#111111" /></View>
+          <View style={{ marginRight: 12 }}><IconUser size={20} color={colors.primary} /></View>
           <TextInput
             ref={nameInputRef}
             style={[s.input, { color: colors.text }]}
@@ -1176,7 +1176,7 @@ function ParentalScreenInner() {
                 activeOpacity={0.7}
               >
                 <View style={[s.docBtnIconWrap, { backgroundColor: '#111111' + '15' }]}>
-                  <IconImage size={24} color="#111111" />
+                  <IconImage size={24} color={colors.primary} />
                 </View>
                 <Text style={[s.docBtnText, { color: colors.text }]}>{t('parental.gallery')}</Text>
                 <Text style={[s.docBtnSub, { color: colors.textSecondary }]}>{t('parental.selectPhoto')}</Text>
@@ -1352,7 +1352,7 @@ function ParentalScreenInner() {
               onPress={() => setQuickSetup(p => ({ ...p, bedtime: !p.bedtime }))}
               activeOpacity={0.7}
             >
-              <View style={s.setupEmojiWrap}><IconMoon size={24} color="#111111" /></View>
+              <View style={s.setupEmojiWrap}><IconMoon size={24} color={colors.primary} /></View>
               <View style={{ flex: 1 }}>
                 <Text style={[s.setupLabel, { color: colors.text }]}>{t('parental.setupBedtime')}</Text>
                 <Text style={[s.setupDesc, { color: colors.textSecondary }]}>{presets.bedtimeStart} - {presets.bedtimeEnd}</Text>
@@ -1461,7 +1461,7 @@ function ParentalScreenInner() {
               onPress={() => setQuickSetup(p => ({ ...p, filterProfanity: !p.filterProfanity }))}
               activeOpacity={0.7}
             >
-              <View style={s.setupEmojiWrap}><IconMessageSquare size={24} color="#111111" /></View>
+              <View style={s.setupEmojiWrap}><IconMessageSquare size={24} color={colors.primary} /></View>
               <View style={{ flex: 1 }}>
                 <Text style={[s.setupLabel, { color: colors.text }]}>{t('parental.filterProfanity') || 'Filter profanity'}</Text>
                 <Text style={[s.setupDesc, { color: colors.textSecondary }]}>{t('parental.filterProfanityDesc') || 'Block bad language'}</Text>
@@ -1480,8 +1480,8 @@ function ParentalScreenInner() {
               }}
               activeOpacity={0.7}
             >
-              <IconSparkles size={18} color="#111111" />
-              <Text style={[s.recommendedText, { color: '#111111' }]}>{t('parental.applyRecommended')}</Text>
+              <IconSparkles size={18} color={colors.primary} />
+              <Text style={[s.recommendedText, { color: colors.primary }]}>{t('parental.applyRecommended')}</Text>
             </TouchableOpacity>
           </View>
         )}

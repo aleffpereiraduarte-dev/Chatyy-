@@ -135,7 +135,7 @@ export default function TwoFactorSetup({ visible, onClose }) {
         ) : (
           <>
             <IconShield size={18} color={colors.onPrimary || '#fff'} style={{ marginRight: 8 }} />
-            <Text style={s.primaryBtnText}>{t('twoFactor.enable')}</Text>
+            <Text style={[s.primaryBtnText, { color: colors.onPrimary }]}>{t('twoFactor.enable')}</Text>
           </>
         )}
       </TouchableOpacity>
@@ -193,7 +193,7 @@ export default function TwoFactorSetup({ visible, onClose }) {
         ) : (
           <>
             <IconCheck size={18} color={colors.onPrimary || '#fff'} style={{ marginRight: 8 }} />
-            <Text style={s.primaryBtnText}>{t('twoFactor.verify')}</Text>
+            <Text style={[s.primaryBtnText, { color: colors.onPrimary }]}>{t('twoFactor.verify')}</Text>
           </>
         )}
       </TouchableOpacity>
@@ -222,7 +222,7 @@ export default function TwoFactorSetup({ visible, onClose }) {
         style={[s.primaryBtn, { backgroundColor: colors.primary }]}
         onPress={handleClose}
       >
-        <Text style={s.primaryBtnText}>{t('twoFactor.done')}</Text>
+        <Text style={[s.primaryBtnText, { color: colors.onPrimary }]}>{t('twoFactor.done')}</Text>
       </TouchableOpacity>
     </ScrollView>
   );

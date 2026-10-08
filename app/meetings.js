@@ -731,8 +731,11 @@ function MeetingsScreenInner() {
           ),
         })} />
       ) : (
-      <View style={[styles.header, { backgroundColor: colors.primary }]}>
-        <View style={[styles.headerGradientOverlay, { backgroundColor: colors.primaryDark }]} />
+      <View style={[styles.header, { backgroundColor: isDark ? (colors.headerBgSolid || colors.surface) : colors.primary }]}>
+        {/* [2026-10-08 polish-leftovers] dark: primary is white → the brand header
+            (white title/back, white CTA pill) went white-on-white. Dark uses the
+            neutral solid header surface; CTA pill flips to primary/onPrimary. */}
+        <View style={[styles.headerGradientOverlay, { backgroundColor: isDark ? 'transparent' : colors.primaryDark }]} />
         <View style={styles.headerRow}>
           <TouchableOpacity
             onPress={() => {
@@ -748,13 +751,13 @@ function MeetingsScreenInner() {
           <Text style={styles.headerTitle} numberOfLines={1}>{t('meetings.title')}</Text>
           <TouchableOpacity
             onPress={() => router.push('/meeting-create')}
-            style={styles.headerCta}
+            style={[styles.headerCta, isDark && { backgroundColor: colors.primary }]}
             activeOpacity={0.85}
             accessibilityLabel={t('meetings.scheduleCta')}
             accessibilityRole="button"
           >
-            <IconPlus size={14} color={colors.primary} />
-            <Text style={[styles.headerCtaText, { color: colors.primary }]} numberOfLines={1}>
+            <IconPlus size={14} color={isDark ? colors.onPrimary : colors.primary} />
+            <Text style={[styles.headerCtaText, { color: isDark ? colors.onPrimary : colors.primary }]} numberOfLines={1}>
               {tl(t, language, 'meetings.create', { pt: 'Criar', en: 'Create', es: 'Crear' })}
             </Text>
           </TouchableOpacity>

@@ -39,7 +39,7 @@ function StepItem({ number, text, colors }) {
   return (
     <View style={styles.stepRow}>
       <View style={[styles.stepCircle, { backgroundColor: colors.primary }]}>
-        <Text style={styles.stepNumber}>{number}</Text>
+        <Text style={[styles.stepNumber, { color: colors.onPrimary }]}>{number}</Text>
       </View>
       <Text style={[styles.stepText, { color: colors.text }]}>{text}</Text>
     </View>
@@ -317,7 +317,7 @@ export default function ParentalInfoModal({ visible, onClose, onStartCreate }) {
               onPress={() => goToPage(currentPage + 1)}
               accessibilityRole="button"
             >
-              <Text style={styles.nextButtonText}>
+              <Text style={[styles.nextButtonText, { color: colors.onPrimary }]}>
                 {t('parental.onboarding.next') || 'Proximo'}
               </Text>
             </TouchableOpacity>

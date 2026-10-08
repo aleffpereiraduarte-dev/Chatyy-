@@ -102,7 +102,7 @@ export default function EmptyState({ search, message, folder, onRefresh }) {
             activeOpacity={0.8}
           >
             <IconCompose size={16} color={colors.onPrimary || '#fff'} style={{ marginRight: 8 }} />
-            <Text style={s.ctaBtnText}>{t('empty.compose')}</Text>
+            <Text style={[s.ctaBtnText, { color: colors.onPrimary }]}>{t('empty.compose')}</Text>
           </TouchableOpacity>
         )}
         {onRefresh && (

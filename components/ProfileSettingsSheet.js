@@ -381,7 +381,7 @@ function PlusUpsellCard({ colors, onPress, t }) {
         backgroundColor: 'rgba(17, 17, 17,0.12)',
         alignItems: 'center', justifyContent: 'center',
       }}>
-        <IconSparkles size={16} color="#111111" />
+        <IconSparkles size={16} color={colors.primary} />
       </View>
       <View style={{ flex: 1 }}>
         <Text style={{ fontSize: 14, fontWeight: '600', color: colors?.text || '#111' }} numberOfLines={1}>

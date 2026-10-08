@@ -24,7 +24,7 @@ import {
 //
 // `index` is 0-based from the bottom (closest to FAB → index 0).
 // `slotHeight` is the vertical space each row occupies including gap.
-function ActionButton({ icon: Icon, label, color, onPress, colors, delay = 0, open, index = 0, slotHeight = 66 }) {
+function ActionButton({ icon: Icon, label, color, iconColor = '#fff', onPress, colors, delay = 0, open, index = 0, slotHeight = 66 }) {
   const scale = useRef(new Animated.Value(open ? 1 : 0)).current;
   // Collapsed translateY = the distance from this row's natural slot
   // back to the FAB. The bottom-most row (index 0) collapses ~slotHeight
@@ -78,7 +78,7 @@ function ActionButton({ icon: Icon, label, color, onPress, colors, delay = 0, op
             : { shadowColor: color, shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.4, shadowRadius: 10, elevation: 6 }),
         }}
       >
-        <Icon size={22} color="#fff" />
+        <Icon size={22} color={iconColor} />
       </TouchableOpacity>
     </Animated.View>
   );
@@ -86,6 +86,9 @@ function ActionButton({ icon: Icon, label, color, onPress, colors, delay = 0, op
 
 export default function UnifiedComposeFab({ router, colors, isDark, t, userEmail, bottom = 24, right = 20 }) {
   const [open, setOpen] = useState(false);
+  // [2026-10-08 polish-leftovers] theme ink: white orb + black glyph in dark
+  const ink = colors?.primary || '#111111';
+  const onInk = colors?.onPrimary || '#fff';
   const rotate = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
@@ -133,7 +136,8 @@ export default function UnifiedComposeFab({ router, colors, isDark, t, userEmail
           slotHeight={70}
           icon={IconMail}
           label={t?.('compose.email') || 'Email'}
-          color="#111111"
+          color={ink}
+          iconColor={onInk}
           colors={colors}
           onPress={() => go('/compose')}
         />
@@ -166,7 +170,8 @@ export default function UnifiedComposeFab({ router, colors, isDark, t, userEmail
           slotHeight={70}
           icon={IconImage}
           label={t?.('compose.post') || 'Publicação'}
-          color="#111111"
+          color={ink}
+          iconColor={onInk}
           colors={colors}
           onPress={() => go('/spotlight?createPost=1')}
         />
@@ -177,17 +182,17 @@ export default function UnifiedComposeFab({ router, colors, isDark, t, userEmail
           activeOpacity={0.85}
           style={{
             width: 56, height: 56, borderRadius: 28,
-            backgroundColor: '#111111',
+            backgroundColor: ink,
             alignItems: 'center', justifyContent: 'center',
             ...(Platform.OS === 'web'
-              ? { boxShadow: '0 8px 24px rgba(17, 17, 17,0.45)' }
-              : { shadowColor: '#111111', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.45, shadowRadius: 14, elevation: 8 }),
+              ? { boxShadow: isDark ? '0 8px 24px rgba(0,0,0,0.6)' : '0 8px 24px rgba(17, 17, 17,0.45)' }
+              : { shadowColor: isDark ? '#000' : '#111111', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.45, shadowRadius: 14, elevation: 8 }),
           }}
           accessibilityLabel={open ? (t?.('common.close') || 'Fechar') : (t?.('compose.new') || 'Novo')}
           accessibilityRole="button"
         >
           <Animated.View style={{ transform: [{ rotate: rotateInterp }] }}>
-            <IconPlus size={26} color="#fff" />
+            <IconPlus size={26} color={onInk} />
           </Animated.View>
         </TouchableOpacity>
       </View>

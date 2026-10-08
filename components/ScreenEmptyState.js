@@ -206,7 +206,7 @@ export default function ScreenEmptyState({
   const haloSize = compact ? 120 : 148;
 
   return (
-    <Animated.View style={[styles.wrap, compact && styles.wrapCompact, { opacity: fade, transform: [{ translateY: slide }] }, style]}>
+    <Animated.View style={[styles.wrapBase, compact ? styles.wrapCompact : styles.wrapFull, { opacity: fade, transform: [{ translateY: slide }] }, style]}>
       {/* Illustration: gradient halo + floating glyph */}
       <Animated.View style={{ transform: [{ translateY }, { scale }] }}>
         <View style={{ width: haloSize, height: haloSize, alignItems: 'center', justifyContent: 'center' }}>
@@ -274,8 +274,16 @@ export default function ScreenEmptyState({
 }
 
 const styles = StyleSheet.create({
-  wrap: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 32, paddingVertical: 40 },
-  wrapCompact: { flex: 0, paddingVertical: 24 },
+  wrapBase: { alignItems: 'center', justifyContent: 'center', paddingHorizontal: 32 },
+  wrapFull: { flex: 1, paddingVertical: 40 },
+  // [2026-10-08 polish-leftovers] react-native-web expands `flex: 0` to
+  // `flex: 0 0 0%` (basis 0) — and stacked over `flex: 1` the compact block
+  // collapsed to 0px height, so the illustration overflowed onto the content
+  // below. Compact never sets the `flex` shorthand now: web gets explicit
+  // longhands with content-sized basis; native keeps Yoga's `flex: 0`.
+  wrapCompact: Platform.OS === 'web'
+    ? { flexGrow: 0, flexShrink: 0, flexBasis: 'auto', paddingVertical: 24 }
+    : { flex: 0, paddingVertical: 24 },
   title: { fontSize: FontSize.title, fontWeight: '800', marginTop: Spacing.lg, textAlign: 'center', letterSpacing: -0.3 },
   subtitle: { fontSize: FontSize.base, lineHeight: 21, marginTop: Spacing.sm, textAlign: 'center', maxWidth: 320 },
   cta: {

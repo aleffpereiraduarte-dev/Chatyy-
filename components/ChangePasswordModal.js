@@ -203,7 +203,7 @@ export default function ChangePasswordModal({ visible, onClose, forced = false, 
                 {loading ? (
                   <ActivityIndicator size="small" color={colors.onPrimary || '#fff'} />
                 ) : (
-                  <Text style={s.submitBtnText}>{t('changePassword.submit')}</Text>
+                  <Text style={[s.submitBtnText, { color: colors.onPrimary }]}>{t('changePassword.submit')}</Text>
                 )}
               </TouchableOpacity>
             </View>

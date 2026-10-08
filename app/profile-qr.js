@@ -199,8 +199,8 @@ export default function ProfileQRScreen() {
               onPress={handleShareLink}
               style={[s.cta, s.ctaSecondary, { borderColor: '#111111', marginTop: 12 }]}
             >
-              <IconShare size={18} color="#111111" />
-              <Text style={[s.ctaText, { color: '#111111' }]}>{t('profile.shareLink') || 'Compartilhar link'}</Text>
+              <IconShare size={18} color={colors.primary} />
+              <Text style={[s.ctaText, { color: colors.primary }]}>{t('profile.shareLink') || 'Compartilhar link'}</Text>
             </TouchableOpacity>
           </>
         ) : (

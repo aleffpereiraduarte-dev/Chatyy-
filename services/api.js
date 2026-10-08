@@ -3409,11 +3409,22 @@ function _avatarViewerPart() {
   const me = savedCredentials?.email || (typeof getActiveAccountEmail === 'function' ? getActiveAccountEmail() : '') || '';
   return me ? `&viewer=${encodeURIComponent(me)}` : '';
 }
+// [2026-10-08 chat-fix-composer-location] Versão da RENDERIZAÇÃO das iniciais
+// geradas pelo servidor (email.php get_avatar centralizou as iniciais hoje — as
+// antigas saíam cortadas, "TH"). O cache em disco (services/avatarCache.js)
+// descarta o `d=` diário ao montar a chave, então sem `v=` a imagem velha das
+// iniciais nunca era rebaixada. `av=` entra SÓ quando não há `v=` (sem foto
+// enviada conhecida = avatar padrão/iniciais); fotos reais seguem pelo `v=`.
+// Subir este número quando o desenho das iniciais mudar de novo.
+export const AVATAR_INITIALS_RENDER_V = 2;
+function _avatarRenderPart(v) {
+  return v ? '' : `&av=${AVATAR_INITIALS_RENDER_V}`;
+}
 export function getAvatarUrl(email) {
   const e = email || savedCredentials?.email || '';
   const v = _avatarV(e);
   const d = _avatarDailyBust();
-  const vPart = v ? `&v=${v}` : '';
+  const vPart = v ? `&v=${v}` : _avatarRenderPart(v);
   return `${API_URL}?action=get_avatar&email=${encodeURIComponent(e)}${vPart}&d=${d}${_avatarViewerPart()}`;
 }
 
@@ -3421,7 +3432,7 @@ export function getAvatarUrlForEmail(email) {
   if (!email) return null;
   const v = _avatarV(email);
   const d = _avatarDailyBust();
-  const vPart = v ? `&v=${v}` : '';
+  const vPart = v ? `&v=${v}` : _avatarRenderPart(v);
   return `${API_URL}?action=get_avatar&email=${encodeURIComponent(email)}${vPart}&d=${d}${_avatarViewerPart()}`;
 }
 

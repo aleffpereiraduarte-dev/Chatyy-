@@ -20,7 +20,7 @@
 // the TurboModules before touching the JS packages; if any is missing we fall
 // back to RN's KeyboardAvoidingView with the same geometry (no crash).
 import React, { useEffect } from 'react';
-import { KeyboardAvoidingView, Platform, TurboModuleRegistry } from 'react-native';
+import { AppState, Keyboard, KeyboardAvoidingView, Platform, TurboModuleRegistry } from 'react-native';
 
 let KC = null;
 let Rea = null;
@@ -82,25 +82,87 @@ export function ChatyyKeyboardProvider({ children }) {
 // doesn't disable KC under another that is still on the stack.
 let _enabledRefs = 0;
 
+// [2026-10-08 chat-fix-composer-location] Composer "flutuando" no meio da tela
+// com um vão branco do tamanho do teclado embaixo (teclado FECHADO).
+// RAIZ: o KeyboardProvider fica disabled fora da conversa e, no iOS, disabled =
+// observers nativos REMOVIDOS (KeyboardControllerView.unmount). O height
+// shared value do KC só muda em onKeyboardMoveStart/Interactive — nunca é
+// zerado ao desabilitar. Se o teclado fecha enquanto o KC está desligado
+// (sair da conversa com o teclado aberto: o cleanup setEnabled(false) chega
+// antes do keyboardWillHide do pop), o valor fica preso em -alturaDoTeclado.
+// Na próxima conversa o KC religa com esse valor velho → paddingBottom ≈ 336pt
+// sem teclado nenhum, e como o mount faz Keyboard.dismiss() sem teclado aberto
+// nenhum evento novo chega pra corrigir. Mesmo efeito se um hide for perdido
+// com um Modal (sheet de localização/anexo) por cima.
+// FIX (auto-cura, sem depender do KC): o RN Keyboard (RCTKeyboardObserver,
+// sempre inscrito) é a fonte de verdade de "teclado fechado":
+//   • ao desligar o KC (última conversa saiu) → zera height/progress do KC;
+//   • ao montar a conversa / voltar do background / keyboardDidHide, se o
+//     teclado NÃO está visível → `settled`=1 força paddingBottom 0;
+//   • qualquer movimento real do teclado (height muda no UI thread) limpa o
+//     `settled` na hora (useAnimatedReaction), então abrir o teclado continua
+//     colado frame-a-frame, sem esperar a thread JS.
 function KCThreadKeyboardAvoider({ style, bottomInset, children }) {
   const { setEnabled } = KC.useKeyboardController();
-  useEffect(() => {
-    _enabledRefs += 1;
-    setEnabled(true);
-    return () => {
-      _enabledRefs = Math.max(0, _enabledRefs - 1);
-      if (_enabledRefs === 0) setEnabled(false);
-    };
-  }, [setEnabled]);
-
   // height: 0 → -keyboardHeight (measured from the screen bottom, so it
   // includes the home indicator / Android nav bar). The composer keeps a
   // constant `bottomInset` padding, so the container only needs to rise by
   // keyboardHeight - bottomInset for the composer to sit flush on the keyboard.
-  const { height } = KC.useReanimatedKeyboardAnimation();
+  const { height, progress } = KC.useReanimatedKeyboardAnimation();
+  const settled = Rea.useSharedValue(0);
+
+  useEffect(() => {
+    _enabledRefs += 1;
+    setEnabled(true);
+    const settle = () => {
+      settled.value = 1;
+      // Also clear KC's stale value so the NEXT open is a real change (a
+      // stuck -336 followed by an open to -336 wouldn't fire the reaction).
+      try { if (height.value !== 0) { height.value = 0; progress.value = 0; } } catch {}
+    };
+    const settleIfHidden = () => {
+      try { if (!Keyboard.isVisible()) settle(); } catch {}
+    };
+    settleIfHidden();
+    const subHide = Keyboard.addListener('keyboardDidHide', settle);
+    const subShow = Keyboard.addListener(Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow', () => { settled.value = 0; });
+    let appStateTimer = null;
+    const subApp = AppState.addEventListener('change', (s) => {
+      if (s !== 'active') return;
+      if (appStateTimer) clearTimeout(appStateTimer);
+      // iOS restores a previously-open keyboard right after resume — give it
+      // time to emit keyboardWillShow before deciding it's closed.
+      appStateTimer = setTimeout(settleIfHidden, 700);
+    });
+    return () => {
+      try { subHide.remove(); } catch {}
+      try { subShow.remove(); } catch {}
+      try { subApp.remove(); } catch {}
+      if (appStateTimer) clearTimeout(appStateTimer);
+      _enabledRefs = Math.max(0, _enabledRefs - 1);
+      if (_enabledRefs === 0) {
+        setEnabled(false);
+        // KC stops observing now — don't leave a keyboard height behind for
+        // the next thread to inherit.
+        try { height.value = 0; progress.value = 0; } catch {}
+      }
+    };
+  }, [setEnabled]);
+
+  // Any real keyboard movement (open / interactive drag) → follow KC again.
+  Rea.useAnimatedReaction(
+    () => height.value,
+    (cur, prev) => {
+      'worklet';
+      if (prev !== null && prev !== undefined && cur !== prev && cur !== 0) settled.value = 0;
+    },
+    [],
+  );
+
   const inset = bottomInset || 0;
   const animatedStyle = Rea.useAnimatedStyle(() => {
     'worklet';
+    if (settled.value === 1) return { paddingBottom: 0 };
     return { paddingBottom: Math.max(0, -height.value - inset) };
   }, [inset]);
 

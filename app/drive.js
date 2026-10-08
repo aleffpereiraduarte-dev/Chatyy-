@@ -100,7 +100,7 @@ function getFileIcon(iconType, size, color) {
     case 'video': return <IconFilm size={size} color={color} />;
     case 'audio': return <IconMusic size={size} color={color} />;
     case 'pdf': return <IconFileText size={size} color="#dc2626" />;
-    case 'document': return <IconFileText size={size} color="#111111" />;
+    case 'document': return <IconFileText size={size} color={color} />;
     case 'spreadsheet': return <IconFileText size={size} color="#16a34a" />;
     case 'presentation': return <IconFileText size={size} color="#d97706" />;
     case 'archive': return <IconArchive size={size} color={color} />;
@@ -1502,7 +1502,7 @@ function DriveScreenInner() {
           <Text style={[styles.emptyDesc, { color: colors.textSecondary }]}>{t('drive.emptyPhotosDesc')}</Text>
           <TouchableOpacity style={[styles.emptyBtn, { backgroundColor: colors.primary }]} onPress={handleUploadPhotos}>
             <IconCamera size={18} color={colors.onPrimary || '#fff'} />
-            <Text style={styles.emptyBtnText}>{t('drive.backupPhotos')}</Text>
+            <Text style={[styles.emptyBtnText, { color: colors.onPrimary }]}>{t('drive.backupPhotos')}</Text>
           </TouchableOpacity>
         </View>
       );
@@ -1574,7 +1574,7 @@ function DriveScreenInner() {
         {activeTab === 'files' && (
           <TouchableOpacity style={[styles.emptyBtn, { backgroundColor: colors.primary }]} onPress={handleUploadFile}>
             <IconUpload size={18} color={colors.onPrimary || '#fff'} />
-            <Text style={styles.emptyBtnText}>{t('drive.uploadFile')}</Text>
+            <Text style={[styles.emptyBtnText, { color: colors.onPrimary }]}>{t('drive.uploadFile')}</Text>
           </TouchableOpacity>
         )}
       </View>
@@ -1621,7 +1621,7 @@ function DriveScreenInner() {
     ] : [
       !item.is_folder && {
         label: 'Analisar com One AI',
-        icon: <IconSparkles size={18} color="#111111" />,
+        icon: <IconSparkles size={18} color={colors.primary} />,
         accent: '#111111',
         onPress: () => {
           setContextMenu(null);
@@ -2115,7 +2115,7 @@ function DriveScreenInner() {
             { rotate: fabRotate.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '45deg'] }) },
           ]}
         >
-          <IconPlus size={24} color="#fff" />
+          <IconPlus size={24} color={colors.onPrimary} />
         </BrandFab>
       </View>
     );

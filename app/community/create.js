@@ -248,7 +248,7 @@ export default function CommunityCreateScreen() {
           {submitting ? (
             <ActivityIndicator color={colors.onPrimary || '#fff'} />
           ) : (
-            <Text style={sty.primaryBtnText}>
+            <Text style={[sty.primaryBtnText, { color: colors.onPrimary }]}>
               {step < STEPS.length - 1
                 ? (t('community.next') || 'Continuar')
                 : (t('community.create') || 'Criar comunidade')}

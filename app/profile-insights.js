@@ -124,7 +124,7 @@ export default function ProfileInsightsScreen() {
             title={t?.('profile.viewsLast7d') || 'Visualizações do perfil (7d)'}
             value={data.profile_views_count}
             spark={data.spark_views}
-            color="#111111"
+            color={colors.primary}
           />
           <Card
             title={t?.('profile.reachLast7d') || 'Alcance dos posts (7d)'}

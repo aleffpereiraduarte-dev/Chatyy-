@@ -411,7 +411,7 @@ export default function MeetingCreateScreen() {
             onSubmitEditing={addInvitee}
           />
           <TouchableOpacity style={s.addBtn} onPress={addInvitee}>
-            <IconPlus size={18} color="#fff" />
+            <IconPlus size={18} color={colors.onPrimary} />
             <Text style={s.addBtnText}>{t('meetingCreate.addButton')}</Text>
           </TouchableOpacity>
         </View>
@@ -503,10 +503,10 @@ export default function MeetingCreateScreen() {
         {/* Submit */}
         <TouchableOpacity style={[s.submitBtn, loading && { opacity: 0.6 }]} onPress={handleSubmit} disabled={loading} activeOpacity={0.8}>
           {loading ? (
-            <ActivityIndicator color="#fff" size="small" />
+            <ActivityIndicator color={colors.onPrimary} size="small" />
           ) : (
             <>
-              <IconVideo size={20} color="#fff" />
+              <IconVideo size={20} color={colors.onPrimary} />
               <Text style={s.submitText}>{isEditMode ? (t('meetingCreate.updateButton') || t('meetingCreate.scheduleButton')) : t('meetingCreate.scheduleButton')}</Text>
             </>
           )}

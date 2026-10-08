@@ -96,7 +96,7 @@ export default function EmptyStateCard({
             borderRadius: 12, backgroundColor: tint,
           }}
         >
-          <Text style={{ color: '#fff', fontSize: 14, fontWeight: '700' }}>{ctaLabel}</Text>
+          <Text style={{ color: colors.onPrimary, fontSize: 14, fontWeight: '700' }}>{ctaLabel}</Text>
         </TouchableOpacity>
       ) : null}
 

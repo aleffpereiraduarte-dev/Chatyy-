@@ -261,10 +261,10 @@ function OneAIShowcase({ colors, isDark, t }) {
         onPress={() => setShowAll(!showAll)}
         activeOpacity={0.7}
       >
-        <Text style={{ color: '#111111', fontSize: 13, fontWeight: '600' }}>
+        <Text style={{ color: colors.primary, fontSize: 13, fontWeight: '600' }}>
           {showAll ? t('plans.collapseFeatures') : t('plans.viewAllFeatures')}
         </Text>
-        {showAll ? <IconChevronUp size={14} color="#111111" /> : <IconChevronDown size={14} color="#111111" />}
+        {showAll ? <IconChevronUp size={14} color={colors.primary} /> : <IconChevronDown size={14} color={colors.primary} />}
       </TouchableOpacity>
 
       {/* Expanded list */}
@@ -288,7 +288,7 @@ function OneAIShowcase({ colors, isDark, t }) {
                 alignItems: 'center', justifyContent: 'center',
                 marginRight: 12,
               }}>
-                <IconCheck size={12} color="#111111" />
+                <IconCheck size={12} color={colors.primary} />
               </View>
               <Text style={{ color: colors.text, fontSize: 14, flex: 1, textTransform: 'capitalize' }}>
                 {action}
@@ -1420,7 +1420,7 @@ export default function PlansScreen() {
   const AMBER = isDark ? '#fbbf24' : '#d97706';
   const RED = isDark ? '#f87171' : '#dc2626';
 
-  const AI_PURPLE = isDark ? '#111111' : '#111111';
+  const AI_PURPLE = isDark ? '#F5F5F7' : '#111111';
 
   // Storage tier selector — modern chips
   const StorageSelector = ({ options, selected, onSelect, accentColor, basePriceCents }) => {
@@ -1654,7 +1654,7 @@ export default function PlansScreen() {
               {t('plans.heroTitle') || 'Escolha seu plano'}
             </Text>
             <Text style={{
-              color: 'rgba(17, 17, 17, 0.85)',
+              color: 'rgba(255, 255, 255, 0.78)', // [2026-10-08 polish-leftovers] hero is always dark
               fontSize: 15.5,
               textAlign: 'center',
               marginTop: 10,

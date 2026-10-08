@@ -1024,7 +1024,7 @@ function WeekView({ weekStart, events, colors, onEventPress, onPrevWeek, onNextW
                       onPress={() => onEventPress(evt)}
                       activeOpacity={0.7}
                     >
-                      <Text style={weekStyles.allDayChipText} numberOfLines={1} ellipsizeMode="tail">
+                      <Text style={[weekStyles.allDayChipText, bg === colors.primary ? { color: colors.onPrimary } : null]} numberOfLines={1} ellipsizeMode="tail">
                         {evt.title || ''}
                       </Text>
                     </TouchableOpacity>

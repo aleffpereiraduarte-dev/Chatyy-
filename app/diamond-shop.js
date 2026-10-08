@@ -219,7 +219,7 @@ export default function DiamondShopScreen() {
           style={styles.headerLinkBtn}
           accessibilityRole="button"
         >
-          <Text style={[styles.headerLinkText, { color: '#111111' }]}>
+          <Text style={[styles.headerLinkText, { color: colors.primary }]}>
             {t('diamondShop.wallet') || 'Carteira'}
           </Text>
         </TouchableOpacity>
@@ -245,10 +245,10 @@ export default function DiamondShopScreen() {
               {t('wallet.currentBalance') || 'Saldo atual'}:
             </Text>
             {loadingBal ? (
-              <ActivityIndicator size="small" color="#111111" />
+              <ActivityIndicator size="small" color={colors.primary} />
             ) : (
               <View style={styles.balPillValRow}>
-                <IconDiamond size={14} color="#111111" />
+                <IconDiamond size={14} color={colors.primary} />
                 <Text style={styles.balPillVal}>{formatInt(balance, language)}</Text>
               </View>
             )}
@@ -270,7 +270,7 @@ export default function DiamondShopScreen() {
           accessibilityLabel={t('diamondShop.payWithCard') || 'Comprar com cartão de crédito'}
         >
           <View style={styles.ccCtaIcon}>
-            <IconCreditCard size={22} color="#111111" />
+            <IconCreditCard size={22} color={colors.primary} />
           </View>
           <View style={{ flex: 1 }}>
             <Text style={[styles.ccCtaTitle, { color: colors.text }]}>
@@ -280,7 +280,7 @@ export default function DiamondShopScreen() {
               {t('diamondShop.payWithCardSub') || 'Pagamento seguro via web. Cartão fica salvo para próximas compras.'}
             </Text>
           </View>
-          <IconChevronRight size={20} color="#111111" />
+          <IconChevronRight size={20} color={colors.primary} />
         </TouchableOpacity>
 
         {/* Packs */}
@@ -330,7 +330,7 @@ export default function DiamondShopScreen() {
 
               <View style={styles.packLeftCol}>
                 <View style={styles.packAmountRow}>
-                  <IconDiamond size={22} color="#111111" />
+                  <IconDiamond size={22} color={colors.primary} />
                   <Text style={[styles.packDiamonds, { color: colors.text }]}>
                     {formatInt(p.diamonds, language)}
                   </Text>
@@ -344,7 +344,7 @@ export default function DiamondShopScreen() {
 
               <View style={styles.packRightCol}>
                 {isLoading ? (
-                  <ActivityIndicator color="#111111" />
+                  <ActivityIndicator color={colors.primary} />
                 ) : (
                   <View style={[styles.buyBtn, { backgroundColor: featured ? '#111111' : (isDark ? 'rgba(17, 17, 17,0.20)' : 'rgba(17, 17, 17,0.12)') }]}>
                     <Text style={[styles.buyBtnText, { color: featured ? '#fff' : '#111111' }]}>
@@ -377,7 +377,7 @@ export default function DiamondShopScreen() {
           style={styles.historyLink}
           accessibilityRole="button"
         >
-          <Text style={[styles.historyLinkText, { color: '#111111' }]}>
+          <Text style={[styles.historyLinkText, { color: colors.primary }]}>
             {t('diamondShop.viewHistory') || 'Ver histórico e enviar diamantes'}
           </Text>
         </TouchableOpacity>

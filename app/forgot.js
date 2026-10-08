@@ -454,7 +454,7 @@ export default function ForgotPassword() {
               }}
               activeOpacity={0.85}
             >
-              <IconMail size={16} color="#fff" style={{ marginRight: 8 }} />
+              <IconMail size={16} color={colors.onPrimary} style={{ marginRight: 8 }} />
               <Text style={[s.primaryBtnText, { color: colors.onPrimary || '#fff' }]}>{t('forgot.contactSupportBtn')}</Text>
             </TouchableOpacity>
           </View>

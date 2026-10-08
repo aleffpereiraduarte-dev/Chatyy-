@@ -300,7 +300,7 @@ function ProfileTab({ colors, isDark, user }) {
 
         {/* Stats */}
         <View style={styles.statsRow}>
-          <StatCard label="Produtos" value={profile?.product_count ?? '—'} color="#111111" colors={colors} />
+          <StatCard label="Produtos" value={profile?.product_count ?? '—'} color={colors.primary} colors={colors} />
           <StatCard label="Pedidos" value={profile?.order_count ?? '—'} color={ACCENT} colors={colors} />
           <StatCard label="Avaliação" value={profile?.rating ? `${profile.rating}` : '—'} icon={profile?.rating ? <IconStar size={13} color={ACCENT} /> : null} color={ACCENT} colors={colors} />
         </View>

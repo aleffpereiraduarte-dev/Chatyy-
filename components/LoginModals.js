@@ -223,8 +223,8 @@ export function HelpModal({ visible, onClose }) {
         onPress={() => setView('ticket')}
         activeOpacity={0.75}
       >
-        <IconSend size={16} color="#fff" style={{ marginRight: 8 }} />
-        <Text style={ms.ctaBtnText}>{t('help.stillNeedHelp')}</Text>
+        <IconSend size={16} color={colors.onPrimary} style={{ marginRight: 8 }} />
+        <Text style={[ms.ctaBtnText, { color: colors.onPrimary }]}>{t('help.stillNeedHelp')}</Text>
       </TouchableOpacity>
     </>
   );
@@ -345,7 +345,7 @@ export function HelpModal({ visible, onClose }) {
         onPress={handleClose}
         activeOpacity={0.75}
       >
-        <Text style={ms.sentBtnText}>{t('help.close')}</Text>
+        <Text style={[ms.sentBtnText, { color: colors.onPrimary }]}>{t('help.close')}</Text>
       </TouchableOpacity>
     </View>
   );

@@ -563,7 +563,7 @@ export default function ProfileEditSheet({
               <TouchableOpacity onPress={handleSave} disabled={saving || !dirty} activeOpacity={0.75}>
                 {saving ? (
                   <View style={{ paddingHorizontal: 16, paddingVertical: 8 }}>
-                    <ActivityIndicator size="small" color="#111111" />
+                    <ActivityIndicator size="small" color={colors.primary} />
                   </View>
                 ) : (
                   <View style={{

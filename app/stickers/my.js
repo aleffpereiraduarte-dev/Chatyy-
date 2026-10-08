@@ -4,7 +4,7 @@
 // to the Premium tier alongside custom animated emoji. The CTA is rendered
 // for everyone but tapping while non-Pro routes to /plans, mirroring the
 // existing upsell pattern across the app.
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react'; // [2026-10-08 polish-leftovers] useRef was missing
 import {
   View, Text, TouchableOpacity, FlatList, ActivityIndicator, Alert, Platform,
   Image, TextInput, Modal, Animated, Share, PanResponder,
@@ -339,8 +339,8 @@ export default function StickerMyPacksScreen() {
                     backgroundColor: 'rgba(17, 17, 17,0.15)', paddingHorizontal: 6, paddingVertical: 2,
                     borderRadius: 6, flexDirection: 'row', alignItems: 'center', gap: 3,
                   }}>
-                    <IconStar size={10} color="#111111" />
-                    <Text style={{ color: '#111111', fontSize: 9, fontWeight: '800' }}>PRO</Text>
+                    <IconStar size={10} color={colors.primary} />
+                    <Text style={{ color: colors.primary, fontSize: 9, fontWeight: '800' }}>PRO</Text>
                   </View>
                 )}
                 <TouchableOpacity onPress={() => sharePack(item)} hitSlop={8} style={{ paddingHorizontal: 4 }}>
@@ -377,7 +377,7 @@ export default function StickerMyPacksScreen() {
                 borderWidth: 1, borderColor: 'rgba(17, 17, 17,0.25)',
                 flexDirection: 'row', alignItems: 'center', gap: 10,
               }}>
-                <IconStar size={18} color="#111111" />
+                <IconStar size={18} color={colors.primary} />
                 <View style={{ flex: 1 }}>
                   <Text style={{ fontSize: 13, color: colors.text, fontWeight: '700' }}>
                     {t?.('chat.proRequired') || 'Recurso Pro'}

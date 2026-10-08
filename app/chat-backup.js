@@ -514,7 +514,7 @@ export default function ChatBackupScreen() {
           ) : (
             <>
               <IconUpload size={18} color={colors.onPrimary || '#fff'} />
-              <Text style={styles.primaryBtnText}>{t('backup.backupNowCta') || 'Backup now'}</Text>
+              <Text style={[styles.primaryBtnText, { color: colors.onPrimary }]}>{t('backup.backupNowCta') || 'Backup now'}</Text>
             </>
           )}
         </TouchableOpacity>

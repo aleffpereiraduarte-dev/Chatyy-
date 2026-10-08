@@ -131,7 +131,7 @@ export default function StarredMessagesScreen() {
         </View>
       ) : loading ? (
         <View style={styles.loading}>
-          <ActivityIndicator color="#111111" size="large" />
+          <ActivityIndicator color={colors.primary} size="large" />
         </View>
       ) : messages.length === 0 ? (
         <View style={styles.empty}>

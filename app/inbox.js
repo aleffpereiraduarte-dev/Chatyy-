@@ -2079,7 +2079,7 @@ function InboxScreenInner() {
           onPress={() => router.push('/compose')}
           accessibilityLabel={t('compose.new') || 'Nova mensagem'}
         >
-          <IconPenTool size={24} color="#fff" />
+          <IconPenTool size={24} color={colors.onPrimary} />
         </BrandFab>
       )}
 
@@ -2192,9 +2192,9 @@ function InboxScreenInner() {
                   }}
                 >
                   {switchLoginLoading ? (
-                    <ActivityIndicator size="small" color="#fff" />
+                    <ActivityIndicator size="small" color={colors.onPrimary} />
                   ) : (
-                    <Text style={{ color: '#fff', fontWeight: '700' }}>{t('login.signIn') || 'Sign in'}</Text>
+                    <Text style={{ color: colors.onPrimary, fontWeight: '700' }}>{t('login.signIn') || 'Sign in'}</Text>
                   )}
                 </TouchableOpacity>
               </View>

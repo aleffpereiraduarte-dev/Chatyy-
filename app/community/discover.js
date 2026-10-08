@@ -148,7 +148,7 @@ export default function CommunityDiscoverScreen() {
       </View>
       {!item.is_member && (
         <TouchableOpacity onPress={() => onJoin(item)} style={[sty.joinBtn, { backgroundColor: colors.primary }]}>
-          <Text style={sty.joinBtnText}>{t('community.join') || 'Entrar'}</Text>
+          <Text style={[sty.joinBtnText, { color: colors.onPrimary }]}>{t('community.join') || 'Entrar'}</Text>
         </TouchableOpacity>
       )}
     </TouchableOpacity>
@@ -193,7 +193,7 @@ export default function CommunityDiscoverScreen() {
             style={sty.chip}
             activeBg={colors.primary}
             idleBg={isDark ? '#1c1c1e' : '#f0f0f3'}
-            activeColor="#fff"
+            activeColor={colors.onPrimary}
             idleColor={colors.text}
           />
         )}

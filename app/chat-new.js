@@ -367,7 +367,7 @@ const ContactRow = React.memo(function ContactRow({
               flexShrink:0 View so the long name (flexShrink:1) truncates instead
               of pushing this icon off-screen / onto the checkbox. */}
           <View style={sty.shrink0}>
-            <IconChatyyOnChat size={13} color="#111111" />
+            <IconChatyyOnChat size={13} color={colors.primary} />
           </View>
           {/* "NOVO" badge — WhatsApp-style pill for contacts that just joined
               Chatyy (last 7d via _justJoined flag, populated by friend_suggestions
@@ -1472,7 +1472,7 @@ export default function ChatNewScreen() {
                 {channel.name || handleStr}
               </Text>
               {handleStr ? (
-                <Text style={{ fontSize: 12, color: '#111111', fontWeight: '600' }} numberOfLines={1}>
+                <Text style={{ fontSize: 12, color: colors.primary, fontWeight: '600' }} numberOfLines={1}>
                   {handleStr}
                 </Text>
               ) : null}
@@ -1514,7 +1514,7 @@ export default function ChatNewScreen() {
       <View style={{ paddingTop: 6, paddingBottom: 8 }}>
         <View style={[sty.sectionHeader, { backgroundColor: 'transparent', paddingBottom: 4 }]}>
           <View style={sty.sectionAccentLine} />
-          <Text style={[sty.sectionTitle, { color: isDark ? '#111111' : '#111111' }]}>
+          <Text style={[sty.sectionTitle, { color: isDark ? '#F5F5F7' : '#111111' }]}>
             {t('chat.trendingTopicsTitle') || 'Tópicos populares'}
           </Text>
         </View>
@@ -1539,7 +1539,7 @@ export default function ChatNewScreen() {
                 accessibilityRole="button"
                 accessibilityLabel={'#' + tag}
               >
-                <Text style={{ color: '#111111', fontSize: 13, fontWeight: '700' }}>
+                <Text style={{ color: colors.primary, fontSize: 13, fontWeight: '700' }}>
                   {'#' + tag}
                 </Text>
               </TouchableOpacity>
@@ -1556,7 +1556,7 @@ export default function ChatNewScreen() {
       <View style={{ paddingTop: 4, paddingBottom: 8 }}>
         <View style={[sty.sectionHeader, { backgroundColor: 'transparent', paddingBottom: 4 }]}>
           <View style={sty.sectionAccentLine} />
-          <Text style={[sty.sectionTitle, { color: isDark ? '#111111' : '#111111' }]}>
+          <Text style={[sty.sectionTitle, { color: isDark ? '#F5F5F7' : '#111111' }]}>
             {t('chat.discoverChannelsTitle') || 'Descobrir canais'}
           </Text>
         </View>
@@ -1684,7 +1684,7 @@ export default function ChatNewScreen() {
     if (section._letterBucket) {
       return (
         <View style={[sty.letterHeader, { backgroundColor: isDark ? '#0d0d0d' : '#fafafc' }]}>
-          <Text style={[sty.letterHeaderText, { color: isDark ? '#111111' : '#111111' }]}>
+          <Text style={[sty.letterHeaderText, { color: isDark ? '#F5F5F7' : '#111111' }]}>
             {section.title}
           </Text>
         </View>
@@ -1693,7 +1693,7 @@ export default function ChatNewScreen() {
     return (
       <View style={[sty.sectionHeader, { backgroundColor: isDark ? '#111' : '#f8f8fa' }]}>
         <View style={sty.sectionAccentLine} />
-        <Text style={[sty.sectionTitle, { color: isDark ? '#111111' : '#111111' }]}>{section.title}</Text>
+        <Text style={[sty.sectionTitle, { color: isDark ? '#F5F5F7' : '#111111' }]}>{section.title}</Text>
       </View>
     );
   }, [isDark]);
@@ -1796,7 +1796,7 @@ export default function ChatNewScreen() {
           style={[sty.toggleBtn, mode === 'channel' && [sty.toggleBtnActive, { backgroundColor: '#111111' }]]}
           onPress={() => setMode('channel')}
         >
-          <Text style={{ fontSize: 13, marginRight: 3 }}>{'#'}</Text>
+          <Text style={{ fontSize: 13, marginRight: 3, color: mode === 'channel' ? '#fff' : colors.textSecondary }}>{'#'}</Text>
           <Text style={[sty.toggleText, { color: mode === 'channel' ? '#fff' : colors.textSecondary }]}>
             {t('chat.channels') || 'Canal'}
           </Text>
@@ -1944,7 +1944,7 @@ export default function ChatNewScreen() {
                 <View style={{ paddingTop: 4, paddingBottom: 8 }}>
                   <View style={[sty.sectionHeader, { backgroundColor: 'transparent', paddingBottom: 4 }]}>
                     <View style={sty.sectionAccentLine} />
-                    <Text style={[sty.sectionTitle, { color: isDark ? '#111111' : '#111111' }]}>
+                    <Text style={[sty.sectionTitle, { color: isDark ? '#F5F5F7' : '#111111' }]}>
                       {t('chat.discoverChannelsTitle') || 'Descobrir canais'}
                     </Text>
                   </View>
@@ -1961,7 +1961,7 @@ export default function ChatNewScreen() {
                 digits.length === (searchText || '').replace(/[\s+()\-.]/g, '').length;
               return (
                 <View style={sty.emptyResults}>
-                  <IllustrationSearch size={148} color="#111111" style={{ opacity: 0.95, marginBottom: 8 }} />
+                  <IllustrationSearch size={148} color={colors.primary} style={{ opacity: 0.95, marginBottom: 8 }} />
                   <Text style={[sty.emptyTitle, { color: colors.text }]}>
                     {isPhoneQuery
                       ? (t('chat.phoneNotOnChatyy') || 'Este número ainda não usa o Chatyy')
@@ -1991,7 +1991,7 @@ export default function ChatNewScreen() {
                           onPress={handleAddEmail}
                         >
                           <IconPlus size={16} color={colors.onPrimary || '#fff'} />
-                          <Text style={sty.emptyActionText}>{t('chat.addEmail', { email: searchText })}</Text>
+                          <Text style={[sty.emptyActionText, { color: colors.onPrimary }]}>{t('chat.addEmail', { email: searchText })}</Text>
                         </TouchableOpacity>
                       )}
                       <TouchableOpacity
@@ -2112,7 +2112,7 @@ export default function ChatNewScreen() {
                     <View style={sty.recentSection}>
                       <View style={[sty.sectionHeader, { backgroundColor: 'transparent', paddingBottom: 4 }]}>
                         <View style={sty.sectionAccentLine} />
-                        <Text style={[sty.sectionTitle, { color: isDark ? '#111111' : '#111111' }]}>
+                        <Text style={[sty.sectionTitle, { color: isDark ? '#F5F5F7' : '#111111' }]}>
                           {t('chat.recentContacts')}
                         </Text>
                       </View>
@@ -2138,7 +2138,7 @@ export default function ChatNewScreen() {
                     <View style={{ paddingHorizontal: Spacing.md, marginTop: 6, marginBottom: 4 }}>
                       <View style={[sty.sectionHeader, { backgroundColor: 'transparent', paddingHorizontal: 0, paddingBottom: 6 }]}>
                         <View style={sty.sectionAccentLine} />
-                        <Text style={[sty.sectionTitle, { color: isDark ? '#111111' : '#111111' }]}>
+                        <Text style={[sty.sectionTitle, { color: isDark ? '#F5F5F7' : '#111111' }]}>
                           {t('chat.broadcastList') || 'Listas de transmissão'}
                         </Text>
                       </View>
@@ -2227,7 +2227,7 @@ export default function ChatNewScreen() {
                             }}
                           >
                             <View style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: '#111111' + '22', alignItems: 'center', justifyContent: 'center' }}>
-                              <IconBroadcastGlyph size={18} color="#111111" />
+                              <IconBroadcastGlyph size={18} color={colors.primary} />
                             </View>
                             <View style={{ flex: 1 }}>
                               <Text style={{ color: colors.text, fontSize: 15, fontWeight: '500' }}>

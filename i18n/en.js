@@ -3083,6 +3083,7 @@ export default {
   'chatConv.liveAlreadySharing': "You're already sharing live location",
   'chatConv.liveTimeLeft': '{mins} left',
   'chatConv.liveUnlimited': 'Unlimited sharing',
+  'chatConv.liveRowUnlimited': 'Until you stop',
   'chatConv.liveStop': 'Stop',
   'common.back': 'Back',
   'signup.stepPhone.cancel': 'Cancel',

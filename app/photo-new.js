@@ -401,7 +401,7 @@ export default function PhotoNew() {
           accessibilityLabel={t('photoNew.publish') || 'Publicar'}
         >
           {publishing ? (
-            <ActivityIndicator size="small" color="#fff" />
+            <ActivityIndicator size="small" color={colors.onPrimary} />
           ) : (
             <Text style={s.publishText}>{t('photoNew.publish') || 'Publicar'}</Text>
           )}

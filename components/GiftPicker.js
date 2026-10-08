@@ -120,7 +120,7 @@ export default function GiftPicker({ visible, onClose, receiverEmail, sessionId,
 
             {/* Recharge button */}
             <TouchableOpacity style={[styles.rechargeBtn, { backgroundColor: colors.primary }]}>
-              <Text style={styles.rechargeText}>
+              <Text style={[styles.rechargeText, { color: colors.onPrimary }]}>
                 {t('gifts.recharge') || 'Recarregar Moedas'}
               </Text>
             </TouchableOpacity>

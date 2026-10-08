@@ -254,7 +254,7 @@ export default function SearchScreen() {
                 <Image source={{ uri: s.image_url || s.artwork_url }} style={{ width: 46, height: 46, borderRadius: 8 }} />
               ) : (
                 <View style={[styles.iconCircle, { backgroundColor: isDark ? 'rgba(17, 17, 17,0.18)' : 'rgba(17, 17, 17,0.10)', borderRadius: 8 }]}>
-                  <IconMusic size={20} color="#111111" />
+                  <IconMusic size={20} color={colors.primary} />
                 </View>
               )}
               <View style={styles.rowText}>

@@ -850,7 +850,7 @@ function EmptyLiveDiscover({ colors, isDark, t, router, refreshing, onRefresh })
           {t('live.whyGoLive') || 'Por que ir ao vivo?'}
         </Text>
         <WhyBullet
-          icon={<IconHeart size={16} color="#111111" />}
+          icon={<IconHeart size={16} color={colors.primary} />}
           text={t('live.whyConnect') || 'Conecte em tempo real'}
           color={colors.text}
         />

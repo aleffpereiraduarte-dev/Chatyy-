@@ -340,7 +340,7 @@ export default function BotsScreen() {
                     paddingHorizontal: 8, paddingVertical: 3, borderRadius: 999,
                     backgroundColor: '#11111122',
                   }}>
-                    <Text style={{ fontSize: 11, color: '#111111', fontWeight: '700' }}>
+                    <Text style={{ fontSize: 11, color: colors.primary, fontWeight: '700' }}>
                       /{String(cmd).replace(/^\//, '')}
                     </Text>
                   </View>

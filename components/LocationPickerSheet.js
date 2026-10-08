@@ -49,7 +49,7 @@ import {
 } from 'react-native';
 import { WebView } from 'react-native-webview';
 import Svg, { Defs, RadialGradient, LinearGradient, Stop, Rect, Circle, Path, Ellipse, G } from 'react-native-svg';
-import { IconMapPin, IconX } from './Icons';
+import { IconMapPin, IconX, IconClock, IconNavigation } from './Icons';
 import * as api from '../services/api';
 import { boraStyleUrl } from './BoraMap';
 // [2026-10-07 native-maps] native map (iOS MapKit / Android MapLibre Native) when
@@ -57,11 +57,13 @@ import { boraStyleUrl } from './BoraMap';
 import { ChatyyMap, isNativeMapAvailable, nativeMapStyleUrl } from './NativeMap';
 import { MapFab, MapSearchBar, IconLocate } from './MapControls';
 
-// WhatsApp-style action green used as this sheet's accent (header badge, CTA,
-// chips, pin). The app's structural `colors.primary` is neutral black; the
-// chat sheets are being re-accented to this green in parallel.
-const ACCENT = '#25D366';
-const ACCENT_DEEP = '#1DA851';
+// [2026-10-08 chat-fix-composer-location] P&B premium. O verde WhatsApp
+// (#25D366 no badge, CTA, chips e pin) saiu: o sheet agora usa a tinta do app
+// — colors.primary/onPrimary (preto no claro, branco no escuro neutro). A cor
+// é resolvida por render via `inkOf(colors)`; nenhum acento colorido sobra
+// além do vermelho de "parar ao vivo" e do âmbar de "aproximada".
+const inkOf = (colors, isDark) => (colors?.primary || (isDark ? '#F5F5F7' : '#111111'));
+const onInkOf = (colors, isDark) => (colors?.onPrimary || (isDark ? '#000000' : '#ffffff'));
 
 // Alpha helper so we can tint the accent without hardcoding every rgba.
 const tint = (hex, a) => {
@@ -130,8 +132,8 @@ function mapPreviewHtml({ lat, lng, isDark }) {
 // hints, NOT a flat gray box.
 function MapCanvasBackdrop({ isDark }) {
   const c = isDark
-    ? { c0: '#1b2a33', c1: '#101c24', street: 'rgba(255,255,255,0.05)', block: 'rgba(255,255,255,0.035)', green: tint(ACCENT, 0.10) }
-    : { c0: '#eef6f0', c1: '#dcebe0', street: 'rgba(255,255,255,0.75)', block: 'rgba(17,27,33,0.035)', green: tint(ACCENT, 0.10) };
+    ? { c0: '#1c1c1e', c1: '#111113', street: 'rgba(255,255,255,0.05)', block: 'rgba(255,255,255,0.035)', green: 'rgba(255,255,255,0.04)' }
+    : { c0: '#f4f4f5', c1: '#e7e7ea', street: 'rgba(255,255,255,0.8)', block: 'rgba(17,17,17,0.035)', green: 'rgba(17,17,17,0.04)' };
   return (
     <Svg width="100%" height="100%" viewBox="0 0 320 180" preserveAspectRatio="xMidYMid slice">
       <Defs>
@@ -159,23 +161,45 @@ function MapCanvasBackdrop({ isDark }) {
 
 // Stylized center pin overlay (halo + head + white dot + ground shadow).
 // Rendered on top of the map/placeholder, perfectly centered on the coords.
-function CenterPin({ pulse }) {
+// [2026-10-08 chat-fix-composer-location] pin monocromático: preto com aro
+// branco (sobre o mapa claro e o escuro — contraste garantido nos dois).
+function CenterPin({ pulse, isDark }) {
+  // No escuro o mapa é escuro → pin BRANCO com aro preto; no claro, o inverso.
+  const ink = isDark ? '#F5F5F7' : '#111111';
+  const rim = isDark ? '#111111' : '#ffffff';
   return (
     <Svg width={74} height={82} viewBox="0 0 74 82">
       {/* ground shadow */}
-      <Ellipse cx="37" cy="70" rx="12" ry="3.5" fill="rgba(0,0,0,0.22)" />
+      <Ellipse cx="37" cy="70" rx="12" ry="3.5" fill="rgba(0,0,0,0.25)" />
       {/* soft halo */}
-      <Circle cx="37" cy="31" r={pulse ? 30 : 26} fill={tint(ACCENT, 0.12)} />
-      <Circle cx="37" cy="31" r="20" fill={tint(ACCENT, 0.18)} />
+      <Circle cx="37" cy="31" r={pulse ? 30 : 26} fill={isDark ? 'rgba(255,255,255,0.08)' : 'rgba(17,17,17,0.08)'} />
+      <Circle cx="37" cy="31" r="20" fill={isDark ? 'rgba(255,255,255,0.10)' : 'rgba(17,17,17,0.10)'} />
       {/* pin head (teardrop) with white rim */}
       <Path
         d="M37 67 C 27 51 21 42 21 31 A 16 16 0 1 1 53 31 C 53 42 47 51 37 67 Z"
-        fill={ACCENT}
-        stroke="#ffffff"
+        fill={ink}
+        stroke={rim}
         strokeWidth="2.5"
       />
       {/* inner dot */}
-      <Circle cx="37" cy="31" r="6" fill="#ffffff" />
+      <Circle cx="37" cy="31" r="6" fill={rim} />
+    </Svg>
+  );
+}
+
+// Infinity glyph (SVG — nunca emoji/texto "∞") p/ a opção "Sempre".
+function IconInfinity({ size = 20, color = '#111', strokeWidth = 2 }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round">
+      <Path d="M12 12c-2-2.67-4-4-6-4a4 4 0 1 0 0 8c2 0 4-1.33 6-4Zm0 0c2 2.67 4 4 6 4a4 4 0 0 0 0-8c-2 0-4 1.33-6 4Z" />
+    </Svg>
+  );
+}
+
+function IconChevronRightSm({ size = 16, color = '#999' }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round">
+      <Path d="M9 6l6 6-6 6" />
     </Svg>
   );
 }
@@ -198,7 +222,7 @@ function MapPreviewCard({ lat, lng, accuracy, height, radius = 18, colors, isDar
     <View style={{
       height, borderRadius: radius, overflow: 'hidden', marginBottom: 16,
       borderWidth: 1, borderColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(17,27,33,0.06)',
-      backgroundColor: isDark ? '#1c1c1e' : '#eef6f0',
+      backgroundColor: isDark ? '#1c1c1e' : '#f4f4f5',
     }}>
       {/* premium gradient backdrop — always behind the map */}
       <View style={{ position: 'absolute', inset: 0 }}>
@@ -250,7 +274,7 @@ function MapPreviewCard({ lat, lng, accuracy, height, radius = 18, colors, isDar
       <View style={{ position: 'absolute', inset: 0, alignItems: 'center', justifyContent: 'center' }} pointerEvents="none">
         {/* nudge up so the pin TIP sits on the center point */}
         <View style={{ marginTop: -22 }}>
-          <CenterPin />
+          <CenterPin isDark={isDark} />
         </View>
       </View>
 
@@ -263,7 +287,7 @@ function MapPreviewCard({ lat, lng, accuracy, height, radius = 18, colors, isDar
           borderRadius: 11, paddingHorizontal: 9, paddingVertical: 5,
           borderWidth: 1, borderColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(17,27,33,0.06)',
         }}>
-          <View style={{ width: 7, height: 7, borderRadius: 4, backgroundColor: ACCENT }} />
+          <View style={{ width: 7, height: 7, borderRadius: 4, backgroundColor: colors.text }} />
           <Text style={{ fontSize: 11, fontWeight: '700', color: colors.text }}>
             ±{Math.round(accuracy)}m
           </Text>
@@ -302,9 +326,9 @@ function NativePickerMap({ gps, height, colors, isDark, t, onPick }) {
 
   const markers = React.useMemo(() => {
     const list = [{ id: 'me', latitude: gps.latitude, longitude: gps.longitude, kind: 'dot', color: '#3B82F6' }];
-    if (searchPin) list.push({ id: 'search', latitude: searchPin.latitude, longitude: searchPin.longitude, kind: 'search', color: '#7C3AED', label: searchPin.title });
+    if (searchPin) list.push({ id: 'search', latitude: searchPin.latitude, longitude: searchPin.longitude, kind: 'search', color: isDark ? '#F5F5F7' : '#111111', label: searchPin.title });
     return list;
-  }, [gps.latitude, gps.longitude, searchPin]);
+  }, [gps.latitude, gps.longitude, searchPin, isDark]);
 
   const onRegionDidChange = React.useCallback((r) => {
     setDragging(false);
@@ -322,7 +346,7 @@ function NativePickerMap({ gps, height, colors, isDark, t, onPick }) {
     <View style={{
       height, borderRadius: 18, overflow: 'hidden', marginBottom: 14,
       borderWidth: 1, borderColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(17,27,33,0.06)',
-      backgroundColor: isDark ? '#1c1c1e' : '#eef6f0',
+      backgroundColor: isDark ? '#1c1c1e' : '#f4f4f5',
     }}>
       <ChatyyMap
         style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}
@@ -338,7 +362,7 @@ function NativePickerMap({ gps, height, colors, isDark, t, onPick }) {
       {/* fixed center pin — tip on the exact map center; lifts while dragging */}
       <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center' }} pointerEvents="none">
         <View style={{ marginTop: -22, transform: [{ translateY: dragging ? -10 : 0 }] }}>
-          <CenterPin pulse={dragging} />
+          <CenterPin pulse={dragging} isDark={isDark} />
         </View>
       </View>
 
@@ -606,6 +630,15 @@ export default function LocationPickerSheet({ visible, onClose, onSend, onLiveSt
 
   const isDark = themeIsDark(colors);
   const gutter = 20;
+  // [2026-10-08 chat-fix-composer-location] tokens P&B do sheet.
+  const ink = inkOf(colors, isDark);
+  const onInk = onInkOf(colors, isDark);
+  const hairline = isDark ? 'rgba(255,255,255,0.10)' : 'rgba(17,17,17,0.08)';
+  const groupBg = isDark ? 'rgba(255,255,255,0.05)' : 'rgba(17,17,17,0.035)';
+  const tileBg = isDark ? 'rgba(255,255,255,0.08)' : 'rgba(17,17,17,0.05)';
+  const liveSubtitle = (d) => (d.seconds === -1
+    ? (t?.('chatConv.liveRowUnlimited') || 'Até você parar')
+    : null);
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
@@ -626,13 +659,13 @@ export default function LocationPickerSheet({ visible, onClose, onSend, onLiveSt
           {/* Header: tinted pin badge + big title + soft close */}
           <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 18 }}>
             <View style={{
-              width: 44, height: 44, borderRadius: 22,
-              backgroundColor: tint(ACCENT, isDark ? 0.18 : 0.14),
+              width: 40, height: 40, borderRadius: 12,
+              backgroundColor: tileBg,
               alignItems: 'center', justifyContent: 'center', marginRight: 12,
             }}>
-              <IconMapPin size={24} color={ACCENT} />
+              <IconMapPin size={21} color={colors.text} />
             </View>
-            <Text style={{ flex: 1, fontSize: 22, fontWeight: '800', color: colors.text, letterSpacing: -0.3 }}>
+            <Text style={{ flex: 1, fontSize: 20, fontWeight: '700', color: colors.text, letterSpacing: -0.4 }} numberOfLines={1}>
               {t?.('chatConv.locationShare') || 'Compartilhar localização'}
             </Text>
             <TouchableOpacity
@@ -712,10 +745,10 @@ export default function LocationPickerSheet({ visible, onClose, onSend, onLiveSt
             <View style={{ height: 220, alignItems: 'center', justifyContent: 'center' }}>
               <View style={{
                 width: 60, height: 60, borderRadius: 30,
-                backgroundColor: tint(ACCENT, isDark ? 0.16 : 0.12),
+                backgroundColor: tileBg,
                 alignItems: 'center', justifyContent: 'center', marginBottom: 16,
               }}>
-                <ActivityIndicator size="large" color={ACCENT} />
+                <ActivityIndicator size="large" color={colors.text} />
               </View>
               <Text style={{ color: colors.text, fontSize: 15, fontWeight: '600' }}>
                 {t?.('chatConv.locationFetching') || 'Buscando sua localização…'}
@@ -773,12 +806,21 @@ export default function LocationPickerSheet({ visible, onClose, onSend, onLiveSt
               )}
 
               {/* Address line */}
-              <Text style={{ fontSize: 15.5, color: colors.text, marginBottom: 4, fontWeight: '700', letterSpacing: -0.2 }} numberOfLines={2}>
+              {/* eyebrow só quando há endereço resolvido (senão o título já é
+                  "Sua localização atual" e o rótulo ficaria duplicado) */}
+              {!!(picked ? pickedAddress : address) && (
+              <Text style={{ fontSize: 11.5, fontWeight: '600', color: colors.textSecondary, letterSpacing: 0.6, marginBottom: 4 }}>
+                {(picked
+                  ? (t?.('maps.selectedPlace') || 'Local selecionado')
+                  : (t?.('chatConv.locationCurrent') || 'Sua localização atual')).toUpperCase()}
+              </Text>
+              )}
+              <Text style={{ fontSize: 16, color: colors.text, marginBottom: 3, fontWeight: '600', letterSpacing: -0.25, lineHeight: 21 }} numberOfLines={2}>
                 {picked
                   ? (pickedAddress || (t?.('maps.selectedPlace') || 'Local selecionado'))
                   : (address || (t?.('chatConv.locationCurrent') || 'Sua localização atual'))}
               </Text>
-              <Text style={{ fontSize: 12.5, color: colors.textSecondary, marginBottom: approxOnly && !picked ? 6 : 20 }}>
+              <Text style={{ fontSize: 12.5, color: colors.textSecondary, marginBottom: approxOnly && !picked ? 6 : 18, fontVariant: ['tabular-nums'] }}>
                 {(picked || coords).latitude.toFixed(5)}, {(picked || coords).longitude.toFixed(5)}
                 {!picked && coords.accuracy ? ` · ±${Math.round(coords.accuracy)}m` : ''}
                 {!picked && loading ? ` · ${t?.('chatConv.locationRefining') || 'refinando…'}` : ''}
@@ -798,18 +840,16 @@ export default function LocationPickerSheet({ visible, onClose, onSend, onLiveSt
                 disabled={sending}
                 activeOpacity={0.85}
                 style={{
-                  backgroundColor: ACCENT,
+                  backgroundColor: ink,
                   borderRadius: 14,
-                  paddingVertical: 15,
+                  height: 52,
                   alignItems: 'center',
                   opacity: sending ? 0.6 : 1,
                   flexDirection: 'row', justifyContent: 'center', gap: 9,
-                  shadowColor: ACCENT_DEEP, shadowOpacity: 0.3, shadowRadius: 12, shadowOffset: { width: 0, height: 6 },
-                  elevation: 3,
                 }}
               >
-                <IconMapPin size={19} color="#fff" />
-                <Text style={{ color: '#fff', fontSize: 16, fontWeight: '800', letterSpacing: 0.1 }}>
+                <IconNavigation size={17} color={onInk} />
+                <Text style={{ color: onInk, fontSize: 16, fontWeight: '600', letterSpacing: -0.1 }}>
                   {sending
                     ? (t?.('common.sending') || 'Enviando…')
                     : picked
@@ -826,11 +866,14 @@ export default function LocationPickerSheet({ visible, onClose, onSend, onLiveSt
                   user stops manually. */}
               {onLiveStart && !activeLive && (
                 <View style={{ marginTop: 22 }}>
-                  <Text style={{ fontSize: 11.5, fontWeight: '800', color: colors.textSecondary, marginBottom: 12, letterSpacing: 1 }}>
+                  {/* [2026-10-08 chat-fix-composer-location] chips verdes → lista
+                      agrupada P&B (iOS Settings / WhatsApp iOS): ícone SVG em
+                      tile neutro + rótulo + subtítulo + chevron, hairlines. */}
+                  <Text style={{ fontSize: 11.5, fontWeight: '600', color: colors.textSecondary, marginBottom: 8, marginLeft: 4, letterSpacing: 0.6 }}>
                     {(t?.('chatConv.liveLocation') || 'COMPARTILHAR AO VIVO').toUpperCase()}
                   </Text>
-                  <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10 }}>
-                    {LIVE_DURATIONS.map(d => {
+                  <View style={{ borderRadius: 14, backgroundColor: groupBg, overflow: 'hidden' }}>
+                    {LIVE_DURATIONS.map((d, idx) => {
                       const inf = d.seconds === -1;
                       return (
                         <TouchableOpacity
@@ -840,22 +883,31 @@ export default function LocationPickerSheet({ visible, onClose, onSend, onLiveSt
                             setLiveConfirm({ seconds: d.seconds, label: d.label, unlimited: inf });
                           }}
                           disabled={sending}
-                          activeOpacity={0.7}
+                          activeOpacity={0.6}
+                          accessibilityRole="button"
+                          accessibilityLabel={`${t?.('chatConv.liveLocation') || 'Compartilhar ao vivo'}: ${d.label}`}
                           style={{
-                            flexBasis: '47%',
-                            flexGrow: 1,
-                            paddingVertical: 14,
-                            borderRadius: 999,
-                            borderWidth: 1.5,
-                            borderColor: tint(ACCENT, isDark ? 0.4 : 0.35),
-                            backgroundColor: tint(ACCENT, isDark ? 0.12 : 0.08),
-                            alignItems: 'center',
+                            flexDirection: 'row', alignItems: 'center',
+                            paddingHorizontal: 14, minHeight: 52,
                             opacity: sending ? 0.5 : 1,
                           }}
                         >
-                          <Text style={{ color: isDark ? ACCENT : ACCENT_DEEP, fontSize: 14.5, fontWeight: '700' }}>
-                            {inf ? '∞ ' : ''}{d.label}
-                          </Text>
+                          <View style={{ width: 30, height: 30, borderRadius: 9, backgroundColor: tileBg, alignItems: 'center', justifyContent: 'center', marginRight: 12 }}>
+                            {inf ? <IconInfinity size={17} color={colors.text} /> : <IconClock size={16} color={colors.text} />}
+                          </View>
+                          <View style={{
+                            flex: 1, flexDirection: 'row', alignItems: 'center', alignSelf: 'stretch',
+                            borderBottomWidth: idx < LIVE_DURATIONS.length - 1 ? 0.5 : 0, borderBottomColor: hairline,
+                            paddingVertical: 9,
+                          }}>
+                            <View style={{ flex: 1 }}>
+                              <Text style={{ color: colors.text, fontSize: 15.5, fontWeight: '500' }}>{d.label}</Text>
+                              {!!liveSubtitle(d) && (
+                                <Text style={{ color: colors.textSecondary, fontSize: 12, marginTop: 1 }} numberOfLines={1}>{liveSubtitle(d)}</Text>
+                              )}
+                            </View>
+                            <IconChevronRightSm size={16} color={colors.textTertiary || colors.textSecondary} />
+                          </View>
                         </TouchableOpacity>
                       );
                     })}
@@ -884,11 +936,11 @@ export default function LocationPickerSheet({ visible, onClose, onSend, onLiveSt
 
               <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 16, gap: 12 }}>
                 <View style={{
-                  width: 40, height: 40, borderRadius: 20,
-                  backgroundColor: tint(ACCENT, isDark ? 0.18 : 0.14),
+                  width: 40, height: 40, borderRadius: 12,
+                  backgroundColor: tileBg,
                   alignItems: 'center', justifyContent: 'center',
                 }}>
-                  <IconMapPin size={20} color={ACCENT} />
+                  {liveConfirm.unlimited ? <IconInfinity size={20} color={colors.text} /> : <IconClock size={19} color={colors.text} />}
                 </View>
                 <View style={{ flex: 1 }}>
                   <Text style={{ fontSize: 15.5, fontWeight: '700', color: colors.text, letterSpacing: -0.2 }} numberOfLines={1}>
@@ -900,8 +952,10 @@ export default function LocationPickerSheet({ visible, onClose, onSend, onLiveSt
                 </View>
               </View>
 
-              {/* Duration switcher — pre-selected pill highlighted */}
-              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 16 }}>
+              {/* Duration switcher — [2026-10-08 chat-fix-composer-location]
+                  segmented control P&B (trilho neutro + segmento selecionado
+                  em superfície com sombra leve), sem verde. */}
+              <View style={{ flexDirection: 'row', backgroundColor: groupBg, borderRadius: 12, padding: 3, marginBottom: 16 }}>
                 {LIVE_DURATIONS.map(d => {
                   const sel = d.seconds === liveConfirm.seconds;
                   const inf = d.seconds === -1;
@@ -911,19 +965,21 @@ export default function LocationPickerSheet({ visible, onClose, onSend, onLiveSt
                       onPress={() => setLiveConfirm({ seconds: d.seconds, label: d.label, unlimited: inf })}
                       disabled={sending}
                       activeOpacity={0.7}
+                      accessibilityRole="button"
+                      accessibilityState={{ selected: sel }}
                       style={{
-                        flexBasis: '22%',
-                        flexGrow: 1,
-                        paddingVertical: 11,
-                        borderRadius: 999,
-                        borderWidth: 1.5,
-                        borderColor: sel ? ACCENT : (isDark ? 'rgba(255,255,255,0.12)' : 'rgba(17,27,33,0.12)'),
-                        backgroundColor: sel ? tint(ACCENT, isDark ? 0.16 : 0.1) : 'transparent',
-                        alignItems: 'center',
+                        flex: 1,
+                        height: 34,
+                        borderRadius: 9,
+                        backgroundColor: sel ? (isDark ? '#2c2c2e' : '#ffffff') : 'transparent',
+                        alignItems: 'center', justifyContent: 'center',
+                        flexDirection: 'row', gap: 4,
+                        ...(sel ? { shadowColor: '#000', shadowOpacity: isDark ? 0 : 0.08, shadowRadius: 3, shadowOffset: { width: 0, height: 1 }, elevation: 1 } : null),
                       }}
                     >
-                      <Text style={{ color: sel ? (isDark ? ACCENT : ACCENT_DEEP) : colors.textSecondary, fontSize: 13, fontWeight: '700' }}>
-                        {inf ? '∞ ' : ''}{d.label}
+                      {inf ? <IconInfinity size={14} color={sel ? colors.text : colors.textSecondary} strokeWidth={2.2} /> : null}
+                      <Text style={{ color: sel ? colors.text : colors.textSecondary, fontSize: 13, fontWeight: sel ? '600' : '500' }} numberOfLines={1}>
+                        {d.label}
                       </Text>
                     </TouchableOpacity>
                   );
@@ -962,7 +1018,7 @@ export default function LocationPickerSheet({ visible, onClose, onSend, onLiveSt
                 borderRadius: 14, paddingHorizontal: 14, paddingVertical: 12, marginBottom: 18,
               }}>
                 <View style={{ marginTop: 1 }}>
-                  <IconMapPin size={16} color={liveConfirm.unlimited ? '#D97706' : ACCENT} />
+                  <IconMapPin size={16} color={liveConfirm.unlimited ? '#D97706' : colors.textSecondary} />
                 </View>
                 <Text style={{ flex: 1, fontSize: 12, color: colors.textSecondary, lineHeight: 17, fontWeight: liveConfirm.unlimited ? '600' : '400' }}>
                   {liveConfirm.unlimited
@@ -986,19 +1042,17 @@ export default function LocationPickerSheet({ visible, onClose, onSend, onLiveSt
                 disabled={sending}
                 activeOpacity={0.85}
                 style={{
-                  backgroundColor: ACCENT,
+                  backgroundColor: ink,
                   borderRadius: 14,
-                  paddingVertical: 15,
+                  height: 52,
                   alignItems: 'center',
                   opacity: sending ? 0.6 : 1,
                   flexDirection: 'row', justifyContent: 'center', gap: 9,
                   marginBottom: 6,
-                  shadowColor: ACCENT_DEEP, shadowOpacity: 0.3, shadowRadius: 12, shadowOffset: { width: 0, height: 6 },
-                  elevation: 3,
                 }}
               >
-                <IconMapPin size={19} color="#fff" />
-                <Text style={{ color: '#fff', fontSize: 16, fontWeight: '800', letterSpacing: 0.1 }}>
+                <IconNavigation size={17} color={onInk} />
+                <Text style={{ color: onInk, fontSize: 16, fontWeight: '600', letterSpacing: -0.1 }}>
                   {sending
                     ? (t?.('common.sending') || 'Enviando…')
                     : (t?.('chatConv.liveShareConfirm') || 'Compartilhar ao vivo')}

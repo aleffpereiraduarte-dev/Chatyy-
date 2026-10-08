@@ -348,7 +348,7 @@ export default function WalletCashoutScreen() {
             </Text>
           )}
           <View style={styles.rateChip}>
-            <IconDiamond size={12} color="#111111" />
+            <IconDiamond size={12} color={colors.primary} />
             <Text style={[styles.rateChipText, { color: colors.textSecondary }]}>
               {(t('wallet.cashoutRateLine') || '1 000 ◆ ≈ R$ {brl}')
                 .replace('{brl}', ((1000 * DIAMOND_TO_BRL_CENTS) / 100).toFixed(2).replace('.', numberLocale(language).startsWith('pt') ? ',' : '.'))}

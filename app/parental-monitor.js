@@ -769,7 +769,7 @@ function ParentalMonitorScreenInner() {
           <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 6 }}>
             {newThisWeek && <View style={[s.riskTag, { backgroundColor: '#f59e0b20' }]}><Text style={[s.riskTagText, { color: '#d97706' }]}>Novo esta semana</Text></View>}
             {unknown && <View style={[s.riskTag, { backgroundColor: '#ef444415' }]}><Text style={[s.riskTagText, { color: '#ef4444' }]}>Desconhecido</Text></View>}
-            {ageUnknown && <View style={[s.riskTag, { backgroundColor: '#11111120' }]}><Text style={[s.riskTagText, { color: '#111111' }]}>Idade ?</Text></View>}
+            {ageUnknown && <View style={[s.riskTag, { backgroundColor: '#11111120' }]}><Text style={[s.riskTagText, { color: colors.primary }]}>Idade ?</Text></View>}
           </View>
           {/* Approve / Block inline actions */}
           {status !== 'approved' && status !== 'blocked' && (
@@ -850,7 +850,7 @@ function ParentalMonitorScreenInner() {
 
       <Text style={[s.sectionLabel, { color: colors.textSecondary }]}>{t('parental.restrictions').toUpperCase()}</Text>
       <View style={[s.settingsGroup, { backgroundColor: isDark ? '#1c1c1e' : '#fff', borderColor: isDark ? '#2c2c2e' : '#e2e8f0' }]}>
-        <SettingRow icon={<IconMail size={18} color="#111111" />} label={t('parental.canSendEmail')} colors={colors}
+        <SettingRow icon={<IconMail size={18} color={colors.primary} />} label={t('parental.canSendEmail')} colors={colors}
           right={<Switch value={restrictions.can_send_email !== false} onValueChange={(v) => updateRestriction('can_send_email', v)} trackColor={{ false: '#767577', true: ACCENT + '60' }} thumbColor={restrictions.can_send_email !== false ? ACCENT : '#f4f3f4'} />} />
         <View style={[s.divider, { backgroundColor: isDark ? '#2c2c2e' : '#f1f5f9' }]} />
         <SettingRow icon={<IconTrash size={18} color="#ef4444" />} label={t('parental.canDeleteMessages')} colors={colors}
@@ -946,10 +946,10 @@ function ParentalMonitorScreenInner() {
         <SettingRow icon={<IconAlertTriangle size={18} color="#f59e0b" />} label={t('parental.filterViolence') || 'Block violence'} colors={colors}
           right={<Switch value={restrictions.filter_violence === true} onValueChange={(v) => updateRestriction('filter_violence', v)} trackColor={{ false: '#767577', true: ACCENT + '60' }} thumbColor={restrictions.filter_violence === true ? ACCENT : '#f4f3f4'} />} />
         <View style={[s.divider, { backgroundColor: isDark ? '#2c2c2e' : '#f1f5f9' }]} />
-        <SettingRow icon={<IconFilter size={18} color="#111111" />} label={t('parental.filterProfanity') || 'Filter profanity'} colors={colors}
+        <SettingRow icon={<IconFilter size={18} color={colors.primary} />} label={t('parental.filterProfanity') || 'Filter profanity'} colors={colors}
           right={<Switch value={restrictions.filter_profanity === true} onValueChange={(v) => updateRestriction('filter_profanity', v)} trackColor={{ false: '#767577', true: ACCENT + '60' }} thumbColor={restrictions.filter_profanity === true ? ACCENT : '#f4f3f4'} />} />
         <View style={[s.divider, { backgroundColor: isDark ? '#2c2c2e' : '#f1f5f9' }]} />
-        <SettingRow icon={<IconEye size={18} color="#111111" />} label={t('parental.safeSearch') || 'Safe search'} colors={colors}
+        <SettingRow icon={<IconEye size={18} color={colors.primary} />} label={t('parental.safeSearch') || 'Safe search'} colors={colors}
           right={<Switch value={restrictions.safe_search === true} onValueChange={(v) => updateRestriction('safe_search', v)} trackColor={{ false: '#767577', true: ACCENT + '60' }} thumbColor={restrictions.safe_search === true ? ACCENT : '#f4f3f4'} />} />
       </View>
 

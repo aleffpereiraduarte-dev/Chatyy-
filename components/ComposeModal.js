@@ -624,8 +624,8 @@ export default function ComposeModal({ params, onClose }) {
                     <ActivityIndicator size="small" color={colors.onPrimary || '#fff'} />
                   ) : (
                     <>
-                      <IconSend size={14} color="#fff" />
-                      <Text style={cm.sendBtnText}>{t('compose.send')}</Text>
+                      <IconSend size={14} color={colors.onPrimary} />
+                      <Text style={[cm.sendBtnText, { color: colors.onPrimary }]}>{t('compose.send')}</Text>
                     </>
                   )}
                 </TouchableOpacity>

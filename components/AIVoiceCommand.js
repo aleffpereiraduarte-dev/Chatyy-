@@ -180,11 +180,11 @@ export default function AIVoiceCommand() {
         }}
       >
         {processing ? (
-          <ActivityIndicator color={colors.onPrimary || '#fff'} />
+          <ActivityIndicator color={recording ? '#fff' : (colors.onPrimary || '#fff')} />
         ) : recording ? (
           <IconStop size={28} color="#fff" />
         ) : (
-          <IconMic size={28} color="#fff" />
+          <IconMic size={28} color={colors.onPrimary} />
         )}
       </TouchableOpacity>
 

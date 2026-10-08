@@ -293,7 +293,7 @@ export default function CompleteProfileModal({ visible, onDone, onSkip, profile 
             {sendingCode ? (
               <ActivityIndicator size="small" color={colors.onPrimary || '#fff'} />
             ) : (
-              <Text style={s.sendCodeBtnText}>
+              <Text style={[s.sendCodeBtnText, { color: colors.onPrimary }]}>
                 {t('completeProfile.sendCode') || 'Enviar codigo'}
               </Text>
             )}
@@ -390,7 +390,7 @@ export default function CompleteProfileModal({ visible, onDone, onSkip, profile 
                 {saving ? (
                   <ActivityIndicator size="small" color={colors.onPrimary || '#fff'} />
                 ) : (
-                  <Text style={s.saveBtnText}>{t('completeProfile.save')}</Text>
+                  <Text style={[s.saveBtnText, { color: colors.onPrimary }]}>{t('completeProfile.save')}</Text>
                 )}
               </TouchableOpacity>
               <TouchableOpacity

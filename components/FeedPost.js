@@ -1997,7 +1997,7 @@ function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated
                       }).join(' ');
                       return (
                         <Svg width={W} height={H}>
-                          <Path d={path} stroke="#111111" strokeWidth="2" fill="none" />
+                          <Path d={path} stroke={colors.primary} strokeWidth="2" fill="none" />
                         </Svg>
                       );
                     })()}

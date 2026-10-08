@@ -3009,6 +3009,113 @@ function CallScreenInner() {
   // call_video_request / call_reaction / call_hand_raise / call_screen_share /
   // call_video_toggle / call_recording. LiveKit DataChannel is faster (no WS
   // hop) and naturally scoped to the room.
+  // ───── [2026-10-08 group-call-interop] group reactions / raise-hand ─────
+  // Group mode (groupCall=1) speaks the shared contract with the native group
+  // screen (app/group-call.js) and the web room (/livekit-room.html): LiveKit
+  // reliable data on topic 'chatyy.call' —
+  //   {type:'reaction', emoji, from_email, name, call_id, ts}
+  //   {type:'raise_hand'|'lower_hand', email, name, call_id}
+  // AND the WS events call_reaction / call_hand_raise (the hub fans those out
+  // to every member of group_<convId>). Same reaction may arrive on both
+  // paths → dedupe (sender+emoji+ts, or sender+emoji within 1.5 s). Hands are
+  // keyed by bare email (LK identity is "<email>#<device>").
+  const GC_DATA_TOPIC = 'chatyy.call';
+  const gcSeenRef = useRef(new Map());
+  const _gcEmailOf = (v) => String(v || '').split('#')[0].trim().toLowerCase();
+  const _gcIsDupReaction = useCallback((from, emoji, ts) => {
+    const now = Date.now();
+    const seen = gcSeenRef.current;
+    seen.forEach((v, k) => { if (now - v > 5000) seen.delete(k); });
+    const winKey = `${from}|${emoji}`;
+    const tsNum = typeof ts === 'number' && ts > 0 ? ts : 0;
+    if (tsNum) {
+      const k = `${winKey}|${tsNum}`;
+      if (seen.has(k)) return true;
+      seen.set(k, now);
+    }
+    const last = seen.get(winKey);
+    seen.set(winKey, now);
+    return !tsNum && last !== undefined && now - last < 1500;
+  }, []);
+  const _gcShowReaction = useCallback((emoji) => {
+    if (!emoji || typeof emoji !== 'string') return;
+    const id = Date.now() + Math.random();
+    const x = 20 + Math.random() * (SCREEN_W - 80);
+    const anim = new Animated.Value(0);
+    setFloatingEmojis(prev => [...prev, { id, emoji: emoji.slice(0, 16), x, anim }]);
+    Animated.timing(anim, {
+      toValue: 1, duration: 2000, easing: Easing.out(Easing.cubic), useNativeDriver: false,
+    }).start(() => setFloatingEmojis(prev => prev.filter(e => e.id !== id)));
+  }, []);
+  const _gcApplyHand = useCallback((email, raised, name) => {
+    const key = _gcEmailOf(email);
+    if (!key) return;
+    const existingTimer = handLowerTimersRef.current.get(key);
+    if (existingTimer) { try { clearTimeout(existingTimer); } catch {} handLowerTimersRef.current.delete(key); }
+    if (raised) {
+      raisedHandsRef.current.set(key, { name: name || key.split('@')[0], ts: raisedHandsRef.current.get(key)?.ts || Date.now() });
+      const timer = setTimeout(() => {
+        raisedHandsRef.current.delete(key);
+        setRaisedHands(new Map(raisedHandsRef.current));
+        handLowerTimersRef.current.delete(key);
+      }, 60000);
+      handLowerTimersRef.current.set(key, timer);
+    } else {
+      if (!raisedHandsRef.current.has(key)) return;
+      raisedHandsRef.current.delete(key);
+    }
+    setRaisedHands(new Map(raisedHandsRef.current));
+  }, []);
+  // Own hand → new-contract data msg + LK attribute (late joiners) + WS.
+  // The legacy {type:'hand_raise'} data msg is still sent by the caller for
+  // older builds.
+  const _gcSendHand = useCallback((raised) => {
+    if (!isGroupCall) return;
+    const me = (user?.email || '').toLowerCase();
+    const name = user?.name || me.split('@')[0];
+    try {
+      const r = roomRef.current;
+      if (r && r.localParticipant) {
+        const bytes = new TextEncoder().encode(JSON.stringify({ type: raised ? 'raise_hand' : 'lower_hand', email: me, name, call_id: callId }));
+        const p = r.localParticipant.publishData(bytes, { reliable: true, topic: GC_DATA_TOPIC });
+        if (p && typeof p.catch === 'function') p.catch(() => {});
+        if (typeof r.localParticipant.setAttributes === 'function') {
+          const pa = r.localParticipant.setAttributes({ hand_raised: raised ? '1' : '0' });
+          if (pa && typeof pa.catch === 'function') pa.catch(() => {});
+        }
+      }
+    } catch {}
+    try {
+      const mailWs = require('../services/websocket').default;
+      mailWs._send({ type: 'call_hand_raise', call_id: callId, conversation_id: conversationId, raised: !!raised, name, email: me });
+    } catch {}
+  }, [isGroupCall, user, callId, conversationId]);
+  useEffect(() => {
+    if (!isGroupCall || !callId) return undefined;
+    let mailWs = null;
+    try { mailWs = require('../services/websocket').default; } catch {}
+    if (!mailWs || typeof mailWs.on !== 'function') return undefined;
+    const me = (user?.email || '').toLowerCase();
+    const offR = mailWs.on('call_reaction', (d) => {
+      if (!d || String(d.call_id || '') !== String(callId)) return;
+      const from = _gcEmailOf(d.from_email || d.email);
+      if (!from || from === me || typeof d.emoji !== 'string' || !d.emoji) return;
+      if (_gcIsDupReaction(from, d.emoji, d.ts)) return;
+      _gcShowReaction(d.emoji);
+    });
+    const offH = mailWs.on('call_hand_raise', (d) => {
+      if (!d || String(d.call_id || '') !== String(callId)) return;
+      const from = _gcEmailOf(d.email || d.from_email);
+      if (!from || from === me) return;
+      _gcApplyHand(from, !!d.raised, d.name);
+    });
+    return () => {
+      try { offR && offR(); } catch {}
+      try { offH && offH(); } catch {}
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isGroupCall, callId, user?.email, _gcIsDupReaction, _gcShowReaction, _gcApplyHand]);
+
   const _handleDataChannelMessage = useCallback((data, participant) => {
     if (!data || typeof data !== 'object') return;
     const fromIdentity = participant?.identity || '';
@@ -3037,6 +3144,8 @@ function CallScreenInner() {
         break;
       case 'reaction': {
         if (!data.emoji) return;
+        // [2026-10-08 group-call-interop] group: dedupe vs the WS mirror.
+        if (isGroupCall && _gcIsDupReaction(_gcEmailOf(fromIdentity || data.from_email), data.emoji, data.ts)) return;
         const id = Date.now() + Math.random();
         const x = 20 + Math.random() * (SCREEN_W - 80);
         const anim = new Animated.Value(0);
@@ -3085,9 +3194,17 @@ function CallScreenInner() {
         }
         break;
       }
+      case 'raise_hand':
+      case 'lower_hand': {
+        // [2026-10-08 group-call-interop] shared contract (group-call.js /
+        // livekit-room.html). Keyed by bare email like 'hand_raise' below.
+        if (!isGroupCall) return;
+        _gcApplyHand(fromIdentity || data.email, data.type === 'raise_hand', data.name);
+        break;
+      }
       case 'hand_raise': {
         if (!fromIdentity) return;
-        const key = fromIdentity.toLowerCase();
+        const key = _gcEmailOf(fromIdentity);
         const existingTimer = handLowerTimersRef.current.get(key);
         if (existingTimer) { try { clearTimeout(existingTimer); } catch {} handLowerTimersRef.current.delete(key); }
         if (data.raised) {
@@ -4095,6 +4212,7 @@ function CallScreenInner() {
       raised: next,
       name: user?.name || (user?.email || '').split('@')[0],
     });
+    _gcSendHand(next); // [2026-10-08 group-call-interop]
     try {
       const me = (user?.email || '').toLowerCase();
       if (me) {
@@ -4111,6 +4229,7 @@ function CallScreenInner() {
       handRaiseTimerRef.current = setTimeout(() => {
         setHandRaised(false);
         sendData({ type: 'hand_raise', raised: false, name: user?.name || (user?.email || '').split('@')[0] });
+        _gcSendHand(false); // [2026-10-08 group-call-interop]
         const me = (user?.email || '').toLowerCase();
         if (me) {
           raisedHandsRef.current.delete(me);
@@ -4120,7 +4239,7 @@ function CallScreenInner() {
       }, 60000);
     }
     resetControlsTimer();
-  }, [isGroupCall, handRaised, user, sendData, resetControlsTimer]);
+  }, [isGroupCall, handRaised, user, sendData, resetControlsTimer, _gcSendHand]);
 
   const handleToggleVideo = useCallback(async () => {
     _hapticTap('light');
@@ -4698,6 +4817,34 @@ function CallScreenInner() {
     Animated.timing(anim, {
       toValue: 1, duration: 2000, easing: Easing.out(Easing.cubic), useNativeDriver: false,
     }).start(() => setFloatingEmojis(prev => prev.filter(e => e.id !== id)));
+    if (isGroupCall) {
+      // [2026-10-08 group-call-interop] shared contract on topic chatyy.call +
+      // WS (hub fans out to the whole group). Same ts on both → receivers
+      // dedupe. Older builds still parse {type:'reaction', emoji}.
+      const _me = (user?.email || '').toLowerCase();
+      const _name = user?.name || _me.split('@')[0];
+      const _ts = Date.now();
+      try {
+        const r = roomRef.current;
+        if (r && r.localParticipant) {
+          const bytes = new TextEncoder().encode(JSON.stringify({ type: 'reaction', emoji, from_email: _me, name: _name, call_id: callId, ts: _ts }));
+          const p = r.localParticipant.publishData(bytes, { reliable: true, topic: GC_DATA_TOPIC });
+          if (p && typeof p.catch === 'function') p.catch(() => {});
+        }
+      } catch {}
+      try {
+        sendSignaling('call_reaction', {
+          call_id: callId,
+          conversation_id: conversationId,
+          emoji,
+          name: _name,
+          ts: _ts,
+        });
+      } catch {}
+      setShowEmojiBar(false);
+      resetControlsTimer();
+      return;
+    }
     sendData({ type: 'reaction', emoji });
     // [reaction bar, 2026-05-17] Also fan via WS so peers without an active
     // LK data-channel still see the reaction (mirrors status_reaction event).
@@ -4710,7 +4857,8 @@ function CallScreenInner() {
     } catch {}
     setShowEmojiBar(false);
     resetControlsTimer();
-  }, [sendData, resetControlsTimer, sendSignaling, callId, conversationId]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sendData, resetControlsTimer, sendSignaling, callId, conversationId, isGroupCall, user]);
 
   // ───── Add participant ─────
   useEffect(() => {
@@ -5708,7 +5856,7 @@ function CallScreenInner() {
                 activeOpacity={0.7}
               >
                 <View style={[styles.recordSheetIcon, onHold && styles.recordSheetIconActive]}>
-                  {onHold ? <IconPlay size={20} color="#fff" /> : <IconPause size={20} color="#111111" />}
+                  {onHold ? <IconPlay size={20} color="#fff" /> : <IconPause size={20} color="#fff" />}
                 </View>
                 <Text style={styles.recordSheetLabel}>{onHold ? (t('call.unhold') || 'Retomar') : (t('call.hold') || 'Espera')}</Text>
               </TouchableOpacity>
@@ -5742,7 +5890,7 @@ function CallScreenInner() {
             >
               <View style={[styles.recordSheetIcon, { backgroundColor: 'rgba(17, 17, 17, 0.18)' }]}>
                 <Svg width={20} height={20} viewBox="0 0 24 24" fill="none">
-                  <SvgPath d="M3 12h3l3-9 4 18 3-9h5" stroke="#111111" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
+                  <SvgPath d="M3 12h3l3-9 4 18 3-9h5" stroke="#fff" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
                 </Svg>
               </View>
               <Text style={styles.recordSheetLabel}>
@@ -6229,7 +6377,7 @@ function CallScreenInner() {
             borderRadius: 18, backgroundColor: 'rgba(20,20,28,0.92)',
             alignItems: 'center', maxWidth: 320,
           }}>
-            <ActivityIndicator size="large" color="#111111" />
+            <ActivityIndicator size="large" color="#fff" />
             <Text style={{ color: '#fff', fontSize: 16, fontWeight: '600', marginTop: 14 }}>
               {t('call.connecting') || 'Conectando...'}
             </Text>

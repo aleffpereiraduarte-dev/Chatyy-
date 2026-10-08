@@ -372,11 +372,11 @@ export default function CommunitiesTab({ colors: propColors, isDark: propIsDark 
       <BrandFab
         style={{ position: 'absolute', bottom: 20, right: 20 }}
         size={56}
-        color={ACCENT}
+        color={colors?.primary || ACCENT}
         onPress={openCreate}
         accessibilityLabel={t('community.create') || 'Create community'}
       >
-        <IconPlus size={24} color="#fff" />
+        <IconPlus size={24} color={colors?.onPrimary || '#fff'} />
       </BrandFab>
 
       {/* Create Modal */}

@@ -1363,11 +1363,11 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onF
                   disabled={!inlineReplyText.trim() || inlineReplySending}
                 >
                   {inlineReplySending ? (
-                    <ActivityIndicator size="small" color="#fff" />
+                    <ActivityIndicator size="small" color={colors.onPrimary} />
                   ) : (
                     <>
-                      <IconSend size={14} color="#fff" style={{ marginRight: 6 }} />
-                      <Text style={s.inlineReplySendText}>{t('reader.send')}</Text>
+                      <IconSend size={14} color={colors.onPrimary} style={{ marginRight: 6 }} />
+                      <Text style={[s.inlineReplySendText, { color: colors.onPrimary }]}>{t('reader.send')}</Text>
                     </>
                   )}
                 </TouchableOpacity>

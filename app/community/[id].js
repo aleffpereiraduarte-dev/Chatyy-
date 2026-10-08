@@ -365,7 +365,7 @@ export default function CommunityScreen() {
           {/* Join / Leave button */}
           {!community.is_member ? (
             <TouchableOpacity onPress={onJoin} style={[sty.primaryBtn, { backgroundColor: colors.primary }]}>
-              <Text style={sty.primaryBtnText}>{t('community.join') || 'Entrar'}</Text>
+              <Text style={[sty.primaryBtnText, { color: colors.onPrimary }]}>{t('community.join') || 'Entrar'}</Text>
             </TouchableOpacity>
           ) : (
             <View style={{ flexDirection: 'row', gap: 8, marginTop: 12 }}>
@@ -460,7 +460,7 @@ export default function CommunityScreen() {
                   disabled={!announceText.trim() || posting}
                   style={[sty.primaryBtn, { backgroundColor: colors.primary, opacity: (!announceText.trim() || posting) ? 0.5 : 1 }]}
                 >
-                  <Text style={sty.primaryBtnText}>
+                  <Text style={[sty.primaryBtnText, { color: colors.onPrimary }]}>
                     {posting ? (t('common.sending') || 'Enviando…') : (t('community.publish') || 'Publicar')}
                   </Text>
                 </TouchableOpacity>
@@ -480,7 +480,7 @@ export default function CommunityScreen() {
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
                   {g.is_announcement && (
                     <View style={[sty.tag, { backgroundColor: colors.primary }]}>
-                      <Text style={sty.tagText}>{t('community.announcementTag') || 'Avisos'}</Text>
+                      <Text style={[sty.tagText, { color: colors.onPrimary }]}>{t('community.announcementTag') || 'Avisos'}</Text>
                     </View>
                   )}
                   <Text style={[sty.rowTitle, { color: colors.text, flex: 1 }]}>{g.name}</Text>

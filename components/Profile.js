@@ -492,7 +492,7 @@ const EmptyGridIllustration = memo(function EmptyGridIllustration({ isDark, size
       {/* Small "plus" hint inside accent tile */}
       <_SvgPath
         d="M35 78 V92 M28 85 H42"
-        stroke={isDark ? '#111111' : '#111111'}
+        stroke={isDark ? '#F5F5F7' : '#111111'}
         strokeWidth="2.4"
         strokeLinecap="round"
       />
@@ -2253,8 +2253,8 @@ export default function Profile({
                 borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(17, 17, 17,0.28)',
                 flexDirection: 'row', alignItems: 'center', gap: 4,
               }} accessibilityLabel={t?.('profile.accountTypeCreator') || 'Criador'}>
-                <IconBrush size={11} color="#111111" />
-                <Text style={{ fontSize: 11, color: '#111111', fontWeight: '700', letterSpacing: 0.1 }}>
+                <IconBrush size={11} color={colors.primary} />
+                <Text style={{ fontSize: 11, color: colors.primary, fontWeight: '700', letterSpacing: 0.1 }}>
                   {t?.('profile.accountTypeCreator') || 'Criador'}
                 </Text>
               </View>
@@ -2502,8 +2502,8 @@ export default function Profile({
           )}
           {!!identity.website && (
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 4 }}>
-              <IconLink size={13} color="#111111" />
-              <Text style={{ fontSize: 13, color: '#111111', fontWeight: '600', flexShrink: 1 }} numberOfLines={1}>
+              <IconLink size={13} color={colors.primary} />
+              <Text style={{ fontSize: 13, color: colors.primary, fontWeight: '600', flexShrink: 1 }} numberOfLines={1}>
                 {identity.website}
               </Text>
             </View>
@@ -2902,7 +2902,7 @@ export default function Profile({
         if (livesLoading && lives.length === 0) {
           return (
             <View style={{ paddingVertical: 60, alignItems: 'center' }}>
-              <ActivityIndicator color="#111111" />
+              <ActivityIndicator color={colors.primary} />
             </View>
           );
         }
@@ -3878,7 +3878,7 @@ export default function Profile({
         web: { boxShadow: '0 4px 12px rgba(0,0,0,0.18)' },
       }),
     }}>
-      <ActivityIndicator size="small" color="#111111" />
+      <ActivityIndicator size="small" color={colors.primary} />
       <Text style={{ fontSize: 14, color: colors?.text, fontWeight: '500' }}>
         {t?.('status.publishing') || 'Publicando…'}
       </Text>

@@ -119,7 +119,7 @@ function AnimatedBadge({ count, isActive, colors, showTotal, folderColor, isInbo
         },
       ]}
     >
-      <Text style={[s.badgeText, { fontWeight: '700' }, isInbox && s.badgeTextInbox]}>
+      <Text style={[s.badgeText, { fontWeight: '700' }, isInbox && s.badgeTextInbox, badgeBg === colors.primary ? { color: colors.onPrimary } : null]}>
         {count || prevCount.current}
       </Text>
     </Animated.View>
@@ -807,7 +807,7 @@ function CollapsedItem({ item, isActive, iconColor, colors, onPress }) {
       <item.icon size={20} color={isActive ? iconColor : colors.textSecondary} />
       {item.badge > 0 && (
         <View style={[s.collapsedBadge, { backgroundColor: colors.primary }]}>
-          <Text style={s.collapsedBadgeText}>{item.badge > 9 ? '9+' : item.badge}</Text>
+          <Text style={[s.collapsedBadgeText, { color: colors.onPrimary }]}>{item.badge > 9 ? '9+' : item.badge}</Text>
         </View>
       )}
       {/* Tooltip on hover */}
@@ -851,7 +851,7 @@ function QuickAccessItem({ item, colors, onPress, isActive }) {
       <Text style={[s.folderLabel, { color: isActive ? iconColor : colors.text, fontWeight: isActive ? '700' : '500' }]}>{item.label}</Text>
       {item.badge > 0 && (
         <View style={[s.quickBadge, { backgroundColor: colors.primary }]}>
-          <Text style={s.quickBadgeText}>{item.badge > 99 ? '99+' : item.badge}</Text>
+          <Text style={[s.quickBadgeText, { color: colors.onPrimary }]}>{item.badge > 99 ? '99+' : item.badge}</Text>
         </View>
       )}
     </TouchableOpacity>

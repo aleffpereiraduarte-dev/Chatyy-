@@ -4381,7 +4381,7 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, openSta
 
             {viewersLoading ? (
               <View style={{ paddingVertical: 60 }}>
-                <ActivityIndicator size="large" color="#111111" />
+                <ActivityIndicator size="large" color={colors.primary} />
               </View>
             ) : viewersList.length === 0 ? (
               <View style={{ alignItems: 'center', paddingVertical: 60, paddingHorizontal: 28 }}>
@@ -5656,7 +5656,7 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, openSta
                 accessibilityState={{ checked: crossPostFeed }}
                 accessibilityLabel={t?.('status.crossPostFeed') || 'Postar também no Feed'}
               >
-                {crossPostFeed ? <IconCheckboxChecked size={20} color="#111111" /> : <IconCheckbox size={20} color="rgba(255,255,255,0.5)" />}
+                {crossPostFeed ? <IconCheckboxChecked size={20} color="#fff" /> : <IconCheckbox size={20} color="rgba(255,255,255,0.5)" />}
                 <IconFeedShare size={16} color="rgba(255,255,255,0.85)" />
                 <Text style={{ color: '#fff', fontSize: 13, fontWeight: '600', flex: 1 }}>
                   {t?.('status.crossPostFeed') || 'Postar também no Feed'}

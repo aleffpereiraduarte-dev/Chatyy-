@@ -77,7 +77,7 @@ export default function TemplatePickerModal({ visible, onClose, onSelect }) {
               <TextInput style={[s.input, s.bodyInput, { color: colors.text, borderColor: colors.border, backgroundColor: colors.surfaceVariant }]}
                 value={body} onChangeText={setBody} placeholder={t('template.bodyPlaceholder')} placeholderTextColor={colors.textTertiary} multiline textAlignVertical="top" />
               <TouchableOpacity style={[s.saveBtn, { backgroundColor: colors.primary }]} onPress={handleSave}>
-                <Text style={s.saveBtnText}>{t('template.save')}</Text>
+                <Text style={[s.saveBtnText, { color: colors.onPrimary }]}>{t('template.save')}</Text>
               </TouchableOpacity>
             </View>
           ) : (

@@ -342,7 +342,7 @@ export default function SafetyNumberSheet({ visible, onClose, peerEmail, peerNam
                   style={[s.primaryBtn, { backgroundColor: colors.primary, marginTop: 18 }]}
                 >
                   <IconCamera size={16} color={colors.onPrimary || '#fff'} />
-                  <Text style={s.primaryBtnText}>
+                  <Text style={[s.primaryBtnText, { color: colors.onPrimary }]}>
                     {t('chatConv.safetyNumberScan') || 'Escanear'}
                   </Text>
                 </TouchableOpacity>

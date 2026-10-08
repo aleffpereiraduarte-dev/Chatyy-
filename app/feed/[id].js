@@ -104,7 +104,7 @@ export default function FeedPostPublic() {
   if (loading) {
     return (
       <View style={[styles.wrap, { backgroundColor: colors.background, alignItems: 'center', justifyContent: 'center' }]}>
-        <ActivityIndicator size="large" color="#111111" />
+        <ActivityIndicator size="large" color={colors.primary} />
       </View>
     );
   }
@@ -130,7 +130,7 @@ export default function FeedPostPublic() {
       {/* Top bar */}
       <View style={[styles.topbar, { borderBottomColor: colors.border }]}>
         <TouchableOpacity onPress={goApp} style={styles.brandRow} activeOpacity={0.8}>
-          <Text style={[styles.brand, { color: '#111111' }]}>Chatyy</Text>
+          <Text style={[styles.brand, { color: colors.primary }]}>Chatyy</Text>
           <Text style={{ fontSize: 12, color: colors.textSecondary, marginLeft: 8 }}>Tudo está aqui</Text>
         </TouchableOpacity>
         {!user?.email && (

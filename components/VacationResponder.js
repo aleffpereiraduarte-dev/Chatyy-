@@ -206,7 +206,7 @@ export default function VacationResponder({ visible, onClose }) {
                 {saving ? (
                   <ActivityIndicator size="small" color={colors.onPrimary || '#fff'} />
                 ) : (
-                  <Text style={s.saveBtnText}>{t('settings.save')}</Text>
+                  <Text style={[s.saveBtnText, { color: colors.onPrimary }]}>{t('settings.save')}</Text>
                 )}
               </TouchableOpacity>
             </ScrollView>

@@ -159,7 +159,7 @@ export default function AdvancedKeyScreen() {
         disabled={busy}
       >
         {busy ? <ActivityIndicator color={colors.onPrimary || '#fff'} /> :
-          <Text style={styles.ctaText}>{t('byok.generate') || 'Gerar chave personalizada'}</Text>}
+          <Text style={[styles.ctaText, { color: colors.onPrimary }]}>{t('byok.generate') || 'Gerar chave personalizada'}</Text>}
       </TouchableOpacity>
     </View>
   );
@@ -187,7 +187,7 @@ export default function AdvancedKeyScreen() {
         style={[styles.cta, { backgroundColor: colors.primary, marginTop: Spacing.md }]}
         onPress={() => setPhase('confirm')}
       >
-        <Text style={styles.ctaText}>{t('byok.iWroteIt') || 'Anotei a frase'}</Text>
+        <Text style={[styles.ctaText, { color: colors.onPrimary }]}>{t('byok.iWroteIt') || 'Anotei a frase'}</Text>
       </TouchableOpacity>
     </View>
   );
@@ -222,7 +222,7 @@ export default function AdvancedKeyScreen() {
         style={[styles.cta, { backgroundColor: colors.primary, marginTop: Spacing.lg }]}
         onPress={handleVerifyConfirm}
       >
-        <Text style={styles.ctaText}>{t('byok.confirmCta') || 'Confirmar'}</Text>
+        <Text style={[styles.ctaText, { color: colors.onPrimary }]}>{t('byok.confirmCta') || 'Confirmar'}</Text>
       </TouchableOpacity>
     </View>
   );

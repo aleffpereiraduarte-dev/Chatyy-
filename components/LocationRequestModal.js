@@ -129,8 +129,8 @@ export default function LocationRequestModal() {
               <AvatarCircle name={reqData.name} email={reqData.email} size={56} />
               <View style={{ flex: 1, marginLeft: 14 }}>
                 <View style={lrm.iconBadge}>
-                  <IconMapPin size={14} color="#111111" />
-                  <Text style={[lrm.badgeLabel, { color: '#111111' }]}>
+                  <IconMapPin size={14} color={colors.primary} />
+                  <Text style={[lrm.badgeLabel, { color: colors.primary }]}>
                     {(t?.('location.requestModalLabel') || 'Localização').toUpperCase()}
                   </Text>
                 </View>
@@ -171,7 +171,7 @@ export default function LocationRequestModal() {
                 }]}
                 accessibilityLabel={t?.('location.acceptOneHour') || '1 hora'}
               >
-                <Text style={[lrm.btnSecondaryText, { color: '#111111' }]}>
+                <Text style={[lrm.btnSecondaryText, { color: colors.primary }]}>
                   {t?.('location.acceptOneHour') || '1 hora'}
                 </Text>
               </TouchableOpacity>

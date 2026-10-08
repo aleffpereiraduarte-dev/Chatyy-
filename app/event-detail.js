@@ -545,12 +545,12 @@ function EditEventView({ event, onSave, onCancel, colors, t }) {
           ) : saveSuccess ? (
             <>
               <IconCheck size={18} color={colors.onPrimary || '#fff'} />
-              <Text style={styles.editSaveBtnText}>{t('eventDetail.saved')}</Text>
+              <Text style={[styles.editSaveBtnText, { color: colors.onPrimary }]}>{t('eventDetail.saved')}</Text>
             </>
           ) : (
             <>
-              <IconCheck size={18} color="#fff" />
-              <Text style={styles.editSaveBtnText}>{t('eventDetail.saveChanges')}</Text>
+              <IconCheck size={18} color={colors.onPrimary} />
+              <Text style={[styles.editSaveBtnText, { color: colors.onPrimary }]}>{t('eventDetail.saveChanges')}</Text>
             </>
           )}
         </TouchableOpacity>
@@ -970,7 +970,7 @@ function EventDetailScreenInner() {
                 activeOpacity={0.7}
               >
                 <IconEdit size={18} color={colors.onPrimary || '#fff'} />
-                <Text style={styles.prominentEditBtnText}>{t('eventDetail.editEvent')}</Text>
+                <Text style={[styles.prominentEditBtnText, { color: colors.onPrimary }]}>{t('eventDetail.editEvent')}</Text>
               </TouchableOpacity>
             </View>
           )}
@@ -1072,7 +1072,7 @@ function EventDetailScreenInner() {
             <Text style={[styles.sectionTitle, { color: colors.text }]}>{t('eventDetail.organizer')}</Text>
             <View style={styles.attendeeRow}>
               <View style={[styles.attendeeAvatar, { backgroundColor: eventColor }]}>
-                <Text style={styles.attendeeAvatarText}>
+                <Text style={[styles.attendeeAvatarText, eventColor === colors.primary ? { color: colors.onPrimary } : null]}>
                   {((event.creator_name || '').trim() || event.created_by || event.creator_email || '?')[0].toUpperCase()}
                 </Text>
               </View>
@@ -1099,7 +1099,7 @@ function EventDetailScreenInner() {
               {event.attendees.map((att, idx) => (
                 <View key={idx} style={[styles.attendeeRow, { borderBottomColor: colors.border }]}>
                   <View style={[styles.attendeeAvatar, { backgroundColor: colors.primary }]}>
-                    <Text style={styles.attendeeAvatarText}>
+                    <Text style={[styles.attendeeAvatarText, { color: colors.onPrimary }]}>
                       {(att.display_name || att.email || '?')[0].toUpperCase()}
                     </Text>
                   </View>

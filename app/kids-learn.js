@@ -214,7 +214,7 @@ function KidsLearnScreenInner() {
                 borderColor: isDark ? '#161618' : '#e5e7eb',
               }]}
               placeholder={t('kids.homeworkPlaceholder') || 'Qual sua duvida?'}
-              placeholderTextColor={isDark ? '#111111' : '#111111'}
+              placeholderTextColor={isDark ? '#8E8E93' : '#111111'}
               value={question}
               onChangeText={setQuestion}
               multiline
@@ -228,7 +228,7 @@ function KidsLearnScreenInner() {
               disabled={!question.trim() || tutorLoading}
               accessibilityLabel="Send" accessibilityRole="button"
             >
-              {tutorLoading ? <ActivityIndicator size="small" color="#fff" /> : <IconSend size={20} color={question.trim() ? '#fff' : (isDark ? '#111111' : '#111111')} />}
+              {tutorLoading ? <ActivityIndicator size="small" color="#fff" /> : <IconSend size={20} color={question.trim() ? '#fff' : (isDark ? '#F5F5F7' : '#111111')} />}
             </TouchableOpacity>
           </View>
 

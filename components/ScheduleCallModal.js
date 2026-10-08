@@ -513,9 +513,9 @@ export default function ScheduleCallModal({ visible, onClose, onScheduled }) {
                 style={[styles.cta, { backgroundColor: submitting ? colors.surfaceVariant : colors.primary }]}
               >
                 {submitting ? (
-                  <ActivityIndicator color={colors.onPrimary || '#fff'} />
+                  <ActivityIndicator color={colors.text} />
                 ) : (
-                  <Text style={styles.ctaText}>{t('calls.schedule') || 'Agendar'}</Text>
+                  <Text style={[styles.ctaText, { color: colors.onPrimary }]}>{t('calls.schedule') || 'Agendar'}</Text>
                 )}
               </TouchableOpacity>
             </Animated.View>

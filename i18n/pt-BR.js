@@ -3106,6 +3106,7 @@ export default {
   'chatConv.liveAlreadySharing': 'Você já está dividindo localização ao vivo',
   'chatConv.liveTimeLeft': '{mins} restantes',
   'chatConv.liveUnlimited': 'Compartilhamento ilimitado',
+  'chatConv.liveRowUnlimited': 'Até você parar',
   'chatConv.liveStop': 'Parar',
   'common.back': 'Voltar',
   'signup.validation.invalidPhone': 'Digite um número de telefone válido',

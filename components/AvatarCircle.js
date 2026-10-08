@@ -156,12 +156,20 @@ function normalizeAvatarUrl(url) {
   // `&d=YYYYMMDD` so the URL rotates daily even if `v=` is sticky. New
   // `&d=` → new cache key → fresh fetch → friend's photo appears again.
   const bust = _todayBust();
-  // Replace existing &d= if present (idempotent), otherwise append.
-  if (/[?&]d=\d{8}(?:&|$)/.test(url)) {
-    return url.replace(/([?&])d=\d{8}/, `$1d=${bust}`);
+  // [2026-10-08 chat-fix-composer-location] Sem `v=` = avatar padrão/iniciais
+  // (ou versão desconhecida): carimba a versão da RENDERIZAÇÃO das iniciais
+  // (`av=`, ver AVATAR_INITIALS_RENDER_V em services/api.js) — o cache em disco
+  // ignora o `d=` diário, então só um param novo derruba as iniciais cortadas.
+  let out = url;
+  if (!/[?&]v=/.test(out) && !/[?&]av=/.test(out)) {
+    out = `${out}${out.indexOf('?') === -1 ? '?' : '&'}av=2`;
   }
-  const sep = url.indexOf('?') === -1 ? '?' : '&';
-  return `${url}${sep}d=${bust}`;
+  // Replace existing &d= if present (idempotent), otherwise append.
+  if (/[?&]d=\d{8}(?:&|$)/.test(out)) {
+    return out.replace(/([?&])d=\d{8}/, `$1d=${bust}`);
+  }
+  const sep = out.indexOf('?') === -1 ? '?' : '&';
+  return `${out}${sep}d=${bust}`;
 }
 
 // Bug 2026-05-12 v2: initials flipped after restart (JA→AU, ML→OF, N→NO).

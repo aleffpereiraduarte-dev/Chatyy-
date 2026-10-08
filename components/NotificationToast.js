@@ -507,7 +507,7 @@ export default function NotificationToast({ notification, onDismiss }) {
                   paddingVertical: 1,
                   borderRadius: 4,
                 }}>
-                  <Text style={{ fontSize: 9, fontWeight: '700', color: '#111111', letterSpacing: 0.3 }}>AI</Text>
+                  <Text style={{ fontSize: 9, fontWeight: '700', color: colors.primary, letterSpacing: 0.3 }}>AI</Text>
                 </View>
               )}
               <Text style={{

@@ -564,7 +564,7 @@ export default function VoicemailRecorder() {
             </Text>
             <View style={{ height: 32 }} />
             <TouchableOpacity onPress={startCountdown} style={styles.micButton} accessibilityLabel="Gravar mensagem de voz">
-              <IconMic size={40} color="#fff" />
+              <IconMic size={40} color={colors.onPrimary} />
             </TouchableOpacity>
           </>
         )}

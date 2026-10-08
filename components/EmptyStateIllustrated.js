@@ -292,7 +292,7 @@ export default function EmptyStateIllustrated({
           accessibilityRole="button"
           accessibilityLabel={resolvedAction}
         >
-          <Text style={styles.actionText}>{resolvedAction}</Text>
+          <Text style={[styles.actionText, { color: colors.onPrimary }]}>{resolvedAction}</Text>
         </TouchableOpacity>
       )}
     </Animated.View>

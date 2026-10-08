@@ -71,7 +71,7 @@ export default function ScheduleSendModal({ visible, onClose, onSchedule }) {
                 onPress={() => { if (customDate) { onSchedule(new Date(customDate).toISOString()); onClose(); } }}
                 disabled={!customDate}>
                 <IconSend size={16} color={colors.onPrimary || '#fff'} style={{ marginRight: 6 }} />
-                <Text style={s.scheduleBtnText}>{t('schedule.schedule')}</Text>
+                <Text style={[s.scheduleBtnText, { color: colors.onPrimary }]}>{t('schedule.schedule')}</Text>
               </TouchableOpacity>
             </View>
           </View>

@@ -1406,9 +1406,19 @@ export function MailProvider({ children }) {
         } catch {}
       }
     } else if (!user?.email) {
+      // [2026-10-08 chat-gaps2] Só derruba o socket numa TRANSIÇÃO real
+      // logado→deslogado (ref setada por um user anterior). No cold start o
+      // user ainda está hidratando (null) enquanto o eager bootstrap já
+      // conectou+autenticou com o bearer salvo — o disconnect() aqui matava
+      // esse socket ~0,5-1 s depois do auth e o mailcontext_login reabria
+      // outro (abrir conversa por link/reload = fecha+reabre ~1 s, chat_870
+      // assinado 2×). Logout real (doLogout) passa por aqui com a ref setada.
+      const hadUser = lastConnectedEmailRef.current != null;
       lastConnectedEmailRef.current = null;
-      mailWs.disconnect();
-      try { require('../services/phoenixAdapter').stopPhoenix(); } catch {}
+      if (hadUser || !api.getAuthToken?.()) {
+        mailWs.disconnect();
+        try { require('../services/phoenixAdapter').stopPhoenix(); } catch {}
+      }
     }
     // No cleanup — the socket should outlive provider re-renders.
   }, [user?.email]);

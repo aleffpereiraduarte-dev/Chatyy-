@@ -2287,7 +2287,7 @@ const ReelItem = memo(function ReelItem({ onCreate, reel, isActive, colors, isDa
               <Text style={{ color: '#fff', fontSize: 16, fontWeight: '600', flex: 1 }}>
                 {t?.('feed.speed') || 'Velocidade'}
               </Text>
-              <Text style={{ color: '#111111', fontSize: 14, fontWeight: '700' }}>{playbackRate}×</Text>
+              <Text style={{ color: '#fff', fontSize: 14, fontWeight: '700' }}>{playbackRate}×</Text>
             </TouchableOpacity>
 
             {/* Report — escalated negative signal. */}

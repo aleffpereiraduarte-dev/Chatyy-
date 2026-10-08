@@ -115,7 +115,7 @@ export default function SnoozePickerModal({ visible, onClose, onSnooze }) {
                   onPress={handleCustom}
                   disabled={!customDate}
                 >
-                  <Text style={s.applyBtnText}>{t('snooze.apply')}</Text>
+                  <Text style={[s.applyBtnText, { color: colors.onPrimary }]}>{t('snooze.apply')}</Text>
                 </TouchableOpacity>
               </View>
             )}

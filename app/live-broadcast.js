@@ -5311,7 +5311,7 @@ export default function LiveBroadcastScreen() {
                 onPress={() => setPollDraftOptions(prev => [...prev, ''])}
                 style={{ paddingVertical: 10, marginBottom: 8 }}
               >
-                <Text style={{ color: '#111111', fontWeight: '700', fontSize: 13 }}>
+                <Text style={{ color: '#fff', fontWeight: '700', fontSize: 13 }}>
                   + {t('live.pollAddOption') || 'Adicionar opção'}
                 </Text>
               </TouchableOpacity>
@@ -5346,7 +5346,7 @@ export default function LiveBroadcastScreen() {
                 activeOpacity={0.7}
               >
                 <Text style={liveSheetStyles.rowLabel}>{o.label}</Text>
-                {slowModeSeconds === o.sec ? <IconCheck size={12} color="#111111" /> : null}
+                {slowModeSeconds === o.sec ? <IconCheck size={12} color="#fff" /> : null}
               </TouchableOpacity>
             ))}
           </View>

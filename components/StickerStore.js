@@ -9,6 +9,7 @@ import {
   IconCheck, IconArrowLeft, IconSparkles, IconUser,
 } from './Icons';
 import * as api from '../services/api';
+import CachedImage from './CachedImage'; // [2026-10-08 polish-leftovers] was used but never imported (ReferenceError)
 // [2026-05-22 monetization-pause] hidden by MONETIZATION_ENABLED flag
 import { PREMIUM_BADGES_VISIBLE } from '../constants/featureFlags';
 
@@ -181,27 +182,27 @@ function PackCard({ pack, onPress, onInstall, onUninstall, installed, installing
             disabled={installing}
             style={{
               marginTop: 8, borderRadius: 999, paddingVertical: 7, paddingHorizontal: 12,
-              backgroundColor: installed ? 'transparent' : '#111111',
+              backgroundColor: installed ? 'transparent' : colors.primary,
               borderWidth: installed ? 1.5 : 0,
-              borderColor: installed ? '#111111' : 'transparent',
+              borderColor: installed ? colors.primary : 'transparent',
               alignItems: 'center', justifyContent: 'center',
               flexDirection: 'row', gap: 4,
             }}
             activeOpacity={0.75}
           >
             {installing ? (
-              <ActivityIndicator size={12} color={installed ? '#111111' : '#fff'} />
+              <ActivityIndicator size={12} color={installed ? colors.primary : colors.onPrimary} />
             ) : installed ? (
               <>
-                <IconCheck size={12} color="#111111" />
-                <Text style={{ fontSize: 11, fontWeight: '700', color: '#111111' }}>
+                <IconCheck size={12} color={colors.primary} />
+                <Text style={{ fontSize: 11, fontWeight: '700', color: colors.primary }}>
                   Instalado
                 </Text>
               </>
             ) : (
               <>
-                <IconPlus size={12} color="#fff" />
-                <Text style={{ fontSize: 11, fontWeight: '700', color: '#fff' }}>
+                <IconPlus size={12} color={colors.onPrimary} />
+                <Text style={{ fontSize: 11, fontWeight: '700', color: colors.onPrimary }}>
                   Adicionar
                 </Text>
               </>
@@ -675,9 +676,9 @@ function CreatePackModal({ colors, onClose, onCreated, t }) {
               activeOpacity={0.8}
             >
               {creating ? (
-                <ActivityIndicator size={14} color="#fff" />
+                <ActivityIndicator size={14} color={colors.onPrimary} />
               ) : (
-                <Text style={{ fontSize: 13, fontWeight: '700', color: '#fff' }}>Criar</Text>
+                <Text style={{ fontSize: 13, fontWeight: '700', color: colors.onPrimary }}>Criar</Text>
               )}
             </TouchableOpacity>
           )}

@@ -1610,7 +1610,7 @@ export default function PhotoEditor({ visible, imageUri, onSave, onClose, photoI
                     onPress={() => setShowStickerStore(true)}
                     style={[s.stickerPackPill, { backgroundColor: 'rgba(17, 17, 17,0.22)' }]}
                   >
-                    <Text style={[s.stickerPackLabel, { color: '#111111', fontWeight: '700' }]}>
+                    <Text style={[s.stickerPackLabel, { color: '#fff', fontWeight: '700' }]}>
                       + Loja
                     </Text>
                   </TouchableOpacity>

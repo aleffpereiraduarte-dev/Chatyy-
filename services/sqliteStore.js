@@ -194,6 +194,46 @@ export function getMessagesSync(convId, limit = 50, beforeId = null) {
   return out;
 }
 
+/**
+ * [2026-10-08 chat-gaps2] Janela local AO REDOR de uma mensagem (pular p/
+ * citação / pin / busca fora da janela carregada) — sem rede. Devolve
+ * oldest→newest; [] se o alvo não está no SQLite local (aí o chamador vai ao
+ * servidor). Mesmo filtro de conta do getMessagesSync.
+ */
+export function getMessagesAroundSync(convId, targetId, before = 30, after = 10) {
+  if (isWeb || convId == null || targetId == null) return [];
+  if (_isLocked()) return [];
+  const db = _getDb();
+  if (!db || !_ensureTable(db)) return [];
+  const tid = Number(targetId);
+  if (!Number.isFinite(tid) || tid <= 0) return [];
+  const af = _acctFilter(db);
+  const parse = (rows) => {
+    const out = [];
+    for (const r of rows || []) {
+      if (!r || !r.raw_json) continue;
+      try { out.push(JSON.parse(r.raw_json)); } catch {}
+    }
+    return out;
+  };
+  try {
+    const older = parse(db.getAllSync(
+      'SELECT raw_json FROM messages WHERE conversation_id = ? AND id <= ?' + (af.sql || '') + ' ORDER BY id DESC LIMIT ?',
+      [convId, tid, ...(af.params || []), Math.max(1, before + 1)],
+    ));
+    if (!older.some(m => m && Number(m.id) === tid)) return [];
+    const newer = parse(db.getAllSync(
+      'SELECT raw_json FROM messages WHERE conversation_id = ? AND id > ?' + (af.sql || '') + ' ORDER BY id ASC LIMIT ?',
+      [convId, tid, ...(af.params || []), Math.max(0, after)],
+    ));
+    older.reverse();
+    return older.concat(newer);
+  } catch (e) {
+    if (__DEV__) console.warn('[sqliteStore] getMessagesAroundSync failed:', e?.message);
+    return [];
+  }
+}
+
 /** Highest server-confirmed message id we have locally (0 if none). */
 export function getLastMessageIdSync(convId) {
   if (isWeb || convId == null) return 0;

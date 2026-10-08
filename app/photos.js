@@ -342,7 +342,7 @@ const PhotoGridItem = React.memo(function PhotoGridItem({ photo, index, isSelect
         )
       )}
 
-      {photo.starred && !sm && (
+      {!!photo.starred && !sm && ( // [2026-10-08 polish-leftovers] starred=0 rendered a stray "0" (crash on native)
         <View style={s.favoriteOverlay} pointerEvents="none">
           <View style={s.favoriteOverlayShadow} />
           <Svg width={16} height={16} viewBox="0 0 24 24">
@@ -2899,7 +2899,7 @@ function PhotosScreenInner() {
             style={[s.backupBtn, { backgroundColor: colors.primary }]}
             onPress={() => toggleBackup(true)}
           >
-            <Text style={s.backupBtnText}>{t('photos.enable')}</Text>
+            <Text style={[s.backupBtnText, { color: colors.onPrimary }]}>{t('photos.enable')}</Text>
           </TouchableOpacity>
         </View>
       );
@@ -3103,7 +3103,7 @@ function PhotosScreenInner() {
               startBackup();
             }}
           >
-            <Text style={s.backupBtnText}>{t('photos.startBackup')}</Text>
+            <Text style={[s.backupBtnText, { color: colors.onPrimary }]}>{t('photos.startBackup')}</Text>
           </TouchableOpacity>
         </View>
       );
@@ -3802,7 +3802,7 @@ function PhotosScreenInner() {
             ) : realFaceClusters.length === 0 ? (
               <View style={{ paddingVertical: 40, alignItems: 'center' }}>
                 <View style={[s.emptyIconCircle, { backgroundColor: isDark ? 'rgba(17, 17, 17,0.16)' : 'rgba(17, 17, 17,0.08)' }]}>
-                  <IconUsers size={44} color="#111111" />
+                  <IconUsers size={44} color={colors.primary} />
                 </View>
                 <Text style={{ color: colors.text, fontSize: 17, fontWeight: '800', marginTop: 16, letterSpacing: -0.3 }}>
                   {t('photos.peopleEmptyTitle') || 'Ninguém por aqui ainda'}
@@ -3987,7 +3987,7 @@ function PhotosScreenInner() {
               {analyzing ? (
                 <ActivityIndicator size="small" color={colors.onPrimary || '#fff'} />
               ) : (
-                <Text style={s.backupBtnText}>{tr(t, 'photos.ux.analyze', 'Analisar fotos')}</Text>
+                <Text style={[s.backupBtnText, { color: colors.onPrimary }]}>{tr(t, 'photos.ux.analyze', 'Analisar fotos')}</Text>
               )}
             </TouchableOpacity>
           </View>
@@ -4306,7 +4306,7 @@ function PhotosScreenInner() {
             {/* Restore photos from cloud */}
             <View style={[s.card, { backgroundColor: colors.surface, borderColor: colors.border, marginTop: Spacing.md }]}>
               <View style={s.cardHeader}>
-                <IconDownload size={20} color="#111111" />
+                <IconDownload size={20} color={colors.primary} />
                 <Text style={[s.cardTitle, { color: colors.text }]}>{t('photos.restorePhotos')}</Text>
               </View>
               <Text style={{ color: colors.textSecondary, fontSize: 13, marginBottom: 12 }}>
@@ -4425,7 +4425,7 @@ function PhotosScreenInner() {
                             onPress={startPhotoRestore}
                             disabled={selectedMonths.size === 0}
                           >
-                            <Text style={[s.backupBtnText, { fontSize: 15 }]}>
+                            <Text style={[s.backupBtnText, { fontSize: 15 }, { color: selectedMonths.size > 0 ? colors.onPrimary : colors.textSecondary }]}>
                               {(t('photos.downloadNPhotos') || 'Baixar {n} fotos').replace('{n}',
                                 cloudPhotoMonths
                                   .filter(m => selectedMonths.has(m.month_key))
@@ -4465,7 +4465,7 @@ function PhotosScreenInner() {
                       loadCloudPhotos(1);
                     }}
                   >
-                    <Text style={s.backupBtnText}>{t('photos.restore')}</Text>
+                    <Text style={[s.backupBtnText, { color: colors.onPrimary }]}>{t('photos.restore')}</Text>
                   </TouchableOpacity>
                   <TouchableOpacity
                     style={[s.backupBtn, { backgroundColor: '#dc2626' }]}
@@ -4924,7 +4924,7 @@ function PhotosScreenInner() {
             </View>
             <View style={{ flex: 1 }} />
             <TouchableOpacity onPress={selectAll} style={s.headerBtn} accessibilityLabel="Selecionar tudo">
-              <IconCheckCircle size={22} color="#111111" />
+              <IconCheckCircle size={22} color={colors.primary} />
             </TouchableOpacity>
           </View>
         ) : showSearch ? (
@@ -4950,7 +4950,7 @@ function PhotosScreenInner() {
               <TouchableOpacity onPress={() => { if (Platform.OS === "web" && window.parent !== window) { try { window.parent.postMessage({ type: "close-side-panel", route: "/photos" }, "*"); } catch {} } else { router.back(); } }} style={s.headerBtn}>
                 <IconArrowLeft size={24} color={colors.text} />
               </TouchableOpacity>
-              <IconCloud size={22} color="#111111" />
+              <IconCloud size={22} color={colors.primary} />
               <Text style={[s.headerTitle, { color: colors.text, marginLeft: 8 }]}>{t('photos.title')}</Text>
               <View style={{ flex: 1 }} />
               {/* Backup status pill — Tudo sincronizado / Enviando / Pausado */}
@@ -5089,14 +5089,14 @@ function PhotosScreenInner() {
             onPress={() => setShowFavorites(false)}
             style={[s.filterChip, !showFavorites && { backgroundColor: colors.primary }]}
           >
-            <Text style={[s.filterChipText, !showFavorites && { color: colors.onPrimary || '#fff' }]}>{t('photos.allPhotos')}</Text>
+            <Text style={[s.filterChipText, { color: colors.text }, !showFavorites && { color: colors.onPrimary || '#fff' }]}>{t('photos.allPhotos')}</Text>
           </TouchableOpacity>
           <TouchableOpacity
             onPress={() => setShowFavorites(true)}
             style={[s.filterChip, showFavorites && { backgroundColor: colors.primary }]}
           >
             <IconStarFilled size={12} color={showFavorites ? (colors.onPrimary || '#fff') : '#f59e0b'} />
-            <Text style={[s.filterChipText, showFavorites && { color: colors.onPrimary || '#fff' }]}>{t('photos.favorites')}</Text>
+            <Text style={[s.filterChipText, { color: colors.text }, showFavorites && { color: colors.onPrimary || '#fff' }]}>{t('photos.favorites')}</Text>
           </TouchableOpacity>
         </View>
       )}
@@ -5207,7 +5207,7 @@ function PhotosScreenInner() {
               { rotate: fabRotateAnim.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '45deg'] }) },
             ]}
           >
-            <IconPlus size={26} color="#fff" />
+            <IconPlus size={26} color={colors.onPrimary} />
           </BrandFab>
         </Animated.View>
       )}
@@ -5257,7 +5257,7 @@ function PhotosScreenInner() {
             accessibilityLabel="Adicionar a album"
           >
             <View style={[s.batchActionPill, { backgroundColor: 'rgba(17, 17, 17,0.14)' }]}>
-              <IconAlbum size={20} color="#111111" />
+              <IconAlbum size={20} color={colors.primary} />
             </View>
             <Text style={[s.batchActionText, { color: colors.text }]}>{t('photos.addToAlbum') || 'Adicionar'}</Text>
           </TouchableOpacity>
@@ -5662,7 +5662,7 @@ function PhotosMapTab({ colors, isDark, insets, t, api, allPhotos, openViewer })
   if (loading) {
     return (
       <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
-        <ActivityIndicator color="#111111" />
+        <ActivityIndicator color={colors.primary} />
         <Text style={{ marginTop: 10, color: colors.textSecondary, fontSize: 13 }}>
           {t('photos.mapLoading') || 'Carregando mapa...'}
         </Text>
@@ -5850,8 +5850,8 @@ function MemoriesCarousel({
       {/* Section header: SVG sparkle + brand pill tag (replaces plain Text). */}
       <View style={s.memoriesHeader}>
         <View style={s.memoriesHeaderPill}>
-          <IconSparkles size={13} color="#111111" />
-          <Text style={s.memoriesHeaderPillText}>
+          <IconSparkles size={13} color={colors.primary} />
+          <Text style={[s.memoriesHeaderPillText, { color: colors.primary }]}>
             {(t('photos.memories') || 'Memórias').toUpperCase()}
           </Text>
         </View>

@@ -253,7 +253,7 @@ export default function SendDiamondSheet({
                 {t('wallet.currentBalance') || 'Saldo atual'}:
               </Text>
               {loadingBal ? (
-                <ActivityIndicator size="small" color="#111111" />
+                <ActivityIndicator size="small" color={colors.primary} />
               ) : (
                 <Text style={[styles.balanceVal, { color: insufficient ? '#EF4444' : colors.text }]}>
                   {formatInt(balance, language)} ◆

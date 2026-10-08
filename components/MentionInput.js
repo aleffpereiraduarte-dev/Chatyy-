@@ -88,8 +88,8 @@ export function MentionAutocomplete({ inputText, members, currentEmail, visible,
                 <Text style={[styles.email, { color: colors.textTertiary }]} numberOfLines={1}>{item.email}</Text>
               </View>
               {item.role === 'admin' && (
-                <View style={styles.adminBadge}>
-                  <Text style={styles.adminText}>Admin</Text>
+                <View style={[styles.adminBadge, { backgroundColor: colors.primaryLight || '#11111120' }]}>
+                  <Text style={[styles.adminText, { color: colors.primary }]}>Admin</Text>
                 </View>
               )}
             </TouchableOpacity>

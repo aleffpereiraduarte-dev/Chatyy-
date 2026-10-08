@@ -729,7 +729,7 @@ export default function StickerPicker({ onSelect, onClose, colors, t, userEmail 
         <View style={{ borderBottomWidth: 1, borderBottomColor: colors.border }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 10, paddingTop: 4, gap: 4 }}>
             <Text style={{ fontSize: 10 }}>⭐</Text>
-            <Text style={{ fontSize: 9, fontWeight: '800', color: '#111111', letterSpacing: 0.6 }}>
+            <Text style={{ fontSize: 9, fontWeight: '800', color: colors.primary, letterSpacing: 0.6 }}>
               FAVORITOS
             </Text>
           </View>

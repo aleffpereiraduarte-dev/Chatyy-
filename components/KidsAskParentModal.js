@@ -173,7 +173,7 @@ export default function KidsAskParentModal({ visible, onClose, isDark, t }) {
               borderBottomWidth: 1, borderBottomColor: isDark ? '#161618' : '#f3e8ff',
             }}>
               <TouchableOpacity onPress={() => setHistoryOpen(false)} accessibilityRole="button" accessibilityLabel="Voltar">
-                <IconBack size={20} color={isDark ? '#111111' : '#111111'} />
+                <IconBack size={20} color={isDark ? '#F5F5F7' : '#111111'} />
               </TouchableOpacity>
               <Text style={{ fontSize: 15, fontWeight: '800', color: isDark ? '#F1F3F5' : '#1e1b4b' }}>
                 {t?.('kids.askParent.history') || 'Pedidos anteriores'}
@@ -183,7 +183,7 @@ export default function KidsAskParentModal({ visible, onClose, isDark, t }) {
             <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 32 }}>
               {historyLoading ? (
                 <View style={{ alignItems: 'center', paddingVertical: 40 }}>
-                  <ActivityIndicator color="#111111" />
+                  <ActivityIndicator color={isDark ? '#fff' : '#111111'} />
                 </View>
               ) : historyItems.length === 0 ? (
                 <View style={{ alignItems: 'center', paddingVertical: 40 }}>
@@ -347,7 +347,7 @@ export default function KidsAskParentModal({ visible, onClose, isDark, t }) {
                 </Text>
                 <TextInput
                   value={contactEmail} onChangeText={setContactEmail}
-                  placeholder="amigo@chatyy.com.br" placeholderTextColor={isDark ? '#111111' : '#111111'}
+                  placeholder="amigo@chatyy.com.br" placeholderTextColor={isDark ? '#8E8E93' : '#111111'}
                   keyboardType="email-address" autoCapitalize="none"
                   style={[styles.input, {
                     backgroundColor: isDark ? '#161618' : '#f3e8ff',
@@ -363,7 +363,7 @@ export default function KidsAskParentModal({ visible, onClose, isDark, t }) {
                 </Text>
                 <TextInput
                   value={appName} onChangeText={setAppName}
-                  placeholder={t?.('kids.askParent.appHint') || 'Ex: YouTube, Roblox'} placeholderTextColor={isDark ? '#111111' : '#111111'}
+                  placeholder={t?.('kids.askParent.appHint') || 'Ex: YouTube, Roblox'} placeholderTextColor={isDark ? '#8E8E93' : '#111111'}
                   style={[styles.input, {
                     backgroundColor: isDark ? '#161618' : '#f3e8ff',
                     color: isDark ? '#F1F3F5' : '#1e1b4b',
@@ -379,14 +379,14 @@ export default function KidsAskParentModal({ visible, onClose, isDark, t }) {
                   <Text style={[styles.sectionLabel, { color: isDark ? '#F1F3F5' : '#6b7280', marginBottom: 0 }]}>
                     {t?.('kids.askParent.why') || 'Quer explicar? (opcional)'}
                   </Text>
-                  <Text style={{ fontSize: 11, color: isDark ? '#111111' : '#111111', fontWeight: '600' }}>
+                  <Text style={{ fontSize: 11, color: isDark ? '#F5F5F7' : '#111111', fontWeight: '600' }}>
                     {message.length}/500
                   </Text>
                 </View>
                 <TextInput
                   value={message} onChangeText={setMessage}
                   placeholder={t?.('kids.askParent.messageHint') || 'Escreve aqui…'}
-                  placeholderTextColor={isDark ? '#111111' : '#111111'}
+                  placeholderTextColor={isDark ? '#8E8E93' : '#111111'}
                   multiline numberOfLines={3} maxLength={500}
                   style={[styles.input, {
                     backgroundColor: isDark ? '#161618' : '#f3e8ff',
@@ -409,8 +409,8 @@ export default function KidsAskParentModal({ visible, onClose, isDark, t }) {
                 accessibilityRole="button"
                 accessibilityLabel={t?.('kids.askParent.history') || 'Ver pedidos anteriores'}
               >
-                <IconClock size={14} color={isDark ? '#111111' : '#111111'} />
-                <Text style={{ fontSize: 13, fontWeight: '700', color: isDark ? '#111111' : '#111111' }}>
+                <IconClock size={14} color={isDark ? '#F5F5F7' : '#111111'} />
+                <Text style={{ fontSize: 13, fontWeight: '700', color: isDark ? '#F5F5F7' : '#111111' }}>
                   {t?.('kids.askParent.history') || 'Ver pedidos anteriores'}
                 </Text>
               </TouchableOpacity>

@@ -417,7 +417,7 @@ export default function FilterRuleEditor({ visible, onClose }) {
                 </TouchableOpacity>
                 <TouchableOpacity style={[s.saveBtn, { backgroundColor: colors.primary, flex: 2, marginTop: 0 }]} onPress={handleSave}>
                   <IconCheck size={18} color={colors.onPrimary || '#fff'} style={{ marginRight: 6 }} />
-                  <Text style={s.saveBtnText}>{t('filters.saveRule') || 'Salvar filtro'}</Text>
+                  <Text style={[s.saveBtnText, { color: colors.onPrimary }]}>{t('filters.saveRule') || 'Salvar filtro'}</Text>
                 </TouchableOpacity>
               </View>
             </ScrollView>

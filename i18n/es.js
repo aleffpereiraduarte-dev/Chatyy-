@@ -3086,6 +3086,7 @@ export default {
   'chatConv.liveAlreadySharing': 'Ya estás compartiendo ubicación en vivo',
   'chatConv.liveTimeLeft': 'Quedan {mins}',
   'chatConv.liveUnlimited': 'Compartiendo sin límite',
+  'chatConv.liveRowUnlimited': 'Hasta que lo detengas',
   'chatConv.liveStop': 'Detener',
   'common.back': 'Volver',
   'signup.stepPhone.cancel': 'Cancelar',

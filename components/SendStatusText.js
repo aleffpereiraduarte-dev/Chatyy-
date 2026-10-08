@@ -27,8 +27,9 @@ import messageOutbox, { MAX_ATTEMPTS, subscribe as subscribeOutbox } from '../se
  *   onRetry            — optional callback. If omitted, taps the "failed" text
  *                        to call messageOutbox.requeue() + poke the worker.
  *   style              — extra View style
+ *   quietPending       — [2026-10-08] queued/sending → null (só o relógio do chamador)
  */
-export default function SendStatusText({ msg, color, fontSize = 10, onRetry, style }) {
+export default function SendStatusText({ msg, color, fontSize = 10, onRetry, style, quietPending = false }) {
   const { colors } = useTheme();
   const { t } = useLanguage();
 
@@ -82,6 +83,13 @@ export default function SendStatusText({ msg, color, fontSize = 10, onRetry, sty
   // persistence in the background. The ✓ icon already says "sent" — showing
   // "Enviando..." next to it would contradict. Failures still surface below.
   if (msg && msg._pending === false && !msg._failed && state !== 'failed' && state !== 'failed_legacy') {
+    return null;
+  }
+
+  // [2026-10-08 chat-gaps2] WhatsApp: mensagem na fila/enviando mostra SÓ o
+  // relógio (o chamador já desenha o ícone). Com quietPending, queued/sending
+  // (e "Tentando de novo (N)") não geram texto; falha continua visível.
+  if (quietPending && (state === 'queued' || state === 'sending')) {
     return null;
   }
 

@@ -231,7 +231,7 @@ export default function PgpKeysScreen() {
                 {busy ? <ActivityIndicator color={colors.onPrimary || '#fff'} /> : (
                   <>
                     <IconLock size={18} color={colors.onPrimary || '#fff'} />
-                    <Text style={s.primaryBtnLabel}>{t('pgp.generate') || 'Gerar chave PGP'}</Text>
+                    <Text style={[s.primaryBtnLabel, { color: colors.onPrimary }]}>{t('pgp.generate') || 'Gerar chave PGP'}</Text>
                   </>
                 )}
               </PressableScale>

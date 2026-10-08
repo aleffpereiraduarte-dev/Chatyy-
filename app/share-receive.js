@@ -256,7 +256,7 @@ export default function ShareReceiveScreen() {
             onPress={handleShareToStatus}
           />
           <QuickAction
-            icon={IconImage} color="#111111"
+            icon={IconImage} color={colors.primary}
             label={t('share.toFeed') || 'Postar no Feed'}
             desc={t('share.toFeedDesc') || 'Publicação visível pros seus seguidores'}
             onPress={handleShareToFeed}
@@ -289,7 +289,7 @@ export default function ShareReceiveScreen() {
 
           {loading ? (
             <View style={{ paddingVertical: 30, alignItems: 'center' }}>
-              <ActivityIndicator size="small" color="#111111" />
+              <ActivityIndicator size="small" color={colors.primary} />
             </View>
           ) : loadError ? (
             <View style={{ paddingVertical: 14, paddingHorizontal: 16, borderRadius: 12, backgroundColor: isDark ? 'rgba(239,68,68,0.12)' : '#fee2e2' }}>
@@ -297,7 +297,7 @@ export default function ShareReceiveScreen() {
                 {t('share.chatsLoadFailed') || 'Não consegui carregar suas conversas agora. Usa as ações rápidas acima.'}
               </Text>
               <TouchableOpacity onPress={() => { setLoading(true); loadChats(); }} activeOpacity={0.7} style={{ marginTop: 10, alignSelf: 'flex-start' }}>
-                <Text style={{ color: '#111111', fontWeight: '700', fontSize: 13 }}>
+                <Text style={{ color: colors.primary, fontWeight: '700', fontSize: 13 }}>
                   {t('common.retry') || 'Tentar novamente'}
                 </Text>
               </TouchableOpacity>

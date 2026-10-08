@@ -1181,7 +1181,7 @@ export default function CreatePostModal({
               </TouchableOpacity>
               <TouchableOpacity style={gs.actionBtn} onPress={openCamera} activeOpacity={0.7}>
                 <View style={[gs.actionIcon, { backgroundColor: isDark ? 'rgba(59,130,246,0.15)' : 'rgba(59,130,246,0.1)' }]}>
-                  <IconCamera size={22} color="#111111" />
+                  <IconCamera size={22} color={colors.primary} />
                 </View>
                 <Text style={[gs.actionLabel, { color: colors.text }]}>{t('post.camera') || 'Camera'}</Text>
               </TouchableOpacity>
@@ -1405,10 +1405,10 @@ export default function CreatePostModal({
                   activeOpacity={0.7}
                 >
                   {aiLoading ? (
-                    <ActivityIndicator size="small" color="#111111" />
+                    <ActivityIndicator size="small" color={colors.primary} />
                   ) : (
                     <>
-                      <IconSparkles size={16} color="#111111" />
+                      <IconSparkles size={16} color={colors.primary} />
                       <Text style={gs.aiBtnText}>{t('post.aiSuggest') || 'AI Suggest'}</Text>
                     </>
                   )}
