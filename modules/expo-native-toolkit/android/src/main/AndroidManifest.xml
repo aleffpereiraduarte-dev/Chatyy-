@@ -1,0 +1,17 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+  <application>
+    <!-- [2026-10-09 system-integration] Home-screen widget "Conversas do Chatyy"
+         (expo.modules.nativetoolkit.widget.ChatyyConversationsWidget). -->
+    <receiver
+      android:name="expo.modules.nativetoolkit.widget.ChatyyConversationsWidget"
+      android:exported="false"
+      android:label="@string/chatyy_widget_label">
+      <intent-filter>
+        <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+      </intent-filter>
+      <meta-data
+        android:name="android.appwidget.provider"
+        android:resource="@xml/chatyy_widget_conversations_info" />
+    </receiver>
+  </application>
+</manifest>

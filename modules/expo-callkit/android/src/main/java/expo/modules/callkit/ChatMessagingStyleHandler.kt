@@ -195,9 +195,17 @@ object ChatMessagingStyleHandler {
         val type = d["type"] ?: return false
         val conversationId = d["conversation_id"] ?: return false
 
+        // [2026-10-09 notif-native] A chat BUBBLE (ChatBubbleActivity) is our
+        // process in the foreground but it is not the RN app: its own chat →
+        // swallow (it polls); another chat → render natively as usual.
+        val bubbleConv = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) ChatBubbleActivity.resumedConv else null
+        if (bubbleConv != null && bubbleConv == conversationId) {
+            Log.d(TAG, "conv=$conversationId is open in its bubble — no notification")
+            return true
+        }
         // Foreground: the JS layer owns the UX (in-app toast + open-chat gate).
         // The open conversation renders the bubble itself → swallow natively.
-        if (ChatNotifStore.isAppVisibleToUser(ctx)) {
+        if (bubbleConv == null && ChatNotifStore.isAppVisibleToUser(ctx)) {
             if (ChatNotifStore.activeConversation(ctx) == conversationId) {
                 Log.d(TAG, "conv=$conversationId is open on screen — no notification")
                 return true
@@ -429,6 +437,35 @@ object ChatMessagingStyleHandler {
             builder.setLocusId(LocusIdCompat(shortcutId))
         }
         (if (isGroup) groupBmp else senderBmp)?.let { builder.setLargeIcon(it) }
+        // [2026-10-09 notif-native] Bubbles (Android 11+): a conversation
+        // notification (MessagingStyle + long-lived shortcut + Person) can float
+        // as a chat head when the user allows bubbles for Chatyy / this chat.
+        // Expanded view = ChatBubbleActivity (native mini-chat). Never for
+        // locked chats or hidden previews.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && shortcutId != null && !locked &&
+            !meta.optBoolean("hide_preview", false)) {
+            try {
+                val bubbleIntent = Intent(ctx, ChatBubbleActivity::class.java).apply {
+                    action = Intent.ACTION_VIEW
+                    data = Uri.parse("chatyy-bubble://conversation/" + Uri.encode(conversationId))
+                    putExtra(ChatBubbleActivity.EXTRA_CONV_ID, conversationId)
+                }
+                val bubblePI = PendingIntent.getActivity(ctx, notifId + 4, bubbleIntent,
+                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE)
+                val bmp = if (isGroup) groupBmp else senderBmp
+                val icon = if (bmp != null) IconCompat.createWithAdaptiveBitmap(ChatAvatarCache.adaptive(bmp))
+                    else IconCompat.createWithResource(ctx, smallIcon(ctx))
+                builder.setBubbleMetadata(
+                    NotificationCompat.BubbleMetadata.Builder(bubblePI, icon)
+                        .setDesiredHeight(600)
+                        .setAutoExpandBubble(false)
+                        .setSuppressNotification(false)
+                        .build()
+                )
+            } catch (t: Throwable) {
+                Log.w(TAG, "bubble metadata failed: ${t.message}")
+            }
+        }
         meta.optString("unread", "").toIntOrNull()?.takeIf { it > 0 }?.let { builder.setNumber(it) }
         if (!subText.isNullOrEmpty()) builder.setSubText(subText)
 
@@ -574,7 +611,10 @@ object ChatMessagingStyleHandler {
                 .setLongLived(true)
                 .setIntent(intent)
                 .setLocusId(LocusIdCompat(id))
-                .setCategories(setOf("android.shortcut.conversation"))
+                // [2026-10-09 notif-native] + Sharing Shortcuts category → the
+                // conversation also shows in the system share sheet row
+                // (<share-target> in plugins/with-app-shortcuts.js).
+                .setCategories(setOf("android.shortcut.conversation", ctx.packageName + ".category.SHARE_TARGET"))
             if (persons.isNotEmpty()) b.setPersons(persons.toTypedArray())
             if (icon != null) b.setIcon(IconCompat.createWithBitmap(icon))
             ShortcutManagerCompat.pushDynamicShortcut(ctx, b.build())
@@ -692,6 +732,11 @@ object ChatMessagingStyleHandler {
     fun appendOwnReply(ctx: Context, conversationId: String, text: String) {
         appendMessageToThread(ctx, conversationId, ThreadMsg("me", "me", text.take(1000), System.currentTimeMillis(), ""))
     }
+
+    /** [2026-10-09 notif-native] Cached thread for ChatBubbleActivity's first
+     *  paint: [key ("me" = own reply), senderName, text, timestamp]. */
+    fun threadSnapshot(ctx: Context, conversationId: String): List<Array<String>> =
+        loadThread(ctx, conversationId).map { arrayOf(it.key, it.senderName, it.text, it.timestamp.toString()) }
 
     private fun loadThread(ctx: Context, conversationId: String): List<ThreadMsg> {
         return try {
@@ -819,6 +864,20 @@ object ChatMessagingStyleHandler {
             val left = (src.width - side) / 2
             val top = (src.height - side) / 2
             canvas.drawBitmap(src, Rect(left, top, left + side, top + side), Rect(0, 0, size, size), paint)
+            return out
+        }
+
+        /** Adaptive-icon canvas (108 units, safe zone 72) around a round avatar
+         *  so the bubble launcher mask doesn't crop the face. */
+        fun adaptive(src: Bitmap): Bitmap {
+            val size = 216
+            val out = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+            val canvas = Canvas(out)
+            canvas.drawColor(Color.WHITE)
+            val inner = 144
+            val off = (size - inner) / 2
+            canvas.drawBitmap(src, Rect(0, 0, src.width, src.height), Rect(off, off, off + inner, off + inner),
+                Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG))
             return out
         }
 

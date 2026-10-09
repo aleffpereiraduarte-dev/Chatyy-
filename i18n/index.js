@@ -25,24 +25,26 @@
 import { Platform } from 'react-native';
 import ptBR from './pt-BR';
 import en from './en';
-import es from './es';
-import ptPT from './pt-PT';
 import bundledManifest from './manifest.json';
 
-// Idiomas carregados na entrada (disponíveis sincronamente p/ o t()).
+// [2026-10-09 lighter-app] Só pt-BR (padrão) + en (fallback universal) vão no
+// bundle. es e pt-PT (~0.9 MB de JS, ~2 × 450 KB) viraram remotos como os
+// outros 53: o idioma do usuário é lido do DISCO antes do 1º frame
+// (preloadLocale + gate do _layout) e atualizado em background pelo manifest.
+// Enquanto um idioma remoto não está em memória, o t() usa a cadeia de
+// fallback (pt-PT → pt-BR → en; demais → en → pt-BR) — nunca chave crua.
 export const translations = {
   'pt-BR': ptBR,
   'en': en,
-  'es': es,
-  'pt-PT': ptPT,
 };
 
 // Mantém em sincronia com CORE_LOCALES em scripts/build-i18n-json.js.
-export const CORE_LOCALES = ['pt-BR', 'en', 'es', 'pt-PT'];
+export const CORE_LOCALES = ['pt-BR', 'en'];
 
 // Idiomas servidos pelo servidor (não vão no bundle). Mesma lista de antes
 // (os antigos lazyLoaders) — ml/ne/pa/si/ur são stubs e seguem fora do suporte.
 export const REMOTE_LOCALES = [
+  'es', 'pt-PT',
   'ja', 'fr', 'de', 'it', 'zh-CN', 'ko', 'ar', 'ru', 'hi', 'tr', 'nl', 'pl',
   'sv', 'nb', 'da', 'fi', 'cs', 'ro', 'hu', 'el', 'uk', 'th', 'vi', 'id', 'ms',
   'fil', 'he', 'fa', 'bn', 'sw', 'ta', 'te', 'mr', 'gu', 'kn', 'my', 'km', 'am',
@@ -111,7 +113,11 @@ function _getFS() {
   if (!_fs || !_fs.cacheDirectory || typeof _fs.readAsStringAsync !== 'function') _fs = null;
   return _fs;
 }
-function _cacheDir() { const fs = _getFS(); return fs ? fs.cacheDirectory + CACHE_SUBDIR : null; }
+// [2026-10-09] documentDirectory (persistente): o iOS/Android podem limpar o
+// cacheDirectory sob pressão de espaço → o usuário es/pt-PT abriria em inglês.
+// Leitura ainda aceita o diretório antigo (cacheDirectory) como migração.
+function _cacheDir() { const fs = _getFS(); return fs ? (fs.documentDirectory || fs.cacheDirectory) + CACHE_SUBDIR : null; }
+function _legacyCacheDir() { const fs = _getFS(); return (fs && fs.documentDirectory && fs.cacheDirectory) ? fs.cacheDirectory + CACHE_SUBDIR : null; }
 function _cachePath(code, hash) { const d = _cacheDir(); return d ? `${d}${code}.${hash}.json` : null; }
 
 async function _ensureCacheDir() {
@@ -154,6 +160,35 @@ async function _writeCache(code, hash, text) {
       }
     } catch {}
   } catch {}
+}
+
+// [2026-10-09 lighter-app] Qualquer versão em disco de `code` (hash do manifest
+// pode ter mudado desde o download, ou o arquivo veio do cacheDirectory antigo).
+// Serve pra pintar o 1º frame já no idioma salvo; a versão nova vem em
+// background. Retorna { obj, hash } ou null. Nunca lança.
+const _esc = (x) => String(x).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+async function _readAnyCache(code) {
+  const fs = _getFS();
+  if (!fs || typeof fs.readDirectoryAsync !== 'function') return null;
+  const re = new RegExp('^' + _esc(code) + '\\.([A-Za-z0-9_-]+)\\.json$');
+  for (const dir of [_cacheDir(), _legacyCacheDir()]) {
+    if (!dir) continue;
+    let names = [];
+    try { names = await fs.readDirectoryAsync(dir); } catch { continue; }
+    for (const n of names || []) {
+      const m = re.exec(n);
+      if (!m) continue;
+      try {
+        const txt = await fs.readAsStringAsync(dir + n);
+        const obj = JSON.parse(txt);
+        if (dir !== _cacheDir()) _writeCache(code, m[1], txt).catch(() => {}); // migra p/ o dir persistente
+        return { obj, hash: m[1] };
+      } catch {
+        try { fs.deleteAsync(dir + n, { idempotent: true }).catch(() => {}); } catch {}
+      }
+    }
+  }
+  return null;
 }
 
 // ── rede ───────────────────────────────────────────────────────────────────
@@ -244,6 +279,16 @@ export function ensureLocaleLoaded(code) {
         _refreshManifest().catch(() => {}); // background: pega hash novo p/ próxima vez
         return true;
       }
+      // (b2) disco, versão anterior → aplica JÁ (sem esperar rede) e baixa a
+      // versão do manifest em background (mesmo hash = sem download).
+      const stale = await _readAnyCache(code);
+      if (stale && _apply(code, stale.obj, stale.hash)) {
+        _refreshManifest().then(() => {
+          const h = _manifestHash(code);
+          if (h !== _loadedHash[code]) _download(code, h).catch(() => {});
+        }).catch(() => {});
+        return true;
+      }
       // (c) rede
       await _download(code, hash);
       if (_retry[code]) { clearTimeout(_retry[code].timer); _retry[code] = null; }
@@ -258,6 +303,37 @@ export function ensureLocaleLoaded(code) {
     }
   })();
   return _inflight[code];
+}
+
+// [2026-10-09 lighter-app] Pré-carga do idioma de boot com teto de tempo:
+// resolve true se `code` ficou disponível em até `maxWaitMs` (bundle → na hora;
+// disco → ~10-40 ms; rede → só se couber no teto). NUNCA lança e NUNCA segura
+// além do teto — o download continua em background e o onLocaleLoaded
+// re-renderiza quando chegar.
+export function preloadLocale(code, maxWaitMs = 600) {
+  if (!code || translations[code]) return Promise.resolve(!!code);
+  if (!REMOTE_SET.has(code)) return Promise.resolve(false);
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = (v) => { if (!done) { done = true; clearTimeout(timer); resolve(!!v); } };
+    const timer = setTimeout(() => finish(!!translations[code]), Math.max(0, maxWaitMs));
+    ensureLocaleLoaded(code).then(finish, () => finish(false));
+  });
+}
+
+// Cadeia de fallback do t() p/ um idioma: ativo → parente próximo → en → pt-BR.
+// pt-PT cai no pt-BR (quase idêntico) antes do inglês.
+const _chainCache = {};
+export function fallbackChain(code) {
+  if (_chainCache[code]) return _chainCache[code];
+  const out = [];
+  const push = (c) => { if (c && !out.includes(c)) out.push(c); };
+  push(code);
+  if (code && String(code).toLowerCase().startsWith('pt')) push('pt-BR');
+  push('en');
+  push(DEFAULT_LANGUAGE);
+  _chainCache[code] = out;
+  return out;
 }
 
 // Compat: nome antigo usado pelo LanguageContext.

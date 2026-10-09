@@ -14,6 +14,7 @@ import { useLanguage } from '../../context/LanguageContext';
 import {
   useVoiceMiniState, subscribeVoicePosition, getVoicePosition,
   toggleVoiceNote, stopVoiceNote, cycleVoiceRate, getVoiceConversationTitle, VOICE_TICK_MS,
+  setVoiceNowPlayingSubtitle,
 } from '../../services/voiceNotePlayer';
 
 const SAFE_TOP = Platform.OS === 'ios'
@@ -39,6 +40,12 @@ export default function VoiceMiniPlayer() {
   const prog = useRef(new Animated.Value(0)).current;
   const anim = useRef(null);
   const messageId = st?.item?.messageId;
+
+  // [2026-10-09 media-native] Localized subtitle for the lock-screen controls.
+  const _npSubtitle = t('voiceNote.miniTitle');
+  useEffect(() => {
+    try { setVoiceNowPlayingSubtitle?.(_npSubtitle); } catch {}
+  }, [_npSubtitle]);
 
   useEffect(() => {
     if (messageId == null) return undefined;

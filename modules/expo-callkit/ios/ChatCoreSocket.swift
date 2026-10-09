@@ -32,7 +32,9 @@ import UIKit
 final class ChatCoreSocket {
     static let shared = ChatCoreSocket()
 
-    private let wsURL = URL(string: "wss://ws.chatyy.com.br/ws")!
+    // [2026-10-09 native-transport] URL por conexão = ChatyyWsEndpoint.pick()
+    // (entrada regional api-br/api-eu escolhida pelo JS, fallback US).
+    private var taskURL: URL?
     private let groupId = "group.com.onemundo.mail"
     private let lastEventKey = "chat_core_last_event_id"
     private let lastEventAcctKey = "chat_core_last_event_acct"
@@ -298,7 +300,9 @@ final class ChatCoreSocket {
             old.cancel(with: .goingAway, reason: nil)
         }
         guard let s = session else { connecting = false; return }
-        let t = s.webSocketTask(with: wsURL)
+        let url = ChatyyWsEndpoint.pick()
+        taskURL = url
+        let t = s.webSocketTask(with: url)
         task = t
         bump("connect")
         emitState("connecting")
@@ -357,6 +361,7 @@ final class ChatCoreSocket {
         task = nil
         t.cancel(with: .goingAway, reason: nil)
         watchdogItem?.cancel(); watchdogItem = nil
+        if !authed { ChatyyWsEndpoint.noteFailedBeforeAuth(taskURL) }
         authed = false
         connecting = false
         bump("disconnect")
@@ -443,6 +448,7 @@ final class ChatCoreSocket {
             }
             authedAcct = email.isEmpty ? expectedAcct : email
             authed = true
+            ChatyyWsEndpoint.noteAuthed(taskURL)
             connecting = false
             attempts = 0
             watchdogItem?.cancel(); watchdogItem = nil

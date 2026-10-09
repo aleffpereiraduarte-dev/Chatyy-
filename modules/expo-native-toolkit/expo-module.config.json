@@ -1,5 +1,8 @@
 {
-  "platforms": ["apple", "android"],
+  "platforms": [
+    "apple",
+    "android"
+  ],
   "apple": {
     "modules": [
       "ExpoNativeToolkitModule",
@@ -23,9 +26,15 @@
       "ExpoFaceLandmarkerModule",
       "ChatyyMapViewModule",
       "ExpoAppShortcutsModule",
-      "ExpoStickerCutoutModule"
+      "ExpoStickerCutoutModule",
+      "ChatyyNotifActionsModule",
+      "ChatyyContextMenuViewModule",
+      "ExpoChatyySystemModule"
     ],
-    "appDelegateSubscribers": ["AppShortcutsAppDelegateSubscriber"]
+    "appDelegateSubscribers": [
+      "AppShortcutsAppDelegateSubscriber",
+      "ChatNotifActionsAppDelegateSubscriber"
+    ]
   },
   "android": {
     "modules": [
@@ -36,7 +45,8 @@
       "expo.modules.nativetoolkit.ChatyyMapViewModule",
       "expo.modules.nativetoolkit.ExpoSmsOtpModule",
       "expo.modules.nativetoolkit.ExpoAppShortcutsModule",
-      "expo.modules.nativetoolkit.ExpoStickerCutoutModule"
+      "expo.modules.nativetoolkit.ExpoStickerCutoutModule",
+      "expo.modules.nativetoolkit.ExpoChatyySystemModule"
     ]
   }
 }

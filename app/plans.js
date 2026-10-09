@@ -17,7 +17,7 @@ import * as IAP from '../services/iap';
 import AvatarCircle from '../components/AvatarCircle';
 import { openInApp } from '../utils/inAppBrowser'; // [2026-10-07 app-feel-webview]
 // [2026-10-09 plans-consistency] plano/cota/preços vêm do backend (plan_info.catalog).
-import { canonicalPlanId, planDisplayName, formatGb, formatQuotaBytes, invalidatePlanState } from '../services/planState';
+import { canonicalPlanId, planDisplayName, formatGb, formatQuotaBytes, invalidatePlanState, planExpiryNotice } from '../services/planState';
 import {
   IconArrowLeft, IconStar, IconStarFilled, IconCheck, IconChevronDown, IconChevronUp,
   IconX, IconSparkles, IconUsers, IconShield, IconPlus, IconTrash,
@@ -1847,6 +1847,21 @@ export default function PlansScreen() {
                   {t('plans.subscribe')} Chatyy Plus
                 </Text>
               </TouchableOpacity>
+            </View>
+          )}
+
+          {/* [2026-10-09 plan-expiry] plano vencido: carência (3d) ou já em Grátis */}
+          {!!planExpiryNotice(planInfo) && (
+            <View style={{
+              marginBottom: 12, padding: 12, borderRadius: 10, borderWidth: 1,
+              backgroundColor: isDark ? 'rgba(245, 158, 11, 0.10)' : 'rgba(245, 158, 11, 0.06)',
+              borderColor: isDark ? 'rgba(245, 158, 11, 0.3)' : 'rgba(245, 158, 11, 0.25)',
+            }}>
+              <Text style={{ color: AMBER, fontSize: FontSize.sm, fontWeight: '600' }}>
+                {planExpiryNotice(planInfo).kind === 'grace'
+                  ? t('planExpiry.grace', { date: planExpiryNotice(planInfo).date })
+                  : t('planExpiry.expired')}
+              </Text>
             </View>
           )}
 

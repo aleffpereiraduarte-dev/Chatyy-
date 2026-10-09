@@ -1010,6 +1010,12 @@ function CallScreenInner() {
   // would spawn a duplicate `new Room()` and orphan the first. This ref gates
   // re-entry until the first attempt resolves (success OR failure).
   const connectingRef = useRef(false);
+  // [2026-10-09 p2p-calls] Sessão P2P (services/p2pCall) quando a ligação 1:1
+  // está indo direto entre os aparelhos; null = caminho LiveKit.
+  const p2pRef = useRef(null);
+  const p2pDisabledRef = useRef(false); // já caiu p/ LiveKit nesta ligação
+  const p2pAttemptRef = useRef(null);
+  const connectToRoomRef = useRef(null);
   const timerRef = useRef(null);
   const callerTimeoutRef = useRef(null);
   const controlsTimerRef = useRef(null);
@@ -1377,6 +1383,7 @@ function CallScreenInner() {
           url: cached.url || 'wss://livekit.chatyy.com.br',
           room: cached.room || room,
           iceServers: Array.isArray(cached.iceServers) ? cached.iceServers : [],
+          p2p: cached.p2p || null, // [2026-10-09 p2p-calls]
         };
       }
     } catch {}
@@ -1405,7 +1412,7 @@ function CallScreenInner() {
         }
         throw new Error('No token returned');
       }
-      return { token, url, room, iceServers };
+      return { token, url, room, iceServers, p2p: data?.p2p || null };
     } catch (e) {
       console.error('[Call] fetchLivekitToken err:', e?.message);
       throw e;
@@ -1568,7 +1575,7 @@ function CallScreenInner() {
     // adopt-success path returns without setting roomRef.current, so without
     // this a later connectToRoom() (e.g. handleReconnect) builds a JS Room with
     // the same identity → LiveKit DUPLICATE_IDENTITY eviction / media desync.
-    if (connectingRef.current || roomRef.current || (Platform.OS !== 'web' && globalThis.__chatyyNativeCallActive)) {
+    if (connectingRef.current || roomRef.current || (p2pRef.current && !p2pRef.current._done) || (Platform.OS !== 'web' && globalThis.__chatyyNativeCallActive)) {
       try { console.log('[Call] connectToRoom re-entry skipped', { connecting: connectingRef.current, hasRoom: !!roomRef.current, nativeActive: !!globalThis.__chatyyNativeCallActive }); } catch {}
       return;
     }
@@ -1890,9 +1897,9 @@ function CallScreenInner() {
       } catch {}
     }
 
-    let token, url, room, iceServers;
+    let token, url, room, iceServers, p2pCfg;
     try {
-      ({ token, url, room, iceServers } = await fetchLivekitToken());
+      ({ token, url, room, iceServers, p2p: p2pCfg } = await fetchLivekitToken());
       _diag('token_ok', { url, room, ice_count: iceServers?.length || 0 });
     } catch (e) {
       _diag('token_err', { msg: String(e?.message || e), stack: String(e?.stack || '').slice(0, 500) });
@@ -1927,6 +1934,15 @@ function CallScreenInner() {
       return;
     }
     if (endedRef.current) { _diag('ended_before_room'); return; }
+    // [2026-10-09 p2p-calls] 1:1 com flag ligada: tenta P2P primeiro; só segue
+    // p/ o LiveKit se não conectar no prazo (~4s) ou o par não suportar.
+    if (!isGroupCall && !_e2eeKeyB64 && p2pAttemptRef.current) {
+      let handled = false;
+      try { handled = await p2pAttemptRef.current({ iceServers, p2pCfg }); } catch (e) {
+        try { _diag('p2p_attempt_err', { msg: String(e?.message || e).slice(0, 160) }); } catch {}
+      }
+      if (handled || endedRef.current) return;
+    }
     // Sanity check on the LiveKit module — if the native module didn't link,
     // `Room` is undefined and `new Room(...)` throws a confusing
     // "undefined is not a constructor" instead of a clear "module missing".
@@ -3036,6 +3052,96 @@ function CallScreenInner() {
     }
   }, [callId, contactEmail, conversationId, isVideoCall, isGroupCall, fetchLivekitToken, t, _refreshRemoteTracks, _updateGroupPeer, _removeGroupPeer]);
 
+  // ───── [2026-10-09 p2p-calls] Ligação 1:1 P2P (WebRTC direto) ─────
+  // Chamado de dentro do connectToRoom (depois do token, antes do LiveKit).
+  // true = P2P conectou (ou a ligação acabou) → NÃO entrar no LiveKit.
+  // false = sem flag / sem suporte / não conectou no prazo → segue LiveKit.
+  // Por enquanto só no WEB (no iOS/Android a mídia é do Room nativo).
+  connectToRoomRef.current = connectToRoom;
+  p2pAttemptRef.current = async ({ iceServers: _ice, p2pCfg: _cfgRaw }) => {
+    if (Platform.OS !== 'web' || isGroupCall || p2pDisabledRef.current || endedRef.current) return false;
+    let P2P;
+    try { P2P = require('../services/p2pCall'); } catch { return false; }
+    const cfg = P2P.resolveP2PConfig(_cfgRaw);
+    if (!cfg.enabled || !P2P.isP2PSupported()) return false;
+    const _log = (evt, d) => {
+      try { console.log('[Call][P2P]', evt, d || {}); } catch {}
+      try { _callDiagAppend('info', 'p2p ' + evt, { call_id: callId, ...(d || {}) }); } catch {}
+    };
+    // Caller: P2P só depois do "atender" (hub só roteia P2P em ACCEPTED e não
+    // expomos IP a quem não atendeu). Teto 45s → segue LiveKit.
+    if (isCaller && !callAcceptedRef.current) {
+      const tw = Date.now();
+      await new Promise((res) => {
+        const iv = setInterval(() => {
+          if (callAcceptedRef.current || endedRef.current || Date.now() - tw > 45000) { clearInterval(iv); res(); }
+        }, 80);
+      });
+      if (endedRef.current) return true;
+      if (!callAcceptedRef.current) return false;
+    }
+    const t0 = Date.now();
+    const sess = P2P.startP2PSession({
+      callId,
+      isCaller,
+      video: !!isVideoCall && !!videoEnabledRef.current,
+      iceServers: _ice,
+      cfg,
+      log: _log,
+      onLocalVideo: (ad) => { if (p2pRef.current === sess || !p2pRef.current) setLocalVideoTrack(ad); },
+      onRemoteVideo: (ad) => { if (p2pRef.current === sess) setRemoteVideoTrack(ad); },
+      onRemoteAudio: () => {
+        if (p2pRef.current !== sess) return;
+        remoteAudioSeenRef.current = true;
+      },
+      onData: (obj) => { try { _handleDataChannelMessage(obj, null); } catch {} },
+      onReconnecting: (on) => { if (p2pRef.current === sess && !endedRef.current) setReconnecting(!!on); },
+      onConnected: ({ ms }) => {
+        if (endedRef.current) return;
+        _log('connected_ui', { ms, total_ms: Date.now() - t0 });
+        setPeerConnected(true);
+        setPeerRinging(true);
+        setReconnecting(false);
+        setConnectionFailed(false);
+        setErrorMsg(null);
+        if (callerTimeoutRef.current) { clearTimeout(callerTimeoutRef.current); callerTimeoutRef.current = null; }
+        peerJoinedAtRef.current = Date.now();
+        try { callKeep.reportConnected(callId); } catch {}
+        try { const { stopRingtone } = require('../services/ringtone'); stopRingtone(); } catch {}
+        // Estado atual dos controles vale também p/ a sessão P2P.
+        try { sess.setMicEnabled(!audioMutedRef.current); } catch {}
+        try { sess.sendData({ type: 'audio_muted', muted: !!audioMutedRef.current }); } catch {}
+      },
+      onFallback: (reason) => {
+        // Antes de conectar: o await sess.ready abaixo devolve false e o
+        // connectToRoom segue p/ o LiveKit. Depois de conectar (queda sem
+        // volta / virou grupo / par pediu): sobe o LiveKit agora.
+        if (p2pRef.current !== sess) return;
+        p2pRef.current = null;
+        p2pDisabledRef.current = true;
+        setRemoteVideoTrack(null);
+        setLocalVideoTrack(null);
+        if (!sess.connectedAt || endedRef.current) return;
+        _log('midcall_fallback_to_livekit', { reason });
+        setReconnecting(true);
+        const go = connectToRoomRef.current;
+        if (typeof go === 'function') {
+          Promise.resolve(go()).catch(() => {}).finally(() => {
+            if (roomRef.current && !endedRef.current) setReconnecting(false);
+          });
+        }
+      },
+    });
+    p2pRef.current = sess;
+    const res = await sess.ready;
+    if (res === 'connected') return true;
+    if (p2pRef.current === sess) p2pRef.current = null;
+    p2pDisabledRef.current = true;
+    if (endedRef.current) return true;
+    _log('fallback_to_livekit', { after_ms: Date.now() - t0, state: res });
+    return false;
+  };
+
   // ───── In-band data channel handler (in-call signaling) ─────
   // Replaces the previous WS-based call_hold / call_audio_muted /
   // call_video_request / call_reaction / call_hand_raise / call_screen_share /
@@ -3264,6 +3370,11 @@ function CallScreenInner() {
 
   // Helper to send an in-band data message via LiveKit.
   const sendData = useCallback((payload) => {
+    // [2026-10-09 p2p-calls] Ligação P2P: data channel próprio da sessão.
+    if (p2pRef.current && !p2pRef.current._done) {
+      try { p2pRef.current.sendData(payload); } catch {}
+      return;
+    }
     const r = roomRef.current;
     if (!r || !r.localParticipant) {
       // [2026-05-25] Adopted-native-room path: the JS Room is null because the
@@ -3416,6 +3527,8 @@ function CallScreenInner() {
       }
       roomRef.current = null;
     } catch {}
+    // [2026-10-09 p2p-calls] Fecha a sessão P2P (libera mic/câmera).
+    try { if (p2pRef.current) { p2pRef.current.close('hangup'); p2pRef.current = null; } } catch {}
 
     // Stop the audio-stats poller — prevents the timer from firing after
     // the room is gone and surfacing stale numbers in any lingering modal.
@@ -3919,6 +4032,7 @@ function CallScreenInner() {
       if (videoTuningStopRef.current) { try { videoTuningStopRef.current(); } catch {} videoTuningStopRef.current = null; }
       try { roomRef.current?.disconnect?.(); } catch {}
       roomRef.current = null;
+      try { if (p2pRef.current) { p2pRef.current.close('unmount'); p2pRef.current = null; } } catch {}
       if (Platform.OS !== 'web' && LK_AudioSession) {
         try { LK_AudioSession.stopAudioSession().catch(() => {}); } catch {}
       }
@@ -4095,6 +4209,15 @@ function CallScreenInner() {
     if (!newMuted && Platform.OS === 'web') {
       const micOk = await _ensureWebMicPermission();
       if (!micOk) return;
+    }
+    // [2026-10-09 p2p-calls] Ligação P2P: liga/desliga a track local direto.
+    if (p2pRef.current && !p2pRef.current._done) {
+      setAudioMuted(newMuted);
+      audioMutedRef.current = newMuted;
+      try { p2pRef.current.setMicEnabled(!newMuted); } catch {}
+      sendData({ type: 'audio_muted', muted: newMuted });
+      resetControlsTimer();
+      return;
     }
     // [2026-05-25] Adopted-native-room path. On the iOS CallKit-answer path
     // connectToRoom adopts the pre-connected native LK Room and returns early
@@ -4276,6 +4399,30 @@ function CallScreenInner() {
   const handleToggleVideo = useCallback(async () => {
     _hapticTap('light');
     const r = roomRef.current;
+    // [2026-10-09 p2p-calls] Ligação P2P: desligar = replaceTrack(null);
+    // ligar segue o fluxo normal (pedido de vídeo ao par em ligação de voz)
+    // e o branch `!r` abaixo cai aqui de novo via _p2pCamOn.
+    const _p2p = p2pRef.current && !p2pRef.current._done ? p2pRef.current : null;
+    if (_p2p && videoEnabled) {
+      try { await _p2p.setCameraEnabled(false); } catch {}
+      setVideoEnabled(false);
+      videoEnabledRef.current = false;
+      setLocalVideoTrack(null);
+      sendData({ type: 'video_toggle', enabled: false });
+      resetControlsTimer();
+      return;
+    }
+    if (_p2p && (isVideoCall || videoUpgradeRequestedRef.current || !peerConnected)) {
+      const ad = await _p2p.setCameraEnabled(true);
+      if (ad) {
+        setVideoEnabled(true);
+        videoEnabledRef.current = true;
+        setLocalVideoTrack(ad);
+        sendData({ type: 'video_toggle', enabled: true });
+      }
+      resetControlsTimer();
+      return;
+    }
     // [2026-05-25] Adopted-native-room path. Same root cause as the mute
     // toggle: after a CallKit answer the JS Room is null (native owns the
     // publisher) yet the call is live. Route camera on/off through the native
@@ -4451,6 +4598,11 @@ function CallScreenInner() {
   const flipCameraFadeAnim = useRef(new Animated.Value(1)).current;
 
   const handleFlipCamera = useCallback(async () => {
+    if (p2pRef.current && !p2pRef.current._done) {
+      try { if (await p2pRef.current.switchCamera(facingFront)) setFacingFront(!facingFront); } catch {}
+      resetControlsTimer();
+      return;
+    }
     const r = roomRef.current;
     if (!r) return;
     const camPub = r.localParticipant.getTrackPublication(Track.Source.Camera);
@@ -4709,6 +4861,33 @@ function CallScreenInner() {
   }, [peerConnected, t, selectAudioRoute]);
 
   const handleToggleHold = useCallback(async () => {
+    // [2026-10-09 p2p-calls] Espera em ligação P2P: só desliga/religa as tracks.
+    const _p2p = p2pRef.current && !p2pRef.current._done ? p2pRef.current : null;
+    if (_p2p) {
+      const nh = !onHold;
+      if (nh) {
+        holdStateRef.current.audioWasMuted = audioMutedRef.current;
+        holdStateRef.current.videoWasEnabled = videoEnabledRef.current;
+        try { _p2p.setMicEnabled(false); } catch {}
+        if (videoEnabledRef.current) { try { await _p2p.setCameraEnabled(false); } catch {} }
+        setAudioMuted(true);
+        audioMutedRef.current = true;
+        if (videoEnabledRef.current) { setVideoEnabled(false); videoEnabledRef.current = false; setLocalVideoTrack(null); }
+      } else {
+        const wantMicOn = !holdStateRef.current.audioWasMuted;
+        try { _p2p.setMicEnabled(wantMicOn); } catch {}
+        setAudioMuted(!wantMicOn);
+        audioMutedRef.current = !wantMicOn;
+        if (holdStateRef.current.videoWasEnabled) {
+          const ad = await _p2p.setCameraEnabled(true);
+          if (ad) { setVideoEnabled(true); videoEnabledRef.current = true; setLocalVideoTrack(ad); }
+        }
+      }
+      setOnHold(nh);
+      sendData({ type: 'hold', on: nh });
+      resetControlsTimer();
+      return;
+    }
     const r = roomRef.current;
     if (!r) return;
     const newHold = !onHold;
@@ -4974,6 +5153,9 @@ function CallScreenInner() {
       }
     } catch {}
     setAddParticipantBusy(true);
+    // [2026-10-09 p2p-calls] Virou grupo → sai do P2P e sobe o LiveKit (o
+    // convidado entra na mesma sala; o par recebe call_p2p_fallback e sobe junto).
+    try { if (p2pRef.current && !p2pRef.current._done) p2pRef.current.fallback('group'); } catch {}
     try {
       const { chatCallInvite } = require('../services/api');
       // The backend ring-fan-out endpoint reuses the same callId — the

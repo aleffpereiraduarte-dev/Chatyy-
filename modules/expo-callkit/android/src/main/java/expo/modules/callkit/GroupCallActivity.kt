@@ -420,7 +420,7 @@ class GroupCallActivity : ComponentActivity() {
 
     connectJob = lifecycleScope.launch {
       try {
-        r.connect(url, token)
+        r.connect(url, token, LkTokenFetcher.connectOptionsFor(token))
         // Local mic always; camera only when group call is video.
         r.localParticipant.setMicrophoneEnabled(true)
         if (hasVideo) {

@@ -71,6 +71,15 @@ class NotificationService: UNNotificationServiceExtension {
             }
         }
 
+        // [2026-10-09 system-integration] Focus filter tag (ChatyyFocusFilter in
+        // the app target, plugins/with-system-intents.js): iOS evaluates the
+        // Focus' NSPredicate against this string. Pinned ids come from the App
+        // Group (ExpoChatyySystem.setConversations) — absent without the NSE
+        // App Group entitlement, then pinned chats fall back to direct/group.
+        if #available(iOS 16.0, *) {
+            best.filterCriteria = Self.focusCriteria(type: type, conv: conv, isGroup: isGroup)
+        }
+
         let imageIsAvatar = Self.str(p, "image_is_avatar") == "1"
         let mediaURL: URL? = imageIsAvatar ? nil : Self.extractImageURL(from: p)
         let avatarURL: URL? = (isChat && !locked) ? Self.httpsURL(Self.str(p, "sender_avatar")
@@ -220,6 +229,15 @@ class NotificationService: UNNotificationServiceExtension {
             intent.setImage(si, forParameterNamed: \.sender)
         }
 
+        // [2026-10-09 notif-native] Donation metadata (iOS 15): lets an
+        // @mention / a reply to me break through a Focus that allows
+        // "mentions only" for groups, and tells the system the group size.
+        let meta = INSendMessageIntentDonationMetadata()
+        meta.mentionsCurrentUser = (Self.str(p, "type") == "chat_mention") || Self.isTrue(Self.str(p, "mentions_me"))
+        meta.isReplyToCurrentUser = Self.isTrue(Self.str(p, "reply_to_me"))
+        meta.recipientCount = isGroup ? max(2, Int(Self.str(p, "member_count") ?? "") ?? 2) : 1
+        intent.donationMetadata = meta
+
         // The system shows the sender name itself → drop the "Sender: " prefix
         // that the classic group banner needs.
         let base = (best.mutableCopy() as? UNMutableNotificationContent) ?? best
@@ -275,6 +293,19 @@ class NotificationService: UNNotificationServiceExtension {
     private static func isTrue(_ s: String?) -> Bool {
         guard let s = s?.lowercased() else { return false }
         return s == "1" || s == "true"
+    }
+
+    /// [2026-10-09 system-integration] chatyy.pinned | chatyy.direct |
+    /// chatyy.group | chatyy.email | chatyy.other (see ChatyyFocusFilter).
+    private static func focusCriteria(type: String, conv: String, isGroup: Bool) -> String {
+        if type == "new_email" || type == "email" { return "chatyy.email" }
+        guard chatTypes.contains(type), !conv.isEmpty else { return "chatyy.other" }
+        if let ud = UserDefaults(suiteName: "group.com.onemundo.mail"),
+           let pinned = ud.array(forKey: "chatyy.pinned_conversation_ids") as? [String],
+           pinned.contains(conv) {
+            return "chatyy.pinned"
+        }
+        return isGroup ? "chatyy.group" : "chatyy.direct"
     }
 
     private static func httpsURL(_ raw: String?) -> URL? {

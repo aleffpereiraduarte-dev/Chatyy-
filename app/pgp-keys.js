@@ -19,7 +19,8 @@ import {
   View, Text, TouchableOpacity, StyleSheet, ScrollView, TextInput,
   ActivityIndicator, Alert, Platform,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useRouter, Stack } from 'expo-router';
+import { USE_NATIVE_HEADER, nativeHeaderOptions, HeaderBackButton } from '../components/nativeHeader'; // [2026-10-09 native-sheets-headers]
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import { useAuth } from '../context/AuthContext';
@@ -59,7 +60,7 @@ async function ssDel(k) {
 
 export default function PgpKeysScreen() {
   const router = useRouter();
-  const { colors } = useTheme();
+  const { colors, isDark } = useTheme();
   const { t } = useLanguage();
   const { user } = useAuth() || {};
   const [hasKey, setHasKey] = useState(false);
@@ -154,7 +155,11 @@ export default function PgpKeysScreen() {
 
   return (
     <View style={[s.root, { backgroundColor: colors.background }]}>
-      <ModalHeader title={t('pgp.title') || 'Chave PGP'} onClose={() => router.back()} />
+      {USE_NATIVE_HEADER ? (
+        <Stack.Screen options={nativeHeaderOptions({ colors, isDark, title: t('pgp.title') })} />
+      ) : (
+        <ModalHeader title={t('pgp.title') || 'Chave PGP'} onClose={() => router.back()} />
+      )}
       <FadeSlideIn>
       <ScrollView contentContainerStyle={{ padding: Spacing.lg, paddingBottom: 80 }}>
         <Text style={[s.intro, { color: colors.textSecondary }]}>

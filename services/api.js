@@ -276,11 +276,15 @@ async function _getRegionHint(net, force) {
 
 // 1 warm-up (abre conexão: DNS+TLS) + 2 medições na conexão quente → mediana.
 async function _probeEdge(s) {
-  const once = async () => {
+  const once = async (ms) => {
     const t0 = Date.now();
-    try { await _fetchWithTimeout(s.url + '/health', EDGE_PROBE_TIMEOUT_MS); return Date.now() - t0; } catch { return null; }
+    try { await _fetchWithTimeout(s.url + '/health', ms || EDGE_PROBE_TIMEOUT_MS); return Date.now() - t0; } catch { return null; }
   };
-  if ((await once()) == null) return { ...s, latency: 99999 };
+  // [2026-10-09 net-resilience] warm-up = DNS+TCP+TLS+req ≈ 4 RTT: com RTT
+  // 1200ms (2G/satélite/Ásia) os 2.5s estouravam SEMPRE → todos 99999, sem
+  // escolha, e re-probe a cada 5 min. Warm-up ganha prazo próprio (8s); as 2
+  // medições na conexão quente seguem com 2.5s.
+  if ((await once(8000)) == null) return { ...s, latency: 99999 };
   const a = await once();
   const b = await once();
   const vals = [a, b].filter(v => v != null).sort((x, y) => x - y);
@@ -339,6 +343,10 @@ async function detectFastestServer(opts) {
       if (changed) _applySelectedServer(_bestServer);
       if (__DEV__) console.log('[API] Edge pick: ' + pick.region + ' (base ' + baseRegion + ', hint ' + (hint || '-') + ') ' + results.map(r => r.region + '=' + r.latency).join(' '));
       _persistBestServer();
+    } else if (_bestServer) {
+      // Nenhum host respondeu a tempo (rede péssima): mantém a escolha atual
+      // (dica) mas carimba ts p/ não re-probar a cada 5 min queimando dados.
+      _bestServer = { ..._bestServer, ts: Date.now(), net };
     }
   } catch {} finally { _detecting = false; }
 }
@@ -1167,6 +1175,34 @@ let _reloginPromise = null;
 
 // [send-reliability 2026-10-06] Per-action fetch timeout overrides (ms).
 const _ACTION_TIMEOUT_MS = { chat_send: 10000 };
+// [2026-10-09 net-resilience] HTTP respondeu = a rede VOLTOU. Se o WS está
+// parado no backoff (até 10s entre tentativas depois de uma queda "muda" —
+// túnel, elevador, 2G que some sem o SO avisar), antecipa a reconexão agora em
+// vez de esperar o timer. Medido na bancada: 4–7s de WS morto após a volta.
+let _wsNudgeAt = 0;
+let _httpNetFailAt = 0; // última falha de TRANSPORTE (status 0) — rede caída
+function _wsNudgeOnHttpOk() {
+  const now = Date.now();
+  if (now - _wsNudgeAt < 3000) return;
+  try {
+    const ws = require('./websocket').default;
+    if (!ws || ws._hidden || ws.destroyed) return;
+    const st = ws.ws ? ws.ws.readyState : 3;
+    // (a) parado no backoff (sem socket / socket fechado) → reconecta já.
+    if (ws.reconnectTimer && (st === 2 || st === 3)) {
+      _wsNudgeAt = now;
+      ws.ensureConnected?.('http_ok', { urgent: true });
+      return;
+    }
+    // (b) handshake aberto DURANTE a queda (SYN/TLS perdidos, preso em
+    // CONNECTING até o connect-timeout de 10s+) e o HTTP já voltou → reabre.
+    if (st === 0 && _httpNetFailAt && (ws._lastConnectAt || 0) <= _httpNetFailAt && (now - _httpNetFailAt) < 120000) {
+      _wsNudgeAt = now;
+      ws.ensureConnected?.('http_ok_stale_connect', { urgent: true, staleBefore: _httpNetFailAt });
+    }
+  } catch {}
+}
+function _netTimeoutScale() { try { return require('./networkInfo').timeoutScale() || 1; } catch { return 1; } }
 
 // [2026-10-08 qa-calls] `data.token` também volta em ações que NÃO são de
 // auth: JWT do LiveKit (chat_livekit_token, chat_call_link_join, cohost de
@@ -1278,12 +1314,16 @@ async function _rawApiCall(action, params = {}, method = 'GET') {
   // idempotent POST (server dedups on client_message_id), so a stalled socket
   // is better abandoned at 10s and retried by the outbox than held for 25s
   // while the bubble sits on the clock and later messages queue behind it.
-  const timeout = setTimeout(() => controller.abort(), _ACTION_TIMEOUT_MS[action] || TIMEOUT_MS);
+  // [2026-10-09 net-resilience] escala pelo enlace (2G/3G/RTT alto ×1.6–2.5).
+  const timeout = setTimeout(() => controller.abort(), Math.round((_ACTION_TIMEOUT_MS[action] || TIMEOUT_MS) * _netTimeoutScale()));
 
   const _fetchT0 = Date.now();
   try {
     const res = await fetch(url, options);
-    clearTimeout(timeout);
+    // [2026-10-09 net-resilience] o timer NÃO é mais limpo aqui: em rede com
+    // perda o corpo pode travar depois dos headers e res.text() ficava sem
+    // limite (e outros GETs iguais "pegavam carona" no request preso).
+    // Limpo após ler o corpo; o abort no meio do corpo cai no catch (AbortError).
 
     const cookie = res.headers.get('set-cookie');
     if (cookie) sessionCookie = cookie.split(';')[0];
@@ -1295,6 +1335,8 @@ async function _rawApiCall(action, params = {}, method = 'GET') {
     }
 
     const text = await res.text();
+    clearTimeout(timeout);
+    if (res.status > 0 && res.status < 500) _wsNudgeOnHttpOk();
     try {
       const data = JSON.parse(text);
       const respToken = data?.data?.token;
@@ -1311,6 +1353,7 @@ async function _rawApiCall(action, params = {}, method = 'GET') {
     }
   } catch (err) {
     clearTimeout(timeout);
+    _httpNetFailAt = Date.now();
     if (err.name === 'AbortError') {
       return { data: _withHttpStatus({ success: false, message: 'Tempo limite excedido' }, 0), status: 0 };
     }
@@ -1786,7 +1829,7 @@ async function _apiCallCore(action, params = {}, method = 'GET', opts = {}) {
 // Only these opt into the transient-5xx/524/timeout retry below; every other
 // POST is skipped to avoid double-sends (chat_send, compose, follow, etc.).
 const _IDEMPOTENT_RETRY_POST = new Set([
-  'check_auth', 'chat_read_receipt', 'chat_typing_set',
+  'check_auth', 'chat_read_receipt', 'chat_typing_set', 'chat_delivery_ack',
   'chat_unread_count', 'chat_starred_list', 'chat_pinned_list',
   'chat_user_privacy', 'get_settings', 'profile_get', 'get_profile',
 ]);
@@ -1811,7 +1854,9 @@ async function _apiCallImpl(action, params = {}, method = 'GET') {
       (result.status === 0 && (_msg === 'Tempo limite excedido' || _msg === 'Connection error'));
     const _retryable = (_m === 'GET') || _IDEMPOTENT_RETRY_POST.has(action);
     if (_isTransient && _retryable && action !== 'login' && action !== 'signup') {
-      await new Promise(r => setTimeout(r, 800));
+      // [2026-10-09 net-resilience] jitter (400–1200ms): N telas que falharam
+      // juntas na mesma queda não voltam todas no mesmo milissegundo.
+      await new Promise(r => setTimeout(r, 400 + Math.floor(Math.random() * 800)));
       const _retry = await _rawApiCall(action, params, method);
       // Never-worse: only adopt the retry if it is NOT itself transient
       // (2xx/3xx or a definitive 4xx). Otherwise keep the original result so
@@ -4423,6 +4468,9 @@ try { loadEnvelopeMode().catch(() => {}); } catch {}
 // faz dedup por (remetente, cmi) e devolve a linha já gravada, se gravou).
 // Devolve o resultado no formato do HTTP ({success,data,message}) ou null.
 const NATIVE_SEND_ACK_TIMEOUT_MS = 4000;
+// [2026-10-09 net-resilience] 4s fixos < 1 RTT+retransmissão em 2G/satélite → caía
+// no HTTP à toa (mesmo cmi, dedup ok, mas dobra o tráfego no pior enlace).
+function _nativeSendAckTimeout() { return Math.round(NATIVE_SEND_ACK_TIMEOUT_MS * _netTimeoutScale()); }
 function _nativeSendSocket() {
   try {
     if (globalThis.__chatyy_native_send_off === true) return null; // kill-switch local (debug)
@@ -4469,7 +4517,7 @@ async function _tryNativeWsSend(payload) {
     if (globalThis.__chatyy_native_send_off !== true) {
       const nc = require('./nativeCore');
       if (nc && typeof nc.canSendNative === 'function' && nc.canSendNative()) {
-        const r = await nc.sendTextNative(frame, NATIVE_SEND_ACK_TIMEOUT_MS);
+        const r = await nc.sendTextNative(frame, _nativeSendAckTimeout());
         if (r !== undefined) {
           if (r && r.data && r.data.id != null) _rememberNativeSent(r.data.id);
           return r;
@@ -4501,7 +4549,7 @@ async function _tryNativeWsSend(payload) {
       if (!m || m.client_message_id !== cmi) return;
       finish(null);
     });
-    timer = setTimeout(() => finish(null), NATIVE_SEND_ACK_TIMEOUT_MS);
+    timer = setTimeout(() => finish(null), _nativeSendAckTimeout());
     try {
       if (ws.ws && ws.ws.readyState === 1) ws.ws.send(ws._encodeOutbound(frame));
       else finish(null);
@@ -5215,7 +5263,9 @@ async function _rustChatPost(path, payload) {
     // Rust to time out before PHP fallback kicked in. 2s is enough to know
     // if Rust is alive on a healthy network; on flaky links we fall through
     // to PHP fast instead of stalling the user.
-    const t = setTimeout(() => ctrl.abort(), 2000);
+    // [2026-10-09 net-resilience] escala pelo enlace: 2s fixos em 2G/RTT 1200ms
+    // estouravam sempre e desligavam o Rust (_rustChatAvailable=false) à toa.
+    const t = setTimeout(() => ctrl.abort(), Math.round(2000 * _netTimeoutScale()));
     const r = await fetch(`${BASE_URL}/api/rust/chat/${path}`, {
       method: 'POST', headers, body: JSON.stringify(payload), signal: ctrl.signal,
     });
@@ -5395,16 +5445,25 @@ function _ackWithRetry(conversationId, ids, attempt = 0) {
       }
     } catch {}
   }
+  // [2026-10-09 net-resilience] apiCall NÃO lança em queda de rede/timeout —
+  // devolve {success:false} (status 0/5xx). Antes o .then só ignorava e o ✓✓
+  // sumia em silêncio (nem retry nem fila offline). Agora: 4xx = definitivo;
+  // transporte/5xx = falha → retry com jitter → fila offline (lotes de 100).
   chatDeliveryAck(conversationId, ids).then((r) => {
-    if (r && r.success !== false) _markAcked(conversationId, ids);
+    if (r && r.success !== false) { _markAcked(conversationId, ids); return; }
+    const st = Number(r && r.__httpStatus) || 0;
+    if (st >= 400 && st < 500) return;
+    throw new Error('ack_transport');
   }).catch(() => {
     if (attempt < 2) {
-      setTimeout(() => _ackWithRetry(conversationId, ids, attempt + 1), 1500 * (attempt + 1));
+      setTimeout(() => _ackWithRetry(conversationId, ids, attempt + 1), Math.round(1500 * (attempt + 1) * (0.6 + Math.random() * 0.8)));
       return;
     }
     try {
       const { queueOfflineAction } = require('./offlineCache');
-      queueOfflineAction({ type: 'chat_delivery_ack', conversation_id: conversationId, message_ids: ids.slice(0, 100) }).catch(() => {});
+      for (let i = 0; i < ids.length; i += 100) {
+        queueOfflineAction({ type: 'chat_delivery_ack', conversation_id: conversationId, message_ids: ids.slice(i, i + 100) }).catch(() => {});
+      }
     } catch {}
   });
 }
@@ -6805,9 +6864,22 @@ export async function rustUpload(file, userEmail, context = 'chat', externalSign
   return r;
 }
 
+// [2026-10-09 net-resilience] Timeout do POST único proporcional ao tamanho:
+// 90s fixos nunca terminavam 1-2 MB em 2G/3G (≈40-200 kbps de subida) e o
+// fallback PHP recomeçava do zero. Piso 90s; ~20 kbps efetivos no pior caso;
+// teto 5 min.
+function _uploadTimeoutMs(size) {
+  const n = Number(size) || 0;
+  let scale = 1;
+  try { scale = require('./networkInfo').timeoutScale() || 1; } catch {}
+  const est = 30000 + (n * 8 / 20000) * 1000 / (scale > 1 ? 1 : 2.5);
+  return Math.round(Math.min(300000, Math.max(90000, est)));
+}
+
 async function _rustUploadAt(base, file, userEmail, context, externalSignal, onProgress) {
   try {
     const formData = new FormData();
+    const _upTmo = _uploadTimeoutMs(file && (file.size || (file._raw && file._raw.size) || (file.blob && file.blob.size)));
     // CRITICAL: web check FIRST. On web `file` is wrapped as { uri: blobUrl, blob, name }.
     // Plain objects with `uri` get stringified to "[object Object]" by FormData → corrupted upload.
     if (Platform.OS === 'web') {
@@ -6850,7 +6922,7 @@ async function _rustUploadAt(base, file, userEmail, context, externalSignal, onP
         xhr.open('POST', `${base}/api/rust/upload`);
         xhr.setRequestHeader('Authorization', `Bearer ${authToken}`);
         if (Platform.OS === 'web') xhr.withCredentials = true;
-        xhr.timeout = 90000;
+        xhr.timeout = _upTmo;
         xhr.upload.onprogress = (e) => {
           if (e.lengthComputable) {
             try { onProgress(e.loaded / e.total); } catch {}
@@ -6879,7 +6951,7 @@ async function _rustUploadAt(base, file, userEmail, context, externalSignal, onP
     // Also wire the external signal (from the upload bubble X button) so user
     // cancels stop the fetch immediately instead of letting it run to timeout.
     const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), 90000);
+    const timer = setTimeout(() => ctrl.abort(), _upTmo);
     const onExternalAbort = () => ctrl.abort();
     if (externalSignal) {
       if (externalSignal.aborted) ctrl.abort();
@@ -7023,8 +7095,29 @@ export async function rustChunkedUpload(file, userEmail, context = 'chat', onPro
  * Each chunk is a separate small POST, so iOS NSURLSession's idle-timeout doesn't
  * kill big uploads. Used by photo backup for files > 3 MB.
  */
+// [2026-10-09 media-native] Background (OS-owned) chunked upload: chat media
+// big enough to matter, native module present. Kill switch:
+// globalThis.__chatyy_bg_transfer = false.
+const BG_TRANSFER_MIN_BYTES = 4 * 1024 * 1024;
+function _bgTransferFor(context, totalSize) {
+  if (Platform.OS === 'web') return false;
+  if (context !== 'chat') return false;
+  if (!(Number(totalSize) >= BG_TRANSFER_MIN_BYTES)) return false;
+  try { return require('./bgTransfer').isBgTransferAvailable(); } catch { return false; }
+}
 async function rustChunkedUploadNative(file, userEmail, context, onProgress, externalSignal = null, resume = null) {
-  const CHUNK_SIZE = 1 * 1024 * 1024; // 1 MB chunks — small enough to finish in <14s on 3 Mbps wifi
+  // [2026-10-09 net-resilience] Pedaço/concorrência pelo enlace: em 2G/3G/RTT
+  // alto, 1 MB × 3 em paralelo estourava o timeout por pedaço e afogava o uplink
+  // (texto e recibos ficavam atrás). Lento: 256 KB × 1; médio: 512 KB × 2.
+  const _lc = (() => { try { return require('./networkInfo').getLinkClass(); } catch { return 'fast'; } })();
+  const _linkChunk = _lc === 'slow' ? 256 * 1024 : (_lc === 'medium' ? 512 * 1024 : 1 * 1024 * 1024);
+  // [2026-10-09 media-native] A resumed session MUST keep the chunk size it
+  // was opened with (chunk i = bytes [i*size, (i+1)*size)); the link class can
+  // change between attempts. Sessions persisted without their size are not
+  // resumed (fresh session) instead of risking a corrupted file.
+  const _resumeChunk = Number(resume && resume.chunkSize) || 0;
+  if (resume && resume.uploadId && !(_resumeChunk > 0)) resume = { ...resume, uploadId: null };
+  const CHUNK_SIZE = (resume && resume.uploadId && _resumeChunk > 0) ? _resumeChunk : _linkChunk;
   try {
     // BUG fix: expo-file-system/legacy is the only one that exposes cacheDirectory
     // at the top level. The new modular API moved it to FileSystem.Paths.cache.
@@ -7059,6 +7152,18 @@ async function rustChunkedUploadNative(file, userEmail, context, onProgress, ext
     let base = _rustUploadBase();
     let uploadId = null;
     const alreadyHave = new Set();
+    // [2026-10-09 media-native] A previous run handed this session to the OS
+    // (background URLSession / WorkManager): its result (or progress) lives in
+    // the native record — never re-open/re-send it from JS.
+    if (resume && resume.uploadId && _bgTransferFor(context, totalSize)) {
+      try {
+        const bgT = require('./bgTransfer');
+        const rec = await bgT.getTransfer('up-' + String(resume.uploadId));
+        if (rec && (rec.state === 'running' || rec.state === 'queued' || (rec.state === 'done' && rec.result && rec.result.cdn_url))) {
+          return await bgT.awaitUpload(resume.uploadId, { onProgress, signal: externalSignal });
+        }
+      } catch {}
+    }
     if (resume && resume.uploadId && /^[0-9a-f]{32}$/.test(String(resume.uploadId))) {
       const resBase = (resume.base && /^https:\/\//.test(String(resume.base))) ? String(resume.base).replace(/\/+$/, '') : US_FALLBACK_BASE;
       const stCtrl = new AbortController();
@@ -7120,7 +7225,22 @@ async function rustChunkedUploadNative(file, userEmail, context, onProgress, ext
       const initData = await initResp.json().catch(() => null);
       uploadId = initData?.upload_id;
       if (!uploadId) return { success: false, error: 'no_upload_id' };
-      try { resume?.onUploadId?.(uploadId, base); } catch {}
+      try { resume?.onUploadId?.(uploadId, base, CHUNK_SIZE); } catch {}
+    }
+
+    // [2026-10-09 media-native] Big chat media → hand the session to the OS
+    // so it keeps uploading with the app suspended/closed (WhatsApp). The
+    // native side refuses (handled:false) on old binaries → JS loop below.
+    if (_bgTransferFor(context, totalSize) && !(externalSignal && externalSignal.aborted)) {
+      try {
+        const bgT = require('./bgTransfer');
+        const h = await bgT.uploadInBackground({
+          fileUri: file.uri, base, bearer: authToken, uploadId, chunkSize: CHUNK_SIZE, totalSize,
+          skipChunks: Array.from(alreadyHave), filename, contentType, userEmail: userEmail || '', context,
+          title: (resume && resume.bgTitle) || filename, onProgress, signal: externalSignal,
+        });
+        if (h && h.handled) return h.result;
+      } catch {}
     }
 
     // 2. Upload each 1 MB chunk as multipart/form-data — Rust expects that format.
@@ -7135,7 +7255,7 @@ async function rustChunkedUploadNative(file, userEmail, context, onProgress, ext
     // bringing the same upload to ~10-12s. Cap at 3 because Cloudflare/Rust
     // limits concurrent connections per origin, and more in-flight buys
     // diminishing returns vs. memory cost.
-    const CONCURRENCY = 3;
+    const CONCURRENCY = _lc === 'slow' ? 1 : (_lc === 'medium' ? 2 : 3);
     let completed = alreadyHave.size;
     if (completed > 0 && onProgress) { try { onProgress(completed / totalChunks); } catch {} }
     let aborted = false;
@@ -7186,7 +7306,7 @@ async function rustChunkedUploadNative(file, userEmail, context, onProgress, ext
       while (attempts < MAX_CHUNK_ATTEMPTS && !chunkOk && !aborted) {
         attempts++;
         const ctrl = new AbortController();
-        const timer = setTimeout(() => ctrl.abort(), 60000);
+        const timer = setTimeout(() => ctrl.abort(), _lc === 'fast' ? 60000 : 90000);
         // [2026-10-07 send-media] user cancel aborts the in-flight chunk too.
         const onExt = () => { try { ctrl.abort(); } catch {} };
         if (externalSignal) externalSignal.addEventListener?.('abort', onExt, { once: true });
@@ -7221,7 +7341,8 @@ async function rustChunkedUploadNative(file, userEmail, context, onProgress, ext
         if (externalSignal) externalSignal.removeEventListener?.('abort', onExt);
         if (externalSignal && externalSignal.aborted) { aborted = true; break; }
         if (!chunkOk && attempts < MAX_CHUNK_ATTEMPTS) {
-          await new Promise(r => setTimeout(r, Math.min(5000, 800 * Math.pow(2, attempts - 1))));
+          // [2026-10-09 net-resilience] jitter: pedaços que falharam juntos não voltam juntos.
+          await new Promise(r => setTimeout(r, Math.round(Math.min(5000, 800 * Math.pow(2, attempts - 1)) * (0.5 + Math.random()))));
         }
       }
       try { await FS.deleteAsync(tmpPath, { idempotent: true }); } catch {}

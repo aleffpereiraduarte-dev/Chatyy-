@@ -82,7 +82,18 @@ public class BackgroundUploadAppDelegateSubscriber: ExpoAppDelegateSubscriber {
         handleEventsForBackgroundURLSession identifier: String,
         completionHandler: @escaping () -> Void
     ) {
-        guard identifier == "com.onemundo.mail.bgUpload" else { return }
+        // [2026-10-09 media-native] chat media transfers (ChatTransferManager):
+        // keep the handler and re-attach the session so pending delegate
+        // events are delivered; the manager calls the handler when done.
+        if identifier == ChatTransferManager.sessionIdentifier {
+            BackgroundUploadAppDelegateSubscriber.completionHandlers[identifier] = completionHandler
+            ChatTransferManager.shared.ensureSession()
+            return
+        }
+        // Not ours (e.g. expo-file-system's background session): Expo
+        // aggregates every subscriber's handler, so ack ours right away or the
+        // system's completion would never fire.
+        guard identifier == "com.onemundo.mail.bgUpload" else { completionHandler(); return }
         BackgroundUploadAppDelegateSubscriber.completionHandlers[identifier] = completionHandler
     }
 }

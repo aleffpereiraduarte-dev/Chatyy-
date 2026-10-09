@@ -37,6 +37,9 @@ import ReactionSwipeUp from './status/ReactionSwipeUp';
 // the composer picker, StoryViewer and AnimatedStatusText never drift apart.
 import { TEXT_BG_GRADIENTS, resolveTextGradient as resolveGradient } from './status/textGradients';
 import { segmentVideoForStatus } from '../services/statusVideoSegments';
+// [2026-10-09 status-composer] Estúdio nível Instagram (filtros reais, texto,
+// figurinhas, público) + fila durável com progresso no anel do "Seu status".
+import StatusStudio from './status/StatusStudio';
 
 // Android status bar safe area — `StatusBar.currentHeight` is null on iOS
 // (where the 54px ios padding already covers the notch) so we just hard-fall
@@ -881,7 +884,10 @@ const StoryScroller = React.memo(function StoryScroller({ statuses, myStatuses, 
 // migrated into hooks/useStatuses.js. The local mine/others state below
 // gets seeded by the hook's mirror useEffect.)
 
-function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, openStatusEmail, onOpenStatusConsumed }) {
+// Último pedido de "novo status" já atendido (sobrevive a remount do lazy).
+let _consumedNewStatusNonce = 0;
+
+function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStatusNonce, openStatusEmail, onOpenStatusConsumed }) {
   // Real safe-area insets — `StatusBar.currentHeight` (the const fallback used
   // before) returned 0 on a few Pixel/Galaxy devices when the composer Modal
   // mounted before the system bar measurement settled, leaving the back/Save/
@@ -1249,6 +1255,8 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, openSta
 
   // Creator state
   const [cameraVisible, setCameraVisible] = useState(false);
+  // [2026-10-09 status-composer] seed do estúdio: { items:[{uri,type,width,height,filter}], mode?, music?, isBoomerang? }
+  const [studioSeed, setStudioSeed] = useState(null);
   // Press lock: TouchableOpacity onPress + onLongPress can both fire on slow
   // devices when the user releases right at the long-press threshold. We saw
   // status creation open StatusCamera AND the system gallery picker at once
@@ -1625,15 +1633,26 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, openSta
   // strip's "+ new status" can re-open the composer every tap — not just once
   // per mount. (Was one-shot-locked via a ref, which broke repeated opens
   // after the status-consolidation redirect routed all composes through here.)
+  // [2026-10-09 status-composer] CAUSA do "+ Seu status não abre nada": este
+  // componente é React.lazy; o host zerava autoNewStatus 500ms depois do toque
+  // e o cleanup abaixo CANCELAVA o timer de 250ms quando o prop voltava a false.
+  // Se o chunk/1º render demorasse >250ms (web sempre, Android frio às vezes),
+  // o compositor nunca abria — sem erro nenhum. Agora o host manda um nonce
+  // (timestamp por pedido) e cada nonce é consumido exatamente uma vez, sem
+  // depender de timing. autoNewStatus fica só p/ hosts antigos.
+  const openNewStatusRef = useRef(null);
   useEffect(() => {
+    if (typeof newStatusNonce === 'number') return;
     if (!autoNewStatus) return;
-    // Slight delay so the tab finishes mounting/switching before the modal
-    // appears. openCreator is declared below; the setTimeout closure resolves
-    // the binding when it fires (after render) to avoid a TDZ in the deps array.
-    const _to = setTimeout(() => { try { openCreator(Platform.OS !== 'web' ? 'camera' : 'text'); } catch {} }, 250);
+    const _to = setTimeout(() => { try { openNewStatusRef.current?.(); } catch {} }, 250);
     return () => clearTimeout(_to);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [autoNewStatus]);
+  useEffect(() => {
+    if (!newStatusNonce || newStatusNonce === _consumedNewStatusNonce) return;
+    _consumedNewStatusNonce = newStatusNonce;
+    setTimeout(() => { try { openNewStatusRef.current?.(); } catch {} }, 60);
+  }, [newStatusNonce]);
 
   // Filter by search
   // [PERF] Memoize the search filter + the 3-way partition so they only
@@ -2320,6 +2339,12 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, openSta
       setCreatorVisible(true);
     }
   }, [t]);
+  // [2026-10-09 status-composer] Entrada única do "+ Seu status": câmera no
+  // nativo (captura → estúdio), estúdio direto no web (texto + galeria).
+  openNewStatusRef.current = () => {
+    if (Platform.OS !== 'web') openCreator('camera');
+    else setStudioSeed({ mode: 'text', items: [] });
+  };
 
   // ── Voice status recorder ──────────────────────────────────────────────
   // Mirrors FeedComments' voice-comment capture (expo-audio native / Web
@@ -2425,6 +2450,29 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, openSta
   // to loop the short clip back-and-forth.
   const handleCameraCapture = useCallback(async (capture) => {
     setCameraVisible(false);
+    // [2026-10-09 status-composer] Toda captura/galeria passa pelo estúdio
+    // (filtros reais, texto, figurinhas, público) antes de publicar. Antes a
+    // foto subia CRUA: o filtro escolhido na câmera nunca era aplicado e a
+    // privacidade escolhida era ignorada neste caminho.
+    {
+      const src = capture?.multi && Array.isArray(capture.items) ? capture.items : (capture?.uri ? [capture] : []);
+      if (src.length) {
+        const m = capture.music;
+        // iOS não apresenta um Modal enquanto o da câmera ainda está fechando.
+        const openStudio = (seed) => setTimeout(() => setStudioSeed(seed), Platform.OS === 'ios' ? 450 : 0);
+        openStudio({
+          items: src.slice(0, 10).map(it => ({ uri: it.uri, type: it.type === 'video' ? 'video' : 'photo', width: it.width, height: it.height, filter: it.filter || capture.filter })),
+          music: m ? {
+            title: m.title || m.name || '', artist: m.artist || '',
+            previewUrl: m.previewUrl || m.preview_url || m.url || '',
+            coverUrl: m.coverUrl || m.cover_url || m.artwork || '',
+            startMs: m.startMs ?? m.start_ms ?? 0,
+          } : null,
+          isBoomerang: !!capture.isBoomerang,
+        });
+        return;
+      }
+    }
     // Gallery multi-select (up to 10) and the segment-stitch fallback both emit
     // { multi: true, items: [...] } with no top-level uri, so the guard below
     // used to swallow the whole selection without a word. The stitch fallback
@@ -2706,6 +2754,7 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, openSta
           mediaTypes: ['images', 'videos'],
           allowsMultipleSelection: true,
           selectionLimit: 10,
+          orderedSelection: true, // [2026-10-09 more-native]
           quality: 0.8,
         });
         if (result.canceled || !result.assets?.length) return;
@@ -3428,9 +3477,23 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, openSta
             onClose={() => setCameraVisible(false)}
             onCapture={handleCameraCapture}
             t={t}
+            directToEditor
           />
         </Modal>
       )}
+
+      {/* [2026-10-09 status-composer] Estúdio (pós-câmera / galeria / texto) */}
+      {studioSeed ? (
+        <StatusStudio
+          visible={!!studioSeed}
+          seed={studioSeed}
+          onClose={() => setStudioSeed(null)}
+          onOpenCamera={() => openCreator('camera')}
+          user={user}
+          t={t}
+          router={router}
+        />
+      ) : null}
 
       {/* ─── Publishing feedback overlay ─── */}
       {/* The camera/voice/carousel paths close their composer the instant the

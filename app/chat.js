@@ -797,6 +797,11 @@ function ChatHub() {
   // that up and opens the creator immediately. Reset on first consume so a
   // refresh/re-render doesn't re-open the composer.
   const [autoNewStatus, setAutoNewStatus] = useState(() => params.new === '1');
+  // [2026-10-09 status-composer] Pedido de "novo status" à prova de corrida:
+  // um timestamp por pedido, consumido 1x pelo ChatStatusTab (lazy). O
+  // autoNewStatus acima sumia em 500ms e, se o tab lazy ainda não tinha
+  // montado, o compositor simplesmente não abria (o "+" parecia morto).
+  const [newStatusNonce, setNewStatusNonce] = useState(() => (params.new === '1' ? Date.now() : 0));
   const [pendingReels, setPendingReels] = useState(false);
   // [2026-05-30 STATUS CONSOLIDATION] When the chat-list home strip (ChatListTab)
   // taps a story ring, it flips to the canonical `status` tab and stashes the
@@ -833,6 +838,7 @@ function ChatHub() {
   const requestNewStatus = useCallback(() => {
     setMountedTabs(prev => prev.has('status') ? prev : new Set(prev).add('status'));
     setAutoNewStatus(true);
+    setNewStatusNonce(Date.now());
   }, []);
   // PERF: these two were inline arrows inside the tabProps literal, so every
   // chat.js render minted fresh function identities → tabProps changed → every
@@ -846,7 +852,7 @@ function ChatHub() {
   // PERF: tabProps was a fresh object every render and is spread into ALL
   // mounted tabs. Memoizing it means a tab only re-renders when a value it
   // actually consumes changes, not on every parent re-render.
-  const tabProps = useMemo(() => ({ colors, isDark, t, user, router, searchQuery, setActiveTab, autoNewStatus, openStatusEmail, onOpenStatusConsumed, requestOpenStatus, requestNewStatus, initialFeedMode: pendingReels ? 'reels' : undefined, onFeedModeConsumed, tabActive: activeTab }), [colors, isDark, t, user, router, searchQuery, setActiveTab, autoNewStatus, openStatusEmail, onOpenStatusConsumed, requestOpenStatus, requestNewStatus, pendingReels, onFeedModeConsumed, activeTab]);
+  const tabProps = useMemo(() => ({ colors, isDark, t, user, router, searchQuery, setActiveTab, autoNewStatus, newStatusNonce, openStatusEmail, onOpenStatusConsumed, requestOpenStatus, requestNewStatus, initialFeedMode: pendingReels ? 'reels' : undefined, onFeedModeConsumed, tabActive: activeTab }), [colors, isDark, t, user, router, searchQuery, setActiveTab, autoNewStatus, newStatusNonce, openStatusEmail, onOpenStatusConsumed, requestOpenStatus, requestNewStatus, pendingReels, onFeedModeConsumed, activeTab]);
 
   const titles = {
     feed: t('feed.title') || 'Feed',
@@ -871,7 +877,8 @@ function ChatHub() {
       return (
         <>
           <TouchableOpacity onPress={() => { try { router.push('/photos?camera=1'); } catch (e) { console.warn("[chat] router.push failed:", e); } }} activeOpacity={0.6}
-            hitSlop={6} style={btnStyle} accessibilityLabel={t('a11y.camera')}>
+            onLongPress={() => { try { haptic.select(); } catch {} requestNewStatus(); }} delayLongPress={350}
+            hitSlop={6} style={btnStyle} accessibilityLabel={t('a11y.camera')} accessibilityHint={t('status.ring.newStatus')}>
             <IconCamera size={19} color={headerIconColor} />
           </TouchableOpacity>
           <TouchableOpacity onPress={toggleSearch} activeOpacity={0.6}
@@ -1338,6 +1345,7 @@ function ChatHub() {
               label={t('chat.tabChats') || 'Chats'}
               active={activeTab === 'chats'}
               onPress={() => handleTabPress('chats')}
+              onLongPress={requestNewStatus /* [2026-10-09 status-composer] segurar = câmera do status (Instagram) */}
               isDark={isDark}
               badge={chatsBadge}
             />
@@ -2050,7 +2058,7 @@ function PulseBadge({ badge, isDark }) {
 }
 
 // ── Mobile tab bar item with dot indicator ──
-function TabBarItem({ icon, label, active, onPress, isDark, badge, dot }) {
+function TabBarItem({ icon, label, active, onPress, onLongPress, isDark, badge, dot }) {
   const { colors } = useTheme();
   const scaleAnim = useRef(new Animated.Value(1)).current;
   const bounceAnim = useRef(new Animated.Value(0)).current;
@@ -2086,6 +2094,8 @@ function TabBarItem({ icon, label, active, onPress, isDark, badge, dot }) {
     <Pressable
       style={styles.tabItem}
       onPress={handlePress}
+      onLongPress={onLongPress ? () => { try { haptic.select(); } catch {} onLongPress(); } : undefined}
+      delayLongPress={380}
       onPressIn={handlePressIn}
       onPressOut={handlePressOut}
       accessibilityRole="tab"

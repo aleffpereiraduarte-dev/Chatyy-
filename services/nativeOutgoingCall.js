@@ -171,7 +171,9 @@ export function track(p) {
       s.unsubs.push(ck.onLkEvent('onCallDeclinedRemote', (d) => { if (matches(d)) onEnded('declined_remote', 'declined'); }));
     }
     if (ck?.onCallEnded) {
-      s.unsubs.push(ck.onCallEnded((d) => { if (matches(d)) onEnded('native_call_ended', d?.reason); }));
+      // [2026-10-09 system-hold] older binaries emit onCallEnded {held:true}
+      // on a CallKit hold — a held call is still live.
+      s.unsubs.push(ck.onCallEnded((d) => { if (d && d.held) return; if (matches(d)) onEnded('native_call_ended', d?.reason); }));
     }
   } catch {}
   try {

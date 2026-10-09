@@ -15,6 +15,8 @@ import PressableScale from '../components/PressableScale';
 import PressableRow from '../components/PressableRow'; // [2026-10-07 app-feel-ui] native cell feedback
 // [2026-10-08 settings-redesign] grouped inset lists (iOS/WhatsApp Settings)
 import { SettingsGroup, SettingsRow, SettingsSwitchRow, SettingsPickerRow, SettingsCardContent, SettingsIconTile, OptionSheet, useGroupedColors } from '../components/settings/SettingsKit';
+import NativeSheetDialog from '../components/NativeSheetDialog'; // [2026-10-09 native-sheets] sheet do sistema (web = Modal original)
+import { USE_NATIVE_SHEETS } from '../components/NativeSheet';
 import SettingsSegmented from '../components/SettingsSegmented';
 import { useRouter, useLocalSearchParams, useFocusEffect, Stack } from 'expo-router';
 import { USE_NATIVE_HEADER, nativeHeaderOptions, HeaderBackButton, useBlurHeaderInset } from '../components/nativeHeader'; // [2026-10-07 app-feel-nav] · blur [2026-10-07 native-ui-build]
@@ -1054,10 +1056,17 @@ function SettingsScreenInner() {
   // User clears a chat / saves a media file in another screen → coming back
   // to settings should reflect the new totals without a manual tap. Mobile
   // only — web has no on-disk store so the stats are always zero.
+  // [2026-10-09 native-sheets] pickers viram rota (formSheet) → cada fechar
+  // re-foca a tela; throttle p/ não repetir o scan de armazenamento a cada picker.
+  const _storageScanAtRef = useRef(0);
   useFocusEffect(
     useCallback(() => {
       if (Platform.OS !== 'web') {
-        refreshStorageStats();
+        const now = Date.now();
+        if (now - _storageScanAtRef.current > 30000) {
+          _storageScanAtRef.current = now;
+          refreshStorageStats();
+        }
       }
       return undefined;
     }, [refreshStorageStats])
@@ -3011,7 +3020,12 @@ function SettingsScreenInner() {
         <SettingsGroup header={t('settings.rd2.dataLabs') || 'Dados e recursos'}>
           <SettingsSwitchRow
             title={t('settings.dataSaver.title') || 'Modo economia de dados'}
-            subtitle={t('settings.dataSaver.subtitle') || 'Comprime mídia e reduz pré-carregamento de vídeos.'}
+            subtitle={(() => {
+              // [2026-10-09 system-integration] iOS Low Data Mode / Android Data Saver.
+              let sys = false;
+              try { sys = require('../services/systemIntegration').isSystemDataSaverOn(); } catch {}
+              return sys ? t('settings.dataSaver.systemActive') : (t('settings.dataSaver.subtitle') || 'Comprime mídia e reduz pré-carregamento de vídeos.');
+            })()}
             value={dataSaver}
             onValueChange={(v) => { setDataSaver(v); setStorage('data_saver', String(v)); }}
           />
@@ -3253,26 +3267,19 @@ function SettingsScreenInner() {
           Data is fetched lazily when the Alertas de login row is tapped so we
           don't roundtrip the server until the user actually asks. Stays
           read-only — revoking a session lives in /activity-log. */}
-      <Modal
+      <NativeSheetDialog
         visible={loginHistoryOpen}
-        transparent
+        onClose={() => setLoginHistoryOpen(false)}
         animationType="slide"
-        onRequestClose={() => setLoginHistoryOpen(false)}
+        overlayStyle={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' }}
+        panelStyle={{
+          backgroundColor: colors.surface,
+          borderTopLeftRadius: 20, borderTopRightRadius: 20,
+          padding: Spacing.lg,
+          paddingBottom: Spacing.lg + (USE_NATIVE_SHEETS ? 0 : insets.bottom),
+          maxHeight: '70%',
+        }}
       >
-        <Pressable
-          style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' }}
-          onPress={() => setLoginHistoryOpen(false)}
-        >
-          <Pressable
-            onPress={(e) => e.stopPropagation()}
-            style={{
-              backgroundColor: colors.surface,
-              borderTopLeftRadius: 20, borderTopRightRadius: 20,
-              padding: Spacing.lg,
-              paddingBottom: Spacing.lg + insets.bottom,
-              maxHeight: '70%',
-            }}
-          >
             <Text style={{ color: colors.text, fontSize: 18, fontWeight: '700', marginBottom: Spacing.md }}>
               {t('settings.loginAlerts.history') || 'Histórico de logins'}
             </Text>
@@ -3314,9 +3321,7 @@ function SettingsScreenInner() {
             >
               <Text style={{ color: colors.primary, fontWeight: '600' }}>{t('common.close') || 'Fechar'}</Text>
             </TouchableOpacity>
-          </Pressable>
-        </Pressable>
-      </Modal>
+      </NativeSheetDialog>
 
       {/* Privacy picker — [2026-10-08 settings-redesign2] OptionSheet (lista
           com checkmark) reutilizado pelos 5 campos de visibilidade. Mesmo
@@ -3966,20 +3971,13 @@ function SettingsScreenInner() {
           modals) or to a licenses route. We keep it dependency-light:
           read Constants.expoConfig.version/buildNumber/versionCode for
           the displayed build label. */}
-      <Modal
+      <NativeSheetDialog
         visible={aboutOpen}
-        transparent
+        onClose={() => setAboutOpen(false)}
         animationType="slide"
-        onRequestClose={() => setAboutOpen(false)}
+        overlayStyle={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', padding: 20 }}
+        panelStyle={{ backgroundColor: colors.surface, borderRadius: 18, padding: 22 }}
       >
-        <Pressable
-          style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', padding: 20 }}
-          onPress={() => setAboutOpen(false)}
-        >
-          <Pressable
-            onPress={e => e.stopPropagation?.()}
-            style={{ backgroundColor: colors.surface, borderRadius: 18, padding: 22 }}
-          >
             <Text style={{ color: colors.text, fontWeight: '800', fontSize: 20, marginBottom: 6 }}>
               {t('settings.about.title') || 'Sobre'}
             </Text>
@@ -3995,14 +3993,14 @@ function SettingsScreenInner() {
             </Text>
 
             <TouchableOpacity
-              onPress={() => { setAboutOpen(false); setTimeout(() => setShowTerms(true), 200); }}
+              onPress={() => { setAboutOpen(false); setTimeout(() => setShowTerms(true), USE_NATIVE_SHEETS ? 520 : 200); }} // [2026-10-09 native-sheets] Modal irmão só depois do sheet descer
               style={{ paddingVertical: 12, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.borderLight, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}
             >
               <Text style={{ color: colors.text, fontSize: 15, fontWeight: '600' }}>{t('settings.about.terms') || 'Termos de uso'}</Text>
               <IconChevronRight size={16} color={colors.textTertiary} />
             </TouchableOpacity>
             <TouchableOpacity
-              onPress={() => { setAboutOpen(false); setTimeout(() => setShowPrivacy(true), 200); }}
+              onPress={() => { setAboutOpen(false); setTimeout(() => setShowPrivacy(true), USE_NATIVE_SHEETS ? 520 : 200); }}
               style={{ paddingVertical: 12, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.borderLight, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}
             >
               <Text style={{ color: colors.text, fontSize: 15, fontWeight: '600' }}>{t('settings.about.privacy') || 'Política de privacidade'}</Text>
@@ -4018,9 +4016,7 @@ function SettingsScreenInner() {
             >
               <Text style={{ color: colors.onPrimary || '#fff', fontWeight: '700' }}>{t('common.close') || 'Fechar'}</Text>
             </TouchableOpacity>
-          </Pressable>
-        </Pressable>
-      </Modal>
+      </NativeSheetDialog>
 
       {/* Backup key rotation modal — re-uses the passphrase-pair UX from
           the original E2E backup flow. On submit we call the same

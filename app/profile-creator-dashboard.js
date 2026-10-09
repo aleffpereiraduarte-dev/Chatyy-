@@ -13,7 +13,8 @@ import React, { useEffect, useState, useCallback } from 'react';
 import {
   View, Text, ScrollView, TouchableOpacity, ActivityIndicator, Platform, StyleSheet, RefreshControl,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useRouter, Stack } from 'expo-router';
+import { USE_NATIVE_HEADER, nativeHeaderOptions } from '../components/nativeHeader'; // [2026-10-09 native-sheets-headers] header NATIVO
 import Svg, { Path, Circle } from 'react-native-svg';
 // [2026-05-22 monetization-pause] hidden by MONETIZATION_ENABLED flag
 import { MONETIZATION_ENABLED } from '../constants/featureFlags';
@@ -88,6 +89,8 @@ export default function CreatorDashboardScreen() {
   if (!MONETIZATION_ENABLED) {
     return (
       <View style={{ flex: 1, backgroundColor: colors.background }}>
+        {USE_NATIVE_HEADER && <Stack.Screen options={nativeHeaderOptions({ colors, isDark, title: t('profile.creatorDashboard') })} />}
+        {!USE_NATIVE_HEADER && (
         <View style={[styles.header, { borderBottomColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)' }]}>
           <TouchableOpacity onPress={() => { try { router.back(); } catch {} }} style={styles.backBtn} accessibilityLabel={t?.('common.back') || 'Voltar'}>
             <IconArrowLeft size={22} color={colors.text} />
@@ -97,6 +100,7 @@ export default function CreatorDashboardScreen() {
           </Text>
           <View style={{ width: 22 }} />
         </View>
+        )}
         <ScrollView contentContainerStyle={styles.gateBody} showsVerticalScrollIndicator={false}>
           <View style={[styles.gateBadge, { backgroundColor: ACCENT_DEEP }]}>
             <View style={[styles.heroOverlay, { backgroundColor: ACCENT_PINK }]} />
@@ -205,6 +209,8 @@ export default function CreatorDashboardScreen() {
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.background }}>
+      {USE_NATIVE_HEADER && <Stack.Screen options={nativeHeaderOptions({ colors, isDark, title: t('profile.creatorDashboard') })} />}
+      {!USE_NATIVE_HEADER && (
       <View style={[styles.header, { borderBottomColor: cardBorder }]}>
         <TouchableOpacity onPress={() => router.back()} style={styles.backBtn} accessibilityLabel={t?.('common.back') || 'Voltar'}>
           <IconArrowLeft size={22} color={colors.text} />
@@ -214,6 +220,7 @@ export default function CreatorDashboardScreen() {
         </Text>
         <View style={{ width: 22 }} />
       </View>
+      )}
 
       {loading ? (
         <View style={styles.loadingWrap}>

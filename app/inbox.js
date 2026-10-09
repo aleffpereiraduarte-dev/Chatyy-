@@ -6,6 +6,8 @@ import {
 } from 'react-native';
 // FlashList reverted to FlatList
 import { useRouter, useFocusEffect } from 'expo-router';
+import NativeSheetDialog from '../components/NativeSheetDialog'; // [2026-10-09 native-sheets] sheet do sistema (web = Modal original)
+import { USE_NATIVE_SHEETS } from '../components/NativeSheet';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuth, isChildAccount } from '../context/AuthContext';
 import { useMail } from '../context/MailContext';
@@ -1307,7 +1309,18 @@ function InboxScreenInner() {
     setSnoozeTarget(null);
   };
 
+  // [2026-10-09 more-native] Ação escolhida no menu NATIVO do iOS (EmailRow →
+  // NativeContextMenu) chega como position.nativeAction → despacha direto com
+  // o mesmo objeto de ações do ContextMenu JS (preenchido antes do return).
+  const ctxActionsRef = useRef(null);
   const handleContextMenu = useCallback((email, position) => {
+    if (position && position.nativeAction) {
+      try {
+        const { dispatchEmailMenuAction } = require('../components/emailMenuItems');
+        dispatchEmailMenuAction(position.nativeAction, email, ctxActionsRef.current);
+      } catch {}
+      return;
+    }
     setContextMenu({ visible: true, email, position });
   }, []);
 
@@ -1367,6 +1380,23 @@ function InboxScreenInner() {
     if (!selectMode) { try { Haptics.selectionAsync(); } catch {} }
     toggleSelect(uid);
   }, [selectMode, toggleSelect]);
+
+  // [2026-10-09 more-native] Ações do menu de contexto (sheet JS + menu nativo iOS).
+  const ctxActions = {
+    onReply: handleReply,
+    onReplyAll: handleReplyAll,
+    onForward: handleForward,
+    onArchive: handleArchive,
+    onDelete: (e) => handleDelete(e.uid),
+    onStar: handleStar,
+    onSnooze: handleSnoozeEmail,
+    onSpam: handleReportSpam,
+    onMute: handleMuteToggle,
+    onMarkRead: async (e) => { const { markRead } = await import('../services/api'); await markRead(e.uid, currentFolder); refresh(); try { (await import('../services/pushNotifications')).refreshBadgeCount?.(); } catch {} },
+    onMarkUnread: async (e) => { await markAsUnread(e.uid, currentFolder); refresh(); },
+    onMoveTo: (e) => setMoveToTarget(e),
+  };
+  ctxActionsRef.current = ctxActions;
 
   // Don't render anything while redirecting to login
   if (!user) return <View style={{ flex: 1, backgroundColor: colors.background }} />;
@@ -2224,20 +2254,7 @@ function InboxScreenInner() {
         email={contextMenu.email}
         onClose={() => setContextMenu({ visible: false, email: null, position: { x: 0, y: 0 } })}
         mutedUids={mutedUids}
-        actions={{
-          onReply: handleReply,
-          onReplyAll: handleReplyAll,
-          onForward: handleForward,
-          onArchive: handleArchive,
-          onDelete: (e) => handleDelete(e.uid),
-          onStar: handleStar,
-          onSnooze: handleSnoozeEmail,
-          onSpam: handleReportSpam,
-          onMute: handleMuteToggle,
-          onMarkRead: async (e) => { const { markRead } = await import('../services/api'); await markRead(e.uid, currentFolder); refresh(); try { (await import('../services/pushNotifications')).refreshBadgeCount?.(); } catch {} },
-          onMarkUnread: async (e) => { await markAsUnread(e.uid, currentFolder); refresh(); },
-          onMoveTo: (e) => setMoveToTarget(e),
-        }}
+        actions={ctxActions}
       />
       </Suspense>
       )}
@@ -2344,15 +2361,18 @@ function InboxScreenInner() {
       </Suspense>
     )}
     {/* Inbox layout selector — bottom sheet */}
-    <Modal visible={showLayoutMenu} transparent animationType="fade" onRequestClose={() => setShowLayoutMenu(false)}>
-      <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' }} onPress={() => setShowLayoutMenu(false)}>
-        <Pressable
-          onPress={(e) => e.stopPropagation()}
-          style={{ backgroundColor: colors.background, borderTopLeftRadius: 18, borderTopRightRadius: 18, paddingTop: 14, paddingBottom: 28 }}
-        >
+    <NativeSheetDialog
+      visible={showLayoutMenu}
+      onClose={() => setShowLayoutMenu(false)}
+      overlayStyle={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' }}
+      panelStyle={{ backgroundColor: colors.background, borderTopLeftRadius: 18, borderTopRightRadius: 18, paddingTop: 14, paddingBottom: 28 }}
+      nativePanelStyle={{ paddingTop: 22 }}
+    >
+          {!USE_NATIVE_SHEETS && (
           <View style={{ alignItems: 'center', marginBottom: 6 }}>
             <View style={{ width: 36, height: 4, borderRadius: 2, backgroundColor: colors.border }} />
           </View>
+          )}
           {[
             { key: 'default', label: t('inbox.layoutDefault') || 'Padrão' },
             { key: 'unread_first', label: t('inbox.layoutUnreadFirst') || 'Não lidas primeiro' },
@@ -2368,9 +2388,7 @@ function InboxScreenInner() {
               {inboxLayout === opt.key && <IconCheck size={18} color={colors.primary} />}
             </TouchableOpacity>
           ))}
-        </Pressable>
-      </Pressable>
-    </Modal>
+    </NativeSheetDialog>
     {/* Keyboard shortcut reference overlay — opens with "?" on web */}
     {showShortcutsRef && (
       <Suspense fallback={null}>

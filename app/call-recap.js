@@ -15,7 +15,8 @@
 
 import React, { useEffect, useState, useRef } from 'react';
 import { View, Text, ScrollView, TouchableOpacity, ActivityIndicator, StyleSheet, Platform } from 'react-native';
-import { useRouter, useLocalSearchParams } from 'expo-router';
+import { useRouter, useLocalSearchParams, Stack } from 'expo-router';
+import { USE_NATIVE_HEADER, nativeHeaderOptions } from '../components/nativeHeader'; // [2026-10-09 native-sheets-headers] header NATIVO
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
@@ -91,12 +92,15 @@ export default function CallRecapScreen() {
 
   return (
     <View style={[styles.root, { backgroundColor: colors.background }]}>
+      {USE_NATIVE_HEADER && <Stack.Screen options={nativeHeaderOptions({ colors, isDark, title: t('callRecap.title') })} />}
+      {!USE_NATIVE_HEADER && (
       <View style={[styles.header, { paddingTop: insets.top + 8, borderBottomColor: isDark ? '#1c1c1e' : '#E5E7EB' }]}>
         <TouchableOpacity onPress={() => router.back()} style={styles.backBtn} activeOpacity={0.7}>
           <IconArrowLeft size={22} color={colors.text} />
         </TouchableOpacity>
         <Text style={[styles.title, { color: colors.text }]}>{t('callRecap.title') || 'Resumo da chamada'}</Text>
       </View>
+      )}
 
       <ScrollView contentContainerStyle={{ padding: Spacing.lg, paddingBottom: insets.bottom + 24 }}>
         {(loading || pending) && (

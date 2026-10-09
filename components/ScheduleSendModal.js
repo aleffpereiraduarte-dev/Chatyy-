@@ -4,10 +4,13 @@ import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import { FontSize, Spacing, BorderRadius, Shadow } from '../constants/theme';
 import { IconX, IconClock, IconCalendar, IconSend } from './Icons';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { USE_NATIVE_SHEETS, NativeSheet, nativeSheetBottomPad } from './NativeSheet'; // [2026-10-09 native-sheets]
 
 export default function ScheduleSendModal({ visible, onClose, onSchedule }) {
   const { colors } = useTheme();
   const { t } = useLanguage();
+  const insets = useSafeAreaInsets();
   const [customDate, setCustomDate] = useState('');
 
   const getOptions = () => {
@@ -32,10 +35,9 @@ export default function ScheduleSendModal({ visible, onClose, onSchedule }) {
       d.getHours().toString().padStart(2, '0') + ':' + d.getMinutes().toString().padStart(2, '0');
   };
 
-  return (
-    <Modal visible={visible} animationType="fade" transparent>
-      <TouchableOpacity style={s.overlay} onPress={onClose} activeOpacity={1}>
-        <TouchableOpacity activeOpacity={1} style={[s.modal, Shadow.xl, { backgroundColor: colors.surface }]}>
+  // [2026-10-09 native-sheets] Corpo compartilhado: sheet do sistema (iOS/Android) ou Modal (web).
+  const body = (
+        <>
           <View style={[s.header, { borderBottomColor: colors.borderLight }]}>
             <IconClock size={20} color={colors.primary} style={{ marginRight: Spacing.sm }} />
             <Text style={[s.title, { color: colors.text }]}>{t('schedule.title')}</Text>
@@ -75,6 +77,24 @@ export default function ScheduleSendModal({ visible, onClose, onSchedule }) {
               </TouchableOpacity>
             </View>
           </View>
+        </>
+  );
+
+  if (USE_NATIVE_SHEETS) {
+    return (
+      <NativeSheet visible={!!visible} onClose={onClose} detents="fitToContents" backgroundColor={colors.surface}>
+        <View style={{ paddingTop: 10, paddingBottom: nativeSheetBottomPad(insets, 8), backgroundColor: colors.surface }}>
+          {body}
+        </View>
+      </NativeSheet>
+    );
+  }
+
+  return (
+    <Modal visible={visible} animationType="fade" transparent>
+      <TouchableOpacity style={s.overlay} onPress={onClose} activeOpacity={1}>
+        <TouchableOpacity activeOpacity={1} style={[s.modal, Shadow.xl, { backgroundColor: colors.surface }]}>
+          {body}
         </TouchableOpacity>
       </TouchableOpacity>
     </Modal>

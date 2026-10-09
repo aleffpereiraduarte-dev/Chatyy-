@@ -15,7 +15,8 @@ import {
   View, Text, TouchableOpacity, StyleSheet, Platform,
   Share, ScrollView, Alert,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useRouter, Stack } from 'expo-router';
+import { USE_NATIVE_HEADER, nativeHeaderOptions } from '../components/nativeHeader'; // [2026-10-09 native-sheets-headers]
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
@@ -24,6 +25,7 @@ import { IconX, IconShare, IconCamera, IconUserPlus } from './../components/Icon
 import AvatarCircle from './../components/AvatarCircle';
 import { getAvatarUrlForEmail } from '../services/api';
 import { parseContactQr } from '../utils/contactQr';
+import QrScanTools from '../components/QrScanTools';
 
 // Lazy-load react-native-qrcode-svg so an environment without it (or web
 // SSR without react-native-svg) doesn't crash. Real QRs are preferred but
@@ -92,6 +94,7 @@ export default function ProfileQRScreen() {
   const { t } = useLanguage();
   const [mode, setMode] = useState('show'); // 'show' | 'scan'
   const [scanned, setScanned] = useState(false);
+  const [torch, setTorch] = useState(false); // [2026-10-09 media-native]
   // Always-call shape so hook order stays stable. The fallback no-op hook
   // returns [null, () => {}] when expo-camera isn't bundled (web).
   const _useCamPerm = useCameraPermissions || (() => [null, () => {}]);
@@ -139,6 +142,9 @@ export default function ProfileQRScreen() {
 
   return (
     <View style={[s.root, { backgroundColor: colors.background }]}>
+      {USE_NATIVE_HEADER ? (
+        <Stack.Screen options={nativeHeaderOptions({ colors, isDark, title: t('profile.qrCode') })} />
+      ) : (
       <View style={[s.header, { borderBottomColor: colors.borderLight }]}>
         <TouchableOpacity onPress={() => router.back()} style={s.iconBtn}>
           <IconX size={22} color={colors.text} />
@@ -146,6 +152,7 @@ export default function ProfileQRScreen() {
         <Text style={[s.title, { color: colors.text }]}>{t('profile.qrCode') || 'QR de contato'}</Text>
         <View style={s.iconBtn} />
       </View>
+      )}
 
       <View style={[s.tabs, { borderColor: colors.borderLight }]}>
         <TouchableOpacity
@@ -206,11 +213,13 @@ export default function ProfileQRScreen() {
         ) : (
           <View style={{ flex: 1, alignItems: 'center', paddingTop: 12 }}>
             {Platform.OS !== 'web' && CameraView ? (
-              permission?.granted ? (
+              <>
+              {permission?.granted ? (
                 <View style={s.scanBox}>
                   <CameraView
                     style={StyleSheet.absoluteFill}
                     facing="back"
+                    enableTorch={torch}
                     barcodeScannerSettings={{ barcodeTypes: ['qr'] }}
                     onBarcodeScanned={scanned ? undefined : handleScanned}
                   />
@@ -226,7 +235,15 @@ export default function ProfileQRScreen() {
                     <Text style={s.ctaText}>{t('profile.grantCamera') || 'Permitir câmera'}</Text>
                   </TouchableOpacity>
                 </View>
-              )
+              )}
+              {/* [2026-10-09 media-native] lanterna + ler QR de uma foto (WhatsApp) */}
+              <QrScanTools
+                t={t}
+                torch={torch}
+                onToggleTorch={permission?.granted ? () => setTorch((v) => !v) : null}
+                onResult={(data) => handleScanned({ data })}
+              />
+              </>
             ) : (
               <View style={{ alignItems: 'center', padding: 24 }}>
                 <IconUserPlus size={48} color={colors.textSecondary} />

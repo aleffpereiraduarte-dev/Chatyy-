@@ -17,7 +17,8 @@ import {
   View, Text, TouchableOpacity, ScrollView, FlatList, ActivityIndicator,
   Platform, Modal, TextInput, RefreshControl, Alert, Share, Linking,
 } from 'react-native';
-import { useRouter, useLocalSearchParams } from 'expo-router';
+import { useRouter, useLocalSearchParams, Stack } from 'expo-router';
+import { USE_NATIVE_HEADER, nativeHeaderOptions, HeaderIconButton, NativeHeaderSafeArea } from '../../components/nativeHeader'; // [2026-10-09 native-sheets-headers] header NATIVO
 import { useTheme } from '../../context/ThemeContext';
 import { useLanguage } from '../../context/LanguageContext';
 import * as api from '../../services/api';
@@ -433,8 +434,22 @@ export default function StickerStoreScreen() {
   );
 
   return (
-    <View style={{ flex: 1, backgroundColor: colors.background }}>
+    <NativeHeaderSafeArea style={{ backgroundColor: colors.background }}>
       {/* Header */}
+      {USE_NATIVE_HEADER && <Stack.Screen options={nativeHeaderOptions({
+        colors, title: t('stickerStore.title'),
+        search: {
+          placeholder: t('stickerStore.searchPlaceholder'),
+          onChangeText: (e) => setSearch(e?.nativeEvent?.text || ''),
+          onCancelButtonPress: () => setSearch(''),
+        },
+        headerRight: () => (
+          <HeaderIconButton onPress={() => router.push('/stickers/my')} accessibilityLabel={t('stickerStore.myPacks')}>
+            <IconStar size={20} color={colors.text} />
+          </HeaderIconButton>
+        ),
+      })} />}
+      {!USE_NATIVE_HEADER && (
       <View style={{
         flexDirection: 'row', alignItems: 'center',
         paddingHorizontal: 12, paddingVertical: 12,
@@ -454,8 +469,10 @@ export default function StickerStoreScreen() {
           </Text>
         </TouchableOpacity>
       </View>
+      )}
 
       {/* Busca */}
+      {!USE_NATIVE_HEADER && (
       <View style={{ paddingHorizontal: 16, paddingTop: 12 }}>
         <View style={{
           flexDirection: 'row', alignItems: 'center',
@@ -481,6 +498,7 @@ export default function StickerStoreScreen() {
           )}
         </View>
       </View>
+      )}
 
       {/* Abas */}
       {!searchingMode && (
@@ -555,6 +573,6 @@ export default function StickerStoreScreen() {
         colors={colors}
         t={t}
       />
-    </View>
+    </NativeHeaderSafeArea>
   );
 }

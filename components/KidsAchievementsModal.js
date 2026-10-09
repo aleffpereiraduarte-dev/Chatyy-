@@ -13,6 +13,7 @@ import {
 } from 'react-native';
 import Svg, { Path, Circle as SvgCircle } from 'react-native-svg';
 import * as api from '../services/api';
+import { USE_NATIVE_SHEETS, NativeSheet } from './NativeSheet'; // [2026-10-09 native-sheets]
 
 const { width: SCREEN_W } = Dimensions.get('window');
 
@@ -98,18 +99,15 @@ export default function KidsAchievementsModal({ visible, onClose, colors, isDark
   const unlocked = data?.unlocked_count || 0;
   const total = data?.total || achievements.length;
 
-  return (
-    <Modal visible={!!visible} transparent animationType="slide" onRequestClose={onClose}>
-      <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'flex-end' }}>
-        <View style={{
-          backgroundColor: isDark ? '#0f0720' : '#faf5ff',
-          borderTopLeftRadius: 28, borderTopRightRadius: 28,
-          maxHeight: '90%',
-        }}>
+  const panelBg = isDark ? '#0f0720' : '#faf5ff';
+  // [2026-10-09 native-sheets] Corpo compartilhado: sheet do sistema (iOS/Android) ou Modal (web).
+  const body = (
+        <>
           {/* Gradient header */}
           <View style={[styles.header, Platform.OS === 'web'
             ? { background: 'linear-gradient(135deg, #fbbf24 0%, #f59e0b 50%, #ef4444 100%)' }
             : { backgroundColor: '#f59e0b' },
+            USE_NATIVE_SHEETS ? { borderTopLeftRadius: 0, borderTopRightRadius: 0, paddingTop: 26 } : null,
           ]}>
             <View style={{ flex: 1 }}>
               <Text style={styles.headerTitle}>{t?.('kids.achievements.title') || 'Minhas conquistas'}</Text>
@@ -162,6 +160,28 @@ export default function KidsAchievementsModal({ visible, onClose, colors, isDark
               )}
             </ScrollView>
           )}
+        </>
+  );
+
+  if (USE_NATIVE_SHEETS) {
+    return (
+      <NativeSheet visible={!!visible} onClose={onClose} detents="fitToContents" backgroundColor={panelBg}>
+        <View style={{ backgroundColor: panelBg }}>
+          {body}
+        </View>
+      </NativeSheet>
+    );
+  }
+
+  return (
+    <Modal visible={!!visible} transparent animationType="slide" onRequestClose={onClose}>
+      <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'flex-end' }}>
+        <View style={{
+          backgroundColor: panelBg,
+          borderTopLeftRadius: 28, borderTopRightRadius: 28,
+          maxHeight: '90%',
+        }}>
+          {body}
         </View>
       </View>
     </Modal>

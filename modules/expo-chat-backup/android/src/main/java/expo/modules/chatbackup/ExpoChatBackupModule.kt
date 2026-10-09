@@ -13,6 +13,9 @@ import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.WorkManager
 import androidx.work.Worker
 import androidx.work.WorkerParameters
+import com.google.android.gms.auth.api.identity.AuthorizationRequest
+import com.google.android.gms.auth.api.identity.AuthorizationResult
+import com.google.android.gms.auth.api.identity.Identity
 import com.google.android.gms.auth.api.signin.GoogleSignIn
 import com.google.android.gms.auth.api.signin.GoogleSignInOptions
 import com.google.android.gms.common.api.Scope
@@ -23,6 +26,7 @@ import com.google.api.client.json.gson.GsonFactory
 import com.google.api.services.drive.Drive
 import com.google.api.services.drive.DriveScopes
 import expo.modules.kotlin.Promise
+import expo.modules.kotlin.events.OnActivityResultPayload
 import expo.modules.kotlin.exception.CodedException
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
@@ -90,6 +94,8 @@ class ExpoChatBackupModule : Module() {
     private const val BACKUP_PREFIX = "chatyy-backup-"
     private const val BACKUP_SUFFIX = ".bin"
     private const val MIME_BIN = "application/octet-stream"
+    private const val DRIVE_FILE_SCOPE = "https://www.googleapis.com/auth/drive.file"
+    private const val REQ_DRIVE_AUTH = 47_281
   }
 
   private val ctx: Context get() = appContext.reactContext
@@ -133,6 +139,73 @@ class ExpoChatBackupModule : Module() {
       }.start()
     }
 
+    // ─── [2026-10-09 system-integration] Google Drive authorization ────
+    // Google Identity AuthorizationClient (no client id in code: Google
+    // matches package + signing SHA-1 against an Android OAuth client in the
+    // Firebase/GCP project onemundo-52ca6, which must have the Drive API on).
+    // Resolves { accessToken, grantedScopes } — the JS engine
+    // (services/chatBackupCloud.js) talks to Drive REST with it. First call
+    // shows Google's consent sheet; later calls are silent.
+    AsyncFunction("authorizeDrive") { promise: Promise ->
+      val activity = appContext.currentActivity
+      if (activity == null) {
+        promise.reject("ERR_NO_ACTIVITY", "No foreground activity", null)
+        return@AsyncFunction
+      }
+      try {
+        val request = AuthorizationRequest.builder()
+          .setRequestedScopes(listOf(Scope(DRIVE_FILE_SCOPE)))
+          .build()
+        Identity.getAuthorizationClient(activity).authorize(request)
+          .addOnSuccessListener { result: AuthorizationResult ->
+            val pending = result.pendingIntent
+            if (result.hasResolution() && pending != null) {
+              synchronized(this@ExpoChatBackupModule) {
+                pendingDriveAuth?.reject("ERR_SUPERSEDED", "Superseded by a new request", null)
+                pendingDriveAuth = promise
+              }
+              try {
+                activity.startIntentSenderForResult(pending.intentSender, REQ_DRIVE_AUTH, null, 0, 0, 0, null)
+              } catch (e: Exception) {
+                synchronized(this@ExpoChatBackupModule) { pendingDriveAuth = null }
+                promise.reject("ERR_DRIVE_AUTH", e.message ?: "could not start consent", e)
+              }
+            } else {
+              promise.resolve(authResultMap(result))
+            }
+          }
+          .addOnFailureListener { e ->
+            promise.reject("ERR_DRIVE_AUTH", e.message ?: "authorization failed", e)
+          }
+      } catch (e: Exception) {
+        promise.reject("ERR_DRIVE_AUTH", e.message ?: "authorization failed", e)
+      }
+    }
+
+    OnActivityResult { activity, payload: OnActivityResultPayload ->
+      if (payload.requestCode != REQ_DRIVE_AUTH) return@OnActivityResult
+      val p = synchronized(this@ExpoChatBackupModule) {
+        val cur = pendingDriveAuth
+        pendingDriveAuth = null
+        cur
+      } ?: return@OnActivityResult
+      if (payload.resultCode != Activity.RESULT_OK) {
+        p.reject("ERR_DRIVE_AUTH_CANCELED", "User canceled Google Drive authorization", null)
+        return@OnActivityResult
+      }
+      val data = payload.data
+      if (data == null) {
+        p.reject("ERR_DRIVE_AUTH", "Empty authorization result", null)
+        return@OnActivityResult
+      }
+      try {
+        val result = Identity.getAuthorizationClient(activity).getAuthorizationResultFromIntent(data)
+        p.resolve(authResultMap(result))
+      } catch (e: Exception) {
+        p.reject("ERR_DRIVE_AUTH", e.message ?: "authorization failed", e)
+      }
+    }
+
     AsyncFunction("scheduleAutomaticBackup") { intervalDays: Int, promise: Promise ->
       try {
         val days = if (intervalDays <= 0) 1 else intervalDays
@@ -154,6 +227,15 @@ class ExpoChatBackupModule : Module() {
         promise.reject("ERR_SCHEDULE", e.message ?: "schedule failed", e)
       }
     }
+  }
+
+  @Volatile private var pendingDriveAuth: Promise? = null
+
+  private fun authResultMap(result: AuthorizationResult): Map<String, Any?> {
+    return mapOf(
+      "accessToken" to result.accessToken,
+      "grantedScopes" to result.grantedScopes,
+    )
   }
 
   // ─── High-level operations ──────────────────────────────────────────

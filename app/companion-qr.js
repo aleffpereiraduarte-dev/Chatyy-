@@ -24,7 +24,8 @@ import {
   View, Text, TouchableOpacity, StyleSheet, Platform, ActivityIndicator,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { useRouter } from 'expo-router';
+import { useRouter, Stack } from 'expo-router';
+import { USE_NATIVE_HEADER, nativeHeaderOptions } from '../components/nativeHeader'; // [2026-10-09 native-sheets-headers]
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
@@ -258,13 +259,17 @@ export default function CompanionQRScreen() {
   const payload = token ? `chatyy://companion?token=${token}` : '';
 
   return (
-    <View style={[s.root, { backgroundColor: colors.background, paddingTop: insets.top }]}>
+    <View style={[s.root, { backgroundColor: colors.background, paddingTop: USE_NATIVE_HEADER ? 0 : insets.top }]}>
+      {USE_NATIVE_HEADER ? (
+        <Stack.Screen options={nativeHeaderOptions({ colors, isDark, title: t('devices.companionTitle') })} />
+      ) : (
       <View style={[s.header, { backgroundColor: isDark ? '#1c1c1e' : '#111111', paddingTop: 10 }]}>
         <TouchableOpacity onPress={() => router.back()} style={s.backBtn}>
           <IconArrowLeft size={24} color="#fff" />
         </TouchableOpacity>
         <Text style={s.title}>{t?.('devices.companionTitle') || 'Vincular outro celular'}</Text>
       </View>
+      )}
 
       <View style={s.body}>
         {status === 'loading' ? (

@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { View, Text, FlatList, TouchableOpacity, StyleSheet, ActivityIndicator, Platform } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useRouter, Stack } from 'expo-router';
+import { USE_NATIVE_HEADER, nativeHeaderOptions } from '../components/nativeHeader'; // [2026-10-09 more-native]
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
@@ -68,20 +69,27 @@ export default function StarredMessagesScreen() {
     } catch { return ''; }
   };
 
-  const tabAccent = isDark ? '#111111' : '#fff';
-  const tabInactive = 'rgba(255,255,255,0.6)';
+  // [2026-10-09 more-native] Com header nativo (fundo = superfície do tema) as
+  // abas seguem a mesma superfície (texto/hairline), sem a faixa preta fixa.
+  const tabAccent = USE_NATIVE_HEADER ? colors.text : (isDark ? '#111111' : '#fff');
+  const tabInactive = USE_NATIVE_HEADER ? (colors.textSecondary || colors.secondaryText) : 'rgba(255,255,255,0.6)';
+  const tabBarBg = USE_NATIVE_HEADER ? (colors.headerBgSolid || colors.surface || colors.background) : (isDark ? '#1c1c1e' : '#111111');
 
   return (
-    <View style={[styles.container, { backgroundColor: colors.background, paddingTop: insets.top }]}>
+    <View style={[styles.container, { backgroundColor: colors.background, paddingTop: USE_NATIVE_HEADER ? 0 : insets.top }]}>
+      {USE_NATIVE_HEADER ? (
+        <Stack.Screen options={nativeHeaderOptions({ colors, isDark, title: t('saved.unifiedTitle'), headerShadowVisible: false })} />
+      ) : (
       <View style={[styles.header, { backgroundColor: isDark ? '#1c1c1e' : '#111111', paddingTop: 10 }]}>
         <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
           <IconArrowLeft size={24} color="#fff" />
         </TouchableOpacity>
         <Text style={styles.title}>{t('saved.unifiedTitle') || 'Salvas e favoritas'}</Text>
       </View>
+      )}
 
       {/* Tab switcher — Salvas | Favoritas */}
-      <View style={[styles.tabBar, { backgroundColor: isDark ? '#1c1c1e' : '#111111' }]}>
+      <View style={[styles.tabBar, { backgroundColor: tabBarBg }, USE_NATIVE_HEADER && { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border }]}>
         <TouchableOpacity
           style={[styles.tab, tab === 'saved' && { borderBottomColor: tabAccent }]}
           onPress={() => setTab('saved')}

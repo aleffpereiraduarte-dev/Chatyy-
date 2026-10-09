@@ -5,7 +5,10 @@
 import { androidTopInset } from '../utils/systemInsets'; // [2026-10-07 android-native] edge-to-edge
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { View, Text, TextInput, TouchableOpacity, FlatList, Platform, StyleSheet } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useRouter, Stack } from 'expo-router';
+// [2026-10-09 more-native] Header + busca NATIVOS (UINavigationBar/UISearchController no iOS,
+// Toolbar/SearchView Material no Android). Web mantém o header custom.
+import { USE_NATIVE_HEADER, nativeHeaderOptions, nativeScrollInsetProps, NativeInsetView } from '../components/nativeHeader';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import * as api from '../services/api';
@@ -96,6 +99,19 @@ export default function StatusExceptScreen() {
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.background }}>
+      {USE_NATIVE_HEADER ? (
+        <Stack.Screen options={nativeHeaderOptions({
+          colors,
+          isDark,
+          title: t('settings.privacyStatusExcept'),
+          search: {
+            placeholder: t('common.search'),
+            onChangeText: (e) => setQuery(e?.nativeEvent?.text || ''),
+            onCancelButtonPress: () => setQuery(''),
+          },
+          headerRight: () => <IconEyeOff size={20} color={colors.text} />,
+        })} />
+      ) : (
       <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingTop: Platform.OS === 'ios' ? 50 : androidTopInset(16), paddingBottom: 12, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border }}>
         <TouchableOpacity onPress={() => router.back()} style={{ padding: 8 }}>
           <IconArrowLeft size={22} color={colors.text} />
@@ -108,7 +124,9 @@ export default function StatusExceptScreen() {
         </View>
         <IconEyeOff size={22} color={colors.textSecondary} />
       </View>
+      )}
 
+      {!USE_NATIVE_HEADER && (
       <View style={{ padding: 12 }}>
         <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: isDark ? '#222' : '#f1f5f9', borderRadius: 12, paddingHorizontal: 12 }}>
           <IconSearch size={18} color={colors.textSecondary} />
@@ -121,11 +139,19 @@ export default function StatusExceptScreen() {
           />
         </View>
       </View>
+      )}
 
       {loading ? (
-        <Text style={{ color: colors.textSecondary, textAlign: 'center', marginTop: 20 }}>{t?.('common.loading') || 'Carregando...'}</Text>
+        <NativeInsetView>
+          <Text style={{ color: colors.textSecondary, textAlign: 'center', marginTop: 20 }}>{t('common.loading')}</Text>
+        </NativeInsetView>
       ) : (
         <FlatList
+          {...nativeScrollInsetProps()}
+          keyboardDismissMode="on-drag"
+          ListHeaderComponent={USE_NATIVE_HEADER ? (
+            <Text style={{ fontSize: 13, color: colors.textSecondary, paddingHorizontal: 16, paddingTop: 10, paddingBottom: 4 }}>{subtitleText}</Text>
+          ) : null}
           data={filtered}
           extraData={excluded}
           keyExtractor={(item, i) => (item.email || item.friend_email || '') + i}

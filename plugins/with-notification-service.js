@@ -124,6 +124,13 @@ const INFO_PLIST = `<?xml version="1.0" encoding="UTF-8"?>
 \t<string>1</string>
 \t<key>NSExtension</key>
 \t<dict>
+\t\t<key>NSExtensionAttributes</key>
+\t\t<dict>
+\t\t\t<key>IntentsSupported</key>
+\t\t\t<array>
+\t\t\t\t<string>INSendMessageIntent</string>
+\t\t\t</array>
+\t\t</dict>
 \t\t<key>NSExtensionPointIdentifier</key>
 \t\t<string>com.apple.usernotifications.service</string>
 \t\t<key>NSExtensionPrincipalClass</key>

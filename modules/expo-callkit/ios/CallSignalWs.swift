@@ -50,7 +50,9 @@ final class CallSignalWs: NSObject {
 
     // MARK: – Tunables
     private let kAppGroupId = "group.com.onemundo.mail"
-    private let kWsURL = URL(string: "wss://ws.chatyy.com.br/ws")!
+    // [2026-10-09 native-transport] URL por conexão = ChatyyWsEndpoint.pick()
+    // (entrada regional api-br/api-eu escolhida pelo JS, fallback US).
+    private var taskURL: URL?
     private let pingInterval: TimeInterval = 25
     private let authTimeout: TimeInterval = 5
     private let maxQueue = 64
@@ -355,7 +357,9 @@ final class CallSignalWs: NSObject {
             task = nil
             old.cancel(with: .goingAway, reason: nil)
         }
-        let newTask = session!.webSocketTask(with: kWsURL)
+        let url = ChatyyWsEndpoint.pick()
+        taskURL = url
+        let newTask = session!.webSocketTask(with: url)
         task = newTask
         newTask.resume()
 
@@ -439,6 +443,7 @@ final class CallSignalWs: NSObject {
         case "auth_success":
             NSLog("[CallSignalWs] auth_success — draining \(pendingMessages.count) queued frame(s)")
             authed = true
+            ChatyyWsEndpoint.noteAuthed(taskURL)
             connecting = false
             reconnectAttempts = 0
             authTimeoutWorkItem?.cancel()
@@ -1015,6 +1020,13 @@ final class CallSignalWs: NSObject {
             update.supportsUngrouping = false
             update.supportsHolding = true
             update.supportsDTMF = false
+            // [2026-10-09 recents-redial] handle → account for Recents redial.
+            CallRecentsIntentStore.remember(
+                handleValue: update.remoteHandle?.value ?? callerName,
+                email: callerEmail,
+                name: callerName,
+                conversationId: conversationId
+            )
             provider.reportNewIncomingCall(with: uuid, update: update) { error in
                 if let error = error {
                     NSLog("[CallSignalWs] reportNewIncomingCall failed: \(error.localizedDescription)")
@@ -1074,6 +1086,7 @@ final class CallSignalWs: NSObject {
             failed.cancel(with: .goingAway, reason: nil)
             return
         }
+        if !authed && task != nil { ChatyyWsEndpoint.noteFailedBeforeAuth(taskURL) }
         authed = false
         connecting = false
         task?.cancel(with: .goingAway, reason: nil)

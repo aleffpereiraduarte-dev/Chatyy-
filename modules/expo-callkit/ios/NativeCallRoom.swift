@@ -632,8 +632,61 @@ public class NativeCallTokenFetcher {
     public struct TokenResult {
         public let token: String
         public let url: String
+        // [2026-10-09 native-transport] iceServers do chat_livekit_token
+        // (TURN regional + credencial de 1h). Vazio = usa os do LiveKit.
+        public var iceServers: [IceServer] = []
     }
     public static let shared = NativeCallTokenFetcher()
+
+    // [2026-10-09 native-transport] iceServers por token LiveKit. O token
+    // passa por vários caminhos (preconnect do VoIP, cache, apresentação do
+    // CallViewController) só como String — indexar pelo próprio token evita
+    // mudar todas essas assinaturas. Tokens que vieram do JS não estão aqui →
+    // connect() segue sem ConnectOptions (comportamento antigo).
+    private static let iceLock = NSLock()
+    private static var iceByToken: [String: [IceServer]] = [:]
+    private static var iceOrder: [String] = []
+
+    static func rememberIceServers(_ ice: [IceServer], forToken token: String) {
+        guard !ice.isEmpty, !token.isEmpty else { return }
+        iceLock.lock(); defer { iceLock.unlock() }
+        if iceByToken[token] == nil { iceOrder.append(token) }
+        iceByToken[token] = ice
+        while iceOrder.count > 8 {
+            let old = iceOrder.removeFirst()
+            iceByToken.removeValue(forKey: old)
+        }
+    }
+
+    public static func iceServers(forToken token: String) -> [IceServer] {
+        iceLock.lock(); defer { iceLock.unlock() }
+        return iceByToken[token] ?? []
+    }
+
+    /// ConnectOptions com os iceServers do token, ou nil (→ connect sem options,
+    /// idêntico ao comportamento anterior).
+    public static func connectOptions(forToken token: String) -> ConnectOptions? {
+        let ice = iceServers(forToken: token)
+        if ice.isEmpty { return nil }
+        return ConnectOptions(iceServers: ice, iceTransportPolicy: .all)
+    }
+
+    /// Lê `iceServers` do envelope ({urls: String|[String], username?, credential?}).
+    static func parseIceServers(_ raw: Any?) -> [IceServer] {
+        guard let arr = raw as? [[String: Any]] else { return [] }
+        var out: [IceServer] = []
+        for s in arr {
+            var urls: [String] = []
+            if let u = s["urls"] as? String { urls = [u] }
+            else if let us = s["urls"] as? [Any] { urls = us.compactMap { $0 as? String } }
+            urls = urls.filter { !$0.isEmpty }
+            if urls.isEmpty { continue }
+            let user = (s["username"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+            let cred = (s["credential"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+            out.append(IceServer(urls: urls, username: user, credential: cred))
+        }
+        return out
+    }
 
     /// [STAGE-A 2026-05-20] GAP #7 — MD5 hex helper for the per-device
     /// identity suffix. CryptoKit's Insecure.MD5 is fine here: we only
@@ -743,7 +796,9 @@ public class NativeCallTokenFetcher {
             NSLog("[CallTrace][7b/12] LkTokenFetcher result success=false err=emptyUrl elapsedMs=\(Int(Date().timeIntervalSince1970 * 1000 - __ct_t0))")
             throw FetchError.malformedResponse(bodyStr)
         }
-        NSLog("[CallTrace][7b/12] LkTokenFetcher result success=true url=\(lkUrl) elapsedMs=\(Int(Date().timeIntervalSince1970 * 1000 - __ct_t0))")
-        return TokenResult(token: token, url: lkUrl)
+        let ice = Self.parseIceServers(envelope["iceServers"])
+        Self.rememberIceServers(ice, forToken: token)
+        NSLog("[CallTrace][7b/12] LkTokenFetcher result success=true url=\(lkUrl) ice=\(ice.count) elapsedMs=\(Int(Date().timeIntervalSince1970 * 1000 - __ct_t0))")
+        return TokenResult(token: token, url: lkUrl, iceServers: ice)
     }
 }

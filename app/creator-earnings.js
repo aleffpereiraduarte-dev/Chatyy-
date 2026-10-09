@@ -21,7 +21,8 @@ import {
   View, Text, StyleSheet, TouchableOpacity, ScrollView, ActivityIndicator,
   RefreshControl, StatusBar,
 } from 'react-native';
-import { useRouter, Redirect } from 'expo-router';
+import { useRouter, Redirect, Stack } from 'expo-router';
+import { USE_NATIVE_HEADER, nativeHeaderOptions } from '../components/nativeHeader'; // [2026-10-09 native-sheets-headers] header NATIVO
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
@@ -200,9 +201,11 @@ export default function CreatorEarningsScreen() {
   const canCashout = data.pending_payout_cents >= MIN_CASHOUT_CENTS;
 
   return (
-    <View style={[styles.container, { backgroundColor: colors.background, paddingTop: (insets.top || 0) + 8 }]}>
+    <View style={[styles.container, { backgroundColor: colors.background, paddingTop: USE_NATIVE_HEADER ? 0 : (insets.top || 0) + 8 }]}>
       <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} />
 
+      {USE_NATIVE_HEADER && <Stack.Screen options={nativeHeaderOptions({ colors, isDark, title: t('creatorEarnings.title') })} />}
+      {!USE_NATIVE_HEADER && (
       <View style={styles.headBar}>
         <TouchableOpacity
           onPress={() => router.back()}
@@ -217,6 +220,7 @@ export default function CreatorEarningsScreen() {
         </Text>
         <View style={{ width: 38 }} />
       </View>
+      )}
 
       {loading ? (
         <View style={{ paddingTop: 80, alignItems: 'center' }}>

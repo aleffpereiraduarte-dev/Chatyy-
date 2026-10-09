@@ -17,6 +17,7 @@ import { STORAGE_TIERS, purchaseStorage, getStorageLocalizedPrice } from '../ser
 import { getBaseUrl, storageUsage } from '../services/api';
 import { startStripeCheckout, openStripePortal, isStripeCardAvailable, isStripeStorageCheckoutAvailable } from '../services/stripeCheckout';
 import { IconX, IconCloud, IconCheck, IconCheckCircle, IconUsers, IconImage, IconShield, IconZap } from './Icons';
+import { USE_NATIVE_SHEETS, NativeSheet } from './NativeSheet'; // [2026-10-09 native-sheets]
 
 function formatBrl(v) {
   const n = Number(v) || 0;
@@ -40,7 +41,9 @@ function fmtBytes(b) {
   return Math.round(v / 1024) + ' KB';
 }
 
-export default function StorageShopSheet({ visible, onClose, currentTier = 'free', usedBytes, limitBytes }) {
+// [2026-10-09 native-sheets] native=false quando o dono é um <Modal> RN (ProfileSettingsSheet):
+// apresentar o formSheet por cima faria o react-native-screens fechar o Modal.
+export default function StorageShopSheet({ visible, onClose, currentTier = 'free', usedBytes, limitBytes, native = true }) {
   const { colors, isDark } = useTheme();
   const { t } = useLanguage();
   const { height: winH } = useWindowDimensions();
@@ -158,10 +161,9 @@ export default function StorageShopSheet({ visible, onClose, currentTier = 'free
     { Icon: IconShield, text: t('storage.perk.cancel') || 'Cancele quando quiser' },
   ];
 
-  return (
-    <Modal visible={!!visible} transparent animationType="slide" onRequestClose={onClose}>
-      <View style={styles.backdrop}>
-        <View style={[styles.sheet, { backgroundColor: colors.background, maxHeight: winH * 0.92 }]}>
+  // Corpo compartilhado: sheet do sistema (iOS/Android) ou Modal (web / dono em Modal).
+  const body = (
+        <>
           {/* Header */}
           <View style={styles.head}>
             <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1, gap: 8 }}>
@@ -369,6 +371,24 @@ export default function StorageShopSheet({ visible, onClose, currentTier = 'free
               {t('storage.cancelAnytime') || 'Cancele quando quiser. Assinatura renova automaticamente.'}
             </Text>
           </View>
+        </>
+  );
+
+  if (USE_NATIVE_SHEETS && native) {
+    return (
+      <NativeSheet visible={!!visible} onClose={onClose} detents={[0.92]} backgroundColor={colors.background}>
+        <View style={[styles.sheet, { flex: 1, paddingTop: 22, backgroundColor: colors.background }]}>
+          {body}
+        </View>
+      </NativeSheet>
+    );
+  }
+
+  return (
+    <Modal visible={!!visible} transparent animationType="slide" onRequestClose={onClose}>
+      <View style={styles.backdrop}>
+        <View style={[styles.sheet, { backgroundColor: colors.background, maxHeight: winH * 0.92 }]}>
+          {body}
         </View>
       </View>
     </Modal>

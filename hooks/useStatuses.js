@@ -270,7 +270,10 @@ function _normalize(raw, currentEmail) {
       .map(it => ({
         ...it,
         // The full UI uses `bgColor` (camel); home reads `bg_color`. Provide both.
-        bgColor: it.bg_color || it.bgColor || '#6D28D9',
+        // [2026-10-09 status-composer] o wire manda `background` (status_list/
+        // status_create/WS) — sem ele todo status de texto com gradiente/cor
+        // aparecia ROXO (#6D28D9) no viewer.
+        bgColor: it.bg_color || it.bgColor || it.background || '#6D28D9',
         timestamp: it.created_at,
       }));
     if (items.length === 0) continue; // group with all items expired → drop

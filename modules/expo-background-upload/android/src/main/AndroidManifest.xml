@@ -28,5 +28,12 @@
     <!-- WorkManager auto-discovers the BackupWorker via reflection; no
          <service> entry is required because WorkManager runs its own
          systemForegroundService internally. -->
+    <!-- [2026-10-09 media-native] ChatTransferWorker calls setForeground()
+         with FOREGROUND_SERVICE_TYPE_DATA_SYNC: Android 14+ requires the
+         type to be declared on WorkManager's service (merged here). -->
+    <service
+      android:name="androidx.work.impl.foreground.SystemForegroundService"
+      android:foregroundServiceType="dataSync"
+      tools:node="merge" />
   </application>
 </manifest>

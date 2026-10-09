@@ -21,6 +21,16 @@ function withVoipPush(config) {
       bgModes.push('remote-notification');
     }
     config.modResults.UIBackgroundModes = bgModes;
+    // [2026-10-09 recents-redial] Phone.app Recents / CarPlay / Siri hand the
+    // app an INStartCallIntent user activity (CallIntentAppDelegateSubscriber).
+    // Merge — never drop INSendMessageIntent (Communication Notifications).
+    const activityTypes = Array.isArray(config.modResults.NSUserActivityTypes)
+      ? config.modResults.NSUserActivityTypes
+      : [];
+    for (const type of ['INStartCallIntent', 'INStartAudioCallIntent', 'INStartVideoCallIntent']) {
+      if (!activityTypes.includes(type)) activityTypes.push(type);
+    }
+    config.modResults.NSUserActivityTypes = activityTypes;
     return config;
   });
 
@@ -28,6 +38,14 @@ function withVoipPush(config) {
   config = withEntitlementsPlist(config, (config) => {
     config.modResults['aps-environment'] =
       config.modResults['aps-environment'] || 'production';
+    // [2026-10-09 pip-camera] Camera keeps running while the video call is in
+    // Picture-in-Picture (CallMultitaskingCamera). MANAGED entitlement: Apple
+    // must grant it to the team first (request form "Multitasking Camera
+    // Access"), and the App ID / provisioning profile must include it —
+    // otherwise signing fails. Gated OFF until then.
+    if (process.env.CHATYY_MULTITASK_CAMERA === '1') {
+      config.modResults['com.apple.developer.avfoundation.multitasking-camera-access'] = true;
+    }
     return config;
   });
 

@@ -71,7 +71,9 @@ import java.util.concurrent.atomic.AtomicReference
  */
 object ChatCoreSocket {
     private const val TAG = "ChatCoreSocket"
-    private const val WS_URL = "wss://ws.chatyy.com.br/ws"
+    // [2026-10-09 native-transport] URL por conexão = ChatyyWsEndpoint.pick()
+    // (entrada regional api-br/api-eu escolhida pelo JS, fallback US).
+    @Volatile private var wsUrlCur: String? = null
     private const val PREFS = "chatyy_chat_core"
     private const val KEY_LAST_EVENT = "last_event_id"
     private const val KEY_LAST_EVENT_ACCT = "last_event_acct"
@@ -307,7 +309,9 @@ object ChatCoreSocket {
         }
         bump("connect")
         emitState("connecting")
-        val req = Request.Builder().url(WS_URL).build()
+        val wsUrl = ChatyyWsEndpoint.pick(ctx)
+        wsUrlCur = wsUrl
+        val req = Request.Builder().url(wsUrl).build()
         val listenerObj = object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
                 val cur = wsRef.get()
@@ -370,6 +374,7 @@ object ChatCoreSocket {
         // Callback of a socket that is no longer the current one → ignore.
         if (!wsRef.compareAndSet(ws, null)) return
         watchdogJob?.cancel(); watchdogJob = null
+        if (!authed.get()) ChatyyWsEndpoint.noteFailedBeforeAuth(wsUrlCur)
         authed.set(false)
         connecting.set(false)
         bump("disconnect")
@@ -485,6 +490,7 @@ object ChatCoreSocket {
                 }
                 authedAcct = if (email.isNotEmpty()) email else expectedAcct
                 authed.set(true)
+                ChatyyWsEndpoint.noteAuthed(wsUrlCur)
                 connecting.set(false)
                 attempts.set(0)
                 watchdogJob?.cancel(); watchdogJob = null

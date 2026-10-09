@@ -124,6 +124,8 @@ import { useRouter, useLocalSearchParams } from 'expo-router';
 // [VISTO AZUL FALSO causa-raiz 2026-10-06] useIsFocused: recibo de leitura SÓ
 // quando esta tela é a focada na pilha (não há modal/outra tela por cima).
 import { useIsFocused } from '@react-navigation/native';
+import NativeSheetDialog from '../components/NativeSheetDialog'; // [2026-10-09 native-sheets] sheet do sistema (web = Modal original)
+import { USE_NATIVE_SHEETS, NativeSheet } from '../components/NativeSheet';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import ReactionBurst from '../components/ReactionBurst';
 import { useTheme } from '../context/ThemeContext';
@@ -5858,6 +5860,8 @@ function MediaPreview({ visible, onClose, onSend, files: filesProp, colors, hdMo
         quality: 1.0,
         allowsMultipleSelection: true,
         selectionLimit: 30,
+        // [2026-10-09 more-native] iOS PHPicker numera 1,2,3 e devolve na ordem tocada (WhatsApp).
+        orderedSelection: true,
         videoMaxDuration: 300,
       });
       if (result.canceled || !result.assets?.length) return;
@@ -9062,6 +9066,8 @@ function ChatConversationInner() {
   const _sanitizeNativeMsg = (m) => {
     if (!m) return null;
     const c = { ...m };
+    // [2026-10-09 e2ee v4] cache nativo guarda o envelope, não o texto.
+    if (typeof c._e2eRaw === 'string' && c._e2eRaw.startsWith('{"e2e":4')) c.content = c._e2eRaw;
     delete c._e2eRaw;
     delete c._pending;
     delete c._failed;
@@ -9371,6 +9377,7 @@ function ChatConversationInner() {
           // but KEEP the original payload in _e2eRaw so a follow-up effect can
           // decrypt it as soon as the secret key finishes loading.
           if ((j.e2e === 1 || j.e2e === 2 || j.e2e === 3) && j.envelopes) return { ...msg, content: '...', _e2e: true, _e2eRaw: trimmed };
+          if (j.e2e === 4 && j.c) return { ...msg, content: '...', _e2e: true, _e2eRaw: trimmed };
         } catch {}
         return msg;
       });
@@ -9875,8 +9882,11 @@ function ChatConversationInner() {
           draftSavedRef.current = trimmed;
           try { DeviceEventEmitter.emit('chatyy:draft', { conversationId: String(conversationId), text: trimmed }); } catch {}
           try {
+            // [2026-10-09 e2ee v4] Conversa cifrada: rascunho fica só no aparelho.
+            let _e2eeConv = false;
+            try { _e2eeConv = !!trimmed && require('../services/e2eeV4').isConversationE2ee(conversationId); } catch {}
             const { chatDraftSet } = require('../services/api');
-            chatDraftSet(conversationId, trimmed).catch(() => {});
+            if (!_e2eeConv) chatDraftSet(conversationId, trimmed).catch(() => {});
           } catch {}
         }
       } catch {}
@@ -10127,7 +10137,7 @@ function ChatConversationInner() {
     const pending = readHttpPendingRef.current;
     readHttpPendingRef.current = null;
     if (!pending || !pending.convId || !pending.id) return;
-    api.chatRead(pending.convId, pending.id).catch(() => {
+    const _queueRead = () => {
       try {
         const { queueOfflineAction } = require('../services/offlineCache');
         // [read-id fix] Carry message_id so the replay advances the server's
@@ -10135,7 +10145,16 @@ function ChatConversationInner() {
         // losing chatReadAck). Without it the peer's blue ticks could regress.
         queueOfflineAction({ type: 'chat_read', conversation_id: pending.convId, message_id: pending.id }).catch(() => {});
       } catch {}
-    });
+    };
+    // [2026-10-09 net-resilience] apiCall NÃO lança em timeout/queda — devolve
+    // {success:false}. Antes o .catch nunca rodava e o "visto" persistido se
+    // perdia em rede ruim (bancada 2G/perda/RTT alto: read_by vazio >60s).
+    api.chatRead(pending.convId, pending.id).then((r) => {
+      if (r && r.success === false) {
+        const st = Number(r.__httpStatus) || 0;
+        if (!(st >= 400 && st < 500)) _queueRead();
+      }
+    }).catch(_queueRead);
   }, []);
   const readHttpFlushRef = useRef(_flushReadHttp);
   readHttpFlushRef.current = _flushReadHttp;
@@ -11315,6 +11334,9 @@ function ChatConversationInner() {
   const myDeviceIdRef = useRef(null);
   const [e2eInitializing, setE2eInitializing] = useState(false);
   const e2eInitSeqRef = useRef(0);
+  // [2026-10-09 e2ee v4] Estado do E2EE v4 (vodozemac/Olm) desta conversa:
+  // { supported, allowed, enabled, peer, me, ... } — ver services/e2eeV4.js.
+  const e2eV4Ref = useRef(null);
 
   // Initialize E2EE: register keys on server, check conversation E2E status, fetch member keys
   useEffect(() => {
@@ -11329,9 +11351,29 @@ function ChatConversationInner() {
 
     const initE2EE = async () => {
       try {
+        // [2026-10-09 e2ee v4] Flag de SERVIDOR (só contas liberadas). Se a
+        // conversa está cifrada em v4, liga o modo e NÃO toca o legado.
+        try {
+          const _v4 = require('../services/e2eeV4');
+          const _st = await _v4.prepareConversation(conversationId);
+          if (!isFresh()) return;
+          e2eV4Ref.current = _st;
+          if (_st.enabled) {
+            setE2eEnabled(true);
+            setE2eKeys({ v4: true });
+            setE2eBundles(null);
+            return;
+          }
+          if (_st.allowed) return;
+        } catch {}
+
         const e2eeOrch = require('../services/e2ee');
 
-        // 1. Initialize E2EE keys for this device (registers with server, idempotent)
+        // 1. Legado (e2e v1-v3): só inicializa (gera prekeys + backup) se a
+        // conversa for E2EE legado. Antes rodava em TODA conversa aberta,
+        // publicando 50 prekeys + backup da chave a cada abertura.
+        const _legacyOn = await e2eeOrch.checkConversationE2E(conversationId);
+        if (!isFresh() || !_legacyOn) return;
         await e2eeOrch.initialize(currentEmail, api.getSavedPassword?.() || '');
         if (!isFresh()) return;
 
@@ -11412,6 +11454,35 @@ function ChatConversationInner() {
     setE2eInitializing(true);
 
     try {
+      // [2026-10-09 e2ee v4] Conta liberada pela flag → liga/desliga o v4.
+      const _v4st = e2eV4Ref.current;
+      if (_v4st?.allowed) {
+        const _v4 = require('../services/e2eeV4');
+        const _tr = (k, fb) => { const v = t(k); return v && v !== k ? v : fb; };
+        if (e2eEnabled) {
+          const r = await _v4.disableConversation(conversationId);
+          if (r.success) { e2eV4Ref.current = { ..._v4st, enabled: false }; setE2eEnabled(false); setE2eKeys(null); }
+          else safeAlert(t('common.error'), t('chatConv.e2eDisableFailed'));
+          return;
+        }
+        if (!_v4st.supported) {
+          safeAlert(_tr('e2ee.title', 'Criptografia de ponta a ponta'), _tr('e2ee.unsupportedDevice', 'Este aparelho ainda não suporta a nova criptografia. Use o Chatyy na web por enquanto.'));
+          return;
+        }
+        const prep = await _v4.prepareConversation(conversationId);
+        e2eV4Ref.current = prep;
+        const r = await _v4.enableConversation(conversationId);
+        if (r.success) {
+          e2eV4Ref.current = { ...prep, enabled: true };
+          setE2eEnabled(true); setE2eKeys({ v4: true }); setE2eBundles(null);
+        } else if (r.code === 'peer_no_keys' || r.code === 'peer_not_allowed') {
+          safeAlert(_tr('e2ee.title', 'Criptografia de ponta a ponta'), _tr('e2ee.peerNoKeys', 'O contato ainda não ativou a criptografia em nenhum aparelho. Peça para ele abrir esta conversa.'));
+        } else {
+          safeAlert(t('common.error'), r.message || t('chatConv.e2eEnableFailed'));
+        }
+        return;
+      }
+
       const e2eeOrch = require('../services/e2ee');
 
       if (e2eEnabled) {
@@ -11460,6 +11531,17 @@ function ChatConversationInner() {
       setE2eInitializing(false);
     }
   }, [e2eEnabled, e2eInitializing, conversationId, currentEmail, t]);
+
+  // [2026-10-09 e2ee v4] Linha "Criptografia" (info do contato + menu): conta
+  // liberada pela flag → ativa (se desligado) ou abre o número de segurança.
+  // Devolve false quando não se aplica (cai no alerta informativo antigo).
+  const handleE2eV4RowPress = useCallback(() => {
+    const st = e2eV4Ref.current;
+    if (!st?.allowed || conversationType !== 'direct') return false;
+    if (e2eEnabled) setShowSafetyNumber(true);
+    else handleToggleE2E();
+    return true;
+  }, [e2eEnabled, conversationType, handleToggleE2E]);
 
   // Wallpaper — saved per conversation only (no longer touches global chatyy settings).
   // Pass null/'__global__' to revert to the global wallpaper.
@@ -11582,6 +11664,30 @@ function ChatConversationInner() {
         if (c.startsWith('{') && c.indexOf('"e2e"') >= 0) raw = c;
       }
       if (!raw) return msg;
+
+      // [2026-10-09 e2ee v4] Envelope vodozemac/Olm: decifra no aparelho;
+      // texto fica em cache local cifrado (recarregar não pede de novo).
+      if (raw.startsWith('{"e2e":4')) {
+        let _v4 = null;
+        try { _v4 = require('../services/e2eeV4'); } catch {}
+        if (!_v4) return { ...msg, content: '...', _e2e: true, _e2eRaw: raw };
+        const _peek = _v4.peekPlaintext(raw);
+        if (_peek != null) return { ...msg, content: _peek, _e2e: true, _e2eRaw: raw };
+        const _fail = _v4.peekFailure(raw);
+        if (_fail) return { ...msg, content: _v4.placeholderText(_fail, t), _e2e: true, _e2eFailed: true, _e2eRaw: raw };
+        const _msgId = msg.id;
+        _v4.decryptForDisplay(raw, { convId: msg.conversation_id || conversationId, senderEmail: msg.sender_email || '' }).then((r) => {
+          if (!mountedRef.current) return;
+          setMessages(prev => prev.map(m => {
+            // Casa por id OU pelo próprio envelope (a linha pode ter trocado de
+            // id temp→servidor, ou vindo de outra fonte, enquanto decifrava).
+            if (!m || (m.id !== _msgId && m._e2eRaw !== raw)) return m;
+            // _e2eRaw fica SEMPRE (caches persistem o envelope, não o texto).
+            return { ...m, content: r.ok ? r.text : _v4.placeholderText(r.code, t), _e2e: true, _e2eFailed: !r.ok, _e2eRaw: raw };
+          }));
+        }).catch(() => {});
+        return { ...msg, content: '...', _e2e: true, _e2eRaw: raw };
+      }
 
       if (e2eSecretKeyRef.current && currentEmail) {
         try {
@@ -11843,6 +11949,11 @@ function ChatConversationInner() {
         }
 
         // Last-resort guard: never let an undecrypted E2E envelope show as raw JSON
+        // [2026-10-09 e2ee v4] Caminhos de cache/carregamento só passam por
+        // aqui → decifra (ou usa o texto já em cache local) também.
+        if (jsonData.e2e === 4 && jsonData.c) {
+          return decryptMessages([{ ...msg, _e2eRaw: contentTrimmed }])[0];
+        }
         if ((jsonData.e2e === 1 || jsonData.e2e === 2 || jsonData.e2e === 3) && jsonData.envelopes) {
           return { ...msg, content: '...', _e2e: true, _e2eRaw: contentTrimmed };
         }
@@ -13375,7 +13486,12 @@ function ChatConversationInner() {
         if (!appActiveRef.current) return;
         const inbound = mailWs?.lastInboundAt || 0;
         const looksZombie = !mailWs?.authenticated || (Date.now() - inbound) > 10000;
-        const gap = looksZombie ? 3500 : 10000;
+        // [2026-10-09 net-resilience] enlace lento (2G/3G/RTT alto): socket
+        // saudável → 30 s (cada poll disputa o uplink com envio/recibo); zumbi
+        // → 6 s (um chat_sync leva >3.5 s nesse enlace; não empilha).
+        let _lk = 'fast';
+        try { _lk = require('../services/networkInfo').getLinkClass?.() || 'fast'; } catch {}
+        const gap = looksZombie ? (_lk === 'fast' ? 3500 : 6000) : (_lk === 'fast' ? 10000 : 30000);
         if (Date.now() - _lastPollAt >= gap) {
           _lastPollAt = Date.now();
           runDeltaSync();
@@ -15566,7 +15682,16 @@ function ChatConversationInner() {
       setSending(true);
       try {
         let editContent = text;
-        if (e2eEnabled && e2eKeys) {
+        if (e2eEnabled && e2eKeys?.v4) {
+          // [2026-10-09 e2ee v4] Edição também vai cifrada; falhou → não edita.
+          try { editContent = await require('../services/e2eeV4').encryptText(conversationId, e2eV4Ref.current?.peer, text); }
+          catch {
+            setSending(false);
+            sendingRef.current = false;
+            safeAlert(t('common.error'), (t('e2ee.sendFailedBody') !== 'e2ee.sendFailedBody' && t('e2ee.sendFailedBody')) || 'Não foi possível criptografar a mensagem. Nada foi enviado. Tente de novo.');
+            return;
+          }
+        } else if (e2eEnabled && e2eKeys) {
           const usableV3 = e2eBundles && Object.keys(e2eBundles).length > 0;
           if (usableV3) {
             try { editContent = await e2eService.createEnvelopeV3(text, currentEmail, e2eBundles, myDeviceIdRef.current); }
@@ -15859,8 +15984,14 @@ function ChatConversationInner() {
     let contentToSend = text;
     if (e2eEnabled && e2eKeys) {
       let encrypted = null;
+      let _v4Err = null;
       const usableV3 = e2eBundles && Object.keys(e2eBundles).length > 0;
-      if (usableV3) {
+      if (e2eKeys.v4) {
+        // [2026-10-09 e2ee v4] vodozemac/Olm por aparelho. Falhou → NÃO envia.
+        try {
+          encrypted = await require('../services/e2eeV4').encryptText(conversationId, e2eV4Ref.current?.peer, text);
+        } catch (e) { _v4Err = e?.code || 'encrypt_failed'; encrypted = null; }
+      } else if (usableV3) {
         try { encrypted = await e2eService.createEnvelopeV3(text, currentEmail, e2eBundles, myDeviceIdRef.current); }
         catch {
           try { encrypted = await e2eService.createEnvelopeV2(text, currentEmail, e2eBundles); }
@@ -15870,6 +16001,23 @@ function ChatConversationInner() {
         }
       } else {
         try { encrypted = e2eService.createEnvelope(text, currentEmail, e2eKeys); } catch {}
+      }
+      if (e2eKeys.v4 && (!encrypted || typeof encrypted !== 'string' || encrypted === text)) {
+        setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _failed: true, _pending: false, _sendError: 'encryption_failed' } : m));
+        removePendingMessage(conversationId, tempId).catch(() => {});
+        _dropOptimisticNativeRow();
+        if (OUTBOX_V2_ONLY) _outboxThen(() => messageOutbox.remove(msgId));
+        setSending(false);
+        const _tr = (k, fb) => { const v = t(k); return v && v !== k ? v : fb; };
+        safeAlert(
+          _tr('e2ee.sendFailedTitle', 'Mensagem não enviada'),
+          _v4Err === 'peer_no_keys'
+            ? _tr('e2ee.peerNoKeys', 'O contato ainda não ativou a criptografia em nenhum aparelho. Peça para ele abrir esta conversa.')
+            : _v4Err === 'e2ee_unsupported'
+              ? _tr('e2ee.unsupportedDevice', 'Este aparelho ainda não suporta a nova criptografia. Use o Chatyy na web por enquanto.')
+              : _tr('e2ee.sendFailedBody', 'Não foi possível criptografar a mensagem. Nada foi enviado. Tente de novo.'),
+        );
+        return;
       }
       if (!encrypted || typeof encrypted !== 'string' || encrypted === text) {
         // [SEND-07, 2026-05-19] Fail-secure: return BEFORE relay so peers
@@ -15900,6 +16048,9 @@ function ChatConversationInner() {
       // [send-reliability] A worker retry must send the SAME ciphertext, never
       // the plaintext that was enqueued before encryption.
       if (OUTBOX_V2_ONLY) _outboxThen(() => messageOutbox.updatePayload?.(msgId, { content: encrypted, _e2e: true }));
+      // [2026-10-09 e2ee v4] Web/legado: a fila de pendentes também guarda o
+      // ENVELOPE (reenvio nunca manda texto puro). Upsert por temp_id.
+      else if (e2eKeys.v4) { try { await savePendingMessage(conversationId, { ...pendingData, content: encrypted, _e2e: true }); } catch {} }
     }
 
     // [send-reliability 2026-10-06] Per-conversation FIFO. If an OLDER message
@@ -16053,11 +16204,33 @@ function ChatConversationInner() {
              name: conversationName || params.email,
              email: String(params.email).toLowerCase(),
              avatarUri: conversationAvatar || api.getAvatarUrlForEmail?.(params.email) || '',
+             force: true,
+           });
+         } catch {}
+       } else if (Platform.OS === 'ios' && conversationType === 'group' && conversationName) {
+         // [2026-10-09 notif-native] Groups in the share-sheet row too.
+         try {
+           const { Intents } = require('../modules/expo-native-toolkit');
+           Intents.donateRecipient({
+             conversationId: String(conversationId),
+             name: conversationName,
+             isGroup: true,
+             avatarUri: conversationAvatar || '',
+             force: true,
            });
          } catch {}
        }
+       // [2026-10-09 notif-native] Android: ranking signal for the Direct Share
+       // row / launcher conversation shortcuts (no-op without the native fn).
+       if (Platform.OS === 'android') {
+         try {
+           const { requireOptionalNativeModule } = require('expo');
+           requireOptionalNativeModule('ExpoAppShortcuts')?.reportConversationUsed?.(String(conversationId));
+         } catch {}
+       }
       const _sendOpts = {};
-      if (replyTo?.quoteText) _sendOpts.replyQuoteText = replyTo.quoteText;
+      // [2026-10-09 e2ee v4] Citação em texto puro NUNCA sai numa conversa cifrada.
+      if (replyTo?.quoteText && !(e2eEnabled && e2eKeys?.v4)) _sendOpts.replyQuoteText = replyTo.quoteText;
       if (stagedEffect) _sendOpts.effect = stagedEffect;
       // Sealed-sender (Signal-mode metadata hiding) — when the user has the
       // privacy toggle on, every send goes out with `sealed=true` so the
@@ -16107,7 +16280,7 @@ function ChatConversationInner() {
           if (timeoutFlag.tripped) {
             if (res?.success && res.data?.id) {
               const serverMsg = { ...res.data, _pending: false };
-              if (e2eEnabled) { serverMsg.content = text; serverMsg._e2e = true; }
+              if (e2eEnabled) { serverMsg.content = text; serverMsg._e2e = true; if (e2eKeys?.v4 && typeof contentToSend === 'string') serverMsg._e2eRaw = contentToSend; }
               // [#1188 fix 2026-05-19] Preserve sender_email from optimistic
               // row — envelope mode synth data returns null and would flip
               // the bubble to incoming on the swap.
@@ -16268,7 +16441,7 @@ function ChatConversationInner() {
                 if (retry?.success && retry?.data?.id) {
                   _rescued = true;
                   const serverMsg = { ...retry.data, _pending: false };
-                  if (e2eEnabled) { serverMsg.content = text; serverMsg._e2e = true; }
+                  if (e2eEnabled) { serverMsg.content = text; serverMsg._e2e = true; if (e2eKeys?.v4 && typeof contentToSend === 'string') serverMsg._e2eRaw = contentToSend; }
                   // [#1188 fix 2026-05-19] Preserve sender_email so envelope-
                   // mode synth (null) doesn't flip the bubble to incoming.
                   // [#1182 bubble-flip] Preserve _client_id so msgKeyExtractor
@@ -17013,6 +17186,8 @@ function ChatConversationInner() {
         // hitting when sharing trip photos. Mixed images+videos in the same
         // batch are supported since mediaTypes includes both.
         selectionLimit: 30,
+        // [2026-10-09 more-native] iOS PHPicker numera a seleção e preserva a ordem (WhatsApp).
+        orderedSelection: true,
         videoMaxDuration: 300,
       });
       if (result.canceled || !result.assets?.length) return;
@@ -20521,7 +20696,11 @@ function ChatConversationInner() {
   };
 
   const handleMessageInfo = async (msg) => {
+    // [2026-10-09 native-sheets] Vindo do menu de contexto (<Modal> RN): no iOS o
+    // sheet nativo não pode ser apresentado enquanto o Modal ainda está descendo.
+    const _fromCtx = !!selectedMsg;
     setSelectedMsg(null);
+    if (_fromCtx && USE_NATIVE_SHEETS && Platform.OS === 'ios') await new Promise((r) => setTimeout(r, 380));
     setMessageInfoModal({ message: msg, receipts: [], sent_at: msg.created_at, loading: true });
     try {
       const r = await api.chatMessageInfo(msg.id);
@@ -20853,6 +21032,14 @@ function ChatConversationInner() {
       }
     }
     if (!textToTranslate.trim()) return;
+    // [2026-10-09 e2ee v4] Tradução é no servidor → mandaria o texto puro.
+    try {
+      if (require('../services/e2eeV4').isConversationE2ee(conversationId)) {
+        const _m = t('e2ee.translateBlocked');
+        safeAlert(t('common.error'), _m && _m !== 'e2ee.translateBlocked' ? _m : 'Tradução indisponível em conversa criptografada.');
+        return;
+      }
+    } catch {}
 
     // Premium gate: free users get 5 translations/day
     try {
@@ -21108,6 +21295,23 @@ function ChatConversationInner() {
   };
   const handleStartVideoCall = () => startCall(true);
   const handleStartAudioCall = () => startCall(false);
+
+  // [2026-10-09 system-integration] Siri/Atalhos ("Ligar no Chatyy para X"),
+  // Google Assistant (CREATE_CALL) and Phone-app Recents land here with
+  // ?autocall=audio|video → start the call ONCE through the normal button path.
+  const autoCallFiredRef = useRef(false);
+  const startCallRef = useRef(startCall);
+  startCallRef.current = startCall;
+  useEffect(() => {
+    const kind = typeof params?.autocall === 'string' ? params.autocall : '';
+    if (!kind || autoCallFiredRef.current || !conversationId) return undefined;
+    const tmo = setTimeout(() => {
+      if (autoCallFiredRef.current) return;
+      autoCallFiredRef.current = true;
+      try { startCallRef.current(kind === 'video'); } catch {}
+    }, 700);
+    return () => clearTimeout(tmo);
+  }, [params?.autocall, conversationId]);
 
   // Disappearing messages handler
   const handleSetDisappearing = async (timer) => {
@@ -30635,29 +30839,32 @@ function ChatConversationInner() {
 
       {/* Auto-translate locale picker — Telegram parity. Lets user choose
           the language to auto-translate inbound messages into. Empty = off. */}
-      <Modal visible={showAutoTranslatePicker} transparent animationType="fade" onRequestClose={() => setShowAutoTranslatePicker(false)}>
-        <Pressable
-          onPress={() => setShowAutoTranslatePicker(false)}
-          style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' }}
-        >
-          <Pressable onPress={() => {}} style={{ backgroundColor: colors.background, borderTopLeftRadius: 20, borderTopRightRadius: 20, paddingTop: 12, paddingBottom: 28 }}>
+      <NativeSheetDialog
+        visible={showAutoTranslatePicker}
+        onClose={() => setShowAutoTranslatePicker(false)}
+        overlayStyle={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' }}
+        panelStyle={{ backgroundColor: colors.background, borderTopLeftRadius: 20, borderTopRightRadius: 20, paddingTop: 12, paddingBottom: 28 }}
+        stopPropagation={false}
+      >
+            {!USE_NATIVE_SHEETS && (
             <View style={{ alignItems: 'center', paddingVertical: 6 }}>
               <View style={{ width: 36, height: 4, borderRadius: 2, backgroundColor: 'rgba(0,0,0,0.18)' }} />
             </View>
+            )}
             <Text style={{ fontSize: 17, fontWeight: '700', color: colors.text, textAlign: 'center', marginVertical: 12 }}>
               {t('chatConv.autoTranslate') || 'Auto-traduzir'}
             </Text>
             {[
               { code: '', label: t('chatConv.autoTranslateOff') || 'Desligado' },
-              { code: 'pt-BR', label: '🇧🇷 Português' },
-              { code: 'en', label: '🇺🇸 English' },
-              { code: 'es', label: '🇪🇸 Español' },
-              { code: 'fr', label: '🇫🇷 Français' },
-              { code: 'it', label: '🇮🇹 Italiano' },
-              { code: 'de', label: '🇩🇪 Deutsch' },
-              { code: 'zh', label: '🇨🇳 中文' },
-              { code: 'ja', label: '🇯🇵 日本語' },
-              { code: 'ru', label: '🇷🇺 Русский' },
+              { code: 'pt-BR', label: 'Português' },
+              { code: 'en', label: 'English' },
+              { code: 'es', label: 'Español' },
+              { code: 'fr', label: 'Français' },
+              { code: 'it', label: 'Italiano' },
+              { code: 'de', label: 'Deutsch' },
+              { code: 'zh', label: '中文' },
+              { code: 'ja', label: '日本語' },
+              { code: 'ru', label: 'Русский' },
             ].map(opt => {
               const isCurrent = (autoTranslateLocale || '') === opt.code;
               return (
@@ -30672,13 +30879,11 @@ function ChatConversationInner() {
                   <Text style={{ flex: 1, fontSize: 15, color: colors.text, fontWeight: isCurrent ? '700' : '500' }}>
                     {opt.label}
                   </Text>
-                  {isCurrent && <IconCheck size={18} color="#111111" />}
+                  {isCurrent && <IconCheck size={18} color={colors.text} />}
                 </TouchableOpacity>
               );
             })}
-          </Pressable>
-        </Pressable>
-      </Modal>
+      </NativeSheetDialog>
       <MessageEffectPicker
         visible={showEffectPicker}
         onClose={() => setShowEffectPicker(false)}
@@ -32015,14 +32220,14 @@ function ChatConversationInner() {
         </Pressable>
       </Modal>
       {/* Message Info Modal (delivery/read timestamps) */}
-      <Modal
+      <NativeSheetDialog
         visible={!!messageInfoModal}
-        transparent
+        onClose={() => setMessageInfoModal(null)}
         animationType="slide"
-        onRequestClose={() => setMessageInfoModal(null)}
+        overlayStyle={styles.modalOverlay}
+        panelStyle={[styles.messageInfoSheet, { backgroundColor: colors.surface }, Shadow.lg]}
+        nativePanelStyle={{ paddingTop: 22 }}
       >
-        <Pressable style={styles.modalOverlay} onPress={() => setMessageInfoModal(null)}>
-          <Pressable style={[styles.messageInfoSheet, { backgroundColor: colors.surface }, Shadow.lg]} onPress={e => e.stopPropagation()}>
             <View style={styles.messageInfoHeader}>
               <Text style={[styles.messageInfoTitle, { color: colors.text }]}>{t('chatConv.messageInfo')}</Text>
               <TouchableOpacity onPress={() => setMessageInfoModal(null)} style={{ padding: 4 }}>
@@ -32196,9 +32401,7 @@ function ChatConversationInner() {
                 {t('chatConv.notDelivered')}
               </Text>
             )}
-          </Pressable>
-        </Pressable>
-      </Modal>
+      </NativeSheetDialog>
 
       {/* Keyboard spacer removed — KeyboardAvoidingView already handles this */}
 
@@ -32596,7 +32799,7 @@ function ChatConversationInner() {
                       <GroupRow colors={colors} Icon={IconShield} tint={e2eEnabled ? '#10b981' : '#8E8E93'}
                         title={t('chatConv.e2eTitle') || 'Criptografia'}
                         subtitle={e2eEnabled ? (t('chatConv.e2eActive') || 'Criptografia ponta-a-ponta ativa') : (t('chatConv.e2eInactive') || 'Criptografia desativada')}
-                        onPress={() => safeAlert(
+                        onPress={() => handleE2eV4RowPress() || safeAlert(
                           t('chatConv.e2eTitle') || 'Criptografia',
                           e2eEnabled
                             ? (t('chatConv.e2eActiveDesc') || 'Suas mensagens são protegidas com criptografia ponta-a-ponta. Nem o Chatyy pode ler.')
@@ -32761,6 +32964,7 @@ function ChatConversationInner() {
                   // E2E is OPT-IN (Secret chat); regular chats are TLS-only — show status only, no toggle
                   { Icon: IconShield, tint: e2eEnabled ? '#10b981' : '#6B7280', label: e2eEnabled ? (t('chatConv.e2eActive') || 'Criptografia ponta-a-ponta ativa') : (t('chatConv.e2eInactive') || 'Criptografia desativada'), badge: e2eEnabled, onPress: () => {
                     setShowHeaderMenu(false);
+                    if (handleE2eV4RowPress()) return;
                     safeAlert(
                       t('chatConv.e2eTitle') || 'Criptografia',
                       e2eEnabled
@@ -32815,6 +33019,7 @@ function ChatConversationInner() {
                       if (!check.allowed) { safeAlert('Chatyy One', getUpsellMessage('ai_summarize', t)); return; }
                       trackFeatureUsage('ai_summarize');
                     } catch {}
+                    if (USE_NATIVE_SHEETS && Platform.OS === 'ios') await new Promise((r) => setTimeout(r, 380)); // [2026-10-09 native-sheets] menu (Modal RN) descendo
                     setAiSummary({ visible: true, loading: true, text: '', error: '', messageCount: items.length });
                     try {
                       const r = await api.aiSummarize(items);
@@ -32836,7 +33041,7 @@ function ChatConversationInner() {
                     label: autoTranslateLocale
                       ? `${t('chatConv.autoTranslate') || 'Auto-traduzir'} • ${autoTranslateLocale.toUpperCase()}`
                       : (t('chatConv.autoTranslate') || 'Auto-traduzir'),
-                    onPress: () => { setShowHeaderMenu(false); setShowAutoTranslatePicker(true); }
+                    onPress: () => { setShowHeaderMenu(false); if (USE_NATIVE_SHEETS && Platform.OS === 'ios') setTimeout(() => setShowAutoTranslatePicker(true), 380); else setShowAutoTranslatePicker(true); } // [2026-10-09 native-sheets] espera o menu (Modal RN) descer
                   },
                   { Icon: IconForward, tint: '#10B981', label: t('chatConv.exportChat') || 'Exportar conversa', onPress: () => { setShowHeaderMenu(false); setShowExportModal(true); }},
                 ]},
@@ -33655,14 +33860,14 @@ function ChatConversationInner() {
               tint="#FF9500"
               title={mutedUntil ? (t('chatConv.unmute') || 'Remover silêncio') : (t('chatConv.muteChat') || 'Silenciar conversa')}
               titleColor={mutedUntil ? '#f59e0b' : colors.text}
-              onPress={() => groupInfoGo(() => setShowMuteModal(true), true)} // [2026-10-07 group-admin] iOS drops a sibling Modal
+              onPress={() => groupInfoGo(() => setShowMuteModal(true), !USE_NATIVE_SHEETS)} // [2026-10-07 group-admin] iOS drops a sibling Modal
               right="chevron"
             />
             <GroupDivider colors={colors} />
 
             {/* Notification Sound */}
             <PressableRow
-              onPress={() => groupInfoGo(() => setShowNotifSoundPicker(true), true)} // [2026-10-07 group-admin] · PressableRow [2026-10-07 native-ui-build]
+              onPress={() => groupInfoGo(() => setShowNotifSoundPicker(true), !USE_NATIVE_SHEETS)} // [2026-10-07 group-admin] · PressableRow [2026-10-07 native-ui-build]
               style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, paddingVertical: 11, minHeight: 56, gap: 12 }}
             >
               <View style={{ width: 34, height: 34, borderRadius: 9, backgroundColor: '#AF52DE22', alignItems: 'center', justifyContent: 'center' }}>
@@ -33748,7 +33953,7 @@ function ChatConversationInner() {
                     : slowModeSeconds < 60 ? `${slowModeSeconds}s`
                     : slowModeSeconds < 3600 ? `${Math.round(slowModeSeconds/60)}m`
                     : `${Math.round(slowModeSeconds/3600)}h`}
-                  onPress={() => groupInfoGo(() => setShowSlowModePicker(true), true)} // [2026-10-07 group-admin]
+                  onPress={() => groupInfoGo(() => setShowSlowModePicker(true), !USE_NATIVE_SHEETS)} // [2026-10-07 group-admin]
                   right="chevron"
                 />
               </>
@@ -33929,7 +34134,7 @@ function ChatConversationInner() {
                       right="chevron"
                       accessibilityRole="button"
                       accessibilityLabel={t('chat.disappearing') || 'Mensagens temporárias'}
-                      onPress={() => groupInfoGo(() => setShowDisappearingModal(true), true)} // [2026-10-07 group-admin]
+                      onPress={() => groupInfoGo(() => setShowDisappearingModal(true), !USE_NATIVE_SHEETS)} // [2026-10-07 group-admin]
                     />
                   </GroupCard>
                 </>
@@ -34019,9 +34224,7 @@ function ChatConversationInner() {
       </Modal>
 
       {/* Slow Mode Picker */}
-      <Modal visible={showSlowModePicker} transparent animationType="fade" onRequestClose={() => setShowSlowModePicker(false)}>
-        <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center' }} onPress={() => setShowSlowModePicker(false)}>
-          <Pressable style={{ backgroundColor: colors.surface, borderRadius: 16, width: 320, padding: 20 }} onPress={e => e.stopPropagation()}>
+      <NativeSheetDialog visible={showSlowModePicker} onClose={() => setShowSlowModePicker(false)} panelStyle={{ backgroundColor: colors.surface, borderRadius: 16, width: 320, padding: 20 }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 }}>
               <IconClock size={20} color={colors.primary} />
               <Text style={{ fontSize: 17, fontWeight: '600', color: colors.text }}>{t('chat.slowMode') || 'Modo lento'}</Text>
@@ -34053,9 +34256,7 @@ function ChatConversationInner() {
                 {slowModeSeconds === opt.value && <IconCheck size={18} color={colors.primary} />}
               </TouchableOpacity>
             ))}
-          </Pressable>
-        </Pressable>
-      </Modal>
+      </NativeSheetDialog>
 
       {/* Topics Modal */}
       <Modal visible={showTopicsModal} transparent animationType="slide" onRequestClose={() => setShowTopicsModal(false)}>
@@ -34376,9 +34577,7 @@ function ChatConversationInner() {
           when the conv is already muted. handleMuteChat takes care of
           mirroring the picked value to chat_user_conv_settings + showing
           a confirmation toast. */}
-      <Modal visible={showMuteModal} transparent animationType="fade" onRequestClose={() => setShowMuteModal(false)}>
-        <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center' }} onPress={() => setShowMuteModal(false)}>
-          <Pressable style={{ backgroundColor: colors.surface, borderRadius: 16, width: 320, padding: 20 }} onPress={e => e.stopPropagation()}>
+      <NativeSheetDialog visible={showMuteModal} onClose={() => setShowMuteModal(false)} panelStyle={{ backgroundColor: colors.surface, borderRadius: 16, width: 320, padding: 20 }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 14 }}>
               <IconClock size={20} color={colors.primary} />
               <Text style={{ fontSize: 17, fontWeight: '600', color: colors.text }}>{t('chatConv.muteChat') || 'Silenciar conversa'}</Text>
@@ -34421,9 +34620,7 @@ function ChatConversationInner() {
                 </Text>
               </TouchableOpacity>
             ) : null}
-          </Pressable>
-        </Pressable>
-      </Modal>
+      </NativeSheetDialog>
 
       {/* Chat Lock Setup Modal */}
       <Modal
@@ -34473,9 +34670,7 @@ function ChatConversationInner() {
       </Modal>
 
       {/* Disappearing Messages Modal */}
-      <Modal visible={showDisappearingModal} transparent animationType="fade" onRequestClose={() => setShowDisappearingModal(false)}>
-        <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center' }} onPress={() => setShowDisappearingModal(false)}>
-          <Pressable style={{ backgroundColor: colors.surface, borderRadius: 16, width: 300, padding: 20 }} onPress={e => e.stopPropagation()}>
+      <NativeSheetDialog visible={showDisappearingModal} onClose={() => setShowDisappearingModal(false)} panelStyle={{ backgroundColor: colors.surface, borderRadius: 16, width: 300, padding: 20 }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 16 }}>
               <IconClock size={20} color={colors.primary} />
               <Text style={{ fontSize: 17, fontWeight: '600', color: colors.text }}>{t('chat.disappearing')}</Text>
@@ -34497,9 +34692,7 @@ function ChatConversationInner() {
                 {disappearingTimer === opt.value && <IconCheck size={18} color={colors.primary} />}
               </TouchableOpacity>
             ))}
-          </Pressable>
-        </Pressable>
-      </Modal>
+      </NativeSheetDialog>
 
       {/* Pin Duration Modal (Android / web) — iOS uses native ActionSheetIOS
           in handlePinMessage. Same 3 buckets WhatsApp exposes:
@@ -34867,10 +35060,9 @@ function ChatConversationInner() {
       </Modal>
 
       {/* ✨ AI Summary Modal — powered by gpt-4o-mini, beautifully rendered */}
-      <Modal visible={aiSummary.visible} transparent animationType="slide" onRequestClose={() => setAiSummary(s => ({ ...s, visible: false }))}>
-        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'flex-end' }}>
-          <Pressable style={{ flex: 1 }} onPress={() => setAiSummary(s => ({ ...s, visible: false }))} />
-          <View style={{ backgroundColor: colors.background, borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingBottom: 34, maxHeight: '82%', overflow: 'hidden' }}>
+      {(() => { // [2026-10-09 native-sheets] iOS/Android: sheet do sistema [0.6, 1]; web: Modal original
+        const _aiClose = () => setAiSummary(s => ({ ...s, visible: false }));
+        const _aiBody = (<>
             {/* Gradient header */}
             <View style={{ paddingHorizontal: 22, paddingTop: 20, paddingBottom: 16, backgroundColor: isDark ? 'rgba(17, 17, 17,0.12)' : 'rgba(17, 17, 17,0.08)', borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: isDark ? 'rgba(17, 17, 17,0.25)' : 'rgba(17, 17, 17,0.2)' }}>
               <View style={{ flexDirection: 'row', alignItems: 'center' }}>
@@ -34968,13 +35160,29 @@ function ChatConversationInner() {
                 </View>
               )}
             </ScrollView>
+        </>);
+        if (USE_NATIVE_SHEETS) {
+          return (
+            <NativeSheet visible={!!aiSummary.visible} onClose={_aiClose} detents={[0.6, 1]} backgroundColor={colors.background}>
+              <View style={{ flex: 1, backgroundColor: colors.background, paddingTop: 8, paddingBottom: Platform.OS === 'ios' ? 0 : insets.bottom }}>{_aiBody}</View>
+            </NativeSheet>
+          );
+        }
+        return (
+      <Modal visible={aiSummary.visible} transparent animationType="slide" onRequestClose={_aiClose}>
+        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'flex-end' }}>
+          <Pressable style={{ flex: 1 }} onPress={_aiClose} />
+          <View style={{ backgroundColor: colors.background, borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingBottom: 34, maxHeight: '82%', overflow: 'hidden' }}>
+            {_aiBody}
           </View>
         </View>
       </Modal>
+        );
+      })()}
 
       {/* Starred Messages Modal */}
-      <Modal visible={showStarredModal} transparent animationType="slide" onRequestClose={() => setShowStarredModal(false)}>
-        <View style={[styles.forwardModal, { backgroundColor: colors.background }]}>
+      {(() => { // [2026-10-09 native-sheets] iOS/Android: sheet do sistema [0.6, 1]; web: Modal original
+        const _stBody = (<>
           <View style={[styles.forwardHeader, { borderBottomColor: colors.border }]}>
             <Text style={[styles.forwardTitle, { color: colors.text }]}>{t('chat.starredMessages')}</Text>
             <TouchableOpacity onPress={() => setShowStarredModal(false)}><IconX size={22} color={colors.text} /></TouchableOpacity>
@@ -35025,8 +35233,22 @@ function ChatConversationInner() {
               )}
             />
           )}
+        </>);
+        if (USE_NATIVE_SHEETS) {
+          return (
+            <NativeSheet visible={!!showStarredModal} onClose={() => setShowStarredModal(false)} detents={[0.6, 1]} backgroundColor={colors.background}>
+              <View style={{ flex: 1, backgroundColor: colors.background, paddingBottom: Platform.OS === 'ios' ? 0 : insets.bottom }}>{_stBody}</View>
+            </NativeSheet>
+          );
+        }
+        return (
+      <Modal visible={showStarredModal} transparent animationType="slide" onRequestClose={() => setShowStarredModal(false)}>
+        <View style={[styles.forwardModal, { backgroundColor: colors.background }]}>
+          {_stBody}
         </View>
       </Modal>
+        );
+      })()}
 
       {/* ─── AI Assistant Modal ─── */}
       <Modal visible={showAiModal} transparent animationType="fade" onRequestClose={() => { setShowAiModal(false); setAiResult(null); }}>
@@ -35121,9 +35343,7 @@ function ChatConversationInner() {
       </Modal>
 
       {/* ─── Notification Sound Picker Modal ─── */}
-      <Modal visible={showNotifSoundPicker} transparent animationType="fade" onRequestClose={() => setShowNotifSoundPicker(false)}>
-        <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center' }} onPress={() => setShowNotifSoundPicker(false)}>
-          <Pressable style={{ backgroundColor: colors.surface, borderRadius: 16, width: 300, padding: 20 }} onPress={e => e.stopPropagation()}>
+      <NativeSheetDialog visible={showNotifSoundPicker} onClose={() => setShowNotifSoundPicker(false)} panelStyle={{ backgroundColor: colors.surface, borderRadius: 16, width: 300, padding: 20 }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 16 }}>
               <IconBell size={20} color={colors.primary} />
               <Text style={{ fontSize: 17, fontWeight: '600', color: colors.text }}>{t('chatNotif.title') || 'Notification sound'}</Text>
@@ -35158,9 +35378,7 @@ function ChatConversationInner() {
                 {chatNotifSound === opt.value && <IconCheck size={18} color={colors.primary} />}
               </TouchableOpacity>
             ))}
-          </Pressable>
-        </Pressable>
-      </Modal>
+      </NativeSheetDialog>
 
       {/* Web Search bar overlay */}
       {showWebSearch && (

@@ -53,6 +53,22 @@ export function catalogEntry(state, planId) {
   return (state && state.catalog && state.catalog[id]) || FALLBACK_CATALOG[id];
 }
 
+/**
+ * [2026-10-09 plan-expiry] Aviso de vencimento a partir do plan_info.
+ * Backend: in_grace=true (venceu, ainda na carência de 3 dias) ou
+ * plan_expired=true (passou da carência → tratado como Grátis; nada apagado).
+ * Retorna { kind: 'grace'|'expired', date: 'DD/MM' } ou null.
+ */
+export function planExpiryNotice(info) {
+  if (!info || (!info.in_grace && !info.plan_expired)) return null;
+  let date = '';
+  const d = info.grace_until ? new Date(info.grace_until) : null;
+  if (d && !isNaN(d.getTime())) {
+    date = `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}`;
+  }
+  return { kind: info.in_grace ? 'grace' : 'expired', date };
+}
+
 /** Junta plan_info + chat_storage_usage num formato único. */
 export function normalizePlanState(info, usage) {
   const planId = info?.plan_id || canonicalPlanId(info?.plan || usage?.plan_id || usage?.plan);
@@ -76,6 +92,7 @@ export function normalizePlanState(info, usage) {
     familyAdmin: info?.family_admin || null,
     billingPeriod: info?.billing_period || usage?.billing_period || 'monthly',
     expiresAt: info?.expires_at || null,
+    expiryNotice: planExpiryNotice(info),
     storageTier: usage?.tier || null,
     storageAddon: !!usage?.storage_addon,
     activeUntil: Number(usage?.active_until) || 0,

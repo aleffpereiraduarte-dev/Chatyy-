@@ -9,7 +9,8 @@
  */
 import React, { useEffect, useState, useCallback } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, FlatList, Platform } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useRouter, Stack } from 'expo-router';
+import { USE_NATIVE_HEADER, nativeHeaderOptions, HeaderBackButton } from '../components/nativeHeader'; // [2026-10-09 native-sheets-headers]
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import { Spacing, BorderRadius, FontSize } from '../constants/theme';
@@ -24,7 +25,7 @@ import { setEmailComposeRestore } from '../services/emailUndo';
 
 export default function EmailOutboxScreen() {
   const router = useRouter();
-  const { colors } = useTheme();
+  const { colors, isDark } = useTheme();
   const { t } = useLanguage();
   const confirm = useConfirm();
   const [items, setItems] = useState(getEmailOutbox());
@@ -105,7 +106,11 @@ export default function EmailOutboxScreen() {
 
   return (
     <View style={[s.root, { backgroundColor: colors.background }]}>
-      <ModalHeader title={t('emailOutbox.title')} onClose={() => router.back()} />
+      {USE_NATIVE_HEADER ? (
+        <Stack.Screen options={nativeHeaderOptions({ colors, isDark, title: t('emailOutbox.title') })} />
+      ) : (
+        <ModalHeader title={t('emailOutbox.title')} onClose={() => router.back()} />
+      )}
       <FlatList
         data={items}
         keyExtractor={(e) => e.csid}

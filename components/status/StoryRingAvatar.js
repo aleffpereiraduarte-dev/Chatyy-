@@ -63,6 +63,11 @@ function StoryRingAvatar({
   // post without having to open it. Applies to both `solid` and
   // `segmented` ring styles. No effect when allViewed (dim grey wins).
   closeFriends = false,
+  // [2026-10-09 status-composer] Envio em segundo plano (statusPublishQueue):
+  // 0..1 desenha um arco de progresso por cima do anel; null = nada enviando.
+  // uploadFailed pinta o anel tracejado (tocar tenta de novo — quem chama trata).
+  uploadProgress = null,
+  uploadFailed = false,
 }) {
   const _dim = dimmedColor || (isDark ? 'rgba(255,255,255,0.25)' : 'rgba(0,0,0,0.2)');
   const _badgeBorder = isDark ? '#0d0d0d' : '#fff';
@@ -249,9 +254,36 @@ function StoryRingAvatar({
     );
   }
 
+  const _showUpload = (typeof uploadProgress === 'number' && uploadProgress >= 0) || uploadFailed;
+  let uploadRing = null;
+  if (_showUpload) {
+    const rs = size + 10;
+    const off = (isLive || ringStyle !== 'none') ? 0 : -2.5;
+    const r = rs / 2 - 1.5;
+    const circ = 2 * Math.PI * r;
+    const p = Math.max(0.04, Math.min(1, Number(uploadProgress) || 0));
+    const fg = _avatarText;
+    uploadRing = (
+      <View pointerEvents="none" style={{ position: 'absolute', top: off, left: off, width: rs, height: rs, zIndex: 2 }}>
+        <Svg width={rs} height={rs}>
+          <SvgCircle cx={rs / 2} cy={rs / 2} r={r} stroke={isDark ? 'rgba(255,255,255,0.18)' : 'rgba(0,0,0,0.12)'} strokeWidth={3} fill="none" />
+          {uploadFailed ? (
+            <SvgCircle cx={rs / 2} cy={rs / 2} r={r} stroke="#EF4444" strokeWidth={3} fill="none" strokeDasharray="5 5" />
+          ) : (
+            <SvgCircle
+              cx={rs / 2} cy={rs / 2} r={r} stroke={fg} strokeWidth={3} fill="none" strokeLinecap="round"
+              strokeDasharray={`${circ * p} ${circ}`} transform={`rotate(-90 ${rs / 2} ${rs / 2})`}
+            />
+          )}
+        </Svg>
+      </View>
+    );
+  }
+
   return (
     <View style={{ position: 'relative' }}>
       {inner}
+      {uploadRing}
       {/* Notes overlay (Instagram-style soft pill on top of the avatar).
           Only paints when `note` is truthy — the wrapper itself stays
           inert, so it doesn't intercept taps on the underlying avatar. */}

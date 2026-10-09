@@ -32,6 +32,7 @@ import { IconLock, IconUnlock, IconShield, IconX, IconEye } from './Icons';
 import PressableScale from './PressableScale';
 import * as api from '../services/api';
 import { confirmWithBiometric } from '../services/biometricGate';
+import { USE_NATIVE_SHEETS, NativeSheet, nativeSheetBottomPad } from './NativeSheet'; // [2026-10-09 native-sheets]
 
 export default function ChatLockSheet({ visible, conversation, locked, onClose, onChanged }) {
   const { colors, isDark } = useTheme();
@@ -91,13 +92,10 @@ export default function ChatLockSheet({ visible, conversation, locked, onClose, 
   const panelBg = isDark ? '#1c1c1e' : '#ffffff';
   const subColor = colors.textSecondary || colors.textTertiary || (isDark ? 'rgba(255,255,255,0.6)' : 'rgba(0,0,0,0.55)');
 
-  return (
-    <Modal visible={!!visible} transparent animationType="slide" onRequestClose={onClose}>
-      <TouchableOpacity activeOpacity={1} style={styles.backdrop} onPress={onClose}>
-        <TouchableOpacity activeOpacity={1} style={{ width: '100%' }} onPress={() => {}}>
-          <View style={[styles.panel, { backgroundColor: panelBg, paddingBottom: (insets.bottom || 12) + 12 }]}>
-            <View style={styles.grabber} />
-
+  // [2026-10-09 native-sheets] Corpo compartilhado: sheet do sistema (iOS/Android)
+  // ou o Modal + backdrop original (web).
+  const body = (
+            <>
             <View style={styles.headerRow}>
               <View style={[styles.iconBadge, { backgroundColor: locked ? '#52525b' : '#2563eb' }]}>
                 <IconLock size={20} color="#fff" />
@@ -151,6 +149,26 @@ export default function ChatLockSheet({ visible, conversation, locked, onClose, 
                     </>}
               </PressableScale>
             )}
+            </>
+  );
+
+  if (USE_NATIVE_SHEETS) {
+    return (
+      <NativeSheet visible={!!visible} onClose={onClose} detents="fitToContents" backgroundColor={panelBg}>
+        <View style={{ paddingHorizontal: 20, paddingTop: 22, paddingBottom: nativeSheetBottomPad(insets, 16), backgroundColor: panelBg }}>
+          {body}
+        </View>
+      </NativeSheet>
+    );
+  }
+
+  return (
+    <Modal visible={!!visible} transparent animationType="slide" onRequestClose={onClose}>
+      <TouchableOpacity activeOpacity={1} style={styles.backdrop} onPress={onClose}>
+        <TouchableOpacity activeOpacity={1} style={{ width: '100%' }} onPress={() => {}}>
+          <View style={[styles.panel, { backgroundColor: panelBg, paddingBottom: (insets.bottom || 12) + 12 }]}>
+            <View style={styles.grabber} />
+            {body}
           </View>
         </TouchableOpacity>
       </TouchableOpacity>

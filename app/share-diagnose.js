@@ -17,7 +17,8 @@ import {
   View, Text, ScrollView, TouchableOpacity, RefreshControl, Platform,
   Alert, StyleSheet,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useRouter, Stack } from 'expo-router';
+import { USE_NATIVE_HEADER, nativeHeaderOptions, HeaderIconButton } from '../components/nativeHeader'; // [2026-10-09 native-sheets-headers] header NATIVO
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import { IconArrowLeft, IconTrash } from '../components/Icons';
@@ -110,6 +111,15 @@ export default function ShareDiagnose() {
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.background }}>
+      {USE_NATIVE_HEADER && <Stack.Screen options={nativeHeaderOptions({
+        colors, title: 'Diagnóstico do compartilhamento',
+        headerRight: () => (
+          <HeaderIconButton onPress={clearAll} accessibilityLabel="Limpar">
+            <IconTrash size={21} color={colors.text} />
+          </HeaderIconButton>
+        ),
+      })} />}
+      {!USE_NATIVE_HEADER && (
       <View style={[styles.header, { borderBottomColor: colors.border }]}>
         <TouchableOpacity onPress={() => router.back()} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
           <IconArrowLeft size={24} color={colors.text} />
@@ -119,6 +129,7 @@ export default function ShareDiagnose() {
           <IconTrash size={22} color={colors.textSecondary || '#6b7280'} />
         </TouchableOpacity>
       </View>
+      )}
 
       <ScrollView
         style={{ flex: 1 }}

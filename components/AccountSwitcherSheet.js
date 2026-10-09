@@ -26,11 +26,14 @@ import { useLanguage } from '../context/LanguageContext';
 import { useMail } from '../context/MailContext';
 import AvatarCircle from './AvatarCircle';
 import { IconPlus, IconLogout, IconCheck, IconX } from './Icons';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { USE_NATIVE_SHEETS, NativeSheet, nativeSheetBottomPad } from './NativeSheet'; // [2026-10-09 native-sheets]
 
 export default function AccountSwitcherSheet({ visible, onClose }) {
   const router = useRouter();
   const { colors } = useTheme();
   const { t } = useLanguage();
+  const insets = useSafeAreaInsets();
   const { user, accounts, switchAccount, removeAccount, switching } = useAuth();
   // MailContext is optional — this sheet can mount on screens outside the mail
   // provider (defensive: don't crash if the hook is unavailable there).
@@ -77,12 +80,9 @@ export default function AccountSwitcherSheet({ visible, onClose }) {
 
   const handleAdd = useCallback(() => { goReLogin(); }, [goReLogin]);
 
-  return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <TouchableOpacity style={s.backdrop} activeOpacity={1} onPress={onClose}>
-        <TouchableOpacity activeOpacity={1} style={[s.sheet, { backgroundColor: colors.surface }]} onPress={() => {}}>
-          {/* grabber + header */}
-          <View style={[s.grabber, { backgroundColor: colors.border }]} />
+  // [2026-10-09 native-sheets] Corpo compartilhado: sheet do sistema (iOS/Android) ou Modal (web).
+  const body = (
+        <>
           <View style={s.headerRow}>
             <Text style={[s.title, { color: colors.text }]}>{t('account.switchTitle') || 'Trocar conta'}</Text>
             <TouchableOpacity onPress={onClose} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
@@ -156,6 +156,26 @@ export default function AccountSwitcherSheet({ visible, onClose }) {
               </Text>
             </View>
           )}
+        </>
+  );
+
+  if (USE_NATIVE_SHEETS) {
+    return (
+      <NativeSheet visible={!!visible} onClose={onClose} detents="fitToContents" backgroundColor={colors.surface}>
+        <View style={{ paddingHorizontal: 16, paddingTop: 22, paddingBottom: nativeSheetBottomPad(insets, 16), backgroundColor: colors.surface }}>
+          {body}
+        </View>
+      </NativeSheet>
+    );
+  }
+
+  return (
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+      <TouchableOpacity style={s.backdrop} activeOpacity={1} onPress={onClose}>
+        <TouchableOpacity activeOpacity={1} style={[s.sheet, { backgroundColor: colors.surface }]} onPress={() => {}}>
+          {/* grabber + header */}
+          <View style={[s.grabber, { backgroundColor: colors.border }]} />
+          {body}
         </TouchableOpacity>
       </TouchableOpacity>
     </Modal>

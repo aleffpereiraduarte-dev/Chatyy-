@@ -1,4 +1,5 @@
 import ExpoModulesCore
+import Intents
 import UIKit
 
 // [2026-10-08 android-otp-shortcuts] Home-screen quick actions (long-press icon).
@@ -34,10 +35,66 @@ final class ChatyyShortcutCenter {
 
   static func consume() -> String? {
     lock.lock()
-    let u = pendingURL
+    var u = pendingURL
     pendingURL = nil
     lock.unlock()
+    // [2026-10-09 system-integration] App Intents (Siri/Atalhos, compiled in
+    // the app target by plugins/with-system-intents.js) park their URL in
+    // UserDefaults — survives the cold-start race before this pod's observer
+    // existed. Fresh (< 10 min) only; always cleared once read.
+    let ud = UserDefaults.standard
+    if let parked = ud.string(forKey: intentURLKey), !parked.isEmpty {
+      let at = ud.double(forKey: intentAtKey)
+      if u == nil && Date().timeIntervalSince1970 - at < 600 { u = parked }
+      ud.removeObject(forKey: intentURLKey)
+      ud.removeObject(forKey: intentAtKey)
+    }
     return u
+  }
+
+  static let intentURLKey = "chatyy.intent.pendingURL"
+  static let intentAtKey = "chatyy.intent.pendingAt"
+  private static var intentObserver: NSObjectProtocol?
+
+  /// Warm path for App Intents: the intent posts "ChatyyIntentOpenURL" (main
+  /// thread, in-process). Registered once from didFinishLaunching.
+  static func observeIntents() {
+    lock.lock()
+    let already = intentObserver != nil
+    lock.unlock()
+    if already { return }
+    let obs = NotificationCenter.default.addObserver(
+      forName: Notification.Name("ChatyyIntentOpenURL"), object: nil, queue: .main
+    ) { note in
+      guard let url = note.userInfo?["url"] as? String, !url.isEmpty else { return }
+      UserDefaults.standard.removeObject(forKey: ChatyyShortcutCenter.intentURLKey)
+      UserDefaults.standard.removeObject(forKey: ChatyyShortcutCenter.intentAtKey)
+      ChatyyShortcutCenter.deliver(url)
+    }
+    lock.lock(); intentObserver = obs; lock.unlock()
+  }
+
+  /// Phone app Recents / Siri suggestions hand us INStartCallIntent /
+  /// INSendMessageIntent user activities (donated by expo-callkit and
+  /// ExpoChatyyIntents). Map them to the same deep links the app routes.
+  static func url(for activity: NSUserActivity) -> String? {
+    guard let interaction = activity.interaction else { return nil }
+    let allowed = CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~")
+    func enc(_ s: String) -> String { return s.addingPercentEncoding(withAllowedCharacters: allowed) ?? s }
+    if let call = interaction.intent as? INStartCallIntent,
+       let person = call.contacts?.first,
+       let handle = person.personHandle?.value, handle.contains("@") {
+      let video = call.callCapability == .videoCall
+      let name = person.displayName
+      // Resolved to the conversation by app/assistant-action/[kind].js, which
+      // opens it with ?autocall= → same call pipeline as the in-chat button.
+      return "onemundomail://assistant-action/\(video ? "video" : "call")?email=\(enc(handle))&name=\(enc(name))"
+    }
+    if let msg = interaction.intent as? INSendMessageIntent,
+       let conv = msg.conversationIdentifier, !conv.isEmpty {
+      return "onemundomail://chat-conversation?id=\(enc(conv))&src=intent"
+    }
+    return nil
   }
 
   /// Static items carry UserInfo.url; fall back to a type → URL map so an
@@ -64,6 +121,24 @@ public class AppShortcutsAppDelegateSubscriber: ExpoAppDelegateSubscriber {
        let url = ChatyyShortcutCenter.url(for: item) {
       ChatyyShortcutCenter.deliver(url)
     }
+    ChatyyShortcutCenter.observeIntents()
+    return true
+  }
+
+  // [2026-10-09 system-integration] Recents "call back" / intent activities.
+  // ExpoAppDelegateSubscriberManager waits for EVERY subscriber to call the
+  // restoration handler → always call it, handled or not.
+  public func application(
+    _ application: UIApplication,
+    continue userActivity: NSUserActivity,
+    restorationHandler: @escaping ([UIUserActivityRestoring]?) -> Void
+  ) -> Bool {
+    guard let url = ChatyyShortcutCenter.url(for: userActivity) else {
+      restorationHandler(nil)
+      return false
+    }
+    ChatyyShortcutCenter.deliver(url)
+    restorationHandler(nil)
     return true
   }
 

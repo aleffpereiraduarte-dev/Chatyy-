@@ -417,6 +417,60 @@ class CallActivity : ComponentActivity() {
     }
   }
 
+  /** [2026-10-09 system-hold] Telecom-driven hold / mute coming from
+   *  ChatyyConnection (GSM call answered → hold, auto-resume when it ends,
+   *  Android Auto / Wear / headset mute). Keeps the Compose UI + the LiveKit
+   *  mic in sync with the system. state.isMuted stays the USER's choice; a
+   *  hold only gates the published mic. */
+  private var heldByTelecom: Boolean = false
+  private val telecomStateReceiver = object : BroadcastReceiver() {
+    override fun onReceive(ctx: Context?, intent: Intent?) {
+      val i = intent ?: return
+      val incomingCallId = i.getStringExtra("call_id") ?: ""
+      if (incomingCallId.isNotEmpty() && callId.isNotEmpty() && incomingCallId != callId) return
+      if (i.hasExtra("held")) {
+        val held = i.getBooleanExtra("held", false)
+        heldByTelecom = held
+        Log.i(TAG, "telecomStateReceiver: held=$held callId=$callId")
+        if (held) {
+          if (state.status == "Conectado") state.status = holdStatusLabel()
+          try { lifecycleScope.launch { try { room?.localParticipant?.setMicrophoneEnabled(false) } catch (_: Throwable) {} } } catch (_: Throwable) {}
+        } else {
+          if (state.status == holdStatusLabel()) state.status = "Conectado"
+          try {
+            val am = getSystemService(Context.AUDIO_SERVICE) as? android.media.AudioManager
+            if (am != null && am.mode != android.media.AudioManager.MODE_IN_COMMUNICATION) {
+              am.mode = android.media.AudioManager.MODE_IN_COMMUNICATION
+            }
+          } catch (_: Throwable) {}
+          // After ChatyyConnection's NativeCallRoom.setMicEnabled(true):
+          // re-apply the user's own mute choice.
+          android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+            if (!heldByTelecom) {
+              try { lifecycleScope.launch { try { room?.localParticipant?.setMicrophoneEnabled(!state.isMuted) } catch (_: Throwable) {} } } catch (_: Throwable) {}
+            }
+          }, 500L)
+        }
+      }
+      if (i.hasExtra("muted")) {
+        val muted = i.getBooleanExtra("muted", false)
+        Log.i(TAG, "telecomStateReceiver: system mute=$muted callId=$callId")
+        state.isMuted = muted
+        if (!heldByTelecom) {
+          try { lifecycleScope.launch { try { room?.localParticipant?.setMicrophoneEnabled(!muted) } catch (_: Throwable) {} } } catch (_: Throwable) {}
+        }
+      }
+    }
+  }
+
+  private fun holdStatusLabel(): String {
+    return when (java.util.Locale.getDefault().language) {
+      "en" -> "On hold"
+      "es" -> "En espera"
+      else -> "Em espera"
+    }
+  }
+
   // ────────────── Lifecycle
 
   override fun onCreate(savedInstanceState: Bundle?) {
@@ -941,6 +995,15 @@ class CallActivity : ComponentActivity() {
       registerReceiver(callAnsweredReceiver, answeredFilter)
     }
 
+    // [2026-10-09 system-hold] Telecom hold / system mute bridge.
+    val telecomFilter = IntentFilter(CallTelecomBridge.ACTION_TELECOM_STATE)
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+      registerReceiver(telecomStateReceiver, telecomFilter, Context.RECEIVER_NOT_EXPORTED)
+    } else {
+      @Suppress("UnspecifiedRegisterReceiverFlag")
+      registerReceiver(telecomStateReceiver, telecomFilter)
+    }
+
     // Bring up LiveKit. If url/token missing, try the 4-source fallback
     // (LkTokenFetcher.fetchToken with intentExtras) before giving up. Only
     // if NO source has the bearer do we surface the humanized banner.
@@ -1133,6 +1196,7 @@ class CallActivity : ComponentActivity() {
     try { unregisterReceiver(closeReceiver) } catch (_: Exception) {}
     try { unregisterReceiver(dtmfReceiver) } catch (_: Exception) {}
     try { unregisterReceiver(callAnsweredReceiver) } catch (_: Exception) {}
+    try { unregisterReceiver(telecomStateReceiver) } catch (_: Exception) {}
     // [2026-05-21] Release proximity wake-lock if held.
     releaseProximityWakeLock()
     proximityWakeLock = null
@@ -1924,7 +1988,7 @@ class CallActivity : ComponentActivity() {
       // `url` is the wss://livekit.chatyy.com.br endpoint; `token` is the
       // signed JWT minted in step 7. Pre-state should be DISCONNECTED.
       Log.i("CallTrace", "[8/12] LK Room.connect roomName=$callId serverUrl=$url attempt=$attempt tokenLen=${token.length}")
-      r.connect(url, token)
+      r.connect(url, token, LkTokenFetcher.connectOptionsFor(token))
       Log.i("CallTrace", "[8b/12] LK Room state=${r.state} after connect (attempt=$attempt)")
       publishLocalMediaAfterConnect(r)
       reconnectAttempts = 0

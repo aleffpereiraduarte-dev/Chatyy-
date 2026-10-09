@@ -48,6 +48,13 @@ class ExpoAppShortcutsModule : Module() {
     private const val SCHEME = "onemundomail"
     private const val AVATAR_HOST = "https://chatyy.com.br"
     private const val MAX_RECENTS = 4
+    // [2026-10-09 notif-native] Sharing Shortcuts — must match the
+    // <share-target> category written by plugins/with-app-shortcuts.js.
+    private const val SHARE_CATEGORY_SUFFIX = ".category.SHARE_TARGET"
+    private const val CONVERSATION_CATEGORY = "android.shortcut.conversation"
+    private const val SHARE_TARGET_TTL_MS = 10L * 60 * 1000
+    @Volatile private var pendingShareShortcut: String? = null
+    @Volatile private var pendingShareAt: Long = 0L
     private const val ICON_PX = 192
     private val PALETTE = intArrayOf(
       0xFF2563EB.toInt(), 0xFF10B981.toInt(), 0xFFF59E0B.toInt(), 0xFFEF4444.toInt(),
@@ -90,6 +97,41 @@ class ExpoAppShortcutsModule : Module() {
     // iOS parity (cold-launch shortcut URL). Android shortcuts are plain
     // ACTION_VIEW deep links handled by Linking/expo-router → always null.
     Function("getPendingShortcut") { null as String? }
+
+    // [2026-10-09 notif-native] Direct Share: the system share sheet row of
+    // recent chats delivers ACTION_SEND with EXTRA_SHORTCUT_ID = "chat_<id>".
+    // Warm start → OnNewIntent; cold start → the activity's launch intent.
+    OnNewIntent { intent -> captureShareShortcut(intent) }
+
+    // Returns { conversationId } once (≤ 10 min old), else null.
+    Function("consumeShareTarget") {
+      try { appContext.currentActivity?.intent?.let { captureShareShortcut(it) } } catch (_: Throwable) {}
+      val id = pendingShareShortcut
+      val fresh = id != null && System.currentTimeMillis() - pendingShareAt < SHARE_TARGET_TTL_MS
+      pendingShareShortcut = null
+      try { appContext.currentActivity?.intent?.removeExtra(ShortcutManagerCompat.EXTRA_SHORTCUT_ID) } catch (_: Throwable) {}
+      if (fresh && id != null && id.startsWith("chat_") && id.length > 5) {
+        mapOf("conversationId" to id.removePrefix("chat_"))
+      } else null
+    }
+
+    // Ranking signal for the share sheet / launcher (call on send).
+    Function("reportConversationUsed") { conversationId: String ->
+      val c = ctx
+      if (c != null && conversationId.isNotBlank()) {
+        try { ShortcutManagerCompat.reportShortcutUsed(c, "chat_" + conversationId.trim()) } catch (_: Throwable) {}
+      }
+    }
+  }
+
+  private fun captureShareShortcut(intent: Intent) {
+    val action = intent.action ?: return
+    if (action != Intent.ACTION_SEND && action != Intent.ACTION_SEND_MULTIPLE) return
+    val sid = try { intent.getStringExtra(ShortcutManagerCompat.EXTRA_SHORTCUT_ID) } catch (_: Throwable) { null }
+    if (!sid.isNullOrBlank()) {
+      pendingShareShortcut = sid
+      pendingShareAt = System.currentTimeMillis()
+    }
   }
 
   private fun publishRecents(c: Context, items: List<Map<String, Any?>>): Int {
@@ -126,7 +168,7 @@ class ExpoAppShortcutsModule : Module() {
           .setLongLived(true)
           .setIntent(intent)
           .setLocusId(LocusIdCompat(id))
-          .setCategories(setOf("android.shortcut.conversation"))
+          .setCategories(setOf(CONVERSATION_CATEGORY, c.packageName + SHARE_CATEGORY_SUFFIX))
           .setRank(rank)
           .setIcon(IconCompat.createWithBitmap(bmp))
           .build()

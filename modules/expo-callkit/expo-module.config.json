@@ -11,7 +11,8 @@
     "appDelegateSubscribers": [
       "VoipPushAppDelegateSubscriber",
       "RelayWakeAppDelegateSubscriber",
-      "ChatBgSyncAppDelegateSubscriber"
+      "ChatBgSyncAppDelegateSubscriber",
+      "CallIntentAppDelegateSubscriber"
     ]
   },
   "android": {

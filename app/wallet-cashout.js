@@ -19,7 +19,8 @@ import {
   View, Text, StyleSheet, TouchableOpacity, ScrollView, TextInput,
   ActivityIndicator, Alert, Platform, StatusBar,
 } from 'react-native';
-import { useRouter, Redirect } from 'expo-router';
+import { useRouter, Redirect, Stack } from 'expo-router';
+import { USE_NATIVE_HEADER, nativeHeaderOptions } from '../components/nativeHeader'; // [2026-10-09 native-sheets-headers] header NATIVO
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../context/ThemeContext';
 // [2026-05-22 monetization-pause] hidden by MONETIZATION_ENABLED flag
@@ -306,9 +307,11 @@ export default function WalletCashoutScreen() {
   };
 
   return (
-    <View style={[styles.container, { backgroundColor: colors.background, paddingTop: (insets.top || 0) + 6 }]}>
+    <View style={[styles.container, { backgroundColor: colors.background, paddingTop: USE_NATIVE_HEADER ? 0 : (insets.top || 0) + 6 }]}>
       <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} />
 
+      {USE_NATIVE_HEADER && <Stack.Screen options={nativeHeaderOptions({ colors, isDark, title: t('wallet.cashoutTitle') })} />}
+      {!USE_NATIVE_HEADER && (
       <View style={styles.headBar}>
         <TouchableOpacity
           onPress={() => router.back()}
@@ -323,6 +326,7 @@ export default function WalletCashoutScreen() {
         </Text>
         <View style={{ width: 38 }} />
       </View>
+      )}
 
       <ScrollView
         contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 60 }}

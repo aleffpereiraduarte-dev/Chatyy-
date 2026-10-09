@@ -102,5 +102,16 @@ class ChatCoreModule : Module() {
     Function("getState") {
       try { ChatCoreSocket.snapshot() } catch (_: Throwable) { mapOf<String, Any?>("enabled" to false) }
     }
+
+    // [2026-10-09 native-transport] Região do WebSocket escolhida pelo JS
+    // ("us" | "br" | "eu") → ChatCoreSocket / CallSignalWs / RelayWakeService
+    // abrem na entrada regional (fallback US). Ver ChatyyWsEndpoint.kt.
+    Function("setWsRegion") { region: String ->
+      try { ChatyyWsEndpoint.setRegion(context, region) } catch (_: Throwable) {}
+    }
+
+    Function("getWsEndpoint") {
+      try { ChatyyWsEndpoint.snapshot(context) } catch (_: Throwable) { mapOf<String, Any?>("url" to ChatyyWsEndpoint.US_URL) }
+    }
   }
 }

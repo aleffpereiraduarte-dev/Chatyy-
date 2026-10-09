@@ -158,6 +158,19 @@ const WS_INSTANCE_ID = (() => {
 // above a worst-case handshake RTT (auth lands in ~167ms in prod) so a healthy
 // slow link never false-positives.
 const AUTH_WATCHDOG_MS = 6000;
+// [2026-10-09 net-resilience] Prazos ADAPTATIVOS: em 2G/satélite/Ásia (RTT
+// 600-1500ms + perda → retransmissões) os prazos fixos acima davam falso
+// "half-open" → reconexão (~5 RTT) em loop. Prazo = max(base, k×srtt + 1s) e,
+// em enlace lento/médio, base × 1.6–2. srtt vem dos próprios pongs.
+function _netAdapt(baseMs, rttMult) {
+  try {
+    const ni = require('./networkInfo');
+    const srtt = (ni.getSrtt && ni.getSrtt()) || 0;
+    const sc = Math.min(2, (ni.timeoutScale && ni.timeoutScale()) || 1);
+    // teto 20s: um pico isolado de RTT não pode deixar a detecção de socket morto lenta demais.
+    return Math.round(Math.min(Math.max(baseMs, 20000), Math.max(baseMs * sc, rttMult * srtt + 1000)));
+  } catch { return baseMs; }
+}
 // [2026-10-08 regions-fast] Entrada REGIONAL do WebSocket. Usuário cuja região
 // escolhida (services/api.js, region_hint + probe) é BR/EU abre o socket em
 // wss://api-<região>.chatyy.com.br/ws: o TLS termina no edge (perto do usuário)
@@ -178,13 +191,32 @@ const REGIONAL_WS_URLS = {
 const REGIONAL_WS_BLOCK_MS = 15 * 60 * 1000;
 let _regionalWsBlockedUntil = 0;
 let _regionalWsFailPending = false;
+// [2026-10-09 native-transport] Os sockets NATIVOS (ChatCoreSocket, CallSignalWs,
+// RelayWake — iOS/Android) usam a MESMA entrada regional: o JS repassa a região
+// escolhida ("us"|"br"|"eu") via ChatyyChatCore.setWsRegion; o nativo persiste
+// (vale no cold start por push) e tem seu próprio fallback regional→US (15 min).
+// Kill-switch __chatyyRegionalWsOff → "us" também no nativo. Binário sem a
+// função → no-op.
+let _nativeWsRegionSent = null;
+function _syncNativeWsRegion(region) {
+  if (region === _nativeWsRegionSent) return;
+  try {
+    const { requireOptionalNativeModule } = require('expo');
+    const m = requireOptionalNativeModule('ChatyyChatCore');
+    if (m && typeof m.setWsRegion === 'function') {
+      m.setWsRegion(region);
+      _nativeWsRegionSent = region;
+    }
+  } catch {}
+}
 function _pickWsUrl() {
   try {
     if (Platform.OS === 'web') return US_WS_URL;
     const g = (typeof globalThis !== 'undefined') ? globalThis : {};
+    const info = require('./api').getEdgeInfo?.();
+    _syncNativeWsRegion((!g.__chatyyRegionalWsOff && info && REGIONAL_WS_URLS[info.region]) ? info.region : 'us');
     if (g.__chatyyRegionalWsOff) return US_WS_URL;
     if (_regionalWsFailPending || Date.now() < _regionalWsBlockedUntil) return US_WS_URL;
-    const info = require('./api').getEdgeInfo?.();
     const url = info && REGIONAL_WS_URLS[info.region];
     return url || US_WS_URL;
   } catch {
@@ -604,8 +636,8 @@ class MailWebSocket {
     }
     const openedBeforeOutage = !!(staleBefore && this._lastConnectAt && this._lastConnectAt <= staleBefore);
     if (!force && !openedBeforeOutage && ws) {
-      if (ws.readyState === CONNECTING && age < CONNECT_TIMEOUT_MS) return 'in_flight';
-      if (ws.readyState === OPEN && !this.authenticated && age < (AUTH_WATCHDOG_MS + 2000)) return 'in_flight';
+      if (ws.readyState === CONNECTING && age < _netAdapt(CONNECT_TIMEOUT_MS, 8)) return 'in_flight';
+      if (ws.readyState === OPEN && !this.authenticated && age < (_netAdapt(AUTH_WATCHDOG_MS, 4) + 2000)) return 'in_flight';
     }
     if (!force && !ws && this.reconnectTimer) {
       if (!urgent) return 'scheduled';
@@ -637,6 +669,7 @@ class MailWebSocket {
   // half-open → descarta e reconecta. Coalesce: um probe por vez.
   _probe(reason, ms = FG_PROBE_MS) {
     if (this._probeTimer) return;
+    ms = _netAdapt(ms, 3);
     const ws = this.ws;
     if (!ws) return;
     const sentAt = Date.now();
@@ -813,13 +846,13 @@ class MailWebSocket {
         this._connectTimer = null;
         if (this.ws !== _thisWs || this.destroyed) return;
         if (typeof WebSocket !== 'undefined' && _thisWs.readyState === WebSocket.CONNECTING) {
-          try { console.warn('[WS] connect timeout (' + CONNECT_TIMEOUT_MS + 'ms) — reabrindo'); } catch {}
+          try { console.warn('[WS] connect timeout — reabrindo'); } catch {}
           this._logGhost?.('connect_timeout', {});
           this._cleanup();
           this._lastConnectAt = 0;
           this._scheduleReconnect();
         }
-      }, CONNECT_TIMEOUT_MS);
+      }, _netAdapt(CONNECT_TIMEOUT_MS, 8));
     }
 
     this.ws.onopen = () => {
@@ -881,7 +914,7 @@ class MailWebSocket {
           this.reconnectAttempt = rejectedRecently ? Math.max(this.reconnectAttempt, 4) : 0;
           this._scheduleReconnect();
         }
-      }, AUTH_WATCHDOG_MS);
+      }, _netAdapt(AUTH_WATCHDOG_MS, 4));
 
       // Wake voice session resume + offline-queue replay sweep. Any
       // streaming voice upload that stalled mid-recording when the WS
@@ -1417,8 +1450,9 @@ class MailWebSocket {
     //   • timer estrangulado (aba oculta 1x/min, JS congelado no iOS): o
     //     veredito é inválido → re-baseline e julga no próximo ciclo
     //     (fix "falso-zumbi 60s" de 2026-10-05 preservado).
-    const { interval, deadline } = this._heartbeatProfile();
+    const { interval, deadline: _baseDeadline } = this._heartbeatProfile();
     const tick = () => {
+      const deadline = _netAdapt(_baseDeadline, 3);
       if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
         // Socket morreu sem onclose (ou onclose já agendou reconexão).
         if (!this.reconnectTimer && !this.destroyed) {
@@ -2114,6 +2148,7 @@ class MailWebSocket {
         // Measure latency
         if (this._pingTs) {
           this._latency = Date.now() - this._pingTs;
+          try { require('./networkInfo').reportRtt(this._latency); } catch {}
         }
         // Surface pong to listeners so ensureHealthy() can resolve early
         // instead of waiting the full watchdog timeout.
@@ -2738,11 +2773,16 @@ class MailWebSocket {
     if (!conversationId || !Array.isArray(messageIds) || messageIds.length === 0) return false;
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN || !this.authenticated || !this.isHealthy) return false;
     try {
-      this.ws.send(this._encodeOutbound({
-        type: 'delivery_ack',
-        conversation_id: conversationId,
-        message_ids: messageIds.slice(0, 100),
-      }));
+      // [2026-10-09 net-resilience] lotes de 100 (antes só os 100 primeiros
+      // saíam e o chamador marcava TODOS como entregues → ✓✓ perdido no
+      // catch-up pós-reconexão).
+      for (let i = 0; i < messageIds.length; i += 100) {
+        this.ws.send(this._encodeOutbound({
+          type: 'delivery_ack',
+          conversation_id: conversationId,
+          message_ids: messageIds.slice(i, i + 100),
+        }));
+      }
       return true;
     } catch {
       return false;

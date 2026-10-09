@@ -80,12 +80,44 @@ function _nativeChat() {
   try { _nativeChatMod = require('../modules/expo-callkit'); } catch { _nativeChatMod = null; }
   return _nativeChatMod;
 }
+// [2026-10-09 notif-native] iOS counterpart: ChatyyNotifActions (expo-native-
+// toolkit) answers "Responder"/"Marcar como lida" natively with the app killed,
+// signing with per-account bearers kept in the Keychain. null on Android, web
+// and binaries without it (requireOptionalNativeModule never throws).
+let _iosNotifActionsMod;
+function _iosNotifActions() {
+  if (Platform.OS !== 'ios') return null;
+  if (_iosNotifActionsMod !== undefined) return _iosNotifActionsMod;
+  _iosNotifActionsMod = null;
+  try {
+    const { requireOptionalNativeModule } = require('expo');
+    _iosNotifActionsMod = requireOptionalNativeModule('ChatyyNotifActions') || null;
+  } catch { _iosNotifActionsMod = null; }
+  return _iosNotifActionsMod;
+}
+// True when the iOS native handler already sent this banner's reply / read.
+function _handledNatively(response) {
+  try {
+    const m = _iosNotifActions();
+    const id = response?.notification?.request?.identifier;
+    return !!(m && id && typeof m.wasHandledNatively === 'function' && m.wasHandledNatively(String(id)));
+  } catch { return false; }
+}
+// Logout: forget every bearer the native notification paths hold.
+export function clearNativeChatAuth() {
+  _lastNativeAuthSig = '';
+  try { const nc = _nativeChat(); nc?.clearChatNotificationAuth?.(); } catch {}
+  try { const m = _iosNotifActions(); m?.clearAuth?.(); } catch {}
+}
+
 let _lastNativeAuthSig = '';
 let _lastNativeAuthAt = 0;
 export async function syncNativeChatAuth(force = false) {
   try {
     const nc = _nativeChat();
-    if (!nc || typeof nc.setChatNotificationAuth !== 'function') return;
+    const ios = _iosNotifActions();
+    const hasAndroid = !!(nc && typeof nc.setChatNotificationAuth === 'function');
+    if (!hasAndroid && !(ios && typeof ios.setAuth === 'function')) return;
     const api = require('./api');
     const tok = (typeof api.getAuthToken === 'function' ? api.getAuthToken() : '') || '';
     const email = (typeof api.getActiveAccountEmail === 'function' ? api.getActiveAccountEmail() : '') || '';
@@ -103,7 +135,8 @@ export async function syncNativeChatAuth(force = false) {
     if (!force && sig === _lastNativeAuthSig && now - _lastNativeAuthAt < 10 * 60 * 1000) return;
     _lastNativeAuthSig = sig;
     _lastNativeAuthAt = now;
-    await nc.setChatNotificationAuth(email, tok, tokens);
+    if (hasAndroid) await nc.setChatNotificationAuth(email, tok, tokens);
+    if (ios && typeof ios.setAuth === 'function') { try { ios.setAuth(email, tok, tokens); } catch {} }
   } catch {}
 }
 
@@ -191,7 +224,18 @@ export function setIncomingCallHandler(handler) {
 // it without any TDZ / declaration-order risk.
 const pushNotificationsState = {
   deviceToken: null,
+  apnsToken: null,     // [2026-10-09] iOS APNs hex token (token_type apns | apns_sandbox)
+  apnsTokenType: null,
 };
+
+// [2026-10-09 native-transport] device_id que pareia o token APNs com o token
+// Expo do MESMO aparelho ("expo:" + id interno do ExponentPushToken[...]).
+// O backend aplica a mesma sanitização ([A-Za-z0-9._:-], 100 chars).
+function _apnsPairId(expoToken) {
+  const m = /\[([^\]]+)\]/.exec(String(expoToken || ''));
+  if (!m) return '';
+  return ('expo:' + m[1].replace(/[^A-Za-z0-9._:-]/g, '')).slice(0, 100);
+}
 
 // Remote diagnostic: posts each step of registerForPushNotifications to the
 // backend so we can see WHERE on Android the chain breaks (Android has zero
@@ -1197,6 +1241,36 @@ export async function registerForPushNotifications(opts = {}) {
       }
     }
 
+    // [2026-10-09 native-transport] iOS: token APNs NATIVO (hex) além do Expo.
+    // O backend (firebase_push.php) manda direto na Apple (HTTP/2 + chave .p8)
+    // quando o aparelho tem os dois — sem o salto exp.host — e usa o Expo como
+    // fallback se a Apple falhar. Pareamento com o token Expo do MESMO aparelho
+    // via device_id "expo:<id>" (evita banner duplo). Ambiente: build de
+    // desenvolvimento (aps-environment=development) → sandbox.
+    if (Platform.OS === 'ios') {
+      pushNotificationsState.apnsToken = null;
+      pushNotificationsState.apnsTokenType = null;
+      try {
+        const dt = await Notifications.getDevicePushTokenAsync();
+        if (dt?.data && typeof dt.data === 'string' && /^[0-9a-fA-F]{32,200}$/.test(dt.data)) {
+          let env = null;
+          try {
+            const App = require('expo-application');
+            if (App && typeof App.getIosPushNotificationServiceEnvironmentAsync === 'function') {
+              env = await App.getIosPushNotificationServiceEnvironmentAsync();
+            }
+          } catch {}
+          pushNotificationsState.apnsToken = dt.data.toLowerCase();
+          pushNotificationsState.apnsTokenType = env === 'development' ? 'apns_sandbox' : 'apns';
+          _diagPush('apns_device_ok', 'len=' + dt.data.length + ' env=' + (env || 'null'));
+        } else {
+          _diagPush('apns_device_missing', 'type=' + (dt?.type || '?'));
+        }
+      } catch (err) {
+        _diagPush('apns_device_err', err?.message || String(err));
+      }
+    }
+
     try { _setCachedPushToken(tokenData.data); } catch {}
     _diagPush('register_done', 'ok');
     return tokenData.data;
@@ -1423,6 +1497,26 @@ async function _sendTokenToBackendInner(pushToken) {
         _diagPush('send_fcm_skip', 'no deviceToken in state');
       }
     }
+
+    // [2026-10-09 native-transport] iOS: token APNs nativo (envio direto na Apple).
+    if (Platform.OS === 'ios' && pushNotificationsState.apnsToken) {
+      const apnsTok = pushNotificationsState.apnsToken;
+      const apnsType = pushNotificationsState.apnsTokenType || 'apns';
+      const pairId = _apnsPairId(pushToken);
+      const r3 = await apiCall('register_push_token', {
+        token: apnsTok,
+        platform: 'ios',
+        token_type: apnsType,
+        device_id: pairId,
+        lang: _lang,
+      }, 'POST');
+      _diagPush('send_apns', r3?.success ? 'ok' : ('fail:' + (r3?.error || 'unknown')));
+      if (r3?.success) {
+        _markFlushed(apnsTok + '|' + email + '|' + apnsType);
+      } else {
+        _enqueuePendingTokenSend({ token: apnsTok, email, platform: 'ios', token_type: apnsType, device_id: pairId });
+      }
+    }
   } catch (err) {
     _diagPush('send_err', err?.message || String(err));
     // Offline / network throw — persist the intent so we retry on next
@@ -1438,6 +1532,15 @@ async function _sendTokenToBackendInner(pushToken) {
         email,
         platform: 'android',
         token_type: 'fcm_device',
+      });
+    }
+    if (Platform.OS === 'ios' && pushNotificationsState.apnsToken) {
+      _enqueuePendingTokenSend({
+        token: pushNotificationsState.apnsToken,
+        email,
+        platform: 'ios',
+        token_type: pushNotificationsState.apnsTokenType || 'apns',
+        device_id: _apnsPairId(pushToken),
       });
     }
   }
@@ -1492,6 +1595,7 @@ export async function flushPendingTokens() {
     try {
       const payload = { token: entry.token, platform: entry.platform || Platform.OS };
       if (entry.token_type) payload.token_type = entry.token_type;
+      if (entry.device_id) payload.device_id = entry.device_id;
       try { payload.lang = await _deviceLangCode(); } catch {}
       const r = await apiCall('register_push_token', payload, 'POST');
       if (r?.success) {
@@ -1873,7 +1977,8 @@ export async function setupNotificationListeners() {
     if ((actionId === 'reply' || actionId === 'REPLY' || actionId === 'reply_chat') && data?.conversation_id) {
       const userText = response.userText;
       if (userText?.trim()) {
-        handleChatReplyFromNotification(data.conversation_id, userText.trim());
+        // [2026-10-09] iOS native handler already sent it → never twice.
+        if (!_handledNatively(response)) handleChatReplyFromNotification(data.conversation_id, userText.trim());
         // WhatsApp parity: replying from the banner = you read the chat → clear
         // this conversation's notifications from the tray (and trim the badge).
         _dismissAfterChatAction(response, data.conversation_id);
@@ -1883,7 +1988,7 @@ export async function setupNotificationListeners() {
     // CHAT: Mark as read. `mark_read` is shared with the email legacy handler above,
     // but that branch guards on `data?.uid` so chat pushes (with `conversation_id`) fall through here.
     if ((actionId === 'mark_read' || actionId === 'MARK_READ' || actionId === 'mark_read_chat') && data?.conversation_id) {
-      handleMarkReadChatFromNotification(data.conversation_id);
+      if (!_handledNatively(response)) handleMarkReadChatFromNotification(data.conversation_id);
       _dismissAfterChatAction(response, data.conversation_id);
       return;
     }
@@ -1893,7 +1998,7 @@ export async function setupNotificationListeners() {
     // pre-filled value via response.userText.
     if (/^smart_reply_\d+$/.test(actionId || '') && data?.conversation_id) {
       const userText = response.userText;
-      if (userText?.trim()) {
+      if (userText?.trim() && !_handledNatively(response)) {
         handleChatReplyFromNotification(data.conversation_id, userText.trim());
       }
       return;

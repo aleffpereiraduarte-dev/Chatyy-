@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+  <color name="chatyy_widget_bg">#FF000000</color>
+  <color name="chatyy_widget_fg">#FFFFFFFF</color>
+  <color name="chatyy_widget_fg_muted">#FF9A9A9A</color>
+  <color name="chatyy_widget_badge_text">#FF000000</color>
+</resources>

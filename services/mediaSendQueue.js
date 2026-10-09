@@ -60,6 +60,7 @@ export const MAX_MEDIA_BYTES = 200 * 1024 * 1024;
 // Rust chunked path above this size (resumable); below → single POST.
 const CHUNKED_MIN_BYTES = 1 * 1024 * 1024;
 const MAX_CONCURRENT = 2;
+function _slowLink() { try { return require('./networkInfo').getLinkClass() !== 'fast'; } catch { return false; } }
 const DURABLE_DIR = 'chat-outbox/';
 
 export const MEDIA_UPLOAD_TYPES = new Set(['image', 'video', 'voice', 'audio', 'file', 'video_note']);
@@ -189,9 +190,12 @@ async function _deleteDurable(p) {
 function _imageProfile(p) {
   if (p.hd) return IMAGE_PROFILES.hd;
   try {
-    const ns = require('./networkInfo').getNetworkState?.();
+    const ni = require('./networkInfo');
+    const ns = ni.getNetworkState?.();
     const gen = ns?.details?.cellularGeneration || ns?.cellularGeneration;
     if (gen === '2g' || gen === '3g') return IMAGE_PROFILES.lite;
+    // [2026-10-09 net-resilience] RTT medido alto (Ásia/satélite/4G ruim) também.
+    if (ni.getLinkClass && ni.getLinkClass() !== 'fast') return IMAGE_PROFILES.lite;
   } catch {}
   return IMAGE_PROFILES.standard;
 }
@@ -316,7 +320,7 @@ const TOO_LARGE_RE = /file_too_large|\b413\b|_413\b|too large|muito grande|excee
 const HARD_RE = /\b41[35]\b|_41[35]\b|\b403\b|too large|exceeds|mime|unsupported|not allowed|blocked|forbidden|rejected|parental|admins? only|only admins|not.?a.?member|permission|conversation.?deleted/i;
 // Rust failures that mean "network blipped" — keep the resumable session and
 // retry later instead of re-sending the whole file through PHP right now.
-const RUST_RETRYABLE_RE = /chunk_\d|network|timeout|read_chunk|complete_/i;
+const RUST_RETRYABLE_RE = /chunk_\d|network|timeout|read_chunk|complete_|bg_/i; // bg_: [2026-10-09 media-native] OS transfer stalled/cancelled
 
 function _kindFor(r, err) {
   const msg = String(err?.message || r?.message || r?.error || '');
@@ -442,12 +446,18 @@ async function _process(row) {
       if (!usePhp) {
         const onPct = (f) => _emit(p, cmi, Math.round((Number(f) || 0) * 100), 'upload');
         try {
-          if (size > CHUNKED_MIN_BYTES && api.rustChunkedUpload) {
+          // [2026-10-09 net-resilience] enlace lento: >256 KB já vai em pedaços
+          // retomáveis (POST único que cai recomeça do zero).
+          if (size > (_slowLink() ? 256 * 1024 : CHUNKED_MIN_BYTES) && api.rustChunkedUpload) {
             const resume = {
               uploadId: (p.rust_upload_id && Number(p.rust_upload_size) === size) ? p.rust_upload_id : null,
               // [2026-10-08 upload-br] sessions are host-local (BR edge vs US): persist the base.
               base: p.rust_upload_base || null,
-              onUploadId: (id, base) => { updatePayload(cmi, { rust_upload_id: id, rust_upload_size: size, rust_upload_base: base || null }).catch(() => {}); },
+              // [2026-10-09 media-native] chunk size the session was opened with
+              // (resume must keep it; rows without it start a fresh session).
+              chunkSize: Number(p.rust_upload_chunk) || null,
+              bgTitle: p.file_name || null,
+              onUploadId: (id, base, chunk) => { updatePayload(cmi, { rust_upload_id: id, rust_upload_size: size, rust_upload_base: base || null, rust_upload_chunk: Number(chunk) || null }).catch(() => {}); },
             };
             rr = await api.rustChunkedUpload(file, p.sender_email || null, 'chat', onPct, ctrl.signal, resume);
           } else if (api.rustUpload) {
@@ -540,7 +550,9 @@ function _scheduleWake(at) {
 
 async function _drainOnce() {
   if (Platform.OS === 'web') return;
-  const free = MAX_CONCURRENT - _running.size;
+  // [2026-10-09 net-resilience] enlace lento: 1 upload por vez (2 disputando o
+  // uplink de 2G/3G atrasam os dois e o texto/recibo junto).
+  const free = (_slowLink() ? 1 : MAX_CONCURRENT) - _running.size;
   if (free > 0) {
     const rows = await dequeueUploads(MAX_CONCURRENT * 2);
     let launched = 0;

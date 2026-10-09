@@ -79,6 +79,114 @@ public class ExpoChatBackupModule: Module {
             }
         }
 
+        // ─── [2026-10-09 system-integration] iCloud Drive file bridge ────
+        // The JS engine (services/chatBackupCloud.js) builds the CYB2 bundle;
+        // these move that file into / out of the app's ubiquity container
+        // (<iCloud Drive>/Chatyy/ once NSUbiquitousContainers is declared —
+        // plugins/with-icloud-backup.js, gated CHATYY_ICLOUD=1). Without the
+        // iCloud entitlement url(forUbiquityContainerIdentifier:) is nil →
+        // iCloudStatus().available=false and JS keeps its old fallback.
+
+        AsyncFunction("iCloudStatus") { (promise: Promise) in
+            DispatchQueue.global(qos: .userInitiated).async {
+                let signedIn = FileManager.default.ubiquityIdentityToken != nil
+                let container = FileManager.default.url(forUbiquityContainerIdentifier: UBIQUITY_ID)
+                let status: [String: Any] = [
+                    "signedIn": signedIn,
+                    "available": container != nil,
+                    "containerId": UBIQUITY_ID,
+                ]
+                promise.resolve(status)
+            }
+        }
+
+        AsyncFunction("iCloudSaveFile") { (localPath: String, filename: String, promise: Promise) in
+            DispatchQueue.global(qos: .userInitiated).async {
+                do {
+                    let src = URL(fileURLWithPath: localPath.hasPrefix("file://")
+                        ? (URL(string: localPath)?.path ?? localPath) : localPath)
+                    let safe = (filename as NSString).lastPathComponent
+                    guard !safe.isEmpty, FileManager.default.fileExists(atPath: src.path) else {
+                        throw NSError(domain: "ExpoChatBackup", code: 20, userInfo: [NSLocalizedDescriptionKey: "Source file not found"])
+                    }
+                    let dest = try self.backupFileUrl(filename: safe)
+                    let data = try Data(contentsOf: src)
+                    try self.writeCoordinated(data: data, to: dest)
+                    let res: [String: Any] = ["filename": safe, "size": data.count]
+                    promise.resolve(res)
+                } catch {
+                    promise.reject("ERR_ICLOUD_SAVE", error.localizedDescription)
+                }
+            }
+        }
+
+        AsyncFunction("iCloudListFiles") { (promise: Promise) in
+            DispatchQueue.global(qos: .userInitiated).async {
+                do {
+                    let dir = try self.backupDirectory()
+                    let keys: [URLResourceKey] = [.fileSizeKey, .contentModificationDateKey, .ubiquitousItemDownloadingStatusKey]
+                    let urls = try FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: keys, options: [])
+                    let iso = ISO8601DateFormatter()
+                    var out: [[String: Any]] = []
+                    for u in urls {
+                        // Not-yet-downloaded items appear as ".<name>.icloud" placeholders.
+                        var name = u.lastPathComponent
+                        if name.hasPrefix(".") && name.hasSuffix(".icloud") {
+                            name = String(name.dropFirst().dropLast(".icloud".count))
+                        }
+                        guard name.hasPrefix(BACKUP_PREFIX) else { continue }
+                        let v = try? u.resourceValues(forKeys: Set(keys))
+                        out.append([
+                            "filename": name,
+                            "size": v?.fileSize ?? 0,
+                            "modifiedAt": v?.contentModificationDate.map { iso.string(from: $0) } ?? "",
+                            "downloaded": v?.ubiquitousItemDownloadingStatus == .current,
+                        ])
+                    }
+                    out.sort { (($0["modifiedAt"] as? String) ?? "") > (($1["modifiedAt"] as? String) ?? "") }
+                    promise.resolve(out)
+                } catch {
+                    promise.reject("ERR_ICLOUD_LIST", error.localizedDescription)
+                }
+            }
+        }
+
+        AsyncFunction("iCloudFetchFile") { (filename: String, promise: Promise) in
+            DispatchQueue.global(qos: .userInitiated).async {
+                do {
+                    let safe = (filename as NSString).lastPathComponent
+                    let src = try self.backupFileUrl(filename: safe)
+                    try self.ensureDownloaded(url: src)
+                    let data = try self.readCoordinated(from: src)
+                    let dest = FileManager.default.temporaryDirectory.appendingPathComponent("icloud-\(safe)")
+                    try? FileManager.default.removeItem(at: dest)
+                    try data.write(to: dest, options: .atomic)
+                    let res: [String: Any] = ["uri": dest.absoluteString, "size": data.count]
+                    promise.resolve(res)
+                } catch {
+                    promise.reject("ERR_ICLOUD_FETCH", error.localizedDescription)
+                }
+            }
+        }
+
+        AsyncFunction("iCloudDeleteFile") { (filename: String, promise: Promise) in
+            DispatchQueue.global(qos: .utility).async {
+                do {
+                    let url = try self.backupFileUrl(filename: (filename as NSString).lastPathComponent)
+                    var coordError: NSError?
+                    var delError: Error?
+                    NSFileCoordinator().coordinate(writingItemAt: url, options: .forDeleting, error: &coordError) { u in
+                        do { try FileManager.default.removeItem(at: u) } catch { delError = error }
+                    }
+                    if let e = coordError { throw e }
+                    if let e = delError { throw e }
+                    promise.resolve(true)
+                } catch {
+                    promise.reject("ERR_ICLOUD_DELETE", error.localizedDescription)
+                }
+            }
+        }
+
         AsyncFunction("scheduleAutomaticBackup") { (intervalDays: Int, promise: Promise) in
             // We register a BGProcessingTask so iOS schedules a daily
             // background opportunity. The actual run happens when iOS

@@ -16,7 +16,8 @@ import {
   View, Text, TouchableOpacity, StyleSheet, ScrollView, TextInput,
   ActivityIndicator, Alert, Platform,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useRouter, Stack } from 'expo-router';
+import { USE_NATIVE_HEADER, nativeHeaderOptions } from '../components/nativeHeader'; // [2026-10-09 native-sheets-headers]
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
@@ -26,7 +27,7 @@ import FadeSlideIn from '../components/FadeSlideIn';
 import * as byok from '../services/byok';
 
 export default function AdvancedKeyScreen() {
-  const { colors } = useTheme();
+  const { colors, isDark } = useTheme();
   const { t } = useLanguage();
   const router = useRouter();
   const insets = useSafeAreaInsets();
@@ -266,7 +267,10 @@ export default function AdvancedKeyScreen() {
   );
 
   return (
-    <View style={[styles.container, { backgroundColor: colors.background, paddingTop: insets.top }]}>
+    <View style={[styles.container, { backgroundColor: colors.background, paddingTop: USE_NATIVE_HEADER ? 0 : insets.top }]}>
+      {USE_NATIVE_HEADER ? (
+        <Stack.Screen options={nativeHeaderOptions({ colors, isDark, title: t('byok.title') })} />
+      ) : (
       <View style={[styles.header, { borderBottomColor: colors.borderLight }]}>
         <TouchableOpacity onPress={() => router.back()} hitSlop={{ top: 10, left: 10, right: 10, bottom: 10 }}>
           <IconArrowLeft size={22} color={colors.text} />
@@ -275,6 +279,7 @@ export default function AdvancedKeyScreen() {
           {t('byok.title') || 'Chave avançada'}
         </Text>
       </View>
+      )}
       <FadeSlideIn>
       <ScrollView contentContainerStyle={{ padding: Spacing.md, paddingBottom: 32 }}>
         {existing === null ? <ActivityIndicator color={colors.primary} style={{ marginTop: 48 }} /> :

@@ -9,7 +9,7 @@
  *
  * Por quê: o Hermes NÃO faz code-split de import() → os 55 idiomas "lazy"
  * (16.5MB de JS) iam em TODO OTA/APK apesar de <1% dos usuários usarem.
- * Agora só pt-BR/en/es/pt-PT vão no bundle; o resto é baixado sob demanda
+ * Agora só pt-BR/en vão no bundle (es/pt-PT remotos desde 2026-10-09); o resto é baixado sob demanda
  * (ver i18n/index.js → ensureLocaleLoaded).
  *
  * Fonte da verdade continua sendo i18n/<code>.js (ES module `export default {}`).
@@ -33,7 +33,7 @@ const I18N_DIR = path.join(ROOT, 'i18n');
 const REPO_MANIFEST = path.join(I18N_DIR, 'manifest.json');
 
 // Mantém em sincronia com CORE_LOCALES em i18n/index.js
-const CORE_LOCALES = ['pt-BR', 'en', 'es', 'pt-PT'];
+const CORE_LOCALES = ['pt-BR', 'en']; // [2026-10-09 lighter-app] es/pt-PT viraram remotos
 
 const args = process.argv.slice(2);
 const argVal = (flag, dflt) => { const i = args.indexOf(flag); return i >= 0 && args[i + 1] ? args[i + 1] : dflt; };

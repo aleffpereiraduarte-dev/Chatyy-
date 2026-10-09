@@ -735,6 +735,7 @@ export default function CreatePostModal({
           allowsMultipleSelection: true,
           quality: 0.8,
           selectionLimit: MAX_MEDIA,
+          orderedSelection: true, // [2026-10-09 more-native]
         }).then(async (result) => {
           if (!result.canceled && result.assets?.length > 0) {
             const items = await Promise.all(result.assets.map(async (asset, idx) => {

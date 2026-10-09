@@ -30,6 +30,7 @@ import {
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import { IconX, IconLock, IconCheck, IconCamera } from './Icons';
+import { USE_NATIVE_SHEETS, NativeSheet } from './NativeSheet'; // [2026-10-09 native-sheets]
 
 // Lazy-load expo-camera so web doesn't crash when the camera scanner is
 // not bundled. Mirror the pattern from /profile-qr.js.
@@ -72,6 +73,10 @@ function pseudoQrMatrix(payload, size = 27) {
   drawFinder(size - 7, 0);
   return out;
 }
+
+// [2026-10-09 e2ee v4] QR de verdade (com correção de erro) quando disponível.
+let RealQRCode = null;
+try { RealQRCode = require('react-native-qrcode-svg').default; } catch {}
 
 function QrArtwork({ payload, size = 220, color = '#111' }) {
   const matrix = useMemo(() => pseudoQrMatrix(payload, 27), [payload]);
@@ -134,6 +139,9 @@ export default function SafetyNumberSheet({ visible, onClose, peerEmail, peerNam
   const [myPub, setMyPub] = useState('');
   const [peerPub, setPeerPub] = useState('');
   const [verifyResult, setVerifyResult] = useState(null); // null | 'match' | 'mismatch'
+  // [2026-10-09 e2ee v4] Número de segurança do protocolo novo (vodozemac):
+  // { digits, groups, verified, changedAt, myDevices, peerDevices } | null
+  const [v4, setV4] = useState(null);
 
   // expo-camera hook (stable shape so hook order stays consistent across
   // platforms that lazy-loaded the module).
@@ -154,7 +162,19 @@ export default function SafetyNumberSheet({ visible, onClose, peerEmail, peerNam
     let cancelled = false;
     if (!visible || !peerEmail) return;
     setLoading(true);
+    setV4(null);
     (async () => {
+      // v4 primeiro (flag de servidor). Se não se aplica, segue o legado.
+      try {
+        const v4mod = require('../services/e2eeV4');
+        if (v4mod.isSupported()) {
+          const st = await v4mod.getStatus();
+          if (st?.allowed) {
+            const sn = await v4mod.safetyNumber(peerEmail);
+            if (!cancelled && sn) { setV4(sn); setPeerPub('v4'); setLoading(false); return; }
+          }
+        }
+      } catch {}
       try {
         const e2e = require('../services/e2e');
         const e2eOrch = (() => { try { return require('../services/e2ee'); } catch { return null; } })();
@@ -180,7 +200,16 @@ export default function SafetyNumberSheet({ visible, onClose, peerEmail, peerNam
     return () => { cancelled = true; };
   }, [visible, peerEmail]);
 
-  const safetyNumber = useMemo(() => deriveSafetyNumber(myPub, peerPub), [myPub, peerPub]);
+  const safetyNumber = useMemo(() => (v4 ? v4.groups.join(' ') : deriveSafetyNumber(myPub, peerPub)), [v4, myPub, peerPub]);
+  const toggleV4Verified = useCallback(async () => {
+    if (!v4) return;
+    try {
+      const v4mod = require('../services/e2eeV4');
+      await v4mod.setVerified(peerEmail, !v4.verified);
+      setV4({ ...v4, verified: !v4.verified });
+    } catch {}
+  }, [v4, peerEmail]);
+  const tr = useCallback((k, fb) => { const v = t(k); return v && v !== k ? v : fb; }, [t]);
 
   // QR payload format. We embed the safety number digest (hex of the
   // first 30 sha512 bytes) so a scan can match locally without sending
@@ -211,6 +240,7 @@ export default function SafetyNumberSheet({ visible, onClose, peerEmail, peerNam
       const q = data.split('?')[1] || '';
       const params = new URLSearchParams(q);
       const peerDigits = (params.get('n') || '').replace(/\s+/g, '');
+      // v4: QR carrega os 60 dígitos crus (chatyy://verify?v=4&n=...).
       const myDigits = safetyNumber.replace(/\s+/g, '');
       if (peerDigits && peerDigits === myDigits) {
         setVerifyResult('match');
@@ -238,15 +268,9 @@ export default function SafetyNumberSheet({ visible, onClose, peerEmail, peerNam
     } catch {}
   }, [requestPermission, t]);
 
-  return (
-    <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
-      <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.55)', justifyContent: 'flex-end' }}>
-        <View style={{
-          backgroundColor: colors.surface,
-          borderTopLeftRadius: 20, borderTopRightRadius: 20,
-          maxHeight: '92%', minHeight: '70%',
-          paddingHorizontal: 20, paddingTop: 18, paddingBottom: 28,
-        }}>
+  // [2026-10-09 native-sheets] Corpo compartilhado: sheet do sistema (iOS/Android) ou Modal (web).
+  const body = (
+        <>
           <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
               <IconLock size={18} color={colors.primary} />
@@ -318,7 +342,13 @@ export default function SafetyNumberSheet({ visible, onClose, peerEmail, peerNam
             </View>
           ) : (
             <ScrollView contentContainerStyle={{ alignItems: 'center', paddingBottom: 20 }}>
-              <QrArtwork payload={qrPayload} size={220} color={isDark ? '#fff' : '#111'} />
+              {v4 && RealQRCode ? (
+                <View style={{ backgroundColor: '#fff', padding: 12, borderRadius: 12 }}>
+                  <RealQRCode value={`chatyy://verify?v=4&n=${v4.digits}`} size={200} color="#000" backgroundColor="#fff" />
+                </View>
+              ) : (
+                <QrArtwork payload={qrPayload} size={220} color={isDark ? '#fff' : '#111'} />
+              )}
               <View style={{ marginTop: 18, padding: 14, borderRadius: 14,
                 backgroundColor: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.04)',
                 width: '100%',
@@ -348,6 +378,25 @@ export default function SafetyNumberSheet({ visible, onClose, peerEmail, peerNam
                 </TouchableOpacity>
               )}
 
+              {v4 && (
+                <View style={{ marginTop: 14, width: '100%', alignItems: 'center', gap: 10 }}>
+                  {!!v4.changedAt && !v4.verified && (
+                    <Text style={{ color: colors.textSecondary, fontSize: 12, textAlign: 'center' }}>
+                      {tr('e2ee.codeChanged', 'O código de segurança mudou (aparelho novo ou reinstalação). Compare de novo.')}
+                    </Text>
+                  )}
+                  <Text style={{ color: colors.textTertiary, fontSize: 12, textAlign: 'center' }}>
+                    {tr('e2ee.devicesCount', 'Aparelhos com criptografia: você {me}, contato {peer}').replace('{me}', String(v4.myDevices)).replace('{peer}', String(v4.peerDevices))}
+                  </Text>
+                  <TouchableOpacity onPress={toggleV4Verified} style={[s.outlineBtn, { borderColor: colors.borderLight, flexDirection: 'row', alignItems: 'center', gap: 6 }]}>
+                    {v4.verified ? <IconCheck size={14} color={colors.text} /> : <IconLock size={14} color={colors.text} />}
+                    <Text style={{ color: colors.text }}>
+                      {v4.verified ? tr('e2ee.verifiedUndo', 'Verificado (toque para desfazer)') : tr('e2ee.markVerified', 'Marcar como verificado')}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              )}
+
               {!peerPub && (
                 <Text style={{ color: colors.textTertiary, fontSize: 12, marginTop: 14, textAlign: 'center' }}>
                   {t('chatConv.e2eVerifyWait') || 'Aguardando chaves do outro participante…'}
@@ -355,6 +404,29 @@ export default function SafetyNumberSheet({ visible, onClose, peerEmail, peerNam
               )}
             </ScrollView>
           )}
+        </>
+  );
+
+  if (USE_NATIVE_SHEETS) {
+    return (
+      <NativeSheet visible={!!visible} onClose={onClose} detents={[0.75, 1]} backgroundColor={colors.surface}>
+        <View style={{ flex: 1, backgroundColor: colors.surface, paddingHorizontal: 20, paddingTop: 24, paddingBottom: 16 }}>
+          {body}
+        </View>
+      </NativeSheet>
+    );
+  }
+
+  return (
+    <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
+      <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.55)', justifyContent: 'flex-end' }}>
+        <View style={{
+          backgroundColor: colors.surface,
+          borderTopLeftRadius: 20, borderTopRightRadius: 20,
+          maxHeight: '92%', minHeight: '70%',
+          paddingHorizontal: 20, paddingTop: 18, paddingBottom: 28,
+        }}>
+          {body}
         </View>
       </View>
     </Modal>

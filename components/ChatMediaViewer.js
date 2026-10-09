@@ -5,7 +5,9 @@ import {
   Dimensions, Animated, PanResponder, ActivityIndicator, Linking, StatusBar, Alert, FlatList, Share, ScrollView,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { IconX, IconDownload, IconPlay, IconPause, IconLock, IconCheck, IconShare, IconStar, IconStarFilled, IconMoreHorizontal, IconInfo, IconForward } from './Icons';
+import { IconX, IconDownload, IconPlay, IconPause, IconLock, IconCheck, IconShare, IconStar, IconStarFilled, IconMoreHorizontal, IconInfo, IconForward, IconType, IconCopy } from './Icons';
+// [2026-10-09 more-native] share do ARQUIVO (não do link) + texto da foto (Vision OCR já no binário iOS)
+import { shareMediaFile, canRecognizeImageText, recognizeImageText } from '../utils/mediaNativeActions';
 // Wave 14: 3D / depth-photo parallax view. Lazy-loaded so web stays green
 // (expo-sensors isn't available in the web bundle).
 let ParallaxPortraitView = null;
@@ -1748,6 +1750,10 @@ export default function ChatMediaViewer({ visible, onClose, fileUrl, hlsUrl, fil
   const [_chromeVisible, _setChromeVisible] = useState(true);
   const [_infoSheetOpen, _setInfoSheetOpen] = useState(false);
   const [_starred, _setStarred] = useState(false);
+  // [2026-10-09 more-native] Texto da foto: null | { loading } | { text } | { empty }
+  const [_ocr, _setOcr] = useState(null);
+  const [_ocrCopied, _setOcrCopied] = useState(false);
+  const [_sharing, _setSharing] = useState(false);
   const _chromeOpacity = useRef(new Animated.Value(1)).current;
   // Open animation (subtle scale-in behind the Modal's fade) + swipe-down
   // dismiss backdrop. _bgOpacity drives a full-black layer so a downward drag
@@ -2583,24 +2589,39 @@ export default function ChatMediaViewer({ visible, onClose, fileUrl, hlsUrl, fil
           {!viewOnce && (
             <TouchableOpacity
               onPress={async () => {
-                try {
-                  if (Platform.OS === 'web') {
-                    if (navigator.share) {
-                      await navigator.share({ url }).catch(() => {});
-                    } else {
-                      await navigator.clipboard?.writeText?.(url);
-                    }
-                  } else {
-                    await Share.share({ url, message: url });
-                  }
-                } catch {}
+                // [2026-10-09 more-native] share sheet nativo com o ARQUIVO
+                // (Salvar imagem / AirDrop / outros apps recebem a mídia, não
+                // um link). Fallback interno: link, como antes.
+                if (_sharing) return;
+                _setSharing(true);
+                try { await shareMediaFile({ url, fileName: _activeFileName }); } catch {}
+                _setSharing(false);
               }}
+              disabled={_sharing}
               style={s.actionBtn}
               hitSlop={10}
               accessibilityLabel={(typeof t === 'function' && t('viewer.share')) || 'Compartilhar'}
               accessibilityRole="button"
             >
-              <IconShare size={22} color="#fff" />
+              {_sharing ? <ActivityIndicator size="small" color="#fff" /> : <IconShare size={22} color="#fff" />}
+            </TouchableOpacity>
+          )}
+          {/* [2026-10-09 more-native] Texto da foto (Live Text-lite, iOS Vision on-device). */}
+          {!viewOnce && isImage && canRecognizeImageText() && (
+            <TouchableOpacity
+              onPress={async () => {
+                if (_ocr?.loading) return;
+                _setOcrCopied(false);
+                _setOcr({ loading: true });
+                const r = await recognizeImageText(url, { fileName: _activeFileName });
+                _setOcr(r?.text ? { text: r.text } : { empty: true });
+              }}
+              style={s.actionBtn}
+              hitSlop={10}
+              accessibilityLabel={typeof t === 'function' ? t('viewer.copyText') : 'viewer.copyText'}
+              accessibilityRole="button"
+            >
+              <IconType size={22} color="#fff" />
             </TouchableOpacity>
           )}
           {!viewOnce && (
@@ -2613,7 +2634,7 @@ export default function ChatMediaViewer({ visible, onClose, fileUrl, hlsUrl, fil
               accessibilityRole="button"
             >
               {saving ? <ActivityIndicator size="small" color="#fff" />
-                : saved ? <IconCheck size={22} color="#22c55e" strokeWidth={3} />
+                : saved ? <IconCheck size={22} color="#fff" strokeWidth={3} />
                 : <IconDownload size={22} color="#fff" />}
             </TouchableOpacity>
           )}
@@ -2625,7 +2646,7 @@ export default function ChatMediaViewer({ visible, onClose, fileUrl, hlsUrl, fil
             accessibilityRole="button"
           >
             {_starred
-              ? <IconStarFilled size={22} color="#facc15" />
+              ? <IconStarFilled size={22} color="#fff" />
               : <IconStar size={22} color="#fff" />}
           </TouchableOpacity>
           {/* Forward — opens the app's existing forward picker for this media.
@@ -2648,6 +2669,56 @@ export default function ChatMediaViewer({ visible, onClose, fileUrl, hlsUrl, fil
             details (filename, file size, sender email, date) that used to
             pollute the main header. Power users still have access; new
             users get a clean fullscreen photo experience. */}
+        {/* [2026-10-09 more-native] Sheet do texto reconhecido: texto SELECIONÁVEL
+            (seleção nativa do sistema) + Copiar. */}
+        {!!_ocr && (
+          <TouchableWithoutFeedback onPress={() => _setOcr(null)}>
+            <View style={s.infoOverlay}>
+              <TouchableWithoutFeedback>
+                <View style={[s.infoSheet, { paddingBottom: Math.max(insets.bottom, 16) + 12, maxHeight: '70%' }]}>
+                  <View style={s.infoHandle} />
+                  <Text style={s.infoTitle}>{typeof t === 'function' ? t('viewer.textInImage') : 'viewer.textInImage'}</Text>
+                  {_ocr.loading ? (
+                    <View style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 18 }}>
+                      <ActivityIndicator color="#fff" />
+                      <Text style={{ color: 'rgba(255,255,255,0.7)', marginLeft: 10, fontSize: 14 }}>
+                        {typeof t === 'function' ? t('viewer.recognizingText') : 'viewer.recognizingText'}
+                      </Text>
+                    </View>
+                  ) : _ocr.empty ? (
+                    <Text style={{ color: 'rgba(255,255,255,0.7)', fontSize: 14, paddingVertical: 18 }}>
+                      {typeof t === 'function' ? t('viewer.noTextFound') : 'viewer.noTextFound'}
+                    </Text>
+                  ) : (
+                    <>
+                      <ScrollView style={{ maxHeight: 320 }} contentContainerStyle={{ paddingBottom: 8 }}>
+                        <Text selectable style={{ color: '#fff', fontSize: 16, lineHeight: 22 }}>{_ocr.text}</Text>
+                      </ScrollView>
+                      <TouchableOpacity
+                        onPress={async () => {
+                          try {
+                            const C = require('expo-clipboard');
+                            await C.setStringAsync(_ocr.text);
+                            _setOcrCopied(true);
+                            try { require('expo-haptics').notificationAsync(require('expo-haptics').NotificationFeedbackType.Success); } catch {}
+                          } catch {}
+                        }}
+                        style={{ marginTop: 12, height: 46, borderRadius: 23, backgroundColor: '#fff', flexDirection: 'row', alignItems: 'center', justifyContent: 'center' }}
+                        accessibilityRole="button"
+                      >
+                        {_ocrCopied ? <IconCheck size={18} color="#000" strokeWidth={3} /> : <IconCopy size={18} color="#000" />}
+                        <Text style={{ color: '#000', fontSize: 15, fontWeight: '600', marginLeft: 8 }}>
+                          {typeof t === 'function' ? t(_ocrCopied ? 'common.copied' : 'common.copy') : 'common.copy'}
+                        </Text>
+                      </TouchableOpacity>
+                    </>
+                  )}
+                </View>
+              </TouchableWithoutFeedback>
+            </View>
+          </TouchableWithoutFeedback>
+        )}
+
         {_infoSheetOpen && (
           <TouchableWithoutFeedback onPress={() => _setInfoSheetOpen(false)}>
             <View style={s.infoOverlay}>

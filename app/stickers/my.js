@@ -9,7 +9,8 @@ import {
   View, Text, TouchableOpacity, FlatList, ActivityIndicator, Alert, Platform,
   Image, TextInput, Modal, Animated, Share, PanResponder,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useRouter, Stack } from 'expo-router';
+import { USE_NATIVE_HEADER, nativeHeaderOptions, HeaderIconButton } from '../../components/nativeHeader'; // [2026-10-09 native-sheets-headers] header NATIVO
 import { useTheme } from '../../context/ThemeContext';
 import { useLanguage } from '../../context/LanguageContext';
 import { useAuth } from '../../context/AuthContext';
@@ -229,6 +230,15 @@ export default function StickerMyPacksScreen() {
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.background }}>
+      {USE_NATIVE_HEADER && <Stack.Screen options={nativeHeaderOptions({
+        colors, title: t('chat.myPacks'),
+        headerRight: () => (
+          <HeaderIconButton onPress={() => setShowCreate(true)} accessibilityLabel={t('chat.createPack')}>
+            <IconPlus size={22} color={colors.text} />
+          </HeaderIconButton>
+        ),
+      })} />}
+      {!USE_NATIVE_HEADER && (
       <View style={{
         flexDirection: 'row', alignItems: 'center',
         paddingHorizontal: 12, paddingVertical: 12, gap: 10,
@@ -248,6 +258,7 @@ export default function StickerMyPacksScreen() {
           </Text>
         </TouchableOpacity>
       </View>
+      )}
 
       {loading ? (
         <ActivityIndicator size="large" color={colors.primary} style={{ marginTop: 36 }} />

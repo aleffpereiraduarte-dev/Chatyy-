@@ -18,7 +18,8 @@ import {
   View, Text, FlatList, TouchableOpacity, StyleSheet, ActivityIndicator,
   RefreshControl, Image, Alert, Platform, Share,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useRouter, Stack } from 'expo-router';
+import { USE_NATIVE_HEADER, nativeHeaderOptions } from '../components/nativeHeader'; // [2026-10-09 native-sheets-headers] header NATIVO
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as api from '../services/api';
 import { useTheme } from '../context/ThemeContext';
@@ -285,7 +286,9 @@ export default function LivesSavedScreen() {
   const empty = !loading && recordings.length === 0;
 
   return (
-    <View style={[styles.container, { backgroundColor: colors.background, paddingTop: insets.top }]}>
+    <View style={[styles.container, { backgroundColor: colors.background, paddingTop: USE_NATIVE_HEADER ? 0 : insets.top }]}>
+      {USE_NATIVE_HEADER && <Stack.Screen options={nativeHeaderOptions({ colors, isDark, title: t('liveReplay.tab') })} />}
+      {!USE_NATIVE_HEADER && (
       <View style={[styles.header, { borderBottomColor: colors.border || (isDark ? '#2a2a2c' : '#eee') }]}>
         <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}
                           accessibilityLabel={t('common.back') || 'Voltar'} accessibilityRole="button">
@@ -296,6 +299,7 @@ export default function LivesSavedScreen() {
         </Text>
         <View style={{ width: 38 }} />
       </View>
+      )}
 
       {loading ? (
         // [Wave 44] Skeleton — 4 rows of placeholder cards so the UI doesn't

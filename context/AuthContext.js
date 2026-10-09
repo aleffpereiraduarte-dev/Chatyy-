@@ -1625,6 +1625,11 @@ export function AuthProvider({ children }) {
     // [2026-10-08 android-otp-shortcuts] Drop recent-conversation icon shortcuts
     // (names/avatars of the account that is leaving).
     try { require('../services/appShortcuts').clearAppShortcuts(); } catch {}
+    // [2026-10-09 system-integration] Widgets + Siri contact list of this account.
+    try { require('../services/systemIntegration').clearSystemIntegration(); } catch {}
+    // [2026-10-09 notif-native] Native notification Reply / Mark-read must not
+    // keep signing with this session's bearers (Android prefs, iOS Keychain).
+    try { require('../services/pushNotifications').clearNativeChatAuth?.(); } catch {}
 
     // CRITICAL: revoke the device's push token server-side BEFORE clearing
     // the bearer token. Previously this ran AFTER `api.clearAuthToken()` —

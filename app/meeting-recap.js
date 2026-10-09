@@ -3,7 +3,8 @@ import {
   View, Text, ScrollView, TouchableOpacity, StyleSheet,
   Platform, ActivityIndicator, Share,
 } from 'react-native';
-import { useRouter, useLocalSearchParams } from 'expo-router';
+import { useRouter, useLocalSearchParams, Stack } from 'expo-router';
+import { USE_NATIVE_HEADER, nativeHeaderOptions } from '../components/nativeHeader'; // [2026-10-09 native-sheets-headers] header NATIVO
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
@@ -170,19 +171,24 @@ export default function MeetingRecapScreen() {
 
   if (loading && !meeting) {
     return (
-      <View style={[styles.container, { backgroundColor: colors.background, paddingTop: insets.top }]} />
+      <View style={[styles.container, { backgroundColor: colors.background, paddingTop: USE_NATIVE_HEADER ? 0 : insets.top }]}>
+        {USE_NATIVE_HEADER && <Stack.Screen options={nativeHeaderOptions({ colors, isDark, title: t('meetingRecap.title') })} />}
+      </View>
     );
   }
 
   if (error || !meeting) {
     return (
-      <View style={[styles.container, { backgroundColor: colors.background, paddingTop: insets.top }]}>
+      <View style={[styles.container, { backgroundColor: colors.background, paddingTop: USE_NATIVE_HEADER ? 0 : insets.top }]}>
+        {USE_NATIVE_HEADER && <Stack.Screen options={nativeHeaderOptions({ colors, isDark, title: t('meetingRecap.title') })} />}
+        {!USE_NATIVE_HEADER && (
         <View style={[styles.header, { backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
           <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
             <IconArrowLeft size={22} color={colors.text} />
           </TouchableOpacity>
           <Text style={[styles.headerTitle, { color: colors.text }]}>{t('meetingRecap.title')}</Text>
         </View>
+        )}
         <View style={styles.center}>
           <IconVideo size={48} color={colors.textTertiary} />
           <Text style={[styles.emptyTitle, { color: colors.text }]}>{error || t('meetingRecap.notFound')}</Text>
@@ -194,14 +200,17 @@ export default function MeetingRecapScreen() {
   const duration = getDuration();
 
   return (
-    <View style={[styles.container, { backgroundColor: colors.background, paddingTop: insets.top }]}>
+    <View style={[styles.container, { backgroundColor: colors.background, paddingTop: USE_NATIVE_HEADER ? 0 : insets.top }]}>
       {/* Header */}
+      {USE_NATIVE_HEADER && <Stack.Screen options={nativeHeaderOptions({ colors, isDark, title: t('meetingRecap.title') })} />}
+      {!USE_NATIVE_HEADER && (
       <View style={[styles.header, { backgroundColor: isDark ? colors.surface : '#fff', borderBottomColor: colors.border }]}>
         <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
           <IconArrowLeft size={22} color={colors.text} />
         </TouchableOpacity>
         <Text style={[styles.headerTitle, { color: colors.text }]}>{t('meetingRecap.title')}</Text>
       </View>
+      )}
 
       <ScrollView contentContainerStyle={styles.content}>
         {/* Meeting Info Card */}

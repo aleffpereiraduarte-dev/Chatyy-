@@ -96,6 +96,10 @@ export async function setupCallKeep() {
     }
     _isSetup = true;
 
+    // [2026-10-09 recents-redial] Phone.app Recents / CarPlay / Siri → call.
+    // No-op on binaries without the native intent bridge.
+    try { require('./systemCallIntents').installSystemCallIntents(); } catch {}
+
     // Listen for VoIP token
     try {
       ExpoCallKit.onVoipTokenReceived(({ token }) => {
@@ -412,12 +416,20 @@ export function addCallKeepListeners({ onAnswer, onEnd }) {
   _diag('callkeep_listeners_register', '', { hasOnAnswer: !!onAnswer, hasOnEnd: !!onEnd });
 
   const unsub1 = ExpoCallKit.onCallAnswered((data) => {
+    // [2026-10-09 system-hold] Binaries <= 2026-10-08 emitted onCallAnswered
+    // {resumed:true} when CallKit RESUMED a held call — not a new answer.
+    if (data && data.resumed) { _diag('callkeep_resume_ignored', data.callId || ''); return; }
     console.log('[CallKeep] Call answered:', data.callId);
     _diag('callkeep_answered_live', data?.callId || '', { callerEmail: data?.callerEmail || '' });
     if (onAnswer) onAnswer(data);
   });
 
-  const unsub2 = ExpoCallKit.onCallEnded(({ callId }) => {
+  const unsub2 = ExpoCallKit.onCallEnded(({ callId, held }) => {
+    // [2026-10-09 system-hold] Binaries <= 2026-10-08 emitted onCallEnded
+    // {held:true} on CXSetHeldCallAction ("Hold & Accept" on a GSM call, or
+    // the system pill). onEnd then sent WS call_end and killed the call.
+    // A hold is NOT an end.
+    if (held) { _diag('callkeep_hold_not_end', callId || ''); return; }
     console.log('[CallKeep] Call ended:', callId);
     _diag('callkeep_ended_live', callId || '');
     if (onEnd) onEnd(callId);
@@ -436,6 +448,8 @@ export function addCallKeepListeners({ onAnswer, onEnd }) {
         _bufferedIncomingCallEvents = [];
         for (const evt of pendingEvents) {
           const eventName = evt._eventName;
+          // [2026-10-09 system-hold] hold/resume are not answer/end.
+          if (evt && (evt.held || evt.resumed)) continue;
           if (eventName === 'onCallAnswered' && onAnswer) {
             console.log('[CallKeep] Replaying buffered onCallAnswered:', evt.callId);
             _diag('callkeep_replay_answered', evt.callId, { callerEmail: evt?.callerEmail || '', callerName: evt?.callerName || '' });
@@ -600,7 +614,8 @@ function installNativeCallStateBridge() {
   // iOS CXEndCallAction ghost event that fires right after CXAnswerCallAction.
   try {
     if (typeof ExpoCallKit.onCallAnswered === 'function') {
-      _stateListeners.push(ExpoCallKit.onCallAnswered(() => {
+      _stateListeners.push(ExpoCallKit.onCallAnswered((d) => {
+        if (d && d.resumed) return; // [2026-10-09 system-hold]
         _lastNativeAnswerAt = Date.now();
         try { globalThis.__chatyyNativeCallActive = true; } catch {}
         try { require('./callState').setCallState('answered'); } catch {}
@@ -609,7 +624,8 @@ function installNativeCallStateBridge() {
   } catch {}
   // Native Room ended → flag drops so the post-call HTTP/WS hangup path can
   // run as it did before (no race vs. the native CXEndCallAction tear-down).
-  _stateListeners.push(ExpoCallKit.onCallEnded(() => {
+  _stateListeners.push(ExpoCallKit.onCallEnded((d) => {
+    if (d && d.held) return; // [2026-10-09 system-hold] hold ≠ end
     if (_lastNativeAnswerAt && Date.now() - _lastNativeAnswerAt < 3000) return;
     try { globalThis.__chatyyNativeCallActive = false; } catch {}
     try {

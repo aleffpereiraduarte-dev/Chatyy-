@@ -417,7 +417,11 @@ public class ExpoCallKitModule: Module {
       // subscription was the only place these frames were observed.
       "onCallAnsweredRemote",
       "onCallDeclinedRemote",
-      "onCallCancelledRemote"
+      "onCallCancelledRemote",
+      // [2026-10-09 recents-redial] Phone.app Recents / Siri / CarPlay asked
+      // to start a Chatyy call (INStartCallIntent). Payload: { handle,
+      // email, name, video, conversationId }. JS: services/systemCallIntents.js.
+      "onStartCallIntent"
     )
 
     // Auto-initialize on module load (skip CallKit in China per Apple requirement)
@@ -518,6 +522,14 @@ public class ExpoCallKitModule: Module {
     // the rich JS UI shows. Safe no-op if no native screen is up.
     Function("dismissNativeCallVC") { () -> Void in
       CallViewController.dismissIfPresented()
+    }
+
+    // [2026-10-09 recents-redial] Pending INStartCallIntent (tap on a Chatyy
+    // entry in Phone.app Recents, Siri "ligar no Chatyy", CarPlay redial)
+    // captured by CallIntentAppDelegateSubscriber, possibly before JS booted.
+    // Returns nil when none / older than 2 min. Consumes (one-shot).
+    Function("consumePendingStartCallIntent") { () -> [String: Any]? in
+      return CallRecentsIntentStore.consumePending()
     }
 
     // [2026-10-06 native-only outgoing] Capability probe. JS (chat-conversation
@@ -1750,6 +1762,14 @@ public class ExpoCallKitModule: Module {
     ) { [weak self] notification in
       self?.handleAudioInterruption(notification)
     }
+    // [2026-10-09 system-hold] Auto-resume a Chatyy call the SYSTEM put on
+    // hold ("Hold & Accept" on a GSM/other-VoIP call) once that other call
+    // ends — WhatsApp behaviour. User-initiated holds are never auto-resumed.
+    CallHoldResumer.shared.install()
+    // [2026-10-09 pip-camera] Keep the local camera running while the call is
+    // in Picture-in-Picture (needs the multitasking-camera entitlement; no-op
+    // without it — isMultitaskingCameraAccessSupported stays false).
+    CallMultitaskingCamera.install()
     print("[ExpoCallKit] CXProvider configured")
   }
 
@@ -1890,6 +1910,19 @@ public class ExpoCallKitModule: Module {
       self?.safeSendEvent("onOpenChat", ["callId": callId, "conversationId": convId])
     }
     callStateObservers.append(chatToken)
+    // [2026-10-09 recents-redial] Live INStartCallIntent → JS.
+    let startIntentToken = nc.addObserver(
+      forName: CallRecentsIntentStore.didReceiveNotification,
+      object: nil,
+      queue: q
+    ) { [weak self] note in
+      var payload: [String: Any] = [:]
+      for (k, v) in note.userInfo ?? [:] {
+        if let key = k as? String { payload[key] = v }
+      }
+      self?.safeSendEvent("onStartCallIntent", payload)
+    }
+    callStateObservers.append(startIntentToken)
   }
 
   /// [2026-05-22 #1349 fix] Bridge the CallSignalWs receiver-loop
@@ -3194,37 +3227,10 @@ private class ProviderDelegate: NSObject, CXProviderDelegate {
   }
 
   func provider(_ provider: CXProvider, perform action: CXSetHeldCallAction) {
-    let session = AVAudioSession.sharedInstance()
-    // Look up the original server-side call_id from the CallKit UUID. JS
-    // listeners key everything by call_id; emitting only the UUID broke
-    // hold/resume mapping (state desync between CallKit and JS).
-    let actionUuid = action.callUUID
-    let callIdForEvent = module?.callIdForUUID(actionUuid) ?? actionUuid.uuidString
-    if action.isOnHold {
-      // Call placed on hold — deactivate audio so other apps can use it
-      do {
-        try session.setActive(false, options: [.notifyOthersOnDeactivation])
-      } catch {
-        print("[ExpoCallKit] Hold audio deactivation failed: \(error)")
-      }
-      module?.safeSendEvent("onCallEnded", ["callId": callIdForEvent, "held": true])
-    } else {
-      // Call resumed from hold — reactivate audio
-      do {
-        // [bug 2026-05-15 #10] aligned BT options with didActivate.
-        // [2026-10-07 audio-route] category/mode/override via AudioRouter so
-        // resume keeps the call type + the user's speaker choice (the old
-        // hard-coded override(.none) dropped a video call to the earpiece).
-        try session.setActive(true)
-        AudioRouter.shared.reapplyRoute()
-      } catch {
-        print("[ExpoCallKit] Resume audio activation failed: \(error)")
-        action.fail()
-        return
-      }
-      module?.safeSendEvent("onCallAnswered", ["callId": callIdForEvent, "resumed": true])
-    }
-    action.fulfill()
+    // [2026-10-09 system-hold] Shared with the early (VoIP stub) provider
+    // delegate — see CallProviderActions.performHeld. Hold/resume NO LONGER
+    // emits onCallEnded{held} / onCallAnswered{resumed} (JS hung up on hold).
+    CallProviderActions.performHeld(action, callId: module?.callIdForUUID(action.callUUID))
   }
 
   /// [DTMF, 2026-05-19] CXPlayDTMFCallAction — fires when the user taps a

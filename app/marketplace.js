@@ -5,7 +5,8 @@ import {
   KeyboardAvoidingView, RefreshControl, Pressable, Animated,
   useWindowDimensions,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useRouter, Stack } from 'expo-router';
+import { USE_NATIVE_HEADER, nativeHeaderOptions, HeaderIconButton, HeaderBackButton } from '../components/nativeHeader'; // [2026-10-09 native-sheets-headers] header NATIVO
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
@@ -532,6 +533,16 @@ function ListingDetail({ listing: initial, onClose, savedIds, onToggleSave }) {
   return (
     <View style={{ flex: 1, backgroundColor: colors.background }}>
       {/* Sticky header */}
+      {USE_NATIVE_HEADER && <Stack.Screen options={nativeHeaderOptions({
+        colors, title: listing.title || '',
+        headerLeft: () => <HeaderBackButton onPress={onClose} color={colors.text} accessibilityLabel={t('common.back')} />,
+        headerRight: () => (
+          <HeaderIconButton onPress={() => onToggleSave(listing.id)} accessibilityLabel={isSaved ? t('marketplace.unsave') : t('marketplace.save')}>
+            {isSaved ? <IconHeartFilled size={22} /> : <IconHeart size={22} color={colors.text} />}
+          </HeaderIconButton>
+        ),
+      })} />}
+      {!USE_NATIVE_HEADER && (
       <View style={[s.detailHeader, { paddingTop: insets.top + 8, backgroundColor: colors.background, borderBottomColor: colors.border }]}>
         <TouchableOpacity onPress={onClose} style={s.backBtn} accessibilityLabel={t('common.back')}>
           <IconArrowLeft size={22} color={colors.text} />
@@ -541,6 +552,7 @@ function ListingDetail({ listing: initial, onClose, savedIds, onToggleSave }) {
           {isSaved ? <IconHeartFilled size={22} /> : <IconHeart size={22} color={colors.text} />}
         </TouchableOpacity>
       </View>
+      )}
 
       <ScrollView showsVerticalScrollIndicator={false}>
         <PhotoCarousel photos={listing.photos} width={width} height={width * 0.75} />
@@ -958,6 +970,11 @@ export default function MarketplaceScreen() {
   return (
     <View style={{ flex: 1, backgroundColor: colors.background }}>
       {/* Header */}
+      {USE_NATIVE_HEADER && <Stack.Screen options={{
+        ...nativeHeaderOptions({ colors, title: t('marketplace.title') }),
+        headerLeft: undefined, headerBackVisible: true, headerRight: undefined,
+      }} />}
+      {!USE_NATIVE_HEADER && (
       <View style={[s.header, { paddingTop: insets.top + 4, backgroundColor: colors.background, borderBottomColor: colors.border }]}>
         <TouchableOpacity onPress={() => router.back()} style={s.backBtn} accessibilityLabel={t('common.back')}>
           <IconArrowLeft size={22} color={colors.text} />
@@ -965,6 +982,7 @@ export default function MarketplaceScreen() {
         <Text style={[s.headerTitle, { color: colors.text }]}>{t('marketplace.title')}</Text>
         <View style={{ width: 36 }} />
       </View>
+      )}
 
       {/* Tab bar */}
       <View style={[s.tabBar, { backgroundColor: colors.background, borderBottomColor: colors.border }]}>

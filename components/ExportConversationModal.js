@@ -26,6 +26,7 @@ import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import { IconPackage, IconFileText, IconImage, IconX, IconCalendar, IconAlertCircle } from './Icons';
 import * as api from '../services/api';
+import { USE_NATIVE_SHEETS, NativeSheet } from './NativeSheet'; // [2026-10-09 native-sheets]
 
 const PURPLE = '#111111';
 
@@ -265,24 +266,9 @@ export default function ExportConversationModal({
     );
   };
 
-  return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
-      <Animated.View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.55)', opacity: fade }}>
-        <Pressable style={{ flex: 1, justifyContent: 'flex-end' }} onPress={status === 'loading' ? undefined : onClose}>
-          <Animated.View style={{ transform: [{ scale }] }}>
-            <Pressable
-              onPress={() => {}}
-              style={{
-                backgroundColor: sheetBg,
-                borderTopLeftRadius: 24, borderTopRightRadius: 24,
-                paddingTop: 10, paddingHorizontal: 18,
-                paddingBottom: Platform.OS === 'ios' ? 34 : androidBottomInset(20),
-                maxHeight: '88%',
-              }}
-            >
-              {/* Grabber */}
-              <View style={{ alignSelf: 'center', width: 40, height: 4, borderRadius: 2, backgroundColor: colors.border, marginBottom: 12 }} />
-
+  // [2026-10-09 native-sheets] Corpo compartilhado: sheet do sistema (iOS/Android) ou Modal (web).
+  const body = (
+            <>
               {/* Header */}
               <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4 }}>
                 <View style={{ flex: 1 }}>
@@ -401,6 +387,37 @@ export default function ExportConversationModal({
                   </TouchableOpacity>
                 </ScrollView>
               )}
+            </>
+  );
+
+  if (USE_NATIVE_SHEETS) {
+    return (
+      <NativeSheet visible={!!visible} onClose={onClose} detents="fitToContents" backgroundColor={sheetBg}>
+        <View style={{ backgroundColor: sheetBg, paddingTop: 22, paddingHorizontal: 18, paddingBottom: Platform.OS === 'ios' ? 16 : androidBottomInset(20) }}>
+          {body}
+        </View>
+      </NativeSheet>
+    );
+  }
+
+  return (
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+      <Animated.View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.55)', opacity: fade }}>
+        <Pressable style={{ flex: 1, justifyContent: 'flex-end' }} onPress={status === 'loading' ? undefined : onClose}>
+          <Animated.View style={{ transform: [{ scale }] }}>
+            <Pressable
+              onPress={() => {}}
+              style={{
+                backgroundColor: sheetBg,
+                borderTopLeftRadius: 24, borderTopRightRadius: 24,
+                paddingTop: 10, paddingHorizontal: 18,
+                paddingBottom: Platform.OS === 'ios' ? 34 : androidBottomInset(20),
+                maxHeight: '88%',
+              }}
+            >
+              {/* Grabber */}
+              <View style={{ alignSelf: 'center', width: 40, height: 4, borderRadius: 2, backgroundColor: colors.border, marginBottom: 12 }} />
+              {body}
             </Pressable>
           </Animated.View>
         </Pressable>

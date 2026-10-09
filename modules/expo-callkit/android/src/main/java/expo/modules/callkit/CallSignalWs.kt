@@ -69,7 +69,9 @@ import java.util.concurrent.atomic.AtomicReference
 object CallSignalWs {
     private const val TAG = "CallSignalWs"
     private const val PREFS_NAME = "expo_callkit_prefs"
-    private const val WS_URL = "wss://ws.chatyy.com.br/ws"
+    // [2026-10-09 native-transport] URL por conexão = ChatyyWsEndpoint.pick()
+    // (entrada regional api-br/api-eu escolhida pelo JS, fallback US).
+    @Volatile private var wsUrlCur: String? = null
     private const val PING_SEC = 30L
     private const val AUTH_TIMEOUT_MS = 5_000L
     private const val MAX_QUEUE = 64
@@ -306,6 +308,11 @@ object CallSignalWs {
         enqueueAndShip(context, payload)
     }
 
+    /** [2026-10-09 p2p-calls] Frame call_p2p_* da sessão nativa (P2PCallSession.send). */
+    fun sendP2P(context: Context, frame: JSONObject) {
+        enqueueAndShip(context, frame.toString())
+    }
+
     // ─── Internals ─────────────────────────────────────────────────────────
 
     private fun enqueueAndShip(context: Context, json: String) {
@@ -357,7 +364,9 @@ object CallSignalWs {
             .build()
             .also { clientRef.compareAndSet(null, it) }
 
-        val req = Request.Builder().url(WS_URL).build()
+        val wsUrl = ChatyyWsEndpoint.pick(ctx)
+        wsUrlCur = wsUrl
+        val req = Request.Builder().url(wsUrl).build()
         val listener = object : WebSocketListener() {
             override fun onOpen(ws: WebSocket, response: Response) {
                 Log.d(TAG, "WS open — auth")
@@ -438,6 +447,7 @@ object CallSignalWs {
             "auth_success" -> {
                 Log.d(TAG, "auth_success — draining ${queue.size} queued frame(s)")
                 authenticated.set(true)
+                ChatyyWsEndpoint.noteAuthed(wsUrlCur)
                 connecting.set(false)
                 reconnectAttempts.set(0)
                 authTimeoutJob?.cancel()
@@ -538,6 +548,12 @@ object CallSignalWs {
                 // `mailWs.on('call_end')` for in-app UI cleanup; this is
                 // belt-and-suspenders so native UIs always come down.
                 handleIncomingCallEnd(obj)
+            }
+            // [2026-10-09 p2p-calls] Sinalização P2P 1:1 → sessão nativa (se houver;
+            // antes dela existir o frame fica no buffer de P2PCallSession).
+            "call_p2p_ready", "call_p2p_offer", "call_p2p_answer",
+            "call_p2p_candidate", "call_p2p_restart", "call_p2p_fallback" -> {
+                try { P2PCallSession.dispatchSignal(obj) } catch (t: Throwable) { Log.w(TAG, "p2p dispatch: ${t.message}") }
             }
             // We don't consume any other server-pushed frames; the JS WS owns
             // the real call event surface (incoming_call, call_answered, …).
@@ -761,6 +777,7 @@ object CallSignalWs {
     }
 
     private fun onDisconnect() {
+        if (!authenticated.get() && wsRef.get() != null) ChatyyWsEndpoint.noteFailedBeforeAuth(wsUrlCur)
         authenticated.set(false)
         connecting.set(false)
         wsRef.set(null)

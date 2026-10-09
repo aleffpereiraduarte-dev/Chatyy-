@@ -405,12 +405,14 @@ export function getLastCachedIdSync(convId) {
 // ─── Public API — writes (fire-and-forget) ─────────────────────────────────
 export function cacheMessages(convId, messages) {
   if (convId == null || !Array.isArray(messages) || messages.length === 0) return;
+  try { messages = require('./e2eeV4Shape').mapStored(messages); } catch {} // [2026-10-09 e2ee v4]
   _mergeIntoMemory(convId, messages);
   _scheduleFlush(convId);
 }
 
 export function cacheSingleMessage(convId, msg) {
   if (convId == null || !msg) return;
+  try { msg = require('./e2eeV4Shape').toStoredShape(msg); } catch {} // [2026-10-09 e2ee v4]
   _mergeIntoMemory(convId, [msg]);
   _scheduleFlush(convId);
 }

@@ -7,7 +7,8 @@ import {
   FlatList, Modal, Platform, Alert, Image, ActivityIndicator,
   KeyboardAvoidingView, Pressable, Animated, Dimensions,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useRouter, Stack } from 'expo-router';
+import { USE_NATIVE_HEADER, nativeHeaderOptions, HeaderIconButton } from '../components/nativeHeader'; // [2026-10-09 native-sheets-headers] header NATIVO
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../context/ThemeContext';
 import { useAuth } from '../context/AuthContext';
@@ -141,6 +142,18 @@ export default function BusinessScreen() {
   return (
     <View style={[styles.root, { backgroundColor: colors.background }]}>
       {/* Header */}
+      {USE_NATIVE_HEADER && <Stack.Screen options={nativeHeaderOptions({
+        colors, isDark, title: 'Negócios',
+        headerRight: (activeTab === 'catalog' && cartCount > 0) ? () => (
+          <HeaderIconButton onPress={() => setActiveTab('cart')} accessibilityLabel={String(cartCount)}>
+            <IconCartLocal size={22} color={colors.text} />
+            <View style={{ position: 'absolute', top: 0, right: -2, minWidth: 16, height: 16, borderRadius: 8, paddingHorizontal: 4, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.text }}>
+              <Text style={{ color: colors.background, fontSize: 10, fontWeight: '700' }}>{cartCount}</Text>
+            </View>
+          </HeaderIconButton>
+        ) : undefined,
+      })} />}
+      {!USE_NATIVE_HEADER && (
       <View style={[styles.header, { backgroundColor: colors.background, paddingTop: insets.top + 8, borderBottomColor: colors.border }]}>
         <TouchableOpacity onPress={() => router.back()} style={styles.backBtn} accessibilityLabel="Voltar">
           <IconArrowLeft size={22} color={colors.text} />
@@ -158,6 +171,7 @@ export default function BusinessScreen() {
           </TouchableOpacity>
         )}
       </View>
+      )}
 
       {/* Tab bar */}
       <View style={[styles.tabBar, { backgroundColor: colors.background, borderBottomColor: colors.border }]}>

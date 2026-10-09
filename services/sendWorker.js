@@ -647,13 +647,20 @@ export function start() {
     const Net = NetInfo?.default || NetInfo;
     if (Net?.addEventListener) {
       let _wasOnline = null;
+      let _lastType = null;
       _netInfoUnsub = Net.addEventListener((state) => {
         const online = !!(state?.isConnected && state?.isInternetReachable !== false);
+        const type = state?.type || null;
         // Only an offline→online EDGE resets backoff (NetInfo re-emits the
         // same state often; a plain poke is enough for those).
+        // [2026-10-09 net-resilience] Troca wifi↔celular SEM passar por
+        // offline também é borda: a msg que estava em backoff (falhou na rede
+        // velha) sai já na nova, em vez de esperar até 5 min.
         if (online && _wasOnline === false) kick('netinfo');
+        else if (online && _lastType && type && type !== _lastType && type !== 'unknown') kick('net_type');
         else if (online) poke();
         _wasOnline = online;
+        if (type && type !== 'unknown' && type !== 'none') _lastType = type;
       });
     }
   } catch {}

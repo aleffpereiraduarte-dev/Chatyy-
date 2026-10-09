@@ -10,7 +10,8 @@ import {
   View, Text, TouchableOpacity, FlatList, StyleSheet, ActivityIndicator,
   RefreshControl, Platform, Alert, Animated, Easing,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useRouter, Stack } from 'expo-router';
+import { USE_NATIVE_HEADER, nativeHeaderOptions } from '../components/nativeHeader'; // [2026-10-09 native-sheets-headers] header NATIVO
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Svg, { Circle as SvgCircle, Defs, RadialGradient, Stop } from 'react-native-svg';
 import { useTheme } from '../context/ThemeContext';
@@ -183,7 +184,9 @@ export default function OneMemoryScreen() {
   const screenBg = colors.background;
 
   return (
-    <View style={[styles.container, { backgroundColor: screenBg, paddingTop: insets.top }]}>
+    <View style={[styles.container, { backgroundColor: screenBg, paddingTop: USE_NATIVE_HEADER ? 0 : insets.top }]}>
+      {USE_NATIVE_HEADER && <Stack.Screen options={nativeHeaderOptions({ colors, isDark, title: t('oneMemory.title') })} />}
+      {!USE_NATIVE_HEADER && (
       <View style={[styles.header, { borderBottomColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)' }]}>
         <TouchableOpacity onPress={() => router.back()} style={styles.headerBtn} hitSlop={8}>
           <IconArrowLeft size={24} color={colors.text} />
@@ -193,6 +196,7 @@ export default function OneMemoryScreen() {
         </Text>
         <View style={styles.headerBtn} />
       </View>
+      )}
 
       {loading && memories.length === 0 ? (
         <View style={styles.empty}>

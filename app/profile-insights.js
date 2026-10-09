@@ -8,7 +8,8 @@
 import { androidTopInset } from '../utils/systemInsets'; // [2026-10-07 android-native] edge-to-edge
 import React, { useEffect, useState, useCallback } from 'react';
 import { View, Text, ScrollView, TouchableOpacity, ActivityIndicator, Platform, StyleSheet } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useRouter, Stack } from 'expo-router';
+import { USE_NATIVE_HEADER, nativeHeaderOptions } from '../components/nativeHeader'; // [2026-10-09 native-sheets-headers] header NATIVO
 import Svg, { Path, Circle } from 'react-native-svg';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
@@ -103,6 +104,8 @@ export default function ProfileInsightsScreen() {
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.background }}>
+      {USE_NATIVE_HEADER && <Stack.Screen options={nativeHeaderOptions({ colors, isDark, title: t('profile.insights') })} />}
+      {!USE_NATIVE_HEADER && (
       <View style={[styles.header, { borderBottomColor: cardBorder }]}>
         <TouchableOpacity onPress={() => router.back()} style={styles.backBtn} accessibilityLabel="Voltar">
           <IconArrowLeft size={22} color={colors.text} />
@@ -112,6 +115,7 @@ export default function ProfileInsightsScreen() {
         </Text>
         <View style={{ width: 22 }} />
       </View>
+      )}
 
       {loading ? (
         <View style={styles.loadingWrap}>

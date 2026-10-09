@@ -2,7 +2,10 @@
 import { androidTopInset } from '../utils/systemInsets'; // [2026-10-07 android-native] edge-to-edge
 import { useState, useEffect, useCallback } from 'react';
 import { View, Text, TextInput, TouchableOpacity, FlatList, Platform, StyleSheet } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useRouter, Stack } from 'expo-router';
+// [2026-10-09 more-native] Header + busca NATIVOS (UINavigationBar/UISearchController no iOS,
+// Toolbar/SearchView Material no Android). Web mantém o header custom.
+import { USE_NATIVE_HEADER, nativeHeaderOptions, nativeScrollInsetProps, NativeInsetView } from '../components/nativeHeader';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import * as api from '../services/api';
@@ -79,8 +82,25 @@ export default function CloseFriendsScreen() {
     ? (t?.('closeFriends.subtitle') || 'Compartilhe com um grupo selecionado')
     : countText;
 
+  // [2026-10-09 more-native] P&B: marcador de seleção na cor do texto (era verde).
+  const markOn = colors.text;
+  const markFg = colors.background;
+
   return (
     <View style={{ flex: 1, backgroundColor: colors.background }}>
+      {USE_NATIVE_HEADER ? (
+        <Stack.Screen options={nativeHeaderOptions({
+          colors,
+          isDark,
+          title: t('closeFriends.title'),
+          search: {
+            placeholder: t('common.search'),
+            onChangeText: (e) => setQuery(e?.nativeEvent?.text || ''),
+            onCancelButtonPress: () => setQuery(''),
+          },
+          headerRight: () => <IconStar size={20} color={colors.text} />,
+        })} />
+      ) : (
       <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingTop: Platform.OS === 'ios' ? 50 : androidTopInset(16), paddingBottom: 12, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border }}>
         <TouchableOpacity onPress={() => router.back()} style={{ padding: 8 }}>
           <IconArrowLeft size={22} color={colors.text} />
@@ -91,10 +111,12 @@ export default function CloseFriendsScreen() {
           </Text>
           <Text style={{ fontSize: 12, color: colors.textSecondary, marginTop: 2 }}>{subtitleText}</Text>
         </View>
-        <IconStar size={22} color="#22C55E" />
+        <IconStar size={22} color={colors.text} />
       </View>
+      )}
 
       <FadeSlideIn>
+      {!USE_NATIVE_HEADER && (
       <View style={{ padding: 12 }}>
         <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: isDark ? '#222' : '#f1f5f9', borderRadius: 12, paddingHorizontal: 12 }}>
           <IconSearch size={18} color={colors.textSecondary} />
@@ -107,11 +129,19 @@ export default function CloseFriendsScreen() {
           />
         </View>
       </View>
+      )}
 
       {loading ? (
-        <Text style={{ color: colors.textSecondary, textAlign: 'center', marginTop: 20 }}>{t?.('common.loading') || 'Carregando...'}</Text>
+        <NativeInsetView>
+          <Text style={{ color: colors.textSecondary, textAlign: 'center', marginTop: 20 }}>{t('common.loading')}</Text>
+        </NativeInsetView>
       ) : (
         <FlatList
+          {...nativeScrollInsetProps()}
+          keyboardDismissMode="on-drag"
+          ListHeaderComponent={USE_NATIVE_HEADER ? (
+            <Text style={{ fontSize: 13, color: colors.textSecondary, paddingHorizontal: 16, paddingTop: 10, paddingBottom: 4 }}>{subtitleText}</Text>
+          ) : null}
           data={filtered}
           extraData={closeFriends}
           keyExtractor={(item, i) => (item.email || item.friend_email || '') + i}
@@ -132,11 +162,11 @@ export default function CloseFriendsScreen() {
                 </View>
                 <View style={{
                   width: 26, height: 26, borderRadius: 13,
-                  borderWidth: 2, borderColor: isIn ? '#22C55E' : colors.border,
-                  backgroundColor: isIn ? '#22C55E' : 'transparent',
+                  borderWidth: 2, borderColor: isIn ? markOn : colors.border,
+                  backgroundColor: isIn ? markOn : 'transparent',
                   alignItems: 'center', justifyContent: 'center',
                 }}>
-                  {isIn && <IconCheck size={15} color="#fff" strokeWidth={3} />}
+                  {isIn && <IconCheck size={15} color={markFg} strokeWidth={3} />}
                 </View>
               </TouchableOpacity>
             );

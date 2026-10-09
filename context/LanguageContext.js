@@ -1,7 +1,7 @@
 import { createContext, useContext, useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Platform, NativeModules, AppState } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { translations, DEFAULT_LANGUAGE, ensureLocaleLoaded, onLocaleLoaded, isLocaleSupported } from '../i18n';
+import { translations, DEFAULT_LANGUAGE, ensureLocaleLoaded, onLocaleLoaded, isLocaleSupported, preloadLocale, fallbackChain } from '../i18n';
 import { setUserLanguage as apiSetUserLanguage, chatUpdateSettings as apiChatUpdateSettings } from '../services/api';
 
 // [2026-10-08 web-receipts-i18n] Idioma da CONTA. Antes o web usava SÓ o
@@ -126,6 +126,44 @@ function detectLanguage() {
   return DEFAULT_LANGUAGE;
 }
 
+// [2026-10-09 lighter-app] Idioma de boot resolvido ANTES do 1º frame.
+// O _layout chama preloadBootLanguage() em paralelo à hidratação do cache
+// (mesmo gate do splash): lê a escolha manual/da conta (AsyncStorage/
+// localStorage), e se o idioma não está no bundle (só pt-BR/en estão) lê o
+// pacote do disco (~10-40 ms) — rede só se couber no teto. Assim o 1º render
+// já sai no idioma salvo, sem piscar inglês, e sem segurar o boot.
+let _bootLang = null;     // idioma resolvido no preload (null = não rodou)
+let _bootManual = null;   // escolha manual lida no preload
+let _bootPromise = null;
+export function bootLanguageNeedsPreload() {
+  try {
+    if (Platform.OS !== 'web') return true; // nativo: leitura async do AsyncStorage
+    const m = _webGet(LANG_MANUAL_KEY);
+    const a = _webGet(LANG_ACCOUNT_KEY);
+    const code = (m && isLocaleSupported(m)) ? m : (a && isLocaleSupported(a)) ? a : detectLanguage();
+    return !!code && !translations[code];
+  } catch { return false; }
+}
+export function preloadBootLanguage(maxWaitMs = 900) {
+  if (_bootPromise) return _bootPromise;
+  _bootPromise = (async () => {
+    let code = null;
+    try {
+      const m = await _kvGet(LANG_MANUAL_KEY);
+      if (m && isLocaleSupported(m)) { code = m; _bootManual = m; }
+      else {
+        const a = await _kvGet(LANG_ACCOUNT_KEY);
+        if (a && isLocaleSupported(a)) code = a;
+      }
+    } catch {}
+    if (!code) { try { code = detectLanguage(); } catch { code = DEFAULT_LANGUAGE; } }
+    _bootLang = code || DEFAULT_LANGUAGE;
+    if (!translations[_bootLang]) { try { await preloadLocale(_bootLang, maxWaitMs); } catch {} }
+    return _bootLang;
+  })().catch(() => DEFAULT_LANGUAGE);
+  return _bootPromise;
+}
+
 export function LanguageProvider({ children }) {
   // [perf 2026-10-06] Seed with the synchronously detected device locale
   // (detectLanguage() is sync) instead of DEFAULT_LANGUAGE → the first render
@@ -140,10 +178,12 @@ export function LanguageProvider({ children }) {
       const a = _webGet(LANG_ACCOUNT_KEY);
       if (a && isLocaleSupported(a)) return a;
     }
+    // Nativo: idioma salvo já resolvido pelo preloadBootLanguage() do gate.
+    if (_bootLang && isLocaleSupported(_bootLang)) return _bootLang;
     try { return detectLanguage() || DEFAULT_LANGUAGE; } catch { return DEFAULT_LANGUAGE; }
   });
   // Escolha manual local vigente (null = nunca escolheu neste aparelho).
-  const manualRef = useRef(Platform.OS === 'web' ? (() => { const m = _webGet(LANG_MANUAL_KEY); return (m && isLocaleSupported(m)) ? m : null; })() : null);
+  const manualRef = useRef(Platform.OS === 'web' ? (() => { const m = _webGet(LANG_MANUAL_KEY); return (m && isLocaleSupported(m)) ? m : null; })() : _bootManual);
   // Bumped quando um idioma lazy termina de carregar → força o t() a recomputar
   // (e os consumidores a re-renderizarem) com as traduções recém-injetadas.
   const [loadedTick, setLoadedTick] = useState(0);
@@ -201,7 +241,9 @@ export function LanguageProvider({ children }) {
         // [2026-10-08 web-receipts-i18n] Web: idioma da conta (cache do último
         // chat_get_settings) antes do navegador. Nativo segue o aparelho, a
         // menos que a conta tenha escolha explícita (applyAccountLanguage).
-        const acct = Platform.OS === 'web' ? _webGet(LANG_ACCOUNT_KEY) : null;
+        // [2026-10-09] Nativo: app_language_account só é gravado com escolha
+        // EXPLÍCITA (conta/Configurações) → vale no boot também (sem piscar).
+        const acct = await _kvGet(LANG_ACCOUNT_KEY);
         if (acct && isLocaleSupported(acct)) { setLanguage(acct); return; }
         // Auto-detect from device locale (always re-detect, never cache)
         const detected = detectLanguage();
@@ -315,10 +357,12 @@ export function LanguageProvider({ children }) {
     // Fallback chain: active language → English (universal) → pt-BR → raw key.
     // English MUST precede pt-BR so a key missing in en/es doesn't leak
     // Portuguese to non-Portuguese users. Bug-hunt P3 (2026-05-30).
-    let str = translations[language]?.[key]
-      ?? translations['en']?.[key]
-      ?? translations[DEFAULT_LANGUAGE]?.[key]
-      ?? key;
+    // [2026-10-09] Cadeia por idioma (pt-PT → pt-BR → en; demais → en → pt-BR):
+    // idioma remoto ainda baixando nunca mostra chave crua.
+    let str;
+    const chain = fallbackChain(language);
+    for (let i = 0; i < chain.length && str == null; i++) str = translations[chain[i]]?.[key];
+    if (str == null) str = key;
     // For arrays (like time.days), return as-is
     if (Array.isArray(str)) return str;
     // Interpolate {param} placeholders.

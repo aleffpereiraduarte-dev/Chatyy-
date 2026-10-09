@@ -93,6 +93,13 @@ object ChatNotifStore {
         }
     }
 
+    /** [2026-10-09 notif-native] Active account (normalized) — ChatBubbleActivity. */
+    fun activeEmail(ctx: Context): String {
+        return try {
+            normEmail(ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY_ACTIVE_EMAIL, "") ?: "")
+        } catch (_: Throwable) { "" }
+    }
+
     fun apiBase(ctx: Context): String {
         return try {
             val b = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString("api_base", "") ?: ""

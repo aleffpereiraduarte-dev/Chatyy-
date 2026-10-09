@@ -23,6 +23,7 @@ import PressableRow from '../PressableRow';
 import NativeSwitch from '../NativeSwitch';
 import { IconChevronRight, IconCheck, IconArrowLeft } from '../Icons';
 import { USE_NATIVE_HEADER, nativeHeaderOptions } from '../nativeHeader';
+import { USE_NATIVE_SHEETS, NativeSheet, nativeSheetBottomPad } from '../NativeSheet'; // [2026-10-09 native-sheets]
 
 // Palette for grouped lists. Light = iOS systemGroupedBackground; dark keeps
 // the app's true-black page [2026-10-08 dark-black] and lifts the cards one step so groups read as groups.
@@ -152,6 +153,41 @@ export function SettingsSwitchRow({ title, subtitle, value, onValueChange, disab
 export function OptionSheet({ visible, title, message, options = [], value, onSelect, onClose, cancelLabel = 'Cancelar' }) {
   const g = useGroupedColors();
   const insets = useSafeAreaInsets();
+  // [2026-10-09 native-sheets] iOS/Android: sheet do SISTEMA (grabber, arrastar
+  // p/ fechar, fundo escurecido nativo) — sem botão Cancelar (o gesto/toque fora
+  // fecha). Web: Modal + card + Cancelar originais.
+  if (USE_NATIVE_SHEETS) {
+    return (
+      <NativeSheet visible={!!visible} onClose={onClose} detents="fitToContents" backgroundColor={g.cardBg}>
+        <View style={{ backgroundColor: g.cardBg, paddingTop: 14, paddingBottom: nativeSheetBottomPad(insets, 8) }}>
+          {(!!title || !!message) && (
+            <View style={[st.sheetHead, { borderBottomColor: g.separator }]}>
+              {!!title && <Text style={[st.sheetTitle, { color: g.text }]} numberOfLines={2}>{title}</Text>}
+              {!!message && <Text style={[st.sheetMsg, { color: g.secondary }]}>{message}</Text>}
+            </View>
+          )}
+          <ScrollView style={{ maxHeight: 480 }} bounces={false}>
+            {options.map((o, i) => {
+              const sel = o.value === value;
+              return (
+                <React.Fragment key={String(o.value)}>
+                  {i > 0 && <View style={[st.sep, { marginLeft: 16, backgroundColor: g.separator }]} />}
+                  <SettingsRow
+                    title={o.label}
+                    subtitle={o.sub}
+                    value={o.hint}
+                    checked={sel}
+                    accessibilityRole="radio"
+                    onPress={() => { onSelect?.(o.value); onClose?.(); }}
+                  />
+                </React.Fragment>
+              );
+            })}
+          </ScrollView>
+        </View>
+      </NativeSheet>
+    );
+  }
   return (
     <Modal visible={!!visible} transparent animationType="fade" onRequestClose={onClose} statusBarTranslucent>
       <Pressable style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.38)' }]} onPress={onClose} accessibilityLabel={cancelLabel} />

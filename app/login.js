@@ -22,6 +22,7 @@ import {
 import { HelpModal, PrivacyModal, TermsModal } from '../components/LoginModals';
 import SignupIntro from '../components/SignupIntro';
 import RestoreBackupPrompt from '../components/RestoreBackupPrompt';
+import OwnBackupRestorePrompt from '../components/OwnBackupRestorePrompt';
 import RestoreHistoryPrompt from '../components/RestoreHistoryPrompt';
 import ChangePasswordModal from '../components/ChangePasswordModal';
 import { LANGUAGES } from '../i18n';
@@ -195,6 +196,18 @@ export default function LoginScreen() {
         if (mountedRef.current) router.replace(target);
       }, 100);
     };
+
+    // [2026-10-09 own-backup] Backup E2E no servidor do Chatyy (principal):
+    // aparelho sem a chave desta conta + backup no servidor → oferece
+    // "Restaurar backup de DD/MM (N mensagens)". Também no web. Nunca bloqueia.
+    try {
+      const ob = require('../services/ownBackup');
+      const cand = await Promise.race([
+        ob.findRestoreCandidate(accountEmail),
+        new Promise((res) => setTimeout(() => res(null), 6000)),
+      ]);
+      if (cand && mountedRef.current) { setOwnRestore(cand); return; }
+    } catch {}
 
     if (Platform.OS === 'web') { doNav(); return; }
 
@@ -691,6 +704,7 @@ export default function LoginScreen() {
   // Web is opt-out (the native module is iOS/Android only).
   const [showRestorePrompt, setShowRestorePrompt] = useState(false);
   const [restoreBackups, setRestoreBackups] = useState([]);
+  const [ownRestore, setOwnRestore] = useState(null); // [2026-10-09 own-backup]
   // Full-history download prompt (#1240 2026-05-20) — fires AFTER the backup
   // prompt path. Different from RestoreBackupPrompt: that one decrypts a
   // .CYB2 blob from iCloud/Drive. This one walks chat_messages page by page
@@ -3059,6 +3073,11 @@ export default function LoginScreen() {
       {/* Restore-from-backup prompt — surfaces on new-device login when
           the user has chat backups in iCloud (iOS) / Google Drive (Android)
           but no local SQLite data yet. See components/RestoreBackupPrompt. */}
+      <OwnBackupRestorePrompt
+        visible={!!ownRestore}
+        candidate={ownRestore}
+        onClose={() => { setOwnRestore(null); handleRestorePromptClose(); }}
+      />
       <RestoreBackupPrompt
         visible={showRestorePrompt}
         backups={restoreBackups}

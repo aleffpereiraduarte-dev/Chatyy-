@@ -930,6 +930,7 @@ function IncomingCallListenerWeb() {
                 url,
                 room,
                 iceServers: Array.isArray(d.iceServers) ? d.iceServers : [],
+                p2p: d.p2p || null, // [2026-10-09 p2p-calls]
                 ts: Date.now(),
               }; } catch {}
               voipDiag('lk_token_prefetched', callData.call_id);

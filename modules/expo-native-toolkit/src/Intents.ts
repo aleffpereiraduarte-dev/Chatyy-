@@ -1,4 +1,4 @@
-import { requireNativeModule } from 'expo';
+import { requireOptionalNativeModule } from 'expo';
 
 interface DonateRecipientArgs {
   /** Conversation ID — used as INPerson customIdentifier so the share
@@ -6,8 +6,12 @@ interface DonateRecipientArgs {
   conversationId: string;
   /** Display name shown in the Share Sheet row. */
   name: string;
-  /** Email or phone — used as INPersonHandle.value. */
-  email: string;
+  /** Email or phone — used as INPersonHandle.value (optional for groups). */
+  email?: string;
+  /** [2026-10-09] Group conversation (speakable group name, no peer email). */
+  isGroup?: boolean;
+  /** [2026-10-09] Skip the native 10-min per-conversation throttle (sends). */
+  force?: boolean;
   /** Optional file path or http(s) URL for the avatar shown next to name. */
   avatarUri?: string;
 }
@@ -38,6 +42,9 @@ declare class IntentsClass {
   setShareExtensionConversations(conversations: ShareExtensionConversation[]): boolean;
   /** Wipe all share-extension cached data (call on logout). */
   clearShareExtensionData(): boolean;
+  /** [2026-10-09] Conversation picked from an iOS share-sheet suggestion
+   *  (parked by the share extension), consumed once. Native ≥ build w/ notif-native. */
+  consumeShareTarget?(): { conversationId: string; handle: string } | null;
   /** WAVE 87 (2026-05-21): read the ShareExtension diagnostic ring buffer.
    *  Each entry: { ts: number (unix sec), level: 'info'|'warn'|'error', msg: string }. */
   getShareExtensionDiag(): Array<{ ts: number; level: string; msg: string }>;
@@ -50,7 +57,8 @@ declare class IntentsClass {
 let _mod: IntentsClass | null = null;
 function getMod(): IntentsClass | null {
   if (_mod !== null) return _mod;
-  try { _mod = requireNativeModule<IntentsClass>('ExpoChatyyIntents'); }
+  // requireOptional: never throws on Android / web / binaries without it.
+  try { _mod = requireOptionalNativeModule<IntentsClass>('ExpoChatyyIntents'); }
   catch { _mod = null as any; }
   return _mod;
 }
@@ -80,6 +88,13 @@ export const Intents = {
   clearShareExtensionData: (): boolean => {
     try { return getMod()?.clearShareExtensionData() ?? false; }
     catch { return false; }
+  },
+  consumeShareTarget: (): { conversationId: string; handle: string } | null => {
+    try {
+      const m = getMod();
+      if (!m || typeof m.consumeShareTarget !== 'function') return null;
+      return m.consumeShareTarget() ?? null;
+    } catch { return null; }
   },
   getShareExtensionDiag: (): Array<{ ts: number; level: string; msg: string }> => {
     try { return getMod()?.getShareExtensionDiag() ?? []; }

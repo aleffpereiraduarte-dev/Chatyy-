@@ -291,6 +291,8 @@ import LiveKitClient
         onMain {
             self.setProximity(false)
             self.restoreWebRTCDefaultConfiguration()
+            // [2026-10-09 route-picker] Next call starts on the system default.
+            AudioRouter.resetPreferredInputIfNeeded()
         }
         print("[AudioRouter] teardown")
     }

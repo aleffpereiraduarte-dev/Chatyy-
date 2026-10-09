@@ -20,7 +20,8 @@ import React, { useEffect, useState, useCallback } from 'react';
 import {
   View, Text, StyleSheet, FlatList, TouchableOpacity, ActivityIndicator,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useRouter, Stack } from 'expo-router';
+import { USE_NATIVE_HEADER, nativeHeaderOptions } from '../components/nativeHeader'; // [2026-10-09 more-native]
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
@@ -132,7 +133,11 @@ export default function LockedChatsScreen() {
   };
 
   return (
-    <View style={[styles.container, { backgroundColor: colors.background, paddingTop: insets.top }]}>
+    <View style={[styles.container, { backgroundColor: colors.background, paddingTop: USE_NATIVE_HEADER ? 0 : insets.top }]}>
+      {/* [2026-10-09 more-native] Header nativo (UINavigationBar / Toolbar Material); web = custom. */}
+      {USE_NATIVE_HEADER ? (
+        <Stack.Screen options={nativeHeaderOptions({ colors, isDark, title: t('chat.hiddenSection') })} />
+      ) : (
       <View style={[styles.header, { borderBottomColor: isDark ? '#2c2c2e' : '#e5e6ea' }]}>
         <TouchableOpacity onPress={() => router.back()} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
           <IconArrowLeft size={24} color={colors.text} />
@@ -142,6 +147,7 @@ export default function LockedChatsScreen() {
         </Text>
         <View style={{ width: 24 }} />
       </View>
+      )}
 
       {phase === 'auth' && (
         <View style={styles.center}>
@@ -165,8 +171,8 @@ export default function LockedChatsScreen() {
           <Text style={[styles.centerText, { color: colors.textTertiary || '#888' }]}>
             {t('chat.authRequiredDesc') || 'Autentique-se para ver suas conversas bloqueadas.'}
           </Text>
-          <PressableScale onPress={authenticate} style={[styles.retryBtn, { backgroundColor: '#2563eb' }]}>
-            <Text style={styles.retryText}>{t('chat.tryAgain') || 'Tentar de novo'}</Text>
+          <PressableScale onPress={authenticate} style={[styles.retryBtn, { backgroundColor: colors.text }]}>
+            <Text style={[styles.retryText, { color: colors.background }]}>{t('chat.tryAgain') || 'Tentar de novo'}</Text>
           </PressableScale>
         </View>
       )}

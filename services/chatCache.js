@@ -203,6 +203,8 @@ export function flushCacheWrites() {
 // Save/merge messages to local cache
 export async function cacheMessages(conversationId, messages) {
   if (!messages?.length) return;
+  // [2026-10-09 e2ee v4] cache guarda o envelope, nunca texto decifrado.
+  try { messages = require('./e2eeV4Shape').mapStored(messages); } catch {}
   const filtered = messages.filter(m => m.id && !String(m.id).startsWith('tmp_'));
   if (!filtered.length) return;
 
@@ -236,6 +238,7 @@ export async function cacheMessages(conversationId, messages) {
 
 // Save a single message to cache
 export async function cacheSingleMessage(conversationId, msg) {
+  try { msg = require('./e2eeV4Shape').toStoredShape(msg); } catch {} // [2026-10-09 e2ee v4]
   if (!msg?.id || String(msg.id).startsWith('tmp_')) {
     console.warn('[cacheSingleMessage] skipped — no id or tmp id:', msg?.id);
     return;

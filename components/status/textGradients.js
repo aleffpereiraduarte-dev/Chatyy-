@@ -21,6 +21,17 @@ export const TEXT_BG_GRADIENTS = [
   { id: 'green_teal',  colors: ['#10B981', '#14B8A6'] },
   { id: 'sunset',      colors: ['#FACC15', '#F97316', '#EF4444'] },
   { id: 'aurora',      colors: ['#06B6D4', '#111111', '#111111'] },
+  // [2026-10-09 status-composer] Fundos premium do status de texto. Só
+  // ACRESCENTAR ids (o viewer resolve `gradient:<id>` por esta mesma lista).
+  { id: 'noir',        colors: ['#000000', '#2B2B2B', '#4A4A4A'] },
+  { id: 'graphite',    colors: ['#111827', '#374151', '#6B7280'] },
+  { id: 'midnight',    colors: ['#020617', '#1E3A8A'] },
+  { id: 'ocean',       colors: ['#0EA5E9', '#1E40AF'] },
+  { id: 'dusk',        colors: ['#7C3AED', '#DB2777'] },
+  { id: 'peach',       colors: ['#FB7185', '#F59E0B'] },
+  { id: 'ember',       colors: ['#7F1D1D', '#EA580C'] },
+  { id: 'forest',      colors: ['#064E3B', '#10B981'] },
+  { id: 'lagoon',      colors: ['#0F766E', '#22D3EE'] },
 ];
 
 // Resolve a published `bg_color` (solid hex OR `gradient:<id>` token) back to a

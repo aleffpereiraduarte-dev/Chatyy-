@@ -3,7 +3,8 @@ import {
   View, Text, TouchableOpacity, FlatList, StyleSheet, ActivityIndicator,
   RefreshControl, Platform, Animated, Easing,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useRouter, Stack } from 'expo-router';
+import { USE_NATIVE_HEADER, nativeHeaderOptions, nativeScrollInsetProps, NativeInsetView } from '../components/nativeHeader'; // [2026-10-09 native-sheets-headers]
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
@@ -243,7 +244,10 @@ export default function NotificationsFeedScreen() {
   };
 
   return (
-    <View style={[styles.container, { backgroundColor: colors.background, paddingTop: insets.top }]}>
+    <View style={[styles.container, { backgroundColor: colors.background, paddingTop: USE_NATIVE_HEADER ? 0 : insets.top }]}>
+      {USE_NATIVE_HEADER ? (
+        <Stack.Screen options={nativeHeaderOptions({ colors, isDark, title: t('notifications.title'), largeTitle: true })} />
+      ) : (
       <View style={[styles.header, { borderBottomColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)' }]}>
         <TouchableOpacity onPress={() => router.back()} style={styles.headerBtn} accessibilityLabel={t('common.back') || 'Voltar'}>
           <IconArrowLeft size={24} color={colors.text} />
@@ -251,12 +255,16 @@ export default function NotificationsFeedScreen() {
         <Text style={[styles.headerTitle, { color: colors.text }]}>{t('notifications.title') || 'Atividade'}</Text>
         <View style={styles.headerBtn} />
       </View>
+      )}
 
       {loading && items.length === 0 ? (
+        <NativeInsetView>
         <View style={styles.empty}>
           <ActivityIndicator size="large" color={ACCENT} />
         </View>
+        </NativeInsetView>
       ) : items.length === 0 ? (
+        <NativeInsetView>
         <ScreenEmptyState
           kind="notifications"
           title={t('notifications.empty') || 'Sem notificações ainda'}
@@ -267,8 +275,10 @@ export default function NotificationsFeedScreen() {
             { icon: 'bell', label: t('notifications.emptyTipMentions') || 'Menções, respostas e lembretes' },
           ]}
         />
+        </NativeInsetView>
       ) : (
         <FlatList
+          {...nativeScrollInsetProps()}
           data={items}
           keyExtractor={(item, i) => String(item.id) + '_' + i}
           renderItem={renderItem}

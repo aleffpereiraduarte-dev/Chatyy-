@@ -234,6 +234,10 @@ final class CallViewController: UIViewController, @unchecked Sendable {
     // toggling mute from the lock-screen / system call bar takes the same
     // fast-path applyMicEnabled uses (track.mute / unmute, no republish).
     private var systemMuteObserver: NSObjectProtocol?
+    // [2026-10-09 system-hold] CXSetHeldCallAction (system pill, "Hold &
+    // Accept" on a GSM call, CallHoldResumer auto-resume) → hold UI + mic.
+    private var systemHoldObserver: NSObjectProtocol?
+    private var preHoldMicEnabled: Bool?
 
     // [Wave WhatsApp parity, 2026-05-20 gap B5 iOS] Listen for AVAudioSession
     // interruptions (Siri, alarm, PSTN call) and recover the mic after the
@@ -521,6 +525,7 @@ final class CallViewController: UIViewController, @unchecked Sendable {
 
         // [Wave WhatsApp parity, 2026-05-20 gap B3 iOS] System call-bar mute.
         installSystemMuteObserver()
+        installSystemHoldObserver()
 
         // [Wave WhatsApp parity, 2026-05-20 gap B5 iOS] AVAudioSession recovery.
         installAVInterruptionObserver()
@@ -1317,7 +1322,7 @@ final class CallViewController: UIViewController, @unchecked Sendable {
                     // [CALL-TRACE 2026-05-20 WAVE42] Step 8/12 — viewDidLoad
                     // path connect (non-preconnect — fresh CallVC mount).
                     NSLog("[CallTrace][8/12] LK Room.connect roomName=\(self.callId) serverUrl=\(url) tokenLen=\(token.count) path=viewDidLoad")
-                    try await r.connect(url: url, token: token)
+                    try await r.connect(url: url, token: token, connectOptions: NativeCallTokenFetcher.connectOptions(forToken: token))
                     NSLog("[CallTrace][8b/12] LK Room state=\(r.connectionState) after connect (path=viewDidLoad)")
                     // [Wave B audio, 2026-05-18 / restored 2026-05-19] Pin
                     // AudioCaptureOptions on the first publish too — RoomOptions
@@ -1923,6 +1928,41 @@ final class CallViewController: UIViewController, @unchecked Sendable {
     /// keep it as the route — pressing "speaker" still flips the loudspeaker
     /// on; pressing it again returns to the headset rather than the earpiece
     /// (matches AudioRouter logic).
+    /// [2026-10-09 route-picker] Output sheet shown when an external route
+    /// exists. The selected route is the sheet's preferredAction (bold).
+    /// Button state follows AudioRouter.routeDidChangeNotification.
+    private func presentAudioRouteSheet(from sourceButton: UIButton?) {
+        let routes = AudioRouter.shared.selectableRoutes()
+        guard routes.count > 1 else {
+            applySpeaker(!session.speakerOn)
+            return
+        }
+        let sheet = UIAlertController(title: CallNativeStrings.routeSheetTitle(), message: nil, preferredStyle: .actionSheet)
+        for route in routes {
+            let action = UIAlertAction(title: route.title, style: .default) { [weak self] _ in
+                guard let self = self else { return }
+                AudioRouter.shared.selectRoute(id: route.id)
+                let speakerNow = route.id == "speaker"
+                self.session.speakerOn = speakerNow
+                NotificationCenter.default.post(
+                    name: Notification.Name("ExpoCallKitLkSpeakerChanged"),
+                    object: nil,
+                    userInfo: ["enabled": speakerNow]
+                )
+            }
+            sheet.addAction(action)
+            if route.selected { sheet.preferredAction = action }
+        }
+        sheet.addAction(UIAlertAction(title: CallNativeStrings.cancel(), style: .cancel, handler: nil))
+        if let pop = sheet.popoverPresentationController {
+            let anchor: UIView = sourceButton ?? view
+            pop.sourceView = anchor
+            pop.sourceRect = anchor.bounds
+        }
+        tapFeedback(sourceButton)
+        present(sheet, animated: true)
+    }
+
     private func applySpeaker(_ enabled: Bool) {
         let actual = AudioRouter.shared.setSpeaker(enabled)
         // Reflect the actual state into the SwiftUI session so the UI shows
@@ -2573,6 +2613,51 @@ final class CallViewController: UIViewController, @unchecked Sendable {
     /// we flip `session.micEnabled` (UI in sync) AND call applyMicEnabled
     /// which takes the track.mute()/unmute() fast-path. Filter by callId so
     /// a stale notification from a previous call doesn't bleed in.
+    /// [2026-10-09 system-hold] React to CXSetHeldCallAction coming from the
+    /// SYSTEM (call pill, "Hold & Accept" on an incoming GSM call, auto-resume
+    /// by CallHoldResumer) — before, only our own "Colocar em espera" updated
+    /// the UI, and the module emitted onCallEnded{held} which made JS hang up.
+    /// Hold: remember the user's mic choice, mute the published mic, flag
+    /// session.onHold. Resume: after CallKit re-activates the audio session,
+    /// re-apply the remembered mic (setMicrophone re-creates the capturer on
+    /// the live session — same recovery as the interruption path).
+    private func installSystemHoldObserver() {
+        guard systemHoldObserver == nil else { return }
+        systemHoldObserver = NotificationCenter.default.addObserver(
+            forName: Notification.Name("ExpoCallKitSystemHoldChanged"),
+            object: nil,
+            queue: .main
+        ) { [weak self] note in
+            guard let self = self else { return }
+            guard let held = note.userInfo?["held"] as? Bool else { return }
+            if let nid = note.userInfo?["callId"] as? String,
+               !nid.isEmpty, nid != self.callId,
+               ExpoCallKitModule.sharedCallKitUUID(forCallId: self.callId) != nil {
+                return
+            }
+            if held {
+                if self.preHoldMicEnabled == nil {
+                    self.preHoldMicEnabled = self.session.micEnabled
+                }
+                self.session.onHold = true
+                nativeCallDiag("call_hold", self.callId, "held=1 mic=\(self.preHoldMicEnabled ?? true)")
+                self.applyMicEnabled(false)
+            } else {
+                let restore = self.preHoldMicEnabled ?? self.session.micEnabled
+                self.preHoldMicEnabled = nil
+                self.session.onHold = false
+                nativeCallDiag("call_hold", self.callId, "held=0 mic=\(restore)")
+                // Let CallKit's didActivate land first (audio unit re-armed).
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
+                    guard let self = self, !self.session.onHold else { return }
+                    self.session.micEnabled = restore
+                    self.applyMicEnabled(restore)
+                    AudioRouter.shared.reapplyRoute()
+                }
+            }
+        }
+    }
+
     private func installSystemMuteObserver() {
         guard systemMuteObserver == nil else { return }
         systemMuteObserver = NotificationCenter.default.addObserver(
@@ -3301,6 +3386,7 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         if let obs = pipResignObserver { NotificationCenter.default.removeObserver(obs) }
         if let obs = dtmfObserver { NotificationCenter.default.removeObserver(obs); dtmfObserver = nil }
         if let obs = systemMuteObserver { NotificationCenter.default.removeObserver(obs); systemMuteObserver = nil }
+        if let obs = systemHoldObserver { NotificationCenter.default.removeObserver(obs); systemHoldObserver = nil }
         if let obs = avInterruptionObserver { NotificationCenter.default.removeObserver(obs); avInterruptionObserver = nil }
         if let obs = audioActivatedObserver { NotificationCenter.default.removeObserver(obs); audioActivatedObserver = nil }
         // [2026-05-22 #1349 fix] Caller-side ringback teardown observer.
@@ -3410,7 +3496,7 @@ final class CallViewController: UIViewController, @unchecked Sendable {
                 // LK SFU on the preconnect path. The viewDidLoad async-connect
                 // path (~line 365) has its own [8/12] tracer below if used.
                 NSLog("[CallTrace][8/12] LK Room.connect roomName=\(callId) serverUrl=\(url) tokenLen=\(token.count) path=preconnect")
-                try await r.connect(url: url, token: token)
+                try await r.connect(url: url, token: token, connectOptions: NativeCallTokenFetcher.connectOptions(forToken: token))
                 NSLog("[CallTrace][8b/12] LK Room state=\(r.connectionState) after connect (path=preconnect)")
                 // [2026-05-22 #1330 fix] PUBLISH DEFERRAL — do NOT call
                 // setMicrophone(enabled: true) here during the ring window.
@@ -3646,6 +3732,12 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         // [2026-10-06 native-only outgoing] User chose a route — stop the
         // earpiece re-assert in didSubscribeTrack from fighting them.
         speakerTouchedByUser = true
+        // [2026-10-09 route-picker] AirPods / BT / CarPlay / wired available →
+        // WhatsApp-style output sheet (iPhone · Alto-falante · device).
+        if AudioRouter.shared.hasSelectableExternalRoute(), presentedViewController == nil {
+            presentAudioRouteSheet(from: view.viewWithTag(9003) as? UIButton)
+            return
+        }
         let next = !session.speakerOn
         applySpeaker(next)
         let btn = view.viewWithTag(9003) as? UIButton

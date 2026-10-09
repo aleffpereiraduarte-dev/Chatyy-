@@ -112,6 +112,20 @@
       android:theme="@style/Theme.AppCompat.NoActionBar"
       android:screenOrientation="portrait" />
 
+    <!--
+      [2026-10-09 notif-native] Expanded view of a chat BUBBLE (Android 11+).
+      Bubble activities must be embeddable + resizeable + documentLaunchMode
+      always. Launched only by the bubble PendingIntent (not exported).
+    -->
+    <activity
+      android:name=".ChatBubbleActivity"
+      android:exported="false"
+      android:allowEmbedded="true"
+      android:resizeableActivity="true"
+      android:documentLaunchMode="always"
+      android:windowSoftInputMode="adjustResize"
+      android:theme="@android:style/Theme.Material.NoActionBar" />
+
     <receiver
       android:name=".CallActionReceiver"
       android:exported="false">

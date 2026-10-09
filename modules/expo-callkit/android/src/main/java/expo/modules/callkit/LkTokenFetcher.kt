@@ -6,6 +6,9 @@ import android.os.Bundle
 import android.util.Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import io.livekit.android.ConnectOptions
+import livekit.org.webrtc.PeerConnection
+import org.json.JSONArray
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
@@ -53,7 +56,68 @@ object LkTokenFetcher {
     private const val CACHE_MAX_AGE_WITH_EXP_MS = 5 * 60_000L
     private const val EXP_SAFETY_MARGIN_MS = 5_000L
 
-    data class Result(val token: String, val url: String)
+    // [2026-10-09 native-transport] iceServers do chat_livekit_token (TURN
+    // regional + credencial 1h). Vazio = usa os do LiveKit (comportamento antigo).
+    data class Result(
+        val token: String,
+        val url: String,
+        val iceServers: List<PeerConnection.IceServer> = emptyList(),
+    )
+
+    // Indexado pelo próprio token: o token chega aos pontos de connect() por
+    // vários caminhos (cache, FCM, Intent extras) só como String.
+    private val iceByToken = java.util.Collections.synchronizedMap(
+        object : LinkedHashMap<String, List<PeerConnection.IceServer>>(16, 0.75f, true) {
+            override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, List<PeerConnection.IceServer>>?): Boolean = size > 8
+        }
+    )
+
+    private fun rememberIce(token: String, ice: List<PeerConnection.IceServer>) {
+        if (token.isEmpty() || ice.isEmpty()) return
+        iceByToken[token] = ice
+    }
+
+    /** Lê `iceServers` ([{urls: String|[String], username?, credential?}]). */
+    fun parseIceServers(arr: JSONArray?): List<PeerConnection.IceServer> {
+        if (arr == null) return emptyList()
+        val out = ArrayList<PeerConnection.IceServer>()
+        for (i in 0 until arr.length()) {
+            try {
+                val s = arr.optJSONObject(i) ?: continue
+                val urls = ArrayList<String>()
+                val u = s.opt("urls")
+                if (u is JSONArray) {
+                    for (j in 0 until u.length()) { val v = u.optString(j, ""); if (v.isNotEmpty()) urls.add(v) }
+                } else if (u is String && u.isNotEmpty()) {
+                    urls.add(u)
+                }
+                if (urls.isEmpty()) continue
+                val b = PeerConnection.IceServer.builder(urls)
+                val user = s.optString("username", "")
+                val cred = s.optString("credential", "")
+                if (user.isNotEmpty()) b.setUsername(user)
+                if (cred.isNotEmpty()) b.setPassword(cred)
+                out.add(b.createIceServer())
+            } catch (_: Throwable) {}
+        }
+        return out
+    }
+
+    /**
+     * ConnectOptions p/ Room.connect. livekit-android 2.24.1 SÓ usa
+     * ConnectOptions.iceServers quando rtcConfig != null (RTCEngine
+     * makeRTCConfig), então a lista vai no próprio rtcConfig com os 2 campos
+     * que o SDK exige. Sem lista → ConnectOptions() (= default do connect()).
+     */
+    fun connectOptionsFor(token: String): ConnectOptions {
+        val ice = iceByToken[token]
+        if (ice.isNullOrEmpty()) return ConnectOptions()
+        val cfg = PeerConnection.RTCConfiguration(ArrayList(ice)).apply {
+            sdpSemantics = PeerConnection.SdpSemantics.UNIFIED_PLAN
+            continualGatheringPolicy = PeerConnection.ContinualGatheringPolicy.GATHER_CONTINUALLY
+        }
+        return ConnectOptions(rtcConfig = cfg)
+    }
 
     // ────────────────── public API ──────────────────
 
@@ -149,7 +213,7 @@ object LkTokenFetcher {
      * the HTTP round-trip when the JS side has already done the work
      * (call_invite WS handler in IncomingCallListener / chat-conversation).
      */
-    fun setCached(ctx: Context, roomName: String, token: String, url: String) {
+    fun setCached(ctx: Context, roomName: String, token: String, url: String, iceJson: JSONArray? = null) {
         if (roomName.isEmpty() || token.isEmpty() || url.isEmpty()) return
         try {
             val prefs = ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -159,6 +223,7 @@ object LkTokenFetcher {
                 put("token", token)
                 put("url", url)
                 put("at", System.currentTimeMillis())
+                if (iceJson != null && iceJson.length() > 0) put("ice", iceJson)
             }
             obj.put(roomName, entry)
             prefs.edit().putString(KEY_TOKEN_CACHE, obj.toString()).apply()
@@ -193,7 +258,9 @@ object LkTokenFetcher {
                 Log.d(TAG, "getCached: stale entry for room=$roomName (age=${ageMs}ms exp=${if (expMs > 0L) "${expMs - now}ms" else "n/a"}), ignoring")
                 return null
             }
-            Result(token, url)
+            val ice = parseIceServers(entry.optJSONArray("ice"))
+            rememberIce(token, ice)
+            Result(token, url, ice)
         } catch (t: Throwable) {
             Log.w(TAG, "getCached failed: ${t.message}")
             null
@@ -476,9 +543,12 @@ object LkTokenFetcher {
                 Log.w(TAG, "doFetchOnce: empty token/url in response")
                 return FetchAttempt(null, code)
             }
-            Log.d(TAG, "doFetchOnce: OK for room=$roomName url=$url")
-            val result = Result(token, url)
-            setCached(ctx, roomName, token, url)
+            val iceJson = data.optJSONArray("iceServers")
+            val ice = parseIceServers(iceJson)
+            rememberIce(token, ice)
+            Log.d(TAG, "doFetchOnce: OK for room=$roomName url=$url ice=${ice.size}")
+            val result = Result(token, url, ice)
+            setCached(ctx, roomName, token, url, iceJson)
             FetchAttempt(result, code)
         } catch (t: Throwable) {
             Log.w(TAG, "doFetchOnce threw: ${t.message}")

@@ -23,7 +23,8 @@ import {
   View, Text, TouchableOpacity, StyleSheet, ScrollView,
   ActivityIndicator, Alert, Platform,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useRouter, Stack } from 'expo-router';
+import { USE_NATIVE_HEADER, nativeHeaderOptions, HeaderBackButton } from '../components/nativeHeader'; // [2026-10-09 native-sheets-headers]
 import Constants from 'expo-constants';
 import * as WebBrowser from 'expo-web-browser';
 import { useTheme } from '../context/ThemeContext';
@@ -134,7 +135,7 @@ async function obtainAccessToken(provider) {
 
 export default function EmailImportScreen() {
   const router = useRouter();
-  const { colors } = useTheme();
+  const { colors, isDark } = useTheme();
   const { t } = useLanguage();
   const [activeProvider, setActiveProvider] = useState(null);
   const [importing, setImporting] = useState(false);
@@ -188,7 +189,11 @@ export default function EmailImportScreen() {
 
   return (
     <View style={[s.root, { backgroundColor: colors.background }]}>
-      <ModalHeader title={t('emailImport.title') || 'Importar de outras contas'} onClose={() => router.back()} />
+      {USE_NATIVE_HEADER ? (
+        <Stack.Screen options={nativeHeaderOptions({ colors, isDark, title: t('emailImport.title') })} />
+      ) : (
+        <ModalHeader title={t('emailImport.title') || 'Importar de outras contas'} onClose={() => router.back()} />
+      )}
       <ScrollView contentContainerStyle={{ padding: Spacing.lg, paddingBottom: 80 }}>
         <Text style={[s.subtitle, { color: colors.textSecondary }]}>
           {t('emailImport.subtitle') || 'Trazemos seus emails recentes do Gmail ou Outlook pra dentro do Chatyy. Os emails ficam numa pasta separada e nada é removido da conta original.'}

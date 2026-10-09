@@ -28,7 +28,7 @@ import Foundation
 //   6. Close socket, endBackgroundTask, call fetchCompletionHandler(.newData).
 
 private let kAppGroupId = "group.com.onemundo.mail"
-private let kWsUrl = "wss://ws.chatyy.com.br/ws"
+// [2026-10-09 native-transport] URL = ChatyyWsEndpoint.pick() (regional escolhida pelo JS, fallback US).
 private let kHoldWindowSeconds: TimeInterval = 10
 private let kAuthTimeoutSeconds: TimeInterval = 5
 private let kBgTaskBudgetSeconds: TimeInterval = 25
@@ -100,6 +100,7 @@ private final class RelayWakeSession: NSObject, URLSessionWebSocketDelegate {
     private var urlSession: URLSession?
     private var didFinish = false
     private var authenticated = false
+    private var wsURL: URL?
     private let queue = DispatchQueue(label: "com.chatyy.relayWake", qos: .userInitiated)
 
     init(requestId: String, completion: @escaping (UIBackgroundFetchResult) -> Void) {
@@ -144,9 +145,8 @@ private final class RelayWakeSession: NSObject, URLSessionWebSocketDelegate {
         let userEmailLc = userEmail.lowercased()
 
         // 4. Open WS.
-        guard let url = URL(string: kWsUrl) else {
-            finish(.failed); return
-        }
+        let url = ChatyyWsEndpoint.pick()
+        self.wsURL = url
         let config = URLSessionConfiguration.default
         config.timeoutIntervalForRequest = 8
         config.waitsForConnectivity = false
@@ -184,6 +184,7 @@ private final class RelayWakeSession: NSObject, URLSessionWebSocketDelegate {
             switch result {
             case .failure(let err):
                 NSLog("[RelayWake] receive error: %@", err.localizedDescription)
+                if !self.authenticated { ChatyyWsEndpoint.noteFailedBeforeAuth(self.wsURL) }
                 self.finish(.failed)
             case .success(let msg):
                 switch msg {
@@ -213,6 +214,7 @@ private final class RelayWakeSession: NSObject, URLSessionWebSocketDelegate {
         case "auth_success":
             NSLog("[RelayWake] authenticated")
             authenticated = true
+            ChatyyWsEndpoint.noteAuthed(wsURL)
             // Subscribe to personal channel so server can deliver relay_request.
             sendJson(["type": "subscribe", "channel": "chat_user_\(userEmailLc)"])
             // Tell server we're ready — drains the wake-pending queue.

@@ -56,5 +56,18 @@ public class ChatCoreModule: Module {
     Function("getState") { () -> [String: Any] in
       return ChatCoreSocket.shared.snapshot()
     }
+
+    // [2026-10-09 native-transport] Região do WebSocket escolhida pelo JS
+    // ("us" | "br" | "eu") → ChatCoreSocket / CallSignalWs / RelayWake abrem
+    // na entrada regional (fallback US). Ver ChatyyWsEndpoint.swift.
+    Function("setWsRegion") { (region: String) -> Void in
+      ChatyyWsEndpoint.setRegion(region)
+    }
+
+    Function("getWsEndpoint") { () -> [String: Any] in
+      var s = ChatyyWsEndpoint.snapshot()
+      s["url"] = ChatyyWsEndpoint.pick().absoluteString
+      return s
+    }
   }
 }

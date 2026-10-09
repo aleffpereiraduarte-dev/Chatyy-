@@ -25,12 +25,30 @@ public class ExpoChatyyIntentsModule: Module {
         AsyncFunction("donateRecipient") { (
             args: [String: Any], promise: Promise
         ) in
+            // [2026-10-09 notif-native] Groups are donated too (isGroup=true,
+            // email optional) — WhatsApp shows groups in the share-sheet row.
+            let isGroup = (args["isGroup"] as? Bool) ?? false
             guard let convId = args["conversationId"] as? String, !convId.isEmpty,
-                  let name = args["name"] as? String, !name.isEmpty,
-                  let email = args["email"] as? String, !email.isEmpty else {
+                  let name = args["name"] as? String, !name.isEmpty else {
                 promise.resolve(false)
                 return
             }
+            let email = (args["email"] as? String) ?? ""
+            if !isGroup && email.isEmpty {
+                promise.resolve(false)
+                return
+            }
+            // Throttle: the chat list re-donates its top rows on every refresh;
+            // once per conversation per 10 min is plenty (each donation may
+            // download an avatar). Sends pass force=true.
+            let force = (args["force"] as? Bool) ?? false
+            let throttleKey = "chatyy.intent_donated_at." + convId
+            let nowTs = Date().timeIntervalSince1970
+            if !force, nowTs - UserDefaults.standard.double(forKey: throttleKey) < 600 {
+                promise.resolve(true)
+                return
+            }
+            UserDefaults.standard.set(nowTs, forKey: throttleKey)
             let avatarUri = args["avatarUri"] as? String
 
             // INImage from a local file or http(s) URL. We avoid blocking the
@@ -50,16 +68,19 @@ public class ExpoChatyyIntentsModule: Module {
                     }
                 }
 
+                // contactIdentifier must be a CNContact id (or nil) — the
+                // conversation id there confused the system's contact match.
+                let handleValue = isGroup ? ("group_" + convId) : email
                 let handle = INPersonHandle(
-                    value: email,
-                    type: email.contains("@") ? .emailAddress : .unknown
+                    value: handleValue,
+                    type: handleValue.contains("@") ? .emailAddress : .unknown
                 )
                 let person = INPerson(
                     personHandle: handle,
                     nameComponents: nil,
                     displayName: name,
                     image: avatar,
-                    contactIdentifier: convId,
+                    contactIdentifier: nil,
                     customIdentifier: convId
                 )
 
@@ -133,6 +154,22 @@ public class ExpoChatyyIntentsModule: Module {
                 return true
             }
             return false
+        }
+
+        // [2026-10-09 notif-native] Share-sheet suggestion tapped → the share
+        // extension (plugins/with-custom-share-extension.js injects the
+        // capture) parks {conv, handle, at} in the App Group. /share-receive
+        // consumes it once to preselect that conversation. Fresh ≤ 10 min.
+        Function("consumeShareTarget") { () -> [String: Any]? in
+            guard let ud = UserDefaults(suiteName: "group.com.onemundo.mail"),
+                  let d = ud.dictionary(forKey: "chatyy.share_target") else { return nil }
+            ud.removeObject(forKey: "chatyy.share_target")
+            let at = (d["at"] as? Double) ?? 0
+            if Date().timeIntervalSince1970 - at > 600 { return nil }
+            var conv = (d["conv"] as? String) ?? ""
+            // NSE incoming donations use "chat_<id>" as conversationIdentifier.
+            if conv.hasPrefix("chat_") { conv = String(conv.dropFirst(5)) }
+            return ["conversationId": conv, "handle": (d["handle"] as? String) ?? ""]
         }
 
         Function("clearShareExtensionData") { () -> Bool in

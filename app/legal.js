@@ -10,7 +10,8 @@
 // deployed) in the in-app browser sheet.
 import { useMemo } from 'react';
 import { View, Text, ScrollView, TouchableOpacity, StyleSheet, Linking } from 'react-native';
-import { useRouter, useLocalSearchParams } from 'expo-router';
+import { useRouter, useLocalSearchParams, Stack } from 'expo-router';
+import { USE_NATIVE_HEADER, nativeHeaderOptions, IOS_NATIVE_INSET } from '../components/nativeHeader'; // [2026-10-09 native-sheets-headers]
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
@@ -59,14 +60,18 @@ export default function LegalScreen() {
 
   return (
     <View style={[st.container, { backgroundColor: colors.background }]}>
+      {USE_NATIVE_HEADER ? (
+        <Stack.Screen options={nativeHeaderOptions({ colors, isDark, title })} />
+      ) : (
       <View style={[st.header, { paddingTop: insets.top, backgroundColor: colors.background }]}>
         <TouchableOpacity onPress={() => (router.canGoBack?.() ? router.back() : router.replace('/settings'))} style={st.headerBtn} hitSlop={8} accessibilityRole="button" accessibilityLabel={t('common.back') || 'Voltar'}>
           <IconArrowLeft size={22} color={colors.text} />
         </TouchableOpacity>
         <Text style={[st.headerTitle, { color: colors.text }]} numberOfLines={1}>{title}</Text>
       </View>
+      )}
       <ScrollView
-        contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: insets.bottom + 32 }}
+        contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: IOS_NATIVE_INSET ? 32 : insets.bottom + 32 }}
         contentInsetAdjustmentBehavior="automatic"
       >
         <View style={st.hero}>

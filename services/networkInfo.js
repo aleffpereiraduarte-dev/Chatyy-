@@ -38,6 +38,9 @@ function _normalize(s) {
     type: s.type || 'unknown', // 'wifi' | 'cellular' | 'ethernet' | 'none' | 'unknown'
     isWifi: wifi,
     isExpensive,
+    // [2026-10-09 net-resilience] antes era descartado → o perfil de imagem
+    // 2G/3G do mediaSendQueue (e qualquer timeout adaptativo) nunca ativava.
+    cellularGeneration: (s.details && s.details.cellularGeneration) || null,
   };
 }
 
@@ -116,4 +119,55 @@ export function getNetworkType() {
   if (_currentState.isWifi) return 'wifi';
   if (_currentState.type === 'cellular') return 'mobile';
   return 'unknown';
+}
+
+// ─── [2026-10-09 net-resilience] qualidade do enlace ───────────────────────
+// RTT suavizado (EWMA, igual TCP srtt) alimentado pelos pongs do WebSocket.
+// Usado p/ deadlines e timeouts ADAPTATIVOS: em
+// 2G/satélite/Ásia (RTT 600-1500ms, perda) os prazos fixos de 2-10s davam
+// falso "morto" → reconexão em loop.
+let _srtt = 0;
+export function reportRtt(ms) {
+  const v = Number(ms);
+  if (!(v > 0) || v > 60000) return;
+  _srtt = _srtt ? Math.round(_srtt * 0.8 + v * 0.2) : Math.round(v);
+}
+export function getSrtt() { return _srtt; }
+
+function _webEffectiveType() {
+  try {
+    if (Platform.OS !== 'web' || typeof navigator === 'undefined') return null;
+    const c = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
+    return (c && c.effectiveType) ? String(c.effectiveType) : null;
+  } catch { return null; }
+}
+
+// Banda estimada pelo navegador (Network Information API, Mbps) — 3G "rápido"
+// em RTT (300ms) mas com 750 kbps ainda é enlace médio p/ upload/concorrência.
+function _webDownlinkMbps() {
+  try {
+    if (Platform.OS !== 'web' || typeof navigator === 'undefined') return null;
+    const c = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
+    const v = c && Number(c.downlink);
+    return (v > 0) ? v : null;
+  } catch { return null; }
+}
+
+// 'slow' | 'medium' | 'fast' — pior sinal entre geração celular, effectiveType
+// do navegador e RTT medido.
+export function getLinkClass() {
+  const gen = _currentState.cellularGeneration;
+  const et = _webEffectiveType();
+  const dl = _webDownlinkMbps();
+  if (gen === '2g' || et === 'slow-2g' || et === '2g' || _srtt > 1000 || (dl != null && dl < 0.3)) return 'slow';
+  if (gen === '3g' || et === '3g' || _srtt > 450 || (dl != null && dl < 1.2)) return 'medium';
+  return 'fast';
+}
+export function isSlowLink() { return getLinkClass() !== 'fast'; }
+// Multiplicador de timeouts/deadlines (1 = rede boa).
+export function timeoutScale() {
+  const c = getLinkClass();
+  // Teto 2×: na bancada, timeouts muito longos (×2.5 → GET de 62s) seguravam
+  // request preso em conexão morta por tempo demais antes do retry.
+  return c === 'slow' ? 2 : (c === 'medium' ? 1.5 : 1);
 }

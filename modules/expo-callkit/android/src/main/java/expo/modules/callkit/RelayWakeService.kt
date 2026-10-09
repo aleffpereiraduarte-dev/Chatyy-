@@ -68,7 +68,7 @@ class RelayWakeService : Service() {
         private const val AUTH_TIMEOUT_MS = 5_000L
 
         private const val PREFS_NAME = "expo_callkit_prefs"
-        private const val WS_URL = "wss://ws.chatyy.com.br/ws"
+        // [2026-10-09 native-transport] URL = ChatyyWsEndpoint.pick() (regional escolhida pelo JS, fallback US).
 
         const val EXTRA_REQUEST_ID = "requestId"
 
@@ -171,8 +171,9 @@ class RelayWakeService : Service() {
             .build()
         httpClient = client
 
+        val wsUrl = ChatyyWsEndpoint.pick(applicationContext)
         val request = Request.Builder()
-            .url(WS_URL)
+            .url(wsUrl)
             .build()
 
         val listener = object : WebSocketListener() {
@@ -195,6 +196,7 @@ class RelayWakeService : Service() {
 
             override fun onFailure(ws: WebSocket, t: Throwable, response: Response?) {
                 Log.w(TAG, "WS failure: ${t.message}")
+                if (!authenticated) ChatyyWsEndpoint.noteFailedBeforeAuth(wsUrl)
                 stopSelfClean()
             }
 

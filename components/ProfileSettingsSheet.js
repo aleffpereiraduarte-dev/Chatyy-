@@ -2859,6 +2859,7 @@ function ChatyyOneScreen({ colors, isDark, t }) {
 
       {MONETIZATION_ENABLED ? (
         <StorageShopSheet
+          native={false} /* [2026-10-09 native-sheets] dono é <Modal> RN */
           visible={shop}
           onClose={() => { setShop(false); load(); }}
           currentTier={String(usage?.tier || 'free')}

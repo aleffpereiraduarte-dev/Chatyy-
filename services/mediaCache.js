@@ -872,7 +872,10 @@ _hydrateDataSaver();
 // a relaunch. Returns the resulting boolean.
 export function isDataSaverOn() {
   _hydrateDataSaver();
-  return _dataSaver;
+  if (_dataSaver) return true;
+  // [2026-10-09 system-integration] iOS Low Data Mode / Android Data Saver
+  // behave like the in-app switch (no video pre-cache, other media Wi-Fi only).
+  try { return !!require('./systemIntegration').isSystemDataSaverOn(); } catch { return false; }
 }
 export function setDataSaver(on) {
   _dataSaver = !!on;
@@ -1619,7 +1622,28 @@ export async function cacheMedia(url, opts = {}) {
         }
         try {
           let download;
-          if (isBig && typeof fs.createDownloadResumable === 'function') {
+          // [2026-10-09 media-native] Big media, first attempt → OS-owned
+          // background download (iOS background URLSession / Android
+          // WorkManager): keeps going with the app suspended or closed and is
+          // re-attached by id on the next request. Network failure/stall →
+          // falls through to the JS resumable path on the next attempt.
+          if (isBig && attempt === 0 && !resumable && Platform.OS !== 'web') {
+            try {
+              const bgT = require('./bgTransfer');
+              if (bgT.isBgTransferAvailable()) {
+                const r = await bgT.downloadInBackground({ id: 'dl-' + key, url: srcUrl, dest: localPath, title: opts.title || null });
+                if (r && r.handled) {
+                  if (!r.ok && !r.status) throw new Error('bg_download_network');
+                  download = { status: r.ok ? (r.status || 200) : r.status, headers: r.contentType ? { 'content-type': r.contentType } : {} };
+                }
+              }
+            } catch (e) {
+              if (e && e.message === 'bg_download_network') throw e;
+            }
+          }
+          if (download) {
+            // handled natively above
+          } else if (isBig && typeof fs.createDownloadResumable === 'function') {
             // Reuse the same resumable instance across attempts: the first
             // attempt calls downloadAsync(); subsequent attempts call
             // resumeAsync() to continue from the partial file on disk.

@@ -21,7 +21,8 @@ import {
   View, Text, TextInput, TouchableOpacity, StyleSheet, ActivityIndicator,
   Platform, KeyboardAvoidingView, ScrollView, Modal, Pressable, Alert,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useRouter, Stack } from 'expo-router';
+import { USE_NATIVE_HEADER, nativeHeaderOptions } from '../components/nativeHeader'; // [2026-10-09 native-sheets-headers]
 import * as Localization from 'expo-localization';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../context/ThemeContext';
@@ -231,8 +232,11 @@ export default function LinkedPhones() {
   };
 
   return (
-    <View style={[s.root, { backgroundColor: colors.background, paddingTop: Math.max(insets.top, 12) }]}>
+    <View style={[s.root, { backgroundColor: colors.background, paddingTop: USE_NATIVE_HEADER ? 0 : Math.max(insets.top, 12) }]}>
       {/* Header */}
+      {USE_NATIVE_HEADER ? (
+        <Stack.Screen options={nativeHeaderOptions({ colors, isDark, title: t('linkedPhones.title') })} />
+      ) : (
       <View style={[s.header, { borderBottomColor: colors.borderLight }]}>
         <TouchableOpacity onPress={() => router.back()} style={s.headerBtn} accessibilityRole="button" accessibilityLabel={t('common.back') || 'Voltar'}>
           <IconArrowLeft size={22} color={colors.text} />
@@ -242,6 +246,7 @@ export default function LinkedPhones() {
         </Text>
         <View style={s.headerBtn} />
       </View>
+      )}
 
       <FadeSlideIn>
       <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 40 }}>

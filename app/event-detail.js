@@ -4,7 +4,8 @@ import {
   ActivityIndicator, Alert, TextInput, Modal, Platform,
   Animated, Switch, KeyboardAvoidingView, Linking,
 } from 'react-native';
-import { useRouter, useLocalSearchParams } from 'expo-router';
+import { useRouter, useLocalSearchParams, Stack } from 'expo-router';
+import { USE_NATIVE_HEADER, nativeHeaderOptions, HeaderIconButton, HeaderBackButton } from '../components/nativeHeader'; // [2026-10-09 native-sheets-headers]
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
@@ -820,7 +821,10 @@ function EventDetailScreenInner() {
 
   if (loading && !event) {
     return (
-      <View style={[styles.container, { backgroundColor: colors.background, paddingTop: insets.top }]}>
+      <View style={[styles.container, { backgroundColor: colors.background, paddingTop: USE_NATIVE_HEADER ? 0 : insets.top }]}>
+        {USE_NATIVE_HEADER ? (
+          <Stack.Screen options={nativeHeaderOptions({ colors, title: t('eventDetail.title') })} />
+        ) : (
         <View style={[styles.header, { borderBottomColor: colors.border }]}>
           <TouchableOpacity onPress={() => router.back()} style={styles.headerBtn}>
             <IconArrowLeft size={22} color={colors.text} />
@@ -828,13 +832,17 @@ function EventDetailScreenInner() {
           <Text style={[styles.headerTitle, { color: colors.text }]}>{t('eventDetail.title')}</Text>
           <View style={styles.headerBtn} />
         </View>
+        )}
       </View>
     );
   }
 
   if (!event) {
     return (
-      <View style={[styles.container, { backgroundColor: colors.background, paddingTop: insets.top }]}>
+      <View style={[styles.container, { backgroundColor: colors.background, paddingTop: USE_NATIVE_HEADER ? 0 : insets.top }]}>
+        {USE_NATIVE_HEADER ? (
+          <Stack.Screen options={nativeHeaderOptions({ colors, title: t('eventDetail.title') })} />
+        ) : (
         <View style={[styles.header, { borderBottomColor: colors.border }]}>
           <TouchableOpacity onPress={() => router.back()} style={styles.headerBtn}>
             <IconArrowLeft size={22} color={colors.text} />
@@ -842,6 +850,7 @@ function EventDetailScreenInner() {
           <Text style={[styles.headerTitle, { color: colors.text }]}>{t('eventDetail.title')}</Text>
           <View style={styles.headerBtn} />
         </View>
+        )}
         <View style={styles.emptyWrap}>
           <IconCalendar size={48} color={colors.textTertiary} />
           <Text style={[styles.emptyText, { color: colors.textSecondary }]}>{t('eventDetail.notFound')}</Text>
@@ -862,25 +871,8 @@ function EventDetailScreenInner() {
   // Get human-readable reminder label
   const reminderLabel = hasReminder ? t(`eventDetail.reminder_${event.reminder}`) : null;
 
-  return (
-    <View style={[styles.container, { backgroundColor: colors.background, paddingTop: insets.top }]}>
-      {/* Header */}
-      <View style={[styles.header, { borderBottomColor: colors.border }]}>
-        <TouchableOpacity onPress={() => { if (editMode) setEditMode(false); else router.back(); }} style={styles.headerBtn}>
-          <IconArrowLeft size={22} color={colors.text} />
-        </TouchableOpacity>
-        <Text style={[styles.headerTitle, { color: colors.text }]}>
-          {editMode ? t('eventDetail.editEvent') : t('eventDetail.title')}
-        </Text>
-        <View style={styles.headerRight}>
-          {!editMode && isCreator && (
-            <TouchableOpacity onPress={() => setEditMode(true)} style={styles.headerBtn}>
-              <IconEdit size={20} color={colors.primary} />
-            </TouchableOpacity>
-          )}
-          {!editMode && !isCreator && isSyncedEvent && (
-            <TouchableOpacity
-              onPress={async () => {
+  // [2026-10-09 native-sheets-headers] extraído do header JS p/ reuso no headerRight nativo.
+  const openSyncedEdit = async () => {
                 if (Platform.OS === 'web') {
                   safeAlert(
                     t('eventDetail.syncedEventTitle') || 'Evento sincronizado',
@@ -915,7 +907,40 @@ function EventDetailScreenInner() {
                     Linking.openURL(Platform.OS === 'ios' ? 'calshow:' : 'content://com.android.calendar/time/');
                   } catch {}
                 }
-              }}
+  };
+
+  return (
+    <View style={[styles.container, { backgroundColor: colors.background, paddingTop: USE_NATIVE_HEADER ? 0 : insets.top }]}>
+      {USE_NATIVE_HEADER && (
+        <Stack.Screen options={{ ...nativeHeaderOptions({
+          colors,
+          title: editMode ? t('eventDetail.editEvent') : t('eventDetail.title'),
+          ...(editMode ? { headerLeft: () => <HeaderBackButton onPress={() => setEditMode(false)} color={colors.text} accessibilityLabel={t('common.back')} /> } : {}),
+          headerRight: (!editMode && (isCreator || isSyncedEvent)) ? () => (
+            <HeaderIconButton onPress={isCreator ? () => setEditMode(true) : openSyncedEdit} accessibilityLabel={t('eventDetail.editEvent')}>
+              <IconEdit size={20} color={colors.text} />
+            </HeaderIconButton>
+          ) : undefined,
+        }), ...(editMode ? {} : { headerLeft: undefined, headerBackVisible: true }) }} />
+      )}
+      {/* Header */}
+      {!USE_NATIVE_HEADER && (
+      <View style={[styles.header, { borderBottomColor: colors.border }]}>
+        <TouchableOpacity onPress={() => { if (editMode) setEditMode(false); else router.back(); }} style={styles.headerBtn}>
+          <IconArrowLeft size={22} color={colors.text} />
+        </TouchableOpacity>
+        <Text style={[styles.headerTitle, { color: colors.text }]}>
+          {editMode ? t('eventDetail.editEvent') : t('eventDetail.title')}
+        </Text>
+        <View style={styles.headerRight}>
+          {!editMode && isCreator && (
+            <TouchableOpacity onPress={() => setEditMode(true)} style={styles.headerBtn}>
+              <IconEdit size={20} color={colors.primary} />
+            </TouchableOpacity>
+          )}
+          {!editMode && !isCreator && isSyncedEvent && (
+            <TouchableOpacity
+              onPress={openSyncedEdit}
               style={styles.headerBtn}
             >
               <IconEdit size={20} color={colors.primary} />
@@ -923,6 +948,7 @@ function EventDetailScreenInner() {
           )}
         </View>
       </View>
+      )}
 
       {editMode ? (
         <EditEventView

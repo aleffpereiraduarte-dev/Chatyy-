@@ -48,7 +48,17 @@ import useStatuses from '../hooks/useStatuses';
 // purple ring, +/↩ badge, optional Notes overlay. Same look the user
 // already loves on home, just one source of truth now.
 import StoryRingAvatar from './status/StoryRingAvatar';
-import StoryViewer from './status/StoryViewer';
+// [2026-10-09 lighter-app] StoryViewer (~170 KB de fonte) só é avaliado no 1º
+// status aberto — a lista de conversas é a 1ª tela do boot. O viewer já
+// devolve null com visible=false; montar direto com visible=true roda os
+// mesmos effects de abertura. Depois de carregado fica montado como antes.
+let _StoryViewerImpl = null;
+function StoryViewer(props) {
+  if (!_StoryViewerImpl && !props.visible) return null;
+  if (!_StoryViewerImpl) _StoryViewerImpl = require('./status/StoryViewer').default;
+  const Impl = _StoryViewerImpl;
+  return <Impl {...props} />;
+}
 import LiveBar from './LiveBar';
 import { useLanguage } from '../context/LanguageContext';
 import ScreenEmptyState from './ScreenEmptyState';
@@ -733,7 +743,14 @@ const ConversationRow = React.memo(function ConversationRow({
         const parsed = JSON.parse(content);
         // call_card stores call kind as boolean `video`, not `call_type`.
         const isCall = lastMsg.type === 'call_card' || parsed.call_id || parsed.call_type !== undefined || parsed.caller_email;
-        if (isCall) {
+        // [2026-10-09 e2ee v4] Envelope cifrado: texto já decifrado neste
+        // aparelho (cache local) ou rótulo neutro — nunca o JSON cru.
+        if (parsed && parsed.e2e) {
+          let _pk = null;
+          try { _pk = require('../services/e2eeV4').peekPlaintext(content); } catch {}
+          const _lbl = t('e2ee.listPreview');
+          content = _pk != null ? _pk : (_lbl && _lbl !== 'e2ee.listPreview' ? _lbl : 'Mensagem criptografada');
+        } else if (isCall) {
           const isVideo = parsed.call_type === 'video' || parsed.video === true;
           const st = parsed.status || '';
           if (st === 'missed' || st === 'declined' || st === 'rejected' || st === 'no_answer') {
@@ -1686,13 +1703,17 @@ const _saveNativeConversations = (convs) => {
     // direct conversations (the suggestions row only shows ~5–8 anyway)
     // and skip groups (INSendMessageIntent surfaces best for 1:1).
     try {
-      const directs = snapshot.filter(c => c.type !== 'group').slice(0, 8);
-      directs.forEach(c => {
-        if (!c.id || !c.email) return;
+      // [2026-10-09 notif-native] Groups too (isGroup); the native side
+      // throttles each conversation to one donation per 10 min.
+      const top = snapshot.filter(c => c.type === 'direct' || c.type === 'group').slice(0, 8);
+      top.forEach(c => {
+        const isGroup = c.type === 'group';
+        if (!c.id || (!isGroup && !c.email) || (isGroup && !c.name)) return;
         Intents.donateRecipient({
           conversationId: String(c.id),
           name: c.name || c.email,
-          email: c.email,
+          email: isGroup ? '' : c.email,
+          isGroup,
           avatarUri: c.avatarUrl || '',
         });
       });
@@ -1711,6 +1732,23 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab, reque
   // Mirror hook output → local state. setState is a noop when reference is
   // unchanged (React bails) so this only fires on actual data deltas.
   useEffect(() => { setStatuses(hookGroups); }, [hookGroups]);
+  // [2026-10-09 status-composer] Fila durável de status (services/
+  // statusPublishQueue): o estúdio fecha na hora e o upload segue aqui —
+  // progresso no anel do "Seu status", falha = tocar tenta de novo.
+  const [pubProgress, setPubProgress] = useState(null);
+  const [pubFailed, setPubFailed] = useState(false);
+  useEffect(() => {
+    let Q = null;
+    try { Q = require('../services/statusPublishQueue'); } catch { return undefined; }
+    const sync = () => {
+      try { setPubProgress(Q.getAggregateProgress(user?.email)); setPubFailed(Q.hasFailedStatusJobs(user?.email)); } catch {}
+    };
+    try { Q.resumeStatusPublishes(user?.email); } catch {}
+    sync();
+    const off = Q.subscribeStatusJobs(sync);
+    const off2 = Q.onStatusPublished(() => { try { refetchStatuses?.(); } catch {} });
+    return () => { try { off(); off2(); } catch {} };
+  }, [user?.email, refetchStatuses]);
   const [notes, setNotes] = useState([]);
   const [showNoteModal, setShowNoteModal] = useState(false);
   const [showStatusComposer, setShowStatusComposer] = useState(false);
@@ -2164,7 +2202,13 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab, reque
   // status" circle floating left-aligned looks like a layout glitch (caught
   // in QA 2026-05-07). The status camera in the chat list header still
   // gives a one-tap entrypoint for new posts.
-  const stripHasContent = !!myStatus || !!myNote || otherStatuses.length > 0 || notesOnly.length > 0 || liveOnlyEntries.length > 0;
+  // [2026-10-09 status-composer] CAUSA do "não aparece a opção de postar
+  // status": a faixa inteira (inclusive o "+ Seu status") era escondida quando
+  // você não tinha status/nota e nenhum contato tinha status — e desde
+  // 2026-10-01 a aba Status saiu da barra (VALID_TABS em app/chat.js) e a câmera
+  // do topo abre /photos, então NÃO sobrava entrada nenhuma. Agora o "Seu
+  // status" é SEMPRE o 1º item, como no Instagram/WhatsApp.
+  const stripHasContent = true; // era: !!myStatus || !!myNote || otherStatuses.length > 0 || notesOnly.length > 0 || liveOnlyEntries.length > 0
   const hasLives = allLivesList.length > 0;
   // [WAVE 43B 2026-05-20] Skeleton rings durante o cold-fetch — substitui o
   // `return null` que deixava a área em branco por ~200-800ms (perceived
@@ -2242,6 +2286,11 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab, reque
               openStatus(user?.email);
               return;
             }
+            // Envio de status falhou → tocar tenta de novo (antes de qualquer coisa).
+            if (pubFailed) {
+              try { const Q = require('../services/statusPublishQueue'); Q.getStatusJobs(user?.email).filter(j => j.status === 'failed').forEach(j => Q.retryStatusJob(j.id)); } catch {}
+              return;
+            }
             // No active story → open the status tab's composer.
             if (typeof requestNewStatus === 'function') { requestNewStatus(); return; }
             try { setActiveTab?.('status'); } catch {}
@@ -2257,12 +2306,17 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab, reque
             size={56}
             ringStyle={myStatus ? 'solid' : 'none'}
             badge="plus"
+            onBadgePress={myStatus ? () => { try { requestNewStatus?.(); } catch {} } : undefined}
+            badgeAccessibilityLabel={t('status.ring.newStatus')}
+            uploadProgress={pubProgress}
+            uploadFailed={pubFailed}
             note={!myStatus && myNote?.content ? myNote.content : null}
             isDark={isDark}
             colors={colors}
           />
           <Text style={{ fontSize: 11.5, color: colors.text, marginTop: 7, fontWeight: '600', letterSpacing: -0.15 }} numberOfLines={1}>
-            {myNote || myStatus ? myDisplayName : (t('status.yourStory') || 'Sua nota')}
+            {/* [2026-10-09 status-composer] sempre "Seu status" (Instagram: "Seu story") */}
+            {pubProgress != null ? t('status.ring.uploading') : t('status.yourStory')}
           </Text>
         </TouchableOpacity>
 
@@ -3201,6 +3255,9 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
   React.useEffect(() => {
     if (Platform.OS === 'web' || !user?.email) return;
     try { require('../services/appShortcuts').scheduleRecentConversations(conversations, { me: user.email, lockedIds }); } catch {}
+    // [2026-10-09 system-integration] Siri/Atalhos contacts, widgets (iOS +
+    // Android) and the Focus-filter pinned tag. Debounced + deduped inside.
+    try { require('../services/systemIntegration').scheduleSystemSnapshot(conversations, { me: user.email, lockedIds }); } catch {}
   }, [conversations, lockedIds, user?.email]);
   // WhatsApp "Secret code" for locked chats. When set, the Locked Chats
   // collection is hidden from the list entirely and only revealed when the

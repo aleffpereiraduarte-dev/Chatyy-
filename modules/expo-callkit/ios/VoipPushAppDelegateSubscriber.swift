@@ -336,6 +336,15 @@ extension VoipPushAppDelegateSubscriber: PKPushRegistryDelegate {
         update.supportsUngrouping = false
         update.supportsHolding = true
         update.supportsDTMF = false
+        // [2026-10-09 recents-redial] Remember handle → Chatyy account so a
+        // tap on this entry in Phone.app Recents (INStartCallIntent carries
+        // only the handle value) can call the right person back.
+        CallRecentsIntentStore.remember(
+            handleValue: update.remoteHandle?.value ?? callerName,
+            email: (dict["caller_email"] as? String) ?? "",
+            name: callerName,
+            conversationId: (dict["conversation_id"] as? String) ?? ""
+        )
 
         // [stage 2] Stash payload keyed by UUID so the stub answer handler
         // can pre-connect LiveKit before the RN bundle is alive. Even if RN
@@ -1343,6 +1352,22 @@ extension VoipPushAppDelegateSubscriber: CXProviderDelegate {
         // automatically after fulfill(); calling setActive ourselves competes
         // with the WebRTC audio engine and races with the module's path.
         action.fulfill()
+    }
+
+    // [2026-10-09 system-integration] Incoming calls live on earlyProvider, so
+    // the system mute / hold / keypad actions for them land HERE, not on the
+    // module's ProviderDelegate. Previously unimplemented → the lock-screen /
+    // pill / CarPlay mute did nothing and "Hold & Accept" (GSM) had no handler.
+    public func provider(_ provider: CXProvider, perform action: CXSetMutedCallAction) {
+        CallProviderActions.performMuted(action)
+    }
+
+    public func provider(_ provider: CXProvider, perform action: CXSetHeldCallAction) {
+        CallProviderActions.performHeld(action)
+    }
+
+    public func provider(_ provider: CXProvider, perform action: CXPlayDTMFCallAction) {
+        CallProviderActions.performDTMF(action)
     }
 
     public func provider(_ provider: CXProvider, timedOutPerforming action: CXAction) {

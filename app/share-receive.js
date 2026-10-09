@@ -211,6 +211,36 @@ export default function ShareReceiveScreen() {
   const [selected, setSelected] = useState([]); // conversation objects, in tap order
   const selectedIds = useMemo(() => new Set(selected.map(c => String(c.id))), [selected]);
 
+  // [2026-10-09 notif-native] Share-sheet suggestion (iOS INSendMessageIntent
+  // row / Android Direct Share shortcut) → preselect that chat, so "Enviar" is
+  // one tap like WhatsApp. Consumed once; no-op on binaries without it.
+  const shareTargetRef = useRef(undefined);
+  useEffect(() => {
+    if (shareTargetRef.current === undefined) {
+      shareTargetRef.current = null;
+      try {
+        if (Platform.OS === 'ios') {
+          const { Intents } = require('../modules/expo-native-toolkit');
+          shareTargetRef.current = Intents?.consumeShareTarget?.() || null;
+        } else if (Platform.OS === 'android') {
+          const { requireOptionalNativeModule } = require('expo');
+          const m = requireOptionalNativeModule('ExpoAppShortcuts');
+          shareTargetRef.current = (m && typeof m.consumeShareTarget === 'function') ? (m.consumeShareTarget() || null) : null;
+        }
+      } catch { shareTargetRef.current = null; }
+    }
+    const target = shareTargetRef.current;
+    if (!target || selected.length || !conversations.length) return;
+    const cid = String(target.conversationId || '');
+    const handle = String(target.handle || '').toLowerCase();
+    const match = conversations.find(c => cid && String(c.id) === cid)
+      || (handle ? conversations.find(c => String(c.other_email || c.contact_email || '').toLowerCase() === handle) : null);
+    if (match) {
+      shareTargetRef.current = null;
+      setSelected([match]);
+    }
+  }, [conversations, selected.length]);
+
   const displayNameOf = useCallback((c) => {
     if (!c) return '';
     const isGroup = c.type === 'group' || c.type === 'channel' || !!c.is_group;

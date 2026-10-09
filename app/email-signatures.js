@@ -16,7 +16,8 @@ import {
   View, Text, TextInput, TouchableOpacity, StyleSheet, ScrollView,
   ActivityIndicator, Alert, Switch, FlatList,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useRouter, Stack } from 'expo-router';
+import { USE_NATIVE_HEADER, nativeHeaderOptions, HeaderBackButton } from '../components/nativeHeader'; // [2026-10-09 native-sheets-headers]
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import { Spacing, BorderRadius } from '../constants/theme';
@@ -29,7 +30,7 @@ import PressableScale from '../components/PressableScale';
 
 export default function EmailSignaturesScreen() {
   const router = useRouter();
-  const { colors } = useTheme();
+  const { colors, isDark } = useTheme();
   const { t } = useLanguage();
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -106,11 +107,15 @@ export default function EmailSignaturesScreen() {
 
   return (
     <View style={[s.root, { backgroundColor: colors.background }]}>
-      <ModalHeader
-        title={editing ? (editing === 'new' ? (t('signatures.newSignature') || 'Nova assinatura') : (t('signatures.editSignature') || 'Editar assinatura'))
-          : (t('settings.signatures') || 'Assinaturas')}
-        onClose={() => editing ? reset() : router.back()}
-      />
+      {USE_NATIVE_HEADER ? (
+        <Stack.Screen options={nativeHeaderOptions({ colors, isDark, title: editing ? (editing === 'new' ? t('signatures.newSignature') : t('signatures.editSignature')) : t('settings.signatures'), ...(editing ? { headerLeft: () => <HeaderBackButton onPress={reset} color={colors.text} accessibilityLabel={t('common.back')} /> } : { headerLeft: undefined, headerBackVisible: true }) })} />
+      ) : (
+        <ModalHeader
+          title={editing ? (editing === 'new' ? (t('signatures.newSignature') || 'Nova assinatura') : (t('signatures.editSignature') || 'Editar assinatura'))
+            : (t('settings.signatures') || 'Assinaturas')}
+          onClose={() => editing ? reset() : router.back()}
+        />
+      )}
 
       <FadeSlideIn>
       {editing ? (

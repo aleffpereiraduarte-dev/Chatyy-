@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { View, Text, FlatList, TouchableOpacity, StyleSheet, ActivityIndicator, Alert, Platform, Modal } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useRouter, Stack } from 'expo-router';
+import { USE_NATIVE_HEADER, nativeHeaderOptions } from '../components/nativeHeader'; // [2026-10-09 native-sheets-headers]
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
@@ -310,13 +311,17 @@ export default function LinkedDevicesScreen() {
   const hasOther = sessions.some(s => !s.is_current);
 
   return (
-    <View style={[styles.container, { backgroundColor: colors.background, paddingTop: insets.top }]}>
+    <View style={[styles.container, { backgroundColor: colors.background, paddingTop: USE_NATIVE_HEADER ? 0 : insets.top }]}>
+      {USE_NATIVE_HEADER ? (
+        <Stack.Screen options={nativeHeaderOptions({ colors, isDark, title: t('devices.title') })} />
+      ) : (
       <View style={[styles.header, { backgroundColor: isDark ? '#1c1c1e' : '#111111', paddingTop: 10 }]}>
         <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
           <IconArrowLeft size={24} color="#fff" />
         </TouchableOpacity>
         <Text style={styles.title} numberOfLines={1}>{t('devices.title') || 'Linked devices'}</Text>
       </View>
+      )}
 
       <FadeSlideIn>
       <View style={[styles.hero, { backgroundColor: isDark ? 'rgba(17, 17, 17,0.1)' : 'rgba(17, 17, 17,0.06)' }]}>
@@ -398,7 +403,7 @@ export default function LinkedDevicesScreen() {
           back on the device list immediately after the link succeeds. */}
       <Modal visible={scanOpen} animationType="slide" presentationStyle="fullScreen" onRequestClose={() => setScanOpen(false)}>
         <View style={styles.scanRoot}>
-          <View style={styles.scanHeader}>
+          <View style={[styles.scanHeader, { paddingTop: Math.max(insets.top, 20) + 10 }]}>
             <TouchableOpacity onPress={() => setScanOpen(false)} style={styles.backBtn}>
               <IconX size={24} color="#fff" />
             </TouchableOpacity>

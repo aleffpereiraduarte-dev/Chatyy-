@@ -47,6 +47,19 @@ interface ExpoCallKitEvents {
    *  subscriber in callkeep.js calls router.push('/chat-conversation?id=...').
    *  `conversationId` may be empty for calls without a prior chat thread. */
   onOpenChat: { callId: string; conversationId?: string };
+  /** [2026-10-09 recents-redial] iOS: Phone.app Recents / CarPlay / Siri
+   *  asked to start a Chatyy call (INStartCallIntent). `email` is empty when
+   *  the handle could not be mapped back to a Chatyy account. */
+  onStartCallIntent: StartCallIntent;
+}
+
+export interface StartCallIntent {
+  handle: string;
+  email: string;
+  name: string;
+  video: boolean;
+  conversationId: string;
+  ts: number;
 }
 
 export interface ShareOutboxEntry {
@@ -402,6 +415,37 @@ export function onOpenChat(cb: (data: { callId: string; conversationId?: string 
   if (!e) return () => {};
   const sub = e.addListener('onOpenChat', cb);
   return () => sub.remove();
+}
+
+/**
+ * [2026-10-09 recents-redial] Live INStartCallIntent (app already running).
+ * No-op unsubscribe on binaries/platforms without the event.
+ */
+export function onStartCallIntent(cb: (data: StartCallIntent) => void): () => void {
+  const e = getEmitter();
+  if (!e) return () => {};
+  try {
+    const sub = e.addListener('onStartCallIntent', cb);
+    return () => sub.remove();
+  } catch {
+    return () => {};
+  }
+}
+
+/**
+ * [2026-10-09 recents-redial] One-shot pending INStartCallIntent captured
+ * before JS booted (cold start from Phone.app Recents). Returns null when
+ * none, on Android, or on binaries that predate the native function.
+ */
+export function consumePendingStartCallIntent(): StartCallIntent | null {
+  const m = getModule() as any;
+  if (!m || typeof m.consumePendingStartCallIntent !== 'function') return null;
+  try {
+    const r = m.consumePendingStartCallIntent();
+    return r && typeof r === 'object' ? (r as StartCallIntent) : null;
+  } catch {
+    return null;
+  }
 }
 
 export function getVoipToken(): string | null {

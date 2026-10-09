@@ -14,7 +14,8 @@ import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
   ActivityIndicator, RefreshControl, Platform, Alert, Linking,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useRouter, Stack } from 'expo-router';
+import { USE_NATIVE_HEADER, nativeHeaderOptions, HeaderIconButton, nativeScrollInsetProps, IOS_NATIVE_INSET } from '../components/nativeHeader'; // [2026-10-09 native-sheets-headers]
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
@@ -116,7 +117,20 @@ export default function StorageScreen() {
   const overGrace = usage?.grace_active;
 
   return (
-    <View style={[styles.container, { backgroundColor: colors.background, paddingTop: (insets.top || 0) + 6 }]}>
+    <View style={[styles.container, { backgroundColor: colors.background, paddingTop: USE_NATIVE_HEADER ? 0 : (insets.top || 0) + 6 }]}>
+      {USE_NATIVE_HEADER ? (
+        <Stack.Screen options={nativeHeaderOptions({
+          colors,
+          isDark,
+          title: t('storage.title'),
+          largeTitle: true,
+          headerRight: () => (
+            <HeaderIconButton onPress={onRefresh} accessibilityLabel={t('common.refresh')}>
+              <IconRefresh size={20} color={colors.text} />
+            </HeaderIconButton>
+          ),
+        })} />
+      ) : (
       <View style={styles.header}>
         <TouchableOpacity onPress={() => router.back()} hitSlop={12}>
           <IconArrowLeft size={26} color={colors.text} />
@@ -128,10 +142,12 @@ export default function StorageScreen() {
           <IconRefresh size={22} color={colors.muted} />
         </TouchableOpacity>
       </View>
+      )}
 
       <FadeSlideIn>
       <ScrollView
-        contentContainerStyle={{ paddingBottom: (insets.bottom || 0) + 24 }}
+        {...nativeScrollInsetProps()}
+        contentContainerStyle={{ paddingBottom: IOS_NATIVE_INSET ? 24 : (insets.bottom || 0) + 24 }}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.tint} />}
       >
         {loading ? (
@@ -176,6 +192,20 @@ export default function StorageScreen() {
                   );
                 })}
               </View>
+
+              {/* [2026-10-09 plan-expiry] plano vencido: carência (3d) ou já em Grátis */}
+              {!!planState?.expiryNotice && (
+                <TouchableOpacity
+                  onPress={() => router.push('/plans')}
+                  style={[styles.warnBanner, { backgroundColor: isDark ? 'rgba(245,158,11,0.10)' : '#fffbeb', borderColor: isDark ? 'rgba(245,158,11,0.35)' : '#fcd34d' }]}
+                >
+                  <Text style={[styles.warnBody, { color: isDark ? '#fcd34d' : '#92400e' }]}>
+                    {planState.expiryNotice.kind === 'grace'
+                      ? t('planExpiry.grace', { date: planState.expiryNotice.date })
+                      : t('planExpiry.expired')}
+                  </Text>
+                </TouchableOpacity>
+              )}
 
               {overGrace && (
                 <View style={[styles.warnBanner, { backgroundColor: '#fef3c7', borderColor: '#fcd34d' }]}>

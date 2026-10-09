@@ -335,6 +335,7 @@ export default function ProfilePostViewer({
           t={t}
           router={router}
           onClose={() => setLikersPost(null)}
+          native={false} /* [2026-10-09 native-sheets] dono é <Modal> RN */
         />
 
         <FeedComments

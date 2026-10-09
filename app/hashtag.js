@@ -1,7 +1,8 @@
 import { androidTopInset } from '../utils/systemInsets'; // [2026-10-07 android-native] edge-to-edge
 import React, { useEffect, useState, useCallback } from 'react';
 import { View, Text, FlatList, TouchableOpacity, StyleSheet, ActivityIndicator, Image, Dimensions, Platform } from 'react-native';
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter, Stack } from 'expo-router';
+import { USE_NATIVE_HEADER, nativeHeaderOptions } from '../components/nativeHeader'; // [2026-10-09 native-sheets-headers] header NATIVO
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import { IconArrowLeft, IconHash } from '../components/Icons';
@@ -101,6 +102,29 @@ export default function HashtagScreen() {
 
   return (
     <View style={[s.container, { backgroundColor: colors.background }]}>
+      {USE_NATIVE_HEADER && <Stack.Screen options={nativeHeaderOptions({
+        colors, isDark, title: '#' + (tag || ''),
+        headerRight: () => (
+          <TouchableOpacity
+            onPress={toggleFollow}
+            disabled={followBusy}
+            hitSlop={8}
+            style={{
+              paddingHorizontal: 12, paddingVertical: 5, borderRadius: 14, borderWidth: 1,
+              backgroundColor: following ? 'transparent' : colors.text,
+              borderColor: following ? colors.border : colors.text,
+              opacity: followBusy ? 0.6 : 1,
+            }}
+            accessibilityRole="button"
+            accessibilityLabel={following ? t('hashtag.following') : t('hashtag.follow')}
+          >
+            <Text style={{ color: following ? colors.text : colors.background, fontWeight: '700', fontSize: 13 }}>
+              {following ? t('hashtag.following') : t('hashtag.follow')}
+            </Text>
+          </TouchableOpacity>
+        ),
+      })} />}
+      {!USE_NATIVE_HEADER && (
       <View style={[s.header, { borderBottomColor: colors.borderLight, paddingTop: Platform.OS === 'ios' ? 50 : androidTopInset(20) }]}>
         <TouchableOpacity onPress={() => router.back()} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }} style={{ padding: 6 }}>
           <IconArrowLeft size={22} color={colors.text} />
@@ -135,6 +159,7 @@ export default function HashtagScreen() {
           </Text>
         </TouchableOpacity>
       </View>
+      )}
       <FlatList
         data={posts}
         keyExtractor={(it) => String(it.id)}
@@ -150,6 +175,11 @@ export default function HashtagScreen() {
           </View>
         ) : null}
         contentContainerStyle={{ paddingTop: 4 }}
+        ListHeaderComponent={USE_NATIVE_HEADER ? (
+          <Text style={{ color: colors.textSecondary, fontSize: 13, paddingHorizontal: 12, paddingVertical: 8 }}>
+            {t('feed.hashtagPosts')}{tag} · {count}
+          </Text>
+        ) : null}
       />
     </View>
   );

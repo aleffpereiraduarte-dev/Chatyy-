@@ -35,12 +35,16 @@ public class ExpoNativeAudioModule: Module {
     /// [2026-10-07 voice-native] Voice-note player (AVPlayer + proximity →
     /// earpiece). Created lazily on the main queue by the first voice* call.
     private var voicePlayer: VoiceNotePlayer?
+    /// [2026-10-09 media-native] Lock-screen / Control Center controls.
+    private var voiceNowPlaying: VoiceNowPlaying?
     private func voice() -> VoiceNotePlayer {
         if let v = voicePlayer { return v }
         let v = VoiceNotePlayer(emit: { [weak self] name, body in
+            if name == "onVoiceStatus" { self?.voiceNowPlaying?.onStatus(body) }
             self?.sendEvent(name, body)
         })
         voicePlayer = v
+        voiceNowPlaying = VoiceNowPlaying(player: v)
         return v
     }
 
@@ -52,6 +56,8 @@ public class ExpoNativeAudioModule: Module {
 
         OnDestroy {
             DispatchQueue.main.async { [weak self] in
+                self?.voiceNowPlaying?.clear()
+                self?.voiceNowPlaying = nil
                 self?.voicePlayer?.release()
                 self?.voicePlayer = nil
             }
@@ -83,6 +89,15 @@ public class ExpoNativeAudioModule: Module {
 
         AsyncFunction("voiceStop") { () -> Void in
             self.voicePlayer?.stop()
+            self.voiceNowPlaying?.clear()
+        }.runOnQueue(.main)
+
+        // [2026-10-09 media-native] Lock-screen metadata for the playing note:
+        // { title?, subtitle?, artworkUri?, enabled? }. Optional — without it
+        // the lock screen shows the app name.
+        AsyncFunction("voiceSetNowPlaying") { (meta: [String: Any]) -> Void in
+            _ = self.voice()
+            self.voiceNowPlaying?.setMetadata(meta)
         }.runOnQueue(.main)
 
         AsyncFunction("voiceSetProximityEnabled") { (enabled: Bool) -> Void in

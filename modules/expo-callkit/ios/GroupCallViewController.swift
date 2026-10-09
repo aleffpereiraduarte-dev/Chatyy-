@@ -130,7 +130,7 @@ final class GroupCallViewController: UIViewController, @unchecked Sendable {
         Task { [weak self] in
             guard let self = self else { return }
             do {
-                try await r.connect(url: self.lkUrl, token: self.lkToken)
+                try await r.connect(url: self.lkUrl, token: self.lkToken, connectOptions: NativeCallTokenFetcher.connectOptions(forToken: self.lkToken))
                 // [Wave B audio, 2026-05-18 / restored 2026-05-19] Pin
                 // AudioCaptureOptions per-publish defense-in-depth.
                 try await r.localParticipant.setMicrophone(

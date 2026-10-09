@@ -6,7 +6,9 @@ import {
   ScrollView, useWindowDimensions, Image, Pressable, Animated,
 } from 'react-native';
 // FlashList reverted to FlatList
-import { useRouter } from 'expo-router';
+import { useRouter, Stack } from 'expo-router';
+// [2026-10-09 native-sheets-headers] Header + busca NATIVOS (UINavigationBar/UISearchController; Toolbar Material). Web mantém o header JS.
+import { USE_NATIVE_HEADER, nativeHeaderOptions, HeaderIconButton, NativeHeaderSafeArea } from '../components/nativeHeader';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
@@ -27,6 +29,8 @@ import {
   IconCopy, IconMenu, IconUsers, IconPlay, IconHome, IconRefresh, IconCamera,
   IconEye, IconSparkles,
 } from '../components/Icons';
+import { IconLock as IconVaultLock } from '../components/Icons'; // [2026-10-09 per-user-vault]
+import * as driveVault from '../services/driveVault';
 import FileViewer from '../components/FileViewer';
 import BrandFab from '../components/BrandFab';
 import CachedImage from '../components/CachedImage';
@@ -252,6 +256,14 @@ function DriveScreenInner() {
   // Request versioning to prevent race conditions in loadFiles
   const loadFilesRequestIdRef = useRef(0);
   const isMountedRef = useIsMounted();
+
+  // [2026-10-09 per-user-vault] Entrada do Cofre só aparece com a flag do servidor ligada para a conta.
+  const [vaultOn, setVaultOn] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    driveVault.getStatus().then((s) => { if (alive && s?.enabled) setVaultOn(true); }).catch(() => {});
+    return () => { alive = false; };
+  }, []);
 
   // Native DOM drag/drop — must use document-level listeners because
   // React Native Web doesn't properly handle preventDefault on drag events
@@ -2271,7 +2283,7 @@ function DriveScreenInner() {
 
   return (
     <View
-      style={[styles.container, { backgroundColor: colors.background, paddingTop: Platform.OS === 'web' ? 0 : insets.top }]}
+      style={[styles.container, { backgroundColor: colors.background, paddingTop: (Platform.OS === 'web' || USE_NATIVE_HEADER) ? 0 : insets.top }]}
       {...(Platform.OS === 'web' ? {
         onDragOver: (e) => {
           e.preventDefault();
@@ -2387,7 +2399,31 @@ function DriveScreenInner() {
         </View>
       )}
 
+      {USE_NATIVE_HEADER && (
+        <Stack.Screen options={nativeHeaderOptions({
+          colors,
+          isDark,
+          title: 'Chatyy Cloud',
+          search: {
+            placeholder: t('drive.searchPlaceholder'),
+            onChangeText: (e) => handleSearch(e?.nativeEvent?.text || ''),
+            onCancelButtonPress: () => { setSearchText(''); setSearchResults(null); },
+          },
+          headerRight: () => (
+            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+              <HeaderIconButton onPress={() => setViewMode(v => v === 'grid' ? 'list' : 'grid')} accessibilityLabel={viewMode === 'grid' ? t('drive.listView') : t('drive.gridView')}>
+                {viewMode === 'grid' ? <IconMenu size={20} color={colors.text} /> : <IconGrid size={20} color={colors.text} />}
+              </HeaderIconButton>
+              <HeaderIconButton onPress={() => setSortMenuVisible(true)} accessibilityLabel={t('common.more')}>
+                <IconMoreVert size={20} color={colors.text} />
+              </HeaderIconButton>
+            </View>
+          ),
+        })} />
+      )}
+      <NativeHeaderSafeArea>
       {/* Header */}
+      {!USE_NATIVE_HEADER && (
       <View style={[styles.header, { backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
         <View style={styles.headerRow}>
           <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
@@ -2422,9 +2458,26 @@ function DriveScreenInner() {
           {isSearching && <ActivityIndicator size="small" color={colors.primary} style={{ marginLeft: 6 }} />}
         </View>
       </View>
+      )}
 
       {/* Storage Bar */}
       {renderStorageBar()}
+
+      {vaultOn && (
+        <TouchableOpacity
+          testID="drive-vault-entry"
+          accessibilityRole="button"
+          onPress={() => router.push('/drive-vault')}
+          style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginHorizontal: Spacing.lg, marginTop: Spacing.sm, padding: Spacing.md, borderWidth: 1, borderColor: colors.border, borderRadius: BorderRadius.md }}
+        >
+          <IconVaultLock size={18} color={colors.text} />
+          <View style={{ flex: 1 }}>
+            <Text style={{ color: colors.text, fontSize: FontSize.md, fontWeight: '600' }}>{t('vault.entry')}</Text>
+            <Text style={{ color: colors.textSecondary, fontSize: FontSize.sm }} numberOfLines={1}>{t('vault.entrySub')}</Text>
+          </View>
+          <IconChevronRight size={16} color={colors.textSecondary} />
+        </TouchableOpacity>
+      )}
 
       {/* Bulk Actions Bar */}
       {selectMode && (
@@ -2515,6 +2568,7 @@ function DriveScreenInner() {
         {/* Desktop Preview Panel */}
         {renderPreviewPanel()}
       </View>
+      </NativeHeaderSafeArea>
 
       {/* Overlays & Modals */}
       {renderUploadProgress()}

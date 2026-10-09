@@ -135,8 +135,19 @@ async function _runOnce(BackgroundFetch) {
   const NewData = BackgroundFetch?.BackgroundFetchResult?.NewData ?? 2;
   const Failed = BackgroundFetch?.BackgroundFetchResult?.Failed ?? 3;
 
+  // [2026-10-09 own-backup] Backup E2E no servidor do Chatyy (principal):
+  // tem seus próprios portões (configurado, auto ligado, >20h, Wi-Fi/4G).
+  let ownRan = false;
+  try {
+    const ob = require('./ownBackup');
+    if (await _batteryOk()) {
+      const r = await ob.maybeRunAutoBackup();
+      ownRan = !!r?.ran;
+    }
+  } catch {}
+
   // Gate 1 — daily window.
-  if (await _withinDailyWindow()) return NoData;
+  if (await _withinDailyWindow()) return ownRan ? NewData : NoData;
   // Gate 2 — battery.
   if (!(await _batteryOk())) return NoData;
   // Gate 3 — network (skip on cellular roaming / no connection).
@@ -166,6 +177,8 @@ async function _runOnce(BackgroundFetch) {
 export async function scheduleDaily() {
   if (_scheduled) return true;
   if (Platform.OS === 'web') return false; // no BG fetch on web
+  // [2026-10-09 own-backup] gatilho em primeiro plano (boot + volta do app).
+  try { require('./ownBackup').startAutoBackupRunner(); } catch {}
 
   let BackgroundFetch, TaskManager;
   try {

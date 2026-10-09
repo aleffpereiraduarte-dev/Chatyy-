@@ -273,6 +273,24 @@ function _nativeEngine(m, uri, startMs, rate, token) {
   return eng;
 }
 
+// [2026-10-09 media-native] Lock-screen / Control Center / shade controls
+// (MPNowPlayingInfoCenter / MediaSession). Binaries without voiceSetNowPlaying
+// simply skip it.
+let _nowPlayingSubtitle = '';
+/** Localized lock-screen subtitle ("Voice message"), set by VoiceMiniPlayer (has t()). */
+export function setVoiceNowPlayingSubtitle(label) {
+  _nowPlayingSubtitle = typeof label === 'string' ? label : '';
+}
+function _nativeNowPlaying(m, item) {
+  if (!m || typeof m.voiceSetNowPlaying !== 'function' || !item) return;
+  try {
+    const title = item.title || getVoiceConversationTitle(item.conversationId) || '';
+    const meta = { title: String(title), subtitle: _nowPlayingSubtitle };
+    if (typeof item.artworkUri === 'string' && item.artworkUri) meta.artworkUri = item.artworkUri;
+    m.voiceSetNowPlaying(meta).catch(() => {});
+  } catch {}
+}
+
 async function _expoEngine(uri, startMs, rate, token) {
   let mod;
   try { mod = require('expo-audio'); } catch { return null; }
@@ -560,7 +578,7 @@ export async function playVoiceNote(item, opts = {}) {
       eng = _webEngine(uri, startMs, rate, token, item);
     } else {
       const m = _getNative();
-      if (m) eng = _nativeEngine(m, uri, startMs, rate, token);
+      if (m) { eng = _nativeEngine(m, uri, startMs, rate, token); _nativeNowPlaying(m, item); }
       else {
         if (prev && prev.kind === 'native') { try { prev.stop(); } catch {} }
         eng = await _expoEngine(uri, startMs, rate, token);

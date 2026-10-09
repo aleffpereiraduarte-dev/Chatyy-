@@ -6,6 +6,9 @@ import { Colors } from '../constants/theme';
 import { FontSize, Spacing, BorderRadius } from '../constants/theme';
 import { IconStar, IconStarFilled, IconCheckbox, IconCheckboxChecked, IconArchive, IconTrash, IconClock, IconPaperclip, IconVolume2, IconChevronLeft, IconChevronRight } from './Icons';
 import SwipeableRow from './SwipeableRow';
+// [2026-10-09 more-native] menu de contexto NATIVO iOS (UIContextMenu) — ativa só no binário que tem a view
+import NativeContextMenu, { isNativeContextMenuAvailable } from './NativeContextMenu';
+import { buildEmailNativeMenuActions } from './emailMenuItems';
 import { fadeIn, scalePop, starSpin } from '../utils/animations';
 import AvatarCircle from './AvatarCircle';
 import { LABEL_COLORS } from './LabelPicker';
@@ -319,6 +322,12 @@ function EmailRow({
     },
   } : {};
 
+  // [2026-10-09 more-native] iOS com ChatyyContextMenuView no binário: long-press
+  // = UIContextMenu do sistema (linha levanta + menu c/ SF Symbols). Fora do
+  // modo seleção. Sem a view → long-press JS de sempre (sheet ContextMenu).
+  const nativeMenuOn = !selectMode && Platform.OS === 'ios' && !!onContextMenu && isNativeContextMenuAvailable();
+  const nativeMenuActions = nativeMenuOn ? buildEmailNativeMenuActions(email, { t, isMuted }) : null;
+
   const row = (
     <Animated.View style={{ opacity: fadeAnim }}>
     <Animated.View style={{
@@ -341,7 +350,7 @@ function EmailRow({
         },
       ]}
       onPress={() => onPress(email)}
-      onLongPress={() => onContextMenu?.(email, { x: 0, y: 0 })}
+      onLongPress={nativeMenuOn ? undefined : () => onContextMenu?.(email, { x: 0, y: 0 })}
       onPressIn={handlePressIn}
       onPressOut={handlePressOut}
       activeOpacity={0.6}
@@ -611,7 +620,16 @@ function EmailRow({
         onSnooze={() => onSnooze?.(email)}
         colors={colors}
       >
-        {row}
+        {nativeMenuOn ? (
+          <NativeContextMenu
+            actions={nativeMenuActions}
+            cornerRadius={0}
+            onAction={(id) => onContextMenu?.(email, { x: 0, y: 0, nativeAction: id })}
+            onPreviewTap={() => onPress?.(email)}
+          >
+            {row}
+          </NativeContextMenu>
+        ) : row}
       </SwipeableRow>
       {showSwipeHint && (
         <Animated.View

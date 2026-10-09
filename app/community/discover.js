@@ -4,7 +4,8 @@ import {
   View, Text, StyleSheet, TouchableOpacity, FlatList, Image,
   ActivityIndicator, RefreshControl, TextInput, Animated, Easing,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useRouter, Stack } from 'expo-router';
+import { USE_NATIVE_HEADER, nativeHeaderOptions, HeaderIconButton, NativeHeaderSafeArea } from '../../components/nativeHeader'; // [2026-10-09 native-sheets-headers] header NATIVO
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../../context/ThemeContext';
 import { useLanguage } from '../../context/LanguageContext';
@@ -156,7 +157,22 @@ export default function CommunityDiscoverScreen() {
   );
 
   return (
-    <View style={[sty.container, { backgroundColor: colors.background, paddingTop: insets.top }]}>
+    <NativeHeaderSafeArea style={[sty.container, { backgroundColor: colors.background, paddingTop: USE_NATIVE_HEADER ? 0 : insets.top }]}>
+      {USE_NATIVE_HEADER && <Stack.Screen options={nativeHeaderOptions({
+        colors, isDark, title: t('community.discoverTitle'),
+        search: {
+          placeholder: t('common.search'),
+          onChangeText: (e) => setQ(e?.nativeEvent?.text || ''),
+          onSearchButtonPress: () => load(),
+          onCancelButtonPress: () => setQ(''),
+        },
+        headerRight: () => (
+          <HeaderIconButton onPress={() => router.push('/community/create')} accessibilityLabel={t('community.create')}>
+            <IconPlus size={22} color={colors.text} />
+          </HeaderIconButton>
+        ),
+      })} />}
+      {!USE_NATIVE_HEADER && (
       <View style={sty.header}>
         <TouchableOpacity onPress={() => router.back()} style={sty.headerBtn} accessibilityRole="button" accessibilityLabel={t('common.back') || 'Voltar'}>
           <IconArrowLeft size={22} color={colors.primary} />
@@ -168,7 +184,9 @@ export default function CommunityDiscoverScreen() {
           <IconPlus size={22} color={colors.primary} />
         </TouchableOpacity>
       </View>
+      )}
 
+      {!USE_NATIVE_HEADER && (
       <View style={sty.searchWrap}>
         <TextInput
           value={q} onChangeText={setQ} onSubmitEditing={() => load()}
@@ -178,6 +196,7 @@ export default function CommunityDiscoverScreen() {
           style={[sty.search, { backgroundColor: isDark ? '#1c1c1e' : '#f0f0f3', color: colors.text }]}
         />
       </View>
+      )}
 
       <FlatList
         horizontal
@@ -252,7 +271,7 @@ export default function CommunityDiscoverScreen() {
           }
         />
       )}
-    </View>
+    </NativeHeaderSafeArea>
   );
 }
 

@@ -29,7 +29,8 @@
  */
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Platform, Alert, ActivityIndicator, TextInput, Modal, Share, Animated, Easing, Image } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useRouter, Stack } from 'expo-router';
+import { USE_NATIVE_HEADER, nativeHeaderOptions, HeaderIconButton } from '../components/nativeHeader'; // [2026-10-09 native-sheets-headers]
 import { useTheme } from '../context/ThemeContext';
 import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
@@ -517,8 +518,9 @@ function FamilySkeleton({ colors }) {
 function FamilyScreenInner() {
   const router = useRouter();
   const { colors, accent, onAccent, heroBg, roles } = useFamilyPalette();
+  const { isDark } = useTheme();
   const { user } = useAuth();
-  useLanguage();
+  const { t } = useLanguage();
 
   const [loading, setLoading] = useState(true);
   const [errored, setErrored] = useState(false);
@@ -686,7 +688,20 @@ function FamilyScreenInner() {
     router.push('/snap-map');
   };
 
-  const Header = (
+  // [2026-10-09 native-sheets-headers] Nativo: UINavigationBar/Toolbar do sistema
+  // (antes o header JS ficava sob a status bar — sem inset do topo).
+  const Header = USE_NATIVE_HEADER ? (
+    <Stack.Screen options={nativeHeaderOptions({
+      colors,
+      isDark,
+      title: t('menu.family'),
+      headerRight: isOwner && !loading && !errored ? () => (
+        <HeaderIconButton onPress={() => setInviteOpen(true)} accessibilityLabel={t('chat.invite')}>
+          <IconPlus size={22} color={colors.text} />
+        </HeaderIconButton>
+      ) : () => null,
+    })} />
+  ) : (
     <View style={[s.header, { backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
       <TouchableOpacity onPress={() => router.back()} style={s.backBtn} accessibilityRole="button" accessibilityLabel="Voltar">
         <IconArrowLeft size={22} color={colors.text} />

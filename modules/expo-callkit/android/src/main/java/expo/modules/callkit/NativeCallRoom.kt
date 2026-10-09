@@ -808,7 +808,7 @@ object NativeCallRoom {
                 // connect — otherwise the first Connected event might fire
                 // before our listener attaches and JS would miss it.
                 publish(r, callId, callId, ctx.applicationContext)
-                r.connect(url, token)
+                r.connect(url, token, LkTokenFetcher.connectOptionsFor(token))
                 Log.i(TAG, "preconnect: Room.connect returned subscribe-only, state=${r.state}")
                 // [bug 2026-05-24 ios-caller-auto-answers] DO NOT publish mic
                 // during preconnect. This matches iOS (CallViewController.swift:

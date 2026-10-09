@@ -747,10 +747,78 @@ export function decryptChatBundle(encryptedU8, passphrase) {
 // picks the file in iCloud Drive themselves), since we can't enumerate the
 // ubiquity container from JS reliably.
 
+// [2026-10-09 system-integration] Native iCloud Drive bridge
+// (modules/expo-chat-backup iCloudStatus/iCloudSaveFile/iCloudListFiles/
+// iCloudFetchFile). Only "available" when the binary has the iCloud
+// entitlement (plugins/with-icloud-backup.js, CHATYY_ICLOUD=1) and the user is
+// signed in to iCloud. Older binaries / no entitlement → legacy paths below.
+function _nativeBackup() {
+  if (Platform.OS === 'web') return null;
+  try {
+    const { requireOptionalNativeModule } = require('expo');
+    return requireOptionalNativeModule('ExpoChatBackupModule') || null;
+  } catch { return null; }
+}
+
+export async function getICloudStatus() {
+  const m = Platform.OS === 'ios' ? _nativeBackup() : null;
+  if (!m || typeof m.iCloudStatus !== 'function') return { available: false, signedIn: false, supported: false };
+  try {
+    const st = await m.iCloudStatus();
+    return { available: !!st?.available, signedIn: !!st?.signedIn, supported: true };
+  } catch {
+    return { available: false, signedIn: false, supported: true };
+  }
+}
+
+/** Backups in the app's iCloud container, newest first ([] when unavailable). */
+export async function listICloudBackups() {
+  const st = await getICloudStatus();
+  if (!st.available) return [];
+  try {
+    const list = await _nativeBackup().iCloudListFiles();
+    return (Array.isArray(list) ? list : []).filter((f) => f && f.filename);
+  } catch { return []; }
+}
+
+/** Downloads (if needed) one iCloud backup and returns its encrypted bytes. */
+export async function downloadICloudBackup(filename) {
+  const m = _nativeBackup();
+  if (!m || typeof m.iCloudFetchFile !== 'function') throw new Error('iCloud unavailable');
+  const res = await m.iCloudFetchFile(String(filename));
+  const b64 = await FileSystem.readAsStringAsync(res.uri, { encoding: FileSystem.EncodingType.Base64 });
+  try { await FileSystem.deleteAsync(res.uri, { idempotent: true }); } catch {}
+  return { encrypted: _base64ToU8(b64), filename: String(filename), size_bytes: res.size || 0 };
+}
+
 export async function saveBundleToICloud(encryptedU8, opts = {}) {
   if (Platform.OS !== 'ios') throw new Error('iCloud is iOS-only');
   if (!FileSystem.documentDirectory) throw new Error('documentDirectory unavailable');
   const filename = (opts.filename || `${DRIVE_FILE_PREFIX}${_safeTimestamp()}${DRIVE_FILE_SUFFIX}`);
+  // Real iCloud Drive (ubiquity container) when the binary supports it.
+  try {
+    const st = await getICloudStatus();
+    if (st.available && FileSystem.cacheDirectory) {
+      const tmp = FileSystem.cacheDirectory + filename;
+      await FileSystem.writeAsStringAsync(tmp, _u8ToBase64(encryptedU8), {
+        encoding: FileSystem.EncodingType.Base64,
+      });
+      try {
+        const r = await _nativeBackup().iCloudSaveFile(tmp, filename);
+        try { await SecureStore.setItemAsync(SS_LAST_BACKUP_AT, _isoNow()); } catch {}
+        // Keep only the 2 newest backups in iCloud (WhatsApp keeps one).
+        try {
+          const all = await listICloudBackups();
+          for (const old of all.slice(2)) {
+            try { await _nativeBackup().iCloudDeleteFile(old.filename); } catch {}
+          }
+        } catch {}
+        return { uri: null, filename, size_bytes: r?.size || encryptedU8.length, provider: 'icloud' };
+      } finally {
+        try { await FileSystem.deleteAsync(tmp, { idempotent: true }); } catch {}
+      }
+    }
+  } catch {}
   const uri = FileSystem.documentDirectory + filename;
   await FileSystem.writeAsStringAsync(uri, _u8ToBase64(encryptedU8), {
     encoding: FileSystem.EncodingType.Base64,
@@ -763,6 +831,12 @@ export async function saveBundleToICloud(encryptedU8, opts = {}) {
 }
 
 export async function pickBundleFromICloud() {
+  // [2026-10-09 system-integration] Native iCloud container first (newest
+  // backup, like WhatsApp's restore); the document picker stays as fallback.
+  try {
+    const list = await listICloudBackups();
+    if (list.length) return await downloadICloudBackup(list[0].filename);
+  } catch {}
   // Lazy import so non-iOS bundlers don't choke.
   const DocumentPicker = await import('expo-document-picker');
   const res = await DocumentPicker.getDocumentAsync({
@@ -824,9 +898,29 @@ async function _persistAccessToken(token, expiresInSec) {
  * called from a UI context (user-initiated tap) — popping a browser is
  * not allowed from background tasks.
  */
+// [2026-10-09 system-integration] Android: native Google Identity
+// AuthorizationClient (modules/expo-chat-backup authorizeDrive) — the account
+// already on the phone, no browser, no client id in JS. Needs an Android OAuth
+// client (package + SHA-1) in GCP project onemundo-52ca6 with the Drive API on.
+const DRIVE_NATIVE_MARKER = 'native-authorization';
+async function _nativeDriveToken() {
+  if (Platform.OS !== 'android') return null;
+  const m = _nativeBackup();
+  if (!m || typeof m.authorizeDrive !== 'function') return null;
+  const r = await m.authorizeDrive();
+  const tok = r && r.accessToken;
+  if (!tok) return null;
+  // Google access tokens live 1h; cache 50 min, re-authorize silently after.
+  await _persistAccessToken(tok, 50 * 60);
+  try { await SecureStore.setItemAsync(SS_DRIVE_REFRESH, DRIVE_NATIVE_MARKER); } catch {}
+  return tok;
+}
+
 export async function signInGoogleDrive() {
   const cached = await _getCachedAccessToken();
   if (cached) return cached;
+  const nativeTok = await _nativeDriveToken();
+  if (nativeTok) return nativeTok;
 
   const AuthSession = await import('expo-auth-session');
   const Google = await import('expo-auth-session/providers/google');
@@ -882,6 +976,14 @@ async function _ensureAccessToken() {
   // Try to silently refresh
   let refreshToken = null;
   try { refreshToken = await SecureStore.getItemAsync(SS_DRIVE_REFRESH); } catch {}
+  if (refreshToken === DRIVE_NATIVE_MARKER) {
+    // Already granted → AuthorizationClient answers without UI.
+    try {
+      const tok = await _nativeDriveToken();
+      if (tok) return tok;
+    } catch {}
+    refreshToken = null;
+  }
   if (refreshToken) {
     try {
       const body = new URLSearchParams({

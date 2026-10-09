@@ -9,7 +9,8 @@ import {
   View, Text, StyleSheet, TouchableOpacity, ScrollView, ActivityIndicator,
   RefreshControl, Platform, Alert,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useRouter, Stack } from 'expo-router';
+import { USE_NATIVE_HEADER, nativeHeaderOptions } from '../components/nativeHeader'; // [2026-10-09 native-sheets-headers]
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as api from '../services/api';
 import { useAuth } from '../context/AuthContext';
@@ -121,6 +122,9 @@ export default function CallScheduleScreen() {
 
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
+      {USE_NATIVE_HEADER ? (
+        <Stack.Screen options={nativeHeaderOptions({ colors, isDark, title: t('calls.scheduled') })} />
+      ) : (
       <View style={[styles.header, {
         backgroundColor: isDark ? '#110a1f' : '#111111',
         paddingTop: insets.top,
@@ -132,6 +136,7 @@ export default function CallScheduleScreen() {
           <Text style={styles.headerTitle}>{t('calls.scheduled') || 'Chamadas agendadas'}</Text>
         </View>
       </View>
+      )}
 
       {loading ? (
         <View style={styles.center}>

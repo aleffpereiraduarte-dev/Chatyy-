@@ -48,11 +48,21 @@ const WEB_STUBS = new Set([
 // Symbols weights from @expo-google-fonts/material-symbols (~6.5MB of TTF assets
 // in every APK / first OTA) plus the expo-symbols JS. Stub it on native; web is
 // untouched. If NativeTabs are ever adopted, delete this block.
-const NATIVE_STUBS = new Set(['expo-symbols']);
+// [2026-10-09 lighter-app] `hls.js` (~545 KB) só é importado por
+// app/live-viewer.web.js, mas o require.context do expo-router empacota TODOS
+// os arquivos de app/ (inclusive *.web.js) no bundle nativo. No nativo essa
+// rota nunca é montada (usa app/live-viewer.js) → stub no Android/iOS.
+const NATIVE_STUBS = new Set(['expo-symbols', 'hls.js']);
 
 config.resolver.resolveRequest = (context, moduleName, platform) => {
   if ((platform === 'android' || platform === 'ios') && NATIVE_STUBS.has(moduleName)) {
     return { filePath: require.resolve('./web-stubs/empty-module.js'), type: 'sourceFile' };
+  }
+  // [2026-10-09 lighter-app] react-native-qrcode-svg → react-native-svg/css
+  // (LocalSvg p/ prop `logoSVG`, nunca usada no app) puxava css-tree/css-select/
+  // domutils/entities (~240 KB). Só p/ quem importa de dentro da lib do QR.
+  if (moduleName === 'react-native-svg/css' && /[\\/]react-native-qrcode-svg[\\/]/.test(context.originModulePath || '')) {
+    return { filePath: require.resolve('./stubs/svg-css-noop.js'), type: 'sourceFile' };
   }
   if (platform === 'web') {
     if (moduleName === 'react-native-gesture-handler') {

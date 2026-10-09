@@ -16,12 +16,14 @@
 //   - new phone must not already belong to another Chatyy account (server 409)
 //   - 60s cooldown between OTP requests, 5/hour cap
 
-import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import { useState, useEffect, useRef, useMemo, useCallback, useContext } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet, ActivityIndicator,
   Animated, Platform, KeyboardAvoidingView, ScrollView, Modal, Pressable, Easing,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useRouter, Stack } from 'expo-router';
+import { HeaderHeightContext } from '@react-navigation/elements';
+import { USE_NATIVE_HEADER, nativeHeaderOptions, HeaderBackButton } from '../components/nativeHeader'; // [2026-10-09 native-sheets-headers]
 import * as Haptics from 'expo-haptics';
 import * as Localization from 'expo-localization';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -40,6 +42,7 @@ export default function ChangePhone() {
   const { colors, isDark } = useTheme();
   const { t } = useLanguage();
   const insets = useSafeAreaInsets();
+  const nativeHeaderH = useContext(HeaderHeightContext) || 0; // KAV: a tela começa abaixo do header nativo
   const mountedRef = useIsMounted();
 
   // Step machine: confirm → otp → done.
@@ -292,13 +295,23 @@ export default function ChangePhone() {
   const _hairlineActive = colors.primary;
 
   return (
-    <View style={[styles.root, { backgroundColor: colors.background, paddingTop: Math.max(insets.top, 12) }]}>
+    <View style={[styles.root, { backgroundColor: colors.background, paddingTop: USE_NATIVE_HEADER ? 0 : Math.max(insets.top, 12) }]}>
+      {USE_NATIVE_HEADER && (
+        <Stack.Screen options={nativeHeaderOptions({
+          colors,
+          isDark,
+          title: t('changePhone.title'),
+          // voltar = um passo atrás (otp → número → confirmar), igual ao header JS
+          headerLeft: () => <HeaderBackButton onPress={goBack} color={colors.text} accessibilityLabel={t('common.back')} />,
+        })} />
+      )}
       <KeyboardAvoidingView
         style={{ flex: 1 }}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 0}
+        keyboardVerticalOffset={Platform.OS === 'ios' && USE_NATIVE_HEADER ? nativeHeaderH : 0}
       >
         {/* Header — back arrow + title */}
+        {!USE_NATIVE_HEADER && (
         <View style={styles.header}>
           <TouchableOpacity
             onPress={goBack}
@@ -314,6 +327,7 @@ export default function ChangePhone() {
           </Text>
           <View style={{ width: 22 }} />
         </View>
+        )}
 
         <ScrollView
           contentContainerStyle={styles.scroll}

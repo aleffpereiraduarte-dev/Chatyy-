@@ -13,7 +13,8 @@ import {
   View, Text, StyleSheet, TouchableOpacity, ScrollView, ActivityIndicator,
   Platform, StatusBar, Alert, Linking, Animated, Easing, AppState,
 } from 'react-native';
-import { useRouter, Redirect } from 'expo-router';
+import { useRouter, Redirect, Stack } from 'expo-router';
+import { USE_NATIVE_HEADER, nativeHeaderOptions } from '../components/nativeHeader'; // [2026-10-09 native-sheets-headers] header NATIVO
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../context/ThemeContext';
 // [2026-05-22 monetization-pause] hidden by MONETIZATION_ENABLED flag
@@ -199,9 +200,18 @@ export default function DiamondShopScreen() {
   const featuredSku = 'chatyy_diamond_5000';
 
   return (
-    <View style={[styles.container, { backgroundColor: colors.background, paddingTop: (insets.top || 0) + 6 }]}>
+    <View style={[styles.container, { backgroundColor: colors.background, paddingTop: USE_NATIVE_HEADER ? 0 : (insets.top || 0) + 6 }]}>
       <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} />
 
+      {USE_NATIVE_HEADER && <Stack.Screen options={nativeHeaderOptions({
+        colors, isDark, title: t('diamondShop.title'),
+        headerRight: () => (
+          <TouchableOpacity onPress={() => router.push('/wallet')} hitSlop={10} accessibilityRole="button">
+            <Text style={{ fontSize: 16, fontWeight: '600', color: colors.text }}>{t('diamondShop.wallet')}</Text>
+          </TouchableOpacity>
+        ),
+      })} />}
+      {!USE_NATIVE_HEADER && (
       <View style={styles.headBar}>
         <TouchableOpacity
           onPress={() => router.back()}
@@ -224,6 +234,7 @@ export default function DiamondShopScreen() {
           </Text>
         </TouchableOpacity>
       </View>
+      )}
 
       <ScrollView
         contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 40 }}

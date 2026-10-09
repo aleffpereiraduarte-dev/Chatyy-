@@ -2,9 +2,7 @@
  "v": 1,
  "core": [
   "pt-BR",
-  "en",
-  "es",
-  "pt-PT"
+  "en"
  ],
  "locales": {
   "am": {
@@ -56,6 +54,11 @@
    "hash": "8b685cf6e0d4",
    "bytes": 531454,
    "keys": 7463
+  },
+  "es": {
+   "hash": "a040cb80a19f",
+   "bytes": 431030,
+   "keys": 8813
   },
   "et": {
    "hash": "d0e4debfba4a",
@@ -216,6 +219,11 @@
    "hash": "6cca75c645ef",
    "bytes": 368022,
    "keys": 7463
+  },
+  "pt-PT": {
+   "hash": "80c20bf4de26",
+   "bytes": 399041,
+   "keys": 8216
   },
   "ro": {
    "hash": "92fc17760094",

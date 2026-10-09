@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+  <string name="chatyy_widget_label">Conversas do Chatyy</string>
+  <string name="chatyy_widget_description">As suas conversas recentes e afixadas, com mensagens não lidas.</string>
+  <string name="chatyy_widget_empty">Abra o Chatyy para ver as suas conversas aqui.</string>
+  <string name="chatyy_widget_locked">Chatyy bloqueado. Toque para abrir.</string>
+  <string name="chatyy_widget_new_chat">Nova conversa</string>
+</resources>

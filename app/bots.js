@@ -4,7 +4,8 @@ import {
   View, Text, TextInput, TouchableOpacity, FlatList, Modal, Platform,
   StyleSheet, ScrollView, Pressable, Alert, Animated, Easing,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useRouter, Stack } from 'expo-router';
+import { USE_NATIVE_HEADER, nativeHeaderOptions, HeaderIconButton } from '../components/nativeHeader'; // [2026-10-09 native-sheets-headers] header NATIVO
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import * as api from '../services/api';
@@ -244,6 +245,15 @@ export default function BotsScreen() {
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.background }}>
+      {USE_NATIVE_HEADER && <Stack.Screen options={nativeHeaderOptions({
+        colors, isDark, title: t('bots.title'),
+        headerRight: () => (
+          <HeaderIconButton onPress={() => setCreateOpen(true)} accessibilityLabel={t('bots.create')}>
+            <IconPlus size={22} color={colors.text} />
+          </HeaderIconButton>
+        ),
+      })} />}
+      {!USE_NATIVE_HEADER && (
       <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingTop: Math.max(insets.top, Platform.OS === 'ios' ? 12 : 16), paddingBottom: 12, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border }}>
         <TouchableOpacity onPress={() => router.back()} style={{ padding: 8 }}>
           <IconArrowLeft size={22} color={colors.text} />
@@ -255,6 +265,7 @@ export default function BotsScreen() {
           <IconPlus size={22} color={colors.primary} />
         </PulsingCreateButton>
       </View>
+      )}
 
       {/* Loading skeleton (first paint only — pull-to-refresh keeps the list). */}
       {loading && bots.length === 0 ? (

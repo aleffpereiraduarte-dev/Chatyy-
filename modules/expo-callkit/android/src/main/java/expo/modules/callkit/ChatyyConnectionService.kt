@@ -435,6 +435,7 @@ class ChatyyConnection(
    * call on an already-disconnected Connection.
    */
   fun endFromUi(cause: Int, reason: String) {
+    stopResumeWatcher()
     try {
       val st = state
       Log.i(TAG, "endFromUi: callId=$callId cause=$cause reason=$reason state=$st")
@@ -452,6 +453,7 @@ class ChatyyConnection(
 
   override fun onDisconnect() {
     Log.i(TAG, "onDisconnect: callId=$callId")
+    stopResumeWatcher()
     setDisconnected(DisconnectCause(DisconnectCause.LOCAL))
     // [2026-10-06 android-incoming] Drop from the registry on every
     // Telecom-driven teardown too (here, onAbort, rejectInternal).
@@ -473,20 +475,97 @@ class ChatyyConnection(
     Log.i(TAG, "onHold: callId=$callId")
     setOnHold()
     NativeCallRoom.setMicEnabled(false)
+    // [2026-10-09 system-hold] Telecom holds us when the user answers a GSM
+    // call (or taps hold on Auto/Wear). Tell CallActivity (status + mic) and
+    // JS, then watch for the other call to end so we resume automatically
+    // (WhatsApp). Before, the call stayed silently held forever.
+    notifyHoldChanged(true)
+    startResumeWatcher()
   }
 
   override fun onUnhold() {
     Log.i(TAG, "onUnhold: callId=$callId")
+    stopResumeWatcher()
     setActive()
     NativeCallRoom.setMicEnabled(true)
+    // CallActivity re-applies the user's own mute choice ~0.5s later.
+    notifyHoldChanged(false)
+  }
+
+  // ─────────── [2026-10-09 system-hold] helpers ───────────
+
+  private val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
+  private var resumeWatcher: Runnable? = null
+
+  private fun notifyHoldChanged(held: Boolean) {
+    try {
+      val i = Intent(CallTelecomBridge.ACTION_TELECOM_STATE).apply {
+        setPackage(ctx.packageName)
+        putExtra("call_id", callId)
+        putExtra("held", held)
+      }
+      ctx.sendBroadcast(i)
+    } catch (t: Throwable) {
+      Log.w(TAG, "hold broadcast failed: ${t.message}")
+    }
+    try { ExpoCallKitModule.emitCallHoldChanged(held) } catch (_: Throwable) {}
+    try { CurrentCallTracker.setHeld(held) } catch (_: Throwable) {}
+  }
+
+  /**
+   * Resume after a GSM call: no READ_PHONE_STATE needed — AudioManager.mode
+   * is MODE_IN_CALL / MODE_RINGTONE while a cellular call owns the audio.
+   * Only auto-resume when we actually SAW that (a plain user hold from
+   * Auto/Wear never sees MODE_IN_CALL and stays held). Polls 1s, max 3h.
+   */
+  private fun startResumeWatcher() {
+    stopResumeWatcher()
+    val am = ctx.getSystemService(Context.AUDIO_SERVICE) as? android.media.AudioManager ?: return
+    val startedAt = System.currentTimeMillis()
+    var sawOtherCall = false
+    var quietTicks = 0
+    val r = object : Runnable {
+      override fun run() {
+        if (resumeWatcher !== this) return
+        if (state != Connection.STATE_HOLDING) { resumeWatcher = null; return }
+        if (System.currentTimeMillis() - startedAt > 3L * 60 * 60 * 1000) { resumeWatcher = null; return }
+        val mode = try { am.mode } catch (_: Throwable) { android.media.AudioManager.MODE_NORMAL }
+        val otherCall = mode == android.media.AudioManager.MODE_IN_CALL ||
+          mode == android.media.AudioManager.MODE_RINGTONE
+        if (otherCall) {
+          sawOtherCall = true
+          quietTicks = 0
+        } else if (sawOtherCall) {
+          quietTicks++
+          if (quietTicks >= 2) {
+            Log.i(TAG, "resumeWatcher: other call ended (mode=$mode) — auto-resuming callId=$callId")
+            resumeWatcher = null
+            onUnhold()
+            return
+          }
+        }
+        mainHandler.postDelayed(this, 1000L)
+      }
+    }
+    resumeWatcher = r
+    mainHandler.postDelayed(r, 1000L)
+  }
+
+  private fun stopResumeWatcher() {
+    resumeWatcher?.let { mainHandler.removeCallbacks(it) }
+    resumeWatcher = null
   }
 
   override fun onAbort() {
     Log.i(TAG, "onAbort: callId=$callId")
+    stopResumeWatcher()
     setDisconnected(DisconnectCause(DisconnectCause.OTHER))
     IncomingCallRegistry.unregisterConnection(callId, this) // [2026-10-06 android-incoming]
     destroy()
   }
+
+  /** [2026-10-09 system-mute] Last CallAudioState.isMuted seen (null = none yet). */
+  @Volatile private var lastTelecomMuted: Boolean? = null
 
   override fun onCallAudioStateChanged(state: android.telecom.CallAudioState?) {
     // Telecom hands us the current audio route (earpiece / speakerphone /
@@ -504,6 +583,25 @@ class ChatyyConnection(
     try {
       ExpoCallKitModule.emitAudioRouteChanged(route, s.isMuted)
     } catch (_: Throwable) {}
+    // [2026-10-09 system-mute] Mute toggled OUTSIDE the app (Android Auto,
+    // Wear, BT headset mute key routed by Telecom) → apply to the real mic +
+    // CallActivity button. Only on a CHANGE of Telecom's flag: the first
+    // callback just records it, so a route change never overrides the
+    // user's in-app mute.
+    val prevMuted = lastTelecomMuted
+    lastTelecomMuted = s.isMuted
+    if (prevMuted != null && prevMuted != s.isMuted && this@ChatyyConnection.state == Connection.STATE_ACTIVE) {
+      Log.i(TAG, "onCallAudioStateChanged: system mute → ${s.isMuted} callId=$callId")
+      try {
+        val i = Intent(CallTelecomBridge.ACTION_TELECOM_STATE).apply {
+          setPackage(ctx.packageName)
+          putExtra("call_id", callId)
+          putExtra("muted", s.isMuted)
+        }
+        ctx.sendBroadcast(i)
+      } catch (_: Throwable) {}
+      NativeCallRoom.setMicEnabled(!s.isMuted)
+    }
     // [2026-05-21] Sync AudioRouter's cached speakerOn flag with what Telecom
     // says is the current route. Without this, after a Bluetooth headset
     // disconnects, AudioRouter still thinks speaker is OFF (its last setSpeaker

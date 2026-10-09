@@ -22,7 +22,8 @@ import {
   View, Text, FlatList, StyleSheet, TouchableOpacity, RefreshControl,
   ActivityIndicator, Alert, ScrollView, Platform,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useRouter, Stack } from 'expo-router';
+import { USE_NATIVE_HEADER, nativeHeaderOptions, HeaderIconButton } from '../components/nativeHeader'; // [2026-10-09 native-sheets-headers]
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
@@ -224,7 +225,7 @@ function FilterPills({ tab, setTab, t, colors }) {
 
 // ─── Main screen ───────────────────────────────────────────────────────
 export default function ActivityLogScreen() {
-  const { colors } = useTheme();
+  const { colors, isDark } = useTheme();
   const { t } = useLanguage();
   const router = useRouter();
   const insets = useSafeAreaInsets();
@@ -400,7 +401,19 @@ export default function ActivityLogScreen() {
   );
 
   return (
-    <View style={[styles.container, { backgroundColor: colors.background, paddingTop: insets.top }]}>
+    <View style={[styles.container, { backgroundColor: colors.background, paddingTop: USE_NATIVE_HEADER ? 0 : insets.top }]}>
+      {USE_NATIVE_HEADER ? (
+        <Stack.Screen options={nativeHeaderOptions({
+          colors,
+          isDark,
+          title: t('activity.title'),
+          headerRight: () => (
+            <HeaderIconButton onPress={onRefresh} accessibilityLabel={t('common.refresh')}>
+              <IconRefresh size={20} color={colors.text} />
+            </HeaderIconButton>
+          ),
+        })} />
+      ) : (
       <View style={[styles.header, { borderBottomColor: colors.borderLight }]}>
         <TouchableOpacity onPress={() => router.back()} hitSlop={{ top: 10, left: 10, right: 10, bottom: 10 }}>
           <IconArrowLeft size={22} color={colors.text} />
@@ -418,6 +431,7 @@ export default function ActivityLogScreen() {
           <IconRefresh size={20} color={colors.textSecondary} />
         </TouchableOpacity>
       </View>
+      )}
 
       {loading && items.length === 0 ? (
         <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>

@@ -1,10 +1,21 @@
 {
-  "platforms": ["apple", "android"],
+  "platforms": [
+    "apple",
+    "android"
+  ],
   "apple": {
-    "modules": ["ExpoBackgroundUploadModule"],
-    "appDelegateSubscribers": ["BackgroundUploadAppDelegateSubscriber"]
+    "modules": [
+      "ExpoBackgroundUploadModule",
+      "ChatTransferModule"
+    ],
+    "appDelegateSubscribers": [
+      "BackgroundUploadAppDelegateSubscriber"
+    ]
   },
   "android": {
-    "modules": ["expo.modules.backgroundupload.ExpoBackgroundUploadModule"]
+    "modules": [
+      "expo.modules.backgroundupload.ExpoBackgroundUploadModule",
+      "expo.modules.backgroundupload.ChatTransferModule"
+    ]
   }
 }

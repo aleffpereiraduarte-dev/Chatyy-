@@ -51,6 +51,7 @@ const StatusVisionCamera = React.lazy(() => import('./status/StatusVisionCamera'
 // CameraView is part of the already-linked expo-camera native module).
 import StatusPlainCamera from './status/StatusPlainCamera';
 import { FACE_FILTER_PRESETS } from './status/FaceFilters';
+import RecentGalleryStrip from './status/RecentGalleryStrip'; // [2026-10-09 status-composer]
 
 // Haptics (graceful — `expo-haptics` may not be present in every build)
 let _Haptics = null;
@@ -202,7 +203,11 @@ function FilterThumb({ filter, uri, selected, onPress }) {
   );
 }
 
-export default function StatusCamera({ visible, onClose, onCapture, t, initialSeed = null }) {
+// [2026-10-09 status-composer] directToEditor: o host (ChatStatusTab) tem o
+// estúdio com filtros reais → galeria vai direto pra ele (sem o preview antigo
+// de filtros "pintados") e a faixa de galeria recente substitui os chips de
+// filtro ao vivo (que eram só uma película colorida, nunca aplicada no arquivo).
+export default function StatusCamera({ visible, onClose, onCapture, t, initialSeed = null, directToEditor = false }) {
   // Safe-area insets — the absolute overlays (close button, music pill,
   // right-side action stack) used a fixed Platform.OS check that fell short
   // on Android edge-to-edge windows (close was tucking under the status
@@ -963,11 +968,13 @@ export default function StatusCamera({ visible, onClose, onCapture, t, initialSe
         allowsEditing: false,
         allowsMultipleSelection: true,
         selectionLimit: 10,
+        orderedSelection: true, // [2026-10-09 more-native]
       });
       if (!result.canceled && result.assets?.length) {
         const isVid = (a) => a.type === 'video' || /\.(mp4|mov|webm|3gp)$/i.test(a.uri || '');
         if (result.assets.length === 1) {
           const a = result.assets[0];
+          if (directToEditor) { onCapture?.({ uri: a.uri, type: isVid(a) ? 'video' : 'photo', width: a.width, height: a.height }); return; }
           setPreview({ uri: a.uri, type: isVid(a) ? 'video' : 'photo', width: a.width, height: a.height });
         } else {
           // Multi-select → emit a carousel directly (skip the single-item
@@ -986,7 +993,7 @@ export default function StatusCamera({ visible, onClose, onCapture, t, initialSe
     } catch (e) {
       console.warn('[StatusCamera] gallery error:', e?.message);
     }
-  }, []);
+  }, [onCapture, directToEditor]);
 
   // ─── Voiceover (long-press record button in preview) ───
   // Records mic-only audio for up to 30s using `expo-audio`. The result
@@ -1601,8 +1608,11 @@ export default function StatusCamera({ visible, onClose, onCapture, t, initialSe
       </View>
       )}
 
-      {/* Live filter chip strip (Feature E) — horizontal scroll above the
-          mode bar so users can pick a look while framing. Tap = apply. */}
+      {directToEditor ? (
+        <RecentGalleryStrip visible={visible} onPick={(c) => { haptic('light'); onCapture?.(c); }} nextLabel={t?.('status.studio.next')} style={{ bottom: 190 }} />
+      ) : (
+      /* Live filter chip strip (Feature E) — horizontal scroll above the
+          mode bar so users can pick a look while framing. Tap = apply. */
       <View style={s.liveFilterStrip} pointerEvents="box-none">
         <ScrollView
           horizontal
@@ -1626,6 +1636,7 @@ export default function StatusCamera({ visible, onClose, onCapture, t, initialSe
           })}
         </ScrollView>
       </View>
+      )}
 
       {/* Mode tabs — TikTok-style with active underline (Feature 4) */}
       <View style={s.modeBar}>

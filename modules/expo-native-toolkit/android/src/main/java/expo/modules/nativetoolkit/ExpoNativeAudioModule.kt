@@ -87,11 +87,23 @@ class ExpoNativeAudioModule : Module() {
   // earpiece + PROXIMITY_SCREEN_OFF_WAKE_LOCK). Lazily created on the main
   // looper by the first voice* call; every voice* function runs on MAIN.
   private var voicePlayer: VoiceNotePlayer? = null
+  // [2026-10-09 media-native] Lock-screen / shade controls (MediaSession).
+  private var voiceNowPlaying: VoiceNowPlaying? = null
   private fun voice(): VoiceNotePlayer {
     val existing = voicePlayer
     if (existing != null) return existing
-    val created = VoiceNotePlayer(ctx.applicationContext) { name, body -> sendEventSafe(name, body) }
+    val created = VoiceNotePlayer(ctx.applicationContext) { name, body ->
+      if (name == "onVoiceStatus") {
+        try {
+          voiceNowPlaying?.onStatus(body)
+        } catch (t: Throwable) {
+          Log.w(TAG, "nowPlaying: ${t.message}")
+        }
+      }
+      sendEventSafe(name, body)
+    }
     voicePlayer = created
+    voiceNowPlaying = VoiceNowPlaying(ctx.applicationContext, created)
     return created
   }
 
@@ -112,8 +124,14 @@ class ExpoNativeAudioModule : Module() {
       releaseAll()
       val vp = voicePlayer
       voicePlayer = null
+      val np = voiceNowPlaying
+      voiceNowPlaying = null
       if (vp != null) {
         android.os.Handler(android.os.Looper.getMainLooper()).post {
+          try {
+            np?.clear()
+          } catch (_: Throwable) {
+          }
           try {
             vp.release()
           } catch (_: Throwable) {
@@ -152,6 +170,15 @@ class ExpoNativeAudioModule : Module() {
 
     AsyncFunction("voiceStop") {
       voicePlayer?.stop()
+      voiceNowPlaying?.clear()
+      Unit
+    }.runOnQueue(Queues.MAIN)
+
+    // [2026-10-09 media-native] Lock-screen metadata for the playing note:
+    // { title?, subtitle?, artworkUri?, enabled? } (optional).
+    AsyncFunction("voiceSetNowPlaying") { meta: Map<String, Any> ->
+      voice()
+      voiceNowPlaying?.setMetadata(meta)
       Unit
     }.runOnQueue(Queues.MAIN)
 

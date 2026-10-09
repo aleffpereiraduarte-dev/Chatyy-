@@ -11,6 +11,7 @@ import { View, Text, TouchableOpacity, Modal, Pressable, ActivityIndicator, Link
 import { Shadow } from '../constants/theme';
 import { IconClock, IconX } from './Icons';
 import { DateTimePickerModal } from './ScheduleModals';
+import { USE_NATIVE_SHEETS, NativeSheet } from './NativeSheet'; // [2026-10-09 native-sheets]
 import { formatReminderWhen, reminderErrorKey, REMINDER_DEFAULTS as _RD } from '../services/reminders';
 // [2026-10-06 HOTFIX P0] fallback defensivo: nunca deixar um import quebrado
 // derrubar a tela da conversa (o sheet é montado sempre, mesmo fechado).
@@ -73,10 +74,9 @@ function ReminderSheetInner({ onClose, text, initialWhen, colors, t, onConfirm }
 
   const openSettings = () => { try { Linking.openSettings(); } catch {} };
 
-  return (
-    <Modal visible transparent animationType="fade" onRequestClose={onClose}>
-      <Pressable style={st.overlay} onPress={busy ? undefined : onClose}>
-        <Pressable style={[st.sheet, { backgroundColor: colors.surface }, Shadow.lg]} onPress={() => {}}>
+  // [2026-10-09 native-sheets] Corpo compartilhado: sheet do sistema (iOS/Android) ou Modal (web).
+  const body = (
+        <>
           <View style={st.headerRow}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
               <IconClock size={18} color={colors.primary} />
@@ -142,9 +142,11 @@ function ReminderSheetInner({ onClose, text, initialWhen, colors, t, onConfirm }
               )}
             </TouchableOpacity>
           </View>
-        </Pressable>
-      </Pressable>
+        </>
+  );
 
+  // O picker é um <Modal> DENTRO do conteúdo do sheet → apresenta a partir do sheet.
+  const picker = (
       <DateTimePickerModal
         visible={showPicker}
         onClose={() => setShowPicker(false)}
@@ -155,6 +157,27 @@ function ReminderSheetInner({ onClose, text, initialWhen, colors, t, onConfirm }
         t={t}
         title={tt('reminder.pickTitle', null, 'Data e hora do lembrete')}
       />
+  );
+
+  if (USE_NATIVE_SHEETS) {
+    return (
+      <NativeSheet visible onClose={onClose} detents="fitToContents" backgroundColor={colors.surface}>
+        <View style={[st.sheetNative, { backgroundColor: colors.surface }]}>
+          {body}
+          {picker}
+        </View>
+      </NativeSheet>
+    );
+  }
+
+  return (
+    <Modal visible transparent animationType="fade" onRequestClose={onClose}>
+      <Pressable style={st.overlay} onPress={busy ? undefined : onClose}>
+        <Pressable style={[st.sheet, { backgroundColor: colors.surface }, Shadow.lg]} onPress={() => {}}>
+          {body}
+        </Pressable>
+      </Pressable>
+      {picker}
     </Modal>
   );
 }
@@ -162,6 +185,7 @@ function ReminderSheetInner({ onClose, text, initialWhen, colors, t, onConfirm }
 const st = StyleSheet.create({
   overlay: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.45)' },
   sheet: { borderTopLeftRadius: 22, borderTopRightRadius: 22, paddingHorizontal: 18, paddingTop: 16, paddingBottom: Platform.OS === 'ios' ? 34 : androidBottomInset(20), maxWidth: 560, width: '100%', alignSelf: 'center' },
+  sheetNative: { paddingHorizontal: 18, paddingTop: 22, paddingBottom: Platform.OS === 'ios' ? 12 : androidBottomInset(20) },
   headerRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 },
   title: { fontSize: 17, fontWeight: '700' },
   quote: { borderLeftWidth: 3, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 8, marginBottom: 14 },

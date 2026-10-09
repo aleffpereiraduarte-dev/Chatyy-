@@ -353,6 +353,8 @@ class ExpoCallKitModule : Module() {
             android.telecom.PhoneAccount.CAPABILITY_VIDEO_CALLING
           )
           .setShortDescription("Chatyy voice + video (self-managed)")
+          // [2026-10-09] System call log + Android Auto / Wear visibility.
+          .setExtras(CallTelecomBridge.phoneAccountExtras())
           .build()
         tm.registerPhoneAccount(account)
         Log.i(TAG, "ConnectionService PhoneAccount registered: ${handle.id}")
