@@ -215,7 +215,7 @@ class P2PCallSession(
 
     private fun log(evt: String, info: String = "") {
         Log.i(TAG, "[$callId] $evt $info")
-        try { NativeCallRoom.postDiag("p2p_$evt".take(40), "cid=${callId.takeLast(8)} caller=$isCaller $info".take(300)) } catch (_: Throwable) {}
+        // [2026-10-09] NativeCallRoom.postDiag não é acessível daqui (quebrou o build) — só Log.
     }
 
     private fun sendFrame(type: String, extra: JSONObject.() -> Unit = {}) {
