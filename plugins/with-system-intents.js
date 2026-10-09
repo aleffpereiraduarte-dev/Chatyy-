@@ -40,8 +40,11 @@ const STRINGS_FILE = 'Localizable.xcstrings';
 const LANGS = ['pt-BR', 'pt-PT', 'es'];
 
 function gateOn() {
+  // [2026-10-09] OFF por padrão: AppShortcuts.xcstrings exige deployment target iOS 17
+  // (o app é 15.1) e quebrou o archive. Ligar com CHATYY_APP_INTENTS=1 só depois de gerar
+  // AppShortcuts.strings por idioma (formato aceito < iOS 17).
   const v = String(process.env.CHATYY_APP_INTENTS || '').trim().toLowerCase();
-  return !(v === '0' || v === 'false' || v === 'off');
+  return v === '1' || v === 'true' || v === 'on';
 }
 
 // =====================================================================
