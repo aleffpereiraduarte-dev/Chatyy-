@@ -9,6 +9,7 @@
 //   • password strength (signup-specific: penalises name/handle/phone reuse)
 //   • server message → friendly i18n key mapping
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { asciiDigits, cleanNationalDigits } from '../../constants/countries';
 
 export const SIGNUP_DRAFT_KEY = 'chatyy_signup_draft_v1';
 const DRAFT_TTL_MS = 24 * 60 * 60 * 1000;
@@ -60,7 +61,7 @@ export function clearSignupDraft() {
 // only strip a duplicated dial code when the digits overflow the mask
 // ("5511987654321" typed under BR) and a BR trunk "0" ("011 9…").
 export function parsePhoneInput(text, currentCountry, countries) {
-  const raw = String(text || '');
+  const raw = asciiDigits(text || ''); // [2026-10-09 geo-qa] ٠٥٠ / ０９０ / ०९८ → ASCII
   const cur = countries.find(c => c.code === currentCountry) || countries[0];
   let digits = raw.replace(/\D/g, '');
   const trimmed = raw.trim();
@@ -74,14 +75,13 @@ export function parsePhoneInput(text, currentCountry, countries) {
       if (!best || dd.length > best.dd.length || (dd.length === best.dd.length && c.code === cur.code)) best = { c, dd };
     }
     if (best) {
-      return { countryCode: best.c.code, digits: digits.slice(best.dd.length).slice(0, best.c.maxDigits || 15) };
+      // "+44 (0)7700…" → tira o 0 de tronco ANTES do corte em maxDigits.
+      return { countryCode: best.c.code, digits: cleanNationalDigits(digits.slice(best.dd.length), best.c, { noDialStrip: true }) };
     }
   }
-  const max = cur.maxDigits || 15;
-  const curDial = String(cur.dial || '').replace('+', '');
-  if (curDial && digits.length > max && digits.startsWith(curDial)) digits = digits.slice(curDial.length);
-  if (cur.code === 'BR') digits = digits.replace(/^0+/, '');
-  return { countryCode: cur.code, digits: digits.slice(0, max) };
+  // [2026-10-09 geo-qa] 0 de tronco tirado em TODOS os países (antes só BR) e
+  // antes do corte — UK/FR/DE/JP/AU/NG/AE/ID/IN perdiam o último dígito.
+  return { countryCode: cur.code, digits: cleanNationalDigits(digits, cur) };
 }
 
 // ── Username ────────────────────────────────────────────────────────────

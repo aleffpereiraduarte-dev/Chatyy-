@@ -497,6 +497,10 @@ if (Platform.OS !== 'web' && typeof setTimeout === 'function') {
   // is empty (default) — nothing else runs.
   afterFirstPaint(() => { try { require('../services/nativeCore').init(); } catch {} }, 4000);
 }
+// [2026-10-09 open-instant] Foreground catch-up (AppState 'active' → one
+// immediate chat_sync for push-touched/unread conversations, outside the
+// debounced sync queue). Cheap listener; web + native.
+try { require('../services/chatOpenPrefetch').init(); } catch {}
 
 // Handles deep links: mailto:, chat, email, and other app URLs
 function useDeepLinking() {

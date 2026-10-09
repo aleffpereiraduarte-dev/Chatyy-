@@ -8240,4 +8240,5 @@ export default {
   'settings.currency.COP': 'بيزو كولومبي',
   'settings.currency.PEN': 'سول بيروفي',
   'settings.currency.CLP': 'بيزو تشيلي',
+  'chatConv.deletedMessageOwn': 'لقد حذفت هذه الرسالة', // [2026-10-09 geo-qa]
 };

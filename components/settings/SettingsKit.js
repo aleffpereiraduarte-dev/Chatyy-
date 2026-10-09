@@ -89,6 +89,13 @@ export function SettingsGroup({ header, footer, children, inset = 16, style, car
 }
 
 // Generic row. Right side priority: `right` node > `checked` > value + chevron.
+// [2026-10-09 geo-qa] RTL (árabe/hebraico/persa/urdu no web: <html dir="rtl">):
+// margem entre ícone/texto/seta do lado certo — o ícone colava no texto —
+// e a seta ">" espelhada para "<".
+function _docRTL() {
+  try { return Platform.OS === 'web' && typeof document !== 'undefined' && document.documentElement && document.documentElement.dir === 'rtl'; } catch { return false; }
+}
+
 export function SettingsRow({
   title, subtitle, value, icon: Icon, iconTile = true, onPress, onLongPress, chevron,
   right, destructive, disabled, checked, titleStyle, numberOfLines = 1, subtitleLines = 2,
@@ -97,23 +104,29 @@ export function SettingsRow({
   const g = useGroupedColors();
   const showChevron = chevron ?? (!!onPress && !destructive && checked === undefined && !right);
   const titleColor = destructive ? g.destructive : g.text;
+  // RN-web não propaga o dir="rtl" do <html> pro LocaleContext → marginStart/End
+  // resolveriam como LTR; o flex do navegador já espelha a linha, então troca
+  // left/right explicitamente quando o documento é RTL. Nativo: inalterado.
+  const _rtl = _docRTL();
+  const _gapEnd = (n) => (_rtl ? { marginLeft: n } : { marginRight: n });
+  const _gapStart = (n) => (_rtl ? { marginRight: n } : { marginLeft: n });
   const body = (
     <View style={[st.row, disabled && { opacity: 0.45 }]}>
       {!!Icon && (iconTile
-        ? <View style={{ marginRight: 12 }}><SettingsIconTile Icon={Icon} /></View>
-        : <View style={{ marginRight: 12, width: 24, alignItems: 'center' }}><Icon size={20} color={destructive ? g.destructive : g.text} /></View>)}
+        ? <View style={{ ..._gapEnd(12) }}><SettingsIconTile Icon={Icon} /></View>
+        : <View style={{ ..._gapEnd(12), width: 24, alignItems: 'center' }}><Icon size={20} color={destructive ? g.destructive : g.text} /></View>)}
       <View style={{ flex: 1, minWidth: 0, alignItems: center ? 'center' : 'flex-start' }}>
         <Text style={[st.title, { color: titleColor }, titleStyle]} numberOfLines={numberOfLines}>{title}</Text>
         {!!subtitle && <Text style={[st.subtitle, { color: g.secondary }]} numberOfLines={subtitleLines}>{subtitle}</Text>}
         {children}
       </View>
-      {right ? <View style={{ marginLeft: 10 }}>{right}</View> : null}
+      {right ? <View style={_gapStart(10)}>{right}</View> : null}
       {!right && value !== undefined && value !== null && value !== '' && (
         <Text style={[st.value, { color: g.secondary }]} numberOfLines={1}>{String(value)}</Text>
       )}
-      {!right && checked === true && <IconCheck size={20} color={g.ink} strokeWidth={2.4} style={{ marginLeft: 10 }} />}
-      {!right && checked === false && <View style={{ width: 20, marginLeft: 10 }} />}
-      {showChevron && <IconChevronRight size={17} color={g.tertiary} style={{ marginLeft: 6 }} />}
+      {!right && checked === true && <IconCheck size={20} color={g.ink} strokeWidth={2.4} style={_gapStart(10)} />}
+      {!right && checked === false && <View style={{ width: 20, ..._gapStart(10) }} />}
+      {showChevron && <IconChevronRight size={17} color={g.tertiary} style={{ ..._gapStart(6), ...(_rtl ? { transform: [{ scaleX: -1 }] } : null) }} />}
     </View>
   );
   if (!onPress && !onLongPress) return <View testID={testID}>{body}</View>;

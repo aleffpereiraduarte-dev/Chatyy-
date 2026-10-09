@@ -241,6 +241,14 @@ function _activeConvId() {
   try { return require('./pushNotifications').getActiveConversation?.() ?? null; } catch { return null; }
 }
 
+function _accConv(id) {
+  try {
+    const list = require('./smartChatCache').getCachedConversationsSync?.() || [];
+    for (const c of list) if (c && _num(c.id) === _num(id)) return { conv: c, visible: true };
+  } catch {}
+  return null;
+}
+
 function _chunk(arr, n) { const out = []; for (let i = 0; i < arr.length; i += n) out.push(arr.slice(i, i + n)); return out; }
 
 let _merging = false;
@@ -261,6 +269,24 @@ export function mergeSync(reason = '') {
   try {
     const r = nat.bgJournalRead();
     if (!r || !r.text) return { applied: 0 };
+    const res = _applyParsedSync(parseJournal(r.text), reason, t0);
+    if (!res || res.retry) return res || { retry: true, skipped: 'error' };
+    // Consume what we read (anything appended meanwhile survives natively).
+    try { nat.bgJournalCommit?.(r.bytes, res.plan.keep.join('\n')); } catch {}
+    return { applied: res.applied, ms: res.ms };
+  } catch (e) {
+    if (__DEV__) console.warn('[bgJournal] mergeSync failed:', e?.message);
+    return { retry: true, skipped: 'error' };
+  } finally {
+    _merging = false;
+  }
+}
+
+// Plan + write already-parsed journal lines into SQLite (+ accelerator) and
+// emit MERGED_EVENT. Shared by the native-journal merge and the JS push ingest
+// ([2026-10-09 open-instant]). Never throws. → { retry } | { plan, applied, ms }
+function _applyParsedSync(parsed, reason, t0) {
+  try {
     const cs = require('./chatStore');
     const acct = cs.getActiveAccount?.() || '';
     if (!acct) return { retry: true, skipped: 'no_account' };
@@ -272,7 +298,6 @@ export function mergeSync(reason = '') {
     const legacyOwner = sq.getLegacyOwner?.() || '';
     const acctN = normAccount(acct);
 
-    const parsed = parseJournal(r.text);
     const mids = [];
     const cids = new Set();
     for (const { e } of parsed) { mids.push(_num(e.mid)); cids.add(_num(e.cid)); }
@@ -312,7 +337,11 @@ export function mergeSync(reason = '') {
       now: Date.now(),
       deviceAccounts: _deviceAccounts(),
       hasMessage: (id) => have.has(id),
-      getConv: (id) => convRows.get(id) || { conv: null, visible: false },
+      // [2026-10-09 open-instant] SQLite lacks the row (iOS: the conversations
+      // table only had journal placeholders) → use the account-scoped list
+      // accelerator row, so the update keeps its pinned/archived/muted/name
+      // instead of creating a placeholder that overrides them in the list.
+      getConv: (id) => convRows.get(id) || _accConv(id) || { conv: null, visible: false },
       activeConvId: _activeConvId(),
     });
 
@@ -379,9 +408,6 @@ export function mergeSync(reason = '') {
       try { db.execSync('PRAGMA busy_timeout = 5000;'); } catch {}
     }
 
-    // Consume what we read (anything appended meanwhile survives natively).
-    try { nat.bgJournalCommit?.(r.bytes, plan.keep.join('\n')); } catch {}
-
     // In-memory accelerator (same process paints from it too).
     _updateAccelerator(plan);
 
@@ -389,12 +415,10 @@ export function mergeSync(reason = '') {
     _lastStats = { reason, lines: parsed.length, applied: plan.applied, msgs: plan.messages.length, convs: plan.convs.length, keep: plan.keep.length, dropped: plan.dropped, ms };
     try { require('./bootTrace').mark('bgjournal_merged'); } catch {}
     if (plan.convs.length || plan.messages.length) _emit(plan);
-    return { applied: plan.applied, ms };
+    return { plan, applied: plan.applied, ms };
   } catch (e) {
-    if (__DEV__) console.warn('[bgJournal] mergeSync failed:', e?.message);
+    if (__DEV__) console.warn('[bgJournal] apply failed:', e?.message);
     return { retry: true, skipped: 'error' };
-  } finally {
-    _merging = false;
   }
 }
 
@@ -462,6 +486,177 @@ function _emit(plan) {
       messages: plan.messages,
     });
   } catch {}
+}
+
+// ─── [2026-10-09 open-instant] Push payload → local store, from JS ───────────
+// "A notificação chega, abro a conversa e demora pra aparecer": the push
+// carries the whole message (chat.php _chatBgSyncFields: bg_full/bg_text/
+// bg_ts/bg_cmid/bg_f*…), but on iOS the NSE journal is OFF (its provisioning
+// profile has no App Group) and on every platform the open thread only learnt
+// about the message from chat_sync/WS after the tap. Now every place JS sees a
+// chat push — foreground listener, background task (content-available), the
+// notification TAP and the cold-start launch response — turns it into the SAME
+// journal line the NSE/FCM service would write and applies it right away:
+// SQLite (native) + accelerator + list preview, so the conversation mounts with
+// the bubble on frame 1. Row = real server id (INSERT OR IGNORE; the server row
+// replaces it on the next delta/WS — same contract as the native journal).
+// Privacy: identical to the native journal — text only when the server marked
+// the push bg_full=1 (never locked / E2E / sealed / view-once / vanish); a
+// locked chat never gets names, text or a placeholder row.
+// Kill-switch OTA: globalThis.__chatyy_push_ingest = false.
+const PUSH_CHAT_TYPES = new Set(['chat_message', 'chat_mention', 'chat_keyword']);
+
+// Payload shape varies (flat data, APNs `body` JSON string, FCM dataString…).
+function _findChatPush(node, depth = 0) {
+  if (node == null || depth > 5) return null;
+  if (typeof node === 'string') {
+    const s = node.trim();
+    if (s.length > 2 && s.length < 16384 && s[0] === '{' && s.includes('message_id')) {
+      try { return _findChatPush(JSON.parse(s), depth + 1); } catch { return null; }
+    }
+    return null;
+  }
+  if (typeof node !== 'object') return null;
+  if (node.conversation_id != null && node.message_id != null && PUSH_CHAT_TYPES.has(_str(node.type))) return node;
+  for (const k of Object.keys(node)) {
+    const r = _findChatPush(node[k], depth + 1);
+    if (r) return r;
+  }
+  return null;
+}
+
+/** Push data → journal entry (same keys as NotificationService.swift journalMessage). Pure. */
+export function entryFromPush(p) {
+  if (!p || typeof p !== 'object' || !PUSH_CHAT_TYPES.has(_str(p.type))) return null;
+  const cid = _num(p.conversation_id);
+  const mid = _num(p.message_id);
+  if (!(cid > 0 && mid > 0)) return null;
+  const locked = _str(p.locked) === '1';
+  const full = !locked && _str(p.bg_full) === '1';
+  const ig = _str(p.is_group).toLowerCase();
+  const isGroup = ig === '1' || ig === 'true' || _str(p.conversation_type) === 'group';
+  const e = {
+    v: 1, src: 'push_js',
+    acct: _str(p.recipient_email).toLowerCase(),
+    at: Date.now(),
+    cid, mid,
+    full: full ? '1' : '0', locked: locked ? '1' : '0',
+    sender: _str(p.sender_email),
+    type: _str(p.bg_type),
+    preview: _str(p.msg_preview).slice(0, 300),
+    ts: _str(p.bg_ts),
+    grp: isGroup ? '1' : '0',
+    unread: _str(p.unread_count),
+  };
+  if (!locked) {
+    e.sname = _str(p.sender_name);
+    e.cname = _str(p.conversation_name || p.group_name);
+  }
+  if (full) {
+    const map = [['bg_text', 'text'], ['bg_cmid', 'cmid'], ['bg_furl', 'furl'], ['bg_fname', 'fname'],
+      ['bg_fsize', 'fsize'], ['bg_w', 'w'], ['bg_h', 'h'], ['bg_dur', 'dur'], ['bg_thumb', 'thumb'],
+      ['bg_reply', 'reply'], ['bg_rquote', 'rquote']];
+    for (const [src, dst] of map) if (p[src] != null && p[src] !== '') e[dst] = _str(p[src]);
+  }
+  return e;
+}
+
+// Web has no sync SQLite: plan against the accelerator and update it only.
+function _applyParsedWeb(parsed, reason) {
+  const t0 = Date.now();
+  try {
+    const cs = require('./chatStore');
+    const acct = cs.getActiveAccount?.() || '';
+    if (!acct) return { retry: true, skipped: 'no_account' };
+    if (cs.isLocked?.()) return { retry: true, skipped: 'locked' };
+    const sc = require('./smartChatCache');
+    const list = sc.getCachedConversationsSync?.() || [];
+    const byId = new Map();
+    for (const c of list) if (c && c.id != null) byId.set(_num(c.id), c);
+    const haveCache = new Map();
+    const hasMessage = (id) => {
+      for (const { e } of parsed) {
+        if (_num(e.mid) !== id) continue;
+        const cid = _num(e.cid);
+        if (!haveCache.has(cid)) {
+          const s = new Set();
+          try { for (const m of (sc.getCachedMessagesSync?.(cid, 200) || [])) s.add(_num(m && m.id)); } catch {}
+          haveCache.set(cid, s);
+        }
+        return haveCache.get(cid).has(id);
+      }
+      return false;
+    };
+    const plan = planMerge(parsed, {
+      acct,
+      now: Date.now(),
+      deviceAccounts: _deviceAccounts(),
+      hasMessage,
+      getConv: (id) => (byId.has(id) ? { conv: byId.get(id), visible: true } : { conv: null, visible: false }),
+      activeConvId: _activeConvId(),
+    });
+    _updateAccelerator(plan);
+    if (plan.convs.length || plan.messages.length) _emit(plan);
+    return { plan, applied: plan.applied, ms: Date.now() - t0, reason };
+  } catch { return { retry: true, skipped: 'error' }; }
+}
+
+const _pushPending = [];   // entries waiting for the store (cold start / busy DB)
+let _pushRetryTimer = null;
+let _pushRetries = 0;
+const _pushTouched = new Map(); // cid → { at, full } (foreground catch-up hint)
+
+function _ingestParsed(parsed, reason) {
+  if (_merging) return { retry: true, skipped: 'busy' };
+  _merging = true;
+  try {
+    return isWeb ? _applyParsedWeb(parsed, reason) : _applyParsedSync(parsed, reason, Date.now());
+  } finally { _merging = false; }
+}
+
+function _schedulePushRetry() {
+  if (_pushRetryTimer || !_pushPending.length) return;
+  if (_pushRetries >= 12) { _pushPending.length = 0; _pushRetries = 0; return; } // ~10 s cap
+  _pushRetries++;
+  _pushRetryTimer = setTimeout(() => {
+    _pushRetryTimer = null;
+    const batch = _pushPending.splice(0, _pushPending.length);
+    const r = _ingestParsed(batch, 'push_retry');
+    if (r && r.retry) { _pushPending.push(...batch); _schedulePushRetry(); } else { _pushRetries = 0; }
+  }, _pushRetries <= 3 ? 250 : 900);
+}
+
+/**
+ * Apply a chat push payload to the local store NOW (sync where possible).
+ * @returns {{applied?:number, retry?:boolean, skipped?:string, entry?:object}}
+ */
+export function ingestPushPayload(payload, reason = 'push') {
+  if (globalThis.__chatyy_push_ingest === false) return { skipped: 'off' };
+  try {
+    const p = _findChatPush(payload);
+    const e = p ? entryFromPush(p) : null;
+    if (!e) return { skipped: 'not_chat' };
+    _pushTouched.set(e.cid, { at: Date.now(), full: e.full === '1', locked: e.locked === '1' });
+    if (_pushTouched.size > 50) _pushTouched.delete(_pushTouched.keys().next().value);
+    const parsed = [{ raw: JSON.stringify(e), e }];
+    const r = _ingestParsed(parsed, reason);
+    if (r && r.retry) {
+      _pushPending.push(...parsed);
+      if (_pushPending.length > 60) _pushPending.splice(0, _pushPending.length - 60);
+      _schedulePushRetry();
+    }
+    try { require('./bootTrace').mark?.('push_ingest_' + (r && r.retry ? 'deferred' : 'ok')); } catch {}
+    return { ...(r || {}), plan: undefined, entry: e };
+  } catch { return { skipped: 'error' }; }
+}
+
+/** Conversations a push touched recently (cid → {at, full, locked}). Consumed by the foreground catch-up. */
+export function takePushTouched(maxAgeMs = 30 * 60 * 1000) {
+  const out = [];
+  const now = Date.now();
+  for (const [cid, v] of _pushTouched) if (now - v.at <= maxAgeMs) out.push({ cid, ...v });
+  _pushTouched.clear();
+  return out;
 }
 
 // ─── Background sync config / schedule ───────────────────────────────────────
@@ -562,4 +757,5 @@ export default {
   parseJournal, planMerge, rowFromEntry, applyConvUpdates, canonAcct,
   mergeSync, exportSyncConfig, scheduleBackgroundSync, onLogout, init,
   getLastMergeStats, MERGED_EVENT,
+  entryFromPush, ingestPushPayload, takePushTouched,
 };

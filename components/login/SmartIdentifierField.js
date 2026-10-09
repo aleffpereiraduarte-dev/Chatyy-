@@ -12,7 +12,7 @@
 import { useState } from 'react';
 import { View, Text, TextInput, TouchableOpacity, Platform } from 'react-native';
 import Svg, { Path, Circle, Rect } from 'react-native-svg';
-import { formatPhone } from '../../constants/countries';
+import { formatPhone, asciiDigits, cleanNationalDigits } from '../../constants/countries';
 import { classifyIdentifier, splitInternational, normalizeLoginEmail } from './loginSmart';
 
 function KindGlyph({ kind, color }) {
@@ -68,16 +68,28 @@ export default function SmartIdentifierField({
   const raw = String(value || '');
   const kind = classifyIdentifier(raw);
   const isNationalPhone = kind === 'phone' && !raw.trim().startsWith('+');
-  const display = isNationalPhone ? formatPhone(raw.replace(/\D/g, ''), country?.mask) : raw;
+  // [2026-10-09 geo-qa] "0" de tronco (UK 07700…, FR 06…, JP 090…) fica
+  // visível na frente da máscara em vez de empurrar o último dígito pra fora.
+  const _natDigits = raw.replace(/\D/g, '');
+  const _trunk = (_natDigits.match(/^0+/) || [''])[0];
+  const _natRest = _natDigits.slice(_trunk.length);
+  const display = isNationalPhone
+    ? (_trunk ? `${_trunk}${_natRest ? ` ${formatPhone(_natRest, country?.mask)}` : ''}` : formatPhone(_natDigits, country?.mask))
+    : raw;
+  const _cc = country ? { ...country, code: country.code || country.iso } : null;
 
   const handleChange = (text) => {
-    let next = String(text ?? '');
+    let next = asciiDigits(text ?? '');
     // A formatted phone ("(11) 9") that suddenly gets letters / "@" is really
     // a handle or e-mail that starts with digits → drop the mask punctuation.
     if (isNationalPhone && /[A-Za-z@_]/.test(next)) next = next.replace(/[\s()\-.]/g, '');
     const k = classifyIdentifier(next);
     if (k === 'phone') {
-      const trimmed = next.trim();
+      let trimmed = next.trim();
+      // "00 351 912…" (prefixo internacional da Europa/LatAm) = "+351 912…".
+      if (/^00[1-9]/.test(trimmed.replace(/[^\d+]/g, '')) && trimmed.replace(/\D/g, '').length > 10) {
+        trimmed = `+${trimmed.replace(/\D/g, '').slice(2)}`;
+      }
       if (trimmed.startsWith('+')) {
         const digits = trimmed.replace(/\D/g, '');
         // Only auto-split once the number is long enough to be unambiguous
@@ -86,14 +98,18 @@ export default function SmartIdentifierField({
           const sp = splitInternational(trimmed);
           if (sp && sp.national.length >= 6) {
             onInternationalDetected?.(sp);
-            onChangeText?.(sp.national.slice(0, sp.country.maxDigits || 15));
+            onChangeText?.(cleanNationalDigits(sp.national, sp.country, { noDialStrip: true }));
             return;
           }
         }
         onChangeText?.(`+${digits}`);
         return;
       }
-      onChangeText?.(next.replace(/\D/g, '').slice(0, country?.maxDigits || 15));
+      // Mantém até "00" na frente (digitação de "00 351…" char a char).
+      const _d = next.replace(/\D/g, '');
+      const _z = (_d.match(/^0+/) || [''])[0].length;
+      const _clean = cleanNationalDigits(_d, _cc, { keepTrunk: true });
+      onChangeText?.(_z >= 2 ? `0${_clean.startsWith('0') ? _clean : `0${_clean}`}` : _clean);
       return;
     }
     onChangeText?.(next);

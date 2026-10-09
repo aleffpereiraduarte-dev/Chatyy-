@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { regionalLocale } from '../utils/dateFormat'; // [2026-10-09 geo-qa]
 import {
   View, FlatList, Text, TouchableOpacity, StyleSheet, Image, InteractionManager,
   ActivityIndicator, TextInput, Platform, Keyboard, Dimensions,
@@ -451,7 +452,7 @@ function _formatReceiptDate(ts, t) {
 // top-level chat-conversation component refreshes this on every render via
 // _setAppLocale(language) below.
 let _appLocale;
-function _setAppLocale(lang) { _appLocale = lang || undefined; }
+function _setAppLocale(lang) { _appLocale = regionalLocale(lang) || undefined; } // [2026-10-09 geo-qa] en→en-GB/en-AU… (24h/DD-MM)
 // Module-level translator so module-scoped helpers (e.g. MediaStatusFooter)
 // can localize a few strings without access to useLanguage(). Refreshed on
 // every render of the top-level component via _setAppT(t) below.
@@ -12694,6 +12695,19 @@ function ChatConversationInner() {
           return;
         }
 
+        // [2026-10-09 open-instant] FAST DELTA on open. The pts path below
+        // (isConvFullySynced → chatSync.syncConversations) has a 500 ms debounce
+        // and is SERIALIZED behind the foreground recovery that syncs every
+        // conversation (onlineRecoveryOrchestrator) — after a push tap / resume
+        // the new message only showed up seconds later ("abro a conversa e
+        // demora pra aparecer"). chat_messages since_id (delta, id-merge that
+        // keeps identical rows' identity — _sameServerRow) goes out NOW, in
+        // parallel with the WS reconnect and the pts sync; both dedup by id.
+        // Kill-switch OTA: globalThis.__chatyy_open_fast_delta = false.
+        if (globalThis.__chatyy_open_fast_delta !== false) {
+          try { loadMessages(false); } catch {}
+        }
+
         // WhatsApp-grade offline path (#1194): if the per-conv bootstrap has
         // already drained this conversation's history into SQLite, skip the
         // chat_messages network call entirely on the initial open. WS push +
@@ -15396,6 +15410,56 @@ function ChatConversationInner() {
     })();
     return () => { cancelled = true; };
   }, [conversationId]);
+
+  // [2026-10-09 open-instant] Rows that reached the local store from a push
+  // (bgJournal.ingestPushPayload: arrival / tap) or from the open/foreground
+  // prefetch (services/chatOpenPrefetch) while THIS screen is already mounted
+  // (tap on a push of the open chat, resume) → show them now, not after the
+  // WS/sync round-trip. Only ids not on screen yet; same decrypt+normalize as
+  // loadMessages; the server row replaces it by id on the next delta/WS.
+  useEffect(() => {
+    if (!conversationId) return undefined;
+    let sub = null;
+    try {
+      const { DeviceEventEmitter } = require('react-native');
+      const bj = require('../services/bgJournal');
+      sub = DeviceEventEmitter.addListener(bj.MERGED_EVENT, (p) => {
+        try {
+          if (!mountedRef.current) return;
+          const rows = (Array.isArray(p?.messages) ? p.messages : []).filter(
+            (m) => m && typeof m.id === 'number' && m.id > 0 && Number(m.conversation_id) === Number(conversationId)
+          );
+          if (!rows.length) return;
+          const incoming = processIncoming(rows);
+          setMessages((prev) => {
+            const have = new Set();
+            const cids = new Set();
+            for (const m of prev) {
+              if (!m) continue;
+              if (m.id != null) have.add(String(m.id));
+              const c = m._client_id || m.client_message_id;
+              if (c) cids.add(String(c));
+            }
+            const add = incoming.filter((m) => m && !have.has(String(m.id)) && !(m.client_message_id && cids.has(String(m.client_message_id))));
+            if (!add.length) return prev;
+            add.sort((a, b) => a.id - b.id);
+            const next = prev.slice();
+            for (const m of add) {
+              // after the last numeric-id row older than it (optimistic tmp_ rows stay at the end)
+              let at = 0;
+              for (let i = next.length - 1; i >= 0; i--) {
+                const x = next[i];
+                if (x && typeof x.id === 'number' && x.id < m.id) { at = i + 1; break; }
+              }
+              next.splice(at, 0, m);
+            }
+            return next;
+          });
+        } catch {}
+      });
+    } catch {}
+    return () => { try { sub?.remove?.(); } catch {} };
+  }, [conversationId, processIncoming]);
 
   // Foreground-resume catchup. When the app (or tab on web) was in the
   // background long enough, the WS may have been suspended by the OS — on
@@ -28266,10 +28330,10 @@ function ChatConversationInner() {
               glifo 22 (viewBox 24, traço 1.9) em alvo 40×44 — antes 17/17/18/20. */}
           <IconSearch size={22} color={colors.text} />
         </TouchableOpacity>
-        <TouchableOpacity onPress={handleStartAudioCall} disabled={startingCall} style={styles.headerBtn} accessibilityLabel={t('call.callingAudio') || 'Audio call'} accessibilityRole="button">
+        <TouchableOpacity onPress={handleStartAudioCall} disabled={startingCall} style={styles.headerBtn} accessibilityLabel={t('chat.voiceCall') || 'Audio call'} accessibilityRole="button">{/* [2026-10-09 geo-qa] era call.callingAudio = "Chamando..." (leitor de tela) */}
           <IconPhone size={22} color={colors.text} />
         </TouchableOpacity>
-        <TouchableOpacity onPress={handleStartVideoCall} disabled={startingCall} style={styles.headerBtn} accessibilityLabel={t('call.callingVideo') || 'Video call'} accessibilityRole="button">
+        <TouchableOpacity onPress={handleStartVideoCall} disabled={startingCall} style={styles.headerBtn} accessibilityLabel={t('chat.videoCall') || 'Video call'} accessibilityRole="button">
           {startingCall
             ? <ActivityIndicator size="small" color={colors.text} />
             : <IconVideo size={24} color={colors.text} />}

@@ -122,3 +122,40 @@ export function formatDuration(seconds) {
   const rm = m % 60;
   return rm ? `${h}h ${rm}min` : `${h}h`;
 }
+
+// [2026-10-09 geo-qa] Locale de FORMATAÇÃO de hora/data = idioma do app +
+// REGIÃO do aparelho/navegador. O app guarda só o idioma ('en', 'es', 'fr'…),
+// então Intl('en') caía em en-US: usuário no Reino Unido/Austrália/Nigéria via
+// "06:16 PM" e "10/01/26" (= 1º de outubro lido como 10 de janeiro). Se o
+// aparelho tem o MESMO idioma com região (en-GB, es-MX, fr-CA), usa essa tag;
+// idioma com região própria (pt-BR, pt-PT, zh-CN) ou aparelho em outra língua
+// → mantém o idioma do app. Cache por idioma (as listas re-renderizam muito).
+const _regionalLocaleCache = {};
+export function regionalLocale(lang) {
+  const l = String(lang || '');
+  if (!l) return undefined;
+  if (Object.prototype.hasOwnProperty.call(_regionalLocaleCache, l)) return _regionalLocaleCache[l];
+  let out = l;
+  try {
+    if (l.indexOf('-') < 0) {
+      let tags = [];
+      if (typeof navigator !== 'undefined' && Array.isArray(navigator.languages) && navigator.languages.length) {
+        tags = navigator.languages.slice();
+      } else {
+        try {
+          // eslint-disable-next-line global-require
+          const L = require('expo-localization');
+          tags = (L.getLocales?.() || []).map(x => x && x.languageTag).filter(Boolean);
+        } catch {}
+      }
+      const base = l.toLowerCase();
+      const hit = tags.find(tag => { const s = String(tag).replace('_', '-'); return s.toLowerCase().split('-')[0] === base && s.includes('-'); });
+      if (hit) {
+        const cand = String(hit).replace('_', '-');
+        try { new Intl.DateTimeFormat(cand); out = cand; } catch {}
+      }
+    }
+  } catch {}
+  _regionalLocaleCache[l] = out;
+  return out;
+}

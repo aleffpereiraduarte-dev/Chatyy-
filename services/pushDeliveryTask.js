@@ -93,6 +93,10 @@ if (Platform.OS !== 'web') {
         if (data && typeof data === 'object' && 'actionIdentifier' in data) return NoData;
         // Em 1º plano o socket/handler de foreground já acka (WS delivery_ack).
         try { if (AppState.currentState === 'active') return NoData; } catch {}
+        // [2026-10-09 open-instant] App suspended in 2º plano (iOS acorda via
+        // content-available): grava a msg do push no store local AGORA, então
+        // abrir o app/a conversa já mostra a bolha no 1º frame. Idempotente.
+        try { require('./bgJournal').ingestPushPayload(data, 'push_bg'); } catch {}
         const ok = await ackPushDelivered(data);
         return ok ? NewData : NoData;
       });

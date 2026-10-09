@@ -8240,4 +8240,5 @@ export default {
   'settings.currency.COP': 'कोलंबियाई पेसो',
   'settings.currency.PEN': 'पेरूवियन सोल',
   'settings.currency.CLP': 'चिली पेसो',
+  'chatConv.deletedMessageOwn': 'आपने यह संदेश हटा दिया', // [2026-10-09 geo-qa]
 };

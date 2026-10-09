@@ -976,6 +976,17 @@ export function prefetchConversation(conversationId, opts = {}) {
           const SmartCache = require('./smartChatCache');
           SmartCache.cacheMessages(conversationId, msgs);
         } catch {}
+        // [2026-10-09 open-instant] The tap already pushed the screen and its
+        // frame-1 read happened before this response → hand the rows to the
+        // mounted conversation (bgJournal MERGED_EVENT listener merges by id).
+        try {
+          const rows = msgs.filter((m) => m && typeof m.id === 'number' && m.id > 0)
+            .map((m) => (m.conversation_id ? m : { ...m, conversation_id: Number(conversationId) }));
+          if (rows.length) {
+            const { DeviceEventEmitter } = require('react-native');
+            DeviceEventEmitter.emit(require('./bgJournal').MERGED_EVENT, { convs: [], messages: rows, src: 'list_prefetch' });
+          }
+        } catch {}
       }
     } catch {}
   })();

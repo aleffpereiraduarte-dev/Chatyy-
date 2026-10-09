@@ -9,7 +9,7 @@ export const COUNTRIES = [
   { code: 'BR', dial: '+55', flag: '\u{1F1E7}\u{1F1F7}', name: 'Brazil', mask: '(##) #####-####', maxDigits: 11 },
   { code: 'US', dial: '+1', flag: '\u{1F1FA}\u{1F1F8}', name: 'United States', mask: '(###) ###-####', maxDigits: 10 },
   { code: 'PT', dial: '+351', flag: '\u{1F1F5}\u{1F1F9}', name: 'Portugal', mask: '### ### ###', maxDigits: 9 },
-  { code: 'AR', dial: '+54', flag: '\u{1F1E6}\u{1F1F7}', name: 'Argentina', mask: '## ####-####', maxDigits: 10 },
+  { code: 'AR', dial: '+54', flag: '\u{1F1E6}\u{1F1F7}', name: 'Argentina', mask: '# ## ####-####', maxDigits: 11 }, // [2026-10-09 geo-qa] celular = +54 9 …(11 díg.); 10 cortava o último
   { code: 'CL', dial: '+56', flag: '\u{1F1E8}\u{1F1F1}', name: 'Chile', mask: '# #### ####', maxDigits: 9 },
   { code: 'CO', dial: '+57', flag: '\u{1F1E8}\u{1F1F4}', name: 'Colombia', mask: '### ### ####', maxDigits: 10 },
   { code: 'MX', dial: '+52', flag: '\u{1F1F2}\u{1F1FD}', name: 'Mexico', mask: '## #### ####', maxDigits: 10 },
@@ -52,7 +52,7 @@ export const COUNTRIES = [
   { code: 'TH', dial: '+66', flag: '\u{1F1F9}\u{1F1ED}', name: 'Thailand', mask: '## ### ####', maxDigits: 9 },
   { code: 'PH', dial: '+63', flag: '\u{1F1F5}\u{1F1ED}', name: 'Philippines', mask: '### ### ####', maxDigits: 10 },
   { code: 'MY', dial: '+60', flag: '\u{1F1F2}\u{1F1FE}', name: 'Malaysia', mask: '##-### ####', maxDigits: 9 },
-  { code: 'ID', dial: '+62', flag: '\u{1F1EE}\u{1F1E9}', name: 'Indonesia', mask: '###-####-####', maxDigits: 11 },
+  { code: 'ID', dial: '+62', flag: '\u{1F1EE}\u{1F1E9}', name: 'Indonesia', mask: '###-####-#####', maxDigits: 12 }, // [2026-10-09 geo-qa] celulares 9–12 díg.
   { code: 'AO', dial: '+244', flag: '\u{1F1E6}\u{1F1F4}', name: 'Angola', mask: '### ### ###', maxDigits: 9 },
   { code: 'MZ', dial: '+258', flag: '\u{1F1F2}\u{1F1FF}', name: 'Mozambique', mask: '## ### ####', maxDigits: 9 },
   { code: 'CV', dial: '+238', flag: '\u{1F1E8}\u{1F1FB}', name: 'Cabo Verde', mask: '### ## ##', maxDigits: 7 },
@@ -201,7 +201,47 @@ export function formatPhone(raw, mask) {
     if (char === '#') { result += raw[i]; i++; }
     else { result += char; }
   }
+  // [2026-10-09 geo-qa] nunca esconder dígitos além da máscara.
+  if (i < raw.length) result += raw.slice(i);
   return result;
+}
+
+// [2026-10-09 geo-qa] Dígitos não-ASCII → ASCII: árabe-índicos (teclado árabe,
+// AE/SA/EG), persas, devanágari (IN) e full-width (teclado japonês). Antes
+// `\D` apagava todos → campo vazio / identificador virava "username".
+export function asciiDigits(s) {
+  return String(s == null ? '' : s)
+    .replace(/[\u0660-\u0669\u06F0-\u06F9\u0966-\u096F\uFF10-\uFF19]/g, (ch) => {
+      const c = ch.charCodeAt(0);
+      const base = c >= 0xFF10 ? 0xFF10 : c >= 0x0966 ? 0x0966 : c >= 0x06F0 ? 0x06F0 : 0x0660;
+      return String(c - base);
+    })
+    .replace(/\uFF0B/g, '+');
+}
+
+// [2026-10-09 geo-qa] Dígitos nacionais digitados → dígitos nacionais limpos.
+// O corte em maxDigits rodava ANTES de tirar o "0" de tronco (UK 07700…,
+// FR 06…, DE 0151…, JP 090…, AU 04…, NG 080…, AE 050…, ID 08…, IN 0…),
+// então o último dígito sumia e o E.164 saía errado (+3361234567).
+//   - DDI duplicado sem "+" ("5511…" com BR, "1 201…" com US) → remove
+//   - MX legado "1" de celular (+52 1 55…) → remove
+//   - keepTrunk: mantém UM "0" inicial visível (campo de login; o envio tira)
+export function cleanNationalDigits(text, country, opts) {
+  const keepTrunk = !!(opts && opts.keepTrunk);
+  const noDialStrip = !!(opts && opts.noDialStrip);
+  let d = asciiDigits(text).replace(/\D/g, '');
+  const max = (country && country.maxDigits) || 15;
+  const dial = String((country && country.dial) || '').replace('+', '');
+  const hasTrunk = /^0/.test(d);
+  let rest = d.replace(/^0+/, '');
+  if (!noDialStrip && !hasTrunk && dial && rest.length > max && rest.startsWith(dial)) rest = rest.slice(dial.length);
+  if (country && country.code === 'MX' && rest.length === 11 && rest[0] === '1') rest = rest.slice(1);
+  // AR local "011 15-2345-6789" (área 2–4 díg. + "15" + assinante) → 9 + área + assinante.
+  if (country && country.code === 'AR' && rest.length === 12 && rest[0] !== '9') {
+    for (const k of [2, 3, 4]) { if (rest.substr(k, 2) === '15') { rest = `9${rest.slice(0, k)}${rest.slice(k + 2)}`; break; } }
+  }
+  rest = rest.slice(0, max);
+  return keepTrunk && hasTrunk ? `0${rest}` : rest;
 }
 
 // Find a country by ISO code, falling back to BR.

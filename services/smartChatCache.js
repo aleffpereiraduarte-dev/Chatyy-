@@ -227,8 +227,38 @@ function _sanitize(m) {
   return c;
 }
 
+// [2026-10-09 open-instant] Canonical in-memory key. Boot hydrate keys the Map
+// by Number (_convIdFromKey) and the screen reads with a Number, but writers
+// pass whatever their payload had ("971" from a push/WS string, 971 from a
+// row). A write under the other shape created a SECOND array the reader never
+// saw (msg missing on frame 1) and its flush overwrote the persisted blob with
+// just that array. Numeric-looking ids → Number; reads/writes fold all shapes.
+function _ck(convId) {
+  if (typeof convId === 'number') return convId;
+  const n = Number(convId);
+  return (convId !== '' && convId != null && Number.isFinite(n) && String(n) === String(convId).trim()) ? n : convId;
+}
+function _takeAllShapes(k) {
+  const a = _msgs.get(k);
+  const alt = typeof k === 'number' ? _msgs.get(String(k)) : null;
+  if (alt && alt.length) {
+    _msgs.delete(String(k));
+    const merged = a && a.length ? a.concat(alt) : alt;
+    _msgs.set(k, merged); // dup ids are folded by _mergeIntoMemory's byId map
+    return merged;
+  }
+  return a || [];
+}
+
 function _mergeIntoMemory(convId, incoming) {
-  const existing = _msgs.get(convId) || [];
+  convId = _ck(convId);
+  let existing = _takeAllShapes(convId);
+  // Cold key: fold the persisted blob in first (same sync MMKV read the
+  // reader does) — otherwise this write would leave memory holding only the
+  // incoming rows and the next frame-1 read would show just those.
+  if (!existing.length) {
+    try { getCachedMessagesSync(convId, 0); existing = _msgs.get(convId) || []; } catch {}
+  }
   const byId = new Map();
   for (const m of existing) {
     if (!m) continue;
@@ -406,6 +436,7 @@ export function getLastCachedIdSync(convId) {
 export function cacheMessages(convId, messages) {
   if (convId == null || !Array.isArray(messages) || messages.length === 0) return;
   try { messages = require('./e2eeV4Shape').mapStored(messages); } catch {} // [2026-10-09 e2ee v4]
+  convId = _ck(convId);
   _mergeIntoMemory(convId, messages);
   _scheduleFlush(convId);
 }
@@ -413,13 +444,15 @@ export function cacheMessages(convId, messages) {
 export function cacheSingleMessage(convId, msg) {
   if (convId == null || !msg) return;
   try { msg = require('./e2eeV4Shape').toStoredShape(msg); } catch {} // [2026-10-09 e2ee v4]
+  convId = _ck(convId);
   _mergeIntoMemory(convId, [msg]);
   _scheduleFlush(convId);
 }
 
 export function updateCachedMessage(convId, msgId, patch) {
   if (convId == null || msgId == null || !patch) return;
-  const arr = _msgs.get(convId) || [];
+  convId = _ck(convId);
+  const arr = _takeAllShapes(convId);
   let touched = false;
   const next = arr.map(m => {
     if (m && String(m.id) === String(msgId)) {
@@ -436,7 +469,8 @@ export function updateCachedMessage(convId, msgId, patch) {
 
 export function deleteCachedMessage(convId, msgId) {
   if (convId == null || msgId == null) return;
-  const arr = _msgs.get(convId) || [];
+  convId = _ck(convId);
+  const arr = _takeAllShapes(convId);
   const next = arr.filter(m => m && String(m.id) !== String(msgId));
   if (next.length !== arr.length) {
     _msgs.set(convId, next);

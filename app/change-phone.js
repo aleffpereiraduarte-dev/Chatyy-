@@ -31,7 +31,7 @@ import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import * as api from '../services/api';
 import useIsMounted from '../hooks/useIsMounted';
-import { COUNTRIES, formatPhone } from '../constants/countries';
+import { COUNTRIES, formatPhone, cleanNationalDigits } from '../constants/countries';
 import {
   IconArrowLeft, IconArrowRight, IconCheck, IconCheckCircle,
   IconPhone, IconShield, IconChevronRight, IconAlertTriangle,
@@ -422,7 +422,7 @@ export default function ChangePhone() {
                     ]}
                     value={formatPhone(phone, country.mask)}
                     onChangeText={(text) => {
-                      const digits = text.replace(/\D/g, '').slice(0, country.maxDigits || 15);
+                      const digits = cleanNationalDigits(text, country); // [2026-10-09 geo-qa] 0 de tronco/dígitos não-ASCII antes do corte
                       setPhone(digits);
                       if (error) setError('');
                     }}

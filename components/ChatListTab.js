@@ -19,6 +19,7 @@ const ListComponent = FlashList;
 const LARGE_TITLE_COLLAPSE_Y = 34;
 import { useRouter, useFocusEffect } from 'expo-router';
 import * as api from '../services/api';
+import { regionalLocale } from '../utils/dateFormat'; // [2026-10-09 geo-qa]
 import { useConfirm } from './ConfirmModal';
 import { emailToDisplayName, BASE_URL } from '../services/api';
 import { cacheConversations, getCachedConversations, prewarmConversationsCache, prefetchConversation } from '../services/chatCache';
@@ -1275,7 +1276,7 @@ const ConversationRow = React.memo(function ConversationRow({
                 } : {
                   color: P.sub,
                 }]}>
-                  {lastMsg ? formatChatTime(lastMsg.created_at, t, language) : ''}
+                  {lastMsg ? formatChatTime(lastMsg.created_at, t, regionalLocale(language)) : ''}
                 </Text>
               </View>
             </View>

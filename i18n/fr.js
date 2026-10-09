@@ -8247,4 +8247,5 @@ export default {
   'settings.currency.COP': 'Peso colombien',
   'settings.currency.PEN': 'Sol péruvien',
   'settings.currency.CLP': 'Peso chilien',
+  'chatConv.deletedMessageOwn': 'Vous avez supprimé ce message', // [2026-10-09 geo-qa]
 };

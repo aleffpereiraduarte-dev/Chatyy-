@@ -7462,4 +7462,5 @@ export default {
   "settings.currency.COP": "コロンビアペソ",
   "settings.currency.PEN": "ペルーソル",
   "settings.currency.CLP": "チリペソ",
+  "chatConv.deletedMessageOwn": "このメッセージを削除しました", // [2026-10-09 geo-qa]
 };

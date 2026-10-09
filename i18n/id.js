@@ -7462,4 +7462,5 @@ export default {
   'settings.currency.COP': 'Peso Kolombia',
   'settings.currency.PEN': 'Sol Peru',
   'settings.currency.CLP': 'Peso Chili',
+  'chatConv.deletedMessageOwn': 'Anda menghapus pesan ini', // [2026-10-09 geo-qa]
 };

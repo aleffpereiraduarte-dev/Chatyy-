@@ -8288,4 +8288,5 @@ export default {
   "status.ring.failed": "Estado não enviado. Toque para tentar novamente.",
   "status.ring.newStatus": "Novo estado",
   "status.studio.next": "Seguinte",
+  "chatConv.deletedMessageOwn": "Apagou esta mensagem", // [2026-10-09 geo-qa]
 };

@@ -1865,6 +1865,10 @@ export async function setupNotificationListeners() {
   const receivedSub = Notifications.addNotificationReceivedListener((notification) => {
     // When a push arrives in foreground, emit event so chat can refresh instantly
     const data = notification.request?.content?.data;
+    // [2026-10-09 open-instant] The push carries the message: put it in the
+    // local store NOW (SQLite + list preview) — no-op when the WS already
+    // delivered it (dedup by server id). services/bgJournal.ingestPushPayload.
+    try { require('./bgJournal').ingestPushPayload(notification.request?.content, 'push_fg'); } catch {}
     if (data?.conversation_id) {
       // Trigger immediate message fetch for this conversation
       try {
@@ -1948,6 +1952,18 @@ export async function setupNotificationListeners() {
     }
     const data = response.notification.request.content.data;
     const actionId = response.actionIdentifier;
+    // [2026-10-09 open-instant] TAP (live or cold-start replay): store the
+    // pushed message BEFORE routing, so the conversation mounts with it on
+    // frame 1 instead of waiting for chat_sync/WS after the app wakes. When the
+    // push can't carry the text (locked / E2E / oversized) start the delta
+    // fetch right now, in parallel with the navigation.
+    try {
+      const _ing = require('./bgJournal').ingestPushPayload(response.notification.request.content, 'push_tap');
+      const _e = _ing && _ing.entry;
+      if (_e && _e.full !== '1' && _e.locked !== '1') {
+        require('./chatOpenPrefetch').prefetchConversationDelta(_e.cid, 'push_tap');
+      }
+    } catch {}
 
     // Handle notification action buttons (new + legacy identifiers)
 

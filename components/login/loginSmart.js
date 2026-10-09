@@ -5,7 +5,7 @@
 // the bottom (last identifier), so it is safe on web + native and trivially
 // testable with plain node.
 import { Platform } from 'react-native';
-import { COUNTRIES } from '../../constants/countries';
+import { COUNTRIES, asciiDigits } from '../../constants/countries';
 
 export const DEFAULT_DOMAIN = 'chatyy.com.br';
 
@@ -15,11 +15,14 @@ export const DEFAULT_DOMAIN = 'chatyy.com.br';
 //  - only digits + phone punctuation (+ ( ) - . space) → phone
 //  - anything else            → username (bare handle → handle@chatyy.com.br)
 export function classifyIdentifier(raw) {
-  const v = String(raw || '').trim();
+  const v = asciiDigits(raw || '').trim();
   if (!v) return 'empty';
   if (v.startsWith('@')) return 'username';
   if (v.includes('@')) return 'email';
-  if (/^[+(]?[\d\s().-]+$/.test(v) && /\d/.test(v)) return 'phone';
+  // [2026-10-09 geo-qa] hífens/traços Unicode (‐ ‑ ‒ – — − ー －, autofill do
+  // iOS e teclados JP/AR) e "/" (DE "0151/2345…") também são pontuação de
+  // telefone; antes "11 98765‑4321" virava username.
+  if (/^[+(]?[\d\s().\/\-\u2010-\u2015\u2212\u30FC\uFF0D]+$/.test(v) && /\d/.test(v)) return 'phone';
   return 'username';
 }
 
@@ -118,7 +121,7 @@ export function findCountryByDial(dial) {
 // "+5511999998888" → { country, national }. Longest dial prefix wins so
 // "+351…" is Portugal, not "+35…". Returns null when nothing matches.
 export function splitInternational(raw) {
-  const digits = String(raw || '').replace(/\D/g, '');
+  const digits = asciiDigits(raw || '').replace(/\D/g, '');
   if (!digits) return null;
   let best = null;
   for (const c of COUNTRIES) {
