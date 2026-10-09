@@ -1,4 +1,27 @@
 export default {
+  // [2026-10-09 passkeys]
+  "settings.passkeys.title": "Chaves de acesso",
+  "settings.passkeys.rowSub": "Entre com Face ID ou impressão digital, sem palavra-passe nem código",
+  "settings.passkeys.footer": "Uma chave de acesso fica guardada neste dispositivo (e no seu Porta-chaves iCloud ou Gestor de palavras-passe da Google). Ninguém a consegue usar sem o seu rosto, impressão digital ou PIN.",
+  "settings.passkeys.add": "Criar chave de acesso neste dispositivo",
+  "settings.passkeys.addSub": "Use Face ID, Touch ID ou impressão digital para entrar",
+  "settings.passkeys.listHeader": "As suas chaves de acesso",
+  "settings.passkeys.empty": "Ainda não tem chaves de acesso.",
+  "settings.passkeys.lastUsed": "Usada a {date}",
+  "settings.passkeys.createdAt": "Criada a {date}",
+  "settings.passkeys.added": "Chave de acesso criada. Da próxima vez, toque em \"Entrar com chave de acesso\".",
+  "settings.passkeys.exists": "Este dispositivo já tem uma chave de acesso para esta conta.",
+  "settings.passkeys.error": "Não foi possível concluir. Tente novamente.",
+  "settings.passkeys.unavailable": "As chaves de acesso chegam na próxima versão da app.",
+  "settings.passkeys.removeTitle": "Remover chave de acesso?",
+  "settings.passkeys.removeMsg": "Deixará de conseguir entrar com ela. Pode criar outra mais tarde.",
+  "settings.passkeys.remove": "Remover",
+  // [2026-10-09 on-device-privacy]
+  "sensitive.warningBody": "Parece que a mensagem contém um dado sensível (cartão, CPF, palavra-passe ou chave). Confirme antes de partilhar.",
+  "sensitive.typeCard": "Cartão",
+  "sensitive.typeCpf": "CPF",
+  "sensitive.typeApiKey": "Chave de API",
+  "sensitive.typePassword": "Palavra-passe",
   // [2026-10-09 signup-nophone/settings-logout]
   "login.createAccountNoPhone": "Criar conta sem número",
   "signupUsername.handlePlaceholder": "o.teu.utilizador",
@@ -1181,6 +1204,9 @@ export default {
   'attachment.download': "Transferir",
   'attachment.of': 'de',
   'attachment.cannotPreview': 'Não é possível visualizar este ficheiro',
+  'doc.openWith': 'Abrir com…', // [2026-10-09 native-docs]
+  'doc.preparing': 'A preparar documento…', // [2026-10-09 native-docs]
+  'doc.openFailed': 'Não foi possível abrir o documento', // [2026-10-09 native-docs]
   'search.dateAfter': 'Depois de',
   'search.dateBefore': 'Antes de',
   'search.larger': 'Maior que',

@@ -17,6 +17,7 @@
 
 import { androidBottomInset } from '../../utils/systemInsets'; // [2026-10-07 android-native] edge-to-edge
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import FastImage from '../FastImage'; // [2026-10-09 expo-image]
 import {
   View, Text, TouchableOpacity, TextInput, Pressable, Image,
   Platform, Modal, Alert, Animated, Keyboard, FlatList, ActivityIndicator,
@@ -577,7 +578,7 @@ const StoryMedia = React.memo(function StoryMedia({
         ? (cur.thumbnail_url.startsWith('http') ? cur.thumbnail_url : api.getMediaUrl(cur.thumbnail_url))
         : '';
       const PosterOverlay = posterUrl ? (
-        <Image
+        <FastImage
           source={{ uri: posterUrl }}
           style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, width: '100%', height: '100%' }}
           resizeMode="contain"
@@ -645,7 +646,7 @@ const StoryMedia = React.memo(function StoryMedia({
       } catch {}
       // [2026-10-07 android-native] expo-av <V> fallback removed (stubbed → undefined component
       // → render crash). Poster image is the graceful fallback.
-      return <Image source={{ uri: mediaUrl }} style={{ width: '100%', height: '100%' }} resizeMode="contain" />;
+      return <FastImage source={{ uri: mediaUrl }} style={{ width: '100%', height: '100%' }} resizeMode="contain" />;
     }
     // Poster fallback for IMAGE status — backend (#557) ships thumbnail_url
     // for both photo + video status. Painting a blurred thumb behind the
@@ -675,7 +676,7 @@ const StoryMedia = React.memo(function StoryMedia({
           }}
         />
       ) : (
-        <Image
+        <FastImage
           source={{ uri: imagePoster }}
           style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, width: '100%', height: '100%' }}
           resizeMode="contain"

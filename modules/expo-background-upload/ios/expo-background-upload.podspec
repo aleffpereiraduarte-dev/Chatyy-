@@ -11,6 +11,10 @@ Pod::Spec.new do |s|
 
   s.dependency 'ExpoModulesCore'
   s.frameworks = 'Photos', 'AVFoundation'
+  # [2026-10-09 live-activity] UploadLiveActivity.swift — ActivityKit is iOS
+  # 16.1+ and the app's floor is 16.0, so weak-link it (all uses are
+  # #available-gated), same as expo-callkit.
+  s.weak_frameworks = 'ActivityKit'
 
   s.pod_target_xcconfig = {
     'DEFINES_MODULE' => 'YES',

@@ -175,10 +175,24 @@ async function _runTxOnce(label, task) {
 }
 
 /** Serialized transaction: `task(db)` runs inside BEGIN IMMEDIATE … COMMIT, one at a time. */
+// [2026-10-09 sqlite-lane] The queue is now the PROCESS-WIDE lane shared with
+// localDb / messageOutbox / bgJournal / sqliteStore: they all get the same
+// native connection from expo-sqlite's connection cache, so a per-module queue
+// still let their BEGINs nest inside ours (see services/sqliteWriteLane.js).
+// Boot wait for the handle happens BEFORE taking the lane so a cold db.js
+// never parks the outbox/localDb writers behind it.
 function _runTx(label, task) {
-  const run = _txTail.then(() => _runTxOnce(label, task));
-  _txTail = run.catch(() => {});
-  return run;
+  const enter = () => {
+    try {
+      const lane = require('./sqliteWriteLane');
+      if (lane && typeof lane.runExclusive === 'function') return lane.runExclusive('db:' + label, () => _runTxOnce(label, task));
+    } catch {}
+    const run = _txTail.then(() => _runTxOnce(label, task));
+    _txTail = run.catch(() => {});
+    return run;
+  };
+  if (_db) return enter();
+  return Promise.race([_readyPromise, new Promise(r => setTimeout(r, 3000))]).catch(() => {}).then(enter);
 }
 /** Public escape hatch for other modules that must write to chatyy.db transactionally. */
 export function dbRunSerialized(label, task) { return _runTx(label || 'external', task); }

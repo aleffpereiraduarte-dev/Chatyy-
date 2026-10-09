@@ -1,4 +1,27 @@
 export default {
+  // [2026-10-09 passkeys]
+  "settings.passkeys.title": "पासकी",
+  "settings.passkeys.rowSub": "Face ID या फ़िंगरप्रिंट से साइन इन करें, बिना पासवर्ड या कोड के",
+  "settings.passkeys.footer": "पासकी इस डिवाइस पर (और आपके iCloud कीचेन या Google पासवर्ड मैनेजर में) सेव रहती है। आपके चेहरे, फ़िंगरप्रिंट या PIN के बिना कोई इसका इस्तेमाल नहीं कर सकता।",
+  "settings.passkeys.add": "इस डिवाइस पर पासकी बनाएं",
+  "settings.passkeys.addSub": "साइन इन के लिए Face ID, Touch ID या फ़िंगरप्रिंट का इस्तेमाल करें",
+  "settings.passkeys.listHeader": "आपकी पासकी",
+  "settings.passkeys.empty": "अभी कोई पासकी नहीं है।",
+  "settings.passkeys.lastUsed": "{date} को इस्तेमाल की गई",
+  "settings.passkeys.createdAt": "{date} को बनाई गई",
+  "settings.passkeys.added": "पासकी बन गई। अगली बार \"पासकी से साइन इन करें\" पर टैप करें।",
+  "settings.passkeys.exists": "इस डिवाइस पर इस खाते के लिए पहले से पासकी है।",
+  "settings.passkeys.error": "पूरा नहीं हो सका। फिर से कोशिश करें।",
+  "settings.passkeys.unavailable": "पासकी ऐप के अगले वर्ज़न में आएंगी।",
+  "settings.passkeys.removeTitle": "पासकी हटाएं?",
+  "settings.passkeys.removeMsg": "आप इससे साइन इन नहीं कर पाएंगे। बाद में नई बना सकते हैं।",
+  "settings.passkeys.remove": "हटाएं",
+  // [2026-10-09 on-device-privacy]
+  "sensitive.warningBody": "इस संदेश में संवेदनशील जानकारी (कार्ड, CPF, पासवर्ड या कुंजी) लगती है। साझा करने से पहले जाँच लें।",
+  "sensitive.typeCard": "कार्ड",
+  "sensitive.typeCpf": "CPF",
+  "sensitive.typeApiKey": "API कुंजी",
+  "sensitive.typePassword": "पासवर्ड",
   // [2026-10-09 signup-nophone/settings-logout]
   "login.createAccountNoPhone": "बिना नंबर के खाता बनाएं",
   "signupUsername.handlePlaceholder": "your.username",
@@ -1000,6 +1023,9 @@ export default {
   'attachment.download': 'डाउनलोड करें',
   'attachment.of': 'से',
   'attachment.cannotPreview': 'इस फ़ाइल का पूर्वावलोकन नहीं किया जा सकता',
+  'doc.openWith': 'इसके साथ खोलें…', // [2026-10-09 native-docs]
+  'doc.preparing': 'दस्तावेज़ तैयार हो रहा है…', // [2026-10-09 native-docs]
+  'doc.openFailed': 'दस्तावेज़ नहीं खोला जा सका', // [2026-10-09 native-docs]
 
   // Advanced Search
   'search.dateAfter': 'के बाद',

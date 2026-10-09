@@ -11,6 +11,7 @@
 
 import { androidTopInset } from '../utils/systemInsets'; // [2026-10-07 android-native] edge-to-edge
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import FastImage from './FastImage'; // [2026-10-09 expo-image]
 import {
   View, Text, TouchableOpacity, Modal, Pressable, Image,
   ScrollView, FlatList, ActivityIndicator, Platform, StyleSheet, RefreshControl,
@@ -291,7 +292,7 @@ const NotifRow = React.memo(function NotifRow({ item, colors, isDark, t, onPress
           {Platform.OS === 'web' ? (
             <img src={thumbUri} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
           ) : (
-            <Image source={{ uri: thumbUri }} style={{ width: 44, height: 44 }} />
+            <FastImage source={{ uri: thumbUri }} style={{ width: 44, height: 44 }} recyclingKey={thumbUri} />
           )}
         </View>
       )}

@@ -285,6 +285,35 @@ export function mergeSync(reason = '') {
 // Plan + write already-parsed journal lines into SQLite (+ accelerator) and
 // emit MERGED_EVENT. Shared by the native-journal merge and the JS push ingest
 // ([2026-10-09 open-instant]). Never throws. → { retry } | { plan, applied, ms }
+// [2026-10-09 sqlite-lane] When the shared write lane is busy, queue ONE task
+// on it that re-runs the merge (journal + pending push ingests) the moment the
+// in-flight async transaction finishes — instead of hoping a later timer finds
+// the lane idle (a long initial sync could starve it past the ~10 s push cap).
+// Inside that task the lane is ours (_laneHeld) and the sync block can't
+// interleave with anything, so the busy check is bypassed.
+let _laneHeld = false;
+let _laneRetryQueued = false;
+function _kickLaneRetry() {
+  if (_laneRetryQueued) return;
+  let lane = null;
+  try { lane = require('./sqliteWriteLane'); } catch {}
+  if (!lane || typeof lane.runExclusive !== 'function') return;
+  _laneRetryQueued = true;
+  lane.runExclusive('bgJournal', async () => {
+    _laneRetryQueued = false;
+    _laneHeld = true;
+    try {
+      try { mergeSync('lane_retry'); } catch {}
+      if (_pushPending.length && !_merging) {
+        const batch = _pushPending.splice(0, _pushPending.length);
+        let r = null;
+        try { r = _ingestParsed(batch, 'push_lane_retry'); } catch {}
+        if (r && r.retry) _pushPending.push(...batch); else _pushRetries = 0;
+      }
+    } finally { _laneHeld = false; }
+  }).catch(() => { _laneRetryQueued = false; _laneHeld = false; });
+}
+
 function _applyParsedSync(parsed, reason, t0) {
   try {
     const cs = require('./chatStore');
@@ -348,9 +377,24 @@ function _applyParsedSync(parsed, reason, t0) {
     // Write — short busy timeout: never block the JS thread behind db.js's
     // async writer at boot. On SQLITE_BUSY we keep the journal and retry later.
     if (plan.messages.length || plan.convs.length) {
+      // [2026-10-09 sqlite-lane] This sync handle is the SAME native connection
+      // as db.js/localDb/outbox (expo-sqlite connection cache). A BEGIN here
+      // while one of their async transactions is open threw "within a
+      // transaction" and the ROLLBACK below then aborted THEIR batch ("cannot
+      // commit - no transaction is active"). Busy lane → keep the journal and
+      // retry (callers already retry on {retry:true}); never touch their txn.
+      try {
+        if (!_laneHeld && require('./sqliteWriteLane').isWriteLaneBusy?.()) {
+          _lastStats = { reason, skipped: 'write_lane_busy', ms: Date.now() - t0 };
+          _kickLaneRetry();
+          return { retry: true, skipped: 'write_lane_busy' };
+        }
+      } catch {}
       try { db.execSync('PRAGMA busy_timeout = 150;'); } catch {}
+      let _began = false;
       try {
         db.execSync('BEGIN');
+        _began = true;
         if (plan.messages.length) {
           const stmt = db.prepareSync(
             `INSERT OR IGNORE INTO messages
@@ -399,7 +443,8 @@ function _applyParsedSync(parsed, reason, t0) {
         }
         db.execSync('COMMIT');
       } catch (e) {
-        try { db.execSync('ROLLBACK'); } catch {}
+        // Only roll back OUR transaction — a failed BEGIN means someone else's is open.
+        if (_began) { try { db.execSync('ROLLBACK'); } catch {} }
         try { db.execSync('PRAGMA busy_timeout = 5000;'); } catch {}
         if (__DEV__) console.warn('[bgJournal] merge write failed:', e?.message);
         _lastStats = { reason, error: String(e?.message || e).slice(0, 120), ms: Date.now() - t0 };

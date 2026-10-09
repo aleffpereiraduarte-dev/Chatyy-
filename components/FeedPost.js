@@ -1536,7 +1536,7 @@ function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated
           }]}
         >
           {post.original_post.thumbnail_url ? (
-            <Image
+            <_CachedFeedImage
               source={{ uri: resolveMediaUrl(post.original_post.thumbnail_url) }}
               style={styles.repostThumb}
               resizeMode="cover"

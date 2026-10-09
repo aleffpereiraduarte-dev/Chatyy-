@@ -1,5 +1,6 @@
 import { androidBottomInset } from '../utils/systemInsets'; // [2026-10-07 android-native] edge-to-edge
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import FastImage from './FastImage'; // [2026-10-09 expo-image]
 import {
   View, Text, TouchableOpacity, StyleSheet, ScrollView, Platform,
   Modal, TextInput, Image, Animated, Dimensions, KeyboardAvoidingView,
@@ -201,7 +202,7 @@ const StatusVideoInner = React.memo(function StatusVideoInner({ mod, uri, poster
               and let the video draw on top once it has the first frame.
               Eliminates the black-screen-while-buffering window. */}
           {posterUrl ? (
-            <Image
+            <FastImage
               source={{ uri: posterUrl }}
               style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}
               resizeMode="contain"
@@ -4342,7 +4343,7 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
                       backgroundColor: isDark ? '#1c1c1e' : '#f4f4f5',
                     }}>
                       {h.cover_url ? (
-                        <Image source={{ uri: h.cover_url.startsWith('http') ? h.cover_url : ('https://chatyy.com.br' + (h.cover_url.startsWith('/') ? '' : '/') + h.cover_url) }} style={{ width: 60, height: 60 }} />
+                        <FastImage source={{ uri: h.cover_url.startsWith('http') ? h.cover_url : ('https://chatyy.com.br' + (h.cover_url.startsWith('/') ? '' : '/') + h.cover_url) }} style={{ width: 60, height: 60 }} recyclingKey={h.cover_url} />
                       ) : (
                         <IconBookmark size={22} color={isDark ? '#888' : '#666'} />
                       )}
@@ -4761,10 +4762,11 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
                             </Text>
                           </View>
                         ) : fullUrl ? (
-                          <Image
+                          <FastImage
                             source={{ uri: fullUrl }}
                             style={{ flex: 1 }}
                             resizeMode="cover"
+                            recyclingKey={fullUrl}
                           />
                         ) : null}
                         {/* Date stripe at bottom — gives the user the

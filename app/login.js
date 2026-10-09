@@ -1020,56 +1020,35 @@ export default function LoginScreen() {
   const handlePasskeyLogin = async () => {
     if (!PASSKEYS_ENABLED) return; // hard guard — never runs while gated off
     try {
-      const fullEmail = normalizeLoginEmail(email);
-      if (!fullEmail || !fullEmail.includes('@')) { setError(t('login.errorEmail')); shake(); return; }
-
-      // Lazy-require the native passkey module. Absent today → graceful notice.
-      let Passkey = null;
-      try { Passkey = require('react-native-passkey').Passkey; } catch { Passkey = null; }
-      if (!Passkey) {
-        setError(t('login.passkeyUnavailable'));
-        return;
-      }
+      // [2026-10-09 passkeys] services/passkeys.js: native module checked with
+      // requireOptionalNativeModule at call time (absent in the current binary
+      // → graceful notice). E-mail optional: empty field = usernameless sign-in
+      // (the system sheet lists this device's chatyy.com.br passkeys).
+      const pk = require('../services/passkeys');
+      if (!pk.isPasskeySupported()) { setError(t('login.passkeyUnavailable')); return; }
+      const typed = String(email || '').trim();
+      const fullEmail = typed ? normalizeLoginEmail(typed) : '';
+      if (typed && (!fullEmail || !fullEmail.includes('@'))) { setError(t('login.errorEmail')); shake(); return; }
 
       setLoading(true);
-      const base = api.getBaseUrl?.() || 'https://chatyy.com.br';
-      const pkFetch = async (action, body) => {
-        const res = await fetch(`${base}/api/passkeys.php?action=${action}`, {
-          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
-        });
-        return res.json();
-      };
-
-      // 1) begin — get assertion options + challenge from the server.
-      const begin = await pkFetch('passkey_login_begin', { email: fullEmail });
-      if (!begin?.success || !begin?.data?.has_passkeys) {
-        setError(t('login.passkeyNone'));
-        setLoading(false); return;
-      }
-      // 2) platform authenticator (Face ID / Touch ID / Android biometrics).
-      const assertion = await Passkey.get({ ...begin.data });
-      // 3) finish — server verifies the assertion signature + mints the bearer.
-      const finish = await pkFetch('passkey_login_finish', {
-        email: fullEmail,
-        id: assertion.id,
-        response: assertion.response,
-      });
-      if (!finish?.success || !finish?.data?.token) {
-        setError(finish?.message || t('login.passkeyError') || 'Falha no login com passkey'); shake();
-        setLoading(false); return;
+      const res = await pk.loginWithPasskey(fullEmail);
+      if (!res.ok) {
+        if (res.reason === 'cancelled') return;
+        if (res.reason === 'none') { setError(t('login.passkeyNone')); return; }
+        if (res.reason === 'unavailable') { setError(t('login.passkeyUnavailable')); return; }
+        setError(t('login.passkeyError')); shake();
+        return;
       }
       // Adopt the minted bearer via the SAME path biometric/QR login uses.
-      const r = await loginWithToken(finish.data.token, fullEmail);
+      const r = await loginWithToken(res.token, res.email);
       if (!mountedRef.current) return;
       if (r?.success) {
         goAfterLogin(r.data?.is_child || isChildAccount());
       } else {
-        setError(r?.message || t('login.passkeyError') || 'Falha no login com passkey'); shake();
+        setError(r?.message || t('login.passkeyError')); shake();
       }
     } catch (e) {
-      if (!/cancel|abort/i.test(String(e?.message || ''))) {
-        setError(t('login.passkeyError') || 'Falha no login com passkey'); shake();
-      }
+      setError(t('login.passkeyError')); shake();
     } finally {
       if (mountedRef.current) setLoading(false);
     }

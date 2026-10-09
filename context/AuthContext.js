@@ -149,6 +149,21 @@ function _chatStoreSetActiveAccount(email) {
 // `coldStart` skips the 800 ms scope lock (nothing else has been painted yet)
 // and `deviceAccounts` lets the store decide whether the pre-isolation rows
 // (account_email NULL) belong to this — the device's only — account.
+// [2026-10-09 boot-native] Start the cached-user read at MODULE EVAL (during
+// bundle evaluation, ~0.5-1 s before AuthProvider's effect runs) so the native
+// AsyncStorage read happens in parallel with the rest of the boot instead of
+// as one more JS↔native hop AFTER the first commit — on a congested boot JS
+// thread that hop alone cost ~350-650 ms (coldstart_marks root_layout_render
+// → route_from_index). Same source of truth (AsyncStorage), single use: only
+// the FIRST hydrate consumes it; any later call reads fresh.
+let _bootOfflineUserP = null;
+try {
+  if (Platform.OS !== 'web') {
+    _bootOfflineUserP = AsyncStorage.getItem('chatyy_offline_user').catch(() => undefined);
+  }
+} catch { _bootOfflineUserP = null; }
+function _takeBootOfflineUser() { const p = _bootOfflineUserP; _bootOfflineUserP = null; return p; }
+
 async function _chatStoreSetActiveAccountColdStart(email) {
   let deviceAccounts;
   try {
@@ -695,7 +710,10 @@ export function AuthProvider({ children }) {
           if (!_webTok) return false;
         }
         try {
-          const cachedUser = await AsyncStorage.getItem('chatyy_offline_user');
+          try { require('../services/bootTrace').mark('auth_hydrate_start'); } catch {}
+          const _pre = _takeBootOfflineUser();
+          let cachedUser = _pre ? await _pre : undefined;
+          if (cachedUser === undefined) cachedUser = await AsyncStorage.getItem('chatyy_offline_user');
           if (cachedUser) {
             const userData = JSON.parse(cachedUser);
             let _webOk = true;
@@ -714,6 +732,7 @@ export function AuthProvider({ children }) {
               loadAccounts();
               _syncShareExtAuth(userData.email);
               setLoading(false);
+              try { require('../services/bootTrace').mark('auth_ready:cache'); } catch {}
               // [2026-10-04 cache-first boot] Wire the happy-path essentials
               // that an eager cache-first return would otherwise skip, so the
               // instant-paint path is functionally equivalent to a fresh

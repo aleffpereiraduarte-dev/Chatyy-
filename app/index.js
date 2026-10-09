@@ -31,7 +31,12 @@ export default function Index() {
   }, [loading]);
 
   useEffect(() => {
-    if (!loading && !user) setShowBrand(true);
+    if (!loading && !user) {
+      // [2026-10-09 boot-native] Separates logged-out boots (→ /login) from slow
+      // returning-user boots in coldstart_marks (both used to read "brand+cap").
+      try { bootMark('auth_none'); } catch {}
+      setShowBrand(true);
+    }
   }, [loading, user]);
 
   // Onboarding lives on /login (SignupIntro) — the splash here just routes.

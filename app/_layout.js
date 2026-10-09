@@ -543,6 +543,14 @@ function useDeepLinking() {
 
       if (!pathname) return;
 
+      // [2026-10-09 universal-links] https links that app/+native-intent.js
+      // already rewrote for expo-router (/u, /j, /g, /ch, /live, /feed, /meet,
+      // /call, /stickers) — navigating here too would stack a 2nd copy.
+      try {
+        const _ul = require('../utils/universalLinks').resolveUniversalLink(url);
+        if (_ul && _ul.owner === 'router') return;
+      } catch {}
+
       // /chat/:id → open chat conversation
       const chatMatch = pathname.match(/^\/chat\/(\d+)/);
       if (chatMatch) {
@@ -1629,31 +1637,32 @@ function ShareIntentWatcher() {
     if (!useShareIntent) return null;
     const { shareIntent, resetShareIntent } = useShareIntent({ resetOnBackground: false });
     useEffect(() => {
-      // Debug: beacon whenever the hook fires so we can diagnose why share
-      // might not be reaching /share-receive.
-      try {
-        fetch('https://chatyy.com.br/api/email.php?action=crash_report', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            message: '[SHARE_INTENT]',
-            stack: JSON.stringify({
-              has: !!shareIntent,
-              files: shareIntent?.files?.length || 0,
-              firstFile: shareIntent?.files?.[0] ? {
-                path: shareIntent.files[0].path,
-                mimeType: shareIntent.files[0].mimeType,
-                fileName: shareIntent.files[0].fileName,
-              } : null,
-              text: shareIntent?.text ? String(shareIntent.text).slice(0, 120) : null,
-              webUrl: shareIntent?.webUrl || null,
-              meta: shareIntent?.meta || null,
-            }).slice(0, 600),
-            component: 'ShareIntentWatcher',
-            fatal: false,
-          }),
-        }).catch(() => {});
-      } catch {}
+      // [2026-10-09 beacons] O beacon de debug disparava em TODA abertura do
+      // app (shareIntent vazio, files:0 — ~100/dia) e ainda mandava o texto/
+      // URL compartilhado ao servidor. Agora: nada quando não há share; num
+      // share real, amostra de 20% só com contagem + mime (sem texto, URL,
+      // caminho ou nome de arquivo).
+      const _hasShare = !!(shareIntent && ((shareIntent.files && shareIntent.files.length) || shareIntent.text || shareIntent.webUrl));
+      if (_hasShare && Math.random() < 0.2) {
+        try {
+          fetch('https://chatyy.com.br/api/email.php?action=crash_report', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              message: '[SHARE_INTENT]',
+              stack: JSON.stringify({
+                files: shareIntent.files?.length || 0,
+                mime: shareIntent.files?.[0]?.mimeType || null,
+                hasText: !!shareIntent.text,
+                hasUrl: !!shareIntent.webUrl,
+                sample: 0.2,
+              }),
+              component: 'ShareIntentWatcher',
+              fatal: false,
+            }),
+          }).catch(() => {});
+        } catch {}
+      }
       if (!shareIntent) return;
       const file = shareIntent.files?.[0];
       const params = {};
@@ -1774,8 +1783,14 @@ export default function RootLayout() {
     // WhatsApp-style "splash until real content"), app/index.js hides it for
     // any other destination, and armSplashFallback() guarantees it can never
     // stay up more than 1.5 s past the gate (never worse than before).
+    // [2026-10-09 boot-native] Once only. The 1.5 s timeout was never cleared
+    // after the hydrate won, so EVERY boot also logged `cache_ready:timeout`
+    // (read in push_diag as "100% of boots fell to the fallback").
+    let _opened = false;
     const _open = (why) => {
-      if (cancelled) return;
+      if (cancelled || _opened) return;
+      _opened = true;
+      try { clearTimeout(timeout); } catch {}
       _bootMark('cache_ready:' + why);
       setCacheReady(true);
       armSplashFallback(1500);
@@ -1942,6 +1957,7 @@ export default function RootLayout() {
                   <Stack.Screen name="activity-log" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR /* [2026-10-09 native-headers] */ }} />
                   <Stack.Screen name="advanced-key" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR /* [2026-10-09 native-headers] */ }} />
                   <Stack.Screen name="advanced-privacy" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR /* [2026-10-09 native-headers] */ }} />
+                  <Stack.Screen name="passkeys" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR /* [2026-10-09 passkeys] */ }} />
                   <Stack.Screen name="profile-qr" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR /* [2026-10-09 native-headers] */ }} />
                   <Stack.Screen name="email-signatures" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR /* [2026-10-09 native-headers] */ }} />
                   <Stack.Screen name="email-outbox" options={{ headerShown: false, presentation: 'card', animation: _PUSH, ..._NATIVE_HDR /* [2026-10-09 native-headers] */ }} />

@@ -3038,6 +3038,12 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
   // [2026-10-07 coldstart] Frame-1 rows came from the local store → no
   // skeleton, no fade-in; the native splash is released when they are drawn.
   const _paintedFromCacheRef = useRef(_initialConvs.length > 0);
+  // [2026-10-09 boot-native] Rows from the local store are about to be drawn:
+  // the splash goes away when THEY are on screen, not on the gate's timer.
+  if (_initialConvs.length > 0 && !_paintedFromCacheRef.__deferred) {
+    _paintedFromCacheRef.__deferred = true;
+    try { require('../services/bootTrace').deferSplashFallback(1200); } catch {}
+  }
   // Splash owner callbacks (services/bootTrace — idempotent, first wins).
   // onLoad = FlashList has drawn its first items → hide native splash now.
   // Wrapper layout = backup (empty list, or onLoad not delivered): immediate
@@ -3051,7 +3057,14 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
       const bt = require('../services/bootTrace');
       if (bt.hasFirstPaint()) return;
       if (_convsCountRef.current === 0) { bt.markFirstListPaint('empty'); return; }
-      setTimeout(() => { try { bt.markFirstListPaint('layout_backup'); } catch {} }, 250);
+      // [2026-10-09 boot-native] Rows are already in this commit (the list
+      // mounts with the cached data) → release the splash on the next frame
+      // instead of a blind 250 ms. FlashList onLoad (measured layout) still
+      // wins when it arrives first; the timer is only a backstop for rAF not
+      // ticking (cold start in background).
+      const _go = () => { try { bt.markFirstListPaint('layout_frame'); } catch {} };
+      try { if (typeof requestAnimationFrame === 'function') requestAnimationFrame(() => requestAnimationFrame(_go)); } catch {}
+      setTimeout(_go, 250);
     } catch {}
   }, []);
   const _onSkeletonLayout = useCallback(() => {

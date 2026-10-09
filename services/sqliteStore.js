@@ -421,8 +421,14 @@ export function upsertMessagesSync(convId, messages) {
   // Only reference account_email when the column truly exists (db.js adds it at
   // init). Keeps sync writes safe on a DB that hasn't finished migrating yet.
   const withAcct = _hasAccountCol(db);
+  // [2026-10-09 sqlite-lane] Same native connection as db.js's async writer:
+  // never BEGIN inside its open transaction (and never ROLLBACK it). Busy →
+  // skip; db.js (the primary writer) persists these rows anyway.
+  try { if (require('./sqliteWriteLane').isWriteLaneBusy?.()) return 0; } catch {}
+  let _began = false;
   try {
     db.execSync('BEGIN');
+    _began = true;
     const stmt = db.prepareSync(
       `INSERT OR REPLACE INTO messages
          (id, conversation_id, sender_email, sender_name, content, type,
@@ -475,7 +481,7 @@ export function upsertMessagesSync(convId, messages) {
     } finally { stmt.finalizeSync(); }
     db.execSync('COMMIT');
   } catch (e) {
-    try { db.execSync('ROLLBACK'); } catch {}
+    if (_began) { try { db.execSync('ROLLBACK'); } catch {} }
     if (__DEV__) console.warn('[sqliteStore] upsertMessagesSync failed:', e?.message);
     return 0;
   }

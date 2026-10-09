@@ -40,6 +40,7 @@ import ScreenEmptyState from '../components/ScreenEmptyState';
 import { generateBatch } from '../services/thumbnailCache';
 import Svg, { Path, Circle as SvgCircle, Line, Polyline, Rect } from 'react-native-svg';
 import { coverageStyleFor, boraStyleUrl, boraMapHtml } from '../components/BoraMap';
+import { ChatyyMap, isNativeMapAvailable, nativeMapStyleUrl } from '../components/NativeMap'; // [2026-10-09 native-maps-2]
 
 let photoBackup = null;
 try { photoBackup = require('../services/photoBackup'); } catch {}
@@ -309,7 +310,7 @@ const PhotoGridItem = React.memo(function PhotoGridItem({ photo, index, isSelect
           {Platform.OS === 'web' ? (
             <Image source={{ uri: imageUri }} style={s.gridImage} resizeMode="cover" />
           ) : photo.thumbUri ? (
-            <Image source={{ uri: photo.thumbUri }} style={s.gridImage} resizeMode="cover" />
+            <ExpoImage source={{ uri: photo.thumbUri }} style={s.gridImage} contentFit="cover" cachePolicy="memory-disk" recyclingKey={photo.thumbUri} />
           ) : (
             <ExpoImage
               source={{ uri: imageUri }}
@@ -3657,12 +3658,12 @@ function PhotosScreenInner() {
             activeOpacity={0.7}
           >
             {album.cover ? (
-              <Image
+              <ExpoImage
                 source={{ uri: album.cover.isDevice ? album.cover.uri : getThumbnailUrl(album.cover) }}
                 style={[s.albumCover, { width: albumSize, backgroundColor: colors.surfaceVariant || '#f1f5f9' }]}
-                resizeMode="cover"
-                defaultSource={undefined}
-                onError={() => {}}
+                contentFit="cover"
+                cachePolicy="memory-disk"
+                recyclingKey={String(album.cover.id ?? album.cover.uri ?? '')}
               />
             ) : (
               <View style={[s.albumCoverPlaceholder, { width: albumSize, aspectRatio: 1, backgroundColor: colors.surfaceVariant || '#f1f5f9' }]}>
@@ -3824,9 +3825,12 @@ function PhotosScreenInner() {
                       accessibilityLabel={label}
                     >
                       {cluster.sample_url ? (
-                        <Image
+                        <ExpoImage
                           source={{ uri: cluster.sample_url }}
                           style={[s.clusterAvatar, { borderColor: isDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.05)' }]}
+                          contentFit="cover"
+                          cachePolicy="memory-disk"
+                          recyclingKey={cluster.sample_url}
                         />
                       ) : (
                         <View style={[s.clusterAvatar, { backgroundColor: colors.surfaceVariant, alignItems: 'center', justifyContent: 'center', borderColor: isDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.05)' }]}>
@@ -3933,7 +3937,7 @@ function PhotosScreenInner() {
                   <TouchableOpacity key={idx} style={{ alignItems: 'center', width: 80 }}
                     onPress={() => { setSearchTabQuery(cluster.label || 'pessoa'); doMLSearch(cluster.label || 'pessoa'); }}>
                     {cluster.cover ? (
-                      <Image source={{ uri: api.fileDownloadUrl(cluster.cover.id) }} style={{ width: 64, height: 64, borderRadius: 32, backgroundColor: '#1a1a2e' }} />
+                      <ExpoImage source={{ uri: api.fileDownloadUrl(cluster.cover.id) }} style={{ width: 64, height: 64, borderRadius: 32, backgroundColor: '#1a1a2e' }} contentFit="cover" cachePolicy="memory-disk" recyclingKey={String(cluster.cover.id)} />
                     ) : (
                       <View style={{ width: 64, height: 64, borderRadius: 32, backgroundColor: colors.surfaceVariant, alignItems: 'center', justifyContent: 'center' }}>
                         <IconImage size={24} color={colors.textTertiary} />
@@ -5703,6 +5707,23 @@ function PhotosMapTab({ colors, isDark, insets, t, api, allPhotos, openViewer })
       </View>
     );
   }
+  // [2026-10-09 native-maps-2] Native ChatyyMapView (MapKit / MapLibre Native,
+  // already in the 2.6.0 binary): smooth pan/zoom, no MapLibre-JS download,
+  // no white flash. Each cluster = round photo thumbnail + count; tap opens
+  // the photo. Old binaries / web keep the WebView/iframe path below.
+  if (isNativeMapAvailable()) {
+    return (
+      <PhotosNativeMap
+        clusters={clusters}
+        total={total}
+        isDark={isDark}
+        insets={insets}
+        t={t}
+        allPhotos={allPhotos}
+        openViewer={openViewer}
+      />
+    );
+  }
   if (!WebView) {
     // Web fallback — embed via iframe (MapLibre GL JS works the same in a plain iframe).
     return (
@@ -5722,6 +5743,69 @@ function PhotosMapTab({ colors, isDark, insets, t, api, allPhotos, openViewer })
       <View style={{ position: 'absolute', top: 10, left: 10, backgroundColor: 'rgba(0,0,0,0.65)', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 14 }}>
         <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700' }}>
           {total} {t('photos.itemsOnMap') || 'fotos no mapa'}
+        </Text>
+      </View>
+    </View>
+  );
+}
+
+// [2026-10-09 native-maps-2] PhotosMapTab on the native ChatyyMapView.
+function PhotosNativeMap({ clusters, total, isDark, insets, t, allPhotos, openViewer }) {
+  const byId = React.useMemo(() => {
+    const m = new Map();
+    for (const p of (allPhotos || [])) { if (p && p.id != null) m.set(String(p.id), p); }
+    return m;
+  }, [allPhotos]);
+  const markers = React.useMemo(() => (clusters || [])
+    .filter((c) => Number.isFinite(Number(c?.lat)) && Number.isFinite(Number(c?.lon)))
+    .slice(0, 400)
+    .map((c, i) => {
+      const photo = byId.get(String(c.sample_id));
+      const n = Number(c.count) || 1;
+      return {
+        id: String(c.sample_id != null ? c.sample_id : 'c' + i),
+        latitude: Number(c.lat),
+        longitude: Number(c.lon),
+        kind: 'avatar',
+        color: isDark ? '#ffffff' : '#111111',
+        imageUrl: photo ? (thumbUrlFor(photo) || undefined) : undefined,
+        initials: ' ', // blank disc while the thumb loads (native shows only 1 char)
+        sublabel: n > 1 ? String(n) : undefined,
+      };
+    }), [clusters, byId, isDark]);
+  const camera = React.useMemo(() => {
+    if (!markers.length) return { latitude: -23.5505, longitude: -46.6333, zoom: 5, seq: 1 };
+    let minLat = 90, maxLat = -90, minLng = 180, maxLng = -180;
+    for (const m of markers) {
+      if (m.latitude < minLat) minLat = m.latitude;
+      if (m.latitude > maxLat) maxLat = m.latitude;
+      if (m.longitude < minLng) minLng = m.longitude;
+      if (m.longitude > maxLng) maxLng = m.longitude;
+    }
+    const cam = { latitude: (minLat + maxLat) / 2, longitude: (minLng + maxLng) / 2, zoom: 10, seq: 1 };
+    if (markers.length > 1) Object.assign(cam, { minLatitude: minLat, minLongitude: minLng, maxLatitude: maxLat, maxLongitude: maxLng, padding: 60, maxZoom: 15 });
+    return cam;
+  }, [markers]);
+  const onMarkerPress = React.useCallback((e) => {
+    const id = e?.id;
+    if (id == null) return;
+    const idx = (allPhotos || []).findIndex((p) => String(p.id) === String(id));
+    if (idx >= 0) openViewer(idx);
+  }, [allPhotos, openViewer]);
+  const center = markers[0] || { latitude: -23.5505, longitude: -46.6333 };
+  return (
+    <View style={{ flex: 1, paddingBottom: insets.bottom }}>
+      <ChatyyMap
+        style={{ flex: 1 }}
+        dark={isDark}
+        styleUrl={nativeMapStyleUrl(center.latitude, center.longitude, isDark)}
+        camera={camera}
+        markers={markers}
+        onMarkerPress={onMarkerPress}
+      />
+      <View pointerEvents="none" style={{ position: 'absolute', top: 10, left: 10, backgroundColor: 'rgba(0,0,0,0.65)', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 14 }}>
+        <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700' }}>
+          {total} {t('photos.itemsOnMap')}
         </Text>
       </View>
     </View>

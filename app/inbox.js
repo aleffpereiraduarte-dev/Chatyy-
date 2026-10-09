@@ -53,6 +53,7 @@ const ComposeModal = lazy(() => import('../components/ComposeModal'));
 // Side panel modules render via iframe (same origin = shared session)
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as api from '../services/api';
+import { classifyImportanceLocal, buildImportanceContext } from '../services/emailImportanceLocal'; // [2026-10-09 on-device-privacy]
 import CompleteProfileModal, { isProfileComplete, COMPLETE_PROFILE_SKIP_KEY } from '../components/CompleteProfileModal';
 import { canNavigateNow } from '../services/navGuard';
 
@@ -386,13 +387,26 @@ function InboxScreenInner() {
   //   - AI classification level === 'high'
   // Falls open if AI hasn't finished — "important" stays empty in that case
   // rather than showing every email.
+  // [2026-10-09 on-device-privacy] Nível local por e-mail ({ uid: level }).
+  const localPriority = useMemo(() => {
+    const out = {};
+    if (currentFolder !== 'INBOX' || !emails?.length) return out;
+    try {
+      const ctx = buildImportanceContext(emails);
+      for (const e of emails) { if (e && e.uid != null) out[e.uid] = classifyImportanceLocal(e, ctx); }
+    } catch {}
+    return out;
+  }, [emails, currentFolder]);
+
   const isImportant = useCallback((e) => {
     if (!e) return false;
     if (e.flagged || (Array.isArray(e.flags) && e.flags.includes('\\Flagged'))) return true;
     if (e.priority === 'high') return true;
+    if (localPriority[e.uid] === 'high') return true;
+    // Resultado antigo da IA (persistido antes de 2026-10-09) ainda vale.
     if (aiPriority[e.uid] === 'high') return true;
     return false;
-  }, [aiPriority]);
+  }, [aiPriority, localPriority]);
 
   // Compute category counts (uses AI categories if available, falls back to e.category)
   useEffect(() => {
@@ -408,69 +422,11 @@ function InboxScreenInner() {
     setCategoryCounts(counts);
   }, [emails, currentFolder, aiCategories, isImportant]);
 
-  // Background AI importance classifier — runs once per email. The backend
-  // caches per (user, message_id) so re-runs are cheap. Throttled to 5 in
-  // parallel and 15 per refresh to avoid blasting GPT on big inboxes.
-  useEffect(() => {
-    if (!aiStoreHydrated) return; // wait for the persisted store so we don't re-classify
-    if (currentFolder !== 'INBOX' || !emails?.length || aiPriorityClassifyingRef.current) return;
-    // Diff against the persistent store (stable message_id) AND the in-memory
-    // result map — NOT the identity of the `emails` array — so a MailContext
-    // rebuild of `emails` never re-fires work already done this or a prior
-    // session.
-    const pending = emails.filter(e => (
-      aiPriority[e.uid] === undefined &&
-      !aiPriorityStoreRef.current.has(aiEmailKey(e))
-    )).slice(0, 15);
-    if (pending.length === 0) return;
-    aiPriorityClassifyingRef.current = true;
-    let alive = true;
-    (async () => {
-      try {
-        const updates = {};
-        let dirty = false;
-        // [2026-09-30] Cap concurrency at 4 in-flight (+250ms gap) so the AI
-        // importance classifier (Claude Haiku, 1-3s/call, holds a php-fpm
-        // worker) never bursts ~15 calls at once and 504/522s the chat sync
-        // that runs in parallel on inbox open.
-        for (let i = 0; i < pending.length; i += 4) {
-          if (!alive) return;
-          if (i > 0) await new Promise(r => setTimeout(r, 250));
-          const batch = pending.slice(i, i + 4);
-          const results = await Promise.all(batch.map(async (e) => {
-            try {
-              // message_id is preferred (cache key); fallback to uid so the
-              // server still classifies even when the IMAP Message-ID isn't
-              // round-tripping cleanly.
-              const r = await api.emailClassifyImportance({
-                message_id: String(e.message_id || e.uid || ''),
-                subject: e.subject || '',
-                from: e.from || '',
-                snippet: (e.snippet || e.body_preview || '').slice(0, 500),
-              });
-              return { uid: e.uid, key: aiEmailKey(e), level: r?.data?.level };
-            } catch { return null; }
-          }));
-          for (const res of results) {
-            if (res?.level) {
-              updates[res.uid] = res.level;
-              // Record in the persistent store as results return → this key is
-              // never classified again.
-              aiPriorityStoreRef.current.set(res.key, res.level);
-              dirty = true;
-            }
-          }
-        }
-        if (alive && Object.keys(updates).length > 0) {
-          setAiPriority(prev => ({ ...prev, ...updates }));
-        }
-        if (dirty) persistAiStore(AI_PRIORITY_STORE_KEY, aiPriorityStoreRef.current);
-      } catch {} finally {
-        aiPriorityClassifyingRef.current = false;
-      }
-    })();
-    return () => { alive = false; };
-  }, [emails, currentFolder, aiStoreHydrated, aiEmailKey, persistAiStore]);
+  // [2026-10-09 on-device-privacy] A importância agora é calculada NO
+  // APARELHO (services/emailImportanceLocal: remetente/lista/promo/urgência/
+  // respondido antes/frequência) — síncrona, sem rede. Antes cada e-mail novo
+  // ia para `email_classify_importance` (LLM na nuvem, 713/dia, ~0,9 s).
+  // Resultado em `localPriority` (useMemo acima de isImportant).
 
   // AI smart-categorize emails that don't have a category yet (run in background, throttled)
   useEffect(() => {

@@ -33,6 +33,26 @@ export function mark(name) {
   try { if (name && _marks[name] === undefined) _marks[name] = _now() - T0; } catch {}
 }
 export function getBootMarks() { return { ..._marks }; }
+// [2026-10-09 boot-native] Exposed for QA (Playwright reads it on web) and for
+// on-device debugging; read-only snapshot semantics are the caller's job.
+try { if (typeof globalThis !== 'undefined') globalThis.__chatyyBootMarks = _marks; } catch {}
+
+// [2026-10-09 boot-native] Non-timing facts that make the beacon readable:
+// `bg` = the JS started with the app NOT in the foreground (cold start by a
+// push / background fetch) → the splash can't hide until the user opens it,
+// which produced the 26 s / 48 s "fallback" outliers; `hyd` = AsyncStorage
+// hydration stats (ms, keys) so the cache cost is measured, not inferred.
+const _meta = {};
+export function setBootMeta(key, value) {
+  try { if (key && _meta[key] === undefined) _meta[key] = value; } catch {}
+}
+try {
+  if (Platform.OS !== 'web') {
+    const { AppState } = require('react-native');
+    const st = AppState && AppState.currentState;
+    if (st && st !== 'active') setBootMeta('bg', String(st));
+  }
+} catch {}
 
 // ─── Native splash ──────────────────────────────────────────────────────────
 let _splashHidden = false;
@@ -62,6 +82,20 @@ let _fallbackTimer = null;
 export function armSplashFallback(ms = 1500) {
   if (_splashHidden || _fallbackTimer) return;
   try { _fallbackTimer = setTimeout(() => { _fallbackTimer = null; hideNativeSplash('fallback'); }, ms); } catch {}
+}
+
+// [2026-10-09 boot-native] The chat list has local rows and is rendering them:
+// give it up to `ms` more to draw (its onLayout/onLoad hide the splash) instead
+// of letting the generic fallback cut to a half-mounted screen. Only ever
+// pushes the fallback once; ABSOLUTE_SPLASH_CAP_MS still bounds everything.
+let _fallbackDeferred = false;
+export function deferSplashFallback(ms = 1200) {
+  if (_splashHidden || _fallbackDeferred || Platform.OS === 'web') return;
+  _fallbackDeferred = true;
+  mark('splash_fallback_deferred');
+  try { if (_fallbackTimer) clearTimeout(_fallbackTimer); } catch {}
+  _fallbackTimer = null;
+  try { _fallbackTimer = setTimeout(() => { _fallbackTimer = null; hideNativeSplash('fallback_list'); }, ms); } catch {}
 }
 
 // ─── First paint ────────────────────────────────────────────────────────────
@@ -150,7 +184,13 @@ export function reportBootMarksSampled() {
         const m = getBootMarks();
         const slow = (m.first_list_paint || 0) > 1500 || (m.splash_hide || 0) > 1500;
         if (!slow && Math.random() > 0.05) return;
-        require('./crashReporter').reportStep?.('coldstart_marks', JSON.stringify(m).slice(0, 460));
+        try {
+          const st = require('./mmkv').getHydrateStats?.();
+          if (st) setBootMeta('hyd', [st.bootMs | 0, st.bootKeys | 0, st.lazyKeys | 0].join('/'));
+        } catch {}
+        // Meta first (short) so the 460-char cut only ever trims late marks.
+        const payload = Object.keys(_meta).length ? { _m: _meta, ...m } : m;
+        require('./crashReporter').reportStep?.('coldstart_marks', JSON.stringify(payload).slice(0, 460));
       } catch {}
     }, 8000);
   } catch {}

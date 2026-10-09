@@ -8,6 +8,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { IconX, IconDownload, IconPlay, IconPause, IconLock, IconCheck, IconShare, IconStar, IconStarFilled, IconMoreHorizontal, IconInfo, IconForward, IconType, IconCopy } from './Icons';
 // [2026-10-09 more-native] share do ARQUIVO (não do link) + texto da foto (Vision OCR já no binário iOS)
 import { shareMediaFile, canRecognizeImageText, recognizeImageText } from '../utils/mediaNativeActions';
+import NativeDocPreview, { hasNativePdfView } from './NativeDocPreview'; // [2026-10-09 native-docs]
 // Wave 14: 3D / depth-photo parallax view. Lazy-loaded so web stays green
 // (expo-sensors isn't available in the web bundle).
 let ParallaxPortraitView = null;
@@ -323,7 +324,9 @@ function UIZoomSurface({ children, natW, natH, dismissSV, onDismissStart, onDism
 const IMAGE_EXTS = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'heic', 'heif'];
 const VIDEO_EXTS = ['mp4', 'mov', 'avi', 'webm', 'mkv', 'm4v', '3gp'];
 const PDF_EXTS = ['pdf'];
-const DOCX_EXTS = ['docx', 'doc'];
+// [2026-10-09 native-docs] Office/iWork/RTF/CSV open on-device (iOS WKWebView
+// local render / Android "Abrir com…") — no Google viewer.
+const DOCX_EXTS = ['docx', 'doc', 'xlsx', 'xls', 'pptx', 'ppt', 'rtf', 'odt', 'ods', 'odp', 'pages', 'numbers', 'key', 'csv'];
 const PREVIEWABLE_EXTS = [...PDF_EXTS, ...DOCX_EXTS];
 
 function getExt(filename) {
@@ -1496,10 +1499,15 @@ function PreviewViewer({ url, filename, messageId, fileSize, t }) {
   const fullFileUrl = getFullUrl(url);
 
   if (Platform.OS === 'web') {
+    // [2026-10-09 native-docs] Office no longer goes through docs.google.com
+    // (the attachment URL leaked to Google) → download/open card instead.
+    if (!isPdf) {
+      return <GenericFileViewer url={url} filename={filename} fileSize={fileSize || 0} messageId={messageId} t={t} />;
+    }
     return (
       <View style={[s.mediaContainer, { alignItems: 'stretch', justifyContent: 'flex-start', width: '100%' }]}>
         <iframe
-          src={isPdf ? fullFileUrl : 'https://docs.google.com/viewer?embedded=true&url=' + encodeURIComponent(fullFileUrl)}
+          src={fullFileUrl}
           style={{ width: '100%', height: SCREEN_H - 100, minHeight: 400, border: 'none', borderRadius: 8 }}
           title={filename}
         />
@@ -1507,24 +1515,31 @@ function PreviewViewer({ url, filename, messageId, fileSize, t }) {
     );
   }
 
-  // Native
-  try {
-    const { WebView } = require('react-native-webview');
-    // iOS: load the PDF URL directly so WKWebView uses its built-in PDF reader.
-    // Any other platform/ext: use preview.html wrapper (gives us the Baixar header).
-    // [2026-10-07 app-feel-webview] preview.html is NOT deployed in prod
-    // (nginx SPA fallback → the whole web app rendered here). Go straight to
-    // the Docs embedded viewer it used to iframe.
-    const source = isPdf && Platform.OS === 'ios'
-      ? { uri: fullFileUrl }
-      : { uri: 'https://docs.google.com/viewer?embedded=true&url=' + encodeURIComponent(fullFileUrl) };
-    return <WebViewWithErrorFallback source={source} url={url} filename={filename} messageId={messageId} fileSize={fileSize} t={t} />;
-  } catch {
-    // Fallback if WebView not available
+  // [2026-10-09 native-docs] Native:
+  //   - PDF + binary with ExpoNativePdfView → PDFKit (iOS) / PdfRenderer (Android).
+  //   - PDF on older iOS binaries → WKWebView with the PDF as document root
+  //     (PDFKit-backed) + the redownload error state below.
+  //   - Office docs, or PDF on older Android binaries → NativeDocPreview's
+  //     local path: download to cache, render the local file in WKWebView (iOS)
+  //     or "Abrir com…" via the system (Android). Never docs.google.com.
+  if (isPdf && hasNativePdfView()) {
     return (
-      <GenericFileViewer url={url} filename={filename} fileSize={fileSize || 0} messageId={messageId} t={t} />
+      <View style={[s.mediaContainer, { alignItems: 'stretch', justifyContent: 'flex-start', width: '100%' }]}>
+        <NativeDocPreview url={fullFileUrl} filename={filename} kind="pdf" dark openLabel={t?.('doc.openWith')} errorLabel={t?.('doc.openFailed')} />
+      </View>
     );
   }
+  if (isPdf && Platform.OS === 'ios') {
+    try {
+      require('react-native-webview');
+      return <WebViewWithErrorFallback source={{ uri: fullFileUrl }} url={url} filename={filename} messageId={messageId} fileSize={fileSize} t={t} />;
+    } catch {}
+  }
+  return (
+    <View style={[s.mediaContainer, { alignItems: 'stretch', justifyContent: 'flex-start', width: '100%' }]}>
+      <NativeDocPreview url={fullFileUrl} filename={filename} kind={isPdf ? 'pdf' : 'doc'} dark errorLabel={t?.('doc.openFailed')} />
+    </View>
+  );
 }
 
 // Wrapper around WebView that shows a friendly "file unavailable" state when

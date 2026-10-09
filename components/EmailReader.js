@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import FastImage from './FastImage'; // [2026-10-09 expo-image]
 import { View, Text, TouchableOpacity, ScrollView, StyleSheet, Platform, ActivityIndicator, Image, Animated, Easing, LayoutAnimation, UIManager, TextInput, Modal as RNModal, FlatList, useWindowDimensions } from 'react-native';
 import { getString as mmkvGetString, setString as mmkvSetString } from '../services/mmkv';
 // DOMPurify is web-only — lazy load to avoid crash on native
@@ -1223,10 +1224,11 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onF
                   accessibilityRole="button"
                 >
                   {isImage ? (
-                    <Image
+                    <FastImage
                       source={{ uri: downloadUrl }}
                       style={s.attachThumb}
                       resizeMode="cover"
+                      recyclingKey={downloadUrl}
                     />
                   ) : (
                     <AttachIcon size={24} color={colors.primary} style={{ marginRight: Spacing.sm }} />

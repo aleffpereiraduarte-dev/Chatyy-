@@ -1,5 +1,6 @@
 // Premium animated reaction burst — full-screen emoji particles
 import { useEffect, useRef } from 'react';
+import FastImage from './FastImage'; // [2026-10-09 expo-image]
 import { View, Text, Image, Animated, StyleSheet, Dimensions, Easing } from 'react-native';
 import * as api from '../services/api';
 
@@ -63,7 +64,7 @@ export default function ReactionBurst({ emoji = '❤️', particles = 12, onDone
           if (isSticker) {
             return (
               <Animated.View key={i} style={{ position: 'absolute', opacity: a.opacity, transform }}>
-                <Image source={{ uri: stickerUri }} style={{ width: a.size * 1.6, height: a.size * 1.6 }} resizeMode="contain" />
+                <FastImage source={{ uri: stickerUri }} style={{ width: a.size * 1.6, height: a.size * 1.6 }} resizeMode="contain" />
               </Animated.View>
             );
           }

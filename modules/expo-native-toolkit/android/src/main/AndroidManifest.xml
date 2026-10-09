@@ -1,4 +1,11 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+  <!-- [2026-10-09 android-ml-parity] Package visibility for the platform speech
+       service (ExpoNativeChatSecurity.transcribeAudioFile, Android 11+). -->
+  <queries>
+    <intent>
+      <action android:name="android.speech.RecognitionService" />
+    </intent>
+  </queries>
   <application>
     <!-- [2026-10-09 system-integration] Home-screen widget "Conversas do Chatyy"
          (expo.modules.nativetoolkit.widget.ChatyyConversationsWidget). -->

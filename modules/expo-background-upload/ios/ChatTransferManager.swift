@@ -83,6 +83,9 @@ final class ChatTransferManager: NSObject, URLSessionDataDelegate, URLSessionDow
     opq.maxConcurrentOperationCount = 1
     opq.underlyingQueue = queue
     session = URLSession(configuration: config, delegate: self, delegateQueue: opq)
+    // [2026-10-09 live-activity] Re-attach to upload Live Activities left on
+    // screen by a previous process (no-op without the extension).
+    UploadLiveActivity.shared.adoptRunning()
     reconcileLocked()
   }
 
@@ -188,6 +191,9 @@ final class ChatTransferManager: NSObject, URLSessionDataDelegate, URLSessionDow
     saveLocked(id)
     inflightBytes.removeValue(forKey: id)
     lastProgressEmit.removeValue(forKey: id)
+    if (rec["kind"] as? String) == "upload" {
+      UploadLiveActivity.shared.finish(id: id, success: state == "done", progress: rec["progress"] as? Double ?? 0)
+    }
     // Leftover bodies are useless once finished (success or hard failure).
     try? FileManager.default.removeItem(at: bodiesDir.appendingPathComponent(id, isDirectory: true))
     if state != "done", let s = session {
@@ -252,6 +258,16 @@ final class ChatTransferManager: NSObject, URLSessionDataDelegate, URLSessionDow
       ]
       records[id] = rec
       saveLocked(id)
+      // [2026-10-09 live-activity] Big media → Dynamic Island / lock screen
+      // progress (≥15 MB; runtime no-op without NSSupportsLiveActivities).
+      UploadLiveActivity.shared.start(
+        id: id,
+        contentType: spec["contentType"] as? String ?? "",
+        filename: spec["filename"] as? String ?? "",
+        totalSize: totalSize,
+        progress: rec["progress"] as? Double ?? 0,
+        lang: spec["lang"] as? String
+      )
       if pending.isEmpty {
         startCompleteLocked(id)
       } else {
@@ -496,6 +512,7 @@ final class ChatTransferManager: NSObject, URLSessionDataDelegate, URLSessionDow
     rec["progress"] = max(0, p)
     records[id] = rec
     emitProgressLocked(id)
+    UploadLiveActivity.shared.update(id: id, progress: max(0, p))
   }
 
   private static func parse(_ desc: String?) -> (kind: String, id: String, chunk: Int)? {

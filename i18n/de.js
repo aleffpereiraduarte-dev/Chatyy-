@@ -1,4 +1,27 @@
 export default {
+  // [2026-10-09 passkeys]
+  "settings.passkeys.title": "Passkeys",
+  "settings.passkeys.rowSub": "Mit Face ID oder Fingerabdruck anmelden, ohne Passwort oder Code",
+  "settings.passkeys.footer": "Ein Passkey wird auf diesem Gerät gespeichert (und in deinem iCloud-Schlüsselbund oder im Google Passwortmanager). Niemand kann ihn ohne dein Gesicht, deinen Fingerabdruck oder deine PIN nutzen.",
+  "settings.passkeys.add": "Passkey auf diesem Gerät erstellen",
+  "settings.passkeys.addSub": "Mit Face ID, Touch ID oder Fingerabdruck anmelden",
+  "settings.passkeys.listHeader": "Deine Passkeys",
+  "settings.passkeys.empty": "Noch keine Passkeys.",
+  "settings.passkeys.lastUsed": "Verwendet am {date}",
+  "settings.passkeys.createdAt": "Erstellt am {date}",
+  "settings.passkeys.added": "Passkey erstellt. Tippe beim nächsten Mal auf „Mit Passkey anmelden“.",
+  "settings.passkeys.exists": "Dieses Gerät hat bereits einen Passkey für dieses Konto.",
+  "settings.passkeys.error": "Konnte nicht abgeschlossen werden. Bitte erneut versuchen.",
+  "settings.passkeys.unavailable": "Passkeys kommen mit der nächsten App-Version.",
+  "settings.passkeys.removeTitle": "Passkey entfernen?",
+  "settings.passkeys.removeMsg": "Du kannst dich dann nicht mehr damit anmelden. Du kannst später einen neuen erstellen.",
+  "settings.passkeys.remove": "Entfernen",
+  // [2026-10-09 on-device-privacy]
+  "sensitive.warningBody": "Diese Nachricht scheint sensible Daten zu enthalten (Karte, CPF, Passwort oder Schlüssel). Prüfe sie vor dem Teilen.",
+  "sensitive.typeCard": "Karte",
+  "sensitive.typeCpf": "CPF",
+  "sensitive.typeApiKey": "API-Schlüssel",
+  "sensitive.typePassword": "Passwort",
   // [2026-10-09 signup-nophone/settings-logout]
   "login.createAccountNoPhone": "Konto ohne Nummer erstellen",
   "signupUsername.handlePlaceholder": "dein.benutzername",
@@ -1001,6 +1024,9 @@ export default {
   'attachment.download': 'Herunterladen',
   'attachment.of': 'von',
   'attachment.cannotPreview': 'Kann diese Datei nicht anzeigen',
+  'doc.openWith': 'Öffnen mit…', // [2026-10-09 native-docs]
+  'doc.preparing': 'Dokument wird vorbereitet…', // [2026-10-09 native-docs]
+  'doc.openFailed': 'Dokument konnte nicht geöffnet werden', // [2026-10-09 native-docs]
 
   // Advanced Search
   'search.dateAfter': 'Nach',

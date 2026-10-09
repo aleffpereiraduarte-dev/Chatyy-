@@ -268,11 +268,20 @@ let _SQLite = null;
 // connection → both rows lost (ghost message).
 let _txTail = Promise.resolve();
 function _tx(h, task) {
-  const run = _txTail.then(async () => {
+  const body = async () => {
     await h.execAsync('BEGIN IMMEDIATE');
     try { const r = await task(); await h.execAsync('COMMIT'); return r; }
     catch (e) { try { await h.execAsync('ROLLBACK'); } catch {} throw e; }
-  });
+  };
+  // [2026-10-09 sqlite-lane] 'chatyy.db' here is the SAME native connection as
+  // db.js/localDb (expo-sqlite connection cache) → share the process-wide lane
+  // so an enqueue can never nest its BEGIN inside a chat-cache batch (and get
+  // the outbox row rolled back with it = ghost/lost message).
+  try {
+    const lane = require('./sqliteWriteLane');
+    if (lane && typeof lane.runExclusive === 'function') return lane.runExclusive('outbox', body);
+  } catch {}
+  const run = _txTail.then(body);
   _txTail = run.catch(() => {});
   return run;
 }

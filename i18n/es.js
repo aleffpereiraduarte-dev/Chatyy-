@@ -1,4 +1,27 @@
 export default {
+  // [2026-10-09 passkeys]
+  "settings.passkeys.title": "Passkeys",
+  "settings.passkeys.rowSub": "Entra con Face ID o huella, sin contraseña ni código",
+  "settings.passkeys.footer": "Una passkey se guarda en este dispositivo (y en tu llavero de iCloud o el Gestor de contraseñas de Google). Nadie puede usarla sin tu rostro, huella o PIN.",
+  "settings.passkeys.add": "Crear passkey en este dispositivo",
+  "settings.passkeys.addSub": "Usa Face ID, Touch ID o huella para entrar",
+  "settings.passkeys.listHeader": "Tus passkeys",
+  "settings.passkeys.empty": "Aún no hay passkeys.",
+  "settings.passkeys.lastUsed": "Usada el {date}",
+  "settings.passkeys.createdAt": "Creada el {date}",
+  "settings.passkeys.added": "Passkey creada. La próxima vez, toca \"Entrar con passkey\".",
+  "settings.passkeys.exists": "Este dispositivo ya tiene una passkey para esta cuenta.",
+  "settings.passkeys.error": "No se pudo completar. Inténtalo de nuevo.",
+  "settings.passkeys.unavailable": "Las passkeys llegan en la próxima versión de la app.",
+  "settings.passkeys.removeTitle": "¿Eliminar passkey?",
+  "settings.passkeys.removeMsg": "Ya no podrás entrar con ella. Puedes crear otra después.",
+  "settings.passkeys.remove": "Eliminar",
+  // [2026-10-09 on-device-privacy]
+  "sensitive.warningBody": "Parece que el mensaje contiene un dato sensible (tarjeta, CPF, contraseña o clave). Revísalo antes de compartirlo.",
+  "sensitive.typeCard": "Tarjeta",
+  "sensitive.typeCpf": "CPF",
+  "sensitive.typeApiKey": "Clave de API",
+  "sensitive.typePassword": "Contraseña",
   // [2026-10-09 signup-nophone/settings-logout]
   "login.createAccountNoPhone": "Crear cuenta sin número",
   "signupUsername.handlePlaceholder": "tu.usuario",
@@ -1458,6 +1481,9 @@ export default {
   'attachment.download': 'Descargar',
   'attachment.of': 'de',
   'attachment.cannotPreview': 'No se puede previsualizar este archivo',
+  'doc.openWith': 'Abrir con…', // [2026-10-09 native-docs]
+  'doc.preparing': 'Preparando documento…', // [2026-10-09 native-docs]
+  'doc.openFailed': 'No se pudo abrir el documento', // [2026-10-09 native-docs]
 
   // Advanced Search
   'search.dateAfter': 'Despues de',

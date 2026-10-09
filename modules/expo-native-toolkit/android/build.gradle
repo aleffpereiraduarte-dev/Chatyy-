@@ -11,11 +11,24 @@ android {
   defaultConfig {
     minSdkVersion safeExtGet("minSdkVersion", 24)
     targetSdkVersion safeExtGet("targetSdkVersion", 35)
+    // [2026-10-09 android-ml-parity] ChatyyMlTranslatorImpl is loaded by
+    // reflection from ExpoNativeChatSecurityModule → keep it through R8.
+    consumerProguardFiles 'consumer-rules.pro'
   }
 
   compileOptions {
     sourceCompatibility JavaVersion.VERSION_17
     targetCompatibility JavaVersion.VERSION_17
+  }
+
+  // [2026-10-09 android-ml-parity] On-device translation (ML Kit Translate)
+  // is OPT-IN: its engine is a bundled native lib (+16 MB arm64 / +11.6 MB
+  // armv7 uncompressed, ~6.8 MB compressed download per ABI). Enable with
+  // CHATYY_MLKIT_TRANSLATE=1 (env) or -PchatyyMlkitTranslate=true.
+  if (chatyyMlkitTranslateEnabled()) {
+    sourceSets {
+      main.java.srcDirs += 'src/mlkitTranslate/java'
+    }
   }
 }
 
@@ -55,6 +68,25 @@ dependencies {
   // o Play services baixa sob demanda (ModuleInstall). ModuleInstall vem do
   // play-services-base (já no grafo).
   implementation 'com.google.android.gms:play-services-mlkit-subject-segmentation:16.0.0-beta1'
+
+  // [2026-10-09 android-ml-parity] ExpoNativeChatSecurityModule (Android half
+  // of the iOS module: OCR / language ID / translation / transcription).
+  // UNBUNDLED Play services variants: the models are downloaded on demand by
+  // Play services (ModuleInstall), the APK only gets the thin client
+  // (~0.5 MB of classes). Versions aligned with what's already in the graph
+  // (mlkit common 18.11.0 / play-services-base 18.5.0 via barcode-scanning).
+  implementation 'com.google.android.gms:play-services-mlkit-text-recognition:19.0.1'
+  implementation 'com.google.android.gms:play-services-mlkit-language-id:17.0.0'
+  if (chatyyMlkitTranslateEnabled()) {
+    implementation 'com.google.mlkit:translate:17.0.3'
+  }
+}
+
+def chatyyMlkitTranslateEnabled() {
+  def env = (System.getenv('CHATYY_MLKIT_TRANSLATE') ?: '').trim().toLowerCase()
+  if (env == '1' || env == 'true' || env == 'on') return true
+  def prop = rootProject.findProperty('chatyyMlkitTranslate')
+  return prop != null && prop.toString().trim().toLowerCase() == 'true'
 }
 
 def safeExtGet(prop, fallback) {

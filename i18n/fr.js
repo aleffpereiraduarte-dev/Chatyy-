@@ -1,4 +1,27 @@
 export default {
+  // [2026-10-09 passkeys]
+  "settings.passkeys.title": "Clés d'accès",
+  "settings.passkeys.rowSub": "Connectez-vous avec Face ID ou l'empreinte, sans mot de passe ni code",
+  "settings.passkeys.footer": "Une clé d'accès est stockée sur cet appareil (et dans votre trousseau iCloud ou le Gestionnaire de mots de passe Google). Personne ne peut l'utiliser sans votre visage, votre empreinte ou votre code.",
+  "settings.passkeys.add": "Créer une clé d'accès sur cet appareil",
+  "settings.passkeys.addSub": "Utilisez Face ID, Touch ID ou l'empreinte pour vous connecter",
+  "settings.passkeys.listHeader": "Vos clés d'accès",
+  "settings.passkeys.empty": "Aucune clé d'accès pour l'instant.",
+  "settings.passkeys.lastUsed": "Utilisée le {date}",
+  "settings.passkeys.createdAt": "Créée le {date}",
+  "settings.passkeys.added": "Clé d'accès créée. La prochaine fois, touchez « Se connecter avec une clé d'accès ».",
+  "settings.passkeys.exists": "Cet appareil a déjà une clé d'accès pour ce compte.",
+  "settings.passkeys.error": "Impossible de terminer. Réessayez.",
+  "settings.passkeys.unavailable": "Les clés d'accès arrivent dans la prochaine version de l'app.",
+  "settings.passkeys.removeTitle": "Supprimer la clé d'accès ?",
+  "settings.passkeys.removeMsg": "Vous ne pourrez plus vous connecter avec elle. Vous pourrez en créer une autre plus tard.",
+  "settings.passkeys.remove": "Supprimer",
+  // [2026-10-09 on-device-privacy]
+  "sensitive.warningBody": "Ce message semble contenir une donnée sensible (carte, CPF, mot de passe ou clé). Vérifiez avant de partager.",
+  "sensitive.typeCard": "Carte",
+  "sensitive.typeCpf": "CPF",
+  "sensitive.typeApiKey": "Clé API",
+  "sensitive.typePassword": "Mot de passe",
   // [2026-10-09 signup-nophone/settings-logout]
   "login.createAccountNoPhone": "Créer un compte sans numéro",
   "signupUsername.handlePlaceholder": "votre.pseudo",
@@ -1008,6 +1031,9 @@ export default {
   'attachment.download': 'Télécharger',
   'attachment.of': 'de',
   'attachment.cannotPreview': 'Impossible d\'apercevoir ce fichier',
+  'doc.openWith': 'Ouvrir avec…', // [2026-10-09 native-docs]
+  'doc.preparing': 'Préparation du document…', // [2026-10-09 native-docs]
+  'doc.openFailed': 'Impossible d’ouvrir le document', // [2026-10-09 native-docs]
 
   // Advanced Search
   'search.dateAfter': 'Après',

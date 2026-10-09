@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
+import FastImage from './FastImage'; // [2026-10-09 expo-image]
 import {
   View, FlatList, Text, TouchableOpacity, StyleSheet, RefreshControl,
   ActivityIndicator, Platform, Dimensions, TextInput, Modal, ScrollView, Alert,
@@ -672,7 +673,7 @@ function ChannelView({ channel, colors, isDark, t, onBack }) {
     return (
       <View style={[styles.postCard, { borderBottomColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)' }]}>
         {isImage ? (
-          <Image source={{ uri: media }} style={[styles.postMedia, { backgroundColor: isDark ? '#1a1a24' : '#f0f0f5' }]} resizeMode="cover" />
+          <FastImage source={{ uri: media }} style={[styles.postMedia, { backgroundColor: isDark ? '#1a1a24' : '#f0f0f5' }]} resizeMode="cover" recyclingKey={media} />
         ) : isVideo ? (
           <PressableScale
             onPress={() => { Linking.openURL(media).catch(() => {}); }}

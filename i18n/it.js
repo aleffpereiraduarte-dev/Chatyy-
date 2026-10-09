@@ -1,4 +1,27 @@
 export default {
+  // [2026-10-09 passkeys]
+  "settings.passkeys.title": "Passkey",
+  "settings.passkeys.rowSub": "Accedi con Face ID o impronta, senza password né codice",
+  "settings.passkeys.footer": "Una passkey resta salvata su questo dispositivo (e nel Portachiavi iCloud o nel Gestore delle password di Google). Nessuno può usarla senza il tuo volto, la tua impronta o il PIN.",
+  "settings.passkeys.add": "Crea una passkey su questo dispositivo",
+  "settings.passkeys.addSub": "Usa Face ID, Touch ID o impronta per accedere",
+  "settings.passkeys.listHeader": "Le tue passkey",
+  "settings.passkeys.empty": "Ancora nessuna passkey.",
+  "settings.passkeys.lastUsed": "Usata il {date}",
+  "settings.passkeys.createdAt": "Creata il {date}",
+  "settings.passkeys.added": "Passkey creata. La prossima volta tocca \"Accedi con passkey\".",
+  "settings.passkeys.exists": "Questo dispositivo ha già una passkey per questo account.",
+  "settings.passkeys.error": "Impossibile completare. Riprova.",
+  "settings.passkeys.unavailable": "Le passkey arrivano nella prossima versione dell'app.",
+  "settings.passkeys.removeTitle": "Rimuovere la passkey?",
+  "settings.passkeys.removeMsg": "Non potrai più accedere con essa. Potrai crearne un'altra in seguito.",
+  "settings.passkeys.remove": "Rimuovi",
+  // [2026-10-09 on-device-privacy]
+  "sensitive.warningBody": "Sembra che il messaggio contenga un dato sensibile (carta, CPF, password o chiave). Controlla prima di condividerlo.",
+  "sensitive.typeCard": "Carta",
+  "sensitive.typeCpf": "CPF",
+  "sensitive.typeApiKey": "Chiave API",
+  "sensitive.typePassword": "Password",
   // [2026-10-09 signup-nophone/settings-logout]
   "login.createAccountNoPhone": "Crea account senza numero",
   "signupUsername.handlePlaceholder": "tuo.username",
@@ -1001,6 +1024,9 @@ export default {
   'attachment.download': 'Scarica',
   'attachment.of': 'di',
   'attachment.cannotPreview': 'Impossibile visualizzare questo file',
+  'doc.openWith': 'Apri con…', // [2026-10-09 native-docs]
+  'doc.preparing': 'Preparazione documento…', // [2026-10-09 native-docs]
+  'doc.openFailed': 'Impossibile aprire il documento', // [2026-10-09 native-docs]
 
   // Advanced Search
   'search.dateAfter': 'Dopo',

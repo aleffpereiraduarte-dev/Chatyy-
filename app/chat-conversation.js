@@ -2620,9 +2620,11 @@ function LinkPreview({ url, colors }) {
               }
               if (favUrl && !faviconFailed) {
                 return (
-                  <Image
+                  <ExpoImage
                     source={{ uri: favUrl }}
                     style={linkPreviewStyles.favicon}
+                    cachePolicy="memory-disk"
+                    recyclingKey={favUrl}
                     onError={() => setFaviconFailed(true)}
                   />
                 );
@@ -3547,10 +3549,12 @@ function ReplyThumb({ uri }) {
   const [failed, setFailed] = useState(false);
   if (failed || !uri) return null;
   return (
-    <Image
+    <ExpoImage
       source={{ uri }}
       style={{ width: '100%', height: '100%' }}
-      resizeMode="cover"
+      contentFit="cover"
+      cachePolicy="memory-disk"
+      recyclingKey={uri}
       onError={() => setFailed(true)}
     />
   );
@@ -5176,7 +5180,7 @@ function PlaylistCreatorModal({ colors, t, conversationId, onClose, onCreated })
                 activeOpacity={0.6}
               >
                 {track.coverUrl
-                  ? <Image source={{ uri: track.coverUrl }} style={{ width: 48, height: 48, borderRadius: 8 }} />
+                  ? <ExpoImage source={{ uri: track.coverUrl }} style={{ width: 48, height: 48, borderRadius: 8 }} cachePolicy="memory-disk" recyclingKey={track.coverUrl} />
                   : <View style={{ width: 48, height: 48, borderRadius: 8, backgroundColor: ACCENT_TINT, alignItems: 'center', justifyContent: 'center' }}><IconMusic size={22} color={ACCENT} /></View>}
                 <View style={{ flex: 1 }}>
                   <Text style={{ fontSize: 15, fontWeight: '600', color: colors.text }} numberOfLines={1}>{track.title}</Text>
@@ -5363,7 +5367,7 @@ function PlaylistEditorModal({ colors, isDark, t, editor, onClose, onUpdated }) 
                       <Text style={{ fontSize: 13, fontWeight: '700', color: colors.textTertiary }}>{idx + 1}</Text>
                     </View>
                     {s.cover
-                      ? <Image source={{ uri: s.cover }} style={{ width: 44, height: 44, borderRadius: 8 }} />
+                      ? <ExpoImage source={{ uri: s.cover }} style={{ width: 44, height: 44, borderRadius: 8 }} cachePolicy="memory-disk" recyclingKey={s.cover} />
                       : <View style={{ width: 44, height: 44, borderRadius: 8, backgroundColor: '#111111' + '22', alignItems: 'center', justifyContent: 'center' }}><IconMusic size={20} color="#111111" /></View>}
                     <View style={{ flex: 1 }}>
                       <Text style={{ fontSize: 14, fontWeight: '700', color: colors.text }} numberOfLines={1}>{s.title}</Text>
@@ -5452,7 +5456,7 @@ function PlaylistEditorModal({ colors, isDark, t, editor, onClose, onUpdated }) 
                   activeOpacity={0.65}
                 >
                   {track.coverUrl
-                    ? <Image source={{ uri: track.coverUrl }} style={{ width: 48, height: 48, borderRadius: 8 }} />
+                    ? <ExpoImage source={{ uri: track.coverUrl }} style={{ width: 48, height: 48, borderRadius: 8 }} cachePolicy="memory-disk" recyclingKey={track.coverUrl} />
                     : <View style={{ width: 48, height: 48, borderRadius: 8, backgroundColor: '#111111' + '22', alignItems: 'center', justifyContent: 'center' }}><IconMusic size={22} color="#111111" /></View>}
                   <View style={{ flex: 1 }}>
                     <Text style={{ fontSize: 14, fontWeight: '700', color: colors.text }} numberOfLines={1}>{track.title}</Text>
@@ -9107,8 +9111,22 @@ function ChatConversationInner() {
     try {
       const DROP = ['handleSend-start', 'ws-relay-attempt', 'optimistic-save-pre', 'optimistic-save-ok', 'postack-save-pre', 'postack-save-ok'];
       if (DROP.indexOf(tag) !== -1) return;
+      // [2026-10-09 beacons] Diagnóstico ainda mandava 1 POST por mensagem
+      // (send-ack-timing, ~360/dia) + 1 por boot (chat-mount, ~240/dia).
+      // Agora só amostra: 10% dos acks (sempre os lentos ≥5 s, que são os
+      // que importam p/ o p99) e 5% dos mounts. Erros reais (*-err, crash,
+      // global-js-error) seguem, com teto por sessão p/ não virar tempestade.
       if (tag === 'send-ack-timing' && !(data && data._deferred)) {
-        setTimeout(() => { try { _reportChatDebug(tag, { ...(data || {}), _deferred: true }); } catch {} }, 2500);
+        const _ms = Number(data && data.ms) || 0;
+        if (_ms < 5000 && Math.random() >= 0.10) return;
+      } else if (tag === 'chat-mount') {
+        if (Math.random() >= 0.05) return;
+      } else if (!(data && data._deferred)) {
+        global.__chatyyDebugErrCount = (global.__chatyyDebugErrCount || 0) + 1;
+        if (global.__chatyyDebugErrCount > 20) return;
+      }
+      if (tag === 'send-ack-timing' && !(data && data._deferred)) {
+        setTimeout(() => { try { _reportChatDebug(tag, { ...(data || {}), _deferred: true, sample: (Number(data && data.ms) || 0) >= 5000 ? 1 : 0.1 }); } catch {} }, 2500);
         return;
       }
     } catch {}
@@ -15695,33 +15713,16 @@ function ChatConversationInner() {
     setTimeout(() => {
       try { require('../services/notificationSound').playChatSendSound(); } catch {}
       if (text.length > 10 && !chatSendBypassGuards.current) {
-        // Skip tone check on common laughter/short reactions. AI was
-        // false-positiving on "Kk Kkkkkk Kkkkk" (Brazilian "kkkkk") and
-        // similar like "rsrs", "hahaha", "huehuehue". These are clearly
-        // NOT hostile, just casual chatter.
-        const _normalized = text.replace(/[\s.,!?]/g, '').toLowerCase();
-        // Token-level whitelist: any combination of laughter tokens +
-        // optional spacing. Covers "Kk Kkkkkk Kkkkk", "hahahaha", "rsrsrs",
-        // "huehuehue", "kkk hahaha", etc.
-        const _isLaughter = /^((k{2,}|kk+|h[ae]+|rs+|hue+|aff+|mds+|hehe+|hihi+)\s*)+$/i.test(text.trim());
-        const _onlyLaughCharSet = /^[kheasrtuhi0-9\s.,!?]+$/i.test(text) && _normalized.length <= 30 && /[khr]/i.test(_normalized);
-
-        Promise.all([
-          api.aiDetectLeak(text.slice(0, 2000)).catch(() => null),
-          // Tone check: skip if text is short laughter/casual chatter, AND
-          // require length > 30 (longer threshold so single-line replies
-          // like "ok valeu" don't trigger). Threshold raised 80 → 88 so AI
-          // only blocks clearly hostile text.
-          (text.length > 30 && !_isLaughter && !_onlyLaughCharSet)
-            ? api.aiToneCheck(text.slice(0, 1500)).catch(() => null)
-            : Promise.resolve(null),
-        ]).then(([leakRes, toneRes]) => {
-          if (leakRes?.success && leakRes.data?.has_secret) {
-            setChatLeakWarning({ text, types: leakRes.data.types || [], warning: leakRes.data.warning || 'Informacao sensivel detectada' });
-          } else if (toneRes?.success && toneRes.data?.warning && (toneRes.data?.score || 0) >= 88) {
-            setChatToneWarning({ text, tone: toneRes.data.tone || 'hostile', score: toneRes.data.score, suggestion: toneRes.data.suggestion || '' });
+        // [2026-10-09 on-device-privacy] Dado sensível detectado NO APARELHO
+        // (Luhn/CPF/chave de API/"senha:"), síncrono e sem rede — o texto não
+        // vai mais para `ai_detect_leak`. `ai_tone_check` era stub "disabled"
+        // no servidor (0,9 s por nada) → removido.
+        try {
+          const _leak = require('../services/sensitiveDetect').detectSensitive(text);
+          if (_leak?.has_secret) {
+            setChatLeakWarning({ text, types: _leak.types, warning: t('sensitive.warningBody') });
           }
-        }).catch(() => {});
+        } catch {}
       }
       chatSendBypassGuards.current = false;
     }, 0);
@@ -19736,9 +19737,34 @@ function ChatConversationInner() {
       };
       if (wait > 0) setTimeout(apply, wait); else apply();
     };
+    // [2026-10-09 android-ml-parity] Fallback no aparelho (iOS SFSpeech /
+    // Android 13+ SpeechRecognizer, próximo binário) quando o servidor falha
+    // ou não transcreve — o áudio não sai do celular. Binário sem o módulo →
+    // getOnDeviceCapabilities().transcribe=false → '' (comportamento antigo).
+    const onDeviceTx = async () => {
+      try {
+        const { getOnDeviceCapabilities, transcribeOnDevice } = require('../utils/onDeviceML');
+        if (!getOnDeviceCapabilities().transcribe) return '';
+        let src = msg._localUri || null;
+        if (!src && typeof msg.local_path === 'string' && msg.local_path) {
+          src = msg.local_path.startsWith('file://') ? msg.local_path : `file://${msg.local_path}`;
+        }
+        if (!src && msg.file_url) {
+          try { src = api.getMediaUrl(msg.file_url); } catch { src = null; }
+        }
+        if (!src) return '';
+        const dev = await transcribeOnDevice(src, { language });
+        return dev?.text || '';
+      } catch { return ''; }
+    };
     try {
-      const r = await api.chatTranscribeAudio(msg.id);
+      let r = await api.chatTranscribeAudio(msg.id);
       if (!mountedRef.current) return;
+      if (!(r?.success && r.data?.transcript)) {
+        const devTx = await onDeviceTx();
+        if (!mountedRef.current) return;
+        if (devTx) r = { success: true, data: { transcript: devTx } };
+      }
       if (r?.success && r.data?.transcript) {
         const tx = r.data.transcript;
         settle({ transcript: tx, _transcribeError: null });
@@ -19757,9 +19783,11 @@ function ChatConversationInner() {
         settle({ _transcribeError: r?.message || 'failed' });
       }
     } catch (e) {
-      settle({ _transcribeError: e?.message || 'failed' });
+      const devTx = await onDeviceTx();
+      if (devTx) settle({ transcript: devTx, _transcribeError: null });
+      else settle({ _transcribeError: e?.message || 'failed' });
     }
-  }, [TX_REVEALED_KEY]);
+  }, [TX_REVEALED_KEY, language]);
 
   // Double-tap to heart react with animated pop
   const lastTapRef = useRef({});
@@ -29894,10 +29922,11 @@ function ChatConversationInner() {
               })()}
             </View>
             {!editingMsg && (replyTo?.type === 'image' || replyTo?.type === 'video') && replyTo?.file_url && (
-              <Image
+              <ExpoImage
                 source={{ uri: api.getMediaUrl(replyTo.file_url) }}
                 style={{ width: 40, height: 40, borderRadius: 6 }}
-                resizeMode="cover"
+                contentFit="cover"
+                cachePolicy="memory-disk"
               />
             )}
           </View>
@@ -31003,16 +31032,16 @@ function ChatConversationInner() {
           <View style={{ backgroundColor:colors.surface, borderRadius:16, padding:24, maxWidth:400, width:'100%' }}>
             <View style={{ flexDirection:'row', alignItems:'center', gap:8, marginBottom:8 }}>
               <IconLock size={18} color="#dc2626" />
-              <Text style={{ fontSize:18, fontWeight:'700', color:'#dc2626' }}>Informacao sensivel</Text>
+              <Text style={{ fontSize:18, fontWeight:'700', color:'#dc2626', flexShrink:1 }}>{t('compose.leakWarning')}</Text>
             </View>
             <Text style={{ fontSize:14, color:colors.text, marginBottom:16 }}>{chatLeakWarning.warning}</Text>
             <View style={{ flexDirection:'row', gap:8 }}>
-              <TouchableOpacity onPress={() => setChatLeakWarning(null)} style={{ flex:1, paddingVertical:12, borderRadius:8, backgroundColor:colors.background, alignItems:'center' }}><Text style={{ color:colors.text, fontWeight:'600' }}>Editar</Text></TouchableOpacity>
+              <TouchableOpacity onPress={() => setChatLeakWarning(null)} style={{ flex:1, paddingVertical:12, borderRadius:8, backgroundColor:colors.background, alignItems:'center' }}><Text style={{ color:colors.text, fontWeight:'600' }}>{t('compose.edit')}</Text></TouchableOpacity>
               {/* The AI guards run AFTER the send already went out (deferred,
                   non-blocking — see handleSend ~13113), so "Enviar mesmo" must
                   ONLY dismiss. Re-calling handleSend here sent a 2nd copy (or
                   fired whatever new draft was in the input). */}
-              <TouchableOpacity onPress={() => setChatLeakWarning(null)} style={{ flex:1, paddingVertical:12, borderRadius:8, backgroundColor:'#dc2626', alignItems:'center' }}><Text style={{ color:'#fff', fontWeight:'600' }}>Enviar mesmo</Text></TouchableOpacity>
+              <TouchableOpacity onPress={() => setChatLeakWarning(null)} style={{ flex:1, paddingVertical:12, borderRadius:8, backgroundColor:'#dc2626', alignItems:'center' }}><Text style={{ color:'#fff', fontWeight:'600' }}>{t('compose.sendAnyway')}</Text></TouchableOpacity>
             </View>
           </View>
         </View>
@@ -32185,10 +32214,12 @@ function ChatConversationInner() {
                       }}
                       accessibilityLabel={em.emoji_handle ? `Reagir com :${em.emoji_handle}:` : 'Reagir com emoji custom'}
                     >
-                      <Image
+                      <ExpoImage
                         source={{ uri: api.getMediaUrl(em.webp_url) }}
                         style={{ width: 40, height: 40 }}
-                        resizeMode="contain"
+                        contentFit="contain"
+                        cachePolicy="memory-disk"
+                        recyclingKey={em.webp_url}
                       />
                     </TouchableOpacity>
                   ))}
@@ -32235,7 +32266,7 @@ function ChatConversationInner() {
                               setSelectedMsg(null);
                             }}
                           >
-                            <Image source={{ uri: api.getMediaUrl(url) }} style={{ width: 48, height: 48 }} resizeMode="contain" />
+                            <ExpoImage source={{ uri: api.getMediaUrl(url) }} style={{ width: 48, height: 48 }} contentFit="contain" cachePolicy="memory-disk" recyclingKey={url} />
                           </TouchableOpacity>
                         );
                       })}

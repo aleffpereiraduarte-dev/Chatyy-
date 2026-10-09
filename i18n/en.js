@@ -1,4 +1,27 @@
 export default {
+  // [2026-10-09 passkeys]
+  "settings.passkeys.title": "Passkeys",
+  "settings.passkeys.rowSub": "Sign in with Face ID or fingerprint, no password or code",
+  "settings.passkeys.footer": "A passkey is stored on this device (and in your iCloud Keychain or Google Password Manager). Nobody can use it without your face, fingerprint or PIN.",
+  "settings.passkeys.add": "Create a passkey on this device",
+  "settings.passkeys.addSub": "Use Face ID, Touch ID or fingerprint to sign in",
+  "settings.passkeys.listHeader": "Your passkeys",
+  "settings.passkeys.empty": "No passkeys yet.",
+  "settings.passkeys.lastUsed": "Used on {date}",
+  "settings.passkeys.createdAt": "Created on {date}",
+  "settings.passkeys.added": "Passkey created. Next time, tap \"Sign in with a passkey\".",
+  "settings.passkeys.exists": "This device already has a passkey for this account.",
+  "settings.passkeys.error": "Could not finish. Please try again.",
+  "settings.passkeys.unavailable": "Passkeys arrive in the next app version.",
+  "settings.passkeys.removeTitle": "Remove passkey?",
+  "settings.passkeys.removeMsg": "You will no longer be able to sign in with it. You can create another one later.",
+  "settings.passkeys.remove": "Remove",
+  // [2026-10-09 on-device-privacy]
+  "sensitive.warningBody": "This message seems to contain sensitive data (card, ID number, password or key). Double-check before sharing.",
+  "sensitive.typeCard": "Card",
+  "sensitive.typeCpf": "CPF",
+  "sensitive.typeApiKey": "API key",
+  "sensitive.typePassword": "Password",
   // [2026-10-09 signup-nophone/settings-logout]
   "login.createAccountNoPhone": "Create account without a number",
   "signupUsername.handlePlaceholder": "your.username",
@@ -1458,6 +1481,9 @@ export default {
   'attachment.download': 'Download',
   'attachment.of': 'of',
   'attachment.cannotPreview': 'Cannot preview this file',
+  'doc.openWith': 'Open with…', // [2026-10-09 native-docs]
+  'doc.preparing': 'Preparing document…', // [2026-10-09 native-docs]
+  'doc.openFailed': 'Could not open the document', // [2026-10-09 native-docs]
 
   // Advanced Search
   'search.dateAfter': 'After',

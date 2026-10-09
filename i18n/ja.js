@@ -1,4 +1,27 @@
 export default {
+  // [2026-10-09 passkeys]
+  "settings.passkeys.title": "パスキー",
+  "settings.passkeys.rowSub": "Face ID や指紋でサインイン（パスワードやコード不要）",
+  "settings.passkeys.footer": "パスキーはこのデバイス（および iCloud キーチェーンや Google パスワード マネージャー）に保存されます。あなたの顔・指紋・PIN がなければ誰も使えません。",
+  "settings.passkeys.add": "このデバイスでパスキーを作成",
+  "settings.passkeys.addSub": "Face ID、Touch ID、指紋でサインイン",
+  "settings.passkeys.listHeader": "あなたのパスキー",
+  "settings.passkeys.empty": "パスキーはまだありません。",
+  "settings.passkeys.lastUsed": "{date} に使用",
+  "settings.passkeys.createdAt": "{date} に作成",
+  "settings.passkeys.added": "パスキーを作成しました。次回は「パスキーでサインイン」をタップしてください。",
+  "settings.passkeys.exists": "このデバイスには、このアカウントのパスキーがすでにあります。",
+  "settings.passkeys.error": "完了できませんでした。もう一度お試しください。",
+  "settings.passkeys.unavailable": "パスキーは次のアプリバージョンで利用できます。",
+  "settings.passkeys.removeTitle": "パスキーを削除しますか？",
+  "settings.passkeys.removeMsg": "このパスキーではサインインできなくなります。あとで新しく作成できます。",
+  "settings.passkeys.remove": "削除",
+  // [2026-10-09 on-device-privacy]
+  "sensitive.warningBody": "このメッセージには機密情報（カード、CPF、パスワード、キー）が含まれているようです。共有する前に確認してください。",
+  "sensitive.typeCard": "カード",
+  "sensitive.typeCpf": "CPF",
+  "sensitive.typeApiKey": "APIキー",
+  "sensitive.typePassword": "パスワード",
   // [2026-10-09 signup-nophone/settings-logout]
   "login.createAccountNoPhone": "電話番号なしでアカウントを作成",
   "signupUsername.handlePlaceholder": "your.username",
@@ -909,6 +932,9 @@ export default {
   "attachment.download": "ダウンロード",
   "attachment.of": "の",
   "attachment.cannotPreview": "このファイルはプレビューできません",
+  "doc.openWith": "このアプリで開く…", // [2026-10-09 native-docs]
+  "doc.preparing": "書類を準備中…", // [2026-10-09 native-docs]
+  "doc.openFailed": "書類を開けませんでした", // [2026-10-09 native-docs]
   "search.dateAfter": "以降",
   "search.dateBefore": "以前",
   "search.larger": "より大きい",

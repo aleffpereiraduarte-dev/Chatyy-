@@ -1,4 +1,27 @@
 export default {
+  // [2026-10-09 passkeys]
+  "settings.passkeys.title": "مفاتيح المرور",
+  "settings.passkeys.rowSub": "سجّل الدخول بـ Face ID أو البصمة، بدون كلمة مرور أو رمز",
+  "settings.passkeys.footer": "يُحفظ مفتاح المرور على هذا الجهاز (وفي سلسلة مفاتيح iCloud أو مدير كلمات مرور Google). لا يمكن لأحد استخدامه بدون وجهك أو بصمتك أو رمز PIN.",
+  "settings.passkeys.add": "إنشاء مفتاح مرور على هذا الجهاز",
+  "settings.passkeys.addSub": "استخدم Face ID أو Touch ID أو البصمة لتسجيل الدخول",
+  "settings.passkeys.listHeader": "مفاتيح المرور الخاصة بك",
+  "settings.passkeys.empty": "لا توجد مفاتيح مرور بعد.",
+  "settings.passkeys.lastUsed": "استُخدم في {date}",
+  "settings.passkeys.createdAt": "أُنشئ في {date}",
+  "settings.passkeys.added": "تم إنشاء مفتاح المرور. في المرة القادمة، اضغط على \"تسجيل الدخول بمفتاح مرور\".",
+  "settings.passkeys.exists": "يحتوي هذا الجهاز بالفعل على مفتاح مرور لهذا الحساب.",
+  "settings.passkeys.error": "تعذّر الإكمال. حاول مرة أخرى.",
+  "settings.passkeys.unavailable": "تصل مفاتيح المرور في الإصدار القادم من التطبيق.",
+  "settings.passkeys.removeTitle": "إزالة مفتاح المرور؟",
+  "settings.passkeys.removeMsg": "لن تتمكن من تسجيل الدخول به بعد الآن. يمكنك إنشاء مفتاح آخر لاحقًا.",
+  "settings.passkeys.remove": "إزالة",
+  // [2026-10-09 on-device-privacy]
+  "sensitive.warningBody": "يبدو أن الرسالة تحتوي على بيانات حساسة (بطاقة أو CPF أو كلمة مرور أو مفتاح). تحقّق قبل المشاركة.",
+  "sensitive.typeCard": "البطاقة",
+  "sensitive.typeCpf": "CPF",
+  "sensitive.typeApiKey": "مفتاح API",
+  "sensitive.typePassword": "كلمة المرور",
   // [2026-10-09 signup-nophone/settings-logout]
   "login.createAccountNoPhone": "إنشاء حساب بدون رقم",
   "signupUsername.handlePlaceholder": "your.username",
@@ -1000,6 +1023,9 @@ export default {
   'attachment.download': 'تحميل',
   'attachment.of': 'من',
   'attachment.cannotPreview': 'لا يمكن معاينة هذا الملف',
+  'doc.openWith': 'فتح باستخدام…', // [2026-10-09 native-docs]
+  'doc.preparing': 'جارٍ تجهيز المستند…', // [2026-10-09 native-docs]
+  'doc.openFailed': 'تعذّر فتح المستند', // [2026-10-09 native-docs]
 
   // Advanced Search
   'search.dateAfter': 'بعد',

@@ -381,13 +381,20 @@ async function _doInit() {
 // above make us wait for db.js's write lock instead of throwing SQLITE_BUSY.
 let _txTail = Promise.resolve();
 function _tx(task) {
-  const run = _txTail.then(async () => {
+  const body = async () => {
     const h = db;
     if (!h) throw new Error('localDb not initialized');
     await h.execAsync('BEGIN IMMEDIATE');
     try { const r = await task(); await h.execAsync('COMMIT'); return r; }
     catch (e) { try { await h.execAsync('ROLLBACK'); } catch {} throw e; }
-  });
+  };
+  // [2026-10-09 sqlite-lane] Same native connection as db.js (expo-sqlite
+  // caches it by path) → must share db.js's lane, not just our own queue.
+  try {
+    const lane = require('./sqliteWriteLane');
+    if (lane && typeof lane.runExclusive === 'function') return lane.runExclusive('localDb', body);
+  } catch {}
+  const run = _txTail.then(body);
   _txTail = run.catch(() => {});
   return run;
 }

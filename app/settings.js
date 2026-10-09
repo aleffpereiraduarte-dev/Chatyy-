@@ -36,6 +36,7 @@ import {
 } from '../components/Icons';
 import Svg, { Defs, LinearGradient as SvgLinearGradient, Stop, Rect as SvgRect, Circle as SvgCircle } from 'react-native-svg';
 import { useBiometric } from '../context/BiometricContext';
+import { PASSKEYS_ENABLED } from '../constants/featureFlags';
 import { useConfirm } from '../components/ConfirmModal';
 import { useAuth } from '../context/AuthContext';
 import FilterRuleEditor from '../components/FilterRuleEditor';
@@ -2555,6 +2556,16 @@ function SettingsScreenInner() {
                 title={t('settings.changePhone') || 'Alterar número de telefone'}
                 subtitle={t('settings.changePhoneDesc') || 'Migre sua conta para um novo número mantendo seus chats e contatos.'}
                 onPress={() => safeNav('/change-phone')}
+              />
+            )}
+            {/* [2026-10-09 passkeys] Entrar com Face ID / digital — OFF por
+                flag (PASSKEYS_ENABLED) até o build com react-native-passkeys
+                + Associated Domains. */}
+            {PASSKEYS_ENABLED && (
+              <SettingsRow
+                title={t('settings.passkeys.title')}
+                subtitle={t('settings.passkeys.rowSub')}
+                onPress={() => safeNav('/passkeys')}
               />
             )}
           </SettingsGroup>

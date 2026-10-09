@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import FastImage from './FastImage'; // [2026-10-09 expo-image]
 import {
   View, Text, TouchableOpacity, FlatList, Modal, Image, ActivityIndicator,
   Platform, StyleSheet,
@@ -99,10 +100,11 @@ function MediaGrid({ items, type, colors, onView }) {
             activeOpacity={0.8}
           >
             <View style={{ flex: 1, borderRadius: 10, overflow: 'hidden', backgroundColor: colors.surface }}>
-              <Image
+              <FastImage
                 source={{ uri: resolveUrl(item.file_url) }}
                 style={{ width: '100%', height: '100%' }}
                 resizeMode="cover"
+                recyclingKey={item.file_url}
               />
               {type === 'video' && (
                 <View style={{

@@ -4,7 +4,10 @@
  *
  * Adds the ChatyyCallActivity iOS target (WidgetKit extension hosting an
  * ActivityKit `ActivityConfiguration`) and `NSSupportsLiveActivities` on the
- * app. The app side (start/end) lives in
+ * app. [2026-10-09] The same extension also hosts the large-upload Live
+ * Activity (ChatyyUploadAttributes, app side in
+ * modules/expo-background-upload/ios/UploadLiveActivity.swift) — no extra
+ * bundle id / profile. The app side (start/end) lives in
  * modules/expo-callkit/ios/CallLiveActivity.swift and is called from
  * CallViewController when the call flips to "Conectado" / tears down. That
  * code is ALWAYS compiled but is a runtime no-op unless the app's Info.plist
@@ -207,10 +210,125 @@ struct ChatyyCallLiveActivity: Widget {
     }
 }
 
+// ─── Upload of large chat media ([2026-10-09 live-activity]) ───────────
+// KEEP IN SYNC with modules/expo-background-upload/ios/UploadLiveActivity.swift
+struct ChatyyUploadAttributes: ActivityAttributes {
+    public struct ContentState: Codable, Hashable {
+        /// 0…1
+        var progress: Double
+        /// "uploading" | "done" | "failed"
+        var status: String
+    }
+    var transferId: String
+    /// "video" | "photo" | "audio" | "file"
+    var kind: String
+    var title: String
+    var doneLabel: String
+    var failedLabel: String
+    var sizeLabel: String
+}
+
+private func uploadPercent(_ s: ChatyyUploadAttributes.ContentState) -> String {
+    let p = Int((max(0, min(1, s.progress)) * 100).rounded(.down))
+    return "\\(p)%"
+}
+
+private struct UploadGlyph: View {
+    let attrs: ChatyyUploadAttributes
+    let state: ChatyyUploadAttributes.ContentState
+    var body: some View {
+        if state.status == "done" {
+            Image(systemName: "checkmark.circle.fill")
+        } else if state.status == "failed" {
+            Image(systemName: "exclamationmark.circle.fill")
+        } else {
+            Image(systemName: attrs.kind == "video" ? "video.fill" : attrs.kind == "photo" ? "photo.fill" : attrs.kind == "audio" ? "waveform" : "doc.fill")
+        }
+    }
+}
+
+private struct UploadHeadline: View {
+    let attrs: ChatyyUploadAttributes
+    let state: ChatyyUploadAttributes.ContentState
+    var body: some View {
+        Text(state.status == "done" ? attrs.doneLabel : state.status == "failed" ? attrs.failedLabel : attrs.title)
+            .lineLimit(1)
+    }
+}
+
+struct ChatyyUploadLiveActivity: Widget {
+    var body: some WidgetConfiguration {
+        ActivityConfiguration(for: ChatyyUploadAttributes.self) { context in
+            // Lock screen / notification banner — black & white.
+            HStack(spacing: 12) {
+                ZStack {
+                    Circle().fill(Color.white.opacity(0.14))
+                    UploadGlyph(attrs: context.attributes, state: context.state)
+                        .font(.system(size: 18, weight: .semibold))
+                        .foregroundColor(.white)
+                }
+                .frame(width: 44, height: 44)
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack {
+                        UploadHeadline(attrs: context.attributes, state: context.state)
+                            .font(.headline)
+                            .foregroundColor(.white)
+                        Spacer(minLength: 4)
+                        Text(uploadPercent(context.state))
+                            .font(.subheadline.monospacedDigit())
+                            .foregroundColor(.white.opacity(0.85))
+                    }
+                    ProgressView(value: max(0, min(1, context.state.progress)))
+                        .tint(.white)
+                    Text("\\(context.attributes.sizeLabel) · Chatyy")
+                        .font(.caption2)
+                        .foregroundColor(.white.opacity(0.6))
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 14)
+            .activityBackgroundTint(Color.black.opacity(0.85))
+            .activitySystemActionForegroundColor(.white)
+        } dynamicIsland: { context in
+            DynamicIsland {
+                DynamicIslandExpandedRegion(.leading) {
+                    UploadGlyph(attrs: context.attributes, state: context.state)
+                        .font(.system(size: 22, weight: .semibold))
+                        .padding(.leading, 4)
+                }
+                DynamicIslandExpandedRegion(.trailing) {
+                    Text(uploadPercent(context.state))
+                        .font(.system(size: 17, weight: .semibold).monospacedDigit())
+                        .frame(maxWidth: 64, alignment: .trailing)
+                }
+                DynamicIslandExpandedRegion(.center) {
+                    UploadHeadline(attrs: context.attributes, state: context.state)
+                        .font(.headline)
+                }
+                DynamicIslandExpandedRegion(.bottom) {
+                    ProgressView(value: max(0, min(1, context.state.progress)))
+                        .tint(.white)
+                        .padding(.horizontal, 4)
+                }
+            } compactLeading: {
+                UploadGlyph(attrs: context.attributes, state: context.state)
+            } compactTrailing: {
+                Text(uploadPercent(context.state))
+                    .monospacedDigit()
+                    .frame(maxWidth: 46)
+            } minimal: {
+                UploadGlyph(attrs: context.attributes, state: context.state)
+            }
+            .keylineTint(.white)
+        }
+    }
+}
+
 @main
 struct ChatyyCallActivityBundle: WidgetBundle {
     var body: some Widget {
         ChatyyCallLiveActivity()
+        ChatyyUploadLiveActivity()
     }
 }
 `;

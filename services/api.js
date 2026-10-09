@@ -2410,6 +2410,11 @@ export async function login(email, password) {
     // _getDeviceIdSafe is defined later in this file but is hoisted (async function).
     const _devIdForLogin = await _getDeviceIdSafe().catch(() => null);
     const _loginPayload = _devIdForLogin ? { email, password, device_id: _devIdForLogin } : { email, password };
+    // [2026-10-09 login-like-gmail] Token de dispositivo confiável também no
+    // corpo (o header X-Device-Trust-Token já vai em toda chamada; o corpo
+    // cobre edges antigos que re-encaminham só o JSON). Sem token = aparelho
+    // novo: o servidor só atrasa este IP, nunca trava a conta.
+    if (deviceTrustToken) _loginPayload.device_trust_token = deviceTrustToken;
     const [goRes, phpRes] = await Promise.all([
       fetch(goAuthUrl('login'), {
         method: 'POST',
@@ -2446,6 +2451,12 @@ export async function login(email, password) {
         r.data = r.data || {};
         if (!r.data.refresh_token) r.data.refresh_token = phpRefresh;
         if (!r.data.refresh_device_id) r.data.refresh_device_id = phpDev;
+      }
+      // [2026-10-09 login-like-gmail] trust token só vem do PHP.
+      const phpTrust = phpRes?.data?.device_trust_token;
+      if (phpTrust) {
+        r.data = r.data || {};
+        if (!r.data.device_trust_token) r.data.device_trust_token = phpTrust;
       }
     } else if (phpRes?.success) {
       r = phpRes;

@@ -51,7 +51,8 @@ function sanitizeQuotedHtml(html) {
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { sendEmail, getMessage, aiToneCheck, aiDetectLeak, aliasesList, archiveEmail, emailUrlPreview } from '../services/api';
+import { sendEmail, getMessage, aliasesList, archiveEmail, emailUrlPreview } from '../services/api';
+import { detectSensitive, sensitiveTypeLabel } from '../services/sensitiveDetect'; // [2026-10-09 on-device-privacy]
 import * as api from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import useIsMounted from '../hooks/useIsMounted';
@@ -1211,28 +1212,16 @@ export default function ComposeScreen() {
     const plainBody = (body || '').replace(/<[^>]+>/g, ' ').trim();
     const hash = subject + '|' + plainBody;
     if (plainBody.length > 10 && hash !== toneCheckedHash) {
+      // [2026-10-09 on-device-privacy] Checagem de dado sensível NO APARELHO
+      // (síncrona, sem rede): o corpo do e-mail não vai mais para
+      // `ai_detect_leak`, e `ai_tone_check` (stub "disabled" no servidor,
+      // ~0,9 s) saiu do caminho do Enviar.
       try {
-        // Run leak + tone in parallel
-        // [2026-10-07 email-instant-send] cap the AI safety checks at 900ms —
-        // a slow model must never hold the Send button.
-        const _cap = (pr) => Promise.race([pr, new Promise((res) => setTimeout(() => res(null), 900))]);
-        const [leakRes, toneRes] = await Promise.all([
-          _cap(aiDetectLeak(plainBody.slice(0, 3000)).catch(() => null)),
-          plainBody.length > 30 ? _cap(aiToneCheck(plainBody.slice(0, 2000)).catch(() => null)) : Promise.resolve(null),
-        ]);
-        if (leakRes?.success && leakRes.data?.has_secret) {
+        const leak = detectSensitive(`${subject || ''}\n${plainBody}`);
+        if (leak.has_secret) {
           setLeakWarning({
-            types: leakRes.data.types || [],
-            warning: leakRes.data.warning || 'Detectamos informacao sensivel',
-          });
-          setToneCheckedHash(hash);
-          return;
-        }
-        if (toneRes?.success && toneRes.data?.warning && (toneRes.data?.score || 0) >= 70) {
-          setToneWarning({
-            tone: toneRes.data.tone || 'hostile',
-            score: toneRes.data.score,
-            suggestion: toneRes.data.suggestion || '',
+            types: leak.types.map((k) => sensitiveTypeLabel(k, t)),
+            warning: t('sensitive.warningBody'),
           });
           setToneCheckedHash(hash);
           return;

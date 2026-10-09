@@ -1,6 +1,7 @@
 import ErrorBoundary from '../components/ErrorBoundary';
 import { canNavigateNow } from '../services/navGuard';
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import FastImage from '../components/FastImage'; // [2026-10-09 expo-image]
 import {
   View, Text, TouchableOpacity, FlatList, StyleSheet,
   Platform, RefreshControl, Animated, Easing, Image,
@@ -314,7 +315,7 @@ function NotifRow({ item, colors, isDark, onPress, onAction, t }) {
               style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
             />
           ) : (
-            <Image source={{ uri: thumbUri }} style={{ width: 44, height: 44 }} />
+            <FastImage source={{ uri: thumbUri }} style={{ width: 44, height: 44 }} recyclingKey={thumbUri} />
           )}
         </View>
       )}

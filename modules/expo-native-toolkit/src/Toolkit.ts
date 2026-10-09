@@ -55,4 +55,20 @@ const _stub: ToolkitClass = {
   },
 } as unknown as ToolkitClass;
 
+// [2026-10-09 android-ml-parity] Android has no ExpoNativeToolkit module, but
+// the next binary ships on-device transcription (platform SpeechRecognizer,
+// Android 13+) in the Android ExpoNativeChatSecurity module with the SAME
+// signatures as iOS. Route the two speech functions there when present, so
+// `Toolkit.transcribeAudioFile` works on both platforms. Old binaries: the
+// module is absent → the stub (throws / false) exactly as before.
+if (!_native) {
+  const _sec = requireOptionalNativeModule<any>('ExpoNativeChatSecurity');
+  if (_sec && typeof _sec.transcribeAudioFile === 'function') {
+    _stub.transcribeAudioFile = (fileUrl: string, locale?: string) => _sec.transcribeAudioFile(fileUrl, locale ?? null);
+    if (typeof _sec.requestSpeechPermission === 'function') {
+      _stub.requestSpeechPermission = () => _sec.requestSpeechPermission();
+    }
+  }
+}
+
 export default (_native ?? _stub) as ToolkitClass;

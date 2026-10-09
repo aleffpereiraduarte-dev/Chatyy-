@@ -127,7 +127,9 @@ function PdfPreview({ url, colors, fileName }) {
 function DocxPreview({ url, colors, fileName }) {
   if (Platform.OS === 'web') {
     const screenH = Dimensions.get('window').height;
-    return <iframe src={docPreviewSource(url, fileName, 'doc').uri} style={{ width: '100%', height: screenH - 80, minHeight: 400, border: 'none', borderRadius: 8 }} title={fileName || 'DOCX Preview'} />;
+    const src = docPreviewSource(url, fileName, 'doc');
+    if (!src) return null;
+    return <iframe src={src.uri} style={{ width: '100%', height: screenH - 80, minHeight: 400, border: 'none', borderRadius: 8 }} title={fileName || 'DOCX Preview'} />;
   }
   // [2026-10-07 app-feel-webview] see PdfPreview.
   return <NativeDocPreview url={url} filename={fileName} kind="doc" />;
@@ -359,7 +361,10 @@ export default function FileViewer({ visible, file, files, initialIndex, onClose
         <View style={s.body}>
           {type === 'image' && <ImagePreview url={url} />}
           {type === 'pdf' && <PdfPreview url={url} colors={colors} fileName={fileName} />}
-          {type === 'docx' && <DocxPreview url={url} colors={colors} fileName={fileName} />}
+          {/* [2026-10-09 native-docs] web: no docs.google.com viewer (Drive URL carries the token) → info card + header download */}
+          {type === 'docx' && (Platform.OS === 'web'
+            ? <FileInfoCard file={current} colors={colors} type={type} />
+            : <DocxPreview url={url} colors={colors} fileName={fileName} />)}
           {type === 'video' && <VideoPreview url={url} colors={colors} fileName={fileName} />}
           {type === 'audio' && <AudioPreview url={url} colors={colors} fileName={fileName} />}
           {type === 'text' && <TextPreview url={url} colors={colors} />}

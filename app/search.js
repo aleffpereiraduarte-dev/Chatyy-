@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react';
+import FastImage from '../components/FastImage'; // [2026-10-09 expo-image]
 import {
   View, Text, TouchableOpacity, StyleSheet, TextInput,
   ActivityIndicator, Platform, ScrollView, Image,
@@ -251,7 +252,7 @@ export default function SearchScreen() {
               accessibilityLabel={label}
             >
               {s.image_url || s.artwork_url ? (
-                <Image source={{ uri: s.image_url || s.artwork_url }} style={{ width: 46, height: 46, borderRadius: 8 }} />
+                <FastImage source={{ uri: s.image_url || s.artwork_url }} style={{ width: 46, height: 46, borderRadius: 8 }} recyclingKey={s.image_url || s.artwork_url} />
               ) : (
                 <View style={[styles.iconCircle, { backgroundColor: isDark ? 'rgba(17, 17, 17,0.18)' : 'rgba(17, 17, 17,0.10)', borderRadius: 8 }]}>
                   <IconMusic size={20} color={colors.primary} />

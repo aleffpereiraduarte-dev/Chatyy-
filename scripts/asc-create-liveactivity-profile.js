@@ -12,6 +12,10 @@
 //   5. set CHATYY_LIVE_ACTIVITY=1 in eas.json build.production.env (gate read
 //      by plugins/with-live-activity.js on the EAS worker)
 //
+// [2026-10-09] The same extension (same bundle id / profile) also hosts the
+// large-upload Live Activity (modules/expo-background-upload/ios/
+// UploadLiveActivity.swift) — one profile turns on BOTH call and upload.
+//
 // NOT RUN AUTOMATICALLY. Modeled on scripts/asc-create-broadcast-profile.js
 // (same auth, same cert). Idempotent: re-running reuses the bundle id and
 // replaces only OUR CallActivity profile.

@@ -167,7 +167,57 @@
             {
               "scheme": "https",
               "host": "chatyy.com.br",
-              "pathPrefix": "/call"
+              "pathPrefix": "/call/"
+            },
+            {
+              "scheme": "https",
+              "host": "chatyy.com.br",
+              "pathPrefix": "/j/"
+            },
+            {
+              "scheme": "https",
+              "host": "chatyy.com.br",
+              "pathPrefix": "/g/"
+            },
+            {
+              "scheme": "https",
+              "host": "chatyy.com.br",
+              "pathPrefix": "/u/"
+            },
+            {
+              "scheme": "https",
+              "host": "chatyy.com.br",
+              "pathPrefix": "/@"
+            },
+            {
+              "scheme": "https",
+              "host": "chatyy.com.br",
+              "pathPrefix": "/ch/"
+            },
+            {
+              "scheme": "https",
+              "host": "chatyy.com.br",
+              "pathPrefix": "/live/"
+            },
+            {
+              "scheme": "https",
+              "host": "chatyy.com.br",
+              "pathPrefix": "/feed/"
+            },
+            {
+              "scheme": "https",
+              "host": "chatyy.com.br",
+              "pathPrefix": "/meet/room.html"
+            },
+            {
+              "scheme": "https",
+              "host": "chatyy.com.br",
+              "pathPrefix": "/chat/"
+            },
+            {
+              "scheme": "https",
+              "host": "chatyy.com.br",
+              "pathPrefix": "/stickers/store"
             }
           ]
         },
@@ -321,6 +371,7 @@
       "./plugins/with-android-packaging-pickfirst",
       "./plugins/voip-push",
       "./plugins/with-notification-service",
+      "./plugins/with-associated-domains",
       "./plugins/with-bg-chat-sync",
       "./plugins/with-broadcast-extension",
       "./plugins/with-live-activity",

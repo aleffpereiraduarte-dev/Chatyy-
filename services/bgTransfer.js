@@ -195,8 +195,14 @@ export async function uploadInBackground(spec) {
   _ensureSubs(m);
   const id = 'up-' + String(spec.uploadId);
   let ok = false;
+  // [2026-10-09 live-activity] App language for the native upload Live
+  // Activity labels (iOS; ignored by older binaries / Android). Lazy require:
+  // api.js imports this file.
+  let lang = '';
+  try { lang = String(require('./api').getUserLanguage?.() || ''); } catch { lang = ''; }
   try {
     ok = await m.enqueueUpload({
+      lang,
       id,
       fileUri: String(spec.fileUri),
       base: String(spec.base),

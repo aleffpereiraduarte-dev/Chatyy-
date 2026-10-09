@@ -105,16 +105,30 @@ let _ocrMod;
 function _ocrModule() {
   if (_ocrMod !== undefined) return _ocrMod;
   _ocrMod = null;
-  if (Platform.OS !== 'ios') return null;
+  // [2026-10-09 android-ml-parity] Android: o próximo binário traz o mesmo
+  // ExpoNativeChatSecurity.ocrImage (ML Kit, modelo baixado pelo Play
+  // services). Binário atual → módulo ausente → null (botão não aparece).
+  if (Platform.OS !== 'ios' && Platform.OS !== 'android') return null;
   try {
     const { requireOptionalNativeModule } = require('expo');
     const m = typeof requireOptionalNativeModule === 'function' ? requireOptionalNativeModule('ExpoNativeChatSecurity') : null;
-    if (m && typeof m.ocrImage === 'function') _ocrMod = m;
+    if (m && typeof m.ocrImage === 'function') {
+      let ok = true;
+      if (Platform.OS === 'android' && typeof m.getOnDeviceCapabilities === 'function') {
+        try { ok = !!m.getOnDeviceCapabilities()?.ocr; } catch { ok = false; }
+      }
+      if (ok) _ocrMod = m;
+      // Android: pede o modelo ao Play services já na 1ª sondagem (Wi-Fi/
+      // em 2º plano), para o 1º toque em "Copiar texto" já rodar no aparelho.
+      if (ok && Platform.OS === 'android' && typeof m.prepareOnDeviceModels === 'function') {
+        try { m.prepareOnDeviceModels({ features: ['ocr'] })?.catch?.(() => {}); } catch {}
+      }
+    }
   } catch { _ocrMod = null; }
   return _ocrMod;
 }
 
-/** true quando o binário tem o OCR on-device (iOS com ExpoNativeChatSecurity). */
+/** true quando o binário tem o OCR on-device (iOS Vision / Android ML Kit). */
 export function canRecognizeImageText() {
   return !!_ocrModule();
 }
@@ -134,7 +148,12 @@ export async function recognizeImageText(url, { fileName, language } = {}) {
   const local = await ensureLocalFile(url, fileName);
   if (!local) return { error: 'download_failed', text: '' };
   try {
-    const r = await m.ocrImage(local, _ocrLocales(language));
+    let r = await m.ocrImage(local, _ocrLocales(language));
+    if (r?.error && Platform.OS === 'android') {
+      // Modelo do ML Kit ainda baixando (1º uso) → uma nova tentativa curta.
+      await new Promise((res) => setTimeout(res, 2500));
+      r = await m.ocrImage(local, _ocrLocales(language));
+    }
     if (r?.error) return { error: String(r.error), text: '' };
     return { text: String(r?.text || '').trim() };
   } catch (e) {

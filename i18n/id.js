@@ -1,4 +1,27 @@
 export default {
+  // [2026-10-09 passkeys]
+  "settings.passkeys.title": "Passkey",
+  "settings.passkeys.rowSub": "Masuk dengan Face ID atau sidik jari, tanpa sandi atau kode",
+  "settings.passkeys.footer": "Passkey disimpan di perangkat ini (dan di Rantai Kunci iCloud atau Pengelola Sandi Google). Tidak ada yang bisa memakainya tanpa wajah, sidik jari, atau PIN Anda.",
+  "settings.passkeys.add": "Buat passkey di perangkat ini",
+  "settings.passkeys.addSub": "Gunakan Face ID, Touch ID, atau sidik jari untuk masuk",
+  "settings.passkeys.listHeader": "Passkey Anda",
+  "settings.passkeys.empty": "Belum ada passkey.",
+  "settings.passkeys.lastUsed": "Dipakai pada {date}",
+  "settings.passkeys.createdAt": "Dibuat pada {date}",
+  "settings.passkeys.added": "Passkey dibuat. Lain kali, ketuk \"Masuk dengan passkey\".",
+  "settings.passkeys.exists": "Perangkat ini sudah punya passkey untuk akun ini.",
+  "settings.passkeys.error": "Tidak dapat diselesaikan. Coba lagi.",
+  "settings.passkeys.unavailable": "Passkey hadir di versi aplikasi berikutnya.",
+  "settings.passkeys.removeTitle": "Hapus passkey?",
+  "settings.passkeys.removeMsg": "Anda tidak bisa lagi masuk dengannya. Anda bisa membuat yang baru nanti.",
+  "settings.passkeys.remove": "Hapus",
+  // [2026-10-09 on-device-privacy]
+  "sensitive.warningBody": "Pesan ini tampaknya berisi data sensitif (kartu, CPF, kata sandi, atau kunci). Periksa sebelum membagikan.",
+  "sensitive.typeCard": "Kartu",
+  "sensitive.typeCpf": "CPF",
+  "sensitive.typeApiKey": "Kunci API",
+  "sensitive.typePassword": "Kata sandi",
   // [2026-10-09 signup-nophone/settings-logout]
   "login.createAccountNoPhone": "Buat akun tanpa nomor",
   "signupUsername.handlePlaceholder": "nama.kamu",
@@ -908,6 +931,9 @@ export default {
   'attachment.download': 'Unduh',
   'attachment.of': 'dari',
   'attachment.cannotPreview': 'Tidak dapat memprabaca file ini',
+  'doc.openWith': 'Buka dengan…', // [2026-10-09 native-docs]
+  'doc.preparing': 'Menyiapkan dokumen…', // [2026-10-09 native-docs]
+  'doc.openFailed': 'Tidak dapat membuka dokumen', // [2026-10-09 native-docs]
   'search.dateAfter': 'Setelah',
   'search.dateBefore': 'Sebelum',
   'search.larger': 'Lebih besar dari',
