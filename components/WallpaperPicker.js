@@ -37,6 +37,8 @@ import {
   IconSparkles, IconCheck,
 } from './Icons';
 import * as api from '../services/api';
+let _WpExpoImage = null; // [2026-10-08 chat-open-flicker] see WallpaperBackground
+try { _WpExpoImage = require('expo-image').Image; } catch {}
 
 // ── Gradient presets ─────────────────────────────────────────────────────
 // id → two/three stop colors + direction. Kept small + hand-picked so the
@@ -130,6 +132,22 @@ export function WallpaperBackground({ value, isDark, preview = false, style }) {
     );
   }
   // Image URI
+  // [2026-10-08 chat-open-flicker] expo-image (memory-disk, no fade) so a
+  // photo wallpaper is decoded once and repaints from memory on every chat
+  // open — RN <Image> re-decoded it per mount and the thread showed one or
+  // two frames of plain background before the wallpaper popped in.
+  if (_WpExpoImage && !preview) {
+    return (
+      <_WpExpoImage
+        source={{ uri: v }}
+        style={[StyleSheet.absoluteFill, { opacity: isDark ? 0.15 : 0.2 }]}
+        contentFit="cover"
+        cachePolicy="memory-disk"
+        transition={0}
+        pointerEvents="none"
+      />
+    );
+  }
   return (
     <Image
       source={{ uri: v }}

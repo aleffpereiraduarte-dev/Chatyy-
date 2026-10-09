@@ -1,0 +1,61 @@
+diff --git a/node_modules/@shopify/flash-list/dist/recyclerview/RecyclerViewManager.js b/node_modules/@shopify/flash-list/dist/recyclerview/RecyclerViewManager.js
+index 1aa651d..3dbd096 100644
+--- a/node_modules/@shopify/flash-list/dist/recyclerview/RecyclerViewManager.js
++++ b/node_modules/@shopify/flash-list/dist/recyclerview/RecyclerViewManager.js
+@@ -295,9 +295,24 @@ export class RecyclerViewManager {
+             // stale offset, causing the wrong items to be rendered.
+             this.layoutManager.recomputeLayouts(0, initialScrollIndex);
+             const initialItemLayout = this.layoutManager.getLayout(initialScrollIndex);
+-            const initialItemOffset = this.propsRef.horizontal
++            let initialItemOffset = this.propsRef.horizontal
+                 ? initialItemLayout.x
+                 : initialItemLayout.y;
++            // [chatyy 2026-10-08 chat-open-flicker] startRenderingFromBottom:
++            // engage the window that ENDS at the last item (what the user will
++            // actually see once the scroll clamps to the end), not the one that
++            // STARTS at it. Upstream rendered only the last row in the first
++            // paint and the rows above popped in a frame later (chat "piscada").
++            const mvcp = this.propsRef.maintainVisibleContentPosition;
++            if (this.propsRef.initialScrollIndex == null &&
++                mvcp && mvcp.startRenderingFromBottom &&
++                !this.propsRef.horizontal) {
++                const win = this.layoutManager.getWindowsSize();
++                const winH = win && win.height > 0 ? win.height : 0;
++                if (winH > 0) {
++                    initialItemOffset = Math.max(0, initialItemLayout.y + initialItemLayout.height - winH);
++                }
++            }
+             this.engagedIndicesTracker.scrollOffset = initialItemOffset;
+         }
+         else {
+diff --git a/node_modules/@shopify/flash-list/src/recyclerview/RecyclerViewManager.ts b/node_modules/@shopify/flash-list/src/recyclerview/RecyclerViewManager.ts
+index 41704d0..ffa8867 100644
+--- a/node_modules/@shopify/flash-list/src/recyclerview/RecyclerViewManager.ts
++++ b/node_modules/@shopify/flash-list/src/recyclerview/RecyclerViewManager.ts
+@@ -388,9 +388,25 @@ export class RecyclerViewManager<T> {
+       this.layoutManager.recomputeLayouts(0, initialScrollIndex);
+       const initialItemLayout =
+         this.layoutManager.getLayout(initialScrollIndex);
+-      const initialItemOffset = this.propsRef.horizontal
++      let initialItemOffset = this.propsRef.horizontal
+         ? initialItemLayout.x
+         : initialItemLayout.y;
++      // [chatyy 2026-10-08 chat-open-flicker] startRenderingFromBottom: engage
++      // the window that ENDS at the last item (see dist copy).
++      const mvcp = this.propsRef.maintainVisibleContentPosition;
++      if (
++        this.propsRef.initialScrollIndex == null &&
++        mvcp?.startRenderingFromBottom &&
++        !this.propsRef.horizontal
++      ) {
++        const winH = this.layoutManager.getWindowsSize()?.height ?? 0;
++        if (winH > 0) {
++          initialItemOffset = Math.max(
++            0,
++            initialItemLayout.y + initialItemLayout.height - winH
++          );
++        }
++      }
+       this.engagedIndicesTracker.scrollOffset = initialItemOffset;
+     } else {
+       const initialItemLayout = this.layoutManager.getLayout(0);

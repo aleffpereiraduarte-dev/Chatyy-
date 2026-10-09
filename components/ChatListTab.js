@@ -712,7 +712,9 @@ const ConversationRow = React.memo(function ConversationRow({
     // bubble renders **word** as bold but the list preview was leaving the
     // raw asterisks/underscores/tildes visible. WhatsApp/Telegram both flatten
     // formatting in previews. Remove pairs of *…*, **…**, _…_, ~…~, ```…```.
-    content = content
+    // [2026-10-08 qa] System tokens ("__sys.user_left__|x") must reach the
+    // decoder below intact — the _italic_ strip mangled them into "_sys.userleft__|x".
+    if (!(lastMsg.type === 'system' || content.startsWith('__sys.'))) content = content
       .replace(/```([\s\S]*?)```/g, '$1')          // code block
       .replace(/\|\|([^|]+)\|\|/g, '$1')           // spoiler ||x||
       .replace(/\*\*([^*]+)\*\*/g, '$1')           // **bold**
@@ -5003,6 +5005,9 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
       router.push('/saved-messages');
       return;
     }
+    // [2026-10-08 chat-open-flicker] Hand the tapped row to the thread so its
+    // first frame already has the group photo etc. (sync, no I/O).
+    try { require('../utils/chatOpenHandoff').stashOpenConversation(conv); } catch {}
     router.push(`/chat-conversation?id=${conv.id}&name=${encodeURIComponent(displayName)}&type=${conv.type}${emailParam}${unreadParam}`);
   }, [user?.email, router]);
 

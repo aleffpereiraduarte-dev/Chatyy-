@@ -44,6 +44,8 @@ import Svg, { Path } from 'react-native-svg';
 import CircularProgressArc from '../components/CircularProgressArc';
 // [2026-10-06 thread-tech] per-row overlay store (download %, painted, error, delete-fade, translation)
 import { useRowOverlayStore, useOverlaySetter, useRowOverlayVersion, useComposerTextStore, ThreadComposerHost } from '../utils/threadRowOverlay';
+import { wasImageLoaded, seenAwareTransition, markImageLoaded } from '../utils/imageSeen'; // [2026-10-08 chat-open-flicker]
+import { peekOpenConversation, getCachedChatSettings, setCachedChatSettings, getCachedLocalPrefs, setCachedLocalPrefs, getCachedPresence, setCachedPresence } from '../utils/chatOpenHandoff'; // [2026-10-08 chat-open-flicker]
 // [2026-10-06 keyboard-controller] Keyboard glued to the composer on the UI
 // thread (native) / RN KeyboardAvoidingView fallback (web + binaries without KC).
 import { ThreadKeyboardAvoider, ThreadKeyboardGestureArea, THREAD_LIST_KEYBOARD_DISMISS_MODE, THREAD_COMPOSER_NATIVE_ID } from '../utils/threadKeyboard';
@@ -692,6 +694,27 @@ function compressImageWeb(blob, maxDimension = 2048, quality = 0.8) {
 const _sendMotionState = { atBottom: true, smoothUntil: 0, me: '' };
 const _sendMotionSeen = new Set();
 const _SEND_MOTION_ND = Platform.OS !== 'web';
+// [2026-10-08 chat-open-flicker] True when every field the SERVER sent for a
+// message already holds the same value on the local copy (deep-equal for the
+// few object/array fields). The local row may carry extra client-only fields
+// (_localUri, _readStatus…) — those are exactly what a refresh should keep.
+// Rows in a local transient state (pending/failed/uploading) never match.
+function _sameServerRow(nm, local) {
+  if (!nm || !local || nm === local) return nm === local;
+  if (local._pending || local._failed || local._queued || local._uploading || local._e2e) return false;
+  for (const k in nm) {
+    if (!Object.prototype.hasOwnProperty.call(nm, k)) continue;
+    const a = nm[k];
+    const b = local[k];
+    if (a === b) continue;
+    if (a == null && b == null) continue;
+    if (a && b && typeof a === 'object' && typeof b === 'object') {
+      try { if (JSON.stringify(a) === JSON.stringify(b)) continue; } catch {}
+    }
+    return false;
+  }
+  return true;
+}
 function _rowMotionKey(item) {
   if (!item) return '';
   if (item._key) return String(item._key);
@@ -2294,10 +2317,38 @@ function detectSmartActions(text) {
   // PIX code (Brazilian instant payment copiable key)
   const pix = text.match(/\b\d{5,14}[A-Z0-9]{20,}\b/);
   if (pix) out.push({ type: 'pix', Icon: IconReceipt, labelKey: 'chatConv.smartCopyPix', payload: pix[0] });
-  // Phone
-  const phone = text.match(/(?:\+?\d{1,3}\s?)?\(?\d{2}\)?\s?9?\d{4}-?\d{4}/);
-  if (phone && !out.find(a => a.type === 'phone')) out.push({ type: 'phone', Icon: IconPhone, labelKey: 'chatConv.smartCallNumber', payload: phone[0] });
+  // Phone — [2026-10-08 qa] only plausible E.164 / BR numbers; the old loose
+  // regex matched any 10+ digit run (timestamps, ids: "1791513616637").
+  const phone = _matchPlausiblePhone(text);
+  if (phone && !out.find(a => a.type === 'phone')) out.push({ type: 'phone', Icon: IconPhone, labelKey: 'chatConv.smartCallNumber', payload: phone });
   return out;
+}
+function _isBrNational(d) {
+  // DDD (11-99, no zero digit) + 9-digit mobile (9xxxx) or 8-digit landline (2-5xxx).
+  if (!/^[1-9][1-9]/.test(d)) return false;
+  if (d.length === 11) return d[2] === '9';
+  if (d.length === 10) return /[2-5]/.test(d[2]);
+  return false;
+}
+function _matchPlausiblePhone(text) {
+  const re = /(^|[^\w+])(\+?\(?\d[\d\s().-]{6,20}\d)(?![\w])/g;
+  let m;
+  while ((m = re.exec(text)) !== null) {
+    const raw = m[2].trim();
+    const d = raw.replace(/\D/g, '');
+    if (/^(\d)\1+$/.test(d)) continue;
+    const formatted = /[\s().-]/.test(raw);
+    if (raw[0] === '+') {
+      if (d.startsWith('55')) { if (_isBrNational(d.slice(2))) return raw; continue; }
+      if (d.length >= 10 && d.length <= 15) return raw;
+      continue;
+    }
+    if (_isBrNational(d)) return raw;
+    if (d.length >= 12 && d.length <= 13 && d.startsWith('55') && _isBrNational(d.slice(2))) return raw;
+    // Local 8/9-digit number only when typed with the usual hyphen (9999-8888 / 99999-8888).
+    if (formatted && /^9?\d{4}-\d{4}$/.test(raw) && /^[2-9]/.test(d)) return raw;
+  }
+  return null;
 }
 function SmartActions({ actions, onAction, colors, t }) {
   if (!actions || actions.length === 0) return null;
@@ -5502,6 +5553,9 @@ function _grabVideoFrame(uri) {
 }
 function VideoFrameGrab({ uri, style }) {
   const [thumb, setThumb] = React.useState(() => (uri && _vfgCache.get(uri)) || null);
+  // [2026-10-08 chat-open-flicker] Frame already grabbed (reopened chat) →
+  // paint it on mount without the cross-dissolve; fade only a fresh grab.
+  const _fadeRef = useRef(!(uri && _vfgCache.get(uri)));
   React.useEffect(() => {
     if (!uri || Platform.OS === 'web') return undefined;
     let alive = true;
@@ -5514,7 +5568,7 @@ function VideoFrameGrab({ uri, style }) {
       source={thumb}
       style={style}
       contentFit="cover"
-      transition={{ duration: 180, effect: 'cross-dissolve' }}
+      transition={_fadeRef.current ? { duration: 180, effect: 'cross-dissolve' } : 0}
     />
   );
 }
@@ -5594,7 +5648,12 @@ function VideoThumbImage({ url, thumbnailUrl, posterUrl, videoThumb, imageVarian
           contentFit="cover"
           // Cross-dissolve the poster in like photos do ("focuses in") instead of
           // the hard pop a plain <Image> gave. 220ms matches the photo bubble feel.
-          transition={{ duration: 220, effect: 'cross-dissolve' }}
+          // [2026-10-08 chat-open-flicker] ...but only the first time: a poster
+          // that already painted (reopened chat) is instant, and memory-disk
+          // keeps it decoded across remounts (default policy was disk-only).
+          cachePolicy="memory-disk"
+          transition={seenAwareTransition(candidates[idx], { duration: 220, effect: 'cross-dissolve' })}
+          onLoad={() => markImageLoaded(candidates[idx])}
           onError={() => setIdx(i => i + 1)}
         />
       )}
@@ -8685,7 +8744,16 @@ function ChatConversationInner() {
   const [savedSearch, setSavedSearch] = useState('');
   const [savedSearchOpen, setSavedSearchOpen] = useState(false);
   const [showSavedReminder, setShowSavedReminder] = useState(false);
-  const [conversationAvatar, setConversationAvatar] = useState('');
+  // [2026-10-08 chat-open-flicker] Group photo from the row the list handed
+  // over (or the in-memory conversation snapshot) on frame 1 — it used to
+  // start '' and arrive from an async cache read → initials → photo blink.
+  const [conversationAvatar, setConversationAvatar] = useState(() => {
+    try {
+      const c = peekOpenConversation(conversationId);
+      const av = c && (c.avatar_url || c.avatar);
+      return typeof av === 'string' ? av : '';
+    } catch { return ''; }
+  });
   const [conversationName, setConversationName] = useState(() => {
     if (String(params.saved || '') === '1' || (params.type || 'direct') === 'saved') {
       return params.name ? decodeURIComponent(String(params.name)) : (t('chat.savedMessages') || 'Mensagens Salvas');
@@ -8798,7 +8866,16 @@ function ChatConversationInner() {
   }, [conversationId]);
 
   // Chatyy settings (font size, read receipts, etc.)
-  const [chatyySettings, setChatyySettings] = useState({ font_size: 'medium', read_receipts: true });
+  // [2026-10-08 chat-open-flicker] Last known settings of this account on
+  // frame 1 (font size + account wallpaper used to switch after the network
+  // round-trip → wallpaper popped in, bubbles re-flowed on every open).
+  const [chatyySettings, setChatyySettings] = useState(() => {
+    const base = { font_size: 'medium', read_receipts: true };
+    try {
+      const c = getCachedChatSettings(user?.email || api.getActiveAccountEmail?.() || '');
+      return c ? { ...base, ...c } : base;
+    } catch { return base; }
+  });
   // [2026-07-02] Keep a live ref of the current settings. onViewableItemsChanged
   // is built once via useRef(fn).current, so it closes over the INITIAL
   // chatyySettings (read_receipts:true). Reading through settingsRef.current
@@ -8810,6 +8887,7 @@ function ChatConversationInner() {
     api.chatGetSettings().then(r => {
       if (r.success && r.data) {
         setChatyySettings(r.data);
+        try { setCachedChatSettings(user?.email || api.getActiveAccountEmail?.() || '', r.data); } catch {} // [2026-10-08 chat-open-flicker]
         // [2026-10-06 rt-client] read_receipts aqui já vem mesclado de
         // chat_user_privacy (autoritativo) → alimenta o gate de typing do WS.
         try {
@@ -8830,10 +8908,14 @@ function ChatConversationInner() {
   //   bubble_shape        — message bubble corners (rounded|square|classic)
   //   wallpaper_default   — global wallpaper fallback for unset conversations
   // All defensive: a missing key leaves the sensible default in place.
-  const [enterSends, setEnterSends] = useState(Platform.OS === 'web');
-  const [autocorrectOn, setAutocorrectOn] = useState(true);
-  const [bubbleShape, setBubbleShape] = useState('rounded');
-  const [wallpaperDefaultPref, setWallpaperDefaultPref] = useState(null);
+  // [2026-10-08 chat-open-flicker] Seeded from the last applied KV (MMKV
+  // mirror, sync) so bubble corners / default wallpaper are right on frame 1
+  // instead of switching when the AsyncStorage read lands.
+  const _lpInit = (() => { try { return getCachedLocalPrefs() || {}; } catch { return {}; } })();
+  const [enterSends, setEnterSends] = useState(() => (_lpInit.enter_sends === 'true' ? true : _lpInit.enter_sends === 'false' ? false : Platform.OS === 'web'));
+  const [autocorrectOn, setAutocorrectOn] = useState(() => _lpInit.autocorrect_enabled !== 'false');
+  const [bubbleShape, setBubbleShape] = useState(() => ((_lpInit.bubble_shape === 'square' || _lpInit.bubble_shape === 'classic') ? _lpInit.bubble_shape : 'rounded'));
+  const [wallpaperDefaultPref, setWallpaperDefaultPref] = useState(() => ((typeof _lpInit.wallpaper_default === 'string' && _lpInit.wallpaper_default.length > 0) ? _lpInit.wallpaper_default : null));
   const _hydrateLocalPrefs = useCallback(() => {
     const apply = (kv) => {
       try {
@@ -8847,6 +8929,7 @@ function ChatConversationInner() {
         if (typeof kv.wallpaper_default === 'string' && kv.wallpaper_default.length > 0) {
           setWallpaperDefaultPref(kv.wallpaper_default);
         }
+        setCachedLocalPrefs(kv); // [2026-10-08 chat-open-flicker] frame-1 seed for the next open
       } catch {}
     };
     const KEYS = ['enter_sends', 'autocorrect_enabled', 'bubble_shape', 'wallpaper_default'];
@@ -10291,11 +10374,25 @@ function ChatConversationInner() {
   const readDebounceRef = useRef(null); // Debounce chatRead calls
   const pendingReadMsgIdRef = useRef(null); // Track pending read receipt msgId for flush-on-unmount
   const lastReadAckRef = useRef(0); // Highest message id we've already acked as read — skip re-acking same id
-  const [presence, setPresence] = useState(null); // { status, last_seen }
+  // [2026-10-08 chat-open-flicker] Last known presence of the peer on frame 1:
+  // starting at null made the "online / visto há" line appear ~100-300 ms
+  // after the screen pushed and shove the name up (header jump). The 35 s
+  // freshness gate below still decides whether "online" may be claimed.
+  const _presenceSeed = (() => {
+    try {
+      if ((params.type || 'direct') !== 'direct' || !params.email) return null;
+      return getCachedPresence(params.email);
+    } catch { return null; }
+  })();
+  const [presence, setPresence] = useState(() => (_presenceSeed ? { status: _presenceSeed.status, last_seen: _presenceSeed.last_seen } : null)); // { status, last_seen }
   // Wall-clock of the last time we received a fresh presence update. Used to
   // gate the "online" label so we never falsely claim a peer is available when
   // the data is stale (no presence push for >35s).
-  const presenceUpdatedAtRef = useRef(0);
+  const presenceUpdatedAtRef = useRef((_presenceSeed && Number(_presenceSeed.at)) || 0);
+  useEffect(() => {
+    if (!presence || (params.type || 'direct') !== 'direct' || !params.email) return;
+    try { setCachedPresence(params.email, presence, presenceUpdatedAtRef.current); } catch {}
+  }, [presence, params.email, params.type]);
   const [mediaViewer, setMediaViewer] = useState({ visible: false, fileUrl: '', fileName: '', fileSize: 0, type: '', blurhash: null, placeholderUri: null, thumbUri: null });
   // Round video note viewer — stays circular (WhatsApp parity, never rect fullscreen).
   const [roundVideoViewer, setRoundVideoViewer] = useState({ visible: false, uri: null });
@@ -12093,6 +12190,10 @@ function ChatConversationInner() {
             });
             const reconciled = newMsgs.map(nm => {
               const local = prevById.get(nm.id);
+              // [2026-10-08 chat-open-flicker] Server row identical to what is
+              // already on screen → keep the SAME object (enrich cache + row
+              // memo skip it; local-only extras like _localUri survive).
+              if (local && _sameServerRow(nm, local)) return local;
               // Keep a hydrated reply_to from local state when the fresh
               // server row returned reply_to_id but no `reply_to` object
               // (can happen if the quote row is in PG but the hydrate path
@@ -23068,7 +23169,12 @@ function ChatConversationInner() {
           // [BUG-1 2026-10-01] True once ChatMedia has painted the full bytes.
           // Used to retire the blur backdrops + loading ring so they behave as
           // a brief placeholder WHILE loading only (see loadedImages state).
-          const imgLoaded = __ov.loaded;
+          // [2026-10-08 chat-open-flicker] Overlay `loaded` is per-screen → on
+          // every reopen the blur/lqip backdrops + iOS remote-blur layer
+          // re-mounted and flashed under a photo whose bytes are already in
+          // expo-image's cache. Painted earlier THIS session = loaded now
+          // (an onError still clears it via imgFailed).
+          const imgLoaded = __ov.loaded || (!imgFailed && !msg._uploading && wasImageLoaded(fullUri));
           // PERF: reuse `imgVariants` parsed just above instead of re-running
           // JSON.parse on the same string a second time per image-row render.
           const thumbUri = imgVariants?.thumb

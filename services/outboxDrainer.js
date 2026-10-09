@@ -246,7 +246,7 @@ export function initOutboxDrainer() {
       });
       // Try to register a one-shot sync (browsers ignore if not supported).
       navigator.serviceWorker.ready.then(reg => {
-        try { reg.sync?.register?.('chat-outbox'); } catch {}
+        try { const _p = reg.sync?.register?.('chat-outbox'); _p?.catch?.(() => {}); } catch {}
       }).catch(() => {});
     } catch {}
   }

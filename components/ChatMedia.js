@@ -38,6 +38,7 @@ import { View, Platform, ActivityIndicator, TouchableOpacity, Text } from 'react
 import { Image as ExpoImage } from 'expo-image';
 import { getLocalUriSyncJs, cacheMedia, requestRedownload, formatBytesShort } from '../services/mediaCache';
 import * as api from '../services/api';
+import { seenAwareTransition, markImageLoaded } from '../utils/imageSeen'; // [2026-10-08 chat-open-flicker]
 
 function resolveAbsolute(url) {
   if (!url) return '';
@@ -112,6 +113,7 @@ export default function ChatMedia({
   // tentar". On 410 the chip swaps to a disabled "Mensagem apagada".
   messageId,
   fileSize,
+  onLoad,
   ...rest
 }) {
   // Allow remote fallback: ChatMedia is used in render closures (FlashList
@@ -266,7 +268,15 @@ export default function ChatMedia({
       // on the rare race where syncIndex flips back to URL.
       cachePolicy={effectiveUri.startsWith('file://') ? 'memory' : 'memory-disk'}
       recyclingKey={recyclingKey}
-      transition={transition}
+      // [2026-10-08 chat-open-flicker] The caller decides the fade from ITS uri
+      // (often the remote URL) but we may render the disk file:// or a URL that
+      // already painted — expo-image (iOS) would still cross-dissolve on the
+      // cache hit, so every reopened chat re-faded its photos. Instant then.
+      transition={seenAwareTransition(effectiveUri, transition)}
+      onLoad={(e) => {
+        try { markImageLoaded(effectiveUri); if (uri && uri !== effectiveUri) markImageLoaded(uri); } catch {}
+        if (typeof onLoad === 'function') onLoad(e);
+      }}
       onError={() => {
         // [WAVE 91 2026-05-21] If the failing source was a file:// path,
         // assume the cached file was evicted/corrupt and flip to remote

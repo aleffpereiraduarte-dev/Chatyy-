@@ -1168,6 +1168,27 @@ let _reloginPromise = null;
 // [send-reliability 2026-10-06] Per-action fetch timeout overrides (ms).
 const _ACTION_TIMEOUT_MS = { chat_send: 10000 };
 
+// [2026-10-08 qa-calls] `data.token` também volta em ações que NÃO são de
+// auth: JWT do LiveKit (chat_livekit_token, chat_call_link_join, cohost de
+// live), Twilio, token de convite de grupo/família, QR de pareamento, bot.
+// Adotar isso como bearer derrubava a sessão: QA web 2 navegadores — o callee
+// atende, chat_livekit_token troca o mail_token pelo JWT do LiveKit, todo
+// request seguinte dá 401 (heartbeat/active_close/call_status) e a PRÓXIMA
+// ligação falha com "No token returned". Bearer real é hex sem ponto
+// (login/auth_refresh/phone_*/username_signup/verify_check/qr_login_status).
+const _NON_BEARER_TOKEN_ACTIONS = new Set([
+  'chat_livekit_token', 'chat_live_cohost_token', 'chat_call_link_join',
+  'chat_call_create_link', 'voip_twilio_token', 'pstn_dial',
+  'chat_qr_login_create', 'chat_group_invite_create', 'chat_group_invite_link',
+  'family_add_spouse', 'chat_bot_lookup', 'bot_regenerate_token',
+  'smart_reply', 'chat_wake_phone', 'register_voip_token', 'register_push_token',
+  'unregister_push_token', 'unregister_voip_token',
+]);
+function _adoptsBearerFromResponse(action, tok) {
+  if (typeof tok !== 'string' || !/^[A-Za-z0-9_-]{32,}$/.test(tok)) return false;
+  return !_NON_BEARER_TOKEN_ACTIONS.has(action);
+}
+
 async function _rawApiCall(action, params = {}, method = 'GET') {
   // CRITICAL: On native iOS, authToken is read from SecureStore asynchronously.
   // Without awaiting this, the first few requests (chat_send, check_auth, etc.)
@@ -1277,7 +1298,7 @@ async function _rawApiCall(action, params = {}, method = 'GET') {
     try {
       const data = JSON.parse(text);
       const respToken = data?.data?.token;
-      if (respToken && respToken !== authToken) {
+      if (respToken && respToken !== authToken && _adoptsBearerFromResponse(action, respToken)) {
         authToken = respToken;
         storeToken(respToken);
       }
@@ -1336,6 +1357,8 @@ function _withHttpStatus(data, status) {
 // GET while the first is pending, they share the same promise instead of
 // spawning a duplicate network request. Mutations (POST) never dedup.
 const _inflight = new Map();
+const _inflightAt = new Map();
+const _INFLIGHT_JOIN_MAX_MS = 8000;
 function _inflightKey(action, params) {
   // [2026-10-08 offline-first] The SWR copy is now also served OFFLINE (web
   // offline gate) and survives reloads via sessionStorage, so the key carries
@@ -1689,8 +1712,14 @@ async function _apiCallCore(action, params = {}, method = 'GET', opts = {}) {
   if (_readable) {
     const key = _inflightKey(action, params);
     // In-flight dedup
+    // [2026-10-08 share-sheet] Only join a FRESH in-flight request. A read
+    // fired just before iOS suspended the app (user leaves for Fotos to share)
+    // keeps a dead socket whose 25s abort timer does not tick while suspended:
+    // every same-key caller after resume (the share sheet's chat_list) joined
+    // that zombie and spun for 25-50s. Older than _INFLIGHT_JOIN_MAX_MS → fire
+    // a new request instead (the old one is left to settle on its own).
     const existing = _inflight.get(key);
-    if (existing) return existing;
+    if (existing && (Date.now() - (_inflightAt.get(key) || 0)) < _INFLIGHT_JOIN_MAX_MS) return existing;
 
     // SWR is enabled for GET/SWR_ALLOW reads and POST_READ_SWR; a POST read
     // that is readable only via POST_READ_DEDUP (and not SWR_ALLOW) gets
@@ -1731,9 +1760,13 @@ async function _apiCallCore(action, params = {}, method = 'GET', opts = {}) {
           }
         }
         return r;
-      } finally { _inflight.delete(key); }
+      } finally {
+        // Never evict a newer request that replaced this (stale) one.
+        if (_inflight.get(key) === promise) { _inflight.delete(key); _inflightAt.delete(key); }
+      }
     })();
     _inflight.set(key, promise);
+    _inflightAt.set(key, Date.now());
     return promise;
   }
   // Mutation — invalidate any cached reads that look related so the next

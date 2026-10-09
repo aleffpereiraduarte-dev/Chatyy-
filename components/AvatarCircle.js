@@ -8,6 +8,7 @@ import ChatyyOneAvatar from './ChatyyOneAvatar';
 // cold-start / offline — even if expo-image's NSURLCache got purged.
 // Web: no-ops (browser Cache API + Cache-Control headers already cover).
 import { getCachedAvatarUriOrNull, cacheAvatar } from '../services/avatarCache';
+import { seenAwareTransition, markImageLoaded } from '../utils/imageSeen'; // [2026-10-08 chat-open-flicker]
 let _networkInfo = null;
 try { _networkInfo = require('../services/networkInfo'); } catch {}
 
@@ -653,7 +654,12 @@ function AvatarCircle({ name, email, uri, size = 48, style, online = false, ring
           {...(ExpoImage ? {
             cachePolicy: 'memory-disk',
             contentFit: 'cover',
-            transition: 200,
+            // [2026-10-08 chat-open-flicker] expo-image (iOS) cross-dissolves
+            // even on a memory-cache hit → the header/list avatar faded in
+            // over the initials on EVERY chat open. Fade only the first-ever
+            // network load; disk file / already-painted URL = instant.
+            transition: seenAwareTransition(avatarUrl, 200),
+            onLoad: () => markImageLoaded(avatarUrl),
             // recyclingKey precisa mudar quando o avatar é atualizado, senão
             // o expo-image reutiliza a célula visual com a foto antiga mesmo
             // depois que o URL mudou. Incluir version no key força remount

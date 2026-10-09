@@ -1,34 +1,35 @@
-// Telegram Premium-style sticker store hub.
+// Loja de figurinhas (estilo WhatsApp) — [2026-10-08 sticker-store]
 //
 // Layout:
-//   - Featured pack auto-scroll carousel (top)
-//   - Sections: Trending, New, Animated, Animated Premium
-//   - Pack card: cover + name + author + install_count + Install/Installed CTA
-//   - Tap pack → modal showing all stickers in the pack + Install CTA
+//   - Header (voltar, título, Meus pacotes) + busca
+//   - Abas: Todos | Animados | Créditos
+//   - Lista vertical de pacotes: capa, nome, autor · N figurinhas, faixa de
+//     prévia (5 figurinhas) e botão Adicionar / Remover
+//   - Toque no pacote → folha com a grade completa + Adicionar/Remover + Compartilhar
+//   - Créditos: atribuição/licença de cada fonte de arte (CC BY 4.0 / MIT)
 //
-// Backend actions:
-//   sticker_pack_browse({filter}), sticker_pack_install/uninstall, sticker_pack_my,
-//   sticker_pack_search.
-//
-// We re-use the existing chat-pack item endpoint (chat_sticker_pack_stickers)
-// for the detail-modal sticker grid since both surfaces share the same items
-// shape (sticker_pack_items lives next to chat_stickers, but the new schema's
-// pack id space is distinct — we probe both).
+// Backend (email.php): sticker_pack_browse / _search / _get_by_handle /
+// _install / _uninstall / _my — schema chat_sticker_packs + chat_stickers,
+// o mesmo que o picker (chat_sticker_pack_stickers) lê. Instalar aqui faz o
+// pacote aparecer como aba no picker do chat.
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  View, Text, TouchableOpacity, ScrollView, FlatList, Image, ActivityIndicator,
-  Animated, Dimensions, Platform, Modal, TextInput, RefreshControl, Alert, Share,
+  View, Text, TouchableOpacity, ScrollView, FlatList, ActivityIndicator,
+  Platform, Modal, TextInput, RefreshControl, Alert, Share, Linking,
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useTheme } from '../../context/ThemeContext';
 import { useLanguage } from '../../context/LanguageContext';
 import * as api from '../../services/api';
-import { IconArrowLeft, IconSearch, IconX, IconCheck, IconPlus, IconStar, IconSparkles, IconPackage, IconFilm, IconImage } from '../../components/Icons';
+import {
+  IconArrowLeft, IconSearch, IconX, IconCheck, IconPlus, IconStar, IconPackage, IconFilm,
+  IconImage, IconShare, IconLink, IconInfo,
+} from '../../components/Icons';
 import CachedImage from '../../components/CachedImage';
 
-const SCREEN_W = Dimensions.get('window').width;
-const FEATURED_W = Math.min(SCREEN_W - 32, 360);
-const FEATURED_H = Math.round(FEATURED_W * 0.55);
+// Figurinha é transparente: sem o fundo pastel (LQIP) do CachedImage atrás dela.
+const CLEAR_PLACEHOLDER = { uri: 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7' };
+const LICENSES_URL = 'https://media.chatyy.com.br/stickers/packs/LICENSE.txt';
 
 // Resolve a stored R2 key / relative URL to something Image can fetch.
 function resolveCoverUri(url) {
@@ -42,329 +43,222 @@ function resolveCoverUri(url) {
   return `https://media.chatyy.com.br/${url.replace(/^\/+/, '')}`;
 }
 
-function PackCard({ pack, installedSet, onInstall, onUninstall, onPress, colors, t }) {
-  const installed = installedSet.has(pack.id);
-  const cover = resolveCoverUri(pack.cover_url);
-  const scale = useRef(new Animated.Value(1)).current;
+function packAuthor(pack) {
+  return pack?.author || pack?.author_email?.split('@')?.[0] || '';
+}
 
+function Sticker({ uri, size, colors }) {
+  const u = resolveCoverUri(uri);
+  if (!u) {
+    return (
+      <View style={{ width: size, height: size, alignItems: 'center', justifyContent: 'center' }}>
+        <IconImage size={Math.round(size * 0.45)} color={colors.textTertiary || colors.textSecondary} />
+      </View>
+    );
+  }
   return (
-    <Animated.View style={{ transform: [{ scale }] }}>
-      <TouchableOpacity
-        onPress={onPress}
-        onPressIn={() => Animated.spring(scale, { toValue: 0.97, useNativeDriver: true, tension: 400, friction: 12 }).start()}
-        onPressOut={() => Animated.spring(scale, { toValue: 1, useNativeDriver: true, tension: 200, friction: 8 }).start()}
-        activeOpacity={0.9}
-        style={{
-          width: 156, marginRight: 10,
-          backgroundColor: colors.surface, borderRadius: 16,
-          borderWidth: 1, borderColor: colors.border, overflow: 'hidden',
-        }}
-      >
-        <View style={{
-          width: '100%', height: 110, backgroundColor: colors.surfaceVariant || colors.background,
-          alignItems: 'center', justifyContent: 'center',
-        }}>
-          {cover ? (
-            <Image source={{ uri: cover }} style={{ width: '100%', height: '100%' }} resizeMode="cover" />
-          ) : (
-            pack.animated ? <IconFilm size={44} color={colors.textSecondary || '#9ca3af'} /> : <IconPackage size={44} color={colors.textSecondary || '#9ca3af'} />
-          )}
-          {pack.premium && (
-            <View style={{
-              position: 'absolute', top: 6, left: 6,
-              backgroundColor: 'rgba(17, 17, 17,0.92)', paddingHorizontal: 6, paddingVertical: 2,
-              borderRadius: 8, flexDirection: 'row', alignItems: 'center', gap: 3,
-            }}>
-              <IconStar size={10} color="#fff" />
-              <Text style={{ color: '#fff', fontSize: 9, fontWeight: '800', letterSpacing: 0.4 }}>PRO</Text>
-            </View>
-          )}
-          {pack.animated && (
-            <View style={{
-              position: 'absolute', top: 6, right: 6,
-              backgroundColor: 'rgba(0,0,0,0.55)', paddingHorizontal: 6, paddingVertical: 2,
-              borderRadius: 8,
-            }}>
-              <Text style={{ color: '#fff', fontSize: 9, fontWeight: '700' }}>GIF</Text>
-            </View>
-          )}
+    <CachedImage
+      source={{ uri: u }}
+      style={{ width: size, height: size }}
+      resizeMode="contain"
+      placeholder={CLEAR_PLACEHOLDER}
+      showSpinner={false}
+    />
+  );
+}
+
+function InstallButton({ installed, onPress, colors, t, big }) {
+  const pad = big ? { paddingVertical: 14, flex: 1 } : { paddingVertical: 7, paddingHorizontal: 12 };
+  return (
+    <TouchableOpacity
+      onPress={onPress}
+      activeOpacity={0.75}
+      accessibilityRole="button"
+      style={{
+        ...pad,
+        borderRadius: big ? 14 : 999,
+        backgroundColor: installed ? 'transparent' : colors.text,
+        borderWidth: 1, borderColor: installed ? colors.border : colors.text,
+        alignItems: 'center', justifyContent: 'center', flexDirection: 'row', gap: 6,
+      }}
+    >
+      {installed
+        ? <IconCheck size={big ? 16 : 13} color={colors.text} />
+        : <IconPlus size={big ? 16 : 13} color={colors.background} />}
+      <Text style={{ fontSize: big ? 15 : 13, fontWeight: '700', color: installed ? colors.text : colors.background }}>
+        {installed ? t('stickerStore.remove') : t('stickerStore.add')}
+      </Text>
+    </TouchableOpacity>
+  );
+}
+
+function PackRow({ pack, installed, onToggle, onPress, colors, t }) {
+  const preview = Array.isArray(pack.preview) ? pack.preview.slice(0, 5) : [];
+  const count = pack.sticker_count || 0;
+  return (
+    <TouchableOpacity
+      onPress={onPress}
+      activeOpacity={0.85}
+      style={{
+        marginHorizontal: 16, marginBottom: 12, padding: 14,
+        backgroundColor: colors.surface, borderRadius: 18,
+        borderWidth: 1, borderColor: colors.border,
+      }}
+    >
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+        <View style={{ width: 52, height: 52, alignItems: 'center', justifyContent: 'center' }}>
+          {pack.cover_url
+            ? <Sticker uri={pack.cover_url} size={52} colors={colors} />
+            : (pack.animated ? <IconFilm size={30} color={colors.textSecondary} /> : <IconPackage size={30} color={colors.textSecondary} />)}
         </View>
-        <View style={{ padding: 10 }}>
-          <Text numberOfLines={1} style={{ fontSize: 13, fontWeight: '700', color: colors.text }}>
+        <View style={{ flex: 1, minWidth: 0 }}>
+          <Text numberOfLines={1} style={{ fontSize: 15, fontWeight: '800', color: colors.text }}>
             {pack.name}
           </Text>
-          <Text numberOfLines={1} style={{ fontSize: 11, color: colors.textSecondary, marginTop: 2 }}>
-            {pack.author_email?.split('@')?.[0] || '—'} · {pack.install_count || 0}
-          </Text>
-          <TouchableOpacity
-            onPress={installed ? onUninstall : onInstall}
-            activeOpacity={0.7}
-            style={{
-              marginTop: 8, paddingVertical: 7, borderRadius: 10,
-              backgroundColor: installed ? (colors.surfaceVariant || colors.background) : colors.primary,
-              borderWidth: installed ? 1 : 0, borderColor: colors.border,
-              alignItems: 'center', flexDirection: 'row', justifyContent: 'center', gap: 4,
-            }}
-          >
-            {installed
-              ? <IconCheck size={12} color={colors.text} />
-              : <IconPlus size={12} color={colors.onPrimary || '#fff'} />}
-            <Text style={{
-              fontSize: 12, fontWeight: '700',
-              color: installed ? colors.text : colors.onPrimary,
-            }}>
-              {installed ? (t?.('chat.installed') || 'Instalado') : (t?.('chat.install') || 'Instalar')}
-            </Text>
-          </TouchableOpacity>
-        </View>
-      </TouchableOpacity>
-    </Animated.View>
-  );
-}
-
-function FeaturedCarousel({ packs, colors, onPressPack, t }) {
-  const scrollRef = useRef(null);
-  const idxRef = useRef(0);
-  const [activeIdx, setActiveIdx] = useState(0);
-
-  // Auto-scroll every 4s. Pause when component unmounts.
-  useEffect(() => {
-    if (!packs?.length) return undefined;
-    const id = setInterval(() => {
-      idxRef.current = (idxRef.current + 1) % packs.length;
-      setActiveIdx(idxRef.current);
-      scrollRef.current?.scrollTo({ x: idxRef.current * (FEATURED_W + 12), animated: true });
-    }, 4000);
-    return () => clearInterval(id);
-  }, [packs?.length]);
-
-  if (!packs?.length) return null;
-
-  return (
-    <View style={{ marginTop: 12 }}>
-      <ScrollView
-        ref={scrollRef}
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        snapToInterval={FEATURED_W + 12}
-        decelerationRate="fast"
-        contentContainerStyle={{ paddingHorizontal: 16 }}
-        onMomentumScrollEnd={(e) => {
-          const x = e.nativeEvent.contentOffset.x;
-          idxRef.current = Math.round(x / (FEATURED_W + 12));
-          setActiveIdx(idxRef.current);
-        }}
-      >
-        {packs.map((pack) => {
-          const cover = resolveCoverUri(pack.cover_url);
-          return (
-            <TouchableOpacity
-              key={pack.id}
-              activeOpacity={0.92}
-              onPress={() => onPressPack(pack)}
-              style={{
-                width: FEATURED_W, height: FEATURED_H, marginRight: 12,
-                borderRadius: 18, overflow: 'hidden',
-                backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border,
-              }}
-            >
-              {cover && (
-                <Image source={{ uri: cover }} style={{ width: '100%', height: '100%', position: 'absolute' }} resizeMode="cover" />
-              )}
-              <View style={{
-                position: 'absolute', bottom: 0, left: 0, right: 0,
-                paddingHorizontal: 14, paddingVertical: 12,
-                backgroundColor: 'rgba(0,0,0,0.55)',
-              }}>
-                <Text numberOfLines={1} style={{ color: '#fff', fontSize: 16, fontWeight: '800' }}>
-                  {pack.name}
-                </Text>
-                <Text numberOfLines={1} style={{ color: 'rgba(255,255,255,0.85)', fontSize: 11, marginTop: 2 }}>
-                  {pack.install_count || 0} {t?.('chat.installs') || 'instalados'}
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 3 }}>
+            {pack.animated && (
+              <View style={{ borderWidth: 1, borderColor: colors.border, borderRadius: 6, paddingHorizontal: 5, paddingVertical: 1 }}>
+                <Text style={{ fontSize: 9, fontWeight: '800', color: colors.textSecondary, letterSpacing: 0.3 }}>
+                  {t('stickerStore.animatedBadge')}
                 </Text>
               </View>
-            </TouchableOpacity>
-          );
-        })}
-      </ScrollView>
-      {/* Dot indicator */}
-      <View style={{ flexDirection: 'row', justifyContent: 'center', marginTop: 8, gap: 5 }}>
-        {packs.map((_, i) => (
-          <View
-            key={i}
-            style={{
-              width: i === activeIdx ? 16 : 6, height: 6, borderRadius: 3,
-              backgroundColor: i === activeIdx ? colors.primary : colors.border,
-            }}
-          />
-        ))}
+            )}
+            <Text numberOfLines={1} style={{ flexShrink: 1, fontSize: 12, color: colors.textSecondary }}>
+              {t('stickerStore.count', { n: count })}
+            </Text>
+          </View>
+        </View>
+        <InstallButton installed={installed} onPress={onToggle} colors={colors} t={t} />
       </View>
-    </View>
+      {preview.length > 0 && (
+        <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 12 }}>
+          {preview.map((u, i) => (
+            <View key={u + i} style={{ width: '19%', aspectRatio: 1, alignItems: 'center', justifyContent: 'center' }}>
+              <Sticker uri={u} size={52} colors={colors} />
+            </View>
+          ))}
+        </View>
+      )}
+    </TouchableOpacity>
   );
 }
 
-function PackDetailModal({ pack, visible, onClose, installedSet, onInstall, onUninstall, colors, t }) {
+function PackDetailModal({ pack, visible, onClose, installed, onToggle, colors, t }) {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(false);
-  const installed = pack ? installedSet.has(pack.id) : false;
 
   useEffect(() => {
     if (!visible || !pack) return;
+    let alive = true;
     setLoading(true);
     setItems([]);
-    // Reuse the existing chat_sticker_pack_stickers endpoint — pack ids in the
-    // new sticker_packs table won't necessarily collide with chat_sticker_packs.
-    // The endpoint returns [] for unknown packs which is the desired no-op.
     api.chatStickerPackStickers(pack.id).then((r) => {
       const arr = r?.items || r?.data?.items || r?.stickers || [];
-      setItems(Array.isArray(arr) ? arr : []);
-    }).catch(() => {}).finally(() => setLoading(false));
+      if (alive) setItems(Array.isArray(arr) ? arr : []);
+    }).catch(() => {}).finally(() => { if (alive) setLoading(false); });
+    return () => { alive = false; };
   }, [visible, pack?.id]);
+
+  const share = useCallback(async () => {
+    const handle = pack?.handle;
+    if (!handle) {
+      Alert.alert(t('stickerStore.shareUnavailable'), t('stickerStore.shareUnavailableBody'));
+      return;
+    }
+    const url = `https://chatyy.com.br/stickers/store?install=${encodeURIComponent(handle)}`;
+    const message = t('stickerStore.shareMsg') + ' ' + url;
+    try {
+      if (Platform.OS === 'web') {
+        if (typeof navigator !== 'undefined' && navigator.share) {
+          await navigator.share({ title: pack.name, text: message, url });
+        } else if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+          await navigator.clipboard.writeText(url);
+          Alert.alert(t('stickerStore.linkCopied'), url);
+        } else {
+          Alert.alert(pack.name, url);
+        }
+      } else {
+        await Share.share({ message, url, title: pack.name });
+      }
+    } catch {}
+  }, [pack, t]);
 
   if (!visible || !pack) return null;
 
   return (
     <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
       <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.55)', justifyContent: 'flex-end' }}>
+        <TouchableOpacity style={{ flex: 1 }} activeOpacity={1} onPress={onClose} />
         <View style={{
-          backgroundColor: colors.background, borderTopLeftRadius: 20, borderTopRightRadius: 20,
-          maxHeight: '85%',
+          backgroundColor: colors.background, borderTopLeftRadius: 22, borderTopRightRadius: 22,
+          maxHeight: '88%', minHeight: '55%',
         }}>
-          {/* Header */}
-          <View style={{
-            paddingHorizontal: 16, paddingVertical: 14,
-            flexDirection: 'row', alignItems: 'center', gap: 12,
-            borderBottomWidth: 1, borderBottomColor: colors.border,
-          }}>
-            <View style={{
-              width: 56, height: 56, borderRadius: 12, overflow: 'hidden',
-              backgroundColor: colors.surfaceVariant || colors.surface,
-              alignItems: 'center', justifyContent: 'center',
-            }}>
-              {pack.cover_url ? (
-                <Image source={{ uri: resolveCoverUri(pack.cover_url) }} style={{ width: '100%', height: '100%' }} resizeMode="cover" />
-              ) : (
-                pack.animated ? <IconFilm size={28} color={colors.textSecondary || '#9ca3af'} /> : <IconPackage size={28} color={colors.textSecondary || '#9ca3af'} />
-              )}
-            </View>
-            <View style={{ flex: 1 }}>
-              <Text numberOfLines={1} style={{ fontSize: 16, fontWeight: '800', color: colors.text }}>{pack.name}</Text>
+          <View style={{ alignItems: 'center', paddingTop: 8 }}>
+            <View style={{ width: 36, height: 4, borderRadius: 2, backgroundColor: colors.border }} />
+          </View>
+          <View style={{ paddingHorizontal: 16, paddingVertical: 12, flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+            <Sticker uri={pack.cover_url} size={52} colors={colors} />
+            <View style={{ flex: 1, minWidth: 0 }}>
+              <Text numberOfLines={1} style={{ fontSize: 17, fontWeight: '800', color: colors.text }}>{pack.name}</Text>
               <Text numberOfLines={1} style={{ fontSize: 12, color: colors.textSecondary, marginTop: 2 }}>
-                {pack.author_email?.split('@')?.[0] || '—'} · {pack.install_count || 0} {t?.('chat.installs') || 'instalados'}
+                {[packAuthor(pack), t('stickerStore.count', { n: pack.sticker_count || items.length || 0 })].filter(Boolean).join(' · ')}
               </Text>
             </View>
-            <TouchableOpacity onPress={onClose} hitSlop={10}>
+            <TouchableOpacity onPress={onClose} hitSlop={10} accessibilityLabel="close-pack">
               <IconX size={22} color={colors.text} />
             </TouchableOpacity>
           </View>
-
-          {/* Description */}
           {!!pack.description && (
-            <Text style={{ paddingHorizontal: 16, paddingTop: 10, fontSize: 13, color: colors.textSecondary }}>
+            <Text style={{ paddingHorizontal: 16, fontSize: 13, color: colors.textSecondary }}>
               {pack.description}
             </Text>
           )}
+          {!!pack.license && (
+            <Text style={{ paddingHorizontal: 16, paddingTop: 4, fontSize: 11, color: colors.textTertiary || colors.textSecondary }}>
+              {t('stickerStore.licenseLine', { license: pack.license })}
+            </Text>
+          )}
 
-          {/* Sticker grid */}
-          <View style={{ flex: 1, padding: 12 }}>
+          <View style={{ flex: 1, paddingHorizontal: 10, paddingTop: 8 }}>
             {loading ? (
-              <ActivityIndicator size="small" color={colors.primary} style={{ marginTop: 24 }} />
+              <ActivityIndicator size="small" color={colors.text} style={{ marginTop: 24 }} />
             ) : items.length === 0 ? (
               <View style={{ alignItems: 'center', justifyContent: 'center', paddingVertical: 40 }}>
-                <IconPackage size={36} color={colors.textSecondary || '#9ca3af'} />
-                <Text style={{ marginTop: 8, fontSize: 13, color: colors.textTertiary }}>
-                  {t?.('chat.emptyPack') || 'Pacote vazio'}
+                <IconPackage size={36} color={colors.textSecondary} />
+                <Text style={{ marginTop: 8, fontSize: 13, color: colors.textSecondary }}>
+                  {t('stickerStore.emptyPack')}
                 </Text>
               </View>
             ) : (
               <FlatList
                 data={items}
-                keyExtractor={(it, i) => String(it.id ?? it.sticker_id ?? i)}
+                keyExtractor={(it, i) => String(it.id ?? i)}
                 numColumns={4}
                 showsVerticalScrollIndicator={false}
-                contentContainerStyle={{ paddingBottom: 20 }}
-                renderItem={({ item }) => {
-                  const uri = resolveCoverUri(item.url || item.image_url || item.sticker_id);
-                  return (
-                    <View style={{
-                      flex: 1 / 4, aspectRatio: 1, padding: 4,
-                      alignItems: 'center', justifyContent: 'center',
-                    }}>
-                      {uri ? (
-                        <CachedImage source={{ uri }} style={{ width: '90%', height: '90%' }} resizeMode="contain" />
-                      ) : (
-                        item.emoji || item.emoji_alt
-                          ? <Text style={{ fontSize: 28 }}>{item.emoji || item.emoji_alt}</Text>
-                          : <IconImage size={28} color={colors.textSecondary || '#9ca3af'} />
-                      )}
-                    </View>
-                  );
-                }}
+                contentContainerStyle={{ paddingBottom: 16 }}
+                renderItem={({ item }) => (
+                  <View style={{ flex: 1 / 4, aspectRatio: 1, padding: 6, alignItems: 'center', justifyContent: 'center' }}>
+                    <Sticker uri={item.url || item.image_url} size={72} colors={colors} />
+                  </View>
+                )}
               />
             )}
           </View>
 
-          {/* CTA */}
           <View style={{ padding: 16, borderTopWidth: 1, borderTopColor: colors.border, flexDirection: 'row', gap: 10 }}>
+            <InstallButton big installed={installed} onPress={() => onToggle(pack)} colors={colors} t={t} />
             <TouchableOpacity
-              onPress={() => (installed ? onUninstall(pack) : onInstall(pack))}
-              activeOpacity={0.85}
+              onPress={share}
+              activeOpacity={0.8}
+              accessibilityLabel={t('stickerStore.share')}
               style={{
-                flex: 1,
-                paddingVertical: 14, borderRadius: 14,
-                backgroundColor: installed ? (colors.surfaceVariant || colors.background) : colors.primary,
-                borderWidth: installed ? 1 : 0, borderColor: colors.border,
-                alignItems: 'center',
-              }}
-            >
-              <Text style={{
-                fontSize: 15, fontWeight: '800',
-                color: installed ? colors.text : colors.onPrimary,
-              }}>
-                {installed
-                  ? (t?.('chat.uninstallPack') || 'Remover pacote')
-                  : (t?.('chat.installPack') || 'Adicionar pacote')}
-              </Text>
-            </TouchableOpacity>
-            {/* Share button — only meaningful if the pack has a handle, which
-                is true for all newly minted packs (sticker_pack_create assigns
-                one). Older / legacy packs without a handle still render the
-                button but it short-circuits with a polite warning. */}
-            <TouchableOpacity
-              onPress={async () => {
-                const handle = pack.handle;
-                if (!handle) {
-                  Alert.alert(t?.('chat.shareUnavailable') || 'Não dá pra compartilhar', t?.('chat.shareUnavailableBody') || 'Esse pacote não tem link público.');
-                  return;
-                }
-                const url = `https://chatyy.com.br/stickers/store?install=${encodeURIComponent(handle)}`;
-                const message = (t?.('chat.shareMsg') || 'Confira esse pacote no Chatyy:') + ' ' + url;
-                try {
-                  if (Platform.OS === 'web') {
-                    if (navigator.share) {
-                      await navigator.share({ title: pack.name, text: message, url });
-                    } else if (navigator.clipboard?.writeText) {
-                      await navigator.clipboard.writeText(url);
-                      Alert.alert(t?.('chat.linkCopied') || 'Link copiado', url);
-                    } else {
-                      Alert.alert(pack.name, url);
-                    }
-                  } else {
-                    await Share.share({ message, url, title: pack.name });
-                  }
-                } catch {}
-              }}
-              activeOpacity={0.85}
-              style={{
-                paddingVertical: 14, paddingHorizontal: 18, borderRadius: 14,
-                backgroundColor: colors.surfaceVariant || colors.background,
+                paddingVertical: 14, paddingHorizontal: 16, borderRadius: 14,
                 borderWidth: 1, borderColor: colors.border,
-                alignItems: 'center', justifyContent: 'center',
+                alignItems: 'center', justifyContent: 'center', flexDirection: 'row', gap: 6,
               }}
             >
-              <Text style={{ fontSize: 15, fontWeight: '700', color: colors.text }}>
-                {t?.('common.share') || 'Compartilhar'}
-              </Text>
+              <IconShare size={16} color={colors.text} />
+              <Text style={{ fontSize: 15, fontWeight: '700', color: colors.text }}>{t('stickerStore.share')}</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -373,45 +267,97 @@ function PackDetailModal({ pack, visible, onClose, installedSet, onInstall, onUn
   );
 }
 
+function CreditsView({ packs, colors, t }) {
+  // Agrupa os pacotes por fonte de arte (attribution + licença + link).
+  const groups = useMemo(() => {
+    const m = new Map();
+    for (const p of packs) {
+      if (!p.license && !p.attribution) continue;
+      const k = `${p.author}|${p.license}|${p.source_url}`;
+      if (!m.has(k)) m.set(k, { author: p.author, license: p.license, attribution: p.attribution, source: p.source_url, packs: [] });
+      m.get(k).packs.push(p.name);
+    }
+    return Array.from(m.values());
+  }, [packs]);
+
+  const open = (u) => { if (u) Linking.openURL(u).catch(() => {}); };
+
+  return (
+    <View style={{ paddingHorizontal: 16, paddingTop: 4 }}>
+      <View style={{ flexDirection: 'row', gap: 10, alignItems: 'flex-start', marginBottom: 14 }}>
+        <IconInfo size={18} color={colors.textSecondary} />
+        <Text style={{ flex: 1, fontSize: 13, lineHeight: 19, color: colors.textSecondary }}>
+          {t('stickerStore.creditsIntro')}
+        </Text>
+      </View>
+      {groups.map((g) => (
+        <View key={g.author + g.license} style={{
+          padding: 14, marginBottom: 12, borderRadius: 16,
+          borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface,
+        }}>
+          <Text style={{ fontSize: 15, fontWeight: '800', color: colors.text }}>{g.author}</Text>
+          <Text style={{ fontSize: 12, fontWeight: '700', color: colors.text, marginTop: 4 }}>
+            {t('stickerStore.licenseLine', { license: g.license })}
+          </Text>
+          {!!g.attribution && (
+            <Text style={{ fontSize: 12, lineHeight: 18, color: colors.textSecondary, marginTop: 6 }}>{g.attribution}</Text>
+          )}
+          <Text style={{ fontSize: 12, lineHeight: 18, color: colors.textSecondary, marginTop: 6 }}>
+            {t('stickerStore.creditsPacks', { packs: g.packs.join(', ') })}
+          </Text>
+          {!!g.source && (
+            <TouchableOpacity onPress={() => open(g.source)} style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 10 }}>
+              <IconLink size={14} color={colors.text} />
+              <Text style={{ fontSize: 13, fontWeight: '700', color: colors.text, textDecorationLine: 'underline' }}>
+                {t('stickerStore.creditsSource')}
+              </Text>
+            </TouchableOpacity>
+          )}
+        </View>
+      ))}
+      <TouchableOpacity onPress={() => open(LICENSES_URL)} style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 8 }}>
+        <IconLink size={14} color={colors.text} />
+        <Text style={{ fontSize: 13, fontWeight: '700', color: colors.text, textDecorationLine: 'underline' }}>
+          {t('stickerStore.creditsFullText')}
+        </Text>
+      </TouchableOpacity>
+    </View>
+  );
+}
+
+const TABS = ['all', 'animated', 'credits'];
+
 export default function StickerStoreScreen() {
   const router = useRouter();
   const params = useLocalSearchParams();
   const { colors } = useTheme();
   const { t } = useLanguage();
-  const [trending, setTrending] = useState([]);
-  const [fresh, setFresh] = useState([]);
-  const [animated, setAnimated] = useState([]);
-  const [premium, setPremium] = useState([]);
-  const [featured, setFeatured] = useState([]);
+  const [packs, setPacks] = useState([]);
   const [installed, setInstalled] = useState(new Set());
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [tab, setTab] = useState('all');
   const [search, setSearch] = useState('');
   const [searchResults, setSearchResults] = useState([]);
   const [searching, setSearching] = useState(false);
   const [selectedPack, setSelectedPack] = useState(null);
+  const busyRef = useRef(new Set());
 
   const refresh = useCallback(async () => {
     try {
-      const [t1, t2, t3, t4, t5, mine] = await Promise.all([
-        api.stickerPackBrowse('trending'),
-        api.stickerPackBrowse('new'),
-        api.stickerPackBrowse('animated'),
-        api.stickerPackBrowse('premium'),
+      const [all, mine] = await Promise.all([
         api.stickerPackBrowse('featured'),
         api.stickerPackMy(),
       ]);
-      setTrending(t1?.items || t1?.data?.items || []);
-      setFresh(t2?.items || t2?.data?.items || []);
-      setAnimated(t3?.items || t3?.data?.items || []);
-      setPremium(t4?.items || t4?.data?.items || []);
-      // Featured = top 5 by install_count over 30d.
-      const f = (t5?.items || t5?.data?.items || []).slice(0, 5);
-      setFeatured(f);
+      const list = all?.items || all?.data?.items;
+      if (!Array.isArray(list)) throw new Error('browse_failed');
+      setPacks(list);
+      setLoadError(false);
       const installedItems = mine?.items || mine?.data?.items || [];
       setInstalled(new Set(installedItems.map((p) => p.id)));
     } catch (e) {
-      // soft fail — empty sections.
+      setLoadError(true);
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -420,33 +366,26 @@ export default function StickerStoreScreen() {
 
   useEffect(() => { refresh(); }, [refresh]);
 
-  // Deep-link install: if the screen is opened with `?install=<handle>` (from
-  // a share link), resolve the handle → pack row → auto-open the install
-  // modal. Runs once per mount; subsequent param changes (rare) re-trigger.
+  // Deep link `?install=<handle>` (link compartilhado) → abre a folha do pacote.
   const installHandleSeenRef = useRef(null);
   useEffect(() => {
     const raw = params?.install;
     const handle = typeof raw === 'string' ? raw.trim() : Array.isArray(raw) ? String(raw[0] || '').trim() : '';
-    if (!handle) return;
-    if (installHandleSeenRef.current === handle) return;
+    if (!handle || installHandleSeenRef.current === handle) return;
     installHandleSeenRef.current = handle;
     (async () => {
       try {
         const r = await api.stickerPackGetByHandle(handle);
         const pack = r?.pack || r?.data?.pack;
-        if (pack && pack.id) {
-          setSelectedPack(pack);
-        }
-      } catch {
-        // Soft-fail: user just lands on the store with no modal.
-      }
+        if (pack && pack.id) setSelectedPack(pack);
+      } catch {}
     })();
   }, [params?.install]);
 
-  // Debounced search.
+  // Busca com debounce.
   useEffect(() => {
     const q = search.trim();
-    if (q.length < 2) { setSearchResults([]); return undefined; }
+    if (q.length < 2) { setSearchResults([]); setSearching(false); return undefined; }
     setSearching(true);
     const tid = setTimeout(async () => {
       try {
@@ -459,57 +398,39 @@ export default function StickerStoreScreen() {
     return () => clearTimeout(tid);
   }, [search]);
 
-  const installPack = useCallback(async (pack) => {
-    // Optimistic — flip locally, then persist. On failure, revert.
-    setInstalled((prev) => { const n = new Set(prev); n.add(pack.id); return n; });
+  const togglePack = useCallback(async (pack) => {
+    if (!pack?.id || busyRef.current.has(pack.id)) return;
+    busyRef.current.add(pack.id);
+    const wasInstalled = installed.has(pack.id);
+    // Otimista — vira na hora; reverte se o servidor falhar.
+    setInstalled((prev) => { const n = new Set(prev); if (wasInstalled) n.delete(pack.id); else n.add(pack.id); return n; });
     try {
-      const r = await api.stickerPackInstall(pack.id);
-      if (!r?.success) throw new Error(r?.error || r?.message || 'install_failed');
+      const r = wasInstalled ? await api.stickerPackUninstall(pack.id) : await api.stickerPackInstall(pack.id);
+      if (!r?.success) throw new Error('toggle_failed');
     } catch (e) {
-      setInstalled((prev) => { const n = new Set(prev); n.delete(pack.id); return n; });
-      Alert.alert(t?.('common.error') || 'Erro', e?.message || 'Falha ao instalar pacote.');
+      setInstalled((prev) => { const n = new Set(prev); if (wasInstalled) n.add(pack.id); else n.delete(pack.id); return n; });
+      Alert.alert(t('stickerStore.errorTitle'), wasInstalled ? t('stickerStore.uninstallFailed') : t('stickerStore.installFailed'));
+    } finally {
+      busyRef.current.delete(pack.id);
     }
-  }, [t]);
+  }, [installed, t]);
 
-  const uninstallPack = useCallback(async (pack) => {
-    setInstalled((prev) => { const n = new Set(prev); n.delete(pack.id); return n; });
-    try {
-      const r = await api.stickerPackUninstall(pack.id);
-      if (!r?.success) throw new Error(r?.error || r?.message || 'uninstall_failed');
-    } catch (e) {
-      setInstalled((prev) => { const n = new Set(prev); n.add(pack.id); return n; });
-      Alert.alert(t?.('common.error') || 'Erro', e?.message || 'Falha ao remover pacote.');
-    }
-  }, [t]);
+  const searchingMode = search.trim().length >= 2;
+  const visiblePacks = searchingMode
+    ? searchResults
+    : tab === 'animated' ? packs.filter((p) => p.animated) : packs;
 
-  const renderRow = (title, packs) => {
-    if (!packs?.length) return null;
-    return (
-      <View style={{ marginTop: 18 }}>
-        <Text style={{
-          paddingHorizontal: 16, fontSize: 14, fontWeight: '800',
-          color: colors.text, marginBottom: 10, letterSpacing: 0.3,
-        }}>
-          {title}
-        </Text>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false}
-          contentContainerStyle={{ paddingHorizontal: 16, paddingVertical: 4 }}>
-          {packs.map((p) => (
-            <PackCard
-              key={p.id}
-              pack={p}
-              installedSet={installed}
-              onPress={() => setSelectedPack(p)}
-              onInstall={() => installPack(p)}
-              onUninstall={() => uninstallPack(p)}
-              colors={colors}
-              t={t}
-            />
-          ))}
-        </ScrollView>
-      </View>
-    );
-  };
+  const renderPack = (p) => (
+    <PackRow
+      key={p.id}
+      pack={p}
+      installed={installed.has(p.id)}
+      onPress={() => setSelectedPack(p)}
+      onToggle={() => togglePack(p)}
+      colors={colors}
+      t={t}
+    />
+  );
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.background }}>
@@ -523,30 +444,30 @@ export default function StickerStoreScreen() {
           <IconArrowLeft size={22} color={colors.text} />
         </TouchableOpacity>
         <Text style={{ flex: 1, fontSize: 17, fontWeight: '800', color: colors.text }}>
-          {t?.('chat.stickerStore') || 'Loja de figurinhas'}
+          {t('stickerStore.title')}
         </Text>
         <TouchableOpacity onPress={() => router.push('/stickers/my')} hitSlop={10}
           style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-          <IconStar size={18} color={colors.primary} />
-          <Text style={{ color: colors.primary, fontSize: 13, fontWeight: '700' }}>
-            {t?.('chat.myPacks') || 'Meus packs'}
+          <IconStar size={17} color={colors.text} />
+          <Text style={{ color: colors.text, fontSize: 13, fontWeight: '700' }}>
+            {t('stickerStore.myPacks')}
           </Text>
         </TouchableOpacity>
       </View>
 
-      {/* Search */}
+      {/* Busca */}
       <View style={{ paddingHorizontal: 16, paddingTop: 12 }}>
         <View style={{
           flexDirection: 'row', alignItems: 'center',
           backgroundColor: colors.surface, borderRadius: 12, paddingHorizontal: 12,
           borderWidth: 1, borderColor: colors.border,
         }}>
-          <IconSearch size={16} color={colors.textTertiary} />
+          <IconSearch size={16} color={colors.textSecondary} />
           <TextInput
             value={search}
             onChangeText={setSearch}
-            placeholder={t?.('chat.searchPacks') || 'Buscar pacotes…'}
-            placeholderTextColor={colors.textTertiary}
+            placeholder={t('stickerStore.searchPlaceholder')}
+            placeholderTextColor={colors.textTertiary || colors.textSecondary}
             style={{
               flex: 1, paddingVertical: 10, paddingHorizontal: 8, fontSize: 14, color: colors.text,
               ...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {}),
@@ -555,61 +476,73 @@ export default function StickerStoreScreen() {
           />
           {!!search && (
             <TouchableOpacity onPress={() => setSearch('')} hitSlop={8}>
-              <IconX size={14} color={colors.textTertiary} />
+              <IconX size={14} color={colors.textSecondary} />
             </TouchableOpacity>
           )}
         </View>
       </View>
 
+      {/* Abas */}
+      {!searchingMode && (
+        <View style={{ flexDirection: 'row', gap: 8, paddingHorizontal: 16, paddingTop: 12, paddingBottom: 4 }}>
+          {TABS.map((k) => {
+            const active = tab === k;
+            return (
+              <TouchableOpacity
+                key={k}
+                onPress={() => setTab(k)}
+                activeOpacity={0.8}
+                style={{
+                  paddingHorizontal: 14, paddingVertical: 7, borderRadius: 999,
+                  backgroundColor: active ? colors.text : 'transparent',
+                  borderWidth: 1, borderColor: active ? colors.text : colors.border,
+                }}
+              >
+                <Text style={{ fontSize: 13, fontWeight: '700', color: active ? colors.background : colors.text }}>
+                  {t(k === 'all' ? 'stickerStore.tabAll' : k === 'animated' ? 'stickerStore.tabAnimated' : 'stickerStore.tabCredits')}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+      )}
+
       {loading ? (
-        <ActivityIndicator size="large" color={colors.primary} style={{ marginTop: 36 }} />
+        <ActivityIndicator size="large" color={colors.text} style={{ marginTop: 36 }} />
       ) : (
         <ScrollView
           showsVerticalScrollIndicator={false}
-          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); refresh(); }} tintColor={colors.primary} />}
-          contentContainerStyle={{ paddingBottom: 32 }}
+          keyboardShouldPersistTaps="handled"
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); refresh(); }} tintColor={colors.text} />}
+          contentContainerStyle={{ paddingTop: 10, paddingBottom: 32 }}
         >
-          {search.trim().length >= 2 ? (
-            <View style={{ marginTop: 12 }}>
-              <Text style={{
-                paddingHorizontal: 16, fontSize: 14, fontWeight: '800',
-                color: colors.text, marginBottom: 10,
-              }}>
-                {t?.('chat.searchResults') || 'Resultados'}
+          {searchingMode ? (
+            searching ? (
+              <ActivityIndicator size="small" color={colors.text} style={{ marginTop: 16 }} />
+            ) : visiblePacks.length === 0 ? (
+              <Text style={{ paddingHorizontal: 16, fontSize: 13, color: colors.textSecondary }}>
+                {t('stickerStore.noResults')}
               </Text>
-              {searching ? (
-                <ActivityIndicator size="small" color={colors.primary} />
-              ) : searchResults.length === 0 ? (
-                <Text style={{ paddingHorizontal: 16, fontSize: 13, color: colors.textTertiary }}>
-                  {t?.('chat.noPacksFound') || 'Nenhum pacote encontrado.'}
-                </Text>
-              ) : (
-                <ScrollView horizontal showsHorizontalScrollIndicator={false}
-                  contentContainerStyle={{ paddingHorizontal: 16, paddingVertical: 4 }}>
-                  {searchResults.map((p) => (
-                    <PackCard
-                      key={p.id}
-                      pack={p}
-                      installedSet={installed}
-                      onPress={() => setSelectedPack(p)}
-                      onInstall={() => installPack(p)}
-                      onUninstall={() => uninstallPack(p)}
-                      colors={colors}
-                      t={t}
-                    />
-                  ))}
-                </ScrollView>
-              )}
+            ) : visiblePacks.map(renderPack)
+          ) : tab === 'credits' ? (
+            <CreditsView packs={packs} colors={colors} t={t} />
+          ) : loadError && packs.length === 0 ? (
+            <View style={{ alignItems: 'center', paddingTop: 40, paddingHorizontal: 24 }}>
+              <Text style={{ fontSize: 14, color: colors.textSecondary, textAlign: 'center' }}>
+                {t('stickerStore.loadError')}
+              </Text>
+              <TouchableOpacity
+                onPress={() => { setLoading(true); refresh(); }}
+                style={{ marginTop: 14, paddingHorizontal: 18, paddingVertical: 9, borderRadius: 999, borderWidth: 1, borderColor: colors.text }}
+              >
+                <Text style={{ fontSize: 13, fontWeight: '700', color: colors.text }}>{t('stickerStore.retry')}</Text>
+              </TouchableOpacity>
             </View>
-          ) : (
-            <>
-              <FeaturedCarousel packs={featured} colors={colors} onPressPack={(p) => setSelectedPack(p)} t={t} />
-              {renderRow(t?.('chat.trending') || 'Em alta', trending)}
-              {renderRow(t?.('chat.newPacks') || 'Novos', fresh)}
-              {renderRow(t?.('chat.animatedPacks') || 'Animados', animated)}
-              {renderRow(t?.('chat.animatedPremium') || 'Animados Premium', premium)}
-            </>
-          )}
+          ) : visiblePacks.length === 0 ? (
+            <Text style={{ paddingHorizontal: 16, paddingTop: 20, fontSize: 13, color: colors.textSecondary, textAlign: 'center' }}>
+              {t('stickerStore.empty')}
+            </Text>
+          ) : visiblePacks.map(renderPack)}
         </ScrollView>
       )}
 
@@ -617,9 +550,8 @@ export default function StickerStoreScreen() {
         pack={selectedPack}
         visible={!!selectedPack}
         onClose={() => setSelectedPack(null)}
-        installedSet={installed}
-        onInstall={installPack}
-        onUninstall={uninstallPack}
+        installed={selectedPack ? installed.has(selectedPack.id) : false}
+        onToggle={togglePack}
         colors={colors}
         t={t}
       />

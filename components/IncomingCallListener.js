@@ -11,6 +11,13 @@ import { startRingtone, stopRingtone } from '../services/ringtone';
 import { stopAllAudio } from '../services/audioManager';
 import { ensureContactIndex, lookupName as lookupDeviceContactName } from '../services/deviceContactLookup';
 
+// [2026-10-08 qa-calls] chat_call_invite_v2 manda `video: '0'|'1'` (string) no
+// WS; `!!'0'` === true → ligação de VOZ abria como VÍDEO no web (banner
+// "Câmera desligada", controles de vídeo e a CÂMERA do callee ligando).
+function _isVideoFlag(v) {
+  return v === true || v === 1 || v === '1' || v === 'true';
+}
+
 // [WAVE 104F] Call telemetry — best-effort, never throws.
 let _callDiagAppend = () => {};
 try { _callDiagAppend = require('../services/callDiag').callDiagAppend; } catch {}
@@ -552,7 +559,7 @@ function IncomingCallListenerWeb() {
             contactName: data.caller_name || callerEmail?.split('@')[0] || '',
             callId: normalizedCallId,
             type: 'missed',
-            video: !!data.video,
+            video: _isVideoFlag(data.video),
             timestamp: new Date().toISOString(),
             duration: 0,
             auto_declined: true,
@@ -619,7 +626,7 @@ function IncomingCallListenerWeb() {
           contactName: c.caller_name || c.caller_email?.split('@')[0] || '',
           callId: c.call_id || c.room_id || '',
           type: 'missed',
-          video: !!c.video,
+          video: _isVideoFlag(c.video),
           timestamp: new Date().toISOString(),
           duration: 0,
         }).catch(() => {});
@@ -805,7 +812,7 @@ function IncomingCallListenerWeb() {
               conversation_id: data.conversation_id || callStateRef.current?.conversation_id || '',
               call_id: data.call_id || data.room_id,
               room_id: data.room_id || data.call_id,
-              video: data.video,
+              video: _isVideoFlag(data.video),
             };
           }
           return;
@@ -990,7 +997,7 @@ function IncomingCallListenerWeb() {
             caller_name: data.caller_name,
             caller_phone: data.caller_phone || '',
             conversation_id: data.conversation_id,
-            video: data.video,
+            video: _isVideoFlag(data.video),
             offer_sdp: data.sdp,
             offer_type: sdpType,
           };
@@ -1172,7 +1179,7 @@ function IncomingCallListenerWeb() {
               contactName: c.caller_name || c.caller_email?.split('@')[0] || '',
               callId: c.call_id || c.room_id || '',
               type: 'missed',
-              video: !!c.video,
+              video: _isVideoFlag(c.video),
               timestamp: new Date().toISOString(),
               duration: 0,
             }).catch(() => {});
@@ -1232,7 +1239,7 @@ function IncomingCallListenerWeb() {
               contactName: c.caller_name || c.caller_email?.split('@')[0] || '',
               callId: c.call_id || c.room_id || '',
               type: 'missed',
-              video: !!c.video,
+              video: _isVideoFlag(c.video),
               timestamp: new Date().toISOString(),
               duration: 0,
             }).catch(() => {});
@@ -1857,7 +1864,7 @@ function IncomingCallListenerWeb() {
       || currentCall.caller_email?.split('@')[0]
       || '';
     const callerEmail = currentCall.caller_email || '';
-    const isVideo = !!currentCall.video ? '1' : '0';
+    const isVideo = _isVideoFlag(currentCall.video) ? '1' : '0';
     const conversationId = currentCall.conversation_id || '';
     const callerVerifiedParam = (currentCall.caller_verified === true
       || currentCall.caller_verified === 1
@@ -2030,7 +2037,7 @@ function IncomingCallListenerWeb() {
         contactName: currentCall.caller_name || currentCall.caller_email?.split('@')[0] || '',
         callId: callId,
         type: 'missed',
-        video: !!currentCall.video,
+        video: _isVideoFlag(currentCall.video),
         timestamp: new Date().toISOString(),
         duration: 0,
       }).catch(() => {});
@@ -2087,7 +2094,7 @@ function IncomingCallListenerWeb() {
     || call.caller_email?.split('@')[0]
     || '?';
   const callerEmail = call.caller_email || '';
-  const isVideo = !!call.video;
+  const isVideo = _isVideoFlag(call.video);
   // Trust the backend flag — set when the caller has completed Telnyx
   // caller-id verification (PIN-confirmed phone in profile/data.json).
   // Both '1' (string from FCM data payload) and true (JS bool) are valid.

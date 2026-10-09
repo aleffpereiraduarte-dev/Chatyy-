@@ -5,7 +5,7 @@ import {
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import CachedImage from './CachedImage';
-import { IconX, IconPlus, IconSearch, IconHeart, IconStar, IconTrash } from './Icons';
+import { IconX, IconPlus, IconSearch, IconHeart, IconStar, IconTrash, IconFilm, IconPackage } from './Icons';
 import * as api from '../services/api';
 // [2026-10-08 sticker-maker] criador novo (recorte automático + contorno +
 // texto/desenho/emoji + WebP 512) substitui o StickerEditor antigo aqui.
@@ -117,29 +117,9 @@ const SEARCH_INDEX = {
 
 // Animated sticker pack — WebP URLs (Telegram-compatible animated stickers)
 // These render as animated images natively and on web via <img> tag.
-const ANIMATED_PACKS = [
-  {
-    id: 'animated-faces',
-    name: 'Animated',
-    thumb: '🎭',
-    animated: true,
-    stickers: [
-      // Peach & Goma (popular Telegram pack) — public domain animated WebP
-      'https://media.chatyy.com.br/stickers/animated/wave.webp',
-      'https://media.chatyy.com.br/stickers/animated/heart.webp',
-      'https://media.chatyy.com.br/stickers/animated/laugh.webp',
-      'https://media.chatyy.com.br/stickers/animated/cry.webp',
-      'https://media.chatyy.com.br/stickers/animated/angry.webp',
-      'https://media.chatyy.com.br/stickers/animated/party.webp',
-      'https://media.chatyy.com.br/stickers/animated/sleep.webp',
-      'https://media.chatyy.com.br/stickers/animated/fire.webp',
-      'https://media.chatyy.com.br/stickers/animated/thumbsup.webp',
-      'https://media.chatyy.com.br/stickers/animated/thinking.webp',
-      'https://media.chatyy.com.br/stickers/animated/cool.webp',
-      'https://media.chatyy.com.br/stickers/animated/love.webp',
-    ],
-  },
-];
+// [2026-10-08] Removido: pacote fixo 'Peach & Goma' não é domínio público (copyright).
+// Pacotes animados agora vêm da loja (Noto Animated Emoji CC BY 4.0, via sticker_pack_my).
+const ANIMATED_PACKS = [];
 
 // Suggestions for chat input. Trade-off tuned to be helpful, not noisy:
 // 1) Min 4 chars on the last word (was 2 — "Com" matched "comida" and the
@@ -1007,9 +987,9 @@ export default function StickerPicker({ onSelect, onClose, colors, t, userEmail 
               activeOpacity={0.6}
             >
               {cover ? (
-                <CachedImage source={{ uri: cover }} style={{ width: 24, height: 24, borderRadius: 4 }} resizeMode="cover" />
+                <CachedImage source={{ uri: cover }} style={{ width: 24, height: 24, borderRadius: 4 }} resizeMode="contain" placeholder={STICKER_CLEAR_PLACEHOLDER} showSpinner={false} />
               ) : (
-                <Text style={{ fontSize: 20 }}>{pack.animated ? '🎬' : '📦'}</Text>
+                pack.animated ? <IconFilm size={20} color={colors.textSecondary} /> : <IconPackage size={20} color={colors.textSecondary} />
               )}
             </TouchableOpacity>
           );

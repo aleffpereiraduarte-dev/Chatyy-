@@ -211,6 +211,27 @@ if (Platform.OS !== 'web') {
 }
 if (!GestureHandlerRootView) GestureHandlerRootView = ({ children, style }) => React.createElement(RNView, { style }, children);
 
+// [2026-10-08 share-sheet] Every shared file (up to 10) as a JSON route param,
+// so /share-receive can show all thumbnails with their real aspect ratio
+// (expo-share-intent reports width/height) and send the whole batch.
+function _shareFilesParam(files) {
+  try {
+    const list = (Array.isArray(files) ? files : []).filter(f => f && f.path).slice(0, 10).map(f => {
+      const mime = String(f.mimeType || '');
+      return {
+        uri: f.path,
+        mime,
+        name: _sanitizeShareName(f.fileName, f.path, mime),
+        kind: mime.startsWith('video') ? 'video' : mime.startsWith('image') ? 'image' : 'file',
+        w: Number(f.width) || 0,
+        h: Number(f.height) || 0,
+        size: Number(f.size) || 0,
+      };
+    });
+    return list.length ? JSON.stringify(list) : '';
+  } catch { return ''; }
+}
+
 // Sanitizes filenames coming from the iOS share-intent / Files-app pipeline.
 // expo-share-intent has been observed to surface the literal "$value" as
 // fileName on certain iOS versions (Files-app PDFs especially) — Swift's
@@ -885,6 +906,8 @@ function AppInit({ onNotification, setOtaToast }) {
             // in R2 ends up as ".../chat/<hash>_$value.pdf". Fall back to
             // the URI's basename or a generic name.
             params.name = _sanitizeShareName(file.fileName, file.path, file.mimeType);
+            params.mime = file.mimeType || '';
+            params.files = _shareFilesParam(intent.files);
           }
           else if (intent.text) { params.text = intent.text; params.type = 'text'; }
           else if (intent.webUrl) { params.text = intent.webUrl; params.type = 'text'; }
@@ -1603,6 +1626,8 @@ function ShareIntentWatcher() {
         params.uri = file.path;
         params.type = (file.mimeType || '').startsWith('video') ? 'video' : 'image';
         params.name = _sanitizeShareName(file.fileName, file.path, file.mimeType);
+        params.mime = file.mimeType || '';
+        params.files = _shareFilesParam(shareIntent.files);
       } else if (shareIntent.text) {
         params.text = shareIntent.text;
         params.type = 'text';

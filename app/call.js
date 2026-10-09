@@ -84,7 +84,12 @@ let LK_AudioSession = null;
 let _livekitRegistered = false;
 function ensureLiveKitRegistered() {
   if (_livekitRegistered) return;
-  if (Platform.OS === 'web') { _livekitRegistered = true; return; }
+  if (Platform.OS === 'web') {
+    _livekitRegistered = true;
+    // [2026-10-08 qa-calls] web não tem o VideoView do @livekit/react-native.
+    try { LK_VideoView = require('../components/WebLkVideoView').default || null; } catch {}
+    return;
+  }
   // [2026-10-07 coldstart] app/_layout.js now registers the LiveKit globals
   // (with autoConfigureAudioSession:false + iOS earpiece default) only AFTER the
   // chat list's first paint. A call opened before that (launch from a call
@@ -287,12 +292,20 @@ function qualityToLabel(q) {
 // setSubscribed(boolean) IS present on RemoteTrackPublication in 2.19 (verified
 // in node_modules/livekit-client RemoteTrackPublication.d.ts); setEnabled is the
 // fallback. We only do this for VIDEO — never audio (would cause an audible blip).
+// [2026-10-08 qa-calls] Anti-loop: o off→on dispara TrackSubscribed de novo e
+// o handler de TrackSubscribed chama _nudgeKeyframe → laço infinito
+// (QA web 2 navegadores: Subscribed/Unsubscribed a cada ~300ms nos 2 lados,
+// vídeo remoto PRETO a chamada toda). Um nudge por publicação a cada 4s.
+const _nudgeAt = new WeakMap();
 function _nudgeKeyframe(pub) {
   try {
     if (!pub) return;
     // Guard to video only — kind may live on the pub or its track.
     const kind = pub.kind || pub.track?.kind;
     if (kind && kind !== 'video' && kind !== Track.Kind.Video) return;
+    const _last = _nudgeAt.get(pub) || 0;
+    if (Date.now() - _last < 4000) return;
+    _nudgeAt.set(pub, Date.now());
     if (typeof pub.setSubscribed === 'function') {
       pub.setSubscribed(false);
       setTimeout(() => { try { pub.setSubscribed(true); } catch {} }, 150);
@@ -2403,6 +2416,9 @@ function CallScreenInner() {
     r.on(RoomEvent.Disconnected, (reason) => {
       try { _callDiagAppend('warn', 'LK Room disconnected', { call_id: callId, reason: String(reason), peer_was_connected: peerConnectedRef.current }); } catch {}
       console.log('[Call] LiveKit Disconnected reason=', reason);
+      if (Platform.OS === 'web') {
+        try { document.querySelectorAll('[data-chatyy-call-audio]').forEach((el) => { try { el.srcObject = null; el.remove(); } catch {} }); } catch {}
+      }
       // [CALL-TRACE 2026-05-20 WAVE42] Step 12b/12 — JS Room dropped. If
       // reason=ClientInitiated it's our own hangup. Anything else combined
       // with peerConnected=false means we never made it (setup-phase fail).
@@ -2556,6 +2572,19 @@ function CallScreenInner() {
 
     r.on(RoomEvent.TrackSubscribed, (track, publication, participant) => {
       console.log('[Call] TrackSubscribed', track.kind, 'from', participant.identity, 'source=', publication.source);
+      // [2026-10-08 qa-calls] WEB: livekit-client (webAudioMix=false) só toca o
+      // áudio remoto se a track for anexada a um <audio>. Ninguém anexava → a
+      // ligação web conectava muda (QA 2 navegadores: 0 elementos de áudio).
+      if (Platform.OS === 'web' && participant !== r.localParticipant && track?.kind === 'audio') {
+        try {
+          const _el = track.attach();
+          _el.setAttribute('data-chatyy-call-audio', '1');
+          _el.style.display = 'none';
+          document.body.appendChild(_el);
+          const _p = _el.play && _el.play();
+          if (_p && _p.catch) _p.catch(() => {});
+        } catch {}
+      }
       try {
         if (participant !== r.localParticipant && (track?.kind === 'audio' || publication?.kind === 'audio') && !remoteAudioSeenRef.current) {
           remoteAudioSeenRef.current = true;
@@ -2600,6 +2629,9 @@ function CallScreenInner() {
 
     r.on(RoomEvent.TrackUnsubscribed, (track, publication, participant) => {
       console.log('[Call] TrackUnsubscribed', track.kind, 'from', participant.identity);
+      if (Platform.OS === 'web' && track?.kind === 'audio') {
+        try { (track.detach() || []).forEach((el) => { try { el.remove(); } catch {} }); } catch {}
+      }
       _refreshRemoteTracks(participant);
       _refreshGroupPeerTracks(participant);
     });
