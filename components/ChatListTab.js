@@ -1599,7 +1599,12 @@ function _getPreloadedConversations() {
   _preloadedConvsLoaded = true;
   try {
     const { getString: _gs } = require('../services/mmkv');
-    const raw = _gs('chat_conversations');
+    // [2026-10-08 chatlist-instant] chatCache writes `chat_conversations_<acct>`
+    // (and deletes the bare `chat_conversations` at module load), so the old
+    // bare-key read here was always empty. Account-scoped: no account → no read.
+    const _acct = String(require('../services/api').getActiveAccountEmail?.() || '').toLowerCase();
+    if (!_acct) return null;
+    const raw = _gs('chat_conversations_' + _acct);
     if (raw) _preloadedConversations = JSON.parse(raw);
   } catch {}
   return _preloadedConversations;

@@ -138,6 +138,48 @@ export function isLocked() {
 
 // ─── Synchronous reads (frame-1 paint) ───────────────────────────────────────
 
+// Recency of a conversation row: last message id (monotonic) first, then the
+// parsed last-activity timestamp. Used only to pick the fresher copy of a row.
+function _convRecency(c) {
+  const lm = c && c.last_message && typeof c.last_message === 'object' ? c.last_message : null;
+  const id = lm && typeof lm.id === 'number' ? lm.id : 0;
+  const ts = Date.parse(String((c && (c.last_message_at || (lm && lm.created_at) || c.updated_at)) || '')) || 0;
+  return { id, ts };
+}
+function _isNewer(a, b) {
+  const ra = _convRecency(a); const rb = _convRecency(b);
+  if (ra.id && rb.id) return ra.id > rb.id;
+  return ra.ts > rb.ts;
+}
+// Base = accelerator list (authoritative membership). Same-id rows are taken
+// from SQLite only when strictly newer; SQLite-only rows are added only when
+// newer than the accelerator's newest row (a chat that arrived after the
+// snapshot) — never a stale/left/deleted conversation the superset still holds.
+function _overlayNewer(acc, rows) {
+  const byId = new Map();
+  for (const r of rows) if (r && r.id != null) byId.set(String(r.id), r);
+  let newestTs = 0;
+  const out = acc.map((c) => {
+    const ts = _convRecency(c).ts; if (ts > newestTs) newestTs = ts;
+    const k = c && c.id != null ? String(c.id) : null;
+    const s = k ? byId.get(k) : null;
+    if (k) byId.delete(k);
+    if (!s || !_isNewer(s, c)) return c;
+    // Only the activity fields — a bgJournal row can be partial (no avatar,
+    // empty name), so never let it blank out the snapshot's identity fields.
+    const o = { ...c };
+    if (s.last_message != null) o.last_message = s.last_message;
+    if (s.last_message_at) o.last_message_at = s.last_message_at;
+    if (s.updated_at) o.updated_at = s.updated_at;
+    if (typeof s.unread_count === 'number') o.unread_count = s.unread_count;
+    return o;
+  });
+  for (const s of byId.values()) {
+    if (newestTs && _convRecency(s).ts > newestTs) out.push(s);
+  }
+  return out;
+}
+
 /**
  * Chat list, synchronous. Native: durable SQLite (sqliteStore), falling back to
  * the in-memory accelerator while the sync handle is cold. Web: accelerator +
@@ -148,11 +190,27 @@ export function getConversationsSync() {
   if (isLocked()) return [];
   if (!isWeb) {
     _maybeMergeJournal();
-    try {
-      const rows = sqliteStore.getConversationsSync();
-      if (Array.isArray(rows) && rows.length) return rows;
-    } catch {}
-    try { return smartChatCache.getCachedConversationsSync() || []; } catch { return []; }
+    // [2026-10-08 chatlist-instant] ACCELERATOR FIRST. The in-memory list
+    // (smartChatCache — MMKV-backed, account-scoped, hydrated before the gate
+    // opens, also fed by the bgJournal merge above) is the exact last full
+    // server snapshot. The SQLite table is only a superset that INSERT OR
+    // REPLACE never prunes, and on iOS it held just the few rows the bgJournal
+    // inserted (dbSaveConversations failed every batch — see db.js) → frame 1
+    // painted 2-3 chats and the rest "came from the server". SQLite now only
+    // overlays rows that are strictly newer (e.g. the accelerator's debounced
+    // MMKV flush lost to a kill) and remains the fallback when the accelerator
+    // is empty (MMKV evicted / first boot after an update).
+    let acc = null;
+    try { acc = smartChatCache.getCachedConversationsSync(); } catch {}
+    let rows = null;
+    try { rows = sqliteStore.getConversationsSync(); } catch {}
+    if (Array.isArray(acc) && acc.length) {
+      if (Array.isArray(rows) && rows.length) {
+        try { return _overlayNewer(acc, rows); } catch {}
+      }
+      return acc;
+    }
+    return Array.isArray(rows) ? rows : [];
   }
   // Web.
   try {

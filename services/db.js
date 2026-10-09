@@ -123,7 +123,11 @@ const RE_TXN_STATE = /within a transaction|no transaction is active/i;
 const RE_CLOSED = /closed|has been rejected|has failed|null ?pointer|not open|SQLITE_MISUSE|misuse|not an error/i;
 const RE_BUSY = /database is locked|busy|SQLITE_BUSY/i;
 function _isCorruptErr(e) { return RE_CORRUPT.test(sqliteErrMsg(e)); }
-const RE_LOGIC = /constraint failed|syntax error|datatype mismatch|too many SQL variables|near "/i;
+// [2026-10-08 chatlist-instant] ERR_INVALID_CONVERTIBLE = a JS value expo-sqlite
+// cannot bind (object/array/undefined). Deterministic → retrying after a
+// reopen can never succeed; it only closed + re-initialised the whole DB on
+// every list refresh (iOS push_diag: ~100 sqlite_heal_reopen/day/device).
+const RE_LOGIC = /constraint failed|syntax error|datatype mismatch|too many SQL variables|near "|INVALID_CONVERTIBLE|InvalidConvertible/i;
 function _isRecoverableErr(e) {
   const m = sqliteErrMsg(e);
   if (RE_LOGIC.test(m) && !RE_CORRUPT.test(m) && !RE_TXN_STATE.test(m)) return false;
@@ -729,6 +733,20 @@ async function _runSelfCheck() {
 // CONVERSATIONS
 // ══════════════════════════════════════
 
+// Scalar-only bind helpers (expo-sqlite rejects objects/arrays/undefined with
+// ERR_INVALID_CONVERTIBLE on iOS).
+function _bindStr(v) {
+  if (v == null) return '';
+  if (typeof v === 'string') return v;
+  if (typeof v === 'number') return Number.isFinite(v) ? String(v) : '';
+  if (typeof v === 'boolean') return v ? '1' : '0';
+  try { return JSON.stringify(v) || ''; } catch { return ''; }
+}
+function _bindNum(v) {
+  const n = typeof v === 'number' ? v : parseInt(v, 10);
+  return Number.isFinite(n) ? n : 0;
+}
+
 export async function dbSaveConversations(conversations) {
   if (isWeb || !_db || !conversations?.length) return;
   await _runTx('dbSaveConversations', async () => {
@@ -738,26 +756,35 @@ export async function dbSaveConversations(conversations) {
     );
     try {
       for (const c of conversations) {
+        if (!c || c.id == null || (typeof c.id !== 'number' && typeof c.id !== 'string')) continue;
+        // [2026-10-08 chatlist-instant] ROOT CAUSE of "a lista demora / não vem
+        // do celular" on iOS: the server sends `last_message` as an OBJECT
+        // ({id, content, sender_email, created_at, …}); binding it raw threw
+        // ERR_INVALID_CONVERTIBLE on iOS for EVERY batch → the durable SQLite
+        // conversations table was never written, only the bgJournal inserted a
+        // few rows (chats that got a push) → frame-1 painted that partial list
+        // and the rest "arrived from the server". Every bind is now a scalar.
+        const lm = (c.last_message && typeof c.last_message === 'object') ? c.last_message : null;
         await stmt.executeAsync({
           $id: c.id,
-          $name: c.name || c.display_name || '',
-          $type: c.type || 'direct',
-          $lastMsg: c.last_message || '',
-          $lastTime: c.last_message_time || c.updated_at || '',
-          $lastSender: c.last_message_sender || '',
-          $unread: c.unread_count || 0,
-          $avatar: c.avatar_url || '',
+          $name: _bindStr(c.name || c.display_name),
+          $type: _bindStr(c.type) || 'direct',
+          $lastMsg: lm ? _bindStr(lm.content != null ? lm.content : lm.text) : _bindStr(c.last_message),
+          $lastTime: _bindStr(c.last_message_at || c.last_message_time || (lm && lm.created_at) || c.updated_at),
+          $lastSender: _bindStr(c.last_message_sender || (lm && lm.sender_email)),
+          $unread: _bindNum(c.unread_count),
+          $avatar: _bindStr(c.avatar_url),
           $pinned: c.pinned ? 1 : 0,
           $muted: c.muted ? 1 : 0,
           $archived: c.archived ? 1 : 0,
           $isGroup: c.type === 'group' ? 1 : 0,
-          $members: c.member_count || 0,
-          $desc: c.description || '',
-          $updated: c.updated_at || '',
+          $members: _bindNum(c.member_count),
+          $desc: _bindStr(c.description),
+          $updated: _bindStr(c.updated_at),
           $raw: JSON.stringify(c),
           // Owner tag: prefer an explicit tag on the row, else the active
           // account, else null (legacy / pre-wiring → unscoped behaviour).
-          $account: c.account_email || _activeAccount || null,
+          $account: (typeof c.account_email === 'string' && c.account_email) || _activeAccount || null,
         });
       }
     } finally { await stmt.finalizeAsync(); }

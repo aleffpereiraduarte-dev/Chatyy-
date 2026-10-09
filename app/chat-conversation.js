@@ -9095,7 +9095,17 @@ function ChatConversationInner() {
   // SmartCache (services/smartChatCache.js) hydrates synchronously from MMKV
   // (native, in-mem populated at splash) or localStorage (web). This is what
   // gives us Telegram-like instant paint on chat open — zero I/O in this frame.
-  const _initialCached = (() => {
+  // [2026-10-08 chatlist-instant] Computed ONCE per conversation (ref keyed by
+  // id) instead of on every render: it was an IIFE in the render body, so each
+  // re-render of this screen (typing, keyboard, presence, receipts…) re-ran a
+  // synchronous SQLite SELECT of 50 rows + JSON.parse + media-index lookups on
+  // the JS thread. Consumers only ever needed the open-time snapshot.
+  const _initialCachedRef = useRef({ cid: undefined, rows: null });
+  if (_initialCachedRef.current.cid !== conversationId) {
+    _initialCachedRef.current = { cid: conversationId, rows: _readInitialCached() };
+  }
+  const _initialCached = _initialCachedRef.current.rows;
+  function _readInitialCached() {
     if (!conversationId) return null;
     // [local-first 2026-09-30] Primary synchronous source: the chatStore
     // facade (services/chatStore) — a native sync SQLite read over the
@@ -9162,7 +9172,7 @@ function ChatConversationInner() {
       }
     } catch {}
     return null;
-  })();
+  }
 
   // 2026-05-28 Lester QA "Limpar conversa volta tudo": even after backend gate
   // added in chat_envelopes_pull, users may have stale messages persisted in
