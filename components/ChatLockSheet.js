@@ -49,7 +49,11 @@ export default function ChatLockSheet({ visible, conversation, locked, onClose, 
     setBusy(true);
     try {
       const r = await api.chatLockConversation(convId);
-      if (r && r.success !== false) onChanged?.(true);
+      if (r && r.success !== false) {
+        // [locked-chats 2026-10-08] tell the chat list (hide the row now).
+        try { require('react-native').DeviceEventEmitter.emit('chatyy:lockChanged', { id: convId, locked: true }); } catch {}
+        onChanged?.(true);
+      }
     } catch {} finally {
       setBusy(false);
       onClose?.();
@@ -71,7 +75,13 @@ export default function ChatLockSheet({ visible, conversation, locked, onClose, 
     setBusy(true);
     try {
       const r = await api.chatUnlockConversation(convId);
-      if (r && r.success !== false) onChanged?.(false);
+      if (r && r.success !== false) {
+        // [locked-chats 2026-10-08] the main list was never told → the chat
+        // stayed hidden until an app restart. Emit with the unmasked row so it
+        // reappears instantly with its real last message.
+        try { require('react-native').DeviceEventEmitter.emit('chatyy:lockChanged', { id: convId, locked: false, conv: conversation }); } catch {}
+        onChanged?.(false);
+      }
     } catch {} finally {
       setBusy(false);
       onClose?.();

@@ -11055,6 +11055,8 @@ function ChatConversationInner() {
       } catch {}
     }
     try { await api.chatLock(conversationId, true); } catch {}
+    // [locked-chats 2026-10-08] keep the chat list's hidden set in sync now.
+    try { require('react-native').DeviceEventEmitter.emit('chatyy:lockChanged', { id: Number(conversationId), locked: true }); } catch {}
     setChatLocked(true);
     setChatUnlocked(true);
     setShowLockSetup(false);
@@ -11078,6 +11080,8 @@ function ChatConversationInner() {
     }
     // Sync lock state with backend
     try { await api.chatLock(conversationId, false); } catch {}
+    // [locked-chats 2026-10-08] unhide in the chat list immediately.
+    try { require('react-native').DeviceEventEmitter.emit('chatyy:lockChanged', { id: Number(conversationId), locked: false }); } catch {}
     setChatLocked(false);
     setChatUnlocked(true);
     safeAlert(t('chatConv.lockRemoved') || 'Lock removed', t('chatConv.lockRemovedDesc') || 'Chat lock has been removed');

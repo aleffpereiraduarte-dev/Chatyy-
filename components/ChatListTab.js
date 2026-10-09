@@ -3193,6 +3193,9 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
   const [showArchived, setShowArchived] = useState(false);
   const [lockedIds, setLockedIds] = useState(new Set());
   const [unlockedIds, setUnlockedIds] = useState(new Set());
+  // [locked-chats 2026-10-08] live view for long-lived closures (lpActions).
+  const lockedIdsRef = useRef(lockedIds);
+  lockedIdsRef.current = lockedIds;
   // [2026-10-08 android-otp-shortcuts] App-icon long-press: top 4 recent
   // conversations (debounced + signature-deduped inside the service).
   React.useEffect(() => {
@@ -3927,12 +3930,74 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
     }, [searchText, reconcileReceipts])
   );
 
-  useEffect(() => {
+  // [locked-chats 2026-10-08] Lock set reconciliation. Before this, lockedIds
+  // was loaded ONCE at mount (and the server stub answered {locked:[]}), and
+  // only this tab's own long-press toggle updated it — unlocking from the
+  // /locked-chats folder or the conversation header left the id in the set,
+  // so the chat stayed hidden from the main list until the app restarted.
+  const refreshLockedIds = useCallback(() => {
     api.chatGetLocked().then(r => {
-      if (r.success && r.data?.locked_conversations) {
-        setLockedIds(new Set(r.data.locked_conversations.map(Number)));
-      }
+      const ids = r?.success ? (r.data?.locked_conversations || r.data?.conversation_ids) : null;
+      if (Array.isArray(ids)) setLockedIds(new Set(ids.map(Number)));
     }).catch(() => {});
+  }, []);
+  useEffect(() => { refreshLockedIds(); }, [refreshLockedIds]);
+  useFocusEffect(useCallback(() => { refreshLockedIds(); }, [refreshLockedIds]));
+  // Rows flagged `locked` by the server (another device locked it) join the
+  // id-set. ADD-ONLY on purpose: a stale cached row must never un-hide a
+  // locked chat — removals come from 'chatyy:lockChanged' (this device) and
+  // refreshLockedIds() on focus (server truth).
+  useEffect(() => {
+    if (!Array.isArray(conversations) || conversations.length === 0) return;
+    setLockedIds(prev => {
+      let next = null;
+      for (const c of conversations) {
+        if (!c || c.id == null || !c.locked || c.locked === '0') continue;
+        const id = Number(c.id);
+        if (!prev.has(id)) { if (!next) next = new Set(prev); next.add(id); }
+      }
+      return next || prev;
+    });
+  }, [conversations]);
+  // Instant (optimistic) lock/unlock from ANY screen: ChatLockSheet (folder),
+  // conversation header, or this tab's own menus emit 'chatyy:lockChanged'.
+  // Unlocking puts the row back in the main list right away (merging the
+  // folder's unmasked last message if the main-feed row had it stripped).
+  useEffect(() => {
+    let sub = null;
+    try {
+      const { DeviceEventEmitter } = require('react-native');
+      sub = DeviceEventEmitter.addListener('chatyy:lockChanged', (p) => {
+        const id = Number(p?.id);
+        if (!id) return;
+        const locked = !!p.locked;
+        const full = p.conv && typeof p.conv === 'object' ? p.conv : null;
+        setLockedIds(prev => {
+          if (locked === prev.has(id)) return prev;
+          const next = new Set(prev);
+          if (locked) next.add(id); else next.delete(id);
+          return next;
+        });
+        if (locked) setUnlockedIds(prev => { if (!prev.has(id)) return prev; const n = new Set(prev); n.delete(id); return n; });
+        setConversations(prev => {
+          const list = Array.isArray(prev) ? prev : [];
+          let found = false;
+          const out = list.map(c => {
+            if (Number(c.id) !== id) return c;
+            found = true;
+            const row = { ...c, locked: locked ? 1 : 0 };
+            if (!locked && full) {
+              if (!row.last_message && full.last_message) row.last_message = full.last_message;
+              if (!row.last_message_at && full.last_message_at) row.last_message_at = full.last_message_at;
+            }
+            return row;
+          });
+          if (!found && !locked && full && !full.archived) out.unshift({ ...full, locked: 0 });
+          return out;
+        });
+      });
+    } catch {}
+    return () => { try { sub?.remove(); } catch {} };
   }, []);
 
   const handleSearchChange = useCallback((text) => {
@@ -5226,19 +5291,13 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
         // and lockedIds so the row hides/shows immediately regardless of which
         // list transport served it. unlockedIds is reset for this conv so a
         // freshly-locked chat demands biometric again on next open.
-        const willLock = !(conv.locked || lockedIds.has(conv.id));
-        try {
-          await api.chatLock(conv.id, willLock);
-          setConversations(prev => prev.map(c => c.id === conv.id ? { ...c, locked: willLock ? 1 : 0 } : c));
-          setLockedIds(prev => {
-            const next = new Set(prev);
-            if (willLock) next.add(conv.id); else next.delete(conv.id);
-            return next;
-          });
-          if (!willLock) {
-            setUnlockedIds(prev => { const n = new Set(prev); n.delete(conv.id); return n; });
-          }
-        } catch {}
+        const willLock = !(conv.locked || lockedIdsRef.current.has(Number(conv.id)));
+        // [locked-chats 2026-10-08] Optimistic: hide/show NOW, revert on failure.
+        const { DeviceEventEmitter } = require('react-native');
+        DeviceEventEmitter.emit('chatyy:lockChanged', { id: conv.id, locked: willLock });
+        let ok = false;
+        try { const r = await api.chatLock(conv.id, willLock); ok = !!(r && r.success !== false); } catch {}
+        if (!ok) DeviceEventEmitter.emit('chatyy:lockChanged', { id: conv.id, locked: !willLock });
       },
       onClear: (conv) => {
         safeAlert(
