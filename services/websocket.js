@@ -289,6 +289,7 @@ class MailWebSocket {
     this._authWatchdog = null;    // [2026-10-05] timer: force reconnect if auth_success never arrives
     this.destroyed = false;
     this._hidden = false;
+    this._rttEpoch = Date.now(); // [2026-10-09 tf653] boot: ignora RTT dos 1os 3s (thread JS ocupada)
     this.lastPongTime = 0;
     this.lastInboundAt = 0;         // [2026-07-03] ts of last inbound frame — zombie-socket detector for the open chat thread's adaptive poll
     this._messageQueue = [];        // Offline message queue
@@ -373,6 +374,7 @@ class MailWebSocket {
           clearTimeout(this.reconnectTimer);
         } else {
           this._hidden = false;
+          this._rttEpoch = Date.now(); // [2026-10-09 tf653] aba voltou: RTT antigo não vale
           // [2026-10-06 rock-solid] Single entry point. Aba voltando: socket
           // autenticado → só PROBE (1 ping, reconecta só se nada chegar em 3s;
           // Chrome congela abas ocultas e o readyState mente OPEN). Morto →
@@ -444,6 +446,9 @@ class MailWebSocket {
         if (nextState === 'inactive') return;
         if (nextState === 'active') {
           this._hidden = false;
+          // [2026-10-09 tf653] volta do background: RTT antigo não vale mais.
+          this._rttEpoch = Date.now();
+          try { require('./networkInfo').resetRtt?.(); } catch {}
           if (this._loggedOut) return; // deslogado: nada a reconectar
           // [WAVE 43G 2026-05-21] Foreground = good moment to revive a
           // tombstoned socket. If destroyed=true (8+ auth_error outside
@@ -2148,7 +2153,15 @@ class MailWebSocket {
         // Measure latency
         if (this._pingTs) {
           this._latency = Date.now() - this._pingTs;
-          try { require('./networkInfo').reportRtt(this._latency); } catch {}
+          // [2026-10-09 tf653] Só amostra RTT "limpa": app visível e ping enviado
+          // ≥3s depois do boot/volta do background. Antes, o pong de um ping
+          // feito antes do iOS suspender o JS (ou durante o boot com a thread JS
+          // ocupada) entrava como RTT de 5-60s → srtt inflado → getLinkClass()
+          // 'slow' → probe/pong-deadline 2.5-6s viravam 20s, HTTP ×2 e poll da
+          // conversa 30s = mensagem "demorando" num socket half-open.
+          if (!this._hidden && this._pingTs >= (this._rttEpoch || 0) + 3000 && this._latency <= 3000) {
+            try { require('./networkInfo').reportRtt(this._latency); } catch {}
+          }
         }
         // Surface pong to listeners so ensureHealthy() can resolve early
         // instead of waiting the full watchdog timeout.

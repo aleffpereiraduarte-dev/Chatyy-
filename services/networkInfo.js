@@ -127,12 +127,22 @@ export function getNetworkType() {
 // 2G/satélite/Ásia (RTT 600-1500ms, perda) os prazos fixos de 2-10s davam
 // falso "morto" → reconexão em loop.
 let _srtt = 0;
+let _rttSamples = [];
 export function reportRtt(ms) {
   const v = Number(ms);
-  if (!(v > 0) || v > 60000) return;
-  _srtt = _srtt ? Math.round(_srtt * 0.8 + v * 0.2) : Math.round(v);
+  if (!(v > 0) || v > 3000) return; // [2026-10-09 tf653] >3s = JS suspenso/ocupado, não é RTT
+  // [2026-10-09 tf653] RTT = MÍNIMO das últimas 4 amostras (não EWMA): no
+  // celular o "RTT" medido no JS inclui a thread JS ocupada (boot, lista,
+  // backup) — 1 pico de 1-3s jogava o enlace p/ 'medium'/'slow' por minutos e
+  // a detecção de socket morto ia de 6s p/ 9-12s. Enlace lento de verdade
+  // deixa TODAS as amostras altas → o mínimo continua alto.
+  _rttSamples.push(Math.round(v));
+  if (_rttSamples.length > 4) _rttSamples.shift();
+  _srtt = Math.min(..._rttSamples);
 }
 export function getSrtt() { return _srtt; }
+// [2026-10-09 tf653] foreground/troca de rede: descarta o histórico (volta ao padrão 'fast' até novos pongs).
+export function resetRtt() { _srtt = 0; _rttSamples = []; }
 
 function _webEffectiveType() {
   try {

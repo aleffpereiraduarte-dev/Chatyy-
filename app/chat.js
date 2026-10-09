@@ -155,8 +155,26 @@ function ChatErrorFallback({ error }) {
 }
 
 class ChatErrorBoundary extends React.Component {
-  state = { error: null };
+  state = { error: null, resetKey: this.props.resetKey };
   static getDerivedStateFromError(error) { return { error }; }
+  // [2026-10-09 tf653-status] Um erro na superfície OCULTA do status (aba
+  // montada fora da tela) virava fallback invisível e nenhum status/compositor
+  // abria mais até reiniciar o app — sem log nenhum. Agora: reporta (push_diag)
+  // e um NOVO pedido (resetKey muda) remonta a superfície.
+  static getDerivedStateFromProps(props, state) {
+    if (props.resetKey !== state.resetKey) return { resetKey: props.resetKey, error: null };
+    return null;
+  }
+  componentDidCatch(error, info) {
+    try {
+      require('../services/crashReporter').reportCrash({
+        type: 'render_error',
+        context: String(this.props.name || 'chat').slice(0, 30),
+        message: String(error?.message || error).slice(0, 200),
+        stack: (error?.stack || '') + ' | ' + String(info?.componentStack || '').slice(0, 300),
+      });
+    } catch {}
+  }
   render() {
     if (this.state.error) {
       return <ChatErrorFallback error={this.state.error} />;
@@ -164,6 +182,20 @@ class ChatErrorBoundary extends React.Component {
     return this.props.children;
   }
 }
+
+// [2026-10-09 tf653-status] Superfície do status (ChatStatusTab) fica montada
+// FORA DA TELA e só serve de host p/ os <Modal> do viewer/câmera. Antes era
+// `display:'none'`: no Fabric (iOS/Android, nova arquitetura) o Yoga não faz
+// layout de NENHUM descendente de um nó display:none — o <Modal> até monta,
+// mas o conteúdo fica 0×0/sem layout → tocar no status "não abre nada". No web
+// display:none é inofensivo (portal DOM) e continua. Nativo: caixa 0×0
+// absoluta, recortada e invisível — os descendentes recebem layout normal e o
+// Modal (janela/VC própria) aparece por cima.
+const _STATUS_SURFACE_HIDDEN = Platform.OS === 'web'
+  ? { display: 'none' }
+  : { position: 'absolute', left: 0, top: 0, width: 0, height: 0, overflow: 'hidden', opacity: 0 };
+const _STATUS_SURFACE_ACTIVE = { display: 'flex', flex: 1 };
+function _statusSurfaceStyle(active) { return active ? _STATUS_SURFACE_ACTIVE : _STATUS_SURFACE_HIDDEN; }
 
 export default function ChatScreenWrapper() {
   return (
@@ -1086,8 +1118,8 @@ function ChatHub() {
             {mountedTabs.has('feed') && <View style={{ display: activeTab === 'feed' ? 'flex' : 'none', flex: activeTab === 'feed' ? 1 : undefined }}>
               <ChatErrorBoundary><Suspense fallback={null}><ChatFeedTab {...tabProps} /></Suspense></ChatErrorBoundary>
             </View>}
-            {mountedTabs.has('status') && <View style={{ display: activeTab === 'status' ? 'flex' : 'none', flex: activeTab === 'status' ? 1 : undefined }}>
-              <ChatErrorBoundary><Suspense fallback={null}><ChatStatusTab {...tabProps} /></Suspense></ChatErrorBoundary>
+            {mountedTabs.has('status') && <View style={_statusSurfaceStyle(activeTab === 'status')} pointerEvents={activeTab === 'status' ? 'auto' : 'box-none'}>
+              <ChatErrorBoundary name="status" resetKey={`${newStatusNonce}|${openStatusEmail || ''}`}><Suspense fallback={null}><ChatStatusTab {...tabProps} /></Suspense></ChatErrorBoundary>
             </View>}
             {/* Removed: 'config' tab rendered ChatProfileTab which duplicated
                 the unified profile. Taps on the header avatar now open /u/{me}. */}
@@ -1226,8 +1258,8 @@ function ChatHub() {
         {mountedTabs.has('feed') && <View style={{ display: activeTab === 'feed' ? 'flex' : 'none', flex: activeTab === 'feed' ? 1 : undefined }}>
           <ChatErrorBoundary><Suspense fallback={null}><ChatFeedTab {...tabProps} /></Suspense></ChatErrorBoundary>
         </View>}
-        {mountedTabs.has('status') && <View style={{ display: activeTab === 'status' ? 'flex' : 'none', flex: activeTab === 'status' ? 1 : undefined }}>
-          <ChatErrorBoundary><Suspense fallback={null}><ChatStatusTab {...tabProps} /></Suspense></ChatErrorBoundary>
+        {mountedTabs.has('status') && <View style={_statusSurfaceStyle(activeTab === 'status')} pointerEvents={activeTab === 'status' ? 'auto' : 'box-none'}>
+          <ChatErrorBoundary name="status" resetKey={`${newStatusNonce}|${openStatusEmail || ''}`}><Suspense fallback={null}><ChatStatusTab {...tabProps} /></Suspense></ChatErrorBoundary>
         </View>}
         {/* Removed: config/profile duplicate — header avatar routes to /u/{me} */}
         {mountedTabs.has('learn') && <View style={{ display: activeTab === 'learn' ? 'flex' : 'none', flex: activeTab === 'learn' ? 1 : undefined }}>
