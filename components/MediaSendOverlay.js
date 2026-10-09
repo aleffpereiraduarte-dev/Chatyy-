@@ -16,6 +16,7 @@ import React, { useRef, useEffect, useState, useMemo } from 'react';
 import { View, Text, Animated, Easing, TouchableOpacity, Platform } from 'react-native';
 import Svg, { Circle } from 'react-native-svg';
 import { IconX, IconCheck, IconRefresh } from './Icons';
+import { isReduceMotionEnabled } from './reducedMotion';
 
 const AnimatedCircle = Animated.createAnimatedComponent(Circle);
 
@@ -24,36 +25,13 @@ const STROKE = 3.5;
 const R = (RING - STROKE) / 2;
 const CIRC = 2 * Math.PI * R;
 
-export function MediaPopIn({ enabled = false, style, children }) {
-  // Decide once at mount: only freshly-created optimistic bubbles animate
-  // (FlashList recycling / history rows render static).
-  const animate = useRef(!!enabled).current;
-  const v = useRef(new Animated.Value(animate ? 0 : 1)).current;
-  useEffect(() => {
-    if (!animate) return undefined;
-    const a = Animated.timing(v, {
-      toValue: 1,
-      duration: 150,
-      easing: Easing.out(Easing.cubic),
-      useNativeDriver: true,
-    });
-    a.start();
-    return () => a.stop();
-  }, [animate, v]);
-  if (!animate) return <View style={style}>{children}</View>;
-  return (
-    <Animated.View
-      style={[
-        style,
-        {
-          opacity: v,
-          transform: [{ scale: v.interpolate({ inputRange: [0, 1], outputRange: [0.96, 1] }) }],
-        },
-      ]}
-    >
-      {children}
-    </Animated.View>
-  );
+export function MediaPopIn({ style, children }) {
+  // [2026-10-08 send-motion] A entrada do balão agora é da ROW inteira
+  // (RowEnterMotion em app/chat-conversation.js: sobe 12px + .96→1 + fade,
+  // decidida 1x por mensagem). Animar aqui de novo somava duas escalas
+  // (.96×.96) e um 2º fade na foto/vídeo. Mantido como View simples p/ não
+  // mexer nos call sites (`enabled` ignorado).
+  return <View style={style}>{children}</View>;
 }
 
 const fmtMB = (b) => (b / 1048576).toFixed(1);
@@ -80,6 +58,10 @@ export default function MediaSendOverlay({
   const prog = useRef(new Animated.Value(0)).current;
   const spin = useRef(new Animated.Value(0)).current;
   const checkV = useRef(new Animated.Value(0)).current;
+  // [2026-10-08 send-motion] tremidinha suave do botão de reenviar quando o
+  // envio FALHA com o balão na tela (não na montagem de um balão já falho).
+  const shake = useRef(new Animated.Value(0)).current;
+  const mountedOnceRef = useRef(false);
   const [pctText, setPctText] = useState(0);
 
   const indeterminate = active && progress === undefined && !compressing;
@@ -114,15 +96,22 @@ export default function MediaSendOverlay({
       });
     } else if (failed) {
       setPhase('failed');
+      const _rm = isReduceMotionEnabled();
+      const _shake = mountedOnceRef.current && !_rm;
+      shake.setValue(0);
       Animated.parallel([
         Animated.timing(fade, { toValue: 1, duration: 200, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
         Animated.spring(scale, { toValue: 1, speed: 20, bounciness: 6, useNativeDriver: true }),
+        ...(_shake ? [Animated.sequence([-6, 6, -4, 3, -1.5, 0].map((to, i) => Animated.timing(shake, {
+          toValue: to, duration: i === 0 ? 50 : 65, delay: i === 0 ? 120 : 0, easing: Easing.inOut(Easing.quad), useNativeDriver: true,
+        })))] : []),
       ]).start();
     } else if (phase === 'failed') {
       // retry tapped -> failed cleared
       Animated.timing(fade, { toValue: 0, duration: 160, useNativeDriver: true }).start(() => setPhase('idle'));
     }
     prevActive.current = active;
+    mountedOnceRef.current = true;
     return () => { if (timer) clearTimeout(timer); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [active, failed]);
@@ -178,7 +167,7 @@ export default function MediaSendOverlay({
               backgroundColor: 'rgba(255,255,255,0.16)',
               borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.55)',
               alignItems: 'center', justifyContent: 'center',
-              transform: [{ scale }],
+              transform: [{ translateX: shake }, { scale }],
             }}
           >
             <IconRefresh size={28} color="#fff" />

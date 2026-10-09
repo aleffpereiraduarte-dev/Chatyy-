@@ -668,62 +668,143 @@ function compressImageWeb(blob, maxDimension = 2048, quality = 0.8) {
 }
 
 // ============================================================
-// MESSAGE SEND ANIMATION (spring slide-up + fade-in for new messages)
+// [2026-10-08 send-motion] ROW ENTER MOTION (envio / recebida / apagada)
 // ============================================================
-// iMessage-style spring animation: bubble pops from the corner anchored
-// at the sender's edge. Own messages anchor bottom-right (near send button);
-// other messages anchor bottom-left. Uses RN Animated with native driver so
-// the animation runs on the UI thread (not JS) — zero jank even when list
-// is scrolling or React is re-rendering.
-function MessageSendAnim({ children, animate, fromOther }) {
-  const translateY = useRef(new Animated.Value(animate ? 12 : (fromOther ? 5 : 0))).current;
-  const translateX = useRef(new Animated.Value(fromOther ? -9 : (animate ? 8 : 0))).current;
-  // [2026-10-02] Peer bubble entra MAIS VISÍVEL (opacity 0.35, não 0) pra não
-  // "demorar a aparecer" (founder). Antes começava invisível + encolhida (0.7)
-  // e o spring levava ~300-400ms → parecia atrasada. Agora já nasce quase
-  // opaca e quase no tamanho, o spring só dá o "assentar" — leitura instantânea.
-  const opacity = useRef(new Animated.Value(animate ? 0 : (fromOther ? 0.35 : 1))).current;
-  const scale = useRef(new Animated.Value(animate ? 0.88 : (fromOther ? 0.9 : 1))).current;
-  // Reduce Motion: no bubble entrance — the message just appears in place.
-  const _reduceMotion = isReduceMotionEnabled();
+// Substitui o antigo MessageSendAnim, que tinha 3 defeitos:
+//  1. `animate={msg._pending}` ligava/desligava o wrapper → no ack do servidor
+//     a árvore mudava (Animated.View>children → children) e o balão INTEIRO
+//     remontava (flash da imagem/áudio a cada envio confirmado);
+//  2. uma row pendente restaurada do outbox, ou uma row `_animateIn` que voltava
+//     à janela do FlashList, re-tocava a entrada (histórico se mexendo);
+//  3. só o ramo de mensagem comum era embrulhado (álbum entrava seco).
+// Agora a decisão é tomada UMA vez por row montada (MemoizedMessageRow, todos
+// os tipos) e guardada num Set da sessão com a mesma chave do msgKeyExtractor
+// → cada mensagem anima no máximo 1x; histórico/rows reciclados = sem wrapper.
+//   out  : row própria otimista criada há < 2,5 s (relógio local) — sobe 12px,
+//          escala .96→1, opacidade 0→1, mola ~200 ms, pivô canto inferior dir.
+//   in   : row do peer chegada ao vivo (_animateIn) com a conversa NO FIM —
+//          menor: sobe 6px + fade 170 ms. Rolado p/ cima = sem movimento.
+//   tomb : "apagar para todos" (_tombIn) — o balão vira lápide (key `_d`) e a
+//          lápide assenta de 1.06→1 + fade ("colapsa" no lugar).
+// Só transform/opacity (native driver = UI thread) → zero layout → não briga
+// com o pin do [open-at-bottom]; o pinSettle lê _sendMotionState.smoothUntil
+// p/ rolar até a row nova ANIMADO (sem pulo de 1 frame).
+const _sendMotionState = { atBottom: true, smoothUntil: 0, me: '' };
+const _sendMotionSeen = new Set();
+const _SEND_MOTION_ND = Platform.OS !== 'web';
+function _rowMotionKey(item) {
+  if (!item) return '';
+  if (item._key) return String(item._key);
+  const p = item._client_id || item.client_message_id;
+  const base = p ? `c:${p}` : String(item.id ?? '');
+  return item.deleted_at ? `${base}_d` : base;
+}
+function _rowMotionMode(item) {
+  if (!item || item._type === 'separator' || item._type === 'unread_separator') return null;
+  const m = (item._type === 'album' && Array.isArray(item._items) && item._items[0]) || item;
+  if (item._tombIn || m._tombIn) return 'tomb';
+  if (m.deleted_at) return null;
+  const pend = !!(m._pending || m._uploading) || (typeof m.id === 'string' && m.id.startsWith('tmp_'));
+  if (pend) {
+    const t = Date.parse(m.created_at);
+    const age = Number.isFinite(t) ? Date.now() - t : Infinity;
+    return (age > -1000 && age < 2500) ? 'out' : null;
+  }
+  if ((item._animateIn || m._animateIn) && _sendMotionState.atBottom) {
+    const me = _sendMotionState.me;
+    if (me && String(m.sender_email || '').toLowerCase() === me) return null; // eco do próprio envio
+    return 'in';
+  }
+  return null;
+}
+function RowEnterMotion({ item, children }) {
+  const modeRef = useRef(undefined);
+  if (modeRef.current === undefined) {
+    let mode = null;
+    try {
+      if (!isReduceMotionEnabled()) {
+        const k = _rowMotionKey(item);
+        const md = (k && !_sendMotionSeen.has(k)) ? _rowMotionMode(item) : null;
+        if (md) {
+          if (_sendMotionSeen.size > 3000) _sendMotionSeen.clear();
+          _sendMotionSeen.add(k);
+          mode = md;
+          if (md !== 'tomb') _sendMotionState.smoothUntil = Date.now() + 450;
+        }
+      }
+    } catch {}
+    modeRef.current = mode;
+  }
+  const mode = modeRef.current;
+  const v = useRef(new Animated.Value(mode ? 0 : 1)).current;
+  // Terminou → solta o transform/opacity (no web um transform residual cria
+  // stacking context/containing block p/ overlays dentro da row).
+  const [settled, setSettled] = useState(!mode);
   useEffect(() => {
-    if (_reduceMotion) {
-      translateY.setValue(0); translateX.setValue(0); scale.setValue(1); opacity.setValue(1);
-      return;
-    }
-    if (animate) {
-      // Own-send entrance: subtle settle (no heavy overshoot). Initial scale
-      // 0.88 + friction 10 settles in ~200ms with no bounce — reads as crisp,
-      // not slow. Keep the opacity fade.
-      Animated.parallel([
-        Animated.spring(translateY, { toValue: 0, useNativeDriver: true, tension: 140, friction: 9 }),
-        Animated.spring(translateX, { toValue: 0, useNativeDriver: true, tension: 140, friction: 9 }),
-        Animated.spring(scale, { toValue: 1, useNativeDriver: true, tension: 130, friction: 10 }),
-        Animated.timing(opacity, { toValue: 1, duration: 110, useNativeDriver: true }),
-      ]).start();
-    } else if (fromOther) {
-      // [2026-10-02] Peer entrance SNAPPY (founder: "demora a aparecer"). Spring
-      // mais rígido (tension 240, friction 9 = sem bounce longo) + fade em 80ms
-      // partindo de 0.35 → a bolha "assenta" em ~150ms em vez de ~350ms. Leitura
-      // = instantânea, mantendo um micro-settle elegante (não é fade seco).
-      Animated.parallel([
-        Animated.spring(translateY, { toValue: 0, useNativeDriver: true, tension: 240, friction: 9 }),
-        Animated.spring(translateX, { toValue: 0, useNativeDriver: true, tension: 240, friction: 9 }),
-        Animated.spring(scale, { toValue: 1, useNativeDriver: true, tension: 240, friction: 9 }),
-        Animated.timing(opacity, { toValue: 1, duration: 80, useNativeDriver: true }),
-      ]).start();
-    }
+    if (!mode) return undefined;
+    const a = mode === 'out'
+      ? Animated.spring(v, { toValue: 1, stiffness: 420, damping: 32, mass: 1, useNativeDriver: _SEND_MOTION_ND })
+      : Animated.timing(v, { toValue: 1, duration: mode === 'in' ? 170 : 210, easing: Easing.out(Easing.cubic), useNativeDriver: _SEND_MOTION_ND });
+    a.start(({ finished }) => { if (finished) setSettled(true); });
+    return () => a.stop();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-  if (!animate && !fromOther) return children;
-  // Use alignSelf so the transform-origin naturally pivots from the bubble's
-  // own edge — RN doesn't expose transformOrigin but because each bubble's
-  // width hugs its content, the scale-from-center effect already looks like
-  // "pop from the side" combined with the translateX offset above.
-  return (
-    <Animated.View style={{ alignSelf: animate ? 'flex-end' : (fromOther ? 'flex-start' : 'auto'), transform: [{ translateY }, { translateX }, { scale }], opacity }}>
-      {children}
-    </Animated.View>
-  );
+  if (!mode) return children;
+  if (settled) return <Animated.View>{children}</Animated.View>;
+  let st;
+  if (mode === 'out') {
+    st = {
+      opacity: v.interpolate({ inputRange: [0, 0.55, 1], outputRange: [0, 1, 1], extrapolate: 'clamp' }),
+      transformOrigin: 'right bottom',
+      transform: [
+        { translateY: v.interpolate({ inputRange: [0, 1], outputRange: [12, 0] }) },
+        { scale: v.interpolate({ inputRange: [0, 1], outputRange: [0.96, 1] }) },
+      ],
+    };
+  } else if (mode === 'in') {
+    st = {
+      opacity: v,
+      transformOrigin: 'left bottom',
+      transform: [{ translateY: v.interpolate({ inputRange: [0, 1], outputRange: [6, 0] }) }],
+    };
+  } else {
+    st = {
+      opacity: v.interpolate({ inputRange: [0, 1], outputRange: [0.2, 1] }),
+      transform: [{ scale: v.interpolate({ inputRange: [0, 1], outputRange: [1.06, 1] }) }],
+    };
+  }
+  return <Animated.View style={st}>{children}</Animated.View>;
+}
+
+// [2026-10-08 send-motion] Tremidinha suave do ícone de falha (texto): toca na
+// 1ª vez que a falha aparece nesta sessão (msg recente) — histórico estático.
+const _failShakeSeen = new Set();
+function FailShake({ shakeKey, createdAt, children }) {
+  const doRef = useRef(undefined);
+  if (doRef.current === undefined) {
+    let d = false;
+    try {
+      const t = Date.parse(createdAt);
+      d = !isReduceMotionEnabled() && !!shakeKey && !_failShakeSeen.has(shakeKey)
+        && Number.isFinite(t) && Date.now() - t < 10 * 60 * 1000;
+      if (shakeKey) {
+        if (_failShakeSeen.size > 1000) _failShakeSeen.clear();
+        _failShakeSeen.add(shakeKey);
+      }
+    } catch {}
+    doRef.current = d;
+  }
+  const x = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    if (!doRef.current) return undefined;
+    const a = Animated.sequence([-5, 5, -3.5, 3, -1.5, 0].map((to, i) => Animated.timing(x, {
+      toValue: to, duration: i === 0 ? 45 : 60, easing: Easing.inOut(Easing.quad), useNativeDriver: _SEND_MOTION_ND,
+    })));
+    a.start();
+    return () => a.stop();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  return <Animated.View style={{ transform: [{ translateX: x }] }}>{children}</Animated.View>;
 }
 
 // ============================================================
@@ -734,20 +815,41 @@ function MessageSendAnim({ children, animate, fromOther }) {
 // FlatList recycling / re-renders unmount & remount the chip, but because we
 // record the popKey the second mount renders at scale 1 with no animation.
 // Only genuinely new reactions pop. Cheap: one Animated.Value + one spring.
+// [2026-10-08 send-motion] Antes o Set começava vazio → TODO chip do histórico
+// "pipocava" na 1ª montagem (abrir conversa = dezenas de chips quicando). Agora
+// só pipoca se a ROW já estava montada antes do chip (= reação nova chegando
+// numa mensagem na tela). Chip que monta junto com a row (histórico, rolagem)
+// só registra a chave e fica estático. Pop pequeno (.4→1 mola curta).
 const _reactionPoppedKeys = new Set();
+const _reactionRowSeen = new Set();
+function _markReactionRowSeen(id) {
+  if (id == null) return;
+  if (_reactionRowSeen.size > 5000) _reactionRowSeen.clear();
+  _reactionRowSeen.add(String(id));
+}
 function ReactionChipPop({ popKey, children }) {
-  const alreadyPopped = _reactionPoppedKeys.has(popKey);
-  const scale = useRef(new Animated.Value(alreadyPopped ? 1 : 0.5)).current;
+  const popRef = useRef(undefined);
+  if (popRef.current === undefined) {
+    const k = String(popKey || '');
+    const rowId = k.split(':')[0];
+    popRef.current = !!k && !_reactionPoppedKeys.has(k) && _reactionRowSeen.has(rowId) && !isReduceMotionEnabled();
+    if (_reactionPoppedKeys.size > 4000) _reactionPoppedKeys.clear();
+    if (k) _reactionPoppedKeys.add(k);
+  }
+  const pop = popRef.current;
+  const scale = useRef(new Animated.Value(pop ? 0.4 : 1)).current;
   useEffect(() => {
-    if (alreadyPopped) return;
-    _reactionPoppedKeys.add(popKey);
-    Animated.spring(scale, { toValue: 1, useNativeDriver: true, tension: 220, friction: 9 }).start();
-    // Bound the guard set so it can't grow without limit on long-lived sessions.
-    if (_reactionPoppedKeys.size > 2000) _reactionPoppedKeys.clear();
+    if (!pop) return;
+    Animated.spring(scale, { toValue: 1, stiffness: 520, damping: 17, mass: 1, useNativeDriver: _SEND_MOTION_ND }).start();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-  if (alreadyPopped) return children;
-  return <Animated.View style={{ transform: [{ scale }] }}>{children}</Animated.View>;
+  if (!pop) return children;
+  return (
+    <Animated.View style={{
+      opacity: scale.interpolate({ inputRange: [0.4, 0.75, 2], outputRange: [0, 1, 1], extrapolate: 'clamp' }),
+      transform: [{ scale }],
+    }}>{children}</Animated.View>
+  );
 }
 
 // ============================================================
@@ -1025,89 +1127,109 @@ function computeTickState(msg, opts = {}) {
 // change instead of a hard UI swap. `status` is the _readStatus enum value
 // (1 = sent, 1.5 = delivered, 2 = read). Keyed by status so the outgoing
 // set gets naturally unmounted by React.
-function AnimatedCheckStatus({ status, color, pending = false }) {
-  // Status: 0 = sent (single check), 1.5 = delivered (double gray), 2 = read (double purple).
-  // WhatsApp-style transitions:
-  //   - 0 → 1.5: second check slides in from the right
-  //   - 1.5 → 2: pulse + smooth color shift gray → purple
-  // Both are useNativeDriver so they ride on the GPU and never block the JS thread.
-  // Pending: render clock icon BEFORE first ✓ (WhatsApp ⏱). Handled below
-  // after the hook calls so we don't violate Rules of Hooks across renders
-  // when callers toggle pending.
-  const opacity = useRef(new Animated.Value(status > 0 ? 1 : 0)).current;
-  const secondCheckSlide = useRef(new Animated.Value(status >= 1.5 ? 1 : 0)).current;
-  const readPulse = useRef(new Animated.Value(status === 2 ? 1 : 0)).current;
-  const prevStatus = useRef(status);
+function AnimatedCheckStatus({ status, color, pending = false, size = 15, readColor = '#53BDEB', style }) {
+  // [2026-10-08 send-motion] ⏱ → ✓ → ✓✓ → ✓✓ azul, nível WhatsApp.
+  //  • Largura RESERVADA (caixa = largura do ✓✓) em todos os estados → hora e
+  //    balão não "andam" quando ✓ vira ✓✓.
+  //  • ⏱ só depois de 600 ms pendente (envio rápido vai direto pro ✓), depois
+  //    respira suave (opacidade; sem giro). Reduce Motion = estático.
+  //  • ⏱→✓: relógio some e o ✓ dá um pop (mola .5→1). ✓→✓✓: 2º ✓ desliza da
+  //    esquerda. ✓✓→azul: crossfade cinza→azul + pulso 1→1.15→1.
+  //  • Montar já num estado final = SEM animação (histórico estático; antes
+  //    TODO ✓ do histórico fazia fade-in ao montar). Só transições vistas com
+  //    a row montada animam. Native driver (UI thread).
+  const ND = Platform.OS !== 'web';
+  const lvl = (pending || status === 0) ? 0 : (status >= 2 ? 2 : (status >= 1.5 ? 1.5 : 1));
+  const clockV = useRef(new Animated.Value(0)).current;
+  const c1 = useRef(new Animated.Value(lvl >= 1 ? 1 : 0)).current;
+  const c2 = useRef(new Animated.Value(lvl >= 1.5 ? 1 : 0)).current;
+  const rd = useRef(new Animated.Value(lvl >= 2 ? 1 : 0)).current;
+  const pulse = useRef(new Animated.Value(1)).current;
+  const prevLvl = useRef(lvl);
+  const isPend = lvl === 0;
+  // Relógio atrasado (600 ms) + respiração enquanto pendente.
   useEffect(() => {
-    const wasMounting = prevStatus.current === status; // first render
-    if (wasMounting) {
-      Animated.timing(opacity, { toValue: 1, duration: 220, useNativeDriver: true }).start();
+    if (!isPend) return undefined;
+    const rm = isReduceMotionEnabled();
+    let loop = null;
+    const tm = setTimeout(() => {
+      if (rm) { clockV.setValue(0.6); return; }
+      Animated.timing(clockV, { toValue: 0.7, duration: 160, useNativeDriver: ND }).start(({ finished }) => {
+        if (!finished) return;
+        loop = Animated.loop(Animated.sequence([
+          Animated.timing(clockV, { toValue: 0.35, duration: 750, easing: Easing.inOut(Easing.quad), useNativeDriver: ND }),
+          Animated.timing(clockV, { toValue: 0.7, duration: 750, easing: Easing.inOut(Easing.quad), useNativeDriver: ND }),
+        ]));
+        loop.start();
+      });
+    }, 600);
+    return () => { clearTimeout(tm); if (loop) loop.stop(); clockV.stopAnimation(); };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isPend]);
+  // Transições de status.
+  useEffect(() => {
+    const from = prevLvl.current;
+    prevLvl.current = lvl;
+    if (from === lvl) return;
+    const rm = isReduceMotionEnabled();
+    if (lvl > 0) {
+      if (rm) clockV.setValue(0);
+      else Animated.timing(clockV, { toValue: 0, duration: 110, useNativeDriver: ND }).start();
     }
-    if (prevStatus.current < 1.5 && status >= 1.5) {
-      // Sent → Delivered: slide the second check in from the right.
-      Animated.spring(secondCheckSlide, { toValue: 1, tension: 220, friction: 14, useNativeDriver: true }).start();
+    if (rm || lvl < from) {
+      // Reduce Motion ou rebaixamento (raro: rollback) → encaixa sem movimento.
+      c1.setValue(lvl >= 1 ? 1 : 0); c2.setValue(lvl >= 1.5 ? 1 : 0); rd.setValue(lvl >= 2 ? 1 : 0);
+      return;
     }
-    if (prevStatus.current < 2 && status === 2) {
-      // Delivered → Read: smooth color shift + scale pulse for the satisfying
-      // "they saw it" moment. Pulse goes 1 → 1.18 → 1 with elastic easing.
+    if (from < 1 && lvl >= 1) {
+      c1.setValue(0);
+      Animated.spring(c1, { toValue: 1, stiffness: 520, damping: 22, mass: 1, useNativeDriver: ND }).start();
+    }
+    if (from < 1.5 && lvl >= 1.5) {
+      Animated.spring(c2, { toValue: 1, stiffness: 420, damping: 26, mass: 1, delay: from < 1 ? 70 : 0, useNativeDriver: ND }).start();
+    }
+    if (from < 2 && lvl >= 2) {
+      Animated.timing(rd, { toValue: 1, duration: 220, delay: from < 1.5 ? 90 : 0, easing: Easing.out(Easing.cubic), useNativeDriver: ND }).start();
+      pulse.setValue(1);
       Animated.sequence([
-        Animated.timing(readPulse, { toValue: 1, duration: 280, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
+        Animated.timing(pulse, { toValue: 1.15, duration: 110, easing: Easing.out(Easing.quad), useNativeDriver: ND }),
+        Animated.spring(pulse, { toValue: 1, stiffness: 380, damping: 18, mass: 1, useNativeDriver: ND }),
       ]).start();
     }
-    prevStatus.current = status;
-  }, [status]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lvl]);
 
-  if (pending) {
-    return (
-      <View style={{ marginLeft: 3, flexShrink: 0, opacity: 0.65 }}>
-        <IconClock size={12} color={color} />
-      </View>
-    );
-  }
-  if (status < 1.5) {
-    // Single check (sent)
-    return (
-      <Animated.View style={{ marginLeft: 3, flexShrink: 0, opacity }}>
-        {/* [VISUAL-G6, 2026-05-19] Check size 13→15 + read color #F1F3F5→#53BDEB (WA blue, visible on purple). */}
-        <IconCheck size={15} color={color} />
+  const step = Math.round(size * 0.6); // deslocamento do 2º ✓ (antes: marginRight -6 em 15px)
+  const grayOp = rd.interpolate({ inputRange: [0, 1], outputRange: [1, 0] });
+  const pair = (
+    <>
+      <Animated.View style={{ opacity: grayOp }}>
+        <IconCheck size={size} color={color} />
       </Animated.View>
-    );
-  }
-
-  // Double check — crossfade gray ↔ blue via two stacked layers.
-  // (Animated color on SVG doesn't propagate without createAnimatedComponent;
-  // crossfading two pre-colored copies is simpler and still 60fps.)
-  const readOpacity = readPulse; // 0 → 1 when reaching status 2
-  const grayOpacity = readPulse.interpolate({ inputRange: [0, 1], outputRange: [1, 0] });
-  const pulseScale = readPulse.interpolate({
-    inputRange: [0, 0.5, 1],
-    outputRange: [1, 1.22, 1],
-  });
-  const slideX = secondCheckSlide.interpolate({ inputRange: [0, 1], outputRange: [-4, 0] });
-  const slideOpacity = secondCheckSlide.interpolate({ inputRange: [0, 1], outputRange: [0, 1] });
-
+      <Animated.View style={{ position: 'absolute', left: 0, top: 0, opacity: rd }}>
+        <IconCheck size={size} strokeWidth={2.6} color={readColor} />
+      </Animated.View>
+    </>
+  );
+  const clockSize = Math.max(9, size - 3);
   return (
-    <Animated.View style={{
-      marginLeft: 3, flexShrink: 0, flexDirection: 'row',
-      opacity, transform: [{ scale: pulseScale }],
-    }}>
-      {/* [VISUAL-G6, 2026-05-19] First check — gray + WhatsApp-blue stacked, crossfade. */}
-      <View style={{ marginRight: -6 }}>
-        <Animated.View style={{ opacity: grayOpacity }}>
-          <IconCheck size={15} color={color} />
-        </Animated.View>
-        <Animated.View style={{ position: 'absolute', opacity: readOpacity }}>
-          <IconCheck size={15} strokeWidth={2.6} color="#53BDEB" />
-        </Animated.View>
-      </View>
-      {/* Second check (slides in on delivered) — same crossfade pair. */}
-      <Animated.View style={{ transform: [{ translateX: slideX }], opacity: slideOpacity }}>
-        <Animated.View style={{ opacity: grayOpacity }}>
-          <IconCheck size={15} color={color} />
-        </Animated.View>
-        <Animated.View style={{ position: 'absolute', opacity: readOpacity }}>
-          <IconCheck size={15} strokeWidth={2.6} color="#53BDEB" />
-        </Animated.View>
+    <Animated.View style={[{ marginLeft: 3, flexShrink: 0, width: size + step, height: size, transform: [{ scale: pulse }] }, style]}>
+      <Animated.View pointerEvents="none" style={{ position: 'absolute', left: 1, top: (size - clockSize) / 2, opacity: clockV }}>
+        <IconClock size={clockSize} color={color} />
+      </Animated.View>
+      <Animated.View style={{
+        position: 'absolute', left: 0, top: 0,
+        opacity: c1.interpolate({ inputRange: [0, 0.6, 2], outputRange: [0, 1, 1], extrapolate: 'clamp' }),
+        transform: [{ scale: c1.interpolate({ inputRange: [0, 1], outputRange: [0.5, 1] }) }],
+      }}>
+        {pair}
+      </Animated.View>
+      <Animated.View style={{
+        position: 'absolute', left: step, top: 0,
+        opacity: c2.interpolate({ inputRange: [0, 0.6, 2], outputRange: [0, 1, 1], extrapolate: 'clamp' }),
+        transform: [{ translateX: c2.interpolate({ inputRange: [0, 1], outputRange: [-4, 0] }) }],
+      }}>
+        {pair}
       </Animated.View>
     </Animated.View>
   );
@@ -1162,36 +1284,20 @@ function MediaStatusFooter({ msg, isOwn, variant }) {
   const time = formatTime(msg.created_at);
   if (!time && !showChecks && !isPending) return null;
 
-  const Checks = () => {
-    if (isPending) {
-      // WhatsApp ⏱ pending — show clock before the first ✓ ever appears.
-      const c = isSticker ? 'rgba(120,120,120,0.85)' : 'rgba(255,255,255,0.85)';
-      return <IconClock size={12} color={c} style={{ marginLeft: 1, flexShrink: 0 }} />;
-    }
-    if (!showChecks) return null;
-    if (msg._readStatus === 2) {
-      // [2026-05-21] WhatsApp parity: read = blue (#53BDEB), not lavender.
-      // Was rendering as light purple #F1F3F5 which didn't read as "blue"
-      // to users coming from WhatsApp. Unified with AnimatedCheckStatus.
-      return (
-        <View style={{ flexDirection: 'row', marginLeft: 1, flexShrink: 0 }}>
-          <IconCheck size={12} strokeWidth={2.6} color="#53BDEB" style={{ marginRight: -6 }} />
-          <IconCheck size={12} strokeWidth={2.6} color="#53BDEB" />
-        </View>
-      );
-    }
-    if (msg._readStatus === 1.5) {
-      const c = isSticker ? 'rgba(120,120,120,0.85)' : 'rgba(255,255,255,0.85)';
-      return (
-        <View style={{ flexDirection: 'row', marginLeft: 1, flexShrink: 0 }}>
-          <IconCheck size={11} color={c} style={{ marginRight: -6 }} />
-          <IconCheck size={11} color={c} />
-        </View>
-      );
-    }
-    const c = isSticker ? 'rgba(120,120,120,0.75)' : 'rgba(255,255,255,0.75)';
-    return <IconCheck size={11} color={c} style={{ marginLeft: 1, flexShrink: 0 }} />;
-  };
+  // [2026-10-08 send-motion] Era `const Checks = () => …` usado como elemento JSX:
+  // um TIPO de componente novo a cada render = remontava sempre (sem transição
+  // possível). Agora é o mesmo AnimatedCheckStatus do balão de texto (⏱ atrasado,
+  // pop do ✓, ✓✓ deslizando, crossfade azul, largura reservada).
+  const _ckColor = isSticker ? 'rgba(120,120,120,0.85)' : 'rgba(255,255,255,0.85)';
+  const checksEl = (isPending || showChecks) ? (
+    <AnimatedCheckStatus
+      status={isPending ? 0 : msg._readStatus}
+      pending={isPending}
+      color={_ckColor}
+      size={12}
+      style={{ marginLeft: 1 }}
+    />
+  ) : null;
 
   if (isSticker) {
     // Sticker: minimal row below the sticker (no dark pill — clashes with
@@ -1206,7 +1312,7 @@ function MediaStatusFooter({ msg, isOwn, variant }) {
           <Text style={{ fontSize: 10, color: 'rgba(120,120,120,0.85)', fontStyle: 'italic' }}>{_mt('chatConv.edited', 'editada')}</Text>
         )}
         <Text style={{ fontSize: 10.5, color: 'rgba(120,120,120,0.95)', fontWeight: '500' }}>{time}</Text>
-        <Checks />
+        {checksEl}
       </View>
     );
   }
@@ -1230,7 +1336,7 @@ function MediaStatusFooter({ msg, isOwn, variant }) {
             <Text style={[{ fontSize: 10, color: 'rgba(255,255,255,0.85)', fontStyle: 'italic' }, _ts]}>{_mt('chatConv.edited', 'editada')}</Text>
           )}
           <Text style={[{ fontSize: 11, color: '#fff', fontWeight: '600', fontVariant: ['tabular-nums'] }, _ts]}>{time}</Text>
-          <Checks />
+          {checksEl}
         </View>
       </View>
     );
@@ -1247,7 +1353,7 @@ function MediaStatusFooter({ msg, isOwn, variant }) {
         <Text style={{ fontSize: 10, color: 'rgba(255,255,255,0.8)', fontStyle: 'italic' }}>{_mt('chatConv.edited', 'editada')}</Text>
       )}
       <Text style={{ fontSize: 10.5, color: 'rgba(255,255,255,0.95)', fontWeight: '500' }}>{time}</Text>
-      <Checks />
+      {checksEl}
     </View>
   );
 }
@@ -1300,6 +1406,7 @@ function MessageDeleteAnim({ children, deleting, onComplete }) {
   const translateX = useRef(new Animated.Value(0)).current;
   useEffect(() => {
     if (deleting) {
+      if (isReduceMotionEnabled()) { opacity.setValue(0); if (onComplete) onComplete(); return; } // [2026-10-08 send-motion]
       Animated.parallel([
         Animated.timing(opacity, { toValue: 0, duration: 250, useNativeDriver: true }),
         Animated.timing(scaleVal, { toValue: 0.92, duration: 250, useNativeDriver: true }),
@@ -3214,6 +3321,8 @@ const MemoizedMessageRow = React.memo(function MemoizedMessageRow({ item, render
   const _rowKey = item && item._type !== 'separator' && item._type !== 'unread_separator' ? item.id : null;
   useRowOverlayVersion(overlayStore, _rowKey);
   const _ov = overlayStore ? overlayStore.snapshot(_rowKey) : null;
+  // [2026-10-08 send-motion] row montada → reações que chegarem DEPOIS pipocam.
+  useEffect(() => { _markReactionRowSeen(_rowKey); }, [_rowKey]);
   // Silent-fail audit: a single malformed payload (corrupt content JSON,
   // missing required field, unexpected type, etc.) thrown inside
   // renderMessage used to crash the WHOLE FlatList — the user would back
@@ -3239,13 +3348,17 @@ const MemoizedMessageRow = React.memo(function MemoizedMessageRow({ item, render
   // when the item is a separator, or when the effect is a screen-only
   // type (those render via MessageScreenEffect, not the bubble).
   const eff = item && typeof item === 'object' ? item.effect : null;
+  // [2026-10-08 send-motion] entrada (envio/recebida/lápide) decidida 1x por
+  // row montada — ver RowEnterMotion. Histórico = sem wrapper.
   if (!eff || item._type === 'separator' || item._type === 'unread_separator') {
-    return rendered;
+    return <RowEnterMotion item={item}>{rendered}</RowEnterMotion>;
   }
   return (
-    <MessageBubbleEffect effect={eff} messageId={item.id || item._client_id}>
-      {rendered}
-    </MessageBubbleEffect>
+    <RowEnterMotion item={item}>
+      <MessageBubbleEffect effect={eff} messageId={item.id || item._client_id}>
+        {rendered}
+      </MessageBubbleEffect>
+    </RowEnterMotion>
   );
 }, (prev, next) => {
   if (prev.overlayStore !== next.overlayStore) return false;
@@ -7966,8 +8079,13 @@ function ChatConversationInner() {
           if (!l) return;
           try {
             const sv = l.getNativeScrollRef?.();
-            if (sv && typeof sv.scrollToEnd === 'function') sv.scrollToEnd({ animated: false });
-            else l.scrollToEnd?.({ animated: false });
+            // [2026-10-08 send-motion] Logo após uma row NOVA entrar (envio /
+            // recebida no fim) o ajuste vira rolagem animada curta: a lista
+            // desliza junto com a bolha subindo, em vez de pular H px num frame.
+            // Fora dessa janela continua instantâneo (abertura, mídia medindo).
+            const _smooth = Date.now() < (_sendMotionState.smoothUntil || 0) && !isReduceMotionEnabled();
+            if (sv && typeof sv.scrollToEnd === 'function') sv.scrollToEnd({ animated: _smooth });
+            else l.scrollToEnd?.({ animated: _smooth });
           } catch {}
         });
       },
@@ -8128,6 +8246,7 @@ function ChatConversationInner() {
   // the boom for a sit-then-launch tactile sequence (iMessage send rhythm).
   const sendPressScale = useRef(new Animated.Value(1)).current;
   const triggerSendBoom = useCallback(() => {
+    if (isReduceMotionEnabled()) return; // [2026-10-08 send-motion]
     sendBoomScale.stopAnimation?.();
     sendBoomRotate.stopAnimation?.();
     sendBoomScale.setValue(1);
@@ -10979,6 +11098,7 @@ function ChatConversationInner() {
   // ticks) until re-render. Fall back to the synchronously-available stored
   // active account (localStorage/MMKV cache) so the side is correct immediately.
   const currentEmail = user?.email || (api.getActiveAccountEmail?.() || '');
+  _sendMotionState.me = String(currentEmail || '').toLowerCase(); // [2026-10-08 send-motion] filtro de eco
   // [FIX stale-currentEmail 2026-10-02] onViewableItemsChanged is created once
   // via useRef().current, so it closes over currentEmail at FIRST render — when
   // user?.email can still be '' — and would then read-ack our OWN messages
@@ -13702,6 +13822,7 @@ function ChatConversationInner() {
             hls_url: null,
             waveform: null,
             deleted_by: m.deleted_by || '',
+            _tombIn: true, // [2026-10-08 send-motion] lápide entra com colapso
           };
         }));
         // Cache invalidation: drop the deleted row from every persistence
@@ -14747,6 +14868,7 @@ function ChatConversationInner() {
                   hls_url: null,
                   waveform: null,
                   deleted_by: data.deleted_by || '',
+                  _tombIn: true, // [2026-10-08 send-motion]
                 };
               }
               // Reply previews pointing at a now-deleted message should
@@ -18927,6 +19049,7 @@ function ChatConversationInner() {
             hls_url: null,
             waveform: null,
             deleted_by: user?.email,
+            _tombIn: true, // [2026-10-08 send-motion]
           };
         }
         return m;
@@ -19124,21 +19247,20 @@ function ChatConversationInner() {
     //   - start tiny (0.3) and bloom to 1.25 over ~350ms (tension 80, friction 6)
     //   - settle to 1.0 over ~400ms with more damping (tension 60, friction 9)
     // Total ~750ms — still under a second, but the eye actually tracks it.
+    // [2026-10-08 send-motion] Pop PEQUENO. Era 0→1.4→1 (~750 ms) + fade a
+    // partir de 0: a fileira INTEIRA de reações sumia e explodia. Agora a
+    // fileira só dá um toque .92→1 e o chip novo faz o próprio pop.
     setReactionBounceId(msgId);
-    reactionBounceScale.setValue(0);
-    reactionBounceOpacity.setValue(0);
-    // Pop sequence wired to the spec from the audit: 0 → 1.4 → 1 with friction 4
-    // tension 120 on the overshoot, then a softer settle. Opacity tweens 0→1
-    // in parallel with the first leg so the chip "appears" instead of snapping.
-    Animated.parallel([
-      Animated.sequence([
-        Animated.spring(reactionBounceScale, { toValue: 1.4, useNativeDriver: true, tension: 120, friction: 4 }),
-        Animated.spring(reactionBounceScale, { toValue: 1,   useNativeDriver: true, tension: 80,  friction: 8 }),
-      ]),
-      Animated.timing(reactionBounceOpacity, { toValue: 1, duration: 180, useNativeDriver: true }),
-    ]).start(() => {
-      setTimeout(() => setReactionBounceId(null), 400);
-    });
+    reactionBounceOpacity.setValue(1);
+    if (isReduceMotionEnabled()) {
+      reactionBounceScale.setValue(1);
+      setTimeout(() => setReactionBounceId(null), 50);
+    } else {
+      reactionBounceScale.setValue(0.92);
+      Animated.spring(reactionBounceScale, { toValue: 1, stiffness: 480, damping: 16, mass: 1, useNativeDriver: Platform.OS !== 'web' }).start(() => {
+        setTimeout(() => setReactionBounceId(null), 120);
+      });
+    }
     // Optimistic UI: paint the reaction immediately, reconcile with server
     // response. Audit 2026-05-05: handler ficava aguardando ~200-500ms de RTT
     // antes de mostrar a reação, dando feel "lento". WhatsApp/iMessage atualiza
@@ -22270,6 +22392,7 @@ function ChatConversationInner() {
     // (inverted: contentOffset.y; oldest-first: contentH - viewportH - y).
     const _distLatest = threadScroll.distanceFromLatest(e);
     threadScrollStateRef.current.lastDistance = _distLatest; // [2026-10-08 chat-gaps2] jumpToLatest
+    _sendMotionState.atBottom = _distLatest <= 120; // [2026-10-08 send-motion] recebida só anima no fim
     // [2026-10-08 open-at-bottom] Grudado no fim: o offset que "se afastou"
     // junto com uma mudança de tamanho do conteúdo/viewport foi o LAYOUT (MVCP
     // ancorando a row do topo, mídia/row medindo, teclado) → volta ao fim.
@@ -22287,7 +22410,10 @@ function ChatConversationInner() {
         _st.pinned = true;
       } else if (_st.pinned) {
         if (_layoutMoved && !_st.dragging) threadScroll.pinSettle();
-        else if (_distLatest > 12) _st.pinned = false;
+        // [2026-10-08 send-motion] durante a rolagem animada do pinSettle os
+        // onScroll intermediários (tamanho igual, ainda longe do fim) NÃO soltam
+        // o pin — arraste real solta via onScrollBeginDrag.
+        else if (_distLatest > 12 && Date.now() > (_sendMotionState.smoothUntil || 0) + 600) _st.pinned = false;
       }
     }
     const scrolledUp = _distLatest > 300;
@@ -26444,7 +26570,7 @@ function ChatConversationInner() {
 
     return (
       <MessageDeleteAnim deleting={__ov.deleting}>
-      <MessageSendAnim animate={!!msg._pending} fromOther={!!msg._animateIn && !isOwn}>
+      {/* [2026-10-08 send-motion] entrada movida p/ RowEnterMotion (MemoizedMessageRow) */}
       <SwipeReplyWrap
         disabled={isDeleted || isSystem}
         onReply={() => { setReplyTo(msg); inputRef.current?.focus(); }}
@@ -27134,7 +27260,9 @@ function ChatConversationInner() {
                     style={{ flexDirection: 'column', alignItems: 'center', marginLeft: 2, gap: 0 }}
                     accessibilityLabel={t('chat.retry') || 'Tentar novamente'}
                   >
-                    <IconAlertTriangle size={12} color="#EF4444" />
+                    <FailShake shakeKey={msg._client_id || msg.client_message_id || String(msg.id)} createdAt={msg.created_at}>
+                      <IconAlertTriangle size={12} color="#EF4444" />
+                    </FailShake>
                     <Text style={{ fontSize: 11, color: colors.error || '#EF4444', marginTop: 2 }}>
                       {t('chatConv.tapToRetry') || 'Tocar para tentar de novo'}
                     </Text>
@@ -27193,9 +27321,9 @@ function ChatConversationInner() {
                 // WhatsApp ⏱ pending state — show clock BEFORE any checkmark.
                 // Covers both _pending (in-flight) and pending_state==='queued'
                 // (offline / awaiting send). Excludes _failed (handled above).
-                if ((msg._pending || msg.pending_state === 'queued') && !msg._failed) return (
-                  <IconClock size={13} color={ownMetaColor} style={{ marginLeft: 3, opacity: 0.5 }} />
-                );
+                // [2026-10-08 send-motion] Pendente agora cai no MESMO elemento do
+                // ✓ (abaixo) → a instância do AnimatedCheckStatus sobrevive ao ack
+                // e anima ⏱→✓→✓✓→azul (antes eram árvores diferentes = troca seca).
                 // WhatsApp-style message status ticks:
                 //   ✓  (single)  — enviado ao servidor
                 //   ✓✓ (double)  — entregue no dispositivo
@@ -27210,20 +27338,20 @@ function ChatConversationInner() {
                 // BOTH groups (one row per member) and direct chats (single
                 // peer w/ exact read+delivered timestamps) — backend already
                 // returns the receipts[] array for either shape.
-                if (typeof msg.id === 'number' && !msg._failed && !msg._queued) {
-                  return (
-                    <TouchableOpacity
-                      onPress={() => handleMessageInfo(msg)}
-                      onLongPress={() => handleMessageInfo(msg)}
-                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                      accessibilityLabel={t('chatConv.messageInfo') || 'Informações da mensagem'}
-                      accessibilityRole="button"
-                    >
-                      <AnimatedCheckStatus status={msg._readStatus} color={ownMetaColor} />
-                    </TouchableOpacity>
-                  );
-                }
-                return <AnimatedCheckStatus status={msg._readStatus} color={ownMetaColor} />;
+                const _stPend = !!(msg._pending || msg.pending_state === 'queued') && !msg._failed;
+                const _stTap = typeof msg.id === 'number' && !msg._failed && !msg._queued && !_stPend;
+                return (
+                  <TouchableOpacity
+                    disabled={!_stTap}
+                    onPress={() => handleMessageInfo(msg)}
+                    onLongPress={() => handleMessageInfo(msg)}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                    accessibilityLabel={_stPend ? (t('chat.sending') || 'Enviando...') : (t('chatConv.messageInfo') || 'Informações da mensagem')}
+                    accessibilityRole={_stTap ? 'button' : undefined}
+                  >
+                    <AnimatedCheckStatus status={_stPend ? 0 : msg._readStatus} pending={_stPend} color={ownMetaColor} />
+                  </TouchableOpacity>
+                );
               })()}
             </View>
           )}
@@ -27384,7 +27512,6 @@ function ChatConversationInner() {
         )}
         </TouchableOpacity>
       </SwipeReplyWrap>
-      </MessageSendAnim>
       </MessageDeleteAnim>
     );
   };

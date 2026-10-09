@@ -158,6 +158,39 @@ const WS_INSTANCE_ID = (() => {
 // above a worst-case handshake RTT (auth lands in ~167ms in prod) so a healthy
 // slow link never false-positives.
 const AUTH_WATCHDOG_MS = 6000;
+// [2026-10-08 regions-fast] Entrada REGIONAL do WebSocket. Usuário cuja região
+// escolhida (services/api.js, region_hint + probe) é BR/EU abre o socket em
+// wss://api-<região>.chatyy.com.br/ws: o TLS termina no edge (perto do usuário)
+// e o edge leva o upgrade pelo túnel WireGuard até o MESMO hub Go do US
+// (nginx do edge → 10.8.0.1:8084 via listener interno; hub vê o IP real via
+// X-Forwarded-For). Medido do box BR: conectar+auth 482→~390ms (−1 RTT por
+// (re)conexão; ~256ms com o pool do edge aquecido); frames/recibos iguais.
+// Web fica no ws.chatyy.com.br (CSP connect-src do site só libera esse host).
+// Fallback: se o socket regional não chegar a auth_success, a PRÓXIMA tentativa
+// vai pro US; se o US autenticar logo em seguida (= problema era do edge), a
+// entrada regional fica bloqueada por REGIONAL_WS_BLOCK_MS. Se o US também
+// falhar (= rede), volta a tentar a regional normalmente.
+const US_WS_URL = 'wss://ws.chatyy.com.br/ws';
+const REGIONAL_WS_URLS = {
+  br: 'wss://api-br.chatyy.com.br/ws',
+  eu: 'wss://api-eu.chatyy.com.br/ws',
+};
+const REGIONAL_WS_BLOCK_MS = 15 * 60 * 1000;
+let _regionalWsBlockedUntil = 0;
+let _regionalWsFailPending = false;
+function _pickWsUrl() {
+  try {
+    if (Platform.OS === 'web') return US_WS_URL;
+    const g = (typeof globalThis !== 'undefined') ? globalThis : {};
+    if (g.__chatyyRegionalWsOff) return US_WS_URL;
+    if (_regionalWsFailPending || Date.now() < _regionalWsBlockedUntil) return US_WS_URL;
+    const info = require('./api').getEdgeInfo?.();
+    const url = info && REGIONAL_WS_URLS[info.region];
+    return url || US_WS_URL;
+  } catch {
+    return US_WS_URL;
+  }
+}
 // [P0 2026-05-25 auth-reject storm] After this many consecutive
 // refreshed-but-still-rejected auth attempts, stop auto-reconnecting and
 // force a real re-login instead of storming the server. A single transient
@@ -733,7 +766,16 @@ class MailWebSocket {
 
     try {
       // Use dedicated WS domain (bypasses Cloudflare proxy which breaks WS)
-      const wsUrl = 'wss://ws.chatyy.com.br/ws';
+      // [2026-10-08 regions-fast] ...ou a entrada regional (api-br/api-eu) do
+      // MESMO hub — ver _pickWsUrl(). Antes de abrir, contabiliza o desfecho da
+      // tentativa ANTERIOR (que nunca autenticou) p/ o fallback regional→US.
+      const _prevAttempt = this._wsAttempt;
+      if (_prevAttempt && !_prevAttempt.authed) {
+        if (_prevAttempt.regional) _regionalWsFailPending = true;
+        else if (_regionalWsFailPending) _regionalWsFailPending = false; // US também falhou → rede, não o edge
+      }
+      const wsUrl = _pickWsUrl();
+      this._wsAttempt = { url: wsUrl, regional: wsUrl !== US_WS_URL, authed: false };
       // CWP/1 subprotocol negotiation — feature-flagged (default OFF).
       // Server picks 'cwp.1' if it supports CWP, else 'json.legacy'.
       // Falls back transparently because the server's onMessage handler
@@ -1720,6 +1762,16 @@ class MailWebSocket {
     switch (msg.type) {
       case 'auth_success':
         this.authenticated = true;
+        // [2026-10-08 regions-fast] Desfecho da tentativa (fallback regional→US).
+        if (this._wsAttempt) {
+          this._wsAttempt.authed = true;
+          if (!this._wsAttempt.regional && _regionalWsFailPending) {
+            // Regional falhou e o US autenticou em seguida → problema do edge.
+            _regionalWsBlockedUntil = Date.now() + REGIONAL_WS_BLOCK_MS;
+            try { this._logGhost?.('regional_ws_fallback', {}); } catch {}
+          }
+        }
+        _regionalWsFailPending = false;
         // [2026-10-05] Handshake completed — disarm the auth watchdog.
         this._clearAuthWatchdog();
         this._authFailStreak = 0;
