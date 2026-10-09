@@ -16,6 +16,8 @@ import * as api from '../services/api';
 import * as IAP from '../services/iap';
 import AvatarCircle from '../components/AvatarCircle';
 import { openInApp } from '../utils/inAppBrowser'; // [2026-10-07 app-feel-webview]
+// [2026-10-09 plans-consistency] plano/cota/preços vêm do backend (plan_info.catalog).
+import { canonicalPlanId, planDisplayName, formatGb, formatQuotaBytes, invalidatePlanState } from '../services/planState';
 import {
   IconArrowLeft, IconStar, IconStarFilled, IconCheck, IconChevronDown, IconChevronUp,
   IconX, IconSparkles, IconUsers, IconShield, IconPlus, IconTrash,
@@ -444,13 +446,17 @@ function formatBRL(centavos) {
 // Plus = legacy "one" tier; Pro = legacy "family" tier. Tier names
 // were rebranded to feel modern; pricing stays exactly what the
 // store already accepted.
+// [2026-10-09 plans-consistency] Valores = fallback IDÊNTICO ao plans.php
+// (PLAN_FREE/PLUS/PRO). Quando plan_info chega, _applyBackendCatalog()
+// sobrescreve PLANS/PRICING com plan_info.catalog — backend é a verdade.
+// Pro = 1 TB (era 500 GB aqui e divergia do backend).
 const PLANS = {
-  free:   { price: 0,     storage: 20,  maxFile: 2, mediaRetention: null, label: 'Chatyy Free' },
-  plus:   { price: 14.99, storage: 200,  maxFile: 2, mediaRetention: null, label: 'Chatyy Plus' },
-  pro:    { price: 29.99, storage: 500,  maxFile: 2, mediaRetention: null, label: 'Chatyy Pro', maxMembers: 6 },
+  free:   { price: 0,     storage: 20,   maxFile: 2, mediaRetention: null, label: 'Chatyy Free', maxMembers: 1, backupDays: 30 },
+  plus:   { price: 14.99, storage: 200,  maxFile: 2, mediaRetention: null, label: 'Chatyy Plus', maxMembers: 1, backupDays: 30 },
+  pro:    { price: 29.99, storage: 1024, maxFile: 5, mediaRetention: null, label: 'Chatyy Pro', maxMembers: 6, backupDays: 90 },
   // Legacy aliases — same entitlement, old name routes here.
-  one:    { price: 14.99, storage: 200,  maxFile: 2, mediaRetention: null, label: 'Chatyy Plus' },
-  family: { price: 29.99, storage: 500,  maxFile: 2, mediaRetention: null, label: 'Chatyy Pro', maxMembers: 6 },
+  one:    { price: 14.99, storage: 200,  maxFile: 2, mediaRetention: null, label: 'Chatyy Plus', maxMembers: 1, backupDays: 30 },
+  family: { price: 29.99, storage: 1024, maxFile: 5, mediaRetention: null, label: 'Chatyy Pro', maxMembers: 6, backupDays: 90 },
 };
 
 // Pricing in centavos. Monthly + annual values match the ASC-approved
@@ -484,11 +490,43 @@ const STORAGE_OPTIONS_ONE = [
 // Pro tier (legacy "family") ships with 500GB included — matches the
 // ASC-approved family_monthly product. Storage add-ons let users top
 // up to 1TB or 2TB without leaving the tier.
+// [2026-10-09] Pro inclui 1 TB no backend (PLAN_PRO) → 1 TB é o incluído.
 const STORAGE_OPTIONS_FAMILY = [
-  { gb: 500,  extra: 0,    label: '500GB', included: true },
-  { gb: 1000, extra: 999,  label: '1TB' },
+  { gb: 1024, extra: 0,    label: '1TB', included: true },
   { gb: 2000, extra: 1999, label: '2TB' },
 ];
+
+// Aplica o catálogo do backend (plan_info.catalog) nas tabelas do módulo.
+function _applyBackendCatalog(catalog) {
+  if (!catalog || typeof catalog !== 'object') return;
+  const pairs = [['free', ['free']], ['plus', ['plus', 'one']], ['pro', ['pro', 'family']]];
+  for (const [id, keys] of pairs) {
+    const c = catalog[id];
+    if (!c) continue;
+    for (const k of keys) {
+      const p = PLANS[k];
+      if (Number(c.storage_gb) > 0) p.storage = Number(c.storage_gb);
+      if (Number(c.max_file_gb) > 0) p.maxFile = Number(c.max_file_gb);
+      if (Number(c.max_members) > 0) p.maxMembers = Number(c.max_members);
+      if (Number(c.backup_retention_days) > 0) p.backupDays = Number(c.backup_retention_days);
+      if (Number.isFinite(Number(c.price_cents))) p.price = Number(c.price_cents) / 100;
+      if (PRICING[k] && Number(c.price_cents) > 0) {
+        PRICING[k].monthly = Number(c.price_cents);
+        if (Number(c.price_annual_cents) > 0) PRICING[k].annual = Math.round(Number(c.price_annual_cents) / 12);
+      }
+    }
+  }
+  const proIncluded = STORAGE_OPTIONS_FAMILY.find(o => o.included);
+  if (proIncluded && PLANS.pro.storage) {
+    proIncluded.gb = PLANS.pro.storage;
+    proIncluded.label = formatGb(PLANS.pro.storage).replace(' ', '');
+  }
+  const plusIncluded = STORAGE_OPTIONS_ONE.find(o => o.included);
+  if (plusIncluded && PLANS.plus.storage) {
+    plusIncluded.gb = PLANS.plus.storage;
+    plusIncluded.label = formatGb(PLANS.plus.storage).replace(' ', '');
+  }
+}
 
 // Get storage options adjusted for billing period
 function getStorageOptions(plan, billingPeriod) {
@@ -610,11 +648,14 @@ export default function PlansScreen() {
   const searchParams = useLocalSearchParams();
   const [successShown, setSuccessShown] = useState(false);
 
-  const currentPlan = planInfo?.plan || 'free';
+  // Nome legado ('one'/'family') mantido p/ as comparações antigas da tela,
+  // mas derivado do plan_id CANÔNICO do backend (free|plus|pro).
+  const currentPlanId = planInfo?.plan_id || canonicalPlanId(planInfo?.plan);
+  const currentPlan = currentPlanId === 'pro' ? 'family' : currentPlanId === 'plus' ? 'one' : 'free';
   const nextBilling = planInfo?.next_billing || null;
   const storageUsedBytes = planInfo?.storage_used || 0;
   const storageUsed = storageUsedBytes / (1024 * 1024 * 1024); // bytes → GB
-  const storageTotal = PLANS[currentPlan]?.storage || 20;
+  const storageTotal = planInfo?.storage_limit ? planInfo.storage_limit / (1024 * 1024 * 1024) : (PLANS[currentPlan]?.storage || 20);
   const isAdmin = !planInfo?.family_admin; // null = you're the admin (you pay)
   const familyAdmin = planInfo?.family_admin || null; // email of admin if you're a member
 
@@ -632,8 +673,12 @@ export default function PlansScreen() {
   const loadPlanInfo = useCallback(async () => {
     try {
       setLoading(true);
+      invalidatePlanState();
       const res = await api.planInfo();
-      if (res?.data) setPlanInfo(res.data);
+      if (res?.data) {
+        _applyBackendCatalog(res.data.catalog);
+        setPlanInfo(res.data);
+      }
     } catch (e) { /* silent */ }
     finally { setLoading(false); }
   }, []);
@@ -1574,7 +1619,7 @@ export default function PlansScreen() {
   const modalTotalCents = modalBaseCents + modalStorageExtra;
   const modalPrice = (modalTotalCents / 100).toFixed(2).replace('.', ',');
   const modalAnnualTotal = modalBillingPeriod === 'annual' ? ((modalTotalCents * 12) / 100).toFixed(2).replace('.', ',') : null;
-  const modalPlanLabel = (modalPlan === 'family' || modalPlan === 'pro') ? 'Chatyy Pro' : 'Chatyy Plus';
+  const modalPlanLabel = planDisplayName((modalPlan === 'family' || modalPlan === 'pro') ? 'pro' : 'plus', t);
   const modalColor = modalPlan === 'family' ? FAMILY_COLOR : PLUS_COLOR;
   const cardBrand = detectCardBrand(cardNumber);
 
@@ -1788,7 +1833,7 @@ export default function PlansScreen() {
                 <IconShield size={18} color={AMBER} />
               </View>
               <Text style={{ color: AMBER, fontSize: FontSize.base, fontWeight: '700', marginBottom: 2 }}>
-                {t('plans.storageWarning', { used: `${storageUsed.toFixed(1)} GB`, total: `${storageTotal} GB` })}
+                {t('plans.storageWarning', { used: `${storageUsed.toFixed(1)} GB`, total: formatGb(storageTotal) })}
               </Text>
               <Text style={{ color: colors.textSecondary, fontSize: FontSize.sm, marginBottom: 10 }}>
                 {t('plans.storageWarningUpgrade')}
@@ -1814,11 +1859,11 @@ export default function PlansScreen() {
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
                 <IconCheck size={18} color={GREEN} />
                 <Text style={{ color: colors.text, fontSize: FontSize.lg, fontWeight: '600' }}>
-                  {t('plans.yourPlan')}: {(currentPlan === 'plus' || currentPlan === 'one') ? 'Chatyy Plus' : (currentPlan === 'pro' || currentPlan === 'family') ? 'Chatyy Pro' : t('plans.family')}
+                  {t('plans.yourPlan')}: {planDisplayName(currentPlanId, t)}
                 </Text>
               </View>
               <Text style={{ color: colors.textSecondary, fontSize: FontSize.sm, marginTop: 6, marginLeft: 26, lineHeight: 20 }}>
-                {t('plans.thankYou')} {'\u2764\uFE0F'}
+                {t('plans.thankYou')}
               </Text>
               {nextBilling && (
                 <Text style={{ color: colors.textSecondary, fontSize: FontSize.sm, marginTop: 4, marginLeft: 26 }}>
@@ -1827,17 +1872,17 @@ export default function PlansScreen() {
               )}
               <View style={{ marginTop: 10, marginLeft: 26 }}>
                 <Text style={{ color: colors.textSecondary, fontSize: FontSize.sm, lineHeight: 18 }}>
-                  {'\u2022'} {t('plans.storage', { n: PLANS[currentPlan]?.storage || 200 })}
+                  {'\u2022'} {t('plans.storageAmount', { n: planInfo?.storage_limit ? formatQuotaBytes(planInfo.storage_limit) : formatGb(PLANS[currentPlan]?.storage) })}
                 </Text>
                 <Text style={{ color: colors.textSecondary, fontSize: FontSize.sm, lineHeight: 18 }}>
                   {'\u2022'} {t('plans.permanentBackup')}
                 </Text>
                 <Text style={{ color: colors.textSecondary, fontSize: FontSize.sm, lineHeight: 18 }}>
-                  {'\u2022'} {t('plans.recoverMessages')}
+                  {'\u2022'} {t('plans.recoverMessagesDays', { n: planInfo?.backup_retention_days || PLANS[currentPlan]?.backupDays })}
                 </Text>
                 {currentPlan === 'family' && (
                   <Text style={{ color: colors.textSecondary, fontSize: FontSize.sm, lineHeight: 18 }}>
-                    {'\u2022'} {t('plans.upToPeople', { n: 5 })}
+                    {'\u2022'} {t('plans.upToPeople', { n: planInfo?.max_members || PLANS.pro.maxMembers })}
                   </Text>
                 )}
               </View>
@@ -1871,9 +1916,9 @@ export default function PlansScreen() {
               <Text style={{ color: colors.textSecondary, fontSize: 13 }}>{t('plans.perMonth')}</Text>
             </View>
             <View style={{ marginTop: 14 }}>
-              <FeatureItem text={t('plans.storage', { n: '15' })} />
-              <FeatureItem text={t('plans.mediaRetention', { n: '30' })} desc={t('plans.mediaExpires30')} />
-              <FeatureItem text={t('plans.maxFileSize', { n: '25' })} />
+              <FeatureItem text={t('plans.storageAmount', { n: formatGb(PLANS.free.storage) })} />
+              <FeatureItem text={t('plans.mediaNeverExpires')} />
+              <FeatureItem text={t('plans.maxFileSizeAmount', { n: formatGb(PLANS.free.maxFile) })} />
               <FeatureItem text={t('plans.limitedAI')} highlight />
             </View>
           </View>
@@ -2030,11 +2075,11 @@ export default function PlansScreen() {
               <FeatureItem text={t('plans.aiPriority') || 'IA prioritária — Llama 3.3 70B + transcrição ilimitada'} highlight />
               <FeatureItem text={t('plans.hdVideo') || 'Reels e vídeo em HD (1080p)'} />
               <FeatureItem text={t('plans.aiSummary') || 'Resumo de conversa com IA'} />
-              <FeatureItem text={t('plans.storage', { n: '200' })} />
+              <FeatureItem text={t('plans.storageAmount', { n: formatGb(PLANS.plus.storage) })} />
               <FeatureItem text={t('plans.photoBackup')} />
               <FeatureItem text={t('plans.permanentBackup')} />
-              <FeatureItem text={t('plans.recoverMessages')} />
-              <FeatureItem text={t('plans.maxFileSize', { n: '100' })} />
+              <FeatureItem text={t('plans.recoverMessagesDays', { n: PLANS.plus.backupDays })} />
+              <FeatureItem text={t('plans.maxFileSizeAmount', { n: formatGb(PLANS.plus.maxFile) })} />
               <FeatureItem text={t('plans.vanishMode') || 'Modo invisível e mensagens efêmeras'} />
               <FeatureItem text={t('plans.verifiedBadge') || 'Selo verificado e anel dourado no perfil'} />
               <FeatureItem text={t('plans.neverLose')} />
@@ -2256,12 +2301,13 @@ export default function PlansScreen() {
             </Text>
 
             <View>
-              <FeatureItem text={t('plans.sharedStorage', { n: '500' })} />
-              <FeatureItem text={t('plans.upToPeople', { n: '5' })} />
+              <FeatureItem text={t('plans.sharedStorageAmount', { n: formatGb(PLANS.pro.storage) })} />
+              <FeatureItem text={t('plans.upToPeople', { n: PLANS.pro.maxMembers })} />
+              <FeatureItem text={t('plans.maxFileSizeAmount', { n: formatGb(PLANS.pro.maxFile) })} />
               <FeatureItem text={t('plans.allPlusForFamily')} />
               <FeatureItem text={t('plans.photoBackup')} />
               <FeatureItem text={t('plans.permanentBackup')} />
-              <FeatureItem text={t('plans.recoverMessages')} />
+              <FeatureItem text={t('plans.recoverMessagesDays', { n: PLANS.pro.backupDays })} />
               <FeatureItem text={t('plans.familyAdmin')} />
               <FeatureItem text={t('plans.crossDevice')} />
               <FeatureItem text={t('plans.oneAIFamily')} highlight />
@@ -2553,7 +2599,7 @@ export default function PlansScreen() {
           {/* ============================================================ */}
           {currentPlan !== 'free' && subInfo && isAdmin && !subInfo.cancel_at_period_end && (() => {
             const plan = currentPlan === 'family' ? 'family' : 'one';
-            const currentStorageTier = subInfo.storage_tier || planInfo?.storage_tier || (plan === 'family' ? 500 : 200);
+            const currentStorageTier = subInfo.storage_tier || planInfo?.storage_tier || planInfo?.storage_limit_gb || PLANS[plan]?.storage;
             const bp = planInfo?.billing_period || 'monthly';
             const adjustedOpts = getStorageOptions(plan, bp);
             const hasUpgradeAvailable = adjustedOpts.some(o => o.gb > currentStorageTier);
@@ -2691,7 +2737,7 @@ export default function PlansScreen() {
                   <View style={[s.storageBarFill, { width: `${Math.min((storageUsed / storageTotal) * 100, 100)}%`, backgroundColor: FAMILY_COLOR }]} />
                 </View>
                 <Text style={{ color: colors.textSecondary, fontSize: FontSize.xs, marginTop: 4 }}>
-                  {t('plans.storageUsed', { used: `${storageUsed.toFixed(1)} GB`, total: `${storageTotal} GB` })}
+                  {t('plans.storageUsed', { used: `${storageUsed.toFixed(1)} GB`, total: formatGb(storageTotal) })}
                 </Text>
               </View>
 
@@ -2787,7 +2833,7 @@ export default function PlansScreen() {
             }}>
               <View style={{ flex: 2 }} />
               <Text style={{ flex: 1, textAlign: 'center', color: '#94a3b8', fontSize: 12, fontWeight: '700' }}>{t('plans.free')}</Text>
-              <Text style={{ flex: 1, textAlign: 'center', color: PLUS_COLOR, fontSize: 12, fontWeight: '700' }}>One</Text>
+              <Text style={{ flex: 1, textAlign: 'center', color: PLUS_COLOR, fontSize: 12, fontWeight: '700' }}>Plus</Text>
               <Text style={{ flex: 1, textAlign: 'center', color: FAMILY_COLOR, fontSize: 12, fontWeight: '700' }}>{t('plans.family')}</Text>
             </View>
 
@@ -3006,7 +3052,7 @@ export default function PlansScreen() {
                   {modalMode === 'update_card' ? t('plans.cardUpdated') : t('plans.paymentApproved')}
                 </Text>
                 <Text style={{ color: colors.textSecondary, fontSize: FontSize.base, textAlign: 'center', marginBottom: 8, lineHeight: 22 }}>
-                  {modalMode === 'update_card' ? t('plans.cardUpdatedDesc') : t('plans.planActiveDesc', { plan: 'Chatyy ' + modalPlanLabel })}
+                  {modalMode === 'update_card' ? t('plans.cardUpdatedDesc') : t('plans.planActiveDesc', { plan: modalPlanLabel })}
                 </Text>
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 4, marginBottom: 20 }}>
                   <IconShield size={14} color={GREEN} />
@@ -3050,7 +3096,7 @@ export default function PlansScreen() {
                         }
                       </View>
                       <Text style={{ color: colors.text, fontSize: 22, fontWeight: '800', marginBottom: 4 }}>
-                        Chatyy {modalPlanLabel}
+                        {modalPlanLabel}
                       </Text>
                       <Text style={{ color: modalColor, fontSize: 24, fontWeight: '800', marginBottom: 4 }}>
                         R${modalPrice}<Text style={{ fontSize: 14, fontWeight: '500', color: colors.textSecondary }}>{t('plans.perMonth')}</Text>
@@ -3063,8 +3109,8 @@ export default function PlansScreen() {
                       {/* Plan highlights */}
                       <Text style={{ color: colors.textSecondary, fontSize: 13, textAlign: 'center', marginTop: 4 }}>
                         {modalPlan === 'family'
-                          ? '500GB \u2022 5 ' + t('plans.familyMembers').toLowerCase() + ' \u2022 One AI'
-                          : '200GB \u2022 Backup \u2022 One AI'}
+                          ? formatGb(PLANS.pro.storage) + ' \u2022 ' + t('plans.upToPeople', { n: PLANS.pro.maxMembers }) + ' \u2022 One AI'
+                          : formatGb(PLANS.plus.storage) + ' \u2022 Backup \u2022 One AI'}
                       </Text>
                     </>
                   )}

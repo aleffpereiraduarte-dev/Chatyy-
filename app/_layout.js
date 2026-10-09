@@ -211,6 +211,28 @@ if (Platform.OS !== 'web') {
 }
 if (!GestureHandlerRootView) GestureHandlerRootView = ({ children, style }) => React.createElement(RNView, { style }, children);
 
+// [2026-10-09] Compartilhar da galeria abria /share-receive 2x: o deep link
+// (onemundomail://?dataUrl=…, sem params), o getShareIntent() e o
+// ShareIntentWatcher disparavam cada um a sua navegação. Um portão único:
+// a 1ª abre; uma vazia seguida de uma com conteúdo SUBSTITUI (replace);
+// duplicatas com conteúdo dentro de 5s são ignoradas.
+let _shareNavAt = 0;
+let _shareNavHadParams = false;
+function _openShareReceive(router, params) {
+  const has = !!(params && Object.keys(params).length);
+  const now = Date.now();
+  const recent = now - _shareNavAt < 5000;
+  if (recent && (_shareNavHadParams || !has)) return;
+  const replaceEmpty = recent && !_shareNavHadParams && has;
+  _shareNavAt = now;
+  _shareNavHadParams = has;
+  try {
+    if (!has) router.replace('/share-receive');
+    else if (replaceEmpty) router.replace({ pathname: '/share-receive', params });
+    else router.push({ pathname: '/share-receive', params });
+  } catch {}
+}
+
 // [2026-10-08 share-sheet] Every shared file (up to 10) as a JSON route param,
 // so /share-receive can show all thumbnails with their real aspect ratio
 // (expo-share-intent reports width/height) and send the whole batch.
@@ -575,7 +597,7 @@ function useDeepLinking() {
       // Route". Forward to /share-receive (which IS registered) so the
       // share-from-gallery flow lands on the picker instead of an error.
       if (pathname === '/share' || pathname.startsWith('/share?') || pathname.startsWith('/share/')) {
-        router.replace('/share-receive');
+        _openShareReceive(router);
         return;
       }
       // iOS Share Extension pattern: `onemundomail://?dataUrl=onemundomailShareKey`.
@@ -583,13 +605,13 @@ function useDeepLinking() {
       // /share matcher above misses it. Detect the `dataUrl=` query flag and
       // route the same way.
       if (url.includes('dataUrl=') || url.includes('shareKey') || url.includes('ShareKey')) {
-        router.replace('/share-receive');
+        _openShareReceive(router);
         return;
       }
       // Any unmatched onemundomail:// that opened the app from an external
       // share/action — land on /share-receive rather than Unmatched Route.
       if (url.startsWith('onemundomail://') && (pathname === '/' || pathname === '')) {
-        router.replace('/share-receive');
+        _openShareReceive(router);
         return;
       }
     } catch {}
@@ -912,7 +934,7 @@ function AppInit({ onNotification, setOtaToast }) {
           else if (intent.text) { params.text = intent.text; params.type = 'text'; }
           else if (intent.webUrl) { params.text = intent.webUrl; params.type = 'text'; }
           if (Object.keys(params).length) {
-            setTimeout(() => router.push({ pathname: '/share-receive', params }), 300);
+            setTimeout(() => _openShareReceive(router, params), 300);
           }
         }).catch(() => {});
       } catch {}
@@ -1636,7 +1658,7 @@ function ShareIntentWatcher() {
         params.type = 'text';
       }
       if (Object.keys(params).length) {
-        router.push({ pathname: '/share-receive', params });
+        _openShareReceive(router, params);
         try { resetShareIntent?.(); } catch {}
       }
     }, [shareIntent]);

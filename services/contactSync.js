@@ -139,6 +139,20 @@ function e164Candidates(rawPhone, homeDial) {
 
   const hd = (homeDial || '55');
 
+  // [2026-10-09 find-contacts] Mirror server peopleE164Candidates():
+  //   "00 55 33 9…" (international 00 prefix) and the BR trunk+carrier form
+  //   "0 21 33 9xxxx-xxxx" (0 + operadora(2) + DDD(2) + 8/9 dígitos).
+  if (rawPhone.trim().startsWith('00') && rawDigits.length > 4) {
+    const intl = rawDigits.slice(2).replace(/^0+/, '');
+    if (intl) add('+' + intl);
+  }
+  if (hd === '55' && rawDigits[0] === '0' && (rawDigits.length === 13 || rawDigits.length === 14)) {
+    const nat = rawDigits.slice(3);
+    add('+55' + nat);
+    if (nat.length === 11 && nat[2] === '9') add('+55' + nat.slice(0, 2) + nat.slice(3));
+    else if (nat.length === 10) add('+55' + nat.slice(0, 2) + '9' + nat.slice(2));
+  }
+
   // 1. If it already starts with a known country code (and is long enough to
   //    be a full international number), trust it as-is.
   const startsWithKnownCC = KNOWN_DIAL_CODES.some(cc =>
@@ -339,6 +353,10 @@ export async function registerOwnPhone(phone) {
  * common country code prefixes so that duplicates can be detected.
  */
 function normalizePhone(phone) {
+  // [2026-10-09 find-contacts] check_contacts echoed `phone` as a JSON number
+  // (PHP numeric array key) → the old typeof guard returned '' and the same
+  // person showed up under BOTH "Contatos no Chatyy" and "Convidar".
+  if (typeof phone === 'number' && isFinite(phone)) phone = String(phone);
   if (!phone || typeof phone !== 'string') return '';
   // Mirror the backend's check_contacts $normalizePhone EXACTLY
   // (email.php ~6378) so client- and server-side normalization produce the
@@ -492,15 +510,28 @@ function getNativeContactsModule() {
  * @param {boolean} forceRefresh - bypass the cache TTL
  * @returns {{ chatyContacts: Array, otherContacts: Array, error: string|null }}
  */
-export async function syncContacts(forceRefresh = false, t) {
+export async function syncContacts(forceRefresh = false, t, opts = {}) {
   // Web has no contacts API
   if (Platform.OS === 'web') {
     return { chatyContacts: [], otherContacts: [], error: null };
   }
+  // [2026-10-09 find-contacts] silent = background re-sync (app voltou ao
+  // primeiro plano / agenda mudou): ignora o cache mas NUNCA mostra o aviso de
+  // consentimento nem o prompt de permissão do sistema — só roda se ambos já
+  // foram concedidos antes.
+  const silent = !!opts?.silent;
 
   try {
+    if (silent) {
+      if ((await getContactsConsentState()) !== 'granted') {
+        return { chatyContacts: [], otherContacts: [], error: 'consent_required', silent: true };
+      }
+      if (!(await hasContactsPermissionNoPrompt())) {
+        return { chatyContacts: [], otherContacts: [], error: 'permission_denied', silent: true };
+      }
+    }
     // Check cache first (unless forced)
-    if (!forceRefresh) {
+    if (!forceRefresh && !silent) {
       const cached = await getCachedContacts();
       if (cached) {
         return { chatyContacts: cached.chatyContacts, otherContacts: cached.otherContacts, error: null };
@@ -510,7 +541,7 @@ export async function syncContacts(forceRefresh = false, t) {
     // [2026-10-07 discovery] An explicit "Sincronizar" tap after an earlier
     // "Agora não" must ask again — before, the persisted 'denied' made the
     // manual sync a silent no-op forever (user could never opt back in here).
-    if (forceRefresh) {
+    if (forceRefresh && !silent) {
       try {
         if ((await getContactsConsentState()) === 'denied') {
           _consentMemory = null;
@@ -609,11 +640,32 @@ export async function syncContacts(forceRefresh = false, t) {
       hashedPromise = syncContactsHashed(phonesForHash).catch(() => ({ matches: [] }));
     } catch {}
 
-    // Ask the backend which contacts are registered
-    const result = await apiCall('check_contacts', {
-      emails: uniqueEmails,
-      phones: uniquePhones,
-    }, 'POST');
+    // Ask the backend which contacts are registered.
+    // [2026-10-09 find-contacts] Server answers 400 "max 500 each" for bigger
+    // phone books → the WHOLE check failed for anyone with > 500 numbers.
+    // Batch in chunks of 500 and merge (rate limit is 20 req/min).
+    let result = null;
+    {
+      const CC = 500;
+      const merged = [];
+      let anyOk = false;
+      let lastErr = null;
+      const n = Math.max(uniqueEmails.length, uniquePhones.length);
+      for (let i = 0; i < n && i < CC * 16; i += CC) {
+        let r = null;
+        try {
+          r = await apiCall('check_contacts', {
+            emails: uniqueEmails.slice(i, i + CC),
+            phones: uniquePhones.slice(i, i + CC),
+          }, 'POST');
+        } catch (e) { lastErr = e?.message || 'api_failed'; }
+        const reg = Array.isArray(r?.data?.registered) ? r.data.registered
+          : (Array.isArray(r?.registered) ? r.registered : null);
+        if (r && r.success !== false && reg) { anyOk = true; merged.push(...reg); }
+        else if (r) lastErr = r.error || r.message || 'api_failed';
+      }
+      result = anyOk ? { success: true, data: { registered: merged } } : { success: false, error: lastErr || 'api_failed' };
+    }
     const hashed = await hashedPromise;
 
     // [2026-10-07 discovery] Server answers { success, data: { registered } } —
@@ -675,7 +727,7 @@ export async function syncContacts(forceRefresh = false, t) {
         chatyContacts.push({
           email: reg.email || local.email || '',
           name: local.name || reg.name || 'Unknown',
-          phone: local.phone || reg.phone || '',
+          phone: local.phone || (reg.phone != null ? String(reg.phone) : ''),
           avatar: reg.avatar || null,
           isRegistered: true,
         });
@@ -749,6 +801,62 @@ export async function syncContacts(forceRefresh = false, t) {
       // ignore cache read failure
     }
     return { chatyContacts: [], otherContacts: [], error: 'sync_failed' };
+  }
+}
+
+/**
+ * [2026-10-09 find-contacts] Permission check that never shows the OS prompt.
+ */
+export async function hasContactsPermissionNoPrompt() {
+  if (Platform.OS === 'web') return false;
+  try {
+    const NativeContacts = getNativeContactsModule();
+    if (NativeContacts && typeof NativeContacts.hasContactsPermission === 'function') {
+      return !!NativeContacts.hasContactsPermission();
+    }
+  } catch {}
+  try {
+    const Contacts = require('expo-contacts');
+    const r = await Contacts.getPermissionsAsync();
+    return r?.status === 'granted' || r?.accessPrivileges === 'limited';
+  } catch { return false; }
+}
+
+/**
+ * [2026-10-09 find-contacts] Subscribe to address-book changes (contact added /
+ * edited in the system Contacts app). Best-effort: returns an unsubscribe fn,
+ * a no-op when the native listener isn't available in this binary.
+ */
+export function subscribeContactsChanged(cb) {
+  if (Platform.OS === 'web' || typeof cb !== 'function') return () => {};
+  try {
+    const Contacts = require('expo-contacts');
+    if (typeof Contacts.addContactsChangeListener === 'function') {
+      const sub = Contacts.addContactsChangeListener(() => { try { cb(); } catch {} });
+      return () => { try { sub?.remove?.(); } catch {} };
+    }
+  } catch {}
+  return () => {};
+}
+
+/**
+ * [2026-10-09 find-contacts] Open the system "new contact" form prefilled with
+ * a phone number (WhatsApp "Novo contato"). Resolves true when the form was
+ * shown. Not available on web.
+ */
+export async function presentNewContactForm(phone = '', name = '') {
+  if (Platform.OS === 'web') return false;
+  try {
+    const Contacts = require('expo-contacts');
+    if (typeof Contacts.presentFormAsync !== 'function') return false;
+    const contact = {};
+    if (phone) contact.phoneNumbers = [{ label: 'mobile', number: String(phone) }];
+    if (name) contact.firstName = String(name);
+    await Contacts.presentFormAsync(null, contact, { isNew: true, allowsEditing: true });
+    return true;
+  } catch (e) {
+    console.warn('[contactSync] presentNewContactForm failed:', e?.message || e);
+    return false;
   }
 }
 

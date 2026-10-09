@@ -25,6 +25,8 @@ import FadeSlideIn from '../components/FadeSlideIn';
 import PressableScale from '../components/PressableScale';
 // [2026-05-22 monetization-pause] hidden by MONETIZATION_ENABLED flag
 import { MONETIZATION_ENABLED } from '../constants/featureFlags';
+// [2026-10-09 plans-consistency] plano/cota = fonte única (services/planState).
+import { loadPlanState, planDisplayName, formatQuotaBytes } from '../services/planState';
 
 function formatBytes(b) {
   const v = Number(b) || 0;
@@ -35,16 +37,6 @@ function formatBytes(b) {
   return v + ' B';
 }
 
-function tierLabel(t, fallback = '50GB Grátis') {
-  const map = {
-    free: '20GB',
-    '100gb': '100GB',
-    '500gb': '500GB',
-    '1tb': '1TB',
-    '5tb': '5TB',
-  };
-  return map[t] || fallback;
-}
 
 export default function StorageScreen() {
   const router = useRouter();
@@ -53,14 +45,18 @@ export default function StorageScreen() {
   const { t } = useLanguage();
 
   const [usage, setUsage] = useState(null);
+  const [planState, setPlanState] = useState(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [showShop, setShowShop] = useState(false);
 
   const load = useCallback(async () => {
     try {
-      const r = await api.storageUsage();
-      if (r?.success && r.data) setUsage(r.data);
+      const st = await loadPlanState({ force: true });
+      if (st) {
+        setPlanState(st);
+        if (st.usage) setUsage(st.usage);
+      }
     } catch (e) {
       if (__DEV__) console.warn('[storage] load failed:', e?.message);
     }
@@ -87,9 +83,13 @@ export default function StorageScreen() {
     return colors.tint || '#0a84ff';
   }, [pct, colors]);
 
-  const isPaid = usage?.tier && usage.tier !== 'free';
+  const isPaid = !!planState?.isPaid;
   const usedLabel = formatBytes(usage?.used_bytes || 0);
-  const limitLabel = formatBytes(usage?.limit_bytes || (20 * 1024 ** 3));
+  const limitBytes = planState?.limitBytes || usage?.limit_bytes || 0;
+  const limitLabel = limitBytes ? formatQuotaBytes(limitBytes) : '—';
+  const planLabel = planDisplayName(planState?.planId || 'free', t);
+  const cycleLabel = !isPaid ? t('storage.billing.free')
+    : (planState?.billingPeriod === 'annual' ? t('storage.billing.annual') : t('storage.billing.monthly'));
 
   const renewsLabel = useMemo(() => {
     if (!usage?.active_until) return null;
@@ -149,7 +149,7 @@ export default function StorageScreen() {
                     {t('storage.usedOf') || 'Usado'} {usedLabel} / {limitLabel}
                   </Text>
                   <Text style={[styles.cardSubtitle, { color: colors.muted }]}>
-                    {pct.toFixed(1)}% · {tierLabel(usage?.tier)} {isPaid && usage?.billing_period === 'annual' ? '· Anual' : (isPaid ? '· Mensal' : '· Grátis')}
+                    {pct.toFixed(1)}% · {planLabel} · {cycleLabel}
                   </Text>
                 </View>
               </View>
@@ -183,7 +183,7 @@ export default function StorageScreen() {
                     {t('storage.graceTitle') || 'Acima do limite gratuito'}
                   </Text>
                   <Text style={[styles.warnBody, { color: '#92400e' }]}>
-                    {(t('storage.graceBody') || 'Você está acima do novo limite de 50GB. Em até 7 dias os uploads serão bloqueados. Faça upgrade ou libere espaço.')}
+                    {t('storage.graceBodyAmount', { n: limitLabel })}
                   </Text>
                 </View>
               )}
@@ -196,7 +196,7 @@ export default function StorageScreen() {
             {MONETIZATION_ENABLED && isPaid && (
               <View style={[styles.tierCard, { backgroundColor: colors.cardBackground || colors.surface || '#fff' }]}>
                 <Text style={[styles.tierName, { color: colors.text }]}>
-                  {tierLabel(usage.tier)} · {usage.billing_period === 'annual' ? (t('storage.cycle.annual') || 'Anual') : (t('storage.cycle.monthly') || 'Mensal')}
+                  {planLabel} · {limitLabel} · {cycleLabel}
                 </Text>
                 {renewsLabel && (
                   <Text style={[styles.tierMeta, { color: colors.muted }]}>

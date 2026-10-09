@@ -3,7 +3,7 @@ import PressableRow from '../components/PressableRow'; // [2026-10-07 app-feel-u
 import {
   View, Text, TouchableOpacity, StyleSheet, TextInput, Image,
   FlatList, ActivityIndicator, Alert, Platform, SectionList, Share, Linking,
-  ScrollView, Modal, ActionSheetIOS, Animated,
+  ScrollView, Modal, ActionSheetIOS, Animated, AppState,
 } from 'react-native';
 import { useRouter, useLocalSearchParams, Stack } from 'expo-router';
 import { USE_NATIVE_HEADER, nativeHeaderOptions, HeaderIconButton } from '../components/nativeHeader'; // [2026-10-07 app-feel-nav]
@@ -14,13 +14,13 @@ import { useLanguage } from '../context/LanguageContext';
 import { BorderRadius, FontSize, Spacing, Shadow } from '../constants/theme';
 import * as api from '../services/api';
 import { getCached, getCachedSync, setCache } from '../services/cache';
-import { syncContacts, getHomeDialDigits } from '../services/contactSync';
+import { syncContacts, getHomeDialDigits, subscribeContactsChanged, presentNewContactForm } from '../services/contactSync';
 import { prettifyHandle } from '../services/displayName';
 import { buildContactQrPayload, buildProfileLink, parseContactQr } from '../utils/contactQr';
 import {
   IconArrowLeft, IconSearch, IconX, IconUsers, IconMessageSquare,
   IconCheck, IconPlus, IconMail, IconRefresh, IconClock, IconUserPlus,
-  IllustrationSearch,
+  IllustrationSearch, IconCamera, IconShare,
 } from '../components/Icons';
 import AvatarCircle from '../components/AvatarCircle';
 import BroadcastModal from '../components/BroadcastModal';
@@ -29,22 +29,39 @@ import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
 
-// QR code icon (inline SVG component)
-function IconQrCode({ size = 24, color = '#000' }) {
-  // Simple grid-based QR icon
-  return (
-    <View style={{ width: size, height: size, justifyContent: 'center', alignItems: 'center' }}>
-      <Text style={{ fontSize: size * 0.75, color, lineHeight: size }}>⊞</Text>
-    </View>
-  );
-}
-
 // Megaphone SVG for broadcast list rows — UI rule bans emoji glyphs, so
 // this draws the icon inline via react-native-svg. Matches the stroke
 // weight of the other components/Icons.js glyphs (1.8 round-cap).
 const _SvgMod = require('react-native-svg');
 const _BSvg = _SvgMod.default || _SvgMod.Svg;
 const _BPath = _SvgMod.Path;
+// [2026-10-09 find-contacts] QR icon as real SVG (was a "⊞" text glyph).
+function IconQrCode({ size = 24, color = '#000' }) {
+  return (
+    <_BSvg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
+      <_BPath d="M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4z" />
+      <_BPath d="M14 14h2v2h-2zM18 14h2M14 18v2M18 18h2v2h-2z" />
+    </_BSvg>
+  );
+}
+
+// [2026-10-09 find-contacts] WhatsApp-style shortcut tile (round black icon +
+// label) for the top of "Nova conversa".
+function ShortcutTile({ label, onPress, colors, children }) {
+  return (
+    <TouchableOpacity
+      onPress={onPress}
+      activeOpacity={0.7}
+      style={sty.shortcutTile}
+      accessibilityRole="button"
+      accessibilityLabel={label}
+    >
+      <View style={sty.shortcutIcon}>{children}</View>
+      <Text style={[sty.shortcutLabel, { color: colors.text }]} numberOfLines={2}>{label}</Text>
+    </TouchableOpacity>
+  );
+}
+
 function IconBroadcastGlyph({ size = 18, color = '#fff' }) {
   return (
     <_BSvg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
@@ -523,6 +540,11 @@ export default function ChatNewScreen() {
   const searchTimeout = useRef(null);
   const sectionListRef = useRef(null);
   const hasSyncedRef = useRef(false);
+  // [2026-10-09 find-contacts] 'granted' | 'denied' | null (unknown yet) —
+  // drives the "Encontre seus contatos" card when the agenda isn't connected.
+  const [contactsAccess, setContactsAccess] = useState(null);
+  const lastContactSyncRef = useRef(0);
+  const silentSyncBusyRef = useRef(false);
 
   // Auto-sync contacts on first open (native only). syncContacts now shows
   // the consent disclosure modal (Apple guideline 5.1.2) before any data
@@ -534,11 +556,51 @@ export default function ChatNewScreen() {
     syncContacts(false, t).then(result => {
       const pc = result.chatyContacts || [];
       const oc = result.otherContacts || [];
+      if (result.error === 'consent_denied' || result.error === 'permission_denied') setContactsAccess('denied');
+      else if (!result.error) { setContactsAccess('granted'); lastContactSyncRef.current = Date.now(); }
       setPhoneContacts(pc);
       setOtherContacts(oc);
       try { setCache(CK_PHONE, pc, CK_TTL); setCache(CK_OTHER, oc, CK_TTL); } catch {}
     }).catch(() => {}).finally(() => setSyncingContacts(false));
   }, [t]);
+
+  // [2026-10-09 find-contacts] Background re-sync (WhatsApp parity): when the
+  // user adds someone in the system Contacts app and comes back, or the agenda
+  // changes while this screen is open, refresh "Contatos no Chatyy" silently —
+  // never re-prompting consent/permission (silent mode bails if not granted).
+  const silentContactSync = useCallback((minGapMs = 0) => {
+    if (Platform.OS === 'web' || pickMode) return;
+    if (silentSyncBusyRef.current) return;
+    if (minGapMs && Date.now() - lastContactSyncRef.current < minGapMs) return;
+    silentSyncBusyRef.current = true;
+    syncContacts(true, t, { silent: true }).then(result => {
+      if (result?.error) return; // keep what is on screen
+      const pc = result.chatyContacts || [];
+      const oc = result.otherContacts || [];
+      lastContactSyncRef.current = Date.now();
+      setContactsAccess('granted');
+      setPhoneContacts(pc);
+      setOtherContacts(oc);
+      try { setCache(CK_PHONE, pc, CK_TTL); setCache(CK_OTHER, oc, CK_TTL); } catch {}
+    }).catch(() => {}).finally(() => { silentSyncBusyRef.current = false; });
+  }, [t, pickMode]);
+
+  useEffect(() => {
+    if (Platform.OS === 'web' || pickMode) return;
+    let debounce = null;
+    const unsubContacts = subscribeContactsChanged(() => {
+      clearTimeout(debounce);
+      debounce = setTimeout(() => silentContactSync(0), 1500);
+    });
+    const appSub = AppState.addEventListener('change', (st) => {
+      if (st === 'active') silentContactSync(2 * 60 * 1000);
+    });
+    return () => {
+      clearTimeout(debounce);
+      try { unsubContacts(); } catch {}
+      try { appSub?.remove?.(); } catch {}
+    };
+  }, [silentContactSync, pickMode]);
 
   // Manual refresh
   const doContactSync = useCallback(() => {
@@ -550,6 +612,8 @@ export default function ChatNewScreen() {
       setPhoneContacts(pc);
       setOtherContacts(oc);
       try { setCache(CK_PHONE, pc, CK_TTL); setCache(CK_OTHER, oc, CK_TTL); } catch {}
+      if (result.error === 'consent_denied' || result.error === 'permission_denied') setContactsAccess('denied');
+      else if (!result.error) { setContactsAccess('granted'); lastContactSyncRef.current = Date.now(); }
       if (result.error === 'permission_denied') {
         Alert.alert(
           t('chat.contactPermissionDeniedTitle') || 'Permissão negada',
@@ -863,7 +927,14 @@ export default function ChatNewScreen() {
     // group co-members, phone contacts). On web the main directory list is
     // alphabetical across all registered users, so a person may appear in
     // both sections — that's fine (Facebook/LinkedIn work the same way).
-    if (suggestions.length > 0) {
+    // [2026-10-09 find-contacts] "Contatos no Chatyy" (my agenda) comes FIRST
+    // when the phone book is connected; suggestions move right after it.
+    const suggestionsSection = suggestions.length > 0 ? {
+      key: 'suggestions',
+      title: t('chat.peopleYouMayKnow') || 'Pessoas que você pode conhecer',
+      data: suggestions,
+    } : null;
+    if (suggestionsSection && phoneContacts.length === 0) {
       sections.push({
         key: 'suggestions',
         title: t('chat.peopleYouMayKnow') || 'Pessoas que você pode conhecer',
@@ -934,6 +1005,7 @@ export default function ChatNewScreen() {
         data: onChatyyBucket,
       });
     }
+    if (suggestionsSection && phoneContacts.length > 0) sections.push(suggestionsSection);
     // Then show the broader directory under a separate header so users can
     // still browse Chatyy beyond their own phone book.
     const directoryRest = phoneContacts.length > 0
@@ -1006,7 +1078,7 @@ export default function ChatNewScreen() {
     const qf = foldSearchText(isUsernameSearch ? raw.slice(1) : raw).replace(/[.\-_]/g, ' ').replace(/\s+/g, ' ').trim();
     const qParts = qf.split(' ').filter(Boolean);
     const qDigits = raw.replace(/\D/g, '');
-    const looksLikePhone = qDigits.length >= 8 && qDigits.length <= 15 && qDigits.length === raw.replace(/[\s+()\-./]/g, '').length;
+    const looksLikePhone = qDigits.length >= 8 && qDigits.length <= 15 && qDigits.length === raw.replace(/[\s+()\-./\u2010-\u2015\u2212\u00A0\u2007\u202F\u2060\uFEFF]/g, '').length; // [2026-10-09] iOS copia com hífen Unicode (U+2011)
     const looksLikeEmail = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(raw);
 
     const fieldsOf = (u) => {
@@ -1063,9 +1135,12 @@ export default function ChatNewScreen() {
       if (global.length) out.push(hdr('global', t('chat.searchOnChatyy') || 'No Chatyy'), ...global);
       const invites = [...localInvites];
       if (phoneInvite && !exact.length && !mine.length && !global.length) {
-        invites.unshift({ _isPhoneInvite: true, _key: `inv_${phoneInvite.e164}`, phone: phoneInvite.e164, name: phoneInvite.display || phoneInvite.e164, display: phoneInvite.display });
+        // [2026-10-09 find-contacts] Clear verdict first ("Ninguém com esse
+        // número no Chatyy") + invite row with the formatted number.
+        out.push(hdr('nobody', t('chat.searchNoOneWithNumber')));
+        out.push({ _isPhoneInvite: true, _key: `inv_${phoneInvite.e164}`, phone: phoneInvite.e164, name: phoneInvite.display || phoneInvite.e164, display: phoneInvite.display });
       }
-      if (invites.length) out.push(hdr('invite', t('chat.inviteToChatyy') || 'Convidar para o Chatyy'), ...invites);
+      if (invites.length) out.push(hdr('invite', t('chat.inviteToChatyy')), ...invites);
       return out;
     };
 
@@ -1098,9 +1173,16 @@ export default function ChatNewScreen() {
         } else if (r?.message && /muitas/i.test(r.message)) {
           // 429 — keep local results, tell the user calmly (pt-BR from server).
           setSearchResults([...compose([], [], null), { _isSearchHeader: true, _key: 'hdr_rl', title: r.message }]);
+        } else {
+          // [2026-10-09 find-contacts] Server error: keep local results and say
+          // so — never the misleading "ninguém com esse número" empty state.
+          setSearchResults([...compose([], [], null), { _isSearchHeader: true, _key: 'hdr_err', title: t('chat.searchServerFailed') }]);
         }
       } catch {
-        // network error: keep the local results already painted
+        // network error: keep the local results already painted + calm note
+        if (seq === searchSeqRef.current) {
+          setSearchResults([...compose([], [], null), { _isSearchHeader: true, _key: 'hdr_err', title: t('chat.searchServerFailed') }]);
+        }
       } finally {
         if (seq === searchSeqRef.current) setSearching(false);
       }
@@ -1350,6 +1432,34 @@ export default function ChatNewScreen() {
     }
     setQrScanned(false);
     setQrMode('scan');
+  };
+
+  // [2026-10-09 find-contacts] Shortcut "Escanear QR": open the modal straight
+  // in scan mode (camera permission asked here, on tap).
+  const handleOpenQrScanner = async () => {
+    if (Platform.OS !== 'web') setShowQrModal(true);
+    setQrScanned(false);
+    setQrMode('show');
+    await handleQrScan();
+  };
+
+  // [2026-10-09 find-contacts] Shortcut "Novo contato": system new-contact form
+  // (prefilled with the typed number, if any). Afterwards re-sync silently so
+  // the new person shows up under "Contatos no Chatyy" when they have an account.
+  const handleNewContact = async () => {
+    const q = String(searchText || '').trim();
+    const qDigits = q.replace(/\D/g, '');
+    const prefill = qDigits.length >= 8 && qDigits.length <= 15 ? q : '';
+    const shown = await presentNewContactForm(prefill);
+    if (!shown) {
+      safeAlert(t('chat.findNewContact'), t('chat.findNewContactUnavailable'));
+      return;
+    }
+    // iOS: the form is modal in-app → it resolved on dismiss, sync now.
+    // Android: an external activity opened (resolves early) → zero the gap so
+    // the AppState 'active' on return re-syncs (contacts listener also fires).
+    lastContactSyncRef.current = 0;
+    if (Platform.OS === 'ios') silentContactSync(0);
   };
 
   const handleBarCodeScanned = ({ data }) => {
@@ -1955,32 +2065,62 @@ export default function ChatNewScreen() {
             contentContainerStyle={sty.contactList}
             ListEmptyComponent={(() => {
               // Phone-shaped query with no matches → this number isn't on Chatyy yet.
-              // Offer to invite via SMS/share sheet directly from here.
-              const digits = (searchText || '').replace(/\D/g, '');
-              const isPhoneQuery = digits.length >= 8 &&
-                digits.length === (searchText || '').replace(/[\s+()\-.]/g, '').length;
+              // Offer to invite via SMS/WhatsApp/share directly from here.
+              // [2026-10-09 find-contacts] Unicode dashes/spaces (iOS copy) count
+              // as formatting, and the invite carries the formatted number.
+              const rawQ = (searchText || '').trim();
+              const digits = rawQ.replace(/\D/g, '');
+              const isPhoneQuery = digits.length >= 8 && digits.length <= 15 &&
+                digits.length === rawQ.replace(/[\s+()\-./\u2010-\u2015\u2212\u00A0\u2007\u202F\u2060\uFEFF]/g, '').length;
+              const isEmailQuery = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(rawQ);
+              let invE164 = '';
+              let invDisplay = rawQ;
+              if (isPhoneQuery) {
+                let hd = '55';
+                try { hd = getHomeDialDigits() || '55'; } catch {}
+                const nt = digits.replace(/^0+/, '');
+                if (rawQ.startsWith('+')) invE164 = digits;
+                else if (rawQ.startsWith('00')) invE164 = digits.slice(2);
+                else if (hd === '55' && (nt.length === 10 || nt.length === 11)) invE164 = '55' + nt;
+                else if (hd === '55' && nt.length >= 12 && nt.startsWith('55')) invE164 = nt;
+                else invE164 = (nt.startsWith(hd) ? '' : hd) + nt;
+                const n = invE164.startsWith('55') ? invE164.slice(2) : '';
+                if (n.length === 10 || n.length === 11) invDisplay = `+55 (${n.slice(0, 2)}) ${n.slice(2, n.length - 4)}-${n.slice(-4)}`;
+                else invDisplay = `+${invE164}`;
+              }
               return (
                 <View style={sty.emptyResults}>
                   <IllustrationSearch size={148} color={colors.primary} style={{ opacity: 0.95, marginBottom: 8 }} />
                   <Text style={[sty.emptyTitle, { color: colors.text }]}>
                     {isPhoneQuery
-                      ? (t('chat.phoneNotOnChatyy') || 'Este número ainda não usa o Chatyy')
-                      : t('chat.noContactsFound')}
+                      ? t('chat.searchNoOneWithNumber')
+                      : t('chat.searchNoOneFound')}
                   </Text>
                   <Text style={[sty.emptyText, { color: colors.textTertiary }]}>
                     {isPhoneQuery
-                      ? (t('chat.inviteViaSms') || 'Convide pra conversarem por aqui.')
-                      : t('chat.tryDifferentSearch')}
+                      ? t('chat.searchInviteNumberDesc', { number: invDisplay })
+                      : t('chat.searchNoOneFoundHint')}
                   </Text>
                   {isPhoneQuery && (
                     <TouchableOpacity
                       style={[sty.emptyActionBtn, { backgroundColor: '#111111', marginTop: 16 }]}
-                      onPress={() => handleInviteShare({ phone: searchText.trim() })}
+                      onPress={() => handleInvitePhone({ phone: invE164, display: invDisplay })}
+                      accessibilityRole="button"
                     >
                       <IconUserPlus size={16} color="#fff" />
                       <Text style={sty.emptyActionText}>
-                        {t('chat.invitePhone') || 'Convidar este número'}
+                        {t('chat.searchInviteNumberBtn', { number: invDisplay })}
                       </Text>
+                    </TouchableOpacity>
+                  )}
+                  {!isPhoneQuery && !isEmailQuery && (
+                    <TouchableOpacity
+                      style={[sty.emptyActionBtn, { backgroundColor: '#111111', marginTop: 16 }]}
+                      onPress={() => handleInviteShare({})}
+                      accessibilityRole="button"
+                    >
+                      <IconShare size={16} color="#fff" />
+                      <Text style={sty.emptyActionText}>{t('chat.inviteToChatyy')}</Text>
                     </TouchableOpacity>
                   )}
                   {/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test((searchText || '').trim()) && (
@@ -2034,6 +2174,186 @@ export default function ChatNewScreen() {
               stickySectionHeadersEnabled
               ListHeaderComponent={
                 <View>
+                  {/* [2026-10-09 find-contacts] WhatsApp-style shortcuts at the
+                      very top: Novo grupo · Novo contato · Escanear QR · Meu QR. */}
+                  {mode === 'direct' && !pickMode && (
+                    <View style={sty.shortcutRow}>
+                      <ShortcutTile label={t('chat.newGroup')} colors={colors} onPress={() => { setSelectedMembers([]); setMode('group'); }}>
+                        <IconUsers size={20} color="#fff" />
+                      </ShortcutTile>
+                      {Platform.OS !== 'web' && (
+                        <ShortcutTile label={t('chat.findNewContact')} colors={colors} onPress={handleNewContact}>
+                          <IconUserPlus size={20} color="#fff" />
+                        </ShortcutTile>
+                      )}
+                      <ShortcutTile label={t('chat.findScanQr')} colors={colors} onPress={handleOpenQrScanner}>
+                        <IconCamera size={20} color="#fff" />
+                      </ShortcutTile>
+                      <ShortcutTile label={t('chat.findMyQr')} colors={colors} onPress={handleQrPress}>
+                        <IconQrCode size={20} color="#fff" />
+                      </ShortcutTile>
+                    </View>
+                  )}
+
+                  {/* [2026-10-09 find-contacts] Agenda not connected → explain + one
+                      tap to connect (consent + OS prompt happen on tap, never
+                      silently). Hidden once access is granted. */}
+                  {Platform.OS !== 'web' && !pickMode && contactsAccess === 'denied' && phoneContacts.length === 0 && !syncingContacts && (
+                    <View style={[sty.findCta, { backgroundColor: isDark ? '#1e1e1e' : '#f2f2f7' }]}>
+                      <Text style={[sty.findCtaTitle, { color: colors.text }]}>{t('chat.findContactsCtaTitle')}</Text>
+                      <Text style={[sty.findCtaDesc, { color: colors.textSecondary }]}>{t('chat.findContactsCtaDesc')}</Text>
+                      <TouchableOpacity
+                        onPress={doContactSync}
+                        style={sty.findCtaBtn}
+                        activeOpacity={0.8}
+                        accessibilityRole="button"
+                      >
+                        <Text style={sty.findCtaBtnText}>{t('chat.findContactsCtaBtn')}</Text>
+                      </TouchableOpacity>
+                    </View>
+                  )}
+
+                  {/* Contacts-on-Chatyy count chip — sits above "Pessoas que você
+                      pode conhecer" so users immediately see how much of their
+                      phone book overlaps with the network. */}
+                  {phoneContacts.length > 0 && (
+                    <View style={{ alignItems: 'center', paddingVertical: 8 }}>
+                      <View
+                        style={{
+                          backgroundColor: colors.primary,
+                          paddingHorizontal: 12,
+                          paddingVertical: 6,
+                          borderRadius: 999,
+                        }}
+                      >
+                        <Text style={{ color: colors.onPrimary || '#fff', fontSize: 12, fontWeight: '600' }}>
+                          {(t('chat.contactsOnChatyyCount') ||
+                            `${phoneContacts.length} dos seus ${(phoneContacts.length + otherContacts.length) || phoneContacts.length} contatos estão no Chatyy`)
+                            .replace('{count}', String(phoneContacts.length))
+                            .replace('{total}', String((phoneContacts.length + otherContacts.length) || phoneContacts.length))}
+                        </Text>
+                      </View>
+                    </View>
+                  )}
+
+                  {/* Recently contacted (horizontal scroll) */}
+                  {recentContacts.length > 0 && (
+                    <View style={sty.recentSection}>
+                      <View style={[sty.sectionHeader, { backgroundColor: 'transparent', paddingBottom: 4 }]}>
+                        <View style={sty.sectionAccentLine} />
+                        <Text style={[sty.sectionTitle, { color: isDark ? '#F5F5F7' : '#111111' }]}>
+                          {t('chat.recentContacts')}
+                        </Text>
+                      </View>
+                      <FlatList
+                        horizontal
+                        data={recentContacts.slice(0, 8)}
+                        keyExtractor={(item) => 'recent-' + item.email}
+                        renderItem={renderRecentItem}
+                        showsHorizontalScrollIndicator={false}
+                        contentContainerStyle={sty.recentList}
+                      />
+                    </View>
+                  )}
+
+                  {/* Quick actions */}
+                  <View style={sty.quickActions}>
+                    {/* Saved Messages — chat with self (Telegram-style) */}
+                    <TouchableOpacity
+                      style={[sty.quickActionRow, { borderBottomColor: colors.border }]}
+                      onPress={async () => {
+                        try {
+                          const r = await api.chatSaved();
+                          if (r?.success && r.data?.id) {
+                            router.replace({ pathname: '/chat-conversation', params: { id: r.data.id, name: t('chat.savedMessages') || 'Saved Messages' } });
+                          }
+                        } catch {}
+                      }}
+                      activeOpacity={0.7}
+                    >
+                      <View style={[sty.quickActionIcon, { backgroundColor: '#0ea5e9' }]}>
+                        <IconMessageSquare size={18} color="#fff" />
+                      </View>
+                      <View style={{ flex: 1 }}>
+                        <Text style={[sty.quickActionTitle, { color: colors.text }]}>{t('chat.savedMessages') || 'Mensagens Salvas'}</Text>
+                        <Text style={[sty.quickActionSub, { color: colors.textTertiary }]}>{t('chat.savedMessagesDesc') || 'Notas, links e arquivos que só você vê'}</Text>
+                      </View>
+                    </TouchableOpacity>
+
+                    {/* Invite by email */}
+                    <TouchableOpacity
+                      style={[sty.quickActionRow, { borderBottomColor: colors.border }]}
+                      onPress={() => setShowInviteInput(!showInviteInput)}
+                      activeOpacity={0.7}
+                    >
+                      <View style={[sty.quickActionIcon, { backgroundColor: '#111111' }]}>
+                        <IconMail size={18} color="#fff" />
+                      </View>
+                      <View style={{ flex: 1 }}>
+                        <Text style={[sty.quickActionTitle, { color: colors.text }]}>{t('chat.inviteFriend')}</Text>
+                        <Text style={[sty.quickActionSub, { color: colors.textTertiary }]}>{t('chat.inviteFriendDesc')}</Text>
+                      </View>
+                    </TouchableOpacity>
+
+                    {/* Inline invite input */}
+                    {showInviteInput && (
+                      <View style={[sty.inviteInputWrap, { backgroundColor: colors.surface }]}>
+                        <TextInput
+                          style={[sty.inviteInput, { color: colors.text, backgroundColor: isDark ? '#1e1e1e' : '#f5f5f7', borderColor: isDark ? '#333' : '#e0e0e0' }]}
+                          placeholder={t('chat.emailPlaceholder')}
+                          placeholderTextColor={colors.textTertiary}
+                          value={inviteEmail}
+                          onChangeText={setInviteEmail}
+                          keyboardType="email-address"
+                          autoCapitalize="none"
+                        />
+                        <TouchableOpacity
+                          style={[sty.inviteSendBtn, { backgroundColor: inviteEmail.includes('@') ? '#111111' : colors.border }]}
+                          disabled={!inviteEmail.includes('@') || !!invitingEmail}
+                          onPress={() => {
+                            handleInviteByEmail(inviteEmail.trim());
+                            setInviteEmail('');
+                          }}
+                        >
+                          {invitingEmail ? (
+                            <ActivityIndicator size={14} color="#fff" />
+                          ) : (
+                            <Text style={{ color: '#fff', fontSize: 14, fontWeight: '600' }}>
+                              {t('chat.sendInvite')}
+                            </Text>
+                          )}
+                        </TouchableOpacity>
+                      </View>
+                    )}
+
+                    {/* Share invite link */}
+                    <TouchableOpacity
+                      style={[sty.quickActionRow, { borderBottomColor: colors.border }]}
+                      onPress={() => handleInviteShare({})}
+                      activeOpacity={0.7}
+                    >
+                      <View style={[sty.quickActionIcon, { backgroundColor: '#111111' }]}>
+                        <IconUserPlus size={18} color="#fff" />
+                      </View>
+                      <View style={{ flex: 1 }}>
+                        <Text style={[sty.quickActionTitle, { color: colors.text }]}>{t('chat.shareLink')}</Text>
+                        <Text style={[sty.quickActionSub, { color: colors.textTertiary }]}>{t('chat.shareLinkDesc')}</Text>
+                      </View>
+                    </TouchableOpacity>
+                  </View>
+
+                  {/* Invite count for non-Chatyy contacts */}
+                  {otherContacts.length > 0 && (
+                    <View style={[sty.inviteCountBanner, { backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(17,17,17,0.04)' }]}>
+                      <Text style={{ color: colors.textSecondary, fontSize: 13 }}>
+                        {t('chat.contactsNotOnChatyy', { count: otherContacts.length })}
+                      </Text>
+                    </View>
+                  )}
+                </View>
+              }
+              ListFooterComponent={
+                <View style={{ paddingTop: 12 }}>
                   {/* Tópicos populares — Telegram-style trending hashtags
                       from public channels (last 7 days). Renders nothing
                       when the server returns no tags yet. */}
@@ -2083,49 +2403,6 @@ export default function ChatNewScreen() {
                       chat with). Hidden in group/channel-create flows where
                       the user is selecting members. */}
                   {mode === 'direct' && !pickMode && renderDiscoverBlock(publicChannels)}
-
-                  {/* Contacts-on-Chatyy count chip — sits above "Pessoas que você
-                      pode conhecer" so users immediately see how much of their
-                      phone book overlaps with the network. */}
-                  {phoneContacts.length > 0 && (
-                    <View style={{ alignItems: 'center', paddingVertical: 8 }}>
-                      <View
-                        style={{
-                          backgroundColor: colors.primary,
-                          paddingHorizontal: 12,
-                          paddingVertical: 6,
-                          borderRadius: 999,
-                        }}
-                      >
-                        <Text style={{ color: colors.onPrimary || '#fff', fontSize: 12, fontWeight: '600' }}>
-                          {(t('chat.contactsOnChatyyCount') ||
-                            `${phoneContacts.length} dos seus ${(phoneContacts.length + otherContacts.length) || phoneContacts.length} contatos estão no Chatyy`)
-                            .replace('{count}', String(phoneContacts.length))
-                            .replace('{total}', String((phoneContacts.length + otherContacts.length) || phoneContacts.length))}
-                        </Text>
-                      </View>
-                    </View>
-                  )}
-
-                  {/* Recently contacted (horizontal scroll) */}
-                  {recentContacts.length > 0 && (
-                    <View style={sty.recentSection}>
-                      <View style={[sty.sectionHeader, { backgroundColor: 'transparent', paddingBottom: 4 }]}>
-                        <View style={sty.sectionAccentLine} />
-                        <Text style={[sty.sectionTitle, { color: isDark ? '#F5F5F7' : '#111111' }]}>
-                          {t('chat.recentContacts')}
-                        </Text>
-                      </View>
-                      <FlatList
-                        horizontal
-                        data={recentContacts.slice(0, 8)}
-                        keyExtractor={(item) => 'recent-' + item.email}
-                        renderItem={renderRecentItem}
-                        showsHorizontalScrollIndicator={false}
-                        contentContainerStyle={sty.recentList}
-                      />
-                    </View>
-                  )}
 
                   {/* Listas de transmissão — Telegram parity. Section
                       shows the user's saved broadcast lists with a
@@ -2243,100 +2520,6 @@ export default function ChatNewScreen() {
                     </View>
                   )}
 
-                  {/* Quick actions */}
-                  <View style={sty.quickActions}>
-                    {/* Saved Messages — chat with self (Telegram-style) */}
-                    <TouchableOpacity
-                      style={[sty.quickActionRow, { borderBottomColor: colors.border }]}
-                      onPress={async () => {
-                        try {
-                          const r = await api.chatSaved();
-                          if (r?.success && r.data?.id) {
-                            router.replace({ pathname: '/chat-conversation', params: { id: r.data.id, name: t('chat.savedMessages') || 'Saved Messages' } });
-                          }
-                        } catch {}
-                      }}
-                      activeOpacity={0.7}
-                    >
-                      <View style={[sty.quickActionIcon, { backgroundColor: '#0ea5e9' }]}>
-                        <IconMessageSquare size={18} color="#fff" />
-                      </View>
-                      <View style={{ flex: 1 }}>
-                        <Text style={[sty.quickActionTitle, { color: colors.text }]}>{t('chat.savedMessages') || 'Mensagens Salvas'}</Text>
-                        <Text style={[sty.quickActionSub, { color: colors.textTertiary }]}>{t('chat.savedMessagesDesc') || 'Notas, links e arquivos que só você vê'}</Text>
-                      </View>
-                    </TouchableOpacity>
-
-                    {/* Invite by email */}
-                    <TouchableOpacity
-                      style={[sty.quickActionRow, { borderBottomColor: colors.border }]}
-                      onPress={() => setShowInviteInput(!showInviteInput)}
-                      activeOpacity={0.7}
-                    >
-                      <View style={[sty.quickActionIcon, { backgroundColor: '#111111' }]}>
-                        <IconMail size={18} color="#fff" />
-                      </View>
-                      <View style={{ flex: 1 }}>
-                        <Text style={[sty.quickActionTitle, { color: colors.text }]}>{t('chat.inviteFriend')}</Text>
-                        <Text style={[sty.quickActionSub, { color: colors.textTertiary }]}>{t('chat.inviteFriendDesc')}</Text>
-                      </View>
-                    </TouchableOpacity>
-
-                    {/* Inline invite input */}
-                    {showInviteInput && (
-                      <View style={[sty.inviteInputWrap, { backgroundColor: colors.surface }]}>
-                        <TextInput
-                          style={[sty.inviteInput, { color: colors.text, backgroundColor: isDark ? '#1e1e1e' : '#f5f5f7', borderColor: isDark ? '#333' : '#e0e0e0' }]}
-                          placeholder={t('chat.emailPlaceholder')}
-                          placeholderTextColor={colors.textTertiary}
-                          value={inviteEmail}
-                          onChangeText={setInviteEmail}
-                          keyboardType="email-address"
-                          autoCapitalize="none"
-                        />
-                        <TouchableOpacity
-                          style={[sty.inviteSendBtn, { backgroundColor: inviteEmail.includes('@') ? '#111111' : colors.border }]}
-                          disabled={!inviteEmail.includes('@') || !!invitingEmail}
-                          onPress={() => {
-                            handleInviteByEmail(inviteEmail.trim());
-                            setInviteEmail('');
-                          }}
-                        >
-                          {invitingEmail ? (
-                            <ActivityIndicator size={14} color="#fff" />
-                          ) : (
-                            <Text style={{ color: '#fff', fontSize: 14, fontWeight: '600' }}>
-                              {t('chat.sendInvite')}
-                            </Text>
-                          )}
-                        </TouchableOpacity>
-                      </View>
-                    )}
-
-                    {/* Share invite link */}
-                    <TouchableOpacity
-                      style={[sty.quickActionRow, { borderBottomColor: colors.border }]}
-                      onPress={() => handleInviteShare({})}
-                      activeOpacity={0.7}
-                    >
-                      <View style={[sty.quickActionIcon, { backgroundColor: '#111111' }]}>
-                        <IconUserPlus size={18} color="#fff" />
-                      </View>
-                      <View style={{ flex: 1 }}>
-                        <Text style={[sty.quickActionTitle, { color: colors.text }]}>{t('chat.shareLink')}</Text>
-                        <Text style={[sty.quickActionSub, { color: colors.textTertiary }]}>{t('chat.shareLinkDesc')}</Text>
-                      </View>
-                    </TouchableOpacity>
-                  </View>
-
-                  {/* Invite count for non-Chatyy contacts */}
-                  {otherContacts.length > 0 && (
-                    <View style={[sty.inviteCountBanner, { backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(17,17,17,0.04)' }]}>
-                      <Text style={{ color: colors.textSecondary, fontSize: 13 }}>
-                        {t('chat.contactsNotOnChatyy', { count: otherContacts.length })}
-                      </Text>
-                    </View>
-                  )}
                 </View>
               }
               ListEmptyComponent={
@@ -2605,6 +2788,16 @@ export default function ChatNewScreen() {
 }
 
 const sty = StyleSheet.create({
+  // [2026-10-09 find-contacts] shortcuts row + agenda CTA
+  shortcutRow: { flexDirection: 'row', justifyContent: 'space-around', paddingHorizontal: 8, paddingTop: 10, paddingBottom: 6 },
+  shortcutTile: { alignItems: 'center', width: 80, paddingVertical: 4 },
+  shortcutIcon: { width: 48, height: 48, borderRadius: 24, backgroundColor: '#111111', alignItems: 'center', justifyContent: 'center' },
+  shortcutLabel: { fontSize: 12, fontWeight: '500', marginTop: 6, textAlign: 'center' },
+  findCta: { marginHorizontal: 16, marginTop: 8, marginBottom: 6, padding: 14, borderRadius: 12 },
+  findCtaTitle: { fontSize: 15, fontWeight: '700' },
+  findCtaDesc: { fontSize: 13, marginTop: 4, lineHeight: 18 },
+  findCtaBtn: { alignSelf: 'flex-start', marginTop: 10, backgroundColor: '#111111', paddingHorizontal: 16, paddingVertical: 9, borderRadius: 999 },
+  findCtaBtnText: { color: '#fff', fontSize: 14, fontWeight: '600' },
   container: { flex: 1 },
   header: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',

@@ -32,6 +32,7 @@ import {
   IconEyeOff, IconArchive, IconCloud, IconCheck, IconBrush, IconZap, IconMusic, IconFilm,
 } from './Icons';
 import * as api from '../services/api';
+import { normalizePlanState, planDisplayName, formatQuotaBytes } from '../services/planState';
 import AvatarCircle from './AvatarCircle';
 import { useTheme, ACCENT_PRESETS } from '../context/ThemeContext';
 import { useBiometric } from '../context/BiometricContext';
@@ -2698,11 +2699,12 @@ function ChatyyOneScreen({ colors, isDark, t }) {
   }, []);
   useEffect(() => { load(); }, [load]);
 
-  const tier = String(usage?.tier || 'free');
-  const planKey = String(plan?.plan || 'free');
-  const isPaid = tier !== 'free' || planKey !== 'free';
+  // [2026-10-09 plans-consistency] plano/cota normalizados (services/planState)
+  // — mesmo dado de /plans, /storage e /backup.
+  const planNorm = normalizePlanState(plan, usage);
+  const isPaid = planNorm.isPaid;
   const used = Number(usage?.used_bytes ?? plan?.storage_used);
-  const limit = Number(usage?.limit_bytes ?? plan?.storage_limit) || 20 * 1024 ** 3;
+  const limit = planNorm.limitBytes;
   const hasUsage = Number.isFinite(used);
   const pct = hasUsage ? Math.min(100, Math.max(0, (used / limit) * 100)) : 0;
   const barColor = pct >= 95 ? '#ef4444' : pct >= 80 ? '#f59e0b' : (colors?.tint || '#0a84ff');
@@ -2738,7 +2740,7 @@ function ChatyyOneScreen({ colors, isDark, t }) {
     return <View style={{ paddingVertical: 40, alignItems: 'center' }}><ActivityIndicator color={colors?.text} /></View>;
   }
 
-  const gbTxt = fmtBytesSheet(limit);
+  const gbTxt = formatQuotaBytes(limit);
   return (
     <>
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 40 }}>
@@ -2754,10 +2756,10 @@ function ChatyyOneScreen({ colors, isDark, t }) {
             </View>
             <View style={{ flex: 1 }}>
               <Text style={{ fontSize: 20, fontWeight: '800', letterSpacing: -0.4, color: colors?.text }}>
-                {isPaid ? `Chatyy One ${gbTxt}` : (t?.('chatyyOne.freeTitle') || 'Chatyy One Grátis')}
+                {planDisplayName(planNorm.planId, t)}
               </Text>
               <Text style={{ fontSize: 13, color: colors?.textSecondary, marginTop: 2 }}>
-                {isPaid ? (t?.('chatyyOne.activePlan') || 'Plano ativo') : `${gbTxt} ${t?.('chatyyOne.included') || 'incluídos'}`}
+                {`${gbTxt} ${t('chatyyOne.included')}`}
               </Text>
             </View>
             <View style={{
@@ -2859,7 +2861,7 @@ function ChatyyOneScreen({ colors, isDark, t }) {
         <StorageShopSheet
           visible={shop}
           onClose={() => { setShop(false); load(); }}
-          currentTier={tier}
+          currentTier={String(usage?.tier || 'free')}
           usedBytes={hasUsage ? used : undefined}
           limitBytes={limit}
         />

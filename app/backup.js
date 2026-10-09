@@ -23,6 +23,7 @@ import {
 } from '../components/Icons';
 // [2026-05-22 monetization-pause] hidden by MONETIZATION_ENABLED flag
 import { MONETIZATION_ENABLED } from '../constants/featureFlags';
+import { normalizePlanState, planDisplayName, formatQuotaBytes, formatGb, catalogEntry } from '../services/planState';
 // Backup engine config / progress hooks. Quality toggle reads/writes the
 // shared settings store the engine consults at runtime, so flipping it here
 // affects the very next photo the engine compresses (or skips, for original).
@@ -212,10 +213,12 @@ export default function BackupScreen() {
   // Storage limit is authoritative from the server (plans.php). We only
   // fall back to 100GB — matches the free tier — when the API hasn't
   // responded yet so the UI doesn't flash a stingier number first.
-  const storageTotalBytes = planInfo?.storage_limit
-    || planInfo?.quota
-    || 100 * 1024 * 1024 * 1024;
-  const storageTotal = Math.round(storageTotalBytes / (1024 * 1024 * 1024));
+  // [2026-10-09 plans-consistency] cota/plano = plan_info (mesma fonte de
+  // /plans e /storage via services/planState). Sem fallback fixo de GB.
+  const planNorm = planInfo ? normalizePlanState(planInfo, null) : null;
+  const storageTotalBytes = planNorm?.limitBytes || 0;
+  const storageTotal = storageTotalBytes / (1024 * 1024 * 1024);
+  const storageTotalLabel = storageTotalBytes ? formatQuotaBytes(storageTotalBytes) : '—';
   // Backup is now included free for every account (100 GB tier).
   // Kept as a constant so the gating branch below stays in the file
   // but never triggers — IAP code paths remain dormant for future use.
@@ -430,7 +433,7 @@ export default function BackupScreen() {
           )}
           <View style={{ marginTop: 16, padding: 16, borderRadius: 12, backgroundColor: (colors.primary || '#111111') + '12' }}>
             <Text style={{ fontSize: 15, fontWeight: '700', color: colors.primary || '#111111' }}>
-              {t?.('backup.freeTier') || '100 GB grátis'}
+              {t('backup.freeTierAmount', { n: formatGb(catalogEntry(planNorm, 'free').storage_gb) })}
             </Text>
             <Text style={{ fontSize: 13, color: colors.textSecondary, marginTop: 4 }}>
               {t?.('backup.freeTierDesc') || 'Backup automático de fotos e arquivos incluído.'}
@@ -516,15 +519,15 @@ export default function BackupScreen() {
               <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
                 <Text style={{ color: colors.textSecondary, fontSize: FontSize.sm }}>{t('backup.plan')}</Text>
                 <Text style={{ color: colors.text, fontSize: FontSize.sm, fontWeight: '600' }}>
-                  {currentPlan === 'family' ? tr(t, 'backup.planFamily', 'Família') : 'Chatyy One'}
+                  {planDisplayName(planNorm?.planId || currentPlan, t)}
                 </Text>
               </View>
               <View style={{ marginTop: 4 }}>
                 <View style={[s.storageBarBg, { backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)' }]}>
-                  <View style={[s.storageBarFill, { width: `${Math.min((storageUsed / storageTotal) * 100, 100)}%`, backgroundColor: ACCENT }]} />
+                  <View style={[s.storageBarFill, { width: `${storageTotal > 0 ? Math.min((storageUsed / storageTotal) * 100, 100) : 0}%`, backgroundColor: ACCENT }]} />
                 </View>
                 <Text style={{ color: colors.textSecondary, fontSize: FontSize.xs, marginTop: 4 }}>
-                  {storageUsed.toFixed(1)} GB / {storageTotal} GB
+                  {storageUsed.toFixed(1)} GB / {storageTotalLabel}
                 </Text>
               </View>
               <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 4 }}>
@@ -543,7 +546,7 @@ export default function BackupScreen() {
                 </Text>
               </View>
               <Text style={{ color: colors.textTertiary, fontSize: FontSize.xs, marginTop: 2 }}>
-                {t('backup.autoExpire')}
+                {planNorm?.backupRetentionDays ? t('backup.autoExpireDays', { n: planNorm.backupRetentionDays }) : t('backup.autoExpire')}
               </Text>
             </View>
           </View>
