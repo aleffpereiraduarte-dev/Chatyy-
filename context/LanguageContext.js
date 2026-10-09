@@ -1,7 +1,7 @@
 import { createContext, useContext, useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { Platform, NativeModules, AppState } from 'react-native';
+import { Platform, NativeModules, AppState, I18nManager, Alert } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { translations, DEFAULT_LANGUAGE, ensureLocaleLoaded, onLocaleLoaded, isLocaleSupported, preloadLocale, fallbackChain } from '../i18n';
+import { translations, DEFAULT_LANGUAGE, ensureLocaleLoaded, onLocaleLoaded, isLocaleSupported, preloadLocale, fallbackChain, isRTLLanguage } from '../i18n';
 import { setUserLanguage as apiSetUserLanguage, chatUpdateSettings as apiChatUpdateSettings } from '../services/api';
 
 // [2026-10-08 web-receipts-i18n] Idioma da CONTA. Antes o web usava SÓ o
@@ -274,8 +274,13 @@ export function LanguageProvider({ children }) {
     } catch {}
   }, []);
 
+  // [2026-10-09 i18n-complete] Troca MANUAL p/ idioma de outra direção (ex.:
+  // pt-BR → العربية) pede reinício — o effect de RTL abaixo lê esta flag.
+  const _rtlAskRef = useRef(false);
+
   const changeLanguage = useCallback((code) => {
     if (!isLocaleSupported(code)) return;
+    if (code !== languageRef.current) _rtlAskRef.current = true;
     // Dispara o download antes do setState (o effect acima só roda após o
     // render) → o JSON chega alguns ms mais cedo; idempotente/single-flight.
     ensureLocaleLoaded(code).catch(() => {});
@@ -375,6 +380,38 @@ export function LanguageProvider({ children }) {
     }
     return str;
   }, [language, loadedTick]);
+
+  // [2026-10-09 i18n-complete] RTL NATIVO. Web: HtmlLangSync (_layout) põe
+  // <html dir="rtl">. iOS/Android: I18nManager só muda a direção do layout
+  // depois de recarregar o JS, então gravamos a preferência (persistida pelo
+  // RN) e, se a troca foi manual, oferecemos reiniciar agora (expo-updates).
+  // Idioma LTR → allowRTL(false): aparelho em árabe com app em pt-BR fica LTR.
+  useEffect(() => {
+    if (Platform.OS === 'web') return;
+    const ask = _rtlAskRef.current;
+    _rtlAskRef.current = false;
+    try {
+      const rtl = isRTLLanguage(language);
+      if (!!I18nManager.isRTL === rtl) return;
+      I18nManager.allowRTL(rtl);
+      I18nManager.forceRTL(rtl);
+      if (!ask) return; // boot/sync: aplica no próximo início
+      Alert.alert(
+        t('settings.language.rtlRestartTitle'),
+        t('settings.language.rtlRestartBody'),
+        [
+          { text: t('common.notNow'), style: 'cancel' },
+          {
+            text: t('settings.language.restartNow'),
+            onPress: () => {
+              try { require('expo-updates').reloadAsync().catch(() => {}); } catch {}
+            },
+          },
+        ],
+      );
+    } catch {}
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [language]);
 
   // Memoize context value — `t` is already stable (useCallback on language),
   // so this only creates a new object when language actually changes.

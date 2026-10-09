@@ -1,4 +1,8 @@
 export default {
+  // [2026-10-09 signup-nophone/settings-logout]
+  "login.createAccountNoPhone": "Create account without a number",
+  "signupUsername.handlePlaceholder": "your.username",
+  "settings.logoutAccount": "Log out",
   // [2026-10-09 per-user-vault]
   "vault.title": "Vault",
   "vault.entry": "Vault",
@@ -5288,7 +5292,7 @@ export default {
   'live.endedTitle': 'Live ended',
   'live.endedBody': 'This broadcast has already ended.',
   // [WAVE 111 2026-05-21]
-  'live.endedOf': "{name}'s",
+  'live.endedOf': "The live from",
   'live.endedSubtitle': 'You can watch the replay when it becomes available',
   'live.warmupWaiting': 'Waiting for the host to start the stream...',
   'live.seeOtherLives': 'See other lives',
@@ -6159,7 +6163,7 @@ export default {
   'plans.autoRenewDisclosure': 'Payment will be charged to your Apple ID at confirmation of purchase. The subscription renews automatically at the same price for the same period unless canceled at least 24 hours before the end of the current period. Manage or cancel anytime in Settings → [your name] → Subscriptions.',
   'plans.termsOfUse': 'Terms of Use',
   'plans.privacyPolicy': 'Privacy Policy',
-  'plans.payNow': 'Pay R${price}/month',
+  "plans.payNow": "Pay {price}/month",
   'plans.cardNumber': 'Card number',
   'plans.expiry': 'Expiry',
   'plans.cvc': 'CVC',
@@ -6229,15 +6233,15 @@ export default {
   'plans.storageUpgradeConfirm': 'Upgrade to {tier} for {price}? Only the prorated difference will be charged.',
   'plans.storageUpgradeSuccess': 'Storage upgraded!',
   'plans.storageUpgradeSuccessMsg': 'Your storage has been expanded successfully.',
-  'plans.subscribeCta': 'Subscribe R${price}/month',
+  "plans.subscribeCta": "Subscribe {price}/month",
   'plans.paymentApproved': 'Payment approved!',
   'plans.cardUpdatedDesc': 'Your card has been updated successfully.',
   'plans.planActiveDesc': 'Your {plan} plan is now active.',
   'plans.monthly': 'Monthly',
   'plans.annual': 'Annual',
   'plans.annualDiscount': '-23% OFF',
-  'plans.billedAnnually': 'Billed R${total}/year',
-  'plans.saveAmount': 'Save R${amount}',
+  "plans.billedAnnually": "Billed {total}/year",
+  "plans.saveAmount": "Save {amount}",
   'plans.perYear': '/year',
   'plans.trustCancel': 'Cancel anytime',
   'plans.trustData': 'Data protected',
@@ -8559,7 +8563,7 @@ export default {
   'parental.unflagDesc': 'The message will no longer appear in the review panel.',
   'parental.unflagTitle': 'Remove flag?',
   'parental.video': 'Video',
-  'plans.savePercent': 'SAVE {{pct}}%',
+  "plans.savePercent": "SAVE {pct}%",
   'plans.support': 'Support',
   'post.camera': 'Camera',
   'post.editorComingSoon': 'Photo editor coming soon',
@@ -9627,4 +9631,48 @@ export default {
   "profile.empty.reelsOtherTitle": "No Reels",
   "profile.empty.reelsSelfSub": "Record your first short video.",
   "profile.empty.reelsSelfTitle": "No Reels yet",
+  "plans.chargedInBRL": "Charged in Brazilian reais (BRL). Your bank converts it to your currency.", // [2026-10-09 plans-intl]
+  "plans.aiCallsTitle": "Calls", // [2026-10-09 plans-intl]
+  "plans.aiEmailsTitle": "Emails", // [2026-10-09 plans-intl]
+  "plans.aiCalendarTitle": "Calendar", // [2026-10-09 plans-intl]
+  "plans.aiCalendarDesc": "Manages appointments", // [2026-10-09 plans-intl]
+  "plans.aiRemindersTitle": "Reminders", // [2026-10-09 plans-intl]
+  "plans.aiRemindersDesc": "Alerts at the right time", // [2026-10-09 plans-intl]
+  "plans.aiDocsTitle": "Documents", // [2026-10-09 plans-intl]
+  "plans.aiDocsDesc": "Creates docs & sheets", // [2026-10-09 plans-intl]
+  "plans.subscriptionActivatedBody": "Your plan is active. Enjoy your premium benefits!", // [2026-10-09 plans-intl]
+  "iap.diagModuleNotLoaded": "Subscriptions aren't supported in this version of the app. Please update to the latest version.", // [2026-10-09 plans-intl]
+  "iap.diagNoProducts": "We couldn't load the plans from the store right now. This is usually temporary.\n\nTap \"Try again\" in a few seconds. If it persists, close and reopen the app.", // [2026-10-09 plans-intl]
+  "iap.diagFetchFailed": "We couldn't load the plans from the store right now. It may be a temporary network issue.\n\nTechnical detail: {detail}\n\nCheck your connection and try again.", // [2026-10-09 plans-intl]
+  "iap.diagInitFailed": "We couldn't connect to the store.\n\nDetail: {detail}\n\nTry closing and reopening the app.", // [2026-10-09 plans-intl]
+  "iap.diagGeneric": "We couldn't load the plans right now. Close and reopen the app, then try again.", // [2026-10-09 plans-intl]
+  "plans.upgradedToProBody": "Upgraded to Pro! Only the difference was charged.", // [2026-10-09 plans-intl]
+  "plans.planChangedBody": "Plan changed successfully!", // [2026-10-09 plans-intl]
+  "plans.changePlanError": "Couldn't change your plan", // [2026-10-09 plans-intl]
+  "plans.upgradeAction": "Upgrade", // [2026-10-09 plans-intl]
+  "plans.cancelError": "Couldn't cancel", // [2026-10-09 plans-intl]
+  "plans.reactivateError": "Couldn't reactivate", // [2026-10-09 plans-intl]
+  "plans.addMemberError": "Couldn't add member", // [2026-10-09 plans-intl]
+  "plans.labelPlan": "Plan", // [2026-10-09 plans-intl]
+  "plans.labelStatus": "Status", // [2026-10-09 plans-intl]
+  "plans.memberBadge": "Member", // [2026-10-09 plans-intl]
+  "plans.useOtherCard": "Use another card", // [2026-10-09 plans-intl]
+  "plans.cardExpiryPlaceholder": "MM/YY", // [2026-10-09 plans-intl]
+  // [2026-10-09 i18n-complete] aviso de reinício ao trocar a direção do texto (RTL)
+  "settings.language.rtlRestartTitle": "Restart Chatyy?",
+  "settings.language.rtlRestartBody": "The app needs to restart to change the text direction.",
+  "settings.language.restartNow": "Restart now",
+  "plans.aiShowcaseIntro": "Your personal assistant will help you...", // [2026-10-09 plans-intl]
+  "plans.aiAct.emails": "send emails", // [2026-10-09 plans-intl]
+  "plans.aiAct.sheets": "build spreadsheets", // [2026-10-09 plans-intl]
+  "plans.aiAct.calls": "make calls", // [2026-10-09 plans-intl]
+  "plans.aiAct.whatsapp": "send WhatsApp messages", // [2026-10-09 plans-intl]
+  "plans.aiAct.meetings": "schedule meetings", // [2026-10-09 plans-intl]
+  "plans.aiAct.reminders": "create reminders", // [2026-10-09 plans-intl]
+  "plans.aiAct.summarize": "summarize documents", // [2026-10-09 plans-intl]
+  "plans.aiAct.write": "write texts", // [2026-10-09 plans-intl]
+  "plans.aiAct.calendar": "organize your calendar", // [2026-10-09 plans-intl]
+  "plans.aiAct.contacts": "manage contacts", // [2026-10-09 plans-intl]
+  "plans.aiAct.reply": "reply to messages", // [2026-10-09 plans-intl]
+  "plans.aiAct.translate": "translate texts", // [2026-10-09 plans-intl]
 };

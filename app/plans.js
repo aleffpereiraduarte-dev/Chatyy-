@@ -18,6 +18,7 @@ import AvatarCircle from '../components/AvatarCircle';
 import { openInApp } from '../utils/inAppBrowser'; // [2026-10-07 app-feel-webview]
 // [2026-10-09 plans-consistency] plano/cota/preços vêm do backend (plan_info.catalog).
 import { canonicalPlanId, planDisplayName, formatGb, formatQuotaBytes, invalidatePlanState, planExpiryNotice } from '../services/planState';
+import { formatPlanMoney, formatBRLCents, normalizeStoreProduct } from '../utils/planPricing'; // [2026-10-09 plans-intl]
 import {
   IconArrowLeft, IconStar, IconStarFilled, IconCheck, IconChevronDown, IconChevronUp,
   IconX, IconSparkles, IconUsers, IconShield, IconPlus, IconTrash,
@@ -40,58 +41,8 @@ const safeAlert = (title, message, buttons) => {
 // ============================================================
 // ONE AI SHOWCASE — Animated flipping text
 // ============================================================
-const ONE_AI_ACTIONS = [
-  'mandar emails',
-  'montar planilhas',
-  'fazer ligações',
-  'enviar WhatsApp',
-  'agendar reuniões',
-  'criar lembretes',
-  'resumir documentos',
-  'escrever textos',
-  'organizar sua agenda',
-  'gerenciar contatos',
-  'responder mensagens',
-  'criar apresentações',
-  'analisar dados',
-  'fazer pesquisas',
-  'traduzir textos',
-  'rascunhar respostas',
-  'agendar compromissos',
-  'enviar notificações',
-  'criar relatórios',
-  'organizar arquivos',
-  'calcular orçamentos',
-  'planejar viagens',
-  'sugerir restaurantes',
-  'acompanhar entregas',
-  'monitorar preços',
-  'gerenciar senhas',
-  'criar listas de tarefas',
-  'programar pagamentos',
-  'verificar clima',
-  'buscar receitas',
-  'converter moedas',
-  'resumir notícias',
-  'agendar médico',
-  'controlar gastos',
-  'criar convites',
-  'editar fotos',
-  'transcrever áudios',
-  'gerar QR codes',
-  'comparar produtos',
-  'rastrear encomendas',
-  'organizar eventos',
-  'fazer backup',
-  'configurar alarmes',
-  'sugerir presentes',
-  'planejar cardápio',
-  'controlar dieta',
-  'acompanhar treinos',
-  'gerenciar assinaturas',
-  'automatizar tarefas',
-  'e muito mais...',
-];
+// [2026-10-09 plans-intl] ids → t(`plans.aiAct.<id>`) (antes: 50 frases fixas em pt-BR em todos os idiomas).
+const ONE_AI_ACTIONS = ['emails', 'sheets', 'calls', 'whatsapp', 'meetings', 'reminders', 'summarize', 'write', 'calendar', 'contacts', 'reply', 'translate'];
 
 function OneAIShowcase({ colors, isDark, t }) {
   const [currentIndex, setCurrentIndex] = useState(0);
@@ -132,11 +83,12 @@ function OneAIShowcase({ colors, isDark, t }) {
 
   const AI_DEMOS = [
     { Icon: IconMessageSquare, color: '#111111', title: 'WhatsApp', desc: t('plans.aiWhatsapp') },
-    { Icon: IconPhone, color: '#111111', title: t('plans.cancel').includes('Cancelar') ? 'Liga\u00E7\u00F5es' : 'Calls', desc: t('plans.aiCalls') },
-    { Icon: IconMail, color: '#ef4444', title: 'Emails', desc: t('plans.aiEmails') },
-    { Icon: IconCalendar, color: '#f59e0b', title: t('plans.cancel').includes('Cancelar') ? 'Agenda' : 'Calendar', desc: t('plans.cancel').includes('Cancelar') ? 'Gerencia compromissos' : 'Manages appointments' },
-    { Icon: IconBell, color: '#111111', title: t('plans.cancel').includes('Cancelar') ? 'Lembretes' : 'Reminders', desc: t('plans.cancel').includes('Cancelar') ? 'Avisa na hora certa' : 'Alerts at the right time' },
-    { Icon: IconFileText, color: '#06b6d4', title: t('plans.cancel').includes('Cancelar') ? 'Documentos' : 'Documents', desc: t('plans.cancel').includes('Cancelar') ? 'Cria textos e planilhas' : 'Creates docs & sheets' },
+    // [2026-10-09 plans-intl] títulos/descrições por chave (antes: só pt/en via .includes('Cancelar')).
+    { Icon: IconPhone, color: '#111111', title: t('plans.aiCallsTitle'), desc: t('plans.aiCalls') },
+    { Icon: IconMail, color: '#ef4444', title: t('plans.aiEmailsTitle'), desc: t('plans.aiEmails') },
+    { Icon: IconCalendar, color: '#f59e0b', title: t('plans.aiCalendarTitle'), desc: t('plans.aiCalendarDesc') },
+    { Icon: IconBell, color: '#111111', title: t('plans.aiRemindersTitle'), desc: t('plans.aiRemindersDesc') },
+    { Icon: IconFileText, color: '#06b6d4', title: t('plans.aiDocsTitle'), desc: t('plans.aiDocsDesc') },
   ];
 
   return (
@@ -184,7 +136,7 @@ function OneAIShowcase({ colors, isDark, t }) {
           One AI
         </Text>
         <Text style={{ color: 'rgba(17, 17, 17, 0.8)', fontSize: 13, textAlign: 'center', marginTop: 6 }}>
-          Sua assistente pessoal vai te ajudar a...
+          {t('plans.aiShowcaseIntro')}
         </Text>
 
         {/* Flipping text */}
@@ -206,7 +158,7 @@ function OneAIShowcase({ colors, isDark, t }) {
                 textShadowOffset: { width: 0, height: 2 },
                 textShadowRadius: 10,
               }}>
-                {ONE_AI_ACTIONS[currentIndex]}
+                {t(`plans.aiAct.${ONE_AI_ACTIONS[currentIndex]}`)}
               </Text>
             </Animated.View>
             {/* Animated gradient line indicator */}
@@ -293,7 +245,7 @@ function OneAIShowcase({ colors, isDark, t }) {
                 <IconCheck size={12} color={colors.primary} />
               </View>
               <Text style={{ color: colors.text, fontSize: 14, flex: 1, textTransform: 'capitalize' }}>
-                {action}
+                {t(`plans.aiAct.${action}`)}
               </Text>
             </View>
           ))}
@@ -576,7 +528,7 @@ export default function PlansScreen() {
   // is actually charged the BRL price — converting on the tile would
   // mislead. Only post-sale displays (where the amount is informational)
   // get the converted view.
-  const { format: formatMoney } = useCurrency(language);
+  const { format: formatMoney, currency: displayCurrency } = useCurrency(language);
   const { user } = useAuth();
   const router = useRouter();
   const insets = useSafeAreaInsets();
@@ -663,7 +615,7 @@ export default function PlansScreen() {
   useEffect(() => {
     if (searchParams?.success === '1' && !successShown) {
       setSuccessShown(true);
-      safeAlert('Assinatura ativada!', 'Seu plano foi ativado com sucesso. Aproveite os beneficios premium!');
+      safeAlert(t('iap.purchaseSuccess'), t('plans.subscriptionActivatedBody'));
       loadPlanInfo();
     } else if (searchParams?.cancelled === '1' && !successShown) {
       setSuccessShown(true);
@@ -883,37 +835,29 @@ export default function PlansScreen() {
   // recover instead of seeing a generic "try again" dead-end.
   const showIapUnavailable = () => {
     const diag = IAP.getLastDiagnostic?.() || '';
-    let title = t('iap.unavailableTitle') || 'Assinaturas indisponíveis';
+    let title = t('iap.unavailableTitle');
     let body = '';
     let buttons = null;
 
     if (diag === 'module_not_loaded') {
-      body = 'O suporte a assinaturas não está disponível nesta versão do app. Instale a última versão pelo TestFlight.';
+      body = t('iap.diagModuleNotLoaded');
     } else if (diag === 'no_products_returned') {
       // Apple's StoreKit (esp. during App Review) sometimes returns 0 products
       // on the first init call. The retry inside initIAP() catches most cases;
       // when it still fails we ask the user to retry — but DO NOT instruct the
       // App Review team to set up sandbox testers (that confused them and
       // triggered rejections). Reviewers see this same dialog as users do.
-      body =
-        'Não conseguimos carregar os planos da Apple agora. Isso costuma ser temporário.\n\n' +
-        'Toque em "Tentar de novo" em alguns segundos. Se persistir, feche e reabra o app.';
+      body = t('iap.diagNoProducts');
       buttons = [
-        { text: t('common.cancel') || 'Cancelar', style: 'cancel' },
-        { text: t('iap.retry') || 'Tentar de novo', onPress: () => { try { IAP.initIAP?.(); } catch {} } },
+        { text: t('common.cancel'), style: 'cancel' },
+        { text: t('iap.retry'), onPress: () => { try { IAP.initIAP?.(); } catch {} } },
       ];
     } else if (diag && diag.startsWith('fetch_failed')) {
-      body =
-        'Não conseguimos carregar os planos na Apple Store agora. Pode ser um problema temporário de rede.\n\n' +
-        `Detalhe técnico: ${diag.replace('fetch_failed:', '')}\n\n` +
-        'Verifique sua conexão e tente de novo.';
+      body = t('iap.diagFetchFailed', { detail: diag.replace('fetch_failed:', '') });
     } else if (diag && diag.startsWith('init_failed')) {
-      body =
-        'Não conseguimos conectar ao StoreKit da Apple.\n\n' +
-        `Detalhe: ${diag.replace('init_failed:', '')}\n\n` +
-        'Tente fechar e abrir o app novamente.';
+      body = t('iap.diagInitFailed', { detail: diag.replace('init_failed:', '') });
     } else {
-      body = 'Não conseguimos carregar os planos agora. Feche e abra o app e tente de novo.';
+      body = t('iap.diagGeneric');
     }
 
     if (buttons) {
@@ -945,12 +889,12 @@ export default function PlansScreen() {
       // available (web SSR / prerender edge).
       const planSlug = plan === 'family' ? 'pro' : (plan === 'one' ? 'plus' : plan);
       const webUrl = 'https://chatyy.com.br/plans?plan=' + encodeURIComponent(planSlug);
-      const title = t('iap.unavailableTitleShort') || 'Assinaturas in-app indisponíveis no momento';
-      const body = t('iap.fallbackBody') || 'Você pode usar suas credenciais Chatyy normais.';
+      const title = t('iap.unavailableTitleShort');
+      const body = t('iap.fallbackBody');
       if (typeof Alert !== 'undefined' && Alert.alert) {
         Alert.alert(title, body, [
-          { text: t('common.cancel') || 'Cancelar', style: 'cancel' },
-          { text: t('iap.subscribeOnWeb') || 'Assinar pelo site', onPress: () => { try { Linking.openURL(webUrl); } catch {} } },
+          { text: t('common.cancel'), style: 'cancel' },
+          { text: t('iap.subscribeOnWeb'), onPress: () => { try { Linking.openURL(webUrl); } catch {} } },
         ]);
       } else {
         safeAlert(title, body);
@@ -963,18 +907,15 @@ export default function PlansScreen() {
     // (and would confuse user if we claimed a trial it doesn't get).
     const hasTrial = !storageGb && plan === 'one';
     if (hasTrial) {
-      const trialMsg = t('iap.trialConfirmMsg') ||
-        'Você terá 30 dias grátis pra testar. Depois disso, a cobrança ' +
-        'começa automaticamente via Apple. Pode cancelar a qualquer momento ' +
-        'em Ajustes → [seu nome] → Assinaturas.';
+      const trialMsg = t('iap.trialConfirmMsg');
       const confirmed = await new Promise((resolve) => {
         if (typeof Alert !== 'undefined' && Alert.alert) {
           Alert.alert(
-            t('iap.trialConfirmTitle') || '30 dias grátis',
+            t('iap.trialConfirmTitle'),
             trialMsg,
             [
-              { text: t('common.cancel') || 'Cancelar', style: 'cancel', onPress: () => resolve(false) },
-              { text: t('iap.continuePurchase') || 'Começar trial', onPress: () => resolve(true) },
+              { text: t('common.cancel'), style: 'cancel', onPress: () => resolve(false) },
+              { text: t('iap.continuePurchase'), onPress: () => resolve(true) },
             ]
           );
         } else { resolve(true); }
@@ -1003,8 +944,8 @@ export default function PlansScreen() {
         // Apple review: we do NOT show error alerts on tap.
       } else {
         safeAlert(
-          t('iap.comingSoonTitle') || 'Em breve',
-          t('iap.comingSoonBody') || 'Assinaturas in-app estão em aprovação. Assine pelo site em chatyy.com.br/plans.'
+          t('iap.comingSoonTitle'),
+          t('iap.comingSoonBody')
         );
         if (__DEV__) console.warn('[Plans] IAP purchase error:', e);
       }
@@ -1026,7 +967,7 @@ export default function PlansScreen() {
         safeAlert(t('iap.restoreNotFound'), '');
       }
     } catch (e) {
-      safeAlert('Erro', t('iap.restoreNotFound'));
+      safeAlert(t('common.error'), t('iap.restoreNotFound'));
       console.error('[Plans] Restore error:', e);
     } finally {
       setIapRestoring(false);
@@ -1058,8 +999,8 @@ export default function PlansScreen() {
       try {
         const res = await api.stripeUpgrade(plan);
         if (res?.success) {
-          safeAlert(t('plans.upgradeSuccess') || 'Plano atualizado!',
-            plan === 'family' ? 'Upgrade para Família concluído! Só a diferença foi cobrada.' : 'Plano alterado com sucesso!');
+          safeAlert(t('plans.upgradeSuccess'),
+            plan === 'family' ? t('plans.upgradedToProBody') : t('plans.planChangedBody'));
           await loadPlanInfo();
           if (subInfo) loadSubscriptionInfo();
         } else {
@@ -1083,9 +1024,9 @@ export default function PlansScreen() {
             }).catch(() => { setSavedCard(null); setUseSavedCard(false); });
             return;
           }
-          safeAlert('Erro', res?.message || 'Erro ao mudar plano');
+          safeAlert(t('common.error'), res?.message || t('plans.changePlanError'));
         }
-      } catch { safeAlert('Erro', 'Erro de conexão'); }
+      } catch { safeAlert(t('common.error'), t('common.networkError')); }
       finally { setUpgrading(false); }
       return;
     }
@@ -1154,8 +1095,8 @@ export default function PlansScreen() {
         const productId = IAP.getProductId(null, 'monthly', storageGb);
         if (!productId) {
           safeAlert(
-            t('iap.comingSoonTitle') || 'Em breve',
-            t('iap.comingSoonBody') || 'Assinaturas in-app estão em aprovação. Assine pelo site em chatyy.com.br/plans.'
+            t('iap.comingSoonTitle'),
+            t('iap.comingSoonBody')
           );
           return;
         }
@@ -1171,8 +1112,8 @@ export default function PlansScreen() {
         } catch (e) {
           if (e.message !== 'CANCELLED' && e.message !== 'ios_iap_unavailable') {
             safeAlert(
-              t('iap.comingSoonTitle') || 'Em breve',
-              t('iap.comingSoonBody') || 'Assinaturas in-app estão em aprovação. Assine pelo site em chatyy.com.br/plans.'
+              t('iap.comingSoonTitle'),
+              t('iap.comingSoonBody')
             );
           }
         } finally {
@@ -1188,14 +1129,14 @@ export default function PlansScreen() {
           await loadPlanInfo();
           if (subInfo) loadSubscriptionInfo();
         } else {
-          safeAlert('Erro', res?.message || t('plans.paymentFailed'));
+          safeAlert(t('common.error'), res?.message || t('plans.paymentFailed'));
         }
-      } catch { safeAlert('Erro', t('plans.paymentFailed')); }
+      } catch { safeAlert(t('common.error'), t('plans.paymentFailed')); }
       finally { setStorageUpgradeLoading(false); }
     };
     safeAlert(t('plans.storageUpgradeTitle'), confirmMsg, [
       { text: t('plans.cancel'), style: 'cancel' },
-      { text: 'Upgrade', onPress: doUpgrade },
+      { text: t('plans.upgradeAction'), onPress: doUpgrade },
     ]);
   };
 
@@ -1380,10 +1321,10 @@ export default function PlansScreen() {
         await loadPlanInfo();
         safeAlert(t('plans.cancellationScheduled'), t('plans.activeUntil', { date: formatDateBR(result?.data?.current_period_end) }));
       } else {
-        safeAlert('Erro', result?.message || 'Erro ao cancelar');
+        safeAlert(t('common.error'), result?.message || t('plans.cancelError'));
       }
     } catch (e) {
-      safeAlert('Erro', 'Erro de conexao');
+      safeAlert(t('common.error'), t('common.networkError'));
     } finally { setCancelLoading(false); }
   };
 
@@ -1396,10 +1337,10 @@ export default function PlansScreen() {
         await loadPlanInfo();
         safeAlert(t('plans.reactivated'));
       } else {
-        safeAlert('Erro', result?.message || 'Erro ao reativar');
+        safeAlert(t('common.error'), result?.message || t('plans.reactivateError'));
       }
     } catch (e) {
-      safeAlert('Erro', 'Erro de conexao');
+      safeAlert(t('common.error'), t('common.networkError'));
     } finally { setReactivateLoading(false); }
   };
 
@@ -1425,10 +1366,10 @@ export default function PlansScreen() {
         setShowAddMember(false);
         await loadFamilyMembers();
       } else {
-        safeAlert('Erro', res?.data?.message || 'Erro ao adicionar membro');
+        safeAlert(t('common.error'), res?.data?.message || t('plans.addMemberError'));
       }
     } catch (e) {
-      safeAlert('Erro', 'Erro de conexao');
+      safeAlert(t('common.error'), t('common.networkError'));
     } finally { setAddingMember(false); }
   };
 
@@ -1467,9 +1408,64 @@ export default function PlansScreen() {
 
   const AI_PURPLE = isDark ? '#F5F5F7' : '#111111';
 
+  // [2026-10-09 plans-intl] Preços: iOS compra via IAP → preço da LOJA (moeda
+  // do Apple ID). Web/Android cobram via Stripe em BRL → BRL formatado no
+  // idioma (Intl) + nota "cobrado em reais". Backend só tem preço em BRL.
+  const brlLabel = (cents, opts) => formatBRLCents(cents, language, opts);
+  const storePrice = (productId) => {
+    if (!isIOS || !iapProducts || iapProducts.length === 0) return null;
+    try { return normalizeStoreProduct(IAP.getStoreProduct?.(productId)); } catch { return null; }
+  };
+  // { amount, currency, label } do preço MENSAL exibido no card (anual = equivalente/mês).
+  const planPrice = (plan, period) => {
+    const sp = storePrice(IAP.getProductId(plan, period));
+    if (sp && sp.amount != null && sp.currency) {
+      const amount = period === 'annual' ? sp.amount / 12 : sp.amount;
+      return { amount, currency: sp.currency, store: true, label: period === 'annual' ? formatPlanMoney(amount, sp.currency, language) : (sp.display || formatPlanMoney(amount, sp.currency, language)) };
+    }
+    if (sp && sp.display && period !== 'annual') return { amount: null, currency: null, store: true, label: sp.display };
+    const cents = PRICING[plan]?.[period] || 0;
+    return { amount: cents / 100, currency: 'BRL', store: false, label: brlLabel(cents) };
+  };
+  // Total cobrado por ano no plano anual.
+  const planYearTotal = (plan) => {
+    const sp = storePrice(IAP.getProductId(plan, 'annual'));
+    if (sp && (sp.display || (sp.amount != null && sp.currency))) {
+      return { amount: sp.amount, currency: sp.currency, label: sp.display || formatPlanMoney(sp.amount, sp.currency, language) };
+    }
+    const cents = (PRICING[plan]?.annual || 0) * 12;
+    return { amount: cents / 100, currency: 'BRL', label: brlLabel(cents) };
+  };
+  // Economia anual (mensal×12 − anual) na mesma moeda; null se não der pra calcular.
+  const planYearSavings = (plan) => {
+    const m = planPrice(plan, 'monthly');
+    const y = planYearTotal(plan);
+    if (m.amount == null || y.amount == null || m.currency !== y.currency) return null;
+    const diff = m.amount * 12 - y.amount;
+    return diff > 0 ? formatPlanMoney(diff, m.currency, language, { whole: true }) : null;
+  };
+  // Extra de armazenamento: iOS usa o produto storage_<gb> da loja quando existe.
+  const storageExtraPrice = (opt) => {
+    if (opt.included || !opt.extra) return { amount: 0, currency: null, label: '' };
+    const sp = storePrice(IAP.getProductId(null, 'monthly', opt.gb));
+    if (sp && sp.amount != null && sp.currency) return { amount: sp.amount, currency: sp.currency, label: sp.display || formatPlanMoney(sp.amount, sp.currency, language) };
+    return { amount: opt.extra / 100, currency: 'BRL', label: brlLabel(opt.extra) };
+  };
+  // Soma base + extra (mesma moeda). Moedas diferentes → "base + extra".
+  const sumPriceLabel = (base, extra) => {
+    if (!extra || !extra.amount) return base.label;
+    if (base.amount != null && base.currency && base.currency === extra.currency) {
+      return formatPlanMoney(base.amount + extra.amount, base.currency, language);
+    }
+    return `${base.label} + ${extra.label}`;
+  };
+  const storePriced = isIOS && planPrice('one', 'monthly').store;
+  // Nota "cobrado em reais" p/ quem não é BR (idioma ≠ pt-BR ou moeda de exibição ≠ BRL).
+  const showBrlNote = !storePriced && (language !== 'pt-BR' || (displayCurrency && displayCurrency !== 'BRL'));
+
   // Storage tier selector — modern chips
-  const StorageSelector = ({ options, selected, onSelect, accentColor, basePriceCents }) => {
-    const total = basePriceCents + selected.extra;
+  const StorageSelector = ({ options, selected, onSelect, accentColor, basePrice }) => {
+    const totalLabel = sumPriceLabel(basePrice, storageExtraPrice(selected));
     const gradientBg = accentColor === FAMILY_COLOR
       ? 'linear-gradient(135deg, #f59e0b, #f97316)'
       : 'linear-gradient(135deg, #111111, #111111)';
@@ -1527,7 +1523,7 @@ export default function PlansScreen() {
                   fontWeight: opt.included ? '600' : '500',
                   marginTop: 4,
                 }}>
-                  {opt.included ? t('plans.included') : `+R$${(opt.extra / 100).toFixed(2).replace('.', ',')}`}
+                  {opt.included ? t('plans.included') : `+${storageExtraPrice(opt).label}`}
                 </Text>
               </TouchableOpacity>
             );
@@ -1538,7 +1534,7 @@ export default function PlansScreen() {
             {t('plans.total')}
           </Text>
           <Text style={{ color: colors.text, fontSize: 22, fontWeight: '800' }}>
-            R${(total / 100).toFixed(2).replace('.', ',')}
+            {totalLabel}
           </Text>
           <Text style={{ color: colors.textSecondary, fontSize: 13 }}>
             {t('plans.perMonth')}
@@ -1617,8 +1613,9 @@ export default function PlansScreen() {
   const modalStorageExtra = paymentModal?.storage?.extra || 0;
   const modalBaseCents = modalPlan ? (PRICING[modalPlan]?.[modalBillingPeriod] || (modalPlan === 'family' ? 1999 : 1299)) : 0;
   const modalTotalCents = modalBaseCents + modalStorageExtra;
-  const modalPrice = (modalTotalCents / 100).toFixed(2).replace('.', ',');
-  const modalAnnualTotal = modalBillingPeriod === 'annual' ? ((modalTotalCents * 12) / 100).toFixed(2).replace('.', ',') : null;
+  // [2026-10-09 plans-intl] modal = Stripe (web/Android) → sempre BRL, formatado no idioma.
+  const modalPrice = brlLabel(modalTotalCents);
+  const modalAnnualTotal = modalBillingPeriod === 'annual' ? brlLabel(modalTotalCents * 12) : null;
   const modalPlanLabel = planDisplayName((modalPlan === 'family' || modalPlan === 'pro') ? 'pro' : 'plus', t);
   const modalColor = modalPlan === 'family' ? FAMILY_COLOR : PLUS_COLOR;
   const cardBrand = detectCardBrand(cardNumber);
@@ -1635,7 +1632,7 @@ export default function PlansScreen() {
           alignItems: 'center', justifyContent: 'center',
           ...(Platform.OS === 'web' ? { backdropFilter: 'blur(10px)' } : {}),
         }}
-        accessibilityLabel="Back"
+        accessibilityLabel={t('common.back')}
         accessibilityRole="button"
       >
         <IconArrowLeft size={20} color="#fff" />
@@ -1696,7 +1693,7 @@ export default function PlansScreen() {
                 textShadowRadius: 30,
               }),
             }}>
-              {t('plans.heroTitle') || 'Escolha seu plano'}
+              {t('plans.heroTitle')}
             </Text>
             <Text style={{
               color: 'rgba(255, 255, 255, 0.78)', // [2026-10-08 polish-leftovers] hero is always dark
@@ -1708,7 +1705,7 @@ export default function PlansScreen() {
               lineHeight: 22,
               maxWidth: 320,
             }}>
-              {t('plans.heroSubtitle') || 'Free, Plus ou Pro — pague mensal ou economize com anual.'}
+              {t('plans.heroSubtitle')}
             </Text>
 
             {/* Quick value pills row */}
@@ -1717,9 +1714,9 @@ export default function PlansScreen() {
               gap: 8, marginTop: 18, paddingHorizontal: 8,
             }}>
               {[
-                { icon: '✓', label: t('plans.heroPill1') || '7 dias grátis' },
-                { icon: '✓', label: t('plans.heroPill2') || 'Cancele quando quiser' },
-                { icon: '✓', label: t('plans.heroPill3') || 'Sem fidelidade' },
+                { icon: '✓', label: t('plans.heroPill1') },
+                { icon: '✓', label: t('plans.heroPill2') },
+                { icon: '✓', label: t('plans.heroPill3') },
               ].map((p, i) => (
                 <View key={i} style={{
                   flexDirection: 'row', alignItems: 'center', gap: 4,
@@ -1904,6 +1901,13 @@ export default function PlansScreen() {
             </View>
           )}
 
+          {/* [2026-10-09 plans-intl] web/Android cobram em BRL via Stripe → avisa quem não é BR. */}
+          {showBrlNote && (
+            <Text style={{ color: colors.textSecondary, fontSize: 12, textAlign: 'center', marginTop: 16, lineHeight: 17 }}>
+              {t('plans.chargedInBRL')}
+            </Text>
+          )}
+
           {/* Free Card — Subdued but clean */}
           <View style={{
             borderRadius: 24,
@@ -1927,7 +1931,7 @@ export default function PlansScreen() {
               )}
             </View>
             <View style={{ flexDirection: 'row', alignItems: 'baseline', marginTop: 8, gap: 2, marginBottom: 4 }}>
-              <Text style={{ color: colors.text, fontSize: 38, fontWeight: '800', letterSpacing: -1.5 }}>R$0</Text>
+              <Text style={{ color: colors.text, fontSize: 38, fontWeight: '800', letterSpacing: -1.5 }}>{formatPlanMoney(0, storePriced ? (planPrice('one', 'monthly').currency || 'BRL') : 'BRL', language)}</Text>
               <Text style={{ color: colors.textSecondary, fontSize: 13 }}>{t('plans.perMonth')}</Text>
             </View>
             <View style={{ marginTop: 14 }}>
@@ -1977,7 +1981,7 @@ export default function PlansScreen() {
               ...(Platform.OS === 'web' ? { boxShadow: '0 3px 10px rgba(251, 191, 36, 0.4)' } : { shadowColor: '#fbbf24', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.4, shadowRadius: 8, elevation: 4 }),
             }}>
               <Text style={{ color: '#000', fontSize: 10, fontWeight: '900', letterSpacing: 0.5 }}>
-                {t('plans.mostPopular') || 'MAIS POPULAR'}
+                {t('plans.mostPopular')}
               </Text>
             </View>
 
@@ -2001,7 +2005,7 @@ export default function PlansScreen() {
                   zIndex: 5,
                 }}>
                   <Text style={{ color: colors.success, fontSize: 11, fontWeight: '800', letterSpacing: 0.3 }}>
-                    {(t('plans.savePercent', { pct }) || `ECONOMIZE ${pct}%`)}
+                    {t('plans.savePercent', { pct })}
                   </Text>
                 </View>
               );
@@ -2028,7 +2032,7 @@ export default function PlansScreen() {
               <View style={{ flexDirection: 'row', alignItems: 'baseline', flexWrap: 'wrap', gap: 8 }}>
                 {billingPeriod === 'annual' && (
                   <Text style={{ fontSize: 18, fontWeight: '500', color: colors.textTertiary, textDecorationLine: 'line-through' }}>
-                    R${(PRICING.one.monthly / 100).toFixed(2).replace('.', ',')}
+                    {planPrice('one', 'monthly').label}
                   </Text>
                 )}
                 <Text style={{
@@ -2039,7 +2043,7 @@ export default function PlansScreen() {
                     WebkitTextFillColor: 'transparent',
                   } : {}),
                 }}>
-                  R${(PRICING.one[billingPeriod] / 100).toFixed(2).replace('.', ',')}
+                  {planPrice('one', billingPeriod).label}
                 </Text>
                 {/* Percent-discount badge — visible inline com o preço pra
                     surfaca o saving "ECONOMIZE X%" mesmo no mobile (antes
@@ -2056,7 +2060,7 @@ export default function PlansScreen() {
                       ...(Platform.OS === 'web' ? { boxShadow: '0 2px 6px rgba(34,197,94,0.35)' } : { shadowColor: '#22c55e', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.3, shadowRadius: 4, elevation: 2 }),
                     }}>
                       <Text style={{ color: '#fff', fontSize: 11, fontWeight: '800', letterSpacing: 0.3 }}>
-                        {(t('plans.savePercent', { pct }) || `ECONOMIZE ${pct}%`)}
+                        {t('plans.savePercent', { pct })}
                       </Text>
                     </View>
                   );
@@ -2068,13 +2072,15 @@ export default function PlansScreen() {
               {billingPeriod === 'annual' && (
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 8 }}>
                   <Text style={{ color: colors.textSecondary, fontSize: 12 }}>
-                    {t('plans.billedAnnually', { total: ((PRICING.one.annual * 12) / 100).toFixed(2).replace('.', ',') })}
+                    {t('plans.billedAnnually', { total: planYearTotal('one').label })}
                   </Text>
+                  {!!planYearSavings('one') && (
                   <View style={{ backgroundColor: '#22c55e', borderRadius: 10, paddingHorizontal: 8, paddingVertical: 3 }}>
                     <Text style={{ color: '#fff', fontSize: 11, fontWeight: '700' }}>
-                      {t('plans.saveAmount', { amount: (((PRICING.one.monthly - PRICING.one.annual) * 12) / 100).toFixed(0) })}
+                      {t('plans.saveAmount', { amount: planYearSavings('one') })}
                     </Text>
                   </View>
+                  )}
                 </View>
               )}
             </View>
@@ -2086,17 +2092,17 @@ export default function PlansScreen() {
             {/* Feature list with icons — full set, transparente sobre o que
                 desbloqueia (user reportou que pagava sem saber o que ganhava). */}
             <View>
-              <FeatureItem text={t('plans.unlimitedCalls') || 'Chamadas ilimitadas (Chatyy + qualquer número)'} highlight />
-              <FeatureItem text={t('plans.aiPriority') || 'IA prioritária — Llama 3.3 70B + transcrição ilimitada'} highlight />
-              <FeatureItem text={t('plans.hdVideo') || 'Reels e vídeo em HD (1080p)'} />
-              <FeatureItem text={t('plans.aiSummary') || 'Resumo de conversa com IA'} />
+              <FeatureItem text={t('plans.unlimitedCalls')} highlight />
+              <FeatureItem text={t('plans.aiPriority')} highlight />
+              <FeatureItem text={t('plans.hdVideo')} />
+              <FeatureItem text={t('plans.aiSummary')} />
               <FeatureItem text={t('plans.storageAmount', { n: formatGb(PLANS.plus.storage) })} />
               <FeatureItem text={t('plans.photoBackup')} />
               <FeatureItem text={t('plans.permanentBackup')} />
               <FeatureItem text={t('plans.recoverMessagesDays', { n: PLANS.plus.backupDays })} />
               <FeatureItem text={t('plans.maxFileSizeAmount', { n: formatGb(PLANS.plus.maxFile) })} />
-              <FeatureItem text={t('plans.vanishMode') || 'Modo invisível e mensagens efêmeras'} />
-              <FeatureItem text={t('plans.verifiedBadge') || 'Selo verificado e anel dourado no perfil'} />
+              <FeatureItem text={t('plans.vanishMode')} />
+              <FeatureItem text={t('plans.verifiedBadge')} />
               <FeatureItem text={t('plans.neverLose')} />
               <FeatureItem text={t('plans.crossDevice')} />
               <FeatureItem text={t('plans.prioritySupport')} />
@@ -2112,7 +2118,7 @@ export default function PlansScreen() {
                 selected={selectedStorageOne}
                 onSelect={setSelectedStorageOne}
                 accentColor={PLUS_COLOR}
-                basePriceCents={PRICING.one[billingPeriod]}
+                basePrice={planPrice('one', billingPeriod)}
               />
             )}
 
@@ -2147,7 +2153,7 @@ export default function PlansScreen() {
                 {upgrading ? <ActivityIndicator color="#fff" size="small" /> :
                   <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, flexWrap: 'wrap' }}>
                     <Text style={{ color: '#fff', fontSize: 15, fontWeight: '800', letterSpacing: 0.3, textAlign: 'center' }}>
-                      {t('plans.startNow')} {'\u2014'} R${((PRICING.one[billingPeriod] + selectedStorageOne.extra) / 100).toFixed(2).replace('.', ',')}{t('plans.perMonth')}
+                      {t('plans.startNow')} {'\u2014'} {sumPriceLabel(planPrice('one', billingPeriod), storageExtraPrice(selectedStorageOne))}{t('plans.perMonth')}
                     </Text>
                     <IconArrowRight size={18} color="#fff" />
                   </View>
@@ -2194,7 +2200,7 @@ export default function PlansScreen() {
               ...(Platform.OS === 'web' ? { boxShadow: '0 3px 10px rgba(16, 185, 129, 0.4)' } : { shadowColor: '#10b981', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.4, shadowRadius: 8, elevation: 4 }),
             }}>
               <Text style={{ color: '#fff', fontSize: 10, fontWeight: '900', letterSpacing: 0.5 }}>
-                {t('plans.bestValue') || 'MELHOR CUSTO'}
+                {t('plans.bestValue')}
               </Text>
             </View>
 
@@ -2215,7 +2221,7 @@ export default function PlansScreen() {
                   zIndex: 5,
                 }}>
                   <Text style={{ color: colors.success, fontSize: 11, fontWeight: '800', letterSpacing: 0.3 }}>
-                    {(t('plans.savePercent', { pct }) || `ECONOMIZE ${pct}%`)}
+                    {t('plans.savePercent', { pct })}
                   </Text>
                 </View>
               );
@@ -2262,7 +2268,7 @@ export default function PlansScreen() {
               <View style={{ flexDirection: 'row', alignItems: 'baseline', flexWrap: 'wrap', gap: 8 }}>
                 {billingPeriod === 'annual' && (
                   <Text style={{ fontSize: 18, fontWeight: '500', color: colors.textTertiary, textDecorationLine: 'line-through' }}>
-                    R${(PRICING.family.monthly / 100).toFixed(2).replace('.', ',')}
+                    {planPrice('family', 'monthly').label}
                   </Text>
                 )}
                 <Text style={{
@@ -2273,7 +2279,7 @@ export default function PlansScreen() {
                     WebkitTextFillColor: 'transparent',
                   } : {}),
                 }}>
-                  R${(PRICING.family[billingPeriod] / 100).toFixed(2).replace('.', ',')}
+                  {planPrice('family', billingPeriod).label}
                 </Text>
                 {/* Mesmo badge de percentual do Plus — pra Pro o desconto
                     em geral é maior (~22%), super-relevante mostrar inline
@@ -2288,7 +2294,7 @@ export default function PlansScreen() {
                       ...(Platform.OS === 'web' ? { boxShadow: '0 2px 6px rgba(34,197,94,0.35)' } : { shadowColor: '#22c55e', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.3, shadowRadius: 4, elevation: 2 }),
                     }}>
                       <Text style={{ color: '#fff', fontSize: 11, fontWeight: '800', letterSpacing: 0.3 }}>
-                        {(t('plans.savePercent', { pct }) || `ECONOMIZE ${pct}%`)}
+                        {t('plans.savePercent', { pct })}
                       </Text>
                     </View>
                   );
@@ -2300,13 +2306,15 @@ export default function PlansScreen() {
               {billingPeriod === 'annual' && (
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 8 }}>
                   <Text style={{ color: colors.textSecondary, fontSize: 12 }}>
-                    {t('plans.billedAnnually', { total: ((PRICING.family.annual * 12) / 100).toFixed(2).replace('.', ',') })}
+                    {t('plans.billedAnnually', { total: planYearTotal('family').label })}
                   </Text>
+                  {!!planYearSavings('family') && (
                   <View style={{ backgroundColor: '#22c55e', borderRadius: 10, paddingHorizontal: 8, paddingVertical: 3 }}>
                     <Text style={{ color: '#fff', fontSize: 11, fontWeight: '700' }}>
-                      {t('plans.saveAmount', { amount: (((PRICING.family.monthly - PRICING.family.annual) * 12) / 100).toFixed(0) })}
+                      {t('plans.saveAmount', { amount: planYearSavings('family') })}
                     </Text>
                   </View>
+                  )}
                 </View>
               )}
             </View>
@@ -2335,7 +2343,7 @@ export default function PlansScreen() {
                 selected={selectedStorageFamily}
                 onSelect={setSelectedStorageFamily}
                 accentColor={FAMILY_COLOR}
-                basePriceCents={PRICING.family[billingPeriod]}
+                basePrice={planPrice('family', billingPeriod)}
               />
             )}
 
@@ -2366,7 +2374,7 @@ export default function PlansScreen() {
                     <Text style={{ color: '#fff', fontSize: 15, fontWeight: '800', letterSpacing: 0.3, textAlign: 'center' }}>
                       {(currentPlan === 'plus' || currentPlan === 'one')
                         ? t('plans.upgradeToFamily')
-                        : `${t('plans.startNow')} \u2014 R$${((PRICING.family[billingPeriod] + selectedStorageFamily.extra) / 100).toFixed(2).replace('.', ',')}${t('plans.perMonth')}`}
+                        : `${t('plans.startNow')} \u2014 ${sumPriceLabel(planPrice('family', billingPeriod), storageExtraPrice(selectedStorageFamily))}${t('plans.perMonth')}`}
                     </Text>
                     <IconArrowRight size={18} color="#fff" />
                   </View>
@@ -2391,13 +2399,13 @@ export default function PlansScreen() {
               {/* Plan + Status */}
               <View style={{ marginBottom: 16 }}>
                 <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 8 }}>
-                  <Text style={{ color: colors.textSecondary, fontSize: FontSize.sm }}>Plano</Text>
+                  <Text style={{ color: colors.textSecondary, fontSize: FontSize.sm }}>{t('plans.labelPlan')}</Text>
                   <Text style={{ color: colors.text, fontSize: FontSize.base, fontWeight: '600' }}>
-                    {subInfo.plan_label || (currentPlan === 'family' ? 'Chatyy Pro' : 'Chatyy Plus')}
+                    {planDisplayName(currentPlanId, t)}
                   </Text>
                 </View>
                 <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 8 }}>
-                  <Text style={{ color: colors.textSecondary, fontSize: FontSize.sm }}>Status</Text>
+                  <Text style={{ color: colors.textSecondary, fontSize: FontSize.sm }}>{t('plans.labelStatus')}</Text>
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
                     {subInfo.cancel_at_period_end ? (
                       <>
@@ -2638,9 +2646,8 @@ export default function PlansScreen() {
                     const currentOpt = adjustedOpts.find(o => o.gb === currentStorageTier);
                     const currentExtra = currentOpt ? currentOpt.extra : 0;
                     const priceDiff = opt.extra - currentExtra;
-                    const priceDiffFormatted = bp === 'annual'
-                      ? `+R$${(priceDiff / 100).toFixed(2).replace('.', ',')}/ano`
-                      : `+R$${(priceDiff / 100).toFixed(2).replace('.', ',')}/${t('plans.perMonth').replace('/', '')}`;
+                    // [2026-10-09 plans-intl] assinatura Stripe → BRL formatado no idioma.
+                    const priceDiffFormatted = `+${brlLabel(priceDiff)}${bp === 'annual' ? t('plans.perYear') : t('plans.perMonth')}`;
                     return (
                       <View key={opt.gb} style={{
                         width: 130,
@@ -2731,7 +2738,7 @@ export default function PlansScreen() {
                   </TouchableOpacity>
                 ) : (
                   <View style={{ backgroundColor: FAMILY_LIGHT, paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12 }}>
-                    <Text style={{ color: FAMILY_COLOR, fontSize: FontSize.xs, fontWeight: '500' }}>Membro</Text>
+                    <Text style={{ color: FAMILY_COLOR, fontSize: FontSize.xs, fontWeight: '500' }}>{t('plans.memberBadge')}</Text>
                   </View>
                 )}
               </View>
@@ -2959,8 +2966,7 @@ export default function PlansScreen() {
               flagged the metadata as insufficient. Now always rendered. */}
           <View style={{ marginTop: 14, paddingHorizontal: 4 }}>
             <Text style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 16, textAlign: 'center' }}>
-              {t('plans.autoRenewDisclosure') ||
-                'Payment will be charged to your Apple ID at confirmation of purchase. The subscription renews automatically at the same price for the same period unless canceled at least 24 hours before the end of the current period. Manage or cancel anytime in Settings → [your name] → Subscriptions.'}
+              {t('plans.autoRenewDisclosure')}
             </Text>
             <View style={{ flexDirection: 'row', justifyContent: 'center', gap: 12, marginTop: 10, flexWrap: 'wrap' }}>
               <TouchableOpacity
@@ -2969,7 +2975,7 @@ export default function PlansScreen() {
                 accessibilityRole="link"
               >
                 <Text style={{ color: colors.primary, fontSize: 12, fontWeight: '600', textDecorationLine: 'underline' }}>
-                  {t('plans.termsOfUse') || 'Terms of Use (EULA)'}
+                  {t('plans.termsOfUse')}
                 </Text>
               </TouchableOpacity>
               <Text style={{ color: colors.textTertiary, fontSize: 12 }}>·</Text>
@@ -2979,7 +2985,7 @@ export default function PlansScreen() {
                 accessibilityRole="link"
               >
                 <Text style={{ color: colors.primary, fontSize: 12, fontWeight: '600', textDecorationLine: 'underline' }}>
-                  {t('plans.privacyPolicy') || 'Privacy Policy'}
+                  {t('plans.privacyPolicy')}
                 </Text>
               </TouchableOpacity>
               <Text style={{ color: colors.textTertiary, fontSize: 12 }}>·</Text>
@@ -2989,7 +2995,7 @@ export default function PlansScreen() {
                 accessibilityRole="link"
               >
                 <Text style={{ color: colors.primary, fontSize: 12, fontWeight: '600', textDecorationLine: 'underline' }}>
-                  {t('plans.support') || 'Support'}
+                  {t('plans.support')}
                 </Text>
               </TouchableOpacity>
             </View>
@@ -3099,7 +3105,7 @@ export default function PlansScreen() {
                         {t('plans.changeCard')}
                       </Text>
                       <Text style={{ color: colors.textSecondary, fontSize: FontSize.sm, marginTop: 6 }}>
-                        {subInfo?.plan_label || 'Chatyy Plus'}
+                        {planDisplayName(currentPlanId, t)}
                       </Text>
                     </>
                   ) : (
@@ -3114,11 +3120,16 @@ export default function PlansScreen() {
                         {modalPlanLabel}
                       </Text>
                       <Text style={{ color: modalColor, fontSize: 24, fontWeight: '800', marginBottom: 4 }}>
-                        R${modalPrice}<Text style={{ fontSize: 14, fontWeight: '500', color: colors.textSecondary }}>{t('plans.perMonth')}</Text>
+                        {modalPrice}<Text style={{ fontSize: 14, fontWeight: '500', color: colors.textSecondary }}>{t('plans.perMonth')}</Text>
                       </Text>
                       {modalBillingPeriod === 'annual' && modalAnnualTotal && (
                         <Text style={{ color: colors.textSecondary, fontSize: 12, textAlign: 'center', marginBottom: 2 }}>
                           {t('plans.billedAnnually', { total: modalAnnualTotal })}
+                        </Text>
+                      )}
+                      {showBrlNote && (
+                        <Text style={{ color: colors.textSecondary, fontSize: 11.5, textAlign: 'center', marginBottom: 2 }}>
+                          {t('plans.chargedInBRL')}
                         </Text>
                       )}
                       {/* Plan highlights */}
@@ -3200,7 +3211,7 @@ export default function PlansScreen() {
                       }}>
                         {!useSavedCard && <View style={{ width: 12, height: 12, borderRadius: 6, backgroundColor: colors.primary }} />}
                       </View>
-                      <Text style={{ color: colors.text, fontSize: 15, fontWeight: '500' }}>Usar outro cartão</Text>
+                      <Text style={{ color: colors.text, fontSize: 15, fontWeight: '500' }}>{t('plans.useOtherCard')}</Text>
                     </TouchableOpacity>
                   </View>
                 )}
@@ -3276,7 +3287,7 @@ export default function PlansScreen() {
                           ref={expiryInputRef}
                           value={cardExpiry}
                           onChangeText={handleExpiryChange}
-                          placeholder="MM/AA"
+                          placeholder={t('plans.cardExpiryPlaceholder')}
                           placeholderTextColor={colors.textTertiary}
                           keyboardType="number-pad"
                           maxLength={5}
@@ -3350,7 +3361,7 @@ export default function PlansScreen() {
                       {modalMode === 'update_card'
                         ? t('plans.changeCard')
                         : modalBillingPeriod === 'annual'
-                          ? `${t('plans.subscribe')} R$${modalAnnualTotal}${t('plans.perYear')}`
+                          ? `${t('plans.subscribe')} ${modalAnnualTotal}${t('plans.perYear')}`
                           : t('plans.subscribeCta', { price: modalPrice })}
                     </Text>
                   )}

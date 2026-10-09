@@ -318,7 +318,7 @@ export default function SignupUsername() {
                       style={[{
                         flex: 1, fontSize: 16, paddingVertical: 14, color: colors.text,
                       }, Platform.OS === 'web' && { outlineStyle: 'none' }]}
-                      placeholder="seu.username"
+                      placeholder={t('signupUsername.handlePlaceholder')}
                       placeholderTextColor={colors.textTertiary}
                       value={username}
                       onChangeText={(v) => setUsername(v.toLowerCase().replace(/[^a-z0-9._]/g, '').slice(0, 20))}

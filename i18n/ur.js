@@ -1,4 +1,8 @@
 export default {
+  // [2026-10-09 signup-nophone/settings-logout]
+  "login.createAccountNoPhone": "نمبر کے بغیر اکاؤنٹ بنائیں",
+  "signupUsername.handlePlaceholder": "your.username",
+  "settings.logoutAccount": "لاگ آؤٹ",
   '_locale': 'ur-PK',
   'splash.tagline': 'محفوظ اور سمارٹ ای میل',
   'folder.inbox': 'ان باکس',

@@ -1,4 +1,8 @@
 export default {
+  // [2026-10-09 signup-nophone/settings-logout]
+  "login.createAccountNoPhone": "Crear cuenta sin número",
+  "signupUsername.handlePlaceholder": "tu.usuario",
+  "settings.logoutAccount": "Cerrar sesión",
   // [2026-10-09 per-user-vault]
   "vault.title": "Caja fuerte",
   "vault.entry": "Caja fuerte",
@@ -6158,7 +6162,7 @@ export default {
   'plans.autoRenewDisclosure': 'El pago se cargara a tu cuenta Apple al confirmar la compra. La suscripcion se renueva automaticamente al mismo precio por el mismo periodo, a menos que se cancele al menos 24 horas antes del fin del periodo actual. Administra o cancela cuando quieras en Ajustes → [tu nombre] → Suscripciones.',
   'plans.termsOfUse': 'Terminos de Uso',
   'plans.privacyPolicy': 'Politica de Privacidad',
-  'plans.payNow': 'Pagar R${price}/mes',
+  "plans.payNow": "Pagar {price}/mes",
   'plans.cardNumber': 'Número de tarjeta',
   'plans.expiry': 'Vencimiento',
   'plans.cvc': 'CVC',
@@ -6228,15 +6232,15 @@ export default {
   'plans.storageUpgradeConfirm': 'Deseas hacer upgrade a {tier} por {price}? Solo se cobrara la diferencia proporcional.',
   'plans.storageUpgradeSuccess': 'Almacenamiento actualizado!',
   'plans.storageUpgradeSuccessMsg': 'Tu almacenamiento ha sido ampliado con exito.',
-  'plans.subscribeCta': 'Suscribirse R${price}/mes',
+  "plans.subscribeCta": "Suscribirse {price}/mes",
   'plans.paymentApproved': 'Pago aprobado!',
   'plans.cardUpdatedDesc': 'Tu tarjeta fue actualizada con exito.',
   'plans.planActiveDesc': 'Tu plan {plan} esta activo.',
   'plans.monthly': 'Mensual',
   'plans.annual': 'Anual',
   'plans.annualDiscount': '-23% OFF',
-  'plans.billedAnnually': 'Cobrado R${total}/año',
-  'plans.saveAmount': 'Ahorra R${amount}',
+  "plans.billedAnnually": "Se cobra {total}/año",
+  "plans.saveAmount": "Ahorra {amount}",
   'plans.perYear': '/año',
   'plans.trustCancel': 'Cancela cuando quieras',
   'plans.trustData': 'Datos protegidos',
@@ -8572,7 +8576,7 @@ export default {
   'parental.unflagDesc': 'El mensaje dejará de aparecer en el panel de revisión.',
   'parental.unflagTitle': '¿Quitar marca?',
   'parental.video': 'Video',
-  'plans.savePercent': 'AHORRA {{pct}}%',
+  "plans.savePercent": "AHORRA {pct}%",
   'plans.support': 'Soporte',
   'post.camera': 'Cámara',
   'post.editorComingSoon': 'Editor de foto próximamente',
@@ -9623,4 +9627,51 @@ export default {
   "profile.empty.reelsOtherTitle": "Sin Reels",
   "profile.empty.reelsSelfSub": "Graba tu primer video corto.",
   "profile.empty.reelsSelfTitle": "Aún no hay Reels",
+  // [2026-10-09 i18n-complete] textos que faltavam (fonte pt-BR) — revisados: placeholders/quebras conferidos
+  "drive.listView": "Vista de lista",
+  "drive.gridView": "Vista de cuadrícula",
+  "plans.chargedInBRL": "Se cobra en reales brasileños (BRL). Tu banco hace la conversión a tu moneda.", // [2026-10-09 plans-intl]
+  "plans.aiCallsTitle": "Llamadas", // [2026-10-09 plans-intl]
+  "plans.aiEmailsTitle": "Correos", // [2026-10-09 plans-intl]
+  "plans.aiCalendarTitle": "Agenda", // [2026-10-09 plans-intl]
+  "plans.aiCalendarDesc": "Gestiona tus citas", // [2026-10-09 plans-intl]
+  "plans.aiRemindersTitle": "Recordatorios", // [2026-10-09 plans-intl]
+  "plans.aiRemindersDesc": "Avisa en el momento justo", // [2026-10-09 plans-intl]
+  "plans.aiDocsTitle": "Documentos", // [2026-10-09 plans-intl]
+  "plans.aiDocsDesc": "Crea textos y hojas de cálculo", // [2026-10-09 plans-intl]
+  "plans.subscriptionActivatedBody": "Tu plan está activo. ¡Disfruta de los beneficios premium!", // [2026-10-09 plans-intl]
+  "iap.diagModuleNotLoaded": "Las suscripciones no están disponibles en esta versión de la app. Actualiza a la versión más reciente.", // [2026-10-09 plans-intl]
+  "iap.diagNoProducts": "No pudimos cargar los planes de la tienda ahora. Suele ser temporal.\n\nToca \"Reintentar\" en unos segundos. Si continúa, cierra y vuelve a abrir la app.", // [2026-10-09 plans-intl]
+  "iap.diagFetchFailed": "No pudimos cargar los planes de la tienda ahora. Puede ser un problema temporal de red.\n\nDetalle técnico: {detail}\n\nRevisa tu conexión y vuelve a intentarlo.", // [2026-10-09 plans-intl]
+  "iap.diagInitFailed": "No pudimos conectar con la tienda.\n\nDetalle: {detail}\n\nCierra y vuelve a abrir la app.", // [2026-10-09 plans-intl]
+  "iap.diagGeneric": "No pudimos cargar los planes ahora. Cierra y vuelve a abrir la app e inténtalo de nuevo.", // [2026-10-09 plans-intl]
+  "plans.upgradedToProBody": "¡Ya tienes Pro! Solo se cobró la diferencia.", // [2026-10-09 plans-intl]
+  "plans.planChangedBody": "¡Plan cambiado correctamente!", // [2026-10-09 plans-intl]
+  "plans.changePlanError": "No se pudo cambiar el plan", // [2026-10-09 plans-intl]
+  "plans.upgradeAction": "Mejorar", // [2026-10-09 plans-intl]
+  "plans.cancelError": "No se pudo cancelar", // [2026-10-09 plans-intl]
+  "plans.reactivateError": "No se pudo reactivar", // [2026-10-09 plans-intl]
+  "plans.addMemberError": "No se pudo añadir el miembro", // [2026-10-09 plans-intl]
+  "plans.labelPlan": "Plan", // [2026-10-09 plans-intl]
+  "plans.labelStatus": "Estado", // [2026-10-09 plans-intl]
+  "plans.memberBadge": "Miembro", // [2026-10-09 plans-intl]
+  "plans.useOtherCard": "Usar otra tarjeta", // [2026-10-09 plans-intl]
+  "plans.cardExpiryPlaceholder": "MM/AA", // [2026-10-09 plans-intl]
+  // [2026-10-09 i18n-complete] aviso de reinício ao trocar a direção do texto (RTL)
+  "settings.language.rtlRestartTitle": "¿Reiniciar Chatyy?",
+  "settings.language.rtlRestartBody": "La app necesita reiniciarse para cambiar la dirección del texto.",
+  "settings.language.restartNow": "Reiniciar ahora",
+  "plans.aiShowcaseIntro": "Tu asistente personal te ayudará a...", // [2026-10-09 plans-intl]
+  "plans.aiAct.emails": "enviar correos", // [2026-10-09 plans-intl]
+  "plans.aiAct.sheets": "crear hojas de cálculo", // [2026-10-09 plans-intl]
+  "plans.aiAct.calls": "hacer llamadas", // [2026-10-09 plans-intl]
+  "plans.aiAct.whatsapp": "enviar WhatsApp", // [2026-10-09 plans-intl]
+  "plans.aiAct.meetings": "programar reuniones", // [2026-10-09 plans-intl]
+  "plans.aiAct.reminders": "crear recordatorios", // [2026-10-09 plans-intl]
+  "plans.aiAct.summarize": "resumir documentos", // [2026-10-09 plans-intl]
+  "plans.aiAct.write": "escribir textos", // [2026-10-09 plans-intl]
+  "plans.aiAct.calendar": "organizar tu agenda", // [2026-10-09 plans-intl]
+  "plans.aiAct.contacts": "gestionar contactos", // [2026-10-09 plans-intl]
+  "plans.aiAct.reply": "responder mensajes", // [2026-10-09 plans-intl]
+  "plans.aiAct.translate": "traducir textos", // [2026-10-09 plans-intl]
 };

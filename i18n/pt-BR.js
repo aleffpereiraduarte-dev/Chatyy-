@@ -1,4 +1,8 @@
 export default {
+  // [2026-10-09 signup-nophone/settings-logout]
+  "login.createAccountNoPhone": "Criar conta sem número",
+  "signupUsername.handlePlaceholder": "seu.usuario",
+  "settings.logoutAccount": "Sair da conta",
   // [2026-10-09 per-user-vault]
   "vault.title": "Cofre",
   "vault.entry": "Cofre",
@@ -2437,7 +2441,7 @@ export default {
 
   // Compose extras
   'compose.replyHeader': 'Em {date}, {sender} escreveu:',
-  'compose.forwardHeader': '---------- Mensagem encaminhada ---------\nDe: {from}\nData: {daté}\nAssunto: {subject}\nPara: {to}',
+  'compose.forwardHeader': '---------- Mensagem encaminhada ---------\nDe: {from}\nData: {date}\nAssunto: {subject}\nPara: {to}',
   'compose.discardDraftConfirm': 'Descartar rascunho?',
   'compose.hide': 'Ocultar',
   'compose.writeWithAI': 'Escrever com IA',
@@ -2506,7 +2510,7 @@ export default {
   'meetingDetail.statusEnded': 'Encerrada',
   'meetingDetail.statusCancelled': 'Cancelada',
   'meetingDetail.at': 'às',
-  'meetingDetail.meetingEndedAt': 'Reunião encerrada {daté} às {time}',
+  'meetingDetail.meetingEndedAt': 'Reunião encerrada {date} às {time}',
   'meetingDetail.yourResponse': 'Sua Resposta',
   'meetingDetail.accept': 'Aceitar',
   'meetingDetail.maybe': 'Talvez',
@@ -6178,7 +6182,7 @@ export default {
   // Plans
   'plans.title': 'Chatyy One',
   'plans.subtitle': 'Proteja suas memórias',
-  'plans.free': 'Gratis',
+  "plans.free": "Grátis",
   'plans.plus': 'One',
   'plans.family': 'Pro',
   'plans.currentPlan': 'Seu plano atual',
@@ -6228,7 +6232,7 @@ export default {
   'plans.mediaRetention': 'Mídia por {n} dias',
   'plans.upToPeople': 'Até {n} pessoas',
   'plans.allPlusForFamily': 'Tudo do Chatyy Plus para até 6 pessoas',
-  'plans.perMonth': '/mes',
+  "plans.perMonth": "/mês",
   'plans.familyMembers': 'Membros da família',
   'plans.addMember': 'Adicionar membro',
   'plans.removeMember': 'Remover',
@@ -6246,7 +6250,7 @@ export default {
   'plans.autoRenewDisclosure': 'O pagamento sera cobrado da sua conta Apple na confirmação da compra. A assinatura renova automaticamente pelo mesmo preco e periodo, salvo se cancelada pelo menos 24 horas antes do fim do periodo atual. Gerencie ou cancele a qualquer momento em Ajustes → [seu nome] → Assinaturas.',
   'plans.termsOfUse': 'Termos de Uso',
   'plans.privacyPolicy': 'Política de Privacidade',
-  'plans.payNow': 'Pagar R${price}/mes',
+  "plans.payNow": "Pagar {price}/mês",
   'plans.cardNumber': 'Número do cartão',
   'plans.expiry': 'Validade',
   'plans.cvc': 'CVC',
@@ -6304,7 +6308,7 @@ export default {
   'plans.orPayWithCard': 'ou pague com cartão',
   'plans.cardDetails': 'Dados do cartão',
   'plans.chooseStorage': 'Armazenamento:',
-  'plans.included': 'incluido',
+  "plans.included": "incluído",
   'plans.total': 'Total:',
   'plans.needMoreSpace': 'Precisa de mais espaço?',
   'plans.addStorageDesc': 'Adicione mais armazenamento ao seu plano',
@@ -6316,15 +6320,15 @@ export default {
   'plans.storageUpgradeConfirm': 'Deseja fazer upgrade para {tier} por {price}? Sera cobrada apenas a diferenca proporcional.',
   'plans.storageUpgradeSuccess': 'Armazenamento atualizado!',
   'plans.storageUpgradeSuccessMsg': 'Seu armazenamento foi ampliado com sucesso.',
-  'plans.subscribeCta': 'Assinar R${price}/mes',
+  "plans.subscribeCta": "Assinar {price}/mês",
   'plans.paymentApproved': 'Pagamento aprovado!',
   'plans.cardUpdatedDesc': 'Seu cartão foi atualizado com sucesso.',
   'plans.planActiveDesc': 'Seu plano {plan} esta ativo.',
   'plans.monthly': 'Mensal',
   'plans.annual': 'Anual',
   'plans.annualDiscount': '-23% OFF',
-  'plans.billedAnnually': 'Cobrado R${total}/ano',
-  'plans.saveAmount': 'Economize R${amount}',
+  "plans.billedAnnually": "Cobrado {total}/ano",
+  "plans.saveAmount": "Economize {amount}",
   'plans.perYear': '/ano',
   'plans.trustCancel': 'Cancele quando quiser',
   'plans.trustData': 'Dados protegidos',
@@ -8652,7 +8656,7 @@ export default {
   'parental.unflagDesc': 'A mensagem deixará de aparecer no painel de revisão.',
   'parental.unflagTitle': 'Remover marcação?',
   'parental.video': 'Vídeo',
-  'plans.savePercent': 'ECONOMIZE {{pct}}%',
+  "plans.savePercent": "ECONOMIZE {pct}%",
   'plans.support': 'Suporte',
   'post.camera': 'Câmera',
   'post.editorComingSoon': 'Editor de foto em breve',
@@ -9705,4 +9709,48 @@ export default {
   "profile.empty.reelsOtherTitle": "Nenhum Reel",
   "profile.empty.reelsSelfSub": "Grave seu primeiro vídeo curto.",
   "profile.empty.reelsSelfTitle": "Nenhum Reel ainda",
+  "plans.chargedInBRL": "Cobrado em reais (BRL).", // [2026-10-09 plans-intl]
+  "plans.aiCallsTitle": "Ligações", // [2026-10-09 plans-intl]
+  "plans.aiEmailsTitle": "E-mails", // [2026-10-09 plans-intl]
+  "plans.aiCalendarTitle": "Agenda", // [2026-10-09 plans-intl]
+  "plans.aiCalendarDesc": "Gerencia compromissos", // [2026-10-09 plans-intl]
+  "plans.aiRemindersTitle": "Lembretes", // [2026-10-09 plans-intl]
+  "plans.aiRemindersDesc": "Avisa na hora certa", // [2026-10-09 plans-intl]
+  "plans.aiDocsTitle": "Documentos", // [2026-10-09 plans-intl]
+  "plans.aiDocsDesc": "Cria textos e planilhas", // [2026-10-09 plans-intl]
+  "plans.subscriptionActivatedBody": "Seu plano foi ativado. Aproveite os benefícios premium!", // [2026-10-09 plans-intl]
+  "iap.diagModuleNotLoaded": "O suporte a assinaturas não está disponível nesta versão do app. Atualize para a versão mais recente.", // [2026-10-09 plans-intl]
+  "iap.diagNoProducts": "Não conseguimos carregar os planos da loja agora. Isso costuma ser temporário.\n\nToque em \"Tentar de novo\" em alguns segundos. Se persistir, feche e reabra o app.", // [2026-10-09 plans-intl]
+  "iap.diagFetchFailed": "Não conseguimos carregar os planos da loja agora. Pode ser um problema temporário de rede.\n\nDetalhe técnico: {detail}\n\nVerifique sua conexão e tente de novo.", // [2026-10-09 plans-intl]
+  "iap.diagInitFailed": "Não conseguimos conectar à loja.\n\nDetalhe: {detail}\n\nTente fechar e abrir o app novamente.", // [2026-10-09 plans-intl]
+  "iap.diagGeneric": "Não conseguimos carregar os planos agora. Feche e abra o app e tente de novo.", // [2026-10-09 plans-intl]
+  "plans.upgradedToProBody": "Upgrade para o Pro concluído! Só a diferença foi cobrada.", // [2026-10-09 plans-intl]
+  "plans.planChangedBody": "Plano alterado com sucesso!", // [2026-10-09 plans-intl]
+  "plans.changePlanError": "Erro ao mudar o plano", // [2026-10-09 plans-intl]
+  "plans.upgradeAction": "Fazer upgrade", // [2026-10-09 plans-intl]
+  "plans.cancelError": "Erro ao cancelar", // [2026-10-09 plans-intl]
+  "plans.reactivateError": "Erro ao reativar", // [2026-10-09 plans-intl]
+  "plans.addMemberError": "Erro ao adicionar membro", // [2026-10-09 plans-intl]
+  "plans.labelPlan": "Plano", // [2026-10-09 plans-intl]
+  "plans.labelStatus": "Status", // [2026-10-09 plans-intl]
+  "plans.memberBadge": "Membro", // [2026-10-09 plans-intl]
+  "plans.useOtherCard": "Usar outro cartão", // [2026-10-09 plans-intl]
+  "plans.cardExpiryPlaceholder": "MM/AA", // [2026-10-09 plans-intl]
+  // [2026-10-09 i18n-complete] aviso de reinício ao trocar a direção do texto (RTL)
+  "settings.language.rtlRestartTitle": "Reiniciar o Chatyy?",
+  "settings.language.rtlRestartBody": "Para mudar a direção do texto, o app precisa reiniciar.",
+  "settings.language.restartNow": "Reiniciar agora",
+  "plans.aiShowcaseIntro": "Sua assistente pessoal vai te ajudar a...", // [2026-10-09 plans-intl]
+  "plans.aiAct.emails": "mandar e-mails", // [2026-10-09 plans-intl]
+  "plans.aiAct.sheets": "montar planilhas", // [2026-10-09 plans-intl]
+  "plans.aiAct.calls": "fazer ligações", // [2026-10-09 plans-intl]
+  "plans.aiAct.whatsapp": "enviar WhatsApp", // [2026-10-09 plans-intl]
+  "plans.aiAct.meetings": "agendar reuniões", // [2026-10-09 plans-intl]
+  "plans.aiAct.reminders": "criar lembretes", // [2026-10-09 plans-intl]
+  "plans.aiAct.summarize": "resumir documentos", // [2026-10-09 plans-intl]
+  "plans.aiAct.write": "escrever textos", // [2026-10-09 plans-intl]
+  "plans.aiAct.calendar": "organizar sua agenda", // [2026-10-09 plans-intl]
+  "plans.aiAct.contacts": "gerenciar contatos", // [2026-10-09 plans-intl]
+  "plans.aiAct.reply": "responder mensagens", // [2026-10-09 plans-intl]
+  "plans.aiAct.translate": "traduzir textos", // [2026-10-09 plans-intl]
 };

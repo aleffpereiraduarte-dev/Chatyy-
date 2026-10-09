@@ -24,6 +24,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useResponsive } from '../utils/responsive';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
+import { SELECTABLE_LOCALES, LANGUAGES as I18N_LANGUAGES } from '../i18n';
 import { useCurrency } from '../context/CurrencyContext';
 import { FontSize, Spacing, BorderRadius, Shadow, LetterSpacing } from '../constants/theme';
 import {
@@ -1361,6 +1362,21 @@ function SettingsScreenInner() {
   ].map(keys => keys.map(k => categoryList.find(c => c.key === k)).filter(Boolean));
   const displayName = (user?.name || user?.display_name || '').trim()
     || (user?.email ? user.email.split('@')[0] : '');
+  // [2026-10-09 settings-logout] Sair da conta direto da raiz das Configurações.
+  // Mesma função de logout do Perfil/Inbox: AuthContext.logout() + /login.
+  const handleSettingsLogout = async () => {
+    const title = t('settings.logoutConfirmTitle');
+    const msg = t('settings.logoutConfirmMessage');
+    let ok = false;
+    if (Platform.OS === 'web') {
+      try { ok = typeof window !== 'undefined' && window.confirm(`${title}\n\n${msg}`); } catch { ok = false; }
+    } else {
+      ok = await confirm({ title, message: msg, confirmLabel: t('settings.logout'), destructive: true });
+    }
+    if (!ok) return;
+    try { await logout(); } catch {}
+    try { router.replace('/login'); } catch {}
+  };
   const openCategory = (key) => {
     setActiveCategory(key);
     if (!IOS_AUTO_INSET) { try { scrollRef.current?.scrollTo?.({ y: 0, animated: false }); } catch {} }
@@ -1432,11 +1448,12 @@ function SettingsScreenInner() {
     } catch { setLoginHistory([]); }
     finally { setLoginHistoryLoading(false); }
   };
-  const LANG_OPTIONS = [
-    { value: 'pt-BR', label: 'Português (Brasil)' },
-    { value: 'en', label: 'English' },
-    { value: 'es', label: 'Español' },
-  ];
+  // [2026-10-09 i18n-complete] Todos os idiomas com tradução completa (≥98%,
+  // ver SELECTABLE_LOCALES / scripts/i18n-coverage.js), com o nome nativo.
+  const LANG_OPTIONS = SELECTABLE_LOCALES.map((code) => ({
+    value: code,
+    label: (I18N_LANGUAGES.find((l) => l.code === code) || {}).label || code,
+  }));
 
   return (
     <View style={[s.container, { backgroundColor: gc.pageBg, paddingTop: USE_NATIVE_HEADER ? 0 : insets.top }]}>
@@ -1567,6 +1584,15 @@ function SettingsScreenInner() {
                 ))}
               </SettingsGroup>
             ))}
+            {/* [2026-10-09 settings-logout] "Sair" só existia em Perfil → engrenagem → Zona de perigo.
+                Mesmo fluxo de logout (AuthContext.logout + /login), com confirmação. */}
+            <SettingsGroup>
+              <SettingsRow
+                title={t('settings.logoutAccount')}
+                destructive
+                onPress={handleSettingsLogout}
+              />
+            </SettingsGroup>
           </View>
         )}
 
@@ -1892,7 +1918,7 @@ function SettingsScreenInner() {
               disabled={languageAuto}
               cancelLabel={t('common.cancel') || 'Cancelar'}
               options={LANG_OPTIONS}
-              displayValue={(LANG_OPTIONS.find(o => o.value === language) || {}).label || String(language || '').toUpperCase()}
+              displayValue={(I18N_LANGUAGES.find(o => o.code === language) || {}).label || String(language || '').toUpperCase()}
               onChange={(v) => {
                 if (languageAuto) return;
                 changeLanguage(v);

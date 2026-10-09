@@ -353,6 +353,16 @@ export function isLocaleSupported(code) {
   return !!code && (!!translations[code] || REMOTE_SET.has(code));
 }
 
+// [2026-10-09 i18n-complete] Idiomas oferecidos no seletor de Configurações:
+// só os com tradução completa (≥ 98% das chaves do pt-BR). Conferir com
+// `node scripts/i18n-coverage.js` (marca com * e falha se algum cair < 98%).
+export const SELECTABLE_LOCALES = ['pt-BR', 'pt-PT', 'en', 'es', 'fr', 'de', 'it', 'ja', 'hi', 'id', 'ar'];
+
+// Idiomas escritos da direita p/ a esquerda (layout espelhado).
+export function isRTLLanguage(code) {
+  return /^(ar|he|fa|ur)(-|$)/i.test(String(code || ''));
+}
+
 export const LANGUAGES = [
   { code: 'pt-BR', label: 'Português (Brasil)', flag: '🇧🇷' },
   { code: 'pt-PT', label: 'Português (Portugal)', flag: '🇵🇹' },

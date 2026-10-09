@@ -318,6 +318,13 @@ export function getLocalizedPrice(productId) {
   return p?.localizedPrice || p?.displayPrice || '';
 }
 
+/** [2026-10-09 plans-intl] Produto bruto da loja (subs + storage) p/ preço localizado. */
+export function getStoreProduct(productId) {
+  if (!productId) return null;
+  const hit = (x) => x && (x.id === productId || x.productId === productId);
+  return _products.find(hit) || _storageProducts.find(hit) || null;
+}
+
 /** Send the purchase to our backend for Apple-signed verification +
  *  plan activation. Finish the transaction afterwards (required or
  *  Apple will auto-refund after ~24h). */
