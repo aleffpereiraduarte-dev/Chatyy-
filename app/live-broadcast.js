@@ -30,6 +30,10 @@ import { useLiveEngageController } from '../components/live/liveEngageStore';
 import useLiveStage, { emailFromIdentity as _mgEmailFromIdentity } from '../hooks/useLiveStage';
 import LiveGuestStage from '../components/liveGuests/LiveGuestStage';
 import HostGuestPanel from '../components/liveGuests/HostGuestPanel';
+// [live-pk 2026-10-10] Batalha PK (split 50/50 + placar por curtidas).
+import LiveBattleStage from '../components/liveBattle/LiveBattleStage';
+import LiveBattleLayer, { BattleHostButton } from '../components/liveBattle/LiveBattleLayer';
+import { useLiveBattleController, useBattleSelector, selSplitVisible } from '../components/liveBattle/battleStore';
 import * as liveBroadcastNotification from '../services/liveBroadcastNotification';
 import { publishToCfStream, liveDiagAppend } from '../services/cfStreamPublisher';
 import * as Haptics from 'expo-haptics';
@@ -508,6 +512,8 @@ export default function LiveBroadcastScreen() {
   }, []);
   const wsRef = useRef(null);
   const likeEngage = useLiveEngageController({ sessionId, wsRef, me: { email: user?.email, name: user?.name }, isHost: true });
+  const battle = useLiveBattleController({ sessionId, wsRef, me: { email: user?.email, name: user?.name }, isHost: true });
+  const battleSplit = useBattleSelector(battle, selSplitVisible);
   const peersRef = useRef(new Map());
   // Buffer of viewer-join messages that arrived before the broadcaster's
   // camera/mic stream was ready. Drained by a useEffect once
@@ -863,6 +869,7 @@ export default function LiveBroadcastScreen() {
         msg = { ...msg, ...msg.data };
       }
       try { likeEngage.onWsMessage(msg); } catch {} // [lives-engage] observador
+      try { battle.onWsMessage(msg); } catch {} // [live-pk] observador
 
       switch (msg.type) {
         case 'auth_success': {
@@ -3819,7 +3826,8 @@ export default function LiveBroadcastScreen() {
   const mgAudioCfgRef = useRef(false);
   const mgHasGuests = mgGuests.length > 0;
   useEffect(() => {
-    if (!mgHasGuests || mgAudioCfgRef.current || Platform.OS === 'web') return;
+    // [live-pk] Batalha PK também toca o host adversário → mesmo ajuste.
+    if (!(mgHasGuests || battleSplit) || mgAudioCfgRef.current || Platform.OS === 'web') return;
     mgAudioCfgRef.current = true;
     (async () => {
       try {
@@ -3833,7 +3841,7 @@ export default function LiveBroadcastScreen() {
         }
       } catch (e) { console.warn('[Live] host guest audio cfg:', e?.message); }
     })();
-  }, [mgHasGuests]);
+  }, [mgHasGuests, battleSplit]);
 
   // Ended state — rich summary card with duration / unique viewers / likes
   // and two CTAs (share recap + save replay toggle). Spring entrance.
@@ -4277,8 +4285,17 @@ export default function LiveBroadcastScreen() {
           fills the notch area instead of being capped by a system-painted
           black status bar (the "mancha preta" reported on the host stage). */}
       <StatusBar barStyle="light-content" translucent backgroundColor="transparent" />
+      {/* [live-pk 2026-10-10] Batalha PK → tela dividida (eu x adversário). */}
       {/* [multi-guest 2026-10-10] 1+ convidado → grade TikTok (2/3/4/5 tiles). */}
-      {mgStageTiles.length >= 2 ? (
+      {battleSplit ? (
+        <LiveBattleStage
+          battle={battle}
+          left={{ renderVideo: () => renderLocalVideo() }}
+          topInset={insets.top}
+          t={t}
+          isHost
+        />
+      ) : mgStageTiles.length >= 2 ? (
         <LiveGuestStage
           tiles={mgStageTiles}
           topInset={insets.top}
@@ -4465,6 +4482,17 @@ export default function LiveBroadcastScreen() {
           presentes e sheets. */}
       <LiveHostEngageBar engage={likeEngage} top={insets.top + 80} />
       <LiveEngageLayer engage={likeEngage} isHost topInset={insets.top} cardTop={insets.top + 170} />
+
+      {/* [live-pk 2026-10-10] Botão "Batalha" (abaixo de "Convidados") + convites/resultado. */}
+      {sessionId ? (
+        <BattleHostButton
+          battle={battle}
+          t={t}
+          guard={() => { if (mgGuests.length > 0 && !battleSplit) { hostToast(t('liveBattle.guestsActive')); return true; } return false; }}
+          style={{ position: 'absolute', top: insets.top + 148, right: 16, zIndex: 30 }}
+        />
+      ) : null}
+      <LiveBattleLayer battle={battle} t={t} isHost topInset={insets.top} bottomInset={insets.bottom} />
 
       {/* [2026-05-22 monetization-pause] hidden by MONETIZATION_ENABLED flag —
           Top gifters leaderboard on the host POV. */}

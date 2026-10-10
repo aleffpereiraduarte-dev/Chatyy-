@@ -38,6 +38,10 @@ import LiveConnectingOverlay from '../components/live/LiveConnectingOverlay';
 // [lives-engage 2026-10-10] curtidas em lote/top fãs/Q&A/presentes (store externo).
 import LiveEngageLayer from '../components/live/LiveEngageLayer';
 import { useLiveEngageController } from '../components/live/liveEngageStore';
+// [live-pk 2026-10-10] Batalha PK: espectador vê o próprio host x adversário.
+import LiveBattleStage from '../components/liveBattle/LiveBattleStage';
+import LiveBattleLayer from '../components/liveBattle/LiveBattleLayer';
+import { useLiveBattleController, useBattleSelector, selSplitVisible } from '../components/liveBattle/battleStore';
 import { LIVE_GIFTS_ENABLED } from '../components/live/liveEngageConfig';
 import LiveTopGifters from '../components/LiveTopGifters';
 import LiveGiftAnimation from '../components/LiveGiftAnimation';
@@ -361,6 +365,8 @@ export default function LiveViewerScreen() {
   const remoteVideoRef = useRef(null);
   const wsRef = useRef(null);
   const likeEngage = useLiveEngageController({ sessionId: paramSessionId, wsRef, me: { email: user?.email, name: user?.name }, isHost: false });
+  const battle = useLiveBattleController({ sessionId: paramSessionId, wsRef, me: { email: user?.email, name: user?.name }, isHost: false });
+  const battleSplit = useBattleSelector(battle, selSplitVisible);
   // Track auth-completion so requestToJoin can wait for it. Without this,
   // tapping "Pedir pra entrar" right after opening the viewer screen sent
   // the WS message before the server's `auth_success` came back — and the
@@ -1452,6 +1458,7 @@ export default function LiveViewerScreen() {
         msg = { ...msg, ...msg.data };
       }
       try { likeEngage.onWsMessage(msg); } catch {} // [lives-engage] observador
+      try { battle.onWsMessage(msg); } catch {} // [live-pk] observador
 
       switch (msg.type) {
         case 'auth_failure':
@@ -3670,6 +3677,10 @@ export default function LiveViewerScreen() {
             // subscribes us to a 2nd (or Nth) video track; we then lay the
             // tiles out in a grid and PIN the host's tile first by matching the
             // participant identity to the host email.
+            // [live-pk 2026-10-10] Batalha PK → tela dividida (host x adversário).
+            if (battleSplit) {
+              return <LiveBattleStage battle={battle} left={{ track: _stage.host?.videoTrack || null }} topInset={insets.top} t={t} />;
+            }
             // [multi-guest 2026-10-10] 2+ no palco → grade TikTok (nomes, quem fala).
             if (showStageGrid) {
               return <LiveGuestStage tiles={stageTiles} topInset={insets.top} hostLabel={t('liveGuests.host')} youLabel={t('liveGuests.you')} />;
@@ -3983,6 +3994,7 @@ export default function LiveViewerScreen() {
       {/* [lives-engage] banners de presente + combo, presente tela cheia,
           pergunta destacada e sheets (top fãs / Q&A / presentes). */}
       <LiveEngageLayer engage={likeEngage} isHost={false} topInset={insets.top} />
+      <LiveBattleLayer battle={battle} t={t} isHost={false} topInset={insets.top} bottomInset={insets.bottom} />
 
       <LiveSystemChipStack
         items={systemEvents}

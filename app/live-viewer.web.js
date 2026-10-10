@@ -32,6 +32,10 @@ import { IconEye, IconSend, IconHeart } from '../components/Icons';
 // [multi-guest 2026-10-10] Palco multi-convidados também no web.
 import useLiveStage from '../hooks/useLiveStage';
 import LiveGuestStage from '../components/liveGuests/LiveGuestStage';
+// [live-pk 2026-10-10] Batalha PK (split host x adversário + placar).
+import LiveBattleStage from '../components/liveBattle/LiveBattleStage';
+import LiveBattleLayer from '../components/liveBattle/LiveBattleLayer';
+import { useLiveBattleController, useBattleSelector, selSplitVisible } from '../components/liveBattle/battleStore';
 import { useLanguage } from '../context/LanguageContext';
 
 // [lives 2026-10-10] Interação no web: comentários em tempo real pelo hub WS
@@ -97,6 +101,8 @@ export default function LiveViewerWeb() {
   const [notice, setNotice] = useState('');
   const [pinned, setPinned] = useState(null);
   const wsRef = useRef(null);
+  const battle = useLiveBattleController({ sessionId, wsRef, me: {}, isHost: false });
+  const battleSplit = useBattleSelector(battle, selSplitVisible);
   const noticeTimerRef = useRef(null);
   const heartSeqRef = useRef(0);
   const lastHeartSentRef = useRef([]);
@@ -474,6 +480,7 @@ export default function LiveViewerWeb() {
         let m;
         try { m = JSON.parse(ev.data); } catch { return; }
         if (m && m.data && typeof m.data === 'object' && !Array.isArray(m.data)) m = { ...m.data, ...m };
+        try { battle.onWsMessage(m); } catch {} // [live-pk] observador
         const ty = m?.type || m?.event;
         if (ty === 'auth_success' || ty === 'authenticated') {
           try { ws.send(JSON.stringify({ type: 'live_join', session_id: sessionId })); } catch {}
@@ -673,6 +680,10 @@ export default function LiveViewerWeb() {
       {phase === 'livekit' && stageTiles.length >= 2 ? (
         <LiveGuestStage tiles={stageTiles} topInset={0} hostLabel={t('liveGuests.host')} youLabel={t('liveGuests.you')} />
       ) : null}
+      {phase === 'livekit' && battleSplit ? (
+        <LiveBattleStage battle={battle} left={{ track: _stage.host?.videoTrack || null }} topInset={0} t={t} muted={muted} />
+      ) : null}
+      <LiveBattleLayer battle={battle} t={t} isHost={false} topInset={0} />
 
       {/* Top overlay: host pill + viewer count */}
       <View style={styles.topRow} pointerEvents="box-none">
