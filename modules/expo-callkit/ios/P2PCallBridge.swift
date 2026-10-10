@@ -1,5 +1,5 @@
 import Foundation
-import LiveKit
+import LiveKitClient
 
 // [2026-10-09 p2p-ios] Integra a sessão P2P (P2PCallSessionIOS) com a ligação
 // nativa (CallViewController / NativeCallRoom / CallSignalWs).
