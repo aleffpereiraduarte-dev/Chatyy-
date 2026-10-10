@@ -1,4 +1,18 @@
 export default {
+  // [2026-10-10 contact-info]
+  "chatConv.groupInfoTitle": "Info grup",
+  "chatConv.vanishAfterRead": "Setelah dibaca",
+  "chatConv.vanishAfterReadHint": "Setiap pesan hilang setelah dibaca dan teksnya tidak muncul di notifikasi.",
+  "chatConv.vanishBannerV2": "Pesan sementara: hilang setelah dibaca. Ketuk untuk mengubah.",
+  "chatConv.muteShort": "Bisukan",
+  "chatConv.unmuteShort": "Bunyikan",
+  "chatConv.mediaLinksDocs": "Media, tautan, dan dokumen",
+  "chatConv.customNotifications": "Notifikasi khusus",
+  "chatConv.customNotificationsHint": "Suara, getar, dan pratinjau",
+  "chatConv.chatLockRow": "Kunci chat",
+  "chatConv.enabledState": "Aktif",
+  "chatConv.e2eSafetyHint": "End-to-end aktif. Ketuk untuk melihat nomor keamanan.",
+  "chatConv.scheduledMessages": "Pesan terjadwal",
   // [2026-10-10 wa-import]
   "waImport.settingsHeader": "Impor",
   "waImport.settingsRow": "Impor chat WhatsApp",
@@ -9145,4 +9159,8 @@ export default {
   "live.wordFilterPlaceholder": "mis.: spam, penipuan",
   "live.wordFilterSaved": "Filter disimpan",
   "live.react": "Beri reaksi",
+  "e2ee.confirmEnable": "Aktifkan enkripsi end-to-end di chat ini? Hanya kalian berdua yang bisa membaca pesan baru.",
+  "e2ee.confirmDisable": "Nonaktifkan enkripsi end-to-end di chat ini? Pesan baru tidak akan dienkripsi lagi.",
+  "e2ee.turnOn": "Aktifkan",
+  "e2ee.turnOff": "Nonaktifkan",
 };

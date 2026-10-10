@@ -1,4 +1,18 @@
 export default {
+  // [2026-10-10 contact-info]
+  "chatConv.groupInfoTitle": "ग्रुप की जानकारी",
+  "chatConv.vanishAfterRead": "पढ़ने के बाद",
+  "chatConv.vanishAfterReadHint": "हर संदेश पढ़ने के बाद गायब हो जाता है और उसका टेक्स्ट नोटिफ़िकेशन में नहीं दिखता।",
+  "chatConv.vanishBannerV2": "गायब होने वाले संदेश: पढ़ते ही गायब हो जाते हैं। बदलने के लिए टैप करें।",
+  "chatConv.muteShort": "म्यूट",
+  "chatConv.unmuteShort": "अनम्यूट",
+  "chatConv.mediaLinksDocs": "मीडिया, लिंक और डॉक्स",
+  "chatConv.customNotifications": "कस्टम नोटिफ़िकेशन",
+  "chatConv.customNotificationsHint": "ध्वनि, वाइब्रेशन और प्रीव्यू",
+  "chatConv.chatLockRow": "चैट लॉक करें",
+  "chatConv.enabledState": "चालू",
+  "chatConv.e2eSafetyHint": "एंड-टू-एंड चालू। सुरक्षा नंबर देखने के लिए टैप करें।",
+  "chatConv.scheduledMessages": "शेड्यूल किए गए संदेश",
   // [2026-10-10 wa-import]
   "waImport.settingsHeader": "इंपोर्ट करें",
   "waImport.settingsRow": "WhatsApp चैट इंपोर्ट करें",
@@ -9923,4 +9937,8 @@ export default {
   "live.wordFilterPlaceholder": "उदा.: spam, धोखा",
   "live.wordFilterSaved": "फ़िल्टर सहेजा गया",
   "live.react": "प्रतिक्रिया दें",
+  "e2ee.confirmEnable": "क्या इस चैट में एंड-टू-एंड एन्क्रिप्शन चालू करें? नए संदेश केवल आप दोनों पढ़ पाएँगे।",
+  "e2ee.confirmDisable": "क्या इस चैट में एंड-टू-एंड एन्क्रिप्शन बंद करें? नए संदेश अब एन्क्रिप्ट नहीं होंगे।",
+  "e2ee.turnOn": "चालू करें",
+  "e2ee.turnOff": "बंद करें",
 };

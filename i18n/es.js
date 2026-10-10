@@ -1,4 +1,18 @@
 export default {
+  // [2026-10-10 contact-info]
+  "chatConv.groupInfoTitle": "Info. del grupo",
+  "chatConv.vanishAfterRead": "Al leer",
+  "chatConv.vanishAfterReadHint": "Cada mensaje desaparece después de leerse y el texto no aparece en las notificaciones.",
+  "chatConv.vanishBannerV2": "Mensajes temporales: desaparecen al leerse. Toca para cambiar.",
+  "chatConv.muteShort": "Silenciar",
+  "chatConv.unmuteShort": "Activar",
+  "chatConv.mediaLinksDocs": "Archivos, enlaces y docs",
+  "chatConv.customNotifications": "Notificaciones personalizadas",
+  "chatConv.customNotificationsHint": "Sonido, vibración y vista previa",
+  "chatConv.chatLockRow": "Bloquear chat con clave",
+  "chatConv.enabledState": "Activado",
+  "chatConv.e2eSafetyHint": "Cifrado de extremo a extremo activo. Toca para ver el número de seguridad.",
+  "chatConv.scheduledMessages": "Mensajes programados",
   // [2026-10-10 wa-import]
   "waImport.settingsHeader": "Importar",
   "waImport.settingsRow": "Importar chats de WhatsApp",
@@ -9892,4 +9906,8 @@ export default {
   "live.wordFilterPlaceholder": "ej.: spam, estafa",
   "live.wordFilterSaved": "Filtro guardado",
   "live.react": "Reaccionar",
+  "e2ee.confirmEnable": "¿Activar el cifrado de extremo a extremo en este chat? Solo ustedes dos podrán leer los mensajes nuevos.",
+  "e2ee.confirmDisable": "¿Desactivar el cifrado de extremo a extremo en este chat? Los mensajes nuevos ya no se cifrarán.",
+  "e2ee.turnOn": "Activar",
+  "e2ee.turnOff": "Desactivar",
 };

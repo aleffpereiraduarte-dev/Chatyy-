@@ -1,4 +1,18 @@
 export default {
+  // [2026-10-10 contact-info]
+  "chatConv.groupInfoTitle": "Gruppeninfo",
+  "chatConv.vanishAfterRead": "Nach dem Lesen",
+  "chatConv.vanishAfterReadHint": "Jede Nachricht verschwindet nach dem Lesen, und ihr Text wird in Benachrichtigungen nicht angezeigt.",
+  "chatConv.vanishBannerV2": "Selbstlöschende Nachrichten: verschwinden nach dem Lesen. Zum Ändern tippen.",
+  "chatConv.muteShort": "Stumm",
+  "chatConv.unmuteShort": "Ton an",
+  "chatConv.mediaLinksDocs": "Medien, Links und Doks",
+  "chatConv.customNotifications": "Eigene Benachrichtigungen",
+  "chatConv.customNotificationsHint": "Ton, Vibration und Vorschau",
+  "chatConv.chatLockRow": "Chat sperren",
+  "chatConv.enabledState": "An",
+  "chatConv.e2eSafetyHint": "Ende-zu-Ende aktiv. Tippen, um die Sicherheitsnummer zu sehen.",
+  "chatConv.scheduledMessages": "Geplante Nachrichten",
   // [2026-10-10 wa-import]
   "waImport.settingsHeader": "Importieren",
   "waImport.settingsRow": "WhatsApp-Chats importieren",
@@ -9923,4 +9937,8 @@ export default {
   "live.wordFilterPlaceholder": "z. B. Spam, Betrug",
   "live.wordFilterSaved": "Filter gespeichert",
   "live.react": "Reagieren",
+  "e2ee.confirmEnable": "Ende-zu-Ende-Verschlüsselung in diesem Chat aktivieren? Nur ihr beide könnt neue Nachrichten lesen.",
+  "e2ee.confirmDisable": "Ende-zu-Ende-Verschlüsselung in diesem Chat deaktivieren? Neue Nachrichten werden nicht mehr verschlüsselt.",
+  "e2ee.turnOn": "Aktivieren",
+  "e2ee.turnOff": "Deaktivieren",
 };

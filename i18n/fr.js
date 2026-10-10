@@ -1,4 +1,18 @@
 export default {
+  // [2026-10-10 contact-info]
+  "chatConv.groupInfoTitle": "Infos du groupe",
+  "chatConv.vanishAfterRead": "Après lecture",
+  "chatConv.vanishAfterReadHint": "Chaque message disparaît après lecture et son texte n'apparaît pas dans les notifications.",
+  "chatConv.vanishBannerV2": "Messages éphémères : ils disparaissent une fois lus. Touchez pour modifier.",
+  "chatConv.muteShort": "Silence",
+  "chatConv.unmuteShort": "Réactiver",
+  "chatConv.mediaLinksDocs": "Médias, liens et docs",
+  "chatConv.customNotifications": "Notifications personnalisées",
+  "chatConv.customNotificationsHint": "Son, vibration et aperçu",
+  "chatConv.chatLockRow": "Verrouiller la discussion",
+  "chatConv.enabledState": "Activé",
+  "chatConv.e2eSafetyHint": "Chiffrement de bout en bout actif. Touchez pour voir le numéro de sécurité.",
+  "chatConv.scheduledMessages": "Messages programmés",
   // [2026-10-10 wa-import]
   "waImport.settingsHeader": "Importer",
   "waImport.settingsRow": "Importer des discussions WhatsApp",
@@ -9924,4 +9938,8 @@ export default {
   "live.wordFilterPlaceholder": "ex. : spam, arnaque",
   "live.wordFilterSaved": "Filtre enregistré",
   "live.react": "Réagir",
+  "e2ee.confirmEnable": "Activer le chiffrement de bout en bout dans cette discussion ? Vous seuls pourrez lire les nouveaux messages.",
+  "e2ee.confirmDisable": "Désactiver le chiffrement de bout en bout dans cette discussion ? Les nouveaux messages ne seront plus chiffrés.",
+  "e2ee.turnOn": "Activer",
+  "e2ee.turnOff": "Désactiver",
 };

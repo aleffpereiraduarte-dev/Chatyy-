@@ -1,4 +1,18 @@
 export default {
+  // [2026-10-10 contact-info]
+  "chatConv.groupInfoTitle": "グループ情報",
+  "chatConv.vanishAfterRead": "既読後",
+  "chatConv.vanishAfterReadHint": "各メッセージは既読後に消え、本文は通知に表示されません。",
+  "chatConv.vanishBannerV2": "消えるメッセージ：既読になると消えます。タップして変更。",
+  "chatConv.muteShort": "ミュート",
+  "chatConv.unmuteShort": "ミュート解除",
+  "chatConv.mediaLinksDocs": "メディア・リンク・ドキュメント",
+  "chatConv.customNotifications": "カスタム通知",
+  "chatConv.customNotificationsHint": "サウンド・バイブ・プレビュー",
+  "chatConv.chatLockRow": "チャットをロック",
+  "chatConv.enabledState": "オン",
+  "chatConv.e2eSafetyHint": "エンドツーエンド暗号化オン。タップしてセキュリティ番号を表示。",
+  "chatConv.scheduledMessages": "予約メッセージ",
   // [2026-10-10 wa-import]
   "waImport.settingsHeader": "インポート",
   "waImport.settingsRow": "WhatsAppのトークをインポート",
@@ -9145,4 +9159,8 @@ export default {
   "live.wordFilterPlaceholder": "例: spam, 詐欺",
   "live.wordFilterSaved": "フィルターを保存しました",
   "live.react": "リアクション",
+  "e2ee.confirmEnable": "このチャットでエンドツーエンド暗号化をオンにしますか？新しいメッセージはお二人だけが読めます。",
+  "e2ee.confirmDisable": "このチャットでエンドツーエンド暗号化をオフにしますか？新しいメッセージは暗号化されなくなります。",
+  "e2ee.turnOn": "オンにする",
+  "e2ee.turnOff": "オフにする",
 };

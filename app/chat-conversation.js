@@ -170,6 +170,7 @@ import {
   IconChevronRight, IconLogOut, IconGrid, IconRefresh,
   IconFlag, // [2026-10-06 UX2] contact info sheet → Denunciar
   IconStickyNote, // [2026-10-08 sticker-maker]
+  IconMoreHorizontal, IconPalette, IconVolumeX, // [2026-10-10 contact-info]
 } from '../components/Icons';
 import * as Clipboard from 'expo-clipboard';
 import { WebView } from 'react-native-webview';
@@ -8107,7 +8108,7 @@ function _sendTimeoutFromCache() {
 // grouped cards, consistent tinted-chip rows, modern toggles and inset
 // dividers. These hold NO conversation logic — every handler/state stays in
 // the screen; these just render what they're handed.
-const GI_ACCENT = '#25D366'; // WhatsApp green — accents + toggles ON
+const GI_ACCENT = '#636366'; // [2026-10-10 contact-info] grafite neutro (era verde #25D366) — P&B premium; legível no claro e no escuro, texto branco por cima ok
 const GI_ROW_INSET = 60;     // paddingLeft(14)+chip(34)+gap(12) ≈ divider inset
 
 function GroupCard({ children, colors, isDark, style }) {
@@ -8170,9 +8171,12 @@ function GroupRow({ Icon, tint, title, subtitle, onPress, right, colors, disable
       accessibilityState={accessibilityState}
       style={{ flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 14, paddingVertical: 11, minHeight: 56 }}
     >
+      {/* [2026-10-10 contact-info] P&B premium: quadrado neutro + glifo na cor
+          do texto em TODAS as linhas (o `tint` antigo ficou ignorado — eram
+          azul/amarelo/verde/roxo fora do padrão). Destrutivo = só o texto. */}
       {Icon ? (
-        <View style={{ width: 34, height: 34, borderRadius: 9, backgroundColor: (tint || '#8E8E93') + '22', alignItems: 'center', justifyContent: 'center' }}>
-          <Icon size={18} color={tint || '#8E8E93'} />
+        <View style={{ width: 34, height: 34, borderRadius: 9, backgroundColor: colors.chipBg || colors.surfaceVariant || 'rgba(127,127,127,0.12)', alignItems: 'center', justifyContent: 'center' }}>
+          <Icon size={18} color={colors.text} />
         </View>
       ) : null}
       <View style={{ flex: 1, justifyContent: 'center' }}>
@@ -8185,6 +8189,38 @@ function GroupRow({ Icon, tint, title, subtitle, onPress, right, colors, disable
         ? <IconChevronRight size={18} color={colors.textTertiary} />
         : (right != null ? right : null)}
     </Comp>
+  );
+}
+
+// [2026-10-10 contact-info] "Mídia, links e docs" com miniaturas das últimas
+// fotos (WhatsApp iOS). Só visual; o toque abre a galeria completa.
+function InfoMediaStrip({ items, colors, onPress, title }) {
+  const list = Array.isArray(items) ? items.slice(0, 4) : [];
+  return (
+    <PressableRow onPress={onPress} accessibilityRole="button" accessibilityLabel={title}
+      style={{ paddingHorizontal: 14, paddingTop: 11, paddingBottom: list.length ? 12 : 11 }}>
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, minHeight: 34 }}>
+        <View style={{ width: 34, height: 34, borderRadius: 9, backgroundColor: colors.chipBg || colors.surfaceVariant || 'rgba(127,127,127,0.12)', alignItems: 'center', justifyContent: 'center' }}>
+          <IconImage size={18} color={colors.text} />
+        </View>
+        <Text style={{ flex: 1, fontSize: 15.5, fontWeight: '500', color: colors.text }} numberOfLines={1}>{title}</Text>
+        <IconChevronRight size={18} color={colors.textTertiary} />
+      </View>
+      {list.length > 0 && (
+        <View style={{ flexDirection: 'row', gap: 6, marginTop: 10 }}>
+          {list.map((it, i) => {
+            let uri = it.thumb_url || it.file_url;
+            try { if (uri && !uri.startsWith('http')) uri = api.getMediaUrl(uri); } catch {}
+            return (
+              <View key={String(it.id || i)} style={{ flex: 1, aspectRatio: 1, borderRadius: 8, overflow: 'hidden', backgroundColor: colors.chipBg || colors.surfaceVariant }}>
+                <ExpoImage source={{ uri }} style={{ width: '100%', height: '100%' }} contentFit="cover" cachePolicy="memory-disk" />
+              </View>
+            );
+          })}
+          {Array.from({ length: Math.max(0, 4 - list.length) }).map((_, i) => <View key={`pad${i}`} style={{ flex: 1 }} />)}
+        </View>
+      )}
+    </PressableRow>
   );
 }
 
@@ -10917,6 +10953,10 @@ function ChatConversationInner() {
   const [showContactInfo, setShowContactInfo] = useState(false);
   const [contactIdentity, setContactIdentity] = useState(null); // profile_get identity
   const [contactPinned, setContactPinned] = useState(null);     // null = unknown
+  // [2026-10-10 contact-info] Miniaturas das últimas fotos + grupos em comum
+  // (profile_get.common_chats) mostrados em "Dados do contato".
+  const [infoMediaThumbs, setInfoMediaThumbs] = useState([]);
+  const [contactCommonGroups, setContactCommonGroups] = useState([]);
   const [adminOnlyMessages, setAdminOnlyMessages] = useState(false);
   const [showSlowModePicker, setShowSlowModePicker] = useState(false);
   const [slowModeSeconds, setSlowModeSeconds] = useState(0);
@@ -11245,6 +11285,8 @@ function ChatConversationInner() {
     : (chatyySettings.wallpaper || wallpaperDefaultPref || 'none');
   const [showWallpaperPicker, setShowWallpaperPicker] = useState(false);
   const [showHeaderMenu, setShowHeaderMenu] = useState(false);
+  // [2026-10-10 contact-info] Menu ⋮ enxuto: atalhos rápidos + "Mais" (sub-lista).
+  const [headerMenuMore, setHeaderMenuMore] = useState(false);
   // Safety-number / E2E verification sheet — opened from the encryption
   // banner tap. Direct conversations only; group verification is per-pair
   // and not surfaced here (matches WhatsApp/Signal behavior).
@@ -11255,6 +11297,7 @@ function ChatConversationInner() {
   const headerMenuOpacity = useRef(new Animated.Value(0)).current;
   useEffect(() => {
     if (showHeaderMenu) {
+      setHeaderMenuMore(false);
       headerMenuScale.setValue(0.94);
       headerMenuOpacity.setValue(0);
       Animated.parallel([
@@ -11849,6 +11892,14 @@ function ChatConversationInner() {
       if (_v4st?.allowed) {
         const _v4 = require('../services/e2eeV4');
         const _tr = (k, fb) => { const v = t(k); return v && v !== k ? v : fb; };
+        // [2026-10-10] Ligar/desligar a criptografia agora pede confirmação (antes era um toque).
+        const _okE2e = await confirm({
+          title: t('e2ee.title'),
+          message: t(e2eEnabled ? 'e2ee.confirmDisable' : 'e2ee.confirmEnable'),
+          confirmText: t(e2eEnabled ? 'e2ee.turnOff' : 'e2ee.turnOn'),
+          cancelText: t('common.cancel'),
+        }).catch(() => false);
+        if (!_okE2e) return;
         if (e2eEnabled) {
           const r = await _v4.disableConversation(conversationId);
           if (r.success) { e2eV4Ref.current = { ..._v4st, enabled: false }; setE2eEnabled(false); setE2eKeys(null); }
@@ -20838,9 +20889,17 @@ function ChatConversationInner() {
     const peer = getContactPeerEmail();
     if (peer) {
       Promise.resolve(api.profileGet?.(peer))
-        .then((r) => { if (alive && r?.success !== false && r?.data?.identity) setContactIdentity(r.data.identity); })
+        .then((r) => {
+          if (!alive || r?.success === false) return;
+          if (r?.data?.identity) setContactIdentity(r.data.identity);
+          setContactCommonGroups((r?.data?.common_chats || []).filter(c => c?.type === 'group'));
+        })
         .catch(() => {});
     }
+    // Últimas fotos p/ a faixa de miniaturas de "Mídia, links e docs".
+    Promise.resolve(api.chatMediaGallery?.(conversationId, 'image', 6))
+      .then((r) => { if (alive && r?.success) setInfoMediaThumbs((r.data?.items || []).filter(it => it?.file_url).slice(0, 6)); })
+      .catch(() => {});
     // Pinned ("Favoritas" in the list = pinned) — read from the account-scoped
     // conversation cache; the chat screen has no other source for it.
     try {
@@ -20855,6 +20914,15 @@ function ChatConversationInner() {
     return () => { alive = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showContactInfo, conversationId]);
+  // [2026-10-10 contact-info] mesma faixa de miniaturas em "Dados do grupo".
+  useEffect(() => {
+    if (!showGroupInfo || !conversationId) return undefined;
+    let alive = true;
+    Promise.resolve(api.chatMediaGallery?.(conversationId, 'image', 6))
+      .then((r) => { if (alive && r?.success) setInfoMediaThumbs((r.data?.items || []).filter(it => it?.file_url).slice(0, 6)); })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, [showGroupInfo, conversationId]);
   const handleToggleContactPinned = async () => {
     const willPin = !contactPinned;
     setContactPinned(willPin);
@@ -20868,6 +20936,147 @@ function ChatConversationInner() {
       safeAlert(t('common.error') || 'Erro', String(e?.message || e));
     }
   };
+
+  // [2026-10-10 contact-info] Ações compartilhadas entre o menu ⋮ (enxuto) e
+  // "Dados do contato/grupo" — antes viviam inline só no menu. Quem chama
+  // fecha a própria superfície (menu ou sheet) antes.
+  const runAiSummary = async () => {
+    const items = (messages || []).slice(-50)
+      .filter(m => !m._pending && m.type !== 'system' && m.content && typeof m.content === 'string' && !m.content.startsWith('🔒'))
+      .map(m => ({
+        sender: m.sender_email === currentEmail ? (t('chatConv.me') || 'Eu') : (m.sender_name || m.sender_email?.split('@')[0] || 'Outro'),
+        content: m.content,
+        type: m.type || 'text',
+      }));
+    if (items.length < 3) {
+      safeAlert(t('chatConv.aiSummary') || 'Resumir', t('chatConv.aiSummaryEmpty') || 'Conversa muito curta pra resumir.');
+      return;
+    }
+    try {
+      const { canUseFeature, trackFeatureUsage, getUpsellMessage } = require('../services/premium');
+      const check = await canUseFeature('ai_summarize');
+      if (!check.allowed) { safeAlert('Chatyy One', getUpsellMessage('ai_summarize', t)); return; }
+      trackFeatureUsage('ai_summarize');
+    } catch {}
+    if (USE_NATIVE_SHEETS && Platform.OS === 'ios') await new Promise((r) => setTimeout(r, 380)); // [2026-10-09 native-sheets] menu (Modal RN) descendo
+    setAiSummary({ visible: true, loading: true, text: '', error: '', messageCount: items.length });
+    try {
+      const r = await api.aiSummarize(items);
+      const summary = r?.data?.summary || '';
+      if (r?.success && summary) {
+        setAiSummary(s => ({ ...s, loading: false, text: summary }));
+      } else {
+        setAiSummary(s => ({ ...s, loading: false, error: r?.message || (t('chatConv.aiSummaryFailed') || 'Não foi possível resumir.') }));
+      }
+    } catch (e) {
+      setAiSummary(s => ({ ...s, loading: false, error: e?.message || (t('chatConv.aiSummaryFailed') || 'Não foi possível resumir.') }));
+    }
+  };
+  const confirmClearHistory = () => {
+    safeAlert(
+      t('chatConv.clearHistory') || 'Limpar histórico',
+      t('chatConv.clearHistoryConfirm') || 'Limpar todo o histórico desta conversa? Apenas você verá a conversa vazia — a outra pessoa continuará com as mensagens.',
+      [
+        { text: t('common.cancel') || 'Cancelar', style: 'cancel' },
+        { text: t('chatConv.clearHistory') || 'Limpar', style: 'destructive', onPress: async () => {
+          try {
+            const r = await api.chatClearHistory(conversationId);
+            if (r?.success) {
+              setMessages([]);
+              try { await AsyncStorage.removeItem(`chatMsgs_${conversationId}`); } catch {}
+              // Watermark + local wipe so cleared history doesn't
+              // resurrect via envelope pull / bootstrap / cold-open.
+              try { await AsyncStorage.setItem(`cleared_at_${conversationId}`, String(Date.now())); } catch {}
+              try { const cc = require('../services/chatCache'); if (typeof cc.clearConversationMessages === 'function') await cc.clearConversationMessages(conversationId); } catch {}
+              try { const ldb = require('../services/localDb'); if (typeof ldb.clearConversationMessages === 'function') await ldb.clearConversationMessages(conversationId); } catch {}
+              try { SmartCache.clearConversation?.(conversationId); } catch {}
+            } else {
+              safeAlert(t('common.error') || 'Erro', r?.message || 'Falha ao limpar histórico');
+            }
+          } catch (e) { safeAlert(t('common.error') || 'Erro', String(e?.message || e)); }
+        }},
+      ]
+    );
+  };
+  const archiveConversation = async () => {
+    try {
+      const r = await api.chatArchive(conversationId, true);
+      if (r?.success !== false) {
+        try { Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success); } catch {}
+        // Pop back to chat list — same UX as long-press archive there.
+        try { router.back(); } catch {}
+      } else {
+        safeAlert(t('common.error') || 'Error', r?.message || 'Falha ao arquivar');
+      }
+    } catch (e) {
+      safeAlert(t('common.error') || 'Error', e?.message || 'Falha ao arquivar');
+    }
+  };
+  const openWhatsAppImport = () => {
+    try { router.push({ pathname: '/import-whatsapp', params: { linkEmail: conversationType === 'direct' ? (getContactPeerEmail() || params.email || '') : '', linkName: conversationName || '' } }); } catch {}
+  };
+  const startSecretChat = async () => {
+    const peerEmail = (members.find(m => m.email !== currentEmail)?.email) || params.email || '';
+    if (!peerEmail) return;
+    try {
+      const r = await api.chatCreateSecret(peerEmail);
+      if (r?.success && r.data?.id) {
+        router.replace({ pathname: '/chat-conversation', params: { id: r.data.id, name: r.data.name || (t('chat.startSecret') || 'Secret Chat'), email: peerEmail }});
+      } else {
+        safeAlert(t('common.error') || 'Error', r?.message || 'Failed to create secret chat');
+      }
+    } catch (e) { safeAlert(t('common.error') || 'Error', String(e?.message || e)); }
+  };
+  // [BUG B fix 2026-05-21] alertas adiados (Modal-over-Modal no iOS engolia o Alert).
+  const requestPeerLiveLocation = async () => {
+    const otherEmail = (params.email || '').toLowerCase();
+    if (!otherEmail) {
+      setTimeout(() => safeAlert(t('common.error') || 'Erro', 'No peer email — open this chat from contacts or chat list and try again.'), 350);
+      return;
+    }
+    if (typeof api?.friendLocationRequest !== 'function') {
+      setTimeout(() => safeAlert(t('common.error') || 'Erro', 'Esta versão do app não suporta pedir localização. Atualize e tente novamente.'), 350);
+      return;
+    }
+    let r = null;
+    let errText = '';
+    try {
+      r = await api.friendLocationRequest(otherEmail, '');
+    } catch (e) {
+      errText = String(e?.message || e || 'network error');
+    }
+    const showLater = (title, msg) => {
+      if (Platform.OS === 'ios') setTimeout(() => safeAlert(title, msg), 350);
+      else safeAlert(title, msg);
+    };
+    if (errText) {
+      showLater(t('common.error') || 'Erro', errText);
+    } else if (r?.success) {
+      showLater(t('location.requestLive') || 'Pedir localização ao vivo', t('location.requestSent') || 'Pedido enviado');
+    } else {
+      showLater(t('common.error') || 'Erro', r?.message || (t('location.requestFailed') || 'Não foi possível enviar o pedido'));
+    }
+  };
+  const toggleChatLockFromUi = () => {
+    if (chatLocked) { safeAlert(t('chatConv.chatLockTitle') || 'Chat Lock', t('chatConv.removeLockConfirm') || 'Remove password lock?', [{ text: t('common.cancel'), style: 'cancel' }, { text: t('chatConv.removeLock') || 'Remove', style: 'destructive', onPress: handleRemoveChatLock }]); }
+    else { setShowLockSetup(true); setLockPassInput(''); }
+  };
+  const showE2eInfo = () => {
+    if (handleE2eV4RowPress()) return;
+    safeAlert(
+      t('chatConv.e2eTitle') || 'Criptografia',
+      e2eEnabled
+        ? (t('chatConv.e2eActiveDesc') || 'Suas mensagens são protegidas com criptografia ponta-a-ponta. Nem o Chatyy pode ler.')
+        : (t('chatConv.e2eInactiveDescV2') || 'Esta conversa usa conexão criptografada (TLS), mas não é criptografada de ponta a ponta. Para isso, inicie um Chat secreto pelo menu da conversa.')
+    );
+  };
+  // Resumo curto do estado de "Mensagens temporárias" (duração ou "Ao ler"
+  // quando o antigo modo invisível está ligado — agora é uma opção de lá).
+  const disappearingSummary = vanishMode
+    ? (t('chatConv.vanishAfterRead') || 'Ao ler')
+    : disappearingTimer > 0
+      ? (disappearingTimer >= 86400 ? `${Math.round(disappearingTimer / 86400)}d` : disappearingTimer >= 3600 ? `${Math.round(disappearingTimer / 3600)}h` : `${Math.round(disappearingTimer / 60)}m`)
+      : (t('common.off') || 'Desativado');
 
   const muteInflightRef = useRef(false);
   const handleMuteChat = async (duration) => {
@@ -21823,6 +22032,18 @@ function ChatConversationInner() {
   // Disappearing messages handler
   const handleSetDisappearing = async (timer) => {
     setShowDisappearingModal(false);
+    // [2026-10-10 contact-info] "Modo invisível" virou a opção "Ao ler" de
+    // Mensagens temporárias: escolher "Ao ler" liga o vanish (e zera o timer);
+    // escolher qualquer duração (ou Desativado) desliga o vanish. Assim nunca
+    // fica um vanish ligado escondido fora desta tela.
+    if (timer === 'vanish') {
+      if (disappearingTimer > 0) {
+        try { const r0 = await api.chatSetDisappearing(conversationId, 0); if (r0?.success) setDisappearingTimer(0); } catch {}
+      }
+      if (!vanishMode) handleToggleVanishMode();
+      return;
+    }
+    if (vanishMode) handleToggleVanishMode();
     try {
       const r = await api.chatSetDisappearing(conversationId, timer);
       if (r.success) {
@@ -28985,16 +29206,17 @@ function ChatConversationInner() {
       {vanishMode && (
         <TouchableOpacity
           activeOpacity={0.85}
-          onPress={handleToggleVanishMode}
+          onPress={() => setShowDisappearingModal(true) /* [2026-10-10 contact-info] abre Temporárias (onde "Ao ler" é explicado) em vez de desligar às cegas */}
+          accessibilityRole="button"
           style={[styles.disappearingBanner, {
             backgroundColor: isDark ? 'rgba(17, 17, 17,0.18)' : 'rgba(17, 17, 17,0.12)',
             borderWidth: 1,
             borderColor: isDark ? 'rgba(17, 17, 17,0.35)' : 'rgba(17, 17, 17,0.25)',
           }]}
         >
-          <IconEye size={14} color="#111111" />
+          <IconClock size={14} color={colors.text} />
           <Text style={[styles.disappearingBannerText, { color: isDark ? '#F1F3F5' : '#111111' }]}>
-            {t('chat.vanishBanner') || 'Modo efêmero — mensagens desaparecem após leitura'}
+            {t('chatConv.vanishBannerV2') || 'Mensagens temporárias: somem ao serem lidas. Toque para mudar.'}
           </Text>
         </TouchableOpacity>
       )}
@@ -33401,10 +33623,12 @@ function ChatConversationInner() {
         onClose={() => setAvatarLightbox(null)}
       />
 
-      {/* [2026-10-06 UX2] "Dados do contato" — WhatsApp-style 1:1 info sheet.
-          Same shell as the Group Info modal (hero + round actions + GroupCard
-          sections). Every row delegates to the existing ⋮-menu handlers /
-          modals; the full profile peek stays reachable via "Ver perfil". */}
+      {/* [2026-10-10 contact-info] "Dados do contato" — fonte ÚNICA das opções
+          da conversa 1:1 (o menu ⋮ ficou só com atalhos). Nível WhatsApp iOS,
+          preto e branco: cabeçalho grande (foto/nome/@/telefone/recado),
+          ações rápidas, Mídia com miniaturas, preferências, privacidade,
+          grupos em comum, "Mais", e ações destrutivas com texto vermelho.
+          Toda linha delega aos MESMOS handlers/modais já existentes. */}
       {conversationType === 'direct' && (
       <Modal
         visible={showContactInfo}
@@ -33422,48 +33646,57 @@ function ChatConversationInner() {
           <ScrollView style={{ flex: 1, backgroundColor: isDark ? colors.background : '#f0f2f5' }} contentContainerStyle={{ paddingBottom: Spacing.xl + insets.bottom }}>
             {(() => {
               const peerEmail = getContactPeerEmail();
+              const peer = peerEmail || params.email || '';
               const ident = contactIdentity && (contactIdentity.email || '').toLowerCase() === (peerEmail || '').toLowerCase() ? contactIdentity : null;
-              const subtitleLine = ident?.phone || (ident?.username ? `@${ident.username}` : peerEmail);
+              const handleLine = [ident?.username ? `@${ident.username}` : null, ident?.phone || null].filter(Boolean).join('  ·  ') || peerEmail;
               const muteSubtitle = !mutedUntil
                 ? (t('common.off') || 'Desativado')
                 : (String(mutedUntil).startsWith('2099')
                     ? (t('chatConv.mutedForever') || 'Sempre')
                     : `${t('chatConv.mutedUntil') || 'Até'} ${(() => { try { return new Date(mutedUntil).toLocaleString(undefined, { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }); } catch { return ''; } })()}`);
-              const disappearingSubtitle = disappearingTimer > 0
-                ? (disappearingTimer >= 86400 ? `${Math.round(disappearingTimer / 86400)}d` : disappearingTimer >= 3600 ? `${Math.round(disappearingTimer / 3600)}h` : `${Math.round(disappearingTimer / 60)}m`)
-                : (t('common.off') || 'Desativado');
+              const onLabel = t('chatConv.enabledState') || 'Ativado';
+              const offLabel = t('common.off') || 'Desativado';
+              const peerName = conversationName || '';
               return (
                 <>
                   <FadeSlideIn>
-                  <View style={{ alignItems: 'center', paddingTop: 24, paddingBottom: 24, paddingHorizontal: Spacing.md, backgroundColor: colors.surface, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border, marginBottom: 16 }}>
+                  <View style={{ alignItems: 'center', paddingTop: 24, paddingBottom: 22, paddingHorizontal: Spacing.md, backgroundColor: colors.surface, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border, marginBottom: 16 }}>
                     <TouchableOpacity
                       activeOpacity={0.85}
-                      style={{ marginBottom: 16 }}
+                      style={{ marginBottom: 14 }}
                       onPress={() => contactInfoGo(() => setAvatarLightbox({ name: conversationName, email: peerEmail, uri: null }))}
                       accessibilityRole="imagebutton"
                       accessibilityLabel={t('chatConv.viewPhoto') || 'Ver foto'}
                     >
-                      <AvatarCircle name={conversationName} email={peerEmail} size={112} />
+                      <AvatarCircle name={conversationName} email={peerEmail} size={120} />
                     </TouchableOpacity>
-                    <Text style={{ fontSize: 23, fontWeight: '700', color: colors.text, textAlign: 'center', marginBottom: 5, letterSpacing: -0.3 }} numberOfLines={2}>
+                    <Text style={{ fontSize: 24, fontWeight: '700', color: colors.text, textAlign: 'center', marginBottom: 4, letterSpacing: -0.4 }} numberOfLines={2}>
                       {conversationName}
                     </Text>
-                    {!!subtitleLine && (
-                      <Text style={{ fontSize: 14, color: colors.textSecondary, fontWeight: '500' }} numberOfLines={1} selectable>
-                        {subtitleLine}
+                    {!!handleLine && (
+                      <Text style={{ fontSize: 15, color: colors.textSecondary, fontWeight: '500' }} numberOfLines={1} selectable>
+                        {handleLine}
                       </Text>
                     )}
-                    <View style={{ flexDirection: 'row', gap: 10, marginTop: 22 }}>
+                    {!!ident?.bio && (
+                      <Text style={{ fontSize: 14, color: colors.textSecondary, textAlign: 'center', marginTop: 8, lineHeight: 19, paddingHorizontal: 12 }} numberOfLines={3} selectable>
+                        {ident.bio}
+                      </Text>
+                    )}
+                    <View style={{ flexDirection: 'row', gap: 8, marginTop: 20, alignSelf: 'stretch', justifyContent: 'center' }}>
                       {[
-                        { Icon: IconPhone, tint: GI_ACCENT, label: t('chatConv.audio') || 'Áudio', onPress: () => contactInfoGo(() => handleStartAudioCall()) },
-                        { Icon: IconVideo, tint: '#0A84FF', label: t('chatConv.video') || 'Vídeo', onPress: () => contactInfoGo(() => handleStartVideoCall()) },
-                        { Icon: IconSearch, tint: '#5856D6', label: t('chatConv.search') || 'Buscar', onPress: () => contactInfoGo(() => { setShowSearchBar(true); setTimeout(() => searchInputRef.current?.focus(), 200); }) },
+                        { Icon: IconPhone, label: t('chatConv.call') || 'Ligar', onPress: () => contactInfoGo(() => handleStartAudioCall()) },
+                        { Icon: IconVideo, label: t('chatConv.video') || 'Vídeo', onPress: () => contactInfoGo(() => handleStartVideoCall()) },
+                        { Icon: IconSearch, label: t('chatConv.search') || 'Buscar', onPress: () => contactInfoGo(() => { setShowSearchBar(true); setTimeout(() => searchInputRef.current?.focus(), 200); }) },
+                        mutedUntil
+                          ? { Icon: IconVolumeX, label: t('chatConv.unmuteShort') || 'Reativar', active: true, onPress: () => handleMuteChat(null) }
+                          : { Icon: IconBell, label: t('chatConv.muteShort') || 'Silenciar', onPress: () => contactInfoGo(() => setShowMuteModal(true)) },
                       ].map((a, ai) => (
-                        <PressableScale key={ai} onPress={a.onPress} style={{ alignItems: 'center', width: 76 }} accessibilityRole="button" accessibilityLabel={a.label}>
-                          {/* [2026-10-08 chat-beauty-chrome] ações monocromáticas (WhatsApp iOS 2025): cartão neutro + glifo na cor do texto */}
-                          <View style={{ width: 76, height: 58, borderRadius: 14, backgroundColor: isDark ? '#1c1c1e' : '#ffffff', borderWidth: StyleSheet.hairlineWidth, borderColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.10)', alignItems: 'center', justifyContent: 'center', gap: 4 }}>
+                        <PressableScale key={ai} onPress={a.onPress} style={{ width: 78 }} accessibilityRole="button" accessibilityLabel={a.label}>
+                          {/* ações monocromáticas (WhatsApp iOS 2025): cartão neutro + glifo na cor do texto */}
+                          <View style={{ width: 78, height: 62, borderRadius: 14, backgroundColor: isDark ? '#1c1c1e' : '#f4f4f5', borderWidth: StyleSheet.hairlineWidth, borderColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)', alignItems: 'center', justifyContent: 'center', gap: 5 }}>
                             <a.Icon size={22} color={colors.text} />
-                            <Text style={{ fontSize: 12, color: colors.text, fontWeight: '500' }} numberOfLines={1}>{a.label}</Text>
+                            <Text style={{ fontSize: 12, color: colors.text, fontWeight: a.active ? '700' : '500' }} numberOfLines={1}>{a.label}</Text>
                           </View>
                         </PressableScale>
                       ))}
@@ -33472,83 +33705,161 @@ function ChatConversationInner() {
                   </FadeSlideIn>
 
                   <View style={{ paddingHorizontal: Spacing.md }}>
-                    {!!ident?.bio && (
-                      <>
-                        <GroupSectionLabel colors={colors}>{t('chatConv.about') || 'Recado'}</GroupSectionLabel>
-                        <GroupCard colors={colors} isDark={isDark}>
-                          <Text style={{ color: colors.text, fontSize: 15, lineHeight: 21, paddingHorizontal: 14, paddingVertical: 13 }} selectable>{ident.bio}</Text>
-                        </GroupCard>
-                      </>
-                    )}
-
-                    <GroupCard colors={colors} isDark={isDark} style={{ marginTop: 12 }}>
-                      <GroupRow colors={colors} Icon={IconImage} tint="#0A84FF"
-                        title={t('chatConv.media') || 'Mídia, links e docs'} right="chevron"
+                    <GroupCard colors={colors} isDark={isDark}>
+                      <InfoMediaStrip items={infoMediaThumbs} colors={colors}
+                        title={t('chatConv.mediaLinksDocs') || 'Mídia, links e docs'}
                         onPress={() => contactInfoGo(() => setShowMediaGallery(true))} />
                       <GroupDivider colors={colors} />
-                      <GroupRow colors={colors} Icon={IconStar} tint="#F59E0B"
+                      <GroupRow colors={colors} Icon={IconStar}
                         title={t('chat.starredMessages') || 'Mensagens favoritas'} right="chevron"
                         onPress={() => contactInfoGo(() => { setShowStarredModal(true); loadStarredMessages(); })} />
                     </GroupCard>
 
-                    <GroupCard colors={colors} isDark={isDark} style={{ marginTop: 12 }}>
-                      <GroupRow colors={colors} Icon={IconBell} tint={mutedUntil ? '#FF9500' : '#8E8E93'}
-                        title={t('chatConv.muteChat') || 'Silenciar'} subtitle={muteSubtitle} right="chevron"
+                    <GroupCard colors={colors} isDark={isDark}>
+                      <GroupRow colors={colors} Icon={mutedUntil ? IconVolumeX : IconBell}
+                        title={t('chatConv.muteChat') || 'Silenciar conversa'} subtitle={muteSubtitle} right="chevron"
                         accessibilityLabel={`${t('chatConv.muteChat') || 'Silenciar'}: ${muteSubtitle}`}
                         onPress={() => contactInfoGo(() => setShowMuteModal(true))} />
                       <GroupDivider colors={colors} />
-                      <GroupRow colors={colors} Icon={IconBell} tint="#111111"
-                        title={t('notifications.title') || 'Notificações'} right="chevron"
+                      <GroupRow colors={colors} Icon={IconBell}
+                        title={t('chatConv.customNotifications') || 'Notificações personalizadas'}
+                        subtitle={t('chatConv.customNotificationsHint') || 'Sons, vibração e prévia'} right="chevron"
                         onPress={() => contactInfoGo(() => setShowNotifSettingsSheet(true))} />
                       <GroupDivider colors={colors} />
-                      <GroupRow colors={colors} Icon={IconClock} tint={disappearingTimer > 0 ? '#10b981' : '#8E8E93'}
-                        title={t('chat.disappearing') || 'Mensagens temporárias'} subtitle={disappearingSubtitle} right="chevron"
-                        onPress={() => contactInfoGo(() => setShowDisappearingModal(true))} />
-                      <GroupDivider colors={colors} />
-                      <GroupRow colors={colors} Icon={IconShield} tint={e2eEnabled ? '#10b981' : '#8E8E93'}
-                        title={t('chatConv.e2eTitle') || 'Criptografia'}
-                        subtitle={e2eEnabled ? (t('chatConv.e2eActive') || 'Criptografia ponta-a-ponta ativa') : (t('chatConv.e2eInactive') || 'Criptografia desativada')}
-                        onPress={() => handleE2eV4RowPress() || safeAlert(
-                          t('chatConv.e2eTitle') || 'Criptografia',
-                          e2eEnabled
-                            ? (t('chatConv.e2eActiveDesc') || 'Suas mensagens são protegidas com criptografia ponta-a-ponta. Nem o Chatyy pode ler.')
-                            : (t('chatConv.e2eInactiveDescV2') || 'Esta conversa usa conexão criptografada (TLS), mas não é criptografada de ponta a ponta. Para isso, inicie um Chat secreto pelo menu da conversa.')
-                        )} />
+                      <GroupRow colors={colors} Icon={IconPalette}
+                        title={t('chatConv.wallpaper') || 'Papel de parede'} right="chevron"
+                        onPress={() => contactInfoGo(() => setShowWallpaperPicker(true))} />
                     </GroupCard>
 
-                    <GroupCard colors={colors} isDark={isDark} style={{ marginTop: 12 }}>
+                    <GroupCard colors={colors} isDark={isDark}>
+                      <GroupRow colors={colors} Icon={IconClock}
+                        title={t('chat.disappearing') || 'Mensagens temporárias'} subtitle={disappearingSummary} right="chevron"
+                        onPress={() => contactInfoGo(() => setShowDisappearingModal(true))} />
+                      <GroupDivider colors={colors} />
+                      <GroupRow colors={colors} Icon={IconShield}
+                        title={t('chatConv.e2eTitle') || 'Criptografia'}
+                        subtitle={e2eEnabled ? (t('chatConv.e2eSafetyHint') || 'Ponta a ponta ativa. Toque para ver o número de segurança.') : (t('chatConv.e2eInactive') || 'Criptografia desativada')}
+                        right="chevron"
+                        onPress={() => contactInfoGo(showE2eInfo)} />
+                      <GroupDivider colors={colors} />
+                      <GroupRow colors={colors} Icon={IconLock}
+                        title={t('chatConv.chatLockRow') || 'Trancar conversa'}
+                        subtitle={chatLocked ? onLabel : offLabel} right="chevron"
+                        accessibilityRole="switch" accessibilityState={{ checked: !!chatLocked }}
+                        onPress={() => contactInfoGo(toggleChatLockFromUi)} />
+                    </GroupCard>
+
+                    {contactCommonGroups.length > 0 && (
+                      <>
+                        <GroupSectionLabel colors={colors}>{`${t('profile.commonChats') || 'Grupos em comum'} (${contactCommonGroups.length})`}</GroupSectionLabel>
+                        <GroupCard colors={colors} isDark={isDark}>
+                          {contactCommonGroups.slice(0, 5).map((g, gi) => (
+                            <React.Fragment key={String(g.id)}>
+                              {gi > 0 && <GroupDivider colors={colors} />}
+                              <PressableRow
+                                onPress={() => contactInfoGo(() => router.replace({ pathname: '/chat-conversation', params: { id: g.id, name: g.name || '', type: 'group' } }))}
+                                accessibilityRole="button" accessibilityLabel={g.name}
+                                style={{ flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 14, paddingVertical: 10, minHeight: 56 }}
+                              >
+                                <AvatarCircle name={g.name} size={34} />
+                                <Text style={{ flex: 1, fontSize: 15.5, fontWeight: '500', color: colors.text }} numberOfLines={1}>{g.name}</Text>
+                                <IconChevronRight size={18} color={colors.textTertiary} />
+                              </PressableRow>
+                            </React.Fragment>
+                          ))}
+                        </GroupCard>
+                      </>
+                    )}
+
+                    <GroupSectionLabel colors={colors}>{t('common.more') || 'Mais'}</GroupSectionLabel>
+                    <GroupCard colors={colors} isDark={isDark}>
+                      <GroupRow colors={colors} Icon={IconSparkles}
+                        title={t('chatConv.aiSummary') || 'Resumir com IA'} right="chevron"
+                        onPress={() => contactInfoGo(runAiSummary)} />
+                      <GroupDivider colors={colors} />
+                      <GroupRow colors={colors} Icon={IconBarChart}
+                        title={t('chatConv.stats') || 'Estatísticas'} right="chevron"
+                        onPress={() => contactInfoGo(() => setShowStatsModal(true))} />
+                      <GroupDivider colors={colors} />
+                      <GroupRow colors={colors} Icon={IconCalendar}
+                        title={t('chatConv.scheduledMessages') || 'Mensagens agendadas'} right="chevron"
+                        onPress={() => contactInfoGo(() => { setShowScheduledMessages(true); loadScheduledMessages(); })} />
+                      <GroupDivider colors={colors} />
+                      <GroupRow colors={colors} Icon={IconGlobe}
+                        title={t('chatConv.autoTranslate') || 'Auto-traduzir'}
+                        subtitle={autoTranslateLocale ? autoTranslateLocale.toUpperCase() : offLabel} right="chevron"
+                        onPress={() => contactInfoGo(() => setShowAutoTranslatePicker(true))} />
+                      {!!peer && peer.toLowerCase() !== (currentEmail || '').toLowerCase() && (
+                        <>
+                          <GroupDivider colors={colors} />
+                          <GroupRow colors={colors} Icon={IconMapPin}
+                            title={t('location.requestLive') || 'Pedir localização ao vivo'}
+                            onPress={() => contactInfoGo(requestPeerLiveLocation)} />
+                        </>
+                      )}
+                      {!e2eEnabled && (
+                        <>
+                          <GroupDivider colors={colors} />
+                          <GroupRow colors={colors} Icon={IconLock}
+                            title={t('chat.startSecret') || 'Chat secreto'} right="chevron"
+                            onPress={() => contactInfoGo(startSecretChat)} />
+                        </>
+                      )}
+                    </GroupCard>
+
+                    <GroupCard colors={colors} isDark={isDark}>
                       {contactPinned !== null && (
                         <>
-                          <GroupRow colors={colors} Icon={IconPin} tint="#F59E0B"
+                          <GroupRow colors={colors} Icon={IconPin}
                             title={contactPinned ? (t('chatConv.removeFromFavorites') || 'Remover das favoritas') : (t('chatConv.addToFavorites') || 'Adicionar às favoritas')}
                             accessibilityRole="switch" accessibilityState={{ checked: !!contactPinned }}
                             onPress={handleToggleContactPinned} />
                           <GroupDivider colors={colors} />
                         </>
                       )}
-                      <GroupRow colors={colors} Icon={IconForward} tint="#10B981"
+                      <GroupRow colors={colors} Icon={IconForward}
                         title={t('chatConv.exportChat') || 'Exportar conversa'} right="chevron"
                         onPress={() => contactInfoGo(() => setShowExportModal(true))} />
-                      <GroupDivider colors={colors} />
-                      <GroupRow colors={colors} Icon={IconUser} tint="#5856D6"
-                        title={t('chatConv.viewFullProfile') || 'Ver perfil'} right="chevron"
-                        onPress={() => contactInfoGo(() => setProfileViewer({ name: conversationName, email: peerEmail || params.email || '' }))} />
-                    </GroupCard>
-
-                    <GroupCard colors={colors} isDark={isDark} style={{ marginTop: 12 }}>
-                      {iBlockedThem ? (
-                        <GroupRow colors={colors} Icon={IconAlertTriangle} tint="#8E8E93"
-                          title={`${t('chat.unblockUser') || 'Desbloquear'} ${conversationName || ''}`.trim()}
-                          onPress={() => contactInfoGo(() => handleUnblockUser(peerEmail || params.email || ''))} />
-                      ) : (
-                        <GroupRow colors={colors} Icon={IconAlertTriangle} tint="#EF4444" titleColor="#EF4444"
-                          title={`${t('chat.blockUser') || 'Bloquear'} ${conversationName || ''}`.trim()}
-                          onPress={() => contactInfoGo(() => handleBlockUser(peerEmail || params.email || ''))} />
+                      {!waImported && (
+                        <>
+                          <GroupDivider colors={colors} />
+                          <GroupRow colors={colors} Icon={IconDownload}
+                            title={t('waImport.menuItem') || 'Importar do WhatsApp'} right="chevron"
+                            onPress={() => contactInfoGo(openWhatsAppImport)} />
+                        </>
                       )}
                       <GroupDivider colors={colors} />
-                      <GroupRow colors={colors} Icon={IconFlag} tint="#EF4444" titleColor="#EF4444"
-                        title={`${t('chat.reportUser') || 'Denunciar'} ${conversationName || ''}`.trim()}
-                        onPress={() => contactInfoGo(() => handleReportUser(peerEmail || params.email || ''))} />
+                      <GroupRow colors={colors} Icon={IconArchive}
+                        title={t('chatConv.archive') || 'Arquivar conversa'}
+                        onPress={() => contactInfoGo(archiveConversation)} />
+                      <GroupDivider colors={colors} />
+                      <GroupRow colors={colors} Icon={IconUser}
+                        title={t('chatConv.viewFullProfile') || 'Ver perfil'} right="chevron"
+                        onPress={() => contactInfoGo(() => setProfileViewer({ name: conversationName, email: peer }))} />
+                    </GroupCard>
+
+                    <GroupCard colors={colors} isDark={isDark}>
+                      <GroupRow colors={colors} Icon={IconTrash} titleColor={colors.error || '#EF4444'}
+                        title={t('chatConv.clearChat') || 'Limpar conversa'}
+                        onPress={() => contactInfoGo(confirmClearHistory)} />
+                      <GroupDivider colors={colors} />
+                      {iBlockedThem ? (
+                        <GroupRow colors={colors} Icon={IconAlertTriangle}
+                          title={`${t('chat.unblockUser') || 'Desbloquear'} ${peerName}`.trim()}
+                          onPress={() => contactInfoGo(() => handleUnblockUser(peer))} />
+                      ) : (
+                        <GroupRow colors={colors} Icon={IconAlertTriangle} titleColor={colors.error || '#EF4444'}
+                          title={`${t('chat.blockUser') || 'Bloquear'} ${peerName}`.trim()}
+                          onPress={() => contactInfoGo(() => handleBlockUser(peer))} />
+                      )}
+                      <GroupDivider colors={colors} />
+                      <GroupRow colors={colors} Icon={IconFlag} titleColor={colors.error || '#EF4444'}
+                        title={`${t('chat.reportUser') || 'Denunciar'} ${peerName}`.trim()}
+                        onPress={() => contactInfoGo(() => handleReportUser(peer))} />
+                      <GroupDivider colors={colors} />
+                      <GroupRow colors={colors} Icon={IconLogOut} titleColor={colors.error || '#EF4444'}
+                        title={t('chatConv.reportAndLeave') || 'Reportar e sair'}
+                        onPress={() => contactInfoGo(handleReportAndLeave)} />
                     </GroupCard>
                   </View>
                 </>
@@ -33625,6 +33936,7 @@ function ChatConversationInner() {
           <Pressable onPress={e => e.stopPropagation()} style={{ flexShrink: 1 }}>
           {/* Header label — tiny uppercase title for visual context, like
               iOS share sheets. Subtle and small so it doesn't compete. */}
+          {!headerMenuMore && (
           <Text style={{
             fontSize: 11, fontWeight: '700', letterSpacing: 0.6,
             color: colors.textSecondary, textTransform: 'uppercase',
@@ -33632,6 +33944,7 @@ function ChatConversationInner() {
           }}>
             {t('chatConv.moreOptions') || 'Mais opções'}
           </Text>
+          )}
           <ScrollView
             showsVerticalScrollIndicator={true}
             keyboardShouldPersistTaps="handled"
@@ -33640,230 +33953,52 @@ function ChatConversationInner() {
             contentContainerStyle={{ paddingBottom: 6 }}
           >
             {(() => {
-              const sections = [
+              // [2026-10-10 contact-info] Menu ⋮ ENXUTO (WhatsApp iOS): só atalhos
+              // de uso rápido + "Mais". Todo o resto (favoritas, notificações,
+              // criptografia, bloqueio da conversa, estatísticas, agendadas,
+              // tradução, localização, arquivar…) vive em "Dados do contato /
+              // grupo". O "modo invisível" virou a opção "Ao ler" de Temporárias.
+              const isGroupConv = conversationType === 'group';
+              const isDirectConv = conversationType === 'direct';
+              const closeMenu = () => setShowHeaderMenu(false);
+              const sections = !headerMenuMore ? [
                 { divider: false, items: [
-                  { Icon: IconUsers, tint: '#111111', label: conversationType === 'group' ? (t('chatConv.groupInfo') || 'Info do grupo') : (t('chatConv.contactInfo') || 'Info do contato'), onPress: () => {
-                    setShowHeaderMenu(false);
-                    if (conversationType === 'group') { setEditGroupName(conversationName); loadGroupMembers(); setShowGroupInfo(true); }
-                    else if (conversationType === 'direct' && getContactPeerEmail()) { setShowContactInfo(true); } // [2026-10-06 UX2]
+                  { Icon: isGroupConv ? IconUsers : IconUser, label: isGroupConv ? (t('chatConv.groupInfoTitle') || 'Dados do grupo') : (t('chatConv.contactInfoTitle') || 'Dados do contato'), onPress: () => {
+                    closeMenu();
+                    if (isGroupConv) { setEditGroupName(conversationName); loadGroupMembers(); setShowGroupInfo(true); }
+                    else if (isDirectConv && getContactPeerEmail()) { setShowContactInfo(true); } // [2026-10-06 UX2]
                     else { setProfileViewer({ name: conversationName, email: params.email || '' }); }
                   }},
                 ]},
                 { divider: true, items: [
-                  { Icon: IconSearch, tint: '#111111', label: t('chat.searchPlaceholder') || 'Buscar', onPress: () => { setShowHeaderMenu(false); setShowSearchBar(true); setTimeout(() => searchInputRef.current?.focus(), 200); }},
-                  { Icon: IconStar, tint: '#F59E0B', label: t('chat.starredMessages') || 'Favoritas', onPress: () => { setShowHeaderMenu(false); setShowStarredModal(true); loadStarredMessages(); }},
-                  { Icon: IconImage, tint: '#111111', label: t('chatConv.media') || 'Mídia, links e docs', onPress: () => { setShowHeaderMenu(false); setShowMediaGallery(true); }},
-                  { Icon: IconBarChart, tint: '#10B981', label: t('chatConv.stats') || 'Estatísticas', onPress: () => { setShowHeaderMenu(false); setShowStatsModal(true); }},
+                  { Icon: IconSearch, label: t('chatConv.search') || 'Buscar', onPress: () => { closeMenu(); setShowSearchBar(true); setTimeout(() => searchInputRef.current?.focus(), 200); }},
+                  { Icon: IconImage, label: t('chatConv.media') || 'Mídia, links e docs', onPress: () => { closeMenu(); setShowMediaGallery(true); }},
+                  { Icon: IconBell, label: mutedUntil ? (t('chatConv.unmute') || 'Remover silêncio') : (t('chatConv.muteChat') || 'Silenciar conversa'), badge: !!mutedUntil, onPress: () => { closeMenu(); if (mutedUntil) { handleMuteChat(null); } else { setShowMuteModal(true); } }},
+                  { Icon: IconClock, label: t('chat.disappearing') || 'Mensagens temporárias', subtitle: disappearingSummary, badge: disappearingTimer > 0 || !!vanishMode, onPress: () => { closeMenu(); setShowDisappearingModal(true); }},
+                  { Icon: IconImage, label: t('chatConv.wallpaper') || 'Papel de parede', onPress: () => { closeMenu(); setShowWallpaperPicker(true); }},
                 ]},
                 { divider: true, items: [
-                  { Icon: IconClock, tint: disappearingTimer > 0 ? '#10b981' : '#6B7280', label: t('chat.disappearing') || 'Mensagens temporárias',
-                    subtitle: disappearingTimer > 0
-                      ? (disappearingTimer >= 86400 ? `${Math.round(disappearingTimer / 86400)}d` : disappearingTimer >= 3600 ? `${Math.round(disappearingTimer / 3600)}h` : `${Math.round(disappearingTimer / 60)}m`)
-                      : (t('common.off') || 'Off'),
-                    badge: disappearingTimer > 0, onPress: () => { setShowHeaderMenu(false); setShowDisappearingModal(true); }},
-                  // Vanish mode ("Modo efêmero") hidden from the UI — user
-                  // feedback: feature confused them and the disappearing-messages
-                  // timer covers the same need. Keep the state+handler so
-                  // remote toggles from other clients still render correctly.
-                  { Icon: IconLock, tint: chatLocked ? '#f59e0b' : '#6B7280', label: chatLocked ? (t('chatConv.removeLock') || 'Remover bloqueio') : (t('chatConv.setLock') || 'Bloquear chat'), badge: chatLocked, onPress: () => {
-                    setShowHeaderMenu(false);
-                    if (chatLocked) { safeAlert(t('chatConv.chatLockTitle') || 'Chat Lock', t('chatConv.removeLockConfirm') || 'Remove password lock?', [{ text: t('common.cancel'), style: 'cancel' }, { text: t('chatConv.removeLock') || 'Remove', style: 'destructive', onPress: handleRemoveChatLock }]); }
-                    else { setShowLockSetup(true); setLockPassInput(''); }
-                  }},
-                  // E2E is OPT-IN (Secret chat); regular chats are TLS-only — show status only, no toggle
-                  { Icon: IconShield, tint: e2eEnabled ? '#10b981' : '#6B7280', label: e2eEnabled ? (t('chatConv.e2eActive') || 'Criptografia ponta-a-ponta ativa') : (t('chatConv.e2eInactive') || 'Criptografia desativada'), badge: e2eEnabled, onPress: () => {
-                    setShowHeaderMenu(false);
-                    if (handleE2eV4RowPress()) return;
-                    safeAlert(
-                      t('chatConv.e2eTitle') || 'Criptografia',
-                      e2eEnabled
-                        ? (t('chatConv.e2eActiveDesc') || 'Suas mensagens são protegidas com criptografia ponta-a-ponta. Nem o Chatyy pode ler.')
-                        : (t('chatConv.e2eInactiveDescV2') || 'Esta conversa usa conexão criptografada (TLS), mas não é criptografada de ponta a ponta. Para isso, inicie um Chat secreto pelo menu da conversa.')
-                    );
-                  }},
-                  { Icon: IconBell, tint: mutedUntil ? '#f59e0b' : '#6B7280', label: mutedUntil ? (t('chatConv.unmute') || 'Remover silêncio') : (t('chatConv.muteChat') || 'Silenciar conversa'), badge: !!mutedUntil, onPress: () => { setShowHeaderMenu(false); if (mutedUntil) { handleMuteChat(null); } else { setShowMuteModal(true); } }},
-                  // Per-conversation notification settings sheet — full
-                  // controls beyond the mute timer: sound, vibration, preview,
-                  // mention-exception toggle for muted groups.
-                  { Icon: IconBell, tint: '#111111', label: t('notifications.title') || 'Notificações', onPress: () => { setShowHeaderMenu(false); setShowNotifSettingsSheet(true); }},
-                  // Vanish (modo invisível): mensagens novas somem após lidas.
-                  // Backend já existia mas não tinha entrada no menu — toggle agora exposto.
-                  { Icon: IconClock, tint: vanishMode ? '#111111' : '#6B7280', label: vanishMode ? (t('chatConv.vanishModeOff') || 'Desligar modo invisível') : (t('chatConv.vanishModeOn') || 'Ativar modo invisível'), badge: !!vanishMode, onPress: () => { setShowHeaderMenu(false); handleToggleVanishMode(); }},
-                  // Archive — mirrors WhatsApp: a quick way to hide a quiet
-                  // conversation without leaving it. Backend chatArchive was
-                  // wired but only ChatListTab swipe surfaced it.
-                  { Icon: IconArchive, tint: '#6B7280', label: t('chatConv.archive') || 'Arquivar conversa', onPress: async () => {
-                    setShowHeaderMenu(false);
-                    try {
-                      const r = await api.chatArchive(conversationId, true);
-                      if (r?.success !== false) {
-                        try { Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success); } catch {}
-                        // Pop back to chat list — same UX as long-press archive there.
-                        try { router.back(); } catch {}
-                      } else {
-                        safeAlert(t('common.error') || 'Error', r?.message || 'Falha ao arquivar');
-                      }
-                    } catch (e) {
-                      safeAlert(t('common.error') || 'Error', e?.message || 'Falha ao arquivar');
-                    }
-                  }},
+                  { Icon: IconMoreHorizontal, label: t('common.more') || 'Mais', chevron: true, keepOpen: true, onPress: () => setHeaderMenuMore(true) },
+                ]},
+              ] : [
+                { divider: false, items: [
+                  { Icon: IconChevronLeft, label: t('chatConv.moreOptions') || 'Mais opções', back: true, keepOpen: true, onPress: () => setHeaderMenuMore(false) },
                 ]},
                 { divider: true, items: [
-                  { Icon: IconSparkles, tint: '#111111', highlight: true, label: t('chatConv.aiSummary') || 'Resumir com IA', onPress: async () => {
-                    setShowHeaderMenu(false);
-                    const items = (messages || []).slice(-50)
-                      .filter(m => !m._pending && m.type !== 'system' && m.content && typeof m.content === 'string' && !m.content.startsWith('🔒'))
-                      .map(m => ({
-                        sender: m.sender_email === currentEmail ? (t('chatConv.me') || 'Eu') : (m.sender_name || m.sender_email?.split('@')[0] || 'Outro'),
-                        content: m.content,
-                        type: m.type || 'text',
-                      }));
-                    if (items.length < 3) {
-                      safeAlert(t('chatConv.aiSummary') || 'Resumir', t('chatConv.aiSummaryEmpty') || 'Conversa muito curta pra resumir.');
-                      return;
-                    }
-                    try {
-                      const { canUseFeature, trackFeatureUsage, getUpsellMessage } = require('../services/premium');
-                      const check = await canUseFeature('ai_summarize');
-                      if (!check.allowed) { safeAlert('Chatyy One', getUpsellMessage('ai_summarize', t)); return; }
-                      trackFeatureUsage('ai_summarize');
-                    } catch {}
-                    if (USE_NATIVE_SHEETS && Platform.OS === 'ios') await new Promise((r) => setTimeout(r, 380)); // [2026-10-09 native-sheets] menu (Modal RN) descendo
-                    setAiSummary({ visible: true, loading: true, text: '', error: '', messageCount: items.length });
-                    try {
-                      const r = await api.aiSummarize(items);
-                      const summary = r?.data?.summary || '';
-                      if (r?.success && summary) {
-                        setAiSummary(s => ({ ...s, loading: false, text: summary }));
-                      } else {
-                        setAiSummary(s => ({ ...s, loading: false, error: r?.message || (t('chatConv.aiSummaryFailed') || 'Não foi possível resumir.') }));
-                      }
-                    } catch (e) {
-                      setAiSummary(s => ({ ...s, loading: false, error: e?.message || (t('chatConv.aiSummaryFailed') || 'Não foi possível resumir.') }));
-                    }
-                  }},
-                ]},
-                { divider: true, items: [
-                  { Icon: IconImage, tint: '#3B82F6', label: t('chatConv.wallpaper') || 'Papel de parede', onPress: () => { setShowHeaderMenu(false); setShowWallpaperPicker(true); }},
-                  { Icon: IconCalendar, tint: '#111111', label: t('chatConv.scheduled') || 'Mensagens agendadas', onPress: () => { setShowHeaderMenu(false); setShowScheduledMessages(true); loadScheduledMessages(); }},
-                  { Icon: IconGlobe, tint: '#06B6D4',
-                    label: autoTranslateLocale
-                      ? `${t('chatConv.autoTranslate') || 'Auto-traduzir'} • ${autoTranslateLocale.toUpperCase()}`
-                      : (t('chatConv.autoTranslate') || 'Auto-traduzir'),
-                    onPress: () => { setShowHeaderMenu(false); if (USE_NATIVE_SHEETS && Platform.OS === 'ios') setTimeout(() => setShowAutoTranslatePicker(true), 380); else setShowAutoTranslatePicker(true); } // [2026-10-09 native-sheets] espera o menu (Modal RN) descer
-                  },
-                  { Icon: IconForward, tint: '#10B981', label: t('chatConv.exportChat') || 'Exportar conversa', onPress: () => { setShowHeaderMenu(false); setShowExportModal(true); }},
+                  { Icon: IconForward, label: t('chatConv.exportChat') || 'Exportar conversa', onPress: () => { closeMenu(); setShowExportModal(true); }},
+                  { Icon: IconSparkles, label: t('chatConv.aiSummary') || 'Resumir com IA', onPress: () => { closeMenu(); runAiSummary(); }},
                   // [2026-10-10 wa-import] Importar histórico do WhatsApp (cópia pessoal vinculada a este contato).
-                  ...(waImported ? [] : [{ Icon: IconDownload, tint: '#111111', label: t('waImport.menuItem'), onPress: () => {
-                    setShowHeaderMenu(false);
-                    try { router.push({ pathname: '/import-whatsapp', params: { linkEmail: conversationType === 'direct' ? (getContactPeerEmail() || params.email || '') : '', linkName: conversationName || '' } }); } catch {}
-                  }}]),
+                  ...(waImported ? [] : [{ Icon: IconDownload, label: t('waImport.menuItem'), onPress: () => { closeMenu(); openWhatsAppImport(); }}]),
+                  { Icon: IconTrash, danger: true, label: t('chatConv.clearChat') || 'Limpar conversa', onPress: () => { closeMenu(); confirmClearHistory(); }},
                 ]},
-                { divider: true, items: [
-                  { Icon: IconTrash, tint: '#EF4444', danger: true, label: t('chatConv.clearHistory') || 'Limpar histórico', onPress: () => {
-                    setShowHeaderMenu(false);
-                    safeAlert(
-                      t('chatConv.clearHistory') || 'Limpar histórico',
-                      t('chatConv.clearHistoryConfirm') || 'Limpar todo o histórico desta conversa? Apenas você verá a conversa vazia — a outra pessoa continuará com as mensagens.',
-                      [
-                        { text: t('common.cancel') || 'Cancelar', style: 'cancel' },
-                        { text: t('chatConv.clearHistory') || 'Limpar', style: 'destructive', onPress: async () => {
-                          try {
-                            const r = await api.chatClearHistory(conversationId);
-                            if (r?.success) {
-                              setMessages([]);
-                              try { await AsyncStorage.removeItem(`chatMsgs_${conversationId}`); } catch {}
-                              // Watermark + local wipe so cleared history doesn't
-                              // resurrect via envelope pull / bootstrap / cold-open.
-                              try { await AsyncStorage.setItem(`cleared_at_${conversationId}`, String(Date.now())); } catch {}
-                              try { const cc = require('../services/chatCache'); if (typeof cc.clearConversationMessages === 'function') await cc.clearConversationMessages(conversationId); } catch {}
-                              try { const ldb = require('../services/localDb'); if (typeof ldb.clearConversationMessages === 'function') await ldb.clearConversationMessages(conversationId); } catch {}
-                              try { SmartCache.clearConversation?.(conversationId); } catch {}
-                            } else {
-                              safeAlert(t('common.error') || 'Erro', r?.message || 'Falha ao limpar histórico');
-                            }
-                          } catch (e) { safeAlert(t('common.error') || 'Erro', String(e?.message || e)); }
-                        }},
-                      ]
-                    );
-                  }},
-                ]},
-                ...(conversationType === 'direct' && !e2eEnabled ? [{ divider: true, items: [
-                  { Icon: IconLock, tint: '#0ea5e9', label: t('chat.startSecret') || 'Chat secreto', onPress: async () => {
-                    setShowHeaderMenu(false);
-                    const peerEmail = (members.find(m => m.email !== currentEmail)?.email) || params.email || '';
-                    if (!peerEmail) return;
-                    try {
-                      const r = await api.chatCreateSecret(peerEmail);
-                      if (r?.success && r.data?.id) {
-                        router.replace({ pathname: '/chat-conversation', params: { id: r.data.id, name: r.data.name || (t('chat.startSecret') || 'Secret Chat'), email: peerEmail }});
-                      } else {
-                        safeAlert(t('common.error') || 'Error', r?.message || 'Failed to create secret chat');
-                      }
-                    } catch (e) { safeAlert(t('common.error') || 'Error', String(e?.message || e)); }
-                  }},
-                ]}] : []),
-                // Find My Friends — pedir localização ao vivo do peer.
-                // Backend endpoint `chat_friend_location_request` cria row em
-                // chat_location_share_requests; peer recebe push (vide
-                // push notif handler) e abre modal aceitar/recusar.
-                // Direct chats apenas — não faz sentido em grupo/canal/saved.
-                ...(conversationType === 'direct' && params.email && (params.email || '').toLowerCase() !== (currentEmail || '').toLowerCase() ? [{ divider: true, items: [
-                  { Icon: IconMapPin, tint: '#10B981', label: t('location.requestLive') || 'Pedir localização ao vivo', onPress: async () => {
-                    // [BUG B fix 2026-05-21] Silent-fail root cause was the iOS
-                    // Modal-over-Modal race (see memory note
-                    // ios_modal_over_modal_race.md): closing the 3-dot menu
-                    // Modal and immediately calling Alert.alert/safeAlert in
-                    // the same tick made UIKit drop the alert with no error.
-                    // Result: user tapped "Pedir localização ao vivo", menu
-                    // closed, NOTHING showed — perceived as silent fail even
-                    // though the backend request did go through.
-                    // Fix: defer the alert past the modal dismiss animation,
-                    // and (defensively) catch the case where api or the helper
-                    // is missing so we can surface that to the user too.
-                    setShowHeaderMenu(false);
-                    const otherEmail = (params.email || '').toLowerCase();
-                    if (!otherEmail) {
-                      setTimeout(() => safeAlert(t('common.error') || 'Erro', 'No peer email — open this chat from contacts or chat list and try again.'), 350);
-                      return;
-                    }
-                    if (typeof api?.friendLocationRequest !== 'function') {
-                      setTimeout(() => safeAlert(t('common.error') || 'Erro', 'Esta versão do app não suporta pedir localização. Atualize e tente novamente.'), 350);
-                      return;
-                    }
-                    let r = null;
-                    let errText = '';
-                    try {
-                      r = await api.friendLocationRequest(otherEmail, '');
-                    } catch (e) {
-                      errText = String(e?.message || e || 'network error');
-                    }
-                    // Defer the alert so the Header menu Modal has fully
-                    // unmounted before UIKit/RN tries to mount the alert
-                    // sheet. 350ms matches the AppContext picker→modal
-                    // fix already documented in memory.
-                    const showLater = (title, msg) => {
-                      if (Platform.OS === 'ios') setTimeout(() => safeAlert(title, msg), 350);
-                      else safeAlert(title, msg);
-                    };
-                    if (errText) {
-                      showLater(t('common.error') || 'Erro', errText);
-                    } else if (r?.success) {
-                      showLater(t('location.requestLive') || 'Pedir localização ao vivo', t('location.requestSent') || 'Pedido enviado');
-                    } else {
-                      showLater(t('common.error') || 'Erro', r?.message || (t('location.requestFailed') || 'Não foi possível enviar o pedido'));
-                    }
-                  }},
-                ]}] : []),
-                ...(conversationType === 'direct' ? [{ divider: true, items: [
+                ...(isDirectConv ? [{ divider: true, items: [
+                  { Icon: IconFlag, danger: true, label: t('chat.reportUser') || 'Denunciar', onPress: () => { closeMenu(); handleReportUser(params.email || ''); }},
                   iBlockedThem
-                    ? { Icon: IconAlertTriangle, tint: '#6B7280', label: t('chat.unblockUser') || 'Desbloquear', onPress: () => { setShowHeaderMenu(false); handleUnblockUser(params.email || ''); }}
-                    : { Icon: IconAlertTriangle, tint: '#EF4444', danger: true, label: t('chat.blockUser') || 'Bloquear', onPress: () => { setShowHeaderMenu(false); handleBlockUser(params.email || ''); }},
-                  { Icon: IconAlertTriangle, tint: '#EF4444', danger: true, label: t('chat.reportUser') || 'Denunciar', onPress: () => { setShowHeaderMenu(false); handleReportUser(params.email || ''); }},
-                  // WhatsApp parity: "Reportar e sair" — single tap submits a
-                  // thread-level report (last 50 msgs as evidence) AND blocks
-                  // the other party AND archives the conversation.
-                  { Icon: IconAlertTriangle, tint: '#EF4444', danger: true, label: t('chatConv.reportAndLeave') || 'Reportar e sair', onPress: () => { setShowHeaderMenu(false); handleReportAndLeave(); }},
+                    ? { Icon: IconAlertTriangle, label: t('chat.unblockUser') || 'Desbloquear', onPress: () => { closeMenu(); handleUnblockUser(params.email || ''); }}
+                    : { Icon: IconAlertTriangle, danger: true, label: t('chat.blockUser') || 'Bloquear', onPress: () => { closeMenu(); handleBlockUser(params.email || ''); }},
+                ]}] : []),
+                ...(isGroupConv ? [{ divider: true, items: [
+                  { Icon: IconLogOut, danger: true, label: t('chatConv.leaveGroup') || 'Sair do grupo', onPress: () => { closeMenu(); handleLeaveGroup(); }},
                 ]}] : []),
               ];
               const out = [];
@@ -33886,10 +34021,9 @@ function ChatConversationInner() {
                   // (danger=red), rows are tighter, badge uses the accent. No
                   // items removed — every function stays.
                   const dangerC = colors.error || '#EF4444';
-                  const iconColor = item.danger ? dangerC : (isHighlighted ? colors.primary : colors.text);
-                  const chipBg = item.danger
-                    ? dangerC + '14'
-                    : (isDark ? 'rgba(255,255,255,0.08)' : 'rgba(17,17,17,0.06)');
+                  // [2026-10-10 contact-info] P&B: glifo sempre neutro; vermelho só no texto destrutivo.
+                  const iconColor = isHighlighted ? colors.primary : colors.text;
+                  const chipBg = isDark ? 'rgba(255,255,255,0.08)' : 'rgba(17,17,17,0.06)';
                   out.push(
                     <TouchableOpacity
                       key={`s${sidx}-i${iidx}`}
@@ -33928,6 +34062,7 @@ function ChatConversationInner() {
                         ) : null}
                       </View>
                       {item.badge && <View style={{ width: 7, height: 7, borderRadius: 3.5, backgroundColor: colors.primary }} />}
+                      {item.chevron ? <IconChevronRight size={16} color={colors.textTertiary} /> : null}
                     </TouchableOpacity>
                   );
                 });
@@ -34130,7 +34265,7 @@ function ChatConversationInner() {
       >
         <View style={[styles.forwardModal, { backgroundColor: colors.background }]}>
           <View style={[styles.forwardHeader, { borderBottomColor: colors.border }]}>
-            <Text style={[styles.forwardTitle, { color: colors.text, fontSize: 17, fontWeight: '600' }]}>{t('chatConv.groupInfo')}</Text>
+            <Text style={[styles.forwardTitle, { color: colors.text, fontSize: 17, fontWeight: '600' }]}>{t('chatConv.groupInfoTitle') || 'Dados do grupo'}</Text>
             <TouchableOpacity onPress={() => setShowGroupInfo(false)} accessibilityRole="button" accessibilityLabel={t('common.close') || 'Fechar'} hitSlop={8} style={{ width: 44, height: 44, alignItems: 'center', justifyContent: 'center', marginRight: -10 }}>
               <IconX size={24} color={colors.text} />
             </TouchableOpacity>
@@ -34175,10 +34310,10 @@ function ChatConversationInner() {
               {/* WhatsApp-style action buttons row (4 round, tinted) */}
               <View style={{ flexDirection: 'row', gap: 10, marginTop: 24 }}>
                 {[
-                  { Icon: IconPhone, tint: GI_ACCENT, label: t('chatConv.audio') || 'Áudio', onPress: () => { setShowGroupInfo(false); handleStartAudioCall(); } },
+                  { Icon: IconPhone, tint: GI_ACCENT, label: t('chatConv.call') || 'Ligar', onPress: () => { setShowGroupInfo(false); handleStartAudioCall(); } },
                   { Icon: IconVideo, tint: '#0A84FF', label: t('chatConv.video') || 'Vídeo', onPress: () => { setShowGroupInfo(false); handleStartVideoCall(); } },
                   { Icon: IconSearch, tint: '#5856D6', label: t('chatConv.search') || 'Buscar', onPress: () => { setShowGroupInfo(false); setShowSearchBar?.(true); } },
-                  { Icon: IconBell, tint: '#FF9500', label: mutedUntil ? (t('chatConv.muted') || 'Mudo') : (t('chatConv.muteChat') || 'Silenciar'), onPress: () => groupInfoGo(() => setShowMuteModal(true)) }, // [2026-10-07 group-admin]
+                  { Icon: IconBell, tint: '#FF9500', label: mutedUntil ? (t('chatConv.unmuteShort') || 'Reativar') : (t('chatConv.muteShort') || 'Silenciar'), onPress: () => (mutedUntil ? handleMuteChat(null) : groupInfoGo(() => setShowMuteModal(true))) }, // [2026-10-07 group-admin]
                 ].map((a, ai) => (
                   <TouchableOpacity key={ai} activeOpacity={0.6} onPress={a.onPress} style={{ alignItems: 'center', width: 74 }} accessibilityRole="button" accessibilityLabel={a.label}>
                     {/* [2026-10-08 chat-beauty-chrome] ações monocromáticas (mesmo cartão do "Dados do contato") */}
@@ -34536,14 +34671,9 @@ function ChatConversationInner() {
             {/* Media, links & search shortcuts */}
             <GroupSectionLabel colors={colors}>{t('chatConv.media') || 'Midia, links e docs'}</GroupSectionLabel>
             <GroupCard colors={colors} isDark={isDark}>
-              <GroupRow
-                colors={colors}
-                Icon={IconImage}
-                tint="#0A84FF"
-                title={t('chatConv.media') || 'Midia, links e docs'}
-                onPress={() => groupInfoGo(() => setShowMediaGallery(true))} // [2026-10-07 group-admin]
-                right="chevron"
-              />
+              <InfoMediaStrip items={infoMediaThumbs} colors={colors}
+                title={t('chatConv.mediaLinksDocs') || 'Mídia, links e docs'}
+                onPress={() => groupInfoGo(() => setShowMediaGallery(true))} />
               <GroupDivider colors={colors} />
               <GroupRow
                 colors={colors}
@@ -34573,7 +34703,7 @@ function ChatConversationInner() {
               Icon={IconBell}
               tint="#FF9500"
               title={mutedUntil ? (t('chatConv.unmute') || 'Remover silêncio') : (t('chatConv.muteChat') || 'Silenciar conversa')}
-              titleColor={mutedUntil ? '#f59e0b' : colors.text}
+              titleColor={colors.text}
               onPress={() => groupInfoGo(() => setShowMuteModal(true), !USE_NATIVE_SHEETS)} // [2026-10-07 group-admin] iOS drops a sibling Modal
               right="chevron"
             />
@@ -34584,8 +34714,8 @@ function ChatConversationInner() {
               onPress={() => groupInfoGo(() => setShowNotifSoundPicker(true), !USE_NATIVE_SHEETS)} // [2026-10-07 group-admin] · PressableRow [2026-10-07 native-ui-build]
               style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, paddingVertical: 11, minHeight: 56, gap: 12 }}
             >
-              <View style={{ width: 34, height: 34, borderRadius: 9, backgroundColor: '#AF52DE22', alignItems: 'center', justifyContent: 'center' }}>
-                <IconMusic size={18} color="#AF52DE" />
+              <View style={{ width: 34, height: 34, borderRadius: 9, backgroundColor: colors.chipBg, alignItems: 'center', justifyContent: 'center' }}>
+                <IconMusic size={18} color={colors.text} />
               </View>
               <View style={{ flex: 1 }}>
                 <Text style={{ fontSize: FontSize.md, color: colors.text, fontWeight: '500' }}>
@@ -34618,8 +34748,8 @@ function ChatConversationInner() {
                     activeOpacity={0.6}
                     style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 12 }}
                   >
-                    <View style={{ width: 34, height: 34, borderRadius: 9, backgroundColor: '#30B0C722', alignItems: 'center', justifyContent: 'center' }}>
-                      <IconHash size={18} color="#30B0C7" />
+                    <View style={{ width: 34, height: 34, borderRadius: 9, backgroundColor: colors.chipBg, alignItems: 'center', justifyContent: 'center' }}>
+                      <IconHash size={18} color={colors.text} />
                     </View>
                     <View style={{ flex: 1 }}>
                       <Text style={{ fontSize: 15.5, color: colors.text, fontWeight: '500' }}>
@@ -34836,7 +34966,7 @@ function ChatConversationInner() {
                       Icon={IconClock}
                       tint="#0A84FF"
                       title={t('chat.disappearing') || 'Mensagens temporárias'}
-                      subtitle={disappearingTimer > 0
+                      subtitle={vanishMode ? disappearingSummary : disappearingTimer > 0
                         ? (disappearingTimer >= 90 * 86400
                             ? (t('chat.disappearing90d') || '90 dias')
                             : disappearingTimer >= 7 * 86400
@@ -34855,14 +34985,85 @@ function ChatConversationInner() {
               );
             })()}
 
+            {/* [2026-10-10 contact-info] O que saiu do menu ⋮ mora aqui agora
+                (mesmo padrão de "Dados do contato"): preferências extras,
+                privacidade, "Mais" e ações da conversa. */}
+            <GroupCard colors={colors} isDark={isDark}>
+              <GroupRow colors={colors} Icon={IconBell}
+                title={t('chatConv.customNotifications') || 'Notificações personalizadas'}
+                subtitle={t('chatConv.customNotificationsHint') || 'Sons, vibração e prévia'} right="chevron"
+                onPress={() => groupInfoGo(() => setShowNotifSettingsSheet(true), !USE_NATIVE_SHEETS)} />
+              <GroupDivider colors={colors} />
+              <GroupRow colors={colors} Icon={IconPalette}
+                title={t('chatConv.wallpaper') || 'Papel de parede'} right="chevron"
+                onPress={() => groupInfoGo(() => setShowWallpaperPicker(true))} />
+              {/* Admin já vê "Mensagens temporárias" em Administração do grupo. */}
+              {(members || []).find(m => m.email === currentEmail)?.role !== 'admin' && (
+                <>
+                  <GroupDivider colors={colors} />
+                  <GroupRow colors={colors} Icon={IconClock}
+                    title={t('chat.disappearing') || 'Mensagens temporárias'} subtitle={disappearingSummary} right="chevron"
+                    onPress={() => groupInfoGo(() => setShowDisappearingModal(true), !USE_NATIVE_SHEETS)} />
+                </>
+              )}
+              <GroupDivider colors={colors} />
+              <GroupRow colors={colors} Icon={IconLock}
+                title={t('chatConv.chatLockRow') || 'Trancar conversa'}
+                subtitle={chatLocked ? (t('chatConv.enabledState') || 'Ativado') : (t('common.off') || 'Desativado')} right="chevron"
+                accessibilityRole="switch" accessibilityState={{ checked: !!chatLocked }}
+                onPress={() => groupInfoGo(toggleChatLockFromUi)} />
+            </GroupCard>
+
+            <GroupSectionLabel colors={colors}>{t('common.more') || 'Mais'}</GroupSectionLabel>
+            <GroupCard colors={colors} isDark={isDark}>
+              <GroupRow colors={colors} Icon={IconSparkles}
+                title={t('chatConv.aiSummary') || 'Resumir com IA'} right="chevron"
+                onPress={() => groupInfoGo(runAiSummary)} />
+              <GroupDivider colors={colors} />
+              <GroupRow colors={colors} Icon={IconBarChart}
+                title={t('chatConv.stats') || 'Estatísticas'} right="chevron"
+                onPress={() => groupInfoGo(() => setShowStatsModal(true))} />
+              <GroupDivider colors={colors} />
+              <GroupRow colors={colors} Icon={IconCalendar}
+                title={t('chatConv.scheduledMessages') || 'Mensagens agendadas'} right="chevron"
+                onPress={() => groupInfoGo(() => { setShowScheduledMessages(true); loadScheduledMessages(); })} />
+              <GroupDivider colors={colors} />
+              <GroupRow colors={colors} Icon={IconGlobe}
+                title={t('chatConv.autoTranslate') || 'Auto-traduzir'}
+                subtitle={autoTranslateLocale ? autoTranslateLocale.toUpperCase() : (t('common.off') || 'Desativado')} right="chevron"
+                onPress={() => groupInfoGo(() => setShowAutoTranslatePicker(true))} />
+            </GroupCard>
+
+            <GroupCard colors={colors} isDark={isDark}>
+              <GroupRow colors={colors} Icon={IconForward}
+                title={t('chatConv.exportChat') || 'Exportar conversa'} right="chevron"
+                onPress={() => groupInfoGo(() => setShowExportModal(true))} />
+              {!waImported && (
+                <>
+                  <GroupDivider colors={colors} />
+                  <GroupRow colors={colors} Icon={IconDownload}
+                    title={t('waImport.menuItem') || 'Importar do WhatsApp'} right="chevron"
+                    onPress={() => groupInfoGo(openWhatsAppImport)} />
+                </>
+              )}
+              <GroupDivider colors={colors} />
+              <GroupRow colors={colors} Icon={IconArchive}
+                title={t('chatConv.archive') || 'Arquivar conversa'}
+                onPress={() => groupInfoGo(archiveConversation)} />
+            </GroupCard>
+
             {/* Leave Group Button */}
             <GroupCard colors={colors} isDark={isDark} style={{ marginTop: 6 }}>
+              <GroupRow colors={colors} Icon={IconTrash} titleColor={colors.error || '#dc2626'}
+                title={t('chatConv.clearChat') || 'Limpar conversa'}
+                onPress={() => groupInfoGo(confirmClearHistory)} />
+              <GroupDivider colors={colors} />
               <GroupRow
                 colors={colors}
                 Icon={IconLogOut}
                 tint="#dc2626"
                 title={t('chatConv.leaveGroup') || 'Sair do grupo'}
-                titleColor="#dc2626"
+                titleColor={colors.error || '#dc2626'}
                 onPress={handleLeaveGroup}
               />
             </GroupCard>
@@ -35396,16 +35597,26 @@ function ChatConversationInner() {
               { label: t('chat.disappearing24h'), value: 86400 },
               { label: t('chat.disappearing7d'), value: 604800 },
               { label: t('chat.disappearing90d'), value: 7776000 },
-            ].map(opt => (
+              // [2026-10-10 contact-info] ex-"modo invisível" (vanish_mode) unificado aqui.
+              { label: t('chatConv.vanishAfterRead') || 'Ao ler', value: 'vanish', hint: t('chatConv.vanishAfterReadHint') || 'Cada mensagem some depois de lida e o texto não aparece nas notificações.' },
+            ].map(opt => {
+              const selected = opt.value === 'vanish' ? !!vanishMode : (!vanishMode && disappearingTimer === opt.value);
+              return (
               <TouchableOpacity
-                key={opt.value}
+                key={String(opt.value)}
                 onPress={() => handleSetDisappearing(opt.value)}
-                style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 14, borderBottomWidth: opt.value === 7776000 ? 0 : 0.5, borderBottomColor: colors.border }}
+                accessibilityRole="radio"
+                accessibilityState={{ checked: selected }}
+                style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 14, borderBottomWidth: opt.value === 'vanish' ? 0 : 0.5, borderBottomColor: colors.border }}
               >
-                <Text style={{ fontSize: 15, color: colors.text }}>{opt.label}</Text>
-                {disappearingTimer === opt.value && <IconCheck size={18} color={colors.primary} />}
+                <View style={{ flex: 1, paddingRight: 8 }}>
+                  <Text style={{ fontSize: 15, color: colors.text }}>{opt.label}</Text>
+                  {opt.hint ? <Text style={{ fontSize: 12.5, color: colors.textSecondary, marginTop: 3, lineHeight: 17 }}>{opt.hint}</Text> : null}
+                </View>
+                {selected && <IconCheck size={18} color={colors.text} />}
               </TouchableOpacity>
-            ))}
+              );
+            })}
       </NativeSheetDialog>
 
       {/* Pin Duration Modal (Android / web) — iOS uses native ActionSheetIOS

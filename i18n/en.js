@@ -1,4 +1,18 @@
 export default {
+  // [2026-10-10 contact-info]
+  "chatConv.groupInfoTitle": "Group info",
+  "chatConv.vanishAfterRead": "After reading",
+  "chatConv.vanishAfterReadHint": "Each message disappears after it's read, and its text isn't shown in notifications.",
+  "chatConv.vanishBannerV2": "Disappearing messages: they vanish once read. Tap to change.",
+  "chatConv.muteShort": "Mute",
+  "chatConv.unmuteShort": "Unmute",
+  "chatConv.mediaLinksDocs": "Media, links and docs",
+  "chatConv.customNotifications": "Custom notifications",
+  "chatConv.customNotificationsHint": "Sound, vibration and preview",
+  "chatConv.chatLockRow": "Lock chat",
+  "chatConv.enabledState": "On",
+  "chatConv.e2eSafetyHint": "End-to-end on. Tap to view the safety number.",
+  "chatConv.scheduledMessages": "Scheduled messages",
   // [2026-10-10 wa-import]
   "waImport.settingsHeader": "Import",
   "waImport.settingsRow": "Import WhatsApp chats",
@@ -9893,4 +9907,8 @@ export default {
   "live.wordFilterPlaceholder": "e.g. spam, scam",
   "live.wordFilterSaved": "Filter saved",
   "live.react": "React",
+  "e2ee.confirmEnable": "Turn on end-to-end encryption in this chat? Only the two of you will be able to read new messages.",
+  "e2ee.confirmDisable": "Turn off end-to-end encryption in this chat? New messages will no longer be encrypted.",
+  "e2ee.turnOn": "Turn on",
+  "e2ee.turnOff": "Turn off",
 };

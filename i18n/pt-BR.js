@@ -1,4 +1,18 @@
 export default {
+  // [2026-10-10 contact-info]
+  "chatConv.groupInfoTitle": "Dados do grupo",
+  "chatConv.vanishAfterRead": "Ao ler",
+  "chatConv.vanishAfterReadHint": "Cada mensagem some depois de lida e o texto não aparece nas notificações.",
+  "chatConv.vanishBannerV2": "Mensagens temporárias: somem ao serem lidas. Toque para mudar.",
+  "chatConv.muteShort": "Silenciar",
+  "chatConv.unmuteShort": "Reativar",
+  "chatConv.mediaLinksDocs": "Mídia, links e docs",
+  "chatConv.customNotifications": "Notificações personalizadas",
+  "chatConv.customNotificationsHint": "Sons, vibração e prévia",
+  "chatConv.chatLockRow": "Trancar conversa",
+  "chatConv.enabledState": "Ativado",
+  "chatConv.e2eSafetyHint": "Ponta a ponta ativa. Toque para ver o número de segurança.",
+  "chatConv.scheduledMessages": "Mensagens agendadas",
   // [2026-10-10 wa-import]
   "waImport.settingsHeader": "Importar",
   "waImport.settingsRow": "Importar conversas do WhatsApp",
@@ -9971,4 +9985,8 @@ export default {
   "live.wordFilterPlaceholder": "ex.: spam, golpe",
   "live.wordFilterSaved": "Filtro salvo",
   "live.react": "Reagir",
+  "e2ee.confirmEnable": "Ativar criptografia de ponta a ponta nesta conversa? Só vocês dois vão conseguir ler as mensagens novas.",
+  "e2ee.confirmDisable": "Desativar a criptografia de ponta a ponta nesta conversa? As mensagens novas não serão mais cifradas.",
+  "e2ee.turnOn": "Ativar",
+  "e2ee.turnOff": "Desativar",
 };

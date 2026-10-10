@@ -1,4 +1,18 @@
 export default {
+  // [2026-10-10 contact-info]
+  "chatConv.groupInfoTitle": "معلومات المجموعة",
+  "chatConv.vanishAfterRead": "بعد القراءة",
+  "chatConv.vanishAfterReadHint": "تختفي كل رسالة بعد قراءتها ولا يظهر نصها في الإشعارات.",
+  "chatConv.vanishBannerV2": "الرسائل المؤقتة: تختفي بعد قراءتها. اضغط للتغيير.",
+  "chatConv.muteShort": "كتم",
+  "chatConv.unmuteShort": "إلغاء الكتم",
+  "chatConv.mediaLinksDocs": "الوسائط والروابط والمستندات",
+  "chatConv.customNotifications": "إشعارات مخصصة",
+  "chatConv.customNotificationsHint": "الصوت والاهتزاز والمعاينة",
+  "chatConv.chatLockRow": "قفل الدردشة",
+  "chatConv.enabledState": "مفعّل",
+  "chatConv.e2eSafetyHint": "التشفير التام مفعّل. اضغط لعرض رقم الأمان.",
+  "chatConv.scheduledMessages": "الرسائل المجدولة",
   // [2026-10-10 wa-import]
   "waImport.settingsHeader": "استيراد",
   "waImport.settingsRow": "استيراد محادثات واتساب",
@@ -9923,4 +9937,8 @@ export default {
   "live.wordFilterPlaceholder": "مثال: spam، احتيال",
   "live.wordFilterSaved": "تم حفظ الفلتر",
   "live.react": "تفاعل",
+  "e2ee.confirmEnable": "هل تريد تفعيل التشفير التام بين الطرفين في هذه الدردشة؟ لن يتمكن من قراءة الرسائل الجديدة سواكما.",
+  "e2ee.confirmDisable": "هل تريد إيقاف التشفير التام بين الطرفين في هذه الدردشة؟ لن تُشفَّر الرسائل الجديدة بعد الآن.",
+  "e2ee.turnOn": "تفعيل",
+  "e2ee.turnOff": "إيقاف",
 };

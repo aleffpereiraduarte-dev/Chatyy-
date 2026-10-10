@@ -1,4 +1,18 @@
 export default {
+  // [2026-10-10 contact-info]
+  "chatConv.groupInfoTitle": "Info gruppo",
+  "chatConv.vanishAfterRead": "Dopo la lettura",
+  "chatConv.vanishAfterReadHint": "Ogni messaggio scompare dopo la lettura e il testo non appare nelle notifiche.",
+  "chatConv.vanishBannerV2": "Messaggi effimeri: scompaiono dopo la lettura. Tocca per cambiare.",
+  "chatConv.muteShort": "Silenzia",
+  "chatConv.unmuteShort": "Riattiva",
+  "chatConv.mediaLinksDocs": "Media, link e documenti",
+  "chatConv.customNotifications": "Notifiche personalizzate",
+  "chatConv.customNotificationsHint": "Suono, vibrazione e anteprima",
+  "chatConv.chatLockRow": "Blocca chat",
+  "chatConv.enabledState": "Attivo",
+  "chatConv.e2eSafetyHint": "Crittografia end-to-end attiva. Tocca per vedere il numero di sicurezza.",
+  "chatConv.scheduledMessages": "Messaggi programmati",
   // [2026-10-10 wa-import]
   "waImport.settingsHeader": "Importa",
   "waImport.settingsRow": "Importa chat di WhatsApp",
@@ -9923,4 +9937,8 @@ export default {
   "live.wordFilterPlaceholder": "es.: spam, truffa",
   "live.wordFilterSaved": "Filtro salvato",
   "live.react": "Reagisci",
+  "e2ee.confirmEnable": "Attivare la crittografia end-to-end in questa chat? Solo voi due potrete leggere i nuovi messaggi.",
+  "e2ee.confirmDisable": "Disattivare la crittografia end-to-end in questa chat? I nuovi messaggi non saranno più crittografati.",
+  "e2ee.turnOn": "Attiva",
+  "e2ee.turnOff": "Disattiva",
 };
