@@ -893,6 +893,7 @@ export default function StickerPicker({ onSelect, onClose, colors, t, userEmail,
           keyExtractor={(item, i) => `${activePack}-${i}-${typeof item === 'string' ? item.slice(0, 32) : i}`}
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
+          style={{ flex: 1 }}
           contentContainerStyle={{ paddingHorizontal: 2, paddingVertical: 2 }}
           renderItem={({ item }) => (item === CREATE_TILE ? (
             <TouchableOpacity
@@ -943,7 +944,9 @@ export default function StickerPicker({ onSelect, onClose, colors, t, userEmail,
       <ScrollView
         horizontal
         showsHorizontalScrollIndicator={false}
-        style={{ borderTopWidth: 1, borderTopColor: colors.border, maxHeight: 46 }}
+        // [2026-10-10] Altura FIXA: com maxHeight a barra encolhia (flexShrink)
+        // quando a grade enchia o painel e os emojis das abas saíam cortados.
+        style={{ borderTopWidth: 1, borderTopColor: colors.border, height: 48, flexGrow: 0, flexShrink: 0 }}
         contentContainerStyle={{ paddingHorizontal: 2, alignItems: 'center' }}
       >
         {/* Recent */}
