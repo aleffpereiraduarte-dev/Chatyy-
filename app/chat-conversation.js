@@ -1409,19 +1409,23 @@ function UnreadSeparatorPulse({ isDark, t }) {
     // [2026-10-06 wa-look] WhatsApp parity: a full-bleed translucent band
     // across the thread (bleeds past the list's 6px gutter) with a centered,
     // muted uppercase label — not red rules + red pill.
+    // [2026-10-10 chat-bubbles-polish] Telegram/iMessage: fio fino dos dois
+    // lados + pílula central (mesma linguagem da pílula de data) — a faixa
+    // cinza de ponta a ponta pesava no P&B.
     <Animated.View style={{
-      marginVertical: 10, marginHorizontal: -6, paddingVertical: 5,
-      alignItems: 'center', justifyContent: 'center', opacity,
-      // [2026-10-08 chat-beauty-bubbles] faixa mono que aparece no fundo branco/preto.
-      backgroundColor: isDark ? 'rgba(255,255,255,0.07)' : 'rgba(0,0,0,0.04)',
-      ...(Platform.OS === 'web' ? { backdropFilter: 'blur(6px)', WebkitBackdropFilter: 'blur(6px)' } : {}),
+      marginVertical: 12, marginHorizontal: 8,
+      flexDirection: 'row', alignItems: 'center', opacity,
     }}>
+      <View style={{ flex: 1, height: StyleSheet.hairlineWidth, backgroundColor: isDark ? 'rgba(255,255,255,0.18)' : 'rgba(0,0,0,0.14)' }} />
       <Text style={{
-        fontSize: 12, fontWeight: '600', letterSpacing: 0.4, textTransform: 'uppercase',
-        color: isDark ? 'rgba(235,235,245,0.75)' : 'rgba(60,60,67,0.82)',
+        marginHorizontal: 8, paddingHorizontal: 12, paddingVertical: 4, borderRadius: 12, overflow: 'hidden',
+        fontSize: 12, fontWeight: '600', letterSpacing: 0.2,
+        color: isDark ? 'rgba(235,235,245,0.80)' : 'rgba(60,60,67,0.85)',
+        backgroundColor: isDark ? 'rgba(44,44,46,0.82)' : 'rgba(236,236,240,0.88)',
       }}>
         {t('chatConv.unreadMessages') || 'Mensagens não lidas'}
       </Text>
+      <View style={{ flex: 1, height: StyleSheet.hairlineWidth, backgroundColor: isDark ? 'rgba(255,255,255,0.18)' : 'rgba(0,0,0,0.14)' }} />
     </Animated.View>
   );
 }
@@ -1494,6 +1498,15 @@ function SendButtonAnim({ children, isSend }) {
 // ============================================================
 // TYPING BUBBLE (WhatsApp-style bouncing dots)
 // ============================================================
+// [2026-10-10 chat-bubbles-polish] fundo escuro? (luminância do hex do tema)
+function _isDarkHex(hex) {
+  const h = String(hex || '').replace('#', '');
+  if (h.length !== 6 && h.length !== 3) return false;
+  const f = h.length === 3 ? h.split('').map(c => c + c).join('') : h;
+  const r = parseInt(f.slice(0, 2), 16), g = parseInt(f.slice(2, 4), 16), b = parseInt(f.slice(4, 6), 16);
+  if (![r, g, b].every(Number.isFinite)) return false;
+  return (0.2126 * r + 0.7152 * g + 0.0722 * b) < 128;
+}
 function TypingBubble({ name, colors, recording, t, active = true, entries = null }) {
   const dot1 = useRef(new Animated.Value(0)).current;
   const dot2 = useRef(new Animated.Value(0)).current;
@@ -1583,6 +1596,7 @@ function TypingBubble({ name, colors, recording, t, active = true, entries = nul
     }
   }
 
+  const _typingDark = _isDarkHex(colors.background);
   return (
     <Animated.View style={{ alignSelf: 'flex-start', marginBottom: 10, marginLeft: 14, opacity: bubbleOpacity, transform: [{ scale: bubbleScale }, { translateY: bubbleY }] }}>
       {!!composedLabel && (
@@ -1600,16 +1614,14 @@ function TypingBubble({ name, colors, recording, t, active = true, entries = nul
           ))}
         </View>
       )}
+      {/* [2026-10-10 chat-bubbles-polish] = bolha RECEBIDA (mesma cor/raio/
+          canto-âncora, chapada) — antes era um cartão branco com sombra que
+          sumia no fundo branco e não parecia mensagem. */}
       <View style={{
-        backgroundColor: colors.surface,
-        borderRadius: 22, borderBottomLeftRadius: 6,
-        paddingHorizontal: 18, paddingVertical: 14,
-        flexDirection: 'row', gap: 7, alignItems: 'center', minWidth: 64,
-        ...Platform.select({
-          ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.08, shadowRadius: 10 },
-          android: { elevation: 3 },
-          web: { boxShadow: '0 1px 2px rgba(0,0,0,0.04), 0 4px 14px rgba(0,0,0,0.08)' },
-        }),
+        backgroundColor: _typingDark ? '#1C1C1E' : '#EEEEF0',
+        borderRadius: 18, borderBottomLeftRadius: 5,
+        paddingHorizontal: 14, paddingVertical: 12,
+        flexDirection: 'row', gap: 5, alignItems: 'center', minWidth: 56,
       }}>
         {recording ? (
           <>
@@ -1618,7 +1630,7 @@ function TypingBubble({ name, colors, recording, t, active = true, entries = nul
           </>
         ) : (
           [dot1, dot2, dot3].map((dot, i) => (
-            <Animated.View key={i} style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: colors.textSecondary || '#8E8E93', transform: [{ translateY: dot }] }} />
+            <Animated.View key={i} style={{ width: 7, height: 7, borderRadius: 3.5, backgroundColor: _typingDark ? 'rgba(235,235,245,0.55)' : 'rgba(60,60,67,0.50)', transform: [{ translateY: dot }] }} />
           ))
         )}
       </View>
@@ -9289,9 +9301,10 @@ function ChatConversationInner() {
     return () => { try { sub?.remove?.(); } catch {} };
   }, [_hydrateLocalPrefs]);
 
-  const fontSizeMap = { small: 13, medium: 15, large: 18 };
+  // [2026-10-10 chat-bubbles-polish] médio 15→16 (corpo iMessage/WhatsApp ~16–17).
+  const fontSizeMap = { small: 14, medium: 16, large: 18 };
   const lineHeightMap = { small: 19, medium: 21, large: 26 };
-  const msgFontSize = fontSizeMap[chatyySettings.font_size] || 15;
+  const msgFontSize = fontSizeMap[chatyySettings.font_size] || 16;
   const msgLineHeight = lineHeightMap[chatyySettings.font_size] || 21;
 
   // Jumbo emoji (Telegram/WhatsApp): standalone-emoji messages render
@@ -22329,7 +22342,9 @@ function ChatConversationInner() {
       };
       for (let i = 0; i < messages.length; i++) {
         const m = messages[i];
-        const isMedia = (m.type === 'image' || m.type === 'video') && !_isViewOnceMsg(m);
+        // [2026-10-10 chat-bubbles-polish] mídia APAGADA não entra em álbum — antes
+        // 2+ fotos apagadas viravam um carrossel preto "1/2" em vez das lápides.
+        const isMedia = (m.type === 'image' || m.type === 'video') && !_isViewOnceMsg(m) && !m.deleted_at;
         if (!isMedia) { flushRun(i - 1); continue; }
         const cd = new Date(_normalizeIso(m.created_at));
         const mb = m._batch_id || null;
@@ -23891,6 +23906,17 @@ function ChatConversationInner() {
       const albumTime = formatTime(item.created_at);
       // [2026-10-08 chat-beauty-bubbles] mesma tinta de meta das bolhas de texto.
       const albumTickColor = isOwn ? ownMetaColor : otherMetaColor;
+      // Historical album rows built before the filename fix may still carry a
+      // joined string of IMG_xxx.jpg filenames as "content". Hide that so the
+      // bubble doesn't show garbage.
+      const _albumCaption = (() => {
+        const c = String(item.content || '').trim();
+        if (!c) return '';
+        const onlyFilenames = c.split(/\s+/).every(tok =>
+          /^[^\s]+\.(jpg|jpeg|png|gif|webp|heic|heif|bmp|tiff|mov|mp4|webm|mkv|avi|m4v|3gp|m4a|mp3|ogg|wav|opus|oga|aac|flac)$/i.test(tok)
+        );
+        return onlyFilenames ? '' : item.content;
+      })();
       return (
         <View style={{
           // [2026-10-10 conv-polish] 16→8 = mesma margem lateral do msgRowOwn/
@@ -23900,9 +23926,14 @@ function ChatConversationInner() {
           alignItems: isOwn ? 'flex-end' : 'flex-start',
         }}>
           <View style={{
-            maxWidth: maxW,
+            // [2026-10-10 chat-bubbles-polish] Álbum = bolha com respiro de 3px
+            // em volta das fotos (igual foto avulsa) e, sem legenda, hora/✓
+            // numa pílula escura SOBRE a mídia (WhatsApp) — antes era uma faixa
+            // sólida embaixo das fotos.
+            maxWidth: maxW + 6,
             borderRadius: bubbleRadius,
             overflow: 'hidden',
+            padding: 3,
             // [MONO 2026-09-30] Own-bubble bg was #E8DEF8 (light lavender/
             // violet) — the hue the founder saw when the album photos didn't
             // paint over it. Neutralized to the same gray as the single-photo
@@ -23915,39 +23946,41 @@ function ChatConversationInner() {
                 single-image bubble's `maxHeight: 320`. overflow:hidden clips
                 any overflow; the caption/footer below are outside this cap so
                 they are never clipped. */}
-            <View style={{ maxHeight: maxH, overflow: 'hidden' }}>
+            <View style={{ maxHeight: maxH, overflow: 'hidden', borderRadius: Math.max(2, bubbleRadius - 3) }}>
               {grid}
-            </View>
-            {(() => {
-              // Historical album rows built before the filename fix may
-              // still carry a joined string of IMG_xxx.jpg filenames as
-              // "content". Hide that so the bubble doesn't show garbage.
-              const c = String(item.content || '').trim();
-              if (!c) return null;
-              const onlyFilenames = c.split(/\s+/).every(tok =>
-                /^[^\s]+\.(jpg|jpeg|png|gif|webp|heic|heif|bmp|tiff|mov|mp4|webm|mkv|avi|m4v|3gp|m4a|mp3|ogg|wav|opus|oga|aac|flac)$/i.test(tok)
-              );
-              if (onlyFilenames) return null;
-              return (
-                <Text style={{
-                  paddingHorizontal: 12, paddingTop: 7, paddingBottom: 2, fontSize: 15.5, lineHeight: 21,
-                  color: isOwn ? ownTextColor : colors.text,
+              {!_albumCaption && (
+                <View pointerEvents="none" style={{
+                  position: 'absolute', right: 6, bottom: 6,
+                  flexDirection: 'row', alignItems: 'center', gap: 3,
+                  paddingHorizontal: 7, paddingVertical: 2, borderRadius: 10,
+                  backgroundColor: 'rgba(0,0,0,0.45)',
                 }}>
-                  {item.content}
-                </Text>
-              );
-            })()}
-            <View style={{
-              flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end',
-              paddingHorizontal: 8, paddingBottom: 4, paddingTop: 2, gap: 4,
-            }}>
-              <Text style={{ fontSize: 11, color: albumTickColor, fontVariant: ['tabular-nums'] }}>{albumTime}</Text>
-              {/* [2026-10-01 Bug A] pending → clock (⏱) while any photo is
-                  still uploading. Without the prop, status 0 rendered a bare
-                  single ✓ (AnimatedCheckStatus treats <1.5 as "sent"), so a
-                  still-sending album looked already-sent. */}
-              {isOwn && <AnimatedCheckStatus status={item._readStatus} color={albumTickColor} pending={item._readStatus === 0} />}
+                  <Text style={{ fontSize: 11, fontWeight: '500', color: 'rgba(255,255,255,0.95)', fontVariant: ['tabular-nums'] }}>{albumTime}</Text>
+                  {isOwn && <AnimatedCheckStatus status={item._readStatus} color="rgba(255,255,255,0.9)" pending={item._readStatus === 0} />}
+                </View>
+              )}
             </View>
+            {!!_albumCaption && (
+              <Text style={{
+                paddingHorizontal: 9, paddingTop: 6, paddingBottom: 1, fontSize: msgFontSize, lineHeight: msgLineHeight,
+                color: isOwn ? ownTextColor : colors.text,
+              }}>
+                {_albumCaption}
+              </Text>
+            )}
+            {!!_albumCaption && (
+              <View style={{
+                flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end',
+                paddingHorizontal: 6, paddingBottom: 2, paddingTop: 1, gap: 4,
+              }}>
+                <Text style={{ fontSize: 11, fontWeight: '500', color: albumTickColor, fontVariant: ['tabular-nums'] }}>{albumTime}</Text>
+                {/* [2026-10-01 Bug A] pending → clock (⏱) while any photo is
+                    still uploading. Without the prop, status 0 rendered a bare
+                    single ✓ (AnimatedCheckStatus treats <1.5 as "sent"), so a
+                    still-sending album looked already-sent. */}
+                {isOwn && <AnimatedCheckStatus status={item._readStatus} color={albumTickColor} pending={item._readStatus === 0} />}
+              </View>
+            )}
           </View>
         </View>
       );
@@ -24099,18 +24132,30 @@ function ChatConversationInner() {
     // no-entry/prohibited glyph (inline SVG — memory rule: never emoji in UI)
     // instead of the padlock, which read as "protected" rather than "deleted".
     const _delTint = isOwn ? ownMetaColor : otherMetaColor; // [2026-10-10 conv-polish] = tinta da hora (legível nos 2 temas)
-    const renderDeletedLabel = () => (
-      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 2 }}>
+    // [2026-10-10 chat-bubbles-polish] withGhost → hora/✓ na MESMA linha da
+    // lápide (WhatsApp): reserva invisível no fim do texto + meta flutuante.
+    const renderDeletedLabel = (withGhost) => (
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 1, flexShrink: 1 }}>
         <Svg width={14} height={14} viewBox="0 0 24 24">
           <Path
             d="M12 2a10 10 0 100 20 10 10 0 000-20zm0 2c1.85 0 3.55.63 4.9 1.69L5.69 16.9A7.96 7.96 0 014 12a8 8 0 018-8zm0 16a7.96 7.96 0 01-4.9-1.69L18.31 7.1A7.96 7.96 0 0120 12a8 8 0 01-8 8z"
             fill={_delTint}
           />
         </Svg>
-        <Text style={{ fontSize: 13, fontStyle: 'italic', color: _delTint, letterSpacing: 0.1 }}>
+        <Text style={{ fontSize: 14, lineHeight: 19, fontStyle: 'italic', color: _delTint, letterSpacing: 0.1, flexShrink: 1 }}>
           {isOwn
             ? (t('chatConv.deletedMessageOwn') || 'Você apagou esta mensagem')
             : (t('chatConv.deletedMessage') || 'Esta mensagem foi apagada')}
+          {withGhost ? (
+            <Text style={styles.metaGhost} selectable={false} accessible={false} importantForAccessibility="no">
+              {_waMetaGhost({
+                time: formatTime(msg.created_at),
+                own: false,
+                edited: '',
+                icons: (msg.starred ? 1 : 0) + (msg._e2e ? 1 : 0) + (disappearingTimer > 0 ? 1 : 0),
+              })}
+            </Text>
+          ) : null}
         </Text>
       </View>
     );
@@ -24136,7 +24181,8 @@ function ChatConversationInner() {
       // the previous render" triggers otherwise when delete-for-all flips
       // the message mid-session).
       if (isDeleted && !(msg.is_view_once || msg.isViewOnce)) {
-        return renderDeletedLabel();
+        _waInlineMeta = true; // [2026-10-10 chat-bubbles-polish]
+        return renderDeletedLabel(true);
       }
       if (msg.is_view_once || msg.isViewOnce) {
         let ViewOnceMessage = null;
@@ -24852,9 +24898,9 @@ function ChatConversationInner() {
                   {!imgUploading && (
                     <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 3, paddingHorizontal: 10, paddingTop: 2, paddingBottom: 3 }}>
                       {!!msg.edited_at && (
-                        <Text style={{ fontSize: 10, color: isOwn ? ownMetaColor : otherMetaColor, fontStyle: 'italic' }}>{t('chatConv.edited')}</Text>
+                        <Text style={[styles.editedLabel, { color: isOwn ? ownMetaColor : otherMetaColor }]}>{t('chatConv.edited')}</Text>
                       )}
-                      <Text style={{ fontSize: 10.5, color: isOwn ? ownMetaColor : otherMetaColor, fontWeight: '500' }}>{formatTime(msg.created_at)}</Text>
+                      <Text style={[styles.msgTime, { color: isOwn ? ownMetaColor : otherMetaColor }]}>{formatTime(msg.created_at)}</Text>
                       {isOwn && !msg._pending && !msg._failed && (
                         msg._readStatus === 2
                           ? <View style={{ flexDirection: 'row', marginLeft: 1, flexShrink: 0 }}><IconCheck size={12} strokeWidth={2.6} color="#53BDEB" style={{ marginRight: -6 }} /><IconCheck size={12} strokeWidth={2.6} color="#53BDEB" /></View>
@@ -28102,8 +28148,9 @@ function ChatConversationInner() {
             const localRef = msg.reply_to?.id ? (messagesById.get(msg.reply_to.id) || null) : null;
             const resolvedEmail = (msg.reply_to?.sender_email || localRef?.sender_email || '').trim();
             const resolvedName  = (msg.reply_to?.sender_name?.trim() || localRef?.sender_name?.trim() || '');
+            const _youLbl = String(t('chatConv.you') || 'Você');
             const replyDisplayName = resolvedEmail === currentEmail
-              ? (t('chatConv.you') || 'Você')
+              ? (_youLbl.charAt(0).toUpperCase() + _youLbl.slice(1)) // [2026-10-10 chat-bubbles-polish] "você" → "Você" no título da citação
               : (resolvedName || (resolvedEmail ? emailToDisplayName(resolvedEmail) : (t('chat.unknown') || 'Desconhecido')));
             // [VISUAL-G8, 2026-05-19] Reply quote bar color = quoted sender's color (same djb2 palette).
             const replySenderColor = senderColorFromEmail(resolvedEmail || resolvedName || '');
@@ -28208,7 +28255,7 @@ function ChatConversationInner() {
                       // WhatsApp instead of truncating mid-sentence.
                       if (msg.reply_quote_text) {
                         return (
-                          <Text style={baseTextStyle} numberOfLines={3} ellipsizeMode="tail">
+                          <Text style={baseTextStyle} numberOfLines={2} ellipsizeMode="tail">
                             {'“' + msg.reply_quote_text + '”'}
                           </Text>
                         );
@@ -28217,13 +28264,13 @@ function ChatConversationInner() {
                       if (msg.reply_to?.type === 'image') {
                         const hasCaption = msg.reply_to?.content && !/^https?:\/\//i.test(msg.reply_to?.content) && msg.reply_to?.content !== msg.reply_to?.file_name;
                         return hasCaption
-                          ? <Text style={baseTextStyle} numberOfLines={3} ellipsizeMode="tail">{msg.reply_to?.content}</Text>
+                          ? <Text style={baseTextStyle} numberOfLines={2} ellipsizeMode="tail">{msg.reply_to?.content}</Text>
                           : renderIconLabel(IconImage, t('chat.photo') || 'Foto');
                       }
                       if (msg.reply_to?.type === 'video') {
                         const hasCaption = msg.reply_to?.content && !/^https?:\/\//i.test(msg.reply_to?.content) && msg.reply_to?.content !== msg.reply_to?.file_name;
                         return hasCaption
-                          ? <Text style={baseTextStyle} numberOfLines={3} ellipsizeMode="tail">{msg.reply_to?.content}</Text>
+                          ? <Text style={baseTextStyle} numberOfLines={2} ellipsizeMode="tail">{msg.reply_to?.content}</Text>
                           : renderIconLabel(IconFilm, t('chat.video') || 'Vídeo');
                       }
                       if (msg.reply_to?.type === 'audio')    return renderIconLabel(IconMic, t('chat.audio') || 'Áudio');
@@ -28282,7 +28329,7 @@ function ChatConversationInner() {
                       // WAVE 67 (2026-05-21): real message text quote shown
                       // in 3 lines (WhatsApp parity); was numberOfLines={1}
                       // and cut off mid-word.
-                      return <Text style={baseTextStyle} numberOfLines={3} ellipsizeMode="tail">{c}</Text>;
+                      return <Text style={baseTextStyle} numberOfLines={2} ellipsizeMode="tail">{c}</Text>;
                     })()}
                   </View>
                   {!msg.reply_to?.deleted_at && (msg.reply_to?.type === 'image' || msg.reply_to?.type === 'video') && msg.reply_to?.file_url && (
@@ -28363,7 +28410,7 @@ function ChatConversationInner() {
                   <TouchableOpacity onPress={() => openEditHistory(msg.id)} hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }} style={{ flexShrink: 1 }}>
                     <Text
                       numberOfLines={1}
-                      style={[styles.editedLabel, { color: isOwn ? ownMetaColor : otherMetaColor, textDecorationLine: 'underline' }]}
+                      style={[styles.editedLabel, { color: isOwn ? ownMetaColor : otherMetaColor }]}
                     >
                       {label}
                     </Text>
@@ -28715,7 +28762,9 @@ function ChatConversationInner() {
                   // [2026-10-08 chat-beauty-bubbles] Chip sobreposto à borda da
                   // bolha com anel da cor do fundo (recorte limpo, sem sombra).
                   style={[styles.reactionChip, {
-                    backgroundColor: meReacted ? (isDark ? '#48484C' : '#DCDCE0') : (isDark ? '#2C2C2E' : '#F2F2F4'),
+                    // [2026-10-10 chat-bubbles-polish] claro: pílula BRANCA com
+                    // sombra-fio (descola da bolha cinza e do fundo branco).
+                    backgroundColor: meReacted ? (isDark ? '#48484C' : '#E6E6EA') : (isDark ? '#2C2C2E' : '#FFFFFF'),
                     borderColor: chatWallBg,
                   }]}
                   accessibilityLabel={meReacted ? `Remover reacao ${emoji}` : `Ver quem reagiu com ${emoji}`}
@@ -28759,7 +28808,7 @@ function ChatConversationInner() {
                         const allReactors = overflow.flatMap(([em, us]) => us.map(u => ({ email: u, name: emailToDisplayName(u), emoji: em })));
                         setReactionDetail({ emoji: '+', reactors: allReactors });
                       }}
-                      style={[styles.reactionChip, { backgroundColor: isDark ? '#2C2C2E' : '#F2F2F4', borderColor: chatWallBg }]}
+                      style={[styles.reactionChip, { backgroundColor: isDark ? '#2C2C2E' : '#FFFFFF', borderColor: chatWallBg }]}
                       accessibilityLabel={`Ver mais ${overflowCount} reacoes`}
                       accessibilityRole="button"
                     >
@@ -36648,10 +36697,10 @@ const styles = StyleSheet.create({
     // top edge so the quote isn't kissing the bubble corner. borderRadius
     // bumped 4→6 to match the WhatsApp quote pill.
     // [2026-10-08 chat-beauty-bubbles] barra 3px + raio 10 (bloco mais leve).
-    borderLeftWidth: 3, borderRadius: 10,
-    paddingHorizontal: 10, paddingVertical: 6,
-    marginTop: 3,
-    marginBottom: 6,
+    borderLeftWidth: 3, borderRadius: 8,
+    paddingLeft: 9, paddingRight: 10, paddingVertical: 5,
+    marginTop: 2,
+    marginBottom: 5,
     overflow: 'hidden',
     // Natural width — lets the reply preview push the bubble out to
     // accommodate the quoted text + sender name. `alignSelf: 'stretch'`
@@ -36662,12 +36711,14 @@ const styles = StyleSheet.create({
   },
   // WAVE 70: author label gets a 700 weight + 3px gap to the quote body
   // (matches WhatsApp typography hierarchy — bold author, muted quote).
-  replyName: { fontSize: 12.5, fontWeight: '700', letterSpacing: -0.1, marginBottom: 2 },
+  replyName: { fontSize: 13, fontWeight: '700', letterSpacing: -0.1, marginBottom: 1 },
   // WAVE 70: quote text bumped 12→13 with 17px lineHeight so multi-line
   // quotes breathe instead of stacking flat. opacity 0.78→0.82 nudges it
   // just a hair more readable while still subordinate to the reply text
   // beneath.
-  replyText: { fontSize: 13, lineHeight: 17, opacity: 0.78 },
+  // [2026-10-10 chat-bubbles-polish] sem opacity extra (a cor já é a tinta
+  // secundária) e 2 linhas no máximo — citação legível, bloco compacto.
+  replyText: { fontSize: 13.5, lineHeight: 18 },
   bubble: {
     // [bubble-redesign 2026-05-30] Tighter, consistent padding + slightly
     // rounder corners for a WhatsApp/Telegram-grade feel. Vertical padding
@@ -36737,7 +36788,7 @@ const styles = StyleSheet.create({
   // encosta na borda, a bolha dimensiona com a folga. Simétrico o bastante (o
   // paddingHorizontal:14 da bolha domina o visual). Cobre todos os caminhos de
   // render que reusam msgText (texto puro + FormattedText segmentado).
-  msgText: { fontSize: 15.5, lineHeight: 21.5, letterSpacing: 0, paddingRight: 3 },
+  msgText: { fontSize: 16, lineHeight: 21, letterSpacing: 0, paddingRight: 3 }, // [2026-10-10 chat-bubbles-polish] 16/21
   // Time + tick row. Always one line inside the bubble. Minimum width is
   // enforced by bubble.minWidth so the row never wraps and the V never
   // "falls behind" the bubble when the bubble is narrow.
@@ -36750,7 +36801,9 @@ const styles = StyleSheet.create({
     marginTop: 3,
     minHeight: 14,
   },
-  editedLabel: { fontSize: 10, fontStyle: 'italic', opacity: 0.55 },
+  // [2026-10-10 chat-bubbles-polish] "editada" = mesma tinta/tamanho da hora
+  // (WhatsApp/iMessage), sem sublinhado/itálico/opacity extra — segue tocável.
+  editedLabel: { fontSize: 11, fontWeight: '500', letterSpacing: 0.1 },
   msgTime: { fontSize: 11, fontWeight: '500', letterSpacing: 0.1, flexShrink: 0, fontVariant: ['tabular-nums'] },
   // [2026-10-06 wa-look] Floated meta (time+ticks) for ghost-spaced text bubbles.
   msgMetaInline: { position: 'absolute', right: 10, bottom: 6, marginTop: 0 },
@@ -36774,11 +36827,18 @@ const styles = StyleSheet.create({
   // is exactly the dopamine moment.
   reactionChip: {
     flexDirection: 'row', alignItems: 'center', gap: 3,
-    paddingHorizontal: 6, paddingVertical: 1.5, minHeight: 24,
-    borderRadius: 12, borderWidth: 2,
-    ...(Platform.OS === 'web' ? { transition: 'transform 0.18s cubic-bezier(0.34,1.56,0.64,1)', cursor: 'pointer' } : {}),
+    paddingHorizontal: 7, paddingVertical: 1.5, minHeight: 26,
+    borderRadius: 13, borderWidth: 2,
+    // [2026-10-10 chat-bubbles-polish] sombra-fio (≈ hairline) por fora do
+    // anel recortado: o chip "flutua" sobre a borda da bolha nos 2 temas.
+    ...Platform.select({
+      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.10, shadowRadius: 1.5 },
+      android: { elevation: 1 },
+      web: { boxShadow: '0 0 0 0.5px rgba(0,0,0,0.10), 0 1px 2px rgba(0,0,0,0.10)', transition: 'transform 0.18s cubic-bezier(0.34,1.56,0.64,1)', cursor: 'pointer' },
+      default: {},
+    }),
   },
-  reactionEmoji: { fontSize: 13.5 },
+  reactionEmoji: { fontSize: 14 },
   reactionCount: { fontSize: 11, fontWeight: '700', letterSpacing: 0.1 },
   loadMoreBtn: {
     alignSelf: 'center', paddingVertical: Spacing.sm, paddingHorizontal: Spacing.lg,
