@@ -28,7 +28,10 @@ import * as api from '../services/api';
 // native bindings). On mobile this file is never bundled because of the
 // `.web.js` extension.
 import { Room, RoomEvent, Track } from 'livekit-client';
-import { IconEye, IconSend } from '../components/Icons';
+import { IconEye, IconSend, IconHeart } from '../components/Icons';
+// [multi-guest 2026-10-10] Palco multi-convidados também no web.
+import useLiveStage from '../hooks/useLiveStage';
+import LiveGuestStage from '../components/liveGuests/LiveGuestStage';
 import { useLanguage } from '../context/LanguageContext';
 
 // [lives 2026-10-10] Interação no web: comentários em tempo real pelo hub WS
@@ -84,6 +87,7 @@ export default function LiveViewerWeb() {
     avatar: params.hostAvatar ? String(params.hostAvatar) : '',
   });
   const [viewerCount, setViewerCount] = useState(0);
+  const [likesTotal, setLikesTotal] = useState(0); // [lives-engage] total do hub
   const [muted, setMuted] = useState(true); // browsers require muted autoplay
   const [connected, setConnected] = useState(false);
   // [lives 2026-10-10] interação
@@ -103,6 +107,10 @@ export default function LiveViewerWeb() {
 
   // LK refs.
   const lkRoomRef = useRef(null);
+  // [multi-guest] Um <audio> por faixa remota (host + convidados). Antes tudo
+  // ia para UM elemento → com convidado no palco só se ouvia uma pessoa.
+  const extraAudioRef = useRef(new Map()); // trackSid → HTMLAudioElement
+  const mutedRef = useRef(true);
   // Tracks whether we ever successfully attached a remote track. If we did and
   // the room later disconnects (host ended the live / socket dropped), we show
   // an "ended" card instead of an infinite "Conectando à live..." spinner.
@@ -122,6 +130,10 @@ export default function LiveViewerWeb() {
 
   // ─── Cleanup helpers ─────────────────────────────────────────────────
   const teardownLk = useCallback(() => {
+    try {
+      extraAudioRef.current.forEach((el) => { try { el.srcObject = null; el.remove(); } catch {} });
+      extraAudioRef.current.clear();
+    } catch {}
     try {
       if (lkRoomRef.current) {
         lkRoomRef.current.disconnect();
@@ -262,11 +274,17 @@ export default function LiveViewerWeb() {
             videoElRef.current.playsInline = true;
             const playPromise = videoElRef.current.play?.();
             if (playPromise && playPromise.catch) playPromise.catch(() => {});
-          } else if (track.kind === Track.Kind.Audio && audioElRef.current) {
-            track.attach(audioElRef.current);
-            audioElRef.current.muted = muted;
-            const playPromise = audioElRef.current.play?.();
-            if (playPromise && playPromise.catch) playPromise.catch(() => {});
+          } else if (track.kind === Track.Kind.Audio) {
+            const key = track.sid || track.mediaStreamTrack?.id || String(Math.random());
+            if (!extraAudioRef.current.has(key)) {
+              const el = track.attach();
+              el.muted = mutedRef.current;
+              el.style.display = 'none';
+              try { document.body.appendChild(el); } catch {}
+              extraAudioRef.current.set(key, el);
+              const playPromise = el.play?.();
+              if (playPromise && playPromise.catch) playPromise.catch(() => {});
+            }
           }
           setConnected(true);
           wasConnectedRef.current = true;
@@ -283,7 +301,14 @@ export default function LiveViewerWeb() {
       };
 
       room.on(RoomEvent.TrackSubscribed, (track) => attach(track));
-      room.on(RoomEvent.TrackUnsubscribed, () => {
+      room.on(RoomEvent.TrackUnsubscribed, (track) => {
+        try {
+          if (track && track.kind === Track.Kind.Audio) {
+            const key = track.sid || track.mediaStreamTrack?.id;
+            const el = key ? extraAudioRef.current.get(key) : null;
+            if (el) { try { track.detach(el); el.remove(); } catch {} extraAudioRef.current.delete(key); }
+          }
+        } catch {}
         // Re-collect to keep playing if other tracks exist.
         room.remoteParticipants.forEach((p) => {
           p.trackPublications.forEach((pub) => {
@@ -463,7 +488,15 @@ export default function LiveViewerWeb() {
             return;
           }
           case 'live_reaction':
+            if (typeof m.likes_total === 'number') setLikesTotal((v) => Math.max(v, m.likes_total));
             spawnHeart();
+            return;
+          // [lives-engage] estado inicial de curtidas (hub com live_engage.go).
+          case 'live_joined':
+            setTimeout(() => { try { ws.send(JSON.stringify({ type: 'live_engage_state', session_id: sessionId })); } catch {} }, 400);
+            return;
+          case 'live_engage_state':
+            if (typeof m.likes_total === 'number') setLikesTotal((v) => Math.max(v, m.likes_total));
             return;
           case 'live_viewer_count':
             if (typeof m.count === 'number') setViewerCount(m.count);
@@ -543,13 +576,15 @@ export default function LiveViewerWeb() {
     lastHeartSentRef.current.push(now);
     const ws = wsRef.current;
     if (ws && ws.readyState === 1) {
-      try { ws.send(JSON.stringify({ type: 'live_reaction', session_id: sessionId, emoji: 'heart' })); } catch {}
+      try { ws.send(JSON.stringify({ type: 'live_reaction', session_id: sessionId, emoji: 'heart', like: true, count: 1 })); } catch {}
     }
   }, [sessionId, spawnHeart]);
 
   // ─── Unmute on first user gesture ────────────────────────────────────
   const handleUnmute = useCallback(() => {
     setMuted(false);
+    mutedRef.current = false;
+    try { extraAudioRef.current.forEach((el) => { el.muted = false; el.play?.()?.catch?.(() => {}); }); } catch {}
     try { if (videoElRef.current) videoElRef.current.muted = false; } catch {}
     try { if (audioElRef.current) audioElRef.current.muted = false; } catch {}
     try { videoElRef.current?.play?.()?.catch?.(() => {}); } catch {}
@@ -563,6 +598,13 @@ export default function LiveViewerWeb() {
     if (router.canGoBack && router.canGoBack()) router.back();
     else router.replace('/');
   }, [router, teardownLk, teardownHls]);
+
+  // [multi-guest 2026-10-10] Grade TikTok quando há convidados no palco.
+  const _stage = useLiveStage(phase === 'livekit' ? lkRoomRef.current : null, { hostEmail: host.email });
+  const stageTiles = _stage.publishers.slice(0, 5).map((p) => ({
+    key: p.email, email: p.email, name: p.isHost ? (host.name || p.name) : p.name, isHost: p.isHost,
+    videoTrack: p.videoTrack, micMuted: p.micMuted, camOff: p.camOff, speaking: p.speaking,
+  }));
 
   // ─── Render branches ─────────────────────────────────────────────────
 
@@ -628,6 +670,9 @@ export default function LiveViewerWeb() {
         muted,
         style: { display: 'none' },
       })}
+      {phase === 'livekit' && stageTiles.length >= 2 ? (
+        <LiveGuestStage tiles={stageTiles} topInset={0} hostLabel={t('liveGuests.host')} youLabel={t('liveGuests.you')} />
+      ) : null}
 
       {/* Top overlay: host pill + viewer count */}
       <View style={styles.topRow} pointerEvents="box-none">
@@ -653,6 +698,8 @@ export default function LiveViewerWeb() {
         <View style={styles.viewerPill}>
           <IconEye size={16} color="#fff" />
           <Text style={styles.viewerCount}>{viewerCount}</Text>
+          {likesTotal > 0 ? <IconHeart size={14} color="#fff" style={{ marginLeft: 8 }} /> : null}
+          {likesTotal > 0 ? <Text style={styles.viewerCount}>{likesTotal >= 1000 ? (Math.floor(likesTotal / 100) / 10) + 'K' : likesTotal}</Text> : null}
         </View>
       </View>
 

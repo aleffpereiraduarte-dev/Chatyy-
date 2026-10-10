@@ -29,7 +29,16 @@ import LiveSystemChipStack from '../components/live/LiveSystemChipStack';
 import LiveChatOverlay from '../components/live/LiveChatOverlay';
 import LiveCommentInput from '../components/live/LiveCommentInput';
 import LiveJoinPill from '../components/live/LiveJoinPill';
+// [multi-guest 2026-10-10] Palco multi-convidados (TikTok Multi-guest).
+import useLiveStage from '../hooks/useLiveStage';
+import LiveGuestStage from '../components/liveGuests/LiveGuestStage';
+import ViewerJoinSheet from '../components/liveGuests/ViewerJoinSheet';
+import ViewerStageControl from '../components/liveGuests/ViewerStageControl';
 import LiveConnectingOverlay from '../components/live/LiveConnectingOverlay';
+// [lives-engage 2026-10-10] curtidas em lote/top fãs/Q&A/presentes (store externo).
+import LiveEngageLayer from '../components/live/LiveEngageLayer';
+import { useLiveEngageController } from '../components/live/liveEngageStore';
+import { LIVE_GIFTS_ENABLED } from '../components/live/liveEngageConfig';
 import LiveTopGifters from '../components/LiveTopGifters';
 import LiveGiftAnimation from '../components/LiveGiftAnimation';
 import LiveGiftPicker, { IconGiftBox } from '../components/LiveGiftPicker';
@@ -351,6 +360,7 @@ export default function LiveViewerScreen() {
   // Refs
   const remoteVideoRef = useRef(null);
   const wsRef = useRef(null);
+  const likeEngage = useLiveEngageController({ sessionId: paramSessionId, wsRef, me: { email: user?.email, name: user?.name }, isHost: false });
   // Track auth-completion so requestToJoin can wait for it. Without this,
   // tapping "Pedir pra entrar" right after opening the viewer screen sent
   // the WS message before the server's `auth_success` came back — and the
@@ -1441,6 +1451,7 @@ export default function LiveViewerScreen() {
       if (msg && msg.data && typeof msg.data === 'object' && !Array.isArray(msg.data)) {
         msg = { ...msg, ...msg.data };
       }
+      try { likeEngage.onWsMessage(msg); } catch {} // [lives-engage] observador
 
       switch (msg.type) {
         case 'auth_failure':
@@ -1859,6 +1870,15 @@ export default function LiveViewerScreen() {
           if (msg.emoji && msg.emoji !== '❤️' && !msg.isDiamond) {
             spawnHeart(msg.emoji);
           } else {
+            // [lives-engage] hub agrega curtidas: 1 frame = N corações (sem o
+            // próprio eco), espalhados pelos xs do lote.
+            const _n = likeEngage.heartsFor(msg);
+            for (let _i = 1; _i < _n; _i++) {
+              const _xs = Array.isArray(msg.xs) && msg.xs.length ? msg.xs[_i % msg.xs.length] : null;
+              const _c = HEART_COLORS[Math.floor(Math.random() * HEART_COLORS.length)];
+              setTimeout(() => spawnHeart({ x: typeof _xs === 'number' ? Math.max(8, Math.min(SCREEN_W - 8, _xs * SCREEN_W)) : undefined, color: _c }), _i * 90);
+            }
+            if (_n === 0) break;
             const xPx = (typeof msg.x === 'number' && isFinite(msg.x))
               ? Math.max(8, Math.min(SCREEN_W - 8, msg.x * SCREEN_W))
               : undefined;
@@ -2009,6 +2029,11 @@ export default function LiveViewerScreen() {
           }
           break;
         case 'live_guest_removed':
+          // [multi-guest] Host tirou do palco (REST chat_live_cohost_remove).
+          if (msg.by_host) {
+            if (!msg.session_id || String(msg.session_id) === String(paramSessionId)) stageWsRef.current?.onRemoved?.(msg);
+            break;
+          }
           // Host kicked us. Tear down + notify.
           try { guestPcRef.current?.close(); } catch {}
           guestPcRef.current = null;
@@ -2037,9 +2062,22 @@ export default function LiveViewerScreen() {
           // because both sides are wired. User report: "amigo eu mandei o
           // pedido ele aceitou mas n licou a camera e faz colabe abe" was
           // exactly this gate silently dropping the approval.
+          // [multi-guest] chat_user_* é re-entregue no reconnect (ws_event_log):
+          // só vale para ESTA live (aprovação velha de outra live não liga a câmera).
+          if (msg.session_id && String(msg.session_id) !== String(paramSessionId)) break;
+          stageWsRef.current?.onApproved?.(msg);
           (async () => {
             try { await joinCohost(); } catch (e) { console.warn('[Live] joinCohost failed:', e?.message); }
           })();
+          break;
+        // [multi-guest 2026-10-10] Eventos REST→/broadcast do palco.
+        case 'live_join_declined':
+        case 'live_guest_invited':
+        case 'live_guest_muted':
+          if (msg.session_id && String(msg.session_id) !== String(paramSessionId)) break;
+          if (msg.type === 'live_join_declined') stageWsRef.current?.onDeclined?.(msg);
+          else if (msg.type === 'live_guest_invited') stageWsRef.current?.onInvited?.(msg);
+          else stageWsRef.current?.onMuted?.(msg);
           break;
         case 'live_ended':
           // Round 66 (2026-05-18) — issue #8. Previously we auto-router.back'd
@@ -2141,29 +2179,66 @@ export default function LiveViewerScreen() {
   // upstream (token mint, LK module, getUserMedia) fails so the viewer knows
   // why they didn't go live.
   const joinCohost = useCallback(async () => {
-    if (cohostRoomRef.current) return; // already publishing
+    if (cohostRoomRef.current || cohostJoiningRef.current) return; // already publishing / in flight
     if (!paramSessionId) return;
+    cohostJoiningRef.current = true;
     setCohostConnecting(true);
+    const _fail = (key) => {
+      cohostJoiningRef.current = false;
+      setCohostConnecting(false);
+      stageWsRef.current?.onJoinFailed?.(key);
+    };
     let lk;
     try {
       lk = loadLiveKit();
       if (!lk?.Room) throw new Error('LiveKit module unavailable');
     } catch (e) {
-      setCohostConnecting(false);
-      try { require('react-native').Alert.alert(t('live.aoVivo') || 'AO VIVO', t('live.cohostUnavailable') || 'Colab indisponível neste device'); } catch {}
+      _fail('liveGuests.failed');
       return;
     }
+    // [multi-guest 2026-10-10] Permissões ANTES do token (Android não pede
+    // sozinho; sem isso setCameraEnabled lança e o palco nunca abria).
+    if (Platform.OS === 'android') {
+      try {
+        const { PermissionsAndroid } = require('react-native');
+        await PermissionsAndroid.requestMultiple([PermissionsAndroid.PERMISSIONS.CAMERA, PermissionsAndroid.PERMISSIONS.RECORD_AUDIO]);
+      } catch {}
+    }
+    // [multi-guest] BUG raiz "aceitou mas não liga a câmera": apiCall devolve
+    // { success, data:{ token,url } } e aqui lia `res.token` → SEMPRE vazio →
+    // "Token de colab indisponível". Lê `data` (com fallback p/ shape plano).
     let tokenInfo;
     try {
-      tokenInfo = await api.liveCohostToken(paramSessionId);
+      const res = await api.liveCohostToken(paramSessionId);
+      tokenInfo = (res && res.data && res.data.token) ? res.data : res;
     } catch (e) {
       console.warn('[Live] cohost token fetch failed:', e?.message);
     }
     if (!tokenInfo?.token || !tokenInfo?.url) {
-      setCohostConnecting(false);
-      try { require('react-native').Alert.alert(t('live.aoVivo') || 'AO VIVO', t('live.cohostTokenFailed') || 'Token de colab indisponível'); } catch {}
+      _fail('liveGuests.failed');
       return;
     }
+    // iOS/Android: sessão de áudio de chamada (mic + alto-falante) antes de
+    // publicar — o espectador estava só em reprodução.
+    if (Platform.OS !== 'web') {
+      try {
+        const lkrn = require('@livekit/react-native');
+        const AS = lkrn?.AudioSession;
+        if (AS) {
+          if (Platform.OS === 'ios' && typeof AS.setAppleAudioConfiguration === 'function' && typeof lkrn.getDefaultAppleAudioConfigurationForMode === 'function') {
+            await AS.setAppleAudioConfiguration(lkrn.getDefaultAppleAudioConfigurationForMode('localAndRemote', true));
+          } else if (Platform.OS === 'android' && typeof AS.configureAudio === 'function' && lkrn.AndroidAudioTypePresets) {
+            await AS.configureAudio({ android: { preferredOutputList: ['speaker'], audioTypeOptions: lkrn.AndroidAudioTypePresets.communication } });
+          }
+          try { await AS.startAudioSession?.(); } catch {}
+        }
+      } catch (eAs) { console.warn('[Live] guest audio session cfg:', eAs?.message); }
+    }
+    let _layers;
+    try {
+      const lkc = require('livekit-client');
+      if (lkc?.VideoPreset) _layers = [new lkc.VideoPreset(320, 568, 200_000, 15)];
+    } catch {}
     const room = new lk.Room({
       adaptiveStream: true,
       dynacast: true,
@@ -2171,38 +2246,44 @@ export default function LiveViewerScreen() {
         facingMode: 'user',
         resolution: { width: 640, height: 1136, frameRate: 24 },
       },
-      publishDefaults: {
-        videoSimulcastLayers: [
-          { width: 320, height: 568, encoding: { maxBitrate: 200_000, maxFramerate: 15 } },
-          { width: 640, height: 1136, encoding: { maxBitrate: 700_000, maxFramerate: 24 } },
-        ],
-      },
+      publishDefaults: _layers ? { simulcast: true, videoSimulcastLayers: _layers, videoEncoding: { maxBitrate: 800_000, maxFramerate: 24 } } : undefined,
     });
     cohostRoomRef.current = room;
     room.on(lk.RoomEvent.Disconnected, () => {
+      if (cohostRoomRef.current !== room) return;
       cohostRoomRef.current = null;
       cohostLocalTrackRef.current = null;
+      cohostJoiningRef.current = false;
       setCohostPublishing(false);
       setCohostConnecting(false);
     });
     try {
-      await room.connect(tokenInfo.url, tokenInfo.token);
+      // autoSubscribe:false — esta conexão SÓ publica. A sala de espectador já
+      // toca host + convidados; assinar aqui também = áudio em dobro/eco.
+      await room.connect(tokenInfo.url, tokenInfo.token, { autoSubscribe: false });
+      const _want = stageChoiceRef.current || { mic: true, cam: true };
+      // Mic sempre publicado (mesmo mudo) → a pessoa aparece no palco.
       await room.localParticipant.setMicrophoneEnabled(true);
-      await room.localParticipant.setCameraEnabled(true);
+      if (!_want.mic) { try { await room.localParticipant.setMicrophoneEnabled(false); } catch {} }
+      if (_want.cam) {
+        try { await room.localParticipant.setCameraEnabled(true); } catch (eCam) { console.warn('[Live] guest camera publish failed:', eCam?.message); }
+      }
       // Grab the local camera track so we can render the preview pip.
       try {
         const pubs = Array.from(room.localParticipant.videoTrackPublications?.values?.() || []);
         const cameraPub = pubs.find(p => p.source === 'camera' || p.kind === 'video') || pubs[0];
         if (cameraPub?.track) cohostLocalTrackRef.current = cameraPub.track;
       } catch {}
+      setGuestMicOn(!!_want.mic);
+      setGuestCamOn(!!(_want.cam && cohostLocalTrackRef.current));
+      cohostJoiningRef.current = false;
       setCohostPublishing(true);
       setCohostConnecting(false);
     } catch (e) {
       console.warn('[Live] cohost room.connect failed:', e?.message);
       try { room.disconnect(); } catch {}
-      cohostRoomRef.current = null;
-      setCohostConnecting(false);
-      try { require('react-native').Alert.alert(t('live.aoVivo') || 'AO VIVO', t('live.cohostConnectFailed') || 'Falha ao conectar ao colab'); } catch {}
+      if (cohostRoomRef.current === room) cohostRoomRef.current = null;
+      _fail('liveGuests.failed');
     }
   }, [paramSessionId, t]);
 
@@ -2212,10 +2293,147 @@ export default function LiveViewerScreen() {
     cohostLocalTrackRef.current = null;
     setCohostPublishing(false);
     setCohostConnecting(false);
+    cohostJoiningRef.current = false;
     if (room) {
       try { room.disconnect(); } catch {}
     }
   }, []);
+
+  // ─── [multi-guest 2026-10-10] Palco: pedir / cancelar / convite / sair ───
+  // Estados do espectador: idle → pending (pedido enviado) → connecting →
+  // live (no palco). Sinalização 100% REST (o hub Go descarta os WS crus
+  // live_join_request/approve/deny). O host aprova; o servidor checa teto de
+  // 4 convidados, ban/bloqueio, público da live e consentimento.
+  const cohostJoiningRef = useRef(false);
+  const stageChoiceRef = useRef({ mic: true, cam: true });
+  const stageWsRef = useRef(null);
+  const stageNoticeTimerRef = useRef(null);
+  const [stageSheet, setStageSheet] = useState(null); // null | 'request' | 'invite'
+  const [stageInviteHost, setStageInviteHost] = useState('');
+  const [stageBusy, setStageBusy] = useState(false);
+  const [stageNotice, setStageNotice] = useState('');
+  const [guestMicOn, setGuestMicOn] = useState(true);
+  const [guestCamOn, setGuestCamOn] = useState(true);
+  const flashStageNotice = useCallback((text) => {
+    if (stageNoticeTimerRef.current) clearTimeout(stageNoticeTimerRef.current);
+    setStageNotice(text || '');
+    stageNoticeTimerRef.current = setTimeout(() => { stageNoticeTimerRef.current = null; setStageNotice(''); }, 4000);
+  }, []);
+  useEffect(() => () => { if (stageNoticeTimerRef.current) clearTimeout(stageNoticeTimerRef.current); }, []);
+  // (stageState é calculado no render, depois da declaração de joinRequested.)
+  const _stageReason = (res) => String(res?.data?.reason || '');
+  const confirmStageSheet = useCallback(async ({ mic, cam }) => {
+    stageChoiceRef.current = { mic: !!mic, cam: !!cam };
+    if (!paramSessionId) return;
+    setStageBusy(true);
+    try {
+      if (stageSheet === 'invite') {
+        const res = await api.liveGuestInviteRespond(paramSessionId, true);
+        if (res?.success) {
+          setStageSheet(null);
+          joinCohost().catch(() => {});
+        } else {
+          setStageSheet(null);
+          flashStageNotice(_stageReason(res) === 'guests_full' ? t('liveGuests.stageFull') : t('liveGuests.failed'));
+        }
+        return;
+      }
+      const res = await api.liveCohostRequest(paramSessionId, displayHostEmail);
+      if (res?.success) {
+        setStageSheet(null);
+        if (res?.data?.already_guest) { joinCohost().catch(() => {}); return; }
+        setJoinRequested(true);
+        try { require('../services/haptics').selection(); } catch {}
+        // Pedido sem resposta some em 2 min (o host pode nunca abrir o painel).
+        if (joinSentResetTimerRef.current) clearTimeout(joinSentResetTimerRef.current);
+        joinSentResetTimerRef.current = setTimeout(() => { joinSentResetTimerRef.current = null; setJoinRequested(false); }, 120000);
+      } else {
+        setStageSheet(null);
+        const r = _stageReason(res);
+        flashStageNotice(r === 'guests_full' ? t('liveGuests.stageFull') : r === 'not_watching' ? t('liveGuests.notWatching') : t('liveGuests.failed'));
+      }
+    } catch {
+      flashStageNotice(t('liveGuests.failed'));
+    } finally {
+      setStageBusy(false);
+    }
+  }, [paramSessionId, stageSheet, displayHostEmail, joinCohost, flashStageNotice, t]);
+  const declineStageInvite = useCallback(() => {
+    setStageSheet(null);
+    if (paramSessionId) api.liveGuestInviteRespond(paramSessionId, false).catch(() => {});
+  }, [paramSessionId]);
+  const cancelStageRequest = useCallback(() => {
+    setJoinRequested(false);
+    if (joinSentResetTimerRef.current) { clearTimeout(joinSentResetTimerRef.current); joinSentResetTimerRef.current = null; }
+    if (paramSessionId) api.liveCohostCancel(paramSessionId).catch(() => {});
+  }, [paramSessionId]);
+  const leaveStage = useCallback(() => {
+    leaveCohost();
+    setJoinRequested(false);
+    if (paramSessionId) api.liveCohostRemove(paramSessionId).catch(() => {});
+    flashStageNotice(t('liveGuests.removed'));
+  }, [paramSessionId, leaveCohost, flashStageNotice, t]);
+  const toggleGuestMic = useCallback(async () => {
+    const lp = cohostRoomRef.current?.localParticipant;
+    if (!lp) return;
+    const next = !guestMicOn;
+    setGuestMicOn(next);
+    try { await lp.setMicrophoneEnabled(next); } catch { setGuestMicOn(!next); }
+  }, [guestMicOn]);
+  const toggleGuestCam = useCallback(async () => {
+    const lp = cohostRoomRef.current?.localParticipant;
+    if (!lp) return;
+    const next = !guestCamOn;
+    setGuestCamOn(next);
+    try {
+      await lp.setCameraEnabled(next);
+      if (next) {
+        const pubs = Array.from(lp.videoTrackPublications?.values?.() || []);
+        const cameraPub = pubs.find(p => p.source === 'camera' || p.kind === 'video') || pubs[0];
+        if (cameraPub?.track) cohostLocalTrackRef.current = cameraPub.track;
+      }
+    } catch { setGuestCamOn(!next); }
+  }, [guestCamOn]);
+  // Handlers chamados pelo ws.onmessage (closure antiga) via ref.
+  stageWsRef.current = {
+    onApproved: () => {
+      setJoinRequested(false);
+      if (joinSentResetTimerRef.current) { clearTimeout(joinSentResetTimerRef.current); joinSentResetTimerRef.current = null; }
+    },
+    onDeclined: () => { setJoinRequested(false); flashStageNotice(t('liveGuests.declined')); },
+    onInvited: (m) => {
+      if (cohostRoomRef.current || cohostJoiningRef.current) return;
+      setStageInviteHost(m?.host_name || '');
+      setStageSheet('invite');
+      try { require('react-native').Vibration.vibrate(60); } catch {}
+    },
+    onRemoved: () => { leaveCohost(); setJoinRequested(false); flashStageNotice(t('liveGuests.removedByHost')); },
+    onMuted: (m) => {
+      const lp = cohostRoomRef.current?.localParticipant;
+      if (m?.kind === 'video') {
+        setGuestCamOn(false);
+        try { lp?.setCameraEnabled(false); } catch {}
+        flashStageNotice(t('liveGuests.camOffByHost'));
+      } else {
+        setGuestMicOn(false);
+        try { lp?.setMicrophoneEnabled(false); } catch {}
+        flashStageNotice(t('liveGuests.mutedByHost'));
+      }
+    },
+    onJoinFailed: (key) => flashStageNotice(t(key || 'liveGuests.failed')),
+  };
+  // Saiu da tela no palco → avisa o servidor (libera a vaga na hora).
+  // Saiu com pedido pendente → cancela (o host não aprova alguém que já foi embora).
+  const stageLiveRef = useRef(false);
+  const stagePendingRef = useRef(false);
+  useEffect(() => { stageLiveRef.current = !!cohostPublishing; }, [cohostPublishing]);
+  useEffect(() => () => {
+    if (!paramSessionId) return;
+    try {
+      if (stageLiveRef.current) api.liveCohostRemove(paramSessionId).catch(() => {});
+      else if (stagePendingRef.current) api.liveCohostCancel(paramSessionId).catch(() => {});
+    } catch {}
+  }, [paramSessionId]);
 
   const handleOffer = useCallback(async (msg) => {
     if (!msg.sdp) return;
@@ -2518,6 +2736,9 @@ export default function LiveViewerScreen() {
     const color = HEART_COLORS[Math.floor(Math.random() * HEART_COLORS.length)];
     spawnHeart({ color });
     popHeartButton();
+    // [lives-engage] curtida em lote (hub soma e devolve likes_total).
+    likeEngage.queueLike({ x: (SCREEN_W - 56) / SCREEN_W, color });
+    if (likeEngage) return;
 
     const now = Date.now();
     if (now - lastReactionSendAtRef.current < 300) return;
@@ -2555,6 +2776,9 @@ export default function LiveViewerScreen() {
   const handleStageHeartSpam = useCallback((tapX, tapY) => {
     const color = HEART_COLORS[Math.floor(Math.random() * HEART_COLORS.length)];
     spawnHeart({ x: tapX, y: tapY, color });
+    // [lives-engage] curtida em lote (cada toque conta no total do host).
+    likeEngage.queueLike({ x: tapX / SCREEN_W, color });
+    if (likeEngage) return;
     const now = Date.now();
     if (now - lastReactionSendAtRef.current < 300) return;
     lastReactionSendAtRef.current = now;
@@ -2927,6 +3151,8 @@ export default function LiveViewerScreen() {
       if (i++ >= 8) return;
       spawnHeart();
       popHeartButton();
+      likeEngage.queueLike({}); // [lives-engage] lote
+      if (likeEngage) { setTimeout(fire, 90); return; }
       // Coalesce WS sends through the same 200ms throttle the single-tap uses.
       // Locally we still spawn the burst so the viewer sees rich feedback,
       // but the WS channel sees at most 1 reaction packet per 200ms — server
@@ -3146,6 +3372,30 @@ export default function LiveViewerScreen() {
       </View>
     );
   };
+
+  // [multi-guest 2026-10-10] Palco a partir da sala de espectador (re-render
+  // ao trocar de sala: lkTracks muda junto). Tiles: host primeiro, convidados,
+  // e o próprio espectador quando no palco (prévia local, sem eco).
+  const _stage = useLiveStage(lkViewerRoomRef.current, { hostEmail: displayHostEmail, selfEmail: user?.email });
+  const stageState = cohostPublishing ? 'live' : (cohostConnecting ? 'connecting' : (joinRequested ? 'pending' : 'idle'));
+  stagePendingRef.current = stageState === 'pending';
+  const stageTiles = (() => {
+    const tiles = [];
+    for (const p of _stage.publishers) {
+      if (p.isSelf) continue;
+      tiles.push({ key: p.email, email: p.email, name: p.isHost ? (displayHostName || p.name) : p.name, isHost: p.isHost, videoTrack: p.videoTrack, micMuted: p.micMuted, camOff: p.camOff, speaking: p.speaking });
+    }
+    if (cohostPublishing || cohostConnecting) {
+      const me = String(user?.email || '').toLowerCase();
+      tiles.push({
+        key: 'self:' + me, email: me, name: user?.name || me.split('@')[0], isSelf: true,
+        videoTrack: guestCamOn ? cohostLocalTrackRef.current : null, mirror: true,
+        micMuted: !guestMicOn, camOff: !guestCamOn || !cohostLocalTrackRef.current, speaking: false,
+      });
+    }
+    return tiles.slice(0, 5);
+  })();
+  const showStageGrid = streamType === 'livekit' && stageTiles.length >= 2;
 
   // Polished: gradient backdrop (purple → black), bigger avatar with soft
   // ring, primary action = "Follow" (returning fans get "Ver perfil" instead),
@@ -3420,6 +3670,10 @@ export default function LiveViewerScreen() {
             // subscribes us to a 2nd (or Nth) video track; we then lay the
             // tiles out in a grid and PIN the host's tile first by matching the
             // participant identity to the host email.
+            // [multi-guest 2026-10-10] 2+ no palco → grade TikTok (nomes, quem fala).
+            if (showStageGrid) {
+              return <LiveGuestStage tiles={stageTiles} topInset={insets.top} hostLabel={t('liveGuests.host')} youLabel={t('liveGuests.you')} />;
+            }
             const _videos = lkTracks.filter(t => t.kind === 'video' && t.track);
             if (_videos.length === 0) return (
               <View style={[StyleSheet.absoluteFill, styles.preStreamFallback]}>
@@ -3647,9 +3901,12 @@ export default function LiveViewerScreen() {
         onPressViewers={() => setShowViewersList(true)}
         /* [2026-05-22 monetization-pause] hidden by MONETIZATION_ENABLED flag —
            "More" button used to open the gift picker. */
-        onPressMore={DIAMONDS_ENABLED ? () => setGiftPickerVisible(true) : undefined}
+        onPressMore={LIVE_GIFTS_ENABLED ? () => likeEngage.openSheet('gift') : undefined}
         onPressShare={handleShare}
         onClose={() => router.back()}
+        engage={likeEngage}
+        myEmail={user?.email}
+        showFollow
       />
 
       {/* Connection-quality bars — only render when quality drops below
@@ -3723,6 +3980,10 @@ export default function LiveViewerScreen() {
 
       {/* System chip stack (joins/leaves) — left-bottom floating column.
           Replaces the old inline "X entrou" rows in the chat overlay. */}
+      {/* [lives-engage] banners de presente + combo, presente tela cheia,
+          pergunta destacada e sheets (top fãs / Q&A / presentes). */}
+      <LiveEngageLayer engage={likeEngage} isHost={false} topInset={insets.top} />
+
       <LiveSystemChipStack
         items={systemEvents}
         bottom={Math.max(insets.bottom + 200, 220)}
@@ -3744,7 +4005,8 @@ export default function LiveViewerScreen() {
         onToggleChat={() => setChatHidden(h => !h)}
         onSnapshot={handleScreenshot}
         onShare={handleShare}
-        onMore={DIAMONDS_ENABLED ? () => setGiftPickerVisible(true) : undefined}
+        onMore={LIVE_GIFTS_ENABLED ? () => likeEngage.openSheet('gift') : undefined}
+        engage={likeEngage}
         i18n={{
           like: t('live.like') || 'Curtir',
           showChat: t('live.showChat') || 'Mostrar chat',
@@ -3760,7 +4022,7 @@ export default function LiveViewerScreen() {
           in a thin "AO VIVO" badge so the user sees they're broadcasting,
           plus a leave button. Top-left position so it doesn't overlap with
           the right rail (likes/chat) or the bottom comment input. */}
-      {(cohostPublishing || cohostConnecting) ? (
+      {(cohostPublishing || cohostConnecting) && !showStageGrid ? (
         <View
           pointerEvents="box-none"
           style={{
@@ -3842,7 +4104,7 @@ export default function LiveViewerScreen() {
             {t('live.youAreLive') || 'Você está ao vivo'}
           </Text>
           <TouchableOpacity
-            onPress={leaveCohost}
+            onPress={leaveStage}
             activeOpacity={0.7}
             style={{
               marginTop: 6,
@@ -3998,6 +4260,8 @@ export default function LiveViewerScreen() {
               }}
               hasMore={chatMessages.length > 5}
               seeAllLabel={t('live.seeAllComments') || 'Ver todos os comentários'}
+              hostEmail={displayHostEmail}
+              engage={likeEngage}
             />
             {/* Round 64 (2026-05-18) — removed the 3-band manual gradient that
                 stacked on top of LiveChatOverlay's internal SVG TopFadeGradient,
@@ -4011,13 +4275,21 @@ export default function LiveViewerScreen() {
 
         {/* "Pedir pra entrar" pill — sits above the comment input. Hidden if
             the chat is hidden (no input shown anyway). */}
-        {!chatHidden ? (
+        {(!chatHidden || stageState === 'live' || stageState === 'connecting') ? (
           <View style={styles.joinPillRow}>
-            <LiveJoinPill
-              joinRequested={joinRequested}
-              onPress={requestToJoin}
-              label={t('live.requestToJoin') || 'Pedir pra entrar'}
-              sentLabel={t('live.requestSent') || 'Pedido enviado'}
+            {/* [multi-guest 2026-10-10] pedir (com prévia) / pendente+cancelar /
+                entrando / no palco (mic, câmera, sair). */}
+            <ViewerStageControl
+              state={stageState}
+              t={t}
+              notice={stageNotice}
+              onRequest={() => { if (!user?.email) { flashStageNotice(t('liveGuests.failed')); return; } setStageSheet('request'); }}
+              onCancel={cancelStageRequest}
+              onLeave={leaveStage}
+              micOn={guestMicOn}
+              camOn={guestCamOn}
+              onToggleMic={toggleGuestMic}
+              onToggleCam={toggleGuestCam}
             />
           </View>
         ) : null}
@@ -4033,7 +4305,7 @@ export default function LiveViewerScreen() {
             onHeartTap={handleHeartTap}
             onHeartLongPress={handleHeartLongPress}
             /* [2026-05-22 monetization-pause] hidden by MONETIZATION_ENABLED flag */
-            onGiftPress={DIAMONDS_ENABLED ? () => setGiftPickerVisible(true) : undefined}
+            onGiftPress={LIVE_GIFTS_ENABLED ? () => likeEngage.openSheet('gift') : undefined}
             onFocus={() => setInputFocused(true)}
             onBlur={() => setInputFocused(false)}
             focused={inputFocused}
@@ -4313,6 +4585,22 @@ export default function LiveViewerScreen() {
           {t('live.entering') || 'Entrando…'}
         </Text>
       </Animated.View>
+      {/* [multi-guest 2026-10-10] Prévia + pedido / convite do host. */}
+      <ViewerJoinSheet
+        visible={!!stageSheet}
+        mode={stageSheet === 'invite' ? 'invite' : 'request'}
+        hostName={stageSheet === 'invite' ? (stageInviteHost || displayHostName) : displayHostName}
+        hostEmail={displayHostEmail}
+        user={user}
+        busy={stageBusy}
+        t={t}
+        bottomInset={insets.bottom}
+        initialMic={stageChoiceRef.current.mic}
+        initialCam={stageChoiceRef.current.cam}
+        onClose={() => { if (stageSheet === 'invite') declineStageInvite(); else setStageSheet(null); }}
+        onConfirm={confirmStageSheet}
+        onDeclineInvite={declineStageInvite}
+      />
     </Animated.View>
   );
 }

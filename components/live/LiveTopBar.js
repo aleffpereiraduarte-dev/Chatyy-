@@ -23,6 +23,10 @@ import {
 import AvatarCircle from '../AvatarCircle';
 import { IconX, IconShare, IconMoreVert, IconEye } from '../Icons';
 import AnimatedViewerCount from '../AnimatedViewerCount';
+// [lives-engage 2026-10-10] Seguir no chip do host + total de curtidas + top fãs.
+import LiveFollowButton from './LiveFollowButton';
+import { LiveTopFansStack } from './LiveTopFans';
+import { LiveLikesChip } from './LiveEngageLayer';
 
 const LIVE_RED = '#dc2626';
 
@@ -50,6 +54,9 @@ export default function LiveTopBar({
   onPressMore,
   onPressShare,
   onClose,
+  engage = null,      // liveEngageStore controller (opcional)
+  myEmail = '',
+  showFollow = false,
 }) {
   // Pulsing dot for LIVE pill — Animated.loop, runs while mounted.
   const dotPulse = useRef(new Animated.Value(1)).current;
@@ -117,7 +124,10 @@ export default function LiveTopBar({
       </TouchableOpacity>
 
       <View style={styles.midBlock} pointerEvents="box-none">
-        <Text style={styles.hostName} numberOfLines={1}>{hostName || '…'}</Text>
+        <View style={styles.nameRow} pointerEvents="box-none">
+          <Text style={styles.hostName} numberOfLines={1}>{hostName || '…'}</Text>
+          {showFollow && hostEmail ? <LiveFollowButton hostEmail={hostEmail} myEmail={myEmail} /> : null}
+        </View>
         <View style={styles.metaRow}>
           <View style={styles.livePill}>
             <Animated.View style={[styles.livePillDot, { opacity: dotPulse }]} />
@@ -151,11 +161,13 @@ export default function LiveTopBar({
               <Text style={styles.plusOneText}>+1</Text>
             </Animated.View>
           </Animated.View>
+          {engage ? <LiveLikesChip engage={engage} /> : null}
         </View>
       </View>
 
       {/* RIGHT cluster — circular blur backdrop buttons */}
       <View style={styles.rightCluster}>
+        {engage ? <LiveTopFansStack engage={engage} size={26} /> : null}
         <TouchableOpacity onPress={onPressMore} style={styles.iconBtn} activeOpacity={0.7} accessibilityRole="button" accessibilityLabel="More">
           <IconMoreVert size={18} color="#fff" />
         </TouchableOpacity>
@@ -222,7 +234,13 @@ const styles = StyleSheet.create({
     marginLeft: 4,
     justifyContent: 'center',
   },
+  nameRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
   hostName: {
+    flexShrink: 1,
     color: '#fff',
     fontSize: 13,
     fontWeight: '800',

@@ -8,11 +8,12 @@
  * Each chip drives its own animated entrance/exit (no re-render storms).
  */
 
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   View, Text, StyleSheet, Platform, Animated,
 } from 'react-native';
 import AvatarCircle from '../AvatarCircle';
+import { useLanguage } from '../../context/LanguageContext';
 
 const ACCENT = '#111111';
 
@@ -67,16 +68,67 @@ function Chip({ item, onDismiss }) {
   );
 }
 
+// [lives-engage 2026-10-10] Entradas com vazão controlada (TikTok): no
+// máximo 1 chip novo a cada PUMP_MS; entradas que chegam no intervalo viram
+// "Fulano e mais N entraram". Live cheia não vira cascata de chips.
+const PUMP_MS = 1400;
+const MAX_VISIBLE = 2;
+
 export default function LiveSystemChipStack({ items = [], bottom, onDismiss }) {
-  // Cap visible chips at 4 — older ones fall off the stack visually.
-  const visible = items.slice(-4);
+  const { t } = useLanguage();
+  const [shown, setShown] = useState([]);
+  const seenRef = useRef(new Set());
+  const pendingRef = useRef([]);
+  const timerRef = useRef(null);
+  const lastPumpRef = useRef(0);
+  const onDismissRef = useRef(onDismiss);
+  onDismissRef.current = onDismiss;
+  const tRef = useRef(t);
+  tRef.current = t;
+
+  const pump = useRef(() => {
+    timerRef.current = null;
+    const batch = pendingRef.current;
+    if (!batch.length) return;
+    pendingRef.current = [];
+    lastPumpRef.current = Date.now();
+    const head = batch[batch.length - 1];
+    const extra = batch.length - 1;
+    const chip = extra > 0
+      ? { ...head, id: head.id + '_agg' + extra, text: tRef.current('liveEng.andOthersJoined').replace('{n}', String(extra)) }
+      : head;
+    setShown(prev => [...prev, chip].slice(-MAX_VISIBLE));
+    // O pai só precisa do array enxuto — avisa que os itens foram consumidos.
+    batch.forEach(it => { try { onDismissRef.current?.(it.id); } catch {} });
+  }).current;
+
+  useEffect(() => {
+    let added = false;
+    for (const it of items) {
+      if (!it || seenRef.current.has(it.id)) continue;
+      seenRef.current.add(it.id);
+      pendingRef.current.push(it);
+      added = true;
+    }
+    if (seenRef.current.size > 500) seenRef.current = new Set(items.map(i => i.id));
+    if (!added || timerRef.current) return;
+    const wait = Math.max(0, PUMP_MS - (Date.now() - lastPumpRef.current));
+    timerRef.current = setTimeout(pump, wait);
+  }, [items, pump]);
+
+  useEffect(() => () => { if (timerRef.current) clearTimeout(timerRef.current); }, []);
+
+  const dismissShown = useCallback((id) => {
+    setShown(prev => prev.filter(x => x.id !== id));
+  }, []);
+
   return (
     <View
       pointerEvents="none"
       style={[styles.stack, { bottom }]}
     >
-      {visible.map(it => (
-        <Chip key={it.id} item={it} onDismiss={onDismiss} />
+      {shown.map(it => (
+        <Chip key={it.id} item={it} onDismiss={dismissShown} />
       ))}
     </View>
   );

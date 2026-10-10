@@ -1,135 +1,109 @@
 /**
  * LiveChatOverlay — TikTok-grade floating comment stream over the video.
  *
- * Renders the last N (default 6) chat messages bottom-up.
+ * [lives-engage 2026-10-10] Reescrito sobre ScrollView:
+ *   • Rola de verdade (últimas 40 mensagens) com auto-scroll suave quando o
+ *     usuário está no fim; se ele rolou pra cima, o fluxo NÃO pula e aparece
+ *     a pílula "N novas" (toque → desce até o fim).
+ *   • Selos P&B: HOST (branco sólido), MOD / CONVIDADO (contorno), #1-#3 para
+ *     os top fãs da live (ranking do hub).
+ *   • Menções: "@nome" em negrito; menção a VOCÊ destaca a linha inteira.
+ *   • Presente no chat (só com presentes ligados): pílula branca com a arte SVG.
  *
- * Features (#921 round):
- *   • Each row slides up from bottom with spring entrance (entry anim).
- *   • Stack alpha — older msgs fade as new ones come.
- *   • Username CHIP COLORED by tier: gold (gifter), purple (host), default.
- *   • Tap on row → @reply pre-fills input (onPressMessage).
- *   • Long-press → host can pin (onLongPressHost) or remove (onRequestRemove).
- *   • System "X entrou" chips inline w/ mini avatar (purple glass pill).
- *   • Gift chip — golden chip with sparkle + amount badge.
- *   • Heart float chip on side when msg has reactions (double-tap).
- *
- * Pure presentation. All animation values come from parent message objects;
- * parent owns timeline + WS plumbing.
+ * Contrato de props antigo mantido (messages, commentHearts, onPressMessage,
+ * onOpenSheet, onLongPressHost, isHostView, hasMore, seeAllLabel, hostEmail);
+ * novos opcionais: engage (store de engajamento), modEmails.
  */
 
-import { memo, useMemo } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  View, Text, TouchableOpacity, StyleSheet, Platform, Animated,
+  View, Text, TouchableOpacity, StyleSheet, Platform, Animated, ScrollView, Dimensions,
 } from 'react-native';
-import Svg, { Defs, LinearGradient as SvgLinearGradient, Stop, Rect } from 'react-native-svg';
 import AvatarCircle from '../AvatarCircle';
-import { IconHeart, IconStar, IconUserPlus, IconStarFilled } from '../Icons';
+import { IconHeart, IconUserPlus, IconChevronDown } from '../Icons';
 import formatLiveChatContent from '../../utils/formatLiveChatContent';
+import { useLanguage } from '../../context/LanguageContext';
+import { useAuth } from '../../context/AuthContext';
+import LiveGiftGlyph from './LiveGiftGlyph';
+import { giftMeta, giftLabel } from './liveEngageConfig';
+import { useEngageSelector, selTopFans } from './liveEngageStore';
 
-// Tier accent — matches the rest of the live UI brand palette.
-const LIVE_RED = '#dc2626';
-const TIER_HOST = '#111111';     // purple chip behind host name
-const TIER_GIFT = '#fbbf24';     // gold chip for paying viewers
-const TIER_GUEST = '#22d3ee';    // cyan for co-host (post-approval)
-const TIER_DEFAULT = 'rgba(255,255,255,0.16)';
+const MAX_ROWS = 40;
+const MENTION_RE = /(@[A-Za-z0-9_.\-À-ɏ]+)/g;
 
-function chipForTier(tier) {
-  if (tier === 'host') return TIER_HOST;
-  if (tier === 'gift' || tier === 'gifter') return TIER_GIFT;
-  if (tier === 'guest' || tier === 'cohost') return TIER_GUEST;
-  return TIER_DEFAULT;
+function entryStyle(entry) {
+  if (!entry) return null;
+  return {
+    opacity: entry,
+    transform: [
+      { translateY: entry.interpolate({ inputRange: [0, 1], outputRange: [14, 0] }) },
+      { scale: entry.interpolate({ inputRange: [0, 1], outputRange: [0.94, 1] }) },
+    ],
+  };
 }
 
-// SVG-backed top fade so messages "exit" softly at the top of the column
-// instead of getting hard-cropped by the parent's mask. We use SVG because
-// expo-linear-gradient isn't in the dep tree; react-native-svg is already
-// imported across the app and renders identically on iOS + Android + web.
-// The fade is positioned absolutely and pointerEvents='none' so it never
-// eats taps on the rows underneath.
-const TopFadeGradient = memo(function TopFadeGradient({ width = 280, height = 56 }) {
+function renderWithMentions(text, meTokens) {
+  const parts = String(text || '').split(MENTION_RE);
+  let mentionsMe = false;
+  const nodes = parts.map((p, i) => {
+    if (i % 2 === 1) {
+      const tok = p.slice(1).toLowerCase();
+      const me = meTokens.has(tok);
+      if (me) mentionsMe = true;
+      return <Text key={i} style={[styles.mention, me && styles.mentionMe]}>{p}</Text>;
+    }
+    return p;
+  });
+  return { nodes, mentionsMe };
+}
+
+const Badge = memo(function Badge({ label, solid }) {
   return (
-    <View
-      pointerEvents="none"
-      style={{
-        position: 'absolute', top: -4, left: 0, right: 0, height,
-      }}
-    >
-      <Svg width="100%" height={height} viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none">
-        <Defs>
-          <SvgLinearGradient id="liveChatTopFade" x1="0" y1="0" x2="0" y2="1">
-            <Stop offset="0" stopColor="#000" stopOpacity="0.85" />
-            <Stop offset="0.55" stopColor="#000" stopOpacity="0.35" />
-            <Stop offset="1" stopColor="#000" stopOpacity="0" />
-          </SvgLinearGradient>
-        </Defs>
-        <Rect x="0" y="0" width={width} height={height} fill="url(#liveChatTopFade)" />
-      </Svg>
+    <View style={[styles.badge, solid ? styles.badgeSolid : styles.badgeLine]}>
+      <Text style={[styles.badgeText, solid && styles.badgeTextSolid]}>{label}</Text>
     </View>
   );
 });
 
-// [7184 / #1346 fix 2026-05-25] Live chat content cleaner now lives in
-// utils/formatLiveChatContent.js so the floating overlay AND the expanded
-// comment sheet (app/live-viewer.js) + pinned chips share ONE source of
-// truth. Previously this was a local copy and the sheet rendered raw, so
-// invite URLs (incl. scheme-less chatyy.com.br/g|j/<token>) leaked through.
-
-// CommentRow — memoized so the row only re-reconciles when its own props
-// change (entry anim value, content, tier). Without this every parent
-// render (countdown tick, viewer count, heart anim) rebuilt all rows.
 const CommentRow = memo(function CommentRow({
-  m, stackAlpha, isHostView, onPressMessage, onLongPressHost,
-  hostEmail, commentHearts,
+  m, isHostView, onPressMessage, onLongPressHost, role, fanRank, heartAnim, meTokens, labels,
 }) {
-  const entry = m.entry;
-  const opacity = entry
-    ? entry.interpolate({ inputRange: [0, 1], outputRange: [0, stackAlpha] })
-    : stackAlpha;
-  const translateY = entry
-    ? entry.interpolate({ inputRange: [0, 1], outputRange: [14, 0] })
-    : 0;
-  const scale = entry
-    ? entry.interpolate({ inputRange: [0, 1], outputRange: [0.92, 1] })
-    : 1;
-
-  const tier = m.tier || (hostEmail && (m.email || '').toLowerCase() === hostEmail.toLowerCase() ? 'host' : 'default');
-  const chipBg = chipForTier(tier);
-  const heartAnim = commentHearts[m.id];
-
+  const { nodes, mentionsMe } = useMemo(
+    () => renderWithMentions(formatLiveChatContent(m.content), meTokens),
+    [m.content, meTokens],
+  );
   return (
-    <Animated.View style={{ opacity, transform: [{ translateY }, { scale }] }}>
+    <Animated.View style={entryStyle(m.entry)}>
       <TouchableOpacity
-        onPress={(e) => { e.stopPropagation?.(); onPressMessage?.(m); }}
+        onPress={() => onPressMessage?.(m)}
         onLongPress={isHostView ? () => onLongPressHost?.(m) : undefined}
         delayLongPress={350}
         activeOpacity={0.7}
         accessibilityRole="button"
-        accessibilityLabel={`Reply to ${m.name}`}
-        style={styles.row}
+        accessibilityLabel={`${labels.reply} ${m.name}`}
+        style={[styles.row, mentionsMe && styles.rowMention]}
       >
         <AvatarCircle name={m.name} email={m.email} size={26} />
         <View style={styles.body}>
-          <View style={[styles.nameChip, { backgroundColor: chipBg }]}>
-            <Text style={styles.name} numberOfLines={1}>{m.name}</Text>
-            {tier === 'host' ? <Text style={styles.tierBadge}>HOST</Text> : null}
-            {tier === 'gift' ? <IconStarFilled size={12} color="#FFD700" /> : null}
-            {(tier === 'guest' || tier === 'cohost') ? <Text style={styles.tierBadge}>COLAB</Text> : null}
+          <View style={styles.nameLine}>
+            <Text style={[styles.name, role === 'host' && styles.nameHost]} numberOfLines={1}>{m.name}</Text>
+            {role === 'host' ? <Badge label={labels.host} solid /> : null}
+            {role === 'mod' ? <Badge label={labels.mod} /> : null}
+            {role === 'guest' ? <Badge label={labels.guest} /> : null}
+            {fanRank ? <Badge label={`#${fanRank}`} /> : null}
           </View>
-          <Text style={styles.text} numberOfLines={3}>{formatLiveChatContent(m.content)}</Text>
+          <Text style={styles.text} numberOfLines={4}>{nodes}</Text>
         </View>
         {heartAnim ? (
           <Animated.View
             pointerEvents="none"
-            style={[
-              styles.heartChip,
-              {
-                opacity: heartAnim,
-                transform: [
-                  { scale: heartAnim.interpolate({ inputRange: [0, 1], outputRange: [0.4, 1] }) },
-                  { translateY: heartAnim.interpolate({ inputRange: [0, 1], outputRange: [10, -4] }) },
-                ],
-              },
-            ]}
+            style={[styles.heartChip, {
+              opacity: heartAnim,
+              transform: [
+                { scale: heartAnim.interpolate({ inputRange: [0, 1], outputRange: [0.4, 1] }) },
+                { translateY: heartAnim.interpolate({ inputRange: [0, 1], outputRange: [10, -4] }) },
+              ],
+            }]}
           >
             <IconHeart size={14} color="#fff" />
           </Animated.View>
@@ -139,22 +113,9 @@ const CommentRow = memo(function CommentRow({
   );
 });
 
-const SystemRow = memo(function SystemRow({ m, stackAlpha }) {
-  const entry = m.entry;
-  const opacity = entry
-    ? entry.interpolate({ inputRange: [0, 1], outputRange: [0, stackAlpha] })
-    : stackAlpha;
-  const translateY = entry
-    ? entry.interpolate({ inputRange: [0, 1], outputRange: [14, 0] })
-    : 0;
-  const scale = entry
-    ? entry.interpolate({ inputRange: [0, 1], outputRange: [0.92, 1] })
-    : 1;
+const SystemRow = memo(function SystemRow({ m }) {
   return (
-    <Animated.View
-      style={[styles.systemRow, { opacity, transform: [{ translateY }, { scale }] }]}
-      pointerEvents="none"
-    >
+    <Animated.View style={[styles.systemRow, entryStyle(m.entry)]} pointerEvents="none">
       <View style={styles.systemPill}>
         {m.email ? (
           <View style={styles.systemAvatarWrap}>
@@ -165,12 +126,6 @@ const SystemRow = memo(function SystemRow({ m, stackAlpha }) {
         )}
         <Text style={styles.systemText} numberOfLines={1}>
           <Text style={styles.systemName}>{m.name}</Text>
-          {/* BUG #1346 (7184, 2026-05-26): system/join rows were dumping the
-              raw payload (`m.text || m.content`) — when that payload was a
-              Chatyy invite/deep-link or any URL it showed as a 40-60 char raw
-              link instead of readable text. Route it through the same cleaner
-              the MessageRow + comment sheet use so URLs become "Link
-              compartilhado" / "link" and invite tokens never leak. */}
           <Text>{` ${formatLiveChatContent(m.text || m.content || '')}`}</Text>
         </Text>
       </View>
@@ -178,36 +133,17 @@ const SystemRow = memo(function SystemRow({ m, stackAlpha }) {
   );
 });
 
-const GiftRow = memo(function GiftRow({ m, stackAlpha }) {
-  const entry = m.entry;
-  const opacity = entry
-    ? entry.interpolate({ inputRange: [0, 1], outputRange: [0, stackAlpha] })
-    : stackAlpha;
-  const translateY = entry
-    ? entry.interpolate({ inputRange: [0, 1], outputRange: [14, 0] })
-    : 0;
-  const scale = entry
-    ? entry.interpolate({ inputRange: [0, 1], outputRange: [0.92, 1] })
-    : 1;
+const GiftRow = memo(function GiftRow({ m, t }) {
+  const meta = giftMeta(m.gift);
   return (
-    <Animated.View
-      style={[styles.giftRow, { opacity, transform: [{ translateY }, { scale }] }]}
-      pointerEvents="none"
-    >
+    <Animated.View style={[styles.giftRow, entryStyle(m.entry)]} pointerEvents="none">
       <View style={styles.giftPill}>
-        <View style={styles.giftAvatar}>
-          <AvatarCircle name={m.name} email={m.email} size={20} />
-        </View>
-        <View style={{ flex: 1 }}>
-          <Text style={styles.giftName} numberOfLines={1}>{m.name}</Text>
-          <Text style={styles.giftText} numberOfLines={1}>
-            {m.giftLabel || (m.gift ? `enviou ${m.gift}` : 'enviou um presente')}
-          </Text>
-        </View>
-        <View style={styles.giftAmount}>
-          <IconStar size={12} color="#fbbf24" />
-          <Text style={styles.giftAmountText}>{m.amount || 1}</Text>
-        </View>
+        <AvatarCircle name={m.name} email={m.email} size={20} />
+        <Text style={styles.giftText} numberOfLines={1}>
+          <Text style={styles.giftName}>{m.name}</Text>
+          {` ${t('liveEng.giftSent')} ${giftLabel(t, meta.icon, meta.label)}`}
+        </Text>
+        <LiveGiftGlyph icon={meta.icon} size={22} />
       </View>
     </Animated.View>
   );
@@ -221,234 +157,257 @@ function LiveChatOverlay({
   onLongPressHost,
   isHostView = false,
   hasMore = false,
-  seeAllLabel = 'Ver todos os comentários',
+  seeAllLabel = '',
   hostEmail = null,
+  engage = null,
+  modEmails = null,
 }) {
-  // Codex root cause #9 — memoize the visible slice so the overlay doesn't
-  // recompute the array on every parent render (chat tick / animation
-  // frame / viewer count). Combined with the parent's bounded array (max
-  // 50) this drops the overlay's RN bridge traffic significantly.
-  const visible = useMemo(() => messages.slice(-6), [messages]);
+  const { t } = useLanguage();
+  let user = null;
+  try { user = useAuth()?.user || null; } catch { user = null; }
+  const topFans = useEngageSelector(engage, selTopFans);
+  const scrollRef = useRef(null);
+  const atBottomRef = useRef(true);
+  const lastIdRef = useRef(null);
+  const [unseen, setUnseen] = useState(0);
+  const maxH = useMemo(() => {
+    const h = Dimensions.get('window').height;
+    return Math.max(150, Math.min(270, Math.round(h * 0.28)));
+  }, []);
+
+  const visible = useMemo(() => messages.slice(-MAX_ROWS), [messages]);
+
+  const meTokens = useMemo(() => {
+    const s = new Set();
+    const name = String(user?.name || '').toLowerCase();
+    if (name) { s.add(name.replace(/\s+/g, '')); s.add(name.split(/\s+/)[0]); }
+    const local = String(user?.email || '').toLowerCase().split('@')[0];
+    if (local) s.add(local);
+    return s;
+  }, [user?.name, user?.email]);
+
+  const fanRanks = useMemo(() => {
+    const m = {};
+    (topFans || []).forEach((f, i) => { if (f?.email) m[String(f.email).toLowerCase()] = i + 1; });
+    return m;
+  }, [topFans]);
+
+  const modSet = useMemo(() => new Set((modEmails || []).map(e => String(e).toLowerCase())), [modEmails]);
+  const host = String(hostEmail || '').toLowerCase();
+
+  const labels = useMemo(() => ({
+    host: t('liveEng.badgeHost'),
+    mod: t('liveEng.badgeMod'),
+    guest: t('liveEng.badgeGuest'),
+    reply: t('liveEng.replyTo'),
+  }), [t]);
+
+  // Novas mensagens: rola se estava no fim, senão conta "N novas".
+  useEffect(() => {
+    const last = visible.length ? visible[visible.length - 1].id : null;
+    const prev = lastIdRef.current;
+    lastIdRef.current = last;
+    if (last == null || last === prev) return;
+    if (atBottomRef.current) return; // onContentSizeChange cuida do scroll
+    const idx = prev == null ? -1 : visible.findIndex(m => m.id === prev);
+    const added = idx >= 0 ? visible.length - 1 - idx : 1;
+    if (added > 0) setUnseen(u => Math.min(99, u + added));
+  }, [visible]);
+
+  const onScroll = useCallback((e) => {
+    const { contentOffset, layoutMeasurement, contentSize } = e.nativeEvent || {};
+    if (!contentOffset) return;
+    const atBottom = contentOffset.y + layoutMeasurement.height >= contentSize.height - 24;
+    atBottomRef.current = atBottom;
+    if (atBottom) setUnseen(u => (u ? 0 : u));
+  }, []);
+
+  const onContentSizeChange = useCallback(() => {
+    if (atBottomRef.current) {
+      try { scrollRef.current?.scrollToEnd({ animated: true }); } catch {}
+    }
+  }, []);
+
+  const jumpToEnd = useCallback(() => {
+    atBottomRef.current = true;
+    setUnseen(0);
+    try { scrollRef.current?.scrollToEnd({ animated: true }); } catch {}
+  }, []);
+
+  const roleOf = (m) => {
+    const e = String(m.email || '').toLowerCase();
+    if (m.tier === 'host' || (host && e === host)) return 'host';
+    if (m.tier === 'mod' || (e && modSet.has(e))) return 'mod';
+    if (m.tier === 'guest' || m.tier === 'cohost') return 'guest';
+    return null;
+  };
 
   return (
-    <TouchableOpacity
-      onPress={onOpenSheet}
-      activeOpacity={0.85}
-      style={styles.overlay}
-      accessibilityLabel="Chat ao vivo"
-      accessibilityRole="button"
-    >
-      {/* Round 69 #1166 (2026-05-19) — TopFadeGradient REMOVED. User: "tira
-          isso muito feio". The 56px #000@85% SVG gradient was painting an
-          opaque black band over the host's face whenever ANY system chip
-          arrived (e.g. "X entrou"). Web mask remains untouched; iOS/Android
-          now just clip without the fade. Cleaner look + no recurring "barra
-          preta" reports. */}
-
-      {hasMore ? (
-        <View style={styles.seeAllChip} pointerEvents="none">
+    <View style={styles.overlay}>
+      {hasMore && onOpenSheet ? (
+        <TouchableOpacity
+          onPress={onOpenSheet}
+          style={styles.seeAllChip}
+          activeOpacity={0.8}
+          hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}
+          accessibilityRole="button"
+          accessibilityLabel={seeAllLabel}
+        >
           <Text style={styles.seeAllText}>{seeAllLabel}</Text>
-        </View>
+        </TouchableOpacity>
       ) : null}
 
-      {visible.map((m, idx) => {
-        // Older comments fade softer; stack alpha 0.45 → 1 from top.
-        const stackAlpha = 0.45 + (idx / Math.max(visible.length - 1, 1)) * 0.55;
+      <ScrollView
+        ref={scrollRef}
+        style={[styles.scroll, { maxHeight: maxH }]}
+        contentContainerStyle={styles.scrollContent}
+        onScroll={onScroll}
+        scrollEventThrottle={32}
+        onContentSizeChange={onContentSizeChange}
+        showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
+        nestedScrollEnabled
+      >
+        {visible.map((m) => {
+          if (m.isSystem || m.type === 'system') return <SystemRow key={m.id} m={m} />;
+          if (m.type === 'gift' || m.gift) return <GiftRow key={m.id} m={m} t={t} />;
+          return (
+            <CommentRow
+              key={m.id}
+              m={m}
+              isHostView={isHostView}
+              onPressMessage={onPressMessage}
+              onLongPressHost={onLongPressHost}
+              role={roleOf(m)}
+              fanRank={fanRanks[String(m.email || '').toLowerCase()] || 0}
+              heartAnim={commentHearts[m.id]}
+              meTokens={meTokens}
+              labels={labels}
+            />
+          );
+        })}
+      </ScrollView>
 
-        if (m.isSystem || m.type === 'system') {
-          return <SystemRow key={m.id} m={m} stackAlpha={stackAlpha} />;
-        }
-        if (m.type === 'gift' || m.gift) {
-          return <GiftRow key={m.id} m={m} stackAlpha={stackAlpha} />;
-        }
-        return (
-          <CommentRow
-            key={m.id}
-            m={m}
-            stackAlpha={stackAlpha}
-            isHostView={isHostView}
-            onPressMessage={onPressMessage}
-            onLongPressHost={onLongPressHost}
-            hostEmail={hostEmail}
-            commentHearts={commentHearts}
-          />
-        );
-      })}
-    </TouchableOpacity>
+      {unseen > 0 ? (
+        <TouchableOpacity
+          onPress={jumpToEnd}
+          style={styles.newPill}
+          activeOpacity={0.85}
+          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+          accessibilityRole="button"
+          accessibilityLabel={t('liveEng.newComments').replace('{n}', String(unseen))}
+        >
+          <IconChevronDown size={14} color="#000" />
+          <Text style={styles.newPillText}>{t('liveEng.newComments').replace('{n}', String(unseen))}</Text>
+        </TouchableOpacity>
+      ) : null}
+    </View>
   );
 }
 
-// Codex root cause #9 — memo wrap prevents re-render when parent (Live
-// host/viewer screen) re-renders for unrelated reasons (countdown tick,
-// heart anim, viewer count). With memoization, the overlay only reconciles
-// when `messages` actually changes.
+// memo: só re-renderiza quando messages/props mudam (não a cada tick da tela).
 export default memo(LiveChatOverlay);
 
 const styles = StyleSheet.create({
   overlay: {
-    paddingRight: 70, // leave room for the right rail
+    paddingRight: 70, // espaço do right rail
     marginBottom: 8,
-    gap: 6,
+  },
+  scroll: {
+    flexGrow: 0,
     ...(Platform.OS === 'web' ? {
-      WebkitMaskImage: 'linear-gradient(to bottom, transparent 0%, rgba(0,0,0,0.2) 12%, #000 38%)',
-      maskImage: 'linear-gradient(to bottom, transparent 0%, rgba(0,0,0,0.2) 12%, #000 38%)',
+      WebkitMaskImage: 'linear-gradient(to bottom, transparent 0%, rgba(0,0,0,0.35) 10%, #000 30%)',
+      maskImage: 'linear-gradient(to bottom, transparent 0%, rgba(0,0,0,0.35) 10%, #000 30%)',
     } : {}),
   },
+  scrollContent: { gap: 6, paddingTop: 8 },
   seeAllChip: {
     alignSelf: 'flex-start',
     marginBottom: 6,
-    paddingHorizontal: 9,
-    paddingVertical: 3,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
     backgroundColor: 'rgba(0,0,0,0.55)',
     borderRadius: 11,
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.12)',
   },
-  seeAllText: {
-    color: 'rgba(255,255,255,0.9)',
-    fontSize: 11,
-    fontWeight: '700',
-    letterSpacing: 0.2,
-  },
+  seeAllText: { color: 'rgba(255,255,255,0.9)', fontSize: 11, fontWeight: '700', letterSpacing: 0.2 },
   row: {
     flexDirection: 'row',
     alignItems: 'flex-start',
     gap: 8,
-    maxWidth: '94%',
+    maxWidth: '96%',
     paddingVertical: 3,
-  },
-  body: {
-    flexShrink: 1,
-    paddingTop: 0,
-  },
-  // Colored name chip (per-tier background)
-  nameChip: {
+    paddingHorizontal: 4,
+    borderRadius: 12,
     alignSelf: 'flex-start',
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    paddingHorizontal: 7,
-    paddingVertical: 2,
-    borderRadius: 9,
-    marginBottom: 2,
+  },
+  rowMention: {
+    backgroundColor: 'rgba(255,255,255,0.16)',
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.18)',
+    borderColor: 'rgba(255,255,255,0.45)',
   },
+  body: { flexShrink: 1 },
+  nameLine: { flexDirection: 'row', alignItems: 'center', gap: 5, marginBottom: 1 },
   name: {
-    color: '#fff',
-    fontSize: 11,
+    color: 'rgba(255,255,255,0.78)',
+    fontSize: 12,
     fontWeight: '800',
-    letterSpacing: 0.2,
-    ...(Platform.OS === 'web' ? { textShadow: '0 1px 2px rgba(0,0,0,0.6)' } : {}),
+    letterSpacing: 0.1,
+    flexShrink: 1,
+    textShadowColor: 'rgba(0,0,0,0.55)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 2,
   },
-  tierBadge: {
-    color: '#fff',
-    fontSize: 9,
-    fontWeight: '900',
-    letterSpacing: 0.4,
-    opacity: 0.92,
-  },
+  nameHost: { color: '#fff' },
+  badge: { paddingHorizontal: 5, paddingVertical: 1, borderRadius: 4 },
+  badgeSolid: { backgroundColor: '#fff' },
+  badgeLine: { borderWidth: 1, borderColor: 'rgba(255,255,255,0.7)', backgroundColor: 'rgba(0,0,0,0.35)' },
+  badgeText: { color: '#fff', fontSize: 8.5, fontWeight: '900', letterSpacing: 0.5 },
+  badgeTextSolid: { color: '#000' },
   text: {
     color: '#fff',
-    fontSize: 13,
-    lineHeight: 17,
+    fontSize: 13.5,
+    lineHeight: 18,
     fontWeight: '500',
-    ...(Platform.OS === 'web' ? { textShadow: '0 1px 2px rgba(0,0,0,0.85)' } : {}),
+    textShadowColor: 'rgba(0,0,0,0.75)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 3,
   },
+  mention: { fontWeight: '800', color: '#fff' },
+  mentionMe: { textDecorationLine: 'underline' },
 
-  // System chip ("@maria entrou")
-  systemRow: {
-    alignSelf: 'flex-start',
-    maxWidth: '88%',
-  },
+  systemRow: { alignSelf: 'flex-start', maxWidth: '88%' },
   systemPill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    paddingLeft: 4,
-    paddingRight: 11,
-    paddingVertical: 3,
-    backgroundColor: 'rgba(17, 17, 17,0.35)',
-    borderWidth: 1,
-    borderColor: 'rgba(17, 17, 17,0.45)',
-    borderRadius: 14,
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    paddingLeft: 4, paddingRight: 11, paddingVertical: 3,
+    backgroundColor: 'rgba(0,0,0,0.4)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.14)', borderRadius: 14,
   },
-  systemAvatarWrap: {
-    borderRadius: 10,
-    overflow: 'hidden',
-    borderWidth: 1.5,
-    borderColor: 'rgba(255,255,255,0.55)',
-  },
-  systemText: {
-    color: 'rgba(255,255,255,0.96)',
-    fontSize: 11.5,
-    fontWeight: '500',
-  },
-  systemName: {
-    fontWeight: '800',
-    color: '#fff',
-  },
+  systemAvatarWrap: { borderRadius: 10, overflow: 'hidden', borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.55)' },
+  systemText: { color: 'rgba(255,255,255,0.96)', fontSize: 11.5, fontWeight: '500' },
+  systemName: { fontWeight: '800', color: '#fff' },
 
-  // Gift chip (golden, with sparkle + amount)
-  giftRow: {
-    alignSelf: 'flex-start',
-    maxWidth: '94%',
-  },
-  // Brand-spec gift chip — full-saturation gold (#fbbf24) so the chip reads
-  // as a discrete "gift fired" event in the chat stream (not a subdued tint).
-  // padding 8 + gap 6 matches the round 51 polish brief.
+  giftRow: { alignSelf: 'flex-start', maxWidth: '94%' },
   giftPill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    padding: 8,
-    backgroundColor: '#fbbf24',
-    borderRadius: 16,
-    ...(Platform.OS === 'web' ? {
-      boxShadow: '0 4px 14px rgba(251,191,36,0.55)',
-    } : {}),
+    flexDirection: 'row', alignItems: 'center', gap: 7,
+    paddingLeft: 4, paddingRight: 8, paddingVertical: 4,
+    backgroundColor: 'rgba(255,255,255,0.92)', borderRadius: 16,
   },
-  // Solid-gold chip background now → swap to dark border + dark text so the
-  // username/label stay legible against the saturated fill.
-  giftAvatar: {
-    borderRadius: 12,
-    overflow: 'hidden',
-    borderWidth: 1.5,
-    borderColor: 'rgba(17,17,17,0.45)',
-  },
-  giftName: {
-    color: '#111',
-    fontSize: 12,
-    fontWeight: '900',
-  },
-  giftText: {
-    color: 'rgba(17,17,17,0.85)',
-    fontSize: 11,
-    fontWeight: '600',
-  },
-  giftAmount: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 3,
-    paddingHorizontal: 7,
-    paddingVertical: 2,
-    borderRadius: 10,
-    backgroundColor: 'rgba(17,17,17,0.85)',
-  },
-  giftAmountText: {
-    color: '#fbbf24',
-    fontWeight: '900',
-    fontSize: 11,
-  },
+  giftText: { color: 'rgba(0,0,0,0.8)', fontSize: 12, fontWeight: '600', flexShrink: 1 },
+  giftName: { color: '#000', fontWeight: '900' },
 
-  // Inline heart chip on a row (double-tap reaction)
   heartChip: {
     marginLeft: 6,
     width: 22, height: 22, borderRadius: 11,
-    // [2026-10-10 lives-2] P&B (era vermelho).
     backgroundColor: '#111',
     alignItems: 'center', justifyContent: 'center',
     borderWidth: 1.5, borderColor: '#fff',
-    ...(Platform.OS === 'web' ? { boxShadow: '0 2px 8px rgba(0,0,0,0.45)' } : {}),
   },
+  newPill: {
+    position: 'absolute',
+    bottom: 4,
+    alignSelf: 'center',
+    left: '30%',
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    height: 30, paddingHorizontal: 12, borderRadius: 15,
+    backgroundColor: '#fff',
+    ...(Platform.OS === 'web' ? { boxShadow: '0 4px 14px rgba(0,0,0,0.35)' } : { elevation: 3 }),
+  },
+  newPillText: { color: '#000', fontSize: 12, fontWeight: '800' },
 });

@@ -12,8 +12,10 @@ import {
   View, Text, TouchableOpacity, StyleSheet, Platform, Animated,
 } from 'react-native';
 import { IconPin } from '../Icons';
+import { useLanguage } from '../../context/LanguageContext';
 
 export default function LivePinnedChip({ pinnedMsg, onDismiss }) {
+  const { t } = useLanguage();
   const entrance = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
@@ -44,12 +46,13 @@ export default function LivePinnedChip({ pinnedMsg, onDismiss }) {
         onPress={onDismiss}
         style={styles.chip}
         accessibilityRole="button"
-        accessibilityLabel="Pinned comment"
+        accessibilityLabel={t('liveEng.pinnedByHost')}
+        hitSlop={{ top: 6, bottom: 6 }}
       >
-        <IconPin size={13} color="#ffffff" />
+        <View style={styles.pinIcon}><IconPin size={12} color="#000" /></View>
         <View style={{ flex: 1 }}>
           <Text style={styles.name} numberOfLines={1}>
-            {pinnedMsg.name}
+            {t('liveEng.pinned')}{pinnedMsg.name ? ` · ${pinnedMsg.name}` : ''}
           </Text>
           <Text style={styles.text} numberOfLines={2}>
             {pinnedMsg.content}
@@ -79,6 +82,10 @@ const styles = StyleSheet.create({
       WebkitBackdropFilter: 'blur(10px)',
       boxShadow: '0 2px 10px rgba(0,0,0,0.25)',
     } : {}),
+  },
+  pinIcon: {
+    width: 22, height: 22, borderRadius: 11, backgroundColor: '#fff',
+    alignItems: 'center', justifyContent: 'center',
   },
   name: {
     // [2026-10-10 visual] P&B overlay chrome (was yellow #fde047)

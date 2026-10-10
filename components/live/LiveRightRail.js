@@ -25,6 +25,9 @@ import {
 import {
   IconHeart, IconShare, IconMoreVert, IconCamera, IconMessageCircle, IconDiamond,
 } from '../Icons';
+// [lives-engage 2026-10-10] Total de curtidas do hub + botão de Q&A.
+import { useEngageSelector, selLikesTotal } from './liveEngageStore';
+import { LiveQAButton } from './LiveEngageLayer';
 
 const LIVE_RED = '#dc2626';
 const ACCENT = '#111111';
@@ -52,7 +55,10 @@ export default function LiveRightRail({
   onShare,
   onMore,
   i18n = {},
+  engage = null,
 }) {
+  const hubLikes = useEngageSelector(engage, selLikesTotal);
+  const shownLikes = Math.max(Number(likeCount) || 0, Number(hubLikes) || 0);
   const heartScale = useRef(new Animated.Value(1)).current;
   const likeCountScale = useRef(new Animated.Value(1)).current;
   const prevLikesRef = useRef(0);
@@ -66,14 +72,14 @@ export default function LiveRightRail({
 
   useEffect(() => {
     const prev = prevLikesRef.current;
-    prevLikesRef.current = likeCount;
-    if (likeCount > prev && prev !== 0) {
+    prevLikesRef.current = shownLikes;
+    if (shownLikes > prev && prev !== 0) {
       Animated.sequence([
         Animated.timing(likeCountScale, { toValue: 1.18, duration: 110, useNativeDriver: true }),
         Animated.spring(likeCountScale, { toValue: 1, friction: 4, tension: 200, useNativeDriver: true }),
       ]).start();
     }
-  }, [likeCount, likeCountScale]);
+  }, [shownLikes, likeCountScale]);
 
   const handleHeart = () => {
     pop();
@@ -97,21 +103,24 @@ export default function LiveRightRail({
             accessibilityRole="button"
             accessibilityLabel={i18n.like || 'Curtir'}
           >
-            <IconHeart size={26} color={LIVE_RED} />
+            <IconHeart size={26} color="#fff" />
           </TouchableOpacity>
         </Animated.View>
-        {likeCount > 0 ? (
+        {shownLikes > 0 ? (
           <Animated.Text
             style={[styles.countText, { transform: [{ scale: likeCountScale }] }]}
             numberOfLines={1}
           >
-            {humanizeCount(likeCount)}
+            {humanizeCount(shownLikes)}
           </Animated.Text>
         ) : null}
       </View>
 
       {/* DIAMANTE DESLIGADO — botão de "Diamante" (presente pago) removido do rail.
           A curtida/coração grátis acima continua normal. */}
+
+      {/* Q&A (só aparece quando o backend tem chat_live_qa_*) */}
+      {engage ? <LiveQAButton engage={engage} /> : null}
 
       {/* Chat toggle */}
       <TouchableOpacity

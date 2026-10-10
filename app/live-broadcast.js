@@ -23,6 +23,13 @@ import LiveGiftAnimation from '../components/LiveGiftAnimation';
 // [2026-05-22 monetization-pause] hidden by MONETIZATION_ENABLED flag
 import { DIAMONDS_ENABLED } from '../constants/featureFlags';
 import LivePollOverlay from '../components/live/LivePollOverlay';
+// [lives-engage 2026-10-10] curtidas totais/top fãs/Q&A/presentes do lado do host.
+import LiveEngageLayer, { LiveHostEngageBar } from '../components/live/LiveEngageLayer';
+import { useLiveEngageController } from '../components/live/liveEngageStore';
+// [multi-guest 2026-10-10] Palco multi-convidados (TikTok Multi-guest).
+import useLiveStage, { emailFromIdentity as _mgEmailFromIdentity } from '../hooks/useLiveStage';
+import LiveGuestStage from '../components/liveGuests/LiveGuestStage';
+import HostGuestPanel from '../components/liveGuests/HostGuestPanel';
 import * as liveBroadcastNotification from '../services/liveBroadcastNotification';
 import { publishToCfStream, liveDiagAppend } from '../services/cfStreamPublisher';
 import * as Haptics from 'expo-haptics';
@@ -500,6 +507,7 @@ export default function LiveBroadcastScreen() {
     }
   }, []);
   const wsRef = useRef(null);
+  const likeEngage = useLiveEngageController({ sessionId, wsRef, me: { email: user?.email, name: user?.name }, isHost: true });
   const peersRef = useRef(new Map());
   // Buffer of viewer-join messages that arrived before the broadcaster's
   // camera/mic stream was ready. Drained by a useEffect once
@@ -854,6 +862,7 @@ export default function LiveBroadcastScreen() {
       if (msg && msg.data && typeof msg.data === 'object' && !Array.isArray(msg.data)) {
         msg = { ...msg, ...msg.data };
       }
+      try { likeEngage.onWsMessage(msg); } catch {} // [lives-engage] observador
 
       switch (msg.type) {
         case 'auth_success': {
@@ -983,6 +992,14 @@ export default function LiveBroadcastScreen() {
               x: (typeof msg.x === 'number' && isFinite(msg.x)) ? msg.x : null,
               color: (typeof msg.color === 'string') ? msg.color : null,
             });
+            // [lives-engage] lote agregado do hub: N corações (teto 6) nos xs do lote.
+            {
+              const _n = likeEngage.heartsFor(msg);
+              for (let _i = 1; _i < _n; _i++) {
+                const _xs = Array.isArray(msg.xs) && msg.xs.length ? msg.xs[_i % msg.xs.length] : null;
+                setTimeout(() => spawnHeart({ x: typeof _xs === 'number' ? _xs : null, color: (typeof msg.color === 'string') ? msg.color : null }), _i * 90);
+              }
+            }
           }
           break;
         case 'live_viewer_count':
@@ -1119,6 +1136,9 @@ export default function LiveBroadcastScreen() {
           const reqData = msg.data || msg;
           const viewerEmail = msg.viewer_email || reqData?.viewer_email;
           const viewerName = msg.viewer_name || reqData?.viewer_name;
+          // [multi-guest] chat_user_* é re-entregue no reconnect: ignora pedido de outra live.
+          const _reqSid = msg.session_id || reqData?.session_id;
+          if (_reqSid && sessionIdRef.current && String(_reqSid) !== String(sessionIdRef.current)) break;
           if (viewerEmail) {
             setJoinRequests(prev => {
               if (prev.some(r => r.email === viewerEmail)) return prev;
@@ -1129,6 +1149,17 @@ export default function LiveBroadcastScreen() {
             // Auto-open the sheet so accept/deny is one tap away.
             setRequestsOpen(true);
           }
+          break;
+        }
+        // [multi-guest 2026-10-10] Eventos REST→/broadcast do palco.
+        case 'live_join_request_cancelled':
+        case 'live_guest_invite_declined':
+        case 'live_guest_invite_accepted':
+        case 'live_guests_changed': {
+          const _d = msg.data || msg;
+          const _sid = msg.session_id || _d?.session_id;
+          if (_sid && sessionIdRef.current && String(_sid) !== String(sessionIdRef.current)) break;
+          mgWsRef.current?.(msg.type, _d);
           break;
         }
         case 'live_pin_comment':
@@ -1888,6 +1919,8 @@ export default function LiveBroadcastScreen() {
                     const idLc = id.toLowerCase();
                     const hostEmailLc = (user?.email || '').toLowerCase();
                     if (idLc.endsWith('-host') || (hostEmailLc && idLc.includes(hostEmailLc))) return;
+                    // [multi-guest] conexão de publicação do convidado ≠ novo espectador.
+                    if (idLc.endsWith('~guest')) return;
                     setLkViewers(prev => {
                       if (prev.some(v => v.identity === id)) return prev;
                       // BUG (2026-05-22) — was leaking `email#hash` into the
@@ -3169,7 +3202,23 @@ export default function LiveBroadcastScreen() {
         // peer was approved (UI moved on), backend never recorded the change,
         // peer never got the cohost token and ringed forever. Alert + restore
         // the join request so host can retry.
-        api.liveCohostApprove(sid, email).catch((err) => {
+        // [multi-guest 2026-10-10] apiCall NÃO lança em 4xx (devolve
+        // {success:false}) → antes um 409/403 sumia calado. Agora trata as
+        // razões do servidor: palco cheio, sem pedido (expirou/cancelou), banido.
+        const _restore = (r) => setJoinRequests(prev => (prev.some(x => x.email === r.email) ? prev : [...prev, r]));
+        const _req = joinRequestsRef.current.find(r => r.email === email) || { email, name: email.split('@')[0], ts: Date.now() };
+        mgSetBusy('accept:' + email, true);
+        api.liveCohostApprove(sid, email).then((res) => {
+          mgSetBusy('accept:' + email, false);
+          if (res && res.success === false) {
+            const reason = String(res?.data?.reason || '');
+            if (reason === 'guests_full') { _restore(_req); hostToast(t('liveGuests.stageFull')); return; }
+            if (reason === 'no_request' || reason === 'banned') { hostToast(t('liveGuests.failed')); return; }
+            _restore(_req);
+            hostToast(t('live.cohostApproveFailed') || t('liveGuests.failed'));
+          }
+        }).catch((err) => {
+          mgSetBusy('accept:' + email, false);
           console.warn('[Live] liveCohostApprove failed:', err?.message || err);
           try {
             const { Alert: A, ToastAndroid: TA, Platform: P } = require('react-native');
@@ -3178,13 +3227,16 @@ export default function LiveBroadcastScreen() {
             else if (A?.alert) A.alert(msg);
           } catch {}
           // Re-add to join-requests so the host can re-tap Approve.
-          setJoinRequests(prev => (prev.some(r => r.email === email) ? prev : [...prev, { email, ts: Date.now() }]));
+          _restore(_req);
         });
       }
     } catch {}
     // Stage 3 of #929 — also kick off host's LK subscriber so the cohost's
     // video (published via Stage 2 viewer path) can be rendered. Gated.
-    ensureCohostSubscriber().catch(() => {});
+    // [multi-guest] Só sem sala de publicação: o host JÁ assina os convidados
+    // pela própria sala (canSubscribe). A 2ª conexão tocava o áudio do
+    // convidado em dobro (eco) e gastava banda.
+    if (!lkRoomRef.current) ensureCohostSubscriber().catch(() => {});
     setJoinRequests(prev => prev.filter(r => r.email !== email));
   }, [user, ensureCohostSubscriber, t]);
   const denyJoinRequest = useCallback((email) => {
@@ -3194,8 +3246,98 @@ export default function LiveBroadcastScreen() {
         ws.send(JSON.stringify({ type: 'live_join_deny', session_id: sessionIdRef.current, viewer_email: email }));
       }
     } catch {}
+    // [multi-guest] o WS cru acima é descartado pelo hub Go → REST avisa o espectador.
+    try { if (sessionIdRef.current) api.liveCohostDeny(sessionIdRef.current, email).catch(() => {}); } catch {}
     setJoinRequests(prev => prev.filter(r => r.email !== email));
   }, []);
+
+  // ─── [multi-guest 2026-10-10] Host: palco com até 4 convidados ───
+  // Convidados = quem PUBLICA na sala do host (lkRoomRef); convidar sai da
+  // lista de quem está assistindo (lkViewers); remover/silenciar via REST
+  // (servidor derruba/silencia no LiveKit — vale mesmo com app antigo).
+  const joinRequestsRef = useRef([]);
+  useEffect(() => { joinRequestsRef.current = joinRequests; }, [joinRequests]);
+  const [mgBusy, setMgBusyState] = useState(() => new Set());
+  const mgSetBusy = useCallback((key, on) => {
+    setMgBusyState(prev => {
+      const has = prev.has(key);
+      if ((on && has) || (!on && !has)) return prev;
+      const next = new Set(prev);
+      if (on) next.add(key); else next.delete(key);
+      return next;
+    });
+  }, []);
+  const [mgInvited, setMgInvited] = useState(() => new Set());
+  const mgWsRef = useRef(null);
+  mgWsRef.current = (type, d) => {
+    const em = String(d?.viewer_email || '').toLowerCase();
+    if (type === 'live_join_request_cancelled' && em) {
+      setJoinRequests(prev => prev.filter(r => String(r.email).toLowerCase() !== em));
+    } else if ((type === 'live_guest_invite_declined' || type === 'live_guest_invite_accepted') && em) {
+      setMgInvited(prev => { if (!prev.has(em)) return prev; const n = new Set(prev); n.delete(em); return n; });
+      if (type === 'live_guest_invite_declined') hostToast(t('liveGuests.inviteDeclined', { name: prettifyHandle(em.split('@')[0]) }));
+    } else if (type === 'live_guests_changed' && Array.isArray(d?.guests)) {
+      const onStage = new Set(d.guests.map(g => String(g?.email || '').toLowerCase()));
+      setJoinRequests(prev => prev.filter(r => !onStage.has(String(r.email).toLowerCase())));
+    }
+  };
+  const inviteGuest = useCallback(async (email) => {
+    const sid = sessionIdRef.current;
+    if (!sid || !email) return;
+    mgSetBusy('invite:' + email, true);
+    try {
+      const res = await api.liveGuestInvite(sid, email);
+      if (res?.success) {
+        // Sem toast (Alert no iOS interrompe a live): a linha vira "Convidado".
+        setMgInvited(prev => { const n = new Set(prev); n.add(email); return n; });
+      } else {
+        hostToast(String(res?.data?.reason || '') === 'guests_full' ? t('liveGuests.stageFull') : t('liveGuests.failed'));
+      }
+    } catch { hostToast(t('liveGuests.failed')); }
+    finally { mgSetBusy('invite:' + email, false); }
+  }, [mgSetBusy, t]);
+  const removeGuest = useCallback(async (email) => {
+    const sid = sessionIdRef.current;
+    if (!sid || !email) return;
+    mgSetBusy('remove:' + email, true);
+    try {
+      const res = await api.liveCohostRemove(sid, email);
+      if (res && res.success === false) hostToast(t('liveGuests.failed'));
+    } catch { hostToast(t('liveGuests.failed')); }
+    finally { mgSetBusy('remove:' + email, false); }
+  }, [mgSetBusy, t]);
+  const muteGuest = useCallback(async (email, kind) => {
+    const sid = sessionIdRef.current;
+    if (!sid || !email) return;
+    const k = (kind === 'video' ? 'video' : 'audio') + ':' + email;
+    mgSetBusy(k, true);
+    try {
+      const res = await api.liveGuestMute(sid, email, kind);
+      if (res && res.success === false) hostToast(t('liveGuests.failed'));
+    } catch { hostToast(t('liveGuests.failed')); }
+    finally { mgSetBusy(k, false); }
+  }, [mgSetBusy, t]);
+  // Ressincroniza pedidos pendentes (reconectou / reabriu o app no meio da live).
+  useEffect(() => {
+    if (!sessionId) return undefined;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await api.liveGuestsState(sessionId);
+        const reqs = res?.data?.requests;
+        if (cancelled || !Array.isArray(reqs)) return;
+        const pending = reqs.filter(r => r && r.kind === 'request' && r.email);
+        if (!pending.length) return;
+        setJoinRequests(prev => {
+          const have = new Set(prev.map(r => String(r.email).toLowerCase()));
+          const add = pending.filter(r => !have.has(String(r.email).toLowerCase()))
+            .map(r => ({ email: r.email, name: r.name || r.email.split('@')[0], ts: r.ts || Date.now() }));
+          return add.length ? [...prev, ...add].slice(0, 30) : prev;
+        });
+      } catch {}
+    })();
+    return () => { cancelled = true; };
+  }, [sessionId]);
 
   // Long-press a chat message to pin (host only). Wired through to LiveChat
   // via a callback prop, but we also expose a simple "pin latest" action on
@@ -3644,6 +3786,55 @@ export default function LiveBroadcastScreen() {
     );
   };
 
+  // [multi-guest 2026-10-10] Palco do host: convidados = quem publica na sala
+  // do host. Com 1+ convidado a tela vira a grade TikTok (host primeiro).
+  const _mgStage = useLiveStage(lkRoomRef.current, { hostEmail: user?.email });
+  const mgGuests = _mgStage.guests;
+  const mgStageTiles = mgGuests.length === 0 ? [] : [
+    {
+      key: 'host', email: String(user?.email || '').toLowerCase(), name: user?.name || prettifyHandle(String(user?.email || '').split('@')[0]),
+      isHost: true, isSelf: true, renderVideo: () => renderLocalVideo(),
+      micMuted: !!audioMuted, camOff: !!videoOff, speaking: !!_mgStage.localSpeaking,
+    },
+    ...mgGuests.slice(0, 4).map(g => ({
+      key: g.email, email: g.email, name: g.name, isHost: false,
+      videoTrack: g.videoTrack, audioTrack: g.audioTrack, micMuted: g.micMuted, camOff: g.camOff, speaking: g.speaking,
+    })),
+  ];
+  const mgViewerList = (() => {
+    const seen = new Set(mgGuests.map(g => g.email));
+    const hostLc = String(user?.email || '').toLowerCase();
+    const out = [];
+    for (const v of (lkViewers || [])) {
+      const em = _mgEmailFromIdentity(v.identity);
+      if (!em || em === hostLc || seen.has(em) || !em.includes('@')) continue;
+      seen.add(em);
+      out.push({ email: em, name: v.name || prettifyHandle(em.split('@')[0]) });
+    }
+    return out.slice(0, 100);
+  })();
+  // Primeiro convidado entrou → sessão de áudio de chamada com ALTO-FALANTE
+  // (sem isso o iOS em playAndRecord/voiceChat tocava o convidado no fone de
+  // ouvido do host). Uma vez por live.
+  const mgAudioCfgRef = useRef(false);
+  const mgHasGuests = mgGuests.length > 0;
+  useEffect(() => {
+    if (!mgHasGuests || mgAudioCfgRef.current || Platform.OS === 'web') return;
+    mgAudioCfgRef.current = true;
+    (async () => {
+      try {
+        const lkrn = require('@livekit/react-native');
+        const AS = lkrn?.AudioSession;
+        if (!AS) return;
+        if (Platform.OS === 'ios' && typeof AS.setAppleAudioConfiguration === 'function' && typeof lkrn.getDefaultAppleAudioConfigurationForMode === 'function') {
+          await AS.setAppleAudioConfiguration(lkrn.getDefaultAppleAudioConfigurationForMode('localAndRemote', true));
+        } else if (Platform.OS === 'android' && typeof AS.selectAudioOutput === 'function') {
+          try { await AS.selectAudioOutput('speaker'); } catch {}
+        }
+      } catch (e) { console.warn('[Live] host guest audio cfg:', e?.message); }
+    })();
+  }, [mgHasGuests]);
+
   // Ended state — rich summary card with duration / unique viewers / likes
   // and two CTAs (share recap + save replay toggle). Spring entrance.
   if (ended) {
@@ -4086,7 +4277,17 @@ export default function LiveBroadcastScreen() {
           fills the notch area instead of being capped by a system-painted
           black status bar (the "mancha preta" reported on the host stage). */}
       <StatusBar barStyle="light-content" translucent backgroundColor="transparent" />
-      {renderLocalVideo()}
+      {/* [multi-guest 2026-10-10] 1+ convidado → grade TikTok (2/3/4/5 tiles). */}
+      {mgStageTiles.length >= 2 ? (
+        <LiveGuestStage
+          tiles={mgStageTiles}
+          topInset={insets.top}
+          hostLabel={t('liveGuests.host')}
+          youLabel={t('liveGuests.you')}
+          onTilePress={(tile) => { if (!tile.isHost) setRequestsOpen(true); }}
+          playWebAudio
+        />
+      ) : renderLocalVideo()}
 
       {/* Guest co-broadcast PiP card (#921 colab mode). Renders the approved
           viewer's camera in a draggable 110×150 card top-right of the host's
@@ -4258,6 +4459,12 @@ export default function LiveBroadcastScreen() {
           </TouchableOpacity>
         </View>
       </View>
+
+      {/* [lives-engage] curtidas totais + top fãs + Q&A (badge) logo abaixo da
+          top bar; camada com pergunta destacada, banners/tela cheia de
+          presentes e sheets. */}
+      <LiveHostEngageBar engage={likeEngage} top={insets.top + 80} />
+      <LiveEngageLayer engage={likeEngage} isHost topInset={insets.top} cardTop={insets.top + 170} />
 
       {/* [2026-05-22 monetization-pause] hidden by MONETIZATION_ENABLED flag —
           Top gifters leaderboard on the host POV. */}
@@ -4728,6 +4935,7 @@ export default function LiveBroadcastScreen() {
               hasMore={chatMessages.length > 6}
               seeAllLabel={t('live.seeAllComments') || 'Ver todos os comentários'}
               hostEmail={user?.email}
+              engage={likeEngage}
             />
           )}
           <View style={styles.chatTopFade} pointerEvents="none" />
@@ -5025,10 +5233,14 @@ export default function LiveBroadcastScreen() {
           top:100 (relative to insets) with a small red badge bubble showing
           the pending count. Brand-purple body keeps it as the dominant CTA
           without screaming red — the count badge handles urgency. */}
-      {joinRequests.length > 0 ? (
+      {/* [multi-guest 2026-10-10] Sempre visível ao vivo ("Convidados"): abre o
+          painel (pedidos / no palco / convidar). Badge só com pedidos. */}
+      {(joinRequests.length > 0 || !!sessionId) ? (
         <TouchableOpacity
           onPress={() => setRequestsOpen(true)}
           activeOpacity={0.85}
+          accessibilityRole="button"
+          accessibilityLabel={joinRequests.length > 0 ? t('liveGuests.requestsBadgeA11y', { count: joinRequests.length }) : t('liveGuests.guestsButton')}
           style={{
             position: 'absolute', top: insets.top + 100, right: 16,
             backgroundColor: '#111111', borderRadius: 16,
@@ -5040,19 +5252,21 @@ export default function LiveBroadcastScreen() {
             } : {}),
           }}
         >
-          <Animated.View
-            style={{
-              width: 8, height: 8, borderRadius: 4, backgroundColor: '#fff',
-              transform: [{ scale: livePulse }],
-              shadowColor: '#fff', shadowOpacity: 0.8, shadowRadius: 6,
-            }}
-          />
+          {joinRequests.length > 0 ? (
+            <Animated.View
+              style={{
+                width: 8, height: 8, borderRadius: 4, backgroundColor: '#fff',
+                transform: [{ scale: livePulse }],
+                shadowColor: '#fff', shadowOpacity: 0.8, shadowRadius: 6,
+              }}
+            />
+          ) : <IconUsers size={14} color="#fff" />}
           <Text style={{ color: '#fff', fontWeight: '700', fontSize: 12 }}>
-            {t('live.colabRequest') || 'pra colab'}
+            {mgGuests.length > 0 ? `${t('liveGuests.guestsButton')} ${mgGuests.length}/4` : t('liveGuests.guestsButton')}
           </Text>
           {/* Red count badge — TikTok pattern: small bubble in the top-right
               corner of the chip so the host immediately sees "how many waiting". */}
-          <View style={{
+          {joinRequests.length > 0 ? <View style={{
             position: 'absolute',
             top: -4, right: -4,
             minWidth: 18, height: 18,
@@ -5068,7 +5282,7 @@ export default function LiveBroadcastScreen() {
             }}>
               {joinRequests.length > 99 ? '99+' : joinRequests.length}
             </Text>
-          </View>
+          </View> : null}
         </TouchableOpacity>
       ) : null}
 
@@ -5179,47 +5393,26 @@ export default function LiveBroadcastScreen() {
         );
       })()}
 
-      {/* Requests sheet — list of viewers who tapped "Pedir pra entrar". Host
-          approves (we send live_join_approve via WS — actual SFU guest join
-          is a native-rebuild deliverable) or denies. */}
-      {requestsOpen ? (
-        <View style={liveSheetStyles.backdrop}>
-          <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={() => setRequestsOpen(false)} />
-          <View style={[liveSheetStyles.sheet, { paddingBottom: insets.bottom + 16, maxHeight: '70%' }]}>
-            <View style={liveSheetStyles.grabber} />
-            <Text style={liveSheetStyles.title}>{t('live.colabRequests') || 'Pedidos pra colab'}</Text>
-            <Text style={[liveSheetStyles.subtitle, { marginBottom: 8 }]}>
-              {t('live.colabSubtitle') || 'Aceitar coloca a pessoa ao vivo com você (tipo TikTok colab).'}
-            </Text>
-            {joinRequests.length === 0 ? (
-              <Text style={liveSheetStyles.subtitle}>{t('live.noRequests') || 'Sem pedidos no momento'}</Text>
-            ) : (
-              <FlatList
-                data={joinRequests}
-                keyExtractor={(item) => item.email}
-                renderItem={({ item }) => (
-                  <View style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.06)' }}>
-                    <View style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: '#111111', alignItems: 'center', justifyContent: 'center', marginRight: 10 }}>
-                      <Text style={{ color: '#fff', fontWeight: '700' }}>{(item.name || '?').slice(0, 1).toUpperCase()}</Text>
-                    </View>
-                    <View style={{ flex: 1 }}>
-                      <Text style={{ color: '#fff', fontWeight: '600', fontSize: 15 }} numberOfLines={1}>{item.name}</Text>
-                      <Text style={{ color: 'rgba(255,255,255,0.55)', fontSize: 12 }} numberOfLines={1}>{item.email}</Text>
-                    </View>
-                    <TouchableOpacity onPress={() => denyJoinRequest(item.email)} style={{ paddingHorizontal: 12, paddingVertical: 8, borderRadius: 14, backgroundColor: 'rgba(255,255,255,0.08)', marginRight: 8 }} activeOpacity={0.7}>
-                      <Text style={{ color: '#fff', fontWeight: '600' }}>{t('common.deny') || 'Recusar'}</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity onPress={() => approveJoinRequest(item.email)} style={{ paddingHorizontal: 12, paddingVertical: 8, borderRadius: 14, backgroundColor: '#22c55e' }} activeOpacity={0.7}>
-                      <Text style={{ color: '#fff', fontWeight: '700' }}>{t('common.approve') || 'Aceitar'}</Text>
-                    </TouchableOpacity>
-                  </View>
-                )}
-                style={{ maxHeight: 380 }}
-              />
-            )}
-          </View>
-        </View>
-      ) : null}
+      {/* [multi-guest 2026-10-10] Painel do host: no palco (silenciar mic /
+          câmera, remover), pedidos (aceitar/recusar, badge) e convidar quem
+          está assistindo. Substitui a folha antiga só de pedidos. */}
+      <HostGuestPanel
+        visible={requestsOpen}
+        onClose={() => setRequestsOpen(false)}
+        t={t}
+        bottomInset={insets.bottom}
+        max={4}
+        guests={mgGuests.map(g => ({ email: g.email, name: g.name, micMuted: g.micMuted, camOff: g.camOff }))}
+        requests={joinRequests.map(r => ({ email: String(r.email || ''), name: r.name || prettifyHandle(String(r.email || '').split('@')[0]) }))}
+        viewers={mgViewerList}
+        invited={mgInvited}
+        busy={mgBusy}
+        onAccept={approveJoinRequest}
+        onDecline={denyJoinRequest}
+        onInvite={inviteGuest}
+        onRemove={removeGuest}
+        onMute={muteGuest}
+      />
 
       {/* Invite friends sheet — TikTok-style multi-select contact picker.
           Hits chat_list to pull the host's direct chats, supports live-search

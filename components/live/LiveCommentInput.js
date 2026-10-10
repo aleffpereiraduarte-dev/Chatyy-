@@ -105,7 +105,7 @@ const LiveCommentInput = forwardRef(function LiveCommentInput({
             accessibilityRole="button"
             accessibilityLabel={a11yLabels.like || 'Like'}
           >
-            <IconHeart size={16} color="#fff" />
+            <IconHeart size={16} color="#000" />
           </TouchableOpacity>
         )}
       </View>
@@ -181,17 +181,18 @@ const styles = StyleSheet.create({
     ...(Platform.OS === 'web' ? { boxShadow: '0 2px 10px rgba(17, 17, 17,0.55)' } : {}),
   },
   heartPill: {
-    backgroundColor: LIVE_RED,
-    ...(Platform.OS === 'web' ? { boxShadow: '0 2px 10px rgba(220,38,38,0.55)' } : {}),
+    // [lives-engage 2026-10-10] P&B (vermelho só no selo AO VIVO)
+    backgroundColor: '#fff',
+    ...(Platform.OS === 'web' ? { boxShadow: '0 2px 10px rgba(0,0,0,0.35)' } : {}),
   },
   giftBtn: {
     width: 44,
     height: 44,
     borderRadius: 22,
     marginLeft: 8,
-    backgroundColor: 'rgba(251,191,36,0.18)',
+    backgroundColor: 'rgba(0,0,0,0.45)',
     borderWidth: 1,
-    borderColor: 'rgba(251,191,36,0.55)',
+    borderColor: 'rgba(255,255,255,0.3)',
     alignItems: 'center',
     justifyContent: 'center',
     ...(Platform.OS === 'web' ? {

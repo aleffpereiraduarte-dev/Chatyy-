@@ -11540,7 +11540,11 @@ export async function liveCohostApprove(sessionId, viewerEmail) {
 // LiveKit publisher token for the live session's room. Backend verifies
 // the approve row exists for this user.
 export async function liveCohostToken(sessionId) {
-  return apiCall('chat_live_cohost_token', { session_id: sessionId }, 'POST');
+  // [multi-guest 2026-10-10] device_id → identidade estável "email#device~guest"
+  // (reconectar não deixa um "fantasma" publicando no palco).
+  const payload = { session_id: sessionId };
+  try { const _did = await _getDeviceIdSafe(); if (_did) payload.device_id = _did; } catch {}
+  return apiCall('chat_live_cohost_token', payload, 'POST');
 }
 
 // Stage 3 of #929 — host of a live session requests a subscribe-only LK
@@ -11549,6 +11553,35 @@ export async function liveCohostToken(sessionId) {
 // ownership before minting.
 export async function liveHostLkToken(sessionId) {
   return apiCall('chat_live_host_lk_token', { session_id: sessionId }, 'POST');
+}
+
+// ─── [multi-guest 2026-10-10] TikTok "Multi-guest" (até 4 convidados) ───
+// Toda a sinalização é REST → /broadcast (o hub Go não repassa os eventos
+// WS crus live_join_approve/deny). Ver chat.php "multi-guest".
+export async function liveCohostCancel(sessionId) {
+  return apiCall('chat_live_cohost_cancel', { session_id: sessionId }, 'POST');
+}
+export async function liveCohostDeny(sessionId, viewerEmail) {
+  return apiCall('chat_live_cohost_deny', { session_id: sessionId, viewer_email: viewerEmail }, 'POST');
+}
+// Host remove um convidado do palco; sem viewerEmail = o próprio chamador sai.
+export async function liveCohostRemove(sessionId, viewerEmail) {
+  const payload = { session_id: sessionId };
+  if (viewerEmail) payload.viewer_email = viewerEmail;
+  return apiCall('chat_live_cohost_remove', payload, 'POST');
+}
+export async function liveGuestInvite(sessionId, viewerEmail) {
+  return apiCall('chat_live_guest_invite', { session_id: sessionId, viewer_email: viewerEmail }, 'POST');
+}
+export async function liveGuestInviteRespond(sessionId, accept) {
+  return apiCall('chat_live_guest_invite_respond', { session_id: sessionId, accept: accept ? 1 : 0 }, 'POST');
+}
+// kind: 'audio' | 'video'
+export async function liveGuestMute(sessionId, viewerEmail, kind) {
+  return apiCall('chat_live_guest_mute', { session_id: sessionId, viewer_email: viewerEmail, kind: kind === 'video' ? 'video' : 'audio' }, 'POST');
+}
+export async function liveGuestsState(sessionId) {
+  return apiCall('chat_live_guests_state', { session_id: sessionId }, 'POST');
 }
 
 // ─── Telnyx Verified Number (caller ID PSTN) ───
