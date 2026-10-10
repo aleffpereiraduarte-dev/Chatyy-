@@ -9178,4 +9178,5 @@ export default {
   "chatConv.parentalBlocked": "ペアレンタルコントロールによりブロックされたメッセージ",
   "chatConv.clearFilters": "フィルターをクリア",
   "chatConv.forwardedFromFmt": "{name}から{label}",
+  "videoNote.tapToSend": "タップして送信",
 };

@@ -9956,4 +9956,5 @@ export default {
   "chatConv.parentalBlocked": "पैरेंटल कंट्रोल द्वारा संदेश अवरुद्ध",
   "chatConv.clearFilters": "फ़िल्टर साफ़ करें",
   "chatConv.forwardedFromFmt": "{name} से {label}",
+  "videoNote.tapToSend": "भेजने के लिए टैप करें",
 };

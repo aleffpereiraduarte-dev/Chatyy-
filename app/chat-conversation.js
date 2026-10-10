@@ -26069,7 +26069,7 @@ function ChatConversationInner() {
                   overflow: 'hidden',
                   backgroundColor: '#000',
                   borderWidth: 2,
-                  borderColor: isOwn ? 'rgba(37,211,102,0.55)' : 'rgba(255,255,255,0.35)',
+                  borderColor: isDark ? 'rgba(255,255,255,0.18)' : 'rgba(0,0,0,0.10)',
                 }}
               >
                 <VideoNote uri={noteUrl} />
@@ -26091,12 +26091,15 @@ function ChatConversationInner() {
                     <IconPlay size={22} color="#fff" />
                   </View>
                 </View>
+              </View>
+              {/* [2026-10-10] Duração e hora FORA do recorte do círculo (antes o
+                  overflow:hidden cortava "0:02" e "13:27"). */}
                 {/* Duration pill (bottom-left of the circle, like a voice note) */}
                 {!!_durStr && (
                   <View
                     pointerEvents="none"
                     style={{
-                      position: 'absolute', left: 12, bottom: 12,
+                      position: 'absolute', left: 4, bottom: 6,
                       flexDirection: 'row', alignItems: 'center',
                       backgroundColor: 'rgba(0,0,0,0.55)',
                       borderRadius: 11, paddingHorizontal: 8, paddingVertical: 3,
@@ -26110,7 +26113,6 @@ function ChatConversationInner() {
                     parity). MediaStatusFooter is itself absolute (bottom:6,
                     right:8) — anchored to this circular container. */}
                 <MediaStatusFooter msg={msg} isOwn={isOwn} />
-              </View>
             </TouchableOpacity>
           );
         }
@@ -27939,10 +27941,12 @@ function ChatConversationInner() {
             !isFirstInGroup && (isOwn ? { borderTopRightRadius: bubbleTailRadius } : { borderTopLeftRadius: bubbleTailRadius }),
             isDeleted && styles.bubbleDeleted,
             (msg.type === 'sticker' || msg.type === 'gif') && !isDeleted && { backgroundColor: 'transparent', borderWidth: 0, paddingHorizontal: 0, paddingVertical: 0, elevation: 0, shadowOpacity: 0 },
+            // [2026-10-10] Vídeo redondo = só o círculo (sem a bolha preta atrás), igual WhatsApp.
+            isVideoNoteMessage(msg) && !isDeleted && { backgroundColor: 'transparent', borderWidth: 0, paddingHorizontal: 0, paddingTop: 0, paddingBottom: 0, elevation: 0, shadowOpacity: 0 },
             // [2026-10-08 location-bubble-fast] emoji-only = sem bolha; localização = mapa rente à bolha (inset 4).
             _jumboNoBubble && { backgroundColor: 'transparent', borderWidth: 0, paddingHorizontal: 0, paddingTop: 0, paddingBottom: 0, elevation: 0, shadowOpacity: 0, minWidth: 0 },
             msg.type === 'location' && !isDeleted && { paddingHorizontal: 4, paddingTop: 4, paddingBottom: 5 },
-            (msg.type === 'image' || msg.type === 'video') && !isDeleted && { paddingHorizontal: 3, paddingTop: 3, paddingBottom: 4, overflow: 'hidden' },
+            (msg.type === 'image' || msg.type === 'video') && !isDeleted && !isVideoNoteMessage(msg) && { paddingHorizontal: 3, paddingTop: 3, paddingBottom: 4, overflow: 'hidden' },
             msg._pending && { opacity: 0.7 },
             msg._failed && { opacity: 0.5 },
           ]}>

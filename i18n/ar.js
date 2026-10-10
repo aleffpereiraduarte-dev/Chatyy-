@@ -9956,4 +9956,5 @@ export default {
   "chatConv.parentalBlocked": "رسالة محظورة بواسطة الرقابة الأبوية",
   "chatConv.clearFilters": "مسح عوامل التصفية",
   "chatConv.forwardedFromFmt": "{label} من {name}",
+  "videoNote.tapToSend": "اضغط للإرسال",
 };

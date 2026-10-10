@@ -9178,4 +9178,5 @@ export default {
   "chatConv.parentalBlocked": "Pesan diblokir oleh kontrol orang tua",
   "chatConv.clearFilters": "Hapus filter",
   "chatConv.forwardedFromFmt": "{label} dari {name}",
+  "videoNote.tapToSend": "Ketuk untuk mengirim",
 };

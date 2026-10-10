@@ -39,7 +39,7 @@ import {
   Modal,
   Pressable,
 } from 'react-native';
-import { IconX, IconStop, IconTrash, IconLock } from '../Icons';
+import { IconX, IconStop, IconTrash, IconLock, IconSend } from '../Icons';
 
 let _camera = null;
 function loadCamera() {
@@ -94,6 +94,11 @@ export default function VideoNoteRecorder({ visible, onClose, onComplete, colors
   // the trash zone grows and the trigger goes red. Drives both the live drag
   // feedback and the on-release cancel decision.
   const [cancelIntent, setCancelIntent] = useState(false);
+  // [2026-10-10] Founder: "tem que ser mais fácil a enviar". Ao abrir, a
+  // câmera já começa a gravar sozinha (mãos livres) e só sobram 2 botões:
+  // ENVIAR e lixeira. Segurar o botão continua funcionando (soltar = envia).
+  const [cameraReady, setCameraReady] = useState(false);
+  const autoStartedRef = useRef(false);
 
   const cameraRef = useRef(null);
   const startedAtRef = useRef(0);
@@ -126,6 +131,8 @@ export default function VideoNoteRecorder({ visible, onClose, onComplete, colors
       setElapsed(0);
       setError('');
       setCancelIntent(false);
+      setCameraReady(false);
+      autoStartedRef.current = false;
       cancelledRef.current = false;
       lastWarnSecRef.current = -1;
       progressAnim.setValue(0);
@@ -234,6 +241,15 @@ export default function VideoNoteRecorder({ visible, onClose, onComplete, colors
     }
   };
 
+  useEffect(() => {
+    if (!visible || !cameraReady || error || recording || autoStartedRef.current) return;
+    if (micPerm && !micPerm.granted) return; // espera o "permitir microfone
+    autoStartedRef.current = true;
+    lockedRef.current = true;
+    setLocked(true);
+    startRecording();
+  }, [visible, cameraReady, error, micPerm?.granted]);
+
   const stopRecording = async (cancel = false) => {
     if (!recording || !cameraRef.current) return;
     if (cancel) {
@@ -324,7 +340,9 @@ export default function VideoNoteRecorder({ visible, onClose, onComplete, colors
         }
         const heldMs = Date.now() - startedAtRef.current;
         if (heldMs < MIN_HOLD_MS) {
-          stopRecording(true);
+          // Toque rápido = grava em mãos livres (antes cancelava).
+          lockedRef.current = true;
+          setLocked(true);
         } else {
           stopRecording(false);
         }
@@ -396,6 +414,7 @@ export default function VideoNoteRecorder({ visible, onClose, onComplete, colors
                 ref={cameraRef}
                 style={{ width: SIZE, height: SIZE }}
                 facing={facing}
+                onCameraReady={() => setCameraReady(true)}
                 mode="video"
                 videoQuality="720p"
               />
@@ -441,7 +460,7 @@ export default function VideoNoteRecorder({ visible, onClose, onComplete, colors
                     : locked
                       ? (inWarn
                           ? `${t?.('videoNote.stopIn') || 'Stop in'} ${remainingS}s`
-                          : `${t?.('videoNote.tapStop') || 'Tap to stop'} • ${mm}:${ss}`)
+                          : `${t?.('videoNote.tapToSend')} • ${mm}:${ss}`)
                       : (inWarn
                           ? `${t?.('videoNote.stopIn') || 'Stop in'} ${remainingS}s`
                           : `${t?.('videoNote.slideHints') || 'Slide ↑ lock • ← cancel'} • ${mm}:${ss}`))
@@ -481,6 +500,19 @@ export default function VideoNoteRecorder({ visible, onClose, onComplete, colors
           >
             <IconTrash size={26} color="#fff" />
           </Animated.View>
+        )}
+
+        {/* [2026-10-10] Mãos livres: lixeira tocável à esquerda do ENVIAR. */}
+        {recording && locked && (
+          <TouchableOpacity
+            onPress={() => stopRecording(true)}
+            style={[s.trashZone, { backgroundColor: 'rgba(255,255,255,0.18)' }]}
+            hitSlop={10}
+            accessibilityLabel={t?.('common.cancel')}
+            accessibilityRole="button"
+          >
+            <IconTrash size={24} color="#fff" />
+          </TouchableOpacity>
         )}
 
         {/* Lock pill — sits above the trigger; bounces gently to surface
@@ -525,11 +557,11 @@ export default function VideoNoteRecorder({ visible, onClose, onComplete, colors
           {locked ? (
             <TouchableOpacity
               onPress={() => stopRecording(false)}
-              style={[s.triggerBtn, { backgroundColor: '#EF4444' }]}
-              accessibilityLabel={t?.('videoNote.tapStop') || 'Tap to stop'}
+              style={[s.triggerBtn, { backgroundColor: '#fff', borderColor: 'rgba(255,255,255,0.35)' }]}
+              accessibilityLabel={t?.('videoNote.tapToSend')}
               accessibilityRole="button"
             >
-              <IconStop size={26} color="#fff" />
+              <IconSend size={30} color="#000" />
             </TouchableOpacity>
           ) : (
             <View

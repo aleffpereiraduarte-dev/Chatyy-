@@ -9202,4 +9202,5 @@ export default {
   "chatConv.parentalBlocked": "Mensagem bloqueada pelo controlo parental",
   "chatConv.clearFilters": "Limpar filtros",
   "chatConv.forwardedFromFmt": "{label} de {name}",
+  "videoNote.tapToSend": "Toque para enviar",
 };
