@@ -324,7 +324,37 @@ export async function getCachedAudioUri(remoteUrl, messageId, onProgress) {
     }
   } catch {}
 
-  // Download with progress
+  // [2026-10-10] Internet fraca: (1) um download por arquivo — o pré-cache do
+  // balão e o toque do usuário compartilham a MESMA promessa (antes eram 2
+  // downloads no mesmo arquivo, um estragava o outro); (2) até 3 tentativas
+  // com espera (1,5 s / 3 s) antes de desistir.
+  if (_inflight.has(localPath)) {
+    const job = _inflight.get(localPath);
+    if (onProgress) job.listeners.add(onProgress);
+    return job.promise;
+  }
+  const job = { listeners: new Set(onProgress ? [onProgress] : []), promise: null };
+  _inflight.set(localPath, job);
+  job.promise = (async () => {
+    try {
+      for (let attempt = 0; attempt < 3; attempt++) {
+        if (attempt > 0) await new Promise((r) => setTimeout(r, 1500 * attempt));
+        const got = await _downloadOnce(fs, remoteUrl, localPath, fileName, (p) => {
+          job.listeners.forEach((fn) => { try { fn(p); } catch {} });
+        });
+        if (got) return got;
+      }
+      return remoteUrl; // Fallback to remote (todas as tentativas falharam)
+    } finally {
+      _inflight.delete(localPath);
+    }
+  })();
+  return job.promise;
+}
+
+const _inflight = new Map();
+
+async function _downloadOnce(fs, remoteUrl, localPath, fileName, onProgress) {
   try {
     const downloadResumable = fs.createDownloadResumable(
       remoteUrl,
@@ -365,9 +395,10 @@ export async function getCachedAudioUri(remoteUrl, messageId, onProgress) {
 
     // Failed download - clean up
     try { await fs.deleteAsync(localPath, { idempotent: true }); } catch {}
-  } catch {}
-
-  return remoteUrl; // Fallback to remote
+  } catch {
+    try { await fs.deleteAsync(localPath, { idempotent: true }); } catch {}
+  }
+  return null;
 }
 
 /**

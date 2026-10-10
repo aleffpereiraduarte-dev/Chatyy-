@@ -3827,7 +3827,9 @@ function AudioPlayer({ url, duration, isOwn, colors, messageId, waveform, played
   // Resolve the best URI to play (cached local or original remote)
   const resolvePlayUri = useCallback(async () => {
     if (cachedUriRef.current) return cachedUriRef.current;
-    if (cachingRef.current) return url;
+    // [2026-10-10] Não toca mais "direto da internet" enquanto baixa: espera o
+    // download (o audioCache junta este pedido ao pré-cache em andamento e
+    // tenta 3×) — com rede fraca o player remoto desistia e dava erro.
     cachingRef.current = true;
     setCaching(true);
     try {

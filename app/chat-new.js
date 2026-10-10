@@ -21,6 +21,7 @@ import {
   IconArrowLeft, IconSearch, IconX, IconUsers, IconMessageSquare,
   IconCheck, IconPlus, IconMail, IconRefresh, IconClock, IconUserPlus,
   IllustrationSearch, IconCamera, IconShare,
+  IconChevronDown,
 } from '../components/Icons';
 import AvatarCircle from '../components/AvatarCircle';
 import BroadcastModal from '../components/BroadcastModal';
@@ -2218,12 +2219,26 @@ export default function ChatNewScreen() {
                       phone book overlaps with the network. */}
                   {phoneContacts.length > 0 && (
                     <View style={{ alignItems: 'center', paddingVertical: 8 }}>
-                      <View
+                      {/* [2026-10-10] Founder: "se eu clicar nisso deveria aparecer
+                          meus contatos" — o chip agora rola até a seção
+                          "Contatos no Chatyy". */}
+                      <TouchableOpacity
+                        activeOpacity={0.8}
+                        accessibilityRole="button"
+                        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                        onPress={() => {
+                          const idx = sections.findIndex(sec => sec.key === 'phone_chatyy');
+                          if (idx < 0 || !sectionListRef.current) return;
+                          try { sectionListRef.current.scrollToLocation({ sectionIndex: idx, itemIndex: 0, animated: true, viewOffset: 0 }); } catch {}
+                        }}
                         style={{
                           backgroundColor: colors.primary,
-                          paddingHorizontal: 12,
-                          paddingVertical: 6,
+                          paddingHorizontal: 14,
+                          paddingVertical: 8,
                           borderRadius: 999,
+                          flexDirection: 'row',
+                          alignItems: 'center',
+                          gap: 6,
                         }}
                       >
                         <Text style={{ color: colors.onPrimary || '#fff', fontSize: 12, fontWeight: '600' }}>
@@ -2232,7 +2247,8 @@ export default function ChatNewScreen() {
                             .replace('{count}', String(phoneContacts.length))
                             .replace('{total}', String((phoneContacts.length + otherContacts.length) || phoneContacts.length))}
                         </Text>
-                      </View>
+                        <IconChevronDown size={14} color={colors.onPrimary || '#fff'} />
+                      </TouchableOpacity>
                     </View>
                   )}
 
