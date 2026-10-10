@@ -544,6 +544,32 @@ export default function ChatNewScreen() {
   // [2026-10-09 find-contacts] 'granted' | 'denied' | null (unknown yet) —
   // drives the "Encontre seus contatos" card when the agenda isn't connected.
   const [contactsAccess, setContactsAccess] = useState(null);
+  // [2026-10-10] Founder: "o aviso diz 9 contatos no Chatyy e ao tocar não
+  // aparece nada". Uma sincronização que falha/volta vazia (rede ruim, API
+  // lenta) ZERAVA a lista. Agora: lista vazia nunca sobrescreve uma cheia, e a
+  // tela já abre com o cache do contactSync (o mesmo que o aviso usa).
+  const applyContactResult = useCallback((result) => {
+    const pc = Array.isArray(result?.chatyContacts) ? result.chatyContacts : [];
+    const oc = Array.isArray(result?.otherContacts) ? result.otherContacts : [];
+    if (pc.length > 0 || !result?.error) {
+      setPhoneContacts(prev => (pc.length === 0 && prev.length > 0 ? prev : pc));
+      setOtherContacts(prev => (oc.length === 0 && prev.length > 0 ? prev : oc));
+      if (pc.length > 0) { try { setCache(CK_PHONE, pc, CK_TTL); setCache(CK_OTHER, oc, CK_TTL); } catch {} }
+    }
+  }, []);
+  useEffect(() => {
+    if (Platform.OS === 'web') return;
+    (async () => {
+      try {
+        const { getCachedContacts } = require('../services/contactSync');
+        const cached = await getCachedContacts();
+        if (cached && Array.isArray(cached.chatyContacts) && cached.chatyContacts.length > 0) {
+          setPhoneContacts(prev => (prev.length > 0 ? prev : cached.chatyContacts));
+          setOtherContacts(prev => (prev.length > 0 ? prev : (cached.otherContacts || [])));
+        }
+      } catch {}
+    })();
+  }, []);
   const lastContactSyncRef = useRef(0);
   const silentSyncBusyRef = useRef(false);
 
@@ -555,15 +581,11 @@ export default function ChatNewScreen() {
     hasSyncedRef.current = true;
     setSyncingContacts(true);
     syncContacts(false, t).then(result => {
-      const pc = result.chatyContacts || [];
-      const oc = result.otherContacts || [];
       if (result.error === 'consent_denied' || result.error === 'permission_denied') setContactsAccess('denied');
       else if (!result.error) { setContactsAccess('granted'); lastContactSyncRef.current = Date.now(); }
-      setPhoneContacts(pc);
-      setOtherContacts(oc);
-      try { setCache(CK_PHONE, pc, CK_TTL); setCache(CK_OTHER, oc, CK_TTL); } catch {}
+      applyContactResult(result);
     }).catch(() => {}).finally(() => setSyncingContacts(false));
-  }, [t]);
+  }, [t, applyContactResult]);
 
   // [2026-10-09 find-contacts] Background re-sync (WhatsApp parity): when the
   // user adds someone in the system Contacts app and comes back, or the agenda
@@ -576,15 +598,11 @@ export default function ChatNewScreen() {
     silentSyncBusyRef.current = true;
     syncContacts(true, t, { silent: true }).then(result => {
       if (result?.error) return; // keep what is on screen
-      const pc = result.chatyContacts || [];
-      const oc = result.otherContacts || [];
       lastContactSyncRef.current = Date.now();
       setContactsAccess('granted');
-      setPhoneContacts(pc);
-      setOtherContacts(oc);
-      try { setCache(CK_PHONE, pc, CK_TTL); setCache(CK_OTHER, oc, CK_TTL); } catch {}
+      applyContactResult(result);
     }).catch(() => {}).finally(() => { silentSyncBusyRef.current = false; });
-  }, [t, pickMode]);
+  }, [t, pickMode, applyContactResult]);
 
   useEffect(() => {
     if (Platform.OS === 'web' || pickMode) return;
@@ -608,11 +626,7 @@ export default function ChatNewScreen() {
     if (Platform.OS === 'web') return;
     setSyncingContacts(true);
     syncContacts(true, t).then(result => {
-      const pc = result.chatyContacts || [];
-      const oc = result.otherContacts || [];
-      setPhoneContacts(pc);
-      setOtherContacts(oc);
-      try { setCache(CK_PHONE, pc, CK_TTL); setCache(CK_OTHER, oc, CK_TTL); } catch {}
+      applyContactResult(result);
       if (result.error === 'consent_denied' || result.error === 'permission_denied') setContactsAccess('denied');
       else if (!result.error) { setContactsAccess('granted'); lastContactSyncRef.current = Date.now(); }
       if (result.error === 'permission_denied') {
