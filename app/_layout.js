@@ -81,6 +81,7 @@ try {
 // before React/components so the monkey-patch is installed before any screen
 // mounts and schedules a LayoutAnimation. Android is left untouched.
 import { androidTopInset } from '../utils/systemInsets'; // [2026-10-07 android-native] edge-to-edge
+import { isNativeTabletSplit } from '../utils/responsive'; // [2026-10-10 tablet-split]
 import '../services/disableLayoutAnimationIOS';
 // [2026-10-07 coldstart] Boot trace + native-splash owner + after-first-paint
 // scheduler. Imported this early so its T0 is as close to bundle start as
@@ -1933,12 +1934,15 @@ export default function RootLayout() {
                   <Stack.Screen name="calendar" options={{ presentation: 'card', animation: _PUSH, gestureEnabled: false, ..._NATIVE_HDR /* [2026-10-08 apps-native] */ }} />
                   <Stack.Screen name="event-detail" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR /* [2026-10-09 native-headers] */ }} />
                   <Stack.Screen name="chat" options={{ presentation: 'card', animation: 'fade', animationDuration: 120 }} />
-                  <Stack.Screen name="chat-conversation" options={{
+                  <Stack.Screen name="chat-conversation" options={() => ({
                     presentation: 'card',
-                    animation: _PUSH,
+                    // [2026-10-10 tablet-split] tablet largo: a conversa abre na tela
+                    // dividida (lista + conversa) → fade curto em vez de deslizar tudo.
+                    animation: _tabletSplitNow() ? 'fade' : _PUSH,
+                    ...(_tabletSplitNow() ? { animationDuration: 140 } : {}),
                     gestureEnabled: true,
                     ...(Platform.OS !== 'web' ? { fullScreenGestureEnabled: true } : {}),
-                  }} />
+                  })} />
                   <Stack.Screen name="chat-new" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR }} />
                   <Stack.Screen name="locked-chats" options={{ headerShown: false, presentation: 'card', animation: _PUSH, ..._NATIVE_HDR /* [2026-10-09 more-native] */ }} />
                   <Stack.Screen name="saved-messages" options={{ headerShown: false, presentation: 'card', animation: _PUSH }} />
@@ -2089,4 +2093,13 @@ export default function RootLayout() {
     </ChatyyKeyboardProvider>
     </GestureHandlerRootView>
   );
+}
+
+// [2026-10-10 tablet-split] Largura atual da janela cabe lista + conversa? (nativo)
+function _tabletSplitNow() {
+  if (Platform.OS === 'web') return false;
+  try {
+    const { Dimensions } = require('react-native');
+    return isNativeTabletSplit(Dimensions.get('window').width);
+  } catch { return false; }
 }

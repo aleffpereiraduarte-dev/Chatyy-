@@ -1,0 +1,8 @@
+{
+  "name": "expo-chatyy-e2ee",
+  "version": "0.1.0",
+  "private": true,
+  "description": "E2EE v4 nativo (vodozemac via Rust/UniFFI). NÃO fica em modules/: o CI copia para modules/expo-chatyy-e2ee só com e2ee_native=true (ver native/e2ee/README.md e /root/e2ee-nativo-plano.md).",
+  "main": "index.js",
+  "license": "Apache-2.0"
+}

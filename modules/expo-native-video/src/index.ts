@@ -92,6 +92,15 @@ declare class ExpoNativeVideoModuleType extends NativeModule {
   generateThumbnail(srcUri: string, atMs: number, maxDim: number): Promise<ThumbnailResult>;
   getInfo(srcUri: string): Promise<VideoInfo>;
   segmentVideo(srcUri: string, segmentMs: number): Promise<SegmentResult>;
+  trimVideo?(srcUri: string, startMs: number, endMs: number): Promise<TrimResult>;
+}
+
+export interface TrimResult {
+  /** file:// URI of the trimmed clip in cache. */
+  uri: string;
+  durationMs: number;
+  size: number;
+  mimeType: string;
 }
 
 let mod: ExpoNativeVideoModuleType | null = null;
@@ -189,8 +198,36 @@ export async function segmentVideo(
   return m.segmentVideo(srcUri, segmentMs);
 }
 
+/**
+ * [2026-10-10 video-trim] true só no binário que já traz trimVideo (build
+ * posterior ao iOS 659 / Android 612). A UI de corte se esconde sem isso.
+ */
+export function isTrimAvailable(): boolean {
+  const m = getModule();
+  return !!m && typeof (m as any).trimVideo === 'function';
+}
+
+/**
+ * Corta o vídeo para [startMs, endMs) sem re-encode (iOS passthrough com
+ * fallback HighestQuality; Android remux a partir do keyframe anterior).
+ * Lança se indisponível/falhar — o chamador envia o vídeo inteiro.
+ */
+export async function trimVideo(
+  srcUri: string,
+  startMs: number,
+  endMs: number
+): Promise<TrimResult> {
+  const m = getModule();
+  if (!m || typeof (m as any).trimVideo !== 'function') {
+    throw new Error('ExpoNativeVideo.trimVideo not available');
+  }
+  return (m as any).trimVideo(srcUri, Math.max(0, Math.round(startMs)), Math.round(endMs));
+}
+
 export default {
   isAvailable,
+  isTrimAvailable,
+  trimVideo,
   compressVideo,
   generateThumbnail,
   getInfo,

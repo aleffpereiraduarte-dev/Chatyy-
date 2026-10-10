@@ -121,6 +121,8 @@ import PressableScale from '../components/PressableScale'; // [2026-10-06 UX2] c
 import FadeSlideIn from '../components/FadeSlideIn'; // [2026-10-06 UX2]
 import { isReduceMotionEnabled } from '../components/reducedMotion'; // [2026-10-04] honor OS Reduce Motion
 import MediaSendOverlay, { MediaPopIn } from '../components/MediaSendOverlay'; // [2026-10-04] WhatsApp-level send motion
+import VideoTrimBar from '../components/media/VideoTrimBar'; // [2026-10-10 video-trim]
+import * as _imagePaste from '../services/imagePaste'; // [2026-10-10 paste-image]
 import { useRouter, useLocalSearchParams } from 'expo-router';
 // [VISTO AZUL FALSO causa-raiz 2026-10-06] useIsFocused: recibo de leitura SÓ
 // quando esta tela é a focada na pilha (não há modal/outra tela por cima).
@@ -144,7 +146,7 @@ import NativeSwitch from '../components/NativeSwitch'; // [2026-10-07 native-ui-
 import { useAuth, isChildAccount, getChildRestrictions } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
 import { BorderRadius, FontSize, Spacing, Shadow, ChatBubble, LetterSpacing, RECONNECT_BANNER_GRACE_MS } from '../constants/theme';
-import { isTablet as RESP_IS_TABLET } from '../utils/responsive';
+import { isTablet as RESP_IS_TABLET, isNativeTabletSplit } from '../utils/responsive';
 import { SCAN_DOCUMENT_ENABLED } from '../constants/featureFlags';
 import * as api from '../services/api';
 import { emailToDisplayName } from '../services/api';
@@ -5761,7 +5763,7 @@ function VideoThumbImage({ url, thumbnailUrl, posterUrl, videoThumb, imageVarian
 // see + scrub the video before sending. Previously we showed a static
 // placeholder, which the user reported as "video crashes the app" — it
 // wasn't a crash, just a dead-looking preview leading to a confused send.
-function VideoPreviewNative({ uri }) {
+function VideoPreviewNative({ uri, trim }) {
   let Video = null;
   let useVideoPlayer = null;
   try {
@@ -5779,10 +5781,31 @@ function VideoPreviewNative({ uri }) {
       </View>
     );
   }
-  return <VideoPreviewNativeInner uri={uri} Video={Video} useVideoPlayer={useVideoPlayer} />;
+  return <VideoPreviewNativeInner uri={uri} trim={trim} Video={Video} useVideoPlayer={useVideoPlayer} />;
 }
-function VideoPreviewNativeInner({ uri, Video, useVideoPlayer }) {
+function VideoPreviewNativeInner({ uri, trim, Video, useVideoPlayer }) {
   const player = useVideoPlayer(uri, (p) => { try { p.loop = false; p.muted = false; } catch {} });
+  // [2026-10-10 video-trim] Prévia toca só o trecho escolhido: pula pro início
+  // ao mudar o corte e volta pro início ao passar do fim.
+  const _trimStart = trim?.startMs ?? null;
+  const _trimEnd = trim?.endMs ?? null;
+  useEffect(() => {
+    if (!player || _trimStart == null) return undefined;
+    try { player.currentTime = _trimStart / 1000; } catch {}
+    let sub = null;
+    try {
+      player.timeUpdateEventInterval = 0.25;
+      sub = player.addListener('timeUpdate', (ev) => {
+        try {
+          const ct = Number(ev?.currentTime);
+          if (_trimEnd != null && isFinite(ct) && ct >= _trimEnd / 1000) {
+            player.currentTime = _trimStart / 1000;
+          }
+        } catch {}
+      });
+    } catch {}
+    return () => { try { sub?.remove?.(); } catch {} };
+  }, [player, _trimStart, _trimEnd]);
   return (
     <Video
       player={player}
@@ -5813,6 +5836,14 @@ function MediaPreview({ visible, onClose, onSend, files: filesProp, colors, hdMo
   // TextInput's `caption` is the ACTIVE photo's buffer; switching photos
   // persists it here and loads the target's. Send flushes + aligns to files.
   const [captions, setCaptions] = useState({});
+  // [2026-10-10 video-trim] Corte por índice ({ startMs, endMs }) — só vídeo.
+  // Aplicado no envio via ExpoNativeVideo.trimVideo; falhou → vai inteiro.
+  const [trims, setTrims] = useState({});
+  const [preparingSend, setPreparingSend] = useState(false);
+  const _trimOk = useMemo(() => {
+    if (Platform.OS === 'web') return false;
+    try { return !!require('../modules/expo-native-video').isTrimAvailable?.(); } catch { return false; }
+  }, []);
   const [editing, setEditing] = useState(false);
   const [drawOpen, setDrawOpen] = useState(false);
   // Full-screen crop/filter editor — opens on the active image so the user
@@ -5846,6 +5877,8 @@ function MediaPreview({ visible, onClose, onSend, files: filesProp, colors, hdMo
     setActiveIdx(0);
     setEdits({});
     setCaptions({});
+    setTrims({});
+    setPreparingSend(false);
     setCaption('');
     setViewOnce(false);
     setDrawOpen(false);
@@ -5903,6 +5936,16 @@ function MediaPreview({ visible, onClose, onSend, files: filesProp, colors, hdMo
     });
     // Reindex edits map — anything above idx shifts down by one
     setEdits(prev => {
+      const next = {};
+      Object.entries(prev).forEach(([k, v]) => {
+        const ki = parseInt(k, 10);
+        if (ki === idx) return;
+        next[ki > idx ? ki - 1 : ki] = v;
+      });
+      return next;
+    });
+    // [2026-10-10 video-trim] Reindexa os cortes igual aos edits.
+    setTrims(prev => {
       const next = {};
       Object.entries(prev).forEach(([k, v]) => {
         const ki = parseInt(k, 10);
@@ -5989,7 +6032,33 @@ function MediaPreview({ visible, onClose, onSend, files: filesProp, colors, hdMo
     // stale original blob would silently discard a crop/rotate — rebuild the
     // blob from the edited uri (data:/blob: URLs are fetchable in-browser).
     // Native keeps blob=null, so the edited uri already wins there.
+    if (preparingSend) return;
+    // [2026-10-10 video-trim] Vídeos com corte: recorta nativo (sem re-encode)
+    // ANTES de entregar o lote. Qualquer falha → manda o vídeo inteiro.
+    const trimmedUris = {};
+    const _trimIdx = Object.keys(trims).map(k => parseInt(k, 10)).filter(i => files[i] && trims[i]);
+    if (_trimOk && _trimIdx.length) {
+      setPreparingSend(true);
+      try {
+        const NV = require('../modules/expo-native-video');
+        for (const i of _trimIdx) {
+          try {
+            const r = await NV.trimVideo(files[i].uri, trims[i].startMs, trims[i].endMs);
+            if (r?.uri) trimmedUris[i] = r;
+          } catch (e) {
+            console.warn('[MediaPreview trim] enviando inteiro:', e?.message);
+          }
+        }
+      } catch {}
+      setPreparingSend(false);
+    }
     const outFiles = await Promise.all(files.map(async (f, i) => {
+      if (trimmedUris[i]) {
+        const r = trimmedUris[i];
+        const ext = /quicktime/.test(r.mimeType || '') ? 'mov' : 'mp4';
+        const baseName = String(f.name || 'video').replace(/\.[a-z0-9]{2,5}$/i, '');
+        return { ...f, uri: r.uri, _raw: null, blob: null, size: r.size || 0, type: r.mimeType || 'video/mp4', name: `${baseName}.${ext}` };
+      }
       if (!edits[i]) return f;
       const out = { ...f, uri: edits[i], _raw: null };
       if (Platform.OS === 'web' && (f.blob || f._raw)) {
@@ -6100,7 +6169,7 @@ function MediaPreview({ visible, onClose, onSend, files: filesProp, colors, hdMo
               // when sent" but the real problem was they couldn't see the
               // video first to verify — expo-video is already installed
               // so we use it here.
-              <VideoPreviewNative uri={currentUri} />
+              <VideoPreviewNative uri={currentUri} trim={trims[activeIdx] || null} />
             )
           ) : (
             <Image source={{ uri: currentUri }} style={previewStyles.previewImage} resizeMode="contain" />
@@ -6119,6 +6188,20 @@ function MediaPreview({ visible, onClose, onSend, files: filesProp, colors, hdMo
             </TouchableOpacity>
           )}
         </View>
+        {/* [2026-10-10 video-trim] Cortar vídeo antes de enviar (só binário com trimVideo) */}
+        {activeIsVideo && _trimOk && !!baseUri && (
+          <VideoTrimBar
+            key={`trim-${activeIdx}-${baseUri}`}
+            uri={baseUri}
+            value={trims[activeIdx] || null}
+            onChange={(r) => setTrims(prev => {
+              const n = { ...prev };
+              if (r) n[activeIdx] = r; else delete n[activeIdx];
+              return n;
+            })}
+            t={t}
+          />
+        )}
         {proEditOpen && !activeIsVideo && _proEditorOk && (
           <ProPhotoEditor
             visible={proEditOpen}
@@ -6153,10 +6236,11 @@ function MediaPreview({ visible, onClose, onSend, files: filesProp, colors, hdMo
             <TouchableOpacity
               style={previewStyles.sendBtn}
               onPress={handleSendPress}
+              disabled={preparingSend}
               accessibilityLabel={t('chatConv.send') || 'Enviar'}
               accessibilityRole="button"
             >
-              <IconSend size={22} color="#fff" />
+              {preparingSend ? <ActivityIndicator size="small" color="#fff" /> : <IconSend size={22} color="#fff" />}
               {files.length > 1 && (
                 <View style={previewStyles.sendBadge}>
                   <Text style={previewStyles.sendBadgeText}>{files.length}</Text>
@@ -10643,6 +10727,58 @@ function ChatConversationInner() {
   const [stickerMakerSrc, setStickerMakerSrc] = useState(null); // [2026-10-08 sticker-maker]
   const [stickerSheet, setStickerSheet] = useState(null); // [2026-10-10 stickers-import] { messageId, url }
   const [stickerDrop, setStickerDrop] = useState(null); // [2026-10-10 stickers-import] web: [{uri, blob, name, type, size}]
+
+  // [2026-10-10 paste-image] Colar foto/GIF/figurinha no app (web já tem Ctrl+V
+  // acima). (a) Chip "Colar foto" acima do campo quando a área de transferência
+  // tem imagem (expo-clipboard, binário atual — só consulta o tipo, sem aviso de
+  // colar). (b) Colar nativo pelo menu do campo / teclado (GIF do Gboard) via
+  // ChatyyImagePaste quando o binário trouxer (requireOptional → no-op hoje).
+  const [pasteChip, setPasteChip] = useState(false);
+  const pasteDismissedRef = useRef(false);
+  const handlePastedFile = (file) => {
+    if (!file?.uri) return;
+    pasteDismissedRef.current = true;
+    setPasteChip(false);
+    if (/webp/i.test(file.type || '') || /\.webp$/i.test(file.name || '')) { setStickerDrop([file]); return; }
+    setMediaPreview(prev => prev?.visible
+      ? { visible: true, files: [...(prev.files || []), file] }
+      : { visible: true, files: [file] });
+  };
+  const handlePastedFileRef = useRef(handlePastedFile);
+  useEffect(() => { handlePastedFileRef.current = handlePastedFile; });
+  useEffect(() => {
+    if (Platform.OS === 'web' || !inputFocused) return undefined;
+    let alive = true;
+    const check = () => {
+      if (pasteDismissedRef.current) return;
+      _imagePaste.clipboardHasImage().then((has) => { if (alive) setPasteChip(prev => (prev === !!has ? prev : !!has)); }).catch(() => {});
+    };
+    check();
+    const unsubClip = _imagePaste.onClipboardChange((hint) => {
+      pasteDismissedRef.current = false;
+      if (hint === false) { if (alive) setPasteChip(false); return; }
+      check();
+    });
+    const appSub = AppState.addEventListener('change', (st) => { if (st === 'active') check(); });
+    return () => { alive = false; unsubClip(); try { appSub?.remove?.(); } catch {} };
+  }, [inputFocused]);
+  useEffect(() => {
+    if (Platform.OS === 'web' || !_imagePaste.hasNativeImagePaste()) return undefined;
+    let cleanup = () => {};
+    const tm = setTimeout(() => {
+      cleanup = _imagePaste.attachNativeImagePaste(inputRef, (ev) => {
+        const f = _imagePaste.fileFromNativePaste(ev);
+        if (f) handlePastedFileRef.current?.(f);
+      });
+    }, 400);
+    return () => { clearTimeout(tm); cleanup(); };
+  }, [conversationId]);
+  const onPasteChipPress = async () => {
+    setPasteChip(false);
+    pasteDismissedRef.current = true;
+    const f = await _imagePaste.readClipboardImageFile();
+    if (f) handlePastedFile(f);
+  };
   // Snapshot for the Android hardware-back handler declared above (see
   // androidBackOverlayRef). Effect without deps = refreshed after every commit;
   // keeps the ref write out of render (React Compiler rule) and avoids TDZ.
@@ -30711,6 +30847,31 @@ function ChatConversationInner() {
             inputRef={inputRef}
           />
         )}
+        {/* [2026-10-10 paste-image] "Colar foto" quando a área de transferência tem imagem */}
+        {pasteChip && inputFocused && Platform.OS !== 'web' && (
+          <View style={{ flexDirection: 'row', paddingHorizontal: 12, paddingTop: 6, backgroundColor: isDark ? '#0b0b0b' : '#ffffff' }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', borderRadius: 18, borderWidth: 1, borderColor: isDark ? '#3a3a3c' : 'rgba(0,0,0,0.14)', backgroundColor: isDark ? '#1c1c1e' : '#f2f2f2' }}>
+              <TouchableOpacity
+                onPress={onPasteChipPress}
+                accessibilityRole="button"
+                accessibilityLabel={t('chatConv.pastePhoto')}
+                style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingLeft: 12, paddingRight: 6, height: 34 }}
+              >
+                <IconImage size={16} color={colors.text} />
+                <Text style={{ color: colors.text, fontSize: 14, fontWeight: '600' }}>{t('chatConv.pastePhoto')}</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => { pasteDismissedRef.current = true; setPasteChip(false); }}
+                hitSlop={{ top: 8, bottom: 8, left: 4, right: 8 }}
+                accessibilityRole="button"
+                accessibilityLabel={t('common.close')}
+                style={{ width: 30, height: 34, alignItems: 'center', justifyContent: 'center' }}
+              >
+                <IconX size={14} color={_chromeIcon} />
+              </TouchableOpacity>
+            </View>
+          </View>
+        )}
         <View pointerEvents={(blockedByPeer || iBlockedPeer) && conversationType === 'direct' ? 'none' : 'auto'} style={[styles.inputBar, {
           // [2026-10-08 chat-beauty-chrome] same surface as the header + hairline
           backgroundColor: isDark ? '#0b0b0b' : '#ffffff',
@@ -36524,26 +36685,66 @@ export default function ChatConversationScreen() {
   const { t } = useLanguage();
   const router = useRouter();
   const params = useLocalSearchParams();
+  const _splitInsets = useSafeAreaInsets();
+  const _splitParamsRef = useRef(params);
+  useEffect(() => { _splitParamsRef.current = params; });
   // replace-instead-of-push only for conversation→conversation hops; every
   // other destination (profile, status, settings) keeps normal stack behavior.
+  // [2026-10-10 tablet-split] Nativo: troca de conversa = setParams na MESMA
+  // tela (só o painel da direita remonta pela key; a lista fica parada, sem a
+  // animação de push/replace deslizando a tela inteira). Chaves antigas são
+  // zeradas para não vazar (email/unread/_shared_* da conversa anterior).
   const listRouter = useMemo(() => ({
     ...router,
     push: (href, opts) => {
       try {
         const target = typeof href === 'string' ? href : href?.pathname || '';
-        if (String(target).startsWith('/chat-conversation')) return router.replace(href, opts);
+        if (String(target).startsWith('/chat-conversation')) {
+          if (Platform.OS !== 'web' && typeof router.setParams === 'function') {
+            let next = null;
+            if (typeof href === 'string') {
+              const q = href.indexOf('?');
+              next = {};
+              if (q >= 0) {
+                href.slice(q + 1).split('&').forEach((kv) => {
+                  if (!kv) return;
+                  const i = kv.indexOf('=');
+                  const k = i >= 0 ? kv.slice(0, i) : kv;
+                  const v = i >= 0 ? (() => { try { return decodeURIComponent(kv.slice(i + 1)); } catch { return kv.slice(i + 1); } })() : '';
+                  if (k) next[k] = v;
+                });
+              }
+            } else if (href && typeof href === 'object') {
+              next = { ...(href.params || {}) };
+            }
+            if (next && next.id) {
+              const cleared = {};
+              Object.keys(_splitParamsRef.current || {}).forEach((k) => { cleared[k] = undefined; });
+              router.setParams({ ...cleared, ...next });
+              return undefined;
+            }
+          }
+          return router.replace(href, opts);
+        }
       } catch {}
       return router.push(href, opts);
     },
   }), [router]);
 
-  const isSplit = Platform.OS === 'web' && _winW >= SPLIT_MIN_WIDTH;
+  // [2026-10-10 tablet-split] iPad/tablet Android: lista + conversa lado a lado
+  // quando a janela é larga (paisagem, ou retrato ≥ 700). Celular nunca entra
+  // (menor lado < 600); Split View estreito do iPad volta pra coluna única.
+  const isSplit = Platform.OS === 'web'
+    ? _winW >= SPLIT_MIN_WIDTH
+    : isNativeTabletSplit(_winW);
   if (!isSplit) return <ChatConversationInner />;
   return (
     <View style={{ flex: 1, flexDirection: 'row', backgroundColor: colors.background }}>
       <View
         style={{
           width: SPLIT_LIST_WIDTH, maxWidth: '36%', minWidth: 300,
+          // [2026-10-10 tablet-split] nativo: lista abaixo da barra de status
+          paddingTop: Platform.OS !== 'web' ? (_splitInsets?.top || 0) : 0,
           borderRightWidth: 1,
           borderRightColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)',
         }}

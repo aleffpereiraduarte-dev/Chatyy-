@@ -21,6 +21,7 @@ import Svg, { Circle as SvgCircle, Path, Rect, Line, Defs, LinearGradient, Stop 
 import { WALLET_ENABLED } from '../constants/featureFlags';
 import { haptic } from '../constants/theme';
 import ChatListTab from '../components/ChatListTab';
+import { IS_TABLET_DEVICE } from '../utils/responsive'; // [2026-10-10 tablet-split]
 import AvatarCircle from '../components/AvatarCircle';
 import ChatCallsTab from '../components/ChatCallsTab';
 // Heavy non-default tabs — code-split via React.lazy so cold start doesn't pay
@@ -1110,7 +1111,25 @@ function ChatHub() {
           {/* Content - lazy mount: only mount tab once visited, then keep mounted hidden */}
           <Animated.View style={{ flex: 1, opacity: contentOpacity, transform: [{ translateX: contentTranslateX }] }}>
             <View style={{ display: activeTab === 'chats' ? 'flex' : 'none', flex: activeTab === 'chats' ? 1 : undefined }}>
-              <ChatErrorBoundary><ChatListTab key={'cl_' + (user?.email || 'anon')} {...tabProps} /></ChatErrorBoundary>
+              {IS_TABLET_DEVICE ? (
+                // [2026-10-10 tablet-split] iPad/tablet: lista à esquerda + painel
+                // vazio à direita (WhatsApp iPad). Tocar numa conversa abre a tela
+                // dividida (lista + conversa) — ver ChatConversationScreen.
+                <View style={{ flex: 1, flexDirection: 'row' }}>
+                  <View style={{ width: 400, maxWidth: '42%', minWidth: 300, borderRightWidth: 1, borderRightColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)' }}>
+                    <ChatErrorBoundary><ChatListTab key={'cl_' + (user?.email || 'anon')} {...tabProps} /></ChatErrorBoundary>
+                  </View>
+                  <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 32, backgroundColor: isDark ? '#000000' : '#f7f7f7' }}>
+                    <Svg width={56} height={56} viewBox="0 0 24 24" fill="none">
+                      <Path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" stroke={isDark ? '#8e8e93' : '#8a8a8e'} strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round" />
+                    </Svg>
+                    <Text style={{ marginTop: 14, fontSize: 17, fontWeight: '600', color: colors.text, textAlign: 'center' }}>{t('chat.tabletPickTitle')}</Text>
+                    <Text style={{ marginTop: 6, fontSize: 14, color: isDark ? '#8e8e93' : '#6b6b70', textAlign: 'center', maxWidth: 360 }}>{t('chat.tabletPickHint')}</Text>
+                  </View>
+                </View>
+              ) : (
+                <ChatErrorBoundary><ChatListTab key={'cl_' + (user?.email || 'anon')} {...tabProps} /></ChatErrorBoundary>
+              )}
             </View>
             {mountedTabs.has('calls') && <View style={{ display: activeTab === 'calls' ? 'flex' : 'none', flex: activeTab === 'calls' ? 1 : undefined }}>
               <ChatErrorBoundary><ChatCallsTab {...tabProps} /></ChatErrorBoundary>

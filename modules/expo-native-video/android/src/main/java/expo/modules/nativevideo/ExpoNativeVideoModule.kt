@@ -88,6 +88,14 @@ class ExpoNativeVideoModule : Module() {
     AsyncFunction("segmentVideo") { srcUri: String, segmentMs: Double ->
       return@AsyncFunction segment(srcUri, segmentMs.toLong())
     }
+
+    // [2026-10-10 video-trim] trimVideo(srcUri, startMs, endMs) — "cortar antes
+    // de enviar". MediaExtractor → MediaMuxer sample-copy (sem re-encode), igual
+    // ao segmentVideo: o início cai no keyframe anterior a startMs. Resolve
+    // { uri, durationMs, size, mimeType }; lança em falha → JS envia o inteiro.
+    AsyncFunction("trimVideo") { srcUri: String, startMs: Double, endMs: Double ->
+      return@AsyncFunction trim(srcUri, startMs.toLong(), endMs.toLong())
+    }
   }
 
   // ─── Helpers ───────────────────────────────────────────────────────────────
@@ -267,6 +275,39 @@ class ExpoNativeVideoModule : Module() {
       "width" to srcW,
       "height" to srcH,
       "durationMs" to durationMs
+    )
+  }
+
+  // ─── trimVideo ───────────────────────────────────────────────────────────
+
+  private fun trim(srcUri: String, startMsIn: Long, endMsIn: Long): Map<String, Any> {
+    val info = readInfo(srcUri)
+    val totalMs = (info["durationMs"] as? Long) ?: 0L
+    val startMs = maxOf(0L, startMsIn)
+    val endMs = if (endMsIn <= 0L || (totalMs > 0L && endMsIn > totalMs)) totalMs else endMsIn
+    if (endMs <= 0L || endMs - startMs < 300L) {
+      throw CodedException("E_TRIM_RANGE", "Range too short", null)
+    }
+    val cacheDir = appContext.reactContext?.cacheDir
+      ?: throw CodedException("E_TRIM_NO_CACHE", "cacheDir unavailable", null)
+    val rotation = try {
+      val mmr = openRetriever(srcUri)
+      try {
+        mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION)?.toIntOrNull() ?: 0
+      } finally { try { mmr.release() } catch (_: Throwable) {} }
+    } catch (_: Throwable) { 0 }
+    val outFile = File(cacheDir, "trim_${System.currentTimeMillis()}.mp4")
+    val durUs = writeSegment(srcUri, outFile, startMs * 1000L, endMs * 1000L, rotation)
+    if (durUs <= 0L || !outFile.exists() || outFile.length() <= 0L) {
+      try { outFile.delete() } catch (_: Throwable) {}
+      throw CodedException("E_TRIM_FAILED", "Trim produced no output", null)
+    }
+    Log.i(TAG, "trimVideo: ${startMs}-${endMs}ms of ${totalMs}ms → ${outFile.length()} bytes")
+    return mapOf(
+      "uri" to "file://${outFile.absolutePath}",
+      "durationMs" to (durUs / 1000L),
+      "size" to outFile.length(),
+      "mimeType" to "video/mp4"
     )
   }
 

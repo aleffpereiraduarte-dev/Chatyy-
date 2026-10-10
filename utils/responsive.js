@@ -94,3 +94,21 @@ export function useResponsive() {
     s: (n) => (typeof n === 'number' ? PixelRatio.roundToNearestPixel(n * scale) : n),
   };
 }
+
+// [2026-10-10 tablet-split] Tablet de verdade (iPad / tablet Android / dobrável
+// aberto): menor lado da TELA ≥ 600dp (ou Platform.isPad). Usa a tela, não a
+// janela, para o iPad em Split View estreito continuar "tablet" mas cair na
+// coluna única pela largura. Web nunca é tablet aqui (tem layout próprio).
+export const IS_TABLET_DEVICE = (() => {
+  if (IS_WEB) return false;
+  try {
+    if (Platform.OS === 'ios' && Platform.isPad) return true;
+    const s = Dimensions.get('screen');
+    return Math.min(s.width || 0, s.height || 0) >= 600;
+  } catch { return false; }
+})();
+// Largura mínima da janela para lista + conversa lado a lado no tablet.
+export const TABLET_SPLIT_MIN_WIDTH = 700;
+export function isNativeTabletSplit(width) {
+  return IS_TABLET_DEVICE && (width || 0) >= TABLET_SPLIT_MIN_WIDTH;
+}

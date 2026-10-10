@@ -19,7 +19,7 @@
 // Author: 2026-05-21 — fix for the `chatyy.com.br/live/<id>` white-page bug.
 
 import React, { useEffect, useRef, useState, useCallback } from 'react';
-import { View, Text, StyleSheet, ActivityIndicator, Pressable } from 'react-native';
+import { View, Text, StyleSheet, ActivityIndicator, Pressable, TextInput } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 
 import * as api from '../services/api';
@@ -28,7 +28,29 @@ import * as api from '../services/api';
 // native bindings). On mobile this file is never bundled because of the
 // `.web.js` extension.
 import { Room, RoomEvent, Track } from 'livekit-client';
-import { IconEye } from '../components/Icons';
+import { IconEye, IconSend } from '../components/Icons';
+import { useLanguage } from '../context/LanguageContext';
+
+// [lives 2026-10-10] Interação no web: comentários em tempo real pelo hub WS
+// (sem polling), corações SVG animados por CSS (compositor do browser, sem
+// re-render por quadro), contagem de pessoas assistindo do hub, aviso de host
+// reconectando, comentário fixado. Visual P&B (sem vermelho/rosa).
+const WS_URL = 'wss://chatyy.com.br/ws';
+const HEART_PATH = 'M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z';
+const MAX_COMMENTS = 60;
+const MAX_HEARTS = 24;
+let _lvwCssDone = false;
+function ensureLiveCss() {
+  if (_lvwCssDone || typeof document === 'undefined') return;
+  _lvwCssDone = true;
+  try {
+    const st = document.createElement('style');
+    st.textContent = '@keyframes lvwFloat{0%{transform:translate(0,0) scale(.6);opacity:0}12%{opacity:1;transform:translate(0,-30px) scale(1.05)}100%{transform:translate(var(--dx),-340px) scale(.9);opacity:0}}'
+      + '.lvw-heart{position:absolute;right:28px;bottom:96px;width:30px;height:30px;pointer-events:none;animation:lvwFloat 1.9s cubic-bezier(.2,.7,.3,1) forwards;will-change:transform,opacity;filter:drop-shadow(0 2px 6px rgba(0,0,0,.45))}'
+      + '@keyframes lvwIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}.lvw-c{animation:lvwIn .22s ease-out}';
+    document.head.appendChild(st);
+  } catch {}
+}
 
 // hls.js is loaded dynamically only when we need it (CF HLS pipeline). Keeps
 // the initial bundle smaller for LiveKit-only viewers.
@@ -50,6 +72,7 @@ function getInitial(name, email) {
 export default function LiveViewerWeb() {
   const params = useLocalSearchParams();
   const router = useRouter();
+  const { t } = useLanguage();
   const sessionId = String(params.sessionId || params.id || '');
 
   // Pipeline state.
@@ -63,6 +86,16 @@ export default function LiveViewerWeb() {
   const [viewerCount, setViewerCount] = useState(0);
   const [muted, setMuted] = useState(true); // browsers require muted autoplay
   const [connected, setConnected] = useState(false);
+  // [lives 2026-10-10] interação
+  const [comments, setComments] = useState([]);
+  const [draft, setDraft] = useState('');
+  const [hearts, setHearts] = useState([]);
+  const [notice, setNotice] = useState('');
+  const [pinned, setPinned] = useState(null);
+  const wsRef = useRef(null);
+  const noticeTimerRef = useRef(null);
+  const heartSeqRef = useRef(0);
+  const lastHeartSentRef = useRef([]);
 
   // DOM refs.
   const videoElRef = useRef(null);
@@ -376,6 +409,144 @@ export default function LiveViewerWeb() {
     }, 0);
   }, [muted]);
 
+  // ─── [lives 2026-10-10] Hub WS: comentários/reações/contagem ─────────
+  const flashNotice = useCallback((txt, ms = 2200) => {
+    setNotice(txt || '');
+    if (noticeTimerRef.current) clearTimeout(noticeTimerRef.current);
+    if (txt) noticeTimerRef.current = setTimeout(() => setNotice(''), ms);
+  }, []);
+
+  const spawnHeart = useCallback(() => {
+    const id = ++heartSeqRef.current;
+    const dx = Math.round((Math.random() - 0.5) * 120);
+    const shade = Math.random() < 0.5 ? '#ffffff' : '#d4d4d4';
+    setHearts((prev) => {
+      const next = prev.length >= MAX_HEARTS ? prev.slice(prev.length - MAX_HEARTS + 1) : prev.slice();
+      next.push({ id, dx, shade });
+      return next;
+    });
+    setTimeout(() => setHearts((prev) => prev.filter((h) => h.id !== id)), 2000);
+  }, []);
+
+  const liveActive = phase === 'livekit' || phase === 'hls';
+  useEffect(() => {
+    if (!sessionId || !liveActive) return undefined;
+    ensureLiveCss();
+    let alive = true;
+    let attempt = 0;
+    let timer = null;
+    const open = () => {
+      if (!alive) return;
+      let ws;
+      try { ws = new WebSocket(WS_URL); } catch { return; }
+      wsRef.current = ws;
+      ws.onopen = () => {
+        attempt = 0;
+        try { ws.send(JSON.stringify({ type: 'auth', token: api.getAuthToken(), client: 'js', platform: 'web' })); } catch {}
+      };
+      ws.onmessage = (ev) => {
+        if (!alive) return;
+        let m;
+        try { m = JSON.parse(ev.data); } catch { return; }
+        if (m && m.data && typeof m.data === 'object' && !Array.isArray(m.data)) m = { ...m.data, ...m };
+        const ty = m?.type || m?.event;
+        if (ty === 'auth_success' || ty === 'authenticated') {
+          try { ws.send(JSON.stringify({ type: 'live_join', session_id: sessionId })); } catch {}
+          return;
+        }
+        if (m.session_id && String(m.session_id) !== sessionId) return;
+        switch (ty) {
+          case 'live_chat': {
+            const c = { id: `${m.timestamp || Date.now()}-${Math.random()}`, name: m.sender_name || String(m.sender_email || '').split('@')[0] || '?', text: String(m.content || '') };
+            if (!c.text) return;
+            setComments((prev) => { const n = prev.concat(c); return n.length > MAX_COMMENTS ? n.slice(n.length - MAX_COMMENTS) : n; });
+            return;
+          }
+          case 'live_reaction':
+            spawnHeart();
+            return;
+          case 'live_viewer_count':
+            if (typeof m.count === 'number') setViewerCount(m.count);
+            return;
+          case 'live_pin_comment':
+          case 'live_pin': {
+            const txt = String(m.comment_text || m.content || '');
+            setPinned(txt ? { text: txt, name: m.comment_author_name || m.sender_name || '' } : null);
+            return;
+          }
+          case 'live_host_reconnecting':
+            flashNotice(t('live.hostReconnecting'), 45000);
+            return;
+          case 'live_host_back':
+            flashNotice('');
+            return;
+          case 'live_chat_rejected': {
+            const r = m.reason;
+            flashNotice(r === 'filtered' ? t('live.commentBlocked')
+              : r === 'banned' ? t('live.commentBanned')
+              : r === 'slow_mode' ? String(t('live.slowModeWait') || '').replace('{n}', String(m.wait_seconds || 1))
+              : r === 'too_long' ? t('live.commentTooLong')
+              : t('live.commentTooFast'));
+            return;
+          }
+          case 'live_ended':
+            setPhase('ended');
+            return;
+          default:
+        }
+      };
+      ws.onclose = () => {
+        if (!alive) return;
+        const wait = Math.min(15000, 800 * 2 ** attempt++);
+        timer = setTimeout(open, wait);
+      };
+      ws.onerror = () => { try { ws.close(); } catch {} };
+    };
+    open();
+    // Histórico curto pra quem chega no meio (best-effort).
+    api.liveChatHistory?.(sessionId, 30).then((res) => {
+      const rows = res?.data?.messages || res?.data || [];
+      if (!alive || !Array.isArray(rows) || !rows.length) return;
+      setComments((prev) => {
+        const old = rows.map((r, i) => ({ id: `h${r.id || i}`, name: r.sender_name || r.name || String(r.sender_email || r.email || '').split('@')[0] || '?', text: String(r.content || '') })).filter((c) => c.text);
+        return old.concat(prev).slice(-MAX_COMMENTS);
+      });
+    }).catch(() => {});
+    return () => {
+      alive = false;
+      if (timer) clearTimeout(timer);
+      try { wsRef.current?.close(); } catch {}
+      wsRef.current = null;
+    };
+  }, [sessionId, liveActive, spawnHeart, flashNotice, t]);
+
+  useEffect(() => () => { if (noticeTimerRef.current) clearTimeout(noticeTimerRef.current); }, []);
+
+  const sendComment = useCallback(() => {
+    const text = String(draft || '').trim();
+    if (!text) return;
+    setDraft('');
+    const ws = wsRef.current;
+    if (ws && ws.readyState === 1) {
+      try { ws.send(JSON.stringify({ type: 'live_chat', session_id: sessionId, content: text.slice(0, 300) })); } catch {}
+    }
+    // Persistência/moderação no servidor (histórico pra quem chega depois).
+    api.liveSendChat?.(sessionId, text.slice(0, 300)).catch(() => {});
+  }, [draft, sessionId]);
+
+  const sendHeart = useCallback(() => {
+    spawnHeart();
+    // Teto local (o hub também limita): 8 reações/s.
+    const now = Date.now();
+    lastHeartSentRef.current = lastHeartSentRef.current.filter((x) => now - x < 1000);
+    if (lastHeartSentRef.current.length >= 8) return;
+    lastHeartSentRef.current.push(now);
+    const ws = wsRef.current;
+    if (ws && ws.readyState === 1) {
+      try { ws.send(JSON.stringify({ type: 'live_reaction', session_id: sessionId, emoji: 'heart' })); } catch {}
+    }
+  }, [sessionId, spawnHeart]);
+
   // ─── Unmute on first user gesture ────────────────────────────────────
   const handleUnmute = useCallback(() => {
     setMuted(false);
@@ -439,12 +610,15 @@ export default function LiveViewerWeb() {
         autoPlay: true,
         playsInline: true,
         muted,
+        onDoubleClick: sendHeart,
         style: {
           position: 'absolute',
           inset: 0,
           width: '100%',
           height: '100%',
-          objectFit: 'contain',
+          // [lives 2026-10-10] tela cheia vertical (estilo TikTok/IG); host em
+          // paisagem continua inteiro em telas largas.
+          objectFit: (typeof window !== 'undefined' && window.innerWidth < 700) ? 'cover' : 'contain',
           backgroundColor: '#000',
         },
       })}
@@ -471,7 +645,7 @@ export default function LiveViewerWeb() {
             <Text style={styles.hostName} numberOfLines={1}>{hostLabel}</Text>
             <View style={styles.liveBadge}>
               <View style={styles.liveDot} />
-              <Text style={styles.liveText}>AO VIVO</Text>
+              <Text style={styles.liveText}>{t('live.live') || 'AO VIVO'}</Text>
             </View>
           </View>
         </View>
@@ -490,6 +664,72 @@ export default function LiveViewerWeb() {
         </View>
       )}
 
+      {/* [lives 2026-10-10] corações (CSS no compositor) */}
+      {hearts.map((h) => React.createElement('svg', {
+        key: h.id,
+        className: 'lvw-heart',
+        viewBox: '0 0 24 24',
+        style: { '--dx': `${h.dx}px` },
+      }, React.createElement('path', { d: HEART_PATH, fill: h.shade })))}
+
+      {/* comentário fixado */}
+      {pinned ? (
+        <View style={styles.pinned} pointerEvents="none">
+          <Text style={styles.pinnedText} numberOfLines={2}>
+            {pinned.name ? <Text style={styles.commentName}>{pinned.name}  </Text> : null}
+            {pinned.text}
+          </Text>
+        </View>
+      ) : null}
+
+      {/* comentários ao vivo */}
+      {liveActive ? (
+        <View style={styles.commentsWrap} pointerEvents="none">
+          {comments.slice(-7).map((c) => (
+            <View key={c.id} style={styles.commentRow}>
+              <Text style={styles.commentText}>
+                <Text style={styles.commentName}>{c.name}  </Text>
+                {c.text}
+              </Text>
+            </View>
+          ))}
+        </View>
+      ) : null}
+
+      {notice ? (
+        <View style={styles.notice} pointerEvents="none">
+          <Text style={styles.noticeText}>{notice}</Text>
+        </View>
+      ) : null}
+
+      {/* barra inferior: comentar + coração */}
+      {liveActive ? (
+        <View style={styles.composerRow}>
+          <Pressable onPress={handleBack} style={styles.roundBtn} accessibilityLabel={t('common.back') || 'Voltar'}>
+            <Text style={styles.backChevron}>‹</Text>
+          </Pressable>
+          <TextInput
+            value={draft}
+            onChangeText={setDraft}
+            onSubmitEditing={sendComment}
+            placeholder={t('live.commentPlaceholder') || ''}
+            placeholderTextColor="rgba(255,255,255,0.55)"
+            maxLength={300}
+            style={styles.composerInput}
+            returnKeyType="send"
+          />
+          {draft.trim() ? (
+            <Pressable onPress={sendComment} style={styles.roundBtn} accessibilityLabel={t('live.send') || 'Enviar'}>
+              <IconSend size={18} color="#fff" />
+            </Pressable>
+          ) : (
+            <Pressable onPress={sendHeart} style={[styles.roundBtn, styles.heartBtn]} accessibilityLabel={t('live.react')}>
+              {React.createElement('svg', { viewBox: '0 0 24 24', width: 22, height: 22 }, React.createElement('path', { d: HEART_PATH, fill: '#000' }))}
+            </Pressable>
+          )}
+        </View>
+      ) : null}
+
       {/* Tap-to-unmute prompt (only while muted and connected) */}
       {muted && connected && (
         <Pressable onPress={handleUnmute} style={styles.unmuteBanner}>
@@ -497,10 +737,12 @@ export default function LiveViewerWeb() {
         </Pressable>
       )}
 
-      {/* Back button (bottom-left) */}
+      {/* Back button (bottom-left) — a barra de comentários já tem voltar */}
+      {!liveActive && (
       <Pressable onPress={handleBack} style={styles.backBtn}>
-        <Text style={styles.backBtnText}>‹ Voltar</Text>
+        <Text style={styles.backBtnText}>‹ {t('common.back') || 'Voltar'}</Text>
       </Pressable>
+      )}
     </View>
   );
 }
@@ -596,15 +838,92 @@ const styles = StyleSheet.create({
     width: 6,
     height: 6,
     borderRadius: 3,
-    backgroundColor: '#ff3b30',
+    backgroundColor: '#fff',
     marginRight: 4,
   },
   liveText: {
-    color: '#ff3b30',
+    color: '#fff',
     fontSize: 10,
-    fontWeight: '700',
-    letterSpacing: 0.5,
+    fontWeight: '800',
+    letterSpacing: 1,
   },
+  commentsWrap: {
+    position: 'absolute',
+    left: 12,
+    right: 88,
+    bottom: 84,
+    zIndex: 9,
+  },
+  commentRow: {
+    alignSelf: 'flex-start',
+    backgroundColor: 'rgba(0,0,0,0.42)',
+    borderRadius: 14,
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    marginTop: 6,
+    maxWidth: '100%',
+  },
+  commentText: { color: '#fff', fontSize: 14, lineHeight: 19 },
+  commentName: { color: 'rgba(255,255,255,0.7)', fontWeight: '700', fontSize: 13 },
+  pinned: {
+    position: 'absolute',
+    top: 72,
+    left: 16,
+    right: 16,
+    backgroundColor: 'rgba(255,255,255,0.92)',
+    borderRadius: 14,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    zIndex: 10,
+  },
+  pinnedText: { color: '#000', fontSize: 13, fontWeight: '500' },
+  notice: {
+    position: 'absolute',
+    top: '42%',
+    alignSelf: 'center',
+    backgroundColor: 'rgba(0,0,0,0.78)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.18)',
+    borderRadius: 999,
+    paddingVertical: 10,
+    paddingHorizontal: 18,
+    zIndex: 12,
+  },
+  noticeText: { color: '#fff', fontSize: 14, fontWeight: '600', textAlign: 'center' },
+  composerRow: {
+    position: 'absolute',
+    left: 12,
+    right: 12,
+    bottom: 18,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    zIndex: 11,
+  },
+  composerInput: {
+    flex: 1,
+    height: 44,
+    borderRadius: 22,
+    paddingHorizontal: 16,
+    color: '#fff',
+    fontSize: 15,
+    backgroundColor: 'rgba(0,0,0,0.45)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.28)',
+    outlineStyle: 'none',
+  },
+  roundBtn: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(0,0,0,0.45)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.28)',
+  },
+  heartBtn: { backgroundColor: '#fff', borderColor: '#fff' },
+  backChevron: { color: '#fff', fontSize: 26, lineHeight: 28, marginTop: -2 },
   viewerPill: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -639,7 +958,7 @@ const styles = StyleSheet.create({
   },
   unmuteBanner: {
     position: 'absolute',
-    bottom: 80,
+    bottom: 140,
     alignSelf: 'center',
     backgroundColor: BRAND,
     paddingVertical: 10,

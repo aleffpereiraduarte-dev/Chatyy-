@@ -9625,10 +9625,17 @@ export async function liveStartLk(title, opts = {}) {
   if (opts && opts.audience) payload.audience = opts.audience;
   if (opts && opts.category) payload.category = opts.category;
   if (opts && opts.subscribersOnly) payload.subscribers_only = 1;
+  // [lives 2026-10-10] gravação só se o dono quiser (backend: sem record = grava, compat)
+  if (opts && typeof opts.record === 'boolean') payload.record = opts.record ? 1 : 0;
   const _did = await _getDeviceIdSafe();
   if (_did) payload.device_id = _did;
   return apiCall('live_start_lk', payload, 'POST');
 }
+// [lives 2026-10-10] Liga/desliga a gravação com a live no ar (host).
+export async function liveRecordSet(sessionId, on) { return apiCall('live_record_set', { session_id: sessionId, on: on ? 1 : 0 }, 'POST'); }
+// [lives 2026-10-10] Filtro de palavras escolhido pelo dono (vale pra todas as lives dele).
+export async function liveWordFilterGet() { return apiCall('chat_live_word_filter_get', {}, 'POST'); }
+export async function liveWordFilterSet(words) { return apiCall('chat_live_word_filter_set', { words: Array.isArray(words) ? words : [] }, 'POST'); }
 export async function liveJoinLk(sessionId) {
   const payload = { session_id: sessionId };
   const _did = await _getDeviceIdSafe();

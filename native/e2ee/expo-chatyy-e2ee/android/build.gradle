@@ -1,0 +1,39 @@
+// E2EE v4 nativo — Android. .so + bindings Kotlin (pacote expo.modules.chatyye2ee.core)
+// gerados por native/e2ee/rust/build-android.sh (CI). JNA é exigido pelo UniFFI.
+apply plugin: 'com.android.library'
+apply plugin: 'kotlin-android'
+
+group = 'expo.modules.chatyye2ee'
+version = '0.1.0'
+
+def generated = file("src/main/java/expo/modules/chatyye2ee/core/chatyy_e2ee.kt")
+def soArm64 = file("src/main/jniLibs/arm64-v8a/libchatyy_e2ee.so")
+if (!generated.exists() || !soArm64.exists()) {
+  throw new GradleException("[expo-chatyy-e2ee] faltam bindings/.so — rode native/e2ee/rust/build-android.sh")
+}
+
+android {
+  namespace "expo.modules.chatyye2ee"
+  compileSdkVersion safeExtGet("compileSdkVersion", 35)
+
+  defaultConfig {
+    minSdkVersion safeExtGet("minSdkVersion", 24)
+    targetSdkVersion safeExtGet("targetSdkVersion", 35)
+    // R8 do app: JNA + bindings usam reflexão (sem isso = crash só no release)
+    consumerProguardFiles 'proguard-rules.pro'
+  }
+
+  compileOptions {
+    sourceCompatibility JavaVersion.VERSION_17
+    targetCompatibility JavaVersion.VERSION_17
+  }
+}
+
+dependencies {
+  implementation project(':expo-modules-core')
+  implementation 'net.java.dev.jna:jna:5.14.0@aar'
+}
+
+def safeExtGet(prop, fallback) {
+  rootProject.ext.has(prop) ? rootProject.ext.get(prop) : fallback
+}

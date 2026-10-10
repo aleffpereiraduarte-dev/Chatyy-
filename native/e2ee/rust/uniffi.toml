@@ -1,0 +1,8 @@
+[bindings.swift]
+module_name = "ChatyyE2EECore"
+ffi_module_name = "ChatyyE2EECoreFFI"
+ffi_module_filename = "ChatyyE2EECoreFFI"
+
+[bindings.kotlin]
+package_name = "expo.modules.chatyye2ee.core"
+cdylib_name = "chatyy_e2ee"

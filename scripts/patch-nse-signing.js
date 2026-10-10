@@ -14,7 +14,8 @@ const fs = require('fs');
 const path = 'ios/Chatyy.xcodeproj/project.pbxproj';
 let txt = fs.readFileSync(path, 'utf8');
 
-const NSE_PROFILE = '695e2ec7-6a2f-4193-8919-9ad98a4e81c5';
+// [2026-10-09 capacidades] CI passa o UUID real (lido do secret) via env.
+const NSE_PROFILE = process.env.NSE_PROFILE_UUID || '695e2ec7-6a2f-4193-8919-9ad98a4e81c5';
 const TEAM = 'XN9XN27QCE';
 const NSE_BUNDLE = 'com.onemundo.mail.notificationservice';
 

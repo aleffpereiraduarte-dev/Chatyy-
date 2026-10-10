@@ -30,7 +30,8 @@
       "ChatyyNotifActionsModule",
       "ChatyyContextMenuViewModule",
       "ExpoChatyySystemModule",
-      "ExpoChatyyDocPreviewModule"
+      "ExpoChatyyDocPreviewModule",
+      "ChatyyImagePasteModule"
     ],
     "appDelegateSubscribers": [
       "AppShortcutsAppDelegateSubscriber",
@@ -49,7 +50,8 @@
       "expo.modules.nativetoolkit.ExpoStickerCutoutModule",
       "expo.modules.nativetoolkit.ExpoChatyySystemModule",
       "expo.modules.nativetoolkit.ExpoChatyyDocPreviewModule",
-      "expo.modules.nativetoolkit.ExpoNativeChatSecurityModule"
+      "expo.modules.nativetoolkit.ExpoNativeChatSecurityModule",
+      "expo.modules.nativetoolkit.ChatyyImagePasteModule"
     ]
   }
 }

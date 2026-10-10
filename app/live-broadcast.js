@@ -58,7 +58,7 @@ if (Platform.OS === 'web') {
 // cold-start path for the broadcast screen pays no cost if LK never kicks in.
 // livekit-client + @livekit/react-native are already in the bundle (call.js
 // drags them in), so the require resolves synchronously off Metro's cache.
-let _LK_Room, _LK_RoomEvent, _LK_VideoView, _LK_createLocalVideoTrack, _LK_createLocalAudioTrack, _LK_Track;
+let _LK_Room, _LK_RoomEvent, _LK_VideoView, _LK_createLocalVideoTrack, _LK_createLocalAudioTrack, _LK_Track, _LK_VideoPreset;
 function _loadLkBroadcast() {
   if (_LK_Room) return true;
   try {
@@ -68,6 +68,7 @@ function _loadLkBroadcast() {
     _LK_createLocalVideoTrack = lkc.createLocalVideoTrack;
     _LK_createLocalAudioTrack = lkc.createLocalAudioTrack;
     _LK_Track = lkc.Track;
+    _LK_VideoPreset = lkc.VideoPreset;
     try {
       const lkrn = require('@livekit/react-native');
       _LK_VideoView = lkrn.VideoView || lkrn.VideoRenderer;
@@ -186,7 +187,12 @@ export default function LiveBroadcastScreen() {
   const [commentDraft, setCommentDraft] = useState('');
   const [connQuality, setConnQuality] = useState('good'); // good | medium | poor
   const [endModal, setEndModal] = useState(false);
-  const [saveReplay, setSaveReplay] = useState(true);
+  // [lives 2026-10-10] Gravação só se o dono quiser: começa DESLIGADA; ligar
+  // durante a live chama live_record_set (sobe o egress na hora).
+  const [saveReplay, setSaveReplay] = useState(false);
+  // true quando a gravação chegou a ser ligada nesta live (no início ou no
+  // meio). Sem isso o "Salvar replay" do modal de encerrar não tem o que salvar.
+  const recordedRef = useRef(false);
   // After teardown, capture whether a replay is actually being produced
   // (CF Stream pipeline = yes; legacy WebRTC P2P = no). Drives the
   // "Ver Lives Salvas" CTA on the end-card vs a plain "Concluído".
@@ -263,6 +269,10 @@ export default function LiveBroadcastScreen() {
   // success handlers can read it without re-renders.
   const [slowModeSeconds, setSlowModeSeconds] = useState(0);
   const [slowModeOpenAndroid, setSlowModeOpenAndroid] = useState(false);
+  // [lives 2026-10-10] Filtro de palavras do dono (sem lista automática).
+  const [wordFilterOpen, setWordFilterOpen] = useState(false);
+  const [wordFilterDraft, setWordFilterDraft] = useState('');
+  const [wordFilterCount, setWordFilterCount] = useState(0);
   // Live poll state (host creates from bottom bar). `activePoll` is the
   // current poll being displayed to host + viewers; `pollDraft` is the
   // in-progress creation form. Backend pushes WS `live_poll_*` events.
@@ -1599,7 +1609,9 @@ export default function LiveBroadcastScreen() {
       // through (e.g. retry on transient timeout).
       let res;
       let sid;
-      const lkOpts = { audience, category: liveCategory, subscribersOnly };
+      // [lives 2026-10-10] record = escolha do dono (gravar só se quiser).
+      const lkOpts = { audience, category: liveCategory, subscribersOnly, record: !!saveReplay };
+      recordedRef.current = !!saveReplay;
       try {
         const ceiling = new Promise((_, rej) => setTimeout(() => rej(new Error('live_start_lk timeout 25s')), 25000));
         res = await Promise.race([api.liveStartLk(liveTitle, lkOpts), ceiling]);
@@ -1750,8 +1762,34 @@ export default function LiveBroadcastScreen() {
             // is useless), then audio. Each in its own try/catch.
             try {
               console.log('[LIVE-TRACE] host camera publish start');
-              const vTrack = await _LK_createLocalVideoTrack({ facingMode: 'user' });
-              await room.localParticipant.publishTrack(vTrack);
+              // [lives 2026-10-10] Respeita a câmera escolhida antes da live
+              // (antes: sempre 'user') e publica em retrato 720p com simulcast
+              // 3 camadas (360p/540p/720p): o SFU entrega a camada que a rede de
+              // cada espectador aguenta e, com dynacast, o host para de codificar
+              // camadas que ninguém está vendo (bitrate adaptativo de verdade).
+              const _facing = facingRef.current === 'environment' ? 'environment' : 'user';
+              const vTrack = await _LK_createLocalVideoTrack({ facingMode: _facing, resolution: { width: 720, height: 1280, frameRate: 30 } });
+              let _pubOpts = null;
+              try {
+                if (_LK_VideoPreset) {
+                  _pubOpts = {
+                    simulcast: true,
+                    videoEncoding: { maxBitrate: 1_800_000, maxFramerate: 30 },
+                    videoSimulcastLayers: [
+                      new _LK_VideoPreset(360, 640, 350_000, 20),
+                      new _LK_VideoPreset(540, 960, 800_000, 30),
+                    ],
+                    degradationPreference: 'maintain-framerate',
+                  };
+                }
+              } catch (_) { _pubOpts = null; }
+              try {
+                await room.localParticipant.publishTrack(vTrack, _pubOpts || undefined);
+              } catch (pubErr) {
+                if (!_pubOpts) throw pubErr;
+                console.warn('[LIVE-TRACE] publish c/ simulcast falhou, tentando padrão:', pubErr?.message || pubErr);
+                await room.localParticipant.publishTrack(vTrack);
+              }
               lkVideoOk = true;
               // [WAVE 121] Expose the published video track so the host
               // self-preview can render via _LK_VideoView (same source the
@@ -3230,6 +3268,11 @@ export default function LiveBroadcastScreen() {
       // Stage 3 cohort LK teardown — disconnect subscriber Room if active.
       try { cohostRoomRef.current?.disconnect(); } catch {}
       cohostRoomRef.current = null;
+      // [lives 2026-10-10] Sair da tela (voltar/gesto/crash de navegação) sem
+      // "Encerrar" deixava câmera+mic publicando no SFU. Solta a sala aqui; o
+      // hub encerra a sessão após a carência de 45s se o host não voltar.
+      try { lkRoomRef.current?.disconnect?.(); } catch {}
+      lkRoomRef.current = null;
     };
   }, []);
 
@@ -4207,6 +4250,14 @@ export default function LiveBroadcastScreen() {
           onPress={() => {
             setSaveReplay(v => {
               const next = !v;
+              // [lives 2026-10-10] Live já no ar → liga/desliga o egress agora.
+              try {
+                const _sid = sessionIdRef.current;
+                if (_sid && lkModeRef.current && typeof api.liveRecordSet === 'function') {
+                  if (next) recordedRef.current = true;
+                  api.liveRecordSet(_sid, next).catch(() => {});
+                }
+              } catch {}
               try {
                 const { ToastAndroid, Alert } = require('react-native');
                 const msg = next
@@ -4582,6 +4633,7 @@ export default function LiveBroadcastScreen() {
                 <Text style={styles.endModalStatLabel}>{t('live.likes') || 'Curtidas'}</Text>
               </View>
             </View>
+            {recordedRef.current ? (
             <TouchableOpacity
               onPress={() => setSaveReplay(v => !v)}
               activeOpacity={0.8}
@@ -4602,6 +4654,7 @@ export default function LiveBroadcastScreen() {
                 <View style={[styles.endModalToggleKnob, saveReplay && styles.endModalToggleKnobOn]} />
               </View>
             </TouchableOpacity>
+            ) : null}
             <View style={styles.endModalActions}>
               <TouchableOpacity
                 onPress={() => setEndModal(false)}
@@ -4683,6 +4736,29 @@ export default function LiveBroadcastScreen() {
                   {slowModeSeconds > 0
                     ? ((t('live.slowModeEvery') || 'Comentário a cada {n}s').replace('{n}', String(slowModeSeconds)))
                     : (t('live.slowModeOff') || 'Desligado')}
+                </Text>
+              </View>
+              <Text style={{ color: 'rgba(255,255,255,0.4)', fontSize: 18 }}>›</Text>
+            </TouchableOpacity>
+
+            {/* [lives 2026-10-10] Palavras bloqueadas — lista do próprio dono. */}
+            <TouchableOpacity
+              onPress={() => {
+                setSettingsOpen(false);
+                setWordFilterOpen(true);
+                api.liveWordFilterGet?.().then((r) => {
+                  const w = Array.isArray(r?.data?.words) ? r.data.words : [];
+                  setWordFilterDraft(w.join(', '));
+                  setWordFilterCount(w.length);
+                }).catch(() => {});
+              }}
+              style={liveSheetStyles.row}
+              activeOpacity={0.7}
+            >
+              <View style={{ flex: 1 }}>
+                <Text style={liveSheetStyles.rowLabel}>{t('live.wordFilterTitle')}</Text>
+                <Text style={{ color: 'rgba(255,255,255,0.55)', fontSize: 12, marginTop: 2 }}>
+                  {wordFilterCount > 0 ? String(wordFilterCount) : (t('live.slowModeOff') || 'Desligado')}
                 </Text>
               </View>
               <Text style={{ color: 'rgba(255,255,255,0.4)', fontSize: 18 }}>›</Text>
@@ -5319,6 +5395,46 @@ export default function LiveBroadcastScreen() {
 
             <TouchableOpacity onPress={submitPollDraft} style={liveSheetStyles.closeBtn} activeOpacity={0.85}>
               <Text style={liveSheetStyles.closeText}>{t('live.pollStart') || 'Iniciar enquete'}</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* [lives 2026-10-10] Filtro de palavras do dono */}
+      <Modal visible={wordFilterOpen} transparent animationType="slide" onRequestClose={() => setWordFilterOpen(false)}>
+        <View style={liveSheetStyles.backdrop}>
+          <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={() => setWordFilterOpen(false)} />
+          <View style={[liveSheetStyles.sheet, { paddingBottom: insets.bottom + 16 }]}>
+            <View style={liveSheetStyles.grabber} />
+            <Text style={liveSheetStyles.title}>{t('live.wordFilterTitle')}</Text>
+            <Text style={{ color: 'rgba(255,255,255,0.6)', fontSize: 13, marginBottom: 10 }}>{t('live.wordFilterHint')}</Text>
+            <TextInput
+              value={wordFilterDraft}
+              onChangeText={setWordFilterDraft}
+              multiline
+              autoCapitalize="none"
+              autoCorrect={false}
+              placeholder={t('live.wordFilterPlaceholder')}
+              placeholderTextColor="rgba(255,255,255,0.35)"
+              style={{ minHeight: 88, maxHeight: 180, color: '#fff', borderWidth: 1, borderColor: 'rgba(255,255,255,0.18)', borderRadius: 14, padding: 12, fontSize: 15, textAlignVertical: 'top' }}
+            />
+            <TouchableOpacity
+              onPress={async () => {
+                const words = String(wordFilterDraft || '').split(/[,\n]+/).map((w) => w.trim()).filter(Boolean);
+                try {
+                  const r = await api.liveWordFilterSet(words);
+                  const saved = Array.isArray(r?.data?.words) ? r.data.words : words;
+                  setWordFilterCount(saved.length);
+                  hostToast(t('live.wordFilterSaved'));
+                  setWordFilterOpen(false);
+                } catch {
+                  hostToast(t('live.chatFailed') || 'Erro');
+                }
+              }}
+              style={[liveSheetStyles.closeBtn, { backgroundColor: '#fff', marginTop: 14 }]}
+              activeOpacity={0.85}
+            >
+              <Text style={[liveSheetStyles.closeText, { color: '#000' }]}>{t('common.save') || 'Salvar'}</Text>
             </TouchableOpacity>
           </View>
         </View>

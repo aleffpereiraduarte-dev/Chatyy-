@@ -1,0 +1,127 @@
+name: E2EE core nativo (vodozemac Rust/UniFFI)
+
+# [2026-10-10] Compila e TESTA o núcleo E2EE v4 nativo, sem tocar no app:
+#   - Linux: cargo test (inclui vetores wasm↔nativo), checagem dos vetores no
+#     wasm do web, núcleo JS + adaptador, .so Android (cargo-ndk, 16 KB) e
+#     bindings Kotlin rodando de verdade na JVM (JNA).
+#   - macOS: ChatyyE2EECore.xcframework + bindings Swift, e um smoke test Swift
+#     que abre um vetor cifrado pelo wasm.
+# Só roda à mão (workflow_dispatch). Os builds do app NÃO dependem disto; eles
+# só incluem o módulo com o input e2ee_native=true (ios/android-build-local.yml).
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: never
+
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      CARGO_TARGET_DIR: ${{ github.workspace }}/../e2ee-target
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '20' }
+      - uses: actions/setup-java@v4
+        with: { distribution: 'temurin', java-version: '17' }
+
+      - name: Rust toolchain + alvos Android + cargo-ndk
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          rustup target add aarch64-linux-android armv7-linux-androideabi x86_64-linux-android
+          cargo install cargo-ndk --version 3.5.4 --locked
+
+      - name: cargo test (nativo ↔ nativo + vetores do wasm)
+        working-directory: native/e2ee/rust
+        run: cargo test -p chatyy-e2ee-native
+
+      - name: Vetores do nativo abrem no wasm do web
+        run: |
+          cd native/e2ee/rust && CHATYY_WRITE_VECTORS=1 cargo test -p chatyy-e2ee-native --test vectors native_to_wasm && cd -
+          node native/e2ee/vectors/wasm-vectors.mjs check
+
+      - name: Núcleo JS (services/e2eeV4Core.js) + adaptador nativo ↔ web
+        run: node native/e2ee/js-test/core-interop.mjs
+
+      - name: Android .so + bindings Kotlin
+        run: |
+          export ANDROID_NDK_HOME="${ANDROID_NDK_LATEST_HOME:-$ANDROID_NDK_HOME}"
+          echo "NDK: $ANDROID_NDK_HOME"
+          mkdir -p "$RUNNER_TEMP/e2ee-mod"
+          cp -R native/e2ee/expo-chatyy-e2ee/. "$RUNNER_TEMP/e2ee-mod/"
+          bash native/e2ee/rust/build-android.sh "$RUNNER_TEMP/e2ee-mod"
+
+      - name: Bindings Kotlin na JVM (JNA) abrem vetor do wasm
+        run: |
+          cd "$RUNNER_TEMP"
+          curl -sSL -o kotlinc.zip https://github.com/JetBrains/kotlin/releases/download/v2.1.21/kotlin-compiler-2.1.21.zip
+          curl -sSL -o jna.jar https://repo1.maven.org/maven2/net/java/dev/jna/jna/5.14.0/jna-5.14.0.jar
+          unzip -q kotlinc.zip
+          ./kotlinc/bin/kotlinc -cp jna.jar \
+            e2ee-mod/android/src/main/java/expo/modules/chatyye2ee/core/chatyy_e2ee.kt \
+            "$GITHUB_WORKSPACE/native/e2ee/kotlin-smoke/Smoke.kt" -include-runtime -d smoke.jar
+          java -Djna.library.path="$CARGO_TARGET_DIR/debug" -cp smoke.jar:jna.jar SmokeKt \
+            "$GITHUB_WORKSPACE/native/e2ee/vectors/wasm-to-native.json"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: e2ee-android-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/e2ee-mod/android/src/main/jniLibs
+            ${{ runner.temp }}/e2ee-mod/android/src/main/java/expo/modules/chatyye2ee/core
+          retention-days: 14
+
+  ios:
+    runs-on: macos-latest
+    timeout-minutes: 40
+    env:
+      CARGO_TARGET_DIR: ${{ github.workspace }}/../e2ee-target
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Rust toolchain
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+
+      - name: xcframework + bindings Swift
+        run: |
+          mkdir -p "$RUNNER_TEMP/e2ee-mod"
+          cp -R native/e2ee/expo-chatyy-e2ee/. "$RUNNER_TEMP/e2ee-mod/"
+          bash native/e2ee/rust/build-ios.sh "$RUNNER_TEMP/e2ee-mod"
+          ls -R "$RUNNER_TEMP/e2ee-mod/ios" | head -40
+
+      - name: Smoke test Swift (bindings geradas + lib do host) abre vetor do wasm
+        run: |
+          GEN="$CARGO_TARGET_DIR/uniffi-swift"
+          swiftc -O -module-name SmokeE2EE \
+            -I "$GEN" -Xcc -fmodule-map-file="$GEN/ChatyyE2EECoreFFI.modulemap" \
+            -L "$CARGO_TARGET_DIR/debug" -lchatyy_e2ee \
+            "$GEN/ChatyyE2EECore.swift" native/e2ee/swift-smoke/main.swift -o "$RUNNER_TEMP/smoke"
+          DYLD_LIBRARY_PATH="$CARGO_TARGET_DIR/debug" "$RUNNER_TEMP/smoke" native/e2ee/vectors/wasm-to-native.json
+
+      - name: Compila o módulo Swift do Expo (sintaxe/tipos) contra o xcframework
+        # Sem Pods: só confere que ChatyyE2EEModule.swift + bindings compilam
+        # para iOS (ExpoModulesCore vem do node_modules num build real; aqui
+        # basta o typecheck das bindings para arm64-apple-ios15.1).
+        run: |
+          SDK=$(xcrun --sdk iphoneos --show-sdk-path)
+          XCF="$RUNNER_TEMP/e2ee-mod/ios/ChatyyE2EECore.xcframework/ios-arm64"
+          xcrun swiftc -typecheck -sdk "$SDK" -target arm64-apple-ios15.1 \
+            -I "$XCF/Headers" -Xcc -fmodule-map-file="$XCF/Headers/module.modulemap" \
+            "$RUNNER_TEMP/e2ee-mod/ios/Generated/ChatyyE2EECore.swift"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: e2ee-ios-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/e2ee-mod/ios/ChatyyE2EECore.xcframework
+            ${{ runner.temp }}/e2ee-mod/ios/Generated
+          retention-days: 14

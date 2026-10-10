@@ -23,6 +23,16 @@ on:
         options:
           - 'true'
           - 'false'
+      # [2026-10-10] E2EE v4 nativo (vodozemac Rust/UniFFI → .so + módulo).
+      # NUNCA roda por padrão; só build de teste (exige submit=false).
+      e2ee_native:
+        description: 'E2EE nativo (compila Rust + inclui o módulo)? Só teste, submit=false.'
+        required: false
+        default: 'false'
+        type: choice
+        options:
+          - 'false'
+          - 'true'
   push:
     paths:
       - '.github/triggers/mobile-build.txt'
@@ -159,6 +169,30 @@ jobs:
           echo "build=$NEW" >> $GITHUB_OUTPUT
           echo "versionCode bumped to $NEW"
 
+      - name: E2EE nativo — Rust → .so + módulo (só com e2ee_native=true)
+        # [2026-10-10] OFF por padrão (push e dispatch sem o input pulam).
+        # Move native/e2ee/expo-chatyy-e2ee para modules/ (autolinking) e gera
+        # .so (arm64-v8a, armeabi-v7a, x86_64; páginas de 16 KB) + bindings
+        # Kotlin. `git add -f` (só stage, sem commit) para o eas build --local
+        # levar os artefatos, que são gitignored; desfeito no passo seguinte.
+        if: ${{ inputs.e2ee_native == 'true' }}
+        env:
+          CARGO_TARGET_DIR: ${{ runner.temp }}/e2ee-target
+        run: |
+          if [ "${{ inputs.submit }}" = "true" ]; then
+            echo "::error::e2ee_native=true é só build de teste — rode com submit=false"; exit 1
+          fi
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          rustup target add aarch64-linux-android armv7-linux-androideabi x86_64-linux-android
+          cargo install cargo-ndk --version 3.5.4 --locked
+          export ANDROID_NDK_HOME="${ANDROID_NDK_LATEST_HOME:-${ANDROID_NDK_HOME:-$(ls -d "$ANDROID_HOME"/ndk/* | sort -V | tail -1)}}"
+          echo "NDK: $ANDROID_NDK_HOME"
+          mv native/e2ee/expo-chatyy-e2ee modules/expo-chatyy-e2ee
+          bash native/e2ee/rust/build-android.sh modules/expo-chatyy-e2ee
+          git add -f modules/expo-chatyy-e2ee
+          git rm -r -q --cached native/e2ee/expo-chatyy-e2ee 2>/dev/null || true
+
       - name: Build Android .aab locally
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
@@ -191,6 +225,18 @@ jobs:
             --local \
             --non-interactive \
             --output ./build.aab
+
+      - name: E2EE nativo — confere a .so no AAB e desfaz o stage
+        # Roda mesmo se o build falhar: o "Commit bumped versionCode" faz
+        # `git add app.json` + commit do que estiver staged — o módulo NUNCA
+        # pode ir junto.
+        if: ${{ always() && inputs.e2ee_native == 'true' }}
+        run: |
+          git reset -q -- modules/expo-chatyy-e2ee native/e2ee/expo-chatyy-e2ee 2>/dev/null || true
+          git status --short | head -20
+          if [ -f build.aab ]; then
+            unzip -l build.aab | grep -E 'libchatyy_e2ee\.so|libjnidispatch\.so' || { echo "::error::AAB sem libchatyy_e2ee.so/JNA — o módulo não entrou"; exit 1; }
+          fi
 
       - name: Submit to Google Play
         # Auto-submit on push (mirrors iOS workflow). Manual dispatch obeys input.

@@ -1629,6 +1629,33 @@ export default function LiveViewerScreen() {
         case 'live_chat':
           handleChatMsg(msg);
           break;
+        // [lives 2026-10-10] Hub recusou o comentário (filtro do dono, banido,
+        // modo lento, rajada, longo demais) — avisa em vez de sumir calado.
+        // Host caiu: o hub segura a live 45s (live_host_reconnecting) antes de
+        // encerrar; mostramos o aviso e limpamos quando ele volta.
+        case 'live_chat_rejected':
+        case 'live_host_reconnecting':
+        case 'live_host_back': {
+          let _txt = '';
+          if (msg.type === 'live_host_reconnecting') _txt = t('live.hostReconnecting');
+          else if (msg.type === 'live_host_back') _txt = '';
+          else if (msg.reason === 'filtered') _txt = t('live.commentBlocked');
+          else if (msg.reason === 'banned') _txt = t('live.commentBanned');
+          else if (msg.reason === 'slow_mode') _txt = (t('live.slowModeWait') || '').replace('{n}', String(msg.wait_seconds || 1));
+          else if (msg.reason === 'too_long') _txt = t('live.commentTooLong');
+          else _txt = t('live.commentTooFast');
+          if (_txt) {
+            try {
+              setToast(_txt);
+              Animated.sequence([
+                Animated.timing(toastAnim, { toValue: 1, duration: 200, useNativeDriver: true }),
+                Animated.delay(msg.type === 'live_host_reconnecting' ? 4000 : 1800),
+                Animated.timing(toastAnim, { toValue: 0, duration: 240, useNativeDriver: true }),
+              ]).start(() => setToast(''));
+            } catch {}
+          }
+          break;
+        }
         case 'live_pin':
           // Legacy WS-only pin (no persistence). Payload: { type: 'live_pin',
           // content, sender_name, sender_email }. Empty content clears.

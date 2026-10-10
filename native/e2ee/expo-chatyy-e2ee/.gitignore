@@ -1,0 +1,5 @@
+# Artefatos do Rust — gerados no CI por native/e2ee/rust/build-{ios,android}.sh
+ios/ChatyyE2EECore.xcframework/
+ios/Generated/
+android/src/main/jniLibs/
+android/src/main/java/expo/modules/chatyye2ee/core/

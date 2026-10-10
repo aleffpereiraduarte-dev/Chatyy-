@@ -57,6 +57,81 @@ public class ExpoNativeVideoModule: Module {
     AsyncFunction("segmentVideo") { (srcUri: String, segmentMs: Double, promise: Promise) in
       Self.runSegment(srcUri: srcUri, segmentMs: segmentMs, promise: promise)
     }
+
+    // [2026-10-10 video-trim] trimVideo(srcUri, startMs, endMs) — "cortar antes
+    // de enviar" (WhatsApp). AVAssetExportSession com timeRange: passthrough
+    // (sem re-encode, rápido) e, se o asset não aceitar, HighestQuality.
+    // Resolve { uri, durationMs, size }. Rejeita em falha → JS envia o vídeo inteiro.
+    AsyncFunction("trimVideo") { (srcUri: String, startMs: Double, endMs: Double, promise: Promise) in
+      Self.runTrim(srcUri: srcUri, startMs: startMs, endMs: endMs, promise: promise)
+    }
+  }
+
+  // ─── trimVideo ─────────────────────────────────────────────────────────────
+
+  private static func runTrim(srcUri: String, startMs: Double, endMs: Double, promise: Promise) {
+    guard let url = resolveURL(srcUri) else {
+      promise.reject("E_TRIM_URL", "Cannot parse srcUri: \(srcUri)")
+      return
+    }
+    let asset = AVURLAsset(url: url)
+    let totalSec = CMTimeGetSeconds(asset.duration)
+    guard totalSec.isFinite, totalSec > 0 else {
+      promise.reject("E_TRIM_DURATION", "Unknown duration")
+      return
+    }
+    let startSec = max(0.0, startMs / 1000.0)
+    let endSec = min(totalSec, endMs > 0 ? endMs / 1000.0 : totalSec)
+    if endSec - startSec < 0.3 {
+      promise.reject("E_TRIM_RANGE", "Range too short")
+      return
+    }
+    let compatible = AVAssetExportSession.exportPresets(compatibleWith: asset)
+    var presets: [String] = []
+    if compatible.contains(AVAssetExportPresetPassthrough) { presets.append(AVAssetExportPresetPassthrough) }
+    if compatible.contains(AVAssetExportPresetHighestQuality) { presets.append(AVAssetExportPresetHighestQuality) }
+    if presets.isEmpty {
+      promise.reject("E_TRIM_PRESET", "No compatible export preset")
+      return
+    }
+    let range = CMTimeRange(
+      start: CMTime(seconds: startSec, preferredTimescale: 600),
+      duration: CMTime(seconds: endSec - startSec, preferredTimescale: 600)
+    )
+    let stamp = Int(Date().timeIntervalSince1970 * 1000)
+
+    func attempt(_ i: Int, _ lastError: String) {
+      if i >= presets.count {
+        promise.reject("E_TRIM_FAILED", "Trim export failed: \(lastError)")
+        return
+      }
+      guard let session = AVAssetExportSession(asset: asset, presetName: presets[i]) else {
+        attempt(i + 1, "cannot init session")
+        return
+      }
+      let fileType: AVFileType = session.supportedFileTypes.contains(.mp4) ? .mp4 : .mov
+      let ext = fileType == .mp4 ? "mp4" : "mov"
+      let outURL = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("trim_\(stamp)_\(i).\(ext)")
+      try? FileManager.default.removeItem(at: outURL)
+      session.outputURL = outURL
+      session.outputFileType = fileType
+      session.shouldOptimizeForNetworkUse = true
+      session.timeRange = range
+      session.exportAsynchronously {
+        if session.status == .completed {
+          promise.resolve([
+            "uri": "file://\(outURL.path)",
+            "durationMs": Int64((endSec - startSec) * 1000.0),
+            "size": fileSize(outURL),
+            "mimeType": fileType == .mp4 ? "video/mp4" : "video/quicktime",
+          ])
+        } else {
+          try? FileManager.default.removeItem(at: outURL)
+          attempt(i + 1, session.error?.localizedDescription ?? "status \(session.status.rawValue)")
+        }
+      }
+    }
+    attempt(0, "")
   }
 
   // ─── URL helper ────────────────────────────────────────────────────────────

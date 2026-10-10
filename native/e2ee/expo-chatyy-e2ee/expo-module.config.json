@@ -1,0 +1,9 @@
+{
+  "platforms": ["apple", "android"],
+  "apple": {
+    "modules": ["ChatyyE2EEModule"]
+  },
+  "android": {
+    "modules": ["expo.modules.chatyye2ee.ChatyyE2EEModule"]
+  }
+}
