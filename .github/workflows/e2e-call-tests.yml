@@ -11,8 +11,8 @@ name: e2e-call-tests
 # Phase 1 (later): ship.sh reads /var/lib/e2e/last_green.txt and gates deploys.
 
 on:
-  pull_request:
-    branches: [main]
+  # [2026-10-10] SEGURANÇA: removido pull_request — o repositório é público e este job roda
+  # no runner self-hosted de PRODUÇÃO; um PR de terceiros executaria código no servidor.
   push:
     branches: [main]
   workflow_dispatch:
