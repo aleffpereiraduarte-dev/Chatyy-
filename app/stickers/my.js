@@ -17,7 +17,7 @@ import { useAuth } from '../../context/AuthContext';
 import * as api from '../../services/api';
 import {
   IconArrowLeft, IconTrash, IconPlus, IconStar, IconX, IconShare,
-  IconPackage, IconFilm,
+  IconPackage, IconFilm, IconDownload,
 } from '../../components/Icons';
 // [2026-05-22 monetization-pause] hidden by MONETIZATION_ENABLED flag
 import { PLANS_ENABLED } from '../../constants/featureFlags';
@@ -41,6 +41,11 @@ export default function StickerMyPacksScreen() {
   const [packs, setPacks] = useState([]);
   const [loading, setLoading] = useState(true);
   const [planTier, setPlanTier] = useState('free');
+  // [2026-10-10 stickers-import] Com planos pausados (PLANS_ENABLED=false) o
+  // "Criar pacote" é livre — antes o modal mostrava "Recurso Pro"/"Fazer
+  // upgrade" para todo mundo mesmo sem gate.
+  const needsPro = PLANS_ENABLED && !['pro', 'family'].includes(planTier);
+  const myEmail = String(user?.email || '').toLowerCase();
   const [showCreate, setShowCreate] = useState(false);
   const [newName, setNewName] = useState('');
   const [newDesc, setNewDesc] = useState('');
@@ -151,6 +156,11 @@ export default function StickerMyPacksScreen() {
   // Share a pack via the system share sheet (or clipboard fallback on web).
   const sharePack = useCallback(async (pack) => {
     const handle = pack?.handle;
+    if (!handle && String(pack?.author_email || '').toLowerCase() === myEmail && myEmail) {
+      // pacote meu ainda privado → abre o pacote (lá tem "Público por link")
+      router.push({ pathname: '/stickers/pack', params: { id: String(pack.id) } });
+      return;
+    }
     if (!handle) {
       Alert.alert(
         t?.('chat.shareUnavailable') || 'Não dá pra compartilhar',
@@ -174,7 +184,20 @@ export default function StickerMyPacksScreen() {
         await Share.share({ message, url, title: pack.name });
       }
     } catch {}
-  }, [t]);
+  }, [t, myEmail, router]);
+
+  const isMine = useCallback((p) => !!myEmail && String(p?.author_email || '').toLowerCase() === myEmail, [myEmail]);
+  // [2026-10-10 stickers-import] Pacote próprio: lixeira = excluir o pacote.
+  const removeOwnPack = useCallback((pack) => {
+    Alert.alert(t('stickers.deletePackTitle'), pack.name, [
+      { text: t('common.cancel'), style: 'cancel' },
+      { text: t('common.delete'), style: 'destructive', onPress: async () => {
+        setPacks((prev) => prev.filter((p) => p.id !== pack.id));
+        const r = await api.chatStickerPackDelete(pack.id);
+        if (r?.success === false) { Alert.alert(t('common.error'), t('stickers.actionFailed')); refresh(); }
+      } },
+    ]);
+  }, [refresh, t]);
 
   const uninstall = useCallback(async (pack) => {
     Alert.alert(
@@ -205,7 +228,7 @@ export default function StickerMyPacksScreen() {
     // [2026-05-22 monetization-pause] hidden by MONETIZATION_ENABLED flag —
     // while plans are paused we let everyone through and rely on the server
     // check to soft-fail. Avoids routing users to a hidden /plans screen.
-    if (PLANS_ENABLED && !['pro', 'family'].includes(planTier)) {
+    if (needsPro) {
       setShowCreate(false);
       router.push('/plans');
       return;
@@ -218,6 +241,9 @@ export default function StickerMyPacksScreen() {
         setNewName('');
         setNewDesc('');
         await refresh();
+        // [2026-10-10 stickers-import] abre o pacote recém-criado p/ adicionar figurinhas
+        const newId = r?.data?.id || r?.id;
+        if (newId) router.push({ pathname: '/stickers/pack', params: { id: String(newId) } });
       } else {
         Alert.alert(t?.('common.error') || 'Erro', r?.error || r?.message || 'Falha');
       }
@@ -226,16 +252,21 @@ export default function StickerMyPacksScreen() {
     } finally {
       setCreating(false);
     }
-  }, [newName, newDesc, planTier, router, refresh, t]);
+  }, [newName, newDesc, needsPro, router, refresh, t]);
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.background }}>
       {USE_NATIVE_HEADER && <Stack.Screen options={nativeHeaderOptions({
         colors, title: t('chat.myPacks'),
         headerRight: () => (
-          <HeaderIconButton onPress={() => setShowCreate(true)} accessibilityLabel={t('chat.createPack')}>
-            <IconPlus size={22} color={colors.text} />
-          </HeaderIconButton>
+          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+            <HeaderIconButton onPress={() => router.push('/stickers/import')} accessibilityLabel={t('stickers.importTitle')}>
+              <IconDownload size={21} color={colors.text} />
+            </HeaderIconButton>
+            <HeaderIconButton onPress={() => setShowCreate(true)} accessibilityLabel={t('chat.createPack')}>
+              <IconPlus size={22} color={colors.text} />
+            </HeaderIconButton>
+          </View>
         ),
       })} />}
       {!USE_NATIVE_HEADER && (
@@ -250,6 +281,11 @@ export default function StickerMyPacksScreen() {
         <Text style={{ flex: 1, fontSize: 17, fontWeight: '800', color: colors.text }}>
           {t?.('chat.myPacks') || 'Meus pacotes'}
         </Text>
+        <TouchableOpacity onPress={() => router.push('/stickers/import')} hitSlop={10}
+          style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginRight: 12 }} accessibilityRole="button">
+          <IconDownload size={18} color={colors.text} />
+          <Text style={{ color: colors.text, fontSize: 13, fontWeight: '700' }}>{t('stickers.importShort')}</Text>
+        </TouchableOpacity>
         <TouchableOpacity onPress={() => setShowCreate(true)} hitSlop={10}
           style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
           <IconPlus size={18} color={colors.primary} />
@@ -334,14 +370,18 @@ export default function StickerMyPacksScreen() {
                     item.animated ? <IconFilm size={26} color={colors.textSecondary || '#9ca3af'} /> : <IconPackage size={26} color={colors.textSecondary || '#9ca3af'} />
                   )}
                 </View>
-                <View style={{ flex: 1 }}>
+                <TouchableOpacity
+                  style={{ flex: 1 }}
+                  onPress={() => router.push({ pathname: '/stickers/pack', params: { id: String(item.id) } })}
+                  accessibilityRole="button"
+                >
                   <Text numberOfLines={1} style={{ fontSize: 14, fontWeight: '700', color: colors.text }}>
-                    {item.name}
+                    {(item.name === 'My Stickers' && isMine(item)) ? t('stickers.myStickers') : item.name}
                   </Text>
                   <Text numberOfLines={1} style={{ fontSize: 12, color: colors.textSecondary, marginTop: 2 }}>
-                    {item.author_email?.split('@')?.[0] || '—'} · {item.install_count || 0}
+                    {t('stickers.stickerCount', { count: item.sticker_count || 0 })} · {isMine(item) ? (item.is_personal ? t('stickers.privatePack') : t('stickers.publicByLink')) : (item.author || '—')}
                   </Text>
-                </View>
+                </TouchableOpacity>
                 {item.premium && (
                   <View style={{
                     backgroundColor: 'rgba(17, 17, 17,0.15)', paddingHorizontal: 6, paddingVertical: 2,
@@ -354,7 +394,7 @@ export default function StickerMyPacksScreen() {
                 <TouchableOpacity onPress={() => sharePack(item)} hitSlop={8} style={{ paddingHorizontal: 4 }}>
                   <IconShare size={18} color={colors.textSecondary} />
                 </TouchableOpacity>
-                <TouchableOpacity onPress={() => uninstall(item)} hitSlop={8} style={{ paddingHorizontal: 4 }}>
+                <TouchableOpacity onPress={() => (isMine(item) ? removeOwnPack(item) : uninstall(item))} hitSlop={8} style={{ paddingHorizontal: 4 }}>
                   <IconTrash size={18} color={colors.danger || '#EF4444'} />
                 </TouchableOpacity>
               </Animated.View>
@@ -378,7 +418,7 @@ export default function StickerMyPacksScreen() {
               </TouchableOpacity>
             </View>
 
-            {!['pro', 'family'].includes(planTier) && (
+            {needsPro && (
               <View style={{
                 marginTop: 14, padding: 12, borderRadius: 12,
                 backgroundColor: 'rgba(17, 17, 17,0.08)',
@@ -446,7 +486,7 @@ export default function StickerMyPacksScreen() {
                 <ActivityIndicator size="small" color={colors.onPrimary || '#fff'} />
               ) : (
                 <Text style={{ color: colors.onPrimary || '#fff', fontSize: 14, fontWeight: '800' }}>
-                  {!['pro', 'family'].includes(planTier)
+                  {needsPro
                     ? (t?.('chat.upgradeToCreate') || 'Fazer upgrade')
                     : (t?.('common.create') || 'Criar')}
                 </Text>

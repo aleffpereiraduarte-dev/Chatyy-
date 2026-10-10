@@ -2078,6 +2078,18 @@ function SettingsScreenInner() {
         </View>
         )}
 
+        {/* [2026-10-10 wa-import] Importar conversas do WhatsApp (cópia pessoal). */}
+        {(searching || activeCategory === 'chat') && sectionMatches(t('waImport.settingsRow'), t('waImport.settingsHeader'), 'whatsapp', 'importar', 'import') && (
+          <SettingsGroup header={t('waImport.settingsHeader')}>
+            <SettingsRow
+              icon={IconDownload}
+              title={t('waImport.settingsRow')}
+              subtitle={t('waImport.settingsRowSub')}
+              onPress={() => router.push('/import-whatsapp')}
+            />
+          </SettingsGroup>
+        )}
+
         {/* Notif LED color — Android only. Picks the LED color used by
             the notification channel. The native module reads
             `notif_led_color` on push delivery. Branded swatches with

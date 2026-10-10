@@ -11147,12 +11147,88 @@ export async function chatStickerFavoritesList() {
 export async function stickerPackCreate({ name, description = '', coverR2Key = '' } = {}) {
   return apiCall('sticker_pack_create', { name, description, cover_r2_key: coverR2Key }, 'POST');
 }
-export async function stickerPackAddItem({ packId, stickerR2Key, emojiAlt = '' } = {}) {
-  return apiCall('sticker_pack_add_item', {
-    pack_id: packId,
-    sticker_r2_key: stickerR2Key,
-    emoji_alt: emojiAlt,
-  }, 'POST');
+// [2026-10-10 stickers-import] Copia uma figurinha visível (sticker_id, url ou
+// message_id de uma figurinha recebida) para um pacote MEU (pack_id) — sem
+// pack_id vai para "Minhas figurinhas" (criado se não existir).
+export async function stickerPackAddItem({ packId = null, stickerId = null, url = '', messageId = null } = {}) {
+  const p = {};
+  if (packId) p.pack_id = packId;
+  if (stickerId) p.sticker_id = stickerId;
+  if (url) p.url = url;
+  if (messageId) p.message_id = messageId;
+  return apiCall('sticker_pack_add_item', p, 'POST');
+}
+// "Salvar nas minhas figurinhas" (folha da figurinha recebida).
+export async function stickerSave({ messageId = null, url = '', stickerId = null } = {}) {
+  return stickerPackAddItem({ messageId, url, stickerId });
+}
+// Reconhece a figurinha (pela mensagem ou URL): { found, sticker_id, saved,
+// favorited, can_save, pack|null } — pack só vem se for público/oficial ou meu.
+export async function stickerLookup({ messageId = null, url = '' } = {}) {
+  const p = {};
+  if (messageId) p.message_id = messageId;
+  if (url) p.url = url;
+  return apiCall('sticker_lookup', p, 'POST');
+}
+export async function stickerPackGet({ packId = null, handle = '' } = {}) {
+  return apiCall('sticker_pack_get', packId ? { pack_id: packId } : { handle }, 'POST');
+}
+export async function stickerPackUpdate(packId, { name, description, coverStickerId } = {}) {
+  const p = { pack_id: packId };
+  if (name !== undefined) p.name = name;
+  if (description !== undefined) p.description = description;
+  if (coverStickerId) p.cover_sticker_id = coverStickerId;
+  return apiCall('sticker_pack_update', p, 'POST');
+}
+export async function stickerPackRemoveItem(packId, stickerId) {
+  return apiCall('sticker_pack_remove_item', { pack_id: packId, sticker_id: stickerId }, 'POST');
+}
+export async function stickerPackPublish(packId, isPublic) {
+  return apiCall('sticker_pack_publish', { pack_id: packId, public: isPublic ? 1 : 0 }, 'POST');
+}
+export async function stickerPackReorderStickers(packId, stickerIds) {
+  return apiCall('sticker_pack_reorder', { pack_id: packId, sticker_ids: (stickerIds || []).map(Number).filter(Boolean) }, 'POST');
+}
+// Multipart para sticker_upload / sticker_pack_import. file: { uri, name, type }
+// (nativo) | Blob/File | { blob } (web).
+async function _stickerMultipart(action, file, fields = {}, timeoutMs = 60000) {
+  const formData = new FormData();
+  const fname = file?.name || 'sticker.webp';
+  try {
+    if (Platform.OS === 'web') {
+      if (file instanceof Blob) formData.append('file', file, fname);
+      else if (file?.blob instanceof Blob) formData.append('file', file.blob, fname);
+      else if (file?.uri) formData.append('file', await fetch(file.uri).then(r => r.blob()), fname);
+      else return { success: false, message: 'Invalid file' };
+    } else {
+      if (!file?.uri) return { success: false, message: 'Invalid file' };
+      formData.append('file', { uri: file.uri, name: fname, type: file.type || 'application/octet-stream' });
+    }
+  } catch { return { success: false, message: 'Could not read file' }; }
+  for (const [k, v] of Object.entries(fields)) { if (v !== undefined && v !== null && v !== '') formData.append(k, String(v)); }
+  const headers = {};
+  if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
+  if (csrfToken) headers['X-CSRF-Token'] = csrfToken;
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    const resp = await fetch(`${API_URL}?action=${action}`, { method: 'POST', body: formData, credentials: 'include', headers, signal: ctrl.signal });
+    let j = null;
+    try { j = await resp.json(); } catch { j = null; }
+    return j || { success: false, message: 'http_' + resp.status };
+  } catch (e) {
+    return { success: false, message: e?.name === 'AbortError' ? 'timeout' : (e?.message || 'upload_failed') };
+  } finally { clearTimeout(timer); }
+}
+// Figurinha avulsa (.webp/.png/.jpg/.gif): servidor valida/normaliza (WebP
+// 512×512; estática ≤100 KB, animada ≤500 KB). packId: id | null (Minhas
+// figurinhas) | 'none' (sem pacote — ex.: só enviar).
+export async function stickerUpload(file, { packId = null, emoji = '' } = {}) {
+  return _stickerMultipart('sticker_upload', file, { pack_id: packId, emoji });
+}
+// Pacote .wastickers/.zip → pacote pessoal com capa (descompactado no servidor).
+export async function stickerPackImport(file, { name = '' } = {}) {
+  return _stickerMultipart('sticker_pack_import', file, { name }, 180000);
 }
 export async function stickerPackInstall(packId) {
   return apiCall('sticker_pack_install', { pack_id: packId }, 'POST');

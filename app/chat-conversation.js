@@ -193,6 +193,8 @@ import GifPickerPanel from '../components/GifPicker';
 import StickerPicker from '../components/StickerPicker';
 // [2026-10-08 sticker-maker] toque longo numa foto → "Criar figurinha"
 import StickerMaker from '../components/stickers/StickerMaker';
+// [2026-10-10 stickers-import] tocar na figurinha → favoritar/salvar/ver pacote; web: arrastar/colar .webp
+import StickerActionSheet, { StickerDropSheet } from '../components/stickers/StickerActionSheet';
 import MessageEffectPicker from '../components/MessageEffectPicker';
 import MessageScreenEffect, { SCREEN_EFFECT_IDS } from '../components/MessageScreenEffect';
 import MessageBubbleEffect from '../components/MessageBubbleEffect';
@@ -10226,6 +10228,9 @@ function ChatConversationInner() {
           const ext = (f.type.split('/')[1] || 'png').replace('jpeg', 'jpg');
           return { uri, blob: f, name: f.name || `colado_${Date.now()}.${ext}`, type: f.type, size: f.size || 0 };
         });
+        // [2026-10-10 stickers-import] só .webp colado (figurinha do WhatsApp
+        // Web etc.) → enviar como figurinha / salvar / enviar como foto.
+        if (wrapped.every(w => /webp/i.test(w.type || '') || /\.webp$/i.test(w.name || ''))) { setStickerDrop(wrapped.slice(0, 10)); return; }
         setMediaPreview(prev => prev?.visible
           ? { visible: true, files: [...(prev.files || []), ...wrapped] }
           : { visible: true, files: wrapped });
@@ -10237,6 +10242,16 @@ function ChatConversationInner() {
 
   const [messageInfo, setMessageInfo] = useState(null); // { id, delivered: [], read: [] }
   const [showAttachMenu, setShowAttachMenu] = useState(false);
+  // [2026-10-09] Enquanto o menu de anexos estiver aberto, o teclado não pode reaparecer por cima.
+  useEffect(() => {
+    if (!showAttachMenu) return undefined;
+    const ev = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const sub = Keyboard.addListener(ev, () => {
+      try { inputRef.current?.blur?.(); } catch {}
+      try { Keyboard.dismiss(); } catch {}
+    });
+    return () => { try { sub.remove(); } catch {} };
+  }, [showAttachMenu]);
   // Desktop-web webcam capture overlay (getUserMedia photo + video)
   const [showWebcam, setShowWebcam] = useState(false);
   const WebcamCapture = require('../components/WebcamCapture').default;
@@ -10626,6 +10641,8 @@ function ChatConversationInner() {
   const [showGifPicker, setShowGifPicker] = useState(false);
   const [showStickerPicker, setShowStickerPicker] = useState(false);
   const [stickerMakerSrc, setStickerMakerSrc] = useState(null); // [2026-10-08 sticker-maker]
+  const [stickerSheet, setStickerSheet] = useState(null); // [2026-10-10 stickers-import] { messageId, url }
+  const [stickerDrop, setStickerDrop] = useState(null); // [2026-10-10 stickers-import] web: [{uri, blob, name, type, size}]
   // Snapshot for the Android hardware-back handler declared above (see
   // androidBackOverlayRef). Effect without deps = refreshed after every commit;
   // keeps the ref write out of render (React Compiler rule) and avoids TDZ.
@@ -11463,10 +11480,25 @@ function ChatConversationInner() {
   // This boolean was recomputed INLINE up to 4 times per render (= per
   // keystroke) via members.find/.some scans down in the JSX — cost scaled with
   // group/channel size. Memoize it once; it only depends on membership + mode.
+  // [2026-10-10 wa-import] Conversa importada do WhatsApp = arquivo pessoal só
+  // de leitura (cópia de quem importou). Registro local por conta, atualizado
+  // em segundo plano (services/waImport/registry).
+  const [waImported, setWaImported] = useState(() => {
+    try { return !!require('../services/waImport/registry').isImportedConversationSync(conversationId); } catch { return false; }
+  });
+  useEffect(() => {
+    let alive = true;
+    try {
+      require('../services/waImport/registry').isImportedConversation(conversationId)
+        .then((v) => { if (alive) setWaImported(!!v); }).catch(() => {});
+    } catch {}
+    return () => { alive = false; };
+  }, [conversationId]);
   const composerBlocked = useMemo(() => (
+    waImported ||
     (conversationType === 'channel' && !members.find(m => m.email === currentEmail && m.role === 'admin')) ||
     (conversationType === 'group' && adminOnlyMessages && members.some(m => m.email === currentEmail && m.role !== 'admin'))
-  ), [conversationType, members, currentEmail, adminOnlyMessages]);
+  ), [waImported, conversationType, members, currentEmail, adminOnlyMessages]);
 
   // Rehydrate the live-location dup-session guard on mount / after messages
   // load. `liveLocActive` initializes to null and was NEVER restored, so after
@@ -25537,15 +25569,31 @@ function ChatConversationInner() {
             const _stickerUri = msg.file_url || msg.content;
             return (
               <View>
-                <ChatMedia
-                  uri={_stickerUri}
-                  style={{ width: 120, height: 120 }}
-                  contentFit="contain"
-                  recyclingKey={`sticker-${msg.id}`}
-                  // Fade remote stickers in; instant for cached local files
-                  // (file:// guard mirrors the photo case).
-                  transition={typeof _stickerUri === 'string' && _stickerUri.startsWith('file://') ? 0 : { duration: 200, effect: 'cross-dissolve' }}
-                />
+                {/* [2026-10-10 stickers-import] toque → folha da figurinha
+                    (favoritar / salvar nas minhas / ver pacote), segurar → menu. */}
+                <TouchableOpacity
+                  activeOpacity={0.85}
+                  onPress={() => {
+                    if (selectionMode) return toggleSelection(msg.id);
+                    if (msg._uploading) return;
+                    const _sid = Number(msg.id);
+                    setStickerSheet({ messageId: Number.isFinite(_sid) && _sid > 0 ? _sid : null, url: (msg.file_url && /^https?:/i.test(msg.file_url)) ? msg.file_url : _stickerUri });
+                  }}
+                  onLongPress={() => { if (selectionMode) toggleSelection(msg.id); else handleLongPress(msg); }}
+                  delayLongPress={350}
+                  accessibilityRole="imagebutton"
+                  accessibilityLabel={t('chat.sticker') || 'Figurinha'}
+                >
+                  <ChatMedia
+                    uri={_stickerUri}
+                    style={{ width: 120, height: 120 }}
+                    contentFit="contain"
+                    recyclingKey={`sticker-${msg.id}`}
+                    // Fade remote stickers in; instant for cached local files
+                    // (file:// guard mirrors the photo case).
+                    transition={typeof _stickerUri === 'string' && _stickerUri.startsWith('file://') ? 0 : { duration: 200, effect: 'cross-dissolve' }}
+                  />
+                </TouchableOpacity>
                 <MediaStatusFooter msg={msg} isOwn={isOwn} variant="sticker" />
               </View>
             );
@@ -27845,6 +27893,12 @@ function ChatConversationInner() {
               {!!msg._e2e && (
                 <IconLock size={10} color={isOwn ? ownMetaColor : otherMetaColor} style={{ marginRight: 2 }} />
               )}
+              {/* [2026-10-10 wa-import] selo discreto "Importada do WhatsApp" */}
+              {typeof msg.client_message_id === 'string' && msg.client_message_id.startsWith('wai:') && (
+                <View accessible accessibilityLabel={t('waImport.badge')} style={{ marginRight: 3, opacity: 0.7 }}>
+                  <IconDownload size={10} color={isOwn ? ownMetaColor : otherMetaColor} />
+                </View>
+              )}
               {msg.edited_at && !isDeleted && (() => {
                 // Show "(editada Nx)" when the server reports more than one
                 // revision so heavy editing reads at a glance. Falls back to
@@ -28366,6 +28420,8 @@ function ChatConversationInner() {
         });
       }
       if (built.length === 0) return;
+      // [2026-10-10 stickers-import] arrastou só .webp → oferece enviar como figurinha / salvar.
+      if (built.every(b => /webp/i.test(b.type || '') || /\.webp$/i.test(b.name || ''))) { setStickerDrop(built.slice(0, 10)); return; }
       // Route through MediaPreview so the user can crop, rotate, draw,
       // add a caption, etc. before hitting send — same UX as picking from
       // the gallery. Previously drag-drop bypassed the preview and sent
@@ -30337,7 +30393,7 @@ function ChatConversationInner() {
           members === []), so the composer never hides during initial load. */}
       {composerBlocked ? (
         <View style={{ paddingVertical: 14, paddingHorizontal: 20, backgroundColor: colors.surface, borderTopWidth: 1, borderTopColor: colors.border, alignItems: 'center' }}>
-          <Text style={{ color: colors.textTertiary, fontSize: 14 }}>{t('chat.onlyAdmins')}</Text>
+          <Text style={{ color: colors.textTertiary, fontSize: 14, textAlign: 'center' }}>{waImported ? t('waImport.readOnlyBanner') : t('chat.onlyAdmins')}</Text>
         </View>
       ) : null}
 
@@ -30685,8 +30741,12 @@ function ChatConversationInner() {
               // Dismiss keyboard FIRST so the overlay animates onto a stable
               // viewport. Otherwise the keyboard closing mid-animation jerks
               // the sheet around and breaks pointer handling on Android.
+              // [2026-10-09] Às vezes o teclado continuava aberto por cima do menu
+              // de anexos (iOS: o campo continuava focado e o teclado voltava).
+              try { inputRef.current?.blur?.(); } catch {}
               try { Keyboard.dismiss(); } catch {}
-              setTimeout(() => setShowAttachMenu(true), Platform.OS === 'android' ? 80 : 0);
+              try { require('react-native-keyboard-controller').KeyboardController?.dismiss?.(); } catch {}
+              setTimeout(() => setShowAttachMenu(true), Platform.OS === 'android' ? 80 : 60);
             }}
             disabled={uploading}
             style={{ width: 40, height: 44, alignItems: 'center', justifyContent: 'center', alignSelf: 'flex-end' }}
@@ -31605,6 +31665,23 @@ function ChatConversationInner() {
         />
       ) : null}
 
+      {/* [2026-10-10 stickers-import] folha da figurinha + arrastar/colar .webp (web) */}
+      <StickerActionSheet
+        visible={!!stickerSheet}
+        messageId={stickerSheet?.messageId || null}
+        url={stickerSheet?.url || ''}
+        onClose={() => setStickerSheet(null)}
+      />
+      {stickerDrop ? (
+        <StickerDropSheet
+          visible
+          files={stickerDrop}
+          onClose={() => setStickerDrop(null)}
+          onSendSticker={(absUrl) => { try { handleSendSticker(absUrl); } catch {} }}
+          onSendAsPhoto={(fs) => setMediaPreview(prev => prev?.visible ? { visible: true, files: [...(prev.files || []), ...fs] } : { visible: true, files: fs })}
+        />
+      ) : null}
+
       {/* Sticker Picker Panel */}
       {showStickerPicker && (
         <StickerPicker
@@ -31934,6 +32011,25 @@ function ChatConversationInner() {
                     <IconCopy size={20} color={colors.text} />
                   </View>
                   <Text style={[ctxS.ctxIconLabel, { color: colors.textSecondary }]}>{t('chatConv.copy') || 'Copy'}</Text>
+                </PressableScale>
+              )}
+
+              {/* [2026-10-10 stickers-import] Figurinha → folha (favoritar / salvar nas minhas / ver pacote) */}
+              {!selectedMsg?.deleted_at && selectedMsg?.type === 'sticker' && (selectedMsg?.file_url || String(selectedMsg?.content || '').startsWith('http')) && (
+                <PressableScale haptic={false}
+                  style={ctxS.ctxIconBtn}
+                  onPress={() => {
+                    const m = selectedMsg;
+                    setSelectedMsg(null);
+                    const _sid = Number(m?.id);
+                    setStickerSheet({ messageId: Number.isFinite(_sid) && _sid > 0 ? _sid : null, url: m?.file_url || m?.content || '' });
+                  }}
+                  activeOpacity={0.6}
+                >
+                  <View style={[ctxS.ctxIconCircle, { backgroundColor: colors.border + '50' }]}>
+                    <IconStar size={20} color={colors.text} />
+                  </View>
+                  <Text style={[ctxS.ctxIconLabel, { color: colors.textSecondary }]}>{t('chat.sticker') || 'Figurinha'}</Text>
                 </PressableScale>
               )}
 
@@ -33496,6 +33592,11 @@ function ChatConversationInner() {
                     onPress: () => { setShowHeaderMenu(false); if (USE_NATIVE_SHEETS && Platform.OS === 'ios') setTimeout(() => setShowAutoTranslatePicker(true), 380); else setShowAutoTranslatePicker(true); } // [2026-10-09 native-sheets] espera o menu (Modal RN) descer
                   },
                   { Icon: IconForward, tint: '#10B981', label: t('chatConv.exportChat') || 'Exportar conversa', onPress: () => { setShowHeaderMenu(false); setShowExportModal(true); }},
+                  // [2026-10-10 wa-import] Importar histórico do WhatsApp (cópia pessoal vinculada a este contato).
+                  ...(waImported ? [] : [{ Icon: IconDownload, tint: '#111111', label: t('waImport.menuItem'), onPress: () => {
+                    setShowHeaderMenu(false);
+                    try { router.push({ pathname: '/import-whatsapp', params: { linkEmail: conversationType === 'direct' ? (getContactPeerEmail() || params.email || '') : '', linkName: conversationName || '' } }); } catch {}
+                  }}]),
                 ]},
                 { divider: true, items: [
                   { Icon: IconTrash, tint: '#EF4444', danger: true, label: t('chatConv.clearHistory') || 'Limpar histórico', onPress: () => {

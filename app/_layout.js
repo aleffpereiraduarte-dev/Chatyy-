@@ -1961,6 +1961,7 @@ export default function RootLayout() {
                   <Stack.Screen name="profile-qr" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR /* [2026-10-09 native-headers] */ }} />
                   <Stack.Screen name="email-signatures" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR /* [2026-10-09 native-headers] */ }} />
                   <Stack.Screen name="email-outbox" options={{ headerShown: false, presentation: 'card', animation: _PUSH, ..._NATIVE_HDR /* [2026-10-09 native-headers] */ }} />
+                  <Stack.Screen name="import-whatsapp" options={{ headerShown: false, presentation: 'card', animation: _PUSH, ..._NATIVE_HDR /* [2026-10-10 wa-import] */ }} />
                   <Stack.Screen name="email-import" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR /* [2026-10-09 native-headers] */ }} />
                   <Stack.Screen name="pgp-keys" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR /* [2026-10-09 native-headers] */ }} />
                   <Stack.Screen name="tasks" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR }} />{/* [2026-10-08 settings-redesign] header nativo (título grande) */}
@@ -2023,6 +2024,8 @@ export default function RootLayout() {
                   <Stack.Screen name="business" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR /* [2026-10-09 native-headers] */ }} />
                   <Stack.Screen name="stickers/store" options={{ headerShown: false, presentation: 'card', animation: _PUSH, ..._NATIVE_HDR /* [2026-10-09 native-headers] */ }} />
                   <Stack.Screen name="stickers/my" options={{ headerShown: false, presentation: 'card', animation: _PUSH, ..._NATIVE_HDR /* [2026-10-09 native-headers] */ }} />
+                  <Stack.Screen name="stickers/pack" options={{ headerShown: false, presentation: 'card', animation: _PUSH, ..._NATIVE_HDR /* [2026-10-10 stickers-import] */ }} />
+                  <Stack.Screen name="stickers/import" options={{ headerShown: false, presentation: 'card', animation: _PUSH, ..._NATIVE_HDR /* [2026-10-10 stickers-import] */ }} />
                   <Stack.Screen name="share-diagnose" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR /* [2026-10-09 native-headers] */ }} />
                   <Stack.Screen name="live-diagnose" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR /* [2026-10-09 native-headers] */ }} />
                   <Stack.Screen name="call-diagnose" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR /* [2026-10-09 native-headers] */ }} />

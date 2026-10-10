@@ -299,7 +299,8 @@
             "NSExtensionActivationSupportsImageWithMaxCount": 10,
             "NSExtensionActivationSupportsMovieWithMaxCount": 5,
             "NSExtensionActivationSupportsWebURLWithMaxCount": 1,
-            "NSExtensionActivationSupportsText": true
+            "NSExtensionActivationSupportsText": true,
+            "NSExtensionActivationSupportsFileWithMaxCount": 10
           },
           "androidIntentFilters": [
             "text/*",

@@ -11,9 +11,9 @@
    "keys": 7463
   },
   "ar": {
-   "hash": "c0793d5b28f3",
-   "bytes": 546865,
-   "keys": 8998
+   "hash": "1ec2449eeb56",
+   "bytes": 555522,
+   "keys": 9119
   },
   "az": {
    "hash": "bce517df9a1c",
@@ -46,9 +46,9 @@
    "keys": 7466
   },
   "de": {
-   "hash": "a14560a395c0",
-   "bytes": 456487,
-   "keys": 8998
+   "hash": "38601060e2b1",
+   "bytes": 463895,
+   "keys": 9119
   },
   "el": {
    "hash": "04c34c1ca9c6",
@@ -56,9 +56,9 @@
    "keys": 7466
   },
   "es": {
-   "hash": "0a70d93ea36d",
-   "bytes": 441218,
-   "keys": 8998
+   "hash": "8bbe59613c6d",
+   "bytes": 448281,
+   "keys": 9119
   },
   "et": {
    "hash": "66176ead1fcc",
@@ -81,9 +81,9 @@
    "keys": 7466
   },
   "fr": {
-   "hash": "1e17764e5170",
-   "bytes": 461340,
-   "keys": 8998
+   "hash": "b66794ce2046",
+   "bytes": 468702,
+   "keys": 9119
   },
   "gu": {
    "hash": "1b12b6e97ed5",
@@ -96,9 +96,9 @@
    "keys": 7466
   },
   "hi": {
-   "hash": "4ed80be71916",
-   "bytes": 754900,
-   "keys": 8998
+   "hash": "4e50ff0c2747",
+   "bytes": 766779,
+   "keys": 9119
   },
   "hr": {
    "hash": "fab7dec992de",
@@ -116,19 +116,19 @@
    "keys": 7463
   },
   "id": {
-   "hash": "db4160f62c32",
-   "bytes": 434375,
-   "keys": 8998
+   "hash": "de75d9cd2ba1",
+   "bytes": 441189,
+   "keys": 9119
   },
   "it": {
-   "hash": "16734fae9e52",
-   "bytes": 443322,
-   "keys": 8998
+   "hash": "8b0769db5a9b",
+   "bytes": 450330,
+   "keys": 9119
   },
   "ja": {
-   "hash": "cf5fdf36906c",
-   "bytes": 510120,
-   "keys": 8998
+   "hash": "a2825f69bba4",
+   "bytes": 519035,
+   "keys": 9119
   },
   "ka": {
    "hash": "9def3c29f0cf",
@@ -221,9 +221,9 @@
    "keys": 7466
   },
   "pt-PT": {
-   "hash": "398d5a35cc27",
-   "bytes": 442827,
-   "keys": 8998
+   "hash": "16c81a192464",
+   "bytes": 450161,
+   "keys": 9119
   },
   "ro": {
    "hash": "eec9938ab5c6",

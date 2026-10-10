@@ -44,6 +44,20 @@ private struct SharedPayload {
     }
 }
 
+// [2026-10-10 wa-import] Formato do expo-share-intent (SharedMediaFile; type 2 = file)
+// para entregar o arquivo ao app via onemundomail://dataUrl=<key>#file.
+private struct WaHandoffFile: Codable {
+    let path: String
+    let thumbnail: String?
+    let fileName: String
+    let fileSize: Int?
+    let width: Int?
+    let height: Int?
+    let duration: Double?
+    let mimeType: String
+    let type: Int
+}
+
 // MARK: - Recent conversation model
 
 private struct ShareConversation {
@@ -1147,6 +1161,7 @@ final class ShareViewController: UIViewController, UISearchBarDelegate {
             }
             contentLoadFailed = true
         }
+        if contentLoaded && handOffImportIfNeeded() { return }
         refreshPreviewBlock()
         updateSendBar()
         if pendingSendAfterLoad && contentLoaded {
@@ -1157,6 +1172,55 @@ final class ShareViewController: UIViewController, UISearchBarDelegate {
             hideSending()
             showError(errorMessage(for: lastFailReason))
         }
+    }
+
+    /// [2026-10-10 wa-import] "Exportar conversa" do WhatsApp (.zip / _chat.txt)
+    /// e pacotes .wastickers não são "enviar para uma conversa": entrega os
+    /// arquivos ao app (mesmo canal do expo-share-intent, dataUrl #file) e o JS
+    /// abre /import-whatsapp ou /stickers/import. Qualquer falha → segue o fluxo
+    /// normal da extensão (enviar como arquivo).
+    private func handOffImportIfNeeded() -> Bool {
+        let files = payloads.filter { $0.fileURL != nil }
+        guard !files.isEmpty, files.count == payloads.count else { return false }
+        func orig(_ n: String) -> String {
+            return n.replacingOccurrences(of: "^[0-9]+_", with: "", options: .regularExpression)
+        }
+        let names = files.map { orig($0.fileName).lowercased() }
+        let isWa = names.contains { n in
+            (n.hasSuffix(".zip") || n.hasSuffix(".txt")) && (n.contains("whatsapp") || n == "_chat.txt")
+        }
+        let isPack = names.allSatisfy { $0.hasSuffix(".wastickers") }
+        guard isWa || isPack else { return false }
+        var list: [WaHandoffFile] = []
+        for p in files {
+            guard let u = p.fileURL else { continue }
+            let size = (try? u.resourceValues(forKeys: [.fileSizeKey]))?.fileSize
+            let n = orig(p.fileName)
+            let low = n.lowercased()
+            let mime = low.hasSuffix(".zip") ? "application/zip" : (low.hasSuffix(".txt") ? "text/plain" : "application/octet-stream")
+            list.append(WaHandoffFile(path: u.absoluteString, thumbnail: nil, fileName: n, fileSize: size,
+                                      width: nil, height: nil, duration: nil, mimeType: mime, type: 2))
+        }
+        guard !list.isEmpty,
+              let data = try? JSONEncoder().encode(list),
+              let ud = UserDefaults(suiteName: appGroupId),
+              let url = URL(string: "onemundomail://dataUrl=onemundomailShareKey#file") else { return false }
+        ud.set(data, forKey: "onemundomailShareKey")
+        ud.synchronize()
+        var responder: UIResponder? = self
+        var opened = false
+        while let r = responder {
+            if let application = r as? UIApplication {
+                application.open(url)
+                opened = true
+                break
+            }
+            responder = r.next
+        }
+        guard opened else { return false }
+        ShareDiag.recordInfo("wa-import handoff: \(list.count) file(s)")
+        extensionContext?.completeRequest(returningItems: [], completionHandler: nil)
+        return true
     }
 
     /// SOFT timeout (~10s): the iCloud download is dragging. Surface an

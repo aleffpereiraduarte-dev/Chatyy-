@@ -41,6 +41,14 @@ const SHARE_FILTERS = [
   { action: 'android.intent.action.SEND', mimeType: 'text/*' },
   { action: 'android.intent.action.SEND_MULTIPLE', mimeType: 'image/*' },
   { action: 'android.intent.action.SEND_MULTIPLE', mimeType: 'video/*' },
+  // [2026-10-10 wa-import] "Exportar conversa" do WhatsApp (.zip, ou .txt +
+  // anexos em SEND_MULTIPLE com tipos mistos) e pacotes .wastickers / .webp.
+  { action: 'android.intent.action.SEND', mimeType: 'application/zip' },
+  { action: 'android.intent.action.SEND', mimeType: 'application/x-zip-compressed' },
+  { action: 'android.intent.action.SEND', mimeType: 'application/octet-stream' },
+  { action: 'android.intent.action.SEND_MULTIPLE', mimeType: 'text/*' },
+  { action: 'android.intent.action.SEND_MULTIPLE', mimeType: 'application/*' },
+  { action: 'android.intent.action.SEND_MULTIPLE', mimeType: '*/*' },
 ];
 
 module.exports = function withAndroidShareIntents(config) {

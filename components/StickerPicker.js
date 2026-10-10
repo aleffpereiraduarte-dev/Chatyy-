@@ -5,7 +5,7 @@ import {
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import CachedImage from './CachedImage';
-import { IconX, IconPlus, IconSearch, IconHeart, IconStar, IconTrash, IconFilm, IconPackage } from './Icons';
+import { IconX, IconPlus, IconSearch, IconHeart, IconStar, IconTrash, IconFilm, IconPackage, IconClock, IconPalette } from './Icons';
 import * as api from '../services/api';
 // [2026-10-08 sticker-maker] criador novo (recorte automático + contorno +
 // texto/desenho/emoji + WebP 512) substitui o StickerEditor antigo aqui.
@@ -861,9 +861,13 @@ export default function StickerPicker({ onSelect, onClose, colors, t, userEmail 
       {/* Sticker grid */}
       {currentStickers.length === 0 && !(activePack === 'mine' && !showSearch) ? (
         <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 24 }}>
-          <Text style={{ fontSize: 32, marginBottom: 8 }}>
-            {showSearch && searchQuery.trim() ? '🔍' : activePack === 'recent' ? '🕐' : activePack === 'favorites' ? '⭐' : activePack === 'mine' ? '🎨' : '📦'}
-          </Text>
+          {/* [2026-10-10 stickers-import] ícone SVG (antes emoji na UI) */}
+          <View style={{ marginBottom: 10 }}>
+            {(() => {
+              const EmptyIcon = showSearch && searchQuery.trim() ? IconSearch : activePack === 'recent' ? IconClock : activePack === 'favorites' ? IconStar : activePack === 'mine' ? IconPalette : IconPackage;
+              return <EmptyIcon size={30} color={colors.textTertiary || colors.textSecondary} />;
+            })()}
+          </View>
           <Text style={{ fontSize: 13, color: colors.textTertiary, textAlign: 'center' }}>
             {showSearch && searchQuery.trim()
               ? (t?.('chat.noStickersFound') || 'Nenhuma figurinha encontrada')

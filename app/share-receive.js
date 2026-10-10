@@ -31,7 +31,7 @@ import AvatarCircle from '../components/AvatarCircle';
 import {
   IconX, IconSearch, IconSend, IconImage, IconCamera, IconMessageSquare,
   IconPaperclip, IconFilm, IconCheck, IconRefresh, IconPlay, IconFileText,
-  IconPlus, IconWifiOff,
+  IconPlus, IconWifiOff, IconSmile,
 } from '../components/Icons';
 
 const NET_TIMEOUT_MS = 10000;
@@ -138,6 +138,31 @@ export default function ShareReceiveScreen() {
   const [caption, setCaption] = useState('');
   const [text, setText] = useState(sharedText);
   useEffect(() => { setText(sharedText); }, [sharedText]);
+
+  // [2026-10-10 wa-import] "Exportar conversa" do WhatsApp (.zip / .txt + mídia)
+  // → importador; pacote .wastickers → importador de figurinhas; .webp soltas →
+  // atalho "Figurinhas" (enviar como foto continua possível).
+  const _plainFiles = useMemo(() => files.map(({ uri, name, mime, size }) => ({ uri, name, mime, size })), [files]);
+  const isStickerShare = useMemo(() => files.length > 0 && files.every((f) => /\.(webp|wastickers)$/i.test(f.name || '') || String(f.mime || '').toLowerCase() === 'image/webp'), [files]);
+  const _routedRef = useRef(false);
+  useEffect(() => {
+    if (_routedRef.current) return;
+    let target = null;
+    try {
+      const imp = require('../services/waImport/importer');
+      if (files.some((f) => imp.isWhatsAppExportName(f.name))) target = { pathname: '/import-whatsapp', params: { files: JSON.stringify(_plainFiles) } };
+      else if (!files.length && sharedText && require('../services/waImport/parser').looksLikeWhatsAppChat(sharedText)) {
+        imp.stashSharedText(sharedText);
+        target = { pathname: '/import-whatsapp', params: { sharedText: '1' } };
+      } else if (files.length && files.every((f) => /\.wastickers$/i.test(f.name || ''))) {
+        target = { pathname: '/stickers/import', params: { files: JSON.stringify(_plainFiles) } };
+      }
+    } catch {}
+    if (target) { _routedRef.current = true; try { router.replace(target); } catch {} }
+  }, [files, sharedText, _plainFiles, router]);
+  const handleShareToStickers = useCallback(() => {
+    try { router.replace({ pathname: '/stickers/import', params: { files: JSON.stringify(_plainFiles) } }); } catch {}
+  }, [router, _plainFiles]);
 
   // Real dimensions for thumbnails whose size the share intent didn't report.
   const [dims, setDims] = useState({});
@@ -554,6 +579,7 @@ export default function ShareReceiveScreen() {
 
       {/* Quick actions — one compact monochrome row. */}
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 14, gap: 8 }} keyboardShouldPersistTaps="handled">
+        {isStickerShare ? <QuickAction icon={IconSmile} label={t('waImport.shareStickers')} onPress={handleShareToStickers} /> : null}
         {hasMedia && first.kind !== 'file' ? <QuickAction icon={IconCamera} label={t('share.statusShort')} onPress={handleShareToStatus} /> : null}
         <QuickAction icon={IconImage} label={t('share.feedShort')} onPress={handleShareToFeed} />
         <QuickAction icon={IconPlus} label={t('share.toNewChat')} onPress={handleShareToNewChat} />

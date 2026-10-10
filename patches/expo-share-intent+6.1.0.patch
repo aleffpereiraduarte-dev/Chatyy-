@@ -1,0 +1,20 @@
+diff --git a/node_modules/expo-share-intent/android/src/main/java/expo/modules/shareintent/ExpoShareIntentModule.kt b/node_modules/expo-share-intent/android/src/main/java/expo/modules/shareintent/ExpoShareIntentModule.kt
+index 0153c89..3993d23 100644
+--- a/node_modules/expo-share-intent/android/src/main/java/expo/modules/shareintent/ExpoShareIntentModule.kt
++++ b/node_modules/expo-share-intent/android/src/main/java/expo/modules/shareintent/ExpoShareIntentModule.kt
+@@ -122,7 +122,14 @@ class ExpoShareIntentModule : Module() {
+                 return
+             }
+             if (intent.type == null) return
+-            if (intent.type!!.startsWith("text/plain")) {
++            // [chatyy 2026-10-10 wa-import] O "Exportar conversa" do WhatsApp manda
++            // text/plain COM arquivo (EXTRA_STREAM) — SEND (.txt) ou SEND_MULTIPLE
++            // (.txt + anexos). O módulo original só lia EXTRA_TEXT (perdia o arquivo)
++            // e dava erro no SEND_MULTIPLE de texto. Arquivo presente → trata como arquivos.
++            val chatyyStreamText = intent.type!!.startsWith("text/plain") && (
++                (intent.action == Intent.ACTION_SEND && intent.parcelable<Uri>(Intent.EXTRA_STREAM) != null) ||
++                intent.action == Intent.ACTION_SEND_MULTIPLE)
++            if (intent.type!!.startsWith("text/plain") && !chatyyStreamText) {
+                 // text / urls
+                 if (intent.action == Intent.ACTION_SEND) {
+                     notifyShareIntent(mapOf(
