@@ -4893,6 +4893,7 @@ export default {
   'photos.deleteFromCloud': 'Padam dari awan',
   'photos.removeBackup': 'Buang dari sandi',
   'photos.noPhotos': 'Tiada gambar',
+  'photos.fileUnavailable': 'Fail tidak tersedia',
   'photos.noPhotosDesc': 'Gambar dan video anda akan muncul di sini',
   'photos.uploadFirst': 'Muat naik gambar pertama untuk mencipta kenangan',
   'photos.noAlbums': 'Tiada album',

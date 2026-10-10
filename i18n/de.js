@@ -5571,6 +5571,7 @@ export default {
   'photos.deleteFromCloud': 'Aus der Cloud löschen',
   'photos.removeBackup': 'Vom Backup entfernen',
   'photos.noPhotos': 'Keine Fotos',
+  'photos.fileUnavailable': 'Datei nicht verfügbar',
   'photos.noPhotosDesc': 'Deine Fotos und Videos werden hier angezeigt',
   'photos.uploadFirst': 'Lade dein erstes Foto hoch, um Erinnerungen zu schaffen',
   'photos.noAlbums': 'Keine Alben',
@@ -9941,4 +9942,11 @@ export default {
   "e2ee.confirmDisable": "Ende-zu-Ende-Verschlüsselung in diesem Chat deaktivieren? Neue Nachrichten werden nicht mehr verschlüsselt.",
   "e2ee.turnOn": "Aktivieren",
   "e2ee.turnOff": "Deaktivieren",
+  // [2026-10-10 lives-2]
+  "live.nextLive": "Nächster Live",
+  "live.previousLive": "Vorheriger Live",
+  "live.torchOn": "Taschenlampe einschalten",
+  "live.torchOff": "Taschenlampe ausschalten",
+  "live.torchUnavailable": "Taschenlampe auf diesem Gerät nicht verfügbar",
+  "live.beautyNeedsUpdate": "Glätten im Live-Video kommt mit dem nächsten App-Update. Vorerst gilt es nur für deine Vorschau.",
 };

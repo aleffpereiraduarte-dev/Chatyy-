@@ -4889,6 +4889,7 @@ export default {
   'photos.deleteFromCloud': 'ક્લાઉડમાંથી કાઢી નાખો',
   'photos.removeBackup': 'બેકઅપમાંથી દૂર કરો',
   'photos.noPhotos': 'કોઈ ફોટો નથી',
+  'photos.fileUnavailable': 'ફાઇલ ઉપલબ્ધ નથી',
   'photos.noPhotosDesc': 'તમારી ફોટોઝ અને વિડિઓઝ અહીં દેખાશે',
   'photos.uploadFirst': 'યાદોને બનાવવા માટે પ્રથમ ફોટો અપલોડ કરો',
   'photos.noAlbums': 'કોઈ આલ્બમ નથી',

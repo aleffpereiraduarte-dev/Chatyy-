@@ -42,7 +42,8 @@ function formatDuration(sec) {
 function formatWhen(iso, t) {
   if (!iso) return '';
   try {
-    const d = new Date(iso.includes('Z') ? iso : iso + 'Z');
+    // [2026-10-10 lives-2] parse robusto: "…+00" + "Z" dava data inválida.
+    const d = api.parseServerDate(iso);
     const diffMs = Date.now() - d.getTime();
     const day = 86400000;
     if (diffMs < day) return t('liveReplay.today') || 'Hoje';

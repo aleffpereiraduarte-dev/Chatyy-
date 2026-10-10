@@ -4893,6 +4893,7 @@ export default {
   'photos.deleteFromCloud': 'Διαγραφή από το cloud',
   'photos.removeBackup': 'Αφαίρεση από το αντίγραφο ασφαλείας',
   'photos.noPhotos': 'Καμία φωτογραφία',
+  'photos.fileUnavailable': 'Το αρχείο δεν είναι διαθέσιμο',
   'photos.noPhotosDesc': 'Οι φωτογραφίες και τα βίντεό σου θα εμφανιστούν εδώ',
   'photos.uploadFirst': 'Κάνε upload την πρώτη φωτογραφία για να δημιουργήσεις αναμνήσεις',
   'photos.noAlbums': 'Κανένα άλμπουμ',

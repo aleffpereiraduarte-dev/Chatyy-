@@ -6174,6 +6174,7 @@ export default {
   'photos.deleteFromCloud': 'Delete from cloud',
   'photos.removeBackup': 'Remove from backup',
   'photos.noPhotos': 'No photos',
+  'photos.fileUnavailable': 'File unavailable',
   'photos.noPhotosDesc': 'Your photos and videos will appear here',
   'photos.uploadFirst': 'Upload your first photo to create memories',
   'photos.noAlbums': 'No albums',
@@ -9911,4 +9912,11 @@ export default {
   "e2ee.confirmDisable": "Turn off end-to-end encryption in this chat? New messages will no longer be encrypted.",
   "e2ee.turnOn": "Turn on",
   "e2ee.turnOff": "Turn off",
+  // [2026-10-10 lives-2]
+  "live.nextLive": "Next live",
+  "live.previousLive": "Previous live",
+  "live.torchOn": "Turn on flashlight",
+  "live.torchOff": "Turn off flashlight",
+  "live.torchUnavailable": "Flashlight unavailable on this device",
+  "live.beautyNeedsUpdate": "Smoothing on the live video arrives in the next app update. For now it only applies to your preview.",
 };

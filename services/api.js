@@ -98,6 +98,11 @@ export function parseServerDate(value) {
   if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?(\.\d+)?$/.test(s)) {
     s += 'Z';
   }
+  // [2026-10-10 lives-2] Texto de timestamptz do PG ("…:09.233283+00"): Hermes
+  // e Safari recusam fração >3 dígitos e offset curto "+00"/"+0300". Normaliza
+  // p/ ISO estrito (".233" e "+00:00") antes do Date().
+  s = s.replace(/(\.\d{3})\d+/, '$1');
+  s = s.replace(/([+-]\d{2})(\d{2})?$/, (m, h, mm) => (/T\d{2}:\d{2}/.test(s) ? `${h}:${mm || '00'}` : m));
   return new Date(s);
 }
 export let BASE_URL = 'https://chatyy.com.br';
@@ -9636,11 +9641,18 @@ export async function liveRecordSet(sessionId, on) { return apiCall('live_record
 // [lives 2026-10-10] Filtro de palavras escolhido pelo dono (vale pra todas as lives dele).
 export async function liveWordFilterGet() { return apiCall('chat_live_word_filter_get', {}, 'POST'); }
 export async function liveWordFilterSet(words) { return apiCall('chat_live_word_filter_set', { words: Array.isArray(words) ? words : [] }, 'POST'); }
-export async function liveJoinLk(sessionId) {
+export async function liveJoinLk(sessionId, opts = {}) {
   const payload = { session_id: sessionId };
   const _did = await _getDeviceIdSafe();
   if (_did) payload.device_id = _did;
+  // [2026-10-10 lives-2] prewarm=1 → token de participante OCULTO (pré-conexão
+  // da próxima live na rolagem vertical; não conta espectador nem avisa o host).
+  if (opts && opts.prewarm) payload.prewarm = 1;
   return apiCall('live_join_lk', payload, 'POST');
+}
+// [2026-10-10 lives-2] Entrou de fato na live pré-conectada → vira visível + conta.
+export async function liveJoinLkPromote(sessionId, identity) {
+  return apiCall('live_join_lk_promote', { session_id: sessionId, identity }, 'POST');
 }
 export async function liveStatusLk(sessionId) {
   return apiCall('live_status_lk', { session_id: sessionId }, 'POST');

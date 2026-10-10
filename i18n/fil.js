@@ -4893,6 +4893,7 @@ export default {
   'photos.deleteFromCloud': 'Tanggalin mula sa ulap',
   'photos.removeBackup': 'Alisin mula sa backup',
   'photos.noPhotos': 'Walang larawan',
+  'photos.fileUnavailable': 'Hindi available ang file',
   'photos.noPhotosDesc': 'Ang iyong mga larawan at video ay lilitaw dito',
   'photos.uploadFirst': 'Mag-upload ng unang larawan para lumikha ng mga alaala',
   'photos.noAlbums': 'Walang album',

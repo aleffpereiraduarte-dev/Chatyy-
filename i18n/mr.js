@@ -4889,6 +4889,7 @@ export default {
   'photos.deleteFromCloud': 'क्लाउडमधून हटवा',
   'photos.removeBackup': 'बॅकअपमधून काढा',
   'photos.noPhotos': 'कोणतेही फोटो नाही',
+  'photos.fileUnavailable': 'फाइल उपलब्ध नाही',
   'photos.noPhotosDesc': 'तुमचे फोटो आणि व्हिडिओ येथे दिसतील',
   'photos.uploadFirst': 'स्मृती तयार करण्यासाठी पहिला फोटो अपलोड करा',
   'photos.noAlbums': 'कोणतेही अल्बम नाही',

@@ -5391,6 +5391,7 @@ export default {
   'photos.deleteFromCloud': 'Poista pilvestä',
   'photos.removeBackup': 'Poista varmuuskopiosta',
   'photos.noPhotos': 'Ei valokuvia',
+  'photos.fileUnavailable': 'Tiedosto ei ole saatavilla',
   'photos.noPhotosDesc': 'Valokuvasi ja videosi näkyvät täällä',
   'photos.uploadFirst': 'Lataa ensimmäinen valokuvasi luodaksesi muistoja',
   'photos.noAlbums': 'Ei albumeita',

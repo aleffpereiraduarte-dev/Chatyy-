@@ -530,9 +530,8 @@ const LiveGridItem = memo(function LiveGridItem({ rec, size, onPress, onLongPres
   try {
     const raw = rec?.ended_at || rec?.started_at;
     if (raw) {
-      const iso = String(raw).indexOf('T') >= 0 && String(raw).indexOf('Z') < 0
-        ? `${raw}Z` : raw;
-      const d = new Date(iso);
+      // [2026-10-10 lives-2] parse robusto (Z, "+00", fração longa, sem fuso = UTC)
+      const d = api.parseServerDate(raw);
       if (!isNaN(d.getTime())) {
         const day = String(d.getDate()).padStart(2, '0');
         const month = String(d.getMonth() + 1).padStart(2, '0');
@@ -1370,7 +1369,7 @@ export default function Profile({
         let nextId = found?.id || null;
         if (found && found.started_at) {
           try {
-            const startedMs = new Date(found.started_at).getTime();
+            const startedMs = api.parseServerDate(found.started_at).getTime();
             if (Number.isFinite(startedMs)) {
               const ageH = (Date.now() - startedMs) / 3600000;
               if (ageH > 6) {
@@ -1410,7 +1409,7 @@ export default function Profile({
           // reconnect could re-paint AO VIVO on a long-dead session id.
           if (d.started_at) {
             try {
-              const startedMs = new Date(d.started_at).getTime();
+              const startedMs = api.parseServerDate(d.started_at).getTime();
               if (Number.isFinite(startedMs) && (Date.now() - startedMs) > 6 * 3600 * 1000) {
                 console.warn('[Profile.live] ignoring stale live_started echo, age>6h');
                 return;

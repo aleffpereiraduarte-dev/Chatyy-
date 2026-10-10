@@ -4889,6 +4889,7 @@ export default {
   'photos.deleteFromCloud': 'Бұлттан жою',
   'photos.removeBackup': 'Резервтік жою',
   'photos.noPhotos': 'Фото жоқ',
+  'photos.fileUnavailable': 'Файл қолжетімсіз',
   'photos.noPhotosDesc': 'Сенің фотоларың мен видеоларың мұнда пайда болады',
   'photos.uploadFirst': 'Алғашқы фотосуретті жүктеп, естеліктер жаса',
   'photos.noAlbums': 'Альбом жоқ',

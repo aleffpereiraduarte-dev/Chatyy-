@@ -5391,6 +5391,7 @@ export default {
   'photos.deleteFromCloud': 'Verwijder uit de cloud',
   'photos.removeBackup': 'Verwijder uit backup',
   'photos.noPhotos': 'Geen foto\'s',
+  'photos.fileUnavailable': 'Bestand niet beschikbaar',
   'photos.noPhotosDesc': 'Je foto\'s en video\'s verschijnen hier',
   'photos.uploadFirst': 'Upload je eerste foto om herinneringen te creëren',
   'photos.noAlbums': 'Geen albums',

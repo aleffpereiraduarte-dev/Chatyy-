@@ -230,9 +230,7 @@ export default function LiveReplayScreen() {
                   try {
                     const raw = rec?.ended_at || rec?.started_at;
                     if (raw) {
-                      const iso = String(raw).indexOf('T') >= 0 && String(raw).indexOf('Z') < 0
-                        ? `${raw}Z` : raw;
-                      const d = new Date(iso);
+                      const d = api.parseServerDate(raw);
                       if (!isNaN(d.getTime())) {
                         dLabel = `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}`;
                       }

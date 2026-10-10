@@ -5571,6 +5571,7 @@ export default {
   'photos.deleteFromCloud': 'حذف من السحابة',
   'photos.removeBackup': 'إزالة من النسخة الاحتياطية',
   'photos.noPhotos': 'لا توجد صور',
+  'photos.fileUnavailable': 'الملف غير متاح',
   'photos.noPhotosDesc': 'ستظهر صورك ومقاطع الفيديو هنا',
   'photos.uploadFirst': 'قم بتحميل الصورة الأولى لإنشاء ذكريات',
   'photos.noAlbums': 'لا ألبومات',
@@ -9941,4 +9942,11 @@ export default {
   "e2ee.confirmDisable": "هل تريد إيقاف التشفير التام بين الطرفين في هذه الدردشة؟ لن تُشفَّر الرسائل الجديدة بعد الآن.",
   "e2ee.turnOn": "تفعيل",
   "e2ee.turnOff": "إيقاف",
+  // [2026-10-10 lives-2]
+  "live.nextLive": "البث التالي",
+  "live.previousLive": "البث السابق",
+  "live.torchOn": "تشغيل المصباح",
+  "live.torchOff": "إيقاف المصباح",
+  "live.torchUnavailable": "المصباح غير متاح على هذا الجهاز",
+  "live.beautyNeedsUpdate": "تنعيم فيديو البث يصل في التحديث القادم للتطبيق. حاليًا يُطبّق على المعاينة فقط.",
 };

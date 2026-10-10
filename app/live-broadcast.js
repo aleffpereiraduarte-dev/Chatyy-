@@ -15,7 +15,7 @@ import LiveChatOverlay from '../components/live/LiveChatOverlay';
 import AvatarCircle from '../components/AvatarCircle';
 import { cleanParticipantName, prettifyHandle } from '../services/displayName';
 import formatLiveChatContent from '../utils/formatLiveChatContent';
-import { IconX, IconCameraFlip, IconMic, IconMicOff, IconVideo, IconVideoOff, IconHeart, IconShare, IconSend, IconSettings, IconUserPlus, IconSparkles, IconFilter, IconPin, IconStar, IconStarFilled, IconGlobe, IconLock, IconUsers, IconEye, IconStop, IconCheck, IconBookmark, IconChevronRight, IconChevronDown, IconBarChart, IconBrush, IconBookmarkFilled, IconPlay, IconRepeat, IconCalendar } from '../components/Icons';
+import { IconX, IconCameraFlip, IconMic, IconMicOff, IconVideo, IconVideoOff, IconHeart, IconShare, IconSend, IconSettings, IconUserPlus, IconSparkles, IconFilter, IconPin, IconStar, IconStarFilled, IconGlobe, IconLock, IconUsers, IconEye, IconStop, IconCheck, IconBookmark, IconChevronRight, IconChevronDown, IconBarChart, IconBrush, IconBookmarkFilled, IconPlay, IconRepeat, IconCalendar, IconFlashlight } from '../components/Icons';
 import { useTheme } from '../context/ThemeContext';
 import AnimatedViewerCount from '../components/AnimatedViewerCount';
 import LiveTopGifters from '../components/LiveTopGifters';
@@ -84,15 +84,141 @@ function _loadLkBroadcast() {
   }
 }
 
+// ─── [2026-10-10 lives-2] Recursos do host que dependem do binário ───────────
+// Lanterna e "beleza" aplicados NO STREAM precisam de código nativo
+// (modules/expo-live-native: liveCapabilities/setTorch + processador de quadro
+// registrado no WebRTC). O JS só usa quando o módulo reporta suporte; no
+// binário atual nada disso existe → botões escondidos / aviso.
+function _liveNativeMod() {
+  if (Platform.OS === 'web') return null;
+  try {
+    const emc = require('expo-modules-core');
+    return typeof emc?.requireOptionalNativeModule === 'function'
+      ? emc.requireOptionalNativeModule('ExpoLiveNative') : null;
+  } catch { return null; }
+}
+function _liveNativeCaps() {
+  const m = _liveNativeMod();
+  try { if (m && typeof m.liveCapabilities === 'function') return m.liveCapabilities() || {}; } catch {}
+  return {};
+}
+function _hostCameraMst(room) {
+  try {
+    const lp = room && room.localParticipant;
+    const pub = lp && _LK_Track && typeof lp.getTrackPublication === 'function'
+      ? lp.getTrackPublication(_LK_Track.Source.Camera) : null;
+    return (pub && pub.videoTrack && pub.videoTrack.mediaStreamTrack) || null;
+  } catch { return null; }
+}
+// Lanterna: web (Chrome Android) via constraint `torch` da faixa publicada;
+// nativo só quando o binário expõe setTorch (próximo build).
+function _hostTorchSupported(room) {
+  if (Platform.OS === 'web') {
+    try {
+      const mst = _hostCameraMst(room);
+      const caps = mst && typeof mst.getCapabilities === 'function' ? mst.getCapabilities() : null;
+      return !!(caps && caps.torch);
+    } catch { return false; }
+  }
+  const m = _liveNativeMod();
+  return !!(m && typeof m.setTorch === 'function' && _liveNativeCaps().torch === true);
+}
+async function _hostSetTorch(room, on) {
+  try {
+    if (Platform.OS === 'web') {
+      const mst = _hostCameraMst(room);
+      if (!mst || typeof mst.applyConstraints !== 'function') return false;
+      await mst.applyConstraints({ advanced: [{ torch: !!on }] });
+      return true;
+    }
+    const m = _liveNativeMod();
+    if (!m || typeof m.setTorch !== 'function') return false;
+    return !!(await m.setTorch(!!on));
+  } catch { return false; }
+}
+function _hostNotice(msg) {
+  try {
+    const { ToastAndroid, Alert } = require('react-native');
+    if (Platform.OS === 'android' && ToastAndroid?.show) ToastAndroid.show(msg, ToastAndroid.SHORT);
+    else if (Platform.OS === 'ios' && Alert?.alert) Alert.alert(msg);
+    else console.log('[Live]', msg);
+  } catch {}
+}
+
+// Qualidade automática pela rede do HOST. Simulcast + dynacast já adaptam o
+// que CADA espectador recebe; isto adapta o que o host ENVIA:
+//  • ao publicar: celular 2G/3G → teto 360p; demais redes → 720p;
+//  • ao vivo: ConnectionQuality do próprio host medida pelo SFU — ruim/perdida
+//    por 6 s → desce um degrau (720→540→360); boa por 15 s → sobe um degrau.
+// Para sozinho quando a sala desconecta. onQuality recebe 'good'|'medium'|'poor'.
+function _startHostAutoQuality(room, vTrack, onQuality) {
+  let lkc = null;
+  try { lkc = require('livekit-client'); } catch { return () => {}; }
+  const VQ = lkc && lkc.VideoQuality;
+  const CQ = lkc && lkc.ConnectionQuality;
+  const RE = lkc && lkc.RoomEvent;
+  if (!VQ || !CQ || !RE || !room || !vTrack || typeof vTrack.setPublishingQuality !== 'function') return () => {};
+  let level = VQ.HIGH;
+  let badSince = 0;
+  let goodSince = 0;
+  let stopped = false;
+  const apply = (lv) => {
+    if (stopped || lv === level) return;
+    level = lv;
+    try { vTrack.setPublishingQuality(lv); } catch {}
+    console.log('[LIVE-TRACE] host auto-quality → ' + (lv === VQ.HIGH ? '720p' : lv === VQ.MEDIUM ? '540p' : '360p'));
+  };
+  try {
+    const NI = require('@react-native-community/netinfo');
+    const N = (NI && NI.default) || NI;
+    if (N && typeof N.fetch === 'function') {
+      N.fetch().then((st) => {
+        const gen = st && st.details && st.details.cellularGeneration;
+        if (st && st.type === 'cellular' && (gen === '2g' || gen === '3g')) apply(VQ.LOW);
+      }).catch(() => {});
+    }
+  } catch {}
+  const onCQ = (q, p) => {
+    if (stopped || !p || p !== room.localParticipant) return;
+    const now = Date.now();
+    if (q === CQ.Poor || q === CQ.Lost) {
+      goodSince = 0; if (!badSince) badSince = now;
+      try { onQuality && onQuality(q === CQ.Lost ? 'poor' : 'medium'); } catch {}
+    } else if (q === CQ.Good || q === CQ.Excellent) {
+      badSince = 0; if (!goodSince) goodSince = now;
+      try { onQuality && onQuality('good'); } catch {}
+    }
+  };
+  const tick = setInterval(() => {
+    const now = Date.now();
+    if (badSince && now - badSince >= 6000 && level !== VQ.LOW) {
+      apply(level === VQ.HIGH ? VQ.MEDIUM : VQ.LOW); badSince = now;
+    } else if (goodSince && now - goodSince >= 15000 && level !== VQ.HIGH) {
+      apply(level === VQ.LOW ? VQ.MEDIUM : VQ.HIGH); goodSince = now;
+    }
+  }, 2000);
+  const stop = () => {
+    stopped = true;
+    clearInterval(tick);
+    try { room.off(RE.ConnectionQualityChanged, onCQ); } catch {}
+    try { room.off(RE.Disconnected, stop); } catch {}
+  };
+  try { room.on(RE.ConnectionQualityChanged, onCQ); room.on(RE.Disconnected, stop); } catch {}
+  return stop;
+}
+
 const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get('window');
 const WS_URL = Platform.OS === 'web' ? 'wss://chatyy.com.br/ws' : 'wss://ws.chatyy.com.br/ws';
-const LIVE_RED = '#dc2626';
+// [2026-10-10 lives-2] Host em PRETO E BRANCO. Vermelho só no pontinho de
+// "AO VIVO"/duração (padrão da indústria) = LIVE_DOT_RED. LIVE_RED virou o
+// acento neutro (branco): anéis, bordas, corações e fundos de botão (que
+// passam a usar texto preto).
+const LIVE_DOT_RED = '#ef4444';
+const LIVE_RED = '#ffffff';
 const MAX_HEARTS = 20;
-// Brand-tinted heart palette — must mirror live-viewer's HEART_COLORS so the
-// color the viewer picks at tap-time renders identically on the host screen.
-// Brand spec: hot pinks + magentas + danger red (no orange/gold — gold is
-// reserved for the gift chip).
-const HEART_COLORS = ['#ff4d6d', '#ff7eb9', '#ff006e', '#c70039', '#ef4444'];
+// Corações em tons de branco/cinza (sem rosa) — o web (live-viewer.web.js) já
+// é P&B; a cor que vier do espectador é ignorada aqui (ver uso de HEART_COLORS).
+const HEART_COLORS = ['#ffffff', '#f5f5f5', '#e5e5e5', '#d4d4d4', '#bdbdbd'];
 
 export default function LiveBroadcastScreen() {
   // Round 67 #1158 (2026-05-18) — keep the display on for the entire
@@ -349,6 +475,30 @@ export default function LiveBroadcastScreen() {
   // Refs
   const localVideoRef = useRef(null);
   const localStreamRef = useRef(null);
+  // [2026-10-10 lives-2] Web: (re)anexa o stream da câmera a cada <video> montado.
+  const attachWebLocalVideo = useCallback((el) => {
+    localVideoRef.current = el;
+    let s = localStreamRef.current;
+    // Ao vivo: prefere a faixa PUBLICADA no LiveKit (o que o espectador vê;
+    // acompanha a troca de câmera via restartTrack), como o app nativo faz.
+    try {
+      const lp = lkRoomRef.current && lkRoomRef.current.localParticipant;
+      const pub = lp && _LK_Track && typeof lp.getTrackPublication === 'function'
+        ? lp.getTrackPublication(_LK_Track.Source.Camera) : null;
+      const mst = pub && pub.videoTrack && pub.videoTrack.mediaStreamTrack;
+      if (mst && mst.readyState === 'live' && typeof MediaStream !== 'undefined') {
+        const cur = el && el.srcObject && el.srcObject.getVideoTracks ? el.srcObject.getVideoTracks()[0] : null;
+        s = cur === mst ? el.srcObject : new MediaStream([mst]);
+      }
+    } catch {}
+    if (el && s && el.srcObject !== s) {
+      try {
+        el.srcObject = s;
+        const p = el.play && el.play();
+        if (p && p.catch) p.catch(() => {});
+      } catch {}
+    }
+  }, []);
   const wsRef = useRef(null);
   const peersRef = useRef(new Map());
   // Buffer of viewer-join messages that arrived before the broadcaster's
@@ -401,6 +551,11 @@ export default function LiveBroadcastScreen() {
   // can disconnect cleanly before hitting live_end_cf / live_end.
   const lkModeRef = useRef(false);
   const lkRoomRef = useRef(null); // livekit-client Room instance when publishing
+  // [2026-10-10 lives-2] qualidade automática (stop fn) + lanterna.
+  const hostAutoQualityStopRef = useRef(null);
+  const [torchAvail, setTorchAvail] = useState(false);
+  const [torchOn, setTorchOn] = useState(false);
+  useEffect(() => () => { try { hostAutoQualityStopRef.current && hostAutoQualityStopRef.current(); } catch {} }, []);
   // Single-flight gate for handleStartLive — without this a double-tap
   // (or a re-render that immediately re-fires the press) calls live_start
   // twice in <1s, creating TWO chat_live_sessions rows. The host's UI only
@@ -1063,7 +1218,9 @@ export default function LiveBroadcastScreen() {
     if (preStart) return;
     const t = setInterval(() => {
       const peers = Array.from(peersRef.current.values());
-      if (!peers.length) { setConnQuality('good'); return; }
+      // [2026-10-10 lives-2] No LiveKit (sem peers P2P) quem manda é a
+      // ConnectionQuality do SFU (_startHostAutoQuality → setConnQuality).
+      if (!peers.length) { if (!lkRoomRef.current) setConnQuality('good'); return; }
       let bad = 0, mid = 0;
       peers.forEach(pc => {
         const s = pc.connectionState;
@@ -1110,9 +1267,8 @@ export default function LiveBroadcastScreen() {
     // Per-heart color — viewer's choice if they sent one, otherwise pick
     // randomly from the brand palette so consecutive taps from the host's
     // own self-tap don't all clone-stamp the same red.
-    const color = (reactor && typeof reactor.color === 'string' && /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(reactor.color))
-      ? reactor.color
-      : HEART_COLORS[Math.floor(Math.random() * HEART_COLORS.length)];
+    // [2026-10-10 lives-2] P&B: ignora a cor (rosa/vermelha) do espectador.
+    const color = HEART_COLORS[Math.floor(Math.random() * HEART_COLORS.length)];
     // Random horizontal drift cached on the heart object so the render
     // reads a stable value (instead of re-randomizing every frame via
     // `Math.random()` inside the interpolation, which is what the old
@@ -1795,6 +1951,12 @@ export default function LiveBroadcastScreen() {
               // self-preview can render via _LK_VideoView (same source the
               // viewers see). Fixes "eu nao consigo me ver" on the host UI.
               try { setLkLocalVideoTrack(vTrack); } catch {}
+              // [2026-10-10 lives-2] Qualidade automática pela rede + lanterna.
+              try {
+                if (hostAutoQualityStopRef.current) hostAutoQualityStopRef.current();
+                hostAutoQualityStopRef.current = _startHostAutoQuality(room, vTrack, (q) => setConnQuality(q));
+              } catch {}
+              try { setTorchAvail(_hostTorchSupported(room)); } catch {}
               console.log('[LIVE-TRACE] host camera publish end');
             } catch (vErr) {
               const vMsg = vErr?.message || String(vErr);
@@ -2379,7 +2541,18 @@ export default function LiveBroadcastScreen() {
           ? lp.getTrackPublication(_LK_Track.Source.Camera)
           : null;
         const camTrack = camPub?.videoTrack || null;
-        if (camTrack && typeof camTrack.restartTrack === 'function') {
+        const camMst = camTrack?.mediaStreamTrack || null;
+        // [2026-10-10 lives-2] Nativo: troca a câmera NO MESMO track
+        // (applyConstraints do WebRTC) — sem parar/recriar a captura, sem
+        // republicar e sem renegociar: o espectador não vê queda nem preto.
+        // Lanterna só existe na traseira → desliga antes de ir p/ a frontal.
+        if (torchOn && newFacing === 'user') {
+          try { await _hostSetTorch(lkRoomRef.current, false); } catch {}
+          setTorchOn(false);
+        }
+        if (Platform.OS !== 'web' && camMst && typeof camMst._switchCamera === 'function') {
+          camMst._switchCamera();
+        } else if (camTrack && typeof camTrack.restartTrack === 'function') {
           await camTrack.restartTrack({ facingMode: newFacing });
         } else {
           // Fallback: cycle the camera off/on. setCameraEnabled re-acquires
@@ -2391,6 +2564,9 @@ export default function LiveBroadcastScreen() {
         facingRef.current = newFacing;
         setMirrorOn(newFacing === 'user');
         setVideoEpoch(e => e + 1);
+        // [2026-10-10 lives-2] Web: a prévia segue a faixa publicada (nova câmera).
+        if (Platform.OS === 'web') { try { attachWebLocalVideo(localVideoRef.current); } catch {} }
+        try { setTorchAvail(_hostTorchSupported(lkRoomRef.current)); } catch {}
         flipInFlightRef.current = false;
         return; // LK handled the flip — done.
       } catch (errLk) {
@@ -2504,7 +2680,16 @@ export default function LiveBroadcastScreen() {
     } finally {
       flipInFlightRef.current = false;
     }
-  }, [t]);
+  }, [t, torchOn]);
+
+  // [2026-10-10 lives-2] Lanterna (só câmera traseira). Web: constraint
+  // `torch` da faixa publicada; nativo: ExpoLiveNative.setTorch (próximo build).
+  const handleToggleTorch = useCallback(async () => {
+    const want = !torchOn;
+    const ok = await _hostSetTorch(lkRoomRef.current, want);
+    if (ok) setTorchOn(want);
+    else _hostNotice(t('live.torchUnavailable') || 'Lanterna indisponível neste aparelho');
+  }, [torchOn, t]);
 
   // ─── AR Filter handler ───
   // Picks a preset, persists in state, and pokes the native module so the
@@ -2524,7 +2709,21 @@ export default function LiveBroadcastScreen() {
       // Native module not loaded (web / Expo Go) — JS-only overlay path
       // handles the visual hint via the styles.arFilterOverlay tint.
     }
-  }, [arWallpaper]);
+    // [2026-10-10 lives-2] "Suavizar" (beleza leve) aplicado NO STREAM: usa o
+    // processador de quadro nativo 'chatyy_beauty' registrado no WebRTC
+    // (ExpoLiveNative.liveCapabilities().beauty — próximo build). Sem ele o
+    // tint é só na prévia local → avisa em vez de fingir que o público vê.
+    if (Platform.OS !== 'web') {
+      try {
+        const mst = _hostCameraMst(lkRoomRef.current);
+        if (_liveNativeCaps().beauty === true && mst && typeof mst._setVideoEffects === 'function') {
+          mst._setVideoEffects(presetKey === 'beauty' ? ['chatyy_beauty'] : []);
+        } else if (presetKey === 'beauty') {
+          _hostNotice(t('live.beautyNeedsUpdate') || 'Suavizar no vídeo da live chega na próxima atualização do app. Por enquanto vale só na sua prévia.');
+        }
+      } catch {}
+    }
+  }, [arWallpaper, t]);
 
   // ─── Multistream handlers ───
   // Loads previously-saved RTMP destinations into state. Called when the
@@ -3299,18 +3498,24 @@ export default function LiveBroadcastScreen() {
   //     absoluteFill) so the native SurfaceView gets explicit dimensions
   //     instead of inheriting a zero-height calc during layout thrash.
   const renderLocalVideo = (style) => {
-    if (Platform.OS === 'web') {
+    // [2026-10-10 lives-2] Web: prévia PRETA do host. A câmera abre no toque
+    // em "Ir ao vivo" e o srcObject ia p/ o <video> da tela pré-live; em
+    // seguida a tela troca p/ a de transmissão, que monta OUTRO <video> (ref
+    // nova, sem stream) → preto. Agora: callback ref reanexa o stream a cada
+    // montagem; sem stream (pré-live) mostra o avatar como no app; espelho só
+    // na câmera frontal.
+    if (Platform.OS === 'web' && localStreamRef.current && !videoOff) {
       return (
         <View style={[StyleSheet.absoluteFill, { backgroundColor: '#000', overflow: 'hidden' }]}>
           <video
-            ref={localVideoRef}
+            ref={attachWebLocalVideo}
             autoPlay
             muted
             playsInline
             style={{
               position: 'absolute', top: 0, left: 0,
               width: '100%', height: '100%',
-              objectFit: 'cover', transform: 'scaleX(-1)',
+              objectFit: 'cover', transform: mirrorOn ? 'scaleX(-1)' : 'none',
             }}
           />
         </View>
@@ -3463,7 +3668,7 @@ export default function LiveBroadcastScreen() {
         }]}>
           <View style={styles.endCardHero}>
             <View style={styles.endCardIcon}>
-              <IconVideo size={32} color="#fff" />
+              <IconVideo size={32} color="#000" />
             </View>
             <Text style={styles.endCardTitle}>{t('live.liveEnded') || 'Live encerrada'}</Text>
             <Text style={styles.endCardSubtitle} numberOfLines={2}>
@@ -3763,7 +3968,7 @@ export default function LiveBroadcastScreen() {
                       onPress={() => setLiveCategory(c.key)}
                       style={[
                         styles.preCatPill,
-                        active && { backgroundColor: c.color, borderColor: c.color },
+                        active && { backgroundColor: 'rgba(255,255,255,0.32)', borderColor: '#fff' }, // [lives-2] P&B
                       ]}
                       activeOpacity={0.85}
                       accessibilityRole="button"
@@ -3896,7 +4101,7 @@ export default function LiveBroadcastScreen() {
           borderRadius: 14,
           backgroundColor: '#0b0b18',
           borderWidth: 2,
-          borderColor: '#22d3ee',
+          borderColor: '#fff',
           overflow: 'hidden',
           zIndex: 25,
           // Android: pair with the inner SurfaceView's zOrder=1 so the
@@ -3905,7 +4110,7 @@ export default function LiveBroadcastScreen() {
           // mask wins on the JS side but the SurfaceView punches a
           // black-square hole on the native side.
           ...(Platform.OS === 'android' ? { elevation: 6 } : null),
-          ...(Platform.OS === 'web' ? { boxShadow: '0 6px 18px rgba(34,211,238,0.4)' } : {}),
+          ...(Platform.OS === 'web' ? { boxShadow: '0 6px 18px rgba(0,0,0,0.45)' } : {}),
         }}>
           {Platform.OS === 'web' ? (
             <video
@@ -4208,7 +4413,7 @@ export default function LiveBroadcastScreen() {
           accessibilityLabel={t('live.effects') || 'Effects'}
           accessibilityRole="button"
         >
-          <IconSparkles size={18} color={effectsOn ? '#facc15' : '#fff'} />
+          <IconSparkles size={18} color="#fff" />
         </TouchableOpacity>
         ) : null}
         {rightStackOpen ? (
@@ -4219,7 +4424,7 @@ export default function LiveBroadcastScreen() {
           accessibilityLabel={t('live.filter') || 'Filter'}
           accessibilityRole="button"
         >
-          <IconFilter size={18} color={activeFilter !== 'none' ? '#facc15' : '#fff'} />
+          <IconFilter size={18} color="#fff" />
         </TouchableOpacity>
         ) : null}
         {/* AR/Beauty/Greenscreen carousel — wave 16 (2026-05-17). 8 presets
@@ -4237,7 +4442,7 @@ export default function LiveBroadcastScreen() {
           accessibilityLabel={t('live.arFilters') || 'AR Filters'}
           accessibilityRole="button"
         >
-          <IconBrush size={18} color={activeARFilter !== 'none' ? '#facc15' : '#fff'} />
+          <IconBrush size={18} color="#fff" />
         </TouchableOpacity>
         ) : null}
         {rightStackOpen ? (
@@ -4282,7 +4487,7 @@ export default function LiveBroadcastScreen() {
           accessibilityState={{ checked: saveReplay }}
         >
           {saveReplay
-            ? <IconBookmarkFilled size={20} color="#fbbf24" />
+            ? <IconBookmarkFilled size={20} color="#fff" />
             : <IconBookmark size={20} color="#fff" />}
         </TouchableOpacity>
         ) : null}
@@ -4311,7 +4516,7 @@ export default function LiveBroadcastScreen() {
           accessibilityLabel={t('live.poll') || 'Enquete'}
           accessibilityRole="button"
         >
-          <IconBarChart size={18} color={activePoll && !activePoll.closed ? '#facc15' : '#fff'} />
+          <IconBarChart size={18} color="#fff" />
         </TouchableOpacity>
         ) : null}
         {rightStackOpen ? (
@@ -4323,6 +4528,20 @@ export default function LiveBroadcastScreen() {
           accessibilityRole="button"
         >
           <IconCameraFlip size={18} color="#fff" />
+        </TouchableOpacity>
+        ) : null}
+        {/* [2026-10-10 lives-2] Lanterna — só na câmera traseira e quando o
+            aparelho/binário suporta (web: torch da faixa; nativo: próximo build). */}
+        {rightStackOpen && torchAvail && !mirrorOn ? (
+        <TouchableOpacity
+          onPress={handleToggleTorch}
+          style={[styles.rightBtn, torchOn && styles.rightBtnActiveEffects]}
+          activeOpacity={0.7}
+          accessibilityLabel={torchOn ? (t('live.torchOff') || 'Desligar lanterna') : (t('live.torchOn') || 'Ligar lanterna')}
+          accessibilityRole="button"
+          accessibilityState={{ checked: torchOn }}
+        >
+          <IconFlashlight size={18} color="#fff" />
         </TouchableOpacity>
         ) : null}
       </View>
@@ -4340,7 +4559,7 @@ export default function LiveBroadcastScreen() {
         <IconEye size={14} color="#fff" />
         <Text style={styles.insightsPillText}>{formatViewerCount(viewerCount)}</Text>
         <View style={styles.insightsPillDot} />
-        <IconHeart size={12} color="#fca5a5" />
+        <IconHeart size={12} color="#fff" />
         <Text style={styles.insightsPillText}>{formatViewerCount(totalLikes)}</Text>
       </TouchableOpacity>
 
@@ -4396,14 +4615,15 @@ export default function LiveBroadcastScreen() {
                 emoji palette dump. Each preset gets a tinted gradient bubble
                 + a single-letter monogram (or an SVG when available). */}
             {[
-              { key: 'none',        svg: 'x',  tint: 'rgba(148,163,184,0.35)', label: t('live.arNone')        || 'Nenhum' },
-              { key: 'dog',         glyph: 'D',  tint: 'rgba(251,146,60,0.45)',  label: t('live.arDogEars')     || 'Cachorro' },
-              { key: 'sunglasses',  glyph: 'S',  tint: 'rgba(56,189,248,0.45)',  label: t('live.arSunglasses')  || 'Óculos' },
-              { key: 'hearts',      svg: 'heart', tint: 'rgba(17, 17, 17,0.55)', label: t('live.arHearts')      || 'Corações' },
-              { key: 'beauty',      svg: 'sparkles', tint: 'rgba(250,204,21,0.45)', label: t('live.arBeauty')   || 'Suavizar' },
-              { key: 'slim',        glyph: '◊',  tint: 'rgba(17, 17, 17,0.45)',  label: t('live.arSlimFace')    || 'Afinar' },
-              { key: 'blur',        glyph: '◐',  tint: 'rgba(99,102,241,0.45)',  label: t('live.arBlurBg')      || 'Desfocar' },
-              { key: 'greenscreen', glyph: '▣',  tint: 'rgba(34,197,94,0.45)',   label: t('live.arGreenscreen') || 'Cenário' },
+              // [2026-10-10 lives-2] bolhas P&B (eram laranja/azul/amarelo/verde).
+              { key: 'none',        svg: 'x',  tint: 'rgba(255,255,255,0.14)', label: t('live.arNone')        || 'Nenhum' },
+              { key: 'dog',         glyph: 'D',  tint: 'rgba(255,255,255,0.14)',  label: t('live.arDogEars')     || 'Cachorro' },
+              { key: 'sunglasses',  glyph: 'S',  tint: 'rgba(255,255,255,0.14)',  label: t('live.arSunglasses')  || 'Óculos' },
+              { key: 'hearts',      svg: 'heart', tint: 'rgba(255,255,255,0.14)', label: t('live.arHearts')      || 'Corações' },
+              { key: 'beauty',      svg: 'sparkles', tint: 'rgba(255,255,255,0.14)', label: t('live.arBeauty')   || 'Suavizar' },
+              { key: 'slim',        glyph: '◊',  tint: 'rgba(255,255,255,0.14)',  label: t('live.arSlimFace')    || 'Afinar' },
+              { key: 'blur',        glyph: '◐',  tint: 'rgba(255,255,255,0.14)',  label: t('live.arBlurBg')      || 'Desfocar' },
+              { key: 'greenscreen', glyph: '▣',  tint: 'rgba(255,255,255,0.14)',   label: t('live.arGreenscreen') || 'Cenário' },
             ].map(p => {
               const active = activeARFilter === p.key;
               return (
@@ -4535,7 +4755,7 @@ export default function LiveBroadcastScreen() {
               style={styles.composerInput}
               value={commentDraft}
               onChangeText={setCommentDraft}
-              placeholder={t('live.sayHello') || 'Diga oi...'}
+              placeholder={t('live.commentHint') || 'Adicionar comentário…'}
               placeholderTextColor="rgba(255,255,255,0.55)"
               onSubmitEditing={submitComposer}
               returnKeyType="send"
@@ -4822,9 +5042,9 @@ export default function LiveBroadcastScreen() {
         >
           <Animated.View
             style={{
-              width: 8, height: 8, borderRadius: 4, backgroundColor: '#facc15',
+              width: 8, height: 8, borderRadius: 4, backgroundColor: '#fff',
               transform: [{ scale: livePulse }],
-              shadowColor: '#facc15', shadowOpacity: 0.8, shadowRadius: 6,
+              shadowColor: '#fff', shadowOpacity: 0.8, shadowRadius: 6,
             }}
           />
           <Text style={{ color: '#fff', fontWeight: '700', fontSize: 12 }}>
@@ -4840,10 +5060,10 @@ export default function LiveBroadcastScreen() {
             borderRadius: 9,
             backgroundColor: LIVE_RED,
             alignItems: 'center', justifyContent: 'center',
-            borderWidth: 1.5, borderColor: '#fff',
+            borderWidth: 1.5, borderColor: '#000',
           }}>
             <Text style={{
-              color: '#fff', fontWeight: '900', fontSize: 10,
+              color: '#000', fontWeight: '900', fontSize: 10,
               fontVariant: ['tabular-nums'],
             }}>
               {joinRequests.length > 99 ? '99+' : joinRequests.length}
@@ -5235,7 +5455,7 @@ export default function LiveBroadcastScreen() {
             </Text>
             <TouchableOpacity
               onPress={() => { setEffectsOn(v => !v); }}
-              style={[liveSheetStyles.closeBtn, effectsOn && { backgroundColor: '#facc15' }]}
+              style={[liveSheetStyles.closeBtn, effectsOn && { backgroundColor: 'rgba(255,255,255,0.32)' }]}
               activeOpacity={0.85}
             >
               <Text style={[liveSheetStyles.closeText, effectsOn && { color: '#000' }]}>
@@ -5566,7 +5786,7 @@ const connStyles = StyleSheet.create({
 // payoff moment for the host wrapping a broadcast (TikTok parity). No
 // external dep — pure Animated.Value loops. Particles share four brand-
 // adjacent colors so the burst reads as celebratory without being chaotic.
-const CONFETTI_COLORS = ['#111111', '#fbbf24', '#ef4444', '#22c55e', '#3b82f6'];
+const CONFETTI_COLORS = ['#111111', '#ffffff', '#9ca3af', '#e5e7eb', '#4b5563']; // [lives-2] P&B
 const CONFETTI_COUNT = 24;
 function EndLiveConfetti() {
   // Build particles once on mount — each has a random start x, fall distance,
@@ -5680,7 +5900,7 @@ const styles = StyleSheet.create({
     width: 80,
     height: 80,
     borderRadius: 40,
-    backgroundColor: 'rgba(220,38,38,0.1)',
+    backgroundColor: 'rgba(255,255,255,0.1)',
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: 20,
@@ -5718,7 +5938,7 @@ const styles = StyleSheet.create({
     fontSize: 15,
   },
   errorText: {
-    color: '#f87171',
+    color: '#fff',
     fontSize: 18,
     fontWeight: '600',
     textAlign: 'center',
@@ -5763,7 +5983,7 @@ const styles = StyleSheet.create({
     borderWidth: 3,
     borderColor: LIVE_RED,
     ...(Platform.OS === 'web' ? {
-      boxShadow: '0 0 24px rgba(220,38,38,0.55)',
+      boxShadow: '0 0 24px rgba(255,255,255,0.35)',
     } : {}),
   },
   preAvatar: {
@@ -5820,17 +6040,17 @@ const styles = StyleSheet.create({
     gap: 12,
     minWidth: 220,
     ...(Platform.OS === 'web' ? {
-      boxShadow: '0 8px 26px rgba(220, 38, 38, 0.55), 0 0 48px rgba(220, 38, 38, 0.22)',
+      boxShadow: '0 8px 26px rgba(0, 0, 0, 0.45)',
     } : {}),
   },
   startBtnDot: {
     width: 12,
     height: 12,
     borderRadius: 6,
-    backgroundColor: '#fff',
+    backgroundColor: LIVE_DOT_RED,
   },
   startBtnText: {
-    color: '#fff',
+    color: '#000',
     fontSize: 18,
     fontWeight: '800',
     letterSpacing: 0.6,
@@ -5959,13 +6179,13 @@ const styles = StyleSheet.create({
   durationDotRing: {
     position: 'absolute',
     width: 10, height: 10, borderRadius: 5,
-    backgroundColor: LIVE_RED,
+    backgroundColor: LIVE_DOT_RED,
   },
   durationDot: {
     width: 6,
     height: 6,
     borderRadius: 3,
-    backgroundColor: LIVE_RED,
+    backgroundColor: LIVE_DOT_RED,
   },
   durationText: {
     color: '#fff',
@@ -6006,14 +6226,14 @@ const styles = StyleSheet.create({
     backgroundColor: LIVE_RED,
     alignItems: 'center', justifyContent: 'center',
     borderWidth: 2,
-    borderColor: 'rgba(255,255,255,0.85)',
+    borderColor: 'rgba(0,0,0,0.25)',
     ...(Platform.OS === 'web' ? {
-      boxShadow: '0 0 14px rgba(220,38,38,0.65), 0 2px 8px rgba(0,0,0,0.35)',
+      boxShadow: '0 2px 8px rgba(0,0,0,0.35)',
     } : {}),
   },
   endLiveBtnInner: {
     width: 12, height: 12, borderRadius: 2,
-    backgroundColor: '#fff',
+    backgroundColor: '#000',
   },
   // Host avatar with pulse ring — sits at top-left of the live header.
   // Bumped from 44 to 56 to match TikTok's prominent host avatar — easier to
@@ -6065,8 +6285,8 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(255,255,255,0.08)',
   },
   controlBtnActive: {
-    backgroundColor: 'rgba(220, 38, 38, 0.6)',
-    borderColor: 'rgba(220, 38, 38, 0.3)',
+    backgroundColor: 'rgba(255, 255, 255, 0.32)',
+    borderColor: 'rgba(255, 255, 255, 0.45)',
   },
   endBtn: {
     paddingVertical: 12,
@@ -6074,11 +6294,11 @@ const styles = StyleSheet.create({
     borderRadius: 24,
     backgroundColor: LIVE_RED,
     ...(Platform.OS === 'web' ? {
-      boxShadow: '0 2px 12px rgba(220, 38, 38, 0.4)',
+      boxShadow: '0 2px 12px rgba(0, 0, 0, 0.35)',
     } : {}),
   },
   endBtnText: {
-    color: '#fff',
+    color: '#000',
     fontSize: 14,
     fontWeight: '800',
     letterSpacing: 0.5,
@@ -6113,16 +6333,13 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
-    backgroundColor: LIVE_RED,
+    backgroundColor: 'rgba(0,0,0,0.6)',
     paddingHorizontal: 7,
     paddingVertical: 2,
     borderRadius: 6,
     alignSelf: 'flex-start',
     position: 'relative',
     flexShrink: 0,
-    ...(Platform.OS === 'web' ? {
-      boxShadow: '0 0 12px rgba(220,38,38,0.55)',
-    } : {}),
   },
   // Concentric expanding halo behind the LIVE badge — sized to the badge's
   // intrinsic box (matches dot start) so it reads as the badge itself
@@ -6136,7 +6353,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'transparent',
   },
   liveBadgeDot: {
-    width: 6, height: 6, borderRadius: 3, backgroundColor: '#fff',
+    width: 6, height: 6, borderRadius: 3, backgroundColor: LIVE_DOT_RED,
   },
   liveBadgeText: {
     color: '#fff', fontSize: 10, fontWeight: '900', letterSpacing: 0.8,
@@ -6243,25 +6460,26 @@ const styles = StyleSheet.create({
   // Active-state tints — one for each surface so the host gets a clear "this
   // mode is on" cue without losing the underlying glass aesthetic. All
   // colors are taken from the brand palette (no off-brand reds/blues).
+  // [2026-10-10 lives-2] Ativo = vidro branco (antes: ícone amarelo).
   rightBtnActiveEffects: {
-    backgroundColor: 'rgba(17, 17, 17,0.55)',
-    borderColor: 'rgba(17, 17, 17,0.7)',
+    backgroundColor: 'rgba(255,255,255,0.32)',
+    borderColor: 'rgba(255,255,255,0.6)',
   },
   rightBtnActiveFilter: {
-    backgroundColor: 'rgba(17, 17, 17,0.55)',
-    borderColor: 'rgba(17, 17, 17,0.7)',
+    backgroundColor: 'rgba(255,255,255,0.32)',
+    borderColor: 'rgba(255,255,255,0.6)',
   },
   rightBtnActiveAr: {
-    backgroundColor: 'rgba(17, 17, 17,0.55)',
-    borderColor: 'rgba(17, 17, 17,0.7)',
+    backgroundColor: 'rgba(255,255,255,0.32)',
+    borderColor: 'rgba(255,255,255,0.6)',
   },
   rightBtnActiveSave: {
-    backgroundColor: 'rgba(250,204,21,0.4)',
-    borderColor: 'rgba(250,204,21,0.6)',
+    backgroundColor: 'rgba(255,255,255,0.32)',
+    borderColor: 'rgba(255,255,255,0.6)',
   },
   rightBtnActivePoll: {
-    backgroundColor: 'rgba(17, 17, 17,0.55)',
-    borderColor: 'rgba(17, 17, 17,0.7)',
+    backgroundColor: 'rgba(255,255,255,0.32)',
+    borderColor: 'rgba(255,255,255,0.6)',
   },
   rightBtnIconEmoji: { fontSize: 18 },
   // Cumulative heart total above the action stack — TikTok aesthetic.
@@ -6349,10 +6567,10 @@ const styles = StyleSheet.create({
     color: '#111111', fontSize: 11, fontWeight: '800', letterSpacing: 0.3,
   },
   commentHostTag: {
-    color: '#f59e0b', fontSize: 10, fontWeight: '700',
+    color: '#fff', fontSize: 10, fontWeight: '700',
   },
   commentHostChip: {
-    backgroundColor: '#f59e0b',
+    backgroundColor: '#111111',
     paddingHorizontal: 6,
     paddingVertical: 1,
     borderRadius: 6,
@@ -6441,8 +6659,8 @@ const styles = StyleSheet.create({
     borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)',
   },
   composerIconBtnActive: {
-    backgroundColor: 'rgba(220,38,38,0.7)',
-    borderColor: 'rgba(220,38,38,0.4)',
+    backgroundColor: 'rgba(255,255,255,0.32)',
+    borderColor: 'rgba(255,255,255,0.45)',
   },
   // Mic-live cue — subtle green halo + tint when the mic is hot. Mirrors the
   // "you are being heard" feedback Instagram/TikTok use so the host doesn't
@@ -6452,11 +6670,8 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(34,197,94,0.55)',
   },
   heartBtn: {
-    backgroundColor: 'rgba(220,38,38,0.65)',
-    borderColor: 'rgba(220,38,38,0.4)',
-    ...(Platform.OS === 'web' ? {
-      boxShadow: '0 4px 14px rgba(220,38,38,0.35)',
-    } : {}),
+    backgroundColor: 'rgba(255,255,255,0.22)',
+    borderColor: 'rgba(255,255,255,0.4)',
   },
 
   // End-Live confirmation modal
@@ -6488,7 +6703,7 @@ const styles = StyleSheet.create({
     marginBottom: 6,
   },
   endModalLiveDot: {
-    width: 10, height: 10, borderRadius: 5, backgroundColor: LIVE_RED,
+    width: 10, height: 10, borderRadius: 5, backgroundColor: LIVE_DOT_RED,
   },
   endModalTitle: {
     color: '#fff',
@@ -6593,12 +6808,9 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     backgroundColor: LIVE_RED,
     alignItems: 'center',
-    ...(Platform.OS === 'web' ? {
-      boxShadow: '0 4px 16px rgba(220,38,38,0.45)',
-    } : {}),
   },
   endModalConfirmText: {
-    color: '#fff', fontSize: 14, fontWeight: '800', letterSpacing: 0.3,
+    color: '#000', fontSize: 14, fontWeight: '800', letterSpacing: 0.3,
   },
 
   // ----- Pre-live hero card -----
@@ -6648,7 +6860,7 @@ const styles = StyleSheet.create({
     position: 'absolute',
     width: 320, height: 320,
     borderRadius: 160,
-    backgroundColor: 'rgba(220,38,38,0.22)',
+    backgroundColor: 'rgba(255,255,255,0.08)',
     top: -100, right: -80,
     ...(Platform.OS === 'web' ? {
       filter: 'blur(70px)', WebkitFilter: 'blur(70px)',
@@ -6742,7 +6954,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(255,255,255,0.18)',
     padding: 3,
   },
-  preSubSwitchOn: { backgroundColor: '#F59E0B' },
+  preSubSwitchOn: { backgroundColor: 'rgba(255,255,255,0.55)' },
   preSubKnob: {
     width: 20, height: 20, borderRadius: 10,
     backgroundColor: '#fff',
@@ -6773,10 +6985,10 @@ const styles = StyleSheet.create({
   preExtraBtnBadge: {
     minWidth: 18, height: 18, borderRadius: 9,
     paddingHorizontal: 5,
-    backgroundColor: '#F59E0B',
+    backgroundColor: '#fff',
     alignItems: 'center', justifyContent: 'center',
   },
-  preExtraBtnBadgeText: { color: '#fff', fontSize: 10, fontWeight: '800' },
+  preExtraBtnBadgeText: { color: '#000', fontSize: 10, fontWeight: '800' },
 
   // ----- AR filter carousel -----
   arCarouselWrap: {
@@ -6859,7 +7071,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 5,
     borderRadius: 12,
-    backgroundColor: 'rgba(220,38,38,0.85)',
+    backgroundColor: 'rgba(0,0,0,0.7)',
     zIndex: 30,
   },
   multistreamPillDot: {
@@ -6978,9 +7190,6 @@ const styles = StyleSheet.create({
     backgroundColor: LIVE_RED,
     alignItems: 'center', justifyContent: 'center',
     marginBottom: 12,
-    ...(Platform.OS === 'web' ? {
-      boxShadow: '0 6px 22px rgba(220,38,38,0.45)',
-    } : {}),
   },
   endCardTitle: {
     color: '#fff', fontSize: 22, fontWeight: '800', letterSpacing: 0.2,
@@ -7044,10 +7253,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 13,
     borderRadius: 14,
-    backgroundColor: '#facc15',
-    ...(Platform.OS === 'web' ? {
-      boxShadow: '0 4px 18px rgba(250,204,21,0.4)',
-    } : {}),
+    backgroundColor: '#fff',
   },
   endCardCtaPrimaryOff: {
     backgroundColor: 'rgba(17, 17, 17,0.85)',

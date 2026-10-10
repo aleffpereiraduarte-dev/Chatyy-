@@ -5391,6 +5391,7 @@ export default {
   'photos.deleteFromCloud': 'Ta bort från molnet',
   'photos.removeBackup': 'Ta bort från säkerhetskopiering',
   'photos.noPhotos': 'Inga foton',
+  'photos.fileUnavailable': 'Filen är inte tillgänglig',
   'photos.noPhotosDesc': 'Dina foton och videor kommer att visas här',
   'photos.uploadFirst': 'Ladda upp ditt första foto för att skapa minnen',
   'photos.noAlbums': 'Inga album',

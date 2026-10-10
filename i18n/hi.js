@@ -5571,6 +5571,7 @@ export default {
   'photos.deleteFromCloud': 'क्लाउड से हटाएँ',
   'photos.removeBackup': 'बैकअप से हटाएँ',
   'photos.noPhotos': 'कोई फोटो नहीं',
+  'photos.fileUnavailable': 'फ़ाइल उपलब्ध नहीं है',
   'photos.noPhotosDesc': 'आपकी फोटो और वीडियो यहाँ दिखाई देंगे',
   'photos.uploadFirst': 'पहली फोटो अपलोड करें ताकि यादें बन सकें',
   'photos.noAlbums': 'कोई एल्बम नहीं',
@@ -9941,4 +9942,11 @@ export default {
   "e2ee.confirmDisable": "क्या इस चैट में एंड-टू-एंड एन्क्रिप्शन बंद करें? नए संदेश अब एन्क्रिप्ट नहीं होंगे।",
   "e2ee.turnOn": "चालू करें",
   "e2ee.turnOff": "बंद करें",
+  // [2026-10-10 lives-2]
+  "live.nextLive": "अगला लाइव",
+  "live.previousLive": "पिछला लाइव",
+  "live.torchOn": "फ़्लैशलाइट चालू करें",
+  "live.torchOff": "फ़्लैशलाइट बंद करें",
+  "live.torchUnavailable": "इस डिवाइस पर फ़्लैशलाइट उपलब्ध नहीं है",
+  "live.beautyNeedsUpdate": "लाइव वीडियो पर स्मूदिंग अगले ऐप अपडेट में आएगी। अभी यह सिर्फ़ आपके प्रीव्यू पर लागू है।",
 };

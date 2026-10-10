@@ -4889,6 +4889,7 @@ export default {
   'photos.deleteFromCloud': 'క్లౌడ్ నుండి తొలగించండి',
   'photos.removeBackup': 'బ్యాకప్ నుండి తొలగించండి',
   'photos.noPhotos': 'ఫోటోలు లేవు',
+  'photos.fileUnavailable': 'ఫైల్ అందుబాటులో లేదు',
   'photos.noPhotosDesc': 'మీ ఫోటోలు మరియు వీడియోలు ఇక్కడ కనిపిస్తాయి',
   'photos.uploadFirst': 'స్మృతులను సృష్టించడానికి మొదటి ఫోటోను అప్‌లోడ్ చేయండి',
   'photos.noAlbums': 'అల్బమ్స్ లేవు',

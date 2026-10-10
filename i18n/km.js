@@ -4889,6 +4889,7 @@ export default {
   'photos.deleteFromCloud': 'លុបពីពពក',
   'photos.removeBackup': 'លុបចេញពីការសន្សំ',
   'photos.noPhotos': 'គ្មានរូបភាព',
+  'photos.fileUnavailable': 'ឯកសារមិនអាចប្រើបាន',
   'photos.noPhotosDesc': 'រូបភាព និងវីដេអូរបស់អ្នកនឹងបង្ហាញនៅទីនេះ',
   'photos.uploadFirst': 'ផ្ទុករូបភាពដំបូងដើម្បីបង្កើតអនុស្សាវរីយ៍',
   'photos.noAlbums': 'គ្មានអាល់ប៊ុម',

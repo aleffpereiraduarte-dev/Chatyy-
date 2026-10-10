@@ -4893,6 +4893,7 @@ export default {
   'photos.deleteFromCloud': 'Izbriši iz oblaka',
   'photos.removeBackup': 'Odstrani iz varnostne kopije',
   'photos.noPhotos': 'Brez fotografij',
+  'photos.fileUnavailable': 'Datoteka ni na voljo',
   'photos.noPhotosDesc': 'Tvoje fotografije in videi se bodo prikazali tukaj',
   'photos.uploadFirst': 'Naloži prvo fotografijo, da ustvariš spomine',
   'photos.noAlbums': 'Noben album',

@@ -2,8 +2,9 @@ import { androidBottomInset } from '../utils/systemInsets'; // [2026-10-07 andro
 import { useState, useEffect, useRef, useCallback, memo } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet, Platform, Animated,
-  Dimensions, Share, Modal, Pressable, ScrollView, Keyboard, StatusBar,
+  Dimensions, Share, Modal, Pressable, ScrollView, Keyboard, StatusBar, PanResponder, Image,
 } from 'react-native';
+import { prewarmLive, takePrewarmedLive, markPrewarmHandoff, releasePrewarmUnlessHandoff } from '../services/livePrewarm';
 import { FlashList } from '@shopify/flash-list';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -461,6 +462,18 @@ export default function LiveViewerScreen() {
   const liveSessionInfoSeenRef = useRef(false);
   // [WAVE 110] LiveKit viewer room ref — non-null when connected via LK SFU.
   const lkViewerRoomRef = useRef(null);
+  // [2026-10-10 lives-2] Tela desmontada (ex.: deslizou p/ outra live): o
+  // Disconnected do disconnect() de limpeza chega depois e NÃO pode agendar
+  // re-join (abriria uma sala zumbi tocando áudio por baixo da live nova).
+  const viewerUnmountedRef = useRef(false);
+  useEffect(() => {
+    viewerUnmountedRef.current = false;
+    return () => {
+      viewerUnmountedRef.current = true;
+      // Pré-conexão da próxima live: só sobrevive se a troca foi por rolagem.
+      releasePrewarmUnlessHandoff();
+    };
+  }, []);
   // [2026-06-12 LK hard-disconnect reconnect] When the LK SDK exhausts its
   // own internal reconnect retries it fires a hard `Disconnected` and hands
   // the dead Room back to us. The WebRTC/HLS fallbacks have explicit retry
@@ -514,7 +527,9 @@ export default function LiveViewerScreen() {
   // tap → live-viewer transition feel instant even on slow WebRTC handshakes
   // (the user gets a confirmation that something is happening while the
   // skeleton card behind it is still spinning up). Plays exactly once.
-  const entryFlash = useRef(new Animated.Value(1)).current;
+  // [2026-10-10 lives-2] Chegando por rolagem vertical (?swipe=1): sem cortina
+  // branca — a troca tem que parecer contínua (TikTok).
+  const entryFlash = useRef(new Animated.Value(params.swipe ? 0 : 1)).current;
 
   // ICE config
   const iceConfig = {
@@ -1089,11 +1104,12 @@ export default function LiveViewerScreen() {
               const _lk2 = loadLiveKit();
               if (!_lk2?.Room) return;
               console.log('[LIVE-TRACE] viewer liveJoinLk start (REST fallback) — session=' + paramSessionId);
-              const _jr = await api.liveJoinLk(paramSessionId);
+              const _pw2 = await takePrewarmedLive(paramSessionId); // [2026-10-10 lives-2]
+              const _jr = _pw2 ? _pw2.joinRes : await api.liveJoinLk(paramSessionId);
               if (!_jr?.success || !_jr?.data?.lk_token) return;
               const { lk_url: _lu, lk_token: _lt, lk_room: _lr, identity: _lid } = _jr.data;
               console.log('[LIVE-TRACE] viewer liveJoinLk resolved (REST) — room=' + _lr + ' identity=' + (_lid || '(none)'));
-              const _rm = new _lk2.Room({ adaptiveStream: true, dynacast: false });
+              const _rm = _pw2 ? _pw2.room : new _lk2.Room({ adaptiveStream: true, dynacast: false });
               lkViewerRoomRef.current = _rm;
               // [ROUND 3 FIX] Track subscribed-video state so setConnected
               // only flips true once we actually have pixels; listener
@@ -1127,7 +1143,9 @@ export default function LiveViewerScreen() {
               _rm.on(_lk2.RoomEvent.TrackUnsubscribed, _ct);
               _rm.on(_lk2.RoomEvent.Disconnected, () => { lkViewerRoomRef.current = null; setLkTracks([]); setConnected(false); if (!liveEndedRef.current) scheduleLkRejoinRef.current?.(); });
               console.log('[LIVE-TRACE] viewer Room.connect start (REST) — ' + (_lu || 'wss://livekit.chatyy.com.br'));
-              await _rm.connect(_lu || 'wss://livekit.chatyy.com.br', _lt);
+              if (_pw2) await _pw2.activate();
+              else await _rm.connect(_lu || 'wss://livekit.chatyy.com.br', _lt);
+              if (viewerUnmountedRef.current) { try { _rm.disconnect(); } catch {} return; }
               console.log('[LIVE-TRACE] viewer Room.connect resolved (REST) — room=' + _lr);
               // Don't blindly setConnected here — let _ct gate on video.
               _ct();
@@ -1259,6 +1277,7 @@ export default function LiveViewerScreen() {
   // instead of just dropping back to "Conectando…" forever.
   const connectLkViewer = useCallback(async () => {
     if (liveEndedRef.current) return 'ended';
+    if (viewerUnmountedRef.current) return 'fail';
     const _lk = loadLiveKit();
     if (!_lk?.Room) throw new Error('LK SDK not available');
     let _joinRes = null;
@@ -1313,6 +1332,7 @@ export default function LiveViewerScreen() {
       scheduleLkRejoin();
     });
     await _room.connect(_lkUrl || 'wss://livekit.chatyy.com.br', _lkToken);
+    if (viewerUnmountedRef.current) { try { _room.disconnect(); } catch {} return 'fail'; }
     _collectTracks();
     return 'ok';
   }, [paramSessionId]);
@@ -1325,6 +1345,7 @@ export default function LiveViewerScreen() {
   // stop; after the cap we give up and let the stuck-timer/ended path take over.
   const scheduleLkRejoin = useCallback(() => {
     if (liveEndedRef.current) return;
+    if (viewerUnmountedRef.current) return;
     if (lkReconnectingRef.current) return; // already reconnecting — don't pile on
     if (lkReconnectAttemptRef.current >= 3) return; // cap reached — give up
     lkReconnectingRef.current = true;
@@ -1466,9 +1487,13 @@ export default function LiveViewerScreen() {
                 // race (row status=pending for ~1s). Retry up to 3× with 1s
                 // backoff before falling back to webrtc — that fallback was
                 // causing permanent "Conectando..." for early viewers.
-                let _joinRes = null;
-                console.log('[LIVE-TRACE] viewer liveJoinLk start — session=' + _lkSid);
-                for (let _attempt = 0; _attempt < 3; _attempt++) {
+                // [2026-10-10 lives-2] Rolagem vertical: se esta live já estava
+                // pré-conectada (oculta, sem mídia), adota a sala em vez de
+                // pedir token + handshake de novo.
+                const _pw = await takePrewarmedLive(_lkSid);
+                let _joinRes = _pw ? _pw.joinRes : null;
+                console.log('[LIVE-TRACE] viewer liveJoinLk start — session=' + _lkSid + (_pw ? ' (prewarmed)' : ''));
+                for (let _attempt = 0; !_pw && _attempt < 3; _attempt++) {
                   try {
                     _joinRes = await api.liveJoinLk(_lkSid);
                     if (_joinRes?.success) break;
@@ -1488,7 +1513,7 @@ export default function LiveViewerScreen() {
                 }
                 const { lk_url: _lkUrl, lk_token: _lkToken, lk_room: _lkRoom, identity: _lkIdentity } = _joinRes.data;
                 console.log('[LIVE-TRACE] viewer liveJoinLk resolved — room=' + _lkRoom + ' identity=' + (_lkIdentity || '(none)'));
-                const _room = new _lk.Room({ adaptiveStream: true, dynacast: false });
+                const _room = _pw ? _pw.room : new _lk.Room({ adaptiveStream: true, dynacast: false });
                 lkViewerRoomRef.current = _room;
                 // [ROUND 3 FIX 2026-05-21] _collectTracks listener MUST be
                 // attached BEFORE Room.connect — previously TrackSubscribed
@@ -1550,7 +1575,10 @@ export default function LiveViewerScreen() {
                   if (!liveEndedRef.current) scheduleLkRejoinRef.current?.();
                 });
                 console.log('[LIVE-TRACE] viewer Room.connect start — ' + (_lkUrl || 'wss://livekit.chatyy.com.br'));
-                await _room.connect(_lkUrl || 'wss://livekit.chatyy.com.br', _lkToken);
+                if (_pw) await _pw.activate();
+                else await _room.connect(_lkUrl || 'wss://livekit.chatyy.com.br', _lkToken);
+                // [2026-10-10 lives-2] Saiu da tela durante o connect → não deixa sala zumbi.
+                if (viewerUnmountedRef.current) { try { _room.disconnect(); } catch {} return; }
                 console.log('[LIVE-TRACE] viewer Room.connect resolved — room=' + _lkRoom);
                 // [2026-06-12] Fresh WS-path connect — reset the LK re-join
                 // backoff counter so a later hard-drop gets its full 3 attempts.
@@ -2999,6 +3027,126 @@ export default function LiveViewerScreen() {
     }
   }, [paramSessionId, savingReplay, replaySaved, t, showToast]);
 
+  // ─── [2026-10-10 lives-2] Rolagem vertical entre lives (estilo TikTok) ───
+  // Fila = ids vindos do live-discover (?queue=a,b,c, mesma ordem da grade) ou,
+  // sem fila, a lista do discover. Arrastar p/ cima = próxima; p/ baixo =
+  // anterior. A PRÓXIMA fica pré-conectada (oculta, sem áudio/vídeo) 2,5 s
+  // depois do 1º quadro da atual — ver services/livePrewarm.js.
+  const [swipeQueue, setSwipeQueue] = useState(() => (
+    String(params.queue || '').split(',').map(s => s.trim()).filter(Boolean).map(id => ({ id }))
+  ));
+  const swipeY = useRef(new Animated.Value(0)).current;
+  const swipeBusyRef = useRef(false);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await api.liveDiscover('');
+        if (cancelled) return;
+        const list = Array.isArray(res?.data?.sessions) ? res.data.sessions : [];
+        const meLc = String(user?.email || '').toLowerCase();
+        const norm = (s) => ({
+          id: String(s?.id || s?.session_id || ''),
+          host_email: s?.host_email || '',
+          host_name: s?.host_name || '',
+          thumbnail_url: s?.thumbnail_url || '',
+        });
+        const live = list.map(norm).filter(s => s.id && String(s.host_email).toLowerCase() !== meLc);
+        const byId = new Map(live.map(s => [s.id, s]));
+        const q = String(params.queue || '').split(',').map(s => s.trim()).filter(Boolean);
+        const cur = String(paramSessionId || '');
+        const ordered = q.length
+          ? q.filter(id => byId.has(id) || id === cur).map(id => byId.get(id) || { id })
+          : live;
+        setSwipeQueue(ordered);
+      } catch {}
+    })();
+    return () => { cancelled = true; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [paramSessionId]);
+  const _swipeCur = String(paramSessionId || '');
+  const _swipeIdx = swipeQueue.findIndex(s => s.id === _swipeCur);
+  const nextLive = _swipeIdx >= 0
+    ? (swipeQueue[_swipeIdx + 1] || null)
+    : (swipeQueue.find(s => s.id !== _swipeCur) || null);
+  const prevLive = _swipeIdx > 0 ? swipeQueue[_swipeIdx - 1] : null;
+
+  // Pré-conecta a próxima só com a atual já tocando (não disputa banda com o
+  // 1º quadro). Ao sair sem rolar, a desmontagem descarta (releasePrewarm…).
+  useEffect(() => {
+    if (!connected || liveEnded || !nextLive?.id) return undefined;
+    const tm = setTimeout(() => { try { prewarmLive(nextLive.id); } catch {} }, 2500);
+    return () => clearTimeout(tm);
+  }, [connected, liveEnded, nextLive?.id]);
+
+  const goToLive = useCallback((target, dir) => {
+    if (!target?.id || swipeBusyRef.current) return;
+    swipeBusyRef.current = true;
+    try { markPrewarmHandoff(target.id); } catch {}
+    try { Keyboard.dismiss(); } catch {}
+    const H = Dimensions.get('window').height;
+    Animated.timing(swipeY, { toValue: dir === 'prev' ? H : -H, duration: 200, useNativeDriver: true }).start(() => {
+      const p = new URLSearchParams();
+      p.set('sessionId', String(target.id));
+      if (target.host_email) p.set('hostEmail', target.host_email);
+      if (target.host_name) p.set('hostName', target.host_name);
+      p.set('swipe', '1');
+      const q = swipeQueue.map(s => s.id).filter(Boolean).slice(0, 30).join(',');
+      if (q) p.set('queue', q);
+      try { router.replace(`/live-viewer?${p.toString()}`); } catch {
+        swipeBusyRef.current = false;
+        swipeY.setValue(0);
+      }
+    });
+  }, [router, swipeQueue, swipeY]);
+
+  const swipeStateRef = useRef({});
+  swipeStateRef.current = {
+    nextLive, prevLive, goToLive,
+    blocked: !!(chatSheetOpen || showViewersList || hostPeekOpen),
+  };
+  const swipePanRef = useRef(null);
+  if (!swipePanRef.current) {
+    const _settle = () => Animated.spring(swipeY, { toValue: 0, useNativeDriver: true, friction: 8, tension: 90 }).start();
+    swipePanRef.current = PanResponder.create({
+      onMoveShouldSetPanResponderCapture: (_e, g) => {
+        const s = swipeStateRef.current;
+        if (swipeBusyRef.current || s.blocked) return false;
+        if (Math.abs(g.dy) < 14 || Math.abs(g.dy) < Math.abs(g.dx) * 2) return false;
+        return g.dy < 0 ? !!s.nextLive : !!s.prevLive;
+      },
+      onPanResponderMove: (_e, g) => { swipeY.setValue(g.dy); },
+      onPanResponderRelease: (_e, g) => {
+        const s = swipeStateRef.current;
+        const H = Dimensions.get('window').height;
+        if ((g.dy < -H * 0.18 || g.vy < -0.8) && s.nextLive) s.goToLive(s.nextLive, 'next');
+        else if ((g.dy > H * 0.18 || g.vy > 0.8) && s.prevLive) s.goToLive(s.prevLive, 'prev');
+        else _settle();
+      },
+      onPanResponderTerminate: _settle,
+      onPanResponderTerminationRequest: () => false,
+    });
+  }
+  const _renderSwipePeek = (target, edge) => {
+    if (!target) return null;
+    const name = target.host_name || (target.host_email ? String(target.host_email).split('@')[0] : '');
+    return (
+      <View
+        pointerEvents="none"
+        style={[styles.swipePeek, edge === 'below' ? { top: '100%' } : { bottom: '100%' }]}
+      >
+        {!!target.thumbnail_url && (
+          <Image source={{ uri: target.thumbnail_url }} style={[StyleSheet.absoluteFill, { opacity: 0.45 }]} resizeMode="cover" blurRadius={8} />
+        )}
+        <AvatarCircle name={name} email={target.host_email} size={84} />
+        {!!name && <Text style={styles.swipePeekName} numberOfLines={1}>{name}</Text>}
+        <Text style={styles.swipePeekHint}>
+          {edge === 'below' ? (t('live.nextLive') || 'Próxima live') : (t('live.previousLive') || 'Live anterior')}
+        </Text>
+      </View>
+    );
+  };
+
   // Polished: gradient backdrop (purple → black), bigger avatar with soft
   // ring, primary action = "Follow" (returning fans get "Ver perfil" instead),
   // secondary actions = Share + Voltar. Auto-back timer (4s) still runs.
@@ -3120,6 +3268,19 @@ export default function LiveViewerScreen() {
           ) : null
         )}
 
+        {/* [2026-10-10 lives-2] Rolagem: live terminou → segue p/ a próxima da fila. */}
+        {!newerSessionFromHost && nextLive ? (
+          <TouchableOpacity
+            onPress={() => goToLive(nextLive, 'next')}
+            style={[styles.endedBtn, styles.endedBtnPrimary, { marginTop: 12 }]}
+            accessibilityLabel={t('live.nextLive') || 'Próxima live'}
+            accessibilityRole="button"
+            activeOpacity={0.85}
+          >
+            <Text style={styles.endedBtnText}>{t('live.nextLive') || 'Próxima live'}</Text>
+          </TouchableOpacity>
+        ) : null}
+
         {/* Helper line under the buttons — explica que o replay vai
             aparecer em "Lives salvas" e que pode demorar pra processar
             na CDN (CF Stream leva 30s-2min pra finalizar o VOD). */}
@@ -3228,7 +3389,14 @@ export default function LiveViewerScreen() {
   const qualityColor = connQuality === 'good' ? '#22c55e' : connQuality === 'medium' ? '#f59e0b' : '#ef4444';
 
   return (
-    <View style={styles.fullScreen} ref={screenRef} collapsable={false}>
+    <Animated.View
+      style={[styles.fullScreen, { transform: [{ translateY: swipeY }] }]}
+      ref={screenRef}
+      collapsable={false}
+    >
+      {/* [2026-10-10 lives-2] Prévia da live vizinha que entra pela borda ao arrastar. */}
+      {_renderSwipePeek(nextLive, 'below')}
+      {_renderSwipePeek(prevLive, 'above')}
       {/* Round 64 (2026-05-18) — translucent status bar so the soft top scrim
           in LiveTopBar bleeds the host video right up to the notch instead of
           competing with a system-painted black/white status bar. Light icons
@@ -3237,6 +3405,7 @@ export default function LiveViewerScreen() {
       {/* Remote video — wrapped in Pressable so double-tap fires a love-bomb
           burst over the stream without stealing taps from controls overlaid
           on top (those have higher zIndex). */}
+      <View style={StyleSheet.absoluteFill} {...swipePanRef.current.panHandlers}>
       <Pressable style={StyleSheet.absoluteFill} onPress={handleStageTap}>
         {streamType === 'livekit' && lkTracks.length > 0 ? (
           // [WAVE 110] LiveKit SFU viewer — render the first video track from
@@ -3393,6 +3562,7 @@ export default function LiveViewerScreen() {
           </View>
         )}
       </Pressable>
+      </View>
 
       {/* Connecting overlay — round 62 redesign extracted into LiveConnectingOverlay.
           Pulsing red ring + round host avatar + "Conectando à live de X..."
@@ -4135,7 +4305,7 @@ export default function LiveViewerScreen() {
         ]}
       >
         <Text style={{
-          color: '#dc2626',
+          color: '#111',
           fontSize: 18,
           fontWeight: '800',
           letterSpacing: 0.6,
@@ -4143,7 +4313,7 @@ export default function LiveViewerScreen() {
           {t('live.entering') || 'Entrando…'}
         </Text>
       </Animated.View>
-    </View>
+    </Animated.View>
   );
 }
 
@@ -4152,6 +4322,14 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#0f0f1a',
   },
+  // [2026-10-10 lives-2] Prévia da live vizinha na rolagem vertical (P&B).
+  swipePeek: {
+    position: 'absolute', left: 0, right: 0, height: '100%',
+    backgroundColor: '#000', alignItems: 'center', justifyContent: 'center',
+    overflow: 'hidden',
+  },
+  swipePeekName: { color: '#fff', fontSize: 17, fontWeight: '700', marginTop: 14, maxWidth: '80%' },
+  swipePeekHint: { color: 'rgba(255,255,255,0.7)', fontSize: 13, marginTop: 6 },
   centered: {
     flex: 1,
     backgroundColor: '#0f0f1a',

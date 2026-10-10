@@ -4893,6 +4893,7 @@ export default {
   'photos.deleteFromCloud': 'Ištrinti iš debesies',
   'photos.removeBackup': 'Pašalinti iš atsarginės kopijos',
   'photos.noPhotos': 'Nėra nuotraukų',
+  'photos.fileUnavailable': 'Failas nepasiekiamas',
   'photos.noPhotosDesc': 'Tavo nuotraukos ir vaizdo įrašai pasirodys čia',
   'photos.uploadFirst': 'Įkelk pirmą nuotrauką, kad sukurtum prisiminimus',
   'photos.noAlbums': 'Nėra albumų',

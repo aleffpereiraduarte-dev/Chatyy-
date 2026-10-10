@@ -4893,6 +4893,7 @@ export default {
   'photos.deleteFromCloud': 'Vymazať z cloudu',
   'photos.removeBackup': 'Odstrániť zo zálohy',
   'photos.noPhotos': 'Žiadne fotky',
+  'photos.fileUnavailable': 'Súbor nie je k dispozícii',
   'photos.noPhotosDesc': 'Tvoje fotky a videá sa tu objavia',
   'photos.uploadFirst': 'Nahraj prvú fotku, aby si vytvoril spomienky',
   'photos.noAlbums': 'Žiadne albumy',

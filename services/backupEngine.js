@@ -418,6 +418,10 @@ export class BackupEngine {
                     seeded++;
                   }
                 }
+                // [2026-10-10 drive-missing] blob lost server-side → re-upload.
+                for (const id of (r?.data?.missing || [])) {
+                  if (this.backedUpIds[id]) { delete this.backedUpIds[id]; seeded++; }
+                }
               } catch {}
             }
             if (seeded > 0) {

@@ -4893,6 +4893,7 @@ export default {
   'photos.deleteFromCloud': 'Törlés a felhőből',
   'photos.removeBackup': 'Eltávolítás a biztonsági mentésből',
   'photos.noPhotos': 'Nincs fotó',
+  'photos.fileUnavailable': 'A fájl nem érhető el',
   'photos.noPhotosDesc': 'A fotóid és videóid itt fognak megjelenni',
   'photos.uploadFirst': 'Töltsd fel az első fotót, hogy emlékeket hozz létre',
   'photos.noAlbums': 'Nincs album',

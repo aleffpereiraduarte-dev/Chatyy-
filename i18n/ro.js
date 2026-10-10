@@ -4893,6 +4893,7 @@ export default {
   'photos.deleteFromCloud': 'Șterge din cloud',
   'photos.removeBackup': 'Îndepărtează din backup',
   'photos.noPhotos': 'Nicio fotografie',
+  'photos.fileUnavailable': 'Fișier indisponibil',
   'photos.noPhotosDesc': 'Fotografiile și videoclipurile tale vor apărea aici',
   'photos.uploadFirst': 'Încarcă prima fotografie pentru a crea amintiri',
   'photos.noAlbums': 'Niciun album',

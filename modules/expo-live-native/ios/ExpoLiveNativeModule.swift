@@ -1,5 +1,6 @@
 import ExpoModulesCore
 import UIKit
+import AVFoundation
 
 // ExpoLiveNativeModule — Stage 1 scaffold (2026-05-16).
 //
@@ -119,6 +120,36 @@ public class ExpoLiveNativeModule: Module {
           self.currentLiveVC = nil
         }
         self.sendEvent("onLiveEnded", ["roomName": "", "reason": "closeLive"])
+      }
+    }
+
+    // ─── [2026-10-10 lives-2] Recursos p/ o host JS (live-broadcast.js) ─────
+    // O JS só mostra a lanterna / aplica beleza no stream quando o binário
+    // reporta suporte aqui. beauty=false até existir o processador de quadro.
+    Function("liveCapabilities") { () -> [String: Any] in
+      return ["version": 2, "torch": true, "beauty": false]
+    }
+
+    // Lanterna da câmera traseira durante a live. O WebRTC captura pela
+    // mesma AVCaptureDevice; torchMode vale p/ a sessão ativa dela.
+    AsyncFunction("setTorch") { (on: Bool) -> Bool in
+      guard let device = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .back),
+            device.hasTorch else {
+        return false
+      }
+      do {
+        try device.lockForConfiguration()
+        defer { device.unlockForConfiguration() }
+        if on {
+          guard device.isTorchAvailable else { return false }
+          try device.setTorchModeOn(level: AVCaptureDevice.maxAvailableTorchLevel)
+        } else {
+          device.torchMode = .off
+        }
+        return true
+      } catch {
+        NSLog("[ExpoLiveNative] setTorch failed: \(error.localizedDescription)")
+        return false
       }
     }
 

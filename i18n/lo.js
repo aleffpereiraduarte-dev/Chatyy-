@@ -4889,6 +4889,7 @@ export default {
   'photos.deleteFromCloud': 'ລຶບຈາກຄະບອກ',
   'photos.removeBackup': 'ລຶບອອກຈາກສໍາຮອງ',
   'photos.noPhotos': 'ບໍ່ມີຮູບ',
+  'photos.fileUnavailable': 'ບໍ່ມີໄຟລ໌',
   'photos.noPhotosDesc': 'ຮູບແລະວິດີໂອຂອງເຈົ້າຈະປາກຢູ່ທີ່ນີ້',
   'photos.uploadFirst': 'ເອົາຮູບແລກຄັ້ງແລກເພື່ອສ້າງຄວາມຈື່ນຈິນ',
   'photos.noAlbums': 'ບໍ່ມີອັບບັມ',

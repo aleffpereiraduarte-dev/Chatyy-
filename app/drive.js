@@ -1466,7 +1466,7 @@ function DriveScreenInner() {
             <Text style={[styles.gridItemName, { color: colors.text }]} numberOfLines={2}>{item.name}</Text>
             <View style={styles.gridItemMeta}>
               {isFolder && item.file_count > 0 && <Text style={[styles.gridItemSize, { color: colors.textTertiary }]}>{item.file_count} {item.file_count === 1 ? 'item' : 'itens'}</Text>}
-              {!isFolder && <Text style={[styles.gridItemSize, { color: colors.textTertiary }]}>{formatBytes(item.size)}</Text>}
+              {!isFolder && <Text style={[styles.gridItemSize, { color: colors.textTertiary }]}>{item.unavailable ? ((t('photos.fileUnavailable') !== 'photos.fileUnavailable' && t('photos.fileUnavailable')) || 'Arquivo indisponível') : formatBytes(item.size)}</Text>}
               {Boolean(hasShare) && <IconUsers size={10} color={colors.primary} style={{ marginLeft: 4 }} />}
             </View>
           </View>
@@ -1480,6 +1480,8 @@ function DriveScreenInner() {
     const colWidth = (width - (isDesktop ? 80 : 24) - (photoColumns - 1) * 2) / photoColumns;
     const isVid = isVideo(item);
     const thumbUrl = item.thumbnail_url || api.fileDownloadUrl(item.id);
+    // [2026-10-10 drive-missing] server says the blob is gone → placeholder, not a broken thumb.
+    const unavailableLabel = (() => { const v = t('photos.fileUnavailable'); return (v && v !== 'photos.fileUnavailable') ? v : 'Arquivo indisponível'; })();
 
     return (
       <TouchableOpacity
@@ -1490,7 +1492,16 @@ function DriveScreenInner() {
         delayLongPress={400}
         activeOpacity={0.8}
       >
-        <CachedImage source={{ uri: thumbUrl }} style={styles.photoThumb} resizeMode="cover" />
+        {item.unavailable ? (
+          <View style={[styles.photoThumb, { alignItems: 'center', justifyContent: 'center', padding: 4, backgroundColor: isDark ? '#1f2937' : '#e5e7eb' }]} accessibilityLabel={unavailableLabel}>
+            {getFileIcon(item.icon_type, 22, colors.textTertiary)}
+            {colWidth >= 72 && (
+              <Text numberOfLines={2} style={{ marginTop: 4, fontSize: 10, textAlign: 'center', color: colors.textTertiary }}>{unavailableLabel}</Text>
+            )}
+          </View>
+        ) : (
+          <CachedImage source={{ uri: thumbUrl }} style={styles.photoThumb} resizeMode="cover" />
+        )}
         {isVid && (
           <View style={styles.videoOverlay}>
             <View style={styles.playIconBg}>

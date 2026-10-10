@@ -5578,6 +5578,7 @@ export default {
   'photos.deleteFromCloud': 'Supprimer du cloud',
   'photos.removeBackup': 'Retirer de la sauvegarde',
   'photos.noPhotos': 'Aucune photo',
+  'photos.fileUnavailable': 'Fichier indisponible',
   'photos.noPhotosDesc': 'Tes photos et vidéos apparaîtront ici',
   'photos.uploadFirst': 'Téléverse ta première photo pour créer des souvenirs',
   'photos.noAlbums': 'Aucun album',
@@ -9942,4 +9943,11 @@ export default {
   "e2ee.confirmDisable": "Désactiver le chiffrement de bout en bout dans cette discussion ? Les nouveaux messages ne seront plus chiffrés.",
   "e2ee.turnOn": "Activer",
   "e2ee.turnOff": "Désactiver",
+  // [2026-10-10 lives-2]
+  "live.nextLive": "Live suivant",
+  "live.previousLive": "Live précédent",
+  "live.torchOn": "Allumer la lampe",
+  "live.torchOff": "Éteindre la lampe",
+  "live.torchUnavailable": "Lampe indisponible sur cet appareil",
+  "live.beautyNeedsUpdate": "Le lissage sur la vidéo du live arrive dans la prochaine mise à jour de l'app. Pour l'instant, il s'applique seulement à votre aperçu.",
 };

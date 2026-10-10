@@ -4893,6 +4893,7 @@ export default {
   "photos.deleteFromCloud": "从云端删除",
   "photos.removeBackup": "从备份中移除",
   "photos.noPhotos": "没有照片",
+  "photos.fileUnavailable": "文件不可用",
   "photos.noPhotosDesc": "您的照片和视频将在这里显示",
   "photos.uploadFirst": "上传第一张照片以创建回忆",
   "photos.noAlbums": "没有相册",

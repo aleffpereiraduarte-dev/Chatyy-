@@ -4893,6 +4893,7 @@ export default {
   'photos.deleteFromCloud': 'Buluttan sil',
   'photos.removeBackup': 'Yedeklemeden kaldır',
   'photos.noPhotos': 'Hiç fotoğraf yok',
+  'photos.fileUnavailable': 'Dosya kullanılamıyor',
   'photos.noPhotosDesc': 'Fotoğraflarınız ve videolarınız burada görünecek',
   'photos.uploadFirst': 'Anılar oluşturmak için ilk fotoğrafı yükle',
   'photos.noAlbums': 'Hiç albüm yok',

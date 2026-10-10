@@ -4893,6 +4893,7 @@ export default {
   'photos.deleteFromCloud': 'Futa kutoka wingu',
   'photos.removeBackup': 'Ondoa kutoka backup',
   'photos.noPhotos': 'Hakuna picha',
+  'photos.fileUnavailable': 'Faili haipatikani',
   'photos.noPhotosDesc': 'Picha na video zako zitaonekana hapa',
   'photos.uploadFirst': 'Pakia picha ya kwanza ili kuunda kumbukumbu',
   'photos.noAlbums': 'Hakuna albamu',

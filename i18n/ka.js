@@ -4889,6 +4889,7 @@ export default {
   'photos.deleteFromCloud': 'წაშლა ღრუბლიდან',
   'photos.removeBackup': 'წაშლა ბექაპიდან',
   'photos.noPhotos': 'ფოტოები არ არის',
+  'photos.fileUnavailable': 'ფაილი მიუწვდომელია',
   'photos.noPhotosDesc': 'შენი ფოტოები და ვიდეოები აქ გამოჩნდება',
   'photos.uploadFirst': 'ატვირთე პირველი ფოტო, რომ მოგონებები შექმნა',
   'photos.noAlbums': 'ალბომები არ არის',

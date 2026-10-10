@@ -4889,6 +4889,7 @@ export default {
   'photos.deleteFromCloud': 'Үүлнээс устгах',
   'photos.removeBackup': 'Нөөцөөс устгах',
   'photos.noPhotos': 'Зураг байхгүй',
+  'photos.fileUnavailable': 'Файл боломжгүй',
   'photos.noPhotosDesc': 'Таны зураг, видео энд гарч ирнэ',
   'photos.uploadFirst': 'Эхний зургийг оруулж дурсамж бүтээ',
   'photos.noAlbums': 'Альбом байхгүй',

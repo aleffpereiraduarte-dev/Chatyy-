@@ -208,6 +208,40 @@ class ExpoLiveNativeModule : Module() {
     }
 
     /**
+     * [2026-10-10 lives-2] Recursos p/ o host JS (live-broadcast.js): o JS só
+     * mostra a lanterna / aplica beleza no stream quando o binário reporta.
+     */
+    Function("liveCapabilities") {
+      mapOf("version" to 2, "torch" to true, "beauty" to false)
+    }
+
+    /**
+     * [2026-10-10 lives-2] Lanterna da câmera traseira. Best-effort: com a
+     * câmera aberta pelo WebRTC alguns aparelhos recusam (CAMERA_IN_USE) →
+     * devolve false e o JS avisa "indisponível".
+     */
+    AsyncFunction("setTorch") { on: Boolean ->
+      try {
+        val cm = context.getSystemService(Context.CAMERA_SERVICE) as android.hardware.camera2.CameraManager
+        val id = cm.cameraIdList.firstOrNull { cid ->
+          val ch = cm.getCameraCharacteristics(cid)
+          ch.get(android.hardware.camera2.CameraCharacteristics.LENS_FACING) ==
+            android.hardware.camera2.CameraCharacteristics.LENS_FACING_BACK &&
+            ch.get(android.hardware.camera2.CameraCharacteristics.FLASH_INFO_AVAILABLE) == true
+        }
+        if (id == null) {
+          false
+        } else {
+          cm.setTorchMode(id, on)
+          true
+        }
+      } catch (t: Throwable) {
+        Log.w(TAG, "setTorch failed: ${t.message}")
+        false
+      }
+    }
+
+    /**
      * Apply an AR/Beauty/Greenscreen filter to the host's published track.
      * Pipeline owner is LiveHostActivity (MediaPipe FaceLandmarker +
      * SelfieSegmentation tasks hook the LK camera video track before

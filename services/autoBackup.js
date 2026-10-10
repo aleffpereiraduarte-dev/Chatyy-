@@ -1379,6 +1379,12 @@ async function pruneAndPrecheckBackedUpIds() {
           for (const id of list) {
             if (!map[id]) { map[id] = now; seeded++; }
           }
+          // [2026-10-10 drive-missing] server lost the blob for these → forget
+          // them locally so the original on this device is uploaded again.
+          const gone = r?.data?.missing || [];
+          for (const id of gone) {
+            if (map[id]) { delete map[id]; seeded++; }
+          }
         } catch {}
       }
       if (seeded > 0) {

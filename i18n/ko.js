@@ -4893,6 +4893,7 @@ export default {
   "photos.deleteFromCloud": "클라우드에서 삭제",
   "photos.removeBackup": "백업에서 제거",
   "photos.noPhotos": "사진 없음",
+  "photos.fileUnavailable": "파일을 사용할 수 없음",
   "photos.noPhotosDesc": "여기에 사진과 비디오가 표시됩니다",
   "photos.uploadFirst": "첫 번째 사진을 업로드하여 추억을 만드세요",
   "photos.noAlbums": "앨범 없음",

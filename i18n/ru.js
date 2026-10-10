@@ -5391,6 +5391,7 @@ export default {
   'photos.deleteFromCloud': 'Удалить из облака',
   'photos.removeBackup': 'Удалить из резервной копии',
   'photos.noPhotos': 'Нет фото',
+  'photos.fileUnavailable': 'Файл недоступен',
   'photos.noPhotosDesc': 'Твои фото и видео появятся здесь',
   'photos.uploadFirst': 'Загрузите первое фото, чтобы создать воспоминания',
   'photos.noAlbums': 'Нет альбомов',

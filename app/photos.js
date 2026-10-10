@@ -277,6 +277,14 @@ const PhotoGridItem = React.memo(function PhotoGridItem({ photo, index, isSelect
   const isVideoItem = isVideo(photo);
   const imageUri = (photo.isDevice && photo.thumbUri) ? photo.thumbUri
     : (photo.isDevice ? photo.uri : thumbUrlFor(photo));
+  // [2026-10-10 drive-missing] Server flags rows whose blob is gone from R2
+  // (unavailable=true, no thumbnail/cdn_url). Also catch a load error on any
+  // cloud item so a dead object never renders as a broken/blank thumbnail.
+  const { t } = useLanguage();
+  const [loadFailed, setLoadFailed] = useState(false);
+  useEffect(() => { setLoadFailed(false); }, [imageUri]);
+  const isUnavailable = !photo.isDevice && (!!photo.unavailable || loadFailed || !imageUri);
+  const _onImgError = useCallback(() => { if (!photo.isDevice) setLoadFailed(true); }, [photo.isDevice]);
 
   // WhatsApp/Google Photos pattern: warm the full-res URL the moment the
   // finger touches the cell, so the viewer opens with the image ready.
@@ -307,8 +315,20 @@ const PhotoGridItem = React.memo(function PhotoGridItem({ photo, index, isSelect
     >
       <View style={{ flex: 1, backgroundColor: '#e5e7eb' }}>
         <View style={{ flex: 1 }}>
-          {Platform.OS === 'web' ? (
-            <Image source={{ uri: imageUri }} style={s.gridImage} resizeMode="cover" />
+          {isUnavailable ? (
+            <View
+              style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 4, backgroundColor: '#d1d5db' }}
+              accessibilityLabel={tr(t, 'photos.fileUnavailable', 'Arquivo indisponível')}
+            >
+              <IconCloudOff size={18} color="#6b7280" />
+              {gis >= 72 && (
+                <Text numberOfLines={2} style={{ marginTop: 4, fontSize: 10, color: '#4b5563', textAlign: 'center' }}>
+                  {tr(t, 'photos.fileUnavailable', 'Arquivo indisponível')}
+                </Text>
+              )}
+            </View>
+          ) : Platform.OS === 'web' ? (
+            <Image source={{ uri: imageUri }} style={s.gridImage} resizeMode="cover" onError={_onImgError} />
           ) : photo.thumbUri ? (
             <ExpoImage source={{ uri: photo.thumbUri }} style={s.gridImage} contentFit="cover" cachePolicy="memory-disk" recyclingKey={photo.thumbUri} />
           ) : (
@@ -318,6 +338,7 @@ const PhotoGridItem = React.memo(function PhotoGridItem({ photo, index, isSelect
               contentFit="cover"
               cachePolicy="memory-disk"
               recyclingKey={String(photo.id)}
+              onError={_onImgError}
             />
           )}
         </View>
@@ -3245,9 +3266,14 @@ function PhotosScreenInner() {
       toggleSelect(photo.id);
       return;
     }
+    // [2026-10-10 drive-missing] blob gone from storage → don't open a blank viewer.
+    if (!photo.isDevice && photo.unavailable) {
+      safeAlert(tr(t, 'photos.fileUnavailable', 'Arquivo indisponível'));
+      return;
+    }
     const byId = photoIndexMap.get(photo.id);
     openViewer(byId != null ? byId : index);
-  }, [selectMode, toggleSelect, openViewer, photoIndexMap]);
+  }, [selectMode, toggleSelect, openViewer, photoIndexMap, t]);
   const onGridItemLongPress = useCallback((photo) => {
     if (selectMode) return;
     try { haptic.medium(); } catch {}

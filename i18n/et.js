@@ -4893,6 +4893,7 @@ export default {
   'photos.deleteFromCloud': 'Kustuta pilvest',
   'photos.removeBackup': 'Eemalda varukoopiast',
   'photos.noPhotos': 'Ei ühtegi fotot',
+  'photos.fileUnavailable': 'Fail pole saadaval',
   'photos.noPhotosDesc': 'Sinu fotod ja videod ilmuvad siia',
   'photos.uploadFirst': 'Laadi üles esimene foto, et luua mälestusi',
   'photos.noAlbums': 'Ei ühtegi albumit',

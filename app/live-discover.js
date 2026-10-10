@@ -23,6 +23,7 @@ import Svg, {
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as api from '../services/api';
+import { prewarmLive } from '../services/livePrewarm';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import {
@@ -286,8 +287,13 @@ export default function LiveDiscoverScreen() {
   const onOpenLive = useCallback((sess) => {
     if (!sess?.id && !sess?.session_id) return;
     const sid = sess.id || sess.session_id;
-    router.push({ pathname: '/live-viewer', params: { id: sid } });
-  }, [router]);
+    // [2026-10-10 lives-2] Rolagem vertical no espectador: manda a fila na
+    // mesma ordem da grade e já começa a conexão (oculta, sem mídia) enquanto
+    // a tela abre — o espectador adota essa sala em vez de refazer o handshake.
+    const queue = (sessions || []).map(s => s?.id || s?.session_id).filter(Boolean).slice(0, 30).join(',');
+    if (Platform.OS !== 'web') { try { prewarmLive(sid, { handoff: true }); } catch {} }
+    router.push({ pathname: '/live-viewer', params: queue ? { id: sid, queue } : { id: sid } });
+  }, [router, sessions]);
 
   const onGoLive = useCallback(() => {
     router.push('/live-broadcast');

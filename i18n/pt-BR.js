@@ -6253,6 +6253,7 @@ export default {
   'photos.deleteFromCloud': 'Excluir da nuvem',
   'photos.removeBackup': 'Remover do backup',
   'photos.noPhotos': 'Nenhuma foto',
+  'photos.fileUnavailable': 'Arquivo indisponível',
   'photos.noPhotosDesc': 'Suas fotos e vídeos aparecerao aqui',
   'photos.uploadFirst': 'Faça upload da primeira foto pra criar memórias',
   'photos.noAlbums': 'Nenhum album',
@@ -9989,4 +9990,11 @@ export default {
   "e2ee.confirmDisable": "Desativar a criptografia de ponta a ponta nesta conversa? As mensagens novas não serão mais cifradas.",
   "e2ee.turnOn": "Ativar",
   "e2ee.turnOff": "Desativar",
+  // [2026-10-10 lives-2]
+  "live.nextLive": "Próxima live",
+  "live.previousLive": "Live anterior",
+  "live.torchOn": "Ligar lanterna",
+  "live.torchOff": "Desligar lanterna",
+  "live.torchUnavailable": "Lanterna indisponível neste aparelho",
+  "live.beautyNeedsUpdate": "Suavizar no vídeo da live chega na próxima atualização do app. Por enquanto vale só na sua prévia.",
 };

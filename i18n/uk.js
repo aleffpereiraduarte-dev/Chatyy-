@@ -4893,6 +4893,7 @@ export default {
   'photos.deleteFromCloud': 'Видалити з хмари',
   'photos.removeBackup': 'Видалити з резервного копіювання',
   'photos.noPhotos': 'Немає фотографій',
+  'photos.fileUnavailable': 'Файл недоступний',
   'photos.noPhotosDesc': 'Твої фотографії та відео з\'являться тут',
   'photos.uploadFirst': 'Завантаж першу фотографію, щоб створити спогади',
   'photos.noAlbums': 'Немає альбомів',

@@ -4893,6 +4893,7 @@ export default {
   'photos.deleteFromCloud': 'ลบจากคลาวด์',
   'photos.removeBackup': 'ลบจากการสำรองข้อมูล',
   'photos.noPhotos': 'ไม่มีรูปภาพ',
+  'photos.fileUnavailable': 'ไฟล์ไม่พร้อมใช้งาน',
   'photos.noPhotosDesc': 'รูปภาพและวิดีโอของคุณจะปรากฏที่นี่',
   'photos.uploadFirst': 'อัปโหลดรูปภาพแรกเพื่อสร้างความทรงจำ',
   'photos.noAlbums': 'ไม่มีอัลบั้ม',

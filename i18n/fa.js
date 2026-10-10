@@ -4893,6 +4893,7 @@ export default {
   'photos.deleteFromCloud': 'حذف از ابر',
   'photos.removeBackup': 'حذف از پشتیبان',
   'photos.noPhotos': 'هیچ عکسی',
+  'photos.fileUnavailable': 'فایل در دسترس نیست',
   'photos.noPhotosDesc': 'عکس‌ها و ویدیوهای شما اینجا نمایش داده می‌شوند',
   'photos.uploadFirst': 'اولین عکس را بارگذاری کن تا خاطرات بسازی',
   'photos.noAlbums': 'هیچ آلبومی',

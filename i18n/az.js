@@ -4889,6 +4889,7 @@ export default {
   'photos.deleteFromCloud': 'Buluddan sil',
   'photos.removeBackup': 'Ehtiyatdan sil',
   'photos.noPhotos': 'Heç bir foto',
+  'photos.fileUnavailable': 'Fayl əlçatan deyil',
   'photos.noPhotosDesc': 'Sənin fotoların və videoların burada görünəcək',
   'photos.uploadFirst': 'İlk fotonu yüklə, xatirələr yarat',
   'photos.noAlbums': 'Heç bir albom',

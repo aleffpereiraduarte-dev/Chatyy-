@@ -4222,7 +4222,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
         // de eventos durante reconnect.
         if (data.started_at) {
           try {
-            const startedMs = new Date(data.started_at).getTime();
+            const startedMs = api.parseServerDate(data.started_at).getTime();
             if (Number.isFinite(startedMs) && (Date.now() - startedMs) > 6 * 3600 * 1000) {
               console.warn('[ChatListTab.live] ignoring stale live_started echo, age>6h');
               return;

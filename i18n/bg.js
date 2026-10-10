@@ -4893,6 +4893,7 @@ export default {
   'photos.deleteFromCloud': 'Изтрий от облака',
   'photos.removeBackup': 'Премахни от резервното копие',
   'photos.noPhotos': 'Няма снимки',
+  'photos.fileUnavailable': 'Файлът не е наличен',
   'photos.noPhotosDesc': 'Твоите снимки и видеа ще се появят тук',
   'photos.uploadFirst': 'Качи първата снимка, за да създадеш спомени',
   'photos.noAlbums': 'Няма албуми',

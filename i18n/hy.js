@@ -4889,6 +4889,7 @@ export default {
   'photos.deleteFromCloud': 'Ջնջել ամպից',
   'photos.removeBackup': 'Հեռացնել պահպանությունից',
   'photos.noPhotos': 'Չկան լուսանկարներ',
+  'photos.fileUnavailable': 'Ֆայլը հասանելի չէ',
   'photos.noPhotosDesc': 'Քո լուսանկարներն ու տեսանյութերը այստեղ կերևան',
   'photos.uploadFirst': 'Բեռնիր առաջին լուսանկարը հիշողություններ ստեղծելու համար',
   'photos.noAlbums': 'Չկան ալբոմներ',

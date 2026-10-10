@@ -5571,6 +5571,7 @@ export default {
   'photos.deleteFromCloud': 'Elimina dal cloud',
   'photos.removeBackup': 'Rimuovi dal backup',
   'photos.noPhotos': 'Nessuna foto',
+  'photos.fileUnavailable': 'File non disponibile',
   'photos.noPhotosDesc': 'Le tue foto e video appariranno qui',
   'photos.uploadFirst': 'Carica la tua prima foto per creare ricordi',
   'photos.noAlbums': 'Nessun album',
@@ -9941,4 +9942,11 @@ export default {
   "e2ee.confirmDisable": "Disattivare la crittografia end-to-end in questa chat? I nuovi messaggi non saranno più crittografati.",
   "e2ee.turnOn": "Attiva",
   "e2ee.turnOff": "Disattiva",
+  // [2026-10-10 lives-2]
+  "live.nextLive": "Live successiva",
+  "live.previousLive": "Live precedente",
+  "live.torchOn": "Accendi torcia",
+  "live.torchOff": "Spegni torcia",
+  "live.torchUnavailable": "Torcia non disponibile su questo dispositivo",
+  "live.beautyNeedsUpdate": "L'effetto levigante sul video della live arriva con il prossimo aggiornamento dell'app. Per ora vale solo nella tua anteprima.",
 };

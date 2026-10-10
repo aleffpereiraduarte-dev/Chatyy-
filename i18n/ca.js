@@ -4893,6 +4893,7 @@ export default {
   'photos.deleteFromCloud': 'Eliminar del núvol',
   'photos.removeBackup': 'Eliminar del backup',
   'photos.noPhotos': 'Cap foto',
+  'photos.fileUnavailable': 'Fitxer no disponible',
   'photos.noPhotosDesc': 'Les teves fotos i vídeos apareixeran aquí',
   'photos.uploadFirst': 'Fes upload de la primera foto per crear records',
   'photos.noAlbums': 'Cap àlbum',

@@ -6173,6 +6173,7 @@ export default {
   'photos.deleteFromCloud': 'Eliminar de la nube',
   'photos.removeBackup': 'Eliminar de la copia',
   'photos.noPhotos': 'Sin fotos',
+  'photos.fileUnavailable': 'Archivo no disponible',
   'photos.noPhotosDesc': 'Tus fotos y videos apareceran aqui',
   'photos.uploadFirst': 'Sube tu primera foto para crear memorias',
   'photos.noAlbums': 'Sin albums',
@@ -9910,4 +9911,11 @@ export default {
   "e2ee.confirmDisable": "¿Desactivar el cifrado de extremo a extremo en este chat? Los mensajes nuevos ya no se cifrarán.",
   "e2ee.turnOn": "Activar",
   "e2ee.turnOff": "Desactivar",
+  // [2026-10-10 lives-2]
+  "live.nextLive": "Siguiente directo",
+  "live.previousLive": "Directo anterior",
+  "live.torchOn": "Encender linterna",
+  "live.torchOff": "Apagar linterna",
+  "live.torchUnavailable": "Linterna no disponible en este dispositivo",
+  "live.beautyNeedsUpdate": "Suavizar en el video del directo llega en la próxima actualización de la app. Por ahora solo se aplica a tu vista previa.",
 };

@@ -5073,6 +5073,7 @@ export default {
   'photos.deleteFromCloud': 'Hapus dari cloud',
   'photos.removeBackup': 'Hapus dari cadangan',
   'photos.noPhotos': 'Tidak ada foto',
+  'photos.fileUnavailable': 'File tidak tersedia',
   'photos.noPhotosDesc': 'Foto dan video Anda akan muncul di sini',
   'photos.uploadFirst': 'Unggah foto pertama untuk membuat kenangan',
   'photos.noAlbums': 'Tidak ada album',
@@ -9163,4 +9164,11 @@ export default {
   "e2ee.confirmDisable": "Nonaktifkan enkripsi end-to-end di chat ini? Pesan baru tidak akan dienkripsi lagi.",
   "e2ee.turnOn": "Aktifkan",
   "e2ee.turnOff": "Nonaktifkan",
+  // [2026-10-10 lives-2]
+  "live.nextLive": "Live berikutnya",
+  "live.previousLive": "Live sebelumnya",
+  "live.torchOn": "Nyalakan senter",
+  "live.torchOff": "Matikan senter",
+  "live.torchUnavailable": "Senter tidak tersedia di perangkat ini",
+  "live.beautyNeedsUpdate": "Penghalus di video live hadir di pembaruan aplikasi berikutnya. Untuk saat ini hanya berlaku di pratinjau kamu.",
 };

@@ -4893,6 +4893,7 @@ export default {
   'photos.deleteFromCloud': 'מחק מהענן',
   'photos.removeBackup': 'הסר מהגיבוי',
   'photos.noPhotos': 'אין תמונות',
+  'photos.fileUnavailable': 'הקובץ אינו זמין',
   'photos.noPhotosDesc': 'התמונות והסרטונים שלך יופיעו כאן',
   'photos.uploadFirst': 'העלה את התמונה הראשונה כדי ליצור זיכרונות',
   'photos.noAlbums': 'אין אלבומים',

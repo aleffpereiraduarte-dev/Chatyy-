@@ -5073,6 +5073,7 @@ export default {
   "photos.deleteFromCloud": "クラウドから削除",
   "photos.removeBackup": "バックアップから削除",
   "photos.noPhotos": "写真がありません",
+  "photos.fileUnavailable": "ファイルを利用できません",
   "photos.noPhotosDesc": "あなたの写真や動画がここに表示されます",
   "photos.uploadFirst": "最初の写真をアップロードして思い出を作りましょう",
   "photos.noAlbums": "アルバムはありません",
@@ -9163,4 +9164,11 @@ export default {
   "e2ee.confirmDisable": "このチャットでエンドツーエンド暗号化をオフにしますか？新しいメッセージは暗号化されなくなります。",
   "e2ee.turnOn": "オンにする",
   "e2ee.turnOff": "オフにする",
+  // [2026-10-10 lives-2]
+  "live.nextLive": "次のライブ",
+  "live.previousLive": "前のライブ",
+  "live.torchOn": "ライトをオン",
+  "live.torchOff": "ライトをオフ",
+  "live.torchUnavailable": "この端末ではライトを使用できません",
+  "live.beautyNeedsUpdate": "ライブ映像への美肌効果は次回のアプリ更新で対応します。現在はプレビューのみに適用されます。",
 };

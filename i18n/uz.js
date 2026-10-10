@@ -4889,6 +4889,7 @@ export default {
   'photos.deleteFromCloud': 'Bulutdan o\'chirish',
   'photos.removeBackup': 'Zaxiradan o\'chirish',
   'photos.noPhotos': 'Hech qanday foto yo\'q',
+  'photos.fileUnavailable': 'Fayl mavjud emas',
   'photos.noPhotosDesc': 'Sening fotolaring va videolaring bu yerda ko\'rsatiladi',
   'photos.uploadFirst': 'Birinchi fotoni yuklash orqali xotiralarni yarating',
   'photos.noAlbums': 'Hech qanday albom yo\'q',

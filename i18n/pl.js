@@ -5391,6 +5391,7 @@ export default {
   'photos.deleteFromCloud': 'Usuń z chmury',
   'photos.removeBackup': 'Usuń z kopii zapasowej',
   'photos.noPhotos': 'Brak zdjęć',
+  'photos.fileUnavailable': 'Plik niedostępny',
   'photos.noPhotosDesc': 'Twoje zdjęcia i filmy pojawią się tutaj',
   'photos.uploadFirst': 'Prześlij swoje pierwsze zdjęcie, aby stworzyć wspomnienia',
   'photos.noAlbums': 'Brak albumów',

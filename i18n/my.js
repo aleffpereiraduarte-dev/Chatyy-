@@ -4889,6 +4889,7 @@ export default {
   'photos.deleteFromCloud': 'ကလောင်မှ ဖျက်ပါ',
   'photos.removeBackup': 'ဘက်ကပ်မှ ဖျက်ပါ',
   'photos.noPhotos': 'ဓာတ်ပုံမရှိပါ',
+  'photos.fileUnavailable': 'ဖိုင် မရရှိနိုင်ပါ',
   'photos.noPhotosDesc': 'သင်၏ဓာတ်ပုံများနှင့်ဗီဒီယိုများသည်ဤနေရာတွင်ပေါ်လာမည်',
   'photos.uploadFirst': 'မှတ်ဉာဏ်များဖန်တီးရန်ပထမဓာတ်ပုံကိုတင်ပါ',
   'photos.noAlbums': 'အယ်လ်ဘမ်မရှိပါ',

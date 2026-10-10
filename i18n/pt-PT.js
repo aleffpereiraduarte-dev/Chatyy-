@@ -5392,6 +5392,7 @@ export default {
   'photos.deleteFromCloud': 'Eliminar da nuvem',
   'photos.removeBackup': 'Remover do backup',
   'photos.noPhotos': 'Nenhuma foto',
+  'photos.fileUnavailable': 'Ficheiro indisponível',
   'photos.noPhotosDesc': 'As tuas fotos e vídeos aparecerão aqui',
   'photos.uploadFirst': 'Faz upload da primeira foto para criar memórias',
   'photos.noAlbums': 'Nenhum álbum',
@@ -9187,4 +9188,11 @@ export default {
   "e2ee.confirmDisable": "Desativar a encriptação ponto a ponto nesta conversa? As mensagens novas deixam de ser cifradas.",
   "e2ee.turnOn": "Ativar",
   "e2ee.turnOff": "Desativar",
+  // [2026-10-10 lives-2]
+  "live.nextLive": "Próximo direto",
+  "live.previousLive": "Direto anterior",
+  "live.torchOn": "Ligar lanterna",
+  "live.torchOff": "Desligar lanterna",
+  "live.torchUnavailable": "Lanterna indisponível neste dispositivo",
+  "live.beautyNeedsUpdate": "Suavizar no vídeo do direto chega na próxima atualização da app. Por agora vale só na sua pré-visualização.",
 };

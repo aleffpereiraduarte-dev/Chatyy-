@@ -4889,6 +4889,7 @@ export default {
   'photos.deleteFromCloud': 'ከደመና ይሰርዝ',
   'photos.removeBackup': 'ከባክን ይወገዱ',
   'photos.noPhotos': 'ምንም ፎቶ የለም',
+  'photos.fileUnavailable': 'ፋይሉ አይገኝም',
   'photos.noPhotosDesc': 'የእርስዎ ፎቶዎች እና ቪዲዮዎች እዚህ ይታዩ',
   'photos.uploadFirst': 'የመጀመሪያውን ፎቶ ይጫኑ እንዲሁም ዝንባሌዎች ይፍጠሩ',
   'photos.noAlbums': 'ምንም አልበም የለም',

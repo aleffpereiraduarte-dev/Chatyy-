@@ -4893,6 +4893,7 @@ export default {
   'photos.deleteFromCloud': 'Xóa khỏi đám mây',
   'photos.removeBackup': 'Xóa khỏi sao lưu',
   'photos.noPhotos': 'Không có ảnh',
+  'photos.fileUnavailable': 'Tệp không khả dụng',
   'photos.noPhotosDesc': 'Ảnh và video của bạn sẽ xuất hiện ở đây',
   'photos.uploadFirst': 'Tải lên ảnh đầu tiên để tạo kỷ niệm',
   'photos.noAlbums': 'Không có album',

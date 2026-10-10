@@ -5391,6 +5391,7 @@ export default {
   'photos.deleteFromCloud': 'Slett fra skyen',
   'photos.removeBackup': 'Fjern fra sikkerhetskopi',
   'photos.noPhotos': 'Ingen bilder',
+  'photos.fileUnavailable': 'Filen er ikke tilgjengelig',
   'photos.noPhotosDesc': 'Bildene og videoene dine vil vises her',
   'photos.uploadFirst': 'Last opp ditt første bilde for å lage minner',
   'photos.noAlbums': 'Ingen album',

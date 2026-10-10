@@ -631,7 +631,7 @@ function ChatFeedTab({ colors, isDark, t, user, router, initialFeedMode, onFeedM
           if (l?.ended_at || l?.status === 'ended') return false;
           // 3) Hide stale sessions (started >90min ago with 0 viewers).
           try {
-            const startedAt = new Date(l?.started_at).getTime();
+            const startedAt = api.parseServerDate(l?.started_at).getTime();
             if (Number.isFinite(startedAt) && (now - startedAt) > NINETY_MIN_MS) {
               const vc = Number(l?.viewer_count) || 0;
               if (vc <= 0) return false;

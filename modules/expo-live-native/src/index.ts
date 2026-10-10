@@ -86,6 +86,10 @@ declare class ExpoLiveNativeModuleType extends NativeModule<ExpoLiveNativeEvents
    * backgrounds.
    */
   setArFilter(presetKey: string, wallpaperId: number): Promise<void>;
+  /** [2026-10-10 lives-2] Recursos do binário (ausente em binários antigos). */
+  liveCapabilities?(): { version?: number; torch?: boolean; beauty?: boolean };
+  /** [2026-10-10 lives-2] Lanterna traseira; true se aplicou. */
+  setTorch?(on: boolean): Promise<boolean>;
 }
 
 let mod: ExpoLiveNativeModuleType | null = null;

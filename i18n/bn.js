@@ -4893,6 +4893,7 @@ export default {
   'photos.deleteFromCloud': 'ক্লাউড থেকে মুছুন',
   'photos.removeBackup': 'ব্যাকআপ থেকে সরান',
   'photos.noPhotos': 'কোন ছবি নেই',
+  'photos.fileUnavailable': 'ফাইল উপলভ্য নয়',
   'photos.noPhotosDesc': 'আপনার ছবি এবং ভিডিও এখানে প্রদর্শিত হবে',
   'photos.uploadFirst': 'মেমোরি তৈরি করতে প্রথম ছবি আপলোড করুন',
   'photos.noAlbums': 'কোন অ্যালবাম নেই',

@@ -445,9 +445,10 @@ const styles = StyleSheet.create({
   heartChip: {
     marginLeft: 6,
     width: 22, height: 22, borderRadius: 11,
-    backgroundColor: LIVE_RED,
+    // [2026-10-10 lives-2] P&B (era vermelho).
+    backgroundColor: '#111',
     alignItems: 'center', justifyContent: 'center',
     borderWidth: 1.5, borderColor: '#fff',
-    ...(Platform.OS === 'web' ? { boxShadow: '0 2px 8px rgba(220,38,38,0.55)' } : {}),
+    ...(Platform.OS === 'web' ? { boxShadow: '0 2px 8px rgba(0,0,0,0.45)' } : {}),
   },
 });

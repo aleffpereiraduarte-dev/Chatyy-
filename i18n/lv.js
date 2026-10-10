@@ -4893,6 +4893,7 @@ export default {
   'photos.deleteFromCloud': 'Izdzēst no mākoņa',
   'photos.removeBackup': 'Noņemt no dublējuma',
   'photos.noPhotos': 'Nav fotogrāfiju',
+  'photos.fileUnavailable': 'Fails nav pieejams',
   'photos.noPhotosDesc': 'Tavas fotogrāfijas un video parādīsies šeit',
   'photos.uploadFirst': 'Augšupielādē pirmo fotogrāfiju, lai izveidotu atmiņas',
   'photos.noAlbums': 'Nav neviena albuma',
