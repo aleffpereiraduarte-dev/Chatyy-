@@ -1133,7 +1133,7 @@ export default function StatusCamera({ visible, onClose, onCapture, t, initialSe
       statusBarTranslucent
       onRequestClose={onClose}
     >
-      {children}
+      <View style={{ flex: 1, backgroundColor: '#000' }}>{children}</View>
     </Modal>
   );
 

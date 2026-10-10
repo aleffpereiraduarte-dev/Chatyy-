@@ -2765,8 +2765,10 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab, reque
 
 
       {/* Instagram-style custom camera (NATIVE ONLY — crashes on web) */}
-      {Platform.OS !== 'web' && (
-        <Modal visible={showCustomCamera} transparent={false} animationType="slide" onRequestClose={() => { setShowCustomCamera(false); setRepostSeed(null); }}>
+      {/* [2026-10-10] Sem Modal externo: o StatusCamera já abre o próprio Modal
+          fullScreen (preto). O externo aparecia BRANCO antes da câmera. */}
+      {Platform.OS !== 'web' && showCustomCamera && (
+        <>
           <StatusCamera
             visible={showCustomCamera}
             t={t}
@@ -2848,7 +2850,7 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab, reque
               setStatusCaption('');
             }}
           />
-        </Modal>
+        </>
       )}
 
       {/* Status Editor — FULLSCREEN preview + caption + filters (Instagram-like) */}

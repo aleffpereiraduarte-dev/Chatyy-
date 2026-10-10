@@ -3481,16 +3481,18 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
       )}
 
       {/* ─── Instagram-style Camera Modal ─── */}
-      {Platform.OS !== 'web' && (
-        <Modal visible={cameraVisible} animationType="slide" transparent={false} statusBarTranslucent onRequestClose={() => setCameraVisible(false)}>
-          <StatusCamera
-            visible={cameraVisible}
-            onClose={() => setCameraVisible(false)}
-            onCapture={handleCameraCapture}
-            t={t}
-            directToEditor
-          />
-        </Modal>
+      {/* [2026-10-10] Founder: "tela branca antes de abrir a câmera". O
+          StatusCamera JÁ se embrulha num Modal fullScreen próprio (_wrap); este
+          Modal externo (fundo branco padrão) aparecia vazio enquanto o de
+          dentro deslizava. Agora só o Modal do StatusCamera (fundo preto). */}
+      {Platform.OS !== 'web' && cameraVisible && (
+        <StatusCamera
+          visible={cameraVisible}
+          onClose={() => setCameraVisible(false)}
+          onCapture={handleCameraCapture}
+          t={t}
+          directToEditor
+        />
       )}
 
       {/* [2026-10-09 status-composer] Estúdio (pós-câmera / galeria / texto) */}
