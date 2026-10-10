@@ -92,12 +92,23 @@ export default function CallScheduleScreen() {
       }
       const room = r.data?.room_id || call.room_id;
       const cid = r.data?.conversation_id || call.conversation_id || 0;
+      // [2026-10-09 native-group-call] Native group screen when available.
+      try {
+        const ngc = require('../services/nativeGroupCall');
+        if (ngc.canUseNativeGroupCall(user?.email)) {
+          const opened = await ngc.openNativeGroupCall({
+            callId: String(room), conversationId: cid, isVideo: false, isCaller: false,
+            title: call?.title || '', email: user?.email,
+          });
+          if (opened) return;
+        }
+      } catch {}
       router.push(`/call?callId=${encodeURIComponent(room)}&conversationId=${cid}&isVideo=0&isCaller=1&groupCall=1`);
     } catch (e) {
       if (Platform.OS === 'web') window.alert(e?.message || 'Erro');
       else Alert.alert(t('common.error') || 'Erro', e?.message || 'Erro');
     }
-  }, [router, t]);
+  }, [router, t, user?.email]);
 
   const handleCancel = useCallback(async (call) => {
     const confirmFn = (msg) => Platform.OS === 'web'

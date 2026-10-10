@@ -267,6 +267,8 @@ try { const _cc = require('../components/chat/ChatCamera'); ChatCamera = _cc.def
 // WhatsApp-style mic trigger — bigger circle, ambient pulse, haptic.
 // Extracted so we can tune the visuals without touching the chat surface.
 let VoiceMicButton = null; try { VoiceMicButton = require('../components/chat/VoiceMicButton').default; } catch {}
+// [2026-10-09 wa-real #12] cartão de contexto de remetente desconhecido.
+let UnknownSenderCard = null; try { UnknownSenderCard = require('../components/chat/UnknownSenderCard').default; } catch {}
 // 2026-05-18: video send pipeline (poster + compress + GIF detection).
 // Used by handleSendVideoNote to land a poster frame in the optimistic
 // bubble BEFORE upload starts — fixes the "blank black bubble" delay
@@ -2372,6 +2374,88 @@ function SmartActions({ actions, onAction, colors, t }) {
       })}
     </View>
   );
+}
+
+// [2026-10-09 a11y-bubble] Leitor de tela: rótulo único do balão (remetente ·
+// conteúdo · hora · status · reações) — antes o VoiceOver/TalkBack lia os Text
+// soltos, o ghost de espaçamento e nada dos ✓✓. t() devolve a CHAVE quando
+// falta → _a11yT cai no fallback pt-BR.
+function _a11yT(t, key, fb, params) {
+  let r = null;
+  try { r = t ? t(key, params) : null; } catch {}
+  if (!r || r === key) {
+    r = fb;
+    if (params && typeof r === 'string') Object.keys(params).forEach(k => { r = r.split(`{${k}}`).join(String(params[k])); });
+  }
+  return r;
+}
+function _composerMaxH() {
+  let fs = 1;
+  try { fs = require('react-native').PixelRatio.getFontScale() || 1; } catch {}
+  return Math.round(140 * Math.min(Math.max(fs, 1), 2));
+}
+function _a11yMsgBody(msg, t) {
+  if (!msg) return '';
+  const raw = typeof msg.content === 'string' ? msg.content : '';
+  const cap = (typeof msg.caption === 'string' && msg.caption.trim()) ? msg.caption.trim() : '';
+  // remove marcadores de markdown/spoiler para não serem soletrados
+  const clean = (s) => String(s || '').replace(/\|\|/g, '').replace(/(\*\*|__|~~|```|`)/g, '').trim();
+  const withCap = (label) => (cap ? `${label}: ${clean(cap)}` : label);
+  switch (msg.type) {
+    case 'image': return withCap(_a11yT(t, 'chat.photo', 'Foto'));
+    case 'video': case 'video_note': return withCap(_a11yT(t, 'chat.video', 'Vídeo'));
+    case 'gif': return withCap(_a11yT(t, 'chat.gif', 'GIF'));
+    case 'sticker': return _a11yT(t, 'chat.sticker', 'Figurinha');
+    case 'audio': case 'voice': {
+      const d = Number(msg.duration || msg.audio_duration || 0);
+      const lab = msg.type === 'voice' ? _a11yT(t, 'a11y.voiceMessage', 'Mensagem de voz') : _a11yT(t, 'chat.audio', 'Áudio');
+      if (d > 0) return `${lab}, ${Math.floor(d / 60)}:${String(Math.round(d % 60)).padStart(2, '0')}`;
+      return lab;
+    }
+    case 'file': return withCap(`${_a11yT(t, 'chat.file', 'Arquivo')}${msg.file_name ? ' ' + msg.file_name : ''}`);
+    case 'location': return _a11yT(t, 'chat.location', 'Localização');
+    case 'contact': return _a11yT(t, 'chat.contact', 'Contato');
+    case 'poll': {
+      let q = '';
+      try { const p = raw && raw[0] === '{' ? JSON.parse(raw) : null; q = (p && (p.question || p.title)) || ''; } catch {}
+      return q ? `${_a11yT(t, 'chat.poll', 'Enquete')}: ${q}` : _a11yT(t, 'chat.poll', 'Enquete');
+    }
+    default: break;
+  }
+  if (raw && raw[0] === '{') {
+    try { const p = JSON.parse(raw); return clean(p.text || p.message || p.caption || cap || ''); } catch {}
+  }
+  return clean(raw || cap);
+}
+function _a11yMsgLabel(msg, { t, isOwn, isGroup, isDeleted, readStatus, reactionGroups }) {
+  const parts = [];
+  if (isOwn) parts.push(_a11yT(t, 'common.you', 'Você'));
+  else if (isGroup) parts.push(msg.sender_name || (msg.sender_email || '').split('@')[0] || '');
+  if (isDeleted) {
+    parts.push(isOwn ? _a11yT(t, 'chatConv.deletedMessageOwn', 'Você apagou esta mensagem') : _a11yT(t, 'chatConv.deletedMessage', 'Esta mensagem foi apagada'));
+  } else {
+    if (msg.forwarded_from) parts.push(_a11yT(t, 'a11y.forwarded', 'Encaminhada'));
+    const rt = msg.reply_to && typeof msg.reply_to === 'object' ? msg.reply_to : null;
+    if (rt || msg.reply_to_id) {
+      const who = rt ? (rt.sender_name || (rt.sender_email || '').split('@')[0]) : '';
+      parts.push(who ? _a11yT(t, 'a11y.replyTo', 'Em resposta a {name}', { name: who }) : _a11yT(t, 'a11y.replyToMsg', 'Em resposta a uma mensagem'));
+    }
+    if (msg.is_view_once || msg.isViewOnce) parts.push(_a11yT(t, 'a11y.viewOnce', 'Visualização única'));
+    else parts.push(_a11yMsgBody(msg, t));
+    if (msg.edited_at) parts.push(_a11yT(t, 'a11y.edited', 'Editada'));
+  }
+  try { parts.push(formatTime(msg.created_at)); } catch {}
+  if (isOwn && !isDeleted) {
+    if (msg._failed) parts.push(_a11yT(t, 'a11y.msgFailed', 'Não enviada. Toque duas vezes para reenviar'));
+    else if (msg._pending || msg._queued || msg.pending_state === 'queued') parts.push(_a11yT(t, 'a11y.msgPending', 'Enviando'));
+    else if (readStatus === 2) parts.push(_a11yT(t, 'a11y.msgRead', 'Lida'));
+    else if (readStatus === 1.5) parts.push(_a11yT(t, 'a11y.msgDelivered', 'Entregue'));
+    else parts.push(_a11yT(t, 'a11y.msgSent', 'Enviada'));
+  }
+  if (msg.starred) parts.push(_a11yT(t, 'a11y.starred', 'Favoritada'));
+  const rk = reactionGroups ? Object.keys(reactionGroups) : [];
+  if (rk.length) parts.push(_a11yT(t, 'a11y.reactions', 'Reações: {list}', { list: rk.map(e => `${e} ${reactionGroups[e].length}`).join(', ') }));
+  return parts.filter(Boolean).join(', ');
 }
 
 function TextWithLinks({ text, style, linkColor, colors, mentionColor, router: routerProp }) {
@@ -6335,6 +6419,35 @@ function safeAlert(title, message, buttons) {
 // rendered as a compact overlay pill) | 'locked' (hands-free controls).
 // holdCtlRef receives { move, cancel, lock, release } so the composer's mic
 // gesture can drive this recorder without re-rendering per touch move.
+// [2026-10-09 wa-real #13] Gravação de voz instantânea. Antes, cada toque no
+// mic esperava: require do expo-audio → pedido de permissão (bridge) →
+// setAudioModeAsync (reconfigura a sessão) → só então o gravador nativo, que
+// ainda reconfigura a sessão de novo. Resultado: o começo da fala cortado.
+// Agora: módulos e permissão são aquecidos quando a conversa abre (sem
+// diálogo — só getRecordingPermissionsAsync), a permissão concedida fica em
+// cache (pedida UMA vez) e, com o gravador nativo, não chamamos
+// setAudioModeAsync antes (o nativo configura a própria sessão; o stop já
+// devolve o modo).
+let _voiceMicGranted = false;
+let _voiceMods = null;
+function _voiceGetMods() {
+  if (_voiceMods) return _voiceMods;
+  let expoAudio = null; let NativeAudio = null;
+  try { expoAudio = require('expo-audio'); } catch {}
+  try { NativeAudio = require('../modules/expo-native-toolkit').Audio || null; } catch {}
+  _voiceMods = { expoAudio, NativeAudio };
+  return _voiceMods;
+}
+function prewarmVoiceRecorder() {
+  if (Platform.OS === 'web') return;
+  try {
+    const { expoAudio } = _voiceGetMods();
+    if (!_voiceMicGranted && expoAudio?.getRecordingPermissionsAsync) {
+      expoAudio.getRecordingPermissionsAsync().then((p) => { if (p?.granted) _voiceMicGranted = true; }).catch(() => {});
+    }
+  } catch {}
+}
+
 function AudioRecorder({ onSend, onCancel, colors, t, conversationId, holdMode = null, holdCtlRef = null, onShortHold }) {
   const [recording, setRecording] = useState(null);
   const [duration, setDuration] = useState(0);
@@ -6346,6 +6459,11 @@ function AudioRecorder({ onSend, onCancel, colors, t, conversationId, holdMode =
   // uma vez". Pre-upload session is skipped when active so view_once=1 lands
   // on chat_upload, which is the path that propagates the flag to the row.
   const [voiceViewOnce, setVoiceViewOnce] = useState(false);
+  // [2026-10-09 wa-real #13] pausar/retomar no modo mãos-livres. O tempo
+  // pausado sai do cronômetro (pausedTotalRef / pausedAtRef).
+  const [recPaused, setRecPaused] = useState(false);
+  const pausedAtRef = useRef(0);
+  const pausedTotalRef = useRef(0);
   // Preview state — set after stopping (to listen before sending, WhatsApp-style)
   const [previewData, setPreviewData] = useState(null); // { uri, blob?, name, type, duration, waveform, voiceSessionId? }
   const [previewPlaying, setPreviewPlaying] = useState(false);
@@ -6543,9 +6661,13 @@ function AudioRecorder({ onSend, onCancel, colors, t, conversationId, holdMode =
 
   const startTimer = () => {
     startTimeRef.current = Date.now();
+    pausedTotalRef.current = 0;
+    pausedAtRef.current = 0;
     intervalRef.current = setInterval(() => {
       if (!mountedRef.current) return;
-      const d = Math.floor((Date.now() - startTimeRef.current) / 1000);
+      const _now = Date.now();
+      const _paused = pausedTotalRef.current + (pausedAtRef.current ? _now - pausedAtRef.current : 0);
+      const d = Math.floor((_now - startTimeRef.current - _paused) / 1000);
       setDuration(d);
       // Auto-stop at 5min — server caps audio uploads at this length and
       // without the auto-stop the recording silently fails on send. WhatsApp
@@ -6688,7 +6810,7 @@ function AudioRecorder({ onSend, onCancel, colors, t, conversationId, holdMode =
       // explicitly check RECORD_AUDIO permission BEFORE touching expo-audio.
       let expoAudio;
       try {
-        expoAudio = require('expo-audio');
+        expoAudio = _voiceGetMods().expoAudio || require('expo-audio');
       } catch (modErr) {
         console.warn('[startRecording] expo-audio require failed:', modErr?.message);
         if (Platform.OS === 'android') {
@@ -6704,9 +6826,10 @@ function AudioRecorder({ onSend, onCancel, colors, t, conversationId, holdMode =
         onCancel();
         return;
       }
-      let perm;
+      let perm = _voiceMicGranted ? { granted: true } : null; // [wa-real #13] pedida 1×
       try {
-        perm = await expoAudio.requestRecordingPermissionsAsync();
+        if (!perm) perm = await expoAudio.requestRecordingPermissionsAsync();
+        if (perm?.granted) _voiceMicGranted = true;
       } catch (permErr) {
         console.warn('[startRecording] permission request failed:', permErr?.message);
         if (Platform.OS === 'android') {
@@ -6737,7 +6860,10 @@ function AudioRecorder({ onSend, onCancel, colors, t, conversationId, holdMode =
         return;
       }
       if (!mountedRef.current) return;
-      try {
+      // [wa-real #13] gravador nativo configura a própria sessão → sem await
+      // de setAudioModeAsync antes de começar (era o maior corte do início).
+      const _nativeAvail = !!(_voiceGetMods().NativeAudio?.startRecording);
+      if (!_nativeAvail) try {
         await expoAudio.setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true });
       } catch (modeErr) {
         // Non-fatal on Android — some Android devices reject playsInSilentMode
@@ -6753,7 +6879,7 @@ function AudioRecorder({ onSend, onCancel, colors, t, conversationId, holdMode =
       let nativeRec = null;
       if (Platform.OS === 'ios' || Platform.OS === 'android') {
         try {
-          const { Audio: NativeAudio } = require('../modules/expo-native-toolkit');
+          const NativeAudio = _voiceGetMods().NativeAudio;
           if (NativeAudio?.startRecording) {
             const path = await NativeAudio.startRecording();
             // [WAVE 39] Validate path returned is non-empty BEFORE wrapping the
@@ -6780,6 +6906,10 @@ function AudioRecorder({ onSend, onCancel, colors, t, conversationId, holdMode =
         }
       }
       let recorder = nativeRec;
+      if (!recorder && _nativeAvail) {
+        // nativo falhou → o caminho expo-audio precisa do modo de gravação.
+        try { await expoAudio.setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true }); } catch {}
+      }
       if (!recorder) {
         try {
           const AudioMod = require('expo-audio/build/AudioModule').default;
@@ -6988,6 +7118,43 @@ function AudioRecorder({ onSend, onCancel, colors, t, conversationId, holdMode =
       onCancel();
     }
     setRecording(null);
+  };
+
+  // [2026-10-09 wa-real #13] Pausar / retomar a gravação (mesmo arquivo).
+  // Nativo: ExpoNativeAudio.pauseRecording/resumeRecording (Android já tem;
+  // iOS a partir do próximo build — feature-detect); expo-audio:
+  // recorder.pause()/record(); web: MediaRecorder.pause()/resume().
+  const canPauseRec = (() => {
+    const r = recording;
+    if (!r) return false;
+    if (r === 'web') { const mr = mediaRecorderRef.current; return !!(mr && typeof mr.pause === 'function' && typeof mr.resume === 'function'); }
+    if (r.__native) return typeof r.NativeAudio?.pauseRecording === 'function' && typeof r.NativeAudio?.resumeRecording === 'function';
+    return typeof r.pause === 'function' && typeof r.record === 'function';
+  })();
+  const togglePauseRecording = async () => {
+    const r = recording;
+    if (!r || !canPauseRec) return;
+    try {
+      if (!recPaused) {
+        if (r === 'web') mediaRecorderRef.current?.pause?.();
+        else if (r.__native) await r.NativeAudio.pauseRecording();
+        else r.pause();
+        pausedAtRef.current = Date.now();
+        setRecPaused(true);
+        try { pulseLoopRef.current?.stop?.(); } catch {}
+      } else {
+        if (r === 'web') mediaRecorderRef.current?.resume?.();
+        else if (r.__native) await r.NativeAudio.resumeRecording();
+        else r.record();
+        if (pausedAtRef.current) pausedTotalRef.current += Date.now() - pausedAtRef.current;
+        pausedAtRef.current = 0;
+        setRecPaused(false);
+        try { pulseLoopRef.current?.start?.(); } catch {}
+      }
+      try { if (Platform.OS !== 'web') require('../services/haptics').tap('light'); } catch {}
+    } catch (e) {
+      console.warn('[voice pause/resume] failed:', e?.message);
+    }
   };
 
   // Stop + send in one shot — wired to the primary Send (paper-plane) button on
@@ -7413,7 +7580,7 @@ function AudioRecorder({ onSend, onCancel, colors, t, conversationId, holdMode =
               (VoiceLiveMeter — Reanimated shared value, no React render per
               sample). Web keeps the AnalyserNode bars below. */}
           {Platform.OS !== 'web' ? (
-            <VoiceLiveMeter getLevel={getLiveLevel} active={!!recording} color={waveColor} />
+            <VoiceLiveMeter getLevel={getLiveLevel} active={!!recording && !recPaused} color={waveColor} />
           ) : (
             // Web live waveform — bars breathe in sync with the recording-dot
             // pulse, giving the whole control a single coherent heartbeat.
@@ -7501,6 +7668,20 @@ function AudioRecorder({ onSend, onCancel, colors, t, conversationId, holdMode =
             {t('chatConv.tapToSend') || 'Toque para enviar'}
           </Text>
         </View>
+        {/* [2026-10-09 wa-real #13] Pausar / retomar (só se o gravador suporta) */}
+        {canPauseRec ? (
+          <TouchableOpacity
+            onPress={togglePauseRecording}
+            style={[recStyles.lockedStopBtn, { backgroundColor: colors.text || '#111111' }]}
+            accessibilityRole="button"
+            accessibilityLabel={recPaused ? (t('chatConv.resumeRecording') || 'Continuar gravação') : (t('chatConv.pauseRecording') || 'Pausar gravação')}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          >
+            {recPaused
+              ? <IconMic size={18} color={colors.surface || '#fff'} />
+              : <IconPause size={18} color={colors.surface || '#fff'} />}
+          </TouchableOpacity>
+        ) : null}
         {/* Stop → preview (review before sending) */}
         <TouchableOpacity
           onPress={handleStop}
@@ -11247,6 +11428,28 @@ function ChatConversationInner() {
   // ticks) until re-render. Fall back to the synchronously-available stored
   // active account (localStorage/MMKV cache) so the side is correct immediately.
   const currentEmail = user?.email || (api.getActiveAccountEmail?.() || '');
+  // [2026-10-09 wa-real #13] aquece módulos de áudio + cache da permissão do
+  // mic (sem diálogo) depois que a conversa assenta → o toque no mic grava já.
+  useEffect(() => {
+    if (Platform.OS === 'web') return undefined;
+    let h = null;
+    try { h = InteractionManager.runAfterInteractions(() => { try { prewarmVoiceRecorder(); } catch {} }); } catch {}
+    return () => { try { h?.cancel?.(); } catch {} };
+  }, []);
+
+  // [2026-10-09 wa-real #12] já mandei alguma mensagem nesta conversa? (some
+  // com o cartão de desconhecido sem esperar o servidor).
+  const _unknownCardHasMine = useMemo(() => {
+    if (conversationType !== 'direct') return true;
+    const me = String(currentEmail || '').toLowerCase();
+    if (!me || !Array.isArray(messages)) return false;
+    for (let i = 0; i < messages.length; i++) {
+      const m = messages[i];
+      if (m && m.type !== 'system' && String(m.sender_email || '').toLowerCase() === me) return true;
+    }
+    return false;
+  }, [messages, currentEmail, conversationType]);
+
   _sendMotionState.me = String(currentEmail || '').toLowerCase(); // [2026-10-08 send-motion] filtro de eco
   // [FIX stale-currentEmail 2026-10-02] onViewableItemsChanged is created once
   // via useRef().current, so it closes over currentEmail at FIRST render — when
@@ -19114,6 +19317,33 @@ function ChatConversationInner() {
       safeAlert(t('common.error') || 'Erro', t('chatConv.contactsUnavailable') || 'Contatos não disponível neste dispositivo');
       return;
     }
+    // [2026-10-09 wa-real #8] Seletor do SISTEMA (CNContactPickerViewController
+    // / ACTION_PICK) em vez de ler a agenda inteira em JS e montar a lista.
+    // iOS: o seletor não pede acesso à agenda (o usuário escolhe 1 contato).
+    // Android: o módulo lê o contato escolhido via ContentResolver → precisa
+    // de READ_CONTACTS (pedido 1× abaixo). Sem o seletor no binário ou em erro
+    // → caminho antigo (lista própria).
+    if (typeof Contacts.presentContactPickerAsync === 'function') {
+      let _pickerOk = false;
+      try {
+        if (Platform.OS !== 'ios') {
+          const perm = await Contacts.requestPermissionsAsync();
+          if (perm?.status !== 'granted') {
+            safeAlert(t('chatConv.permission') || 'Permissão', t('chatConv.contactsPermission') || 'Permita acesso aos contatos nas configurações.');
+            return;
+          }
+        }
+        const picked = await Contacts.presentContactPickerAsync();
+        _pickerOk = true;
+        if (picked) {
+          const pName = (picked.name || [picked.firstName, picked.lastName].filter(Boolean).join(' ') || '').trim();
+          sendContact({ ...picked, name: pName });
+        }
+      } catch (e) {
+        console.warn('presentContactPickerAsync fallback:', e?.message || e);
+      }
+      if (_pickerOk) return;
+    }
     let status;
     try {
       const res = await Contacts.requestPermissionsAsync();
@@ -21227,6 +21457,23 @@ function ChatConversationInner() {
       // Notify all members so they receive an incoming call push
       try { await api.callNotify(conversationId, roomId, videoEnabled, roomId); } catch {}
       setStartingCall(true);
+      // [2026-10-09 native-group-call] Fully native group screen when the
+      // binary + flag allow it; otherwise the /call.js group grid below.
+      try {
+        const ngc = require('../services/nativeGroupCall');
+        if (ngc.canUseNativeGroupCall(currentEmail)) {
+          const opened = await ngc.openNativeGroupCall({
+            callId: roomId,
+            conversationId,
+            isVideo: !!videoEnabled,
+            isCaller: true,
+            title: conversationName || '',
+            members,
+            email: currentEmail,
+          });
+          if (opened) { setTimeout(() => setStartingCall(false), 2000); return; }
+        }
+      } catch {}
       try {
         router.push(`/call?callId=${encodeURIComponent(roomId)}&conversationId=${conversationId}&isVideo=${videoEnabled ? '1' : '0'}&isCaller=1&groupCall=1`);
       } catch {} finally { setTimeout(() => setStartingCall(false), 2000); }
@@ -22924,6 +23171,46 @@ function ChatConversationInner() {
 
   // Ref to the latest renderMessage closure — used by MemoizedMessageRow
   // so that the memo wrapper never invalidates due to function identity change.
+  // [2026-10-09 a11y-announce] Leitor de tela ligado → anuncia a mensagem
+  // nova recebida nesta conversa ("Nova mensagem de Ana: oi"), como o
+  // WhatsApp. Só a última da lista, só de outra pessoa, só recente (< 2 min)
+  // e nunca no primeiro carregamento/paginação.
+  const _a11ySrOnRef = useRef(false);
+  const _a11yLastAnnRef = useRef(undefined);
+  useEffect(() => {
+    if (Platform.OS === 'web') return undefined;
+    let alive = true;
+    let sub = null;
+    try {
+      const AI = require('react-native').AccessibilityInfo;
+      AI.isScreenReaderEnabled().then((v) => { if (alive) _a11ySrOnRef.current = !!v; }).catch(() => {});
+      sub = AI.addEventListener('screenReaderChanged', (v) => { _a11ySrOnRef.current = !!v; });
+    } catch {}
+    return () => { alive = false; try { sub?.remove?.(); } catch {} };
+  }, []);
+  useEffect(() => {
+    const last = messages && messages.length ? messages[messages.length - 1] : null;
+    const lastId = last ? String(last.id) : null;
+    const prevId = _a11yLastAnnRef.current;
+    _a11yLastAnnRef.current = lastId;
+    if (prevId === undefined || !last || lastId === prevId) return;
+    if (!_a11ySrOnRef.current || Platform.OS === 'web') return;
+    if (last.type === 'system' || last.deleted_at) return;
+    if ((last.sender_email || '').toLowerCase() === (currentEmail || '').toLowerCase()) return;
+    const ts = Date.parse(last.created_at);
+    if (Number.isFinite(ts) && Date.now() - ts > 120000) return;
+    try {
+      const RN = require('react-native');
+      if (RN.AppState.currentState !== 'active') return;
+      const who = last.sender_name || emailToDisplayName(last.sender_email || '') || '';
+      const msgTxt = _a11yT(t, 'a11y.newMessageFrom', 'Nova mensagem de {name}: {text}', { name: who, text: _a11yMsgBody(last, t) });
+      if (Platform.OS === 'ios' && RN.AccessibilityInfo.announceForAccessibilityWithOptions) {
+        RN.AccessibilityInfo.announceForAccessibilityWithOptions(msgTxt, { queue: true });
+      } else {
+        RN.AccessibilityInfo.announceForAccessibility(msgTxt);
+      }
+    } catch {}
+  }, [messages]);
   const renderMessageRef = useRef(null);
 
   const renderMessage = ({ item, ov }) => {
@@ -22939,7 +23226,7 @@ function ChatConversationInner() {
               soft lavender wash + violet ink. Dark: deep glass + muted text. */}
           {/* [2026-10-06 wa-look] WA day pill: received-bubble surface + muted ink. */}
           {/* [2026-10-08 chat-beauty-bubbles] Pílula de data P&B translúcida. */}
-          <Text style={[styles.dateText, isDark ? styles.dateTextDark : styles.dateTextLight]}>
+          <Text maxFontSizeMultiplier={1.4} accessibilityRole="header" style={[styles.dateText, isDark ? styles.dateTextDark : styles.dateTextLight]}>
             {item._label || formatDateSeparator(item.date, t)}
           </Text>
         </View>
@@ -25110,6 +25397,34 @@ function ChatConversationInner() {
             }
             try {
               const Contacts = require('expo-contacts');
+              // [2026-10-09 wa-real #8] "Adicionar contato" pelo FORMULÁRIO do
+              // sistema (CNContactViewController / ACTION_INSERT) com os dados
+              // preenchidos — o usuário revisa e salva, como no WhatsApp. iOS:
+              // o formulário não exige acesso à agenda. Android: o módulo exige
+              // READ_CONTACTS. Se o formulário não existir no binário ou falhar,
+              // cai no caminho antigo (addContactAsync direto).
+              const _formContact = {
+                [Contacts.Fields.FirstName]: ctName,
+                ...(ctPhone ? { [Contacts.Fields.PhoneNumbers]: [{ label: 'mobile', number: ctPhone }] } : {}),
+                ...(ctEmail ? { [Contacts.Fields.Emails]: [{ label: 'home', email: ctEmail }] } : {}),
+              };
+              if (typeof Contacts.presentFormAsync === 'function') {
+                let _formOk = false;
+                try {
+                  if (Platform.OS !== 'ios') {
+                    const perm = await Contacts.requestPermissionsAsync();
+                    if (perm?.status !== 'granted') {
+                      safeAlert(t('chatConv.permission') || 'Permissão', t('chatConv.contactsPermission') || 'Permita acesso aos contatos.');
+                      return;
+                    }
+                  }
+                  await Contacts.presentFormAsync(null, _formContact, { isNew: true });
+                  _formOk = true;
+                } catch (formErr) {
+                  console.warn('presentFormAsync fallback:', formErr?.message || formErr);
+                }
+                if (_formOk) return;
+              }
               const { status } = await Contacts.requestPermissionsAsync();
               if (status !== 'granted') {
                 safeAlert(t('chatConv.permission') || 'Permissão', t('chatConv.contactsPermission') || 'Permita acesso aos contatos.');
@@ -27069,6 +27384,31 @@ function ChatConversationInner() {
             },
           } : {})}
           style={[styles.msgRow, isOwn ? styles.msgRowOwn : styles.msgRowOther, isLastInGroup && styles.msgRowGroupEnd, selectedIds.has(msg.id) && { backgroundColor: colors.primary + '22' }]}
+          // [2026-10-09 a11y-bubble] VoiceOver/TalkBack: rótulo completo +
+          // ações nomeadas (responder, reagir, encaminhar, apagar, info, mais).
+          // 'activate' NÃO entra na lista → o toque duplo segue o onPress.
+          accessibilityLabel={_a11yMsgLabel(msg, { t, isOwn, isGroup: conversationType === 'group', isDeleted, readStatus: msg._readStatus, reactionGroups })}
+          accessibilityHint={(selectionMode || isDeleted || isSystem) ? undefined : _a11yT(t, 'a11y.msgHint', 'Há ações para responder, reagir, encaminhar ou apagar.')}
+          accessibilityState={selectionMode ? { selected: selectedIds.has(msg.id) } : undefined}
+          accessibilityActions={(selectionMode || isDeleted || isSystem) ? undefined : [
+            { name: 'reply', label: _a11yT(t, 'chatConv.reply', 'Responder') },
+            { name: 'react', label: _a11yT(t, 'a11y.react', 'Reagir') },
+            { name: 'forward', label: _a11yT(t, 'chatConv.forward', 'Encaminhar') },
+            { name: 'delete', label: _a11yT(t, 'a11y.delete', 'Apagar') },
+            ...((isOwn && typeof msg.id === 'number') ? [{ name: 'info', label: _a11yT(t, 'a11y.messageInfo', 'Informações da mensagem') }] : []),
+            { name: 'more', label: _a11yT(t, 'a11y.moreOptions', 'Mais opções') },
+          ]}
+          onAccessibilityAction={(e) => {
+            const n = e?.nativeEvent?.actionName;
+            try {
+              if (n === 'reply') { setReplyTo(msg); inputRef.current?.focus(); }
+              else if (n === 'react') setSelectedMsg(msg);
+              else if (n === 'forward') handleForward(msg);
+              else if (n === 'delete') handleDelete(msg.id);
+              else if (n === 'info') handleMessageInfo(msg);
+              else if (n === 'more') handleLongPress(msg);
+            } catch {}
+          }}
         >
           {selectionMode && !isDeleted && !isSystem && (
             <View style={{ marginRight: 12, justifyContent: 'center' }}>
@@ -28058,7 +28398,7 @@ function ChatConversationInner() {
             <IconArrowLeft size={22} color={colors.text} />
           </TouchableOpacity>
           <View style={styles.headerInfo}>
-            <Text style={[styles.headerTitle, { color: colors.text }]} numberOfLines={1}>{conversationName}</Text>
+            <Text style={[styles.headerTitle, { color: colors.text }]} numberOfLines={1} maxFontSizeMultiplier={1.3}>{conversationName}</Text>
           </View>
         </View>
         <IconLock size={48} color={colors.textTertiary} />
@@ -28277,7 +28617,7 @@ function ChatConversationInner() {
           </View>
           <View style={{ flex: 1 }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
-              <Text style={[styles.headerTitle, { color: colors.text }]} numberOfLines={1}>
+              <Text style={[styles.headerTitle, { color: colors.text }]} numberOfLines={1} maxFontSizeMultiplier={1.3}>
                 {conversationName}
               </Text>
               {e2eEnabled && <IconLock size={12} color={colors.textSecondary} />}
@@ -28525,7 +28865,7 @@ function ChatConversationInner() {
           <Text style={[styles.disappearingBannerText, { color: isDark ? '#fecaca' : '#991b1b', fontSize: 11.5, flex: 1 }]}>
             {t('chatConv.keyChangedShort') || 'Código de segurança alterado. Toque para detalhes.'}
           </Text>
-          <TouchableOpacity onPress={(e) => { e.stopPropagation?.(); setKeyChangedPeers([]); }} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }} style={{ padding: 4, marginLeft: 4 }}>
+          <TouchableOpacity onPress={(e) => { e.stopPropagation?.(); setKeyChangedPeers([]); }} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }} style={{ padding: 4, marginLeft: 4 }} accessibilityRole="button" accessibilityLabel={_a11yT(t, 'common.close', 'Fechar')}>
             <IconX size={14} color={isDark ? '#fca5a5' : '#b91c1c'} />
           </TouchableOpacity>
         </TouchableOpacity>
@@ -28554,21 +28894,21 @@ function ChatConversationInner() {
               returnKeyType="search"
             />
             {/* ★ Filter button */}
-            <TouchableOpacity onPress={() => setShowSearchBar('filters')} style={{ padding: 4 }}>
+            <TouchableOpacity onPress={() => setShowSearchBar('filters')} style={{ padding: 4 }} accessibilityRole="button" accessibilityLabel={_a11yT(t, 'a11y.searchFilters', 'Filtros da busca')}>
               <IconFilter size={18} color={searchFilters.dateFrom || searchFilters.dateTo || searchFilters.type || searchFilters.senderEmail || searchFilters.starredOnly ? '#3b82f6' : colors.textSecondary} />
             </TouchableOpacity>
             {searchResults.length > 0 && (
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
                 <Text style={{ fontSize: 12, color: colors.textSecondary }}>{searchIdx + 1}/{searchResults.length}</Text>
-                <TouchableOpacity onPress={() => handleSearchNav('up')} style={{ padding: 4 }}>
+                <TouchableOpacity onPress={() => handleSearchNav('up')} style={{ padding: 4 }} accessibilityRole="button" accessibilityLabel={_a11yT(t, 'a11y.prevResult', 'Resultado anterior')}>
                   <IconChevronDown size={16} color={colors.text} style={{ transform: [{ rotate: '180deg' }] }} />
                 </TouchableOpacity>
-                <TouchableOpacity onPress={() => handleSearchNav('down')} style={{ padding: 4 }}>
+                <TouchableOpacity onPress={() => handleSearchNav('down')} style={{ padding: 4 }} accessibilityRole="button" accessibilityLabel={_a11yT(t, 'a11y.nextResult', 'Próximo resultado')}>
                   <IconChevronDown size={16} color={colors.text} />
                 </TouchableOpacity>
               </View>
             )}
-            <TouchableOpacity onPress={() => { setShowSearchBar(false); setSearchQuery(''); setSearchResults([]); }} style={{ padding: 4 }}>
+            <TouchableOpacity onPress={() => { setShowSearchBar(false); setSearchQuery(''); setSearchResults([]); }} style={{ padding: 4 }} accessibilityRole="button" accessibilityLabel={_a11yT(t, 'a11y.closeSearch', 'Fechar busca')}>
               <IconX size={18} color={colors.textSecondary} />
             </TouchableOpacity>
           </View>
@@ -28808,6 +29148,22 @@ function ChatConversationInner() {
           row shows a "Xd restantes" countdown in the right gutter when the
           pin has a finite TTL. Permanent legacy pins (NULL pinned_until)
           omit the countdown entirely. */}
+      {/* [2026-10-09 wa-real #12] remetente desconhecido: não está na
+          agenda, grupos em comum, país — some quando o usuário responde. */}
+      {UnknownSenderCard && conversationType === 'direct' && !isSavedMode && !showSearchBar ? (
+        <UnknownSenderCard
+          conversationId={conversationId}
+          conversationType={conversationType}
+          myEmail={currentEmail}
+          hasMine={_unknownCardHasMine}
+          blocked={iBlockedThem}
+          colors={colors}
+          isDark={isDark}
+          t={t}
+          language={language}
+          onBlock={() => handleBlockUser(params.email || '')}
+        />
+      ) : null}
       {visiblePinnedMessages.length > 0 && showPinnedBanner && !showSearchBar && (
         <View style={{
           // [2026-10-08 chat-beauty-chrome] barra fixada monocromática (era
@@ -29293,7 +29649,7 @@ function ChatConversationInner() {
                   autoFocus
                 />
                 {!!savedSearch && (
-                  <TouchableOpacity onPress={() => setSavedSearch('')} hitSlop={8}>
+                  <TouchableOpacity onPress={() => setSavedSearch('')} hitSlop={8} accessibilityRole="button" accessibilityLabel={_a11yT(t, 'a11y.clearSearch', 'Limpar busca')}>
                     <IconX size={16} color={colors.textSecondary} />
                   </TouchableOpacity>
                 )}
@@ -29753,7 +30109,7 @@ function ChatConversationInner() {
               <Text style={{ fontSize: 17, fontWeight: '700', color: colors.text }}>
                 {t('chatConv.editHistory') || 'Histórico de edições'}
               </Text>
-              <TouchableOpacity onPress={() => setEditHistoryModal({ visible: false, loading: false, versions: [], currentContent: '' })}>
+              <TouchableOpacity onPress={() => setEditHistoryModal({ visible: false, loading: false, versions: [], currentContent: '' })} accessibilityRole="button" accessibilityLabel={_a11yT(t, 'common.close', 'Fechar')}>
                 <IconX size={22} color={colors.textSecondary} />
               </TouchableOpacity>
             </View>
@@ -30400,7 +30756,8 @@ function ChatConversationInner() {
                 color: (Platform.OS === 'android' || Platform.OS === 'web') ? (isDark ? '#e5e7eb' : '#111') : (hasRichInput ? 'transparent' : (isDark ? '#e5e7eb' : '#111')),
                 // [2026-10-08 chat-beauty-chrome] 16pt text, grows to ~6 lines (140)
                 fontSize: 16,
-                minHeight: 42, maxHeight: 140,
+                // [2026-10-09 a11y-font] ~6 linhas também com fonte grande do sistema
+                minHeight: 42, maxHeight: _composerMaxH(),
                 paddingHorizontal: 4,
                 paddingTop: Platform.OS === 'ios' ? 11 : 9,
                 paddingBottom: Platform.OS === 'ios' ? 11 : 9,

@@ -292,6 +292,11 @@ final class CallSignalWs: NSObject {
         enqueue(dict)
     }
 
+    /// [2026-10-09 p2p-ios] Frame call_p2p_* da sessão nativa (P2PCallSessionIOS).
+    func sendP2P(_ frame: [String: Any]) {
+        enqueue(frame)
+    }
+
     // MARK: – Internals
 
     private func enqueue(_ dict: [String: Any]) {
@@ -499,6 +504,11 @@ final class CallSignalWs: NSObject {
             // own `mailWs.on('call_end')` subscription — this is belt-and-
             // suspenders for the native UI cleanup.
             handleIncomingCallEndLocked(obj)
+        case "call_p2p_ready", "call_p2p_offer", "call_p2p_answer",
+             "call_p2p_candidate", "call_p2p_restart", "call_p2p_fallback":
+            // [2026-10-09 p2p-ios] Sinalização P2P 1:1 → sessão nativa (ou
+            // buffer, se ainda não existe). O hub fixa este socket como rota.
+            P2PCallSessionIOS.dispatchSignal(obj)
         default:
             // We don't consume any other server frames here; the JS WS owns
             // the real call event surface.
@@ -547,6 +557,7 @@ final class CallSignalWs: NSObject {
             NSLog("[CallSignalWs] call_declined: missing call_id/room_id, skipping")
             return
         }
+        P2PCallBridge.close(callId: callId, reason: "call_declined") // [2026-10-09 p2p-ios]
         let reason = (obj["reason"] as? String) ?? "declined"
         let declinedByEmail = (obj["declined_by_email"] as? String)
             ?? (obj["callee_email"] as? String)
@@ -647,6 +658,7 @@ final class CallSignalWs: NSObject {
             return
         }
         NSLog("[CallSignalWs] call_end \(callId) reason=\(reason) — dismissing native call UI")
+        P2PCallBridge.close(callId: callId, reason: "call_end") // [2026-10-09 p2p-ios]
         // [CALL-CLOSE diag 2026-05-27] Surface every inbound call_end on the
         // per-user voip_diag log so the next answered call reveals if a
         // stale/duplicate frame is what fired the close.

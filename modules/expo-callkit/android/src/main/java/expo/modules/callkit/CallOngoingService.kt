@@ -47,9 +47,14 @@ class CallOngoingService : Service() {
 
         const val EXTRA_CALL_ID = "call_id"
         const val EXTRA_CALLER_NAME = "caller_name"
+        /** [2026-10-09 native-group-call] Tap → GroupCallActivity instead of CallActivity. */
+        const val EXTRA_IS_GROUP = "is_group"
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
+
+    // [2026-10-09 native-group-call] Set per start command (group FGS).
+    private var isGroupCall: Boolean = false
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val callId = intent?.getStringExtra(EXTRA_CALL_ID) ?: ""
@@ -59,6 +64,7 @@ class CallOngoingService : Service() {
         Log.d(TAG, "onStartCommand callId=$callId caller=$callerName")
 
         createNotificationChannel(this)
+        isGroupCall = intent?.getBooleanExtra(EXTRA_IS_GROUP, false) ?: false
         val notification = buildOngoingNotification(callId, callerName)
 
         try {
@@ -97,7 +103,8 @@ class CallOngoingService : Service() {
         // lives in its own affinity-less task, so the tap must re-front THAT
         // task — never MainActivity's. An intent that only carries call_id +
         // name hits onNewIntent on the live instance (no re-create).
-        val contentIntent = Intent(this, CallActivity::class.java).apply {
+        val target: Class<*> = if (isGroupCall) GroupCallActivity::class.java else CallActivity::class.java
+        val contentIntent = Intent(this, target).apply {
             putExtra(CallActivity.EXTRA_CALL_ID, callId)
             putExtra(CallActivity.EXTRA_CALLER_NAME, callerName)
             addFlags(

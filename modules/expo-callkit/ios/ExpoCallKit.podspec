@@ -26,6 +26,16 @@ Pod::Spec.new do |s|
   # init with delegate param, @objc optional RoomDelegate methods).
   s.dependency 'LiveKitClient', '2.0.18' # [2026-10-07 audio-route] pin: AudioRouter usa customConfigureAudioSessionFunc (API da 2.0.18; depreciada nas novas)
 
+  # [2026-10-09 p2p-ios] P2PCallSessionIOS.swift faz `import LiveKitWebRTC`
+  # (libwebrtc que o LiveKitClient 2.0.18 JÁ traz: LiveKitClient.podspec →
+  # `spec.dependency("LiveKitWebRTC", "= 125.6422.11")`). Declarado aqui com a
+  # MESMA versão exata → o resolvedor do CocoaPods não muda nada (mesmo
+  # xcframework, zero binário novo) e o módulo fica importável neste pod.
+  # Se algum dia o LiveKitClient subir, ESTA linha tem de subir junto (ver
+  # LiveKitClient.podspec da versão nova). O arquivo tem `#if
+  # canImport(LiveKitWebRTC)` com stub — sem o módulo, o P2P só desliga.
+  s.dependency 'LiveKitWebRTC', '125.6422.11'
+
   # [2026-05-17 MediaPipe background blur / virtual background]
   # Google open-source MediaPipe (Apache 2). BackgroundProcessor.swift wraps
   # MPPImageSegmenter for live background blur + virtual wallpapers in the

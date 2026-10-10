@@ -1,4 +1,21 @@
 export default {
+  // [2026-10-09 wa-real]
+  "chatConv.pauseRecording": "إيقاف التسجيل مؤقتًا",
+  "chatConv.resumeRecording": "استئناف التسجيل",
+  // [2026-10-09 wa-real]
+  "maps.nearbyPlaces": "أماكن قريبة",
+  "maps.sendThisPlace": "إرسال هذا المكان",
+  // [2026-10-09 wa-real]
+  "settings.blockUnknown": "حظر الرسائل من حسابات غير معروفة",
+  "settings.blockUnknownDesc": "لن تصلك رسائل من أشخاص ليسوا في جهات اتصالك ولا تجمعك بهم أي مجموعة ولم تتحدث معهم من قبل.",
+  "chatConv.unknownCard.title": "ليس ضمن جهات اتصالك",
+  "chatConv.unknownCard.noCommonGroups": "لا توجد مجموعات مشتركة",
+  "chatConv.unknownCard.commonGroups": "مجموعات مشتركة: {names}",
+  "chatConv.unknownCard.country": "رقم من {country}",
+  "chatConv.unknownCard.newAccount": "حساب أُنشئ مؤخرًا",
+  "chatConv.unknownCard.hint": "احذر من طلبات المال أو الرموز أو الروابط. إن لم تكن تعرفه، فاحظره.",
+  "chatConv.unknownCard.block": "حظر",
+  "chatConv.unknownCard.ok": "حسنًا",
   // [2026-10-09 passkeys]
   "settings.passkeys.title": "مفاتيح المرور",
   "settings.passkeys.rowSub": "سجّل الدخول بـ Face ID أو البصمة، بدون كلمة مرور أو رمز",
@@ -9731,4 +9748,40 @@ export default {
   "plans.aiAct.contacts": "إدارة جهات الاتصال", // [2026-10-09 plans-intl]
   "plans.aiAct.reply": "الرد على الرسائل", // [2026-10-09 plans-intl]
   "plans.aiAct.translate": "ترجمة النصوص", // [2026-10-09 plans-intl]
+  // [2026-10-09 a11y-screenreader]
+  "a11y.group": "مجموعة",
+  "a11y.channel": "قناة",
+  "a11y.online": "متصل",
+  "a11y.unreadOne": "رسالة واحدة غير مقروءة",
+  "a11y.unreadCount": "{n} رسائل غير مقروءة",
+  "a11y.mentioned": "تمت الإشارة إليك",
+  "a11y.msgRead": "مقروءة",
+  "a11y.msgDelivered": "تم التسليم",
+  "a11y.msgSent": "تم الإرسال",
+  "a11y.scheduled": "رسالة مجدولة",
+  "a11y.pinned": "مثبتة",
+  "a11y.muted": "مكتومة",
+  "a11y.viewPhoto": "عرض صورة الملف الشخصي",
+  "a11y.moreOptions": "خيارات أخرى",
+  "a11y.openChatHint": "انقر مرتين للفتح. تتوفر إجراءات أخرى.",
+  "a11y.voiceMessage": "رسالة صوتية",
+  "a11y.forwarded": "معاد توجيهها",
+  "a11y.replyTo": "ردًا على {name}",
+  "a11y.replyToMsg": "ردًا على رسالة",
+  "a11y.viewOnce": "عرض لمرة واحدة",
+  "a11y.edited": "معدلة",
+  "a11y.msgFailed": "لم تُرسل. انقر مرتين لإعادة المحاولة",
+  "a11y.msgPending": "جارٍ الإرسال",
+  "a11y.starred": "مميزة بنجمة",
+  "a11y.reactions": "التفاعلات: {list}",
+  "a11y.msgHint": "تتوفر إجراءات للرد أو التفاعل أو إعادة التوجيه أو الحذف.",
+  "a11y.react": "تفاعل",
+  "a11y.delete": "حذف",
+  "a11y.messageInfo": "معلومات الرسالة",
+  "a11y.newMessageFrom": "رسالة جديدة من {name}: {text}",
+  "a11y.searchFilters": "عوامل تصفية البحث",
+  "a11y.prevResult": "النتيجة السابقة",
+  "a11y.nextResult": "النتيجة التالية",
+  "a11y.closeSearch": "إغلاق البحث",
+  "a11y.clearSearch": "مسح البحث",
 };

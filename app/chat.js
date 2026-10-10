@@ -943,7 +943,7 @@ function ChatHub() {
         // [2026-06-04] era onPress={() => {}} — botão de câmera morto (caçada
         // R2). Reusa o fluxo do strip "+ status": requestNewStatus() flipa
         // autoNewStatus e o ChatStatusTab abre o composer canônico.
-        <TouchableOpacity onPress={requestNewStatus} activeOpacity={0.6}
+        <TouchableOpacity onPress={requestNewStatus} activeOpacity={0.6} accessibilityRole="button" accessibilityLabel={t('a11y.camera')}
           style={[styles.headerIconBtn, { backgroundColor: headerBtnBg }]}>
           <IconCameraHeader size={18} color={headerIconColor} />
         </TouchableOpacity>
@@ -951,7 +951,7 @@ function ChatHub() {
     }
     if (activeTab === 'feed') {
       return (
-        <TouchableOpacity onPress={toggleSearch} activeOpacity={0.6}
+        <TouchableOpacity onPress={toggleSearch} activeOpacity={0.6} accessibilityRole="button" accessibilityLabel={t('a11y.search')}
           style={[styles.headerIconBtn, { backgroundColor: headerBtnBg }]}>
           <IconSearch size={18} color={headerIconColor} />
         </TouchableOpacity>
@@ -1047,7 +1047,7 @@ function ChatHub() {
 
           {/* Back button at bottom (hidden for kids) */}
           {!isKids && (
-          <TouchableOpacity onPress={() => router.back()} activeOpacity={0.6}
+          <TouchableOpacity onPress={() => router.back()} activeOpacity={0.6} accessibilityRole="button" accessibilityLabel={t('a11y.back')}
             style={[styles.desktopBackBtn, {
               backgroundColor: 'rgba(255,255,255,0.1)',
             }]}>
@@ -1097,7 +1097,7 @@ function ChatHub() {
                 >
                   <Text style={{ fontSize: 11, fontWeight: '700', letterSpacing: 0.2, color: isDark ? '#F5F5F7' : '#111111' }}>{t('common.searchAll') || 'Tudo'}</Text>
                 </TouchableOpacity>
-                <TouchableOpacity onPress={toggleSearch} activeOpacity={0.6} style={styles.searchCloseBtn}>
+                <TouchableOpacity onPress={toggleSearch} activeOpacity={0.6} style={styles.searchCloseBtn} accessibilityRole="button" accessibilityLabel={t('a11y.closeSearch')}>
                   <IconClose size={16} color={searchIconC} />
                 </TouchableOpacity>
               </View>
@@ -1228,7 +1228,7 @@ function ChatHub() {
               returnKeyType="search"
               clearButtonMode="while-editing"
               style={[styles.searchInput, { color: colors.text }]} />
-            <TouchableOpacity onPress={toggleSearch} activeOpacity={0.6} style={styles.searchCloseBtn}>
+            <TouchableOpacity onPress={toggleSearch} activeOpacity={0.6} style={styles.searchCloseBtn} accessibilityRole="button" accessibilityLabel={t('a11y.closeSearch')}>
               <IconClose size={16} color={searchIconC} />
             </TouchableOpacity>
           </View>

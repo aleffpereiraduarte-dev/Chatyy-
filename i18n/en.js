@@ -1,4 +1,21 @@
 export default {
+  // [2026-10-09 wa-real]
+  "chatConv.pauseRecording": "Pause recording",
+  "chatConv.resumeRecording": "Resume recording",
+  // [2026-10-09 wa-real]
+  "maps.nearbyPlaces": "Nearby places",
+  "maps.sendThisPlace": "Send this place",
+  // [2026-10-09 wa-real]
+  "settings.blockUnknown": "Block messages from unknown accounts",
+  "settings.blockUnknownDesc": "Messages from people who aren't in your contacts, share no group with you and you've never chatted with won't reach you.",
+  "chatConv.unknownCard.title": "Not in your contacts",
+  "chatConv.unknownCard.noCommonGroups": "No groups in common",
+  "chatConv.unknownCard.commonGroups": "Groups in common: {names}",
+  "chatConv.unknownCard.country": "Number from {country}",
+  "chatConv.unknownCard.newAccount": "Recently created account",
+  "chatConv.unknownCard.hint": "Be careful with requests for money, codes or links. If you don't know them, block.",
+  "chatConv.unknownCard.block": "Block",
+  "chatConv.unknownCard.ok": "OK",
   // [2026-10-09 passkeys]
   "settings.passkeys.title": "Passkeys",
   "settings.passkeys.rowSub": "Sign in with Face ID or fingerprint, no password or code",
@@ -9701,4 +9718,40 @@ export default {
   "plans.aiAct.contacts": "manage contacts", // [2026-10-09 plans-intl]
   "plans.aiAct.reply": "reply to messages", // [2026-10-09 plans-intl]
   "plans.aiAct.translate": "translate texts", // [2026-10-09 plans-intl]
+  // [2026-10-09 a11y-screenreader]
+  "a11y.group": "Group",
+  "a11y.channel": "Channel",
+  "a11y.online": "Online",
+  "a11y.unreadOne": "1 unread message",
+  "a11y.unreadCount": "{n} unread messages",
+  "a11y.mentioned": "You were mentioned",
+  "a11y.msgRead": "Read",
+  "a11y.msgDelivered": "Delivered",
+  "a11y.msgSent": "Sent",
+  "a11y.scheduled": "Scheduled message",
+  "a11y.pinned": "Pinned",
+  "a11y.muted": "Muted",
+  "a11y.viewPhoto": "View profile photo",
+  "a11y.moreOptions": "More options",
+  "a11y.openChatHint": "Double-tap to open. More actions available.",
+  "a11y.voiceMessage": "Voice message",
+  "a11y.forwarded": "Forwarded",
+  "a11y.replyTo": "Replying to {name}",
+  "a11y.replyToMsg": "Replying to a message",
+  "a11y.viewOnce": "View once",
+  "a11y.edited": "Edited",
+  "a11y.msgFailed": "Not sent. Double-tap to retry",
+  "a11y.msgPending": "Sending",
+  "a11y.starred": "Starred",
+  "a11y.reactions": "Reactions: {list}",
+  "a11y.msgHint": "Actions available to reply, react, forward or delete.",
+  "a11y.react": "React",
+  "a11y.delete": "Delete",
+  "a11y.messageInfo": "Message info",
+  "a11y.newMessageFrom": "New message from {name}: {text}",
+  "a11y.searchFilters": "Search filters",
+  "a11y.prevResult": "Previous result",
+  "a11y.nextResult": "Next result",
+  "a11y.closeSearch": "Close search",
+  "a11y.clearSearch": "Clear search",
 };

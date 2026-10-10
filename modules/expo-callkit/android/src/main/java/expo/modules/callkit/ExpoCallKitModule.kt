@@ -1565,6 +1565,72 @@ class ExpoCallKitModule : Module() {
       }
     }
 
+    // [2026-10-09 native-group-call] Capability probe for JS
+    // (services/nativeGroupCall.js): binaries without it keep /call.js.
+    Function("supportsNativeGroupCallUI") { GroupCallActivity.NATIVE_GROUP_UI_VERSION }
+
+    // [2026-10-09 native-group-call] JS mirrors NATIVE_GROUP_CALL_UI here.
+    // Android incoming group accepts already open GroupCallActivity (#1359);
+    // the pref is kept for parity/diagnostics with iOS.
+    Function("setNativeGroupCallUiEnabled") { enabled: Boolean ->
+      try {
+        context.getSharedPreferences("expo_callkit_prefs", Context.MODE_PRIVATE)
+          .edit().putBoolean("chatyy_native_group_call_ui", enabled).apply()
+      } catch (_: Throwable) {}
+      enabled
+    }
+
+    // [2026-10-09 native-group-call] Full native group call launched from JS
+    // (outgoing / join-ongoing). params: roomName, lkUrl, lkToken,
+    // iceServers (array), conversationId, title, hasVideo, isOutgoing,
+    // participants (array of {email|identity, name}).
+    AsyncFunction("openNativeGroupCall") { params: Map<String, Any> ->
+      val roomName = (params["roomName"] as? String) ?: ""
+      if (roomName.isEmpty()) return@AsyncFunction false
+      val lkUrl = (params["lkUrl"] as? String) ?: ""
+      val lkToken = (params["lkToken"] as? String) ?: ""
+      try {
+        if (lkUrl.isNotEmpty() && lkToken.isNotEmpty()) {
+          val ice = try {
+            (params["iceServers"] as? List<*>)?.let { org.json.JSONArray(it) }
+          } catch (_: Throwable) { null }
+          // Stash so GroupCallActivity's connect gets the same ICE (TURN)
+          // list via LkTokenFetcher.connectOptionsFor(token).
+          LkTokenFetcher.setCached(context, roomName, lkToken, lkUrl, ice)
+        }
+        val participantsJson = try {
+          (params["participants"] as? List<*>)?.let { org.json.JSONArray(it).toString() } ?: "[]"
+        } catch (_: Throwable) { "[]" }
+        val conversationId = when (val c = params["conversationId"]) {
+          is String -> c
+          is Number -> c.toLong().toString()
+          else -> ""
+        }
+        val intent = Intent(context, GroupCallActivity::class.java).apply {
+          addFlags(
+            Intent.FLAG_ACTIVITY_NEW_TASK
+              or Intent.FLAG_ACTIVITY_SINGLE_TOP
+              or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
+              or Intent.FLAG_ACTIVITY_CLEAR_TOP
+          )
+          putExtra(GroupCallActivity.EXTRA_ROOM_NAME, roomName)
+          if (lkUrl.isNotEmpty()) putExtra(GroupCallActivity.EXTRA_LK_URL, lkUrl)
+          if (lkToken.isNotEmpty()) putExtra(GroupCallActivity.EXTRA_LK_TOKEN, lkToken)
+          putExtra(GroupCallActivity.EXTRA_PARTICIPANTS_JSON, participantsJson)
+          putExtra(GroupCallActivity.EXTRA_HAS_VIDEO, (params["hasVideo"] as? Boolean) ?: false)
+          putExtra(GroupCallActivity.EXTRA_IS_OUTGOING, (params["isOutgoing"] as? Boolean) ?: true)
+          putExtra(GroupCallActivity.EXTRA_CONVERSATION_ID, conversationId)
+          putExtra(GroupCallActivity.EXTRA_TITLE, (params["title"] as? String) ?: "")
+          enrichIntentWithAuth(context, this)
+        }
+        context.startActivity(intent)
+        true
+      } catch (t: Throwable) {
+        Log.e(TAG, "openNativeGroupCall failed: ${t.message}", t)
+        false
+      }
+    }
+
     // ─── Native WS call signaling (Stage 1, 2026-05-16) ──────────────────
     //
     // JS-callable bridge to CallSignalWs (raw OkHttp WebSocket to

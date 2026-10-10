@@ -1,4 +1,21 @@
 export default {
+  // [2026-10-09 wa-real]
+  "chatConv.pauseRecording": "Metti in pausa la registrazione",
+  "chatConv.resumeRecording": "Riprendi la registrazione",
+  // [2026-10-09 wa-real]
+  "maps.nearbyPlaces": "Luoghi vicini",
+  "maps.sendThisPlace": "Invia questo luogo",
+  // [2026-10-09 wa-real]
+  "settings.blockUnknown": "Blocca i messaggi da sconosciuti",
+  "settings.blockUnknownDesc": "I messaggi di chi non è nei tuoi contatti, non ha gruppi in comune con te e con cui non hai mai chattato non ti arriveranno.",
+  "chatConv.unknownCard.title": "Non è nei tuoi contatti",
+  "chatConv.unknownCard.noCommonGroups": "Nessun gruppo in comune",
+  "chatConv.unknownCard.commonGroups": "Gruppi in comune: {names}",
+  "chatConv.unknownCard.country": "Numero di {country}",
+  "chatConv.unknownCard.newAccount": "Account creato di recente",
+  "chatConv.unknownCard.hint": "Attenzione a richieste di denaro, codici o link. Se non lo conosci, bloccalo.",
+  "chatConv.unknownCard.block": "Blocca",
+  "chatConv.unknownCard.ok": "OK",
   // [2026-10-09 passkeys]
   "settings.passkeys.title": "Passkey",
   "settings.passkeys.rowSub": "Accedi con Face ID o impronta, senza password né codice",
@@ -9731,4 +9748,40 @@ export default {
   "plans.aiAct.contacts": "gestire i contatti", // [2026-10-09 plans-intl]
   "plans.aiAct.reply": "rispondere ai messaggi", // [2026-10-09 plans-intl]
   "plans.aiAct.translate": "tradurre testi", // [2026-10-09 plans-intl]
+  // [2026-10-09 a11y-screenreader]
+  "a11y.group": "Gruppo",
+  "a11y.channel": "Canale",
+  "a11y.online": "Online",
+  "a11y.unreadOne": "1 messaggio non letto",
+  "a11y.unreadCount": "{n} messaggi non letti",
+  "a11y.mentioned": "Sei stato menzionato",
+  "a11y.msgRead": "Letto",
+  "a11y.msgDelivered": "Consegnato",
+  "a11y.msgSent": "Inviato",
+  "a11y.scheduled": "Messaggio programmato",
+  "a11y.pinned": "Fissato",
+  "a11y.muted": "Silenziato",
+  "a11y.viewPhoto": "Vedi foto profilo",
+  "a11y.moreOptions": "Altre opzioni",
+  "a11y.openChatHint": "Tocca due volte per aprire. Altre azioni disponibili.",
+  "a11y.voiceMessage": "Messaggio vocale",
+  "a11y.forwarded": "Inoltrato",
+  "a11y.replyTo": "In risposta a {name}",
+  "a11y.replyToMsg": "In risposta a un messaggio",
+  "a11y.viewOnce": "Visualizza una volta",
+  "a11y.edited": "Modificato",
+  "a11y.msgFailed": "Non inviato. Tocca due volte per riprovare",
+  "a11y.msgPending": "Invio in corso",
+  "a11y.starred": "Importante",
+  "a11y.reactions": "Reazioni: {list}",
+  "a11y.msgHint": "Azioni disponibili per rispondere, reagire, inoltrare o eliminare.",
+  "a11y.react": "Reagisci",
+  "a11y.delete": "Elimina",
+  "a11y.messageInfo": "Info messaggio",
+  "a11y.newMessageFrom": "Nuovo messaggio da {name}: {text}",
+  "a11y.searchFilters": "Filtri di ricerca",
+  "a11y.prevResult": "Risultato precedente",
+  "a11y.nextResult": "Risultato successivo",
+  "a11y.closeSearch": "Chiudi ricerca",
+  "a11y.clearSearch": "Cancella ricerca",
 };

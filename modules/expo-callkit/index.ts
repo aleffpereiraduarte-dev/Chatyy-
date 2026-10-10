@@ -147,6 +147,7 @@ declare class ExpoCallKitModuleType extends NativeModule<ExpoCallKitEvents> {
     call_id?: string;
     lk_url?: string;
     lk_token?: string;
+    p2p_json?: string;
   }): Promise<boolean>;
   // [2026-05-16] Group-call scaffold (Android). Launches GroupCallActivity
   // with an N×N grid of tiles, one per remote participant. Participants are
@@ -160,6 +161,13 @@ declare class ExpoCallKitModuleType extends NativeModule<ExpoCallKitEvents> {
     participantsJson: string,
     hasVideo: boolean
   ): Promise<void>;
+  // [2026-10-09 native-group-call] Full native group call (iOS
+  // GroupCallViewController / Android GroupCallActivity). Optional: only
+  // binaries built after 2026-10-09 have them — gate on
+  // supportsNativeGroupCallUI() (returns the contract version, >= 1).
+  supportsNativeGroupCallUI?(): number;
+  setNativeGroupCallUiEnabled?(enabled: boolean): boolean;
+  openNativeGroupCall?(params: Record<string, any>): Promise<boolean>;
 
   // [2026-05-17 RNNoise] Per-user ML noise suppression toggle. Default ON.
   // Returns the current state from native SharedPreferences (Android) /
@@ -697,6 +705,9 @@ export interface StartOutgoingCallParams {
   lkUrl?: string;
   /** LiveKit access token (publisher grant). Pair with `lkUrl`. */
   lkToken?: string;
+  /** [2026-10-09 p2p-ios] `p2p` do chat_call_invite_v2 serializado (JSON).
+   *  Binários antigos ignoram a chave. */
+  p2pJson?: string;
 }
 
 /** Stage #996 — kick off an outgoing call through the native CallKit /
@@ -731,6 +742,7 @@ export async function startOutgoingCall(params: StartOutgoingCallParams): Promis
     call_id: s(params.callId),
     lk_url: s(params.lkUrl),
     lk_token: s(params.lkToken),
+    p2p_json: s(params.p2pJson), // [2026-10-09 p2p-ios]
   });
 }
 
@@ -750,6 +762,66 @@ export async function openGroupCall(params: OpenGroupCallParams): Promise<void> 
     JSON.stringify(params.participants ?? []),
     params.hasVideo
   );
+}
+
+/** [2026-10-09 native-group-call] Contract version of the native group-call
+ *  screen in this binary (0 = absent → keep the JS /call.js group path). */
+export function nativeGroupCallUiVersion(): number {
+  const m = getModule();
+  try {
+    const v = m && typeof m.supportsNativeGroupCallUI === 'function' ? m.supportsNativeGroupCallUI() : 0;
+    return typeof v === 'number' ? v : (v ? 1 : 0);
+  } catch {
+    return 0;
+  }
+}
+
+/** [2026-10-09 native-group-call] Mirror the JS flag into native storage so
+ *  the CallKit answer path (no JS) routes GROUP calls to the native screen. */
+export function setNativeGroupCallUiEnabled(enabled: boolean): boolean {
+  const m = getModule();
+  try {
+    if (m && typeof m.setNativeGroupCallUiEnabled === 'function') {
+      return !!m.setNativeGroupCallUiEnabled(!!enabled);
+    }
+  } catch {}
+  return false;
+}
+
+export interface OpenNativeGroupCallParams {
+  roomName: string;
+  lkUrl?: string;
+  lkToken?: string;
+  iceServers?: any[];
+  conversationId?: string;
+  title?: string;
+  hasVideo: boolean;
+  isOutgoing: boolean;
+  participants?: Array<{ email: string; name?: string }>;
+}
+
+/** [2026-10-09 native-group-call] Opens the full native group call. Resolves
+ *  false when the binary lacks it or presentation failed (caller falls back
+ *  to /call?groupCall=1). */
+export async function openNativeGroupCall(params: OpenNativeGroupCallParams): Promise<boolean> {
+  const m = getModule();
+  if (!m || typeof m.openNativeGroupCall !== 'function') return false;
+  try {
+    const ok = await m.openNativeGroupCall({
+      roomName: String(params.roomName || ''),
+      lkUrl: String(params.lkUrl || ''),
+      lkToken: String(params.lkToken || ''),
+      iceServers: Array.isArray(params.iceServers) ? params.iceServers : [],
+      conversationId: String(params.conversationId || ''),
+      title: String(params.title || ''),
+      hasVideo: !!params.hasVideo,
+      isOutgoing: !!params.isOutgoing,
+      participants: Array.isArray(params.participants) ? params.participants : [],
+    });
+    return ok !== false;
+  } catch {
+    return false;
+  }
 }
 
 type LkEventName =

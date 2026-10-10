@@ -135,6 +135,10 @@ async function _runSync(convIds) {
         lastErr = r?.error || 'no_success';
         break;
       }
+      // [2026-10-09 push-token-forever] servidor pediu re-registro do token de push.
+      if (r.data?.push_rereg) {
+        try { require('./pushNotifications').requestPushReregister?.('sync'); } catch {}
+      }
       const out = Array.isArray(r.data?.conversations) ? r.data.conversations : [];
       for (const c of out) {
         if (c?.denied) { gapStreak.delete(c.id); continue; }

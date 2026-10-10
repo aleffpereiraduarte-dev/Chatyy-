@@ -551,6 +551,8 @@ export async function startOutgoingCall({
     callId: String(cid ?? ''),
     lkUrl: v2Data.lk_url ? String(v2Data.lk_url) : '',
     lkToken: v2Data.lk_token ? String(v2Data.lk_token) : '',
+    // [2026-10-09 p2p-ios] flag P2P da ligação → nativo (binário antigo ignora).
+    p2pJson: (() => { try { return v2Data.p2p ? JSON.stringify(v2Data.p2p) : ''; } catch { return ''; } })(),
   };
   try {
     console.log('[CALL-TRACE][4/12] ExpoCallKit.startOutgoingCall payload', {

@@ -588,6 +588,34 @@ function _removeTyperByEmail(prev, convId, email) {
   return next;
 }
 
+// [2026-10-09 a11y-list] Leitor de tela (VoiceOver/TalkBack): a linha vira UM
+// elemento com rótulo completo (nome · tipo · não lidas · prévia · hora ·
+// fixada/silenciada) + ações nomeadas (arquivar, fixar, silenciar, lida/não
+// lida, apagar, foto). Antes cada Text era lido solto e o swipe (única via
+// para essas ações) é inacessível com o leitor ligado.
+// t() devolve a CHAVE quando falta tradução → _a11yT cai no fallback pt-BR.
+function _a11yT(t, key, fb, params) {
+  let r = null;
+  try { r = t ? t(key, params) : null; } catch {}
+  if (!r || r === key) {
+    r = fb;
+    if (params && typeof r === 'string') Object.keys(params).forEach(k => { r = r.split(`{${k}}`).join(String(params[k])); });
+  }
+  return r;
+}
+function _a11yPreviewPlain(str) {
+  if (typeof str !== 'string') return '';
+  if (str.length >= 2 && PREVIEW_EMOJI_ICONS[str.slice(0, 2)]) return str.slice(2).replace(/^[️\s]+/, '');
+  return str;
+}
+// Fonte grande: a FlashList v2 mede as linhas, mas a estimativa inicial (e o
+// skeleton) acompanham a escala do sistema para não "pular" no primeiro paint.
+function _rowEstimate() {
+  let fs = 1;
+  try { fs = require('react-native').PixelRatio.getFontScale() || 1; } catch {}
+  return Math.round(74 * Math.min(Math.max(fs, 1), 1.35));
+}
+
 const ConversationRow = React.memo(function ConversationRow({
   conversation, colors, onPress, onPressIn, onDelete, onArchive, onMute, onPin, onMarkUnread, onEmail,
   currentEmail, t, language, isOnline: isOnlineProp, isDark, isLocked, typingUsers,
@@ -1143,9 +1171,76 @@ const ConversationRow = React.memo(function ConversationRow({
   // context handlers/delays/activeOpacity) pass straight through unchanged.
   // [2026-10-07 app-feel-ui] PressableRow: native cell feedback (iOS gray
   // highlight / Android ripple, NO shrink+fade). Web keeps PressableScale.
+  // [2026-10-09 a11y-list] rótulo agregado + ações do leitor de tela.
+  const _a11yRowLabel = isWeb ? '' : (() => {
+    const parts = [displayName];
+    if (isGroup) parts.push(_a11yT(t, 'a11y.group', 'Grupo'));
+    else if (isChannel) parts.push(_a11yT(t, 'a11y.channel', 'Canal'));
+    else if (isOnline) parts.push(_a11yT(t, 'a11y.online', 'Online'));
+    const uc = Number(conversation.unread_count) || 0;
+    if (uc === 1) parts.push(_a11yT(t, 'a11y.unreadOne', '1 mensagem não lida'));
+    else if (uc > 1) parts.push(_a11yT(t, 'a11y.unreadCount', '{n} mensagens não lidas', { n: uc }));
+    if (conversation.unread_mentions > 0) parts.push(_a11yT(t, 'a11y.mentioned', 'Você foi mencionado'));
+    if (isLocked) {
+      parts.push(_a11yT(t, 'chat.lockedChat', 'Chat bloqueado'));
+    } else if (typingName) {
+      parts.push(`${isGroup ? typingName + ' ' : ''}${typingRecording ? _a11yT(t, 'chat.recordingAudio', 'gravando áudio...') : _a11yT(t, 'chat.typing', 'digitando...')}`);
+    } else if (draftText) {
+      parts.push(`${_a11yT(t, 'chat.draft', 'Rascunho')}: ${draftText}`);
+    } else if (lastMsg) {
+      const pv = _a11yPreviewPlain(preview);
+      if (statusType) {
+        const st = statusType === 'read' ? _a11yT(t, 'a11y.msgRead', 'Lida')
+          : statusType === 'delivered' ? _a11yT(t, 'a11y.msgDelivered', 'Entregue')
+          : _a11yT(t, 'a11y.msgSent', 'Enviada');
+        parts.push(`${_a11yT(t, 'common.you', 'Você')}: ${pv}`, st);
+      } else if (previewSender) {
+        parts.push(`${previewSender}: ${pv}`);
+      } else if (pv) {
+        parts.push(pv);
+      }
+    }
+    if (lastMsg) { try { parts.push(formatChatTime(lastMsg.created_at, t, regionalLocale(language))); } catch {} }
+    if (hasScheduled) parts.push(_a11yT(t, 'a11y.scheduled', 'Mensagem agendada'));
+    if (isPinned) parts.push(_a11yT(t, 'a11y.pinned', 'Fixada'));
+    if (isMuted) parts.push(_a11yT(t, 'a11y.muted', 'Silenciada'));
+    return parts.filter(Boolean).join(', ');
+  })();
+  const _a11yRowActions = selectionMode ? [] : [
+    { name: 'toggleRead', label: unread ? _a11yT(t, 'chat.markRead', 'Marcar como lida') : _a11yT(t, 'chat.markUnread', 'Marcar como não lida') },
+    { name: 'pin', label: isPinned ? _a11yT(t, 'chat.unpin', 'Desafixar') : _a11yT(t, 'chat.pin', 'Fixar') },
+    { name: 'mute', label: isMuted ? _a11yT(t, 'chat.unmute', 'Reativar som') : _a11yT(t, 'chat.mute', 'Silenciar') },
+    { name: 'archive', label: isArchived ? _a11yT(t, 'chat.unarchive', 'Desarquivar') : _a11yT(t, 'chat.archive', 'Arquivar') },
+    { name: 'delete', label: _a11yT(t, 'chat.delete', 'Apagar') },
+    ...((onAvatarPress && !isGroup && !isChannel) ? [{ name: 'photo', label: _a11yT(t, 'a11y.viewPhoto', 'Ver foto do perfil') }] : []),
+    { name: 'more', label: _a11yT(t, 'a11y.moreOptions', 'Mais opções') },
+  ];
+  const _onA11yRowAction = (e) => {
+    const n = e?.nativeEvent?.actionName;
+    try {
+      if (n === 'toggleRead') onMarkUnread?.(conversation);
+      else if (n === 'pin') onPin?.(conversation);
+      else if (n === 'mute') onMute?.(conversation);
+      else if (n === 'archive') onArchive?.(conversation);
+      else if (n === 'delete') onDelete?.(conversation);
+      else if (n === 'photo') onAvatarPress?.({ name: displayName, email: otherEmail });
+      else if (n === 'more') onLongPress?.(conversation);
+    } catch {}
+  };
   const rowContent = (
         <PressableRow
           haptic={false}
+          // Web: sem role/label agregados — o avatar é um botão aninhado (axe
+          // nested-interactive) e as ações customizadas não existem no DOM.
+          {...(!isWeb ? {
+            accessible: true,
+            accessibilityRole: 'button',
+            accessibilityLabel: _a11yRowLabel,
+            accessibilityHint: selectionMode ? undefined : _a11yT(t, 'a11y.openChatHint', 'Toque duas vezes para abrir. Há mais ações disponíveis.'),
+            accessibilityState: selectionMode ? { selected: !!isSelected } : undefined,
+            accessibilityActions: _a11yRowActions,
+            onAccessibilityAction: _onA11yRowAction,
+          } : {})}
           style={[
             s.row,
             {
@@ -6145,6 +6240,21 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
   const [messageHits, setMessageHits] = useState([]);
   const [searchingMessages, setSearchingMessages] = useState(false);
   const latestSearchReqId = useRef(0);
+  // [2026-10-09 wa-real #3] Busca global LOCAL primeiro (FTS5 do SQLite do
+  // aparelho, services/db.js dbSearchMessages, prefixo por palavra) — aparece
+  // na hora e funciona offline. O servidor vem por cima e COMPLEMENTA (antes
+  // substituía a lista inteira): mescla por id, servidor ganha no conteúdo.
+  // Offline → nem chama o servidor. Hits locais ganham nome/tipo da conversa
+  // pela lista já carregada (antes caíam em type='text' e nome = e-mail).
+  const _searchConvIndexRef = useRef(new Map());
+  useEffect(() => {
+    const m = new Map();
+    try {
+      for (const c of (Array.isArray(conversations) ? conversations : [])) if (c && c.id != null) m.set(String(c.id), c);
+      for (const c of (Array.isArray(archivedConversations) ? archivedConversations : [])) if (c && c.id != null && !m.has(String(c.id))) m.set(String(c.id), c);
+    } catch {}
+    _searchConvIndexRef.current = m;
+  }, [conversations, archivedConversations]);
   useEffect(() => {
     const q = (searchQuery || '').trim();
     if (q.length < 2) {
@@ -6155,21 +6265,59 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
     }
     const myId = ++latestSearchReqId.current;
     setSearchingMessages(true);
+    let _localHits = [];
+    const _hitKey = (h) => `${h.conversation_id}:${h.id}`;
+    const _byNewest = (a, b) => String(b.created_at || '').localeCompare(String(a.created_at || ''));
+    const _enrichLocal = (m) => {
+      const conv = _searchConvIndexRef.current.get(String(m.conversation_id));
+      const out = { ...m, _local: true };
+      if (conv) {
+        out.conv_name = out.conv_name || conv.name || conv.display_name || conv.title || '';
+        out.conv_type = conv.type || conv.conversation_type || (conv.is_group ? 'group' : 'direct');
+        const peer = conv.other_email || conv.peer_email || conv.contact_email || '';
+        if (peer) out.peer_email = out.peer_email || peer;
+      } else {
+        // Sem a conversa na lista: não deixar o tipo da MENSAGEM ('text')
+        // virar o tipo da conversa no push da rota.
+        out.conv_type = out.conv_type || 'direct';
+      }
+      return out;
+    };
+    let _online = true;
+    try { _online = require('../services/offlineCache').isOnline() !== false; } catch {}
     (async () => {
       try {
         const { dbSearchMessages } = require('../services/db');
-        const local = await dbSearchMessages(q, 20);
+        const local = await dbSearchMessages(q, 30, null, { prefix: true });
         if (myId !== latestSearchReqId.current) return;
         if (Array.isArray(local) && local.length) {
-          const mapped = local.map(m => {
-            let raw = null; try { raw = m.raw_json ? JSON.parse(m.raw_json) : null; } catch {}
-            return { ...(raw || {}), id: m.id, conversation_id: m.conversation_id, content: m.content, sender_email: m.sender_email, created_at: m.created_at, _local: true };
-          });
-          setMessageHits(mapped);
+          const seen = new Set();
+          _localHits = [];
+          for (const m0 of local) {
+            const m = m0 && m0._row ? { ...m0, id: m0.id ?? m0._row.id, conversation_id: m0.conversation_id ?? m0._row.conversation_id } : m0;
+            if (!m || m.id == null) continue;
+            const hit = _enrichLocal({
+              ...m,
+              id: m.id,
+              conversation_id: m.conversation_id,
+              content: m.content,
+              sender_email: m.sender_email,
+              created_at: m.created_at,
+            });
+            delete hit._row;
+            const k = _hitKey(hit);
+            if (seen.has(k)) continue;
+            seen.add(k); _localHits.push(hit);
+          }
+          setMessageHits(_localHits.slice(0, 20));
           setSearchingMessages(false);
         }
-      } catch {}
+        if (!_online && myId === latestSearchReqId.current) setSearchingMessages(false);
+      } catch {
+        if (!_online && myId === latestSearchReqId.current) setSearchingMessages(false);
+      }
     })();
+    if (!_online) return undefined;
     const timer = setTimeout(async () => {
       try {
         const r = await api.apiCall('chat_search', { query: q, limit: 20 });
@@ -6181,11 +6329,18 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
           const seen = new Set();
           const merged = [];
           for (const hit of raw) {
-            const key = `${hit.conversation_id}:${hit.id}`;
+            const key = _hitKey(hit);
             if (seen.has(key)) continue;
             seen.add(key); merged.push(hit);
           }
-          setMessageHits(merged);
+          // Locais que o servidor não trouxe (ex.: só no aparelho) continuam.
+          for (const h of _localHits) {
+            const key = _hitKey(h);
+            if (seen.has(key)) continue;
+            seen.add(key); merged.push(h);
+          }
+          merged.sort(_byNewest);
+          setMessageHits(merged.slice(0, 30));
         } else {
           setMessageHits(prev => prev.filter(m => m._local));
         }
@@ -7493,16 +7648,16 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
             >
               <IconMail size={20} color={colors.text} />
             </TouchableOpacity>
-            <TouchableOpacity onPress={handleBulkPin} style={{ padding: 6 }}>
+            <TouchableOpacity onPress={handleBulkPin} style={{ padding: 6 }} accessibilityRole="button" accessibilityLabel={_a11yT(t, 'chat.pin', 'Fixar')}>
               <IconPin size={20} color={colors.text} />
             </TouchableOpacity>
-            <TouchableOpacity onPress={handleBulkMute} style={{ padding: 6 }}>
+            <TouchableOpacity onPress={handleBulkMute} style={{ padding: 6 }} accessibilityRole="button" accessibilityLabel={_a11yT(t, 'chat.mute', 'Silenciar')}>
               <IconVolume2 size={20} color={colors.text} />
             </TouchableOpacity>
-            <TouchableOpacity onPress={handleBulkArchive} style={{ padding: 6 }}>
+            <TouchableOpacity onPress={handleBulkArchive} style={{ padding: 6 }} accessibilityRole="button" accessibilityLabel={_a11yT(t, 'chat.archive', 'Arquivar')}>
               <IconArchive size={20} color={colors.text} />
             </TouchableOpacity>
-            <TouchableOpacity onPress={handleBulkDelete} style={{ padding: 6 }}>
+            <TouchableOpacity onPress={handleBulkDelete} style={{ padding: 6 }} accessibilityRole="button" accessibilityLabel={_a11yT(t, 'chat.delete', 'Apagar')}>
               <IconTrash size={20} color={colors.error || '#EF4444'} />
             </TouchableOpacity>
           </View>
@@ -7553,7 +7708,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
           onLoad={_onListLoad}
           data={visibleConversations}
           keyExtractor={keyExtractor}
-          estimatedItemSize={74}
+          estimatedItemSize={_rowEstimate()}
           ListHeaderComponent={_listHeaderEl}
           ListFooterComponent={ListFooterComponent}
           renderItem={renderItem}

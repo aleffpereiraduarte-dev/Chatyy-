@@ -45,7 +45,7 @@
 import React, { useEffect, useState, useRef } from 'react';
 import {
   View, Text, TouchableOpacity, Modal, Pressable, ActivityIndicator,
-  Platform, KeyboardAvoidingView, TextInput,
+  Platform, KeyboardAvoidingView, TextInput, ScrollView, StyleSheet,
 } from 'react-native';
 import { WebView } from 'react-native-webview';
 import Svg, { Defs, RadialGradient, LinearGradient, Stop, Rect, Circle, Path, Ellipse, G } from 'react-native-svg';
@@ -54,7 +54,7 @@ import * as api from '../services/api';
 import { boraStyleUrl } from './BoraMap';
 // [2026-10-07 native-maps] native map (iOS MapKit / Android MapLibre Native) when
 // the binary ships ChatyyMapView; otherwise the WebView preview below is used.
-import { ChatyyMap, isNativeMapAvailable, nativeMapStyleUrl } from './NativeMap';
+import { ChatyyMap, isNativeMapAvailable, nativeMapStyleUrl, nearbyPlaces } from './NativeMap';
 import { MapFab, MapSearchBar, IconLocate } from './MapControls';
 
 // [2026-10-08 chat-fix-composer-location] P&B premium. O verde WhatsApp
@@ -393,6 +393,81 @@ function NativePickerMap({ gps, height, colors, isDark, t, onPick }) {
   );
 }
 
+// [2026-10-09 wa-real #6] "Lugares próximos" (WhatsApp): POIs do OSM em volta
+// do ponto atual / escolhido (Photon, sem Google). Toque = envia aquele lugar
+// com nome + endereço. Debounce 600 ms e cancela a busca anterior.
+function _fmtDist(m) {
+  if (!Number.isFinite(m)) return '';
+  if (m < 1000) return `${Math.max(1, Math.round(m))} m`;
+  return `${(m / 1000).toFixed(1).replace('.', ',')} km`;
+}
+function NearbyPlacesList({ lat, lng, colors, isDark, t, disabled, onSelect }) {
+  const [items, setItems] = useState([]);
+  const [state, setState] = useState('loading'); // loading | ok | empty | error
+  useEffect(() => {
+    const la = Number(lat); const lo = Number(lng);
+    if (!Number.isFinite(la) || !Number.isFinite(lo)) return undefined;
+    let alive = true;
+    const ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+    setState(prev => (prev === 'ok' ? 'ok' : 'loading'));
+    const tm = setTimeout(async () => {
+      const killer = setTimeout(() => { try { ctrl?.abort(); } catch {} }, 8000);
+      try {
+        const list = await nearbyPlaces(la, lo, { signal: ctrl?.signal });
+        if (!alive) return;
+        setItems(list);
+        setState(list.length ? 'ok' : 'empty');
+      } catch {
+        if (alive) setState('error');
+      } finally { clearTimeout(killer); }
+    }, 600);
+    return () => { alive = false; clearTimeout(tm); try { ctrl?.abort(); } catch {} };
+  }, [Number(lat).toFixed(4), Number(lng).toFixed(4)]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  if (state === 'error' || state === 'empty') return null;
+  const cardBg = isDark ? 'rgba(255,255,255,0.06)' : 'rgba(17,17,17,0.04)';
+  const border = isDark ? 'rgba(255,255,255,0.10)' : 'rgba(17,17,17,0.08)';
+  // Linha horizontal de cartões: não disputa o gesto vertical do mapa nem
+  // aumenta muito a altura do sheet (que não rola).
+  return (
+    <View style={{ marginTop: 16 }}>
+      <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8, marginLeft: 4, gap: 8 }}>
+        <Text style={{ fontSize: 11.5, fontWeight: '600', color: colors.textSecondary, letterSpacing: 0.6 }}>
+          {(t?.('maps.nearbyPlaces') || 'Lugares próximos').toUpperCase()}
+        </Text>
+        {state === 'loading' ? <ActivityIndicator size="small" color={colors.textSecondary} /> : null}
+      </View>
+      {items.length > 0 && (
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} keyboardShouldPersistTaps="handled" contentContainerStyle={{ gap: 8, paddingRight: 4 }}>
+          {items.map((p) => (
+            <TouchableOpacity
+              key={p.id}
+              onPress={() => { if (!disabled) onSelect?.(p); }}
+              disabled={disabled}
+              activeOpacity={0.6}
+              accessibilityRole="button"
+              accessibilityLabel={`${t?.('maps.sendThisPlace') || 'Enviar este lugar'}: ${p.title}${p.subtitle ? ', ' + p.subtitle : ''}, ${_fmtDist(p.distanceM)}`}
+              style={{
+                width: 168, minHeight: 58, borderRadius: 12, paddingHorizontal: 10, paddingVertical: 8,
+                backgroundColor: cardBg, borderWidth: StyleSheet.hairlineWidth, borderColor: border,
+                flexDirection: 'row', alignItems: 'center', gap: 8, opacity: disabled ? 0.5 : 1,
+              }}
+            >
+              <IconMapPin size={16} color={colors.text} />
+              <View style={{ flex: 1 }}>
+                <Text style={{ color: colors.text, fontSize: 13.5, fontWeight: '600' }} numberOfLines={1}>{p.title}</Text>
+                <Text style={{ color: colors.textSecondary, fontSize: 11.5, marginTop: 1 }} numberOfLines={1}>
+                  {_fmtDist(p.distanceM)}{p.subtitle ? ` · ${p.subtitle}` : ''}
+                </Text>
+              </View>
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
+      )}
+    </View>
+  );
+}
+
 const LIVE_DURATIONS = [
   { key: '15m', label: '15 min', seconds: 15 * 60 },
   { key: '1h',  label: '1 hora', seconds: 60 * 60 },
@@ -608,6 +683,17 @@ export default function LocationPickerSheet({ visible, onClose, onSend, onLiveSt
     return () => { active = false; cancelRef.current = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible]);
+
+  // [2026-10-09 wa-real #6] envia um lugar próximo (nome + endereço).
+  const handleSendPlace = (p) => {
+    if (!p || sending) return;
+    setSending(true);
+    onSend?.({
+      latitude: p.latitude,
+      longitude: p.longitude,
+      address: [p.title, p.subtitle].filter(Boolean).join(' — '),
+    });
+  };
 
   const handleSend = () => {
     if (!coords || sending) return;
@@ -858,6 +944,17 @@ export default function LocationPickerSheet({ visible, onClose, onSend, onLiveSt
                 </Text>
               </TouchableOpacity>
 
+              {/* [2026-10-09 wa-real #6] lugares próximos do ponto atual/escolhido */}
+              <NearbyPlacesList
+                lat={(picked || coords).latitude}
+                lng={(picked || coords).longitude}
+                colors={colors}
+                isDark={isDark}
+                t={t}
+                disabled={sending}
+                onSelect={handleSendPlace}
+              />
+
               {/* Live location chips — picking a duration jumps to the
                   confirm step instead of starting broadcast immediately
                   (WhatsApp parity: avoids accidental "I just shared my
@@ -914,6 +1011,7 @@ export default function LocationPickerSheet({ visible, onClose, onSend, onLiveSt
                   </View>
                 </View>
               )}
+
             </>
           )}
 

@@ -1,4 +1,21 @@
 export default {
+  // [2026-10-09 wa-real]
+  "chatConv.pauseRecording": "Aufnahme pausieren",
+  "chatConv.resumeRecording": "Aufnahme fortsetzen",
+  // [2026-10-09 wa-real]
+  "maps.nearbyPlaces": "Orte in der Nähe",
+  "maps.sendThisPlace": "Diesen Ort senden",
+  // [2026-10-09 wa-real]
+  "settings.blockUnknown": "Nachrichten von Unbekannten blockieren",
+  "settings.blockUnknownDesc": "Nachrichten von Personen, die nicht in deinen Kontakten sind, keine gemeinsame Gruppe haben und mit denen du nie geschrieben hast, kommen nicht an.",
+  "chatConv.unknownCard.title": "Nicht in deinen Kontakten",
+  "chatConv.unknownCard.noCommonGroups": "Keine gemeinsamen Gruppen",
+  "chatConv.unknownCard.commonGroups": "Gemeinsame Gruppen: {names}",
+  "chatConv.unknownCard.country": "Nummer aus {country}",
+  "chatConv.unknownCard.newAccount": "Kürzlich erstelltes Konto",
+  "chatConv.unknownCard.hint": "Vorsicht bei Bitten um Geld, Codes oder Links. Wenn du die Person nicht kennst, blockiere sie.",
+  "chatConv.unknownCard.block": "Blockieren",
+  "chatConv.unknownCard.ok": "OK",
   // [2026-10-09 passkeys]
   "settings.passkeys.title": "Passkeys",
   "settings.passkeys.rowSub": "Mit Face ID oder Fingerabdruck anmelden, ohne Passwort oder Code",
@@ -9731,4 +9748,40 @@ export default {
   "plans.aiAct.contacts": "Kontakte verwalten", // [2026-10-09 plans-intl]
   "plans.aiAct.reply": "Nachrichten beantworten", // [2026-10-09 plans-intl]
   "plans.aiAct.translate": "Texte übersetzen", // [2026-10-09 plans-intl]
+  // [2026-10-09 a11y-screenreader]
+  "a11y.group": "Gruppe",
+  "a11y.channel": "Kanal",
+  "a11y.online": "Online",
+  "a11y.unreadOne": "1 ungelesene Nachricht",
+  "a11y.unreadCount": "{n} ungelesene Nachrichten",
+  "a11y.mentioned": "Du wurdest erwähnt",
+  "a11y.msgRead": "Gelesen",
+  "a11y.msgDelivered": "Zugestellt",
+  "a11y.msgSent": "Gesendet",
+  "a11y.scheduled": "Geplante Nachricht",
+  "a11y.pinned": "Angeheftet",
+  "a11y.muted": "Stummgeschaltet",
+  "a11y.viewPhoto": "Profilbild ansehen",
+  "a11y.moreOptions": "Weitere Optionen",
+  "a11y.openChatHint": "Zum Öffnen doppeltippen. Weitere Aktionen verfügbar.",
+  "a11y.voiceMessage": "Sprachnachricht",
+  "a11y.forwarded": "Weitergeleitet",
+  "a11y.replyTo": "Antwort an {name}",
+  "a11y.replyToMsg": "Antwort auf eine Nachricht",
+  "a11y.viewOnce": "Einmalansicht",
+  "a11y.edited": "Bearbeitet",
+  "a11y.msgFailed": "Nicht gesendet. Zum Wiederholen doppeltippen",
+  "a11y.msgPending": "Wird gesendet",
+  "a11y.starred": "Markiert",
+  "a11y.reactions": "Reaktionen: {list}",
+  "a11y.msgHint": "Aktionen zum Antworten, Reagieren, Weiterleiten oder Löschen verfügbar.",
+  "a11y.react": "Reagieren",
+  "a11y.delete": "Löschen",
+  "a11y.messageInfo": "Nachrichteninfo",
+  "a11y.newMessageFrom": "Neue Nachricht von {name}: {text}",
+  "a11y.searchFilters": "Suchfilter",
+  "a11y.prevResult": "Vorheriges Ergebnis",
+  "a11y.nextResult": "Nächstes Ergebnis",
+  "a11y.closeSearch": "Suche schließen",
+  "a11y.clearSearch": "Suche löschen",
 };

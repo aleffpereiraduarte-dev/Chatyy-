@@ -689,6 +689,8 @@ async function _pushMentionsCurrentUser(data, content) {
 // deliberately skipped the OS dialog (pre-permission primer pending), so
 // ensurePushTokenFresh doesn't count it as a failure (stale banner).
 let _lastRegisterDeferred = false;
+// [2026-10-09 wa-real #15] marcador "já pedimos a permissão de push uma vez".
+const PUSH_PERM_ASKED_KEY = 'push_perm_asked_v1';
 
 export async function registerForPushNotifications(opts = {}) {
   _lastRegisterDeferred = false;
@@ -709,6 +711,7 @@ export async function registerForPushNotifications(opts = {}) {
     const _existingPerm = await Notifications.getPermissionsAsync();
     const existingStatus = _existingPerm?.status;
     _diagPush('existing_perm', existingStatus);
+    _lastPermStatus = String(existingStatus || '');
     let finalStatus = existingStatus;
 
     // [2026-10-07 native-polish] Pre-permission primer (gap P0-6: 56% of
@@ -752,18 +755,36 @@ export async function registerForPushNotifications(opts = {}) {
         return null;
       }
     } else if (existingStatus !== 'granted') {
-      const { status } = await Notifications.requestPermissionsAsync({
-        ios: {
-          allowAlert: true,
-          allowBadge: true,
-          allowSound: true,
-          allowProvisional: false,
-        },
-      });
-      finalStatus = status;
-      _diagPush('request_perm', finalStatus);
+      // [2026-10-09 wa-real #15] Pedir UMA vez. Um iPhone "pediu" 58× com
+      // status denied (iOS nunca mais mostra o diálogo depois do 1º "Não"; a
+      // chamada só devolvia denied a cada boot e o usuário ficava sem aviso).
+      // Caminho automático: se o SO não deixa pedir de novo (canAskAgain
+      // false / denied) ou já pedimos uma vez neste aparelho → não chama o
+      // diálogo; liga o aviso "Ativar nos Ajustes" (PushTokenStaleBanner).
+      let _askedOnce = false;
+      try { _askedOnce = !!getJSON(PUSH_PERM_ASKED_KEY, false); } catch {}
+      const _osBlocked = _existingPerm?.canAskAgain === false || existingStatus === 'denied';
+      if (!_userInitiated && (_osBlocked || _askedOnce)) {
+        finalStatus = existingStatus;
+        _diagPush('perm_skip_settings', String(existingStatus) + (_osBlocked ? ':blocked' : ':asked'));
+      } else {
+        const { status } = await Notifications.requestPermissionsAsync({
+          ios: {
+            allowAlert: true,
+            allowBadge: true,
+            allowSound: true,
+            allowProvisional: false,
+          },
+        });
+        finalStatus = status;
+        try { setJSON(PUSH_PERM_ASKED_KEY, true); } catch {}
+        _diagPush('request_perm', finalStatus);
+      }
     }
+    // Aviso persistente que leva aos Ajustes enquanto a permissão estiver negada.
+    try { globalThis.__chatyy_push_denied = (finalStatus !== 'granted' && !_primerGate); } catch {}
 
+    _lastPermStatus = (Platform.OS === 'ios' && _primerGate) ? 'provisional' : String(finalStatus || '');
     if (finalStatus !== 'granted') {
       _diagPush('perm_denied', finalStatus);
       return null;
@@ -1400,6 +1421,160 @@ async function _getActiveEmailSafe() {
   } catch { return ''; }
 }
 
+// ─── [2026-10-09 push-token-forever] "Só envia se mudou ou se faz >24h" ────
+// Registro barato a cada abertura/volta ao primeiro plano: um token já
+// confirmado pelo servidor para {conta, tipo, versão do app} nas últimas 24h
+// não é re-enviado. Login/troca de conta (outra conta = outra chave),
+// atualização do app (versão entra na chave), token rotacionado (outro token)
+// e pedido de re-registro do servidor (bypass) sempre enviam.
+const PUSH_SENT_CACHE_KEY = 'push_token_sent_v1';
+const PUSH_RESEND_MS = 24 * 60 * 60 * 1000;
+let _pushForceUntil = 0;
+let _pushAppVersionCache = null;
+function _pushAppVersion() {
+  if (_pushAppVersionCache !== null) return _pushAppVersionCache;
+  let out = '';
+  try {
+    let A = null;
+    try { A = require('expo-application'); } catch {}
+    const v = Constants?.expoConfig?.version || A?.nativeApplicationVersion || '';
+    const b = A?.nativeBuildVersion || '';
+    let ota = '';
+    try {
+      const U = require('expo-updates');
+      if (U?.updateId) ota = String(U.updateId).slice(0, 8);
+      else if (U?.isEmbeddedLaunch) ota = 'embedded';
+    } catch {}
+    out = `${v}${b ? '+' + b : ''}${ota ? ' ota:' + ota : ''}`.slice(0, 40);
+  } catch {}
+  _pushAppVersionCache = out;
+  return out;
+}
+function _pushSentKey(token, email, type) {
+  return `${String(email || '').toLowerCase()}|${type || 'expo'}|${token}`;
+}
+function _readPushSentCache() {
+  try {
+    const v = getJSON(PUSH_SENT_CACHE_KEY);
+    return v && typeof v === 'object' && !Array.isArray(v) ? v : {};
+  } catch { return {}; }
+}
+function _pushSentRecently(token, email, type) {
+  if (!token || Date.now() < _pushForceUntil) return false;
+  const e = _readPushSentCache()[_pushSentKey(token, email, type)];
+  return !!(e && e.v === _pushAppVersion() && Date.now() - Number(e.at || 0) < PUSH_RESEND_MS);
+}
+function _markPushSent(token, email, type) {
+  if (!token) return;
+  try {
+    const c = _readPushSentCache();
+    c[_pushSentKey(token, email, type)] = { at: Date.now(), v: _pushAppVersion() };
+    const keys = Object.keys(c);
+    if (keys.length > 40) {
+      keys.sort((a, b) => Number(c[a]?.at || 0) - Number(c[b]?.at || 0));
+      for (const k of keys.slice(0, keys.length - 40)) delete c[k];
+    }
+    setJSON(PUSH_SENT_CACHE_KEY, c);
+  } catch {}
+}
+/** Esquece o "já enviado" de uma conta (logout / push desligado) — ou de todas. */
+export function forgetSentPushTokens(email) {
+  try {
+    if (!email) { setJSON(PUSH_SENT_CACHE_KEY, {}); return; }
+    const pre = String(email).toLowerCase() + '|';
+    const c = _readPushSentCache();
+    for (const k of Object.keys(c)) if (k.startsWith(pre)) delete c[k];
+    setJSON(PUSH_SENT_CACHE_KEY, c);
+  } catch {}
+}
+/**
+ * Pedido de re-registro vindo do servidor (evento WS `push_reregister` ou
+ * `push_rereg` na resposta do chat_sync): o servidor não tem token válido desta
+ * conta → re-registra ignorando o cache de 24h. No máximo 1×/30 min.
+ */
+let _lastServerReregAt = 0;
+export function requestPushReregister(reason) {
+  if (Platform.OS === 'web') return;
+  const now = Date.now();
+  if (now - _lastServerReregAt < 30 * 60 * 1000) return;
+  _lastServerReregAt = now;
+  _pushForceUntil = now + 2 * 60 * 1000;
+  _diagPush('server_rereg', String(reason || ''));
+  ensurePushTokenFresh({ force: true }).catch(() => {});
+}
+
+// Relata ao servidor o estado da permissão deste aparelho (granted/denied/…),
+// p/ o painel separar "usuário negou" de "token sumiu". Só quando muda ou 1×/24h.
+let _lastPermStatus = '';
+const PUSH_PERM_REPORT_KEY = 'push_perm_report_v1';
+function _pushInstallId() {
+  try {
+    let id = getJSON('push_install_id');
+    if (typeof id === 'string' && id.length >= 8) return id;
+    id = 'i' + Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
+    setJSON('push_install_id', id);
+    return id;
+  } catch { return ''; }
+}
+async function _reportPushPermission(hasToken) {
+  try {
+    if (Platform.OS === 'web' || !_lastPermStatus) return;
+    const email = await _getActiveEmailSafe();
+    if (!email) return;
+    const sig = `${email.toLowerCase()}|${_lastPermStatus}|${hasToken ? 1 : 0}|${_pushAppVersion()}`;
+    const prev = getJSON(PUSH_PERM_REPORT_KEY) || {};
+    if (prev.sig === sig && Date.now() - Number(prev.at || 0) < PUSH_RESEND_MS) return;
+    const { apiCall } = require('./api');
+    const r = await apiCall('push_permission_report', {
+      install_id: _pushInstallId(),
+      permission: _lastPermStatus,
+      platform: Platform.OS,
+      app_version: _pushAppVersion(),
+      has_token: hasToken ? 1 : 0,
+    }, 'POST');
+    if (r?.success) setJSON(PUSH_PERM_REPORT_KEY, { sig, at: Date.now() });
+  } catch {}
+}
+
+// Multi-conta no mesmo aparelho: o token do aparelho também é registrado nas
+// OUTRAS contas logadas (cada uma com o próprio bearer), p/ o push de qualquer
+// conta chegar — o toque já troca de conta (ensureNotificationAccount).
+// Respeita o "push desligado" por conta. Best-effort, sem fila.
+async function _registerForOtherAccounts(entries, activeEmail) {
+  try {
+    if (!Array.isArray(entries) || !entries.length) return;
+    const api = require('./api');
+    const accts = (typeof api.getStoredAccounts === 'function' ? api.getStoredAccounts() : []) || [];
+    const url = typeof api.getApiUrl === 'function' ? api.getApiUrl() : '';
+    if (!url || !Array.isArray(accts)) return;
+    const AsyncStorage = require('@react-native-async-storage/async-storage').default;
+    const active = String(activeEmail || '').toLowerCase();
+    let n = 0;
+    for (const a of accts) {
+      const em = String(a?.email || '').toLowerCase();
+      if (!em || em === active || typeof a?.token !== 'string' || !a.token) continue;
+      if (++n > 4) break;
+      try { if ((await AsyncStorage.getItem(`push_enabled:${em}`)) === 'false') continue; } catch {}
+      for (const p of entries) {
+        if (!p?.token || _pushSentRecently(p.token, em, p.token_type || 'expo')) continue;
+        try {
+          const ctl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+          const to = setTimeout(() => { try { ctl?.abort(); } catch {} }, 8000);
+          const resp = await fetch(`${url}?action=register_push_token`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${a.token}` },
+            body: JSON.stringify(p),
+            signal: ctl?.signal,
+          });
+          clearTimeout(to);
+          const j = await resp.json().catch(() => null);
+          if (j?.success) _markPushSent(p.token, em, p.token_type || 'expo');
+        } catch {}
+      }
+    }
+  } catch {}
+}
+
 export async function sendTokenToBackend(pushToken) {
   if (!pushToken) return;
   // [2026-06-12 STORM FIX] hard re-entry + frequency guard.
@@ -1467,32 +1642,35 @@ async function _sendTokenToBackendInner(pushToken) {
     // language (chat.php _chatPushLang reads tokens.json[].lang → data.json
     // language → pt). Ignored by backends that don't store it yet.
     const _lang = await _deviceLangCode();
-    const r1 = await apiCall('register_push_token', { token: pushToken, platform: Platform.OS, lang: _lang }, 'POST');
-    _diagPush('send_expo', r1?.success ? 'ok' : ('fail:' + (r1?.error || 'unknown')));
-    if (r1?.success) {
-      _markFlushed(pushToken + '|' + email + '|');
-    } else {
-      // API returned a non-throwing failure (e.g. 5xx wrapped in success:false).
-      // Queue for retry just like a network throw.
-      _enqueuePendingTokenSend({ token: pushToken, email, platform: Platform.OS });
-    }
+    // [2026-10-09 push-token-forever] Cada token só sobe se mudou / >24h /
+    // versão nova do app / pedido do servidor (_pushSentRecently). Vai junto a
+    // versão do app (o servidor guarda por token: app antigo vs novo).
+    const _ver = _pushAppVersion();
+    const _sent = [];
+    const _one = async (payload, diagStep) => {
+      const type = payload.token_type || 'expo';
+      _sent.push(payload);
+      if (_pushSentRecently(payload.token, email, type)) {
+        _diagPush(diagStep, 'fresh_skip');
+        return;
+      }
+      const r = await apiCall('register_push_token', { ...payload, lang: _lang, app_version: _ver }, 'POST');
+      _diagPush(diagStep, r?.success ? 'ok' : ('fail:' + (r?.error || 'unknown')));
+      if (r?.success) {
+        _markFlushed(payload.token + '|' + email + '|' + (payload.token_type || ''));
+        _markPushSent(payload.token, email, type);
+      } else {
+        // API returned a non-throwing failure (e.g. 5xx wrapped in success:false).
+        // Queue for retry just like a network throw.
+        _enqueuePendingTokenSend({ ...payload, email });
+      }
+    };
+    await _one({ token: pushToken, platform: Platform.OS }, 'send_expo');
 
     // Also register the raw FCM device token for Android incoming calls
     if (Platform.OS === 'android') {
       if (pushNotificationsState.deviceToken) {
-        const fcmTok = pushNotificationsState.deviceToken;
-        const r2 = await apiCall('register_push_token', {
-          token: fcmTok,
-          platform: 'android',
-          token_type: 'fcm_device',
-          lang: _lang,
-        }, 'POST');
-        _diagPush('send_fcm', r2?.success ? 'ok' : ('fail:' + (r2?.error || 'unknown')));
-        if (r2?.success) {
-          _markFlushed(fcmTok + '|' + email + '|fcm_device');
-        } else {
-          _enqueuePendingTokenSend({ token: fcmTok, email, platform: 'android', token_type: 'fcm_device' });
-        }
+        await _one({ token: pushNotificationsState.deviceToken, platform: 'android', token_type: 'fcm_device' }, 'send_fcm');
       } else {
         _diagPush('send_fcm_skip', 'no deviceToken in state');
       }
@@ -1500,23 +1678,15 @@ async function _sendTokenToBackendInner(pushToken) {
 
     // [2026-10-09 native-transport] iOS: token APNs nativo (envio direto na Apple).
     if (Platform.OS === 'ios' && pushNotificationsState.apnsToken) {
-      const apnsTok = pushNotificationsState.apnsToken;
-      const apnsType = pushNotificationsState.apnsTokenType || 'apns';
-      const pairId = _apnsPairId(pushToken);
-      const r3 = await apiCall('register_push_token', {
-        token: apnsTok,
+      await _one({
+        token: pushNotificationsState.apnsToken,
         platform: 'ios',
-        token_type: apnsType,
-        device_id: pairId,
-        lang: _lang,
-      }, 'POST');
-      _diagPush('send_apns', r3?.success ? 'ok' : ('fail:' + (r3?.error || 'unknown')));
-      if (r3?.success) {
-        _markFlushed(apnsTok + '|' + email + '|' + apnsType);
-      } else {
-        _enqueuePendingTokenSend({ token: apnsTok, email, platform: 'ios', token_type: apnsType, device_id: pairId });
-      }
+        token_type: pushNotificationsState.apnsTokenType || 'apns',
+        device_id: _apnsPairId(pushToken),
+      }, 'send_apns');
     }
+    // Multi-conta: as outras contas logadas neste aparelho também recebem o token.
+    _registerForOtherAccounts(_sent.map((p) => ({ ...p, lang: _lang, app_version: _ver })), email).catch(() => {});
   } catch (err) {
     _diagPush('send_err', err?.message || String(err));
     // Offline / network throw — persist the intent so we retry on next
@@ -1577,10 +1747,18 @@ export async function flushPendingTokens() {
   const FLUSH_MAX_ATTEMPTS = 40;
   const FLUSH_BACKOFF_CAP_MS = 6 * 60 * 60 * 1000;
   const now = Date.now();
+  // [2026-10-09 push-token-forever] A fila guarda a conta de cada pedido; o POST
+  // vai com o bearer da conta ATIVA → entrada de outra conta espera aquela conta
+  // voltar a ser a ativa (antes registrava o token na conta errada).
+  const _activeEmail = String((await _getActiveEmailSafe()) || '').toLowerCase();
   for (const entry of list) {
     const dedupKey = entry.token + '|' + (entry.email || '') + '|' + (entry.token_type || '');
     if (_flushedTokensInSession.has(dedupKey)) {
       flushed++;
+      continue;
+    }
+    if (entry.email && _activeEmail && String(entry.email).toLowerCase() !== _activeEmail) {
+      kept.push(entry);
       continue;
     }
     const attempts = Number(entry.attempts) || 0;
@@ -1597,10 +1775,12 @@ export async function flushPendingTokens() {
       if (entry.token_type) payload.token_type = entry.token_type;
       if (entry.device_id) payload.device_id = entry.device_id;
       try { payload.lang = await _deviceLangCode(); } catch {}
+      payload.app_version = _pushAppVersion();
       const r = await apiCall('register_push_token', payload, 'POST');
       if (r?.success) {
         flushed++;
         _markFlushed(dedupKey);
+        _markPushSent(entry.token, entry.email || _activeEmail, entry.token_type || 'expo');
       } else {
         // Server returned a structured failure. If the response shape
         // suggests a permanent error (invalid token format, account
@@ -1729,8 +1909,11 @@ export async function ensurePushTokenFresh(opts = {}) {
     // don't count toward the stale banner, and allow the next foreground to
     // re-check (the user may have granted via the primer meanwhile).
     try { await _writeJsonKey(PUSH_REFRESH_LAST_KEY, 0); } catch {}
+    _reportPushPermission(false).catch(() => {});
     return { ok: false, needsPrimer: true };
   }
+  // [2026-10-09 push-token-forever] permissão deste aparelho → painel de saúde do push.
+  _reportPushPermission(!!token).catch(() => {});
   if (!token) {
     const failCount = (await _readJsonKey(PUSH_REFRESH_FAIL_KEY, 0)) || 0;
     const next = failCount + 1;
@@ -1795,13 +1978,26 @@ export async function removeTokenFromBackend(pushToken) {
   if (tok) {
     try { await apiCall('unregister_push_token', { token: tok }, 'POST'); } catch {}
   }
-  // 2. Privacy fallback: when the cached token was lost (app reload, fresh
-  // install, permission revoked) the call above can't identify what to
-  // remove. Logout is an explicit "stop pushing me on this device" signal,
-  // so we wipe ALL of this user's tokens. Other devices the user is
-  // logged into will re-register on next foreground via sendTokenToBackend,
-  // so the only window of missed pushes is until they next open the app.
-  try { await apiCall('unregister_all_my_push_tokens', {}, 'POST'); } catch {}
+  // 2. [2026-10-09 push-token-forever] Remove SÓ os tokens DESTE aparelho
+  // (Expo + FCM nativo + APNs nativo + VoIP) e os registrados por esta sessão.
+  // Antes isto zerava o tokens.json da conta inteira → o iPhone/Android de
+  // outro lugar ficava sem push até reabrir o app. O servidor (email.php)
+  // também casa pela sessão (bearer) quando o cache do token se perdeu.
+  // Web não tem token nativo (o Web Push sai pelo passo 3) → não chama.
+  if (Platform.OS !== 'web') try {
+    const mine = [tok, pushNotificationsState.deviceToken, pushNotificationsState.apnsToken].filter((x) => typeof x === 'string' && x);
+    const body = { tokens: mine, platform: Platform.OS };
+    if (Platform.OS === 'ios') {
+      try {
+        const ck = require('../modules/expo-callkit');
+        const v = typeof ck?.getVoipToken === 'function' ? ck.getVoipToken() : null;
+        if (typeof v === 'string' && v) body.voip_token = v;
+      } catch {}
+    }
+    await apiCall('unregister_all_my_push_tokens', body, 'POST');
+  } catch {}
+  // Próximo login/reativação desta conta re-envia na hora (sem o cache de 24h).
+  try { forgetSentPushTokens(await _getActiveEmailSafe()); } catch {}
   // 3. Web platform path — FCM Web SDK lives in services/webPush.js and
   // talks to a different backend table (web_tokens.json). Without this
   // call, logging out on a browser leaves the SW receiving pushes until
@@ -2178,6 +2374,7 @@ export async function setupNotificationListeners() {
   //    much faster than the AppState bounce in carrier-flap scenarios.
   let _flushAppStateSub = null;
   let _flushWsConnUnsub = null;
+  let _reregWsUnsub = null;
   try {
     _flushAppStateSub = AppState.addEventListener('change', (state) => {
       if (state === 'active') {
@@ -2197,6 +2394,8 @@ export async function setupNotificationListeners() {
           flushPendingTokens().catch(() => {});
         }
       });
+      // [2026-10-09 push-token-forever] servidor sem token válido desta conta → re-registra.
+      _reregWsUnsub = mailWs.on('push_reregister', (d) => { requestPushReregister('ws:' + String(d?.reason || '')); });
     }
   } catch {}
   // Best-effort initial drain in case there were pending entries from the
@@ -2251,6 +2450,7 @@ export async function setupNotificationListeners() {
     try { _linkSub?.remove?.(); } catch {}
     try { _flushAppStateSub?.remove?.(); } catch {}
     try { _flushWsConnUnsub?.(); } catch {}
+    try { _reregWsUnsub?.(); } catch {}
     try { _tokenRotationSub?.remove?.(); _tokenRotationSub = null; } catch {}
   };
 }

@@ -313,6 +313,29 @@ export async function reportStep(step, info) {
 // to 480 chars by _post (matches its info budget).
 //
 // ALWAYS safe to call — never throws even if the reporter is mid-boot.
+// [2026-10-09 wa-real #14] Build nativo + OTA no beacon de gravação local
+// (sqlite_* / persistence_*): 69 dos 75 erros SQLite de 09/10 vinham de 1
+// aparelho que provavelmente não tinha o OTA37 — sem build/OTA no evento não
+// dava pra provar. Formato: "[b=657 ota=34cd2e6e rt=2.6.0]". O build vem do
+// binário (ExpoApplication via requireOptionalNativeModule — não lança se o
+// módulo faltar), não do app.json do OTA.
+let _buildTagCache = null;
+function _buildTag() {
+  if (_buildTagCache !== null) return _buildTagCache;
+  let b = '';
+  try {
+    const { requireOptionalNativeModule } = require('expo-modules-core');
+    const A = requireOptionalNativeModule ? requireOptionalNativeModule('ExpoApplication') : null;
+    if (A && A.nativeBuildVersion) b = String(A.nativeBuildVersion).slice(0, 12);
+  } catch {}
+  const c = _staticCtx();
+  if (!b) {
+    try { const v = String(c.ver || ''); const i = v.indexOf('+'); if (i >= 0) b = v.slice(i + 1); } catch {}
+  }
+  _buildTagCache = `[b=${b || '?'} ota=${c.ota || '?'} rt=${c.rt || '?'}]`;
+  return _buildTagCache;
+}
+
 export function reportCrash(payload) {
   try {
     const p = payload || {};
@@ -323,6 +346,7 @@ export function reportCrash(payload) {
     // type+ctx as the step and the message as info.
     const step = `${type}_${ctx}`;
     let info = msg;
+    try { info = `${_buildTag()} ${info}`; } catch {}
     if (p.stack) info += ` | ${normalizeStack(p.stack, 4).slice(0, 250)}`;
     addBreadcrumb(step, msg.slice(0, 40));
     _post(step, info);

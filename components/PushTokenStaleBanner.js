@@ -13,11 +13,26 @@
  * (web uses Service Worker for push and doesn't go through this path).
  */
 import React, { useEffect, useState } from 'react';
-import { Platform, View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, Linking } from 'react-native';
+import { Platform, View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, Linking, AppState } from 'react-native';
 import { IconX } from './Icons';
 import { useLanguage } from '../context/LanguageContext';
 
 const POLL_MS = 5000; // [perf 2026-10-06] was 1000 — the flag flips rarely; a 5s pickup is invisible to the user
+// [2026-10-09 wa-real #15] Permissão negada → em vez de pedir de novo a cada
+// boot (58× num iPhone), o app pede 1× e depois só mostra ESTE aviso, que leva
+// aos Ajustes. "Fechar" esconde por 7 dias (persistido).
+const DENIED_DISMISS_KEY = 'push_denied_banner_dismissed_at';
+const DENIED_DISMISS_MS = 7 * 24 * 3600e3;
+function _deniedDismissedRecently() {
+  try {
+    const { getJSON } = require('../services/mmkv');
+    const at = Number(getJSON(DENIED_DISMISS_KEY, 0)) || 0;
+    return at > 0 && Date.now() - at < DENIED_DISMISS_MS;
+  } catch { return false; }
+}
+function _markDeniedDismissed() {
+  try { require('../services/mmkv').setJSON(DENIED_DISMISS_KEY, Date.now()); } catch {}
+}
 
 export default function PushTokenStaleBanner() {
   const { t } = useLanguage();
@@ -37,6 +52,9 @@ export default function PushTokenStaleBanner() {
       if (!mounted) return;
       let flag = false;
       try { flag = !!globalThis.__chatyy_push_token_stale; } catch {}
+      try {
+        if (!flag && globalThis.__chatyy_push_denied && !_deniedDismissedRecently()) flag = true;
+      } catch {}
       setVisible(flag);
       // Auto-clear local dismiss state when the flag flips back to false
       // so a future recurrence shows the banner again.
@@ -44,7 +62,28 @@ export default function PushTokenStaleBanner() {
     };
     tick();
     const id = setInterval(tick, POLL_MS);
-    return () => { mounted = false; clearInterval(id); };
+    // Voltou dos Ajustes: se a permissão foi concedida, re-registra o token na
+    // hora e some com o aviso.
+    let sub = null;
+    try {
+      sub = AppState.addEventListener('change', async (st) => {
+        if (st !== 'active' || !mounted) return;
+        let denied = false;
+        try { denied = !!globalThis.__chatyy_push_denied; } catch {}
+        if (!denied) return;
+        try {
+          const Notifications = require('expo-notifications');
+          const perm = await Notifications.getPermissionsAsync();
+          if (perm?.status === 'granted') {
+            try { globalThis.__chatyy_push_denied = false; } catch {}
+            if (mounted) setVisible(false);
+            const { retryPushTokenRegistration } = require('../services/pushNotifications');
+            retryPushTokenRegistration().catch(() => {});
+          }
+        } catch {}
+      });
+    } catch {}
+    return () => { mounted = false; clearInterval(id); try { sub?.remove?.(); } catch {} };
   }, []);
 
   // Resolve the permission state once the banner becomes visible so we know
@@ -59,7 +98,9 @@ export default function PushTokenStaleBanner() {
         const Notifications = require('expo-notifications');
         const perm = await Notifications.getPermissionsAsync();
         if (alive) {
-          setOpenSettingsMode(!!perm && perm.status !== 'granted' && perm.canAskAgain === false);
+          let deniedFlag = false;
+          try { deniedFlag = !!globalThis.__chatyy_push_denied; } catch {}
+          setOpenSettingsMode(!!perm && perm.status !== 'granted' && (perm.canAskAgain === false || deniedFlag));
         }
       } catch {}
     })();
@@ -117,7 +158,11 @@ export default function PushTokenStaleBanner() {
         <ActivityIndicator size="small" color="#7c5e00" />
       ) : (
         <TouchableOpacity
-          onPress={(e) => { e?.stopPropagation?.(); setDismissed(true); }}
+          onPress={(e) => {
+            e?.stopPropagation?.();
+            try { if (globalThis.__chatyy_push_denied) _markDeniedDismissed(); } catch {}
+            setDismissed(true);
+          }}
           style={s.closeBtn}
           accessibilityLabel={t('pushBanner.dismiss')}
           accessibilityRole="button"

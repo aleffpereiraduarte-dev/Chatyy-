@@ -35,6 +35,32 @@ import React, { useEffect, useRef, useState } from 'react';
 import { View, TouchableOpacity, Animated, Platform, Easing, PanResponder } from 'react-native';
 import { IconMic, IconLock, IconChevronUp } from '../Icons';
 import { isReduceMotionEnabled } from '../reducedMotion';
+import { KEYBOARD_CONTROLLER_ACTIVE } from '../../utils/threadKeyboard';
+
+// [2026-10-09 wa-real #13] Gesto do mic na UI THREAD (RNGH + Reanimated):
+// o "segurou 180 ms", os limiares de cancelar/travar e o soltar são decididos
+// no thread nativo — um JS ocupado (sync, lista, decrypt) não atrasa mais o
+// início da gravação nem perde o "soltar". Mesmo gate OTA do SwipeReplyRow:
+// só quando utils/threadKeyboard já carregou Reanimated neste binário;
+// senão (e no web) fica o PanResponder antigo, intacto.
+let Rea = null;
+let GH = null;
+if (KEYBOARD_CONTROLLER_ACTIVE) {
+  try {
+    // eslint-disable-next-line global-require
+    Rea = require('react-native-reanimated');
+    // eslint-disable-next-line global-require
+    GH = require('react-native-gesture-handler');
+  } catch {
+    Rea = null;
+    GH = null;
+  }
+}
+const runOnJS = Rea ? Rea.runOnJS : null;
+export const MIC_UI_THREAD = !!(
+  Rea && Rea.runOnJS && Rea.useSharedValue
+  && GH && GH.GestureDetector && GH.Gesture && GH.Gesture.Pan && GH.Gesture.Tap && GH.Gesture.Exclusive
+);
 
 let _Haptics = null;
 try { _Haptics = require('expo-haptics'); } catch {}
@@ -267,6 +293,119 @@ export default function VoiceMicButton({
     })
   ).current;
 
+  // ── [2026-10-09 wa-real #13] UI-thread gesture (RNGH) ──
+  // JS side-effects run via runOnJS; recognition/thresholds are worklets.
+  const jsRef = useRef({});
+  jsRef.current = {
+    pressIn: () => onPressIn(),
+    pressOut: () => onPressOut(),
+    holdStart: () => {
+      holdActiveRef.current = true;
+      haptic('heavy');
+      setHolding(true);
+      growMic(true);
+      showLockChip(true);
+      try { propsRef.current.onHoldStart?.(); } catch {}
+    },
+    move: (dx, dy) => {
+      try { propsRef.current.onHoldMove?.({ dx, dy }); } catch {}
+      lockChipY.setValue(Math.max(dy, LOCK_DY));
+    },
+    tick: (kind) => haptic(kind),
+    cancel: () => {
+      holdActiveRef.current = false;
+      hapticNotify('warning');
+      endHoldVisuals();
+      onPressOut();
+      try { propsRef.current.onHoldCancel?.(); } catch {}
+    },
+    lock: () => {
+      holdActiveRef.current = false;
+      hapticNotify('success');
+      endHoldVisuals();
+      onPressOut();
+      try { propsRef.current.onHoldLock?.(); } catch {}
+    },
+    release: () => {
+      holdActiveRef.current = false;
+      endHoldVisuals();
+      haptic('light');
+      try { propsRef.current.onHoldRelease?.(); } catch {}
+    },
+    tap: () => {
+      onPressOut();
+      if (propsRef.current.disabled) return;
+      haptic('medium');
+      try { propsRef.current.onActivate?.(); } catch {}
+    },
+  };
+  const callJs = React.useCallback((name, a, b) => {
+    try { jsRef.current[name]?.(a, b); } catch {}
+  }, []);
+  // 0 idle · 1 holding · 2 cancel/lock already fired for this touch
+  const gState = MIC_UI_THREAD ? Rea.useSharedValue(0) : null; // eslint-disable-line react-hooks/rules-of-hooks
+  const gNearC = MIC_UI_THREAD ? Rea.useSharedValue(0) : null; // eslint-disable-line react-hooks/rules-of-hooks
+  const gNearL = MIC_UI_THREAD ? Rea.useSharedValue(0) : null; // eslint-disable-line react-hooks/rules-of-hooks
+  const gestureEnabled = !disabled && !locked;
+  const micGesture = React.useMemo(() => {
+    if (!MIC_UI_THREAD) return null;
+    const pan = GH.Gesture.Pan()
+      .enabled(gestureEnabled)
+      .activateAfterLongPress(HOLD_MS)
+      .onBegin(() => {
+        'worklet';
+        gState.value = 0;
+        gNearC.value = 0;
+        gNearL.value = 0;
+        runOnJS(callJs)('pressIn');
+      })
+      .onStart(() => {
+        'worklet';
+        gState.value = 1;
+        runOnJS(callJs)('holdStart');
+      })
+      .onUpdate((e) => {
+        'worklet';
+        if (gState.value !== 1) return;
+        const dx = e.translationX < 0 ? e.translationX : 0;
+        const dy = e.translationY < 0 ? e.translationY : 0;
+        runOnJS(callJs)('move', dx, dy);
+        const nearC = dx < CANCEL_DX * 0.6 ? 1 : 0;
+        if (nearC !== gNearC.value) { gNearC.value = nearC; runOnJS(callJs)('tick', nearC ? 'medium' : 'light'); }
+        const nearL = dy < LOCK_DY * 0.6 ? 1 : 0;
+        if (nearL !== gNearL.value) { gNearL.value = nearL; runOnJS(callJs)('tick', nearL ? 'medium' : 'light'); }
+        if (dx <= CANCEL_DX && dy > LOCK_DY * 0.5) {
+          gState.value = 2;
+          runOnJS(callJs)('cancel');
+        } else if (dy <= LOCK_DY && dx > CANCEL_DX * 0.5) {
+          gState.value = 2;
+          runOnJS(callJs)('lock');
+        }
+      })
+      .onFinalize(() => {
+        'worklet';
+        // Lifted (or the system cancelled the touch) while holding → send;
+        // the recorder enforces the 1 s minimum. Never-activated touch → just
+        // undo the press-in visual (the Tap below handles a quick tap).
+        if (gState.value === 1) {
+          gState.value = 0;
+          runOnJS(callJs)('release');
+        } else {
+          gState.value = 0;
+          runOnJS(callJs)('pressOut');
+        }
+      });
+    const tap = GH.Gesture.Tap()
+      .enabled(gestureEnabled)
+      .maxDuration(HOLD_MS + 400)
+      .maxDistance(TAP_SLOP)
+      .onEnd((_e, success) => {
+        'worklet';
+        if (success) runOnJS(callJs)('tap');
+      });
+    return GH.Gesture.Exclusive(pan, tap);
+  }, [gestureEnabled, callJs]); // eslint-disable-line react-hooks/exhaustive-deps
+
   function finishTouch() {
     const hadTimer = !!holdTimerRef.current;
     clearHoldTimer();
@@ -378,7 +517,24 @@ export default function VoiceMicButton({
         </Animated.View>
       )}
       <Animated.View style={{ transform: [{ scale: Animated.multiply(pressScale, holdScale) }] }}>
-        {useHold ? (
+        {useHold && MIC_UI_THREAD && micGesture ? (
+          <GH.GestureDetector gesture={micGesture}>
+            <View
+              style={circleStyle}
+              accessible
+              accessibilityLabel={accessibilityLabel || 'Record voice message'}
+              accessibilityRole="button"
+              accessibilityHint={lockHintLabel || undefined}
+              // Leitor de tela: o duplo toque não passa pelo gesto → grava
+              // no modo mãos-livres (mesmo fluxo do toque rápido).
+              accessibilityActions={[{ name: 'activate' }]}
+              onAccessibilityAction={(ev) => { if (ev?.nativeEvent?.actionName === 'activate' && !disabled) { try { onActivate?.(); } catch {} } }}
+              hitSlop={6}
+            >
+              <IconMic size={Math.round(size * (size >= 52 ? 0.42 : 0.48))} color={iconColor} />
+            </View>
+          </GH.GestureDetector>
+        ) : useHold ? (
           <View
             {...panResponder.panHandlers}
             style={circleStyle}
@@ -386,6 +542,8 @@ export default function VoiceMicButton({
             accessibilityLabel={accessibilityLabel || 'Record voice message'}
             accessibilityRole="button"
             accessibilityHint={lockHintLabel || undefined}
+            accessibilityActions={[{ name: 'activate' }]}
+            onAccessibilityAction={(ev) => { if (ev?.nativeEvent?.actionName === 'activate' && !disabled) { try { onActivate?.(); } catch {} } }}
             hitSlop={6}
           >
             <IconMic size={Math.round(size * (size >= 52 ? 0.42 : 0.48))} color={iconColor} />

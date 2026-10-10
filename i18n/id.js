@@ -1,4 +1,21 @@
 export default {
+  // [2026-10-09 wa-real]
+  "chatConv.pauseRecording": "Jeda rekaman",
+  "chatConv.resumeRecording": "Lanjutkan rekaman",
+  // [2026-10-09 wa-real]
+  "maps.nearbyPlaces": "Tempat terdekat",
+  "maps.sendThisPlace": "Kirim tempat ini",
+  // [2026-10-09 wa-real]
+  "settings.blockUnknown": "Blokir pesan dari akun tak dikenal",
+  "settings.blockUnknownDesc": "Pesan dari orang yang tidak ada di kontak Anda, tidak berada di grup yang sama, dan belum pernah mengobrol dengan Anda tidak akan sampai.",
+  "chatConv.unknownCard.title": "Tidak ada di kontak Anda",
+  "chatConv.unknownCard.noCommonGroups": "Tidak ada grup yang sama",
+  "chatConv.unknownCard.commonGroups": "Grup yang sama: {names}",
+  "chatConv.unknownCard.country": "Nomor dari {country}",
+  "chatConv.unknownCard.newAccount": "Akun baru dibuat",
+  "chatConv.unknownCard.hint": "Hati-hati dengan permintaan uang, kode, atau tautan. Jika tidak kenal, blokir.",
+  "chatConv.unknownCard.block": "Blokir",
+  "chatConv.unknownCard.ok": "OK",
   // [2026-10-09 passkeys]
   "settings.passkeys.title": "Passkey",
   "settings.passkeys.rowSub": "Masuk dengan Face ID atau sidik jari, tanpa sandi atau kode",
@@ -8953,4 +8970,40 @@ export default {
   "plans.aiAct.contacts": "mengelola kontak", // [2026-10-09 plans-intl]
   "plans.aiAct.reply": "membalas pesan", // [2026-10-09 plans-intl]
   "plans.aiAct.translate": "menerjemahkan teks", // [2026-10-09 plans-intl]
+  // [2026-10-09 a11y-screenreader]
+  "a11y.group": "Grup",
+  "a11y.channel": "Saluran",
+  "a11y.online": "Online",
+  "a11y.unreadOne": "1 pesan belum dibaca",
+  "a11y.unreadCount": "{n} pesan belum dibaca",
+  "a11y.mentioned": "Anda disebut",
+  "a11y.msgRead": "Dibaca",
+  "a11y.msgDelivered": "Terkirim ke penerima",
+  "a11y.msgSent": "Terkirim",
+  "a11y.scheduled": "Pesan terjadwal",
+  "a11y.pinned": "Disematkan",
+  "a11y.muted": "Dibisukan",
+  "a11y.viewPhoto": "Lihat foto profil",
+  "a11y.moreOptions": "Opsi lainnya",
+  "a11y.openChatHint": "Ketuk dua kali untuk membuka. Tersedia tindakan lain.",
+  "a11y.voiceMessage": "Pesan suara",
+  "a11y.forwarded": "Diteruskan",
+  "a11y.replyTo": "Membalas {name}",
+  "a11y.replyToMsg": "Membalas sebuah pesan",
+  "a11y.viewOnce": "Sekali lihat",
+  "a11y.edited": "Diedit",
+  "a11y.msgFailed": "Tidak terkirim. Ketuk dua kali untuk mencoba lagi",
+  "a11y.msgPending": "Mengirim",
+  "a11y.starred": "Berbintang",
+  "a11y.reactions": "Reaksi: {list}",
+  "a11y.msgHint": "Tersedia tindakan untuk membalas, bereaksi, meneruskan, atau menghapus.",
+  "a11y.react": "Beri reaksi",
+  "a11y.delete": "Hapus",
+  "a11y.messageInfo": "Info pesan",
+  "a11y.newMessageFrom": "Pesan baru dari {name}: {text}",
+  "a11y.searchFilters": "Filter pencarian",
+  "a11y.prevResult": "Hasil sebelumnya",
+  "a11y.nextResult": "Hasil berikutnya",
+  "a11y.closeSearch": "Tutup pencarian",
+  "a11y.clearSearch": "Hapus pencarian",
 };

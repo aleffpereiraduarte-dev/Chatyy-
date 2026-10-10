@@ -13,6 +13,8 @@ public class ExpoNativeAudioModule: Module {
     private var levelMeter: Timer?
     private var samples: [Float] = []
     private var startedAt: TimeInterval = 0
+    // [2026-10-09 wa-real #13] pausar/retomar a gravação (paridade Android).
+    private var recPausedAt: TimeInterval = 0
     private var currentLevel: Float = 0
     /// Monotonic recording session id. Used by the level-meter timer to
     /// abort if a NEWER recording started before the timer was created on
@@ -171,6 +173,7 @@ public class ExpoNativeAudioModule: Module {
             }
             self.recorder = newRecorder
             self.startedAt = Date().timeIntervalSince1970
+            self.recPausedAt = 0
             self.samples.removeAll()
             self.stateLock.unlock()
 
@@ -197,7 +200,7 @@ public class ExpoNativeAudioModule: Module {
                     let db = rec.averagePower(forChannel: 0)
                     let normalized = max(0, min(1, (db + 50) / 50))
                     self.stateLock.lock()
-                    if self.recSession == mySession {
+                    if self.recSession == mySession && self.recPausedAt == 0 {
                         self.currentLevel = normalized
                         self.samples.append(normalized)
                     }
@@ -213,7 +216,9 @@ public class ExpoNativeAudioModule: Module {
             self.levelMeter?.invalidate()
             self.levelMeter = nil
             self.currentLevel = 0
-            let durationMs = Int((Date().timeIntervalSince1970 - self.startedAt) * 1000)
+            let stopAt = self.recPausedAt > 0 ? self.recPausedAt : Date().timeIntervalSince1970
+            let durationMs = Int((stopAt - self.startedAt) * 1000)
+            self.recPausedAt = 0
             let r = self.recorder
             self.recorder = nil
             let snapshotSamples = self.samples
@@ -237,6 +242,7 @@ public class ExpoNativeAudioModule: Module {
             self.levelMeter?.invalidate()
             self.levelMeter = nil
             self.currentLevel = 0
+            self.recPausedAt = 0
             let r = self.recorder
             self.recorder = nil
             self.samples.removeAll()
@@ -244,6 +250,39 @@ public class ExpoNativeAudioModule: Module {
             r?.stop()
             if let url = r?.url { try? FileManager.default.removeItem(at: url) }
             self.deactivateSession()
+        }
+
+        // [2026-10-09 wa-real #13] Pausar/retomar (AVAudioRecorder.pause/record
+        // continuam o MESMO arquivo). O tempo pausado sai da duração: startedAt
+        // anda pra frente no resume. JS detecta por typeof pauseRecording.
+        AsyncFunction("pauseRecording") { () -> Void in
+            self.stateLock.lock()
+            let r = self.recorder
+            if r != nil && self.recPausedAt == 0 {
+                self.recPausedAt = Date().timeIntervalSince1970
+                self.currentLevel = 0
+            }
+            self.stateLock.unlock()
+            guard let rec = r else {
+                throw NSError(domain: "Audio", code: 5, userInfo: [NSLocalizedDescriptionKey: "Not recording"])
+            }
+            rec.pause()
+        }
+
+        AsyncFunction("resumeRecording") { () -> Void in
+            self.stateLock.lock()
+            let r = self.recorder
+            if r != nil && self.recPausedAt > 0 {
+                self.startedAt += Date().timeIntervalSince1970 - self.recPausedAt
+                self.recPausedAt = 0
+            }
+            self.stateLock.unlock()
+            guard let rec = r else {
+                throw NSError(domain: "Audio", code: 5, userInfo: [NSLocalizedDescriptionKey: "Not recording"])
+            }
+            guard rec.record() else {
+                throw NSError(domain: "Audio", code: 6, userInfo: [NSLocalizedDescriptionKey: "Failed to resume recording"])
+            }
         }
 
         Function("currentLevelSync") { () -> Double in

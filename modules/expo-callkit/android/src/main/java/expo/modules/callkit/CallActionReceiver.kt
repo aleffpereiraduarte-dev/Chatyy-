@@ -218,6 +218,13 @@ class CallActionReceiver : BroadcastReceiver() {
           val closeIntent = Intent("expo.modules.callkit.CLOSE_CALL_ACTIVITY").putExtra("call_id", callId)
           context.sendBroadcast(closeIntent)
         } catch (_: Exception) {}
+        // [2026-10-09 native-group-call] Same "Encerrar" for the native group
+        // screen (its FGS notification carries the group room as call_id).
+        try {
+          context.sendBroadcast(
+            Intent(GroupCallActivity.ACTION_CLOSE).setPackage(context.packageName).putExtra("call_id", callId)
+          )
+        } catch (_: Exception) {}
         try {
           val stopOngoing = Intent(context, CallOngoingService::class.java)
           context.stopService(stopOngoing)

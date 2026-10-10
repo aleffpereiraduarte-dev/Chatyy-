@@ -308,6 +308,8 @@ final class CallViewController: UIViewController, @unchecked Sendable {
     private var outgoingConnectFallbackTimer: DispatchWorkItem?
     private var speakerTouchedByUser: Bool = false
     private var remoteEndObserver: NSObjectProtocol?
+    /// [2026-10-09 p2p-ios] P2PCallBridge.stateChangedNotification.
+    private var p2pObserver: NSObjectProtocol?
     /// [2026-10-07 audio-route] AudioRouter.routeDidChangeNotification → keeps
     /// the "Alto-falante" button in sync with the REAL output (AirPods
     /// connect, BT drop, policy re-apply), not just the last tap.
@@ -428,6 +430,14 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         // [2026-10-06 native-only outgoing] Answered — the no-answer timer is moot.
         cancelOutgoingRingTimer()
         nativeCallDiag("outgoing_mic_gate_open", callId, reason)
+        // [2026-10-09 p2p-ios] Ligação 1:1 de voz com P2P ligado: o P2P vira
+        // dono da mídia e o Room LiveKit fica em espera quente (nada publicado).
+        // Se o P2P cair, P2PCallBridge publica o mic nesse mesmo Room.
+        if P2PCallBridge.startIfEligible(callId: callId, isCaller: true, hasVideo: hasVideo) {
+            P2PCallBridge.setMicEnabled(callId: callId, session.micEnabled)
+            nativeCallDiag("outgoing_media_p2p", callId, reason)
+            return
+        }
         guard let r = self.room else { return }
         // [2026-10-04 ring-leak, VIDEO] Publish the caller's camera on answer
         // too, gated the same as the mic. Done BEFORE the mic-enabled guard so a
@@ -498,6 +508,9 @@ final class CallViewController: UIViewController, @unchecked Sendable {
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = UIColor(red: 0x0B/255.0, green: 0x14/255.0, blue: 0x1A/255.0, alpha: 1.0)
+        // [2026-10-09 p2p-ios] Tipo da ligação p/ o P2PCallBridge + estado P2P → UI.
+        P2PCallBridge.noteCall(callId: callId, hasVideo: hasVideo)
+        installP2PObserver()
 
         if isOutgoing {
             CallSignalWs.shared.fireCallInvite(
@@ -1170,7 +1183,7 @@ final class CallViewController: UIViewController, @unchecked Sendable {
                         if let shared = sharedMicTask {
                             micPub = await shared.value
                         }
-                        if micPub == nil {
+                        if micPub == nil && !P2PCallBridge.ownsMedia(self.callId) {
                             micPub = try await r.localParticipant.setMicrophone(
                                 enabled: true,
                                 captureOptions: Self.defaultAudioCaptureOptions()
@@ -1336,6 +1349,10 @@ final class CallViewController: UIViewController, @unchecked Sendable {
                     if self.isOutgoing && !self.outgoingMicGateOpen {
                         // [2026-10-03 ring-leak] Caller: hold the mic until answered.
                         print("[CallVC] outgoing mic publish DEFERRED until answer — callId=\(self.callId)")
+                    } else if P2PCallBridge.ownsMedia(self.callId)
+                                || (!self.isOutgoing && P2PCallBridge.startIfEligible(callId: self.callId, isCaller: false, hasVideo: self.hasVideo)) {
+                        // [2026-10-09 p2p-ios] P2P dono da mídia — LiveKit em espera.
+                        print("[CallVC] mic publish skipped — P2P owns media callId=\(self.callId)")
                     } else {
                     let micPub = try await r.localParticipant.setMicrophone(
                         enabled: true,
@@ -1455,6 +1472,7 @@ final class CallViewController: UIViewController, @unchecked Sendable {
             return
         }
         didHangup = true
+        P2PCallBridge.close(callId: callId, reason: "hangup") // [2026-10-09 p2p-ios]
         cancelOutgoingRingTimer()
         cancelOutgoingConnectFallback()
         // [CALL-CLOSE diag 2026-05-27] Mark this teardown path so the next
@@ -1699,6 +1717,17 @@ final class CallViewController: UIViewController, @unchecked Sendable {
     }
 
     private func applyMicEnabled(_ enabled: Bool) {
+        // [2026-10-09 p2p-ios] P2P dono da mídia → liga/desliga a track P2P.
+        if P2PCallBridge.ownsMedia(callId) {
+            P2PCallBridge.setMicEnabled(callId: callId, enabled)
+            session.micEnabled = enabled
+            NotificationCenter.default.post(
+                name: Notification.Name("ExpoCallKitLkLocalAudioChanged"),
+                object: nil,
+                userInfo: ["enabled": enabled]
+            )
+            return
+        }
         guard let r = self.room else { return }
         // [2026-10-03 ring-leak] Un-muting during the ring must not publish.
         // The desired state is kept in session.micEnabled (set by the caller of
@@ -1780,6 +1809,11 @@ final class CallViewController: UIViewController, @unchecked Sendable {
     private var isTogglingCamera = false
 
     private func applyCamEnabled(_ enabled: Bool) {
+        // [2026-10-09 p2p-ios] v1 do P2P iOS é só áudio: ligar a câmera devolve
+        // a ligação ao LiveKit (já conectado) e segue o caminho normal.
+        if enabled && P2PCallBridge.ownsMedia(callId) {
+            P2PCallBridge.requestFallback(callId: callId, reason: "video_upgrade")
+        }
         guard let r = self.room else {
             Task { @MainActor in self.isTogglingCamera = false }
             return
@@ -2737,6 +2771,12 @@ final class CallViewController: UIViewController, @unchecked Sendable {
                 // (Siri-owned) session. Going back through setMicrophone
                 // forces LK to re-attach to the now-active session.
                 let desired = self.preInterruptionMicEnabled
+                // [2026-10-09 p2p-ios] P2P dono da mídia: a pilha P2P retoma
+                // sozinha com a sessão reativada; só reaplica o estado do mic.
+                if P2PCallBridge.ownsMedia(self.callId) {
+                    P2PCallBridge.setMicEnabled(callId: self.callId, desired)
+                    return
+                }
                 Task { [weak self] in
                     guard let self = self, let r = self.room else { return }
                     do {
@@ -2784,7 +2824,7 @@ final class CallViewController: UIViewController, @unchecked Sendable {
             Task { [weak self] in
                 guard let self = self else { return }
                 do {
-                    if self.outgoingMicGateOpen {
+                    if self.outgoingMicGateOpen && !P2PCallBridge.ownsMedia(self.callId) {
                     let micPub = try await r.localParticipant.setMicrophone(
                         enabled: desired,
                         captureOptions: Self.defaultAudioCaptureOptions()
@@ -2844,6 +2884,29 @@ final class CallViewController: UIViewController, @unchecked Sendable {
     /// LK didSubscribeTrack path which ALSO calls stopRingbackTone — the
     /// ringbackActive guard inside stopRingbackTone makes a second call
     /// a cheap no-op.
+    /// [2026-10-09 p2p-ios] P2P conectou → "Conectado" (caller: também avisa o
+    /// CallKit via markCallConnected). Queda p/ o LiveKit é tratada no bridge.
+    private func installP2PObserver() {
+        guard p2pObserver == nil else { return }
+        p2pObserver = NotificationCenter.default.addObserver(
+            forName: P2PCallBridge.stateChangedNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] note in
+            guard let self = self else { return }
+            guard (note.userInfo?["callId"] as? String) == self.callId else { return }
+            let st = (note.userInfo?["state"] as? String) ?? ""
+            if st == "connected" {
+                self.stopRingbackTone(reason: "p2p_connected")
+                if self.isOutgoing {
+                    self.markCallConnected(reason: "p2p")
+                } else if self.session.status != "Conectado" {
+                    self.session.status = "Conectado"
+                }
+            }
+        }
+    }
+
     private func installRemoteAnsweredObserver() {
         guard remoteAnsweredObserver == nil else { return }
         remoteAnsweredObserver = NotificationCenter.default.addObserver(
@@ -3374,6 +3437,7 @@ final class CallViewController: UIViewController, @unchecked Sendable {
             // only strong ref (the suspected double-VC teardown). Surfacing it
             // here on the voip_diag log tells us if THIS is the close path.
             nativeCallDiag("call_close_deinit_teardown", callId)
+            P2PCallBridge.close(callId: callId, reason: "deinit") // [2026-10-09 p2p-ios]
             // [#1207 NativeCallRoom REAL] Belt-and-braces: usually handleHangup
             // or didDisconnect have already cleared the singleton by the time
             // deinit runs, but force-quit can short-circuit those. Idempotent —
@@ -3393,6 +3457,7 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         if let obs = remoteAnsweredObserver { NotificationCenter.default.removeObserver(obs); remoteAnsweredObserver = nil }
         // [2026-10-06 native-only outgoing]
         if let obs = remoteEndObserver { NotificationCenter.default.removeObserver(obs); remoteEndObserver = nil }
+        if let obs = p2pObserver { NotificationCenter.default.removeObserver(obs); p2pObserver = nil }
         outgoingRingTimer?.cancel(); outgoingRingTimer = nil
         outgoingConnectFallbackTimer?.cancel(); outgoingConnectFallbackTimer = nil
         if #available(iOS 15.0, *), let pip = pipController, pip.isPictureInPictureActive {
@@ -3545,6 +3610,22 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         isOutgoing: Bool = false,
         conversationId: String = ""
     ) {
+        // [2026-10-09 native-group-call] A CallKit-answered GROUP call gets the
+        // native N-way screen (GroupCallViewController adopts the preconnected
+        // Room) instead of this 1:1 UI. Gated by the App Group flag JS sets
+        // from NATIVE_GROUP_CALL_UI (off → unchanged behavior).
+        if !isOutgoing && GroupCallViewController.shouldPresentNativeGroup(callId: callId) {
+            nativeCallDiag("callvc_reroute_group", callId)
+            GroupCallViewController.presentIncoming(
+                from: base,
+                callId: callId,
+                hasVideo: hasVideo,
+                lkUrl: lkUrl ?? "",
+                lkToken: lkToken ?? "",
+                conversationId: conversationId
+            )
+            return
+        }
         let top = topMostViewController(from: base)
         // [2026-05-25] Dedup guard. Now that BOTH the cold-start stub and the
         // warm-app path present for VoIP-push calls (the module-bound bail was
@@ -5191,8 +5272,11 @@ extension CallViewController: RoomDelegate {
     func room(_ room: Room,
               participant: RemoteParticipant?,
               didReceiveData data: Data,
-              forTopic topic: String,
-              encryptionType: EncryptionType) {
+              forTopic topic: String) {
+        // [2026-10-09] A assinatura com `encryptionType:` NÃO existe no
+        // LiveKitClient 2.0.18 (RoomDelegate.swift:144) → método opcional @objc
+        // nunca era chamado: video_request e reações não chegavam no 1:1
+        // nativo. Mesma assinatura do GroupCallViewController.
         guard let str = String(data: data, encoding: .utf8) else { return }
         // [2026-06-01 VIDEO PARITY] Handle the `video_request` handshake the JS
         // (/call.js) and Android (CallActivity.kt) sides already speak. ROOT

@@ -1,4 +1,21 @@
 export default {
+  // [2026-10-09 wa-real]
+  "chatConv.pauseRecording": "録音を一時停止",
+  "chatConv.resumeRecording": "録音を再開",
+  // [2026-10-09 wa-real]
+  "maps.nearbyPlaces": "近くの場所",
+  "maps.sendThisPlace": "この場所を送信",
+  // [2026-10-09 wa-real]
+  "settings.blockUnknown": "知らないアカウントからのメッセージをブロック",
+  "settings.blockUnknownDesc": "連絡先になく、共通のグループもなく、一度もやり取りしたことのない相手からのメッセージは届きません。",
+  "chatConv.unknownCard.title": "連絡先にありません",
+  "chatConv.unknownCard.noCommonGroups": "共通のグループはありません",
+  "chatConv.unknownCard.commonGroups": "共通のグループ: {names}",
+  "chatConv.unknownCard.country": "{country}の番号",
+  "chatConv.unknownCard.newAccount": "最近作成されたアカウント",
+  "chatConv.unknownCard.hint": "お金・コード・リンクの要求に注意してください。知らない相手ならブロックしましょう。",
+  "chatConv.unknownCard.block": "ブロック",
+  "chatConv.unknownCard.ok": "OK",
   // [2026-10-09 passkeys]
   "settings.passkeys.title": "パスキー",
   "settings.passkeys.rowSub": "Face ID や指紋でサインイン（パスワードやコード不要）",
@@ -8953,4 +8970,40 @@ export default {
   "plans.aiAct.contacts": "連絡先を管理する", // [2026-10-09 plans-intl]
   "plans.aiAct.reply": "メッセージに返信する", // [2026-10-09 plans-intl]
   "plans.aiAct.translate": "文章を翻訳する", // [2026-10-09 plans-intl]
+  // [2026-10-09 a11y-screenreader]
+  "a11y.group": "グループ",
+  "a11y.channel": "チャンネル",
+  "a11y.online": "オンライン",
+  "a11y.unreadOne": "未読メッセージ1件",
+  "a11y.unreadCount": "未読メッセージ{n}件",
+  "a11y.mentioned": "あなたがメンションされました",
+  "a11y.msgRead": "既読",
+  "a11y.msgDelivered": "配信済み",
+  "a11y.msgSent": "送信済み",
+  "a11y.scheduled": "予約メッセージ",
+  "a11y.pinned": "ピン留め",
+  "a11y.muted": "ミュート",
+  "a11y.viewPhoto": "プロフィール写真を見る",
+  "a11y.moreOptions": "その他のオプション",
+  "a11y.openChatHint": "ダブルタップで開きます。ほかの操作もあります。",
+  "a11y.voiceMessage": "ボイスメッセージ",
+  "a11y.forwarded": "転送済み",
+  "a11y.replyTo": "{name}への返信",
+  "a11y.replyToMsg": "メッセージへの返信",
+  "a11y.viewOnce": "1回表示",
+  "a11y.edited": "編集済み",
+  "a11y.msgFailed": "未送信。ダブルタップで再送信",
+  "a11y.msgPending": "送信中",
+  "a11y.starred": "スター付き",
+  "a11y.reactions": "リアクション: {list}",
+  "a11y.msgHint": "返信、リアクション、転送、削除の操作があります。",
+  "a11y.react": "リアクション",
+  "a11y.delete": "削除",
+  "a11y.messageInfo": "メッセージ情報",
+  "a11y.newMessageFrom": "{name}からの新着メッセージ: {text}",
+  "a11y.searchFilters": "検索フィルター",
+  "a11y.prevResult": "前の結果",
+  "a11y.nextResult": "次の結果",
+  "a11y.closeSearch": "検索を閉じる",
+  "a11y.clearSearch": "検索をクリア",
 };

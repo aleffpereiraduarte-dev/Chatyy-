@@ -294,6 +294,10 @@ extension VoipPushAppDelegateSubscriber: PKPushRegistryDelegate {
 
         let callerName = (dict["caller_name"] as? String) ?? (dict["caller_email"] as? String) ?? "Unknown"
         let hasVideo = (dict["video"] as? String) == "1" || (dict["call_type"] as? String) == "video"
+        // [2026-10-09 p2p-ios] Tipo da ligação + flag P2P (se o servidor mandar
+        // `p2p` no push; senão o P2PCallBridge usa o último config da conta).
+        P2PCallBridge.noteCall(callId: callId, hasVideo: hasVideo)
+        if let p2p = dict["p2p"] { P2PCallBridge.rememberConfig(p2p, callId: callId) }
         // [Wave WhatsApp parity, 2026-05-20 gap A2+H5] Phone-number handle gives
         // iOS enough info to render the call on the lock-screen + Recents.app
         // exactly like a PSTN call (with carrier-style number formatting). If

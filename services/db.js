@@ -1381,11 +1381,20 @@ function ftsEscape(query) {
   return '"' + String(query).replace(/"/g, '""') + '"';
 }
 
-export async function dbSearchMessages(query, limit = 50, conversationId = null) {
+// [2026-10-09 wa-real #3] Busca enquanto digita: cada palavra vira um termo
+// de PREFIXO ("ola"* "mund"*), AND implícito — "ola mund" acha "Olá mundo".
+// Aspas internas escapadas; tokens só de pontuação descartados.
+function ftsPrefixQuery(query) {
+  const toks = String(query || '').split(/\s+/).map(x => x.replace(/["*]/g, '').trim()).filter(x => /[0-9A-Za-z\u00C0-\uFFFF]/.test(x));
+  if (!toks.length) return ftsEscape(query);
+  return toks.slice(0, 8).map(x => '"' + x + '"*').join(' ');
+}
+
+export async function dbSearchMessages(query, limit = 50, conversationId = null, opts = null) {
   if (isWeb || !_db) return [];
   const q = String(query || '').trim();
   if (!q) return [];
-  const ftsQ = ftsEscape(q);
+  const ftsQ = opts && opts.prefix ? ftsPrefixQuery(q) : ftsEscape(q);
   try {
     const sql = conversationId
       ? `SELECT m.* FROM messages_fts

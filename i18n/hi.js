@@ -1,4 +1,21 @@
 export default {
+  // [2026-10-09 wa-real]
+  "chatConv.pauseRecording": "रिकॉर्डिंग रोकें",
+  "chatConv.resumeRecording": "रिकॉर्डिंग फिर शुरू करें",
+  // [2026-10-09 wa-real]
+  "maps.nearbyPlaces": "आस-पास की जगहें",
+  "maps.sendThisPlace": "यह जगह भेजें",
+  // [2026-10-09 wa-real]
+  "settings.blockUnknown": "अनजान खातों के संदेश ब्लॉक करें",
+  "settings.blockUnknownDesc": "जो आपके संपर्कों में नहीं हैं, आपके साथ कोई समूह साझा नहीं करते और जिनसे आपने कभी बात नहीं की, उनके संदेश आप तक नहीं पहुँचेंगे।",
+  "chatConv.unknownCard.title": "आपके संपर्कों में नहीं है",
+  "chatConv.unknownCard.noCommonGroups": "कोई साझा समूह नहीं",
+  "chatConv.unknownCard.commonGroups": "साझा समूह: {names}",
+  "chatConv.unknownCard.country": "{country} का नंबर",
+  "chatConv.unknownCard.newAccount": "हाल ही में बना खाता",
+  "chatConv.unknownCard.hint": "पैसे, कोड या लिंक की माँग से सावधान रहें। अगर आप नहीं जानते, तो ब्लॉक करें।",
+  "chatConv.unknownCard.block": "ब्लॉक करें",
+  "chatConv.unknownCard.ok": "ठीक है",
   // [2026-10-09 passkeys]
   "settings.passkeys.title": "पासकी",
   "settings.passkeys.rowSub": "Face ID या फ़िंगरप्रिंट से साइन इन करें, बिना पासवर्ड या कोड के",
@@ -9731,4 +9748,40 @@ export default {
   "plans.aiAct.contacts": "संपर्क संभालने में", // [2026-10-09 plans-intl]
   "plans.aiAct.reply": "मैसेज का जवाब देने में", // [2026-10-09 plans-intl]
   "plans.aiAct.translate": "टेक्स्ट अनुवाद करने में", // [2026-10-09 plans-intl]
+  // [2026-10-09 a11y-screenreader]
+  "a11y.group": "समूह",
+  "a11y.channel": "चैनल",
+  "a11y.online": "ऑनलाइन",
+  "a11y.unreadOne": "1 अपठित संदेश",
+  "a11y.unreadCount": "{n} अपठित संदेश",
+  "a11y.mentioned": "आपका उल्लेख किया गया",
+  "a11y.msgRead": "पढ़ा गया",
+  "a11y.msgDelivered": "डिलीवर हुआ",
+  "a11y.msgSent": "भेजा गया",
+  "a11y.scheduled": "शेड्यूल किया गया संदेश",
+  "a11y.pinned": "पिन किया गया",
+  "a11y.muted": "म्यूट",
+  "a11y.viewPhoto": "प्रोफ़ाइल फ़ोटो देखें",
+  "a11y.moreOptions": "और विकल्प",
+  "a11y.openChatHint": "खोलने के लिए दो बार टैप करें। और कार्रवाइयाँ उपलब्ध हैं।",
+  "a11y.voiceMessage": "वॉइस संदेश",
+  "a11y.forwarded": "फ़ॉरवर्ड किया गया",
+  "a11y.replyTo": "{name} को जवाब",
+  "a11y.replyToMsg": "एक संदेश का जवाब",
+  "a11y.viewOnce": "एक बार देखें",
+  "a11y.edited": "संपादित",
+  "a11y.msgFailed": "नहीं भेजा गया। दोबारा भेजने के लिए दो बार टैप करें",
+  "a11y.msgPending": "भेजा जा रहा है",
+  "a11y.starred": "तारांकित",
+  "a11y.reactions": "प्रतिक्रियाएँ: {list}",
+  "a11y.msgHint": "जवाब देने, प्रतिक्रिया देने, फ़ॉरवर्ड करने या हटाने की कार्रवाइयाँ उपलब्ध हैं।",
+  "a11y.react": "प्रतिक्रिया दें",
+  "a11y.delete": "हटाएँ",
+  "a11y.messageInfo": "संदेश की जानकारी",
+  "a11y.newMessageFrom": "{name} का नया संदेश: {text}",
+  "a11y.searchFilters": "खोज फ़िल्टर",
+  "a11y.prevResult": "पिछला परिणाम",
+  "a11y.nextResult": "अगला परिणाम",
+  "a11y.closeSearch": "खोज बंद करें",
+  "a11y.clearSearch": "खोज साफ़ करें",
 };

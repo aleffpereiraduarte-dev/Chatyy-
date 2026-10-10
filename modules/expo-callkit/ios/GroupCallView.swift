@@ -97,6 +97,10 @@ final class GroupCallSessionState: ObservableObject {
     @Published var onHold: Bool
     @Published var connectionQuality: Int
     @Published var floatingReactions: [CallFloatingReaction]
+    /// [2026-10-09 native-group-call] Tile pinned in spotlight (tap to toggle).
+    @Published var pinnedIdentity: String?
+    /// Last remote dominant speaker reported by LiveKit.
+    @Published var dominantSpeaker: String?
 
     init(participants: [GroupParticipant] = [],
          status: String = "Conectando\u{2026}",
@@ -113,6 +117,8 @@ final class GroupCallSessionState: ObservableObject {
         self.onHold = false
         self.connectionQuality = 3
         self.floatingReactions = []
+        self.pinnedIdentity = nil
+        self.dominantSpeaker = nil
     }
 }
 
@@ -133,6 +139,8 @@ struct GroupCallView: View {
     let onMinimize: () -> Void
     let onSendReaction: (String) -> Void
     let onHandRaiseToggle: (Bool) -> Void
+    /// [2026-10-09 native-group-call] Tap a tile → pin/unpin it in spotlight.
+    var onTogglePin: (String) -> Void = { _ in }
 
     // Local UI state
     @State private var showAudioPicker = false
@@ -144,11 +152,12 @@ struct GroupCallView: View {
     @State private var timer: Timer?
 
     // Palette (same as the 1:1 CallView so the two feel like one product)
-    private let backgroundColor = Color(red: 0x0B/255.0, green: 0x14/255.0, blue: 0x1A/255.0)
-    private let chipColor       = Color(red: 0x1F/255.0, green: 0x2C/255.0, blue: 0x34/255.0)
+    // [2026-10-09 native-group-call] Monochrome (app is black & white).
+    private let backgroundColor = Color.black
+    private let chipColor       = Color(red: 0x1C/255.0, green: 0x1C/255.0, blue: 0x1E/255.0)
     private let hangupColor     = Color(red: 0xE5/255.0, green: 0x39/255.0, blue: 0x35/255.0)
-    private let secondaryText   = Color(red: 0x86/255.0, green: 0x96/255.0, blue: 0xA0/255.0)
-    private let speakerRingColor = Color(red: 0x2E/255.0, green: 0xCC/255.0, blue: 0x71/255.0)
+    private let secondaryText   = Color(white: 0.62)
+    private let speakerRingColor = Color.white
 
     private var remoteParticipants: [GroupParticipant] {
         session.participants.filter { !$0.isLocal }
@@ -293,6 +302,9 @@ struct GroupCallView: View {
 
         if count == 0 {
             waitingState
+        } else if count >= 2, let pinned = session.pinnedIdentity,
+                  let focus = remotes.first(where: { $0.identity == pinned }) {
+            spotlightLayout(focus: focus, others: remotes.filter { $0.identity != pinned }, size: size)
         } else if count == 1 {
             tile(for: remotes[0], width: size.width, height: size.height)
         } else if count == 2 {
@@ -322,6 +334,26 @@ struct GroupCallView: View {
                     }
                 }
             }
+        }
+    }
+
+    /// [2026-10-09 native-group-call] Spotlight: pinned tile big on top, the
+    /// rest in a horizontal filmstrip (adaptiveStream gives the strip the low
+    /// simulcast layer automatically — small views subscribe small).
+    @ViewBuilder
+    private func spotlightLayout(focus: GroupParticipant, others: [GroupParticipant], size: CGSize) -> some View {
+        let stripH: CGFloat = min(150, max(96, size.height * 0.22))
+        let stripW: CGFloat = stripH * 0.75
+        VStack(spacing: 8) {
+            tile(for: focus, width: size.width, height: max(120, size.height - stripH - 8))
+            ScrollView(.horizontal, showsIndicators: false) {
+                LazyHStack(spacing: 8) {
+                    ForEach(others) { p in
+                        tile(for: p, width: stripW, height: stripH)
+                    }
+                }
+            }
+            .frame(height: stripH)
         }
     }
 
@@ -400,7 +432,7 @@ struct GroupCallView: View {
                 if participant.handRaised {
                     Image(systemName: "hand.raised.fill")
                         .font(.system(size: 11, weight: .semibold))
-                        .foregroundColor(.yellow)
+                        .foregroundColor(.white)
                 }
                 Text(participant.name.isEmpty ? participant.identity : participant.name)
                     .font(.system(size: 13, weight: .medium))
@@ -449,8 +481,31 @@ struct GroupCallView: View {
                 }
                 .frame(width: width, height: height)
             }
+
+            // Pinned marker (top-trailing, under the quality bars).
+            if session.pinnedIdentity == participant.identity {
+                VStack {
+                    HStack {
+                        Spacer()
+                        Image(systemName: "pin.fill")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundColor(.white)
+                            .padding(6)
+                            .background(Circle().fill(Color.black.opacity(0.55)))
+                            .padding(.top, participant.connectionQuality < 3 ? 34 : 8)
+                            .padding(.trailing, 8)
+                    }
+                    Spacer()
+                }
+                .frame(width: width, height: height)
+            }
         }
         .frame(width: width, height: height)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            hapticTap()
+            onTogglePin(participant.identity)
+        }
     }
 
     // MARK: - Local PiP
@@ -558,7 +613,7 @@ struct GroupCallView: View {
 
                 circleButton(
                     size: 60,
-                    background: session.handRaised ? Color.yellow : chipColor,
+                    background: session.handRaised ? Color.white : chipColor,
                     foreground: session.handRaised ? .black : .white,
                     systemName: "hand.raised.fill"
                 ) {
@@ -680,14 +735,9 @@ struct GroupCallView: View {
                         .font(.system(size: 18, weight: .semibold))
                         .foregroundColor(.white)
                         .padding(.bottom, 6)
-                    moreRow(icon: "record.circle", title: session.recording ? "Parar gravação" : "Gravar reunião") {
-                        session.recording.toggle()
-                        withAnimation(.easeInOut(duration: 0.2)) { showMoreSheet = false }
-                    }
-                    moreRow(icon: session.onHold ? "play.fill" : "pause.fill", title: session.onHold ? "Retomar" : "Colocar em espera") {
-                        session.onHold.toggle()
-                        withAnimation(.easeInOut(duration: 0.2)) { showMoreSheet = false }
-                    }
+                    // [2026-10-09 native-group-call] "Gravar" / "Em espera"
+                    // rows removed — they only flipped a local flag (no real
+                    // recording / hold behind them).
                     moreRow(icon: "person.3.fill", title: "Lista de participantes (\(session.participants.count))") {
                         withAnimation(.easeInOut(duration: 0.2)) { showMoreSheet = false }
                     }
@@ -697,7 +747,7 @@ struct GroupCallView: View {
                 .frame(maxWidth: .infinity)
                 .background(
                     RoundedRectangle(cornerRadius: 24)
-                        .fill(Color(red: 0x14/255.0, green: 0x1F/255.0, blue: 0x27/255.0))
+                        .fill(Color(red: 0x12/255.0, green: 0x12/255.0, blue: 0x12/255.0))
                 )
             }
         }
@@ -757,7 +807,7 @@ struct GroupCallView: View {
             .padding(.horizontal, 20)
             Spacer()
         }
-        .background(Color(red: 0x14/255.0, green: 0x1F/255.0, blue: 0x27/255.0))
+        .background(Color(red: 0x12/255.0, green: 0x12/255.0, blue: 0x12/255.0))
     }
 
     @ViewBuilder

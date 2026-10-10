@@ -946,6 +946,8 @@ export function AuthProvider({ children }) {
               }
             }
           } catch {}
+          // [2026-10-09 native-group-call] Mirror NATIVE_GROUP_CALL_UI natively.
+          try { if (Platform.OS !== 'web') require('../services/nativeGroupCall').syncNativeGroupCallFlag(r.data.email); } catch {}
           // Cache user data for offline access (WhatsApp-style). [2026-10-08
           // offline-first] web too — hydrateOffline only trusts it alongside a
           // stored bearer for the same active account.
@@ -1334,6 +1336,9 @@ export function AuthProvider({ children }) {
           }
         }
       } catch {}
+      // [2026-10-09 native-group-call] Mirror NATIVE_GROUP_CALL_UI into the
+      // native side (CallKit answer path routes GROUP calls without JS).
+      try { if (Platform.OS !== 'web') require('../services/nativeGroupCall').syncNativeGroupCallFlag(r.data?.email || email); } catch {}
       // Initial sync — download everything to SQLite (WhatsApp-style).
       // Boots deltaSync (1min interval + AppState refresh) and the foreground
       // envelopePuller (30s pull when active, gated on

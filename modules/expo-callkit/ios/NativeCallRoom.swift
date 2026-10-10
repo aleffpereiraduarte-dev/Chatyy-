@@ -231,6 +231,15 @@ public enum NativeCallRoomEvent {
         if micPublishCallId == callId, let existing = micPublishTask {
             return existing
         }
+        // [2026-10-09 p2p-ios] Ligação 1:1 de voz com P2P ligado: o P2P é dono
+        // da mídia e NADA é publicado no LiveKit (Room fica em espera quente;
+        // P2PCallBridge publica o mic se cair p/ o LiveKit). nil = quem chamou
+        // também não publica (CallViewController checa P2PCallBridge.ownsMedia).
+        if P2PCallBridge.startIfEligible(callId: callId, isCaller: false,
+                                         hasVideo: P2PCallBridge.knownVideo(callId) ?? true) {
+            nativeCallDiag("fast_mic_publish_skipped_p2p", callId, "reason=\(reason)")
+            return nil
+        }
         micPublishCallId = callId
         let t0 = Date()
         nativeCallDiag("fast_mic_publish_start", callId, "reason=\(reason) connected=\(r.connectionState == .connected)")
@@ -264,6 +273,13 @@ public enum NativeCallRoomEvent {
         }
         micPublishTask = task
         return task
+    }
+
+    /// [2026-10-09 p2p-ios] O mic desta ligação já começou a ser publicado no
+    /// LiveKit (single-flight acima) → não troca de pilha p/ o P2P. MAIN THREAD.
+    public func hasStartedIncomingMicPublish(callId: String) -> Bool {
+        if Thread.isMainThread { return micPublishCallId == callId }
+        return DispatchQueue.main.sync { micPublishCallId == callId }
     }
 
     // [2026-10-06 native-only outgoing] See `outgoingAnswerWatcher` docs.
@@ -454,6 +470,11 @@ public enum NativeCallRoomEvent {
     }
 
     public func setMicEnabled(_ enabled: Bool) {
+        // [2026-10-09 p2p-ios] P2P dono da mídia → toggle na track P2P.
+        if let cid = _callId, P2PCallBridge.ownsMedia(cid) {
+            P2PCallBridge.setMicEnabled(callId: cid, enabled)
+            return
+        }
         guard let r = room else {
             print("[NativeCallRoom] setMicEnabled(\(enabled)): no room")
             return
@@ -572,6 +593,8 @@ final class OutgoingAnswerWatcher: NSObject, RoomDelegate {
 
     private func publishOnAnswer(reason: String) {
         guard !fired, let r = room else { return }
+        // [2026-10-09 p2p-ios] P2P dono da mídia → não publica no LiveKit.
+        if P2PCallBridge.ownsMedia(callId) { return }
         fired = true
         nativeCallDiag("outgoing_mic_gate_open_watcher", callId, reason)
         let wantMic = micDesired
@@ -798,6 +821,8 @@ public class NativeCallTokenFetcher {
         }
         let ice = Self.parseIceServers(envelope["iceServers"])
         Self.rememberIceServers(ice, forToken: token)
+        // [2026-10-09 p2p-ios] `p2p` do servidor (flag da ligação 1:1 P2P).
+        P2PCallBridge.rememberConfig(envelope["p2p"], iceServers: envelope["iceServers"], callId: roomName)
         NSLog("[CallTrace][7b/12] LkTokenFetcher result success=true url=\(lkUrl) ice=\(ice.count) elapsedMs=\(Int(Date().timeIntervalSince1970 * 1000 - __ct_t0))")
         return TokenResult(token: token, url: lkUrl, iceServers: ice)
     }

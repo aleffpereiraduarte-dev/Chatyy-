@@ -1091,6 +1091,12 @@ public class ExpoCallKitModule: Module {
         return "call_\(Int(Date().timeIntervalSince1970 * 1000))_\(UUID().uuidString.prefix(8))"
       }()
       let uuid = UUID()
+      // [2026-10-09 p2p-ios] Flag P2P da ligação (chat_call_invite_v2 → `p2p`,
+      // repassado pelo JS como JSON) + tipo da ligação p/ o P2PCallBridge.
+      P2PCallBridge.noteCall(callId: callId, hasVideo: isVideo)
+      if let pj = params["p2p_json"] as? String, !pj.isEmpty {
+        P2PCallBridge.rememberConfig(pj, callId: callId)
+      }
 
       // [#1217 2026-05-19] FULL NATIVE — gate reverted per user decision.
       // The dual-UI approach (JS /call.js when foreground, native when
@@ -1459,6 +1465,60 @@ public class ExpoCallKitModule: Module {
         GroupCallViewController.present(from: root,
           roomName: roomName, lkUrl: lkUrl, lkToken: lkToken,
           participantsJson: participantsJson, hasVideo: hasVideo)
+      }
+    }
+
+    // [2026-10-09 native-group-call] Capability probe for JS
+    // (services/nativeGroupCall.js). Binaries without it keep /call.js.
+    Function("supportsNativeGroupCallUI") { () -> Int in
+      return GroupCallViewController.kNativeGroupUiVersion
+    }
+
+    // [2026-10-09 native-group-call] JS mirrors NATIVE_GROUP_CALL_UI into the
+    // App Group so the CallKit answer path (no JS needed) routes GROUP calls
+    // to GroupCallViewController instead of the 1:1 CallViewController.
+    Function("setNativeGroupCallUiEnabled") { (enabled: Bool) -> Bool in
+      GroupCallViewController.setNativeGroupUiEnabled(enabled)
+      return GroupCallViewController.nativeGroupUiEnabled
+    }
+
+    // [2026-10-09 native-group-call] Full native group call launched from JS
+    // (outgoing / join-ongoing). params: roomName, lkUrl, lkToken,
+    // iceServers (array, optional), conversationId, title, hasVideo,
+    // isOutgoing, participants (array of {email|identity, name}).
+    AsyncFunction("openNativeGroupCall") { (params: [String: Any]) -> Bool in
+      let roomName = (params["roomName"] as? String) ?? ""
+      if roomName.isEmpty { return false }
+      let lkUrl = (params["lkUrl"] as? String) ?? ""
+      let lkToken = (params["lkToken"] as? String) ?? ""
+      if !lkToken.isEmpty, let ice = params["iceServers"] {
+        let parsed = NativeCallTokenFetcher.parseIceServers(ice)
+        if !parsed.isEmpty { NativeCallTokenFetcher.rememberIceServers(parsed, forToken: lkToken) }
+      }
+      var participantsJson = "[]"
+      if let arr = params["participants"] as? [Any],
+         let data = try? JSONSerialization.data(withJSONObject: arr, options: []),
+         let str = String(data: data, encoding: .utf8) {
+        participantsJson = str
+      }
+      let hasVideo = (params["hasVideo"] as? Bool) ?? false
+      let isOutgoing = (params["isOutgoing"] as? Bool) ?? true
+      let conversationId: String = {
+        if let s = params["conversationId"] as? String { return s }
+        if let n = params["conversationId"] as? NSNumber { return n.stringValue }
+        return ""
+      }()
+      let title = (params["title"] as? String) ?? ""
+      return await MainActor.run { () -> Bool in
+        guard let root = resolvePresentingViewController() else {
+          print("[ExpoCallKit] openNativeGroupCall: no presenting VC available")
+          return false
+        }
+        GroupCallViewController.present(from: root,
+          roomName: roomName, lkUrl: lkUrl, lkToken: lkToken,
+          participantsJson: participantsJson, hasVideo: hasVideo,
+          isOutgoing: isOutgoing, conversationId: conversationId, title: title)
+        return true
       }
     }
 
@@ -3173,6 +3233,19 @@ private class ProviderDelegate: NSObject, CXProviderDelegate {
           NSLog("[CALL-CLOSE] dismissActiveCallSurfaces(\(reason)): SKIP — presented callId=\(call.callId) != ended callId=\(wantId) (stale call_end guard)")
           nativeCallDiag("dismiss_skip_stale_callid", wantId, "presented=\(call.callId)")
           continue
+        }
+        // [2026-10-09 native-group-call] Same stale-callId guard for the group
+        // screen, and a relayed WS call_end for a GROUP room never kicks us
+        // out while other people are still in it (leaving ≠ ending for all).
+        if let group = vc as? GroupCallViewController {
+          if let wantId = forCallId, !wantId.isEmpty, group.roomName != wantId {
+            nativeCallDiag("dismiss_skip_stale_group", wantId, "presented=\(group.roomName)")
+            continue
+          }
+          if reason == "remote_call_end" && group.shouldIgnoreRemoteCallEnd {
+            nativeCallDiag("dismiss_skip_group_live", group.roomName)
+            continue
+          }
         }
         NSLog("[CALL-CLOSE] dismissActiveCallSurfaces(\(reason)): dismissing \(name) forCallId=\(forCallId ?? "<any>")")
         nativeCallDiag("dismiss_surface", forCallId ?? "", "vc=\(name) reason=\(reason)")

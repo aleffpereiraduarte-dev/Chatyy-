@@ -100,6 +100,28 @@ export default function OngoingCallChip({ conversationId, refreshKey }) {
     setJoining(true);
     try {
       const room = state?.room || state?.call_id || '';
+      // [2026-10-09 native-group-call] Fully native group screen when the
+      // binary + flag allow it (it mints its own token); else /call.js below.
+      try {
+        const ngc = require('../services/nativeGroupCall');
+        if (room && ngc.canUseNativeGroupCall(me)) {
+          const opened = await ngc.openNativeGroupCall({
+            callId: String(room),
+            conversationId: String(conversationId),
+            isVideo: !!state?.video,
+            isCaller: false,
+            email: me,
+          });
+          if (opened) {
+            if (me) {
+              setState(prev => (prev && typeof prev === 'object')
+                ? { ...prev, participants: [...participants, me] }
+                : prev);
+            }
+            return;
+          }
+        }
+      } catch {}
       // Mint a token up-front so the group-call screen renders the WebView
       // without waiting on its own fetch; the screen also re-mints if our
       // token is missing/expired.

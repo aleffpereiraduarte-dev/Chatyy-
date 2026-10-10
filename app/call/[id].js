@@ -107,6 +107,22 @@ export default function CallLinkLobbyScreen() {
           ts: Date.now(),
         };
       } catch {}
+      // [2026-10-09 native-group-call] Native group screen when available
+      // (uses this exact pre-minted link token).
+      try {
+        const ngc = require('../../services/nativeGroupCall');
+        if (ngc.canUseNativeGroupCall(user?.email)) {
+          const opened = await ngc.openNativeGroupCall({
+            callId: String(room), conversationId: '', isVideo: !!isVideo, isCaller: false,
+            title: info?.creator_name || '', email: user?.email,
+            token, url, iceServers: Array.isArray(data?.iceServers) ? data.iceServers : [],
+          });
+          if (opened) {
+            try { if (router.canGoBack()) router.back(); else router.replace('/chat'); } catch {}
+            return;
+          }
+        }
+      } catch {}
       // Reuse the validated "enter a LiveKit room" path (same params
       // group-call.js uses to join): groupCall=1 + isCaller=1.
       router.replace(
@@ -119,7 +135,7 @@ export default function CallLinkLobbyScreen() {
       setErr(String(e?.message || e));
       setStatus('error');
     }
-  }, [linkId, info, router, t]);
+  }, [linkId, info, router, t, user?.email]);
 
   const bg = colors?.background || '#000';
   const text = colors?.text || '#fff';

@@ -918,6 +918,9 @@ function SettingsScreenInner() {
     // up; this only kills the audible/haptic ring. Stored server-side on
     // chat_user_defaults so it follows the account across devices.
     mute_call_ringtone: false,
+    // [2026-10-09 wa-real #12] "Bloquear mensagens de desconhecidos"
+    // (chat_user_defaults.block_unknown, aplicado no servidor no chat_send).
+    block_unknown: false,
   });
   const [privacyPickerOpen, setPrivacyPickerOpen] = useState(null); // 'last_seen' | 'profile_photo' | 'story_privacy' | 'group_add' | null
   useEffect(() => {
@@ -943,6 +946,7 @@ function SettingsScreenInner() {
               r.data.hide_reactions_in_notifs !== undefined ? !!r.data.hide_reactions_in_notifs : false,
             mute_call_ringtone:
               r.data.mute_call_ringtone !== undefined ? !!r.data.mute_call_ringtone : false,
+            block_unknown: r.data.block_unknown === true,
           }));
           // [2026-10-06 rt-client] Espelha o gate de typing no WS (typing agora
           // é só via socket; o gate do PHP chat_typing deixou de ser chamado).
@@ -2451,7 +2455,7 @@ function SettingsScreenInner() {
             checkmark (OptionSheet, no fim da tela). Mesmas chaves/APIs:
             chat_privacy_set, chat_user_defaults_set, rotas /change-phone,
             /activity-log, /advanced-key, /advanced-privacy, /family, /parental. ── */}
-        {(searching || activeCategory === 'privacy') && sectionMatches(t('settings.privacyTitle'), t('settings.privacyLastSeen'), t('settings.privacyProfilePhoto'), t('settings.privacyReadReceipts'), t('settings.privacyStatus'), t('settings.privacyGroups'), t('settings.privacyOnline'), t('settings.privacyKeepArchived'), 'privacy', 'privacidade') && (
+        {(searching || activeCategory === 'privacy') && sectionMatches(t('settings.privacyTitle'), t('settings.privacyLastSeen'), t('settings.privacyProfilePhoto'), t('settings.privacyReadReceipts'), t('settings.privacyStatus'), t('settings.privacyGroups'), t('settings.privacyOnline'), t('settings.privacyKeepArchived'), t('settings.blockUnknown'), 'privacy', 'privacidade') && (
         <View ref={registerSectionRef('privacy_granular')}>
           <SettingsGroup header={t('settings.rd2.whoCanSee') || 'Quem pode ver'} footer={t('settings.rd2.whoCanSeeFooter') || 'Escolha quem vê suas informações no Chatyy.'}>
             {['last_seen', 'online', 'profile_photo', 'story_privacy', 'group_add'].map(field => (
@@ -2488,6 +2492,13 @@ function SettingsScreenInner() {
               title={t('settings.privacyKeepArchived')}
               value={chatPrivacy.keep_archived !== false}
               onValueChange={(v) => saveChatPrivacy({ keep_archived: !!v })}
+            />
+          </SettingsGroup>
+          <SettingsGroup footer={t('settings.blockUnknownDesc')}>
+            <SettingsSwitchRow
+              title={t('settings.blockUnknown')}
+              value={!!chatPrivacy.block_unknown}
+              onValueChange={(v) => saveChatPrivacy({ block_unknown: !!v })}
             />
           </SettingsGroup>
         </View>

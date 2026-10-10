@@ -1,4 +1,21 @@
 export default {
+  // [2026-10-09 wa-real]
+  "chatConv.pauseRecording": "Pausar gravação",
+  "chatConv.resumeRecording": "Retomar gravação",
+  // [2026-10-09 wa-real]
+  "maps.nearbyPlaces": "Locais próximos",
+  "maps.sendThisPlace": "Enviar este local",
+  // [2026-10-09 wa-real]
+  "settings.blockUnknown": "Bloquear mensagens de desconhecidos",
+  "settings.blockUnknownDesc": "Mensagens de quem não está nos seus contactos, não tem grupos em comum consigo e com quem nunca conversou não chegam.",
+  "chatConv.unknownCard.title": "Não está nos seus contactos",
+  "chatConv.unknownCard.noCommonGroups": "Nenhum grupo em comum",
+  "chatConv.unknownCard.commonGroups": "Grupos em comum: {names}",
+  "chatConv.unknownCard.country": "Número de {country}",
+  "chatConv.unknownCard.newAccount": "Conta criada recentemente",
+  "chatConv.unknownCard.hint": "Cuidado com pedidos de dinheiro, códigos ou links. Se não conhece, bloqueie.",
+  "chatConv.unknownCard.block": "Bloquear",
+  "chatConv.unknownCard.ok": "OK",
   // [2026-10-09 passkeys]
   "settings.passkeys.title": "Chaves de acesso",
   "settings.passkeys.rowSub": "Entre com Face ID ou impressão digital, sem palavra-passe nem código",
@@ -8977,4 +8994,40 @@ export default {
   "plans.aiAct.contacts": "gerir contactos", // [2026-10-09 plans-intl]
   "plans.aiAct.reply": "responder a mensagens", // [2026-10-09 plans-intl]
   "plans.aiAct.translate": "traduzir textos", // [2026-10-09 plans-intl]
+  // [2026-10-09 a11y-screenreader]
+  "a11y.group": "Grupo",
+  "a11y.channel": "Canal",
+  "a11y.online": "Online",
+  "a11y.unreadOne": "1 mensagem não lida",
+  "a11y.unreadCount": "{n} mensagens não lidas",
+  "a11y.mentioned": "Foi mencionado",
+  "a11y.msgRead": "Lida",
+  "a11y.msgDelivered": "Entregue",
+  "a11y.msgSent": "Enviada",
+  "a11y.scheduled": "Mensagem agendada",
+  "a11y.pinned": "Afixada",
+  "a11y.muted": "Silenciada",
+  "a11y.viewPhoto": "Ver foto do perfil",
+  "a11y.moreOptions": "Mais opções",
+  "a11y.openChatHint": "Toque duas vezes para abrir. Há mais ações disponíveis.",
+  "a11y.voiceMessage": "Mensagem de voz",
+  "a11y.forwarded": "Reencaminhada",
+  "a11y.replyTo": "Em resposta a {name}",
+  "a11y.replyToMsg": "Em resposta a uma mensagem",
+  "a11y.viewOnce": "Visualização única",
+  "a11y.edited": "Editada",
+  "a11y.msgFailed": "Não enviada. Toque duas vezes para reenviar",
+  "a11y.msgPending": "A enviar",
+  "a11y.starred": "Com estrela",
+  "a11y.reactions": "Reações: {list}",
+  "a11y.msgHint": "Há ações para responder, reagir, reencaminhar ou apagar.",
+  "a11y.react": "Reagir",
+  "a11y.delete": "Apagar",
+  "a11y.messageInfo": "Informações da mensagem",
+  "a11y.newMessageFrom": "Nova mensagem de {name}: {text}",
+  "a11y.searchFilters": "Filtros da pesquisa",
+  "a11y.prevResult": "Resultado anterior",
+  "a11y.nextResult": "Resultado seguinte",
+  "a11y.closeSearch": "Fechar pesquisa",
+  "a11y.clearSearch": "Limpar pesquisa",
 };

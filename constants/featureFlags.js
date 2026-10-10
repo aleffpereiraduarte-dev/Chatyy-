@@ -235,6 +235,33 @@ export const NATIVE_GROUP_CALL_TEST_ACCOUNTS = [
   'duarte@chatyy.com.br',
 ];
 export const GROUP_CALL_DATA_TOPIC = 'chatyy.call';
+
+// ────────────────────────────────────────────────────────────────────────
+// [2026-10-09 native-group-call] NATIVE_GROUP_CALL_UI — group calls on
+// mobile run on the FULLY NATIVE screen (iOS GroupCallViewController /
+// Android GroupCallActivity, LiveKit native SDK) instead of the RN grid in
+// /call?groupCall=1. Covers outgoing (chat header), join-ongoing (chip /
+// link / scheduled) and — via the App Group flag mirrored by
+// services/nativeGroupCall.syncNativeGroupCallFlag — the iOS CallKit answer
+// path. Needs a binary that reports supportsNativeGroupCallUI() >= 1 (builds
+// after 2026-10-09); older binaries keep /call.js automatically.
+// **DEFAULT false.** QA accounts below get it; dev override:
+// globalThis.__chatyy_native_group_call_ui = true | false.
+// Web never uses it (web keeps the LiveKit web room).
+export const NATIVE_GROUP_CALL_UI = false;
+export const NATIVE_GROUP_CALL_UI_TEST_ACCOUNTS = [
+  'apitest@onemundo.com.br',
+  'qa2@chatyy.com.br',
+];
+export function isNativeGroupCallUiEnabled(email) {
+  try {
+    const o = typeof globalThis !== 'undefined' ? globalThis.__chatyy_native_group_call_ui : undefined;
+    if (o === true || o === false) return o;
+  } catch {}
+  if (NATIVE_GROUP_CALL_UI === true) return true;
+  const e = String(email || '').trim().toLowerCase();
+  return !!e && NATIVE_GROUP_CALL_UI_TEST_ACCOUNTS.includes(e);
+}
 export function isNativeGroupCallEnabled(email) {
   try {
     const o = typeof globalThis !== 'undefined' ? globalThis.__chatyy_native_group_call : undefined;
