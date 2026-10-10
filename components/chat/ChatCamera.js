@@ -598,10 +598,10 @@ function CameraScreen({ VC, micOk, insets, onClose, onCapture, onOpenGallery, t 
             {selected.length > 0 ? (
               <TouchableOpacity style={st.sendSel} onPress={sendSelected} disabled={resolving}
                 accessibilityRole="button" accessibilityLabel={tt(t, 'common.next', 'Próximo')}>
-                {resolving ? <ActivityIndicator color="#fff" size="small" /> : (
+                {resolving ? <ActivityIndicator color="#000" size="small" /> : (
                   <>
                     <Text style={st.sendSelTxt}>{selected.length}</Text>
-                    <IconSend size={18} color="#fff" />
+                    <IconSend size={18} color="#000" />
                   </>
                 )}
               </TouchableOpacity>
@@ -650,8 +650,9 @@ const st = StyleSheet.create({
   center: { alignItems: 'center', justifyContent: 'center' },
   permTitle: { color: '#fff', fontSize: 19, fontWeight: '700', textAlign: 'center', marginBottom: 10 },
   permBody: { color: 'rgba(255,255,255,0.75)', fontSize: 15, textAlign: 'center', lineHeight: 21 },
-  permBtn: { marginTop: 22, backgroundColor: '#25d366', borderRadius: 22, paddingHorizontal: 22, paddingVertical: 11 },
-  permBtnTxt: { color: '#fff', fontWeight: '700', fontSize: 15 },
+  // [2026-10-10 conv-polish] P&B: botões/seleção brancos com tinta preta sobre a câmera (era verde WhatsApp).
+  permBtn: { marginTop: 22, backgroundColor: '#fff', borderRadius: 22, paddingHorizontal: 22, paddingVertical: 11 },
+  permBtnTxt: { color: '#000', fontWeight: '700', fontSize: 15 },
   topBar: { position: 'absolute', left: 12, right: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   topBtn: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
   flashSlash: { position: 'absolute', left: -1, top: 11, width: 27, height: 2, backgroundColor: '#fff', transform: [{ rotate: '-45deg' }] },
@@ -664,10 +665,10 @@ const st = StyleSheet.create({
   thumbWrap: { width: 64, height: 64, marginHorizontal: 2, borderRadius: 6, overflow: 'hidden' },
   thumb: { width: 64, height: 64 },
   thumbDur: { position: 'absolute', left: 4, bottom: 2, color: '#fff', fontSize: 10, fontWeight: '700', textShadowColor: 'rgba(0,0,0,0.8)', textShadowRadius: 3 },
-  thumbSel: { position: 'absolute', top: 3, right: 3, minWidth: 20, height: 20, borderRadius: 10, backgroundColor: '#25d366', alignItems: 'center', justifyContent: 'center', borderWidth: 1.5, borderColor: '#fff' },
-  thumbSelTxt: { color: '#fff', fontSize: 11, fontWeight: '800' },
-  sendSel: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: '#25d366', borderRadius: 22, height: 44, paddingHorizontal: 14, marginRight: 10, marginLeft: 4 },
-  sendSelTxt: { color: '#fff', fontWeight: '800', fontSize: 15 },
+  thumbSel: { position: 'absolute', top: 3, right: 3, minWidth: 20, height: 20, borderRadius: 10, backgroundColor: '#fff', alignItems: 'center', justifyContent: 'center', borderWidth: 1.5, borderColor: '#000' },
+  thumbSelTxt: { color: '#000', fontSize: 11, fontWeight: '800' },
+  sendSel: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: '#fff', borderRadius: 22, height: 44, paddingHorizontal: 14, marginRight: 10, marginLeft: 4 },
+  sendSelTxt: { color: '#000', fontWeight: '800', fontSize: 15 },
   controls: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 32 },
   sideBtn: { width: 48, height: 48, borderRadius: 24, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.25)' },
   shutterHit: { width: SHUTTER + 24, height: SHUTTER + 24, alignItems: 'center', justifyContent: 'center' },

@@ -66,7 +66,6 @@ import ScreenEmptyState from './ScreenEmptyState';
 import ChatListSmartEmpty from './onboarding/ChatListSmartEmpty'; // [2026-10-07 welcome]
 import { ChatListSkeleton } from './SkeletonLoader';
 import { SkeletonRow as SkeletonRowPrimitive } from './Skeleton';
-import PressableScale from './PressableScale';
 import PressableRow from './PressableRow';
 import { BlurBackdrop } from './NativeBlur'; // [2026-10-07 native-ui-build]
 import FadeSlideIn from './FadeSlideIn';
@@ -1356,7 +1355,9 @@ const ConversationRow = React.memo(function ConversationRow({
                   const activity = formatActivityStatus(isOnline, lastSeen, t);
                   if (!activity) return null;
                   return (
-                    <Text style={{ fontSize: 12, fontWeight: '500', color: activity.color || P.faint, marginLeft: 6, flexShrink: 0 }} numberOfLines={1} maxFontSizeMultiplier={1.3}>
+                    // [2026-10-10 polish-list] P&B list: the avatar pip already carries
+                    // the one green "online" signal — the label stays monochrome.
+                    <Text style={{ fontSize: 12, fontWeight: '500', color: P.sub, marginLeft: 6, flexShrink: 0 }} numberOfLines={1} maxFontSizeMultiplier={1.3}>
                       {activity.text}
                     </Text>
                   );
@@ -2584,8 +2585,8 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab, reque
                 <Text style={{ color: colors.text, fontWeight: '600' }}>{t('common.cancel') || 'Cancelar'}</Text>
               </TouchableOpacity>
               <TouchableOpacity onPress={saveNote} disabled={savingNote || !noteText.trim()}
-                style={{ flex: 1, padding: 12, borderRadius: 10, backgroundColor: '#111111', alignItems: 'center', opacity: (!noteText.trim() || savingNote) ? 0.5 : 1 }}>
-                <Text style={{ color: '#fff', fontWeight: '700' }}>{savingNote ? '...' : (t('common.save') || 'Salvar')}</Text>
+                style={{ flex: 1, padding: 12, borderRadius: 10, backgroundColor: isDark ? '#F5F5F7' : '#111111', alignItems: 'center', opacity: (!noteText.trim() || savingNote) ? 0.5 : 1 }}>
+                <Text style={{ color: isDark ? '#111111' : '#fff', fontWeight: '700' }}>{savingNote ? '...' : (t('common.save') || 'Salvar')}</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -6679,7 +6680,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
                   width: 32, height: 32, borderRadius: 16,
                   alignItems: 'center', justifyContent: 'center',
                   backgroundColor: pressed
-                    ? (isDark ? 'rgba(17, 17, 17,0.32)' : 'rgba(17, 17, 17,0.20)')
+                    ? (isDark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.08)')
                     : 'transparent',
                   ...(Platform.OS === 'web' ? { cursor: 'pointer', userSelect: 'none' } : {}),
                 })}
@@ -6708,13 +6709,13 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
                 style={{
                   paddingHorizontal: 14, height: 32, borderRadius: 16,
                   flexDirection: 'row', alignItems: 'center', gap: 6,
-                  backgroundColor: '#111111',
+                  backgroundColor: P.pillBg, // [2026-10-10 polish-list] was #111 (invisible in dark)
                   ...(Platform.OS === 'web' ? { cursor: 'pointer', userSelect: 'none' } : {}),
                 }}
                 accessibilityLabel={t?.('common.done') || 'Concluir'}
               >
-                <IconCheck size={14} color="#fff" />
-                <Text style={{ fontSize: 12, fontWeight: '700', color: '#fff' }}>
+                <IconCheck size={14} color={P.pillTxt} />
+                <Text style={{ fontSize: 12, fontWeight: '700', color: P.pillTxt }}>
                   {t?.('common.done') || 'Concluir'}
                 </Text>
               </TouchableOpacity>
@@ -6865,7 +6866,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
                         <View style={{
                           position: 'absolute', left: 0, top: 0,
                           width: itemSizePx, height: itemSizePx, borderRadius: itemSizePx / 2,
-                          borderWidth: 3, borderColor: '#111111',
+                          borderWidth: 3, borderColor: P.text,
                         }} />
                       )}
                     </View>
@@ -7380,8 +7381,8 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
       {renderPinnedLabel()}
       {(searchQuery || '').trim().length >= 2 && filteredConversations.length > 0 && (
         <View style={{ paddingHorizontal: 16, paddingTop: 10, paddingBottom: 6 }}>
-          <Text style={{ fontSize: 13, fontWeight: '700', color: colors.textSecondary, letterSpacing: 0.3 }}>
-            CONVERSAS
+          <Text style={{ fontSize: 13, fontWeight: '700', color: colors.textSecondary, letterSpacing: 0.3, textTransform: 'uppercase' }}>
+            {t('chat.listSearchChats')}
           </Text>
         </View>
       )}
@@ -7398,8 +7399,8 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
     return (
       <View style={{ paddingTop: 8 }}>
         <View style={{ paddingHorizontal: 16, paddingVertical: 8, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-          <Text style={{ fontSize: 13, fontWeight: '700', color: colors.textSecondary, letterSpacing: 0.3 }}>
-            MENSAGENS
+          <Text style={{ fontSize: 13, fontWeight: '700', color: colors.textSecondary, letterSpacing: 0.3, textTransform: 'uppercase' }}>
+            {t('chat.listSearchMessages')}
           </Text>
           {searchingMessages && <ActivityIndicator size="small" color={colors.textSecondary} />}
         </View>
@@ -7433,7 +7434,9 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
         {messageHits.map((hit) => {
           const snippet = (hit.snippet || hit.content || '').replace(/<b>/g, '').replace(/<\/b>/g, '');
           const convName = hit.conv_name || hit.conversation_name || (hit.sender_email || '').split('@')[0];
-          const date = hit.created_at ? (_d => isNaN(_d.getTime()) ? '' : _d.toLocaleDateString())(new Date(hit.created_at)) : '';
+          // [2026-10-10 polish-list] same relative stamp as the conversation rows
+          // above (04:27 / ontem / weekday) instead of a full dd/mm/yyyy.
+          const date = hit.created_at ? (formatChatTime(hit.created_at, t, regionalLocale(language)) || '') : '';
           // WAVE 55 fix: chat-conversation lê `params.id` (não `conversationId`).
           // Antes o tap em search result navegava com param errado → tela abria
           // com id=0 e nada renderizava. Passa também `type` + `name` pra header
@@ -7441,7 +7444,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
           const hitType = hit.conv_type || hit.conversation_type || hit.type || 'direct';
           const peerEmail = hit.peer_email || hit.other_email || hit.contact_email || hit.sender_email || '';
           return (
-            <PressableScale
+            <TouchableOpacity
               key={`hit-${hit.id}`}
               onPress={() => router.push({
                 pathname: '/chat-conversation',
@@ -7471,10 +7474,10 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
               </View>
               <View style={{ flex: 1 }}>
                 <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <Text style={{ fontSize: 15, fontWeight: '600', color: colors.text }} numberOfLines={1}>
+                  <Text style={{ fontSize: 15, fontWeight: '600', color: colors.text, flexShrink: 1, marginRight: 8 }} numberOfLines={1}>
                     {convName}
                   </Text>
-                  <Text style={{ fontSize: 11, color: isDark ? 'rgba(255,255,255,0.4)' : 'rgba(0,0,0,0.4)' }}>
+                  <Text style={{ fontSize: 12, color: P.sub }}>
                     {date}
                   </Text>
                 </View>
@@ -7482,12 +7485,12 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
                   {snippet}
                 </Text>
               </View>
-            </PressableScale>
+            </TouchableOpacity>
           );
         })}
       </View>
     );
-  }, [searchQuery, messageHits, searchingMessages, isDark, colors, router, wsDownBanner, t, hasDraftSection, draftConversations.length, draftsSectionOpen]);
+  }, [searchQuery, messageHits, searchingMessages, isDark, colors, router, wsDownBanner, t, hasDraftSection, draftConversations.length, draftsSectionOpen, language, P]);
 
   // [2026-10-07 welcome] Smart empty state: friends already on Chatyy +
   // Nova conversa / Convidar + Saved Messages tip. With a filter/search (or
@@ -7781,7 +7784,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
             >
               <View style={[s.fabMenuIcon, { backgroundColor: '#111111' }]}>
                 <Svg width={18} height={18} viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
-                  <Path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4-4v2" />
+                  <Path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2" />
                   <SvgCircle cx="9" cy="7" r="4" />
                   <Path d="M23 21v-2a4 4 0 00-3-3.87" />
                   <Path d="M16 3.13a4 4 0 010 7.75" />
@@ -7982,10 +7985,10 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
                 onPress={handleSetNote}
                 style={{
                   flex: 1, paddingVertical: 10, borderRadius: 12,
-                  backgroundColor: ACCENT, alignItems: 'center',
+                  backgroundColor: P.pillBg, alignItems: 'center',
                 }}
               >
-                <Text style={{ color: '#fff', fontWeight: '700', fontSize: 14 }}>
+                <Text style={{ color: P.pillTxt, fontWeight: '700', fontSize: 14 }}>
                   {t('common.save') || 'Save'}
                 </Text>
               </TouchableOpacity>

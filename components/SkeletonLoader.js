@@ -213,11 +213,12 @@ export function ChatListSkeleton({ count = 8 }) {
       {Array.from({ length: count }).map((_, i) => (
         // [2026-10-08 chat-beauty-list] Matches the real row: 54 avatar, 74pt
         // rhythm, text column at x=84 (container 4 + 12 + 54 + 14).
+        // [2026-10-10 polish-list] widths fixed per index (were Math.random → jitter on re-render).
         <View key={i} style={[s.row, { paddingVertical: 10, minHeight: 74, paddingHorizontal: 12 }]}>
           <Shimmer style={{ width: 54, height: 54, borderRadius: 27 }} delay={i * 35} />
           <View style={[s.lines, { marginLeft: 2 }]}>
-            <Shimmer style={[s.line1, { width: `${40 + Math.random() * 25}%` }]} delay={i * 35 + 15} />
-            <Shimmer style={[s.line2, { width: `${55 + Math.random() * 30}%` }]} delay={i * 35 + 30} />
+            <Shimmer style={[s.line1, { width: `${40 + ((i * 37) % 25)}%` }]} delay={i * 35 + 15} />
+            <Shimmer style={[s.line2, { width: `${55 + ((i * 53) % 30)}%` }]} delay={i * 35 + 30} />
           </View>
           <View style={{ alignItems: 'flex-end', gap: 8 }}>
             <Shimmer style={{ width: 36, height: 10, borderRadius: 5 }} delay={i * 35 + 20} />

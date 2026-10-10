@@ -9949,4 +9949,11 @@ export default {
   "live.torchOff": "إيقاف المصباح",
   "live.torchUnavailable": "المصباح غير متاح على هذا الجهاز",
   "live.beautyNeedsUpdate": "تنعيم فيديو البث يصل في التحديث القادم للتطبيق. حاليًا يُطبّق على المعاينة فقط.",
+  "chat.listSearchChats": "المحادثات",
+  "chat.listSearchMessages": "الرسائل",
+  // [2026-10-10 conv-polish]
+  "chatConv.tapToJoin": "انقر للانضمام",
+  "chatConv.parentalBlocked": "رسالة محظورة بواسطة الرقابة الأبوية",
+  "chatConv.clearFilters": "مسح عوامل التصفية",
+  "chatConv.forwardedFromFmt": "{label} من {name}",
 };

@@ -219,8 +219,11 @@ export default function StickerPicker({ onSelect, onClose, colors, t, userEmail 
     // Local cache for offline; server is the source of truth — hydrate from
     // chat_sticker_favorites_list below to merge any favorites this user
     // saved from another device.
-    storageGet(FAV_KEY).then(setFavorites);
+    // [2026-10-10] Lê o cache local ANTES de mesclar com o servidor. Antes os
+    // dois corriam em paralelo e, se o storage resolvesse depois, sobrescrevia
+    // a lista mesclada → favorita salva pelo chat "não aparecia".
     (async () => {
+      try { const local = await storageGet(FAV_KEY); setFavorites(prev => (prev && prev.length ? prev : local)); } catch {}
       try {
         const r = await api.chatStickerFavoritesList();
         const rows = r?.items || r?.data?.items || [];

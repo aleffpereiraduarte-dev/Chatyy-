@@ -9949,4 +9949,11 @@ export default {
   "live.torchOff": "फ़्लैशलाइट बंद करें",
   "live.torchUnavailable": "इस डिवाइस पर फ़्लैशलाइट उपलब्ध नहीं है",
   "live.beautyNeedsUpdate": "लाइव वीडियो पर स्मूदिंग अगले ऐप अपडेट में आएगी। अभी यह सिर्फ़ आपके प्रीव्यू पर लागू है।",
+  "chat.listSearchChats": "बातचीत",
+  "chat.listSearchMessages": "संदेश",
+  // [2026-10-10 conv-polish]
+  "chatConv.tapToJoin": "जुड़ने के लिए टैप करें",
+  "chatConv.parentalBlocked": "पैरेंटल कंट्रोल द्वारा संदेश अवरुद्ध",
+  "chatConv.clearFilters": "फ़िल्टर साफ़ करें",
+  "chatConv.forwardedFromFmt": "{name} से {label}",
 };

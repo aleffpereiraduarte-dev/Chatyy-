@@ -88,11 +88,14 @@ export default function AISummarizeModal({
           onPress={() => {}}
           style={[s.card, { backgroundColor: colors?.surface || '#fff' }]}
         >
+          {/* [2026-10-10 conv-polish] tinta = colors.primary (#111 claro / #F5F5F7
+              escuro): BRAND fixo #111 sumia no cartão escuro (ícone, spinner,
+              bullets e botão preto-no-preto). */}
           {/* Header */}
           <View style={s.header}>
             <View style={s.headerLeft}>
-              <View style={[s.iconCircle, { backgroundColor: BRAND + '22' }]}>
-                <IconSparkles size={18} color={BRAND} />
+              <View style={[s.iconCircle, { backgroundColor: colors?.surfaceVariant || (BRAND + '14') }]}>
+                <IconSparkles size={18} color={colors?.primary || BRAND} />
               </View>
               <Text style={[s.title, { color: colors?.text || '#000' }]}>
                 {t?.('chatConv.summaryTitle') || 'Resumo da conversa'}
@@ -107,7 +110,7 @@ export default function AISummarizeModal({
           <ScrollView style={{ maxHeight: 460 }} contentContainerStyle={{ padding: 18, paddingTop: 8 }}>
             {loading ? (
               <View style={{ alignItems: 'center', paddingVertical: 40 }}>
-                <ActivityIndicator size="large" color={BRAND} />
+                <ActivityIndicator size="large" color={colors?.primary || BRAND} />
                 <Text style={[s.loadingText, { color: colors?.textSecondary || '#666' }]}>
                   {t?.('chatConv.summarizing') || 'Lendo mensagens não lidas...'}
                 </Text>
@@ -139,7 +142,7 @@ export default function AISummarizeModal({
                 ) : (
                   bullets.map((b, i) => (
                     <View key={i} style={s.bulletRow}>
-                      <View style={[s.bulletDot, { backgroundColor: BRAND }]} />
+                      <View style={[s.bulletDot, { backgroundColor: colors?.primary || BRAND }]} />
                       <Text style={[s.bulletText, { color: colors?.text || '#000' }]}>{b}</Text>
                     </View>
                   ))
@@ -153,10 +156,10 @@ export default function AISummarizeModal({
             <View style={[s.actions, { borderTopColor: colors?.border || '#eee' }]}>
               <TouchableOpacity
                 onPress={() => { onMarkRead?.(); onClose?.(); }}
-                style={[s.actionBtn, { backgroundColor: BRAND }]}
+                style={[s.actionBtn, { backgroundColor: colors?.primary || BRAND }]}
               >
-                <IconCheck size={16} color="#fff" strokeWidth={3} />
-                <Text style={{ color: '#fff', fontWeight: '700', fontSize: 14 }}>
+                <IconCheck size={16} color={colors?.onPrimary || '#fff'} strokeWidth={3} />
+                <Text style={{ color: colors?.onPrimary || '#fff', fontWeight: '700', fontSize: 14 }}>
                   {t?.('chatConv.markAsRead') || 'Marcar como lido'}
                 </Text>
               </TouchableOpacity>

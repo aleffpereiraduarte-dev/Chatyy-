@@ -70,7 +70,13 @@ function StoryRingAvatar({
   uploadFailed = false,
 }) {
   const _dim = dimmedColor || (isDark ? 'rgba(255,255,255,0.25)' : 'rgba(0,0,0,0.2)');
-  const _badgeBorder = isDark ? '#0d0d0d' : '#fff';
+  const _badgeBorder = colors?.background || (isDark ? '#000' : '#fff');
+  // [2026-10-10 polish-list] P&B: the default ink ring/badge (#111111) vanished
+  // on the black dark-mode background — invert it to light ink in dark. An
+  // explicit caller ringColor is respected as-is.
+  const _inkDefault = isDark && ringColor === '#111111';
+  const _ink = _inkDefault ? (colors?.text || '#F5F5F7') : ringColor;
+  const _onInk = _inkDefault ? '#111111' : '#fff';
   const _avatarText = colors?.text || (isDark ? '#fff' : '#0f172a');
   const _notePillBg = isDark ? '#2c2c2e' : '#fff';
   const _notePillBorder = isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.08)';
@@ -157,9 +163,9 @@ function StoryRingAvatar({
                     knows at a glance the post is restricted. Default is the
                     brand purple gradient. */}
                 <LinearGradient id={gid} x1="0" y1="0" x2="1" y2="1">
-                  <Stop offset="0" stopColor={closeFriends ? '#34D399' : '#111111'} />
-                  <Stop offset="0.5" stopColor={closeFriends ? '#10B981' : ringColor} />
-                  <Stop offset="1" stopColor={closeFriends ? '#047857' : '#111111'} />
+                  <Stop offset="0" stopColor={closeFriends ? '#34D399' : (_inkDefault ? _ink : '#111111')} />
+                  <Stop offset="0.5" stopColor={closeFriends ? '#10B981' : _ink} />
+                  <Stop offset="1" stopColor={closeFriends ? '#047857' : (_inkDefault ? _ink : '#111111')} />
                 </LinearGradient>
               </Defs>
               <SvgCircle
@@ -214,9 +220,9 @@ function StoryRingAvatar({
                   audience scope is visible at a glance — same per-segment
                   dimming as the purple variant once that item is viewed. */}
               <LinearGradient id={segGid} x1="0" y1="0" x2="1" y2="1">
-                <Stop offset="0" stopColor={closeFriends ? '#34D399' : '#111111'} />
-                <Stop offset="0.5" stopColor={closeFriends ? '#10B981' : ringColor} />
-                <Stop offset="1" stopColor={closeFriends ? '#047857' : '#111111'} />
+                <Stop offset="0" stopColor={closeFriends ? '#34D399' : (_inkDefault ? _ink : '#111111')} />
+                <Stop offset="0.5" stopColor={closeFriends ? '#10B981' : _ink} />
+                <Stop offset="1" stopColor={closeFriends ? '#047857' : (_inkDefault ? _ink : '#111111')} />
               </LinearGradient>
             </Defs>
             {Array.from({ length: count }).map((_, i) => {
@@ -229,7 +235,7 @@ function StoryRingAvatar({
                   cy={ringSize / 2}
                   r={radius}
                   stroke={segViewed
-                    ? (closeFriends ? 'rgba(16,185,129,0.22)' : 'rgba(17, 17, 17,0.22)')
+                    ? (closeFriends ? 'rgba(16,185,129,0.22)' : _dim)
                     : `url(#${segGid})`}
                   strokeWidth={3}
                   fill="none"
@@ -355,11 +361,11 @@ function StoryRingAvatar({
               width: badge === 'reply' ? 22 : 22,
               height: badge === 'reply' ? 22 : 22,
               borderRadius: 11,
-              backgroundColor: ringColor,
+              backgroundColor: _ink,
               alignItems: 'center', justifyContent: 'center',
               borderWidth: badge === 'reply' ? 2 : 2.5, borderColor: _badgeBorder,
               // Soft brand glow on both badge variants — premium CTA feel.
-              shadowColor: ringColor, shadowOpacity: 0.5, shadowRadius: 6,
+              shadowColor: '#000', shadowOpacity: isDark ? 0 : 0.18, shadowRadius: 4,
               shadowOffset: { width: 0, height: 2 }, elevation: 4,
             }}
           >
@@ -367,22 +373,22 @@ function StoryRingAvatar({
                 '↩' could render as a color emoji on iOS (hard-rule violation),
                 and text plus-signs drift off-center across fonts. */}
             {badge === 'reply'
-              ? <IconReply size={12} color="#fff" />
-              : <IconPlus size={14} color="#fff" />}
+              ? <IconReply size={12} color={_onInk} />
+              : <IconPlus size={14} color={_onInk} />}
           </TouchableOpacity>
         ) : (
           <View style={{
             position: 'absolute', bottom: -1, right: -1,
             width: 22, height: 22, borderRadius: 11,
-            backgroundColor: ringColor,
+            backgroundColor: _ink,
             alignItems: 'center', justifyContent: 'center',
             borderWidth: 2.5, borderColor: _badgeBorder,
             // Soft brand-purple glow so the add affordance reads as a premium
             // CTA (Instagram/WhatsApp parity) instead of a flat dot.
-            shadowColor: ringColor, shadowOpacity: 0.5, shadowRadius: 6,
+            shadowColor: '#000', shadowOpacity: isDark ? 0 : 0.18, shadowRadius: 4,
             shadowOffset: { width: 0, height: 2 }, elevation: 4,
           }}>
-            <IconPlus size={14} color="#fff" />
+            <IconPlus size={14} color={_onInk} />
           </View>
         )
       ) : null}

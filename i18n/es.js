@@ -9918,4 +9918,11 @@ export default {
   "live.torchOff": "Apagar linterna",
   "live.torchUnavailable": "Linterna no disponible en este dispositivo",
   "live.beautyNeedsUpdate": "Suavizar en el video del directo llega en la próxima actualización de la app. Por ahora solo se aplica a tu vista previa.",
+  "chat.listSearchChats": "Chats",
+  "chat.listSearchMessages": "Mensajes",
+  // [2026-10-10 conv-polish]
+  "chatConv.tapToJoin": "Toca para unirte",
+  "chatConv.parentalBlocked": "Mensaje bloqueado por el control parental",
+  "chatConv.clearFilters": "Borrar filtros",
+  "chatConv.forwardedFromFmt": "{label} de {name}",
 };

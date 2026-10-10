@@ -1170,6 +1170,10 @@ function AppInit({ onNotification, setOtaToast }) {
           ::selection { background: rgba(37,99,235,0.2); color: inherit; }
           /* Focus ring for keyboard navigation */
           :focus-visible { outline: 2px solid rgba(17, 17, 17,0.6); outline-offset: 2px; border-radius: 4px; }
+          /* [2026-10-10 polish-list] Text fields always match :focus-visible, so every
+             focused search/compose box got a thick ring INSIDE its own pill. Fields show
+             the caret + their own container styling; keep the ring for buttons/links. */
+          input:focus-visible, textarea:focus-visible { outline: none; }
           /* Smooth image loading */
           img { transition: opacity 0.3s ease; }
           /* Desktop chat message hover */

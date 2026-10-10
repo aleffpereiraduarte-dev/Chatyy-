@@ -784,7 +784,7 @@ export default function ForgotPassword() {
             shadowOpacity: 0.06, shadowRadius: 3, elevation: 2,
           }),
         }]}>
-          {isDark ? <IconSun size={16} color={colors.warning} /> : <IconMoon size={16} color={colors.textSecondary} />}
+          {isDark ? <IconSun size={16} color={colors.textSecondary} /> : <IconMoon size={16} color={colors.textSecondary} />}
         </View>
       </TouchableOpacity>
 
@@ -930,7 +930,8 @@ const s = StyleSheet.create({
   btnCol: { marginTop: 16 },
   primaryBtn: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
-    borderRadius: 8, paddingVertical: 12,
+    // [2026-10-10 visual] match login CTA (radius 14, ~52pt tall)
+    borderRadius: 14, paddingVertical: 12, minHeight: 52,
     ...Platform.select({
       web: {
         cursor: 'pointer', transition: 'all 0.2s ease',

@@ -1362,7 +1362,10 @@ function SettingsScreenInner() {
   // profile card on top, then the categories split into three inset groups.
   const categoryGroups = [
     ['account', 'privacy', 'notifications', 'appearance'],
-    ['chat', 'email', 'storage_data'],
+    // [2026-10-10 settings-polish] web: todas as seções de "Armazenamento e
+    // dados" são nativas (Platform.OS !== 'web') → a categoria abria uma página
+    // VAZIA. No web ela sai da lista.
+    ['chat', 'email', ...(Platform.OS === 'web' ? [] : ['storage_data'])],
     ['bia', 'help'],
   ].map(keys => keys.map(k => categoryList.find(c => c.key === k)).filter(Boolean));
   const displayName = (user?.name || user?.display_name || '').trim()

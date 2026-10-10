@@ -1362,7 +1362,7 @@ function ContactsScreenInner() {
       ) : (
       <View style={[s.header, { backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
         <TouchableOpacity onPress={() => { if (Platform.OS === "web" && window.parent !== window) { try { window.parent.postMessage({ type: "close-side-panel", route: "/contacts" }, "*"); } catch {} } else { router.back(); } }} style={s.backBtn}>
-          <IconArrowLeft size={24} color={colors.textSecondary} />
+          <IconArrowLeft size={24} color={colors.text} />
         </TouchableOpacity>
         <Text style={[s.headerTitle, { color: colors.text }]}>
           {t('contacts.title')}{contacts.length > 0 ? ` (${contacts.length})` : ''}

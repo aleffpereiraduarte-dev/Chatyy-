@@ -47,7 +47,7 @@ function IconQrCode({ size = 24, color = '#000' }) {
 
 // [2026-10-09 find-contacts] WhatsApp-style shortcut tile (round black icon +
 // label) for the top of "Nova conversa".
-function ShortcutTile({ label, onPress, colors, children }) {
+function ShortcutTile({ label, onPress, colors, isDark, children }) {
   return (
     <TouchableOpacity
       onPress={onPress}
@@ -56,7 +56,7 @@ function ShortcutTile({ label, onPress, colors, children }) {
       accessibilityRole="button"
       accessibilityLabel={label}
     >
-      <View style={sty.shortcutIcon}>{children}</View>
+      <View style={[sty.shortcutIcon, isDark && sty.iconChipDark]}>{children}</View>
       <Text style={[sty.shortcutLabel, { color: colors.text }]} numberOfLines={2}>{label}</Text>
     </TouchableOpacity>
   );
@@ -221,7 +221,7 @@ const ContactRow = React.memo(function ContactRow({
   if (item._isPhoneInvite) {
     return (
       <View style={[sty.contactRow, { borderBottomColor: colors.border }]}>
-        <View style={[sty.quickActionIcon, { backgroundColor: '#111111', marginRight: 12 }]}>
+        <View style={[sty.quickActionIcon, { backgroundColor: colors.onPrimary === '#000000' ? '#2C2C2E' : '#111111', marginRight: 12 }]}>
           <IconUserPlus size={18} color="#fff" />
         </View>
         <View style={sty.contactInfo}>
@@ -231,12 +231,12 @@ const ContactRow = React.memo(function ContactRow({
           </Text>
         </View>
         <InvitePill
-          style={[sty.inviteBtn, sty.inviteBtnWithIcon, { backgroundColor: '#111111' }]}
+          style={[sty.inviteBtn, sty.inviteBtnWithIcon, { backgroundColor: colors.primary }]}
           onPress={() => onInvitePhone && onInvitePhone(item)}
           accessibilityLabel={t('chat.invitePhone') || 'Convidar este número'}
         >
-          <IconUserPlus size={13} color="#fff" />
-          <Text style={sty.inviteBtnText}>{t('chat.invite')}</Text>
+          <IconUserPlus size={13} color={colors.onPrimary || '#fff'} />
+          <Text style={[sty.inviteBtnText, { color: colors.onPrimary || '#fff' }]}>{t('chat.invite')}</Text>
         </InvitePill>
       </View>
     );
@@ -251,7 +251,7 @@ const ContactRow = React.memo(function ContactRow({
         accessibilityLabel={t('chat.messageYourself') || 'Message yourself'}
         accessibilityRole="button"
       >
-        <View style={sty.contactAvatarRing}>
+        <View style={[sty.contactAvatarRing, { borderColor: colors.border }]}>
           <AvatarCircle email={item.email} name={item.name} size={40} colors={colors} />
         </View>
         <View style={sty.contactInfo}>
@@ -275,7 +275,7 @@ const ContactRow = React.memo(function ContactRow({
   if (item._isInvitePlaceholder) {
     return (
       <View style={[sty.contactRow, { borderBottomColor: colors.border, paddingVertical: 16 }]}>
-        <View style={[sty.quickActionIcon, { backgroundColor: '#111111', marginRight: 12 }]}>
+        <View style={[sty.quickActionIcon, { backgroundColor: colors.onPrimary === '#000000' ? '#2C2C2E' : '#111111', marginRight: 12 }]}>
           <IconUserPlus size={18} color="#fff" />
         </View>
         <View style={sty.flex1}>
@@ -283,12 +283,12 @@ const ContactRow = React.memo(function ContactRow({
           <Text style={[sty.contactSub, { color: colors.textTertiary }]}>{t('chat.inviteFriendDesc')}</Text>
         </View>
         <InvitePill
-          style={[sty.inviteBtn, sty.inviteBtnWithIcon, { backgroundColor: '#111111' }]}
+          style={[sty.inviteBtn, sty.inviteBtnWithIcon, { backgroundColor: colors.primary }]}
           onPress={() => onShowInviteInput(true)}
           accessibilityLabel={t('chat.invite')}
         >
-          <IconUserPlus size={13} color="#fff" />
-          <Text style={sty.inviteBtnText}>{t('chat.invite')}</Text>
+          <IconUserPlus size={13} color={colors.onPrimary || '#fff'} />
+          <Text style={[sty.inviteBtnText, { color: colors.onPrimary || '#fff' }]}>{t('chat.invite')}</Text>
         </InvitePill>
       </View>
     );
@@ -341,18 +341,18 @@ const ContactRow = React.memo(function ContactRow({
           </Text>
         </View>
         <InvitePill
-          style={[sty.inviteBtn, sty.inviteBtnWithIcon, { backgroundColor: '#111111' }]}
+          style={[sty.inviteBtn, sty.inviteBtnWithIcon, { backgroundColor: colors.primary }]}
           onPress={onTap}
           onLongPress={onHold}
           disabled={invitingEmail === item.email}
           accessibilityLabel={t('chat.invite')}
         >
           {invitingEmail === item.email ? (
-            <ActivityIndicator size={14} color="#fff" />
+            <ActivityIndicator size={14} color={colors.onPrimary || '#fff'} />
           ) : (
             <>
-              <IconUserPlus size={13} color="#fff" />
-              <Text style={sty.inviteBtnText}>{t('chat.invite')}</Text>
+              <IconUserPlus size={13} color={colors.onPrimary || '#fff'} />
+              <Text style={[sty.inviteBtnText, { color: colors.onPrimary || '#fff' }]}>{t('chat.invite')}</Text>
             </>
           )}
         </InvitePill>
@@ -367,7 +367,7 @@ const ContactRow = React.memo(function ContactRow({
       onPress={() => onSelect(item)}
       activeOpacity={0.7}
     >
-      <View style={sty.contactAvatarRing}>
+      <View style={[sty.contactAvatarRing, { borderColor: colors.border }]}>
         <AvatarCircle email={item.email} name={item.name || prettifyHandle(item.email)} size={40} colors={colors} />
         {item.online && <View style={[sty.onlineDotSmall, { borderColor: colors.background }]} />}
       </View>
@@ -391,8 +391,8 @@ const ContactRow = React.memo(function ContactRow({
               backend + contact_joined WS event). Brand purple so it stands out
               without screaming. */}
           {item._justJoined && (
-            <View style={sty.novoBadge}>
-              <Text style={sty.novoBadgeText}>
+            <View style={[sty.novoBadge, { backgroundColor: colors.primary }]}>
+              <Text style={[sty.novoBadgeText, { color: colors.onPrimary || '#fff' }]}>
                 {t('chat.newOnChatyy') || 'NOVO'}
               </Text>
             </View>
@@ -406,7 +406,7 @@ const ContactRow = React.memo(function ContactRow({
             highlightStyle={{ backgroundColor: '#11111130' }}
           />
           {item.username ? (
-            <Text style={sty.usernameInline} numberOfLines={1}>@{item.username}</Text>
+            <Text style={[sty.usernameInline, { color: colors.text }]} numberOfLines={1}>@{item.username}</Text>
           ) : null}
         </View>
         {item.about ? (
@@ -1717,7 +1717,7 @@ export default function ChatNewScreen() {
     >
       <View>
         <AvatarCircle email={item.email} name={item.name || item.email} size={56} colors={colors} />
-        <View style={[sty.onlineDot, { borderColor: colors.background }]} />
+        {item.online ? <View style={[sty.onlineDot, { borderColor: colors.background }]} /> : null}
       </View>
       <Text style={[sty.recentName, { color: colors.text }]} numberOfLines={1}>
         {((item.name && !item.name.includes('@')) ? item.name : prettifyHandle(item.email || item.name || '')).split(' ')[0]}
@@ -2178,18 +2178,18 @@ export default function ChatNewScreen() {
                       very top: Novo grupo · Novo contato · Escanear QR · Meu QR. */}
                   {mode === 'direct' && !pickMode && (
                     <View style={sty.shortcutRow}>
-                      <ShortcutTile label={t('chat.newGroup')} colors={colors} onPress={() => { setSelectedMembers([]); setMode('group'); }}>
+                      <ShortcutTile label={t('chat.newGroup')} colors={colors} isDark={isDark} onPress={() => { setSelectedMembers([]); setMode('group'); }}>
                         <IconUsers size={20} color="#fff" />
                       </ShortcutTile>
                       {Platform.OS !== 'web' && (
-                        <ShortcutTile label={t('chat.findNewContact')} colors={colors} onPress={handleNewContact}>
+                        <ShortcutTile label={t('chat.findNewContact')} colors={colors} isDark={isDark} onPress={handleNewContact}>
                           <IconUserPlus size={20} color="#fff" />
                         </ShortcutTile>
                       )}
-                      <ShortcutTile label={t('chat.findScanQr')} colors={colors} onPress={handleOpenQrScanner}>
+                      <ShortcutTile label={t('chat.findScanQr')} colors={colors} isDark={isDark} onPress={handleOpenQrScanner}>
                         <IconCamera size={20} color="#fff" />
                       </ShortcutTile>
-                      <ShortcutTile label={t('chat.findMyQr')} colors={colors} onPress={handleQrPress}>
+                      <ShortcutTile label={t('chat.findMyQr')} colors={colors} isDark={isDark} onPress={handleQrPress}>
                         <IconQrCode size={20} color="#fff" />
                       </ShortcutTile>
                     </View>
@@ -2271,7 +2271,7 @@ export default function ChatNewScreen() {
                       }}
                       activeOpacity={0.7}
                     >
-                      <View style={[sty.quickActionIcon, { backgroundColor: '#0ea5e9' }]}>
+                      <View style={[sty.quickActionIcon, isDark && sty.iconChipDark]}>
                         <IconMessageSquare size={18} color="#fff" />
                       </View>
                       <View style={{ flex: 1 }}>
@@ -2286,7 +2286,7 @@ export default function ChatNewScreen() {
                       onPress={() => setShowInviteInput(!showInviteInput)}
                       activeOpacity={0.7}
                     >
-                      <View style={[sty.quickActionIcon, { backgroundColor: '#111111' }]}>
+                      <View style={[sty.quickActionIcon, isDark && sty.iconChipDark]}>
                         <IconMail size={18} color="#fff" />
                       </View>
                       <View style={{ flex: 1 }}>
@@ -2332,7 +2332,7 @@ export default function ChatNewScreen() {
                       onPress={() => handleInviteShare({})}
                       activeOpacity={0.7}
                     >
-                      <View style={[sty.quickActionIcon, { backgroundColor: '#111111' }]}>
+                      <View style={[sty.quickActionIcon, isDark && sty.iconChipDark]}>
                         <IconUserPlus size={18} color="#fff" />
                       </View>
                       <View style={{ flex: 1 }}>
@@ -2793,6 +2793,8 @@ const sty = StyleSheet.create({
   shortcutTile: { alignItems: 'center', width: 80, paddingVertical: 4 },
   shortcutIcon: { width: 48, height: 48, borderRadius: 24, backgroundColor: '#111111', alignItems: 'center', justifyContent: 'center' },
   shortcutLabel: { fontSize: 12, fontWeight: '500', marginTop: 6, textAlign: 'center' },
+  // [2026-10-10 polish-list] dark: #111 chip on the #000 page was invisible.
+  iconChipDark: { backgroundColor: '#2C2C2E' },
   findCta: { marginHorizontal: 16, marginTop: 8, marginBottom: 6, padding: 14, borderRadius: 12 },
   findCtaTitle: { fontSize: 15, fontWeight: '700' },
   findCtaDesc: { fontSize: 13, marginTop: 4, lineHeight: 18 },

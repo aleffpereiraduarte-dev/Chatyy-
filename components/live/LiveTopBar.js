@@ -276,12 +276,12 @@ const styles = StyleSheet.create({
     top: -4, right: -8,
     paddingHorizontal: 5,
     paddingVertical: 1,
-    backgroundColor: '#22c55e',
+    backgroundColor: '#ffffff', // [2026-10-10 visual] P&B (was green #22c55e)
     borderRadius: 8,
-    borderWidth: 1, borderColor: '#fff',
+    borderWidth: 1, borderColor: 'rgba(0,0,0,0.15)',
   },
   plusOneText: {
-    color: '#fff',
+    color: '#000',
     fontSize: 8,
     fontWeight: '900',
     letterSpacing: 0.3,

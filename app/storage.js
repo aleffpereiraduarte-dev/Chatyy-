@@ -23,6 +23,7 @@ import * as api from '../services/api';
 import { IconArrowLeft, IconCloud, IconDatabase, IconRefresh } from '../components/Icons';
 import StorageShopSheet from '../components/StorageShopSheet';
 import FadeSlideIn from '../components/FadeSlideIn';
+import { useGroupedColors } from '../components/settings/SettingsKit'; // [2026-10-10 settings-polish] P&B grouped
 import PressableScale from '../components/PressableScale';
 // [2026-05-22 monetization-pause] hidden by MONETIZATION_ENABLED flag
 import { MONETIZATION_ENABLED } from '../constants/featureFlags';
@@ -43,6 +44,12 @@ export default function StorageScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { colors, isDark } = useTheme();
+  // [2026-10-10 settings-polish] colors.muted/colors.tint NÃO existem no tema →
+  // no escuro os rótulos caíam no preto padrão (invisíveis) e o acento era azul.
+  // Agora: secundário = textSecondary, acento = tinta P&B, cartões agrupados.
+  const g = useGroupedColors();
+  const muted = colors.textSecondary;
+  const ink = colors.primary;
   const { t } = useLanguage();
 
   const [usage, setUsage] = useState(null);
@@ -81,8 +88,8 @@ export default function StorageScreen() {
   const barColor = useMemo(() => {
     if (pct >= 95) return '#ef4444';
     if (pct >= 80) return '#f59e0b';
-    return colors.tint || '#0a84ff';
-  }, [pct, colors]);
+    return ink;
+  }, [pct, ink]);
 
   const isPaid = !!planState?.isPaid;
   const usedLabel = formatBytes(usage?.used_bytes || 0);
@@ -117,7 +124,7 @@ export default function StorageScreen() {
   const overGrace = usage?.grace_active;
 
   return (
-    <View style={[styles.container, { backgroundColor: colors.background, paddingTop: USE_NATIVE_HEADER ? 0 : (insets.top || 0) + 6 }]}>
+    <View style={[styles.container, { backgroundColor: g.pageBg, paddingTop: USE_NATIVE_HEADER ? 0 : (insets.top || 0) + 6 }]}>
       {USE_NATIVE_HEADER ? (
         <Stack.Screen options={nativeHeaderOptions({
           colors,
@@ -139,7 +146,7 @@ export default function StorageScreen() {
           {t('storage.title') || 'Armazenamento'}
         </Text>
         <TouchableOpacity onPress={onRefresh} hitSlop={12}>
-          <IconRefresh size={22} color={colors.muted} />
+          <IconRefresh size={22} color={colors.text} />
         </TouchableOpacity>
       </View>
       )}
@@ -148,29 +155,29 @@ export default function StorageScreen() {
       <ScrollView
         {...nativeScrollInsetProps()}
         contentContainerStyle={{ paddingBottom: IOS_NATIVE_INSET ? 24 : (insets.bottom || 0) + 24 }}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.tint} />}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={ink} />}
       >
         {loading ? (
           <View style={{ padding: 40, alignItems: 'center' }}>
-            <ActivityIndicator color={colors.tint} />
+            <ActivityIndicator color={ink} />
           </View>
         ) : (
           <>
             {/* Usage card */}
-            <View style={[styles.card, { backgroundColor: colors.cardBackground || colors.surface || '#fff' }]}>
+            <View style={[styles.card, { backgroundColor: g.cardBg }]}>
               <View style={styles.cardHead}>
-                <IconCloud size={28} color={colors.tint || '#0a84ff'} />
+                <IconCloud size={28} color={ink} />
                 <View style={{ flex: 1, marginLeft: 10 }}>
                   <Text style={[styles.cardTitle, { color: colors.text }]}>
                     {t('storage.usedOf') || 'Usado'} {usedLabel} / {limitLabel}
                   </Text>
-                  <Text style={[styles.cardSubtitle, { color: colors.muted }]}>
+                  <Text style={[styles.cardSubtitle, { color: muted }]}>
                     {pct.toFixed(1)}% · {planLabel} · {cycleLabel}
                   </Text>
                 </View>
               </View>
 
-              <View style={[styles.barWrap, { backgroundColor: isDark ? '#1c1c1e' : '#f1f5f9' }]}>
+              <View style={[styles.barWrap, { backgroundColor: g.fill }]}>
                 <View style={[styles.bar, { width: `${pct}%`, backgroundColor: barColor }]} />
               </View>
 
@@ -186,7 +193,7 @@ export default function StorageScreen() {
                   };
                   return (
                     <View key={k} style={styles.breakdownRow}>
-                      <Text style={[styles.breakdownLabel, { color: colors.muted }]}>{labelMap[k]}</Text>
+                      <Text style={[styles.breakdownLabel, { color: muted }]}>{labelMap[k]}</Text>
                       <Text style={[styles.breakdownValue, { color: colors.text }]}>{formatBytes(v)}</Text>
                     </View>
                   );
@@ -224,17 +231,17 @@ export default function StorageScreen() {
                 CTAs + "Cancele quando quiser" disclaimer all hidden. Free 50GB
                 stays visible above. */}
             {MONETIZATION_ENABLED && isPaid && (
-              <View style={[styles.tierCard, { backgroundColor: colors.cardBackground || colors.surface || '#fff' }]}>
+              <View style={[styles.tierCard, { backgroundColor: g.cardBg }]}>
                 <Text style={[styles.tierName, { color: colors.text }]}>
                   {planLabel} · {limitLabel} · {cycleLabel}
                 </Text>
                 {renewsLabel && (
-                  <Text style={[styles.tierMeta, { color: colors.muted }]}>
+                  <Text style={[styles.tierMeta, { color: muted }]}>
                     {t('storage.renewsOn') || 'Renova em'} {renewsLabel}
                   </Text>
                 )}
-                <TouchableOpacity onPress={onManage} style={[styles.manageBtn, { borderColor: colors.tint }]}>
-                  <Text style={[styles.manageBtnText, { color: colors.tint }]}>
+                <TouchableOpacity onPress={onManage} style={[styles.manageBtn, { borderColor: ink }]}>
+                  <Text style={[styles.manageBtnText, { color: ink }]}>
                     {t('storage.manage') || 'Gerenciar assinatura'}
                   </Text>
                 </TouchableOpacity>
@@ -242,13 +249,13 @@ export default function StorageScreen() {
             )}
 
             {MONETIZATION_ENABLED && !isPaid && (
-              <View style={[styles.promo, { backgroundColor: pct >= 80 ? (pct >= 95 ? '#fee2e2' : '#fef3c7') : (isDark ? '#0b2540' : '#f0f7ff') }]}>
+              <View style={[styles.promo, { backgroundColor: pct >= 80 ? (pct >= 95 ? '#fee2e2' : '#fef3c7') : g.cardBg }]}>
                 <Text style={[styles.promoTitle, { color: pct >= 80 ? (pct >= 95 ? '#991b1b' : '#92400e') : colors.text }]}>
                   {pct >= 80
                     ? (t('storage.promo.lowTitle') || 'Seu espaço está acabando')
                     : (t('storage.promo.title') || 'Mais espaço, mais tranquilidade')}
                 </Text>
-                <Text style={[styles.promoBody, { color: pct >= 80 ? (pct >= 95 ? '#991b1b' : '#92400e') : colors.muted }]}>
+                <Text style={[styles.promoBody, { color: pct >= 80 ? (pct >= 95 ? '#991b1b' : '#92400e') : muted }]}>
                   {t('storage.promo.body') || 'Backup automático, fotos e vídeos em qualidade original e espaço para compartilhar com a família. A partir de R$ 5,99/mês.'}
                 </Text>
               </View>
@@ -257,11 +264,11 @@ export default function StorageScreen() {
             {MONETIZATION_ENABLED && (
               <PressableScale
                 onPress={onShopOpen}
-                style={[styles.upgradeBtn, { backgroundColor: colors.tint || '#0a84ff' }]}
+                style={[styles.upgradeBtn, { backgroundColor: ink }]}
                 activeOpacity={0.85}
               >
-                <IconDatabase size={20} color="#fff" />
-                <Text style={styles.upgradeBtnText}>
+                <IconDatabase size={20} color={colors.onPrimary} />
+                <Text style={[styles.upgradeBtnText, { color: colors.onPrimary }]}>
                   {isPaid
                     ? (t('storage.changeTier') || 'Mudar plano')
                     : (t('storage.upgrade') || 'Aumentar armazenamento')}
@@ -271,7 +278,7 @@ export default function StorageScreen() {
 
             <TouchableOpacity
               onPress={() => router.push('/files')}
-              style={[styles.secondaryBtn, { borderColor: colors.border || '#e5e7eb' }]}
+              style={[styles.secondaryBtn, { borderColor: g.separator, backgroundColor: g.cardBg }]}
             >
               <Text style={[styles.secondaryBtnText, { color: colors.text }]}>
                 {t('storage.freeSpace') || 'Liberar espaço'}
@@ -279,7 +286,7 @@ export default function StorageScreen() {
             </TouchableOpacity>
 
             {MONETIZATION_ENABLED && (
-              <Text style={[styles.helpText, { color: colors.muted }]}>
+              <Text style={[styles.helpText, { color: muted }]}>
                 {t('storage.cancelAnytime') || 'Cancele quando quiser. Assinatura renova automaticamente.'}
               </Text>
             )}

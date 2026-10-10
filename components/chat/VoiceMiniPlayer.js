@@ -148,10 +148,10 @@ const s = StyleSheet.create({
   center: { flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 10, height: '100%' },
   title: { flexShrink: 1, color: '#fff', fontSize: 13, fontWeight: '700' },
   time: { color: 'rgba(255,255,255,0.75)', fontSize: 12, fontWeight: '600', fontVariant: ['tabular-nums'] },
-  ear: { color: '#53BDEB', fontSize: 11, fontWeight: '700', marginRight: 6 },
+  ear: { color: 'rgba(255,255,255,0.75)', fontSize: 11, fontWeight: '700', marginRight: 6 }, // [2026-10-10 conv-polish] P&B (era azul)
   speed: { paddingHorizontal: 7, paddingVertical: 3, borderRadius: 10, backgroundColor: 'rgba(255,255,255,0.16)', marginRight: 4 },
   speedTxt: { color: '#fff', fontSize: 11, fontWeight: '800' },
   close: { width: 28, height: 28, alignItems: 'center', justifyContent: 'center' },
   track: { position: 'absolute', left: 0, right: 0, bottom: 0, height: 2, overflow: 'hidden' },
-  fill: { height: 2, backgroundColor: '#53BDEB' },
+  fill: { height: 2, backgroundColor: '#fff' },
 });

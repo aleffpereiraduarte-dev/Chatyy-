@@ -2529,7 +2529,7 @@ export default function LoginScreen() {
         </TouchableOpacity>
         <TouchableOpacity onPress={toggle} activeOpacity={0.7} accessibilityRole="button" accessibilityLabel={isDark ? t('a11y.switchToLight') : t('a11y.switchToDark')}>
           <View style={[s.topBtn, { backgroundColor: 'transparent' }]}>
-            {isDark ? <IconSun size={16} color={colors.warning} /> : <IconMoon size={16} color={colors.textSecondary} />}
+            {isDark ? <IconSun size={16} color={colors.textSecondary} /> : <IconMoon size={16} color={colors.textSecondary} />}
           </View>
         </TouchableOpacity>
       </View>

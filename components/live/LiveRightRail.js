@@ -194,11 +194,12 @@ const styles = StyleSheet.create({
     opacity: 0.72,
   },
   btnDiamond: {
-    backgroundColor: 'rgba(96,165,250,0.18)',
-    borderColor: 'rgba(96,165,250,0.5)',
+    // [2026-10-10 visual] P&B (was blue tint)
+    backgroundColor: 'rgba(255,255,255,0.16)',
+    borderColor: 'rgba(255,255,255,0.45)',
   },
   diamondCaption: {
-    color: '#bfdbfe',
+    color: '#ffffff',
     fontSize: 9,
     fontWeight: '800',
     letterSpacing: 0.3,

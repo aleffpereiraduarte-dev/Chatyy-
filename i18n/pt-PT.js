@@ -9195,4 +9195,11 @@ export default {
   "live.torchOff": "Desligar lanterna",
   "live.torchUnavailable": "Lanterna indisponível neste dispositivo",
   "live.beautyNeedsUpdate": "Suavizar no vídeo do direto chega na próxima atualização da app. Por agora vale só na sua pré-visualização.",
+  "chat.listSearchChats": "Conversas",
+  "chat.listSearchMessages": "Mensagens",
+  // [2026-10-10 conv-polish]
+  "chatConv.tapToJoin": "Toque para entrar",
+  "chatConv.parentalBlocked": "Mensagem bloqueada pelo controlo parental",
+  "chatConv.clearFilters": "Limpar filtros",
+  "chatConv.forwardedFromFmt": "{label} de {name}",
 };

@@ -374,6 +374,8 @@ function CallScreenInner() {
   // flag bumped to true on the first video_request accept (caller and
   // peer paths both call setIsVideoCall(true) below).
   const [isVideoCall, setIsVideoCall] = useState(initialVideoCall);
+  const isVideoCallRef = useRef(initialVideoCall);
+  isVideoCallRef.current = isVideoCall;
   // [bug 2026-05-15 #977-followup] Flag set by IncomingCallListener
   // handleAndroidPendingCall when the user accepted via the native heads-up
   // notification while the app was minimized/dead. Used below to suppress
@@ -3309,6 +3311,11 @@ function CallScreenInner() {
             clearInterval(videoUpgradeCountdownRef.current);
             videoUpgradeCountdownRef.current = null;
           }
+          // [2026-10-10 cam-1-toque] Par recusou/cancelou numa ligação de voz →
+          // desliga a câmera que ligamos no toque.
+          if (wasWaiting && videoEnabledRef.current && !isVideoCallRef.current) {
+            try { handleToggleVideoRef.current?.(); } catch {}
+          }
           if (wasWaiting && data.action === 'declined') {
             try {
               const { Alert } = require('react-native');
@@ -3328,7 +3335,9 @@ function CallScreenInner() {
           // <LK_VideoView> guard at line 2040 stop short-circuiting on the
           // initial audio-only param.
           setIsVideoCall(true);
-          try { handleToggleVideo(); } catch {}
+          // [2026-10-10 cam-1-toque] Nossa câmera já ligou no toque; só liga
+          // aqui se ainda estiver desligada (antes isto a DESLIGAVA).
+          if (!videoEnabledRef.current) { try { handleToggleVideoRef.current?.(); } catch {} }
         }
         break;
       }
@@ -4412,7 +4421,13 @@ function CallScreenInner() {
       resetControlsTimer();
       return;
     }
-    if (_p2p && (isVideoCall || videoUpgradeRequestedRef.current || !peerConnected)) {
+    if (_p2p) {
+      // [2026-10-10 cam-1-toque] Ligação de voz P2P: pede o vídeo ao par e já
+      // liga a câmera no MESMO toque (antes caía no `!r` e não fazia nada).
+      if (!isVideoCall && !videoUpgradeRequestedRef.current && peerConnected) {
+        videoUpgradeRequestedRef.current = true;
+        sendData({ type: 'video_request', action: 'request' });
+      }
       const ad = await _p2p.setCameraEnabled(true);
       if (ad) {
         setVideoEnabled(true);
@@ -4495,11 +4510,17 @@ function CallScreenInner() {
           return { secondsLeft: next };
         });
       }, 1000);
-      return;
+      // [2026-10-10 cam-1-toque] Founder: "tem que clicar 2 vezes pra ligar a
+      // câmera". Antes o 1º toque SÓ pedia o vídeo e retornava; a câmera ligava
+      // no 2º toque. Agora (igual WhatsApp) pede ao par E já liga a nossa
+      // câmera no mesmo toque — o par (iOS/Android nativos) aceita sozinho.
     }
     // Peer accepted (or this is already a video call) — flip our cam on.
-    videoUpgradeRequestedRef.current = false;
-    if (videoUpgradeTimeoutRef.current) { clearTimeout(videoUpgradeTimeoutRef.current); videoUpgradeTimeoutRef.current = null; }
+    // (Mantém o pedido pendente quando acabamos de enviá-lo neste toque.)
+    if (requestSent || isVideoCall || !peerConnected) {
+      videoUpgradeRequestedRef.current = false;
+      if (videoUpgradeTimeoutRef.current) { clearTimeout(videoUpgradeTimeoutRef.current); videoUpgradeTimeoutRef.current = null; }
+    }
     // [2026-05-15 #976] Pre-request CAMERA on Android. If call started as
     // audio-only, the permission was never asked → setCameraEnabled silently
     // fails (LK getUserMedia throws). Without this, user toggles video and
@@ -5722,7 +5743,7 @@ function CallScreenInner() {
           {pendingVideoRequest && peerConnected && !ended && (
             <View style={styles.videoRequestSheet}>
               <View style={styles.videoRequestIconCircle}>
-                <IconVideo size={28} color="#fff" />
+                <IconVideo size={28} color="#000" />
               </View>
               <Text style={styles.videoRequestTitle}>
                 {(t('call.videoRequestTitle') || '{name} quer ativar o vídeo').replace('{name}', callerName)}
@@ -5756,8 +5777,8 @@ function CallScreenInner() {
                     if (!videoEnabled) handleToggleVideo();
                   }}
                 >
-                  <IconVideo size={18} color="#fff" />
-                  <Text style={[styles.videoRequestBtnText, { color: '#fff' }]}>{t('common.accept') || 'Aceitar'}</Text>
+                  <IconVideo size={18} color="#000" />
+                  <Text style={[styles.videoRequestBtnText, { color: '#000' }]}>{t('common.accept')}</Text>
                 </TouchableOpacity>
               </View>
             </View>
@@ -5775,9 +5796,12 @@ function CallScreenInner() {
 
           {/* Outgoing video upgrade toast */}
           {videoUpgradeToast && !ended && (
-            <View style={[styles.weakBanner, { backgroundColor: 'rgba(31,41,55,0.92)', flexDirection: 'row', justifyContent: 'space-between' }]}>
-              <Text style={[styles.weakBannerText, { flex: 1 }]} numberOfLines={1}>
-                {(t('call.videoRequestSentBody') || 'Aguardando aceitação...') + ' ' + videoUpgradeToast.secondsLeft + 's'}
+            <View style={styles.videoAskPill}>
+              <View style={styles.videoAskIcon}>
+                <IconVideo size={14} color="#000" />
+              </View>
+              <Text style={styles.videoAskText} numberOfLines={1}>
+                {t('call.videoRequestSentBody')}
               </Text>
               <TouchableOpacity
                 onPress={() => {
@@ -5787,12 +5811,12 @@ function CallScreenInner() {
                   if (videoUpgradeCountdownRef.current) { clearInterval(videoUpgradeCountdownRef.current); videoUpgradeCountdownRef.current = null; }
                   setVideoUpgradeToast(null);
                 }}
-                style={{ marginLeft: 12, paddingHorizontal: 10, paddingVertical: 4, borderRadius: 8, backgroundColor: 'rgba(255,255,255,0.18)' }}
-                accessibilityLabel={t('call.cancel') || 'Cancelar'}
+                style={styles.videoAskCancel}
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                accessibilityRole="button"
+                accessibilityLabel={t('call.cancel')}
               >
-                <Text style={{ color: '#fff', fontSize: 12, fontWeight: '600' }}>
-                  {t('call.cancel') || 'Cancelar'}
-                </Text>
+                <IconX size={14} color="#fff" />
               </TouchableOpacity>
             </View>
           )}
@@ -7125,7 +7149,7 @@ const styles = StyleSheet.create({
   },
   videoRequestIconCircle: {
     width: 64, height: 64, borderRadius: 32,
-    backgroundColor: '#111111',
+    backgroundColor: '#fff',
     alignItems: 'center', justifyContent: 'center', marginBottom: 14,
     shadowColor: '#111111', shadowOpacity: 0.45, shadowRadius: 18, shadowOffset: { width: 0, height: 6 },
   },
@@ -7136,11 +7160,23 @@ const styles = StyleSheet.create({
     flex: 1, paddingVertical: 14, paddingHorizontal: 16, borderRadius: 14,
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
   },
-  videoRequestBtnDecline: { backgroundColor: 'rgba(239, 68, 68, 0.9)' },
+  // [2026-10-10] P&B: recusar = vidro, aceitar = branco sólido (era vermelho/verde).
+  videoRequestBtnDecline: { backgroundColor: 'rgba(255,255,255,0.14)', borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(255,255,255,0.22)' },
   videoRequestBtnAccept: {
-    backgroundColor: '#22c55e',
-    shadowColor: '#22c55e', shadowOpacity: 0.4, shadowRadius: 12, shadowOffset: { width: 0, height: 4 },
+    backgroundColor: '#fff',
+    shadowColor: '#000', shadowOpacity: 0.3, shadowRadius: 12, shadowOffset: { width: 0, height: 4 },
   },
+  videoAskPill: {
+    position: 'absolute', top: 100, alignSelf: 'center', maxWidth: '86%',
+    flexDirection: 'row', alignItems: 'center', gap: 10,
+    backgroundColor: 'rgba(18,18,18,0.88)', borderRadius: 999,
+    paddingVertical: 7, paddingLeft: 7, paddingRight: 8, zIndex: 15,
+    borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(255,255,255,0.16)',
+    ...Platform.select({ web: { backdropFilter: 'blur(14px)' }, default: {} }),
+  },
+  videoAskIcon: { width: 26, height: 26, borderRadius: 13, backgroundColor: '#fff', alignItems: 'center', justifyContent: 'center' },
+  videoAskText: { color: '#fff', fontSize: 13.5, fontWeight: '600', letterSpacing: -0.1, flexShrink: 1 },
+  videoAskCancel: { width: 26, height: 26, borderRadius: 13, backgroundColor: 'rgba(255,255,255,0.16)', alignItems: 'center', justifyContent: 'center' },
   videoRequestBtnText: { fontSize: 15, fontWeight: '600', color: '#fff' },
   moreSheetOverlay: { ...StyleSheet.absoluteFillObject, zIndex: 45, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' },
   moreSheet: {

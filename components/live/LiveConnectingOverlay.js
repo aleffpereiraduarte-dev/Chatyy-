@@ -189,7 +189,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 22,
   },
   warmupText: {
-    color: '#f59e0b',
+    color: 'rgba(255,255,255,0.85)', // [2026-10-10 visual] P&B (was amber)
     fontSize: 12,
     fontWeight: '600',
     marginTop: 10,

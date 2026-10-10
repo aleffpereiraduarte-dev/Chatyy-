@@ -239,8 +239,10 @@ export default function LiveDiscoverScreen() {
   // useMemo factory.
   const labelFor = useCallback((cat) => {
     if (!cat) return '';
-    if (locale && locale.startsWith('en')) return cat.label_en || cat.label_pt || FALLBACK_LABELS[cat.key] || cat.key;
-    return cat.label_pt || cat.label_en || FALLBACK_LABELS[cat.key] || cat.key;
+    // Backend (live_categories) sends {id, name}; older shape was {key, label_pt, label_en}.
+    const k = cat.key || cat.id;
+    if (locale && locale.startsWith('en')) return cat.label_en || cat.label_pt || cat.name || FALLBACK_LABELS[k] || k;
+    return cat.label_pt || cat.label_en || cat.name || FALLBACK_LABELS[k] || k;
   }, [locale]);
 
   // Order: "Para você" (personalized) → "Todos" → backend categories.
@@ -248,7 +250,9 @@ export default function LiveDiscoverScreen() {
   const railData = useMemo(() => ([
     { key: 'for_you', label: t('live.forYou') || 'Para você' },
     { key: '',        label: t('common.all') || 'Todos' },
-    ...(categories || []).map(c => ({ key: c.key, label: labelFor(c) })),
+    ...(categories || [])
+      .filter(c => (c?.key || c?.id) && (c.key || c.id) !== 'all')
+      .map(c => ({ key: c.key || c.id, label: labelFor(c) })),
   ]), [categories, labelFor, t]);
 
   // Slide the underline whenever the active category changes. Uses
@@ -444,6 +448,7 @@ export default function LiveDiscoverScreen() {
               label={item.label}
               icon={CATEGORY_ICONS[item.key]}
               active={activeCategory === item.key}
+              dark={isDark}
               onPress={() => setActiveCategory(item.key)}
               onLayout={(e) => {
                 const { x, width } = e.nativeEvent.layout;
@@ -456,14 +461,9 @@ export default function LiveDiscoverScreen() {
             />
           )}
         />
-        {/* Animated 2px underline that spring-slides between active pills. */}
-        <Animated.View
-          pointerEvents="none"
-          style={[
-            styles.pillUnderline,
-            { transform: [{ translateX: underlineX }], width: underlineW },
-          ]}
-        />
+        {/* [2026-10-10 visual] Underline removido: o pill ativo já é sólido
+            (redundante) e a medição de x desalinhava em RTL. Animações
+            underlineX/W seguem vivas (inofensivas) para não mexer em lógica. */}
       </View>
 
       {/* List */}
@@ -633,7 +633,7 @@ function LiveCard({ item, index, isDark, t, onPress, onLongPress }) {
 // Pill with brand-purple selected fill + spring scale + soft shadow + icon.
 // Why useRef + spring: keeps the press feel snappy across re-renders without
 // re-creating the Animated.Value each frame.
-function CategoryPill({ pillKey, label, icon: Icon, active, onPress, onLayout }) {
+function CategoryPill({ pillKey, label, icon: Icon, active, dark, onPress, onLayout }) {
   const scale = useRef(new Animated.Value(active ? 1.05 : 1)).current;
 
   useEffect(() => {
@@ -645,7 +645,9 @@ function CategoryPill({ pillKey, label, icon: Icon, active, onPress, onLayout })
     }).start();
   }, [active, scale]);
 
-  const iconColor = active ? '#fff' : '#9CA3AF';
+  // P&B: active pill = ink (black in light, white in dark — #111 was
+  // invisible on the black dark-mode background).
+  const iconColor = active ? (dark ? '#000' : '#fff') : '#9CA3AF';
   return (
     <Animated.View
       onLayout={onLayout}
@@ -657,7 +659,7 @@ function CategoryPill({ pillKey, label, icon: Icon, active, onPress, onLayout })
         style={[
           styles.pill,
           active
-            ? styles.pillActive
+            ? [styles.pillActive, dark && styles.pillActiveDark]
             : styles.pillInactive,
         ]}
         accessibilityRole="button"
@@ -669,6 +671,7 @@ function CategoryPill({ pillKey, label, icon: Icon, active, onPress, onLayout })
           style={[
             styles.pillText,
             active && styles.pillTextActive,
+            active && dark && styles.pillTextActiveDark,
           ]}
           numberOfLines={1}
         >
@@ -760,10 +763,13 @@ function EmptyLiveDiscover({ colors, isDark, t, router, refreshing, onRefresh })
     router.push('/live-broadcast');
   }, [router]);
 
-  const haloScale = pulseAnim.interpolate({ inputRange: [0, 1], outputRange: [1, 1.45] });
-  const haloOpacity = pulseAnim.interpolate({ inputRange: [0, 1], outputRange: [0.55, 0] });
+  const haloScale = pulseAnim.interpolate({ inputRange: [0, 1], outputRange: [1, 1.12] });
+  const haloOpacity = pulseAnim.interpolate({ inputRange: [0, 1], outputRange: [0.16, 0] });
 
-  const cardBg = isDark ? '#161618' : '#FAF7FF';
+  // P&B: neutral card surface (was lavender #FAF7FF) + inverted CTA in dark.
+  const cardBg = isDark ? '#161618' : '#F6F6F7';
+  const ctaBg = colors.text || (isDark ? '#fff' : '#111');
+  const ctaFg = isDark ? '#000' : '#fff';
   const subText = colors.textSecondary || '#6B7280';
 
   return (
@@ -774,13 +780,13 @@ function EmptyLiveDiscover({ colors, isDark, t, router, refreshing, onRefresh })
         <RefreshControl
           refreshing={!!refreshing}
           onRefresh={onRefresh}
-          tintColor={BRAND_PURPLE}
+          tintColor={colors.text}
         />
       }
     >
       {/* 1. Hero illustration */}
       <View style={styles.heroWrap}>
-        <LiveHeroIllustration isDark={isDark} />
+        <LiveHeroIllustration isDark={isDark} ink={colors.text} />
       </View>
 
       <Text style={[styles.heroTitle, { color: colors.text }]}>
@@ -796,18 +802,18 @@ function EmptyLiveDiscover({ colors, isDark, t, router, refreshing, onRefresh })
           pointerEvents="none"
           style={[
             styles.ctaHalo,
-            { transform: [{ scale: haloScale }], opacity: haloOpacity },
+            { backgroundColor: ctaBg, transform: [{ scale: haloScale }], opacity: haloOpacity },
           ]}
         />
         <TouchableOpacity
           activeOpacity={0.88}
           onPress={onStartLive}
-          style={styles.ctaBtn}
+          style={[styles.ctaBtn, { backgroundColor: ctaBg, shadowColor: '#000' }]}
           accessibilityRole="button"
           accessibilityLabel={t('live.startNowCta') || 'Você poderia começar agora'}
         >
-          <IconVideo size={20} color="#fff" />
-          <Text style={styles.ctaText}>
+          <IconVideo size={20} color={ctaFg} />
+          <Text style={[styles.ctaText, { color: ctaFg }]}>
             {t('live.startNowCta') || 'Você poderia começar agora!'}
           </Text>
         </TouchableOpacity>
@@ -832,7 +838,9 @@ function EmptyLiveDiscover({ colors, isDark, t, router, refreshing, onRefresh })
         </View>
       )}
 
-      {/* 4. Replays populares */}
+      {/* 4. Replays populares — only while loading or with real data (no fake
+          mock cards with invented view counts). */}
+      {(replays === null || replays.length > 0) && (
       <View style={styles.section}>
         <View style={styles.sectionHeader}>
           <Text style={[styles.sectionTitle, { color: colors.text }]}>
@@ -840,7 +848,7 @@ function EmptyLiveDiscover({ colors, isDark, t, router, refreshing, onRefresh })
           </Text>
         </View>
         <ReplayStrip
-          items={(replays === null || replays.length === 0) ? MOCK_REPLAYS : replays}
+          items={replays === null ? MOCK_REPLAYS : replays}
           loading={replays === null}
           colors={colors}
           subText={subText}
@@ -849,24 +857,25 @@ function EmptyLiveDiscover({ colors, isDark, t, router, refreshing, onRefresh })
           t={t}
         />
       </View>
+      )}
 
       {/* 5. Por que ir ao vivo? */}
-      <View style={[styles.whyCard, { backgroundColor: cardBg, borderColor: isDark ? '#161618' : '#F1F3F5' }]}>
+      <View style={[styles.whyCard, { backgroundColor: cardBg, borderColor: isDark ? '#222224' : '#EDEDEF' }]}>
         <Text style={[styles.whyTitle, { color: colors.text }]}>
           {t('live.whyGoLive') || 'Por que ir ao vivo?'}
         </Text>
         <WhyBullet
-          icon={<IconHeart size={16} color={colors.primary} />}
+          icon={<IconHeart size={16} color={colors.text} />}
           text={t('live.whyConnect') || 'Conecte em tempo real'}
           color={colors.text}
         />
         <WhyBullet
-          icon={<IconGiftBox size={16} color={BRAND_PURPLE} />}
+          icon={<IconGiftBox size={16} color={colors.text} />}
           text={t('live.whyGifts') || 'Receba gifts'}
           color={colors.text}
         />
         <WhyBullet
-          icon={<IconSparkles size={16} color="#F59E0B" />}
+          icon={<IconSparkles size={16} color={colors.text} />}
           text={t('live.whyReach') || 'Aumente seu alcance'}
           color={colors.text}
         />
@@ -879,37 +888,40 @@ function EmptyLiveDiscover({ colors, isDark, t, router, refreshing, onRefresh })
 
 // SVG hero — stylized broadcast camera with concentric signal waves.
 // Pure inline react-native-svg so it renders identically on web + native.
-function LiveHeroIllustration({ isDark }) {
-  const bg = isDark ? '#161618' : '#F5F0FF';
-  const innerLens = isDark ? '#161618' : '#fff';
+function LiveHeroIllustration({ isDark, ink }) {
+  // P&B: neutral body (was lavender #F5F0FF) and ink that follows the theme
+  // so the camera stays visible on the black dark-mode background.
+  const bg = isDark ? '#161618' : '#F4F4F5';
+  const innerLens = isDark ? '#2a2a2d' : '#fff';
+  const INK = ink || (isDark ? '#ffffff' : BRAND_PURPLE);
   return (
     <Svg width={180} height={140} viewBox="0 0 180 140" fill="none">
       <Defs>
         <SvgLinearGradient id="lensGrad" x1="0" y1="0" x2="1" y2="1">
-          <Stop offset="0" stopColor={BRAND_PURPLE_LIGHT} stopOpacity="1" />
-          <Stop offset="1" stopColor={BRAND_PURPLE_DARK} stopOpacity="1" />
+          <Stop offset="0" stopColor={INK} stopOpacity="1" />
+          <Stop offset="1" stopColor={INK} stopOpacity="1" />
         </SvgLinearGradient>
       </Defs>
       {/* Signal waves (left + right) */}
       <G opacity="0.85">
-        <Path d="M40 30 Q55 22 70 30" stroke={BRAND_PURPLE} strokeWidth="2.5" strokeLinecap="round" fill="none" opacity="0.35" />
-        <Path d="M32 22 Q55 8 78 22" stroke={BRAND_PURPLE} strokeWidth="2.5" strokeLinecap="round" fill="none" opacity="0.55" />
-        <Path d="M24 14 Q55 -6 86 14" stroke={BRAND_PURPLE} strokeWidth="2.5" strokeLinecap="round" fill="none" opacity="0.85" />
-        <Path d="M140 30 Q125 22 110 30" stroke={BRAND_PURPLE} strokeWidth="2.5" strokeLinecap="round" fill="none" opacity="0.35" />
-        <Path d="M148 22 Q125 8 102 22" stroke={BRAND_PURPLE} strokeWidth="2.5" strokeLinecap="round" fill="none" opacity="0.55" />
-        <Path d="M156 14 Q125 -6 94 14" stroke={BRAND_PURPLE} strokeWidth="2.5" strokeLinecap="round" fill="none" opacity="0.85" />
+        <Path d="M40 30 Q55 22 70 30" stroke={INK} strokeWidth="2.5" strokeLinecap="round" fill="none" opacity="0.35" />
+        <Path d="M32 22 Q55 8 78 22" stroke={INK} strokeWidth="2.5" strokeLinecap="round" fill="none" opacity="0.55" />
+        <Path d="M24 14 Q55 -6 86 14" stroke={INK} strokeWidth="2.5" strokeLinecap="round" fill="none" opacity="0.85" />
+        <Path d="M140 30 Q125 22 110 30" stroke={INK} strokeWidth="2.5" strokeLinecap="round" fill="none" opacity="0.35" />
+        <Path d="M148 22 Q125 8 102 22" stroke={INK} strokeWidth="2.5" strokeLinecap="round" fill="none" opacity="0.55" />
+        <Path d="M156 14 Q125 -6 94 14" stroke={INK} strokeWidth="2.5" strokeLinecap="round" fill="none" opacity="0.85" />
       </G>
       {/* Camera body */}
-      <Rect x="40" y="50" width="90" height="62" rx="14" fill={bg} stroke={BRAND_PURPLE} strokeWidth="2.5" />
+      <Rect x="40" y="50" width="90" height="62" rx="14" fill={bg} stroke={INK} strokeWidth="2.5" />
       {/* Camera lens */}
       <Circle cx="85" cy="81" r="22" fill="url(#lensGrad)" />
       <Circle cx="85" cy="81" r="12" fill={innerLens} opacity="0.92" />
-      <Circle cx="85" cy="81" r="5" fill={BRAND_PURPLE_DARK} />
+      <Circle cx="85" cy="81" r="5" fill={INK} />
       {/* REC dot */}
       <Circle cx="118" cy="62" r="4" fill="#DC2626" />
       {/* Camera handle/tripod base */}
-      <Rect x="78" y="112" width="14" height="10" rx="2" fill={BRAND_PURPLE_DARK} />
-      <Path d="M55 132 L85 122 L115 132" stroke={BRAND_PURPLE_DARK} strokeWidth="3" strokeLinecap="round" fill="none" />
+      <Rect x="78" y="112" width="14" height="10" rx="2" fill={INK} />
+      <Path d="M55 132 L85 122 L115 132" stroke={INK} strokeWidth="3" strokeLinecap="round" fill="none" />
     </Svg>
   );
 }
@@ -975,7 +987,7 @@ function ReplayStrip({ items, loading, colors, subText, cardBg, isDark, t }) {
                 <Image source={{ uri: thumb }} style={{ width: '100%', height: '100%' }} resizeMode="cover" />
               ) : (
                 <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
-                  <IconPlay size={28} color={BRAND_PURPLE_LIGHT} />
+                  <IconPlay size={28} color={colors.textTertiary || '#8696a0'} />
                 </View>
               )}
               {duration ? (
@@ -1196,6 +1208,8 @@ const styles = StyleSheet.create({
   },
   pillText: { fontSize: 13, fontWeight: '600', color: '#9CA3AF' },
   pillTextActive: { color: '#fff', fontWeight: '800' },
+  pillActiveDark: { backgroundColor: '#ffffff', borderColor: '#ffffff', shadowOpacity: 0 },
+  pillTextActiveDark: { color: '#000' },
   pillUnderline: {
     position: 'absolute',
     bottom: 0,

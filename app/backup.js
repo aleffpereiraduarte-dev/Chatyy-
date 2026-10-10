@@ -488,13 +488,14 @@ export default function BackupScreen() {
             {/* Status pill: green=enabled, orange=warning, gray=disabled */}
             {(() => {
               const statusKind = currentPlan ? 'ok' : (storageUsed > storageTotal * 0.9 ? 'warn' : 'idle');
+              // [2026-10-10 settings-polish] P&B: "ativado" em tinta neutra (era verde).
               const pillBg = statusKind === 'ok'
-                ? 'rgba(34,197,94,0.15)'
+                ? (isDark ? 'rgba(255,255,255,0.10)' : 'rgba(17,17,17,0.06)')
                 : statusKind === 'warn'
                   ? 'rgba(245,158,11,0.15)'
                   : 'rgba(148,163,184,0.18)';
               const pillFg = statusKind === 'ok'
-                ? (isDark ? '#4ade80' : '#16a34a')
+                ? colors.text
                 : statusKind === 'warn'
                   ? (isDark ? '#fbbf24' : '#d97706')
                   : colors.textSecondary;
@@ -672,8 +673,8 @@ export default function BackupScreen() {
                 {t('backup.historyTitle') || 'Backup das mensagens'}
               </Text>
               {snapshot.has_backup && (
-                <View style={{ paddingHorizontal: 8, paddingVertical: 3, borderRadius: 10, backgroundColor: 'rgba(34,197,94,0.15)' }}>
-                  <Text style={{ color: '#16a34a', fontSize: FontSize.xs, fontWeight: '700' }}>
+                <View style={{ paddingHorizontal: 8, paddingVertical: 3, borderRadius: 10, backgroundColor: isDark ? 'rgba(255,255,255,0.10)' : 'rgba(17,17,17,0.06)' }}>
+                  <Text style={{ color: colors.text, fontSize: FontSize.xs, fontWeight: '700' }}>
                     {tr(t, 'backup.msgsShort', `${snapshot.msg_count} msgs`, { n: String(snapshot.msg_count) })}
                   </Text>
                 </View>
@@ -724,16 +725,21 @@ export default function BackupScreen() {
             )}
             {/* Action row */}
             <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
+              {/* [2026-10-10 settings-polish] o flex:1 ia pro Animated.View interno do
+                  PressableScale (o Touchable externo não esticava) → botão colapsava
+                  na altura do texto. O wrapper agora carrega o flex. */}
+              <View style={{ flex: 1, minWidth: 140 }}>
               <PressableScale
                 onPress={handleSnapshotNow}
                 disabled={snapshotBusy}
-                style={{ flex: 1, minWidth: 140, height: 42, borderRadius: 10, backgroundColor: ACCENT, alignItems: 'center', justifyContent: 'center', opacity: snapshotBusy ? 0.6 : 1 }}
+                style={{ height: 42, borderRadius: 10, paddingHorizontal: 14, backgroundColor: ACCENT, alignItems: 'center', justifyContent: 'center', opacity: snapshotBusy ? 0.6 : 1 }}
                 accessibilityRole="button"
               >
                 {snapshotBusy
                   ? <ActivityIndicator color={ON_ACCENT} />
-                  : <Text style={{ color: ON_ACCENT, fontWeight: '700' }}>{t('backup.snapshotNow') || 'Fazer backup agora'}</Text>}
+                  : <Text style={{ color: ON_ACCENT, fontWeight: '700' }} numberOfLines={1}>{t('backup.snapshotNow') || 'Fazer backup agora'}</Text>}
               </PressableScale>
+              </View>
               {snapshot.has_backup && (
                 <>
                   <PressableScale
@@ -861,6 +867,11 @@ const s = StyleSheet.create({
   headerTitle: { fontSize: FontSize.xl, fontWeight: '700', letterSpacing: -0.4 },
   scrollContent: { paddingTop: Spacing.xl, paddingBottom: 40 },
   statusCard: {
+    borderRadius: BorderRadius.xl, borderWidth: 1, padding: 20, marginBottom: 20,
+  },
+  // [2026-10-10 settings-polish] "Backup das mensagens" usava s.card, que não
+  // existia → seção sem cartão, colada na borda. Mesmo cartão dos demais.
+  card: {
     borderRadius: BorderRadius.xl, borderWidth: 1, padding: 20, marginBottom: 20,
   },
   // Storage bar bumped 6→7 height + tighter radius so the fill is more

@@ -9950,4 +9950,11 @@ export default {
   "live.torchOff": "Éteindre la lampe",
   "live.torchUnavailable": "Lampe indisponible sur cet appareil",
   "live.beautyNeedsUpdate": "Le lissage sur la vidéo du live arrive dans la prochaine mise à jour de l'app. Pour l'instant, il s'applique seulement à votre aperçu.",
+  "chat.listSearchChats": "Discussions",
+  "chat.listSearchMessages": "Messages",
+  // [2026-10-10 conv-polish]
+  "chatConv.tapToJoin": "Touchez pour rejoindre",
+  "chatConv.parentalBlocked": "Message bloqué par le contrôle parental",
+  "chatConv.clearFilters": "Effacer les filtres",
+  "chatConv.forwardedFromFmt": "{label} de {name}",
 };

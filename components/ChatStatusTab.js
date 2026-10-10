@@ -725,9 +725,9 @@ function EmptyStatusIllustration({ isDark }) {
       <Rect x="38" y="35" width="24" height="30" rx="4" stroke={isDark ? '#48484a' : '#9ca3af'} strokeWidth="2" fill="none" />
       <SvgCircle cx="50" cy="47" r="5" stroke={isDark ? '#48484a' : '#9ca3af'} strokeWidth="1.5" fill="none" />
       <Path d="M38 58 L44 52 L48 56 L54 48 L62 58" stroke={isDark ? '#48484a' : '#9ca3af'} strokeWidth="1.5" fill="none" strokeLinejoin="round" />
-      <Path d="M68 30 L72 26" stroke={ACCENT} strokeWidth="2" strokeLinecap="round" />
-      <Path d="M72 34 L76 34" stroke={ACCENT} strokeWidth="2" strokeLinecap="round" />
-      <Path d="M68 38 L72 42" stroke={ACCENT} strokeWidth="2" strokeLinecap="round" />
+      <Path d="M68 30 L72 26" stroke={isDark ? '#8e8e93' : ACCENT} strokeWidth="2" strokeLinecap="round" />
+      <Path d="M72 34 L76 34" stroke={isDark ? '#8e8e93' : ACCENT} strokeWidth="2" strokeLinecap="round" />
+      <Path d="M68 38 L72 42" stroke={isDark ? '#8e8e93' : ACCENT} strokeWidth="2" strokeLinecap="round" />
     </Svg>
   );
 }
@@ -3111,7 +3111,7 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
           <RefreshControl
             refreshing={refreshing}
             onRefresh={onPullRefresh}
-            tintColor={ACCENT}
+            tintColor={isDark ? '#F5F5F7' : ACCENT}
             colors={[ACCENT, '#111111']}
             progressBackgroundColor={isDark ? '#1a1a1a' : '#fff'}
           />
@@ -3153,9 +3153,10 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
                   <Svg width={108} height={108} style={{ position: 'absolute', top: -6, left: -6 }}>
                     <Defs>
                       <LinearGradient id="heroRing" x1="0" y1="0" x2="1" y2="1">
-                        <Stop offset="0" stopColor="#111111" />
-                        <Stop offset="0.5" stopColor="#111111" />
-                        <Stop offset="1" stopColor="#111111" />
+                        {/* [2026-10-10 visual] ink follows theme (#111 vanished on dark) */}
+                        <Stop offset="0" stopColor={isDark ? '#F5F5F7' : '#111111'} />
+                        <Stop offset="0.5" stopColor={isDark ? '#F5F5F7' : '#111111'} />
+                        <Stop offset="1" stopColor={isDark ? '#F5F5F7' : '#111111'} />
                       </LinearGradient>
                     </Defs>
                     <SvgCircle cx="54" cy="54" r="51" stroke="url(#heroRing)" strokeWidth={3.5} fill="none" />
@@ -3163,7 +3164,7 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
                 ) : (
                   // Dashed purple "tap to add" ring when empty.
                   <Svg width={108} height={108} style={{ position: 'absolute', top: -6, left: -6 }}>
-                    <SvgCircle cx="54" cy="54" r="51" stroke={ACCENT} strokeWidth={2.5} strokeDasharray="6 5" fill="none" opacity={0.65} />
+                    <SvgCircle cx="54" cy="54" r="51" stroke={isDark ? '#F5F5F7' : ACCENT} strokeWidth={2.5} strokeDasharray="6 5" fill="none" opacity={0.65} />
                   </Svg>
                 )}
                 <AvatarCircle name={currentName} email={currentEmail} size={96} />
@@ -3192,8 +3193,8 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
               {hasMyStatus && myViewCount > 0 && (
                 <TouchableOpacity
                   style={[styles.viewCountPill, {
-                    backgroundColor: isDark ? 'rgba(17, 17, 17,0.18)' : 'rgba(17, 17, 17,0.10)',
-                    borderColor: isDark ? 'rgba(17, 17, 17,0.35)' : 'rgba(17, 17, 17,0.22)',
+                    backgroundColor: isDark ? 'rgba(255,255,255,0.10)' : 'rgba(17, 17, 17,0.10)',
+                    borderColor: isDark ? 'rgba(255,255,255,0.22)' : 'rgba(17, 17, 17,0.22)',
                   }]}
                   activeOpacity={0.7}
                   onPress={async () => {
@@ -3212,8 +3213,8 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
                   }}
                   accessibilityLabel={`${myViewCount} visualizações`}
                 >
-                  <IconEye size={12} color={ACCENT} />
-                  <Text style={styles.viewCountPillText}>
+                  <IconEye size={12} color={isDark ? '#F5F5F7' : ACCENT} />
+                  <Text style={[styles.viewCountPillText, isDark && { color: '#F5F5F7' }]}>
                     {myViewCount} {myViewCount === 1 ? 'visualização' : 'visualizações'}
                   </Text>
                 </TouchableOpacity>
@@ -3289,7 +3290,8 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
               )}
               <TouchableOpacity
                 style={[styles.actionCircle, {
-                  backgroundColor: isDark ? '#1a332a' : '#e8f5e9',
+                  // [2026-10-10 visual] P&B neutral (was green-tinted #e8f5e9/#1a332a)
+                  backgroundColor: isDark ? '#2c2c2e' : '#f0f2f5',
                   marginLeft: hasMyStatus ? 10 : 0,
                 }]}
                 onPress={() => openCreator(Platform.OS !== 'web' ? 'camera' : 'photo')}
@@ -3302,7 +3304,7 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
                 accessibilityLabel={t?.('status.addMore') || 'Adicionar outro'}
                 accessibilityHint={t?.('status.longPressCarousel') || 'Segure para publicar várias fotos'}
               >
-                <IconPlus size={20} color={ACCENT} />
+                <IconPlus size={20} color={isDark ? '#F5F5F7' : ACCENT} />
               </TouchableOpacity>
             </View>
           </View>
@@ -3402,32 +3404,32 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
         style={{ position: 'absolute', bottom: (insets?.bottom || 0) + 84, right: 24 }}
         size={48}
         variant="secondary"
-        surfaceColor={isDark ? '#2a2e2b' : '#fff'}
+        surfaceColor={isDark ? '#2c2c2e' : '#fff'}
         onPress={() => Platform.OS !== 'web' ? openCreator('camera') : openCreator('photo')}
         onLongPress={publishCarousel}
         delayLongPress={350}
         accessibilityHint={t?.('status.longPressCarousel') || 'Segure para publicar várias fotos'}
       >
-        <IconCamera size={22} color={ACCENT} />
+        <IconCamera size={22} color={isDark ? '#F5F5F7' : ACCENT} />
       </BrandFab>
       <BrandFab
         style={{ position: 'absolute', bottom: (insets?.bottom || 0) + 148, right: 24 }}
         size={48}
         variant="secondary"
-        surfaceColor={isDark ? '#2a2e2b' : '#fff'}
+        surfaceColor={isDark ? '#2c2c2e' : '#fff'}
         onPress={openVoiceComposer}
         accessibilityLabel={t?.('status.voiceStatus') || 'Status de voz'}
       >
-        <IconMic size={22} color={ACCENT} />
+        <IconMic size={22} color={isDark ? '#F5F5F7' : ACCENT} />
       </BrandFab>
       <BrandFab
         style={{ position: 'absolute', bottom: (insets?.bottom || 0) + 16, right: 20 }}
         size={58}
-        color={ACCENT}
+        color={colors?.primary || ACCENT}
         onPress={() => openCreator('text')}
         accessibilityLabel="New text status"
       >
-        <IconEdit size={24} color="#fff" />
+        <IconEdit size={24} color={colors?.onPrimary || '#fff'} />
       </BrandFab>
 
       {/* Voice status recorder — record → upload → publish as a voice story */}

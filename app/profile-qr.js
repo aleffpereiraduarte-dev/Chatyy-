@@ -156,18 +156,18 @@ export default function ProfileQRScreen() {
 
       <View style={[s.tabs, { borderColor: colors.borderLight }]}>
         <TouchableOpacity
-          style={[s.tab, mode === 'show' && { backgroundColor: '#111111' }]}
+          style={[s.tab, mode === 'show' && { backgroundColor: colors.primary }]}
           onPress={() => setMode('show')}
         >
-          <Text style={[s.tabText, { color: mode === 'show' ? '#fff' : colors.text }]}>
+          <Text style={[s.tabText, { color: mode === 'show' ? colors.onPrimary : colors.text }]}>
             {t('profile.myQr') || 'Meu QR'}
           </Text>
         </TouchableOpacity>
         <TouchableOpacity
-          style={[s.tab, mode === 'scan' && { backgroundColor: '#111111' }]}
+          style={[s.tab, mode === 'scan' && { backgroundColor: colors.primary }]}
           onPress={() => { setMode('scan'); setScanned(false); }}
         >
-          <Text style={[s.tabText, { color: mode === 'scan' ? '#fff' : colors.text }]}>
+          <Text style={[s.tabText, { color: mode === 'scan' ? colors.onPrimary : colors.text }]}>
             {t('profile.scanQr') || 'Escanear'}
           </Text>
         </TouchableOpacity>
@@ -186,8 +186,11 @@ export default function ProfileQRScreen() {
               <QrArtwork
                 payload={payload}
                 size={240}
-                color={isDark ? '#fff' : '#000'}
-                backgroundColor={isDark ? '#000' : '#fff'}
+                // [2026-10-10 settings-polish] sempre módulos pretos em cartão branco
+                // (como o WhatsApp): o QR invertido do escuro some no fundo preto e
+                // vários leitores não decodificam QR invertido.
+                color="#000"
+                backgroundColor="#fff"
                 logoUri={user?.email ? getAvatarUrlForEmail(user.email) : ''}
               />
             </View>
@@ -196,15 +199,15 @@ export default function ProfileQRScreen() {
               {t('profile.qrHint') || 'Outros usuários podem escanear pra te adicionar'}
             </Text>
 
-            <TouchableOpacity onPress={handleShare} style={[s.cta, { backgroundColor: '#111111' }]}>
-              <IconShare size={18} color="#fff" />
-              <Text style={s.ctaText}>{t('profile.shareQr') || 'Compartilhar QR'}</Text>
+            <TouchableOpacity onPress={handleShare} style={[s.cta, { backgroundColor: colors.primary }]}>
+              <IconShare size={18} color={colors.onPrimary} />
+              <Text style={[s.ctaText, { color: colors.onPrimary }]}>{t('profile.shareQr') || 'Compartilhar QR'}</Text>
             </TouchableOpacity>
 
             {/* [WA-parity 2026-05-31] Share a public https profile link */}
             <TouchableOpacity
               onPress={handleShareLink}
-              style={[s.cta, s.ctaSecondary, { borderColor: '#111111', marginTop: 12 }]}
+              style={[s.cta, s.ctaSecondary, { borderColor: colors.primary, marginTop: 12 }]}
             >
               <IconShare size={18} color={colors.primary} />
               <Text style={[s.ctaText, { color: colors.primary }]}>{t('profile.shareLink') || 'Compartilhar link'}</Text>
@@ -231,8 +234,8 @@ export default function ProfileQRScreen() {
                   <Text style={[s.hint, { color: colors.textSecondary, marginTop: 12 }]}>
                     {t('profile.qrCameraNeeded') || 'Permissão de câmera necessária'}
                   </Text>
-                  <TouchableOpacity onPress={requestPermission} style={[s.cta, { backgroundColor: '#111111' }]}>
-                    <Text style={s.ctaText}>{t('profile.grantCamera') || 'Permitir câmera'}</Text>
+                  <TouchableOpacity onPress={requestPermission} style={[s.cta, { backgroundColor: colors.primary }]}>
+                    <Text style={[s.ctaText, { color: colors.onPrimary }]}>{t('profile.grantCamera') || 'Permitir câmera'}</Text>
                   </TouchableOpacity>
                 </View>
               )}

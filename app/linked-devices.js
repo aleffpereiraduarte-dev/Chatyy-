@@ -11,6 +11,7 @@ import * as api from '../services/api';
 import { loadDeviceRegistry, installAppStateHook } from '../services/deviceRegistry';
 import FadeSlideIn from '../components/FadeSlideIn';
 import PressableScale from '../components/PressableScale';
+import { useGroupedColors } from '../components/settings/SettingsKit'; // [2026-10-10 settings-polish]
 
 // Lazy-load expo-camera so web doesn't crash if it's not bundled. Same
 // pattern as profile-qr.js / chat-new.js.
@@ -69,6 +70,10 @@ export default function LinkedDevicesScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { colors, isDark } = useTheme();
+  // [2026-10-10 settings-polish] P&B: header claro como as outras telas de
+  // Configurações (era barra preta fixa), selo "Este dispositivo" neutro (era
+  // verde), CTA primário em tinta do tema (no escuro #111 sumia no fundo preto).
+  const g = useGroupedColors();
   const { t } = useLanguage();
   const { user } = useAuth();
 
@@ -274,7 +279,7 @@ export default function LinkedDevicesScreen() {
 
     return (
       <View style={[styles.row, { borderBottomColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)' }]}>
-        <View style={[styles.iconBox, { backgroundColor: isDark ? 'rgba(17, 17, 17,0.15)' : 'rgba(17, 17, 17,0.1)' }]}>
+        <View style={[styles.iconBox, { backgroundColor: g.fill }]}>
           <Icon size={22} color={colors.primary} />
         </View>
         <View style={styles.rowBody}>
@@ -283,8 +288,8 @@ export default function LinkedDevicesScreen() {
               {deviceLabel}
             </Text>
             {isCurrent && (
-              <View style={styles.currentBadge}>
-                <Text style={styles.currentBadgeText}>
+              <View style={[styles.currentBadge, { backgroundColor: g.fill }]}>
+                <Text style={[styles.currentBadgeText, { color: colors.text }]}>
                   {t('devices.thisDevice') || 'This device'}
                 </Text>
               </View>
@@ -300,8 +305,8 @@ export default function LinkedDevicesScreen() {
         {!isCurrent && (
           <TouchableOpacity onPress={() => revoke(item)} disabled={revoking === (item.id || item.token_hash)} style={styles.signOutBtn}>
             {revoking === (item.id || item.token_hash)
-              ? <ActivityIndicator color="#EF4444" size="small" />
-              : <Text style={styles.signOutText}>{t('devices.signOut') || 'Sign out'}</Text>}
+              ? <ActivityIndicator color={colors.error} size="small" />
+              : <Text style={[styles.signOutText, { color: colors.error }]}>{t('devices.signOut') || 'Sign out'}</Text>}
           </TouchableOpacity>
         )}
       </View>
@@ -315,16 +320,16 @@ export default function LinkedDevicesScreen() {
       {USE_NATIVE_HEADER ? (
         <Stack.Screen options={nativeHeaderOptions({ colors, isDark, title: t('devices.title') })} />
       ) : (
-      <View style={[styles.header, { backgroundColor: isDark ? '#1c1c1e' : '#111111', paddingTop: 10 }]}>
+      <View style={[styles.header, { backgroundColor: colors.background, paddingTop: 10, borderBottomColor: g.separator }]}>
         <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
-          <IconArrowLeft size={24} color="#fff" />
+          <IconArrowLeft size={24} color={colors.text} />
         </TouchableOpacity>
-        <Text style={styles.title} numberOfLines={1}>{t('devices.title') || 'Linked devices'}</Text>
+        <Text style={[styles.title, { color: colors.text }]} numberOfLines={1}>{t('devices.title') || 'Linked devices'}</Text>
       </View>
       )}
 
       <FadeSlideIn>
-      <View style={[styles.hero, { backgroundColor: isDark ? 'rgba(17, 17, 17,0.1)' : 'rgba(17, 17, 17,0.06)' }]}>
+      <View style={styles.hero}>
         <IconShield size={40} color={colors.primary} />
         <Text style={[styles.heroTitle, { color: colors.text }]}>
           {t('devices.heroTitle') || 'Keep your account secure'}
@@ -342,21 +347,25 @@ export default function LinkedDevicesScreen() {
           confirms the link from here. WhatsApp/Telegram offer both
           directions; we mirror that. */}
       <View style={styles.ctaRow}>
+        {/* flex do botão no wrapper: o style do PressableScale vai pro Animated.View
+            interno, então o Touchable externo não esticava e o rótulo cortava. */}
+        <View style={{ flex: 1, minWidth: 0 }}>
         <PressableScale
-          style={[styles.ctaBtn, { backgroundColor: '#111111' }]}
+          style={[styles.ctaBtn, { flex: 0, backgroundColor: colors.primary }]}
           onPress={() => router.push('/companion-qr')}
         >
-          <IconUserPlus size={18} color="#fff" />
-          <Text style={styles.ctaBtnText}>
+          <IconUserPlus size={18} color={colors.onPrimary} />
+          <Text style={[styles.ctaBtnText, { color: colors.onPrimary }]} numberOfLines={1}>
             {t('devices.linkAnotherPhone') || 'Vincular outro celular'}
           </Text>
         </PressableScale>
+        </View>
         <TouchableOpacity
-          style={[styles.ctaBtn, styles.ctaBtnSecondary, { borderColor: '#111111' }]}
+          style={[styles.ctaBtn, styles.ctaBtnSecondary, { borderColor: colors.primary }]}
           onPress={openScanner}
         >
           <IconCamera size={18} color={colors.primary} />
-          <Text style={[styles.ctaBtnText, { color: colors.primary }]}>
+          <Text style={[styles.ctaBtnText, { color: colors.primary }]} numberOfLines={1}>
             {t('devices.scanCompanion') || 'Escanear QR'}
           </Text>
         </TouchableOpacity>
@@ -374,7 +383,7 @@ export default function LinkedDevicesScreen() {
             contentContainerStyle={styles.listContent}
             ListEmptyComponent={
               <View style={styles.emptyWrap}>
-                <View style={[styles.emptyIconBox, { backgroundColor: isDark ? 'rgba(17, 17, 17,0.15)' : 'rgba(17, 17, 17,0.1)' }]}>
+                <View style={[styles.emptyIconBox, { backgroundColor: g.fill }]}>
                   <IconMonitor size={34} color={colors.primary} />
                 </View>
                 <Text style={[styles.emptyTitle, { color: colors.text }]}>
@@ -387,8 +396,8 @@ export default function LinkedDevicesScreen() {
             }
           />
           {hasOther && (
-            <TouchableOpacity onPress={revokeAll} style={[styles.revokeAllBtn, { marginBottom: 16 + insets.bottom }]}>
-              <Text style={styles.revokeAllText}>
+            <TouchableOpacity onPress={revokeAll} style={[styles.revokeAllBtn, { marginBottom: 16 + insets.bottom }, isDark && { backgroundColor: 'rgba(248,113,113,0.10)', borderColor: 'rgba(248,113,113,0.22)' }]}>
+              <Text style={[styles.revokeAllText, { color: colors.error }]}>
                 {t('devices.signOutAll') || 'Sign out all other devices'}
               </Text>
             </TouchableOpacity>
@@ -445,7 +454,7 @@ export default function LinkedDevicesScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingBottom: 14 },
+  header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingBottom: 14, borderBottomWidth: StyleSheet.hairlineWidth },
   backBtn: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
   title: { flex: 1, color: '#fff', fontSize: 20, fontWeight: '700', marginLeft: 8 },
   hero: { alignItems: 'center', padding: 20, gap: 8 },
@@ -476,10 +485,10 @@ const styles = StyleSheet.create({
   emptyText: { textAlign: 'center', fontSize: 13, paddingHorizontal: 16 },
   revokeAllBtn: { margin: 16, padding: 14, borderRadius: 12, backgroundColor: '#FEF2F2', alignItems: 'center', borderWidth: 1, borderColor: '#FEE2E2' },
   revokeAllText: { color: '#EF4444', fontSize: 14, fontWeight: '700' },
-  ctaRow: { flexDirection: 'row', gap: 10, paddingHorizontal: 16, paddingTop: 8 },
-  ctaBtn: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingVertical: 12, borderRadius: 12 },
+  ctaRow: { flexDirection: 'row', gap: 10, paddingHorizontal: 16, paddingTop: 8, paddingBottom: 8 },
+  ctaBtn: { flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingVertical: 12, paddingHorizontal: 10, borderRadius: 12 },
   ctaBtnSecondary: { backgroundColor: 'transparent', borderWidth: 1 },
-  ctaBtnText: { color: '#fff', fontWeight: '700', fontSize: 13 },
+  ctaBtnText: { color: '#fff', fontWeight: '700', fontSize: 13, flexShrink: 1 },
   scanRoot: { flex: 1, backgroundColor: '#000' },
   scanHeader: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingTop: 50, paddingBottom: 14 },
   scanTitle: { color: '#fff', fontSize: 18, fontWeight: '700', marginLeft: 8 },

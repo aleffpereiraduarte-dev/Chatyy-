@@ -9171,4 +9171,11 @@ export default {
   "live.torchOff": "Matikan senter",
   "live.torchUnavailable": "Senter tidak tersedia di perangkat ini",
   "live.beautyNeedsUpdate": "Penghalus di video live hadir di pembaruan aplikasi berikutnya. Untuk saat ini hanya berlaku di pratinjau kamu.",
+  "chat.listSearchChats": "Percakapan",
+  "chat.listSearchMessages": "Pesan",
+  // [2026-10-10 conv-polish]
+  "chatConv.tapToJoin": "Ketuk untuk bergabung",
+  "chatConv.parentalBlocked": "Pesan diblokir oleh kontrol orang tua",
+  "chatConv.clearFilters": "Hapus filter",
+  "chatConv.forwardedFromFmt": "{label} dari {name}",
 };

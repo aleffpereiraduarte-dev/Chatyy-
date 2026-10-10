@@ -9949,4 +9949,11 @@ export default {
   "live.torchOff": "Spegni torcia",
   "live.torchUnavailable": "Torcia non disponibile su questo dispositivo",
   "live.beautyNeedsUpdate": "L'effetto levigante sul video della live arriva con il prossimo aggiornamento dell'app. Per ora vale solo nella tua anteprima.",
+  "chat.listSearchChats": "Chat",
+  "chat.listSearchMessages": "Messaggi",
+  // [2026-10-10 conv-polish]
+  "chatConv.tapToJoin": "Tocca per partecipare",
+  "chatConv.parentalBlocked": "Messaggio bloccato dal controllo genitori",
+  "chatConv.clearFilters": "Cancella filtri",
+  "chatConv.forwardedFromFmt": "{label} da {name}",
 };

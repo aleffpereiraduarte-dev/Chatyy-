@@ -12,6 +12,7 @@ import { useLanguage } from '../../context/LanguageContext';
 import { BorderRadius } from '../../constants/theme';
 import * as api from '../../services/api';
 import { IconArrowLeft, IconPlus } from '../../components/Icons';
+import ScreenEmptyState from '../../components/ScreenEmptyState';
 
 // Slide-up entrance for discovery cards. Each card translates 24px up while
 // fading in, staggered 60ms per index. Native driver (transform+opacity).
@@ -203,6 +204,9 @@ export default function CommunityDiscoverScreen() {
         data={CATEGORIES}
         keyExtractor={(c) => c.key}
         showsHorizontalScrollIndicator={false}
+        // [2026-10-10 visual] flexGrow 0: a horizontal FlatList in a column grows
+        // and pushed the list ~500px down (big blank gap under the chips).
+        style={{ flexGrow: 0 }}
         contentContainerStyle={{ paddingHorizontal: 12, paddingVertical: 8 }}
         renderItem={({ item }) => (
           <CategoryChip
@@ -257,7 +261,7 @@ export default function CommunityDiscoverScreen() {
           data={items}
           keyExtractor={(i) => String(i.id)}
           renderItem={renderItem}
-          contentContainerStyle={{ padding: 12, paddingBottom: 80 }}
+          contentContainerStyle={items.length === 0 ? { padding: 12, flexGrow: 1 } : { padding: 12, paddingBottom: 80 }}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); load(true); }} tintColor={colors.primary} />}
           ListHeaderComponent={
             <Text style={[sty.sectionTitle, { color: colors.textSecondary, marginTop: myComm.length ? 16 : 0 }]}>
@@ -265,9 +269,12 @@ export default function CommunityDiscoverScreen() {
             </Text>
           }
           ListEmptyComponent={
-            <Text style={{ color: colors.textSecondary, textAlign: 'center', marginTop: 40 }}>
-              {t('community.empty') || 'Nenhuma comunidade encontrada'}
-            </Text>
+            <ScreenEmptyState
+              kind="search"
+              compact
+              title={t('community.empty') || 'Nenhuma comunidade encontrada'}
+              cta={{ label: t('community.create') || 'Criar comunidade', onPress: () => router.push('/community/create') }}
+            />
           }
         />
       )}

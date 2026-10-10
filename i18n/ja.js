@@ -9171,4 +9171,11 @@ export default {
   "live.torchOff": "ライトをオフ",
   "live.torchUnavailable": "この端末ではライトを使用できません",
   "live.beautyNeedsUpdate": "ライブ映像への美肌効果は次回のアプリ更新で対応します。現在はプレビューのみに適用されます。",
+  "chat.listSearchChats": "チャット",
+  "chat.listSearchMessages": "メッセージ",
+  // [2026-10-10 conv-polish]
+  "chatConv.tapToJoin": "タップして参加",
+  "chatConv.parentalBlocked": "ペアレンタルコントロールによりブロックされたメッセージ",
+  "chatConv.clearFilters": "フィルターをクリア",
+  "chatConv.forwardedFromFmt": "{name}から{label}",
 };

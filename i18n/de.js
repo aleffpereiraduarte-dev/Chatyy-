@@ -9949,4 +9949,11 @@ export default {
   "live.torchOff": "Taschenlampe ausschalten",
   "live.torchUnavailable": "Taschenlampe auf diesem Gerät nicht verfügbar",
   "live.beautyNeedsUpdate": "Glätten im Live-Video kommt mit dem nächsten App-Update. Vorerst gilt es nur für deine Vorschau.",
+  "chat.listSearchChats": "Chats",
+  "chat.listSearchMessages": "Nachrichten",
+  // [2026-10-10 conv-polish]
+  "chatConv.tapToJoin": "Zum Beitreten tippen",
+  "chatConv.parentalBlocked": "Nachricht durch die Kindersicherung blockiert",
+  "chatConv.clearFilters": "Filter zurücksetzen",
+  "chatConv.forwardedFromFmt": "{label} von {name}",
 };

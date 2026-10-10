@@ -1618,7 +1618,7 @@ function TypingBubble({ name, colors, recording, t, active = true, entries = nul
           </>
         ) : (
           [dot1, dot2, dot3].map((dot, i) => (
-            <Animated.View key={i} style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: '#111111', transform: [{ translateY: dot }] }} />
+            <Animated.View key={i} style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: colors.textSecondary || '#8E8E93', transform: [{ translateY: dot }] }} />
           ))
         )}
       </View>
@@ -2513,7 +2513,7 @@ function TextWithLinks({ text, style, linkColor, colors, mentionColor, router: r
       p.t === '#' ? (
         <Text
           key={`${kp}_h${j}`}
-          style={{ color: '#111111', fontWeight: '700' }}
+          style={{ color: mentionColor || linkColor || colors?.text || '#111111', fontWeight: '700' }} // [2026-10-10 conv-polish] #111 fixo sumia na bolha enviada (preta) e no escuro
           onPress={() => {
             // Telegram-style hashtag tap: route to the dedicated hashtag
             // results screen which queries chat_hashtag_search and lists
@@ -4399,7 +4399,7 @@ function ContactCardActions({ email, phone, t, accent, dividerColor, onStartChat
   }, [email, phone]);
 
   const showMessage = check.has_chatyy;
-  const inviteAccent = '#10b981';
+  const inviteAccent = accent; // [2026-10-10 conv-polish] P&B: era verde, destoava das outras ações do cartão
   return (
     <View style={{ flexDirection: 'row', borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: dividerColor }}>
       <TouchableOpacity
@@ -7440,10 +7440,18 @@ function AudioRecorder({ onSend, onCancel, colors, t, conversationId, holdMode =
     );
   }
 
-  const isDarkBg = colors.surface === '#1e1e1e' || colors.surface === '#121212' || colors.surface === '#000';
+  // [2026-10-10 conv-polish] o tema escuro atual usa surface #0b0b0b / fundo
+  // #000000 → a checagem antiga nunca batia e o gravador ficava com tinta #111
+  // (ondas, botões play/enviar) invisível no preto. Tinta = colors.text e os
+  // botões redondos invertem no escuro (branco com ícone preto), igual ao
+  // botão de mic do composer.
+  const isDarkBg = colors.surface === '#1e1e1e' || colors.surface === '#121212' || colors.surface === '#000'
+    || colors.surface === '#0b0b0b' || colors.background === '#000000';
   const recBg = isDarkBg ? 'rgba(17, 17, 17,0.08)' : 'rgba(17, 17, 17,0.06)';
   const previewBg = isDarkBg ? 'rgba(17, 17, 17,0.10)' : 'rgba(17, 17, 17,0.08)';
-  const waveColor = '#111111';
+  const waveColor = isDarkBg ? (colors.text || '#F5F5F7') : '#111111';
+  const recBtnBg = isDarkBg ? (colors.text || '#F5F5F7') : '#111111';
+  const recBtnInk = isDarkBg ? '#000' : '#fff';
   const slideCancelColor = colors.textSecondary;
 
   // ─── [2026-10-06 UX2] HOLD-TO-RECORD controller ───
@@ -7529,10 +7537,10 @@ function AudioRecorder({ onSend, onCancel, colors, t, conversationId, holdMode =
         </TouchableOpacity>
 
         {/* Play / Pause */}
-        <TouchableOpacity onPress={togglePreviewPlay} style={recStyles.previewPlayBtn} accessibilityLabel={previewPlaying ? 'Pausar' : 'Reproduzir'}>
+        <TouchableOpacity onPress={togglePreviewPlay} style={[recStyles.previewPlayBtn, { backgroundColor: recBtnBg }]} accessibilityLabel={previewPlaying ? 'Pausar' : 'Reproduzir'}>
           {previewPlaying
-            ? <IconPause size={20} color="#fff" />
-            : <IconPlay size={20} color="#fff" />}
+            ? <IconPause size={20} color={recBtnInk} />
+            : <IconPlay size={20} color={recBtnInk} />}
         </TouchableOpacity>
 
         {/* Static waveform with played-progress overlay */}
@@ -7546,7 +7554,7 @@ function AudioRecorder({ onSend, onCancel, colors, t, conversationId, holdMode =
                   recStyles.waveBar,
                   {
                     height: Math.max(4, level * 30),
-                    backgroundColor: played ? '#111111' : (isDarkBg ? '#2c2c2e' : '#9ca3af'),
+                    backgroundColor: played ? waveColor : (isDarkBg ? '#48484A' : '#9ca3af'),
                     opacity: played ? 1 : 0.55,
                   },
                 ]}
@@ -7578,8 +7586,8 @@ function AudioRecorder({ onSend, onCancel, colors, t, conversationId, holdMode =
         </TouchableOpacity>
 
         {/* Send */}
-        <TouchableOpacity onPress={handleConfirmSend} style={recStyles.sendBtn} accessibilityLabel={t('chatConv.sendAudio') || 'Enviar áudio'}>
-          <IconSend size={20} color="#fff" />
+        <TouchableOpacity onPress={handleConfirmSend} style={[recStyles.sendBtn, { backgroundColor: recBtnBg }]} accessibilityLabel={t('chatConv.sendAudio') || 'Enviar áudio'}>
+          <IconSend size={20} color={recBtnInk} />
         </TouchableOpacity>
       </View>
     );
@@ -7708,7 +7716,7 @@ function AudioRecorder({ onSend, onCancel, colors, t, conversationId, holdMode =
               translateX/opacity interpolations spec'd by the design. */}
         <Animated.View style={[recStyles.slideRow, { opacity: slideHintOpacity }]}>
           {voiceViewOnce ? (
-            <Text style={[recStyles.slideHint, { color: '#111111', fontWeight: '600' }]} numberOfLines={1}>
+            <Text style={[recStyles.slideHint, { color: colors.text || '#111111', fontWeight: '600' }]} numberOfLines={1}>
               {t('chatConv.viewOnceVoiceHint') || 'Áudio só pode ser ouvido uma vez'}
             </Text>
           ) : (
@@ -7751,7 +7759,7 @@ function AudioRecorder({ onSend, onCancel, colors, t, conversationId, holdMode =
           Stop + Send pair is always shown (no lock state). */}
       <View style={recStyles.lockedActions}>
         <View pointerEvents="none" style={recStyles.tapToSendHint}>
-          <Text style={recStyles.tapToSendHintText} numberOfLines={1}>
+          <Text style={[recStyles.tapToSendHintText, { color: isDarkBg ? (colors.textSecondary || '#8E8E93') : '#111111' }]} numberOfLines={1}>
             {t('chatConv.tapToSend') || 'Toque para enviar'}
           </Text>
         </View>
@@ -7781,11 +7789,11 @@ function AudioRecorder({ onSend, onCancel, colors, t, conversationId, holdMode =
         {/* Send → ship the recorded audio immediately */}
         <TouchableOpacity
           onPress={handleStopAndSend}
-          style={recStyles.lockedSendBtn}
+          style={[recStyles.lockedSendBtn, { backgroundColor: recBtnBg }]}
           accessibilityLabel={t('chatConv.sendAudio') || 'Enviar áudio'}
           hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
         >
-          <IconSend size={20} color="#fff" />
+          <IconSend size={20} color={recBtnInk} />
         </TouchableOpacity>
       </View>
     </Animated.View>
@@ -22128,10 +22136,11 @@ function ChatConversationInner() {
 
   const presenceColor = useMemo(() => {
     if (!presence || conversationType === 'group') return colors.textTertiary;
-    if (presence.status === 'online') return '#111111';
-    if (presence.status === 'away') return '#f59e0b';
+    // [2026-10-10 conv-polish] online = tinta do texto (#111 fixo sumia no header escuro); ausente = secundária (P&B, era âmbar).
+    if (presence.status === 'online') return colors.text;
+    if (presence.status === 'away') return colors.textSecondary;
     return colors.textTertiary;
-  }, [presence, conversationType, colors.textTertiary]);
+  }, [presence, conversationType, colors.text, colors.textSecondary, colors.textTertiary]);
 
   // ============================================================
   // GROUP MESSAGES BY DATE
@@ -23076,9 +23085,9 @@ function ChatConversationInner() {
           </Text>
           <TouchableOpacity
             onPress={() => { setLoadError(null); loadMessages(true); }}
-            style={{ backgroundColor: '#111111', paddingHorizontal: 22, paddingVertical: 10, borderRadius: 22 }}
+            style={{ backgroundColor: colors.primary || '#111111', paddingHorizontal: 22, paddingVertical: 10, borderRadius: 22 }}
           >
-            <Text style={{ color: '#fff', fontSize: 14, fontWeight: '600' }}>
+            <Text style={{ color: colors.onPrimary || '#fff', fontSize: 14, fontWeight: '600' }}>
               {t('common.retry') || 'Tentar novamente'}
             </Text>
           </TouchableOpacity>
@@ -23089,16 +23098,17 @@ function ChatConversationInner() {
       <View style={[styles.emptyMessages, THREAD_EMPTY_FLIP]}>
         <View style={{
           width: 96, height: 96, borderRadius: 48,
-          backgroundColor: isDark ? 'rgba(17, 17, 17,0.10)' : 'rgba(17, 17, 17,0.10)',
+          // [2026-10-10 conv-polish] anéis #111 + cadeado #111 sumiam no fundo
+          // preto; no claro, sombra difusa pesada removida (visual chapado).
+          backgroundColor: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(17, 17, 17,0.05)',
           alignItems: 'center', justifyContent: 'center', marginBottom: 18,
-          ...(Platform.OS === 'web' ? { boxShadow: '0 8px 32px rgba(17, 17, 17,0.18)' } : {}),
         }}>
           <View style={{
             width: 72, height: 72, borderRadius: 36,
-            backgroundColor: isDark ? 'rgba(17, 17, 17,0.18)' : 'rgba(17, 17, 17,0.18)',
+            backgroundColor: isDark ? 'rgba(255,255,255,0.09)' : 'rgba(17, 17, 17,0.08)',
             alignItems: 'center', justifyContent: 'center',
           }}>
-            <IconLock size={32} color="#111111" />
+            <IconLock size={32} color={isDark ? '#F5F5F7' : '#111111'} />
           </View>
         </View>
         <Text style={{
@@ -23843,7 +23853,9 @@ function ChatConversationInner() {
       const albumTickColor = isOwn ? ownMetaColor : otherMetaColor;
       return (
         <View style={{
-          paddingHorizontal: 16,
+          // [2026-10-10 conv-polish] 16→8 = mesma margem lateral do msgRowOwn/
+          // msgRowOther: o álbum ficava 8px recuado em relação às bolhas.
+          paddingHorizontal: 8,
           marginBottom: item._isLastInGroup ? 8 : 2,
           alignItems: isOwn ? 'flex-end' : 'flex-start',
         }}>
@@ -23921,12 +23933,13 @@ function ChatConversationInner() {
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 2 }}>
               <View style={{
                 width: 32, height: 32, borderRadius: 16,
-                backgroundColor: isCaller ? '#3b82f620' : '#10b98120',
+                // [2026-10-10 conv-polish] P&B: círculo neutro + ícone na tinta do texto (era azul/verde).
+                backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)',
                 alignItems: 'center', justifyContent: 'center',
               }}>
                 {isVideo
-                  ? <IconVideo size={16} color={isCaller ? '#3b82f6' : '#10b981'} />
-                  : <IconPhone size={16} color={isCaller ? '#3b82f6' : '#10b981'} />}
+                  ? <IconVideo size={16} color={colors.text} />
+                  : <IconPhone size={16} color={colors.text} />}
               </View>
               <View>
                 <Text style={{ fontSize: 13, fontWeight: '600', color: colors.text }}>{callLabel}</Text>
@@ -23981,8 +23994,8 @@ function ChatConversationInner() {
         return (
           <View style={styles.systemMsg}>
             <View style={[styles.systemPill, { flexDirection: 'row', alignItems: 'center', gap: 6 }]}>
-              <IconEye size={14} color="#111111" />
-              <Text style={[styles.systemText, { color: '#111111' }]}>{text}</Text>
+              <IconEye size={14} color={colors.textSecondary} />
+              <Text style={[styles.systemText, { color: colors.textSecondary }]}>{text}</Text>
             </View>
           </View>
         );
@@ -24045,7 +24058,7 @@ function ChatConversationInner() {
     // mensagem foi apagada" (the peer retracted theirs), and uses a crisp
     // no-entry/prohibited glyph (inline SVG — memory rule: never emoji in UI)
     // instead of the padlock, which read as "protected" rather than "deleted".
-    const _delTint = isOwn ? 'rgba(255,255,255,0.55)' : colors.textTertiary;
+    const _delTint = isOwn ? ownMetaColor : otherMetaColor; // [2026-10-10 conv-polish] = tinta da hora (legível nos 2 temas)
     const renderDeletedLabel = () => (
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 2 }}>
         <Svg width={14} height={14} viewBox="0 0 24 24">
@@ -26622,7 +26635,7 @@ function ChatConversationInner() {
                   </View>
                   {song.url && /^https?:\/\//i.test(song.url) ? (
                     <TouchableOpacity onPress={() => Linking.openURL(song.url).catch(() => {})} style={{ padding: 3 }}>
-                      <IconPlay size={12} color="#111111" />
+                      <IconPlay size={12} color={isDark ? '#f5f5f5' : '#111111'} />
                     </TouchableOpacity>
                   ) : null}
                 </View>
@@ -26638,8 +26651,10 @@ function ChatConversationInner() {
                 </Text>
               )}
               <View style={{ marginTop: 6, paddingTop: 6, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: isDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.08)', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4 }}>
-                <Text style={{ fontSize: 10, color: '#111111', fontWeight: '600' }}>
-                  {'\u270F\uFE0F'} {t('chatConv.tapToEdit') || 'Toque pra editar'}
+                {/* [2026-10-10 conv-polish] SVG no lugar do emoji ✏️ + tinta legível no escuro. */}
+                <IconPencil size={11} color={isDark ? 'rgba(255,255,255,0.7)' : '#111111'} />
+                <Text style={{ fontSize: 10, color: isDark ? 'rgba(255,255,255,0.7)' : '#111111', fontWeight: '600' }}>
+                  {t('chatConv.tapToEdit') || 'Toque pra editar'}
                 </Text>
               </View>
             </TouchableOpacity>
@@ -27131,9 +27146,11 @@ function ChatConversationInner() {
           const cardBorder = isDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.08)';
           const cardText = isDark ? '#f5f5f5' : '#111827';
           const cardSubtext = isDark ? 'rgba(255,255,255,0.55)' : '#64748b';
-          const accent = '#111111';
-          const bgFill = isDark ? 'rgba(17, 17, 17,0.32)' : 'rgba(17, 17, 17,0.18)';
-          const bgFillVoted = isDark ? 'rgba(17, 17, 17,0.55)' : 'rgba(17, 17, 17,0.42)';
+          // [2026-10-10 conv-polish] accent/preenchimento #111 fixos sumiam no
+          // cartão escuro (#1c1c1e): ícone, barras, ✓ e "Ver votos" invisíveis.
+          const accent = isDark ? '#F5F5F7' : '#111111';
+          const bgFill = isDark ? 'rgba(255,255,255,0.10)' : 'rgba(17, 17, 17,0.18)';
+          const bgFillVoted = isDark ? 'rgba(255,255,255,0.22)' : 'rgba(17, 17, 17,0.42)';
           const trackBg = isDark ? 'rgba(255,255,255,0.06)' : '#f1f5f9';
           return (
             <View style={{
@@ -27241,7 +27258,7 @@ function ChatConversationInner() {
                       }}>
                         {isCorrect && <Text style={{ fontSize: 10, color: '#fff', fontWeight: '800', marginTop: -1 }}>{'\u2713'}</Text>}
                         {isWrongChosen && <Text style={{ fontSize: 10, color: '#fff', fontWeight: '800', marginTop: -1 }}>{'\u2715'}</Text>}
-                        {!isCorrect && !isWrongChosen && voted && <Text style={{ fontSize: 10, color: '#fff', fontWeight: '800', marginTop: -1 }}>{'\u2713'}</Text>}
+                        {!isCorrect && !isWrongChosen && voted && <Text style={{ fontSize: 10, color: isDark ? '#000' : '#fff', fontWeight: '800', marginTop: -1 }}>{'\u2713'}</Text>}
                       </View>
                       <Text style={{
                         flex: 1, fontSize: 13, color: cardText,
@@ -27332,12 +27349,13 @@ function ChatConversationInner() {
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 2 }}>
                   <View style={{
                     width: 32, height: 32, borderRadius: 16,
-                    backgroundColor: jsonData.caller_email === currentEmail ? '#3b82f620' : '#10b98120',
+                    // [2026-10-10 conv-polish] P&B: círculo neutro + ícone na tinta do texto (era azul/verde).
+                    backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)',
                     alignItems: 'center', justifyContent: 'center',
                   }}>
                     {isVideo
-                      ? <IconVideo size={16} color={jsonData.caller_email === currentEmail ? '#3b82f6' : '#10b981'} />
-                      : <IconPhone size={16} color={jsonData.caller_email === currentEmail ? '#3b82f6' : '#10b981'} />}
+                      ? <IconVideo size={16} color={colors.text} />
+                      : <IconPhone size={16} color={colors.text} />}
                   </View>
                   <View>
                     <Text style={{ fontSize: 13, fontWeight: '600', color: colors.text }}>{callLabel}</Text>
@@ -27392,12 +27410,13 @@ function ChatConversationInner() {
                 style={{ minWidth: 200, maxWidth: 280, backgroundColor: colors.surface, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 10, gap: 8 }}
               >
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                  <View style={{ width: 44, height: 44, borderRadius: 12, backgroundColor: '#10b98120', alignItems: 'center', justifyContent: 'center' }}>
-                    <IconMapPin size={22} color='#10b981' />
+                  {/* [2026-10-10 conv-polish] P&B (era verde) + texto via i18n (estava fixo em PT). */}
+                  <View style={{ width: 44, height: 44, borderRadius: 12, backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)', alignItems: 'center', justifyContent: 'center' }}>
+                    <IconMapPin size={22} color={colors.text} />
                   </View>
                   <View style={{ flex: 1 }}>
                     <Text style={{ fontSize: 13, fontWeight: '600', color: colors.text, marginBottom: 2 }}>{locLabel}</Text>
-                    <Text style={{ fontSize: 10, color: '#10b981', fontWeight: '600' }}>Toque para abrir mapa</Text>
+                    <Text style={{ fontSize: 11, color: colors.textSecondary, fontWeight: '500' }}>{t('chatConv.tapToOpenMap')}</Text>
                   </View>
                 </View>
               </TouchableOpacity>
@@ -27444,20 +27463,21 @@ function ChatConversationInner() {
               >
                 <View style={{
                   width: 32, height: 32, borderRadius: 16,
-                  backgroundColor: isOwn ? 'rgba(255,255,255,0.15)' : '#3b82f620',
+                  // [2026-10-10 conv-polish] P&B (era azul na recebida) + textos via i18n (estavam fixos em PT).
+                  backgroundColor: isOwn ? 'rgba(255,255,255,0.15)' : (isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)'),
                   alignItems: 'center', justifyContent: 'center',
                 }}>
                   {isVideo
-                    ? <IconVideo size={16} color={isOwn ? '#fff' : '#3b82f6'} />
-                    : <IconPhone size={16} color={isOwn ? '#fff' : '#3b82f6'} />
+                    ? <IconVideo size={16} color={isOwn ? ownTextColor : colors.text} />
+                    : <IconPhone size={16} color={isOwn ? ownTextColor : colors.text} />
                   }
                 </View>
                 <View>
                   <Text style={{ fontSize: 13, fontWeight: '600', color: isOwn ? ownTextColor : colors.text }}>
-                    {isVideo ? 'Videochamada' : 'Chamada de voz'}
+                    {isVideo ? t('call.videoCall') : t('call.audioCall')}
                   </Text>
                   <Text style={{ fontSize: 11, color: isOwn ? ownMetaColor : otherMetaColor }}>
-                    Toque para entrar
+                    {t('chatConv.tapToJoin')}
                   </Text>
                 </View>
               </TouchableOpacity>
@@ -27500,18 +27520,20 @@ function ChatConversationInner() {
                   alignSelf: 'flex-start',
                   paddingHorizontal: 8, paddingVertical: 3,
                   borderRadius: 999, marginBottom: 4,
-                  backgroundColor: isDark ? 'rgba(17, 17, 17, 0.18)' : '#F1F3F5',
+                  // [2026-10-10 conv-polish] tinta #111 fixa sumia na bolha escura (#2A2A2E).
+                  backgroundColor: isDark ? 'rgba(255,255,255,0.10)' : '#F1F3F5',
                 }}>
-                  <Text style={{ color: '#111111', fontSize: 11, fontWeight: '700' }}>@</Text>
-                  <Text style={{ color: '#111111', fontSize: 11, fontWeight: '700' }}>
+                  <Text style={{ color: isDark ? '#F5F5F7' : '#111111', fontSize: 11, fontWeight: '700' }}>@</Text>
+                  <Text style={{ color: isDark ? '#F5F5F7' : '#111111', fontSize: 11, fontWeight: '700' }}>
                     {t?.('chat.youWereMentioned') || 'Você foi mencionado'}
                   </Text>
                 </View>
               )}
               {msg._filtered && msg._hidden && (
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 }}>
-                  <IconLock size={12} color="#f59e0b" />
-                  <Text style={{ fontSize: 12, color: '#f59e0b' }}>Mensagem bloqueada pelo controle parental</Text>
+                  {/* [2026-10-10 conv-polish] tinta de meta (era âmbar) + i18n (estava fixo em PT). */}
+                  <IconLock size={12} color={isOwn ? ownMetaColor : otherMetaColor} />
+                  <Text style={{ fontSize: 12, fontStyle: 'italic', color: isOwn ? ownMetaColor : otherMetaColor }}>{t('chatConv.parentalBlocked')}</Text>
                 </View>
               )}
               {!autoHideOriginal && (() => {
@@ -27916,11 +27938,11 @@ function ChatConversationInner() {
             // cima do mesmo lado também fica justo → o grupo vira um bloco.
             !isFirstInGroup && (isOwn ? { borderTopRightRadius: bubbleTailRadius } : { borderTopLeftRadius: bubbleTailRadius }),
             isDeleted && styles.bubbleDeleted,
-            (msg.type === 'sticker' || msg.type === 'gif') && { backgroundColor: 'transparent', borderWidth: 0, paddingHorizontal: 0, paddingVertical: 0, elevation: 0, shadowOpacity: 0 },
+            (msg.type === 'sticker' || msg.type === 'gif') && !isDeleted && { backgroundColor: 'transparent', borderWidth: 0, paddingHorizontal: 0, paddingVertical: 0, elevation: 0, shadowOpacity: 0 },
             // [2026-10-08 location-bubble-fast] emoji-only = sem bolha; localização = mapa rente à bolha (inset 4).
             _jumboNoBubble && { backgroundColor: 'transparent', borderWidth: 0, paddingHorizontal: 0, paddingTop: 0, paddingBottom: 0, elevation: 0, shadowOpacity: 0, minWidth: 0 },
             msg.type === 'location' && !isDeleted && { paddingHorizontal: 4, paddingTop: 4, paddingBottom: 5 },
-            (msg.type === 'image' || msg.type === 'video') && { paddingHorizontal: 3, paddingTop: 3, paddingBottom: 4, overflow: 'hidden' },
+            (msg.type === 'image' || msg.type === 'video') && !isDeleted && { paddingHorizontal: 3, paddingTop: 3, paddingBottom: 4, overflow: 'hidden' },
             msg._pending && { opacity: 0.7 },
             msg._failed && { opacity: 0.5 },
           ]}>
@@ -27970,7 +27992,7 @@ function ChatConversationInner() {
             const showPin  = isPinnedHere && (msg.type !== 'text' || String(msg.content || '').length > 300);
             if (!showPin) return null;
             if (msg.type === 'sticker' || msg.type === 'gif' || msg.type === 'image' || msg.type === 'video') return null;
-            const tint = isOwn ? 'rgba(255,255,255,0.85)' : '#f59e0b';
+            const tint = isOwn ? ownMetaColor : otherMetaColor; // [2026-10-10 conv-polish] P&B (era âmbar na recebida)
             return (
               <View pointerEvents="none" style={{ position: 'absolute', top: 4, left: 6, opacity: 0.85, zIndex: 2, flexDirection: 'row', gap: 3 }}>
                 <IconPin size={11} color={tint} />
@@ -28002,7 +28024,8 @@ function ChatConversationInner() {
               : fc > 1
                 ? (t('chatConv.forwardedMany') || 'Encaminhada varias vezes')
                 : (t('chatConv.forwarded') || 'Encaminhada');
-            const fullLabel = fromName ? `${baseLabel} de ${fromName}` : baseLabel;
+            // [2026-10-10 conv-polish] "de" estava fixo em PT ("Forwarded de X" no en).
+            const fullLabel = fromName ? t('chatConv.forwardedFromFmt').replace('{label}', baseLabel).replace('{name}', fromName) : baseLabel;
             return (
               <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 3 }}>
                 {heavyWarn ? (
@@ -28238,7 +28261,10 @@ function ChatConversationInner() {
           {/* [2026-10-08 chat-beauty-bubbles] imagem NUNCA usa esta linha: sem
               legenda = selo sobre a foto; com legenda = linha própria sob a
               legenda (antes a hora saía DUAS vezes). */}
-          {msg.type !== 'sticker' && msg.type !== 'gif' && msg.type !== 'image' && msg.type !== 'video' && (
+          {/* [2026-10-10 conv-polish] foto/vídeo/figurinha APAGADOS viram lápide
+              comum → precisam da linha de hora como qualquer bolha (antes saía
+              uma pílula sem hora e com padding 3 colado na borda). */}
+          {(isDeleted || (msg.type !== 'sticker' && msg.type !== 'gif' && msg.type !== 'image' && msg.type !== 'video')) && (
             <View style={[styles.msgMeta, _waInlineMeta && styles.msgMetaInline,
               // [2026-10-08 location-bubble-fast] emoji-only: pílula com o fundo da bolha (hora/✓ legíveis no tema).
               _jumboNoBubble && { alignSelf: isOwn ? 'flex-end' : 'flex-start', backgroundColor: isOwn ? ownBubbleBg : otherBubbleBg, borderRadius: 10, paddingHorizontal: 7, paddingVertical: 2, marginTop: 0 },
@@ -28593,13 +28619,13 @@ function ChatConversationInner() {
                         style={{
                           paddingHorizontal: 12, paddingVertical: 8,
                           borderRadius: 14,
-                          backgroundColor: isDark ? 'rgba(17, 17, 17,0.18)' : 'rgba(17, 17, 17,0.10)',
+                          backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(17, 17, 17,0.06)',
                           borderWidth: 1,
-                          borderColor: 'rgba(17, 17, 17,0.32)',
+                          borderColor: isDark ? 'rgba(255,255,255,0.18)' : 'rgba(17, 17, 17,0.18)',
                           minWidth: 44,
                         }}
                       >
-                        <Text style={{ color: '#111111', fontSize: 13, fontWeight: '600', textAlign: 'center' }}>
+                        <Text style={{ color: isDark ? '#F5F5F7' : '#111111', fontSize: 13, fontWeight: '600', textAlign: 'center' }}>
                           {btn.text}
                         </Text>
                       </TouchableOpacity>
@@ -29333,7 +29359,7 @@ function ChatConversationInner() {
             />
             {/* ★ Filter button */}
             <TouchableOpacity onPress={() => setShowSearchBar('filters')} style={{ padding: 4 }} accessibilityRole="button" accessibilityLabel={_a11yT(t, 'a11y.searchFilters', 'Filtros da busca')}>
-              <IconFilter size={18} color={searchFilters.dateFrom || searchFilters.dateTo || searchFilters.type || searchFilters.senderEmail || searchFilters.starredOnly ? '#3b82f6' : colors.textSecondary} />
+              <IconFilter size={18} color={searchFilters.dateFrom || searchFilters.dateTo || searchFilters.type || searchFilters.senderEmail || searchFilters.starredOnly ? colors.primary : colors.textSecondary} />
             </TouchableOpacity>
             {searchResults.length > 0 && (
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
@@ -29375,10 +29401,10 @@ function ChatConversationInner() {
                         paddingHorizontal: 10,
                         paddingVertical: 6,
                         borderRadius: 16,
-                        backgroundColor: searchFilters.type === type ? '#3b82f6' : colors.border,
+                        backgroundColor: searchFilters.type === type ? colors.primary : colors.border,
                       }}
                     >
-                      <Text style={{ fontSize: 12, color: searchFilters.type === type ? '#fff' : colors.text, fontWeight: searchFilters.type === type ? '600' : '500' }}>
+                      <Text style={{ fontSize: 12, color: searchFilters.type === type ? colors.onPrimary : colors.text, fontWeight: searchFilters.type === type ? '600' : '500' }}>
                         {label}
                       </Text>
                     </TouchableOpacity>
@@ -29492,11 +29518,11 @@ function ChatConversationInner() {
               >
                 <View style={{
                   width: 18, height: 18, borderRadius: 4,
-                  borderWidth: 1.5, borderColor: searchFilters.starredOnly ? '#3b82f6' : colors.border,
-                  backgroundColor: searchFilters.starredOnly ? '#3b82f6' : 'transparent',
+                  borderWidth: 1.5, borderColor: searchFilters.starredOnly ? colors.primary : colors.border,
+                  backgroundColor: searchFilters.starredOnly ? colors.primary : 'transparent',
                   alignItems: 'center', justifyContent: 'center',
                 }}>
-                  {searchFilters.starredOnly && <IconCheck size={12} color="#fff" />}
+                  {searchFilters.starredOnly && <IconCheck size={12} color={colors.onPrimary} />}
                 </View>
                 <Text style={{ fontSize: 13, color: colors.text, fontWeight: '500' }}>
                   {t('search.filter.starredOnly') || 'Apenas favoritos'}
@@ -29537,7 +29563,7 @@ function ChatConversationInner() {
                 }}
                 style={{ paddingVertical: 8, alignItems: 'center' }}
               >
-                <Text style={{ fontSize: 13, color: '#3b82f6', fontWeight: '600' }}>Clear filters</Text>
+                <Text style={{ fontSize: 13, color: colors.text, fontWeight: '600' }}>{t('chatConv.clearFilters')}</Text>
               </TouchableOpacity>
             </View>
           )}
@@ -29571,9 +29597,10 @@ function ChatConversationInner() {
           are already on screen from SQLite. Only a genuine mid-session drop —
           after the 5s grace timer — surfaces the subtle "Reconectando..." row. */}
       {(!netReachable || !wsConnected && !hasEverConnectedRef.current) ? null : !wsConnected ? (
-        <View style={{ backgroundColor: isDark ? 'rgba(245,158,11,0.10)' : 'rgba(245,158,11,0.10)', paddingVertical: 6, paddingHorizontal: 14, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
-          <ActivityIndicator size={12} color="#f59e0b" />
-          <Text style={{ color: '#f59e0b', fontSize: 12, fontWeight: '500' }}>
+        // [2026-10-10 conv-polish] faixa neutra (era âmbar) — WhatsApp mostra "Conectando…" discreto.
+        <View style={{ backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)', paddingVertical: 6, paddingHorizontal: 14, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
+          <ActivityIndicator size={12} color={colors.textSecondary} />
+          <Text style={{ color: colors.textSecondary, fontSize: 12, fontWeight: '500' }}>
             {t('chat.reconnecting') || 'Reconectando...'}
           </Text>
         </View>
@@ -30022,8 +30049,9 @@ function ChatConversationInner() {
             borderBottomColor: colors.borderLight,
           }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 }}>
-              <IconPin size={12} color="#f59e0b" />
-              <Text style={{ fontSize: 11, fontWeight: '700', color: '#f59e0b', textTransform: 'uppercase', letterSpacing: 0.5 }}>
+              {/* [2026-10-10 conv-polish] faixa de fixados P&B (era âmbar). */}
+              <IconPin size={12} color={colors.textSecondary} />
+              <Text style={{ fontSize: 11, fontWeight: '700', color: colors.textSecondary, textTransform: 'uppercase', letterSpacing: 0.5 }}>
                 {t('chatConv.pinnedMessages') || 'Fixados'}
               </Text>
             </View>
@@ -30044,8 +30072,8 @@ function ChatConversationInner() {
                     }}
                     style={{
                       maxWidth: 220,
-                      backgroundColor: 'rgba(245,158,11,0.12)',
-                      borderLeftWidth: 3, borderLeftColor: '#f59e0b',
+                      backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)',
+                      borderLeftWidth: 3, borderLeftColor: colors.text,
                       paddingHorizontal: 10, paddingVertical: 6,
                       borderRadius: 6,
                     }}
@@ -30403,10 +30431,10 @@ function ChatConversationInner() {
                   </View>
                   <View style={{
                     width: 32, height: 32, borderRadius: 16,
-                    backgroundColor: '#111111' + '18',
+                    backgroundColor: colors.border + '50',
                     alignItems: 'center', justifyContent: 'center',
                   }}>
-                    <Text style={{ color: '#111111', fontSize: 18, fontWeight: '700' }}>›</Text>
+                    <Text style={{ color: colors.text, fontSize: 18, fontWeight: '700' }}>›</Text>
                   </View>
                 </TouchableOpacity>
               );
@@ -30924,8 +30952,8 @@ function ChatConversationInner() {
                     accessibilityRole="button"
                     accessibilityLabel={'/' + row.command}
                   >
-                    <View style={{ width: 28, height: 28, borderRadius: 14, backgroundColor: '#11111122', alignItems: 'center', justifyContent: 'center' }}>
-                      <Text style={{ color: '#111111', fontSize: 14, fontWeight: '800' }}>/</Text>
+                    <View style={{ width: 28, height: 28, borderRadius: 14, backgroundColor: colors.border + '50', alignItems: 'center', justifyContent: 'center' }}>
+                      <Text style={{ color: colors.text, fontSize: 14, fontWeight: '800' }}>/</Text>
                     </View>
                     <View style={{ flex: 1 }}>
                       <Text style={{ color: colors.text, fontSize: 14, fontWeight: '700' }} numberOfLines={1}>
@@ -30963,7 +30991,7 @@ function ChatConversationInner() {
                 onPress={() => handleUnblockUser(params.email || '')}
                 style={{ paddingHorizontal: 20, paddingVertical: 8, borderRadius: 20, backgroundColor: isDark ? '#2c2c2e' : '#e5e7eb' }}
               >
-                <Text style={{ color: '#111111', fontWeight: '600', fontSize: 14 }}>
+                <Text style={{ color: colors.text, fontWeight: '600', fontSize: 14 }}>
                   {t('chat.unblockUser')}
                 </Text>
               </TouchableOpacity>
@@ -32542,8 +32570,9 @@ function ChatConversationInner() {
                   }}
                   activeOpacity={0.6}
                 >
-                  <View style={[ctxS.ctxIconCircle, { backgroundColor: '#11111120' }]}>
-                    <IconMessageSquare size={20} color="#111111" />
+                  {/* [2026-10-10 conv-polish] = demais ações (ícone #111 fixo sumia no escuro). */}
+                  <View style={[ctxS.ctxIconCircle, { backgroundColor: colors.border + '50' }]}>
+                    <IconMessageSquare size={20} color={colors.text} />
                   </View>
                   <Text style={[ctxS.ctxIconLabel, { color: colors.textSecondary }]} numberOfLines={1}>
                     {t('chatConv.replyPrivately') || 'Responder em privado'}
@@ -32568,8 +32597,8 @@ function ChatConversationInner() {
                     }}
                     activeOpacity={0.6}
                   >
-                    <View style={[ctxS.ctxIconCircle, { backgroundColor: '#3B82F620' }]}>
-                      <IconMail size={20} color="#3B82F6" />
+                    <View style={[ctxS.ctxIconCircle, { backgroundColor: colors.border + '50' }]}>
+                      <IconMail size={20} color={colors.text} />
                     </View>
                     <Text style={[ctxS.ctxIconLabel, { color: colors.textSecondary }]} numberOfLines={1}>{t('chatConv.sendEmail') || 'Enviar e-mail'}</Text>
                   </PressableScale>
@@ -32583,9 +32612,9 @@ function ChatConversationInner() {
                   onPress={() => handleStarMessage(selectedMsg)}
                   activeOpacity={0.6}
                 >
-                  <View style={[ctxS.ctxIconCircle, { backgroundColor: selectedMsg?.starred ? '#f59e0b20' : (colors.border + '50') }]}>
+                  <View style={[ctxS.ctxIconCircle, { backgroundColor: colors.border + '50' }]}>
                     {selectedMsg?.starred
-                      ? <IconStarFilled size={20} color="#f59e0b" />
+                      ? <IconStarFilled size={20} color={colors.text} />
                       : <IconStar size={20} color={colors.text} />}
                   </View>
                   <Text style={[ctxS.ctxIconLabel, { color: colors.textSecondary }]}>{selectedMsg?.starred ? t('chat.unstar') : t('chat.star')}</Text>
@@ -32933,8 +32962,8 @@ function ChatConversationInner() {
               {/* Read by */}
               <View style={{ marginBottom: 16 }}>
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-                  <IconCheck size={14} color="#111111" />
-                  <IconCheck size={14} color="#111111" style={{ marginLeft: -14 }} />
+                  <IconCheck size={14} color={colors.text} />
+                  <IconCheck size={14} color={colors.text} style={{ marginLeft: -14 }} />
                   <Text style={{ fontSize: 13, fontWeight: '700', color: colors.text, textTransform: 'uppercase', letterSpacing: 0.5, marginLeft: 4 }}>
                     {t('chatConv.readBy') || 'Lido por'} ({messageInfo?.read?.length || 0})
                   </Text>
@@ -36342,7 +36371,7 @@ function ChatConversationInner() {
             web: { boxShadow: '0 2px 8px rgba(0,0,0,0.15)' },
           }),
         }}>
-          <IconGlobe size={18} color="#3B82F6" />
+          <IconGlobe size={18} color={colors.textSecondary} />
           <TextInput
             style={{ flex: 1, height: 38, borderRadius: 19, backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)', paddingHorizontal: 14, fontSize: 14, color: colors.text }}
             placeholder={t('chatConv.searchWebPlaceholder') || 'Search the web...'}
@@ -36394,12 +36423,12 @@ function ChatConversationInner() {
                 } catch (e) { console.warn('[WebSearch] share error:', e?.message); }
               }}
               style={{
-                backgroundColor: '#3B82F6', borderRadius: 16, paddingHorizontal: 14, paddingVertical: 7,
+                backgroundColor: colors.primary, borderRadius: 16, paddingHorizontal: 14, paddingVertical: 7,
                 flexDirection: 'row', alignItems: 'center', gap: 4,
               }}
             >
-              <IconSend size={14} color="#fff" />
-              <Text style={{ color: '#fff', fontSize: 13, fontWeight: '600' }}>{t('chatConv.share') || 'Share'}</Text>
+              <IconSend size={14} color={colors.onPrimary} />
+              <Text style={{ color: colors.onPrimary, fontSize: 13, fontWeight: '600' }}>{t('chatConv.share') || 'Share'}</Text>
             </TouchableOpacity>
           </View>
           {webSearchUrl ? (
@@ -36629,7 +36658,11 @@ const styles = StyleSheet.create({
   // [beauty 2026-05-31] Match the live bubble's horizontal padding (13) so a
   // deleted-message bubble lines up exactly with its neighbours instead of
   // sitting 1px narrower.
-  bubbleDeleted: { opacity: 0.55, paddingHorizontal: 11, paddingVertical: 6 },
+  // [2026-10-10 conv-polish] SEM opacity na bolha: 0.55 deixava a enviada
+  // cinza-chumbo (#888 no claro) e a recebida quase invisível (tinta 0.55 ×
+  // bolha 0.55). Agora a bolha mantém a cor normal e só a lápide (ícone +
+  // itálico na tinta de meta) é discreta — igual WhatsApp.
+  bubbleDeleted: { paddingHorizontal: 12, paddingVertical: 6 },
   // [beauty 2026-05-31] lineHeight 20.5→21 — a hair more leading so multi-line
   // message bodies breathe and don't pack tight against the meta row below.
   // letterSpacing 0 (era -0.08): o espaçamento negativo fazia o RN SUBMEDIR a

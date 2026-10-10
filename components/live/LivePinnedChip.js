@@ -46,7 +46,7 @@ export default function LivePinnedChip({ pinnedMsg, onDismiss }) {
         accessibilityRole="button"
         accessibilityLabel="Pinned comment"
       >
-        <IconPin size={13} color="#fde047" />
+        <IconPin size={13} color="#ffffff" />
         <View style={{ flex: 1 }}>
           <Text style={styles.name} numberOfLines={1}>
             {pinnedMsg.name}
@@ -71,17 +71,18 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0,0,0,0.55)',
     borderRadius: 12,
     borderWidth: 1.5,
-    borderColor: 'rgba(253,224,71,0.55)',
+    borderColor: 'rgba(255,255,255,0.35)',
     maxWidth: '85%',
     alignSelf: 'flex-start',
     ...(Platform.OS === 'web' ? {
       backdropFilter: 'blur(10px)',
       WebkitBackdropFilter: 'blur(10px)',
-      boxShadow: '0 2px 10px rgba(253,224,71,0.18)',
+      boxShadow: '0 2px 10px rgba(0,0,0,0.25)',
     } : {}),
   },
   name: {
-    color: '#fde047',
+    // [2026-10-10 visual] P&B overlay chrome (was yellow #fde047)
+    color: 'rgba(255,255,255,0.75)',
     fontSize: 10.5,
     fontWeight: '800',
     letterSpacing: 0.3,

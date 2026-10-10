@@ -9997,4 +9997,11 @@ export default {
   "live.torchOff": "Desligar lanterna",
   "live.torchUnavailable": "Lanterna indisponível neste aparelho",
   "live.beautyNeedsUpdate": "Suavizar no vídeo da live chega na próxima atualização do app. Por enquanto vale só na sua prévia.",
+  "chat.listSearchChats": "Conversas",
+  "chat.listSearchMessages": "Mensagens",
+  // [2026-10-10 conv-polish]
+  "chatConv.tapToJoin": "Toque para entrar",
+  "chatConv.parentalBlocked": "Mensagem bloqueada pelo controle parental",
+  "chatConv.clearFilters": "Limpar filtros",
+  "chatConv.forwardedFromFmt": "{label} de {name}",
 };

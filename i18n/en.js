@@ -9919,4 +9919,11 @@ export default {
   "live.torchOff": "Turn off flashlight",
   "live.torchUnavailable": "Flashlight unavailable on this device",
   "live.beautyNeedsUpdate": "Smoothing on the live video arrives in the next app update. For now it only applies to your preview.",
+  "chat.listSearchChats": "Chats",
+  "chat.listSearchMessages": "Messages",
+  // [2026-10-10 conv-polish]
+  "chatConv.tapToJoin": "Tap to join",
+  "chatConv.parentalBlocked": "Message blocked by parental controls",
+  "chatConv.clearFilters": "Clear filters",
+  "chatConv.forwardedFromFmt": "{label} from {name}",
 };

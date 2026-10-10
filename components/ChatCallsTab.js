@@ -872,7 +872,7 @@ const CallHistoryRow = memo(function CallHistoryRow({ item, isDark, t, language,
           accessibilityLabel={t?.('calls.callBack') || 'Call back'}
           accessibilityRole="button"
         >
-          <IconPhone size={18} color={GREEN} />
+          <IconPhone size={18} color={blueInk(isDark)} />
         </TouchableOpacity>
         <TouchableOpacity
           style={s.infoBtn}
@@ -987,9 +987,9 @@ function PlanBadge({ minutesInfo, isDark, t }) {
       ? (t?.('calls.unlimited') || 'Chamadas ilimitadas')
       : `${used}/${limit} min`;
     return (
-      <View style={[s.planBadge, { backgroundColor: isDark ? '#0a2e0a' : '#f0fdf4' }]}>
-        <IconCheckCircle size={16} color={GREEN} />
-        <Text style={[s.planBadgeText, { color: isDark ? '#86efac' : '#166534' }]}>
+      <View style={[s.planBadge, { backgroundColor: isDark ? '#1c1c1e' : '#ffffff' }]}>
+        <IconCheckCircle size={16} color={blueInk(isDark)} />
+        <Text style={[s.planBadgeText, { color: blueInk(isDark) }]}>
           {badgeText}
         </Text>
       </View>
@@ -3619,7 +3619,8 @@ function ChatCallsTab({ colors, isDark, t, user, router }) {
         flexDirection: 'row', alignItems: 'center',
         marginHorizontal: 16, marginTop: 8, marginBottom: 4,
         paddingVertical: 12, paddingHorizontal: 16, borderRadius: 12,
-        backgroundColor: isDark ? '#1c1c1e' : '#f2f2f7',
+        // [2026-10-10 visual] was #f2f2f7 = same as the light page bg (card vanished)
+        backgroundColor: cardBg,
       }}>
         <View style={{ flex: 1, marginRight: 12 }}>
           <Text style={{ fontSize: 14, fontWeight: '500', color: isDark ? '#fff' : '#000' }}>
@@ -3641,7 +3642,7 @@ function ChatCallsTab({ colors, isDark, t, user, router }) {
           flexDirection: 'row', alignItems: 'center',
           marginHorizontal: 16, marginTop: 8, marginBottom: 4,
           paddingVertical: 12, paddingHorizontal: 16, borderRadius: 12,
-          backgroundColor: isDark ? '#1c1c1e' : '#f2f2f7',
+          backgroundColor: cardBg,
           opacity: creatingLink ? 0.6 : 1,
         }}
         accessibilityRole="button"
@@ -3650,7 +3651,7 @@ function ChatCallsTab({ colors, isDark, t, user, router }) {
         <View style={{
           width: 40, height: 40, borderRadius: 20, marginRight: 12,
           alignItems: 'center', justifyContent: 'center',
-          backgroundColor: isDark ? 'rgba(255, 255, 255,0.10)' : 'rgba(17, 17, 17,0.15)',
+          backgroundColor: isDark ? 'rgba(255, 255, 255,0.10)' : 'rgba(17, 17, 17,0.07)',
         }}>
           {creatingLink
             ? <ActivityIndicator size="small" color={isDark ? '#F5F5F7' : '#111111'} />
@@ -3749,11 +3750,11 @@ function ChatCallsTab({ colors, isDark, t, user, router }) {
       <BrandFab
         style={{ position: 'absolute', right: 20, bottom: 24 }}
         size={56}
-        color={GREEN}
+        color={colors?.primary || ACCENT}
         onPress={() => setDialerVisible(true)}
         accessibilityLabel={t?.('calls.dialer') || 'Teclado'}
       >
-        <Svg width={26} height={26} viewBox="0 0 24 24" fill="none" stroke="#ffffff" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round">
+        <Svg width={26} height={26} viewBox="0 0 24 24" fill="none" stroke={colors?.onPrimary || '#ffffff'} strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round">
           <Path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07 19.5 19.5 0 01-6-6 19.79 19.79 0 01-3.07-8.67A2 2 0 014.11 2h3a2 2 0 012 1.72c.127.96.361 1.903.7 2.81a2 2 0 01-.45 2.11L8.09 9.91a16 16 0 006 6l1.27-1.27a2 2 0 012.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0122 16.92z" />
         </Svg>
       </BrandFab>
@@ -3909,7 +3910,7 @@ const s = StyleSheet.create({
     minHeight: 66,
   },
   historyLeft: {
-    marginRight: 13,
+    marginEnd: 13,
     borderWidth: 2,
     borderColor: 'transparent',
     borderRadius: 26,
@@ -3928,8 +3929,9 @@ const s = StyleSheet.create({
   },
   historyMiddle: {
     flex: 1,
+    minWidth: 0,
     justifyContent: 'center',
-    marginRight: 8,
+    marginEnd: 10,
   },
   // WhatsApp-grade: name is semibold so it reads as the row's anchor.
   historyName: {
@@ -3950,10 +3952,10 @@ const s = StyleSheet.create({
     gap: 10,
   },
   historyTime: {
-    fontSize: 11,
+    fontSize: 12,
     fontWeight: '500',
     letterSpacing: 0.2,
-    opacity: 0.6,
+    opacity: 0.8,
     fontVariant: ['tabular-nums'],
   },
   infoBtn: {
@@ -3969,7 +3971,7 @@ const s = StyleSheet.create({
   },
   separator: {
     height: StyleSheet.hairlineWidth,
-    marginLeft: 73,
+    marginStart: 73,
   },
 
   // Empty state

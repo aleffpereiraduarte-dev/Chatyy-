@@ -1808,19 +1808,47 @@ final class CallViewController: UIViewController, @unchecked Sendable {
     /// released when this func's async Task completes or on any early return.
     private var isTogglingCamera = false
 
+    /// [2026-10-10 cam-1-toque] Câmera não ligou de verdade → botão, PiP e
+    /// áudio voltam pro estado "desligada" (antes ficava aceso e mentindo).
+    @MainActor private func revertCameraUI() {
+        session.camEnabled = false
+        AudioRouter.shared.setLocalVideoActive(false)
+        setControlActive(view.viewWithTag(9005) as? UIButton, active: false, symbol: "video.slash.fill")
+        showLocalPip(false)
+        updateFlipButtonVisibility(false)
+    }
+
     private func applyCamEnabled(_ enabled: Bool) {
         // [2026-10-09 p2p-ios] v1 do P2P iOS é só áudio: ligar a câmera devolve
         // a ligação ao LiveKit (já conectado) e segue o caminho normal.
         if enabled && P2PCallBridge.ownsMedia(callId) {
             P2PCallBridge.requestFallback(callId: callId, reason: "video_upgrade")
         }
-        guard let r = self.room else {
+        // [2026-10-10 cam-1-toque] Founder: "tem que clicar 2 vezes pra ligar a
+        // câmera". Causa: no 1º toque a sala ainda podia estar nil (P2P voltando
+        // pro LiveKit) ou o setCamera falhava; o catch só desfazia
+        // session.camEnabled e o botão ficava ACESO com a câmera desligada → o
+        // 2º toque é que ligava. Agora: espera a sala (até ~3s) e tenta de novo
+        // (3x); se não der mesmo, devolve botão/PiP/áudio pro estado desligado.
+        if self.room == nil && !enabled {
             Task { @MainActor in self.isTogglingCamera = false }
             return
         }
         Task { [weak self] in
             guard let self = self else { return }
             defer { Task { @MainActor in self.isTogglingCamera = false } }
+            var waits = 0
+            while self.room == nil && waits < 12 {
+                waits += 1
+                try? await Task.sleep(nanoseconds: 250_000_000)
+            }
+            var attempt = 0
+            while true {
+            attempt += 1
+            guard let r = self.room else {
+                await MainActor.run { self.revertCameraUI() }
+                return
+            }
             do {
                 if let track = self.session.localVideoTrack {
                     // Track already published — just mute / unmute the
@@ -1866,9 +1894,18 @@ final class CallViewController: UIViewController, @unchecked Sendable {
                     // already handle this frame.
                     self.sendVideoRequest(action: "request")
                 } // else: disable requested but never published — no-op
+                break
             } catch {
-                print("[CallVC] setCamera(\(enabled)) failed: \(error)")
-                await MainActor.run { self.session.camEnabled = !enabled }
+                print("[CallVC] setCamera(\(enabled)) failed (try \(attempt)): \(error)")
+                if enabled && attempt < 3 {
+                    try? await Task.sleep(nanoseconds: 600_000_000)
+                    continue
+                }
+                await MainActor.run {
+                    if enabled { self.revertCameraUI() } else { self.session.camEnabled = true }
+                }
+                break
+            }
             }
         }
         // [#1358 video parity 2026-05-25] Reflect the toggle into the local PiP

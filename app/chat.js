@@ -2166,7 +2166,7 @@ function TabBarItem({ icon, label, active, onPress, onLongPress, isDark, badge, 
             position: 'absolute', top: 2, right: 2,
             width: 8, height: 8, borderRadius: 4,
             backgroundColor: colors.badge,
-            borderWidth: 1.5, borderColor: isDark ? '#0f1115' : '#ffffff',
+            borderWidth: 1.5, borderColor: isDark ? SHELL_DARK : '#ffffff', // [2026-10-10 polish-list] was navy #0f1115
           }} />
         )}
       </Animated.View>

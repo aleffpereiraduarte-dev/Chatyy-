@@ -537,8 +537,8 @@ export default function CommunityScreen() {
                     <Text style={[sty.rowSubtitle, { color: colors.textSecondary }]}>{m.email}</Text>
                   </View>
                   {m.role !== 'member' && (
-                    <View style={[sty.tag, { backgroundColor: roleColor(m.role) }]}>
-                      <Text style={sty.tagText}>{roleLabel(m.role, t)}</Text>
+                    <View style={[sty.tag, { backgroundColor: roleColor(m.role, isDark) }]}>
+                      <Text style={[sty.tagText, isDark && m.role === 'owner' ? { color: '#000' } : null]}>{roleLabel(m.role, t)}</Text>
                     </View>
                   )}
                 </Pressable>
@@ -628,11 +628,13 @@ function AnimatedMemberRow({ index, children, style }) {
   );
 }
 
-function roleColor(role) {
+// [2026-10-10 visual] P&B role tags (were orange / purple / green): hierarchy
+// by ink weight — owner = solid ink, admin = dark gray, mod = mid gray.
+function roleColor(role, isDark) {
   switch (role) {
-    case 'owner': return '#ff9500';
-    case 'admin': return '#5856d6';
-    case 'mod':   return '#34c759';
+    case 'owner': return isDark ? '#F5F5F7' : '#111111';
+    case 'admin': return isDark ? '#48484a' : '#3a3a3c';
+    case 'mod':   return '#636366';
     default:      return '#8e8e93';
   }
 }

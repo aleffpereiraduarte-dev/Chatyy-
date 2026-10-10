@@ -442,15 +442,16 @@ const Stat = memo(function Stat({ value, label, onPress, colors }) {
           locks digit width so 1.2K → 1.3K doesn't shift the column. */}
       <Animated.View style={{ alignItems: 'center', transform: [{ scale }] }}>
         <Text style={{
-          fontSize: 20, fontWeight: '800', color: colors?.text, letterSpacing: -0.6,
+          fontSize: 18, fontWeight: '700', color: colors?.text, letterSpacing: -0.3,
           fontVariant: ['tabular-nums'],
         }}>
           {formatCount(value)}
         </Text>
-        <Text style={{
-          fontSize: 11.5, color: colors?.textTertiary || colors?.textSecondary || colors?.text,
-          marginTop: 3, letterSpacing: 0.4, fontWeight: '600',
-          textTransform: 'uppercase',
+        {/* [2026-10-10 settings-polish] Instagram: rótulo 13 em caixa normal, cor do
+            texto. O CAIXA-ALTA 11.5 cinza encostava nos divisores ("SEGUIDORES"). */}
+        <Text numberOfLines={1} style={{
+          fontSize: 13, color: colors?.text,
+          marginTop: 2, fontWeight: '400',
         }}>
           {label}
         </Text>
@@ -2350,6 +2351,9 @@ export default function Profile({
             ) : (
               <View style={{
                 width: HALO_SIZE, height: HALO_SIZE,
+                // [2026-10-10 settings-polish] sem raio o boxShadow (web) desenhava
+                // um QUADRADO com sombra atrás do avatar redondo.
+                borderRadius: HALO_SIZE / 2,
                 alignItems: 'center', justifyContent: 'center',
                 // Soft depth so the avatar reads as a lifted, premium focal
                 // point instead of sitting flat on the background. Purely
@@ -2457,17 +2461,12 @@ export default function Profile({
               them give the "stats card" rhythm Instagram uses, keeping the
               numbers visually grouped without a heavy bordered box. */}
           {(() => {
-            const dividerColor = isDark ? 'rgba(255,255,255,0.10)' : 'rgba(15,23,42,0.08)';
-            const Divider = () => (
-              <View style={{ width: StyleSheet.hairlineWidth, height: 30, backgroundColor: dividerColor }} />
-            );
+            // [2026-10-10 settings-polish] sem divisores verticais (Instagram).
             return (
               <View style={{ flex: 1, flexDirection: 'row', justifyContent: 'space-around', alignItems: 'center', paddingHorizontal: 4 }}>
                 <Stat value={postsTotal} label={t?.('profile.posts') || 'Publicações'} colors={colors} />
-                <Divider />
                 <Stat value={social?.followers_count || 0} label={t?.('profile.followers') || 'Seguidores'} colors={colors}
                   onPress={() => (onOpenFollowers ? onOpenFollowers(identity.email, 'followers') : setFollowersTab('followers'))} />
-                <Divider />
                 <Stat value={social?.following_count || 0} label={t?.('profile.following') || 'Seguindo'} colors={colors}
                   onPress={() => (onOpenFollowers ? onOpenFollowers(identity.email, 'following') : setFollowersTab('following'))} />
               </View>
