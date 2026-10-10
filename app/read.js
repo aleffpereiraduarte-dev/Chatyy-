@@ -495,16 +495,16 @@ export default function ReadScreen() {
   const followupChip = followupSuggestion ? (
     <View style={{
       flexDirection: 'row', alignItems: 'center', gap: 10,
-      backgroundColor: colors.warningBg, borderColor: colors.warning,
-      borderWidth: 1, borderLeftWidth: 4, borderRadius: 10,
+      backgroundColor: colors.surfaceVariant, borderColor: colors.border,
+      borderWidth: StyleSheet.hairlineWidth, borderLeftWidth: 3, borderLeftColor: colors.text, borderRadius: 10,
       marginHorizontal: 12, marginTop: 8, padding: 12,
     }}>
       <View style={{ flex: 1 }}>
-        <Text style={{ fontWeight: '700', color: colors.warning, fontSize: 13 }}>
+        <Text style={{ fontWeight: '700', color: colors.text, fontSize: 13 }}>
           {(t('read.followupTitle') || 'Aguardando resposta há {n} dias — Enviar follow-up?').replace('{n}', String(followupSuggestion.days))}
         </Text>
         {!!followupSuggestion.suggested_message && (
-          <Text numberOfLines={2} style={{ color: colors.warning, fontSize: 12, marginTop: 4 }}>
+          <Text numberOfLines={2} style={{ color: colors.textSecondary, fontSize: 12, marginTop: 4 }}>
             {followupSuggestion.suggested_message}
           </Text>
         )}
@@ -519,11 +519,11 @@ export default function ReadScreen() {
           });
           router.replace('/compose?' + params.toString());
         }}
-        style={{ backgroundColor: colors.warning, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8 }}
+        style={{ backgroundColor: colors.primary, paddingHorizontal: 14, minHeight: 36, justifyContent: 'center', borderRadius: 8 }}
         accessibilityLabel={t('read.followupSend') || 'Enviar follow-up'}
         accessibilityRole="button"
       >
-        <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700' }}>
+        <Text style={{ color: colors.onPrimary, fontSize: 12, fontWeight: '700' }}>
           {t('read.followupSend') || 'Enviar'}
         </Text>
       </TouchableOpacity>
@@ -600,12 +600,16 @@ export default function ReadScreen() {
 // surface tint on press so the rounded 12 shape reads instead of floating icons.
 function ActionBarButton({ icon: Icon, label, color, onPress, accessibilityLabel, primary }) {
   const scaleAnim = useRef(new Animated.Value(1)).current;
+  // Filled pill ink must follow the theme: dark primary is near-white, so a
+  // hardcoded '#fff' label/icon was invisible on the Reply pill in dark mode.
+  const { colors: themeColors } = useTheme();
+  const onFill = themeColors.onPrimary || '#fff';
 
   const innerStyle = primary
     ? { backgroundColor: color, paddingHorizontal: 18, paddingVertical: 10, borderRadius: 12, flexDirection: 'row', alignItems: 'center', gap: 8 }
     : { alignItems: 'center', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 12 };
-  const iconColor = primary ? '#fff' : color;
-  const textColor = primary ? '#fff' : color;
+  const iconColor = primary ? onFill : color;
+  const textColor = primary ? onFill : color;
 
   return (
     <TouchableOpacity
@@ -651,7 +655,6 @@ const s = StyleSheet.create({
       web: {
         transformOrigin: 'left',
         transition: 'opacity 0.3s ease',
-        background: '#111111',
       },
       default: {},
     }),

@@ -280,14 +280,14 @@ export default function EmailList({
           {(currentFolder === 'Junk' || currentFolder === 'Spam') && emails.length > 0 && onClearSpam && (
             <TouchableOpacity
               onPress={onClearSpam}
-              style={[s.folderActionBtn, { borderColor: colors.warning }]}
+              style={[s.folderActionBtn, { borderColor: colors.error }]}
               activeOpacity={0.7}
             >
-              <IconTrash size={13} color={colors.warning} />
-              <Text style={{ color: colors.warning, fontSize: 12, fontWeight: '600' }}>{t('inbox.clearSpam')}</Text>
+              <IconTrash size={13} color={colors.error} />
+              <Text style={{ color: colors.error, fontSize: 12, fontWeight: '600' }}>{t('inbox.clearSpam')}</Text>
             </TouchableOpacity>
           )}
-          <TouchableOpacity onPress={onRefresh} style={s.refreshBtn}>
+          <TouchableOpacity onPress={onRefresh} style={s.refreshBtn} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }} accessibilityRole="button" accessibilityLabel={t('common.refresh')}>
             <IconRefresh size={18} color={colors.textSecondary} />
           </TouchableOpacity>
         </View>

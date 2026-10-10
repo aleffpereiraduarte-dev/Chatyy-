@@ -274,6 +274,8 @@ function thumbUrlFor(photo) {
 // component with stable handlers (onPressItem/onLongPressItem receive the
 // photo) so cells only re-render when their own props change.
 const PhotoGridItem = React.memo(function PhotoGridItem({ photo, index, isSelected, selectMode: sm, gridItemSize: gis, onPressItem, onLongPressItem, primaryColor }) {
+  // [2026-10-10 P&B] placeholders cinza-claro estouravam no tema escuro.
+  const { isDark: _dk } = useTheme();
   const isVideoItem = isVideo(photo);
   const imageUri = (photo.isDevice && photo.thumbUri) ? photo.thumbUri
     : (photo.isDevice ? photo.uri : thumbUrlFor(photo));
@@ -313,16 +315,16 @@ const PhotoGridItem = React.memo(function PhotoGridItem({ photo, index, isSelect
         pressed && Platform.OS !== 'web' && { opacity: 0.85 },
       ]}
     >
-      <View style={{ flex: 1, backgroundColor: '#e5e7eb' }}>
+      <View style={{ flex: 1, backgroundColor: _dk ? '#1C1C1E' : '#e5e7eb' }}>
         <View style={{ flex: 1 }}>
           {isUnavailable ? (
             <View
-              style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 4, backgroundColor: '#d1d5db' }}
+              style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 4, backgroundColor: _dk ? '#2C2C2E' : '#d1d5db' }}
               accessibilityLabel={tr(t, 'photos.fileUnavailable', 'Arquivo indisponível')}
             >
-              <IconCloudOff size={18} color="#6b7280" />
+              <IconCloudOff size={18} color={_dk ? '#8E8E93' : '#6b7280'} />
               {gis >= 72 && (
-                <Text numberOfLines={2} style={{ marginTop: 4, fontSize: 10, color: '#4b5563', textAlign: 'center' }}>
+                <Text numberOfLines={2} style={{ marginTop: 4, fontSize: 10, color: _dk ? '#AEAEB2' : '#4b5563', textAlign: 'center' }}>
                   {tr(t, 'photos.fileUnavailable', 'Arquivo indisponível')}
                 </Text>
               )}
@@ -2931,7 +2933,7 @@ function PhotosScreenInner() {
       const deviceCount = deviceTotalCount || devicePhotos.length;
       const pct = deviceCount > 0 ? Math.min((backedUpTotal / deviceCount) * 100, 100) : 0;
       return (
-        <View style={[s.backupBanner, { backgroundColor: isDark ? '#172554' : '#F1F3F5', borderColor: colors.primary + '40' }]}>
+        <View style={[s.backupBanner, { backgroundColor: isDark ? '#1C1C1E' : '#F1F3F5', borderColor: colors.primary + '40' }]}>
           <View style={s.backupBannerLeft}>
             <IconCloudUpload size={20} color={colors.primary} />
             <View style={{ marginLeft: 10, flex: 1 }}>
@@ -2982,7 +2984,7 @@ function PhotosScreenInner() {
       if (deviceCount === 0) {
         // Still loading device count — show "checking..."
         return (
-          <View style={[s.backupBanner, { backgroundColor: isDark ? '#172554' : '#F1F3F5', borderColor: colors.primary + '40' }]}>
+          <View style={[s.backupBanner, { backgroundColor: isDark ? '#1C1C1E' : '#F1F3F5', borderColor: colors.primary + '40' }]}>
             <View style={s.backupBannerLeft}>
               <ActivityIndicator size="small" color={colors.primary} />
               <View style={{ marginLeft: 10, flex: 1 }}>
@@ -3095,7 +3097,7 @@ function PhotosScreenInner() {
 
       // Has pending photos - show start button
       return (
-        <View style={[s.backupBanner, { backgroundColor: isDark ? '#172554' : '#F1F3F5', borderColor: colors.primary + '40' }]}>
+        <View style={[s.backupBanner, { backgroundColor: isDark ? '#1C1C1E' : '#F1F3F5', borderColor: colors.primary + '40' }]}>
           <View style={s.backupBannerLeft}>
             <IconCloudUpload size={20} color={colors.primary} />
             <View style={{ marginLeft: 10, flex: 1 }}>
@@ -3309,7 +3311,7 @@ function PhotosScreenInner() {
           s.sectionHeader,
           {
             backgroundColor: isDark
-              ? 'rgba(15,23,42,0.92)'
+              ? 'rgba(0,0,0,0.92)'
               : 'rgba(255,255,255,0.92)',
           },
         ]}
@@ -4102,7 +4104,7 @@ function PhotosScreenInner() {
               const cur = Math.min(backedUpTotal || 0, total || (backedUpTotal || 0));
               const pct = total > 0 ? Math.min((cur / total) * 100, 100) : 0;
               return (
-                <View style={[s.card, { backgroundColor: isDark ? '#172554' : '#F1F3F5', borderColor: colors.primary + '40', marginBottom: Spacing.md }]}>
+                <View style={[s.card, { backgroundColor: isDark ? '#1C1C1E' : '#F1F3F5', borderColor: colors.primary + '40', marginBottom: Spacing.md }]}>
                   <View style={{ padding: 16 }}>
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 6 }}>
                       <ActivityIndicator size="small" color={colors.primary} />
@@ -5016,7 +5018,7 @@ function PhotosScreenInner() {
             "Backup completo" the founder flagged. Keep it only for the tabs
             (Albums/Pessoas/Mapa) that have no inline banner. */}
         {activeTab !== 'photos' && backupStatus === 'backing_up' && (
-          <View style={{ backgroundColor: isDark ? '#172554' : '#F1F3F5', paddingHorizontal: 16, paddingVertical: 10, flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+          <View style={{ backgroundColor: isDark ? '#1C1C1E' : '#F1F3F5', paddingHorizontal: 16, paddingVertical: 10, flexDirection: 'row', alignItems: 'center', gap: 10 }}>
             <ActivityIndicator size="small" color={colors.primary} />
             <View style={{ flex: 1 }}>
               <Text style={{ color: colors.text, fontSize: 13, fontWeight: '600' }}>
@@ -5093,15 +5095,15 @@ function PhotosScreenInner() {
                 style={[
                   s.tabPill,
                   isActive
-                    ? [{ backgroundColor: '#111111' }, s.tabPillActive]
+                    ? [{ backgroundColor: isDark ? '#F5F5F7' : '#111111' }, s.tabPillActive]
                     : { backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : '#F3F4F6' },
                 ]}
               >
-                <Ico size={15} color={isActive ? '#fff' : colors.textSecondary} />
+                <Ico size={15} color={isActive ? (isDark ? '#111111' : '#fff') : colors.textSecondary} />
                 <Text
                   style={[
                     s.tabPillText,
-                    { color: isActive ? '#fff' : colors.text },
+                    { color: isActive ? (isDark ? '#111111' : '#fff') : colors.text },
                   ]}
                 >
                   {t(`photos.tab_${tab}`)}
@@ -5248,7 +5250,7 @@ function PhotosScreenInner() {
           style={[
             s.batchToolbar,
             {
-              backgroundColor: isDark ? 'rgba(15,23,42,0.96)' : 'rgba(255,255,255,0.98)',
+              backgroundColor: isDark ? 'rgba(28,28,30,0.96)' : 'rgba(255,255,255,0.98)',
               borderTopColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)',
               paddingBottom: (insets.bottom || 0) + 16,
             },

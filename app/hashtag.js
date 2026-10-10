@@ -6,6 +6,7 @@ import { USE_NATIVE_HEADER, nativeHeaderOptions } from '../components/nativeHead
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import { IconArrowLeft, IconHash } from '../components/Icons';
+import ScreenEmptyState from '../components/ScreenEmptyState'; // [2026-10-10 feed-polish]
 import * as api from '../services/api';
 
 const ACCENT = '#111111';
@@ -147,14 +148,14 @@ export default function HashtagScreen() {
             paddingVertical: 6,
             borderRadius: 14,
             borderWidth: 1,
-            backgroundColor: following ? 'transparent' : ACCENT,
-            borderColor: following ? colors.borderLight : ACCENT,
+            backgroundColor: following ? 'transparent' : colors.text,
+            borderColor: following ? colors.border : colors.text,
             opacity: followBusy ? 0.6 : 1,
           }}
           accessibilityRole="button"
           accessibilityLabel={following ? (t('hashtag.following') || 'Seguindo') : (t('hashtag.follow') || 'Seguir')}
         >
-          <Text style={{ color: following ? colors.text : '#fff', fontWeight: '700', fontSize: 13 }}>
+          <Text style={{ color: following ? colors.text : colors.background, fontWeight: '700', fontSize: 13 }}>
             {following ? (t('hashtag.following') || 'Seguindo') : (t('hashtag.follow') || 'Seguir')}
           </Text>
         </TouchableOpacity>
@@ -169,10 +170,7 @@ export default function HashtagScreen() {
         onEndReached={() => { if (hasMore && !loading) load(page + 1); }}
         ListFooterComponent={loading ? <ActivityIndicator color={colors.primary} style={{ paddingVertical: 20 }} /> : null}
         ListEmptyComponent={!loading ? (
-          <View style={{ alignItems: 'center', paddingTop: 60 }}>
-            <IconHash size={40} color={colors.textTertiary} />
-            <Text style={{ color: colors.textSecondary, marginTop: 10 }}>{t('feed.noPosts') || 'Sem posts'}</Text>
-          </View>
+          <ScreenEmptyState kind="feed" compact title={t('feed.noPosts')} />
         ) : null}
         contentContainerStyle={{ paddingTop: 4 }}
         ListHeaderComponent={USE_NATIVE_HEADER ? (

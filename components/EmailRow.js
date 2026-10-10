@@ -416,7 +416,7 @@ function EmailRow({
                 hitSlop={{ top: 8, bottom: 8, left: 6, right: 6 }}
                 style={[s.threadBadge, { backgroundColor: threadExpanded ? colors.primary + '22' : colors.surfaceVariant }]}
                 accessibilityRole="button"
-                accessibilityLabel={`${email.thread_count} mensagens na conversa`}
+                accessibilityLabel={t('inbox.threadCountA11y', { n: email.thread_count })}
               >
                 <Text style={[s.threadBadgeText, { color: threadExpanded ? colors.primary : colors.textSecondary }]}>
                   {email.thread_count}
@@ -473,8 +473,8 @@ function EmailRow({
         ) : null}
 
         {nudgeDays >= 3 && (
-          <View style={[s.nudgeChip, { backgroundColor: colors.warningBg || '#fef3cd' }]}>
-            <Text style={[s.nudgeText, { color: colors.warningText || '#856404' }]}>
+          <View style={[s.nudgeChip, { backgroundColor: colors.surfaceVariant }]}>
+            <Text style={[s.nudgeText, { color: colors.textSecondary }]}>
               {t('nudge.reply', { n: nudgeDays })}
             </Text>
           </View>
@@ -549,7 +549,7 @@ function EmailRow({
             style={[s.hoverBtn, { backgroundColor: colors.hoverActionBg }]}
             onPress={handleArchive}
             hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-            accessibilityLabel="Archive"
+            accessibilityLabel={t('reader.archive')}
             accessibilityRole="button"
           >
             <IconArchive size={18} color={colors.textSecondary} />
@@ -558,7 +558,7 @@ function EmailRow({
             style={[s.hoverBtn, { backgroundColor: colors.hoverActionBg }]}
             onPress={handleSnooze}
             hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-            accessibilityLabel="Snooze"
+            accessibilityLabel={t('reader.snooze')}
             accessibilityRole="button"
           >
             <IconClock size={18} color={colors.textSecondary} />
@@ -567,7 +567,7 @@ function EmailRow({
             style={[s.hoverBtn, { backgroundColor: colors.hoverActionBg }]}
             onPress={handleDelete}
             hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-            accessibilityLabel="Delete"
+            accessibilityLabel={t('reader.delete')}
             accessibilityRole="button"
           >
             <IconTrash size={18} color={colors.textSecondary} />

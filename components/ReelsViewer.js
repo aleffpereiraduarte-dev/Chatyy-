@@ -708,7 +708,7 @@ const TipSheetWrapper = memo(function TipSheetWrapper({ visible, onClose, postId
       >
         <Pressable
           onPress={(e) => e.stopPropagation && e.stopPropagation()}
-          style={{ backgroundColor: '#0F172A', borderTopLeftRadius: 18, borderTopRightRadius: 18, paddingHorizontal: 16, paddingTop: 12, paddingBottom: 30, minHeight: 320 }}
+          style={{ backgroundColor: '#111111', borderTopLeftRadius: 18, borderTopRightRadius: 18, paddingHorizontal: 16, paddingTop: 12, paddingBottom: 30, minHeight: 320 }}
         >
           <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
             <Text style={{ color: '#fff', fontSize: 16, fontWeight: '700' }}>
@@ -736,12 +736,12 @@ const TipSheetWrapper = memo(function TipSheetWrapper({ visible, onClose, postId
                 <TouchableOpacity
                   onPress={() => onSend(item)}
                   disabled={sending}
-                  style={{ flex: 1, aspectRatio: 0.85, marginBottom: 10, borderRadius: 14, padding: 10, backgroundColor: 'rgba(17, 17, 17,0.10)', borderWidth: 1, borderColor: 'rgba(17, 17, 17,0.20)', alignItems: 'center', opacity: affordable ? 1 : 0.55 }}
+                  style={{ flex: 1, aspectRatio: 0.85, marginBottom: 10, borderRadius: 14, padding: 10, backgroundColor: 'rgba(255,255,255,0.08)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.14)', alignItems: 'center', opacity: affordable ? 1 : 0.55 }}
                   activeOpacity={0.85}
                   accessibilityRole="button"
                   accessibilityLabel={`${item.label} ${item.diamonds_cost} diamonds`}
                 >
-                  <View style={{ width: 56, height: 56, borderRadius: 28, backgroundColor: '#111111', alignItems: 'center', justifyContent: 'center', marginBottom: 6 }}>
+                  <View style={{ width: 56, height: 56, borderRadius: 28, backgroundColor: 'rgba(255,255,255,0.14)', alignItems: 'center', justifyContent: 'center', marginBottom: 6 }}>
                     <Text style={{ color: '#fff', fontSize: 22, fontWeight: '800' }}>{(item.icon || item.label || '?').toString().charAt(0).toUpperCase()}</Text>
                   </View>
                   <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700' }} numberOfLines={1}>{item.label}</Text>
@@ -996,7 +996,7 @@ function SpeedPickerSheet({ visible, current, onSelect, onClose, t }) {
                     style={{
                       flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
                       paddingVertical: 12, paddingHorizontal: 10, borderRadius: 10,
-                      backgroundColor: active ? 'rgba(17, 17, 17,0.20)' : 'transparent',
+                      backgroundColor: active ? 'rgba(255,255,255,0.10)' : 'transparent',
                     }}
                     accessibilityRole="button"
                     accessibilityLabel={`${s}x`}
@@ -1005,7 +1005,7 @@ function SpeedPickerSheet({ visible, current, onSelect, onClose, t }) {
                       {s}×{s === 1 ? `  (${t?.('common.default') || 'Padrão'})` : ''}
                     </Text>
                     {active ? (
-                      <View style={{ width: 12, height: 12, borderRadius: 6, backgroundColor: '#111111' }} />
+                      <View style={{ width: 12, height: 12, borderRadius: 6, backgroundColor: '#ffffff' }} />
                     ) : null}
                   </TouchableOpacity>
                 );
@@ -1896,11 +1896,11 @@ const ReelItem = memo(function ReelItem({ onCreate, reel, isActive, colors, isDa
               onPress={toggleSubtitles}
               activeOpacity={0.7}
               hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-              style={{ backgroundColor: subtitlesEnabled ? 'rgba(17, 17, 17,0.85)' : 'rgba(0,0,0,0.35)', borderRadius: 8, paddingHorizontal: 8, height: 28, alignItems: 'center', justifyContent: 'center' }}
+              style={{ backgroundColor: subtitlesEnabled ? 'rgba(255,255,255,0.92)' : 'rgba(0,0,0,0.35)', borderRadius: 8, paddingHorizontal: 8, height: 28, alignItems: 'center', justifyContent: 'center' }}
               accessibilityLabel={subtitlesEnabled ? (t('feed.captionsOn') || t('media.subtitlesOn') || 'Captions on') : (t('feed.captionsOff') || t('media.subtitlesOff') || 'Captions off')}
               accessibilityRole="button"
             >
-              <Text style={{ color: '#fff', fontSize: 12, fontWeight: '800', letterSpacing: 0.5 }}>CC</Text>
+              <Text style={{ color: subtitlesEnabled ? '#000' : '#fff', fontSize: 12, fontWeight: '800', letterSpacing: 0.5 }}>CC</Text>
             </TouchableOpacity>
           )}
           {/* [2026-10-08 apps-native] botão câmera era MORTO (sem onPress).
@@ -2033,10 +2033,10 @@ const ReelItem = memo(function ReelItem({ onCreate, reel, isActive, colors, isDa
         >
           <View style={{
             paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12,
-            backgroundColor: playbackRate === 1 ? 'rgba(255,255,255,0.15)' : '#111111',
+            backgroundColor: playbackRate === 1 ? 'rgba(255,255,255,0.15)' : 'rgba(255,255,255,0.92)',
             minWidth: 36, alignItems: 'center',
           }}>
-            <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700' }}>
+            <Text style={{ color: playbackRate === 1 ? '#fff' : '#000', fontSize: 12, fontWeight: '700' }}>
               {playbackRate === 0.5 ? '0.5×' : playbackRate === 1 ? '1×' : playbackRate === 1.5 ? '1.5×' : '2×'}
             </Text>
           </View>
@@ -3357,11 +3357,11 @@ const styles = StyleSheet.create({
   // and react-native-svg <LinearGradient> on a 3px bar isn't worth it).
   progressFill: {
     height: '100%',
-    backgroundColor: '#111111',
+    // [2026-10-10 feed-polish] was #111 on the video/black track → invisible.
+    backgroundColor: '#ffffff',
     borderRadius: 1.5,
     ...(isWeb ? {
-      backgroundImage: 'linear-gradient(90deg, #111111 0%, #111111 100%)',
-      boxShadow: '0 0 8px rgba(17, 17, 17,0.55), 0 0 14px rgba(17, 17, 17,0.4)',
+      boxShadow: '0 0 6px rgba(0,0,0,0.35)',
     } : {}),
   },
 

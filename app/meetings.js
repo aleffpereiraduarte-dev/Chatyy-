@@ -823,6 +823,7 @@ function MeetingsScreenInner() {
 
       {/* FAB row */}
       <View style={[styles.fabRow, { paddingBottom: insets.bottom + Spacing.md }]}>
+        <View style={styles.fabCell}>
         <PressableScale
           style={[styles.fab, styles.fabSecondary, { backgroundColor: colors.surface, borderColor: colors.border, shadowColor: isDark ? colors.shadow : '#94a3b8' }]}
           onPress={() => router.push('/meeting-create')}
@@ -831,6 +832,8 @@ function MeetingsScreenInner() {
           <IconCalendar size={20} color={colors.primary} />
           <Text style={[styles.fabText, { color: colors.primary }]}>{t('meetings.schedule')}</Text>
         </PressableScale>
+        </View>
+        <View style={styles.fabCell}>
         <PressableScale
           style={[styles.fab, styles.fabPrimary, { backgroundColor: colors.primary, shadowColor: colors.primary }]}
           onPress={handleInstantMeeting}
@@ -847,6 +850,7 @@ function MeetingsScreenInner() {
             </>
           )}
         </PressableScale>
+        </View>
       </View>
     </View>
   );
@@ -1026,8 +1030,12 @@ const styles = StyleSheet.create({
     flexDirection: 'row', gap: Spacing.sm, paddingHorizontal: Spacing.md,
     paddingTop: Spacing.sm,
   },
+  // [2026-10-10] PressableScale aplica `style` no Animated.View INTERNO — o
+  // flex:1 não chegava no TouchableOpacity e os dois botões encolhiam à
+  // esquerda ("Nova Reunião" cortado). A célula flex:1 divide a largura.
+  fabCell: { flex: 1 },
   fab: {
-    flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
     gap: 8, paddingVertical: 14, borderRadius: 14,
     shadowOffset: { width: 0, height: 3 },
     shadowOpacity: 0.15,

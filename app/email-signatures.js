@@ -159,9 +159,9 @@ export default function EmailSignaturesScreen() {
             <Switch value={isDefault} onValueChange={setIsDefault} trackColor={{ true: colors.primary, false: colors.border }} />
           </View>
 
-          <PressableScale onPress={handleSave} style={[s.cta, { backgroundColor: '#111111' }]}>
-            <IconCheck size={18} color="#fff" />
-            <Text style={s.ctaText}>{t('common.save') || 'Salvar'}</Text>
+          <PressableScale onPress={handleSave} style={[s.cta, { backgroundColor: colors.primary }]}>
+            <IconCheck size={18} color={colors.onPrimary} />
+            <Text style={[s.ctaText, { color: colors.onPrimary }]}>{t('common.save') || 'Salvar'}</Text>
           </PressableScale>
         </ScrollView>
       ) : (
@@ -212,8 +212,8 @@ export default function EmailSignaturesScreen() {
                     <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                       <Text style={[s.rowName, { color: colors.text }]}>{item.name}</Text>
                       {item.is_default ? (
-                        <View style={[s.badge, { backgroundColor: '#111111' }]}>
-                          <Text style={s.badgeText}>{t('signatures.defaultBadge') || 'Padrão'}</Text>
+                        <View style={[s.badge, { backgroundColor: colors.primary }]}>
+                          <Text style={[s.badgeText, { color: colors.onPrimary }]}>{t('signatures.defaultBadge') || 'Padrão'}</Text>
                         </View>
                       ) : null}
                     </View>
@@ -245,7 +245,7 @@ export default function EmailSignaturesScreen() {
             size={52}
             color={colors.primary}
             onPress={() => { setEditing('new'); setName(''); setBodyHtml(''); setAliasEmail(''); setIsDefault(items.length === 0); }}
-            accessibilityLabel="New signature"
+            accessibilityLabel={t('signatures.newSignature')}
           >
             <IconPlus size={22} color={colors.onPrimary} />
           </BrandFab>

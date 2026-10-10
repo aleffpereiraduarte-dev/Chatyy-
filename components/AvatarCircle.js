@@ -234,15 +234,18 @@ function hashColor(name) {
 // sóbrio, nada de arco-íris. Saturação baixíssima (<~15%); iniciais brancas
 // WCAG-safe em todas. Gradiente mono-tom muito sutil (c1 claro → c2 escuro).
 // Reversível: trocar este array de volta restaura o grayscale puro.
+// [2026-10-10 P&B] Founder: "TH"/"QA" ainda pareciam verde/oliva — os tons
+// slate/taupe/stone tinham matiz residual. Agora 100% cinza neutro (R=G=B),
+// só a luminosidade varia; iniciais brancas legíveis (contraste >= 4.5:1 no c2).
 const AVATAR_GRADIENTS = [
-  ['#525E6B', '#2C353F'], // slate (cinza-azulado)
-  ['#5B5F66', '#2F343A'], // grafite
-  ['#5E5750', '#332E29'], // taupe (neutro quente, bem dessaturado)
-  ['#4F5A66', '#28313B'], // steel
-  ['#5A5A5A', '#303030'], // cinza neutro
-  ['#565E62', '#2D3337'], // cool stone
-  ['#605852', '#352F2A'], // warm stone
-  ['#4B5560', '#262E37'], // deep slate
+  ['#5C5C5C', '#333333'],
+  ['#636363', '#3A3A3A'],
+  ['#545454', '#2C2C2C'],
+  ['#6A6A6A', '#404040'],
+  ['#4D4D4D', '#262626'],
+  ['#5F5F5F', '#363636'],
+  ['#575757', '#303030'],
+  ['#666666', '#3D3D3D'],
 ];
 function hashInt(s) {
   let h = 0;

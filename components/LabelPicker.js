@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { View, Text, TouchableOpacity, TextInput, StyleSheet, Modal, Platform, ScrollView } from 'react-native';
 import { useTheme } from '../context/ThemeContext';
+import { useLanguage } from '../context/LanguageContext';
 import { FontSize, Spacing, BorderRadius, Shadow } from '../constants/theme';
 import { IconX, IconTag, IconCheck, IconPlus, IconChevronDown, IconChevronRight } from './Icons';
 import * as api from '../services/api';
@@ -49,6 +50,7 @@ export function LabelChip({ label, small }) {
 
 export default function LabelPicker({ visible, onClose, currentLabels = [], onToggleLabel, customLabels = [] }) {
   const { colors } = useTheme();
+  const { t } = useLanguage();
   const [showCreate, setShowCreate] = useState(false);
   const [newLabelName, setNewLabelName] = useState('');
   // Nested-label support (2026-05-17): pull labels (with parent_label) from
@@ -158,7 +160,7 @@ export default function LabelPicker({ visible, onClose, currentLabels = [], onTo
         <TouchableOpacity activeOpacity={1} style={[s.modal, Shadow.xl, { backgroundColor: colors.surface }]}>
           <View style={[s.header, { borderBottomColor: colors.borderLight }]}>
             <IconTag size={20} color={colors.primary} style={{ marginRight: Spacing.sm }} />
-            <Text style={[s.title, { color: colors.text }]}>Labels</Text>
+            <Text style={[s.title, { color: colors.text }]}>{t('sidebar.labels')}</Text>
             <TouchableOpacity onPress={onClose} style={s.closeBtn}>
               <IconX size={20} color={colors.textSecondary} />
             </TouchableOpacity>
@@ -177,7 +179,7 @@ export default function LabelPicker({ visible, onClose, currentLabels = [], onTo
                   style={[s.createInput, { color: colors.text, borderColor: colors.border, backgroundColor: colors.surfaceVariant }]}
                   value={newLabelName}
                   onChangeText={setNewLabelName}
-                  placeholder="Nome da label"
+                  placeholder={t('labels.namePlaceholder')}
                   placeholderTextColor={colors.textTertiary}
                   autoFocus
                   onSubmitEditing={handleCreateLabel}
@@ -186,7 +188,7 @@ export default function LabelPicker({ visible, onClose, currentLabels = [], onTo
                   style={[s.createInput, { color: colors.text, borderColor: colors.border, backgroundColor: colors.surfaceVariant }]}
                   value={parentDraft}
                   onChangeText={setParentDraft}
-                  placeholder="Pai (opcional, ex.: trabalho)"
+                  placeholder={t('labels.parentPlaceholder')}
                   placeholderTextColor={colors.textTertiary}
                   onSubmitEditing={handleCreateLabel}
                 />
@@ -205,7 +207,7 @@ export default function LabelPicker({ visible, onClose, currentLabels = [], onTo
                 onPress={() => setShowCreate(true)}
               >
                 <IconPlus size={14} color={colors.primary} style={{ marginRight: Spacing.md }} />
-                <Text style={[s.labelName, { color: colors.primary }]}>Criar nova label</Text>
+                <Text style={[s.labelName, { color: colors.primary }]}>{t('labels.createNew')}</Text>
               </TouchableOpacity>
             )}
           </View>

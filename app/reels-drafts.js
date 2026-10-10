@@ -27,7 +27,7 @@ import {
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useLanguage } from '../context/LanguageContext';
-import { IconX, IconTrash } from '../components/Icons';
+import { IconX, IconTrash, IconFilm } from '../components/Icons';
 import FadeSlideIn from '../components/FadeSlideIn';
 import { listReelDrafts, deleteReelDraft as _deleteDraft } from '../services/reelDrafts';
 
@@ -162,6 +162,10 @@ export default function ReelsDraftsScreen() {
         </View>
       ) : drafts.length === 0 ? (
         <View style={styles.center}>
+          {/* [2026-10-10 feed-polish] icon halo — was a lone text line */}
+          <View style={styles.emptyHalo}>
+            <IconFilm size={30} color="rgba(255,255,255,0.85)" />
+          </View>
           <Text style={styles.emptyTxt}>
             {t('reels.draftsEmpty') || 'Nenhum rascunho salvo'}
           </Text>
@@ -200,7 +204,8 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(255,255,255,0.12)',
   },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24 },
-  emptyTxt: { color: '#fff', opacity: 0.7, fontSize: 14 },
+  emptyHalo: { width: 72, height: 72, borderRadius: 36, backgroundColor: 'rgba(255,255,255,0.08)', alignItems: 'center', justifyContent: 'center', marginBottom: 14 },
+  emptyTxt: { color: '#fff', opacity: 0.7, fontSize: 15, fontWeight: '600' },
   tile: {
     width: TILE_W,
     height: TILE_H,

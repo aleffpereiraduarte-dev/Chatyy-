@@ -1049,7 +1049,7 @@ export default function FeedComments({ visible, post, colors, isDark, t, user, o
           {/* Reply indicator */}
           {replyTo && (
             <View style={[styles.replyBar, {
-              backgroundColor: isDark ? 'rgba(17, 17, 17,0.08)' : 'rgba(17, 17, 17,0.06)',
+              backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(17, 17, 17,0.06)',
               borderTopColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)',
             }]}>
               <View style={[styles.replyAccent, { backgroundColor: accent }]} />

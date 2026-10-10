@@ -112,23 +112,11 @@ function getFileIcon(iconType, size, color) {
   }
 }
 
+// [2026-10-10 P&B] fundo do ícone neutro por tema (antes pastel/navy por
+// tipo — estourava no escuro). A cor do TIPO fica só no glifo/badge
+// (PDF/XLS/PPT), como os documentos do WhatsApp.
 function getIconBgColor(iconType, isDark) {
-  if (isDark) {
-    switch (iconType) {
-      case 'image': return '#1e3a5f'; case 'video': return '#161618';
-      case 'audio': return '#312e81'; case 'pdf': return '#450a0a';
-      case 'document': return '#1e3a5f'; case 'spreadsheet': return '#052e16';
-      case 'presentation': return '#451a03'; case 'archive': return '#1e293b';
-      default: return '#1e293b';
-    }
-  }
-  switch (iconType) {
-    case 'image': return '#F1F3F5'; case 'video': return '#fce7f3';
-    case 'audio': return '#e0e7ff'; case 'pdf': return '#fef2f2';
-    case 'document': return '#F1F3F5'; case 'spreadsheet': return '#f0fdf4';
-    case 'presentation': return '#fffbeb'; case 'archive': return '#f1f5f9';
-    default: return '#f1f5f9';
-  }
+  return isDark ? '#1C1C1E' : '#F1F3F5';
 }
 
 function getFileTypeBadge(item) {
@@ -141,9 +129,9 @@ function getFileTypeBadge(item) {
     ppt: { label: 'PPT', bg: '#d97706' }, pptx: { label: 'PPT', bg: '#d97706' },
     zip: { label: 'ZIP', bg: '#6b7280' }, rar: { label: 'RAR', bg: '#6b7280' }, '7z': { label: '7Z', bg: '#6b7280' },
     mp3: { label: 'MP3', bg: '#111111' }, wav: { label: 'WAV', bg: '#111111' }, ogg: { label: 'OGG', bg: '#111111' },
-    mp4: { label: 'MP4', bg: '#db2777' }, mov: { label: 'MOV', bg: '#db2777' }, avi: { label: 'AVI', bg: '#db2777' },
-    png: { label: 'PNG', bg: '#0891b2' }, jpg: { label: 'JPG', bg: '#0891b2' }, jpeg: { label: 'JPG', bg: '#0891b2' },
-    gif: { label: 'GIF', bg: '#0891b2' }, webp: { label: 'WEBP', bg: '#0891b2' }, svg: { label: 'SVG', bg: '#0891b2' },
+    mp4: { label: 'MP4', bg: '#48484A' }, mov: { label: 'MOV', bg: '#48484A' }, avi: { label: 'AVI', bg: '#48484A' },
+    png: { label: 'PNG', bg: '#48484A' }, jpg: { label: 'JPG', bg: '#48484A' }, jpeg: { label: 'JPG', bg: '#48484A' },
+    gif: { label: 'GIF', bg: '#48484A' }, webp: { label: 'WEBP', bg: '#48484A' }, svg: { label: 'SVG', bg: '#48484A' },
     txt: { label: 'TXT', bg: '#6b7280' }, json: { label: 'JSON', bg: '#6b7280' }, xml: { label: 'XML', bg: '#6b7280' },
   };
   return badges[ext] || null;
@@ -1129,7 +1117,7 @@ function DriveScreenInner() {
   const storageUsedBytes = storageInfo?.total_used || storageInfo?.used_bytes || 0;
   const storageTotalBytes = storageInfo?.quota || storageInfo?.plan_quota || (STORAGE_LIMIT_GB * 1024 * 1024 * 1024);
   const storagePercent = Math.min((storageUsedBytes / storageTotalBytes) * 100, 100);
-  const storageColor = storagePercent > 90 ? '#dc2626' : storagePercent > 70 ? '#f59e0b' : '#111111';
+  const storageColor = storagePercent > 90 ? '#dc2626' : storagePercent > 70 ? '#f59e0b' : (isDark ? '#F5F5F7' : '#111111');
 
   // ============================================================
   // RENDER HELPERS
@@ -1142,10 +1130,12 @@ function DriveScreenInner() {
     const chatBytes = storageInfo?.chat_used || 0;
     const feedBytes = storageInfo?.feed_used || 0;
     const segments = [
-      { label: 'Cloud', bytes: driveBytes, color: '#111111' },
-      { label: 'Email', bytes: emailBytes, color: '#16a34a' },
-      { label: 'Chat', bytes: chatBytes, color: '#f59e0b' },
-      { label: 'Feed', bytes: feedBytes, color: '#111111' },
+      // [2026-10-10 P&B] rampa de cinzas por tema (antes verde/âmbar e
+      // Cloud/Feed #111 iguais + invisíveis no escuro).
+      { label: 'Cloud', bytes: driveBytes, color: isDark ? '#F5F5F7' : '#111111' },
+      { label: 'Email', bytes: emailBytes, color: isDark ? '#AEAEB2' : '#48484A' },
+      { label: 'Chat', bytes: chatBytes, color: isDark ? '#7C7C80' : '#8E8E93' },
+      { label: 'Feed', bytes: feedBytes, color: isDark ? '#545458' : '#C7C7CC' },
     ].filter(s => s.bytes > 0);
 
     return (
@@ -1318,7 +1308,7 @@ function DriveScreenInner() {
         style={[
           styles.listItem,
           { backgroundColor: isSelected ? (isDark ? colors.selectedBg : '#F1F3F5') : 'transparent', borderBottomColor: colors.border },
-          isDragTarget && { backgroundColor: isDark ? '#1e3a5f' : '#F1F3F5', borderColor: '#111111', borderWidth: 2, borderRadius: 8 },
+          isDragTarget && { backgroundColor: isDark ? '#2C2C2E' : '#F1F3F5', borderColor: isDark ? '#F5F5F7' : '#111111', borderWidth: 2, borderRadius: 8 },
           isFocused && !isSelected && { backgroundColor: isDark ? colors.surfaceVariant : '#f1f5f9' },
         ]}
         onPress={(e) => { setFocusedIndex(index); handleItemPress(item, e); }}
@@ -1333,9 +1323,9 @@ function DriveScreenInner() {
             </View>
           </TouchableOpacity>
         )}
-        <View style={[styles.listIconContainer, { backgroundColor: isFolder ? (isDark ? '#78350f20' : '#fef3c7') : getIconBgColor(item.icon_type, isDark) }]}>
+        <View style={[styles.listIconContainer, { backgroundColor: isFolder ? (isDark ? '#1C1C1E' : '#F1F3F5') : getIconBgColor(item.icon_type, isDark) }]}>
           {isFolder
-            ? <IconFolder size={22} color="#f59e0b" />
+            ? <IconFolder size={22} color={isDark ? '#AEAEB2' : '#48484A'} />
             : getFileIcon(item.icon_type, 22, colors.textSecondary)
           }
         </View>
@@ -1431,7 +1421,7 @@ function DriveScreenInner() {
               ...(isDark ? { backgroundColor: colors.surfaceVariant } : { backgroundColor: '#f8fafc' }),
               transform: [{ translateY: -1 }],
             },
-            isDragTarget && { borderColor: '#111111', borderWidth: 2, backgroundColor: isDark ? '#1e3a5f' : '#F1F3F5' },
+            isDragTarget && { borderColor: isDark ? '#F5F5F7' : '#111111', borderWidth: 2, backgroundColor: isDark ? '#2C2C2E' : '#F1F3F5' },
             isFocused && !isSelected && !isDragTarget && { borderColor: colors.primary, borderWidth: 2 },
             Platform.OS === 'web' && { transition: 'all 0.15s ease' },
           ]}
@@ -1447,10 +1437,10 @@ function DriveScreenInner() {
               </View>
             </TouchableOpacity>
           )}
-          <View style={[styles.gridIconArea, { backgroundColor: isFolder ? (isDark ? '#78350f20' : '#fef3c7') : getIconBgColor(item.icon_type, isDark) }]}>
+          <View style={[styles.gridIconArea, { backgroundColor: isFolder ? (isDark ? '#1C1C1E' : '#F1F3F5') : getIconBgColor(item.icon_type, isDark) }]}>
             {isFolder
               ? <View style={{ alignItems: 'center' }}>
-                  <IconFolder size={40} color="#f59e0b" />
+                  <IconFolder size={40} color={isDark ? '#AEAEB2' : '#48484A'} />
                 </View>
               : (isPhoto(item) && item.thumbnail_url
                 ? <Image source={{ uri: item.thumbnail_url }} style={styles.gridThumbnail} resizeMode="cover" />
@@ -1643,7 +1633,7 @@ function DriveScreenInner() {
       { label: t('drive.deletePermanently'), icon: <IconTrash size={18} color="#dc2626" />, onPress: () => handlePermanentDelete(item), danger: true },
     ] : [
       !item.is_folder && {
-        label: 'Analisar com One AI',
+        label: t('files.analyzeWithOne'),
         icon: <IconSparkles size={18} color={colors.primary} />,
         accent: '#111111',
         onPress: () => {
@@ -1844,7 +1834,7 @@ function DriveScreenInner() {
             keyExtractor={item => String(item.id)}
             renderItem={({ item }) => (
               <TouchableOpacity style={[styles.moveFolderItem, { borderBottomColor: colors.border }]} onPress={() => handleMove(item.id)}>
-                <IconFolder size={18} color="#f59e0b" />
+                <IconFolder size={18} color={colors.textSecondary} />
                 <Text style={[styles.moveFolderName, { color: colors.text }]}>{item.name}</Text>
               </TouchableOpacity>
             )}
@@ -1867,10 +1857,12 @@ function DriveScreenInner() {
     const freeBytes = storageTotalBytes - storageUsedBytes;
 
     const segments = [
-      { label: 'Cloud', bytes: driveBytes, color: '#111111' },
-      { label: 'Email', bytes: emailBytes, color: '#16a34a' },
-      { label: 'Chat', bytes: chatBytes, color: '#f59e0b' },
-      { label: 'Feed', bytes: feedBytes, color: '#111111' },
+      // [2026-10-10 P&B] rampa de cinzas por tema (antes verde/âmbar e
+      // Cloud/Feed #111 iguais + invisíveis no escuro).
+      { label: 'Cloud', bytes: driveBytes, color: isDark ? '#F5F5F7' : '#111111' },
+      { label: 'Email', bytes: emailBytes, color: isDark ? '#AEAEB2' : '#48484A' },
+      { label: 'Chat', bytes: chatBytes, color: isDark ? '#7C7C80' : '#8E8E93' },
+      { label: 'Feed', bytes: feedBytes, color: isDark ? '#545458' : '#C7C7CC' },
     ].filter(s => s.bytes > 0);
 
     return (
@@ -2057,19 +2049,23 @@ function DriveScreenInner() {
   // FAB Menu
   const renderFAB = () => {
     if (activeTab === 'trash') return null;
+    // [2026-10-10 P&B] chips neutros (antes rosa/verde/índigo/âmbar pastel,
+    // que estouravam no modo escuro).
+    const fabChipBg = isDark ? '#2C2C2E' : '#F1F3F5';
+    const fabChipFg = isDark ? '#F5F5F7' : '#111111';
     return (
       <View style={[styles.fabContainer, { bottom: insets.bottom + 20 }]}>
         {fabOpen && (
           <View style={[styles.fabMenu, { backgroundColor: colors.surface, borderColor: colors.border, ...Shadow.xl }]}>
             <TouchableOpacity style={styles.fabMenuItem} onPress={handleUploadFile}>
-              <View style={[styles.fabMenuIcon, { backgroundColor: '#F1F3F5' }]}>
-                <IconUpload size={18} color="#111111" />
+              <View style={[styles.fabMenuIcon, { backgroundColor: fabChipBg }]}>
+                <IconUpload size={18} color={fabChipFg} />
               </View>
               <Text style={[styles.fabMenuText, { color: colors.text }]}>{t('drive.uploadFile')}</Text>
             </TouchableOpacity>
             <TouchableOpacity style={styles.fabMenuItem} onPress={handleUploadPhotos}>
-              <View style={[styles.fabMenuIcon, { backgroundColor: '#fce7f3' }]}>
-                <IconCamera size={18} color="#db2777" />
+              <View style={[styles.fabMenuIcon, { backgroundColor: fabChipBg }]}>
+                <IconCamera size={18} color={fabChipFg} />
               </View>
               <Text style={[styles.fabMenuText, { color: colors.text }]}>{t('drive.uploadPhotos')}</Text>
             </TouchableOpacity>
@@ -2086,10 +2082,10 @@ function DriveScreenInner() {
                 };
                 input.click();
               }}>
-                <View style={[styles.fabMenuIcon, { backgroundColor: '#e0e7ff' }]}>
-                  <IconFolder size={18} color="#4f46e5" />
+                <View style={[styles.fabMenuIcon, { backgroundColor: fabChipBg }]}>
+                  <IconFolder size={18} color={fabChipFg} />
                 </View>
-                <Text style={[styles.fabMenuText, { color: colors.text }]}>{t('drive.uploadFolder') || 'Upload de Pasta'}</Text>
+                <Text style={[styles.fabMenuText, { color: colors.text }]}>{t('drive.uploadFolder')}</Text>
               </TouchableOpacity>
             )}
             {Platform.OS !== 'web' && (
@@ -2115,15 +2111,15 @@ function DriveScreenInner() {
                   setTimeout(() => { setUploading(false); setUploadProgress([]); }, 1500);
                 } catch { setUploading(false); setUploadProgress([]); }
               }}>
-                <View style={[styles.fabMenuIcon, { backgroundColor: '#dcfce7' }]}>
-                  <IconCamera size={18} color="#16a34a" />
+                <View style={[styles.fabMenuIcon, { backgroundColor: fabChipBg }]}>
+                  <IconCamera size={18} color={fabChipFg} />
                 </View>
                 <Text style={[styles.fabMenuText, { color: colors.text }]}>{t('drive.takePhoto')}</Text>
               </TouchableOpacity>
             )}
             <TouchableOpacity style={styles.fabMenuItem} onPress={() => { setFabOpen(false); setNewFolderModal(true); }}>
-              <View style={[styles.fabMenuIcon, { backgroundColor: '#fef3c7' }]}>
-                <IconFolderPlus size={18} color="#d97706" />
+              <View style={[styles.fabMenuIcon, { backgroundColor: fabChipBg }]}>
+                <IconFolderPlus size={18} color={fabChipFg} />
               </View>
               <Text style={[styles.fabMenuText, { color: colors.text }]}>{t('drive.newFolder')}</Text>
             </TouchableOpacity>

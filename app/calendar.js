@@ -803,11 +803,12 @@ function CalendarGrid({ year, month, selectedDate, events, colors, onSelectDate,
                     activeOpacity={0.75}
                     onPress={(e) => { e.stopPropagation && e.stopPropagation(); haptic.light(); onQuickAdd(cell.date); }}
                     style={[styles.cellEmptyCta, { borderColor: colors.primary, backgroundColor: colors.surface }]}
+                    accessibilityRole="button"
+                    accessibilityLabel={t ? t('calendar.quickAdd') : undefined}
                   >
-                    <IconPlus size={9} color={colors.primary} />
-                    <Text style={[styles.cellEmptyCtaText, { color: colors.primary }]} numberOfLines={1}>
-                      {(t && t('calendar.quickAdd')) || 'Adicionar'}
-                    </Text>
+                    {/* [2026-10-10] só o "+": o texto "Adicionar" não cabia na
+                        célula (~50px) e saía cortado ("+ Adicion"). */}
+                    <IconPlus size={11} color={colors.primary} />
                   </TouchableOpacity>
                 )}
               </DayCellPressable>
@@ -2994,7 +2995,7 @@ function CalendarScreenInner() {
               pointerEvents={isViewingCurrentMonth ? 'none' : 'auto'}
             >
               <PressableScale haptic={false} onPress={handleToday} style={styles.todayPill} accessibilityLabel={t('calendar.today')}>
-                <Text style={[styles.todayPillText, { color: colors.primary }]}>{t('calendar.today')}</Text>
+                <Text style={styles.todayPillText /* [2026-10-10] pill é sempre branca → tinta fixa #111 (primary vira branco no escuro = invisível) */}>{t('calendar.today')}</Text>
               </PressableScale>
             </Animated.View>
           </View>
@@ -3027,7 +3028,7 @@ function CalendarScreenInner() {
                   accessibilityLabel={opt.label}
                   accessibilityState={{ selected: active }}
                 >
-                  <Text style={[styles.viewSegmentText, active && { color: colors.primary }]}>
+                  <Text style={[styles.viewSegmentText, active && styles.viewSegmentTextActive]}>
                     {opt.label}
                   </Text>
                 </TouchableOpacity>
@@ -3068,7 +3069,7 @@ function CalendarScreenInner() {
                   ]}>
                     <Text style={[
                       styles.weekStripText,
-                      isTodayDow && { color: colors.primary },
+                      isTodayDow && styles.weekStripTextToday,
                     ]}>
                       {d}
                     </Text>
@@ -3590,9 +3591,9 @@ const styles = StyleSheet.create({
   cellMultiDayStripe: { height: 3 },
   // Empty-day inline CTA (selected day, no events).
   cellEmptyCta: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 3,
-    alignSelf: 'flex-start',
-    paddingHorizontal: 6, paddingVertical: 2,
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+    alignSelf: 'center',
+    width: 24, height: 18,
     borderRadius: 999, borderWidth: 1,
     marginTop: 4, marginHorizontal: 2,
   },

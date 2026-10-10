@@ -3831,7 +3831,7 @@ function _avatarViewerPart() {
 // iniciais nunca era rebaixada. `av=` entra SÓ quando não há `v=` (sem foto
 // enviada conhecida = avatar padrão/iniciais); fotos reais seguem pelo `v=`.
 // Subir este número quando o desenho das iniciais mudar de novo.
-export const AVATAR_INITIALS_RENDER_V = 2;
+export const AVATAR_INITIALS_RENDER_V = 3; // [2026-10-10] servidor gera cinza puro
 function _avatarRenderPart(v) {
   return v ? '' : `&av=${AVATAR_INITIALS_RENDER_V}`;
 }

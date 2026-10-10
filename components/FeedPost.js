@@ -554,7 +554,7 @@ const AnimatedCarouselDot = memo(function AnimatedCarouselDot({ active }) {
         borderRadius: 3,
         opacity,
         transform: [{ scale }],
-        backgroundColor: active ? ACCENT : '#ffffff',
+        backgroundColor: '#ffffff', // [2026-10-10 feed-polish] active was #111 on the dark dot pill = invisible; active now reads via opacity+scale
       }}
     />
   );
@@ -1840,10 +1840,10 @@ function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated
                             styles.likersFollowBtn,
                             u.is_following
                               ? { backgroundColor: 'transparent', borderColor: colors.border }
-                              : { backgroundColor: ACCENT, borderColor: ACCENT },
+                              : { backgroundColor: colors.primary, borderColor: colors.primary },
                           ]}
                         >
-                          <Text style={[styles.likersFollowText, { color: u.is_following ? colors.text : '#fff' }]}>
+                          <Text style={[styles.likersFollowText, { color: u.is_following ? colors.text : colors.onPrimary }]}>
                             {u.is_following ? (t('profile.following') || 'Seguindo') : (t('profile.follow') || 'Seguir')}
                           </Text>
                         </TouchableOpacity>
@@ -1882,9 +1882,9 @@ function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated
               <TouchableOpacity
                 onPress={createCollection}
                 disabled={!newCollectionName.trim() || creatingCollection}
-                style={{ backgroundColor: newCollectionName.trim() ? ACCENT : colors.border, paddingHorizontal: 14, paddingVertical: 10, borderRadius: 10 }}
+                style={{ backgroundColor: newCollectionName.trim() ? colors.primary : colors.border, paddingHorizontal: 14, paddingVertical: 10, borderRadius: 10 }}
               >
-                <Text style={{ color: '#fff', fontWeight: '700', fontSize: 13 }}>+</Text>
+                <Text style={{ color: newCollectionName.trim() ? colors.onPrimary : colors.textSecondary, fontWeight: '700', fontSize: 13 }}>+</Text>
               </TouchableOpacity>
             </View>
             {collections === null ? (
@@ -1901,7 +1901,7 @@ function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated
                     onPress={() => saveToCollection(c.id)}
                     style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 18, paddingVertical: 14, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border }}
                   >
-                    <IconBookmarkFilled size={20} color={ACCENT} />
+                    <IconBookmarkFilled size={20} color={colors.text} />
                     <Text style={{ flex: 1, marginLeft: 12, fontSize: 15, fontWeight: '600', color: colors.text }} numberOfLines={1}>{c.name}</Text>
                     <Text style={{ fontSize: 12, color: colors.textTertiary }}>{c.post_count}</Text>
                   </TouchableOpacity>
@@ -1972,7 +1972,7 @@ function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated
                     { k: 'shares',      label: t('feed.shares') || 'Shares' },
                     { k: 'saves',       label: t('feed.saves') || 'Saves' },
                   ].map(({ k, label }) => (
-                    <View key={k} style={{ width: '47%', backgroundColor: isDark ? '#1c1c1e' : '#f8fafc', borderRadius: 12, padding: 12 }}>
+                    <View key={k} style={{ width: '47%', backgroundColor: isDark ? '#1c1c1e' : '#f5f5f5', borderRadius: 12, padding: 12 }}>
                       <Text style={{ color: colors.textSecondary, fontSize: 11, fontWeight: '700', textTransform: 'uppercase' }}>{label}</Text>
                       <Text style={{ color: colors.text, fontSize: 22, fontWeight: '800', marginTop: 4 }}>
                         {Number(analyticsData[k] || 0).toLocaleString()}
@@ -1982,7 +1982,7 @@ function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated
                 </View>
                 {/* 7-day SVG chart */}
                 {Array.isArray(analyticsData.series) && analyticsData.series.length > 0 ? (
-                  <View style={{ backgroundColor: isDark ? '#1c1c1e' : '#f8fafc', borderRadius: 12, padding: 14, marginBottom: 16 }}>
+                  <View style={{ backgroundColor: isDark ? '#1c1c1e' : '#f5f5f5', borderRadius: 12, padding: 14, marginBottom: 16 }}>
                     <Text style={{ color: colors.textSecondary, fontSize: 11, fontWeight: '700', textTransform: 'uppercase', marginBottom: 8 }}>
                       {t('feed.last7Days') || 'Últimos 7 dias'}
                     </Text>
@@ -2005,7 +2005,7 @@ function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated
                 ) : null}
                 {/* Audience breakdown */}
                 {Array.isArray(analyticsData.audience) && analyticsData.audience.length > 0 ? (
-                  <View style={{ backgroundColor: isDark ? '#1c1c1e' : '#f8fafc', borderRadius: 12, padding: 14 }}>
+                  <View style={{ backgroundColor: isDark ? '#1c1c1e' : '#f5f5f5', borderRadius: 12, padding: 14 }}>
                     <Text style={{ color: colors.textSecondary, fontSize: 11, fontWeight: '700', textTransform: 'uppercase', marginBottom: 6 }}>
                       {t('feed.audience') || 'Audiência'}
                     </Text>
@@ -2136,13 +2136,13 @@ function PromotePostModal({ visible, onClose, post, onPromoted, colors, isDark, 
                   style={{
                     paddingHorizontal: 14, paddingVertical: 10, borderRadius: 12,
                     borderWidth: StyleSheet.hairlineWidth,
-                    borderColor: active ? '#111111' : (isDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.10)'),
-                    backgroundColor: active ? (isDark ? 'rgba(17, 17, 17,0.22)' : 'rgba(17, 17, 17,0.10)') : 'transparent',
+                    borderColor: active ? colors.text : (isDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.10)'),
+                    backgroundColor: active ? (isDark ? 'rgba(255,255,255,0.22)' : 'rgba(17, 17, 17,0.10)') : 'transparent',
                   }}
                   accessibilityRole="button"
                   accessibilityState={{ selected: active }}
                 >
-                  <Text style={{ color: active ? '#111111' : colors.text, fontWeight: active ? '800' : '600' }}>{tr.label}</Text>
+                  <Text style={{ color: colors.text, fontWeight: active ? '800' : '600' }}>{tr.label}</Text>
                 </TouchableOpacity>
               );
             })}
@@ -2161,13 +2161,13 @@ function PromotePostModal({ visible, onClose, post, onPromoted, colors, isDark, 
                   style={{
                     paddingHorizontal: 14, paddingVertical: 10, borderRadius: 12,
                     borderWidth: StyleSheet.hairlineWidth,
-                    borderColor: active ? '#111111' : (isDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.10)'),
-                    backgroundColor: active ? (isDark ? 'rgba(17, 17, 17,0.22)' : 'rgba(17, 17, 17,0.10)') : 'transparent',
+                    borderColor: active ? colors.text : (isDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.10)'),
+                    backgroundColor: active ? (isDark ? 'rgba(255,255,255,0.22)' : 'rgba(17, 17, 17,0.10)') : 'transparent',
                   }}
                   accessibilityRole="button"
                   accessibilityState={{ selected: active }}
                 >
-                  <Text style={{ color: active ? '#111111' : colors.text, fontWeight: active ? '800' : '600' }}>
+                  <Text style={{ color: colors.text, fontWeight: active ? '800' : '600' }}>
                     {(t?.('feed.daysN') || '{n} dias').replace('{n}', d)}
                   </Text>
                 </TouchableOpacity>
@@ -2175,7 +2175,7 @@ function PromotePostModal({ visible, onClose, post, onPromoted, colors, isDark, 
             })}
           </View>
 
-          <View style={{ paddingVertical: 10, paddingHorizontal: 12, borderRadius: 12, backgroundColor: isDark ? 'rgba(17, 17, 17,0.10)' : 'rgba(17, 17, 17,0.06)', marginBottom: 16, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+          <View style={{ paddingVertical: 10, paddingHorizontal: 12, borderRadius: 12, backgroundColor: isDark ? 'rgba(255,255,255,0.10)' : 'rgba(17, 17, 17,0.06)', marginBottom: 16, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
             <Text style={{ color: colors.textSecondary, fontSize: 13 }}>
               {t?.('feed.promoteCost') || 'Custo'}
             </Text>
@@ -2190,14 +2190,14 @@ function PromotePostModal({ visible, onClose, post, onPromoted, colors, isDark, 
           <TouchableOpacity
             onPress={submit}
             disabled={submitting}
-            style={{ backgroundColor: '#111111', paddingVertical: 14, borderRadius: 12, alignItems: 'center', opacity: submitting ? 0.6 : 1 }}
+            style={{ backgroundColor: colors.primary, paddingVertical: 14, borderRadius: 12, alignItems: 'center', opacity: submitting ? 0.6 : 1 }}
             accessibilityRole="button"
             accessibilityLabel={t?.('feed.promoteConfirm') || 'Confirmar impulsionamento'}
           >
             {submitting ? (
-              <ActivityIndicator color="#fff" />
+              <ActivityIndicator color={colors.onPrimary} />
             ) : (
-              <Text style={{ color: '#fff', fontSize: 15, fontWeight: '800' }}>
+              <Text style={{ color: colors.onPrimary, fontSize: 15, fontWeight: '800' }}>
                 {t?.('feed.promoteConfirm') || 'Impulsionar agora'}
               </Text>
             )}
@@ -2459,7 +2459,7 @@ const styles = StyleSheet.create({
   },
   videoProgressFill: {
     height: '100%',
-    backgroundColor: '#111111',
+    backgroundColor: '#ffffff', // [2026-10-10 feed-polish] was #111 on a dark video → invisible
   },
   // Actions
   derivativeLabel: {

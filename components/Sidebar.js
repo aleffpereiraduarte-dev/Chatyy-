@@ -513,7 +513,9 @@ function Sidebar({ folders, currentFolder, onFolderPress, onCompose, onFoldersCh
         while (folderAnims.length < folderList.length) folderAnims.push(new Animated.Value(0));
         const showTotal = ['Trash', 'Spam', 'Junk', 'Drafts'].includes(f.name);
         const badgeCount = showTotal ? (f.total || 0) : (f.unread || f.unseen || 0);
-        const fColor = FOLDER_COLORS[f.name] || colors.primary;
+        // Theme accent (not the light-only #111111 map) so the unread badge
+        // stays visible in dark mode and its text flips to colors.onPrimary.
+        const fColor = colors.primary;
         return (
           <View key={f.name}>
             <FolderItem

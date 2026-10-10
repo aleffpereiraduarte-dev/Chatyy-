@@ -134,18 +134,18 @@ export default function ChatHashtagScreen() {
 
   return (
     <View style={[sty.screen, { backgroundColor: colors.background, paddingTop: Platform.OS === 'web' ? 0 : insets.top }]}>
-      <View style={[sty.header, { backgroundColor: isDark ? '#1c1c1e' : '#111111' }]}>
+      <View style={[sty.header, { backgroundColor: colors.background, borderBottomColor: colors.borderLight || colors.border }]}>
         <TouchableOpacity
           onPress={() => { try { router.back(); } catch {} }}
           style={sty.backBtn}
           accessibilityRole="button"
           accessibilityLabel={t('common.back') || 'Voltar'}
         >
-          <IconArrowLeft size={22} color="#fff" />
+          <IconArrowLeft size={22} color={colors.text} />
         </TouchableOpacity>
         <View style={{ flex: 1 }}>
-          <Text style={sty.headerTitle} numberOfLines={1}>#{tag}</Text>
-          <Text style={sty.headerSub} numberOfLines={1}>
+          <Text style={[sty.headerTitle, { color: colors.text }]} numberOfLines={1}>#{tag}</Text>
+          <Text style={[sty.headerSub, { color: colors.textSecondary }]} numberOfLines={1}>
             {t('chat.hashtagResultsSubtitle') || 'Em canais públicos'}
           </Text>
         </View>
@@ -190,6 +190,7 @@ const sty = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: 12,
     paddingVertical: 12,
+    borderBottomWidth: StyleSheet.hairlineWidth,
   },
   backBtn: { padding: 6, marginRight: 8 },
   headerTitle: { color: '#fff', fontSize: 18, fontWeight: '700' },

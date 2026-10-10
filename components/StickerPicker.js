@@ -177,7 +177,10 @@ async function storageSet(key, value) {
   } catch {}
 }
 
-export default function StickerPicker({ onSelect, onClose, colors, t, userEmail }) {
+export default function StickerPicker({ onSelect, onClose, colors, t, userEmail, bottomInset = 0 }) {
+  // [2026-10-10] Painel substitui o teclado (WhatsApp): ocupa o lugar do home
+  // indicator — a aba de pacotes fica ACIMA do inset, sem faixa vazia.
+  const _bi = Math.max(0, Number(bottomInset) || 0);
   const router = useRouter();
   const [activePack, setActivePack] = useState('recent');
   const [recents, setRecents] = useState([]);
@@ -638,7 +641,7 @@ export default function StickerPicker({ onSelect, onClose, colors, t, userEmail 
   }, []);
 
   return (
-    <View style={{ height: 340, backgroundColor: colors.surface, borderTopWidth: 1, borderTopColor: colors.border }}>
+    <View style={{ height: 340 + _bi, paddingBottom: _bi, backgroundColor: colors.surface, borderTopWidth: 1, borderTopColor: colors.border }}>
       <StickerMaker
         visible={!!editorUri}
         sourceUri={editorUri}
@@ -944,11 +947,11 @@ export default function StickerPicker({ onSelect, onClose, colors, t, userEmail 
         contentContainerStyle={{ paddingHorizontal: 2, alignItems: 'center' }}
       >
         {/* Recent */}
-        <PackTab emoji="🕐" active={activePack === 'recent'} onPress={() => setActivePack('recent')} colors={colors} />
+        <PackTab icon={IconClock} active={activePack === 'recent'} onPress={() => setActivePack('recent')} colors={colors} />
         {/* Favorites */}
-        <PackTab emoji="⭐" active={activePack === 'favorites'} onPress={() => setActivePack('favorites')} colors={colors} badge={favorites.length || null} />
+        <PackTab icon={IconStar} active={activePack === 'favorites'} onPress={() => setActivePack('favorites')} colors={colors} badge={favorites.length || null} />
         {/* My stickers */}
-        <PackTab emoji="🎨" active={activePack === 'mine'} onPress={() => setActivePack('mine')} colors={colors} badge={(mineFull.length || mine.length) || null} />
+        <PackTab icon={IconPalette} active={activePack === 'mine'} onPress={() => setActivePack('mine')} colors={colors} badge={(mineFull.length || mine.length) || null} />
         {/* Divider */}
         <View style={{ width: 1, height: 20, backgroundColor: colors.border, marginHorizontal: 4 }} />
         {/* Emoji packs */}
@@ -1025,7 +1028,7 @@ export default function StickerPicker({ onSelect, onClose, colors, t, userEmail 
         activeOpacity={0.85}
         disabled={creating}
         style={{
-          position: 'absolute', right: 14, bottom: 60,
+          position: 'absolute', right: 14, bottom: 60 + _bi,
           width: 48, height: 48, borderRadius: 24,
           backgroundColor: '#111111',
           alignItems: 'center', justifyContent: 'center',
@@ -1114,7 +1117,7 @@ export default function StickerPicker({ onSelect, onClose, colors, t, userEmail 
   );
 }
 
-function PackTab({ emoji, active, onPress, colors, badge }) {
+function PackTab({ emoji, icon: Icon, active, onPress, colors, badge }) {
   return (
     <TouchableOpacity
       onPress={onPress}
@@ -1130,15 +1133,18 @@ function PackTab({ emoji, active, onPress, colors, badge }) {
       }}
       activeOpacity={0.6}
     >
-      <Text style={{ fontSize: 20 }}>{emoji}</Text>
+      {/* [2026-10-10] Abas fixas (recentes/favoritas/minhas) = ícone SVG, não emoji. */}
+      {Icon
+        ? <View style={{ width: 24, height: 24, alignItems: 'center', justifyContent: 'center' }}><Icon size={21} color={active ? colors.text : colors.textSecondary} /></View>
+        : <Text style={{ fontSize: 20 }}>{emoji}</Text>}
       {badge > 0 && (
         <View style={{
           position: 'absolute', top: 2, right: 2,
           minWidth: 14, height: 14, borderRadius: 7,
-          backgroundColor: '#25D366',
+          backgroundColor: colors.text,
           alignItems: 'center', justifyContent: 'center',
         }}>
-          <Text style={{ fontSize: 8, color: '#fff', fontWeight: '800' }}>{badge > 9 ? '9+' : badge}</Text>
+          <Text style={{ fontSize: 8, color: colors.background, fontWeight: '800' }}>{badge > 9 ? '9+' : badge}</Text>
         </View>
       )}
     </TouchableOpacity>

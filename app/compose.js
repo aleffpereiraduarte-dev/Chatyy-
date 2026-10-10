@@ -1745,7 +1745,7 @@ export default function ComposeScreen() {
       {undoCountdown > 0 && (
         <Animated.View style={[s.undoBar, { backgroundColor: colors.toastBg, opacity: undoOpacity }]}>
           <View style={s.undoCountdownCircle}>
-            <View style={[s.undoCircleBg, { borderColor: 'rgba(255,255,255,0.15)' }]} />
+            <View style={[s.undoCircleBg, { borderColor: colors.onPrimary }]} />
             {Platform.OS === 'web' && (
               <View style={[s.undoCircleProgress, {
                 background: `conic-gradient(${colors.primary} ${(undoCountdown / undoDelayRef.current) * 360}deg, transparent 0deg)`,
@@ -1754,14 +1754,17 @@ export default function ComposeScreen() {
                 transition: 'background 0.3s linear',
               }]} />
             )}
-            <Text style={s.undoCountdownText}>{undoCountdown}</Text>
+            <Text style={[s.undoCountdownText, { color: colors.onPrimary }]}>{undoCountdown}</Text>
           </View>
           <View style={{ flex: 1, marginLeft: 4 }}>
-            <Text style={s.undoText}>{t('compose.undoSending', { n: undoCountdown })}</Text>
-            <Text style={[s.undoSubText, { color: 'rgba(255,255,255,0.6)' }]}>{t('compose.undoTapCancel')}</Text>
+            <Text style={[s.undoText, { color: colors.onPrimary }]}>{t('compose.undoSending', { n: undoCountdown })}</Text>
+            <Text style={[s.undoSubText, { color: colors.onPrimary, opacity: 0.6 }]}>{t('compose.undoTapCancel')}</Text>
           </View>
-          <TouchableOpacity onPress={cancelUndoSend} style={[s.undoBtn, { backgroundColor: 'rgba(255,255,255,0.2)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.15)' }]}>
-            <Text style={[s.undoBtnText, { color: '#fff' }]}>{t('undo.button')}</Text>
+          {/* toastBg inverts with the theme (dark #2A2C30 in light mode, light
+              #F5F5F7 in dark mode) — ink follows via onPrimary, which inverts
+              the same way. Hardcoded white text vanished in dark mode. */}
+          <TouchableOpacity onPress={cancelUndoSend} style={[s.undoBtn, { backgroundColor: colors.primaryLight, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border }]} accessibilityRole="button" accessibilityLabel={t('undo.button')}>
+            <Text style={[s.undoBtnText, { color: colors.text }]}>{t('undo.button')}</Text>
           </TouchableOpacity>
           {/* Progress bar shrinking from right to left */}
           <View style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: 3, backgroundColor: 'rgba(255,255,255,0.08)', borderBottomLeftRadius: 16, borderBottomRightRadius: 16, overflow: 'hidden' }}>
@@ -1795,9 +1798,9 @@ export default function ComposeScreen() {
       {externalWarning && (
         <View style={{
           flexDirection: 'row', alignItems: 'center', gap: 10,
-          backgroundColor: (colors.warning || '#f59e0b') + '18',
-          borderColor: (colors.warning || '#f59e0b') + '55',
-          borderWidth: 1, borderRadius: 12,
+          backgroundColor: colors.surfaceVariant,
+          borderColor: colors.border,
+          borderWidth: StyleSheet.hairlineWidth, borderLeftWidth: 3, borderLeftColor: colors.text, borderRadius: 12,
           marginHorizontal: Spacing.md, marginTop: Spacing.sm, padding: 12,
         }}>
           <Text style={{ fontSize: 13, color: colors.text, flex: 1 }}>
@@ -1809,11 +1812,11 @@ export default function ComposeScreen() {
           </Text>
           <TouchableOpacity
             onPress={() => setExternalWarning(null)}
-            style={{ paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8, backgroundColor: colors.warning || '#f59e0b' }}
+            style={{ paddingHorizontal: 14, minHeight: 36, justifyContent: 'center', borderRadius: 8, backgroundColor: colors.primary }}
             accessibilityLabel={t('compose.externalAck') || 'OK, continuar'}
             accessibilityRole="button"
           >
-            <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700' }}>
+            <Text style={{ color: colors.onPrimary, fontSize: 12, fontWeight: '700' }}>
               {t('compose.externalAck') || 'OK'}
             </Text>
           </TouchableOpacity>
@@ -2556,7 +2559,7 @@ export default function ComposeScreen() {
             </Text>
             {toneWarning.suggestion ? (
               <View style={{ backgroundColor:colors.background, padding:12, borderRadius:8, marginBottom:16 }}>
-                <Text style={{ fontSize:12, color:colors.textSecondary, marginBottom:4 }}>Sugestão:</Text>
+                <Text style={{ fontSize:12, color:colors.textSecondary, marginBottom:4 }}>{t('compose.toneSuggestion')}</Text>
                 <Text style={{ fontSize:14, color:colors.text }}>{toneWarning.suggestion}</Text>
               </View>
             ) : null}
@@ -2591,7 +2594,8 @@ const s = StyleSheet.create({
     paddingHorizontal: Spacing.md, height: 56,
     ...Platform.select({
       web: {
-        background: '#ffffff',
+        // No hardcoded white here: the inline colors.headerBgSolid sets the
+        // fill so the bar is correct in dark mode on web too.
         boxShadow: '0 1px 2px rgba(0, 0, 0, 0.05)',
       },
       default: {

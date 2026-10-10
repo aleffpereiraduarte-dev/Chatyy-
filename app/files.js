@@ -43,22 +43,25 @@ const isWeb = Platform.OS === 'web';
 // ============================================================
 
 const FILE_TYPE_COLORS = {
-  image:        { accent: '#f59e0b', bg: '#fffbeb', bgDark: '#451a03', icon: '#d97706' },
+  image:        { accent: '#111111', bg: '#F1F3F5', bgDark: '#1C1C1E', icon: '#111111' }, // [2026-10-10] P&B (era âmbar)
   video:        { accent: '#111111', bg: '#F1F3F5', bgDark: '#161618', icon: '#111111' },
   audio:        { accent: '#111111', bg: '#F1F3F5', bgDark: '#161618', icon: '#111111' },
   pdf:          { accent: '#dc2626', bg: '#fef2f2', bgDark: '#450a0a', icon: '#dc2626' },
   document:     { accent: '#111111', bg: '#F1F3F5', bgDark: '#161618', icon: '#111111' },
   spreadsheet:  { accent: '#16a34a', bg: '#f0fdf4', bgDark: '#052e16', icon: '#16a34a' },
   presentation: { accent: '#d97706', bg: '#fffbeb', bgDark: '#451a03', icon: '#d97706' },
-  archive:      { accent: '#64748b', bg: '#f8fafc', bgDark: '#1e293b', icon: '#64748b' },
-  default:      { accent: '#94a3b8', bg: '#f1f5f9', bgDark: '#1e293b', icon: '#94a3b8' },
+  archive:      { accent: '#64748b', bg: '#f8fafc', bgDark: '#1C1C1E', icon: '#64748b' },
+  default:      { accent: '#94a3b8', bg: '#f1f5f9', bgDark: '#1C1C1E', icon: '#94a3b8' },
 };
 
+// [2026-10-10 P&B] pastas sem arco-íris (antes verde/âmbar/vermelho/ciano
+// por hash — "Photo Backup" saía vermelha). Cinzas; no escuro ver getFolderColor.
 const FOLDER_COLORS = [
-  '#111111', '#111111', '#16a34a', '#f59e0b', '#dc2626', '#111111', '#0891b2', '#ea580c',
+  '#111111', '#3A3A3C', '#48484A', '#2C2C2E',
 ];
 
-function getFolderColor(folderId) {
+function getFolderColor(folderId, isDark) {
+  if (isDark) return '#D1D1D6';
   if (!folderId) return '#111111';
   const hash = typeof folderId === 'number' ? folderId : String(folderId).split('').reduce((a, c) => a + c.charCodeAt(0), 0);
   return FOLDER_COLORS[hash % FOLDER_COLORS.length];
@@ -66,7 +69,9 @@ function getFolderColor(folderId) {
 
 function getTypeColors(iconType, isDark) {
   const c = FILE_TYPE_COLORS[iconType] || FILE_TYPE_COLORS.default;
-  return { accent: c.accent, bg: isDark ? c.bgDark : c.bg, icon: c.icon };
+  // [2026-10-10] tinta #111 some no fundo escuro → inverte no tema escuro.
+  const inv = (v) => (isDark && v === '#111111' ? '#F5F5F7' : v);
+  return { accent: inv(c.accent), bg: isDark ? c.bgDark : c.bg, icon: inv(c.icon) };
 }
 
 function formatDate(dateStr, t) {
@@ -168,7 +173,7 @@ function glassHeaderBg(isDark) {
 // ============================================================
 
 function FolderCard({ folder, colors, onPress, onLongPress, onContextMenu, t, isDark, searchQuery }) {
-  const folderColor = getFolderColor(folder.id);
+  const folderColor = getFolderColor(folder.id, isDark);
   const folderBg = isDark ? folderColor + '18' : folderColor + '10';
   const hoverAnim = useRef(new Animated.Value(0)).current;
 
@@ -459,10 +464,11 @@ function formatStorageBytes(bytes) {
 // Threshold-based fill color so the storage bar visually communicates
 // pressure: green under 50%, amber 50-80%, orange 80-95%, red > 95%.
 // Used by both the files Drive bar and the photos backup bar.
-function getStorageFillColor(percent) {
+// [2026-10-10 P&B] abaixo de 80% = neutro (tinta do tema); cor só sinaliza
+// pressão real (âmbar/laranja/vermelho).
+function getStorageFillColor(percent, isDark) {
   const p = Number(percent) || 0;
-  if (p < 50) return '#22c55e';
-  if (p < 80) return '#f59e0b';
+  if (p < 80) return isDark ? '#F5F5F7' : '#111111';
   if (p < 95) return '#ef6c00';
   return '#ef4444';
 }
@@ -510,7 +516,7 @@ function StorageBar({ storageInfo, colors, t, isDark }) {
   const isMedium = percent > 60;
   // Threshold color drives the drive fill + percentage badge so the bar
   // reads as "green / yellow / orange / red" at a glance.
-  const fillColor = getStorageFillColor(percent);
+  const fillColor = getStorageFillColor(percent, isDark);
 
   return (
     <View style={[
@@ -572,7 +578,7 @@ function StorageBar({ storageInfo, colors, t, isDark }) {
           {emailPct > 0 && (
             <Animated.View style={[
               styles.storageFillEmail,
-              { width: emailWidth, backgroundColor: colors.warning },
+              { width: emailWidth, backgroundColor: isDark ? '#7C7C80' : '#8E8E93' },
               drivePct > 0 && { borderTopLeftRadius: 0, borderBottomLeftRadius: 0 },
             ]} />
           )}
@@ -588,7 +594,7 @@ function StorageBar({ storageInfo, colors, t, isDark }) {
           </Text>
         </View>
         <View style={styles.storageLegendItem}>
-          <View style={[styles.storageLegendDot, { backgroundColor: colors.warning }]} />
+          <View style={[styles.storageLegendDot, { backgroundColor: isDark ? '#7C7C80' : '#8E8E93' }]} />
           <Text style={[styles.storageLegendText, { color: colors.textTertiary }]}>
             Email {storageInfo.email_formatted || formatStorageBytes(emailUsed)}
           </Text>
@@ -2395,7 +2401,7 @@ function FilesScreenInner() {
   // ---- GRID ITEM RENDERER ----
   const renderGridItem = ({ item }) => {
     if (item._type === 'folder') {
-      const folderColor = getFolderColor(item.id);
+      const folderColor = getFolderColor(item.id, isDark);
       return (
         <GridCardPressable
           style={[
@@ -2914,8 +2920,8 @@ function FilesScreenInner() {
           {/* Icon bg intentionally paired with the INVERTED toast surface above
               (isDark? light-theme green : dark-theme green) for contrast — not a
               direct colors.success mapping, left as-is. */}
-          <View style={[styles.toastIcon, { backgroundColor: isDark ? '#16a34a' : '#4ade80' }]}>
-            <IconCheck size={12} color="#fff" />
+          <View style={[styles.toastIcon, { backgroundColor: isDark ? '#111111' : '#F5F5F7' }]}>
+            <IconCheck size={12} color={isDark ? '#fff' : '#111111'} />
           </View>
           <Text style={[styles.toastText, { color: colors.toastText }]}>{toast}</Text>
         </Animated.View>
@@ -3147,7 +3153,7 @@ function FilesScreenInner() {
                   <View style={[styles.actionItemIcon, { backgroundColor: colors.primary }]}>
                     <IconSparkles size={16} color={colors.onPrimary} />
                   </View>
-                  <Text style={[styles.actionItemText, { color: colors.primary, fontWeight: '700' }]}>{t('files.analyzeWithOne') || 'Analisar com One AI'}</Text>
+                  <Text style={[styles.actionItemText, { color: colors.primary, fontWeight: '700' }]}>{t('files.analyzeWithOne')}</Text>
                 </TouchableOpacity>
                 {(() => {
                   const m = (actionMenu.item.mime_type || '').toLowerCase();
@@ -3188,7 +3194,7 @@ function FilesScreenInner() {
                           <View style={[styles.actionItemIcon, { backgroundColor: isDark ? '#4285f418' : '#e8f0fe' }]}>
                             <IconFileText size={18} color="#4285f4" />
                           </View>
-                          <Text style={[styles.actionItemText, { color: '#4285f4', fontWeight: '600' }]}>{t('files.editWithDocs') || 'Editar com Documentos'}</Text>
+                          <Text style={[styles.actionItemText, { color: '#4285f4', fontWeight: '600' }]}>{t('files.editWithDocs')}</Text>
                         </TouchableOpacity>
                       )}
                     </>
@@ -3835,8 +3841,8 @@ function FilesScreenInner() {
                   style={[styles.moveItem, { borderBottomColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)' }]}
                   onPress={() => handleMove(item.id)}
                 >
-                  <View style={[styles.moveItemIconWrap, { backgroundColor: isDark ? getFolderColor(item.id) + '18' : getFolderColor(item.id) + '10' }]}>
-                    <IconFolder size={18} color={getFolderColor(item.id)} />
+                  <View style={[styles.moveItemIconWrap, { backgroundColor: isDark ? getFolderColor(item.id, true) + '18' : getFolderColor(item.id) + '10' }]}>
+                    <IconFolder size={18} color={getFolderColor(item.id, isDark)} />
                   </View>
                   <Text style={[styles.moveItemText, { color: colors.text }]}>{item.name}</Text>
                 </TouchableOpacity>
@@ -4116,7 +4122,7 @@ const styles = StyleSheet.create({
   },
   storageFillEmail: {
     height: '100%', borderRadius: 4,
-    backgroundColor: '#f59e0b',
+    backgroundColor: '#8E8E93',
   },
   storageLegend: {
     flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',

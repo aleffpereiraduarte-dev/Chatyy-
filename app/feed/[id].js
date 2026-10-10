@@ -16,6 +16,7 @@ import {
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useTheme } from '../../context/ThemeContext';
 import { useAuth } from '../../context/AuthContext';
+import { useLanguage } from '../../context/LanguageContext'; // [2026-10-10 feed-polish] i18n
 import * as api from '../../services/api';
 import AvatarCircle from '../../components/AvatarCircle';
 import { IconHeart, IconMessageSquare, IconShare, IconX, IconMapPin, IconDownload } from '../../components/Icons';
@@ -34,6 +35,7 @@ export default function FeedPostPublic() {
   const router = useRouter();
   const { colors, isDark } = useTheme();
   const { user } = useAuth();
+  const { t } = useLanguage();
   const [post, setPost] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -49,9 +51,9 @@ export default function FeedPostPublic() {
         const r = await api.apiCall('feed_get_post', { id }, 'POST');
         if (!alive) return;
         if (r?.success && r.data?.post) setPost(r.data.post);
-        else setError(r?.message || 'Post não encontrado');
+        else setError(r?.message || t('feedPublic.notFound'));
       } catch (e) {
-        if (alive) setError(e?.message || 'Erro ao carregar');
+        if (alive) setError(e?.message || t('feedPublic.loadError'));
       } finally {
         if (alive) setLoading(false);
       }
@@ -66,8 +68,8 @@ export default function FeedPostPublic() {
   useEffect(() => {
     if (Platform.OS !== 'web' || !post) return;
     try {
-      const title = `${post.author_name || post.author_email?.split('@')[0]} no Chatyy`;
-      const desc = (post.caption || 'Tudo está aqui').slice(0, 160);
+      const title = t('feedPublic.onChatyy').replace('{name}', post.author_name || post.author_email?.split('@')[0] || '');
+      const desc = (post.caption || t('feedPublic.tagline')).slice(0, 160);
       const imgRaw = post.thumbnail_url && !post.thumbnail_url.endsWith('.mp4')
         ? post.thumbnail_url
         : (post.media_urls && post.media_urls[0]);
@@ -112,10 +114,10 @@ export default function FeedPostPublic() {
   if (error || !post) {
     return (
       <View style={[styles.wrap, { backgroundColor: colors.background, alignItems: 'center', justifyContent: 'center', padding: 24 }]}>
-        <Text style={{ fontSize: 18, fontWeight: '700', color: colors.text }}>Post não disponível</Text>
-        <Text style={{ fontSize: 14, color: colors.textSecondary, marginTop: 8, textAlign: 'center' }}>{error || 'Este post foi removido ou não pode ser exibido.'}</Text>
-        <TouchableOpacity onPress={goApp} style={{ marginTop: 24, paddingHorizontal: 24, paddingVertical: 12, backgroundColor: '#111111', borderRadius: 10 }}>
-          <Text style={{ color: '#fff', fontWeight: '700' }}>Ir pro Chatyy</Text>
+        <Text style={{ fontSize: 18, fontWeight: '700', color: colors.text }}>{t('feedPublic.unavailable')}</Text>
+        <Text style={{ fontSize: 14, color: colors.textSecondary, marginTop: 8, textAlign: 'center' }}>{error || t('feedPublic.removed')}</Text>
+        <TouchableOpacity onPress={goApp} style={{ marginTop: 24, paddingHorizontal: 24, paddingVertical: 12, backgroundColor: colors.primary, borderRadius: 10 }}>
+          <Text style={{ color: colors.onPrimary, fontWeight: '700' }}>{t('feedPublic.goApp')}</Text>
         </TouchableOpacity>
       </View>
     );
@@ -131,11 +133,11 @@ export default function FeedPostPublic() {
       <View style={[styles.topbar, { borderBottomColor: colors.border }]}>
         <TouchableOpacity onPress={goApp} style={styles.brandRow} activeOpacity={0.8}>
           <Text style={[styles.brand, { color: colors.primary }]}>Chatyy</Text>
-          <Text style={{ fontSize: 12, color: colors.textSecondary, marginLeft: 8 }}>Tudo está aqui</Text>
+          <Text style={{ fontSize: 12, color: colors.textSecondary, marginLeft: 8 }}>{t('feedPublic.tagline')}</Text>
         </TouchableOpacity>
         {!user?.email && (
-          <TouchableOpacity onPress={goLogin} style={styles.loginBtn} activeOpacity={0.85}>
-            <Text style={styles.loginBtnText}>Entrar</Text>
+          <TouchableOpacity onPress={goLogin} style={[styles.loginBtn, { backgroundColor: colors.primary }]} activeOpacity={0.85}>
+            <Text style={[styles.loginBtnText, { color: colors.onPrimary }]}>{t('feedPublic.signIn')}</Text>
           </TouchableOpacity>
         )}
       </View>
@@ -170,7 +172,7 @@ export default function FeedPostPublic() {
               />
             ) : (
               <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
-                <Text style={{ color: '#fff' }}>Vídeo — abra no app</Text>
+                <Text style={{ color: '#fff' }}>{t('feedPublic.videoOpenApp')}</Text>
               </View>
             )
           ) : (
@@ -199,33 +201,36 @@ export default function FeedPostPublic() {
       {/* CTA for logged-out viewers */}
       {!user?.email && (
         <View style={[styles.cta, { borderColor: colors.border }]}>
-          <Text style={[styles.ctaTitle, { color: colors.text }]}>Gostou desse post?</Text>
+          <Text style={[styles.ctaTitle, { color: colors.text }]}>{t('feedPublic.ctaTitle')}</Text>
           <Text style={[styles.ctaSubtitle, { color: colors.textSecondary }]}>
-            Entre pra curtir, comentar e seguir {post.author_name || 'o autor'}.
+            {t('feedPublic.ctaSub').replace('{name}', post.author_name || t('feedPublic.theAuthor'))}
           </Text>
-          <TouchableOpacity onPress={goLogin} style={styles.ctaBtn} activeOpacity={0.85}>
-            <Text style={styles.ctaBtnText}>Entrar no Chatyy</Text>
+          <TouchableOpacity onPress={goLogin} style={[styles.ctaBtn, { backgroundColor: colors.primary }]} activeOpacity={0.85}>
+            <Text style={[styles.ctaBtnText, { color: colors.onPrimary }]}>{t('feedPublic.signInChatyy')}</Text>
           </TouchableOpacity>
           {Platform.OS === 'web' && (
             <View style={styles.storesRow}>
               <TouchableOpacity
                 onPress={() => (typeof window !== 'undefined') && window.open('https://apps.apple.com/app/id6759975575', '_blank')}
-                style={[styles.storeBtn, { backgroundColor: '#000' }]}
+                style={[styles.storeBtn, { backgroundColor: colors.primary }]}
                 activeOpacity={0.85}
                 accessibilityLabel="Download on App Store"
               >
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                  <IconDownload size={14} color="#fff" />
-                  <Text style={styles.storeText}>App Store</Text>
+                  <IconDownload size={14} color={colors.onPrimary} />
+                  <Text style={[styles.storeText, { color: colors.onPrimary }]}>App Store</Text>
                 </View>
               </TouchableOpacity>
               <TouchableOpacity
                 onPress={() => (typeof window !== 'undefined') && window.open('https://play.google.com/store/apps/details?id=com.onemundo.mail', '_blank')}
-                style={[styles.storeBtn, { backgroundColor: '#000' }]}
+                style={[styles.storeBtn, { backgroundColor: colors.primary }]}
                 activeOpacity={0.85}
                 accessibilityLabel="Get it on Google Play"
               >
-                <Text style={styles.storeText}>▶ Google Play</Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                  <IconDownload size={14} color={colors.onPrimary} />
+                  <Text style={[styles.storeText, { color: colors.onPrimary }]}>Google Play</Text>
+                </View>
               </TouchableOpacity>
             </View>
           )}

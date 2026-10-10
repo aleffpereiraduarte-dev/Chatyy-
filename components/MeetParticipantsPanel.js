@@ -5,7 +5,7 @@ import { useLanguage } from '../context/LanguageContext';
 import { BorderRadius, FontSize, Spacing } from '../constants/theme';
 import { IconX, IconMic, IconMicOff, IconVideo, IconVideoOff, IconUsers, IconRaisedHand } from './Icons';
 
-const AVATAR_COLORS = ['#111111', '#16a34a', '#dc2626', '#f59e0b', '#111111', '#ea580c', '#0d9488', '#e11d48'];
+const AVATAR_COLORS = ['#5C5C5C', '#4A4A4A', '#6B6B6B', '#3D3D3D', '#545454', '#636363']; // [2026-10-10] P&B neutro
 
 function hashColor(name = '') {
   let h = 0;

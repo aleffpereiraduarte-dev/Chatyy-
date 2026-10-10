@@ -3069,14 +3069,18 @@ const sty = StyleSheet.create({
   createBtnText: { color: '#fff', fontSize: 16, fontWeight: '700', letterSpacing: 0.2 },
 
   // Alphabet sidebar
+  // [2026-10-10] Was position:absolute over the whole list → the letters sat
+  // on top of the "Recentes" carousel / shortcut rows. Now a real column in
+  // the flexDirection:'row' container, so the list (and its header rows) end
+  // before the index and nothing overlaps.
   alphabetSidebar: {
-    position: 'absolute', right: 2, top: 0, bottom: 0,
-    justifyContent: 'center', zIndex: 10,
+    width: 22, marginRight: 2,
+    justifyContent: 'center', alignItems: 'center',
   },
   alphabetInner: {
     paddingVertical: 4, alignItems: 'center',
   },
-  alphabetLetter: { paddingVertical: 1, paddingHorizontal: 6 },
+  alphabetLetter: { paddingVertical: 1, paddingHorizontal: 4 },
   alphabetLetterText: { fontSize: 10, fontWeight: '700' },
 
   // QR Modal

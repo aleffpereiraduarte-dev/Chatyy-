@@ -38,7 +38,7 @@ try { mailWs = require('../services/websocket').default; } catch {}
 const ACCENT = '#111111';
 // [beauty 2026-10-01] Single source for the light-mode feed canvas off-white
 // (was a magic '#f6f8fa' literal repeated 9×). One const = no drift.
-const FEED_CANVAS = '#f6f8fa';
+const FEED_CANVAS = '#ffffff'; // [2026-10-10 feed-polish] was bluish #f6f8fa → seam vs white header
 const SCREEN_WIDTH = Dimensions.get('window').width;
 const useNative = Platform.OS !== 'web';
 
@@ -110,7 +110,7 @@ const FeedPostRow = React.memo(function FeedPostRow(props) {
 // — a translucent red halo expands behind it on a 1.6 s loop so the
 // user reads "this is live" without the icon visibly bouncing every
 // frame. Subtle but signals tech-grade attention.
-function LiveFab({ onPress, t, isWeb, styles }) {
+function LiveFab({ onPress, t, isWeb, styles, colors, isDark }) {
   const pulse = useRef(new Animated.Value(0)).current;
   useEffect(() => {
     const loop = Animated.loop(
@@ -128,7 +128,8 @@ function LiveFab({ onPress, t, isWeb, styles }) {
         style={{
           position: 'absolute', inset: 0, left: 0, top: 0, right: 0, bottom: 0,
           borderRadius: 23,
-          backgroundColor: '#dc2626',
+          // [2026-10-10 feed-polish] P&B: was a red halo/red button (off-palette).
+          backgroundColor: isDark ? 'rgba(255,255,255,0.5)' : 'rgba(0,0,0,0.28)',
           opacity: ringOpacity,
           transform: [{ scale: ringScale }],
         }}
@@ -136,16 +137,20 @@ function LiveFab({ onPress, t, isWeb, styles }) {
       <TouchableOpacity
         style={{
           width: 46, height: 46, borderRadius: 23,
-          backgroundColor: '#dc2626',
+          backgroundColor: isDark ? 'rgba(30,30,30,0.96)' : '#ffffff',
+          borderWidth: StyleSheet.hairlineWidth,
+          borderColor: isDark ? 'rgba(255,255,255,0.14)' : 'rgba(0,0,0,0.10)',
           alignItems: 'center', justifyContent: 'center',
-          ...(isWeb ? { boxShadow: '0 4px 14px rgba(220,38,38,0.4), 0 2px 6px rgba(0,0,0,0.1)' } : {}),
+          ...(isWeb ? { boxShadow: '0 4px 14px rgba(0,0,0,0.14)' } : {}),
         }}
         onPress={onPress}
         activeOpacity={0.8}
         accessibilityLabel={t('live.goLive')}
         accessibilityRole="button"
       >
-        <IconVideo size={20} color="#fff" />
+        <IconVideo size={20} color={colors.text} />
+        {/* live semantic = only a tiny red dot (IG/TikTok style) */}
+        <View pointerEvents="none" style={{ position: 'absolute', top: 9, right: 9, width: 8, height: 8, borderRadius: 4, backgroundColor: '#ef4444', borderWidth: 1.5, borderColor: isDark ? '#1e1e1e' : '#ffffff' }} />
       </TouchableOpacity>
     </View>
   );
@@ -946,11 +951,11 @@ function ChatFeedTab({ colors, isDark, t, user, router, initialFeedMode, onFeedM
           accessibilityRole="button"
           accessibilityLabel={`${t('live.liveNow')}: ${heroName}`}
           style={[styles.liveHero, {
-            backgroundColor: isDark ? '#1a0e10' : '#fff',
+            backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : '#fff',
             ...(isWeb ? {
               boxShadow: isDark
-                ? '0 6px 24px rgba(220,38,38,0.18), 0 2px 8px rgba(0,0,0,0.35)'
-                : '0 6px 24px rgba(220,38,38,0.12), 0 2px 8px rgba(0,0,0,0.08)',
+                ? '0 6px 24px rgba(0,0,0,0.35)'
+                : '0 6px 24px rgba(0,0,0,0.08), 0 2px 8px rgba(0,0,0,0.06)',
             } : {}),
           }]}
         >
@@ -981,8 +986,8 @@ function ChatFeedTab({ colors, isDark, t, user, router, initialFeedMode, onFeedM
                   {hero.title}
                 </Text>
               )}
-              <View style={styles.liveHeroCtaPill}>
-                <Text style={styles.liveHeroCtaText}>
+              <View style={[styles.liveHeroCtaPill, { backgroundColor: colors.primary }]}>
+                <Text style={[styles.liveHeroCtaText, { color: colors.onPrimary }]}>
                   {(t('live.enter') || 'Entrar').toUpperCase()}
                 </Text>
               </View>
@@ -1149,14 +1154,14 @@ function ChatFeedTab({ colors, isDark, t, user, router, initialFeedMode, onFeedM
         </Text>
       </View>
       <TouchableOpacity
-        style={styles.followButton}
+        style={[styles.followButton, { backgroundColor: colors.primary }]}
         onPress={() => {
           clearSearch();
           handlePressUser(usr.email, usr.name);
         }}
         activeOpacity={0.7}
       >
-        <Text style={styles.followButtonText}>{t('profile.follow')}</Text>
+        <Text style={[styles.followButtonText, { color: colors.onPrimary }]}>{t('profile.follow')}</Text>
       </TouchableOpacity>
     </PressableRow>
   ), [isDark, colors, isWeb, t, handlePressUser, clearSearch]);
@@ -1165,7 +1170,7 @@ function ChatFeedTab({ colors, isDark, t, user, router, initialFeedMode, onFeedM
     if (searchLoading) {
       return (
         <View style={styles.searchStatusContainer}>
-          <ActivityIndicator size="small" color={ACCENT} />
+          <ActivityIndicator size="small" color={colors.text} />
         </View>
       );
     }
@@ -1244,7 +1249,7 @@ function ChatFeedTab({ colors, isDark, t, user, router, initialFeedMode, onFeedM
             <TouchableOpacity
               key={u.email}
               style={[styles.suggestionCard, {
-                backgroundColor: isDark ? 'rgba(255,255,255,0.04)' : FEED_CANVAS,
+                backgroundColor: isDark ? 'rgba(255,255,255,0.04)' : '#fafafa',
                 borderColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)',
               }]}
               onPress={() => handlePressUser(u.email)}
@@ -1262,7 +1267,7 @@ function ChatFeedTab({ colors, isDark, t, user, router, initialFeedMode, onFeedM
                 </Text>
               ) : null}
               <TouchableOpacity
-                style={styles.suggestionFollowBtn}
+                style={[styles.suggestionFollowBtn, { backgroundColor: colors.primary }]}
                 onPress={async () => {
                   try { haptic.light(); } catch {} // [2026-10-08 apps-native]
                   try { await api.followUser(u.email); } catch {}
@@ -1270,7 +1275,7 @@ function ChatFeedTab({ colors, isDark, t, user, router, initialFeedMode, onFeedM
                 }}
                 activeOpacity={0.8}
               >
-                <Text style={styles.suggestionFollowText}>
+                <Text style={[styles.suggestionFollowText, { color: colors.onPrimary }]}>
                   {t('profile.follow') || 'Seguir'}
                 </Text>
               </TouchableOpacity>
@@ -1335,7 +1340,7 @@ function ChatFeedTab({ colors, isDark, t, user, router, initialFeedMode, onFeedM
     return (
       <View>
         <View style={styles.footerLoader}>
-          <ActivityIndicator size="small" color={colors?.primary || ACCENT} />
+          <ActivityIndicator size="small" color={colors.text} />
         </View>
         {/* Lightweight skeleton card beneath the spinner so the viewport
             reveals a hint of the next post instead of a blank gap. */}
@@ -1410,15 +1415,18 @@ function ChatFeedTab({ colors, isDark, t, user, router, initialFeedMode, onFeedM
   const renderAlgorithmTabs = useCallback(() => (
     <View style={[styles.tabBar, {
       backgroundColor: isDark ? colors.background : FEED_CANVAS,
-      borderBottomColor: 'transparent',
-      paddingVertical: 2,
+      borderBottomColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)',
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      paddingVertical: 0,
     }]}>
       <Animated.View pointerEvents="none" style={{
         position: 'absolute',
-        top: 4, bottom: 4, left: algoPillLeft,
+        // [2026-10-10 feed-polish] 2nd row = underline tabs (IG profile style) so it
+        // no longer looks like a duplicate of the Posts/Reels segmented pill above.
+        bottom: 0, height: 2, left: algoPillLeft,
         width: '48%',
-        backgroundColor: isDark ? 'rgba(255,255,255,0.12)' : 'rgba(17, 17, 17,0.10)', // [2026-10-08 apps-native] dark pill was black-on-black
-        borderRadius: 10,
+        backgroundColor: colors.text,
+        borderRadius: 1,
       }} />
       <TouchableOpacity
         style={styles.tabItem}
@@ -1672,7 +1680,7 @@ function ChatFeedTab({ colors, isDark, t, user, router, initialFeedMode, onFeedM
       {/* Go Live FAB — pulse ring + scroll-top glass blur for a more
           "tech" feel. Pulse signals "ready to broadcast" without being
           distracting (1 cycle per 1.6s, max scale 1.45). */}
-      <LiveFab onPress={() => router.push('/live-broadcast')} t={t} isWeb={isWeb} styles={styles} />
+      <LiveFab onPress={() => router.push('/live-broadcast')} t={t} isWeb={isWeb} styles={styles} colors={colors} isDark={isDark} />
 
       {/* [2026-10-08 reels-publish] progresso do reel em 2º plano + "Ver" → aba Reels */}
       <ReelPublishProgress email={user?.email} t={t} bottom={96} onView={() => setFeedMode('reels')} />
@@ -1794,16 +1802,16 @@ const styles = StyleSheet.create({
     width: 46,
     height: 46,
     borderRadius: 23,
-    backgroundColor: '#dc2626',
+    backgroundColor: 'transparent',
     alignItems: 'center',
     justifyContent: 'center',
     zIndex: 10,
     ...Platform.select({
       ios: {
-        shadowColor: '#dc2626',
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.35,
-        shadowRadius: 10,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 3 },
+        shadowOpacity: 0.15,
+        shadowRadius: 6,
       },
       android: { elevation: 8 },
       default: {},
@@ -1895,12 +1903,12 @@ const styles = StyleSheet.create({
   },
   liveHeroBackdrop: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(220,38,38,0.10)',
+    backgroundColor: 'transparent',
   },
   liveHeroBackdropGradient: {
     position: 'absolute',
     top: 0, left: 0, right: 0, height: 64,
-    backgroundColor: 'rgba(220,38,38,0.16)',
+    backgroundColor: 'transparent',
   },
   liveHeroContent: {
     flexDirection: 'row',

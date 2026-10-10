@@ -130,7 +130,7 @@ function GalleryGrid({ onSelect, selectedIds, colors, isDark, t, isWeb }) {
   if (hasPermission === null) {
     return (
       <View style={gs.galleryEmpty}>
-        <ActivityIndicator size="large" color={ACCENT} />
+        <ActivityIndicator size="large" color={colors.primary} />
         <Text style={[gs.galleryEmptyText, { color: colors.textSecondary, marginTop: 12 }]}>
           {t('post.loadingGallery') || 'Carregando galeria...'}
         </Text>
@@ -144,7 +144,7 @@ function GalleryGrid({ onSelect, selectedIds, colors, isDark, t, isWeb }) {
           {t('post.galleryPermission') || 'Permitir acesso às suas fotos para selecionar mídia'}
         </Text>
         <TouchableOpacity
-          style={{ paddingHorizontal: 20, paddingVertical: 12, borderRadius: 10, backgroundColor: ACCENT }}
+          style={{ paddingHorizontal: 20, paddingVertical: 12, borderRadius: 10, backgroundColor: colors.primary }}
           onPress={async () => {
             try {
               const MediaLibrary = require('expo-media-library');
@@ -155,7 +155,7 @@ function GalleryGrid({ onSelect, selectedIds, colors, isDark, t, isWeb }) {
           }}
           activeOpacity={0.8}
         >
-          <Text style={{ color: '#fff', fontWeight: '700' }}>
+          <Text style={{ color: colors.onPrimary, fontWeight: '700' }}>
             {t('post.allowPhotos') || 'Permitir Fotos'}
           </Text>
         </TouchableOpacity>
@@ -166,7 +166,7 @@ function GalleryGrid({ onSelect, selectedIds, colors, isDark, t, isWeb }) {
   if (assets.length === 0 && loading) {
     return (
       <View style={gs.galleryEmpty}>
-        <ActivityIndicator size="large" color={ACCENT} />
+        <ActivityIndicator size="large" color={colors.primary} />
       </View>
     );
   }
@@ -223,7 +223,7 @@ function GalleryGrid({ onSelect, selectedIds, colors, isDark, t, isWeb }) {
           </TouchableOpacity>
         );
       }}
-      ListFooterComponent={loading ? <ActivityIndicator color={ACCENT} style={{ marginVertical: 16 }} /> : null}
+      ListFooterComponent={loading ? <ActivityIndicator color={colors.primary} style={{ marginVertical: 16 }} /> : null}
     />
   );
 }
@@ -254,7 +254,7 @@ function MentionDropdown({ query, onSelect, colors, isDark }) {
       backgroundColor: isDark ? '#1c1c1e' : '#fff',
       borderColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)',
     }]}>
-      {loading && <ActivityIndicator size="small" color={ACCENT} style={{ paddingVertical: 8 }} />}
+      {loading && <ActivityIndicator size="small" color={colors.primary} style={{ paddingVertical: 8 }} />}
       {results.map((c, i) => (
         <TouchableOpacity
           key={c.email || i}
@@ -334,17 +334,17 @@ function AudienceModal({ visible, onClose, selected, onSelect, colors, isDark, t
             return (
               <TouchableOpacity
                 key={opt.key}
-                style={[gs.audienceRow, isActive && { backgroundColor: isDark ? 'rgba(17, 17, 17,0.1)' : 'rgba(17, 17, 17,0.06)' }]}
+                style={[gs.audienceRow, isActive && { backgroundColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(17, 17, 17,0.06)' }]}
                 onPress={() => { onSelect(opt.key); onClose(); }}
               >
                 <View style={[gs.audienceIcon, { backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)' }]}>
-                  <Icon size={22} color={isActive ? ACCENT : colors.textSecondary} />
+                  <Icon size={22} color={isActive ? colors.primary : colors.textSecondary} />
                 </View>
                 <View style={{ flex: 1 }}>
                   <Text style={[gs.audienceLabel, { color: colors.text }]}>{opt.label}</Text>
                   <Text style={[gs.audienceDesc, { color: colors.textSecondary }]}>{opt.desc}</Text>
                 </View>
-                {isActive && <IconCheck size={22} color={ACCENT} />}
+                {isActive && <IconCheck size={22} color={colors.primary} />}
               </TouchableOpacity>
             );
           })}
@@ -372,7 +372,7 @@ function SchedulePicker({ value, onChange, colors, isDark, t }) {
             flex: 1,
             background: 'transparent',
             border: 'none',
-            color: isDark ? '#e2e8f0' : '#1e293b',
+            color: colors.text,
             fontSize: 15,
             outline: 'none',
             fontFamily: 'inherit',
@@ -430,8 +430,8 @@ function TagPeopleModal({ visible, onClose, tagged, onTag, colors, isDark, t }) 
             <IconX size={24} color={colors.text} />
           </TouchableOpacity>
           <Text style={[gs.tagTitle, { color: colors.text }]}>{t('post.tagPeople') || 'Marcar pessoas'}</Text>
-          <TouchableOpacity onPress={onClose} style={[gs.tagDoneBtn, { backgroundColor: ACCENT }]}>
-            <Text style={gs.tagDoneText}>{t('common.done') || 'Pronto'}</Text>
+          <TouchableOpacity onPress={onClose} style={[gs.tagDoneBtn, { backgroundColor: colors.primary }]}>
+            <Text style={[gs.tagDoneText, { color: colors.onPrimary }]}>{t('common.done') || 'Pronto'}</Text>
           </TouchableOpacity>
         </View>
         <View style={[gs.tagSearchRow, { backgroundColor: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.03)' }]}>
@@ -450,16 +450,16 @@ function TagPeopleModal({ visible, onClose, tagged, onTag, colors, isDark, t }) 
             {tagged.map(person => (
               <TouchableOpacity
                 key={person.email}
-                style={[gs.tagChip, { backgroundColor: isDark ? 'rgba(17, 17, 17,0.15)' : 'rgba(17, 17, 17,0.1)' }]}
+                style={[gs.tagChip, { backgroundColor: isDark ? 'rgba(255,255,255,0.15)' : 'rgba(17, 17, 17,0.1)' }]}
                 onPress={() => onTag(tagged.filter(p => p.email !== person.email))}
               >
-                <Text style={[gs.tagChipText, { color: ACCENT }]}>{person.name || person.email}</Text>
-                <IconX size={14} color={ACCENT} />
+                <Text style={[gs.tagChipText, { color: colors.primary }]}>{person.name || person.email}</Text>
+                <IconX size={14} color={colors.primary} />
               </TouchableOpacity>
             ))}
           </ScrollView>
         )}
-        {loading && <ActivityIndicator color={ACCENT} style={{ marginTop: 16 }} />}
+        {loading && <ActivityIndicator color={colors.primary} style={{ marginTop: 16 }} />}
         <FlatList
           data={results}
           keyExtractor={item => item.email}
@@ -482,8 +482,8 @@ function TagPeopleModal({ visible, onClose, tagged, onTag, colors, isDark, t }) 
                   <Text style={[gs.tagResultName, { color: colors.text }]}>{item.name || item.email}</Text>
                   {item.name && <Text style={[gs.tagResultEmail, { color: colors.textSecondary }]}>{item.email}</Text>}
                 </View>
-                <View style={[gs.tagCheckbox, isTagged && { backgroundColor: ACCENT, borderColor: ACCENT }]}>
-                  {isTagged && <IconCheck size={14} color="#fff" />}
+                <View style={[gs.tagCheckbox, isTagged && { backgroundColor: colors.primary, borderColor: colors.primary }]}>
+                  {isTagged && <IconCheck size={14} color={colors.onPrimary} />}
                 </View>
               </TouchableOpacity>
             );
@@ -1075,7 +1075,7 @@ export default function CreatePostModal({
               onPress={publish}
               disabled={publishing || mediaFiles.length === 0}
               style={[gs.publishBtn, {
-                backgroundColor: publishing || mediaFiles.length === 0 ? (isDark ? '#1a3a2a' : '#a8e6c1') : ACCENT,
+                backgroundColor: publishing || mediaFiles.length === 0 ? (isDark ? 'rgba(255,255,255,0.16)' : 'rgba(17,17,17,0.22)') : colors.primary,
               }]}
               accessibilityLabel={t('post.share') || 'Share'}
               accessibilityRole="button"
@@ -1083,7 +1083,7 @@ export default function CreatePostModal({
               {publishing ? (
                 <ActivityIndicator size="small" color="#fff" />
               ) : (
-                <Text style={gs.publishText}>
+                <Text style={[gs.publishText, { color: publishing || mediaFiles.length === 0 ? '#fff' : colors.onPrimary }]}>
                   {scheduleDate ? (t('post.schedule') || 'Schedule') : (t('post.share') || 'Share')}
                 </Text>
               )}
@@ -1092,11 +1092,11 @@ export default function CreatePostModal({
             mediaFiles.length > 0 ? (
               <TouchableOpacity
                 onPress={() => setStep(2)}
-                style={[gs.publishBtn, { backgroundColor: ACCENT }]}
+                style={[gs.publishBtn, { backgroundColor: colors.primary }]}
                 accessibilityLabel={t('common.next') || 'Next'}
                 accessibilityRole="button"
               >
-                <Text style={gs.publishText}>{t('common.next') || 'Next'}</Text>
+                <Text style={[gs.publishText, { color: colors.onPrimary }]}>{t('common.next') || 'Next'}</Text>
               </TouchableOpacity>
             ) : (
               <View style={{ width: 80 }} />
@@ -1175,13 +1175,13 @@ export default function CreatePostModal({
             {/* Action buttons row */}
             <View style={[gs.actionRow, { borderBottomColor: borderColor }]}>
               <TouchableOpacity style={gs.actionBtn} onPress={pickMedia} activeOpacity={0.7}>
-                <View style={[gs.actionIcon, { backgroundColor: isDark ? 'rgba(17, 17, 17,0.15)' : 'rgba(17, 17, 17,0.1)' }]}>
-                  <IconImage size={22} color={ACCENT} />
+                <View style={[gs.actionIcon, { backgroundColor: isDark ? 'rgba(255,255,255,0.15)' : 'rgba(17, 17, 17,0.1)' }]}>
+                  <IconImage size={22} color={colors.primary} />
                 </View>
                 <Text style={[gs.actionLabel, { color: colors.text }]}>{t('post.gallery') || 'Gallery'}</Text>
               </TouchableOpacity>
               <TouchableOpacity style={gs.actionBtn} onPress={openCamera} activeOpacity={0.7}>
-                <View style={[gs.actionIcon, { backgroundColor: isDark ? 'rgba(59,130,246,0.15)' : 'rgba(59,130,246,0.1)' }]}>
+                <View style={[gs.actionIcon, { backgroundColor: isDark ? 'rgba(255,255,255,0.15)' : 'rgba(17, 17, 17,0.1)' }]}>
                   <IconCamera size={22} color={colors.primary} />
                 </View>
                 <Text style={[gs.actionLabel, { color: colors.text }]}>{t('post.camera') || 'Camera'}</Text>
@@ -1194,12 +1194,12 @@ export default function CreatePostModal({
                 >
                   <View style={[gs.actionIcon, {
                     backgroundColor: multiSelectMode
-                      ? (isDark ? 'rgba(17, 17, 17,0.2)' : 'rgba(17, 17, 17,0.1)')
+                      ? (isDark ? 'rgba(255,255,255,0.2)' : 'rgba(17, 17, 17,0.1)')
                       : (isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)'),
                   }]}>
-                    <IconCheck size={22} color={multiSelectMode ? '#111111' : colors.textSecondary} />
+                    <IconCheck size={22} color={multiSelectMode ? colors.primary : colors.textSecondary} />
                   </View>
-                  <Text style={[gs.actionLabel, { color: multiSelectMode ? '#111111' : colors.text }]}>
+                  <Text style={[gs.actionLabel, { color: multiSelectMode ? colors.primary : colors.text }]}>
                     {t('post.selectMultiple') || 'Multi'}
                   </Text>
                 </TouchableOpacity>
@@ -1214,9 +1214,9 @@ export default function CreatePostModal({
                   borderColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)',
                 }]}>
                   <View style={[gs.iconCircle, {
-                    backgroundColor: isDark ? 'rgba(17, 17, 17,0.12)' : 'rgba(17, 17, 17,0.08)',
+                    backgroundColor: isDark ? 'rgba(255,255,255,0.12)' : 'rgba(17, 17, 17,0.08)',
                   }]}>
-                    <IconCamera size={44} color={ACCENT} />
+                    <IconCamera size={44} color={colors.primary} />
                   </View>
                   <Text style={[gs.webEmptyTitle, { color: colors.text }]}>
                     {t('post.dragOrSelect') || 'Select photos and videos'}
@@ -1225,13 +1225,13 @@ export default function CreatePostModal({
                     {(t('feed.selectMediaHint') || 'Up to {max} items').replace('{max}', MAX_MEDIA)}
                   </Text>
                   <View style={gs.webBtnRow}>
-                    <TouchableOpacity style={gs.webBtn} onPress={pickMedia} activeOpacity={0.8}>
-                      <IconImage size={20} color="#fff" />
-                      <Text style={gs.webBtnText}>{t('post.gallery') || 'Gallery'}</Text>
+                    <TouchableOpacity style={[gs.webBtn, { backgroundColor: colors.primary }]} onPress={pickMedia} activeOpacity={0.8}>
+                      <IconImage size={20} color={colors.onPrimary} />
+                      <Text style={[gs.webBtnText, { color: colors.onPrimary }]}>{t('post.gallery') || 'Gallery'}</Text>
                     </TouchableOpacity>
-                    <TouchableOpacity style={[gs.webBtn, { backgroundColor: '#111111' }]} onPress={openCamera} activeOpacity={0.8}>
-                      <IconCamera size={20} color="#fff" />
-                      <Text style={gs.webBtnText}>{t('post.camera') || 'Camera'}</Text>
+                    <TouchableOpacity style={[gs.webBtn, { backgroundColor: colors.primary }]} onPress={openCamera} activeOpacity={0.8}>
+                      <IconCamera size={20} color={colors.onPrimary} />
+                      <Text style={[gs.webBtnText, { color: colors.onPrimary }]}>{t('post.camera') || 'Camera'}</Text>
                     </TouchableOpacity>
                   </View>
                 </View>
@@ -1345,7 +1345,7 @@ export default function CreatePostModal({
                       activeOpacity={0.7}
                       accessibilityLabel={filter.name}
                     >
-                      <View style={[gs.filterThumb, isActive && { borderColor: ACCENT, borderWidth: 2 }]}>
+                      <View style={[gs.filterThumb, isActive && { borderColor: colors.primary, borderWidth: 2 }]}>
                         {isWeb ? (
                           <img
                             src={firstUri}
@@ -1363,7 +1363,7 @@ export default function CreatePostModal({
                           />
                         )}
                       </View>
-                      <Text style={[gs.filterName, { color: isActive ? ACCENT : colors.textSecondary }, isActive && { fontWeight: '700' }]} numberOfLines={1}>
+                      <Text style={[gs.filterName, { color: isActive ? colors.primary : colors.textSecondary }, isActive && { fontWeight: '700' }]} numberOfLines={1}>
                         {filter.name}
                       </Text>
                     </TouchableOpacity>
@@ -1400,7 +1400,7 @@ export default function CreatePostModal({
               {/* Caption footer: char count + AI suggest */}
               <View style={gs.captionFooter}>
                 <TouchableOpacity
-                  style={[gs.aiBtn, { backgroundColor: isDark ? 'rgba(17, 17, 17,0.15)' : 'rgba(17, 17, 17,0.08)' }]}
+                  style={[gs.aiBtn, { backgroundColor: isDark ? 'rgba(255,255,255,0.15)' : 'rgba(17, 17, 17,0.08)' }]}
                   onPress={suggestCaption}
                   disabled={aiLoading}
                   activeOpacity={0.7}
@@ -1410,7 +1410,7 @@ export default function CreatePostModal({
                   ) : (
                     <>
                       <IconSparkles size={16} color={colors.primary} />
-                      <Text style={gs.aiBtnText}>{t('post.aiSuggest') || 'AI Suggest'}</Text>
+                      <Text style={[gs.aiBtnText, { color: colors.primary }]}>{t('post.aiSuggest') || 'AI Suggest'}</Text>
                     </>
                   )}
                 </TouchableOpacity>
@@ -1438,7 +1438,7 @@ export default function CreatePostModal({
                 accessibilityRole="button"
                 accessibilityLabel={t('post.addLocation') || 'Adicionar local'}
               >
-                <IconMapPin size={22} color={locationCoords ? ACCENT : colors.textSecondary} />
+                <IconMapPin size={22} color={locationCoords ? colors.primary : colors.textSecondary} />
               </TouchableOpacity>
               <TextInput
                 style={[gs.optionInput, { color: colors.text }]}
@@ -1516,7 +1516,7 @@ export default function CreatePostModal({
               <View
                 style={[gs.optionRow, {
                   borderTopColor: borderColor,
-                  backgroundColor: isDark ? 'rgba(17, 17, 17,0.10)' : 'rgba(17, 17, 17,0.06)',
+                  backgroundColor: isDark ? 'rgba(255,255,255,0.10)' : 'rgba(17, 17, 17,0.06)',
                 }]}
               >
                 <View style={{ width: 32, height: 44, borderRadius: 4, overflow: 'hidden', backgroundColor: '#000' }}>
@@ -1525,7 +1525,7 @@ export default function CreatePostModal({
                   ) : null}
                 </View>
                 <View style={{ flex: 1 }}>
-                  <Text style={{ color: ACCENT, fontSize: 11, fontWeight: '700' }}>
+                  <Text style={{ color: colors.primary, fontSize: 11, fontWeight: '700' }}>
                     {duetMode === 'split' ? (t('feed.duet') || 'Duet') : (t('feed.stitch') || 'Stitch')}
                   </Text>
                   <Text style={{ color: colors.text, fontSize: 14, fontWeight: '600' }} numberOfLines={1}>
@@ -1573,7 +1573,7 @@ export default function CreatePostModal({
                       style={[
                         gs.crossPostPill,
                         active
-                          ? { backgroundColor: ACCENT, borderColor: ACCENT }
+                          ? { backgroundColor: colors.primary, borderColor: colors.primary }
                           : { borderColor: isDark ? 'rgba(255,255,255,0.18)' : 'rgba(0,0,0,0.12)' },
                       ]}
                       onPress={() => setCrossPosts(prev => ({ ...prev, [key]: !prev[key] }))}
@@ -1584,7 +1584,7 @@ export default function CreatePostModal({
                     >
                       <Text style={[
                         gs.crossPostPillText,
-                        { color: active ? '#fff' : colors.text },
+                        { color: active ? colors.onPrimary : colors.text },
                       ]}>
                         {label}
                       </Text>
@@ -1597,15 +1597,15 @@ export default function CreatePostModal({
             {/* Post as Reel toggle (only if there's video content) */}
             {mediaFiles.some(m => m.type === 'video') && (
               <View style={[gs.optionRow, { borderTopColor: borderColor }]}>
-                <IconVideo size={22} color={postAsReel ? ACCENT : colors.textSecondary} />
-                <Text style={[gs.optionLabel, { color: postAsReel ? ACCENT : colors.text, flex: 1 }]}>
+                <IconVideo size={22} color={postAsReel ? colors.primary : colors.textSecondary} />
+                <Text style={[gs.optionLabel, { color: postAsReel ? colors.primary : colors.text, flex: 1 }]}>
                   {t('post.postAsReel') || 'Post as Reel'}
                 </Text>
                 <Switch
                   value={postAsReel}
                   onValueChange={setPostAsReel}
-                  trackColor={{ false: isDark ? '#333' : '#ddd', true: 'rgba(17, 17, 17,0.4)' }}
-                  thumbColor={postAsReel ? ACCENT : '#f4f3f4'}
+                  trackColor={{ false: isDark ? '#333' : '#ddd', true: isDark ? 'rgba(255,255,255,0.4)' : 'rgba(17, 17, 17,0.4)' }}
+                  thumbColor={postAsReel ? colors.primary : '#f4f3f4'}
                 />
               </View>
             )}
@@ -1625,13 +1625,13 @@ export default function CreatePostModal({
                 }
               }}
             >
-              <IconClock size={22} color={scheduleDate ? '#f59e0b' : colors.textSecondary} />
-              <Text style={[gs.optionLabel, { color: scheduleDate ? '#f59e0b' : colors.textTertiary }]}>
+              <IconClock size={22} color={scheduleDate ? colors.text : colors.textSecondary} />
+              <Text style={[gs.optionLabel, { color: scheduleDate ? colors.text : colors.textTertiary }]}>
                 {scheduleDate ? (t('post.scheduled') || 'Scheduled') : (t('post.schedule') || 'Schedule post')}
               </Text>
               {scheduleDate ? (
                 <TouchableOpacity onPress={() => setScheduleDate(null)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-                  <IconX size={16} color="#f59e0b" />
+                  <IconX size={16} color={colors.textSecondary} />
                 </TouchableOpacity>
               ) : (
                 <IconChevronRight size={18} color={colors.textTertiary} />
@@ -1661,16 +1661,16 @@ export default function CreatePostModal({
               activeOpacity={0.85}
               style={[
                 gs.bottomShareBtn,
-                { backgroundColor: ACCENT },
+                { backgroundColor: colors.primary },
                 (publishing || mediaFiles.length === 0) && gs.bottomShareBtnDisabled,
               ]}
               accessibilityRole="button"
               accessibilityLabel={t('post.share') || 'Share'}
             >
               {publishing ? (
-                <ActivityIndicator size="small" color="#fff" />
+                <ActivityIndicator size="small" color={colors.onPrimary} />
               ) : (
-                <Text style={gs.bottomShareText}>
+                <Text style={[gs.bottomShareText, { color: colors.onPrimary }]}>
                   {scheduleDate ? (t('post.schedule') || 'Agendar') : (t('post.share') || 'Compartilhar')}
                 </Text>
               )}
@@ -1761,13 +1761,13 @@ export default function CreatePostModal({
                     style={{
                       paddingHorizontal: 14, paddingVertical: 7, borderRadius: 999,
                       borderWidth: StyleSheet.hairlineWidth,
-                      borderColor: active ? ACCENT : (isDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.10)'),
-                      backgroundColor: active ? (isDark ? 'rgba(17, 17, 17,0.22)' : 'rgba(17, 17, 17,0.10)') : 'transparent',
+                      borderColor: active ? colors.primary : (isDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.10)'),
+                      backgroundColor: active ? (isDark ? 'rgba(255,255,255,0.22)' : 'rgba(17, 17, 17,0.10)') : 'transparent',
                     }}
                     accessibilityRole="tab"
                     accessibilityState={{ selected: active }}
                   >
-                    <Text style={{ color: active ? ACCENT : colors.text, fontWeight: active ? '700' : '500', fontSize: 13 }}>
+                    <Text style={{ color: active ? colors.primary : colors.text, fontWeight: active ? '700' : '500', fontSize: 13 }}>
                       {tb.label}
                     </Text>
                   </TouchableOpacity>
@@ -1796,7 +1796,7 @@ export default function CreatePostModal({
                 </View>
                 {catalogLoading ? (
                   <View style={{ paddingVertical: 18, alignItems: 'center' }}>
-                    <ActivityIndicator size="small" color={ACCENT} />
+                    <ActivityIndicator size="small" color={colors.primary} />
                   </View>
                 ) : catalogSounds.length === 0 ? (
                   <View style={{ paddingVertical: 18, paddingHorizontal: 20 }}>
@@ -1836,7 +1836,7 @@ export default function CreatePostModal({
                               {trk.artist || 'Pixabay'} · {trk.duration_sec || 30}s
                             </Text>
                           </View>
-                          {active ? <IconCheck size={20} color={ACCENT} /> : null}
+                          {active ? <IconCheck size={20} color={colors.primary} /> : null}
                         </TouchableOpacity>
                       );
                     }}
@@ -1849,7 +1849,7 @@ export default function CreatePostModal({
             {soundPickerTab === 'saved' && (
               savedSoundsLoading ? (
                 <View style={{ paddingVertical: 18, alignItems: 'center' }}>
-                  <ActivityIndicator size="small" color={ACCENT} />
+                  <ActivityIndicator size="small" color={colors.primary} />
                 </View>
               ) : savedSounds.length === 0 ? (
                 <View style={{ paddingVertical: 18, paddingHorizontal: 20 }}>
@@ -1890,7 +1890,7 @@ export default function CreatePostModal({
                             {trk.artist || ''}
                           </Text>
                         </View>
-                        {active ? <IconCheck size={20} color={ACCENT} /> : null}
+                        {active ? <IconCheck size={20} color={colors.primary} /> : null}
                       </TouchableOpacity>
                     );
                   }}
@@ -1906,8 +1906,8 @@ export default function CreatePostModal({
                 activeOpacity={0.7}
                 onPress={() => { setSelectedSound(null); setShowSoundPicker(false); }}
               >
-                <View style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: ACCENT, alignItems: 'center', justifyContent: 'center' }}>
-                  <IconMusic size={20} color="#fff" />
+                <View style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center' }}>
+                  <IconMusic size={20} color={colors.onPrimary} />
                 </View>
                 <View style={{ flex: 1 }}>
                   <Text style={{ color: colors.text, fontSize: 15, fontWeight: '600' }}>
@@ -1917,7 +1917,7 @@ export default function CreatePostModal({
                     {t('post.originalSoundHint') || 'Áudio gravado com o vídeo'}
                   </Text>
                 </View>
-                {!selectedSound ? <IconCheck size={20} color={ACCENT} /> : null}
+                {!selectedSound ? <IconCheck size={20} color={colors.primary} /> : null}
               </TouchableOpacity>
             )}
           </Pressable>

@@ -434,7 +434,7 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     borderRadius: 18,
     borderWidth: 1,
-    borderColor: 'rgba(17, 17, 17,0.55)',
+    borderColor: 'rgba(255,255,255,0.18)',
   },
   hintText: {
     color: '#fff',

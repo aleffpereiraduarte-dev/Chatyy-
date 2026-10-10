@@ -80,7 +80,9 @@ const GifItem = memo(({ item, onSelect, colors }) => {
   );
 });
 
-export default function GifPickerPanel({ onSelect, onClose, colors, t }) {
+export default function GifPickerPanel({ onSelect, onClose, colors, t, bottomInset = 0 }) {
+  // [2026-10-10] Painel no lugar do teclado: reserva o home indicator embaixo.
+  const _bi = Math.max(0, Number(bottomInset) || 0);
   const [query, setQuery] = useState('');
   const [gifs, setGifs] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -181,7 +183,7 @@ export default function GifPickerPanel({ onSelect, onClose, colors, t }) {
 
   return (
     <View style={{
-      height: 320, backgroundColor: colors.surface,
+      height: 320 + _bi, paddingBottom: _bi, backgroundColor: colors.surface,
       borderTopWidth: 1, borderTopColor: colors.border,
       ...(Platform.OS === 'web' ? { borderTopLeftRadius: 16, borderTopRightRadius: 16 } : {}),
     }}>

@@ -872,50 +872,47 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onF
           target. Tapping fires email_unsubscribe and the pill rolls through
           sending → done states. */}
       {unsubscribeInfo && (
-        <View style={{ marginHorizontal: 16, marginTop: 12, flexDirection: 'row', alignItems: 'center', gap: 10,
-                       backgroundColor: '#f3f4f6', borderLeftWidth: 4, borderLeftColor: '#111111',
-                       padding: 12, borderRadius: 8 }}>
+        <View style={[s.smartCard, { backgroundColor: colors.surfaceVariant, borderLeftColor: colors.text }]}>
           <View style={{ flex: 1 }}>
-            <Text style={{ fontWeight: '700', color: '#111111', fontSize: 13 }}>
-              {t('reader.unsubscribeTitle') || 'Newsletter detectada'}
+            <Text style={[s.smartTitle, { color: colors.text, fontSize: 13 }]}>
+              {t('reader.unsubscribeTitle')}
             </Text>
             {!!unsubscribeInfo.sender_name && (
-              <Text style={{ color: '#111111', fontSize: 12, marginTop: 2 }}>{unsubscribeInfo.sender_name}</Text>
+              <Text style={[s.smartSub, { color: colors.textSecondary }]}>{unsubscribeInfo.sender_name}</Text>
             )}
           </View>
           <TouchableOpacity
             onPress={handleUnsubscribe}
             disabled={unsubscribeState === 'sending' || unsubscribeState === 'done'}
-            style={{ backgroundColor: unsubscribeState === 'done' ? '#111111' : '#111111',
-                     paddingHorizontal: 14, paddingVertical: 8, borderRadius: 8,
-                     opacity: unsubscribeState === 'sending' ? 0.6 : 1 }}
-            accessibilityLabel={t('reader.unsubscribe') || 'Descadastrar'}
+            style={[s.smartBtn, { backgroundColor: colors.primary, opacity: unsubscribeState === 'sending' ? 0.6 : 1 }]}
+            accessibilityLabel={t('reader.unsubscribe')}
             accessibilityRole="button"
           >
-            <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700' }}>
-              {unsubscribeState === 'sending' ? (t('reader.unsubscribing') || 'Enviando...')
-                : unsubscribeState === 'done' ? (t('reader.unsubscribed') || 'Solicitado ✓')
-                : unsubscribeState === 'error' ? (t('reader.unsubscribeError') || 'Tentar novamente')
-                : (t('reader.unsubscribe') || 'Descadastrar')}
+            <Text style={[s.smartBtnText, { color: colors.onPrimary }]}>
+              {unsubscribeState === 'sending' ? t('reader.unsubscribing')
+                : unsubscribeState === 'done' ? t('reader.unsubscribed')
+                : unsubscribeState === 'error' ? t('reader.unsubscribeError')
+                : t('reader.unsubscribe')}
             </Text>
           </TouchableOpacity>
         </View>
       )}
-      {/* AI Smart Actions Banner: boleto, tracking, meeting */}
+      {/* AI Smart Actions Banner: boleto, tracking, meeting — neutral P&B cards
+          (theme tokens) so they read correctly in light and dark mode. */}
       {smartActions && (
         <View style={{ marginHorizontal: 16, marginTop: 12, gap: 8 }}>
           {smartActions.boleto && (
-            <View style={{ backgroundColor: '#fef3c7', borderLeftWidth: 4, borderLeftColor: '#f59e0b', padding: 12, borderRadius: 8, flexDirection: 'row', alignItems: 'center', gap: 12 }}>
-              <IconReceipt size={24} color="#92400e" />
+            <View style={[s.smartCard, s.smartCardFlush, { backgroundColor: colors.surfaceVariant, borderLeftColor: colors.text }]}>
+              <IconReceipt size={22} color={colors.text} />
               <View style={{ flex: 1 }}>
-                <Text style={{ fontWeight: '700', color: '#92400e', fontSize: 14 }}>
-                  Boleto detectado{smartActions.boleto.amount ? ` — R$ ${Number(smartActions.boleto.amount).toFixed(2)}` : ''}
+                <Text style={[s.smartTitle, { color: colors.text }]}>
+                  {t('reader.smartBoleto')}{smartActions.boleto.amount ? ` — R$ ${Number(smartActions.boleto.amount).toFixed(2)}` : ''}
                 </Text>
                 {smartActions.boleto.due_date && (
-                  <Text style={{ fontSize: 12, color: '#92400e' }}>Vence: {smartActions.boleto.due_date}</Text>
+                  <Text style={[s.smartSub, { color: colors.textSecondary }]}>{t('reader.smartDue', { date: smartActions.boleto.due_date })}</Text>
                 )}
                 {smartActions.boleto.payee && (
-                  <Text style={{ fontSize: 12, color: '#92400e' }}>{smartActions.boleto.payee}</Text>
+                  <Text style={[s.smartSub, { color: colors.textSecondary }]}>{smartActions.boleto.payee}</Text>
                 )}
               </View>
               {smartActions.boleto.barcode && (
@@ -924,38 +921,39 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onF
                     if (Platform.OS === 'web') navigator.clipboard?.writeText(smartActions.boleto.barcode);
                     else require('expo-clipboard').setStringAsync(smartActions.boleto.barcode);
                   } catch {}
-                }} style={{ backgroundColor: '#f59e0b', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 6 }}>
-                  <Text style={{ color: '#fff', fontSize: 12, fontWeight: '600' }}>Copiar codigo</Text>
+                }} style={[s.smartBtn, { backgroundColor: colors.primary }]}
+                  accessibilityRole="button" accessibilityLabel={t('reader.smartCopyCode')}>
+                  <Text style={[s.smartBtnText, { color: colors.onPrimary }]}>{t('reader.smartCopyCode')}</Text>
                 </TouchableOpacity>
               )}
             </View>
           )}
           {smartActions.tracking && smartActions.tracking.tracking_codes?.length > 0 && (
-            <View style={{ backgroundColor: '#dbeafe', borderLeftWidth: 4, borderLeftColor: '#3b82f6', padding: 12, borderRadius: 8, flexDirection: 'row', alignItems: 'center', gap: 12 }}>
-              <IconPackage size={24} color="#1e40af" />
+            <View style={[s.smartCard, s.smartCardFlush, { backgroundColor: colors.surfaceVariant, borderLeftColor: colors.text }]}>
+              <IconPackage size={22} color={colors.text} />
               <View style={{ flex: 1 }}>
-                <Text style={{ fontWeight: '700', color: '#1e40af', fontSize: 14 }}>
-                  Rastreio {smartActions.tracking.carrier ? `(${smartActions.tracking.carrier})` : ''}
+                <Text style={[s.smartTitle, { color: colors.text }]}>
+                  {t('reader.smartTracking')}{smartActions.tracking.carrier ? ` (${smartActions.tracking.carrier})` : ''}
                 </Text>
-                <Text style={{ fontSize: 12, color: '#1e40af', fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace' }}>
+                <Text style={[s.smartSub, { color: colors.text, fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace' }]} selectable>
                   {smartActions.tracking.tracking_codes[0]}
                 </Text>
                 {smartActions.tracking.estimated_delivery && (
-                  <Text style={{ fontSize: 12, color: '#1e40af' }}>Entrega: {smartActions.tracking.estimated_delivery}</Text>
+                  <Text style={[s.smartSub, { color: colors.textSecondary }]}>{t('reader.smartDelivery', { date: smartActions.tracking.estimated_delivery })}</Text>
                 )}
               </View>
             </View>
           )}
           {smartActions.meeting && smartActions.meeting.start && (
-            <View style={{ backgroundColor: '#dcfce7', borderLeftWidth: 4, borderLeftColor: '#22c55e', padding: 12, borderRadius: 8, flexDirection: 'row', alignItems: 'center', gap: 12 }}>
-              <IconCalendar size={24} color="#166534" />
+            <View style={[s.smartCard, s.smartCardFlush, { backgroundColor: colors.surfaceVariant, borderLeftColor: colors.text }]}>
+              <IconCalendar size={22} color={colors.text} />
               <View style={{ flex: 1 }}>
-                <Text style={{ fontWeight: '700', color: '#166534', fontSize: 14 }}>
-                  {smartActions.meeting.title || 'Reuniao detectada'}
+                <Text style={[s.smartTitle, { color: colors.text }]}>
+                  {smartActions.meeting.title || t('reader.smartMeeting')}
                 </Text>
-                <Text style={{ fontSize: 12, color: '#166534' }}>{smartActions.meeting.start}</Text>
+                <Text style={[s.smartSub, { color: colors.textSecondary }]}>{smartActions.meeting.start}</Text>
                 {smartActions.meeting.location && (
-                  <Text style={{ fontSize: 12, color: '#166534' }}>{smartActions.meeting.location}</Text>
+                  <Text style={[s.smartSub, { color: colors.textSecondary }]}>{smartActions.meeting.location}</Text>
                 )}
               </View>
               <TouchableOpacity onPress={() => {
@@ -964,7 +962,7 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onF
                     pathname: '/event-detail',
                     params: {
                       mode: 'create',
-                      title: smartActions.meeting.title || 'Reuniao',
+                      title: smartActions.meeting.title || t('reader.smartMeetingTitle'),
                       start: smartActions.meeting.start,
                       end: smartActions.meeting.end || '',
                       location: smartActions.meeting.location || '',
@@ -972,8 +970,9 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onF
                     },
                   });
                 } catch {}
-              }} style={{ backgroundColor: '#22c55e', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 6 }}>
-                <Text style={{ color: '#fff', fontSize: 12, fontWeight: '600' }}>Adicionar</Text>
+              }} style={[s.smartBtn, { backgroundColor: colors.primary }]}
+                accessibilityRole="button" accessibilityLabel={t('common.add')}>
+                <Text style={[s.smartBtnText, { color: colors.onPrimary }]}>{t('common.add')}</Text>
               </TouchableOpacity>
             </View>
           )}
@@ -998,7 +997,7 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onF
             </Animated.View>
           </TouchableOpacity>
           {onClose && (
-            <TouchableOpacity onPress={onClose} style={s.headerBtn} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} accessibilityLabel="Close" accessibilityRole="button">
+            <TouchableOpacity onPress={onClose} style={s.headerBtn} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} accessibilityLabel={t('common.close')} accessibilityRole="button">
               <IconX size={18} color={colors.textSecondary} />
             </TouchableOpacity>
           )}
@@ -1185,7 +1184,7 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onF
                     document.body.removeChild(link);
                   });
                 }}
-                accessibilityLabel="Download all attachments"
+                accessibilityLabel={t('reader.downloadAll')}
                 accessibilityRole="button"
               >
                 <IconDownload size={13} color={colors.primary} style={{ marginRight: 4 }} />
@@ -1314,7 +1313,7 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onF
           ) : (
             <View style={s.inlineReplyExpanded}>
               <View style={[s.inlineReplyToRow, { borderBottomColor: colors.borderLight }]}>
-                <Text style={[s.inlineReplyToLabel, { color: colors.textTertiary }]}>Para:</Text>
+                <Text style={[s.inlineReplyToLabel, { color: colors.textTertiary }]}>{t('compose.to')}:</Text>
                 <Text style={[s.inlineReplyToEmail, { color: colors.textSecondary }]} numberOfLines={1}>{email.from}</Text>
               </View>
               <TextInput
@@ -1512,7 +1511,7 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onF
             ) : (
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
                 <IconSparkles size={12} color={colors.text} />
-                <Text style={{ color: colors.text, fontWeight: '600', fontSize: 12 }}>Tarefas</Text>
+                <Text style={{ color: colors.text, fontWeight: '600', fontSize: 12 }}>{t('reader.tasks')}</Text>
               </View>
             )}
           </TouchableOpacity>
@@ -1671,12 +1670,12 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onF
             <View style={{ flexDirection:'row', alignItems:'center', justifyContent:'space-between', marginBottom:12 }}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
                 <IconSparkles size={18} color={colors.text} />
-                <Text style={{ fontSize:18, fontWeight:'700', color:colors.text }}>Tarefas extraidas</Text>
+                <Text style={{ fontSize:18, fontWeight:'700', color:colors.text }}>{t('reader.tasksExtracted')}</Text>
               </View>
-              <TouchableOpacity onPress={() => setActionItems(null)}><Text style={{ fontSize:24, color:colors.textSecondary }}>×</Text></TouchableOpacity>
+              <TouchableOpacity onPress={() => setActionItems(null)} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} accessibilityRole="button" accessibilityLabel={t('common.close')} style={{ padding: 4 }}><IconX size={20} color={colors.textSecondary} /></TouchableOpacity>
             </View>
             {actionItems.length === 0 ? (
-              <Text style={{ color:colors.textSecondary, padding:12 }}>Nenhuma tarefa identificada nesse email.</Text>
+              <Text style={{ color:colors.textSecondary, padding:12 }}>{t('reader.tasksNone')}</Text>
             ) : (
               <ScrollView style={{ maxHeight:400 }}>
                 {actionItems.map((item, i) => (
@@ -1696,8 +1695,10 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onF
                         </View>
                       )}
                       {item.priority && (
-                        <View style={{ backgroundColor: item.priority==='high'?'#fee2e2':(item.priority==='medium'?'#fef3c7':'#e0f2fe'), paddingHorizontal:6, borderRadius:4 }}>
-                          <Text style={{ fontSize:10, color: item.priority==='high'?'#991b1b':(item.priority==='medium'?'#92400e':'#0369a1'), fontWeight:'600' }}>{item.priority}</Text>
+                        <View style={{ backgroundColor: item.priority==='high' ? (colors.errorBg || colors.surfaceVariant) : colors.surfaceVariant, paddingHorizontal:6, borderRadius:4 }}>
+                          <Text style={{ fontSize:10, color: item.priority==='high' ? colors.error : colors.textSecondary, fontWeight:'600' }}>
+                            {item.priority==='high' ? t('reader.priorityHigh') : item.priority==='medium' ? t('reader.priorityMedium') : item.priority==='low' ? t('reader.priorityLow') : item.priority}
+                          </Text>
                         </View>
                       )}
                     </View>
@@ -1732,6 +1733,16 @@ const s = StyleSheet.create({
     justifyContent: 'center', alignItems: 'center', marginRight: Spacing.md + 2,
   },
   senderAvatarText: { color: '#fff', fontSize: 21, fontWeight: '800' },
+  // Smart cards (newsletter / boleto / tracking / meeting) — neutral, themed.
+  smartCard: {
+    marginHorizontal: 16, marginTop: 12, flexDirection: 'row', alignItems: 'center', gap: 12,
+    borderLeftWidth: 3, paddingVertical: 12, paddingHorizontal: 14, borderRadius: 10,
+  },
+  smartCardFlush: { marginHorizontal: 0, marginTop: 0 },
+  smartTitle: { fontWeight: '700', fontSize: 14, letterSpacing: -0.1 },
+  smartSub: { fontSize: 12, marginTop: 2 },
+  smartBtn: { paddingHorizontal: 14, minHeight: 36, justifyContent: 'center', borderRadius: 8 },
+  smartBtnText: { fontSize: 12, fontWeight: '700' },
   // Polish 2026-05-13: subtle brand ring around 40px avatar — 2px border +
   // soft halo shadow. Matches the sender-hero-pill spec.
   senderAvatarRing: {

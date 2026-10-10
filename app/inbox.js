@@ -1374,8 +1374,10 @@ function InboxScreenInner() {
       {/* Account switching overlay */}
       {switching && (
         <View style={s.switchOverlay}>
-          <ActivityIndicator size="large" color={colors.textOnPrimary} />
-          <Text style={[s.switchText, { color: colors.textOnPrimary }]}>{t('account.switching', { email: '' })}</Text>
+          {/* Scrim is always dark (rgba 0,0,0,.5) — ink must stay white in both
+              themes (textOnPrimary is black in dark mode → was invisible). */}
+          <ActivityIndicator size="large" color="#ffffff" />
+          <Text style={[s.switchText, { color: '#ffffff' }]}>{t('account.switching', { email: '' })}</Text>
         </View>
       )}
 
@@ -2014,14 +2016,14 @@ function InboxScreenInner() {
             }]}>
               <View style={[s.sideModuleHeader, {
                 borderBottomColor: colors.border,
-                backgroundColor: panelInfo.color + '08',
+                backgroundColor: colors.surface,
               }]}>
                 <View style={{
                   width: 30, height: 30, borderRadius: 8,
-                  backgroundColor: panelInfo.color + '18',
+                  backgroundColor: colors.surfaceVariant,
                   alignItems: 'center', justifyContent: 'center',
                 }}>
-                  <PanelIcon size={16} color={panelInfo.color} />
+                  <PanelIcon size={16} color={colors.text} />
                 </View>
                 <Text style={[s.sideModuleTitle, { color: colors.text }]}>
                   {t(panelInfo.label)}

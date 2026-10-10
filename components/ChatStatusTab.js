@@ -300,6 +300,14 @@ function stopStatusAudio() {
   if (_nativeAudioCallback) _nativeAudioCallback(null);
 }
 
+// [2026-10-10 i18n] "N visualização/visualizações" was hardcoded pt-BR.
+// Singular/plural via i18n keys with {count}.
+function _viewCountLabel(t, n) {
+  const c = Number(n) || 0;
+  if (typeof t !== 'function') return String(c);
+  return t(c === 1 ? 'status.viewCountOne' : 'status.viewCountOther', { count: c });
+}
+
 function timeAgo(dateStr, t) {
   if (!dateStr) return '';
   let str = String(dateStr).trim();
@@ -3211,11 +3219,11 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
                       setViewersModal(true);
                     } catch {}
                   }}
-                  accessibilityLabel={`${myViewCount} visualizações`}
+                  accessibilityLabel={_viewCountLabel(t, myViewCount)}
                 >
                   <IconEye size={12} color={isDark ? '#F5F5F7' : ACCENT} />
                   <Text style={[styles.viewCountPillText, isDark && { color: '#F5F5F7' }]}>
-                    {myViewCount} {myViewCount === 1 ? 'visualização' : 'visualizações'}
+                    {_viewCountLabel(t, myViewCount)}
                   </Text>
                 </TouchableOpacity>
               )}
@@ -4309,7 +4317,7 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
               >
                 <IconEye size={16} color="rgba(255,255,255,0.6)" />
                 <Text style={styles.viewersText}>
-                  {currentViewerItem?.view_count} {currentViewerItem?.view_count === 1 ? (t?.('status.viewer') || 'visualização') : (t?.('status.viewers') || 'visualizações')}
+                  {_viewCountLabel(t, Number(currentViewerItem?.view_count) || 0)}
                 </Text>
                 <IconChevronRight size={14} color="rgba(255,255,255,0.4)" />
               </TouchableOpacity>
@@ -4434,7 +4442,7 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
                 </View>
                 <View style={{ flex: 1 }}>
                   <Text style={{ fontSize: 22, fontWeight: '800', color: isDark ? '#fff' : '#111', letterSpacing: -0.4 }}>
-                    {viewersList.length} {viewersList.length === 1 ? (t?.('status.viewer') || 'visualização') : (t?.('status.views') || 'visualizações')}
+                    {_viewCountLabel(t, viewersList.length)}
                   </Text>
                   {viewersList.length > 0 && (
                     <Text style={{ fontSize: 12.5, color: isDark ? 'rgba(255,255,255,0.5)' : 'rgba(0,0,0,0.48)', marginTop: 2 }}>

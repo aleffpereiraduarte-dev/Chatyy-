@@ -6,6 +6,7 @@ import { View, Text, TouchableOpacity, StyleSheet, Platform } from 'react-native
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useLanguage } from '../context/LanguageContext';
+import { useTheme } from '../context/ThemeContext';
 import { subscribeEmailUndo, getEmailUndo, undoEmailSend, dismissEmailUndo } from '../services/emailUndo';
 import { initEmailOutbox } from '../services/emailOutbox';
 
@@ -15,6 +16,10 @@ export default function EmailUndoBar() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { t } = useLanguage();
+  // Dark mode: a #111 bar vanishes on the black app background — lift it to
+  // the elevated surface with a hairline border (iOS-dark snackbar look).
+  const { colors, isDark } = useTheme();
+  const barTheme = isDark ? { backgroundColor: colors.surfaceVariant, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border } : null;
 
   useEffect(() => subscribeEmailUndo(setSt), []);
   // [2026-10-08 email-outbox] this bar is mounted once globally — wire the
@@ -40,7 +45,7 @@ export default function EmailUndoBar() {
 
   return (
     <View pointerEvents="box-none" style={[st_.wrap, { bottom: Math.max(insets.bottom, 12) + 64 }]}>
-      <View style={st_.bar} accessibilityLiveRegion="polite">
+      <View style={[st_.bar, barTheme]} accessibilityLiveRegion="polite">
         <Text style={st_.text} numberOfLines={1}>
           {pending || st.phase === 'sending' ? t('compose.sendingUndo') : outbox ? t('emailOutbox.queuedToast') : t('compose.sentToast')}
         </Text>
@@ -54,7 +59,7 @@ export default function EmailUndoBar() {
           </TouchableOpacity>
         ) : (
           <TouchableOpacity onPress={dismissEmailUndo} hitSlop={10} accessibilityRole="button" style={st_.btn}>
-            <Text style={st_.btnText}>OK</Text>
+            <Text style={st_.btnText}>{t('common.ok')}</Text>
           </TouchableOpacity>
         )}
       </View>

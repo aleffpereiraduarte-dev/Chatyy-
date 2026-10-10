@@ -1716,12 +1716,12 @@ export default function NotesScreen() {
   const BoardIcon = () => (
     <View style={{ width: 20, height: 20, justifyContent: 'center', alignItems: 'center' }}>
       <View style={{ flexDirection: 'row', gap: 2 }}>
-        <View style={{ width: 7, height: 7, backgroundColor: viewMode === 'board' ? '#fff' : colors.textSecondary, borderRadius: 1, transform: [{ rotate: '-3deg' }] }} />
-        <View style={{ width: 7, height: 7, backgroundColor: viewMode === 'board' ? '#fff' : colors.textSecondary, borderRadius: 1, transform: [{ rotate: '2deg' }], marginTop: 3 }} />
+        <View style={{ width: 7, height: 7, backgroundColor: viewMode === 'board' ? (colors.onPrimary || '#fff') : colors.textSecondary, borderRadius: 1, transform: [{ rotate: '-3deg' }] }} />
+        <View style={{ width: 7, height: 7, backgroundColor: viewMode === 'board' ? (colors.onPrimary || '#fff') : colors.textSecondary, borderRadius: 1, transform: [{ rotate: '2deg' }], marginTop: 3 }} />
       </View>
       <View style={{ flexDirection: 'row', gap: 2, marginTop: 1 }}>
-        <View style={{ width: 7, height: 7, backgroundColor: viewMode === 'board' ? '#fff' : colors.textSecondary, borderRadius: 1, transform: [{ rotate: '1deg' }] }} />
-        <View style={{ width: 7, height: 7, backgroundColor: viewMode === 'board' ? '#fff' : colors.textSecondary, borderRadius: 1, transform: [{ rotate: '-2deg' }], marginTop: -2 }} />
+        <View style={{ width: 7, height: 7, backgroundColor: viewMode === 'board' ? (colors.onPrimary || '#fff') : colors.textSecondary, borderRadius: 1, transform: [{ rotate: '1deg' }] }} />
+        <View style={{ width: 7, height: 7, backgroundColor: viewMode === 'board' ? (colors.onPrimary || '#fff') : colors.textSecondary, borderRadius: 1, transform: [{ rotate: '-2deg' }], marginTop: -2 }} />
       </View>
     </View>
   );
@@ -1876,7 +1876,7 @@ export default function NotesScreen() {
                 onPress={() => setViewMode('list')}
                 style={s.viewToggleBtn}
               >
-                <IconMenu size={16} color={viewMode === 'list' ? '#fff' : colors.textSecondary} />
+                <IconMenu size={16} color={viewMode === 'list' ? (colors.onPrimary || '#fff') : colors.textSecondary} />
               </TouchableOpacity>
             </View>
           )}
@@ -2058,83 +2058,75 @@ export default function NotesScreen() {
             scale: emptyAnim.interpolate({ inputRange: [0, 1], outputRange: [0.9, 1] }),
           }],
         }]}>
-          {/* Decorative floating notes illustration */}
+          {/* Decorative floating notes illustration — [2026-10-10] P&B (era amarelo/azul/rosa) */}
           <View style={s.emptyIllustration}>
             <Animated.View style={[s.floatingNote, s.floatingNote1, {
-              backgroundColor: isDark ? '#3E3A1E' : '#FFF9C4',
+              backgroundColor: isDark ? '#2C2C2E' : '#FFFFFF',
               ...(Platform.OS === 'web' ? {
                 background: isDark
-                  ? 'linear-gradient(135deg, #3E3A1E, #4A4520)'
-                  : 'linear-gradient(135deg, #FFF9C4, #FFF176)',
+                  ? 'linear-gradient(135deg, #2C2C2E, #323234)'
+                  : 'linear-gradient(135deg, #FFFFFF, #F2F2F7)',
                 boxShadow: isDark
-                  ? '0 4px 16px rgba(249,168,37,0.15)'
-                  : '0 4px 16px rgba(255,241,118,0.3)',
+                  ? '0 4px 16px rgba(0,0,0,0.15)'
+                  : '0 4px 16px rgba(0,0,0,0.10)',
               } : {}),
               transform: [
                 { rotate: '-8deg' },
                 { translateY: floatAnim1.interpolate({ inputRange: [0, 1], outputRange: [0, -10] }) },
               ],
             }]}>
-              <View style={[s.floatingNoteLine, { backgroundColor: isDark ? 'rgba(255,249,196,0.3)' : 'rgba(0,0,0,0.1)', width: '80%' }]} />
-              <View style={[s.floatingNoteLine, { backgroundColor: isDark ? 'rgba(255,249,196,0.2)' : 'rgba(0,0,0,0.06)', width: '60%' }]} />
-              <View style={[s.floatingNoteLine, { backgroundColor: isDark ? 'rgba(255,249,196,0.15)' : 'rgba(0,0,0,0.04)', width: '40%' }]} />
+              <View style={[s.floatingNoteLine, { backgroundColor: isDark ? 'rgba(255,255,255,0.3)' : 'rgba(0,0,0,0.1)', width: '80%' }]} />
+              <View style={[s.floatingNoteLine, { backgroundColor: isDark ? 'rgba(255,255,255,0.2)' : 'rgba(0,0,0,0.06)', width: '60%' }]} />
+              <View style={[s.floatingNoteLine, { backgroundColor: isDark ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.04)', width: '40%' }]} />
             </Animated.View>
             <Animated.View style={[s.floatingNote, s.floatingNote2, {
-              backgroundColor: isDark ? '#1c1c1e' : '#BBDEFB',
+              backgroundColor: isDark ? '#242426' : '#F2F2F7',
               ...(Platform.OS === 'web' ? {
                 background: isDark
-                  ? 'linear-gradient(135deg, #1E2A3E, #25354A)'
-                  : 'linear-gradient(135deg, #BBDEFB, #90CAF9)',
+                  ? 'linear-gradient(135deg, #242426, #2C2C2E)'
+                  : 'linear-gradient(135deg, #F2F2F7, #E5E5EA)',
                 boxShadow: isDark
-                  ? '0 4px 16px rgba(25,118,210,0.15)'
-                  : '0 4px 16px rgba(144,202,249,0.3)',
+                  ? '0 4px 16px rgba(0,0,0,0.15)'
+                  : '0 4px 16px rgba(0,0,0,0.10)',
               } : {}),
               transform: [
                 { rotate: '5deg' },
                 { translateY: floatAnim2.interpolate({ inputRange: [0, 1], outputRange: [0, -12] }) },
               ],
             }]}>
-              <View style={[s.floatingNoteLine, { backgroundColor: isDark ? 'rgba(187,222,251,0.3)' : 'rgba(0,0,0,0.1)', width: '70%' }]} />
-              <View style={[s.floatingNoteLine, { backgroundColor: isDark ? 'rgba(187,222,251,0.2)' : 'rgba(0,0,0,0.06)', width: '50%' }]} />
+              <View style={[s.floatingNoteLine, { backgroundColor: isDark ? 'rgba(255,255,255,0.3)' : 'rgba(0,0,0,0.1)', width: '70%' }]} />
+              <View style={[s.floatingNoteLine, { backgroundColor: isDark ? 'rgba(255,255,255,0.2)' : 'rgba(0,0,0,0.06)', width: '50%' }]} />
             </Animated.View>
             <Animated.View style={[s.floatingNote, s.floatingNote3, {
-              backgroundColor: isDark ? '#3E1E2A' : '#F8BBD0',
+              backgroundColor: isDark ? '#1C1C1E' : '#E5E5EA',
               ...(Platform.OS === 'web' ? {
                 background: isDark
-                  ? 'linear-gradient(135deg, #3E1E2A, #4A2535)'
-                  : 'linear-gradient(135deg, #F8BBD0, #F48FB1)',
+                  ? 'linear-gradient(135deg, #1C1C1E, #242426)'
+                  : 'linear-gradient(135deg, #E5E5EA, #D1D1D6)',
                 boxShadow: isDark
-                  ? '0 4px 16px rgba(233,30,99,0.15)'
-                  : '0 4px 16px rgba(244,143,177,0.3)',
+                  ? '0 4px 16px rgba(0,0,0,0.15)'
+                  : '0 4px 16px rgba(0,0,0,0.10)',
               } : {}),
               transform: [
                 { rotate: '-3deg' },
                 { translateY: floatAnim3.interpolate({ inputRange: [0, 1], outputRange: [0, -8] }) },
               ],
             }]}>
-              <View style={[s.floatingNoteLine, { backgroundColor: isDark ? 'rgba(248,187,208,0.3)' : 'rgba(0,0,0,0.1)', width: '75%' }]} />
-              <View style={[s.floatingNoteLine, { backgroundColor: isDark ? 'rgba(248,187,208,0.2)' : 'rgba(0,0,0,0.06)', width: '55%' }]} />
-              <View style={[s.floatingNoteLine, { backgroundColor: isDark ? 'rgba(248,187,208,0.15)' : 'rgba(0,0,0,0.04)', width: '35%' }]} />
+              <View style={[s.floatingNoteLine, { backgroundColor: isDark ? 'rgba(255,255,255,0.3)' : 'rgba(0,0,0,0.1)', width: '75%' }]} />
+              <View style={[s.floatingNoteLine, { backgroundColor: isDark ? 'rgba(255,255,255,0.2)' : 'rgba(0,0,0,0.06)', width: '55%' }]} />
+              <View style={[s.floatingNoteLine, { backgroundColor: isDark ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.04)', width: '35%' }]} />
             </Animated.View>
             <View style={[s.emptyIconCircle, {
-              backgroundColor: isDark ? 'rgba(249,168,37,0.15)' : 'rgba(249,168,37,0.12)',
+              backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)',
               ...(Platform.OS === 'web' && isDark ? {
-                boxShadow: '0 0 32px rgba(255,213,79,0.15)',
+                boxShadow: '0 0 32px rgba(0,0,0,0.15)',
               } : {}),
             }]}>
-              <IconStickyNote size={40} color={isDark ? '#FFD54F' : '#F9A825'} />
+              <IconStickyNote size={40} color={colors.text} />
             </View>
           </View>
           <Text style={[s.emptyTitle, {
-            color: colors.text,
-            ...(Platform.OS === 'web' ? {
-              backgroundImage: isDark
-                ? 'linear-gradient(135deg, #FFD54F, #F9A825)'
-                : 'linear-gradient(135deg, #F9A825, #FF8F00)',
-              WebkitBackgroundClip: 'text',
-              WebkitTextFillColor: 'transparent',
-              backgroundClip: 'text',
-            } : {}),
+            color: colors.text, // [2026-10-10 P&B] sem gradiente âmbar no título
           }]}>
             {t('notes.emptyTitle')}
           </Text>

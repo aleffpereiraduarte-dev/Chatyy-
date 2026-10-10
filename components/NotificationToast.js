@@ -32,7 +32,7 @@ const TYPE_ACCENTS = {
 
 // Avatar color from name
 function getAvatarColor(name) {
-  const colors = ['#2563eb', '#16a34a', '#dc2626', '#f59e0b', '#111111', '#ea580c', '#0d9488', '#e11d48'];
+  const colors = ['#5C5C5C', '#4A4A4A', '#6B6B6B', '#3D3D3D', '#545454', '#636363']; // [2026-10-10] P&B neutro
   let hash = 0;
   for (let i = 0; i < (name || '').length; i++) hash = name.charCodeAt(i) + ((hash << 5) - hash);
   return colors[Math.abs(hash) % colors.length];

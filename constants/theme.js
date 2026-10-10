@@ -101,7 +101,7 @@ export const Colors = {
 
   // Avatar — neutral gray tones only (no violet)
   avatarBg: '#8A9099',
-  avatarColors: ['#8A9099', '#7C8B9A', '#9AA0A6', '#A0968C'],
+  avatarColors: ['#6B6B6B', '#5A5A5A', '#777777', '#4F4F4F'], // [2026-10-10] P&B puro (R=G=B)
 
   // Chat — NEUTRAL bubbles (2026-10-03): ENVIADO e RECEBIDO agora têm tons
   // claramente distintos (antes own #E7E9EC ~ other #FFFFFF ~ fundo #f0f2f5 =
@@ -303,7 +303,7 @@ export const DarkColors = {
 
   // Avatar — neutral gray tones only (no violet)
   avatarBg: '#7C828A',
-  avatarColors: ['#7C828A', '#8B95A3', '#9AA0A6', '#A09488'],
+  avatarColors: ['#5E5E5E', '#4C4C4C', '#696969', '#424242'], // [2026-10-10] P&B puro (R=G=B)
 
   // Chat — NEUTRAL bubbles [2026-10-08 dark-black]: preto/cinza Apple (sem azul).
   // ENVIADO #333336 (mais claro), RECEBIDO #1C1C1E, texto #F5F5F7.

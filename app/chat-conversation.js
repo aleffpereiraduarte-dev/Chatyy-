@@ -10768,6 +10768,46 @@ function ChatConversationInner() {
   const [forwardSearch, setForwardSearch] = useState('');
   const [showGifPicker, setShowGifPicker] = useState(false);
   const [showStickerPicker, setShowStickerPicker] = useState(false);
+  // [2026-10-10 painel-no-lugar-do-teclado] Figurinhas/GIF/emoji SUBSTITUEM o
+  // teclado (WhatsApp): abrir um painel derruba o teclado antes (mesmo padrão
+  // do menu "+": blur + Keyboard.dismiss + KeyboardController.dismiss + ~60ms);
+  // tocar no campo de texto (foco / teclado subindo PELO composer) fecha o
+  // painel e o teclado abre sozinho. Antes o teclado ficava aberto POR CIMA do
+  // painel e escondia as abas de pacotes ("tá sobrando embaixo").
+  const dismissComposerKeyboard = useCallback(() => {
+    let wasOpen = false;
+    try { wasOpen = !!Keyboard.isVisible?.(); } catch {}
+    try { inputRef.current?.blur?.(); } catch {}
+    try { Keyboard.dismiss(); } catch {}
+    try { require('react-native-keyboard-controller').KeyboardController?.dismiss?.(); } catch {}
+    return wasOpen;
+  }, []);
+  const openComposerPanel = useCallback((kind) => {
+    const wasOpen = dismissComposerKeyboard();
+    const apply = () => {
+      if (kind === 'sticker') { setShowStickerPicker(true); setShowGifPicker(false); }
+      else if (kind === 'gif') { setShowGifPicker(true); setShowStickerPicker(false); }
+      else if (kind === 'emoji') { setShowFullEmojiPicker(true); }
+    };
+    if (wasOpen && Platform.OS !== 'web') setTimeout(apply, Platform.OS === 'android' ? 80 : 60);
+    else apply();
+  }, [dismissComposerKeyboard]);
+  useEffect(() => {
+    if (!showStickerPicker && !showGifPicker && !showFullEmojiPicker) return undefined;
+    if (Platform.OS === 'web') return undefined;
+    const ev = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const sub = Keyboard.addListener(ev, () => {
+      // Só quando o teclado é do COMPOSER — a busca dentro do painel
+      // (figurinhas/GIF) também abre teclado e não pode fechar o painel.
+      let composerFocused = false;
+      try { composerFocused = !!inputRef.current?.isFocused?.(); } catch {}
+      if (!composerFocused) return;
+      setShowStickerPicker(false);
+      setShowGifPicker(false);
+      setShowFullEmojiPicker(false);
+    });
+    return () => { try { sub.remove(); } catch {} };
+  }, [showStickerPicker, showGifPicker, showFullEmojiPicker]);
   const [stickerMakerSrc, setStickerMakerSrc] = useState(null); // [2026-10-08 sticker-maker]
   const [stickerSheet, setStickerSheet] = useState(null); // [2026-10-10 stickers-import] { messageId, url }
   const [stickerDrop, setStickerDrop] = useState(null); // [2026-10-10 stickers-import] web: [{uri, blob, name, type, size}]
@@ -10929,9 +10969,7 @@ function ChatConversationInner() {
         // → close GIF picker if it's open. Don't fight the keyboard:
         // when the picker isn't already mounted we just open it.
         if (g.dx < -60) {
-          setShowGifPicker(true);
-          setShowStickerPicker(false);
-          try { Keyboard.dismiss(); } catch {}
+          openComposerPanel('gif');
         } else if (g.dx > 60) {
           setShowGifPicker(false);
         }
@@ -17429,7 +17467,7 @@ function ChatConversationInner() {
       // text-input's right edge → fat-finger mis-tap every time the
       // keyboard opened). Now lives in the + menu (and the left-swipe
       // gesture on the pill still toggles it for power users).
-      case 'gif':          return (setShowGifPicker(true), setShowStickerPicker(false));
+      case 'gif':          return openComposerPanel('gif');
       case 'audio':        return handlePickAudioFile();
       case 'location':     return setShowLocationPickerSheet(true);
       case 'liveLocation': return handleShareLiveLocation();
@@ -21718,7 +21756,7 @@ function ChatConversationInner() {
               index={_qr.length}
               colors={colors}
               isDark={isDark}
-              onPress={() => setShowFullEmojiPicker(true)}
+              onPress={() => openComposerPanel('emoji')}
             />
           </>
         );
@@ -31163,7 +31201,10 @@ function ChatConversationInner() {
           // with the keyboard open: ThreadKeyboardAvoider lifts the screen by
           // keyboardHeight - composerBottomPad, so the composer is flush on the
           // keyboard with no padding flip (= no layout jump, no re-render).
-          paddingBottom: composerBottomPad,
+          // [2026-10-10] Com figurinhas/GIF abertos o PAINEL reserva o home
+          // indicator (bottomInset) — aqui só o respiro mínimo, senão sobrava
+          // uma faixa vazia entre o composer e o painel.
+          paddingBottom: (showStickerPicker || showGifPicker) ? Spacing.sm : composerBottomPad,
         }]}>
           {/* WhatsApp pill container — 2026 refined.
               Telegram-style horizontal swipe: a short flick LEFT on the
@@ -31212,7 +31253,11 @@ function ChatConversationInner() {
           }}>
           {/* Emoji/Sticker button - left side of pill */}
             <TouchableOpacity
-              onPress={() => { setShowStickerPicker(prev => !prev); setShowGifPicker(false); }}
+              onPress={() => {
+                // [2026-10-10] Painel no lugar do teclado: fecha o teclado antes de abrir.
+                if (showStickerPicker) { setShowStickerPicker(false); return; }
+                openComposerPanel('sticker');
+              }}
               style={{ width: 36, height: 42, alignItems: 'center', justifyContent: 'center' }}
               accessibilityLabel={t('chatConv.stickers') || 'Stickers'}
               accessibilityRole="button"
@@ -31401,7 +31446,12 @@ function ChatConversationInner() {
               // against `sending` prevents a double-send race.
               onSubmitEditing={enterSends ? () => { if (!sending) handleSend(); } : undefined}
               blurOnSubmit={enterSends}
-              onFocus={() => setInputFocused(true)}
+              onFocus={() => {
+                setInputFocused(true);
+                // [2026-10-10] Tocar no campo com figurinhas/GIF abertos = teclado no lugar do painel.
+                setShowStickerPicker(false);
+                setShowGifPicker(false);
+              }}
               onBlur={() => {
                 setInputFocused(false);
                 // WhatsApp parity: kill "X está digitando…" on the peer's
@@ -32069,6 +32119,7 @@ function ChatConversationInner() {
           onClose={() => setShowGifPicker(false)}
           colors={colors}
           t={t}
+          bottomInset={Platform.OS === 'web' ? 0 : insets.bottom}
         />
       )}
 
@@ -32129,6 +32180,7 @@ function ChatConversationInner() {
           colors={colors}
           t={t}
           userEmail={currentEmail}
+          bottomInset={Platform.OS === 'web' ? 0 : insets.bottom}
         />
       )}
 
@@ -33778,7 +33830,7 @@ function ChatConversationInner() {
                         accessibilityLabel={`${t('chatConv.muteChat') || 'Silenciar'}: ${muteSubtitle}`}
                         onPress={() => contactInfoGo(() => setShowMuteModal(true))} />
                       <GroupDivider colors={colors} />
-                      <GroupRow colors={colors} Icon={IconBell}
+                      <GroupRow colors={colors} Icon={IconMusic}
                         title={t('chatConv.customNotifications') || 'Notificações personalizadas'}
                         subtitle={t('chatConv.customNotificationsHint') || 'Sons, vibração e prévia'} right="chevron"
                         onPress={() => contactInfoGo(() => setShowNotifSettingsSheet(true))} />
@@ -34525,7 +34577,8 @@ function ChatConversationInner() {
                   </View>
                 </View>
               )}
-              {(members.length >= 4 || isGroupAdmin) && <GroupDivider colors={colors} inset={0} />}
+              {/* [2026-10-10] Só separa a BUSCA da lista — sem busca, o divisor de "Adicionar" já basta (era linha dupla). */}
+              {members.length >= 4 && <GroupDivider colors={colors} inset={0} />}
             {/* Sort members: current user first, then admins, then others alphabetically by display name.
                 Server ordering is creation-time which is stable but not particularly helpful — putting
                 "você" at the top mirrors WhatsApp/Telegram convention and makes it easier to spot
@@ -35046,7 +35099,7 @@ function ChatConversationInner() {
                 (mesmo padrão de "Dados do contato"): preferências extras,
                 privacidade, "Mais" e ações da conversa. */}
             <GroupCard colors={colors} isDark={isDark}>
-              <GroupRow colors={colors} Icon={IconBell}
+              <GroupRow colors={colors} Icon={IconMusic}
                 title={t('chatConv.customNotifications') || 'Notificações personalizadas'}
                 subtitle={t('chatConv.customNotificationsHint') || 'Sons, vibração e prévia'} right="chevron"
                 onPress={() => groupInfoGo(() => setShowNotifSettingsSheet(true), !USE_NATIVE_SHEETS)} />
