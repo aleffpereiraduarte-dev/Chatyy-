@@ -103,7 +103,7 @@ final class GroupCallSessionState: ObservableObject {
     @Published var dominantSpeaker: String?
 
     init(participants: [GroupParticipant] = [],
-         status: String = "Conectando\u{2026}",
+         status: String = GroupCallStrings.connecting,
          micEnabled: Bool = true,
          camEnabled: Bool = true,
          speakerOn: Bool = true) {
@@ -245,9 +245,9 @@ struct GroupCallView: View {
     }
 
     private var statusLine: String {
-        if session.status == "Conectado" {
+        if session.status == GroupCallStrings.connected {
             let count = remoteParticipants.count + (localParticipant != nil ? 1 : 0)
-            return "\(count) participantes · \(formatDuration(elapsedSeconds))"
+            return "\(GroupCallStrings.participants(count)) · \(formatDuration(elapsedSeconds))"
         }
         return session.status
     }
@@ -260,7 +260,7 @@ struct GroupCallView: View {
             ConnectionQualityBars(quality: session.connectionQuality)
                 .frame(width: 22, height: 22)
             Spacer()
-            Text(roomName.isEmpty ? "Reunião" : roomName)
+            Text(roomName.isEmpty ? GroupCallStrings.meeting : roomName)
                 .font(.system(size: 15, weight: .semibold))
                 .foregroundColor(.white)
                 .lineLimit(1)
@@ -378,7 +378,7 @@ struct GroupCallView: View {
             Image(systemName: "person.2.fill")
                 .font(.system(size: 48))
                 .foregroundColor(secondaryText)
-            Text("Aguardando outros participantes\u{2026}")
+            Text(GroupCallStrings.waitingOthers)
                 .font(.system(size: 16))
                 .foregroundColor(secondaryText)
             Text(roomName.isEmpty ? "" : roomName)
@@ -555,17 +555,17 @@ struct GroupCallView: View {
     private var bottomActionBar: some View {
         VStack(spacing: 16) {
             HStack(spacing: 16) {
-                actionPillButton(icon: "rectangle.on.rectangle", label: "Compartilhar") {
+                actionPillButton(icon: "rectangle.on.rectangle", label: GroupCallStrings.share) {
                     hapticTap(); onScreenShare()
                 }
-                actionPillButton(icon: "person.badge.plus", label: "Adicionar") {
+                actionPillButton(icon: "person.badge.plus", label: GroupCallStrings.add) {
                     hapticTap(); onAddMember()
                 }
-                actionPillButton(icon: "ellipsis", label: "Mais") {
+                actionPillButton(icon: "ellipsis", label: GroupCallStrings.more) {
                     hapticTap()
                     withAnimation(.easeInOut(duration: 0.2)) { showMoreSheet.toggle() }
                 }
-                actionPillButton(icon: "face.smiling", label: "Reagir") {
+                actionPillButton(icon: "face.smiling", label: GroupCallStrings.react) {
                     hapticTap()
                     withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) { showEmojiBar.toggle() }
                 }
@@ -731,14 +731,14 @@ struct GroupCallView: View {
                         .fill(Color.white.opacity(0.3))
                         .frame(width: 40, height: 4)
                         .padding(.top, 10)
-                    Text("Mais opções")
+                    Text(GroupCallStrings.moreOptions)
                         .font(.system(size: 18, weight: .semibold))
                         .foregroundColor(.white)
                         .padding(.bottom, 6)
                     // [2026-10-09 native-group-call] "Gravar" / "Em espera"
                     // rows removed — they only flipped a local flag (no real
                     // recording / hold behind them).
-                    moreRow(icon: "person.3.fill", title: "Lista de participantes (\(session.participants.count))") {
+                    moreRow(icon: "person.3.fill", title: GroupCallStrings.participantsList(session.participants.count)) {
                         withAnimation(.easeInOut(duration: 0.2)) { showMoreSheet = false }
                     }
                 }
@@ -783,23 +783,23 @@ struct GroupCallView: View {
                 .fill(Color.white.opacity(0.3))
                 .frame(width: 40, height: 4)
                 .padding(.top, 10)
-            Text("Saída de áudio")
+            Text(GroupCallStrings.audioOutput)
                 .font(.system(size: 17, weight: .semibold))
                 .foregroundColor(.white)
                 .padding(.top, 14)
                 .padding(.bottom, 8)
             VStack(spacing: 8) {
-                audioRouteRow(icon: "speaker.wave.3.fill", title: "Alto-falante", selected: session.speakerOn) {
+                audioRouteRow(icon: "speaker.wave.3.fill", title: GroupCallStrings.speaker, selected: session.speakerOn) {
                     session.speakerOn = true
                     onToggleSpeaker(true)
                     showAudioPicker = false
                 }
-                audioRouteRow(icon: "iphone", title: "Telefone", selected: !session.speakerOn) {
+                audioRouteRow(icon: "iphone", title: GroupCallStrings.phone, selected: !session.speakerOn) {
                     session.speakerOn = false
                     onToggleSpeaker(false)
                     showAudioPicker = false
                 }
-                audioRouteRow(icon: "headphones", title: "Bluetooth", selected: false) {
+                audioRouteRow(icon: "headphones", title: GroupCallStrings.bluetooth, selected: false) {
                     onToggleSpeaker(false)
                     showAudioPicker = false
                 }
@@ -842,7 +842,7 @@ struct GroupCallView: View {
     private func startTimer() {
         timer?.invalidate()
         timer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { _ in
-            guard session.status == "Conectado" else { return }
+            guard session.status == GroupCallStrings.connected else { return }
             elapsedSeconds += 1
         }
     }

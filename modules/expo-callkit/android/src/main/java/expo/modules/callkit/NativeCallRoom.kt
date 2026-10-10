@@ -499,6 +499,8 @@ object NativeCallRoom {
     // here. Returns Unit so JS sees immediate Promise.resolve(undefined).
 
     fun setMicEnabled(enabled: Boolean) {
+        // [2026-10-10 p2p-android] Ligação 1:1 indo P2P: o mic é do motor P2P.
+        try { P2PCallSession.active()?.setMicEnabled(enabled) } catch (_: Throwable) {}
         val r = room
         if (r == null) {
             Log.w(TAG, "setMicEnabled($enabled): no live Room")

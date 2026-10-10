@@ -4657,6 +4657,10 @@ export async function chatSend(conversationId, content, type = 'text', replyToId
   if (opts?.meta && typeof opts.meta === 'object') {
     try { payload.meta = JSON.stringify(opts.meta); } catch { /* skip on circular */ }
   }
+  // [2026-10-10 regional-accept] Re-tentativa de mensagem que o edge aceitou e
+  // o US rejeitou (evento chat_send_rejected): pede o caminho direto ao US —
+  // senão o edge repete a rejeição guardada no spool. Corpo (não header: CORS).
+  try { if (require('./regionalAccept').shouldBypassRegional(stableCMI)) payload.regional_off = 1; } catch {}
   // Try Rust — inserts in PG, broadcasts to WS hub, returns ~5ms vs 30-50ms PHP.
   // topic_id still goes through PHP (threaded replies not yet in Rust).
   //
@@ -4844,6 +4848,18 @@ export async function chatSend(conversationId, content, type = 'text', replyToId
     }
   }
 
+  // [2026-10-10 regional-accept] Edge aceitou (id tmp_…, spool durável) mas o
+  // id numérico ainda vem do US → o outbox segura a linha ('accepted') até o
+  // eco chegar; services/regionalAccept.js confirma, re-dirige ou falha.
+  let _raProv = false;
+  try {
+    const _ra = require('./regionalAccept');
+    if (result && _ra.isRegionalProvisional(result)) {
+      _raProv = true;
+      _ra.noteAccepted(stableCMI, { conversationId, tempId: localTempId });
+    }
+  } catch {}
+
   // ── 3. Finalize SQLite — swap temp id → server id, flip pending_state ──
   // [instant-send 2026-06-02] The local optimistic write was kicked off
   // non-blocking above. Await it here so the temp row provably exists before
@@ -4858,6 +4874,9 @@ export async function chatSend(conversationId, content, type = 'text', replyToId
   // background chain (write → finalize) and hand the server row to the UI now.
   const _finalizeLocal = async () => {
     try { await _localWritePromise; } catch {}
+    // [2026-10-10 regional-accept] Linha provisória (tmp_) NÃO finaliza o SQLite
+    // local: a intenção fica pendente até o eco com o id numérico.
+    if (_raProv) return;
     if (result && (result.success || result.message_id || result.data?.message_id)) {
       if (result.envelope_mode) {
         // Stage 5 envelope mode — there is no server message_id, but the

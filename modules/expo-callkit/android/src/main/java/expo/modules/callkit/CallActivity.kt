@@ -344,6 +344,33 @@ class CallActivity : ComponentActivity() {
    *  full-bleed remoteRenderer (so unsubscribe/unmute can rebind precisely). */
   private var boundRemoteVideoTrack: VideoTrack? = null
 
+  // ────────────── [2026-10-10 p2p-android] Ligação 1:1 PEER-TO-PEER
+  // Mesmo protocolo do web (services/p2pCall.js) e do hub Go (p2p_signal.go),
+  // motor em P2PCallSession (libwebrtc embutido no LiveKit). Só entra quando o
+  // servidor manda `p2p.enabled` (CALL_P2P / CALL_P2P_ACCOUNTS) p/ ESTE usuário
+  // e esta ligação; qualquer falha → LiveKit (bringUpRoomLk), igual ao web.
+  /** Sessão P2P viva (tentando ou conectada); null = caminho LiveKit. */
+  private var p2p: P2PCallSession? = null
+  /** Já tentamos P2P nesta ligação (nunca tenta 2×; fallback é definitivo). */
+  private var p2pTried: Boolean = false
+  /** P2P conectado e carregando a mídia. */
+  private var p2pActive: Boolean = false
+  /** Caller esperando o "atender" antes de iniciar a sessão. */
+  private var p2pWaitJob: Job? = null
+  private var p2pVideoWatchJob: Job? = null
+  private var p2pRemoteTrack: livekit.org.webrtc.VideoTrack? = null
+  private var p2pLocalTrack: livekit.org.webrtc.VideoTrack? = null
+  @Volatile private var p2pLastRemoteFrameAt: Long = 0L
+  /** Renderers inicializados com o EglBase do motor P2P (precisam ser
+   *  re-inicializados com o do Room no fallback). */
+  private var renderersOnP2PEgl: Boolean = false
+  /** Sink do vídeo remoto P2P: repassa ao remoteRenderer e marca a hora do
+   *  último frame (sem frames ≈ câmera do outro lado desligada → avatar). */
+  private val p2pRemoteSink = livekit.org.webrtc.VideoSink { frame ->
+    p2pLastRemoteFrameAt = android.os.SystemClock.elapsedRealtime()
+    try { remoteRenderer?.onFrame(frame) } catch (_: Throwable) {}
+  }
+
   private val closeReceiver = object : BroadcastReceiver() {
     override fun onReceive(ctx: Context?, intent: Intent?) {
       // [2026-05-24] Ghost-disconnect fix: only finish if the broadcast is
@@ -434,6 +461,7 @@ class CallActivity : ComponentActivity() {
         Log.i(TAG, "telecomStateReceiver: held=$held callId=$callId")
         if (held) {
           if (state.status == "Conectado") state.status = holdStatusLabel()
+          try { p2p?.setMicEnabled(false) } catch (_: Throwable) {}
           try { lifecycleScope.launch { try { room?.localParticipant?.setMicrophoneEnabled(false) } catch (_: Throwable) {} } } catch (_: Throwable) {}
         } else {
           if (state.status == holdStatusLabel()) state.status = "Conectado"
@@ -447,6 +475,7 @@ class CallActivity : ComponentActivity() {
           // re-apply the user's own mute choice.
           android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
             if (!heldByTelecom) {
+              try { p2p?.setMicEnabled(!state.isMuted) } catch (_: Throwable) {}
               try { lifecycleScope.launch { try { room?.localParticipant?.setMicrophoneEnabled(!state.isMuted) } catch (_: Throwable) {} } } catch (_: Throwable) {}
             }
           }, 500L)
@@ -457,6 +486,7 @@ class CallActivity : ComponentActivity() {
         Log.i(TAG, "telecomStateReceiver: system mute=$muted callId=$callId")
         state.isMuted = muted
         if (!heldByTelecom) {
+          try { p2p?.setMicEnabled(!muted) } catch (_: Throwable) {}
           try { lifecycleScope.launch { try { room?.localParticipant?.setMicrophoneEnabled(!muted) } catch (_: Throwable) {} } } catch (_: Throwable) {}
         }
       }
@@ -655,6 +685,11 @@ class CallActivity : ComponentActivity() {
           onHangup = { finishCall(reason = "user_hangup") },
           onToggleMute = { desired ->
             state.isMuted = !desired
+            // [2026-10-10 p2p-android] Ligação indo P2P: o mic é do motor P2P.
+            p2p?.let { s ->
+              try { s.setMicEnabled(desired && !heldByTelecom) } catch (_: Throwable) {}
+              try { s.sendData(org.json.JSONObject().put("type", "audio_muted").put("muted", !desired)) } catch (_: Throwable) {}
+            }
             // [Wave 15 gap B3, 2026-05-20] Audio mute fast-path: enable/disable
             // direto na LocalAudioTrack em vez de setMicrophoneEnabled (que
             // re-publica o track em algumas LK revs, dropando RTP stream +
@@ -680,6 +715,14 @@ class CallActivity : ComponentActivity() {
             try { ExpoCallKitModule.emitLkLocalAudioChanged(desired) } catch (_: Throwable) {}
           },
           onToggleCam = onToggleCam@{ desired ->
+            // [2026-10-10 p2p-android] Ligação P2P: câmera = replaceTrack no
+            // transceiver de vídeo (sem renegociar). O outro lado vira vídeo
+            // sozinho quando os frames chegam.
+            if (p2p != null) {
+              p2pToggleCamera(desired)
+              try { ExpoCallKitModule.emitLkLocalVideoChanged(desired && state.isCameraOn) } catch (_: Throwable) {}
+              return@onToggleCam
+            }
             // [video-upgrade 2026-05-25] If this is still an audio-only call and
             // the user is turning the camera ON, don't publish video unilaterally
             // — ask the peer first (mirror of JS app/call.js handleToggleVideo).
@@ -1015,7 +1058,11 @@ class CallActivity : ComponentActivity() {
     // active 24.25, mic only at 37.10 (the caller heard NOTHING for ~15 s).
     // Adopting keeps the live PeerConnection: accept → mic publish ≈ 1 SFU RTT.
     val warmRoom: Room? = if (!isOutgoing) NativeCallRoom.preconnectedRoomFor(callId) else null
-    if (warmRoom != null && adoptWarmRoom(warmRoom)) {
+    if (warmRoom != null && startP2PIfEligible("warm_incoming")) {
+      // [2026-10-10 p2p-android] P2P primeiro; o Room quente (só-assinatura)
+      // fica como fallback instantâneo e é desligado quando o P2P conecta.
+      Log.i(TAG, "onCreate: P2P attempt first — warm Room kept as fallback for $callId")
+    } else if (warmRoom != null && adoptWarmRoom(warmRoom)) {
       Log.i(TAG, "onCreate: adopted warm preconnected Room for $callId — no re-join")
     } else if (!lkUrl.isNullOrEmpty() && !lkToken.isNullOrEmpty()) {
       bringUpRoom(lkUrl!!, lkToken!!)
@@ -1192,6 +1239,7 @@ class CallActivity : ComponentActivity() {
   @OptIn(DelicateCoroutinesApi::class)
   override fun onDestroy() {
     try { videoQualityDiagJob?.cancel() } catch (_: Throwable) {}
+    try { closeP2P("destroy") } catch (_: Throwable) {}
     try { CallVideoQuality.resetCallState() } catch (_: Throwable) {}
     try { unregisterReceiver(closeReceiver) } catch (_: Exception) {}
     try { unregisterReceiver(dtmfReceiver) } catch (_: Exception) {}
@@ -1304,7 +1352,13 @@ class CallActivity : ComponentActivity() {
     // sitting on "Sem token" / "Chamando…" without LK connection).
     val newUrl = extras.getString(EXTRA_LK_URL)
     val newToken = extras.getString(EXTRA_LK_TOKEN)
-    if (room == null && !newUrl.isNullOrEmpty() && !newToken.isNullOrEmpty()) {
+    if (room == null && p2pInProgress() && !newUrl.isNullOrEmpty() && !newToken.isNullOrEmpty()) {
+      // [2026-10-10 p2p-android] P2P em andamento: só guarda as credenciais
+      // p/ o fallback LiveKit (não sobe um Room em paralelo).
+      lkUrl = newUrl
+      lkToken = newToken
+      Log.d(TAG, "onNewIntent: late LK token stored — P2P in progress")
+    } else if (room == null && !newUrl.isNullOrEmpty() && !newToken.isNullOrEmpty()) {
       Log.d(TAG, "onNewIntent: late LK token arrived — bringing up Room")
       lkUrl = newUrl
       lkToken = newToken
@@ -1473,6 +1527,8 @@ class CallActivity : ComponentActivity() {
         // was granted after we already connected. Publish + bind the camera
         // now (mirrors the late RECORD_AUDIO re-publish below). Without this,
         // first-ever video call shows a black self-view until manual toggle.
+        // [2026-10-10 p2p-android] P2P: liga a câmera no motor P2P.
+        if (p2p != null) { p2pToggleCamera(true); return }
         val r = room
         if (r != null) {
           state.isCameraOn = true
@@ -1750,7 +1806,308 @@ class CallActivity : ComponentActivity() {
     }
   }
 
+  // ────────────── [2026-10-10 p2p-android] P2P 1:1 antes do LiveKit
+  //
+  // bringUpRoom = porta de entrada única (onCreate, token tardio, retry):
+  //   1ª vez + flag p2p.enabled + 1:1 + mic liberado → tenta P2P;
+  //   senão (ou no fallback) → bringUpRoomLk (caminho LiveKit de sempre).
+  // Caller: P2P só depois do "atender" (hub só roteia P2P em ACCEPTED e não
+  // expomos IP a quem não atendeu) — mesmo contrato do web (app/call.js).
   private fun bringUpRoom(url: String, token: String) {
+    lkUrl = url
+    lkToken = token
+    if (p2pInProgress()) {
+      Log.d(TAG, "bringUpRoom: P2P in progress — LK creds stored for fallback")
+      return
+    }
+    if (startP2PIfEligible("bringUpRoom")) return
+    bringUpRoomLk(url, token)
+  }
+
+  /** Sessão P2P viva OU caller esperando o "atender" p/ iniciá-la. */
+  private fun p2pInProgress(): Boolean = p2p != null || p2pWaitJob?.isActive == true
+
+  /** true = a tentativa P2P assumiu (quem chamou NÃO deve subir o LiveKit). */
+  private fun startP2PIfEligible(source: String): Boolean {
+    if (p2pTried || finishing || room != null) return false
+    if (callId.isEmpty() || callId.startsWith("group_") || state.groupParticipants.size >= 2) return false
+    val info = LkTokenFetcher.p2pFor(applicationContext, callId) ?: return false
+    val cfg = P2PCallSession.parseConfig(info.first) ?: return false
+    val micGranted = ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) ==
+      PackageManager.PERMISSION_GRANTED
+    if (!micGranted) {
+      // Sem mic o motor P2P não recupera sozinho depois do grant (o LK sim).
+      Log.i(TAG, "[P2P] skip — RECORD_AUDIO not granted yet")
+      return false
+    }
+    p2pTried = true
+    Log.i(TAG, "[P2P] attempt source=$source outgoing=$isOutgoing callId=$callId timeoutMs=${cfg.connectTimeoutMs} turn=${cfg.allowTurn}")
+    try { CallVideoQuality.postDiag("p2p_attempt", "src=$source out=$isOutgoing") } catch (_: Throwable) {}
+    if (isOutgoing) {
+      startRingback()
+      p2pWaitJob = lifecycleScope.launch {
+        val t0 = System.currentTimeMillis()
+        while (!finishing && !peerAnswered && !P2PCallSession.peerReadyBuffered(callId) &&
+          System.currentTimeMillis() - t0 < 45_000L) {
+          delay(80)
+        }
+        if (finishing) return@launch
+        if (!peerAnswered && !P2PCallSession.peerReadyBuffered(callId)) {
+          // Ninguém atendeu na janela: o timeout de 45s encerra a ligação; se
+          // ainda estiver viva, segue o caminho LiveKit (comportamento antigo).
+          p2pFallbackToLk("no_answer_window")
+          return@launch
+        }
+        launchP2PSession(cfg, info.second)
+      }
+    } else {
+      launchP2PSession(cfg, info.second)
+    }
+    return true
+  }
+
+  private fun launchP2PSession(cfg: P2PCallSession.Config, iceJson: org.json.JSONArray?) {
+    if (finishing) return
+    val egl = P2PCallSession.eglFor(applicationContext)
+    if (egl == null) { p2pFallbackToLk("no_egl"); return }
+    initRenderersFor(egl.eglBaseContext)
+    renderersOnP2PEgl = true
+    val camGranted = ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) ==
+      PackageManager.PERMISSION_GRANTED
+    val withVideo = state.isVideo && state.isCameraOn && camGranted
+    val ice = P2PCallSession.iceServersFrom(iceJson, cfg.allowTurn)
+    lateinit var sess: P2PCallSession
+    sess = P2PCallSession(
+      appCtx = applicationContext,
+      callId = callId,
+      isCaller = isOutgoing,
+      startWithVideo = withVideo,
+      iceServers = ice,
+      cfg = cfg,
+      send = { frame -> CallSignalWs.sendP2P(applicationContext, frame) },
+      listener = object : P2PCallSession.Listener {
+        override fun onConnected(ms: Long) { runOnUiThread { onP2PConnected(sess, ms) } }
+        override fun onFallback(reason: String, afterConnected: Boolean) { runOnUiThread { onP2PFallback(sess, reason, afterConnected) } }
+        override fun onReconnecting(on: Boolean) { runOnUiThread { if (p2p === sess && !finishing) state.isReconnecting = on } }
+        override fun onRemoteVideo(track: livekit.org.webrtc.VideoTrack?) { runOnUiThread { onP2PRemoteVideo(sess, track) } }
+        override fun onLocalVideo(track: livekit.org.webrtc.VideoTrack?) { runOnUiThread { onP2PLocalVideo(sess, track) } }
+        override fun onData(obj: org.json.JSONObject) {
+          runOnUiThread {
+            if (p2p !== sess || finishing) return@runOnUiThread
+            if (obj.optString("type") == "video_request") handleVideoRequestData(obj.optString("action"))
+          }
+        }
+      },
+    )
+    p2p = sess
+    sess.start()
+  }
+
+  private fun onP2PConnected(sess: P2PCallSession, ms: Long) {
+    if (p2p !== sess || finishing) return
+    p2pActive = true
+    peerAnswered = true
+    stopRingback()
+    cancelOutgoingTimeout()
+    try { IncomingRinger.stop() } catch (_: Throwable) {}
+    state.status = "Conectado"
+    state.isReconnecting = false
+    if (state.connectionStartedAt == 0L) state.connectionStartedAt = System.currentTimeMillis()
+    try { sess.setMicEnabled(!state.isMuted && !heldByTelecom) } catch (_: Throwable) {}
+    try { sess.sendData(org.json.JSONObject().put("type", "audio_muted").put("muted", state.isMuted)) } catch (_: Throwable) {}
+    // Room quente (só-assinatura) do toque não serve mais: libera o SFU e o mic.
+    if (room == null) {
+      try { NativeCallRoom.disconnect() } catch (_: Throwable) {}
+    }
+    startP2PVideoWatch(sess)
+    Log.i(TAG, "[P2P] connected in ${ms}ms callId=$callId")
+    try { CallVideoQuality.postDiag("p2p_connected", "ms=$ms out=$isOutgoing") } catch (_: Throwable) {}
+  }
+
+  private fun onP2PFallback(sess: P2PCallSession, reason: String, afterConnected: Boolean) {
+    if (p2p !== sess) return
+    Log.i(TAG, "[P2P] fallback reason=$reason afterConnected=$afterConnected callId=$callId")
+    try { CallVideoQuality.postDiag("p2p_fallback", "reason=$reason after=$afterConnected") } catch (_: Throwable) {}
+    detachP2P()
+    if (finishing) return
+    if (afterConnected) state.isReconnecting = true
+    p2pFallbackToLk(reason)
+  }
+
+  /** Solta sinks/estado do P2P (a sessão em si já foi encerrada ou será). */
+  private fun detachP2P() {
+    p2p = null
+    p2pActive = false
+    p2pWaitJob?.cancel(); p2pWaitJob = null
+    p2pVideoWatchJob?.cancel(); p2pVideoWatchJob = null
+    p2pRemoteTrack?.let { t -> try { t.removeSink(p2pRemoteSink) } catch (_: Throwable) {} }
+    p2pRemoteTrack = null
+    p2pLocalTrack?.let { t -> try { localRenderer?.let { t.removeSink(it) } } catch (_: Throwable) {} }
+    p2pLocalTrack = null
+    state.hasRemoteVideo = false
+    state.remoteFirstFrame = false
+    state.hasLocalVideo = false
+  }
+
+  /** Sobe o LiveKit depois que o P2P desistiu (ou nem chegou a começar). */
+  private fun p2pFallbackToLk(reason: String) {
+    if (finishing || room != null) return
+    p2pTried = true
+    if (renderersOnP2PEgl) {
+      // Os renderers estão no EglBase do motor P2P; o Room re-inicializa com o dele.
+      try { remoteRenderer?.release() } catch (_: Throwable) {}
+      try { localRenderer?.release() } catch (_: Throwable) {}
+      renderersOnP2PEgl = false
+    }
+    val warm = if (!isOutgoing) NativeCallRoom.preconnectedRoomFor(callId) else null
+    if (warm != null && adoptWarmRoom(warm)) {
+      Log.i(TAG, "[P2P] fallback($reason) → adopted warm Room")
+      kickRendererSurfaces()
+      return
+    }
+    val u = lkUrl
+    val t = lkToken
+    if (!u.isNullOrEmpty() && !t.isNullOrEmpty()) {
+      Log.i(TAG, "[P2P] fallback($reason) → bringUpRoomLk")
+      bringUpRoomLk(u, t)
+      kickRendererSurfaces()
+      return
+    }
+    Log.i(TAG, "[P2P] fallback($reason) → fetching LK token")
+    lifecycleScope.launch {
+      val tk = try { LkTokenFetcher.fetchToken(applicationContext, callId, hasVideo, intent?.extras) } catch (_: Throwable) { null }
+      if (finishing || room != null) return@launch
+      if (tk != null) {
+        lkUrl = tk.url
+        lkToken = tk.token
+        bringUpRoomLk(tk.url, tk.token)
+        kickRendererSurfaces()
+      } else {
+        state.status = "Erro de conexão"
+      }
+    }
+  }
+
+  /** (Re)inicializa os 2 renderers 1:1 num EglBase (P2P ou Room). */
+  private fun initRenderersFor(ctx: livekit.org.webrtc.EglBase.Context) {
+    for ((rv, overlay) in listOf(remoteRenderer to false, localRenderer to true)) {
+      if (rv == null) continue
+      try { rv.release() } catch (_: Throwable) {}
+      try {
+        rv.init(ctx, null)
+        rv.setScalingType(RendererCommon.ScalingType.SCALE_ASPECT_FILL)
+        rv.setEnableHardwareScaler(false)
+        if (overlay) {
+          try { rv.setZOrderMediaOverlay(true) } catch (_: Throwable) {}
+        }
+      } catch (t: Throwable) {
+        Log.w(TAG, "[P2P] renderer init failed: ${t.message}")
+      }
+    }
+    kickRendererSurfaces()
+  }
+
+  /** Renderer re-inicializado com a Surface JÁ criada não recebe
+   *  surfaceCreated de novo → sem EGL surface = preto. Força a criação. */
+  private fun kickRendererSurfaces() {
+    for (rv in listOf(remoteRenderer, localRenderer)) {
+      if (rv == null) continue
+      try {
+        val h = rv.holder
+        if (h != null && h.surface != null && h.surface.isValid) rv.surfaceCreated(h)
+      } catch (_: Throwable) {}
+    }
+  }
+
+  private fun onP2PRemoteVideo(sess: P2PCallSession, track: livekit.org.webrtc.VideoTrack?) {
+    if (p2p !== sess && track != null) return
+    val prev = p2pRemoteTrack
+    if (prev != null && prev !== track) {
+      try { prev.removeSink(p2pRemoteSink) } catch (_: Throwable) {}
+    }
+    p2pRemoteTrack = track
+    if (track != null && prev !== track) {
+      try { track.addSink(p2pRemoteSink) } catch (t: Throwable) { Log.w(TAG, "[P2P] remote addSink: ${t.message}") }
+    }
+  }
+
+  private fun onP2PLocalVideo(sess: P2PCallSession, track: livekit.org.webrtc.VideoTrack?) {
+    if (p2p !== sess && track != null) return
+    val rv = localRenderer
+    val prev = p2pLocalTrack
+    if (prev != null && prev !== track && rv != null) {
+      try { prev.removeSink(rv) } catch (_: Throwable) {}
+    }
+    p2pLocalTrack = track
+    if (track != null && rv != null) {
+      try { track.addSink(rv); state.hasLocalVideo = true } catch (t: Throwable) { Log.w(TAG, "[P2P] local addSink: ${t.message}") }
+    } else {
+      state.hasLocalVideo = false
+      try { rv?.clearImage() } catch (_: Throwable) {}
+    }
+  }
+
+  /** Vídeo remoto "vivo" = frame nos últimos 1,5 s. Sem frames (câmera do
+   *  outro lado desligada / ligação de voz) → avatar. Frames numa ligação de
+   *  voz = o outro lado abriu a câmera → vira vídeo (igual TrackSubscribed). */
+  private fun startP2PVideoWatch(sess: P2PCallSession) {
+    p2pVideoWatchJob?.cancel()
+    p2pVideoWatchJob = lifecycleScope.launch {
+      while (p2p === sess && !finishing) {
+        val last = p2pLastRemoteFrameAt
+        val live = last > 0L && android.os.SystemClock.elapsedRealtime() - last < 1_500L
+        if (live != state.hasRemoteVideo) {
+          state.hasRemoteVideo = live
+          if (live) {
+            if (!state.isVideo) {
+              Log.d(TAG, "[P2P] remote frames on a voice call → auto-upgrading to video")
+              state.isVideo = true
+              state.pendingVideoRequest = false
+              state.videoUpgradeRequested = false
+              releaseProximityWakeLock()
+            }
+            state.remoteFirstFrame = true
+          }
+        }
+        delay(400)
+      }
+    }
+  }
+
+  private fun p2pToggleCamera(desired: Boolean) {
+    val s = p2p ?: return
+    if (desired) {
+      val camGranted = ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) ==
+        PackageManager.PERMISSION_GRANTED
+      if (!camGranted) {
+        state.isVideo = true
+        pendingVideoPublish = true
+        ensureCameraPermission()
+        return
+      }
+      if (!state.isVideo) {
+        state.isVideo = true
+        releaseProximityWakeLock()
+      }
+      if (state.isCameraOn && p2pLocalTrack != null) return
+      state.isCameraOn = true
+      try { s.setCameraEnabled(true) } catch (_: Throwable) {}
+    } else {
+      state.isCameraOn = false
+      try { s.setCameraEnabled(false) } catch (_: Throwable) {}
+      try { localRenderer?.clearImage() } catch (_: Throwable) {}
+    }
+  }
+
+  /** Encerra a sessão P2P (desligar / destruir). Não manda fallback ao par:
+   *  o fim da ligação vai pelo call_end. */
+  private fun closeP2P(reason: String) {
+    val s = p2p
+    detachP2P()
+    try { s?.close(reason) } catch (_: Throwable) {}
+  }
+
+  private fun bringUpRoomLk(url: String, token: String) {
     // [Wave C, 2026-05-18] RoomOptions wired for adaptive bitrate.
     //   - adaptiveStream=true: SFU picks best simulcast tier per subscriber
     //   - dynacast=true: pause publishing layers nobody subscribes to (uplink
@@ -1972,7 +2329,9 @@ class CallActivity : ComponentActivity() {
       }
     }
 
-    if (isOutgoing) {
+    // [2026-10-10 p2p-android] Sem ringback se o outro lado JÁ atendeu (LK
+    // subindo como fallback do P2P / token tardio depois do "atender").
+    if (isOutgoing && !peerAnswered) {
       startRingback()
     }
 
@@ -2497,6 +2856,8 @@ class CallActivity : ComponentActivity() {
 
     Log.d(TAG, "finishCall reason=$reason callId=$callId")
     stopRingback()
+    // [2026-10-10 p2p-android] Encerra a sessão P2P (PeerConnection + câmera + mic).
+    closeP2P("finish:$reason")
 
     // Notify the WS server first so the peer sees call_end with low latency.
     // [2026-05-24] Pass callerEmail (the peer) as target so the C++ WS can
@@ -2717,6 +3078,13 @@ class CallActivity : ComponentActivity() {
   // ────────────── Camera flip
 
   private fun flipCamera() {
+    // [2026-10-10 p2p-android] Capturer do motor P2P (mesma VideoSource).
+    p2p?.let { s ->
+      try { s.switchCamera() } catch (_: Throwable) {}
+      state.isFrontCamera = !state.isFrontCamera
+      try { ExpoCallKitModule.emitLkCameraFlipped(state.isFrontCamera) } catch (_: Throwable) {}
+      return
+    }
     val r = room ?: return
     lifecycleScope.launch {
       try {
@@ -2823,6 +3191,8 @@ class CallActivity : ComponentActivity() {
    * is the native twin of JS `sendData(payload)`. Used for video_request.
    */
   private fun sendCallData(payload: org.json.JSONObject) {
+    // [2026-10-10 p2p-android] Ligação P2P: DataChannel "chatyy" do motor.
+    p2p?.let { s -> if (s.sendData(payload)) return }
     val r = room ?: return
     val bytes = payload.toString().toByteArray(Charsets.UTF_8)
     lifecycleScope.launch {
@@ -2902,6 +3272,12 @@ class CallActivity : ComponentActivity() {
   @Volatile private var pendingVideoPublish: Boolean = false
 
   private fun enterVideoModeAndPublish() {
+    // [2026-10-10 p2p-android] Ligação P2P: câmera no motor P2P.
+    if (p2p != null) {
+      state.videoUpgradeRequested = false
+      p2pToggleCamera(true)
+      return
+    }
     val r = room ?: return
     // [proximity fix 2026-10-04] Audio→video upgrade: the proximity wake-lock
     // acquired for the audio call blanks the screen when the phone nears the

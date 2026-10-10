@@ -184,6 +184,9 @@ class CallFirebaseMessagingService : FirebaseMessagingService() {
                     Log.w(TAG, "Failed to seed LK cache: ${t.message}")
                 }
             }
+            // [2026-10-10 p2p-android] Flag P2P do CALLEE (chat.php só manda
+            // `p2p` quando CALL_P2P está ligado p/ este usuário).
+            try { LkTokenFetcher.rememberP2P(applicationContext, callId, data["p2p"]) } catch (_: Throwable) {}
             // [2026-05-16 Stage 4] Cold-start auto-accept signal. Set by
             // backend (e.g. when a VoIP "answered on another device" push
             // is converted into a CallKit accept on this device, or when

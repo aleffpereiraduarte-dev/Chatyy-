@@ -167,6 +167,7 @@ declare class ExpoCallKitModuleType extends NativeModule<ExpoCallKitEvents> {
   // supportsNativeGroupCallUI() (returns the contract version, >= 1).
   supportsNativeGroupCallUI?(): number;
   setNativeGroupCallUiEnabled?(enabled: boolean): boolean;
+  setNativeAppLanguage?(code: string): boolean;
   openNativeGroupCall?(params: Record<string, any>): Promise<boolean>;
 
   // [2026-05-17 RNNoise] Per-user ML noise suppression toggle. Default ON.
@@ -774,6 +775,19 @@ export function nativeGroupCallUiVersion(): number {
   } catch {
     return 0;
   }
+}
+
+/** [2026-10-10 group-call-i18n] Mirror the app language into native storage
+ *  so native-only screens (group call) use the same language as the app.
+ *  Older binaries lack the function → false (native keeps the system language). */
+export function setNativeAppLanguage(code: string): boolean {
+  const m = getModule();
+  try {
+    if (m && typeof m.setNativeAppLanguage === 'function') {
+      return !!m.setNativeAppLanguage(String(code || ''));
+    }
+  } catch {}
+  return false;
 }
 
 /** [2026-10-09 native-group-call] Mirror the JS flag into native storage so

@@ -103,6 +103,70 @@ object LkTokenFetcher {
         return out
     }
 
+    // [2026-10-10 p2p-android] Config P2P (`p2p` do chat_livekit_token /
+    // chat_call_invite_v2 / p2p_json do JS) por sala, em memória (mesmo
+    // processo do FCM, do CallSignalWs e do JS). A flag é POR USUÁRIO no
+    // servidor (CALL_P2P / CALL_P2P_ACCOUNTS; grupos sempre off) → além da
+    // sala guardamos o ÚLTIMO config da conta (prefs, 24h), igual ao iOS
+    // (P2PCallBridge): o push de ligação não traz `p2p`, então o callee usa o
+    // da conta. Qualquer resposta com enabled=false desliga o cache da conta.
+    private class P2PInfo(val cfg: JSONObject, val ice: JSONArray?, val at: Long)
+    private val p2pByRoom = java.util.Collections.synchronizedMap(HashMap<String, P2PInfo>())
+    private const val P2P_TTL_MS = 10 * 60_000L
+    private const val P2P_ACCOUNT_TTL_MS = 24 * 3600_000L
+    private const val KEY_P2P_ACCOUNT = "p2p_cfg_account_json"
+    private const val KEY_P2P_ACCOUNT_AT = "p2p_cfg_account_at"
+
+    /** raw = JSONObject | String JSON | Map. */
+    fun rememberP2P(ctx: Context?, roomName: String?, raw: Any?, iceJson: JSONArray? = null) {
+        if (raw == null) return
+        val cfg: JSONObject = try {
+            when (raw) {
+                is JSONObject -> raw
+                is String -> if (raw.isBlank()) return else JSONObject(raw)
+                is Map<*, *> -> JSONObject(raw)
+                else -> return
+            }
+        } catch (_: Throwable) { return }
+        val enabled = cfg.optBoolean("enabled", false)
+        val isGroupRoom = roomName != null && Regex("^(group_|conv_|live_|link_|meet_)", RegexOption.IGNORE_CASE).containsMatchIn(roomName)
+        // Cache da conta: só respostas 1:1 (grupo vem sempre off por regra, não por conta).
+        if (ctx != null && !isGroupRoom) {
+            try {
+                ctx.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
+                    .putString(KEY_P2P_ACCOUNT, cfg.toString())
+                    .putLong(KEY_P2P_ACCOUNT_AT, System.currentTimeMillis())
+                    .apply()
+            } catch (_: Throwable) {}
+        }
+        if (roomName.isNullOrEmpty()) return
+        val now = System.currentTimeMillis()
+        synchronized(p2pByRoom) {
+            p2pByRoom.entries.removeAll { now - it.value.at > P2P_TTL_MS }
+            val prev = p2pByRoom[roomName]
+            p2pByRoom[roomName] = P2PInfo(cfg, iceJson ?: prev?.ice, now)
+        }
+    }
+
+    /** (cfg, iceServers JSON) se o P2P está LIGADO p/ esta sala, senão null.
+     *  Sem config da sala → último config da conta (≤24h). */
+    fun p2pFor(ctx: Context?, roomName: String?): Pair<JSONObject, JSONArray?>? {
+        if (roomName.isNullOrEmpty()) return null
+        val e = p2pByRoom[roomName]
+        if (e != null && System.currentTimeMillis() - e.at <= P2P_TTL_MS) {
+            return if (e.cfg.optBoolean("enabled", false)) e.cfg to e.ice else null
+        }
+        if (ctx == null) return null
+        return try {
+            val prefs = ctx.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            val at = prefs.getLong(KEY_P2P_ACCOUNT_AT, 0L)
+            val raw = prefs.getString(KEY_P2P_ACCOUNT, null)
+            if (raw.isNullOrEmpty() || System.currentTimeMillis() - at > P2P_ACCOUNT_TTL_MS) return null
+            val cfg = JSONObject(raw)
+            if (cfg.optBoolean("enabled", false)) cfg to null else null
+        } catch (_: Throwable) { null }
+    }
+
     /**
      * ConnectOptions p/ Room.connect. livekit-android 2.24.1 SÓ usa
      * ConnectOptions.iceServers quando rtcConfig != null (RTCEngine
@@ -546,6 +610,7 @@ object LkTokenFetcher {
             val iceJson = data.optJSONArray("iceServers")
             val ice = parseIceServers(iceJson)
             rememberIce(token, ice)
+            try { rememberP2P(ctx, roomName, data.optJSONObject("p2p"), iceJson) } catch (_: Throwable) {}
             Log.d(TAG, "doFetchOnce: OK for room=$roomName url=$url ice=${ice.size}")
             val result = Result(token, url, ice)
             setCached(ctx, roomName, token, url, iceJson)

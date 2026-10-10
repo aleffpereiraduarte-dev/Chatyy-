@@ -1482,6 +1482,13 @@ public class ExpoCallKitModule: Module {
       return GroupCallViewController.nativeGroupUiEnabled
     }
 
+    // [2026-10-10 group-call-i18n] Idioma escolhido no app → textos nativos
+    // da tela de grupo (GroupCallStrings). "" = seguir o idioma do sistema.
+    Function("setNativeAppLanguage") { (code: String) -> Bool in
+      GroupCallStrings.setAppLanguage(code)
+      return true
+    }
+
     // [2026-10-09 native-group-call] Full native group call launched from JS
     // (outgoing / join-ongoing). params: roomName, lkUrl, lkToken,
     // iceServers (array, optional), conversationId, title, hasVideo,

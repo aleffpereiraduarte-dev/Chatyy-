@@ -227,6 +227,13 @@ export function LanguageProvider({ children }) {
     apiSetUserLanguage((language || '').slice(0, 2));
   }, [language]);
 
+  // [2026-10-10 group-call-i18n] Idioma do app → telas 100% nativas (ligação em
+  // grupo iOS/Android). Binário antigo sem a função = no-op (usa o do sistema).
+  useEffect(() => {
+    if (Platform.OS === 'web' || !language) return;
+    try { require('../modules/expo-callkit').setNativeAppLanguage?.(language); } catch {}
+  }, [language]);
+
   useEffect(() => {
     const loadLanguage = async () => {
       // Only respect saved preference if user explicitly chose a language

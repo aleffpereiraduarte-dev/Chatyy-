@@ -192,7 +192,7 @@ class GroupCallActivity : ComponentActivity() {
   // Status / timers.
   private val ui = Handler(Looper.getMainLooper())
   private var connectedAtMs = 0L
-  private var statusOverride: String? = "Conectando…"
+  private var statusOverride: String? = GroupCallStrings.s("connecting")
   private val ticker = object : Runnable {
     override fun run() {
       renderStatus()
@@ -201,7 +201,7 @@ class GroupCallActivity : ComponentActivity() {
   }
   private val noAnswerRunnable = Runnable {
     if (!finished && (room?.remoteParticipants?.isEmpty() != false)) {
-      statusOverride = "Ninguém atendeu"
+      statusOverride = GroupCallStrings.s("noAnswer")
       renderStatus()
       ui.postDelayed({ finishCall(reason = "no_answer") }, 1200)
     }
@@ -240,6 +240,9 @@ class GroupCallActivity : ComponentActivity() {
 
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
+    // [2026-10-10 group-call-i18n] Idioma do app (espelhado pelo JS) p/ os textos.
+    GroupCallStrings.load(applicationContext)
+    statusOverride = GroupCallStrings.s("connecting")
 
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
       setShowWhenLocked(true)
@@ -263,7 +266,7 @@ class GroupCallActivity : ComponentActivity() {
     isOutgoing = extras.getBoolean(EXTRA_IS_OUTGOING, false)
     conversationId = extras.getString(EXTRA_CONVERSATION_ID)
       ?: (if (roomName.startsWith("group_")) roomName.removePrefix("group_") else "")
-    title = extras.getString(EXTRA_TITLE)?.takeIf { it.isNotBlank() } ?: "Chamada em grupo"
+    title = extras.getString(EXTRA_TITLE)?.takeIf { it.isNotBlank() } ?: GroupCallStrings.s("groupCall")
     camEnabled = hasVideo
     parseInvitedParticipants(extras.getString(EXTRA_PARTICIPANTS_JSON))
 
@@ -355,7 +358,7 @@ class GroupCallActivity : ComponentActivity() {
   }
 
   private fun fetchTokenAndConnect() {
-    statusOverride = "Conectando…"
+    statusOverride = GroupCallStrings.s("connecting")
     renderStatus()
     lifecycleScope.launch {
       val res = try {
@@ -365,7 +368,7 @@ class GroupCallActivity : ComponentActivity() {
       }
       if (finished) return@launch
       if (res == null) {
-        statusOverride = "Sem conexão"
+        statusOverride = GroupCallStrings.s("noConnection")
         renderStatus()
         handleConnectFailure()
         return@launch
@@ -424,7 +427,7 @@ class GroupCallActivity : ComponentActivity() {
             renderStatus()
           }
           is RoomEvent.Reconnecting -> {
-            statusOverride = "Reconectando…"; renderStatus()
+            statusOverride = GroupCallStrings.s("reconnecting"); renderStatus()
           }
           is RoomEvent.Reconnected -> {
             statusOverride = null; renderStatus()
@@ -546,13 +549,13 @@ class GroupCallActivity : ComponentActivity() {
   private fun handleConnectFailure() {
     if (finished) return
     if (rejoinAttempts >= 2) {
-      statusOverride = "Falha na conexão"
+      statusOverride = GroupCallStrings.s("connectionFailed")
       renderStatus()
       ui.postDelayed({ finishCall(reason = "connect_failed") }, 1500)
       return
     }
     rejoinAttempts += 1
-    statusOverride = "Reconectando…"
+    statusOverride = GroupCallStrings.s("reconnecting")
     renderStatus()
     val old = room
     room = null
@@ -938,7 +941,7 @@ class GroupCallActivity : ComponentActivity() {
     val count = (room?.remoteParticipants?.size ?: 0) + 1
     val secs = if (connectedAtMs > 0) ((System.currentTimeMillis() - connectedAtMs) / 1000).toInt() else 0
     val mmss = String.format(java.util.Locale.US, "%02d:%02d", secs / 60, secs % 60)
-    statusText.text = if (count <= 1) "Aguardando participantes…" else "$mmss · $count participantes"
+    statusText.text = if (count <= 1) GroupCallStrings.s("waitingOthers") else "$mmss · ${GroupCallStrings.participants(count)}"
   }
 
   // ─── Build view tree ──────────────────────────────────────────────────────
@@ -1032,7 +1035,7 @@ class GroupCallActivity : ComponentActivity() {
       ).apply { gravity = Gravity.TOP }
     }
     val minimize = roundButton(40, Color.parseColor("#2C2C2E"),
-      drawable("gc_minimize", android.R.drawable.arrow_down_float), Color.WHITE, "Minimizar") {
+      drawable("gc_minimize", android.R.drawable.arrow_down_float), Color.WHITE, GroupCallStrings.s("minimize")) {
       minimizeCall()
     }
     header.addView(minimize, LinearLayout.LayoutParams(dp(40), dp(40)))
@@ -1048,7 +1051,7 @@ class GroupCallActivity : ComponentActivity() {
       typeface = android.graphics.Typeface.DEFAULT_BOLD
     }
     statusText = TextView(this).apply {
-      text = "Conectando…"
+      text = GroupCallStrings.s("connecting")
       setTextColor(Color.parseColor("#9E9E9E"))
       setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
       maxLines = 1
@@ -1109,7 +1112,7 @@ class GroupCallActivity : ComponentActivity() {
       })
     }
 
-    muteBtn = roundButton(52, Color.parseColor("#2C2C2E"), drawable("gc_mic", android.R.drawable.ic_btn_speak_now), Color.WHITE, "Microfone") {
+    muteBtn = roundButton(52, Color.parseColor("#2C2C2E"), drawable("gc_mic", android.R.drawable.ic_btn_speak_now), Color.WHITE, GroupCallStrings.s("microphone")) {
       micEnabled = !micEnabled
       refreshControlStates()
       lifecycleScope.launch {
@@ -1120,7 +1123,7 @@ class GroupCallActivity : ComponentActivity() {
     addCtl(muteBtn, 52)
 
     if (hasVideo) {
-      val vb = roundButton(52, Color.parseColor("#2C2C2E"), drawable("gc_videocam", android.R.drawable.ic_menu_camera), Color.WHITE, "Câmera") {
+      val vb = roundButton(52, Color.parseColor("#2C2C2E"), drawable("gc_videocam", android.R.drawable.ic_menu_camera), Color.WHITE, GroupCallStrings.s("camera")) {
         camEnabled = !camEnabled
         refreshControlStates()
         lifecycleScope.launch {
@@ -1139,7 +1142,7 @@ class GroupCallActivity : ComponentActivity() {
       addCtl(vb, 52)
       videoBtn = vb
 
-      val sc = roundButton(52, Color.parseColor("#2C2C2E"), drawable("gc_flip_camera", android.R.drawable.ic_menu_rotate), Color.WHITE, "Virar câmera") {
+      val sc = roundButton(52, Color.parseColor("#2C2C2E"), drawable("gc_flip_camera", android.R.drawable.ic_menu_rotate), Color.WHITE, GroupCallStrings.s("flipCamera")) {
         // [2026-10-08 call-video-fix] Swap the device on the same track.
         lifecycleScope.launch {
           try {
@@ -1160,7 +1163,7 @@ class GroupCallActivity : ComponentActivity() {
       switchCamBtn = sc
     }
 
-    val spk = roundButton(52, Color.parseColor("#2C2C2E"), drawable("gc_volume_up", android.R.drawable.ic_lock_silent_mode_off), Color.WHITE, "Alto-falante") {
+    val spk = roundButton(52, Color.parseColor("#2C2C2E"), drawable("gc_volume_up", android.R.drawable.ic_lock_silent_mode_off), Color.WHITE, GroupCallStrings.s("speaker")) {
       try {
         speakerOn = expo.modules.callkit.audio.AudioRouter.get(applicationContext).setSpeaker(!speakerOn)
       } catch (t: Throwable) {
@@ -1171,12 +1174,12 @@ class GroupCallActivity : ComponentActivity() {
     addCtl(spk, 52)
     speakerBtn = spk
 
-    val add = roundButton(52, Color.parseColor("#2C2C2E"), drawable("gc_person_add", android.R.drawable.ic_menu_add), Color.WHITE, "Adicionar pessoa") {
+    val add = roundButton(52, Color.parseColor("#2C2C2E"), drawable("gc_person_add", android.R.drawable.ic_menu_add), Color.WHITE, GroupCallStrings.s("addPerson")) {
       showAddParticipant()
     }
     addCtl(add, 52)
 
-    val hangupBtn = roundButton(60, Color.parseColor("#E53935"), drawable("phone_end", android.R.drawable.ic_menu_close_clear_cancel), Color.WHITE, "Sair da chamada") {
+    val hangupBtn = roundButton(60, Color.parseColor("#E53935"), drawable("phone_end", android.R.drawable.ic_menu_close_clear_cancel), Color.WHITE, GroupCallStrings.s("leaveCall")) {
       finishCall(reason = "user_hangup")
     }
     addCtl(hangupBtn, 60)
@@ -1190,20 +1193,20 @@ class GroupCallActivity : ComponentActivity() {
     val extras = intent?.extras
     val present = HashSet<String>()
     room?.remoteParticipants?.values?.forEach { p -> p.identity?.value?.let { present.add(bareEmail(it)) } }
-    Toast.makeText(this, "Carregando contatos…", Toast.LENGTH_SHORT).show()
+    Toast.makeText(this, GroupCallStrings.s("loadingContacts"), Toast.LENGTH_SHORT).show()
     lifecycleScope.launch {
       val contacts = withContext(Dispatchers.IO) {
         try { CallContacts.fetchContacts(applicationContext, extras) } catch (_: Throwable) { emptyList() }
       }.filter { bareEmail(it.email) !in present }
       if (finished || isFinishing) return@launch
       if (contacts.isEmpty()) {
-        Toast.makeText(this@GroupCallActivity, "Nenhum contato disponível", Toast.LENGTH_SHORT).show()
+        Toast.makeText(this@GroupCallActivity, GroupCallStrings.s("noContacts"), Toast.LENGTH_SHORT).show()
         return@launch
       }
       val labels = contacts.map { c -> c.name.ifEmpty { c.email } }.toTypedArray()
       try {
         AlertDialog.Builder(this@GroupCallActivity, android.R.style.Theme_DeviceDefault_Dialog_Alert)
-          .setTitle("Adicionar à chamada")
+          .setTitle(GroupCallStrings.s("addToCall"))
           .setItems(labels) { _, which ->
             val c = contacts.getOrNull(which) ?: return@setItems
             lifecycleScope.launch {
@@ -1215,7 +1218,7 @@ class GroupCallActivity : ComponentActivity() {
               if (!finished) {
                 Toast.makeText(
                   this@GroupCallActivity,
-                  if (ok) "Chamando ${labels[which]}…" else "Não foi possível chamar",
+                  if (ok) GroupCallStrings.s("calling", "name" to labels[which]) else GroupCallStrings.s("couldNotCall"),
                   Toast.LENGTH_SHORT
                 ).show()
               }
@@ -1229,7 +1232,7 @@ class GroupCallActivity : ComponentActivity() {
               }
             }
           }
-          .setNegativeButton("Cancelar", null)
+          .setNegativeButton(GroupCallStrings.s("cancel"), null)
           .show()
       } catch (t: Throwable) {
         Log.w(TAG, "add participant dialog failed: ${t.message}")

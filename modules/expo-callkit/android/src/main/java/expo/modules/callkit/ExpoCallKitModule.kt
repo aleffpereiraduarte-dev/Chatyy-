@@ -1386,6 +1386,12 @@ class ExpoCallKitModule : Module() {
       val lkToken = params["lk_token"] as? String
       val callId: String = (params["call_id"] as? String)?.takeIf { it.isNotEmpty() }
         ?: "call_${System.currentTimeMillis()}_${java.util.UUID.randomUUID().toString().substring(0, 8)}"
+      // [2026-10-10 p2p-android] `p2p_json` (JS já manda desde 2026-10-09 p/ o
+      // iOS) → CallActivity tenta P2P 1:1 antes do LiveKit quando enabled.
+      try {
+        val p2pJson = params["p2p_json"] as? String
+        if (!p2pJson.isNullOrBlank()) LkTokenFetcher.rememberP2P(context, callId, p2pJson)
+      } catch (_: Throwable) {}
 
       // [BUG 1 fix 2026-05-26 — REVERTED preconnect, kept clean teardown only]
       // Do NOT preconnect for OUTGOING here. preconnect() actually does
@@ -1572,6 +1578,12 @@ class ExpoCallKitModule : Module() {
     // [2026-10-09 native-group-call] JS mirrors NATIVE_GROUP_CALL_UI here.
     // Android incoming group accepts already open GroupCallActivity (#1359);
     // the pref is kept for parity/diagnostics with iOS.
+    // [2026-10-10 group-call-i18n] Idioma escolhido no app → textos nativos
+    // (tela de grupo). "" = seguir o idioma do sistema.
+    Function("setNativeAppLanguage") { code: String ->
+      try { GroupCallStrings.setAppLanguage(context, code); true } catch (_: Throwable) { false }
+    }
+
     Function("setNativeGroupCallUiEnabled") { enabled: Boolean ->
       try {
         context.getSharedPreferences("expo_callkit_prefs", Context.MODE_PRIVATE)

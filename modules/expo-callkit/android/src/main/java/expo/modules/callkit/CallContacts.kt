@@ -110,6 +110,13 @@ object CallContacts {
         intentExtras: Bundle? = null,
     ): Boolean {
         if (callId.isEmpty() || email.isEmpty()) return false
+        // [2026-10-10 p2p-android] Virou grupo: P2P (1:1) cai p/ o LiveKit antes
+        // do convidado entrar no Room.
+        try {
+            android.os.Handler(android.os.Looper.getMainLooper()).post {
+                try { P2PCallSession.get(callId)?.fallback("became_group") } catch (_: Throwable) {}
+            }
+        } catch (_: Throwable) {}
         val auth = LkTokenFetcher.resolveAuth(ctx, intentExtras) ?: run {
             Log.w(TAG, "ringIntoCall: no auth")
             return false

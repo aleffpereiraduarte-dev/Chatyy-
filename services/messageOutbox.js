@@ -558,6 +558,10 @@ export async function markSending(cmi) {
  * collection happens via cleanup() on a long timer.
  */
 export async function markSent(cmi, serverId = null) {
+  // [2026-10-10 regional-accept] Id provisório do edge (tmp_…) ≠ gravado no
+  // US: a linha fica em 'accepted' (continua no outbox) até o id numérico
+  // chegar (services/regionalAccept.js confirma / re-dirige).
+  if (typeof serverId === 'string' && /^tmp_/.test(serverId)) return markAccepted(cmi);
   _disown(cmi);
   const db = await _db_or_null();
   if (!db) return false;
@@ -580,6 +584,59 @@ export async function markSent(cmi, serverId = null) {
     try { console.warn('[messageOutbox] markSent:', e?.message); } catch {}
     return false;
   }
+}
+
+/**
+ * [2026-10-10 regional-accept] Edge regional aceitou (spool durável) mas o US
+ * ainda não deu o id numérico. Não é terminal: sem confirmação em ~45 s o
+ * regionalAccept volta a linha p/ 'queued' (mesmo client_message_id).
+ */
+export async function markAccepted(cmi) {
+  _disown(cmi);
+  const db = await _db_or_null();
+  if (!db) return false;
+  try {
+    await db.runAsync(
+      `UPDATE outbox
+          SET state = 'accepted', updated_at = ?, last_error = NULL
+        WHERE client_message_id = ? AND state NOT IN ('sent','delivered','read')`,
+      Date.now(),
+      String(cmi),
+    );
+    _notify(cmi, await getStatus(cmi));
+    return true;
+  } catch (e) {
+    try { console.warn('[messageOutbox] markAccepted:', e?.message); } catch {}
+    return false;
+  }
+}
+
+/** [2026-10-10 regional-accept] Linhas aguardando o id numérico. */
+export async function listAccepted() {
+  const db = await _db_or_null();
+  if (!db) return [];
+  try {
+    const rows = await db.getAllAsync(`SELECT * FROM outbox WHERE state = 'accepted' ORDER BY seq ASC LIMIT 200`);
+    return (rows || []).map(_hydrate);
+  } catch { return []; }
+}
+
+/** [2026-10-10 regional-accept] 'accepted' sem confirmação → reenviar (idempotente). */
+export async function redriveAccepted(cmi) {
+  const db = await _db_or_null();
+  if (!db) return false;
+  try {
+    const row = await db.getFirstAsync('SELECT conversation_id FROM outbox WHERE client_message_id = ? AND state = ?', String(cmi), 'accepted');
+    if (!row) return false;
+    await db.runAsync(
+      `UPDATE outbox SET state = 'queued', next_retry_at = 0, updated_at = ?
+        WHERE client_message_id = ? AND state = 'accepted'`,
+      Date.now(), String(cmi)
+    );
+    noteBacklog(row.conversation_id);
+    _notify(cmi, await getStatus(cmi));
+    return true;
+  } catch { return false; }
 }
 
 export async function markDelivered(cmi) {
@@ -1067,6 +1124,9 @@ export default {
   dequeueNext,
   markSending,
   markSent,
+  markAccepted,
+  listAccepted,
+  redriveAccepted,
   markDelivered,
   markRead,
   markFailed,

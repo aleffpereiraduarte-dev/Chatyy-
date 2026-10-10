@@ -615,6 +615,9 @@ export function start() {
   if (_started) return;
   _started = true;
   _stopped = false;
+  // [2026-10-10 regional-accept] Ouvintes de eco/rejeição + varredura das
+  // linhas 'accepted' (aceite regional do edge aguardando o id numérico).
+  try { require('./regionalAccept').install?.(); } catch {}
 
   // On boot, recover any rows stuck mid-flight from a previous crash. Nothing
   // is owned yet in this fresh JS context, so EVERY 'sending' row is an

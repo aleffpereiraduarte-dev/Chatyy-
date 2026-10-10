@@ -626,6 +626,9 @@ object CallSignalWs {
             Log.w(TAG, "call_invite: missing call_id/room_id, skipping")
             return
         }
+        // [2026-10-10 p2p-android] Flag P2P do callee (antes do dedupe: o FCM
+        // pode ter tocado antes, mas a config vale igual).
+        try { LkTokenFetcher.rememberP2P(ctx, callId, obj.opt("p2p")) } catch (_: Throwable) {}
         // Dedup vs server retries + FCM↔WS race + multi-device fan-out.
         // CallRingingService is also idempotent on call_id, but bailing here
         // avoids a redundant startForegroundService spin.

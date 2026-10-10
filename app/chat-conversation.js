@@ -14598,6 +14598,30 @@ function ChatConversationInner() {
       });
       wsUnsubs.push(unsubAck);
 
+      // [2026-10-10 regional-accept] O edge regional aceitou (bolha com id tmp_)
+      // mas o US rejeitou em definitivo → bolha "não enviada" (vermelha, tocar
+      // p/ tentar de novo; a re-tentativa vai direto ao US — regionalAccept).
+      const unsubRaRejected = mailWs.on('chat_send_rejected', (data) => {
+        try { require('../services/regionalAccept').noteRejected?.(data); } catch {}
+        if (!mountedRef.current) return;
+        if (String(data?.conversation_id) !== String(conversationId)) return;
+        const rjCmi = data?.client_message_id ? String(data.client_message_id) : '';
+        const rjTid = data?.temp_id ? String(data.temp_id) : '';
+        if (!rjCmi && !rjTid) return;
+        setMessages(prev => {
+          let hit = false;
+          const next = prev.map(m => {
+            const isTmp = typeof m.id === 'string' && m.id.startsWith('tmp_');
+            if (!isTmp) return m;
+            if (!((rjTid && m.id === rjTid) || (rjCmi && (m._client_id === rjCmi || m.client_message_id === rjCmi)))) return m;
+            hit = true;
+            return { ...m, _failed: true, _pending: false, _queued: false, _client_id: m._client_id || rjCmi, _sendError: String(data?.error || 'rejected') };
+          });
+          return hit ? next : prev;
+        });
+      });
+      wsUnsubs.push(unsubRaRejected);
+
       // Listen for push notification refresh (when push arrives before WS)
       const unsubPush = mailWs.on('push_chat_refresh', (data) => {
         if (String(data?.conversation_id) === String(conversationId) && mountedRef.current) {

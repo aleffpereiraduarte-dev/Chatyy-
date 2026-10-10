@@ -160,10 +160,10 @@ final class GroupCallViewController: UIViewController, @unchecked Sendable {
         } else {
             self.conversationId = ""
         }
-        self.displayTitle = title.isEmpty ? "Chamada em grupo" : title
+        self.displayTitle = title.isEmpty ? GroupCallStrings.groupCall : title
         self.session = GroupCallSessionState(
             participants: initialRoster,
-            status: "Conectando\u{2026}",
+            status: GroupCallStrings.connecting,
             micEnabled: true,
             camEnabled: hasVideo,
             speakerOn: true
@@ -356,7 +356,7 @@ final class GroupCallViewController: UIViewController, @unchecked Sendable {
                     self.lkToken = res.token
                     self.connectFresh(url: res.url, token: res.token)
                 } else {
-                    self.session.status = "Sem conexão"
+                    self.session.status = GroupCallStrings.noConnection
                     self.handleConnectFailure()
                 }
             }
@@ -372,7 +372,7 @@ final class GroupCallViewController: UIViewController, @unchecked Sendable {
         // Mic publish joins the single-flight task the CXAnswer path armed.
         _ = NativeCallRoom.shared.ensureIncomingMicPublished(callId: roomName, reason: "group_adopt")
         if pre.connectionState == .connected {
-            session.status = "Conectado"
+            session.status = GroupCallStrings.connected
             flags.liveRemotes = pre.remoteParticipants.count
         }
         seedExistingParticipants(pre)
@@ -408,7 +408,7 @@ final class GroupCallViewController: UIViewController, @unchecked Sendable {
         if rejoinAttempts < 2 {
             rejoinAttempts += 1
             rejoinPending = true
-            session.status = "Reconectando\u{2026}"
+            session.status = GroupCallStrings.reconnecting
             let delay = Double(rejoinAttempts) * 1.2
             DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
                 guard let self = self else { return }
@@ -428,7 +428,7 @@ final class GroupCallViewController: UIViewController, @unchecked Sendable {
                 self.fetchTokenAndConnect()
             }
         } else {
-            session.status = "Falha na conexão"
+            session.status = GroupCallStrings.connectionFailed
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
                 self?.handleHangup(reason: "connect_failed")
             }
@@ -442,7 +442,7 @@ final class GroupCallViewController: UIViewController, @unchecked Sendable {
         noAnswerTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: false) { [weak self] _ in
             guard let self = self else { return }
             if self.flags.liveRemotes == 0 && !self.flags.didHangup {
-                self.session.status = "Ninguém atendeu"
+                self.session.status = GroupCallStrings.noAnswer
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
                     self?.handleHangup(reason: "no_answer")
                 }
@@ -862,7 +862,7 @@ final class GroupCallViewController: UIViewController, @unchecked Sendable {
             arr.append(GroupParticipant(
                 id: "local:" + identity,
                 identity: identity,
-                name: "Você",
+                name: GroupCallStrings.you,
                 videoTrack: clearVideo ? nil : videoTrack,
                 audioMuted: audioMuted ?? !session.micEnabled,
                 isLocal: true,
@@ -1062,7 +1062,7 @@ extension GroupCallViewController: RoomDelegate {
         print("[GroupCallVC] roomDidConnect — room=\(roomName)")
         Task { @MainActor [weak self] in
             guard let self = self else { return }
-            self.session.status = "Conectado"
+            self.session.status = GroupCallStrings.connected
             self.rejoinAttempts = 0
             self.updateLocalParticipant()
         }
@@ -1070,13 +1070,13 @@ extension GroupCallViewController: RoomDelegate {
 
     func roomIsReconnecting(_ room: Room) {
         Task { @MainActor [weak self] in
-            self?.session.status = "Reconectando\u{2026}"
+            self?.session.status = GroupCallStrings.reconnecting
         }
     }
 
     func roomDidReconnect(_ room: Room) {
         Task { @MainActor [weak self] in
-            self?.session.status = "Conectado"
+            self?.session.status = GroupCallStrings.connected
         }
     }
 

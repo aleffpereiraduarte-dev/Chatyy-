@@ -152,12 +152,34 @@ class P2PCallSession(
 
         fun eglBase(): EglBase? = egl
 
+        /** [2026-10-10 p2p-android] Garante a factory e devolve o EglBase com
+         *  que os SurfaceViewRenderer precisam ser inicializados (texturas do
+         *  decoder P2P vivem neste contexto). null = libwebrtc indisponível. */
+        fun eglFor(ctx: Context): EglBase? = try { ensureFactory(ctx); egl } catch (t: Throwable) {
+            Log.w(TAG, "eglFor: ${t.message}"); null
+        }
+
+        /** Qualquer sessão viva (Telecom mute/hold não sabe o callId). */
+        fun active(): P2PCallSession? = synchronized(sessions) { sessions.values.firstOrNull { !it.done } }
+
+        /** O callee já mandou call_p2p_ready (= atendeu) antes da sessão do caller existir. */
+        fun peerReadyBuffered(callId: String?): Boolean {
+            if (callId.isNullOrEmpty()) return false
+            return synchronized(buffer) { buffer[callId]?.any { it.second.optString("type") == "call_p2p_ready" } == true }
+        }
+
         private fun ensureFactory(ctx: Context): PeerConnectionFactory {
             factory?.let { return it }
             synchronized(this) {
                 factory?.let { return it }
+                // [2026-10-10 p2p-android] O .so do libwebrtc do LiveKit chama-se
+                // "lkjingle_peerconnection_so" (RTCModule.libWebrtcInitialization).
+                // Com o nome padrão ("jingle_peerconnection_so") o load falha quando
+                // o P2P inicializa ANTES de qualquer Room (caller) → UnsatisfiedLinkError.
                 PeerConnectionFactory.initialize(
-                    PeerConnectionFactory.InitializationOptions.builder(ctx.applicationContext).createInitializationOptions()
+                    PeerConnectionFactory.InitializationOptions.builder(ctx.applicationContext)
+                        .setNativeLibraryName("lkjingle_peerconnection_so")
+                        .createInitializationOptions()
                 )
                 val e = EglBase.create()
                 egl = e
