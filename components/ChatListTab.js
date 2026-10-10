@@ -3549,7 +3549,8 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
       } catch {} finally { setContactBannerSyncing(false); }
       try { router.push('/chat-new'); } catch {}
     } else {
-      try { router.push('/chat-new'); } catch {}
+      // [2026-10-10] Abre já filtrado em "Contatos no Chatyy".
+      try { router.push({ pathname: '/chat-new', params: { only: 'chatyy' } }); } catch {}
     }
   }, [contactBanner, router, t]);
   const searchTimerRef = useRef(null);

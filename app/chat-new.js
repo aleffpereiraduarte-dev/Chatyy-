@@ -442,6 +442,11 @@ export default function ChatNewScreen() {
   // add them to the named conv, then navigate back into the conversation.
   const addMemberConvId = pageParams.addMemberToConv ? Number(pageParams.addMemberToConv) : null;
   const pickMode = !!addMemberConvId;
+  // [2026-10-10] Founder: tocar em "N contatos estão no Chatyy" tem que MOSTRAR
+  // esses contatos. Vira um filtro: só "Contatos no Chatyy" (some Recentes,
+  // atalhos e convites); tocar de novo volta à tela completa. O aviso da lista
+  // de conversas abre direto filtrado (?only=chatyy).
+  const [onlyChatyy, setOnlyChatyy] = useState(pageParams.only === 'chatyy');
   const insets = useSafeAreaInsets();
 
   // ── Instant-open cache keys (per-user scoped by services/cache) ──────────
@@ -2169,7 +2174,7 @@ export default function ChatNewScreen() {
           <View style={{ flex: 1 }}>
             <SectionList
               ref={sectionListRef}
-              sections={sections}
+              sections={onlyChatyy ? sections.filter(sec => String(sec.key).startsWith('phone_chatyy')) : sections}
               keyExtractor={(item, idx) => item.email || item.phone || String(idx)}
               renderItem={renderContact}
               renderSectionHeader={renderSectionHeader}
@@ -2241,9 +2246,8 @@ export default function ChatNewScreen() {
                         accessibilityRole="button"
                         hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                         onPress={() => {
-                          const idx = sections.findIndex(sec => sec.key === 'phone_chatyy');
-                          if (idx < 0 || !sectionListRef.current) return;
-                          try { sectionListRef.current.scrollToLocation({ sectionIndex: idx, itemIndex: 0, animated: true, viewOffset: 0 }); } catch {}
+                          setOnlyChatyy(v => !v);
+                          try { sectionListRef.current?.getScrollResponder?.()?.scrollTo?.({ y: 0, animated: false }); } catch {}
                         }}
                         style={{
                           backgroundColor: colors.primary,
@@ -2261,13 +2265,15 @@ export default function ChatNewScreen() {
                             .replace('{count}', String(phoneContacts.length))
                             .replace('{total}', String((phoneContacts.length + otherContacts.length) || phoneContacts.length))}
                         </Text>
-                        <IconChevronDown size={14} color={colors.onPrimary || '#fff'} />
+                        {onlyChatyy
+                          ? <IconX size={14} color={colors.onPrimary || '#fff'} />
+                          : <IconChevronDown size={14} color={colors.onPrimary || '#fff'} />}
                       </TouchableOpacity>
                     </View>
                   )}
 
                   {/* Recently contacted (horizontal scroll) */}
-                  {recentContacts.length > 0 && (
+                  {!onlyChatyy && recentContacts.length > 0 && (
                     <View style={sty.recentSection}>
                       <View style={[sty.sectionHeader, { backgroundColor: 'transparent', paddingBottom: 4 }]}>
                         <View style={sty.sectionAccentLine} />
@@ -2287,6 +2293,7 @@ export default function ChatNewScreen() {
                   )}
 
                   {/* Quick actions */}
+                  {!onlyChatyy && (
                   <View style={sty.quickActions}>
                     {/* Saved Messages — chat with self (Telegram-style) */}
                     <TouchableOpacity
@@ -2371,9 +2378,10 @@ export default function ChatNewScreen() {
                       </View>
                     </TouchableOpacity>
                   </View>
+                  )}
 
                   {/* Invite count for non-Chatyy contacts */}
-                  {otherContacts.length > 0 && (
+                  {!onlyChatyy && otherContacts.length > 0 && (
                     <View style={[sty.inviteCountBanner, { backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(17,17,17,0.04)' }]}>
                       <Text style={{ color: colors.textSecondary, fontSize: 13 }}>
                         {t('chat.contactsNotOnChatyy', { count: otherContacts.length })}
