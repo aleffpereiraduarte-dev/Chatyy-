@@ -54,16 +54,32 @@ import LiveKitClient
 
     /// Runtime on/off (atomic in C, read by the audio thread every frame).
     /// Does NOT persist — callers persist `rnnoise_enabled` themselves.
+    // [2026-10-11] O C do RNNoise ficou FORA do pod no iOS por enquanto: no target
+    // ExpoCallKit os headers do folly (Stdlib.h/String.h…) sombreiam os da libc em
+    // arquivos .c ("'cstdlib' file not found"). Sem CHATYY_NS_C este processador
+    // é pass-through (o WebRTC continua com NS/AEC/AGC próprios). Android tem RNNoise.
+    #if CHATYY_NS_C
     @objc var enabled: Bool {
         get { return chatyy_ns_is_enabled() != 0 }
         set { chatyy_ns_set_enabled(newValue ? 1 : 0) }
     }
+    #else
+    private var _enabled = false
+    @objc var enabled: Bool {
+        get { return _enabled }
+        set { _enabled = newValue }
+    }
+    #endif
 
     private override init() {
         // chatyy_ns_create also pre-builds RNNoise's global tables, so this must
         // run off the audio thread — `shared` is first touched from install()
         // (main thread) or the ExpoCallKit module functions (JS thread).
+        #if CHATYY_NS_C
         self.ns = chatyy_ns_create()
+        #else
+        self.ns = nil
+        #endif
         super.init()
         enabled = Self.persistedEnabled()
         os_log("RNNoise ready=%{public}@ enabled=%{public}@", log: log, type: .info,
@@ -108,16 +124,20 @@ import LiveKitClient
 
     @objc func audioProcessingInitialize(sampleRate sampleRateHz: Int, channels: Int) {
         // New stream / rate: start the recurrent state clean (no allocation).
+        #if CHATYY_NS_C
         if let ns = ns { chatyy_ns_reset(ns) }
+        #endif
     }
 
     @objc func audioProcessingProcess(audioBuffer: LKAudioBuffer) {
         // Mono only (LiveKit mic capture is mono); anything else passes through
         // so a stereo source never ends up with denoised-L / raw-R.
+        #if CHATYY_NS_C
         guard let ns = ns, audioBuffer.channels == 1 else { return }
         let frames = audioBuffer.frames
         guard frames == 480 else { return } // 10 ms @ 48 kHz only (C re-checks)
         _ = chatyy_ns_process(ns, audioBuffer.rawBuffer(forChannel: 0), Int32(truncatingIfNeeded: frames))
+        #endif
     }
 
     @objc func audioProcessingRelease() {

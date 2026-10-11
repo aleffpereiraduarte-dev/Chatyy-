@@ -68,9 +68,11 @@ Pod::Spec.new do |s|
   # -import-underlying-module). The vendored rnnoise/ files are NOT compiled on
   # their own (would duplicate symbols) and their headers are NOT public (macro
   # soup must stay out of the umbrella) → preserve_paths only.
-  s.source_files = ['**/*.swift', 'ChatyyNS/chatyy_ns.{h,c}']
-  s.public_header_files = 'ChatyyNS/chatyy_ns.h'
-  s.preserve_paths = 'ChatyyNS/rnnoise/**/*'
+  # [2026-10-11] C do RNNoise FORA do pod por ora (folly sombreia stdlib.h em .c
+  # neste target → "'cstdlib' file not found"). Próximo passo: pod próprio sem
+  # React (ChatyyNS) + -DCHATYY_NS_C. Swift compila em pass-through.
+  s.source_files = ['**/*.swift']
+  s.preserve_paths = 'ChatyyNS/**/*'
 
   # [2026-10-07 bgsync] BackgroundTasks → ChatBgSyncAppDelegateSubscriber (BGAppRefreshTask).
   s.frameworks = 'CallKit', 'PushKit', 'AVFoundation', 'CoreImage', 'CoreVideo', 'Intents', 'BackgroundTasks'
