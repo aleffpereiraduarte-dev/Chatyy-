@@ -352,9 +352,19 @@ final class CallViewController: UIViewController, @unchecked Sendable {
             guard let self = self else { return }
             self.outgoingConnectFallbackTimer = nil
             guard !self.didHangup, self.session.status != "Conectado" else { return }
+            // [2026-10-10] Founder: "tá aparecendo conectado mesmo se a pessoa
+            // não atendeu?" — SIM: o callee pré-conecta (só assinatura) DURANTE
+            // o toque, então "peer presente" virava "Conectado" em 6s com o
+            // celular dela ainda tocando (call_1791675346907: callee 'missed',
+            // caller 'call_connected participant_present_6s'). Agora o fallback
+            // só confirma se o atendimento chegou (WS call_accepted abriu o
+            // gate) E o par está na sala; mídia real (didSubscribe) segue sendo
+            // o caminho principal.
             let peerPresent = (self.room?.remoteParticipants.isEmpty == false)
-            if peerPresent || self.outgoingMicGateOpen {
+            if peerPresent && self.outgoingMicGateOpen {
                 self.markCallConnected(reason: reason)
+            } else {
+                nativeCallDiag("outgoing_connect_fallback_skip", self.callId, "peer=\(peerPresent) accepted=\(self.outgoingMicGateOpen)")
             }
         }
         outgoingConnectFallbackTimer = work
