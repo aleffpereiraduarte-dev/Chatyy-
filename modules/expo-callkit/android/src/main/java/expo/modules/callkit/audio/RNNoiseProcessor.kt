@@ -1,48 +1,51 @@
 package expo.modules.callkit.audio
 
 import android.util.Log
+import io.livekit.android.audio.AudioProcessorInterface
+import io.livekit.android.room.Room
 import java.nio.ByteBuffer
-import java.nio.ByteOrder
 
 /**
- * RNNoiseProcessor — ML noise suppression replacement for Krisp.
+ * RNNoiseProcessor — REAL ML noise suppression for native LiveKit calls.
  *
- * Backed by the open-source RNNoise model (Xiph, BSD license — https://github.com/xiph/rnnoise).
- * On Android we use the LiveKit-built prebuilt AAR (`com.github.livekit:rnnoise-android`, Apache 2)
- * which bundles the libRNNoise.so per ABI and exposes a JNI surface with:
- *   - long  RNNoise.create()                       // alloc a session
- *   - int   RNNoise.processFrame(handle, short[] pcm)   // in-place, 480-sample frame @ 48k
- *   - void  RNNoise.destroy(handle)
+ * [2026-10-11 noise] Rewritten. The previous version reflected into
+ * `org.xiph.rnnoise.RNNoise` from a JitPack AAR that was removed on 2026-05-18
+ * (401) → it was a permanent pass-through. RNNoise (Xiph/Mozilla, BSD-3,
+ * v0.1.1, default model compiled in) is now vendored C shared with iOS
+ * (modules/expo-callkit/ios/ChatyyNS) and built into `libchatyyns.so` by this
+ * module's CMakeLists.txt.
  *
- * If the prebuilt JNI is missing at runtime (library swap, gradle skip, etc.) we degrade to a
- * pass-through processor so audio still flows. Toggle owns its on/off state — every 480-sample
- * frame is suppressed when enabled, untouched otherwise.
+ * Hook (verified against livekit-android 2.24.1 sources + webrtc-sdk m144):
+ *   room.audioProcessingController.capturePostProcessor = RNNoiseProcessor.shared()
+ *   → WebRTC APM calls processAudio(numBands, numFrames, buffer) every 10 ms,
+ *     AFTER WebRTC's AEC/NS/AGC. `buffer` is a DIRECT ByteBuffer over APM's
+ *     channel-0 float samples (int16 scale) — denoised IN PLACE in C (JNI
+ *     GetDirectBufferAddress), no copies/allocations on the audio thread.
+ *   RNNoise needs 480-sample frames @ 48 kHz = exactly one 10 ms APM frame, so
+ *   numFrames == 480 is processed and anything else (16/32 kHz APM rate, e.g.
+ *   Bluetooth SCO) passes through untouched (WebRTC NS still active).
  *
- * Integration path (Android):
- *   - LiveKit Android exposes `AudioProcessorOptions` on the `LiveKitOverrides`-backed
- *     RoomOptions.audioCaptureOptions. The processor wraps a webrtc PCM frame
- *     (signed 16-bit little-endian @ 48 kHz mono) and runs RNNoise in 480-sample chunks.
- *   - The processor is registered globally once in ExpoCallKitModule.setup() so every Room
- *     instance picks it up. Per-user persistence lives in SharedPreferences (key:
- *     `rnnoise_enabled`, default true).
+ * Failure-safe: `System.loadLibrary` / native alloc failure → available=false
+ * → every callback is a no-op (= previous behaviour). The C side never blocks
+ * (try-lock), never allocates per frame, and restores the raw frame if the
+ * model ever outputs NaN/Inf. Any Throwable in processAudio disables us.
  *
- * Frame size: RNNoise expects exactly 480 samples per call at 48 kHz (10 ms). We buffer
- * partial frames between calls and drain in 480-chunks; remaining tail is held over to
- * the next process call.
- *
- * Thread safety: NOT thread-safe — LiveKit's audio thread is the single caller. Construct
- * on UI / module setup and pin to one Room.
+ * Toggle: `enabled` (process-wide, atomic in C). Persisted by callers in the
+ * module SharedPreferences key `rnnoise_enabled` (default true) — see
+ * ExpoCallKitModule.setNoiseSuppression / CallActivity.
  */
-class RNNoiseProcessor {
+class RNNoiseProcessor private constructor() : AudioProcessorInterface {
 
   companion object {
     private const val TAG = "RNNoiseProcessor"
-    /** Frame size required by RNNoise. */
+    /** Frame size required by RNNoise (10 ms @ 48 kHz). */
     private const val FRAME_SIZE = 480
     /** Sample rate expected by the model. */
     const val SAMPLE_RATE = 48000
+    /** getName() — anything but "krisp_noise_cancellation" (that one makes
+     *  LiveKit advertise TF_ENHANCED_NOISE_CANCELLATION to the SFU). */
+    const val NAME = "chatyy_rnnoise"
 
-    /** Singleton handle so the processor survives Room recreation. */
     @Volatile
     private var instance: RNNoiseProcessor? = null
 
@@ -57,142 +60,96 @@ class RNNoiseProcessor {
         return fresh
       }
     }
+
+    /**
+     * Attach the shared processor to a Room's capture APM (call right after
+     * LiveKit.create, before the mic is published). Never throws.
+     */
+    fun attachTo(room: Room?) {
+      if (room == null) return
+      try {
+        val p = shared()
+        if (!p.available) {
+          Log.w(TAG, "attachTo: RNNoise unavailable — WebRTC NS only")
+          return
+        }
+        val ctl = room.audioProcessingController
+        if (ctl.capturePostProcessor !== p) ctl.capturePostProcessor = p
+        Log.i(TAG, "attachTo: capture post-processor installed (enabled=${p.enabled})")
+      } catch (t: Throwable) {
+        Log.w(TAG, "attachTo failed (pass-through): ${t.message}")
+      }
+    }
+
+    @JvmStatic private external fun nativeCreate(): Long
+    @JvmStatic private external fun nativeReset(handle: Long)
+    @JvmStatic private external fun nativeProcess(handle: Long, buffer: ByteBuffer, numFrames: Int): Int
+    @JvmStatic private external fun nativeSetEnabled(enabled: Boolean)
   }
 
-  /** JNI handle to the underlying RNNoise denoise_state. 0 == not allocated / unavailable. */
+  /** Native chatyy_ns handle; 0 == unavailable. Lives for the process (never freed,
+   *  so a late audio callback can never touch freed memory). */
   @Volatile
   private var handle: Long = 0
 
-  /** Toggle owned by JS / UI. When false, processFrame() returns immediately. */
-  @Volatile
-  var enabled: Boolean = true
-
-  /** True once we successfully loaded the .so and allocated a session. */
+  /** True once libchatyyns.so loaded and the RNNoise state was allocated. */
   @Volatile
   var available: Boolean = false
     private set
 
-  /** Carry-over buffer for partial frames smaller than FRAME_SIZE. */
-  private val tail = ShortArray(FRAME_SIZE)
-  private var tailLength = 0
+  /** User toggle (default true). Applied live to the native stage. */
+  @Volatile
+  var enabled: Boolean = true
+    set(value) {
+      field = value
+      if (available) {
+        try { nativeSetEnabled(value) } catch (_: Throwable) {}
+      }
+    }
 
   init {
-    available = tryLoadAndCreate()
-    if (!available) {
-      Log.w(TAG, "RNNoise JNI unavailable — falling back to pass-through")
-    } else {
-      Log.i(TAG, "RNNoise session ready (handle=$handle, frameSize=$FRAME_SIZE)")
-    }
-  }
-
-  /**
-   * Try to load the prebuilt libRNNoise.so and allocate a session. The native class lives at
-   * `org.xiph.rnnoise.RNNoise` per the LiveKit AAR; we use reflection so a missing dep
-   * degrades gracefully instead of failing the whole app.
-   */
-  private fun tryLoadAndCreate(): Boolean {
-    return try {
-      val cls = Class.forName("org.xiph.rnnoise.RNNoise")
-      val createMethod = cls.getMethod("create")
-      val h = createMethod.invoke(null) as? Long ?: 0L
-      handle = h
-      h != 0L
+    available = try {
+      System.loadLibrary("chatyyns")
+      handle = nativeCreate()
+      handle != 0L
     } catch (t: Throwable) {
-      Log.w(TAG, "tryLoadAndCreate failed: ${t.message}")
-      0L.also { handle = it }
+      Log.w(TAG, "libchatyyns unavailable — pass-through: ${t.message}")
+      handle = 0L
       false
     }
-  }
-
-  /**
-   * Process a chunk of mono 48 kHz signed-16 PCM samples in place. The chunk can be any
-   * length — we buffer partial frames internally and only call into RNNoise on full
-   * 480-sample chunks. Disabled / unavailable → no-op.
-   */
-  fun process(pcm: ShortArray, offset: Int = 0, length: Int = pcm.size) {
-    if (!enabled || !available || handle == 0L) return
-    var idx = offset
-    val end = offset + length
-
-    // Drain any leftover tail first so the next process call starts aligned.
-    if (tailLength > 0) {
-      val need = FRAME_SIZE - tailLength
-      val take = minOf(need, end - idx)
-      System.arraycopy(pcm, idx, tail, tailLength, take)
-      tailLength += take
-      idx += take
-      if (tailLength == FRAME_SIZE) {
-        runFrame(tail, 0)
-        // Copy denoised frame back into the caller's buffer at the same position. We
-        // overwrite the original samples we consumed; this preserves the in-place
-        // contract LiveKit's AudioProcessor expects.
-        System.arraycopy(tail, 0, pcm, idx - FRAME_SIZE, FRAME_SIZE)
-        tailLength = 0
-      }
-    }
-
-    // Process every full 480-sample frame.
-    while (end - idx >= FRAME_SIZE) {
-      runFrame(pcm, idx)
-      idx += FRAME_SIZE
-    }
-
-    // Stash anything left over in `tail` for the next call.
-    val rem = end - idx
-    if (rem > 0) {
-      System.arraycopy(pcm, idx, tail, 0, rem)
-      tailLength = rem
+    if (available) {
+      try { nativeSetEnabled(enabled) } catch (_: Throwable) {}
+      Log.i(TAG, "RNNoise ready (frame=$FRAME_SIZE @ $SAMPLE_RATE Hz)")
     }
   }
 
-  /** Reflection call into RNNoise.processFrame. The native side denoises in place. */
-  private fun runFrame(buf: ShortArray, offset: Int) {
+  // ─── AudioProcessorInterface (WebRTC APM thread) ────────────────────────
+
+  /** LiveKit calls every method regardless of isEnabled(); we gate in C. */
+  override fun isEnabled(): Boolean = available && enabled
+
+  override fun getName(): String = NAME
+
+  override fun initializeAudioProcessing(sampleRateHz: Int, numChannels: Int) {
+    val h = handle
+    if (h != 0L) try { nativeReset(h) } catch (_: Throwable) {}
+  }
+
+  override fun resetAudioProcessing(newRate: Int) {
+    val h = handle
+    if (h != 0L) try { nativeReset(h) } catch (_: Throwable) {}
+  }
+
+  override fun processAudio(numBands: Int, numFrames: Int, buffer: ByteBuffer) {
+    val h = handle
+    if (h == 0L || numFrames != FRAME_SIZE) return
     try {
-      val cls = Class.forName("org.xiph.rnnoise.RNNoise")
-      val proc = cls.getMethod("processFrame", Long::class.javaPrimitiveType, ShortArray::class.java)
-      // The AAR's processFrame takes the whole array starting at index 0. We
-      // copy the 480-sample window into a fixed scratch to honour that contract
-      // when offset != 0.
-      if (offset == 0 && buf.size == FRAME_SIZE) {
-        proc.invoke(null, handle, buf)
-      } else {
-        // Stack-allocated buffer for the frame window.
-        val window = ShortArray(FRAME_SIZE)
-        System.arraycopy(buf, offset, window, 0, FRAME_SIZE)
-        proc.invoke(null, handle, window)
-        System.arraycopy(window, 0, buf, offset, FRAME_SIZE)
-      }
+      nativeProcess(h, buffer, numFrames)
     } catch (t: Throwable) {
-      Log.w(TAG, "runFrame failed (disabling): ${t.message}")
+      // Never let a JNI surprise kill the capture thread — degrade forever.
+      Log.w(TAG, "processAudio failed — disabling: ${t.message}")
+      handle = 0L
       available = false
     }
-  }
-
-  /**
-   * Convenience entry for callers that hand us a ByteBuffer rather than a ShortArray. LiveKit's
-   * AudioProcessor APIs vary across SDK rev — both shapes are common.
-   */
-  fun process(byteBuffer: ByteBuffer) {
-    if (!enabled || !available || handle == 0L) return
-    byteBuffer.order(ByteOrder.LITTLE_ENDIAN)
-    val samples = byteBuffer.remaining() / 2
-    val pcm = ShortArray(samples)
-    byteBuffer.mark()
-    for (i in 0 until samples) pcm[i] = byteBuffer.short
-    process(pcm)
-    byteBuffer.reset()
-    for (i in 0 until samples) byteBuffer.putShort(pcm[i])
-  }
-
-  fun release() {
-    val h = handle
-    if (h == 0L) return
-    handle = 0L
-    available = false
-    try {
-      val cls = Class.forName("org.xiph.rnnoise.RNNoise")
-      val destroy = cls.getMethod("destroy", Long::class.javaPrimitiveType)
-      destroy.invoke(null, h)
-    } catch (_: Throwable) {}
   }
 }

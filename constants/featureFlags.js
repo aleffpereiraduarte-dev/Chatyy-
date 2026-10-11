@@ -281,3 +281,30 @@ export function isNativeGroupCallEnabled(email) {
 // Backend também recusa (410). Só religar com um provedor novo.
 export const VOICE_OTP_ENABLED = false;
 export const PSTN_ENABLED = false;
+
+// ────────────────────────────────────────────────────────────────────────
+// [2026-10-10 storage-boot] Armazenamento local / abertura rápida.
+//
+// MMKV_LAZY_IOS: services/mmkv.js NÃO hidrata no boot os blobs de mensagens
+//   (`chat_msgs_*`), corpos de e-mail (`omc_msg_*`) e offline last-known
+//   (`apiofl1_*`) também no iOS (no Android já era assim desde 06/10). Carregam
+//   por conversa sob demanda. OTA-safe (JS puro). false = boot antigo do iOS.
+export const MMKV_LAZY_IOS = true;
+//
+// KV_SQLITE_ENABLED: services/mmkv.js passa a usar uma tabela KV no expo-sqlite
+//   (`chatyy_kv.db`, leitura SÍNCRONA) em vez de AsyncStorage. 1º boot com a flag:
+//   roda como antes + copia AsyncStorage→SQLite em background; do 2º boot em
+//   diante o boot é síncrono. Escritas continuam também no AsyncStorage
+//   (dual-write) → desligar a flag é rollback seguro. expo-sqlite já está nos
+//   binários (sqliteStore usa openDatabaseSync); require guardado + fallback.
+//   Override de teste: globalThis.__chatyy_kv_sqlite = true ANTES do 1º import de
+//   services/mmkv (ex.: index.js). DEFAULT OFF até validar em device.
+export const KV_SQLITE_ENABLED = false;
+//
+// NATIVE_CHAT_CACHE_ENABLED: religa modules/expo-chat-cache (Swift SQLite) no
+//   chat (saveMessages/leitura frame-1/mídia). Só ativa se o binário expõe
+//   getSchemaVersionSync() >= 2 (= build SEM os triggers FTS5 que corrompiam o
+//   índice e derrubavam o processo). Binários antigos → sempre null.
+//   Override de teste: globalThis.__chatyy_native_chat_cache = true|false.
+//   DEFAULT OFF: ligar via OTA só depois do build novo testado em device.
+export const NATIVE_CHAT_CACHE_ENABLED = false;

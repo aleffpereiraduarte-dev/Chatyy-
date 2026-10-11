@@ -61,7 +61,16 @@ Pod::Spec.new do |s|
   # target's own Podfile entry (see ios/Podfile) pulls LiveKitClient on the
   # extension side. SampleHandler.swift already extends `LKSampleHandler`.
 
-  s.source_files = '**/*.swift'
+  # [2026-10-11 noise] RNNoise (BSD-3, vendored v0.1.1) for real ML noise
+  # suppression in native calls — RNNoiseAudioProcessor.swift. ONE C
+  # translation unit (chatyy_ns.c #includes ChatyyNS/rnnoise/*.c) + ONE plain-C
+  # public header (chatyy_ns.h → pod umbrella → visible to the pod's Swift via
+  # -import-underlying-module). The vendored rnnoise/ files are NOT compiled on
+  # their own (would duplicate symbols) and their headers are NOT public (macro
+  # soup must stay out of the umbrella) → preserve_paths only.
+  s.source_files = ['**/*.swift', 'ChatyyNS/chatyy_ns.{h,c}']
+  s.public_header_files = 'ChatyyNS/chatyy_ns.h'
+  s.preserve_paths = 'ChatyyNS/rnnoise/**/*'
 
   # [2026-10-07 bgsync] BackgroundTasks → ChatBgSyncAppDelegateSubscriber (BGAppRefreshTask).
   s.frameworks = 'CallKit', 'PushKit', 'AVFoundation', 'CoreImage', 'CoreVideo', 'Intents', 'BackgroundTasks'

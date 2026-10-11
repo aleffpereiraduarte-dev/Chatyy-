@@ -404,6 +404,8 @@ class GroupCallActivity : ComponentActivity() {
     }
     val r = LiveKit.create(applicationContext, options = roomOptions)
     room = r
+    // [2026-10-11 noise] RNNoise capture post-processor (pass-through on failure).
+    expo.modules.callkit.audio.RNNoiseProcessor.attachTo(r)
 
     localRenderer?.let { r.initVideoRenderer(it) }
     tilesByIdentity.values.forEach { tile -> r.initVideoRenderer(tile.renderer) }

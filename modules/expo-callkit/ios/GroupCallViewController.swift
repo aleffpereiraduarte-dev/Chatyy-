@@ -237,6 +237,11 @@ final class GroupCallViewController: UIViewController, @unchecked Sendable {
 
         installSystemMuteObserver()
 
+        // [2026-10-11 noise] RNNoise on LiveKit's capture APM before any mic
+        // publish (fresh join or adopted preconnect). Pref `rnnoise_enabled`
+        // (default ON); pass-through on any failure.
+        RNNoiseAudioProcessor.install()
+
         // [2026-10-09 native-group-call] Incoming CallKit answer: adopt the
         // ring-window preconnected Room instead of joining a 2nd time with
         // the same identity (SFU would evict one of them).

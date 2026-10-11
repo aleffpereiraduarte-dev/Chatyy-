@@ -1,0 +1,4 @@
+# ninja log v5
+2	84	1791690079158428266	CMakeFiles/chatyyns.dir/src/main/cpp/chatyy_ns_jni.c.o	67925f733e27b66b
+0	1770	1791690080844400640	CMakeFiles/chatyyns.dir/root/webmail-app/modules/expo-callkit/ios/ChatyyNS/chatyy_ns.c.o	303b6213ae6dc6ec
+1770	1821	1791690080899399739	../../../../build/intermediates/cxx/RelWithDebInfo/1e315h70/obj/arm64-v8a/libchatyyns.so	e1a9b260fd9ebc0f

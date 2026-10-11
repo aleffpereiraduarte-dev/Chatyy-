@@ -646,6 +646,11 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         // suppress noise. The REAL suppression is WebRTC's built-in NS + Apple
         // VPIO/HW-AEC, enabled unconditionally via defaultAudioCaptureOptions()
         // on the LiveKit RoomOptions, and is untouched. Nothing to force here.
+        // [2026-10-11 noise] RNNoise is now REAL (vendored C, see
+        // RNNoiseAudioProcessor.swift): attach it to LiveKit's capture APM
+        // before any mic publish (fresh Room or adopted preconnect). Respects
+        // the `rnnoise_enabled` pref (default ON); no-op/pass-through on failure.
+        RNNoiseAudioProcessor.install()
 
         // [WAVE 154 2026-05-22] NUCLEAR — SwiftUI CallView removed entirely.
         //
@@ -2530,7 +2535,10 @@ final class CallViewController: UIViewController, @unchecked Sendable {
     private func applyNoiseSuppression(_ enabled: Bool) {
         session.noiseSuppression = enabled
         UserDefaults(suiteName: "group.com.onemundo.mail")?.set(enabled, forKey: "rnnoise_enabled")
-        print("[CallVC] noiseSuppression UI flag → \(enabled) (real NS = WebRTC/VPIO, always on)")
+        // [2026-10-11 noise] The toggle is real again: flips the RNNoise stage
+        // live (atomic, next 10 ms frame). WebRTC NS/VPIO stay on regardless.
+        RNNoiseAudioProcessor.shared.enabled = enabled
+        print("[CallVC] noiseSuppression → \(enabled) (RNNoise available=\(RNNoiseAudioProcessor.shared.available); WebRTC/VPIO always on)")
     }
 
     /// [MediaPipe, 2026-05-17] Cycle through background modes: off → blur_medium
@@ -3541,7 +3549,17 @@ final class CallViewController: UIViewController, @unchecked Sendable {
     /// highpassFilter. Past attempts to spell out the args got tripped up on
     /// the init's actual labeled-arg order, so just take the defaults.
     static func defaultAudioCaptureOptions() -> AudioCaptureOptions {
-        return AudioCaptureOptions()
+        // [2026-10-11 noise] Spelled out (labels/order verified against
+        // client-sdk-swift 2.0.18 AudioCaptureOptions.init) so an SDK bump can
+        // never silently flip a default. RNNoise runs AFTER these, in the APM
+        // capture post-processor (RNNoiseAudioProcessor).
+        return AudioCaptureOptions(
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+            typingNoiseDetection: true,
+            highpassFilter: true
+        )
     }
 
     // MARK: - Deinit

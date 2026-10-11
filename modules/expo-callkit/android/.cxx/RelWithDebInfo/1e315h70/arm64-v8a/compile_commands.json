@@ -1,0 +1,12 @@
+[
+{
+  "directory": "/root/webmail-app/modules/expo-callkit/android/.cxx/RelWithDebInfo/1e315h70/arm64-v8a",
+  "command": "/opt/android-sdk/ndk/27.1.12297006/toolchains/llvm/prebuilt/linux-x86_64/bin/clang --target=aarch64-none-linux-android24 --sysroot=/opt/android-sdk/ndk/27.1.12297006/toolchains/llvm/prebuilt/linux-x86_64/sysroot -Dchatyyns_EXPORTS -I/root/webmail-app/modules/expo-callkit/android/../ios/ChatyyNS -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D__BIONIC_NO_PAGE_SIZE_MACRO -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security  -O2 -g -DNDEBUG -fPIC -O3 -fvisibility=hidden -w -o CMakeFiles/chatyyns.dir/root/webmail-app/modules/expo-callkit/ios/ChatyyNS/chatyy_ns.c.o -c /root/webmail-app/modules/expo-callkit/ios/ChatyyNS/chatyy_ns.c",
+  "file": "/root/webmail-app/modules/expo-callkit/ios/ChatyyNS/chatyy_ns.c"
+},
+{
+  "directory": "/root/webmail-app/modules/expo-callkit/android/.cxx/RelWithDebInfo/1e315h70/arm64-v8a",
+  "command": "/opt/android-sdk/ndk/27.1.12297006/toolchains/llvm/prebuilt/linux-x86_64/bin/clang --target=aarch64-none-linux-android24 --sysroot=/opt/android-sdk/ndk/27.1.12297006/toolchains/llvm/prebuilt/linux-x86_64/sysroot -Dchatyyns_EXPORTS -I/root/webmail-app/modules/expo-callkit/android/../ios/ChatyyNS -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D__BIONIC_NO_PAGE_SIZE_MACRO -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security  -O2 -g -DNDEBUG -fPIC -O3 -fvisibility=hidden -w -o CMakeFiles/chatyyns.dir/src/main/cpp/chatyy_ns_jni.c.o -c /root/webmail-app/modules/expo-callkit/android/src/main/cpp/chatyy_ns_jni.c",
+  "file": "/root/webmail-app/modules/expo-callkit/android/src/main/cpp/chatyy_ns_jni.c"
+}
+]

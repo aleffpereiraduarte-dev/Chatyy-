@@ -23,6 +23,16 @@ import CommonCrypto
 private let DB_NAME = "chatyy_chat_cache.sqlite"
 private let DEFAULT_LIMIT = 50
 private let MEMORY_CACHE_SIZE = 100 // messages kept in memory per conversation
+/// [2026-10-10] Schema 2 = NO messages_fts / sync triggers. The external-content
+/// FTS5 index (content='messages') + AFTER INSERT/UPDATE/DELETE triggers got
+/// out of sync under `INSERT OR REPLACE` (REPLACE's implicit delete does NOT fire
+/// the AFTER DELETE trigger unless recursive_triggers=ON → a second FTS row for
+/// the same rowid, later 'delete' commands with mismatched values) → corrupted
+/// FTS index → SQLITE_CORRUPT inside the trigger on the next save → native
+/// crash with no JS-catchable error. Message search is now a plain LIKE.
+/// JS (services/nativeChatCacheGate.js) only uses this module when
+/// getSchemaVersionSync() >= 2, so old binaries can never re-enable the bug.
+private let SCHEMA_VERSION: Int32 = 2
 
 public class ExpoChatCacheModule: Module {
 
@@ -98,7 +108,13 @@ public class ExpoChatCacheModule: Module {
 
         OnCreate {
             self.openDatabase()
+            self.migrateSchema()
             self.createSchema()
+        }
+
+        /// JS gate: >= 2 means this binary has no FTS5 triggers on `messages`.
+        Function("getSchemaVersionSync") { () -> Int in
+            return Int(SCHEMA_VERSION)
         }
 
         // ─── SYNCHRONOUS reads (the whole point of this module) ───
@@ -555,35 +571,61 @@ public class ExpoChatCacheModule: Module {
                 cached_at INTEGER
             );
 
-            -- FTS5 virtual tables for instant search across messages and emails.
-            -- These are populated by triggers below so they stay in sync.
-            CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
-                content, sender_email,
-                content='messages', content_rowid='id',
-                tokenize='unicode61 remove_diacritics 2'
-            );
+            -- [2026-10-10] Only the STANDALONE email FTS table remains (no
+            -- external content, no triggers; rows written explicitly by
+            -- indexEmailForSearch). messages_fts + its triggers were removed —
+            -- see SCHEMA_VERSION / migrateSchema().
             CREATE VIRTUAL TABLE IF NOT EXISTS emails_fts USING fts5(
                 subject, body, from_addr,
                 tokenize='unicode61 remove_diacritics 2'
             );
-
-            -- Sync triggers for messages → messages_fts
-            CREATE TRIGGER IF NOT EXISTS messages_ai AFTER INSERT ON messages BEGIN
-                INSERT INTO messages_fts(rowid, content, sender_email)
-                VALUES (new.id, new.content, new.sender_email);
-            END;
-            CREATE TRIGGER IF NOT EXISTS messages_ad AFTER DELETE ON messages BEGIN
-                INSERT INTO messages_fts(messages_fts, rowid, content, sender_email)
-                VALUES('delete', old.id, old.content, old.sender_email);
-            END;
-            CREATE TRIGGER IF NOT EXISTS messages_au AFTER UPDATE ON messages BEGIN
-                INSERT INTO messages_fts(messages_fts, rowid, content, sender_email)
-                VALUES('delete', old.id, old.content, old.sender_email);
-                INSERT INTO messages_fts(rowid, content, sender_email)
-                VALUES (new.id, new.content, new.sender_email);
-            END;
         """
         sqlite3_exec(db, sql, nil, nil, nil)
+    }
+
+    /// One-time upgrade to SCHEMA_VERSION (PRAGMA user_version):
+    ///   1. drop the messages FTS triggers FIRST (so nothing writes the index),
+    ///   2. drop messages_fts (if the corrupted vtab refuses to drop, the whole
+    ///      cache file is deleted and recreated — it is only a cache),
+    ///   3. wipe `messages` (rows are months stale since the JS side disabled
+    ///      this cache; the server/JS stores repopulate on open).
+    /// Media/avatar/email/drive tables are kept.
+    private func migrateSchema() {
+        guard db != nil else { return }
+        var ver: Int32 = 0
+        var stmt: OpaquePointer?
+        if sqlite3_prepare_v2(db, "PRAGMA user_version;", -1, &stmt, nil) == SQLITE_OK,
+           sqlite3_step(stmt) == SQLITE_ROW {
+            ver = sqlite3_column_int(stmt, 0)
+        }
+        sqlite3_finalize(stmt)
+        if ver >= SCHEMA_VERSION { return }
+
+        sqlite3_exec(db, "DROP TRIGGER IF EXISTS messages_ai;", nil, nil, nil)
+        sqlite3_exec(db, "DROP TRIGGER IF EXISTS messages_ad;", nil, nil, nil)
+        sqlite3_exec(db, "DROP TRIGGER IF EXISTS messages_au;", nil, nil, nil)
+        let dropRc = sqlite3_exec(db, "DROP TABLE IF EXISTS messages_fts;", nil, nil, nil)
+        if dropRc != SQLITE_OK {
+            print("[ChatCache] DROP messages_fts failed rc=\(dropRc) — recreating cache file")
+            resetDatabaseFile()
+            guard db != nil else { return }
+        } else {
+            // Table may not exist yet on a brand-new install — ignore errors.
+            sqlite3_exec(db, "DELETE FROM messages;", nil, nil, nil)
+        }
+        sqlite3_exec(db, "PRAGMA user_version = \(SCHEMA_VERSION);", nil, nil, nil)
+    }
+
+    /// Close + delete the SQLite file (and WAL/SHM) and reopen an empty one.
+    private func resetDatabaseFile() {
+        if let d = db { sqlite3_close_v2(d) }
+        db = nil
+        guard let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return }
+        let base = appSupport.appendingPathComponent(DB_NAME).path
+        for suffix in ["", "-wal", "-shm"] {
+            try? FileManager.default.removeItem(atPath: base + suffix)
+        }
+        openDatabase()
     }
 
     private func queryMessages(conversationId: Int, limit: Int) -> [[String: Any]] {
@@ -912,23 +954,26 @@ public class ExpoChatCacheModule: Module {
     private func searchMessages(query: String, limit: Int) -> [[String: Any]] {
         dbLock.lock()
         defer { dbLock.unlock() }
-        guard db != nil, !query.isEmpty else { return [] }
-        // FTS5 prefix matching: append * to last term so partial words match
-        let tokens = query.split(separator: " ").map { String($0) + "*" }.joined(separator: " ")
-        let sql = """
-            SELECT m.payload_json
-            FROM messages_fts f
-            JOIN messages m ON m.id = f.rowid
-            WHERE messages_fts MATCH ?
-            ORDER BY rank
-            LIMIT ?;
-        """
+        guard db != nil else { return [] }
+        // [2026-10-10] LIKE instead of FTS5 (messages_fts removed). Every term
+        // must appear (AND), case-insensitive for ASCII; newest first. Bounded
+        // by the per-device cache size, so a scan is cheap.
+        let terms = query.split(separator: " ").map { String($0) }.filter { !$0.isEmpty }.prefix(8)
+        guard !terms.isEmpty else { return [] }
+        let clause = terms.map { _ in "content LIKE ? ESCAPE '\\'" }.joined(separator: " AND ")
+        let sql = "SELECT payload_json FROM messages WHERE deleted_at IS NULL AND \(clause) ORDER BY id DESC LIMIT ?;"
         var stmt: OpaquePointer?
         var results: [[String: Any]] = []
         if sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK {
-            sqlite3_bind_text(stmt, 1, (tokens as NSString).utf8String, -1,
-                              unsafeBitCast(-1, to: sqlite3_destructor_type.self))
-            sqlite3_bind_int(stmt, 2, Int32(limit))
+            var idx: Int32 = 1
+            for t in terms {
+                let escaped = t.replacingOccurrences(of: "\\", with: "\\\\")
+                    .replacingOccurrences(of: "%", with: "\\%")
+                    .replacingOccurrences(of: "_", with: "\\_")
+                bindString(stmt, idx, "%" + escaped + "%")
+                idx += 1
+            }
+            sqlite3_bind_int(stmt, idx, Int32(limit))
             while sqlite3_step(stmt) == SQLITE_ROW {
                 if let cstr = sqlite3_column_text(stmt, 0) {
                     let json = String(cString: cstr)

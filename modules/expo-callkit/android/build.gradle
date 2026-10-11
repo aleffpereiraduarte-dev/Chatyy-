@@ -34,6 +34,23 @@ android {
   defaultConfig {
     minSdkVersion safeExtGet("minSdkVersion", 24)
     targetSdkVersion safeExtGet("targetSdkVersion", 35)
+    // [2026-10-11 noise] libchatyyns.so (RNNoise, see CMakeLists.txt). Same
+    // ABI list the app builds (reactNativeArchitectures), pure C → no STL.
+    externalNativeBuild {
+      cmake {
+        def nsAbis = (findProperty('reactNativeArchitectures') ?: 'armeabi-v7a,arm64-v8a,x86,x86_64').toString().split(',').collect { it.trim() }.findAll { it }
+        abiFilters(*nsAbis)
+        arguments "-DANDROID_STL=none", "-DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON"
+      }
+    }
+  }
+
+  // [2026-10-11 noise] Native noise suppressor (RNNoise) for LiveKit calls.
+  ndkVersion rootProject.ext.has('ndkVersion') ? rootProject.ext.get('ndkVersion') : '27.1.12297006'
+  externalNativeBuild {
+    cmake {
+      path "CMakeLists.txt"
+    }
   }
 
   compileOptions {
@@ -105,6 +122,8 @@ dependencies {
   // screenshare would create a cycle if it ever called back into callkit).
   implementation project(':expo-screen-share')
 
+  // [2026-10-11 noise] SUPERSEDED: RNNoise is now vendored C built by this
+  // module's CMakeLists.txt (libchatyyns.so) — no Maven/JitPack artifact.
   // [2026-05-18] RNNoise dep removed — `com.github.livekit:rnnoise-android`
   // 0.1.0 is published only via JitPack and that artifact now returns 401
   // (the underlying tag was either deleted or auth-gated). RNNoiseProcessor

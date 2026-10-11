@@ -801,6 +801,8 @@ object NativeCallRoom {
                 // + AEC/AGC/NS). buildCallRoomOptions folds e2ee in when present,
                 // so the no-key path == the old default + audio knobs.
                 val r = LiveKit.create(ctx.applicationContext, buildCallRoomOptions(ctx.applicationContext, e2ee))
+                // [2026-10-11 noise] RNNoise capture post-processor before any mic publish.
+                expo.modules.callkit.audio.RNNoiseProcessor.attachTo(r)
                 // [2026-10-07 audio-route] Ring-time preconnect: call type not
                 // known here → voice policy (earpiece-first) in LiveKit's
                 // AudioSwitch before connect; adoptForCall re-applies with the

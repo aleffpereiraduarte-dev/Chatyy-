@@ -719,29 +719,24 @@ public class ExpoCallKitModule: Module {
       return true
     }
 
-    // ─── RNNoise (2026-05-17 / removed as facade 2026-10-04) ─────────────
-    //
-    // RNNoise ML noise suppression was NEVER actually linked (the Swift
-    // Package was never added, so the dlsym lookups always failed and every
-    // frame passed through untouched). These JS-facing functions are kept so
-    // existing JS callers don't break, but they are now honest no-ops:
-    // `isNoiseSuppressionAvailable` returns false and the toggle does nothing.
-    // Real noise suppression = WebRTC's built-in NS + Apple VPIO/HW-AEC, which
-    // are always on via the LiveKit audio capture options and NOT toggleable.
+    // ─── RNNoise (2026-05-17; facade removed 2026-10-04; real 2026-10-11) ─
+    // [2026-10-11 noise] REAL again: RNNoise is vendored C (ChatyyNS/) and
+    // runs as LiveKit's capture post-processor (RNNoiseAudioProcessor). Same
+    // contract as Android: pref `rnnoise_enabled` (App Group), default ON,
+    // applied live to an in-progress call. WebRTC NS/VPIO stay on regardless.
     Function("setNoiseSuppression") { (enabled: Bool) -> Bool in
-      // Accepted (returns true) to avoid breaking JS callers, but it's a no-op:
-      // there is no RNNoise layer to toggle. WebRTC NS stays on regardless.
-      NSLog("[ExpoCallKit] setNoiseSuppression(\(enabled)) — no-op (RNNoise not integrated; real NS = WebRTC/VPIO, always on)")
+      UserDefaults(suiteName: "group.com.onemundo.mail")?.set(enabled, forKey: "rnnoise_enabled")
+      RNNoiseAudioProcessor.shared.enabled = enabled
+      NSLog("[ExpoCallKit] setNoiseSuppression(\(enabled)) available=\(RNNoiseAudioProcessor.shared.available)")
       return true
     }
 
     Function("getNoiseSuppression") { () -> Bool in
-      // RNNoise is not running. (WebRTC NS, which IS running, is not exposed here.)
-      return false
+      return UserDefaults(suiteName: "group.com.onemundo.mail")?.object(forKey: "rnnoise_enabled") as? Bool ?? true
     }
 
     Function("isNoiseSuppressionAvailable") { () -> Bool in
-      return false
+      return RNNoiseAudioProcessor.shared.available
     }
 
     // [2026-10-06 UX2] "Qualidade HD (1080p)" toggle — same UserDefaults key

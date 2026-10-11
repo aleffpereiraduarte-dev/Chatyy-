@@ -1742,6 +1742,9 @@ if (Platform.OS === 'web' && typeof localStorage !== 'undefined') {
 
 // Native SQLite chat cache disabled — crashed via FTS5 triggers. SmartCache
 // (pure JS, MMKV/localStorage backed, synchronous) replaces it.
+// [2026-10-10] Kept null here on purpose (the list paints from SmartCache /
+// chatStore). The re-enable path for the chat screen lives in
+// services/nativeChatCacheGate.js (flag NATIVE_CHAT_CACHE_ENABLED, schema>=2).
 const _NativeChatCache = null;
 const _SmartCache = (() => {
   try { return require('../services/smartChatCache'); } catch { return null; }

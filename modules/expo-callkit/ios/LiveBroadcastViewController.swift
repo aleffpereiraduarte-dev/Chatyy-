@@ -265,6 +265,9 @@ final class LiveBroadcastViewController: UIViewController {
             return
         }
         print("[LiveBroadcastVC] connecting LK — session=\(liveSessionId)")
+        // [2026-10-11 noise] RNNoise is a process-wide LiveKit capture hook
+        // installed by the call screens; a live may carry music → detach it.
+        RNNoiseAudioProcessor.uninstall()
         let r = Room(delegate: self)
         self.room = r
         Task { [weak self] in

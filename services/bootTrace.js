@@ -187,6 +187,13 @@ export function reportBootMarksSampled() {
         try {
           const st = require('./mmkv').getHydrateStats?.();
           if (st) setBootMeta('hyd', [st.bootMs | 0, st.bootKeys | 0, st.lazyKeys | 0].join('/'));
+          // [2026-10-10 storage-boot] backend (a=AsyncStorage, s=SQLite KV,
+          // m=migrating) + smartChatCache hydrate maxMs/parsed blobs/KB parsed.
+          try {
+            const sh = require('./smartChatCache').getSmartHydrateStats?.();
+            const b = String(st?.backend || 'a');
+            setBootMeta('hyd2', [b === 'sqlite' ? 's' : (b.indexOf('migr') >= 0 ? 'm' : 'a'), sh ? sh.maxMs | 0 : -1, sh ? sh.parsed | 0 : -1, sh ? (sh.parsedBytes / 1024) | 0 : -1, st ? st.lazySyncHits | 0 : 0].join('/'));
+          } catch {}
         } catch {}
         // Meta first (short) so the 460-char cut only ever trims late marks.
         const payload = Object.keys(_meta).length ? { _m: _meta, ...m } : m;

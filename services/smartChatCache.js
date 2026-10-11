@@ -79,7 +79,14 @@ let _convTimer = null;
 // Fix: do the sync hydrate first (covers web + hot-start native), then await
 // mmkv.waitForCacheReady and retry. Second pass populates anything the
 // first pass missed due to the race.
+// [2026-10-10 storage-boot] Hydrate cost, surfaced in the coldstart_marks beacon
+// (bootTrace 'hyd' meta) so iOS-lazy vs eager can be compared on real devices.
+const _hydStats = { runs: 0, lastMs: 0, maxMs: 0, parsed: 0, parsedBytes: 0, prefetched: 0 };
+export function getSmartHydrateStats() { return { ..._hydStats, convsInMemory: _msgs.size }; }
+
 function _doHydrate() {
+  const _t0 = Date.now();
+  let _parsed = 0; let _bytes = 0; let _pf = 0;
   try {
     const convRaw = getString(_convKey());
     if (convRaw) {
@@ -116,10 +123,17 @@ function _doHydrate() {
       if (!raw) continue;
       try {
         const parsed = JSON.parse(raw);
+        _parsed++; _bytes += raw.length;
         if (Array.isArray(parsed) && !_msgs.has(convId)) _msgs.set(convId, parsed);
       } catch {}
     }
+    _pf = toPrefetch.length;
     if (toPrefetch.length) { try { ensureLoaded(toPrefetch).catch(() => {}); } catch {} }
+  } catch {}
+  try {
+    const ms = Date.now() - _t0;
+    _hydStats.runs++; _hydStats.lastMs = ms; if (ms > _hydStats.maxMs) _hydStats.maxMs = ms;
+    _hydStats.parsed += _parsed; _hydStats.parsedBytes += _bytes; _hydStats.prefetched += _pf;
   } catch {}
 }
 

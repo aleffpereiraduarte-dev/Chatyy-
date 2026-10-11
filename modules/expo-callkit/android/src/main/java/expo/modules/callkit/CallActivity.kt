@@ -2465,6 +2465,8 @@ class CallActivity : ComponentActivity() {
     }
     val r = LiveKit.create(applicationContext, options = roomOptionsFinal)
     room = r
+    // [2026-10-11 noise] RNNoise capture post-processor (pass-through on failure).
+    expo.modules.callkit.audio.RNNoiseProcessor.attachTo(r)
     // [2026-10-07 audio-route] Earpiece-first for voice / speaker-first for
     // video in LiveKit's AudioSwitch BEFORE connect (its default list puts the
     // loudspeaker before the earpiece and would override configureForCall).

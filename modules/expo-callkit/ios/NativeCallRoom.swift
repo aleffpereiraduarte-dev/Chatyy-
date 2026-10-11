@@ -243,6 +243,9 @@ public enum NativeCallRoomEvent {
         micPublishCallId = callId
         let t0 = Date()
         nativeCallDiag("fast_mic_publish_start", callId, "reason=\(reason) connected=\(r.connectionState == .connected)")
+        // [2026-10-11 noise] CallKit-answer fast path publishes the mic before
+        // any call VC exists → attach RNNoise here too (idempotent, never throws).
+        RNNoiseAudioProcessor.install()
         let task = Task<LocalTrackPublication?, Never> {
             // A Room still finishing its ring-window connect throws
             // "Publisher is nil" on publish — wait (bounded) for .connected.

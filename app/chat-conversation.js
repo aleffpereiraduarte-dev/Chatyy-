@@ -7213,6 +7213,29 @@ function AudioRecorder({ onSend, onCancel, colors, t, conversationId, holdMode =
           uri = recording.uri;
         }
         try { const { setAudioModeAsync } = require('expo-audio'); await setAudioModeAsync({ allowsRecording: false }); } catch {}
+        // [2026-10-10 voice-peaks] Real waveform from the recorded FILE
+        // (native readVoicePeaks / iOS readWaveform; off the JS/main thread).
+        // expo-audio fallback has no meter samples → wait briefly (direct-send
+        // confirms as soon as previewData lands); native recorder already has
+        // meter bars → don't block, refine the preview when the peaks arrive.
+        let _peaksP = null;
+        if (uri) {
+          try {
+            const { readVoiceWaveform } = require('../utils/onDeviceML');
+            _peaksP = readVoiceWaveform(uri, { bars: 40, durationSec: duration });
+          } catch { _peaksP = null; }
+        }
+        if (_peaksP && nativeWaveform.length < 8) {
+          const _filePeaks = await Promise.race([_peaksP, new Promise((r) => setTimeout(() => r(null), 700))]);
+          if (Array.isArray(_filePeaks)) { nativeWaveform = _filePeaks; _peaksP = null; }
+        }
+        if (_peaksP) {
+          const _peaksUri = uri;
+          _peaksP.then((pk) => {
+            if (!Array.isArray(pk)) return;
+            setPreviewData((prev) => (prev && prev.uri === _peaksUri ? { ...prev, waveform: pk } : prev));
+          }).catch(() => {});
+        }
         if (uri) {
           voiceDraftUriRef.current = uri;
           try {
@@ -9406,7 +9429,10 @@ function ChatConversationInner() {
   // triggers get corrupted by INSERT OR REPLACE and crash the Swift process
   // natively (no JS-catchable error). Server PG is source of truth; we fall
   // back to the JS-side chatCache (expo-sqlite) which doesn't use FTS5.
-  const _NativeChatCache = null;
+  // [2026-10-10] Re-enable path: services/nativeChatCacheGate returns the module
+  // only on iOS + flag NATIVE_CHAT_CACHE_ENABLED (default OFF) + a binary whose
+  // Swift schema >= 2 (FTS5 triggers removed). Old binaries → always null.
+  const _NativeChatCache = (() => { try { return require('../services/nativeChatCacheGate').getNativeChatCache(); } catch { return null; } })();
   // Sanitize a message row for the Swift SQLite native cache. The Swift
   // bindings can't serialize nested objects that contain Dates, functions or
   // undefined — so we strip transient JS-only fields AND any nested objects
@@ -9592,6 +9618,13 @@ function ChatConversationInner() {
     try {
       const cached = SmartCache.getCachedMessagesSync(conversationId, 50);
       if (Array.isArray(cached) && cached.length > 0) return cached;
+    } catch {}
+    // [2026-10-10] Native Swift cache (gated; null unless flag ON + schema>=2).
+    try {
+      if (_NativeChatCache?.getCachedMessagesSync && Number(conversationId) > 0) {
+        const rows = _NativeChatCache.getCachedMessagesSync(Number(conversationId), 50);
+        if (Array.isArray(rows) && rows.length > 0) return rows;
+      }
     } catch {}
     // [2026-09-28 offline-first] Cold-start fallback to the durable SQLite
     // store (services/sqliteStore.js) — a *synchronous* read over the same
@@ -18647,6 +18680,9 @@ function ChatConversationInner() {
       file_url: localUri,
       _localUri: localUri,
       duration: audioData.duration,
+      // [2026-10-10 voice-peaks] client peaks → real bars in the sender's bubble
+      // instantly; the server echo (ffmpeg *.peaks.json) replaces them.
+      waveform: (Array.isArray(audioData.waveform) && audioData.waveform.length >= 8) ? audioData.waveform.slice(0, 64) : undefined,
       created_at: new Date().toISOString(),
       _pending: true,
       _uploading: true,

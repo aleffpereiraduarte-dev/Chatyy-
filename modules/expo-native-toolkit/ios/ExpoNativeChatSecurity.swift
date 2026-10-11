@@ -386,5 +386,92 @@ public class ExpoNativeChatSecurityModule: Module {
             }
             return result
         }
+
+        // ─── 12b. Voice-note peaks on the SERVER scale ─────────────────
+        // [2026-10-10 voice-peaks] Same curve chat.php's ffmpeg astats pass
+        // writes to *.peaks.json (RMS per 50 ms window → dB clamped at -60 →
+        // (dB+60)/60 → ^1.7 → bucket average into N bars, 2 decimals), so the
+        // client bars shown instantly don't "jump" when the server echo lands.
+        // Streams the file in 16k-frame chunks (bounded memory, unlike
+        // readWaveform which loads the whole file). Runs on the module's
+        // background queue (AsyncFunction). Mirrors the Android implementation
+        // in ExpoNativeChatSecurityModule.kt.
+        AsyncFunction("readVoicePeaks") { (fileUri: String, bars: Int?) -> [Double] in
+            let n = min(200, max(8, bars ?? 40))
+            let url: URL
+            if fileUri.hasPrefix("file://"), let parsed = URL(string: fileUri), parsed.isFileURL {
+                url = parsed
+            } else {
+                url = URL(fileURLWithPath: fileUri.replacingOccurrences(of: "file://", with: ""))
+            }
+            guard let file = try? AVAudioFile(forReading: url) else { return [] }
+            let format = file.processingFormat
+            let sampleRate = format.sampleRate
+            let totalFrames = file.length
+            let channels = Int(format.channelCount)
+            if totalFrames <= 0 || sampleRate <= 0 || channels <= 0 { return [] }
+
+            let windowFrames = max(1, Int(sampleRate * 0.05))
+            let chunk: AVAudioFrameCount = 16384
+            guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: chunk) else { return [] }
+
+            var windows: [Double] = []
+            windows.reserveCapacity(Int(totalFrames) / windowFrames + 2)
+            var acc: Double = 0
+            var accCount = 0
+            let maxWindows = 20 * 60 * 30 // 30 min of 50 ms windows
+
+            while file.framePosition < totalFrames && windows.count < maxWindows {
+                do {
+                    try file.read(into: buffer, frameCount: chunk)
+                } catch {
+                    break
+                }
+                let len = Int(buffer.frameLength)
+                if len == 0 { break }
+                guard let data = buffer.floatChannelData else { break }
+                for i in 0..<len {
+                    var mono: Double = 0
+                    for ch in 0..<channels {
+                        mono += Double(data[ch][i])
+                    }
+                    mono /= Double(channels)
+                    acc += mono * mono
+                    accCount += 1
+                    if accCount >= windowFrames {
+                        windows.append((acc / Double(accCount)).squareRoot())
+                        acc = 0
+                        accCount = 0
+                    }
+                }
+            }
+            if accCount > windowFrames / 4 {
+                windows.append((acc / Double(accCount)).squareRoot())
+            }
+            let count = windows.count
+            if count == 0 { return [] }
+
+            let levels: [Double] = windows.map { (rms: Double) -> Double in
+                var db = rms > 0 ? 20.0 * log10(rms) : -60.0
+                if !db.isFinite || db < -60.0 { db = -60.0 }
+                let norm = Swift.max(0.0, Swift.min(1.0, (db + 60.0) / 60.0))
+                return pow(norm, 1.7)
+            }
+
+            var out: [Double] = []
+            out.reserveCapacity(n)
+            for i in 0..<n {
+                var a = (i * count) / n
+                var b = ((i + 1) * count) / n
+                if a >= count { a = count - 1 }
+                if b <= a { b = a + 1 }
+                if b > count { b = count }
+                var sum: Double = 0
+                for j in a..<b { sum += levels[j] }
+                let avg = sum / Double(b - a)
+                out.append((avg * 100.0).rounded() / 100.0)
+            }
+            return out
+        }
     }
 }

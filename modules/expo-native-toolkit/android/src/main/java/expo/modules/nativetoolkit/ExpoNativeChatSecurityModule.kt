@@ -105,6 +105,9 @@ class ExpoNativeChatSecurityModule : Module() {
   }
 
   private val worker = Executors.newSingleThreadExecutor()
+  // Separate thread so a long STT decode on `worker` never delays the
+  // voice-note peaks the recorder is waiting on.
+  private val peaksWorker = Executors.newSingleThreadExecutor()
   private val mainHandler = Handler(Looper.getMainLooper())
 
   @Volatile private var textRecognizer: TextRecognizer? = null
@@ -368,7 +371,26 @@ class ExpoNativeChatSecurityModule : Module() {
       }
     }
 
+    // ─── Voice-note peaks (server scale) ─────────────────────────────
+    // [2026-10-10 voice-peaks] Same contract as iOS readVoicePeaks: N bars,
+    // RMS per 50 ms window → dB (clamped -60) → (dB+60)/60 → ^1.7 → bucket
+    // average, 2 decimals — the curve chat.php writes to *.peaks.json.
+    // Decoded with MediaExtractor + MediaCodec on a dedicated thread.
+    AsyncFunction("readVoicePeaks") { fileUrl: String, bars: Int?, promise: Promise ->
+      val c = ctx()
+      if (c == null) { promise.resolve(emptyList<Double>()); return@AsyncFunction }
+      val n = (bars ?: 40).coerceIn(8, 200)
+      peaksWorker.execute {
+        val out = try { extractVoicePeaks(c, fileUrl, n) } catch (t: Throwable) {
+          Log.w(TAG, "voice peaks failed: ${t.message}")
+          null
+        }
+        promise.resolve(out ?: emptyList<Double>())
+      }
+    }
+
     OnDestroy {
+      try { peaksWorker.shutdown() } catch (_: Throwable) {}
       try { textRecognizer?.close() } catch (_: Throwable) {}
       try { languageIdentifier?.close() } catch (_: Throwable) {}
       try { translator?.close() } catch (_: Throwable) {}
@@ -665,6 +687,140 @@ class ExpoNativeChatSecurityModule : Module() {
       Log.w(TAG, "decode failed: ${t.message}")
       try { out.delete() } catch (_: Throwable) {}
       return null
+    } finally {
+      try { codec?.stop() } catch (_: Throwable) {}
+      try { codec?.release() } catch (_: Throwable) {}
+      try { extractor.release() } catch (_: Throwable) {}
+    }
+  }
+
+  // ─── Voice peaks: decode → RMS per 50 ms → N bars (server curve) ───
+
+  private fun extractVoicePeaks(c: Context, uri: String, bars: Int): List<Double>? {
+    val extractor = MediaExtractor()
+    var codec: MediaCodec? = null
+    try {
+      when {
+        uri.startsWith("file://") -> extractor.setDataSource(Uri.parse(uri).path ?: return null)
+        uri.startsWith("/") -> extractor.setDataSource(uri)
+        uri.startsWith("content://") -> extractor.setDataSource(c, Uri.parse(uri), null)
+        else -> return null
+      }
+      var track = -1
+      var format: MediaFormat? = null
+      for (i in 0 until extractor.trackCount) {
+        val f = extractor.getTrackFormat(i)
+        if ((f.getString(MediaFormat.KEY_MIME) ?: "").startsWith("audio/")) { track = i; format = f; break }
+      }
+      if (track < 0 || format == null) return null
+      extractor.selectTrack(track)
+      val mime = format.getString(MediaFormat.KEY_MIME) ?: return null
+      val dec = MediaCodec.createDecoderByType(mime)
+      codec = dec
+      dec.configure(format, null, null, 0)
+      dec.start()
+
+      var srcRate = if (format.containsKey(MediaFormat.KEY_SAMPLE_RATE)) format.getInteger(MediaFormat.KEY_SAMPLE_RATE) else 48000
+      var channels = if (format.containsKey(MediaFormat.KEY_CHANNEL_COUNT)) format.getInteger(MediaFormat.KEY_CHANNEL_COUNT) else 1
+      var isFloat = false
+      var windowFrames = maxOf(1, srcRate / 20)
+      val maxWindows = 20 * 60 * 30 // 30 min of 50 ms windows
+      val deadline = System.currentTimeMillis() + 20_000L
+
+      val windows = ArrayList<Double>(1024)
+      var acc = 0.0
+      var accCount = 0
+      val info = MediaCodec.BufferInfo()
+      var inputDone = false
+      var outputDone = false
+      while (!outputDone && windows.size < maxWindows) {
+        if (System.currentTimeMillis() > deadline) break
+        if (!inputDone) {
+          val inIdx = dec.dequeueInputBuffer(10_000)
+          if (inIdx >= 0) {
+            val buf = dec.getInputBuffer(inIdx)
+            val size = if (buf != null) extractor.readSampleData(buf, 0) else -1
+            if (size < 0) {
+              dec.queueInputBuffer(inIdx, 0, 0, 0, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
+              inputDone = true
+            } else {
+              dec.queueInputBuffer(inIdx, 0, size, extractor.sampleTime, 0)
+              extractor.advance()
+            }
+          }
+        }
+        val outIdx = dec.dequeueOutputBuffer(info, 10_000)
+        when {
+          outIdx == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
+            val of = dec.outputFormat
+            if (of.containsKey(MediaFormat.KEY_SAMPLE_RATE)) srcRate = of.getInteger(MediaFormat.KEY_SAMPLE_RATE)
+            if (of.containsKey(MediaFormat.KEY_CHANNEL_COUNT)) channels = of.getInteger(MediaFormat.KEY_CHANNEL_COUNT)
+            isFloat = of.containsKey(MediaFormat.KEY_PCM_ENCODING) &&
+              of.getInteger(MediaFormat.KEY_PCM_ENCODING) == AudioFormat.ENCODING_PCM_FLOAT
+            windowFrames = maxOf(1, srcRate / 20)
+          }
+          outIdx >= 0 -> {
+            val ob = dec.getOutputBuffer(outIdx)
+            if (ob != null && info.size > 0) {
+              ob.position(info.offset)
+              ob.limit(info.offset + info.size)
+              ob.order(ByteOrder.LITTLE_ENDIAN)
+              val ch = maxOf(1, channels)
+              if (isFloat) {
+                val fb = ob.asFloatBuffer()
+                val frames = fb.remaining() / ch
+                for (f in 0 until frames) {
+                  var m = 0.0
+                  for (k in 0 until ch) m += fb.get(f * ch + k).toDouble()
+                  m /= ch
+                  acc += m * m
+                  accCount++
+                  if (accCount >= windowFrames) {
+                    windows.add(Math.sqrt(acc / accCount)); acc = 0.0; accCount = 0
+                  }
+                }
+              } else {
+                val sb = ob.asShortBuffer()
+                val frames = sb.remaining() / ch
+                for (f in 0 until frames) {
+                  var m = 0.0
+                  for (k in 0 until ch) m += sb.get(f * ch + k) / 32768.0
+                  m /= ch
+                  acc += m * m
+                  accCount++
+                  if (accCount >= windowFrames) {
+                    windows.add(Math.sqrt(acc / accCount)); acc = 0.0; accCount = 0
+                  }
+                }
+              }
+            }
+            dec.releaseOutputBuffer(outIdx, false)
+            if ((info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0) outputDone = true
+          }
+        }
+      }
+      if (accCount > windowFrames / 4) windows.add(Math.sqrt(acc / accCount))
+      val count = windows.size
+      if (count == 0) return null
+
+      val levels = DoubleArray(count) { i ->
+        val rms = windows[i]
+        var db = if (rms > 0.0) 20.0 * Math.log10(rms) else -60.0
+        if (db.isNaN() || db.isInfinite() || db < -60.0) db = -60.0
+        Math.pow(((db + 60.0) / 60.0).coerceIn(0.0, 1.0), 1.7)
+      }
+      val out = ArrayList<Double>(bars)
+      for (i in 0 until bars) {
+        var a = (i.toLong() * count / bars).toInt()
+        var b = ((i + 1).toLong() * count / bars).toInt()
+        if (a >= count) a = count - 1
+        if (b <= a) b = a + 1
+        if (b > count) b = count
+        var sum = 0.0
+        for (j in a until b) sum += levels[j]
+        out.add(Math.round(sum / (b - a) * 100.0) / 100.0)
+      }
+      return out
     } finally {
       try { codec?.stop() } catch (_: Throwable) {}
       try { codec?.release() } catch (_: Throwable) {}

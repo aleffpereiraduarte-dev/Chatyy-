@@ -143,3 +143,50 @@ export async function transcribeOnDevice(url, { language, fileName } = {}) {
     return { error: String(e?.message || e || 'failed') };
   }
 }
+
+/**
+ * [2026-10-10 voice-peaks] Waveform REAL de uma nota de voz local, extraída no
+ * aparelho logo após gravar (fora da main thread):
+ *   - readVoicePeaks (iOS + Android, PRÓXIMO binário): mesma curva do
+ *     *.peaks.json do servidor (RMS/50 ms → dB → ^1.7 → média por barra),
+ *     então a bolha não "pula" quando o eco do servidor chega;
+ *   - readWaveform (iOS, binários atuais): picos normalizados — carrega o
+ *     arquivo inteiro na memória, por isso só para notas ≤ 5 min.
+ * Devolve `bars` números 0..1, ou null (web / módulo ausente / falha /
+ * timeout). O servidor continua sendo a fonte da verdade (ffmpeg astats).
+ */
+export async function readVoiceWaveform(uri, { bars = 40, timeoutMs = 0, durationSec = 0 } = {}) {
+  if (Platform.OS === 'web' || typeof uri !== 'string' || !uri) return null;
+  const s = _sec();
+  if (!s) return null;
+  let p = null;
+  try {
+    if (typeof s.readVoicePeaks === 'function') {
+      p = s.readVoicePeaks(uri, bars);
+    } else if (Platform.OS === 'ios' && typeof s.readWaveform === 'function' && !(Number(durationSec) > 300)) {
+      p = s.readWaveform(uri, bars);
+    }
+  } catch { p = null; }
+  if (!p || typeof p.then !== 'function') return null;
+  p = p.catch(() => null);
+  let timer = null;
+  const raw = timeoutMs > 0
+    ? await Promise.race([p, new Promise((r) => { timer = setTimeout(() => r(null), timeoutMs); })])
+    : await p;
+  if (timer) clearTimeout(timer);
+  if (!Array.isArray(raw) || raw.length < 8) return null;
+  const src = raw.map((v) => { const n = Number(v); return Number.isFinite(n) ? Math.max(0, Math.min(1, n)) : 0; });
+  if (!src.some((v) => v > 0.01)) return null; // silêncio total / decode vazio → mantém o fallback
+  if (src.length <= bars) return src.map((v) => Math.round(v * 1000) / 1000);
+  // readWaveform legado pode devolver bars+1 (resto da divisão) → pico por balde.
+  const out = [];
+  const step = src.length / bars;
+  for (let i = 0; i < bars; i++) {
+    const a = Math.floor(i * step);
+    const b = Math.max(a + 1, Math.floor((i + 1) * step));
+    let peak = 0;
+    for (let j = a; j < b && j < src.length; j++) if (src[j] > peak) peak = src[j];
+    out.push(Math.round(peak * 1000) / 1000);
+  }
+  return out;
+}
