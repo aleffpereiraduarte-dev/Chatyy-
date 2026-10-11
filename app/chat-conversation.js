@@ -6036,6 +6036,9 @@ function MediaPreview({ visible, onClose, onSend, files: filesProp, colors, hdMo
   const { t } = useLanguage();
   const _previewInsets = useSafeAreaInsets(); // [2026-10-07 native-ui-build] bottomBar = safe-area real
   const [caption, setCaption] = useState('');
+  // [2026-10-11] Android: só desvia do teclado quando a legenda está focada
+  // (evita a prévia encolhida ao voltar da câmera com teclado "fantasma").
+  const [capFocus, setCapFocus] = useState(false);
   const [viewOnce, setViewOnce] = useState(false);
   // All files in this batch — MediaPreview owns the list locally so the user
   // can remove a photo via its thumbnail without round-tripping through the
@@ -6295,6 +6298,7 @@ function MediaPreview({ visible, onClose, onSend, files: filesProp, colors, hdMo
     <Modal visible transparent animationType="slide" onRequestClose={onClose} statusBarTranslucent>
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        enabled={Platform.OS === 'ios' || capFocus}
         style={previewStyles.container}
       >
         {/* Header */}
@@ -6435,6 +6439,8 @@ function MediaPreview({ visible, onClose, onSend, files: filesProp, colors, hdMo
             <TextInput
               style={previewStyles.captionInput}
               placeholder={t('chatConv.addCaption') || 'Adicionar legenda...'}
+              onFocus={() => setCapFocus(true)}
+              onBlur={() => setCapFocus(false)}
               placeholderTextColor="rgba(255,255,255,0.5)"
               value={caption}
               onChangeText={setCaption}
@@ -6557,6 +6563,9 @@ function MediaPreview({ visible, onClose, onSend, files: filesProp, colors, hdMo
 // photo/video path uses (uploadAndSendFile's `caption` arg → chat_send content).
 function FileCaptionPreview({ visible, kind, file, gifUri, colors, t, onClose, onSend }) {
   const [caption, setCaption] = useState('');
+  // [2026-10-11] Android: só desvia do teclado quando a legenda está focada
+  // (evita a prévia encolhida ao voltar da câmera com teclado "fantasma").
+  const [capFocus, setCapFocus] = useState(false);
   const _previewInsets = useSafeAreaInsets(); // [2026-10-07 native-ui-build] bottomBar = safe-area real
   useEffect(() => { if (visible) setCaption(''); }, [visible]);
   if (!visible) return null;
@@ -6567,7 +6576,7 @@ function FileCaptionPreview({ visible, kind, file, gifUri, colors, t, onClose, o
   const isAudio = kind === 'audio';
   return (
     <Modal visible transparent animationType="slide" onRequestClose={onClose} statusBarTranslucent>
-      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={previewStyles.container}>
+      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} enabled={Platform.OS === 'ios' || capFocus} style={previewStyles.container}>
         <View style={previewStyles.header}>
           <TouchableOpacity onPress={onClose} style={previewStyles.headerBtn} accessibilityLabel={_t('common.close', 'Close')} accessibilityRole="button">
             <IconX size={24} color="#fff" />
@@ -6599,6 +6608,8 @@ function FileCaptionPreview({ visible, kind, file, gifUri, colors, t, onClose, o
             <TextInput
               style={previewStyles.captionInput}
               placeholder={_t('chatConv.addCaption', 'Adicionar legenda...')}
+              onFocus={() => setCapFocus(true)}
+              onBlur={() => setCapFocus(false)}
               placeholderTextColor="rgba(255,255,255,0.5)"
               value={caption}
               onChangeText={setCaption}
@@ -18022,6 +18033,10 @@ function ChatConversationInner() {
       // [2026-10-07 ios-native] WhatsApp-style in-app camera (tap = photo,
       // hold = video, flash/flip/recent strip). Kill switch:
       // globalThis.__chatyy_inapp_camera = false → system camera below.
+      // [2026-10-11] Android: teclado aberto ao ir pra câmera → ao voltar o
+      // KeyboardAvoidingView da prévia achava que ele ainda estava aberto e
+      // encolhia a tela (conversa aparecendo embaixo). Fecha antes.
+      try { Keyboard.dismiss(); } catch {}
       if (ChatCamera && isChatCameraAvailable?.()) {
         setShowChatCamera(true);
         return;
