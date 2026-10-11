@@ -84,16 +84,24 @@ public class ExpoChatyyIntentsModule: Module {
                     customIdentifier: convId
                 )
 
+                // [2026-10-11] Nome de grupo SÓ em grupo: em conversa 1:1 o
+                // speakableGroupName fazia o iOS tratar como grupo e a
+                // notificação saía "To you & 1 other" sem a foto. O id é o mesmo
+                // da notificação (NSE: "chat_" + id) para o iOS unir os dois.
                 let intent = INSendMessageIntent(
                     recipients: [person],
                     content: nil,
-                    speakableGroupName: INSpeakableString(spokenPhrase: name),
-                    conversationIdentifier: convId,
+                    speakableGroupName: isGroup ? INSpeakableString(spokenPhrase: name) : nil,
+                    conversationIdentifier: "chat_" + convId,
                     serviceName: "Chatyy",
                     sender: nil
                 )
                 if let avatar = avatar {
-                    intent.setImage(avatar, forParameterNamed: \.speakableGroupName)
+                    if isGroup {
+                        intent.setImage(avatar, forParameterNamed: \.speakableGroupName)
+                    } else {
+                        intent.setImage(avatar, forParameterNamed: \.recipients)
+                    }
                 }
 
                 let interaction = INInteraction(intent: intent, response: nil)

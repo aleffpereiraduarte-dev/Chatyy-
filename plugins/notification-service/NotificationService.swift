@@ -220,6 +220,15 @@ class NotificationService: UNNotificationServiceExtension {
                                        contactIdentifier: nil, customIdentifier: "group_" + conv,
                                        isMe: false, suggestionType: .none)
             recipients = [me, groupPerson]
+        } else {
+            // [2026-10-11] 1:1 → destinatário explícito = só EU. Com nil o iOS
+            // juntava com a doação do app e mostrava "To you & 1 other" (layout
+            // de grupo, ícone do app em vez da foto de quem mandou).
+            let meDirect = INPerson(personHandle: INPersonHandle(value: "me", type: .unknown),
+                                    nameComponents: nil, displayName: nil, image: nil,
+                                    contactIdentifier: nil, customIdentifier: "me",
+                                    isMe: true, suggestionType: .none)
+            recipients = [meDirect]
         }
 
         let intent = INSendMessageIntent(recipients: recipients,
