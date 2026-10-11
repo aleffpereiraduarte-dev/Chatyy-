@@ -190,7 +190,7 @@ function LocalDocPreview({ url, filename, headers, dark, errorLabel }) {
           allowingReadAccessToURL={dir}
           allowFileAccess
           javaScriptEnabled={false}
-          decelerationRate="normal"
+          decelerationRate={0.998} /* [2026-10-11] número: "normal" (texto) derrubava o Android (RNCWebView espera Double) */
           allowsLinkPreview={false}
           automaticallyAdjustContentInsets={false}
           contentInsetAdjustmentBehavior="never"
@@ -263,7 +263,7 @@ function WebDocPreview({ url, filename, kind, dark, openLabel, errorLabel }) {
         originWhitelist={['*']}
         javaScriptEnabled
         domStorageEnabled
-        decelerationRate="normal"
+        decelerationRate={0.998} /* [2026-10-11] número: "normal" (texto) derrubava o Android (RNCWebView espera Double) */
         overScrollMode="never"
         textZoom={100}
         setSupportMultipleWindows={false}

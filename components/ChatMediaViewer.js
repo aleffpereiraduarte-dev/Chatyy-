@@ -1647,7 +1647,7 @@ function WebViewWithErrorFallback({ source, url, filename, messageId, fileSize, 
         allowsInlineMediaPlayback
         bounces={false}
         // [2026-10-07 app-feel-webview] native scroll feel, no popups/glow.
-        decelerationRate="normal"
+        decelerationRate={0.998} /* [2026-10-11] número: "normal" (texto) derrubava o Android (RNCWebView espera Double) */
         overScrollMode="never"
         textZoom={100}
         setSupportMultipleWindows={false}

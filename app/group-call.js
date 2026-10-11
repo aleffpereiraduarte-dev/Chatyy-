@@ -1367,7 +1367,7 @@ export default function GroupCallScreen() {
         bounces={false}
         overScrollMode="never"
         textZoom={100}
-        decelerationRate="normal"
+        decelerationRate={0.998} /* [2026-10-11] número: "normal" (texto) derrubava o Android (RNCWebView espera Double) */
         setSupportMultipleWindows={false}
         javaScriptCanOpenWindowsAutomatically={false}
         allowsLinkPreview={false}

@@ -803,7 +803,7 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onF
           textZoom={100}
           showsVerticalScrollIndicator={false}
           showsHorizontalScrollIndicator={false}
-          decelerationRate="normal"
+          decelerationRate={0.998} /* [2026-10-11] número: "normal" (texto) derrubava o Android (RNCWebView espera Double) */
           setBuiltInZoomControls={false}
           setDisplayZoomControls={false}
           setSupportMultipleWindows={false}
