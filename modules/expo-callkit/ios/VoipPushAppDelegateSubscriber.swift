@@ -1304,6 +1304,8 @@ extension VoipPushAppDelegateSubscriber: CXProviderDelegate {
             action.fulfill()
             return
         }
+        // [2026-10-11 call-parity] Hangup of the ACCEPTED call vs a decline.
+        let stubWasAccepted: Bool = (acceptedForCallId == action.callUUID)
         if let acc = acceptedForCallId, acc == action.callUUID {
             // The accepted call itself is ending — forget the accept so a
             // re-dial reusing this callId starts clean.
@@ -1340,12 +1342,20 @@ extension VoipPushAppDelegateSubscriber: CXProviderDelegate {
             }()
             if !callerEmail.isEmpty && !callId.isEmpty {
                 NSLog("[VoipSubscriber] cold-start decline — firing native call_end → caller=\(callerEmail) callId=\(callId)")
+                // [2026-10-11 call-parity] An ACCEPTED call ending here is a
+                // hangup — the hub BLOCKS "declined after accepted", which left
+                // the caller on the call screen. Decline stays "declined" and
+                // gets the HTTP twin (WS may die with the suspended app).
                 CallSignalWs.shared.fireCallEnd(
                     callId: callId,
                     conversationId: convId,
-                    reason: "declined",
+                    reason: stubWasAccepted ? "user_hangup" : "declined",
                     targetEmail: callerEmail
                 )
+                if !stubWasAccepted && !CallViewController.hasCallScreen(callId: callId) {
+                    nativeCallDiag("decline_sent", callId, "via=stub")
+                    CallSignalWs.postDeclineHttp(callId: callId)
+                }
             }
         }
         // [stage 2] Tear the native LK room. Safe to call even if connect never

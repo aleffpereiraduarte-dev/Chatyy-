@@ -197,7 +197,11 @@ class CallActionReceiver : BroadcastReceiver() {
         // closeReceiver (which now ignores UNTARGETED closes for <5s-old
         // calls) always honours this explicit hangup.
         try {
-          context.sendBroadcast(Intent("expo.modules.callkit.CLOSE_CALL_ACTIVITY").putExtra("call_id", callId))
+          // [2026-10-11 call-parity] Direct local hangup when the screen is
+          // alive; explicit package on the broadcast (NOT_EXPORTED receiver).
+          if (!CallActivity.ongoingHangup()) {
+            context.sendBroadcast(Intent("expo.modules.callkit.CLOSE_CALL_ACTIVITY").setPackage(context.packageName).putExtra("call_id", callId))
+          }
         } catch (_: Exception) {}
         try { context.stopService(Intent(context, CallOngoingService::class.java)) } catch (_: Exception) {}
         ExpoCallKitModule.emitCallEnded(callId)
@@ -218,8 +222,12 @@ class CallActionReceiver : BroadcastReceiver() {
         Log.d(TAG, "ACTION_HANGUP callId=$callId — closing active call")
         try {
           // [2026-10-06 android-incoming] call_id stamped (see PIP_END).
-          val closeIntent = Intent("expo.modules.callkit.CLOSE_CALL_ACTIVITY").putExtra("call_id", callId)
-          context.sendBroadcast(closeIntent)
+          // [2026-10-11 call-parity] Direct local hangup when the 1:1 screen
+          // is alive; explicit package on the fallback broadcast.
+          if (!CallActivity.ongoingHangup()) {
+            val closeIntent = Intent("expo.modules.callkit.CLOSE_CALL_ACTIVITY").setPackage(context.packageName).putExtra("call_id", callId)
+            context.sendBroadcast(closeIntent)
+          }
         } catch (_: Exception) {}
         // [2026-10-09 native-group-call] Same "Encerrar" for the native group
         // screen (its FGS notification carries the group room as call_id).
@@ -319,7 +327,7 @@ class CallActionReceiver : BroadcastReceiver() {
     // IncomingCallActivity ONLY. CallActivity.closeReceiver ignores it, so an
     // accept-from-notification can never tear down the CallActivity it is
     // about to (or just did) launch.
-    val closeIntent = Intent("expo.modules.callkit.CLOSE_CALL_ACTIVITY").putExtra("target", "ringer")
+    val closeIntent = Intent("expo.modules.callkit.CLOSE_CALL_ACTIVITY").setPackage(context.packageName).putExtra("target", "ringer")
     context.sendBroadcast(closeIntent)
   }
 

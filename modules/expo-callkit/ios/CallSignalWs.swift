@@ -1,4 +1,5 @@
 import Foundation
+import UIKit
 import CallKit
 import PushKit
 
@@ -274,6 +275,41 @@ final class CallSignalWs: NSObject {
         // removal only affects whether we keep retrying reconnects afterward).
         queue.async { [weak self] in self?.activeCallIds.remove(callId) }
         enqueue(dict)
+    }
+
+    /// [2026-10-11 call-parity] HTTP twin of a pre-answer DECLINE. The native
+    /// WS call_end can be lost when iOS suspends the app right after the user
+    /// declines from the lock screen (socket still authenticating). This POSTs
+    /// call_status=declined (history row → 'declined'; with the server patch
+    /// /root/chamadas-recusada-servidor.sh it also relays call_end{declined}
+    /// to the caller). Runs inside a background task. Never for an answered
+    /// call (callers gate it).
+    static func postDeclineHttp(callId: String) {
+        guard !callId.isEmpty,
+              let ud = UserDefaults(suiteName: "group.com.onemundo.mail"),
+              let token = ud.string(forKey: "auth_token"), !token.isEmpty,
+              let base0 = ud.string(forKey: "api_base"), !base0.isEmpty else { return }
+        let base = base0.hasSuffix("/") ? String(base0.dropLast()) : base0
+        guard let url = URL(string: "\(base)/api/email.php?action=call_status") else { return }
+        var req = URLRequest(url: url, timeoutInterval: 8.0)
+        req.httpMethod = "POST"
+        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.setValue("application/json", forHTTPHeaderField: "Accept")
+        req.httpBody = try? JSONSerialization.data(withJSONObject: [
+            "action": "call_status", "call_id": callId, "status": "declined", "duration": 0,
+        ])
+        DispatchQueue.main.async {
+            let box = DeclineBgTaskBox()
+            box.id = UIApplication.shared.beginBackgroundTask(withName: "chatyy_decline_http") {
+                box.end()
+            }
+            URLSession.shared.dataTask(with: req) { _, resp, _ in
+                let code = (resp as? HTTPURLResponse)?.statusCode ?? -1
+                nativeCallDiag("decline_http", callId, "code=\(code)")
+                DispatchQueue.main.async { box.end() }
+            }.resume()
+        }
     }
 
     /// [reaction bar, 2026-05-17] Floating-emoji reaction during an active
@@ -1192,5 +1228,16 @@ final class CallSignalWs: NSObject {
         // base64url string in practice so this is paranoia.
         return s.replacingOccurrences(of: "\\", with: "\\\\")
                 .replacingOccurrences(of: "\"", with: "\\\"")
+    }
+}
+
+/// [2026-10-11 call-parity] Background-task id holder for postDeclineHttp
+/// (shared by the expiration handler and the completion). Main thread only.
+private final class DeclineBgTaskBox {
+    var id: UIBackgroundTaskIdentifier = .invalid
+    func end() {
+        guard id != .invalid else { return }
+        UIApplication.shared.endBackgroundTask(id)
+        id = .invalid
     }
 }

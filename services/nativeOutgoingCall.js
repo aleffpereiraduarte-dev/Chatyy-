@@ -233,9 +233,16 @@ function _finish(s, reason) {
   try {
     const api = require('./api');
     // [2026-10-10 call-states] answered but the 25s no-media watchdog ended it.
+    // [2026-10-11 call-parity] Never answered: a REMOTE refusal (call_end
+    // reason declined/busy/rejected — via WS, or native "remote_declined")
+    // is 'declined', not 'cancelled'. Writing 'cancelled' here overwrote the
+    // hub's 'declined' (call_1791738657050_lmfydnfdt: caller=cancelled,
+    // callee=missed after a CallKit decline).
+    const _r = String(reason || '').toLowerCase();
+    const _refused = /declin|reject|busy/.test(_r);
     const terminal = s.connectedAt
-      ? ((String(reason || '').toLowerCase() === 'failed' && !s.mediaAt) ? 'failed' : 'ended')
-      : 'cancelled';
+      ? ((_r === 'failed' && !s.mediaAt) ? 'failed' : 'ended')
+      : (_refused ? 'declined' : 'cancelled');
     api.callStatus?.(s.callId, terminal, dur).catch(() => {});
   } catch {}
   try { if (globalThis.__chatyyLastCallInviteId === s.callId) delete globalThis.__chatyyLastCallInviteId; } catch {}

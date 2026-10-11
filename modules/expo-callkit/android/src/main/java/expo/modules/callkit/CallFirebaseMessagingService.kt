@@ -101,6 +101,18 @@ class CallFirebaseMessagingService : FirebaseMessagingService() {
             }
             Log.d(TAG, "$type $cancelId reason=$reason — tearing down ring/notification")
             CallDiag.log("caller_cancel", cancelId, "src=fcm type=$type reason=$reason", applicationContext)
+            // [2026-10-11 call-parity] Live 1:1 call screen for this call_id
+            // (outgoing refused / peer hung up while our WS was down) → end it
+            // directly; the CLOSE broadcast below was not reaching it.
+            if (reason != "answered_elsewhere") {
+                try {
+                    CallActivity.remoteEnded(
+                        cancelId,
+                        reason.ifEmpty { if (type == "call_cancel") "cancel" else "remote_hangup" },
+                        "fcm"
+                    )
+                } catch (e: Throwable) {}
+            }
             // [2026-10-11 double-banner] Single teardown: ringer, FGS, BOTH
             // notification ids, Telecom, ringer activity, ring-time LK
             // preconnect + tombstone (a late duplicate invite can't re-ring).

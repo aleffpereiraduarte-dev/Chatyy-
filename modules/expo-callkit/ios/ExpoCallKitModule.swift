@@ -1950,7 +1950,16 @@ public class ExpoCallKitModule: Module {
       // [WAVE 116 2026-05-21] Issue 4 — purge pending LK token on remote-end
       // path too (peer hung up via WS → ExpoCallKitNativeCallEnded).
       ExpoCallKitModule.clearPendingLkToken(callId: callId)
-      self?.safeSendEvent("onCallEnded", ["callId": callId])
+      // [2026-10-11 call-parity] Forward the end reason (JS history: a remote
+      // decline is 'declined', not 'cancelled').
+      let endReason = (note.userInfo?["reason"] as? String) ?? ""
+      self?.safeSendEvent("onCallEnded", endReason.isEmpty ? ["callId": callId] : ["callId": callId, "reason": endReason])
+      // [2026-10-11 call-parity] Our OUTGOING call refused before media →
+      // the CallVC shows "Recusada"/"Ocupado"/"Indisponível" ~1.5 s + busy
+      // tone and dismisses itself (WhatsApp). Not an immediate dismiss.
+      if !endReason.isEmpty && CallViewController.handleRemoteRefusalIfOutgoing(callId: callId, reason: endReason) {
+        return
+      }
       // [#1179 cleanup, 2026-05-19] When the peer hangs up via WS, CallSignalWs
       // posts this notification (handleIncomingCallEndLocked). The CallKit
       // system UI dismisses via reportCall(with:endedAt:reason:) but our
@@ -2561,6 +2570,13 @@ public class ExpoCallKitModule: Module {
             reason: "declined",
             targetEmail: callerEmail
           )
+          // [2026-10-11 call-parity] Pre-answer decline only (no call screen
+          // was ever presented for it) → HTTP twin in case the WS frame dies
+          // with the suspended app.
+          if !CallViewController.hasCallScreen(callId: callId) {
+            nativeCallDiag("decline_sent", callId, "via=module")
+            CallSignalWs.postDeclineHttp(callId: callId)
+          }
         }
       }
       // [WAVE 116 2026-05-21] Issue 4 — purge the pending LK token/url/ts

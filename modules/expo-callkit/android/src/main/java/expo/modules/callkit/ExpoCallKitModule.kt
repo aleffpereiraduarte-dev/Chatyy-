@@ -158,10 +158,12 @@ class ExpoCallKitModule : Module() {
       Log.d(TAG, "emitCallAnswered: callId=$callId, instanceReady=${inst != null}")
     }
 
-    fun emitCallEnded(callId: String) {
+    fun emitCallEnded(callId: String, reason: String = "") {
       val inst = instance.get()
       if (inst != null) {
-        inst.sendEvent("onCallEnded", mapOf("callId" to callId))
+        // [2026-10-11 call-parity] `reason` lets JS write the right terminal
+        // history status (remote_declined → declined, not cancelled).
+        inst.sendEvent("onCallEnded", if (reason.isEmpty()) mapOf("callId" to callId) else mapOf("callId" to callId, "reason" to reason))
       }
     }
 
@@ -766,7 +768,7 @@ class ExpoCallKitModule : Module() {
         // this and KILLED the freshly launched native CallActivity. The
         // receiver now ignores target=ringer (and any untargeted close while
         // its call is <5s old).
-        val closeIntent = Intent("expo.modules.callkit.CLOSE_CALL_ACTIVITY").putExtra("target", "ringer")
+        val closeIntent = Intent("expo.modules.callkit.CLOSE_CALL_ACTIVITY").setPackage(context.packageName).putExtra("target", "ringer")
         context.sendBroadcast(closeIntent)
       } catch (_: Exception) {}
     }
@@ -815,6 +817,9 @@ class ExpoCallKitModule : Module() {
         // [2026-10-06 android-incoming] Stamp call_id so only UIs bound to
         // THIS call close (CallActivity ignores other ids, and ignores
         // id-less closes for <5s-old calls).
+        // NOTE [2026-10-11 call-parity]: deliberately left implicit (behaviour
+        // unchanged) — JS also calls endCall right after an accept; explicit
+        // remote ends now reach CallActivity directly (remoteEnded).
         val closeIntent = Intent("expo.modules.callkit.CLOSE_CALL_ACTIVITY")
         if (callId.isNotEmpty()) closeIntent.putExtra("call_id", callId)
         context.sendBroadcast(closeIntent)

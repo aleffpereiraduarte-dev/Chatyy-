@@ -246,6 +246,14 @@ final class CallViewController: UIViewController, @unchecked Sendable {
     // Accept" on a GSM call, CallHoldResumer auto-resume) → hold UI + mic.
     private var systemHoldObserver: NSObjectProtocol?
     private var preHoldMicEnabled: Bool?
+    // [2026-10-11 call-parity] Hold pauses a live camera too; restored on resume.
+    private var preHoldCamEnabled: Bool = false
+    // [2026-10-11 call-parity] The PEER put the call on hold ({type:"hold"}).
+    private var peerOnHold: Bool = false
+    // [2026-10-11 call-parity] Outgoing call refused (declined/busy/unavailable):
+    // showing the label ~1.5 s with a busy tone before dismissing.
+    private var remoteRefusalActive: Bool = false
+    private var busyToneEngine: AVAudioEngine?
 
     // [Wave WhatsApp parity, 2026-05-20 gap B5 iOS] Listen for AVAudioSession
     // interruptions (Siri, alarm, PSTN call) and recover the mic after the
@@ -328,6 +336,33 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         "Atendida em outro dispositivo", "Desconectado", "Erro",
         "Não foi possível conectar", // [2026-10-10 call-states]
     ]
+    /// [2026-10-11 call-parity] Terminal check incl. the localized refusal labels.
+    private static func isTerminalStatus(_ s: String) -> Bool {
+        if kTerminalStatuses.contains(s) { return true }
+        return [CallStrings.s("declined"), CallStrings.s("busy"),
+                CallStrings.s("unavailable"), CallStrings.s("ended")].contains(s)
+    }
+    /// [2026-10-11 call-parity] Internal status literals are pt-BR (the state
+    /// machine compares them); the label shows the app language.
+    fileprivate static func displayStatus(_ s: String) -> String {
+        switch s {
+        case "Chamando…", "Chamando": return CallStrings.s("calling")
+        case "Tocando…", "Tocando": return CallStrings.s("ringing")
+        case "Conectando…", "Conectando": return CallStrings.s("connecting")
+        case "Reconectando…", "Reconectando": return CallStrings.s("reconnecting")
+        case "Conectado": return CallStrings.s("connected")
+        case "Recusada": return CallStrings.s("declined")
+        case "Ocupado": return CallStrings.s("busy")
+        case "Encerrada": return CallStrings.s("ended")
+        case "Sem resposta": return CallStrings.s("noAnswer")
+        default: return s
+        }
+    }
+    private static func dotsBase(_ s: String) -> String {
+        var t = displayStatus(s)
+        while t.hasSuffix("…") || t.hasSuffix(".") { t.removeLast() }
+        return t
+    }
 
     /// Single place that commits "Conectado": opens the caller gate, stops
     /// ringback, starts the duration timer (via the statusObserver sink) and
@@ -538,13 +573,17 @@ final class CallViewController: UIViewController, @unchecked Sendable {
             guard let self = self, !self.didHangup else { return }
             let nid = (note.userInfo?["callId"] as? String) ?? ""
             guard nid == self.callId else { return }
+            // [2026-10-11 call-parity] Refusal already on screen (module routed it).
+            if self.remoteRefusalActive { return }
             let reason = ((note.userInfo?["reason"] as? String) ?? "").lowercased()
             let label: String
             switch reason {
             case "declined", "rejected", "call_declined":
-                label = "Recusada"
+                label = CallStrings.s("declined")
             case "busy":
-                label = "Ocupado"
+                label = CallStrings.s("busy")
+            case "unavailable", "offline":
+                label = CallStrings.s("unavailable")
             case "timeout", "unanswered", "missed", "no_answer", "cancelled", "canceled":
                 label = (self.isOutgoing && !self.outgoingMicGateOpen) ? "Sem resposta" : "Encerrada"
             case "answered_elsewhere":
@@ -953,7 +992,7 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         let statusLabel = UILabel()
         statusLabel.translatesAutoresizingMaskIntoConstraints = false
         statusDotsBase = isOutgoing ? "Chamando" : "Conectando"
-        statusLabel.text = statusDotsBase
+        statusLabel.text = CallViewController.dotsBase(statusDotsBase)
         statusLabel.textColor = UIColor.white.withAlphaComponent(0.65)
         statusLabel.font = .systemFont(ofSize: 16, weight: .medium)
         statusLabel.textAlignment = .center
@@ -969,9 +1008,10 @@ final class CallViewController: UIViewController, @unchecked Sendable {
             // [2026-10-06 native-only outgoing] base flips Chamando → Conectando on accept.
             // [2026-10-10 call-states] Chamando → Tocando → Conectando; a
             // transport blip before media shows "Reconectando".
+            if self.remoteRefusalActive { return } // [2026-10-11 call-parity]
             let base = self.session.isReconnecting ? "Reconectando" : self.statusDotsBase
             let dots = String(repeating: ".", count: self.dotCount)
-            lbl.text = base + dots
+            lbl.text = CallViewController.dotsBase(base) + dots
         }
 
         // 5. ── Bottom control bar (WhatsApp-grade, ALWAYS visible) ───────────
@@ -1272,31 +1312,42 @@ final class CallViewController: UIViewController, @unchecked Sendable {
                         // "Reconectando…" instead of a ticking "Conectado";
                         // the count (from first media) resumes on recovery.
                         if self.session.isReconnecting {
-                            lbl.text = "Reconectando\u{2026}"
+                            lbl.text = CallStrings.s("reconnecting")
+                            return
+                        }
+                        // [2026-10-11 call-parity] Hold (ours or the peer's) wins.
+                        if self.session.onHold {
+                            lbl.text = CallStrings.s("onHold")
+                            return
+                        }
+                        if self.peerOnHold {
+                            let who = self.callerName.isEmpty ? self.callerEmail : self.callerName
+                            lbl.text = CallStrings.s("peerOnHold", ["name": who])
                             return
                         }
                         let elapsed = Int(Date().timeIntervalSince(connAt))
                         let h = elapsed / 3600
                         let m = (elapsed % 3600) / 60
                         let s = elapsed % 60
+                        let c = CallStrings.s("connected")
                         if h > 0 {
-                            lbl.text = String(format: "Conectado %d:%02d:%02d", h, m, s)
+                            lbl.text = String(format: "%@ %d:%02d:%02d", c, h, m, s)
                         } else {
-                            lbl.text = String(format: "Conectado %02d:%02d", m, s)
+                            lbl.text = String(format: "%@ %02d:%02d", c, m, s)
                         }
                     }
                     if let lbl = self.view.viewWithTag(9001) as? UILabel {
-                        lbl.text = "Conectado 00:00"
+                        lbl.text = CallStrings.s("connected") + " 00:00"
                     }
                 } else if newStatus != "Conectado" {
                     // [2026-10-06 native-only outgoing] A terminal status must not
                     // be overwritten by the 420ms "Chamando..." dots ticker.
-                    if CallViewController.kTerminalStatuses.contains(newStatus) {
+                    if CallViewController.isTerminalStatus(newStatus) {
                         self.dotsTimer?.invalidate()
                         self.dotsTimer = nil
                     }
                     if let lbl = self.view.viewWithTag(9001) as? UILabel {
-                        lbl.text = newStatus
+                        lbl.text = CallViewController.displayStatus(newStatus)
                     }
                 }
             }
@@ -1676,7 +1727,7 @@ final class CallViewController: UIViewController, @unchecked Sendable {
     // [2026-10-06 native-only outgoing] `reason` goes out on the WS call_end
     // (hub maps "timeout" while RINGING → call_cancel + push cancel to the
     // callee); `statusText` is what the user sees during the dismiss.
-    private func handleHangup(reason: String = "user_hangup", statusText: String = "Encerrada") {
+    private func handleHangup(reason: String = "user_hangup", statusText: String = "Encerrada", sendCallEnd: Bool = true) {
         if didHangup {
             // Second tap (or delegate-driven re-entry) — only re-issue the
             // dismiss in case the first one was swallowed by a presentation
@@ -1723,12 +1774,25 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         // [Wave WhatsApp parity, 2026-05-20 gap G4 iOS] Tear down the
         // OngoingCallBar overlay if it was mounted (audio minimize path).
         OngoingCallBarOverlayController.shared.uninstall()
-        CallSignalWs.shared.fireCallEnd(
-            callId: callId,
-            conversationId: conversationId,
-            reason: reason,
-            targetEmail: callerEmail
-        )
+        // [2026-10-11 call-parity] A remote refusal (declined/busy) already
+        // closed the call on the hub; echoing call_end during the hub's 2 s
+        // "declined" window looked like a CALLER cancel (history wrong).
+        if sendCallEnd {
+            CallSignalWs.shared.fireCallEnd(
+                callId: callId,
+                conversationId: conversationId,
+                reason: reason,
+                targetEmail: callerEmail
+            )
+        }
+        // [2026-10-11 call-parity] Goodbye frame over LiveKit BEFORE leaving so
+        // the peer ends instantly (never waits out its peer-gone grace).
+        var goodbye: Data? = nil
+        if sendCallEnd && !reason.hasPrefix("remote_") {
+            goodbye = try? JSONSerialization.data(withJSONObject: [
+                "type": "call_end", "call_id": callId, "reason": reason,
+            ])
+        }
         NotificationCenter.default.post(
             name: CallViewController.callEndedNotification,
             object: nil,
@@ -1765,7 +1829,17 @@ final class CallViewController: UIViewController, @unchecked Sendable {
             // breaks the @MainActor isolation chain inherited from
             // CallViewController so the disconnect doesn't race the audio
             // session teardown that CallKit does in provider:didDeactivate:.
+            let goodbyeData = goodbye
             Task.detached(priority: .userInitiated) {
+                if let gb = goodbyeData, r.connectionState == .connected {
+                    // Bounded: never delay the leave by more than 400 ms.
+                    await withTaskGroup(of: Void.self) { g in
+                        g.addTask { try? await r.localParticipant.publish(data: gb) }
+                        g.addTask { try? await Task.sleep(nanoseconds: 400_000_000) }
+                        _ = await g.next()
+                        g.cancelAll()
+                    }
+                }
                 await withTaskGroup(of: Void.self) { group in
                     group.addTask { await r.disconnect() }
                     group.addTask {
@@ -2478,8 +2552,8 @@ final class CallViewController: UIViewController, @unchecked Sendable {
                     self.applyScreenShareState(ScreenShareSupport.isSharing(room: r))
                     if desired {
                         let alert = UIAlertController(
-                            title: "Compartilhar tela",
-                            message: "Não foi possível iniciar o compartilhamento de tela. Tente novamente.",
+                            title: CallStrings.s("shareScreen"),
+                            message: CallStrings.s("screenShareFailed"),
                             preferredStyle: .alert)
                         alert.addAction(UIAlertAction(title: "OK", style: .default))
                         self.present(alert, animated: true)
@@ -2617,7 +2691,9 @@ final class CallViewController: UIViewController, @unchecked Sendable {
             // Fallback: if CallKit isn't tracking this call (rare edge case
             // via WS-fast-path before CallKit reported), at least mute the
             // mic so the peer doesn't hear audio while "on hold".
-            applyMicEnabled(!held)
+            applyMicEnabled(!held && session.micEnabled)
+            session.onHold = held
+            applyHoldMediaAndSignal(held)
             return
         }
         let controller = CXCallController(queue: .main)
@@ -2639,6 +2715,34 @@ final class CallViewController: UIViewController, @unchecked Sendable {
                 userInfo: ["held": held]
             )
         }
+    }
+
+    /// [2026-10-11 call-parity] Hold side effects shared by the "Colocar em
+    /// espera" row and the system/CallKit hold: pause a live camera (restored
+    /// on resume) and tell the PEER over LiveKit data ({type:"hold",on}) so its
+    /// screen reads "<nome> colocou a chamada em espera" instead of silence.
+    /// Same frame Android CallActivity sends/handles.
+    private func applyHoldMediaAndSignal(_ held: Bool) {
+        if held {
+            if session.camEnabled && !isTogglingCamera {
+                preHoldCamEnabled = true
+                isTogglingCamera = true
+                session.camEnabled = false
+                applyCamEnabled(false)
+                setControlActive(view.viewWithTag(9005) as? UIButton, active: false, symbol: "video.slash.fill")
+            }
+        } else if preHoldCamEnabled {
+            preHoldCamEnabled = false
+            if !session.camEnabled && !isTogglingCamera {
+                isTogglingCamera = true
+                session.camEnabled = true
+                applyCamEnabled(true)
+                setControlActive(view.viewWithTag(9005) as? UIButton, active: true, symbol: "video.fill")
+            }
+        }
+        guard let r = self.room,
+              let data = try? JSONSerialization.data(withJSONObject: ["type": "hold", "on": held]) else { return }
+        Task { try? await r.localParticipant.publish(data: data) }
     }
 
     /// [2026-10-04] Noise-suppression UI toggle. NOTE: this only reflects the
@@ -2854,6 +2958,20 @@ final class CallViewController: UIViewController, @unchecked Sendable {
     /// event via CallSignalWs so reactions arrive even when LK data is
     /// briefly disrupted (mirrors the status-reaction WS event the user
     /// already has elsewhere in the app).
+    /// [2026-10-11 call-parity] Local floating burst (own or the peer's). Main thread.
+    private func showFloatingReaction(_ emoji: String) {
+        let reaction = CallFloatingReaction(
+            id: UUID(),
+            emoji: emoji,
+            spawnedAt: Date(),
+            xOffset: CGFloat.random(in: -80...80)
+        )
+        session.floatingReactions.append(reaction)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) { [weak self] in
+            self?.session.floatingReactions.removeAll { $0.id == reaction.id }
+        }
+    }
+
     private func sendReaction(_ emoji: String) {
         // Local burst
         let reaction = CallFloatingReaction(
@@ -2950,11 +3068,13 @@ final class CallViewController: UIViewController, @unchecked Sendable {
                 self.session.onHold = true
                 nativeCallDiag("call_hold", self.callId, "held=1 mic=\(self.preHoldMicEnabled ?? true)")
                 self.applyMicEnabled(false)
+                self.applyHoldMediaAndSignal(true)
             } else {
                 let restore = self.preHoldMicEnabled ?? self.session.micEnabled
                 self.preHoldMicEnabled = nil
                 self.session.onHold = false
                 nativeCallDiag("call_hold", self.callId, "held=0 mic=\(restore)")
+                self.applyHoldMediaAndSignal(false)
                 // Let CallKit's didActivate land first (audio unit re-armed).
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
                     guard let self = self, !self.session.onHold else { return }
@@ -3383,6 +3503,99 @@ final class CallViewController: UIViewController, @unchecked Sendable {
 
     static func hasOngoing() -> Bool {
         return ongoingVC() != nil
+    }
+
+    /// [2026-10-11 call-parity] True when a 1:1 call screen for `callId` exists
+    /// (an incoming CallVC is only presented AFTER answer) — used to tell a
+    /// pre-answer DECLINE from a hangup of an answered call.
+    static func hasCallScreen(callId: String) -> Bool {
+        guard !callId.isEmpty else { return false }
+        if let vc = minimizedInstance, vc.callId == callId { return true }
+        if let vc = liveInstance, vc.callId == callId { return true }
+        return false
+    }
+
+    /// [2026-10-11 call-parity] Remote refusal of OUR outgoing call (WS
+    /// call_end reason declined/busy/unavailable) before any media: show
+    /// "Recusada"/"Ocupado"/"Indisponível" ~1.5 s with a short busy tone, then
+    /// close. Returns true when the VC took over the dismissal (the caller
+    /// must NOT dismiss immediately). WhatsApp behaviour; Android CallActivity
+    /// does the same (handleRemoteEnd).
+    static func handleRemoteRefusalIfOutgoing(callId: String, reason: String) -> Bool {
+        guard let vc = ongoingVC(), vc.callId == callId else { return false }
+        guard vc.isOutgoing, vc.callConnectedAt == nil, !vc.remoteRefusalActive else { return false }
+        let r = reason.lowercased()
+        let label: String
+        if r.contains("busy") { label = CallStrings.s("busy") }
+        else if r.contains("declin") || r.contains("reject") { label = CallStrings.s("declined") }
+        else if r.contains("unavailable") || r.contains("offline") { label = CallStrings.s("unavailable") }
+        else { return false }
+        vc.beginRemoteRefusal(label: label, reason: r)
+        return true
+    }
+
+    private func beginRemoteRefusal(label: String, reason: String) {
+        remoteRefusalActive = true
+        nativeCallDiag("remote_refusal", callId, "reason=\(reason)")
+        cancelOutgoingRingTimer()
+        cancelOutgoingConnectFallback()
+        stopRingbackTone(reason: "remote_refusal")
+        dotsTimer?.invalidate()
+        dotsTimer = nil
+        session.status = label
+        if let lbl = view.viewWithTag(9001) as? UILabel { lbl.text = label }
+        playBusyToneShort()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+            guard let self = self else { return }
+            self.stopBusyTone()
+            self.handleHangup(reason: "remote_" + reason, statusText: label, sendCallEnd: false)
+        }
+    }
+
+    /// ~1.2 s "tu-tu-tu" (480 Hz, 0.25 s on / 0.15 s off ×3).
+    private func playBusyToneShort() {
+        let engine = AVAudioEngine()
+        let player = AVAudioPlayerNode()
+        let outFmt = engine.mainMixerNode.outputFormat(forBus: 0)
+        let fmt: AVAudioFormat
+        if outFmt.channelCount == 0 || outFmt.sampleRate == 0 {
+            guard let f = AVAudioFormat(standardFormatWithSampleRate: 44100, channels: 1) else { return }
+            fmt = f
+        } else {
+            fmt = outFmt
+        }
+        let sr = fmt.sampleRate
+        let total = AVAudioFrameCount(sr * 1.2)
+        guard let buf = AVAudioPCMBuffer(pcmFormat: fmt, frameCapacity: total),
+              let chans = buf.floatChannelData else { return }
+        buf.frameLength = total
+        let period = Int(sr * 0.4)
+        let on = Int(sr * 0.25)
+        for ch in 0..<Int(fmt.channelCount) {
+            let ptr = chans[ch]
+            for i in 0..<Int(total) {
+                if i % period < on {
+                    ptr[i] = Float(sin(2.0 * Double.pi * 480.0 * Double(i) / sr)) * 0.45
+                } else {
+                    ptr[i] = 0
+                }
+            }
+        }
+        engine.attach(player)
+        engine.connect(player, to: engine.mainMixerNode, format: fmt)
+        do { try engine.start() } catch {
+            print("[CallVC] busy tone engine.start failed: \(error)")
+            return
+        }
+        player.volume = 0.4
+        player.scheduleBuffer(buf, at: nil, options: [], completionHandler: nil)
+        player.play()
+        busyToneEngine = engine
+    }
+
+    private func stopBusyTone() {
+        if let e = busyToneEngine, e.isRunning { e.stop() }
+        busyToneEngine = nil
     }
 
     /// Snapshot dict (same keys as CallStateSnapshot + minimized/isGroup/
@@ -4295,7 +4508,7 @@ final class CallViewController: UIViewController, @unchecked Sendable {
 
         let header = UILabel()
         header.translatesAutoresizingMaskIntoConstraints = false
-        header.text = "Mais opções"
+        header.text = CallStrings.s("moreOptions")
         header.textColor = .white
         header.font = .systemFont(ofSize: 18, weight: .semibold)
         header.textAlignment = .center
@@ -4303,23 +4516,31 @@ final class CallViewController: UIViewController, @unchecked Sendable {
 
         // Rows — the screen-share + hold rows reflect current state (title +
         // symbol), exactly like the old action sheet did.
-        let shareTitle  = screenSharing ? "Parar compartilhamento" : "Compartilhar tela"
+        let shareTitle  = CallStrings.s(screenSharing ? "stopSharing" : "shareScreen")
         let shareSymbol = screenSharing ? "stop.circle" : "rectangle.on.rectangle"
-        let holdTitle   = session.onHold ? "Retomar" : "Colocar em espera"
+        let holdTitle   = CallStrings.s(session.onHold ? "resume" : "hold")
         let holdSymbol  = session.onHold ? "play.fill" : "pause.fill"
 
+        // [2026-10-11 call-parity] "Efeito de fundo" REMOVED (iOS + Android):
+        // LiveKitClient 2.0.18 has no camera VideoProcessor hook, so
+        // BackgroundProcessorLKAdapter.bind() was always a no-op ("skipped") —
+        // the row only flipped a flag and the peer never saw any blur. Same
+        // order/rows as Android CallActivity's MoreOptionsSheet.
         var rows: [UIButton] = [
-            moreMenuRow(symbol: "face.smiling",         title: "Reações",                 tag: 9071, action: #selector(moreMenuReactions)),
-            moreMenuRow(symbol: shareSymbol,            title: shareTitle,                tag: 9072, action: #selector(moreMenuScreenShare)),
-            moreMenuRow(symbol: "person.crop.rectangle", title: "Efeito de fundo",        tag: 9073, action: #selector(moreMenuBackground)),
-            moreMenuRow(symbol: holdSymbol,             title: holdTitle,                 tag: 9074, action: #selector(moreMenuHold)),
-            moreMenuRow(symbol: "person.badge.plus",    title: "Adicionar participante",  tag: 9075, action: #selector(moreMenuAddMember)),
+            moreMenuRow(symbol: "face.smiling",         title: CallStrings.s("reactions"),      tag: 9071, action: #selector(moreMenuReactions)),
+            moreMenuRow(symbol: shareSymbol,            title: shareTitle,                      tag: 9072, action: #selector(moreMenuScreenShare)),
+            moreMenuRow(symbol: holdSymbol,             title: holdTitle,                       tag: 9074, action: #selector(moreMenuHold)),
+            moreMenuRow(symbol: "person.badge.plus",    title: CallStrings.s("addParticipant"), tag: 9075, action: #selector(moreMenuAddMember)),
         ]
-        // [video-quality 2026-10-06] "Qualidade HD" (1080p on Wi-Fi) — video calls only.
+        // [video-quality 2026-10-06] "Qualidade HD" — video calls only. Label
+        // tells the truth: 1080p only on Wi-Fi, 720p on mobile data.
         if hasVideo || session.camEnabled {
             let hdOn = CallVideoQuality.isHdPreferred
+            let net = CallNetworkSnapshot.shared
+            let cell = net.isCellular || net.isExpensive
+            let title = !hdOn ? CallStrings.s("hdOff") : CallStrings.s(cell ? "hdOnCell" : "hdOnWifi")
             rows.append(moreMenuRow(symbol: hdOn ? "checkmark.circle.fill" : "tv",
-                                    title: hdOn ? "Qualidade HD: ligada (1080p)" : "Qualidade HD (1080p no Wi-Fi)",
+                                    title: title,
                                     tag: 9076, action: #selector(moreMenuToggleHd)))
         }
         let rowStack = UIStackView(arrangedSubviews: rows)
@@ -4482,10 +4703,27 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         dismissMoreMenu()
         let next = !CallVideoQuality.isHdPreferred
         CallVideoQuality.isHdPreferred = next
-        nativeCallDiag("video_hd_toggle", callId, "on=\(next ? 1 : 0) net=\(CallNetworkSnapshot.shared.label)")
+        // [2026-10-11 call-parity] Turning HD ON must never LOWER the capture
+        // (log: hd_toggle on=1 → profile sd540 reason=hd_on on cellular, because
+        // profile() also folded in the poor-bars step-down). HD ON = 1080p on
+        // Wi-Fi, 720p on cellular (Low Data Mode keeps the current). HD OFF =
+        // 720p (the cellular poor-link step-down still applies on its own).
+        let net = CallNetworkSnapshot.shared
+        let cellular = net.isCellular || net.isExpensive
+        let cur = CallVideoQuality.current
+        let target: CallVideoProfile
+        if session.isGroup {
+            target = .group540
+        } else if next {
+            target = cellular ? (net.isConstrained ? cur : .hd720) : .hd1080
+        } else {
+            target = .hd720
+        }
+        nativeCallDiag("video_hd_toggle", callId, "on=\(next ? 1 : 0) net=\(net.label) cur=\(cur.rawValue) target=\(target.rawValue)")
         guard hasVideo || session.camEnabled else { return }
-        let target = CallVideoQuality.profile(isGroup: session.isGroup, localQualityScore: session.connectionQuality)
-        if target != CallVideoQuality.current {
+        if next && target.rank <= cur.rank { return }
+        if target != cur {
+            if next { videoStepDownDone = false; localPoorQualityStreak = 0 }
             applyVideoProfile(target, reason: next ? "hd_on" : "hd_off")
         }
     }
@@ -4494,13 +4732,13 @@ final class CallViewController: UIViewController, @unchecked Sendable {
     /// existing sendReaction(_:) which bursts locally + publishes over the LK
     /// data channel + fires the parity WS event.
     private func presentReactionPicker() {
-        let sheet = UIAlertController(title: "Enviar reação", message: nil, preferredStyle: .actionSheet)
+        let sheet = UIAlertController(title: CallStrings.s("sendReaction"), message: nil, preferredStyle: .actionSheet)
         for emoji in ["❤️", "😂", "👍", "🎉", "😮", "🖐️"] {
             sheet.addAction(UIAlertAction(title: emoji, style: .default) { [weak self] _ in
                 self?.sendReaction(emoji)
             })
         }
-        sheet.addAction(UIAlertAction(title: "Cancelar", style: .cancel, handler: nil))
+        sheet.addAction(UIAlertAction(title: CallStrings.s("cancel"), style: .cancel, handler: nil))
         if let pop = sheet.popoverPresentationController, let anchor = view.viewWithTag(9007) {
             pop.sourceView = anchor
             pop.sourceRect = anchor.bounds
@@ -5509,6 +5747,15 @@ extension CallViewController: RoomDelegate {
                 self.stopRingbackTone(reason: "didSubscribeTrack")
                 return
             }
+            // [2026-10-11 call-parity] The peer's SCREEN keeps the full-bleed
+            // tile: a camera (re)subscribed while a screen share shows must not
+            // replace it (didUnsubscribeTrack falls back to the camera when the
+            // share ends).
+            if publication.source != .screenShareVideo,
+               let cur = self.session.remoteVideoTrack, cur.source == .screenShareVideo {
+                self.stopRingbackTone(reason: "didSubscribeTrack")
+                return
+            }
             // 1:1 path: keep remoteVideoTrack for the full-bleed background.
             self.session.remoteVideoTrack = track
             self.stopRingbackTone(reason: "didSubscribeTrack")
@@ -5615,6 +5862,12 @@ extension CallViewController: RoomDelegate {
         print("[CallVC] remote video \(isMuted ? "MUTED (camera off)" : "UNMUTED (camera on)") — identity=\(identity)")
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
+            // [2026-10-11 call-parity] Camera muted/unmuted BEHIND a live screen
+            // share: leave the screen on the tile.
+            if trackPublication.source != .screenShareVideo,
+               let cur = self.session.remoteVideoTrack, cur.source == .screenShareVideo {
+                return
+            }
             if isMuted {
                 // Remember the live track so we can restore it on unmute, then
                 // show the avatar placeholder. applyRemoteVideoTrack(nil) only
@@ -5702,6 +5955,43 @@ extension CallViewController: RoomDelegate {
         // nunca era chamado: video_request e reações não chegavam no 1:1
         // nativo. Mesma assinatura do GroupCallViewController.
         guard let str = String(data: data, encoding: .utf8) else { return }
+        // [2026-10-11 call-parity] In-band control frames (same wire format as
+        // Android CallActivity.handleControlFrame): call_end (peer leaving —
+        // sent BEFORE it leaves), reaction, hold.
+        if str.hasPrefix("{"), let cd = str.data(using: .utf8),
+           let ctl = (try? JSONSerialization.jsonObject(with: cd)) as? [String: Any],
+           let type = ctl["type"] as? String,
+           type == "call_end" || type == "reaction" || type == "hold" {
+            DispatchQueue.main.async { [weak self] in
+                guard let self = self, !self.didHangup else { return }
+                switch type {
+                case "call_end":
+                    let cid = (ctl["call_id"] as? String) ?? ""
+                    if !cid.isEmpty && cid != self.callId { return }
+                    // A participant added mid-call leaving must not end it for the rest.
+                    if let r = self.room, r.remoteParticipants.count >= 2 {
+                        nativeCallDiag("remote_end_ignored_group", self.callId, "remotes=\(r.remoteParticipants.count)")
+                        return
+                    }
+                    let why = (ctl["reason"] as? String) ?? "remote_hangup"
+                    nativeCallDiag("remote_end", self.callId, "src=lk_data reason=\(why)")
+                    self.handleHangup(reason: "remote_hangup", statusText: "Encerrada")
+                case "reaction":
+                    if let e = ctl["emoji"] as? String, !e.isEmpty {
+                        self.showFloatingReaction(e)
+                    }
+                default: // hold
+                    let on = (ctl["on"] as? Bool) ?? ((ctl["on"] as? NSNumber)?.boolValue ?? false)
+                    self.peerOnHold = on
+                    nativeCallDiag("peer_hold", self.callId, "on=\(on ? 1 : 0)")
+                    if let lbl = self.view.viewWithTag(9001) as? UILabel, self.callConnectedAt != nil {
+                        let who = self.callerName.isEmpty ? self.callerEmail : self.callerName
+                        if on { lbl.text = CallStrings.s("peerOnHold", ["name": who]) }
+                    }
+                }
+            }
+            return
+        }
         // [2026-06-01 VIDEO PARITY] Handle the `video_request` handshake the JS
         // (/call.js) and Android (CallActivity.kt) sides already speak. ROOT
         // CAUSE of "quando muda pra vídeo o outro vê mas quem ligou não vê": iOS
@@ -5740,17 +6030,8 @@ extension CallViewController: RoomDelegate {
         }
         guard str.hasPrefix("R:") else { return }
         let emoji = String(str.dropFirst(2))
-        let reaction = CallFloatingReaction(
-            id: UUID(),
-            emoji: emoji.isEmpty ? "🎉" : emoji,
-            spawnedAt: Date(),
-            xOffset: CGFloat.random(in: -80...80)
-        )
         DispatchQueue.main.async { [weak self] in
-            self?.session.floatingReactions.append(reaction)
-            DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) { [weak self] in
-                self?.session.floatingReactions.removeAll { $0.id == reaction.id }
-            }
+            self?.showFloatingReaction(emoji.isEmpty ? "🎉" : emoji)
         }
     }
 }

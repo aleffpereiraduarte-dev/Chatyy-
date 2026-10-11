@@ -638,7 +638,15 @@ object NativeCallRoom {
      * teardown; wrap in coroutine with 10s timeout so JS bridge call never
      * stalls and stale Room can't keep peer stuck on "Conectando".
      */
-    fun disconnect() {
+    /** [2026-10-11 call-parity] True when [r] is the Room this singleton owns. */
+    fun isCurrent(r: Room?): Boolean = r != null && room === r
+
+    /**
+     * [2026-10-11 call-parity] `goodbye` = data frame published (reliable,
+     * bounded 400 ms) BEFORE leaving, so the peer ends instantly instead of
+     * waiting out its peer-gone grace. Null = plain disconnect.
+     */
+    fun disconnect(goodbye: ByteArray? = null) {
         val r = room
         if (r == null) {
             Log.d(TAG, "disconnect: no live Room (no-op)")
@@ -648,6 +656,14 @@ object NativeCallRoom {
         // and stale state can't survive past this point.
         room = null
         scope.launch(Dispatchers.IO) {
+            if (goodbye != null) {
+                val sent = withTimeoutOrNull(400L) {
+                    try { r.localParticipant.publishData(goodbye); true } catch (t: Throwable) {
+                        Log.w(TAG, "disconnect: goodbye publish failed: ${t.message}"); false
+                    }
+                }
+                Log.d(TAG, "disconnect: goodbye sent=$sent")
+            }
             val result = withTimeoutOrNull(10_000L) {
                 try {
                     r.disconnect()

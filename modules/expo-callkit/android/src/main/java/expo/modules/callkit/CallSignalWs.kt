@@ -225,6 +225,10 @@ object CallSignalWs {
             }
         }.toString()
         enqueueAndShip(context, payload)
+        // [2026-10-11 call-parity] Pre-answer DECLINE → HTTP twin
+        // (call_status=declined) so the history says 'declined' and, with the
+        // server patch, the caller gets call_end even if this WS frame is lost.
+        if (reason == "declined") postDeclineHttp(context, callId)
         // [P0 socket-leak fix 2026-05-26] Release the socket shortly after the
         // call_end frame is shipped. Before this, fireCallEnd only enqueued the
         // frame and left the WS open forever. On a rapid decline → re-invite
@@ -238,6 +242,38 @@ object CallSignalWs {
         // FRESH socket only when actually needed (keepAlive callee path) so the
         // normal in-call WS is never broken — the call is ending anyway.
         scheduleSocketRelease()
+    }
+
+    private fun postDeclineHttp(context: Context, callId: String) {
+        if (callId.isEmpty()) return
+        val app = context.applicationContext
+        Thread {
+            try {
+                val sp = app.getSharedPreferences("expo_callkit_prefs", Context.MODE_PRIVATE)
+                val token = sp.getString("auth_token", "") ?: ""
+                val apiBase = sp.getString("api_base", "") ?: ""
+                if (token.isEmpty() || apiBase.isEmpty()) return@Thread
+                val base = if (apiBase.endsWith("/")) apiBase.dropLast(1) else apiBase
+                val conn = (java.net.URL("$base/api/email.php?action=call_status").openConnection() as java.net.HttpURLConnection).apply {
+                    requestMethod = "POST"
+                    setRequestProperty("Authorization", "Bearer $token")
+                    setRequestProperty("Content-Type", "application/json")
+                    setRequestProperty("Accept", "application/json")
+                    doOutput = true
+                    connectTimeout = 5000
+                    readTimeout = 6000
+                }
+                val body = JSONObject().apply {
+                    put("action", "call_status"); put("call_id", callId); put("status", "declined"); put("duration", 0)
+                }.toString()
+                conn.outputStream.use { it.write(body.toByteArray(Charsets.UTF_8)) }
+                val code = conn.responseCode
+                try { conn.inputStream.close() } catch (_: Throwable) {}
+                CallDiag.log("decline_http", callId, "code=$code", app)
+            } catch (t: Throwable) {
+                Log.w(TAG, "decline HTTP failed: ${t.message}")
+            }
+        }.apply { isDaemon = true }.start()
     }
 
     /**
@@ -525,7 +561,7 @@ object CallSignalWs {
                     return
                 }
                 Log.d(TAG, "$type — treating as call_end equivalent")
-                handleIncomingCallEnd(obj)
+                handleIncomingCallEnd(obj, if (type == "call_cancel") "cancel" else "declined")
             }
             "call_end" -> {
                 // [#1179 cleanup, 2026-05-19] Native dismissal fallback for
@@ -588,11 +624,24 @@ object CallSignalWs {
      * native UI / service that may be holding the call open. Safe to call
      * even when no call is active (every step is best-effort).
      */
-    private fun handleIncomingCallEnd(obj: JSONObject) {
+    private fun handleIncomingCallEnd(obj: JSONObject, defaultReason: String = "remote_hangup") {
         val ctx = appContext ?: return
         val callId = obj.optString("call_id").ifEmpty { obj.optString("room_id") }
-        val reason = obj.optString("reason").ifEmpty { "remote_hangup" }
+        val reason = obj.optString("reason").ifEmpty { defaultReason }
         Log.d(TAG, "call_end $callId reason=$reason — dismissing native call UIs")
+
+        // [2026-10-11 call-parity] 0. Live 1:1 call screen → end it DIRECTLY
+        //    (no broadcast hop). call_1791738459492_1vd5rwg0b /
+        //    call_1791738657050_lmfydnfdt: the implicit CLOSE broadcast below
+        //    never reached CallActivity (ring_stop logged, screen stayed up on
+        //    "Reconectando…" / kept ringing). Explicit end = instant.
+        if (callId.isNotEmpty() && reason != "answered_elsewhere" && obj.optString("accepted_by_client_id").isEmpty()) {
+            try {
+                if (CallActivity.remoteEnded(callId, reason, "ws")) {
+                    CallDiag.log("remote_end_dispatch", callId, "src=ws reason=$reason", ctx)
+                }
+            } catch (t: Throwable) { Log.w(TAG, "CallActivity.remoteEnded: ${t.message}") }
+        }
 
         // 1. Broadcast ACTION_CLOSE — CallActivity and IncomingCallActivity
         //    both listen on this filter and finish themselves cleanly
@@ -606,7 +655,13 @@ object CallSignalWs {
         // session) was tearing down an in-flight outgoing call mid-handshake.
         try {
             val closeIntent = Intent("expo.modules.callkit.CLOSE_CALL_ACTIVITY")
+            // [2026-10-11 call-parity] Explicit package: receivers are
+            // RECEIVER_NOT_EXPORTED; an implicit broadcast is not reliably
+            // delivered to them on recent Android releases.
+            closeIntent.setPackage(ctx.packageName)
             if (callId.isNotEmpty()) closeIntent.putExtra("call_id", callId)
+            closeIntent.putExtra("reason", reason)
+            closeIntent.putExtra("src", "ws")
             ctx.sendBroadcast(closeIntent)
         } catch (t: Throwable) {
             Log.w(TAG, "broadcast CLOSE_CALL_ACTIVITY failed: ${t.message}")

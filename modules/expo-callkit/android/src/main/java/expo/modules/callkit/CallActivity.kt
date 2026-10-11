@@ -104,6 +104,14 @@ import androidx.compose.material.icons.filled.VideocamOff
 import androidx.compose.material.icons.filled.Videocam
 import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material.icons.filled.VolumeDown
+import androidx.compose.material.icons.filled.MoreHoriz
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.ScreenShare
+import androidx.compose.material.icons.filled.StopScreenShare
+import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Hd
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -358,6 +366,26 @@ class CallActivity : ComponentActivity() {
       }
       return true
     }
+
+    /**
+     * [2026-10-11 call-parity] EXPLICIT end of the live 1:1 call by the peer /
+     * server (WS call_end|declined|cancel, FCM call_end, LiveKit data
+     * `call_end`). Direct call — no broadcast hop. Incident
+     * call_1791738459492_1vd5rwg0b: the WS call_end reached CallSignalWs
+     * (ring_stop logged) but the implicit CLOSE broadcast never reached this
+     * activity, which sat on "Reconectando…" (peer-gone grace) for 15 s.
+     * Explicit end = instant, in grace, in rejoin, anywhere.
+     * Returns true when a live call screen for [callId] took it.
+     */
+    @JvmStatic
+    fun remoteEnded(callId: String, reason: String, src: String): Boolean {
+      val a = live() ?: return false
+      if (callId.isNotEmpty() && a.callId.isNotEmpty() && a.callId != callId) return false
+      a.runOnUiThread {
+        try { a.handleRemoteEnd(reason, src) } catch (t: Throwable) { Log.w(TAG, "remoteEnded: ${t.message}") }
+      }
+      return true
+    }
   }
 
   // ────────────── Intent-derived params (immutable for life of activity)
@@ -528,6 +556,16 @@ class CallActivity : ComponentActivity() {
           Log.w(TAG, "closeReceiver: ignoring UNTARGETED close — our call is only ${ageMs}ms old (callId=$callId)")
           return
         }
+      }
+      // [2026-10-11 call-parity] Remote/server end paths stamp `reason`
+      // (declined/busy/user_hangup…) → same instant handler as the direct
+      // call (shows "Recusada"/"Ocupado" briefly). Local paths (notification
+      // "Encerrar") carry no reason → legacy finish.
+      val remoteReason = intent?.getStringExtra("reason")
+      if (!remoteReason.isNullOrEmpty()) {
+        Log.d(TAG, "closeReceiver: remote end reason=$remoteReason (call_id=$broadcastCallId)")
+        handleRemoteEnd(remoteReason, intent.getStringExtra("src") ?: "broadcast")
+        return
       }
       Log.d(TAG, "closeReceiver: finishing activity (broadcast call_id=$broadcastCallId)")
       finishCall(reason = "close_broadcast")
@@ -745,13 +783,7 @@ class CallActivity : ComponentActivity() {
     }
   }
 
-  private fun holdStatusLabel(): String {
-    return when (java.util.Locale.getDefault().language) {
-      "en" -> "On hold"
-      "es" -> "En espera"
-      else -> "Em espera"
-    }
-  }
+  private fun holdStatusLabel(): String = CallStrings.s("onHold")
 
   // ────────────── Lifecycle
 
@@ -925,6 +957,7 @@ class CallActivity : ComponentActivity() {
     try { remoteRenderer?.setScalingType(RendererCommon.ScalingType.SCALE_ASPECT_FILL) } catch (_: Throwable) {}
     try { localRenderer?.setScalingType(RendererCommon.ScalingType.SCALE_ASPECT_FILL) } catch (_: Throwable) {}
 
+    refreshHdState() // [2026-10-11 call-parity] More-sheet HD label
     // Mount the Compose UI.
     setContent {
       MaterialTheme(colorScheme = darkColorScheme()) {
@@ -1121,17 +1154,9 @@ class CallActivity : ComponentActivity() {
                 .apply()
             } catch (t: Throwable) { Log.w(TAG, "bg toggle: ${t.message}") }
           },
-          onStartScreenshare = {
-            try {
-              val intent = Intent("expo.modules.screenshare.REQUEST_PICKER").apply {
-                setPackage(packageName)
-                putExtra("audio", false)
-              }
-              sendBroadcast(intent)
-            } catch (t: Throwable) {
-              Log.w(TAG, "startScreenshare bridge: ${t.message}")
-            }
-          },
+          // [2026-10-11 call-parity] Real MediaProjection publish into THIS
+          // Room (the old REQUEST_PICKER broadcast hit the JS module only).
+          onStartScreenshare = { toggleScreenShare() },
           onPlayDTMF = { digit ->
             // Local tone via ToneGenerator + LK data fan-out. The receiver
             // installed in onCreate also handles the network publish path
@@ -1208,6 +1233,8 @@ class CallActivity : ComponentActivity() {
           // [video-upgrade 2026-05-25] Wire the two video-upgrade callbacks.
           onRequestVideoUpgrade = { requestVideoUpgrade() },
           onRespondVideoRequest = { accept -> respondVideoRequest(accept) },
+          onToggleHold = { applyUserHold(!state.isOnHold) },
+          onToggleHd = { toggleHd() },
         )
       }
     }
@@ -2156,6 +2183,7 @@ class CallActivity : ComponentActivity() {
         override fun onData(obj: org.json.JSONObject) {
           runOnUiThread {
             if (p2p !== sess || finishing) return@runOnUiThread
+            if (handleControlFrame(obj, "p2p_data")) return@runOnUiThread
             if (obj.optString("type") == "video_request") handleVideoRequestData(obj.optString("action"))
           }
         }
@@ -2674,6 +2702,12 @@ class CallActivity : ComponentActivity() {
     if (lkRejoinJob?.isActive == true) return
     lkRejoinAttempts++
     val attempt = lkRejoinAttempts
+    // [2026-10-11 call-parity] A rejoin does not republish the MediaProjection
+    // track — reflect it (the user can share again).
+    if (state.isScreenSharing) {
+      state.isScreenSharing = false
+      CallDiag.log("screen_share_unpublished", callId, "why=rejoin", applicationContext)
+    }
     state.status = "Reconectando…"
     state.isReconnecting = true
     CallDiag.log("lk_rejoin_start", callId, "attempt=$attempt why=$why", applicationContext)
@@ -2723,6 +2757,124 @@ class CallActivity : ComponentActivity() {
         state.status = steadyStatusLabel()
       }
     }
+  }
+
+  // ────────────── [2026-10-11 call-parity] Explicit remote end (WhatsApp rule)
+  //
+  // Grace / rejoin are ONLY for silent drops. An explicit end for THIS call
+  // (WS call_end/declined/cancel, FCM call_end, LiveKit data `call_end`)
+  // ends the screen immediately — also while "Reconectando…" (peer-gone
+  // grace or LK rejoin). Outgoing call refused before media: show
+  // "Recusada" / "Ocupado" / "Indisponível" ~1.5 s with a short busy tone,
+  // then close (call_1791738657050_lmfydnfdt only stopped ringing).
+  private var remoteEndHandled = false
+
+  private fun remoteEndLabel(reason: String): String? {
+    val r = reason.lowercase()
+    return when {
+      r.contains("busy") -> CallStrings.s("busy")
+      r.contains("declin") || r.contains("reject") -> CallStrings.s("declined")
+      r.contains("unavailable") || r.contains("offline") || r.contains("no_device") -> CallStrings.s("unavailable")
+      else -> null
+    }
+  }
+
+  private fun handleRemoteEnd(reasonRaw: String, src: String) {
+    if (finishing || remoteEndHandled) return
+    val reason = reasonRaw.ifEmpty { "remote_hangup" }
+    // A live call screen on the CALLEE side means THIS device answered: an
+    // "answered elsewhere" sibling fan-out is about the other devices.
+    if (reason.contains("answered_elsewhere") || reason.contains("picked_up")) {
+      CallDiag.log("remote_end_ignored_answered_here", callId, "src=$src reason=$reason", applicationContext)
+      return
+    }
+    // A participant added mid-call (group upgrade) hanging up must not end
+    // the call for the others: only end when nobody else would remain.
+    val remotes = room?.remoteParticipants?.size ?: 0
+    if (remotes >= 2 && src == "lk_data") {
+      CallDiag.log("remote_end_ignored_group", callId, "src=$src reason=$reason remotes=$remotes", applicationContext)
+      return
+    }
+    remoteEndHandled = true
+    peerGoneJob?.cancel(); peerGoneJob = null
+    lkRejoinJob?.cancel(); lkRejoinJob = null
+    connectWatchdogJob?.cancel(); connectWatchdogJob = null
+    val label = remoteEndLabel(reason)
+    val refusedBeforeMedia = isOutgoing && !mediaFlowing && label != null
+    CallDiag.log(
+      "remote_end", callId,
+      "src=$src reason=$reason media=$mediaFlowing answered=$peerAnswered out=$isOutgoing reconnecting=${state.isReconnecting} show=${refusedBeforeMedia}",
+      applicationContext
+    )
+    if (refusedBeforeMedia) {
+      stopRingback()
+      state.isReconnecting = false
+      state.status = label!!
+      playBusyToneShort()
+      lifecycleScope.launch {
+        delay(1_500L)
+        finishCall(reason = "remote_$reason", remote = true)
+      }
+    } else {
+      state.isReconnecting = false
+      finishCall(reason = "remote_$reason", remote = true)
+    }
+  }
+
+  /** ~1.4 s busy tone (WhatsApp "tu-tu-tu") for a refused outgoing call. */
+  private fun playBusyToneShort() {
+    try {
+      val tg = ToneGenerator(AudioManager.STREAM_VOICE_CALL, 70)
+      tg.startTone(ToneGenerator.TONE_SUP_BUSY, 1_400)
+      android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+        try { tg.stopTone() } catch (_: Throwable) {}
+        try { tg.release() } catch (_: Throwable) {}
+      }, 1_600L)
+    } catch (t: Throwable) {
+      Log.w(TAG, "busy tone failed: ${t.message}")
+    }
+  }
+
+  /** In-band control frames shared by LiveKit data and the P2P DataChannel.
+   *  Returns true when the frame was consumed. Wire format (JSON, same on
+   *  iOS CallViewController):
+   *    {type:"call_end", call_id, reason}  — peer is leaving (sent BEFORE it leaves)
+   *    {type:"reaction", emoji}            — floating reaction (legacy "R:<emoji>" too)
+   *    {type:"hold", on:true|false}        — peer put the call on hold / resumed */
+  private fun handleControlFrame(obj: org.json.JSONObject, src: String): Boolean {
+    when (obj.optString("type")) {
+      "call_end" -> {
+        val cid = obj.optString("call_id")
+        if (cid.isNotEmpty() && cid != callId) return true
+        handleRemoteEnd(obj.optString("reason").ifEmpty { "remote_hangup" }, src)
+        return true
+      }
+      "reaction" -> {
+        val e = obj.optString("emoji")
+        if (e.isNotEmpty()) showFloatingReaction(e)
+        return true
+      }
+      "hold" -> {
+        val on = obj.optBoolean("on", false)
+        state.peerOnHold = on
+        CallDiag.log("peer_hold", callId, "on=$on src=$src", applicationContext)
+        return true
+      }
+    }
+    return false
+  }
+
+  /** [2026-10-11 call-parity] Peer screen → FIT (whole screen legible, no
+   *  crop of a 9:19.5 phone screen); camera → FILL. */
+  private fun setRemoteScreenMode(screen: Boolean) {
+    if (state.remoteIsScreenShare == screen) return
+    state.remoteIsScreenShare = screen
+    try {
+      remoteRenderer?.setScalingType(
+        if (screen) RendererCommon.ScalingType.SCALE_ASPECT_FIT else RendererCommon.ScalingType.SCALE_ASPECT_FILL
+      )
+    } catch (_: Throwable) {}
+    CallDiag.log("remote_screen_share", callId, "on=$screen", applicationContext)
   }
 
   private fun handleRoomEvent(r: Room, event: RoomEvent) {
@@ -2894,6 +3046,13 @@ class CallActivity : ComponentActivity() {
           // (peer turned the camera off before we subscribed / re-subscribe
           // after a reconnect) must show the avatar, not a black surface.
           // TrackUnmuted flips it back on (same bound renderer).
+          // [2026-10-11 call-parity] The peer's SCREEN wins the full-bleed
+          // tile: a camera (re)subscribed while a screen share is showing
+          // must not steal the renderer (it becomes the fallback when the
+          // share ends — TrackUnsubscribed below).
+          val incomingIsScreen = event.publication.source == Track.Source.SCREEN_SHARE
+          val keepScreen = !incomingIsScreen && state.remoteIsScreenShare && boundRemoteVideoTrack != null
+          if (!keepScreen) {
           state.hasRemoteVideo = !event.publication.muted
           // Track this as THE remote camera sink so TrackUnsubscribed can
           // unbind exactly it (flip/republish on the peer = new track).
@@ -2904,6 +3063,8 @@ class CallActivity : ComponentActivity() {
             try { remoteRenderer?.let { rv -> prevBound.removeRenderer(rv) } } catch (_: Throwable) {}
           }
           boundRemoteVideoTrack = track
+          setRemoteScreenMode(incomingIsScreen)
+          }
           // [video-upgrade 2026-05-25] CRITICAL: a remote VIDEO track means the
           // peer enabled their camera (initial video call OR a mid-call audio→
           // video upgrade). The remote-video Crossfade in CallScreen is gated on
@@ -2930,7 +3091,7 @@ class CallActivity : ComponentActivity() {
           // was created in onCreate (video call) or in enterVideoModeAndPublish
           // (audio→video upgrade) and initVideoRenderer'd against this Room in
           // bringUpRoom / the upgrade path, so addRenderer here makes frames flow.
-          remoteRenderer?.let { rv ->
+          if (!keepScreen) remoteRenderer?.let { rv ->
             try { track.addRenderer(rv) } catch (t: Throwable) {
               Log.w(TAG, "remoteRenderer addRenderer failed: ${t.message}")
             }
@@ -2993,13 +3154,18 @@ class CallActivity : ComponentActivity() {
               .firstOrNull { it.sid != event.publications.sid && it.track is VideoTrack && it.track !== track && !it.muted }
               ?.track as? VideoTrack
           } catch (_: Throwable) { null }
-          if (fallback != null) {
+          if (boundRemoteVideoTrack != null && boundRemoteVideoTrack !== track) {
+            // [2026-10-11 call-parity] A track that was NOT on screen went away
+            // (e.g. the camera behind a screen share) — keep the current one.
+          } else if (fallback != null) {
             remoteRenderer?.let { rv -> try { fallback.addRenderer(rv) } catch (_: Throwable) {} }
             boundRemoteVideoTrack = fallback
+            setRemoteScreenMode(event.participant.trackPublications.values.any { it.track === fallback && it.source == Track.Source.SCREEN_SHARE })
             state.hasRemoteVideo = true
             Log.d(TAG, "remote video unsubscribed → fallback to other remote video sid=${event.publications.sid}")
           } else {
             state.hasRemoteVideo = false
+            setRemoteScreenMode(false)
             try { remoteRenderer?.clearImage() } catch (_: Throwable) {}
             Log.d(TAG, "remote video unsubscribed → avatar placeholder sid=${event.publications.sid}")
           }
@@ -3032,7 +3198,11 @@ class CallActivity : ComponentActivity() {
       // the local preview is driven by isCameraOn from the toggle handler.
       is RoomEvent.TrackMuted -> if (event.participant !is LocalParticipant) {
         val pub = event.publication
-        if (pub.source == Track.Source.CAMERA || pub.track is VideoTrack) {
+        val mutedOther = boundRemoteVideoTrack != null && pub.track != null && pub.track !== boundRemoteVideoTrack
+        if (mutedOther) {
+          // [2026-10-11 call-parity] camera muted behind a live screen share → keep the screen.
+          Log.d(TAG, "remote ${pub.source} muted but not on screen — ignore")
+        } else if (pub.source == Track.Source.CAMERA || pub.track is VideoTrack) {
           Log.d(TAG, "remote camera muted → placeholder")
           state.hasRemoteVideo = false
           // [2026-05-27] BLANK the renderer surface. The old comment assumed "LK
@@ -3068,7 +3238,9 @@ class CallActivity : ComponentActivity() {
             // one feeding the full-bleed renderer (it may have been unbound by
             // a TrackUnsubscribed/fallback in between).
             val vt = pub.track as? VideoTrack
-            if (vt != null && vt !== boundRemoteVideoTrack) {
+            // [2026-10-11 call-parity] …unless the peer's screen is on it.
+            val screenOnTile = state.remoteIsScreenShare && boundRemoteVideoTrack != null && pub.source != Track.Source.SCREEN_SHARE
+            if (vt != null && vt !== boundRemoteVideoTrack && !screenOnTile) {
               remoteRenderer?.let { rv -> try { vt.addRenderer(rv) } catch (_: Throwable) {} }
               boundRemoteVideoTrack = vt
             }
@@ -3105,10 +3277,17 @@ class CallActivity : ComponentActivity() {
       // native↔native call doesn't choke on its own reaction/DTMF frames.
       is RoomEvent.DataReceived -> {
         val txt = try { String(event.data, Charsets.UTF_8) } catch (_: Throwable) { "" }
-        if (txt.isNotEmpty() && !txt.startsWith("R:") && !txt.startsWith("D:")) {
+        // [2026-10-11 call-parity] Peer reactions were dropped here ("R:"
+        // filtered out) → iOS reactions never showed on Android. Render them.
+        if (txt.startsWith("R:")) {
+          val e = txt.substring(2)
+          if (e.isNotEmpty()) showFloatingReaction(e)
+        } else if (txt.isNotEmpty() && !txt.startsWith("D:")) {
           try {
             val obj = org.json.JSONObject(txt)
-            if (obj.optString("type") == "video_request") {
+            if (handleControlFrame(obj, "lk_data")) {
+              // consumed (call_end / reaction / hold)
+            } else if (obj.optString("type") == "video_request") {
               val action = obj.optString("action")
               Log.d(TAG, "DataReceived video_request action=$action")
               handleVideoRequestData(action)
@@ -3205,7 +3384,7 @@ class CallActivity : ComponentActivity() {
 
   // ────────────── Hangup
 
-  private fun finishCall(reason: String) {
+  private fun finishCall(reason: String, remote: Boolean = false) {
     // [#1179 cleanup, 2026-05-19] Idempotent — multiple end paths (user
     // hangup → RoomEvent.Disconnected → closeReceiver re-broadcast →
     // server WS call_end echo) all converge here. Without this guard each
@@ -3218,16 +3397,43 @@ class CallActivity : ComponentActivity() {
     finishing = true
     ExpoCallKitModule.emitCallUiChanged() // [2026-10-11 ongoing-call] drop the in-app bar
 
-    Log.d(TAG, "finishCall reason=$reason callId=$callId")
+    Log.d(TAG, "finishCall reason=$reason remote=$remote callId=$callId")
     stopRingback()
+    peerGoneJob?.cancel(); peerGoneJob = null
+    lkRejoinJob?.cancel(); lkRejoinJob = null
+    connectWatchdogJob?.cancel(); connectWatchdogJob = null
+    // [2026-10-11 call-parity] Goodbye frame BEFORE leaving, so the peer ends
+    // instantly (never needs the peer-gone grace) even if the WS is slow.
+    val goodbye: ByteArray? = if (!remote) {
+      try {
+        org.json.JSONObject()
+          .put("type", "call_end").put("call_id", callId).put("reason", reason)
+          .toString().toByteArray(Charsets.UTF_8)
+      } catch (_: Throwable) { null }
+    } else null
+    if (goodbye != null) {
+      try { p2p?.sendData(org.json.JSONObject(String(goodbye, Charsets.UTF_8))) } catch (_: Throwable) {}
+    }
     // [2026-10-10 p2p-android] Encerra a sessão P2P (PeerConnection + câmera + mic).
     closeP2P("finish:$reason")
+    // [2026-10-11 call-parity] Local screen share must not outlive the call.
+    if (state.isScreenSharing) {
+      state.isScreenSharing = false
+      try { val r0 = room; if (r0 != null) MainScope().launch { try { r0.localParticipant.setScreenShareEnabled(false) } catch (_: Throwable) {} } } catch (_: Throwable) {}
+    }
 
     // Notify the WS server first so the peer sees call_end with low latency.
     // [2026-05-24] Pass callerEmail (the peer) as target so the C++ WS can
     // route the frame — without it the server drops with "no target — drop"
     // and the OTHER side stays stuck on the call screen.
-    CallSignalWs.fireCallEnd(this, callId, conversationId, reason, callerEmail)
+    // [2026-10-11 call-parity] Remote decline/busy: the hub already closed the
+    // call — echoing call_end while it is still in its 2 s "declined" delay
+    // made it look like a CALLER cancel (history cancelled/missed). Every
+    // other end (ours, or a remote hangup) still ships it (hub dedupes).
+    val remoteRefusal = remote && remoteEndLabel(reason) != null
+    if (!remoteRefusal) {
+      CallSignalWs.fireCallEnd(this, callId, conversationId, reason, callerEmail)
+    }
 
     // Broadcast for any JS subscribers that still want the legacy hook.
     try {
@@ -3281,7 +3487,15 @@ class CallActivity : ComponentActivity() {
     // from the just-ended call. Idempotent — onDestroy's NativeCallRoom.clear()
     // is a harmless no-op afterward.
     try {
-      NativeCallRoom.disconnect()
+      val r = room
+      if (goodbye != null && r != null && r.state == Room.State.CONNECTED && NativeCallRoom.isCurrent(r)) {
+        // Room handed to NativeCallRoom's deferred leave (goodbye ≤400 ms,
+        // then disconnect); onDestroy must not race it with its own disconnect.
+        room = null
+        NativeCallRoom.disconnect(goodbye)
+      } else {
+        NativeCallRoom.disconnect()
+      }
     } catch (t: Throwable) {
       Log.w(TAG, "NativeCallRoom.disconnect() in finishCall failed: ${t.message}")
     }
@@ -3297,7 +3511,7 @@ class CallActivity : ComponentActivity() {
     } catch (t: Throwable) {
       Log.w(TAG, "endTelecom in finishCall failed: ${t.message}")
     }
-    ExpoCallKitModule.emitCallEnded(callId)
+    ExpoCallKitModule.emitCallEnded(callId, reason)
     finish()
     // [#1176 polish, 2026-05-18] Symmetric slide-down exit — matches the
     // slide-up enter applied by ExpoCallKitModule.startOutgoingCall.
@@ -3801,7 +4015,8 @@ class CallActivity : ComponentActivity() {
     }
   }
 
-  private fun spawnReaction(emoji: String) {
+  /** [2026-10-11 call-parity] Local floating burst only (own send or peer's). */
+  private fun showFloatingReaction(emoji: String) {
     val now = System.currentTimeMillis()
     val xOffset = Random.nextInt(-80, 80).toFloat()
     val item = FloatingReactionAndroid(id = now + Random.nextLong(0, 9999), emoji = emoji, xOffset = xOffset, spawnedAt = now)
@@ -3810,6 +4025,15 @@ class CallActivity : ComponentActivity() {
     lifecycleScope.launch {
       delay(3_000)
       state.floatingReactions.remove(item)
+    }
+  }
+
+  private fun spawnReaction(emoji: String) {
+    showFloatingReaction(emoji)
+    CallDiag.log("reaction_send", callId, "p2p=${p2p != null}", applicationContext)
+    // [2026-10-11 call-parity] P2P leg: the LK room may be idle → DataChannel.
+    p2p?.let { s ->
+      try { if (s.sendData(org.json.JSONObject().put("type", "reaction").put("emoji", emoji))) return } catch (_: Throwable) {}
     }
     // [reaction bar, 2026-05-17] LK Room owns in-band data delivery already
     // (publishData below) but also fan to the WS hub so peers without an
@@ -3842,7 +4066,7 @@ class CallActivity : ComponentActivity() {
     state.isMuted = !desired
     // [2026-10-10 p2p-android] Ligação indo P2P: o mic é do motor P2P.
     p2p?.let { s ->
-      try { s.setMicEnabled(desired && !heldByTelecom) } catch (_: Throwable) {}
+      try { s.setMicEnabled(desired && !heldByTelecom && !state.isOnHold) } catch (_: Throwable) {}
       try { s.sendData(org.json.JSONObject().put("type", "audio_muted").put("muted", !desired)) } catch (_: Throwable) {}
     }
     // [Wave 15 gap B3, 2026-05-20] Audio mute fast-path: enable/disable
@@ -3863,7 +4087,8 @@ class CallActivity : ComponentActivity() {
       // enable()/disable() — use setMicrophoneEnabled instead. Re-publish
       // cost is negligible for mute toggle on Android side.
       lifecycleScope.launch {
-        try { room?.localParticipant?.setMicrophoneEnabled(desired) }
+        // [2026-10-11 call-parity] On hold the mic stays closed until "Retomar".
+        try { room?.localParticipant?.setMicrophoneEnabled(desired && !state.isOnHold) }
         catch (t: Throwable) { Log.w(TAG, "setMicrophoneEnabled: ${t.message}") }
       }
     } catch (t: Throwable) {
@@ -3873,6 +4098,220 @@ class CallActivity : ComponentActivity() {
       }
     }
     try { ExpoCallKitModule.emitLkLocalAudioChanged(desired) } catch (_: Throwable) {}
+  }
+
+  // ────────────── [2026-10-11 call-parity] Hold ("Colocar em espera")
+  //
+  // iOS parity (CallViewController.applyHold → CXSetHeldCallAction): our mic
+  // closes, a live camera pauses, and the PEER is told over the data channel
+  // ({type:"hold",on}) so its screen reads "Em espera" instead of silence.
+  // "Retomar" restores the user's own mute choice and the camera.
+  private var cameraWasOnBeforeHold = false
+
+  private fun applyUserHold(held: Boolean) {
+    if (state.isOnHold == held || finishing) return
+    state.isOnHold = held
+    CallDiag.log("hold_toggle", callId, "on=$held p2p=${p2p != null}", applicationContext)
+    val micOn = !held && !state.isMuted && !heldByTelecom
+    p2p?.let { s -> try { s.setMicEnabled(micOn) } catch (_: Throwable) {} }
+    if (!callerRingGateClosed()) {
+      lifecycleScope.launch {
+        try { room?.localParticipant?.setMicrophoneEnabled(micOn) } catch (t: Throwable) { Log.w(TAG, "hold mic: ${t.message}") }
+      }
+    }
+    if (held) {
+      cameraWasOnBeforeHold = state.isVideo && state.isCameraOn
+      if (cameraWasOnBeforeHold) setCameraLive(false)
+    } else if (cameraWasOnBeforeHold) {
+      cameraWasOnBeforeHold = false
+      setCameraLive(true)
+    }
+    sendCallData(org.json.JSONObject().put("type", "hold").put("on", held))
+  }
+
+  /** Mute/unmute an ALREADY-published camera (hold path); no upgrade logic. */
+  private fun setCameraLive(on: Boolean) {
+    state.isCameraOn = on
+    if (p2p != null) { try { p2pToggleCamera(on) } catch (_: Throwable) {}; return }
+    val r = room ?: return
+    lifecycleScope.launch {
+      try {
+        r.localParticipant.setCameraEnabled(on)
+        if (on) bindLocalCameraIfReady(r) else try { localRenderer?.clearImage() } catch (_: Throwable) {}
+      } catch (t: Throwable) { Log.w(TAG, "setCameraLive($on): ${t.message}") }
+    }
+    try { ExpoCallKitModule.emitLkLocalVideoChanged(on) } catch (_: Throwable) {}
+  }
+
+  // ────────────── [2026-10-11 call-parity] Screen share (MediaProjection)
+  //
+  // Founder: "compartilhar tela no Android não tem essa opção". The old pill
+  // broadcast expo.modules.screenshare.REQUEST_PICKER (the JS module, not this
+  // Room) → nothing was ever published. Now: system consent → LiveKit
+  // setScreenShareEnabled(true, ScreenCaptureParams(data)) — LK runs its own
+  // ScreenCaptureService (foregroundServiceType=mediaProjection, permission
+  // FOREGROUND_SERVICE_MEDIA_PROJECTION merged from the SDK manifest + app.json)
+  // with OUR notification (LK's default has no small icon → startForeground
+  // would throw). Stop = unpublish; the system "Stop sharing" chip / revoke
+  // fires onStop → UI resets.
+  private val screenCaptureLauncher = registerForActivityResult(
+    androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult()
+  ) { res ->
+    val data = res.data
+    if (res.resultCode == RESULT_OK && data != null) {
+      startScreenShareWith(data)
+    } else {
+      CallDiag.log("screen_share_denied", callId, "code=${res.resultCode}", applicationContext)
+    }
+  }
+
+  private var screenShareInFlight = false
+
+  private fun toggleScreenShare() {
+    if (screenShareInFlight || finishing) return
+    if (state.isScreenSharing) {
+      CallDiag.log("screen_share_stop_tap", callId, "", applicationContext)
+      stopScreenShare("user")
+      return
+    }
+    CallDiag.log("screen_share_start_tap", callId, "p2p=${p2p != null}", applicationContext)
+    if (p2p != null || room?.state != Room.State.CONNECTED) {
+      // P2P leg (no SFU publish) or room not up yet.
+      showCallToast(CallStrings.s("screenShareFailed"))
+      CallDiag.log("screen_share_error", callId, "reason=${if (p2p != null) "p2p" else "room_not_connected"}", applicationContext)
+      return
+    }
+    try {
+      val mpm = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as android.media.projection.MediaProjectionManager
+      armSelfLaunchGuard("screen_share_consent", 30_000L)
+      screenCaptureLauncher.launch(mpm.createScreenCaptureIntent())
+    } catch (t: Throwable) {
+      Log.w(TAG, "screen capture intent failed: ${t.message}")
+      CallDiag.log("screen_share_error", callId, "err=${t.message?.take(100)}", applicationContext)
+      showCallToast(CallStrings.s("screenShareFailed"))
+    }
+  }
+
+  private fun buildScreenShareNotification(): android.app.Notification {
+    val iconRes = try {
+      resources.getIdentifier("ic_notification", "drawable", packageName).takeIf { it != 0 } ?: applicationInfo.icon
+    } catch (_: Throwable) { applicationInfo.icon }
+    val channelId = "chatyy_screen_share"
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+      try {
+        val nm = getSystemService(Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
+        if (nm.getNotificationChannel(channelId) == null) {
+          nm.createNotificationChannel(
+            android.app.NotificationChannel(channelId, CallStrings.s("sharingScreen"), android.app.NotificationManager.IMPORTANCE_LOW)
+          )
+        }
+      } catch (_: Throwable) {}
+    }
+    val open = try {
+      PendingIntent.getActivity(
+        this, 7311,
+        Intent(this, CallActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT),
+        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+      )
+    } catch (_: Throwable) { null }
+    return androidx.core.app.NotificationCompat.Builder(this, channelId)
+      .setSmallIcon(iconRes)
+      .setContentTitle(CallStrings.s("sharingScreen"))
+      .setContentText(state.callerName)
+      .setOngoing(true)
+      .setOnlyAlertOnce(true)
+      .setCategory(androidx.core.app.NotificationCompat.CATEGORY_CALL)
+      .apply { if (open != null) setContentIntent(open) }
+      .build()
+  }
+
+  private fun startScreenShareWith(data: Intent) {
+    val r = room ?: return
+    screenShareInFlight = true
+    lifecycleScope.launch {
+      try {
+        val params = io.livekit.android.room.track.screencapture.ScreenCaptureParams(
+          mediaProjectionPermissionResultData = data,
+          notificationId = 7312,
+          notification = buildScreenShareNotification(),
+          onStop = {
+            runOnUiThread {
+              if (state.isScreenSharing) {
+                state.isScreenSharing = false
+                CallDiag.log("screen_share_stopped_by_system", callId, "", applicationContext)
+              }
+            }
+          },
+        )
+        val ok = r.localParticipant.setScreenShareEnabled(true, params)
+        state.isScreenSharing = ok
+        CallDiag.log(if (ok) "screen_share_published" else "screen_share_error", callId, "mediaprojection", applicationContext)
+        if (!ok) showCallToast(CallStrings.s("screenShareFailed"))
+      } catch (t: Throwable) {
+        Log.w(TAG, "setScreenShareEnabled(true) failed: ${t.message}")
+        CallDiag.log("screen_share_error", callId, "err=${t.message?.take(100)}", applicationContext)
+        state.isScreenSharing = false
+        showCallToast(CallStrings.s("screenShareFailed"))
+      } finally {
+        screenShareInFlight = false
+      }
+    }
+  }
+
+  private fun stopScreenShare(why: String) {
+    val r = room
+    state.isScreenSharing = false
+    if (r == null) return
+    lifecycleScope.launch {
+      try { r.localParticipant.setScreenShareEnabled(false) } catch (t: Throwable) { Log.w(TAG, "stop screen share: ${t.message}") }
+      CallDiag.log("screen_share_unpublished", callId, "why=$why", applicationContext)
+    }
+  }
+
+  private fun showCallToast(msg: String) {
+    try { android.widget.Toast.makeText(this, msg, android.widget.Toast.LENGTH_LONG).show() } catch (_: Throwable) {}
+  }
+
+  // ────────────── [2026-10-11 call-parity] "Qualidade HD" (iOS menu parity)
+  //
+  // ON  → Wi-Fi/ethernet: 1080p; cellular: 720p (never 1080p on data).
+  // OFF → 720p (cellular may still step down to 540p on sustained poor bars).
+  // Turning HD ON never LOWERS the current capture (iOS log: hd_on → sd540).
+  private fun refreshHdState() {
+    state.hdPreferred = CallVideoQuality.isHdPreferred(applicationContext)
+    state.hdOnCellular = CallVideoQuality.isCellular(applicationContext)
+  }
+
+  private fun toggleHd() {
+    val next = !CallVideoQuality.isHdPreferred(applicationContext)
+    CallVideoQuality.setHdPreferred(applicationContext, next)
+    refreshHdState()
+    val cell = state.hdOnCellular
+    val target = when {
+      next && !cell -> CallVideoQuality.Profile.HD1080
+      else -> CallVideoQuality.Profile.HD720
+    }
+    val cur = CallVideoQuality.current
+    CallDiag.log("video_hd_toggle", callId, "on=${if (next) 1 else 0} net=${CallVideoQuality.networkLabel(applicationContext)} cur=${cur.name} target=${target.name}", applicationContext)
+    if (next && target.rank <= cur.rank) return // never lower on HD ON
+    if (target == cur) return
+    val bgOn = try {
+      val proc = expo.modules.callkit.video.BackgroundProcessor.get(applicationContext)
+      proc.available && proc.mode != expo.modules.callkit.video.BackgroundProcessor.Mode.OFF
+    } catch (_: Throwable) { false }
+    val track = try { room?.localParticipant?.getTrackPublication(Track.Source.CAMERA)?.track as? LocalVideoTrack } catch (_: Throwable) { null }
+    if (track == null || bgOn || p2p != null) {
+      CallVideoQuality.current = target // applied on the next camera publish
+      return
+    }
+    try {
+      track.restartTrack(track.options.copy(captureParams = CallVideoQuality.captureParams(target)))
+      CallVideoQuality.current = target
+      bindLocalCameraIfReady(room ?: return)
+      CallDiag.log("video_profile_change", callId, "to=${target.name} reason=${if (next) "hd_on" else "hd_off"} net=${CallVideoQuality.networkLabel(applicationContext)}", applicationContext)
+    } catch (t: Throwable) {
+      Log.w(TAG, "HD restartTrack failed: ${t.message}")
+    }
   }
 
   // ────────────── PiP
@@ -4169,6 +4608,19 @@ class CallSessionStateAndroid {
   //     video before the peer agrees).
   var pendingVideoRequest by mutableStateOf(false)
   var videoUpgradeRequested by mutableStateOf(false)
+
+  // [2026-10-11 call-parity] iOS CallViewController parity.
+  /** WE are publishing a MediaProjection screen share. */
+  var isScreenSharing by mutableStateOf(false)
+  /** The full-bleed remote tile currently shows the peer's SCREEN (fit, not fill). */
+  var remoteIsScreenShare by mutableStateOf(false)
+  /** WE put the call on hold ("Colocar em espera"). */
+  var isOnHold by mutableStateOf(false)
+  /** The PEER put the call on hold ({type:"hold"} data frame). */
+  var peerOnHold by mutableStateOf(false)
+  /** "Qualidade HD" preference mirrored for the More sheet label. */
+  var hdPreferred by mutableStateOf(false)
+  var hdOnCellular by mutableStateOf(false)
 }
 
 /** One floating emoji burst. The activity scope removes it after ~3s. */
@@ -4302,8 +4754,14 @@ private fun CallScreen(
   /** [video-upgrade 2026-05-25] Respond to an incoming `video_request:request`
    *  prompt. true=accept (publish camera), false=decline. */
   onRespondVideoRequest: (Boolean) -> Unit,
+  /** [2026-10-11 call-parity] "Colocar em espera" / "Retomar". */
+  onToggleHold: () -> Unit = {},
+  /** [2026-10-11 call-parity] "Qualidade HD" toggle. */
+  onToggleHd: () -> Unit = {},
 ) {
   var elapsedSeconds by remember { mutableStateOf(0) }
+  /** [2026-10-11 call-parity] iOS "Mais opções" sheet. */
+  var showMore by remember { mutableStateOf(false) }
   var showReactions by remember { mutableStateOf(false) }
   /** [DTMF, 2026-05-19] Toggles the 4×3 keypad overlay. */
   var showKeypad by remember { mutableStateOf(false) }
@@ -4477,9 +4935,8 @@ private fun CallScreen(
       TopBar(
         state = state,
         onMinimize = onMinimize,
-        onFlipCamera = onFlipCamera,
-        onToggleCam = onToggleCam,
         onOpenChat = onOpenChat,
+        onShowMore = { showMore = true },
       )
       Spacer(Modifier.height(24.dp))
 
@@ -4507,29 +4964,19 @@ private fun CallScreen(
           state = state,
           onToggleMute = onToggleMute,
           onToggleCam = onToggleCam,
-          onToggleSpeaker = onToggleSpeaker,
-          onPickAudioOutput = {
-            // Refresh the device list right before showing so we reflect a
-            // headset that just got plugged in / paired.
-            audioDevices = enumerateAudioOutputs(ctx)
-            showAudioPicker = true
+          onFlipCamera = onFlipCamera,
+          onSpeakerTap = {
+            // iOS parity: BT / wired present → output picker; else toggle.
+            val devs = enumerateAudioOutputs(ctx)
+            if (devs.any { it.type == "bluetooth" || it.type == "wired" }) {
+              audioDevices = devs
+              showAudioPicker = true
+            } else {
+              onToggleSpeaker(!state.isSpeakerOn)
+            }
           },
+          onScreenShare = onStartScreenshare,
           onHangup = onHangup,
-          onToggleHand = onToggleHand,
-          onShowReactions = { showReactions = !showReactions },
-          onToggleNoiseSuppression = onToggleNoiseSuppression,
-          onCycleBackground = onCycleBackground,
-          onStartScreenshare = onStartScreenshare,
-          onShowKeypad = {
-            showKeypad = true
-            dtmfBuffer = ""
-          },
-          onAddParticipant = {
-            // Open the contact picker. Loading is driven by the
-            // LaunchedEffect keyed on showAddParticipant below.
-            addParticipantError = null
-            showAddParticipant = true
-          },
         )
       }
       Spacer(Modifier.height(12.dp))
@@ -4649,13 +5096,59 @@ private fun CallScreen(
               if (ok) {
                 addParticipantInvited = addParticipantInvited + email
               } else {
-                addParticipantError = "Não foi possível chamar $email"
+                addParticipantError = CallStrings.s("couldNotCall", "name" to email)
               }
               addParticipantBusyEmail = null
             }
           }
         },
         onDismiss = { showAddParticipant = false },
+      )
+    }
+
+    // [2026-10-11 call-parity] "Compartilhando tela · Parar" chip (iOS tag 9012).
+    AnimatedVisibility(
+      visible = state.isScreenSharing,
+      enter = fadeIn(),
+      exit = fadeOut(),
+      modifier = Modifier
+        .align(Alignment.TopCenter)
+        .padding(top = 104.dp),
+    ) {
+      Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+          .clip(RoundedCornerShape(18.dp))
+          .background(Color(0xFF1E8E3E))
+          .clickable { onStartScreenshare() }
+          .padding(horizontal = 14.dp, vertical = 8.dp),
+      ) {
+        Icon(imageVector = Icons.Filled.ScreenShare, contentDescription = null, tint = Color.White, modifier = Modifier.size(16.dp))
+        Spacer(Modifier.width(8.dp))
+        Text(text = CallStrings.s("sharingScreen") + " · " + CallStrings.s("stop"), color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+      }
+    }
+
+    // [2026-10-11 call-parity] "Mais opções" — same rows/order as iOS
+    // CallViewController.presentMoreMenu: Reações, Compartilhar tela,
+    // Colocar em espera, Adicionar participante, Qualidade HD (video).
+    // "Efeito de fundo" is hidden on BOTH platforms: the processor was a
+    // pass-through (no real blur ever reached the encoder).
+    AnimatedVisibility(
+      visible = showMore,
+      enter = fadeIn(),
+      exit = fadeOut(),
+      modifier = Modifier.fillMaxSize(),
+    ) {
+      MoreOptionsSheet(
+        state = state,
+        onDismiss = { showMore = false },
+        onReactions = { showMore = false; showReactions = true },
+        onScreenShare = { showMore = false; onStartScreenshare() },
+        onHold = { showMore = false; onToggleHold() },
+        onAddParticipant = { showMore = false; addParticipantError = null; showAddParticipant = true },
+        onToggleHd = { showMore = false; onToggleHd() },
+        onKeypad = { showMore = false; showKeypad = true; dtmfBuffer = "" },
       )
     }
 
@@ -4757,11 +5250,11 @@ private fun VideoUpgradePrompt(
 private fun TopBar(
   state: CallSessionStateAndroid,
   onMinimize: () -> Unit,
-  onFlipCamera: () -> Unit,
-  onToggleCam: (Boolean) -> Unit,
   // [Wave C-1, 2026-05-21] Back-to-chat button. Taps emit onOpenChat + enter
   // PiP so the chat thread becomes visible while the call stays alive.
   onOpenChat: () -> Unit,
+  /** [2026-10-11 call-parity] iOS top bar: minimize · bars · … · message · more · lock. */
+  onShowMore: () -> Unit,
 ) {
   Row(
     modifier = Modifier
@@ -4771,41 +5264,34 @@ private fun TopBar(
   ) {
     IconChip(
       icon = Icons.Filled.ExpandMore,
-      contentDescription = "Minimize",
+      contentDescription = CallStrings.s("minimize"),
       onClick = onMinimize,
     )
     Spacer(Modifier.width(12.dp))
     ConnectionQualityBars(quality = state.peerQuality)
 
-    // [Wave C-1, 2026-05-21] Chat icon — only visible while connected so the
-    // caller can't accidentally open chat before the call even picks up.
-    if (state.status == "Conectado") {
-      Spacer(Modifier.width(12.dp))
-      IconChip(
-        icon = Icons.Filled.Chat,
-        contentDescription = GroupCallStrings.s("message"),
-        onClick = onOpenChat,
-      )
-    }
-
     Spacer(Modifier.weight(1f))
 
-    if (state.isVideo && state.isCameraOn) {
+    if (state.callerEmail.isNotEmpty()) {
       IconChip(
-        icon = Icons.Filled.Cameraswitch,
-        contentDescription = "Flip camera",
-        onClick = onFlipCamera,
+        icon = Icons.Filled.Chat,
+        contentDescription = CallStrings.s("message"),
+        onClick = onOpenChat,
       )
-      Spacer(Modifier.width(12.dp))
+      Spacer(Modifier.width(4.dp))
     }
-
-    if (state.isVideo) {
-      IconChip(
-        icon = if (state.isCameraOn) Icons.Filled.Videocam else Icons.Filled.VideocamOff,
-        contentDescription = "Toggle camera",
-        onClick = { onToggleCam(!state.isCameraOn) },
-      )
-    }
+    IconChip(
+      icon = Icons.Filled.MoreHoriz,
+      contentDescription = CallStrings.s("moreOptions"),
+      onClick = onShowMore,
+    )
+    Spacer(Modifier.width(8.dp))
+    Icon(
+      imageVector = Icons.Filled.Lock,
+      contentDescription = CallStrings.s("encrypted"),
+      tint = Color.White.copy(alpha = 0.5f),
+      modifier = Modifier.size(16.dp),
+    )
   }
 }
 
@@ -4942,8 +5428,19 @@ private fun AvatarBlock(state: CallSessionStateAndroid, elapsedSeconds: Int) {
 
     Spacer(Modifier.height(8.dp))
 
+    // [2026-10-11 call-parity] Hold (ours or the peer's) wins the status line.
+    if (state.isOnHold || state.peerOnHold) {
+      Text(
+        text = if (state.peerOnHold && !state.isOnHold)
+          CallStrings.s("peerOnHold", "name" to state.callerName.ifEmpty { state.callerEmail })
+        else CallStrings.s("onHold"),
+        color = Color(0xFFF1C40F),
+        fontSize = 16.sp,
+        fontWeight = FontWeight.Medium,
+      )
+    } else
     // [2026-10-10 call-states] terminal failure text: no animated dots.
-    if (state.status == "Conectado" || state.status == "Não foi possível conectar") {
+    if (state.status == "Conectado" || state.status == "Não foi possível conectar" || !state.status.endsWith("…")) {
       Text(
         text = statusLine(state.status, elapsedSeconds),
         color = SecondaryText,
@@ -4952,7 +5449,7 @@ private fun AvatarBlock(state: CallSessionStateAndroid, elapsedSeconds: Int) {
       )
     } else {
       AnimatedDotsText(
-        base = state.status.removeSuffix("…").removeSuffix("..."),
+        base = localizedStatus(state.status).removeSuffix("…").removeSuffix("..."),
         color = SecondaryText,
         fontSize = 16.sp,
       )
@@ -4974,10 +5471,23 @@ private fun statusLine(status: String, elapsedSeconds: Int): String {
     val h = elapsedSeconds / 3600
     val m = (elapsedSeconds % 3600) / 60
     val s = elapsedSeconds % 60
-    return if (h > 0) "Conectado %d:%02d:%02d".format(h, m, s)
-    else "Conectado %02d:%02d".format(m, s)
+    // [2026-10-11 call-parity] localized ("Conectado 01:23" / "Connected 01:23").
+    val c = CallStrings.s("connected")
+    return if (h > 0) "%s %d:%02d:%02d".format(c, h, m, s)
+    else "%s %02d:%02d".format(c, m, s)
   }
-  return status
+  return localizedStatus(status)
+}
+
+/** [2026-10-11 call-parity] Internal state labels are pt-BR literals (the
+ *  state machine compares them); the UI shows the app language. */
+private fun localizedStatus(status: String): String = when (status) {
+  "Conectado" -> CallStrings.s("connected")
+  "Conectando…" -> CallStrings.s("connecting")
+  "Reconectando…" -> CallStrings.s("reconnecting")
+  "Chamando…" -> CallStrings.s("calling")
+  "Tocando…" -> CallStrings.s("ringing")
+  else -> status
 }
 
 // [WAVE 142 GPT-5.5-pro] Snippet #7 — Replace PulseRing with staggered tween.
@@ -5284,159 +5794,199 @@ private fun LocalPreviewTile(
 // Bottom action bar
 // ══════════════════════════════════════════════════════════════════════════
 
+// [2026-10-11 call-parity] Same bar as iOS CallViewController (tags 9002…9004):
+// Mudo · Vídeo · Girar (only while the camera is on) · Alto-falante ·
+// Tela (shares the Girar slot) · Encerrar — 64dp discs + caption, 72dp red.
 @Composable
 private fun BottomActionBar(
   state: CallSessionStateAndroid,
   onToggleMute: (Boolean) -> Unit,
   onToggleCam: (Boolean) -> Unit,
-  onToggleSpeaker: (Boolean) -> Unit,
-  onPickAudioOutput: () -> Unit,
+  onFlipCamera: () -> Unit,
+  onSpeakerTap: () -> Unit,
+  onScreenShare: () -> Unit,
   onHangup: () -> Unit,
-  onToggleHand: () -> Unit,
-  onShowReactions: () -> Unit,
-  onToggleNoiseSuppression: (Boolean) -> Unit,
-  onCycleBackground: () -> Unit,
-  onStartScreenshare: () -> Unit,
-  /** [DTMF, 2026-05-19] Open the 4×3 keypad overlay. */
-  onShowKeypad: () -> Unit,
-  /** [add-participant 2026-05-26] Open the contact picker to ring someone
-   *  new into THIS call (person+ button — WhatsApp "add to call"). */
-  onAddParticipant: () -> Unit,
 ) {
-  Column(
+  val camLive = state.isVideo && state.isCameraOn
+  Row(
     modifier = Modifier
       .fillMaxWidth()
-      .padding(horizontal = 16.dp),
-    horizontalAlignment = Alignment.CenterHorizontally,
+      .padding(horizontal = 8.dp),
+    horizontalArrangement = Arrangement.SpaceEvenly,
+    verticalAlignment = Alignment.Top,
   ) {
-    // Secondary row: reactions, hand raise, audio output picker, noise
-    // suppression, background blur. Five pills fit on the action surface
-    // without crowding on a 412dp viewport.
-    Row(
-      modifier = Modifier.fillMaxWidth(),
-      horizontalArrangement = Arrangement.SpaceEvenly,
-      verticalAlignment = Alignment.CenterVertically,
-    ) {
-      // [add-participant 2026-05-26] WhatsApp-style "add to call" person+.
-      // First pill so it's reachable; opens the contact picker which rings
-      // the selected contact into THIS room via chat_call_add.
-      ActionPill(
-        icon = Icons.Filled.PersonAdd,
-        label = "Adicionar",
-        onClick = onAddParticipant,
-      )
-      // [BUG 4 removal 2026-05-26] "Reagir" (EmojiEmotions → onShowReactions)
-      // SEND pill REMOVED per founder. The RECEIVE path is untouched: incoming
-      // peer reactions still animate via spawnReaction + the "R:" data/WS
-      // handler, and FloatingEmoji still renders them. Only the send button is
-      // gone — the onShowReactions callback + showReactions state +
-      // EmojiQuickBar remain in the signature (harmless, unused) so other call
-      // sites don't break.
-      // [button-removal 2026-05-26] "Levantar mão" (FrontHand) and "Sem ruído"
-      // (GraphicEq) pills REMOVED per founder. Hand-raise is gone entirely.
-      // Noise suppression stays ALWAYS ON internally — the RNNoiseProcessor is
-      // still seeded enabled in onCreate (state.noiseSuppression = prefs default
-      // true → RNNoiseProcessor.shared().enabled), so noise cancellation keeps
-      // working; only the user-facing toggle button is removed. The
-      // onToggleHand / onToggleNoiseSuppression callbacks remain in the
-      // signature (harmless, unused) so other call sites don't break.
-      // [MediaPipe, 2026-05-17] Background mode cycler. Only shown for video
-      // calls (camera publishing); audio calls have no useful background.
-      if (state.isVideo) {
-        ActionPill(
-          icon = Icons.Filled.BlurOn,
-          label = backgroundLabel(state.backgroundMode),
-          active = state.backgroundMode != "off",
-          onClick = onCycleBackground,
-        )
-      }
-      ActionPill(
-        icon = Icons.Filled.Bluetooth,
-        label = "Áudio",
-        active = state.audioOutputPreferBluetooth,
-        onClick = onPickAudioOutput,
-      )
-      // [DTMF, 2026-05-19] Keypad — opens the 4×3 DTMF grid overlay. Useful
-      // mainly for PSTN bridge calls hitting an IVR; for Chatyy↔Chatyy
-      // peer calls it still publishes the digit + tone so the receiver
-      // sees the press (useful for games / collaborative tools).
-      ActionPill(
-        icon = Icons.Filled.Dialpad,
-        label = "Teclado",
-        onClick = onShowKeypad,
-      )
-      // [Screen share, 2026-05-17] Optional screenshare pill for video calls.
-      // Calls into the native start-screenshare bridge which forwards to the
-      // expo-screen-share MediaProjection picker. Hidden on audio-only.
-      if (state.isVideo) {
-        ActionPill(
-          icon = Icons.Filled.Refresh, // re-use Refresh — Compose Material doesn't bundle a screen-share glyph
-          label = "Tela",
-          onClick = onStartScreenshare,
-        )
-      }
-    }
-
-    Spacer(Modifier.height(16.dp))
-
-    // Primary row: mute, video toggle (when video), speaker, hangup (red, larger).
-    Row(
-      modifier = Modifier.fillMaxWidth(),
-      horizontalArrangement = Arrangement.spacedBy(20.dp, alignment = Alignment.CenterHorizontally),
-      verticalAlignment = Alignment.CenterVertically,
-    ) {
+    ControlCell(caption = CallStrings.s("mute")) {
       CircleControlButton(
-        size = 64.dp,
+        size = 60.dp,
         background = if (!state.isMuted) ChipColor else Color.White,
         foreground = if (!state.isMuted) Color.White else Color.Black,
         icon = if (!state.isMuted) Icons.Filled.Mic else Icons.Filled.MicOff,
-        contentDescription = "Mute",
+        contentDescription = CallStrings.s("mute"),
         onClick = { onToggleMute(state.isMuted) }, // pass current isMuted so onToggleMute flips it
       )
-
-      if (state.isVideo) {
+    }
+    ControlCell(caption = CallStrings.s("video")) {
+      // Audio-only call: the activity routes desired=true + !isVideo to the
+      // audio→video upgrade (request + own camera on).
+      CircleControlButton(
+        size = 60.dp,
+        background = if (camLive || state.videoUpgradeRequested) Color.White else ChipColor,
+        foreground = if (camLive || state.videoUpgradeRequested) Color.Black else Color.White,
+        icon = if (camLive || !state.isVideo) Icons.Filled.Videocam else Icons.Filled.VideocamOff,
+        contentDescription = CallStrings.s("video"),
+        onClick = { onToggleCam(if (state.isVideo) !state.isCameraOn else true) },
+      )
+    }
+    if (camLive) {
+      ControlCell(caption = CallStrings.s("flip")) {
         CircleControlButton(
-          size = 64.dp,
-          background = if (state.isCameraOn) ChipColor else Color.White,
-          foreground = if (state.isCameraOn) Color.White else Color.Black,
-          icon = if (state.isCameraOn) Icons.Filled.Videocam else Icons.Filled.VideocamOff,
-          contentDescription = "Camera",
-          onClick = { onToggleCam(!state.isCameraOn) },
-        )
-      } else {
-        // [video-upgrade 2026-05-25] Audio-only call: still offer a video
-        // button so the user can REQUEST an audio→video upgrade. The activity's
-        // onToggleCam intercept routes desired=true + !isVideo to
-        // requestVideoUpgrade() (asks the peer), instead of publishing video
-        // unilaterally. Disabled visual while a request is already in flight.
-        CircleControlButton(
-          size = 64.dp,
-          background = if (state.videoUpgradeRequested) Color.White else ChipColor,
-          foreground = if (state.videoUpgradeRequested) Color.Black else Color.White,
-          icon = Icons.Filled.Videocam,
-          contentDescription = "Pedir vídeo",
-          onClick = { onToggleCam(true) },
+          size = 60.dp,
+          background = ChipColor,
+          foreground = Color.White,
+          icon = Icons.Filled.Cameraswitch,
+          contentDescription = CallStrings.s("flip"),
+          onClick = onFlipCamera,
         )
       }
-
+    }
+    ControlCell(caption = CallStrings.s("speaker")) {
       CircleControlButton(
-        size = 64.dp,
-        background = if (state.isSpeakerOn) Color.White else ChipColor,
-        foreground = if (state.isSpeakerOn) Color.Black else Color.White,
-        icon = if (state.isSpeakerOn) Icons.Filled.VolumeUp else Icons.Filled.VolumeDown,
-        contentDescription = "Speaker",
-        onClick = { onToggleSpeaker(!state.isSpeakerOn) },
+        size = 60.dp,
+        background = if (state.isSpeakerOn || state.audioOutputPreferBluetooth) Color.White else ChipColor,
+        foreground = if (state.isSpeakerOn || state.audioOutputPreferBluetooth) Color.Black else Color.White,
+        icon = when {
+          state.audioOutputPreferBluetooth -> Icons.Filled.Bluetooth
+          state.isSpeakerOn -> Icons.Filled.VolumeUp
+          else -> Icons.Filled.VolumeDown
+        },
+        contentDescription = CallStrings.s("speaker"),
+        onClick = onSpeakerTap,
       )
-
+    }
+    if (!camLive) {
+      ControlCell(caption = CallStrings.s("screen")) {
+        CircleControlButton(
+          size = 60.dp,
+          background = if (state.isScreenSharing) Color.White else ChipColor,
+          foreground = if (state.isScreenSharing) Color.Black else Color.White,
+          icon = if (state.isScreenSharing) Icons.Filled.StopScreenShare else Icons.Filled.ScreenShare,
+          contentDescription = CallStrings.s(if (state.isScreenSharing) "stopSharing" else "shareScreen"),
+          onClick = onScreenShare,
+        )
+      }
+    }
+    ControlCell(caption = CallStrings.s("end")) {
       CircleControlButton(
-        size = 72.dp,
+        size = 68.dp,
         background = HangupColor,
         foreground = Color.White,
         icon = Icons.Filled.CallEnd,
-        contentDescription = "Hangup",
+        contentDescription = CallStrings.s("end"),
         onClick = onHangup,
       )
     }
+  }
+}
+
+@Composable
+private fun ControlCell(caption: String, content: @Composable () -> Unit) {
+  Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.width(68.dp)) {
+    content()
+    Spacer(Modifier.height(6.dp))
+    Text(text = caption, color = Color.White.copy(alpha = 0.85f), fontSize = 11.sp, maxLines = 1)
+  }
+}
+
+// [2026-10-11 call-parity] Dark rounded card — mirrors iOS presentMoreMenu
+// (#141F27, grabber, "Mais opções" header, 56dp rows with a tinted round icon).
+@Composable
+private fun MoreOptionsSheet(
+  state: CallSessionStateAndroid,
+  onDismiss: () -> Unit,
+  onReactions: () -> Unit,
+  onScreenShare: () -> Unit,
+  onHold: () -> Unit,
+  onAddParticipant: () -> Unit,
+  onToggleHd: () -> Unit,
+  onKeypad: () -> Unit,
+) {
+  Box(
+    modifier = Modifier
+      .fillMaxSize()
+      .background(Color.Black.copy(alpha = 0.45f))
+      .clickable { onDismiss() },
+    contentAlignment = Alignment.BottomCenter,
+  ) {
+    Column(
+      modifier = Modifier
+        .navigationBarsPadding()
+        .padding(10.dp)
+        .fillMaxWidth()
+        .clip(RoundedCornerShape(24.dp))
+        .background(Color(0xFF141F27))
+        .clickable(enabled = true, onClick = {}) // swallow taps on the card
+        .padding(start = 10.dp, end = 10.dp, top = 10.dp, bottom = 12.dp),
+      horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+      Box(
+        Modifier
+          .size(width = 40.dp, height = 5.dp)
+          .clip(RoundedCornerShape(3.dp))
+          .background(Color.White.copy(alpha = 0.25f))
+      )
+      Spacer(Modifier.height(12.dp))
+      Text(text = CallStrings.s("moreOptions"), color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
+      Spacer(Modifier.height(14.dp))
+      MoreRow(Icons.Filled.EmojiEmotions, CallStrings.s("reactions"), onReactions)
+      MoreRow(
+        if (state.isScreenSharing) Icons.Filled.StopScreenShare else Icons.Filled.ScreenShare,
+        CallStrings.s(if (state.isScreenSharing) "stopSharing" else "shareScreen"),
+        onScreenShare,
+      )
+      MoreRow(
+        if (state.isOnHold) Icons.Filled.PlayArrow else Icons.Filled.Pause,
+        CallStrings.s(if (state.isOnHold) "resume" else "hold"),
+        onHold,
+      )
+      MoreRow(Icons.Filled.PersonAdd, CallStrings.s("addParticipant"), onAddParticipant)
+      if (state.isVideo) {
+        val label = when {
+          !state.hdPreferred -> CallStrings.s("hdOff")
+          state.hdOnCellular -> CallStrings.s("hdOnCell")
+          else -> CallStrings.s("hdOnWifi")
+        }
+        MoreRow(if (state.hdPreferred) Icons.Filled.CheckCircle else Icons.Filled.Hd, label, onToggleHd)
+      }
+      // Android extra (DTMF for PSTN/IVR bridges) — kept, last row.
+      MoreRow(Icons.Filled.Dialpad, CallStrings.s("keypad"), onKeypad)
+    }
+  }
+}
+
+@Composable
+private fun MoreRow(icon: androidx.compose.ui.graphics.vector.ImageVector, title: String, onClick: () -> Unit) {
+  Row(
+    verticalAlignment = Alignment.CenterVertically,
+    modifier = Modifier
+      .fillMaxWidth()
+      .padding(vertical = 2.dp)
+      .height(56.dp)
+      .clip(RoundedCornerShape(12.dp))
+      .background(Color.White.copy(alpha = 0.05f))
+      .clickable { onClick() }
+      .padding(horizontal = 10.dp),
+  ) {
+    Box(
+      modifier = Modifier
+        .size(36.dp)
+        .clip(CircleShape)
+        .background(Color.White.copy(alpha = 0.10f)),
+      contentAlignment = Alignment.Center,
+    ) {
+      Icon(imageVector = icon, contentDescription = null, tint = Color.White, modifier = Modifier.size(18.dp))
+    }
+    Spacer(Modifier.width(14.dp))
+    Text(text = title, color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Medium, maxLines = 1)
   }
 }
 
@@ -5534,7 +6084,7 @@ private fun CircleControlButton(
 // [reaction bar, 2026-05-17] 5 emojis — matches iOS CallView/GroupCallView
 // and the JS /call.js fallback. Trimmed from 6 (dropped 🔥) to align with
 // the WhatsApp 2025 reaction set and keep each tile-tap target wider.
-private val QuickEmojis = listOf("❤️", "👍", "👏", "😂", "🎉")
+private val QuickEmojis = listOf("❤️", "😂", "👍", "🎉", "😮", "🖐️") // [2026-10-11 call-parity] = iOS presentReactionPicker
 
 @Composable
 private fun EmojiQuickBar(onPick: (String) -> Unit) {
