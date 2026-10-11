@@ -10231,4 +10231,12 @@ export default {
   "chatConv.deleteForAllRemaining": "Noch {time} verfügbar",
   // [2026-10-11 qa-sweep2] a11y resposta rápida de status
   "status.replyWithEmoji": "Mit {emoji} antworten",
+  // [2026-10-11 funnel-qa] OTP erros traduzidos + senha opcional no cadastro
+  "otp.waitSeconds": "Warte {s} s, bevor du einen neuen Code anforderst.",
+  "otp.tooManyTries": "Zu viele Versuche mit diesem Code. Fordere einen neuen Code an.",
+  "otp.alreadySent": "Wir haben dir gerade einen Code geschickt. Nutze den zuletzt erhaltenen.",
+  "otp.mayTakeMinute": "Es kann bis zu 1 Minute dauern.",
+  "signupPhone.existingAccountOtp": "Diese Nummer hat bereits ein Konto. Gib den Code ein, um dich anzumelden.",
+  "signupPhone.passwordOptionalPh": "Passwort (optional)",
+  "signupPhone.passwordOptionalHint": "Optional. Du meldest dich immer mit deiner Nummer an. Erstelle ein Passwort nur, wenn du deine @chatyy-E-Mail in anderen Apps nutzen willst.",
 };

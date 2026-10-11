@@ -9453,4 +9453,12 @@ export default {
   "chatConv.deleteForAllRemaining": "あと{time}利用可能",
   // [2026-10-11 qa-sweep2] a11y resposta rápida de status
   "status.replyWithEmoji": "{emoji}で返信",
+  // [2026-10-11 funnel-qa] OTP erros traduzidos + senha opcional no cadastro
+  "otp.waitSeconds": "別のコードをリクエストするまで{s}秒お待ちください。",
+  "otp.tooManyTries": "このコードでの試行回数が多すぎます。新しいコードをリクエストしてください。",
+  "otp.alreadySent": "先ほどコードを送信しました。最後に届いたコードを使ってください。",
+  "otp.mayTakeMinute": "届くまで最大1分かかることがあります。",
+  "signupPhone.existingAccountOtp": "この番号にはすでにアカウントがあります。コードを入力してログインしてください。",
+  "signupPhone.passwordOptionalPh": "パスワード（任意）",
+  "signupPhone.passwordOptionalHint": "任意です。ログインはいつも電話番号で行います。@chatyy メールを他のアプリで使いたい場合のみパスワードを作成してください。",
 };

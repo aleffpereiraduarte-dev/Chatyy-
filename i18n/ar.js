@@ -10231,4 +10231,12 @@ export default {
   "chatConv.deleteForAllRemaining": "متاح لمدة {time} أخرى",
   // [2026-10-11 qa-sweep2] a11y resposta rápida de status
   "status.replyWithEmoji": "الرد بـ {emoji}",
+  // [2026-10-11 funnel-qa] OTP erros traduzidos + senha opcional no cadastro
+  "otp.waitSeconds": "انتظر {s} ث لطلب رمز آخر.",
+  "otp.tooManyTries": "محاولات كثيرة جدًا بهذا الرمز. اطلب رمزًا جديدًا.",
+  "otp.alreadySent": "أرسلنا إليك رمزًا للتو. استخدم آخر رمز وصلك.",
+  "otp.mayTakeMinute": "قد يستغرق وصوله حتى دقيقة واحدة.",
+  "signupPhone.existingAccountOtp": "هذا الرقم لديه حساب بالفعل. أدخل الرمز لتسجيل الدخول.",
+  "signupPhone.passwordOptionalPh": "كلمة المرور (اختيارية)",
+  "signupPhone.passwordOptionalHint": "اختيارية. تسجّل الدخول دائمًا برقمك. أنشئ كلمة مرور فقط إذا أردت استخدام بريد @chatyy في تطبيقات أخرى.",
 };

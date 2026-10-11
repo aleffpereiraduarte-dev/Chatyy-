@@ -164,6 +164,24 @@ export function friendlyServerError(r, fallbackKey) {
   if (/verificacao expirada|verificação expirada|token de verificacao|verifique seu telefone/.test(m)) return { key: 'signupPhone.expired', kind: 'expired' };
   if (/senha curta/.test(m)) return { key: 'signupPhone.err.passwordShort', kind: 'password' };
   if (/muitas contas/.test(m)) return { key: 'signupPhone.err.tooManySignups', kind: 'rate' };
+  // [2026-10-11 funnel-qa] Transport failures: api.js resolves (never throws)
+  // with { success:false, message:'Connection error' | 'Tempo limite excedido'
+  // | 'Servidor indisponivel', __httpStatus:0 }. Was shown RAW ("Connection
+  // error" in English inside a pt-BR screen) or, on the code step, as
+  // "Código incorreto" — the user retyped a correct code that never reached us.
+  if ((r && r.success === false && r.__httpStatus === 0 && !/c[oó]digo|n[uú]mero|telefone|username|senha/.test(m)) || /^(connection error|tempo limite excedido|servidor indispon[ií]vel|offline|network request failed|failed to fetch)$/.test(m.trim())) {
+    return { key: 'login.errorConnection', kind: 'network' };
+  }
+  // OTP verify outcomes (email.php phone_login_verify / verify_check — pt-BR
+  // without accents: 'Codigo incorreto', 'Codigo expirado. Solicite um novo.',
+  // 'Solicite um codigo primeiro', 'Muitas tentativas. Solicite um novo codigo.').
+  if (/muitas tentativas.*(novo c[oó]digo|solicite)/.test(m)) return { key: 'otp.tooManyTries', kind: 'otp_locked' };
+  if (/c[oó]digo expirado|expired|solicite um c[oó]digo primeiro|no valid|no pending/.test(m)) return { key: 'login.phoneOtpExpired', kind: 'otp_expired' };
+  if (/c[oó]digo (incorreto|inv[aá]lido|errado)|wrong code|invalid code/.test(m)) return { key: 'signupPhone.otpInvalid', kind: 'otp_wrong' };
+  // Per-number send cooldown: "Aguarde 42s antes de pedir outro codigo." →
+  // expose the seconds so the screen can drive its resend timer from it.
+  const _wait = m.match(/aguarde\s+(\d{1,4})\s*s/);
+  if (_wait) return { key: 'otp.waitSeconds', kind: 'rate', seconds: Math.min(3600, Number(_wait[1]) || 0) };
   if (status === 429 || /muitas (tentativas|requisi|solicita)|aguarde|too many/.test(m)) return { key: 'signupPhone.err.tooManyAttempts', kind: 'rate' };
   if (/invalido|inválido|invalid/.test(m) && /n[uú]mero|telefone|phone/.test(m)) return { key: 'login.phoneInvalid', kind: 'phone' };
   if (status >= 500) return { key: 'signupPhone.err.server', kind: 'server' };

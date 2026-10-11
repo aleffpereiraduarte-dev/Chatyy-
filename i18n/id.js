@@ -9453,4 +9453,12 @@ export default {
   "chatConv.deleteForAllRemaining": "Tersedia {time} lagi",
   // [2026-10-11 qa-sweep2] a11y resposta rápida de status
   "status.replyWithEmoji": "Balas dengan {emoji}",
+  // [2026-10-11 funnel-qa] OTP erros traduzidos + senha opcional no cadastro
+  "otp.waitSeconds": "Tunggu {s} dtk untuk meminta kode lain.",
+  "otp.tooManyTries": "Terlalu banyak percobaan dengan kode ini. Minta kode baru.",
+  "otp.alreadySent": "Kami baru saja mengirim kode. Gunakan kode terakhir yang diterima.",
+  "otp.mayTakeMinute": "Bisa memakan waktu hingga 1 menit.",
+  "signupPhone.existingAccountOtp": "Nomor ini sudah punya akun. Masukkan kode untuk masuk.",
+  "signupPhone.passwordOptionalPh": "Kata sandi (opsional)",
+  "signupPhone.passwordOptionalHint": "Opsional. Kamu selalu masuk dengan nomormu. Buat kata sandi hanya jika ingin memakai email @chatyy di aplikasi lain.",
 };

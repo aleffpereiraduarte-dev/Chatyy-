@@ -10201,4 +10201,12 @@ export default {
   "chatConv.deleteForAllRemaining": "Available for {time} more",
   // [2026-10-11 qa-sweep2] a11y resposta rápida de status
   "status.replyWithEmoji": "Reply with {emoji}",
+  // [2026-10-11 funnel-qa] OTP erros traduzidos + senha opcional no cadastro
+  "otp.waitSeconds": "Wait {s}s to request another code.",
+  "otp.tooManyTries": "Too many attempts with this code. Request a new code.",
+  "otp.alreadySent": "We just sent you a code. Use the latest one you received.",
+  "otp.mayTakeMinute": "It can take up to 1 minute to arrive.",
+  "signupPhone.existingAccountOtp": "This number already has an account. Enter the code to sign in.",
+  "signupPhone.passwordOptionalPh": "Password (optional)",
+  "signupPhone.passwordOptionalHint": "Optional. You always sign in with your number. Create a password only if you want to use your @chatyy email in other apps.",
 };

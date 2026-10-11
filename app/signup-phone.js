@@ -15,7 +15,7 @@ import { useState, useEffect, useRef, useMemo } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet, ActivityIndicator,
   Animated, Platform, ScrollView, Dimensions, Modal,
-  Image, ActionSheetIOS, Easing, Pressable, useWindowDimensions,
+  Image, ActionSheetIOS, Easing, Pressable, useWindowDimensions, BackHandler,
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import * as Haptics from 'expo-haptics';
@@ -37,6 +37,7 @@ import SignupIntro from '../components/SignupIntro';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import RestoreBackupPrompt from '../components/RestoreBackupPrompt';
 import { VOICE_OTP_ENABLED } from '../constants/featureFlags';
+import { markFreshSignup } from '../services/firstRun'; // [2026-10-11 funnel-qa]
 // [2026-10-07 signup-ux] keyboard-controller aware container (falls back to RN
 // KeyboardAvoidingView when KC native is absent / on web), draft resume,
 // smarter phone/handle/password helpers.
@@ -172,6 +173,11 @@ export default function SignupPhone() {
   // Canal pelo qual o último código saiu ('sms' | 'voice'). [2026-06-19] WhatsApp
   // REMOVIDO do cadastro a pedido do founder — só SMS (Twilio) + ligação (Vonage).
   const [sentVia, setSentVia] = useState('sms');
+  // [2026-10-11 funnel-qa] Where the last code ACTUALLY went (verify_send
+  // reports whatsapp_sent / sms_sent). The OTP card used to always say
+  // "WhatsApp e SMS" — wrong for intl numbers (WhatsApp OR SMS) and for the
+  // existing-account path (phone_login_request = SMS only).
+  const [otpChannels, setOtpChannels] = useState({ wa: true, sms: true });
   // Registration-lock (anti-SIM-swap) PIN state. lockRequired flips true when
   // server returns requires_lock=true after a successful OTP verify; the OTP
   // step then renders an extra PIN input below the OTP boxes. lockPin holds
@@ -513,16 +519,20 @@ export default function SignupPhone() {
             // login). If they're in fromLogin=1 we trust the original
             // routing — but a fresh exists:true is still surfaced via the
             // banner below.
-            if (exists && params?.fromLogin !== '1') {
+            if (exists) {
+              // [2026-10-11 funnel-qa] phone_login_request ALREADY texted the
+              // code for an existing account (and armed the 60s per-number
+              // cooldown). Bouncing to /login made the user tap "Enviar
+              // código" again → 429 "Aguarde 60s" on the very first try, and
+              // the SMS they already had was for a screen they had left.
+              // WhatsApp parity: same number → same code screen → you're in
+              // (checkOtp logs existing accounts in via the token branch).
+              setOtpChannels({ wa: false, sms: lr?.data?.sms_sent !== false });
+              setSentVia('sms');
+              setResendCountdown(60);
+              setCode('');
               setBusy(false);
-              setError(t('signupPhone.alreadyHaveAccount') || 'Esse número já tem conta no Chatyy. Vamos fazer login!');
-              // Brief pause so the user reads the message, then route.
-              setTimeout(() => {
-                try {
-                  const isoCountry = String(params?.country || countryCode || 'BR').toUpperCase();
-                  router.replace(`/login?phone=${encodeURIComponent(fullPhone)}&country=${encodeURIComponent(isoCountry)}`);
-                } catch {}
-              }, 1500);
+              goStep('otp');
               return;
             }
           }
@@ -550,10 +560,16 @@ export default function SignupPhone() {
         // [2026-06-19] Só SMS ou voz no cadastro (WhatsApp removido).
         if (channel === 'voice') setSentVia('voice');
         else setSentVia('sms');
+        const _wa = r?.data?.whatsapp_sent; const _sms = r?.data?.sms_sent;
+        setOtpChannels((_wa === undefined && _sms === undefined) ? { wa: true, sms: true } : { wa: !!_wa, sms: !!_sms });
         if (step !== 'otp') goStep('otp');
         setCode('');
       } else {
-        setError(_errText(r, 'signupPhone.sendError'));
+        // [2026-10-11 funnel-qa] "Aguarde 42s…" → drive the resend timer from
+        // the server's cooldown instead of a dead "Reenviar" button.
+        const _f = friendlyServerError(r, 'signupPhone.sendError');
+        if (_f.seconds) { setResendCountdown(_f.seconds); setError(t('otp.waitSeconds', { s: _f.seconds })); }
+        else setError(_f.text || t(_f.key));
       }
     } catch (e) {
       if (!mountedRef.current) return;
@@ -632,10 +648,22 @@ export default function SignupPhone() {
         goStep('name');
       } else {
         const _f = friendlyServerError(r, 'signupPhone.otpInvalid');
-        // Wrong/expired code is by far the common case — say it plainly.
-        setError(_f.kind === 'rate' ? t(_f.key) : (t('signupPhone.otpInvalid') || 'Código incorreto'));
-        setCode('');
-        triggerOtpError();
+        // [2026-10-11 funnel-qa] A network blip used to read "Código
+        // incorreto" (and wiped a correct code). Now: network → keep the
+        // digits so one tap on Continuar retries; expired / too many tries →
+        // say so and unlock "Reenviar" right away; wrong → clear + shake.
+        if (_f.kind === 'network') {
+          setError(t('login.errorConnection'));
+        } else if (_f.kind === 'otp_expired' || _f.kind === 'otp_locked') {
+          setError(t(_f.key));
+          setCode('');
+          setResendCountdown(0);
+          triggerOtpError();
+        } else {
+          setError(_f.kind === 'rate' ? t(_f.key, { s: _f.seconds }) : (t('signupPhone.otpInvalid') || 'Código incorreto'));
+          setCode('');
+          triggerOtpError();
+        }
       }
     } catch {
       if (!mountedRef.current) return;
@@ -735,10 +763,14 @@ export default function SignupPhone() {
   const finishSignup = async () => {
     if (!verifyToken) { setError(t('signupPhone.expired') || 'Verificação expirou. Recomece.'); goStep('phone'); return; }
     if (!username || usernameAvailable === false || usernameLocalError(username)) return;
-    if (password.length < 8) { setError(t('signupPhone.err.passwordShort')); return; }
+    // [2026-10-11 funnel-qa] Password is OPTIONAL (WhatsApp has none): the
+    // number is the login; phone_signup generates + stores a server password
+    // when none is sent. A typed one still needs 8+ chars.
+    if (password.length > 0 && password.length < 8) { setError(t('signupPhone.err.passwordShort')); return; }
     setError(''); setBusy(true);
     try {
       const r = await api.phoneSignup({ verify_token: verifyToken, username, name, domain: 'chatyy.com.br', password });
+      if (r?.success && r.data?.email) { try { await markFreshSignup(r.data.email, { skip: ['profile'] }); } catch {} } // name + photo were just asked here
       if (!mountedRef.current) return;
       if (r?.success && r.data?.token) {
         // Hand off via the standard token-login path so the auth state hydrates,
@@ -895,6 +927,22 @@ export default function SignupPhone() {
     }
     else if (step === 'handle') goStep('name');
   };
+
+  // [2026-10-11 funnel-qa] Android hardware back walks the steps backwards
+  // (handle → name → code → number) like the on-screen arrow, instead of
+  // popping the whole screen and losing the verified number / typed name.
+  const goBackRef = useRef(null);
+  goBackRef.current = goBack;
+  useEffect(() => {
+    if (Platform.OS !== 'android') return undefined;
+    if (step !== 'otp' && step !== 'name' && step !== 'handle') return undefined;
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (busy) return true;
+      try { goBackRef.current?.(); } catch {}
+      return true;
+    });
+    return () => { try { sub.remove(); } catch {} };
+  }, [step, busy]);
 
   // Welcome carousel — render the SignupIntro component as a separate root
   // (no KeyboardAvoiding/back-bar) so the 5 slides take the full screen,
@@ -1307,16 +1355,27 @@ export default function SignupPhone() {
                     borderWidth: 1, borderColor: colors.border,
                   }}>
                     <View style={{ flexDirection: 'row', gap: 6 }}>
-                      <View style={{ width: 34, height: 34, borderRadius: 17, backgroundColor: `${colors.primary}1f`, alignItems: 'center', justifyContent: 'center' }}>
-                        <IconMessageCircle size={17} color={colors.primary} />
-                      </View>
-                      <View style={{ width: 34, height: 34, borderRadius: 17, backgroundColor: `${colors.primary}1f`, alignItems: 'center', justifyContent: 'center' }}>
-                        <IconSmartphone size={17} color={colors.primary} />
-                      </View>
+                      {otpChannels.wa && (
+                        <View style={{ width: 34, height: 34, borderRadius: 17, backgroundColor: `${colors.primary}1f`, alignItems: 'center', justifyContent: 'center' }}>
+                          <IconMessageCircle size={17} color={colors.primary} />
+                        </View>
+                      )}
+                      {(otpChannels.sms || !otpChannels.wa) && (
+                        <View style={{ width: 34, height: 34, borderRadius: 17, backgroundColor: `${colors.primary}1f`, alignItems: 'center', justifyContent: 'center' }}>
+                          <IconSmartphone size={17} color={colors.primary} />
+                        </View>
+                      )}
                     </View>
                     <View style={{ flex: 1 }}>
-                      <Text style={{ fontSize: 14, fontWeight: '700', color: colors.text }}>{t('onb.codeChannels')}</Text>
-                      <Text style={{ fontSize: 12, lineHeight: 17, color: colors.textSecondary, marginTop: 2 }}>{t('onb.codeChannelsSub')}</Text>
+                      <Text style={{ fontSize: 14, fontWeight: '700', color: colors.text }}>
+                        {(otpChannels.wa && otpChannels.sms) ? t('onb.codeChannels')
+                          : otpChannels.wa ? t('login.otpSentWhatsapp')
+                          : t('login.otpSentSms')}
+                      </Text>
+                      <Text style={{ fontSize: 12, lineHeight: 17, color: colors.textSecondary, marginTop: 2 }}>
+                        {accountExists === true ? t('signupPhone.existingAccountOtp')
+                          : (otpChannels.wa && otpChannels.sms) ? t('onb.codeChannelsSub') : t('otp.mayTakeMinute')}
+                      </Text>
                     </View>
                   </View>
                 )}
@@ -1642,13 +1701,13 @@ export default function SignupPhone() {
                       style={[{
                         flex: 1, fontSize: 16, paddingVertical: 14, color: colors.text,
                       }, Platform.OS === 'web' && { outlineStyle: 'none' }]}
-                      placeholder={t('signupPhone.passwordPlaceholder') || 'Mínimo 8 caracteres'}
+                      placeholder={t('signupPhone.passwordOptionalPh')}
                       placeholderTextColor={colors.textTertiary}
                       ref={passwordRef}
                       value={password}
                       onChangeText={(v) => { setPassword(v); if (error) setError(''); }}
                       returnKeyType="done"
-                      onSubmitEditing={() => { if (!busy && usernameAvailable === true && password.length >= 8) finishSignup(); }}
+                      onSubmitEditing={() => { if (!busy && usernameAvailable === true && (password.length === 0 || password.length >= 8)) finishSignup(); }}
                       accessibilityLabel={t('signupPhone.passwordLabel')}
                       autoCapitalize="none"
                       autoCorrect={false}
@@ -1729,7 +1788,7 @@ export default function SignupPhone() {
                         t={t}
                       />
                       <Text style={[styles.hint, { color: colors.textTertiary }]}>
-                        {t('signupPhone.passwordHint') || 'Use pra entrar pelo email também (IMAP / web). Guarde com carinho.'}
+                        {t('signupPhone.passwordOptionalHint')}
                       </Text>
                     </View>
                   </View>
@@ -1870,7 +1929,7 @@ export default function SignupPhone() {
                   (step === 'phone' && phone.replace(/\D/g, '').length < 8) ||
                   (step === 'otp'   && (lockRequired ? lockPin.length < 4 : code.length !== 6)) ||
                   (step === 'name'  && (firstName || '').trim().length < 2) ||
-                  (step === 'handle' && (!username || usernameAvailable !== true || !!usernameLocalError(username) || password.length < 8))
+                  (step === 'handle' && (!username || usernameAvailable !== true || !!usernameLocalError(username) || (password.length > 0 && password.length < 8)))
                 ) ? 0.5 : 1,
               },
             ]}
@@ -1878,7 +1937,7 @@ export default function SignupPhone() {
               (step === 'phone' && phone.replace(/\D/g, '').length < 8) ||
               (step === 'otp'   && (lockRequired ? lockPin.length < 4 : code.length !== 6)) ||
               (step === 'name'  && (firstName || '').trim().length < 2) ||
-              (step === 'handle' && (!username || usernameAvailable !== true || !!usernameLocalError(username) || password.length < 8))}
+              (step === 'handle' && (!username || usernameAvailable !== true || !!usernameLocalError(username) || (password.length > 0 && password.length < 8)))}
             onPress={() => {
               // WhatsApp/Telegram both skip the "is this the right number?"
               // sheet — the OTP screen already shows the number with an Edit

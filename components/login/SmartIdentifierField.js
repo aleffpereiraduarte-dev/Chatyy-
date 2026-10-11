@@ -63,11 +63,16 @@ export default function SmartIdentifierField({
   autoFocus = false,
   editable = true,
   showKindHint = true,
+  // [2026-10-11 funnel-qa] New-user path ("Começar"): numeric keypad + tel
+  // autofill (iOS offers the SIM's own number) instead of the e-mail keyboard.
+  phoneFirst = false,
 }) {
   const [focused, setFocused] = useState(false);
   const raw = String(value || '');
   const kind = classifyIdentifier(raw);
   const isNationalPhone = kind === 'phone' && !raw.trim().startsWith('+');
+  // Phone-first: the country chip is there from the first keystroke (WhatsApp).
+  const showCountry = isNationalPhone || (phoneFirst && kind === 'empty');
   // [2026-10-09 geo-qa] "0" de tronco (UK 07700…, FR 06…, JP 090…) fica
   // visível na frente da máscara em vez de empurrar o último dígito pra fora.
   const _natDigits = raw.replace(/\D/g, '');
@@ -132,11 +137,11 @@ export default function SmartIdentifierField({
         borderWidth: focused || invalid ? 1.5 : 1,
         borderColor,
         backgroundColor: colors.surfaceVariant,
-        paddingLeft: isNationalPhone ? 6 : 14, paddingRight: 6,
+        paddingLeft: showCountry ? 6 : 14, paddingRight: 6,
         ...(Platform.OS === 'web' ? { transition: 'border-color 140ms ease, box-shadow 140ms ease' } : {}),
         ...(Platform.OS === 'web' && focused ? { boxShadow: `0 0 0 4px ${invalid ? colors.error : colors.text}14` } : {}),
       }}>
-        {isNationalPhone ? (
+        {showCountry ? (
           <TouchableOpacity
             onPress={onPressCountry}
             activeOpacity={0.6}
@@ -171,18 +176,19 @@ export default function SmartIdentifierField({
           onSubmitEditing={onSubmitEditing}
           editable={editable}
           autoFocus={autoFocus}
-          placeholder={t('login.smartPlaceholder')}
+          placeholder={phoneFirst ? (country?.mask ? country.mask.replace(/#/g, '0') : t('login.phonePlaceholder')) : t('login.smartPlaceholder')}
           placeholderTextColor={colors.textTertiary}
           accessibilityLabel={t('login.smartPlaceholder')}
           accessibilityHint={t('login.smartA11yHint')}
           // Keychain / Autofill: this IS the account identifier.
-          textContentType="username"
-          autoComplete="username"
+          textContentType={phoneFirst ? 'telephoneNumber' : 'username'}
+          autoComplete={phoneFirst ? 'tel' : 'username'}
           importantForAutofill="yes"
           autoCapitalize="none"
           autoCorrect={false}
           spellCheck={false}
-          keyboardType="email-address"
+          keyboardType={phoneFirst ? 'phone-pad' : 'email-address'}
+          inputMode={phoneFirst ? 'tel' : 'email'}
           returnKeyType="next"
           enterKeyHint="next"
           blurOnSubmit={false}

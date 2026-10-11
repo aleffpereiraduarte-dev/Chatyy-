@@ -563,6 +563,9 @@ export function MailProvider({ children }) {
 
   const openEmail = useCallback(async (uid, folder) => {
     setLoadingMessage(true);
+    // [2026-10-11] Abriu = lido NA HORA na lista/contador (local, sem POST); o
+    // POST ao servidor continua no caminho da rede abaixo (ou no catch).
+    try { markAsRead(uid, folder, true); } catch {}
     // [2026-07-02 email speed] Paint from the LOCAL cache FIRST so re-opening an
     // already-seen email is instant (Gmail/Superhuman pattern), then revalidate
     // from the network in the background. Email bodies are immutable once
@@ -611,10 +614,12 @@ export function MailProvider({ children }) {
       // Fallback to cached message
       const cached = await getMessageFromCache(uid, folder || currentFolder);
       if (cached) setSelectedEmail({ ...cached, seen: true, read: true });
+      // Rede falhou: ainda assim avisa o servidor que foi lido.
+      try { markAsRead(uid, folder); } catch {}
     } finally {
       setLoadingMessage(false);
     }
-  }, [currentFolder]);
+  }, [currentFolder]); // markAsRead é declarado abaixo (TDZ) — não pode ir nas deps
 
   // Mark email as read — updates both server and local state
   const markAsRead = useCallback(async (uid, folder, skipServerPost = false) => {

@@ -9477,4 +9477,12 @@ export default {
   "chatConv.deleteForAllRemaining": "Disponível durante mais {time}",
   // [2026-10-11 qa-sweep2] a11y resposta rápida de status
   "status.replyWithEmoji": "Responder com {emoji}",
+  // [2026-10-11 funnel-qa] OTP erros traduzidos + senha opcional no cadastro
+  "otp.waitSeconds": "Aguarde {s}s para pedir outro código.",
+  "otp.tooManyTries": "Demasiadas tentativas com este código. Peça um novo código.",
+  "otp.alreadySent": "Já enviámos um código há pouco. Use o último que chegou.",
+  "otp.mayTakeMinute": "Pode demorar até 1 minuto a chegar.",
+  "signupPhone.existingAccountOtp": "Este número já tem conta. Introduza o código para entrar.",
+  "signupPhone.passwordOptionalPh": "Palavra-passe (opcional)",
+  "signupPhone.passwordOptionalHint": "Opcional. Entra sempre com o seu número. Crie uma palavra-passe só se quiser aceder ao e-mail @chatyy noutras apps.",
 };

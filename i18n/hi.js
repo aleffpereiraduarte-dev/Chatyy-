@@ -10231,4 +10231,12 @@ export default {
   "chatConv.deleteForAllRemaining": "{time} और उपलब्ध",
   // [2026-10-11 qa-sweep2] a11y resposta rápida de status
   "status.replyWithEmoji": "{emoji} से जवाब दें",
+  // [2026-10-11 funnel-qa] OTP erros traduzidos + senha opcional no cadastro
+  "otp.waitSeconds": "दूसरा कोड मांगने के लिए {s} सेकंड रुकें।",
+  "otp.tooManyTries": "इस कोड से बहुत ज़्यादा प्रयास। नया कोड मांगें।",
+  "otp.alreadySent": "हमने अभी आपको एक कोड भेजा है। सबसे नया मिला कोड इस्तेमाल करें।",
+  "otp.mayTakeMinute": "आने में 1 मिनट तक लग सकता है।",
+  "signupPhone.existingAccountOtp": "इस नंबर पर पहले से खाता है। साइन इन के लिए कोड डालें।",
+  "signupPhone.passwordOptionalPh": "पासवर्ड (वैकल्पिक)",
+  "signupPhone.passwordOptionalHint": "वैकल्पिक। आप हमेशा अपने नंबर से साइन इन करते हैं। पासवर्ड तभी बनाएं जब आप दूसरे ऐप्स में अपना @chatyy ईमेल इस्तेमाल करना चाहें।",
 };

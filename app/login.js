@@ -4,7 +4,7 @@ import {
   View, Text, TextInput, TouchableOpacity, StyleSheet,
   KeyboardAvoidingView, Platform, ScrollView, ActivityIndicator,
   Animated, useWindowDimensions, Modal, FlatList, Pressable, Image, Alert,
-  Easing, Linking,
+  Easing, Linking, BackHandler,
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -47,6 +47,7 @@ import { onNetworkChange } from '../services/networkInfo';
 import AvatarCircle from '../components/AvatarCircle';
 import PressableScale from '../components/PressableScale';
 import SmartIdentifierField from '../components/login/SmartIdentifierField';
+import { friendlyServerError } from '../components/signup/signupSmarts'; // [2026-10-11 funnel-qa] translated OTP/network errors
 import RememberedAccounts, { BiometricGlyph } from '../components/login/RememberedAccounts';
 import LoginNotice, { SuggestionChip } from '../components/login/LoginNotice';
 import LoginKeyboardScroll from '../components/login/LoginKeyboardScroll';
@@ -343,8 +344,15 @@ export default function LoginScreen() {
     })();
     return () => { cancelled = true; };
   }, [isDesktop, isAddAccount]);
-  const dismissIntro = useCallback(() => {
+  // [2026-10-11 funnel-qa] "Começar" on the welcome = a NEW user. They used to
+  // land on "Entrar no Chatyy · telefone, e-mail ou @usuário" with an e-mail
+  // keyboard (native). WhatsApp parity: "Seu número" + numeric keypad; a link
+  // switches back to e-mail / @usuário. The field stays smart either way
+  // (existing numbers simply log in after the code).
+  const [phoneFirst, setPhoneFirst] = useState(false);
+  const dismissIntro = useCallback((arg) => {
     setShowIntro(false);
+    if (arg && arg.mode === 'signup') setPhoneFirst(true);
     try { AsyncStorage.setItem('chatyy_intro_seen', '1').catch(() => {}); } catch {}
   }, []);
 
@@ -831,6 +839,22 @@ export default function LoginScreen() {
       setOtpChannelNote('');
     }, -1);
   };
+
+  // [2026-10-11 funnel-qa] Android hardware back on the code / password step
+  // returns to the number field (WhatsApp "wrong number?") instead of popping
+  // /login — which is the root after the splash, so back CLOSED the app and
+  // the user had to start over.
+  const backToSmartRef = useRef(null);
+  backToSmartRef.current = backToSmart;
+  useEffect(() => {
+    if (Platform.OS !== 'android') return undefined;
+    if (loginMode !== 'phone' && loginMode !== 'email') return undefined;
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      try { backToSmartRef.current?.(); } catch {}
+      return true;
+    });
+    return () => { try { sub.remove(); } catch {} };
+  }, [loginMode]);
 
   // Big check pop between "auth OK" and the route change (password, Face ID,
   // remembered-account and OTP logins all use it now).
@@ -1529,8 +1553,30 @@ export default function LoginScreen() {
           });
         }, 1000);
       } else {
-        setError(r.message || t('login.phoneInvalid'));
-        shake();
+        // [2026-10-11 funnel-qa] Backend text is pt-BR without accents
+        // ("Aguarde 42s antes de pedir outro codigo.") and transport failures
+        // came through as the English "Connection error" — map both.
+        const _f = friendlyServerError(r, 'login.phoneInvalid');
+        if (_f.seconds) {
+          // Per-number cooldown = a code went to this number < 60s ago (double
+          // tap, back + resend). Open the code screen with the real remaining
+          // time instead of a dead-end error on the number screen.
+          setOtpChannelNote(t('otp.alreadySent'));
+          setPhoneOtp(['', '', '', '', '', '']);
+          if (loginMode !== 'phone') swapTo(() => { setLoginMode('phone'); setPhoneStep('otp'); }, 1);
+          else setPhoneStep('otp');
+          setPhoneResendTimer(_f.seconds);
+          if (phoneResendRef.current) clearInterval(phoneResendRef.current);
+          phoneResendRef.current = setInterval(() => {
+            setPhoneResendTimer(prev => {
+              if (prev <= 1) { clearInterval(phoneResendRef.current); return 0; }
+              return prev - 1;
+            });
+          }, 1000);
+        } else {
+          setError(_f.text || t(_f.key));
+          shake();
+        }
       }
     } catch {
       if (!mountedRef.current) return;
@@ -1636,9 +1682,25 @@ export default function LoginScreen() {
         }
         return;
       }
-      const msg = r.message || t('login.phoneOtpInvalid');
-      if (msg.includes('expired') || msg.includes('No valid')) setError(t('login.phoneOtpExpired'));
-      else setError(msg);
+      // [2026-10-11 funnel-qa] Was the raw server string ("Codigo invalido",
+      // "Codigo expirado…" — never matched the English 'expired' check) and a
+      // network blip wiped a correct code. Now translated + kind-aware.
+      const _f = friendlyServerError(r, 'login.phoneOtpInvalid');
+      if (_f.kind === 'network') {
+        setError(t('login.errorConnection'));
+        shake();
+        return; // keep the digits — "Verificar" retries with one tap
+      }
+      if (_f.kind === 'otp_expired' || _f.kind === 'otp_locked') {
+        setError(t(_f.key));
+        // A new code is the only way forward — unlock "Reenviar" now.
+        if (phoneResendRef.current) clearInterval(phoneResendRef.current);
+        setPhoneResendTimer(0);
+      } else if (_f.kind === 'otp_wrong' || !_f.text) {
+        setError(_f.kind === 'rate' ? t(_f.key, { s: _f.seconds }) : t('login.phoneOtpInvalid'));
+      } else {
+        setError(_f.text);
+      }
       shake();
       setPhoneOtp(['', '', '', '', '', '']);
       setTimeout(() => { try { phoneOtpRefs.current?.[0]?.focus?.(); } catch {} }, 0);
@@ -2032,8 +2094,8 @@ export default function LoginScreen() {
         </>
       ) : (
         <>
-          <Text accessibilityRole="header" style={[s.title, { color: colors.text }]}>{t('login.smartTitle')}</Text>
-          <Text style={[s.subtitle, { color: colors.textSecondary }]}>{t('login.smartSubtitle')}</Text>
+          <Text accessibilityRole="header" style={[s.title, { color: colors.text }]}>{phoneFirst ? t('login.phoneTitle') : t('login.smartTitle')}</Text>
+          <Text style={[s.subtitle, { color: colors.textSecondary }]}>{phoneFirst ? t('login.phoneSubtitle') : t('login.smartSubtitle')}</Text>
 
           <SmartIdentifierField
             value={identifier}
@@ -2048,7 +2110,26 @@ export default function LoginScreen() {
             invalid={!!error}
             autoFocus={isDesktop || (Platform.OS !== 'web' && !identifier)}
             showKindHint={!error && !emailSuggestion && !idSoftHint}
+            phoneFirst={phoneFirst}
           />
+          {phoneFirst && (
+            <TouchableOpacity
+              onPress={() => {
+                hSelection();
+                setPhoneFirst(false);
+                // Re-mount the keyboard with the e-mail layout.
+                try { identifierRef.current?.blur(); } catch {}
+                setTimeout(() => { try { identifierRef.current?.focus(); } catch {} }, 120);
+              }}
+              activeOpacity={0.6}
+              accessibilityRole="button"
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              style={{ alignSelf: 'flex-start', marginTop: 8, paddingVertical: 4, paddingHorizontal: 4 }}
+              testID="login-use-email"
+            >
+              <Text style={{ fontSize: 14, fontWeight: '600', color: colors.text, textDecorationLine: 'underline' }}>{t('login.useEmailInstead')}</Text>
+            </TouchableOpacity>
+          )}
 
           {!!emailSuggestion && !error && (
             <View style={{ marginTop: 10 }}>

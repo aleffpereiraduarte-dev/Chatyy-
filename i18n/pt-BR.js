@@ -941,7 +941,7 @@ export default {
   'login.qrTitle': 'Login com QR Code',
   'login.qrSubtitle': 'Escaneie com o Chatyy no celular',
   'login.qrStep1': 'Abra o Chatyy no celular',
-  'login.qrStep2': 'Toque em Configuracoes > Dispositivos',
+  'login.qrStep2': 'Toque em Configurações › Aparelhos conectados',
   'login.qrStep3': 'Escaneie o código QR',
   'login.qrExpires': 'QR Code expira em',
   'login.qrExpired': 'QR Code expirado',
@@ -10279,4 +10279,12 @@ export default {
   "chatConv.deleteForAllRemaining": "Disponível por mais {time}",
   // [2026-10-11 qa-sweep2] a11y resposta rápida de status
   "status.replyWithEmoji": "Responder com {emoji}",
+  // [2026-10-11 funnel-qa] OTP erros traduzidos + senha opcional no cadastro
+  "otp.waitSeconds": "Aguarde {s}s para pedir outro código.",
+  "otp.tooManyTries": "Muitas tentativas com este código. Peça um novo código.",
+  "otp.alreadySent": "Já enviamos um código há pouco. Use o último que chegou.",
+  "otp.mayTakeMinute": "Pode levar até 1 minuto para chegar.",
+  "signupPhone.existingAccountOtp": "Este número já tem conta. Digite o código para entrar.",
+  "signupPhone.passwordOptionalPh": "Senha (opcional)",
+  "signupPhone.passwordOptionalHint": "Opcional. Você entra sempre pelo seu número. Crie uma senha só se quiser acessar o e-mail @chatyy em outros apps.",
 };

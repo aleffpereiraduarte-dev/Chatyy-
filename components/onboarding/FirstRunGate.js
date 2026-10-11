@@ -26,8 +26,18 @@ export default function FirstRunGate() {
       try {
         const r = await evaluateFirstRun(user);
         if (cancelled || !r?.show) return;
-        const steps = await computeFirstRunSteps();
+        let steps = await computeFirstRunSteps();
         if (cancelled) return;
+        // [2026-10-11 funnel-qa] Steps the signup screen already covered
+        // (phone signup = name + photo) are not asked again.
+        const skip = Array.isArray(r.skip) ? r.skip : [];
+        if (skip.length) {
+          const left = steps.filter((s) => !skip.includes(s));
+          // A lone theme picker right after signup is just one more tap
+          // between the new user and the chat list (theme follows the system).
+          if (!left.length || (left.length === 1 && left[0] === 'look')) { completeFirstRun(email, 'covered_by_signup'); return; }
+          steps = left;
+        }
         setState({ steps, step: r.step && steps.includes(r.step) ? r.step : steps[0] });
       } catch {}
     }, SETTLE_MS);

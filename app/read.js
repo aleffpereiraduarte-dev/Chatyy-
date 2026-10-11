@@ -107,6 +107,12 @@ export default function ReadScreen() {
     if (!uid) { router.back(); return; }
     let cancelled = false;
     let networkResolved = false;
+    // [2026-10-11] Founder: "quando eu abro o e-mail tem que atualizar que já
+    // abriu". Antes só marcava lido DEPOIS do corpo chegar da rede — abrindo
+    // pelo cache e voltando antes (ou com a rede falhando) ficava "não lido"
+    // pra sempre. Agora marca na hora da abertura (otimista + POST), 1× por uid.
+    let markedOnOpen = false;
+    try { markAsRead(uid, folder); markedOnOpen = true; } catch {}
 
     // [2026-09-24 abrir-rápido mobile] CACHE-FIRST: se o corpo já está no cache
     // local (prefetch da lista OU abertura anterior nesta sessão), renderiza NA
@@ -159,7 +165,7 @@ export default function ReadScreen() {
         // Optimistic seen=true pro header não piscar "não lido".
         setEmail({ ...msgResult.data, seen: true, read: true });
         const wasUnread = msgResult.data.seen === false;
-        markAsRead(uid, folder);
+        if (!markedOnOpen) markAsRead(uid, folder);
         if (wasUnread) {
           import('../services/pushNotifications').then(m => m.refreshBadgeCount?.()).catch(() => {});
         }

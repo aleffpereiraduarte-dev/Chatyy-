@@ -10232,4 +10232,12 @@ export default {
   "chatConv.deleteForAllRemaining": "Encore disponible pendant {time}",
   // [2026-10-11 qa-sweep2] a11y resposta rápida de status
   "status.replyWithEmoji": "Répondre avec {emoji}",
+  // [2026-10-11 funnel-qa] OTP erros traduzidos + senha opcional no cadastro
+  "otp.waitSeconds": "Patientez {s} s avant de demander un autre code.",
+  "otp.tooManyTries": "Trop de tentatives avec ce code. Demandez un nouveau code.",
+  "otp.alreadySent": "Nous venons de vous envoyer un code. Utilisez le dernier reçu.",
+  "otp.mayTakeMinute": "Il peut mettre jusqu’à 1 minute à arriver.",
+  "signupPhone.existingAccountOtp": "Ce numéro a déjà un compte. Saisissez le code pour vous connecter.",
+  "signupPhone.passwordOptionalPh": "Mot de passe (facultatif)",
+  "signupPhone.passwordOptionalHint": "Facultatif. Vous vous connectez toujours avec votre numéro. Créez un mot de passe seulement pour utiliser votre e-mail @chatyy dans d’autres apps.",
 };

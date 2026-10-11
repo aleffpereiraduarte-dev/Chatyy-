@@ -36,18 +36,26 @@ async function _write(email, v) {
   try { await AsyncStorage.setItem(_k(email), JSON.stringify({ ...v, at: Date.now() })); } catch {}
 }
 
-/** Force the flow for this account (e.g. from a signup screen). */
-export async function markFreshSignup(email) {
+/**
+ * Force the flow for this account (e.g. from a signup screen).
+ * `opts.skip` = step ids the signup screen already covered — e.g. the phone
+ * signup asks name + photo, so it passes ['profile'] and the first-run flow
+ * no longer asks the brand-new user for the same name/photo twice.
+ * [2026-10-11 funnel-qa]
+ */
+export async function markFreshSignup(email, opts = {}) {
   if (!email) return;
   const cur = await _read(email);
   if (cur?.status === 'done') return;
-  await _write(email, { status: 'pending', step: cur?.step || null });
+  const skip = Array.from(new Set([...(Array.isArray(cur?.skip) ? cur.skip : []), ...(Array.isArray(opts?.skip) ? opts.skip : [])]));
+  await _write(email, { status: 'pending', step: cur?.step || null, ...(skip.length ? { skip } : {}) });
 }
 
 /** Persist the step the user is on, so an interrupted flow resumes there. */
 export async function saveFirstRunStep(email, step) {
   if (!email) return;
-  await _write(email, { status: 'pending', step: step || null });
+  const cur = await _read(email);
+  await _write(email, { status: 'pending', step: step || null, ...(Array.isArray(cur?.skip) && cur.skip.length ? { skip: cur.skip } : {}) });
 }
 
 /** Never show again for this account. */
@@ -90,7 +98,7 @@ export async function evaluateFirstRun(user) {
 
   const st = await _read(email);
   if (st?.status === 'done') return no;
-  if (st?.status === 'pending') return { show: true, step: st.step || null };
+  if (st?.status === 'pending') return { show: true, step: st.step || null, skip: Array.isArray(st.skip) ? st.skip : [] };
 
   try {
     const api = require('./api');
