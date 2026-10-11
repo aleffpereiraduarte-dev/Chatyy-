@@ -11471,6 +11471,19 @@ function ChatConversationInner() {
   const [showCustomSchedule, setShowCustomSchedule] = useState(false);
   const [customScheduleDate, setCustomScheduleDate] = useState('');
   const [scheduleToast, setScheduleToast] = useState('');
+  // [2026-10-11 ongoing-call] Voice/video notes can't be recorded while a call
+  // owns the mic (WhatsApp shows the same notice). Returns true = blocked.
+  const blockRecordingDuringCall = (kind) => {
+    let busy = false;
+    try { busy = require('../services/ongoingCall').isCallOngoing(); } catch {}
+    if (!busy) return false;
+    const msg = kind === 'video'
+      ? (t('call.ongoing.videoNoteBlocked') || 'Não é possível gravar vídeo durante uma ligação')
+      : (t('call.ongoing.voiceNoteBlocked') || 'Não é possível gravar áudio durante uma ligação');
+    setScheduleToast(msg);
+    setTimeout(() => setScheduleToast(''), 2600);
+    return true;
+  };
   // Smart action "Criar lembrete" → confirmation sheet ({ text, when, messageId })
   const [reminderSheet, setReminderSheet] = useState(null);
 
@@ -31781,7 +31794,7 @@ function ChatConversationInner() {
                   already gated above so we just check the native flag). */}
               {Platform.OS !== 'web' && VideoNoteRecorder ? (
                 <TouchableOpacity
-                  onPress={() => setShowVideoNoteRecorder(true)}
+                  onPress={() => { if (blockRecordingDuringCall('video')) return; setShowVideoNoteRecorder(true); }}
                   style={{
                     width: 40, height: 44,
                     alignItems: 'center', justifyContent: 'center',
@@ -31799,6 +31812,7 @@ function ChatConversationInner() {
                   // cancel, slide up → lock, release → send. Tap = legacy flow.
                   onHoldStart={() => {
                     if (isRecording) { voiceHoldOwnRef.current = false; return; }
+                    if (blockRecordingDuringCall('voice')) { voiceHoldOwnRef.current = false; return; }
                     voiceHoldOwnRef.current = true;
                     setVoiceHoldMode('hold');
                     setIsRecording(true);
@@ -31834,6 +31848,7 @@ function ChatConversationInner() {
                   locked={voiceHoldMode === 'locked'}
                   lockHintLabel={t('chatConv.slideUpToLock') || 'Deslize para cima para travar'}
                   onActivate={() => {
+                    if (blockRecordingDuringCall('voice')) return;
                     setIsRecording(true);
                     // Switch from "typing" → "recording" presence: cancel any
                     // pending typing-stop timer and tell peers we stopped typing
@@ -31859,6 +31874,7 @@ function ChatConversationInner() {
                    composer still works even if the new component isn't bundled. */
                 <TouchableOpacity
                   onPress={() => {
+                    if (blockRecordingDuringCall('voice')) return;
                     setIsRecording(true);
                     if (typingStopTimerRef.current) { clearTimeout(typingStopTimerRef.current); typingStopTimerRef.current = null; }
                     typingLastSentAt.current = 0;

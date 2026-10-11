@@ -78,6 +78,7 @@ import {
   ConnectionQuality,
   ConnectionState,
   DisconnectReason,
+  DefaultReconnectPolicy,
 } from 'livekit-client';
 let LK_VideoView = null;
 let LK_AudioSession = null;
@@ -153,13 +154,16 @@ import {
   makeSustainedPoorFilter,
   triggerIceRestart,
   applyOpusSdpMunge,
+  CALL_CONNECT_OPTIONS,
+  CALL_RECONNECT_DELAYS_MS,
+  PEER_GONE_GRACE_MS,
 } from '../services/livekitTuning';
 import * as callStateBus from '../services/callState';
 import {
   IconMic, IconMicOff, IconVideo, IconVideoOff, IconPhoneOff,
   IconVolume2, IconVolume, IconArrowLeft, IconChevronDown, IconCameraFlip, IconScreenShare,
   IconPause, IconPlay, IconMoreHorizontal, IconPhone, IconRecord,
-  IconZap, IconUserPlus, IconX, IconSearch, IconVerifiedBadge,
+  IconZap, IconUserPlus, IconX, IconSearch, IconVerifiedBadge, IconMessageCircle,
 } from '../components/Icons';
 import { setCallActive } from '../components/IncomingCallListener';
 // [WAVE 104F] Call telemetry — best-effort, never throws.
@@ -586,6 +590,8 @@ function CallScreenInner() {
   // 25s matches WhatsApp's reconnect ceiling — LK normally recovers within
   // 5-12s on cellular handoffs; anything longer is a real fault.
   const reconnectGraceTimerRef = useRef(null);
+  const peerGoneTimerRef = useRef(null); // [2026-10-11 ligacao-melhorias] 1:1 peer sumiu da sala
+  const peerGoneFiredRef = useRef(false);
   const RECONNECT_HARD_TIMEOUT_MS = 25000;
 
   // Post-call rating prompt. Shown in the end card overlay when the call
@@ -714,6 +720,25 @@ function CallScreenInner() {
   // Media truth → "connected" + timer. Remote media also proves the answer
   // (the callee's ring preconnect is subscribe-only), so a lost WS
   // call_accepted can't strand the caller.
+  // [2026-10-11 ligacao-melhorias] 1:1: o outro lado não está na sala LiveKit
+  // (saiu por queda, ou ainda não chegou depois do fallback P2P→LiveKit). Mantém
+  // "Reconectando…" e, se ele não (re)entrar em PEER_GONE_GRACE_MS, mostra
+  // "Não foi possível reconectar" (Tentar de novo / Encerrar) em vez de ficar
+  // preso para sempre. ParticipantConnected desarma (ver lá).
+  const _armPeerGoneTimer = (room) => {
+    if (isGroupCall || endedRef.current) return;
+    try { if (peerGoneTimerRef.current) clearTimeout(peerGoneTimerRef.current); } catch {}
+    peerGoneTimerRef.current = setTimeout(() => {
+      peerGoneTimerRef.current = null;
+      if (endedRef.current) return;
+      try { if ((room?.remoteParticipants?.size || 0) > 0) return; } catch {}
+      peerGoneFiredRef.current = true;
+      try { _callDiagAppend('warn', 'peer never (re)joined LiveKit room', { call_id: callId, ms: PEER_GONE_GRACE_MS }); } catch {}
+      setReconnecting(false);
+      setConnectionFailed(true);
+      try { setErrorMsg(t('call.reconnectFailed') || 'Não foi possível reconectar. Tente novamente.'); } catch {}
+    }, PEER_GONE_GRACE_MS);
+  };
   const _markMediaUp = (src) => {
     if (mediaUpRef.current || endedRef.current) return;
     mediaUpRef.current = true;
@@ -1246,8 +1271,10 @@ function CallScreenInner() {
       console.log('[Call] Restoring minimized LiveKit room');
       roomRef.current = gc.room;
       wsUnsubsRef.current = gc.wsUnsubs || [];
-      callDurationRef.current = gc.duration || 0;
-      setCallDuration(gc.duration || 0);
+      // [2026-10-11 ongoing-call] add the time spent minimized.
+      const _minimizedFor = gc.minimizedAt ? Math.max(0, Math.floor((Date.now() - gc.minimizedAt) / 1000)) : 0;
+      callDurationRef.current = (gc.duration || 0) + _minimizedFor;
+      setCallDuration((gc.duration || 0) + _minimizedFor);
       setPeerConnected(true);
       // [2026-10-10 call-states] restoring a live call: media already flowed.
       mediaUpRef.current = true;
@@ -2164,6 +2191,14 @@ function CallScreenInner() {
     } else {
       roomOpts.rtcConfig = { iceTransportPolicy: 'all' };
     }
+    // [2026-10-11 ligacao-melhorias] retry de reconexão ≤3s (padrão LK chega a 7s).
+    // Junto com CALL_CONNECT_OPTIONS no connect: queda de 25s → áudio de volta em
+    // ~6s após a rede voltar (era 16–17s). Ver services/livekitTuning.js.
+    try {
+      if (typeof DefaultReconnectPolicy === 'function') {
+        roomOpts.reconnectPolicy = new DefaultReconnectPolicy([...CALL_RECONNECT_DELAYS_MS]);
+      }
+    } catch {}
     // [CALL-E2EE 2026-06-28] WEB: wire LiveKit insertable-streams E2EE into
     // the Room constructor (the `e2ee` option must be set BEFORE connect — it
     // can't be attached after). Mobile uses the native frame-cryptor instead
@@ -2618,6 +2653,21 @@ function CallScreenInner() {
       _updateGroupPeer(participant.identity, { participant, name: participant.name || participant.identity });
 
       const remoteIsTrulyConnected = !isCaller || callAcceptedRef.current || isGroupCall;
+      // [2026-10-11 ligacao-melhorias] O outro lado VOLTOU à sala (rejoin completo
+      // após queda > ~20s): desarma o timeout de "sumiu" e tira o "Reconectando…"
+      // que o ParticipantDisconnected ligou — antes o banner ficava preso com o
+      // áudio já de volta (teste: queda de 25s no callee, caller voltava a ouvir
+      // mas seguia "Reconectando").
+      const _wasPeerGone = !!peerGoneTimerRef.current || peerGoneFiredRef.current;
+      try { if (peerGoneTimerRef.current) { clearTimeout(peerGoneTimerRef.current); peerGoneTimerRef.current = null; } } catch {}
+      try {
+        if (_wasPeerGone && !isGroupCall && r.state === ConnectionState.Connected) {
+          setReconnecting(false);
+          if (peerGoneFiredRef.current) { setConnectionFailed(false); setErrorMsg(null); }
+          try { _callDiagAppend('info', 'peer rejoined after ParticipantDisconnected', { call_id: callId }); } catch {}
+        }
+      } catch {}
+      peerGoneFiredRef.current = false;
       if (remoteIsTrulyConnected) {
         setPeerConnected(true);
         setPeerRinging(true);
@@ -2669,6 +2719,12 @@ function CallScreenInner() {
         if (!isGroupCall && !endedRef.current) {
           console.warn('[Call] ParticipantDisconnected — showing Reconnecting, NOT tearing down');
           setReconnecting(true);
+          // [2026-10-11 ligacao-melhorias] Antes ficava em "Reconectando…" PARA
+          // SEMPRE se o outro aparelho morreu/perdeu a rede e o call_end do WS
+          // não chegou (nada armava timeout aqui). Se o outro lado não voltar à
+          // sala em PEER_GONE_GRACE_MS, cai no mesmo estado do hard-timeout
+          // ("Não foi possível reconectar" + Tentar de novo/Encerrar).
+          _armPeerGoneTimer(r);
         }
       } else {
         // Switch the 1:1 display to the next remote if our current one left.
@@ -2869,7 +2925,10 @@ function CallScreenInner() {
       // to "connection failed" so the user can retry. WhatsApp times out at
       // ~12s. We use 15s to match LK's internal ICE-gathering ceiling.
       const CONNECT_TIMEOUT_MS = 15000;
-      const connectPromise = r.connect(url, token);
+      // [2026-10-11 ligacao-melhorias] websocketTimeout/peerConnectionTimeout menores:
+      // o LK reusa estas opções em TODA tentativa de reconexão (sinal pendurado
+      // 15s após a rede voltar era o que atrasava a volta do áudio).
+      const connectPromise = r.connect(url, token, { ...CALL_CONNECT_OPTIONS });
       const timeoutPromise = new Promise((_, reject) => {
         setTimeout(() => reject(new Error('LK connect timeout (15s)')), CONNECT_TIMEOUT_MS);
       });
@@ -2878,6 +2937,11 @@ function CallScreenInner() {
     } catch (e) {
       _diag('connect_err', { msg: String(e?.message || e), stack: String(e?.stack || '').slice(0, 500), url });
       console.error('[Call] LiveKit connect err:', e?.message);
+      // [2026-10-11 ligacao-melhorias] O race de 15s NÃO cancela o r.connect():
+      // sem isso a Room órfã terminava de conectar depois e ficava na sala (o
+      // outro lado via "Tocando"/presença fantasma; nada a desconectava porque
+      // roomRef nunca recebe esta instância). handleReconnect cria outra Room.
+      try { if (roomRef.current !== r) r.disconnect(); } catch {}
       if (endedRef.current) return;
       setErrorMsg(t('call.connectionFailed') || 'Não foi possível conectar.');
       setConnectionFailed(true);
@@ -3218,12 +3282,50 @@ function CallScreenInner() {
         if (!sess.connectedAt || endedRef.current) return;
         _log('midcall_fallback_to_livekit', { reason });
         setReconnecting(true);
-        const go = connectToRoomRef.current;
-        if (typeof go === 'function') {
+        // [2026-10-11 ligacao-melhorias] Teste real (queda de 25s no callee, web):
+        // o fallback disparava AINDA OFFLINE → token falhava 1x e o callee ficava
+        // em "Não foi possível conectar" mesmo com a rede de volta; o caller
+        // entrava sozinho no LiveKit e mostrava o TIMER (cara de conectado) com
+        // silêncio. Agora: re-tenta até 45s (backoff ≤4s) e só tira o
+        // "Reconectando…" quando o outro lado está de fato na sala.
+        const _fbStart = Date.now();
+        let _fbAttempt = 0;
+        const _fbTry = () => {
+          if (endedRef.current) return;
+          const go = connectToRoomRef.current;
+          if (typeof go !== 'function') return;
+          _fbAttempt++;
           Promise.resolve(go()).catch(() => {}).finally(() => {
-            if (roomRef.current && !endedRef.current) setReconnecting(false);
+            if (endedRef.current) return;
+            const rr = roomRef.current;
+            if (rr) {
+              if ((rr.remoteParticipants?.size || 0) > 0) { setReconnecting(false); return; }
+              setReconnecting(true);
+              setConnectionFailed(false);
+              setErrorMsg(null);
+              _armPeerGoneTimer(rr);
+              return;
+            }
+            if (Date.now() - _fbStart > 45000) {
+              _log('midcall_fallback_gave_up', { attempts: _fbAttempt });
+              setReconnecting(false);
+              return; // connectToRoom já deixou connectionFailed + mensagem
+            }
+            setConnectionFailed(false);
+            setErrorMsg(null);
+            setReconnecting(true);
+            // Re-tenta no backoff OU assim que o navegador avisar que a rede voltou.
+            let _fbFired = false;
+            const _fbNext = () => {
+              if (_fbFired) return; _fbFired = true;
+              try { if (typeof window !== 'undefined' && window.removeEventListener) window.removeEventListener('online', _fbNext); } catch {}
+              _fbTry();
+            };
+            try { if (Platform.OS === 'web' && typeof window !== 'undefined' && window.addEventListener) window.addEventListener('online', _fbNext); } catch {}
+            setTimeout(_fbNext, Math.min(1000 * _fbAttempt, 4000));
           });
-        }
+        };
+        _fbTry();
       },
     });
     p2pRef.current = sess;
@@ -3517,6 +3619,17 @@ function CallScreenInner() {
       console.warn(new Error('handleEndCall stack').stack);
     } catch {}
     endedRef.current = true;
+    // [2026-10-11 ongoing-call] Ended WHILE minimized (peer hung up / bar
+    // "end"): the live Room + WS subs were parked in the global call slot and
+    // roomRef was nulled — re-adopt them so the teardown below disconnects
+    // the Room (mic off) instead of leaking it.
+    try {
+      const _gcEnd = _getGC();
+      if (_gcEnd && _gcEnd.callId === callId) {
+        if (!roomRef.current && _gcEnd.room) roomRef.current = _gcEnd.room;
+        if ((!wsUnsubsRef.current || wsUnsubsRef.current.length === 0) && Array.isArray(_gcEnd.wsUnsubs)) wsUnsubsRef.current = _gcEnd.wsUnsubs;
+      }
+    } catch {}
     minimizedRef.current = false;
     _clearGC();
     setEnded(true);
@@ -3769,6 +3882,9 @@ function CallScreenInner() {
       room: roomRef.current,
       wsUnsubs: wsUnsubsRef.current,
       duration: callDurationRef.current,
+      // [2026-10-11 ongoing-call] wall clock at minimize → the in-app bar
+      // (components/CallStatusBar.js) and the restore keep counting.
+      minimizedAt: Date.now(),
       contactEmail,
       isCaller,
     });
@@ -3779,6 +3895,21 @@ function CallScreenInner() {
     if (router.canGoBack()) router.back();
     else router.replace('/chat');
   }, [callId, contactEmail, isCaller, router]);
+
+  // [2026-10-11 ongoing-call] "Mensagem" (WhatsApp parity): minimize the call
+  // and open the chat with this person (or the group) — audio keeps flowing.
+  const handleOpenChatFromCall = useCallback(() => {
+    const peer = typeof contactEmail === 'string' ? contactEmail : '';
+    const conv = conversationId ? String(conversationId) : '';
+    if (!peer && !conv) return;
+    handleMinimize();
+    setTimeout(() => {
+      try {
+        if (conv) router.push(`/chat-conversation?id=${encodeURIComponent(conv)}${peer && !isGroupCall ? `&email=${encodeURIComponent(peer)}` : ''}`);
+        else router.push(`/chat-conversation?email=${encodeURIComponent(peer)}`);
+      } catch {}
+    }, 60);
+  }, [contactEmail, conversationId, isGroupCall, handleMinimize, router]);
 
   // ───── PSTN fallback (#1183 bad-internet) ─────
   // Lazily fetch the peer's verified phone when LK gives up. We don't preload
@@ -4131,6 +4262,7 @@ function CallScreenInner() {
       if (ratingDismissTimerRef.current) { try { clearTimeout(ratingDismissTimerRef.current); } catch {} ratingDismissTimerRef.current = null; }
       if (navAfterEndTimerRef.current) { try { clearTimeout(navAfterEndTimerRef.current); } catch {} navAfterEndTimerRef.current = null; }
       if (reconnectGraceTimerRef.current) { try { clearTimeout(reconnectGraceTimerRef.current); } catch {} reconnectGraceTimerRef.current = null; }
+      if (peerGoneTimerRef.current) { try { clearTimeout(peerGoneTimerRef.current); } catch {} peerGoneTimerRef.current = null; }
 
       if (minimizedRef.current) {
         console.log('[Call] unmounting minimized — preserving LiveKit room');
@@ -5737,6 +5869,18 @@ function CallScreenInner() {
                 </View>
               )}
             </View>
+            {/* [2026-10-11 ongoing-call] "Mensagem": minimize + open the chat. */}
+            {!ended && (_safePeerEmail || conversationId) ? (
+              <TouchableOpacity
+                onPress={handleOpenChatFromCall}
+                style={[styles.backBtn, { marginRight: 10 }]}
+                accessibilityRole="button"
+                accessibilityLabel={t('call.ongoing.message') || 'Mensagem'}
+                hitSlop={{ top: 2, bottom: 2, left: 2, right: 2 }}
+              >
+                <IconMessageCircle size={20} color="#fff" />
+              </TouchableOpacity>
+            ) : null}
             {peerConnected && (
               <View style={styles.encryptionBadge}>
                 <Svg width={11} height={11} viewBox="0 0 24 24" fill="none">

@@ -177,7 +177,10 @@ class CallActionReceiver : BroadcastReceiver() {
       "expo.modules.callkit.PIP_MUTE" -> {
         // [Wave 15 gap G1] PiP RemoteAction toggle mute. Broadcast pra
         // CallActivity (que segura o LK Room) e atualiza Notification.
-        try {
+        // [2026-10-11 ongoing-call] Nobody registered PIP_TOGGLE_MUTE — the
+        // PiP mute button was dead. Toggle the live CallActivity directly.
+        val handled = try { CallActivity.ongoingToggleMute() } catch (_: Throwable) { false }
+        if (!handled) try {
           val muteIntent = Intent("expo.modules.callkit.PIP_TOGGLE_MUTE").setPackage(context.packageName)
           context.sendBroadcast(muteIntent)
         } catch (_: Exception) {}

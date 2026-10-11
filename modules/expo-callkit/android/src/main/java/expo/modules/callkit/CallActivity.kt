@@ -251,6 +251,109 @@ class CallActivity : ComponentActivity() {
     // the Compose UI can render the real photo while LK is still
     // connecting. Mirrors IncomingCallActivity's `caller_avatar` extra.
     const val EXTRA_CALLER_AVATAR = "caller_avatar"
+
+    // ── [2026-10-11 ongoing-call] In-app "Toque para voltar à ligação" bar ──
+    // Live 1:1 call screen (weak) + whether it is the visible full screen.
+    // components/CallStatusBar.js reads ongoingSnapshot() through
+    // ExpoCallKitModule.getCurrentCallSnapshot and drives restore / mute /
+    // hangup through the functions below — JS never touches the Room.
+    @Volatile private var liveRef: java.lang.ref.WeakReference<CallActivity>? = null
+    @Volatile private var uiVisible: Boolean = false
+
+    private fun live(): CallActivity? {
+      val a = liveRef?.get() ?: return null
+      if (a.finishing || a.isFinishing || a.isDestroyed) return null
+      return a
+    }
+
+    @JvmStatic
+    fun ongoingSnapshot(): Map<String, Any>? {
+      val a = live() ?: return null
+      val st = a.state
+      val connected = st.connectionStartedAt > 0L
+      val dur = if (connected) ((System.currentTimeMillis() - st.connectionStartedAt) / 1000L).coerceAtLeast(0L).toInt() else 0
+      val ring = when {
+        st.isReconnecting -> "connecting"
+        connected -> "active"
+        a.isOutgoing -> "ringing"
+        else -> "connecting"
+      }
+      return mapOf(
+        "callId" to a.callId,
+        "contactEmail" to a.callerEmail,
+        "contactName" to a.callerName,
+        "isVideo" to (a.hasVideo || st.isVideo),
+        "mic" to !st.isMuted,
+        "speaker" to st.isSpeakerOn,
+        "durationSec" to dur,
+        "lkConnected" to connected,
+        "ringState" to ring,
+        "minimized" to !uiVisible,
+        "inPip" to st.isInPip,
+        "isGroup" to false,
+        "conversationId" to a.conversationId,
+        "canRestore" to true,
+      )
+    }
+
+    /** Bring the live call screen back (same intent as the ongoing-call
+     *  notification: hits onNewIntent on the running instance). */
+    @JvmStatic
+    fun ongoingRestore(ctx: Context): Boolean {
+      val a = live() ?: return false
+      return try {
+        val i = Intent(ctx, CallActivity::class.java).apply {
+          putExtra(EXTRA_CALL_ID, a.callId)
+          putExtra(EXTRA_CALLER_NAME, a.callerName)
+          addFlags(
+            Intent.FLAG_ACTIVITY_NEW_TASK
+              or Intent.FLAG_ACTIVITY_SINGLE_TOP
+              or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
+              or Intent.FLAG_ACTIVITY_CLEAR_TOP
+          )
+        }
+        ctx.startActivity(i)
+        true
+      } catch (t: Throwable) {
+        Log.w(TAG, "ongoingRestore failed: ${t.message}")
+        false
+      }
+    }
+
+    @JvmStatic
+    fun ongoingSetMuted(muted: Boolean): Boolean {
+      val a = live() ?: return false
+      a.runOnUiThread {
+        try { a.applyMuteToggle(!muted) } catch (t: Throwable) { Log.w(TAG, "ongoingSetMuted: ${t.message}") }
+        ExpoCallKitModule.emitCallUiChanged()
+      }
+      return true
+    }
+
+    /** PiP RemoteAction "Mudo/Som" (was a broadcast nobody received). */
+    @JvmStatic
+    fun ongoingToggleMute(): Boolean {
+      val a = live() ?: return false
+      a.runOnUiThread {
+        try {
+          a.applyMuteToggle(a.state.isMuted)
+          if (a.isInPictureInPictureMode && Build.VERSION.SDK_INT >= 26) {
+            a.setPictureInPictureParams(a.buildPipParams())
+          }
+        } catch (t: Throwable) { Log.w(TAG, "ongoingToggleMute: ${t.message}") }
+        ExpoCallKitModule.emitCallUiChanged()
+      }
+      return true
+    }
+
+    @JvmStatic
+    fun ongoingHangup(): Boolean {
+      val a = live() ?: return false
+      a.runOnUiThread {
+        try { a.finishCall(reason = "user_hangup") } catch (t: Throwable) { Log.w(TAG, "ongoingHangup: ${t.message}") }
+      }
+      return true
+    }
   }
 
   // ────────────── Intent-derived params (immutable for life of activity)
@@ -650,6 +753,7 @@ class CallActivity : ComponentActivity() {
 
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
+    liveRef = java.lang.ref.WeakReference(this) // [2026-10-11 ongoing-call]
 
     // [WAVE 142 GPT-5.5-pro] Parte 5 — Edge-to-edge so the gradient/blur paints
     // under the status + navigation bars. Compose pulls real inset paddings via
@@ -828,42 +932,7 @@ class CallActivity : ComponentActivity() {
           callId = callId,
           conversationId = conversationId,
           onHangup = { finishCall(reason = "user_hangup") },
-          onToggleMute = { desired ->
-            state.isMuted = !desired
-            // [2026-10-10 p2p-android] Ligação indo P2P: o mic é do motor P2P.
-            p2p?.let { s ->
-              try { s.setMicEnabled(desired && !heldByTelecom) } catch (_: Throwable) {}
-              try { s.sendData(org.json.JSONObject().put("type", "audio_muted").put("muted", !desired)) } catch (_: Throwable) {}
-            }
-            // [Wave 15 gap B3, 2026-05-20] Audio mute fast-path: enable/disable
-            // direto na LocalAudioTrack em vez de setMicrophoneEnabled (que
-            // re-publica o track em algumas LK revs, dropando RTP stream +
-            // causando audio glitch). Fallback pra setMicrophoneEnabled se
-            // o track ainda não foi publicado.
-            // [2026-10-10 call-states] Caller still ringing: only remember the
-            // choice (state.isMuted) — publishing now would leak the mic to the
-            // callee's preconnect. The gated publish on answer honours it.
-            if (callerRingGateClosed()) {
-              Log.d(TAG, "[call-states] mute toggle during ring — stored, publish deferred")
-            } else try {
-              val pub = room?.localParticipant?.getTrackPublication(
-                io.livekit.android.room.track.Track.Source.MICROPHONE
-              )
-              // [Wave 20 fix] LK Android LocalAudioTrack doesn't expose public
-              // enable()/disable() — use setMicrophoneEnabled instead. Re-publish
-              // cost is negligible for mute toggle on Android side.
-              lifecycleScope.launch {
-                try { room?.localParticipant?.setMicrophoneEnabled(desired) }
-                catch (t: Throwable) { Log.w(TAG, "setMicrophoneEnabled: ${t.message}") }
-              }
-            } catch (t: Throwable) {
-              Log.w(TAG, "fast mute fail, falling back: ${t.message}")
-              lifecycleScope.launch {
-                try { room?.localParticipant?.setMicrophoneEnabled(desired) } catch (_: Throwable) {}
-              }
-            }
-            try { ExpoCallKitModule.emitLkLocalAudioChanged(desired) } catch (_: Throwable) {}
-          },
+          onToggleMute = { desired -> applyMuteToggle(desired) },
           onToggleCam = onToggleCam@{ desired ->
             // [2026-10-10 p2p-android] Ligação P2P: câmera = replaceTrack no
             // transceiver de vídeo (sem renegociar). O outro lado vira vídeo
@@ -982,7 +1051,7 @@ class CallActivity : ComponentActivity() {
             try { ExpoCallKitModule.emitAudioRouteChanged(if (desired) "speaker" else if (state.audioOutputPreferBluetooth) "bluetooth" else "earpiece") } catch (_: Throwable) {}
           },
           onFlipCamera = { flipCamera() },
-          onMinimize = { tryEnterPip(bringAppForward = true, source = "minimize") },
+          onMinimize = { minimizeCall(source = "minimize") },
           onSendReaction = { emoji -> spawnReaction(emoji) },
           onToggleHand = {
             state.isHandRaised = !state.isHandRaised
@@ -1094,8 +1163,8 @@ class CallActivity : ComponentActivity() {
             // [Wave C-1, 2026-05-21] Emit onOpenChat to JS then enter PiP /
             // move task to back so the navigation stack is visible while the
             // call stays alive in the foreground service + notification.
-            try { ExpoCallKitModule.emitOpenChat(callId, conversationId) } catch (_: Throwable) {}
-            tryEnterPip(bringAppForward = true, source = "open_chat")
+            try { ExpoCallKitModule.emitOpenChat(callId, conversationId, callerEmail) } catch (_: Throwable) {}
+            minimizeCall(source = "open_chat")
           },
           onPickAudioDevice = { type ->
             // [Audio output picker, 2026-05-19] Real route switch via
@@ -1394,6 +1463,9 @@ class CallActivity : ComponentActivity() {
 
   @OptIn(DelicateCoroutinesApi::class)
   override fun onDestroy() {
+    // [2026-10-11 ongoing-call] Forget the live screen + refresh the JS bar.
+    if (liveRef?.get() === this) { liveRef = null; uiVisible = false }
+    try { ExpoCallKitModule.emitCallUiChanged() } catch (_: Throwable) {}
     try { videoQualityDiagJob?.cancel() } catch (_: Throwable) {}
     try { closeP2P("destroy") } catch (_: Throwable) {}
     try { CallVideoQuality.resetCallState() } catch (_: Throwable) {}
@@ -1472,8 +1544,12 @@ class CallActivity : ComponentActivity() {
   }
 
   override fun onBackPressed() {
-    // Hangup must be intentional; ignore stray back-press.
-    Log.d(TAG, "back press ignored — use hangup button")
+    // Hangup must be intentional — back never hangs up. [2026-10-11
+    // ongoing-call] WhatsApp parity: back = minimize (call keeps running,
+    // in-app bar / PiP brings it back).
+    if (finishing || isFinishing) return
+    Log.d(TAG, "back press → minimize")
+    minimizeCall(source = "back")
   }
 
   /**
@@ -3049,6 +3125,7 @@ class CallActivity : ComponentActivity() {
       return
     }
     finishing = true
+    ExpoCallKitModule.emitCallUiChanged() // [2026-10-11 ongoing-call] drop the in-app bar
 
     Log.d(TAG, "finishCall reason=$reason callId=$callId")
     stopRingback()
@@ -3667,7 +3744,76 @@ class CallActivity : ComponentActivity() {
     }
   }
 
+  // [2026-10-11 ongoing-call] Mute toggle, extracted from the Compose
+  // onToggleMute lambda so the in-app call bar (and PiP action) can reuse
+  // the exact same path. `desired` = mic ENABLED.
+  private fun applyMuteToggle(desired: Boolean) {
+    state.isMuted = !desired
+    // [2026-10-10 p2p-android] Ligação indo P2P: o mic é do motor P2P.
+    p2p?.let { s ->
+      try { s.setMicEnabled(desired && !heldByTelecom) } catch (_: Throwable) {}
+      try { s.sendData(org.json.JSONObject().put("type", "audio_muted").put("muted", !desired)) } catch (_: Throwable) {}
+    }
+    // [Wave 15 gap B3, 2026-05-20] Audio mute fast-path: enable/disable
+    // direto na LocalAudioTrack em vez de setMicrophoneEnabled (que
+    // re-publica o track em algumas LK revs, dropando RTP stream +
+    // causando audio glitch). Fallback pra setMicrophoneEnabled se
+    // o track ainda não foi publicado.
+    // [2026-10-10 call-states] Caller still ringing: only remember the
+    // choice (state.isMuted) — publishing now would leak the mic to the
+    // callee's preconnect. The gated publish on answer honours it.
+    if (callerRingGateClosed()) {
+      Log.d(TAG, "[call-states] mute toggle during ring — stored, publish deferred")
+    } else try {
+      val pub = room?.localParticipant?.getTrackPublication(
+        io.livekit.android.room.track.Track.Source.MICROPHONE
+      )
+      // [Wave 20 fix] LK Android LocalAudioTrack doesn't expose public
+      // enable()/disable() — use setMicrophoneEnabled instead. Re-publish
+      // cost is negligible for mute toggle on Android side.
+      lifecycleScope.launch {
+        try { room?.localParticipant?.setMicrophoneEnabled(desired) }
+        catch (t: Throwable) { Log.w(TAG, "setMicrophoneEnabled: ${t.message}") }
+      }
+    } catch (t: Throwable) {
+      Log.w(TAG, "fast mute fail, falling back: ${t.message}")
+      lifecycleScope.launch {
+        try { room?.localParticipant?.setMicrophoneEnabled(desired) } catch (_: Throwable) {}
+      }
+    }
+    try { ExpoCallKitModule.emitLkLocalAudioChanged(desired) } catch (_: Throwable) {}
+  }
+
   // ────────────── PiP
+  //
+  // [2026-10-11 ongoing-call] Explicit minimize (chevron / back / "Mensagem").
+  // Video → system PiP floating over the app (tryEnterPip re-fronts the RN
+  // task). Voice → straight back to the app: the JS in-app bar ("Toque para
+  // voltar à ligação · 02:31", mute, end) is the return path, like WhatsApp —
+  // a PiP window of an avatar would sit on top of the chat the user wants to
+  // use. If PiP is refused for a video call, tryEnterPip still re-fronts the
+  // app and the bar covers the return path.
+  private fun minimizeCall(source: String) {
+    if (finishing || isFinishing) return
+    val video = hasVideo || state.isVideo
+    if (video) {
+      tryEnterPip(bringAppForward = true, source = source)
+      return
+    }
+    try {
+      val launch = packageManager.getLaunchIntentForPackage(packageName)
+      if (launch != null) {
+        launch.addFlags(
+          Intent.FLAG_ACTIVITY_NEW_TASK
+            or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
+            or Intent.FLAG_ACTIVITY_NO_USER_ACTION
+        )
+        armSelfLaunchGuard("minimize_to_app:$source", 2_500L)
+        startActivity(launch)
+      }
+    } catch (t: Throwable) { Log.w(TAG, "minimize to app failed: ${t.message}") }
+    Log.i("CallTrace", "[launch-decision] CallActivity.minimizeCall source=$source video=false callId=$callId")
+  }
 
   /**
    * [2026-10-06 android-outgoing] PiP entry, rewritten. The previous version
@@ -3795,12 +3941,16 @@ class CallActivity : ComponentActivity() {
   // then onStop) from "we finished" and from PiP transitions.
   override fun onResume() {
     super.onResume()
+    uiVisible = !isInPictureInPictureMode // [2026-10-11 ongoing-call]
+    ExpoCallKitModule.emitCallUiChanged()
     Log.i("CallTrace", "[launch-decision] CallActivity.onResume callId=$callId outgoing=$isOutgoing " +
       "ageMs=${System.currentTimeMillis() - createdAtMs} isInPip=$isInPictureInPictureMode taskId=$taskId")
   }
 
   override fun onPause() {
     super.onPause()
+    uiVisible = false // [2026-10-11 ongoing-call] in-app bar takes over
+    ExpoCallKitModule.emitCallUiChanged()
     Log.i("CallTrace", "[launch-decision] CallActivity.onPause callId=$callId outgoing=$isOutgoing " +
       "ageMs=${System.currentTimeMillis() - createdAtMs} isFinishing=$isFinishing finishing=$finishing " +
       "isInPip=$isInPictureInPictureMode status=${state.status}")
@@ -3825,6 +3975,10 @@ class CallActivity : ComponentActivity() {
   ) {
     super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
     state.isInPip = isInPictureInPictureMode
+    // [2026-10-11 ongoing-call] PiP → the app is what the user sees.
+    uiVisible = !isInPictureInPictureMode &&
+      lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)
+    ExpoCallKitModule.emitCallUiChanged()
     Log.d(TAG, "onPictureInPictureModeChanged isInPip=$isInPictureInPictureMode")
     // [Wave 15 gap G1] Refresh PiP params quando estado muda (mute/cam toggle)
     // pro RemoteAction label "Som/Mudo" + "Câm off/on" refletir o estado real.
@@ -4538,7 +4692,7 @@ private fun TopBar(
       Spacer(Modifier.width(12.dp))
       IconChip(
         icon = Icons.Filled.Chat,
-        contentDescription = "Abrir chat",
+        contentDescription = GroupCallStrings.s("message"),
         onClick = onOpenChat,
       )
     }
@@ -4570,20 +4724,28 @@ private fun IconChip(
   contentDescription: String,
   onClick: () -> Unit,
 ) {
+  // [2026-10-11 ongoing-call] 44dp touch target around the 36dp chip.
   Box(
     modifier = Modifier
-      .size(36.dp)
+      .size(44.dp)
       .clip(CircleShape)
-      .background(Color.Black.copy(alpha = 0.45f))
       .clickable { onClick() },
     contentAlignment = Alignment.Center,
   ) {
-    Icon(
-      imageVector = icon,
-      contentDescription = contentDescription,
-      tint = Color.White,
-      modifier = Modifier.size(16.dp),
-    )
+    Box(
+      modifier = Modifier
+        .size(36.dp)
+        .clip(CircleShape)
+        .background(Color.Black.copy(alpha = 0.45f)),
+      contentAlignment = Alignment.Center,
+    ) {
+      Icon(
+        imageVector = icon,
+        contentDescription = contentDescription,
+        tint = Color.White,
+        modifier = Modifier.size(16.dp),
+      )
+    }
   }
 }
 

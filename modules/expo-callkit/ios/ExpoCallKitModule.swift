@@ -409,6 +409,10 @@ public class ExpoCallKitModule: Module {
       // button on the native SwiftUI CallView. Payload: { callId, conversationId }.
       // JS subscriber in callkeep.js calls router.push('/chat-conversation').
       "onOpenChat",
+      // [2026-10-11 ongoing-call] Call screen shown/hidden (minimize, restore,
+      // PiP, hangup) → JS re-reads getCurrentCallSnapshot right away so the
+      // in-app "Toque para voltar à ligação" bar appears/disappears instantly.
+      "onCallUiChanged",
       // [2026-05-22 #1349 fix] Caller-side remote-signaling events bridged
       // from the CallSignalWs receiver loop. Caller-only — the callee path
       // already has `onCallAnswered` (CXAnswerCallAction) and `onIncomingCall`.
@@ -987,7 +991,10 @@ public class ExpoCallKitModule: Module {
     // logic into native instead.
     Function("getCurrentCallSnapshot") { () -> [String: Any]? in
       return self.safeStateSync { () -> [String: Any]? in
-        guard let ctx = self.currentCallContext else { return nil }
+        // [2026-10-11 ongoing-call] currentCallContext is never populated (see
+        // TODO above) — fall back to the live call VC state kept by
+        // OngoingCallState (1:1 CallViewController or GroupCallViewController).
+        guard let ctx = self.currentCallContext else { return OngoingCallState.shared.snapshot() }
         let duration: Int = {
           guard let start = ctx.startedAt else { return 0 }
           return max(0, Int(CFAbsoluteTimeGetCurrent() - start))
@@ -1009,6 +1016,30 @@ public class ExpoCallKitModule: Module {
         )
         return snap.toDictionary()
       }
+    }
+
+    // [2026-10-11 ongoing-call] In-app call bar (components/CallStatusBar.js)
+    // actions. All fire-and-forget on the main thread; return false when no
+    // native call is alive (JS then falls back / hides the bar).
+    Function("restoreOngoingCall") { () -> Bool in
+      return OngoingCallState.shared.restore()
+    }
+
+    Function("setOngoingCallMuted") { (muted: Bool) -> Bool in
+      return OngoingCallState.shared.setMuted(muted)
+    }
+
+    Function("hangupOngoingCall") { () -> Bool in
+      return OngoingCallState.shared.hangup()
+    }
+
+    // JS bar mounted (true) / unmounted (false). While true the native
+    // OngoingCallBarOverlay is not installed (single bar, no duplicates).
+    Function("setInAppCallBarActive") { (active: Bool) -> Bool in
+      DispatchQueue.main.async {
+        OngoingCallBarOverlayController.shared.jsBarActive = active
+      }
+      return true
     }
 
     // [native call screen, 2026-05-16] Mirrors Android's `openNativeCall`.
@@ -1969,9 +2000,22 @@ public class ExpoCallKitModule: Module {
     ) { [weak self] note in
       let callId = note.userInfo?["callId"] as? String ?? ""
       let convId  = note.userInfo?["conversationId"] as? String ?? ""
-      self?.safeSendEvent("onOpenChat", ["callId": callId, "conversationId": convId])
+      // [2026-10-11 ongoing-call] + peer email / group flag so JS can open
+      // the right chat even without a conversation id.
+      let email = note.userInfo?["email"] as? String ?? ""
+      let isGroup = note.userInfo?["isGroup"] as? Bool ?? false
+      self?.safeSendEvent("onOpenChat", ["callId": callId, "conversationId": convId, "email": email, "isGroup": isGroup])
     }
     callStateObservers.append(chatToken)
+    // [2026-10-11 ongoing-call] Call UI shown/hidden → JS bar refresh.
+    let uiToken = nc.addObserver(
+      forName: OngoingCallState.uiChangedNotification,
+      object: nil,
+      queue: q
+    ) { [weak self] _ in
+      self?.safeSendEvent("onCallUiChanged", [:])
+    }
+    callStateObservers.append(uiToken)
     // [2026-10-09 recents-redial] Live INStartCallIntent → JS.
     let startIntentToken = nc.addObserver(
       forName: CallRecentsIntentStore.didReceiveNotification,

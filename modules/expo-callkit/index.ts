@@ -419,7 +419,60 @@ export function onPipChanged(cb: (data: { inPip: boolean }) => void): () => void
  * Returns an unsubscribe function; safe to call before the native module
  * is loaded (returns a no-op unsubscribe).
  */
-export function onOpenChat(cb: (data: { callId: string; conversationId?: string }) => void): () => void {
+// ─── [2026-10-11 ongoing-call] In-app "Toque para voltar à ligação" bar ───
+// components/CallStatusBar.js (via services/call-state-reader.js). All are
+// optional on older native binaries → safe no-ops / null.
+
+/** Live native call snapshot (1:1 or group) or null. Adds `minimized`,
+ *  `inPip`, `isGroup`, `conversationId`, `canRestore` on 2026-10-11+ builds. */
+export function getCurrentCallSnapshot(): Record<string, any> | null {
+  const m: any = getModule();
+  if (!m || typeof m.getCurrentCallSnapshot !== 'function') return null;
+  try { return m.getCurrentCallSnapshot() || null; } catch { return null; }
+}
+
+/** Bring the minimized / PiP call screen back. false = unsupported / no call. */
+export function restoreOngoingCall(): boolean {
+  const m: any = getModule();
+  if (!m || typeof m.restoreOngoingCall !== 'function') return false;
+  try { return !!m.restoreOngoingCall(); } catch { return false; }
+}
+
+export function setOngoingCallMuted(muted: boolean): boolean {
+  const m: any = getModule();
+  if (!m || typeof m.setOngoingCallMuted !== 'function') return false;
+  try { return !!m.setOngoingCallMuted(!!muted); } catch { return false; }
+}
+
+export function hangupOngoingCall(): boolean {
+  const m: any = getModule();
+  if (!m || typeof m.hangupOngoingCall !== 'function') return false;
+  try { return !!m.hangupOngoingCall(); } catch { return false; }
+}
+
+/** JS bar mounted → iOS skips its native fallback overlay (no double bar). */
+export function setInAppCallBarActive(active: boolean): boolean {
+  const m: any = getModule();
+  if (!m || typeof m.setInAppCallBarActive !== 'function') return false;
+  try { return !!m.setInAppCallBarActive(!!active); } catch { return false; }
+}
+
+/** True when the native build supports the in-app bar actions above. */
+export function supportsOngoingCallBar(): boolean {
+  const m: any = getModule();
+  return !!m && typeof m.restoreOngoingCall === 'function';
+}
+
+export function onCallUiChanged(cb: () => void): () => void {
+  const e = getEmitter();
+  if (!e) return () => {};
+  try {
+    const sub = (e as any).addListener('onCallUiChanged', cb);
+    return () => { try { sub.remove(); } catch {} };
+  } catch { return () => {}; }
+}
+
+export function onOpenChat(cb: (data: { callId: string; conversationId?: string; email?: string; isGroup?: boolean }) => void): () => void {
   const e = getEmitter();
   if (!e) return () => {};
   const sub = e.addListener('onOpenChat', cb);

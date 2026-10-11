@@ -141,6 +141,8 @@ struct GroupCallView: View {
     let onHandRaiseToggle: (Bool) -> Void
     /// [2026-10-09 native-group-call] Tap a tile → pin/unpin it in spotlight.
     var onTogglePin: (String) -> Void = { _ in }
+    /// [2026-10-11 ongoing-call] "Mensagem" shortcut (nil = hidden).
+    var onOpenChat: (() -> Void)? = nil
 
     // Local UI state
     @State private var showAudioPicker = false
@@ -266,6 +268,10 @@ struct GroupCallView: View {
                 .lineLimit(1)
                 .padding(.horizontal, 8)
             Spacer()
+            if let openChat = onOpenChat {
+                iconChip(systemName: "message.fill", action: { hapticTap(); openChat() })
+                    .accessibilityLabel(Text(OngoingCallStrings.message))
+            }
             if hasVideo {
                 iconChip(systemName: "camera.rotate.fill", action: { hapticTap(); onSwitchCamera() })
                 iconChip(systemName: session.camEnabled ? "video.fill" : "video.slash.fill", action: {
@@ -289,6 +295,9 @@ struct GroupCallView: View {
                     .font(.system(size: 16, weight: .medium))
                     .foregroundColor(.white)
             }
+            // [2026-10-11 ongoing-call] 44pt hit area around the 36pt chip.
+            .frame(width: 44, height: 44)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
     }

@@ -11,6 +11,7 @@ import { View, Text, TouchableOpacity, Animated, Easing, StyleSheet, Platform, S
 import { useRouter, usePathname } from 'expo-router';
 import { IconPlay, IconPause, IconX, IconMic } from '../Icons';
 import { useLanguage } from '../../context/LanguageContext';
+import { useCallBarHeight } from '../CallStatusBar';
 import {
   useVoiceMiniState, subscribeVoicePosition, getVoicePosition,
   toggleVoiceNote, stopVoiceNote, cycleVoiceRate, getVoiceConversationTitle, VOICE_TICK_MS,
@@ -31,6 +32,8 @@ function fmt(sec) {
 
 export default function VoiceMiniPlayer() {
   const st = useVoiceMiniState();
+  // [2026-10-11 ongoing-call] Sit below the "voltar à ligação" bar when shown.
+  const callBarH = useCallBarHeight();
   const router = useRouter();
   const pathname = usePathname();
   const { t } = useLanguage();
@@ -86,7 +89,7 @@ export default function VoiceMiniPlayer() {
   const tx = prog.interpolate({ inputRange: [0, 1], outputRange: [-w, 0] });
 
   return (
-    <View pointerEvents="box-none" style={[s.host, { top: TOP }]}>
+    <View pointerEvents="box-none" style={[s.host, { top: TOP + callBarH }]}>
       <View style={s.pill} onLayout={(e) => setW(e.nativeEvent.layout.width)}>
         <TouchableOpacity
           onPress={() => toggleVoiceNote(it)}

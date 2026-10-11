@@ -481,3 +481,24 @@ export function applyOpusSdpMunge(sdp, opts = {}) {
     `$1a=fmtp:${pt} ${knobs}\n`
   );
 }
+
+// ────────────────────────────────────────────────────────────────────
+// [2026-10-11 ligacao-melhorias] Reconexão mais rápida após queda de rede.
+// Medido no teste real apitest↔qa2 (edge BR, callee atrás de NAT com o link
+// derrubado de verdade): com os padrões do livekit-client (websocketTimeout
+// 15s, retry até 7s) uma queda de 25s levava 16–17s para o áudio voltar
+// DEPOIS que a rede voltou — a tentativa de sinal iniciada ainda offline
+// ficava pendurada até o timeout de 15s. Com ws 7s / pc 12s / retry ≤3s:
+// 6–6,6s (2 rodadas cada). Quedas ≤15s não mudam (~0,2–0,4s).
+// Puro (sem import do livekit-client): call.js monta o DefaultReconnectPolicy.
+// ────────────────────────────────────────────────────────────────────
+export const CALL_CONNECT_OPTIONS = Object.freeze({
+  websocketTimeout: 7000,
+  peerConnectionTimeout: 12000,
+  maxRetries: 2,
+});
+export const CALL_RECONNECT_DELAYS_MS = Object.freeze([0, 300, 1200, 2000, 2500, 3000, 3000, 3000, 3000, 3000, 3000, 3000, 3000]);
+// 1:1: quanto tempo mostrar "Reconectando…" depois que o OUTRO lado sumiu da
+// sala (ParticipantDisconnected) antes de oferecer "Não foi possível
+// reconectar" — antes ficava preso para sempre se o call_end do WS se perdesse.
+export const PEER_GONE_GRACE_MS = 30000;

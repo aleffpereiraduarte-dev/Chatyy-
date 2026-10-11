@@ -389,7 +389,7 @@ import ErrorBoundary from '../components/ErrorBoundary';
 import OfflineNotice from '../components/OfflineNotice';
 import NotificationToast from '../components/NotificationToast';
 import { CallProvider } from '../context/CallContext';
-import CallStatusBar from '../components/CallStatusBar';
+import CallStatusBar, { CallBarInsetProvider, callBarScreenLayout } from '../components/CallStatusBar';
 // [2026-10-07 voice-native] global voice-note mini player (leaves the chat → keeps playing)
 import VoiceMiniPlayer from '../components/chat/VoiceMiniPlayer';
 import EmailUndoBar from '../components/EmailUndoBar';
@@ -1902,7 +1902,11 @@ export default function RootLayout() {
                     tap to retry before incoming calls silently drop. */}
                 <PushTokenStaleBanner />
                 <ChildRestrictionGuard>
-                <Stack screenOptions={{
+                {/* [2026-10-11 ongoing-call] Pushes the whole stack below the
+                    "Toque para voltar à ligação" bar while a call is minimized
+                    (always mounted — never remounts the navigator). */}
+                <CallBarInsetProvider>
+                <Stack screenLayout={callBarScreenLayout} screenOptions={{
                   headerShown: false,
                   animation: _PUSH,
                   // [2026-09-24] Pinta o fundo do container de cada tela com a cor
@@ -2043,6 +2047,7 @@ export default function RootLayout() {
                   {/* [2026-10-09 native-sheets] Sheet do SISTEMA (detents/grabber/arrastar) p/ <NativeSheet> — components/NativeSheet.js. Web nunca empurra esta rota. */}
                   <Stack.Screen name="native-sheet" options={Platform.OS === 'web' ? { headerShown: false } : nativeSheetScreenOptions} />
                 </Stack>
+                </CallBarInsetProvider>
                 </ChildRestrictionGuard>
                 <Suspense fallback={null}>
                   <ActiveCallBar />

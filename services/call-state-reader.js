@@ -46,8 +46,8 @@ function _loadModule() {
     return _ExpoCallKit;
   }
   try {
-    _ExpoCallKit = require('../modules/expo-callkit').default
-                || require('../modules/expo-callkit');
+    // index.ts has only named exports (no default) — use the namespace.
+    _ExpoCallKit = require('../modules/expo-callkit');
   } catch (e) {
     console.warn('[call-state-reader] ExpoCallKit unavailable:', e?.message);
     _ExpoCallKit = false;
@@ -98,6 +98,13 @@ export function getCurrentCallSnapshotSync() {
       durationSec: Number(raw.durationSec) || 0,
       lkConnected: !!raw.lkConnected,
       ringState: typeof raw.ringState === 'string' ? raw.ringState : 'idle',
+      // [2026-10-11 ongoing-call] In-app bar fields (absent on older native
+      // builds → minimized=false / canRestore=false, i.e. the bar stays hidden).
+      minimized: !!raw.minimized,
+      inPip: !!raw.inPip,
+      isGroup: !!raw.isGroup,
+      conversationId: String(raw.conversationId || ''),
+      canRestore: !!raw.canRestore,
     });
   } catch (e) {
     // OTA bundle on old native build — function missing or threw.
@@ -153,7 +160,11 @@ export function useCurrentCall() {
           || prev.speaker !== next.speaker
           || prev.durationSec !== next.durationSec
           || prev.lkConnected !== next.lkConnected
-          || prev.ringState !== next.ringState) {
+          || prev.ringState !== next.ringState
+          || prev.minimized !== next.minimized
+          || prev.inPip !== next.inPip
+          || prev.isGroup !== next.isGroup
+          || prev.conversationId !== next.conversationId) {
           return next;
         }
         return prev;
@@ -182,6 +193,7 @@ export function useCurrentCall() {
     // Event-driven refresh — bypass the 1s lag on transitions.
     let unsubAnswered = null;
     let unsubEnded = null;
+    let unsubUi = null;
     const mod = _loadModule();
     if (mod) {
       try {
@@ -190,6 +202,11 @@ export function useCurrentCall() {
         }
         if (typeof mod.onCallEnded === 'function') {
           unsubEnded = mod.onCallEnded(() => read());
+        }
+        // [2026-10-11 ongoing-call] minimize / restore / PiP / hangup → the
+        // in-app bar appears or disappears without waiting for the poll.
+        if (typeof mod.onCallUiChanged === 'function') {
+          unsubUi = mod.onCallUiChanged(() => { read(); arm(); });
         }
       } catch (e) {
         // Module exists but emitter shape is different (older native
@@ -201,8 +218,12 @@ export function useCurrentCall() {
     return () => {
       mountedRef.current = false;
       if (interval) clearInterval(interval);
-      try { unsubAnswered && unsubAnswered.remove?.(); } catch {}
-      try { unsubEnded && unsubEnded.remove?.(); } catch {}
+      // index.ts helpers return an unsubscribe FUNCTION (older code assumed a
+      // subscription object) — handle both.
+      const _off = (u) => { try { if (typeof u === 'function') u(); else u?.remove?.(); } catch {} };
+      _off(unsubAnswered);
+      _off(unsubEnded);
+      _off(unsubUi);
     };
   }, []);
 

@@ -293,11 +293,22 @@ class ExpoCallKitModule : Module() {
     /** [Wave C-1, 2026-05-21] Emitted when the user taps the chat icon in the
      *  native Compose CallActivity. JS subscriber in callkeep.js calls
      *  router.push('/chat-conversation?id=<conversationId>'). */
-    fun emitOpenChat(callId: String, conversationId: String) {
+    fun emitOpenChat(callId: String, conversationId: String, email: String = "", isGroup: Boolean = false) {
       instance.get()?.sendEvent("onOpenChat", mapOf(
         "callId" to callId,
-        "conversationId" to conversationId
+        "conversationId" to conversationId,
+        // [2026-10-11 ongoing-call] peer email / group flag so JS can open the
+        // right chat even when the call has no conversation id (incoming).
+        "email" to email,
+        "isGroup" to isGroup
       ))
+    }
+
+    /** [2026-10-11 ongoing-call] Call screen shown/hidden (minimize, restore,
+     *  PiP, hangup) → JS re-reads getCurrentCallSnapshot so the in-app
+     *  "Toque para voltar à ligação" bar appears/disappears instantly. */
+    fun emitCallUiChanged() {
+      try { instance.get()?.sendEvent("onCallUiChanged", mapOf<String, Any>()) } catch (_: Throwable) {}
     }
 
     /**
@@ -468,7 +479,9 @@ class ExpoCallKitModule : Module() {
       // [Wave C-1, 2026-05-21] Back-to-chat button in native call UI.
       // Payload: { callId: String, conversationId: String? }.
       // JS subscriber in callkeep.js pushes /chat-conversation?id=...
-      "onOpenChat"
+      "onOpenChat",
+      // [2026-10-11 ongoing-call] in-app call bar refresh trigger.
+      "onCallUiChanged"
     )
 
     OnCreate {
@@ -935,7 +948,11 @@ class ExpoCallKitModule : Module() {
     // expanding this API.
     Function("getCurrentCallSnapshot") {
       val tracker = CurrentCallTracker.snapshotOrNull()
-      if (tracker == null) return@Function null
+      // [2026-10-11 ongoing-call] The tracker's write sites were never wired —
+      // fall back to the live call screen (1:1 CallActivity or group).
+      if (tracker == null) {
+        return@Function (CallActivity.ongoingSnapshot() ?: GroupCallActivity.ongoingSnapshot())
+      }
       val lkConnected = NativeCallRoom.isConnected()
       val snap = CallStateSnapshot(
         callId = tracker.callId,
@@ -1290,6 +1307,26 @@ class ExpoCallKitModule : Module() {
     // Incoming flow (Stage 4): IncomingCallActivity.onAccept will also call
     // into here once the migration is complete — for now the legacy MainActivity
     // path still runs.
+    // [2026-10-11 ongoing-call] In-app call bar (components/CallStatusBar.js)
+    // actions. false = no live native call (JS hides the bar / falls back).
+    Function("restoreOngoingCall") {
+      CallActivity.ongoingRestore(context) || GroupCallActivity.ongoingRestore(context)
+    }
+
+    Function("setOngoingCallMuted") { muted: Boolean ->
+      CallActivity.ongoingSetMuted(muted) || GroupCallActivity.ongoingSetMuted(muted)
+    }
+
+    Function("hangupOngoingCall") {
+      CallActivity.ongoingHangup() || GroupCallActivity.ongoingHangup()
+    }
+
+    // iOS uses this to suppress its native fallback overlay; Android has no
+    // native in-app bar, so it is a no-op kept for API parity.
+    Function("setInAppCallBarActive") { _: Boolean ->
+      true
+    }
+
     AsyncFunction("openNativeCall") {
       callId: String,
       callerName: String,

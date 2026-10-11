@@ -1,254 +1,379 @@
 /**
- * CallStatusBar — Ongoing call indicator.
+ * CallStatusBar — "Ligação em andamento" (WhatsApp-style ongoing call bar).
  *
- * [Wave Bridge-Surface, 2026-05-21 / Agent 9] Refactored: state now comes
- * from `useCurrentCall()` (services/call-state-reader.js) which reads the
- * native call snapshot via the single sanctioned ExpoModule entry point.
+ * [2026-10-11 ongoing-call] Rewritten. While a call (1:1 or group, voice or
+ * video) is MINIMIZED the user uses the app normally (chat list, open any
+ * chat, send text/photos) and this bar sits on top of every screen:
  *
- * On mobile (iOS/Android): native is the source of truth. JS never touches
- * the LiveKit Room handle, SDP, or ICE candidates — see
- * docs/whatsapp-migration/IMPL-bridge-surface-policy.md.
+ *   ● Toque para voltar à ligação            [mic] [end]
+ *     Fulano · 02:31
  *
- * On web: native module returns null, so we fall back to the legacy
- * CallContext path (web has no PJSIP / CallKit and stays on the JS-driven
- * LiveKit Room).
+ * - Tap → returns to the SAME live call screen (no reconnection): native
+ *   CallViewController / GroupCallViewController (iOS) or CallActivity /
+ *   GroupCallActivity (Android) via ExpoCallKit.restoreOngoingCall; web →
+ *   /call (restores the parked LiveKit Room from services/callState).
+ * - Mute / end quick actions go through the native call screen's own paths
+ *   (setOngoingCallMuted / hangupOngoingCall) so its UI stays in sync.
+ * - The bar PUSHES the navigation stack down (CallBarInsetProvider below +
+ *   app/_layout.js) instead of covering screen headers.
+ * - P&B premium: the strip uses the theme background (status-bar icons keep
+ *   their contrast) with an inverted pill (black on light / white on dark)
+ *   and a breathing dot. 44pt targets, no emoji.
+ *
+ * State source on mobile: the native snapshot (services/call-state-reader.js)
+ * — `minimized` says the call screen is not the visible one. Web (and the
+ * legacy SIP path) keeps the JS CallContext fallback.
  */
-import { useEffect, useState, useRef, useCallback } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, Animated, Platform, StatusBar } from 'react-native';
+import React, { useEffect, useState, useRef, useCallback, useMemo, useSyncExternalStore } from 'react';
+import { View, Text, Pressable, StyleSheet, Animated, Platform } from 'react-native';
 import { useRouter, usePathname } from 'expo-router';
-import { IconPhone, IconPhoneOff, IconVideo } from './Icons';
+import { useSafeAreaInsets, SafeAreaInsetsContext } from 'react-native-safe-area-context';
+import { IconPhone, IconPhoneOff, IconVideo, IconMic, IconMicOff } from './Icons';
 import { useCurrentCall } from '../services/call-state-reader';
 import { useLanguage } from '../context/LanguageContext';
-import AvatarCircle from './AvatarCircle';
-
-// Safe area top padding (no hook import to avoid circular dep). On Android,
-// devices with punch-hole/notch report 36-48px via StatusBar.currentHeight —
-// the prior hardcoded 24px pushed the bar under the clock and made the
-// Desligar button overlap the gesture/notification area (reported 2026-05-12).
-const SAFE_TOP = Platform.OS === 'ios'
-  ? 50
-  : Math.max(24, (StatusBar.currentHeight || 24)) + 4;
 
 // Lazy resolved at module load (outside the component) — does NOT call hooks itself
 let _useCall = null;
 try { _useCall = require('../context/CallContext').useCall; } catch {}
+let _useTheme = null;
+try { _useTheme = require('../context/ThemeContext').useTheme; } catch {}
 
-// White breathing dot that signals a live call. Tiny: 8×8 px, opacity
-// 0.55 → 1 → 0.55 over 1.6s. Cheap, non-distracting.
-function PulseDot() {
-  const op = useRef(new Animated.Value(0.55)).current;
+const IS_NATIVE = Platform.OS === 'ios' || Platform.OS === 'android';
+
+// Height of the bar BELOW the top safe-area inset (pill 44 + 6 breathing room).
+export const CALL_BAR_CONTENT_H = 50;
+
+// ── Tiny external store: is the bar visible? (drives the layout shift) ──
+let _barVisible = false;
+const _barListeners = new Set();
+function _setBarVisible(v) {
+  const nv = !!v;
+  if (nv === _barVisible) return;
+  _barVisible = nv;
+  _barListeners.forEach((fn) => { try { fn(); } catch {} });
+}
+function _subscribeBar(fn) { _barListeners.add(fn); return () => _barListeners.delete(fn); }
+function _getBar() { return _barVisible; }
+
+/** Extra top space the ongoing-call bar takes below the safe-area inset (0 when hidden). */
+export function useCallBarHeight() {
+  const v = useSyncExternalStore(_subscribeBar, _getBar, _getBar);
+  return v ? CALL_BAR_CONTENT_H : 0;
+}
+
+// Real (un-shifted) insets, for screens the OS presents OVER the whole window.
+const RealInsetsContext = React.createContext(null);
+
+/**
+ * Wraps the root navigator. While the bar is visible the whole stack is pushed
+ * below it and screens see top inset 0 (the bar already covers the status-bar
+ * area), so headers / back buttons are never hidden under the bar.
+ * ALWAYS rendered (never toggled) so the navigator is never remounted.
+ */
+export function CallBarInsetProvider({ children }) {
+  const insets = useSafeAreaInsets();
+  const barH = useCallBarHeight();
+  const shifted = useMemo(
+    () => (barH ? { top: 0, bottom: insets.bottom, left: insets.left, right: insets.right } : insets),
+    [barH, insets]
+  );
+  return (
+    <RealInsetsContext.Provider value={insets}>
+      <View style={{ flex: 1, paddingTop: barH ? insets.top + barH : 0 }}>
+        <SafeAreaInsetsContext.Provider value={shifted}>{children}</SafeAreaInsetsContext.Provider>
+      </View>
+    </RealInsetsContext.Provider>
+  );
+}
+
+// iOS presents these as real UIKit modals over the WHOLE window (not inside
+// the shifted container) → they need the real status-bar inset back.
+const IOS_WINDOW_MODALS = new Set(['modal', 'fullScreenModal', 'transparentModal', 'formSheet', 'pageSheet']);
+
+function ModalInsetRestore({ presentation, children }) {
+  const real = React.useContext(RealInsetsContext);
+  const barH = useCallBarHeight();
+  if (!barH || !real || !IOS_WINDOW_MODALS.has(presentation)) return children;
+  return <SafeAreaInsetsContext.Provider value={real}>{children}</SafeAreaInsetsContext.Provider>;
+}
+
+/** Stack `screenLayout` — restores real insets inside iOS window modals. */
+export function callBarScreenLayout({ children, options }) {
+  if (Platform.OS !== 'ios') return children;
+  return <ModalInsetRestore presentation={options?.presentation}>{children}</ModalInsetRestore>;
+}
+
+// Breathing dot that signals a live call (0.45 → 1 over 1.6s).
+function PulseDot({ color }) {
+  const op = useRef(new Animated.Value(0.45)).current;
   useEffect(() => {
     const loop = Animated.loop(
       Animated.sequence([
-        Animated.timing(op, { toValue: 1,    duration: 800, useNativeDriver: true }),
-        Animated.timing(op, { toValue: 0.55, duration: 800, useNativeDriver: true }),
+        Animated.timing(op, { toValue: 1, duration: 800, useNativeDriver: true }),
+        Animated.timing(op, { toValue: 0.45, duration: 800, useNativeDriver: true }),
       ])
     );
     loop.start();
     return () => loop.stop();
   }, []);
-  return (
-    <Animated.View
-      style={{
-        width: 8, height: 8, borderRadius: 4,
-        backgroundColor: '#fff',
-        opacity: op,
-      }}
-    />
-  );
+  return <Animated.View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: color, opacity: op }} />;
+}
+
+function _fmt(sec) {
+  const s = Math.max(0, Math.floor(sec || 0));
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const r = s % 60;
+  const mm = String(m).padStart(2, '0');
+  const ss = String(r).padStart(2, '0');
+  return h > 0 ? `${h}:${mm}:${ss}` : `${mm}:${ss}`;
+}
+
+let _ExpoCallKit;
+function _ck() {
+  if (_ExpoCallKit !== undefined) return _ExpoCallKit;
+  try { _ExpoCallKit = IS_NATIVE ? require('../modules/expo-callkit') : null; } catch { _ExpoCallKit = null; }
+  return _ExpoCallKit;
 }
 
 export default function CallStatusBar() {
-  // [Wave Bridge-Surface, 2026-05-21] Primary state: native snapshot via
-  // the single sanctioned reader. CallContext stays as a web fallback +
-  // SIP/PSTN fallback (Telnyx voice calls go through ChatCallsTab modal,
-  // not the native CallKit/Telecom path, so they keep using CallContext).
   const nativeSnapshot = useCurrentCall();
   const ctxState = _useCall
     ? _useCall()
     : { isInCall: false, callData: null, callStartTime: null, endCall: () => {}, getCallDuration: () => 0 };
+  const theme = _useTheme ? _useTheme() : { isDark: false };
+  const isDark = !!theme?.isDark;
+  const { t } = useLanguage();
+  const router = useRouter();
+  const pathname = usePathname();
+  const insets = useSafeAreaInsets();
 
-  // Prefer the native snapshot. Fall back to JS context for web + SIP.
-  // Build a unified `callData` shape so the rest of the component below
-  // doesn't have to branch on the source.
-  const fromNative = !!nativeSnapshot;
+  // iOS: tell native the JS bar owns the surface (its fallback overlay stays off).
+  useEffect(() => {
+    if (!IS_NATIVE) return undefined;
+    try { _ck()?.setInAppCallBarActive?.(true); } catch {}
+    return () => { try { _ck()?.setInAppCallBarActive?.(false); } catch {} };
+  }, []);
+
+  // ── Resolve the source ──
+  const fromNative = !!nativeSnapshot && !!nativeSnapshot.canRestore;
   const callData = fromNative ? {
     callId: nativeSnapshot.callId,
     contactName: nativeSnapshot.contactName,
     contactEmail: nativeSnapshot.contactEmail,
     isVideo: nativeSnapshot.isVideo,
-    conversationId: '', // not present in the minimal snapshot — read from
-                        // CallContext if absolutely needed (deep-link only)
-    isCaller: false,    // ditto — not surfaced by native, JS treats as N/A
+    isGroup: nativeSnapshot.isGroup,
+    conversationId: nativeSnapshot.conversationId,
     callType: 'native',
   } : ctxState.callData;
-  const isInCall = fromNative ? true : ctxState.isInCall;
-  const endCall = ctxState.endCall; // JS-side cleanup still goes through CallContext
 
-  const { t } = useLanguage();
+  const shouldShow = fromNative
+    ? !!nativeSnapshot.minimized
+    : (!nativeSnapshot && !!ctxState.isInCall && pathname !== '/call');
+
+  // Mute state: native snapshot is authoritative; web reads the parked Room.
+  const [webMuted, setWebMuted] = useState(false);
+  const muted = fromNative ? !nativeSnapshot.mic : webMuted;
+
+  // ── Duration ──
   const [duration, setDuration] = useState(0);
-  const router = useRouter();
-  const pathname = usePathname();
-  const timerRef = useRef(null);
-  const slideAnim = useRef(new Animated.Value(-100)).current;
-
-  // Timer
-  // When state comes from native, durationSec is already authoritative —
-  // we skip the local clock so JS Hermes time can't drift away from CFAbs.
   useEffect(() => {
-    if (fromNative) {
-      setDuration(nativeSnapshot.durationSec);
-      // Cleanup any leftover JS timer from a previous fallback render.
-      if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
-      return;
-    }
-    if (!isInCall || !ctxState.callStartTime) {
-      if (timerRef.current) clearInterval(timerRef.current);
-      setDuration(0);
-      return;
-    }
-    setDuration(ctxState.getCallDuration());
-    timerRef.current = setInterval(() => setDuration(ctxState.getCallDuration()), 1000);
-    return () => { if (timerRef.current) clearInterval(timerRef.current); };
-  }, [fromNative, nativeSnapshot?.durationSec, isInCall, ctxState.callStartTime]);
-
-  // Show/hide animation
-  const shouldShow = isInCall && pathname !== '/call';
-  useEffect(() => {
-    Animated.spring(slideAnim, {
-      toValue: shouldShow ? 0 : -100,
-      friction: 10, tension: 60,
-      useNativeDriver: true,
-    }).start();
-  }, [shouldShow]);
-
-  // GUARANTEED hang up — closes WebRTC, signals peer, clears state.
-  const handleHangUp = useCallback(() => {
-    // 1. Close WebRTC via shared global state (works across module chunks)
-    try {
-      const { hangupGlobalCall } = require('../services/callState');
-      hangupGlobalCall();
-    } catch {}
-    // 2. Send call_end via WS so the OTHER side hangs up too
-    try {
-      const mailWs = require('../services/websocket').default;
-      if (callData?.callId) {
-        // Send via _send if connected; also try sendSignaling fallback
-        if (mailWs?.isConnected && mailWs._send) {
-          mailWs._send({ type: 'call_end', call_id: callData.callId, target_email: callData.contactEmail || '', reason: 'hangup' });
+    if (!shouldShow) return undefined;
+    if (fromNative) { setDuration(nativeSnapshot.durationSec || 0); return undefined; }
+    const tick = () => {
+      // Web: the parked call carries its own clock (services/callState GC).
+      try {
+        const gc = require('../services/callState').getGlobalCall?.();
+        if (gc && gc.callId === callData?.callId && typeof gc.duration === 'number') {
+          const extra = gc.minimizedAt ? Math.floor((Date.now() - gc.minimizedAt) / 1000) : 0;
+          setDuration(gc.duration + extra);
+          try {
+            const mic = gc.room?.localParticipant?.isMicrophoneEnabled;
+            if (typeof mic === 'boolean') setWebMuted(!mic);
+          } catch {}
+          return;
         }
-        if (mailWs?.sendSignaling) {
-          mailWs.sendSignaling('call_end', { call_id: callData.callId, target_email: callData.contactEmail || '', reason: 'hangup' });
-        }
-      }
-    } catch {}
-    // 3. Stop ringtone
-    try { require('../services/ringtone').stopRingtone(); } catch {}
-    // 4. Tell CallKit/CallKeep the call ended (iOS native call UI)
-    try {
-      const { endCall: callKeepEnd } = require('../services/callkeep');
-      if (callData?.callId && callKeepEnd) callKeepEnd(callData.callId);
-    } catch {}
-    // 5. Disable proximity sensor + deactivate audio session so iOS
-    // routes audio back to normal and the screen doesn't stay blank
-    // after a minimized call is hung up via this banner.
-    try {
-      const ExpoAudioSession = require('../modules/expo-audio-session').default;
-      ExpoAudioSession?.enableProximitySensor?.(false);
-      ExpoAudioSession?.deactivate?.().catch?.(() => {});
-    } catch {}
-    // 6. Clear app-level state
-    try { require('./ActiveCallBar').clearActiveCall(); } catch {}
-    try { endCall(); } catch {}
-  }, [callData, endCall]);
+      } catch {}
+      setDuration(ctxState.getCallDuration ? ctxState.getCallDuration() : 0);
+    };
+    tick();
+    const id = setInterval(tick, 1000);
+    return () => clearInterval(id);
+  }, [shouldShow, fromNative, nativeSnapshot?.durationSec, callData?.callId, ctxState.callStartTime]);
 
-  // Return to call
+  // Publish visibility for the layout shift.
+  useEffect(() => { _setBarVisible(shouldShow); }, [shouldShow]);
+  useEffect(() => () => _setBarVisible(false), []);
+
+  // ── Actions ──
   const handlePress = useCallback(() => {
     if (!callData) return;
-    // SIP call (PSTN dial via Telnyx) lives inside ChatCallsTab modal — try to resume via the
-    // OngoingCallBar shared state which has an onResume callback set by ChatCallsTab.
+    if (fromNative) {
+      try { if (_ck()?.restoreOngoingCall?.()) return; } catch {}
+    }
+    // SIP call (PSTN dial via Telnyx) lives inside the ChatCallsTab modal.
     if (callData.callType === 'sip') {
       try {
         const { getOngoingCall } = require('./OngoingCallBar');
         const og = getOngoingCall?.();
         if (typeof og?.onResume === 'function') { og.onResume(); return; }
       } catch {}
-      // Fallback: open the calls tab inside chat
       try { router.push('/chat?tab=calls'); return; } catch {}
     }
-    // [WAVE 117A] Mobile = 100% native. Tap-to-return re-opens native call
-    // screen via ExpoCallKit.openNativeCall. Web resumes via /call.js.
-    if (Platform.OS === 'ios' || Platform.OS === 'android') {
-      try {
-        const ExpoCallKit = require('../modules/expo-callkit');
-        ExpoCallKit.openNativeCall({
-          callId: callData.callId || '',
-          callerName: callData.contactName || '',
-          callerEmail: callData.contactEmail || '',
-          hasVideo: !!callData.isVideo,
-          lkUrl: null,
-          lkToken: null,
-        }).catch((e) => console.warn('[CallStatusBar] openNativeCall failed:', e));
-      } catch (e) { console.warn('[CallStatusBar] openNativeCall import failed:', e); }
-      return;
-    }
-    // Web: navigate back to /call.js
+    // Web (and JS-owned mobile fallback): back to /call, which re-adopts the
+    // parked Room from services/callState (no reconnection).
     try {
       router.push({ pathname: '/call', params: {
         callId: callData.callId || '', contactName: callData.contactName || '',
         contactEmail: callData.contactEmail || '', isVideo: callData.isVideo ? '1' : '0',
-        conversationId: callData.conversationId || '', isCaller: callData.isCaller ? '1' : '0',
-      }});
+        conversationId: callData.conversationId ? String(callData.conversationId) : '', isCaller: callData.isCaller ? '1' : '0',
+      } });
     } catch { try { router.push('/call'); } catch {} }
-  }, [callData, router]);
+  }, [callData, fromNative, router]);
 
-  // Skip render entirely when on /call screen — without this, the bar
-  // (positioned absolute, full width, with green+red children) animates
-  // its translateY from 0→-100 and the bottom 8-10px of the bar bleeds
-  // visible above the call screen as a green+red strip (bug print 2026-05-12).
-  if (!shouldShow) return null;
+  const handleToggleMute = useCallback(() => {
+    if (fromNative) {
+      try { _ck()?.setOngoingCallMuted?.(!muted); } catch {}
+      return;
+    }
+    try {
+      const gc = require('../services/callState').getGlobalCall?.();
+      const lp = gc?.room?.localParticipant;
+      if (lp?.setMicrophoneEnabled) {
+        const next = !!muted; // muted → enable
+        lp.setMicrophoneEnabled(next).catch?.(() => {});
+        setWebMuted(!next);
+      }
+    } catch {}
+  }, [fromNative, muted]);
 
-  const m = Math.floor(duration / 60);
-  const s = duration % 60;
-  const timeStr = `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
-  const contactName = callData?.contactName || callData?.contactEmail?.split('@')[0] || '';
+  const handleHangUp = useCallback(() => {
+    if (fromNative) {
+      try { if (_ck()?.hangupOngoingCall?.()) return; } catch {}
+    }
+    // Web / JS fallback: close the parked Room, signal the peer, clear state.
+    try { require('../services/callState').hangupGlobalCall(); } catch {}
+    try {
+      const mailWs = require('../services/websocket').default;
+      if (callData?.callId) {
+        const payload = { call_id: callData.callId, target_email: callData.contactEmail || '', reason: 'hangup' };
+        if (mailWs?.isConnected && mailWs._send) mailWs._send({ type: 'call_end', ...payload });
+        else if (mailWs?.sendSignaling) mailWs.sendSignaling('call_end', payload);
+      }
+    } catch {}
+    try { require('../services/ringtone').stopRingtone(); } catch {}
+    try {
+      const { endCall: callKeepEnd } = require('../services/callkeep');
+      if (callData?.callId && callKeepEnd) callKeepEnd(callData.callId);
+    } catch {}
+    try {
+      const ExpoAudioSession = require('../modules/expo-audio-session').default;
+      ExpoAudioSession?.enableProximitySensor?.(false);
+      ExpoAudioSession?.deactivate?.().catch?.(() => {});
+    } catch {}
+    try { require('./ActiveCallBar').clearActiveCall(); } catch {}
+    try { ctxState.endCall?.(); } catch {}
+  }, [callData, fromNative, ctxState.endCall]);
+
+  // Slide-in once per appearance.
+  const slide = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    if (!shouldShow) return;
+    slide.setValue(0);
+    Animated.timing(slide, { toValue: 1, duration: 220, useNativeDriver: true }).start();
+  }, [shouldShow]);
+
+  if (!shouldShow || !callData) return null;
+
+  const name = callData.contactName
+    || (callData.contactEmail ? String(callData.contactEmail).split('@')[0] : '')
+    || (callData.isGroup ? (t('call.ongoing.groupCall') || 'Ligação em grupo') : '');
+  const ringState = fromNative ? nativeSnapshot.ringState : 'active';
+  const connected = fromNative ? (nativeSnapshot.lkConnected || ringState === 'active') : true;
+  let sub;
+  if (ringState === 'held') sub = t('call.ongoing.onHold') || 'Em espera';
+  else if (ringState === 'ringing') sub = t('call.ongoing.calling') || 'Chamando…';
+  else if (!connected || ringState === 'connecting') sub = t('call.ongoing.connecting') || 'Conectando…';
+  else sub = _fmt(duration);
+
+  // P&B: strip = theme background; pill = inverted.
+  const stripBg = isDark ? '#000000' : '#FFFFFF';
+  const pillBg = isDark ? '#F2F2F2' : '#111111';
+  const fg = isDark ? '#111111' : '#FFFFFF';
+  const fgDim = isDark ? 'rgba(17,17,17,0.62)' : 'rgba(255,255,255,0.66)';
+  const btnBg = isDark ? 'rgba(17,17,17,0.08)' : 'rgba(255,255,255,0.14)';
+  const tapLabel = t('call.ongoing.tapToReturn') || 'Toque para voltar à ligação';
 
   return (
-    <Animated.View style={[styles.container, { paddingTop: SAFE_TOP, transform: [{ translateY: slideAnim }] }]}>
-      <TouchableOpacity style={styles.bar} onPress={handlePress} activeOpacity={0.8}>
-        <View style={styles.left}>
-          {/* Pulsing dot = "live call now". Plain solid dot before;
-              now breathes between 0.55 and 1 opacity so the bar
-              actively signals the call is ongoing instead of looking
-              like a static banner. */}
-          <PulseDot />
-          {callData?.isVideo ? <IconVideo size={14} color="#fff" /> : <IconPhone size={14} color="#fff" />}
-          <AvatarCircle email={callData?.contactEmail} name={contactName} size={24} />
-          <Text style={styles.name} numberOfLines={1}>{contactName}</Text>
-          <Text style={styles.timer}>{timeStr}</Text>
+    <Animated.View
+      style={[
+        styles.container,
+        {
+          paddingTop: insets.top,
+          height: insets.top + CALL_BAR_CONTENT_H,
+          backgroundColor: stripBg,
+          opacity: slide,
+          transform: [{ translateY: slide.interpolate({ inputRange: [0, 1], outputRange: [-12, 0] }) }],
+        },
+      ]}
+    >
+      <Pressable
+        onPress={handlePress}
+        style={({ pressed }) => [styles.pill, { backgroundColor: pillBg, opacity: pressed ? 0.85 : 1 }]}
+        accessibilityRole="button"
+        accessibilityLabel={`${tapLabel}. ${name} ${sub}`}
+      >
+        <PulseDot color={fg} />
+        {callData.isVideo ? <IconVideo size={15} color={fg} /> : <IconPhone size={15} color={fg} />}
+        <View style={styles.texts}>
+          <Text style={[styles.title, { color: fg }]} numberOfLines={1}>{tapLabel}</Text>
+          <Text style={[styles.sub, { color: fgDim }]} numberOfLines={1}>
+            {name ? `${name} · ${sub}` : sub}
+          </Text>
         </View>
-        <TouchableOpacity
-          style={styles.hangUpBtn}
-          onPress={(e) => { e.stopPropagation?.(); handleHangUp(); }}
-          activeOpacity={0.6}
-          hitSlop={{ top: 15, bottom: 15, left: 15, right: 15 }}
+        <Pressable
+          onPress={handleToggleMute}
+          style={({ pressed }) => [styles.action, { opacity: pressed ? 0.6 : 1 }]}
+          hitSlop={4}
+          accessibilityRole="button"
+          accessibilityLabel={muted ? (t('call.ongoing.unmute') || 'Ativar som') : (t('call.ongoing.mute') || 'Silenciar')}
+          accessibilityState={{ selected: muted }}
         >
-          <IconPhoneOff size={14} color="#fff" />
-          <Text style={styles.hangUpText}>{t('call.hangUp') || 'Desligar'}</Text>
-        </TouchableOpacity>
-      </TouchableOpacity>
+          <View style={[styles.actionCircle, { backgroundColor: muted ? fg : btnBg }]}>
+            {muted ? <IconMicOff size={16} color={pillBg} /> : <IconMic size={16} color={fg} />}
+          </View>
+        </Pressable>
+        <Pressable
+          onPress={handleHangUp}
+          style={({ pressed }) => [styles.action, { opacity: pressed ? 0.6 : 1 }]}
+          hitSlop={4}
+          accessibilityRole="button"
+          accessibilityLabel={t('call.ongoing.end') || 'Encerrar ligação'}
+        >
+          <View style={[styles.actionCircle, { backgroundColor: '#E53935' }]}>
+            <IconPhoneOff size={16} color="#FFFFFF" />
+          </View>
+        </Pressable>
+      </Pressable>
     </Animated.View>
   );
 }
 
 const styles = StyleSheet.create({
-  // WhatsApp-green minimized call bar — matches the native Phone app UX.
-  container: { position: 'absolute', top: 0, left: 0, right: 0, zIndex: 99999, backgroundColor: '#25D366' },
-  bar: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', height: 40, paddingHorizontal: 16 },
-  left: { flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 },
-  dot: { width: 8, height: 8, borderRadius: 4, backgroundColor: '#fff' },
-  name: { color: '#fff', fontSize: 14, fontWeight: '600', flex: 1 },
-  timer: { color: 'rgba(255,255,255,0.95)', fontSize: 13, fontWeight: '700', fontVariant: ['tabular-nums'], marginRight: 12 },
-  hangUpBtn: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: '#C62828', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 20 },
-  hangUpText: { color: '#fff', fontSize: 12, fontWeight: '600' },
+  container: {
+    position: 'absolute', top: 0, left: 0, right: 0,
+    zIndex: 99999, elevation: 30,
+    paddingHorizontal: 8, justifyContent: 'flex-start',
+  },
+  pill: {
+    height: 44, borderRadius: 22,
+    flexDirection: 'row', alignItems: 'center',
+    paddingLeft: 14, paddingRight: 0, gap: 8,
+    shadowColor: '#000', shadowOpacity: 0.18, shadowRadius: 10, shadowOffset: { width: 0, height: 3 },
+  },
+  texts: { flex: 1, minWidth: 0 },
+  title: { fontSize: 13, fontWeight: '700', letterSpacing: 0.1 },
+  sub: { fontSize: 11.5, fontWeight: '500', fontVariant: ['tabular-nums'], marginTop: 1 },
+  action: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
+  actionCircle: { width: 32, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center' },
 });

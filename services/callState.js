@@ -265,5 +265,16 @@ export function hangupGlobalCall() {
   try { gc.localStream?.getTracks?.().forEach(t => { try { t.stop(); } catch {} }); } catch {}
   try { gc.screenStream?.getTracks?.().forEach(t => { try { t.stop(); } catch {} }); } catch {}
   try { (gc.wsUnsubs || []).forEach(fn => { try { fn(); } catch {} }); } catch {}
+  // [2026-10-11 ongoing-call] /call.js parks a LiveKit Room (not a bare
+  // RTCPeerConnection) when minimized — disconnect it too, or ending from the
+  // in-app bar left the mic open, and drop the web <audio> sinks it attached.
+  try { gc.room?.disconnect?.(); } catch {}
+  try {
+    if (typeof document !== 'undefined') {
+      document.querySelectorAll('[data-chatyy-call-audio="1"]').forEach((el) => {
+        try { el.pause?.(); el.srcObject = null; el.remove(); } catch {}
+      });
+    }
+  } catch {}
   return true;
 }

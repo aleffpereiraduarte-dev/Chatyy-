@@ -1709,41 +1709,46 @@ struct OngoingCallBarOverlay: View {
     @State private var elapsed: Int = 0
     @State private var timer: Timer? = nil
 
-    /// WhatsApp green for the audio-only bar; matches OngoingCallBar.js
-    private let barColor = Color(red: 0x12/255.0, green: 0xB7/255.0, blue: 0x6A/255.0)
+    // [2026-10-11 ongoing-call] P&B premium (app is black & white): black pill
+    // bar, white text, breathing white dot. Fallback surface only — the JS
+    // CallStatusBar is primary when mounted (see `jsBarActive`).
+    private let barColor = Color(red: 0x11/255.0, green: 0x11/255.0, blue: 0x11/255.0)
 
     var body: some View {
         Button(action: onTap) {
-            HStack(spacing: 12) {
+            HStack(spacing: 10) {
                 // Pulsing dot — visual cue the call is live.
                 Circle()
                     .fill(Color.white)
                     .frame(width: 8, height: 8)
-                    .opacity(elapsed % 2 == 0 ? 1.0 : 0.5)
+                    .opacity(elapsed % 2 == 0 ? 1.0 : 0.45)
 
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(callerName)
-                        .font(.system(size: 14, weight: .semibold))
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(OngoingCallStrings.tapToReturn)
+                        .font(.system(size: 13, weight: .semibold))
                         .foregroundColor(.white)
                         .lineLimit(1)
-                    Text(Self.formatElapsed(elapsed))
-                        .font(.system(size: 12))
-                        .foregroundColor(.white.opacity(0.85))
-                        .monospacedDigit()
+                    Text(callerName)
+                        .font(.system(size: 11))
+                        .foregroundColor(.white.opacity(0.7))
+                        .lineLimit(1)
                 }
 
                 Spacer(minLength: 8)
 
-                Text("Toque para voltar")
-                    .font(.system(size: 12, weight: .medium))
+                Text(Self.formatElapsed(elapsed))
+                    .font(.system(size: 13, weight: .semibold))
                     .foregroundColor(.white)
+                    .monospacedDigit()
             }
             .padding(.horizontal, 16)
-            .padding(.vertical, 8)
-            .frame(maxWidth: .infinity)
+            .frame(maxWidth: .infinity, minHeight: 44)
             .background(barColor)
+            .clipShape(Capsule())
+            .padding(.horizontal, 12)
         }
         .buttonStyle(.plain)
+        .accessibilityLabel(Text(OngoingCallStrings.tapToReturn))
         .onAppear {
             elapsed = max(0, Int(Date().timeIntervalSince(startedAt)))
             timer?.invalidate()
@@ -1773,6 +1778,13 @@ struct OngoingCallBarOverlay: View {
     private var window: UIWindow?
     private var hosting: UIViewController?
 
+    /// [2026-10-11 ongoing-call] True while the JS in-app bar
+    /// (components/CallStatusBar.js) is mounted — it then owns the surface
+    /// and this native overlay is never installed (no double bar).
+    @objc var jsBarActive: Bool = false {
+        didSet { if jsBarActive { uninstall() } }
+    }
+
     func install(callerName: String,
                  hasVideo: Bool,
                  startedAt: Date,
@@ -1789,7 +1801,10 @@ struct OngoingCallBarOverlay: View {
                 ?? UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene }).first
         else { return }
 
-        let win = UIWindow(windowScene: scene)
+        // [2026-10-11 ongoing-call] Pass-through window: only the bar takes
+        // touches. A plain UIWindow here covered the whole screen and swallowed
+        // every tap → the app was unusable while a voice call was minimized.
+        let win = OngoingCallPassthroughWindow(windowScene: scene)
         win.windowLevel = UIWindow.Level.statusBar + 1
         win.backgroundColor = .clear
         win.isHidden = false
@@ -1807,7 +1822,7 @@ struct OngoingCallBarOverlay: View {
         host.view.backgroundColor = .clear
         // Place the bar just below the status bar / Dynamic Island.
         let safeTop = scene.statusBarManager?.statusBarFrame.height ?? 44
-        host.view.frame = CGRect(x: 0, y: safeTop, width: win.bounds.width, height: 48)
+        host.view.frame = CGRect(x: 0, y: safeTop + 2, width: win.bounds.width, height: 48)
         host.view.autoresizingMask = [.flexibleWidth]
         let container = UIViewController()
         container.view.backgroundColor = .clear

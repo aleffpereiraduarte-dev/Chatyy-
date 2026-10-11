@@ -147,6 +147,14 @@ final class CallViewController: UIViewController, @unchecked Sendable {
     // return. Cleared on restoreFromMinimize() and on real hangup teardown.
     private static var minimizedInstance: CallViewController?
 
+    // [2026-10-11 ongoing-call] Weak pointer to the live 1:1 call VC (on screen,
+    // minimized or in PiP) so OngoingCallState can build the JS snapshot and
+    // the in-app call bar (components/CallStatusBar.js) can restore / mute /
+    // hang up without JS ever touching the Room.
+    private static weak var liveInstance: CallViewController?
+    /// Became visible at least once (a VC still being presented is NOT "minimized").
+    private var hasAppearedOnce = false
+
     let callId: String
     let callerName: String
     let callerEmail: String
@@ -583,8 +591,22 @@ final class CallViewController: UIViewController, @unchecked Sendable {
 
     // MARK: - Lifecycle
 
+    // [2026-10-11 ongoing-call] On-screen / off-screen transitions drive the
+    // in-app "Toque para voltar à ligação" bar (JS) — re-read the snapshot now.
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        hasAppearedOnce = true
+        OngoingCallState.shared.notifyChanged()
+    }
+
+    override func viewDidDisappear(_ animated: Bool) {
+        super.viewDidDisappear(animated)
+        OngoingCallState.shared.notifyChanged()
+    }
+
     override func viewDidLoad() {
         super.viewDidLoad()
+        CallViewController.liveInstance = self // [2026-10-11 ongoing-call]
         view.backgroundColor = UIColor(red: 0x0B/255.0, green: 0x14/255.0, blue: 0x1A/255.0, alpha: 1.0)
         // [2026-10-09 p2p-ios] Tipo da ligação p/ o P2PCallBridge + estado P2P → UI.
         P2PCallBridge.noteCall(callId: callId, hasVideo: hasVideo)
@@ -751,6 +773,23 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         moreBtn.tag = 9007
         moreBtn.addTarget(self, action: #selector(uikitOnMoreTap), for: .touchUpInside)
         topBar.addSubview(moreBtn)
+
+        // [2026-10-11 ongoing-call] "Mensagem" shortcut (WhatsApp parity):
+        // minimizes the call (PiP for video / in-app bar for voice) and opens
+        // the chat with this person. 36pt visual, 44pt hit area.
+        let msgBtn = CallHitExpandButton(type: .system)
+        msgBtn.translatesAutoresizingMaskIntoConstraints = false
+        msgBtn.tintColor = .white
+        let msgCfg = UIImage.SymbolConfiguration(pointSize: 15, weight: .semibold)
+        msgBtn.setImage(UIImage(systemName: "message.fill", withConfiguration: msgCfg), for: .normal)
+        msgBtn.backgroundColor = UIColor.black.withAlphaComponent(0.45)
+        msgBtn.layer.cornerRadius = 18
+        msgBtn.clipsToBounds = true
+        msgBtn.tag = 9008
+        msgBtn.accessibilityLabel = OngoingCallStrings.message
+        msgBtn.isHidden = callerEmail.isEmpty && conversationId.isEmpty
+        msgBtn.addTarget(self, action: #selector(uikitOnMessageTap), for: .touchUpInside)
+        topBar.addSubview(msgBtn)
 
         // 2. Pulse rings container
         let pulseContainer = UIView()
@@ -1081,6 +1120,12 @@ final class CallViewController: UIViewController, @unchecked Sendable {
             moreBtn.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
             moreBtn.widthAnchor.constraint(equalToConstant: 36),
             moreBtn.heightAnchor.constraint(equalToConstant: 36),
+
+            // [2026-10-11 ongoing-call] Message shortcut, left of "More".
+            msgBtn.trailingAnchor.constraint(equalTo: moreBtn.leadingAnchor, constant: -12),
+            msgBtn.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
+            msgBtn.widthAnchor.constraint(equalToConstant: 36),
+            msgBtn.heightAnchor.constraint(equalToConstant: 36),
 
             // Pulse container (sized to fit the bigger avatar + breathing ring)
             pulseContainer.widthAnchor.constraint(equalToConstant: 245),
@@ -1588,6 +1633,8 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         // (further down), so the call ends regardless of who held the VC.
         isMinimizing = false
         CallViewController.minimizedInstance = nil
+        // [2026-10-11 ongoing-call] Remove the in-app "voltar à ligação" bar now.
+        OngoingCallState.shared.notifyChanged()
         stopRingbackTone(reason: "handleHangup")
         // [#1171 redux dismiss, 2026-05-19] Update the visible status BEFORE
         // any async teardown. Previously the VC stayed at "Conectando…" while
@@ -2630,28 +2677,36 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         // Park a strong ref so this exact VC (the live Room's RoomDelegate)
         // survives the dismiss and can be re-presented intact on return.
         CallViewController.minimizedInstance = self
+        // [2026-10-11 ongoing-call] PiP only when there IS remote video to show
+        // (a voice call's PiP window is just a black square). Voice → in-app bar.
         if #available(iOS 15.0, *),
+           (hasVideo || pipAttachedTrack != nil),
            let pip = pipController,
            pip.isPictureInPicturePossible,
            !pip.isPictureInPictureActive {
             pip.startPictureInPicture()
+            OngoingCallState.shared.notifyChanged()
             return
         }
-        // No PiP (audio-only or unsupported device): install floating bar +
-        // dismiss self. The bar is owned by OngoingCallBarOverlayController
-        // which holds a weak ref to us so tap-to-restore can re-present.
-        // startedAt: best-effort = now. The bar reads CallSessionState
-        // directly for the canonical elapsed timer, but we hand a fallback
-        // so the bar appears immediately even before the first session tick.
-        OngoingCallBarOverlayController.shared.install(
-            callerName: callerName,
-            hasVideo: hasVideo,
-            startedAt: Date(),
-            onTapRestore: { [weak self] in
-                self?.restoreFromMinimize()
-            }
-        )
-        dismiss(animated: true, completion: nil)
+        // No PiP (audio-only or unsupported device): dismiss self and let the
+        // in-app bar take over. [2026-10-11 ongoing-call] The JS bar
+        // (components/CallStatusBar.js — live timer, mute, end, pushes content
+        // down) is the primary surface; the native overlay below is only the
+        // fallback for JS bundles that don't mount it (they never call
+        // setInAppCallBarActive). It holds a weak ref to us for tap-to-restore.
+        if !OngoingCallBarOverlayController.shared.jsBarActive {
+            OngoingCallBarOverlayController.shared.install(
+                callerName: callerName,
+                hasVideo: hasVideo,
+                startedAt: callConnectedAt ?? Date(),
+                onTapRestore: { [weak self] in
+                    self?.restoreFromMinimize()
+                }
+            )
+        }
+        dismiss(animated: true) {
+            OngoingCallState.shared.notifyChanged()
+        }
     }
 
     /// [Wave C-1, 2026-05-21] Chat button handler: post an
@@ -2665,7 +2720,10 @@ final class CallViewController: UIViewController, @unchecked Sendable {
             object: nil,
             userInfo: [
                 "callId": callId,
-                "conversationId": conversationId
+                "conversationId": conversationId,
+                // [2026-10-11 ongoing-call] Peer email so JS can open the 1:1
+                // chat even when the call carries no conversation id (incoming).
+                "email": callerEmail
             ]
         )
         // Minimise so JS navigation is reachable.
@@ -2677,6 +2735,12 @@ final class CallViewController: UIViewController, @unchecked Sendable {
     /// ProviderDelegate's presenter resolver to handle the case where the JS
     /// shell pushed new VCs while we were minimised.
     fileprivate func restoreFromMinimize() {
+        // [2026-10-11 ongoing-call] Docked in PiP → stopping PiP runs
+        // restoreUserInterfaceForPictureInPictureStop, which re-presents us.
+        if #available(iOS 15.0, *), let pip = pipController, pip.isPictureInPictureActive {
+            pip.stopPictureInPicture()
+            return
+        }
         // [minimize-drop fix 2026-05-26] We're coming back to fullscreen, so a
         // subsequent dismiss (next minimize / hangup) is re-evaluated fresh.
         // (deinit shouldn't run while we're re-presented, but reset defensively
@@ -3229,6 +3293,79 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         ) { [weak self] _ in
             self?.stopRingbackTone(reason: "willResignActive")
         }
+    }
+
+    // MARK: - Ongoing call (in-app bar) [2026-10-11 ongoing-call]
+    //
+    // Read/act surface for OngoingCallState (OngoingCallSupport.swift). All of
+    // these run on the main thread (OngoingCallState dispatches there).
+
+    private static func ongoingVC() -> CallViewController? {
+        if let vc = minimizedInstance, !vc.didHangup { return vc }
+        if let vc = liveInstance, !vc.didHangup { return vc }
+        return nil
+    }
+
+    static func hasOngoing() -> Bool {
+        return ongoingVC() != nil
+    }
+
+    /// Snapshot dict (same keys as CallStateSnapshot + minimized/isGroup/
+    /// conversationId/canRestore). nil = no live 1:1 call.
+    static func ongoingSnapshot() -> [String: Any]? {
+        guard let vc = ongoingVC() else { return nil }
+        var inPip = false
+        if #available(iOS 15.0, *), let pip = vc.pipController, pip.isPictureInPictureActive { inPip = true }
+        let offScreen = vc.isViewLoaded && vc.view.window == nil
+        let minimized = inPip || (minimizedInstance === vc) || (vc.hasAppearedOnce && offScreen)
+        let connected = vc.callConnectedAt != nil
+        let duration: Int = {
+            guard let at = vc.callConnectedAt else { return 0 }
+            return max(0, Int(Date().timeIntervalSince(at)))
+        }()
+        let ringState: String = vc.session.isReconnecting ? "connecting"
+            : (connected ? (vc.session.onHold ? "held" : "active") : (vc.isOutgoing ? "ringing" : "connecting"))
+        return [
+            "callId": vc.callId,
+            "contactEmail": vc.callerEmail,
+            "contactName": vc.callerName,
+            "isVideo": vc.hasVideo || vc.pipAttachedTrack != nil,
+            "mic": vc.session.micEnabled,
+            "speaker": vc.session.speakerOn,
+            "durationSec": duration,
+            "lkConnected": connected,
+            "ringState": ringState,
+            "minimized": minimized,
+            "inPip": inPip,
+            "isGroup": false,
+            "conversationId": vc.conversationId,
+            "canRestore": true,
+        ]
+    }
+
+    @discardableResult
+    static func ongoingRestore() -> Bool {
+        guard let vc = ongoingVC() else { return false }
+        vc.restoreFromMinimize()
+        return true
+    }
+
+    @discardableResult
+    static func ongoingSetMuted(_ muted: Bool) -> Bool {
+        guard let vc = ongoingVC() else { return false }
+        let enabled = !muted
+        vc.session.micEnabled = enabled
+        vc.applyMicEnabled(enabled)
+        vc.setControlActive(vc.view.viewWithTag(9002) as? UIButton, active: !enabled,
+                            symbol: enabled ? "mic.fill" : "mic.slash.fill")
+        return true
+    }
+
+    @discardableResult
+    static func ongoingHangup() -> Bool {
+        guard let vc = ongoingVC() else { return false }
+        vc.handleHangup()
+        return true
     }
 
     // MARK: - PiP (Stage #993)
@@ -3910,6 +4047,13 @@ final class CallViewController: UIViewController, @unchecked Sendable {
     @objc private func uikitOnMinimizeTap() {
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
         handleMinimize()
+    }
+
+    // [2026-10-11 ongoing-call] "Mensagem": minimize + open this person's chat.
+    @objc private func uikitOnMessageTap() {
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        tapFeedback(view.viewWithTag(9008) as? UIButton)
+        openChat()
     }
 
     // [UI rewrite 2026-05-25] Active-state tint for a glass control button:
@@ -5538,7 +5682,17 @@ extension CallViewController: AVPictureInPictureControllerDelegate {
         // Room remains owned by us; the user can tap the PiP window to come
         // back. If they swipe to close PiP, the system fires
         // pictureInPictureControllerDidStopPictureInPicture and we re-present.
-        dismiss(animated: false, completion: nil)
+        // [2026-10-11 ongoing-call] PiP can also start on its own (app goes to
+        // background → willResignActive observer). Park + flag as a minimize
+        // in that path too, or the dismiss would dealloc us and deinit would
+        // tear the live Room down.
+        if !didHangup {
+            isMinimizing = true
+            CallViewController.minimizedInstance = self
+        }
+        dismiss(animated: false) {
+            OngoingCallState.shared.notifyChanged()
+        }
     }
     func pictureInPictureController(_ controller: AVPictureInPictureController,
                                     failedToStartPictureInPictureWithError error: Error) {

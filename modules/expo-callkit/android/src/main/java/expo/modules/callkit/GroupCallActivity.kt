@@ -119,6 +119,79 @@ class GroupCallActivity : ComponentActivity() {
 
     fun bareEmail(identity: String): String =
       identity.substringBefore('#').trim().lowercase()
+
+    // ── [2026-10-11 ongoing-call] In-app "voltar à ligação" bar (JS) ──
+    @Volatile private var liveRef: java.lang.ref.WeakReference<GroupCallActivity>? = null
+    @Volatile private var uiVisible: Boolean = false
+
+    private fun live(): GroupCallActivity? {
+      val a = liveRef?.get() ?: return null
+      if (a.finished || a.isFinishing || a.isDestroyed) return null
+      return a
+    }
+
+    @JvmStatic
+    fun ongoingSnapshot(): Map<String, Any>? {
+      val a = live() ?: return null
+      val connected = a.connectedAtMs > 0L
+      val dur = if (connected) ((System.currentTimeMillis() - a.connectedAtMs) / 1000L).coerceAtLeast(0L).toInt() else 0
+      return mapOf(
+        "callId" to a.roomName,
+        "contactEmail" to "",
+        "contactName" to a.title,
+        "isVideo" to a.hasVideo,
+        "mic" to a.micEnabled,
+        "speaker" to false,
+        "durationSec" to dur,
+        "lkConnected" to connected,
+        "ringState" to (if (connected) "active" else "connecting"),
+        "minimized" to !uiVisible,
+        "inPip" to a.isInPictureInPictureMode,
+        "isGroup" to true,
+        "conversationId" to a.conversationId,
+        "canRestore" to true,
+      )
+    }
+
+    @JvmStatic
+    fun ongoingRestore(ctx: Context): Boolean {
+      val a = live() ?: return false
+      return try {
+        val i = Intent(ctx, GroupCallActivity::class.java).apply {
+          putExtra(CallActivity.EXTRA_CALL_ID, a.roomName)
+          addFlags(
+            Intent.FLAG_ACTIVITY_NEW_TASK
+              or Intent.FLAG_ACTIVITY_SINGLE_TOP
+              or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
+              or Intent.FLAG_ACTIVITY_CLEAR_TOP
+          )
+        }
+        ctx.startActivity(i)
+        true
+      } catch (t: Throwable) {
+        Log.w(TAG, "ongoingRestore failed: ${t.message}")
+        false
+      }
+    }
+
+    @JvmStatic
+    fun ongoingSetMuted(muted: Boolean): Boolean {
+      val a = live() ?: return false
+      a.runOnUiThread {
+        try { a.setMicFromOutside(!muted) } catch (t: Throwable) { Log.w(TAG, "ongoingSetMuted: ${t.message}") }
+        ExpoCallKitModule.emitCallUiChanged()
+      }
+      return true
+    }
+
+    @JvmStatic
+    fun ongoingHangup(): Boolean {
+      val a = live() ?: return false
+      a.runOnUiThread {
+        try { a.finishCall("user_hangup") } catch (t: Throwable) { Log.w(TAG, "ongoingHangup: ${t.message}") }
+      }
+      return true
+    }
   }
 
   // Intent state.
@@ -240,6 +313,7 @@ class GroupCallActivity : ComponentActivity() {
 
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
+    liveRef = java.lang.ref.WeakReference(this) // [2026-10-11 ongoing-call]
     // [2026-10-10 group-call-i18n] Idioma do app (espelhado pelo JS) p/ os textos.
     GroupCallStrings.load(applicationContext)
     statusOverride = GroupCallStrings.s("connecting")
@@ -1061,6 +1135,15 @@ class GroupCallActivity : ComponentActivity() {
     titles.addView(titleText)
     titles.addView(statusText)
     header.addView(titles, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+    // [2026-10-11 ongoing-call] "Mensagem": open the group chat + minimize.
+    if (conversationId.isNotEmpty()) {
+      val chat = roundButton(40, Color.parseColor("#2C2C2E"),
+        drawable("gc_chat", android.R.drawable.sym_action_chat), Color.WHITE, GroupCallStrings.s("message")) {
+        try { ExpoCallKitModule.emitOpenChat(roomName, conversationId, "", true) } catch (_: Throwable) {}
+        minimizeCall()
+      }
+      header.addView(chat, LinearLayout.LayoutParams(dp(44), dp(44)))
+    }
     root.addView(header)
     statusBar = header
 
@@ -1115,12 +1198,7 @@ class GroupCallActivity : ComponentActivity() {
     }
 
     muteBtn = roundButton(52, Color.parseColor("#2C2C2E"), drawable("gc_mic", android.R.drawable.ic_btn_speak_now), Color.WHITE, GroupCallStrings.s("microphone")) {
-      micEnabled = !micEnabled
-      refreshControlStates()
-      lifecycleScope.launch {
-        try { room?.localParticipant?.setMicrophoneEnabled(micEnabled) }
-        catch (t: Throwable) { Log.w(TAG, "setMicrophoneEnabled failed: ${t.message}") }
-      }
+      setMicFromOutside(!micEnabled)
     }
     addCtl(muteBtn, 52)
 
@@ -1246,6 +1324,9 @@ class GroupCallActivity : ComponentActivity() {
 
   @OptIn(DelicateCoroutinesApi::class)
   override fun onDestroy() {
+    // [2026-10-11 ongoing-call] Forget the live screen + refresh the JS bar.
+    if (liveRef?.get() === this) { liveRef = null; uiVisible = false }
+    try { ExpoCallKitModule.emitCallUiChanged() } catch (_: Throwable) {}
     try { unregisterReceiver(closeReceiver) } catch (_: Exception) {}
     ui.removeCallbacksAndMessages(null)
     stopRingback()
@@ -1279,6 +1360,7 @@ class GroupCallActivity : ComponentActivity() {
   private fun finishCall(reason: String) {
     if (finished) { finish(); return }
     finished = true
+    ExpoCallKitModule.emitCallUiChanged() // [2026-10-11 ongoing-call]
     Log.d(TAG, "finishCall reason=$reason room=$roomName")
     ui.removeCallbacksAndMessages(null)
     stopRingback()
@@ -1309,6 +1391,29 @@ class GroupCallActivity : ComponentActivity() {
     } catch (t: Throwable) {
       Log.w(TAG, "endTelecom failed: ${t.message}")
     }
+  }
+
+  /** [2026-10-11 ongoing-call] Mic toggle shared by the button and the
+   *  in-app call bar. `enabled` = mic open. */
+  private fun setMicFromOutside(enabled: Boolean) {
+    micEnabled = enabled
+    refreshControlStates()
+    lifecycleScope.launch {
+      try { room?.localParticipant?.setMicrophoneEnabled(micEnabled) }
+      catch (t: Throwable) { Log.w(TAG, "setMicrophoneEnabled failed: ${t.message}") }
+    }
+  }
+
+  override fun onResume() {
+    super.onResume()
+    uiVisible = !isInPictureInPictureMode // [2026-10-11 ongoing-call]
+    ExpoCallKitModule.emitCallUiChanged()
+  }
+
+  override fun onPause() {
+    super.onPause()
+    uiVisible = false // [2026-10-11 ongoing-call] in-app bar takes over
+    ExpoCallKitModule.emitCallUiChanged()
   }
 
   private fun minimizeCall() {
@@ -1366,6 +1471,10 @@ class GroupCallActivity : ComponentActivity() {
     newConfig: Configuration
   ) {
     super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
+    // [2026-10-11 ongoing-call]
+    uiVisible = !isInPictureInPictureMode &&
+      lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)
+    ExpoCallKitModule.emitCallUiChanged()
     val vis = if (isInPictureInPictureMode) View.GONE else View.VISIBLE
     controlsRow?.visibility = vis
     statusBar?.visibility = vis

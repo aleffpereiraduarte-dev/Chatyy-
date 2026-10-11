@@ -132,6 +132,8 @@ final class GroupCallViewController: UIViewController, @unchecked Sendable {
     private var noAnswerTimer: Timer?
     private var systemMuteObserver: NSObjectProtocol?
     private let callStartedAt = Date()
+    /// [2026-10-11 ongoing-call] Became visible at least once.
+    private var hasAppearedOnce = false
     /// identity → last time LiveKit reported them speaking (main only).
     private var lastSpokeAt: [String: Date] = [:]
     private var lastReorderAt = Date.distantPast
@@ -205,6 +207,12 @@ final class GroupCallViewController: UIViewController, @unchecked Sendable {
         super.viewDidLoad()
         view.backgroundColor = .black
 
+        // [2026-10-11 ongoing-call] "Mensagem" only when we know the group chat.
+        var openChatAction: (() -> Void)? = nil
+        if !conversationId.isEmpty {
+            openChatAction = { [weak self] in self?.openChat() }
+        }
+
         let rootView = GroupCallView(
             session: session,
             roomName: displayTitle,
@@ -219,7 +227,9 @@ final class GroupCallViewController: UIViewController, @unchecked Sendable {
             onMinimize: { [weak self] in self?.minimize() },
             onSendReaction: { [weak self] emoji in self?.sendReaction(emoji) },
             onHandRaiseToggle: { [weak self] raised in self?.publishHandRaise(raised) },
-            onTogglePin: { [weak self] identity in self?.togglePin(identity) }
+            onTogglePin: { [weak self] identity in self?.togglePin(identity) },
+            // [2026-10-11 ongoing-call] "Mensagem" → minimize + open the group chat.
+            onOpenChat: openChatAction
         )
 
         let host = UIHostingController(rootView: rootView)
@@ -268,8 +278,16 @@ final class GroupCallViewController: UIViewController, @unchecked Sendable {
 
     override var preferredStatusBarStyle: UIStatusBarStyle { .lightContent }
 
+    // [2026-10-11 ongoing-call] On/off-screen transitions drive the in-app bar.
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        hasAppearedOnce = true
+        OngoingCallState.shared.notifyChanged()
+    }
+
     override func viewDidDisappear(_ animated: Bool) {
         super.viewDidDisappear(animated)
+        OngoingCallState.shared.notifyChanged()
         // Dismissed by someone else (CXEndCallAction from the lock screen /
         // system pill, stale-surface sweep) without our hangup → tear down.
         if !isMinimizing && !flags.didHangup && (isBeingDismissed || presentingViewController == nil) {
@@ -514,6 +532,7 @@ final class GroupCallViewController: UIViewController, @unchecked Sendable {
         if GroupCallViewController.activeInstance === self {
             GroupCallViewController.activeInstance = nil
         }
+        OngoingCallState.shared.notifyChanged() // [2026-10-11 ongoing-call]
         if !alreadyDismissed {
             dismiss(animated: true, completion: nil)
         }
@@ -530,15 +549,93 @@ final class GroupCallViewController: UIViewController, @unchecked Sendable {
         let started = callStartedAt
         dismiss(animated: true) { [weak self] in
             self?.isMinimizing = false
-            OngoingCallBarOverlayController.shared.install(
-                callerName: title,
-                hasVideo: video,
-                startedAt: started,
-                onTapRestore: {
-                    GroupCallViewController.restoreActive()
-                }
-            )
+            // [2026-10-11 ongoing-call] JS bar (CallStatusBar) is primary; the
+            // native overlay is only the fallback for bundles without it.
+            if !OngoingCallBarOverlayController.shared.jsBarActive {
+                OngoingCallBarOverlayController.shared.install(
+                    callerName: title,
+                    hasVideo: video,
+                    startedAt: started,
+                    onTapRestore: {
+                        GroupCallViewController.restoreActive()
+                    }
+                )
+            }
+            OngoingCallState.shared.notifyChanged()
         }
+    }
+
+    /// [2026-10-11 ongoing-call] "Mensagem": JS opens the group chat
+    /// (ExpoCallKitOpenChat → onOpenChat), then we minimize.
+    private func openChat() {
+        NotificationCenter.default.post(
+            name: Notification.Name("ExpoCallKitOpenChat"),
+            object: nil,
+            userInfo: [
+                "callId": roomName,
+                "conversationId": conversationId,
+                "email": "",
+                "isGroup": true
+            ]
+        )
+        minimize()
+    }
+
+    // MARK: - Ongoing call (in-app bar) [2026-10-11 ongoing-call]
+
+    private static func ongoingVC() -> GroupCallViewController? {
+        if let vc = activeInstance, !vc.flags.didHangup { return vc }
+        return nil
+    }
+
+    static func hasOngoing() -> Bool {
+        return ongoingVC() != nil
+    }
+
+    static func ongoingSnapshot() -> [String: Any]? {
+        guard let vc = ongoingVC() else { return nil }
+        let offScreen = !vc.isViewLoaded || vc.view.window == nil
+        let minimized = vc.hasAppearedOnce && offScreen
+        let connected = vc.session.status == GroupCallStrings.connected
+        return [
+            "callId": vc.roomName,
+            "contactEmail": "",
+            "contactName": vc.displayTitle,
+            "isVideo": vc.hasVideo,
+            "mic": vc.session.micEnabled,
+            "speaker": vc.session.speakerOn,
+            "durationSec": max(0, Int(Date().timeIntervalSince(vc.callStartedAt))),
+            "lkConnected": connected,
+            "ringState": connected ? "active" : "connecting",
+            "minimized": minimized,
+            "inPip": false,
+            "isGroup": true,
+            "conversationId": vc.conversationId,
+            "canRestore": true,
+        ]
+    }
+
+    @discardableResult
+    static func ongoingRestore() -> Bool {
+        guard ongoingVC() != nil else { return false }
+        OngoingCallBarOverlayController.shared.uninstall()
+        restoreActive()
+        return true
+    }
+
+    @discardableResult
+    static func ongoingSetMuted(_ muted: Bool) -> Bool {
+        guard let vc = ongoingVC() else { return false }
+        vc.session.micEnabled = !muted
+        vc.applyMicEnabled(!muted)
+        return true
+    }
+
+    @discardableResult
+    static func ongoingHangup() -> Bool {
+        guard let vc = ongoingVC() else { return false }
+        vc.handleHangup(reason: "user_hangup", alreadyDismissed: vc.presentingViewController == nil)
+        return true
     }
 
     static func restoreActive() {

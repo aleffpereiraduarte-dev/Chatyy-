@@ -163,12 +163,17 @@ export async function setupCallKeep() {
     // handler pushes the /chat-conversation route so the conversation is visible
     // while the call continues in the background. Mirrors WhatsApp behaviour.
     try {
-      ExpoCallKit.onOpenChat?.(({ callId, conversationId }) => {
-        if (conversationId) {
-          try {
-            require('expo-router').router.push(`/chat-conversation?id=${conversationId}`);
-          } catch {}
-        }
+      ExpoCallKit.onOpenChat?.(({ callId, conversationId, email, isGroup }) => {
+        // [2026-10-11 ongoing-call] Incoming 1:1 calls often carry no
+        // conversation id — fall back to the peer email (chat-conversation
+        // resolves/creates the direct chat from ?email=).
+        const conv = conversationId ? String(conversationId) : '';
+        const peer = email ? String(email) : '';
+        let path = '';
+        if (conv) path = `/chat-conversation?id=${encodeURIComponent(conv)}${!isGroup && peer ? `&email=${encodeURIComponent(peer)}` : ''}`;
+        else if (peer && !isGroup) path = `/chat-conversation?email=${encodeURIComponent(peer)}`;
+        if (!path) return;
+        try { require('expo-router').router.push(path); } catch {}
       });
     } catch {}
 

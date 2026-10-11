@@ -693,8 +693,9 @@ public class NativeCallTokenFetcher {
     /// idêntico ao comportamento anterior).
     public static func connectOptions(forToken token: String) -> ConnectOptions? {
         let ice = iceServers(forToken: token)
-        if ice.isEmpty { return nil }
-        return ConnectOptions(iceServers: ice, iceTransportPolicy: .all)
+        // [2026-10-11 ligacao-melhorias] SDK 2.0.18 padrão = 3 tentativas/2s → queda de ~10s já encerrava a ligação; 10×1,5s aguenta ~25–30s.
+        if ice.isEmpty { return ConnectOptions(reconnectAttempts: 10, reconnectAttemptDelay: 1.5) }
+        return ConnectOptions(reconnectAttempts: 10, reconnectAttemptDelay: 1.5, iceServers: ice, iceTransportPolicy: .all)
     }
 
     /// Lê `iceServers` do envelope ({urls: String|[String], username?, credential?}).
