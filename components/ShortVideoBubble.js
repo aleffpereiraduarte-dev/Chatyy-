@@ -37,6 +37,7 @@ import {
   SHORT_VIDEO_TUNING,
   SHORT_VIDEO_META_KEYS,
 } from '../services/shortVideoConfig';
+import { cachedVideoSource } from '../services/videoCacheSource'; // [2026-10-10 native-audit] native video disk cache
 
 // Lazy-load the native shorts player so the bubble works in dev even when
 // the binary hasn't been linked. Falls back to expo-video, then to a
@@ -239,7 +240,7 @@ function ExpoVideoFallback({ uri, shouldPlay, onReady }) {
   if (!ev?.useVideoPlayer || !ev?.VideoView) return null;
   const { useVideoPlayer, VideoView } = ev;
 
-  const player = useVideoPlayer(uri, (p) => {
+  const player = useVideoPlayer(cachedVideoSource(uri), (p) => {
     try {
       p.muted = true;
       p.loop = true;

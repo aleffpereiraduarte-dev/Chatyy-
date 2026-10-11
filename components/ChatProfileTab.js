@@ -123,6 +123,7 @@ import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import { useAuth, isChildAccount, getChildRestrictions } from '../context/AuthContext';
 import { useBiometric } from '../context/BiometricContext';
+import { PSTN_ENABLED } from '../constants/featureFlags';
 
 const ACCENT = '#111111';
 
@@ -1212,7 +1213,9 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
               <IconChevronRight size={16} color={isDark ? '#48484a' : '#c5c5c5'} />
             </TouchableOpacity>
 
-            {/* Verify Caller ID */}
+            {/* Verify Caller ID — [2026-10-11 sem-twilio] só existia via PSTN
+                (Twilio/Telnyx, contas desativadas) → oculto junto com o PSTN. */}
+            {PSTN_ENABLED && (
             <TouchableOpacity
               style={styles.linkRowModern}
               onPress={() => setSubScreen('callerid')}
@@ -1224,6 +1227,7 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
               <Text style={[styles.linkText, { color: colors.text }]}>{t?.('callerId.title') || 'Verificar Caller ID'}</Text>
               <IconChevronRight size={16} color={isDark ? '#48484a' : '#c5c5c5'} />
             </TouchableOpacity>
+            )}
 
             {/* Blocked contacts */}
             <TouchableOpacity
@@ -2464,7 +2468,8 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
         </SectionCard>
 
         {/* Verified Caller ID — show your number to non-Chatyy contacts when calling */}
-        {(() => {
+        {/* [2026-10-10] PSTN removido (Telnyx/Vonage) — card oculto via PSTN_ENABLED. */}
+        {PSTN_ENABLED && (() => {
           const callerVerified = !!profile?.telnyx_caller_id_verified;
           return (
             <TouchableOpacity

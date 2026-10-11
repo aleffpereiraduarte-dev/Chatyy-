@@ -16,7 +16,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Svg, { Circle as SvgCircle, Defs, RadialGradient, Stop } from 'react-native-svg';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
-import { BASE_URL, getAuthHeaders } from '../services/api';
+import { ORIGIN_BASE, getAuthHeaders } from '../services/api'; // [2026-10-10] /api/rust/one só existe no US (edges devolviam o SPA)
 import { IconArrowLeft, IconTrash, IconSparkles } from '../components/Icons';
 
 const ACCENT = '#111111';
@@ -117,7 +117,7 @@ export default function OneMemoryScreen() {
   const load = useCallback(async () => {
     try {
       const headers = getAuthHeaders();
-      const r = await fetch(`${BASE_URL}/api/rust/one/memory`, { headers });
+      const r = await fetch(`${ORIGIN_BASE}/api/rust/one/memory`, { headers });
       if (r.ok) {
         const data = await r.json();
         setMemories(data?.data?.memories || []);
@@ -138,7 +138,7 @@ export default function OneMemoryScreen() {
         { text: t('common.delete') || 'Apagar', style: 'destructive', onPress: async () => {
           try {
             const headers = { ...getAuthHeaders(), 'Content-Type': 'application/json' };
-            const r = await fetch(`${BASE_URL}/api/rust/one/memory/delete`, {
+            const r = await fetch(`${ORIGIN_BASE}/api/rust/one/memory/delete`, {
               method: 'POST', headers, body: JSON.stringify({ key }),
             });
             // Só atualiza estado local se o backend confirmou a deleção.
@@ -158,7 +158,7 @@ export default function OneMemoryScreen() {
         { text: t('common.deleteAll') || 'Apagar tudo', style: 'destructive', onPress: async () => {
           try {
             const headers = { ...getAuthHeaders(), 'Content-Type': 'application/json' };
-            const r = await fetch(`${BASE_URL}/api/rust/one/memory/delete`, {
+            const r = await fetch(`${ORIGIN_BASE}/api/rust/one/memory/delete`, {
               method: 'POST', headers, body: JSON.stringify({ key: '' }),
             });
             if (r.ok) setMemories([]);

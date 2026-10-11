@@ -271,3 +271,13 @@ export function isNativeGroupCallEnabled(email) {
   const e = String(email || '').trim().toLowerCase();
   return !!e && NATIVE_GROUP_CALL_TEST_ACCOUNTS.includes(e);
 }
+
+// ────────────────────────────────────────────────────────────────────────
+// [2026-10-10 sem-telnyx-vonage] Telnyx + Vonage contas MORTAS (401 blocked /
+// unauthorized). Tudo que dependia deles fica escondido:
+//   - VOICE_OTP_ENABLED: "Receber código por chamada" no cadastro/login.
+//   - PSTN_ENABLED: discador / ligar para números comuns (não-Chatyy),
+//     promo "Chamadas ilimitadas", saldo de minutos, ligações SIP/PSTN.
+// Backend também recusa (410). Só religar com um provedor novo.
+export const VOICE_OTP_ENABLED = false;
+export const PSTN_ENABLED = false;

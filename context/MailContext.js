@@ -11,6 +11,7 @@ try { mailWs = require('../services/websocket').default; } catch {}
 // try { _deltaSync = require('../services/deltaSync'); } catch {}
 import { playNewEmailAlert as playAlert } from '../services/notificationSound';
 import { useAuth } from './AuthContext';
+import { useLanguage } from './LanguageContext';
 import {
   saveEmailsToCache, getEmailsFromCache,
   saveMessageToCache, getMessageFromCache,
@@ -112,13 +113,14 @@ function playNewEmailAlert() {
 
 // Show local notification for new email (mobile) — triggers NotificationToast via foreground handler
 // Includes AI-generated summary when available
-async function showLocalEmailNotification(email) {
+async function showLocalEmailNotification(email, t) {
   if (Platform.OS === 'web' || !email) return;
+  const _tt = typeof t === 'function' ? t : null;
   try {
     const Notifications = await import('expo-notifications');
 
     // Build notification body: subject + preview
-    let body = email.subject || '(no subject)';
+    let body = email.subject || (_tt ? _tt('reader.noSubject') : '(no subject)');
     if (email.preview) {
       body = `${body}\n${email.preview.slice(0, 100)}`;
     }
@@ -126,7 +128,7 @@ async function showLocalEmailNotification(email) {
     // Show notification immediately with basic content
     await Notifications.scheduleNotificationAsync({
       content: {
-        title: email.from_name || email.from || 'New email',
+        title: email.from_name || email.from || (_tt ? _tt('toast.newEmail') : 'New email'),
         body,
         data: {
           type: 'new_email',
@@ -184,6 +186,11 @@ const POLL_DISCONNECTED = 10000;
 
 export function MailProvider({ children }) {
   const { user } = useAuth();
+  // [2026-10-10 qa-sweep] Toast/notificação de e-mail novo usava "New email" /
+  // "(no subject)" fixos em inglês. MailProvider mora dentro do LanguageProvider.
+  const { t: _t } = useLanguage();
+  const _tRef = useRef(_t);
+  _tRef.current = _t;
 
   // ─── Email-activity gate (chat-first app) ────────────────────────────────
   // The app is chat-first and lands on /chat. A user parked on /chat used to
@@ -1214,7 +1221,7 @@ export function MailProvider({ children }) {
     const offNew = mailWs.on('new_email', (data) => {
       // Sound + haptic are handled by NotificationToast when it appears
       // Mobile local notification (triggers NotificationToast via foreground handler)
-      if (data?.email) showLocalEmailNotification(data.email);
+      if (data?.email) showLocalEmailNotification(data.email, _tRef.current);
 
       // Web: trigger in-app toast (toast handles sound + vibration)
       if (Platform.OS === 'web' && data?.email) {
@@ -1222,8 +1229,8 @@ export function MailProvider({ children }) {
           const { _triggerForegroundToast } = require('../services/pushNotifications');
           const e = data.email;
           _triggerForegroundToast({
-            title: e.from_name || e.from || 'New email',
-            body: e.subject || '(no subject)',
+            title: e.from_name || e.from || _tRef.current('toast.newEmail'),
+            body: e.subject || _tRef.current('reader.noSubject'),
             data: {
               type: 'new_email',
               uid: e.uid,
@@ -1264,9 +1271,9 @@ export function MailProvider({ children }) {
         const e = data?.email;
         if (e) {
           try {
-            const subject = e.subject || '(no subject)';
+            const subject = e.subject || _tRef.current('reader.noSubject');
             const preview = e.preview ? `\n${e.preview.slice(0, 120)}` : '';
-            const n = new Notification(e.from_name || e.from || 'New email', {
+            const n = new Notification(e.from_name || e.from || _tRef.current('toast.newEmail'), {
               body: subject + preview,
               icon: '/icon-192.png',
               tag: `email-${e.uid}`,
@@ -1533,10 +1540,17 @@ export function MailProvider({ children }) {
     // the broadcast lands with delivered=0, and the email only shows up
     // on the next poll interval. AppState listener closes that gap.
     if (Platform.OS !== 'web') {
+      // [2026-10-10 perf-battery] Pause the poll while backgrounded (it used
+      // to keep firing — at the 10 s POLL_DISCONNECTED rate, since the WS is
+      // parked in background — until the OS froze JS). Resume on 'active'.
+      if (AppState.currentState === 'background') stop();
       const sub = AppState.addEventListener('change', (next) => {
         if (next === 'active') {
           try { silentRefresh(); } catch {}
           try { loadFolders(); } catch {}
+          start();
+        } else if (next === 'background') {
+          stop();
         }
       });
       return () => { stop(); try { sub.remove(); } catch {} };

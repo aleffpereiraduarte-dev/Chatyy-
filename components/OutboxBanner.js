@@ -21,6 +21,7 @@ import {
 } from 'react-native';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
+import { setActiveInterval } from '../utils/activeInterval'; // [2026-10-10 perf-battery]
 import { FontSize, Spacing, BorderRadius } from '../constants/theme';
 import {
   IconClock,
@@ -46,6 +47,7 @@ export function useOutboxCount() {
   const [lastError, setLastError] = useState(null);
   const [isReplaying, setIsReplaying] = useState(false);
   const mountedRef = useRef(true);
+  const itemsSigRef = useRef('');
 
   const refresh = useCallback(async () => {
     try {
@@ -54,7 +56,12 @@ export function useOutboxCount() {
       if (!mountedRef.current) return;
       const list = Array.isArray(queue) ? queue : [];
       setCount(list.length);
-      setItems(list);
+      // [2026-10-10 perf] Only hand React a new array when the queue actually
+      // changed — the 2 s poll used to re-render the banner (and its host
+      // screen's subtree via the hook) every tick even with an empty queue.
+      let sig = '';
+      try { sig = list.map(a => [a?.id, a?.ts, a?.attempts, a?.permanent_fail ? 1 : 0, a?.last_error || ''].join('|')).join('\n'); } catch { sig = String(Math.random()); }
+      if (sig !== itemsSigRef.current) { itemsSigRef.current = sig; setItems(list); }
       // Surface the most recent permanent_fail action as "last error" so the
       // banner can flip from yellow → red once we know retries are dead.
       const failed = list.find(a => a?.permanent_fail);
@@ -67,10 +74,11 @@ export function useOutboxCount() {
   useEffect(() => {
     mountedRef.current = true;
     refresh();
-    const id = setInterval(refresh, 2000);
+    // [2026-10-10 perf-battery] paused while backgrounded (utils/activeInterval).
+    const stopPoll = setActiveInterval(refresh, 2000);
     return () => {
       mountedRef.current = false;
-      clearInterval(id);
+      stopPoll();
     };
   }, [refresh]);
 

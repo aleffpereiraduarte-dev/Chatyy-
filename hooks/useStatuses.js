@@ -36,6 +36,7 @@ import { Platform } from 'react-native';
 import * as api from '../services/api';
 import { BASE_URL } from '../services/api';
 import { setCache, getCached, getCachedSync } from '../services/cache';
+import { setActiveInterval } from '../utils/activeInterval'; // [2026-10-10 perf-battery]
 
 let _mailWs = null;
 try { _mailWs = require('../services/websocket').default; } catch {}
@@ -702,9 +703,10 @@ export default function useStatuses(currentEmail, opts = {}) {
     }
 
     // Belt-and-suspenders polling against a missed WS frame.
-    const poll = setInterval(refetch, pollMs);
+    // [2026-10-10 perf-battery] paused while backgrounded (utils/activeInterval).
+    const stopPoll = setActiveInterval(refetch, pollMs);
     return () => {
-      clearInterval(poll);
+      stopPoll();
       if (wsTimer) clearTimeout(wsTimer);
       for (const u of subs) { try { u?.(); } catch {} }
     };

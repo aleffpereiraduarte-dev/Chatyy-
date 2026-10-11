@@ -2403,7 +2403,11 @@ export default function OneScreen() {
             router.push(`/call?contactEmail=${encodeURIComponent(contactEmail)}&contactName=${encodeURIComponent(contactName)}&isVideo=${video}&isCaller=1&callId=${callId}`);
           }
         } else if (params.phone) {
-          if (Platform.OS === 'web') {
+          // [2026-10-10 sem-telnyx-vonage] PSTN off → discador do aparelho (tel:).
+          const _pstnOn = (() => { try { return require('../constants/featureFlags').PSTN_ENABLED === true; } catch { return false; } })();
+          if (!_pstnOn) {
+            try { const { Linking } = require('react-native'); Linking.openURL(`tel:${params.phone}`).catch(() => {}); } catch {}
+          } else if (Platform.OS === 'web') {
             router.push(`/chat?tab=calls&dial=${encodeURIComponent(params.phone)}`);
           } else {
             try {

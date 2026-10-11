@@ -401,7 +401,7 @@ export default function GlobalSearch({
               ref={inputRef}
               value={q}
               onChangeText={setQ}
-              placeholder={t?.('search.placeholder') || 'Buscar em tudo...'}
+              placeholder={t?.('search.globalPlaceholder') /* [2026-10-10 qa-sweep] search.placeholder duplicada no i18n */}
               placeholderTextColor={colors?.textTertiary}
               style={{
                 flex: 1,

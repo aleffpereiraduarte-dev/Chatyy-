@@ -39,6 +39,12 @@ dependencies {
   implementation 'androidx.media3:media3-exoplayer:1.3.1'
   implementation 'androidx.media3:media3-ui:1.3.1'
   implementation 'androidx.media3:media3-exoplayer-hls:1.3.1'
+  // [2026-10-10 native-audit] Disk cache for progressive reels/short videos
+  // (SimpleCache + CacheDataSource + StandaloneDatabaseProvider). Already on
+  // the classpath transitively via exoplayer; declared explicitly so the
+  // module compiles on its own.
+  implementation 'androidx.media3:media3-datasource:1.3.1'
+  implementation 'androidx.media3:media3-database:1.3.1'
 }
 
 def safeExtGet(prop, fallback) {

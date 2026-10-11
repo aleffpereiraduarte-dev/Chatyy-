@@ -15,6 +15,7 @@ import { useTheme } from '../context/ThemeContext';
 import { IconBell } from './Icons';
 import * as api from '../services/api';
 import useIsMounted from '../hooks/useIsMounted';
+import { setActiveInterval } from '../utils/activeInterval'; // [2026-10-10 perf-battery]
 
 export default function NotificationBell({ size = 24, color, style }) {
   const { colors } = useTheme();
@@ -34,9 +35,10 @@ export default function NotificationBell({ size = 24, color, style }) {
 
   useEffect(() => {
     fetch();
-    timerRef.current = setInterval(fetch, 30000);
+    // [2026-10-10 perf-battery] network poll paused while backgrounded.
+    const stopPoll = setActiveInterval(fetch, 30000);
     return () => {
-      clearInterval(timerRef.current);
+      stopPoll();
     };
   }, [fetch]);
 

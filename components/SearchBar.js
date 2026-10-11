@@ -236,7 +236,7 @@ export default function SearchBar({ value, onChange, onSubmit, onClear, onFocus 
     ]}>
       <IconSearch size={16} color={value ? colors.primary : colors.textTertiary} />
       <Text style={[st.triggerText, { color: value ? colors.text : colors.textTertiary }]} numberOfLines={1}>
-        {value || t('search.placeholder')}
+        {value || t('search.mailPlaceholder')}
       </Text>
       {value ? (
         <TouchableOpacity onPress={(e) => { e.stopPropagation?.(); handleClear(); }} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
@@ -279,7 +279,7 @@ export default function SearchBar({ value, onChange, onSubmit, onClear, onFocus 
               <TextInput
                 ref={inputRef}
                 style={[st.input, { color: colors.text }]}
-                placeholder={t('search.placeholder')}
+                placeholder={t('search.mailPlaceholder') /* [2026-10-10 qa-sweep] search.placeholder é chave DUPLICADA no i18n (vence a da busca social) */}
                 placeholderTextColor={colors.textTertiary}
                 value={localValue}
                 onChangeText={(text) => {

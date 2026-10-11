@@ -4,6 +4,7 @@
 import { Modal, View, TouchableOpacity, StyleSheet, StatusBar } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { IconX } from './Icons';
+import { cachedVideoSource } from '../services/videoCacheSource'; // [2026-10-10 native-audit] native video disk cache
 
 let _ev = null;
 function loadExpoVideo() {
@@ -19,7 +20,7 @@ export function nativeVideoAvailable() {
 
 function Player({ url }) {
   const ev = loadExpoVideo();
-  const player = ev.useVideoPlayer(url, (p) => {
+  const player = ev.useVideoPlayer(cachedVideoSource(url), (p) => {
     try { p.loop = false; p.muted = false; const r = p.play?.(); if (r?.catch) r.catch(() => {}); } catch {}
   });
   const VideoView = ev.VideoView;

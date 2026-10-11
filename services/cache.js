@@ -134,7 +134,9 @@ export function getCachedSync(key) {
  */
 export async function setCache(key, data, ttlMs = 7776000000) {
   const fullKey = _getPrefix() + key;
-  const entry = { data, expiry: Date.now() + ttlMs };
+  // `ts` (write time) is additive — readers only destructure data/expiry. It
+  // lets prefetch() skip a network refresh of a copy that is still fresh.
+  const entry = { data, expiry: Date.now() + ttlMs, ts: Date.now() };
 
   _memSet(fullKey, entry);
 
@@ -191,7 +193,24 @@ export async function warmCache(keys) {
 /**
  * Pre-fetch and cache data from API.
  */
-export async function prefetch(key, apiFn, ttlMs = 2592000000) {
+export async function prefetch(key, apiFn, ttlMs = 2592000000, opts = null) {
+  // [2026-10-10 perf-data] opts.skipIfFresherThanMs: when the cached copy was
+  // written less than that long ago, skip the network entirely (cold starts in
+  // quick succession — iOS kills/relaunches — re-downloaded contacts/calendar/
+  // files/notes every time). Entries without `ts` (written before this
+  // change) always refresh, exactly like before.
+  const skipMs = opts && opts.skipIfFresherThanMs;
+  if (skipMs > 0) {
+    try {
+      const fullKey = _getPrefix() + key;
+      let entry = _memCache.get(fullKey);
+      if (!entry) { const raw = getString(fullKey); if (raw) entry = JSON.parse(raw); }
+      if (entry && entry.ts && (Date.now() - entry.ts) < skipMs
+        && !(entry.expiry && Date.now() > entry.expiry) && entry.data != null) {
+        return entry.data;
+      }
+    } catch {}
+  }
   try {
     const data = await apiFn();
     if (data && data.success !== false) {

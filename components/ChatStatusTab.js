@@ -41,6 +41,7 @@ import { segmentVideoForStatus } from '../services/statusVideoSegments';
 // [2026-10-09 status-composer] Estúdio nível Instagram (filtros reais, texto,
 // figurinhas, público) + fila durável com progresso no anel do "Seu status".
 import StatusStudio from './status/StatusStudio';
+import { cachedVideoSource } from '../services/videoCacheSource'; // [2026-10-10 native-audit] native video disk cache
 
 // Android status bar safe area — `StatusBar.currentHeight` is null on iOS
 // (where the 54px ios padding already covers the notch) so we just hard-fall
@@ -53,6 +54,7 @@ import StatusStudio from './status/StatusStudio';
 const ANDROID_TOP_INSET = (Platform.OS === 'android' ? (StatusBar.currentHeight || 24) : 0);
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
+const _viewerHdrNarrow = SCREEN_WIDTH < 560; // [2026-10-10 qa-sweep] header do visualizador em 2 linhas
 
 // Resolve a status media path to an absolute URL. The backend already returns
 // absolute CDN URLs (https://media.chatyy.com.br/...), but legacy/cached rows
@@ -153,7 +155,7 @@ function NativeAudioPlayer({ url }) {
 // and long-press "pause" actually restarted it playing.
 const StatusVideoInner = React.memo(function StatusVideoInner({ mod, uri, posterUrl, paused, onDuration, onLoaded, onError }) {
   const { useVideoPlayer, VideoView } = mod;
-  const player = useVideoPlayer(uri, (p) => {
+  const player = useVideoPlayer(cachedVideoSource(uri), (p) => {
     try { p.loop = true; p.muted = false; p.play(); } catch {}
   });
   // Pause/resume in lockstep with the viewer's long-press state
@@ -3079,7 +3081,7 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
           <IconSearch size={18} color={colors.textSecondary} />
           <TextInput
             style={[styles.searchInput, { color: colors.text }]}
-            placeholder={t?.('search.placeholder') || 'Pesquisar...'}
+            placeholder={t?.('status.searchPlaceholder') /* [2026-10-10 qa-sweep] search.placeholder duplicada no i18n */}
             placeholderTextColor={colors.textSecondary}
             value={searchQuery}
             onChangeText={setSearchQuery}
@@ -3106,7 +3108,7 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
           >
             <IconSearch size={18} color={colors.textSecondary} />
             <Text style={[styles.searchToggleText, { color: colors.textSecondary }]}>
-              {t?.('search.placeholder') || 'Pesquisar...'}
+              {t?.('status.searchPlaceholder')}
             </Text>
           </TouchableOpacity>
         </View>
@@ -3815,14 +3817,23 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
             </View>
 
             {/* Header */}
-            <View style={styles.viewerHeader}>
+            {/* [2026-10-10 qa-sweep] Celular (<560px) + status PRÓPRIO: 6 ações +
+                contador não cabiam numa linha → a coluna do nome encolhia até
+                1 caractere ("a/g/o/r/a" na vertical). Agora: linha 1 = avatar +
+                nome + X; ações quebram p/ linha 2, alinhadas à direita. */}
+            <View style={[styles.viewerHeader, _viewerHdrNarrow && isOwnStatus && { flexWrap: 'wrap', justifyContent: 'flex-end', rowGap: 6 }]}>
               <AvatarCircle name={viewerOwnerName} email={viewerOwnerEmail} size={40} />
-              <View style={styles.viewerHeaderInfo}>
+              <View style={[styles.viewerHeaderInfo, _viewerHdrNarrow && isOwnStatus && { minWidth: Math.max(80, SCREEN_WIDTH - 130) }]}>
                 <Text style={styles.viewerName} numberOfLines={1}>{viewerOwnerName}</Text>
-                <Text style={styles.viewerTime}>
+                <Text style={styles.viewerTime} numberOfLines={1}>
                   {timeAgo(currentViewerItem?.timestamp, t)}
                 </Text>
               </View>
+              {_viewerHdrNarrow && isOwnStatus && (
+                <TouchableOpacity onPress={closeViewer} style={styles.viewerClose} accessibilityRole="button" accessibilityLabel={t?.('common.close')}>
+                  <IconX size={26} color="#fff" />
+                </TouchableOpacity>
+              )}
               {isOwnStatus && currentViewerItem?.view_count != null && (
                 <TouchableOpacity
                   style={styles.viewCountBadge}
@@ -3918,9 +3929,11 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
                   </TouchableOpacity>
                 </>
               )}
-              <TouchableOpacity onPress={closeViewer} style={styles.viewerClose}>
-                <IconX size={26} color="#fff" />
-              </TouchableOpacity>
+              {!(_viewerHdrNarrow && isOwnStatus) && (
+                <TouchableOpacity onPress={closeViewer} style={styles.viewerClose}>
+                  <IconX size={26} color="#fff" />
+                </TouchableOpacity>
+              )}
             </View>
 
             {/* Content area with tap zones */}
@@ -5020,6 +5033,8 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
                 <Svg
                   pointerEvents="none"
                   style={StyleSheet.absoluteFill}
+                  width="100%" // [2026-10-10 qa-sweep] web: sem isso o <svg> fica 1:1 (viewBox) e o gradiente não cobre o card
+                  height="100%"
                   preserveAspectRatio="none"
                   viewBox="0 0 1 1"
                 >

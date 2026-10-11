@@ -2,6 +2,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Alert, Platform, Linking } from 'react-native';
 import { apiCall, chatSyncContacts, getActiveAccountEmail } from './api';
 import { COUNTRIES } from '../constants/countries';
+import { sha256HexSync } from '../utils/sha256Sync'; // [2026-10-10 native-audit]
 
 const CACHE_KEY_BASE = '@chatyy_synced_contacts';
 // [2026-10-07 discovery] Cache is namespaced per account — the old global key
@@ -200,6 +201,14 @@ function e164Candidates(rawPhone, homeDial) {
 // expo-crypto polyfill) and falling back to a small WordArray-free
 // implementation that only needs TextEncoder + subtle.digest.
 async function sha256Hex(str) {
+  // [2026-10-10 native-audit] Sync pure-JS path first: Hermes has no
+  // crypto.subtle, so the old code paid one expo-crypto bridge round-trip per
+  // candidate, serially (~10k hops per phonebook sync). Verified against FIPS
+  // vectors at load; null → fall through to the async paths below.
+  try {
+    const h = sha256HexSync(str);
+    if (h) return h;
+  } catch {}
   try {
     const enc = new TextEncoder().encode(str);
     const buf = await crypto.subtle.digest('SHA-256', enc);

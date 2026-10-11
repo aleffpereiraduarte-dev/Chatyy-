@@ -689,9 +689,15 @@ export default function ChatNewScreen() {
           // For direct chats, extract the other person's info
           const members = c.members || [];
           const other = members.find(m => (m?.email || '').toLowerCase() !== meLc) || {};
+          const _em = other.email || c.other_email || c.email || '';
+          // [2026-10-10 qa-sweep] Mesmo nome da lista de conversas (apelido local
+          // → display_name/name do servidor humanizado). Antes: "mariana.demo",
+          // "qa2" cru nos Recentes enquanto a lista mostrava "Mariana Demo".
+          let _nick = '';
+          if (_em) { try { _nick = require('../services/nicknames').getNickname(_em) || ''; } catch {} }
           return {
-            email: other.email || c.email || '',
-            name: other.name || c.name || c.email || '',
+            email: _em,
+            name: _nick || api.emailToDisplayName(c.display_name || c.name || other.name || _em || '') || '',
             conversationId: c.id || c.conversation_id,
             lastMessage: c.last_message || '',
             lastMessageAt: c.last_message_at || '',
@@ -2607,7 +2613,7 @@ export default function ChatNewScreen() {
             {creating ? <ActivityIndicator size="small" color={colors.onPrimary || '#fff'} /> : (
               <>
                 <IconUsers size={18} color={colors.onPrimary || '#fff'} />
-                <Text style={sty.createBtnText}>{t('chat.createGroup', { count: selectedMembers.length })}</Text>
+                <Text style={sty.createBtnText}>{selectedMembers.length === 1 ? t('chat.createGroupOne') : t('chat.createGroup', { count: selectedMembers.length }) /* [2026-10-10 qa-sweep] "1 membros" */}</Text>
               </>
             )}
           </TouchableOpacity>

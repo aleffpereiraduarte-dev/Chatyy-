@@ -381,7 +381,21 @@ function _bootSyncEngines() {
       .then(([did, pub]) => {
         if (did && pub && typeof api.chatDeviceKeyPublish === 'function') {
           const kind = Platform.OS === 'web' ? 'web' : Platform.OS;
-          api.chatDeviceKeyPublish(did, pub, kind).catch(() => {});
+          // [2026-10-10 servidores-melhorias] Dedupe 6h por (conta, aparelho, chave):
+          // era 1 escrita por abertura do app (247/dia só no edge BR, p50 303ms
+          // edge→US) competindo com o lote do boot. UPSERT idempotente no servidor;
+          // envelopePuller ainda republica sozinho se a decifragem falhar.
+          let mm = null; let k = '';
+          try {
+            mm = require('../services/mmkv');
+            const em = String((typeof api.getActiveAccountEmail === 'function' && api.getActiveAccountEmail()) || (typeof api.getSavedEmail === 'function' && api.getSavedEmail()) || '').toLowerCase();
+            k = 'devkey_pub_ok:' + em + '|' + did + '|' + kind + '|' + String(pub).slice(-24);
+            const last = Number(mm.getString(k) || 0);
+            if (em && last > 0 && (Date.now() - last) < 6 * 60 * 60 * 1000) return;
+          } catch { mm = null; }
+          api.chatDeviceKeyPublish(did, pub, kind)
+            .then((r) => { if (r && r.success && mm && k) { try { mm.setString(k, String(Date.now())); } catch {} } })
+            .catch(() => {});
         }
       })
       .catch(() => {});
@@ -556,6 +570,14 @@ async function clearAllPerAccountCaches() {
   try {
     const { clearAvatarCache } = require('../services/avatarCache');
     await clearAvatarCache();
+  } catch {}
+
+  // 1b-video. [2026-10-10 native-audit] expo-video native disk cache (chat
+  // videos / stories / feed now opt in via services/videoCacheSource) — wipe
+  // it so the next account can't replay this one's media from disk.
+  try {
+    const { clearVideoDiskCache } = require('../services/videoCacheSource');
+    await clearVideoDiskCache();
   } catch {}
 
   // 1c. Email caches (MMKV list_/msg_ + web IDB). These are written by

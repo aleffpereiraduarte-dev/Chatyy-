@@ -32,6 +32,7 @@ import ScreenEmptyState from './ScreenEmptyState';
 import PressableScale from './PressableScale';
 import PressableRow from './PressableRow';
 import { haptic } from '../constants/theme';
+import { setActiveInterval } from '../utils/activeInterval'; // [2026-10-10 perf-battery]
 let mailWs = null;
 try { mailWs = require('../services/websocket').default; } catch {}
 
@@ -482,8 +483,8 @@ function ChatFeedTab({ colors, isDark, t, user, router, initialFeedMode, onFeedM
       } catch {}
     };
     tick();
-    const id = setInterval(tick, 45000);
-    return () => { alive = false; clearInterval(id); };
+    const stopPoll = setActiveInterval(tick, 45000); // [2026-10-10 perf-battery] fg-only
+    return () => { alive = false; stopPoll(); };
   }, []);
 
   const pollRef = useRef(null);
@@ -781,12 +782,15 @@ function ChatFeedTab({ colors, isDark, t, user, router, initialFeedMode, onFeedM
     // listener below flips polling back on if WS ever drops.
     const startPolling = () => {
       if (pollRef.current || livePollRef.current) return;
-      pollRef.current = setInterval(() => loadPosts(1, true), 60000);
-      livePollRef.current = setInterval(loadLives, 60000);
+      // [2026-10-10 perf-battery] fg-only: the WS 'disconnected' that turns
+      // this fallback on fires on EVERY background transition (socket park),
+      // so plain intervals polled feed+lives in background. Refs hold stop().
+      pollRef.current = setActiveInterval(() => loadPosts(1, true), 60000);
+      livePollRef.current = setActiveInterval(loadLives, 60000);
     };
     const stopPolling = () => {
-      if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
-      if (livePollRef.current) { clearInterval(livePollRef.current); livePollRef.current = null; }
+      if (pollRef.current) { pollRef.current(); pollRef.current = null; }
+      if (livePollRef.current) { livePollRef.current(); livePollRef.current = null; }
     };
     // [2026-10-08 apps-native] mailWs can be null (guarded require at the top)
     // → `mailWs.isConnected` threw and killed the whole Feed tab. No socket =

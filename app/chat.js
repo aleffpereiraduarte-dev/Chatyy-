@@ -20,6 +20,7 @@ import Svg, { Circle as SvgCircle, Path, Rect, Line, Defs, LinearGradient, Stop 
 // [2026-05-22 monetization-pause] hidden by MONETIZATION_ENABLED flag
 import { WALLET_ENABLED } from '../constants/featureFlags';
 import { haptic } from '../constants/theme';
+import { setActiveInterval } from '../utils/activeInterval'; // [2026-10-10 perf-battery]
 import ChatListTab from '../components/ChatListTab';
 import { IS_TABLET_DEVICE } from '../utils/responsive'; // [2026-10-10 tablet-split]
 import AvatarCircle from '../components/AvatarCircle';
@@ -471,9 +472,12 @@ function ChatHub() {
   // Each branch tolerates failure independently — a 502 on feed_list won't
   // wipe the chats badge. Polling pauses when the tab is foreground-active
   // because the underlying screen is doing its own real-time refresh.
+  const badgeLastRefreshRef = useRef(0);
+  const badgeEmailRef = useRef(null);
   React.useEffect(() => {
     let cancelled = false;
     const refresh = async () => {
+      badgeLastRefreshRef.current = Date.now();
       try {
         const api = require('../services/api');
         // Chats: sum unread across conversations from chat_list.
@@ -536,9 +540,22 @@ function ChatHub() {
         }
       } catch {}
     };
-    refresh();
-    const id = setInterval(refresh, 60000);
-    return () => { cancelled = true; clearInterval(id); };
+    // [2026-10-10 perf] Was: refresh() at t=0 on mount (status_list + a
+    // 20-post feed_list + chat_list racing the chat list's cold start) AND on
+    // EVERY tab switch, with the 60 s loop also running in background.
+    // Now: first run 1.5 s after mount, tab switches refresh only if the last
+    // run is >= 15 s old, and the loop pauses while backgrounded.
+    let firstTimer = null;
+    if (badgeEmailRef.current !== (user?.email || '')) {
+      // account switch → behave like a fresh mount (no stale badges).
+      badgeEmailRef.current = user?.email || '';
+      badgeLastRefreshRef.current = 0;
+    }
+    const last = badgeLastRefreshRef.current;
+    if (!last) firstTimer = setTimeout(refresh, 1500);
+    else if (Date.now() - last >= 15000) refresh();
+    const stopPoll = setActiveInterval(refresh, 60000);
+    return () => { cancelled = true; if (firstTimer) clearTimeout(firstTimer); stopPoll(); };
   }, [activeTab, user?.email]);
 
   // Reset feed badge on landing on feed tab — store the most recent post ts

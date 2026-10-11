@@ -18,6 +18,7 @@ import React, { useEffect, useState } from 'react';
 import { Platform, View, Text, StyleSheet, TouchableOpacity, ActivityIndicator } from 'react-native';
 import { IconX, IconWifiOff } from './Icons';
 import { useLanguage } from '../context/LanguageContext';
+import { setActiveInterval } from '../utils/activeInterval'; // [2026-10-10 perf-battery]
 import * as api from '../services/api';
 
 const POLL_MS = 1000;
@@ -95,7 +96,8 @@ export default function PhoneOfflineBanner() {
       if (!flag) setDismissed(false);
     };
     tick();
-    const id = setInterval(tick, POLL_MS);
+    // [2026-10-10 perf-battery] paused while backgrounded (utils/activeInterval).
+    const stopPoll = setActiveInterval(tick, POLL_MS);
     // Also re-evaluate on the browser online/offline events so the dedup
     // reacts instantly instead of waiting for the 1s poll tick.
     let onOnline = null;
@@ -108,7 +110,7 @@ export default function PhoneOfflineBanner() {
     } catch {}
     return () => {
       mounted = false;
-      clearInterval(id);
+      stopPoll();
       try {
         if (onOnline) window.removeEventListener('online', onOnline);
         if (onOffline) window.removeEventListener('offline', onOffline);

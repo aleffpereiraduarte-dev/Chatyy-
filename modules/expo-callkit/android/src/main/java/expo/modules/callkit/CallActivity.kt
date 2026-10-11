@@ -272,6 +272,21 @@ class CallActivity : ComponentActivity() {
   // app/call.js where callAcceptedRef gates the "Conectado" UI flip.
   @Volatile private var peerAnswered: Boolean = false
 
+  // [2026-10-10 call-states] WhatsApp-grade state machine, IDENTICAL on iOS
+  // (CallViewController) and JS (app/call.js):
+  //   caller: "Chamando…" (invite sent) → "Tocando…" (callee device reached:
+  //   its subscribe-only preconnect showed up in the LK room) → accept →
+  //   "Conectando…" → "Conectado" + timer ONLY on media truth (first remote
+  //   track subscribed / P2P ICE connected). Callee: "Conectando…" → media →
+  //   "Conectado". Peer presence alone NEVER means connected (incident
+  //   call_1791675346907: caller showed a running timer while the callee's
+  //   phone was still ringing). After accept: no media in 8s → resubscribe
+  //   nudge; 25s → "Não foi possível conectar" + call_end{reason:failed}.
+  private var mediaFlowing: Boolean = false
+  private var connectWatchdogJob: Job? = null
+  /** Caller ring gate: true once mic/camera were published after the answer. */
+  private var callerMediaPublished: Boolean = false
+
   // ────────────── LiveKit / lifecycle
 
   private var room: Room? = null
@@ -436,11 +451,135 @@ class CallActivity : ComponentActivity() {
         Log.d(TAG, "callAnsweredReceiver: callId mismatch ($incomingCallId vs $callId), ignoring")
         return
       }
-      Log.d(TAG, "[WAVE161] callAnsweredReceiver: flipping status to Conectado")
+      // [2026-10-10 call-states] Accept ≠ media: "Conectando…" until the first
+      // remote track (markMediaConnected); timer starts there, not here.
+      Log.d(TAG, "[WAVE161] callAnsweredReceiver: answered → Conectando… (awaiting media)")
+      onAnswerConfirmed("ws_accepted")
+    }
+  }
+
+  // ────────────── [2026-10-10 call-states] state machine helpers
+
+  /** Caller: callee device confirmed ringing (preconnect participant in the
+   *  LK room). Only upgrades "Chamando…" — never touches accept/connected. */
+  private fun markPeerRinging(src: String) {
+    if (!isOutgoing || peerAnswered || mediaFlowing || finishing) return
+    if (state.status != "Chamando…") return
+    state.status = "Tocando…"
+    Log.i(TAG, "[call-states] Tocando… src=$src callId=$callId")
+    try { CallVideoQuality.postDiag("call_state_ringing", "src=$src") } catch (_: Throwable) {}
+  }
+
+  /** Real answer (WS call_accepted, or remote media which implies it). Stops
+   *  ringback, publishes the caller's gated mic/camera and arms the
+   *  no-media watchdog. Idempotent. */
+  private fun onAnswerConfirmed(src: String) {
+    if (finishing) return
+    val first = !peerAnswered
+    peerAnswered = true
+    stopRingback()
+    openCallerMediaGate(src)
+    if (!mediaFlowing) {
+      if (!state.isReconnecting) state.status = "Conectando…"
+      startConnectWatchdog(src)
+    }
+    if (first) {
+      try { CallVideoQuality.postDiag("call_state_accepted", "src=$src") } catch (_: Throwable) {}
+    }
+  }
+
+  /** Media truth → "Conectado" + timer (connectionStartedAt). Idempotent. */
+  private fun markMediaConnected(src: String) {
+    if (finishing) return
+    if (isOutgoing && !peerAnswered) {
+      // Remote media = the callee published = it answered (preconnect is
+      // subscribe-only). Covers a lost WS call_accepted.
       peerAnswered = true
-      stopRingback()
-      state.status = "Conectado"
+      openCallerMediaGate("media_$src")
+    }
+    val first = !mediaFlowing
+    mediaFlowing = true
+    connectWatchdogJob?.cancel()
+    connectWatchdogJob = null
+    stopRingback()
+    try { IncomingRinger.stop() } catch (_: Throwable) {}
+    state.status = "Conectado"
+    state.isReconnecting = false
+    if (state.connectionStartedAt == 0L) {
       state.connectionStartedAt = System.currentTimeMillis()
+    }
+    if (first) {
+      Log.i(TAG, "[call-states] Conectado (media truth) src=$src callId=$callId")
+      try { CallVideoQuality.postDiag("call_state_media", "src=$src") } catch (_: Throwable) {}
+    }
+  }
+
+  /** Label to restore after an LK Reconnected / when nothing else applies. */
+  private fun steadyStatusLabel(): String = when {
+    mediaFlowing -> "Conectado"
+    !isOutgoing || peerAnswered -> "Conectando…"
+    (room?.remoteParticipants?.isNotEmpty() == true) -> "Tocando…"
+    else -> "Chamando…"
+  }
+
+  /** Caller ring gate (parity with iOS outgoingMicGateOpen / JS _micGateOpen):
+   *  the callee's preconnect is in the room subscribe-only DURING the ring,
+   *  so a caller mic/camera published at connect time reached the callee's
+   *  device before Accept. Published here, once, after the answer. */
+  private fun callerRingGateClosed(): Boolean = isOutgoing && !peerAnswered
+
+  private fun openCallerMediaGate(src: String) {
+    if (!isOutgoing || callerMediaPublished) return
+    val r = room ?: return
+    if (r.state != Room.State.CONNECTED) return // attemptConnect publishes after connect
+    callerMediaPublished = true
+    Log.i(TAG, "[call-states] caller media gate open src=$src callId=$callId")
+    lifecycleScope.launch {
+      try { publishLocalMediaAfterConnect(r) } catch (t: Throwable) {
+        Log.w(TAG, "[call-states] gated caller publish failed: ${t.message}")
+        callerMediaPublished = false
+      }
+    }
+  }
+
+  /** After accept: 8s without media → resubscribe nudge (LK handles ICE
+   *  restarts itself; a stuck subscription is the cheap thing we can fix);
+   *  25s → end gracefully. If the peer IS in the room after 25s (answered,
+   *  but mic muted/denied → nothing to subscribe) we commit "Conectado"
+   *  rather than kill a live call — logged as call_state_present_no_media. */
+  private fun startConnectWatchdog(src: String) {
+    if (mediaFlowing || finishing || connectWatchdogJob != null) return
+    connectWatchdogJob = lifecycleScope.launch {
+      delay(8_000L)
+      if (mediaFlowing || finishing) return@launch
+      Log.w(TAG, "[call-states] no media 8s after answer (src=$src) — resubscribe nudge")
+      try { CallVideoQuality.postDiag("call_state_no_media_8s", "src=$src p2p=${p2p != null}") } catch (_: Throwable) {}
+      try {
+        room?.remoteParticipants?.values?.forEach { rp ->
+          rp.trackPublications.values.forEach { pub ->
+            val rpub = pub as? io.livekit.android.room.track.RemoteTrackPublication
+            if (rpub != null && pub.track == null) {
+              try { rpub.setSubscribed(true) } catch (_: Throwable) {}
+            }
+          }
+        }
+      } catch (_: Throwable) {}
+      delay(17_000L)
+      if (mediaFlowing || finishing) return@launch
+      val r = room
+      val peerPresent = r != null && r.state == Room.State.CONNECTED && r.remoteParticipants.isNotEmpty()
+      if (peerPresent) {
+        Log.w(TAG, "[call-states] 25s: peer present but no media (muted/denied mic) — committing Conectado")
+        try { CallVideoQuality.postDiag("call_state_present_no_media", "src=$src") } catch (_: Throwable) {}
+        markMediaConnected("present_no_media_25s")
+        return@launch
+      }
+      Log.w(TAG, "[call-states] 25s without media after answer — ending (failed)")
+      try { CallVideoQuality.postDiag("call_state_connect_failed", "src=$src") } catch (_: Throwable) {}
+      state.status = "Não foi possível conectar"
+      state.isReconnecting = false
+      delay(1_500L)
+      if (!finishing && !mediaFlowing) finishCall(reason = "failed")
     }
   }
 
@@ -476,7 +615,10 @@ class CallActivity : ComponentActivity() {
           android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
             if (!heldByTelecom) {
               try { p2p?.setMicEnabled(!state.isMuted) } catch (_: Throwable) {}
-              try { lifecycleScope.launch { try { room?.localParticipant?.setMicrophoneEnabled(!state.isMuted) } catch (_: Throwable) {} } } catch (_: Throwable) {}
+              // [2026-10-10 call-states] never publish the caller mic during the ring.
+              if (!callerRingGateClosed()) {
+                try { lifecycleScope.launch { try { room?.localParticipant?.setMicrophoneEnabled(!state.isMuted) } catch (_: Throwable) {} } } catch (_: Throwable) {}
+              }
             }
           }, 500L)
         }
@@ -487,7 +629,10 @@ class CallActivity : ComponentActivity() {
         state.isMuted = muted
         if (!heldByTelecom) {
           try { p2p?.setMicEnabled(!muted) } catch (_: Throwable) {}
-          try { lifecycleScope.launch { try { room?.localParticipant?.setMicrophoneEnabled(!muted) } catch (_: Throwable) {} } } catch (_: Throwable) {}
+          // [2026-10-10 call-states] never publish the caller mic during the ring.
+          if (!callerRingGateClosed()) {
+            try { lifecycleScope.launch { try { room?.localParticipant?.setMicrophoneEnabled(!muted) } catch (_: Throwable) {} } } catch (_: Throwable) {}
+          }
         }
       }
     }
@@ -695,7 +840,12 @@ class CallActivity : ComponentActivity() {
             // re-publica o track em algumas LK revs, dropando RTP stream +
             // causando audio glitch). Fallback pra setMicrophoneEnabled se
             // o track ainda não foi publicado.
-            try {
+            // [2026-10-10 call-states] Caller still ringing: only remember the
+            // choice (state.isMuted) — publishing now would leak the mic to the
+            // callee's preconnect. The gated publish on answer honours it.
+            if (callerRingGateClosed()) {
+              Log.d(TAG, "[call-states] mute toggle during ring — stored, publish deferred")
+            } else try {
               val pub = room?.localParticipant?.getTrackPublication(
                 io.livekit.android.room.track.Track.Source.MICROPHONE
               )
@@ -721,6 +871,12 @@ class CallActivity : ComponentActivity() {
             if (p2p != null) {
               p2pToggleCamera(desired)
               try { ExpoCallKitModule.emitLkLocalVideoChanged(desired && state.isCameraOn) } catch (_: Throwable) {}
+              return@onToggleCam
+            }
+            // [2026-10-10 call-states] Caller still ringing (video call): just
+            // remember the choice; the gated publish on answer uses isCameraOn.
+            if (callerRingGateClosed() && state.isVideo) {
+              state.isCameraOn = desired
               return@onToggleCam
             }
             // [video-upgrade 2026-05-25] If this is still an audio-only call and
@@ -1068,7 +1224,7 @@ class CallActivity : ComponentActivity() {
       bringUpRoom(lkUrl!!, lkToken!!)
     } else {
       Log.w(TAG, "missing lk_url or lk_token — attempting LkTokenFetcher fallback")
-      state.status = "Conectando…"
+      state.status = steadyStatusLabel() // [2026-10-10 call-states] caller keeps "Chamando…"
       lifecycleScope.launch {
         // [#1175 2026-05-18] Pull whatever extras the launcher carried so
         // LkTokenFetcher can use Intent fallback B even if SharedPreferences
@@ -1530,7 +1686,9 @@ class CallActivity : ComponentActivity() {
         // [2026-10-10 p2p-android] P2P: liga a câmera no motor P2P.
         if (p2p != null) { p2pToggleCamera(true); return }
         val r = room
-        if (r != null) {
+        // [2026-10-10 call-states] Caller still ringing → camera goes out with
+        // the gated publish on answer (publishLocalMediaAfterConnect).
+        if (r != null && !callerRingGateClosed()) {
           state.isCameraOn = true
           lifecycleScope.launch {
             try {
@@ -1570,7 +1728,9 @@ class CallActivity : ComponentActivity() {
       // hadn't connected yet (rare — perm dialog faster than LK handshake)
       // the publish below is a no-op and attemptConnect will pick it up.
       val r = room
-      if (r != null) {
+      // [2026-10-10 call-states] Caller still ringing → the gated publish on
+      // answer picks the grant up (state.micPermissionGranted).
+      if (r != null && !callerRingGateClosed()) {
         lifecycleScope.launch {
           try {
             r.localParticipant.setMicrophoneEnabled(!state.isMuted)
@@ -1668,10 +1828,19 @@ class CallActivity : ComponentActivity() {
       return
     }
     try { IncomingRinger.stop() } catch (_: Throwable) {}
-    state.status = "Conectado"
+    // [2026-10-10 call-states] Warm Room CONNECTED ≠ media. "Conectado" +
+    // timer only if the caller's media is already subscribed (TrackSubscribed
+    // fired before we collected events); otherwise "Conectando…" + watchdog
+    // and the TrackSubscribed handler commits it.
     state.isReconnecting = false
-    if (state.connectionStartedAt == 0L) {
-      state.connectionStartedAt = System.currentTimeMillis()
+    val warmHasMedia = try {
+      r.remoteParticipants.values.any { rp -> rp.trackPublications.values.any { it.track != null } }
+    } catch (_: Throwable) { false }
+    if (warmHasMedia) {
+      markMediaConnected("warm_adopt_backfill")
+    } else if (!mediaFlowing) {
+      state.status = "Conectando…"
+      startConnectWatchdog("warm_adopt")
     }
     // Back-fill remote participants / video tracks subscribed during the ring.
     try {
@@ -1760,6 +1929,14 @@ class CallActivity : ComponentActivity() {
   // [2026-10-08 call-connect-fast] Extracted from attemptConnect (unchanged
   // body) so the warm adopt path publishes mic → camera identically.
   private suspend fun publishLocalMediaAfterConnect(r: Room) {
+    // [2026-10-10 call-states] Caller ring gate — nothing goes out to the SFU
+    // (where the callee's preconnect is already subscribed) before the
+    // answer. openCallerMediaGate() re-enters here on accept / first media.
+    if (callerRingGateClosed()) {
+      Log.i(TAG, "[call-states] caller mic/camera publish DEFERRED until answer callId=$callId")
+      return
+    }
+    if (isOutgoing) callerMediaPublished = true
     // [#1191 audio fix, 2026-05-19] Only publish mic if RECORD_AUDIO is
     // actually granted. Calling setMicrophoneEnabled(true) without the
     // perm silently publishes a muted/empty track — call looks connected
@@ -1909,10 +2086,8 @@ class CallActivity : ComponentActivity() {
     peerAnswered = true
     stopRingback()
     cancelOutgoingTimeout()
-    try { IncomingRinger.stop() } catch (_: Throwable) {}
-    state.status = "Conectado"
-    state.isReconnecting = false
-    if (state.connectionStartedAt == 0L) state.connectionStartedAt = System.currentTimeMillis()
+    // [2026-10-10 call-states] P2P ICE connected = media path up (media truth).
+    markMediaConnected("p2p")
     try { sess.setMicEnabled(!state.isMuted && !heldByTelecom) } catch (_: Throwable) {}
     try { sess.sendData(org.json.JSONObject().put("type", "audio_muted").put("muted", state.isMuted)) } catch (_: Throwable) {}
     // Room quente (só-assinatura) do toque não serve mais: libera o SFU e o mic.
@@ -2435,11 +2610,20 @@ class CallActivity : ComponentActivity() {
         if (isOutgoing && !peerAnswered) {
           Log.d(TAG, "RoomEvent.Connected (caller, awaiting peer answer) — keep Chamando…")
           state.isReconnecting = false
+          // [2026-10-10 call-states] LK does not emit ParticipantConnected for
+          // peers already in the room at join: the callee's ring preconnect
+          // being there already = its device is ringing → "Tocando…".
+          if (state.status != "Tocando…") state.status = "Chamando…" // clears "Tentando reconectar…"
+          if (r.remoteParticipants.isNotEmpty()) markPeerRinging("present_at_join")
         } else {
-          state.status = "Conectado"
+          // [2026-10-10 call-states] Room up ≠ media: "Conectado" + timer only
+          // on the first remote track (markMediaConnected).
           state.isReconnecting = false
-          if (state.connectionStartedAt == 0L) {
-            state.connectionStartedAt = System.currentTimeMillis()
+          if (mediaFlowing) {
+            state.status = "Conectado"
+          } else {
+            state.status = "Conectando…"
+            startConnectWatchdog("room_connected")
           }
         }
       }
@@ -2450,8 +2634,10 @@ class CallActivity : ComponentActivity() {
       }
       is RoomEvent.Reconnected -> {
         Log.d(TAG, "RoomEvent.Reconnected")
-        state.status = "Conectado"
+        // [2026-10-10 call-states] Back to the real phase — never "Conectado"
+        // for a call whose media never flowed (timer resumes with media).
         state.isReconnecting = false
+        state.status = steadyStatusLabel()
       }
       is RoomEvent.Disconnected -> {
         Log.d(TAG, "RoomEvent.Disconnected reason=${event.reason} err=${event.error}")
@@ -2483,6 +2669,9 @@ class CallActivity : ComponentActivity() {
         // call_accepted). For incoming side or after Accept, fire eagerly.
         if (isOutgoing && !peerAnswered) {
           Log.d(TAG, "ParticipantConnected (caller, awaiting peer answer) — keep ringback")
+          // [2026-10-10 call-states] Callee preconnect arrived = its phone is
+          // ringing → "Tocando…" (NEVER connected; ringback keeps playing).
+          markPeerRinging("participant_connected")
         } else {
           stopRingback()
           if (isOutgoing) {
@@ -2500,7 +2689,13 @@ class CallActivity : ComponentActivity() {
           state.groupParticipants.removeAt(idx)
         }
         val remaining = room?.remoteParticipants?.size ?: 0
-        if (remaining == 0 && !isFinishing) {
+        if (remaining == 0 && isOutgoing && !peerAnswered && !mediaFlowing) {
+          // [2026-10-10 call-states] Callee's RING preconnect left (decline /
+          // ring teardown) — the ring outcome comes over the WS (call_end /
+          // declined / cancel) or the 45s timeout; presence ≠ state (iOS
+          // never ended the caller here either).
+          Log.d(TAG, "ParticipantDisconnected pre-answer — keep ringing, WS decides")
+        } else if (remaining == 0 && !isFinishing) {
           Log.d(TAG, "Last remote participant left — finishing 1:1 call")
           finishCall(reason = "peer_left")
         }
@@ -2514,15 +2709,12 @@ class CallActivity : ComponentActivity() {
         // the caller's audio connects but the UI stays on "Chamando…" with the
         // ringback looping forever ("conecta mas fica chamando"; mirrors iOS #1349).
         try { IncomingRinger.stop() } catch (_: Throwable) {}
-        if (isOutgoing && !peerAnswered) {
-          peerAnswered = true
-          stopRingback()
-          state.status = "Conectado"
-          state.isReconnecting = false
-          if (state.connectionStartedAt == 0L) {
-            state.connectionStartedAt = System.currentTimeMillis()
-          }
-          Log.d(TAG, "TrackSubscribed: remote media → peer answered, ringback stopped")
+        // [2026-10-10 call-states] First remote track = media truth for BOTH
+        // sides → "Conectado" + timer (markMediaConnected also opens the
+        // caller gate / marks answered when the WS call_accepted was lost).
+        if (!mediaFlowing) {
+          Log.d(TAG, "TrackSubscribed: remote media → Conectado (media truth)")
+          markMediaConnected("track_subscribed")
         }
         if (track is VideoTrack) {
           Log.d(TAG, "TrackSubscribed (video) sid=${event.publication.sid}")
@@ -2828,7 +3020,9 @@ class CallActivity : ComponentActivity() {
     outgoingTimeoutJob?.cancel()
     outgoingTimeoutJob = lifecycleScope.launch {
       kotlinx.coroutines.delay(45_000)
-      if (!finishing && state.status != "Conectado") {
+      // [2026-10-10 call-states] Answered calls are owned by the connect
+      // watchdog (25s → failed); this is the no-answer path only.
+      if (!finishing && !peerAnswered && !mediaFlowing) {
         Log.w(TAG, "[WAVE163] outgoing 45s timeout — unanswered, finishing")
         finishCall(reason = "unanswered")
       }
@@ -4493,7 +4687,8 @@ private fun AvatarBlock(state: CallSessionStateAndroid, elapsedSeconds: Int) {
 
     Spacer(Modifier.height(8.dp))
 
-    if (state.status == "Conectado") {
+    // [2026-10-10 call-states] terminal failure text: no animated dots.
+    if (state.status == "Conectado" || state.status == "Não foi possível conectar") {
       Text(
         text = statusLine(state.status, elapsedSeconds),
         color = SecondaryText,

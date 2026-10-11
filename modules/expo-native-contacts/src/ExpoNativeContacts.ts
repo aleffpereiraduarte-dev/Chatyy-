@@ -1,4 +1,4 @@
-import { requireNativeModule } from 'expo';
+import { requireOptionalNativeModule } from 'expo';
 
 export interface NativeContact {
   name: string;
@@ -34,4 +34,10 @@ declare class ExpoNativeContactsClass {
   getContactCount(): Promise<number>;
 }
 
-export default requireNativeModule<ExpoNativeContactsClass>('ExpoNativeContacts');
+// [2026-10-10 native-audit] requireOptionalNativeModule: a top-level
+// requireNativeModule THROWS inside the module factory when the binary lacks
+// the module (Android, web, old builds) and a lazy require() of a throwing
+// factory goes to reportFatalError (try/catch around require() does NOT
+// help — see AuthContext/expo-chat-cache incident 2026-10-06). Callers already
+// treat a null module as "use expo-contacts".
+export default requireOptionalNativeModule<ExpoNativeContactsClass>('ExpoNativeContacts') as ExpoNativeContactsClass;

@@ -2809,7 +2809,18 @@ if (Platform.OS !== 'web') {
   try { _NativeSwipeable = require('react-native-gesture-handler').Swipeable; } catch {}
 }
 
-function SwipeReplyWrap({ children, onReply, onInfo, disabled, colors, style }) {
+// [2026-10-10 qa-sweep] AudioContext.close() devolve Promise que REJEITA
+// ("Cannot close a closed AudioContext") se já fechado — o try/catch síncrono
+// não pega → unhandledrejection no web (stop da gravação + unmount fecham 2x).
+function _closeAudioCtxSafe(ctx) {
+  try {
+    if (!ctx || ctx.state === 'closed' || typeof ctx.close !== 'function') return;
+    const p = ctx.close();
+    if (p && typeof p.catch === 'function') p.catch(() => {});
+  } catch {}
+}
+
+function SwipeReplyWrap({ children, onReply, onInfo, disabled, colors, style, onContextMenu }) {
   const isNative = Platform.OS !== 'web';
   // [2026-10-07 native-polish] UI-thread swipe (Reanimated worklets + RNGH
   // Gesture.Pan) when this binary has Reanimated (runtime 2.6.0+). Module
@@ -2949,7 +2960,10 @@ function SwipeReplyWrap({ children, onReply, onInfo, disabled, colors, style }) 
   const badgeBg      = swipeX.interpolate({ inputRange: [0, 30, 60], outputRange: ['rgba(17, 17, 17,0)', 'rgba(17, 17, 17,0.18)', 'rgba(17, 17, 17,0.35)'], extrapolate: 'clamp' });
 
   return (
-    <Animated.View {...panResponder.panHandlers} style={[{ transform: [{ translateX: swipeX }] }, style]}>
+    // [2026-10-10 qa-sweep] onContextMenu mora AQUI (View web) — no
+    // TouchableOpacity da linha ele era sobrescrito pelos pressEventHandlers do
+    // RN-web (spread depois do ...rest) → clique direito nunca abria o menu.
+    <Animated.View {...panResponder.panHandlers} onContextMenu={onContextMenu} style={[{ transform: [{ translateX: swipeX }] }, style]}>
       <Animated.View style={{
         position: 'absolute', left: -40, top: '50%', marginTop: -18,
         width: 36, height: 36, borderRadius: 18,
@@ -6675,7 +6689,7 @@ function AudioRecorder({ onSend, onCancel, colors, t, conversationId, holdMode =
           if (mr && mr.state !== 'inactive') mr.stop();
           if (mr?.stream) mr.stream.getTracks().forEach(t => t.stop());
         } catch {}
-        try { audioCtxRef.current?.close(); } catch {}
+        _closeAudioCtxSafe(audioCtxRef.current); audioCtxRef.current = null;
       }
       // [2026-10-06 UX2] Native leak fix: unmounting mid-recording (navigate
       // away, ErrorBoundary reset, hold released before stop) used to leave
@@ -7123,7 +7137,7 @@ function AudioRecorder({ onSend, onCancel, colors, t, conversationId, holdMode =
         await stopWebRecorder();
         const mr = mediaRecorderRef.current;
         if (mr?.stream) mr.stream.getTracks().forEach(t => t.stop());
-        try { audioCtxRef.current?.close(); } catch {}
+        _closeAudioCtxSafe(audioCtxRef.current); audioCtxRef.current = null;
         if (chunksRef.current.length === 0) { onCancel(); return; }
         const blob = new Blob(chunksRef.current, { type: 'audio/webm' });
         const uri = URL.createObjectURL(blob);
@@ -9130,7 +9144,12 @@ function ChatConversationInner() {
           try { nn = require('../services/nicknames').getNickname?.(peer) || ''; } catch {}
         }
       }
-      const name = nn || emailToDisplayName(conv.display_name || conv.name || '');
+      // [2026-10-10 qa-sweep] Self-chat: o servidor chama de "Saved Messages"
+      // (inglês) e sobrescrevia o título localizado vindo da rota.
+      const _isSavedConv = conv.type === 'saved' || String(params.saved || '') === '1';
+      const name = _isSavedConv
+        ? t('chat.savedMessages')
+        : (nn || emailToDisplayName(conv.display_name || conv.name || ''));
       if (name) setConversationName(name);
       // Track the group's avatar separately so the group info header can
       // actually render the uploaded photo (AvatarCircle has no email to
@@ -22156,7 +22175,18 @@ function ChatConversationInner() {
         return `${typingUser} ${t('chat.typingMultiple') || 'estão digitando...'}`;
       }
       if (members.length > 0) {
-        const names = members.map(m => (m.display_name || m.email?.split('@')[0] || '').split(' ')[0]).filter(Boolean);
+        // [2026-10-10 qa-sweep] WhatsApp: "Qa2, Mariana, Você" — antes saía o
+        // local-part cru ("apitest, qa2") e o próprio usuário pelo e-mail.
+        const _me = String(currentEmail || '').toLowerCase();
+        let _hasMe = false;
+        const names = members.map(m => {
+          const em = String(m.email || '').toLowerCase();
+          if (_me && em === _me) { _hasMe = true; return ''; }
+          let nn = '';
+          if (em) { try { nn = require('../services/nicknames').getNickname?.(em) || ''; } catch {} }
+          return (nn || emailToDisplayName(m.display_name || m.email || '') || '').split(' ')[0];
+        }).filter(Boolean);
+        if (_hasMe) { const _y = String(t('chatConv.you') || ''); if (_y) names.push(_y.charAt(0).toUpperCase() + _y.slice(1)); }
         if (names.length <= 4) return names.join(', ');
         return `${names.slice(0, 3).join(', ')} +${names.length - 3}`;
       }
@@ -22185,7 +22215,7 @@ function ChatConversationInner() {
       }
     }
     return '';
-  }, [conversationType, presence, typingUser, typingUsers, typingIsRecording, members, t, wsConnected]);
+  }, [conversationType, presence, typingUser, typingUsers, typingIsRecording, members, t, wsConnected, currentEmail]);
 
   const presenceColor = useMemo(() => {
     if (!presence || conversationType === 'group') return colors.textTertiary;
@@ -24982,7 +25012,7 @@ function ChatConversationInner() {
                 ? `0:${String(Math.floor(vidDuration)).padStart(2, '0')}`
                 : `${Math.floor(vidDuration / 60)}:${String(Math.floor(vidDuration % 60)).padStart(2, '0')}`
           ) : '';
-          const vidSizeStr = msg.file_size > 0 ? (msg.file_size < 1048576 ? (msg.file_size / 1024).toFixed(0) + ' KB' : (msg.file_size / 1048576).toFixed(1) + ' MB') : '';
+          const vidSizeStr = msg.file_size > 0 ? formatBytes(msg.file_size) : ''; // [2026-10-10 qa-sweep] <1 KB mostrava "0 KB"
           // [WAVE 73 2026-05-21] HD / 4K badge top-right. Resolution comes
           // from image_variants.full_h (set when the ffmpeg poster pass ran
           // server-side) OR msg.height (camera/preview pipeline). Falls
@@ -27020,7 +27050,7 @@ function ChatConversationInner() {
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 3 }}>
                     {msg.file_size > 0 && (
                       <Text style={{ fontSize: 11.5, color: isOwn ? ownMetaColor : otherMetaColor, fontWeight: '500' }}>
-                        {msg.file_size < 1048576 ? (msg.file_size / 1024).toFixed(0) + ' KB' : (msg.file_size / 1048576).toFixed(1) + ' MB'}
+                        {formatBytes(msg.file_size) /* [2026-10-10 qa-sweep] 193 B mostrava "0 KB" */}
                       </Text>
                     )}
                     {!fileIsLocal && Platform.OS !== 'web' && !fileIsDownloading ? (
@@ -27847,6 +27877,13 @@ function ChatConversationInner() {
         onInfo={isOwn && !isDeleted ? () => handleMessageInfo(msg) : null}
         colors={colors}
         style={{ marginBottom: wrapMargin }}
+        onContextMenu={Platform.OS === 'web' ? (e) => {
+          // Web: clique direito = long-press (menu completo: responder / reagir /
+          // encaminhar / copiar / apagar). Seleção múltipla: alterna a linha.
+          try { e.preventDefault?.(); } catch {}
+          if (isDeleted || isSystem) return;
+          if (selectionMode) toggleSelection(msg.id); else handleLongPress(msg);
+        } : undefined}
       >
         <TouchableOpacity
           activeOpacity={0.8}
@@ -27912,16 +27949,7 @@ function ChatConversationInner() {
               handleLongPress(msg);
             }
           }}
-          // Web: right-click mirrors long-press so mouse users get the full action
-          // sheet (reply / react / forward / copy / delete). Without this the only
-          // way to trigger it on desktop is the 3-dot menu on the bubble hover,
-          // which isn't discoverable.
-          {...(Platform.OS === 'web' ? {
-            onContextMenu: (e) => {
-              e.preventDefault?.();
-              if (!selectionMode && !isDeleted && !isSystem) handleLongPress(msg);
-            },
-          } : {})}
+          // Web: clique direito → ver onContextMenu do SwipeReplyWrap acima.
           style={[styles.msgRow, isOwn ? styles.msgRowOwn : styles.msgRowOther, isLastInGroup && styles.msgRowGroupEnd, selectedIds.has(msg.id) && { backgroundColor: colors.primary + '22' }]}
           // [2026-10-09 a11y-bubble] VoiceOver/TalkBack: rótulo completo +
           // ações nomeadas (responder, reagir, encaminhar, apagar, info, mais).
@@ -30202,7 +30230,7 @@ function ChatConversationInner() {
                 <TextInput
                   value={savedSearch}
                   onChangeText={setSavedSearch}
-                  placeholder={t('search.placeholder') || 'Buscar...'}
+                  placeholder={t('chatConv.searchPlaceholder') /* [2026-10-10 qa-sweep] search.placeholder = busca social */}
                   placeholderTextColor={colors.textTertiary}
                   style={{ flex: 1, marginLeft: 8, color: colors.text, paddingVertical: 4 }}
                   autoFocus
@@ -32992,24 +33020,10 @@ function ChatConversationInner() {
                 })()
               )}
 
-              {/* Select (enters multi-select mode — WhatsApp puts this here).
-                  Hidden in the lifted-bubble list: "Selecionar" is already a
-                  row of the primary list there. [2026-10-08 chat-native] */}
-              {!ctxAnchor && (
-              <PressableRow highlightColor={isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)'}
-                style={ctxS.ctxSecondaryItem}
-                onPress={() => {
-                  const msgId = selectedMsg?.id;
-                  setSelectedMsg(null);
-                  setSelectionMode(true);
-                  if (msgId) toggleSelection(msgId);
-                }}
-                activeOpacity={0.6}
-              >
-                <IconCheck size={18} color={colors.text} />
-                <Text style={[ctxS.ctxSecondaryText, { color: colors.text }]}>{t('chatConv.select') || 'Selecionar'}</Text>
-              </PressableRow>
-              )}
+              {/* [2026-10-10 qa-sweep] "Selecionar" da lista secundária REMOVIDO:
+                  o botão "Selecionar" da fileira de ícones (acima) aparece em
+                  todo menu de mensagem não apagada → a folha clássica (web /
+                  sem lift) mostrava "Selecionar" DUAS vezes. */}
 
               {/* Per-message "mark as unread" REMOVED 2026-05-25 (dev/owner
                   feedback: confusing — it rolled the whole thread's last_read
@@ -34285,9 +34299,19 @@ function ChatConversationInner() {
             const rest = filtered.slice(5);
             const renderRow = ({ item }) => {
               const peerEmail = item.type === 'direct'
-                ? (item.members?.find(m => m.email !== currentEmail)?.email || item.email)
+                ? (item.other_email || item.contact_email || item.members?.find(m => m.email !== currentEmail)?.email || item.email)
                 : null;
-              const avatarName = item.name || peerEmail || 'C';
+              // [2026-10-10 qa-sweep] Mesmo nome da lista de conversas: "Saved
+              // Messages" (nome do servidor, inglês) → localizado; apelido local;
+              // "mariana.demo" → "Mariana Demo".
+              const _fwdIsSaved = item.type === 'saved' || (!!peerEmail && !!currentEmail
+                && String(peerEmail).toLowerCase() === String(currentEmail).toLowerCase());
+              let _fwdNick = '';
+              if (peerEmail && !_fwdIsSaved) { try { _fwdNick = require('../services/nicknames').getNickname(peerEmail) || ''; } catch {} }
+              const fwdName = _fwdIsSaved
+                ? t('chat.savedMessages')
+                : (_fwdNick || emailToDisplayName(item.display_name || item.name || peerEmail || '') || t('chat.unknown'));
+              const avatarName = fwdName || 'C';
               const isSelected = forwardSelected.has(String(item.id));
               return (
                 <TouchableOpacity
@@ -34308,7 +34332,7 @@ function ChatConversationInner() {
                   />
                   <View style={{ flex: 1, marginLeft: 12 }}>
                     <Text style={{ fontSize: 15, fontWeight: '500', color: colors.text }} numberOfLines={1}>
-                      {item.name || peerEmail || t('chat.unknown')}
+                      {fwdName}
                     </Text>
                     <Text style={{ fontSize: 12, color: colors.textTertiary, marginTop: 2 }} numberOfLines={1}>
                       {item.type === 'group'
@@ -34666,7 +34690,10 @@ function ChatConversationInner() {
               return String(a.display_name || a.email || '').localeCompare(String(b.display_name || b.email || ''));
             }).map((m, i) => {
               const isMe = m.email === user?.email;
-              const memberName = m.display_name || m.email?.split('@')[0];
+              // [2026-10-10 qa-sweep] Nome humanizado/apelido (antes "qa2" cru).
+              let _mNick = '';
+              if (m.email && !isMe) { try { _mNick = require('../services/nicknames').getNickname?.(m.email) || ''; } catch {} }
+              const memberName = _mNick || emailToDisplayName(m.display_name || m.email?.split('@')[0] || '');
               return (
                 <View key={m.email || i}>
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 14, paddingVertical: 9 }}>

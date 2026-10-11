@@ -32,6 +32,7 @@ import {
   IconArrowLeft, IconHeart, IconHeartOutline, IconMessageCircle,
   IconShare, IconBookmark, IconBookmarkFilled, IconPlus, IconPlay,
 } from '../components/Icons';
+import { cachedVideoSource } from '../services/videoCacheSource'; // [2026-10-10 native-audit] native video disk cache
 
 const { width: SW, height: SH } = Dimensions.get('window');
 
@@ -82,7 +83,7 @@ if (Platform.OS !== 'web') {
 
 function NativeVideoPane({ uri, poster, active }) {
   const focused = useIsFocused();
-  const player = _ExpoVideo.useVideoPlayer(uri || null, (p) => {
+  const player = _ExpoVideo.useVideoPlayer(cachedVideoSource(uri || null), (p) => {
     try { p.loop = true; p.muted = false; } catch {}
   });
   const [ready, setReady] = useState(false);

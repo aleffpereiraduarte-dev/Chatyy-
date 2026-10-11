@@ -996,11 +996,14 @@ function AppInit({ onNotification, setOtaToast }) {
         // then a further idle delay, so it rides well behind chat's first
         // paint. Same defer idiom the boot already uses for LiveKit/Sentry/
         // webPush. NOT removed, just rescheduled out of the chat window.
+        // [2026-10-10 perf-data] Skip a key whose cached copy is < 5 min old
+        // (back-to-back cold starts no longer re-download all four lists).
+        const _fresh = { skipIfFresherThanMs: 5 * 60 * 1000 };
         const prewarmAncillary = () => {
-          prefetch('contacts', () => apiMod.getContactsList(), 600000).catch(() => {});
-          prefetch('calendar_events', () => apiMod.calEvents(fmt(start), fmt(end)), 600000).catch(() => {});
-          prefetch('files_root', () => apiMod.fileList(null), 600000).catch(() => {});
-          prefetch('notes', () => apiMod.notesList({}), 600000).catch(() => {});
+          prefetch('contacts', () => apiMod.getContactsList(), 600000, _fresh).catch(() => {});
+          prefetch('calendar_events', () => apiMod.calEvents(fmt(start), fmt(end)), 600000, _fresh).catch(() => {});
+          prefetch('files_root', () => apiMod.fileList(null), 600000, _fresh).catch(() => {});
+          prefetch('notes', () => apiMod.notesList({}), 600000, _fresh).catch(() => {});
         };
         try {
           InteractionManager.runAfterInteractions(() => {

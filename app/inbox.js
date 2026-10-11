@@ -158,6 +158,7 @@ function InboxScreenInner() {
 
   const getGreeting = () => {
     const h = new Date().getHours();
+    if (h < 5) return t('greeting.evening'); // [2026-10-10 qa-sweep] 01h dizia "Bom dia"
     if (h < 12) return t('greeting.morning');
     if (h < 18) return t('greeting.afternoon');
     return t('greeting.evening');

@@ -1,9 +1,11 @@
 // Lightweight analytics tracking — pageviews, screen views, app opens
 // GDPR-friendly: no cookies, just localStorage/sessionStorage IDs
 import { Platform } from 'react-native';
-import { getBaseUrl } from './api';
+import { getOriginBase } from './api';
 
-function TRACK_URL() { return `${getBaseUrl()}/api/analytics.php?action=track`; }
+// [2026-10-10 servidores-melhorias] Sempre na origem (Cloudflare→US): no edge o
+// analytics.php abria conexão de ESCRITA ao PG master pelo túnel (p50 605ms no BR).
+function TRACK_URL() { return `${getOriginBase()}/api/analytics.php?action=track`; }
 
 let _visitorId = null;
 let _sessionId = null;

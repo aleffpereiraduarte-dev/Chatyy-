@@ -257,7 +257,7 @@ import { getGlobalCall as _getGC, setGlobalCall as _setGC, clearGlobalCall as _c
 // [CALL-E2EE 2026-06-28] Master kill-switch for end-to-end encrypted calls.
 // DEFAULT false → none of the call-key path below executes; the call behaves
 // exactly like today. See constants/featureFlags.js + services/callE2ee.js.
-import { CALL_E2EE_ENABLED } from '../constants/featureFlags';
+import { CALL_E2EE_ENABLED, PSTN_ENABLED } from '../constants/featureFlags';
 export const getGlobalCall = _getGC;
 export const clearGlobalCall = _clearGC;
 
@@ -456,6 +456,22 @@ function CallScreenInner() {
   // dead code. Pattern mirrors handleEndCallRef. [2026-10-03]
   const peerConnectedRef = useRef(false);
   const [peerRinging, setPeerRinging] = useState(false);
+  // [2026-10-10 call-states] WhatsApp-grade 1:1 state machine, IDENTICAL to
+  // iOS CallViewController + Android CallActivity:
+  //   caller: Chamando… (invite sent) → Tocando… (callee device reached: its
+  //   subscribe-only preconnect joined the LK room — NEVER "connected") →
+  //   accept → Conectando… → timer ONLY on media truth (first remote track
+  //   subscribed / P2P connected). Callee: Conectando… → media → timer.
+  //   After accept: 8s without media → resubscribe nudge; 25s → "Não foi
+  //   possível conectar" + call_end{reason:'failed'}.
+  // Incident call_1791675346907: caller saw a running timer while the
+  // callee's phone was still ringing (presence treated as answer).
+  const [peerReached, setPeerReached] = useState(false);
+  const [answeredUi, setAnsweredUi] = useState(false);
+  const [mediaUp, setMediaUp] = useState(false);
+  const mediaUpRef = useRef(false);
+  const connectWatchdogRef = useRef({ t8: null, t25: null });
+  const endReasonRef = useRef('');
   const [ended, setEnded] = useState(false);
   const [errorMsg, setErrorMsg] = useState(null);
   const [facingFront, setFacingFront] = useState(true);
@@ -689,6 +705,79 @@ function CallScreenInner() {
   // the leak). Callee and group calls are unaffected.
   const remoteAudioSeenRef = useRef(false);
   const _micGateOpen = () => !isCaller || isGroupCall || callAcceptedRef.current || remoteAudioSeenRef.current;
+  // [2026-10-10 call-states] helpers (see the state-machine note at peerReached).
+  const _clearConnectWatchdog = () => {
+    const w = connectWatchdogRef.current;
+    if (w.t8) { try { clearTimeout(w.t8); } catch {} w.t8 = null; }
+    if (w.t25) { try { clearTimeout(w.t25); } catch {} w.t25 = null; }
+  };
+  // Media truth → "connected" + timer. Remote media also proves the answer
+  // (the callee's ring preconnect is subscribe-only), so a lost WS
+  // call_accepted can't strand the caller.
+  const _markMediaUp = (src) => {
+    if (mediaUpRef.current || endedRef.current) return;
+    mediaUpRef.current = true;
+    _clearConnectWatchdog();
+    try { _callDiagAppend('info', 'call-states media up', { call_id: callId, src }); } catch {}
+    if (isCaller && !isGroupCall && !callAcceptedRef.current) {
+      callAcceptedRef.current = true;
+      try { _openCallerMic(); _openCallerCam(); } catch {}
+    }
+    if (pendingPeerConnectedFallbackRef.current) {
+      try { clearTimeout(pendingPeerConnectedFallbackRef.current); } catch {}
+      pendingPeerConnectedFallbackRef.current = null;
+    }
+    if (callerTimeoutRef.current) { try { clearTimeout(callerTimeoutRef.current); } catch {} callerTimeoutRef.current = null; }
+    try { const { stopRingtone } = require('../services/ringtone'); stopRingtone(); } catch {}
+    setAnsweredUi(true);
+    setMediaUp(true);
+    setPeerConnected(true);
+    setPeerRinging(true);
+    if (!peerJoinedAtRef.current) peerJoinedAtRef.current = Date.now();
+    if (!isGroupCall) { try { callKeep.reportConnected(callId); } catch {} }
+  };
+  // Armed after the answer (caller: WS call_accepted; callee: room/peer up).
+  // Skipped when the native Room owns media (legacy adopt path: JS sees no
+  // LK events there) and for group calls (unchanged behaviour).
+  const _armConnectWatchdog = (src) => {
+    if (isGroupCall || mediaUpRef.current || endedRef.current) return;
+    try { if (Platform.OS !== 'web' && globalThis.__chatyyNativeCallActive === true) return; } catch {}
+    const w = connectWatchdogRef.current;
+    if (w.t8 || w.t25) return;
+    w.t8 = setTimeout(() => {
+      w.t8 = null;
+      if (mediaUpRef.current || endedRef.current) return;
+      try { _callDiagAppend('warn', 'call-states no media 8s after answer — resubscribe nudge', { call_id: callId, src }); } catch {}
+      try {
+        const r = roomRef.current;
+        for (const p of Array.from(r?.remoteParticipants?.values?.() || [])) {
+          for (const pub of Array.from(p?.trackPublications?.values?.() || [])) {
+            if (!pub?.track && typeof pub?.setSubscribed === 'function') { try { pub.setSubscribed(true); } catch {} }
+          }
+        }
+      } catch {}
+    }, 8000);
+    w.t25 = setTimeout(() => {
+      w.t25 = null;
+      if (mediaUpRef.current || endedRef.current) return;
+      const r = roomRef.current;
+      const present = !!(r && (r.remoteParticipants?.size || 0) > 0 && (!isCaller || callAcceptedRef.current));
+      if (present) {
+        // Answered + peer in the room for 25s but nothing to subscribe (mic
+        // muted/denied on the other side): commit rather than kill the call.
+        try { _callDiagAppend('warn', 'call-states 25s peer present, no media — committing', { call_id: callId, src }); } catch {}
+        _markMediaUp('present_no_media_25s');
+        return;
+      }
+      try { _callDiagAppend('warn', 'call-states 25s without media after answer — failed', { call_id: callId, src }); } catch {}
+      try { setErrorMsg(t('call.state.connectFailed') || 'Não foi possível conectar'); } catch {}
+      endReasonRef.current = 'failed';
+      setTimeout(() => {
+        if (mediaUpRef.current || endedRef.current) return;
+        try { handleEndCallRef.current && handleEndCallRef.current(); } catch {}
+      }, 1500);
+    }, 25000);
+  };
   // [2026-10-06 caller-silent fix] SFU log for the 3 iOS→Android calls of
   // 2026-10-05 (rooms tfcg2mksb / tdjpf1018 / zbvtxnps2): the caller NEVER
   // published an audio track — the callee heard silence — while the camera
@@ -1160,6 +1249,10 @@ function CallScreenInner() {
       callDurationRef.current = gc.duration || 0;
       setCallDuration(gc.duration || 0);
       setPeerConnected(true);
+      // [2026-10-10 call-states] restoring a live call: media already flowed.
+      mediaUpRef.current = true;
+      setMediaUp(true);
+      setAnsweredUi(true);
       minimizedRef.current = false;
       _clearGC();
     }
@@ -1874,6 +1967,10 @@ function CallScreenInner() {
           // shows "Chamando…" until the callee answers). The caller now waits
           // for the WS call_accepted signal (handler below) to flip connected.
           if (!isCaller) setPeerConnected(true);
+          // [2026-10-10 call-states] Legacy callee adopt (gated off on iOS since
+          // 2026-05-27): the NATIVE Room owns media and already committed its
+          // own media-truth state; JS sees no LK events here, so mirror it.
+          if (!isCaller) _markMediaUp('native_adopt');
           // Flip the global flag so the WS chat_call_end gate
           // (isNativeRoomConnected helper below) knows the native side owns
           // the call lifecycle and JS must NOT race a duplicate hangup.
@@ -2344,8 +2441,12 @@ function CallScreenInner() {
           if (remoteIsTrulyConnected) {
             setPeerConnected(true);
             callKeep.reportConnected(callId);
+            _armConnectWatchdog('present_at_join'); // [2026-10-10 call-states]
           } else {
             peerParticipantConnectedAtRef.current = Date.now();
+            // [2026-10-10 call-states] callee's ring preconnect already in the
+            // room = its device is ringing → "Tocando…" (never connected).
+            setPeerReached(true);
           }
         }
         for (const p of others) {
@@ -2524,35 +2625,23 @@ function CallScreenInner() {
         peerJoinedAtRef.current = Date.now();
         callKeep.reportConnected(callId);
         try { const { stopRingtone } = require('../services/ringtone'); stopRingtone(); } catch {}
+        _armConnectWatchdog('participant_connected'); // [2026-10-10 call-states]
       } else {
         // Caller side, no WS call_accepted yet — peer is in LK room as a
         // pre-connect warm-up but hasn't tapped Accept. Don't flip UI to
         // "Conectado", don't stop ringback, don't tell CallKit yet. Stamp
         // the time so call_accepted (if it arrives) knows we already saw
-        // ParticipantConnected, and arm a 12s fallback in case WS drops
-        // the call_accepted broadcast.
+        // ParticipantConnected.
+        // [2026-10-10 call-states] REMOVED the 12s "flip connected via LK
+        // presence" fallback: presence is the callee's RING preconnect, so it
+        // started the timer AND opened the caller mic while the callee's phone
+        // was still ringing (same bug as iOS call_1791675346907). A dropped WS
+        // call_accepted is covered by media truth (TrackSubscribed →
+        // _markMediaUp: the callee publishes only after Accept). Presence now
+        // only means "Tocando…".
         peerParticipantConnectedAtRef.current = Date.now();
-        try { _callDiagAppend('info', 'caller ParticipantConnected — awaiting WS call_accepted', { call_id: callId, peer: participant.identity }); } catch {}
-        if (!pendingPeerConnectedFallbackRef.current) {
-          pendingPeerConnectedFallbackRef.current = setTimeout(() => {
-            pendingPeerConnectedFallbackRef.current = null;
-            if (endedRef.current || callAcceptedRef.current) return;
-            try { _callDiagAppend('warn', 'caller WS call_accepted fallback — flipping connected via LK presence', { call_id: callId, ms_since_lk_join: Date.now() - peerParticipantConnectedAtRef.current }); } catch {}
-            setPeerConnected(true);
-            setPeerRinging(true);
-            if (callerTimeoutRef.current) { clearTimeout(callerTimeoutRef.current); callerTimeoutRef.current = null; }
-            peerJoinedAtRef.current = Date.now();
-            try { callKeep.reportConnected(callId); } catch {}
-            // The WS call_accepted was dropped, so the normal answered-side mic
-            // open (via call_accepted / TrackSubscribed) never fired. Declaring
-            // connected here without opening the caller mic left the mic gate
-            // shut → callee heard silence and handleToggleMute showed a lying
-            // unmuted icon. Open mic (and camera on video) now. [2026-10-03]
-            _openCallerMic();
-            _openCallerCam();
-            try { const { stopRingtone } = require('../services/ringtone'); stopRingtone(); } catch {}
-          }, 12000);
-        }
+        setPeerReached(true);
+        try { _callDiagAppend('info', 'caller ParticipantConnected — callee ringing (Tocando)', { call_id: callId, peer: participant.identity }); } catch {}
       }
     });
 
@@ -2603,6 +2692,8 @@ function CallScreenInner() {
           if (_p && _p.catch) _p.catch(() => {});
         } catch {}
       }
+      // [2026-10-10 call-states] First remote track (any kind) = media truth.
+      if (participant !== r.localParticipant) { try { _markMediaUp('track_subscribed'); } catch {} }
       try {
         if (participant !== r.localParticipant && (track?.kind === 'audio' || publication?.kind === 'audio') && !remoteAudioSeenRef.current) {
           remoteAudioSeenRef.current = true;
@@ -3101,6 +3192,7 @@ function CallScreenInner() {
       onConnected: ({ ms }) => {
         if (endedRef.current) return;
         _log('connected_ui', { ms, total_ms: Date.now() - t0 });
+        _markMediaUp('p2p'); // [2026-10-10 call-states] ICE connected = media path up
         setPeerConnected(true);
         setPeerRinging(true);
         setReconnecting(false);
@@ -3481,7 +3573,8 @@ function CallScreenInner() {
             sendSignaling('call_end', {
               call_id: callId,
               target_email: contactEmail,
-              reason: 'hangup',
+              // [2026-10-10 call-states] 'failed' = 25s no-media watchdog.
+              reason: endReasonRef.current || 'hangup',
               attempt: i + 1,
             });
           } catch {}
@@ -3515,6 +3608,8 @@ function CallScreenInner() {
         // hanging up on the ring = 'declined'.
         terminalStatus = isCaller ? 'cancelled' : 'declined';
       }
+      // [2026-10-10 call-states] answered but media never flowed (watchdog).
+      if (endReasonRef.current === 'failed' && !mediaUpRef.current) terminalStatus = 'failed';
       // Backend terminal status is 'ended' — 'completed' was rejected (400)
       // and the .catch swallowed it, so history never got status/duration.
       apiMod.callStatus?.(callId, terminalStatus, dur).catch(() => {});
@@ -3689,7 +3784,7 @@ function CallScreenInner() {
   // Lazily fetch the peer's verified phone when LK gives up. We don't preload
   // on mount — most calls connect fine and this is a slow API path.
   useEffect(() => {
-    if (!connectionFailed || isGroupCall || peerPhoneLoadedRef.current) return;
+    if (!PSTN_ENABLED || !connectionFailed || isGroupCall || peerPhoneLoadedRef.current) return;
     if (!_safePeerEmail || !_safePeerEmail.includes('@')) return;
     peerPhoneLoadedRef.current = true;
     (async () => {
@@ -3748,6 +3843,7 @@ function CallScreenInner() {
         } else if (state === 'connected') {
           // Mimic peer-joined state so the timer + UI light up.
           setErrorMsg(null);
+          _markMediaUp('pstn'); // [2026-10-10 call-states] PSTN leg connected = media
           setPeerConnected(true);
         } else if (state === 'ended') {
           setPeerConnected(false);
@@ -3815,6 +3911,7 @@ function CallScreenInner() {
       unsubAccepted = mailWs.on('call_accepted', (data) => {
         if (data?.call_id === callId && mounted) {
           callAcceptedRef.current = true;
+          setAnsweredUi(true); // [2026-10-10 call-states] → "Conectando…" until media
           _openCallerMic();
           _openCallerCam();
           if (callerTimeoutRef.current) clearTimeout(callerTimeoutRef.current);
@@ -3833,6 +3930,11 @@ function CallScreenInner() {
             try { callKeep.reportConnected(callId); } catch {}
             try { _callDiagAppend('info', 'caller flip connected via WS call_accepted', { call_id: callId }); } catch {}
           }
+          // [2026-10-10 call-states] Accept ≠ media: the timer waits for the
+          // first remote track. Legacy native-owned caller (JS sees no LK
+          // events) mirrors the native screen's own media-truth state.
+          if (globalThis.__chatyyNativeCallActive && Platform.OS !== 'web') _markMediaUp('native_owned_accept');
+          else _armConnectWatchdog('ws_call_accepted');
           if (pendingPeerConnectedFallbackRef.current) {
             try { clearTimeout(pendingPeerConnectedFallbackRef.current); } catch {}
             pendingPeerConnectedFallbackRef.current = null;
@@ -4109,12 +4211,15 @@ function CallScreenInner() {
   }, [peerSpeaking, speakingPulseAnim]);
 
   // ───── Duration timer ─────
+  // [2026-10-10 call-states] 1:1: the timer (and the history duration, which
+  // reads callDurationRef) starts on MEDIA truth, not on accept/presence.
   useEffect(() => {
     if (!peerConnected) return;
+    if (!mediaUp && !isGroupCall) return;
     try { const { stopRingtone } = require('../services/ringtone'); stopRingtone(); } catch {}
     timerRef.current = setInterval(() => setCallDuration(d => { callDurationRef.current = d + 1; return d + 1; }), 1000);
     return () => { if (timerRef.current) clearInterval(timerRef.current); };
-  }, [peerConnected]);
+  }, [peerConnected, mediaUp, isGroupCall]);
 
   // ───── Server heartbeat (multi-device handoff) ─────
   // Stamps chat_call_state.last_heartbeat_at every 5s while connected. The
@@ -5253,7 +5358,16 @@ function CallScreenInner() {
       statusText = t('call.establishing') || 'Estabelecendo conexão segura...';
     }
   }
-  if (peerRinging && !peerConnected) statusText = t('call.ringing') || 'Chamando...';
+  // [2026-10-10 call-states] 1:1 caller labels, identical to iOS/Android:
+  // Chamando… → Tocando… (callee device reached) → Conectando… (answered,
+  // waiting for media) → timer.
+  if (isCaller && !isGroupCall && !peerConnected) {
+    statusText = answeredUi
+      ? (t('call.state.connecting') || 'Conectando…')
+      : peerReached
+        ? (t('call.state.ringing') || 'Tocando…')
+        : (t('call.state.calling') || 'Chamando…');
+  } else if (peerRinging && !peerConnected) statusText = t('call.ringing') || 'Chamando...';
   if (connectionFailed) {
     // [2026-05-26] Quem LIGA e nunca teve o outro lado conectado = o destino
     // está offline / não atendeu — NÃO é falha de conexão do caller. Mostrar
@@ -5268,6 +5382,8 @@ function CallScreenInner() {
   else if (errorMsg) statusText = errorMsg;
   else if (ended) statusText = t('call.ended') || 'Chamada encerrada';
   else if (showReconnectBanner && !peerConnected) statusText = t('call.reconnecting') || 'Reconectando...';
+  // [2026-10-10 call-states] answered/peer up but no media yet → no timer.
+  else if (peerConnected && !mediaUp && !isGroupCall) statusText = (showReconnectBanner || reconnecting) ? (t('call.reconnecting') || 'Reconectando...') : (t('call.state.connecting') || 'Conectando…');
   else if (onHold) statusText = (t('call.onHold') || 'Em espera') + ' · ' + formatDuration(callDuration);
   else if (screenSharing) statusText = t('call.screenSharing') || 'Compartilhando tela';
   else if (peerScreenSharing) statusText = formatDuration(callDuration);
@@ -5971,7 +6087,7 @@ function CallScreenInner() {
                   {/* #1183 — PSTN fallback button. Only when peer has a verified
                        phone, this is a 1-on-1 (group calls can't bridge to
                        phone), and we aren't already dialing. */}
-                  {peerPhone && !isGroupCall && !pstnFallbackActive && (
+                  {PSTN_ENABLED && peerPhone && !isGroupCall && !pstnFallbackActive && (
                     <TouchableOpacity
                       style={styles.reconnectBtn}
                       onPress={handlePstnFallback}

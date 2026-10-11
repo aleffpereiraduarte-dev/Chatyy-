@@ -6,12 +6,17 @@ import android.util.Log
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.database.StandaloneDatabaseProvider
 import androidx.media3.datasource.DefaultHttpDataSource
+import androidx.media3.datasource.cache.CacheDataSource
+import androidx.media3.datasource.cache.LeastRecentlyUsedCacheEvictor
+import androidx.media3.datasource.cache.SimpleCache
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.hls.HlsMediaSource
 import androidx.media3.exoplayer.source.MediaSource
 import androidx.media3.exoplayer.source.ProgressiveMediaSource
+import java.io.File
 import java.util.Locale
 
 // -----------------------------------------------------------------------------
@@ -62,6 +67,59 @@ object ExoPoolManager {
   )
 
   private val slots = Array(POOL_SIZE) { Slot() }
+
+  // ---------------------------------------------------------------------------
+  // [2026-10-10 native-audit] Disk cache for progressive (MP4) reels / chat
+  // short videos. Before: every bind streamed from the network again — swipe
+  // back to a reel, reopen a chat short video, loop after pool eviction = full
+  // re-download. Now ExoPlayer reads through a media3 SimpleCache (LRU,
+  // CACHE_BYTES) and only fetches the missing byte ranges.
+  //   - Own folder (cacheDir/chatyy_shorts_media): SimpleCache locks its
+  //     folder per process; expo-video's cache lives in ExpoVideoCache/*.
+  //   - HLS keeps the old uncached path (segments + live playlists).
+  //   - Any failure creating the cache → permanent fallback to the old
+  //     uncached path for this process (never breaks playback).
+  //   - FLAG_IGNORE_CACHE_ON_ERROR: a corrupt/locked cache read goes to network.
+  // ---------------------------------------------------------------------------
+  private const val CACHE_BYTES = 300L * 1024L * 1024L
+  private const val CACHE_DIR = "chatyy_shorts_media"
+  private var mediaCache: SimpleCache? = null
+  private var mediaCacheFailed = false
+
+  @Synchronized
+  private fun obtainCache(context: Context): SimpleCache? {
+    mediaCache?.let { return it }
+    if (mediaCacheFailed) return null
+    return try {
+      val app = context.applicationContext
+      val dir = File(app.cacheDir, CACHE_DIR)
+      val created = SimpleCache(dir, LeastRecentlyUsedCacheEvictor(CACHE_BYTES), StandaloneDatabaseProvider(app))
+      mediaCache = created
+      created
+    } catch (t: Throwable) {
+      mediaCacheFailed = true
+      Log.w(TAG, "obtainCache: disabled (${t.message})")
+      null
+    }
+  }
+
+  /**
+   * Drops every cached reel/short-video byte (logout / account switch).
+   * Players keep working: CacheDataSource just misses and refetches.
+   * Must NOT run on the main thread (SimpleCache I/O).
+   */
+  fun clearDiskCache(context: Context) {
+    val c = obtainCache(context) ?: return
+    try {
+      val keys = HashSet(c.keys)
+      for (k in keys) {
+        try { c.removeResource(k) } catch (_: Throwable) {}
+      }
+      Log.d(TAG, "clearDiskCache: removed ${keys.size} resources")
+    } catch (t: Throwable) {
+      Log.w(TAG, "clearDiskCache failed: ${t.message}")
+    }
+  }
 
   @Synchronized
   private fun ensureSlot(context: Context, index: Int): Slot {
@@ -118,7 +176,7 @@ object ExoPoolManager {
       }
     }
 
-    bindUrl(player, videoUrl)
+    bindUrl(context, player, videoUrl)
     victim.boundUrl = videoUrl
     victim.lastTouchedMs = now
 
@@ -168,8 +226,8 @@ object ExoPoolManager {
   // internals
   // ---------------------------------------------------------------------------
 
-  private fun bindUrl(player: ExoPlayer, videoUrl: String) {
-    val source = buildMediaSource(videoUrl)
+  private fun bindUrl(context: Context, player: ExoPlayer, videoUrl: String) {
+    val source = buildMediaSource(videoUrl) ?: buildCachedProgressiveSource(context, videoUrl)
     if (source != null) {
       player.setMediaSource(source)
     } else {
@@ -190,6 +248,27 @@ object ExoPoolManager {
     val httpFactory = DefaultHttpDataSource.Factory()
       .setAllowCrossProtocolRedirects(true)
     return HlsMediaSource.Factory(httpFactory).createMediaSource(mediaItem)
+  }
+
+  // Progressive http(s) → ProgressiveMediaSource reading through the disk
+  // cache. null (no cache / not http) → caller keeps the plain setMediaItem.
+  private fun buildCachedProgressiveSource(context: Context, videoUrl: String): MediaSource? {
+    val lower = videoUrl.lowercase(Locale.ROOT)
+    if (!(lower.startsWith("https://") || lower.startsWith("http://"))) return null
+    val cache = obtainCache(context) ?: return null
+    return try {
+      val httpFactory = DefaultHttpDataSource.Factory()
+        .setAllowCrossProtocolRedirects(true)
+      val cacheFactory = CacheDataSource.Factory()
+        .setCache(cache)
+        .setUpstreamDataSourceFactory(httpFactory)
+        .setFlags(CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR)
+      ProgressiveMediaSource.Factory(cacheFactory)
+        .createMediaSource(MediaItem.fromUri(Uri.parse(videoUrl)))
+    } catch (t: Throwable) {
+      Log.w(TAG, "buildCachedProgressiveSource: fallback uncached (${t.message})")
+      null
+    }
   }
 
   internal fun looksLikeHls(url: String): Boolean {

@@ -47,6 +47,17 @@ class ExpoShortsModule : Module() {
       }
     }
 
+    // [2026-10-10 native-audit] Wipe the reels/short-video disk cache
+    // (logout / account switch). AsyncFunction → runs off the main thread.
+    AsyncFunction("clearMediaCache") {
+      try {
+        val ctx = appContext.reactContext
+        if (ctx != null) ExoPoolManager.clearDiskCache(ctx)
+      } catch (t: Throwable) {
+        Log.w(TAG, "clearMediaCache failed: ${t.message}")
+      }
+    }
+
     // Audio-session helpers — iOS sets AVAudioSession.playback so lock-screen
     // audio keeps going. Android handles that via the MediaSession + audio
     // focus in ExoPlayer, which is already on by default. We expose stubs so

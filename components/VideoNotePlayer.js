@@ -1,6 +1,7 @@
 import React from 'react';
 import { View, Text, Platform } from 'react-native';
 import { IconVideo } from './Icons';
+import { cachedVideoSource } from '../services/videoCacheSource'; // [2026-10-10 native-audit] native video disk cache
 
 let _expoVideo = null;
 function loadExpoVideo() {
@@ -38,7 +39,7 @@ export default function VideoNotePlayer({ uri }) {
     } catch {}
   }
   const { useVideoPlayer, VideoView } = mod;
-  const player = useVideoPlayer(resolvedUri, (p) => {
+  const player = useVideoPlayer(cachedVideoSource(resolvedUri), (p) => {
     // expo-video usa `muted`/`loop` como properties (não isMuted como em
     // expo-av). p?.play() pode rejeitar em iOS — engole.
     try { p.muted = true; p.loop = true; const r = p.play?.(); if (r?.catch) r.catch(() => {}); } catch {}

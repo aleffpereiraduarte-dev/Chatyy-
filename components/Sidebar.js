@@ -15,6 +15,7 @@ import { LABEL_COLORS, LABEL_NAMES } from './LabelPicker';
 import * as api from '../services/api';
 import { useConfirm } from './ConfirmModal';
 import EmailOutboxBanner from './EmailOutboxBanner';
+import { setActiveInterval } from '../utils/activeInterval'; // [2026-10-10 perf-battery]
 
 const FOLDER_ICONS = {
   INBOX: IconInbox,
@@ -261,8 +262,8 @@ function Sidebar({ folders, currentFolder, onFolderPress, onCompose, onFoldersCh
       } catch {}
     };
     fetchCounts();
-    const interval = setInterval(fetchCounts, 30000);
-    return () => { mounted = false; clearInterval(interval); };
+    const stopCountsPoll = setActiveInterval(fetchCounts, 30000); // [2026-10-10 perf-battery] fg-only
+    return () => { mounted = false; stopCountsPoll(); };
   }, []);
 
   // Compose button press animation

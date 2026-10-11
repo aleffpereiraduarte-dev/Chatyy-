@@ -14,7 +14,7 @@ import {
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import { STORAGE_TIERS, purchaseStorage, getStorageLocalizedPrice } from '../services/iap';
-import { getBaseUrl, storageUsage } from '../services/api';
+import { getOriginBase, storageUsage } from '../services/api'; // [2026-10-10] loja web = host canônico
 import { startStripeCheckout, openStripePortal, isStripeCardAvailable, isStripeStorageCheckoutAvailable } from '../services/stripeCheckout';
 import { IconX, IconCloud, IconCheck, IconCheckCircle, IconUsers, IconImage, IconShield, IconZap } from './Icons';
 import { USE_NATIVE_SHEETS, NativeSheet } from './NativeSheet'; // [2026-10-09 native-sheets]
@@ -74,7 +74,7 @@ export default function StorageShopSheet({ visible, onClose, currentTier = 'free
   const onBuy = useCallback(async (tier) => {
     if (pendingTier) return;
     if (Platform.OS === 'web') {
-      const base = (typeof getBaseUrl === 'function' && getBaseUrl()) || 'https://chatyy.com.br';
+      const base = (typeof getOriginBase === 'function' && getOriginBase()) || 'https://chatyy.com.br';
       Linking.openURL(`${base.replace(/\/$/, '')}/storage?tier=${tier.id}&cycle=${cycle}`).catch(() => {});
       return;
     }
@@ -91,7 +91,7 @@ export default function StorageShopSheet({ visible, onClose, currentTier = 'free
         // silent
       } else if (r?.message === 'web_fallback' || r?.message === 'iap_unavailable') {
         if (Platform.OS === 'android') {
-          const base = (typeof getBaseUrl === 'function' ? getBaseUrl() : 'https://chatyy.com.br').replace(/\/$/, '');
+          const base = (typeof getOriginBase === 'function' ? getOriginBase() : 'https://chatyy.com.br').replace(/\/$/, '');
           Alert.alert(
             t('storage.unavailableTitle') || 'Indisponível',
             t('storage.androidWebBuyBody') || 'A compra direta no Android chega em breve. Quer abrir no navegador?',

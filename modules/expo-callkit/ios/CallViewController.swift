@@ -318,6 +318,7 @@ final class CallViewController: UIViewController, @unchecked Sendable {
     private static let kTerminalStatuses: Set<String> = [
         "Encerrada", "Recusada", "Ocupado", "Sem resposta",
         "Atendida em outro dispositivo", "Desconectado", "Erro",
+        "Não foi possível conectar", // [2026-10-10 call-states]
     ]
 
     /// Single place that commits "Conectado": opens the caller gate, stops
@@ -341,13 +342,21 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         }
     }
 
-    /// Arms a one-shot "flip to Conectado anyway" timer for the two cases where
-    /// media-truth never arrives: WS call_accepted landed but the callee
-    /// publishes no track (mic denied), or a peer is present in the SFU and
-    /// the WS frame was lost. Only flips if a remote participant is actually
-    /// in the Room or the gate is already open — never on a bare timer.
+    /// [2026-10-10 call-states] Post-answer CONNECT WATCHDOG (was the 5s/6s
+    /// "flip to Conectado anyway" fallback). WhatsApp rule, identical on
+    /// Android CallActivity and JS call.js: "Conectado" + timer ONLY on media
+    /// truth (didSubscribeTrack / P2P connected) — never on accept or peer
+    /// presence alone. Armed after the answer (caller: WS call_accepted;
+    /// callee: VC up after Accept). `seconds` (8) without media → resubscribe
+    /// nudge; +17s (25s total) → if the peer is genuinely in the room (answered
+    /// but mic muted/denied → nothing to subscribe) commit "Conectado" rather
+    /// than kill a live call; otherwise "Não foi possível conectar" +
+    /// call_end{reason:failed}. Stored in outgoingConnectFallbackTimer so every
+    /// existing cancelOutgoingConnectFallback() site also cancels it.
     private func scheduleOutgoingConnectFallback(reason: String, seconds: Double) {
-        guard isOutgoing, session.status != "Conectado", outgoingConnectFallbackTimer == nil else { return }
+        guard !didHangup, session.status != "Conectado", outgoingConnectFallbackTimer == nil else { return }
+        // Caller: only after the real answer (the ring has its own 45s timer).
+        if isOutgoing && !outgoingMicGateOpen { return }
         let work = DispatchWorkItem { [weak self] in
             guard let self = self else { return }
             self.outgoingConnectFallbackTimer = nil
@@ -360,15 +369,68 @@ final class CallViewController: UIViewController, @unchecked Sendable {
             // só confirma se o atendimento chegou (WS call_accepted abriu o
             // gate) E o par está na sala; mídia real (didSubscribe) segue sendo
             // o caminho principal.
+            // [2026-10-10 call-states] …and even then only after 25s (the
+            // muted-mic case); before that we only nudge subscriptions.
             let peerPresent = (self.room?.remoteParticipants.isEmpty == false)
-            if peerPresent && self.outgoingMicGateOpen {
-                self.markCallConnected(reason: reason)
-            } else {
-                nativeCallDiag("outgoing_connect_fallback_skip", self.callId, "peer=\(peerPresent) accepted=\(self.outgoingMicGateOpen)")
+            nativeCallDiag("connect_watchdog_no_media", self.callId,
+                           "reason=\(reason) t=\(Int(seconds))s peer=\(peerPresent) accepted=\(self.outgoingMicGateOpen) p2p=\(P2PCallBridge.ownsMedia(self.callId))")
+            self.nudgeRemoteSubscriptions()
+            let fail = DispatchWorkItem { [weak self] in
+                guard let self = self else { return }
+                self.outgoingConnectFallbackTimer = nil
+                guard !self.didHangup, self.session.status != "Conectado" else { return }
+                let present = (self.room?.remoteParticipants.isEmpty == false)
+                    && (self.room?.connectionState == .connected)
+                    && (!self.isOutgoing || self.outgoingMicGateOpen)
+                if present {
+                    nativeCallDiag("connect_watchdog_present_no_media", self.callId, reason)
+                    self.markCallConnected(reason: "present_no_media_25s")
+                } else {
+                    self.failConnect(reason: reason)
+                }
             }
+            self.outgoingConnectFallbackTimer = fail
+            DispatchQueue.main.asyncAfter(deadline: .now() + 17.0, execute: fail)
         }
         outgoingConnectFallbackTimer = work
         DispatchQueue.main.asyncAfter(deadline: .now() + seconds, execute: work)
+    }
+
+    /// [2026-10-10 call-states] Cheap recovery for "answered but no media":
+    /// (re)request every remote publication we are not subscribed to. LiveKit
+    /// already runs its own ICE restart / resume on transport failure.
+    private func nudgeRemoteSubscriptions() {
+        guard let r = room else { return }
+        for rp in r.remoteParticipants.values {
+            for pub in rp.trackPublications.values {
+                guard let rpub = pub as? RemoteTrackPublication, rpub.track == nil else { continue }
+                Task { try? await rpub.set(subscribed: true) }
+            }
+        }
+    }
+
+    /// [2026-10-10 call-states] 25s after the answer with no media: tell the
+    /// user, then end with the hub-relayed reason "failed".
+    private func failConnect(reason: String) {
+        guard !didHangup else { return }
+        nativeCallDiag("connect_failed_no_media", callId, reason)
+        stopRingbackTone(reason: "connect_failed")
+        session.status = "Não foi possível conectar"
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+            guard let self = self, !self.didHangup, self.session.status != "Conectado" else { return }
+            self.handleHangup(reason: "failed", statusText: "Não foi possível conectar")
+        }
+    }
+
+    /// [2026-10-10 call-states] Caller: the callee's device is confirmed
+    /// ringing (its subscribe-only preconnect joined the LK room). Upgrades
+    /// "Chamando…" → "Tocando…" only; ringback keeps playing; NEVER connected.
+    private func markPeerRinging(reason: String) {
+        guard isOutgoing, !outgoingMicGateOpen, !didHangup, callConnectedAt == nil else { return }
+        guard statusDotsBase == "Chamando" else { return }
+        statusDotsBase = "Tocando"
+        session.status = "Tocando"
+        nativeCallDiag("outgoing_peer_ringing", callId, reason)
     }
 
     private func cancelOutgoingConnectFallback() {
@@ -424,6 +486,8 @@ final class CallViewController: UIViewController, @unchecked Sendable {
                 label = (self.isOutgoing && !self.outgoingMicGateOpen) ? "Sem resposta" : "Encerrada"
             case "answered_elsewhere":
                 label = "Atendida em outro dispositivo"
+            case "failed": // [2026-10-10 call-states] peer's 25s no-media watchdog
+                label = "Não foi possível conectar"
             default:
                 label = "Encerrada"
             }
@@ -439,6 +503,10 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         outgoingMicGateOpen = true
         // [2026-10-06 native-only outgoing] Answered — the no-answer timer is moot.
         cancelOutgoingRingTimer()
+        // [2026-10-10 call-states] …and so is the module's process-scope 45s
+        // CallKit .unanswered timer (otherwise an answer at ~40s whose media
+        // lands after 45s got the call killed as "unanswered").
+        VoipPushAppDelegateSubscriber.cancelOutgoingTimeout(callId: callId)
         nativeCallDiag("outgoing_mic_gate_open", callId, reason)
         // [2026-10-09 p2p-ios] Ligação 1:1 de voz com P2P ligado: o P2P vira
         // dono da mídia e o Room LiveKit fica em espera quente (nada publicado).
@@ -800,7 +868,9 @@ final class CallViewController: UIViewController, @unchecked Sendable {
             if self.callConnectedAt != nil { return }
             self.dotCount = (self.dotCount + 1) % 4
             // [2026-10-06 native-only outgoing] base flips Chamando → Conectando on accept.
-            let base = self.statusDotsBase
+            // [2026-10-10 call-states] Chamando → Tocando → Conectando; a
+            // transport blip before media shows "Reconectando".
+            let base = self.session.isReconnecting ? "Reconectando" : self.statusDotsBase
             let dots = String(repeating: ".", count: self.dotCount)
             lbl.text = base + dots
         }
@@ -1093,6 +1163,13 @@ final class CallViewController: UIViewController, @unchecked Sendable {
                         guard let self = self,
                               let connAt = self.callConnectedAt,
                               let lbl = self.view.viewWithTag(9001) as? UILabel else { return }
+                        // [2026-10-10 call-states] Mid-call media loss: show
+                        // "Reconectando…" instead of a ticking "Conectado";
+                        // the count (from first media) resumes on recovery.
+                        if self.session.isReconnecting {
+                            lbl.text = "Reconectando\u{2026}"
+                            return
+                        }
                         let elapsed = Int(Date().timeIntervalSince(connAt))
                         let h = elapsed / 3600
                         let m = (elapsed % 3600) / 60
@@ -1168,8 +1245,19 @@ final class CallViewController: UIViewController, @unchecked Sendable {
                 }
             }
             // Update session.status if already connected.
-            if NativeCallRoom.shared.state == .connected {
-                self.session.status = "Conectado"
+            // [2026-10-10 call-states] Room connected ≠ media. "Conectado" +
+            // timer only if the caller's media is ALREADY subscribed (it may
+            // have landed before attachDelegate — didSubscribeTrack never
+            // re-fires); otherwise "Conectando…" until didSubscribeTrack, with
+            // the 8s/25s watchdog armed.
+            let adoptHasMedia = (self.room?.remoteParticipants.values.contains { rp in
+                rp.trackPublications.values.contains { $0.isSubscribed && $0.track != nil }
+            }) ?? false
+            if adoptHasMedia {
+                self.markCallConnected(reason: "adopt_backfill_media")
+            } else {
+                self.statusDotsBase = "Conectando"
+                self.scheduleOutgoingConnectFallback(reason: "adopt", seconds: 8)
             }
             // [2026-05-22 #1330 fix] PUBLISH-ON-ANSWER. Because preconnectRoom
             // is now subscribe-only (no setMicrophone during the ring window
@@ -2947,8 +3035,10 @@ final class CallViewController: UIViewController, @unchecked Sendable {
                 self.stopRingbackTone(reason: "p2p_connected")
                 if self.isOutgoing {
                     self.markCallConnected(reason: "p2p")
-                } else if self.session.status != "Conectado" {
-                    self.session.status = "Conectado"
+                } else {
+                    // [2026-10-10 call-states] same single commit point (also
+                    // cancels the connect watchdog); idempotent.
+                    self.markCallConnected(reason: "p2p_incoming")
                 }
             }
         }
@@ -2980,10 +3070,12 @@ final class CallViewController: UIViewController, @unchecked Sendable {
             // timer. "Conectado" is committed by markCallConnected() on the first
             // subscribed remote track; a 5s fallback covers a callee that
             // answered but publishes nothing (mic denied).
+            // [2026-10-10 call-states] → connect watchdog: 8s nudge, 25s
+            // fail (or commit if the peer is in the room with a muted mic).
             if self.session.status != "Conectado" {
                 self.statusDotsBase = "Conectando"
-                self.session.status = "Conectando"
-                self.scheduleOutgoingConnectFallback(reason: "accepted_no_media_5s", seconds: 5)
+                if !self.session.isReconnecting { self.session.status = "Conectando" }
+                self.scheduleOutgoingConnectFallback(reason: "ws_call_accepted", seconds: 8)
             }
 
             // [WAVE 156 2026-05-22] Moved here from roomDidConnect.
@@ -4822,6 +4914,19 @@ extension CallViewController: RoomDelegate {
         // so the JS-side /call.js sees onLkConnected and renders peers from
         // the snapshot without spinning up a duplicate Room.
         NativeCallRoom.shared.didConnect()
+        // [2026-10-10 call-states] LiveKit does not fire participantDidConnect
+        // for peers already in the room at join. Caller: the callee's ring
+        // preconnect being there = its phone is ringing → "Tocando…".
+        // Callee / answered: arm the media watchdog.
+        let presentAtJoin = !room.remoteParticipants.isEmpty
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            if self.isOutgoing && !self.outgoingMicGateOpen {
+                if presentAtJoin { self.markPeerRinging(reason: "present_at_join") }
+            } else {
+                self.scheduleOutgoingConnectFallback(reason: "room_connected", seconds: 8)
+            }
+        }
         // [WAVE 115, 2026-05-21 / WAVE 119, 2026-05-22] Relay-first Phase-2:
         // 1s after Connected on TURN relay, trigger ICE restart with policy
         // 'all' so WebRTC tries a direct P2P candidate. If P2P wins, media
@@ -4902,8 +5007,12 @@ extension CallViewController: RoomDelegate {
                 self.session.isReconnecting = true
             case .connected:
                 if self.session.isReconnecting {
-                    self.session.status = "Conectado"
+                    // [2026-10-10 call-states] Back to the REAL phase: only a
+                    // call whose media already flowed goes back to "Conectado"
+                    // (timer resumes); otherwise restore Chamando/Tocando/
+                    // Conectando.
                     self.session.isReconnecting = false
+                    self.session.status = (self.callConnectedAt != nil) ? "Conectado" : self.statusDotsBase
                 }
             case .disconnected:
                 self.session.status = "Desconectado"
@@ -4994,7 +5103,8 @@ extension CallViewController: RoomDelegate {
         print("[CallVC] participantDidConnect — identity=\(identity)")
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
-            self.stopRingbackTone(reason: "participantDidConnect")
+            // [2026-10-10 call-states] ringback stop moved into the post-answer
+            // branch below — the callee's ring preconnect must NOT silence it.
             // [WAVE 161 2026-05-23] Restore the status-flip fallback that WAVE 156
             // accidentally removed. WAVE 156 correctly stopped roomDidConnect (=
             // OUR join, premature) from flipping status, but it ALSO removed the
@@ -5022,11 +5132,18 @@ extension CallViewController: RoomDelegate {
             // call_accepted landed); otherwise arm a 6s fallback that flips if
             // the peer is still present and nothing else confirmed (lost WS
             // frame + callee whose mic publishes nothing). Incoming unchanged.
-            if !self.isOutgoing || self.outgoingMicGateOpen {
-                self.markCallConnected(reason: "participant_connected")
+            // [2026-10-10 call-states] Presence is NEVER "Conectado" (not even
+            // after the answer — the callee publishes on Accept, so media
+            // follows within ~1s and didSubscribeTrack commits it). Pre-answer
+            // presence = the callee's ring preconnect = its phone is ringing →
+            // "Tocando…", ringback keeps playing. Post-answer / incoming: make
+            // sure the connect watchdog is armed.
+            if self.isOutgoing && !self.outgoingMicGateOpen {
+                NSLog("[CallVC] ParticipantConnected pre-answer (outgoing) — callee ringing → Tocando callId=\(self.callId)")
+                self.markPeerRinging(reason: "participant_connected")
             } else {
-                NSLog("[CallVC] ParticipantConnected pre-answer (outgoing) — holding Chamando, 6s fallback armed callId=\(self.callId)")
-                self.scheduleOutgoingConnectFallback(reason: "participant_present_6s", seconds: 6)
+                if self.isOutgoing { self.stopRingbackTone(reason: "participantDidConnect") }
+                self.scheduleOutgoingConnectFallback(reason: "participant_connected", seconds: 8)
             }
             self.remoteParticipantCount += 1
             self.updateParticipantCountLabel()

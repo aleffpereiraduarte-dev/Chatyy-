@@ -17,6 +17,14 @@ const EDGE_SERVERS = [
 // US origin/master is the INVIOLABLE fallback. Whenever latency detection has
 // not run, failed, or every edge probe timed out, API+chat resolve here.
 const US_FALLBACK_BASE = 'https://chatyy.com.br';
+// [2026-10-10 servidores-melhorias] Host CANÔNICO (origem US via Cloudflare) p/
+// tudo que os edges api-br/api-eu NÃO servem: /api/rust/email/* e /api/go-auth/*
+// (no edge iam edge→Cloudflare→US com TLS novo: +47ms BR / +246ms EU medidos),
+// /api/rust/one/* e /api/push/* (no edge caíam no SPA → HTML 200 / 405) e links
+// públicos (feed/meet/drive/storage) que vão pra outras pessoas. As ações de
+// /api/email.php continuam na região escolhida (API_URL/BASE_URL).
+export const ORIGIN_BASE = US_FALLBACK_BASE;
+export function getOriginBase() { return ORIGIN_BASE; }
 // Bump whenever EDGE_SERVERS changes so upgrading clients re-probe instead of
 // restoring a stale/dead edge. v11 = 3 regional edges (us/br/eu).
 // v12 [2026-10-08 region-pick] = escolha com dica do servidor + probe aquecido
@@ -498,7 +506,9 @@ export function hasRefreshToken() { return !!refreshToken; }
 
 // Go Fast Auth endpoints (100x faster than PHP)
 function goAuthUrl(path) {
-  return (BASE_URL || 'https://chatyy.com.br') + '/api/go-auth/' + path;
+  // [2026-10-10 servidores-melhorias] Go auth (:8090) só existe no US; o edge
+  // repassava via Cloudflare com TLS novo (+36ms BR / +246ms EU). Direto na origem.
+  return ORIGIN_BASE + '/api/go-auth/' + path;
 }
 let deviceTrustToken = ''; // Device trust token — persists across sessions to prevent re-verification
 
@@ -1532,8 +1542,23 @@ if (typeof window !== 'undefined' && typeof sessionStorage !== 'undefined') {
       }
     }
   } catch {}
+  // [2026-10-10 perf] Dirty flag: the 30 s flush re-serialized the whole
+  // cache (~50-100 ms main-thread block) even when nothing changed since the
+  // last flush (idle tab, background). Track mutations on this Map instance
+  // and skip clean ticks. pagehide still flushes whenever dirty.
+  let _swrDirty = true;
+  try {
+    const _set = _swrCache.set.bind(_swrCache);
+    const _del = _swrCache.delete.bind(_swrCache);
+    const _clr = _swrCache.clear.bind(_swrCache);
+    _swrCache.set = (k, v) => { _swrDirty = true; return _set(k, v); };
+    _swrCache.delete = (k) => { _swrDirty = true; return _del(k); };
+    _swrCache.clear = () => { _swrDirty = true; return _clr(); };
+  } catch {}
   // Flush in-memory cache to sessionStorage every 10s and on pagehide.
   const _persist = () => {
+    if (!_swrDirty) return;
+    _swrDirty = false;
     try {
       const obj = {};
       let i = 0;
@@ -2783,7 +2808,7 @@ export async function getInbox(folder = 'INBOX', page = 1, perPage = 20, search 
         const qs = new URLSearchParams({ folder, page: String(page), per_page: String(perPage) });
         if (search) qs.set('search', search);
         if (filter) qs.set('filter', filter);
-        const url = `${BASE_URL}/api/rust/email/inbox?${qs.toString()}`;
+        const url = `${ORIGIN_BASE}/api/rust/email/inbox?${qs.toString()}`; // [2026-10-10 servidores-melhorias] Rust e-mail só no US
         const r = await _rustFetchWithRefresh(url);
         if (r.status === 401) _markRustDead();
         if (r.ok) {
@@ -2822,7 +2847,7 @@ export async function getMessage(uid, folder = 'INBOX', opts = {}) {
   const _markSeen = opts.markSeen !== false;
   if (!authToken || _isRustDead()) return _markSeen ? apiCall('message', { uid, folder }) : null;
   try {
-    const url = `${BASE_URL}/api/rust/email/message/${encodeURIComponent(uid)}?folder=${encodeURIComponent(folder)}&mark_seen=${_markSeen}`;
+    const url = `${ORIGIN_BASE}/api/rust/email/message/${encodeURIComponent(uid)}?folder=${encodeURIComponent(folder)}&mark_seen=${_markSeen}`;
     const r = await _rustFetchWithRefresh(url);
     if (r.status === 401) _markRustDead();
     if (r.ok) {
@@ -2945,7 +2970,7 @@ export async function getFolders() {
   // Also skip when Rust recently 401'd (see _isRustDead cooldown comment).
   if (authToken && !_isRustDead()) {
     try {
-      const r = await _rustFetchWithRefresh(`${BASE_URL}/api/rust/email/folders`);
+      const r = await _rustFetchWithRefresh(`${ORIGIN_BASE}/api/rust/email/folders`);
       if (r.status === 401) _markRustDead();
       if (r.ok) {
         const j = await r.json();
@@ -8859,7 +8884,7 @@ export async function fileListLinks(fileId) {
       .filter(f => String(f.id) === String(fileId) && f.shared_with === 'public' && f.share_token)
       .map(f => ({
         token: f.share_id,
-        url: `${BASE_URL}/api/drive.php?action=drive_get_shared&token=${f.share_token}`,
+        url: `${ORIGIN_BASE}/api/drive.php?action=drive_get_shared&token=${f.share_token}`, // link público → host canônico
         has_password: false,
         expires_at: null,
         max_downloads: null,
@@ -9052,7 +9077,7 @@ export async function oneChat(message, conversationId = null, imageBase64 = null
       const t = setTimeout(() => ctrl.abort(), 120000);
       const headers = { 'Content-Type': 'application/json' };
       if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
-      const res = await fetch(`${BASE_URL}/api/rust/one/chat`, {
+      const res = await fetch(`${ORIGIN_BASE}/api/rust/one/chat`, { // edges não roteiam /api/rust/one
         method: 'POST',
         headers,
         body: JSON.stringify({ message, locale, history: [] }),
@@ -11991,7 +12016,7 @@ export async function linkedPhonesRemove(phone) {
 // the global PushLoginRequestModal.
 async function _pushLoginRespond(challengeId, action) {
   if (!challengeId) throw new Error('missing_challenge_id');
-  const r = await fetch(`${BASE_URL}/api/push/login-approve`, {
+  const r = await fetch(`${ORIGIN_BASE}/api/push/login-approve`, { // edges: 405 (sem location)
     method: 'POST',
     headers: { ...getAuthHeaders(), 'Content-Type': 'application/json' },
     body: JSON.stringify({ challenge_id: challengeId, action }),

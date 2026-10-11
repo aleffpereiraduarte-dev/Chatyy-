@@ -24,6 +24,7 @@ import {
 
 // SVG icons — reuse app's Icons.js (never emoji)
 import { IconX, IconVolume2, IconVolumeX, IconPlay, IconPause } from './Icons';
+import { cachedVideoSource } from '../services/videoCacheSource'; // [2026-10-10 native-audit] native video disk cache
 
 const SIZE = 320;
 const RADIUS = SIZE / 2;
@@ -68,7 +69,7 @@ function CircularPlayer({ uri, paused, muted, onReady }) {
 
   const { useVideoPlayer, VideoView } = ev;
 
-  const player = useVideoPlayer(uri, (p) => {
+  const player = useVideoPlayer(cachedVideoSource(uri), (p) => {
     try {
       p.muted = muted;
       p.loop = true;

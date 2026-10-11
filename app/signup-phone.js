@@ -36,6 +36,7 @@ import { IconArrowLeft, IconArrowRight, IconCheck, IconCheckCircle, IconUser, Ic
 import SignupIntro from '../components/SignupIntro';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import RestoreBackupPrompt from '../components/RestoreBackupPrompt';
+import { VOICE_OTP_ENABLED } from '../constants/featureFlags';
 // [2026-10-07 signup-ux] keyboard-controller aware container (falls back to RN
 // KeyboardAvoidingView when KC native is absent / on web), draft resume,
 // smarter phone/handle/password helpers.
@@ -1403,7 +1404,7 @@ export default function SignupPhone() {
                 {/* Voice fallback (WhatsApp/Telegram parity): após o timer expirar,
                     deixa o user pedir uma chamada onde a Polly Camila lê o
                     código em PT-BR. Para quando o SMS não chega ou caixa lotada. */}
-                {resendCountdown === 0 && (
+                {VOICE_OTP_ENABLED && resendCountdown === 0 && (
                   <TouchableOpacity
                     onPress={() => sendOtp('voice')}
                     disabled={busy}

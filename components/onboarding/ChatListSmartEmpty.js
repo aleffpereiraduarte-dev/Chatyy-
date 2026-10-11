@@ -29,7 +29,7 @@ function Chevron({ color }) {
   );
 }
 
-export default function ChatListSmartEmpty({ router, t, filtered, currentEmail }) {
+export default function ChatListSmartEmpty({ router, t, filtered, currentEmail, filter, query, onClearFilter, onNewGroup }) {
   const { isDark } = useTheme();
   const c = useOnbCopy();
   const reduceMotion = useReducedMotion();
@@ -83,6 +83,46 @@ export default function ChatListSmartEmpty({ router, t, filtered, currentEmail }
   }, [router, t, c]);
 
   if (filtered) {
+    // [2026-10-10 qa-sweep] Vazio POR FILTRO/BUSCA: antes todo filtro vazio
+    // (Não lidas, Favoritas, Grupos, Arquivadas, busca sem resultado) dizia
+    // "Nenhuma conversa — Inicie uma nova conversa", como se a conta estivesse
+    // vazia. Agora a mensagem explica o filtro e oferece voltar p/ "Todas".
+    const q = String(query || '').trim();
+    const back = typeof onClearFilter === 'function'
+      ? { label: t('chat.emptyFilterShowAll'), onPress: onClearFilter }
+      : undefined;
+    if (q) {
+      return (
+        <ScreenEmptyState
+          kind="search"
+          title={t('chat.emptySearchTitle')}
+          subtitle={t('chat.emptySearchDesc', { query: q.length > 40 ? `${q.slice(0, 40)}…` : q })}
+        />
+      );
+    }
+    if (filter === 'unread') {
+      return <ScreenEmptyState kind="chat" title={t('chat.emptyUnreadTitle')} subtitle={t('chat.emptyUnreadDesc')} secondary={back} />;
+    }
+    if (filter === 'favorites') {
+      return <ScreenEmptyState kind="chat" title={t('chat.emptyFavoritesTitle')} subtitle={t('chat.emptyFavoritesDesc')} secondary={back} />;
+    }
+    if (filter === 'groups') {
+      return (
+        <ScreenEmptyState
+          kind="chat"
+          title={t('chat.emptyGroupsTitle')}
+          subtitle={t('chat.emptyGroupsDesc')}
+          cta={typeof onNewGroup === 'function' ? { label: t('chat.newGroup'), icon: 'plus', onPress: onNewGroup } : undefined}
+          secondary={back}
+        />
+      );
+    }
+    if (filter === 'archived') {
+      return <ScreenEmptyState kind="chat" title={t('chat.emptyArchivedTitle')} subtitle={t('chat.emptyArchivedDesc')} secondary={back} />;
+    }
+    if (filter && filter !== 'all') {
+      return <ScreenEmptyState kind="chat" title={t('chat.emptyFilterTitle')} subtitle={t('chat.emptyFilterDesc')} secondary={back} />;
+    }
     return (
       <ScreenEmptyState
         kind="chat"

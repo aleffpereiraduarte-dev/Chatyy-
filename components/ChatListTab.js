@@ -34,6 +34,7 @@ import AvatarCircle from './AvatarCircle';
 import HomeHubCard from './HomeHubCard';
 import AvatarLightbox from './AvatarLightbox';
 import ChatyyOneAvatar from './ChatyyOneAvatar';
+import { setActiveInterval } from '../utils/activeInterval'; // [2026-10-10 perf-battery]
 import StatusCamera, { FILTERS as STATUS_FILTERS, FilterOverlay } from './StatusCamera';
 import BroadcastModal from './BroadcastModal';
 import CreateGroupFlow from './CreateGroupFlow';
@@ -1885,8 +1886,8 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab, reque
   // Notes mount+interval (statuses are owned by the hook).
   useEffect(() => {
     loadNotes();
-    const t = setInterval(loadNotes, 60000);
-    return () => clearInterval(t);
+    const stopNotesPoll = setActiveInterval(loadNotes, 60000); // [2026-10-10 perf-battery] fg-only
+    return () => stopNotesPoll();
   }, [loadNotes]);
 
   // [WAVE 93 2026-05-21] Pull-to-refresh bus subscription. Parent's onRefresh
@@ -1945,8 +1946,8 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab, reque
       }
     };
     tick();
-    const iv = setInterval(tick, 45000);
-    return () => { cancelled = true; clearInterval(iv); };
+    const stopLivePoll = setActiveInterval(tick, 45000); // [2026-10-10 perf-battery] fg-only
+    return () => { cancelled = true; stopLivePoll(); };
   }, [user?.email]);
   const liveAoVivo = (t('live.aoVivo') || 'AO VIVO').toUpperCase();
   const openLiveViewer = useCallback(async (email, sessionId, hostName) => {
@@ -3453,8 +3454,8 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
       }).catch(() => {});
     };
     loadNotes();
-    const interval = setInterval(loadNotes, 60000); // refresh every 60s
-    return () => { alive = false; clearInterval(interval); };
+    const stopNotesPoll = setActiveInterval(loadNotes, 60000); // refresh every 60s — [2026-10-10 perf-battery] fg-only
+    return () => { alive = false; stopNotesPoll(); };
   }, []);
 
   const handleSetNote = useCallback(async (overrideText) => {
@@ -4105,7 +4106,14 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
   // only this tab's own long-press toggle updated it — unlocking from the
   // /locked-chats folder or the conversation header left the id in the set,
   // so the chat stayed hidden from the main list until the app restarted.
+  const lockedFetchAtRef = useRef(0);
   const refreshLockedIds = useCallback(() => {
+    // [2026-10-10 perf] mount useEffect + the first useFocusEffect both fire
+    // on mount → 2 identical chat_get_locked POSTs (not in api.js dedup).
+    // Collapse calls < 1.5 s apart; later focuses still refresh.
+    const now = Date.now();
+    if (now - lockedFetchAtRef.current < 1500) return;
+    lockedFetchAtRef.current = now;
     api.chatGetLocked().then(r => {
       const ids = r?.success ? (r.data?.locked_conversations || r.data?.conversation_ids) : null;
       if (Array.isArray(ids)) setLockedIds(new Set(ids.map(Number)));
@@ -4951,6 +4959,12 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
       // tick). Also fires ensureHealthy() twice as often on a dead socket so
       // a stuck connection self-repairs faster on flaky cellular.
       const healWatchdog = setInterval(() => {
+        // [2026-10-10 perf-battery] Native background: no UI to heal and the
+        // socket is intentionally parked (websocket.js 'background' branch).
+        // Without this gate the 1.5 s tick called ensureHealthy() → reopened
+        // the socket + reset the backoff while backgrounded. Foreground is
+        // handled by websocket.js ('foreground' → ensureConnected urgent).
+        if (Platform.OS !== 'web' && AppState.currentState !== 'active') return;
         try {
           if (mailWs?.isConnected) {
             if (bannerTimer) { clearTimeout(bannerTimer); bannerTimer = null; }
@@ -4994,7 +5008,15 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
       // so the last-message preview and unread counts reflect anything that
       // arrived while WS was dead. Without this the list shows stale bubbles
       // until the user manually pulls to refresh.
+      // [2026-10-10 perf] ONE 2 s throttle shared by the WS 'foreground' event
+      // and the AppState backup below (the comment there promised it guarded
+      // against the WS path, but each had its own clock → 2 list rebuilds +
+      // fingerprint/partition passes per foreground).
+      let lastAppStateRefresh = 0;
       unsubs.push(mailWs.on('foreground', () => {
+        const now = Date.now();
+        if (now - lastAppStateRefresh < 2000) return;
+        lastAppStateRefresh = now;
         try { loadConvRef.current?.(false); } catch {}
       }));
       // silent_sync (background FCM hint) → refresh the list so a message
@@ -5022,7 +5044,6 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
       // never reaches us. AppState fires regardless of WS state, so we
       // refresh the list directly. Throttled to 2s to avoid double-fires
       // alongside the WS path.
-      let lastAppStateRefresh = 0;
       const _onAppStateChange = (next) => {
         if (next !== 'active') return;
         const now = Date.now();
@@ -5049,6 +5070,31 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
     // deps stops the per-keystroke teardown/rebuild of all WS listeners.
   }, [user?.email]);
 
+  // [2026-10-10 perf] DM peer list for presence, keyed by its CONTENT. The
+  // presence effect below used to depend on `conversations`, so every new
+  // message / unread bump / preview change tore down + re-subscribed its WS
+  // listeners and re-sent watch_presence+query_presence for ALL DM peers. Now
+  // it re-runs only when the set of DM peers actually changes.
+  const dmPresenceEmails = useMemo(() => {
+    const dmEmails = [];
+    const meLc = (user?.email || '').toLowerCase();
+    for (const conv of (Array.isArray(conversations) ? conversations : [])) {
+      if (conv && conv.type === 'direct' && conv.members) {
+        const other = conv.members.find(m => {
+          const e = typeof m === 'string' ? m : (m?.email || '');
+          return e && e.toLowerCase() !== meLc;
+        });
+        const otherEmail = (other ? (typeof other === 'string' ? other : other?.email) : null)
+          || conv.other_email || conv.contact_email || null;
+        if (otherEmail) dmEmails.push(otherEmail);
+      }
+    }
+    return dmEmails;
+  }, [conversations, user?.email]);
+  const dmPresenceKey = useMemo(() => dmPresenceEmails.join('\n'), [dmPresenceEmails]);
+  const dmPresenceEmailsRef = useRef(dmPresenceEmails);
+  dmPresenceEmailsRef.current = dmPresenceEmails;
+
   // WebSocket-based presence (single source of truth)
   useEffect(() => {
     let mailWs;
@@ -5056,19 +5102,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
     let intervalId;
 
     const queryDmPresences = () => {
-      const dmEmails = [];
-      const meLc = (user?.email || '').toLowerCase();
-      for (const conv of conversations) {
-        if (conv.type === 'direct' && conv.members) {
-          const other = conv.members.find(m => {
-            const e = typeof m === 'string' ? m : (m?.email || '');
-            return e && e.toLowerCase() !== meLc;
-          });
-          const otherEmail = (other ? (typeof other === 'string' ? other : other?.email) : null)
-            || conv.other_email || conv.contact_email || null;
-          if (otherEmail) dmEmails.push(otherEmail);
-        }
-      }
+      const dmEmails = dmPresenceEmailsRef.current || [];
       if (dmEmails.length > 0 && mailWs.isConnected) {
         // Bug 2026-05-12: subscribe-then-query, not the other way
         // around. The previous order left a window where the server
@@ -5143,15 +5177,16 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
     // reconnects or transient hiccups. WhatsApp uses ~60s; we go
     // slightly tighter at 45s to feel snappier without burning battery.
     queryDmPresences();
-    intervalId = setInterval(queryDmPresences, 45000);
+    // [2026-10-10 perf-battery] backstop poll paused while backgrounded.
+    intervalId = setActiveInterval(queryDmPresences, 45000);
 
     return () => {
       unsubResult?.();
       unsubPresence?.();
-      if (intervalId) clearInterval(intervalId);
+      if (intervalId) intervalId();
       if (presenceRtTimerRef.current) { clearTimeout(presenceRtTimerRef.current); presenceRtTimerRef.current = null; }
     };
-  }, [conversations, user?.email]);
+  }, [dmPresenceKey, user?.email]);
 
   const onRefresh = useCallback(() => {
     setRefreshing(true);
@@ -6519,7 +6554,9 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
   }, [filter, isDark, P, handleDeleteFolderChip]);
 
   const renderPinnedLabel = () => {
-    if (filter !== 'all' || pinnedCount === 0) return null;
+    // [2026-10-10 qa-sweep] Buscando: as fixadas aparecem misturadas em
+    // "CONVERSAS" (com o ícone de pin) → o rótulo "FIXADAS" ficava órfão/vazio.
+    if (filter !== 'all' || pinnedCount === 0 || String(searchQuery || '').trim()) return null;
     // iMessage-style grid: avatares grandes circulares no topo, até 9 fixadas.
     // Acima de 9 cai no fallback "FIXADAS" (lista vertical com badge de pin)
     // — 10+ bolas grandes ficam estranhas.
@@ -7435,8 +7472,26 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
           </View>
         )}
         {messageHits.map((hit) => {
-          const snippet = (hit.snippet || hit.content || '').replace(/<b>/g, '').replace(/<\/b>/g, '');
-          const convName = hit.conv_name || hit.conversation_name || (hit.sender_email || '').split('@')[0];
+          let snippet = (hit.snippet || hit.content || '').replace(/<b>/g, '').replace(/<\/b>/g, '');
+          // [2026-10-10 qa-sweep] Hit de mídia (casou pelo nome do arquivo) vinha
+          // com linha vazia; e o título era o local-part cru do REMETENTE
+          // ("apitest") em vez do nome da conversa como na lista.
+          if (!String(snippet).trim()) {
+            const _ht = hit.type || hit.message_type || '';
+            snippet = _ht === 'image' ? t('chat.photo')
+              : _ht === 'video' ? t('chat.video')
+              : (_ht === 'audio' || _ht === 'voice') ? t('chat.audio')
+              : _ht === 'sticker' ? t('chat.sticker')
+              : (hit.file_name || (_ht === 'file' ? t('chat.file') : ''));
+            if (hit.file_name && _ht !== 'file' && _ht !== 'audio' && _ht !== 'voice') snippet = `${snippet} · ${hit.file_name}`;
+          }
+          const _hitConv = Array.isArray(conversations) ? conversations.find(c => String(c.id) === String(hit.conversation_id)) : null;
+          const _hcPeer = _hitConv ? String(_hitConv.other_email || _hitConv.contact_email || '').toLowerCase() : '';
+          const _hitSaved = (hit.conv_type || hit.conversation_type) === 'saved' || (_hitConv && (_hitConv.type === 'saved'
+            || (_hcPeer && _hcPeer === String(user?.email || '').toLowerCase())));
+          let convName = _hitSaved ? t('chat.savedMessages') : (hit.conv_name || hit.conversation_name || '');
+          if (!convName && _hitConv) convName = emailToDisplayName(_hitConv.display_name || _hitConv.name || '');
+          if (!convName) convName = emailToDisplayName(hit.sender_email || '');
           // [2026-10-10 polish-list] same relative stamp as the conversation rows
           // above (04:27 / ontem / weekday) instead of a full dd/mm/yyyy.
           const date = hit.created_at ? (formatChatTime(hit.created_at, t, regionalLocale(language)) || '') : '';
@@ -7493,7 +7548,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
         })}
       </View>
     );
-  }, [searchQuery, messageHits, searchingMessages, isDark, colors, router, wsDownBanner, t, hasDraftSection, draftConversations.length, draftsSectionOpen, language, P]);
+  }, [searchQuery, messageHits, searchingMessages, isDark, colors, router, wsDownBanner, t, hasDraftSection, draftConversations.length, draftsSectionOpen, language, P, conversations, user?.email]);
 
   // [2026-10-07 welcome] Smart empty state: friends already on Chatyy +
   // Nova conversa / Convidar + Saved Messages tip. With a filter/search (or
@@ -7501,9 +7556,14 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
   // ScreenEmptyState inside ChatListSmartEmpty.
   const _emptyIsFiltered = filter !== 'all' || !!String(searchQuery || '').trim()
     || (Array.isArray(conversations) && conversations.length > 0);
+  const _emptyClearFilter = useCallback(() => { setFilter('all'); }, []);
+  const _emptyNewGroup = useCallback(() => { setShowCreateGroup(true); }, []);
   const ListEmptyComponent = useMemo(() => loading ? null : (
-    <ChatListSmartEmpty router={router} t={t} filtered={_emptyIsFiltered} currentEmail={user?.email} />
-  ), [loading, t, router, _emptyIsFiltered, user?.email]);
+    <ChatListSmartEmpty router={router} t={t} filtered={_emptyIsFiltered} currentEmail={user?.email}
+      filter={filter} query={searchQuery}
+      onClearFilter={filter !== 'all' ? _emptyClearFilter : undefined}
+      onNewGroup={_emptyNewGroup} />
+  ), [loading, t, router, _emptyIsFiltered, user?.email, filter, searchQuery, _emptyClearFilter, _emptyNewGroup]);
 
   // [2026-10-08 chat-beauty-list] iOS/web: hairline inset under the text
   // column (starts where the name starts). Android/Material: no dividers —
@@ -8150,7 +8210,11 @@ function ChatLongPressSheet({ conv, onClose, actions, colors, isDark, t, current
     ? (conv.other_email || conv.contact_email || conv.email || '')
     : '';
   const hasUnread = (conv.unread_count || 0) > 0;
-  const peerName = conv.display_name || conv.name || (peerEmail ? peerEmail.split('@')[0] : '');
+  // [2026-10-10 qa-sweep] Mesmo nome da linha da lista (apelido → humanizado):
+  // antes "Bloquear qa2" com a linha mostrando "Qa2".
+  let _peerNick = '';
+  if (peerEmail) { try { _peerNick = require('../services/nicknames').getNickname(peerEmail) || ''; } catch {} }
+  const peerName = _peerNick || emailToDisplayName(conv.display_name || conv.name || (peerEmail ? peerEmail.split('@')[0] : ''));
   // Menu de bloquear/limpar fica feio com email completo ("anacarla.pereiraramos").
   // Pega so o primeiro nome — mesma logica do WhatsApp ("Bloquear Ana"). Cai
   // pro display name inteiro se nao tiver espaco/dot pra cortar.

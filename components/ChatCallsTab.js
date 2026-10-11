@@ -5,6 +5,7 @@ import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Platform, Animate
 import Svg, { Path, Polyline, Circle as SvgCircle, Line, Rect } from 'react-native-svg';
 import AvatarCircle from './AvatarCircle';
 import BrandFab from './BrandFab';
+import { PSTN_ENABLED } from '../constants/featureFlags';
 import { IconPhone, IconVideo, IconInfo, IconX, IconPhoneOff, IconMic, IconMicOff, IconVolume2, IconVolumeX, IconGrid, IconUserPlus, IconTrash, IconSmartphone, IconCheck, IconCalendar, IconVerifiedBadge, IconLink } from './Icons';
 import SwipeAction from './SwipeAction';
 import ScheduleCallModal from './ScheduleCallModal';
@@ -16,6 +17,7 @@ import { useTheme } from '../context/ThemeContext'; // [2026-10-08 polish-leftov
 import { ensureContactIndex, lookupName as lookupDeviceContactName } from '../services/deviceContactLookup';
 import { CallListSkeleton } from './SkeletonLoader';
 import { haptic } from '../constants/theme';
+import { setActiveInterval } from '../utils/activeInterval'; // [2026-10-10 perf-battery]
 // SIP call — dynamic import to prevent crash if native WebRTC module fails
 let _sip = null;
 try { _sip = require('../services/sipCall'); } catch {}
@@ -3011,7 +3013,7 @@ function ChatCallsTab({ colors, isDark, t, user, router }) {
     }, 2500);
 
     // Fetch fresh in background — does NOT toggle loading.
-    voipMinutesRemaining().then(r => {
+    if (PSTN_ENABLED) voipMinutesRemaining().then(r => {
       if (r?.success && r.data) {
         setMinutesInfo(r.data);
         setCache('voip_minutes', r.data, 2592000000).catch(() => {});
@@ -3038,8 +3040,9 @@ function ChatCallsTab({ colors, isDark, t, user, router }) {
 
   // Refresh on interval — uses fingerprint dedup so unchanged data doesn't re-render.
   useEffect(() => {
-    const interval = setInterval(() => {
-      voipMinutesRemaining().then(r => {
+    // [2026-10-10 perf-battery] paused while backgrounded (utils/activeInterval).
+    const interval = setActiveInterval(() => {
+      if (PSTN_ENABLED) voipMinutesRemaining().then(r => {
         if (r?.success && r.data) {
           setMinutesInfo(r.data);
           if (Array.isArray(r.data.history)) setVoipHistory(r.data.history);
@@ -3058,11 +3061,11 @@ function ChatCallsTab({ colors, isDark, t, user, router }) {
         } catch {}
       }).catch(() => {});
     }, 30000);
-    return () => clearInterval(interval);
+    return () => interval();
   }, []);
 
   const refreshData = useCallback(() => {
-    voipMinutesRemaining().then(r => {
+    if (PSTN_ENABLED) voipMinutesRemaining().then(r => {
       if (r?.success && r.data) {
         setMinutesInfo(r.data);
         if (Array.isArray(r.data.history)) setVoipHistory(r.data.history);
@@ -3084,6 +3087,7 @@ function ChatCallsTab({ colors, isDark, t, user, router }) {
 
   const handleHistoryPress = useCallback(async (item) => {
     if (item.to_number) {
+      if (!PSTN_ENABLED) return; // [2026-10-10 sem-telnyx-vonage] sem discagem PSTN
       // 2026-05-09: WhatsApp parity — tap em phone history disca direto
       // (antes só abria o teclado vazio, user tinha que retiar o numero).
       // Preenche o number state + abre o dialer com auto-dial flag.
@@ -3610,7 +3614,7 @@ function ChatCallsTab({ colors, isDark, t, user, router }) {
       </View>
 
       {/* Plan status */}
-      {!loadingMinutes && (
+      {PSTN_ENABLED && !loadingMinutes && (
         <PlanBadge minutesInfo={minutesInfo} isDark={isDark} t={t} />
       )}
 
@@ -3686,6 +3690,7 @@ function ChatCallsTab({ colors, isDark, t, user, router }) {
               {t?.('calls.noCallsSubtitle') || 'Seu historico de ligacoes aparecera aqui'}
             </Text>
             {/* CTA — primes the user to make a call instead of staring at nothing. */}
+            {PSTN_ENABLED && (
             <TouchableOpacity
               style={[s.emptyCtaBtn, colors?.primary ? { backgroundColor: colors.primary, ...(Platform.OS === 'web' ? { backgroundImage: 'none', boxShadow: isDark ? 'none' : '0 6px 18px rgba(17, 17, 17,0.35)' } : null) } : null]}
               onPress={() => setDialerVisible(true)}
@@ -3697,6 +3702,7 @@ function ChatCallsTab({ colors, isDark, t, user, router }) {
                 {t?.('calls.openDialer') || 'Abrir teclado'}
               </Text>
             </TouchableOpacity>
+            )}
           </View>
         ) : (
           groupedCalls.map((group, gIdx) => (
@@ -3747,6 +3753,7 @@ function ChatCallsTab({ colors, isDark, t, user, router }) {
       </ScrollView>
 
       {/* FAB - Dialer button (Telegram-grade glass orb, green tint) */}
+      {PSTN_ENABLED && (
       <BrandFab
         style={{ position: 'absolute', right: 20, bottom: 24 }}
         size={56}
@@ -3758,8 +3765,10 @@ function ChatCallsTab({ colors, isDark, t, user, router }) {
           <Path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07 19.5 19.5 0 01-6-6 19.79 19.79 0 01-3.07-8.67A2 2 0 014.11 2h3a2 2 0 012 1.72c.127.96.361 1.903.7 2.81a2 2 0 01-.45 2.11L8.09 9.91a16 16 0 006 6l1.27-1.27a2 2 0 012.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0122 16.92z" />
         </Svg>
       </BrandFab>
+      )}
 
       {/* Dialer modal */}
+      {PSTN_ENABLED && (
       <DialerModal
         visible={dialerVisible}
         onClose={() => { setDialerVisible(false); setDialerAutoDial(false); setDialerPrefill(''); }}
@@ -3773,6 +3782,7 @@ function ChatCallsTab({ colors, isDark, t, user, router }) {
         autoDial={dialerAutoDial}
         onAutoDialConsumed={() => setDialerAutoDial(false)}
       />
+      )}
 
       {/* Schedule a call — opens the date+title+participants picker.
           On success the participants get a system DM with a tap-to-add

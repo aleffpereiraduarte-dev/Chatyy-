@@ -9,6 +9,7 @@ import { IconX, IconDownload, IconPlay, IconPause, IconLock, IconCheck, IconShar
 // [2026-10-09 more-native] share do ARQUIVO (não do link) + texto da foto (Vision OCR já no binário iOS)
 import { shareMediaFile, canRecognizeImageText, recognizeImageText } from '../utils/mediaNativeActions';
 import NativeDocPreview, { hasNativePdfView } from './NativeDocPreview'; // [2026-10-09 native-docs]
+import { cachedVideoSource } from '../services/videoCacheSource'; // [2026-10-10 native-audit]
 // Wave 14: 3D / depth-photo parallax view. Lazy-loaded so web stays green
 // (expo-sensors isn't available in the web bundle).
 let ParallaxPortraitView = null;
@@ -992,7 +993,7 @@ if (Platform.OS === 'ios') {
   try { _NativeVideoPlayerView = require('../modules/expo-native-toolkit').VideoPlayer; } catch {}
 }
 
-function NativeVideoPlayer({ url, isActive = true, allowPip = true }) {
+function NativeVideoPlayer({ url, isActive = true, allowPip = true, noCache = false }) {
   // Prefer expo-video — has native AVPlayerViewController controls,
   // PiP, fullscreen, scrubbing, captions. Custom AVPlayerLayer view
   // exists for perf-sensitive inline playback but has no UI chrome
@@ -1003,7 +1004,9 @@ function NativeVideoPlayer({ url, isActive = true, allowPip = true }) {
     // the neighbor slides, so playing on mount made the NEXT video start playing
     // before you swiped to it ("o vídeo toca antes de abrir, passando de lado").
     // Only play the slide that's actually active; pause the rest.
-    const player = useVideoPlayer(url, (p) => {
+    // [2026-10-10 native-audit] native disk cache (reopen = no re-download);
+    // never for view-once media (noCache) — nothing of it may persist.
+    const player = useVideoPlayer(noCache ? url : cachedVideoSource(url), (p) => {
       try { p.loop = false; p.muted = false; } catch {}
     });
     useEffect(() => {
@@ -1438,7 +1441,7 @@ const ctlBtn = {
 };
 
 // ============================================================
-function VideoPlayer({ url, isActive = true, allowPip = true }) {
+function VideoPlayer({ url, isActive = true, allowPip = true, noCache = false }) {
   const [playing, setPlaying] = useState(false);
   const [loading, setLoading] = useState(true);
   const [progress, setProgress] = useState(0);
@@ -1465,7 +1468,7 @@ function VideoPlayer({ url, isActive = true, allowPip = true }) {
 
   // Native: try expo-video first (best MOV support)
   if (useVideoPlayer && ExpoVideo) {
-    return <NativeVideoPlayer url={url} isActive={isActive} allowPip={allowPip} />;
+    return <NativeVideoPlayer url={url} isActive={isActive} allowPip={allowPip} noCache={noCache} />;
   }
 
   // No expo-video module on this build — fall back to the native AVPlayer
@@ -1911,8 +1914,18 @@ export default function ChatMediaViewer({ visible, onClose, fileUrl, hlsUrl, fil
       const u = getFullUrl(n.fileUrl);
       const isImg = n.type === 'image' || IMAGE_EXTS.includes(getExt(n.fileName));
       if (!isImg) continue;
-      try { Image.prefetch?.(u); } catch {}
-      try { require('expo-image').Image.prefetch?.(u); } catch {}
+      // [2026-10-10 native-audit] Native: ONLY expo-image (the viewer renders
+      // with expo-image, cachePolicy memory-disk). RN Image.prefetch filled a
+      // SEPARATE cache (NSURLCache / Fresco) → every neighbor photo was
+      // downloaded twice. RN prefetch kept only as the no-expo-image fallback.
+      let _ei = null;
+      try { _ei = require('expo-image').Image; } catch {}
+      if (Platform.OS !== 'web' && _ei?.prefetch) {
+        try { const _r = _ei.prefetch(u, 'memory-disk'); if (_r?.catch) _r.catch(() => {}); } catch {}
+      } else {
+        try { Image.prefetch?.(u); } catch {}
+        try { _ei?.prefetch?.(u); } catch {}
+      }
     }
   }, [visible, _currentIdx, _list]);
 
@@ -2485,7 +2498,7 @@ export default function ChatMediaViewer({ visible, onClose, fileUrl, hlsUrl, fil
               return (
                 <View style={{ width: SCREEN_W, flex: 1 }}>
                   {isImg ? <ImageViewer url={u} messageId={item?.messageId || item?.id || 0} conversationId={conversationId} fileSize={item?.fileSize} createdAt={item?.createdAt || item?.created_at} t={t} placeholderUri={item?.placeholderUri || item?.thumbB64Uri} blurhash={item?.blurhash} thumbUri={item?.thumbUri} onDismissMove={_onDismissMove} onDismissEnd={_onDismissEnd} dismissSV={_dismissSV} onDismissStart={_onDismissStart} onZoomChange={_onZoomChange} /> :
-                   isVid ? <VideoPlayer url={u} isActive={index === _currentIdx} allowPip={!viewOnce} /> :
+                   isVid ? <VideoPlayer url={u} isActive={index === _currentIdx} allowPip={!viewOnce} noCache={!!viewOnce} /> :
                    isPrv ? <PreviewViewer url={u} filename={item?.fileName} messageId={item?.messageId || item?.id || 0} fileSize={item?.fileSize} t={t} /> :
                    <GenericFileViewer url={u} filename={item?.fileName} fileSize={item?.fileSize} messageId={item?.messageId || item?.id || 0} t={t} />}
                 </View>
@@ -2539,7 +2552,7 @@ export default function ChatMediaViewer({ visible, onClose, fileUrl, hlsUrl, fil
                 </Text>
               </View>
             ) : (
-              <VideoPlayer url={url} allowPip={!viewOnce} />
+              <VideoPlayer url={url} allowPip={!viewOnce} noCache={!!viewOnce} />
             )
           ) : isPreviewable ? (
             <PreviewViewer

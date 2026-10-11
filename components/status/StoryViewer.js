@@ -32,6 +32,7 @@ import Svg, { Defs, LinearGradient as SvgLinearGradient, Stop, Rect as SvgRect, 
 // Shared text-status gradient presets + resolver — single source of truth so
 // StoryViewer, AnimatedStatusText and ChatStatusTab never drift apart.
 import { resolveTextGradient as _resolveTextGradient } from './textGradients';
+import { cachedVideoSource } from '../../services/videoCacheSource'; // [2026-10-10 native-audit] native video disk cache
 
 const WEB = Platform.OS === 'web';
 const STORY_DURATION_MS = 5000;
@@ -353,7 +354,7 @@ const StatusVideoPlayer = React.memo(function StatusVideoPlayer({
   // [WAVE 93 2026-05-21] Seed loop + mute from the CURRENT item's props so each
   // advance to a new video gets the right semantics (not the first item's,
   // which the old inline closure captured).
-  const player = useVideoPlayer(uri, (p) => {
+  const player = useVideoPlayer(cachedVideoSource(uri), (p) => {
     try { p.loop = !!loop; p.muted = !!initialMuted; p.play(); } catch {}
   });
   const endedRef = useRef(false);
@@ -519,6 +520,8 @@ const StoryMedia = React.memo(function StoryMedia({
             <Svg
               pointerEvents="none"
               style={StyleSheet.absoluteFill}
+              width="100%" // [2026-10-10 qa-sweep] web: sem isso o <svg> fica 1:1 (viewBox) e o gradiente não cobre o card
+              height="100%"
               preserveAspectRatio="none"
               viewBox="0 0 1 1"
             >

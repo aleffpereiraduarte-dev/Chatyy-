@@ -11,6 +11,7 @@ import { FontSize, Spacing } from '../constants/theme';
 let mailWs = null;
 try { mailWs = require('../services/websocket').default; } catch (e) { console.warn('[SyncBar] websocket module not available:', e.message); }
 import useIsMounted from '../hooks/useIsMounted';
+import { setActiveInterval } from '../utils/activeInterval'; // [2026-10-10 perf-battery]
 
 export default function SyncBar() {
   const { colors, isDark } = useTheme();
@@ -337,7 +338,8 @@ export default function SyncBar() {
     // is authenticated but a stale 'offline' banner is still up (NetInfo never
     // sent a recovery event — the classic stuck-banner case), clear it. Same
     // 1s pattern OfflineNotice.js uses.
-    const socketPoll = setInterval(() => {
+    // [2026-10-10 perf-battery] paused while backgrounded (utils/activeInterval).
+    const stopSocketPoll = setActiveInterval(() => {
       if (!mountedRef.current) return;
       // [2026-10-05] Cura banner preso em 'offline' OU 'connecting': se o socket
       // já autenticou mas o banner ficou pintado (o evento connected/authenticated
@@ -354,7 +356,7 @@ export default function SyncBar() {
       clearTimeout(connectingTimeout.current);
       clearTimeout(syncStallTimer.current);
       clearTimeout(offlineDebounce);
-      clearInterval(socketPoll);
+      stopSocketPoll();
       appStateSub?.remove?.();
       mailWs?.off?.('connection', handleConnection);
       mailWs?.off?.('sync_progress', handleSync);

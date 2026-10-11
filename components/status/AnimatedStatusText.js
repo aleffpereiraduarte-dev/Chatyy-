@@ -112,6 +112,11 @@ export default function AnimatedStatusText({
         <Svg
           pointerEvents="none"
           style={StyleSheet.absoluteFill}
+          // [2026-10-10 qa-sweep] Web: <svg> absoluto SEM height explícito usa a
+          // proporção do viewBox (1:1) → gradiente só num quadrado no topo e o
+          // resto do status numa cor chapada. 100%/100% estica no card todo.
+          width="100%"
+          height="100%"
           preserveAspectRatio="none"
           viewBox="0 0 1 1"
         >

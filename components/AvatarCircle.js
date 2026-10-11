@@ -387,8 +387,10 @@ function _GroupCollage({ members, size, style }) {
     >
       {count === 2 && (
         <>
-          <_CollageTile member={m[0]} size={halfW} />
-          <_CollageTile member={m[1]} size={halfW} />
+          {/* [2026-10-10 qa-sweep] Metades em ALTURA CHEIA — antes eram
+              quadrados halfW×halfW → metade de baixo do círculo ficava preta. */}
+          <_CollageTile member={m[0]} width={halfW} height={size} size={halfW} />
+          <_CollageTile member={m[1]} width={halfW} height={size} size={halfW} />
         </>
       )}
       {count === 3 && (

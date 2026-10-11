@@ -6,7 +6,7 @@ import {
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as api from '../services/api';
-import { BASE_URL } from '../services/api';
+import { ORIGIN_BASE } from '../services/api'; // [2026-10-10] link público = host canônico (edge não tem /meet)
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
@@ -205,7 +205,7 @@ export default function MeetingCreateScreen() {
       if (res.success) {
         const d = res.data || res;
         const roomId = d.room_id;
-        const joinLink = d.join_url || d.meeting_link || `${BASE_URL}/meet/${roomId}`;
+        const joinLink = d.join_url || d.meeting_link || `${ORIGIN_BASE}/meet/${roomId}`;
 
         // Send email invites if there are invitees
         if (invitees.length > 0 && roomId) {

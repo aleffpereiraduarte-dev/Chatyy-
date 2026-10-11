@@ -4,6 +4,7 @@ import { useTheme } from '../context/ThemeContext';
 import { FontSize, Spacing, BorderRadius } from '../constants/theme';
 import { IconWifiOff, IconRefresh } from './Icons';
 import { useLanguage } from '../context/LanguageContext';
+import { setActiveInterval } from '../utils/activeInterval'; // [2026-10-10 perf-battery]
 
 // [2026-10-01] Cruza a conectividade com o socket real: um WS conectado+
 // autenticado é PROVA de que o device tem internet funcionando, mesmo quando o
@@ -36,7 +37,7 @@ export default function OfflineNotice() {
     const applyConnectivity = (online) => {
       if (online) {
         // Back online → hide immediately + cancel any pending show.
-        if (offlineTimer) { clearTimeout(offlineTimer); offlineTimer = null; } if (wsUnsub) { try { wsUnsub(); } catch {} wsUnsub = null; } if (wsPoll) { clearInterval(wsPoll); wsPoll = null; }
+        if (offlineTimer) { clearTimeout(offlineTimer); offlineTimer = null; } if (wsUnsub) { try { wsUnsub(); } catch {} wsUnsub = null; } if (wsPoll) { wsPoll(); wsPoll = null; }
         setIsOffline(false);
       } else {
         // Went offline → arm the sustained-outage timer (don't stack timers
@@ -71,7 +72,8 @@ export default function OfflineNotice() {
         });
       }
     } catch {}
-    wsPoll = setInterval(() => {
+    // [2026-10-10 perf-battery] paused while backgrounded (utils/activeInterval).
+    wsPoll = setActiveInterval(() => {
       try { if (mailWs && mailWs.authenticated) applyConnectivity(true); } catch {}
     }, 1000);
 
@@ -82,7 +84,7 @@ export default function OfflineNotice() {
       window.addEventListener('offline', handleOffline);
       applyConnectivity(navigator.onLine);
       return () => {
-        if (offlineTimer) { clearTimeout(offlineTimer); offlineTimer = null; } if (wsUnsub) { try { wsUnsub(); } catch {} wsUnsub = null; } if (wsPoll) { clearInterval(wsPoll); wsPoll = null; }
+        if (offlineTimer) { clearTimeout(offlineTimer); offlineTimer = null; } if (wsUnsub) { try { wsUnsub(); } catch {} wsUnsub = null; } if (wsPoll) { wsPoll(); wsPoll = null; }
         window.removeEventListener('online', handleOnline);
         window.removeEventListener('offline', handleOffline);
       };
@@ -102,7 +104,7 @@ export default function OfflineNotice() {
       try {
         NetInfo = require('@react-native-community/netinfo').default;
       } catch {
-        return () => { if (offlineTimer) { clearTimeout(offlineTimer); offlineTimer = null; } if (wsUnsub) { try { wsUnsub(); } catch {} wsUnsub = null; } if (wsPoll) { clearInterval(wsPoll); wsPoll = null; } };
+        return () => { if (offlineTimer) { clearTimeout(offlineTimer); offlineTimer = null; } if (wsUnsub) { try { wsUnsub(); } catch {} wsUnsub = null; } if (wsPoll) { wsPoll(); wsPoll = null; } };
       }
       const unsub = NetInfo.addEventListener(state => {
         // Use the native value when available — more accurate than NetInfo's
@@ -119,7 +121,7 @@ export default function OfflineNotice() {
         }
       });
       return () => {
-        if (offlineTimer) { clearTimeout(offlineTimer); offlineTimer = null; } if (wsUnsub) { try { wsUnsub(); } catch {} wsUnsub = null; } if (wsPoll) { clearInterval(wsPoll); wsPoll = null; }
+        if (offlineTimer) { clearTimeout(offlineTimer); offlineTimer = null; } if (wsUnsub) { try { wsUnsub(); } catch {} wsUnsub = null; } if (wsPoll) { wsPoll(); wsPoll = null; }
         unsub();
       };
     }

@@ -31,6 +31,7 @@ import {
 import * as api from '../services/api';
 // [2026-05-22 monetization-pause] hidden by MONETIZATION_ENABLED flag
 import { DIAMONDS_ENABLED } from '../constants/featureFlags';
+import { cachedVideoSource } from '../services/videoCacheSource'; // [2026-10-10 native-audit] native video disk cache
 // expo-shorts powers the native player + pool. Imported lazily so a missing
 // native binary (dev only) doesn't break the import chain — fallback paths
 // degrade gracefully when these are null.
@@ -126,7 +127,7 @@ const ShortsPlayerLazy = (() => {
 function VideoFallbackPlayer({ videoUrl, isActive, paused, muted, playbackRate = 1, onTimeUpdate, onReady }) {
   const VideoView = _expoVideo?.VideoView;
   const useVideoPlayer = _expoVideo?.useVideoPlayer;
-  const player = useVideoPlayer && useVideoPlayer(videoUrl || '', (p) => {
+  const player = useVideoPlayer && useVideoPlayer(cachedVideoSource(videoUrl || ''), (p) => {
     try {
       p.loop = true;
       p.muted = !!muted;

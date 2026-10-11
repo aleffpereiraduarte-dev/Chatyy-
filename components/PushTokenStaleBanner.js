@@ -16,6 +16,7 @@ import React, { useEffect, useState } from 'react';
 import { Platform, View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, Linking, AppState } from 'react-native';
 import { IconX } from './Icons';
 import { useLanguage } from '../context/LanguageContext';
+import { setActiveInterval } from '../utils/activeInterval'; // [2026-10-10 perf-battery]
 
 const POLL_MS = 5000; // [perf 2026-10-06] was 1000 — the flag flips rarely; a 5s pickup is invisible to the user
 // [2026-10-09 wa-real #15] Permissão negada → em vez de pedir de novo a cada
@@ -61,7 +62,8 @@ export default function PushTokenStaleBanner() {
       if (!flag) setDismissed(false);
     };
     tick();
-    const id = setInterval(tick, POLL_MS);
+    // [2026-10-10 perf-battery] paused while backgrounded (utils/activeInterval).
+    const stopPoll = setActiveInterval(tick, POLL_MS);
     // Voltou dos Ajustes: se a permissão foi concedida, re-registra o token na
     // hora e some com o aviso.
     let sub = null;
@@ -83,7 +85,7 @@ export default function PushTokenStaleBanner() {
         } catch {}
       });
     } catch {}
-    return () => { mounted = false; clearInterval(id); try { sub?.remove?.(); } catch {} };
+    return () => { mounted = false; stopPoll(); try { sub?.remove?.(); } catch {} };
   }, []);
 
   // Resolve the permission state once the banner becomes visible so we know

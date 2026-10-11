@@ -73,6 +73,7 @@ import * as api from '../services/api';
 import { useLanguage } from '../context/LanguageContext';
 // [2026-05-22 monetization-pause] hidden by MONETIZATION_ENABLED flag
 import { MONETIZATION_ENABLED } from '../constants/featureFlags';
+import { cachedVideoSource } from '../services/videoCacheSource'; // [2026-10-10 native-audit] native video disk cache
 
 const ACCENT = '#111111';
 const SCREEN_WIDTH = Dimensions.get('window').width;
@@ -218,7 +219,7 @@ const NativeFeedVideoPlayer = memo(function NativeFeedVideoPlayer({ uri, isActiv
 
   const [paused, setPaused] = useState(false);
   const [muted, setMuted] = useState(false);
-  const player = useVideoPlayer(resolveMediaUrl(uri), (p) => {
+  const player = useVideoPlayer(cachedVideoSource(resolveMediaUrl(uri)), (p) => {
     // Autoplay with sound + loop, matching the old WebView (v.muted=false).
     // If iOS rejects an unmuted autoplay, retry muted so it still plays.
     try {

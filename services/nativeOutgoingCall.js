@@ -139,6 +139,10 @@ export function track(p) {
     conversationId: p.conversationId ? String(p.conversationId) : '',
     startedAt: Date.now(),
     connectedAt: 0,
+    // [2026-10-10 call-states] first remote media (LK track subscribed). The
+    // history duration counts from here (WhatsApp: from media, not accept);
+    // connectedAt (= answered) is the fallback when media came via P2P.
+    mediaAt: 0,
     ended: false,
     unsubs: [],
     safetyTimer: null,
@@ -166,7 +170,11 @@ export function track(p) {
   try {
     if (ck?.onLkEvent) {
       s.unsubs.push(ck.onLkEvent('onCallAnsweredRemote', (d) => { if (matches(d)) onConnected('ws_accepted'); }));
-      s.unsubs.push(ck.onLkEvent('onLkTrackSubscribed', (d) => { if (matches(d)) onConnected('remote_track'); }));
+      s.unsubs.push(ck.onLkEvent('onLkTrackSubscribed', (d) => {
+        if (!matches(d)) return;
+        if (!s.mediaAt && !s.ended) s.mediaAt = Date.now(); // [2026-10-10 call-states]
+        onConnected('remote_track');
+      }));
       s.unsubs.push(ck.onLkEvent('onLkDisconnected', (d) => { if (matches(d)) onEnded('lk_disconnected', d?.reason); }));
       s.unsubs.push(ck.onLkEvent('onCallDeclinedRemote', (d) => { if (matches(d)) onEnded('declined_remote', 'declined'); }));
     }
@@ -203,7 +211,9 @@ function _finish(s, reason) {
   _sessions.delete(s.callId);
   _setCallActiveFlags(false, s.callId);
 
-  const dur = s.connectedAt ? Math.max(0, Math.round((Date.now() - s.connectedAt) / 1000)) : 0;
+  // [2026-10-10 call-states] duration from first media (fallback: answer).
+  const _t0 = s.mediaAt || s.connectedAt;
+  const dur = _t0 ? Math.max(0, Math.round((Date.now() - _t0) / 1000)) : 0;
   // History row — same shape /call.js wrote (ChatCallsTab.addCallToHistory).
   try {
     const chatCallsTab = require('../components/ChatCallsTab');
@@ -222,7 +232,10 @@ function _finish(s, reason) {
   // Server terminal status — closes ended_at so the row never stays 'active'.
   try {
     const api = require('./api');
-    const terminal = s.connectedAt ? 'ended' : 'cancelled';
+    // [2026-10-10 call-states] answered but the 25s no-media watchdog ended it.
+    const terminal = s.connectedAt
+      ? ((String(reason || '').toLowerCase() === 'failed' && !s.mediaAt) ? 'failed' : 'ended')
+      : 'cancelled';
     api.callStatus?.(s.callId, terminal, dur).catch(() => {});
   } catch {}
   try { if (globalThis.__chatyyLastCallInviteId === s.callId) delete globalThis.__chatyyLastCallInviteId; } catch {}

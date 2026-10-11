@@ -22,6 +22,7 @@ import * as api from '../services/api';
 import AvatarCircle from './AvatarCircle';
 import LikersSheet from './LikersSheet';
 import FeedComments from './FeedComments';
+import { cachedVideoSource } from '../services/videoCacheSource'; // [2026-10-10 native-audit] native video disk cache
 
 // expo-video native player. Carrega lazy pra evitar custo no web.
 let _ExpoVideo = null;
@@ -37,7 +38,7 @@ function NativeVideoPlayer({ uri, style }) {
     return <View style={[style, { backgroundColor: '#111', alignItems: 'center', justifyContent: 'center' }]}><ActivityIndicator color="#fff" /></View>;
   }
   const { useVideoPlayer, VideoView } = mod;
-  const player = useVideoPlayer(uri, (p) => {
+  const player = useVideoPlayer(cachedVideoSource(uri), (p) => {
     p.loop = true;
     p.muted = false;
     try { p.play(); } catch {}
