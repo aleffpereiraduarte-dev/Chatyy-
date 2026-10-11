@@ -1312,6 +1312,10 @@ async function _rawApiCall(action, params = {}, method = 'GET') {
   if (deviceTrustToken) headers['X-Device-Trust-Token'] = deviceTrustToken;
 
   let url = `${API_URL}?action=${action}`;
+  // [rodada3 2026-10-11] Capacidade: este app desenha a mensagem apagada pelo flag
+  // `deleted`/`deleted_at` (texto traduzido no aparelho) → o servidor manda
+  // last_message.content '' em vez do rótulo pt-BR fixo. Só ações chat_*.
+  if (action.startsWith('chat_')) url += '&cap_deleted=1';
   const options = { method, headers, credentials: 'include' };
 
   if (method === 'GET') {
@@ -7562,6 +7566,15 @@ export async function chatUploadFile(conversationId, file, content = '', viewOnc
   } finally {
     if (externalSignal) externalSignal.removeEventListener?.('abort', onExternalAbort);
   }
+}
+
+// [2026-10-11] Contagem de e-mails não lidos da Caixa de entrada (barra de baixo
+// e ícone do app). Antes o app chamava esta função mas ela não existia → o
+// número de e-mail nunca aparecia. folder_counts devolve { counts: {INBOX: n} }.
+export async function inboxUnreadCount() {
+  const r = await apiCall('folder_counts');
+  const n = Number(r?.data?.counts?.INBOX ?? r?.data?.INBOX?.unseen ?? 0);
+  return { success: !!r?.success, data: { unread: Number.isFinite(n) ? n : 0 } };
 }
 
 export async function chatUnreadCount() {

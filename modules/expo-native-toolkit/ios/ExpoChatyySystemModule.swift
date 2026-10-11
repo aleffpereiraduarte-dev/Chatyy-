@@ -26,6 +26,13 @@ private let kPinnedKey = "chatyy.pinned_conversation_ids"
 private let kUpdatedKey = "chatyy.system_updated_at"
 private let kFocusKey = "chatyy.focus_filter"
 private let kLockedKey = "chatyy.widget_locked"
+// [2026-10-11 badge] Shared with the NSE (plugins/notification-service/
+// NotificationService.swift applyBadge): the app re-bases the counter every
+// time it sets the icon badge so the NSE's "+1 per new message" fallback
+// starts from the real number.
+private let kBadgeCountKey = "chatyy.badge.count"
+private let kBadgeAtKey = "chatyy.badge.at"
+private let kBadgeLastServerKey = "chatyy.badge.last_server"
 
 public class ExpoChatyySystemModule: Module {
   private var monitor: NWPathMonitor?
@@ -85,9 +92,19 @@ public class ExpoChatyySystemModule: Module {
       return clean.count
     }
 
+    // [2026-10-11 badge] Mirror of the icon badge for the NSE (app killed).
+    Function("setBadgeMirror") { (count: Int) -> Bool in
+      guard let ud = UserDefaults(suiteName: kAppGroup) else { return false }
+      ud.set(max(0, count), forKey: kBadgeCountKey)
+      ud.set(Date().timeIntervalSince1970, forKey: kBadgeAtKey)
+      ud.removeObject(forKey: kBadgeLastServerKey)
+      return true
+    }
+
     AsyncFunction("clear") { () -> Bool in
       if let ud = UserDefaults(suiteName: kAppGroup) {
-        for k in [kConvsKey, kPinnedKey, kUpdatedKey, kFocusKey, kLockedKey] { ud.removeObject(forKey: k) }
+        for k in [kConvsKey, kPinnedKey, kUpdatedKey, kFocusKey, kLockedKey,
+                  kBadgeCountKey, kBadgeAtKey, kBadgeLastServerKey] { ud.removeObject(forKey: k) }
       }
       ExpoChatyySystemModule.reloadWidgets()
       ExpoChatyySystemModule.refreshSiriPhrases()

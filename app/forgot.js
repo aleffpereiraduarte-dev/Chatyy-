@@ -20,6 +20,7 @@ import {
 // inline notices, haptics, identifier normalisation, last-identifier prefill).
 import LoginKeyboardScroll from '../components/login/LoginKeyboardScroll';
 import LoginNotice from '../components/login/LoginNotice';
+import PressableScale from '../components/PressableScale'; // [2026-10-11] primary CTAs: spring + haptic
 import { normalizeLoginEmail, isPlausibleEmail, saveLastIdentifier } from '../components/login/loginSmart';
 import { tap as hTap, success as hSuccess, error as hError, selection as hSelection } from '../services/haptics';
 
@@ -323,9 +324,10 @@ export default function ForgotPassword() {
         </View>
 
         <View style={s.btnCol}>
-          <TouchableOpacity
+          <PressableScale
             style={[s.primaryBtn, { backgroundColor: colors.primary, shadowColor: colors.primary }, loading && { opacity: 0.65 }]}
             onPress={handleGetOptions}
+            haptic={false /* handler already ticks after validation */}
             disabled={loading}
             activeOpacity={0.85}
           >
@@ -335,7 +337,7 @@ export default function ForgotPassword() {
                 <IconArrowRight size={15} color={colors.onPrimary || '#fff'} style={{ marginLeft: 6 }} />
               </>
             )}
-          </TouchableOpacity>
+          </PressableScale>
           <TouchableOpacity style={s.backBtn} onPress={() => setStep(6)} activeOpacity={0.6}>
             <Text style={[s.backText, { color: colors.primary }]}>{t('forgot.forgotEmail') || 'Esqueceu o email?'}</Text>
           </TouchableOpacity>
@@ -413,16 +415,17 @@ export default function ForgotPassword() {
         )}
 
         <View style={s.btnCol}>
-          <TouchableOpacity
+          <PressableScale
             style={[s.primaryBtn, { backgroundColor: colors.primary, shadowColor: colors.primary }, loading && { opacity: 0.65 }]}
             onPress={handleFindEmail}
+            haptic={false /* handler already ticks after validation */}
             disabled={loading || !findQuery.trim()}
             activeOpacity={0.85}
           >
             {loading ? <ActivityIndicator color={colors.onPrimary || '#fff'} size="small" /> : (
               <Text style={[s.primaryBtnText, { color: colors.onPrimary || '#fff' }]}>{t('forgot.findCta')}</Text>
             )}
-          </TouchableOpacity>
+          </PressableScale>
           <TouchableOpacity style={s.backBtn} onPress={() => { setStep(1); setFindQuery(''); setFoundEmails([]); }} activeOpacity={0.6}>
             <Text style={[s.backText, { color: colors.primary }]}>{t('forgot.back')}</Text>
           </TouchableOpacity>
@@ -443,7 +446,7 @@ export default function ForgotPassword() {
             </View>
             <Text style={[s.noMethodsTitle, { color: colors.text }]}>{t('forgot.noMethods')}</Text>
             <Text style={[s.noMethodsDesc, { color: colors.textSecondary }]}>{t('forgot.contactSupport')}</Text>
-            <TouchableOpacity
+            <PressableScale
               style={[s.primaryBtn, { backgroundColor: colors.primary, shadowColor: colors.primary, marginTop: 20, width: '100%' }]}
               onPress={() => {
                 if (Platform.OS === 'web') {
@@ -456,7 +459,7 @@ export default function ForgotPassword() {
             >
               <IconMail size={16} color={colors.onPrimary} style={{ marginRight: 8 }} />
               <Text style={[s.primaryBtnText, { color: colors.onPrimary || '#fff' }]}>{t('forgot.contactSupportBtn')}</Text>
-            </TouchableOpacity>
+            </PressableScale>
           </View>
         ) : (
           // Show available methods
@@ -593,7 +596,7 @@ export default function ForgotPassword() {
         <Text style={[s.label, { color: colors.authLabelColor }]}>{t('forgot.enterCode')}</Text>
         <OtpInput value={code} onChange={handleCodeChange} />
 
-        <TouchableOpacity
+        <PressableScale
           style={[s.primaryBtn, { backgroundColor: colors.primary, shadowColor: colors.primary, marginTop: 22 }, loading && { opacity: 0.65 }]}
           onPress={() => handleVerify()}
           disabled={loading}
@@ -605,7 +608,7 @@ export default function ForgotPassword() {
               <Text style={[s.primaryBtnText, { color: colors.onPrimary || '#fff' }]}>{t('forgot.verifyCode')}</Text>
             </>
           )}
-        </TouchableOpacity>
+        </PressableScale>
 
         {countdown > 0 ? (
           <Text style={[s.countdownText, { color: colors.textTertiary }]}>
@@ -712,7 +715,7 @@ export default function ForgotPassword() {
         )}
 
         <View style={s.btnCol}>
-          <TouchableOpacity
+          <PressableScale
             style={[s.primaryBtn, { backgroundColor: colors.primary, shadowColor: colors.primary }, loading && { opacity: 0.65 }]}
             onPress={handleReset}
             disabled={loading}
@@ -724,7 +727,7 @@ export default function ForgotPassword() {
                 <Text style={[s.primaryBtnText, { color: colors.onPrimary || '#fff' }]}>{t('forgot.changePassword')}</Text>
               </>
             )}
-          </TouchableOpacity>
+          </PressableScale>
         </View>
       </>
     );
@@ -739,13 +742,13 @@ export default function ForgotPassword() {
           </View>
           <Text style={[s.successTitle, { color: colors.authSuccessGreen }]}>{t('forgot.passwordChanged')}</Text>
           <Text style={[s.successSub, { color: colors.textSecondary }]}>{t('forgot.passwordChangedDesc')}</Text>
-          <TouchableOpacity
+          <PressableScale
             style={[s.primaryBtn, { backgroundColor: colors.primary, shadowColor: colors.primary, marginTop: 24, width: '100%' }]}
             onPress={() => router.replace('/login')}
             activeOpacity={0.85}
           >
             <Text style={[s.primaryBtnText, { color: colors.onPrimary || '#fff' }]}>{t('forgot.goToLogin')}</Text>
-          </TouchableOpacity>
+          </PressableScale>
         </Animated.View>
       );
     }

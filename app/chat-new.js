@@ -26,6 +26,7 @@ import {
 import AvatarCircle from '../components/AvatarCircle';
 import BroadcastModal from '../components/BroadcastModal';
 import { ListSkeleton } from '../components/SkeletonLoader';
+import PressableScale from '../components/PressableScale'; // [2026-10-11] primary CTAs
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
@@ -2621,7 +2622,7 @@ export default function ChatNewScreen() {
       {/* Create Group Button */}
       {mode === 'group' && selectedMembers.length > 0 && (
         <View style={[sty.createBtnWrap, { paddingBottom: insets.bottom + Spacing.md }]}>
-          <TouchableOpacity
+          <PressableScale
             style={[sty.createBtn, { backgroundColor: colors.primary }, Shadow.md]}
             onPress={handleCreateGroup}
             disabled={creating}
@@ -2632,25 +2633,25 @@ export default function ChatNewScreen() {
                 <Text style={sty.createBtnText}>{selectedMembers.length === 1 ? t('chat.createGroupOne') : t('chat.createGroup', { count: selectedMembers.length }) /* [2026-10-10 qa-sweep] "1 membros" */}</Text>
               </>
             )}
-          </TouchableOpacity>
+          </PressableScale>
         </View>
       )}
 
       {/* Create Channel Button */}
       {mode === 'channel' && groupName.trim() && (
         <View style={[sty.createBtnWrap, { paddingBottom: insets.bottom + Spacing.md }]}>
-          <TouchableOpacity
+          <PressableScale
             style={[sty.createBtn, { backgroundColor: colors.primary }, Shadow.md]}
             onPress={handleCreateChannel}
             disabled={creating}
           >
             {creating ? <ActivityIndicator size="small" color={colors.onPrimary || '#fff'} /> : (
               <>
-                <Text style={{ fontSize: 16, marginRight: 6 }}>{'#'}</Text>
+                <Text style={{ fontSize: 16, marginRight: 6, fontWeight: '700', color: colors.onPrimary || '#fff' /* [2026-10-11] was default (black) on the black CTA → invisible */ }}>{'#'}</Text>
                 <Text style={sty.createBtnText}>{t('chat.createChannel')}</Text>
               </>
             )}
-          </TouchableOpacity>
+          </PressableScale>
         </View>
       )}
 

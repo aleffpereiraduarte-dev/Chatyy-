@@ -10239,4 +10239,13 @@ export default {
   "signupPhone.existingAccountOtp": "Questo numero ha già un account. Inserisci il codice per accedere.",
   "signupPhone.passwordOptionalPh": "Password (facoltativa)",
   "signupPhone.passwordOptionalHint": "Facoltativa. Accedi sempre con il tuo numero. Crea una password solo se vuoi usare l’e-mail @chatyy in altre app.",
+  // [2026-10-11 attach-recent]
+  "chat.attach.recentPrompt": "Consenti l’accesso alle foto per inviare le più recenti con un tocco.",
+  "chat.attach.recentAllow": "Consenti accesso",
+  "chat.attach.recentSettings": "Apri Impostazioni",
+  "chat.attach.recentMore": "Altre foto",
+  "chat.attach.recentSend": "Invia ({count})",
+  "chat.attach.recentPhoto": "Foto",
+  "chat.attach.recentVideo": "Video",
+  "chat.attach.recentSelected": "selezionata",
 };

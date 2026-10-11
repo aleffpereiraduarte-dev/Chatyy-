@@ -9485,4 +9485,13 @@ export default {
   "signupPhone.existingAccountOtp": "Este número já tem conta. Introduza o código para entrar.",
   "signupPhone.passwordOptionalPh": "Palavra-passe (opcional)",
   "signupPhone.passwordOptionalHint": "Opcional. Entra sempre com o seu número. Crie uma palavra-passe só se quiser aceder ao e-mail @chatyy noutras apps.",
+  // [2026-10-11 attach-recent]
+  "chat.attach.recentPrompt": "Permita o acesso às fotografias para enviar as mais recentes com um toque.",
+  "chat.attach.recentAllow": "Permitir acesso",
+  "chat.attach.recentSettings": "Abrir Definições",
+  "chat.attach.recentMore": "Mais fotografias",
+  "chat.attach.recentSend": "Enviar ({count})",
+  "chat.attach.recentPhoto": "Fotografia",
+  "chat.attach.recentVideo": "Vídeo",
+  "chat.attach.recentSelected": "selecionada",
 };

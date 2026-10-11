@@ -38,7 +38,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { COUNTRIES as COUNTRIES_FULL, formatPhone } from '../constants/countries';
 import * as LocalAuthentication from 'expo-local-authentication';
 import * as SecureStore from 'expo-secure-store';
-import * as Haptics from 'expo-haptics';
+import { HapticsCompat as Haptics } from '../services/haptics'; // [2026-10-11] same API, routed via the shared haptics shim
 import Svg, { Path, Rect, Circle as SvgCircle, Defs, Pattern, Line, RadialGradient, Stop, Mask } from 'react-native-svg';
 // [2026-10-07 login-ux] Smart single-field login (phone / e-mail / @usuário),
 // remembered accounts, inline notices, keyboard-aware scroll.

@@ -195,7 +195,9 @@ export async function dismissConversationNotifications(conversationId) {
     if (cleared > 0 && Notifications.getBadgeCountAsync && Notifications.setBadgeCountAsync) {
       try {
         const cur = await Notifications.getBadgeCountAsync();
-        await Notifications.setBadgeCountAsync(Math.max(0, (cur || 0) - cleared));
+        const next = Math.max(0, (cur || 0) - cleared);
+        await Notifications.setBadgeCountAsync(next);
+        _mirrorBadge(next);
       } catch {}
     }
   } catch {}
@@ -2753,11 +2755,33 @@ async function handleMarkReadChatFromNotification(conversationId) {
  * Clear the app icon badge (set to 0).
  * Called when the user opens the app or reads all messages.
  */
+// [2026-10-11 badge] iOS: mirror every icon-badge write into the App Group so
+// the Notification Service Extension (plugins/notification-service) counts
+// from the real number while the app is killed. No-op on binaries without
+// ExpoChatyySystem.setBadgeMirror (OTA-safe) and on Android/web.
+let _badgeMirrorMod;
+function _mirrorBadge(count) {
+  try {
+    if (Platform.OS !== 'ios') return;
+    if (_badgeMirrorMod === undefined) {
+      _badgeMirrorMod = null;
+      try {
+        const { requireOptionalNativeModule } = require('expo');
+        _badgeMirrorMod = requireOptionalNativeModule('ExpoChatyySystem') || null;
+      } catch { _badgeMirrorMod = null; }
+    }
+    if (_badgeMirrorMod && typeof _badgeMirrorMod.setBadgeMirror === 'function') {
+      _badgeMirrorMod.setBadgeMirror(Math.max(0, Math.floor(Number(count) || 0)));
+    }
+  } catch {}
+}
+
 export async function clearBadge() {
   try {
     const loaded = await loadModules();
     if (!loaded) return;
     await Notifications.setBadgeCountAsync(0);
+    _mirrorBadge(0);
   } catch {}
 }
 
@@ -2770,6 +2794,7 @@ export async function setBadgeCount(count) {
     const loaded = await loadModules();
     if (!loaded) return;
     await Notifications.setBadgeCountAsync(Math.max(0, count));
+    _mirrorBadge(count);
   } catch {}
 }
 
@@ -2798,7 +2823,9 @@ export async function refreshBadgeCount() {
     let emailUnread = 0;
     try {
       const emailResp = await apiCall('folder_counts');
-      emailUnread = emailResp?.data?.INBOX?.unseen ?? 0;
+      // folder_counts devolve { counts: { INBOX: n } } — o formato antigo
+      // (data.INBOX.unseen) nunca existiu, então o e-mail não entrava no ícone.
+      emailUnread = Number(emailResp?.data?.counts?.INBOX ?? emailResp?.data?.INBOX?.unseen ?? 0) || 0;
     } catch {}
 
     const total = chatUnread + emailUnread;

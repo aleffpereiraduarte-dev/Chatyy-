@@ -150,6 +150,18 @@ import { isTablet as RESP_IS_TABLET, isNativeTabletSplit } from '../utils/respon
 import { SCAN_DOCUMENT_ENABLED } from '../constants/featureFlags';
 import * as api from '../services/api';
 import { emailToDisplayName } from '../services/api';
+
+// [2026-10-11 qa] Nome amigável de remetente: "Você" p/ o próprio usuário,
+// sender_name quando é um nome de verdade (não e-mail nem local-part cru tipo
+// "apitest"), senão emailToDisplayName(email).
+function _friendlySenderName(email, name, currentEmail, t) {
+  const em = String(email || '').trim().toLowerCase();
+  if (em && em === String(currentEmail || '').trim().toLowerCase()) return (t && t('chat.you')) || 'Você';
+  const nm = String(name || '').trim();
+  if (nm && !nm.includes('@') && (!em || nm !== em.split('@')[0])) return nm;
+  if (em) return emailToDisplayName(em) || nm;
+  return nm;
+}
 import { humanizeSystemText } from '../utils/systemMessageText';
 import { formatBytes } from '../services/format';
 import * as e2eService from '../services/e2e';
@@ -788,6 +800,22 @@ const _SEND_MOTION_ND = Platform.OS !== 'web';
 // few object/array fields). The local row may carry extra client-only fields
 // (_localUri, _readStatus…) — those are exactly what a refresh should keep.
 // Rows in a local transient state (pending/failed/uploading) never match.
+// [2026-10-11 fluidez] `prev.map(fn)` que devolve o MESMO array quando nenhuma
+// linha mudou (fn devolveu o próprio item p/ todas). Os ~120
+// setMessages(prev => prev.map(...)) da tela (recibos, reações, upload, eco de
+// leitura…) criavam um array novo mesmo quando nada mudava → re-render da tela
+// inteira + re-enrich da lista por evento WS sem efeito. Nenhum callback muta o
+// item in-place (auditado), então identidade igual ⇔ nada mudou.
+function _mapKeep(arr, fn) {
+  if (!Array.isArray(arr)) return arr;
+  let out = null;
+  for (let i = 0; i < arr.length; i++) {
+    const v = fn(arr[i], i, arr);
+    if (out) out[i] = v;
+    else if (v !== arr[i]) { out = arr.slice(0, i); out[i] = v; }
+  }
+  return out || arr;
+}
 function _sameServerRow(nm, local) {
   if (!nm || !local || nm === local) return nm === local;
   if (local._pending || local._failed || local._queued || local._uploading || local._e2e) return false;
@@ -2347,6 +2375,31 @@ const FormattedText = React.memo(function FormattedText({ text, style, colors })
   );
 }, _formattedTextPropsEqual);
 
+// [2026-10-11 qa] Busca na conversa — destaca o termo (case-insensitive) no
+// texto da bolha. Marca P&B invertida (fundo = tinta da bolha, letra = fundo da
+// bolha): legível em enviada/recebida, claro/escuro, sem cor de acento. Só é
+// usado enquanto a barra de busca está aberta e a linha está nos resultados.
+function _searchMarkInk(isOwn, ownTextColor, colors) {
+  return isOwn ? '#111111' : ((colors && colors.background) || '#ffffff');
+}
+function _escapeRegExp(str) { return String(str).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
+const SearchHighlightText = React.memo(function SearchHighlightText({ text, term, style, markBg, markInk }) {
+  const str = typeof text === 'string' ? text : '';
+  const q = typeof term === 'string' ? term.trim() : '';
+  if (!q || !str) return <Text style={style} selectable={true}>{str}</Text>;
+  let parts;
+  try { parts = str.split(new RegExp(`(${_escapeRegExp(q)})`, 'gi')); } catch { parts = [str]; }
+  if (parts.length === 1) return <Text style={style} selectable={true}>{str}</Text>;
+  const ql = q.toLowerCase();
+  return (
+    <Text style={style} selectable={true}>
+      {parts.map((p, i) => (p && p.toLowerCase() === ql)
+        ? <Text key={i} style={{ backgroundColor: markBg, color: markInk, fontWeight: '700', borderRadius: 3 }}>{p}</Text>
+        : (p ? <Text key={i}>{p}</Text> : null))}
+    </Text>
+  );
+});
+
 // ============================================================
 // TEXT WITH CLICKABLE LINKS + @MENTIONS + #HASHTAGS
 // ============================================================
@@ -2523,17 +2576,17 @@ function _a11yMsgBody(msg, t) {
   }
   return clean(raw || cap);
 }
-function _a11yMsgLabel(msg, { t, isOwn, isGroup, isDeleted, readStatus, reactionGroups }) {
+function _a11yMsgLabel(msg, { t, isOwn, isGroup, isDeleted, readStatus, reactionGroups, me }) {
   const parts = [];
   if (isOwn) parts.push(_a11yT(t, 'common.you', 'Você'));
-  else if (isGroup) parts.push(msg.sender_name || (msg.sender_email || '').split('@')[0] || '');
+  else if (isGroup) parts.push(_friendlySenderName(msg.sender_email, msg.sender_name, me, t));
   if (isDeleted) {
     parts.push(isOwn ? _a11yT(t, 'chatConv.deletedMessageOwn', 'Você apagou esta mensagem') : _a11yT(t, 'chatConv.deletedMessage', 'Esta mensagem foi apagada'));
   } else {
     if (msg.forwarded_from) parts.push(_a11yT(t, 'a11y.forwarded', 'Encaminhada'));
     const rt = msg.reply_to && typeof msg.reply_to === 'object' ? msg.reply_to : null;
     if (rt || msg.reply_to_id) {
-      const who = rt ? (rt.sender_name || (rt.sender_email || '').split('@')[0]) : '';
+      const who = rt ? _friendlySenderName(rt.sender_email, rt.sender_name, me, t) : ''; // [2026-10-11 qa] "Você"/nome, não "apitest"
       parts.push(who ? _a11yT(t, 'a11y.replyTo', 'Em resposta a {name}', { name: who }) : _a11yT(t, 'a11y.replyToMsg', 'Em resposta a uma mensagem'));
     }
     if (msg.is_view_once || msg.isViewOnce) parts.push(_a11yT(t, 'a11y.viewOnce', 'Visualização única'));
@@ -3564,6 +3617,7 @@ function _locMapSource(lat, lng) {
 const _RICH_INPUT_RE = /[*_~`]|(^|\s)@[\w.]|:[a-z0-9_]{2,32}:/;
 
 const MemoizedMessageRow = React.memo(function MemoizedMessageRow({ item, renderRef, overlayStore }) {
+  _perfTick('row');
   // [2026-10-06 thread-tech] Subscribe to THIS row's overlay key: a download
   // tick / image-painted / error / delete-fade / translation for this id
   // re-renders only this row (the memo comparator below can't see store state,
@@ -3676,6 +3730,7 @@ const MemoizedMessageRow = React.memo(function MemoizedMessageRow({ item, render
     a.is_view_once === b.is_view_once &&
     a.isViewOnce === b.isViewOnce &&
     a._isHighlighted === b._isHighlighted &&
+    (a._searchTerm || null) === (b._searchTerm || null) &&
     a._heartPop === b._heartPop &&
     a._uploadPct === b._uploadPct &&
     a._readStatus === b._readStatus &&
@@ -4842,8 +4897,10 @@ function PollCreatorModal({ colors, t, conversationId, onClose, onCreated }) {
   // Visual-only presentation helpers (unified sheet language) — no logic change.
   const insets = useSafeAreaInsets();
   const [focusedField, setFocusedField] = useState(null);
-  const ACCENT = '#25D366';
-  const ACCENT_TINT = 'rgba(37,211,102,0.12)';
+  // [2026-10-11 qa] P&B — sem verde: tinta = texto, fundo = surfaceVariant.
+  const ACCENT = colors.text;
+  const ACCENT_TINT = colors.surfaceVariant;
+  const ON_ACCENT = colors.background || colors.surface;
   const inputBase = { backgroundColor: colors.surfaceVariant, borderRadius: 14, borderWidth: 1, paddingHorizontal: 14, paddingVertical: 12, fontSize: 15, color: colors.text };
   const canCreate = !!question.trim() && options.filter(o => o.trim()).length >= 2;
 
@@ -4900,15 +4957,15 @@ function PollCreatorModal({ colors, t, conversationId, onClose, onCreated }) {
             style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 16, paddingVertical: 6 }}>
             <Text style={{ color: colors.text, fontSize: 15, fontWeight: '500' }}>{t('chat.pollMultiple') || 'Múltipla escolha'}</Text>
             <View style={{ width: 46, height: 28, borderRadius: 14, padding: 3, backgroundColor: multipleChoice ? ACCENT : colors.textTertiary, alignItems: multipleChoice ? 'flex-end' : 'flex-start', justifyContent: 'center' }}>
-              <View style={{ width: 22, height: 22, borderRadius: 11, backgroundColor: '#fff', shadowColor: '#000', shadowOpacity: 0.2, shadowRadius: 2, shadowOffset: { width: 0, height: 1 }, elevation: 2 }} />
+              <View style={{ width: 22, height: 22, borderRadius: 11, backgroundColor: multipleChoice ? ON_ACCENT : '#fff', shadowColor: '#000', shadowOpacity: 0.2, shadowRadius: 2, shadowOffset: { width: 0, height: 1 }, elevation: 2 }} />
             </View>
           </TouchableOpacity>
         </ScrollView>
         <TouchableOpacity onPress={handleCreate} disabled={sending || !question.trim() || options.filter(o => o.trim()).length < 2} activeOpacity={0.85}
           style={{ backgroundColor: canCreate ? ACCENT : colors.border, borderRadius: 14, paddingVertical: 15, alignItems: 'center', marginTop: 20, opacity: sending ? 0.7 : 1 }}>
           {sending
-            ? <ActivityIndicator color="#fff" size="small" />
-            : <Text style={{ color: canCreate ? '#fff' : colors.textTertiary, fontSize: 16, fontWeight: '700' }}>{t('chat.pollCreate') || 'Criar enquete'}</Text>
+            ? <ActivityIndicator color={ON_ACCENT} size="small" />
+            : <Text style={{ color: canCreate ? ON_ACCENT : colors.textTertiary, fontSize: 16, fontWeight: '700' }}>{t('chat.pollCreate') || 'Criar enquete'}</Text>
           }
         </TouchableOpacity>
       </View>
@@ -6383,6 +6440,10 @@ function MediaPreview({ visible, onClose, onSend, files: filesProp, colors, hdMo
               onChangeText={setCaption}
               maxLength={300}
               multiline
+              // [2026-10-11 qa] Web: legenda já focada + Enter envia (Shift+Enter = quebra).
+              autoFocus={Platform.OS === 'web'}
+              blurOnSubmit={Platform.OS === 'web'}
+              onSubmitEditing={Platform.OS === 'web' ? () => { handleSendPress(); } : undefined}
             />
             <TouchableOpacity
               onPress={() => setViewOnce(v => !v)}
@@ -6543,6 +6604,10 @@ function FileCaptionPreview({ visible, kind, file, gifUri, colors, t, onClose, o
               onChangeText={setCaption}
               maxLength={1024}
               multiline
+              // [2026-10-11 qa] Web: legenda já focada + Enter envia (Shift+Enter = quebra).
+              autoFocus={Platform.OS === 'web'}
+              blurOnSubmit={Platform.OS === 'web'}
+              onSubmitEditing={Platform.OS === 'web' ? () => { const c = caption; onSend(c); } : undefined}
             />
             <TouchableOpacity
               style={previewStyles.sendBtn}
@@ -8418,7 +8483,16 @@ function InfoMediaStrip({ items, colors, onPress, title }) {
 // conversation logic or the file-based routing (URL is still
 // /chat-conversation?id=N; the list pane just replaces instead of pushing
 // so the stack doesn't pile up one screen per conversation click).
+// [2026-10-11 fluidez] Contador de renders estilo profiler — SÓ web e SÓ com
+// window.__CHATYY_PERF ligado (QA/Playwright). Custo zero fora disso.
+const _PERF_ON = Platform.OS === 'web' && typeof window !== 'undefined';
+function _perfTick(k) {
+  if (!_PERF_ON) return;
+  try { const p = window.__CHATYY_PERF; if (p) p[k] = (p[k] || 0) + 1; } catch {}
+}
+
 function ChatConversationInner() {
+  _perfTick('screen');
   const { colors, isDark } = useTheme();
   const { user } = useAuth();
   const { t, language } = useLanguage();
@@ -8891,6 +8965,11 @@ function ChatConversationInner() {
   const typingStopTimerRef = useRef(null);
   const [showScrollDown, setShowScrollDown] = useState(false);
   const [newMsgCount, setNewMsgCount] = useState(0);
+  // [2026-10-11 fluidez] Espelho do contador p/ o onScroll (60 Hz) não
+  // enfileirar setNewMsgCount(0) a cada evento quando já está em 0 — cada
+  // setState no componente da tela (~37k linhas) pode custar um render inteiro.
+  const newMsgCountRef = useRef(0);
+  newMsgCountRef.current = newMsgCount;
   const isScrolledUpRef = useRef(false);
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -10902,7 +10981,7 @@ function ChatConversationInner() {
       try {
         const _cmi = msg?._client_id || msg?.client_message_id;
         if (_cmi && (await messageOutbox.getStatus(String(_cmi)))) {
-          setMessages(prev => prev.map(m => m.id === msg.id ? { ...m, _failed: false, _pending: true, _queued: true, _uploading: false } : m));
+          setMessages(prev => _mapKeep(prev, m => m.id === msg.id ? { ...m, _failed: false, _pending: true, _queued: true, _uploading: false } : m));
           await mediaSendQueue.retry(String(_cmi));
           return;
         }
@@ -10911,7 +10990,7 @@ function ChatConversationInner() {
     try {
       const raw = msg?._localUri || msg?.file_url || '';
       if (!raw || /^https?:/i.test(raw)) return;
-      setMessages(prev => prev.map(m => m.id === msg.id ? { ...m, _failed: false, _pending: true, _uploading: true, _uploadPct: 0 } : m));
+      setMessages(prev => _mapKeep(prev, m => m.id === msg.id ? { ...m, _failed: false, _pending: true, _uploading: true, _uploadPct: 0 } : m));
       const { queueOfflineAction, replayOfflineQueue } = require('../services/offlineCache');
       await queueOfflineAction({
         type: 'chat_file_upload',
@@ -10927,7 +11006,7 @@ function ChatConversationInner() {
       });
       replayOfflineQueue(api).catch(() => {});
     } catch {
-      setMessages(prev => prev.map(m => m.id === msg?.id ? { ...m, _failed: true, _pending: false, _uploading: false } : m));
+      setMessages(prev => _mapKeep(prev, m => m.id === msg?.id ? { ...m, _failed: true, _pending: false, _uploading: false } : m));
     }
   }, [conversationId]);
   const [wsConnected, setWsConnected] = useState(true);
@@ -11124,7 +11203,7 @@ function ChatConversationInner() {
           txRevealedRef.current = revealed;
         }
         if (set.size > 0 || Object.keys(txRevealedRef.current).length > 0) {
-          setMessages(prev => prev.map(m => {
+          setMessages(prev => _mapKeep(prev, m => {
             let next = m;
             const sid = String(m.id);
             if (set.has(sid)) next = { ...next, _txHidden: true };
@@ -11146,7 +11225,7 @@ function ChatConversationInner() {
       const AS = require('@react-native-async-storage/async-storage').default;
       AS.setItem(TX_HIDDEN_KEY, JSON.stringify([...set])).catch(() => {});
     } catch {}
-    setMessages(prev => prev.map(m => m.id === id ? { ...m, _txHidden: willHide } : m));
+    setMessages(prev => _mapKeep(prev, m => m.id === id ? { ...m, _txHidden: willHide } : m));
   }, [TX_HIDDEN_KEY]);
   // [2026-10-06 thread-tech] composerStore subscription (was useEffect on inputText).
   useEffect(() => {
@@ -12141,7 +12220,7 @@ function ChatConversationInner() {
         const fresh = p.localUri || p.url;
         if (!fresh) return;
         if (!mountedRef.current) return;
-        setMessages(prev => prev.map(m => (
+        setMessages(prev => _mapKeep(prev, m => (
           m && m.id === p.messageId
             ? { ...m, _localUri: fresh, file_url: m.file_url || p.originalUrl || p.url }
             : m
@@ -12389,7 +12468,7 @@ function ChatConversationInner() {
         const _msgId = msg.id;
         _v4.decryptForDisplay(raw, { convId: msg.conversation_id || conversationId, senderEmail: msg.sender_email || '' }).then((r) => {
           if (!mountedRef.current) return;
-          setMessages(prev => prev.map(m => {
+          setMessages(prev => _mapKeep(prev, m => {
             // Casa por id OU pelo próprio envelope (a linha pode ter trocado de
             // id temp→servidor, ou vindo de outra fonte, enquanto decifrava).
             if (!m || (m.id !== _msgId && m._e2eRaw !== raw)) return m;
@@ -12409,7 +12488,7 @@ function ChatConversationInner() {
             result._v2Decrypt().then(r2 => {
               const text2 = r2.text && !r2.text.startsWith('[E2E:') ? r2.text : '🔒';
               let savedMsg = null;
-              setMessages(prev => prev.map(m => {
+              setMessages(prev => _mapKeep(prev, m => {
                 if (m.id !== msgId) return m;
                 const next = { ...m, content: text2, _e2e: true };
                 delete next._e2eRaw;
@@ -12434,7 +12513,7 @@ function ChatConversationInner() {
               // WhatsApp-style "waiting" state instead, and KEEP _e2eRaw so the
               // next remount/decrypt pass auto-retries (e.g. after the sender's
               // device key propagates).
-              setMessages(prev => prev.map(m => (
+              setMessages(prev => _mapKeep(prev, m => (
                 m.id === msgId ? { ...m, content: '🔒 Aguardando esta mensagem', _e2e: true } : m
               )));
             });
@@ -13699,10 +13778,10 @@ function ChatConversationInner() {
               mailWs.relayChatMessage(conversationId, r.data, p.temp_id, getMemberEmails());
             } catch {}
           } else if (mountedRef.current) {
-            setMessages(prev => prev.map(m => m.id === p.temp_id ? { ...m, _failed: true, _pending: false, _queued: false } : m));
+            setMessages(prev => _mapKeep(prev, m => m.id === p.temp_id ? { ...m, _failed: true, _pending: false, _queued: false } : m));
           }
         } catch {
-          if (mountedRef.current) setMessages(prev => prev.map(m => m.id === p.temp_id ? { ...m, _failed: true, _pending: false, _queued: false } : m));
+          if (mountedRef.current) setMessages(prev => _mapKeep(prev, m => m.id === p.temp_id ? { ...m, _failed: true, _pending: false, _queued: false } : m));
         }
       }
     }).catch(() => {});
@@ -14080,7 +14159,7 @@ function ChatConversationInner() {
       const { onSendFail } = require('../services/sendFailEvents');
       unsub = onSendFail(({ conversationId: convId, tempId, clientMessageId }) => {
         if (Number(convId) !== Number(conversationId)) return;
-        setMessages(prev => prev.map(m => {
+        setMessages(prev => _mapKeep(prev, m => {
           const matchTemp = tempId && (m.id === tempId || m._client_id === tempId);
           const matchClient = clientMessageId && m._client_id === clientMessageId;
           if (matchTemp || matchClient) return { ...m, _failed: true, _pending: false };
@@ -14688,7 +14767,7 @@ function ChatConversationInner() {
         if (!mountedRef.current) return;
         const m = _extractWsMsg(payload);
         if (!m || String(m.conversation_id) !== String(conversationId)) return;
-        setMessages(prev => prev.map(row => {
+        setMessages(prev => _mapKeep(prev, row => {
           // Relay-delivered ids can arrive as strings while local rows hold
           // numbers — a strict === match made the edit invisible until refetch.
           if (String(row.id) === String(m.id)) {
@@ -14710,7 +14789,7 @@ function ChatConversationInner() {
         // and total_votes on poll_vote events — merge straight in.
         // my_votes is per-device (server doesn't know who's looking),
         // so preserve the existing value unless the payload supplied one.
-        setMessages(prev => prev.map(row => {
+        setMessages(prev => _mapKeep(prev, row => {
           if (String(row.id) !== String(m.id)) return row;
           const fresh = m.poll || {};
           const prevPoll = row.poll || {};
@@ -14742,7 +14821,7 @@ function ChatConversationInner() {
         if (!data || String(data.conversation_id) !== String(conversationId)) return;
         const msgId = data.message_id;
         if (!msgId) return;
-        setMessages(prev => prev.map(row => {
+        setMessages(prev => _mapKeep(prev, row => {
           if (String(row.id) !== String(msgId)) return row;
           const meetup = { ...(row.meetup || {}) };
           meetup.rsvps = data.rsvps || meetup.rsvps;
@@ -14772,7 +14851,7 @@ function ChatConversationInner() {
         // would blind-replace (wipe) our optimistic reaction. Skip the row —
         // our own HTTP reconcile carries the authoritative merged state.
         if (inflightReactionMsgIdsRef.current.has(String(m.id))) return;
-        setMessages(prev => prev.map(row => String(row.id) === String(m.id) ? { ...row, reactions: m.reactions } : row));
+        setMessages(prev => _mapKeep(prev, row => String(row.id) === String(m.id) ? { ...row, reactions: m.reactions } : row));
       };
       wsUnsubs.push(mailWs.on('reaction', onWsReaction));
 
@@ -14785,7 +14864,7 @@ function ChatConversationInner() {
         // tombstone could still surface the original image/video via a
         // cached file:// URI even after backend strip.
         let priorFileUrl = '';
-        setMessages(prev => prev.map(row => {
+        setMessages(prev => _mapKeep(prev, row => {
           // String-coerce: relay-delivered delete ids arrive as strings while
           // local rows hold numbers (matches onWsEdit/onWsReaction). Without
           // this the deleted bubble was never tombstoned live — content/media
@@ -14846,7 +14925,7 @@ function ChatConversationInner() {
         if (!mountedRef.current) return;
         const droppedId = info?.droppedMsgId;
         if (!droppedId) return;
-        setMessages(prev => prev.map(m =>
+        setMessages(prev => _mapKeep(prev, m =>
           (m._client_id === droppedId || m.id === droppedId)
             ? { ...m, _failed: true, _pending: false, _sendError: 'queue_overflow' }
             : m
@@ -14862,7 +14941,7 @@ function ChatConversationInner() {
         const cid = data?.client_message_id || data?.client_id;
         if (!tempId && !cid) return;
         let matchedTempId = null;
-        setMessages(prev => prev.map(m => {
+        setMessages(prev => _mapKeep(prev, m => {
           // Match by temp_id (current session) OR client_message_id
           // (restored pending row that was sent in a previous session
           // and is now acked by the server). Without the cid match,
@@ -14958,7 +15037,7 @@ function ChatConversationInner() {
               if (buf) { deliveredSet.forEach(id => buf.add(id)); if (buf.size > 600) buf.clear(); }
             } catch {}
           }
-          setMessages(prev => prev.map(m => {
+          setMessages(prev => _mapKeep(prev, m => {
             if (m.status === 'read') return m;
             const numId = Number(m.id);
             const matched =
@@ -14994,7 +15073,7 @@ function ChatConversationInner() {
           if (conversationType === 'group') {
             const who = String(data?.email || '').toLowerCase();
             if (!who) return;
-            setMessages(prev => prev.map(m => {
+            setMessages(prev => _mapKeep(prev, m => {
               const numId = Number(m.id);
               return (!Number.isNaN(numId) && ids.has(numId)) ? _rcAddDeliveredTo(m, who) : m;
             }));
@@ -15004,7 +15083,7 @@ function ChatConversationInner() {
             const buf = deliveredIdBufferRef.current;
             if (buf) { ids.forEach(id => buf.add(id)); if (buf.size > 600) buf.clear(); }
           } catch {}
-          setMessages(prev => prev.map(m => {
+          setMessages(prev => _mapKeep(prev, m => {
             if (m.status === 'read') return m;
             const numId = Number(m.id);
             return (!Number.isNaN(numId) && ids.has(numId))
@@ -15017,7 +15096,7 @@ function ChatConversationInner() {
         if (!mid) return;
         if (conversationType === 'group') { // [2026-10-07 receipts2] idem (shape singular legado)
           const who = String(data?.email || '').toLowerCase();
-          if (who) setMessages(prev => prev.map(m => (Number(m.id) === Number(mid) ? _rcAddDeliveredTo(m, who) : m)));
+          if (who) setMessages(prev => _mapKeep(prev, m => (Number(m.id) === Number(mid) ? _rcAddDeliveredTo(m, who) : m)));
           return;
         }
         // [WhatsApp instant ✓ 2026-06-03] Remember this delivered server id so
@@ -15034,7 +15113,7 @@ function ChatConversationInner() {
         // but vanished after navigating away and back (refetch dropped the
         // transient flag while the server-side row hadn't been re-queried).
         const deliveredStamp = data?.delivered_at || new Date().toISOString();
-        setMessages(prev => prev.map(m =>
+        setMessages(prev => _mapKeep(prev, m =>
           m.id === mid && m.status !== 'read'
             ? { ...m, status: 'delivered', _delivered: true, delivered_at: m.delivered_at || deliveredStamp }
             : m
@@ -15081,7 +15160,7 @@ function ChatConversationInner() {
           return [...prev, { email: peerEmail, last_read_id: newId }];
         });
         const isGroup = conversationType === 'group';
-        setMessages(prev => prev.map(m =>
+        setMessages(prev => _mapKeep(prev, m =>
           (m.sender_email || '').toLowerCase() === _myEmail && Number.isFinite(Number(m.id)) && Number(m.id) > 0 && Number(m.id) <= newId
             ? (isGroup
                 // [2026-10-04] Grupo: NÃO sintetiza _delivered a partir de UM leitor.
@@ -15129,7 +15208,7 @@ function ChatConversationInner() {
             // [2026-10-07 receipts2] GRUPO: não sintetiza mais `_delivered` a partir
             // de UM leitor (pintava ✓✓ com 1 de N). O readReceipts acima já guarda o
             // watermark desse membro; o enrichment agrega leitura/entrega por membro.
-            if (!isGroup) setMessages(prev => prev.map(m =>
+            if (!isGroup) setMessages(prev => _mapKeep(prev, m =>
               m.sender_email === currentEmail && readUpTo > 0 && Number.isFinite(Number(m.id)) && Number(m.id) > 0 && Number(m.id) <= readUpTo
                 ? (!m._read ? { ...m, status: 'read', _read: true, _delivered: true } : m)
                 : m
@@ -15148,7 +15227,7 @@ function ChatConversationInner() {
         const tx = data?.transcription;
         if (!vmId || !tx) return;
         if (String(data?.conversation_id) !== String(conversationId)) return;
-        setMessages(prev => prev.map(m => {
+        setMessages(prev => _mapKeep(prev, m => {
           if (m.type !== 'voicemail') return m;
           let parsed;
           try { parsed = typeof m.content === 'string' ? JSON.parse(m.content) : m.content; } catch { parsed = null; }
@@ -15164,7 +15243,7 @@ function ChatConversationInner() {
         if (!mountedRef.current) return;
         const vmId = data?.voicemail_id;
         if (!vmId) return;
-        setMessages(prev => prev.map(m => {
+        setMessages(prev => _mapKeep(prev, m => {
           if (m.type !== 'voicemail') return m;
           let parsed;
           try { parsed = typeof m.content === 'string' ? JSON.parse(m.content) : m.content; } catch { parsed = null; }
@@ -15184,7 +15263,7 @@ function ChatConversationInner() {
         if (!mountedRef.current) return;
         const vpId = data?.message_id ?? data?.id;
         if (vpId == null) return;
-        setMessages(prev => prev.map(m =>
+        setMessages(prev => _mapKeep(prev, m =>
           (String(m.id) === String(vpId))
             ? { ...m, _voice_played: true, played_at: m.played_at || data?.played_at || new Date().toISOString() }
             : m
@@ -15230,7 +15309,7 @@ function ChatConversationInner() {
         const lng = data.longitude;
         if (!msgId || lat == null || lng == null) return;
         // Update the message in state with new coordinates
-        setMessages(prev => prev.map(m => {
+        setMessages(prev => _mapKeep(prev, m => {
           if (String(m.id) !== String(msgId)) return m;
           try {
             const content = typeof m.content === 'string' ? JSON.parse(m.content) : (m.content || {});
@@ -15288,6 +15367,7 @@ function ChatConversationInner() {
             // pauses between words on slower typers).
             const timer = setTimeout(() => {
               setTypingUsers(p => {
+                if (!p.has(email)) return p; // [2026-10-11 fluidez] sem Map novo → sem re-render da tela
                 const n = new Map(p);
                 n.delete(email);
                 return n;
@@ -15458,7 +15538,7 @@ function ChatConversationInner() {
                   if (r?.success) {
                     await removeFromQueue(a.id);
                     if (mountedRef.current && r.data?.id) {
-                      setMessages(prev => prev.map(m =>
+                      setMessages(prev => _mapKeep(prev, m =>
                         (m.id === a.temp_id || m._client_id === a.client_message_id || m._client_id === a.id)
                           // [#1188 fix] Preserve sender_email — envelope mode returns null.
                           ? { ...r.data, _pending: false, _failed: false, _queued: false, sender_email: r.data.sender_email || m.sender_email || currentEmail }
@@ -15778,7 +15858,7 @@ function ChatConversationInner() {
           const rid = data.id ?? data.message_id;
           if (rid == null) return;
           if (inflightReactionMsgIdsRef.current.has(String(rid))) return;
-          setMessages(prev => prev.map(row => String(row.id) === String(rid) ? { ...row, reactions: data.reactions } : row));
+          setMessages(prev => _mapKeep(prev, row => String(row.id) === String(rid) ? { ...row, reactions: data.reactions } : row));
           return;
         }
         const mid = data?.message_id ?? data?.id;
@@ -15830,7 +15910,7 @@ function ChatConversationInner() {
         const content = data?.content;
         if (mid && typeof content === 'string') {
           const editedAt = data.edited_at || new Date().toISOString();
-          setMessages(prev => prev.map(m => {
+          setMessages(prev => _mapKeep(prev, m => {
             if (m.id === mid) return { ...m, content, edited_at: editedAt };
             // Sync reply-preview: any bubble quoting this edited message
             // needs its cached preview text refreshed, otherwise the quote
@@ -15859,7 +15939,7 @@ function ChatConversationInner() {
           if (mode === 'for_all') {
             const now = new Date().toISOString();
             let priorFileUrl = '';
-            setMessages(prev => prev.map(m => {
+            setMessages(prev => _mapKeep(prev, m => {
               if (m.id === mid) {
                 priorFileUrl = m.file_url || '';
                 return {
@@ -15941,7 +16021,7 @@ function ChatConversationInner() {
         if (String(data?.conversation_id) !== String(conversationId)) return;
         const msgId = data?.message_id;
         if (!msgId) return;
-        setMessages(prev => prev.map(m =>
+        setMessages(prev => _mapKeep(prev, m =>
           m.id === msgId && !m._delivered
             ? { ...m, _delivered: true }
             : m
@@ -15963,6 +16043,17 @@ function ChatConversationInner() {
         const isStopped = data?.action === 'stopped';
 
         setTypingUsers(prev => {
+          // [2026-10-11 fluidez] Mesmo typer pingando de novo (caso comum) →
+          // só re-arma o timer e devolve `prev` (sem re-render da tela inteira).
+          if (isStopped && !prev.has(email)) return prev;
+          const _same = !isStopped ? prev.get(email) : null;
+          if (_same && _same.recording === false) {
+            if (_same.timer) clearTimeout(_same.timer);
+            _same.timer = setTimeout(() => {
+              setTypingUsers(p => { if (!p.has(email)) return p; const n = new Map(p); n.delete(email); return n; });
+            }, 4000);
+            return prev;
+          }
           const next = new Map(prev);
           const existing = next.get(email);
           if (existing?.timer) clearTimeout(existing.timer);
@@ -15971,7 +16062,7 @@ function ChatConversationInner() {
             return next;
           }
           const timer = setTimeout(() => {
-            setTypingUsers(p => { const n = new Map(p); n.delete(email); return n; });
+            setTypingUsers(p => { if (!p.has(email)) return p; const n = new Map(p); n.delete(email); return n; });
           }, 4000);
           next.set(email, { name, recording: false, timer });
           return next;
@@ -15990,6 +16081,17 @@ function ChatConversationInner() {
         const isStopped = data?.action === 'stopped';
 
         setTypingUsers(prev => {
+          // [2026-10-11 fluidez] Mesmo typer pingando de novo (caso comum) →
+          // só re-arma o timer e devolve `prev` (sem re-render da tela inteira).
+          if (isStopped && !prev.has(email)) return prev;
+          const _same = !isStopped ? prev.get(email) : null;
+          if (_same && _same.recording === true) {
+            if (_same.timer) clearTimeout(_same.timer);
+            _same.timer = setTimeout(() => {
+              setTypingUsers(p => { if (!p.has(email)) return p; const n = new Map(p); n.delete(email); return n; });
+            }, 60000);
+            return prev;
+          }
           const next = new Map(prev);
           const existing = next.get(email);
           if (existing?.timer) clearTimeout(existing.timer);
@@ -15999,7 +16101,7 @@ function ChatConversationInner() {
           }
           // Auto-clear after 60s max (voice recording limit)
           const timer = setTimeout(() => {
-            setTypingUsers(p => { const n = new Map(p); n.delete(email); return n; });
+            setTypingUsers(p => { if (!p.has(email)) return p; const n = new Map(p); n.delete(email); return n; });
           }, 60000);
           next.set(email, { name, recording: true, timer });
           return next;
@@ -16519,7 +16621,7 @@ function ChatConversationInner() {
         const _editId = editingMsg.id;
         let editedRow = null;
         let _prevEditRow = null;
-        setMessages(prev => prev.map(m => {
+        setMessages(prev => _mapKeep(prev, m => {
           if (m.id !== _editId) return m;
           _prevEditRow = m;
           editedRow = { ...m, content: text, edited_at: editedAt };
@@ -16546,7 +16648,7 @@ function ChatConversationInner() {
             if (isHard) {
               // Restore the original row + surface the reason.
               if (_prevEditRow) {
-                setMessages(prev => prev.map(m => m.id === _editId ? _prevEditRow : m));
+                setMessages(prev => _mapKeep(prev, m => m.id === _editId ? _prevEditRow : m));
                 try { _cacheOne(conversationId, _prevEditRow); } catch {}
                 try {
                   const SmartCache = require('../services/smartChatCache');
@@ -16810,7 +16912,7 @@ function ChatConversationInner() {
         try { encrypted = e2eService.createEnvelope(text, currentEmail, e2eKeys); } catch {}
       }
       if (e2eKeys.v4 && (!encrypted || typeof encrypted !== 'string' || encrypted === text)) {
-        setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _failed: true, _pending: false, _sendError: 'encryption_failed' } : m));
+        setMessages(prev => _mapKeep(prev, m => m.id === tempId ? { ...m, _failed: true, _pending: false, _sendError: 'encryption_failed' } : m));
         removePendingMessage(conversationId, tempId).catch(() => {});
         _dropOptimisticNativeRow();
         if (OUTBOX_V2_ONLY) _outboxThen(() => messageOutbox.remove(msgId));
@@ -16831,7 +16933,7 @@ function ChatConversationInner() {
         // never see plaintext when encryption falls over.
         // [bug 2026-05-15 #980 e2ee-silent-fail] Surface Alert so user
         // understands this isn't a network issue.
-        setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _failed: true, _pending: false, _sendError: 'encryption_failed' } : m));
+        setMessages(prev => _mapKeep(prev, m => m.id === tempId ? { ...m, _failed: true, _pending: false, _sendError: 'encryption_failed' } : m));
         removePendingMessage(conversationId, tempId).catch(() => {});
         _dropOptimisticNativeRow();
         if (OUTBOX_V2_ONLY) {
@@ -16918,7 +17020,7 @@ function ChatConversationInner() {
       //      HTTP swap re-applies it; read receipts self-heal via readReceipts
       //      state which is re-evaluated against the server id on every render.
       if (wsOk && !_convBusyAtSend) {
-        setMessages(prev => prev.map(m =>
+        setMessages(prev => _mapKeep(prev, m =>
           (m.id === tempId || m._client_id === msgId)
             ? { ...m, _pending: false, _queued: false }
             : m
@@ -17093,7 +17195,7 @@ function ChatConversationInner() {
               // the bubble to incoming on the swap.
               // [#1182 bubble-flip] Preserve _client_id so msgKeyExtractor
               // returns a stable key across the optimistic→server swap.
-              setMessages(prev => prev.map(m => {
+              setMessages(prev => _mapKeep(prev, m => {
                 if (m.id !== tempId && m._client_id !== msgId) return m;
                 return { ...serverMsg, sender_email: serverMsg.sender_email || m.sender_email || currentEmail, _client_id: m._client_id || msgId };
               }));
@@ -17139,7 +17241,7 @@ function ChatConversationInner() {
         const _alreadyDelivered = (() => {
           try { const _b = deliveredIdBufferRef.current; return serverMsg.id != null && !!_b && (_b.has(serverMsg.id) || _b.has(Number(serverMsg.id))); } catch { return false; }
         })();
-        setMessages(prev => prev.map(m => {
+        setMessages(prev => _mapKeep(prev, m => {
           if (m.id !== tempId) return m;
           const swapped = { ...serverMsg, sender_email: serverMsg.sender_email || m.sender_email || currentEmail, _client_id: m._client_id || msgId };
           if (_alreadyDelivered && swapped.status !== 'read') {
@@ -17253,7 +17355,7 @@ function ChatConversationInner() {
                   // mode synth (null) doesn't flip the bubble to incoming.
                   // [#1182 bubble-flip] Preserve _client_id so msgKeyExtractor
                   // returns a stable key.
-                  setMessages(prev => prev.map(m => {
+                  setMessages(prev => _mapKeep(prev, m => {
                     if (m.id !== tempId) return m;
                     return { ...serverMsg, sender_email: serverMsg.sender_email || m.sender_email || currentEmail, _client_id: m._client_id || msgId };
                   }));
@@ -17272,7 +17374,7 @@ function ChatConversationInner() {
           // [send-reliability] The SQLite outbox is the single retry owner on
           // native: keep the clock, back off, retry after the session heals
           // (api.js refresh / WS re-auth kicks the worker). No MMKV twin queue.
-          setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _pending: true, _failed: false, _queued: true, _client_id: msgId, _sendError: 'unauthorized' } : m));
+          setMessages(prev => _mapKeep(prev, m => m.id === tempId ? { ...m, _pending: true, _failed: false, _queued: true, _client_id: msgId, _sendError: 'unauthorized' } : m));
           _outboxThen(() => messageOutbox.markFailed(msgId, 'unauthorized', { kind: 'transient' }));
           _outboxThen(() => { try { require('../services/sendWorker').poke?.(); } catch {} });
           _dropOptimisticNativeRow();
@@ -17287,9 +17389,9 @@ function ChatConversationInner() {
           try {
             const { queueOfflineAction } = require('../services/offlineCache');
             await queueOfflineAction({ type: 'chat_send', conversation_id: conversationId, content: contentToSend, msgType: 'text', reply_to_id: replyId, mentions: currentMentions, temp_id: tempId, client_message_id: msgId, effect: stagedEffect || null, topic_id: activeTopic?.id || null });
-            setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _pending: true, _failed: false, _queued: true, _client_id: msgId, _sendError: 'unauthorized' } : m));
+            setMessages(prev => _mapKeep(prev, m => m.id === tempId ? { ...m, _pending: true, _failed: false, _queued: true, _client_id: msgId, _sendError: 'unauthorized' } : m));
           } catch {
-            setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _failed: true, _pending: false, _sendError: 'unauthorized' } : m));
+            setMessages(prev => _mapKeep(prev, m => m.id === tempId ? { ...m, _failed: true, _pending: false, _sendError: 'unauthorized' } : m));
           }
           if (OUTBOX_V2_ONLY) {
             // [401 not-rescued fix] Without this the outbox row stays stuck in
@@ -17308,10 +17410,10 @@ function ChatConversationInner() {
         // send (older message still pending) was already handed to the worker.
         const _kind = r?._deferred ? 'deferred' : (messageOutbox.classifySendResult?.(r) || 'transient');
         if (_kind === 'hard') {
-          setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _failed: true, _pending: false, _queued: false, _client_id: msgId, _sendError: r?.message || 'rejected' } : m));
+          setMessages(prev => _mapKeep(prev, m => m.id === tempId ? { ...m, _failed: true, _pending: false, _queued: false, _client_id: msgId, _sendError: r?.message || 'rejected' } : m));
           _outboxThen(() => messageOutbox.markFailed(msgId, r?.message || r?.error || 'rejected', { kind: 'hard' }));
         } else {
-          setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _pending: true, _failed: false, _queued: true, _client_id: msgId } : m));
+          setMessages(prev => _mapKeep(prev, m => m.id === tempId ? { ...m, _pending: true, _failed: false, _queued: true, _client_id: msgId } : m));
           if (_kind !== 'deferred') {
             _outboxThen(() => messageOutbox.markFailed(msgId, r?.message || r?.error || 'server_error', { kind: _kind === 'offline' ? 'offline' : 'transient' }));
           }
@@ -17328,9 +17430,9 @@ function ChatConversationInner() {
         try {
           const { queueOfflineAction } = require('../services/offlineCache');
           await queueOfflineAction({ type: 'chat_send', conversation_id: conversationId, content: contentToSend, msgType: 'text', reply_to_id: replyId, mentions: currentMentions, temp_id: tempId, client_message_id: msgId, effect: stagedEffect || null, topic_id: activeTopic?.id || null });
-          setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _pending: true, _failed: false, _queued: true } : m));
+          setMessages(prev => _mapKeep(prev, m => m.id === tempId ? { ...m, _pending: true, _failed: false, _queued: true } : m));
         } catch {
-          setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _failed: true, _pending: false } : m));
+          setMessages(prev => _mapKeep(prev, m => m.id === tempId ? { ...m, _failed: true, _pending: false } : m));
         }
         if (OUTBOX_V2_ONLY) {
           // Bump attempt counter in SQLite — sendWorker's periodic drain
@@ -17352,9 +17454,9 @@ function ChatConversationInner() {
         // original row — never a duplicate).
         const _k = messageOutbox.classifySendResult?.(null, e) || 'transient';
         if (_k === 'hard') {
-          setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _failed: true, _pending: false, _queued: false, _client_id: msgId, _sendError: e?.message || 'rejected' } : m));
+          setMessages(prev => _mapKeep(prev, m => m.id === tempId ? { ...m, _failed: true, _pending: false, _queued: false, _client_id: msgId, _sendError: e?.message || 'rejected' } : m));
         } else {
-          setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _pending: true, _failed: false, _queued: true, _client_id: msgId, _sendError: e?.message || 'network' } : m));
+          setMessages(prev => _mapKeep(prev, m => m.id === tempId ? { ...m, _pending: true, _failed: false, _queued: true, _client_id: msgId, _sendError: e?.message || 'network' } : m));
         }
         _outboxThen(() => messageOutbox.markFailed(msgId, e?.message || 'network', { kind: _k }));
         _outboxThen(() => { try { require('../services/sendWorker').poke?.(); } catch {} });
@@ -17374,7 +17476,7 @@ function ChatConversationInner() {
           topic_id: activeTopic?.id || null,
         });
         // Mark as queued (still pending, not failed) — UI shows clock icon
-        setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _pending: true, _failed: false, _queued: true, _client_id: msgId, _sendError: e?.message || 'network' } : m));
+        setMessages(prev => _mapKeep(prev, m => m.id === tempId ? { ...m, _pending: true, _failed: false, _queued: true, _client_id: msgId, _sendError: e?.message || 'network' } : m));
         if (OUTBOX_V2_ONLY) {
           // Network error → bump attempt + schedule next retry on the
           // SQLite ladder. sendWorker.poke() on next reconnect/foreground
@@ -17397,7 +17499,7 @@ function ChatConversationInner() {
           } catch {}
         }, 5000);
       } catch {
-        setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _failed: true, _pending: false, _sendError: e?.message || 'unknown' } : m));
+        setMessages(prev => _mapKeep(prev, m => m.id === tempId ? { ...m, _failed: true, _pending: false, _sendError: e?.message || 'unknown' } : m));
       }
     } finally {
       setSending(false);
@@ -17526,7 +17628,7 @@ function ChatConversationInner() {
       if (r.success && r.data?.id) {
         // [#1188 fix] Preserve sender_email — envelope mode returns null and
         // would flip the bubble to incoming side.
-        setMessages(prev => prev.map(m => m.id === tempId ? { ...r.data, _pending: false, sender_email: r.data.sender_email || m.sender_email || currentEmail } : m));
+        setMessages(prev => _mapKeep(prev, m => m.id === tempId ? { ...r.data, _pending: false, sender_email: r.data.sender_email || m.sender_email || currentEmail } : m));
         removePendingMessage(conversationId, tempId).catch(() => {});
         try { const mailWs = require('../services/websocket').default; mailWs.relayChatMessage(conversationId, r.data, tempId, getMemberEmails()); } catch {}
         if (_cap) {
@@ -17541,29 +17643,29 @@ function ChatConversationInner() {
         // Hard server reject — retrying can never succeed, so show the failed
         // bubble instead of queueing it forever.
         removePendingMessage(conversationId, tempId).catch(() => {});
-        setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _failed: true, _pending: false } : m));
+        setMessages(prev => _mapKeep(prev, m => m.id === tempId ? { ...m, _failed: true, _pending: false } : m));
       } else {
         // Mirror text-send fallback: queue for retry instead of dropping.
         try {
           const { queueOfflineAction } = require('../services/offlineCache');
           await queueOfflineAction({ type: 'chat_send', conversation_id: conversationId, content: bodyContent, file_url: fileUrlArg, msgType: 'gif', reply_to_id: null, mentions: null, temp_id: tempId, client_message_id: msgId });
-          setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _pending: true, _failed: false, _queued: true } : m));
+          setMessages(prev => _mapKeep(prev, m => m.id === tempId ? { ...m, _pending: true, _failed: false, _queued: true } : m));
         } catch {
-          setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _failed: true, _pending: false } : m));
+          setMessages(prev => _mapKeep(prev, m => m.id === tempId ? { ...m, _failed: true, _pending: false } : m));
         }
       }
     } catch (_gifErr) {
       if (/\b(400|403|413|415|422|429)\b|too large|rejected|blocked|forbidden|unsupported|invalid/i.test(String(_gifErr?.message || ''))) {
         removePendingMessage(conversationId, tempId).catch(() => {});
-        setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _failed: true, _pending: false } : m));
+        setMessages(prev => _mapKeep(prev, m => m.id === tempId ? { ...m, _failed: true, _pending: false } : m));
         return;
       }
       try {
         const { queueOfflineAction } = require('../services/offlineCache');
         await queueOfflineAction({ type: 'chat_send', conversation_id: conversationId, content: bodyContent, file_url: fileUrlArg, msgType: 'gif', reply_to_id: null, mentions: null, temp_id: tempId, client_message_id: msgId });
-        setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _pending: true, _failed: false, _queued: true } : m));
+        setMessages(prev => _mapKeep(prev, m => m.id === tempId ? { ...m, _pending: true, _failed: false, _queued: true } : m));
       } catch {
-        setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _failed: true, _pending: false } : m));
+        setMessages(prev => _mapKeep(prev, m => m.id === tempId ? { ...m, _failed: true, _pending: false } : m));
       }
     }
   };
@@ -17611,25 +17713,25 @@ function ChatConversationInner() {
       const r = await enqueueChatSend(() => api.chatSend(conversationId, sticker, 'sticker', null, null, isImage ? sticker : null, tempId, msgId));
       if (r.success && r.data?.id) {
         // [#1188 fix] Preserve sender_email — envelope mode returns null.
-        setMessages(prev => prev.map(m => m.id === tempId ? { ...r.data, _pending: false, sender_email: r.data.sender_email || m.sender_email || currentEmail } : m));
+        setMessages(prev => _mapKeep(prev, m => m.id === tempId ? { ...r.data, _pending: false, sender_email: r.data.sender_email || m.sender_email || currentEmail } : m));
         removePendingMessage(conversationId, tempId).catch(() => {});
         try { const mailWs = require('../services/websocket').default; mailWs.relayChatMessage(conversationId, r.data, tempId, getMemberEmails()); } catch {}
       } else {
         try {
           const { queueOfflineAction } = require('../services/offlineCache');
           await queueOfflineAction({ type: 'chat_send', conversation_id: conversationId, content: sticker, msgType: 'sticker', reply_to_id: null, mentions: null, temp_id: tempId, client_message_id: msgId, file_url: isImage ? sticker : null });
-          setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _pending: true, _failed: false, _queued: true } : m));
+          setMessages(prev => _mapKeep(prev, m => m.id === tempId ? { ...m, _pending: true, _failed: false, _queued: true } : m));
         } catch {
-          setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _failed: true, _pending: false } : m));
+          setMessages(prev => _mapKeep(prev, m => m.id === tempId ? { ...m, _failed: true, _pending: false } : m));
         }
       }
     } catch {
       try {
         const { queueOfflineAction } = require('../services/offlineCache');
         await queueOfflineAction({ type: 'chat_send', conversation_id: conversationId, content: sticker, msgType: 'sticker', reply_to_id: null, mentions: null, temp_id: tempId, client_message_id: msgId, file_url: isImage ? sticker : null });
-        setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _pending: true, _failed: false, _queued: true } : m));
+        setMessages(prev => _mapKeep(prev, m => m.id === tempId ? { ...m, _pending: true, _failed: false, _queued: true } : m));
       } catch {
-        setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _failed: true, _pending: false } : m));
+        setMessages(prev => _mapKeep(prev, m => m.id === tempId ? { ...m, _failed: true, _pending: false } : m));
       }
     }
   };
@@ -17964,6 +18066,34 @@ function ChatConversationInner() {
     }
   };
 
+  // [2026-10-11 attach-recent] Aviso de arquivo >50MB compartilhado entre a
+  // galeria (handleGallery) e a faixa de fotos recentes do menu de anexo.
+  const confirmLargeMediaFiles = async (files) => {
+    const LARGE_MB = 50;
+    const largeOnes = (files || []).filter(f => (f?.size || 0) > LARGE_MB * 1024 * 1024);
+    if (largeOnes.length === 0) return true;
+    const totalMB = Math.round(largeOnes.reduce((s, f) => s + (f.size || 0), 0) / 1024 / 1024);
+    return new Promise(resolve => {
+      safeAlert(
+        t('chat.largeFileTitle') || 'Arquivo grande',
+        (t('chat.largeFileBody') || `${largeOnes.length} arquivo(s) com mais de ${LARGE_MB}MB (${totalMB}MB total). Pode demorar em rede lenta. Continuar?`),
+        [
+          { text: t('common.cancel') || 'Cancelar', style: 'cancel', onPress: () => resolve(false) },
+          { text: t('common.send') || 'Enviar', onPress: () => resolve(true) },
+        ]
+      );
+    });
+  };
+  // Faixa "recentes" do AttachSheet → mesmo MediaPreview da galeria. iOS:
+  // espera o sheet terminar de fechar (modal-over-modal é descartado).
+  const handleAttachRecentMedia = async (files) => {
+    const list = Array.isArray(files) ? files.filter(Boolean) : [];
+    if (list.length === 0) return;
+    if (!(await confirmLargeMediaFiles(list))) return;
+    if (Platform.OS === 'ios') setTimeout(() => setMediaPreview({ visible: true, files: list }), 350);
+    else setMediaPreview({ visible: true, files: list });
+  };
+
   const handleGallery = async () => {
     try {
       if (Platform.OS === 'web') {
@@ -18044,22 +18174,7 @@ function ChatConversationInner() {
       // Large file warning — without this, a 200MB video on 3G would silently
       // hang for minutes mid-upload before the user knew anything was wrong.
       // Warn once for the whole batch and let user proceed knowingly.
-      const LARGE_MB = 50;
-      const largeOnes = builtFiles.filter(f => (f.size || 0) > LARGE_MB * 1024 * 1024);
-      if (largeOnes.length > 0) {
-        const totalMB = Math.round(largeOnes.reduce((s, f) => s + (f.size || 0), 0) / 1024 / 1024);
-        const proceed = await new Promise(resolve => {
-          safeAlert(
-            t('chat.largeFileTitle') || 'Arquivo grande',
-            (t('chat.largeFileBody') || `${largeOnes.length} arquivo(s) com mais de ${LARGE_MB}MB (${totalMB}MB total). Pode demorar em rede lenta. Continuar?`),
-            [
-              { text: t('common.cancel') || 'Cancelar', style: 'cancel', onPress: () => resolve(false) },
-              { text: t('common.send') || 'Enviar', onPress: () => resolve(true) },
-            ]
-          );
-        });
-        if (!proceed) return;
-      }
+      if (!(await confirmLargeMediaFiles(builtFiles))) return;
       // [bug 2026-05-15] User: "escolho fotos mas não vai pro preview".
       // iOS PHPicker dismiss animation runs async even after the
       // launchImageLibraryAsync promise resolves — if we present <Modal>
@@ -18197,7 +18312,7 @@ function ChatConversationInner() {
           const b64 = pf && pf.thumbB64;
           if (!b64 || !mountedRef.current) return;
           try { attachLqipToTempMessage && attachLqipToTempMessage(tempId, b64); } catch {}
-          setMessages(prev => prev.map(m => (m.id === tempId && !m.thumb_b64) ? { ...m, thumb_b64: b64 } : m));
+          setMessages(prev => _mapKeep(prev, m => (m.id === tempId && !m.thumb_b64) ? { ...m, thumb_b64: b64 } : m));
         } catch {}
       })();
     }
@@ -18218,7 +18333,7 @@ function ChatConversationInner() {
           const poster = await _videoSendPipeline.preparePoster(file.uri, file.duration || null);
           const pUri = poster?.posterUri || null;
           if (!pUri || !mountedRef.current) return;
-          setMessages(prev => prev.map(m => (m.id === tempId && !m._posterUri)
+          setMessages(prev => _mapKeep(prev, m => (m.id === tempId && !m._posterUri)
             ? { ...m, poster_url: m.poster_url || pUri, _posterUri: pUri }
             : m));
         } catch {}
@@ -18340,7 +18455,7 @@ function ChatConversationInner() {
       // Flip the bubble to the queued state — ⏱ clock icon, no spinner.
       // Identical to the "transient network error" branch below so the
       // visual language stays consistent.
-      setMessages(prev => prev.map(m => m.id === tempId ? {
+      setMessages(prev => _mapKeep(prev, m => m.id === tempId ? {
         ...m,
         _failed: false,
         _pending: true,
@@ -18520,7 +18635,7 @@ function ChatConversationInner() {
         try {
           const { compressVideoWeb } = require('../services/webVideoCompressor');
           if (mountedRef.current) {
-            setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _compressing: true } : m));
+            setMessages(prev => _mapKeep(prev, m => m.id === tempId ? { ...m, _compressing: true } : m));
             setUploadProgress(prev => ({ ...prev, [tempId]: 0 }));
           }
           // Match the native quality profile: HD toggle → higher bitrate, both
@@ -18557,7 +18672,7 @@ function ChatConversationInner() {
           // Never block the send on compression — fall through with the original.
         } finally {
           if (mountedRef.current) {
-            setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _compressing: false } : m));
+            setMessages(prev => _mapKeep(prev, m => m.id === tempId ? { ...m, _compressing: false } : m));
             // Reset the ring to 0 so the real upload starts its own 0→100 pass
             // (same visual language as the Rust→PHP fallback restart).
             setUploadProgress(prev => ({ ...prev, [tempId]: 0 }));
@@ -18631,7 +18746,7 @@ function ChatConversationInner() {
         // crash the state updater when spread. Mark failed so the user can
         // retry instead of taking down the whole screen via ErrorBoundary.
         if (!msg || typeof msg !== 'object' || !msg.id) {
-          setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _pending: false, _failed: true } : m));
+          setMessages(prev => _mapKeep(prev, m => m.id === tempId ? { ...m, _pending: false, _failed: true } : m));
           setUploadProgress(prev => { const n = { ...prev }; delete n[tempId]; return n; });
           break;
         }
@@ -18648,7 +18763,7 @@ function ChatConversationInner() {
         const _alreadyDeliveredM = (() => {
           try { const _b = deliveredIdBufferRef.current; return msg.id != null && !!_b && (_b.has(msg.id) || _b.has(Number(msg.id))); } catch { return false; }
         })();
-        setMessages(prev => prev.map(m => {
+        setMessages(prev => _mapKeep(prev, m => {
           if (String(m.id) !== String(tempId)) return m;
           // Preserve _client_id so msgKeyExtractor keeps a stable FlatList key
           // across the optimistic→server swap (same as the text path #1182).
@@ -18789,7 +18904,7 @@ function ChatConversationInner() {
             // reconnects, NetInfo listener in OfflineNotice triggers
             // replayOfflineQueue which redrives the upload via case
             // 'chat_file_upload' in offlineCache. No alert, no red bubble.
-            setMessages(prev => prev.map(m => m.id === tempId ? {
+            setMessages(prev => _mapKeep(prev, m => m.id === tempId ? {
               ...m,
               _failed: false,
               _pending: true,
@@ -18802,7 +18917,7 @@ function ChatConversationInner() {
             // Hard error (413/415/403/etc.) — user needs to know so they
             // can pick a smaller file / different format. Keep the red ❗
             // bubble + alert that surfaces the HTTP code.
-            setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _failed: true, _pending: false, _uploading: false } : m));
+            setMessages(prev => _mapKeep(prev, m => m.id === tempId ? { ...m, _failed: true, _pending: false, _uploading: false } : m));
             setUploadProgress(prev => { const n = { ...prev }; delete n[tempId]; return n; });
             const detail = lastError?.message ? ` (${lastError.message})` : '';
             safeAlert(t('common.error') || 'Error', (t('chatConv.uploadError') || 'Failed to send file') + detail);
@@ -18975,7 +19090,7 @@ function ChatConversationInner() {
         const msg = r.data.message || r.data;
         // [#1188 fix] Preserve sender_email on the audio swap so the bubble
         // doesn't flip to incoming when server returns an envelope-mode synth.
-        setMessages(prev => prev.map(m => m.id === tempId ? { ...msg, _pending: false, sender_email: msg.sender_email || m.sender_email || currentEmail } : m));
+        setMessages(prev => _mapKeep(prev, m => m.id === tempId ? { ...msg, _pending: false, sender_email: msg.sender_email || m.sender_email || currentEmail } : m));
         // Clear the durable pending row now that the server owns the message —
         // otherwise outboxDrainer re-posts this audio as a ghost every tick.
         removePendingMessage(conversationId, tempId).catch(() => {});
@@ -19000,7 +19115,7 @@ function ChatConversationInner() {
         // can never succeed → failed bubble, don't queue (same regex as the
         // photo/video path's _isHard).
         removePendingMessage(conversationId, tempId).catch(() => {});
-        setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _failed: true, _pending: false, _uploading: false } : m));
+        setMessages(prev => _mapKeep(prev, m => m.id === tempId ? { ...m, _failed: true, _pending: false, _uploading: false } : m));
       } else {
         // Falhou no server (5xx, timeout, etc) → queue pra retry automático
         // quando a rede voltar. Antes ficava como _failed e só re-enviava
@@ -19020,9 +19135,9 @@ function ChatConversationInner() {
             // retry dedups against the row the server may already have.
             client_message_id: audioMsgId,
           });
-          setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _pending: true, _queued: true, _uploading: false } : m));
+          setMessages(prev => _mapKeep(prev, m => m.id === tempId ? { ...m, _pending: true, _queued: true, _uploading: false } : m));
         } catch {
-          setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _failed: true, _pending: false, _uploading: false } : m));
+          setMessages(prev => _mapKeep(prev, m => m.id === tempId ? { ...m, _failed: true, _pending: false, _uploading: false } : m));
         }
       }
       setUploadProgress(prev => { const n = { ...prev }; delete n[tempId]; return n; });
@@ -19032,7 +19147,7 @@ function ChatConversationInner() {
       // Hard rejects (403/413/429/507) are permanent → failed bubble, no queue.
       if (/\b41[35]\b|\b403\b|\b429\b|\b507\b|too large|size|mime|rejected|blocked|forbidden|unsupported|quota|storage/i.test(String(_audErr?.message || ''))) {
         removePendingMessage(conversationId, tempId).catch(() => {});
-        setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _failed: true, _pending: false, _uploading: false } : m));
+        setMessages(prev => _mapKeep(prev, m => m.id === tempId ? { ...m, _failed: true, _pending: false, _uploading: false } : m));
         setUploadProgress(prev => { const n = { ...prev }; delete n[tempId]; return n; });
         return;
       }
@@ -19049,9 +19164,9 @@ function ChatConversationInner() {
           view_once: audioViewOnce ? 1 : 0, // was silently dropped on this path
           client_message_id: audioMsgId,
         });
-        setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _pending: true, _queued: true, _uploading: false } : m));
+        setMessages(prev => _mapKeep(prev, m => m.id === tempId ? { ...m, _pending: true, _queued: true, _uploading: false } : m));
       } catch {
-        setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _failed: true, _pending: false, _uploading: false } : m));
+        setMessages(prev => _mapKeep(prev, m => m.id === tempId ? { ...m, _failed: true, _pending: false, _uploading: false } : m));
       }
       setUploadProgress(prev => { const n = { ...prev }; delete n[tempId]; return n; });
     } finally {
@@ -19141,7 +19256,7 @@ function ChatConversationInner() {
             if (!mountedRef.current) return;
             posterUri = p?.posterUri || null;
             if (posterUri) {
-              setMessages(prev => prev.map(m => m.id === tempId ? { ...m, poster_url: posterUri, _posterUri: posterUri } : m));
+              setMessages(prev => _mapKeep(prev, m => m.id === tempId ? { ...m, poster_url: posterUri, _posterUri: posterUri } : m));
             }
           },
           onCompressProgress: (p) => {
@@ -19190,7 +19305,7 @@ function ChatConversationInner() {
         // (RoundVideoViewer). We also stamp the relayed payload so receivers
         // render it round too.
         const noteMsg = { ...msg, type: 'video_note' };
-        setMessages(prev => prev.map(m => m.id === tempId ? { ...noteMsg, _pending: false, sender_email: noteMsg.sender_email || m.sender_email || currentEmail } : m));
+        setMessages(prev => _mapKeep(prev, m => m.id === tempId ? { ...noteMsg, _pending: false, sender_email: noteMsg.sender_email || m.sender_email || currentEmail } : m));
         // Clear the durable pending row now that the server owns the message —
         // otherwise outboxDrainer re-posts this note as a ghost every tick.
         removePendingMessage(conversationId, tempId).catch(() => {});
@@ -19208,9 +19323,9 @@ function ChatConversationInner() {
             uri: file.uri, name: file.name || '', file_type: file.type || 'video/mp4',
             msg_type: 'video_note', client_message_id: clientId, temp_id: tempId, caption: '',
           });
-          setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _pending: true, _failed: false, _queued: true, _uploading: false } : m));
+          setMessages(prev => _mapKeep(prev, m => m.id === tempId ? { ...m, _pending: true, _failed: false, _queued: true, _uploading: false } : m));
         } catch {
-          setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _failed: true, _uploading: false } : m));
+          setMessages(prev => _mapKeep(prev, m => m.id === tempId ? { ...m, _failed: true, _uploading: false } : m));
           safeAlert(t('common.error') || 'Error', r?.message || t('chatConv.sendFailed') || 'Failed to send');
         }
       }
@@ -19222,9 +19337,9 @@ function ChatConversationInner() {
           uri: file.uri, name: file.name || '', file_type: file.type || 'video/mp4',
           msg_type: 'video_note', client_message_id: clientId, temp_id: tempId, caption: '',
         });
-        setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _pending: true, _failed: false, _queued: true, _uploading: false } : m));
+        setMessages(prev => _mapKeep(prev, m => m.id === tempId ? { ...m, _pending: true, _failed: false, _queued: true, _uploading: false } : m));
       } catch {
-        setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _failed: true, _uploading: false } : m));
+        setMessages(prev => _mapKeep(prev, m => m.id === tempId ? { ...m, _failed: true, _uploading: false } : m));
       }
     } finally {
       if (mountedRef.current) {
@@ -19432,7 +19547,7 @@ function ChatConversationInner() {
           if (address && inserted?.id) {
             const newContent = JSON.stringify({ latitude, longitude, label: address, address });
             // Update locally
-            setMessages(prev => prev.map(m => m.id === inserted.id ? { ...m, content: newContent } : m));
+            setMessages(prev => _mapKeep(prev, m => m.id === inserted.id ? { ...m, content: newContent } : m));
             // Persist server-side via update_live_location (works for static too).
             // [WAVE 62 2026-05-21] 4th positional arg is `address` (string), not
             // `{ address }` — passing an object made the backend payload ship a
@@ -19519,7 +19634,7 @@ function ChatConversationInner() {
     // button does, so users tapping Parar from the picker see consistent
     // feedback whether they triggered it from the bubble or the sheet.
     if (msgId) {
-      setMessages(prev => prev.map(m => {
+      setMessages(prev => _mapKeep(prev, m => {
         if (m.id !== msgId) return m;
         try {
           const c = JSON.parse(m.content || '{}');
@@ -19839,7 +19954,34 @@ function ChatConversationInner() {
 
   const handleShareContact = async () => {
     if (Platform.OS === 'web') {
-      // Web: manual contact entry (no contacts API in browsers)
+      // [2026-10-11 qa] Web: lista de contatos do Chatyy (api.chatContacts)
+      // no MESMO seletor in-app do nativo. window.prompt só como último
+      // recurso (lista vazia / falha de rede).
+      try {
+        const r = await api.chatContacts();
+        let list = [];
+        if (typeof api.apiList === 'function') list = api.apiList(r, 'contacts');
+        else { const d = r?.data; list = Array.isArray(d) ? d : (Array.isArray(d?.contacts) ? d.contacts : []); }
+        const meLc = String(currentEmail || '').toLowerCase();
+        const mapped = (Array.isArray(list) ? list : [])
+          .filter(c => c && c.email && String(c.email).toLowerCase() !== meLc && !String(c.email).toLowerCase().endsWith('@bots.chatyy'))
+          .map(c => ({
+            id: String(c.email).toLowerCase(),
+            name: c.name || emailToDisplayName(c.email),
+            emails: [{ email: c.email }],
+            phoneNumbers: c.phone ? [{ number: String(c.phone) }] : [],
+          }))
+          .sort((x, y) => String(x.name || '').localeCompare(String(y.name || '')));
+        if (mapped.length > 0) {
+          setContactPickerList(mapped);
+          setContactPickerSearch('');
+          setShowContactPicker(true);
+          return;
+        }
+      } catch (e) {
+        console.warn('chatContacts (web share contact) failed:', e?.message || e);
+      }
+      // Último recurso: entrada manual (navegador não tem API de agenda)
       const name = (window.prompt(t('chatConv.enterContactName') || 'Nome do contato:') || '').trim();
       if (!name) return;
       const phone = (window.prompt(t('chatConv.enterContactPhone') || 'Telefone (opcional):') || '').trim();
@@ -20161,7 +20303,7 @@ function ChatConversationInner() {
       const _deletedAt = new Date().toISOString();
       let priorFileUrl = '';
       let _prevRow = null;
-      setMessages(prev => prev.map(m => {
+      setMessages(prev => _mapKeep(prev, m => {
         if (String(m.id) === String(msgId)) {
           priorFileUrl = m.file_url || '';
           _prevRow = m;
@@ -20214,7 +20356,7 @@ function ChatConversationInner() {
           const reason = String(r?.message || '');
           const isHard = /expired|window|permission|forbidden|not_found|invalid/i.test(reason);
           if (isHard) {
-            if (_prevRow) setMessages(prev => prev.map(m => String(m.id) === String(msgId) ? _prevRow : m));
+            if (_prevRow) setMessages(prev => _mapKeep(prev, m => String(m.id) === String(msgId) ? _prevRow : m));
             if (reason) safeAlert(t('common.error'), r.message);
           } else {
             // Transient soft failure — keep the optimistic tombstone, enqueue
@@ -20393,7 +20535,7 @@ function ChatConversationInner() {
     // antes de mostrar a reação, dando feel "lento". WhatsApp/iMessage atualiza
     // na hora — server vira fonte de verdade quando responde.
     let prevReactions = null;
-    setMessages(prev => prev.map(m => {
+    setMessages(prev => _mapKeep(prev, m => {
       if (m.id !== msgId) return m;
       prevReactions = m.reactions || [];
       // Build with the AGGREGATED shape the renderer + server use:
@@ -20431,14 +20573,14 @@ function ChatConversationInner() {
       const r = await api.chatReact(msgId, isSticker ? null : emoji, isSticker ? stickerUrl : undefined);
       if (r.success) {
         // Reconcile com truth do server (caso outro device/peer tenha mudado).
-        setMessages(prev => prev.map(m => {
+        setMessages(prev => _mapKeep(prev, m => {
           if (m.id !== msgId) return m;
           return { ...m, reactions: r.data?.reactions || [] };
         }));
       } else {
         // Rollback se servidor rejeitou (gating premium etc).
         if (prevReactions) {
-          setMessages(prev => prev.map(m => m.id === msgId ? { ...m, reactions: prevReactions } : m));
+          setMessages(prev => _mapKeep(prev, m => m.id === msgId ? { ...m, reactions: prevReactions } : m));
         }
         if (isSticker && /premium/i.test(r.message || '')) {
           setStickerReactionPremium(false);
@@ -20465,7 +20607,7 @@ function ChatConversationInner() {
         // Queue itself unavailable — last-resort rollback so the chip doesn't
         // lie about a reaction that will never sync.
         if (prevReactions) {
-          setMessages(prev => prev.map(m => m.id === msgId ? { ...m, reactions: prevReactions } : m));
+          setMessages(prev => _mapKeep(prev, m => m.id === msgId ? { ...m, reactions: prevReactions } : m));
         }
       }
     } finally {
@@ -20495,7 +20637,7 @@ function ChatConversationInner() {
     if (!msg || typeof msg.id !== 'number') return;
     if (msg.transcript || msg.transcription) return;
     if (msg._transcribing) return; // já em andamento — evita duplo POST
-    setMessages(prev => prev.map(m => m.id === msg.id ? { ...m, _transcribing: true, _transcribeError: null } : m));
+    setMessages(prev => _mapKeep(prev, m => m.id === msg.id ? { ...m, _transcribing: true, _transcribeError: null } : m));
     // Garante feedback visual mínimo de 800ms — caches/erros rápidos
     // faziam o spinner piscar imperceptivelmente, e o user reclamava
     // que "não mostra carregando".
@@ -20505,7 +20647,7 @@ function ChatConversationInner() {
       const wait = Math.max(0, 800 - elapsed);
       const apply = () => {
         if (!mountedRef.current) return;
-        setMessages(prev => prev.map(m => m.id === msg.id ? { ...m, ...patch, _transcribing: false } : m));
+        setMessages(prev => _mapKeep(prev, m => m.id === msg.id ? { ...m, ...patch, _transcribing: false } : m));
       };
       if (wait > 0) setTimeout(apply, wait); else apply();
     };
@@ -21553,12 +21695,12 @@ function ChatConversationInner() {
     }
     const isStarred = !!msg.starred;
     // Optimistic update
-    setMessages(prev => prev.map(m => m.id === msg.id ? { ...m, starred: !isStarred } : m));
+    setMessages(prev => _mapKeep(prev, m => m.id === msg.id ? { ...m, starred: !isStarred } : m));
     try {
       const r = await api.chatStarMessage(numericId, !isStarred);
       if (!r || r.success === false) {
         // Revert on failure + surface it (no more silent no-op)
-        setMessages(prev => prev.map(m => m.id === msg.id ? { ...m, starred: isStarred } : m));
+        setMessages(prev => _mapKeep(prev, m => m.id === msg.id ? { ...m, starred: isStarred } : m));
         safeAlert(
           t('common.error') || 'Erro',
           t('chatConv.starFailed') || 'Não foi possível favoritar a mensagem. Tente novamente.'
@@ -21567,7 +21709,7 @@ function ChatConversationInner() {
         try { if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); } catch {}
       }
     } catch {
-      setMessages(prev => prev.map(m => m.id === msg.id ? { ...m, starred: isStarred } : m));
+      setMessages(prev => _mapKeep(prev, m => m.id === msg.id ? { ...m, starred: isStarred } : m));
       safeAlert(
         t('common.error') || 'Erro',
         t('chatConv.starFailed') || 'Não foi possível favoritar a mensagem. Tente novamente.'
@@ -22037,7 +22179,7 @@ function ChatConversationInner() {
           if (tr?.success && tr.data?.transcript) {
             textToTranslate = String(tr.data.transcript || '');
             // Mirror onto the message so the bubble's transcript label fills in too.
-            setMessages(prev => prev.map(m => m.id === msg.id ? { ...m, transcript: textToTranslate } : m));
+            setMessages(prev => _mapKeep(prev, m => m.id === msg.id ? { ...m, transcript: textToTranslate } : m));
             // Persist revealed state — user explicitly asked to translate, so
             // showing the transcript across reloads matches expectation.
             try {
@@ -22405,7 +22547,7 @@ function ChatConversationInner() {
           if (em) { try { nn = require('../services/nicknames').getNickname?.(em) || ''; } catch {} }
           return (nn || emailToDisplayName(m.display_name || m.email || '') || '').split(' ')[0];
         }).filter(Boolean);
-        if (_hasMe) { const _y = String(t('chatConv.you') || ''); if (_y) names.push(_y.charAt(0).toUpperCase() + _y.slice(1)); }
+        if (_hasMe) { const _y = String(t('chat.you') || 'Você'); if (_y) names.push(_y.charAt(0).toUpperCase() + _y.slice(1)); }
         if (names.length <= 4) return names.join(', ');
         return `${names.slice(0, 3).join(', ')} +${names.length - 3}`;
       }
@@ -22784,6 +22926,16 @@ function ChatConversationInner() {
   const searchHighlightId = searchResults.length > 0 && searchResults[searchIdx] ? searchResults[searchIdx].id : null;
   const highlightedMsgId = replyJumpHighlightId != null ? replyJumpHighlightId : searchHighlightId;
   const _enrichCacheRef = useRef(new Map()); // id → { enriched, source }
+  // [2026-10-11 qa] Busca na conversa: destaca o termo no texto das bolhas
+  // que bateram. Só as linhas do resultado ganham `_searchTerm` (o resto do
+  // cache de enrich é reaproveitado por referência → sem re-render geral).
+  const _searchHlTerm = showSearchBar && searchResults.length > 0 ? String(searchQuery || '').trim() : '';
+  const _searchHlIds = useMemo(() => {
+    if (!_searchHlTerm) return null;
+    const ids = new Set();
+    for (let i = 0; i < searchResults.length; i++) { const r = searchResults[i]; if (r && r.id != null) ids.add(r.id); }
+    return ids;
+  }, [searchResults, _searchHlTerm]);
   // Precompute the highest `last_read_id` across read receipts — O(r).
   // [AZUL FALSO causa-raiz 2026-10-04] Este watermark DEVE ser só do PEER.
   // Ao abrir a conversa chamamos api.chatRead(conv, 0) = "marca tudo como lido
@@ -22984,6 +23136,7 @@ function ChatConversationInner() {
       });
       const isHighlighted = item.id === highlightedMsgId;
       const isHeartPop = item.id === heartPopMsg;
+      const searchTerm = (_searchHlIds && _searchHlIds.has(item.id)) ? _searchHlTerm : null;
       // NOTE: live upload byte-progress is intentionally NOT folded in here
       // (see `enrichedMessages` overlay below). It used to be a dep of this
       // memo, which re-derived the WHOLE array on every ~60Hz progress tick.
@@ -22993,7 +23146,8 @@ function ChatConversationInner() {
           prev.source === item &&
           prev.enriched._isHighlighted === isHighlighted &&
           prev.enriched._heartPop === isHeartPop &&
-          prev.enriched._readStatus === readStatus) {
+          prev.enriched._readStatus === readStatus &&
+          (prev.enriched._searchTerm || null) === searchTerm) {
         out[i] = prev.enriched;
         newCache.set(item.id, prev);
         continue;
@@ -23003,13 +23157,14 @@ function ChatConversationInner() {
         _isHighlighted: isHighlighted,
         _heartPop: isHeartPop,
         _readStatus: readStatus,
+        _searchTerm: searchTerm,
       };
       out[i] = enriched;
       newCache.set(item.id, { enriched, source: item });
     }
     _enrichCacheRef.current = newCache; // drop stale entries
     return out;
-  }, [reversedMessages, highlightedMsgId, heartPopMsg, maxReadId, currentEmail, conversationType, members, readReceipts]); // [2026-10-07 receipts2] +members/readReceipts (agregado de grupo)
+  }, [reversedMessages, highlightedMsgId, heartPopMsg, maxReadId, currentEmail, conversationType, members, readReceipts, _searchHlIds, _searchHlTerm]); // [2026-10-07 receipts2] +members/readReceipts (agregado de grupo)
 
   // [perf] Overlay live upload progress onto ONLY the row(s) currently
   // uploading. uploadProgress ticks ~60×/s during a media send; folding it
@@ -23588,7 +23743,13 @@ function ChatConversationInner() {
   }, [messages]);
 
   // Floating "today/yesterday/date" pill — updated as user scrolls
-  const [floatingDate, setFloatingDate] = useState('');
+  // [2026-10-11 fluidez] Pílula de data flutuante fora do state da TELA: o
+  // rótulo muda a cada dia cruzado na rolagem e cada setState re-renderizava o
+  // componente inteiro (~37k linhas) no meio do gesto. Agora vive num store
+  // externo e só o <ThreadComposerHost> da pílula re-renderiza.
+  const floatingDateStore = useComposerTextStore();
+  const setFloatingDate = floatingDateStore.set;
+  const floatingDateRef = useRef('');
   const floatingDateOpacity = useRef(new Animated.Value(0)).current;
   const floatingHideTimer = useRef(null);
   // [dup "Hoje" fix 2026-10-03] When every loaded message falls on the SAME
@@ -23679,7 +23840,7 @@ function ChatConversationInner() {
         floatingDateOpacity.setValue(0);
       } else {
         const label = formatDateSeparator(ca, tRef.current);
-        setFloatingDate(label);
+        if (floatingDateRef.current !== label) { floatingDateRef.current = label; setFloatingDate(label); }
         Animated.timing(floatingDateOpacity, { toValue: 1, duration: 180, useNativeDriver: true }).start();
         if (floatingHideTimer.current) clearTimeout(floatingHideTimer.current);
         floatingHideTimer.current = setTimeout(() => {
@@ -23809,7 +23970,7 @@ function ChatConversationInner() {
       showScrollDownRef.current = scrolledUp;
       setShowScrollDown(scrolledUp);
     }
-    if (!scrolledUp) setNewMsgCount(0);
+    if (!scrolledUp && newMsgCountRef.current !== 0) { newMsgCountRef.current = 0; setNewMsgCount(0); }
   }, []);
   // [2026-10-08 open-at-bottom] Conteúdo (rows medidas, imagem/preview que
   // carregou, delta do servidor, digitando) ou viewport (composer/teclado)
@@ -24464,7 +24625,7 @@ function ChatConversationInner() {
                 await api.chatViewOnceOpen(messageId);
                 // Mark as viewed locally — normalize id compare so string/number
                 // server shapes both match.
-                setMessages(prev => prev.map(m => String(m.id) === String(messageId) ? { ...m, viewed_at: new Date().toISOString() } : m));
+                setMessages(prev => _mapKeep(prev, m => String(m.id) === String(messageId) ? { ...m, viewed_at: new Date().toISOString() } : m));
               } catch (err) {
                 console.warn('Failed to mark view-once as viewed:', err);
               }
@@ -26054,7 +26215,7 @@ function ChatConversationInner() {
                       setLiveLocActive(null);
                       // Optimistic: flip the bubble to "encerrada" instantly
                       // so the user sees feedback before the server responds.
-                      setMessages(prev => prev.map(m => {
+                      setMessages(prev => _mapKeep(prev, m => {
                         if (m.id !== msg.id) return m;
                         try {
                           const c = JSON.parse(m.content || '{}');
@@ -26840,7 +27001,7 @@ function ChatConversationInner() {
               // so even other members in the chat don't see the vote. Patch
               // every layer: msg.content (JSON path), msg.meetup (native bubble
               // path), AND the rsvps array for stat counts.
-              setMessages(prev => prev.map(m => {
+              setMessages(prev => _mapKeep(prev, m => {
                 if (m.id !== msg.id) return m;
                 let content = m.content;
                 try {
@@ -27408,7 +27569,7 @@ function ChatConversationInner() {
             // Optimistic update — show vote change immediately, then sync with server.
             // Backend `chat_vote_poll` is a toggle: tapping the same option removes the vote;
             // for single-choice, voting on a different option replaces the previous one.
-            setMessages(prev => prev.map(m => {
+            setMessages(prev => _mapKeep(prev, m => {
               if (m.id !== msg.id) return m;
               const p = { ...(m.poll || {}) };
               const myVotes = new Set(p.my_votes || []);
@@ -27465,7 +27626,7 @@ function ChatConversationInner() {
                 // an unvote action). Otherwise keep the optimistic state.
                 const serverIsEmpty = serverCounts.length === 0 && serverMy.length === 0 && serverTotal === 0;
                 let updatedMsg = null;
-                setMessages(prev => prev.map(m => {
+                setMessages(prev => _mapKeep(prev, m => {
                   if (m.id !== msg.id) return m;
                   if (serverIsEmpty) {
                     // Server gave us nothing — preserve optimistic state +
@@ -27986,6 +28147,9 @@ function ChatConversationInner() {
                     : '';
                   return (
                     <Text style={_txtStyle} selectable={true}>
+                      {msg._searchTerm ? (
+                        <SearchHighlightText text={_c} term={msg._searchTerm} style={_txtStyle} markBg={isOwn ? ownTextColor : colors.text} markInk={_searchMarkInk(isOwn, ownTextColor, colors)} />
+                      ) : (
                       <TextWithLinks
                         text={_c}
                         style={_txtStyle}
@@ -27994,6 +28158,7 @@ function ChatConversationInner() {
                         colors={colors}
                         router={router}
                       />
+                      )}
                       <Text style={styles.metaGhost} selectable={false} accessible={false} importantForAccessibility="no">
                         {_waMetaGhost({
                           time: formatTime(msg.created_at),
@@ -28004,6 +28169,9 @@ function ChatConversationInner() {
                       </Text>
                     </Text>
                   );
+                }
+                if (msg._searchTerm && typeof msg.content === 'string') {
+                  return <SearchHighlightText text={msg.content} term={msg._searchTerm} style={_txtStyle} markBg={isOwn ? ownTextColor : colors.text} markInk={_searchMarkInk(isOwn, ownTextColor, colors)} />;
                 }
                 return (
                   <TextWithLinks
@@ -28164,7 +28332,7 @@ function ChatConversationInner() {
               try {
                 if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
               } catch {}
-              setMessages(prev => prev.map(m =>
+              setMessages(prev => _mapKeep(prev, m =>
                 m.id === msg.id ? { ...m, _failed: false, _pending: true, _queued: true } : m
               ));
               // [2026-07-05 stuck-retry fix] replayOfflineQueue alone is NOT
@@ -28213,7 +28381,7 @@ function ChatConversationInner() {
           // [2026-10-09 a11y-bubble] VoiceOver/TalkBack: rótulo completo +
           // ações nomeadas (responder, reagir, encaminhar, apagar, info, mais).
           // 'activate' NÃO entra na lista → o toque duplo segue o onPress.
-          accessibilityLabel={_a11yMsgLabel(msg, { t, isOwn, isGroup: conversationType === 'group', isDeleted, readStatus: msg._readStatus, reactionGroups })}
+          accessibilityLabel={_a11yMsgLabel(msg, { t, isOwn, isGroup: conversationType === 'group', isDeleted, readStatus: msg._readStatus, reactionGroups, me: currentEmail })}
           accessibilityHint={(selectionMode || isDeleted || isSystem) ? undefined : _a11yT(t, 'a11y.msgHint', 'Há ações para responder, reagir, encaminhar ou apagar.')}
           accessibilityState={selectionMode ? { selected: selectedIds.has(msg.id) } : undefined}
           accessibilityActions={(selectionMode || isDeleted || isSystem) ? undefined : [
@@ -28435,7 +28603,7 @@ function ChatConversationInner() {
             const localRef = msg.reply_to?.id ? (messagesById.get(msg.reply_to.id) || null) : null;
             const resolvedEmail = (msg.reply_to?.sender_email || localRef?.sender_email || '').trim();
             const resolvedName  = (msg.reply_to?.sender_name?.trim() || localRef?.sender_name?.trim() || '');
-            const _youLbl = String(t('chatConv.you') || 'Você');
+            const _youLbl = String(t('chat.you') || 'Você');
             const replyDisplayName = resolvedEmail === currentEmail
               ? (_youLbl.charAt(0).toUpperCase() + _youLbl.slice(1)) // [2026-10-10 chat-bubbles-polish] "você" → "Você" no título da citação
               : (resolvedName || (resolvedEmail ? emailToDisplayName(resolvedEmail) : (t('chat.unknown') || 'Desconhecido')));
@@ -28672,7 +28840,7 @@ function ChatConversationInner() {
                   back a MINIMAL star, but only when the message is actually
                   starred (msg.starred now arrives from chat_messages — Fix B).
                   Tiny (10px) + same meta color = clean look, real feedback. */}
-              {!!msg.starred && (
+              {!!msg.starred && !isDeleted && (
                 <IconStarFilled size={10} color={isOwn ? ownMetaColor : otherMetaColor} style={{ marginRight: 2 }} />
               )}
               {!!msg._e2e && (
@@ -28754,7 +28922,7 @@ function ChatConversationInner() {
                       const isMediaWithUrl = isMediaType && hasRemoteUrl;
                       const isLocalMedia = isMediaType && !hasRemoteUrl && !!localUriRaw;
                       if (!isText && !isMediaWithUrl && !isLocalMedia) return;
-                      setMessages(prev => prev.map(m => m.id === msg.id ? { ...m, _failed: false, _pending: true, _uploading: isLocalMedia ? true : false } : m));
+                      setMessages(prev => _mapKeep(prev, m => m.id === msg.id ? { ...m, _failed: false, _pending: true, _uploading: isLocalMedia ? true : false } : m));
                       // Caminho 1 — media local falhou no upload original.
                       // Re-enqueue via offlineCache (mesma chave que o catch
                       // do uploadAndSendFile usa), depois dispara replay
@@ -28778,7 +28946,7 @@ function ChatConversationInner() {
                           // Dispara replay agora (não espera próximo foreground).
                           replayOfflineQueue(api).catch(() => {});
                         } catch {
-                          setMessages(prev => prev.map(m => m.id === msg.id ? { ...m, _failed: true, _pending: false, _uploading: false } : m));
+                          setMessages(prev => _mapKeep(prev, m => m.id === msg.id ? { ...m, _failed: true, _pending: false, _uploading: false } : m));
                         }
                         return;
                       }
@@ -28800,17 +28968,17 @@ function ChatConversationInner() {
                         const r = await enqueueChatSend(() => api.chatSend(conversationId, sendContent, msg.type, msg.reply_to_id, null, null, retryTempId, retryMsgId));
                         if (r.success && r.data?.id) {
                           // [#1188 fix] Preserve sender_email — envelope mode returns null.
-                          setMessages(prev => prev.map(m => m.id === msg.id ? { ...r.data, _pending: false, sender_email: r.data.sender_email || m.sender_email || currentEmail } : m));
+                          setMessages(prev => _mapKeep(prev, m => m.id === msg.id ? { ...r.data, _pending: false, sender_email: r.data.sender_email || m.sender_email || currentEmail } : m));
                           if (typeof msg.id === 'string' && msg.id.startsWith('tmp_')) {
                             removePendingMessage(conversationId, msg.id).catch(() => {});
                           }
                           _cacheOne(conversationId, r.data);
                           try { const mailWs = require('../services/websocket').default; mailWs.relayChatMessage(conversationId, r.data, msg.id, getMemberEmails()); } catch {}
                         } else {
-                          setMessages(prev => prev.map(m => m.id === msg.id ? { ...m, _failed: true, _pending: false } : m));
+                          setMessages(prev => _mapKeep(prev, m => m.id === msg.id ? { ...m, _failed: true, _pending: false } : m));
                         }
                       } catch {
-                        setMessages(prev => prev.map(m => m.id === msg.id ? { ...m, _failed: true, _pending: false } : m));
+                        setMessages(prev => _mapKeep(prev, m => m.id === msg.id ? { ...m, _failed: true, _pending: false } : m));
                       }
                       };
                       safeAlert(
@@ -29534,7 +29702,7 @@ function ChatConversationInner() {
         <TouchableOpacity
           onPress={() => { setShowSearchBar(true); setTimeout(() => searchInputRef.current?.focus?.(), 200); }}
           style={styles.headerBtn}
-          accessibilityLabel={t('chat.searchPlaceholder') || 'Buscar'}
+          accessibilityLabel={t('chatConv.searchInConversation') || 'Buscar na conversa'}
           accessibilityRole="button"
         >
           {/* [2026-10-08 chat-beauty-chrome] ícones de ação numa grade só:
@@ -29731,7 +29899,7 @@ function ChatConversationInner() {
                 if (!q.trim()) { setSearchResults([]); setSearchIdx(0); return; }
                 searchDebounceRef.current = setTimeout(() => handleSearchMessages(q, searchFilters), 250);
               }}
-              placeholder={t('chatConv.searchPlaceholder') || t('chat.searchPlaceholder') || 'Search messages...'}
+              placeholder={t('chatConv.searchPlaceholder') || 'Pesquisar mensagens...'}
               placeholderTextColor={colors.textTertiary}
               style={{ flex: 1, fontSize: 14, color: colors.text, paddingVertical: 6, paddingHorizontal: 10, backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)', borderRadius: 18 }}
               autoFocus
@@ -30054,7 +30222,7 @@ function ChatConversationInner() {
                 <View style={{ width: 3, alignSelf: 'stretch', backgroundColor: colors.text, borderRadius: 2, opacity: 0.85 }} />
                 <View style={{ flex: 1 }}>
                   <Text style={{ fontSize: 12, color: colors.text, fontWeight: '600' }} numberOfLines={1}>
-                    {pinned.sender_name || pinned.sender_email?.split('@')[0] || ''}
+                    {_friendlySenderName(pinned.sender_email, pinned.sender_name, currentEmail, t)}
                   </Text>
                   <Text style={{ fontSize: 13.5, color: colors.textSecondary }} numberOfLines={1}>
                     {pinned.content || (pinned.type === 'image' ? (t('chat.photo') || 'Foto') : pinned.type === 'video' ? (t('chat.video') || 'Vídeo') : (pinned.type === 'voice' || pinned.type === 'audio') ? (t('chat.audio') || 'Áudio') : (t('chat.message') || 'Mensagem'))}
@@ -30230,7 +30398,7 @@ function ChatConversationInner() {
             // corrupt reaction counts / reconciliation.
             const myEmail = currentEmail;
             if (!myEmail) return;
-            setMessages(prev => prev.map(m => {
+            setMessages(prev => _mapKeep(prev, m => {
               if (String(m.id) !== String(messageId)) return m;
               const reactions = Array.isArray(m.reactions) ? [...m.reactions] : [];
               const idx = reactions.findIndex(r => r.emoji === emoji);
@@ -30261,7 +30429,7 @@ function ChatConversationInner() {
             } catch {}
             api.chatReact(messageId, emoji).then(r => {
               if (r?.success && Array.isArray(r.data?.reactions)) {
-                setMessages(prev => prev.map(m => String(m.id) === String(messageId) ? { ...m, reactions: r.data.reactions } : m));
+                setMessages(prev => _mapKeep(prev, m => String(m.id) === String(messageId) ? { ...m, reactions: r.data.reactions } : m));
               }
             }).catch(() => {});
           }}
@@ -30303,7 +30471,7 @@ function ChatConversationInner() {
             // reported "uma vez votado n deixa trocar". Mirrors the backend
             // toggle: same option = unvote, different option (single-choice)
             // = clear previous + add new, multi-choice = additive toggle.
-            setMessages(prev => prev.map(m => {
+            setMessages(prev => _mapKeep(prev, m => {
               if (String(m.id) !== String(messageId)) return m;
               const p = { ...(m.poll || {}) };
               const myVotes = new Set(p.my_votes || []);
@@ -30331,7 +30499,7 @@ function ChatConversationInner() {
                   const total = (typeof r.data.total_votes === 'number')
                     ? r.data.total_votes
                     : counts.reduce((a, b) => a + (b || 0), 0);
-                  setMessages(prev => prev.map(m => {
+                  setMessages(prev => _mapKeep(prev, m => {
                     if (String(m.id) !== String(messageId)) return m;
                     return { ...m, poll: { ...(m.poll || {}),
                       vote_counts: counts,
@@ -30359,7 +30527,7 @@ function ChatConversationInner() {
                   // renderMeetup path (which reads parsed content, not the
                   // .meetup field) picks up the new rsvp map. Otherwise the
                   // vote shows briefly then "disappears" on next render.
-                  setMessages(prev => prev.map(m => {
+                  setMessages(prev => _mapKeep(prev, m => {
                     if (String(m.id) !== String(messageId)) return m;
                     let content = m.content;
                     try {
@@ -31026,7 +31194,7 @@ function ChatConversationInner() {
           Top must clear safe-area + header (~56) + small breath, otherwise
           the pill lands on top of the conversation title (foto Rene Reis
           2026-05-05 — "sexta-feira" sobrepunha o header). */}
-      {!!floatingDate && (
+      <ThreadComposerHost store={floatingDateStore} render={(floatingDate) => (!!floatingDate && (
         <Animated.View
           pointerEvents="none"
           style={{
@@ -31044,7 +31212,7 @@ function ChatConversationInner() {
             </Text>
           </View>
         </Animated.View>
-      )}
+      )) || null} />
 
       {/* Reply/Edit indicator — WhatsApp style with thick green left line.
           Animated entrance: slide up + fade in for the "I'm replying" cue. */}
@@ -31064,7 +31232,7 @@ function ChatConversationInner() {
           <View style={[styles.replyBarContent, { flexDirection: 'row', alignItems: 'center', gap: 8 }]}>
             <View style={{ flex: 1 }}>
               <Text style={[styles.replyBarLabel, { color: _composerReplyColor }]}>
-                {editingMsg ? t('chat.editing') : t('chat.replyingTo', { name: replyTo?.sender_name || t('chat.message') })}
+                {editingMsg ? t('chat.editing') : t('chat.replyingTo', { name: _friendlySenderName(replyTo?.sender_email, replyTo?.sender_name, currentEmail, t) || t('chat.message') })}
               </Text>
               {(() => {
                 // WAVE 67 (2026-05-21): show the full reply text up to 3
@@ -31205,6 +31373,7 @@ function ChatConversationInner() {
           The render fn is recreated per screen render → always sees the
           latest screen state (replyTo, sending, members, colors…). */}
       <ThreadComposerHost store={composerStore} render={(inputText) => {
+      _perfTick('composer');
       const hasRichInput = _RICH_INPUT_RE.test(inputText);
       // [2026-10-08 chat-beauty-chrome] Neutral (iOS systemGray) glyph tint for
       // the in-pill icons — was WhatsApp's teal-gray #8696a0.
@@ -31215,9 +31384,21 @@ function ChatConversationInner() {
       // already auto-grows up to maxHeight.
       if (Platform.OS === 'web') {
         try {
+          const _len = inputText.length;
           requestAnimationFrame(() => {
             const el = inputRef.current;
             if (!el || !el.style || typeof el.scrollHeight !== 'number') return;
+            // [2026-10-11 fluidez] Texto CRESCEU (caso de cada tecla): só lê
+            // scrollHeight e ajusta se transbordou — o reset p/ '0px' forçava
+            // 2 layouts síncronos da página inteira (lista incluída) por tecla.
+            // Encolheu/limpou → re-mede do zero como antes.
+            const _prev = typeof el.__cvLen === 'number' ? el.__cvLen : -1;
+            el.__cvLen = _len;
+            if (_prev >= 0 && _len >= _prev && el.style.height) {
+              const _sh = el.scrollHeight;
+              if (_sh > el.clientHeight + 1) el.style.height = Math.min(Math.max(_sh, 42), 140) + 'px';
+              return;
+            }
             // '0px' (not 'auto'): an 'auto' textarea falls back to its rows=2
             // default, so an EMPTY composer measured 2 lines tall.
             el.style.height = '0px';
@@ -32563,6 +32744,7 @@ function ChatConversationInner() {
         visible={showAttachMenu}
         onClose={() => setShowAttachMenu(false)}
         onPick={handlePickAttachment}
+        onSendMedia={handleAttachRecentMedia}
         colors={colors}
       />
 
@@ -32644,7 +32826,7 @@ function ChatConversationInner() {
               editor={playlistEditor}
               onClose={() => setPlaylistEditor(null)}
               onUpdated={(updated) => {
-                setMessages(prev => prev.map(m => m.id === updated.messageId ? { ...m, content: JSON.stringify(updated.playlist) } : m));
+                setMessages(prev => _mapKeep(prev, m => m.id === updated.messageId ? { ...m, content: JSON.stringify(updated.playlist) } : m));
               }}
             />
           </KeyboardAvoidingView>
@@ -32731,7 +32913,7 @@ function ChatConversationInner() {
               <View style={[ctxS.ctxPreview, { backgroundColor: selectedMsg.sender_email === currentEmail ? (colors.primary + '18') : (colors.border + '60') }]}>
                 <View style={{ flex: 1 }}>
                   <Text style={[ctxS.ctxPreviewSender, { color: colors.primary }]} numberOfLines={1}>
-                    {selectedMsg.sender_email === currentEmail ? (t('chatConv.you') || 'You') : (selectedMsg.sender_name || emailToDisplayName(selectedMsg.sender_email))}
+                    {selectedMsg.sender_email === currentEmail ? (t('chat.you') || 'Você') : (selectedMsg.sender_name || emailToDisplayName(selectedMsg.sender_email))}
                   </Text>
                   {/* [2026-10-07 app-feel-ui] SVG type glyph instead of emoji prefix (founder rule). */}
                   {(() => { const _ctxRaw = (() => {
@@ -33325,7 +33507,7 @@ function ChatConversationInner() {
                     setSelectedMsg(null);
                     try {
                       await api.chatKeepMessage(msgId, !isKept);
-                      setMessages(prev => prev.map(m => m.id === msgId ? { ...m, kept: !isKept } : m));
+                      setMessages(prev => _mapKeep(prev, m => m.id === msgId ? { ...m, kept: !isKept } : m));
                     } catch {}
                   }}
                   activeOpacity={0.6}
@@ -33853,7 +34035,7 @@ function ChatConversationInner() {
             onClose={() => {
               if (mv.viewOnce && mv.messageId) {
                 api.markViewOnce(mv.messageId).catch(() => {});
-                setMessages(prev => prev.map(m =>
+                setMessages(prev => _mapKeep(prev, m =>
                   m.id === mv.messageId ? { ...m, view_once_opened: true, file_url: '', content: '' } : m
                 ));
               }
@@ -33871,8 +34053,13 @@ function ChatConversationInner() {
             blurhash={mv.blurhash}
             placeholderUri={mv.placeholderUri}
             thumbUri={mv.thumbUri}
-            senderName={mv.senderName}
-            senderEmail={mv.senderEmail}
+            senderName={(() => {
+              // [2026-10-11 qa] "Você"/nome amigável no header + "Enviado por"
+              // (antes: sender_name cru ou local-part "apitest").
+              const _mvMsg = mv.messageId ? messagesById.get(mv.messageId) : null;
+              return _friendlySenderName(mv.senderEmail || _mvMsg?.sender_email, mv.senderName || _mvMsg?.sender_name, currentEmail, t);
+            })()}
+            senderEmail={mv.senderEmail || (mv.messageId ? (messagesById.get(mv.messageId)?.sender_email || '') : '')}
             createdAt={mv.createdAt}
             caption={mv.caption}
             onForward={(item) => {
@@ -34813,6 +35000,9 @@ function ChatConversationInner() {
                     placeholder={t('chatConv.groupName')}
                     placeholderTextColor={colors.textTertiary}
                     maxLength={80}
+                    // [2026-10-11 qa] Enter/Return salva (web + teclado nativo).
+                    returnKeyType="done"
+                    onSubmitEditing={() => { handleUpdateGroupName(); }}
                   />
                   {/* Save only appears when name is dirty — removes the always-on button
                       that made the form feel like a settings page. */}
@@ -34985,7 +35175,7 @@ function ChatConversationInner() {
                     <View style={{ flex: 1 }}>
                       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
                         <Text style={{ fontSize: 15.5, fontWeight: '500', color: colors.text }} numberOfLines={1}>
-                          {memberName}{isMe ? ` (${t('chatConv.you') || 'você'})` : ''}
+                          {memberName}{isMe ? ` (${t('chat.you') || 'Você'})` : ''}
                         </Text>
                         {m.role === 'admin' && (
                           <View style={{
@@ -35049,8 +35239,11 @@ function ChatConversationInner() {
             });
             })()}
               {/* Funções e permissões — footer note; the actual "Editar
-                  permissões" link lives next to each admin badge above. */}
-              {isGroupAdmin && (
+                  permissões" link lives next to each admin badge above.
+                  [2026-10-11 qa] Só mostra quando o link EXISTE (há outro
+                  admin além de mim) — antes a dica apontava p/ um botão
+                  inexistente em grupos com um único admin. */}
+              {isGroupAdmin && (members || []).some(m => m.role === 'admin' && m.email !== user?.email) && (
                 <>
                   <GroupDivider colors={colors} inset={0} />
                   <View style={{ paddingHorizontal: 14, paddingVertical: 12 }}>

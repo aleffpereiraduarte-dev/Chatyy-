@@ -7,7 +7,7 @@ import {
   BackHandler,
 } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
-import * as Haptics from 'expo-haptics';
+import { HapticsCompat as Haptics } from '../services/haptics'; // [2026-10-11] same API, routed via the shared haptics shim
 import AvatarCircle from '../components/AvatarCircle';
 import AccountSwitcherSheet from '../components/AccountSwitcherSheet';
 import FadeSlideIn from '../components/FadeSlideIn';

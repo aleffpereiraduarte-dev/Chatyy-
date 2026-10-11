@@ -4,7 +4,7 @@
  * ("duarte@chatyy.com.br"); the Profile component resolves either.
  */
 import React, { useCallback } from 'react';
-import { View, StyleSheet, Platform, StatusBar, Alert } from 'react-native';
+import { View, StyleSheet, Platform, StatusBar, Alert, useWindowDimensions } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../../context/ThemeContext';
@@ -13,6 +13,7 @@ import { useAuth } from '../../context/AuthContext';
 import Profile from '../../components/Profile';
 import { IconArrowLeft } from '../../components/Icons';
 import PressableScale from '../../components/PressableScale'; // [2026-10-08 apps-native]
+import { computeContentMaxWidth } from '../../utils/responsive';
 
 export default function UserProfileScreen() {
   const { username, openStatus, openSettings } = useLocalSearchParams();
@@ -59,6 +60,11 @@ export default function UserProfileScreen() {
   // Top padding = safe-area notch + breathing room so avatar/name don't
   // touch the status bar (Instagram/TikTok pattern).
   const topPad = (insets.top || 0) + 12;
+  // [2026-10-11 visual polish] Wide web: the profile column is centered (~900px)
+  // so the edge-anchored back arrow never overlaps @username — drop the 48px
+  // spacer there (it left @handle visibly indented vs. the avatar below).
+  const { width: winW } = useWindowDimensions();
+  const headerLead = (Platform.OS === 'web' && (winW - computeContentMaxWidth(winW)) / 2 >= 56) ? 0 : 48;
 
   return (
     // The back button is absolute-positioned at left:14 (38px wide, so right edge ~52px).
@@ -69,16 +75,6 @@ export default function UserProfileScreen() {
     // posts/reels grid gets full width.
     <View style={[styles.container, { backgroundColor: colors.background, paddingTop: topPad }]}>
       <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} />
-      {/* Minimal back button — no clutter header */}
-      <PressableScale
-        onPress={() => { if (router.canGoBack?.()) router.back(); else router.replace('/chat'); }}
-        hitSlop={8}
-        style={[styles.backBtn, { top: topPad + 2, backgroundColor: isDark ? 'rgba(0,0,0,0.5)' : 'rgba(255,255,255,0.8)' }]}
-        accessibilityLabel={t?.('common.back') || 'Back'}
-        accessibilityRole="button"
-      >
-        <IconArrowLeft size={22} color={colors.text} />
-      </PressableScale>
 
       <Profile
         mode="full"
@@ -90,23 +86,43 @@ export default function UserProfileScreen() {
         isDark={isDark}
         t={t}
         router={router}
-        headerLeadingSpace={48}
+        headerLeadingSpace={headerLead}
         onOpenChat={handleChat}
         onOpenCall={handleCall}
         onOpenEmail={handleEmail}
         onLogout={async () => { try { await logout?.(); router.replace('/login'); } catch {} }}
       />
+      {/* Minimal back button — no clutter header.
+          [2026-10-11 visual polish] Rendered AFTER <Profile> so it paints on top:
+          on web the profile body stacked over it and the arrow was invisible
+          (only the 48px gap before @username showed). top aligned with row 1. */}
+      <View style={[styles.backBtnWrap, { top: topPad + 10 }]} pointerEvents="box-none">
+        <PressableScale
+          onPress={() => { if (router.canGoBack?.()) router.back(); else router.replace('/chat'); }}
+          hitSlop={8}
+          style={[styles.backBtn, { backgroundColor: isDark ? 'rgba(0,0,0,0.5)' : 'rgba(255,255,255,0.8)' }]}
+          accessibilityLabel={t?.('common.back') || 'Back'}
+          accessibilityRole="button"
+        >
+          <IconArrowLeft size={22} color={colors.text} />
+        </PressableScale>
+      </View>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  backBtn: {
+  // PressableScale puts `style` on its INNER Animated.View, so absolute
+  // positioning must live on a wrapper (otherwise the button is positioned
+  // relative to an in-flow 0-height Touchable).
+  backBtnWrap: {
     position: 'absolute',
-    // `top` now set inline via insets — fallback below if inset=0 (web)
+    // `top` set inline via insets
     left: 14,
     zIndex: 10,
+  },
+  backBtn: {
     width: 38, height: 38, borderRadius: 19,
     alignItems: 'center', justifyContent: 'center',
     ...Platform.select({

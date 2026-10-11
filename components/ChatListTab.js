@@ -7668,7 +7668,10 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
       <ScrollView
         horizontal
         showsHorizontalScrollIndicator={false}
-        style={{ flexGrow: 0, flexShrink: 0, height: 46 }}
+        // [2026-10-11 visual polish] Web/tablet: the list column is centered at
+        // CONTENT_MAX_WIDTH but the chips hugged the far left of the pane, so
+        // "Todas" didn't line up with the avatars below. Same column as the list.
+        style={[{ flexGrow: 0, flexShrink: 0, height: 46 }, (Platform.OS === 'web' || RESP_IS_TABLET) && { maxWidth: CONTENT_MAX_WIDTH, width: '100%', alignSelf: 'center' }]}
         contentContainerStyle={s.filtersRow}
       >
         <FilterChip label={t('chat.filterAll') || 'Todas'} value="all" />

@@ -19,6 +19,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { KEYBOARD_CONTROLLER_ACTIVE } from '../../utils/threadKeyboard';
 import PressableScale from '../PressableScale';
 import { isReduceMotionEnabled } from '../reducedMotion';
+import { useLanguageOptional } from '../../context/LanguageContext';
+import AttachSheetRecentStrip, { recentStripSupported } from './AttachSheetRecentStrip';
 
 let Rea = null;
 let GH = null;
@@ -98,8 +100,18 @@ function GridItem({ item, index, progress, colors, onPress, width }) {
   );
 }
 
-export default function AttachSheet({ visible, onClose, onPick, colors, items }) {
+// [2026-10-11 attach-recent] `onSendMedia(files)` (optional): when the parent
+// passes it, a WhatsApp-style strip of recent photos/videos sits above the
+// grid (AttachSheetRecentStrip). files = same shape as handleGallery's
+// buildFile → the parent feeds them to its media preview / send path.
+export default function AttachSheet({ visible, onClose, onPick, colors, items, onSendMedia }) {
   const A = Rea.default;
+  const lang = useLanguageOptional();
+  const showRecent = typeof onSendMedia === 'function' && recentStripSupported();
+  const galleryLabel = useMemo(() => {
+    const g = (items || []).find((it) => it && it.key === 'gallery');
+    return g ? g.label : null;
+  }, [items]);
   const insets = useSafeAreaInsets();
   const { width: winW } = useWindowDimensions();
   const [show, setShow] = useState(!!visible);
@@ -185,6 +197,18 @@ export default function AttachSheet({ visible, onClose, onPick, colors, items })
           <View style={styles.grabZone}>
             <View style={[styles.handle, { backgroundColor: isDarkColors(colors) ? 'rgba(255,255,255,0.22)' : 'rgba(0,0,0,0.16)' }]} />
           </View>
+          {showRecent ? (
+            <AttachSheetRecentStrip
+              visible={!!visible}
+              dark={isDarkColors(colors)}
+              colors={colors}
+              t={lang && lang.t}
+              galleryLabel={galleryLabel}
+              ListComponent={GH && GH.FlatList}
+              onOpenGallery={() => { requestClose(); onPick && onPick('gallery'); }}
+              onSend={(files) => { requestClose(); try { onSendMedia(files); } catch {} }}
+            />
+          ) : null}
           <View style={[styles.grid, { width: gridW }]}>
             {(items || []).map((item, idx) => (
               <GridItem

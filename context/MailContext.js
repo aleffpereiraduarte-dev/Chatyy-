@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, useCallback, useRef, useEffect, useMemo } from 'react';
-import { Platform, LayoutAnimation, UIManager, AppState } from 'react-native';
+import { Platform, LayoutAnimation, UIManager, AppState, DeviceEventEmitter } from 'react-native';
 import { usePathname } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import * as api from '../services/api';
@@ -607,7 +607,9 @@ export function MailProvider({ children }) {
         // local optimistic seen-state + persisted recentlyRead set. When the
         // message came back unseen (PHP fallback / offline stub that didn't
         // flag it), fall through to the full path that also POSTs to the server.
-        markAsRead(uid, folder, r.data?.seen === true);
+        // [2026-10-11] SEMPRE avisa o servidor: o cache do Rust pode responder
+        // seen=true sem ter marcado no IMAP (prévia/disco) → ficava não lido.
+        markAsRead(uid, folder);
         saveMessageToCache(uid, r.data, folder || currentFolder).catch(() => {});
       }
     } catch {
@@ -648,6 +650,8 @@ export function MailProvider({ children }) {
         return { ...f, unread: next, unseen: next };
       }));
     }
+    // [2026-10-11] Avisa o resto do app (badge de e-mail na barra do Chatyy).
+    try { DeviceEventEmitter.emit('mail:unread-changed', { uid: uidStr, folder: targetFolder, delta: wasUnread ? -1 : 0 }); } catch {}
     // Track this UID as recently read — prevents revert from stale server data
     recentlyReadRef.current.add(uidStr);
     // Persist so it survives app restarts
@@ -676,6 +680,11 @@ export function MailProvider({ children }) {
     if (!skipServerPost) {
       try {
         const r = await api.markRead(uid, targetFolder);
+        if (r?.success) {
+          // Servidor confirmou → recontar (barra do Chatyy + ícone do app).
+          try { DeviceEventEmitter.emit('mail:unread-changed', { uid: uidStr, folder: targetFolder, synced: true }); } catch {}
+          try { require('../services/pushNotifications').refreshBadgeCount?.()?.catch?.(() => {}); } catch {}
+        }
         if (!r?.success) {
           console.warn('markRead failed for uid', uid, r?.message);
           // Backend rejected the flag-set. Revert the optimistic seen=true and

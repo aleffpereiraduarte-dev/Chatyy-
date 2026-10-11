@@ -14,7 +14,7 @@ import BrandFab from './BrandFab';
 import { IconPlus, IconCamera, IconEdit, IconX, IconSearch, IconTrash, IconEye, IconChevronLeft, IconChevronRight, IconSend, IconPause, IconPlay, IconForward, IconSmile, IconType, IconBrush, IconUndo2, IconRotateCw, IconBookmark, IconBarChart, IconHelpCircle, IconClock, IconAtSign, IconAward, IconMapPin, IconLink, IconArrowRight, IconArchive, IconSliders, IconFeedShare, IconCheck, IconCheckbox, IconCheckboxChecked, IconChevronUp, IconChevronDown, IconMic } from './Icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as api from '../services/api';
-import * as Haptics from 'expo-haptics';
+import { HapticsCompat as Haptics } from '../services/haptics'; // [2026-10-11] same API, routed via the shared haptics shim
 import { cacheMedia } from '../services/mediaCache';
 import StoryRingAvatar from './status/StoryRingAvatar';
 // Shared status fetch+cache+WS+poll source. Took over the inline

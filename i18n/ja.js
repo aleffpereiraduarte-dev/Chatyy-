@@ -9461,4 +9461,13 @@ export default {
   "signupPhone.existingAccountOtp": "この番号にはすでにアカウントがあります。コードを入力してログインしてください。",
   "signupPhone.passwordOptionalPh": "パスワード（任意）",
   "signupPhone.passwordOptionalHint": "任意です。ログインはいつも電話番号で行います。@chatyy メールを他のアプリで使いたい場合のみパスワードを作成してください。",
+  // [2026-10-11 attach-recent]
+  "chat.attach.recentPrompt": "写真へのアクセスを許可すると、最新の写真をワンタップで送信できます。",
+  "chat.attach.recentAllow": "アクセスを許可",
+  "chat.attach.recentSettings": "設定を開く",
+  "chat.attach.recentMore": "他の写真",
+  "chat.attach.recentSend": "送信（{count}）",
+  "chat.attach.recentPhoto": "写真",
+  "chat.attach.recentVideo": "動画",
+  "chat.attach.recentSelected": "選択済み",
 };

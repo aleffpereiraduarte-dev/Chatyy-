@@ -3555,7 +3555,15 @@ function ChatCallsTab({ colors, isDark, t, user, router }) {
     <View style={[s.container, { backgroundColor: bgColor }]}>
       {/* Header with tabs */}
       <View style={[s.header, { backgroundColor: isDark ? '#000000' : '#f2f2f7' }]}>
-        <View style={[s.headerTop, { flexDirection: 'row', alignItems: 'center', gap: 8, justifyContent: 'flex-end' }]}>
+        {/* [2026-10-11 visual polish] Chip row scrolls horizontally from the
+            16px gutter. It was a right-aligned (flex-end) row that overflowed
+            on phones: "Agendar" was clipped against the left screen edge. */}
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          style={{ marginHorizontal: -16, marginBottom: 8, flexGrow: 0 }}
+          contentContainerStyle={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 16, minHeight: 24 }}
+        >
           <TouchableOpacity
             onPress={() => setScheduleVisible(true)}
             hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
@@ -3604,7 +3612,7 @@ function ChatCallsTab({ colors, isDark, t, user, router }) {
               </Text>
             </TouchableOpacity>
           )}
-        </View>
+        </ScrollView>
         <SegmentTabs
           activeTab={activeTab}
           onTabChange={setActiveTab}

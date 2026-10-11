@@ -141,3 +141,29 @@ Object.assign(haptics, {
   pullToRefresh: () => tap('soft'),
   callIncoming: () => warning(),
 });
+
+// [2026-10-11 haptics consistency] Drop-in for `import * as Haptics from
+// 'expo-haptics'` (same impactAsync / notificationAsync / selectionAsync +
+// enum API) that routes through THIS shim, so screens still calling the
+// expo-haptics API directly get the iOS Core Haptics engine like the rest of
+// the app instead of a mix of generators. Web = silent no-op (expo-haptics on
+// web rejects asynchronously → stray unhandled rejections).
+//   import { HapticsCompat as Haptics } from '../services/haptics';
+export const HapticsCompat = {
+  ImpactFeedbackStyle: { Light: 'light', Medium: 'medium', Heavy: 'heavy', Rigid: 'rigid', Soft: 'soft' },
+  NotificationFeedbackType: { Success: 'success', Warning: 'warning', Error: 'error' },
+  impactAsync: async (style = 'medium') => {
+    if (Platform.OS === 'web') return;
+    tap(typeof style === 'string' ? style : 'medium');
+  },
+  notificationAsync: async (type = 'success') => {
+    if (Platform.OS === 'web') return;
+    if (type === 'error') error();
+    else if (type === 'warning') warning();
+    else success();
+  },
+  selectionAsync: async () => {
+    if (Platform.OS === 'web') return;
+    selection();
+  },
+};

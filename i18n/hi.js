@@ -10239,4 +10239,13 @@ export default {
   "signupPhone.existingAccountOtp": "इस नंबर पर पहले से खाता है। साइन इन के लिए कोड डालें।",
   "signupPhone.passwordOptionalPh": "पासवर्ड (वैकल्पिक)",
   "signupPhone.passwordOptionalHint": "वैकल्पिक। आप हमेशा अपने नंबर से साइन इन करते हैं। पासवर्ड तभी बनाएं जब आप दूसरे ऐप्स में अपना @chatyy ईमेल इस्तेमाल करना चाहें।",
+  // [2026-10-11 attach-recent]
+  "chat.attach.recentPrompt": "हाल की फ़ोटो एक टैप में भेजने के लिए फ़ोटो की अनुमति दें।",
+  "chat.attach.recentAllow": "अनुमति दें",
+  "chat.attach.recentSettings": "सेटिंग्स खोलें",
+  "chat.attach.recentMore": "और फ़ोटो",
+  "chat.attach.recentSend": "भेजें ({count})",
+  "chat.attach.recentPhoto": "फ़ोटो",
+  "chat.attach.recentVideo": "वीडियो",
+  "chat.attach.recentSelected": "चयनित",
 };

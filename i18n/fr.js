@@ -10240,4 +10240,13 @@ export default {
   "signupPhone.existingAccountOtp": "Ce numéro a déjà un compte. Saisissez le code pour vous connecter.",
   "signupPhone.passwordOptionalPh": "Mot de passe (facultatif)",
   "signupPhone.passwordOptionalHint": "Facultatif. Vous vous connectez toujours avec votre numéro. Créez un mot de passe seulement pour utiliser votre e-mail @chatyy dans d’autres apps.",
+  // [2026-10-11 attach-recent]
+  "chat.attach.recentPrompt": "Autorisez l’accès aux photos pour envoyer les plus récentes en un geste.",
+  "chat.attach.recentAllow": "Autoriser l’accès",
+  "chat.attach.recentSettings": "Ouvrir les Réglages",
+  "chat.attach.recentMore": "Plus de photos",
+  "chat.attach.recentSend": "Envoyer ({count})",
+  "chat.attach.recentPhoto": "Photo",
+  "chat.attach.recentVideo": "Vidéo",
+  "chat.attach.recentSelected": "sélectionnée",
 };

@@ -10239,4 +10239,13 @@ export default {
   "signupPhone.existingAccountOtp": "هذا الرقم لديه حساب بالفعل. أدخل الرمز لتسجيل الدخول.",
   "signupPhone.passwordOptionalPh": "كلمة المرور (اختيارية)",
   "signupPhone.passwordOptionalHint": "اختيارية. تسجّل الدخول دائمًا برقمك. أنشئ كلمة مرور فقط إذا أردت استخدام بريد @chatyy في تطبيقات أخرى.",
+  // [2026-10-11 attach-recent]
+  "chat.attach.recentPrompt": "اسمح بالوصول إلى الصور لإرسال أحدثها بلمسة واحدة.",
+  "chat.attach.recentAllow": "السماح بالوصول",
+  "chat.attach.recentSettings": "فتح الإعدادات",
+  "chat.attach.recentMore": "صور أخرى",
+  "chat.attach.recentSend": "إرسال ({count})",
+  "chat.attach.recentPhoto": "صورة",
+  "chat.attach.recentVideo": "فيديو",
+  "chat.attach.recentSelected": "محددة",
 };

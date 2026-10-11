@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback, useMemo, Suspense } from 'react';
-import { View, Text, TouchableOpacity, ScrollView, StyleSheet, Platform, Animated, Dimensions, TextInput, Modal, Pressable, KeyboardAvoidingView, AppState, PanResponder } from 'react-native';
+import { View, Text, TouchableOpacity, ScrollView, StyleSheet, Platform, Animated, Dimensions, TextInput, Modal, Pressable, KeyboardAvoidingView, AppState, PanResponder, DeviceEventEmitter } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../context/ThemeContext';
@@ -344,7 +344,18 @@ function ChatHub() {
   // Animated indicator position. Width comes from the responsive `windowWidth`
   // state (not a one-shot Dimensions.get) so the sliding indicator stays
   // centered after rotation / split-view resize.
-  const indicatorAnim = useRef(new Animated.Value(TAB_KEYS.indexOf('chats'))).current;
+  // [2026-10-11 visual polish] Start on the INITIAL tab (deep links like
+  // /chat?tab=calls), not always 'chats' — the bar showed Ligações active with
+  // the indicator still parked under Conversas.
+  const indicatorAnim = useRef(new Animated.Value(
+    TAB_KEYS.indexOf(_initialTab) >= 0 ? TAB_KEYS.indexOf(_initialTab) : TAB_KEYS.indexOf('chats')
+  )).current;
+  // Keep the indicator in sync when the tab changes without handleTabPress
+  // (tabProps.setActiveTab from child tabs). Same target value → no-op spring.
+  useEffect(() => {
+    const i = TAB_KEYS.indexOf(activeTab);
+    if (i >= 0) Animated.spring(indicatorAnim, { toValue: i, useNativeDriver: true, tension: 120, friction: 16 }).start();
+  }, [activeTab, TAB_KEYS, indicatorAnim]);
   const screenWidth = windowWidth;
   const tabWidth = isDesktop ? 72 : screenWidth / TAB_KEYS.length;
 
@@ -637,7 +648,16 @@ function ChatHub() {
     };
     fetchEmailUnread();
     timer = setInterval(fetchEmailUnread, 60000);
-    return () => { cancelled = true; if (timer) clearInterval(timer); };
+    // [2026-10-11] Abriu/marcou e-mail → o número baixa NA HORA e é recontado
+    // quando o servidor confirma (antes só mudava no próximo ciclo de 60s).
+    let recount = null;
+    const sub = DeviceEventEmitter.addListener('mail:unread-changed', (ev) => {
+      if (ev && ev.delta < 0) setEmailBadge(n => Math.max(0, n + ev.delta));
+      if (ev && ev.synced) { if (recount) clearTimeout(recount); recount = setTimeout(fetchEmailUnread, 400); }
+    });
+    // Voltou para o app → reconta.
+    const appSub = AppState.addEventListener('change', (st) => { if (st === 'active') fetchEmailUnread(); });
+    return () => { cancelled = true; if (timer) clearInterval(timer); if (recount) clearTimeout(recount); try { sub.remove(); } catch {} try { appSub.remove(); } catch {} };
   }, []);
 
   const handleTabPress = useCallback((tab) => {
@@ -1094,6 +1114,7 @@ function ChatHub() {
             ...glassHeader,
             borderBottomColor: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.04)',
             overflow: 'hidden',
+            ...(searchOpen ? null : { paddingBottom: 0, borderBottomWidth: 0 }),
           }]}>
             {searchOpen && (
               <View style={[styles.searchBar, {
@@ -1252,6 +1273,10 @@ function ChatHub() {
         ...glassHeader,
         borderBottomColor: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.04)',
         overflow: 'hidden',
+        // [2026-10-11 visual polish] Collapsed (height 0) the 8px paddingBottom +
+        // hairline still rendered on web (border-box) → 9px blank band + double
+        // divider under the header on every tab. Only pad/border while open.
+        ...(searchOpen ? null : { paddingBottom: 0, borderBottomWidth: 0 }),
       }]}>
         {searchOpen && (
           <View style={[styles.searchBar, {

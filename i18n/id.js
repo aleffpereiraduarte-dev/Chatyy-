@@ -9461,4 +9461,13 @@ export default {
   "signupPhone.existingAccountOtp": "Nomor ini sudah punya akun. Masukkan kode untuk masuk.",
   "signupPhone.passwordOptionalPh": "Kata sandi (opsional)",
   "signupPhone.passwordOptionalHint": "Opsional. Kamu selalu masuk dengan nomormu. Buat kata sandi hanya jika ingin memakai email @chatyy di aplikasi lain.",
+  // [2026-10-11 attach-recent]
+  "chat.attach.recentPrompt": "Izinkan akses foto untuk mengirim foto terbaru dengan sekali ketuk.",
+  "chat.attach.recentAllow": "Izinkan akses",
+  "chat.attach.recentSettings": "Buka Pengaturan",
+  "chat.attach.recentMore": "Foto lainnya",
+  "chat.attach.recentSend": "Kirim ({count})",
+  "chat.attach.recentPhoto": "Foto",
+  "chat.attach.recentVideo": "Video",
+  "chat.attach.recentSelected": "dipilih",
 };

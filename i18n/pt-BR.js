@@ -10287,4 +10287,13 @@ export default {
   "signupPhone.existingAccountOtp": "Este número já tem conta. Digite o código para entrar.",
   "signupPhone.passwordOptionalPh": "Senha (opcional)",
   "signupPhone.passwordOptionalHint": "Opcional. Você entra sempre pelo seu número. Crie uma senha só se quiser acessar o e-mail @chatyy em outros apps.",
+  // [2026-10-11 attach-recent]
+  "chat.attach.recentPrompt": "Permita o acesso às fotos para enviar as mais recentes com um toque.",
+  "chat.attach.recentAllow": "Permitir acesso",
+  "chat.attach.recentSettings": "Abrir Ajustes",
+  "chat.attach.recentMore": "Mais fotos",
+  "chat.attach.recentSend": "Enviar ({count})",
+  "chat.attach.recentPhoto": "Foto",
+  "chat.attach.recentVideo": "Vídeo",
+  "chat.attach.recentSelected": "selecionada",
 };

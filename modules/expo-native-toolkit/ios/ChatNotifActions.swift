@@ -117,6 +117,7 @@ enum ChatNotifAuthStore {
 
 final class ChatNotifActionHandler: NotificationDelegate {
   static let shared = ChatNotifActionHandler()
+  static let appGroupId = "group.com.onemundo.mail"
 
   private static let replyIds: Set<String> = ["reply", "REPLY", "reply_chat"]
   private static let readIds: Set<String> = ["mark_read", "MARK_READ", "mark_read_chat"]
@@ -245,7 +246,29 @@ final class ChatNotifActionHandler: NotificationDelegate {
         return ChatNotifActionHandler.str(p, "conversation_id") == conv
       }.map { $0.request.identifier }
       if !ids.isEmpty { center.removeDeliveredNotifications(withIdentifiers: ids) }
+      // [2026-10-11 badge] Read from the banner with the app killed → the icon
+      // badge drops by the messages just cleared (one banner per message on
+      // iOS: threadId stacks, no collapse) and the NSE's App Group counter is
+      // re-based so the next push counts from the right number.
+      if !ids.isEmpty { adjustBadge(by: -ids.count) }
       then()
+    }
+  }
+
+  private static func adjustBadge(by delta: Int) {
+    DispatchQueue.main.async {
+      let app = UIApplication.shared
+      let next = max(0, app.applicationIconBadgeNumber + delta)
+      if #available(iOS 16.0, *) {
+        UNUserNotificationCenter.current().setBadgeCount(next, withCompletionHandler: nil)
+      } else {
+        app.applicationIconBadgeNumber = next
+      }
+      if let ud = UserDefaults(suiteName: ChatNotifActionHandler.appGroupId) {
+        ud.set(next, forKey: "chatyy.badge.count")
+        ud.set(Date().timeIntervalSince1970, forKey: "chatyy.badge.at")
+        ud.removeObject(forKey: "chatyy.badge.last_server")
+      }
     }
   }
 

@@ -10208,4 +10208,13 @@ export default {
   "signupPhone.existingAccountOtp": "Este número ya tiene cuenta. Ingresa el código para entrar.",
   "signupPhone.passwordOptionalPh": "Contraseña (opcional)",
   "signupPhone.passwordOptionalHint": "Opcional. Siempre entras con tu número. Crea una contraseña solo si quieres usar tu correo @chatyy en otras apps.",
+  // [2026-10-11 attach-recent]
+  "chat.attach.recentPrompt": "Permite el acceso a las fotos para enviar las más recientes con un toque.",
+  "chat.attach.recentAllow": "Permitir acceso",
+  "chat.attach.recentSettings": "Abrir Ajustes",
+  "chat.attach.recentMore": "Más fotos",
+  "chat.attach.recentSend": "Enviar ({count})",
+  "chat.attach.recentPhoto": "Foto",
+  "chat.attach.recentVideo": "Vídeo",
+  "chat.attach.recentSelected": "seleccionada",
 };

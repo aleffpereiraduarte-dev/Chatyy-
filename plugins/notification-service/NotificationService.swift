@@ -19,6 +19,9 @@ import CryptoKit
 ///      and category chat_message / chat_mention (Responder / Marcar como lida).
 ///   4. Rich media: photo/video poster attached (never the avatar when the
 ///      communication layout already shows it).
+///   5. [2026-10-11] App-icon badge kept right with the app killed (server
+///      aps.badge + App Group counter — see applyBadge) and the message is
+///      journaled into the App Group (journalMessage) for instant open.
 ///
 /// Limits respected: ~30 s wall time (each download ≤ 8 s, everything in
 /// parallel, serviceExtensionTimeWillExpire delivers the best attempt) and the
@@ -63,6 +66,12 @@ class NotificationService: UNNotificationServiceExtension {
         let conv = Self.str(p, "conversation_id") ?? ""
         let locked = Self.str(p, "locked") == "1"
         let isGroup = Self.isTrue(Self.str(p, "is_group")) || Self.str(p, "conversation_type") == "group"
+
+        // [2026-10-11 badge] App-icon badge correct with the app KILLED: the
+        // server's aps.badge (live unread) is trusted, corrected for its 15 s
+        // memo / failure-returns-0 cases with an App Group counter the app
+        // re-bases on every setBadgeCount (ExpoChatyySystem.setBadgeMirror).
+        Self.applyBadge(best, p: p, type: type)
 
         if isChat && !conv.isEmpty {
             if best.threadIdentifier.isEmpty { best.threadIdentifier = "chat_" + conv }
@@ -329,6 +338,79 @@ class NotificationService: UNNotificationServiceExtension {
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.httpBody = try? JSONSerialization.data(withJSONObject: ["d_ack": dAck])
         URLSession.shared.dataTask(with: req).resume()
+    }
+
+    // MARK: - App-icon badge ([2026-10-11])
+    //
+    // Server (firebase_push.php) sets aps.badge = live unread (chat + INBOX) for
+    // chat_message/chat_mention/chat_reaction/new_email/email and 0 for every
+    // other type. Gaps fixed here:
+    //   • non-badge types (like/follow/live/chat_keyword…) sent badge 0 → the
+    //     icon was CLEARED by a like → leave it untouched (badge = nil).
+    //   • fcmGetBadgeCount returns 0 on failure → a new message zeroed the icon
+    //     → fall back to the shared counter + 1.
+    //   • the count is memoized 15 s server-side → a burst showed the same
+    //     number → if the server repeats the value we last saw (< 20 s ago)
+    //     and our counter is already there, count +1 per new message.
+    // Shared keys (App Group group.com.onemundo.mail, also written by the app —
+    // modules/expo-native-toolkit/ios/ExpoChatyySystemModule.swift):
+    //   chatyy.badge.count (Int), chatyy.badge.at (epoch s),
+    //   chatyy.badge.last_server (Int), chatyy.badge.seen ([type:mid], dedupe).
+    // Without the NSE App Group entitlement the container is nil → only the
+    // "never clear on non-badge types" rule applies.
+    private static let appGroupId = "group.com.onemundo.mail"
+    private static let badgeServerTypes: Set<String> = ["chat_message", "chat_mention", "chat_reaction", "new_email", "email"]
+    private static let badgeNewUnreadTypes: Set<String> = ["chat_message", "chat_mention", "chat_keyword", "new_email", "email"]
+    private static let badgeLock = NSLock()
+
+    private static func applyBadge(_ best: UNMutableNotificationContent, p: [String: Any], type: String) {
+        let server: Int? = best.badge?.intValue
+        let newUnread = badgeNewUnreadTypes.contains(type)
+        let serverCounts = badgeServerTypes.contains(type)
+        if !newUnread && !serverCounts {
+            best.badge = nil
+            return
+        }
+        guard FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroupId) != nil,
+              let ud = UserDefaults(suiteName: appGroupId) else {
+            if (server ?? 0) <= 0 { best.badge = nil }
+            return
+        }
+        badgeLock.lock()
+        defer { badgeLock.unlock() }
+        let now = Date().timeIntervalSince1970
+        let base = max(0, ud.integer(forKey: "chatyy.badge.count"))
+        let at = ud.double(forKey: "chatyy.badge.at")
+        let lastServer = ud.object(forKey: "chatyy.badge.last_server") as? Int
+        let mid = str(p, "message_id") ?? str(p, "uid") ?? ""
+        let seenKey = type + ":" + mid
+        var seen = ud.stringArray(forKey: "chatyy.badge.seen") ?? []
+        let dup = !mid.isEmpty && seen.contains(seenKey)
+
+        var result: Int? = nil
+        if let s = server, s > 0 {
+            if newUnread, !dup, let ls = lastServer, ls == s, now - at < 20, base >= s {
+                result = base + 1
+            } else {
+                result = s
+            }
+            ud.set(s, forKey: "chatyy.badge.last_server")
+        } else if newUnread {
+            let r = dup ? base : base + 1
+            result = r > 0 ? r : nil
+        }
+        if let r = result {
+            best.badge = NSNumber(value: r)
+            ud.set(r, forKey: "chatyy.badge.count")
+            ud.set(now, forKey: "chatyy.badge.at")
+        } else {
+            best.badge = nil
+        }
+        if !mid.isEmpty && !dup {
+            seen.append(seenKey)
+            if seen.count > 40 { seen.removeFirst(seen.count - 40) }
+            ud.set(seen, forKey: "chatyy.badge.seen")
+        }
     }
 
     // MARK: - Background message journal ([2026-10-07 bgsync])

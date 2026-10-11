@@ -10209,4 +10209,13 @@ export default {
   "signupPhone.existingAccountOtp": "This number already has an account. Enter the code to sign in.",
   "signupPhone.passwordOptionalPh": "Password (optional)",
   "signupPhone.passwordOptionalHint": "Optional. You always sign in with your number. Create a password only if you want to use your @chatyy email in other apps.",
+  // [2026-10-11 attach-recent]
+  "chat.attach.recentPrompt": "Allow photo access to send your latest ones in one tap.",
+  "chat.attach.recentAllow": "Allow access",
+  "chat.attach.recentSettings": "Open Settings",
+  "chat.attach.recentMore": "More photos",
+  "chat.attach.recentSend": "Send ({count})",
+  "chat.attach.recentPhoto": "Photo",
+  "chat.attach.recentVideo": "Video",
+  "chat.attach.recentSelected": "selected",
 };
