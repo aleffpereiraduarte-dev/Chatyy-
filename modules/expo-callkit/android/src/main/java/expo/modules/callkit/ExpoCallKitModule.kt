@@ -1423,6 +1423,13 @@ class ExpoCallKitModule : Module() {
       val lkToken = params["lk_token"] as? String
       val callId: String = (params["call_id"] as? String)?.takeIf { it.isNotEmpty() }
         ?: "call_${System.currentTimeMillis()}_${java.util.UUID.randomUUID().toString().substring(0, 8)}"
+      // [2026-10-11 android-diag] tap→native latency: the call id embeds the
+      // JS tap time (call_<ms>_…), so since_mint_ms = JS→native hand-off delay.
+      try {
+        val minted = callId.split('_').getOrNull(1)?.toLongOrNull()
+        val since = if (minted != null) System.currentTimeMillis() - minted else -1L
+        CallDiag.log("outgoing_tap", callId, "since_mint_ms=$since video=$isVideo has_token=${!lkToken.isNullOrEmpty()}", context)
+      } catch (_: Throwable) {}
       // [2026-10-10 p2p-android] `p2p_json` (JS já manda desde 2026-10-09 p/ o
       // iOS) → CallActivity tenta P2P 1:1 antes do LiveKit quando enabled.
       try {

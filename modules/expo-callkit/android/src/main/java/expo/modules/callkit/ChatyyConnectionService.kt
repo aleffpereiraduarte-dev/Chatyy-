@@ -617,6 +617,12 @@ class ChatyyConnection(
   // ─────────── Private helpers ───────────
 
   private fun rejectInternal(reason: String) {
+    CallDiag.log("reject", callId, "src=telecom reason=$reason", ctx)
+    // [2026-10-11 double-banner] Same single teardown as our own UI (ringer,
+    // BOTH notification ids, ring activity, preconnect, tombstone).
+    try {
+      IncomingCallRegistry.dismissIncoming(ctx, callId, "telecom_$reason", DisconnectCause.REJECTED, "telecom")
+    } catch (_: Throwable) {}
     setDisconnected(DisconnectCause(DisconnectCause.REJECTED))
     IncomingCallRegistry.unregisterConnection(callId, this) // [2026-10-06 android-incoming]
     ExpoCallKitModule.emitCallEnded(callId)
@@ -632,7 +638,7 @@ class ChatyyConnection(
     // IncomingCallListener also fires this from emitCallEnded → onCallEnded
     // handler; server dedupes by call_id. Safe.
     try {
-      CallSignalWs.fireCallEnd(ctx, callId, conversationId, reason)
+      CallSignalWs.fireCallEnd(ctx, callId, conversationId, reason, callerEmail)
     } catch (_: Throwable) {}
     destroy()
   }

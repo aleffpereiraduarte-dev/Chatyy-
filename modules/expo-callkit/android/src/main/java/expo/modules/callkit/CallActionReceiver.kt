@@ -255,6 +255,30 @@ class CallActionReceiver : BroadcastReceiver() {
           return
         }
 
+        CallDiag.log("reject", callId, "src=notification_action", context)
+        // [2026-10-11 double-banner] Tell the CALLER natively. Before, this
+        // path only emitted onCallEnded to JS — with the app killed (the
+        // normal case for a heads-up "Recusar") nothing reached the hub and
+        // the caller kept "Chamando…" until its own timeout. The hub resolves
+        // the peer from its CallState; target is a hint for older hubs.
+        try {
+          CallSignalWs.fireCallEnd(
+            context.applicationContext,
+            callId,
+            intent.getStringExtra("conversation_id") ?: "",
+            "declined",
+            intent.getStringExtra("caller_email") ?: ""
+          )
+        } catch (_: Throwable) {}
+        // Single teardown (ringer, FGS, BOTH notification ids, Telecom,
+        // ringer activity, ring-time preconnect) + tombstone vs late dupes.
+        try {
+          IncomingCallRegistry.dismissIncoming(
+            context, callId, "declined_notification",
+            android.telecom.DisconnectCause.REJECTED, "notification"
+          )
+        } catch (_: Throwable) {}
+
         // [Goal 1 ring-fix 2026-05-25] Stop the authoritative ringtone — same
         // belt-and-suspenders as the accept path (covers the FCM-fallback
         // branch where no FGS owns its lifecycle). Idempotent.

@@ -137,6 +137,7 @@ import androidx.lifecycle.lifecycleScope
 import expo.modules.screenshare.LiveKitRoomHolder
 import io.livekit.android.LiveKit
 import io.livekit.android.RoomOptions
+import io.livekit.android.events.DisconnectReason
 import io.livekit.android.events.RoomEvent
 import io.livekit.android.events.collect
 import io.livekit.android.room.participant.LocalParticipant
@@ -208,6 +209,9 @@ import kotlin.random.Random
 class CallActivity : ComponentActivity() {
 
   companion object {
+    /** [2026-10-11 rejoin] SFU-drop recovery budget + peer-gone grace. */
+    private const val MAX_LK_REJOINS = 3
+    private const val PEER_GONE_GRACE_MS = 15_000L
     private const val TAG = "CallActivity"
     /** [#1191 audio fix, 2026-05-19] Runtime RECORD_AUDIO permission request
      *  code. Required even though the perm is declared in the manifest:
@@ -894,6 +898,7 @@ class CallActivity : ComponentActivity() {
       CallSignalWs.fireCallInvite(
         this, callId, conversationId, callerEmail, hasVideo
       )
+      CallDiag.log("invite_sent", callId, "via=ws_native video=$hasVideo has_token=${!lkToken.isNullOrEmpty()}", applicationContext)
     }
 
     // Pre-create BOTH SurfaceViewRenderers ALWAYS — even for an audio-only call.
@@ -934,6 +939,7 @@ class CallActivity : ComponentActivity() {
           onHangup = { finishCall(reason = "user_hangup") },
           onToggleMute = { desired -> applyMuteToggle(desired) },
           onToggleCam = onToggleCam@{ desired ->
+            CallDiag.log("camera_toggle", callId, "on=$desired p2p=${p2p != null} media=$mediaFlowing", applicationContext)
             // [2026-10-10 p2p-android] Ligação P2P: câmera = replaceTrack no
             // transceiver de vídeo (sem renegociar). O outro lado vira vídeo
             // sozinho quando os frames chegam.
@@ -1950,6 +1956,7 @@ class CallActivity : ComponentActivity() {
       Log.w(TAG, "warm adopt publish failed: ${e.message}")
     }
     reconnectAttempts = 0
+    CallDiag.log("lk_connected", callId, "attempt=0 warm=1 out=$isOutgoing video=$hasVideo", applicationContext)
     Log.i("CallTrace", "[8x/12] warm adopt publish done callId=$callId waitedMs=$waited totalMs=${System.currentTimeMillis() - t0}")
   }
 
@@ -2026,7 +2033,9 @@ class CallActivity : ComponentActivity() {
     } else {
       Log.w(TAG, "LK connected but RECORD_AUDIO denied — mic NOT published")
     }
-    if (hasVideo) {
+    // [2026-10-11 rejoin] `|| state.isCameraOn`: a voice call whose camera was
+    // turned on mid-call must republish it after an LK rejoin.
+    if (hasVideo || state.isCameraOn) {
       // [2026-10-06 android-incoming] Publish the camera ONLY once CAMERA is
       // granted. ensureCameraPermission() in onCreate is async; on a first
       // video call the grant dialog is still up when we reach here, and
@@ -2615,47 +2624,15 @@ class CallActivity : ComponentActivity() {
       // the restartIce so this is invisible to the user even on slow nets.
       // Only run on first successful connect (attempt==0 guard prevents
       // re-triggering on manual reconnect paths).
-      if (attempt == 0) {
-        lifecycleScope.launch {
-          // [WAVE 162 2026-05-23] Was 1000L (WAVE 119). Caused "chiada"
-          // — DTLS re-negotiate + audio path swap mid-frame within
-          // 200-800ms of connect. Move to 5000L (WAVE 115 timing) so
-          // audio is settled before P2P attempt; swap is silent or
-          // fails silently keeping relay leg.
-          delay(5000L)
-          if (isFinishing || isDestroyed) return@launch
-          try {
-            // Walk Room internals to reach the publisher RTCPeerConnection.
-            val roomCls = r.javaClass
-            val engineField = roomCls.declaredFields.firstOrNull {
-              it.name.contains("engine", ignoreCase = true) ||
-              it.name.contains("rtcEngine", ignoreCase = true)
-            }
-            val engine = engineField?.apply { isAccessible = true }?.get(r)
-            val pubField = engine?.javaClass?.declaredFields?.firstOrNull {
-              it.name.equals("publisher", ignoreCase = true) ||
-              it.name.contains("publisherPc", ignoreCase = true)
-            }
-            val pub = pubField?.apply { isAccessible = true }?.get(engine)
-            val pcField = pub?.javaClass?.declaredFields?.firstOrNull {
-              it.name.equals("pc", ignoreCase = true) ||
-              it.name.contains("peerConnection", ignoreCase = true)
-            }
-            val pc = pcField?.apply { isAccessible = true }?.get(pub)
-            if (pc != null) {
-              val restartIceMethod = pc.javaClass.methods.firstOrNull {
-                it.name == "restartIce" && it.parameterCount == 0
-              }
-              restartIceMethod?.invoke(pc)
-              Log.d(TAG, "[relay-first] Phase-2: restartIce() called on publisher PC")
-            } else {
-              Log.d(TAG, "[relay-first] Phase-2: publisher PC not found via reflection — skip")
-            }
-          } catch (t2: Throwable) {
-            Log.w(TAG, "[relay-first] Phase-2 restartIce failed: ${t2.message}")
-          }
-        }
-      }
+      // [2026-10-11 negotiate-deadlock] REMOVED the relay-first "Phase-2"
+      // block that, 5 s after connect, reflected into RTCEngine internals and
+      // called publisherPc.restartIce() from the MAIN thread. Relay-first is
+      // disabled (iceTransportPolicy=ALL since 2026-05-25), so it was not a
+      // no-op: it armed an ICE restart that rode along with the next publisher
+      // offer (= the moment the camera is turned on mid-call), re-gathering
+      // ICE under a live call, and it touched the PeerConnection outside
+      // LiveKit's RTC thread. Nothing replaces it.
+      CallDiag.log("lk_connected", callId, "attempt=$attempt out=$isOutgoing video=$hasVideo", applicationContext)
     } catch (t: Throwable) {
       Log.e(TAG, "LK connect failed attempt=$attempt: ${t.message}", t)
       if (attempt < 3) {
@@ -2668,6 +2645,82 @@ class CallActivity : ComponentActivity() {
       } else {
         state.status = "Erro de conexão"
         state.isReconnecting = false
+      }
+    }
+  }
+
+  // ────────────── [2026-10-11 rejoin] SFU drop ≠ hangup (WhatsApp "Reconectando…")
+  private var lkRejoinAttempts = 0
+  private var lkRejoinJob: Job? = null
+  private var peerGoneJob: Job? = null
+
+  private fun shouldRejoinAfter(reason: DisconnectReason?): Boolean {
+    if (finishing || isFinishing) return false
+    if (lkUrl.isNullOrEmpty() || lkToken.isNullOrEmpty()) return false
+    if (lkRejoinAttempts >= MAX_LK_REJOINS) return false
+    return when (reason) {
+      DisconnectReason.CLIENT_INITIATED,
+      DisconnectReason.DUPLICATE_IDENTITY,
+      DisconnectReason.PARTICIPANT_REMOVED,
+      DisconnectReason.ROOM_DELETED,
+      DisconnectReason.ROOM_CLOSED,
+      DisconnectReason.USER_REJECTED,
+      DisconnectReason.USER_UNAVAILABLE -> false
+      else -> true // UNKNOWN / SIGNAL_CLOSE / STATE_MISMATCH / JOIN_FAILURE / CONNECTION_TIMEOUT / MEDIA_FAILURE / SERVER_SHUTDOWN / MIGRATION
+    }
+  }
+
+  private fun scheduleLkRejoin(r: Room, why: String) {
+    if (lkRejoinJob?.isActive == true) return
+    lkRejoinAttempts++
+    val attempt = lkRejoinAttempts
+    state.status = "Reconectando…"
+    state.isReconnecting = true
+    CallDiag.log("lk_rejoin_start", callId, "attempt=$attempt why=$why", applicationContext)
+    lkRejoinJob = lifecycleScope.launch {
+      delay(400L * attempt)
+      if (finishing || isFinishing) return@launch
+      val url = lkUrl
+      val token = lkToken
+      if (url.isNullOrEmpty() || token.isNullOrEmpty()) { finishCall("room_disconnect"); return@launch }
+      val t0 = System.currentTimeMillis()
+      try {
+        // Same Room object: LK Android Rooms are reusable after Disconnected
+        // (connect() rebuilds the engine/PCs); the events collector and the
+        // renderers stay wired, TrackSubscribed re-binds the peer's tracks.
+        r.connect(url, token, LkTokenFetcher.connectOptionsFor(token))
+        publishLocalMediaAfterConnect(r)
+        CallDiag.log("lk_rejoin_ok", callId, "attempt=$attempt ms=${System.currentTimeMillis() - t0}", applicationContext)
+        state.isReconnecting = false
+        state.status = steadyStatusLabel()
+      } catch (t: Throwable) {
+        Log.w(TAG, "LK rejoin attempt=$attempt failed: ${t.message}")
+        CallDiag.log("lk_rejoin_fail", callId, "attempt=$attempt err=${t.message?.take(120)}", applicationContext)
+        if (!finishing && attempt < MAX_LK_REJOINS) {
+          lkRejoinJob = null
+          scheduleLkRejoin(r, "retry")
+        } else {
+          stopRingback()
+          finishCall(reason = "room_disconnect")
+        }
+      }
+    }
+  }
+
+  private fun startPeerGoneGrace() {
+    if (peerGoneJob?.isActive == true) return
+    state.status = "Reconectando…"
+    state.isReconnecting = true
+    peerGoneJob = lifecycleScope.launch {
+      delay(PEER_GONE_GRACE_MS)
+      if (finishing || isFinishing) return@launch
+      if ((room?.remoteParticipants?.size ?: 0) == 0) {
+        Log.d(TAG, "Peer did not come back in ${PEER_GONE_GRACE_MS}ms — finishing 1:1 call")
+        CallDiag.log("peer_gone_timeout", callId, "", applicationContext)
+        finishCall(reason = "peer_left")
+      } else {
+        state.isReconnecting = false
+        state.status = steadyStatusLabel()
       }
     }
   }
@@ -2707,11 +2760,13 @@ class CallActivity : ComponentActivity() {
       }
       is RoomEvent.Reconnecting -> {
         Log.d(TAG, "RoomEvent.Reconnecting")
+        CallDiag.log("lk_reconnecting", callId, "media=$mediaFlowing", applicationContext)
         state.status = "Reconectando…"
         state.isReconnecting = true
       }
       is RoomEvent.Reconnected -> {
         Log.d(TAG, "RoomEvent.Reconnected")
+        CallDiag.log("lk_reconnected", callId, "media=$mediaFlowing", applicationContext)
         // [2026-10-10 call-states] Back to the real phase — never "Conectado"
         // for a call whose media never flowed (timer resumes with media).
         state.isReconnecting = false
@@ -2719,13 +2774,37 @@ class CallActivity : ComponentActivity() {
       }
       is RoomEvent.Disconnected -> {
         Log.d(TAG, "RoomEvent.Disconnected reason=${event.reason} err=${event.error}")
-        stopRingback()
-        finishCall(reason = "room_disconnect")
+        CallDiag.log(
+          "lk_disconnected", callId,
+          "reason=${event.reason} err=${event.error?.message?.take(120)} media=$mediaFlowing answered=$peerAnswered out=$isOutgoing rejoins=$lkRejoinAttempts",
+          applicationContext
+        )
+        // [2026-10-11 rejoin] An SFU-side drop (NEGOTIATE_FAILED / signal
+        // close / ICE timeout after the SDK's own resume gave up) is NOT a
+        // hangup: incident call_1791735091317_q9bvow1ci ended the call the
+        // moment the SFU closed the participant. WhatsApp-like: keep the call
+        // screen on "Reconectando…" and rejoin the SAME room (same token) a
+        // few times; the peer keeps its session (iOS waits for us). Only an
+        // explicit end (our hangup, room deleted, kicked, duplicate identity)
+        // or exhausted retries finishes the call.
+        if (!finishing && shouldRejoinAfter(event.reason)) {
+          scheduleLkRejoin(r, "disconnected:${event.reason}")
+        } else {
+          stopRingback()
+          finishCall(reason = "room_disconnect")
+        }
       }
       is RoomEvent.ParticipantConnected -> {
         val identity = event.participant.identity?.value ?: ""
         val name = event.participant.name ?: ""
         Log.d(TAG, "ParticipantConnected $identity")
+        if (peerGoneJob?.isActive == true) {
+          // [2026-10-11 rejoin] Peer came back inside the grace window.
+          peerGoneJob?.cancel(); peerGoneJob = null
+          CallDiag.log("peer_rejoined", callId, "", applicationContext)
+          state.isReconnecting = false
+          state.status = steadyStatusLabel()
+        }
         state.peerIdentity = identity
         // [Wave C-2] Add to the group grid if not already present.
         // Video track starts null — wired in on TrackSubscribed / wireGroupTiles.
@@ -2774,12 +2853,23 @@ class CallActivity : ComponentActivity() {
           // never ended the caller here either).
           Log.d(TAG, "ParticipantDisconnected pre-answer — keep ringing, WS decides")
         } else if (remaining == 0 && !isFinishing) {
-          Log.d(TAG, "Last remote participant left — finishing 1:1 call")
-          finishCall(reason = "peer_left")
+          // [2026-10-11 rejoin] The peer's SFU session dropped (network
+          // switch, NEGOTIATE_FAILED, full reconnect on their side) — that is
+          // NOT a hangup: a real hangup arrives as WS call_end and closes us
+          // immediately. Show "Reconectando…" and give the peer a grace
+          // window to come back (ParticipantConnected cancels it).
+          Log.d(TAG, "Last remote participant left — grace ${PEER_GONE_GRACE_MS}ms before finishing")
+          CallDiag.log("peer_left_grace", callId, "identity=${identity.substringBefore('#')}", applicationContext)
+          startPeerGoneGrace()
         }
       }
       is RoomEvent.TrackSubscribed -> {
         val track = event.track
+        CallDiag.log(
+          "track_subscribed", callId,
+          "kind=${if (track is VideoTrack) "video" else "audio"} src=${event.publication.source} mime=${event.publication.mimeType}",
+          applicationContext
+        )
         // [ring-fix 2026-05-25] A subscribed REMOTE track means the peer
         // PUBLISHED media = they truly answered (the callee preconnect is
         // subscribe-only and publishes nothing until pickup). Media-truth
@@ -3002,6 +3092,7 @@ class CallActivity : ComponentActivity() {
         val track = event.publication.track
         if (track is LocalVideoTrack) {
           Log.d(TAG, "LocalTrackPublished (video) via RoomEvent.TrackPublished")
+          CallDiag.log("video_publish", callId, "src=${event.publication.source} mime=${event.publication.mimeType} dims=${track.dimensions.width}x${track.dimensions.height}", applicationContext)
           bindLocalVideoTrack(track)
         }
       }

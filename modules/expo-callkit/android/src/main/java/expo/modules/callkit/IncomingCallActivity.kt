@@ -116,6 +116,16 @@ class IncomingCallActivity : AppCompatActivity() {
     groupName = intent.getStringExtra("group_name") ?: ""
     val autoAccept = intent.getBooleanExtra("auto_accept", false)
 
+    // [2026-10-11 double-banner] A full-screen intent / foreground launch for
+    // a call that already ended on this device (declined from the other
+    // banner, caller cancelled, missed) must not re-open the ring screen.
+    if (!autoAccept && IncomingCallRegistry.isEnded(this, callId ?: "")) {
+      Log.i("IncomingCallActivity", "onCreate: call ${callId} already ended — finishing")
+      CallDiag.log("dedupe_skip", callId ?: "", "src=ring_screen reason=ended", applicationContext)
+      finish()
+      return
+    }
+
     // Register receiver to close from notification action buttons
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
       registerReceiver(
@@ -1047,6 +1057,16 @@ class IncomingCallActivity : AppCompatActivity() {
 
   private fun onDecline() {
     stopRinging()
+    CallDiag.log("reject", callId ?: "", "src=ring_screen", applicationContext)
+    // [2026-10-11 double-banner] Single teardown first (ringer, FGS, BOTH
+    // notification ids — the FGS one is untagged — Telecom, ring-time LK
+    // preconnect) + tombstone so a late duplicate push can't re-ring.
+    try {
+      IncomingCallRegistry.dismissIncoming(
+        applicationContext, callId ?: "", "declined",
+        android.telecom.DisconnectCause.REJECTED, "ring_screen"
+      )
+    } catch (_: Throwable) {}
 
     // [#1179 cleanup, 2026-05-19] Notify the caller via WS that we declined.
     // Without this, the caller's UI stayed on "Calling..." until the 30s
@@ -1059,7 +1079,8 @@ class IncomingCallActivity : AppCompatActivity() {
         applicationContext,
         callId ?: "",
         conversationId ?: "",
-        "declined"
+        "declined",
+        callerEmail ?: ""
       )
     } catch (_: Exception) {}
 

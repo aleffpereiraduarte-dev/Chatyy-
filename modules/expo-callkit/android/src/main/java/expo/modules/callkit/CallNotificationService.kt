@@ -98,6 +98,11 @@ object CallNotificationService {
     Thread {
       val bmp = fetchAvatarBitmap(avatarUrl) ?: return@Thread
       try {
+        // [2026-10-11 double-banner] The avatar fetch can take seconds on
+        // cellular. If the call was declined / cancelled meanwhile, re-posting
+        // here resurrected a ringing banner (channel ringtone + FSI) AFTER the
+        // user hung up. Only replace a notification that is still showing.
+        if (!isIncomingNotificationActive(context, callId, NOTIFICATION_TAG)) return@Thread
         val notif = buildIncomingCallNotification(
           context, callId, callerName, callerEmail, conversationId, hasVideo, avatarUrl, bmp,
           muteRingtone = muteRingtone
@@ -408,6 +413,10 @@ object CallNotificationService {
     val declineIntent = Intent(context, CallActionReceiver::class.java).apply {
       action = "ACTION_DECLINE_CALL"
       putExtra("call_id", callId)
+      // [2026-10-11 double-banner] caller + conversation so the receiver can
+      // tell the caller natively (WS call_end) even with JS dead.
+      putExtra("caller_email", callerEmail)
+      putExtra("conversation_id", conversationId)
     }
     val declinePendingIntent = PendingIntent.getBroadcast(
       context,
@@ -457,6 +466,10 @@ object CallNotificationService {
       .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
       .setOngoing(true)
       .setAutoCancel(false)
+      // [2026-10-11 double-banner] Re-posts of the SAME call (avatar refresh,
+      // FCM-after-WS extras refresh) must not re-play the channel ringtone /
+      // re-pop the heads-up.
+      .setOnlyAlertOnce(true)
       .addAction(0, "Recusar", declinePendingIntent)
       .addAction(0, "Atender", acceptPendingIntent)
     if (muteRingtone) {
@@ -539,7 +552,27 @@ object CallNotificationService {
   }
 
   fun cancelNotification(context: Context, callId: String) {
+    if (callId.isEmpty()) return
     val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
     notificationManager.cancel(NOTIFICATION_TAG, callId.hashCode())
+    // [2026-10-11 double-banner] CallRingingService posts the ringing
+    // notification via startForeground(id) — i.e. with NO tag. Cancel that
+    // (tag=null, id) pair too, so every end path removes BOTH banners even
+    // if the FGS teardown lags or the service already died.
+    try { notificationManager.cancel(callId.hashCode()) } catch (_: Throwable) {}
+  }
+
+  /**
+   * [2026-10-11 double-banner] True when the incoming-call notification for
+   * [callId] (posted with [tag]; null = the untagged FGS one) is still on
+   * screen. Async refreshers check this so they never resurrect a banner the
+   * user already dismissed by declining / the caller cancelled.
+   */
+  fun isIncomingNotificationActive(context: Context, callId: String, tag: String?): Boolean {
+    return try {
+      val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+      val id = callId.hashCode()
+      nm.activeNotifications.any { it.id == id && it.tag == tag }
+    } catch (_: Throwable) { true }
   }
 }

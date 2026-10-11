@@ -39,6 +39,42 @@ export function noteChatActivity() {
   if (_pollTimer) _evaluate();
 }
 
+/**
+ * [2026-10-11 call-preempt] A call is starting NOW (outgoing tap / incoming
+ * accept). Pause the backup AND cancel the in-flight photo upload so the call
+ * invite, LiveKit signaling and media own the uplink. Incident
+ * call_1791735091317_q9bvow1ci: a backup upload in flight on cellular held the
+ * chat_call_invite_v2 POST (same HTTP/2 connection) for ~6 s. Cheap no-op when
+ * no backup runs. The normal governor loop resumes it ~15 s after the call.
+ */
+export function noteCallStarting(source = '') {
+  _callHoldUntil = Date.now() + CALL_HOLD_MS;
+  if (Platform.OS === 'web') return 0;
+  let aborted = 0;
+  try {
+    const engine = require('../backupEngine').getBackupEngine?.();
+    if (engine && engine.isRunning) {
+      const userPaused = engine.isPaused && !_engineWasPausedByUs;
+      if (typeof engine.preemptUploads === 'function') aborted = engine.preemptUploads() || 0;
+      else if (!engine.isPaused) engine.pause?.();
+      if (!userPaused) _engineWasPausedByUs = true;
+      _pausedReason = 'call';
+      _quietSince = 0;
+      _notify();
+    }
+  } catch {}
+  try {
+    const a = _auto();
+    const nativeRunning = typeof a?.isNativeBackupRunning === 'function' ? a.isNativeBackupRunning() : false;
+    const n = _native();
+    if (nativeRunning && n && typeof n.stopBackup === 'function') {
+      n.stopBackup(); _nativeStoppedByUs = true; _pausedReason = 'call'; _notify();
+    }
+  } catch {}
+  if (_pausedReason) { try { start(); } catch {} } // keep polling so it resumes after the call
+  return aborted;
+}
+
 /** 'call' | 'chat' | null — exposed for the Backup settings UI ("pausado: em chamada"). */
 export function getPauseReason() { return _pausedReason; }
 
@@ -49,7 +85,13 @@ export function subscribe(fn) {
 }
 function _notify() { for (const fn of _subs) { try { fn(_pausedReason); } catch {} } }
 
+// [2026-10-11 call-preempt] Set by noteCallStarting() at the call tap /
+// incoming accept, BEFORE callState flips (the invite is still in flight).
+let _callHoldUntil = 0;
+const CALL_HOLD_MS = 90 * 1000;
+
 function _callActive() {
+  if (Date.now() < _callHoldUntil) return true;
   try {
     const cs = require('../callState');
     const st = cs?.getCallState?.();

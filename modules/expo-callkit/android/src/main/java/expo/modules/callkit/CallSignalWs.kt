@@ -549,6 +549,27 @@ object CallSignalWs {
                 // belt-and-suspenders so native UIs always come down.
                 handleIncomingCallEnd(obj)
             }
+            "call_missed", "call_dismissed", "call_picked_up_elsewhere" -> {
+                // [2026-10-11 double-banner] Hub ring timeout (call_missed) and
+                // answered-on-another-device (call_dismissed / picked_up) were
+                // dropped by the `else` below → this device kept ringing until
+                // its own 45s timer. Only touch a call this device is still
+                // RINGING and has not accepted (a call_dismissed can echo back
+                // to our own native socket when the JS socket sent the accept).
+                val cid = obj.optString("call_id").ifEmpty { obj.optString("room_id") }
+                val c = appContext
+                if (c != null && cid.isNotEmpty() && CallRingingService.ringingCallIds.contains(cid) &&
+                    !ExpoCallKitModule.isCallAccepting(cid) &&
+                    !ExpoCallKitModule.isCallAcceptingPersisted(c, cid)) {
+                    CallDiag.log("caller_cancel", cid, "src=ws type=$type reason=${obj.optString("reason")}", c)
+                    IncomingCallRegistry.dismissIncoming(
+                        c, cid, "ws_$type",
+                        if (type == "call_missed") android.telecom.DisconnectCause.MISSED
+                        else android.telecom.DisconnectCause.ANSWERED_ELSEWHERE,
+                        "ws"
+                    )
+                }
+            }
             // [2026-10-09 p2p-calls] Sinalização P2P 1:1 → sessão nativa (se houver;
             // antes dela existir o frame fica no buffer de P2PCallSession).
             "call_p2p_ready", "call_p2p_offer", "call_p2p_answer",
@@ -614,6 +635,18 @@ object CallSignalWs {
         // 4. Dedup table: forget this call so a stale retransmit of the
         //    invite (server retry, race) wouldn't be filtered out.
         IncomingCallRegistry.forget(callId)
+
+        // [2026-10-11 double-banner] Same single teardown as the FCM cancel
+        // (no-op for an accepted call): ringer, both notification ids, ring
+        // activity, ring-time LK preconnect + tombstone vs late duplicates.
+        if (callId.isNotEmpty() && CallRingingService.ringingCallIds.contains(callId)) {
+            CallDiag.log("caller_cancel", callId, "src=ws reason=$reason", ctx)
+        }
+        try {
+            IncomingCallRegistry.dismissIncoming(
+                ctx, callId, "ws_call_end:$reason", android.telecom.DisconnectCause.REMOTE, "ws"
+            )
+        } catch (_: Throwable) {}
     }
 
     private fun handleIncomingCallInvite(obj: JSONObject) {
@@ -637,13 +670,22 @@ object CallSignalWs {
         // is the richer source — lk creds + avatar — so nothing is lost).
         // NOTE: read isRinging BEFORE markInviteSeen (which marks the call as
         // seen → isRinging would always be true afterwards).
+        CallDiag.log("push_received", callId, "src=ws", ctx)
+        // [2026-10-11 double-banner] Already declined/cancelled here → stale.
+        if (IncomingCallRegistry.isEnded(ctx, callId)) {
+            Log.d(TAG, "call_invite $callId: already ended on this device, skipping")
+            CallDiag.log("dedupe_skip", callId, "src=ws reason=ended", ctx)
+            return
+        }
         val alreadyRinging = IncomingCallRegistry.isRinging(callId)
         if (!IncomingCallRegistry.markInviteSeen(callId, "ws")) {
             Log.d(TAG, "call_invite $callId: already surfaced (ws dup), skipping")
+            CallDiag.log("dedupe_skip", callId, "src=ws reason=dup_ws", ctx)
             return
         }
         if (alreadyRinging) {
             Log.d(TAG, "call_invite $callId: already ringing via FCM — skipping WS ring")
+            CallDiag.log("dedupe_skip", callId, "src=ws reason=ringing_fcm", ctx)
             return
         }
 

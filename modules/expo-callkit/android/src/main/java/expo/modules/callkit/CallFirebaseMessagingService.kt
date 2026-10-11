@@ -100,6 +100,16 @@ class CallFirebaseMessagingService : FirebaseMessagingService() {
                 return
             }
             Log.d(TAG, "$type $cancelId reason=$reason — tearing down ring/notification")
+            CallDiag.log("caller_cancel", cancelId, "src=fcm type=$type reason=$reason", applicationContext)
+            // [2026-10-11 double-banner] Single teardown: ringer, FGS, BOTH
+            // notification ids, Telecom, ringer activity, ring-time LK
+            // preconnect + tombstone (a late duplicate invite can't re-ring).
+            try {
+                IncomingCallRegistry.dismissIncoming(
+                    applicationContext, cancelId, "fcm_$type:$reason",
+                    android.telecom.DisconnectCause.REMOTE, "fcm"
+                )
+            } catch (e: Throwable) {}
             // Stop the authoritative looping ringtone (the FCM-fallback ringer
             // is launched directly, not tied to the FGS lifecycle, so an
             // explicit stop is required here). Idempotent.
@@ -215,9 +225,18 @@ class CallFirebaseMessagingService : FirebaseMessagingService() {
             // startTelecomIncomingCall.
             // NOTE: read isRinging BEFORE markInviteSeen (which itself marks
             // the call as seen → isRinging would always be true afterwards).
+            CallDiag.log("push_received", callId, "src=fcm type=$type prio=${message.priority}/${message.originalPriority} sent=${message.sentTime} video=${if (hasVideo) 1 else 0} lk=${if (preLkToken != null) 1 else 0}", applicationContext)
+            // [2026-10-11 double-banner] Call already declined / cancelled /
+            // missed on this device → a late duplicate push must not re-ring.
+            if (IncomingCallRegistry.isEnded(applicationContext, callId)) {
+                Log.i(TAG, "incoming_call callId=$callId: already ended on this device — skipping")
+                CallDiag.log("dedupe_skip", callId, "src=fcm reason=ended", applicationContext)
+                return
+            }
             val alreadyRinging = IncomingCallRegistry.isRinging(callId)
             if (!IncomingCallRegistry.markInviteSeen(callId, "fcm")) {
                 Log.i(TAG, "incoming_call callId=$callId: duplicate FCM — skipping")
+                CallDiag.log("dedupe_skip", callId, "src=fcm reason=dup_fcm", applicationContext)
                 return
             }
 

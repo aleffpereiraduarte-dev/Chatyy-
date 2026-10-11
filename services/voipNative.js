@@ -101,6 +101,14 @@ function isAppForeground() {
  * Generate a server-side call_id. Format mirrors the legacy inline
  * generator in chat-conversation.js so backend logs stay comparable.
  */
+// [2026-10-11 call-tap-latency] Max time the native call screen waits for
+// chat_call_invite_v2 (normal p50 ≈ 250-400 ms incl. TLS on cellular).
+const INVITE_WAIT_MS = 1500;
+
+function _diag(event, callId, detail) {
+  try { require('./voipDiag').voipDiag(event, callId, detail); } catch {}
+}
+
 function generateCallId() {
   return `call_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 }
@@ -217,6 +225,19 @@ export async function startOutgoingCall({
   }, _OUTGOING_LOCK_TTL_MS);
 
   const cid = callId || generateCallId();
+  const _tapT0 = Date.now();
+
+  // [2026-10-11 call-tap-latency] The call owns the uplink from the tap on:
+  // pause the photo backup and CANCEL its in-flight upload BEFORE the invite.
+  // Incident call_1791735091317_q9bvow1ci (Android, cellular): tap 16:11:31.3,
+  // but chat_call_invite_v2 only reached the server at 16:11:37 — nothing from
+  // the phone reached nginx between 16:11:26 and 16:11:37 while a backup
+  // upload (/api/rust/upload) was in flight on the same HTTP/2 connection;
+  // the invite, chat_sync and the hub WS re-auth all landed the second the
+  // upload finished. Sync, cheap, no-op when no backup runs.
+  let _preempted = 0;
+  try { _preempted = require('./backup/uploadGovernor').noteCallStarting?.('outgoing') || 0; } catch {}
+  _diag('js_outgoing_tap', cid, `plat=${Platform.OS} video=${isVideo ? 1 : 0} backup_aborted=${_preempted}`);
 
   // [CALL-TRACE 2026-05-21 ROUND3] Step 2b/12 — post-validation. Confirms
   // the trimmed calleeEmail + generated cid that propagate to native.
@@ -331,6 +352,7 @@ export async function startOutgoingCall({
   // block below) is kept untouched and runs when the flag is OFF — additive
   // rollout, instant revert by flipping setRelayFirstV2Enabled(false).
   let v2Resp = null;
+  let _lateInvite = null; // [2026-10-11] invite still in flight after INVITE_WAIT_MS
   if (RELAY_FIRST_V2_ENABLED && conversationId) {
     try {
       console.log('[CALL-TRACE][3v2/12] chat_call_invite_v2 fired', {
@@ -338,12 +360,37 @@ export async function startOutgoingCall({
       });
     } catch {}
     try {
-      v2Resp = await api.chatCallInviteV2({
+      // [2026-10-11 call-tap-latency] Bounded wait. The invite keeps going in
+      // the background, but the native call screen + ringback never wait more
+      // than INVITE_WAIT_MS for it: past that, native starts WITHOUT the
+      // pre-minted token (CallActivity / CXStartCallAction mint their own via
+      // chat_livekit_token — same room = callId) and the late response only
+      // fills the token cache. Before, a slow uplink froze the UI on a spinner.
+      const _invT0 = Date.now();
+      _diag('js_invite_sent', cid, `since_tap_ms=${_invT0 - _tapT0}`);
+      const _invP = api.chatCallInviteV2({
         conversationId,
         callId: cid,
         video: !!isVideo,
         calleeEmail,
       });
+      _invP.then((r) => {
+        _diag('js_invite_resp', cid, `ms=${Date.now() - _invT0} ok=${r?.success ? 1 : 0} err=${String(r?.error || '').slice(0, 60)}`);
+      }, (e) => {
+        _diag('js_invite_resp', cid, `ms=${Date.now() - _invT0} ok=0 throw=${String(e?.message || e).slice(0, 60)}`);
+      });
+      const _TIMEOUT = Symbol('invite_timeout');
+      let _waitTimer = null;
+      v2Resp = await Promise.race([
+        _invP,
+        new Promise((res) => { _waitTimer = setTimeout(() => res(_TIMEOUT), INVITE_WAIT_MS); }),
+      ]);
+      if (_waitTimer) clearTimeout(_waitTimer);
+      if (v2Resp === _TIMEOUT) {
+        _diag('js_invite_slow', cid, `waited_ms=${INVITE_WAIT_MS} — native starts without pre-minted token`);
+        v2Resp = null;
+        _lateInvite = _invP;
+      }
       try {
         console.log('[CALL-TRACE][3v2/12] chat_call_invite_v2 resp', {
           cid,
@@ -419,7 +466,7 @@ export async function startOutgoingCall({
   // Legacy fire-and-forget callNotify — runs when v2 is OFF or when v2
   // failed/was skipped (e.g. no conversationId). Identical behavior to the
   // pre-WAVE-119 flow; preserved for rollback safety.
-  if (!v2Resp && conversationId) {
+  if (!v2Resp && conversationId && !_lateInvite) {
     // [CALL-TRACE 2026-05-21 ROUND3] Step 3/12 — fire-and-forget push to
     // wake the callee. We log both the request kickoff and the response
     // shape so a missing call_invite on the peer side can be traced back
@@ -618,15 +665,34 @@ export async function startOutgoingCall({
   } catch {}
 
   const nativePresent = ExpoCallKit.startOutgoingCall(nativePayload);
+  _diag('js_native_start', cid, `since_tap_ms=${Date.now() - _tapT0} has_token=${nativePayload.lkToken ? 1 : 0}`);
+
+  if (_lateInvite) {
+    _lateInvite.then(async (r) => {
+      if (r?.success) {
+        const d = r.data || {};
+        if (d.lk_token && d.lk_url) {
+          try { await ExpoCallKit.persistPendingLkToken(cid, d.lk_token, d.lk_url); } catch {}
+        }
+        return;
+      }
+      // Late invite failed → the callee was never rung: legacy fan-out.
+      try { await api.callNotify(conversationId, cid, isVideo); } catch {}
+    }, async () => {
+      try { await api.callNotify(conversationId, cid, isVideo); } catch {}
+    });
+  }
 
   // Background: mint LK token then forward it to native.
   // [WAVE 119, 2026-05-22] Skip when v2 already pre-minted the token above —
   // the persistPendingLkToken cache is already populated and the native side
   // doesn't need a second mint. We log the skip so the absence of the legacy
   // 5/12 trace doesn't read as a regression.
-  if (v2Resp && v2Resp.data?.lk_token) {
+  if ((v2Resp && v2Resp.data?.lk_token) || _lateInvite) {
+    // _lateInvite: the slow invite still mints the token (fills the native
+    // cache when it lands) and the native screen fetches its own meanwhile.
     try {
-      console.log('[CALL-TRACE][5/12] chatLivekitToken SKIPPED (v2 pre-minted)', { cid });
+      console.log('[CALL-TRACE][5/12] chatLivekitToken SKIPPED (v2 pre-minted / in flight)', { cid });
     } catch {}
   } else (async () => {
     try {

@@ -82,6 +82,7 @@ class CallRingingService : Service() {
     // left the OS notification ring playing — now we own both as the
     // single FGS that holds the ringtone audio policy).
     private var vibrator: Vibrator? = null
+    @Volatile private var destroyed = false
     private val timeoutRunnable = Runnable {
         val cid = callId
         Log.d(TAG, "Ringing timed out for callId=$cid — broadcasting missed event")
@@ -121,7 +122,9 @@ class CallRingingService : Service() {
             try {
                 IncomingCallRegistry.endTelecom(cid, android.telecom.DisconnectCause.MISSED, "ring_timeout")
                 IncomingCallRegistry.forget(cid)
+                IncomingCallRegistry.markEnded(applicationContext, cid, "ring_timeout")
             } catch (_: Throwable) {}
+            CallDiag.log("ring_timeout", cid, "ms=$RINGING_TIMEOUT_MS", applicationContext)
         }
 
         // Notify the rest of the system that this call was missed. Without
@@ -188,6 +191,7 @@ class CallRingingService : Service() {
         // extras (avatar / mute / group) from the later source are applied
         // in place (same notification id → no flicker).
         val alreadyRinging = ringingCallIds.contains(safeCallId)
+        destroyed = false
         // [2026-05-15] Add to the Set FIRST (allows concurrent rings to be
         // reasoned about), then use compareAndSet on currentCallId so we
         // only stamp the "primary" reference if it was empty. If another
@@ -235,6 +239,21 @@ class CallRingingService : Service() {
                 startForeground(safeCallId.hashCode(), notification)
             }
             Log.d(TAG, "Foreground service started successfully")
+            if (!alreadyRinging) {
+                CallDiag.log("notif_shown", safeCallId, "id=${safeCallId.hashCode()} src=fgs avatar=${if (callerAvatar.isNotEmpty()) 1 else 0} mute=${if (muteRingtone) 1 else 0}", applicationContext)
+            }
+
+            // [2026-10-11 double-banner] A late duplicate invite for a call
+            // that already ended on this device (declined / cancelled /
+            // missed): we had to call startForeground (5s FGS contract), now
+            // drop it immediately — no ringer, no vibration, no timer.
+            if (IncomingCallRegistry.isEnded(applicationContext, safeCallId)) {
+                Log.i(TAG, "callId=$safeCallId already ended on this device — not ringing")
+                CallDiag.log("dedupe_skip", safeCallId, "src=ring_service reason=ended", applicationContext)
+                if (!alreadyRinging) ringingCallIds.remove(safeCallId)
+                stopSelf()
+                return START_NOT_STICKY
+            }
 
             // Async fetch + re-emit notification with real avatar Bitmap so the
             // heads-up & full-screen renderiza a foto do caller em vez da
@@ -244,6 +263,10 @@ class CallRingingService : Service() {
                 Thread {
                     val bmp = CallNotificationService.fetchAvatarBitmap(callerAvatar) ?: return@Thread
                     try {
+                        // [2026-10-11 double-banner] Only refresh while THIS
+                        // call is still ringing (the fetch can outlive a
+                        // decline/cancel by seconds → resurrected banner).
+                        if (destroyed || !ringingCallIds.contains(safeCallId)) return@Thread
                         val updated = CallNotificationService.buildIncomingCallNotification(
                             this@CallRingingService,
                             safeCallId, callerName, callerEmail, conversationId,
@@ -253,7 +276,14 @@ class CallRingingService : Service() {
                             groupName = groupName
                         )
                         val nm = getSystemService(NOTIFICATION_SERVICE) as android.app.NotificationManager
-                        nm.notify("call_notification", safeCallId.hashCode(), updated)
+                        // [2026-10-11 double-banner] ROOT CAUSE of the "2
+                        // banners": startForeground() posts with tag=null,
+                        // this refresh used tag="call_notification" → a
+                        // DIFFERENT (tag,id) pair = a SECOND ringing
+                        // notification (own heads-up, FSI, channel ringtone)
+                        // on every call whose payload has caller_avatar.
+                        // Same untagged id → replaces the FGS one in place.
+                        nm.notify(safeCallId.hashCode(), updated)
                     } catch (e: Exception) {
                         Log.w(TAG, "Avatar refresh failed: ${e.message}")
                     }
@@ -340,6 +370,7 @@ class CallRingingService : Service() {
     }
 
     override fun onDestroy() {
+        destroyed = true
         handler.removeCallbacksAndMessages(null)
         // [Goal 1 ring-fix 2026-05-25] Stop + release the authoritative ringtone.
         // onDestroy fires on every teardown path: answer (IncomingCallActivity
@@ -387,6 +418,7 @@ class CallRingingService : Service() {
             currentCallId.set(null)
         }
         Log.d(TAG, "Ringing service destroyed for callId=$cid, remaining=${ringingCallIds.size}")
+        if (cid != null) CallDiag.log("ring_service_stop", cid, "remaining=${ringingCallIds.size}", applicationContext)
         super.onDestroy()
     }
 

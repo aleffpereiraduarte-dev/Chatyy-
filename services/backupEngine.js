@@ -261,6 +261,7 @@ export class BackupEngine {
     // Config
     this.maxConcurrent = MAX_CONCURRENT;
     this.isPaused = false;
+    this._inflightCtrls = new Set(); // [2026-10-11 call-preempt] AbortControllers of in-flight uploads
     this.isRunning = false;
 
     // Stats
@@ -1011,6 +1012,13 @@ export class BackupEngine {
         }
         if (this.onFileComplete) this.onFileComplete(item);
       } catch (err) {
+        // [2026-10-11 call-preempt] Upload aborted because a call is starting:
+        // NOT a failure — put the item back, no retry/circuit-breaker penalty
+        // (the governor keeps the engine paused until the call is over).
+        if (err?.callPreempted) {
+          item.status = 'pending';
+          continue;
+        }
         // [quota 2026-07-23] Drive cheio: retry é inútil (cada tentativa custa
         // 2-3 requests 507). _uploadItem já setou _aborted; o finally limpa.
         // [2026-10-06] Idem para 4xx definitivos: nginx mostrou 244×403
@@ -1282,9 +1290,25 @@ export class BackupEngine {
           && typeof api.rustChunkedUpload === 'function'
           && (sizeKnown ? fileSize > 2 * 1024 * 1024 : true);
         _bdbg('upload.rust.begin', { file: uploadFilename, size: fileSize, chunked: useChunked });
-        const r = useChunked
-          ? await api.rustChunkedUpload(fileForRust, userEmail, 'photo_backup')
-          : await api.rustUpload(fileForRust, userEmail, 'photo_backup');
+        // [2026-10-11 call-preempt] Abortable: a call tap cancels the in-flight
+        // photo upload (preemptUploads) — incident call_1791735091317: an 11 s
+        // backup upload on cellular held the invite POST (same HTTP/2 conn to
+        // Cloudflare) → "fica girando ~6 s antes de chamar".
+        const _ctrl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+        if (_ctrl) this._inflightCtrls.add(_ctrl);
+        let r;
+        try {
+          r = useChunked
+            ? await api.rustChunkedUpload(fileForRust, userEmail, 'photo_backup', null, _ctrl ? _ctrl.signal : null)
+            : await api.rustUpload(fileForRust, userEmail, 'photo_backup', _ctrl ? _ctrl.signal : null);
+        } finally {
+          if (_ctrl) this._inflightCtrls.delete(_ctrl);
+        }
+        if ((_ctrl && _ctrl.signal.aborted) || r?.aborted) {
+          const e = new Error('call_preempted');
+          e.callPreempted = true;
+          throw e;
+        }
         const elapsed = Date.now() - tStart;
         _bdbg('upload.rust.done', { ok: !!r?.success, error: r?.error || '', elapsedMs: elapsed, cdn: !!r?.cdn_url });
         // Rust returns shape: { success, file_id, filename, size, mime_type, content_hash, cdn_url, ... }
@@ -1983,6 +2007,19 @@ export class BackupEngine {
 
   resume() {
     this.isPaused = false;
+  }
+
+  /** [2026-10-11 call-preempt] Pause AND cancel the in-flight uploads (the
+   *  items go back to pending). Used when a call starts: the photo upload
+   *  must not sit in front of the call invite / media on the uplink. */
+  preemptUploads() {
+    this.isPaused = true;
+    let n = 0;
+    try {
+      for (const c of Array.from(this._inflightCtrls || [])) { try { c.abort(); n++; } catch {} }
+      this._inflightCtrls && this._inflightCtrls.clear();
+    } catch {}
+    return n;
   }
 
   abort() {

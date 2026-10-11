@@ -1217,53 +1217,92 @@ object CallVideoQuality {
      * res/fps/target bitrate/limitation/encoder + codec (publisher PC) and
      * received res/fps/drops + decoder (subscriber PC), plus profile/net/bars.
      * Read with: grep video_quality /var/www/mail/data/push_diag.log | tail
+     *
+     * [2026-10-11 negotiate-deadlock] ROOT CAUSE of "a imagem do iPhone não
+     * aparece no Android e a ligação cai" (call_1791735091317_q9bvow1ci and
+     * call_1791487687822_bwh4c32zh — both: Android camera on, t+8s beacon,
+     * then SFU "SUBSCRIBER negotiation timed out" → NEGOTIATE_FAILED):
+     * the old code called room.getSubscriberRTCStats() INSIDE the
+     * getPublisherRTCStats callback. libwebrtc delivers stats callbacks on
+     * its SIGNALING thread; LK Android's get*RTCStats does
+     * runBlocking { launchBlockingOnRTCThread { pc.getStats() } } and
+     * pc.getStats() is proxied synchronously back onto the signaling
+     * thread → signaling thread waits for the LK RTC thread, RTC thread
+     * waits for the signaling thread = permanent DEADLOCK 8 s after the
+     * local camera starts. Audio keeps flowing (worker threads) but no
+     * renegotiation can ever complete again (the offer that adds the
+     * peer's video is never answered), no resume/reconnect either, and the
+     * t8 beacon itself never landed (push_diag android-native has nothing
+     * after 16:11:42). Now: both stats are fetched sequentially from a
+     * plain background thread; the callbacks only hand the report over a
+     * latch (never call back into LiveKit), each wait is bounded (4 s), and
+     * nothing here runs on the main thread (runBlocking on main = ANR risk).
      */
     fun reportVideoQuality(ctx: Context?, room: Room, tag: String, callId: String, bars: Int) {
+        try {
+            Thread({ reportVideoQualityBlocking(ctx, room, tag, callId, bars) }, "chatyy-vq-diag")
+                .apply { isDaemon = true }
+                .start()
+        } catch (t: Throwable) {
+            Log.w(TAG, "reportVideoQuality spawn failed: ${t.message}")
+        }
+    }
+
+    /** Fetch one stats report WITHOUT re-entering LiveKit from the callback. */
+    private fun awaitStats(timeoutMs: Long, fetch: (livekit.org.webrtc.RTCStatsCollectorCallback) -> Unit): RTCStatsReport? {
+        val latch = java.util.concurrent.CountDownLatch(1)
+        val out = java.util.concurrent.atomic.AtomicReference<RTCStatsReport?>(null)
+        try {
+            fetch(livekit.org.webrtc.RTCStatsCollectorCallback { r -> out.set(r); latch.countDown() })
+        } catch (t: Throwable) {
+            Log.w(TAG, "stats fetch threw: ${t.message}")
+            return null
+        }
+        return try {
+            if (latch.await(timeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS)) out.get() else null
+        } catch (_: Throwable) { null }
+    }
+
+    private fun reportVideoQualityBlocking(ctx: Context?, room: Room, tag: String, callId: String, bars: Int) {
         try {
             val head = "cid=${callId.takeLast(12)} tag=$tag profile=${current.name} codec_pref=${NativeCallRoom.preferredVideoCodec()} net=${net(ctx).label} bars=$bars dev=${Build.MODEL}/${Build.VERSION.SDK_INT}"
             val camDims = try {
                 (room.localParticipant.getTrackPublication(Track.Source.CAMERA)?.track as? LocalVideoTrack)?.dimensions
             } catch (_: Throwable) { null }
             val cap = if (camDims != null) " cap=${camDims.width}x${camDims.height}" else " cap=none"
-            room.getPublisherRTCStats { pub: RTCStatsReport ->
-                val sb = StringBuilder(head).append(cap)
-                try {
-                    val stats = pub.statsMap.values
-                    val codecs = stats.filter { it.type == "codec" }.associateBy({ it.id }, { it.members["mimeType"]?.toString() ?: "?" })
-                    stats.filter { it.type == "outbound-rtp" && (it.members["kind"] == "video" || it.members["mediaType"] == "video") }
-                        .forEach { st ->
-                            val mm = st.members
-                            sb.append(" out=${m(mm, "frameWidth")}x${m(mm, "frameHeight")}@${m(mm, "framesPerSecond")}")
-                            sb.append(" tgt=${kbps(mm, "targetBitrate")}")
-                            sb.append(" lim=${m(mm, "qualityLimitationReason")}")
-                            sb.append(" enc=${m(mm, "encoderImplementation")}")
-                            sb.append(" pli=${m(mm, "pliCount")} nack=${m(mm, "nackCount")}")
-                            sb.append(" codec=${codecs[mm["codecId"]?.toString()] ?: "?"}")
-                            if (mm["rid"] != null) sb.append(" rid=${mm["rid"]}")
-                        }
-                } catch (t: Throwable) { sb.append(" out_err=${t.message}") }
-                try {
-                    room.getSubscriberRTCStats { sub: RTCStatsReport ->
-                        try {
-                            val stats = sub.statsMap.values
-                            val codecs = stats.filter { it.type == "codec" }.associateBy({ it.id }, { it.members["mimeType"]?.toString() ?: "?" })
-                            stats.filter { it.type == "inbound-rtp" && (it.members["kind"] == "video" || it.members["mediaType"] == "video") }
-                                .forEach { st ->
-                                    val mm = st.members
-                                    sb.append(" rx=${m(mm, "frameWidth")}x${m(mm, "frameHeight")}@${m(mm, "framesPerSecond")}")
-                                    sb.append(" drop=${m(mm, "framesDropped")} rx_pli=${m(mm, "pliCount")} rx_nack=${m(mm, "nackCount")}")
-                                    sb.append(" dec=${m(mm, "decoderImplementation")}")
-                                    sb.append(" rx_codec=${codecs[mm["codecId"]?.toString()] ?: "?"}")
-                                }
-                        } catch (t: Throwable) { sb.append(" rx_err=${t.message}") }
-                        Log.i(TAG, "video_quality $sb")
-                        postDiag("video_quality", sb.toString())
+            val sb = StringBuilder(head).append(cap)
+            val pub = awaitStats(4_000) { cb -> room.getPublisherRTCStats(cb) }
+            if (pub == null) sb.append(" out=timeout") else try {
+                val stats = pub.statsMap.values
+                val codecs = stats.filter { it.type == "codec" }.associateBy({ it.id }, { it.members["mimeType"]?.toString() ?: "?" })
+                stats.filter { it.type == "outbound-rtp" && (it.members["kind"] == "video" || it.members["mediaType"] == "video") }
+                    .forEach { st ->
+                        val mm = st.members
+                        sb.append(" out=${m(mm, "frameWidth")}x${m(mm, "frameHeight")}@${m(mm, "framesPerSecond")}")
+                        sb.append(" tgt=${kbps(mm, "targetBitrate")}")
+                        sb.append(" lim=${m(mm, "qualityLimitationReason")}")
+                        sb.append(" enc=${m(mm, "encoderImplementation")}")
+                        sb.append(" pli=${m(mm, "pliCount")} nack=${m(mm, "nackCount")}")
+                        sb.append(" codec=${codecs[mm["codecId"]?.toString()] ?: "?"}")
+                        if (mm["rid"] != null) sb.append(" rid=${mm["rid"]}")
                     }
-                } catch (t: Throwable) {
-                    Log.i(TAG, "video_quality $sb (no subscriber stats: ${t.message})")
-                    postDiag("video_quality", sb.toString())
-                }
-            }
+            } catch (t: Throwable) { sb.append(" out_err=${t.message}") }
+            val sub = awaitStats(4_000) { cb -> room.getSubscriberRTCStats(cb) }
+            if (sub == null) sb.append(" rx=timeout") else try {
+                val stats = sub.statsMap.values
+                val codecs = stats.filter { it.type == "codec" }.associateBy({ it.id }, { it.members["mimeType"]?.toString() ?: "?" })
+                stats.filter { it.type == "inbound-rtp" && (it.members["kind"] == "video" || it.members["mediaType"] == "video") }
+                    .forEach { st ->
+                        val mm = st.members
+                        sb.append(" rx=${m(mm, "frameWidth")}x${m(mm, "frameHeight")}@${m(mm, "framesPerSecond")}")
+                        sb.append(" drop=${m(mm, "framesDropped")} rx_pli=${m(mm, "pliCount")} rx_nack=${m(mm, "nackCount")}")
+                        sb.append(" dec=${m(mm, "decoderImplementation")}")
+                        sb.append(" rx_codec=${codecs[mm["codecId"]?.toString()] ?: "?"}")
+                    }
+            } catch (t: Throwable) { sb.append(" rx_err=${t.message}") }
+            Log.i(TAG, "video_quality $sb")
+            postDiag("video_quality", sb.toString())
+            CallDiag.log("video_quality", callId, sb.toString().removePrefix("cid=${callId.takeLast(12)} "), ctx)
         } catch (t: Throwable) {
             Log.w(TAG, "reportVideoQuality failed: ${t.message}")
         }

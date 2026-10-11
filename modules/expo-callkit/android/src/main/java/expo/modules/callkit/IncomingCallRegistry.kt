@@ -96,6 +96,115 @@ object IncomingCallRegistry {
         return true
     }
 
+    // ───────────────────────── ended tombstones (2026-10-11) ─────────────────────────
+    //
+    // [2026-10-11 double-banner] `forget()` (called on decline / cancel /
+    // timeout) wipes the seen-set so a "genuine re-invite" isn't filtered —
+    // but call_ids are unique per call, so the only thing that can arrive
+    // after an end for the SAME call_id is a LATE duplicate: the 2nd FCM of
+    // the double server push (invite_v2 sends fcmSendCallToAndroid AND
+    // fcmSendToUser when the callee has no iOS VoIP token), a WS re-deliver,
+    // or a hub retransmit. Each of those re-armed CallRingingService → a new
+    // ring + banner AFTER the user had already declined ("mesmo eu desligando
+    // ele continua chamando"). Tombstones are persisted (SharedPreferences)
+    // so they also survive the FCM cold-start process being reaped between
+    // the two pushes.
+    private const val ENDED_TTL_MS = 120_000L
+    private const val ENDED_PREFS = "expo_callkit_ended_calls"
+    private val endedAt = ConcurrentHashMap<String, Long>()
+
+    /** Mark [callId] as finished for this device (decline, cancel, timeout, hangup). */
+    fun markEnded(ctx: Context?, callId: String, reason: String) {
+        if (callId.isEmpty()) return
+        val now = System.currentTimeMillis()
+        endedAt[callId] = now
+        try {
+            val sp = ctx?.applicationContext?.getSharedPreferences(ENDED_PREFS, Context.MODE_PRIVATE) ?: return
+            val ed = sp.edit()
+            for ((k, v) in sp.all) {
+                val at = (v as? Long) ?: 0L
+                if (now - at > ENDED_TTL_MS) ed.remove(k)
+            }
+            ed.putLong(callId, now).apply()
+        } catch (_: Throwable) {}
+        Log.d(TAG, "markEnded $callId reason=$reason")
+    }
+
+    /** True when [callId] ended on this device within the last 2 min → any invite for it is stale. */
+    fun isEnded(ctx: Context?, callId: String): Boolean {
+        if (callId.isEmpty()) return false
+        val now = System.currentTimeMillis()
+        val mem = endedAt[callId]
+        if (mem != null) {
+            if (now - mem <= ENDED_TTL_MS) return true
+            endedAt.remove(callId)
+        }
+        return try {
+            val sp = ctx?.applicationContext?.getSharedPreferences(ENDED_PREFS, Context.MODE_PRIVATE) ?: return false
+            val at = sp.getLong(callId, 0L)
+            at > 0L && now - at <= ENDED_TTL_MS
+        } catch (_: Throwable) { false }
+    }
+
+    /**
+     * [2026-10-11 double-banner] ONE teardown for a ringing incoming call,
+     * used by every end path (FCM cancel, WS call_end/cancel/declined,
+     * notification "Recusar", IncomingCallActivity red button, Telecom
+     * reject). Idempotent; never throws. Kills EVERY surface for the call_id:
+     *   - authoritative ringer (IncomingRinger) + CallRingingService FGS
+     *     (onDestroy stops vibration + cancels the FGS notification)
+     *   - BOTH notification ids (FGS untagged + "call_notification" tagged)
+     *   - Telecom Connection
+     *   - IncomingCallActivity (ringer-targeted close broadcast)
+     *   - the ring-time LiveKit preconnect Room (was left in the SFU for
+     *     ~60s after a caller cancel — call_1791735342314_5wgk8gqso)
+     * and tombstones the call so a late duplicate invite can't re-ring.
+     * Does NOTHING to an already accepted call (accept in flight / adopted).
+     */
+    fun dismissIncoming(ctx: Context, callId: String, reason: String, cause: Int, src: String) {
+        if (callId.isEmpty()) return
+        val app = ctx.applicationContext
+        val accepting = try {
+            ExpoCallKitModule.isCallAccepting(callId) || ExpoCallKitModule.isCallAcceptingPersisted(app, callId)
+        } catch (_: Throwable) { false }
+        // Ringing = the FGS still holds this call (removed on accept/decline/
+        // timeout). Deliberately NOT hasSeen(): that stays true for 60s after
+        // an ACCEPT and would tear down a live call's Room on a late cancel.
+        val wasRinging = CallRingingService.ringingCallIds.contains(callId)
+        markEnded(app, callId, reason)
+        if (accepting) {
+            CallDiag.log("dismiss_skip", callId, "src=$src reason=$reason accepting=1", app)
+            return
+        }
+        try { IncomingRinger.stop() } catch (_: Throwable) {}
+        try { CallNotificationService.cancelNotification(app, callId) } catch (_: Throwable) {}
+        try {
+            // Only stop the FGS when it is ringing THIS call (or nothing): a
+            // stale cancel for an old call must not silence a new one.
+            val cur = CallRingingService.currentCallId.get()
+            if (cur == null || cur == callId || CallRingingService.ringingCallIds.contains(callId)) {
+                app.stopService(Intent(app, CallRingingService::class.java))
+            }
+        } catch (_: Throwable) {}
+        try { endTelecom(callId, cause, "$src:$reason") } catch (_: Throwable) {}
+        forget(callId)
+        try {
+            app.sendBroadcast(Intent("expo.modules.callkit.CLOSE_CALL_ACTIVITY").apply {
+                setPackage(app.packageName)
+                putExtra("call_id", callId)
+                putExtra("target", "ringer")
+            })
+        } catch (_: Throwable) {}
+        // Ring-time preconnect (subscribe-only Room) for a call that was never
+        // answered: leave the SFU now so the caller's room empties.
+        if (wasRinging) {
+            try {
+                if (NativeCallRoom.currentCallId() == callId) NativeCallRoom.disconnect()
+            } catch (_: Throwable) {}
+        }
+        CallDiag.log("ring_stop", callId, "src=$src reason=$reason was_ringing=${if (wasRinging) 1 else 0}", app)
+    }
+
     /** True when any source surfaced this call within the TTL. */
     fun hasSeen(callId: String): Boolean {
         if (callId.isEmpty()) return false

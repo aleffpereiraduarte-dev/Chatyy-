@@ -294,10 +294,16 @@ function _uuidv4() {
  * SecureStore on native / localStorage on web. The backend regex allows
  * dashes so we keep the canonical UUID form.
  */
+// [2026-10-11 call-tap-latency] In-memory memo per storage key (= per
+// account): the id never changes once written, but chat_call_invite_v2 paid a
+// SecureStore/Keystore read on every call tap.
+const _deviceIdMemo = new Map();
 export async function getDeviceId() {
   const key = deviceIdStorageKey();
+  const memo = _deviceIdMemo.get(key);
+  if (memo) return memo;
   let stored = await secureGet(key);
-  if (stored && typeof stored === 'string' && stored.length >= 8) return stored;
+  if (stored && typeof stored === 'string' && stored.length >= 8) { _deviceIdMemo.set(key, stored); return stored; }
   // One-time migration: older builds may have written the global key.
   if (_activeAccountEmail && key !== E2E_DEVICE_ID) {
     const legacy = await secureGet(E2E_DEVICE_ID);
