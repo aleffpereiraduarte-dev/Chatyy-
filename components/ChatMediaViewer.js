@@ -8,6 +8,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { IconX, IconDownload, IconPlay, IconPause, IconLock, IconCheck, IconShare, IconStar, IconStarFilled, IconMoreHorizontal, IconInfo, IconForward, IconType, IconCopy } from './Icons';
 // [2026-10-09 more-native] share do ARQUIVO (não do link) + texto da foto (Vision OCR já no binário iOS)
 import { shareMediaFile, canRecognizeImageText, recognizeImageText } from '../utils/mediaNativeActions';
+import { useLanguage } from '../context/LanguageContext';
 import NativeDocPreview, { hasNativePdfView } from './NativeDocPreview'; // [2026-10-09 native-docs]
 import { cachedVideoSource } from '../services/videoCacheSource'; // [2026-10-10 native-audit]
 // Wave 14: 3D / depth-photo parallax view. Lazy-loaded so web stays green
@@ -466,6 +467,7 @@ if (Platform.OS === 'ios') {
 }
 
 function NativeImageViewerWithLoading({ url }) {
+  const { t } = useLanguage();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [retryEpoch, setRetryEpoch] = useState(0);
@@ -477,7 +479,7 @@ function NativeImageViewerWithLoading({ url }) {
     const timeout = setTimeout(() => {
       if (!cancelled) {
         setLoading(false);
-        setError('Timeout — a imagem demorou muito pra carregar');
+        setError(t('mediaViewer.loadTimeout'));
       }
     }, 20000);
     Image.prefetch(url)
@@ -490,7 +492,7 @@ function NativeImageViewerWithLoading({ url }) {
         if (cancelled) return;
         clearTimeout(timeout);
         setLoading(false);
-        setError('Não consegui carregar a imagem');
+        setError(t('mediaViewer.loadFailed'));
       });
     return () => { cancelled = true; clearTimeout(timeout); };
   }, [url, retryEpoch]);
@@ -504,14 +506,14 @@ function NativeImageViewerWithLoading({ url }) {
         <View style={[s.mediaContainer, { alignItems: 'center', justifyContent: 'center' }]}>
           <ActivityIndicator size="large" color="#fff" />
           <Text style={{ color: 'rgba(255,255,255,0.6)', marginTop: 12, fontSize: 13 }}>
-            Carregando imagem...
+            {t('chatConv.loadingImage')}
           </Text>
         </View>
       )}
       {error && (
         <View style={[s.mediaContainer, { alignItems: 'center', justifyContent: 'center', padding: 24 }]}>
           <Text style={{ color: '#fff', fontSize: 15, fontWeight: '600', marginBottom: 6 }}>
-            Ops!
+            {t('mediaViewer.oops')}
           </Text>
           <Text style={{ color: 'rgba(255,255,255,0.7)', fontSize: 13, textAlign: 'center', marginBottom: 16 }}>
             {error}
@@ -519,10 +521,10 @@ function NativeImageViewerWithLoading({ url }) {
           <TouchableOpacity
             onPress={() => setRetryEpoch(e => e + 1)}
             style={{ backgroundColor: '#111111', paddingHorizontal: 20, paddingVertical: 10, borderRadius: 10 }}
-            accessibilityLabel="Tentar novamente"
+            accessibilityLabel={t('common.tryAgain')}
             accessibilityRole="button"
           >
-            <Text style={{ color: '#fff', fontSize: 14, fontWeight: '600' }}>Tentar novamente</Text>
+            <Text style={{ color: '#fff', fontSize: 14, fontWeight: '600' }}>{t('common.tryAgain')}</Text>
           </TouchableOpacity>
         </View>
       )}
@@ -1113,6 +1115,7 @@ function fmtT(sec) {
 }
 
 function ModernWebVideoPlayer({ url, videoRef }) {
+  const { t } = useLanguage();
   const [playing, setPlaying] = useState(false);
   const [loading, setLoading] = useState(true);
   const [pos, setPos] = useState(0);
@@ -1297,7 +1300,7 @@ function ModernWebVideoPlayer({ url, videoRef }) {
         {!playing && !loading && (
           <button
             onClick={togglePlay}
-            aria-label="Reproduzir"
+            aria-label={t('common.play')}
             style={{
               position: 'absolute',
               top: '50%',
@@ -1402,7 +1405,7 @@ function ModernWebVideoPlayer({ url, videoRef }) {
 
           {/* Bottom row: play, time, volume, fullscreen */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-            <button onClick={togglePlay} aria-label={playing ? 'Pausar' : 'Reproduzir'} style={ctlBtn}>
+            <button onClick={togglePlay} aria-label={playing ? t('common.pause') : t('common.play')} style={ctlBtn}>
               {playing ? (
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="#fff"><path d="M6 4h4v16H6zm8 0h4v16h-4z"/></svg>
               ) : (
@@ -1413,14 +1416,14 @@ function ModernWebVideoPlayer({ url, videoRef }) {
               {fmtT(pos)} <span style={{ color: 'rgba(255,255,255,0.55)' }}>/ {fmtT(dur)}</span>
             </span>
             <div style={{ flex: 1 }} />
-            <button onClick={toggleMute} aria-label={muted ? 'Ativar som' : 'Silenciar'} style={ctlBtn}>
+            <button onClick={toggleMute} aria-label={muted ? t('feed.unmute') : t('chat.mute')} style={ctlBtn}>
               {muted || volume === 0 ? (
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="#fff"><path d="M3.63 3.63a1 1 0 0 0 0 1.41L7.29 8.7 7 9H4a1 1 0 0 0-1 1v4a1 1 0 0 0 1 1h3l3.29 3.29c.63.63 1.71.18 1.71-.71v-4.17l4.18 4.18c-.49.37-1.02.68-1.6.91a1 1 0 0 0 .76 1.85c.86-.35 1.66-.83 2.36-1.42l1.27 1.27a1 1 0 0 0 1.41 0 1 1 0 0 0 0-1.41L5.05 3.63a1 1 0 0 0-1.42 0zM19 12a7 7 0 0 0-1.16-3.86l-1.45 1.45A5 5 0 0 1 17 12c0 .67-.13 1.31-.37 1.9l1.51 1.51A7 7 0 0 0 19 12zm-2.5 0a4.5 4.5 0 0 0-.16-1.18l-1.71 1.71v.04l1.6 1.6a4.4 4.4 0 0 0 .27-2.17zM12 4l-1.65 1.65L12 7.3z"/></svg>
               ) : (
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="#fff"><path d="M3 10v4a1 1 0 0 0 1 1h3l3.29 3.29c.63.63 1.71.18 1.71-.71V6.41c0-.89-1.08-1.34-1.71-.71L7 9H4a1 1 0 0 0-1 1zm13.5 2A4.5 4.5 0 0 0 14 7.97v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v.41a1 1 0 0 0 .68.95A8.01 8.01 0 0 1 20 12a8 8 0 0 1-5.32 7.41A1 1 0 0 0 14 20.36v.41a1 1 0 0 0 1.32.95C19.21 20.4 22 16.52 22 12s-2.79-8.4-6.68-9.72A1 1 0 0 0 14 3.23z"/></svg>
               )}
             </button>
-            <button onClick={toggleFs} aria-label={fullscreen ? 'Sair de tela cheia' : 'Tela cheia'} style={ctlBtn}>
+            <button onClick={toggleFs} aria-label={fullscreen ? t('mediaViewer.exitFullscreen') : t('viewer.fullscreen')} style={ctlBtn}>
               {fullscreen ? (
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="#fff"><path d="M5 16h3v3h2v-5H5v2zm3-8H5v2h5V5H8v3zm6 11h2v-3h3v-2h-5v5zm2-11V5h-2v5h5V8h-3z"/></svg>
               ) : (
@@ -1720,12 +1723,12 @@ function GenericFileViewer({ url, filename, fileSize, messageId, t }) {
       <TouchableOpacity
         style={s.openExternalBtn}
         onPress={() => Linking.openURL(resolvedUrl).catch(() => {})}
-        accessibilityLabel="Download"
+        accessibilityLabel={t?.('files.download') || 'Baixar'}
         accessibilityRole="button"
       >
         <IconDownload size={18} color="#fff" />
         <Text style={s.openExternalText}>
-          {t?.('chat.openOrDownload') || 'Abrir / Baixar'}
+          {t?.('mediaViewer.openOrDownload') || 'Abrir / Baixar'}
         </Text>
       </TouchableOpacity>
       {messageId ? (
@@ -2225,7 +2228,7 @@ export default function ChatMediaViewer({ visible, onClose, fileUrl, hlsUrl, fil
           const tempPath = FS.cacheDirectory + 'chatyy_save_' + Date.now() + '.' + safeExt;
           const download = await FS.downloadAsync(sourceUri, tempPath);
           if (!download?.uri || (download.status && download.status >= 400)) {
-            Alert.alert('Erro', `Download falhou (status ${download?.status || '?'}).`);
+            Alert.alert(t?.('common.error') || 'Erro', t?.('mediaViewer.downloadFailedStatus', { status: download?.status || '?' }) || `Download falhou (status ${download?.status || '?'}).`);
             setSaving(false);
             return;
           }
@@ -2239,7 +2242,7 @@ export default function ChatMediaViewer({ visible, onClose, fileUrl, hlsUrl, fil
         try {
           const fc = await FS.getInfoAsync(sourceUri);
           if (!fc?.exists) {
-            Alert.alert('Erro ao salvar', 'Arquivo não disponível. Tente abrir a imagem e salvar novamente.');
+            Alert.alert(t?.('mediaViewer.saveErrorTitle') || 'Erro ao salvar', t?.('mediaViewer.fileUnavailableSave') || 'Arquivo não disponível. Tente abrir a imagem e salvar novamente.');
             setSaving(false);
             return;
           }
@@ -2292,11 +2295,11 @@ export default function ChatMediaViewer({ visible, onClose, fileUrl, hlsUrl, fil
             // in their own UI — surface a clean friendly message instead.
             const rawMsg = String(saveErr2?.message || saveErr?.message || '');
             const cleanMsg = /no such file|could not be opened/i.test(rawMsg)
-              ? 'Arquivo não encontrado. Toque na imagem pra abrir e tente salvar de novo.'
+              ? (t?.('mediaViewer.fileNotFound') || 'Arquivo não encontrado. Toque na imagem para abrir e tente salvar de novo.')
               : /source_missing_or_empty/i.test(rawMsg)
-              ? 'Arquivo vazio ou ausente. Tente abrir a imagem novamente.'
-              : (rawMsg || 'Verifique as permissões de Fotos em Ajustes > Chatyy');
-            Alert.alert('Erro ao salvar', cleanMsg);
+              ? (t?.('mediaViewer.fileEmpty') || 'Arquivo vazio ou ausente. Tente abrir a imagem novamente.')
+              : (rawMsg || t?.('mediaViewer.photosPermCheck') || 'Verifique as permissões de Fotos em Ajustes > Chatyy');
+            Alert.alert(t?.('mediaViewer.saveErrorTitle') || 'Erro ao salvar', cleanMsg);
           }
         }
         // [WAVE 91 2026-05-21] After a successful createAssetAsync, move
@@ -2330,7 +2333,7 @@ export default function ChatMediaViewer({ visible, onClose, fileUrl, hlsUrl, fil
           FS.deleteAsync(sourceUri, { idempotent: true }).catch(() => {});
         }
       } catch (e) {
-        Alert.alert('Erro ao salvar', String(e?.message || 'Verifique a permissão de fotos nas configurações.'));
+        Alert.alert(t?.('mediaViewer.saveErrorTitle') || 'Erro ao salvar', String(e?.message || t?.('mediaViewer.photosPermCheck') || 'Verifique as permissões de Fotos em Ajustes > Chatyy'));
       } finally {
         setSaving(false);
       }

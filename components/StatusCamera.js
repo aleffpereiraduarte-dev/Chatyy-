@@ -74,84 +74,15 @@ const SCREEN_W = Dimensions.get('window').width;
 const SCREEN_H = Dimensions.get('window').height;
 const THUMB_SIZE = 76;
 
-// ─── Instagram-style filters ───
-// Each filter has: overlay layers (tint color + opacity + blendMode) that stack
-// on top of the image on native. On confirm, the filter key is passed to parent.
-export const FILTERS = [
-  { key: 'normal',    label: 'Normal',    layers: [] },
-  { key: 'clarendon', label: 'Clarendon', layers: [
-    { color: 'rgba(127,187,227,0.2)', blend: 'overlay' },
-    { color: 'rgba(0,0,0,0.05)', blend: 'multiply' },
-  ], adjust: { contrast: 1.2, saturate: 1.35 } },
-  { key: 'gingham',   label: 'Gingham',   layers: [
-    { color: 'rgba(230,230,250,0.2)', blend: 'soft-light' },
-  ], adjust: { brightness: 1.05, hueRotate: -10 } },
-  { key: 'moon',      label: 'Moon',      layers: [
-    { color: 'rgba(160,160,186,0.35)', blend: 'overlay' },
-  ], adjust: { grayscale: 1, contrast: 1.1, brightness: 1.1 } },
-  { key: 'lark',      label: 'Lark',      layers: [
-    { color: 'rgba(242,242,220,0.15)', blend: 'soft-light' },
-  ], adjust: { contrast: 0.9, brightness: 1.15, saturate: 1.2 } },
-  { key: 'reyes',     label: 'Reyes',     layers: [
-    { color: 'rgba(239,205,173,0.25)', blend: 'overlay' },
-  ], adjust: { sepia: 0.22, brightness: 1.1, contrast: 0.85, saturate: 0.75 } },
-  { key: 'juno',      label: 'Juno',      layers: [
-    { color: 'rgba(127,140,200,0.12)', blend: 'overlay' },
-  ], adjust: { contrast: 1.15, brightness: 1.05, saturate: 1.7, sepia: 0.1 } },
-  { key: 'slumber',   label: 'Slumber',   layers: [
-    { color: 'rgba(125,105,24,0.2)', blend: 'overlay' },
-  ], adjust: { saturate: 0.66, brightness: 1.05 } },
-  { key: 'aden',      label: 'Aden',      layers: [
-    { color: 'rgba(66,10,14,0.12)', blend: 'soft-light' },
-    { color: 'rgba(230,193,165,0.1)', blend: 'overlay' },
-  ], adjust: { hueRotate: -20, contrast: 0.9, saturate: 0.85, brightness: 1.2 } },
-  { key: 'valencia',  label: 'Valencia',  layers: [
-    { color: 'rgba(58,3,3,0.12)', blend: 'overlay' },
-  ], adjust: { contrast: 1.08, brightness: 1.08, sepia: 0.08 } },
-  { key: 'nashville', label: 'Nashville', layers: [
-    { color: 'rgba(247,176,59,0.18)', blend: 'overlay' },
-    { color: 'rgba(0,70,150,0.08)', blend: 'multiply' },
-  ], adjust: { contrast: 1.2, brightness: 1.05, saturate: 1.2, sepia: 0.15 } },
-  { key: 'perpetua',  label: 'Perpetua',  layers: [
-    { color: 'rgba(0,91,154,0.12)', blend: 'soft-light' },
-    { color: 'rgba(230,193,61,0.08)', blend: 'overlay' },
-  ], adjust: { saturate: 1.25, brightness: 1.05 } },
-  { key: 'toaster',   label: 'Toaster',   layers: [
-    { color: 'rgba(128,78,15,0.2)', blend: 'overlay' },
-  ], adjust: { contrast: 1.5, brightness: 0.9, saturate: 1.3 } },
-  { key: 'walden',    label: 'Walden',    layers: [
-    { color: 'rgba(0,68,204,0.12)', blend: 'soft-light' },
-    { color: 'rgba(204,204,0,0.06)', blend: 'overlay' },
-  ], adjust: { brightness: 1.1, saturate: 1.6, hueRotate: 10 } },
-  { key: 'hudson',    label: 'Hudson',    layers: [
-    { color: 'rgba(166,177,255,0.18)', blend: 'overlay' },
-  ], adjust: { brightness: 1.2, contrast: 0.9, saturate: 1.1 } },
-  { key: 'xpro2',     label: 'X-Pro II',  layers: [
-    { color: 'rgba(230,97,0,0.15)', blend: 'overlay' },
-    { color: 'rgba(0,0,80,0.12)', blend: 'multiply' },
-  ], adjust: { contrast: 1.3, saturate: 1.4, sepia: 0.1 } },
-  { key: 'rise',      label: 'Rise',      layers: [
-    { color: 'rgba(236,205,169,0.15)', blend: 'overlay' },
-    { color: 'rgba(50,30,7,0.08)', blend: 'multiply' },
-  ], adjust: { brightness: 1.05, contrast: 0.9, saturate: 0.9, sepia: 0.05 } },
-  { key: 'sierra',    label: 'Sierra',    layers: [
-    { color: 'rgba(128,78,15,0.15)', blend: 'overlay' },
-  ], adjust: { contrast: 0.85, saturate: 0.75, brightness: 1.15 } },
-  { key: 'inkwell',   label: 'Inkwell',   layers: [
-    { color: 'rgba(0,0,0,0.08)', blend: 'multiply' },
-  ], adjust: { grayscale: 1, contrast: 1.25, brightness: 1.05 } },
-  { key: 'lofi',      label: 'Lo-Fi',     layers: [
-    { color: 'rgba(34,34,34,0.1)', blend: 'multiply' },
-  ], adjust: { contrast: 1.5, saturate: 1.1, brightness: 1.0 } },
-  { key: 'earlybird', label: 'Earlybird', layers: [
-    { color: 'rgba(208,186,142,0.2)', blend: 'overlay' },
-    { color: 'rgba(100,50,10,0.1)', blend: 'multiply' },
-  ], adjust: { contrast: 0.9, sepia: 0.25, saturate: 1.3, brightness: 1.05 } },
-];
+// [2026-10-11 boot-split] FILTERS moved to ./status/cameraFilters (re-exported).
+import { FILTERS, FilterOverlay } from './status/cameraFilters';
+export { FILTERS, FilterOverlay };
+
 
 // Capture modes — TikTok-style 3-tab swipeable bar
 const MODES = ['photo', 'video', 'story'];
 const MODE_LABELS = { photo: 'Foto', video: 'Vídeo', story: 'Story' };
+const MODE_LABEL_KEYS = { photo: 'chatConv.photo', video: 'chatConv.video', story: 'statusCam.modeStory' };
 
 // Speed cycle (TikTok pattern — affects video playback rate metadata)
 const SPEED_CYCLE = [0.3, 0.5, 1, 2, 3];
@@ -175,18 +106,6 @@ const IMPORT_SPEED_LIST = [0.5, 1, 2, 3];
 // recording automatically when the cap is hit so we don't need a
 // separate timer.
 const VOICEOVER_MAX_MS = 30000;
-
-// ─── Filter overlay component (native) ───
-export function FilterOverlay({ filter, style }) {
-  if (!filter?.layers?.length) return null;
-  return filter.layers.map((layer, i) => (
-    <View
-      key={i}
-      pointerEvents="none"
-      style={[StyleSheet.absoluteFill, style, { backgroundColor: layer.color }]}
-    />
-  ));
-}
 
 // ─── Filter thumbnail ───
 function FilterThumb({ filter, uri, selected, onPress }) {
@@ -691,12 +610,12 @@ export default function StatusCamera({ visible, onClose, onCapture, t, initialSe
       photo = await cameraRef.current.takePictureAsync({ quality: 0.92, exif: false });
     } catch (e) {
       console.warn('[StatusCamera] takePhoto threw:', e?.message || e);
-      try { Alert.alert('Erro', 'Falha ao tirar foto. Tenta novamente.'); } catch {}
+      try { Alert.alert(t?.('common.error') || 'Erro', t?.('statusCam.photoFailed') || 'Falha ao tirar a foto. Tente novamente.'); } catch {}
       return;
     }
     if (!photo || !photo.uri) {
       console.warn('[StatusCamera] takePhoto returned empty photo');
-      try { Alert.alert('Erro', 'Não foi possível capturar a foto. Tenta novamente.'); } catch {}
+      try { Alert.alert(t?.('common.error') || 'Erro', t?.('statusCam.photoCaptureFailed') || 'Não foi possível capturar a foto. Tente novamente.'); } catch {}
       return;
     }
     try {
@@ -1361,7 +1280,7 @@ export default function StatusCamera({ visible, onClose, onCapture, t, initialSe
       <TouchableOpacity
         onPress={() => { haptic('light'); onClose?.(); }}
         style={[s.closeBtn, { top: safeTop + 16 }]}
-        accessibilityLabel="Close camera"
+        accessibilityLabel={t?.('statusCam.closeCamera') || 'Fechar câmera'}
         accessibilityRole="button"
       >
         <IconX size={22} color="#fff" />
@@ -1371,12 +1290,12 @@ export default function StatusCamera({ visible, onClose, onCapture, t, initialSe
       <TouchableOpacity
         onPress={() => { haptic('light'); setMusicPickerOpen(true); }}
         style={[s.musicPill, { top: safeTop + 20 }]}
-        accessibilityLabel="Add music"
+        accessibilityLabel={t?.('status.addMusic') || 'Adicionar música'}
         accessibilityRole="button"
       >
         <IconMusic size={14} color="#fff" style={{ marginRight: 6 }} />
         <Text style={s.musicLabel} numberOfLines={1}>
-          {musicTrack?.title || 'Adicionar som'}
+          {musicTrack?.title || t?.('statusCam.addSound') || 'Adicionar som'}
         </Text>
       </TouchableOpacity>
 
@@ -1385,21 +1304,21 @@ export default function StatusCamera({ visible, onClose, onCapture, t, initialSe
         <TouchableOpacity
           onPress={() => { haptic('light'); setFacing(f => f === 'front' ? 'back' : 'front'); }}
           style={s.stackBtn}
-          accessibilityLabel="Flip camera"
+          accessibilityLabel={t?.('live.flipCamera') || 'Virar câmera'}
         >
           <IconRefresh size={22} color="#fff" />
-          <Text style={s.stackLabel}>Virar</Text>
+          <Text style={s.stackLabel}>{t?.('statusCam.flip') || 'Virar'}</Text>
         </TouchableOpacity>
         <TouchableOpacity
           onPress={() => { haptic('light'); setFlash(f => f === 'off' ? 'on' : f === 'on' ? 'auto' : 'off'); }}
           style={s.stackBtn}
-          accessibilityLabel="Toggle flash"
+          accessibilityLabel={t?.('statusCam.toggleFlash') || 'Alternar flash'}
         >
           <View style={[s.stackIconCircle, flash !== 'off' && s.stackIconCircleActive]}>
             <IconZap size={20} color={flash !== 'off' ? '#FACC15' : '#fff'} />
           </View>
           <Text style={s.stackLabel}>
-            {flash === 'off' ? 'Off' : flash === 'on' ? 'On' : 'Auto'}
+            {flash === 'off' ? (t?.('statusCam.flashOff') || 'Desligado') : flash === 'on' ? (t?.('statusCam.flashOn') || 'Ligado') : (t?.('statusCam.flashAuto') || 'Auto')}
           </Text>
         </TouchableOpacity>
         <TouchableOpacity
@@ -1411,30 +1330,30 @@ export default function StatusCamera({ visible, onClose, onCapture, t, initialSe
             });
           }}
           style={s.stackBtn}
-          accessibilityLabel="Speed"
+          accessibilityLabel={t?.('feed.speed') || 'Velocidade'}
         >
           <Text style={[s.stackIcon, { fontSize: 13, fontWeight: '900' }]}>{SPEED_LABELS[speed]}</Text>
-          <Text style={s.stackLabel}>Speed</Text>
+          <Text style={s.stackLabel}>{t?.('feed.speed') || 'Velocidade'}</Text>
         </TouchableOpacity>
         <TouchableOpacity
           onPress={() => { haptic('light'); setBeauty(b => !b); }}
           style={[s.stackBtn, beauty && s.stackBtnActive]}
-          accessibilityLabel="Beauty"
+          accessibilityLabel={t?.('statusCam.beauty') || 'Beleza'}
         >
           <View style={[s.stackIconCircle, beauty && s.stackIconCircleActive]}>
             <IconSparkles size={20} color={beauty ? BRAND_PURPLE_LIGHT : '#fff'} />
           </View>
-          <Text style={s.stackLabel}>Beauty</Text>
+          <Text style={s.stackLabel}>{t?.('statusCam.beauty') || 'Beleza'}</Text>
         </TouchableOpacity>
         <TouchableOpacity
           onPress={() => { haptic('light'); setTimerDelay(d => d === 0 ? 3 : d === 3 ? 10 : 0); }}
           style={[s.stackBtn, timerDelay > 0 && s.stackBtnActive]}
-          accessibilityLabel="Timer"
+          accessibilityLabel={t?.('statusCam.timer') || 'Timer'}
         >
           <View style={[s.stackIconCircle, timerDelay > 0 && s.stackIconCircleActive]}>
             <IconClock size={20} color={timerDelay > 0 ? BRAND_PURPLE_LIGHT : '#fff'} />
           </View>
-          <Text style={s.stackLabel}>{timerDelay === 0 ? 'Timer' : `${timerDelay}s`}</Text>
+          <Text style={s.stackLabel}>{timerDelay === 0 ? (t?.('statusCam.timer') || 'Timer') : `${timerDelay}s`}</Text>
         </TouchableOpacity>
         {/* Multi-clip toggle — sets captureMode to video and records the
             first segment. Subsequent taps on the record button add more
@@ -1450,7 +1369,7 @@ export default function StatusCamera({ visible, onClose, onCapture, t, initialSe
             recordSegment();
           }}
           style={[s.stackBtn, segments.length > 0 && s.stackBtnActive]}
-          accessibilityLabel="Multi-clip"
+          accessibilityLabel={t?.('statusCam.multiClip') || 'Vários clipes'}
         >
           <View style={[s.stackIconCircle, segments.length > 0 && s.stackIconCircleActive]}>
             {segments.length > 0 ? (
@@ -1545,7 +1464,7 @@ export default function StatusCamera({ visible, onClose, onCapture, t, initialSe
       {/* Filter swipe hint (Feature 8) */}
       {showSwipeHint && (
         <Animated.View style={[s.swipeHint, { opacity: hintFadeAnim }]} pointerEvents="none">
-          <Text style={s.swipeHintTxt}>Deslize pra trocar filtro</Text>
+          <Text style={s.swipeHintTxt}>{t?.('statusCam.swipeFilterHint') || 'Deslize para trocar o filtro'}</Text>
         </Animated.View>
       )}
 
@@ -1578,7 +1497,7 @@ export default function StatusCamera({ visible, onClose, onCapture, t, initialSe
                 key={p.key}
                 onPress={() => { haptic('light'); setArFilterIdx(i); }}
                 style={[s.arFilterTile, sel && s.arFilterTileActive]}
-                accessibilityLabel={`AR ${p.label}`}
+                accessibilityLabel={`AR ${t?.(`statusCam.face.${p.key}`) || p.label}`}
               >
                 {/* The 'none' preset has no asset — render a circle slash
                     glyph (∅) so it still reads as "no filter" without
@@ -1599,7 +1518,7 @@ export default function StatusCamera({ visible, onClose, onCapture, t, initialSe
                   </View>
                 )}
                 <Text style={[s.arFilterLabel, sel && s.arFilterLabelActive]} numberOfLines={1}>
-                  {p.label}
+                  {t?.(`statusCam.face.${p.key}`) || p.label}
                 </Text>
               </TouchableOpacity>
             );
@@ -1626,7 +1545,7 @@ export default function StatusCamera({ visible, onClose, onCapture, t, initialSe
                 key={f.key}
                 onPress={() => setFilterIdx(i)}
                 style={[s.liveFilterChip, sel && s.liveFilterChipActive]}
-                accessibilityLabel={`Filter ${f.label}`}
+                accessibilityLabel={t?.('statusCam.filterA11y', { name: f.label }) || `Filtro ${f.label}`}
               >
                 <Text style={[s.liveFilterChipTxt, sel && s.liveFilterChipTxtActive]} numberOfLines={1}>
                   {f.label}
@@ -1651,7 +1570,7 @@ export default function StatusCamera({ visible, onClose, onCapture, t, initialSe
               accessibilityState={{ selected: active }}
             >
               <Text style={[s.modeTxt, active && s.modeTxtActive]}>
-                {MODE_LABELS[m]}
+                {t?.(MODE_LABEL_KEYS[m]) || MODE_LABELS[m]}
               </Text>
               {active && <View style={s.modeUnderline} />}
             </TouchableOpacity>
@@ -1685,7 +1604,7 @@ export default function StatusCamera({ visible, onClose, onCapture, t, initialSe
           onPressIn={handlePressIn}
           onPressOut={handlePressOut}
           delayLongPress={300}
-          accessibilityLabel="Capture"
+          accessibilityLabel={t?.('statusCam.capture') || 'Capturar'}
           accessibilityRole="button"
         >
           <View style={s.capWrap}>
@@ -1746,7 +1665,7 @@ export default function StatusCamera({ visible, onClose, onCapture, t, initialSe
                   <Text style={[s.musicArtist, { marginTop: 2, marginBottom: 6 }]} numberOfLines={1}>{trimTrack.artist}</Text>
                 ) : null}
                 <Text style={s.trimHint}>
-                  Arraste para escolher o trecho · {Math.round(trimClipMs / 1000)}s
+                  {t?.('statusCam.trimHint', { n: Math.round(trimClipMs / 1000) }) || `Arraste para escolher o trecho · ${Math.round(trimClipMs / 1000)}s`}
                 </Text>
                 {/* Timeline with a draggable start handle. The filled window
                     shows the clip that will play; the dot is the grab handle. */}
@@ -1777,43 +1696,43 @@ export default function StatusCamera({ visible, onClose, onCapture, t, initialSe
                   </View>
                 </View>
                 <Text style={s.trimTime}>
-                  Início: {Math.floor(trimStartMs / 1000)}s
+                  {t?.('statusCam.trimStart', { n: Math.floor(trimStartMs / 1000) }) || `Início: ${Math.floor(trimStartMs / 1000)}s`}
                 </Text>
                 <View style={s.trimBtnRow}>
                   <TouchableOpacity onPress={cancelTrim} style={[s.trimBtn, s.trimBtnGhost]}>
-                    <Text style={s.trimBtnGhostTxt}>Voltar</Text>
+                    <Text style={s.trimBtnGhostTxt}>{t?.('common.back') || 'Voltar'}</Text>
                   </TouchableOpacity>
                   <TouchableOpacity onPress={commitTrim} style={[s.trimBtn, s.trimBtnPrimary]}>
-                    <Text style={s.trimBtnPrimaryTxt}>Pronto</Text>
+                    <Text style={s.trimBtnPrimaryTxt}>{t?.('common.done') || 'Pronto'}</Text>
                   </TouchableOpacity>
                 </View>
               </View>
             ) : (
             <>
-            <Text style={s.musicSheetTitle}>Adicionar som</Text>
+            <Text style={s.musicSheetTitle}>{t?.('statusCam.addSound') || 'Adicionar som'}</Text>
             <View style={s.musicSearchRow}>
               <TextInput
                 value={musicQuery}
                 onChangeText={setMusicQuery}
                 onSubmitEditing={() => loadMusicCatalog(musicQuery.trim())}
-                placeholder="Buscar música…"
+                placeholder={t?.('statusCam.searchMusic') || 'Buscar música…'}
                 placeholderTextColor="rgba(255,255,255,0.45)"
                 returnKeyType="search"
                 style={s.musicSearchInput}
               />
               {musicQuery ? (
-                <TouchableOpacity onPress={() => { setMusicQuery(''); loadMusicCatalog(''); }} style={s.musicSearchClear} accessibilityLabel="Limpar busca">
+                <TouchableOpacity onPress={() => { setMusicQuery(''); loadMusicCatalog(''); }} style={s.musicSearchClear} accessibilityLabel={t?.('a11y.clearSearch') || 'Limpar busca'}>
                   <IconX size={16} color="rgba(255,255,255,0.75)" />
                 </TouchableOpacity>
               ) : null}
             </View>
             <FlatList
-              data={[{ id: '__none__', title: 'Sem música', artist: '', preview_url: '', image_url: '' }, ...musicCatalog]}
+              data={[{ id: '__none__', title: t?.('statusCam.noMusic') || 'Sem música', artist: '', preview_url: '', image_url: '' }, ...musicCatalog]}
               keyExtractor={(it) => String(it.id)}
               style={s.musicList}
               keyboardShouldPersistTaps="handled"
               ListEmptyComponent={musicLoading ? null : (
-                <Text style={s.musicSheetEmpty}>Nenhuma faixa encontrada</Text>
+                <Text style={s.musicSheetEmpty}>{t?.('statusCam.noTracks') || 'Nenhuma faixa encontrada'}</Text>
               )}
               renderItem={({ item }) => {
                 const isNone = item.id === '__none__';
@@ -1834,7 +1753,7 @@ export default function StatusCamera({ visible, onClose, onCapture, t, initialSe
                         // WhatsApp/IG-style. Selection is committed on "Pronto".
                         setTrimTrack({
                           id: String(item.id),
-                          title: item.title || 'Untitled',
+                          title: item.title || t?.('notes.untitled') || 'Sem título',
                           artist: item.artist || '',
                           previewUrl: item.preview_url || '',
                           coverUrl: item.image_url || '',
@@ -1855,7 +1774,7 @@ export default function StatusCamera({ visible, onClose, onCapture, t, initialSe
                       />
                     )}
                     <View style={{ flex: 1, marginLeft: 12 }}>
-                      <Text style={s.musicTitle} numberOfLines={1}>{item.title || 'Untitled'}</Text>
+                      <Text style={s.musicTitle} numberOfLines={1}>{item.title || t?.('notes.untitled') || 'Sem título'}</Text>
                       {!isNone && (
                         <Text style={s.musicArtist} numberOfLines={1}>{item.artist || 'Pixabay'}</Text>
                       )}
@@ -1869,7 +1788,7 @@ export default function StatusCamera({ visible, onClose, onCapture, t, initialSe
               onPress={() => { haptic('light'); setMusicPickerOpen(false); }}
               style={s.musicSheetClose}
             >
-              <Text style={s.musicSheetCloseTxt}>Fechar</Text>
+              <Text style={s.musicSheetCloseTxt}>{t?.('common.close') || 'Fechar'}</Text>
             </TouchableOpacity>
             </>
             )}

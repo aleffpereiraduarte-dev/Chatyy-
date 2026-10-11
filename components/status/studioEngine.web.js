@@ -125,8 +125,8 @@ export async function exportFiltered(base, matrix) {
 }
 
 export async function captureStage(viewRef, { width, height }) {
-  // eslint-disable-next-line global-require
-  const mod = require('html2canvas');
+  // [2026-10-11 boot-split] dynamic import → html2canvas in its own chunk (was in boot __common).
+  const mod = await import('html2canvas');
   const html2canvas = mod?.default || mod;
   const node = viewRef?.current || viewRef;
   const scale = Math.min(3, Math.max(1, 1080 / Math.max(1, width)));

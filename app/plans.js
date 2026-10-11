@@ -2695,7 +2695,7 @@ export default function PlansScreen() {
                                 <ActivityIndicator color="#fff" size="small" />
                               ) : (
                                 <Text style={{ color: '#fff', fontSize: FontSize.xs, fontWeight: '700' }}>
-                                  Upgrade
+                                  {t('plans.upgradeAction')}
                                 </Text>
                               )}
                             </TouchableOpacity>
@@ -2748,7 +2748,7 @@ export default function PlansScreen() {
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 12, paddingVertical: 8, paddingHorizontal: 12, backgroundColor: isDark ? 'rgba(245,158,11,0.06)' : '#fffbeb', borderRadius: 8 }}>
                   <IconShield size={14} color={FAMILY_COLOR} />
                   <Text style={{ color: colors.textSecondary, fontSize: FontSize.sm }}>
-                    Admin: <Text style={{ fontWeight: '600', color: colors.text }}>{familyAdmin}</Text>
+                    {t('community.admin')}: <Text style={{ fontWeight: '600', color: colors.text }}>{familyAdmin}</Text>
                   </Text>
                 </View>
               )}
@@ -3188,7 +3188,7 @@ export default function PlansScreen() {
                           {(savedCard.brand || 'card').charAt(0).toUpperCase() + (savedCard.brand || 'card').slice(1)} •••• {savedCard.last4}
                         </Text>
                         <Text style={{ color: colors.textSecondary, fontSize: 12, marginTop: 2 }}>
-                          Validade: {savedCard.exp_month}/{savedCard.exp_year}
+                          {t('plans.validity')}: {savedCard.exp_month}/{savedCard.exp_year}
                         </Text>
                       </View>
                       <IconCheck size={18} color={useSavedCard ? colors.primary : 'transparent'} />

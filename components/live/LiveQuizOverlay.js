@@ -24,6 +24,7 @@ import { useMemo } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet,
 } from 'react-native';
+import { IconCheck, IconX } from '../Icons';
 
 export default function LiveQuizOverlay({
   quiz,
@@ -111,14 +112,20 @@ export default function LiveQuizOverlay({
           </TouchableOpacity>
         ) : null}
         {closed ? (
-          <Text style={styles.summary}>
-            {total} {t.answers}
+          <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4 }}>
+            <Text style={[styles.summary, { marginTop: 0 }]}>
+              {total} {t.answers}
+            </Text>
             {hasAnswered && correctIdx >= 0 ? (
-              myAnswerIdx === correctIdx
-                ? '   ·   ✓ ' + t.yourAnswer
-                : '   ·   ✗ ' + t.yourAnswer
-            ) : ''}
-          </Text>
+              <>
+                <Text style={[styles.summary, { marginTop: 0 }]}>{'   ·   '}</Text>
+                {myAnswerIdx === correctIdx
+                  ? <IconCheck size={11} color="rgba(255,255,255,0.7)" />
+                  : <IconX size={11} color="rgba(255,255,255,0.7)" />}
+                <Text style={[styles.summary, { marginTop: 0 }]}>{' ' + t.yourAnswer}</Text>
+              </>
+            ) : null}
+          </View>
         ) : null}
       </View>
     </View>

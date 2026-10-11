@@ -216,7 +216,7 @@ function _finish(s, reason) {
   const dur = _t0 ? Math.max(0, Math.round((Date.now() - _t0) / 1000)) : 0;
   // History row — same shape /call.js wrote (ChatCallsTab.addCallToHistory).
   try {
-    const chatCallsTab = require('../components/ChatCallsTab');
+    const chatCallsTab = require('./callHistoryStore');
     if (typeof chatCallsTab.addCallToHistory === 'function') {
       chatCallsTab.addCallToHistory({
         contactEmail: s.calleeEmail,

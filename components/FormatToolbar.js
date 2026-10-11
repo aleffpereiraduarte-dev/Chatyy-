@@ -1,5 +1,7 @@
 import React, { useRef, useEffect } from 'react';
 import { View, TouchableOpacity, Text, StyleSheet, Animated, Platform } from 'react-native';
+import { IconEyeOff } from './Icons';
+import { useLanguageOptional } from '../context/LanguageContext';
 // Static import — Metro precisa do módulo no bundle de qualquer jeito;
 // `require` dentro do handler escondia a dependência e dificultava bundle.
 let _Haptics = null;
@@ -9,12 +11,14 @@ try { _Haptics = require('expo-haptics'); } catch {}
 // Pills com glyph estilizado por tipo (B negrito, I itálico, S tachado, etc).
 // Tap aplica/desaplica o marker na seleção, ou insere par com cursor no meio.
 const BUTTONS = [
-  { id: 'bold',   marker: '*',   glyph: 'B',   tip: 'Negrito' },
-  { id: 'italic', marker: '_',   glyph: 'I',   tip: 'Itálico' },
-  { id: 'strike', marker: '~',   glyph: 'S',   tip: 'Tachado' },
-  { id: 'mono',   marker: '`',   glyph: '</>', tip: 'Monoespaçado' },
-  { id: 'spoil',  marker: '||',  glyph: '▮',   tip: 'Spoiler' },
-  { id: 'code',   marker: '```', glyph: '⌨',   tip: 'Bloco código', block: true },
+  { id: 'bold',   marker: '*',   glyph: 'B',   tip: 'Negrito',      tipKey: 'chat.bold' },
+  { id: 'italic', marker: '_',   glyph: 'I',   tip: 'Itálico',      tipKey: 'chat.italic' },
+  { id: 'strike', marker: '~',   glyph: 'S',   tip: 'Tachado',      tipKey: 'chat.strikethrough' },
+  { id: 'mono',   marker: '`',   glyph: '</>', tip: 'Monoespaçado', tipKey: 'uiG.format.mono' },
+  // [2026-10-11 ui-sweep] spoiler/código usavam glyphs unicode (▮ ⌨) como
+  // ícone — ⌨ vira emoji no iOS. Spoiler → IconEyeOff; código → "{ }".
+  { id: 'spoil',  marker: '||',  Icon: IconEyeOff, tip: 'Spoiler', tipKey: 'uiG.format.spoiler' },
+  { id: 'code',   marker: '```', glyph: '{ }', tip: 'Bloco de código', tipKey: 'uiG.format.codeBlock', block: true },
 ];
 
 const GLYPH_STYLES = {
@@ -53,6 +57,8 @@ function _isDarkBg(bg) {
 }
 
 export default function FormatToolbar({ text = '', setText, selection, colors = {}, inputRef }) {
+  const _lang = useLanguageOptional();
+  const _tip = (b) => { try { const v = _lang?.t?.(b.tipKey); if (v && v !== b.tipKey) return v; } catch {} return b.tip; };
   const enterAnim = useRef(new Animated.Value(0)).current;
   // Tracks last cursor request — reaplica num useEffect depois do `text` mudar
   // pra não competir com o re-render do TextInput. (Antes setNativeProps logo
@@ -138,10 +144,12 @@ export default function FormatToolbar({ text = '', setText, selection, colors = 
           onPress={() => wrapSelection(b.marker, b.block)}
           activeOpacity={0.65}
           style={[styles.pill, { backgroundColor: pill }]}
-          accessibilityLabel={b.tip}
+          accessibilityLabel={_tip(b)}
           accessibilityRole="button"
         >
-          <Text style={[styles.glyph, { color: pillActive }, GLYPH_STYLES[b.id]]}>{b.glyph}</Text>
+          {b.Icon
+            ? <b.Icon size={16} color={pillActive} />
+            : <Text style={[styles.glyph, { color: pillActive }, GLYPH_STYLES[b.id]]}>{b.glyph}</Text>}
         </TouchableOpacity>
       ))}
     </Animated.View>

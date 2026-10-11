@@ -23,6 +23,7 @@ import { USE_NATIVE_HEADER, nativeHeaderOptions, HeaderIconButton } from '../com
 import { useTheme } from '../context/ThemeContext';
 import { getCallDiag, clearCallDiag } from '../services/callDiag';
 import { IconArrowLeft, IconTrash, IconPhone } from '../components/Icons';
+import { useLanguage } from '../context/LanguageContext';
 
 function fmtTs(ts) {
   if (!ts || typeof ts !== 'number') return '?';
@@ -43,6 +44,7 @@ function levelColor(level, colors) {
 export default function CallDiagnose() {
   const router = useRouter();
   const { colors } = useTheme();
+  const { t } = useLanguage();
   const [entries, setEntries] = useState([]);
   const [refreshing, setRefreshing] = useState(false);
 
@@ -65,12 +67,12 @@ export default function CallDiagnose() {
 
   const clearAll = useCallback(() => {
     Alert.alert(
-      'Limpar diagnóstico?',
-      'Apaga todos os registros de chamadas. Use depois de reportar pro suporte.',
+      t('callDiagnose.clearTitle'),
+      t('callDiagnose.clearBody'),
       [
-        { text: 'Cancelar', style: 'cancel' },
+        { text: t('common.cancel'), style: 'cancel' },
         {
-          text: 'Limpar',
+          text: t('common.clear'),
           style: 'destructive',
           onPress: async () => {
             await clearCallDiag();
@@ -79,7 +81,7 @@ export default function CallDiagnose() {
         },
       ],
     );
-  }, [load]);
+  }, [load, t]);
 
   const copyAll = useCallback(() => {
     try {
@@ -94,16 +96,16 @@ export default function CallDiagnose() {
       } else {
         try { Clipboard.setString(txt); } catch {}
       }
-      Alert.alert('Copiado', 'Log copiado para a área de transferência.');
+      Alert.alert(t('callDiagnose.copiedTitle'), t('callDiagnose.copiedBody'));
     } catch {}
-  }, [entries]);
+  }, [entries, t]);
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.background }}>
       {USE_NATIVE_HEADER && <Stack.Screen options={nativeHeaderOptions({
-        colors, title: 'Diagnóstico de chamadas',
+        colors, title: t('settings.rd2.callDiag'),
         headerRight: () => (
-          <HeaderIconButton onPress={clearAll} accessibilityLabel="Limpar">
+          <HeaderIconButton onPress={clearAll} accessibilityLabel={t('common.clear')}>
             <IconTrash size={21} color={colors.text} />
           </HeaderIconButton>
         ),
@@ -115,7 +117,7 @@ export default function CallDiagnose() {
         </TouchableOpacity>
         <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
           <IconPhone size={18} color={colors.primary} />
-          <Text style={[styles.title, { color: colors.text }]}>Diagnóstico de chamadas</Text>
+          <Text style={[styles.title, { color: colors.text }]}>{t('settings.rd2.callDiag')}</Text>
         </View>
         <TouchableOpacity onPress={clearAll} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }} style={{ marginRight: 12 }}>
           <IconTrash size={22} color={colors.textSecondary || '#6b7280'} />
@@ -129,12 +131,9 @@ export default function CallDiagnose() {
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.text} />}
       >
         <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
-          <Text style={[styles.cardTitle, { color: colors.text }]}>O que é isso?</Text>
+          <Text style={[styles.cardTitle, { color: colors.text }]}>{t('callDiagnose.whatIsThis')}</Text>
           <Text style={[styles.cardBody, { color: colors.textSecondary }]}>
-            Registra eventos críticos do ciclo de vida de chamadas: montagem da tela, conexão
-            LiveKit, ICE, qualidade, áudio mudo remoto, timeouts e desconexão. Útil para
-            diagnosticar "Conectando forever", áudio mudo ou quedas aleatórias sem precisar
-            de Console/Xcode.
+            {t('callDiagnose.whatIsThisBody')}
           </Text>
         </View>
 
@@ -144,20 +143,19 @@ export default function CallDiagnose() {
             style={[styles.copyBtn, { backgroundColor: colors.primary + '18', borderColor: colors.primary + '44' }]}
           >
             <Text style={{ color: colors.primary, fontWeight: '700', fontSize: 14 }}>
-              Copiar log ({entries.length} eventos)
+              {t('callDiagnose.copyLog', { n: entries.length })}
             </Text>
           </TouchableOpacity>
         )}
 
         <Text style={[styles.sectionTitle, { color: colors.text }]}>
-          Eventos ({entries.length})
+          {t('callDiagnose.events', { n: entries.length })}
         </Text>
 
         {entries.length === 0 ? (
           <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
             <Text style={[styles.cardBody, { color: colors.textSecondary }]}>
-              Nenhum registro ainda. Faça ou receba uma chamada e volte aqui para ver o que
-              aconteceu.
+              {t('callDiagnose.empty')}
             </Text>
           </View>
         ) : (

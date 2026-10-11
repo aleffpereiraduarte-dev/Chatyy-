@@ -191,7 +191,8 @@ function groupPhotosByDate(items, t) {
       key = 'thisMonth'; label = t('photos.thisMonth');
     } else {
       // Group by month/year
-      const monthNames = [
+      const _tMonths = t('calendar.months');
+      const monthNames = (Array.isArray(_tMonths) && _tMonths.length === 12) ? _tMonths : [
         'Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho',
         'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'
       ];
@@ -494,11 +495,11 @@ function PhotosScreenInner() {
   };
   const fmtEta = (sec) => {
     if (!sec || sec < 0) return '—';
-    if (sec < 60) return sec + 's restantes';
-    if (sec < 3600) return Math.round(sec / 60) + ' min restantes';
+    if (sec < 60) return t('photosUi.etaSec', { n: sec });
+    if (sec < 3600) return t('photosUi.etaMin', { n: Math.round(sec / 60) });
     const h = Math.floor(sec / 3600);
     const m = Math.round((sec % 3600) / 60);
-    return `${h}h ${m}min restantes`;
+    return t('photosUi.etaHourMin', { h, m });
   };
 
   // Selection
@@ -545,10 +546,10 @@ function PhotosScreenInner() {
       if (res?.success && res.data?.pdf_url) {
         setPhotobookResult(res.data);
       } else {
-        safeAlert?.('Erro', res?.error || 'Falha ao gerar PDF');
+        safeAlert?.(t('common.error'), res?.error || t('photosUi.pdfFailed'));
       }
     } catch (e) {
-      safeAlert?.('Erro', String(e?.message || e));
+      safeAlert?.(t('common.error'), String(e?.message || e));
     } finally {
       setPhotobookGenerating(false);
     }
@@ -838,9 +839,9 @@ function PhotosScreenInner() {
       }
       if (perm.status !== 'granted' && perm.accessPrivileges !== 'all') {
         if (perm.accessPrivileges === 'limited') {
-          setPhotoError('Acesso LIMITADO: só vejo ' + (perm.totalCount || 'algumas') + ' fotos.\n\nPara fazer backup de TODAS:\nAjustes → Chatyy → Fotos → "Acesso Total"');
+          setPhotoError(perm.totalCount ? t('photosUi.limitedAccess', { n: perm.totalCount }) : t('photosUi.limitedAccessSome'));
         } else {
-          setPhotoError('Permissão negada. Vá em Ajustes → Chatyy → Fotos e permita acesso.');
+          setPhotoError(t('photosUi.permDeniedSettings'));
         }
         if (perm.status !== 'granted' && perm.accessPrivileges !== 'limited') return;
       }
@@ -889,7 +890,7 @@ function PhotosScreenInner() {
       }
     } catch (e) {
       console.warn('Media library not available:', e);
-      setPhotoError('Módulo de fotos não disponível. Atualize o app pela App Store/Play Store para ativar o backup de fotos.');
+      setPhotoError(t('photosUi.photosModuleUnavailable'));
     }
   }, []);
 
@@ -996,7 +997,8 @@ function PhotosScreenInner() {
     // Also group device photos by date as "virtual albums"
     if (devicePhotos.length > 0 && !folderMap.has('Recentes')) {
       folderMap.set('Recentes', {
-        name: 'Recentes',
+        name: t('chatConv.recents'),
+        isRecents: true,
         photos: devicePhotos.slice(0, 50),
         count: devicePhotos.length,
         cover: devicePhotos[0],
@@ -1035,7 +1037,7 @@ function PhotosScreenInner() {
           isDevice: true,
         }));
         setAlbumPhotos(photos);
-      } else if (album.name === 'Recentes') {
+      } else if (album.isRecents || album.name === 'Recentes') {
         // Virtual album — just use device photos
         setAlbumPhotos(devicePhotos);
       } else if (album.photos?.length > 0) {
@@ -1845,7 +1847,7 @@ function PhotosScreenInner() {
   const startBackup = useCallback(async () => {
     if (Platform.OS === 'web') return;
     if (!autoBackupMod?.startForegroundBackup) {
-      safeAlert('Backup', 'Módulo de backup não disponível. Atualize o app.');
+      safeAlert('Backup', t('photosUi.backupModuleUnavailable'));
       return;
     }
     // 2026-05-18 (#1126): if the previous run completed with uploaded=0 AND
@@ -2072,7 +2074,7 @@ function PhotosScreenInner() {
         // Don't block — just continue
       }
       if (result?.error === 'permission_denied') {
-        safeAlert('Permissão', 'Permita acesso às fotos em Ajustes');
+        safeAlert(t('common.permission'), t('photosUi.allowPhotosSettings'));
         clearInterval(refreshTimer);
         cleanupBackupRefresh();
         setBackupStatus('idle');
@@ -2088,7 +2090,7 @@ function PhotosScreenInner() {
         // Surface to user via banner + Alert (GAP 9)
         setBackupErrorCount(c => c + 1);
         setBackupErrorVisible(true);
-        safeAlert('Erro no backup', mapApiError(result, t, 'photos'));
+        safeAlert(t('photosUi.backupError'), mapApiError(result, t, 'photos'));
         clearInterval(refreshTimer);
         cleanupBackupRefresh();
         setBackupStatus('needs_backup');
@@ -2322,7 +2324,7 @@ function PhotosScreenInner() {
       const ids = JSON.parse(saved);
       const backedUpDevicePhotos = devicePhotos.filter(p => p.deviceId && ids[p.deviceId]);
       if (backedUpDevicePhotos.length === 0) {
-        safeAlert('', 'Nenhuma foto para liberar');
+        safeAlert('', t('photosUi.nothingToFree'));
         return;
       }
       const estimatedSize = backedUpDevicePhotos.length * 3 * 1024 * 1024; // ~3MB avg
@@ -2526,7 +2528,7 @@ function PhotosScreenInner() {
       ? '\n' + (t('photos.restoreSkippedMsg') || '{n} já estavam no dispositivo.').replace('{n}', skippedExisting)
       : '';
     safeAlert(
-      t('photos.restoreComplete') || 'Concluido!',
+      t('photos.restoreComplete') || 'Concluído!',
       `${baseMsg}${skipNotice}\n\n${economyNotice}`
     );
   }, [selectedMonths, cloudPhotoMonths, devicePhotos, t]);
@@ -2938,7 +2940,7 @@ function PhotosScreenInner() {
             <IconCloudUpload size={20} color={colors.primary} />
             <View style={{ marginLeft: 10, flex: 1 }}>
               <Text style={[s.backupBannerTitle, { color: colors.text }]}>
-                {Math.min(backedUpTotal, deviceCount || backedUpTotal)} de {deviceCount} fotos salvas
+                {t('photosUi.savedOfTotal', { done: Math.min(backedUpTotal, deviceCount || backedUpTotal), total: deviceCount })}
               </Text>
               <View style={[s.progressBar, { backgroundColor: colors.border }]}>
                 <View style={[s.progressFill, { width: `${pct}%`, backgroundColor: colors.primary }]} />
@@ -3034,7 +3036,7 @@ function PhotosScreenInner() {
             <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
               <ActivityIndicator size="small" color={colors.primary} />
               <Text style={{ marginLeft: 10, fontSize: 14, fontWeight: '600', color: colors.text, flex: 1 }}>
-                Escaneando biblioteca...
+                {t('photosUi.scanning')}
               </Text>
               <Text style={{ fontSize: 12, color: colors.textSecondary }}>
                 {scanState.scanned}/{scanState.total}
@@ -3048,7 +3050,7 @@ function PhotosScreenInner() {
               }} />
             </View>
             <Text style={{ fontSize: 11, color: colors.textSecondary, marginTop: 6 }}>
-              {scanState.pending} fotos pendentes • {fmtBytes(scanState.pendingBytes)}
+              {t('photosUi.pendingWithSize', { n: scanState.pending, size: fmtBytes(scanState.pendingBytes) })}
             </Text>
           </View>
         );
@@ -3060,7 +3062,7 @@ function PhotosScreenInner() {
             <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
               <IconCloudUpload size={20} color={colors.primary} />
               <Text style={{ marginLeft: 10, fontSize: 14, fontWeight: '600', color: colors.text, flex: 1 }}>
-                Fazendo backup
+                {t('photosUi.backingUp')}
               </Text>
               <Text style={{ fontSize: 13, fontWeight: '700', color: colors.primary }}>{progressPct}%</Text>
             </View>
@@ -3074,7 +3076,7 @@ function PhotosScreenInner() {
             </View>
             <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 8 }}>
               <Text style={{ fontSize: 11, color: colors.textSecondary }}>
-                {uploadStats.uploaded} de {uploadStats.total} • {fmtBytes(uploadStats.bytesUploaded)} / {fmtBytes(uploadStats.totalBytes)}
+                {t('photosUi.countOf', { done: uploadStats.uploaded, total: uploadStats.total })} • {fmtBytes(uploadStats.bytesUploaded)} / {fmtBytes(uploadStats.totalBytes)}
               </Text>
               <Text style={{ fontSize: 11, color: colors.textSecondary, fontWeight: '600' }}>
                 {fmtSpeed(uploadStats.bytesPerSec)}
@@ -3088,7 +3090,7 @@ function PhotosScreenInner() {
               paddingTop: 10, borderTopWidth: 1, borderTopColor: colors.border + '60',
             }}>
               <Text style={{ fontSize: 11, color: colors.textTertiary, flex: 1 }}>
-                Mantenha o app aberto para um backup mais rápido
+                {t('photosUi.keepOpen')}
               </Text>
             </View>
           </View>
@@ -3102,7 +3104,7 @@ function PhotosScreenInner() {
             <IconCloudUpload size={20} color={colors.primary} />
             <View style={{ marginLeft: 10, flex: 1 }}>
               <Text style={[s.backupBannerTitle, { color: colors.text }]}>
-                {Math.min(backedUpTotal, deviceCount || backedUpTotal)} de {deviceCount} fotos salvas
+                {t('photosUi.savedOfTotal', { done: Math.min(backedUpTotal, deviceCount || backedUpTotal), total: deviceCount })}
               </Text>
               {storageText ? <Text style={[s.backupBannerSub, { color: colors.textSecondary }]}>{storageText}</Text> : null}
             </View>
@@ -3909,7 +3911,7 @@ function PhotosScreenInner() {
       const res = await api.photoAnalyzeBatch(50);
       if (res?.success) {
         const d = res.data || {};
-        safeAlert('Analise ML', `${d.analyzed || 0} fotos analisadas!\n${d.remaining || 0} restantes.`);
+        safeAlert(t('photosUi.mlTitle'), t('photosUi.mlAnalyzed', { done: d.analyzed || 0, left: d.remaining || 0 }));
       }
     } catch {}
     setAnalyzing(false);
@@ -3972,9 +3974,9 @@ function PhotosScreenInner() {
                       </View>
                     )}
                     <Text style={{ color: colors.text, fontSize: 11, marginTop: 4, textAlign: 'center' }} numberOfLines={1}>
-                      {cluster.label || `Pessoa ${idx + 1}`}
+                      {cluster.label || t('photosUi.personN', { n: idx + 1 })}
                     </Text>
-                    <Text style={{ color: colors.textSecondary, fontSize: 10 }}>{cluster.count} fotos</Text>
+                    <Text style={{ color: colors.textSecondary, fontSize: 10 }}>{t('photos.memoryPhotos', { n: cluster.count })}</Text>
                   </TouchableOpacity>
                 ))}
               </View>
@@ -4009,7 +4011,7 @@ function PhotosScreenInner() {
               <Text style={[s.cardTitle, { color: colors.text }]}>{tr(t, 'photos.ux.ai', 'Inteligência Artificial')}</Text>
             </View>
             <Text style={{ color: colors.textSecondary, fontSize: 13, marginBottom: 12 }}>
-              Analisa suas fotos com IA para busca por conteudo (pessoas, objetos, cenas, cores)
+              {t('photos.aiAnalysisDesc')}
             </Text>
             <TouchableOpacity
               style={[s.backupBtn, { backgroundColor: colors.primary, alignSelf: 'flex-start', opacity: analyzing ? 0.6 : 1 }]}
@@ -4109,7 +4111,7 @@ function PhotosScreenInner() {
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 6 }}>
                       <ActivityIndicator size="small" color={colors.primary} />
                       <Text style={{ color: colors.text, fontWeight: '600', fontSize: 15, flex: 1 }}>
-                        {cur} de {total} fotos
+                        {t('photosUi.countOfPhotos', { done: cur, total })}
                       </Text>
                       <Text style={{ color: colors.primary, fontWeight: '700', fontSize: 14 }}>
                         {Math.round(pct)}%
@@ -4133,7 +4135,7 @@ function PhotosScreenInner() {
             {backupStatus === 'paused' && (
               <View style={[s.card, { backgroundColor: isDark ? '#451a03' : '#fef3c7', borderColor: '#d97706', marginBottom: Spacing.md }]}>
                 <View style={{ padding: 16, flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-                  <Text style={{ fontSize: 20 }}>⏸</Text>
+                  <IconPause size={20} color={isDark ? '#fbbf24' : '#92400e'} />
                   <View style={{ flex: 1 }}>
                     <Text style={{ color: isDark ? '#fbbf24' : '#92400e', fontWeight: '700', fontSize: 14 }}>{tr(t, 'photos.ux.backupPaused', 'Backup pausado')}</Text>
                     <Text style={{ color: isDark ? '#fde68a' : '#78350f', fontSize: 12, marginTop: 2 }}>{tr(t, 'photos.ux.noProgress', 'Sem progresso há alguns minutos.')}</Text>
@@ -4146,7 +4148,7 @@ function PhotosScreenInner() {
                       startBackup();
                     }}
                     style={{ backgroundColor: '#d97706', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8 }}
-                    accessibilityLabel="Continuar backup"
+                    accessibilityLabel={t('photosUi.resumeBackup')}
                     accessibilityRole="button"
                   >
                     <Text style={{ color: '#fff', fontWeight: '700', fontSize: 13 }}>{tr(t, 'photos.ux.resume', 'Continuar')}</Text>
@@ -4154,7 +4156,7 @@ function PhotosScreenInner() {
                   <TouchableOpacity
                     onPress={repairBackup}
                     style={{ backgroundColor: '#b91c1c', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8 }}
-                    accessibilityLabel="Reparar backup"
+                    accessibilityLabel={t('photosUi.repairBackup')}
                     accessibilityRole="button"
                   >
                     <Text style={{ color: '#fff', fontWeight: '700', fontSize: 13 }}>{tr(t, 'photos.ux.repair', 'Reparar')}</Text>
@@ -4545,7 +4547,7 @@ function PhotosScreenInner() {
                 disabled={Platform.OS === 'web'}
               >
                 <IconRefresh size={20} color="#b91c1c" />
-                <Text style={[s.actionBtnText, { color: '#b91c1c' }]}>Reparar backup</Text>
+                <Text style={[s.actionBtnText, { color: '#b91c1c' }]}>{t('photosUi.repairBackup')}</Text>
               </TouchableOpacity>
 
               {/* v3 migration restore — only shown when a v2 snapshot exists.
@@ -4557,26 +4559,26 @@ function PhotosScreenInner() {
                   style={[s.actionBtn, { borderBottomWidth: 1, borderBottomColor: colors.border }]}
                   onPress={() => {
                     safeAlert(
-                      'Restaurar mapa anterior',
-                      'Carrega o mapa de fotos backupeadas anterior à migração. Pode evitar re-uploads.',
+                      t('photosUi.restoreMapTitle'),
+                      t('photosUi.restoreMapMsg'),
                       [
                         { text: t('common.cancel'), style: 'cancel' },
                         {
-                          text: 'Restaurar',
+                          text: t('backup.restore'),
                           onPress: async () => {
                             try {
                               const bs = require('../services/backup/backupStorage');
                               const n = await bs.restoreV2Snapshot();
                               if (n > 0) {
-                                safeAlert('', `${n} fotos marcadas como já backupeadas.`);
+                                safeAlert('', t('photosUi.restoreMapDone', { n }));
                                 setHasV2Snapshot(false);
                               } else if (n === 0) {
-                                safeAlert('', 'Mapa anterior vazio — nada a restaurar.');
+                                safeAlert('', t('photosUi.restoreMapEmpty'));
                               } else {
-                                safeAlert('', 'Nenhum mapa anterior encontrado.');
+                                safeAlert('', t('photosUi.restoreMapNone'));
                               }
                             } catch (e) {
-                              safeAlert('Erro', e?.message || 'falhou');
+                              safeAlert(t('common.error'), e?.message || t('common.failed'));
                             }
                           },
                         },
@@ -4586,7 +4588,7 @@ function PhotosScreenInner() {
                   disabled={Platform.OS === 'web'}
                 >
                   <IconRefresh size={20} color={colors.primary} />
-                  <Text style={[s.actionBtnText, { color: colors.primary }]}>Restaurar mapa anterior</Text>
+                  <Text style={[s.actionBtnText, { color: colors.primary }]}>{t('photosUi.restoreMapTitle')}</Text>
                 </TouchableOpacity>
               )}
 
@@ -4809,7 +4811,7 @@ function PhotosScreenInner() {
 
             <TouchableOpacity style={s.viewerAction} onPress={generateAiCaption} disabled={aiCaptionLoading}>
               {aiCaptionLoading ? <Text style={{ fontSize: 22, color: '#fff' }}>...</Text> : <IconSparkles size={22} color="#fff" />}
-              <Text style={s.viewerActionText}>Caption</Text>
+              <Text style={s.viewerActionText}>{t('feed.caption')}</Text>
             </TouchableOpacity>
 
             {!viewerPhoto.isDevice && (
@@ -4955,7 +4957,7 @@ function PhotosScreenInner() {
               </Text>
             </View>
             <View style={{ flex: 1 }} />
-            <TouchableOpacity onPress={selectAll} style={s.headerBtn} accessibilityLabel="Selecionar tudo">
+            <TouchableOpacity onPress={selectAll} style={s.headerBtn} accessibilityLabel={t('photos.selectAll')}>
               <IconCheckCircle size={22} color={colors.primary} />
             </TouchableOpacity>
           </View>
@@ -5208,7 +5210,7 @@ function PhotosScreenInner() {
                 onPress={() => { setFabOpen(false); startNewPostFlow('camera'); }}
               >
                 <IconCamera size={20} color={colors.primary} />
-                <Text style={[s.fabOptionText, { color: colors.text }]}>{t('photos.camera') || 'Camera'}</Text>
+                <Text style={[s.fabOptionText, { color: colors.text }]}>{t('photos.camera') || 'Câmera'}</Text>
               </TouchableOpacity>
               <TouchableOpacity
                 style={[s.fabOption, { backgroundColor: colors.surface, ...Shadow.md }]}
@@ -5286,7 +5288,7 @@ function PhotosScreenInner() {
           <TouchableOpacity
             style={s.batchAction}
             onPress={() => setCreateAlbumVisible(true)}
-            accessibilityLabel="Adicionar a album"
+            accessibilityLabel={t('photos.addToAlbum')}
           >
             <View style={[s.batchActionPill, { backgroundColor: 'rgba(17, 17, 17,0.14)' }]}>
               <IconAlbum size={20} color={colors.primary} />
@@ -5316,12 +5318,12 @@ function PhotosScreenInner() {
                 .map(p => p.id);
               if (ids.length === 0) return;
               if (ids.length > 100) {
-                safeAlert?.('Limite 100', 'Selecione ate 100 fotos por album.');
+                safeAlert?.(t('photosUi.limitTitle', { n: 100 }), t('photosUi.limitMsg', { n: 100 }));
                 return;
               }
               openPhotobookForSelection(ids);
             }}
-            accessibilityLabel="Criar album"
+            accessibilityLabel={t('photos.createPhotobook')}
           >
             <View style={[s.batchActionPill, { backgroundColor: 'rgba(16,185,129,0.14)' }]}>
               <IconAlbum size={20} color="#10B981" />
@@ -5440,7 +5442,7 @@ function PhotosScreenInner() {
         >
           <Pressable style={[s.modalContent, { backgroundColor: colors.surface, width: 320 }]} onPress={e => e.stopPropagation()}>
             <Text style={[s.modalTitle, { color: colors.text }]}>
-              {t('photos.createPhotobook') || 'Criar album'}
+              {t('photos.createPhotobook') || 'Criar álbum'}
             </Text>
             <Text style={{ color: colors.textSecondary, fontSize: 13, marginBottom: 12 }}>
               {photobookSelectedCount} {t('photos.items') || 'fotos'} {t('photos.selected') || 'selecionadas'}
@@ -5481,7 +5483,7 @@ function PhotosScreenInner() {
             ) : photobookResult?.pdf_url ? (
               <View style={{ paddingVertical: 8 }}>
                 <Text style={{ color: colors.textSecondary, fontSize: 12, marginBottom: 10 }}>
-                  {(photobookResult.page_count || 0)} {t('photos.pages') || 'paginas'} · {Math.round((photobookResult.size_bytes || 0) / 1024)} KB
+                  {(photobookResult.page_count || 0)} {t('photos.pages') || 'páginas'} · {Math.round((photobookResult.size_bytes || 0) / 1024)} KB
                 </Text>
                 <TouchableOpacity
                   onPress={async () => {
@@ -5598,10 +5600,10 @@ function PhotosMapTab({ colors, isDark, insets, t, api, allPhotos, openViewer })
         setClusters(r.data.clusters || []);
         setTotal(r.data.total || 0);
       } else {
-        setError(r?.error || 'Falha ao carregar mapa');
+        setError(r?.error || t('photosUi.mapLoadFailed'));
       }
     } catch (e) {
-      setError(e?.message || 'Falha ao carregar mapa');
+      setError(e?.message || t('photosUi.mapLoadFailed'));
     } finally {
       setLoading(false);
     }
@@ -5899,15 +5901,15 @@ function MemoriesCarousel({
   // per the audit). Adding new categories is a matter of dropping an entry
   // here + extending the `queries` map below; no backend change required.
   const presetCards = [
-    { key: 'summer', title: `Verão ${(new Date().getMonth() >= 11 ? new Date().getFullYear() + 1 : new Date().getFullYear())}`, sub: 'Os melhores momentos', tint: ['#111111', '#111111'] },
-    { key: 'thisweek', title: 'Esta semana', sub: 'Novas memórias', tint: ['#0EA5E9', '#111111'] },
-    { key: 'people', title: 'Pessoas', sub: 'Quem aparece mais', tint: ['#F59E0B', '#111111'] },
+    { key: 'summer', title: `${t('photos.preset.summer')} ${(new Date().getMonth() >= 11 ? new Date().getFullYear() + 1 : new Date().getFullYear())}`, sub: t('photosUi.presetSub.summer'), tint: ['#111111', '#111111'] },
+    { key: 'thisweek', title: t('photos.preset.thisweek'), sub: t('photosUi.presetSub.thisweek'), tint: ['#0EA5E9', '#111111'] },
+    { key: 'people', title: t('photos.preset.people'), sub: t('photosUi.presetSub.people'), tint: ['#F59E0B', '#111111'] },
     // Auto-categories ("Coleções automáticas") — surfaced via photo_labels.
-    { key: 'selfies', title: 'Selfies', sub: 'Você no foco', tint: ['#111111', '#111111'] },
-    { key: 'food', title: 'Comida', sub: 'Pratos que marcaram', tint: ['#F97316', '#EF4444'] },
-    { key: 'pets', title: 'Pets', sub: 'Animais que amam você', tint: ['#10B981', '#06B6D4'] },
-    { key: 'sunset', title: 'Por do sol', tint: ['#F59E0B', '#111111'], sub: 'Céus inesquecíveis' },
-    { key: 'documents', title: 'Documentos', sub: 'Recibos, comprovantes', tint: ['#64748B', '#0EA5E9'] },
+    { key: 'selfies', title: t('photos.preset.selfies'), sub: t('photosUi.presetSub.selfies'), tint: ['#111111', '#111111'] },
+    { key: 'food', title: t('photos.preset.food'), sub: t('photosUi.presetSub.food'), tint: ['#F97316', '#EF4444'] },
+    { key: 'pets', title: t('photos.preset.pets'), sub: t('photosUi.presetSub.pets'), tint: ['#10B981', '#06B6D4'] },
+    { key: 'sunset', title: t('photos.preset.sunset'), tint: ['#F59E0B', '#111111'], sub: t('photosUi.presetSub.sunset') },
+    { key: 'documents', title: t('photos.preset.documents'), sub: t('photosUi.presetSub.documents'), tint: ['#64748B', '#0EA5E9'] },
   ];
   const totalCards = memoryCards.length + presetCards.length;
 

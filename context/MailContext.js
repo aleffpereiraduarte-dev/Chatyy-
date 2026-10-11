@@ -187,6 +187,33 @@ const POLL_DISCONNECTED = 10000;
 // (Desfazer = 5 s + POST). Ver loadFolders.
 const FOLDER_SETTLE_MS = 6500;
 
+// [2026-10-11 email-qa] Envio otimista em Enviados (ver subscribeEmailSent em
+// services/api.js). Linha local fica até a lista do servidor trazer a real
+// (casada por assunto + destinatário + horário) ou expirar.
+const PENDING_SENT_TTL_MS = 10 * 60 * 1000;
+const _isSentFolder = (name) => /^(INBOX[./])?\.?(sent|sent items|sent messages|sent mail|enviados|enviadas|itens enviados)$/i.test(String(name || '').trim());
+const _normSubj = (x) => String(x || '').trim().replace(/\s+/g, ' ').toLowerCase();
+const _firstAddr = (x) => {
+  const str = String(x || '');
+  const m = str.match(/<([^>]+@[^>]+)>/) || str.match(/([^\s,;<>"]+@[^\s,;<>"]+)/);
+  return m ? m[1].trim().toLowerCase() : '';
+};
+const _stripHtml = (h) => String(h || '')
+  .replace(/<(style|script|head)\b[^>]*>[\s\S]*?<\/\1>/gi, ' ')
+  .replace(/<br\s*\/?>/gi, ' ').replace(/<[^>]+>/g, ' ')
+  .replace(/&nbsp;/gi, ' ').replace(/&amp;/gi, '&').replace(/&lt;/gi, '<').replace(/&gt;/gi, '>')
+  .replace(/&quot;/gi, '"').replace(/&#39;/gi, "'").replace(/\s+/g, ' ').trim();
+const _sentMatches = (p, e) => {
+  if (!e || e._optimistic) return false;
+  if (_normSubj(e.subject) !== _normSubj(p.subject)) return false;
+  const pTo = _firstAddr(p.to);
+  const eTo = _firstAddr(e.to);
+  if (pTo && eTo && pTo !== eTo) return false;
+  const ek = _emailDateKey(e);
+  // Data do servidor pode vir sem fuso/arredondada → janela folgada.
+  return !Number.isFinite(ek) || ek <= 0 || ek >= p._optimisticAt - 15 * 60 * 1000;
+};
+
 export function MailProvider({ children }) {
   const { user } = useAuth();
   // [2026-10-10 qa-sweep] Toast/notificação de e-mail novo usava "New email" /
@@ -284,6 +311,27 @@ export function MailProvider({ children }) {
   // switches, so changeFolder can paint instantly instead of showing the
   // previous folder's rows under the new header (instant folder switch fix).
   const folderRowsRef = useRef(new Map());
+  // [2026-10-11 email-qa] Linhas otimistas de Enviados (mais nova primeiro).
+  const pendingSentRef = useRef([]);
+  const mergePendingSent = useCallback((folder, list) => {
+    const base = Array.isArray(list) ? list : [];
+    if (!_isSentFolder(folder)) return base;
+    const hadOptimistic = base.some(e => e && e._optimistic);
+    const pend = pendingSentRef.current;
+    if (!pend.length && !hadOptimistic) return base;
+    const now = Date.now();
+    const used = new Set();
+    const keep = [];
+    for (const p of pend) {
+      if (now - p._optimisticAt > PENDING_SENT_TTL_MS) continue;
+      const idx = base.findIndex((e, i) => !used.has(i) && _sentMatches(p, e));
+      if (idx >= 0) { used.add(idx); continue; } // servidor já trouxe a real
+      keep.push(p);
+    }
+    pendingSentRef.current = keep;
+    const rest = hadOptimistic ? base.filter(e => !(e && e._optimistic)) : base;
+    return keep.length ? [...keep, ...rest] : rest;
+  }, []);
   // Tracks the folder+query of the last loadEmails call so we can force page 1
   // when either changes (prevents requesting a non-existent page after a
   // folder/search switch). Seeded to the initial folder.
@@ -494,7 +542,7 @@ export function MailProvider({ children }) {
       } else {
         const cached = await getEmailsFromCache(f);
         if (cached && cached.length > 0) {
-          setEmails(cached);
+          setEmails(mergePendingSent(f, cached));
           setTotal(cached.length);
           // Don't show loading spinner — we have cached data visible
           // Fetch fresh data silently in background
@@ -608,11 +656,13 @@ export function MailProvider({ children }) {
               if (Number.isFinite(uidN) && Number.isFinite(newestUid)) return uidN > newestUid;
               return _emailDateKey(e) > newestKey; // date fallback
             });
-            return survivors.length ? [...survivors, ...reconciled] : reconciled;
+            const merged = survivors.length ? [...survivors, ...reconciled] : reconciled;
+            return (pg === 1 && !q && !category && !label) ? mergePendingSent(f, merged) : merged;
           });
         } else {
           // Non-silent load: replace all, but still protect recently-read emails
-          setEmails(applyRecentFlags(applyRecentlyRead(emailList)));
+          const fresh = applyRecentFlags(applyRecentlyRead(emailList));
+          setEmails((pg === 1 && !q && !category && !label) ? mergePendingSent(f, fresh) : fresh);
         }
         setTotal(r.data?.total || 0);
         // Update label unread counts from server
@@ -643,6 +693,15 @@ export function MailProvider({ children }) {
   }, [currentFolder]);
 
   const openEmail = useCallback(async (uid, folder) => {
+    // [2026-10-11 email-qa] Linha otimista de Enviados (ainda sem uid IMAP):
+    // mostra o que foi enviado direto da memória, sem rede.
+    if (String(uid).startsWith('local-')) {
+      const p = pendingSentRef.current.find(x => String(x.uid) === String(uid))
+        || emailsRef.current.find(x => String(x.uid) === String(uid));
+      if (p) setSelectedEmail({ ...p, body_html: p._bodyHtml || '', body_text: p._bodyText || p.preview || '' });
+      setLoadingMessage(false);
+      return;
+    }
     setLoadingMessage(true);
     // [2026-10-11] Abriu = lido NA HORA na lista/contador (local, sem POST); o
     // POST ao servidor continua no caminho da rede abaixo (ou no catch).
@@ -888,6 +947,7 @@ export function MailProvider({ children }) {
       // the PREVIOUS account's remembered rows, and pendingRemoval/arrived
       // windows filter or protect the new account's uids on collision.
       folderRowsRef.current = new Map();
+      pendingSentRef.current = [];
       pendingRemovalRef.current = new Map();
       recentlyArrivedRef.current = new Map();
       recentlyFlaggedRef.current = new Map();
@@ -922,13 +982,73 @@ export function MailProvider({ children }) {
     // skeleton (EmailList shows the skeleton only when loading && no rows).
     const remembered = folderRowsRef.current.get(folder);
     if (remembered && remembered.length > 0) {
-      setEmails(remembered);
+      setEmails(mergePendingSent(folder, remembered));
     } else {
-      setEmails([]);
-      setLoadingList(true);
+      // Enviados nunca visitado mas com envio otimista → já pinta a linha.
+      const pend = mergePendingSent(folder, []);
+      setEmails(pend);
+      if (!pend.length) setLoadingList(true);
     }
     loadEmails(folder, 1, '');
-  }, [loadEmails]);
+  }, [loadEmails, mergePendingSent]);
+
+  // [2026-10-11 email-qa] Enviou → linha em Enviados NA HORA; Desfazer remove.
+  // Reconciliação: mergePendingSent em toda carga da pasta Enviados + recargas
+  // silenciosas agendadas enquanto ela estiver aberta.
+  const sentReloadTimersRef = useRef([]);
+  useEffect(() => {
+    if (typeof api.subscribeEmailSent !== 'function') return undefined;
+    const applyEverywhere = () => {
+      for (const [k, rows] of folderRowsRef.current) {
+        if (_isSentFolder(k)) folderRowsRef.current.set(k, mergePendingSent(k, rows));
+      }
+      if (_isSentFolder(folderRef.current)) {
+        setEmails(prev => mergePendingSent(folderRef.current, prev));
+      }
+    };
+    const unsub = api.subscribeEmailSent((evt) => {
+      if (!evt) return;
+      if (evt.type === 'cancelled') {
+        if (!evt.sendId) return;
+        pendingSentRef.current = pendingSentRef.current.filter(p => p._sendId !== evt.sendId);
+        const drop = (rows) => rows.filter(e => !(e && e._optimistic && e._sendId === evt.sendId));
+        for (const [k, rows] of folderRowsRef.current) {
+          if (_isSentFolder(k)) folderRowsRef.current.set(k, drop(rows));
+        }
+        if (_isSentFolder(folderRef.current)) setEmails(prev => drop(prev));
+        return;
+      }
+      if (evt.type !== 'sent') return;
+      const at = evt.at || Date.now();
+      const id = 'local-' + (evt.clientSendId || String(at));
+      if (pendingSentRef.current.some(p => p.uid === id)) return;
+      const html = /<[a-z][\s\S]*>/i.test(String(evt.body || '')) ? String(evt.body) : '';
+      const text = html ? _stripHtml(html) : String(evt.body || '');
+      const me = api.getActiveAccountEmail?.() || user?.email || '';
+      const row = {
+        uid: id, _optimistic: true, _optimisticAt: at, _sendId: evt.sendId || null,
+        _bodyHtml: html, _bodyText: text,
+        from: me, from_email: me, from_name: user?.name || me,
+        to: evt.to || '', cc: evt.cc || '', subject: evt.subject || '',
+        preview: text.slice(0, 200), date: new Date(at).toISOString(),
+        seen: true, read: true, flagged: false, has_attachments: !!evt.hasAttachments, labels: [],
+      };
+      pendingSentRef.current = [row, ...pendingSentRef.current];
+      applyEverywhere();
+      // O servidor reindexa Enviados em até ~2 min: reconfere em silêncio se o
+      // usuário estiver olhando a pasta.
+      sentReloadTimersRef.current.forEach(clearTimeout);
+      sentReloadTimersRef.current = [15000, 60000, 135000].map(ms => setTimeout(() => {
+        if (_isSentFolder(folderRef.current) && pendingSentRef.current.length) {
+          try { loadEmails(folderRef.current, 1, '', '', '', true); } catch {}
+        }
+      }, ms));
+    });
+    return () => {
+      unsub && unsub();
+      sentReloadTimersRef.current.forEach(clearTimeout);
+    };
+  }, [user?.email, user?.name, mergePendingSent, loadEmails]);
 
   // Manual refresh (pull-to-refresh) — always use silent merge to preserve seen state
   // Manual pull-to-refresh always resets to page 1 so the user sees the

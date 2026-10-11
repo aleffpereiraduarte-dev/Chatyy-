@@ -625,8 +625,10 @@ function MeetingsScreenInner() {
         accent={colors.primary}
         title={t('meetings.empty')}
         subtitle={isPast ? t('meetings.emptyPast') : t('meetings.emptyUpcoming')}
-        cta={isPast ? null : { label: t('meetings.scheduleCta'), icon: 'calendar', onPress: () => router.push('/meeting-create') }}
-        secondary={isPast ? null : { label: t('meetings.newMeeting'), onPress: handleInstantMeeting }}
+        // [2026-10-11 ui-sweep] Sem CTAs aqui: a barra inferior já tem
+        // "Nova reunião" (primário) + "Agendar" (secundário) — estilo Meet.
+        // Antes eram 4 botões redundantes (Criar / Agendar reunião / Nova
+        // reunião / barra inferior).
         tips={isPast ? null : [
           { icon: 'play', label: t('meetings.tipInstant') },
           { icon: 'calendar', label: t('meetings.tipSchedule') },
@@ -724,11 +726,8 @@ function MeetingsScreenInner() {
           colors,
           isDark,
           title: t('meetings.title'),
-          headerRight: () => (
-            <HeaderIconButton onPress={() => router.push('/meeting-create')} accessibilityLabel={t('meetings.scheduleCta')}>
-              <IconPlus size={24} color={colors.text} />
-            </HeaderIconButton>
-          ),
+          // [2026-10-11 ui-sweep] sem "+" no header: Agendar/Nova reunião
+          // ficam só na barra inferior (1 primário + 1 secundário).
         })} />
       ) : (
       <View style={[styles.header, { backgroundColor: colors.headerBgSolid || colors.surface, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border }]}>
@@ -749,18 +748,8 @@ function MeetingsScreenInner() {
             <IconArrowLeft size={24} color={colors.text} />
           </TouchableOpacity>
           <Text style={[styles.headerTitle, { color: colors.text }]} numberOfLines={1}>{t('meetings.title')}</Text>
-          <TouchableOpacity
-            onPress={() => router.push('/meeting-create')}
-            style={[styles.headerCta, { backgroundColor: colors.primary }]}
-            activeOpacity={0.85}
-            accessibilityLabel={t('meetings.scheduleCta')}
-            accessibilityRole="button"
-          >
-            <IconPlus size={14} color={colors.onPrimary} />
-            <Text style={[styles.headerCtaText, { color: colors.onPrimary }]} numberOfLines={1}>
-              {tl(t, language, 'meetings.create', { pt: 'Criar', en: 'Create', es: 'Crear' })}
-            </Text>
-          </TouchableOpacity>
+          {/* [2026-10-11 ui-sweep] botão "Criar" removido (redundante com a barra inferior); espaçador mantém o título centralizado. */}
+          <View style={styles.headerBtn} />
         </View>
       </View>
       )}
@@ -828,6 +817,7 @@ function MeetingsScreenInner() {
           style={[styles.fab, styles.fabSecondary, { backgroundColor: colors.surface, borderColor: colors.border, shadowColor: isDark ? colors.shadow : '#94a3b8' }]}
           onPress={() => router.push('/meeting-create')}
           accessibilityRole="button"
+          accessibilityLabel={t('meetings.scheduleCta')}
         >
           <IconCalendar size={20} color={colors.primary} />
           <Text style={[styles.fabText, { color: colors.primary }]}>{t('meetings.schedule')}</Text>
@@ -840,6 +830,7 @@ function MeetingsScreenInner() {
           disabled={creating}
           haptic={false}
           accessibilityRole="button"
+          accessibilityLabel={t('meetings.newMeeting')}
         >
           {creating ? (
             <ActivityIndicator size="small" color={colors.onPrimary || '#fff'} />

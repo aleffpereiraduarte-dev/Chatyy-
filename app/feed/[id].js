@@ -214,7 +214,7 @@ export default function FeedPostPublic() {
                 onPress={() => (typeof window !== 'undefined') && window.open('https://apps.apple.com/app/id6759975575', '_blank')}
                 style={[styles.storeBtn, { backgroundColor: colors.primary }]}
                 activeOpacity={0.85}
-                accessibilityLabel="Download on App Store"
+                accessibilityLabel={t('feedPublic.downloadAppStore')}
               >
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
                   <IconDownload size={14} color={colors.onPrimary} />
@@ -225,7 +225,7 @@ export default function FeedPostPublic() {
                 onPress={() => (typeof window !== 'undefined') && window.open('https://play.google.com/store/apps/details?id=com.onemundo.mail', '_blank')}
                 style={[styles.storeBtn, { backgroundColor: colors.primary }]}
                 activeOpacity={0.85}
-                accessibilityLabel="Get it on Google Play"
+                accessibilityLabel={t('feedPublic.getGooglePlay')}
               >
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
                   <IconDownload size={14} color={colors.onPrimary} />

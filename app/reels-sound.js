@@ -12,7 +12,8 @@ import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useTheme } from '../context/ThemeContext';
 import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
-import ReelsViewer from '../components/ReelsViewer';
+// [2026-10-11 boot-split] lazy: keeps ReelsViewer out of the web boot __common chunk.
+const ReelsViewer = React.lazy(() => import('../components/ReelsViewer'));
 import { IconChevronLeft, IconMusic } from '../components/Icons';
 
 export default function ReelsSoundScreen() {
@@ -32,7 +33,7 @@ export default function ReelsSoundScreen() {
 
   return (
     <View style={styles.root}>
-      <ReelsViewer
+      <React.Suspense fallback={null}><ReelsViewer
         colors={colors}
         isDark={isDark}
         t={t}
@@ -42,7 +43,7 @@ export default function ReelsSoundScreen() {
         soundLabel={soundLabel}
         feedMode="foryou"
         showLiveRing
-      />
+      /></React.Suspense>
 
       {/* Top bar — back + sound label, transparent glass overlay. */}
       <View style={[styles.topBar, { paddingTop: (insets.top || 0) + 6 }]} pointerEvents="box-none">

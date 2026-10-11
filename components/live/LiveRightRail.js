@@ -27,6 +27,7 @@ import {
 } from '../Icons';
 // [lives-engage 2026-10-10] Total de curtidas do hub + botão de Q&A.
 import { useEngageSelector, selLikesTotal } from './liveEngageStore';
+import { useLanguage } from '../../context/LanguageContext';
 import { LiveQAButton } from './LiveEngageLayer';
 
 const LIVE_RED = '#dc2626';
@@ -57,6 +58,7 @@ export default function LiveRightRail({
   i18n = {},
   engage = null,
 }) {
+  const { t } = useLanguage();
   const hubLikes = useEngageSelector(engage, selLikesTotal);
   const shownLikes = Math.max(Number(likeCount) || 0, Number(hubLikes) || 0);
   const heartScale = useRef(new Animated.Value(1)).current;
@@ -161,7 +163,7 @@ export default function LiveRightRail({
         onPress={onMore}
         activeOpacity={0.7}
         accessibilityRole="button"
-        accessibilityLabel="More"
+        accessibilityLabel={i18n.more || t('common.more') || 'Mais'}
       >
         <IconMoreVert size={22} color="#fff" />
       </TouchableOpacity>

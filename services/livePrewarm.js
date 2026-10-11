@@ -17,7 +17,7 @@ const IDLE_TTL_MS = 10 * 60 * 1000;
 const HANDOFF_TTL_MS = 15000;
 
 function _loadLk() {
-  try { return require('livekit-client'); } catch { return null; }
+  try { return require('./lkLoader').lkSync(); } catch { return null; }
 }
 
 function _drop(entry) {
@@ -42,6 +42,11 @@ export function prewarmLive(sessionId, opts = {}) {
   }
   disposePrewarm();
   const lk = _loadLk();
+  if (!lk) {
+    // [2026-10-11 boot-split] web: SDK chunk not loaded yet — fetch it, then retry once.
+    try { require('./lkLoader').loadLiveKit().then(() => { if (!_entry && _loadLk()) prewarmLive(sid, opts); }, () => {}); } catch {}
+    return;
+  }
   if (!lk?.Room) return;
   const entry = { sessionId: sid, room: null, joinRes: null, dead: false, handoff: false, timer: null };
   _entry = entry;

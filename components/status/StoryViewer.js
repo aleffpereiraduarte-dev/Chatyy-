@@ -25,7 +25,7 @@ import {
 } from 'react-native';
 import * as api from '../../services/api';
 import { BASE_URL } from '../../services/api';
-import { IconX, IconPlus, IconTrash, IconSend, IconCheck, IconMessageSquare, IconEye, IconMusic, IconVolume2, IconVolumeX, IconPause, IconArrowRight, IconDownload, IconCamera, IconAlertTriangle } from '../Icons';
+import { IconX, IconPlus, IconTrash, IconSend, IconCheck, IconMessageSquare, IconEye, IconMusic, IconVolume2, IconVolumeX, IconPause, IconArrowRight, IconDownload, IconCamera, IconAlertTriangle, IconChevronUp } from '../Icons';
 import AvatarCircle from '../AvatarCircle';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Svg, { Defs, LinearGradient as SvgLinearGradient, Stop, Rect as SvgRect, Path } from 'react-native-svg';
@@ -2299,7 +2299,7 @@ export default function StoryViewer({
               shadowColor: '#000', shadowOpacity: 0.4, shadowRadius: 6, shadowOffset: { width: 0, height: 2 },
               elevation: 4,
             }}
-            accessibilityLabel="Close"
+            accessibilityLabel={t?.('common.close') || 'Fechar'}
           >
             <IconX size={20} color="#fff" />
           </TouchableOpacity>
@@ -2696,11 +2696,12 @@ export default function StoryViewer({
               paddingHorizontal: 12, paddingVertical: 5,
               borderRadius: 14,
             }}>
+              <IconChevronUp size={12} color="#fff" />
               <Text style={{ color: '#fff', fontSize: 11, fontWeight: '700' }}>
                 {/* Reusing the link sticker's CTA label keeps the hint and
                     the pill consistent — if the publisher set "Comprar"
                     the swipe hint also says "Comprar". */}
-                {`↑ ${linkSticker.label}`}
+                {linkSticker.label}
               </Text>
             </View>
           </Animated.View>

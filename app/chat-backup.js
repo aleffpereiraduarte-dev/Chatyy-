@@ -468,13 +468,13 @@ export default function ChatBackupScreen() {
   return (
     <View style={[styles.root, { backgroundColor: colors.background, paddingTop: insets.top }]}>
       <View style={[styles.header, { borderBottomColor: colors.border }]}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.headerBtn} accessibilityLabel="Back">
+        <TouchableOpacity onPress={() => router.back()} style={styles.headerBtn} accessibilityLabel={t('common.back')}>
           <IconArrowLeft size={22} color={colors.text} />
         </TouchableOpacity>
         <Text style={[styles.headerTitle, { color: colors.text }]}>
           {t('backup.chatBackupTitle') || 'Chat backup'}
         </Text>
-        <TouchableOpacity onPress={refreshList} style={styles.headerBtn} accessibilityLabel="Refresh">
+        <TouchableOpacity onPress={refreshList} style={styles.headerBtn} accessibilityLabel={t('common.refresh')}>
           <IconRefresh size={20} color={colors.text} />
         </TouchableOpacity>
       </View>
@@ -702,8 +702,8 @@ export default function ChatBackupScreen() {
             </Text>
             <Text style={[styles.toggleHelp, { color: colors.textMuted }]}>
               {Platform.OS === 'ios'
-                ? 'Backup diario na sua iCloud, cifrado com sua senha.'
-                : 'Backup diario no seu Google Drive, cifrado com sua senha.'}
+                ? t('chatBackup.autoHelpIcloud')
+                : t('chatBackup.autoHelpDrive')}
             </Text>
           </View>
           <Text style={[styles.toggleState, { color: autoSchedule ? colors.primary : colors.textMuted }]}>
@@ -713,8 +713,8 @@ export default function ChatBackupScreen() {
 
         <Text style={[styles.privacyNote, { color: colors.textMuted }]}>
           {Platform.OS === 'ios'
-            ? 'Backup vai pro seu iCloud (iOS) cifrado com sua senha — Chatyy nunca ve o conteudo.'
-            : 'Backup vai pro seu Google Drive cifrado com sua senha — Chatyy nunca ve o conteudo.'}
+            ? t('chatBackup.privacyIcloud')
+            : t('chatBackup.privacyDrive')}
         </Text>
 
         <Text style={[styles.sectionHeader, { color: colors.text }]}>

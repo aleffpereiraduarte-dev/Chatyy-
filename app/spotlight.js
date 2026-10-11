@@ -14,7 +14,10 @@ import * as api from '../services/api';
 import { BASE_URL } from '../services/api';
 import AvatarCircle from '../components/AvatarCircle';
 import FadeSlideIn from '../components/FadeSlideIn';
-import CreatePostModal from '../components/CreatePostModal';
+import React from 'react';
+// [2026-10-11 boot-split] lazy: keeps CreatePostModal out of the web boot __common chunk.
+const CreatePostModal = React.lazy(() => import('../components/CreatePostModal'));
+import LazyMount from '../components/LazyMount';
 import UnifiedComposeFab from '../components/UnifiedComposeFab';
 import LikersSheet from '../components/LikersSheet';
 import FeedComments from '../components/FeedComments';
@@ -422,7 +425,7 @@ export default function SpotlightScreen() {
         right={14}
       />
 
-      <CreatePostModal
+      <LazyMount when={createVisible}><CreatePostModal
         visible={createVisible}
         colors={colors}
         isDark={isDark}
@@ -445,7 +448,7 @@ export default function SpotlightScreen() {
           id: 'shared_' + Date.now(),
           name: String(params._shared_name || ''),
         }] : null)}
-      />
+      /></LazyMount>
 
       {/* Likers — tapping the like count in the action column opens this */}
       <LikersSheet

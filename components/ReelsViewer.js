@@ -31,6 +31,7 @@ import {
 import * as api from '../services/api';
 // [2026-05-22 monetization-pause] hidden by MONETIZATION_ENABLED flag
 import { DIAMONDS_ENABLED } from '../constants/featureFlags';
+import { giftLabel } from './live/liveEngageConfig';
 import { cachedVideoSource } from '../services/videoCacheSource'; // [2026-10-10 native-audit] native video disk cache
 // expo-shorts powers the native player + pool. Imported lazily so a missing
 // native binary (dev only) doesn't break the import chain — fallback paths
@@ -520,7 +521,7 @@ const SpinningDiscNative = memo(function SpinningDiscNative({ authorEmail, autho
 // onAvatarTap. Pure View + Animated stack so it works on web + native without
 // needing react-native-svg. 2-color rotating gradient effect is simulated
 // with a single colored ring + opacity loop, which is plenty for the size.
-const LiveBadgeRing = memo(function LiveBadgeRing({ size = 44, children }) {
+const LiveBadgeRing = memo(function LiveBadgeRing({ size = 44, children, t }) {
   const pulse = useRef(new Animated.Value(0)).current;
   useEffect(() => {
     const loop = Animated.loop(
@@ -567,7 +568,7 @@ const LiveBadgeRing = memo(function LiveBadgeRing({ size = 44, children }) {
         }}
       >
         <Text style={{ color: '#fff', fontSize: 8, fontWeight: '800', letterSpacing: 0.4 }}>
-          AO VIVO
+          {t?.('live.aoVivo') || 'AO VIVO'}
         </Text>
       </View>
     </View>
@@ -805,7 +806,10 @@ const TipSheetWrapper = memo(function TipSheetWrapper({ visible, onClose, postId
             <Text style={{ color: 'rgba(255,255,255,0.7)', fontSize: 13 }}>
               {t?.('live.diamondBalance') || 'Saldo'}:
             </Text>
-            <Text style={{ color: '#fff', fontSize: 15, fontWeight: '800' }}>{balance} ◆</Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+              <Text style={{ color: '#fff', fontSize: 15, fontWeight: '800' }}>{balance}</Text>
+              <IconDiamond size={13} color="#fff" />
+            </View>
           </View>
           <FlatList
             data={gifts}
@@ -822,13 +826,16 @@ const TipSheetWrapper = memo(function TipSheetWrapper({ visible, onClose, postId
                   style={{ flex: 1, aspectRatio: 0.85, marginBottom: 10, borderRadius: 14, padding: 10, backgroundColor: 'rgba(255,255,255,0.08)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.14)', alignItems: 'center', opacity: affordable ? 1 : 0.55 }}
                   activeOpacity={0.85}
                   accessibilityRole="button"
-                  accessibilityLabel={`${item.label} ${item.diamonds_cost} diamonds`}
+                  accessibilityLabel={`${giftLabel(t, item.icon || String(item.sku || '').replace(/^gift_/, ''), item.label)} ${item.diamonds_cost} ${t?.('wallet.diamondsLabel') || 'diamantes'}`}
                 >
                   <View style={{ width: 56, height: 56, borderRadius: 28, backgroundColor: 'rgba(255,255,255,0.14)', alignItems: 'center', justifyContent: 'center', marginBottom: 6 }}>
                     <Text style={{ color: '#fff', fontSize: 22, fontWeight: '800' }}>{(item.icon || item.label || '?').toString().charAt(0).toUpperCase()}</Text>
                   </View>
-                  <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700' }} numberOfLines={1}>{item.label}</Text>
-                  <Text style={{ color: '#FBBF24', fontSize: 13, fontWeight: '800', marginTop: 2 }}>{item.diamonds_cost} ◆</Text>
+                  <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700' }} numberOfLines={1}>{giftLabel(t, item.icon || String(item.sku || '').replace(/^gift_/, ''), item.label)}</Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3, marginTop: 2 }}>
+                    <Text style={{ color: '#FBBF24', fontSize: 13, fontWeight: '800' }}>{item.diamonds_cost}</Text>
+                    <IconDiamond size={12} color="#FBBF24" />
+                  </View>
                 </TouchableOpacity>
               );
             }}
@@ -1498,7 +1505,7 @@ const ReelItem = memo(function ReelItem({ onCreate, reel, isActive, colors, isDa
   const handleToggleSoundSave = useCallback(async () => {
     if (!reel) return;
     const sid = reel.sound_id || `${reel.author_email}/${reel.id}`;
-    const label = reel.sound_label || `${reel.author_name || reel.author_email?.split('@')[0]} — ${t?.('feed.originalAudio') || 'Audio original'}`;
+    const label = reel.sound_label || `${reel.author_name || reel.author_email?.split('@')[0]} — ${t?.('feed.originalAudio') || 'Áudio original'}`;
     if (soundSaved) {
       setSoundSaved(false);
       try { await api.reelsSoundFavoriteUnsave?.(sid); } catch {}
@@ -1521,7 +1528,7 @@ const ReelItem = memo(function ReelItem({ onCreate, reel, isActive, colors, isDa
   const videoUrl = useMemo(() => resolveMediaUrl(mediaUrls[0]), [mediaUrls]);
   const authorDisplay = reel.author_name || reel.author_email?.split('@')[0] || '?';
   const commentCount = Number(reel.comment_count ?? reel.comments_count ?? reel.comments) || 0;
-  const musicName = reel.audio_name || `${authorDisplay} - ${t('feed.originalAudio') || 'Audio original'}`;
+  const musicName = reel.audio_name || `${authorDisplay} - ${t('feed.originalAudio') || 'Áudio original'}`;
 
   // Sync with prop changes
   useEffect(() => {
@@ -2103,7 +2110,7 @@ const ReelItem = memo(function ReelItem({ onCreate, reel, isActive, colors, isDa
           {/* Reels P0 — Live badge ring around the avatar when the author is
               broadcasting. Tap routes via onAvatarTap (wired in parent). */}
           {showLiveRing && (reel.is_live || reel.live_id) ? (
-            <LiveBadgeRing size={40}>
+            <LiveBadgeRing size={40} t={t}>
               <AvatarCircle email={reel.author_email} name={reel.author_name} size={36} />
             </LiveBadgeRing>
           ) : (

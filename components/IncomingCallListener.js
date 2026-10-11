@@ -28,7 +28,7 @@ const initAddCallToHistory = (() => {
   let loaded = false;
   return () => {
     if (!loaded) {
-      const chatCallsTab = require('./ChatCallsTab');
+      const chatCallsTab = require('../services/callHistoryStore'); // [2026-10-11 boot-split] was ./ChatCallsTab
       addCallToHistory = chatCallsTab.addCallToHistory;
       loaded = true;
     }
@@ -2128,7 +2128,7 @@ function IncomingCallListenerWeb() {
         {/* Top section */}
         <View style={styles.topSection}>
           <Text style={styles.encryptedText}>
-            {isVideo ? (t('call.incomingVideo') || 'Chamada de video') : (t('call.incomingAudio') || 'Chamada de voz')}
+            {isVideo ? (t('call.incomingVideo') || 'Chamada de vídeo') : (t('call.incomingAudio') || 'Chamada de voz')}
           </Text>
         </View>
 

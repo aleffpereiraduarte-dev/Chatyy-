@@ -6,7 +6,7 @@ import { useTheme } from '../context/ThemeContext';
 import { Colors, FontSize, BorderRadius, Spacing, Shadow } from '../constants/theme';
 import { SPRING_BOUNCY, SPRING_GENTLE, fadeIn } from '../utils/animations';
 import { useLanguage } from '../context/LanguageContext';
-import { IconMail, IconMessageSquare, IconVideo, IconBell } from './Icons';
+import { IconMail, IconMessageSquare, IconVideo, IconBell, IconX, IconReply } from './Icons';
 import { playNotificationAlert, triggerHaptic } from '../services/notificationSound';
 
 const TOAST_DURATION = 4000;
@@ -604,6 +604,8 @@ export default function NotificationToast({ notification, onDismiss }) {
                 if (timerRef.current) clearTimeout(timerRef.current);
                 dismiss();
               }}
+              accessibilityRole="button"
+              accessibilityLabel={t('common.close')}
               hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
               style={{
                 marginLeft: 8,
@@ -615,7 +617,7 @@ export default function NotificationToast({ notification, onDismiss }) {
                 justifyContent: 'center',
               }}
             >
-              <Text style={{ fontSize: 11, color: colors.textTertiary, fontWeight: '700' }}>{'\u2715'}</Text>
+              <IconX size={11} color={colors.textTertiary} />
             </TouchableOpacity>
           )}
         </View>
@@ -637,7 +639,7 @@ export default function NotificationToast({ notification, onDismiss }) {
               flexDirection: 'row',
               alignItems: 'center',
             }}>
-              <Text style={{ fontSize: 12, marginRight: 4 }}>{'\u21A9'}</Text>
+              <View style={{ marginRight: 4 }}><IconReply size={12} color={colors.primary} /></View>
               <Text style={{
                 fontSize: 12,
                 fontWeight: '600',

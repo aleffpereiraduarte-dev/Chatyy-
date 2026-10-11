@@ -505,12 +505,12 @@ export default function ComposeModal({ params, onClose }) {
                     <View style={cm.ccBtns}>
                       {!showCc && (
                         <TouchableOpacity onPress={() => setShowCc(true)} style={[cm.ccToggle, { backgroundColor: colors.primary + '12' }]}>
-                          <Text style={[cm.ccToggleText, { color: colors.textSecondary }]}>Cc</Text>
+                          <Text style={[cm.ccToggleText, { color: colors.textSecondary }]}>{t('compose.cc')}</Text>
                         </TouchableOpacity>
                       )}
                       {!showBcc && (
                         <TouchableOpacity onPress={() => setShowBcc(true)} style={[cm.ccToggle, { backgroundColor: colors.primary + '12' }]}>
-                          <Text style={[cm.ccToggleText, { color: colors.textSecondary }]}>Bcc</Text>
+                          <Text style={[cm.ccToggleText, { color: colors.textSecondary }]}>{t('compose.bcc')}</Text>
                         </TouchableOpacity>
                       )}
                     </View>
@@ -519,12 +519,12 @@ export default function ComposeModal({ params, onClose }) {
 
                 {showCc && (
                   <View style={[cm.contactRow, { borderBottomColor: colors.borderLight, zIndex: 20 }]}>
-                    <ContactAutocomplete value={cc} onChange={setCc} placeholder="cc@email.com" label="Cc" />
+                    <ContactAutocomplete value={cc} onChange={setCc} placeholder="cc@email.com" label={t('compose.cc')} />
                   </View>
                 )}
                 {showBcc && (
                   <View style={[cm.contactRow, { borderBottomColor: colors.borderLight, zIndex: 10 }]}>
-                    <ContactAutocomplete value={bcc} onChange={setBcc} placeholder="bcc@email.com" label="Bcc" />
+                    <ContactAutocomplete value={bcc} onChange={setBcc} placeholder="bcc@email.com" label={t('compose.bcc')} />
                   </View>
                 )}
 

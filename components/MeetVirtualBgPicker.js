@@ -2,19 +2,20 @@ import { androidBottomInset } from '../utils/systemInsets'; // [2026-10-07 andro
 import { useState, useCallback } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Platform, Pressable, ScrollView } from 'react-native';
 import { useLanguage } from '../context/LanguageContext';
+import { IconX, IconCloud, IconSun, IconGlobe, IconPalette, IconMoon, IconSparkles, IconBuilding, IconImage, IconCheck } from './Icons';
 
 function getBackgrounds(t) {
   return [
-    { key: 'none', label: t('virtualBg.none'), icon: '\u274C', type: 'none' },
-    { key: 'blur', label: t('virtualBg.blur'), icon: '\uD83D\uDCA7', type: 'blur' },
-    { key: 'blur-light', label: t('virtualBg.blurLight'), icon: '\u2600\uFE0F', type: 'blur-light' },
-    { key: 'gradient-ocean', label: t('virtualBg.ocean'), icon: '\uD83C\uDF0A', type: 'gradient', value: 'ocean', colors: ['#0077b6', '#00b4d8', '#90e0ef'] },
-    { key: 'gradient-sunset', label: t('virtualBg.sunset'), icon: '\uD83C\uDF07', type: 'gradient', value: 'sunset', colors: ['#ff6b35', '#c2185b', '#161618'] },
-    { key: 'gradient-forest', label: t('virtualBg.forest'), icon: '\uD83C\uDF33', type: 'gradient', value: 'forest', colors: ['#1b5e20', '#2e7d32', '#4caf50'] },
-    { key: 'gradient-space', label: t('virtualBg.space'), icon: '\uD83C\uDF0C', type: 'gradient', value: 'space', colors: ['#000000', '#1a237e', '#0d0d2b'] },
-    { key: 'gradient-aurora', label: t('virtualBg.aurora'), icon: '\u2728', type: 'gradient', value: 'aurora', colors: ['#0f0c29', '#302b63', '#92fe9d'] },
-    { key: 'image-office', label: t('virtualBg.office'), icon: '\uD83C\uDFE2', type: 'image', value: '/meet/bg/office.jpg' },
-    { key: 'image-beach', label: t('virtualBg.beach'), icon: '\uD83C\uDFD6\uFE0F', type: 'image', value: '/meet/bg/beach.jpg' },
+    { key: 'none', label: t('virtualBg.none'), Icon: IconX, type: 'none' },
+    { key: 'blur', label: t('virtualBg.blur'), Icon: IconCloud, type: 'blur' },
+    { key: 'blur-light', label: t('virtualBg.blurLight'), Icon: IconSun, type: 'blur-light' },
+    { key: 'gradient-ocean', label: t('virtualBg.ocean'), Icon: IconGlobe, type: 'gradient', value: 'ocean', colors: ['#0077b6', '#00b4d8', '#90e0ef'] },
+    { key: 'gradient-sunset', label: t('virtualBg.sunset'), Icon: IconPalette, type: 'gradient', value: 'sunset', colors: ['#ff6b35', '#c2185b', '#161618'] },
+    { key: 'gradient-forest', label: t('virtualBg.forest'), Icon: IconPalette, type: 'gradient', value: 'forest', colors: ['#1b5e20', '#2e7d32', '#4caf50'] },
+    { key: 'gradient-space', label: t('virtualBg.space'), Icon: IconMoon, type: 'gradient', value: 'space', colors: ['#000000', '#1a237e', '#0d0d2b'] },
+    { key: 'gradient-aurora', label: t('virtualBg.aurora'), Icon: IconSparkles, type: 'gradient', value: 'aurora', colors: ['#0f0c29', '#302b63', '#92fe9d'] },
+    { key: 'image-office', label: t('virtualBg.office'), Icon: IconBuilding, type: 'image', value: '/meet/bg/office.jpg' },
+    { key: 'image-beach', label: t('virtualBg.beach'), Icon: IconImage, type: 'image', value: '/meet/bg/beach.jpg' },
   ];
 }
 
@@ -72,9 +73,9 @@ export default function MeetVirtualBgPicker({ visible, onClose, onSelect, curren
                 }}
               >
                 {bg.colors && <GradientPreview colors={bg.colors} />}
-                <Text style={s.optionIcon}>{bg.icon}</Text>
+                <View style={s.optionIcon}><bg.Icon size={22} color="#fff" /></View>
                 <Text style={[s.optionLabel, isActive && s.optionLabelActive]}>{bg.label}</Text>
-                {isActive && <View style={s.checkmark}><Text style={s.checkmarkText}>{'\u2713'}</Text></View>}
+                {isActive && <View style={s.checkmark}><IconCheck size={11} color="#111" /></View>}
               </TouchableOpacity>
             );
           })}
@@ -125,22 +126,22 @@ const s = StyleSheet.create({
     overflow: 'hidden',
   },
   optionActive: {
-    borderColor: '#111111',
-    backgroundColor: 'rgba(59,130,246,0.15)',
+    borderColor: '#ffffff',
+    backgroundColor: 'rgba(255,255,255,0.15)',
   },
   optionIcon: {
-    fontSize: 24, marginBottom: 4,
+    height: 26, marginBottom: 4, alignItems: 'center', justifyContent: 'center',
   },
   optionLabel: {
     color: '#cbd5e1', fontSize: 11, fontWeight: '600',
   },
   optionLabelActive: {
-    color: '#111111',
+    color: '#ffffff',
   },
   checkmark: {
     position: 'absolute', top: 4, right: 4,
     width: 18, height: 18, borderRadius: 9,
-    backgroundColor: '#111111',
+    backgroundColor: '#ffffff',
     alignItems: 'center', justifyContent: 'center',
   },
   checkmarkText: {

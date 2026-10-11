@@ -10,6 +10,8 @@
  */
 import React, { useRef, useState, useCallback } from 'react';
 import { View, Image, StyleSheet, Platform, Animated, PanResponder, TouchableOpacity, Text, Dimensions } from 'react-native';
+import { useLanguage } from '../context/LanguageContext';
+import { IconRotateCw } from './Icons';
 
 const SNAP_ANGLE_THRESHOLD = 8; // degrees — snap to cardinal/diagonal when within this
 const SNAP_CENTER_THRESHOLD = 14; // px — snap pan to center
@@ -60,6 +62,7 @@ export default function ImageEditorGestures({
   onTransformChange,
   style,
 }) {
+  const { t } = useLanguage();
   // Current transform values (committed after gesture ends)
   const [tx, setTx] = useState(0);
   const [ty, setTy] = useState(0);
@@ -236,14 +239,15 @@ export default function ImageEditorGestures({
       {guideY && <View pointerEvents="none" style={styles.guideHorizontal} />}
 
       {/* Floating rotate button — bottom-left */}
-      <TouchableOpacity onPress={_rotate90} style={styles.rotateBtn} activeOpacity={0.7}>
-        <Text style={styles.rotateBtnText}>↻ 90°</Text>
+      <TouchableOpacity onPress={_rotate90} style={[styles.rotateBtn, { flexDirection: 'row', alignItems: 'center', gap: 6 }]} activeOpacity={0.7} accessibilityLabel={t('photoEditor.rotate')}>
+        <IconRotateCw size={15} color="#fff" />
+        <Text style={styles.rotateBtnText}>90°</Text>
       </TouchableOpacity>
 
       {/* Reset button — bottom-right, only if transformed */}
       {(tx !== 0 || ty !== 0 || scale !== 1 || rotation !== 0) && (
         <TouchableOpacity onPress={_reset} style={styles.resetBtn} activeOpacity={0.7}>
-          <Text style={styles.resetBtnText}>Reset</Text>
+          <Text style={styles.resetBtnText}>{t('status.studio.reset')}</Text>
         </TouchableOpacity>
       )}
     </View>

@@ -157,11 +157,12 @@ async function mktDelete(listingId) { return api.apiCall('marketplace_delete', {
 function PhotoCarousel({ photos, width, height = 240 }) {
   const [idx, setIdx] = useState(0);
   const { colors } = useTheme();
+  const { t } = useLanguage();
   if (!photos || photos.length === 0) {
     return (
       <View style={[s.photoPlaceholder, { width, height, backgroundColor: colors.surface }]}>
         <IconCamera size={40} color={colors.textSecondary} />
-        <Text style={{ color: colors.textSecondary, marginTop: 8, fontSize: 13 }}>Sem foto</Text>
+        <Text style={{ color: colors.textSecondary, marginTop: 8, fontSize: 13 }}>{t('marketplace.noPhoto')}</Text>
       </View>
     );
   }
@@ -178,7 +179,7 @@ function PhotoCarousel({ photos, width, height = 240 }) {
             <TouchableOpacity
               style={[s.carouselBtn, { left: 8 }]}
               onPress={() => setIdx(i => Math.max(0, i - 1))}
-              accessibilityLabel="Foto anterior"
+              accessibilityLabel={t('marketplace.prevPhoto')}
             >
               <IconChevronLeft size={20} color="#fff" />
             </TouchableOpacity>
@@ -187,7 +188,7 @@ function PhotoCarousel({ photos, width, height = 240 }) {
             <TouchableOpacity
               style={[s.carouselBtn, { right: 8 }]}
               onPress={() => setIdx(i => Math.min(sorted.length - 1, i + 1))}
-              accessibilityLabel="Próxima foto"
+              accessibilityLabel={t('marketplace.nextPhoto')}
             >
               <IconChevronRight size={20} color="#fff" />
             </TouchableOpacity>
@@ -206,6 +207,7 @@ function PhotoCarousel({ photos, width, height = 240 }) {
 // ─── Listing card (2-column grid) ─────────────────────────────────────────────
 function ListingCard({ item, onPress, onToggleSave, isSaved }) {
   const { colors } = useTheme();
+  const { t } = useLanguage();
   const { width } = useWindowDimensions();
   const PADDING = 12;
   const cardWidth = (width - PADDING * 3) / 2;
@@ -236,7 +238,7 @@ function ListingCard({ item, onPress, onToggleSave, isSaved }) {
             <IconCamera size={32} color={colors.textSecondary} />
           </View>
         )}
-        <TouchableOpacity style={s.heartBtn} onPress={toggleSave} hitSlop={{ top: 8, left: 8, right: 8, bottom: 8 }} accessibilityLabel={isSaved ? 'Remover dos salvos' : 'Salvar anúncio'}>
+        <TouchableOpacity style={s.heartBtn} onPress={toggleSave} hitSlop={{ top: 8, left: 8, right: 8, bottom: 8 }} accessibilityLabel={isSaved ? t('marketplace.unsave') : t('marketplace.saveListing')}>
           <Animated.View style={{ transform: [{ scale: heart.interpolate({ inputRange: [0, 1, 1.3], outputRange: [1, 1, 1.3] }) }] }}>
             {isSaved ? <IconHeartFilled size={20} /> : <IconHeart size={20} color="#fff" />}
           </Animated.View>
@@ -334,7 +336,7 @@ function CreateListingModal({ visible, onClose, onCreated }) {
               <View key={i} style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
                 <TextInput
                   style={[s.input, { flex: 1, color: colors.text, backgroundColor: colors.surface, borderColor: colors.border }]}
-                  placeholder={`URL da foto ${i + 1}`}
+                  placeholder={t('marketplace.photoUrlPh', { n: i + 1 })}
                   placeholderTextColor={colors.textSecondary}
                   value={url}
                   onChangeText={v => setPhotoUrls(p => { const n = [...p]; n[i] = v; return n; })}

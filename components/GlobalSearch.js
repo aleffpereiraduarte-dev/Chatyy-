@@ -16,6 +16,7 @@ import { BASE_URL } from '../services/api';
 import CachedImage from './CachedImage';
 import AvatarCircle from './AvatarCircle';
 import EmptyStateCard from './EmptyStateCard';
+import { useLanguageOptional } from '../context/LanguageContext';
 import {
   IconSearch, IconX, IconMail, IconMessageSquare, IconImage,
   IconUser, IconChevronRight, IconClock, IconFileText, IconFilm, IconFile,
@@ -29,22 +30,26 @@ const MAX_RECENT = 6;
 const SECTION_PREVIEW = 3;
 
 // Compact time formatter (Spotlight-grade): "agora", "5m", "2h", "ter", "12 mai".
-function formatTime(ts) {
+function formatTime(ts, t, language) {
   if (!ts) return '';
   const d = typeof ts === 'number' ? new Date(ts * (ts < 1e12 ? 1000 : 1)) : new Date(ts);
   if (isNaN(d.getTime())) return '';
   const now = new Date();
   const diffMs = now - d;
   const diffMin = Math.floor(diffMs / 60000);
-  if (diffMin < 1) return 'agora';
+  if (diffMin < 1) return (typeof t === 'function' && t('time.justNow')) || 'agora';
   if (diffMin < 60) return `${diffMin}m`;
   const diffH = Math.floor(diffMin / 60);
   if (diffH < 24) return `${diffH}h`;
   const diffD = Math.floor(diffH / 24);
+  // [2026-10-11 ui-sweep] dia/data no idioma do app (antes fixo em pt-BR).
+  const loc = language || 'pt-BR';
   if (diffD < 7) {
+    try { return d.toLocaleDateString(loc, { weekday: 'short' }).replace(/\.$/, ''); } catch {}
     const days = ['dom','seg','ter','qua','qui','sex','sáb'];
     return days[d.getDay()];
   }
+  try { return d.toLocaleDateString(loc, { day: '2-digit', month: 'short' }); } catch {}
   return d.toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' });
 }
 
@@ -76,7 +81,7 @@ function HighlightText({ text, highlight, style, highlightColor }) {
   );
 }
 
-function Section({ title, children, colors, icon: Icon, totalCount, onSeeAll }) {
+function Section({ title, children, colors, icon: Icon, totalCount, onSeeAll, t }) {
   // Header doubles as a "see all" affordance when the bucket overflows the
   // preview cap. Stays subtle (no full row) so the section list feels light.
   const showSeeAll = typeof totalCount === 'number' && totalCount > SECTION_PREVIEW && !!onSeeAll;
@@ -91,9 +96,12 @@ function Section({ title, children, colors, icon: Icon, totalCount, onSeeAll }) 
         </View>
         {showSeeAll && (
           <TouchableOpacity onPress={onSeeAll} hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}>
-            <Text style={{ fontSize: 12, fontWeight: '600', color: BRAND }}>
-              Ver todos →
-            </Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 2 }}>
+              <Text style={{ fontSize: 12, fontWeight: '600', color: BRAND }}>
+                {(typeof t === 'function' && t('snapmap.tapToExpand')) || 'Ver todos'}
+              </Text>
+              <IconChevronRight size={12} color={BRAND} />
+            </View>
           </TouchableOpacity>
         )}
       </View>
@@ -136,11 +144,11 @@ function Row({ leading, title, subtitle, time, onPress, colors, query }) {
 // Spotlight-style filter chips — kept tight (5 items) so the row doesn't need
 // to scroll on iPhone widths. Keys are stable internal IDs; labels stay PT.
 const FILTERS = [
-  { id: 'all',    label: 'Tudo' },
-  { id: 'msg',    label: 'Mensagens' },
-  { id: 'people', label: 'Pessoas' },
-  { id: 'media',  label: 'Mídia' },
-  { id: 'docs',   label: 'Arquivos' },
+  { id: 'all',    label: 'Tudo',      labelKey: 'activity.tabs.all' },
+  { id: 'msg',    label: 'Mensagens', labelKey: 'settings.rd2.messages' },
+  { id: 'people', label: 'Pessoas',   labelKey: 'search.people' },
+  { id: 'media',  label: 'Mídia',     labelKey: 'apps.media' },
+  { id: 'docs',   label: 'Arquivos',  labelKey: 'files.title' },
 ];
 
 // Loose URL detector — matches plain http(s)://… and bare domain.tld/path forms.
@@ -240,6 +248,7 @@ function FilterChip({ label, active, onPress, colors }) {
 export default function GlobalSearch({
   visible, onClose, colors, isDark, t, router,
 }) {
+  const _lang = useLanguageOptional();
   const [q, setQ] = useState('');
   const [results, setResults] = useState({ users: [], chats: [], emails: [], posts: [] });
   const [loading, setLoading] = useState(false);
@@ -451,7 +460,7 @@ export default function GlobalSearch({
                 {FILTERS.map(f => (
                   <FilterChip
                     key={f.id}
-                    label={f.label}
+                    label={(t?.(f.labelKey)) || f.label}
                     active={filter === f.id}
                     onPress={() => setFilter(f.id)}
                     colors={colors}
@@ -525,6 +534,7 @@ export default function GlobalSearch({
             {/* Conversas — surface chats first (Spotlight ordem: most-actionable). */}
             {viewResults.chats.length > 0 && (
               <Section
+                t={t}
                 title={t?.('search.chats') || 'Conversas'}
                 icon={IconMessageSquare}
                 colors={colors}
@@ -537,7 +547,7 @@ export default function GlobalSearch({
                     leading={<AvatarCircle name={c.name || String(c.id)} size={40} />}
                     title={c.name || (t?.('chat.untitled') || 'Conversa')}
                     subtitle={c.last_message || (c.type === 'group' ? (t?.('chat.group') || 'Grupo') : (t?.('chat.direct') || 'Conversa direta'))}
-                    time={formatTime(c.last_message_at || c.updated_at)}
+                    time={formatTime(c.last_message_at || c.updated_at, t, _lang?.language)}
                     onPress={() => go(`/chat-conversation?id=${c.id}`)}
                     colors={colors}
                     query={q.trim()}
@@ -549,6 +559,7 @@ export default function GlobalSearch({
             {/* Email */}
             {viewResults.emails.length > 0 && (
               <Section
+                t={t}
                 title={t?.('search.emails') || 'Email'}
                 icon={IconMail}
                 colors={colors}
@@ -565,7 +576,7 @@ export default function GlobalSearch({
                     }
                     title={e.subject || '(sem assunto)'}
                     subtitle={e.from}
-                    time={formatTime(e.date || e.received_at)}
+                    time={formatTime(e.date || e.received_at, t, _lang?.language)}
                     onPress={() => go(`/read?uid=${e.uid}&folder=${encodeURIComponent(e.folder)}`)}
                     colors={colors}
                     query={q.trim()}
@@ -577,6 +588,7 @@ export default function GlobalSearch({
             {/* Pessoas */}
             {viewResults.users.length > 0 && (
               <Section
+                t={t}
                 title={t?.('search.users') || 'Pessoas'}
                 icon={IconUser}
                 colors={colors}
@@ -606,6 +618,7 @@ export default function GlobalSearch({
               if (reels.length === 0) return null;
               return (
                 <Section
+                  t={t}
                   title={t?.('search.reels') || 'Reels'}
                   icon={IconFilm}
                   colors={colors}
@@ -630,7 +643,7 @@ export default function GlobalSearch({
                         }
                         title={p.caption || (t?.('feed.untitled') || 'Reel')}
                         subtitle={p.author_email}
-                        time={formatTime(p.created_at)}
+                        time={formatTime(p.created_at, t, _lang?.language)}
                         onPress={() => go(`/feed/${p.id}`)}
                         colors={colors}
                         query={q.trim()}
@@ -650,6 +663,7 @@ export default function GlobalSearch({
               if (files.length === 0) return null;
               return (
                 <Section
+                  t={t}
                   title={t?.('search.files') || 'Arquivos'}
                   icon={IconFile || IconImage}
                   colors={colors}
@@ -666,7 +680,7 @@ export default function GlobalSearch({
                       }
                       title={p.caption || p.filename || (t?.('feed.untitled') || 'Arquivo')}
                       subtitle={p.author_email}
-                      time={formatTime(p.created_at)}
+                      time={formatTime(p.created_at, t, _lang?.language)}
                       onPress={() => go(`/files/${p.id}`)}
                       colors={colors}
                       query={q.trim()}
@@ -685,6 +699,7 @@ export default function GlobalSearch({
               if (others.length === 0) return null;
               return (
                 <Section
+                  t={t}
                   title={t?.('search.posts') || 'Publicações'}
                   icon={IconImage}
                   colors={colors}
@@ -707,7 +722,7 @@ export default function GlobalSearch({
                         }
                         title={p.caption || (t?.('feed.untitled') || 'Post')}
                         subtitle={p.author_email}
-                        time={formatTime(p.created_at)}
+                        time={formatTime(p.created_at, t, _lang?.language)}
                         onPress={() => go(`/feed/${p.id}`)}
                         colors={colors}
                         query={q.trim()}

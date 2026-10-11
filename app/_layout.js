@@ -156,7 +156,7 @@ function _registerLiveKitGlobals() {
   if (_lkGlobalsRegistered || Platform.OS === 'web') return;
   _lkGlobalsRegistered = true;
   try {
-    const lkrn = require('@livekit/react-native');
+    const lkrn = require('../services/lkLoader').lkRn(); // [2026-10-11 boot-split] native-only require; web stub keeps LiveKit out of the boot bundle
     if (typeof lkrn.registerGlobals === 'function') {
       try { lkrn.registerGlobals({ autoConfigureAudioSession: false }); }
       catch (e) {
@@ -399,7 +399,7 @@ import ChildRestrictionGuard from '../components/ChildRestrictionGuard';
 import { nativeSheetScreenOptions } from '../components/NativeSheet'; // [2026-10-09 native-sheets] formSheet nativo (rota-ponte /native-sheet)
 import { MailProvider } from '../context/MailContext';
 import { ThemeProvider } from '../context/ThemeContext';
-import { LanguageProvider, useLanguage, preloadBootLanguage, bootLanguageNeedsPreload } from '../context/LanguageContext';
+import { LanguageProvider, useLanguage, useLanguageOptional, preloadBootLanguage, bootLanguageNeedsPreload } from '../context/LanguageContext';
 import { CurrencyProvider } from '../context/CurrencyContext';
 import { BiometricProvider } from '../context/BiometricContext';
 import { PhotosProvider } from '../context/PhotosContext';
@@ -470,6 +470,50 @@ function PWAPromptsThemed() {
   // Translation context isn't crucial here — PWAPrompts has hardcoded
   // fallbacks; we just pass null t (component handles undefined).
   return <PWAPrompts colors={colors} isDark={isDark} t={null} />;
+}
+
+// [2026-10-11 ui-sweep] Banner de OTA extraído p/ componente próprio: o
+// RootLayout fica FORA do LanguageProvider, então o texto não passava por t().
+// useLanguageOptional nunca lança; sem provider cai no texto pt-BR do toast.
+function OtaToastView({ toast }) {
+  const _lang = useLanguageOptional();
+  const tr = (key, fb) => {
+    try { const v = _lang?.t?.(key); if (v && v !== key) return v; } catch {}
+    return fb;
+  };
+  const _Pressable = require('react-native').Pressable;
+  const _tappable = typeof toast.onPress === 'function';
+  const _bg = toast.kind === 'success' ? '#16a34a'
+            : toast.kind === 'update' ? '#111111'
+            : toast.kind === 'info' ? '#111111'
+            : 'rgba(30,30,30,0.95)';
+  const _wrap = {
+    position: 'absolute',
+    top: Platform.OS === 'ios' ? 54 : androidTopInset(24),
+    left: 16, right: 16,
+    backgroundColor: _bg,
+    borderRadius: 12, paddingVertical: 11, paddingHorizontal: 16,
+    flexDirection: 'row', alignItems: 'center', gap: 10,
+    zIndex: 9999,
+    shadowColor: '#000', shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.28, shadowRadius: 16, elevation: 12,
+  };
+  const _text = toast.textKey ? tr(toast.textKey, toast.text) : toast.text;
+  const _inner = (
+    <>
+      <RNText style={{ color: '#fff', fontSize: 14, fontWeight: '600', flex: 1, textAlign: _tappable ? 'left' : 'center' }}>
+        {_text}
+      </RNText>
+      {_tappable ? (
+        <RNView style={{ backgroundColor: 'rgba(255,255,255,0.20)', borderRadius: 8, paddingVertical: 6, paddingHorizontal: 13 }}>
+          <RNText style={{ color: '#fff', fontSize: 13, fontWeight: '700' }}>{tr('uiG.layout.updateBtn', 'Atualizar')}</RNText>
+        </RNView>
+      ) : null}
+    </>
+  );
+  return _tappable
+    ? <_Pressable onPress={toast.onPress} style={({ pressed }) => [_wrap, pressed && { opacity: 0.85 }]} accessibilityRole="button" accessibilityLabel={tr('uiG.layout.updateA11y', 'Atualizar para a nova versão')}>{_inner}</_Pressable>
+    : <RNView style={_wrap}>{_inner}</RNView>;
 }
 
 function ThemedStatusBar() {
@@ -708,6 +752,11 @@ function useDeepLinking() {
 
 function AppInit({ onNotification, setOtaToast }) {
   const cleanupRef = useRef(null);
+  // [2026-10-11 ui-sweep] t() p/ handlers WS (cashout/diamante) via ref —
+  // AppInit mora dentro do LanguageProvider; Optional nunca lança.
+  const _langCtx = useLanguageOptional();
+  const _tRef = useRef(null);
+  _tRef.current = _langCtx?.t || null;
   const pathname = usePathname();
   const pathnameRef = useRef(null);
   const prefetchedRef = useRef(false);
@@ -772,12 +821,13 @@ function AppInit({ onNotification, setOtaToast }) {
         // user found those noisy and not useful.
         const update = await Updates.checkForUpdateAsync();
         if (!update.isAvailable) return;
-        setOtaToast({ text: 'Baixando atualização…', kind: 'info' });
+        setOtaToast({ textKey: 'uiG.layout.downloadingUpdate', text: 'Baixando atualização…', kind: 'info' });
         await Updates.fetchUpdateAsync();
         // [2026-10-04] Em vez de recarregar sozinho (invasivo + histórico de
         // "updates empilhados"), mostra um banner PERSISTENTE e TOCÁVEL: o
         // usuário VÊ que a nova versão chegou e aplica quando quiser.
         setOtaToast({
+          textKey: 'uiG.layout.newVersion',
           text: 'Nova versão disponível',
           kind: 'update',
           onPress: () => { try { Updates.reloadAsync(); } catch {} },
@@ -1279,8 +1329,15 @@ function AppInit({ onNotification, setOtaToast }) {
                   lang = String(navigator.language).slice(0, 2);
                 }
               } catch {}
-              const t = TITLES[lang] || TITLES.pt;
-              const b = BODIES[lang] || BODIES.pt;
+              let t = TITLES[lang] || TITLES.pt;
+              let b = BODIES[lang] || BODIES.pt;
+              try {
+                const _t = _tRef.current;
+                if (typeof _t === 'function') {
+                  t = { paid: _t('wallet.cashoutPushPaidTitle'), rejected: _t('wallet.cashoutPushRejectedTitle') };
+                  b = { paid: _t('wallet.cashoutPushPaidBody', { amount: amountBrl }), rejected: data?.admin_note || _t('wallet.cashoutPushRejectedBody') };
+                }
+              } catch {}
               if (status === 'paid' || status === 'rejected') {
                 const { Platform, Alert } = require('react-native');
                 if (Platform.OS === 'web' && typeof window !== 'undefined') {
@@ -1296,7 +1353,7 @@ function AppInit({ onNotification, setOtaToast }) {
         } catch {}
         wsDiamondUnsub = ws.on('diamond_received', (data) => {
           try {
-            const fromName = data?.from_name || (data?.from_email || '').split('@')[0] || 'Alguém';
+            const fromName = data?.from_name || (data?.from_email || '').split('@')[0] || ((typeof _tRef.current === 'function' && _tRef.current('creatorEarnings.someone')) || 'Alguém');
             const amount = Number(data?.amount) || 0;
             const msg = data?.message ? `\n${data.message}` : '';
             // Pulse vibration on native; web silently no-ops.
@@ -1330,6 +1387,11 @@ function AppInit({ onNotification, setOtaToast }) {
                 };
                 const tpl = TEMPLATES[detected] || TEMPLATES.pt;
                 title = tpl.replace('{name}', fromName).replace('{n}', amount);
+                const _t = _tRef.current;
+                if (typeof _t === 'function') {
+                  const _tt = _t('wallet.diamondReceivedTitle', { name: fromName, n: amount });
+                  if (_tt && _tt !== 'wallet.diamondReceivedTitle') title = _tt;
+                }
               } catch {}
               if (Platform.OS === 'web' && typeof window !== 'undefined') {
                 if (window.Notification && window.Notification.permission === 'granted') {
@@ -1880,40 +1942,7 @@ export default function RootLayout() {
                 <HtmlLangSync />
                 <AccountLanguageSync />
                 <OfflineNotice />
-                {otaToast ? (() => {
-                  const _Pressable = require('react-native').Pressable;
-                  const _tappable = typeof otaToast.onPress === 'function';
-                  const _bg = otaToast.kind === 'success' ? '#16a34a'
-                            : otaToast.kind === 'update' ? '#111111'
-                            : otaToast.kind === 'info' ? '#111111'
-                            : 'rgba(30,30,30,0.95)';
-                  const _wrap = {
-                    position: 'absolute',
-                    top: Platform.OS === 'ios' ? 54 : androidTopInset(24),
-                    left: 16, right: 16,
-                    backgroundColor: _bg,
-                    borderRadius: 12, paddingVertical: 11, paddingHorizontal: 16,
-                    flexDirection: 'row', alignItems: 'center', gap: 10,
-                    zIndex: 9999,
-                    shadowColor: '#000', shadowOffset: { width: 0, height: 6 },
-                    shadowOpacity: 0.28, shadowRadius: 16, elevation: 12,
-                  };
-                  const _inner = (
-                    <>
-                      <RNText style={{ color: '#fff', fontSize: 14, fontWeight: '600', flex: 1, textAlign: _tappable ? 'left' : 'center' }}>
-                        {otaToast.text}
-                      </RNText>
-                      {_tappable ? (
-                        <RNView style={{ backgroundColor: 'rgba(255,255,255,0.20)', borderRadius: 8, paddingVertical: 6, paddingHorizontal: 13 }}>
-                          <RNText style={{ color: '#fff', fontSize: 13, fontWeight: '700' }}>Atualizar</RNText>
-                        </RNView>
-                      ) : null}
-                    </>
-                  );
-                  return _tappable
-                    ? <_Pressable onPress={otaToast.onPress} style={({ pressed }) => [_wrap, pressed && { opacity: 0.85 }]} accessibilityRole="button" accessibilityLabel="Atualizar para a nova versão">{_inner}</_Pressable>
-                    : <RNView style={_wrap}>{_inner}</RNView>;
-                })() : null}
+                {otaToast ? <OtaToastView toast={otaToast} /> : null}
                 <ThemedStatusBar />
                 {/* Stage 6 — yellow "phone offline" banner shows when WS relay
                     couldn't reach the phone and we served cached data from

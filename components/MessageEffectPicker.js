@@ -381,7 +381,7 @@ export default function MessageEffectPicker({ visible, onClose, onPick, t, isDar
                     effect={e.id}
                     active={visible && tab === 'bubble' && !previewBubble && !previewEffect}
                     color={bubbleColor}
-                    label="Olá"
+                    label={tx('effects.previewSample', 'Olá')}
                   />
                 </View>
                 <Text style={{ color: text, fontSize: 13, fontWeight: '600', textAlign: 'center' }}>

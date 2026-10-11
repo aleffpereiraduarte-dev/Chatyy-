@@ -12,7 +12,7 @@ import {
 } from 'react-native';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
-import { IconShield, IconAlertTriangle } from './Icons';
+import { IconShield, IconAlertTriangle, IconCheck, IconX } from './Icons';
 import * as api from '../services/api';
 
 // Global trigger — called from pushNotifications.js or WebSocket handler
@@ -128,9 +128,9 @@ export default function LoginChallengePrompt() {
               <View style={[lcs.iconCircle, {
                 backgroundColor: result === 'approved' ? '#10b98115' : '#ef444415',
               }]}>
-                <Text style={{ fontSize: 40 }}>
-                  {result === 'approved' ? '\u2713' : '\u2717'}
-                </Text>
+                {result === 'approved'
+                  ? <IconCheck size={40} color={colors.text} />
+                  : <IconX size={40} color={colors.text} />}
               </View>
               <Text style={[lcs.title, { color: colors.text }]}>
                 {result === 'approved' ? t('login.verifyApproved') : t('login.verifyDenied')}

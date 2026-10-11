@@ -24,6 +24,7 @@ import {
 
 // SVG icons — reuse app's Icons.js (never emoji)
 import { IconX, IconVolume2, IconVolumeX, IconPlay, IconPause } from './Icons';
+import { useLanguage } from '../context/LanguageContext';
 import { cachedVideoSource } from '../services/videoCacheSource'; // [2026-10-10 native-audit] native video disk cache
 
 const SIZE = 320;
@@ -57,12 +58,13 @@ function enablePlaybackAudioSession() {
 
 // ── Inner player (extracted so hooks stay unconditional) ──────────────────
 function CircularPlayer({ uri, paused, muted, onReady }) {
+  const { t } = useLanguage();
   const ev = loadExpoVideo();
   if (!ev?.useVideoPlayer || !ev?.VideoView) {
     return (
       <View style={styles.fallback}>
         <IconPlay size={36} color="#fff" />
-        <Text style={styles.fallbackText}>expo-video not available</Text>
+        <Text style={styles.fallbackText}>{t('status.videoUnavailable')}</Text>
       </View>
     );
   }
@@ -123,6 +125,7 @@ function CircularPlayer({ uri, paused, muted, onReady }) {
 
 // ── Main component ────────────────────────────────────────────────────────
 export default function RoundVideoViewer({ visible, uri, onClose }) {
+  const { t } = useLanguage();
   const [muted, setMuted] = useState(true);  // start muted (tap to unmute)
   const [paused, setPaused] = useState(false);
   const [ready, setReady] = useState(false);
@@ -174,7 +177,7 @@ export default function RoundVideoViewer({ visible, uri, onClose }) {
         <View style={styles.closeRow} pointerEvents="box-none">
           <TouchableOpacity
             onPress={onClose}
-            accessibilityLabel="Fechar"
+            accessibilityLabel={t('common.close')}
             hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
           >
             <View style={styles.closeBtnInner}>
@@ -211,7 +214,7 @@ export default function RoundVideoViewer({ visible, uri, onClose }) {
           <TouchableOpacity
             onPress={handleToggleMute}
             style={styles.muteBtn}
-            accessibilityLabel={muted ? 'Unmute video' : 'Mute video'}
+            accessibilityLabel={muted ? t('feed.unmute') : t('feed.mute')}
             hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
           >
             {muted
@@ -224,7 +227,7 @@ export default function RoundVideoViewer({ visible, uri, onClose }) {
           {ready && muted && (
             <View pointerEvents="none" style={styles.muteHint}>
               <IconVolumeX size={12} color="#fff" />
-              <Text style={styles.muteHintText}>Som desativado</Text>
+              <Text style={styles.muteHintText}>{t('roundVideo.soundOff')}</Text>
             </View>
           )}
         </View>

@@ -7,24 +7,24 @@ import {
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import { FontSize, Spacing, BorderRadius, Shadow } from '../constants/theme';
-import { IconSparkles, IconX } from './Icons';
+import { IconSparkles, IconX, IconBriefcase, IconSmile, IconCrop, IconLaughFace, IconZap, IconHeartOutline, IconRefresh, IconCheck, IconCopy, IconArrowRight } from './Icons';
 
 const BRAND = '#111111';
 const BRAND_PINK = '#111111';
 
 const TONES = [
-  { id: 'formal', label: 'Formal', emoji: '🎩' },
-  { id: 'casual', label: 'Casual', emoji: '👋' },
-  { id: 'curto', label: 'Curto', emoji: '✂️' },
-  { id: 'engracado', label: 'Engraçado', emoji: '😄' },
-  { id: 'persuasivo', label: 'Persuasivo', emoji: '🎯' },
-  { id: 'amigavel', label: 'Amigável', emoji: '🤝' },
+  { id: 'formal', label: 'aiComposeModal.toneFormal', Icon: IconBriefcase },
+  { id: 'casual', label: 'aiComposeModal.toneCasual', Icon: IconSmile },
+  { id: 'curto', label: 'aiComposeModal.toneShort', Icon: IconCrop },
+  { id: 'engracado', label: 'aiComposeModal.toneFunny', Icon: IconLaughFace },
+  { id: 'persuasivo', label: 'aiComposeModal.tonePersuasive', Icon: IconZap },
+  { id: 'amigavel', label: 'aiComposeModal.toneFriendly', Icon: IconHeartOutline },
 ];
 
 const LENGTHS = [
-  { id: 'short', label: 'Curto', words: '~50' },
-  { id: 'medium', label: 'Médio', words: '~120' },
-  { id: 'long', label: 'Longo', words: '~250' },
+  { id: 'short', label: 'aiComposeModal.lenShort', words: '~50' },
+  { id: 'medium', label: 'aiComposeModal.lenMedium', words: '~120' },
+  { id: 'long', label: 'aiComposeModal.lenLong', words: '~250' },
 ];
 
 export default function AIComposeModal({ visible, onClose, onUseDraft }) {
@@ -103,20 +103,20 @@ export default function AIComposeModal({ visible, onClose, onUseDraft }) {
                 <IconSparkles size={18} color="#fff" />
               </View>
               <View>
-                <Text style={[s.headerTitle, { color: colors.text }]}>Escrever com IA</Text>
+                <Text style={[s.headerTitle, { color: colors.text }]}>{t('aiCompose.title')}</Text>
                 <Text style={[s.headerSubtitle, { color: colors.textTertiary }]}>
-                  Powered by Chatyy AI
+                  {t('aiComposeModal.poweredBy')}
                 </Text>
               </View>
             </View>
-            <TouchableOpacity onPress={handleClose} style={s.closeBtn} hitSlop={{ top: 10, left: 10, right: 10, bottom: 10 }}>
+            <TouchableOpacity onPress={handleClose} style={s.closeBtn} hitSlop={{ top: 10, left: 10, right: 10, bottom: 10 }} accessibilityRole="button" accessibilityLabel={t('common.close')}>
               <IconX size={22} color={colors.textSecondary} />
             </TouchableOpacity>
           </View>
 
           <ScrollView style={s.body} contentContainerStyle={s.bodyContent} keyboardShouldPersistTaps="handled">
             {/* Tone picker */}
-            <Text style={[s.sectionLabel, { color: colors.text }]}>Tom da mensagem</Text>
+            <Text style={[s.sectionLabel, { color: colors.text }]}>{t('aiComposeModal.toneLabel')}</Text>
             <ScrollView
               horizontal
               showsHorizontalScrollIndicator={false}
@@ -135,9 +135,9 @@ export default function AIComposeModal({ visible, onClose, onUseDraft }) {
                       { borderColor: active ? BRAND : colors.divider, backgroundColor: active ? BRAND + '15' : colors.surface },
                     ]}
                   >
-                    <Text style={s.toneEmoji}>{tn.emoji}</Text>
+                    <tn.Icon size={14} color={active ? BRAND : colors.textSecondary} />
                     <Text style={[s.toneText, { color: active ? BRAND : colors.text, fontWeight: active ? '700' : '500' }]}>
-                      {tn.label}
+                      {t(tn.label)}
                     </Text>
                   </TouchableOpacity>
                 );
@@ -146,7 +146,7 @@ export default function AIComposeModal({ visible, onClose, onUseDraft }) {
 
             {/* Length slider (segmented) */}
             <Text style={[s.sectionLabel, { color: colors.text, marginTop: Spacing.lg }]}>
-              Tamanho
+              {t('aiComposeModal.lengthLabel')}
             </Text>
             <View style={[s.segmented, { backgroundColor: colors.surfaceVariant, borderColor: colors.divider }]}>
               {LENGTHS.map((ln) => {
@@ -159,7 +159,7 @@ export default function AIComposeModal({ visible, onClose, onUseDraft }) {
                     activeOpacity={0.85}
                   >
                     <Text style={[s.segmentText, { color: active ? '#fff' : colors.text, fontWeight: active ? '700' : '500' }]}>
-                      {ln.label}
+                      {t(ln.label)}
                     </Text>
                     <Text style={[s.segmentSub, { color: active ? 'rgba(255,255,255,0.85)' : colors.textTertiary }]}>
                       {ln.words}
@@ -171,7 +171,7 @@ export default function AIComposeModal({ visible, onClose, onUseDraft }) {
 
             {/* Prompt textarea (large) */}
             <Text style={[s.sectionLabel, { color: colors.text, marginTop: Spacing.lg }]}>
-              O que você quer escrever?
+              {t('aiComposeModal.promptLabel')}
             </Text>
             <TextInput
               style={[
@@ -180,7 +180,7 @@ export default function AIComposeModal({ visible, onClose, onUseDraft }) {
               ]}
               value={prompt}
               onChangeText={setPrompt}
-              placeholder="Ex: agradecer pela reunião e propor próximos passos..."
+              placeholder={t('aiComposeModal.promptPlaceholder')}
               placeholderTextColor={colors.textTertiary}
               multiline
               numberOfLines={6}
@@ -201,12 +201,12 @@ export default function AIComposeModal({ visible, onClose, onUseDraft }) {
                   {loading ? (
                     <>
                       <ActivityIndicator size="small" color="#fff" />
-                      <Text style={s.generateText}>Gerando...</Text>
+                      <Text style={s.generateText}>{t('chatConv.wallpaperAiGenerating')}</Text>
                     </>
                   ) : (
                     <>
                       <IconSparkles size={18} color="#fff" />
-                      <Text style={s.generateText}>Gerar com IA</Text>
+                      <Text style={s.generateText}>{t('aiComposeModal.generate')}</Text>
                     </>
                   )}
                 </View>
@@ -224,7 +224,7 @@ export default function AIComposeModal({ visible, onClose, onUseDraft }) {
               <View style={[s.resultCard, { backgroundColor: colors.surface, borderColor: BRAND + '30' }, Shadow.md]}>
                 <View style={s.resultHeader}>
                   <IconSparkles size={14} color={BRAND} />
-                  <Text style={[s.resultLabel, { color: BRAND }]}>Rascunho gerado</Text>
+                  <Text style={[s.resultLabel, { color: BRAND }]}>{t('aiComposeModal.draftGenerated')}</Text>
                 </View>
                 <TextInput
                   style={[s.draftText, { color: colors.text }]}
@@ -239,15 +239,17 @@ export default function AIComposeModal({ visible, onClose, onUseDraft }) {
                     onPress={handleGenerate}
                     activeOpacity={0.8}
                   >
-                    <Text style={[s.actionText, { color: colors.text }]}>↻  Regenerar</Text>
+                    <IconRefresh size={15} color={colors.text} />
+                    <Text style={[s.actionText, { color: colors.text }]}>{t('aiComposeModal.regenerate')}</Text>
                   </TouchableOpacity>
                   <TouchableOpacity
                     style={[s.actionBtn, { borderColor: colors.divider }]}
                     onPress={handleCopy}
                     activeOpacity={0.8}
                   >
+                    {copied ? <IconCheck size={15} color="#10B981" /> : <IconCopy size={15} color={colors.text} />}
                     <Text style={[s.actionText, { color: copied ? '#10B981' : colors.text }]}>
-                      {copied ? '✓  Copiado' : '⧉  Copiar'}
+                      {copied ? t('common.copied') : t('common.copy')}
                     </Text>
                   </TouchableOpacity>
                   <TouchableOpacity
@@ -255,7 +257,8 @@ export default function AIComposeModal({ visible, onClose, onUseDraft }) {
                     onPress={handleUse}
                     activeOpacity={0.85}
                   >
-                    <Text style={[s.actionText, { color: '#fff', fontWeight: '700' }]}>Inserir →</Text>
+                    <Text style={[s.actionText, { color: '#fff', fontWeight: '700' }]}>{t('aiComposeModal.insert')}</Text>
+                    <IconArrowRight size={15} color="#fff" />
                   </TouchableOpacity>
                 </View>
               </View>
@@ -358,6 +361,7 @@ const s = StyleSheet.create({
   actionBtn: {
     flex: 1, borderWidth: 1, borderRadius: BorderRadius.md,
     paddingVertical: 12, alignItems: 'center',
+    flexDirection: 'row', justifyContent: 'center', gap: 6,
   },
   actionPrimary: { borderWidth: 0, flex: 1.3 },
   actionText: { fontSize: FontSize.base, fontWeight: '600' },

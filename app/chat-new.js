@@ -668,7 +668,7 @@ export default function ChatNewScreen() {
         Alert.alert(t('chat.noContacts') || 'Sem contatos', t('chat.noContactsMsg') || 'Nenhum contato com email ou telefone foi encontrado no seu celular.');
       }
     }).catch((e) => {
-      Alert.alert('Erro', String(e?.message || e));
+      Alert.alert(t('common.error'), String(e?.message || e));
     }).finally(() => setSyncingContacts(false));
   }, [t]);
 
@@ -889,7 +889,7 @@ export default function ChatNewScreen() {
           params: { id: String(cid), name: channel.name || '', type: channel.type || 'channel' },
         });
       } else {
-        safeAlert(t('common.error') || 'Erro', r?.message || 'Falha ao entrar no canal');
+        safeAlert(t('common.error') || 'Erro', r?.message || t('uiG.chatNew.joinChannelFailed'));
       }
     } catch (e) {
       safeAlert(t('common.error') || 'Erro', String(e?.message || e));
@@ -1236,7 +1236,7 @@ export default function ChatNewScreen() {
             // pick-mode only ever starts from the group/channel info modal.
             router.replace({ pathname: '/chat-conversation', params: { id: String(addMemberConvId), type: pageParams.addMemberConvType || 'group', name: pageParams.addMemberConvName || '' } });
           } else {
-            safeAlert(t('common.error') || 'Erro', r?.message || 'Falha ao adicionar');
+            safeAlert(t('common.error') || 'Erro', r?.message || t('uiG.chatNew.addFailed'));
           }
         } catch (e) {
           safeAlert(t('common.error') || 'Erro', String(e?.message || e));
@@ -1345,7 +1345,7 @@ export default function ChatNewScreen() {
       if (r.success && convId) {
         router.replace(`/chat-conversation?id=${convId}&name=${encodeURIComponent(groupName.trim())}&type=channel`);
       } else {
-        safeAlert(t('common.error'), r?.message || 'Error');
+        safeAlert(t('common.error'), r?.message || t('common.genericError'));
       }
     } catch {
       safeAlert(t('common.error'), t('common.networkError'));
@@ -1394,7 +1394,7 @@ export default function ChatNewScreen() {
       if (r.success) {
         safeAlert('', t('chat.inviteSentTo', { email }));
       } else {
-        safeAlert(t('common.error'), r.message || 'Failed');
+        safeAlert(t('common.error'), r.message || t('common.genericError'));
       }
     } catch {
       safeAlert(t('common.error'), t('common.networkError'));
@@ -1989,7 +1989,7 @@ export default function ChatNewScreen() {
                 <TouchableOpacity
                   style={sty.selectedChip}
                   onPress={() => setSelectedMembers(prev => prev.filter(m => m.email !== item.email))}
-                  accessibilityLabel={`Remover ${label}`}
+                  accessibilityLabel={`${t('common.remove')} ${label}`}
                   accessibilityRole="button"
                 >
                   <View style={{ position: 'relative' }}>

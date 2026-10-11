@@ -42,14 +42,14 @@ export default function QuickSettingsPanel({ visible, onClose }) {
               onPress={() => { if (isDark) toggle(); }}
             >
               <IconSun size={18} color={!isDark ? colors.primary : colors.textSecondary} />
-              <Text style={[s.optionText, { color: !isDark ? colors.primary : colors.text }]}>Light</Text>
+              <Text style={[s.optionText, { color: !isDark ? colors.primary : colors.text }]}>{t('settings.theme.light')}</Text>
             </TouchableOpacity>
             <TouchableOpacity
               style={[s.optionBtn, { borderColor: colors.divider }, isDark && { borderColor: colors.primary, backgroundColor: colors.primaryLight }]}
               onPress={() => { if (!isDark) toggle(); }}
             >
               <IconMoon size={18} color={isDark ? colors.primary : colors.textSecondary} />
-              <Text style={[s.optionText, { color: isDark ? colors.primary : colors.text }]}>Dark</Text>
+              <Text style={[s.optionText, { color: isDark ? colors.primary : colors.text }]}>{t('settings.theme.dark')}</Text>
             </TouchableOpacity>
           </View>
         </View>

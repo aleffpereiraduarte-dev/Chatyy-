@@ -21,6 +21,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { IconX } from './Icons';
+import { useLanguage } from '../context/LanguageContext';
 import { getAvatarUrlForEmail } from '../services/api';
 
 let ExpoImage = null;
@@ -32,6 +33,7 @@ const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get('window');
 
 export default function AvatarLightbox({ visible, onClose, email, uri, name }) {
   const insets = useSafeAreaInsets();
+  const { t } = useLanguage();
   const [imgError, setImgError] = useState(false);
   const scale = useRef(new Animated.Value(1)).current;
   const translateX = useRef(new Animated.Value(0)).current;
@@ -153,7 +155,7 @@ export default function AvatarLightbox({ visible, onClose, email, uri, name }) {
       <Animated.View style={[styles.root, { opacity }]}>
         {Platform.OS === 'android' && <StatusBar backgroundColor="#000" barStyle="light-content" />}
         {/* Tap-out backdrop. We capture taps that aren't part of a pan gesture. */}
-        <Pressable style={StyleSheet.absoluteFill} onPress={requestClose} accessibilityLabel="Fechar foto">
+        <Pressable style={StyleSheet.absoluteFill} onPress={requestClose} accessibilityLabel={t('avatarLightbox.closePhoto')}>
           <View style={StyleSheet.absoluteFill} />
         </Pressable>
 
@@ -192,7 +194,7 @@ export default function AvatarLightbox({ visible, onClose, email, uri, name }) {
           <TouchableOpacity
             onPress={requestClose}
             style={styles.closeBtn}
-            accessibilityLabel="Fechar"
+            accessibilityLabel={t('common.close')}
             accessibilityRole="button"
             hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
           >

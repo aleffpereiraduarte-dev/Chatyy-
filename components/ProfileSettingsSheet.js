@@ -420,7 +420,7 @@ function SettingsSearchBar({ value, onChangeText, colors, t }) {
         returnKeyType="search"
       />
       {!!value && (
-        <TouchableOpacity onPress={() => onChangeText('')} accessibilityLabel="Clear search">
+        <TouchableOpacity onPress={() => onChangeText('')} accessibilityLabel={t?.('a11y.clearSearch') || 'Limpar busca'}>
           <IconX size={16} color={colors?.textSecondary || '#64748b'} />
         </TouchableOpacity>
       )}
@@ -839,7 +839,7 @@ function DevicesScreen({ colors, t, onClose, onLogout }) {
               {sessions.length} {sessions.length === 1 ? 'aparelho' : 'aparelhos'}
             </Text>
             <Text style={{ fontSize: 13, color: colors?.textSecondary, marginTop: 4 }}>
-              Sessões ativas com acesso à sua conta. Toque em um aparelho pra encerrar a sessão.
+              {t?.('profileSettingsD.devicesIntro') || 'Sessões ativas com acesso à sua conta. Toque em um aparelho para encerrar a sessão.'}
             </Text>
           </View>
 
@@ -855,7 +855,7 @@ function DevicesScreen({ colors, t, onClose, onLogout }) {
                   <View style={{ flex: 1 }}>
                     <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                       <Text style={{ fontSize: 15, fontWeight: '700', color: colors?.text }} numberOfLines={1}>
-                        {current.device_label || current.user_agent || 'Aparelho'}
+                        {current.device_label || current.user_agent || t?.('login.verifyPromptDevice') || 'Aparelho'}
                       </Text>
                       <View style={{ marginLeft: 8, paddingHorizontal: 8, paddingVertical: 2, borderRadius: 8, backgroundColor: '#10b981' }}>
                         <Text style={{ fontSize: 10, fontWeight: '700', color: '#fff', letterSpacing: 0.4 }}>
@@ -902,7 +902,7 @@ function DevicesScreen({ colors, t, onClose, onLogout }) {
                       </View>
                       <View style={{ flex: 1 }}>
                         <Text style={{ fontSize: 14, fontWeight: '600', color: colors?.text }} numberOfLines={1}>
-                          {s.device_label || s.user_agent || 'Aparelho'}
+                          {s.device_label || s.user_agent || t?.('login.verifyPromptDevice') || 'Aparelho'}
                         </Text>
                         <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 3 }}>
                           {!!s.ip && (
@@ -945,7 +945,7 @@ function DevicesScreen({ colors, t, onClose, onLogout }) {
             <View style={{ flexDirection: 'row', alignItems: 'flex-start' }}>
               <IconShield size={14} color={colors?.textTertiary} style={{ marginTop: 2 }} />
               <Text style={{ flex: 1, fontSize: 11, color: colors?.textTertiary, marginLeft: 8, lineHeight: 16 }}>
-                Não reconhece um aparelho? Encerre a sessão e troque sua senha. O endereço IP é onde a conexão se conectou da última vez.
+                {t?.('profileSettingsD.devicesFooter') || 'Não reconhece um aparelho? Encerre a sessão e troque sua senha. O endereço IP é de onde o aparelho se conectou pela última vez.'}
               </Text>
             </View>
           </View>

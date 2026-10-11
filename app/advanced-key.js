@@ -76,7 +76,7 @@ export default function AdvancedKeyScreen() {
       setConfirmInputs(['', '']);
       setPhase('showPhrase');
     } catch (e) {
-      Alert.alert('Erro', e?.message || 'Não foi possível gerar a chave.');
+      Alert.alert(t('common.error'), e?.message || t('uiG.advKey.generateFailed'));
       setPhase('idle');
     } finally {
       setBusy(false);
@@ -119,7 +119,7 @@ export default function AdvancedKeyScreen() {
               setFingerprint('');
               setPhase('idle');
             } catch (e) {
-              Alert.alert('Erro', e?.message || 'Falha ao apagar.');
+              Alert.alert(t('common.error'), e?.message || t('uiG.advKey.deleteFailed'));
             }
           },
         },

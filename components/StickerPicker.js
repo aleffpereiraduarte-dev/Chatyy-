@@ -5,7 +5,7 @@ import {
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import CachedImage from './CachedImage';
-import { IconX, IconPlus, IconSearch, IconHeart, IconStar, IconTrash, IconFilm, IconPackage, IconClock, IconPalette } from './Icons';
+import { IconX, IconPlus, IconSearch, IconHeart, IconStar, IconStarFilled, IconTrash, IconFilm, IconPackage, IconClock, IconPalette } from './Icons';
 import * as api from '../services/api';
 // [2026-10-08 sticker-maker] criador novo (recorte automático + contorno +
 // texto/desenho/emoji + WebP 512) substitui o StickerEditor antigo aqui.
@@ -432,10 +432,10 @@ export default function StickerPicker({ onSelect, onClose, colors, t, userEmail,
           } catch {}
         }
       } else {
-        Alert.alert(t?.('common.error') || 'Erro', r?.error || r?.message || 'Falha ao criar figurinha animada.');
+        Alert.alert(t?.('common.error') || 'Erro', r?.error || r?.message || _tr(t, 'stickerPicker.animatedFailed', 'Falha ao criar figurinha animada.'));
       }
     } catch (e) {
-      Alert.alert(t?.('common.error') || 'Erro', e?.message || 'Falha ao criar figurinha animada.');
+      Alert.alert(t?.('common.error') || 'Erro', e?.message || _tr(t, 'stickerPicker.animatedFailed', 'Falha ao criar figurinha animada.'));
     } finally {
       setCreating(false);
     }
@@ -517,10 +517,10 @@ export default function StickerPicker({ onSelect, onClose, colors, t, userEmail,
           if (p?.success) setMyPacks(p.items || p.data?.items || []);
         } catch {}
       } else {
-        Alert.alert(t?.('common.error') || 'Erro', 'Falha ao criar figurinha.');
+        Alert.alert(t?.('common.error') || 'Erro', _tr(t, 'stickerPicker.createFailed', 'Falha ao criar figurinha.'));
       }
     } catch (e) {
-      Alert.alert(t?.('common.error') || 'Erro', e?.message || 'Falha ao criar figurinha.');
+      Alert.alert(t?.('common.error') || 'Erro', e?.message || _tr(t, 'stickerPicker.createFailed', 'Falha ao criar figurinha.'));
     } finally {
       setCreating(false);
     }
@@ -546,10 +546,10 @@ export default function StickerPicker({ onSelect, onClose, colors, t, userEmail,
         setShowPackCreate(false);
         setSelectedMyPack(created.id);
       } else {
-        Alert.alert(t?.('common.error') || 'Erro', r?.error || 'Falha ao criar pack.');
+        Alert.alert(t?.('common.error') || 'Erro', r?.error || _tr(t, 'stickerShop.createFailed', 'Falha ao criar pacote.'));
       }
     } catch (e) {
-      Alert.alert(t?.('common.error') || 'Erro', e?.message || 'Falha ao criar pack.');
+      Alert.alert(t?.('common.error') || 'Erro', e?.message || _tr(t, 'stickerShop.createFailed', 'Falha ao criar pacote.'));
     }
   }, [newPackName, t]);
 
@@ -725,8 +725,8 @@ export default function StickerPicker({ onSelect, onClose, colors, t, userEmail,
       {!showSearch && activePack !== 'recent' && recents.length > 0 && (
         <View style={{ borderBottomWidth: 1, borderBottomColor: colors.border }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 10, paddingTop: 4 }}>
-            <Text style={{ fontSize: 9, fontWeight: '800', color: colors.textTertiary, letterSpacing: 0.6 }}>
-              RECENTES
+            <Text style={{ fontSize: 9, fontWeight: '800', color: colors.textTertiary, letterSpacing: 0.6, textTransform: 'uppercase' }}>
+              {_tr(t, 'chatConv.recents', 'Recentes')}
             </Text>
           </View>
           <ScrollView
@@ -761,9 +761,9 @@ export default function StickerPicker({ onSelect, onClose, colors, t, userEmail,
       {!showSearch && activePack !== 'favorites' && activePack !== 'recent' && favorites.length > 0 && (
         <View style={{ borderBottomWidth: 1, borderBottomColor: colors.border }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 10, paddingTop: 4, gap: 4 }}>
-            <Text style={{ fontSize: 10 }}>⭐</Text>
-            <Text style={{ fontSize: 9, fontWeight: '800', color: colors.primary, letterSpacing: 0.6 }}>
-              FAVORITOS
+            <IconStarFilled size={10} color={colors.primary} />
+            <Text style={{ fontSize: 9, fontWeight: '800', color: colors.primary, letterSpacing: 0.6, textTransform: 'uppercase' }}>
+              {_tr(t, 'photos.favorites', 'Favoritos')}
             </Text>
           </View>
           <ScrollView
@@ -842,7 +842,7 @@ export default function StickerPicker({ onSelect, onClose, colors, t, userEmail,
                 onSubmitEditing={handleCreatePack}
                 maxLength={40}
               />
-              <TouchableOpacity onPress={handleCreatePack}><Text style={{ color: colors.primary, fontWeight: '700', fontSize: 11 }}>OK</Text></TouchableOpacity>
+              <TouchableOpacity onPress={handleCreatePack}><Text style={{ color: colors.primary, fontWeight: '700', fontSize: 11 }}>{_tr(t, 'common.ok', 'OK')}</Text></TouchableOpacity>
               <TouchableOpacity onPress={() => { setShowPackCreate(false); setNewPackName(''); }}><IconX size={12} color={colors.textTertiary} /></TouchableOpacity>
             </View>
           ) : (
@@ -932,7 +932,7 @@ export default function StickerPicker({ onSelect, onClose, colors, t, userEmail,
               )}
               {isFav(item) && (
                 <View style={{ position: 'absolute', top: 2, right: 2 }}>
-                  <Text style={{ fontSize: 8 }}>⭐</Text>
+                  <IconStarFilled size={9} color={colors.text} />
                 </View>
               )}
             </TouchableOpacity>
@@ -1040,7 +1040,7 @@ export default function StickerPicker({ onSelect, onClose, colors, t, userEmail,
           elevation: 6,
           opacity: creating ? 0.6 : 1,
         }}
-        accessibilityLabel="Criar sticker"
+        accessibilityLabel={_tr(t, 'stickerMaker.pickTitle', 'Criar figurinha')}
       >
         {creating ? <ActivityIndicator color="#fff" /> : <IconPlus size={22} color="#fff" />}
       </TouchableOpacity>
@@ -1108,8 +1108,8 @@ export default function StickerPicker({ onSelect, onClose, colors, t, userEmail,
                 color: previewItem != null && isFav(previewItem) ? '#111111' : '#fff',
               }}>
                 {previewItem != null && isFav(previewItem)
-                  ? 'Remover dos favoritos'
-                  : 'Adicionar aos favoritos'}
+                  ? _tr(t, 'stickerMaker.unfavorite', 'Remover dos favoritos')
+                  : _tr(t, 'stickerMaker.favorite', 'Adicionar aos favoritos')}
               </Text>
             </TouchableOpacity>
           </Animated.View>

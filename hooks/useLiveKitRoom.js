@@ -39,14 +39,14 @@ import { Platform, PermissionsAndroid } from 'react-native';
 let _lkClient = null;
 function lkClient() {
   if (_lkClient) return _lkClient;
-  try { _lkClient = require('livekit-client'); } catch { _lkClient = null; }
+  try { _lkClient = require('../services/lkLoader').lkSync(); } catch { _lkClient = null; }
   return _lkClient;
 }
 let _lkRn = null;
 function lkRn() {
   if (_lkRn) return _lkRn;
   if (Platform.OS === 'web') return null;
-  try { _lkRn = require('@livekit/react-native'); } catch { _lkRn = null; }
+  try { _lkRn = require('../services/lkLoader').lkRn(); } catch { _lkRn = null; }
   return _lkRn;
 }
 

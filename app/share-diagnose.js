@@ -92,12 +92,12 @@ export default function ShareDiagnose() {
 
   const clearAll = useCallback(() => {
     Alert.alert(
-      'Limpar diagnóstico?',
-      'Apaga todos os registros de erro do compartilhamento. Use isso depois de reportar pro suporte.',
+      t('callDiagnose.clearTitle'),
+      t('shareDiagnose.clearBody'),
       [
-        { text: 'Cancelar', style: 'cancel' },
+        { text: t('common.cancel'), style: 'cancel' },
         {
-          text: 'Limpar',
+          text: t('common.clear'),
           style: 'destructive',
           onPress: () => {
             const Intents = getIntents();
@@ -107,14 +107,14 @@ export default function ShareDiagnose() {
         },
       ],
     );
-  }, [load]);
+  }, [load, t]);
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.background }}>
       {USE_NATIVE_HEADER && <Stack.Screen options={nativeHeaderOptions({
-        colors, title: 'Diagnóstico do compartilhamento',
+        colors, title: t('shareDiagnose.title'),
         headerRight: () => (
-          <HeaderIconButton onPress={clearAll} accessibilityLabel="Limpar">
+          <HeaderIconButton onPress={clearAll} accessibilityLabel={t('common.clear')}>
             <IconTrash size={21} color={colors.text} />
           </HeaderIconButton>
         ),
@@ -124,7 +124,7 @@ export default function ShareDiagnose() {
         <TouchableOpacity onPress={() => router.back()} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
           <IconArrowLeft size={24} color={colors.text} />
         </TouchableOpacity>
-        <Text style={[styles.title, { color: colors.text }]}>Diagnóstico do compartilhamento</Text>
+        <Text style={[styles.title, { color: colors.text }]}>{t('shareDiagnose.title')}</Text>
         <TouchableOpacity onPress={clearAll} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
           <IconTrash size={22} color={colors.textSecondary || '#6b7280'} />
         </TouchableOpacity>
@@ -139,25 +139,24 @@ export default function ShareDiagnose() {
         {Platform.OS !== 'ios' ? (
           <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
             <Text style={[styles.cardTitle, { color: colors.text }]}>
-              Disponível apenas no iOS
+              {t('shareDiagnose.iosOnly')}
             </Text>
             <Text style={[styles.cardBody, { color: colors.textSecondary }]}>
-              O Share Extension diagnostic é específico do iOS. No Android, compartilhe direto via app principal.
+              {t('shareDiagnose.iosOnlyBody')}
             </Text>
           </View>
         ) : (
           <>
             <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
-              <Text style={[styles.cardTitle, { color: colors.text }]}>O que é isso?</Text>
+              <Text style={[styles.cardTitle, { color: colors.text }]}>{t('callDiagnose.whatIsThis')}</Text>
               <Text style={[styles.cardBody, { color: colors.textSecondary }]}>
-                Quando você compartilha uma foto/vídeo do iPhone direto pro Chatyy (via menu Compartilhar do iOS), o
-                extension grava aqui o que aconteceu. Use isso pra ver porque o último compartilhamento falhou.
+                {t('shareDiagnose.whatIsThisBody')}
               </Text>
             </View>
 
             {lastErr && lastErr.msg && (
               <View style={[styles.card, { backgroundColor: '#fef2f2', borderColor: '#fecaca' }]}>
-                <Text style={[styles.cardTitle, { color: '#991b1b' }]}>Última falha</Text>
+                <Text style={[styles.cardTitle, { color: '#991b1b' }]}>{t('shareDiagnose.lastFailure')}</Text>
                 <Text style={[styles.timestamp, { color: '#7f1d1d' }]}>{fmtTs(lastErr.ts)}</Text>
                 <Text style={[styles.cardBody, { color: '#7f1d1d', marginTop: 4, fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace' }]}>
                   {String(lastErr.msg).slice(0, 600)}
@@ -166,13 +165,13 @@ export default function ShareDiagnose() {
             )}
 
             <Text style={[styles.sectionTitle, { color: colors.text }]}>
-              Eventos ({entries.length})
+              {t('callDiagnose.events', { n: entries.length })}
             </Text>
 
             {entries.length === 0 ? (
               <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
                 <Text style={[styles.cardBody, { color: colors.textSecondary }]}>
-                  Nenhum registro ainda. Tente compartilhar uma foto do app Fotos → Chatyy, depois volta aqui.
+                  {t('shareDiagnose.empty')}
                 </Text>
               </View>
             ) : (

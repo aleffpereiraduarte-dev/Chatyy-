@@ -39,6 +39,24 @@ import {
   Platform,
 } from 'react-native';
 import * as api from '../services/api';
+import { useLanguageOptional } from '../context/LanguageContext';
+import { IconHelpCircle, IconCheckCircle, IconSend, IconAward, IconCheck, IconX, IconClock } from './Icons';
+
+// [2026-10-11 ui-sweep] i18n helper — tolerant of rendering outside the
+// LanguageProvider (falls back to the pt-BR literal, with {param} interpolation).
+function useTr() {
+  const ctx = useLanguageOptional();
+  const t = ctx?.t;
+  return useCallback((key, fb, params) => {
+    try {
+      const v = t ? t(key, params) : '';
+      if (v && v !== key) return v;
+    } catch {}
+    let out = fb;
+    if (params) for (const k of Object.keys(params)) out = out.split('{' + k + '}').join(String(params[k]));
+    return out;
+  }, [t]);
+}
 
 // ─── Utility ────────────────────────────────────────────────────────────────
 
@@ -153,6 +171,7 @@ function StickerSwitch({ sticker, statusId, currentEmail, stacked }) {
  * UPDATE) so tapping again switches your vote.
  */
 export function PollSticker({ sticker, statusId, currentEmail, stacked }) {
+  const tr = useTr();
   const [votedOption, setVotedOption] = useState(null); // null | 0 | 1
   const [votes, setVotes] = useState([0, 0]);           // [countA, countB]
   const [loading, setLoading] = useState(false);
@@ -186,11 +205,11 @@ export function PollSticker({ sticker, statusId, currentEmail, stacked }) {
     }
   }, [loading, votedOption, statusId]);
 
-  const options = [sticker.optionA || 'Sim', sticker.optionB || 'Não'];
+  const options = [sticker.optionA || tr('common.yes', 'Sim'), sticker.optionB || tr('common.no', 'Não')];
 
   return (
     <View style={[styles.pollContainer, stacked && styles.stackedCard]}>
-      <Text style={styles.pollQuestion}>{sticker.question || 'Qual a sua opinião?'}</Text>
+      <Text style={styles.pollQuestion}>{sticker.question || tr('istickers.pollDefault', 'Qual a sua opinião?')}</Text>
 
       {options.map((label, idx) => {
         const pct = hasVoted ? Math.round((votes[idx] / total) * 100) : 0;
@@ -229,7 +248,9 @@ export function PollSticker({ sticker, statusId, currentEmail, stacked }) {
 
       {hasVoted && (
         <Text style={styles.pollTotalVotes}>
-          {votes[0] + votes[1]} voto{votes[0] + votes[1] !== 1 ? 's' : ''}
+          {votes[0] + votes[1] === 1
+            ? tr('istickers.votesOne', '{n} voto', { n: 1 })
+            : tr('istickers.votesMany', '{n} votos', { n: votes[0] + votes[1] })}
         </Text>
       )}
     </View>
@@ -243,6 +264,7 @@ export function PollSticker({ sticker, statusId, currentEmail, stacked }) {
  * After submitting, shows a thank-you confirmation.
  */
 export function QuestionSticker({ sticker, statusId, currentEmail, stacked }) {
+  const tr = useTr();
   const [text, setText] = useState('');
   const [submitted, setSubmitted] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -260,36 +282,36 @@ export function QuestionSticker({ sticker, statusId, currentEmail, stacked }) {
       if (result?.success) {
         setSubmitted(true);
       } else {
-        setError(result?.message || 'Erro ao enviar. Tente novamente.');
+        setError(result?.message || tr('istickers.sendError', 'Erro ao enviar. Tente novamente.'));
       }
     } catch {
-      setError('Erro de conexão. Tente novamente.');
+      setError(tr('signup.validation.connectionError', 'Erro de conexão. Tente novamente.'));
     } finally {
       setLoading(false);
     }
-  }, [text, loading, statusId]);
+  }, [text, loading, statusId, tr]);
 
   return (
     <View style={[styles.questionContainer, stacked && styles.stackedCard]}>
       {/* Header */}
       <View style={styles.questionHeader}>
-        <Text style={styles.questionIcon}>❓</Text>
-        <Text style={styles.questionLabel}>Pergunta</Text>
+        <IconHelpCircle size={16} color="#fff" />
+        <Text style={styles.questionLabel}>{tr('status.stickerQuestion', 'Pergunta')}</Text>
       </View>
 
-      <Text style={styles.questionPrompt}>{sticker.prompt || 'Me pergunte algo...'}</Text>
+      <Text style={styles.questionPrompt}>{sticker.prompt || tr('istickers.questionDefault', 'Me pergunte algo…')}</Text>
 
       {submitted ? (
         <View style={styles.questionThanks}>
-          <Text style={styles.questionThanksIcon}>🙌</Text>
-          <Text style={styles.questionThanksText}>Resposta enviada!</Text>
+          <IconCheckCircle size={24} color="#fff" />
+          <Text style={styles.questionThanksText}>{tr('istickers.answerSent', 'Resposta enviada!')}</Text>
         </View>
       ) : (
         <View style={styles.questionInputRow}>
           <TextInput
             ref={inputRef}
             style={styles.questionInput}
-            placeholder="Digite sua resposta..."
+            placeholder={tr('istickers.answerPlaceholder', 'Digite sua resposta…')}
             placeholderTextColor="rgba(255,255,255,0.5)"
             value={text}
             onChangeText={t => { setText(t); setError(null); }}
@@ -297,16 +319,16 @@ export function QuestionSticker({ sticker, statusId, currentEmail, stacked }) {
             returnKeyType="send"
             onSubmitEditing={handleSubmit}
             editable={!loading}
-            accessibilityLabel="Campo de resposta"
+            accessibilityLabel={tr('istickers.answerField', 'Campo de resposta')}
           />
           <TouchableOpacity
             onPress={handleSubmit}
             disabled={!text.trim() || loading}
             style={[styles.questionSendBtn, (!text.trim() || loading) && styles.questionSendBtnDisabled]}
-            accessibilityLabel="Enviar resposta"
+            accessibilityLabel={tr('smartReply.quickSend', 'Enviar resposta')}
             accessibilityRole="button"
           >
-            <Text style={styles.questionSendIcon}>➤</Text>
+            <IconSend size={16} color="#ef4444" />
           </TouchableOpacity>
         </View>
       )}
@@ -324,6 +346,7 @@ export function QuestionSticker({ sticker, statusId, currentEmail, stacked }) {
  * Calls api.statusQuizAnswer(statusId, selectedIdx).
  */
 export function QuizSticker({ sticker, statusId, currentEmail, stacked }) {
+  const tr = useTr();
   const [selected, setSelected] = useState(null); // null | number
   const [loading, setLoading] = useState(false);
   const shakeAnim = useRef(new Animated.Value(0)).current;
@@ -379,11 +402,11 @@ export function QuizSticker({ sticker, statusId, currentEmail, stacked }) {
     >
       {/* Header */}
       <View style={styles.quizHeader}>
-        <Text style={styles.quizHeaderIcon}>🧠</Text>
-        <Text style={styles.quizHeaderLabel}>Quiz</Text>
+        <IconAward size={16} color="#fff" />
+        <Text style={styles.quizHeaderLabel}>{tr('status.stickerQuiz', 'Quiz')}</Text>
       </View>
 
-      <Text style={styles.quizQuestion}>{sticker.question || 'Qual a resposta certa?'}</Text>
+      <Text style={styles.quizQuestion}>{sticker.question || tr('istickers.quizDefault', 'Qual é a resposta certa?')}</Text>
 
       {options.map((opt, idx) => (
         <TouchableOpacity
@@ -391,23 +414,25 @@ export function QuizSticker({ sticker, statusId, currentEmail, stacked }) {
           onPress={() => handleSelect(idx)}
           activeOpacity={hasAnswered ? 1 : 0.75}
           style={[styles.quizOption, optionStyle(idx)]}
-          accessibilityLabel={`Opção ${opt}`}
+          accessibilityLabel={tr('istickers.optionLabel', 'Opção {opt}', { opt })}
           accessibilityRole="button"
           disabled={hasAnswered || loading}
         >
           <Text style={[styles.quizOptionText, optionTextStyle(idx)]}>{opt}</Text>
           {hasAnswered && idx === correctIdx && (
-            <Text style={styles.quizCheckmark}>✓</Text>
+            <IconCheck size={16} color="#fff" />
           )}
           {hasAnswered && idx === selected && idx !== correctIdx && (
-            <Text style={styles.quizCross}>✗</Text>
+            <IconX size={16} color="#fff" />
           )}
         </TouchableOpacity>
       ))}
 
       {hasAnswered && (
         <Text style={[styles.quizResult, selected === correctIdx ? styles.quizResultCorrect : styles.quizResultWrong]}>
-          {selected === correctIdx ? '🎉 Correto!' : '😬 Errou! A certa era: ' + (options[correctIdx] || '')}
+          {selected === correctIdx
+            ? tr('istickers.quizCorrect', 'Correto!')
+            : tr('istickers.quizWrong', 'Errou! A certa era: {answer}', { answer: options[correctIdx] || '' })}
         </Text>
       )}
     </Animated.View>
@@ -421,6 +446,7 @@ export function QuizSticker({ sticker, statusId, currentEmail, stacked }) {
  * Pure display — no API call needed.
  */
 export function CountdownSticker({ sticker, stacked }) {
+  const tr = useTr();
   const [timeLeft, setTimeLeft] = useState(calcTimeLeft(sticker.targetDate));
 
   useEffect(() => {
@@ -436,12 +462,12 @@ export function CountdownSticker({ sticker, stacked }) {
     <View style={[styles.countdownContainer, stacked && styles.stackedCard]}>
       {/* Header */}
       <View style={styles.countdownHeader}>
-        <Text style={styles.countdownHeaderIcon}>⏳</Text>
-        <Text style={styles.countdownLabel}>{sticker.label || 'Evento'}</Text>
+        <IconClock size={16} color="#fff" />
+        <Text style={styles.countdownLabel}>{sticker.label || tr('eventDetail.title', 'Evento')}</Text>
       </View>
 
       {expired ? (
-        <Text style={styles.countdownExpired}>Encerrado</Text>
+        <Text style={styles.countdownExpired}>{tr('istickers.ended', 'Encerrado')}</Text>
       ) : (
         <View style={styles.countdownUnitsRow}>
           {timeLeft.days > 0 && (

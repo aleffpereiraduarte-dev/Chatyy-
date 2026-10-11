@@ -180,7 +180,7 @@ export default function ChatReelsTab({ active, parentActive: parentActiveProp, t
               onPress={() => switchTab('following')}
               style={styles.tabBtn}
               accessibilityRole="tab"
-              accessibilityLabel="Seguindo"
+              accessibilityLabel={t('feed.following') || 'Seguindo'}
             >
               <Text
                 style={[
@@ -188,7 +188,7 @@ export default function ChatReelsTab({ active, parentActive: parentActiveProp, t
                   activeTab === 'following' && styles.tabTextActive,
                 ]}
               >
-                Seguindo
+                {t('feed.following') || 'Seguindo'}
               </Text>
             </Pressable>
 
@@ -198,7 +198,7 @@ export default function ChatReelsTab({ active, parentActive: parentActiveProp, t
               onPress={() => switchTab('foryou')}
               style={styles.tabBtn}
               accessibilityRole="tab"
-              accessibilityLabel="Pra Você"
+              accessibilityLabel={t('feed.forYou') || 'Para você'}
             >
               <Text
                 style={[
@@ -206,7 +206,7 @@ export default function ChatReelsTab({ active, parentActive: parentActiveProp, t
                   activeTab === 'foryou' && styles.tabTextActive,
                 ]}
               >
-                Pra Você
+                {t('feed.forYou') || 'Para você'}
               </Text>
             </Pressable>
 
@@ -243,7 +243,7 @@ export default function ChatReelsTab({ active, parentActive: parentActiveProp, t
             onPress={() => router.push('/chat-new?from=reels')}
             style={[styles.searchBtn, { right: 14 }]}
             accessibilityRole="button"
-            accessibilityLabel="Buscar"
+            accessibilityLabel={t('chatConv.search') || 'Buscar'}
             hitSlop={10}
           >
             <IconSearch size={24} color="#fff" />
@@ -261,7 +261,7 @@ export default function ChatReelsTab({ active, parentActive: parentActiveProp, t
           pointerEvents="none"
         >
           <ActivityIndicator size="small" color="#fff" />
-          <Text style={styles.refreshText}>Atualizando feed</Text>
+          <Text style={styles.refreshText}>{t('reelsTab.refreshing') || 'Atualizando feed'}</Text>
         </View>
       )}
 
@@ -284,7 +284,7 @@ export default function ChatReelsTab({ active, parentActive: parentActiveProp, t
           </Animated.View>
           <View style={styles.hintBubble}>
             <Text style={styles.hintText}>
-              Deslize pra cima pra próximo
+              {t('reelsTab.swipeUpHint') || 'Deslize para cima para o próximo'}
             </Text>
           </View>
         </Animated.View>

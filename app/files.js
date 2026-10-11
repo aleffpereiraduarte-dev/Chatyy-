@@ -1627,7 +1627,7 @@ function FilesScreenInner() {
       } else {
         // Going forward - find folder name from current display
         const targetFolder = allFolders.find(f => f.id === folderId);
-        const name = targetFolder?.name || targetFolder?.original_name || 'Folder';
+        const name = targetFolder?.name || targetFolder?.original_name || t('files.folder');
         breadcrumbStackRef.current = [...breadcrumbStackRef.current, { id: folderId, name }];
       }
       setBreadcrumb([...breadcrumbStackRef.current]);
@@ -2566,7 +2566,7 @@ function FilesScreenInner() {
                   <>
                     <HeaderIconButton
                       onPress={() => { haptic.select(); setViewMode(v => v === 'list' ? 'grid' : 'list'); }}
-                      accessibilityLabel={viewMode === 'list' ? 'Grid' : 'List'}
+                      accessibilityLabel={viewMode === 'list' ? t('photos.layoutGrid') : t('chat.list')}
                     >
                       {viewMode === 'list' ? <IconGrid size={21} color={colors.text} /> : <IconMenu size={22} color={colors.text} />}
                     </HeaderIconButton>
@@ -3147,7 +3147,7 @@ function FilesScreenInner() {
                       file_url: fileUrl,
                       mime_type: mime,
                     });
-                    router.push({ pathname: '/one', params: { intent, prefill: `Analise esse arquivo: ${fileName}` } });
+                    router.push({ pathname: '/one', params: { intent, prefill: t('files.analyzePrefill', { name: fileName }) } });
                   } catch {}
                 }}>
                   <View style={[styles.actionItemIcon, { backgroundColor: colors.primary }]}>
@@ -3436,10 +3436,10 @@ function FilesScreenInner() {
                               showToast?.(t?.('files.versionRestored') || 'Versão restaurada');
                               try { loadAllFiles?.(false); } catch {}
                             } else {
-                              showToast?.(r?.message || 'Erro');
+                              showToast?.(r?.message || t?.('common.error') || 'Erro');
                             }
                           } catch {
-                            showToast?.('Erro');
+                            showToast?.(t?.('common.error') || 'Erro');
                           }
                         }}
                       >
@@ -3564,7 +3564,7 @@ function FilesScreenInner() {
                 onPress={() => setSharePermission('admin')}
               >
                 <Text style={[styles.permissionText, { color: sharePermission === 'admin' ? colors.onPrimary : colors.textSecondary }]}>
-                  Admin
+                  {t('community.roleAdmin')}
                 </Text>
               </TouchableOpacity>
             </View>

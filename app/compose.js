@@ -1854,7 +1854,7 @@ export default function ComposeScreen() {
             accessibilityLabel={t('compose.addBcc') || 'Add Bcc'}
             accessibilityRole="button"
           >
-            <Text style={[s.ccToggle, { color: colors.primary }]}>Bcc</Text>
+            <Text style={[s.ccToggle, { color: colors.primary }]}>{t('compose.bcc')}</Text>
           </TouchableOpacity>
         )}
       </View>
@@ -2225,12 +2225,12 @@ export default function ComposeScreen() {
 
               {showCc && (
                 <View style={[s.replyFieldRow, { borderBottomColor: colors.borderLight, zIndex: 20 }]}>
-                  <ContactAutocomplete ref={ccRef} value={cc} onChange={setCc} placeholder="cc@email.com" label="Cc" />
+                  <ContactAutocomplete ref={ccRef} value={cc} onChange={setCc} placeholder="cc@email.com" label={t('compose.cc')} />
                 </View>
               )}
               {showBcc && (
                 <View style={[s.replyFieldRow, { borderBottomColor: colors.borderLight, zIndex: 10 }]}>
-                  <ContactAutocomplete ref={bccRef} value={bcc} onChange={setBcc} placeholder="bcc@email.com" label="Bcc" />
+                  <ContactAutocomplete ref={bccRef} value={bcc} onChange={setBcc} placeholder="bcc@email.com" label={t('compose.bcc')} />
                 </View>
               )}
 
@@ -2352,7 +2352,9 @@ export default function ComposeScreen() {
                     <Text style={[s.fromText, { color: colors.primary }]} numberOfLines={1}>
                       {fromAlias || user?.email}
                     </Text>
-                    <Text style={{ color: colors.primary, marginLeft: 6, fontSize: 11, opacity: 0.7 }}>{showAliasMenu ? '▴' : '▾'}</Text>
+                    {showAliasMenu
+                      ? <IconChevronUp size={12} color={colors.primary} style={{ marginLeft: 6, opacity: 0.7 }} />
+                      : <IconChevronDown size={12} color={colors.primary} style={{ marginLeft: 6, opacity: 0.7 }} />}
                   </TouchableOpacity>
                   {showAliasMenu && (
                     <View style={{ marginTop: 6, backgroundColor: colors.surface, borderColor: colors.borderLight, borderWidth: 1, borderRadius: 8, overflow: 'hidden' }}>
@@ -2395,12 +2397,12 @@ export default function ComposeScreen() {
 
             {showCc && (
               <View style={[s.contactFieldRow, { borderBottomColor: colors.borderLight, zIndex: 20 }]}>
-                <ContactAutocomplete ref={ccRef} value={cc} onChange={setCc} placeholder="cc@email.com" label="Cc" />
+                <ContactAutocomplete ref={ccRef} value={cc} onChange={setCc} placeholder="cc@email.com" label={t('compose.cc')} />
               </View>
             )}
             {showBcc && (
               <View style={[s.contactFieldRow, { borderBottomColor: colors.borderLight, zIndex: 10 }]}>
-                <ContactAutocomplete ref={bccRef} value={bcc} onChange={setBcc} placeholder="bcc@email.com" label="Bcc" />
+                <ContactAutocomplete ref={bccRef} value={bcc} onChange={setBcc} placeholder="bcc@email.com" label={t('compose.bcc')} />
               </View>
             )}
 

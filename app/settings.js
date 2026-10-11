@@ -366,12 +366,12 @@ function SettingsScreenInner() {
     const fire = () => {
       try { router.push(path); }
       catch (e) {
-        try { Alert.alert('Erro de navegação', `${path}\n${String(e?.message || e)}`); } catch {}
+        try { Alert.alert(t('uiG.settings.navError'), `${path}\n${String(e?.message || e)}`); } catch {}
       }
     };
     if (typeof requestAnimationFrame === 'function') requestAnimationFrame(fire);
     else setTimeout(fire, 0);
-  }, [router]);
+  }, [router, t]);
 
   // Alterar senha — modal state
   const [changePasswordOpen, setChangePasswordOpen] = useState(false);
@@ -2226,7 +2226,7 @@ function SettingsScreenInner() {
                   activeOpacity={0.75}
                   style={{ alignItems: 'center', width: 76 }}
                   accessibilityRole="button"
-                  accessibilityLabel={`Wallpaper ${g.label}`}
+                  accessibilityLabel={`${t('chatConv.wallpaper')} ${g.label}`}
                 >
                   {/* Outer ring keeps the tile a constant 70px so the
                       selected highlight never nudges the grid layout. */}
@@ -3464,7 +3464,7 @@ function SettingsScreenInner() {
               value={e2eBackupPass}
               onChangeText={setE2eBackupPass}
               secureTextEntry
-              placeholder="Frase secreta"
+              placeholder={t('settings.backupKey.newPass')}
               placeholderTextColor={colors.textTertiary}
               style={{
                 borderWidth: 1, borderColor: colors.borderLight,
@@ -3477,7 +3477,7 @@ function SettingsScreenInner() {
               value={e2eBackupPass2}
               onChangeText={setE2eBackupPass2}
               secureTextEntry
-              placeholder="Repita a frase secreta"
+              placeholder={t('settings.backupKey.repeatPass')}
               placeholderTextColor={colors.textTertiary}
               style={{
                 borderWidth: 1, borderColor: colors.borderLight,
@@ -3488,7 +3488,7 @@ function SettingsScreenInner() {
             />
             {e2eBackupMsg ? (
               <Text style={{ color: e2eBackupMsg.startsWith('OK') ? colors.success : colors.error, fontSize: 13, marginBottom: 10 }}>
-                {e2eBackupMsg}
+                {e2eBackupMsg.replace(/^OK /, '')}
               </Text>
             ) : null}
             <View style={{ flexDirection: 'row', gap: 10 }}>
@@ -3502,10 +3502,10 @@ function SettingsScreenInner() {
                 onPress={async () => {
                   setE2eBackupMsg('');
                   if (!e2eBackupPass || e2eBackupPass.length < 8) {
-                    setE2eBackupMsg('Use ao menos 8 caracteres'); return;
+                    setE2eBackupMsg(t('settings.backupKey.tooShort')); return;
                   }
                   if (e2eBackupPass !== e2eBackupPass2) {
-                    setE2eBackupMsg('As frases nao coincidem'); return;
+                    setE2eBackupMsg(t('settings.backupKey.mismatch')); return;
                   }
                   setE2eBackupBusy(true);
                   try {
@@ -3548,7 +3548,7 @@ function SettingsScreenInner() {
                       setE2eBackupPass(''); setE2eBackupPass2('');
                       setTimeout(() => setE2eBackupOpen(false), 1200);
                     } else {
-                      setE2eBackupMsg(r?.message || 'Falha ao salvar');
+                      setE2eBackupMsg(r?.message || t('vacation.saveError'));
                     }
                   } catch (err) {
                     setE2eBackupMsg(String(err?.message || err));
@@ -3746,7 +3746,7 @@ function SettingsScreenInner() {
                       setCpError(r?.message || (t('settings.passwordChangeFailed') || 'Não foi possível alterar a senha'));
                     }
                   } catch (e) {
-                    setCpError(e?.message || 'Erro');
+                    setCpError(e?.message || t('common.error'));
                   } finally {
                     setCpLoading(false);
                   }
@@ -4169,7 +4169,7 @@ function SettingsScreenInner() {
             />
             {backupKeyMsg ? (
               <Text style={{ color: backupKeyMsg.startsWith('OK') ? colors.success : colors.error, fontSize: 13, marginBottom: 10 }}>
-                {backupKeyMsg}
+                {backupKeyMsg.replace(/^OK /, '')}
               </Text>
             ) : null}
             <View style={{ flexDirection: 'row', gap: 10 }}>
@@ -4186,7 +4186,7 @@ function SettingsScreenInner() {
                     setBackupKeyMsg(t('settings.backupKey.tooShort') || 'Use ao menos 8 caracteres'); return;
                   }
                   if (backupKeyPass !== backupKeyPass2) {
-                    setBackupKeyMsg(t('settings.backupKey.mismatch') || 'As frases nao coincidem'); return;
+                    setBackupKeyMsg(t('settings.backupKey.mismatch') || 'As frases não coincidem'); return;
                   }
                   setBackupKeyBusy(true);
                   try {

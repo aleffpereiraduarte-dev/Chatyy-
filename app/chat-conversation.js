@@ -45,6 +45,7 @@ import Svg, { Path } from 'react-native-svg';
 import CircularProgressArc from '../components/CircularProgressArc';
 // [2026-10-06 thread-tech] per-row overlay store (download %, painted, error, delete-fade, translation)
 import { useRowOverlayStore, useOverlaySetter, useRowOverlayVersion, useComposerTextStore, ThreadComposerHost } from '../utils/threadRowOverlay';
+import { createFrameBatcher } from '../utils/frameBatch'; // [2026-10-11 fluidez-2]
 import { wasImageLoaded, seenAwareTransition, markImageLoaded } from '../utils/imageSeen'; // [2026-10-08 chat-open-flicker]
 import { peekOpenConversation, getCachedChatSettings, setCachedChatSettings, getCachedLocalPrefs, setCachedLocalPrefs, getCachedPresence, setCachedPresence } from '../utils/chatOpenHandoff'; // [2026-10-08 chat-open-flicker]
 // [2026-10-06 keyboard-controller] Keyboard glued to the composer on the UI
@@ -178,7 +179,7 @@ import {
   IconStar, IconStarFilled, IconBarChart, IconInfo, IconGlobe,
   IconCopy, IconPin, IconShield, IconBell, IconCalendar, IconSearch, IconMusic, IconFilter, IconEye, IconSparkles, IconHash, IconDownload,
   IconArchive, IconMessageSquare, IconFilm, IconShare, IconMail, IconUserPlus, IconBookmark,
-  IconReceipt, IconPackage,
+  IconReceipt, IconPackage, IconHelpCircle,
   IconRotateCw, IconRotateCcw, IconFlipHorizontal, IconFlipVertical, IconCrop, IconPencil, IconUndo,
   IconLink, IconAlertCircle, IconPenTool,
   IconChevronRight, IconLogOut, IconGrid, IconRefresh,
@@ -571,28 +572,76 @@ function _timeFormatter(loc) {
   }
   return f;
 }
+// [2026-10-11 fluidez-2] Resultado memoizado por (string do servidor, locale):
+// a mesma hora era formatada ~8× por render de bolha (meta, a11y, fantasma de
+// largura…) e cada row que entra na janela durante a rolagem paga isso de novo.
+const _fmtTimeMemo = new Map();
 function formatTime(dateStr) {
+  const mk = (_appLocale || '') + '|' + dateStr;
+  const hit = _fmtTimeMemo.get(mk);
+  if (hit !== undefined) return hit;
   const d = new Date(_normalizeIso(dateStr));
-  if (isNaN(d.getTime())) return '';
-  const f = _timeFormatter(_appLocale);
-  if (f) { try { return f.format(d); } catch {} }
-  return d.toLocaleTimeString(_appLocale || undefined, { hour: '2-digit', minute: '2-digit' });
+  let out = '';
+  if (!isNaN(d.getTime())) {
+    const f = _timeFormatter(_appLocale);
+    if (f) { try { out = f.format(d); } catch { out = ''; } }
+    if (!out) out = d.toLocaleTimeString(_appLocale || undefined, { hour: '2-digit', minute: '2-digit' });
+  }
+  if (_fmtTimeMemo.size > 4000) _fmtTimeMemo.clear();
+  _fmtTimeMemo.set(mk, out);
+  return out;
 }
 
+// [2026-10-11 fluidez-2] toLocaleDateString cria um Intl.DateTimeFormat novo a
+// cada chamada; formatDateSeparator roda em toda row de data montada E no
+// onViewableItemsChanged da pílula flutuante (por item visível, a cada passo
+// da rolagem) — ~1% do perfil de scroll. Formatter cacheado por locale+opções
+// e rótulo memoizado por (dia local, hoje, locale, t).
+const _dateFmtCache = new Map();
+function _dateFormatter(locale, kind) {
+  const k = (locale || '') + '|' + kind;
+  let f = _dateFmtCache.get(k);
+  if (f === undefined) {
+    try {
+      f = new Intl.DateTimeFormat(locale || undefined, kind === 'wd'
+        ? { weekday: 'long' }
+        : { month: 'short', day: 'numeric', year: 'numeric' });
+    } catch { f = null; }
+    _dateFmtCache.set(k, f);
+  }
+  return f;
+}
+const _dateSepMemo = new Map();
+let _dateSepMemoT = null;
 function formatDateSeparator(dateStr, t) {
   if (!dateStr) return '';
   const d = new Date(_normalizeIso(dateStr));
   if (isNaN(d.getTime())) return '';
   const now = new Date();
+  const todayKey = now.getFullYear() * 10000 + now.getMonth() * 100 + now.getDate();
+  const dayKey = d.getFullYear() * 10000 + d.getMonth() * 100 + d.getDate();
+  if (_dateSepMemoT !== t) { _dateSepMemo.clear(); _dateSepMemoT = t; }
+  const mk = todayKey + '|' + dayKey;
+  const hit = _dateSepMemo.get(mk);
+  if (hit !== undefined) return hit;
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   const msgDate = new Date(d.getFullYear(), d.getMonth(), d.getDate());
   const diffDays = Math.floor((today - msgDate) / 86400000);
-
-  if (diffDays === 0) return t('date.today');
-  if (diffDays === 1) return t('date.yesterday');
-  const locale = t('_locale') || undefined;
-  if (diffDays < 7) return d.toLocaleDateString(locale, { weekday: 'long' });
-  return d.toLocaleDateString(locale, { month: 'short', day: 'numeric', year: 'numeric' });
+  let out;
+  if (diffDays === 0) out = t('date.today');
+  else if (diffDays === 1) out = t('date.yesterday');
+  else {
+    const locale = t('_locale') || undefined;
+    const kind = diffDays < 7 ? 'wd' : 'full';
+    const f = _dateFormatter(locale, kind);
+    try { out = f ? f.format(d) : null; } catch { out = null; }
+    if (!out) out = kind === 'wd'
+      ? d.toLocaleDateString(locale, { weekday: 'long' })
+      : d.toLocaleDateString(locale, { month: 'short', day: 'numeric', year: 'numeric' });
+  }
+  if (_dateSepMemo.size > 2000) _dateSepMemo.clear();
+  _dateSepMemo.set(mk, out);
+  return out;
 }
 
 // ============================================================
@@ -816,6 +865,16 @@ function _mapKeep(arr, fn) {
     else if (v !== arr[i]) { out = arr.slice(0, i); out[i] = v; }
   }
   return out || arr;
+}
+// [2026-10-11 fluidez-2] ✓✓ só existe em mensagem MINHA. Os eventos de entrega
+// (chat_delivered / message_delivered) também chegam p/ as mensagens que EU
+// recebi (é o meu próprio ack ecoado) e reescreviam a linha recebida → 1
+// render da tela por msg recebida sem nada visível mudar. Remetente vazio
+// (modo selado/envelope) conta como possivelmente meu.
+function _rcPeerRow(m, me) {
+  const se = m && m.sender_email;
+  if (!se || !me) return false;
+  return String(se).toLowerCase() !== String(me).toLowerCase();
 }
 function _sameServerRow(nm, local) {
   if (!nm || !local || nm === local) return nm === local;
@@ -1561,8 +1620,14 @@ function MessageDeleteAnim({ children, deleting, onComplete }) {
       });
     }
   }, [deleting]);
+  // [2026-10-11 fluidez-2] Parado (o caso de ~todas as rows) = sem nós
+  // animados no style: mesmo tipo de componente (sem remontar os filhos), mas a
+  // montagem não liga 3 Animated.Value ao DOM/view nativa por row. Os valores
+  // só entram quando a exclusão começa (o efeito acima anima a partir daí).
+  const _animStyleRef = useRef(null);
+  if (deleting && !_animStyleRef.current) _animStyleRef.current = { opacity, transform: [{ scale: scaleVal }, { translateX }] };
   return (
-    <Animated.View style={{ opacity, transform: [{ scale: scaleVal }, { translateX }] }}>
+    <Animated.View style={_animStyleRef.current}>
       {children}
     </Animated.View>
   );
@@ -2455,7 +2520,24 @@ function parseSmartDate(text) {
   }
   return null;
 }
+// [2026-10-11 fluidez-2] detectSmartActions roda 2× por bolha de texto a cada
+// render (regexes + parser de datas pt/en/es). Memo por texto dentro do mesmo
+// minuto (as datas relativas — "amanhã às 9" — dependem do relógio).
+const _smartActMemo = new Map();
+let _smartActMin = 0;
 function detectSmartActions(text) {
+  if (typeof text !== 'string' || !text) return [];
+  const minute = Math.floor(Date.now() / 60000);
+  if (minute !== _smartActMin) { _smartActMemo.clear(); _smartActMin = minute; }
+  let r = _smartActMemo.get(text);
+  if (r === undefined) {
+    r = _detectSmartActionsRaw(text);
+    if (_smartActMemo.size > 1500) _smartActMemo.clear();
+    _smartActMemo.set(text, r);
+  }
+  return r;
+}
+function _detectSmartActionsRaw(text) {
   const out = [];
   if (typeof text !== 'string' || !text) return out;
   const low = text.toLowerCase();
@@ -2577,7 +2659,24 @@ function _a11yMsgBody(msg, t) {
   }
   return clean(raw || cap);
 }
-function _a11yMsgLabel(msg, { t, isOwn, isGroup, isDeleted, readStatus, reactionGroups, me }) {
+// [2026-10-11 fluidez-2] Rótulo de acessibilidade memoizado por objeto de
+// mensagem (o enrich mantém a identidade enquanto nada muda) + entradas que
+// alteram o texto. Era recomputado (nomes, corpo, hora, recibos, reações) em
+// todo render de toda bolha.
+const _a11yLabelMemo = new WeakMap();
+function _a11yMsgLabel(msg, opts) {
+  if (!msg || typeof msg !== 'object') return _a11yMsgLabelRaw(msg, opts);
+  const { t, isOwn, isGroup, isDeleted, readStatus, me } = opts;
+  const c = _a11yLabelMemo.get(msg);
+  if (c && c.t === t && c.isOwn === isOwn && c.isGroup === isGroup && c.isDeleted === isDeleted
+      && c.readStatus === readStatus && c.me === me && c.loc === _appLocale && c.reactions === msg.reactions) {
+    return c.label;
+  }
+  const label = _a11yMsgLabelRaw(msg, opts);
+  _a11yLabelMemo.set(msg, { t, isOwn, isGroup, isDeleted, readStatus, me, loc: _appLocale, reactions: msg.reactions, label });
+  return label;
+}
+function _a11yMsgLabelRaw(msg, { t, isOwn, isGroup, isDeleted, readStatus, reactionGroups, me }) {
   const parts = [];
   if (isOwn) parts.push(_a11yT(t, 'common.you', 'Você'));
   else if (isGroup) parts.push(_friendlySenderName(msg.sender_email, msg.sender_name, me, t));
@@ -3057,6 +3156,13 @@ function SwipeReplyWrap({ children, onReply, onInfo, disabled, colors, style, on
   const propsRef = useRef({ onReply, onInfo, disabled });
   const _swipeThresholdHit = useRef(false);
   propsRef.current = { onReply, onInfo, disabled };
+  // [2026-10-11 fluidez-2] O selo de "responder" (Animated.View + 3
+  // interpolações, uma delas de COR, + SVG) era montado em TODA row, parado e
+  // invisível. Na rolagem rápida isso era custo puro de montagem por row. Só
+  // monta enquanto há um arraste horizontal em curso.
+  const [_armed, _setArmed] = useState(false);
+  const _setArmedRef = useRef(_setArmed);
+  _setArmedRef.current = _setArmed;
 
   const panResponder = useRef(
     PanResponder.create({
@@ -3066,7 +3172,7 @@ function SwipeReplyWrap({ children, onReply, onInfo, disabled, colors, style, on
       },
       onMoveShouldSetPanResponderCapture: () => false,
       onStartShouldSetPanResponder: () => false,
-      onPanResponderGrant: () => { swipeX.stopAnimation(); swipeX.setValue(0); _swipeThresholdHit.current = false; },
+      onPanResponderGrant: () => { swipeX.stopAnimation(); swipeX.setValue(0); _swipeThresholdHit.current = false; _setArmedRef.current(true); },
       onPanResponderMove: (_, g) => {
         const val = Math.min(65, Math.max(0, g.dx));
         swipeX.setValue(val);
@@ -3083,20 +3189,30 @@ function SwipeReplyWrap({ children, onReply, onInfo, disabled, colors, style, on
       onPanResponderRelease: (_, g) => {
         if (g.dx > 30) propsRef.current.onReply?.();
         _swipeThresholdHit.current = false;
-        Animated.spring(swipeX, { toValue: 0, useNativeDriver: false, stiffness: 250, damping: 20, mass: 0.7 }).start();
+        Animated.spring(swipeX, { toValue: 0, useNativeDriver: false, stiffness: 250, damping: 20, mass: 0.7 }).start(({ finished }) => {
+          if (finished) _setArmedRef.current(false);
+        });
+      },
+      onPanResponderTerminate: () => {
+        _swipeThresholdHit.current = false;
+        Animated.spring(swipeX, { toValue: 0, useNativeDriver: false, stiffness: 250, damping: 20, mass: 0.7 }).start(({ finished }) => {
+          if (finished) _setArmedRef.current(false);
+        });
       },
     })
   ).current;
 
-  const replyOpacity = swipeX.interpolate({ inputRange: [0, 20, 40], outputRange: [0, 0.6, 1], extrapolate: 'clamp' });
-  const replyScale   = swipeX.interpolate({ inputRange: [0, 30, 60], outputRange: [0.4, 1, 1.15], extrapolate: 'clamp' });
-  const badgeBg      = swipeX.interpolate({ inputRange: [0, 30, 60], outputRange: ['rgba(17, 17, 17,0)', 'rgba(17, 17, 17,0.18)', 'rgba(17, 17, 17,0.35)'], extrapolate: 'clamp' });
+  const replyOpacity = _armed ? swipeX.interpolate({ inputRange: [0, 20, 40], outputRange: [0, 0.6, 1], extrapolate: 'clamp' }) : 0;
+  const replyScale   = _armed ? swipeX.interpolate({ inputRange: [0, 30, 60], outputRange: [0.4, 1, 1.15], extrapolate: 'clamp' }) : 0.4;
+  const badgeBg      = _armed ? swipeX.interpolate({ inputRange: [0, 30, 60], outputRange: ['rgba(17, 17, 17,0)', 'rgba(17, 17, 17,0.18)', 'rgba(17, 17, 17,0.35)'], extrapolate: 'clamp' }) : 'transparent';
 
   return (
     // [2026-10-10 qa-sweep] onContextMenu mora AQUI (View web) — no
     // TouchableOpacity da linha ele era sobrescrito pelos pressEventHandlers do
     // RN-web (spread depois do ...rest) → clique direito nunca abria o menu.
     <Animated.View {...panResponder.panHandlers} onContextMenu={onContextMenu} style={[{ transform: [{ translateX: swipeX }] }, style]}>
+      {/* slot fixo (false quando parado) → {children} nunca muda de posição */}
+      {_armed && (
       <Animated.View style={{
         position: 'absolute', left: -40, top: '50%', marginTop: -18,
         width: 36, height: 36, borderRadius: 18,
@@ -3107,6 +3223,7 @@ function SwipeReplyWrap({ children, onReply, onInfo, disabled, colors, style, on
       }} pointerEvents="none">
         <IconReply size={20} color={colors.primary} />
       </Animated.View>
+      )}
       {children}
     </Animated.View>
   );
@@ -4319,7 +4436,7 @@ function VoicemailBubble({ voicemail, messageId, isOwn, colors, t, ownTextColor,
           }}>
             {loading
               ? <ActivityIndicator size="small" color={isOwn ? '#fff' : '#fff'} />
-              : <Text style={{ color: '#fff', fontSize: 16 }}>{'▶'}</Text>}
+              : <IconPlay size={16} color="#fff" />}
           </View>
           <Text style={{ fontSize: 13, color: isOwn ? '#fff' : colors.text, flex: 1 }}>
             {loading ? (t?.('voicemail.loading') || 'Carregando…') : (t?.('voicemail.tapToPlay') || 'Tocar mensagem')}
@@ -4900,7 +5017,7 @@ function PollCreatorModal({ colors, t, conversationId, onClose, onCreated }) {
         const msg = r.data.message || r.data;
         onCreated(msg);
       } else {
-        try { Platform.OS === 'web' ? window.alert(r?.message || 'Erro ao criar enquete') : Alert.alert('Erro', r?.message || 'Erro ao criar enquete'); } catch {}
+        try { Platform.OS === 'web' ? window.alert(r?.message || _mt('chatConv.pollCreateError', 'Erro ao criar enquete')) : Alert.alert(_mt('common.error', 'Erro'), r?.message || _mt('chatConv.pollCreateError', 'Erro ao criar enquete')); } catch {}
         onClose();
       }
     } catch (e) {
@@ -5080,7 +5197,7 @@ function MeetupCreatorModal({ colors, t, conversationId, onClose, onCreated }) {
           created_at: msg.created_at || new Date().toISOString(),
         });
       } else {
-        try { Platform.OS === 'web' ? window.alert(r?.message || 'Erro ao criar encontro') : Alert.alert('Erro', r?.message || 'Erro ao criar encontro'); } catch {}
+        try { Platform.OS === 'web' ? window.alert(r?.message || _mt('chatConv.meetupCreateError', 'Erro ao criar encontro')) : Alert.alert(_mt('common.error', 'Erro'), r?.message || _mt('chatConv.meetupCreateError', 'Erro ao criar encontro')); } catch {}
         onClose();
       }
     } catch (e) {
@@ -5158,7 +5275,7 @@ function MeetupCreatorModal({ colors, t, conversationId, onClose, onCreated }) {
             <IconMapPin size={17} color={colors.textSecondary} style={{ marginRight: 10 }} />
             <TextInput
               style={{ flex: 1, paddingVertical: 12, fontSize: 15, color: colors.text }}
-              placeholder="Buscar endereço (rua, cidade, ponto turístico...)"
+              placeholder={_mt('chatConv.searchAddressPh', 'Buscar endereço (rua, cidade, ponto turístico...)')}
               placeholderTextColor={colors.textTertiary}
               value={location}
               onChangeText={(v) => { setLocation(v); setPickedCoords(null); }}
@@ -5194,7 +5311,7 @@ function MeetupCreatorModal({ colors, t, conversationId, onClose, onCreated }) {
               <Text style={{ color: colors.textSecondary, fontWeight: '700', fontSize: 14, marginRight: 10 }}>Nº</Text>
               <TextInput
                 style={{ flex: 1, paddingVertical: 12, fontSize: 15, color: colors.text }}
-                placeholder="Número da casa/apto"
+                placeholder={_mt('chatConv.houseNumberPh', 'Número da casa/apto')}
                 placeholderTextColor={colors.textTertiary}
                 value={houseNumber}
                 onChangeText={setHouseNumber}
@@ -5229,7 +5346,7 @@ function MeetupCreatorModal({ colors, t, conversationId, onClose, onCreated }) {
             : (
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
                 <IconMapPin size={17} color={canCreate ? '#fff' : colors.textTertiary} />
-                <Text style={{ color: canCreate ? '#fff' : colors.textTertiary, fontSize: 16, fontWeight: '700' }}>{(t('chatConv.createMeetupBtn') || 'Marcar Encontro 📍').replace(/\s*📍\s*/g, '')}</Text>
+                <Text style={{ color: canCreate ? '#fff' : colors.textTertiary, fontSize: 16, fontWeight: '700' }}>{(t('chatConv.createMeetupBtn') || 'Marcar Encontro').replace(/\s*\u{1F4CD}\s*/gu, '')}</Text>
               </View>
             )
           }
@@ -5440,7 +5557,7 @@ function PlaylistCreatorModal({ colors, t, conversationId, onClose, onCreated, o
           <IconSearch size={17} color={colors.textSecondary} />
           <TextInput
             style={{ flex: 1, fontSize: 15, color: colors.text, paddingVertical: 0 }}
-            placeholder="Buscar música no Deezer..."
+            placeholder={_mt('chatConv.searchDeezerPh', 'Buscar música no Deezer…')}
             placeholderTextColor={colors.textTertiary}
             value={searchQuery}
             onChangeText={setSearchQuery}
@@ -5478,7 +5595,7 @@ function PlaylistCreatorModal({ colors, t, conversationId, onClose, onCreated, o
                 <IconSearch size={30} color={colors.textTertiary} />
               </View>
               <Text style={{ color: colors.textTertiary, fontSize: 14, textAlign: 'center' }}>
-                Nenhuma música encontrada
+                {_mt('chatConv.noSongsFound', 'Nenhuma música encontrada')}
               </Text>
             </View>
           )}
@@ -5667,7 +5784,7 @@ function PlaylistEditorModal({ colors, isDark, t, editor, onClose, onUpdated }) 
                 Playlist
               </Text>
               <Text style={{ fontSize: 20, fontWeight: '800', color: '#fff', marginBottom: 3 }} numberOfLines={1}>
-                {editor.playlist?.playlist_name || 'Playlist'}
+                {editor.playlist?.playlist_name || _mt('chatConv.playlist', 'Playlist')}
               </Text>
               <Text style={{ fontSize: 12, fontWeight: '600', color: 'rgba(255,255,255,0.85)' }}>
                 {songs.length} {songs.length === 1 ? 'música' : 'músicas'}
@@ -5744,7 +5861,7 @@ function PlaylistEditorModal({ colors, isDark, t, editor, onClose, onUpdated }) 
             <IconSearch size={18} color={colors.textTertiary} />
             <TextInput
               style={{ flex: 1, fontSize: 15, color: colors.text, paddingVertical: 0 }}
-              placeholder="Buscar música no Deezer…"
+              placeholder={_mt('chatConv.searchDeezerPh', 'Buscar música no Deezer…')}
               placeholderTextColor={colors.textTertiary}
               value={searchQuery}
               onChangeText={setSearchQuery}
@@ -5778,7 +5895,7 @@ function PlaylistEditorModal({ colors, isDark, t, editor, onClose, onUpdated }) 
             )}
             {searchResults.length === 0 && !searching && searchQuery.length >= 2 && (
               <Text style={{ textAlign: 'center', color: colors.textTertiary, fontSize: 13, paddingVertical: 16 }}>
-                Nenhuma música encontrada
+                {_mt('chatConv.noSongsFound', 'Nenhuma música encontrada')}
               </Text>
             )}
             {searchResults.map((track, idx) => {
@@ -6031,7 +6148,7 @@ function VideoPreviewNative({ uri, trim }) {
     return (
       <View style={previewStyles.videoPlaceholder}>
         <IconPlay size={48} color="#fff" />
-        <Text style={{ color: '#fff', marginTop: 8 }}>Video</Text>
+        <Text style={{ color: '#fff', marginTop: 8 }}>{_mt('chatConv.video', 'Vídeo')}</Text>
       </View>
     );
   }
@@ -7847,7 +7964,7 @@ function AudioRecorder({ onSend, onCancel, colors, t, conversationId, holdMode =
     return (
       <View style={[recStyles.container, recStyles.previewPill, { backgroundColor: previewBg, borderTopColor: colors.border }]}>
         {/* Delete button */}
-        <TouchableOpacity onPress={handleDeletePreview} style={recStyles.iconBtn} accessibilityLabel="Apagar gravação">
+        <TouchableOpacity onPress={handleDeletePreview} style={recStyles.iconBtn} accessibilityLabel={_mt('chatConv.deleteRecording', 'Apagar gravação')}>
           <View style={recStyles.trashWrap}>
             <IconTrash size={20} color={colors.error || '#ef4444'} />
           </View>
@@ -8563,12 +8680,40 @@ function _perfTick(k) {
   if (!_PERF_ON) return;
   try { const p = window.__CHATYY_PERF; if (p) p[k] = (p[k] || 0) + 1; } catch {}
 }
+// [2026-10-11 fluidez-2] "Por que a tela renderizou?" — SÓ quando a página
+// nasce com window.__CHATYY_PERF_WHY (QA/Playwright). Fora disso _useStateT É
+// o useState do React (alias constante no load do módulo = custo zero). Conta,
+// por ordinal de useState da tela (ordem no fonte), quantas vezes o valor mudou
+// entre renders; + contextos (tema/auth/idioma/params/foco).
+const _PERF_WHY_ON = _PERF_ON && (() => { try { return !!window.__CHATYY_PERF_WHY; } catch { return false; } })();
+let _whyIdx = 0;
+const _whyPrev = [];
+function _whyHit(key) {
+  try { const w = window.__CHATYY_PERF_WHY; if (w && w.on !== false) w[key] = (w[key] || 0) + 1; } catch {}
+}
+function _whyStart() { if (_PERF_WHY_ON) _whyIdx = 0; }
+function _whyVal(key, v) {
+  if (!_PERF_WHY_ON) return;
+  const k = 'ctx:' + key;
+  if (_whyPrev[k] !== undefined && _whyPrev[k] !== v) _whyHit(k);
+  _whyPrev[k] = v;
+}
+function _useStateTraced(init) {
+  const r = useState(init);
+  const i = _whyIdx++;
+  if (i in _whyPrev && _whyPrev[i] !== r[0]) _whyHit('s' + i);
+  _whyPrev[i] = r[0];
+  return r;
+}
+const _useStateT = _PERF_WHY_ON ? _useStateTraced : useState;
 
 function ChatConversationInner() {
   _perfTick('screen');
+  _whyStart();
   const { colors, isDark } = useTheme();
   const { user } = useAuth();
   const { t, language } = useLanguage();
+  _whyVal('colors', colors); _whyVal('user', user); _whyVal('t', t);
   _setAppLocale(language);
   _setAppT(t);
   // [FIX 4 — floating date pill locale 2026-10-05] onViewableItemsChanged is a
@@ -8592,6 +8737,7 @@ function ChatConversationInner() {
   // the keyboard without any React state / re-render / layout jump.
   const composerBottomPad = Math.max(insets.bottom, Spacing.sm);
   const params = useLocalSearchParams();
+  _whyVal('confirm', confirm); _whyVal('router', router); _whyVal('insets', insets); _whyVal('params', params);
   const flatListRef = useRef(null);
   // ── [2026-10-07 flashlist] ONE scroll adapter for the message list ────────
   // Every scroll of the thread goes through `threadScroll` so the call sites
@@ -8636,7 +8782,7 @@ function ChatConversationInner() {
   // — com só o cache local as não-lidas mais novas ainda não estão em
   // `messages` e o divisor caía no lugar errado.
   const openLoadDoneRef = useRef(false);
-  const [openLoadDone, setOpenLoadDone] = useState(false);
+  const [openLoadDone, setOpenLoadDone] = _useStateT(false);
   const threadScroll = useMemo(() => {
     const inst = () => (THREAD_IS_FLASH ? flashListRef.current : flatListRef.current);
     const findIdx = (pred) => {
@@ -8831,7 +8977,7 @@ function ChatConversationInner() {
   // [2026-10-05 abrir chat instantâneo] Quando a navegação vem SÓ com email
   // (clicar no contato), resolvemos o id EM-ESTADO (sem router.replace, que
   // remontava esta tela de 33k linhas) — ver o effect resolver abaixo.
-  const [resolvedConvId, setResolvedConvId] = useState(0);
+  const [resolvedConvId, setResolvedConvId] = _useStateT(0);
   const conversationId = parseInt(params.id, 10) || resolvedConvId || 0;
   // [2026-10-07 native-polish] Push pre-permission primer (gap P0-6): the first
   // chat open is the in-context moment to explain + ask (no-op once decided /
@@ -9023,7 +9169,7 @@ function ChatConversationInner() {
   //   shape: { messageId, expiresAt: epoch_ms, isUnlimited: bool } | null
   // WhatsApp parity: opening the picker while a live session is active shows
   // a top card + Stop button instead of letting the user start a 2nd session.
-  const [liveLocActive, setLiveLocActive] = useState(null);
+  const [liveLocActive, setLiveLocActive] = _useStateT(null);
   const presenceIntervalRef = useRef(null);
   const mountedRef = useRef(true);
   // Sync ref for messages count — used by loadMessages to detect empty screen
@@ -9040,8 +9186,8 @@ function ChatConversationInner() {
   //   the remote the user stopped.
   const typingLastSentAt = useRef(0);
   const typingStopTimerRef = useRef(null);
-  const [showScrollDown, setShowScrollDown] = useState(false);
-  const [newMsgCount, setNewMsgCount] = useState(0);
+  const [showScrollDown, setShowScrollDown] = _useStateT(false);
+  const [newMsgCount, setNewMsgCount] = _useStateT(0);
   // [2026-10-11 fluidez] Espelho do contador p/ o onScroll (60 Hz) não
   // enfileirar setNewMsgCount(0) a cada evento quando já está em 0 — cada
   // setState no componente da tela (~37k linhas) pode custar um render inteiro.
@@ -9076,6 +9222,7 @@ function ChatConversationInner() {
   // leituras legítimas nunca se perdem — só deixam de ser antecipadas.
   // ─────────────────────────────────────────────────────────────────────────
   const isScreenFocused = useIsFocused();
+  _whyVal('focused', isScreenFocused);
   const screenFocusedRef = useRef(isScreenFocused);
   screenFocusedRef.current = isScreenFocused;
   const appActiveRef = useRef((() => {
@@ -9102,8 +9249,8 @@ function ChatConversationInner() {
   canAckReadNowRef.current = canAckReadNow;
 
   // Multi-select state
-  const [selectionMode, setSelectionMode] = useState(false);
-  const [selectedIds, setSelectedIds] = useState(new Set());
+  const [selectionMode, setSelectionMode] = _useStateT(false);
+  const [selectedIds, setSelectedIds] = _useStateT(new Set());
 
   useEffect(() => { return () => {
     mountedRef.current = false;
@@ -9396,21 +9543,21 @@ function ChatConversationInner() {
   // "Lembrar-me em" composer extras. Everything else (rendering, send,
   // pin, etc.) is shared with the regular conversation experience.
   const isSavedMode = String(params.saved || '') === '1' || conversationType === 'saved';
-  const [savedFilter, setSavedFilter] = useState('all');
-  const [savedSearch, setSavedSearch] = useState('');
-  const [savedSearchOpen, setSavedSearchOpen] = useState(false);
-  const [showSavedReminder, setShowSavedReminder] = useState(false);
+  const [savedFilter, setSavedFilter] = _useStateT('all');
+  const [savedSearch, setSavedSearch] = _useStateT('');
+  const [savedSearchOpen, setSavedSearchOpen] = _useStateT(false);
+  const [showSavedReminder, setShowSavedReminder] = _useStateT(false);
   // [2026-10-08 chat-open-flicker] Group photo from the row the list handed
   // over (or the in-memory conversation snapshot) on frame 1 — it used to
   // start '' and arrive from an async cache read → initials → photo blink.
-  const [conversationAvatar, setConversationAvatar] = useState(() => {
+  const [conversationAvatar, setConversationAvatar] = _useStateT(() => {
     try {
       const c = peekOpenConversation(conversationId);
       const av = c && (c.avatar_url || c.avatar);
       return typeof av === 'string' ? av : '';
     } catch { return ''; }
   });
-  const [conversationName, setConversationName] = useState(() => {
+  const [conversationName, setConversationName] = _useStateT(() => {
     if (String(params.saved || '') === '1' || (params.type || 'direct') === 'saved') {
       return params.name ? decodeURIComponent(String(params.name)) : (t('chat.savedMessages') || 'Mensagens Salvas');
     }
@@ -9554,7 +9701,7 @@ function ChatConversationInner() {
   // [2026-10-08 chat-open-flicker] Last known settings of this account on
   // frame 1 (font size + account wallpaper used to switch after the network
   // round-trip → wallpaper popped in, bubbles re-flowed on every open).
-  const [chatyySettings, setChatyySettings] = useState(() => {
+  const [chatyySettings, setChatyySettings] = _useStateT(() => {
     const base = { font_size: 'medium', read_receipts: true };
     try {
       const c = getCachedChatSettings(user?.email || api.getActiveAccountEmail?.() || '');
@@ -9613,10 +9760,10 @@ function ChatConversationInner() {
   // mirror, sync) so bubble corners / default wallpaper are right on frame 1
   // instead of switching when the AsyncStorage read lands.
   const _lpInit = (() => { try { return getCachedLocalPrefs() || {}; } catch { return {}; } })();
-  const [enterSends, setEnterSends] = useState(() => (_lpInit.enter_sends === 'true' ? true : _lpInit.enter_sends === 'false' ? false : Platform.OS === 'web'));
-  const [autocorrectOn, setAutocorrectOn] = useState(() => _lpInit.autocorrect_enabled !== 'false');
-  const [bubbleShape, setBubbleShape] = useState(() => ((_lpInit.bubble_shape === 'square' || _lpInit.bubble_shape === 'classic') ? _lpInit.bubble_shape : 'rounded'));
-  const [wallpaperDefaultPref, setWallpaperDefaultPref] = useState(() => ((typeof _lpInit.wallpaper_default === 'string' && _lpInit.wallpaper_default.length > 0) ? _lpInit.wallpaper_default : null));
+  const [enterSends, setEnterSends] = _useStateT(() => (_lpInit.enter_sends === 'true' ? true : _lpInit.enter_sends === 'false' ? false : Platform.OS === 'web'));
+  const [autocorrectOn, setAutocorrectOn] = _useStateT(() => _lpInit.autocorrect_enabled !== 'false');
+  const [bubbleShape, setBubbleShape] = _useStateT(() => ((_lpInit.bubble_shape === 'square' || _lpInit.bubble_shape === 'classic') ? _lpInit.bubble_shape : 'rounded'));
+  const [wallpaperDefaultPref, setWallpaperDefaultPref] = _useStateT(() => ((typeof _lpInit.wallpaper_default === 'string' && _lpInit.wallpaper_default.length > 0) ? _lpInit.wallpaper_default : null));
   const _hydrateLocalPrefs = useCallback(() => {
     const apply = (kv) => {
       try {
@@ -9993,10 +10140,10 @@ function ChatConversationInner() {
   // Block status surfaced by chat_messages response (backend adds blocked_by_peer,
   // i_blocked_peer, blocker_name fields). When peer blocked us OR we blocked them
   // we render a banner above the composer and disable the input.
-  const [blockedByPeer, setBlockedByPeer] = useState(false);
-  const [iBlockedPeer, setIBlockedPeer] = useState(false);
-  const [blockerName, setBlockerName] = useState(null);
-  const [messages, setMessages] = useState(() => {
+  const [blockedByPeer, setBlockedByPeer] = _useStateT(false);
+  const [iBlockedPeer, setIBlockedPeer] = _useStateT(false);
+  const [blockerName, setBlockerName] = _useStateT(null);
+  const [messages, setMessages] = _useStateT(() => {
     try {
       const raw = _initialCached || [];
       if (!Array.isArray(raw) || raw.length === 0) return [];
@@ -10127,14 +10274,14 @@ function ChatConversationInner() {
   }, [messages]);
 
   // Map of remote URL → local cached path (native only)
-  const [cachedUris, setCachedUris] = useState({});
+  const [cachedUris, setCachedUris] = _useStateT({});
   // Skip the loader if we already painted from the native cache
-  const [loading, setLoading] = useState(() => !_initialCached);
+  const [loading, setLoading] = _useStateT(() => !_initialCached);
   // Surface load failures so the empty state can offer retry instead of
   // sitting silent on a blank screen when chatMessages returns !success
   // or throws. See loadMessages() — the catch used to be `} catch {}`.
-  const [loadError, setLoadError] = useState(null);
-  const [sending, setSending] = useState(false);
+  const [loadError, setLoadError] = _useStateT(null);
+  const [sending, setSending] = _useStateT(false);
   // [fix 2026-07-05 msg-dup] Synchronous re-entry lock. `sending` is React
   // state — it lags a render frame, so a same-frame burst of onPress events
   // (touch-digitizer bounce, a11y double-tap, or the leak/tone "Enviar mesmo"
@@ -10145,8 +10292,14 @@ function ChatConversationInner() {
   // hasMore starts true if we painted from native cache — there are
   // probably more messages on the server. The first onReachTop will sort
   // it out: if the server returns nothing, hasMore flips to false.
-  const [hasMore, setHasMore] = useState(() => Boolean(_initialCached));
-  const [loadingMore, setLoadingMore] = useState(false);
+  const [hasMore, setHasMore] = _useStateT(() => Boolean(_initialCached));
+  // [2026-10-11 fluidez-2] Spinner de "carregando antigas" em store externa:
+  // cada página paginada fazia 2 renders da TELA só p/ ligar/desligar o
+  // spinner do topo (true→false) — durante a rolagem, quando mais dói. Agora
+  // só o host do spinner re-renderiza. O guard de concorrência é o
+  // loadingMoreRef (sempre foi).
+  const loadingMoreStore = useComposerTextStore();
+  const setLoadingMore = loadingMoreStore.setFlag || (loadingMoreStore.setFlag = (v) => loadingMoreStore.set(v ? '1' : ''));
   const loadingMoreRef = useRef(false); // Ref guard to prevent duplicate pagination calls
   const loadMessagesSeqRef = useRef(0); // Sequence id for race-safe loadMessages
 
@@ -10193,10 +10346,10 @@ function ChatConversationInner() {
   // (99% do tempo) deixamos o TextInput nativo pintar sozinho = instantâneo.
   // [2026-10-06 thread-tech] now computed inside the composer render (per
   // keystroke, composer-only) — see _RICH_INPUT_RE / ThreadComposerHost.
-  const [aiQuickReplies, setAiQuickReplies] = useState([]);
+  const [aiQuickReplies, setAiQuickReplies] = _useStateT([]);
   const lastQuickReplyMsgId = useRef(null);
-  const [chatLeakWarning, setChatLeakWarning] = useState(null);
-  const [chatToneWarning, setChatToneWarning] = useState(null);
+  const [chatLeakWarning, setChatLeakWarning] = _useStateT(null);
+  const [chatToneWarning, setChatToneWarning] = _useStateT(null);
   const chatSendBypassGuards = useRef(false);
   // [instant-send 2026-06-01] Cache the sealed-sender privacy flag in a ref,
   // loaded once on mount + refreshed on focus. The send path used to
@@ -10215,7 +10368,7 @@ function ChatConversationInner() {
     })();
     return () => { alive = false; };
   }, []);
-  const [audioTranscription, setAudioTranscription] = useState(null);
+  const [audioTranscription, setAudioTranscription] = _useStateT(null);
 
   // [2026-06-03] Auto-fetch de AI quick replies DESLIGADO — o sistema de
   // sugestão de mensagem foi removido a pedido do founder (ficava "carregando"
@@ -10308,7 +10461,7 @@ function ChatConversationInner() {
     })();
   }, [messages.length, user, playScreenEffect]);
 
-  const [replyTo, setReplyTo] = useState(null);
+  const [replyTo, setReplyTo] = _useStateT(null);
   // Hydrate the reply preview bar from a navigation param — used by the
   // "Reply privately" action in group chats, which navigates here with a
   // JSON-encoded snapshot of the original message so this DM starts with
@@ -10332,12 +10485,12 @@ function ChatConversationInner() {
   // Telegram-style partial-text reply. When set, shows a modal with the
   // source message rendered in a TextInput so the user can highlight the
   // exact phrase to quote. Confirm → setReplyTo with `quoteText` populated.
-  const [quoteSelectModal, setQuoteSelectModal] = useState(null); // { msg, draft }
-  const [editingMsg, setEditingMsg] = useState(null);
+  const [quoteSelectModal, setQuoteSelectModal] = _useStateT(null); // { msg, draft }
+  const [editingMsg, setEditingMsg] = _useStateT(null);
   // [2026-10-08 chat-ab-test] espelho p/ o autosave de rascunho (closure longa).
   const editingMsgRef = useRef(null);
   editingMsgRef.current = editingMsg;
-  const [selectedMsg, setSelectedMsg] = useState(null);
+  const [selectedMsg, setSelectedMsg] = _useStateT(null);
 
   // Web-only floating "Citar" pill — when the user drags-selects a span of
   // text inside any message bubble, a small popover appears near the cursor
@@ -10345,7 +10498,7 @@ function ChatConversationInner() {
   // Mobile keeps the existing modal flow since OS-level Text selection is
   // unreliable across iOS/Android RN versions.
   // Shape: { x, y, text } or null when no selection.
-  const [quotePill, setQuotePill] = useState(null);
+  const [quotePill, setQuotePill] = _useStateT(null);
   useEffect(() => {
     if (Platform.OS !== 'web') return undefined;
     let raf = 0;
@@ -10398,7 +10551,7 @@ function ChatConversationInner() {
   // 1-second tick used to repaint the "Apagar para todos · Disponível por X
   // mais" countdown inside the long-press menu while it's open. Without this
   // the subtitle would freeze on the value at open time and never tick down.
-  const [longPressNow, setLongPressNow] = useState(() => Date.now());
+  const [longPressNow, setLongPressNow] = _useStateT(() => Date.now());
   useEffect(() => {
     if (!selectedMsg) return undefined;
     const id = setInterval(() => setLongPressNow(Date.now()), 1000);
@@ -10413,51 +10566,51 @@ function ChatConversationInner() {
     if (Platform.OS === 'web') return;
     try { Haptics.selectionAsync(); } catch {}
   }, [selectedMsg ? selectedMsg.id : null]);
-  const [showReactions, setShowReactions] = useState(null);
-  const [reactionDetail, setReactionDetail] = useState(null);
-  const [showFullEmojiPicker, setShowFullEmojiPicker] = useState(false);
+  const [showReactions, setShowReactions] = _useStateT(null);
+  const [reactionDetail, setReactionDetail] = _useStateT(null);
+  const [showFullEmojiPicker, setShowFullEmojiPicker] = _useStateT(false);
   // Reaction picker tab: 'emoji' (default), 'mine' (user's custom animated
   // emoji), or 'sticker' (premium feature). Mine + sticker share the same
   // server path (sticker:<url> in emoji column); the difference is that
   // mine is free for the owner of the custom_animated_emoji rows.
-  const [reactionPickerTab, setReactionPickerTab] = useState('emoji');
-  const [stickerReactionPacks, setStickerReactionPacks] = useState([]); // [{id, name, cover_url, stickers: [{id, file_url}]}]
-  const [stickerReactionLoading, setStickerReactionLoading] = useState(false);
-  const [stickerReactionPremium, setStickerReactionPremium] = useState(null); // null=unknown, true/false=resolved
+  const [reactionPickerTab, setReactionPickerTab] = _useStateT('emoji');
+  const [stickerReactionPacks, setStickerReactionPacks] = _useStateT([]); // [{id, name, cover_url, stickers: [{id, file_url}]}]
+  const [stickerReactionLoading, setStickerReactionLoading] = _useStateT(false);
+  const [stickerReactionPremium, setStickerReactionPremium] = _useStateT(null); // null=unknown, true/false=resolved
   // "Meus emojis" tab: lazy-loaded list of the user's custom animated emoji
   // (custom_animated_emoji table). Shape: [{ id, emoji_handle, webp_url }].
-  const [myCustomEmojis, setMyCustomEmojis] = useState(null); // null=not loaded, []=loaded empty
-  const [myCustomEmojiLoading, setMyCustomEmojiLoading] = useState(false);
-  const [inputFocused, setInputFocused] = useState(false);
-  const [readReceipts, setReadReceipts] = useState([]);
-  const [messageInfoModal, setMessageInfoModal] = useState(null); // { message, receipts, sent_at, loading }
+  const [myCustomEmojis, setMyCustomEmojis] = _useStateT(null); // null=not loaded, []=loaded empty
+  const [myCustomEmojiLoading, setMyCustomEmojiLoading] = _useStateT(false);
+  const [inputFocused, setInputFocused] = _useStateT(false);
+  const [readReceipts, setReadReceipts] = _useStateT([]);
+  const [messageInfoModal, setMessageInfoModal] = _useStateT(null); // { message, receipts, sent_at, loading }
   // [2026-10-06 thread-tech] Per-row overlay store (see utils/threadRowOverlay).
   const rowOverlayStore = useRowOverlayStore();
-  const [translatedMessages, setTranslatedMessages] = useState({}); // { [msgId]: { text, loading } }
+  const [translatedMessages, setTranslatedMessages] = _useStateT({}); // { [msgId]: { text, loading } }
   // [2026-10-06 thread-tech] translatedMessages stays screen state (effects +
   // the action menu read it; it changes rarely) but is MIRRORED into the row
   // overlay store so the memoized bubble actually repaints with the result.
   useEffect(() => { rowOverlayStore.setField('tr', translatedMessages); }, [translatedMessages, rowOverlayStore]);
 
   // Group invite link state
-  const [inviteLink, setInviteLink] = useState(null);
-  const [inviteLinkLoading, setInviteLinkLoading] = useState(false);
+  const [inviteLink, setInviteLink] = _useStateT(null);
+  const [inviteLinkLoading, setInviteLinkLoading] = _useStateT(false);
   // QR modal state — shows the invite link as a scannable QR. WhatsApp
   // pattern: opens via "Mostrar QR" next to the share-link button so an
   // in-person guest can join without copy-paste.
-  const [showInviteQr, setShowInviteQr] = useState(false);
+  const [showInviteQr, setShowInviteQr] = _useStateT(false);
   // Mute state
-  const [showMuteModal, setShowMuteModal] = useState(false);
-  const [mutedUntil, setMutedUntil] = useState(null);
+  const [showMuteModal, setShowMuteModal] = _useStateT(false);
+  const [mutedUntil, setMutedUntil] = _useStateT(null);
 
   // ─── AI Assistant Modal ───
-  const [showAiModal, setShowAiModal] = useState(false);
-  const [aiLoading, setAiLoading] = useState(false);
-  const [aiResult, setAiResult] = useState(null);
+  const [showAiModal, setShowAiModal] = _useStateT(false);
+  const [aiLoading, setAiLoading] = _useStateT(false);
+  const [aiResult, setAiResult] = _useStateT(null);
 
   // ─── Custom notification sound per chat ───
-  const [chatNotifSound, setChatNotifSound] = useState('default');
-  const [showNotifSoundPicker, setShowNotifSoundPicker] = useState(false);
+  const [chatNotifSound, setChatNotifSound] = _useStateT('default');
+  const [showNotifSoundPicker, setShowNotifSoundPicker] = _useStateT(false);
 
   // ─── Draft persistence (Telegram-style cross-device) ───
   // Local = AsyncStorage (offline-resilient). Cloud = chat_conversation_drafts
@@ -10670,9 +10823,9 @@ function ChatConversationInner() {
   }, [conversationId]);
 
   // WhatsApp features state
-  const [mediaPreview, setMediaPreview] = useState({ visible: false, files: [] });
+  const [mediaPreview, setMediaPreview] = _useStateT({ visible: false, files: [] });
   // Caption preview for documents / audio files / GIFs (see FileCaptionPreview).
-  const [captionPreview, setCaptionPreview] = useState({ visible: false, kind: null, file: null, gif: null, gifUri: null });
+  const [captionPreview, setCaptionPreview] = _useStateT({ visible: false, kind: null, file: null, gif: null, gifUri: null });
   // HD quality toggle (2048 vs 4096) — defaults to ON per user request
   // "sem perder qualidade". Browser-only compression still caps at 4096px
   // to keep uploads reasonable; native uses the original file unchanged.
@@ -10685,7 +10838,7 @@ function ChatConversationInner() {
   // THIS send (reset to null every time the preview opens, WhatsApp-style).
   // Photos stay standard unless the chip is explicitly ON (4096px photos by
   // default would multiply the data cost of every photo).
-  const [hdMode, setHdMode] = useState(null);
+  const [hdMode, setHdMode] = _useStateT(null);
   useEffect(() => { if (mediaPreview.visible) setHdMode(null); }, [mediaPreview.visible]);
 
   // Share-to-Chatyy hand-off — if user came in from /share-receive with a file
@@ -10741,8 +10894,8 @@ function ChatConversationInner() {
     return () => document.removeEventListener('paste', onPaste);
   }, []);
 
-  const [messageInfo, setMessageInfo] = useState(null); // { id, delivered: [], read: [] }
-  const [showAttachMenu, setShowAttachMenu] = useState(false);
+  const [messageInfo, setMessageInfo] = _useStateT(null); // { id, delivered: [], read: [] }
+  const [showAttachMenu, setShowAttachMenu] = _useStateT(false);
   // [2026-10-09] Enquanto o menu de anexos estiver aberto, o teclado não pode reaparecer por cima.
   useEffect(() => {
     if (!showAttachMenu) return undefined;
@@ -10754,31 +10907,31 @@ function ChatConversationInner() {
     return () => { try { sub.remove(); } catch {} };
   }, [showAttachMenu]);
   // Desktop-web webcam capture overlay (getUserMedia photo + video)
-  const [showWebcam, setShowWebcam] = useState(false);
+  const [showWebcam, setShowWebcam] = _useStateT(false);
   const WebcamCapture = require('../components/WebcamCapture').default;
   // [2026-10-07 ios-native] In-app WhatsApp-style camera (vision-camera, no
   // frame processor). Falls back to the system camera when unavailable.
-  const [showChatCamera, setShowChatCamera] = useState(false);
-  const [showPollCreator, setShowPollCreator] = useState(false);
-  const [showMeetupCreator, setShowMeetupCreator] = useState(false);
-  const [showPlaylistCreator, setShowPlaylistCreator] = useState(false);
-  const [playlistEditor, setPlaylistEditor] = useState(null); // { messageId, playlist }
-  const [isRecording, setIsRecording] = useState(false);
+  const [showChatCamera, setShowChatCamera] = _useStateT(false);
+  const [showPollCreator, setShowPollCreator] = _useStateT(false);
+  const [showMeetupCreator, setShowMeetupCreator] = _useStateT(false);
+  const [showPlaylistCreator, setShowPlaylistCreator] = _useStateT(false);
+  const [playlistEditor, setPlaylistEditor] = _useStateT(null); // { messageId, playlist }
+  const [isRecording, setIsRecording] = _useStateT(false);
   // [2026-10-06 UX2] WhatsApp hold-to-record: null = tap mode (legacy),
   // 'hold' = finger on the mic (recorder rendered as an overlay so the mic
   // keeps the touch responder), 'locked' = slid up → hands-free controls.
-  const [voiceHoldMode, setVoiceHoldMode] = useState(null);
+  const [voiceHoldMode, setVoiceHoldMode] = _useStateT(null);
   const voiceRecCtlRef = useRef(null); // { move, cancel, lock, release } — set by AudioRecorder
   const voiceHoldOwnRef = useRef(false); // this touch owns the recorder (ignore a 2nd hold while one is finishing)
   useEffect(() => { if (!isRecording) setVoiceHoldMode(null); }, [isRecording]);
   // Chat 2026 — round-video-note recorder (Telegram-style). Lives in its
   // own component so the composer doesn't gain another 400 LoC.
-  const [showVideoNoteRecorder, setShowVideoNoteRecorder] = useState(false);
+  const [showVideoNoteRecorder, setShowVideoNoteRecorder] = _useStateT(false);
   // Chat 2026 — AI summarize unread modal. Triggered from the header pill
   // when unread_count is >= 5.
-  const [showSummarizeModal, setShowSummarizeModal] = useState(false);
-  const [uploading, setUploading] = useState(false);
-  const [uploadProgress, setUploadProgress] = useState({}); // { [tempId]: 0-100 }
+  const [showSummarizeModal, setShowSummarizeModal] = _useStateT(false);
+  const [uploading, setUploading] = _useStateT(false);
+  const [uploadProgress, setUploadProgress] = _useStateT({}); // { [tempId]: 0-100 }
   // Download progress for remote media bubbles (WhatsApp-style ring while the
   // full image/video is being fetched from the CDN). Keyed by message id so a
   // stale state for an off-screen bubble doesn't bleed into a new message
@@ -10980,7 +11133,7 @@ function ChatConversationInner() {
     };
   }, []);
   // Reply-jump highlight (tap quote → scroll + flash target for ~1.5s)
-  const [replyJumpHighlightId, setReplyJumpHighlightId] = useState(null);
+  const [replyJumpHighlightId, setReplyJumpHighlightId] = _useStateT(null);
   const cancelUpload = useCallback((tempId) => {
     const ctrl = uploadAbortsRef.current[tempId];
     // Mark as USER-initiated so the catch block knows to drop silently
@@ -11094,12 +11247,12 @@ function ChatConversationInner() {
       setMessages(prev => _mapKeep(prev, m => m.id === msg?.id ? { ...m, _failed: true, _pending: false, _uploading: false } : m));
     }
   }, [conversationId]);
-  const [wsConnected, setWsConnected] = useState(true);
+  const [wsConnected, setWsConnected] = _useStateT(true);
   // Network reachability — separate from WS state so the banner can
   // distinguish "no network at all" (gray + cellular off) from "network
   // ok but WS dropped" (amber + spinner, existing). Subscribed below
   // via @react-native-community/netinfo (web falls back to navigator.onLine).
-  const [netReachable, setNetReachable] = useState(true);
+  const [netReachable, setNetReachable] = _useStateT(true);
   const wsDisconnectTimerRef = useRef(null);
   const hasEverConnectedRef = useRef(false); // Only show banner after first successful connection + disconnect
   const offlineQueueRef = useRef([]); // Queue of messages to send when back online
@@ -11119,7 +11272,7 @@ function ChatConversationInner() {
       return getCachedPresence(params.email);
     } catch { return null; }
   })();
-  const [presence, setPresence] = useState(() => (_presenceSeed ? { status: _presenceSeed.status, last_seen: _presenceSeed.last_seen } : null)); // { status, last_seen }
+  const [presence, setPresence] = _useStateT(() => (_presenceSeed ? { status: _presenceSeed.status, last_seen: _presenceSeed.last_seen } : null)); // { status, last_seen }
   // Wall-clock of the last time we received a fresh presence update. Used to
   // gate the "online" label so we never falsely claim a peer is available when
   // the data is stale (no presence push for >35s).
@@ -11128,19 +11281,19 @@ function ChatConversationInner() {
     if (!presence || (params.type || 'direct') !== 'direct' || !params.email) return;
     try { setCachedPresence(params.email, presence, presenceUpdatedAtRef.current); } catch {}
   }, [presence, params.email, params.type]);
-  const [mediaViewer, setMediaViewer] = useState({ visible: false, fileUrl: '', fileName: '', fileSize: 0, type: '', blurhash: null, placeholderUri: null, thumbUri: null });
+  const [mediaViewer, setMediaViewer] = _useStateT({ visible: false, fileUrl: '', fileName: '', fileSize: 0, type: '', blurhash: null, placeholderUri: null, thumbUri: null });
   // Round video note viewer — stays circular (WhatsApp parity, never rect fullscreen).
-  const [roundVideoViewer, setRoundVideoViewer] = useState({ visible: false, uri: null });
-  const [forwardMsg, setForwardMsg] = useState(null);
-  const [forwardConversations, setForwardConversations] = useState([]);
+  const [roundVideoViewer, setRoundVideoViewer] = _useStateT({ visible: false, uri: null });
+  const [forwardMsg, setForwardMsg] = _useStateT(null);
+  const [forwardConversations, setForwardConversations] = _useStateT([]);
   // Multi-select forward (WhatsApp-style): user pode marcar várias convs e
   // enviar todas de uma vez. Antes só um destino por toque.
-  const [forwardSelected, setForwardSelected] = useState(() => new Set());
-  const [forwardSending, setForwardSending] = useState(false);
-  const [forwardLoading, setForwardLoading] = useState(false);
-  const [forwardSearch, setForwardSearch] = useState('');
-  const [showGifPicker, setShowGifPicker] = useState(false);
-  const [showStickerPicker, setShowStickerPicker] = useState(false);
+  const [forwardSelected, setForwardSelected] = _useStateT(() => new Set());
+  const [forwardSending, setForwardSending] = _useStateT(false);
+  const [forwardLoading, setForwardLoading] = _useStateT(false);
+  const [forwardSearch, setForwardSearch] = _useStateT('');
+  const [showGifPicker, setShowGifPicker] = _useStateT(false);
+  const [showStickerPicker, setShowStickerPicker] = _useStateT(false);
   // [2026-10-10 painel-no-lugar-do-teclado] Figurinhas/GIF/emoji SUBSTITUEM o
   // teclado (WhatsApp): abrir um painel derruba o teclado antes (mesmo padrão
   // do menu "+": blur + Keyboard.dismiss + KeyboardController.dismiss + ~60ms);
@@ -11181,16 +11334,16 @@ function ChatConversationInner() {
     });
     return () => { try { sub.remove(); } catch {} };
   }, [showStickerPicker, showGifPicker, showFullEmojiPicker]);
-  const [stickerMakerSrc, setStickerMakerSrc] = useState(null); // [2026-10-08 sticker-maker]
-  const [stickerSheet, setStickerSheet] = useState(null); // [2026-10-10 stickers-import] { messageId, url }
-  const [stickerDrop, setStickerDrop] = useState(null); // [2026-10-10 stickers-import] web: [{uri, blob, name, type, size}]
+  const [stickerMakerSrc, setStickerMakerSrc] = _useStateT(null); // [2026-10-08 sticker-maker]
+  const [stickerSheet, setStickerSheet] = _useStateT(null); // [2026-10-10 stickers-import] { messageId, url }
+  const [stickerDrop, setStickerDrop] = _useStateT(null); // [2026-10-10 stickers-import] web: [{uri, blob, name, type, size}]
 
   // [2026-10-10 paste-image] Colar foto/GIF/figurinha no app (web já tem Ctrl+V
   // acima). (a) Chip "Colar foto" acima do campo quando a área de transferência
   // tem imagem (expo-clipboard, binário atual — só consulta o tipo, sem aviso de
   // colar). (b) Colar nativo pelo menu do campo / teclado (GIF do Gboard) via
   // ChatyyImagePaste quando o binário trouxer (requireOptional → no-op hoje).
-  const [pasteChip, setPasteChip] = useState(false);
+  const [pasteChip, setPasteChip] = _useStateT(false);
   const pasteDismissedRef = useRef(false);
   const handlePastedFile = (file) => {
     if (!file?.uri) return;
@@ -11254,7 +11407,7 @@ function ChatConversationInner() {
   });
   // Sticker suggestion strip user-dismissal — resets when the input is
   // cleared so the next message gets a fresh chance at suggestions.
-  const [stickerSuggestionsHidden, setStickerSuggestionsHidden] = useState(false);
+  const [stickerSuggestionsHidden, setStickerSuggestionsHidden] = _useStateT(false);
   // Audio transcript collapse — toggled by mutating the message itself so
   // MemoizedMessageRow's per-field comparator picks it up (an external Set
   // state didn't trigger re-render because the memo didn't see it).
@@ -11355,93 +11508,93 @@ function ChatConversationInner() {
   }, []);
   // iMessage Send-with-Effect: long-press on send opens this picker. The
   // staged effect rides along on the next chatSend (cleared right after).
-  const [showEffectPicker, setShowEffectPicker] = useState(false);
-  const [stagedEffect, setStagedEffect] = useState(null);
+  const [showEffectPicker, setShowEffectPicker] = _useStateT(false);
+  const [stagedEffect, setStagedEffect] = _useStateT(null);
   const screenEffectRef = useRef(null);
   // One-shot offline replay guard: per mount, we replay AT MOST the
   // single newest unseen screen-effect message — never a chain of stale
   // ones, never twice on remount. AsyncStorage records which IDs have
   // already played so reopening the same conv doesn't refire.
   const offlineEffectReplayedRef = useRef(false);
-  const [showMediaGallery, setShowMediaGallery] = useState(false);
-  const [showFormatToolbar, setShowFormatToolbar] = useState(false);
+  const [showMediaGallery, setShowMediaGallery] = _useStateT(false);
+  const [showFormatToolbar, setShowFormatToolbar] = _useStateT(false);
   // inputSelection moved to inputSelectionRef to avoid re-renders on every cursor move
-  const [showExportModal, setShowExportModal] = useState(false);
-  const [showGroupInfo, setShowGroupInfo] = useState(false);
+  const [showExportModal, setShowExportModal] = _useStateT(false);
+  const [showGroupInfo, setShowGroupInfo] = _useStateT(false);
   // [2026-10-06 UX2] WhatsApp "Dados do contato" sheet for 1:1 chats (header
   // tap / ⋮ → Info do contato). Reuses the group-info building blocks
   // (GroupCard/GroupRow/GroupSectionLabel) and wires every row to the SAME
   // handlers/modals the ⋮ menu uses — no duplicated business logic.
-  const [showContactInfo, setShowContactInfo] = useState(false);
-  const [contactIdentity, setContactIdentity] = useState(null); // profile_get identity
-  const [contactPinned, setContactPinned] = useState(null);     // null = unknown
+  const [showContactInfo, setShowContactInfo] = _useStateT(false);
+  const [contactIdentity, setContactIdentity] = _useStateT(null); // profile_get identity
+  const [contactPinned, setContactPinned] = _useStateT(null);     // null = unknown
   // [2026-10-10 contact-info] Miniaturas das últimas fotos + grupos em comum
   // (profile_get.common_chats) mostrados em "Dados do contato".
-  const [infoMediaThumbs, setInfoMediaThumbs] = useState([]);
-  const [contactCommonGroups, setContactCommonGroups] = useState([]);
-  const [adminOnlyMessages, setAdminOnlyMessages] = useState(false);
-  const [showSlowModePicker, setShowSlowModePicker] = useState(false);
-  const [slowModeSeconds, setSlowModeSeconds] = useState(0);
+  const [infoMediaThumbs, setInfoMediaThumbs] = _useStateT([]);
+  const [contactCommonGroups, setContactCommonGroups] = _useStateT([]);
+  const [adminOnlyMessages, setAdminOnlyMessages] = _useStateT(false);
+  const [showSlowModePicker, setShowSlowModePicker] = _useStateT(false);
+  const [slowModeSeconds, setSlowModeSeconds] = _useStateT(0);
   // ─── Group admin quick-wins (5 surfaces) ───
   // pendingMembers: list of users awaiting admin approval to join the group.
   // We fetch the count when group info loads (admins only) and the full list
   // on demand when admin opens the modal.
-  const [pendingMembers, setPendingMembers] = useState([]);
-  const [pendingLoading, setPendingLoading] = useState(false);
-  const [showPendingModal, setShowPendingModal] = useState(false);
-  const [pendingActionEmail, setPendingActionEmail] = useState(null);
+  const [pendingMembers, setPendingMembers] = _useStateT([]);
+  const [pendingLoading, setPendingLoading] = _useStateT(false);
+  const [showPendingModal, setShowPendingModal] = _useStateT(false);
+  const [pendingActionEmail, setPendingActionEmail] = _useStateT(null);
   // forwardingDisabled: admin-only group setting. When TRUE, non-admin
   // members cannot forward messages out of this conv (Telegram parity —
   // "Restrict saving content"). Persisted via chat_update_group;
   // backend enforces in chat_forward / chat_forward_multi.
-  const [forwardingDisabled, setForwardingDisabled] = useState(false);
+  const [forwardingDisabled, setForwardingDisabled] = _useStateT(false);
 
   // hideMembers: when ON, non-admins shouldn't see the member list. Persisted
   // server-side via chat_group_admin (the backend may add the flag separately;
   // for now we only persist + reflect the toggle locally).
-  const [hideMembers, setHideMembers] = useState(false);
+  const [hideMembers, setHideMembers] = _useStateT(false);
   // [2026-10-07 group-admin] true when the server stripped the roster for ME
   // (non-admin + hide_members) — the sheet then says so instead of "Membros (1)".
-  const [membersHiddenForMe, setMembersHiddenForMe] = useState(false);
-  const [groupMemberCount, setGroupMemberCount] = useState(0);
+  const [membersHiddenForMe, setMembersHiddenForMe] = _useStateT(false);
+  const [groupMemberCount, setGroupMemberCount] = _useStateT(0);
 
   // ── Member search + role filter inside the Group Info modal ──
   // Tracks the live search box + a 3-way role chip (all/admins/members).
   // Lives at the screen-level state so the input doesn't reset across
   // re-renders triggered by member-list refreshes.
-  const [memberSearchQuery, setMemberSearchQuery] = useState('');
-  const [memberRoleFilter, setMemberRoleFilter] = useState('all'); // 'all' | 'admins' | 'members'
+  const [memberSearchQuery, setMemberSearchQuery] = _useStateT('');
+  const [memberRoleFilter, setMemberRoleFilter] = _useStateT('all'); // 'all' | 'admins' | 'members'
 
   // ── Approval-required toggle ──
   // Optimistic local mirror of the conversation.require_approval flag.
   // Persisted via api.chatGroupSetApprovalRequired (alias of the legacy
   // chatGroupSetRequireApproval call). Surfaced as a row in the admin
   // settings block of the group info modal.
-  const [approvalRequired, setApprovalRequired] = useState(false);
+  const [approvalRequired, setApprovalRequired] = _useStateT(false);
 
   // ── Group description ──
   // Plain-text or lightly-marked-up description shipped by the backend on
   // chat_group_info. Rendered with a tiny markdown helper so **bold**,
   // *italic*, ~strike~, and bare URLs come through as the user expects.
-  const [conversationDescription, setConversationDescription] = useState('');
-  const [burst, setBurst] = useState(null); // { emoji, key, premium }
-  const [isPremium, setIsPremium] = useState(false);
-  const [e2eBannerDismissed, setE2eBannerDismissed] = useState(false);
+  const [conversationDescription, setConversationDescription] = _useStateT('');
+  const [burst, setBurst] = _useStateT(null); // { emoji, key, premium }
+  const [isPremium, setIsPremium] = _useStateT(false);
+  const [e2eBannerDismissed, setE2eBannerDismissed] = _useStateT(false);
   // Per-conversation dismiss flag for the amber "vanish timer" banner. Storage
   // key includes the timer value so any policy change re-surfaces the banner —
   // users shouldn't silently miss the new duration.
-  const [vanishTimerBannerDismissed, setVanishTimerBannerDismissed] = useState(false);
+  const [vanishTimerBannerDismissed, setVanishTimerBannerDismissed] = _useStateT(false);
   // disappearingTimer is hoisted up here (was previously declared ~80 lines
   // below) so the vanish-timer-banner useEffect's deps array `[…, disappearingTimer]`
   // doesn't TDZ on first render. The web bundler emits the deps eval before
   // the later `const` initializer runs → "Cannot access 'ss' before
   // initialization" crash on chat open. Native runs were lenient; web wasn't.
-  const [disappearingTimer, setDisappearingTimer] = useState(0);
+  const [disappearingTimer, setDisappearingTimer] = _useStateT(0);
   // ISO-Z timestamp of WHEN disappearing was enabled for this conversation.
   // Only messages sent at/after this moment vanish — the prior history stays
   // (WhatsApp semantics). null/empty = nothing disappears. (Lester QA 2026-05-29)
-  const [disappearingSetAt, setDisappearingSetAt] = useState(null);
-  const [showDisappearingModal, setShowDisappearingModal] = useState(false);
+  const [disappearingSetAt, setDisappearingSetAt] = _useStateT(null);
+  const [showDisappearingModal, setShowDisappearingModal] = _useStateT(false);
 
   // Load dismissed state for E2E banner (per-conversation)
   useEffect(() => {
@@ -11482,40 +11635,40 @@ function ChatConversationInner() {
     })();
     return () => { alive = false; };
   }, []);
-  const [showTopicsModal, setShowTopicsModal] = useState(false);
-  const [topics, setTopics] = useState([]);
-  const [activeTopic, setActiveTopic] = useState(null); // { id, name, icon } | null
-  const [newTopicName, setNewTopicName] = useState('');
-  const [newTopicIcon, setNewTopicIcon] = useState('💬');
+  const [showTopicsModal, setShowTopicsModal] = _useStateT(false);
+  const [topics, setTopics] = _useStateT([]);
+  const [activeTopic, setActiveTopic] = _useStateT(null); // { id, name, icon } | null
+  const [newTopicName, setNewTopicName] = _useStateT('');
+  const [newTopicIcon, setNewTopicIcon] = _useStateT('💬');
   // Admin-only "create topic" sheet (separate from the read-only topic
   // filter — keeps the picker UI out of the way for non-admins).
-  const [showTopicCreate, setShowTopicCreate] = useState(false);
-  const [newTopicColor, setNewTopicColor] = useState('#111111');
+  const [showTopicCreate, setShowTopicCreate] = _useStateT(false);
+  const [newTopicColor, setNewTopicColor] = _useStateT('#111111');
   // Per-member custom permissions sheet. `roleEditTarget` holds the email
   // of the admin we're editing; `rolePermsLocal` keeps optimistic state
   // keyed by email (until the backend grows real persistence).
-  const [roleEditTarget, setRoleEditTarget] = useState(null);
-  const [rolePermsLocal, setRolePermsLocal] = useState({});
-  const [rolePermsDraft, setRolePermsDraft] = useState(null);
-  const [mentionedEmails, setMentionedEmails] = useState([]);
-  const [showMentionPopup, setShowMentionPopup] = useState(false);
+  const [roleEditTarget, setRoleEditTarget] = _useStateT(null);
+  const [rolePermsLocal, setRolePermsLocal] = _useStateT({});
+  const [rolePermsDraft, setRolePermsDraft] = _useStateT(null);
+  const [mentionedEmails, setMentionedEmails] = _useStateT([]);
+  const [showMentionPopup, setShowMentionPopup] = _useStateT(false);
   // Bot slash-command popover. Becomes visible when:
   //   - the conversation has at least one bot member (email ends with @bots.chatyy)
   //   - and the input text starts with `/` followed by 0+ word chars (no space yet)
   // The popover exposes each bot's `commands` JSON. Tapping a command rewrites
   // the input to `/cmd ` so the user can finish with their args.
-  const [showBotPopup, setShowBotPopup] = useState(false);
-  const [botCommandFilter, setBotCommandFilter] = useState('');
-  const [showStarredModal, setShowStarredModal] = useState(false);
-  const [starredMessages, setStarredMessages] = useState([]);
-  const [starredLoading, setStarredLoading] = useState(false);
-  const [profileViewer, setProfileViewer] = useState(null); // { name, email }
+  const [showBotPopup, setShowBotPopup] = _useStateT(false);
+  const [botCommandFilter, setBotCommandFilter] = _useStateT('');
+  const [showStarredModal, setShowStarredModal] = _useStateT(false);
+  const [starredMessages, setStarredMessages] = _useStateT([]);
+  const [starredLoading, setStarredLoading] = _useStateT(false);
+  const [profileViewer, setProfileViewer] = _useStateT(null); // { name, email }
   // WAVE 95 (2026-05-21): tap-to-fullscreen avatar viewer. WhatsApp-style.
   // User: "se eu clico na foto de perfil do meu amigo deveria ficar grande
   // pra eu ver". Opens a dedicated lightbox (not ChatMediaViewer — see the
   // comment block in components/AvatarLightbox.js for the rationale).
-  const [avatarLightbox, setAvatarLightbox] = useState(null); // { name, email, uri }
-  const [members, setMembers] = useState([]);
+  const [avatarLightbox, setAvatarLightbox] = _useStateT(null); // { name, email, uri }
+  const [members, setMembers] = _useStateT([]);
   const membersRef = useRef([]);
   useEffect(() => { membersRef.current = members; }, [members]);
   const getMemberEmails = useCallback(() => membersRef.current.map(m => m.email).filter(Boolean), []);
@@ -11556,7 +11709,7 @@ function ChatConversationInner() {
       }
     }
   }, [conversationId]);
-  const [editGroupName, setEditGroupName] = useState('');
+  const [editGroupName, setEditGroupName] = _useStateT('');
 
   // Screen context for One AI — uses refs to avoid TDZ in minified bundle.
   // (conversationId/conversationType are declared early but members/currentEmail
@@ -11582,13 +11735,13 @@ function ChatConversationInner() {
   // in the vanish-timer-banner useEffect's deps array (web bundler crash).
 
   // Vanish mode
-  const [vanishMode, setVanishMode] = useState(false);
+  const [vanishMode, setVanishMode] = _useStateT(false);
   // Tick used by the per-message vanish_at countdown indicator. Bumps every
   // 30s so bubbles whose vanish_at is <1h away repaint their "23m" / "12m"
   // label. Cheap — top-level state change re-runs the row enrichment but
   // MemoizedMessageRow's comparator filters out rows that don't render the
   // countdown.
-  const [vanishTickNow, setVanishTickNow] = useState(() => Date.now());
+  const [vanishTickNow, setVanishTickNow] = _useStateT(() => Date.now());
   // [2026-07-02] Gate the 30s ticker. It used to run in EVERY open conversation
   // forever, forcing a full-list re-render twice a minute even when nothing on
   // screen is counting down. We only need it when something time-sensitive is
@@ -11626,7 +11779,7 @@ function ChatConversationInner() {
   }, [needsVanishTick]);
 
   // Message effects
-  const [activeEffect, setActiveEffect] = useState(null); // 'confetti' | 'hearts' | 'fire' | null
+  const [activeEffect, setActiveEffect] = _useStateT(null); // 'confetti' | 'hearts' | 'fire' | null
   const effectTimeoutRef = useRef(null);
 
   const triggerMessageEffect = useCallback((effect) => {
@@ -11667,7 +11820,7 @@ function ChatConversationInner() {
   // Wallpaper: read instant from MMKV (synchronous) so the chat paints with
   // the right background on first frame. API fetch happens in the background
   // and updates state only if different — stale-while-revalidate.
-  const [perConvWallpaper, setPerConvWallpaper] = useState(() => {
+  const [perConvWallpaper, setPerConvWallpaper] = _useStateT(() => {
     if (!conversationId) return undefined;
     try {
       const mmkv = require('../services/mmkv');
@@ -11707,14 +11860,14 @@ function ChatConversationInner() {
   const wallpaperColor = (perConvWallpaper && perConvWallpaper !== '__global__')
     ? perConvWallpaper
     : (chatyySettings.wallpaper || wallpaperDefaultPref || 'none');
-  const [showWallpaperPicker, setShowWallpaperPicker] = useState(false);
-  const [showHeaderMenu, setShowHeaderMenu] = useState(false);
+  const [showWallpaperPicker, setShowWallpaperPicker] = _useStateT(false);
+  const [showHeaderMenu, setShowHeaderMenu] = _useStateT(false);
   // [2026-10-10 contact-info] Menu ⋮ enxuto: atalhos rápidos + "Mais" (sub-lista).
-  const [headerMenuMore, setHeaderMenuMore] = useState(false);
+  const [headerMenuMore, setHeaderMenuMore] = _useStateT(false);
   // Safety-number / E2E verification sheet — opened from the encryption
   // banner tap. Direct conversations only; group verification is per-pair
   // and not surfaced here (matches WhatsApp/Signal behavior).
-  const [showSafetyNumber, setShowSafetyNumber] = useState(false);
+  const [showSafetyNumber, setShowSafetyNumber] = _useStateT(false);
   // Header overflow menu entrance animation: scale 0.94 → 1 + opacity 0 → 1
   // (220ms spring-ease) to match WhatsApp/Telegram polish. Reverse on close.
   const headerMenuScale = useRef(new Animated.Value(0.94)).current;
@@ -11734,13 +11887,25 @@ function ChatConversationInner() {
   // Surfaced from the header overflow menu → "Notificações". Persists via
   // api.chatSetConvSettings and mirrors to AsyncStorage so the push handler
   // in services/pushNotifications.js can read it on the next conv push.
-  const [showNotifSettingsSheet, setShowNotifSettingsSheet] = useState(false);
-  const [showStatsModal, setShowStatsModal] = useState(false);
+  const [showNotifSettingsSheet, setShowNotifSettingsSheet] = _useStateT(false);
+  const [showStatsModal, setShowStatsModal] = _useStateT(false);
+  // [2026-10-11 fluidez-2] O conteúdo do modal de estatísticas (varre TODAS as
+  // mensagens: por remetente/tipo/hora) era um IIFE no JSX → rodava em CADA
+  // render da tela, com o modal fechado (~30% do JS do render no perfil de
+  // msg recebida). Agora só calcula com o modal aberto e quando as deps mudam;
+  // fechando, mantém o último conteúdo p/ a animação de saída.
+  const _statsCacheRef = useRef({ deps: null, el: null });
+  const _statsMemo = (fn, deps) => {
+    const c = _statsCacheRef.current;
+    if (!showStatsModal) return c.el;
+    if (!c.deps || c.deps.length !== deps.length || c.deps.some((d, ix) => d !== deps[ix])) { c.deps = deps; c.el = fn(); }
+    return c.el;
+  };
   // Real server-computed stats (chat_conversation_stats). Loaded on open so
   // the modal reflects the FULL conversation history, not the rendered window.
-  const [statsData, setStatsData] = useState(null);
-  const [statsLoading, setStatsLoading] = useState(false);
-  const [statsError, setStatsError] = useState('');
+  const [statsData, setStatsData] = _useStateT(null);
+  const [statsLoading, setStatsLoading] = _useStateT(false);
+  const [statsError, setStatsError] = _useStateT('');
   const loadConversationStats = useCallback(async () => {
     if (!conversationId) return;
     setStatsLoading(true);
@@ -11762,26 +11927,26 @@ function ChatConversationInner() {
   useEffect(() => {
     if (showStatsModal) loadConversationStats();
   }, [showStatsModal, loadConversationStats]);
-  const [aiSummary, setAiSummary] = useState({ visible: false, loading: false, text: '', error: '', messageCount: 0 });
-  const [showWebSearch, setShowWebSearch] = useState(false);
-  const [webSearchQuery, setWebSearchQuery] = useState('');
-  const [showWebSearchResults, setShowWebSearchResults] = useState(false);
-  const [webSearchUrl, setWebSearchUrl] = useState('');
-  const [mapModalData, setMapModalData] = useState(null); // { lat, lng, label, isLive, liveUntil }
+  const [aiSummary, setAiSummary] = _useStateT({ visible: false, loading: false, text: '', error: '', messageCount: 0 });
+  const [showWebSearch, setShowWebSearch] = _useStateT(false);
+  const [webSearchQuery, setWebSearchQuery] = _useStateT('');
+  const [showWebSearchResults, setShowWebSearchResults] = _useStateT(false);
+  const [webSearchUrl, setWebSearchUrl] = _useStateT('');
+  const [mapModalData, setMapModalData] = _useStateT(null); // { lat, lng, label, isLive, liveUntil }
 
   // Chat lock
-  const [chatLocked, setChatLocked] = useState(false);
-  const [chatUnlocked, setChatUnlocked] = useState(false);
-  const [showLockSetup, setShowLockSetup] = useState(false);
-  const [lockPassInput, setLockPassInput] = useState('');
+  const [chatLocked, setChatLocked] = _useStateT(false);
+  const [chatUnlocked, setChatUnlocked] = _useStateT(false);
+  const [showLockSetup, setShowLockSetup] = _useStateT(false);
+  const [lockPassInput, setLockPassInput] = _useStateT('');
 
   // Scheduled messages
-  const [showScheduleMenu, setShowScheduleMenu] = useState(false);
-  const [showScheduledMessages, setShowScheduledMessages] = useState(false);
-  const [scheduledMessages, setScheduledMessages] = useState([]);
-  const [showCustomSchedule, setShowCustomSchedule] = useState(false);
-  const [customScheduleDate, setCustomScheduleDate] = useState('');
-  const [scheduleToast, setScheduleToast] = useState('');
+  const [showScheduleMenu, setShowScheduleMenu] = _useStateT(false);
+  const [showScheduledMessages, setShowScheduledMessages] = _useStateT(false);
+  const [scheduledMessages, setScheduledMessages] = _useStateT([]);
+  const [showCustomSchedule, setShowCustomSchedule] = _useStateT(false);
+  const [customScheduleDate, setCustomScheduleDate] = _useStateT('');
+  const [scheduleToast, setScheduleToast] = _useStateT('');
   // [2026-10-11 ongoing-call] Voice/video notes can't be recorded while a call
   // owns the mic (WhatsApp shows the same notice). Returns true = blocked.
   const blockRecordingDuringCall = (kind) => {
@@ -11796,25 +11961,25 @@ function ChatConversationInner() {
     return true;
   };
   // Smart action "Criar lembrete" → confirmation sheet ({ text, when, messageId })
-  const [reminderSheet, setReminderSheet] = useState(null);
+  const [reminderSheet, setReminderSheet] = _useStateT(null);
 
   // Block & Report
-  const [showReportModal, setShowReportModal] = useState(false);
-  const [reportTargetEmail, setReportTargetEmail] = useState('');
-  const [reportMessageId, setReportMessageId] = useState(null);
-  const [iBlockedThem, setIBlockedThem] = useState(false);
-  const [theyBlockedMe, setTheyBlockedMe] = useState(false);
+  const [showReportModal, setShowReportModal] = _useStateT(false);
+  const [reportTargetEmail, setReportTargetEmail] = _useStateT('');
+  const [reportMessageId, setReportMessageId] = _useStateT(null);
+  const [iBlockedThem, setIBlockedThem] = _useStateT(false);
+  const [theyBlockedMe, setTheyBlockedMe] = _useStateT(false);
 
   // Search within conversation
-  const [showSearchBar, setShowSearchBar] = useState(false);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [searchResults, setSearchResults] = useState([]);
-  const [searchIdx, setSearchIdx] = useState(0);
+  const [showSearchBar, setShowSearchBar] = _useStateT(false);
+  const [searchQuery, setSearchQuery] = _useStateT('');
+  const [searchResults, setSearchResults] = _useStateT([]);
+  const [searchIdx, setSearchIdx] = _useStateT(0);
   const searchInputRef = useRef(null);
 
   // Pinned messages
-  const [pinnedMessages, setPinnedMessages] = useState([]);
-  const [showPinnedBanner, setShowPinnedBanner] = useState(true);
+  const [pinnedMessages, setPinnedMessages] = _useStateT([]);
+  const [showPinnedBanner, setShowPinnedBanner] = _useStateT(true);
 
   // Per-account scoping: same device can host multiple Chatyy logins; without
   // userScopedKey the chat lock password leaks between accounts.
@@ -12099,7 +12264,7 @@ function ChatConversationInner() {
   // [2026-10-10 wa-import] Conversa importada do WhatsApp = arquivo pessoal só
   // de leitura (cópia de quem importou). Registro local por conta, atualizado
   // em segundo plano (services/waImport/registry).
-  const [waImported, setWaImported] = useState(() => {
+  const [waImported, setWaImported] = _useStateT(() => {
     try { return !!require('../services/waImport/registry').isImportedConversationSync(conversationId); } catch { return false; }
   });
   useEffect(() => {
@@ -12196,13 +12361,13 @@ function ChatConversationInner() {
   // E2E ENCRYPTION
   // ============================================================
 
-  const [e2eEnabled, setE2eEnabled] = useState(false);
-  const [e2eKeys, setE2eKeys] = useState(null);
-  const [e2eBundles, setE2eBundles] = useState(null);
-  const [keyChangedPeers, setKeyChangedPeers] = useState([]);
+  const [e2eEnabled, setE2eEnabled] = _useStateT(false);
+  const [e2eKeys, setE2eKeys] = _useStateT(null);
+  const [e2eBundles, setE2eBundles] = _useStateT(null);
+  const [keyChangedPeers, setKeyChangedPeers] = _useStateT([]);
   const e2eSecretKeyRef = useRef(null);
   const myDeviceIdRef = useRef(null);
-  const [e2eInitializing, setE2eInitializing] = useState(false);
+  const [e2eInitializing, setE2eInitializing] = _useStateT(false);
   const e2eInitSeqRef = useRef(0);
   // [2026-10-09 e2ee v4] Estado do E2EE v4 (vodozemac/Olm) desta conversa:
   // { supported, allowed, enabled, peer, me, ... } — ver services/e2eeV4.js.
@@ -12848,6 +13013,7 @@ function ChatConversationInner() {
   }, [decryptMessages, normalizeMessageTypes]);
 
   const loadMessages = useCallback(async (showLoader, beforeId = null) => {
+    if (_PERF_WHY_ON) _whyHit(beforeId ? 'fn:loadOlder' : 'fn:loadMessages');
     const seq = ++loadMessagesSeqRef.current;
     const isFresh = () => seq === loadMessagesSeqRef.current;
     // Fresh-install fetch (no cache hit): pull 100 messages so the user sees
@@ -13232,6 +13398,14 @@ function ChatConversationInner() {
               const bk = String(b._client_id || b.temp_id || b.id || '');
               return ak < bk ? -1 : ak > bk ? 1 : 0;
             });
+            // [2026-10-11 fluidez-2] Refetch sem novidade (todas as linhas
+            // reaproveitadas, mesma ordem) → devolve o array anterior: sem
+            // render da tela nem re-enrich (antes 1 render por refetch).
+            if (merged.length === prev.length) {
+              let _same = true;
+              for (let _i = 0; _i < merged.length; _i++) { if (merged[_i] !== prev[_i]) { _same = false; break; } }
+              if (_same) return prev;
+            }
             return merged;
           });
           // Cache for offline + native view (only confirmed messages, no pending)
@@ -13339,6 +13513,13 @@ function ChatConversationInner() {
               // antigo → balões meus ficavam ✓✓ azul mesmo o peer não tendo lido,
               // e reabrir o app NÃO corrigia. Confiar no snapshot do servidor.
               map.set(rr.email, rr.last_read_id || 0);
+            }
+            // [2026-10-11 fluidez-2] Mesmo conteúdo → mesmo array (cada refetch
+            // criava um array novo = 1 render extra da tela + re-enrich).
+            if (Array.isArray(prev) && prev.length === map.size) {
+              let same = true;
+              for (const x of prev) { if (!map.has(x.email) || map.get(x.email) !== (x.last_read_id || 0) || x.last_read_id === undefined) { same = false; break; } }
+              if (same) return prev;
             }
             return Array.from(map, ([email, last_read_id]) => ({ email, last_read_id }));
           });
@@ -14008,16 +14189,16 @@ function ChatConversationInner() {
   }, [conversationId, messages.length > 0]);
 
   // WebSocket real-time messages + slow polling fallback
-  const [typingUsers, setTypingUsers] = useState(new Map()); // Map<email, { name, recording, timer }>
+  const [typingUsers, setTypingUsers] = _useStateT(new Map()); // Map<email, { name, recording, timer }>
   // @ChatyyAI inline mention — when user types `@chatyy <pergunta>`, a tiny
   // typing indicator from the bot shows while we wait for the API response.
   // Cleared on success or 30s safety timeout.
-  const [aiTyping, setAiTyping] = useState(false);
+  const [aiTyping, setAiTyping] = _useStateT(false);
   const aiTypingTimerRef = useRef(null);
 
   // Auto-translate per-conv (Telegram parity). Stores target locale or null.
-  const [autoTranslateLocale, setAutoTranslateLocale] = useState(null);
-  const [showAutoTranslatePicker, setShowAutoTranslatePicker] = useState(false);
+  const [autoTranslateLocale, setAutoTranslateLocale] = _useStateT(null);
+  const [showAutoTranslatePicker, setShowAutoTranslatePicker] = _useStateT(false);
   useEffect(() => {
     if (!conversationId) return;
     let alive = true;
@@ -14292,8 +14473,19 @@ function ChatConversationInner() {
   }, [typingUsers]);
   useEffect(() => {
     let wsUnsubs = [];
+    // [2026-10-11 fluidez-2] Eventos de tempo real que mexem no estado da
+    // thread (msg nova, recibos, digitando, presença, reação/edição/apagar)
+    // chegam em rajada, cada um numa task → 3-4 renders da tela por mensagem.
+    // Enfileira e aplica TODOS em ≤2 frames num único commit (FIFO; teto
+    // 64ms se o rAF estiver pausado). Controle (ack/rejeição/conexão/sync)
+    // continua síncrono.
+    const _rtBatch = createFrameBatcher({ label: 'conv-rt', frames: 2, maxDelay: 64 });
+    // Cleanup (troca de conversa/deps ou unmount): aplica o que já chegou
+    // (os handlers checam mountedRef/conversa) e só então descarta.
+    wsUnsubs.push(() => { try { _rtBatch.flush(); } catch {} _rtBatch.dispose(); });
     try {
       const mailWs = require('../services/websocket').default;
+      const _wsOnB = (ev, fn) => mailWs.on(ev, _rtBatch.wrap(_PERF_WHY_ON ? (...a) => { _whyHit('ev:' + ev); return fn(...a); } : fn));
       const tcpClient = require('../services/tcp-client').getTCPClient();
       // Subscribe to this conversation via TCP (replaces MQTT)
       mailWs.subscribe(`chat_${conversationId}`);  // Keep WS for presence/typing
@@ -14355,6 +14547,7 @@ function ChatConversationInner() {
       // recipient sees on app return is "ghost" — no bubble. Re-run the
       // delta sync immediately when the push lands.
       const unsubSilentSync = mailWs.on('silent_sync', (data) => {
+        _whyHit('ev:silent_sync');
         // [2026-07-03 sempre-tempo-real] Accept the chat-scoped silent wake
         // regardless of exact payload shape — the backend fcmSendSilentSync
         // sets type='silent_sync' + sync_type='chat' (the presence-skip path
@@ -14776,8 +14969,8 @@ function ChatConversationInner() {
       // — if the subscribe frame lost against the auth handshake, the
       // per-user channel still delivers the full payload and the bubble
       // lands instantly. Dedup guard (_recvIdSet) prevents double-insert.
-      const unsubMsg = mailWs.on('chat_message', onIncomingMessage);
-      const unsubMsgSummary = mailWs.on('chat_summary', onIncomingMessage);
+      const unsubMsg = _wsOnB('chat_message', onIncomingMessage);
+      const unsubMsgSummary = _wsOnB('chat_summary', onIncomingMessage);
       wsUnsubs.push(unsubMsg, unsubMsgSummary);
 
       // [#1188 Agent A 2026-05-19] ENVELOPE-MODE UI WAKE
@@ -14867,7 +15060,7 @@ function ChatConversationInner() {
           return row;
         }));
       };
-      wsUnsubs.push(mailWs.on('edit', onWsEdit));
+      wsUnsubs.push(_wsOnB('edit', onWsEdit));
 
       const onWsPollVote = (payload) => {
         if (!mountedRef.current) return;
@@ -14891,7 +15084,7 @@ function ChatConversationInner() {
           };
         }));
       };
-      wsUnsubs.push(mailWs.on('poll_vote', onWsPollVote));
+      wsUnsubs.push(_wsOnB('poll_vote', onWsPollVote));
 
       // Meetup RSVP updates: when another member votes yes/no/maybe on a
       // meetup card, the backend fans out the new aggregate so we can splice
@@ -14927,7 +15120,7 @@ function ChatConversationInner() {
           return { ...row, meetup, content };
         }));
       };
-      wsUnsubs.push(mailWs.on('meetup_rsvp_update', onWsMeetupRsvp));
+      wsUnsubs.push(_wsOnB('meetup_rsvp_update', onWsMeetupRsvp));
 
       const onWsReaction = (payload) => {
         if (!mountedRef.current) return;
@@ -14941,7 +15134,7 @@ function ChatConversationInner() {
         if (inflightReactionMsgIdsRef.current.has(String(m.id))) return;
         setMessages(prev => _mapKeep(prev, row => String(row.id) === String(m.id) ? { ...row, reactions: m.reactions } : row));
       };
-      wsUnsubs.push(mailWs.on('reaction', onWsReaction));
+      wsUnsubs.push(_wsOnB('reaction', onWsReaction));
 
       const onWsDelete = (payload) => {
         if (!mountedRef.current) return;
@@ -15003,7 +15196,7 @@ function ChatConversationInner() {
           } catch {}
         }
       };
-      wsUnsubs.push(mailWs.on('delete', onWsDelete));
+      wsUnsubs.push(_wsOnB('delete', onWsDelete));
 
       // WS queue overflow — fired by the WS client when the offline message
       // queue hits its 100-entry cap. Without listener, the message was
@@ -15087,6 +15280,7 @@ function ChatConversationInner() {
 
       // Listen for push notification refresh (when push arrives before WS)
       const unsubPush = mailWs.on('push_chat_refresh', (data) => {
+        _whyHit('ev:push_chat_refresh');
         if (String(data?.conversation_id) === String(conversationId) && mountedRef.current) {
           loadMessages(false);
         }
@@ -15094,7 +15288,7 @@ function ChatConversationInner() {
       wsUnsubs.push(unsubPush);
 
       // Listen for delivery receipt updates via WS (WhatsApp-style double grey check)
-      const unsubDelivered = mailWs.on('message_delivered', (data) => {
+      const unsubDelivered = _wsOnB('message_delivered', (data) => {
         if (!mountedRef.current) return;
         if (String(data?.conversation_id) === String(conversationId) && Array.isArray(data?.message_ids)) {
           // [delivered-batch id-mismatch fix 2026-05-25] message_ids are
@@ -15126,7 +15320,7 @@ function ChatConversationInner() {
             } catch {}
           }
           setMessages(prev => _mapKeep(prev, m => {
-            if (m.status === 'read') return m;
+            if (m.status === 'read' || _rcPeerRow(m, currentEmail)) return m;
             const numId = Number(m.id);
             const matched =
               (!Number.isNaN(numId) && deliveredSet.has(numId)) ||
@@ -15144,7 +15338,7 @@ function ChatConversationInner() {
       // emitted by chat_delivery_ack fanout). The old message_delivered
       // handler above expects a batch shape {message_ids:[]}; the chat_
       // delivered shape carries a single {message_id, email}. Support both.
-      const unsubChatDelivered = mailWs.on('chat_delivered', (data) => {
+      const unsubChatDelivered = _wsOnB('chat_delivered', (data) => {
         if (!mountedRef.current) return;
         if (String(data?.conversation_id) !== String(conversationId)) return;
         // [batched-delivery fix] PHP coalesces a delivery-ack burst into ONE
@@ -15172,7 +15366,7 @@ function ChatConversationInner() {
             if (buf) { ids.forEach(id => buf.add(id)); if (buf.size > 600) buf.clear(); }
           } catch {}
           setMessages(prev => _mapKeep(prev, m => {
-            if (m.status === 'read') return m;
+            if (m.status === 'read' || _rcPeerRow(m, currentEmail)) return m;
             const numId = Number(m.id);
             return (!Number.isNaN(numId) && ids.has(numId))
               ? { ...m, status: 'delivered', _delivered: true, delivered_at: m.delivered_at || deliveredStampBatch }
@@ -15202,7 +15396,7 @@ function ChatConversationInner() {
         // transient flag while the server-side row hadn't been re-queried).
         const deliveredStamp = data?.delivered_at || new Date().toISOString();
         setMessages(prev => _mapKeep(prev, m =>
-          m.id === mid && m.status !== 'read'
+          m.id === mid && m.status !== 'read' && !_rcPeerRow(m, currentEmail)
             ? { ...m, status: 'delivered', _delivered: true, delivered_at: m.delivered_at || deliveredStamp }
             : m
         ));
@@ -15220,7 +15414,7 @@ function ChatConversationInner() {
       // <50ms instead of waiting for HTTP persistence. Bug 2026-05-13: this
       // event was completely unlistened — only chat_read worked, so the
       // optimistic WS path was silently dropped on the wire.
-      const unsubMsgRead = mailWs.on('message_read', (data) => {
+      const unsubMsgRead = _wsOnB('message_read', (data) => {
         if (!mountedRef.current) return;
         if (String(data?.conversation_id) !== String(conversationId)) return;
         // [FIX 2026-08-09] normaliza casing — o resto do código (presence/typing)
@@ -15262,7 +15456,7 @@ function ChatConversationInner() {
       });
       wsUnsubs.push(unsubMsgRead);
 
-      const unsubRead = mailWs.on('chat_read', (data) => {
+      const unsubRead = _wsOnB('chat_read', (data) => {
         if (!mountedRef.current) return;
         // Ignore our own locally-emitted read (fired by markReadUpTo); only
         // remote events (peer read our outbound) should flip ticks. Without
@@ -15309,7 +15503,7 @@ function ChatConversationInner() {
       // Voicemail transcript landed late (whisper >6s on slow network).
       // Find the matching voicemail bubble and patch transcription so the
       // italic line appears without a manual refetch.
-      const unsubVmTx = mailWs.on('voicemail_transcribed', (data) => {
+      const unsubVmTx = _wsOnB('voicemail_transcribed', (data) => {
         if (!mountedRef.current) return;
         const vmId = data?.voicemail_id;
         const tx = data?.transcription;
@@ -15327,7 +15521,7 @@ function ChatConversationInner() {
 
       // Recipient marked our voicemail as listened — flip the bubble ring
       // (mirrors WhatsApp's blue "heard" indicator).
-      const unsubVmListened = mailWs.on('voicemail_listened', (data) => {
+      const unsubVmListened = _wsOnB('voicemail_listened', (data) => {
         if (!mountedRef.current) return;
         const vmId = data?.voicemail_id;
         if (!vmId) return;
@@ -15347,7 +15541,7 @@ function ChatConversationInner() {
       // This was computed + broadcast but NEVER consumed — the sender's mic dot
       // never turned blue. Map played_at onto the matching own message so the
       // bubble flips in real time (playedByPeer prop).
-      const unsubVoicePlayed = mailWs.on('voice_played', (data) => {
+      const unsubVoicePlayed = _wsOnB('voice_played', (data) => {
         if (!mountedRef.current) return;
         const vpId = data?.message_id ?? data?.id;
         if (vpId == null) return;
@@ -15363,7 +15557,7 @@ function ChatConversationInner() {
       // Skip if reader_email missing — otherwise we'd create a phantom 'peer'
       // entry that competes with the real per-email entry from chat_read and
       // flickers the V between two stale values.
-      const unsubMsgStatus = mailWs.on('message_status', (data) => {
+      const unsubMsgStatus = _wsOnB('message_status', (data) => {
         if (!mountedRef.current) return;
         if (String(data?.conversation_id) === String(conversationId) && data?.message_ids?.length) {
           const idsSet = new Set(data.message_ids);
@@ -15389,7 +15583,7 @@ function ChatConversationInner() {
       wsUnsubs.push(unsubMsgStatus);
 
       // Listen for live location updates (real-time position tracking)
-      const unsubLiveLoc = mailWs.on('live_location_update', (data) => {
+      const unsubLiveLoc = _wsOnB('live_location_update', (data) => {
         if (!mountedRef.current) return;
         if (String(data?.conversation_id) !== String(conversationId)) return;
         const msgId = data.message_id;
@@ -15409,7 +15603,7 @@ function ChatConversationInner() {
       wsUnsubs.push(unsubLiveLoc);
 
       // Listen for typing indicators (supports multiple typers in groups)
-      const unsubTyping = mailWs.on('typing', (data) => {
+      const unsubTyping = _wsOnB('typing', (data) => {
         if (!mountedRef.current) return;
         if (String(data?.conversation_id) === String(conversationId) && (data?.email || '').toLowerCase() !== (currentEmail || '').toLowerCase()) {
           // Normalize to lowercase — peers sometimes send mixed-case emails,
@@ -15469,7 +15663,7 @@ function ChatConversationInner() {
       wsUnsubs.push(unsubTyping);
 
       // Listen for explicit stopped_typing
-      const unsubStopTyping = mailWs.on('stopped_typing', (data) => {
+      const unsubStopTyping = _wsOnB('stopped_typing', (data) => {
         if (!mountedRef.current) return;
         if (String(data?.conversation_id) === String(conversationId) && (data?.email || '').toLowerCase() !== (currentEmail || '').toLowerCase()) {
           const email = (data?.email || '').toLowerCase();
@@ -15486,7 +15680,7 @@ function ChatConversationInner() {
       wsUnsubs.push(unsubStopTyping);
 
       // Listen for presence updates via WS (online/offline)
-      const unsubPresence = mailWs.on('presence', (data) => {
+      const unsubPresence = _wsOnB('presence', (data) => {
         if (!mountedRef.current) return;
         if (data?.email && conversationType === 'direct') {
           // Case-insensitive compare — server may send a different email case
@@ -15903,8 +16097,7 @@ function ChatConversationInner() {
           // [2026-10-06 thread-tech] (former inline cache/sound/haptic/ack block now lives in _tcpNewMsgFx above)
         });
       };
-      tcpClient.on('chat_message', onChatMessage);
-      tcpUnsubs.push(() => tcpClient.off('chat_message', onChatMessage));
+      { const _b = _rtBatch.wrap(onChatMessage); tcpClient.on('chat_message', _b); tcpUnsubs.push(() => tcpClient.off('chat_message', _b)); }
 
       // TCP read receipts (same dedupe as WS path — avoid flicker when both fire)
       const onChatRead = (data) => {
@@ -15926,8 +16119,7 @@ function ChatConversationInner() {
           });
         }
       };
-      tcpClient.on('chat_read', onChatRead);
-      tcpUnsubs.push(() => tcpClient.off('chat_read', onChatRead));
+      { const _b = _rtBatch.wrap(onChatRead); tcpClient.on('chat_read', _b); tcpUnsubs.push(() => tcpClient.off('chat_read', _b)); }
 
       // TCP reactions (event name changed: chat_reaction → chat_react)
       // Aggregates into {emoji, count, users[]} matching the backend payload
@@ -15984,8 +16176,7 @@ function ChatConversationInner() {
           return next;
         });
       };
-      tcpClient.on('chat_react', onChatReact);
-      tcpUnsubs.push(() => tcpClient.off('chat_react', onChatReact));
+      { const _b = _rtBatch.wrap(onChatReact); tcpClient.on('chat_react', _b); tcpUnsubs.push(() => tcpClient.off('chat_react', _b)); }
 
       // TCP edits
       const onChatEdit = (data) => {
@@ -16010,8 +16201,7 @@ function ChatConversationInner() {
           }));
         }
       };
-      tcpClient.on('chat_edit', onChatEdit);
-      tcpUnsubs.push(() => tcpClient.off('chat_edit', onChatEdit));
+      { const _b = _rtBatch.wrap(onChatEdit); tcpClient.on('chat_edit', _b); tcpUnsubs.push(() => tcpClient.off('chat_edit', _b)); }
 
       // TCP deletes
       const onChatDelete = (data) => {
@@ -16079,8 +16269,7 @@ function ChatConversationInner() {
           }
         }
       };
-      tcpClient.on('chat_delete', onChatDelete);
-      tcpUnsubs.push(() => tcpClient.off('chat_delete', onChatDelete));
+      { const _b = _rtBatch.wrap(onChatDelete); tcpClient.on('chat_delete', _b); tcpUnsubs.push(() => tcpClient.off('chat_delete', _b)); }
 
       // TCP pin/unpin — keep the pinned banner in sync across devices.
       // Without this, pinning on device A only updates that device; device B
@@ -16100,8 +16289,7 @@ function ChatConversationInner() {
           });
         }
       };
-      tcpClient.on('chat_pin', onChatPin);
-      tcpUnsubs.push(() => tcpClient.off('chat_pin', onChatPin));
+      { const _b = _rtBatch.wrap(onChatPin); tcpClient.on('chat_pin', _b); tcpUnsubs.push(() => tcpClient.off('chat_pin', _b)); }
 
       // TCP delivery receipt (✓✓) — server tells sender that recipient got the message
       const onChatDelivered = (data) => {
@@ -16115,8 +16303,7 @@ function ChatConversationInner() {
             : m
         ));
       };
-      tcpClient.on('chat_delivered', onChatDelivered);
-      tcpUnsubs.push(() => tcpClient.off('chat_delivered', onChatDelivered));
+      { const _b = _rtBatch.wrap(onChatDelivered); tcpClient.on('chat_delivered', _b); tcpUnsubs.push(() => tcpClient.off('chat_delivered', _b)); }
 
       // TCP typing indicators (action: "started" | "stopped")
       const onUserTyping = (data) => {
@@ -16156,8 +16343,7 @@ function ChatConversationInner() {
           return next;
         });
       };
-      tcpClient.on('user_typing', onUserTyping);
-      tcpUnsubs.push(() => tcpClient.off('user_typing', onUserTyping));
+      { const _b = _rtBatch.wrap(onUserTyping); tcpClient.on('user_typing', _b); tcpUnsubs.push(() => tcpClient.off('user_typing', _b)); }
 
       // TCP recording indicator (action: "started" | "stopped")
       const onUserRecording = (data) => {
@@ -16195,8 +16381,7 @@ function ChatConversationInner() {
           return next;
         });
       };
-      tcpClient.on('user_recording', onUserRecording);
-      tcpUnsubs.push(() => tcpClient.off('user_recording', onUserRecording));
+      { const _b = _rtBatch.wrap(onUserRecording); tcpClient.on('user_recording', _b); tcpUnsubs.push(() => tcpClient.off('user_recording', _b)); }
     } catch {}
 
     // Real-time delivery: TCP handles chat messages, WS handles presence/typing
@@ -17963,7 +18148,7 @@ function ChatConversationInner() {
       let scanner = null;
       try { scanner = require('react-native-document-scanner-plugin'); } catch { scanner = null; }
       if (!scanner || !scanner.scanDocument) {
-        safeAlert(t('chatConv.scanDocument') || 'Digitalizar documento', t('chatConv.scanUnavailable') || 'O scanner ainda nao esta disponivel neste app.');
+        safeAlert(t('chatConv.scanDocument') || 'Digitalizar documento', t('chatConv.scanUnavailable') || 'O scanner ainda não está disponível neste app.');
         return;
       }
       // responseType 'imageFilePath' + our own PDF assembly, OR the plugin's PDF
@@ -17975,7 +18160,7 @@ function ChatConversationInner() {
       if (status === 'cancel') return;
       const pdfUri = scannedPdf || (Array.isArray(scannedImages) ? scannedImages[0] : null);
       if (!pdfUri) {
-        safeAlert(t('common.error') || 'Error', t('chatConv.scanError') || 'Nao foi possivel digitalizar.');
+        safeAlert(t('common.error') || 'Error', t('chatConv.scanError') || 'Não foi possível digitalizar.');
         return;
       }
       const fileName = `documento_${Date.now()}.pdf`;
@@ -17991,7 +18176,7 @@ function ChatConversationInner() {
     } catch (e) {
       console.warn('[scan_document] failed', e?.message || e);
       if (!/cancel/i.test(String(e?.message || ''))) {
-        safeAlert(t('common.error') || 'Error', t('chatConv.scanError') || 'Nao foi possivel digitalizar.');
+        safeAlert(t('common.error') || 'Error', t('chatConv.scanError') || 'Não foi possível digitalizar.');
       }
     }
   };
@@ -19462,7 +19647,7 @@ function ChatConversationInner() {
   };
 
   const sharingLocationRef = useRef(false);
-  const [showLocationPickerSheet, setShowLocationPickerSheet] = useState(false);
+  const [showLocationPickerSheet, setShowLocationPickerSheet] = _useStateT(false);
   const handleShareLocation = async (preset) => {
     // Anti-duplicate guard: ignore if already sending
     if (sharingLocationRef.current) return;
@@ -20060,9 +20245,9 @@ function ChatConversationInner() {
     }
   };
 
-  const [showContactPicker, setShowContactPicker] = useState(false);
-  const [contactPickerList, setContactPickerList] = useState([]);
-  const [contactPickerSearch, setContactPickerSearch] = useState('');
+  const [showContactPicker, setShowContactPicker] = _useStateT(false);
+  const [contactPickerList, setContactPickerList] = _useStateT([]);
+  const [contactPickerSearch, setContactPickerSearch] = _useStateT('');
 
   const handleShareContact = async () => {
     if (Platform.OS === 'web') {
@@ -20541,7 +20726,7 @@ function ChatConversationInner() {
     if (isChildAccount()) {
       const r = getChildRestrictions();
       if (r && !r.can_delete_messages) {
-        safeAlert('🔒', 'Voce nao pode apagar mensagens. Seu responsavel controla essa permissao.');
+        safeAlert(_mt('chatConv.parentalTitle', 'Controle dos pais'), _mt('chatConv.parentalNoDelete', 'Você não pode apagar mensagens. Seu responsável controla essa permissão.'));
         return;
       }
     }
@@ -20596,7 +20781,7 @@ function ChatConversationInner() {
   }, []);
 
   // Reaction bounce animation
-  const [reactionBounceId, setReactionBounceId] = useState(null);
+  const [reactionBounceId, setReactionBounceId] = _useStateT(null);
   const reactionBounceScale = useRef(new Animated.Value(1)).current;
   // Companion opacity drives a fade-in on the chip when the reaction is
   // freshly added — the chip mounts already at full size, but the eye still
@@ -20818,7 +21003,7 @@ function ChatConversationInner() {
   // Double-tap to heart react with animated pop
   const lastTapRef = useRef({});
   const lastTapTimerRef = useRef({});
-  const [heartPopMsg, setHeartPopMsg] = useState(null);
+  const [heartPopMsg, setHeartPopMsg] = _useStateT(null);
   const heartScale = useRef(new Animated.Value(0)).current;
   const heartOpacity = useRef(new Animated.Value(0)).current;
 
@@ -20886,8 +21071,8 @@ function ChatConversationInner() {
 
   // ---- Search within conversation with filters ----
   // ★ Advanced search: query + date range + message type + sender (groups) + starred-only + NL date input
-  const [searchFilters, setSearchFilters] = useState({ dateFrom: null, dateTo: null, type: null, senderEmail: null, starredOnly: false });
-  const [searchDateTextInput, setSearchDateTextInput] = useState('');
+  const [searchFilters, setSearchFilters] = _useStateT({ dateFrom: null, dateTo: null, type: null, senderEmail: null, starredOnly: false });
+  const [searchDateTextInput, setSearchDateTextInput] = _useStateT('');
 
   // 1. Local search first (instant) on loaded messages
   // 2. If query >= 3 chars and local results < 3, fall back to server-side FTS
@@ -21039,7 +21224,7 @@ function ChatConversationInner() {
   // WhatsApp parity: when pinning a NEW message, ask how long via ActionSheet
   // (24h / 7d / 30d, default 7d). Unpinning is a single confirm-less tap.
   const _pinPicker = useRef({ msg: null, resolve: null });
-  const [pinDurationModal, setPinDurationModal] = useState(null); // { msg } when open
+  const [pinDurationModal, setPinDurationModal] = _useStateT(null); // { msg } when open
   const _executePin = useCallback(async (msg, durationSeconds) => {
     try {
       const r = await api.chatPinMessage(msg.id, durationSeconds);
@@ -21314,7 +21499,7 @@ function ChatConversationInner() {
   // → upload via chat_upload (reuses the chat media pipeline + R2 push)
   // → write the returned file_url as the group's avatar_url. The server
   // also fans out a "updated the group photo" system message.
-  const [changingGroupPhoto, setChangingGroupPhoto] = useState(false);
+  const [changingGroupPhoto, setChangingGroupPhoto] = _useStateT(false);
   const handleChangeGroupPhoto = async () => {
     if (changingGroupPhoto) return;
     try {
@@ -22194,8 +22379,8 @@ function ChatConversationInner() {
     if (node) bubbleNodeRefs.current.set(id, node);
     else bubbleNodeRefs.current.delete(id);
   };
-  const [ctxAnchor, setCtxAnchor] = useState(null);
-  const [ctxMenuH, setCtxMenuH] = useState(0);
+  const [ctxAnchor, setCtxAnchor] = _useStateT(null);
+  const [ctxMenuH, setCtxMenuH] = _useStateT(0);
   const ctxAnchorRef = useRef(null);
   const liftPendingRef = useRef(false);
   const { width: _liftWinW, height: _liftWinH } = useWindowDimensions();
@@ -22376,7 +22561,7 @@ function ChatConversationInner() {
   };
 
   // Start call from chat
-  const [startingCall, setStartingCall] = useState(false);
+  const [startingCall, setStartingCall] = _useStateT(false);
 
   const startCall = async (videoEnabled) => {
     if (startingCall) return;
@@ -22721,8 +22906,8 @@ function ChatConversationInner() {
   // the "Não lidas volta / divisor acima de msgs velhas" bug where the count
   // drifted (stale badge, multi-device reads). Fed from the conversation
   // object (cache + server chat_list, which now echo last_read_message_id).
-  const [lastReadWatermark, setLastReadWatermark] = useState(null);
-  const [convMetaResolved, setConvMetaResolved] = useState(false);
+  const [lastReadWatermark, setLastReadWatermark] = _useStateT(null);
+  const [convMetaResolved, setConvMetaResolved] = _useStateT(false);
   // [2026-10-08 open-at-bottom] O watermark do CACHE da lista de conversas fica
   // velho (web: o IndexedDB não recebe o read local; nativo: lido em outro
   // aparelho com o app fechado) → o divisor "Não lidas" caía em msgs JÁ
@@ -22736,7 +22921,7 @@ function ChatConversationInner() {
   // divisor; watermark cobrindo mais msgs que a contagem = divisor na N-ésima
   // do fim. Na dúvida, abre no fim (divisor ausente é inofensivo; divisor
   // errado puxava a tela p/ o meio).
-  const [, setDividerRev] = useState(0); // re-render quando o divisor (ref) muda
+  const [, setDividerRev] = _useStateT(0); // re-render quando o divisor (ref) muda
   const dividerDecidedRef = useRef(false); // decidido 1x na abertura (msgs ao vivo não ganham divisor)
   useEffect(() => {
     if (firstUnreadIdRef.current !== null || dividerDecidedRef.current) return;
@@ -23617,12 +23802,12 @@ function ChatConversationInner() {
   // spinner only ever has 2 states (visible/hidden) but the inline form
   // built a fresh element on each parent render.
   const listFooter = useMemo(() => (
-    loadingMore ? (
+    <ThreadComposerHost store={loadingMoreStore} render={(v) => (v ? (
       <View style={styles.loadMoreBtn}>
         <ActivityIndicator size="small" color={colors.primary} />
       </View>
-    ) : null
-  ), [loadingMore, colors.primary]);
+    ) : null)} />
+  ), [loadingMoreStore, colors.primary]);
 
   // PERF: ListEmptyComponent was a huge inline ternary subtree
   // (skeleton / loadError / empty-state with two SVGs + 4 Text). Re-built
@@ -23713,7 +23898,7 @@ function ChatConversationInner() {
             textTransform: 'uppercase',
             color: isDark ? 'rgba(233,237,239,0.55)' : 'rgba(17,27,33,0.55)',
           }}>
-            Início da conversa
+            {_mt('chatConv.conversationStart', 'Início da conversa')}
           </Text>
         </View>
       </View>
@@ -23721,7 +23906,7 @@ function ChatConversationInner() {
   }, [loading, loadError, e2eEnabled, isDark, colors, t, loadMessages, netReachable]);
 
   // Edit history viewer
-  const [editHistoryModal, setEditHistoryModal] = useState({ visible: false, loading: false, versions: [], currentContent: '' });
+  const [editHistoryModal, setEditHistoryModal] = _useStateT({ visible: false, loading: false, versions: [], currentContent: '' });
   // Lazy-load the user's sticker packs the first time the Stickers tab
   // opens. Caches in state so re-opening is instant. Resolves a list of
   // packs each with a small `stickers[]` array — same shape returned by
@@ -23915,11 +24100,31 @@ function ChatConversationInner() {
         let budget = 4;
         const _pf = (mm) => {
           if (!mm?.file_url || (mm.type !== 'image' && mm.type !== 'video')) return;
-          const absURL = mm.file_url.startsWith('http') ? mm.file_url : `https://chatyy.com.br${mm.file_url}`;
+          // [2026-10-11 fluidez-2] Pré-aquece a MESMA URL que a bolha vai pintar:
+          // imagem = variante `display` (servidor) quando existe — antes baixava
+          // o original (MBs) enquanto a bolha pedia a display → cache frio e
+          // banda dobrada. Vídeo = pôster (a bolha não carrega o arquivo).
+          let absURL = null;
+          try {
+            if (mm.type === 'image' && mm.image_variants && !_dispFailedIds.has(mm.id) && !mm._blurred) {
+              const iv = typeof mm.image_variants === 'string' ? _memoJSONSafe(mm.image_variants) : mm.image_variants;
+              if (iv && typeof iv.display === 'string' && iv.display) absURL = api.getMediaUrl(iv.display);
+            } else if (mm.type === 'video' && mm.thumbnail_url) {
+              absURL = api.getMediaUrl(mm.thumbnail_url);
+            }
+          } catch { absURL = null; }
+          if (!absURL) {
+            if (mm.type === 'video') return; // sem pôster conhecido: não baixa o vídeo inteiro
+            absURL = mm.file_url.startsWith('http') ? mm.file_url : `https://chatyy.com.br${mm.file_url}`;
+          }
           if (_prefetchedURLs.has(absURL)) return;
           _prefetchedURLs.add(absURL); budget--;
           if (Platform.OS === 'ios' || Platform.OS === 'android') { try { _expoImagePrefetch?.(absURL); } catch {} }
-          else if (Platform.OS === 'web' && typeof window !== 'undefined' && typeof window.Image === 'function') { try { const img = new window.Image(); img.src = absURL; } catch {} }
+          else if (Platform.OS === 'web' && typeof window !== 'undefined' && typeof window.Image === 'function') {
+            // decode() fora da thread principal: quando a row montar, o bitmap já
+            // está decodificado (sem o "engasgo" de decodificar no 1º paint).
+            try { const img = new window.Image(); img.decoding = 'async'; img.src = absURL; if (img.decode) img.decode().catch(() => {}); } catch {}
+          }
         };
         for (let i = maxIdx + 1; i < Math.min(maxIdx + 6, list.length) && budget > 0; i++) {
           const mm = list[i];
@@ -25385,8 +25590,8 @@ function ChatConversationInner() {
                 )}
                 {msg._blurred && (
                   <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.4)' }}>
-                    <Text style={{ color: '#fff', fontSize: 14, fontWeight: '700' }}>{'\uD83D\uDD12'}</Text>
-                    <Text style={{ color: '#fff', fontSize: 11, marginTop: 4 }}>Protegido</Text>
+                    <IconLock size={16} color="#fff" />
+                    <Text style={{ color: '#fff', fontSize: 11, marginTop: 4 }}>{_mt('chatConv.protectedMedia', 'Protegido')}</Text>
                   </View>
                 )}
                 <MediaSendOverlay
@@ -26977,7 +27182,7 @@ function ChatConversationInner() {
           const onTapStatus = async () => {
             try {
               const showNotAvailable = () => {
-                setScheduleToast(t('status.notAvailable') || 'Status nao disponivel');
+                setScheduleToast(t('status.notAvailable') || 'Status não disponível');
                 setTimeout(() => setScheduleToast(''), 2400);
               };
               if (isStatusExpired) { showNotAvailable(); return; }
@@ -27175,12 +27380,12 @@ function ChatConversationInner() {
                 {/* Attendee summary */}
                 <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4, marginBottom: 8, gap: 12 }}>
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-                    <Text style={{ fontSize: 11 }}>{'\u2705'}</Text>
+                    <IconCheckCircle size={12} color={isOwn ? ownTextColor : colors.text} />
                     <Text style={{ fontSize: 11, fontWeight: '700', color: isOwn ? ownTextColor : colors.text }}>{goingCount} {t('chatConv.going') || 'vão'}</Text>
                   </View>
                   {maybeCount > 0 && (
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-                      <Text style={{ fontSize: 11 }}>{'\uD83E\uDD14'}</Text>
+                      <IconHelpCircle size={12} color={isOwn ? ownMetaColor : colors.textSecondary} />
                       <Text style={{ fontSize: 11, fontWeight: '600', color: isOwn ? ownMetaColor : colors.textSecondary }}>{maybeCount} {t('chatConv.maybe') || 'talvez'}</Text>
                     </View>
                   )}
@@ -28196,6 +28401,20 @@ function ChatConversationInner() {
                 </View>
               )}
               {!autoHideOriginal && (() => {
+                // [2026-10-11 emoji-sweep] '🔒…' é a SENTINELA de E2E pendente
+                // (cache/merge dependem do prefixo) — nunca pintar o emoji:
+                // cadeado SVG + texto traduzido.
+                if (typeof msg.content === 'string' && msg.content.startsWith('🔒')) {
+                  const _lockTint = isOwn ? ownMetaColor : otherMetaColor;
+                  return (
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                      <IconLock size={13} color={_lockTint} />
+                      <Text style={{ fontSize: 14, fontStyle: 'italic', color: _lockTint, flexShrink: 1 }}>
+                        {t('chatConv.waitingForMessage') || 'Aguardando esta mensagem'}
+                      </Text>
+                    </View>
+                  );
+                }
                 // Jumbo emoji shortcut: skip TextWithLinks (no URLs/mentions
                 // possible inside a pure-emoji message anyway) so the giant
                 // glyph isn't dragged through link-detection regex.
@@ -29385,7 +29604,7 @@ function ChatConversationInner() {
                         setReactionDetail({ emoji: '+', reactors: allReactors });
                       }}
                       style={[styles.reactionChip, { backgroundColor: isDark ? '#2C2C2E' : '#FFFFFF', borderColor: chatWallBg }]}
-                      accessibilityLabel={`Ver mais ${overflowCount} reacoes`}
+                      accessibilityLabel={_mt('chatConv.moreReactionsA11y', 'Ver mais {count} reações').replace('{count}', String(overflowCount))}
                       accessibilityRole="button"
                     >
                       <Text style={[styles.reactionCount, { color: colors.text, fontWeight: '600' }]}>{`+${overflowCount}`}</Text>
@@ -29446,7 +29665,7 @@ function ChatConversationInner() {
   // become a single batched send (all files share a batch_id so the
   // recipient sees the gallery as one group bubble). Placed BEFORE the
   // lock-screen early return so hook order stays stable across renders.
-  const [isDragging, setIsDragging] = useState(false);
+  const [isDragging, setIsDragging] = _useStateT(false);
   const dragCounterRef = useRef(0);
   useEffect(() => {
     if (Platform.OS !== 'web' || typeof window === 'undefined' || !conversationId) return;
@@ -30510,7 +30729,7 @@ function ChatConversationInner() {
             }
             setMessageMenu({ message: msg });
           }}
-          onReachTop={() => { if (hasMore && !loadingMore) handleLoadMore(); }}
+          onReachTop={() => { if (hasMore && !loadingMoreRef.current) handleLoadMore(); }}
           onReactionTap={(e) => {
             const { messageId, emoji } = e?.nativeEvent || {};
             if (!messageId || !emoji) return;
@@ -30789,7 +31008,7 @@ function ChatConversationInner() {
                   </TouchableOpacity>
                 )}
                 <TouchableOpacity onPress={() => { setSavedSearchOpen(false); setSavedSearch(''); }} hitSlop={8} style={{ marginLeft: 8 }}>
-                  <Text style={{ color: colors.primary, fontWeight: '600' }}>Cancelar</Text>
+                  <Text style={{ color: colors.primary, fontWeight: '600' }}>{_mt('common.cancel', 'Cancelar')}</Text>
                 </TouchableOpacity>
               </View>
             ) : (
@@ -31000,7 +31219,7 @@ function ChatConversationInner() {
               </>
             )}
             <TouchableOpacity onPress={() => setShowSavedReminder(false)} style={{ marginTop: 12, alignSelf: 'flex-end' }}>
-              <Text style={{ color: colors.primary, fontWeight: '600' }}>Cancelar</Text>
+              <Text style={{ color: colors.primary, fontWeight: '600' }}>{_mt('common.cancel', 'Cancelar')}</Text>
             </TouchableOpacity>
           </Pressable>
         </Pressable>
@@ -31789,7 +32008,7 @@ function ChatConversationInner() {
               style={{ paddingHorizontal: 12, paddingVertical: 6, borderRadius: 14, backgroundColor: '#111111' }}
               accessibilityRole="button"
             >
-              <Text style={{ color: '#fff', fontWeight: '700', fontSize: 12 }}>Desbloquear</Text>
+              <Text style={{ color: '#fff', fontWeight: '700', fontSize: 12 }}>{_mt('chat.unblockUser', 'Desbloquear')}</Text>
             </TouchableOpacity>
           </View>
         )}
@@ -32726,7 +32945,7 @@ function ChatConversationInner() {
             {audioTranscription.loading ? (
               <View style={{ padding:20, alignItems:'center' }}>
                 <ActivityIndicator color={colors.primary} />
-                <Text style={{ color:colors.textSecondary, marginTop:8 }}>Transcrevendo via Whisper...</Text>
+                <Text style={{ color:colors.textSecondary, marginTop:8 }}>{_mt('chatConv.transcribing', 'Transcrevendo...')}</Text>
               </View>
             ) : audioTranscription.error ? (
               <Text style={{ color:'#ef4444' }}>Erro: {audioTranscription.error}</Text>
@@ -32734,19 +32953,19 @@ function ChatConversationInner() {
               <ScrollView>
                 {audioTranscription.summary ? (
                   <View style={{ marginBottom:12, padding:12, backgroundColor:colors.primary+'15', borderRadius:8 }}>
-                    <Text style={{ fontSize:11, color:colors.textSecondary, fontWeight:'600', marginBottom:4 }}>RESUMO</Text>
+                    <Text style={{ fontSize:11, color:colors.textSecondary, fontWeight:'600', marginBottom:4, textTransform:'uppercase' }}>{_mt('chatConv.summaryHeading', 'Resumo')}</Text>
                     <Text style={{ color:colors.text, fontSize:14, lineHeight:20 }}>{audioTranscription.summary}</Text>
                   </View>
                 ) : null}
                 {audioTranscription.keyPoints?.length > 0 && (
                   <View style={{ marginBottom:12 }}>
-                    <Text style={{ fontSize:11, color:colors.textSecondary, fontWeight:'600', marginBottom:4 }}>PONTOS CHAVE</Text>
+                    <Text style={{ fontSize:11, color:colors.textSecondary, fontWeight:'600', marginBottom:4, textTransform:'uppercase' }}>{_mt('chatConv.keyPointsHeading', 'Pontos-chave')}</Text>
                     {audioTranscription.keyPoints.map((kp, i) => (
                       <Text key={i} style={{ color:colors.text, fontSize:13, marginBottom:2 }}>• {kp}</Text>
                     ))}
                   </View>
                 )}
-                <Text style={{ fontSize:11, color:colors.textSecondary, fontWeight:'600', marginBottom:4 }}>TRANSCRICAO</Text>
+                <Text style={{ fontSize:11, color:colors.textSecondary, fontWeight:'600', marginBottom:4, textTransform:'uppercase' }}>{_mt('chatConv.transcriptHeading', 'Transcrição')}</Text>
                 <Text style={{ color:colors.text, fontSize:13, lineHeight:18 }}>{audioTranscription.text}</Text>
               </ScrollView>
             )}
@@ -33042,7 +33261,7 @@ function ChatConversationInner() {
                       if (t_ === 'sticker')  return '🏷️ ' + (t('chatConv.sticker') || 'Sticker');
                       if (t_ === 'voice')    return '🎤 ' + (t('chatConv.voice')   || 'Voice message');
                       if (t_ === 'audio')    return '🎵 ' + (t('chatConv.viewOnceAudio') || 'Audio');
-                      if (t_ === 'video')    return '🎬 ' + (t('chatConv.viewOnceVideo') || 'Video');
+                      if (t_ === 'video')    return '🎬 ' + (t('chatConv.viewOnceVideo') || 'Vídeo');
                       if (t_ === 'location') return '📍 ' + (t('chatConv.location') || 'Location');
                       if (t_ === 'contact')  return '👤 ' + (t('chatConv.contact')  || 'Contact');
                       if (t_ === 'poll')     return '📊 ' + (t('chat.poll')         || 'Poll');
@@ -33243,15 +33462,16 @@ function ChatConversationInner() {
                       const previewSource = (() => {
                         const c = String(srcMsg.content || '').trim();
                         if (c) return c.slice(0, 240);
-                        if (srcMsg.type === 'image')   return '📷 Foto';
-                        if (srcMsg.type === 'video')   return '🎥 Vídeo';
-                        if (srcMsg.type === 'audio')   return '🎤 Áudio';
-                        if (srcMsg.type === 'voice')   return '🎤 Áudio';
-                        if (srcMsg.type === 'file')    return '📄 ' + (srcMsg.file_name || '');
-                        if (srcMsg.type === 'gif')     return '🎞️ GIF';
-                        if (srcMsg.type === 'sticker') return '💟 Figurinha';
-                        if (srcMsg.type === 'location') return '📍 Localização';
-                        if (srcMsg.type === 'contact')  return '👤 Contato';
+                        // [2026-10-11 emoji-sweep] rótulo traduzido, sem emoji (vira texto da citação no DM)
+                        if (srcMsg.type === 'image')   return t('chatConv.photo') || 'Foto';
+                        if (srcMsg.type === 'video')   return t('chatConv.video') || 'Vídeo';
+                        if (srcMsg.type === 'audio')   return t('chatConv.audio') || 'Áudio';
+                        if (srcMsg.type === 'voice')   return t('chatConv.audio') || 'Áudio';
+                        if (srcMsg.type === 'file')    return srcMsg.file_name || (t('chatConv.file') || 'Arquivo');
+                        if (srcMsg.type === 'gif')     return t('chatConv.gif') || 'GIF';
+                        if (srcMsg.type === 'sticker') return t('chatConv.sticker') || 'Figurinha';
+                        if (srcMsg.type === 'location') return t('chatConv.location') || 'Localização';
+                        if (srcMsg.type === 'contact')  return t('chatConv.contact') || 'Contato';
                         return '';
                       })();
                       const payload = {
@@ -33555,7 +33775,7 @@ function ChatConversationInner() {
                           sentiment: sumRes?.data?.sentiment || '',
                         });
                       } else {
-                        setTx({ error: r?.message || 'Falha na transcricao' });
+                        setTx({ error: r?.message || _mt('chatConv.transcribeFailed', 'Falha na transcrição') });
                       }
                     } catch (e) {
                       setTx({ error: e?.message || 'Erro' });
@@ -33570,7 +33790,7 @@ function ChatConversationInner() {
                   activeOpacity={0.6}
                 >
                   <View style={{ marginLeft: 0, marginRight: 4 }}><IconSparkles size={18} color={colors.text} /></View>
-                  <Text style={[ctxS.ctxSecondaryText, { color: colors.text }]}>Transcrever + resumir</Text>
+                  <Text style={[ctxS.ctxSecondaryText, { color: colors.text }]}>{_mt('chatConv.transcribeSummarize', 'Transcrever + resumir')}</Text>
                 </PressableRow>
               )}
 
@@ -35453,7 +35673,7 @@ function ChatConversationInner() {
             )}
 
             {/* Media, links & search shortcuts */}
-            <GroupSectionLabel colors={colors}>{t('chatConv.media') || 'Midia, links e docs'}</GroupSectionLabel>
+            <GroupSectionLabel colors={colors}>{t('chatConv.media') || 'Mídia, links e docs'}</GroupSectionLabel>
             <GroupCard colors={colors} isDark={isDark}>
               <InfoMediaStrip items={infoMediaThumbs} colors={colors}
                 title={t('chatConv.mediaLinksDocs') || 'Mídia, links e docs'}
@@ -36624,7 +36844,7 @@ function ChatConversationInner() {
             </View>
 
             <ScrollView contentContainerStyle={{ padding: 18 }} showsVerticalScrollIndicator={false}>
-              {(() => {
+              {_statsMemo(() => {
                 const msgs = (messages || []).filter(m => !m._pending && m.type !== 'system');
                 const total = msgs.length;
                 const bySender = {};
@@ -36771,7 +36991,7 @@ function ChatConversationInner() {
                     </View>
                   </>
                 );
-              })()}
+              }, [messages, colors, isDark, t, currentEmail])}
             </ScrollView>
           </View>
         </View>

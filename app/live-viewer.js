@@ -3127,7 +3127,7 @@ export default function LiveViewerScreen() {
       return;
     }
     try {
-      const mod = require('react-native-view-shot');
+      const mod = require('../services/viewShot').viewShotModule() /* [2026-10-11 boot-split] */;
       const captureRef = mod.captureRef || mod.default || mod;
       if (!screenRef.current || typeof captureRef !== 'function') {
         showToast(t('live.screenshotFailed') || 'Falha no print');

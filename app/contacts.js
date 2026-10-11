@@ -223,13 +223,14 @@ const FamilyUserRow = React.memo(({ user, colors, saved, onAdd, t, onOpenProfile
 });
 
 const MyContactRow = React.memo(({ c, colors, onEdit, onDelete, onToggleFav, onOpenProfile, onQuickActions }) => {
+  const { t } = useLanguage();
   return (
     <SwipeAction
       onSwipeLeft={() => onDelete(c.email)}
       rightContent={
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
           <IconTrash size={18} color="#fff" />
-          <Text style={{ color: '#fff', fontWeight: '700', fontSize: 12 }}>Excluir</Text>
+          <Text style={{ color: '#fff', fontWeight: '700', fontSize: 12 }}>{t('common.delete')}</Text>
         </View>
       }
       style={{ backgroundColor: colors.error }}

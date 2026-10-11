@@ -1,11 +1,13 @@
 import { useState, useRef, useEffect } from 'react';
 import { View, Text, TextInput, TouchableOpacity, FlatList, StyleSheet, Platform, KeyboardAvoidingView } from 'react-native';
 import { useTheme } from '../context/ThemeContext';
+import { useLanguage } from '../context/LanguageContext';
 import { FontSize, Spacing, BorderRadius } from '../constants/theme';
 import { IconX, IconSend } from './Icons';
 
 export default function MeetChatPanel({ messages, onSend, onClose, visible }) {
   const { colors } = useTheme();
+  const { t } = useLanguage();
   const [text, setText] = useState('');
   const listRef = useRef(null);
 
@@ -28,7 +30,7 @@ export default function MeetChatPanel({ messages, onSend, onClose, visible }) {
     return (
       <View style={s.msgContainer}>
         <View style={s.msgHeader}>
-          <Text style={[s.sender, { color: '#60a5fa' }]}>{item.displayName || 'User'}</Text>
+          <Text style={[s.sender, { color: '#60a5fa' }]}>{item.displayName || t('menu.user')}</Text>
           <Text style={[s.time, { color: '#64748b' }]}>
             {time.getHours().toString().padStart(2, '0')}:{time.getMinutes().toString().padStart(2, '0')}
           </Text>
@@ -42,8 +44,8 @@ export default function MeetChatPanel({ messages, onSend, onClose, visible }) {
     <View style={[s.panel, Platform.OS === 'web' && s.panelGlass]}>
       {/* Header */}
       <View style={s.header}>
-        <Text style={s.headerTitle}>Chat</Text>
-        <TouchableOpacity onPress={onClose} style={s.closeBtn}>
+        <Text style={s.headerTitle}>{t('meet.chat')}</Text>
+        <TouchableOpacity onPress={onClose} style={s.closeBtn} accessibilityLabel={t('common.close')}>
           <IconX size={18} color="#94a3b8" />
         </TouchableOpacity>
       </View>
@@ -64,12 +66,12 @@ export default function MeetChatPanel({ messages, onSend, onClose, visible }) {
           style={s.input}
           value={text}
           onChangeText={setText}
-          placeholder="Digite uma mensagem..."
+          placeholder={t('chatConv.messagePlaceholder')}
           placeholderTextColor="#64748b"
           onSubmitEditing={handleSend}
           returnKeyType="send"
         />
-        <TouchableOpacity onPress={handleSend} style={s.sendBtn} activeOpacity={0.7}>
+        <TouchableOpacity onPress={handleSend} style={s.sendBtn} activeOpacity={0.7} accessibilityLabel={t('common.send')}>
           <IconSend size={16} color="#fff" />
         </TouchableOpacity>
       </View>

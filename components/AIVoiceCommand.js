@@ -15,6 +15,7 @@ import { View, Text, TouchableOpacity, ActivityIndicator, Platform } from 'react
 import { useRouter } from 'expo-router';
 import * as api from '../services/api';
 import { useTheme } from '../context/ThemeContext';
+import { useLanguage } from '../context/LanguageContext';
 import { IconMic, IconStop } from './Icons';
 
 // VAD tuning — expo-audio / iOS AVAudioRecorder report metering in dBFS
@@ -31,6 +32,7 @@ const POLL_MS = 120;
 
 export default function AIVoiceCommand() {
   const { colors } = useTheme();
+  const { t } = useLanguage();
   const router = useRouter();
   const [recording, setRecording] = useState(false);
   const [processing, setProcessing] = useState(false);
@@ -51,7 +53,7 @@ export default function AIVoiceCommand() {
       const expoAudio = require('expo-audio');
       const perm = await expoAudio.requestRecordingPermissionsAsync();
       if (!perm.granted) {
-        setResult({ error: 'Permissão de microfone negada' });
+        setResult({ error: t('aiVoice.micDenied') });
         return;
       }
       await expoAudio.setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true });
@@ -96,7 +98,7 @@ export default function AIVoiceCommand() {
         }
       }, POLL_MS);
     } catch (e) {
-      setResult({ error: 'Microfone indisponível: ' + (e?.message || 'erro desconhecido') });
+      setResult({ error: t('aiVoice.micUnavailable', { reason: e?.message || t('aiVoice.unknownError') }) });
     }
   }
 
@@ -121,7 +123,7 @@ export default function AIVoiceCommand() {
       // language (fixes: "spoke Portuguese but One replied in English").
       const transRes = await api.aiTranscribeAudio(uri);
       if (!transRes?.success || !transRes.data?.text) {
-        setResult({ error: 'Transcription failed' });
+        setResult({ error: t('aiVoice.transcriptionFailed') });
         setProcessing(false);
         return;
       }
@@ -159,7 +161,7 @@ export default function AIVoiceCommand() {
         }
       }, 1500);
     } catch (e) {
-      setResult({ error: e?.message || 'Unknown error' });
+      setResult({ error: e?.message || t('aiVoice.unknownError') });
       setProcessing(false);
     }
   }
@@ -194,22 +196,22 @@ export default function AIVoiceCommand() {
           <View style={{ backgroundColor: colors.surface, borderRadius: 12, padding: 16, shadowColor: '#000', shadowOpacity: 0.3, shadowRadius: 8, elevation: 6 }}>
             {result.error ? (
               <>
-                <Text style={{ color: '#ef4444', fontWeight: '600', marginBottom: 4 }}>Erro</Text>
+                <Text style={{ color: '#ef4444', fontWeight: '600', marginBottom: 4 }}>{t('common.error')}</Text>
                 <Text style={{ color: colors.text, fontSize: 13 }}>{result.error}</Text>
               </>
             ) : (
               <>
-                <Text style={{ color: colors.textSecondary, fontSize: 11, marginBottom: 4 }}>VOCE DISSE</Text>
+                <Text style={{ color: colors.textSecondary, fontSize: 11, marginBottom: 4 }}>{t('aiVoice.youSaid').toUpperCase()}</Text>
                 <Text style={{ color: colors.text, fontSize: 14, marginBottom: 8 }}>"{result.text}"</Text>
                 {result.intent?.intent && result.intent.intent !== 'other' && (
                   <Text style={{ color: colors.primary, fontSize: 12 }}>
-                    Acao detectada: {result.intent.intent} — executando...
+                    {t('aiVoice.actionDetected', { intent: result.intent.intent })}
                   </Text>
                 )}
               </>
             )}
-            <TouchableOpacity onPress={() => setResult(null)} style={{ marginTop: 8, alignSelf: 'flex-end' }}>
-              <Text style={{ color: colors.textSecondary, fontSize: 12 }}>Fechar</Text>
+            <TouchableOpacity onPress={() => setResult(null)} style={{ marginTop: 8, alignSelf: 'flex-end' }} accessibilityRole="button">
+              <Text style={{ color: colors.textSecondary, fontSize: 12 }}>{t('common.close')}</Text>
             </TouchableOpacity>
           </View>
         </View>

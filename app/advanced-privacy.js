@@ -99,9 +99,9 @@ export default function AdvancedPrivacyScreen() {
                   onPress={() => { try { vpnDetect.dismissVpnSuggestion(); } catch {} setVpnActive(true); }}
                   style={[st.okBtn, { backgroundColor: g.fill }]}
                   accessibilityRole="button"
-                  accessibilityLabel="OK"
+                  accessibilityLabel={t('common.ok')}
                 >
-                  <Text style={[st.okText, { color: g.text }]}>OK</Text>
+                  <Text style={[st.okText, { color: g.text }]}>{t('common.ok')}</Text>
                 </TouchableOpacity>
               )}
             />

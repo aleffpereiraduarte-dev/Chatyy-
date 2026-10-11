@@ -69,7 +69,7 @@ function emit(phase, progress = 0) {
 // "Sincronizando…" banner.
 function _prefetchCallHistoryBg() {
   try {
-    const mod = require('../components/ChatCallsTab');
+    const mod = require('./callHistoryStore');
     const fn = mod && (mod.prefetchCallHistory
       || (mod.default && mod.default.prefetchCallHistory));
     if (typeof fn === 'function') { try { fn().catch(() => {}); } catch {} }

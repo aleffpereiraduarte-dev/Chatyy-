@@ -13,7 +13,10 @@ import {
   Dimensions, ActivityIndicator, PanResponder, Animated, ScrollView,
 } from 'react-native';
 import CachedImage from './CachedImage';
-import { IconX, IconCheck } from './Icons';
+import {
+  IconX, IconCheck, IconTrash, IconSmile, IconType, IconMapPin, IconClock, IconMusic,
+  IconAtSign, IconHelpCircle, IconBarChart, IconAward, IconSliders,
+} from './Icons';
 import * as api from '../services/api';
 
 const { width: SW } = Dimensions.get('window');
@@ -28,18 +31,19 @@ const QUICK_EMOJIS = ['😀', '😂', '🥰', '😎', '😢', '😡', '🤔', '�
 // Instagram-style sticker library tabs. Each one is a quick-insert overlay
 // type that appears as a chip at the top of the editor. Tapping a chip adds
 // a draggable widget on top of the canvas (text/emoji/etc).
+// [2026-10-11 ui-sweep] SVG icons instead of emoji glyphs; labels via t().
 const STICKER_TABS = [
-  { id: 'emoji',    label: 'Emoji',     glyph: '😀' },
-  { id: 'text',     label: 'Texto',     glyph: 'Aa' },
-  { id: 'gif',      label: 'GIF',       glyph: 'GIF' },
-  { id: 'location', label: 'Local',     glyph: '📍' },
-  { id: 'time',     label: 'Hora',      glyph: '🕒' },
-  { id: 'music',    label: 'Música',    glyph: '🎵' },
-  { id: 'mention',  label: 'Mention',   glyph: '@' },
-  { id: 'question', label: 'Pergunta',  glyph: '❓' },
-  { id: 'poll',     label: 'Poll',      glyph: '📊' },
-  { id: 'quiz',     label: 'Quiz',      glyph: '🧠' },
-  { id: 'slider',   label: 'Slider',    glyph: '🎚️' },
+  { id: 'emoji',    labelKey: 'stickerMaker.emoji',         fb: 'Emoji',    Icon: IconSmile },
+  { id: 'text',     labelKey: 'stickerMaker.text',          fb: 'Texto',    Icon: IconType },
+  { id: 'gif',      labelKey: 'status.stickerGif',          fb: 'GIF',      glyph: 'GIF' },
+  { id: 'location', labelKey: 'status.stickerLocation',     fb: 'Local',    Icon: IconMapPin },
+  { id: 'time',     labelKey: 'stickerEditor.time',         fb: 'Hora',     Icon: IconClock },
+  { id: 'music',    labelKey: 'status.music',               fb: 'Música',   Icon: IconMusic },
+  { id: 'mention',  labelKey: 'status.stickerMention',      fb: 'Menção',   Icon: IconAtSign },
+  { id: 'question', labelKey: 'status.stickerQuestion',     fb: 'Pergunta', Icon: IconHelpCircle },
+  { id: 'poll',     labelKey: 'status.stickerPoll',         fb: 'Enquete',  Icon: IconBarChart },
+  { id: 'quiz',     labelKey: 'status.stickerQuiz',         fb: 'Quiz',     Icon: IconAward },
+  { id: 'slider',   labelKey: 'status.stickerSlider',       fb: 'Slider',   Icon: IconSliders },
 ];
 
 // Trash-zone hit area, centered horizontally near the bottom of the canvas.
@@ -313,7 +317,7 @@ export default function StickerEditor({ visible, imageUri, onCancel, onSave, t, 
         // react-native-view-shot.
         let captureUri = null;
         try {
-          const mod = require('react-native-view-shot');
+          const mod = require('../services/viewShot').viewShotModule();
           const captureRef = mod.captureRef || (typeof mod.default === 'function' ? mod.default : null);
           if (captureRef && shotRef.current) {
             captureUri = await captureRef(shotRef.current, {
@@ -407,9 +411,11 @@ export default function StickerEditor({ visible, imageUri, onCancel, onSave, t, 
                     flexDirection: 'row', alignItems: 'center', gap: 6,
                   }}
                 >
-                  <Text style={{ fontSize: 14 }}>{tab.glyph}</Text>
+                  {tab.Icon
+                    ? <tab.Icon size={15} color="#fff" />
+                    : <Text style={{ fontSize: 12, fontWeight: '800', color: '#fff' }}>{tab.glyph}</Text>}
                   <Text style={{ color: '#fff', fontSize: 13, fontWeight: active ? '700' : '500' }}>
-                    {tab.label}
+                    {(t && t(tab.labelKey) !== tab.labelKey && t(tab.labelKey)) || tab.fb}
                   </Text>
                 </TouchableOpacity>
               );
@@ -481,7 +487,7 @@ export default function StickerEditor({ visible, imageUri, onCancel, onSave, t, 
                     : {}),
                 }}
               >
-                <Text style={{ fontSize: 22 }}>🗑️</Text>
+                <IconTrash size={22} color="#fff" />
               </View>
             )}
           </Canvas>
@@ -560,15 +566,18 @@ export default function StickerEditor({ visible, imageUri, onCancel, onSave, t, 
               opacity: bgProcessing ? 0.7 : 1,
             }}
           >
-            <Text style={{ color: '#fff', fontSize: 14, fontWeight: '600' }}>
-              {removeBg ? (bgCutoutUri ? '✓ ' : '… ') : ''}
-              {t?.('chat.stickerRemoveBg') || 'Remover fundo automaticamente'}
-            </Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexShrink: 1 }}>
+              {removeBg && bgCutoutUri ? <IconCheck size={14} color="#fff" /> : null}
+              <Text style={{ color: '#fff', fontSize: 14, fontWeight: '600', flexShrink: 1 }}>
+                {removeBg && !bgCutoutUri ? '… ' : ''}
+                {t?.('chat.stickerRemoveBg') || 'Remover fundo automaticamente'}
+              </Text>
+            </View>
             {bgProcessing ? (
               <ActivityIndicator size="small" color="#30D158" />
             ) : (
               <Text style={{ color: 'rgba(255,255,255,0.55)', fontSize: 10 }}>
-                {removeBg && bgCutoutUri ? 'OK' : (t?.('chat.stickerRemoveBgBeta') || 'Beta')}
+                {removeBg && bgCutoutUri ? (t?.('common.ok') || 'OK') : (t?.('chat.stickerRemoveBgBeta') || 'Beta')}
               </Text>
             )}
           </TouchableOpacity>

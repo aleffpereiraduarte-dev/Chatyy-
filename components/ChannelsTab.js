@@ -102,18 +102,18 @@ function IconUsersSmall({ size = 11, color = '#fff' }) {
 }
 
 const CATEGORIES = [
-  { key: 'all', emoji: '\uD83D\uDD25' },
-  { key: 'news', emoji: '\uD83D\uDCF0' },
-  { key: 'sports', emoji: '\u26BD' },
-  { key: 'tech', emoji: '\uD83D\uDCBB' },
-  { key: 'entertainment', emoji: '\uD83C\uDFAC' },
-  { key: 'education', emoji: '\uD83D\uDCDA' },
-  { key: 'business', emoji: '\uD83D\uDCBC' },
-  { key: 'lifestyle', emoji: '\u2728' },
-  { key: 'gaming', emoji: '\uD83C\uDFAE' },
-  { key: 'music', emoji: '\uD83C\uDFB5' },
-  { key: 'health', emoji: '\uD83C\uDFCB' },
-  { key: 'general', emoji: '\uD83D\uDCAC' },
+  { key: 'all' },
+  { key: 'news' },
+  { key: 'sports' },
+  { key: 'tech' },
+  { key: 'entertainment' },
+  { key: 'education' },
+  { key: 'business' },
+  { key: 'lifestyle' },
+  { key: 'gaming' },
+  { key: 'music' },
+  { key: 'health' },
+  { key: 'general' },
 ];
 
 function IconMegaphone({ size = 20, color = '#666' }) {

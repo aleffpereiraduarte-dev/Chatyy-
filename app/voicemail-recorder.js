@@ -563,7 +563,7 @@ export default function VoicemailRecorder() {
               {t('voicemail.tapToRecord') || 'Toque no microfone para gravar (até 1 minuto).'}
             </Text>
             <View style={{ height: 32 }} />
-            <TouchableOpacity onPress={startCountdown} style={styles.micButton} accessibilityLabel="Gravar mensagem de voz">
+            <TouchableOpacity onPress={startCountdown} style={styles.micButton} accessibilityLabel={t('voicemailRec.recordA11y')}>
               <IconMic size={40} color={colors.onPrimary} />
             </TouchableOpacity>
           </>

@@ -15,9 +15,13 @@ import { useLocalSearchParams } from 'expo-router';
 import AvatarCircle, { bumpAvatarCache } from './AvatarCircle';
 import FeedPost from './FeedPost';
 import FeedComments from './FeedComments';
-import CreatePostModal from './CreatePostModal';
+// [2026-10-11 boot-split] CreatePostModal + ReelsViewer are code-split (they
+// were shared with post-create/spotlight/reels-sound and so sat in the web boot
+// `__common` chunk). Loaded on first open of the composer / Reels mode.
+const CreatePostModal = React.lazy(() => import('./CreatePostModal'));
 import LiveIndicator from './LiveIndicator';
-import ReelsViewer from './ReelsViewer';
+const ReelsViewer = React.lazy(() => import('./ReelsViewer'));
+import LazyMount from './LazyMount';
 import ReelPublishProgress from './ReelPublishProgress'; // [2026-10-08 reels-publish]
 import UnifiedComposeFab from './UnifiedComposeFab';
 import Profile from './Profile';
@@ -1065,7 +1069,7 @@ function ChatFeedTab({ colors, isDark, t, user, router, initialFeedMode, onFeedM
                     />
                   </View>
                   <View style={styles.liveBadgeSmall}>
-                    <Text style={styles.liveBadgeText}>LIVE</Text>
+                    <Text style={styles.liveBadgeText}>{t('live.aoVivo') || 'AO VIVO'}</Text>
                   </View>
                 </View>
                 <Text style={[styles.liveHostName, { color: colors.text }]} numberOfLines={1}>
@@ -1614,8 +1618,8 @@ function ChatFeedTab({ colors, isDark, t, user, router, initialFeedMode, onFeedM
       <View style={[styles.container, { backgroundColor: '#000' }]}>
         {/* [2026-10-08 apps-native] onCreate liga o botão câmera do reel (antes morto).
             CreatePostModal só monta no modo posts → volta pra posts e abre o composer. */}
-        <ReelsViewer colors={colors} isDark={isDark} t={t} user={user} router={router} parentActive={parentActive}
-          onCreate={openCreateFromReels} />
+        <React.Suspense fallback={null}><ReelsViewer colors={colors} isDark={isDark} t={t} user={user} router={router} parentActive={parentActive}
+          onCreate={openCreateFromReels} /></React.Suspense>
         {/* [2026-10-08 reels-publish] progresso do reel sendo publicado em 2º plano */}
         <ReelPublishProgress email={user?.email} t={t} top={safeTopPill + 44} />
         {/* Small back-to-posts pill at top-left */}
@@ -1747,7 +1751,7 @@ function ChatFeedTab({ colors, isDark, t, user, router, initialFeedMode, onFeedM
       <ReelPublishProgress email={user?.email} t={t} bottom={96} onView={() => setFeedMode('reels')} />
 
       {/* Create post modal */}
-      <CreatePostModal
+      <LazyMount when={createVisible}><CreatePostModal
         visible={createVisible}
         colors={colors}
         isDark={isDark}
@@ -1757,7 +1761,7 @@ function ChatFeedTab({ colors, isDark, t, user, router, initialFeedMode, onFeedM
         originalPost={repostTarget?.originalPost || null}
         onClose={() => { setCreateVisible(false); setRepostTarget(null); }}
         onPostCreated={(p) => { setRepostTarget(null); handlePostCreated(p); }}
-      />
+      /></LazyMount>
 
       {/* Comments modal */}
       <FeedComments

@@ -136,11 +136,11 @@ export default function MeetingCreateScreen() {
     const email = inviteEmail.trim().toLowerCase();
     if (!email) return;
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-      setInviteError(t('meetingCreate.titleRequired') ? (t('common.invalidEmail') || 'E-mail inválido') : 'Invalid email');
+      setInviteError(t('common.invalidEmail') || 'E-mail inválido');
       return;
     }
     if (invitees.some((i) => i.email === email)) {
-      setInviteError(t('common.invalidEmail') || (t('_locale')?.startsWith('pt') ? 'Já adicionado' : 'Already added'));
+      setInviteError(t('meetingCreate.alreadyAdded') || 'Já adicionado');
       return;
     }
     setInviteError('');

@@ -18,6 +18,7 @@ import React from 'react';
 import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import { IconX, IconArrowLeft } from './Icons';
 import { useTheme } from '../context/ThemeContext';
+import { useLanguageOptional } from '../context/LanguageContext';
 
 export default function ModalHeader({
   title,
@@ -31,6 +32,7 @@ export default function ModalHeader({
   testID,
 }) {
   const { colors } = useTheme();
+  const _lang = useLanguageOptional();
   return (
     <View>
       {dragHandle && (
@@ -47,7 +49,7 @@ export default function ModalHeader({
       >
         <View style={styles.side}>
           {onBack ? (
-            <TouchableOpacity onPress={onBack} hitSlop={hitSlop} accessibilityRole="button" accessibilityLabel="Voltar">
+            <TouchableOpacity onPress={onBack} hitSlop={hitSlop} accessibilityRole="button" accessibilityLabel={(_lang?.t?.('common.back')) || 'Voltar'}>
               <IconArrowLeft size={22} color={colors.text} />
             </TouchableOpacity>
           ) : null}
@@ -74,7 +76,7 @@ export default function ModalHeader({
               <Text style={{ fontSize: 15, fontWeight: '600', color: colors.primary }}>{rightActionLabel}</Text>
             </TouchableOpacity>
           ) : onClose ? (
-            <TouchableOpacity onPress={onClose} hitSlop={hitSlop} accessibilityRole="button" accessibilityLabel="Fechar">
+            <TouchableOpacity onPress={onClose} hitSlop={hitSlop} accessibilityRole="button" accessibilityLabel={(_lang?.t?.('common.close')) || 'Fechar'}>
               <IconX size={22} color={colors.text} />
             </TouchableOpacity>
           ) : null}

@@ -33,8 +33,8 @@ async function scheduleReminder(meeting) {
     await Notifications.scheduleNotificationAsync({
       identifier: REMINDER_PREFIX + id,
       content: {
-        title: 'Reuniao em 5 minutos',
-        body: meeting.title || 'Reuniao sem titulo',
+        title: 'Reunião em 5 minutos',
+        body: meeting.title || 'Reunião sem título',
         data: { type: 'meeting_reminder', room_id: id },
         sound: true,
       },
@@ -102,7 +102,7 @@ export async function setupMeetingChannel() {
     const loaded = await loadNotifications();
     if (!loaded) return;
     await Notifications.setNotificationChannelAsync('meetings', {
-      name: 'Lembretes de Reuniao',
+      name: 'Lembretes de Reunião',
       importance: Notifications.AndroidImportance.HIGH,
       vibrationPattern: [0, 250, 250, 250],
       sound: 'default',

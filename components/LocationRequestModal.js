@@ -138,7 +138,7 @@ export default function LocationRequestModal() {
                   {title}
                 </Text>
               </View>
-              <TouchableOpacity onPress={dismiss} style={lrm.closeBtn} accessibilityLabel="Fechar">
+              <TouchableOpacity onPress={dismiss} style={lrm.closeBtn} accessibilityLabel={t?.('common.close') || 'Fechar'}>
                 <IconX size={20} color={colors.textSecondary} />
               </TouchableOpacity>
             </View>

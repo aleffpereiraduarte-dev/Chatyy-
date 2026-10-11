@@ -4,6 +4,7 @@
 import { Modal, View, TouchableOpacity, StyleSheet, StatusBar } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { IconX } from './Icons';
+import { useLanguage } from '../context/LanguageContext';
 import { cachedVideoSource } from '../services/videoCacheSource'; // [2026-10-10 native-audit] native video disk cache
 
 let _ev = null;
@@ -29,6 +30,7 @@ function Player({ url }) {
 
 export default function NativeVideoModal({ url, onClose }) {
   const insets = useSafeAreaInsets();
+  const { t } = useLanguage();
   if (!url || !nativeVideoAvailable()) return null;
   return (
     <Modal visible animationType="fade" presentationStyle="fullScreen" onRequestClose={onClose} supportedOrientations={['portrait', 'landscape']}>
@@ -40,7 +42,7 @@ export default function NativeVideoModal({ url, onClose }) {
           style={[st.close, { top: insets.top + 8 }]}
           hitSlop={10}
           accessibilityRole="button"
-          accessibilityLabel="Fechar"
+          accessibilityLabel={t('common.close')}
         >
           <IconX size={22} color="#fff" />
         </TouchableOpacity>

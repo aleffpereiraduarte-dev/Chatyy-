@@ -136,7 +136,7 @@ export default function KidsAskParentModal({ visible, onClose, isDark, t }) {
                 {t?.('kids.askParent.sub') || 'Manda um pedido pro seu responsável'}
               </Text>
             </View>
-            <TouchableOpacity onPress={onClose} style={styles.closeBtn} accessibilityLabel="Fechar">
+            <TouchableOpacity onPress={onClose} style={styles.closeBtn} accessibilityLabel={t?.('common.close') || 'Fechar'}>
               <IconX size={22} color="#fff" />
             </TouchableOpacity>
           </View>
@@ -172,7 +172,7 @@ export default function KidsAskParentModal({ visible, onClose, isDark, t }) {
               paddingHorizontal: 16, paddingVertical: 12,
               borderBottomWidth: 1, borderBottomColor: isDark ? '#161618' : '#f3e8ff',
             }}>
-              <TouchableOpacity onPress={() => setHistoryOpen(false)} accessibilityRole="button" accessibilityLabel="Voltar">
+              <TouchableOpacity onPress={() => setHistoryOpen(false)} accessibilityRole="button" accessibilityLabel={t?.('common.back') || 'Voltar'}>
                 <IconBack size={20} color={isDark ? '#F5F5F7' : '#111111'} />
               </TouchableOpacity>
               <Text style={{ fontSize: 15, fontWeight: '800', color: isDark ? '#F1F3F5' : '#1e1b4b' }}>

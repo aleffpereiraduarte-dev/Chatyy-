@@ -16,7 +16,7 @@ import { emailFromIdentity } from '../../hooks/useLiveStage';
 let _lkc = null;
 function _lk() {
   if (_lkc) return _lkc;
-  try { _lkc = require('livekit-client'); } catch { _lkc = null; }
+  try { _lkc = require('../../services/lkLoader').lkSync(); } catch { _lkc = null; }
   return _lkc;
 }
 

@@ -29,13 +29,16 @@ const hangupSipCall = _sip?.hangupSipCall || (() => {});
 // i.e. the whole LiveKit JS SDK was evaluated on the launch→chat-list path.
 // Now it is required on the first PSTN dial/hangup only.
 let _pstn; // undefined = not loaded yet, null = failed to load
-function _getPstn() {
-  if (_pstn === undefined) {
-    try { _pstn = require('../services/pstnCall'); } catch { _pstn = null; }
-  }
-  return _pstn;
+// [2026-10-11 boot-split] dynamic import() (not require) so Metro splits
+// pstnCall + livekit-client into their own async chunk on web; on native the
+// import() resolves synchronously-bundled code, behavior unchanged.
+let _pstnP = null;
+function _loadPstn() {
+  if (_pstn !== undefined) return Promise.resolve(_pstn);
+  if (!_pstnP) _pstnP = import('../services/pstnCall').then((m) => { _pstn = m || null; return _pstn; }, () => { _pstn = null; return null; });
+  return _pstnP;
 }
-const startPstnCall = (...args) => { const f = _getPstn()?.startPstnCall; return f ? f(...args) : Promise.resolve(); };
+const startPstnCall = (...args) => _loadPstn().then((m) => { const f = m?.startPstnCall; return f ? f(...args) : undefined; });
 // Never loaded → no PSTN call can be active → nothing to hang up.
 const hangupPstnCall = (...args) => { if (_pstn === undefined) return undefined; const f = _pstn?.hangupPstnCall; return f ? f(...args) : undefined; };
 const muteSipCall = _sip?.muteSipCall || (() => {});
@@ -328,152 +331,12 @@ function IconSignalBars({ size = 20, color = '#fff', bars = 3 }) {
 }
 
 // --- API helpers ---
-const CALL_HISTORY_CACHE_KEY = 'omc_call_history';
-
-function _readCallHistoryCache() {
-  try {
-    const { getJSON } = require('../services/mmkv');
-    const c = getJSON(CALL_HISTORY_CACHE_KEY);
-    if (c?.data && Array.isArray(c.data)) return c.data;
-  } catch {}
-  return null;
-}
-function _writeCallHistoryCache(arr) {
-  const trimmed = arr.slice(0, 200);
-  try {
-    const { setJSON, setString } = require('../services/mmkv');
-    setJSON(CALL_HISTORY_CACHE_KEY, { data: trimmed, ts: Date.now() });
-    // Mirror to the legacy `chat_calls` string key — that's the one the list
-    // preloads from on cold start (line 2802 _gs('chat_calls')). Without this
-    // mirror, optimistic adds disappear after app restart.
-    setString('chat_calls', JSON.stringify(trimmed));
-  } catch {}
-  // ALSO mirror into the ACCOUNT-SCOPED cache (services/cache → MMKV key hashed
-  // by the logged-in email). This is the PRIMARY source the first-paint seed
-  // reads, so it must stay fresh on EVERY write — including optimistic adds
-  // (addCallToHistory) and deletes — not only on the mount-effect setCache.
-  // Writing it here means: (1) the cold-start seed is instant AND can never
-  // surface another account's log (P0 privacy — the key is per-account), and
-  // (2) a call made this session is already on-device for the next cold start.
-  // Fire-and-forget; setCache writes MMKV synchronously under the hood.
-  try {
-    const { setCache } = require('../services/cache');
-    setCache('call_history', trimmed, 2592000000).catch(() => {});
-  } catch {}
-}
-
-export async function getCallHistory() {
-  // Cache-first: return cached rows immediately if present, then refresh in
-  // the background. Caller renders the cached list while the network catches up.
-  try {
-    const r = await callHistoryList(200, 0);
-    if (r?.success && Array.isArray(r?.data?.calls)) {
-      _writeCallHistoryCache(r.data.calls);
-      return r.data.calls;
-    }
-  } catch {}
-  const cached = _readCallHistoryCache();
-  return cached || [];
-}
-
-// Synchronous accessor — read cache without hitting the network.
-// UI uses this on first paint to avoid the empty-list flash.
-export function getCallHistoryCached() {
-  return _readCallHistoryCache() || [];
-}
-
-// Startup prefetch (fire-and-forget) — called from services/initialSync.js.
-//
-// ROOT FIX for "parece que os dados não tá no celular": nothing EVER warmed the
-// call-history cache except the user OPENING the Calls tab. So the first open of
-// each app session was always a cold BR→NY network fetch (and a skeleton
-// spinner whenever the cache wasn't warm). This runs the SAME endpoint the tab
-// uses (callHistoryList via getCallHistory) and writes the SAME cache keys the
-// tab reads so the data is already on-device before the user taps Calls:
-//   • chat_calls        (MMKV string) — the module-level synchronous preload
-//   • omc_call_history  (MMKV JSON)   — getCallHistoryCached() / useState seed
-//     ↑ both written by getCallHistory()'s _writeCallHistoryCache()
-//   • call_history      (scoped cache) — the async slow-path fallback (getCached)
-// Account scoping: setCache uses the active user's hash (asserted by AuthContext
-// / initialSync before this runs). MUST NOT be awaited anywhere that gates the
-// "Sincronizando…" banner.
-export async function prefetchCallHistory() {
-  try {
-    const h = await getCallHistory(); // writes chat_calls + omc_call_history
-    if (Array.isArray(h)) {
-      try { setCache('call_history', h, 2592000000).catch(() => {}); } catch {}
-    }
-    return h;
-  } catch {}
-  return null;
-}
-
-// Flip every cached missed-call row to `read: true`. Tab badge derives its
-// count from the cache, so without this the number reappears the moment the
-// user navigates away from the Calls tab — the React state was zeroed but
-// the cache still said "unread", and the next recompute brought it back.
-export function markMissedCallsRead() {
-  try {
-    const cur = _readCallHistoryCache();
-    if (!Array.isArray(cur) || cur.length === 0) return;
-    let touched = false;
-    const next = cur.map(c => {
-      if (callDirection(c) === 'missed' && !(c?.read === true || c?.read === 1)) { // [2026-10-06 UX2]
-        touched = true;
-        return { ...c, read: true };
-      }
-      return c;
-    });
-    if (touched) _writeCallHistoryCache(next);
-  } catch {}
-}
-
-export async function addCallToHistory(callData) {
-  // Build the row first so we can write it to cache even if the server fails.
-  const row = {
-    id: null,
-    contactEmail: callData.contactEmail || '',
-    contactName: callData.contactName || callData.contactEmail || '',
-    callId: callData.callId || '',
-    type: callData.type || 'outgoing',
-    video: !!callData.video,
-    timestamp: callData.timestamp || Date.now(),
-    duration: callData.duration || 0,
-    isGroup: !!callData.isGroup,
-    participants: callData.participants || [],
-  };
-  // Optimistic: prepend to cache immediately so the calls tab shows the new
-  // entry without waiting for a network round-trip. Was the bug — calls
-  // ended but the list stayed empty because nothing wrote to cache.
-  try {
-    const cur = _readCallHistoryCache() || [];
-    _writeCallHistoryCache([{ ...row, id: 'tmp_' + Date.now() }, ...cur]);
-  } catch {}
-  try {
-    const r = await callHistoryAdd(callData);
-    if (r?.success) {
-      const finalRow = { ...row, id: r.data?.id };
-      // Replace the temp row with the server-assigned id.
-      try {
-        const cur = _readCallHistoryCache() || [];
-        const replaced = cur.filter(x => !String(x.id || '').startsWith('tmp_'));
-        _writeCallHistoryCache([finalRow, ...replaced]);
-      } catch {}
-      return finalRow;
-    }
-    return null;
-  } catch { return null; }
-}
-
-export async function removeCallFromHistory(callId) {
-  try { await callHistoryDelete(callId); } catch {}
-  // Drop from cache too — otherwise the row reappears on next mount.
-  try {
-    const cur = _readCallHistoryCache() || [];
-    _writeCallHistoryCache(cur.filter(x => String(x.id) !== String(callId)));
-  } catch {}
-  return true;
-}
+// [2026-10-11 boot-split] moved to services/callHistoryStore.js (re-exported below).
+import {
+  CALL_HISTORY_CACHE_KEY, _readCallHistoryCache, _writeCallHistoryCache, callDirection,
+  getCallHistory, getCallHistoryCached, prefetchCallHistory, markMissedCallsRead, addCallToHistory, removeCallFromHistory,
+} from '../services/callHistoryStore';
+export { getCallHistory, getCallHistoryCached, prefetchCallHistory, markMissedCallsRead, addCallToHistory, removeCallFromHistory };
 
 // --- Formatting ---
 function formatCallTime(timestamp, t, locale) {
@@ -537,21 +400,7 @@ function formatDurationLong(seconds) {
 // checking `item.type === 'outgoing'` only, so every server row fell through
 // to the "incoming" branch and labels showed raw "audio". Single source of
 // truth here — never read direction from `type` directly again.
-function callDirection(item) {
-  if (!item) return 'outgoing';
-  const dir = String(item.direction || '').toLowerCase();
-  const status = String(item.status || '').toLowerCase();
-  if (dir === 'outgoing') return 'outgoing';
-  if (dir === 'missed' || status === 'missed') return 'missed';
-  if (dir === 'incoming') return 'incoming';
-  const legacy = String(item.type || '').toLowerCase();
-  if (legacy === 'outgoing' || legacy === 'incoming' || legacy === 'missed') return legacy;
-  if (typeof item.is_outgoing === 'boolean') return item.is_outgoing ? 'outgoing' : 'incoming';
-  const caller = String(item.caller_email || '').toLowerCase();
-  const contact = String(item.contact_email || item.contactEmail || '').toLowerCase();
-  if (caller && contact) return caller === contact ? 'incoming' : 'outgoing';
-  return 'outgoing';
-}
+// callDirection: see services/callHistoryStore.js
 // [2026-10-06 UX2] Media kind (audio vs video) — distinct from direction.
 function callIsVideo(item) {
   return !!(item && (item.video || item.is_video || String(item.type || '').toLowerCase() === 'video'));
@@ -1377,7 +1226,7 @@ function ActiveCallScreen({
                 backgroundColor: 'rgba(255,255,255,0.16)',
                 alignItems: 'center', justifyContent: 'center',
               }}
-              accessibilityLabel="Minimizar"
+              accessibilityLabel={t?.('call.minimize') || 'Minimizar'}
             >
               <Svg width={20} height={20} viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth={2.4} strokeLinecap="round" strokeLinejoin="round">
                 <Polyline points="6 9 12 15 18 9" />
@@ -1728,6 +1577,12 @@ function t9Match(digits, name) {
   return initialsMatch && digits.length <= initials.length;
 }
 
+// Renders an i18n string where **segments** are bold (keeps translations in
+// one key instead of splitting sentences around inline <Text> runs).
+function boldify(str, boldStyle) {
+  return String(str || '').split('**').map((part, i) => (i % 2 ? <Text key={i} style={boldStyle}>{part}</Text> : part));
+}
+
 export function CallerIdVerifyContent({ onClose, onVerified, isDark, t }) {
   const [step, setStep] = useState('intro'); // intro | pin | done
   const [pin, setPin] = useState('');
@@ -1781,7 +1636,7 @@ export function CallerIdVerifyContent({ onClose, onVerified, isDark, t }) {
           setStep('pin');
         }
       } else {
-        setError(r?.message || 'Erro ao iniciar verificação');
+        setError(r?.message || t?.('callerIdVerify.startError') || 'Erro ao iniciar verificação');
       }
     } catch (e) {
       setError(String(e?.message || e));
@@ -1793,7 +1648,7 @@ export function CallerIdVerifyContent({ onClose, onVerified, isDark, t }) {
   // User types the 6-digit code Telnyx sent and we POST it to confirm.
   const handleSubmitPin = async () => {
     if (!/^\d{6}$/.test(pin)) {
-      setError('Digite os 6 dígitos do código.');
+      setError(t?.('callerIdVerify.enterSixDigits') || 'Digite os 6 dígitos do código.');
       return;
     }
     setLoading(true);
@@ -1804,7 +1659,7 @@ export function CallerIdVerifyContent({ onClose, onVerified, isDark, t }) {
         setStep('done');
         onVerified?.();
       } else {
-        setError(r?.message || 'Código incorreto ou expirado');
+        setError(r?.message || t?.('callerIdVerify.wrongCode') || 'Código incorreto ou expirado');
       }
     } catch (e) {
       setError(String(e?.message || e));
@@ -1837,11 +1692,11 @@ export function CallerIdVerifyContent({ onClose, onVerified, isDark, t }) {
               )}
             </View>
             <Text style={{ fontSize: 20, fontWeight: '800', color: step === 'done' ? '#fff' : onInk, textAlign: 'center', letterSpacing: -0.3 }}>
-              {step === 'done' ? 'Número verificado!' : step === 'pin' ? 'Atenda a ligação' : 'Verificar seu número'}
+              {step === 'done' ? (t?.('callerIdVerify.doneTitle') || 'Número verificado!') : step === 'pin' ? (t?.('callerIdVerify.pinTitle') || 'Confirme o código') : (t?.('callerIdVerify.introTitle') || 'Verificar seu número')}
             </Text>
             {step !== 'done' && (
               <Text style={{ fontSize: 13, color: onInk, opacity: 0.88, textAlign: 'center', marginTop: 6, lineHeight: 18 }}>
-                {step === 'pin' ? 'Digite o PIN abaixo no teclado do telefone' : 'Mostre seu número de verdade nas ligações'}
+                {step === 'pin' ? (t?.('callerIdVerify.pinSubtitle') || 'Digite o código de 6 dígitos que você recebeu') : (t?.('callerIdVerify.introSubtitle') || 'Mostre seu número de verdade nas ligações')}
               </Text>
             )}
           </View>
@@ -1854,13 +1709,13 @@ export function CallerIdVerifyContent({ onClose, onVerified, isDark, t }) {
                 {phone}
               </Text>
               <Text style={{ fontSize: 13, color: sub, lineHeight: 19, textAlign: 'center', marginBottom: 22 }}>
-                Pronto! Quando você ligar pelo Chatyy, esse número vai aparecer pra quem receber a chamada — não mais um número desconhecido.
+                {t?.('callerIdVerify.doneBody') || 'Pronto! Quando você ligar pelo Chatyy, esse número vai aparecer para quem receber a chamada — não mais um número desconhecido.'}
               </Text>
               <TouchableOpacity
                 onPress={onClose}
                 style={{ height: 50, borderRadius: 12, backgroundColor: '#16a34a', alignItems: 'center', justifyContent: 'center' }}
               >
-                <Text style={{ color: '#fff', fontWeight: '700', fontSize: 15 }}>Entendi</Text>
+                <Text style={{ color: '#fff', fontWeight: '700', fontSize: 15 }}>{t?.('callerIdVerify.gotIt') || 'Entendi'}</Text>
               </TouchableOpacity>
             </>
           ) : step === 'intro' ? (
@@ -1872,10 +1727,10 @@ export function CallerIdVerifyContent({ onClose, onVerified, isDark, t }) {
                 borderLeftWidth: 3, borderLeftColor: ink,
               }}>
                 <Text style={{ fontSize: 12, fontWeight: '800', color: ink, marginBottom: 4, letterSpacing: 0.4 }}>
-                  POR QUE ISSO?
+                  {t?.('callerIdVerify.whyTitle') || 'POR QUE ISSO?'}
                 </Text>
                 <Text style={{ fontSize: 13, color: txt, lineHeight: 19 }}>
-                  Por exigência regulatória (ANATEL/FCC), operadoras só permitem mostrar seu número real nas ligações se você confirmar que é seu. <Text style={{ fontWeight: '700' }}>Só uma vez na vida</Text>.
+                  {boldify(t?.('callerIdVerify.whyBody') || 'Por exigência regulatória (ANATEL/FCC), as operadoras só permitem mostrar seu número real nas ligações se você confirmar que ele é seu. **Só uma vez na vida**.', { fontWeight: '700' })}
                 </Text>
               </View>
 
@@ -1886,7 +1741,9 @@ export function CallerIdVerifyContent({ onClose, onVerified, isDark, t }) {
                     <Text style={{ color: onInk, fontSize: 12, fontWeight: '800' }}>1</Text>
                   </View>
                   <Text style={{ flex: 1, fontSize: 13, color: txt, lineHeight: 19 }}>
-                    Você vai receber {method === 'call' ? <Text style={{ fontWeight: '700' }}>uma ligação</Text> : <Text style={{ fontWeight: '700' }}>um SMS</Text>} com um código de 6 dígitos.
+                    {boldify(method === 'call'
+                      ? (t?.('callerIdVerify.step1Call') || 'Você vai receber **uma ligação** com um código de 6 dígitos.')
+                      : (t?.('callerIdVerify.step1Sms') || 'Você vai receber **um SMS** com um código de 6 dígitos.'), { fontWeight: '700' })}
                   </Text>
                 </View>
                 <View style={{ flexDirection: 'row', alignItems: 'flex-start', marginBottom: 10 }}>
@@ -1894,7 +1751,7 @@ export function CallerIdVerifyContent({ onClose, onVerified, isDark, t }) {
                     <Text style={{ color: onInk, fontSize: 12, fontWeight: '800' }}>2</Text>
                   </View>
                   <Text style={{ flex: 1, fontSize: 13, color: txt, lineHeight: 19 }}>
-                    Digite o código aqui no app pra confirmar que esse número é seu.
+                    {t?.('callerIdVerify.step2') || 'Digite o código aqui no app para confirmar que esse número é seu.'}
                   </Text>
                 </View>
                 <View style={{ flexDirection: 'row', alignItems: 'flex-start' }}>
@@ -1902,7 +1759,7 @@ export function CallerIdVerifyContent({ onClose, onVerified, isDark, t }) {
                     <Text style={{ color: onInk, fontSize: 12, fontWeight: '800' }}>3</Text>
                   </View>
                   <Text style={{ flex: 1, fontSize: 13, color: txt, lineHeight: 19 }}>
-                    Pronto — <Text style={{ fontWeight: '700' }}>verificado pra sempre</Text>. Suas ligações vão mostrar seu número real.
+                    {boldify(t?.('callerIdVerify.step3') || 'Pronto — **verificado para sempre**. Suas ligações vão mostrar seu número real.', { fontWeight: '700' })}
                   </Text>
                 </View>
               </View>
@@ -1919,7 +1776,7 @@ export function CallerIdVerifyContent({ onClose, onVerified, isDark, t }) {
                   onPress={() => setMethod('call')}
                   style={{ flex: 1, paddingVertical: 9, borderRadius: 8, alignItems: 'center', backgroundColor: method === 'call' ? (isDark ? '#3a3a3c' : '#fff') : 'transparent' }}
                 >
-                  <Text style={{ fontSize: 13, fontWeight: method === 'call' ? '700' : '500', color: method === 'call' ? txt : sub }}>Ligação</Text>
+                  <Text style={{ fontSize: 13, fontWeight: method === 'call' ? '700' : '500', color: method === 'call' ? txt : sub }}>{t?.('callerIdVerify.methodCall') || 'Ligação'}</Text>
                 </TouchableOpacity>
               </View>
 
@@ -1940,14 +1797,14 @@ export function CallerIdVerifyContent({ onClose, onVerified, isDark, t }) {
                   onPress={onClose}
                   style={{ flex: 1, height: 50, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: isDark ? '#2c2c2e' : '#f2f2f7' }}
                 >
-                  <Text style={{ color: txt, fontWeight: '600' }}>Agora não</Text>
+                  <Text style={{ color: txt, fontWeight: '600' }}>{t?.('common.notNow') || 'Agora não'}</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
                   disabled={loading}
                   onPress={handleStartVerify}
                   style={{ flex: 1.4, height: 50, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: ink, opacity: loading ? 0.6 : 1 }}
                 >
-                  {loading ? <ActivityIndicator color={onInk} /> : <Text style={{ color: onInk, fontWeight: '700', fontSize: 15 }}>Iniciar verificação</Text>}
+                  {loading ? <ActivityIndicator color={onInk} /> : <Text style={{ color: onInk, fontWeight: '700', fontSize: 15 }}>{t?.('parental.startVerification') || 'Iniciar verificação'}</Text>}
                 </TouchableOpacity>
               </View>
             </>
@@ -1957,8 +1814,8 @@ export function CallerIdVerifyContent({ onClose, onVerified, isDark, t }) {
                 <IconSmartphone size={14} color={sub} style={{ marginTop: 2 }} />
                 <Text style={{ fontSize: 13, color: sub, lineHeight: 19, textAlign: 'center', flexShrink: 1 }}>
                   {method === 'call'
-                    ? <>Atenda a ligação e <Text style={{ fontWeight: '700', color: txt }}>digite o código de 6 dígitos</Text> aqui no app:</>
-                    : <>Enviamos um <Text style={{ fontWeight: '700', color: txt }}>SMS com código de 6 dígitos</Text>. Digite abaixo:</>}
+                    ? boldify(t?.('callerIdVerify.pinHintCall') || 'Atenda a ligação e **digite o código de 6 dígitos** aqui no app:', { fontWeight: '700', color: txt })
+                    : boldify(t?.('callerIdVerify.pinHintSms') || 'Enviamos um **SMS com código de 6 dígitos**. Digite abaixo:', { fontWeight: '700', color: txt })}
                 </Text>
               </View>
 
@@ -1988,14 +1845,14 @@ export function CallerIdVerifyContent({ onClose, onVerified, isDark, t }) {
                   onPress={() => { setStep('intro'); setPin(''); setError(''); }}
                   style={{ flex: 1, height: 50, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: isDark ? '#2c2c2e' : '#f2f2f7' }}
                 >
-                  <Text style={{ color: txt, fontWeight: '600' }}>Cancelar</Text>
+                  <Text style={{ color: txt, fontWeight: '600' }}>{t?.('common.cancel') || 'Cancelar'}</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
                   disabled={loading || pin.length !== 6}
                   onPress={handleSubmitPin}
                   style={{ flex: 1.4, height: 50, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: ink, opacity: (loading || pin.length !== 6) ? 0.4 : 1 }}
                 >
-                  {loading ? <ActivityIndicator color={onInk} /> : <Text style={{ color: onInk, fontWeight: '700', fontSize: 15 }}>Confirmar</Text>}
+                  {loading ? <ActivityIndicator color={onInk} /> : <Text style={{ color: onInk, fontWeight: '700', fontSize: 15 }}>{t?.('common.confirm') || 'Confirmar'}</Text>}
                 </TouchableOpacity>
               </View>
             </>
@@ -2452,13 +2309,13 @@ function DialerModal({ visible, onClose, isDark, t, minutesInfo, onCallPlaced, c
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 }}>
               <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: '#fff' }} />
               <Text style={{ color: '#fff', fontSize: 14, fontWeight: '700' }} numberOfLines={1}>
-                {activeCall?.contactName || activeCall?.number || 'Em chamada'}
+                {activeCall?.contactName || activeCall?.number || t?.('call.inProgress') || 'Em ligação'}
               </Text>
               <Text style={{ color: 'rgba(255,255,255,0.9)', fontSize: 13, fontWeight: '600', fontVariant: ['tabular-nums'] }}>
                 {`${Math.floor((activeCall?.duration || 0) / 60).toString().padStart(2, '0')}:${((activeCall?.duration || 0) % 60).toString().padStart(2, '0')}`}
               </Text>
             </View>
-            <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700' }}>TOQUE PARA VOLTAR</Text>
+            <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700', textTransform: 'uppercase' }}>{t?.('call.tapToReturn') || 'Toque para voltar'}</Text>
           </TouchableOpacity>
         )}
         {/* Close button - top left, iOS style */}
@@ -2491,7 +2348,7 @@ function DialerModal({ visible, onClose, isDark, t, minutesInfo, onCallPlaced, c
           >
             {callerIdVerified ? <IconVerifiedBadge size={13} color="#16a34a" /> : null}
             <Text style={{ fontSize: 13, fontWeight: '700', color: callerIdVerified ? '#16a34a' : blueInk(isDark) }}>
-              {callerIdVerified ? 'Verificado' : 'Verificar nº'}
+              {callerIdVerified ? (t?.('profile.verified') || 'Verificado') : (t?.('callerIdVerify.verifyShort') || 'Verificar nº')}
             </Text>
           </TouchableOpacity>
         </View>
@@ -2534,7 +2391,7 @@ function DialerModal({ visible, onClose, isDark, t, minutesInfo, onCallPlaced, c
                     numberOfLines={1}
                     adjustsFontSizeToFit
                   >
-                    {number ? formatPhoneDisplay(number) : (t?.('calls.addNumber') || 'Adicionar numero')}
+                    {number ? formatPhoneDisplay(number) : (t?.('calls.addNumber') || 'Adicionar número')}
                   </Text>
                 </View>
                 {country && number.length > 0 && (
@@ -2600,7 +2457,7 @@ function DialerModal({ visible, onClose, isDark, t, minutesInfo, onCallPlaced, c
               backgroundColor: callResult.success ? 'rgba(52,199,89,0.12)' : 'rgba(255,59,48,0.12)',
             }]}>
               <Text style={{ color: callResult.success ? GREEN : RED, fontSize: 14, fontWeight: '600', textAlign: 'center' }}>
-                {callResult.success ? (callResult.message || t?.('voip.callStarted') || 'Ligacao iniciada!') : callResult.message}
+                {callResult.success ? (callResult.message || t?.('voip.callStarted') || 'Ligação iniciada!') : callResult.message}
               </Text>
             </View>
           )}
@@ -3339,11 +3196,11 @@ function ChatCallsTab({ colors, isDark, t, user, router }) {
       } catch {}
     };
     if (Platform.OS === 'web') {
-      if (confirm(t?.('calls.clearConfirm') || 'Limpar todo o historico de ligacoes?')) doIt();
+      if (confirm(t?.('calls.clearConfirm') || 'Limpar todo o histórico de ligações?')) doIt();
     } else {
       Alert.alert(
-        t?.('calls.clearHistory') || 'Limpar Historico',
-        t?.('calls.clearConfirm') || 'Limpar todo o historico de ligacoes?',
+        t?.('calls.clearHistory') || 'Limpar Histórico',
+        t?.('calls.clearConfirm') || 'Limpar todo o histórico de ligações?',
         [
           { text: t?.('common.cancel') || 'Cancelar', style: 'cancel' },
           { text: t?.('calls.clearAll') || 'Limpar Tudo', style: 'destructive', onPress: doIt },
@@ -3692,10 +3549,10 @@ function ChatCallsTab({ colors, isDark, t, user, router }) {
           <View style={s.emptyState}>
             <CallEmptyIllustration isDark={isDark} ink={colors?.primary || '#111111'} onInk={colors?.onPrimary || '#fff'} />
             <Text style={[s.emptyTitle, { color: textColor }]}>
-              {t?.('calls.noCallsTitle') || 'Nenhuma ligacao recente'}
+              {t?.('calls.noCallsTitle') || 'Nenhuma ligação recente'}
             </Text>
             <Text style={[s.emptySubtitle, { color: subColor }]}>
-              {t?.('calls.noCallsSubtitle') || 'Seu historico de ligacoes aparecera aqui'}
+              {t?.('calls.noCallsSubtitle') || 'Seu histórico de ligações aparecerá aqui'}
             </Text>
             {/* CTA — primes the user to make a call instead of staring at nothing. */}
             {PSTN_ENABLED && (

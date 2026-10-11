@@ -178,7 +178,7 @@ export default function PgpKeysScreen() {
                 </Text>
               </View>
               <Text style={{ color: colors.textTertiary, fontSize: FontSize.xs, marginBottom: 6 }}>
-                Fingerprint
+                {t('byok.fingerprint')}
               </Text>
               <Text selectable style={[s.fingerprint, { color: colors.text, backgroundColor: colors.borderLight + '44' }]}>
                 {fingerprint.match(/.{1,4}/g)?.join(' ') || fingerprint}

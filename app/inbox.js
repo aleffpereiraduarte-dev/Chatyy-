@@ -15,6 +15,7 @@ import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import { Shadow, BorderRadius, FontSize, Spacing, LetterSpacing, AnimTiming } from '../constants/theme';
 import EmailReader from '../components/EmailReader';
+import ThreadView from '../components/ThreadView';
 import Sidebar from '../components/Sidebar';
 import EmailOutboxBanner from '../components/EmailOutboxBanner';
 import * as Haptics from 'expo-haptics';
@@ -42,6 +43,7 @@ import {
   IconMessageSquare, IconCalendar, IconFilm, IconGlobe, IconZap, IconImage,
   IconStar, IconArchive, IconLink, IconStickyNote, IconBell, IconPenTool, IconFilter, IconCheck,
   IconWifiOff, IconBookmark, IconSparkles,
+  IconReply, IconReplyAll, IconForward, IconTrash, IconMarkUnread, IconClock,
 } from '../components/Icons';
 import CategoryTabs from '../components/CategoryTabs';
 const QuickSettingsPanel = lazy(() => import('../components/QuickSettingsPanel'));
@@ -950,12 +952,15 @@ function InboxScreenInner() {
     if (isDesktop) {
       openEmail(email.uid, currentFolder);
     } else {
+      // [2026-10-11 email-qa] Linha otimista de Enviados ainda não tem uid
+      // IMAP → /read não acharia. Puxa a lista; a real chega em instantes.
+      if (email._optimistic) { refresh(); return; }
       const idx = emails.findIndex(e => e.uid === email.uid);
       const prevUid = idx > 0 ? emails[idx - 1].uid : '';
       const nextUid = idx < emails.length - 1 ? emails[idx + 1].uid : '';
       router.push(`/read?uid=${email.uid}&folder=${encodeURIComponent(currentFolder)}&prevUid=${prevUid}&nextUid=${nextUid}`);
     }
-  }, [selectMode, toggleSelect, currentFolder, isDesktop, openEmail, emails, router]);
+  }, [selectMode, toggleSelect, currentFolder, isDesktop, openEmail, emails, router, refresh]);
 
   const handleStar = useCallback((email) => {
     ctxStarEmail(email.uid);
@@ -1129,7 +1134,44 @@ function InboxScreenInner() {
     return () => document.removeEventListener('keydown', onKey);
   }, [router]);
 
+  const currentFolderCtx = currentFolder;
+
+  // [2026-10-11 email-qa] Painel de leitura do desktop mostra a CONVERSA
+  // inteira (como /read): busca get_thread em paralelo, só p/ e-mails que
+  // fazem parte de uma conversa (References/In-Reply-To ou thread_count>1).
+  // O corpo aparece na hora (EmailReader); a thread troca quando chega.
+  const [desktopThread, setDesktopThread] = useState(null);
+  const _selUid = selectedEmail?.uid;
+  const _selHasBody = !!(selectedEmail && (selectedEmail.body_html || selectedEmail.body_text || selectedEmail.body));
+  useEffect(() => {
+    setDesktopThread(prev => (prev && prev.uid === _selUid ? prev : null));
+    if (!isDesktop || !_selUid || !_selHasBody) return;
+    const sel = selectedEmail;
+    const hdrs = sel?.headers || {};
+    const hget = (k) => hdrs[k] || hdrs[k.toLowerCase()] || hdrs[k.toUpperCase()];
+    const row = emails.find(e => String(e.uid) === String(_selUid));
+    const isThreaded = !!(hget('References') || hget('In-Reply-To') || (row && row.thread_count > 1) || sel?.thread_count > 1);
+    if (!isThreaded) return;
+    let cancelled = false;
+    const folderAtOpen = currentFolder;
+    api.getThread(_selUid, folderAtOpen).then((r) => {
+      if (cancelled || !(r?.success && Array.isArray(r.data) && r.data.length > 1)) return;
+      const normalized = r.data.map((m, i) => {
+        let mm = i === 0 ? { ...m, subject: m?.subject || sel.subject || '', from: m?.from || sel.from || '' } : m;
+        if (Number(mm.uid) === Number(_selUid) && !(mm.body_html || mm.body_text || mm.body)) {
+          mm = { ...mm, body_html: sel.body_html, body_text: sel.body_text, body: sel.body, attachments: sel.attachments };
+        }
+        return mm;
+      });
+      setDesktopThread({ uid: _selUid, folder: folderAtOpen, messages: normalized });
+    }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [isDesktop, _selUid, _selHasBody, currentFolder]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // [2026-10-11 email-qa] Mensagens da thread podem estar em outra pasta
+  // (ex.: a sua resposta em Enviados) → `_folder` vem do get_thread.
   const handleReply = (email) => {
+    const currentFolder = email?._folder || currentFolderCtx;
     if (isDesktop && Platform.OS === 'web') {
       setComposeModal({
         reply_uid: email.uid,
@@ -1146,6 +1188,7 @@ function InboxScreenInner() {
   };
 
   const handleReplyAll = (email) => {
+    const currentFolder = email?._folder || currentFolderCtx;
     if (isDesktop && Platform.OS === 'web') {
       const allRecipients = [email?.to, email?.cc].filter(Boolean).join(',');
       setComposeModal({
@@ -1164,6 +1207,7 @@ function InboxScreenInner() {
   };
 
   const handleForward = (email) => {
+    const currentFolder = email?._folder || currentFolderCtx;
     if (isDesktop && Platform.OS === 'web') {
       setComposeModal({
         forward_uid: email.uid,
@@ -1395,6 +1439,94 @@ function InboxScreenInner() {
     onMoveTo: (e) => setMoveToTarget(e),
   };
   ctxActionsRef.current = ctxActions;
+
+  // [2026-10-11 email-qa] Painel de leitura do desktop: toolbar própria no topo
+  // (Responder/Resp. todos/Encaminhar/Arquivar/Adiar/Não lido/Excluir, só
+  // ícones + tooltip) e o leitor recebe hasActionBar → a grade grande de botões
+  // e as pílulas da resposta rápida não repetem as mesmas ações (igual mobile).
+  // Com conversa (2+ mensagens) mostra o ThreadView estilo Gmail.
+  const renderDesktopReader = () => {
+    const sel = selectedEmail;
+    if (!sel) return null;
+    const thread = desktopThread && desktopThread.uid === sel.uid && desktopThread.messages.length > 1
+      ? desktopThread.messages : null;
+    const multiRcpt = !!((sel.cc && String(sel.cc).trim()) || (sel.to && String(sel.to).split(',').filter(x => x.trim()).length > 1));
+    const tbBtn = (key, Icon, label, onPress, color) => (
+      <TouchableOpacity
+        key={key}
+        onPress={onPress}
+        style={s.readerTbBtn}
+        accessibilityRole="button"
+        accessibilityLabel={label}
+        {...(Platform.OS === 'web' ? { title: label } : {})}
+      >
+        <Icon size={18} color={color || colors.textSecondary} />
+      </TouchableOpacity>
+    );
+    const toolbar = (
+      <View style={[s.readerToolbar, { borderBottomColor: colors.borderLight, backgroundColor: colors.surface }]}>
+        {tbBtn('reply', IconReply, t('reader.reply'), () => handleReply(sel), colors.primary)}
+        {multiRcpt && tbBtn('replyAll', IconReplyAll, t('reader.replyAll'), () => handleReplyAll(sel))}
+        {tbBtn('fwd', IconForward, t('reader.forward'), () => handleForward(sel))}
+        <View style={[s.readerTbSep, { backgroundColor: colors.borderLight }]} />
+        {tbBtn('archive', IconArchive, t('reader.archive'), () => handleArchive(sel))}
+        {tbBtn('snooze', IconClock, t('reader.snooze'), () => handleSnoozeEmail(sel))}
+        {tbBtn('unread', IconMarkUnread, t('contextMenu.markUnread'), async () => {
+          await markAsUnread(sel.uid, currentFolder);
+          setSelectedEmail(null);
+          refresh();
+        })}
+        {tbBtn('delete', IconTrash, t('reader.delete'), () => handleDelete(sel.uid), colors.error)}
+      </View>
+    );
+    if (thread) {
+      const withFolder = (fn) => (m) => fn(m && m.uid ? { ...m, _folder: m.folder || desktopThread.folder } : sel);
+      return (
+        <View style={{ flex: 1 }}>
+          {toolbar}
+          <ThreadView
+            thread={thread}
+            focusUid={sel.uid}
+            hasActionBar
+            onReply={withFolder(handleReply)}
+            onReplyAll={withFolder(handleReplyAll)}
+            onForward={withFolder(handleForward)}
+            onClose={() => setSelectedEmail(null)}
+          />
+        </View>
+      );
+    }
+    return (
+      <View style={{ flex: 1 }}>
+        {toolbar}
+        <EmailReader
+          email={sel}
+          folder={currentFolder}
+          hasActionBar
+          onReply={(e) => handleReply(e || sel)}
+          onReplyAll={(e) => handleReplyAll(e || sel)}
+          onForward={() => handleForward(sel)}
+          onForwardAsAttachment={() => handleForwardAsAttachment(sel)}
+          onAddAsTask={() => handleAddAsTask(sel)}
+          onDelete={() => handleDelete(sel.uid)}
+          onStar={() => handleStar(sel)}
+          onClose={() => setSelectedEmail(null)}
+          onAddLabel={addLabelToEmail}
+          onRemoveLabel={removeLabelFromEmail}
+          onReportSpam={handleReportSpam}
+          onReportHam={handleReportHam}
+          onMarkUnread={async (e) => {
+            // Context markAsUnread clears the recentlyRead protection —
+            // a raw api.markUnread call was reverted to "read" on the
+            // next silent merge. [deep-20260805-032549]
+            await markAsUnread(e.uid, currentFolder);
+            setSelectedEmail(null);
+            refresh();
+          }}
+        />
+      </View>
+    );
+  };
 
   // Don't render anything while redirecting to login
   if (!user) return <View style={{ flex: 1, backgroundColor: colors.background }} />;
@@ -1882,7 +2014,7 @@ function InboxScreenInner() {
             </View>
             <View style={{ flex: 1 }}>
               <View style={{ flexDirection:'row', alignItems:'center', marginBottom: 4 }}>
-                <Text style={{ flex:1, fontWeight:'700', color:colors.text, fontSize: FontSize.base, letterSpacing: -0.2 }}>Briefing AI</Text>
+                <Text style={{ flex:1, fontWeight:'700', color:colors.text, fontSize: FontSize.base, letterSpacing: -0.2 }}>{t('inbox.aiBriefing')}</Text>
                 <TouchableOpacity onPress={() => setAiBriefing(null)} hitSlop={{ top:8, bottom:8, left:8, right:8 }} accessibilityRole="button" accessibilityLabel={t('common.close') || 'Fechar'}>
                   <IconX size={16} color={colors.textTertiary} />
                 </TouchableOpacity>
@@ -1945,30 +2077,7 @@ function InboxScreenInner() {
               <IconChevronLeft size={18} color={colors.primary} />
               <Text style={{ color: colors.primary, fontSize: 14, fontWeight: '500', marginLeft: 2 }}>{t('folder.inbox') || 'Caixa de entrada'}</Text>
             </TouchableOpacity>
-            <EmailReader
-              email={selectedEmail}
-              folder={currentFolder}
-              onReply={(e) => handleReply(e || selectedEmail)}
-              onReplyAll={(e) => handleReplyAll(e || selectedEmail)}
-              onForward={() => handleForward(selectedEmail)}
-              onForwardAsAttachment={() => handleForwardAsAttachment(selectedEmail)}
-              onAddAsTask={() => handleAddAsTask(selectedEmail)}
-              onDelete={() => selectedEmail && handleDelete(selectedEmail.uid)}
-              onStar={() => handleStar(selectedEmail)}
-              onClose={() => setSelectedEmail(null)}
-              onAddLabel={addLabelToEmail}
-              onRemoveLabel={removeLabelFromEmail}
-              onReportSpam={handleReportSpam}
-              onReportHam={handleReportHam}
-              onMarkUnread={async (e) => {
-                // Context markAsUnread clears the recentlyRead protection —
-                // a raw api.markUnread call was reverted to "read" on the
-                // next silent merge. [deep-20260805-032549]
-                await markAsUnread(e.uid, currentFolder);
-                setSelectedEmail(null);
-                refresh();
-              }}
-            />
+            {renderDesktopReader()}
           </View>
         )}
 
@@ -1979,27 +2088,7 @@ function InboxScreenInner() {
               <MessageSkeleton />
             ) : selectedEmail ? (
               <ErrorBoundary>
-                <EmailReader
-                  email={selectedEmail}
-                  folder={currentFolder}
-                  onReply={(e) => handleReply(e || selectedEmail)}
-                  onReplyAll={(e) => handleReplyAll(e || selectedEmail)}
-                  onForward={() => handleForward(selectedEmail)}
-              onForwardAsAttachment={() => handleForwardAsAttachment(selectedEmail)}
-              onAddAsTask={() => handleAddAsTask(selectedEmail)}
-                  onDelete={() => selectedEmail && handleDelete(selectedEmail.uid)}
-                  onStar={() => handleStar(selectedEmail)}
-                  onClose={() => setSelectedEmail(null)}
-                  onAddLabel={addLabelToEmail}
-                  onRemoveLabel={removeLabelFromEmail}
-                  onReportSpam={handleReportSpam}
-                  onReportHam={handleReportHam}
-                  onMarkUnread={async (e) => {
-                    await markAsUnread(e.uid, currentFolder);
-                    setSelectedEmail(null);
-                    refresh();
-                  }}
-                />
+                {renderDesktopReader()}
               </ErrorBoundary>
             ) : (
               <View style={s.noSelection}>
@@ -2619,6 +2708,13 @@ const s = StyleSheet.create({
     position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 40,
   },
   readPanel: { flex: 1.5, borderLeftWidth: 1 },
+  // [2026-10-11 email-qa] toolbar do painel de leitura (desktop)
+  readerToolbar: {
+    flexDirection: 'row', alignItems: 'center', gap: 2,
+    paddingHorizontal: 12, paddingVertical: 6, borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  readerTbBtn: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
+  readerTbSep: { width: 1, height: 20, marginHorizontal: 6 },
   sideModule: {
     minWidth: 320,
     flex: 1,

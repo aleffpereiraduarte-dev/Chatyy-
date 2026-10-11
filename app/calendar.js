@@ -485,6 +485,7 @@ function DayCellInner({ isSelected, isToday, isOtherMonth, day, colors }) {
 // so it reads as "happening now" without ever taking the whole chip.
 function LiveBadge({ size = 8 }) {
   const { colors } = useTheme();
+  const { t } = useLanguage();
   const blink = useRef(new Animated.Value(1)).current;
   useEffect(() => {
     const loop = Animated.loop(
@@ -501,7 +502,7 @@ function LiveBadge({ size = 8 }) {
       backgroundColor: colors.error, borderRadius: 4, paddingHorizontal: 4, paddingVertical: 1 }}>
       <Animated.View style={{ width: size - 2, height: size - 2, borderRadius: (size - 2) / 2,
         backgroundColor: '#fff', opacity: blink }} />
-      <Text style={{ color: '#fff', fontSize: 8, fontWeight: '800', letterSpacing: 0.4 }}>AO VIVO</Text>
+      <Text style={{ color: '#fff', fontSize: 8, fontWeight: '800', letterSpacing: 0.4 }}>{t('live.aoVivo')}</Text>
     </View>
   );
 }
@@ -662,7 +663,7 @@ function CalendarGrid({ year, month, selectedDate, events, colors, onSelectDate,
             </Text>
             {monthEventCount > 0 && (
               <Text style={[styles.monthEventCount, { color: colors.textSecondary }]}>
-                {t('calendar.eventCount', { count: monthEventCount })}
+                {eventCountLabel(t, monthEventCount)}
               </Text>
             )}
           </View>
@@ -1974,9 +1975,24 @@ function AddEventModal({ visible, onClose, onSave, colors, calendars, selectedDa
   );
 }
 
+// [2026-10-11 ui-sweep] Plural de verdade: "Nenhum evento" / "1 evento" /
+// "N eventos" (era "0 evento(s)").
+function eventCountLabel(t, n) {
+  const c = Number(n) || 0;
+  if (c === 0) return t('calendar.eventCount_zero');
+  if (c === 1) return t('calendar.eventCount_one', { count: c });
+  return t('calendar.eventCount_other', { count: c });
+}
+
 // ============================================================
 // Error Boundary
 // ============================================================
+// [2026-10-11 ui-sweep] título traduzido (class component não usa hook).
+function CalendarErrorTitle() {
+  const { t } = useLanguage();
+  return <Text style={{ fontSize: 18, fontWeight: '700', color: '#dc2626', marginBottom: 12 }}>{t('common.somethingWentWrong')}</Text>;
+}
+
 class CalendarErrorBoundary extends React.Component {
   state = { error: null };
   static getDerivedStateFromError(error) { return { error }; }
@@ -1984,7 +2000,7 @@ class CalendarErrorBoundary extends React.Component {
     if (this.state.error) {
       return (
         <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 20 }}>
-          <Text style={{ fontSize: 18, fontWeight: '700', color: '#dc2626', marginBottom: 12 }}>Calendar Error</Text>
+          <CalendarErrorTitle />
           <Text style={{ fontSize: 13, color: '#666', textAlign: 'center' }}>{String(this.state.error)}</Text>
         </View>
       );
@@ -3201,7 +3217,7 @@ function CalendarScreenInner() {
                   style={[styles.syncBarBtn, { borderColor: colors.border }]}
                 >
                   {loadingReminders ? <ActivityIndicator size="small" color={colors.primary} /> : <IconSparkles size={15} color={colors.primary} />}
-                  <Text style={[styles.syncBarBtnText, { color: colors.primary }]}>AI</Text>
+                  <Text style={[styles.syncBarBtnText, { color: colors.primary }]}>{t('compose.ai')}</Text>
                 </PressableScale>
               </View>
 
@@ -3226,7 +3242,7 @@ function CalendarScreenInner() {
                   {selectedDateStr}
                 </Text>
                 <Text style={[styles.dayEventCount, { color: colors.textSecondary }]}>
-                  {t('calendar.eventCount', { count: dayEvents.length })}
+                  {eventCountLabel(t, dayEvents.length)}
                 </Text>
               </View>
 

@@ -172,7 +172,7 @@ export default function BotsScreen() {
       return;
     }
     if (!/bot$/i.test(newUsername.trim())) {
-      safeAlert(t?.('common.error') || 'Erro', t?.('bots.usernameMustEndBot') || 'Username deve terminar com "bot"');
+      safeAlert(t?.('common.error') || 'Erro', t?.('bots.usernameMustEndBot') || 'Username deve terminar com "_bot"');
       return;
     }
     // Webhook URL must be HTTPS — backend (chat.php bot_create ~L8930)
@@ -195,7 +195,7 @@ export default function BotsScreen() {
         setNewName(''); setNewUsername(''); setNewWebhook(''); setNewDesc('');
         load();
       } else {
-        safeAlert(t?.('common.error') || 'Erro', r?.message || 'Falha ao criar bot');
+        safeAlert(t?.('common.error') || 'Erro', r?.message || t('bots.createFailed'));
       }
     } catch (e) {
       safeAlert(t?.('common.error') || 'Erro', String(e));
@@ -401,20 +401,20 @@ export default function BotsScreen() {
             </Text>
             <ScrollView>
               <Text style={{ fontSize: 13, color: colors.textSecondary, marginBottom: 6 }}>{t?.('bots.name') || 'Nome'}</Text>
-              <TextInput value={newName} onChangeText={setNewName} placeholder="My Cool Bot" placeholderTextColor={colors.textSecondary}
+              <TextInput value={newName} onChangeText={setNewName} placeholder={t('bots.namePh')} placeholderTextColor={colors.textSecondary}
                 style={{ borderWidth: 1, borderColor: colors.border, borderRadius: 10, padding: 12, color: colors.text, marginBottom: 12 }} />
 
               <Text style={{ fontSize: 13, color: colors.textSecondary, marginBottom: 6 }}>
-                {t?.('bots.username') || 'Username'} ({t?.('bots.mustEndBot') || 'deve terminar com "bot"'})
+                {t?.('bots.username') || 'Username'} ({t?.('bots.mustEndBot') || 'deve terminar com "_bot"'})
               </Text>
-              <TextInput value={newUsername} onChangeText={setNewUsername} placeholder="mycoolbot" placeholderTextColor={colors.textSecondary}
+              <TextInput value={newUsername} onChangeText={setNewUsername} placeholder="mycool_bot" placeholderTextColor={colors.textSecondary}
                 autoCapitalize="none"
                 style={{ borderWidth: 1, borderColor: colors.border, borderRadius: 10, padding: 12, color: colors.text, marginBottom: 12 }} />
 
               <Text style={{ fontSize: 13, color: colors.textSecondary, marginBottom: 6 }}>
                 {t?.('bots.webhook') || 'Webhook URL (HTTPS)'}
               </Text>
-              <TextInput value={newWebhook} onChangeText={setNewWebhook} placeholder="https://meu-bot.com/webhook" placeholderTextColor={colors.textSecondary}
+              <TextInput value={newWebhook} onChangeText={setNewWebhook} placeholder="https://example.com/webhook" placeholderTextColor={colors.textSecondary}
                 autoCapitalize="none" keyboardType="url"
                 style={{ borderWidth: 1, borderColor: colors.border, borderRadius: 10, padding: 12, color: colors.text, marginBottom: 12 }} />
 

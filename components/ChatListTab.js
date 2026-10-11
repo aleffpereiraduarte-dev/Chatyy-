@@ -1,5 +1,5 @@
 import { androidBottomInset, androidTopInset } from '../utils/systemInsets'; // [2026-10-07 android-native] edge-to-edge
-import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo, Suspense } from 'react';
 import {
   View, FlatList, Text, TouchableOpacity, StyleSheet, ScrollView, Modal,
   ActivityIndicator, RefreshControl, TextInput, Alert, ActionSheetIOS,
@@ -35,10 +35,17 @@ import HomeHubCard from './HomeHubCard';
 import AvatarLightbox from './AvatarLightbox';
 import ChatyyOneAvatar from './ChatyyOneAvatar';
 import { setActiveInterval } from '../utils/activeInterval'; // [2026-10-10 perf-battery]
-import StatusCamera, { FILTERS as STATUS_FILTERS, FilterOverlay } from './StatusCamera';
-import BroadcastModal from './BroadcastModal';
-import CreateGroupFlow from './CreateGroupFlow';
-import ChannelDiscoverModal from './ChannelDiscoverModal';
+// [2026-10-11 boot-split] Heavy, rarely-opened surfaces are code-split: the chat
+// list is the boot screen, so StatusCamera (native-only here), the group/channel
+// creation flow, channel discovery and broadcast lists load on first open
+// (React.lazy → own web chunk; on native import() resolves from the bundle).
+// The status editor only needs the light FILTERS/FilterOverlay module.
+import { FILTERS as STATUS_FILTERS, FilterOverlay } from './status/cameraFilters';
+const StatusCamera = React.lazy(() => import('./StatusCamera'));
+const BroadcastModal = React.lazy(() => import('./BroadcastModal'));
+const CreateGroupFlow = React.lazy(() => import('./CreateGroupFlow'));
+const ChannelDiscoverModal = React.lazy(() => import('./ChannelDiscoverModal'));
+import LazyMount from './LazyMount';
 import BrandFab from './BrandFab';
 import Svg, { Path, Rect, Line, Circle as SvgCircle } from 'react-native-svg';
 import CircularProgressArc from './CircularProgressArc';
@@ -2794,7 +2801,7 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab, reque
       {/* [2026-10-10] Sem Modal externo: o StatusCamera já abre o próprio Modal
           fullScreen (preto). O externo aparecia BRANCO antes da câmera. */}
       {Platform.OS !== 'web' && showCustomCamera && (
-        <>
+        <Suspense fallback={null}>
           <StatusCamera
             visible={showCustomCamera}
             t={t}
@@ -2876,7 +2883,7 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab, reque
               setStatusCaption('');
             }}
           />
-        </>
+        </Suspense>
       )}
 
       {/* Status Editor — FULLSCREEN preview + caption + filters (Instagram-like) */}
@@ -7928,13 +7935,13 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
           pelo "+" verde do cabeçalho → /chat-new (que já cria chat, grupo e canal). */}
 
       {/* Broadcast Modal */}
-      <BroadcastModal
+      <LazyMount when={showBroadcast}><BroadcastModal
         visible={showBroadcast}
         onClose={() => setShowBroadcast(false)}
         onCreated={() => { setShowBroadcast(false); loadConversations(false); }}
         colors={colors}
         t={t}
-      />
+      /></LazyMount>
 
       {/* Secret code setter for locked chats (WhatsApp "Secret code") */}
       {secretCodeModalVisible && (
@@ -7992,27 +7999,27 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
       )}
 
       {/* Create Group Flow */}
-      <CreateGroupFlow
+      <LazyMount when={showCreateGroup}><CreateGroupFlow
         visible={showCreateGroup}
         onClose={() => setShowCreateGroup(false)}
         onCreated={handleGroupCreated}
         mode="group"
-      />
+      /></LazyMount>
 
       {/* Create Channel Flow */}
-      <CreateGroupFlow
+      <LazyMount when={showCreateChannel}><CreateGroupFlow
         visible={showCreateChannel}
         onClose={() => setShowCreateChannel(false)}
         onCreated={handleGroupCreated}
         mode="channel"
-      />
+      /></LazyMount>
 
       {/* Discover Channels */}
-      <ChannelDiscoverModal
+      <LazyMount when={showDiscoverChannels}><ChannelDiscoverModal
         visible={showDiscoverChannels}
         onClose={() => setShowDiscoverChannels(false)}
         onJoined={() => loadConversations(false)}
-      />
+      /></LazyMount>
 
       {/* WAVE 95 — Avatar lightbox (tap on a row avatar → fullscreen photo).
           Row tap (anywhere else) still opens the conversation; only the small

@@ -5,7 +5,7 @@ import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import {
   IconArrowLeft, IconEye, IconShield, IconCamera, IconVideo, IconMusic, IconPaperclip,
-  IconNavigation, IconFilm, IconSearch, IconAlertTriangle, IconChevronRight,
+  IconNavigation, IconFilm, IconSearch, IconAlertTriangle, IconChevronRight, IconX,
 } from '../components/Icons';
 import AvatarCircle from '../components/AvatarCircle';
 import * as api from '../services/api';
@@ -235,7 +235,7 @@ function ParentalChildChatScreenInner() {
             {(t('parental.risk') || 'Risco') + ' ' + riskInfo.label}
           </Text>
         </View>
-        <TouchableOpacity onPress={() => setSearchOpen(o => !o)} style={s.iconBtn} accessibilityRole="button" accessibilityLabel="Buscar">
+        <TouchableOpacity onPress={() => setSearchOpen(o => !o)} style={s.iconBtn} accessibilityRole="button" accessibilityLabel={t('sidebar.search')}>
           <IconSearch size={20} color={colors.text} />
         </TouchableOpacity>
       </View>
@@ -253,8 +253,8 @@ function ParentalChildChatScreenInner() {
             autoFocus
           />
           {!!search && (
-            <TouchableOpacity onPress={() => setSearch('')} accessibilityRole="button" accessibilityLabel="Limpar">
-              <Text style={{ color: colors.textSecondary, fontSize: 18 }}>×</Text>
+            <TouchableOpacity onPress={() => setSearch('')} accessibilityRole="button" accessibilityLabel={t('common.clear')}>
+              <IconX size={18} color={colors.textSecondary} />
             </TouchableOpacity>
           )}
         </View>

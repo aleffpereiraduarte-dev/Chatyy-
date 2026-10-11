@@ -1,6 +1,7 @@
 import React from 'react';
 import { View, Text, Platform } from 'react-native';
 import { IconVideo } from './Icons';
+import { useLanguage } from '../context/LanguageContext';
 import { cachedVideoSource } from '../services/videoCacheSource'; // [2026-10-10 native-audit] native video disk cache
 
 let _expoVideo = null;
@@ -16,13 +17,14 @@ function loadExpoVideo() {
 // viewer. Hooks are called here (never behind a conditional in the parent)
 // to stay Rules-of-Hooks safe.
 export default function VideoNotePlayer({ uri }) {
+  const { t } = useLanguage();
   if (!uri) return null;
   const mod = loadExpoVideo();
   if (!mod || !mod.useVideoPlayer || !mod.VideoView) {
     return (
       <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#111' }}>
         <IconVideo size={28} color="#fff" />
-        <Text style={{ color: '#fff', fontSize: 11, marginTop: 4 }}>Video note</Text>
+        <Text style={{ color: '#fff', fontSize: 11, marginTop: 4 }}>{t('chat.video')}</Text>
       </View>
     );
   }

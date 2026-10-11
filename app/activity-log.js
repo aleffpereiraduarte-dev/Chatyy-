@@ -427,7 +427,7 @@ export default function ActivityLogScreen() {
         <TouchableOpacity
           onPress={onRefresh}
           hitSlop={{ top: 10, left: 10, right: 10, bottom: 10 }}
-          accessibilityLabel="Refresh">
+          accessibilityLabel={t('common.refresh')}>
           <IconRefresh size={20} color={colors.textSecondary} />
         </TouchableOpacity>
       </View>

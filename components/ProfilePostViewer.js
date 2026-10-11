@@ -281,7 +281,7 @@ export default function ProfilePostViewer({
           flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
           paddingHorizontal: 14,
         }}>
-          <TouchableOpacity onPress={onClose} style={{ padding: 8 }} accessibilityLabel="Close">
+          <TouchableOpacity onPress={onClose} style={{ padding: 8 }} accessibilityLabel={t ? t('common.close') : 'Fechar'}>
             <IconX size={26} color="#fff" />
           </TouchableOpacity>
           <Text style={{ color: '#fff', fontSize: 13, fontWeight: '600' }}>

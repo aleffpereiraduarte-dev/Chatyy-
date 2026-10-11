@@ -55,7 +55,7 @@ if (Platform.OS !== 'web' && KEYBOARD_CONTROLLER_ACTIVE) {
 if (Platform.OS !== 'web') {
   try {
     // eslint-disable-next-line global-require
-    const vs = require('react-native-view-shot');
+    const vs = require('../../services/viewShot').viewShotModule();
     captureRefFn = vs.captureRef || (typeof vs.default === 'function' ? vs.default : null);
   } catch { captureRefFn = null; }
   try {

@@ -12,23 +12,24 @@ import {
 } from 'react-native';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
+import { IconShield, IconMessageCircle, IconPhone, IconUsers, IconClock, IconMapPin, IconSparkles, IconSettings, IconZap, IconEye, IconSmartphone, IconCalendar, IconBell, IconCake, IconEyeOff, IconLock, IconCheckCircle, IconMail, IconNavigation, IconAlertTriangle, IconUserPlus } from './Icons';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
-// Simple SVG-free icon components using Unicode/emoji-like text
+// Icon wrappers — SVG icons from components/Icons (no emoji chrome)
 function IconCircle({ color, size = 64, children }) {
   return (
     <View style={[styles.iconCircle, { width: size, height: size, borderRadius: size / 2, backgroundColor: color + '18' }]}>
-      <Text style={{ fontSize: size * 0.45, color }}>{children}</Text>
+      {children}
     </View>
   );
 }
 
-function FeatureRow({ icon, text, color, colors }) {
+function FeatureRow({ Icon, text, color, colors }) {
   return (
     <View style={styles.featureRow}>
       <View style={[styles.featureIcon, { backgroundColor: (color || colors.primary) + '15' }]}>
-        <Text style={{ fontSize: 18, color: color || colors.primary }}>{icon}</Text>
+        {Icon ? <Icon size={18} color={color || colors.primary} /> : null}
       </View>
       <Text style={[styles.featureText, { color: colors.text }]}>{text}</Text>
     </View>
@@ -143,23 +144,23 @@ export default function ParentalInfoModal({ visible, onClose, onStartCreate }) {
             <ScrollView style={styles.pageScroll} contentContainerStyle={styles.pageContent} showsVerticalScrollIndicator={false}>
               <View style={[styles.heroSection, { backgroundColor: greenAccent + '10' }]}>
                 <IconCircle color={greenAccent} size={80}>
-                  {'\u{1F6E1}'}
+                  <IconShield size={36} color={greenAccent} />
                 </IconCircle>
                 <Text style={[styles.pageTitle, { color: colors.text }]}>
                   {t('parental.onboarding.protectTitle') || 'Proteja seu filho no Chatyy'}
                 </Text>
                 <Text style={[styles.pageSubtitle, { color: colors.textSecondary }]}>
-                  {t('parental.onboarding.protectSubtitle') || 'O Chatyy oferece controle parental completo para criancas de 6 a 13 anos. Voce tera total controle sobre a experiencia digital do seu filho.'}
+                  {t('parental.onboarding.protectSubtitle') || 'O Chatyy oferece controle parental completo para crianças de 6 a 13 anos. Você terá total controle sobre a experiência digital do seu filho.'}
                 </Text>
               </View>
 
               <View style={[styles.card, { backgroundColor: cardBg }]}>
-                <FeatureRow icon={'\u{1F4AC}'} text={t('parental.onboarding.feat1') || 'Monitore todas as conversas'} colors={colors} color={blueAccent} />
-                <FeatureRow icon={'\u{1F4DE}'} text={t('parental.onboarding.feat2') || 'Veja o historico de chamadas'} colors={colors} color={purpleAccent} />
-                <FeatureRow icon={'\u{1F465}'} text={t('parental.onboarding.feat3') || 'Controle quem pode entrar em contato'} colors={colors} color={orangeAccent} />
-                <FeatureRow icon={'\u{23F1}'} text={t('parental.onboarding.feat4') || 'Defina limites de tempo de uso'} colors={colors} color={tealAccent} />
-                <FeatureRow icon={'\u{1F4CD}'} text={t('parental.onboarding.feat5') || 'Localizacao em tempo real 24h'} colors={colors} color={'#dc2626'} />
-                <FeatureRow icon={'\u{1F916}'} text={t('parental.onboarding.feat6') || 'Resumos diarios com IA'} colors={colors} color={greenAccent} />
+                <FeatureRow Icon={IconMessageCircle} text={t('parental.onboarding.feat1') || 'Monitore todas as conversas'} colors={colors} color={blueAccent} />
+                <FeatureRow Icon={IconPhone} text={t('parental.onboarding.feat2') || 'Veja o histórico de chamadas'} colors={colors} color={purpleAccent} />
+                <FeatureRow Icon={IconUsers} text={t('parental.onboarding.feat3') || 'Controle quem pode entrar em contato'} colors={colors} color={orangeAccent} />
+                <FeatureRow Icon={IconClock} text={t('parental.onboarding.feat4') || 'Defina limites de tempo de uso'} colors={colors} color={tealAccent} />
+                <FeatureRow Icon={IconMapPin} text={t('parental.onboarding.feat5') || 'Localização em tempo real 24h'} colors={colors} color={'#dc2626'} />
+                <FeatureRow Icon={IconSparkles} text={t('parental.onboarding.feat6') || 'Resumos diários com IA'} colors={colors} color={greenAccent} />
               </View>
             </ScrollView>
           </View>
@@ -169,7 +170,7 @@ export default function ParentalInfoModal({ visible, onClose, onStartCreate }) {
             <ScrollView style={styles.pageScroll} contentContainerStyle={styles.pageContent} showsVerticalScrollIndicator={false}>
               <View style={[styles.heroSection, { backgroundColor: blueAccent + '10' }]}>
                 <IconCircle color={blueAccent} size={80}>
-                  {'\u{2699}'}
+                  <IconSettings size={36} color={blueAccent} />
                 </IconCircle>
                 <Text style={[styles.pageTitle, { color: colors.text }]}>
                   {t('parental.onboarding.howTitle') || 'Como funciona'}
@@ -177,15 +178,16 @@ export default function ParentalInfoModal({ visible, onClose, onStartCreate }) {
               </View>
 
               <View style={[styles.card, { backgroundColor: cardBg }]}>
-                <StepItem number="1" text={t('parental.onboarding.step1') || 'Voce cria a conta do seu filho (nome, data de nascimento)'} colors={colors} />
-                <StepItem number="2" text={t('parental.onboarding.step2') || 'Envia um documento de identidade (RG, Certidao de Nascimento, Termo de Guarda)'} colors={colors} />
+                <StepItem number="1" text={t('parental.onboarding.step1') || 'Você cria a conta do seu filho (nome, data de nascimento)'} colors={colors} />
+                <StepItem number="2" text={t('parental.onboarding.step2') || 'Envia um documento de identidade (RG, Certidão de Nascimento, Termo de Guarda)'} colors={colors} />
                 <StepItem number="3" text={t('parental.onboarding.step3') || 'Nossa IA analisa o documento automaticamente'} colors={colors} />
                 <StepItem number="4" text={t('parental.onboarding.step4') || 'Conta ativada! Seu filho recebe email e senha para entrar'} colors={colors} />
               </View>
 
               <View style={[styles.timeNote, { backgroundColor: greenAccent + '12' }]}>
+                <IconZap size={16} color={greenAccent} />
                 <Text style={[styles.timeNoteText, { color: greenAccent }]}>
-                  {'\u{26A1}'} {t('parental.onboarding.twoMinutes') || 'Todo o processo leva menos de 2 minutos'}
+                  {t('parental.onboarding.twoMinutes') || 'Todo o processo leva menos de 2 minutos'}
                 </Text>
               </View>
             </ScrollView>
@@ -196,21 +198,21 @@ export default function ParentalInfoModal({ visible, onClose, onStartCreate }) {
             <ScrollView style={styles.pageScroll} contentContainerStyle={styles.pageContent} showsVerticalScrollIndicator={false}>
               <View style={[styles.heroSection, { backgroundColor: purpleAccent + '10' }]}>
                 <IconCircle color={purpleAccent} size={80}>
-                  {'\u{1F440}'}
+                  <IconEye size={36} color={purpleAccent} />
                 </IconCircle>
                 <Text style={[styles.pageTitle, { color: colors.text }]}>
-                  {t('parental.onboarding.monitorTitle') || 'O que voce pode monitorar'}
+                  {t('parental.onboarding.monitorTitle') || 'O que você pode monitorar'}
                 </Text>
               </View>
 
               <View style={[styles.card, { backgroundColor: cardBg }]}>
-                <FeatureRow icon={'\u{1F4AC}'} text={t('parental.onboarding.mon1') || 'Conversas: Leia todas as mensagens do seu filho (somente leitura)'} colors={colors} color={blueAccent} />
-                <FeatureRow icon={'\u{1F4DE}'} text={t('parental.onboarding.mon2') || 'Chamadas: Veja quem ligou e por quanto tempo'} colors={colors} color={purpleAccent} />
-                <FeatureRow icon={'\u{1F465}'} text={t('parental.onboarding.mon3') || 'Contatos: Defina uma lista de contatos permitidos'} colors={colors} color={orangeAccent} />
-                <FeatureRow icon={'\u{1F4F1}'} text={t('parental.onboarding.mon4') || 'Tempo de tela: Veja quanto tempo seu filho usa o app por dia'} colors={colors} color={tealAccent} />
-                <FeatureRow icon={'\u{1F553}'} text={t('parental.onboarding.mon5') || 'Horarios: Defina horarios permitidos (ex: 8h-21h)'} colors={colors} color={greenAccent} />
-                <FeatureRow icon={'\u{1F4CD}'} text={t('parental.onboarding.mon6') || 'Localização: Saiba onde seu filho esta em tempo real, 24 horas'} colors={colors} color={'#dc2626'} />
-                <FeatureRow icon={'\u{1F514}'} text={t('parental.onboarding.mon7') || 'Alertas IA: Receba alertas automaticos sobre atividades suspeitas'} colors={colors} color={'#d97706'} />
+                <FeatureRow Icon={IconMessageCircle} text={t('parental.onboarding.mon1') || 'Conversas: Leia todas as mensagens do seu filho (somente leitura)'} colors={colors} color={blueAccent} />
+                <FeatureRow Icon={IconPhone} text={t('parental.onboarding.mon2') || 'Chamadas: Veja quem ligou e por quanto tempo'} colors={colors} color={purpleAccent} />
+                <FeatureRow Icon={IconUsers} text={t('parental.onboarding.mon3') || 'Contatos: Defina uma lista de contatos permitidos'} colors={colors} color={orangeAccent} />
+                <FeatureRow Icon={IconSmartphone} text={t('parental.onboarding.mon4') || 'Tempo de tela: Veja quanto tempo seu filho usa o app por dia'} colors={colors} color={tealAccent} />
+                <FeatureRow Icon={IconCalendar} text={t('parental.onboarding.mon5') || 'Horários: Defina horários permitidos (ex: 8h-21h)'} colors={colors} color={greenAccent} />
+                <FeatureRow Icon={IconMapPin} text={t('parental.onboarding.mon6') || 'Localização: Saiba onde seu filho está em tempo real, 24 horas'} colors={colors} color={'#dc2626'} />
+                <FeatureRow Icon={IconBell} text={t('parental.onboarding.mon7') || 'Alertas IA: Receba alertas automáticos sobre atividades suspeitas'} colors={colors} color={'#d97706'} />
               </View>
             </ScrollView>
           </View>
@@ -220,7 +222,7 @@ export default function ParentalInfoModal({ visible, onClose, onStartCreate }) {
             <ScrollView style={styles.pageScroll} contentContainerStyle={styles.pageContent} showsVerticalScrollIndicator={false}>
               <View style={[styles.heroSection, { backgroundColor: orangeAccent + '10' }]}>
                 <IconCircle color={orangeAccent} size={80}>
-                  {'\u{1F382}'}
+                  <IconCake size={36} color={orangeAccent} />
                 </IconCircle>
                 <Text style={[styles.pageTitle, { color: colors.text }]}>
                   {t('parental.onboarding.thirteenTitle') || 'Aos 13 anos'}
@@ -231,16 +233,16 @@ export default function ParentalInfoModal({ visible, onClose, onStartCreate }) {
               </View>
 
               <View style={[styles.card, { backgroundColor: cardBg }]}>
-                <FeatureRow icon={'\u{1F514}'} text={t('parental.onboarding.grad1') || 'Voce recebe uma notificacao'} colors={colors} color={blueAccent} />
-                <FeatureRow icon={'\u{1F6D1}'} text={t('parental.onboarding.grad2') || 'O monitoramento e desativado'} colors={colors} color={orangeAccent} />
-                <FeatureRow icon={'\u{1F512}'} text={t('parental.onboarding.grad3') || 'Seu filho ganha total privacidade'} colors={colors} color={greenAccent} />
-                <FeatureRow icon={'\u{2705}'} text={t('parental.onboarding.grad4') || 'As restricoes sao removidas'} colors={colors} color={purpleAccent} />
-                <FeatureRow icon={'\u{1F4E7}'} text={t('parental.onboarding.grad5') || 'A conta continua funcionando normalmente'} colors={colors} color={tealAccent} />
+                <FeatureRow Icon={IconBell} text={t('parental.onboarding.grad1') || 'Você recebe uma notificação'} colors={colors} color={blueAccent} />
+                <FeatureRow Icon={IconEyeOff} text={t('parental.onboarding.grad2') || 'O monitoramento é desativado'} colors={colors} color={orangeAccent} />
+                <FeatureRow Icon={IconLock} text={t('parental.onboarding.grad3') || 'Seu filho ganha total privacidade'} colors={colors} color={greenAccent} />
+                <FeatureRow Icon={IconCheckCircle} text={t('parental.onboarding.grad4') || 'As restrições são removidas'} colors={colors} color={purpleAccent} />
+                <FeatureRow Icon={IconMail} text={t('parental.onboarding.grad5') || 'A conta continua funcionando normalmente'} colors={colors} color={tealAccent} />
               </View>
 
               <View style={[styles.legalNote, { backgroundColor: colors.surfaceVariant }]}>
                 <Text style={[styles.legalNoteText, { color: colors.textSecondary }]}>
-                  {t('parental.onboarding.legalNote') || 'Esta e a idade minima recomendada pela legislacao brasileira (LGPD) e internacional (COPPA).'}
+                  {t('parental.onboarding.legalNote') || 'Esta é a idade mínima recomendada pela legislação brasileira (LGPD) e internacional (COPPA).'}
                 </Text>
               </View>
             </ScrollView>
@@ -251,27 +253,27 @@ export default function ParentalInfoModal({ visible, onClose, onStartCreate }) {
             <ScrollView style={styles.pageScroll} contentContainerStyle={styles.pageContent} showsVerticalScrollIndicator={false}>
               <View style={[styles.heroSection, { backgroundColor: '#dc2626' + '10' }]}>
                 <IconCircle color={'#dc2626'} size={80}>
-                  {'\u{1F5FA}'}
+                  <IconNavigation size={36} color={'#dc2626'} />
                 </IconCircle>
                 <Text style={[styles.pageTitle, { color: colors.text }]}>
-                  {t('parental.onboarding.locationTitle') || 'Localizacao 24h'}
+                  {t('parental.onboarding.locationTitle') || 'Localização 24h'}
                 </Text>
                 <Text style={[styles.pageSubtitle, { color: colors.textSecondary }]}>
-                  {t('parental.onboarding.locationSubtitle') || 'Com a permissao de localizacao ativada no celular do seu filho, voce pode:'}
+                  {t('parental.onboarding.locationSubtitle') || 'Com a permissão de localização ativada no celular do seu filho, você pode:'}
                 </Text>
               </View>
 
               <View style={[styles.card, { backgroundColor: cardBg }]}>
-                <FeatureRow icon={'\u{1F4CD}'} text={t('parental.onboarding.loc1') || 'Ver a localizacao em tempo real no mapa'} colors={colors} color={'#dc2626'} />
-                <FeatureRow icon={'\u{1F6A8}'} text={t('parental.onboarding.loc2') || 'Receber alertas quando sair de areas seguras (geofencing)'} colors={colors} color={orangeAccent} />
-                <FeatureRow icon={'\u{1F4C5}'} text={t('parental.onboarding.loc3') || 'Ver o historico de locais visitados'} colors={colors} color={blueAccent} />
-                <FeatureRow icon={'\u{1F4A4}'} text={t('parental.onboarding.loc4') || 'Tudo de forma discreta — seu filho nao recebe notificacao'} colors={colors} color={purpleAccent} />
+                <FeatureRow Icon={IconMapPin} text={t('parental.onboarding.loc1') || 'Ver a localização em tempo real no mapa'} colors={colors} color={'#dc2626'} />
+                <FeatureRow Icon={IconAlertTriangle} text={t('parental.onboarding.loc2') || 'Receber alertas quando sair de áreas seguras (geofencing)'} colors={colors} color={orangeAccent} />
+                <FeatureRow Icon={IconCalendar} text={t('parental.onboarding.loc3') || 'Ver o histórico de locais visitados'} colors={colors} color={blueAccent} />
+                <FeatureRow Icon={IconEyeOff} text={t('parental.onboarding.loc4') || 'Tudo de forma discreta — seu filho não recebe notificação'} colors={colors} color={purpleAccent} />
               </View>
 
               <View style={[styles.privacyNote, { backgroundColor: greenAccent + '10' }]}>
-                <Text style={[styles.privacyIcon]}>{'\u{1F512}'}</Text>
+                <View style={styles.privacyIcon}><IconLock size={18} color={greenAccent} /></View>
                 <Text style={[styles.privacyText, { color: greenAccent }]}>
-                  {t('parental.onboarding.locPrivacy') || 'A localizacao e criptografada e so voce tem acesso.'}
+                  {t('parental.onboarding.locPrivacy') || 'A localização é criptografada e só você tem acesso.'}
                 </Text>
               </View>
             </ScrollView>
@@ -282,10 +284,10 @@ export default function ParentalInfoModal({ visible, onClose, onStartCreate }) {
             <View style={[styles.pageScroll, styles.pageContent, styles.centerContent]}>
               <View style={[styles.heroSection, { backgroundColor: greenAccent + '10' }]}>
                 <IconCircle color={greenAccent} size={96}>
-                  {'\u{1F680}'}
+                  <IconUserPlus size={43} color={greenAccent} />
                 </IconCircle>
                 <Text style={[styles.pageTitle, { color: colors.text, fontSize: 28 }]}>
-                  {t('parental.onboarding.startTitle') || 'Vamos comecar!'}
+                  {t('parental.onboarding.startTitle') || 'Vamos começar!'}
                 </Text>
               </View>
 
@@ -302,7 +304,7 @@ export default function ParentalInfoModal({ visible, onClose, onStartCreate }) {
               </TouchableOpacity>
 
               <Text style={[styles.docNote, { color: colors.textSecondary }]}>
-                {t('parental.onboarding.docNote') || 'Voce precisara de um documento de identidade'}
+                {t('parental.onboarding.docNote') || 'Você precisará de um documento de identidade'}
               </Text>
             </View>
           </View>
@@ -318,7 +320,7 @@ export default function ParentalInfoModal({ visible, onClose, onStartCreate }) {
               accessibilityRole="button"
             >
               <Text style={[styles.nextButtonText, { color: colors.onPrimary }]}>
-                {t('parental.onboarding.next') || 'Proximo'}
+                {t('parental.onboarding.next') || 'Próximo'}
               </Text>
             </TouchableOpacity>
           )}
@@ -455,10 +457,14 @@ const styles = StyleSheet.create({
   timeNote: {
     borderRadius: 12,
     padding: 16,
+    flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
   },
   timeNoteText: {
     fontSize: 15,
+    flexShrink: 1,
     fontWeight: '600',
     textAlign: 'center',
   },
@@ -481,7 +487,6 @@ const styles = StyleSheet.create({
     marginTop: 8,
   },
   privacyIcon: {
-    fontSize: 20,
     marginRight: 10,
   },
   privacyText: {

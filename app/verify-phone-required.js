@@ -13,11 +13,13 @@ import {
 import { useRouter } from 'expo-router';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
+import { useLanguage } from '../context/LanguageContext';
 import * as api from '../services/api';
 import { IconSmartphone } from '../components/Icons';
 
 export default function VerifyPhoneRequiredScreen() {
   const { colors } = useTheme();
+  const { t } = useLanguage();
   const router = useRouter();
   const { user, refreshAuth, logout } = useAuth();
   const [phone, setPhone] = useState('');
@@ -30,7 +32,7 @@ export default function VerifyPhoneRequiredScreen() {
   const requestOtp = async () => {
     setError('');
     let normalized = phone.trim();
-    if (!normalized) { setError('Digite seu número'); return; }
+    if (!normalized) { setError(t('verifyPhoneReq.enterNumber')); return; }
     if (normalized[0] === '+') {
       // Já tem prefixo internacional — só sanitizar separadores (espaços/hífens).
       normalized = '+' + normalized.slice(1).replace(/\D/g, '');
@@ -52,10 +54,10 @@ export default function VerifyPhoneRequiredScreen() {
         setStep('code');
         setTimeout(() => codeRef.current?.focus(), 100);
       } else {
-        setError(r?.message || 'Erro ao enviar código');
+        setError(r?.message || t('signup.validation.sendError'));
       }
     } catch (e) {
-      setError('Erro de conexão');
+      setError(t('compose.errorConnection'));
     } finally {
       setLoading(false);
     }
@@ -63,7 +65,7 @@ export default function VerifyPhoneRequiredScreen() {
 
   const verifyCode = async () => {
     setError('');
-    if (code.length !== 6) { setError('Código deve ter 6 dígitos'); return; }
+    if (code.length !== 6) { setError(t('verifyPhoneReq.codeLength')); return; }
     setLoading(true);
     try {
       const r = await api.verifyPhoneCheck(phone, code);
@@ -72,10 +74,10 @@ export default function VerifyPhoneRequiredScreen() {
         await refreshAuth();
         router.replace('/inbox');
       } else {
-        setError(r?.message || 'Código inválido');
+        setError(r?.message || t('signup.validation.invalidCode'));
       }
     } catch (e) {
-      setError('Erro de conexão');
+      setError(t('compose.errorConnection'));
     } finally {
       setLoading(false);
     }
@@ -90,16 +92,16 @@ export default function VerifyPhoneRequiredScreen() {
         <View style={{ alignItems: 'center', marginBottom: 32 }}>
           <IconSmartphone size={56} color={colors.primary} />
           <Text style={{ fontSize: 22, fontWeight: '700', color: colors.text, marginTop: 16, textAlign: 'center' }}>
-            Verifique seu telefone
+            {t('verifyPhoneReq.title')}
           </Text>
           <Text style={{ fontSize: 14, color: colors.textSecondary, marginTop: 8, textAlign: 'center', lineHeight: 20 }}>
-            Pra usar o Chatyy você precisa{'\n'}verificar seu número de telefone.
+            {t('verifyPhoneReq.subtitle')}
           </Text>
         </View>
 
         {step === 'phone' ? (
           <>
-            <Text style={{ color: colors.textSecondary, fontSize: 13, marginBottom: 6 }}>Telefone (com DDD/código do país)</Text>
+            <Text style={{ color: colors.textSecondary, fontSize: 13, marginBottom: 6 }}>{t('verifyPhoneReq.phoneLabel')}</Text>
             <TextInput
               value={phone}
               onChangeText={setPhone}
@@ -131,19 +133,19 @@ export default function VerifyPhoneRequiredScreen() {
               }}
             >
               {loading ? <ActivityIndicator color={colors.onPrimary || '#fff'} /> : (
-                <Text style={{ color: colors.onPrimary || '#fff', fontWeight: '700', fontSize: 16 }}>Enviar código</Text>
+                <Text style={{ color: colors.onPrimary || '#fff', fontWeight: '700', fontSize: 16 }}>{t('login.phoneSendCode')}</Text>
               )}
             </TouchableOpacity>
           </>
         ) : (
           <>
             <Text style={{ color: colors.textSecondary, fontSize: 13, marginBottom: 6 }}>
-              Código enviado para {phone}
+              {t('verifyPhoneReq.codeSentTo', { phone })}
             </Text>
             <TextInput
               ref={codeRef}
               value={code}
-              onChangeText={(t) => setCode(t.replace(/\D/g, '').slice(0, 6))}
+              onChangeText={(v) => setCode(v.replace(/\D/g, '').slice(0, 6))}
               placeholder="000000"
               placeholderTextColor={colors.textTertiary}
               keyboardType="number-pad"
@@ -174,25 +176,25 @@ export default function VerifyPhoneRequiredScreen() {
               }}
             >
               {loading ? <ActivityIndicator color={colors.onPrimary || '#fff'} /> : (
-                <Text style={{ color: colors.onPrimary || '#fff', fontWeight: '700', fontSize: 16 }}>Verificar</Text>
+                <Text style={{ color: colors.onPrimary || '#fff', fontWeight: '700', fontSize: 16 }}>{t('common.verify')}</Text>
               )}
             </TouchableOpacity>
             <TouchableOpacity onPress={() => setStep('phone')} style={{ marginTop: 12, alignItems: 'center' }}>
-              <Text style={{ color: colors.primary, fontSize: 14 }}>Mudar número</Text>
+              <Text style={{ color: colors.primary, fontSize: 14 }}>{t('login.phoneChangeNumber')}</Text>
             </TouchableOpacity>
           </>
         )}
 
         <TouchableOpacity
           onPress={() => {
-            Alert.alert('Sair', 'Deseja sair da conta?', [
-              { text: 'Cancelar', style: 'cancel' },
-              { text: 'Sair', style: 'destructive', onPress: () => { logout(); router.replace('/login'); } },
+            Alert.alert(t('common.signOut'), t('sidebar.logoutConfirm'), [
+              { text: t('common.cancel'), style: 'cancel' },
+              { text: t('common.signOut'), style: 'destructive', onPress: () => { logout(); router.replace('/login'); } },
             ]);
           }}
           style={{ marginTop: 32, alignItems: 'center' }}
         >
-          <Text style={{ color: colors.textSecondary, fontSize: 13 }}>Sair</Text>
+          <Text style={{ color: colors.textSecondary, fontSize: 13 }}>{t('common.signOut')}</Text>
         </TouchableOpacity>
       </ScrollView>
     </KeyboardAvoidingView>

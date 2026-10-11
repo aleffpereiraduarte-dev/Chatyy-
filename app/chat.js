@@ -24,12 +24,13 @@ import { setActiveInterval } from '../utils/activeInterval'; // [2026-10-10 perf
 import ChatListTab from '../components/ChatListTab';
 import { IS_TABLET_DEVICE } from '../utils/responsive'; // [2026-10-10 tablet-split]
 import AvatarCircle from '../components/AvatarCircle';
-import ChatCallsTab from '../components/ChatCallsTab';
 // Heavy non-default tabs — code-split via React.lazy so cold start doesn't pay
 // the ChatStatusTab (4.5k LOC), ChatFeedTab, ChannelsTab, CommunitiesTab, kids
 // tabs parse cost upfront. Each chunk only loads when the user actually opens
-// the tab. ChatCallsTab stays eager because chat.js has a require() reference
-// to its `getCallHistoryCached` named export at startup (missed-calls badge).
+// the tab. [2026-10-11 boot-split] ChatCallsTab is lazy too now: the badge
+// helpers (getCallHistoryCached/markMissedCallsRead) live in
+// services/callHistoryStore, so the 4k-LOC tab only loads on first open.
+const ChatCallsTab = React.lazy(() => import('../components/ChatCallsTab'));
 const ChatFeedTab = React.lazy(() => import('../components/ChatFeedTab'));
 const ChatStatusTab = React.lazy(() => import('../components/ChatStatusTab'));
 const ChannelsTab = React.lazy(() => import('../components/ChannelsTab'));
@@ -37,6 +38,7 @@ const CommunitiesTab = React.lazy(() => import('../components/CommunitiesTab'));
 const KidsLearnTab = React.lazy(() => import('../components/KidsLearnTab'));
 const KidsTVTab = React.lazy(() => import('../components/KidsTVTab'));
 import SyncBar from '../components/SyncBar';
+import { CallListSkeleton } from '../components/SkeletonLoader'; // [2026-10-11 boot-split] lazy Calls fallback
 import { isSyncComplete, runInitialSync } from '../services/initialSync';
 import PlusOnboardingTour, { checkShouldShowPlusOnboarding } from '../components/PlusOnboardingTour';
 import GlobalSearch from '../components/GlobalSearch';
@@ -429,7 +431,7 @@ function ChatHub() {
     const compute = async () => {
       let count = 0;
       try {
-        const { getCallHistoryCached } = require('../components/ChatCallsTab');
+        const { getCallHistoryCached } = require('../services/callHistoryStore');
         const cached = (typeof getCallHistoryCached === 'function') ? getCallHistoryCached() : [];
         let lastSeen = 0;
         try {
@@ -467,7 +469,7 @@ function ChatHub() {
   React.useEffect(() => {
     if (activeTab === 'calls') {
       try {
-        const { markMissedCallsRead } = require('../components/ChatCallsTab');
+        const { markMissedCallsRead } = require('../services/callHistoryStore');
         markMissedCallsRead?.();
       } catch {}
       try {
@@ -1193,7 +1195,7 @@ function ChatHub() {
               )}
             </View>
             {mountedTabs.has('calls') && <View style={{ display: activeTab === 'calls' ? 'flex' : 'none', flex: activeTab === 'calls' ? 1 : undefined }}>
-              <ChatErrorBoundary><ChatCallsTab {...tabProps} /></ChatErrorBoundary>
+              <ChatErrorBoundary><Suspense fallback={<CallListSkeleton />}><ChatCallsTab {...tabProps} /></Suspense></ChatErrorBoundary>
             </View>}
             {mountedTabs.has('feed') && <View style={{ display: activeTab === 'feed' ? 'flex' : 'none', flex: activeTab === 'feed' ? 1 : undefined }}>
               <ChatErrorBoundary><Suspense fallback={null}><ChatFeedTab {...tabProps} /></Suspense></ChatErrorBoundary>
@@ -1342,7 +1344,7 @@ function ChatHub() {
           /></ChatErrorBoundary>
         </View>
         {mountedTabs.has('calls') && <View style={{ display: activeTab === 'calls' ? 'flex' : 'none', flex: activeTab === 'calls' ? 1 : undefined }}>
-          <ChatErrorBoundary><ChatCallsTab {...tabProps} /></ChatErrorBoundary>
+          <ChatErrorBoundary><Suspense fallback={<CallListSkeleton />}><ChatCallsTab {...tabProps} /></Suspense></ChatErrorBoundary>
         </View>}
         {mountedTabs.has('feed') && <View style={{ display: activeTab === 'feed' ? 'flex' : 'none', flex: activeTab === 'feed' ? 1 : undefined }}>
           <ChatErrorBoundary><Suspense fallback={null}><ChatFeedTab {...tabProps} /></Suspense></ChatErrorBoundary>

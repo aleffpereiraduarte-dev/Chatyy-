@@ -3,6 +3,7 @@ import { AppState, Platform, View, Text, TouchableOpacity, StyleSheet, ActivityI
 import * as LocalAuthentication from 'expo-local-authentication';
 import { usePathname } from 'expo-router';
 import { useLanguage } from './LanguageContext';
+import { IconLock } from '../components/Icons';
 
 // Routes where biometric auto-lock must be SUPPRESSED. These are the
 // pre-authentication / public screens — locking them is incoherent (the
@@ -376,7 +377,7 @@ export function BiometricProvider({ children }) {
   const lockOverlay = isLocked && biometricEnabled ? (
     <View style={ls.overlay}>
       <View style={ls.card}>
-        <Text style={ls.lockIcon}>{'\uD83D\uDD12'}</Text>
+        <View style={ls.lockIcon}><IconLock size={48} color="#fff" /></View>
         <Text style={ls.title}>Chatyy</Text>
         <Text style={ls.subtitle}>{t('biometric.unlockToContinue')}</Text>
         {authenticating ? (
@@ -437,7 +438,7 @@ const ls = StyleSheet.create({
     alignItems: 'center',
     width: 300,
   },
-  lockIcon: { fontSize: 48, marginBottom: 16 },
+  lockIcon: { marginBottom: 16 },
   title: { fontSize: 24, fontWeight: '700', color: '#fff', marginBottom: 8 },
   subtitle: { fontSize: 14, color: '#9ca3af', textAlign: 'center', marginBottom: 0 },
   btn: {

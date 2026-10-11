@@ -858,7 +858,7 @@ export default function CreatePostModal({
             setStep(2);
           }
         }).catch(() => {
-          setError(t('feed.cameraError') || 'Camera not available');
+          setError(t('feed.cameraError') || 'Câmera indisponível');
         });
       });
     }
@@ -1184,7 +1184,7 @@ export default function CreatePostModal({
                 <View style={[gs.actionIcon, { backgroundColor: isDark ? 'rgba(255,255,255,0.15)' : 'rgba(17, 17, 17,0.1)' }]}>
                   <IconCamera size={22} color={colors.primary} />
                 </View>
-                <Text style={[gs.actionLabel, { color: colors.text }]}>{t('post.camera') || 'Camera'}</Text>
+                <Text style={[gs.actionLabel, { color: colors.text }]}>{t('post.camera') || 'Câmera'}</Text>
               </TouchableOpacity>
               {!isWeb && (
                 <TouchableOpacity
@@ -1231,7 +1231,7 @@ export default function CreatePostModal({
                     </TouchableOpacity>
                     <TouchableOpacity style={[gs.webBtn, { backgroundColor: colors.primary }]} onPress={openCamera} activeOpacity={0.8}>
                       <IconCamera size={20} color={colors.onPrimary} />
-                      <Text style={[gs.webBtnText, { color: colors.onPrimary }]}>{t('post.camera') || 'Camera'}</Text>
+                      <Text style={[gs.webBtnText, { color: colors.onPrimary }]}>{t('post.camera') || 'Câmera'}</Text>
                     </TouchableOpacity>
                   </View>
                 </View>
@@ -1971,7 +1971,7 @@ function renderSingleMedia(item, isWeb, activeFilter, colors, t) {
           return (
             <>
               <CachedImage source={{ uri: item.uri }} style={StyleSheet.absoluteFill} resizeMode="contain" />
-              <View style={gs.previewVideoBadge}><Text style={gs.previewVideoBadgeText}>VIDEO</Text></View>
+              <View style={gs.previewVideoBadge}><Text style={gs.previewVideoBadgeText}>{String(t?.('chat.video') || 'Vídeo').toUpperCase()}</Text></View>
             </>
           );
         })()}
@@ -2022,7 +2022,7 @@ function renderMediaItem(item, isWeb, activeFilter, colors, t, idx) {
     return (
       <>
         <CachedImage source={{ uri: item.thumbnail || item.uri }} style={[StyleSheet.absoluteFill, getNativeFilterStyle(activeFilter)]} resizeMode="contain" />
-        <View style={gs.previewVideoBadge}><Text style={gs.previewVideoBadgeText}>VIDEO</Text></View>
+        <View style={gs.previewVideoBadge}><Text style={gs.previewVideoBadgeText}>{String(t?.('chat.video') || 'Vídeo').toUpperCase()}</Text></View>
       </>
     );
   }

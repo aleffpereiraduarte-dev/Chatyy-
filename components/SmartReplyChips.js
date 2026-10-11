@@ -3,7 +3,7 @@ import { View, Text, TouchableOpacity, StyleSheet, ActivityIndicator, Animated, 
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import { FontSize, Spacing, BorderRadius } from '../constants/theme';
-import { IconSparkles } from './Icons';
+import { IconSparkles, IconSend } from './Icons';
 
 const BRAND = '#111111';
 
@@ -179,7 +179,7 @@ export default function SmartReplyChips({ email, onSelectReply, onSendReply, rep
                     {sending ? (
                       <ActivityIndicator size="small" color="#fff" />
                     ) : (
-                      <Text style={s.sendArrow}>↑</Text>
+                      <IconSend size={15} color="#fff" />
                     )}
                   </TouchableOpacity>
                 </View>

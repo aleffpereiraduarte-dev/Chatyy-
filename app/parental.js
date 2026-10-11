@@ -1556,7 +1556,7 @@ function ParentalScreenInner() {
                 <IconCopy size={18} color={ACCENT} />
               </TouchableOpacity>
             )}
-            <TouchableOpacity onPress={() => setSummaryModal(false)} style={s.modalClose} accessibilityLabel="Close" accessibilityRole="button">
+            <TouchableOpacity onPress={() => setSummaryModal(false)} style={s.modalClose} accessibilityLabel={t('common.close')} accessibilityRole="button">
               <IconX size={20} color={colors.textSecondary} />
             </TouchableOpacity>
           </View>

@@ -7,7 +7,9 @@ import {
 import {
   IconX, IconSearch, IconPlus, IconTrash, IconStar, IconHeart,
   IconCheck, IconArrowLeft, IconSparkles, IconUser,
+  IconPackage, IconGiftBox, IconParty, IconArrowRight, IconGrid, IconFlame, IconBarChart,
 } from './Icons';
+import { useLanguage } from '../context/LanguageContext';
 import * as api from '../services/api';
 import CachedImage from './CachedImage'; // [2026-10-08 polish-leftovers] was used but never imported (ReferenceError)
 // [2026-05-22 monetization-pause] hidden by MONETIZATION_ENABLED flag
@@ -57,6 +59,7 @@ async function createCustomPack(name, coverUrl, stickerUrls) {
 // ─── Pack Card ────────────────────────────────────────────────────────────────
 
 function PackCard({ pack, onPress, onInstall, onUninstall, installed, installing, colors }) {
+  const { t } = useLanguage();
   const scaleAnim = useRef(new Animated.Value(1)).current;
 
   const handlePressIn = () =>
@@ -133,10 +136,14 @@ function PackCard({ pack, onPress, onInstall, onUninstall, installed, installing
                           style={{ width: '85%', height: '85%' }}
                           resizeMode="contain"
                         />
-                      ) : (
+                      ) : pack.cover_emoji ? (
                         <Text style={{ fontSize: cellSize * 0.5, opacity: 0.3 }}>
-                          {pack.cover_emoji || '📦'}
+                          {pack.cover_emoji}
                         </Text>
+                      ) : (
+                        <View style={{ opacity: 0.3 }}>
+                          <IconPackage size={cellSize * 0.45} color={colors.textTertiary} />
+                        </View>
                       )}
                     </View>
                   );
@@ -173,7 +180,7 @@ function PackCard({ pack, onPress, onInstall, onUninstall, installed, installing
             {pack.name}
           </Text>
           <Text numberOfLines={1} style={{ fontSize: 11, color: colors.textTertiary, marginTop: 1 }}>
-            {pack.author || 'Chatyy'} · {pack.sticker_count || 0} fig.
+            {pack.author || 'Chatyy'} · {t('stickerStore.count', { n: pack.sticker_count || 0 })}
           </Text>
 
           {/* Pill: "Adicionar" primary filled OR "Instalado" outline */}
@@ -196,14 +203,14 @@ function PackCard({ pack, onPress, onInstall, onUninstall, installed, installing
               <>
                 <IconCheck size={12} color={colors.primary} />
                 <Text style={{ fontSize: 11, fontWeight: '700', color: colors.primary }}>
-                  Instalado
+                  {t('chat.installed')}
                 </Text>
               </>
             ) : (
               <>
                 <IconPlus size={12} color={colors.onPrimary} />
                 <Text style={{ fontSize: 11, fontWeight: '700', color: colors.onPrimary }}>
-                  Adicionar
+                  {t('stickerStore.add')}
                 </Text>
               </>
             )}
@@ -291,14 +298,14 @@ function PackDetailModal({ pack, colors, onClose, onInstall, onUninstall, instal
             <>
               <IconTrash size={14} color={colors.error || '#dc2626'} />
               <Text style={{ fontSize: 13, fontWeight: '700', color: colors.error || '#dc2626' }}>
-                Remover
+                {t('stickerStore.remove')}
               </Text>
             </>
           ) : (
             <>
               <IconPlus size={14} color={colors.onPrimary || '#fff'} />
               <Text style={{ fontSize: 13, fontWeight: '700', color: colors.onPrimary || '#fff' }}>
-                Adicionar
+                {t('stickerStore.add')}
               </Text>
             </>
           )}
@@ -316,18 +323,20 @@ function PackDetailModal({ pack, colors, onClose, onInstall, onUninstall, instal
         }}>
           {pack?.cover_url ? (
             <CachedImage source={{ uri: pack.cover_url }} style={{ width: 72, height: 72 }} resizeMode="cover" />
+          ) : pack?.cover_emoji ? (
+            <Text style={{ fontSize: 40 }}>{pack.cover_emoji}</Text>
           ) : (
-            <Text style={{ fontSize: 40 }}>{pack?.cover_emoji || '📦'}</Text>
+            <IconPackage size={36} color={colors.textTertiary} />
           )}
         </View>
         <View style={{ flex: 1 }}>
           <Text style={{ fontSize: 18, fontWeight: '800', color: colors.text }}>{pack?.name}</Text>
           <Text style={{ fontSize: 13, color: colors.textSecondary, marginTop: 2 }}>
-            por {pack?.author || 'Chatyy'}
+            {t('stickerShop.byAuthor', { author: pack?.author || 'Chatyy' })}
           </Text>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, marginTop: 6 }}>
             <Text style={{ fontSize: 12, color: colors.textTertiary }}>
-              {pack?.sticker_count || stickers.length} figurinhas
+              {t('stickerStore.count', { n: pack?.sticker_count || stickers.length })}
             </Text>
             {pack?.category && (
               <View style={{
@@ -350,9 +359,11 @@ function PackDetailModal({ pack, colors, onClose, onInstall, onUninstall, instal
         </View>
       ) : stickers.length === 0 ? (
         <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 32 }}>
-          <Text style={{ fontSize: 40, marginBottom: 12 }}>📦</Text>
+          <View style={{ marginBottom: 12 }}>
+            <IconPackage size={40} color={colors.textTertiary} />
+          </View>
           <Text style={{ color: colors.textTertiary, fontSize: 15, textAlign: 'center' }}>
-            Nenhuma figurinha encontrada neste pacote.
+            {t('stickers.emptyPack')}
           </Text>
         </View>
       ) : (
@@ -395,12 +406,14 @@ function MyPacksTab({ colors, installedPacks, onUninstall, onPackPress, uninstal
   if (installedPacks.length === 0) {
     return (
       <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 40 }}>
-        <Text style={{ fontSize: 52, marginBottom: 14 }}>🎁</Text>
+        <View style={{ marginBottom: 14 }}>
+          <IconGiftBox size={52} color={colors.textTertiary} />
+        </View>
         <Text style={{ fontSize: 17, fontWeight: '700', color: colors.text, marginBottom: 6 }}>
-          Nenhum pacote instalado
+          {t('stickerShop.noInstalledTitle')}
         </Text>
         <Text style={{ fontSize: 14, color: colors.textSecondary, textAlign: 'center', lineHeight: 20 }}>
-          Explore a loja e adicione seus pacotes favoritos de figurinhas!
+          {t('stickerShop.noInstalledBody')}
         </Text>
       </View>
     );
@@ -430,8 +443,10 @@ function MyPacksTab({ colors, installedPacks, onUninstall, onPackPress, uninstal
           }}>
             {item.cover_url ? (
               <CachedImage source={{ uri: item.cover_url }} style={{ width: 58, height: 58 }} resizeMode="cover" />
+            ) : item.cover_emoji ? (
+              <Text style={{ fontSize: 32 }}>{item.cover_emoji}</Text>
             ) : (
-              <Text style={{ fontSize: 32 }}>{item.cover_emoji || '📦'}</Text>
+              <IconPackage size={28} color={colors.textTertiary} />
             )}
           </View>
 
@@ -439,11 +454,11 @@ function MyPacksTab({ colors, installedPacks, onUninstall, onPackPress, uninstal
           <View style={{ flex: 1 }}>
             <Text style={{ fontSize: 15, fontWeight: '700', color: colors.text }}>{item.name}</Text>
             <Text style={{ fontSize: 12, color: colors.textTertiary, marginTop: 2 }}>
-              {item.author || 'Chatyy'} · {item.sticker_count || '?'} figurinhas
+              {item.author || 'Chatyy'} · {item.sticker_count ? t('stickerStore.count', { n: item.sticker_count }) : '?'}
             </Text>
             {item.installed_at && (
               <Text style={{ fontSize: 11, color: colors.textTertiary, marginTop: 2 }}>
-                Instalado em {(_d => isNaN(_d.getTime()) ? '' : _d.toLocaleDateString())(new Date(item.installed_at))}
+                {t('stickerShop.installedOn', { date: (_d => isNaN(_d.getTime()) ? '' : _d.toLocaleDateString())(new Date(item.installed_at)) })}
               </Text>
             )}
           </View>
@@ -533,19 +548,19 @@ function CreatePackModal({ colors, onClose, onCreated, t }) {
       const url = await uploadFile(file);
       setCoverUrl(url);
     } catch {
-      Alert.alert('Erro', 'Falha ao enviar a capa.');
+      Alert.alert(t('common.error'), t('stickerShop.coverUploadFailed'));
       setCoverUri(null);
     } finally {
       setUploading(false);
     }
-  }, [pickImage, uploadFile]);
+  }, [pickImage, uploadFile, t]);
 
   // removeBg: after uploading, send the cdn_url to sticker_bg_remove — server
   // runs rembg (U²-Net), returns a new URL with alpha transparency. Falls
   // back to the original on failure.
   const handleAddSticker = useCallback(async (opts = {}) => {
     if (stickers.length >= 30) {
-      Alert.alert('Limite atingido', 'Máximo de 30 figurinhas por pacote.');
+      Alert.alert(t('stickerShop.limitTitle'), t('stickerShop.limitBody', { n: 30 }));
       return;
     }
     const file = await pickImage('sticker');
@@ -565,14 +580,14 @@ function CreatePackModal({ colors, onClose, onCreated, t }) {
       setUploadProgress(p => p + 1);
     } catch {
       setStickers(prev => prev.filter(s => s.id !== tempId));
-      Alert.alert('Erro', 'Falha ao enviar figurinha.');
+      Alert.alert(t('common.error'), t('stickerShop.stickerUploadFailed'));
     }
-  }, [stickers.length, pickImage, uploadFile]);
+  }, [stickers.length, pickImage, uploadFile, t]);
 
   // Add a video sticker — calls sticker_animated (ffmpeg mp4→webp 512x512 3s)
   const handleAddAnimatedSticker = useCallback(async () => {
     if (stickers.length >= 30) {
-      Alert.alert('Limite atingido', 'Máximo de 30 figurinhas por pacote.');
+      Alert.alert(t('stickerShop.limitTitle'), t('stickerShop.limitBody', { n: 30 }));
       return;
     }
     let file = null;
@@ -614,18 +629,18 @@ function CreatePackModal({ colors, onClose, onCreated, t }) {
       setUploadProgress(p => p + 1);
     } catch (e) {
       setStickers(prev => prev.filter(s => s.id !== tempId));
-      Alert.alert('Erro', 'Falha ao criar figurinha animada. Vídeo precisa ter até 3s e 15 MB.');
+      Alert.alert(t('common.error'), t('stickerShop.animatedFailed'));
     }
-  }, [stickers.length]);
+  }, [stickers.length, t]);
 
   const handleRemoveSticker = useCallback((id) => {
     setStickers(prev => prev.filter(s => s.id !== id));
   }, []);
 
   const handleCreate = useCallback(async () => {
-    if (!packName.trim()) { Alert.alert('Atenção', 'Dê um nome ao seu pacote.'); return; }
+    if (!packName.trim()) { Alert.alert(t('stickerShop.attention'), t('stickerShop.nameRequired')); return; }
     const readyStickers = stickers.filter(s => s.url);
-    if (readyStickers.length < 1) { Alert.alert('Atenção', 'Adicione pelo menos 1 figurinha.'); return; }
+    if (readyStickers.length < 1) { Alert.alert(t('stickerShop.attention'), t('stickerShop.addAtLeastOne')); return; }
 
     setCreating(true);
     try {
@@ -640,14 +655,14 @@ function CreatePackModal({ colors, onClose, onCreated, t }) {
           onCreated(r.pack);
         }, 1400);
       } else {
-        Alert.alert('Erro', r?.error || 'Falha ao criar pacote.');
+        Alert.alert(t('common.error'), r?.error || t('stickerShop.createFailed'));
       }
     } catch (e) {
-      Alert.alert('Erro', e?.message || 'Falha ao criar pacote.');
+      Alert.alert(t('common.error'), e?.message || t('stickerShop.createFailed'));
     } finally {
       setCreating(false);
     }
-  }, [packName, stickers, coverUrl, onCreated]);
+  }, [packName, stickers, coverUrl, onCreated, t]);
 
   return (
     <Animated.View style={{ flex: 1, opacity: fadeAnim, backgroundColor: colors.background }}>
@@ -662,7 +677,7 @@ function CreatePackModal({ colors, onClose, onCreated, t }) {
             <IconX size={22} color={colors.text} />
           </TouchableOpacity>
           <Text style={{ flex: 1, fontSize: 17, fontWeight: '700', color: colors.text }}>
-            Criar Pacote de Figurinhas
+            {t('stickerShop.createTitle')}
           </Text>
           {step === 2 && (
             <TouchableOpacity
@@ -678,7 +693,7 @@ function CreatePackModal({ colors, onClose, onCreated, t }) {
               {creating ? (
                 <ActivityIndicator size={14} color={colors.onPrimary} />
               ) : (
-                <Text style={{ fontSize: 13, fontWeight: '700', color: colors.onPrimary }}>Criar</Text>
+                <Text style={{ fontSize: 13, fontWeight: '700', color: colors.onPrimary }}>{t('common.create')}</Text>
               )}
             </TouchableOpacity>
           )}
@@ -704,12 +719,12 @@ function CreatePackModal({ colors, onClose, onCreated, t }) {
         {step === 1 && (
           <ScrollView contentContainerStyle={{ padding: 20 }}>
             <Text style={{ fontSize: 15, fontWeight: '600', color: colors.text, marginBottom: 8 }}>
-              Nome do pacote *
+              {t('stickerShop.nameLabel')}
             </Text>
             <TextInput
               value={packName}
               onChangeText={setPackName}
-              placeholder="Ex: Meus Memes, Fofurinhas..."
+              placeholder={t('stickerShop.namePlaceholder')}
               placeholderTextColor={colors.textTertiary}
               style={{
                 backgroundColor: colors.surface,
@@ -723,7 +738,7 @@ function CreatePackModal({ colors, onClose, onCreated, t }) {
             />
 
             <Text style={{ fontSize: 15, fontWeight: '600', color: colors.text, marginBottom: 8 }}>
-              Capa do pacote (opcional)
+              {t('stickerShop.coverLabel')}
             </Text>
             <TouchableOpacity
               onPress={handlePickCover}
@@ -743,27 +758,29 @@ function CreatePackModal({ colors, onClose, onCreated, t }) {
               ) : (
                 <>
                   <IconPlus size={28} color={colors.textTertiary} />
-                  <Text style={{ fontSize: 11, color: colors.textTertiary, marginTop: 4 }}>Escolher</Text>
+                  <Text style={{ fontSize: 11, color: colors.textTertiary, marginTop: 4 }}>{t('storage.choose')}</Text>
                 </>
               )}
             </TouchableOpacity>
 
             <TouchableOpacity
               onPress={() => {
-                if (!packName.trim()) { Alert.alert('Atenção', 'Dê um nome ao pacote para continuar.'); return; }
+                if (!packName.trim()) { Alert.alert(t('stickerShop.attention'), t('stickerShop.nameRequiredContinue')); return; }
                 setStep(2);
               }}
               style={{
                 marginTop: 32, borderRadius: 14, paddingVertical: 14,
                 backgroundColor: packName.trim() ? colors.primary : colors.textTertiary,
-                alignItems: 'center',
+                alignItems: 'center', justifyContent: 'center',
+                flexDirection: 'row', gap: 6,
               }}
               disabled={!packName.trim()}
               activeOpacity={0.8}
             >
               <Text style={{ fontSize: 15, fontWeight: '700', color: colors.onPrimary || '#fff' }}>
-                Próximo: Adicionar figurinhas →
+                {t('stickerShop.nextAddStickers')}
               </Text>
+              <IconArrowRight size={16} color={colors.onPrimary || '#fff'} />
             </TouchableOpacity>
           </ScrollView>
         )}
@@ -773,7 +790,7 @@ function CreatePackModal({ colors, onClose, onCreated, t }) {
           <View style={{ flex: 1 }}>
             <View style={{ paddingHorizontal: 16, paddingTop: 12, paddingBottom: 4 }}>
               <Text style={{ fontSize: 13, color: colors.textSecondary }}>
-                {stickers.length}/30 figurinhas · {stickers.filter(s => s.url).length} prontas
+                {t('stickerShop.progress', { count: stickers.length, max: 30, ready: stickers.filter(s => s.url).length })}
               </Text>
             </View>
             <FlatList
@@ -792,19 +809,19 @@ function CreatePackModal({ colors, onClose, onCreated, t }) {
                     <TouchableOpacity
                       onPress={() => {
                         const buttons = [
-                          { text: 'Cancelar', style: 'cancel' },
-                          { text: 'Foto normal', onPress: () => handleAddSticker() },
-                          { text: '✨ Remover fundo', onPress: () => handleAddSticker({ removeBg: true }) },
-                          { text: '🎬 Vídeo animado (3s)', onPress: () => handleAddAnimatedSticker() },
+                          { text: t('common.cancel'), style: 'cancel' },
+                          { text: t('stickerShop.normalPhoto'), onPress: () => handleAddSticker() },
+                          { text: t('sticker.removeBg'), onPress: () => handleAddSticker({ removeBg: true }) },
+                          { text: t('stickerShop.animatedVideo'), onPress: () => handleAddAnimatedSticker() },
                         ];
                         if (Platform.OS === 'web') {
                           // Web has no Alert.alert button sheet — show a prompt
-                          const choice = window.prompt('Tipo de figurinha:\n1 = Foto normal\n2 = Remover fundo\n3 = Vídeo animado');
+                          const choice = window.prompt(`${t('stickerShop.typePrompt')}\n1 = ${t('stickerShop.normalPhoto')}\n2 = ${t('sticker.removeBg')}\n3 = ${t('stickerShop.animatedVideo')}`);
                           if (choice === '1') handleAddSticker();
                           else if (choice === '2') handleAddSticker({ removeBg: true });
                           else if (choice === '3') handleAddAnimatedSticker();
                         } else {
-                          Alert.alert('Nova figurinha', 'Escolha o tipo:', buttons);
+                          Alert.alert(t('stickerMaker.title'), t('stickerShop.chooseType'), buttons);
                         }
                       }}
                       style={{
@@ -818,7 +835,7 @@ function CreatePackModal({ colors, onClose, onCreated, t }) {
                       activeOpacity={0.7}
                     >
                       <IconPlus size={26} color={colors.primary} />
-                      <Text style={{ fontSize: 11, color: colors.primary, fontWeight: '600' }}>Adicionar</Text>
+                      <Text style={{ fontSize: 11, color: colors.primary, fontWeight: '600' }}>{t('common.add')}</Text>
                     </TouchableOpacity>
                   );
                 }
@@ -873,12 +890,14 @@ function CreatePackModal({ colors, onClose, onCreated, t }) {
         {/* Step 3: Success */}
         {step === 3 && (
           <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 40 }}>
-            <Text style={{ fontSize: 64, marginBottom: 16 }}>🎉</Text>
+            <View style={{ marginBottom: 16 }}>
+              <IconParty size={64} color={colors.text} />
+            </View>
             <Text style={{ fontSize: 22, fontWeight: '800', color: colors.text, marginBottom: 8, textAlign: 'center' }}>
-              Pacote criado!
+              {t('stickerShop.createdTitle')}
             </Text>
             <Text style={{ fontSize: 15, color: colors.textSecondary, textAlign: 'center', lineHeight: 22 }}>
-              Seu pacote "{packName}" foi criado com sucesso e já está disponível nas suas figurinhas.
+              {t('stickerShop.createdBody', { name: packName })}
             </Text>
           </View>
         )}
@@ -895,6 +914,7 @@ import { StyleSheet } from 'react-native';
 // first entry above the Em destaque rail.
 
 function HeroPackCard({ pack, onPress, colors, installed }) {
+  const { t } = useLanguage();
   if (!pack) return null;
   const previews = (pack.preview_stickers || pack.previews || []).slice(0, 4);
   while (previews.length < 4) previews.push(null);
@@ -934,8 +954,8 @@ function HeroPackCard({ pack, onPress, colors, installed }) {
           marginBottom: 10,
         }}>
           <IconSparkles size={12} color="#fff" />
-          <Text style={{ fontSize: 11, fontWeight: '800', color: '#fff', letterSpacing: 0.4 }}>
-            PACK DO DIA
+          <Text style={{ fontSize: 11, fontWeight: '800', color: '#fff', letterSpacing: 0.4, textTransform: 'uppercase' }}>
+            {t('stickerShop.packOfDay')}
           </Text>
         </View>
 
@@ -944,7 +964,7 @@ function HeroPackCard({ pack, onPress, colors, installed }) {
           {pack.name}
         </Text>
         <Text numberOfLines={1} style={{ fontSize: 12, color: 'rgba(255,255,255,0.85)', marginTop: 2 }}>
-          por {pack.author || 'Chatyy'} · {pack.sticker_count || 0} figurinhas
+          {t('stickerShop.byAuthor', { author: pack.author || 'Chatyy' })} · {t('stickerStore.count', { n: pack.sticker_count || 0 })}
         </Text>
 
         {/* Sticker preview row */}
@@ -972,8 +992,12 @@ function HeroPackCard({ pack, onPress, colors, installed }) {
                   <Text style={{ fontSize: 30 }}>{emoji}</Text>
                 ) : pack.cover_url && idx === 0 ? (
                   <Image source={{ uri: pack.cover_url }} style={{ width: '85%', height: '85%' }} resizeMode="contain" />
+                ) : pack.cover_emoji ? (
+                  <Text style={{ fontSize: 26, opacity: 0.3 }}>{pack.cover_emoji}</Text>
                 ) : (
-                  <Text style={{ fontSize: 26, opacity: 0.3 }}>{pack.cover_emoji || '📦'}</Text>
+                  <View style={{ opacity: 0.3 }}>
+                    <IconPackage size={24} color="#111111" />
+                  </View>
                 )}
               </View>
             );
@@ -991,14 +1015,14 @@ function HeroPackCard({ pack, onPress, colors, installed }) {
             <>
               <IconCheck size={13} color="#111111" />
               <Text style={{ fontSize: 12, fontWeight: '800', color: '#111111' }}>
-                Instalado · ver pack
+                {t('stickerShop.installedViewPack')}
               </Text>
             </>
           ) : (
             <>
               <IconPlus size={13} color="#111111" />
               <Text style={{ fontSize: 12, fontWeight: '800', color: '#111111' }}>
-                Ver pack
+                {t('stickers.viewPack')}
               </Text>
             </>
           )}
@@ -1011,6 +1035,7 @@ function HeroPackCard({ pack, onPress, colors, installed }) {
 // ─── Featured Section ─────────────────────────────────────────────────────────
 
 function FeaturedSection({ packs, onPackPress, colors }) {
+  const { t } = useLanguage();
   if (!packs || packs.length === 0) return null;
   return (
     <View style={{ marginBottom: 8 }}>
@@ -1020,7 +1045,7 @@ function FeaturedSection({ packs, onPackPress, colors }) {
       }}>
         <IconSparkles size={16} color="#F59E0B" />
         <Text style={{ fontSize: 15, fontWeight: '800', color: colors.text }}>
-          Em destaque
+          {t('wallet.featured')}
         </Text>
       </View>
       <ScrollView
@@ -1049,8 +1074,10 @@ function FeaturedSection({ packs, onPackPress, colors }) {
             }}>
               {pack.cover_url ? (
                 <CachedImage source={{ uri: pack.cover_url }} style={{ width: '100%', height: '100%' }} resizeMode="cover" />
+              ) : pack.cover_emoji ? (
+                <Text style={{ fontSize: 44 }}>{pack.cover_emoji}</Text>
               ) : (
-                <Text style={{ fontSize: 44 }}>{pack.cover_emoji || '🌟'}</Text>
+                <IconPackage size={36} color={colors.textTertiary} />
               )}
             </View>
             <View style={{ padding: 8 }}>
@@ -1058,7 +1085,7 @@ function FeaturedSection({ packs, onPackPress, colors }) {
                 {pack.name}
               </Text>
               <Text numberOfLines={1} style={{ fontSize: 10, color: colors.textTertiary, marginTop: 1 }}>
-                {pack.sticker_count || '?'} fig.
+                {pack.sticker_count ? t('stickerStore.count', { n: pack.sticker_count }) : '?'}
               </Text>
             </View>
           </TouchableOpacity>
@@ -1070,18 +1097,20 @@ function FeaturedSection({ packs, onPackPress, colors }) {
 
 // ─── Category Pills ───────────────────────────────────────────────────────────
 
+// [2026-10-11 ui-sweep] labels are i18n keys; emoji chrome removed (plain B&W pills)
 const CATEGORIES = [
-  { id: '', label: 'Todos', emoji: '✨' },
-  { id: 'emoji', label: 'Emoji', emoji: '😀' },
-  { id: 'anime', label: 'Anime', emoji: '🎌' },
-  { id: 'meme', label: 'Memes', emoji: '🤣' },
-  { id: 'love', label: 'Amor', emoji: '❤️' },
-  { id: 'animals', label: 'Animais', emoji: '🐾' },
-  { id: 'custom', label: 'Custom', emoji: '🎨' },
-  { id: 'premium', label: 'Premium', emoji: '⭐' },
+  { id: '', labelKey: 'stickerStore.tabAll' },
+  { id: 'emoji', labelKey: 'stickerMaker.emoji' },
+  { id: 'anime', labelKey: 'stickerShop.catAnime' },
+  { id: 'meme', labelKey: 'stickerShop.catMemes' },
+  { id: 'love', labelKey: 'stickerShop.catLove' },
+  { id: 'animals', labelKey: 'stickerShop.catAnimals' },
+  { id: 'custom', labelKey: 'stickerShop.catCustom' },
+  { id: 'premium', labelKey: 'stickerShop.catPremium' },
 ];
 
 function CategoryPills({ active, onSelect, colors }) {
+  const { t } = useLanguage();
   return (
     <ScrollView
       horizontal
@@ -1104,12 +1133,11 @@ function CategoryPills({ active, onSelect, colors }) {
           }}
           activeOpacity={0.7}
         >
-          <Text style={{ fontSize: 12 }}>{cat.emoji}</Text>
           <Text style={{
             fontSize: 12, fontWeight: '600',
             color: active === cat.id ? '#fff' : colors.text,
           }}>
-            {cat.label}
+            {t(cat.labelKey)}
           </Text>
         </TouchableOpacity>
       ))}
@@ -1120,12 +1148,13 @@ function CategoryPills({ active, onSelect, colors }) {
 // ─── Main StickerStore Component ──────────────────────────────────────────────
 
 const TABS = [
-  { id: 'my', label: 'Meus', emoji: '📦' },
-  { id: 'store', label: 'Loja', emoji: '🛍️' },
-  { id: 'trending', label: 'Trending', emoji: '🔥' },
+  { id: 'my', labelKey: 'stickerShop.tabMine', Icon: IconPackage },
+  { id: 'store', labelKey: 'stickerShop.tabStore', Icon: IconGrid },
+  { id: 'trending', labelKey: 'stickerShop.tabTrending', Icon: IconFlame },
 ];
 
-export default function StickerStore({ visible, onClose, colors, t, userEmail }) {
+export default function StickerStore({ visible, onClose, colors, t: _tProp, userEmail }) {
+  const { t } = useLanguage();
   const [activeTab, setActiveTab] = useState('store');
   const [storePacks, setStorePacks] = useState([]);
   const [featuredPacks, setFeaturedPacks] = useState([]);
@@ -1249,23 +1278,23 @@ export default function StickerStore({ visible, onClose, colors, t, userEmail })
           setInstalledIds(new Set(myRes.packs.map(p => String(p.id))));
         }
       } else {
-        Alert.alert('Erro', res?.error || 'Falha ao adicionar pacote.');
+        Alert.alert(t('common.error'), res?.error || t('stickerStore.installFailed'));
       }
     } catch {
-      Alert.alert('Erro', 'Falha ao adicionar pacote.');
+      Alert.alert(t('common.error'), t('stickerStore.installFailed'));
     } finally {
       setInstallingId(null);
     }
-  }, []);
+  }, [t]);
 
   const handleUninstall = useCallback((packId) => {
     Alert.alert(
-      'Remover pacote?',
-      'As figurinhas deste pacote não aparecerão mais no seu teclado.',
+      t('stickerShop.removeTitle'),
+      t('stickerShop.removeBody'),
       [
-        { text: 'Cancelar', style: 'cancel' },
+        { text: t('common.cancel'), style: 'cancel' },
         {
-          text: 'Remover', style: 'destructive',
+          text: t('stickerStore.remove'), style: 'destructive',
           onPress: async () => {
             setUninstallingId(packId);
             try {
@@ -1284,7 +1313,7 @@ export default function StickerStore({ visible, onClose, colors, t, userEmail })
         },
       ]
     );
-  }, []);
+  }, [t]);
 
   const handlePackCreated = useCallback(async (pack) => {
     setShowCreate(false);
@@ -1347,7 +1376,7 @@ export default function StickerStore({ visible, onClose, colors, t, userEmail })
               borderBottomWidth: 1, borderBottomColor: colors.border,
             }}>
               <Text style={{ flex: 1, fontSize: 20, fontWeight: '800', color: colors.text }}>
-                Loja de Figurinhas
+                {t('stickerStore.title')}
               </Text>
               <TouchableOpacity onPress={onClose} style={{ padding: 6 }} hitSlop={8}>
                 <IconX size={22} color={colors.textSecondary} />
@@ -1370,7 +1399,7 @@ export default function StickerStore({ visible, onClose, colors, t, userEmail })
                 <TextInput
                   value={search}
                   onChangeText={handleSearch}
-                  placeholder="Buscar figurinhas..."
+                  placeholder={t('chat.searchStickers')}
                   placeholderTextColor={colors.textTertiary}
                   style={{ flex: 1, fontSize: 14, color: colors.text, padding: 0 }}
                   autoCorrect={false}
@@ -1400,13 +1429,13 @@ export default function StickerStore({ visible, onClose, colors, t, userEmail })
                   }}
                   activeOpacity={0.7}
                 >
-                  <Text style={{ fontSize: 13 }}>{tab.emoji}</Text>
+                  <tab.Icon size={15} color={activeTab === tab.id ? colors.primary : colors.textSecondary} />
                   <Text style={{
                     fontSize: 11, fontWeight: activeTab === tab.id ? '700' : '500',
                     color: activeTab === tab.id ? colors.primary : colors.textSecondary,
                     marginTop: 1,
                   }}>
-                    {tab.label}
+                    {t(tab.labelKey)}
                   </Text>
                 </TouchableOpacity>
               ))}
@@ -1425,7 +1454,7 @@ export default function StickerStore({ visible, onClose, colors, t, userEmail })
                   <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
                     <ActivityIndicator color={colors.primary} size="large" />
                     <Text style={{ color: colors.textTertiary, marginTop: 10, fontSize: 13 }}>
-                      Carregando pacotes...
+                      {t('stickerShop.loadingPacks')}
                     </Text>
                   </View>
                 ) : (
@@ -1462,14 +1491,16 @@ export default function StickerStore({ visible, onClose, colors, t, userEmail })
                     }
                     ListEmptyComponent={
                       <View style={{ alignItems: 'center', justifyContent: 'center', padding: 40 }}>
-                        <Text style={{ fontSize: 44, marginBottom: 12 }}>🔍</Text>
+                        <View style={{ marginBottom: 12 }}>
+                          <IconSearch size={40} color={colors.textTertiary} />
+                        </View>
                         <Text style={{ fontSize: 16, fontWeight: '600', color: colors.text, marginBottom: 6 }}>
-                          Nenhum pacote encontrado
+                          {t('stickerShop.noPacksTitle')}
                         </Text>
                         <Text style={{ fontSize: 13, color: colors.textTertiary, textAlign: 'center' }}>
                           {search
-                            ? `Sem resultados para "${search}"`
-                            : 'Nenhum pacote nesta categoria ainda.'}
+                            ? t('stickerShop.noResultsFor', { q: search })
+                            : t('stickerShop.emptyCategory')}
                         </Text>
                       </View>
                     }
@@ -1488,7 +1519,7 @@ export default function StickerStore({ visible, onClose, colors, t, userEmail })
                           activeOpacity={0.7}
                         >
                           <Text style={{ fontSize: 13, fontWeight: '600', color: colors.primary }}>
-                            Carregar mais
+                            {t('feed.loadMore')}
                           </Text>
                         </TouchableOpacity>
                       ) : null
@@ -1564,17 +1595,19 @@ export default function StickerStore({ visible, onClose, colors, t, userEmail })
                         flexDirection: 'row', alignItems: 'center', gap: 8,
                         marginBottom: 12,
                       }}>
-                        <Text style={{ fontSize: 20 }}>🔥</Text>
+                        <IconFlame size={20} color={colors.text} />
                         <Text style={{ fontSize: 17, fontWeight: '800', color: colors.text }}>
-                          Mais baixados da semana
+                          {t('stickerShop.trendingTitle')}
                         </Text>
                       </View>
                     }
                     ListEmptyComponent={
                       <View style={{ alignItems: 'center', padding: 40 }}>
-                        <Text style={{ fontSize: 44, marginBottom: 12 }}>📊</Text>
+                        <View style={{ marginBottom: 12 }}>
+                          <IconBarChart size={40} color={colors.textTertiary} />
+                        </View>
                         <Text style={{ fontSize: 14, color: colors.textTertiary, textAlign: 'center' }}>
-                          Sem dados de trending ainda. Volte em breve!
+                          {t('stickerShop.trendingEmpty')}
                         </Text>
                       </View>
                     }
@@ -1610,8 +1643,10 @@ export default function StickerStore({ visible, onClose, colors, t, userEmail })
                           }}>
                             {item.cover_url ? (
                               <Image source={{ uri: item.cover_url }} style={{ width: 52, height: 52 }} resizeMode="cover" />
+                            ) : item.cover_emoji ? (
+                              <Text style={{ fontSize: 28 }}>{item.cover_emoji}</Text>
                             ) : (
-                              <Text style={{ fontSize: 28 }}>{item.cover_emoji || '📦'}</Text>
+                              <IconPackage size={26} color={colors.textTertiary} />
                             )}
                           </View>
                           {/* Info */}
@@ -1620,7 +1655,7 @@ export default function StickerStore({ visible, onClose, colors, t, userEmail })
                               {item.name}
                             </Text>
                             <Text numberOfLines={1} style={{ fontSize: 11, color: colors.textTertiary, marginTop: 2 }}>
-                              {item.author || 'Chatyy'} · {(item.install_count || item.installs || 0).toLocaleString()} downloads
+                              {item.author || 'Chatyy'} · {t('stickerShop.downloads', { n: (item.install_count || item.installs || 0).toLocaleString() })}
                             </Text>
                           </View>
                           {/* Pill */}
@@ -1641,7 +1676,7 @@ export default function StickerStore({ visible, onClose, colors, t, userEmail })
                               fontSize: 11, fontWeight: '800',
                               color: installed ? '#111111' : '#fff',
                             }}>
-                              {installed ? 'Instalado' : 'Adicionar'}
+                              {installed ? t('chat.installed') : t('stickerStore.add')}
                             </Text>
                           </TouchableOpacity>
                         </TouchableOpacity>

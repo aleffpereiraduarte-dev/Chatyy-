@@ -84,9 +84,9 @@ export default function CallScheduleScreen() {
       const r = await api.callScheduleJoin(call.id);
       if (!r?.success) {
         if (Platform.OS === 'web') {
-          window.alert(r?.message || 'Não disponível agora');
+          window.alert(r?.message || t('scheduleCall.unavailableNow'));
         } else {
-          Alert.alert(t('common.error') || 'Erro', r?.message || 'Não disponível agora');
+          Alert.alert(t('common.error') || 'Erro', r?.message || t('scheduleCall.unavailableNow'));
         }
         return;
       }
@@ -105,8 +105,8 @@ export default function CallScheduleScreen() {
       } catch {}
       router.push(`/call?callId=${encodeURIComponent(room)}&conversationId=${cid}&isVideo=0&isCaller=1&groupCall=1`);
     } catch (e) {
-      if (Platform.OS === 'web') window.alert(e?.message || 'Erro');
-      else Alert.alert(t('common.error') || 'Erro', e?.message || 'Erro');
+      if (Platform.OS === 'web') window.alert(e?.message || t('common.error'));
+      else Alert.alert(t('common.error') || 'Erro', e?.message || t('common.error'));
     }
   }, [router, t, user?.email]);
 

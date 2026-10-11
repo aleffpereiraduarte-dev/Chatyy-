@@ -6,6 +6,7 @@ import * as api from '../services/api';
 import { clearAll as clearAllCache, setCacheUser } from '../services/cache';
 import { initDeltaSync, stopDeltaSync } from '../services/deltaSync';
 import { DEFAULT_E2EE } from '../constants/featureFlags';
+import { useLanguage } from './LanguageContext';
 
 // Force the biometric app-lock to re-fire on identity changes. Imported via a
 // thin module-level bridge (NOT the React context) because BiometricProvider
@@ -2295,6 +2296,7 @@ function CloudRestorePrompt() {
   const [state, setState] = React.useState(getRestorePromptState());
   const [busy, setBusy] = React.useState(false);
   const [progressMsg, setProgressMsg] = React.useState('');
+  const { t } = useLanguage();
 
   React.useEffect(() => {
     return subscribeRestorePrompt(setState);
@@ -2305,7 +2307,7 @@ function CloudRestorePrompt() {
   const onRestore = async () => {
     if (busy) return;
     setBusy(true);
-    setProgressMsg('Baixando backup…');
+    setProgressMsg(t('cloudRestore.downloading'));
     try {
       let payload = null;
       try {
@@ -2318,10 +2320,10 @@ function CloudRestorePrompt() {
       const looksRestorable = payload && (Array.isArray(payload?.conversations)
         || Array.isArray(payload?.messages) || typeof payload?.snapshot === 'string');
       if (looksRestorable) {
-        setProgressMsg('Restaurando…');
+        setProgressMsg(t('cloudRestore.restoring'));
         try { await api.chatBackupRestore?.(payload); } catch {}
       } else {
-        setProgressMsg('Backup vazio — abrindo Chatyy do zero');
+        setProgressMsg(t('cloudRestore.emptyBackup'));
       }
     } catch {}
     setBusy(false);
@@ -2351,10 +2353,10 @@ function CloudRestorePrompt() {
           }}
         >
           <Text style={{ fontSize: 19, fontWeight: '700', color: '#111', textAlign: 'center', marginBottom: 8 }}>
-            Restaurar dados do Chatyy?
+            {t('cloudRestore.title')}
           </Text>
           <Text style={{ fontSize: 14, color: '#555', textAlign: 'center', lineHeight: 20, marginBottom: 20 }}>
-            Encontramos um backup na nuvem. Você pode restaurar suas conversas e mídias agora, ou começar do zero.
+            {t('cloudRestore.body')}
           </Text>
           {busy ? (
             <View style={{ alignItems: 'center', paddingVertical: 16 }}>
@@ -2376,7 +2378,7 @@ function CloudRestorePrompt() {
                   opacity: pressed ? 0.7 : 1,
                 })}
               >
-                <Text style={{ fontSize: 15, fontWeight: '600', color: '#111' }}>Começar do zero</Text>
+                <Text style={{ fontSize: 15, fontWeight: '600', color: '#111' }}>{t('ownBackup.startOverConfirm')}</Text>
               </Pressable>
               <Pressable
                 onPress={onRestore}
@@ -2389,7 +2391,7 @@ function CloudRestorePrompt() {
                   opacity: pressed ? 0.85 : 1,
                 })}
               >
-                <Text style={{ fontSize: 15, fontWeight: '700', color: '#fff' }}>Restaurar</Text>
+                <Text style={{ fontSize: 15, fontWeight: '700', color: '#fff' }}>{t('backup.restore')}</Text>
               </Pressable>
             </View>
           )}

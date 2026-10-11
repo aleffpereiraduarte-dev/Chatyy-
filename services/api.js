@@ -3040,7 +3040,36 @@ async function _getFoldersImpl() {
   return apiCall('folders');
 }
 
+// [2026-10-11 email-qa] "Enviou → aparece em Enviados NA HORA". Todo envio
+// bem-sucedido (compose, ComposeModal do desktop, resposta rápida do leitor,
+// dreno do outbox) passa por aqui → MailContext insere a linha otimista em
+// Enviados e reconcilia quando a lista do servidor trouxer a real (o servidor
+// marca a pasta stale e reindexa em ~2 min). cancel_send (Desfazer) remove.
+const _emailSentListeners = new Set();
+export function subscribeEmailSent(fn) {
+  _emailSentListeners.add(fn);
+  return () => _emailSentListeners.delete(fn);
+}
+function _emitEmailSent(evt) {
+  _emailSentListeners.forEach((fn) => { try { fn(evt); } catch {} });
+}
+
 export async function sendEmail(to, subject, body, cc = '', bcc = '', replyToUid = null, folder = 'INBOX', attachments = [], opts = {}) {
+  const hasAtt = Array.isArray(attachments) && attachments.filter(Boolean).length > 0;
+  const r = await _sendEmailImpl(to, subject, body, cc, bcc, replyToUid, folder, attachments, opts);
+  try {
+    if (r && r.success) {
+      _emitEmailSent({
+        type: 'sent', to, cc, bcc, subject, body, hasAttachments: hasAtt,
+        sendId: r.data?.send_id || null, clientSendId: (opts && opts.clientSendId) || '',
+        at: Date.now(),
+      });
+    }
+  } catch {}
+  return r;
+}
+
+async function _sendEmailImpl(to, subject, body, cc = '', bcc = '', replyToUid = null, folder = 'INBOX', attachments = [], opts = {}) {
   // opts.trackOpens — inject 1×1 read-receipt pixel; backend logs to email_opens.
   // opts.fromAlias — verified send-as alias to use for the From: header.
   const trackOpens = !!opts.trackOpens;
@@ -3162,7 +3191,9 @@ export async function sendEmail(to, subject, body, cc = '', bcc = '', replyToUid
 // elapses; this deletes that file so the email never leaves the MTA. Safe to
 // call after the window closed — server replies 404 (already sent).
 export async function cancelSend(sendId) {
-  return apiCall('cancel_send', { send_id: sendId }, 'POST');
+  const r = await apiCall('cancel_send', { send_id: sendId }, 'POST');
+  try { if (r && r.success) _emitEmailSent({ type: 'cancelled', sendId }); } catch {}
+  return r;
 }
 
 // [2026-10-08 email-outbox] Gmail-style attachment pre-upload. The composer

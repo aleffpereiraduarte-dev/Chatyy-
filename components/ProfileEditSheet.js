@@ -58,7 +58,7 @@ const MAX_BIO = 150;
 // wraps below the label, but we keep the same divider treatment.
 function Row({
   label, value, onChangeText, placeholder, multiline, maxLength, colors,
-  prefix, required, rightAdornment, showCounter, collapsible,
+  prefix, required, rightAdornment, showCounter, collapsible, seeMoreLabel,
 }) {
   // Bio-style collapse: default to 4 lines, "Ver mais" expands when the
   // input value visibly overflows the collapsed clamp.
@@ -133,7 +133,7 @@ function Row({
       </View>
       {showVerMais ? (
         <TouchableOpacity onPress={() => setExpanded(true)} style={{ marginTop: 4 }} accessibilityRole="button">
-          <Text style={{ fontSize: 13, color: colors?.text || '#111111', fontWeight: '600' }}>Ver mais</Text>
+          <Text style={{ fontSize: 13, color: colors?.text || '#111111', fontWeight: '600' }}>{seeMoreLabel || 'Mostrar mais'}</Text>
         </TouchableOpacity>
       ) : null}
       {showCounter && multiline && maxLength ? (
@@ -796,6 +796,7 @@ export default function ProfileEditSheet({
                 colors={colors}
                 showCounter
                 collapsible
+                seeMoreLabel={t?.('feed.showMore') || 'Mostrar mais'}
               />
               <Row
                 label={t?.('profile.website') || 'Site'}

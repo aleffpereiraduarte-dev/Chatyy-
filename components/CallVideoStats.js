@@ -17,6 +17,7 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { View, Text, StyleSheet, Animated, TouchableOpacity } from 'react-native';
 import Svg, { Path as SvgPath, Circle as SvgCircle } from 'react-native-svg';
+import { useLanguageOptional } from '../context/LanguageContext';
 
 // ─── Color tokens (matches the rest of /call.js) ──────────────────────────────
 const COLORS = {
@@ -47,6 +48,7 @@ function formatBitrate(kbps) {
 //   • snapshot — { fps, sentFps, bitrateKbps, rttMs, lossPct, bucket, frameW, frameH }
 //   • onClose — tap dismiss
 export default function CallVideoStats({ visible, snapshot, onClose, style }) {
+  const t = useLanguageOptional()?.t;
   if (!visible || !snapshot) return null;
   const color = bucketColor(snapshot.bucket);
   const resolution = (snapshot.frameW && snapshot.frameH)
@@ -59,7 +61,7 @@ export default function CallVideoStats({ visible, snapshot, onClose, style }) {
       onPress={onClose}
       style={[styles.statsCard, { borderColor: color }, style]}
       accessibilityRole="button"
-      accessibilityLabel="Estatísticas da chamada"
+      accessibilityLabel={t ? t('callStats.a11y') : 'Estatísticas da chamada'}
     >
       <View style={styles.statsHeaderRow}>
         <View style={[styles.statsDot, { backgroundColor: color }]} />
@@ -89,6 +91,7 @@ function StatLine({ label, value }) {
 // very_poor. Fades in/out (300ms). Suppress while the LK reconnecting banner
 // is already showing so we don't stack overlapping alerts.
 export function PoorConnectionWarning({ snapshot, suppressed, label, style }) {
+  const t = useLanguageOptional()?.t;
   const [show, setShow] = useState(false);
   const fadeRef = useRef(new Animated.Value(0)).current;
   const lowSinceRef = useRef(0);
@@ -145,7 +148,7 @@ export function PoorConnectionWarning({ snapshot, suppressed, label, style }) {
         <SvgPath d="M12 2L2 22h20L12 2z" stroke={COLORS.bad} strokeWidth={2} fill="rgba(239,68,68,0.25)" />
         <SvgPath d="M12 10v5M12 18v.5" stroke={COLORS.bad} strokeWidth={2.2} strokeLinecap="round" />
       </Svg>
-      <Text style={styles.warnText}>{label || 'Conexão fraca'}</Text>
+      <Text style={styles.warnText}>{label || (t ? t('call.poorConnection') : 'Conexão fraca')}</Text>
     </Animated.View>
   );
 }

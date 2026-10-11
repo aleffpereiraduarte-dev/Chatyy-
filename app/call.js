@@ -71,15 +71,20 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 // Room.connect on native). LiveKit's `Track.Source.Camera` and
 // `Track.Source.Microphone` are how we address publications without juggling
 // SDP m-lines.
-import {
-  Room,
-  RoomEvent,
-  Track,
-  ConnectionQuality,
-  ConnectionState,
-  DisconnectReason,
-  DefaultReconnectPolicy,
-} from 'livekit-client';
+// [2026-10-11 boot-split] livekit-client is no longer statically imported (it
+// was dragging ~1 MB into the web boot `__common` chunk). Bindings are filled
+// from services/lkLoader: synchronously at module eval on native (same as the
+// old static import), and on web by the withLiveKit() route gate below
+// before CallScreen ever renders.
+import { lkSync as _lkSync, withLiveKit as _withLiveKit } from '../services/lkLoader';
+let Room, RoomEvent, Track, ConnectionQuality, ConnectionState, DisconnectReason, DefaultReconnectPolicy;
+function _bindLiveKit() {
+  if (Room) return;
+  const lk = _lkSync();
+  if (!lk) return;
+  ({ Room, RoomEvent, Track, ConnectionQuality, ConnectionState, DisconnectReason, DefaultReconnectPolicy } = lk);
+}
+try { _bindLiveKit(); } catch (e) { console.warn('[Call] livekit-client load failed:', e?.message); }
 let LK_VideoView = null;
 let LK_AudioSession = null;
 let _livekitRegistered = false;
@@ -98,7 +103,7 @@ function ensureLiveKitRegistered() {
   // ran at boot — so run it synchronously here before our own registerGlobals.
   try { if (typeof globalThis !== 'undefined' && typeof globalThis.__chatyyEnsureLiveKitGlobals === 'function') globalThis.__chatyyEnsureLiveKitGlobals(); } catch {}
   try {
-    const lkrn = require('@livekit/react-native');
+    const lkrn = require('../services/lkLoader').lkRn();
     LK_VideoView = lkrn.VideoView || null;
     LK_AudioSession = lkrn.AudioSession || null;
     if (typeof lkrn.registerGlobals === 'function') {
@@ -184,7 +189,7 @@ const initCallModules = (() => {
         if (activeCallBar?.clearActiveCall) clearActiveCall = activeCallBar.clearActiveCall;
       } catch (e) { console.warn('[Call] ActiveCallBar load failed:', e?.message); }
       try {
-        const chatCallsTab = require('../components/ChatCallsTab');
+        const chatCallsTab = require('../services/callHistoryStore');
         if (chatCallsTab?.addCallToHistory) addCallToHistory = chatCallsTab.addCallToHistory;
       } catch (e) { console.warn('[Call] ChatCallsTab load failed:', e?.message); }
       loaded = true;
@@ -1775,7 +1780,7 @@ function CallScreenInner() {
         // had no valid output route. Configure the session the SAME way the SDK's
         // own hook does, BEFORE activating it (must be set prior to connect).
         try {
-          const lkrn = require('@livekit/react-native');
+          const lkrn = require('../services/lkLoader').lkRn();
           if (Platform.OS === 'ios' && typeof LK_AudioSession.setAppleAudioConfiguration === 'function'
               && typeof lkrn.getDefaultAppleAudioConfigurationForMode === 'function') {
             // 'localAndRemote' → playAndRecord; preferSpeaker → videoChat (speaker)
@@ -2211,7 +2216,7 @@ function CallScreenInner() {
     // e2ee (call still connects, just not E2E) — see needs_qa.
     if (CALL_E2EE_ENABLED && Platform.OS === 'web' && _e2eeKeyB64) {
       try {
-        const lk = require('livekit-client');
+        const lk = require('../services/lkLoader').lkSync();
         const KeyProviderCtor = lk.ExternalE2EEKeyProvider || lk.BaseKeyProvider;
         let worker = null;
         try {
@@ -2249,7 +2254,7 @@ function CallScreenInner() {
     // antes de ligar a flag p/ qualquer usuário.
     else if (CALL_E2EE_ENABLED && Platform.OS !== 'web' && _e2eeKeyB64) {
       try {
-        const lkrn = require('@livekit/react-native');
+        const lkrn = require('../services/lkLoader').lkRn();
         if (lkrn && lkrn.RNKeyProvider && lkrn.RNE2EEManager) {
           const keyProvider = new lkrn.RNKeyProvider({ sharedKey: true });
           Promise.resolve(keyProvider.setSharedKey(_e2eeKeyB64)).catch(() => {});
@@ -7826,7 +7831,8 @@ function NativeOnlyOutgoingBridge() {
   return null;
 }
 
-export default function CallScreen(props) {
+function CallScreen(props) {
+  _bindLiveKit(); // web: SDK already loaded by the withLiveKit gate
   // ALWAYS call hooks at the top — Rules of Hooks requires unconditional
   // invocation. We read params here once and branch below.
   const params = useLocalSearchParams();
@@ -7876,3 +7882,7 @@ export default function CallScreen(props) {
   // Incoming / cold-start fallback — dispatch to native and pop.
   return <MobileNativeBridge />;
 }
+
+// [2026-10-11 boot-split] web: wait for the livekit-client chunk before
+// rendering (native: identity — no behavior change).
+export default _withLiveKit(CallScreen);

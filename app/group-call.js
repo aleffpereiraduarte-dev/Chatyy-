@@ -1125,7 +1125,7 @@ export default function GroupCallScreen() {
     >
       <TouchableOpacity
         accessibilityRole="button"
-        accessibilityLabel="Adicionar pessoa"
+        accessibilityLabel={t('files.addPerson')}
         activeOpacity={0.85}
         onPressIn={() => Animated.timing(pillScale, { toValue: 0.94, duration: 90, easing: Easing.out(Easing.quad), useNativeDriver: true }).start()}
         onPressOut={() => Animated.spring(pillScale, { toValue: 1, friction: 5, tension: 180, useNativeDriver: true }).start()}
@@ -1238,7 +1238,7 @@ export default function GroupCallScreen() {
       <View style={[styles.center, { backgroundColor: '#000' }]}>
         <Text style={{ color: '#fff', fontSize: 16, marginBottom: 16 }}>{err}</Text>
         <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
-          <Text style={{ color: '#fff' }}>Voltar</Text>
+          <Text style={{ color: '#fff' }}>{t('common.back')}</Text>
         </TouchableOpacity>
       </View>
     );
@@ -1252,7 +1252,7 @@ export default function GroupCallScreen() {
         {ParticipantGrid}
         <View style={styles.connectingHud}>
           <ActivityIndicator color={BRAND_PURPLE} />
-          <Text style={{ color: '#999', marginTop: 10, fontSize: 13, fontWeight: '500' }}>Conectando ao grupo...</Text>
+          <Text style={{ color: '#999', marginTop: 10, fontSize: 13, fontWeight: '500' }}>{t('groupCallD.connecting')}</Text>
         </View>
       </View>
     );
@@ -1282,7 +1282,7 @@ export default function GroupCallScreen() {
         {connecting ? (
           <View pointerEvents="none" style={styles.connectingHud}>
             <ActivityIndicator color="#fff" />
-            <Text style={{ color: '#999', marginTop: 10, fontSize: 13, fontWeight: '500' }}>Conectando ao grupo...</Text>
+            <Text style={{ color: '#999', marginTop: 10, fontSize: 13, fontWeight: '500' }}>{t('groupCallD.connecting')}</Text>
           </View>
         ) : null}
         {lk.state === 'reconnecting' ? (
@@ -1344,7 +1344,7 @@ export default function GroupCallScreen() {
   if (!WebView) {
     return (
       <View style={[styles.center, { backgroundColor: '#000' }]}>
-        <Text style={{ color: '#fff' }}>WebView não disponível nesta plataforma</Text>
+        <Text style={{ color: '#fff' }}>{t('groupCallD.webviewUnavailable')}</Text>
       </View>
     );
   }

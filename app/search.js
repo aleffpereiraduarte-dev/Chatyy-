@@ -301,7 +301,7 @@ export default function SearchScreen() {
           <View style={{ position: 'relative' }}>
             <AvatarCircle name={l.host_name} email={l.host_email} size={46} />
             <View style={styles.liveDot}>
-              <Text style={styles.liveDotText}>LIVE</Text>
+              <Text style={styles.liveDotText}>{t('chatConv.liveBadge')}</Text>
             </View>
           </View>
           <View style={styles.rowText}>

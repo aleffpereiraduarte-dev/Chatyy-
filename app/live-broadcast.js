@@ -73,7 +73,7 @@ let _LK_Room, _LK_RoomEvent, _LK_VideoView, _LK_createLocalVideoTrack, _LK_creat
 function _loadLkBroadcast() {
   if (_LK_Room) return true;
   try {
-    const lkc = require('livekit-client');
+    const lkc = require('../services/lkLoader').lkSync();
     _LK_Room = lkc.Room;
     _LK_RoomEvent = lkc.RoomEvent;
     _LK_createLocalVideoTrack = lkc.createLocalVideoTrack;
@@ -81,7 +81,7 @@ function _loadLkBroadcast() {
     _LK_Track = lkc.Track;
     _LK_VideoPreset = lkc.VideoPreset;
     try {
-      const lkrn = require('@livekit/react-native');
+      const lkrn = require('../services/lkLoader').lkRn();
       _LK_VideoView = lkrn.VideoView || lkrn.VideoRenderer;
       if (typeof lkrn.registerGlobals === 'function' && !_LK_Room._rnRegistered) {
         lkrn.registerGlobals();
@@ -164,7 +164,7 @@ function _hostNotice(msg) {
 // Para sozinho quando a sala desconecta. onQuality recebe 'good'|'medium'|'poor'.
 function _startHostAutoQuality(room, vTrack, onQuality) {
   let lkc = null;
-  try { lkc = require('livekit-client'); } catch { return () => {}; }
+  try { lkc = require('../services/lkLoader').lkSync(); } catch { return () => {}; }
   const VQ = lkc && lkc.VideoQuality;
   const CQ = lkc && lkc.ConnectionQuality;
   const RE = lkc && lkc.RoomEvent;
@@ -231,7 +231,7 @@ const MAX_HEARTS = 20;
 // é P&B; a cor que vier do espectador é ignorada aqui (ver uso de HEART_COLORS).
 const HEART_COLORS = ['#ffffff', '#f5f5f5', '#e5e5e5', '#d4d4d4', '#bdbdbd'];
 
-export default function LiveBroadcastScreen() {
+function LiveBroadcastScreen() {
   // Round 67 #1158 (2026-05-18) — keep the display on for the entire
   // host session. Tag scopes the lock so multi-screen mounts don't
   // collide. Unmount auto-releases via expo-keep-awake's effect.
@@ -3063,11 +3063,11 @@ export default function LiveBroadcastScreen() {
   // free of livekit-client cost for hosts who never approve a cohost.
   const _loadLK = useCallback(() => {
     try {
-      const lkc = require('livekit-client');
+      const lkc = require('../services/lkLoader').lkSync();
       let VideoView = null;
       if (Platform.OS !== 'web') {
         try {
-          const lkrn = require('@livekit/react-native');
+          const lkrn = require('../services/lkLoader').lkRn();
           lkrn.registerGlobals?.();
           VideoView = lkrn.VideoView;
         } catch (e) {
@@ -3836,7 +3836,7 @@ export default function LiveBroadcastScreen() {
     mgAudioCfgRef.current = true;
     (async () => {
       try {
-        const lkrn = require('@livekit/react-native');
+        const lkrn = require('../services/lkLoader').lkRn();
         const AS = lkrn?.AudioSession;
         if (!AS) return;
         if (Platform.OS === 'ios' && typeof AS.setAppleAudioConfiguration === 'function' && typeof lkrn.getDefaultAppleAudioConfigurationForMode === 'function') {
@@ -5360,7 +5360,7 @@ export default function LiveBroadcastScreen() {
             let VV = null;
             try {
               if (Platform.OS !== 'web') {
-                VV = require('@livekit/react-native').VideoView;
+                VV = require('../services/lkLoader').lkRn().VideoView;
               }
             } catch {}
             // Bind the native mount lifecycle to the underlying track sid so
@@ -7537,3 +7537,7 @@ const styles = StyleSheet.create({
     marginLeft: 4,
   },
 });
+
+// [2026-10-11 boot-split] web: render only after the livekit-client chunk
+// loaded (lkSync() call sites stay synchronous). Native: identity wrapper.
+export default require('../services/lkLoader').withLiveKit(LiveBroadcastScreen);

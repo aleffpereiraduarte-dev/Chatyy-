@@ -24,7 +24,7 @@ import {
   View, TextInput, TouchableOpacity, Animated, StyleSheet, Platform,
 } from 'react-native';
 import { useTheme } from '../context/ThemeContext';
-import { useLanguage } from '../context/LanguageContext';
+import { useLanguageOptional } from '../context/LanguageContext';
 import { IconSearch, IconX, IconFilter } from './Icons';
 
 const FOCUS_DURATION = 180;
@@ -59,7 +59,7 @@ export default function PremiumSearchBar({
   testID,
 }) {
   const { colors, isDark } = useTheme();
-  const { t, locale } = useLanguage() || {};
+  const { t, locale } = useLanguageOptional() || {};
   const [focused, setFocused] = useState(false);
 
   // Two separate animated values so we can split native-driver (transform)
@@ -221,7 +221,7 @@ export default function PremiumSearchBar({
           hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
           style={styles.trailingBtn}
           accessibilityRole="button"
-          accessibilityLabel="Clear search"
+          accessibilityLabel={t?.('a11y.clearSearch') || 'Limpar busca'}
         >
           <Animated.View style={{ transform: [{ rotate: clearRotate }] }}>
             <IconX size={14} color={subtleColor} />
@@ -237,7 +237,7 @@ export default function PremiumSearchBar({
           hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
           style={styles.trailingBtn}
           accessibilityRole="button"
-          accessibilityLabel="Open filters"
+          accessibilityLabel={t?.('photos.filters') || 'Filtros'}
         >
           <IconFilter size={16} color={focused ? colors.primary : subtleColor} />
         </TouchableOpacity>

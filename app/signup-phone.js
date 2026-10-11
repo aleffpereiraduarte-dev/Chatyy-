@@ -1654,7 +1654,7 @@ export default function SignupPhone() {
                       style={[{
                         flex: 1, minWidth: 0, fontSize: 20, fontWeight: '600', paddingVertical: 12, color: colors.text,
                       }, Platform.OS === 'web' && { outlineStyle: 'none' }]}
-                      placeholder="seu.username"
+                      placeholder={t('signupUsername.handlePlaceholder')}
                       placeholderTextColor={colors.textTertiary}
                       value={username}
                       onChangeText={(v) => { _usernameAutoRef.current = false; setUsername(sanitizeUsernameTyping(v)); if (error) setError(''); }}

@@ -107,11 +107,11 @@ export default function ProfileInsightsScreen() {
       {USE_NATIVE_HEADER && <Stack.Screen options={nativeHeaderOptions({ colors, isDark, title: t('profile.insights') })} />}
       {!USE_NATIVE_HEADER && (
       <View style={[styles.header, { borderBottomColor: cardBorder }]}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.backBtn} accessibilityLabel="Voltar">
+        <TouchableOpacity onPress={() => router.back()} style={styles.backBtn} accessibilityLabel={t?.('common.back') || 'Voltar'}>
           <IconArrowLeft size={22} color={colors.text} />
         </TouchableOpacity>
         <Text style={[styles.headerTitle, { color: colors.text }]} numberOfLines={1}>
-          {t?.('profile.insights') || 'Estatisticas'}
+          {t?.('profile.insights') || 'Estatísticas'}
         </Text>
         <View style={{ width: 22 }} />
       </View>

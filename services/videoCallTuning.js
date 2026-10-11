@@ -175,7 +175,7 @@ export function startAdaptiveLoop(room, { onChange, intervalMs = 3000 } = {}) {
   // cold-paths.
   let VQ = null;
   try {
-    const lk = require('livekit-client');
+    const lk = require('./lkLoader').lkSync();
     VQ = lk.VideoQuality || null;
   } catch {
     VQ = null;
@@ -355,7 +355,7 @@ export function startAdaptiveLoop(room, { onChange, intervalMs = 3000 } = {}) {
 // dependency (so this file is import-safe on web cold paths).
 function _cameraSource() {
   try {
-    const lk = require('livekit-client');
+    const lk = require('./lkLoader').lkSync();
     return lk.Track?.Source?.Camera || 'camera';
   } catch {
     return 'camera';

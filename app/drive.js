@@ -1647,7 +1647,7 @@ function DriveScreenInner() {
               file_url: fileUrl,
               mime_type: item.mime_type || '',
             });
-            router.push({ pathname: '/one', params: { intent, prefill: `Analise esse arquivo: ${item.name || 'arquivo'}` } });
+            router.push({ pathname: '/one', params: { intent, prefill: t('files.analyzePrefill', { name: item.name || t('one.attachedFile') }) } });
           } catch {}
         },
       },

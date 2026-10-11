@@ -15,7 +15,10 @@ const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get('window');
 const isDesktop = Platform.OS === 'web' && SCREEN_W > 768;
 
 // ---- Notebook Editor HTML (Canvas + Text Layer) ----
-function getNotebookHTML(isDark) {
+function getNotebookHTML(isDark, L = {}) {
+  // L = strings já traduzidas (t()) vindas do componente; esc() p/ atributos/HTML.
+  const esc = (v) => String(v == null ? '' : v).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  const L10N_JSON = JSON.stringify(L).replace(/</g, '\\u003c');
   return `<!DOCTYPE html>
 <html>
 <head>
@@ -424,15 +427,15 @@ html, body { width: 100%; height: 100%; overflow: hidden; background: ${isDark ?
 <div id="notebook-container">
   <!-- Top bar with page info -->
   <div id="page-info">
-    <span class="info-text" id="page-indicator">Página 1 de 1</span>
+    <span class="info-text" id="page-indicator">${esc(L.page)} 1 ${esc(L.of)} 1</span>
     <div style="display:flex;align-items:center;gap:4px">
-      <button class="action-btn" onclick="exportPdf()" title="Exportar PDF">
+      <button class="action-btn" onclick="exportPdf()" title="${esc(L.exportPdf)}">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
       </button>
-      <button class="action-btn" id="btn-thumbs" onclick="toggleThumbnails()" title="Páginas">
+      <button class="action-btn" id="btn-thumbs" onclick="toggleThumbnails()" title="${esc(L.pages)}">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="8" height="8" rx="1"/><rect x="14" y="2" width="8" height="8" rx="1"/><rect x="2" y="14" width="8" height="8" rx="1"/><rect x="14" y="14" width="8" height="8" rx="1"/></svg>
       </button>
-      <span class="save-status" id="save-status" style="opacity:0">Salvo</span>
+      <span class="save-status" id="save-status" style="opacity:0">${esc(L.saved)}</span>
     </div>
   </div>
 
@@ -456,26 +459,26 @@ html, body { width: 100%; height: 100%; overflow: hidden; background: ${isDark ?
 
   <!-- Main toolbar (floating) -->
   <div id="toolbar">
-    <button class="tool-btn active" id="btn-pen" onclick="selectTool('pen')" title="Caneta">
+    <button class="tool-btn active" id="btn-pen" onclick="selectTool('pen')" title="${esc(L.pen)}">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19l7-7 3 3-7 7-3-3z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/><path d="M2 2l7.586 7.586"/><circle cx="11" cy="11" r="2"/></svg>
     </button>
-    <button class="tool-btn" id="btn-highlighter" onclick="selectTool('highlighter')" title="Marca-texto">
+    <button class="tool-btn" id="btn-highlighter" onclick="selectTool('highlighter')" title="${esc(L.highlighter)}">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l-6 6v3h9l3-3"/><path d="M22 12l-4.6 4.6a2 2 0 01-2.8 0l-5.2-5.2a2 2 0 010-2.8L14 4"/></svg>
     </button>
-    <button class="tool-btn" id="btn-eraser" onclick="selectTool('eraser')" title="Borracha">
+    <button class="tool-btn" id="btn-eraser" onclick="selectTool('eraser')" title="${esc(L.eraser)}">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20H7L3 16a1 1 0 010-1.4l9.6-9.6a2 2 0 012.8 0l5.2 5.2a2 2 0 010 2.8L13 20"/><path d="M6 12l6 6"/></svg>
     </button>
-    <button class="tool-btn" id="btn-text" onclick="selectTool('text')" title="Texto">
+    <button class="tool-btn" id="btn-text" onclick="selectTool('text')" title="${esc(L.text)}">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 7 4 4 20 4 20 7"/><line x1="9" y1="20" x2="15" y2="20"/><line x1="12" y1="4" x2="12" y2="20"/></svg>
     </button>
 
     <div class="separator"></div>
 
-    <button class="tool-btn" id="btn-colors" onclick="togglePanel('colors')" title="Cores">
+    <button class="tool-btn" id="btn-colors" onclick="togglePanel('colors')" title="${esc(L.colors)}">
       <div style="width:22px;height:22px;border-radius:50%;border:2.5px solid ${isDark ? '#555' : '#ccc'};transition:all 0.2s" id="color-indicator"></div>
     </button>
 
-    <button class="tool-btn" id="btn-widths" onclick="togglePanel('widths')" title="Espessura">
+    <button class="tool-btn" id="btn-widths" onclick="togglePanel('widths')" title="${esc(L.width)}">
       <div style="display:flex;flex-direction:column;gap:3px;align-items:center">
         <div style="width:14px;height:2px;background:currentColor;border-radius:1px"></div>
         <div style="width:14px;height:3px;background:currentColor;border-radius:2px"></div>
@@ -485,26 +488,27 @@ html, body { width: 100%; height: 100%; overflow: hidden; background: ${isDark ?
 
     <div class="separator"></div>
 
-    <button class="tool-btn" id="btn-undo" onclick="undoStroke()" title="Desfazer">
+    <button class="tool-btn" id="btn-undo" onclick="undoStroke()" title="${esc(L.undo)}">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 102.13-9.36L1 10"/></svg>
     </button>
-    <button class="tool-btn" id="btn-redo" onclick="redoStroke()" title="Refazer">
+    <button class="tool-btn" id="btn-redo" onclick="redoStroke()" title="${esc(L.redo)}">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 11-2.13-9.36L23 10"/></svg>
     </button>
 
     <div class="separator"></div>
 
-    <button class="tool-btn" id="btn-bg" onclick="togglePanel('bg')" title="Fundo">
+    <button class="tool-btn" id="btn-bg" onclick="togglePanel('bg')" title="${esc(L.background)}">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="3" y1="15" x2="21" y2="15"/></svg>
     </button>
 
-    <button class="tool-btn" id="btn-clear" onclick="clearAll()" title="Clear">
+    <button class="tool-btn" id="btn-clear" onclick="clearAll()" title="${esc(L.clear)}">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>
     </button>
   </div>
 </div>
 
 <script>
+const L10N = ${L10N_JSON};
 // ---- State ----
 let currentTool = 'pen';
 let currentColor = '#333333';
@@ -867,7 +871,7 @@ function redoStroke() {
 // ---- Clear All ----
 function clearAll() {
   if (strokes.length === 0) return;
-  if (confirm('Clear all drawings?')) {
+  if (confirm(L10N.clearConfirm || 'Clear all drawings?')) {
     redoStack = redoStack.concat(strokes.reverse());
     strokes = [];
     redrawStrokes();
@@ -1032,7 +1036,7 @@ function setWidth(w) {
 function showBgPanel() {
   const bgPanel = document.getElementById('bg-panel');
   const bgs = ['lined', 'grid', 'dotted', 'blank'];
-  const labels = { lined: 'Lined', grid: 'Grid', dotted: 'Dotted', blank: 'Blank' };
+  const labels = { lined: L10N.lined || 'Lined', grid: L10N.grid || 'Grid', dotted: L10N.dotted || 'Dotted', blank: L10N.blank || 'Blank' };
 
   bgPanel.innerHTML = bgs.map(bg =>
     '<div style="text-align:center">' +
@@ -1098,7 +1102,7 @@ function showStylusBadge() {
     el = document.createElement('div');
     el.id = 'stylus-badge';
     el.style.cssText = 'position:fixed;left:50%;top:14px;transform:translateX(-50%);background:rgba(0,0,0,0.78);color:#fff;padding:8px 14px;border-radius:16px;font-size:13px;font-weight:500;z-index:9999;box-shadow:0 4px 12px rgba(0,0,0,0.25);opacity:0;transition:opacity 0.2s';
-    el.textContent = '✏️ Caneta detectada · palma ignorada';
+    el.textContent = L10N.stylus || '';
     document.body.appendChild(el);
   }
   requestAnimationFrame(() => { el.style.opacity = '1'; });
@@ -1132,7 +1136,7 @@ function showSaveStatus(status) {
     saveStatusEl.style.background = isDark ? 'rgba(255,180,0,0.15)' : 'rgba(245,158,11,0.1)';
     saveStatusEl.style.color = isDark ? '#ffb400' : '#d97706';
   } else {
-    saveStatusEl.textContent = 'Saved';
+    saveStatusEl.textContent = L10N.saved || 'Saved';
     saveStatusEl.style.opacity = '1';
     saveStatusEl.style.background = isDark ? 'rgba(80,200,120,0.15)' : 'rgba(34,197,94,0.1)';
     saveStatusEl.style.color = isDark ? '#50c878' : '#16a34a';
@@ -1179,7 +1183,7 @@ function loadPageData(data) {
 }
 
 function updatePageIndicator(current, total) {
-  pageIndicator.textContent = 'Page ' + current + ' of ' + total;
+  pageIndicator.textContent = (L10N.page || 'Page') + ' ' + current + ' ' + (L10N.of || 'of') + ' ' + total;
 }
 
 function updateLabels(labels) {
@@ -1463,7 +1467,16 @@ export default function NotebookEditorScreen() {
     }
   }, [pages, currentPageIndex, t]);
 
-  const html = useMemo(() => getNotebookHTML(isDark), [isDark]);
+  // tRef: labels traduzidas sem recriar o HTML (recriar recarrega o WebView e perde estado).
+  const tRef = useRef(t); tRef.current = t;
+  const html = useMemo(() => { const t = tRef.current; return getNotebookHTML(isDark, {
+    page: t('notebook.page'), of: t('notebook.of'), exportPdf: t('notes.exportPdf'), pages: t('notebookEditor.pages'),
+    saved: t('common.saved'), pen: t('notebook.pen'), highlighter: t('notebook.highlighter'), eraser: t('notebook.eraser'),
+    text: t('notebook.text'), colors: t('notebook.colors'), width: t('notebook.width'), undo: t('notebook.undo'),
+    redo: t('notebook.redo'), background: t('notebook.background'), clear: t('notebook.clear'),
+    clearConfirm: t('notebook.clearConfirm'), lined: t('notebook.lined'), grid: t('notebook.grid'),
+    dotted: t('notebook.dotted'), blank: t('notebook.blank'), stylus: t('notebookEditor.stylusDetected'),
+  }); }, [isDark]);
 
   // Page swipe gesture for mobile
   const swipeAnim = useRef(new Animated.Value(0)).current;
@@ -1536,7 +1549,7 @@ export default function NotebookEditorScreen() {
   if (!notebookId) {
     return (
       <View style={[styles.container, { backgroundColor: colors.background, justifyContent: 'center', alignItems: 'center' }]}>
-        <Text style={{ color: colors.textSecondary }}>No notebook selected</Text>
+        <Text style={{ color: colors.textSecondary }}>{t('notebookEditor.noNotebook')}</Text>
       </View>
     );
   }
@@ -1683,7 +1696,7 @@ export default function NotebookEditorScreen() {
             />
           ) : (
             <View style={styles.loadingContainer}>
-              <Text style={{ color: colors.textSecondary }}>WebView not available</Text>
+              <Text style={{ color: colors.textSecondary }}>{t('notebookEditor.webviewUnavailable')}</Text>
             </View>
           )}
         </Animated.View>

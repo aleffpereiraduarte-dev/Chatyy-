@@ -12,12 +12,14 @@ import {
 import Svg, { Path } from 'react-native-svg';
 import CachedImage from './CachedImage';
 import { IconX, IconCheck, IconTrash } from './Icons';
+import { useLanguage } from '../context/LanguageContext';
 
 const { width: SW, height: SH } = Dimensions.get('window');
 const COLORS = ['#ffffff', '#000000', '#FF3B30', '#FF9500', '#FFCC00', '#30D158', '#0A84FF', '#111111'];
 const WIDTHS = [3, 6, 10];
 
 export default function DrawOverlay({ visible, imageUri, onCancel, onDone }) {
+  const { t } = useLanguage();
   const [color, setColor] = useState('#FF3B30');
   const [stroke, setStroke] = useState(6);
   const [paths, setPaths] = useState([]);
@@ -262,7 +264,7 @@ export default function DrawOverlay({ visible, imageUri, onCancel, onDone }) {
         onDone?.(imageUri);
         return;
       } else {
-        const mod = require('react-native-view-shot');
+        const mod = require('../services/viewShot').viewShotModule();
         const captureRef = mod.captureRef || (typeof mod.default === 'function' ? mod.default : null);
         if (captureRef && shotRef.current) {
           outUri = await captureRef(shotRef.current, { format: 'jpg', quality: 0.92, result: 'tmpfile' });
@@ -366,7 +368,7 @@ export default function DrawOverlay({ visible, imageUri, onCancel, onDone }) {
           style={{ paddingHorizontal: 22, height: 50, borderRadius: 25, backgroundColor: '#0A84FF', alignItems: 'center', justifyContent: 'center', flexDirection: 'row', gap: 8 }}>
           {saving ? <ActivityIndicator color="#fff" /> : (<>
             <IconCheck size={18} color="#fff" />
-            <Text style={{ color: '#fff', fontWeight: '700', fontSize: 15 }}>Concluir</Text>
+            <Text style={{ color: '#fff', fontWeight: '700', fontSize: 15 }}>{t('photoEditor.done')}</Text>
           </>)}
         </TouchableOpacity>
       </View>

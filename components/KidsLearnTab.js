@@ -9,6 +9,7 @@ import { useLanguage } from '../context/LanguageContext';
 import * as api from '../services/api';
 import KidsAchievementsModal from './KidsAchievementsModal';
 import KidsAskParentModal from './KidsAskParentModal';
+import { IconHash, IconFileText, IconSparkles, IconBuilding, IconTranslate, IconPalette, IconMusic, IconGlobe, IconAward, IconInfo, IconPencil } from './Icons';
 
 const { width: SCREEN_W } = Dimensions.get('window');
 let ImagePicker = null;
@@ -96,14 +97,14 @@ function IconParent({ size = 18, color = '#fff' }) {
 // ─── Category Config ───
 
 const CATEGORIES = [
-  { key: 'matematica', emoji: '\uD83D\uDD22', color: '#111111', gradient: ['#111111', '#111111'], i18nKey: 'kids.categories.math' },
-  { key: 'portugues', emoji: '\uD83D\uDCDA', color: '#111111', gradient: ['#db2777', '#f9a8d4'], i18nKey: 'kids.categories.portuguese' },
-  { key: 'ciencias', emoji: '\uD83D\uDD2C', color: '#10b981', gradient: ['#059669', '#6ee7b7'], i18nKey: 'kids.categories.science' },
-  { key: 'historia', emoji: '\uD83C\uDFDB\uFE0F', color: '#f59e0b', gradient: ['#d97706', '#fcd34d'], i18nKey: 'kids.categories.history' },
-  { key: 'ingles', emoji: '\uD83C\uDF0D', color: '#111111', gradient: ['#111111', '#93c5fd'], i18nKey: 'kids.categories.english' },
-  { key: 'artes', emoji: '\uD83C\uDFA8', color: '#f43f5e', gradient: ['#e11d48', '#fda4af'], i18nKey: 'kids.categories.art' },
-  { key: 'musica', emoji: '\uD83C\uDFB5', color: '#06b6d4', gradient: ['#0891b2', '#67e8f9'], i18nKey: 'kids.categories.music' },
-  { key: 'geografia', emoji: '\uD83C\uDF0E', color: '#84cc16', gradient: ['#65a30d', '#bef264'], i18nKey: 'kids.categories.geography' },
+  { key: 'matematica', Icon: IconHash, color: '#111111', gradient: ['#111111', '#111111'], i18nKey: 'kids.categories.math' },
+  { key: 'portugues', Icon: IconFileText, color: '#111111', gradient: ['#db2777', '#f9a8d4'], i18nKey: 'kids.categories.portuguese' },
+  { key: 'ciencias', Icon: IconSparkles, color: '#10b981', gradient: ['#059669', '#6ee7b7'], i18nKey: 'kids.categories.science' },
+  { key: 'historia', Icon: IconBuilding, color: '#f59e0b', gradient: ['#d97706', '#fcd34d'], i18nKey: 'kids.categories.history' },
+  { key: 'ingles', Icon: IconTranslate, color: '#111111', gradient: ['#111111', '#93c5fd'], i18nKey: 'kids.categories.english' },
+  { key: 'artes', Icon: IconPalette, color: '#f43f5e', gradient: ['#e11d48', '#fda4af'], i18nKey: 'kids.categories.art' },
+  { key: 'musica', Icon: IconMusic, color: '#06b6d4', gradient: ['#0891b2', '#67e8f9'], i18nKey: 'kids.categories.music' },
+  { key: 'geografia', Icon: IconGlobe, color: '#84cc16', gradient: ['#65a30d', '#bef264'], i18nKey: 'kids.categories.geography' },
 ];
 
 // ─── Animated Components ───
@@ -172,9 +173,9 @@ function StarProgress({ stars, maxStars = 5, size = 20 }) {
 // ─── Badge card for encouragement/fact/exercise ───
 function SpecialCard({ type, content, isDark }) {
   const configs = {
-    badge: { bg: isDark ? '#1a2e1a' : '#dcfce7', color: isDark ? '#86efac' : '#166534', icon: '\uD83C\uDFC6' },
-    fact: { bg: isDark ? '#2e2a1a' : '#fef3c7', color: isDark ? '#fbbf24' : '#92400e', icon: '\uD83D\uDCA1' },
-    exercise: { bg: isDark ? '#161618' : '#F1F3F5', color: isDark ? '#F1F3F5' : '#111111', icon: '\u270D\uFE0F' },
+    badge: { bg: isDark ? '#1a2e1a' : '#dcfce7', color: isDark ? '#86efac' : '#166534', Icon: IconAward },
+    fact: { bg: isDark ? '#2e2a1a' : '#fef3c7', color: isDark ? '#fbbf24' : '#92400e', Icon: IconInfo },
+    exercise: { bg: isDark ? '#161618' : '#F1F3F5', color: isDark ? '#F1F3F5' : '#111111', Icon: IconPencil },
   };
   const c = configs[type] || configs.fact;
   return (
@@ -185,7 +186,7 @@ function SpecialCard({ type, content, isDark }) {
         flexDirection: 'row', alignItems: 'center', gap: 12,
         ...(Platform.OS === 'web' ? { boxShadow: '0 2px 8px rgba(0,0,0,0.08)' } : {}),
       }}>
-        <Text style={{ fontSize: 22 }}>{c.icon}</Text>
+        <c.Icon size={22} color={c.color} />
         <Text style={{ fontSize: 16, lineHeight: 22, color: c.color, flex: 1, fontWeight: '600' }}>
           {content}
         </Text>
@@ -240,7 +241,7 @@ export default function KidsLearnTab() {
     try {
       const res = await api.oneKidsChat(text.trim(), selectedTopic || 'geral');
       const d = res?.data || res || {};
-      const reply = d.response || 'Hmm, tive um probleminha. Tenta de novo?';
+      const reply = d.response || t('kidsLearn.replyEmpty');
       if (d.level) setLevel(d.level);
       if (d.sessions) setSessions(d.sessions);
       if (d.stars) setStars(d.stars);
@@ -251,15 +252,15 @@ export default function KidsLearnTab() {
       if (d.exercise) newMsgs.push({ id: String(Date.now() + 4), role: 'exercise', content: d.exercise });
       setMessages(prev => [...prev, ...newMsgs]);
     } catch {
-      setMessages(prev => [...prev, { id: String(Date.now() + 1), role: 'assistant', content: 'Ops! Algo deu errado. Tenta de novo!' }]);
+      setMessages(prev => [...prev, { id: String(Date.now() + 1), role: 'assistant', content: t('kidsLearn.tutorError') }]);
     } finally { setLoading(false); }
-  }, [loading, selectedTopic]);
+  }, [loading, selectedTopic, t]);
 
   useEffect(() => {
     if (messages.length > 1) setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 150);
   }, [messages.length]);
 
-  const LEVEL_LABELS = ['Iniciante', 'Basico', 'Intermediario', 'Avancado', 'Expert'];
+  const LEVEL_LABELS = ['kidsLearn.level.beginner', 'kidsLearn.level.basic', 'kidsLearn.level.intermediate', 'kidsLearn.level.advanced', 'kidsLearn.level.expert'];
   const levelProgress = Math.min(level / 5, 1);
 
   const renderMessage = useCallback(({ item }) => {
@@ -286,7 +287,7 @@ export default function KidsLearnTab() {
                 <Text style={{ fontSize: 15, fontWeight: '800', color: colors.primary }}>{t('kids.teacherOne')}</Text>
                 {level > 1 && (
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 2 }}>
-                    <Text style={{ fontSize: 11, color: colors.primary, fontWeight: '700' }}>Lv.{level}</Text>
+                    <Text style={{ fontSize: 11, color: colors.primary, fontWeight: '700' }}>{t('kidsLearn.levelShort', { n: level })}</Text>
                     <StarProgress stars={Math.min(stars, 5)} maxStars={5} size={12} />
                   </View>
                 )}
@@ -324,7 +325,7 @@ export default function KidsLearnTab() {
               <View style={{ width: `${levelProgress * 100}%`, height: 6, backgroundColor: '#fbbf24', borderRadius: 3 }} />
             </View>
             <Text style={s.headerSub}>
-              {LEVEL_LABELS[Math.min(level - 1, 4)]}
+              {t(LEVEL_LABELS[Math.max(0, Math.min(level - 1, 4))])}
             </Text>
           </View>
         </View>
@@ -339,7 +340,7 @@ export default function KidsLearnTab() {
           {streak > 0 && (
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: 'rgba(255,255,255,0.2)', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12 }}>
               <IconFire size={14} color="#f97316" />
-              <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700' }}>{streak}d</Text>
+              <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700' }}>{t('kidsLearn.streakDays', { n: streak })}</Text>
             </View>
           )}
         </View>
@@ -347,10 +348,10 @@ export default function KidsLearnTab() {
           <TouchableOpacity
             onPress={() => { setSelectedTopic(null); setShowCategories(true); }}
             style={{ backgroundColor: 'rgba(255,255,255,0.25)', paddingHorizontal: 14, paddingVertical: 8, borderRadius: 16, flexDirection: 'row', alignItems: 'center', gap: 8 }}
-            accessibilityLabel="Change subject"
+            accessibilityLabel={t('kidsLearn.changeSubject')}
             accessibilityRole="button"
           >
-            <Text style={{ fontSize: 18 }}>{CATEGORIES.find(c => c.key === selectedTopic)?.emoji}</Text>
+            {(() => { const SelIcon = CATEGORIES.find(c => c.key === selectedTopic)?.Icon; return SelIcon ? <SelIcon size={18} color="#fff" /> : null; })()}
             <Text style={{ color: '#fff', fontSize: 14, fontWeight: '700' }}>
               {t(CATEGORIES.find(c => c.key === selectedTopic)?.i18nKey) || selectedTopic}
             </Text>
@@ -400,7 +401,7 @@ export default function KidsLearnTab() {
               const subj = dailyQuest.quest.subject;
               if (subj) setSelectedTopic(subj);
               setShowCategories(false);
-              sendMessage('Quero fazer a missão de hoje: ' + dailyQuest.quest.title + '!');
+              sendMessage(t('kidsLearn.questStart', { title: dailyQuest.quest.title }));
             }}
             style={{
               marginHorizontal: 16, marginTop: 12, marginBottom: 6,
@@ -416,7 +417,7 @@ export default function KidsLearnTab() {
                 backgroundColor: 'rgba(255,255,255,0.25)',
                 alignItems: 'center', justifyContent: 'center',
               }}>
-                <Text style={{ fontSize: 34 }}>{dailyQuest.quest.emoji}</Text>
+                {(() => { const QIcon = CATEGORIES.find(c => c.key === dailyQuest.quest.subject)?.Icon || IconSparkles; return <QIcon size={32} color="#fff" />; })()}
               </View>
               <View style={{ flex: 1 }}>
                 <Text style={{ fontSize: 11, fontWeight: '800', color: 'rgba(255,255,255,0.9)', letterSpacing: 1 }}>
@@ -473,7 +474,7 @@ export default function KidsLearnTab() {
                   onPress={() => {
                     setSelectedTopic(topic.key);
                     setShowCategories(false);
-                    sendMessage('Quero aprender ' + (t(topic.i18nKey) || topic.key) + '!');
+                    sendMessage(t('kidsLearn.wantToLearn', { subject: t(topic.i18nKey) || topic.key }));
                   }}
                   activeOpacity={0.7}
                   accessibilityLabel={t(topic.i18nKey) || topic.key}
@@ -483,7 +484,7 @@ export default function KidsLearnTab() {
                     width: 44, height: 44, borderRadius: 14,
                     backgroundColor: topic.color + '20', alignItems: 'center', justifyContent: 'center',
                   }}>
-                    <Text style={{ fontSize: 24 }}>{topic.emoji}</Text>
+                    <topic.Icon size={24} color={topic.color} />
                   </View>
                   <Text style={{ fontSize: 15, fontWeight: '700', color: topic.color }}>
                     {t(topic.i18nKey) || topic.key}
@@ -501,15 +502,15 @@ export default function KidsLearnTab() {
           <TouchableOpacity style={s.iconBtn} onPress={async () => {
             try {
               const r = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], quality: 0.8 });
-              if (!r.canceled && r.assets?.[0]) sendMessage(input.trim() || 'Me ajuda com esse dever de casa!');
+              if (!r.canceled && r.assets?.[0]) sendMessage(input.trim() || t('kidsLearn.helpHomework'));
             } catch {}
-          }} activeOpacity={0.7} accessibilityLabel="Photo" accessibilityRole="button">
+          }} activeOpacity={0.7} accessibilityLabel={t('kidsLearn.photo')} accessibilityRole="button">
             <IconCamera size={24} color={isDark ? '#F5F5F7' : '#111111'} />
           </TouchableOpacity>
         )}
         <TextInput
           style={[s.input, { backgroundColor: isDark ? '#161618' : '#f3e8ff', color: isDark ? '#F1F3F5' : '#1e1b4b' }]}
-          placeholder={t('kids.homeworkPlaceholder') || 'Qual sua duvida?'}
+          placeholder={t('kids.homeworkPlaceholder') || 'Qual sua dúvida?'}
           placeholderTextColor={isDark ? '#8E8E93' : '#111111'}
           value={input} onChangeText={setInput}
           onSubmitEditing={() => sendMessage(input)} returnKeyType="send" maxLength={500} editable={!loading}
@@ -520,7 +521,7 @@ export default function KidsLearnTab() {
             ...(input.trim() && !loading && Platform.OS === 'web' ? { boxShadow: '0 4px 12px rgba(17, 17, 17,0.35)' } : {}),
           }]}
           onPress={() => sendMessage(input)} disabled={!input.trim() || loading} activeOpacity={0.7}
-          accessibilityLabel="Send" accessibilityRole="button"
+          accessibilityLabel={t('common.send')} accessibilityRole="button"
         >
           {loading
             ? <ActivityIndicator size="small" color={colors.primary} />

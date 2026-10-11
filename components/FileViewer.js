@@ -5,6 +5,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../context/ThemeContext';
+import { useLanguage } from '../context/LanguageContext';
 import { BorderRadius, FontSize, Spacing } from '../constants/theme';
 import CachedImage from './CachedImage';
 import { IconX, IconDownload, IconFileText, IconImage, IconFilm, IconMusic, IconPackage, IconChevronLeft, IconChevronRight, IconUpload } from './Icons';
@@ -74,6 +75,7 @@ function formatSize(bytes) {
 
 // --- Image Preview (works natively) ---
 function ImagePreview({ url }) {
+  const { t } = useLanguage();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
 
@@ -81,7 +83,7 @@ function ImagePreview({ url }) {
     return (
       <View style={s.previewCenter}>
         <IconImage size={48} color="#94a3b8" />
-        <Text style={{ color: '#94a3b8', marginTop: 12, fontSize: 14 }}>Erro ao carregar imagem</Text>
+        <Text style={{ color: '#94a3b8', marginTop: 12, fontSize: 14 }}>{t('fileViewer.imageLoadError')}</Text>
       </View>
     );
   }
@@ -147,7 +149,7 @@ function NativeVideoPreview({ url, colors }) {
   // before the hook (Rules-of-Hooks safe). No WebView fallback — a build
   // without expo-video degrades to the download affordance.
   if (!useVideoPlayer || !VideoView) {
-    return <FallbackView label="Reprodutor não disponível" colors={colors} url={url} />;
+    return <FallbackView labelKey="fileViewer.playerUnavailable" colors={colors} url={url} />;
   }
   const player = useVideoPlayer(url, (p) => {
     try { p.loop = false; p.muted = false; const r = p.play?.(); if (r?.catch) r.catch(() => {}); } catch {}
@@ -203,7 +205,7 @@ function NativeAudioPreview({ url, colors, fileName }) {
   const VideoView = ev && ev.VideoView;
   // Module presence is constant for the app's lifetime → stable early return.
   if (!useVideoPlayer || !VideoView) {
-    return <FallbackView label="Reprodutor não disponível" colors={colors} url={url} />;
+    return <FallbackView labelKey="fileViewer.playerUnavailable" colors={colors} url={url} />;
   }
   const player = useVideoPlayer(url, (p) => {
     try { p.loop = false; p.muted = false; const r = p.play?.(); if (r?.catch) r.catch(() => {}); } catch {}
@@ -223,33 +225,36 @@ function NativeAudioPreview({ url, colors, fileName }) {
 
 // --- Text Preview ---
 function TextPreview({ url, colors }) {
+  const { t } = useLanguage();
   const [content, setContent] = useState(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    fetch(url).then(r => r.text()).then(t => { setContent(t); setLoading(false); }).catch(() => setLoading(false));
+    fetch(url).then(r => r.text()).then(txt => { setContent(txt); setLoading(false); }).catch(() => setLoading(false));
   }, [url]);
 
   if (loading) return <ActivityIndicator size="large" color={colors.primary} style={{ flex: 1 }} />;
   return (
     <ScrollView style={[s.textScroll, { backgroundColor: colors.surfaceVariant || '#1e293b' }]} contentContainerStyle={s.textContent}>
-      <Text style={[s.textCode, { color: colors.text }]} selectable>{content || '(arquivo vazio)'}</Text>
+      <Text style={[s.textCode, { color: colors.text }]} selectable>{content || t('fileViewer.emptyFile')}</Text>
     </ScrollView>
   );
 }
 
 // --- Fallback for unsupported types ---
-function FallbackView({ label, colors, url }) {
+function FallbackView({ label, labelKey, colors, url }) {
+  const { t } = useLanguage();
   return (
     <View style={s.fallbackWrap}>
       <IconFileText size={48} color="#94a3b8" />
-      <Text style={s.fallbackText}>{label || 'Formato não suportado para visualização'}</Text>
+      <Text style={s.fallbackText}>{label || (labelKey ? t(labelKey) : t('fileViewer.unsupported'))}</Text>
     </View>
   );
 }
 
 // --- File Info Card ---
 function FileInfoCard({ file, colors, type }) {
+  const { t } = useLanguage();
   const TypeIcon = getTypeIcon(type);
   return (
     <View style={s.fallbackWrap}>
@@ -258,13 +263,14 @@ function FileInfoCard({ file, colors, type }) {
       </View>
       <Text style={[s.infoName, { color: colors.text || '#fff' }]} numberOfLines={2}>{file.name || file.original_name}</Text>
       {file.size ? <Text style={[s.infoSize, { color: colors.textSecondary || '#94a3b8' }]}>{formatSize(file.size)}</Text> : null}
-      <Text style={[s.infoType, { color: colors.textTertiary || '#64748b' }]}>Arquivo {getExt(file.name || file.original_name || '').toUpperCase()}</Text>
+      <Text style={[s.infoType, { color: colors.textTertiary || '#64748b' }]}>{t('fileViewer.fileOfType', { ext: getExt(file.name || file.original_name || '').toUpperCase() })}</Text>
     </View>
   );
 }
 
 export default function FileViewer({ visible, file, files, initialIndex, onClose, getUrl }) {
   const { colors } = useTheme();
+  const { t } = useLanguage();
   const insets = useSafeAreaInsets();
   const [currentIndex, setCurrentIndex] = useState(initialIndex || 0);
   const [downloading, setDownloading] = useState(false);
@@ -334,7 +340,7 @@ export default function FileViewer({ visible, file, files, initialIndex, onClose
             <IconX size={22} color="#fff" />
           </TouchableOpacity>
           <View style={s.headerInfo}>
-            <Text style={s.headerTitle} numberOfLines={1}>{fileName || 'Arquivo'}</Text>
+            <Text style={s.headerTitle} numberOfLines={1}>{fileName || t('viewer.fileLabel')}</Text>
             {current.size ? <Text style={s.headerSize}>{formatSize(current.size)}</Text> : null}
           </View>
           {Platform.OS !== 'web' && (
@@ -346,7 +352,7 @@ export default function FileViewer({ visible, file, files, initialIndex, onClose
             onPress={handleDownload}
             style={s.headerBtn}
             disabled={downloading}
-            accessibilityLabel="Baixar"
+            accessibilityLabel={t('files.download')}
             accessibilityRole="button"
           >
             {downloading ? (

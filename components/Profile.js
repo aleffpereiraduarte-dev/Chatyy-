@@ -507,7 +507,7 @@ const EmptyGridIllustration = memo(function EmptyGridIllustration({ isDark, size
 // bleed 1:1 cell, hairline gutters) but layers a duration chip + view
 // count overlay so the user can scan their saved replays. Long-press on
 // own profile opens the delete confirm (wired in renderTabContent).
-const LiveGridItem = memo(function LiveGridItem({ rec, size, onPress, onLongPress }) {
+const LiveGridItem = memo(function LiveGridItem({ rec, size, onPress, onLongPress, t }) {
   const thumb = rec?.thumbnail_url ? resolveMedia(rec.thumbnail_url) : '';
   // Prefer viewer_count (peak live audience) over view_count when both are
   // present — the backend started returning both as of 2026-05-18 and we
@@ -543,7 +543,7 @@ const LiveGridItem = memo(function LiveGridItem({ rec, size, onPress, onLongPres
   return (
     <TouchableOpacity onPress={onPress} onLongPress={onLongPress} activeOpacity={0.85}
       style={{ width: size, height: size, padding: 0.5 }}
-      accessibilityLabel={rec?.title || 'Live replay'}
+      accessibilityLabel={rec?.title || t?.('live.live') || 'Live'}
     >
       <View style={{ width: '100%', height: '100%', overflow: 'hidden', backgroundColor: '#0a0a0a' }}>
         {thumb
@@ -587,7 +587,7 @@ const LiveGridItem = memo(function LiveGridItem({ rec, size, onPress, onLongPres
             backgroundColor: '#ef4444', marginRight: 4,
           }} />
           <Text style={{ color: '#fff', fontSize: 10, fontWeight: '800', letterSpacing: 0.5 }}>
-            LIVE{dateLabel ? ` · ${dateLabel}` : ''}
+            {t?.('live.live') || 'AO VIVO'}{dateLabel ? ` · ${dateLabel}` : ''}
           </Text>
         </View>
         {/* Top-right play badge — same visual weight as the Reels grid so
@@ -602,9 +602,10 @@ const LiveGridItem = memo(function LiveGridItem({ rec, size, onPress, onLongPres
         </View>
         {/* Bottom-left: ▶ view count (matches Reels overlay convention). */}
         {!!viewLabel && (
-          <View style={{ position: 'absolute', bottom: 6, left: 6 }}>
+          <View style={{ position: 'absolute', bottom: 6, left: 6, flexDirection: 'row', alignItems: 'center', gap: 3 }}>
+            <IconPlay size={10} color="#fff" />
             <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700', textShadowColor: 'rgba(0,0,0,0.5)', textShadowRadius: 3 }}>
-              ▶ {viewLabel}
+              {viewLabel}
             </Text>
           </View>
         )}
@@ -906,10 +907,11 @@ const GridItem = memo(function GridItem({ item, size, onPress, isReel }) {
             {!!viewLabel && (
               <View style={{
                 position: 'absolute', bottom: 6, left: 6,
-                flexDirection: 'row', alignItems: 'center', gap: 4,
+                flexDirection: 'row', alignItems: 'center', gap: 3,
               }}>
+                <IconPlay size={10} color="#fff" />
                 <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700', textShadowColor: 'rgba(0,0,0,0.5)', textShadowRadius: 3 }}>
-                  ▶ {viewLabel}
+                  {viewLabel}
                 </Text>
               </View>
             )}
@@ -2004,7 +2006,7 @@ export default function Profile({
                   Alert.alert(t?.('common.error') || 'Erro', msg);
                 }
               } catch (e) {
-                Alert.alert(t?.('common.error') || 'Erro', e?.message || 'Falhou');
+                Alert.alert(t?.('common.error') || 'Erro', e?.message || t?.('common.failed') || 'Falhou');
               }
             }}
           >
@@ -2097,7 +2099,7 @@ export default function Profile({
               }
               setHighlightViewer({ open: true, items, title: h.title || '', startIdx: 0, highlightId: h.id });
             } catch (e) {
-              Alert.alert(t?.('common.error') || 'Erro', e?.message || 'Falhou');
+              Alert.alert(t?.('common.error') || 'Erro', e?.message || t?.('common.failed') || 'Falhou');
             }
           };
           // [2026-05-18 IG-Pro] Long-press → action sheet (Edit / Share /
@@ -2289,7 +2291,7 @@ export default function Profile({
               <IconMoreHorizontal size={24} color={colors?.text} />
             </TouchableOpacity>
           ) : (
-            <TouchableOpacity onPress={() => setMenuOpen(true)} style={{ padding: 6 }} accessibilityLabel="More">
+            <TouchableOpacity onPress={() => setMenuOpen(true)} style={{ padding: 6 }} accessibilityLabel={t?.('a11y.moreOptions') || 'Mais opções'}>
               <IconMoreHorizontal size={24} color={colors?.text} />
             </TouchableOpacity>
           )}
@@ -2965,6 +2967,7 @@ export default function Profile({
                 size={gridSize}
                 onPress={() => onOpenLive(rec)}
                 onLongPress={() => onLongPressLive(rec)}
+                t={t}
               />
             ))}
           </View>
@@ -3049,13 +3052,13 @@ export default function Profile({
       </View>
       <Text style={{ color: colors?.text, fontSize: 18, fontWeight: '700', marginBottom: 6, textAlign: 'center' }}>
         {errStatus === 401
-          ? (t?.('profile.errSessionTitle') || 'Sessao expirada')
-          : (t?.('profile.errLoadTitle') || 'Nao foi possivel carregar')}
+          ? (t?.('profile.errSessionTitle') || 'Sessão expirada')
+          : (t?.('profile.errLoadTitle') || 'Não foi possível carregar')}
       </Text>
       <Text style={{ color: colors?.textSecondary || (isDark ? 'rgba(255,255,255,0.6)' : 'rgba(0,0,0,0.55)'), fontSize: 14, lineHeight: 20, textAlign: 'center', marginBottom: 24 }}>
         {errStatus === 401
-          ? (t?.('profile.errSessionMsg') || 'Sua sessao expirou. Faca login de novo pra ver o perfil.')
-          : (t?.('profile.errLoadMsg') || 'Verifique sua conexao e tente novamente.')}
+          ? (t?.('profile.errSessionMsg') || 'Sua sessão expirou. Faça login de novo pra ver o perfil.')
+          : (t?.('profile.errLoadMsg') || 'Verifique sua conexão e tente novamente.')}
       </Text>
       <View style={{ flexDirection: 'row', gap: 10 }}>
         <TouchableOpacity
@@ -3700,7 +3703,7 @@ export default function Profile({
           Alert.alert(t?.('common.error') || 'Erro', t?.('status.publishFailed') || 'Não foi possível publicar o status.');
         }
       } catch (e) {
-        Alert.alert(t?.('common.error') || 'Erro', e?.message || 'Falhou');
+        Alert.alert(t?.('common.error') || 'Erro', e?.message || t?.('common.failed') || 'Falhou');
       } finally {
         setStatusPublishing(false);
       }
@@ -3759,7 +3762,7 @@ export default function Profile({
         Alert.alert(t?.('common.error') || 'Erro', uploadR?.message || t?.('status.uploadFailed') || 'Falha no upload.');
       }
     } catch (e) {
-      Alert.alert(t?.('common.error') || 'Erro', e?.message || 'Falhou');
+      Alert.alert(t?.('common.error') || 'Erro', e?.message || t?.('common.failed') || 'Falhou');
     } finally {
       setStatusPublishing(false);
     }

@@ -265,7 +265,7 @@ function ContactAutocompleteInner({ value = [], onChange, placeholder, label }, 
           </Text>
         )}
       </View>
-      {!!item.phone && <Text style={{ fontSize: 10, color: '#34C759', fontWeight: '600', marginRight: 4 }}>TEL</Text>}
+      {!!item.phone && <Text style={{ fontSize: 10, color: '#34C759', fontWeight: '600', marginRight: 4 }}>{t('uiG.contactAuto.phoneBadge')}</Text>}
       {!!item.source && <SourceIcon source={item.source} />}
     </TouchableOpacity>
   );
@@ -318,7 +318,7 @@ function ContactAutocompleteInner({ value = [], onChange, placeholder, label }, 
             setTimeout(() => setFocused(false), 200);
           }}
           onKeyPress={handleKeyPress}
-          placeholder={value.length === 0 ? (placeholder || 'Digite um email...') : ''}
+          placeholder={value.length === 0 ? (placeholder || t('uiG.contactAuto.placeholder')) : ''}
           placeholderTextColor={colors.textTertiary}
           keyboardType="email-address"
           autoCapitalize="none"
@@ -351,7 +351,7 @@ function ContactAutocompleteInner({ value = [], onChange, placeholder, label }, 
           {loading && suggestions.length === 0 ? (
             <View style={styles.loadingContainer}>
               <ActivityIndicator size="small" color={colors.primary} />
-              <Text style={[styles.loadingText, { color: colors.textSecondary }]}>Buscando contatos...</Text>
+              <Text style={[styles.loadingText, { color: colors.textSecondary }]}>{t('one.toolSearchingContacts')}</Text>
             </View>
           ) : (
             <FlatList

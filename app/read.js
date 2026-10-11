@@ -586,6 +586,10 @@ export default function ReadScreen() {
           onReplyAll={handleReplyAll}
           onForward={handleForward}
           onClose={showChrome ? undefined : () => router.back()}
+          // [2026-10-11 email-qa] Com a barra de baixo, o rodapé da thread
+          // repetia Responder/Resp. todos/Encaminhar.
+          hasActionBar={!!showChrome}
+          focusUid={uid}
         />
         {actionBar}
         <SnoozePickerModal visible={showSnooze} onClose={() => setShowSnooze(false)} onSnooze={onSnoozePick} />

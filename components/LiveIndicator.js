@@ -1,5 +1,6 @@
 import React, { useEffect, useRef } from 'react';
 import { View, Text, Animated, StyleSheet, Platform } from 'react-native';
+import { useLanguageOptional } from '../context/LanguageContext';
 
 const LIVE_RED = '#dc2626';
 
@@ -16,6 +17,7 @@ function humanize(n) {
 }
 
 export default function LiveIndicator({ size = 'small', viewerCount }) {
+  const t = useLanguageOptional()?.t;
   const pulseAnim = useRef(new Animated.Value(1)).current;
   const glowAnim = useRef(new Animated.Value(0)).current;
 
@@ -67,7 +69,7 @@ export default function LiveIndicator({ size = 'small', viewerCount }) {
             boxShadow: '0 0 6px rgba(220, 38, 38, 0.4)',
           },
         ]}
-        accessibilityLabel="Live indicator"
+        accessibilityLabel={t?.('live.connected') || 'Ao vivo'}
       >
         <View style={[styles.dotOuter, isLarge && styles.dotOuterLarge]}>
           <Animated.View
@@ -78,7 +80,7 @@ export default function LiveIndicator({ size = 'small', viewerCount }) {
             ]}
           />
         </View>
-        <Text style={[styles.text, isLarge && styles.textLarge]}>LIVE</Text>
+        <Text style={[styles.text, isLarge && styles.textLarge]}>{t?.('live.aoVivo') || 'AO VIVO'}</Text>
         {viewerCount != null && (
           <View style={styles.countContainer}>
             <View style={styles.countDivider} />

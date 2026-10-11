@@ -30,6 +30,7 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import { useTheme } from '../context/ThemeContext';
+import { useLanguageOptional } from '../context/LanguageContext';
 import { BorderRadius, Spacing, FontSize } from '../constants/theme';
 import { IconPlay, IconFilm, IconMusic } from './Icons';
 import {
@@ -106,6 +107,7 @@ export default function ShortVideoBubble({
   messageId,
 }) {
   const { colors } = useTheme();
+  const t = useLanguageOptional()?.t;
   const [playerReady, setPlayerReady] = useState(false);
   const [errored, setErrored] = useState(false);
 
@@ -178,7 +180,7 @@ export default function ShortVideoBubble({
           <View style={[shortStyles.fill, shortStyles.fallbackTile]}>
             <IconFilm size={28} color="#fff" />
             <Text style={shortStyles.fallbackText}>
-              {flagOn ? 'Short video' : 'Vídeo curto'}
+              {t?.('chat.attach.shortVideo') || 'Vídeo curto'}
             </Text>
           </View>
         )}
@@ -193,7 +195,7 @@ export default function ShortVideoBubble({
           a normal chat video. */}
       <View style={shortStyles.badge}>
         <IconFilm size={11} color="#fff" />
-        <Text style={shortStyles.badgeText}>Short</Text>
+        <Text style={shortStyles.badgeText}>{t?.('shortVideo.badge') || 'Curto'}</Text>
       </View>
 
       {/* Bottom-left: duration pill. */}
@@ -224,7 +226,7 @@ export default function ShortVideoBubble({
       {/* "Posted to Reels" indicator (subtle bottom bar). */}
       {reelsCrossPosted && (
         <View pointerEvents="none" style={[shortStyles.reelsBar, { backgroundColor: colors.primary }]}>
-          <Text style={[shortStyles.reelsBarText, { color: colors.onPrimary }]}>Reels</Text>
+          <Text style={[shortStyles.reelsBarText, { color: colors.onPrimary }]}>{t?.('reels.title') || 'Reels'}</Text>
         </View>
       )}
     </TouchableOpacity>

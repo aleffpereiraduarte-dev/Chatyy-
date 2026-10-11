@@ -205,7 +205,7 @@ function PackDetailModal({ pack, visible, onClose, installed, onToggle, colors, 
                 {[packAuthor(pack), t('stickerStore.count', { n: pack.sticker_count || items.length || 0 })].filter(Boolean).join(' · ')}
               </Text>
             </View>
-            <TouchableOpacity onPress={onClose} hitSlop={10} accessibilityLabel="close-pack">
+            <TouchableOpacity onPress={onClose} hitSlop={10} accessibilityLabel={t('common.close')}>
               <IconX size={22} color={colors.text} />
             </TouchableOpacity>
           </View>

@@ -100,7 +100,7 @@ function _finishSession(callId) {
   const dur = Math.max(0, Math.round((Date.now() - s.startedAt) / 1000));
   // Our own history row (the call itself goes on for the others).
   try {
-    const { addCallToHistory } = require('../components/ChatCallsTab');
+    const { addCallToHistory } = require('./callHistoryStore');
     if (typeof addCallToHistory === 'function') {
       addCallToHistory({
         contactEmail: '',

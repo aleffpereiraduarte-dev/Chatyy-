@@ -13,7 +13,8 @@ import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useTheme } from '../context/ThemeContext';
 import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
-import CreatePostModal from '../components/CreatePostModal';
+// [2026-10-11 boot-split] lazy: keeps CreatePostModal out of the web boot __common chunk.
+const CreatePostModal = React.lazy(() => import('../components/CreatePostModal'));
 
 export default function PostCreateScreen() {
   const router = useRouter();
@@ -37,7 +38,7 @@ export default function PostCreateScreen() {
 
   return (
     <View style={{ flex: 1, backgroundColor: '#000' }}>
-      <CreatePostModal
+      <React.Suspense fallback={null}><CreatePostModal
         visible
         colors={colors}
         isDark={isDark}
@@ -49,7 +50,7 @@ export default function PostCreateScreen() {
         stitchOf={stitchOf}
         presetSoundId={presetSoundId}
         presetSoundLabel={presetSoundLabel}
-      />
+      /></React.Suspense>
     </View>
   );
 }

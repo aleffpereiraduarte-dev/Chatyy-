@@ -294,7 +294,7 @@ export default function CompleteProfileModal({ visible, onDone, onSkip, profile 
               <ActivityIndicator size="small" color={colors.onPrimary || '#fff'} />
             ) : (
               <Text style={[s.sendCodeBtnText, { color: colors.onPrimary }]}>
-                {t('completeProfile.sendCode') || 'Enviar codigo'}
+                {t('completeProfile.sendCode') || 'Enviar código'}
               </Text>
             )}
           </TouchableOpacity>

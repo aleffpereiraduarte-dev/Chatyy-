@@ -184,7 +184,7 @@ export default function AttachSheet({ visible, onClose, onPick, colors, items, o
   return (
     <View style={styles.fullscreen} pointerEvents="box-none">
       <A.View style={[styles.backdrop, backdropStyle]} pointerEvents={visible ? 'auto' : 'none'}>
-        <Pressable style={StyleSheet.absoluteFill} onPress={requestClose} accessibilityRole="button" accessibilityLabel="Fechar" />
+        <Pressable style={StyleSheet.absoluteFill} onPress={requestClose} accessibilityRole="button" accessibilityLabel={(lang && lang.t && lang.t('common.close')) || 'Fechar'} />
       </A.View>
       <GH.GestureDetector gesture={pan}>
         <A.View

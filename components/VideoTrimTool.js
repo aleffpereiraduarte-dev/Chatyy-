@@ -3,6 +3,7 @@
 // Native: stores trim range in metadata (server or ffmpeg handles actual trim)
 import { useState, useRef, useEffect } from 'react';
 import { View, Text, TouchableOpacity, Platform, Dimensions } from 'react-native';
+import { IconPlay, IconPause } from './Icons';
 
 export default function VideoTrimTool({ videoUri, onDone, onCancel, t }) {
   const [duration, setDuration] = useState(0);
@@ -65,7 +66,7 @@ export default function VideoTrimTool({ videoUri, onDone, onCancel, t }) {
             playsInline
           />
         ) : (
-          <Text style={{ color: '#fff' }}>{t?.('video.trimNotice') || 'Arraste para recortar o video'}</Text>
+          <Text style={{ color: '#fff' }}>{t?.('video.trimNotice') || 'Arraste para recortar o vídeo'}</Text>
         )}
       </View>
 
@@ -73,11 +74,11 @@ export default function VideoTrimTool({ videoUri, onDone, onCancel, t }) {
       <View style={{ backgroundColor: 'rgba(0,0,0,0.9)', padding: 16, gap: 12 }}>
         {/* Play/pause + time */}
         <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-          <TouchableOpacity onPress={togglePlay} style={{ width: 44, height: 44, borderRadius: 22, backgroundColor: '#111111', alignItems: 'center', justifyContent: 'center' }}>
-            <Text style={{ color: '#fff', fontSize: 18 }}>{playing ? '⏸' : '▶'}</Text>
+          <TouchableOpacity onPress={togglePlay} style={{ width: 44, height: 44, borderRadius: 22, backgroundColor: '#111111', alignItems: 'center', justifyContent: 'center' }} accessibilityLabel={playing ? (t?.('common.pause') || 'Pausar') : (t?.('common.play') || 'Reproduzir')}>
+            {playing ? <IconPause size={18} color="#fff" /> : <IconPlay size={18} color="#fff" />}
           </TouchableOpacity>
           <Text style={{ color: '#fff', fontSize: 14, fontWeight: '600' }}>
-            {formatTime(start)} → {formatTime(end)} ({formatTime(end - start)})
+            {formatTime(start)} – {formatTime(end)} ({formatTime(end - start)})
           </Text>
         </View>
 
@@ -85,7 +86,7 @@ export default function VideoTrimTool({ videoUri, onDone, onCancel, t }) {
         {Platform.OS === 'web' && duration > 0 && (
           <View style={{ gap: 8 }}>
             <View>
-              <Text style={{ color: '#fff', fontSize: 12, marginBottom: 4 }}>{t?.('video.trimStart') || 'Inicio'}: {formatTime(start)}</Text>
+              <Text style={{ color: '#fff', fontSize: 12, marginBottom: 4 }}>{t?.('video.trimStart') || 'Início'}: {formatTime(start)}</Text>
               <input
                 type="range"
                 min="0"

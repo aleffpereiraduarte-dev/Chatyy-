@@ -22,6 +22,7 @@ import {
 } from 'react-native';
 import AvatarCircle from '../AvatarCircle';
 import { IconX, IconShare, IconMoreVert, IconEye } from '../Icons';
+import { useLanguage } from '../../context/LanguageContext';
 import AnimatedViewerCount from '../AnimatedViewerCount';
 // [lives-engage 2026-10-10] Seguir no chip do host + total de curtidas + top fãs.
 import LiveFollowButton from './LiveFollowButton';
@@ -58,6 +59,7 @@ export default function LiveTopBar({
   myEmail = '',
   showFollow = false,
 }) {
+  const { t } = useLanguage();
   // Pulsing dot for LIVE pill — Animated.loop, runs while mounted.
   const dotPulse = useRef(new Animated.Value(1)).current;
   // Avatar breath — subtle 1→1.05 loop so the host "feels alive" (IG-style).
@@ -168,13 +170,13 @@ export default function LiveTopBar({
       {/* RIGHT cluster — circular blur backdrop buttons */}
       <View style={styles.rightCluster}>
         {engage ? <LiveTopFansStack engage={engage} size={26} /> : null}
-        <TouchableOpacity onPress={onPressMore} style={styles.iconBtn} activeOpacity={0.7} accessibilityRole="button" accessibilityLabel="More">
+        <TouchableOpacity onPress={onPressMore} style={styles.iconBtn} activeOpacity={0.7} accessibilityRole="button" accessibilityLabel={t('common.more') || 'Mais'}>
           <IconMoreVert size={18} color="#fff" />
         </TouchableOpacity>
-        <TouchableOpacity onPress={onPressShare} style={styles.iconBtn} activeOpacity={0.7} accessibilityRole="button" accessibilityLabel="Share">
+        <TouchableOpacity onPress={onPressShare} style={styles.iconBtn} activeOpacity={0.7} accessibilityRole="button" accessibilityLabel={t('common.share') || 'Compartilhar'}>
           <IconShare size={17} color="#fff" />
         </TouchableOpacity>
-        <TouchableOpacity onPress={onClose} style={styles.iconBtn} activeOpacity={0.7} accessibilityRole="button" accessibilityLabel="Close">
+        <TouchableOpacity onPress={onClose} style={styles.iconBtn} activeOpacity={0.7} accessibilityRole="button" accessibilityLabel={t('common.close') || 'Fechar'}>
           <IconX size={19} color="#fff" />
         </TouchableOpacity>
       </View>

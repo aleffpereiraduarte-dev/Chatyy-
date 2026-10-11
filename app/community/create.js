@@ -87,7 +87,7 @@ export default function CommunityCreateScreen() {
       if (r.success && r.data?.community_id) {
         router.replace(`/community/${r.data.community_id}`);
       } else {
-        Alert.alert(t('common.error') || 'Erro', r.error || 'Falha ao criar');
+        Alert.alert(t('common.error') || 'Erro', r.error || t('community.createFailed'));
       }
     } catch (e) {
       Alert.alert(t('common.error') || 'Erro', String(e?.message || e));
@@ -155,7 +155,7 @@ export default function CommunityCreateScreen() {
               <Text style={{ color: colors.textSecondary, fontSize: 16 }}>@</Text>
               <TextInput
                 value={handle} onChangeText={(s) => setHandle(s.toLowerCase().replace(/[^a-z0-9_]/g, ''))}
-                placeholder="comunidade_devs" placeholderTextColor={colors.textSecondary}
+                placeholder={t('communityCreate.handlePh')} placeholderTextColor={colors.textSecondary}
                 autoCapitalize="none" maxLength={32}
                 style={[sty.inputInline, { color: colors.text }]}
               />

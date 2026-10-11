@@ -1,6 +1,7 @@
 import React, { useRef, useCallback, useMemo } from 'react';
 import { View, StyleSheet, Animated, PanResponder, Platform, Easing, Text, LayoutAnimation, UIManager } from 'react-native';
 import { IconTrash, IconArchive } from './Icons';
+import { useLanguageOptional } from '../context/LanguageContext';
 
 // Enable LayoutAnimation on Android
 if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
@@ -17,6 +18,8 @@ const THRESHOLD = 80;
  * but the actual animation (translateX) runs natively.
  */
 export default function SwipeableRow({ children, onDelete, onArchive, onSnooze, colors }) {
+  const _lang = useLanguageOptional();
+  const _tr = (k, fb) => { try { const v = _lang?.t?.(k); if (v && v !== k) return v; } catch {} return fb; };
   const tx = useRef(new Animated.Value(0)).current;
   const isAnimating = useRef(false);
 
@@ -143,7 +146,7 @@ export default function SwipeableRow({ children, onDelete, onArchive, onSnooze, 
         <Animated.View style={[s.bg, s.bgLeft, { opacity: archiveOpacity }]}>
           <Animated.View style={{ transform: [{ scale: archiveScale }], alignItems: 'center', gap: 4 }}>
             <IconArchive size={22} color="#fff" />
-            <Animated.Text style={[s.bgLabel, { opacity: archiveLabelOpacity }]}>Arquivar</Animated.Text>
+            <Animated.Text style={[s.bgLabel, { opacity: archiveLabelOpacity }]}>{_tr('contextMenu.archive', 'Arquivar')}</Animated.Text>
           </Animated.View>
         </Animated.View>
       )}
@@ -151,7 +154,7 @@ export default function SwipeableRow({ children, onDelete, onArchive, onSnooze, 
         <Animated.View style={[s.bg, s.bgRight, { opacity: deleteOpacity }]}>
           <Animated.View style={{ transform: [{ scale: deleteScale }], alignItems: 'center', gap: 4 }}>
             <IconTrash size={22} color="#fff" />
-            <Animated.Text style={[s.bgLabel, { opacity: deleteLabelOpacity }]}>Excluir</Animated.Text>
+            <Animated.Text style={[s.bgLabel, { opacity: deleteLabelOpacity }]}>{_tr('common.delete', 'Excluir')}</Animated.Text>
           </Animated.View>
         </Animated.View>
       )}

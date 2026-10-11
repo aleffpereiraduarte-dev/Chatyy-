@@ -78,7 +78,7 @@ function ViewerJoinSheet({
           if (r && r[PermissionsAndroid.PERMISSIONS.CAMERA] !== PermissionsAndroid.RESULTS.GRANTED) throw new Error('camera_denied');
         }
         if (cancelled) return;
-        const lkc = require('livekit-client');
+        const lkc = require('../../services/lkLoader').lkSync();
         const tr = await lkc.createLocalVideoTrack({ facingMode: 'user', resolution: { width: 480, height: 854, frameRate: 24 } });
         if (cancelled) { try { tr.stop(); } catch {} return; }
         trackRef.current = tr;

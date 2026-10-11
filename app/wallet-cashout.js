@@ -401,9 +401,9 @@ export default function WalletCashoutScreen() {
         <View style={styles.chipsRow}>
           {[
             { id: 'cpf',    label: 'CPF' },
-            { id: 'email',  label: 'E-mail' },
-            { id: 'phone',  label: 'Telefone' },
-            { id: 'random', label: 'Aleatória' },
+            { id: 'email',  label: t('wallet.keyType.email') },
+            { id: 'phone',  label: t('wallet.keyType.phone') },
+            { id: 'random', label: t('wallet.keyType.random') },
           ].map(c => {
             const active = pixType === c.id;
             return (

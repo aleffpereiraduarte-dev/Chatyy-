@@ -3,6 +3,46 @@ import { View, Text, TouchableOpacity, StyleSheet, Appearance } from 'react-nati
 import { IconAlertTriangle } from './Icons';
 import { Sentry } from '../services/sentry';
 import { reloadOnceForChunkError } from '../services/chunkReload';
+import { useLanguageOptional } from '../context/LanguageContext';
+
+// [2026-10-11 ui-sweep] O boundary raiz (app/_layout) fica FORA do
+// LanguageProvider. Tradução à prova de falha: usa o contexto quando existe
+// (boundaries de tela), senão o idioma do aparelho sobre os dicionários já
+// carregados, e por fim o texto pt-BR fixo. Nunca lança.
+function _deviceLocale() {
+  try {
+    if (typeof navigator !== 'undefined' && navigator?.language) return String(navigator.language);
+  } catch {}
+  try { return Intl.DateTimeFormat().resolvedOptions().locale || ''; } catch {}
+  return '';
+}
+function _staticT(key, fallback) {
+  try {
+    const i18n = require('../i18n');
+    const loc = _deviceLocale();
+    const chain = typeof i18n.fallbackChain === 'function' ? i18n.fallbackChain(loc) : [loc, 'en'];
+    const short = String(loc).split('-')[0];
+    const tries = [...chain];
+    if (short && !tries.includes(short)) tries.splice(1, 0, short);
+    for (const c of tries) {
+      const v = i18n.translations?.[c]?.[key];
+      if (typeof v === 'string' && v) return v;
+    }
+  } catch {}
+  return fallback;
+}
+function BoundaryText({ k, fb }) {
+  let ctx = null;
+  try { ctx = useLanguageOptional(); } catch {}
+  let out = null;
+  try {
+    if (ctx && typeof ctx.t === 'function') {
+      const v = ctx.t(k);
+      if (typeof v === 'string' && v && v !== k) out = v;
+    }
+  } catch {}
+  return out || _staticT(k, fb);
+}
 
 function getColors() {
   const scheme = Appearance?.getColorScheme?.() || 'light';
@@ -107,9 +147,9 @@ export default class ErrorBoundary extends React.Component {
       return (
         <View style={[s.container, { backgroundColor: c.bg }]}>
           <IconAlertTriangle size={48} color={c.error} style={{ marginBottom: 16 }} />
-          <Text style={[s.title, { color: c.text }]}>Algo deu errado</Text>
+          <Text style={[s.title, { color: c.text }]}><BoundaryText k="common.somethingWentWrong" fb="Algo deu errado" /></Text>
           <Text style={[s.message, { color: c.sub }]}>
-            Não foi possível carregar esta tela. Tente novamente em instantes.
+            <BoundaryText k="uiG.errorBoundary.body" fb="Não foi possível carregar esta tela. Tente novamente em instantes." />
           </Text>
           {__DEV__ && this.state.error?.message && (
             <Text selectable style={{ color: c.error, fontSize: 12, marginTop: 8, textAlign: 'left', paddingHorizontal: 20, fontFamily: 'monospace' }}>
@@ -125,7 +165,7 @@ export default class ErrorBoundary extends React.Component {
             style={[s.button, { backgroundColor: c.btnBg }]}
             onPress={() => this.setState({ hasError: false, error: null, componentStack: '', showDetails: false })}
           >
-            <Text style={[s.buttonText, { color: c.btnText }]}>Tentar novamente</Text>
+            <Text style={[s.buttonText, { color: c.btnText }]}><BoundaryText k="common.tryAgain" fb="Tentar novamente" /></Text>
           </TouchableOpacity>
           {/* Production "Detalhes" toggle — tapping reveals the raw error
               message + first stack line in a small selectable monospace
@@ -139,7 +179,9 @@ export default class ErrorBoundary extends React.Component {
               style={{ marginTop: 12 }}
             >
               <Text style={{ color: c.sub, fontSize: 11, textDecorationLine: 'underline' }}>
-                {this.state.showDetails ? 'Ocultar detalhes' : 'Detalhes técnicos'}
+                {this.state.showDetails
+                  ? <BoundaryText k="uiG.errorBoundary.hideDetails" fb="Ocultar detalhes" />
+                  : <BoundaryText k="uiG.errorBoundary.techDetails" fb="Detalhes técnicos" />}
               </Text>
             </TouchableOpacity>
           )}

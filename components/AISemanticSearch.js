@@ -11,7 +11,7 @@ const BRAND_2 = '#111111';
 
 /**
  * Spotlight-grade AI search header banner.
- * Shows "Buscar com IA ✨" gradient title + an explanation line summarizing
+ * Shows "Buscar com IA" gradient title + an explanation line summarizing
  * what the rerank actually surfaced. Web uses a real CSS gradient on text;
  * native falls back to brand-tinted text (no MaskedView dependency).
  *
@@ -36,10 +36,10 @@ export function AISemanticSearchHeader({ query, explanation, colors, onDismiss }
           <IconSparkles size={14} color={BRAND} />
         </View>
         <Text style={[s.headerTitle, titleStyle]}>
-          {t?.('search.aiTitle') || 'Buscar com IA'} ✨
+          {t?.('search.aiTitle') || 'Buscar com IA'}
         </Text>
         {!!onDismiss && (
-          <TouchableOpacity onPress={onDismiss} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+          <TouchableOpacity onPress={onDismiss} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }} accessibilityRole="button" accessibilityLabel={t?.('common.close') || 'Fechar'}>
             <IconX size={14} color={colors?.textTertiary || '#999'} />
           </TouchableOpacity>
         )}

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, TouchableOpacity, Linking, StyleSheet, Share, Platform, Dimensions, Image as RNImage } from 'react-native';
-import { IconMapPin } from './Icons';
+import { IconMapPin, IconShare } from './Icons';
 import { boraStaticMapUrl } from './BoraMap';
 
 // Bubble width — used so Image gets explicit pixel dimensions instead of
@@ -96,7 +96,7 @@ export default function LocationMessage({ content, isOwn, colors = {}, onOpenMap
     const url = `https://maps.google.com/?q=${lat},${lng}`;
     Linking.openURL(url).catch(() => {});
     if (typeof onOpenMap === 'function') {
-      onOpenMap({ lat, lng, label: location.address || 'Location', isLive: location.is_live || false });
+      onOpenMap({ lat, lng, label: location.address || (t?.('chatConv.location') || 'Localização'), isLive: location.is_live || false });
     }
   };
 
@@ -105,12 +105,12 @@ export default function LocationMessage({ content, isOwn, colors = {}, onOpenMap
     const lat = location.latitude;
     const lng = location.longitude;
     if (lat == null || lng == null) return;
-    const text = `${location.address || 'Location'}\nhttps://maps.google.com/?q=${lat},${lng}`;
+    const text = `${location.address || (t?.('chatConv.location') || 'Localização')}\nhttps://maps.google.com/?q=${lat},${lng}`;
     try {
       if (Platform.OS !== 'web') {
-        await Share.share({ message: text, title: 'Localização' });
+        await Share.share({ message: text, title: t?.('chatConv.location') || 'Localização' });
       } else if (typeof navigator !== 'undefined' && navigator.share) {
-        await navigator.share({ text, title: 'Localização' });
+        await navigator.share({ text, title: t?.('chatConv.location') || 'Localização' });
       } else if (typeof navigator !== 'undefined' && navigator.clipboard) {
         await navigator.clipboard.writeText(text);
       }
@@ -124,7 +124,7 @@ export default function LocationMessage({ content, isOwn, colors = {}, onOpenMap
       <View style={[styles.container, { backgroundColor: safeColors.surface }]}>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
           <IconMapPin size={16} color={safeColors.textTertiary} />
-          <Text style={{ color: safeColors.textTertiary }}>{t?.('chatConv.invalidLocation') || 'Invalid location'}</Text>
+          <Text style={{ color: safeColors.textTertiary }}>{t?.('chatConv.invalidLocation') || 'Localização inválida'}</Text>
         </View>
       </View>
     );
@@ -259,7 +259,7 @@ export default function LocationMessage({ content, isOwn, colors = {}, onOpenMap
         {location.is_live && (
           <View style={styles.liveBadge}>
             <View style={styles.liveDot} />
-            <Text style={styles.liveText}>{t?.('chatConv.liveLocation') || 'AO VIVO'}</Text>
+            <Text style={styles.liveText}>{t?.('chatConv.liveBadge') || 'AO VIVO'}</Text>
           </View>
         )}
       </View>
@@ -268,7 +268,7 @@ export default function LocationMessage({ content, isOwn, colors = {}, onOpenMap
       <View style={styles.infoContainer}>
         <View style={{ flex: 1 }}>
           <Text style={[styles.addressText, { color: isOwn ? '#fff' : safeColors.text }]} numberOfLines={2}>
-            {String(location.address || (hasCoords ? `${lat.toFixed(5)}, ${lng.toFixed(5)}` : 'Localização'))}
+            {String(location.address || (hasCoords ? `${lat.toFixed(5)}, ${lng.toFixed(5)}` : (t?.('chatConv.location') || 'Localização')))}
           </Text>
           <Text style={{ fontSize: 10, color: isOwn ? 'rgba(255,255,255,0.55)' : safeColors.textTertiary, marginTop: 2 }}>
             {location.accuracy != null ? `±${Math.round(location.accuracy)}m · ` : ''}{t?.('chatConv.tapToOpenMap') || 'Toque para abrir'}
@@ -277,8 +277,8 @@ export default function LocationMessage({ content, isOwn, colors = {}, onOpenMap
 
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
           {hasCoords && (
-            <TouchableOpacity onPress={handleShare} style={styles.iconBtn}>
-              <Text style={{ fontSize: 14, color: isOwn ? 'rgba(255,255,255,0.7)' : safeColors.textSecondary }}>↗</Text>
+            <TouchableOpacity onPress={handleShare} style={styles.iconBtn} accessibilityRole="button" accessibilityLabel={t?.('common.share') || 'Compartilhar'}>
+              <IconShare size={14} color={isOwn ? 'rgba(255,255,255,0.7)' : safeColors.textSecondary} />
             </TouchableOpacity>
           )}
         </View>

@@ -810,7 +810,7 @@ function VoiceConversationOverlay({ isDark, colors, t, voiceState, transcript, o
       <View style={st.voiceTopBar}>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
           <Animated.View style={{ width: 7, height: 7, borderRadius: 3.5, backgroundColor: '#ef4444', opacity: livePulse }} />
-          <Text style={[st.voiceTopBarLive, { color: fgMuted, letterSpacing: 1 }]}>AO VIVO</Text>
+          <Text style={[st.voiceTopBarLive, { color: fgMuted, letterSpacing: 1 }]}>{t('live.aoVivo')}</Text>
         </View>
         <Text style={[st.voiceTopBarTitle, { color: fg }]}>Chatyy AI</Text>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
@@ -1276,6 +1276,7 @@ function getToolLabel(action, t) {
 // ─── Code block with copy button ───
 
 function CodeBlockWithCopy({ code, isDark }) {
+  const { t } = useLanguage();
   const [copied, setCopied] = useState(false);
 
   const handleCopy = useCallback(async () => {
@@ -1300,14 +1301,14 @@ function CodeBlockWithCopy({ code, isDark }) {
 
   return (
     <View style={st.codeBlockWrap}>
-      <TouchableOpacity onPress={handleCopy} style={st.codeCopyBtn} activeOpacity={0.7} accessibilityLabel="Copy code">
+      <TouchableOpacity onPress={handleCopy} style={st.codeCopyBtn} activeOpacity={0.7} accessibilityLabel={t('oneScreen.copyCode')}>
         {copied ? (
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
             <IconCheck size={11} color="#ccc" />
-            <Text style={st.codeCopyBtnText}>Copied</Text>
+            <Text style={st.codeCopyBtnText}>{t('common.copied')}</Text>
           </View>
         ) : (
-          <Text style={st.codeCopyBtnText}>Copy</Text>
+          <Text style={st.codeCopyBtnText}>{t('common.copy')}</Text>
         )}
       </TouchableOpacity>
       <View style={[st.codeBlock, isDark && { backgroundColor: '#1a1a1a' }]}>
@@ -1649,7 +1650,7 @@ function MessageRow({ item, colors, isDark, onSpeak, speakingId, t, onCopy, onRe
             onPress={() => onSpeak?.(item)}
             hitSlop={6}
             style={st.aiActionBtn}
-            accessibilityLabel={isSpeaking ? 'Stop reading' : 'Read aloud'}
+            accessibilityLabel={isSpeaking ? (t?.('one.speakStop') || 'Stop reading') : (t?.('oneScreen.readAloud') || 'Read aloud')}
           >
             {isSpeaking ? (
               <IconVolumeX size={14} color={ACCENT_DARK} />
@@ -1681,6 +1682,7 @@ const MODEL_OPTIONS = [
 ];
 
 function ModelPickerPill({ isDark, onPress, modelLabel }) {
+  const { t } = useLanguage();
   return (
     <TouchableOpacity
       onPress={onPress}
@@ -1688,7 +1690,7 @@ function ModelPickerPill({ isDark, onPress, modelLabel }) {
       style={[st.modelPill, {
         backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)',
       }]}
-      accessibilityLabel="Pick model"
+      accessibilityLabel={t('one.pickModel')}
     >
       <Text style={[st.modelPillText, { color: isDark ? '#A1A1A6' : '#6B7280' }]}>
         {`One · ${modelLabel}`}
@@ -2933,7 +2935,7 @@ export default function OneScreen() {
         setIsListening(false);
         const blob = new Blob(chunks, { type: mimeType });
         if (blob.size < 512) {
-          if (typeof alert !== 'undefined') alert('Gravacao muito curta. Tenta novamente.');
+          if (typeof alert !== 'undefined') alert(t('oneScreen.recTooShort'));
           return;
         }
         setLoading(true);
@@ -2955,11 +2957,11 @@ export default function OneScreen() {
             setInputText(text);
             setTimeout(() => { sendMessage(text); setInputText(''); }, 150);
           } else {
-            if (typeof alert !== 'undefined') alert('Nao consegui entender. Tenta falar mais perto.');
+            if (typeof alert !== 'undefined') alert(t('oneScreen.notUnderstood'));
           }
         } catch (e) {
           setLoading(false);
-          if (typeof alert !== 'undefined') alert('Erro na transcricao: ' + (e?.message || 'tenta de novo'));
+          if (typeof alert !== 'undefined') alert(t('oneScreen.transcribeError', { reason: e?.message || t('oneScreen.tryAgain') }));
         }
       };
       mr.start();
@@ -2971,7 +2973,7 @@ export default function OneScreen() {
       }, 30000);
     } catch (e) {
       setIsListening(false);
-      if (typeof alert !== 'undefined') alert('Microfone indisponivel: ' + (e?.message || 'permissao negada'));
+      if (typeof alert !== 'undefined') alert(t('oneScreen.micUnavailable', { reason: e?.message || t('oneScreen.permissionDenied') }));
     }
   }, [t, locale, sendMessage]);
 
@@ -2999,7 +3001,7 @@ export default function OneScreen() {
         if (!uri) {
           console.warn('[one] No audio URI after stop');
           setLoading(false);
-          if (typeof alert !== 'undefined') alert('Nao consegui capturar o audio, tenta de novo');
+          if (typeof alert !== 'undefined') alert(t('oneScreen.captureFailed'));
           return;
         }
         // Sanity check: the recorded file must be non-trivial. A < 2KB
@@ -3014,7 +3016,7 @@ export default function OneScreen() {
         if (__DEV__) console.log('[one] Audio recorded at', uri, 'size=', fileSize, '— sending to Whisper');
         if (fileSize > 0 && fileSize < 2048) {
           setLoading(false);
-          if (typeof alert !== 'undefined') alert('Gravacao muito curta. Fala algo e toca no microfone pra parar.');
+          if (typeof alert !== 'undefined') alert(t('oneScreen.recTooShortHint'));
           return;
         }
         const transRes = await api.aiTranscribeAudio(uri);
@@ -3028,13 +3030,13 @@ export default function OneScreen() {
           // No text detected — let user know with a more actionable hint.
           const errMsg = transRes?.message || '';
           if (typeof alert !== 'undefined') {
-            alert('Nao consegui entender. Tenta falar mais perto e mais alto.' + (errMsg ? '\n(' + errMsg + ')' : ''));
+            alert(t('oneScreen.notUnderstoodLouder') + (errMsg ? '\n(' + errMsg + ')' : ''));
           }
         }
       } catch (e) {
         console.warn('[one] Whisper transcribe error:', e?.message, e);
         setLoading(false);
-        if (typeof alert !== 'undefined') alert('Erro na transcricao: ' + (e?.message || 'tenta de novo'));
+        if (typeof alert !== 'undefined') alert(t('oneScreen.transcribeError', { reason: e?.message || t('oneScreen.tryAgain') }));
       }
       return;
     }
@@ -3139,7 +3141,7 @@ export default function OneScreen() {
           const expoAudio = require('expo-audio');
           const perm = await expoAudio.requestRecordingPermissionsAsync();
           if (!perm.granted) {
-            if (typeof alert !== 'undefined') alert('Microfone negado. Libera em Ajustes → Chatyy → Microfone.');
+            if (typeof alert !== 'undefined') alert(t('oneScreen.micDeniedSettings'));
             if (isFreshSession()) {
               voiceModeRef.current = false;
               setVoiceMode(false);
@@ -3261,7 +3263,7 @@ export default function OneScreen() {
         }, 500);
       } else if (err === 'not-allowed' || err === 'service-not-allowed') {
         // Permission denied — don't loop; surface it once.
-        if (typeof alert !== 'undefined') alert('Microfone negado. Libera no navegador pra usar a voz.');
+        if (typeof alert !== 'undefined') alert(t('oneScreen.micDeniedBrowser'));
         voiceModeRef.current = false;
         setVoiceMode(false);
       }

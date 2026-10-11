@@ -36,7 +36,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 // COUNTRIES (with masks/maxDigits) used to power format-as-you-type. The
 // local COUNTRY_CODES list above (dial-keyed) handles the picker chip; we
 // look up the matching mask from the canonical list at typing time.
-import { COUNTRIES as COUNTRIES_FULL, formatPhone } from '../constants/countries';
+import { COUNTRIES as COUNTRIES_FULL, formatPhone, countryDisplayName } from '../constants/countries';
 import * as LocalAuthentication from 'expo-local-authentication';
 import * as SecureStore from 'expo-secure-store';
 import { HapticsCompat as Haptics } from '../services/haptics'; // [2026-10-11] same API, routed via the shared haptics shim
@@ -1290,7 +1290,7 @@ export default function LoginScreen() {
         setQrStatus('pending');
       } else {
         setQrStatus('idle');
-        setError(res.message || 'Failed to generate QR code');
+        setError(res.message || t('uiG.login.qrFailed'));
       }
     } catch {
       if (!mountedRef.current) return;
@@ -1423,40 +1423,40 @@ export default function LoginScreen() {
     { code: '+1', flag: '\uD83C\uDDFA\uD83C\uDDF8', name: 'Estados Unidos', label: 'US +1' },
     { code: '+351', flag: '\uD83C\uDDF5\uD83C\uDDF9', name: 'Portugal', label: 'PT +351' },
     { code: '+34', flag: '\uD83C\uDDEA\uD83C\uDDF8', name: 'Espanha', label: 'ES +34' },
-    { code: '+52', flag: '\uD83C\uDDF2\uD83C\uDDFD', name: 'Mexico', label: 'MX +52' },
+    { code: '+52', flag: '\uD83C\uDDF2\uD83C\uDDFD', name: 'México', label: 'MX +52' },
     { code: '+44', flag: '\uD83C\uDDEC\uD83C\uDDE7', name: 'Reino Unido', label: 'UK +44' },
     { code: '+49', flag: '\uD83C\uDDE9\uD83C\uDDEA', name: 'Alemanha', label: 'DE +49' },
-    { code: '+33', flag: '\uD83C\uDDEB\uD83C\uDDF7', name: 'Franca', label: 'FR +33' },
-    { code: '+39', flag: '\uD83C\uDDEE\uD83C\uDDF9', name: 'Italia', label: 'IT +39' },
-    { code: '+81', flag: '\uD83C\uDDEF\uD83C\uDDF5', name: 'Japao', label: 'JP +81' },
+    { code: '+33', flag: '\uD83C\uDDEB\uD83C\uDDF7', name: 'França', label: 'FR +33' },
+    { code: '+39', flag: '\uD83C\uDDEE\uD83C\uDDF9', name: 'Itália', label: 'IT +39' },
+    { code: '+81', flag: '\uD83C\uDDEF\uD83C\uDDF5', name: 'Japão', label: 'JP +81' },
     { code: '+54', flag: '\uD83C\uDDE6\uD83C\uDDF7', name: 'Argentina', label: 'AR +54' },
     { code: '+56', flag: '\uD83C\uDDE8\uD83C\uDDF1', name: 'Chile', label: 'CL +56' },
-    { code: '+57', flag: '\uD83C\uDDE8\uD83C\uDDF4', name: 'Colombia', label: 'CO +57' },
+    { code: '+57', flag: '\uD83C\uDDE8\uD83C\uDDF4', name: 'Colômbia', label: 'CO +57' },
     { code: '+51', flag: '\uD83C\uDDF5\uD83C\uDDEA', name: 'Peru', label: 'PE +51' },
-    { code: '+91', flag: '\uD83C\uDDEE\uD83C\uDDF3', name: 'India', label: 'IN +91' },
+    { code: '+91', flag: '\uD83C\uDDEE\uD83C\uDDF3', name: 'Índia', label: 'IN +91' },
     { code: '+86', flag: '\uD83C\uDDE8\uD83C\uDDF3', name: 'China', label: 'CN +86' },
     { code: '+82', flag: '\uD83C\uDDF0\uD83C\uDDF7', name: 'Coreia do Sul', label: 'KR +82' },
-    { code: '+61', flag: '\uD83C\uDDE6\uD83C\uDDFA', name: 'Australia', label: 'AU +61' },
-    { code: '+7', flag: '\uD83C\uDDF7\uD83C\uDDFA', name: 'Russia', label: 'RU +7' },
-    { code: '+27', flag: '\uD83C\uDDFF\uD83C\uDDE6', name: 'Africa do Sul', label: 'ZA +27' },
-    { code: '+234', flag: '\uD83C\uDDF3\uD83C\uDDEC', name: 'Nigeria', label: 'NG +234' },
-    { code: '+971', flag: '\uD83C\uDDE6\uD83C\uDDEA', name: 'Emirados Arabes', label: 'AE +971' },
-    { code: '+966', flag: '\uD83C\uDDF8\uD83C\uDDE6', name: 'Arabia Saudita', label: 'SA +966' },
+    { code: '+61', flag: '\uD83C\uDDE6\uD83C\uDDFA', name: 'Austrália', label: 'AU +61' },
+    { code: '+7', flag: '\uD83C\uDDF7\uD83C\uDDFA', name: 'Rússia', label: 'RU +7' },
+    { code: '+27', flag: '\uD83C\uDDFF\uD83C\uDDE6', name: 'África do Sul', label: 'ZA +27' },
+    { code: '+234', flag: '\uD83C\uDDF3\uD83C\uDDEC', name: 'Nigéria', label: 'NG +234' },
+    { code: '+971', flag: '\uD83C\uDDE6\uD83C\uDDEA', name: 'Emirados Árabes', label: 'AE +971' },
+    { code: '+966', flag: '\uD83C\uDDF8\uD83C\uDDE6', name: 'Arábia Saudita', label: 'SA +966' },
     { code: '+972', flag: '\uD83C\uDDEE\uD83C\uDDF1', name: 'Israel', label: 'IL +972' },
-    { code: '+48', flag: '\uD83C\uDDF5\uD83C\uDDF1', name: 'Polonia', label: 'PL +48' },
+    { code: '+48', flag: '\uD83C\uDDF5\uD83C\uDDF1', name: 'Polônia', label: 'PL +48' },
     { code: '+31', flag: '\uD83C\uDDF3\uD83C\uDDF1', name: 'Holanda', label: 'NL +31' },
-    { code: '+46', flag: '\uD83C\uDDF8\uD83C\uDDEA', name: 'Suecia', label: 'SE +46' },
-    { code: '+41', flag: '\uD83C\uDDE8\uD83C\uDDED', name: 'Suica', label: 'CH +41' },
+    { code: '+46', flag: '\uD83C\uDDF8\uD83C\uDDEA', name: 'Suécia', label: 'SE +46' },
+    { code: '+41', flag: '\uD83C\uDDE8\uD83C\uDDED', name: 'Suíça', label: 'CH +41' },
     { code: '+90', flag: '\uD83C\uDDF9\uD83C\uDDF7', name: 'Turquia', label: 'TR +90' },
-    { code: '+62', flag: '\uD83C\uDDEE\uD83C\uDDE9', name: 'Indonesia', label: 'ID +62' },
+    { code: '+62', flag: '\uD83C\uDDEE\uD83C\uDDE9', name: 'Indonésia', label: 'ID +62' },
     { code: '+63', flag: '\uD83C\uDDF5\uD83C\uDDED', name: 'Filipinas', label: 'PH +63' },
-    { code: '+66', flag: '\uD83C\uDDF9\uD83C\uDDED', name: 'Tailandia', label: 'TH +66' },
-    { code: '+84', flag: '\uD83C\uDDFB\uD83C\uDDF3', name: 'Vietna', label: 'VN +84' },
+    { code: '+66', flag: '\uD83C\uDDF9\uD83C\uDDED', name: 'Tailândia', label: 'TH +66' },
+    { code: '+84', flag: '\uD83C\uDDFB\uD83C\uDDF3', name: 'Vietnã', label: 'VN +84' },
     { code: '+20', flag: '\uD83C\uDDEA\uD83C\uDDEC', name: 'Egito', label: 'EG +20' },
     { code: '+212', flag: '\uD83C\uDDF2\uD83C\uDDE6', name: 'Marrocos', label: 'MA +212' },
     { code: '+598', flag: '\uD83C\uDDFA\uD83C\uDDFE', name: 'Uruguai', label: 'UY +598' },
     { code: '+595', flag: '\uD83C\uDDF5\uD83C\uDDFE', name: 'Paraguai', label: 'PY +595' },
-    { code: '+591', flag: '\uD83C\uDDE7\uD83C\uDDF4', name: 'Bolivia', label: 'BO +591' },
+    { code: '+591', flag: '\uD83C\uDDE7\uD83C\uDDF4', name: 'Bolívia', label: 'BO +591' },
     { code: '+593', flag: '\uD83C\uDDEA\uD83C\uDDE8', name: 'Equador', label: 'EC +593' },
     { code: '+58', flag: '\uD83C\uDDFB\uD83C\uDDEA', name: 'Venezuela', label: 'VE +58' },
   ];
@@ -1470,13 +1470,18 @@ export default function LoginScreen() {
       COUNTRY_CODES.push({ code: c.dial, flag: c.flag, name: c.name, label: `${c.code} ${c.dial}` });
     }
   }
+  // Nome do país localizado (Intl.DisplayNames) com fallback pro nome pt-BR da lista.
+  const _ccName = (c) => {
+    const iso = String(c?.label || '').split(' ')[0];
+    return countryDisplayName({ code: iso === 'UK' ? 'GB' : iso, name: c?.name }, language);
+  };
   const [showCountryPicker, setShowCountryPicker] = useState(false);
   const [countrySearch, setCountrySearch] = useState('');
   const filteredCountries = useMemo(() => {
     if (!countrySearch) return COUNTRY_CODES;
     const q = countrySearch.toLowerCase();
-    return COUNTRY_CODES.filter(c => c.name.toLowerCase().includes(q) || c.code.includes(q) || c.label.toLowerCase().includes(q));
-  }, [countrySearch]);
+    return COUNTRY_CODES.filter(c => c.name.toLowerCase().includes(q) || _ccName(c).toLowerCase().includes(q) || c.code.includes(q) || c.label.toLowerCase().includes(q));
+  }, [countrySearch, language]);
 
   // [2026-10-07 login-ux] `override` = { dial, national } from the smart field
   // (React state set in the same tick isn't readable yet). channel 'backend'
@@ -2600,7 +2605,7 @@ export default function LoginScreen() {
 
       {/* Language selector + Theme toggle — top right */}
       <View style={[s.topRightRow, { top: insets.top + 12 }]}>
-        <TouchableOpacity onPress={() => setShowLangModal(true)} activeOpacity={0.7} accessibilityRole="button" accessibilityLabel="Change language">
+        <TouchableOpacity onPress={() => setShowLangModal(true)} activeOpacity={0.7} accessibilityRole="button" accessibilityLabel={t('settings.language')}>
           <View style={[s.langBtn, { backgroundColor: 'transparent' }]}>
             <IconGlobe size={14} color={colors.textSecondary} />
             <Text style={[s.langBtnText, { color: colors.text }]}>{langShort}</Text>
@@ -2851,7 +2856,7 @@ export default function LoginScreen() {
                       fontFamily: 'Menlo, Consolas, monospace', fontSize: 11,
                       color: colors.textSecondary,
                     }}>
-                      {'↵'} Enter
+                      Enter
                     </Text>
                   </View>
                   <Text style={{ fontSize: 12, color: colors.textSecondary }}>
@@ -2908,7 +2913,7 @@ export default function LoginScreen() {
                             await AS.removeItem('chatyy_offline_user').catch(() => {});
                           }
                           api.clearAuthToken?.();
-                          Alert.alert('OK', 'Sessao limpa. Feche e abra o app.');
+                          Alert.alert(t('common.ok'), t('uiG.login.sessionCleared'));
                         } catch {}
                       })();
                     }
@@ -2947,15 +2952,15 @@ export default function LoginScreen() {
         <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' }}>
           <View style={{ backgroundColor: colors.authCardBg, borderTopLeftRadius: 20, borderTopRightRadius: 20, maxHeight: '70%', paddingBottom: 30 + insets.bottom }}>
             <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 16, borderBottomWidth: 0.5, borderBottomColor: colors.border }}>
-              <Text style={{ fontSize: 18, fontWeight: '700', color: colors.text }}>{t('login.selectCountry') || 'Selecionar pais'}</Text>
+              <Text style={{ fontSize: 18, fontWeight: '700', color: colors.text }}>{t('login.selectCountry') || 'Selecionar país'}</Text>
               <TouchableOpacity onPress={() => setShowCountryPicker(false)} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
-                <Text style={{ fontSize: 16, color: colors.primary, fontWeight: '600' }}>OK</Text>
+                <Text style={{ fontSize: 16, color: colors.primary, fontWeight: '600' }}>{t('common.ok')}</Text>
               </TouchableOpacity>
             </View>
             <View style={{ paddingHorizontal: 16, paddingVertical: 8 }}>
               <TextInput
                 style={{ backgroundColor: colors.surfaceVariant, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, fontSize: 15, color: colors.text }}
-                placeholder={t('login.searchCountry') || 'Buscar pais...'}
+                placeholder={t('login.searchCountry') || 'Buscar país...'}
                 placeholderTextColor={colors.textTertiary}
                 value={countrySearch}
                 onChangeText={setCountrySearch}
@@ -2981,7 +2986,7 @@ export default function LoginScreen() {
                     <Text style={{ fontSize: 12, fontWeight: '800', color: colors.text, letterSpacing: 0.4 }}>{(item.label || '').slice(0, 2)}</Text>
                   </View>
                   <View style={{ flex: 1 }}>
-                    <Text style={{ fontSize: 16, color: colors.text, fontWeight: '500' }}>{item.name}</Text>
+                    <Text style={{ fontSize: 16, color: colors.text, fontWeight: '500' }}>{_ccName(item)}</Text>
                     <Text style={{ fontSize: 13, color: colors.textSecondary }}>{item.label}</Text>
                   </View>
                   {item.code === phoneCountryCode && <IconCheck size={18} color={colors.primary} />}

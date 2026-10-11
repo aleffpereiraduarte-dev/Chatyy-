@@ -1184,7 +1184,7 @@ export default function MeetScreen() {
   if (!WebView) {
     return (
       <View style={[s.centered, { backgroundColor: colors.meetBg }]}>
-        <Text style={[s.errorText, { color: colors.meetEndCall }]}>WebView not available</Text>
+        <Text style={[s.errorText, { color: colors.meetEndCall }]}>{t('groupCallD.webviewUnavailable')}</Text>
       </View>
     );
   }

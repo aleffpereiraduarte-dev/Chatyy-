@@ -212,7 +212,7 @@ export default function StickerMyPacksScreen() {
             // Optimistic update.
             setPacks((prev) => prev.filter((p) => p.id !== pack.id));
             try { await api.stickerPackUninstall(pack.id); }
-            catch (e) { Alert.alert(t?.('common.error') || 'Erro', e?.message || 'Falha'); refresh(); }
+            catch (e) { Alert.alert(t?.('common.error') || 'Erro', e?.message || t('stickers.actionFailed')); refresh(); }
           },
         },
       ],
@@ -245,10 +245,10 @@ export default function StickerMyPacksScreen() {
         const newId = r?.data?.id || r?.id;
         if (newId) router.push({ pathname: '/stickers/pack', params: { id: String(newId) } });
       } else {
-        Alert.alert(t?.('common.error') || 'Erro', r?.error || r?.message || 'Falha');
+        Alert.alert(t?.('common.error') || 'Erro', r?.error || r?.message || t('stickers.actionFailed'));
       }
     } catch (e) {
-      Alert.alert(t?.('common.error') || 'Erro', e?.message || 'Falha');
+      Alert.alert(t?.('common.error') || 'Erro', e?.message || t('stickers.actionFailed'));
     } finally {
       setCreating(false);
     }

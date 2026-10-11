@@ -123,7 +123,7 @@ export default function SmartDateInput({
     if (!ageInfo) return null;
     const { years, months } = ageInfo;
     const yStr = years === 1 ? '1 ano' : `${years} anos`;
-    const mStr = months === 1 ? '1 mes' : `${months} meses`;
+    const mStr = months === 1 ? '1 mês' : `${months} meses`;
     if (months === 0) return yStr;
     return `${yStr} e ${mStr}`;
   }, [ageInfo]);
@@ -131,10 +131,10 @@ export default function SmartDateInput({
   // ── Validation message ────────────────────────────────────────────
   const validationMsg = useMemo(() => {
     if (!isComplete) return null;
-    if (!parsed) return 'Data invalida';
+    if (!parsed) return 'Data inválida';
     if (!ageInfo) return null;
-    if (ageInfo.years < minAge) return `Idade minima: ${minAge} anos`;
-    if (ageInfo.years > maxAge) return `Idade maxima: ${maxAge} anos`;
+    if (ageInfo.years < minAge) return `Idade mínima: ${minAge} anos`;
+    if (ageInfo.years > maxAge) return `Idade máxima: ${maxAge} anos`;
     return null;
   }, [isComplete, parsed, ageInfo, minAge, maxAge]);
 

@@ -36,7 +36,7 @@ export default function ContactMessage({ content, isOwn, colors = {}, t }) {
       <View style={[styles.container, { backgroundColor: safeColors.surface }]}>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
           <IconUser size={16} color={safeColors.textTertiary} />
-          <Text style={{ color: safeColors.textTertiary }}>{t?.('chatConv.invalidContact') || 'Invalid contact'}</Text>
+          <Text style={{ color: safeColors.textTertiary }}>{t?.('chatConv.invalidContact') || 'Contato inválido'}</Text>
         </View>
       </View>
     );
@@ -101,7 +101,7 @@ export default function ContactMessage({ content, isOwn, colors = {}, t }) {
           >
             <IconMail size={15} color={isOwn ? '#fff' : safeColors.primary} style={{ marginRight: 5 }} />
             <Text style={[styles.actionText, { color: isOwn ? '#fff' : safeColors.primary }]}>
-              Email
+              {t?.('chat.email') || 'E-mail'}
             </Text>
           </TouchableOpacity>
         )}

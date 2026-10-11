@@ -19,6 +19,7 @@ import { View, Text, Modal, Pressable, ScrollView, StyleSheet, Platform } from '
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Stack, useRouter } from 'expo-router';
 import { useTheme } from '../../context/ThemeContext';
+import { useLanguageOptional } from '../../context/LanguageContext';
 import PressableRow from '../PressableRow';
 import NativeSwitch from '../NativeSwitch';
 import { IconChevronRight, IconCheck, IconArrowLeft } from '../Icons';
@@ -163,7 +164,9 @@ export function SettingsSwitchRow({ title, subtitle, value, onValueChange, disab
 
 // Bottom sheet with a checkmark list. Used by SettingsPickerRow; exported so
 // screens can open it from any row.
-export function OptionSheet({ visible, title, message, options = [], value, onSelect, onClose, cancelLabel = 'Cancelar' }) {
+export function OptionSheet({ visible, title, message, options = [], value, onSelect, onClose, cancelLabel: cancelLabelProp }) {
+  const _lang = useLanguageOptional();
+  const cancelLabel = cancelLabelProp || (_lang?.t?.('common.cancel')) || 'Cancelar';
   const g = useGroupedColors();
   const insets = useSafeAreaInsets();
   // [2026-10-09 native-sheets] iOS/Android: sheet do SISTEMA (grabber, arrastar
@@ -289,6 +292,7 @@ export function SettingsPickerRow({ title, subtitle, options = [], value, onChan
 // Web: header simples (voltar + título) acima do scroll.
 const IOS_NATIVE = USE_NATIVE_HEADER && Platform.OS === 'ios';
 export function SettingsScreen({ title, children, headerRight, onBack, contentStyle, overlay, testID }) {
+  const _lang = useLanguageOptional();
   const g = useGroupedColors();
   const { colors = {}, isDark } = useTheme() || {};
   const insets = useSafeAreaInsets();
@@ -310,7 +314,7 @@ export function SettingsScreen({ title, children, headerRight, onBack, contentSt
         })} />
       ) : (
         <View style={[st.webHeader, { paddingTop: insets.top, backgroundColor: g.pageBg }]}>
-          <Pressable onPress={goBack} style={st.webBack} accessibilityRole="button" accessibilityLabel="Voltar" hitSlop={8}>
+          <Pressable onPress={goBack} style={st.webBack} accessibilityRole="button" accessibilityLabel={(_lang?.t?.('common.back')) || 'Voltar'} hitSlop={8}>
             <IconArrowLeft size={24} color={g.text} />
           </Pressable>
           <Text style={[st.webTitle, { color: g.text }]} numberOfLines={1} accessibilityRole="header">{title}</Text>

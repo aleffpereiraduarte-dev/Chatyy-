@@ -12,7 +12,7 @@ import CachedImage from './CachedImage';
 import AvatarCircle from './AvatarCircle';
 import StatusCamera from './StatusCamera';
 import BrandFab from './BrandFab';
-import { IconPlus, IconCamera, IconEdit, IconX, IconSearch, IconTrash, IconEye, IconChevronLeft, IconChevronRight, IconSend, IconPause, IconPlay, IconForward, IconSmile, IconType, IconBrush, IconUndo2, IconRotateCw, IconBookmark, IconBarChart, IconHelpCircle, IconClock, IconAtSign, IconAward, IconMapPin, IconLink, IconArrowRight, IconArchive, IconSliders, IconFeedShare, IconCheck, IconCheckbox, IconCheckboxChecked, IconChevronUp, IconChevronDown, IconMic, IconHeart, IconHeartOutline, IconFlame, IconLaughFace, IconSurpriseFace, IconSadFace, IconClap, IconThumbsUp } from './Icons';
+import { IconPlus, IconCamera, IconEdit, IconX, IconSearch, IconTrash, IconEye, IconChevronLeft, IconChevronRight, IconSend, IconPause, IconPlay, IconForward, IconSmile, IconType, IconBrush, IconUndo2, IconRotateCw, IconBookmark, IconBarChart, IconHelpCircle, IconClock, IconAtSign, IconAward, IconMapPin, IconLink, IconArrowRight, IconArchive, IconSliders, IconFeedShare, IconCheck, IconCheckbox, IconCheckboxChecked, IconChevronUp, IconChevronDown, IconMic, IconHeart, IconHeartOutline, IconFlame, IconLaughFace, IconSurpriseFace, IconSadFace, IconClap, IconThumbsUp, IconSparkles } from './Icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as api from '../services/api';
 import { HapticsCompat as Haptics } from '../services/haptics'; // [2026-10-11] same API, routed via the shared haptics shim
@@ -408,7 +408,7 @@ function isValidStickerUrl(raw) {
 }
 
 // ─── Draggable sticker (PanResponder for touch drag, double-tap to remove) ───
-function DraggableSticker({ sticker, onMove, onRemove }) {
+function DraggableSticker({ sticker, onMove, onRemove, t }) {
   const pan = useRef(new Animated.ValueXY({ x: sticker.x, y: sticker.y })).current;
   const lastTap = useRef(0);
   const panR = useRef(PanResponder.create({
@@ -446,14 +446,14 @@ function DraggableSticker({ sticker, onMove, onRemove }) {
       <View style={{ backgroundColor: 'rgba(239,68,68,0.9)', borderRadius: 14, padding: 14, width: 220, alignItems: 'center' }}>
         <Text style={{ color: '#fff', fontSize: 13, fontWeight: '700', marginBottom: 6 }}>{sticker.prompt}</Text>
         <View style={{ backgroundColor: 'rgba(255,255,255,0.25)', borderRadius: 20, paddingVertical: 8, paddingHorizontal: 16, width: '100%', alignItems: 'center' }}>
-          <Text style={{ color: 'rgba(255,255,255,0.6)', fontSize: 13 }}>Toque pra responder</Text>
+          <Text style={{ color: 'rgba(255,255,255,0.6)', fontSize: 13 }}>{t?.('statusTab.tapToReply') || 'Toque para responder'}</Text>
         </View>
       </View>
     );
     if (sticker.type === 'countdown') return (
       <View style={{ backgroundColor: 'rgba(16,185,129,0.9)', borderRadius: 14, padding: 14, width: 200, alignItems: 'center' }}>
         <Text style={{ color: '#fff', fontSize: 11, fontWeight: '600', marginBottom: 4 }}>{sticker.label}</Text>
-        <Text style={{ color: '#fff', fontSize: 28, fontWeight: '800' }}>⏳</Text>
+        <View style={{ height: 34, justifyContent: 'center' }}><IconClock size={28} color="#fff" /></View>
         <Text style={{ color: 'rgba(255,255,255,0.8)', fontSize: 12, marginTop: 4 }}>
           {(() => {
             try { const d = new Date(sticker.targetDate); return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }); } catch { return ''; }
@@ -681,13 +681,13 @@ const AnimatedPeekPreview = React.memo(function AnimatedPeekPreview({ group, own
             <CachedImage source={{ uri: posterUrl }} style={{ flex: 1 }} resizeMode="cover" />
             <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center' }}>
               <View style={{ width: 48, height: 48, borderRadius: 24, backgroundColor: 'rgba(0,0,0,0.5)', alignItems: 'center', justifyContent: 'center' }}>
-                <Text style={{ color: '#fff', fontSize: 20 }}>▶</Text>
+                <IconPlay size={20} color="#fff" />
               </View>
             </View>
           </View>
         ) : (
           <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
-            <Text style={{ color: '#fff', fontSize: 14 }}>▶ {ownerName}</Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}><IconPlay size={14} color="#fff" /><Text style={{ color: '#fff', fontSize: 14 }}>{ownerName}</Text></View>
           </View>
         )
       ) : url ? (
@@ -2425,9 +2425,9 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
         const { Alert } = require('react-native');
         Alert.alert(
           t?.('status.addPhoto') || 'Adicionar foto',
-          t?.('status.pickSource') || 'De onde voce quer tirar a foto?',
+          t?.('status.pickSource') || 'De onde você quer tirar a foto?',
           [
-            { text: t?.('status.camera') || 'Camera', onPress: () => pickFromSource('camera') },
+            { text: t?.('status.camera') || 'Câmera', onPress: () => pickFromSource('camera') },
             { text: t?.('status.gallery') || 'Galeria', onPress: () => pickFromSource('gallery') },
             { text: t?.('common.cancel') || 'Cancelar', style: 'cancel' },
           ],
@@ -3526,7 +3526,7 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
         size={58}
         color={colors?.primary || ACCENT}
         onPress={() => openCreator('text')}
-        accessibilityLabel="New text status"
+        accessibilityLabel={t?.('statusTab.newTextStatus') || 'Novo status de texto'}
       >
         <IconEdit size={24} color={colors?.onPrimary || '#fff'} />
       </BrandFab>
@@ -4299,7 +4299,7 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
               {isPaused && (
                 <View style={styles.pausedOverlay} pointerEvents="none">
                   <View style={styles.pausedBadge}>
-                    <Text style={styles.pausedText}>II</Text>
+                    <IconPause size={22} color="#fff" />
                   </View>
                 </View>
               )}
@@ -5023,7 +5023,7 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
                   <IconChevronLeft size={24} color={isDark ? '#fff' : '#111'} />
                 </TouchableOpacity>
                 <Text style={{ fontSize: 18, fontWeight: '700', color: isDark ? '#fff' : '#111', flex: 1, textAlign: 'center', marginRight: 28 }}>
-                  {t?.('status.addMusic') || 'Adicionar musica'}
+                  {t?.('status.addMusic') || 'Adicionar música'}
                 </Text>
               </View>
 
@@ -5032,7 +5032,7 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
                 <IconSearch size={18} color={isDark ? '#6C6C70' : '#9ca3af'} />
                 <TextInput
                   style={{ flex: 1, marginLeft: 8, fontSize: 15, color: isDark ? '#fff' : '#111', paddingVertical: 0 }}
-                  placeholder={t?.('status.searchMusic') || 'Buscar musica ou artista...'}
+                  placeholder={t?.('status.searchMusic') || 'Buscar música ou artista...'}
                   placeholderTextColor={isDark ? '#6C6C70' : '#9ca3af'}
                   value={musicQuery}
                   onChangeText={(q) => {
@@ -5079,7 +5079,7 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
                   <View style={{ alignItems: 'center', marginTop: 60 }}>
                     <IconMusicNote size={48} color={isDark ? '#2c2c2e' : '#d1d5db'} />
                     <Text style={{ color: isDark ? '#6C6C70' : '#9ca3af', marginTop: 16, fontSize: 15 }}>
-                      {t?.('status.searchMusicHint') || 'Pesquise uma musica para adicionar'}
+                      {t?.('status.searchMusicHint') || 'Pesquise uma música para adicionar'}
                     </Text>
                   </View>
                 )}
@@ -5226,12 +5226,15 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
                   activeOpacity={0.7}
                   accessibilityLabel={t?.('status.textAnimation') || 'Animação de texto'}
                 >
-                  <Text style={styles.fontToggleText}>
-                    {textAnimation === 'none' ? '—'
-                      : textAnimation === 'bounce' ? '✨'
-                      : textAnimation === 'fade' ? '◐'
-                      : '▌'}
-                  </Text>
+                  {textAnimation === 'bounce' ? (
+                    <IconSparkles size={16} color="#fff" />
+                  ) : (
+                    <Text style={styles.fontToggleText}>
+                      {textAnimation === 'none' ? '—'
+                        : textAnimation === 'fade' ? '◐'
+                        : '▌'}
+                    </Text>
+                  )}
                 </TouchableOpacity>
               )}
 
@@ -5371,7 +5374,7 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
                   )}
                   {/* Draggable emoji stickers — PanResponder for drag */}
                   {stickers.map(st => (
-                    <DraggableSticker key={st.id} sticker={st}
+                    <DraggableSticker key={st.id} sticker={st} t={t}
                       onMove={(x, y) => setStickers(prev => prev.map(s => s.id === st.id ? { ...s, x, y } : s))}
                       onRemove={() => setStickers(prev => prev.filter(s => s.id !== st.id))}
                     />
@@ -5453,7 +5456,7 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
                   <TouchableOpacity
                     onPress={() => setShowStickerPicker(p => !p)}
                     style={editorToolBtnStyle}
-                    accessibilityLabel="Stickers"
+                    accessibilityLabel={t?.('status.studio.stickers') || 'Figurinhas'}
                     accessibilityRole="button"
                   >
                     <IconSmile size={22} color="#fff" />
@@ -5461,7 +5464,7 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
                   <TouchableOpacity
                     onPress={() => { setShowAddTextInput(true); setNewOverlayText(''); }}
                     style={editorToolBtnStyle}
-                    accessibilityLabel="Texto"
+                    accessibilityLabel={t?.('status.studio.text') || 'Texto'}
                     accessibilityRole="button"
                   >
                     <IconType size={22} color="#fff" />
@@ -5469,7 +5472,7 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
                   <TouchableOpacity
                     onPress={() => setDrawMode(d => !d)}
                     style={[editorToolBtnStyle, drawMode && { backgroundColor: '#111111' }]}
-                    accessibilityLabel="Desenhar"
+                    accessibilityLabel={t?.('status.studio.draw') || 'Desenhar'}
                     accessibilityRole="button"
                   >
                     <IconBrush size={22} color="#fff" />
@@ -5482,7 +5485,7 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
                   <TouchableOpacity
                     onPress={undoEdit}
                     style={[editorToolBtnStyle, { opacity: historyRef.current.past.length === 0 ? 0.35 : 1 }]}
-                    accessibilityLabel="Desfazer"
+                    accessibilityLabel={t?.('status.studio.undo') || 'Desfazer'}
                     accessibilityRole="button"
                     disabled={historyRef.current.past.length === 0}
                   >
@@ -5491,7 +5494,7 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
                   <TouchableOpacity
                     onPress={redoEdit}
                     style={[editorToolBtnStyle, { opacity: historyRef.current.future.length === 0 ? 0.35 : 1 }]}
-                    accessibilityLabel="Refazer"
+                    accessibilityLabel={t?.('notebook.redo') || 'Refazer'}
                     accessibilityRole="button"
                     disabled={historyRef.current.future.length === 0}
                   >
@@ -5560,7 +5563,7 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
                     <TextInput
                       value={newOverlayText}
                       onChangeText={setNewOverlayText}
-                      placeholder="Digite o texto..."
+                      placeholder={t?.('status.studio.textPlaceholder') || 'Digite algo…'}
                       placeholderTextColor="rgba(255,255,255,0.4)"
                       style={{ color: '#fff', fontSize: 18, borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.2)', paddingBottom: 10, marginBottom: 16, textAlign: 'center' }}
                       autoFocus
@@ -5569,7 +5572,7 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
                     <View style={{ flexDirection: 'row', gap: 10, justifyContent: 'center' }}>
                       <TouchableOpacity onPress={() => setShowAddTextInput(false)}
                         style={{ paddingHorizontal: 20, paddingVertical: 10, borderRadius: 20, backgroundColor: 'rgba(255,255,255,0.1)' }}>
-                        <Text style={{ color: '#fff' }}>Cancelar</Text>
+                        <Text style={{ color: '#fff' }}>{t?.('common.cancel') || 'Cancelar'}</Text>
                       </TouchableOpacity>
                       <TouchableOpacity onPress={() => {
                         if (newOverlayText.trim()) {
@@ -5583,7 +5586,7 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
                         }
                         setShowAddTextInput(false);
                       }} style={{ paddingHorizontal: 20, paddingVertical: 10, borderRadius: 20, backgroundColor: '#111111' }}>
-                        <Text style={{ color: '#fff', fontWeight: '700' }}>Adicionar</Text>
+                        <Text style={{ color: '#fff', fontWeight: '700' }}>{t?.('common.add') || 'Adicionar'}</Text>
                       </TouchableOpacity>
                     </View>
                   </View>
@@ -5593,7 +5596,7 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
                 <View style={{ position: 'absolute', top: 56, right: 12, backgroundColor: 'rgba(0,0,0,0.85)', borderRadius: 16, padding: 12, width: 260, zIndex: 30, maxHeight: SCREEN_HEIGHT * 0.55 }}>
                   <ScrollView showsVerticalScrollIndicator={false}>
                     {/* Interactive stickers section */}
-                    <Text style={{ color: 'rgba(255,255,255,0.5)', fontSize: 11, fontWeight: '700', marginBottom: 8, letterSpacing: 0.5 }}>INTERATIVOS</Text>
+                    <Text style={{ color: 'rgba(255,255,255,0.5)', fontSize: 11, fontWeight: '700', marginBottom: 8, letterSpacing: 0.5, textTransform: 'uppercase' }}>{t?.('statusTab.interactiveStickers') || 'Interativos'}</Text>
                     <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 14 }}>
                       {[
                         { key: 'poll', Icon: IconBarChart, label: t?.('status.stickerPoll') || 'Enquete' },
@@ -5655,14 +5658,14 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
                           // state; the mutation below replaces it.
                           recordEdit();
                           if (s.key === 'poll') {
-                            setStickers(prev => [...prev, { id: Date.now(), type: 'poll', x: 40, y: 200, question: 'Sim ou Não?', optionA: 'Sim', optionB: 'Não' }]);
+                            setStickers(prev => [...prev, { id: Date.now(), type: 'poll', x: 40, y: 200, question: t?.('statusTab.pollDefaultQuestion') || 'Sim ou não?', optionA: t?.('common.yes') || 'Sim', optionB: t?.('common.no') || 'Não' }]);
                           } else if (s.key === 'question') {
-                            setStickers(prev => [...prev, { id: Date.now(), type: 'question', x: 40, y: 200, prompt: 'Me pergunte algo...' }]);
+                            setStickers(prev => [...prev, { id: Date.now(), type: 'question', x: 40, y: 200, prompt: t?.('statusTab.questionDefaultPrompt') || 'Me pergunte algo...' }]);
                           } else if (s.key === 'countdown') {
                             const tomorrow = new Date(); tomorrow.setDate(tomorrow.getDate() + 1); tomorrow.setHours(12, 0, 0, 0);
-                            setStickers(prev => [...prev, { id: Date.now(), type: 'countdown', x: 60, y: 200, label: 'Evento', targetDate: tomorrow.toISOString() }]);
+                            setStickers(prev => [...prev, { id: Date.now(), type: 'countdown', x: 60, y: 200, label: t?.('statusTab.countdownDefaultLabel') || 'Evento', targetDate: tomorrow.toISOString() }]);
                           } else if (s.key === 'quiz') {
-                            setStickers(prev => [...prev, { id: Date.now(), type: 'quiz', x: 40, y: 180, question: 'Qual a resposta?', options: ['A', 'B', 'C'], correct: 0 }]);
+                            setStickers(prev => [...prev, { id: Date.now(), type: 'quiz', x: 40, y: 180, question: t?.('statusTab.quizDefaultQuestion') || 'Qual é a resposta?', options: ['A', 'B', 'C'], correct: 0 }]);
                           } else if (s.key === 'slider') {
                             // Slider sticker. `emoji` is the indicator that
                             // rides the track in the viewer; `preview` is
@@ -5692,7 +5695,7 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
                         <TextInput
                           value={linkPromptUrl}
                           onChangeText={setLinkPromptUrl}
-                          placeholder="chatyy.com.br ou https://..."
+                          placeholder={t?.('statusTab.linkUrlPlaceholder') || 'chatyy.com.br ou https://...'}
                           placeholderTextColor="rgba(255,255,255,0.35)"
                           autoCapitalize="none"
                           autoCorrect={false}
@@ -5704,13 +5707,13 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
                             ...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {}),
                           }}
                         />
-                        <Text style={{ color: 'rgba(255,255,255,0.6)', fontSize: 10, fontWeight: '700', marginTop: 10, marginBottom: 6, letterSpacing: 0.5 }}>
-                          BOTÃO (OPCIONAL)
+                        <Text style={{ color: 'rgba(255,255,255,0.6)', fontSize: 10, fontWeight: '700', marginTop: 10, marginBottom: 6, letterSpacing: 0.5, textTransform: 'uppercase' }}>
+                          {t?.('statusTab.linkButtonOptional') || 'Botão (opcional)'}
                         </Text>
                         <TextInput
                           value={linkPromptLabel}
                           onChangeText={setLinkPromptLabel}
-                          placeholder="Saiba mais"
+                          placeholder={t?.('statusTab.learnMore') || 'Saiba mais'}
                           placeholderTextColor="rgba(255,255,255,0.35)"
                           maxLength={28}
                           style={{
@@ -5739,7 +5742,7 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
                                 type: 'link',
                                 x: 60, y: 220,
                                 url,
-                                label: label || 'Saiba mais',
+                                label: label || t?.('statusTab.learnMore') || 'Saiba mais',
                               }]);
                               setLinkPromptVisible(false);
                               setLinkPromptUrl('');
@@ -5821,7 +5824,7 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
                     )}
 
                     {/* Emoji stickers */}
-                    <Text style={{ color: 'rgba(255,255,255,0.5)', fontSize: 11, fontWeight: '700', marginBottom: 8, letterSpacing: 0.5 }}>EMOJIS</Text>
+                    <Text style={{ color: 'rgba(255,255,255,0.5)', fontSize: 11, fontWeight: '700', marginBottom: 8, letterSpacing: 0.5, textTransform: 'uppercase' }}>{t?.('chatConv.tabEmoji') || 'Emojis'}</Text>
                     <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
                       {['😂','❤️','🔥','👏','🎉','😍','🥺','💀','🤩','😎','🥳','💯','🙌','✨','💕','🦋','🌈','⭐','🎵','📍','⏰','🗓️'].map(em => (
                         <TouchableOpacity key={em} onPress={() => {
@@ -5890,7 +5893,7 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
               >
                 <IconMusicNote size={20} color="#fff" />
                 <Text style={styles.addMusicText}>
-                  {selectedMusic ? (t?.('status.changeMusic') || 'Trocar musica') : (t?.('status.addMusic') || 'Adicionar musica')}
+                  {selectedMusic ? (t?.('status.changeMusic') || 'Trocar música') : (t?.('status.addMusic') || 'Adicionar música')}
                 </Text>
               </TouchableOpacity>
 

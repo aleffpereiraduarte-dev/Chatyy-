@@ -27,7 +27,12 @@ import * as api from '../services/api';
 // LiveKit web SDK — direct import is fine on web (it's the JS package, no
 // native bindings). On mobile this file is never bundled because of the
 // `.web.js` extension.
-import { Room, RoomEvent, Track } from 'livekit-client';
+// [2026-10-11 boot-split] livekit-client via services/lkLoader (own async
+// chunk); the default export is wrapped in withLiveKit() so these bindings are
+// filled before the screen renders.
+import { lkSync as _lkSync, withLiveKit as _withLiveKit } from '../services/lkLoader';
+let Room, RoomEvent, Track;
+function _bindLiveKit() { if (Room) return; const lk = _lkSync(); if (lk) ({ Room, RoomEvent, Track } = lk); }
 import { IconEye, IconSend, IconHeart } from '../components/Icons';
 // [multi-guest 2026-10-10] Palco multi-convidados também no web.
 import useLiveStage from '../hooks/useLiveStage';
@@ -76,7 +81,8 @@ function getInitial(name, email) {
   return src.charAt(0).toUpperCase() || '?';
 }
 
-export default function LiveViewerWeb() {
+function LiveViewerWeb() {
+  _bindLiveKit();
   const params = useLocalSearchParams();
   const router = useRouter();
   const { t } = useLanguage();
@@ -1045,3 +1051,5 @@ const styles = StyleSheet.create({
     fontSize: 14,
   },
 });
+
+export default _withLiveKit(LiveViewerWeb);

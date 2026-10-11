@@ -7,7 +7,7 @@ import {
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { IconX, IconCheck, IconRefresh } from '../components/Icons';
+import { IconX, IconCheck, IconRefresh, IconMusic } from '../components/Icons';
 import Svg, { Rect, Line, Path, Circle, G } from 'react-native-svg';
 
 // ── Icon helpers (small inline SVGs for editor tools) ──
@@ -134,10 +134,11 @@ const STICKER_PACKS = [
   {
     key: 'emoji',
     label: 'Emoji',
+    labelKey: 'photoEditor.packEmoji',
     items: ['😀', '😂', '😍', '🥳', '🔥', '✨', '❤️', '👍', '👏', '🎉', '💯', '⭐', '😎', '🤩', '🙌', '💜'],
   },
   { key: 'giphy', label: 'GIPHY', items: ['🎬', '🎞️', '📺', '🎥', '🎭', '🎪'] },
-  { key: 'avatars', label: 'Avatares', items: ['🧑', '👩', '👨', '🧒', '👶', '🧓'] },
+  { key: 'avatars', label: 'Avatares', labelKey: 'photoEditor.packAvatars', items: ['🧑', '👩', '👨', '🧒', '👶', '🧓'] },
   { key: 'branded', label: 'Chatyy', items: ['💬', '✉️', '🔔', '🚀', '⚡', '💎'] },
 ];
 
@@ -145,10 +146,10 @@ const STICKER_PACKS = [
 // design brief calls out (Quadrado / Stories / Post). Labels are inline
 // strings since these aren't in i18n yet (placeholder OK per task rules).
 const CROP_RATIOS = [
-  { label: 'Original', value: null },
-  { label: '1:1', sub: 'Quadrado', value: 1 },
-  { label: '9:16', sub: 'Stories', value: 9 / 16 },
-  { label: '4:5', sub: 'Post', value: 4 / 5 },
+  { label: 'Original', labelKey: 'photoEditor.ratioOriginal', value: null },
+  { label: '1:1', subKey: 'settings.bubble.square', value: 1 },
+  { label: '9:16', subKey: 'photoEditor.ratioStories', value: 9 / 16 },
+  { label: '4:5', subKey: 'photoEditor.ratioPost', value: 4 / 5 },
   { label: '4:3', value: 4 / 3 },
   { label: '16:9', value: 16 / 9 },
 ];
@@ -276,7 +277,7 @@ export default function PhotoEditor({ visible, imageUri, onSave, onClose, photoI
   const [aiNotice, setAiNotice] = useState('');
   const _runAi = useCallback(async (kind, extra = {}) => {
     if (!photoId) {
-      setAiNotice('Salve a foto na nuvem antes para usar IA.');
+      setAiNotice(t('photoEditor.aiSaveFirst'));
       return;
     }
     setAiBusyMode(kind);
@@ -289,24 +290,24 @@ export default function PhotoEditor({ visible, imageUri, onSave, onClose, photoI
         res = await api.photosAiEnhance(photoId, kind);
         const url = res?.data?.enhanced_url;
         if (res?.success && url) setAiResultUrl(url);
-        else setAiNotice(res?.data?.reason === 'no_api_key' ? 'Funcao IA em breve.' : 'IA indisponivel agora.');
+        else setAiNotice(res?.data?.reason === 'no_api_key' ? t('photoEditor.aiComingSoon') : t('photoEditor.aiUnavailable'));
       } else if (kind === 'sky') {
         res = await api.photosSkyReplace(photoId, extra.preset || 'sunset');
         const url = res?.data?.sky_url;
         if (res?.success && url) setAiResultUrl(url);
-        else setAiNotice('Troca de ceu indisponivel agora.');
+        else setAiNotice(t('photoEditor.aiSkyUnavailable'));
       } else if (kind === 'bokeh') {
         res = await api.photosBokeh(photoId, 0.7);
         const url = res?.data?.bokeh_url;
         if (res?.success && url) setAiResultUrl(url);
-        else setAiNotice('Modo retrato indisponivel agora.');
+        else setAiNotice(t('photoEditor.aiBokehUnavailable'));
       }
     } catch (e) {
-      setAiNotice('Erro na IA: ' + (e?.message || ''));
+      setAiNotice(t('photoEditor.aiError', { error: e?.message || '' }));
     } finally {
       setAiBusyMode(null);
     }
-  }, [photoId]);
+  }, [photoId, t]);
 
   // ── Editor-depth state (round 2026-05-17) ──
   // Music track attached to the photo. Set by the music picker sheet; the
@@ -1032,13 +1033,13 @@ export default function PhotoEditor({ visible, imageUri, onSave, onClose, photoI
   const tabLabels = {
     filters: t('photos.filters') || 'Filtros',
     text: t('photos.text') || 'Texto',
-    sticker: 'Adesivos',
-    draw: 'Desenho',
+    sticker: t('photoEditor.tabStickers'),
+    draw: t('photoEditor.draw'),
     crop: t('photos.crop') || 'Cortar',
-    adjust: 'Brilho',
-    music: 'Música',
-    tag: 'Marcar',
-    ai: 'IA',
+    adjust: t('photos.brightness'),
+    music: t('status.music'),
+    tag: t('photoEditor.tabTag'),
+    ai: t('photoEditor.tabAi'),
   };
 
   const canUndo = historyRef.current.past.length > 0;
@@ -1068,7 +1069,7 @@ export default function PhotoEditor({ visible, imageUri, onSave, onClose, photoI
             onPressOut={() => setComparing(false)}
             style={[s.resetPill, comparing && { backgroundColor: 'rgba(17, 17, 17,0.55)' }]}
             hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
-            accessibilityLabel="Original"
+            accessibilityLabel={t('photos.original')}
           >
             <Text style={s.resetPillText}>{t('photos.original') || 'Original'}</Text>
           </TouchableOpacity>
@@ -1097,7 +1098,7 @@ export default function PhotoEditor({ visible, imageUri, onSave, onClose, photoI
             disabled={!canUndo}
             style={[s.undoRedoBtn, !canUndo && { opacity: 0.3 }]}
             hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
-            accessibilityLabel="Undo"
+            accessibilityLabel={t('photoEditor.undo')}
           >
             <Svg width={20} height={20} viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round">
               <Path d="M9 14L4 9l5-5" />
@@ -1109,7 +1110,7 @@ export default function PhotoEditor({ visible, imageUri, onSave, onClose, photoI
             disabled={!canRedo}
             style={[s.undoRedoBtn, !canRedo && { opacity: 0.3 }]}
             hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
-            accessibilityLabel="Redo"
+            accessibilityLabel={t('notebook.redo')}
           >
             <Svg width={20} height={20} viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round">
               <Path d="M15 14l5-5-5-5" />
@@ -1435,9 +1436,9 @@ export default function PhotoEditor({ visible, imageUri, onSave, onClose, photoI
                         onPress={() => applyCropRatio(r.value)}
                         activeOpacity={0.85}
                       >
-                        <Text style={[s.ratioBtnText, isActive && s.ratioBtnTextActive]}>{r.label}</Text>
-                        {r.sub && (
-                          <Text style={[s.ratioBtnSub, isActive && s.ratioBtnSubActive]}>{r.sub}</Text>
+                        <Text style={[s.ratioBtnText, isActive && s.ratioBtnTextActive]}>{r.labelKey ? t(r.labelKey) : r.label}</Text>
+                        {r.subKey && (
+                          <Text style={[s.ratioBtnSub, isActive && s.ratioBtnSubActive]}>{t(r.subKey)}</Text>
                         )}
                       </TouchableOpacity>
                     );
@@ -1598,7 +1599,7 @@ export default function PhotoEditor({ visible, imageUri, onSave, onClose, photoI
                         onPress={() => setStickerPack(pack.key)}
                         style={[s.stickerPackPill, active && s.stickerPackPillActive]}
                       >
-                        <Text style={[s.stickerPackLabel, active && s.stickerPackLabelActive]}>{pack.label}</Text>
+                        <Text style={[s.stickerPackLabel, active && s.stickerPackLabelActive]}>{pack.labelKey ? t(pack.labelKey) : pack.label}</Text>
                       </TouchableOpacity>
                     );
                   })}
@@ -1611,7 +1612,7 @@ export default function PhotoEditor({ visible, imageUri, onSave, onClose, photoI
                     style={[s.stickerPackPill, { backgroundColor: 'rgba(17, 17, 17,0.22)' }]}
                   >
                     <Text style={[s.stickerPackLabel, { color: '#fff', fontWeight: '700' }]}>
-                      + Loja
+                      {t('photoEditor.storeAdd')}
                     </Text>
                   </TouchableOpacity>
                 </ScrollView>
@@ -1637,11 +1638,11 @@ export default function PhotoEditor({ visible, imageUri, onSave, onClose, photoI
                     raw path array; we store it and overlay on the photo. */}
                 <TouchableOpacity onPress={() => setShowDrawTool(true)} style={s.blurAddBtn}>
                   <Text style={s.blurAddBtnLabel}>
-                    {drawPaths.length > 0 ? `${drawPaths.length} traços — editar` : '+ Abrir pincel'}
+                    {drawPaths.length > 0 ? t('photoEditor.drawCountEdit', { n: drawPaths.length }) : t('photoEditor.openBrush')}
                   </Text>
                 </TouchableOpacity>
                 <Text style={s.placeholderHint}>
-                  4 espessuras · 12 cores · borracha · desfazer/refazer.
+                  {t('photoEditor.drawHint')}
                 </Text>
               </View>
             )}
@@ -1652,13 +1653,18 @@ export default function PhotoEditor({ visible, imageUri, onSave, onClose, photoI
                     behavior is consistent between status + photo flows.
                     Selected track is exported via onSave({ music }) below. */}
                 <TouchableOpacity onPress={() => setShowMusicSheet(true)} style={s.blurAddBtn}>
-                  <Text style={s.blurAddBtnLabel}>
-                    {musicTrack ? `♫ ${musicTrack.title}` : '+ Adicionar som'}
-                  </Text>
+                  {musicTrack ? (
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                      <IconMusic size={14} color="#fff" />
+                      <Text style={s.blurAddBtnLabel}>{musicTrack.title}</Text>
+                    </View>
+                  ) : (
+                    <Text style={s.blurAddBtnLabel}>{t('photoEditor.addSoundCta')}</Text>
+                  )}
                 </TouchableOpacity>
                 {musicTrack && (
                   <TouchableOpacity onPress={() => setMusicTrack(null)} style={{ marginTop: 4 }}>
-                    <Text style={[s.placeholderHint, { color: '#fca5a5' }]}>Remover trilha</Text>
+                    <Text style={[s.placeholderHint, { color: '#fca5a5' }]}>{t('photoEditor.removeTrack')}</Text>
                   </TouchableOpacity>
                 )}
               </View>
@@ -1667,12 +1673,12 @@ export default function PhotoEditor({ visible, imageUri, onSave, onClose, photoI
             {activeTab === 'tag' && (
               <View style={s.placeholderPanel}>
                 {tagItems.length === 0 ? (
-                  <Text style={s.placeholderTitle}>Toque na foto para marcar</Text>
+                  <Text style={s.placeholderTitle}>{t('photoEditor.tagEmpty')}</Text>
                 ) : (
-                  <Text style={s.placeholderTitle}>{tagItems.length} marcaç{tagItems.length === 1 ? 'ão' : 'ões'}</Text>
+                  <Text style={s.placeholderTitle}>{tagItems.length === 1 ? t('photoEditor.tagCountOne') : t('photoEditor.tagCount', { n: tagItems.length })}</Text>
                 )}
                 <Text style={s.placeholderHint}>
-                  Use @ para sugerir amigos. Toque longo numa marcação pra remover.
+                  {t('photoEditor.tagHint')}
                 </Text>
                 {/* Quick input — appears after the user taps a photo point.
                     Free text + @mention; the host's onSave gets the list back. */}
@@ -1682,7 +1688,7 @@ export default function PhotoEditor({ visible, imageUri, onSave, onClose, photoI
                       autoFocus
                       value={tagDraft}
                       onChangeText={setTagDraft}
-                      placeholder="@usuario ou nome"
+                      placeholder={t('photoEditor.tagPlaceholder')}
                       placeholderTextColor="rgba(255,255,255,0.5)"
                       style={s.textInput}
                     />
@@ -1713,16 +1719,16 @@ export default function PhotoEditor({ visible, imageUri, onSave, onClose, photoI
               <View style={{ paddingHorizontal: 16, paddingVertical: 12 }}>
                 {!photoId ? (
                   <Text style={{ color: '#bbb', fontSize: 13, textAlign: 'center', paddingVertical: 16 }}>
-                    Salve esta foto na nuvem para liberar Melhorar IA, Apagar objeto, Trocar ceu e Modo retrato.
+                    {t('photoEditor.aiLocked')}
                   </Text>
                 ) : (
                   <>
                     <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 10 }}>
                       {[
-                        { k: 'upscale', label: 'Melhorar' },
-                        { k: 'denoise', label: 'Reduzir ruido' },
-                        { k: 'colorize', label: 'Colorir P&B' },
-                        { k: 'bokeh', label: 'Modo retrato' },
+                        { k: 'upscale', label: t('compose.improveText') },
+                        { k: 'denoise', label: t('photoEditor.aiDenoise') },
+                        { k: 'colorize', label: t('photoEditor.aiColorize') },
+                        { k: 'bokeh', label: t('photoEditor.aiBokeh') },
                       ].map(b => (
                         <TouchableOpacity
                           key={b.k}
@@ -1735,12 +1741,12 @@ export default function PhotoEditor({ visible, imageUri, onSave, onClose, photoI
                           }}
                         >
                           <Text style={{ color: '#fff', fontSize: 13, fontWeight: '600' }}>
-                            {aiBusyMode === b.k ? 'Processando...' : b.label}
+                            {aiBusyMode === b.k ? t('chatAi.processing') : b.label}
                           </Text>
                         </TouchableOpacity>
                       ))}
                     </View>
-                    <Text style={{ color: '#888', fontSize: 12, marginTop: 4, marginBottom: 6 }}>Trocar ceu</Text>
+                    <Text style={{ color: '#888', fontSize: 12, marginTop: 4, marginBottom: 6 }}>{t('photoEditor.skyTitle')}</Text>
                     <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
                       {['sunset', 'clearblue', 'starry', 'aurora', 'cloudy', 'golden'].map(p => (
                         <TouchableOpacity
@@ -1752,7 +1758,7 @@ export default function PhotoEditor({ visible, imageUri, onSave, onClose, photoI
                             backgroundColor: 'rgba(255,255,255,0.06)',
                           }}
                         >
-                          <Text style={{ color: '#ddd', fontSize: 12 }}>{p}</Text>
+                          <Text style={{ color: '#ddd', fontSize: 12 }}>{t(`photoEditor.sky.${p}`)}</Text>
                         </TouchableOpacity>
                       ))}
                     </View>
@@ -1761,13 +1767,13 @@ export default function PhotoEditor({ visible, imageUri, onSave, onClose, photoI
                     ) : null}
                     {aiResultUrl ? (
                       <View style={{ marginTop: 12 }}>
-                        <Text style={{ color: '#10B981', fontSize: 12, fontWeight: '600' }}>IA processou:</Text>
+                        <Text style={{ color: '#10B981', fontSize: 12, fontWeight: '600' }}>{t('photoEditor.aiDone')}</Text>
                         <Text numberOfLines={1} style={{ color: '#bbb', fontSize: 11, marginTop: 2 }}>{aiResultUrl}</Text>
                         <TouchableOpacity
                           onPress={() => { onSave?.({ uri: aiResultUrl, ai_enhanced: true }); }}
                           style={{ marginTop: 8, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 14, backgroundColor: '#111111', alignSelf: 'flex-start' }}
                         >
-                          <Text style={{ color: '#fff', fontWeight: '600', fontSize: 13 }}>Usar resultado</Text>
+                          <Text style={{ color: '#fff', fontWeight: '600', fontSize: 13 }}>{t('photoEditor.useResult')}</Text>
                         </TouchableOpacity>
                       </View>
                     ) : null}
@@ -1846,9 +1852,9 @@ export default function PhotoEditor({ visible, imageUri, onSave, onClose, photoI
           <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.55)', justifyContent: 'flex-end' }}>
             <View style={{ backgroundColor: '#1a1a1a', borderTopLeftRadius: 16, borderTopRightRadius: 16, padding: 20, minHeight: 280 }}>
               <View style={{ alignSelf: 'center', width: 36, height: 4, borderRadius: 2, backgroundColor: 'rgba(255,255,255,0.2)', marginBottom: 12 }} />
-              <Text style={{ color: '#fff', fontSize: 18, fontWeight: '700' }}>Adicionar som</Text>
+              <Text style={{ color: '#fff', fontSize: 18, fontWeight: '700' }}>{t('photoEditor.addSound')}</Text>
               <Text style={{ color: '#aaa', fontSize: 13, marginTop: 6, marginBottom: 14 }}>
-                Selecione uma trilha para acompanhar a foto.
+                {t('photoEditor.musicHint')}
               </Text>
               {/* Static demo catalog — real picker will hit the same shape via
                   api.musicLibrary() once the backend lands. Each row sets the
@@ -1871,7 +1877,7 @@ export default function PhotoEditor({ visible, imageUri, onSave, onClose, photoI
                 onPress={() => setShowMusicSheet(false)}
                 style={{ marginTop: 16, padding: 12, alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.08)', borderRadius: 10 }}
               >
-                <Text style={{ color: '#fff', fontWeight: '700' }}>Fechar</Text>
+                <Text style={{ color: '#fff', fontWeight: '700' }}>{t('common.close')}</Text>
               </TouchableOpacity>
             </View>
           </View>

@@ -111,7 +111,11 @@ const DEFAULT_ZOOM = 14;
 // base elsewhere). We use it instead of the old 'world-cinza' fallback, which
 // is a LIGHT gray base and read washed-out in dark mode. Light mode keeps the
 // per-country coverage styles (they also feed the static balloon maps).
-function buildMapHtml({ center, zoom, isDark, initialPins, initialMe }) {
+function buildMapHtml({ center, zoom, isDark, initialPins, initialMe, labels }) {
+  // [2026-10-11 ui-sweep] Textos do chrome do WebView vêm traduzidos do RN.
+  const _L = labels || {};
+  const _h = (v) => String(v == null ? '' : v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  const _lb = (k, fb) => _h(_L[k] || fb);
   const pinsJson = JSON.stringify(initialPins || []);
   const meJson = JSON.stringify(initialMe || null);
   // Style is picked by the BoraUm coverage helper. coverageStyleFor() takes
@@ -223,17 +227,17 @@ function buildMapHtml({ center, zoom, isDark, initialPins, initialMe }) {
 <div id="searchWrap">
   <div id="searchBar">
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="${glassText}" stroke-width="2.2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-    <input id="searchInput" type="text" autocomplete="off" autocorrect="off" spellcheck="false" placeholder="Buscar lugar ou endereço"/>
+    <input id="searchInput" type="text" autocomplete="off" autocorrect="off" spellcheck="false" placeholder="${_lb('searchPlace', 'Buscar lugar ou endereço')}"/>
     <div id="searchClear"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="${glassText}" stroke-width="2.4" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></div>
   </div>
   <div id="searchResults"></div>
 </div>
-<div id="compass" title="Norte"><div class="needle"></div></div>
+<div id="compass" title="${_lb('north', 'Norte')}"><div class="needle"></div></div>
 <div id="ctrlStack">
-  <div class="glassbtn" id="btnFit" title="Ver todos"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="${glassText}" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3M16 3h3a2 2 0 0 1 2 2v3M8 21H5a2 2 0 0 1-2-2v-3M16 21h3a2 2 0 0 0 2-2v-3"/></svg></div>
-  <div class="glassbtn sm" id="btnZoomIn" title="Aproximar">+</div>
-  <div class="glassbtn sm" id="btnZoomOut" title="Afastar">&#8722;</div>
-  <div class="glassbtn" id="btn3d" title="Visão 3D">3D</div>
+  <div class="glassbtn" id="btnFit" title="${_lb('fitAll', 'Ver todos')}"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="${glassText}" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3M16 3h3a2 2 0 0 1 2 2v3M8 21H5a2 2 0 0 1-2-2v-3M16 21h3a2 2 0 0 0 2-2v-3"/></svg></div>
+  <div class="glassbtn sm" id="btnZoomIn" title="${_lb('zoomIn', 'Aproximar')}">+</div>
+  <div class="glassbtn sm" id="btnZoomOut" title="${_lb('zoomOut', 'Afastar')}">&#8722;</div>
+  <div class="glassbtn" id="btn3d" title="${_lb('view3d', 'Visão 3D')}">3D</div>
 </div>
 <script>
 var INITIAL_CENTER = ${JSON.stringify(center)};
@@ -556,13 +560,13 @@ function doGeocode(q) {
   if (!box) return;
   if (!q || q.trim().length < 3) { box.style.display = 'none'; box.innerHTML = ''; return; }
   var seq = ++__searchSeq;
-  box.innerHTML = '<div class="sr-loading">Buscando…</div>';
+  box.innerHTML = '<div class="sr-loading">' + ${JSON.stringify(_lb('searching', 'Buscando…'))} + '</div>';
   box.style.display = 'block';
   fetch('https://nominatim.openstreetmap.org/search?format=json&limit=6&addressdetails=1&accept-language=pt-BR&q=' + encodeURIComponent(q), { headers: { 'Accept': 'application/json' } })
     .then(function(r){ return r.json(); })
     .then(function(list){
       if (seq !== __searchSeq) return; // a newer keystroke superseded this
-      if (!Array.isArray(list) || !list.length) { box.innerHTML = '<div class="sr-empty">Nenhum resultado</div>'; box.style.display = 'block'; return; }
+      if (!Array.isArray(list) || !list.length) { box.innerHTML = '<div class="sr-empty">' + ${JSON.stringify(_lb('noResults', 'Nenhum resultado'))} + '</div>'; box.style.display = 'block'; return; }
       box.innerHTML = '';
       list.forEach(function(it){
         var row = document.createElement('div');
@@ -916,17 +920,20 @@ function wsUtcStamp() {
   return `${d.getUTCFullYear()}-${p(d.getUTCMonth() + 1)}-${p(d.getUTCDate())} ${p(d.getUTCHours())}:${p(d.getUTCMinutes())}:${p(d.getUTCSeconds())}`;
 }
 
+// [2026-10-11 ui-sweep] t() do SnapMapScreen (setado a cada render) p/ ago().
+let _agoT = null;
 function ago(updatedAt) {
   if (!updatedAt) return '';
   let ts = 0;
   try { ts = new Date(updatedAt.replace(' ', 'T') + 'Z').getTime(); } catch {}
   if (!ts) return '';
   const s = Math.max(0, Math.round((Date.now() - ts) / 1000));
-  if (s < 5) return 'agora';
-  if (s < 60) return `há ${s}s`;
-  if (s < 3600) return `há ${Math.round(s / 60)}min`;
-  if (s < 86400) return `há ${Math.round(s / 3600)}h`;
-  return `há ${Math.round(s / 86400)}d`;
+  const _t = typeof _agoT === 'function' ? _agoT : null;
+  if (s < 5) return _t ? _t('time.justNow') : 'agora';
+  if (s < 60) return _t ? _t('uiG.snapmap.agoSec', { n: s }) : `há ${s}s`;
+  if (s < 3600) return _t ? _t('uiG.snapmap.agoMin', { n: Math.round(s / 60) }) : `há ${Math.round(s / 60)}min`;
+  if (s < 86400) return _t ? _t('uiG.snapmap.agoHour', { n: Math.round(s / 3600) }) : `há ${Math.round(s / 3600)}h`;
+  return _t ? _t('uiG.snapmap.agoDay', { n: Math.round(s / 86400) }) : `há ${Math.round(s / 86400)}d`;
 }
 
 // [WAVE 49 2026-05-21] Active sessions chip. Renders ONLY when the user is
@@ -1002,6 +1009,7 @@ function ActiveSessionsChip({ grantsData, isDark, colors, t, ghostMode, onOpen, 
 export default function SnapMapScreen() {
   const { colors, isDark } = useTheme();
   const { t } = useLanguage();
+  _agoT = t;
   const { user } = useAuth();
   const router = useRouter();
   // User feedback 2026-05-18 ("no android mapa de amigos tá muito encima ai
@@ -1559,6 +1567,16 @@ export default function SnapMapScreen() {
     isDark,
     initialPins: pinsPayload,
     initialMe: mePayload,
+    labels: {
+      searchPlace: t('uiG.snapmap.searchPlace'),
+      north: t('uiG.snapmap.north'),
+      fitAll: t('maps.fitAll'),
+      zoomIn: t('uiG.snapmap.zoomIn'),
+      zoomOut: t('uiG.snapmap.zoomOut'),
+      view3d: t('uiG.snapmap.view3d'),
+      searching: t('live.searching'),
+      noResults: t('docs.noResults'),
+    },
   }), [initialCenter, isDark]);  // eslint-disable-line react-hooks/exhaustive-deps
 
   // WebView refs — native uses ref.injectJavaScript, web posts to iframe.
@@ -1817,7 +1835,7 @@ export default function SnapMapScreen() {
         >
           <IconEyeOff size={20} color={colors.text} />
         </TouchableOpacity>
-        <TouchableOpacity onPress={openGrants} style={{ padding: 8 }} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }} accessibilityLabel="Privacidade">
+        <TouchableOpacity onPress={openGrants} style={{ padding: 8 }} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }} accessibilityLabel={t('settings.privacy')}>
           <IconUser size={22} color={colors.text} />
         </TouchableOpacity>
       </View>
@@ -2002,7 +2020,7 @@ export default function SnapMapScreen() {
             <View style={{ backgroundColor: 'rgba(28,28,33,0.95)', borderRadius: 14, paddingHorizontal: 14, paddingVertical: 10, maxWidth: 340, borderWidth: 1, borderColor: 'rgba(255,255,255,0.18)' }}>
               <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700' }}>{t?.('snapmap.mapOffline') || 'Sem conexão com o mapa'}</Text>
               <Text style={{ color: 'rgba(255,255,255,0.8)', fontSize: 10, marginTop: 2 }} numberOfLines={2}>
-                Verifique sua internet — o mapa recarrega sozinho quando você voltar online.
+                {t('uiG.snapmap.offlineHint')}
               </Text>
               <TouchableOpacity
                 onPress={() => { setMapErr(null); mapReadyRef.current = false; if (nativeMap) { setNativeKey((k) => k + 1); return; } try { webRef.current?.reload?.(); } catch(_){} }}
@@ -2126,7 +2144,7 @@ export default function SnapMapScreen() {
               elevation: 8,
               borderWidth: 1, borderColor: isDark ? 'rgba(255,255,255,0.14)' : 'rgba(0,0,0,0.07)',
             }}
-            accessibilityLabel={t?.('snapmap.centerOnMe') || 'Minha localização'}
+            accessibilityLabel={t?.('maps.myLocation') || 'Minha localização'}
           >
             <IconNavigation size={23} color={colors.primary} />
           </TouchableOpacity>
@@ -2169,7 +2187,7 @@ export default function SnapMapScreen() {
             <Pressable
               onPress={() => setListExpanded((v) => !v)}
               accessibilityRole="button"
-              accessibilityLabel={listExpanded ? (t?.('snapmap.collapseList') || 'Recolher lista') : (t?.('snapmap.expandList') || 'Expandir lista')}
+              accessibilityLabel={listExpanded ? (t?.('snapmap.tapToCollapse') || 'Recolher') : (t?.('reader.expand') || 'Expandir')}
               style={{ paddingTop: 8, paddingBottom: 6, alignItems: 'center' }}
             >
               <View style={{ width: 36, height: 4, borderRadius: 2, backgroundColor: isDark ? 'rgba(255,255,255,0.30)' : 'rgba(0,0,0,0.18)' }} />
@@ -2460,7 +2478,7 @@ export default function SnapMapScreen() {
                     <View style={{ flex: 1 }}>
                       <Text style={{ color: colors.text, fontSize: 14, fontWeight: '600' }} numberOfLines={1}>{g.name || g.email}</Text>
                       <Text style={{ color: colors.textSecondary, fontSize: 11 }}>
-                        {g.is_unlimited ? '∞ sempre ativo' : (g.expires_at ? `expira em ${Math.max(0, Math.round((g.expires_at - Date.now() / 1000) / 60))}min` : '')}
+                        {g.is_unlimited ? `∞ ${t('snapmap.alwaysOn')}` : (g.expires_at ? t('uiG.snapmap.expiresInMin', { n: Math.max(0, Math.round((g.expires_at - Date.now() / 1000) / 60)) }) : '')}
                       </Text>
                     </View>
                     <TouchableOpacity onPress={() => revokeGrant(g.email)} style={{ paddingHorizontal: 12, paddingVertical: 6, borderRadius: 14, backgroundColor: '#ef444420' }}>
@@ -2484,7 +2502,7 @@ export default function SnapMapScreen() {
                     <View style={{ flex: 1 }}>
                       <Text style={{ color: colors.text, fontSize: 14, fontWeight: '600' }} numberOfLines={1}>{g.name || g.email}</Text>
                       <Text style={{ color: colors.textSecondary, fontSize: 11 }}>
-                        {g.is_unlimited ? '∞ sempre ativo' : ''}
+                        {g.is_unlimited ? `∞ ${t('snapmap.alwaysOn')}` : ''}
                       </Text>
                     </View>
                     <TouchableOpacity onPress={() => revokeGrant(g.email)} style={{ paddingHorizontal: 12, paddingVertical: 6, borderRadius: 14, backgroundColor: '#ef444420' }}>

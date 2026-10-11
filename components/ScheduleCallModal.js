@@ -10,7 +10,7 @@ import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import { Spacing, BorderRadius, FontSize, Shadow } from '../constants/theme';
 import * as api from '../services/api';
-import { IconX, IconCalendar, IconClock, IconUserPlus } from './Icons';
+import { IconX, IconCalendar, IconClock, IconUserPlus, IconAlertTriangle } from './Icons';
 import AvatarCircle from './AvatarCircle';
 
 let DateTimePicker = null;
@@ -373,9 +373,11 @@ export default function ScheduleCallModal({ visible, onClose, onScheduled }) {
               <View style={{
                 marginTop: 6, padding: 8, borderRadius: 8,
                 backgroundColor: '#f59e0b22', borderLeftWidth: 3, borderLeftColor: '#f59e0b',
+                flexDirection: 'row', alignItems: 'center', gap: 6,
               }}>
-                <Text style={{ fontSize: 12, color: '#b45309', fontWeight: '600' }}>
-                  {(t('calls.conflictWarning') || '⚠ Você já tem outra chamada perto de {time}')
+                <IconAlertTriangle size={14} color="#b45309" />
+                <Text style={{ flex: 1, fontSize: 12, color: '#b45309', fontWeight: '600' }}>
+                  {(t('scheduleCall.conflictNear') || 'Você já tem outra chamada perto de {time}')
                     .replace('{time}', new Date(conflictCall.scheduled_at || conflictCall.scheduledAt).toLocaleTimeString(localeTag, { hour: '2-digit', minute: '2-digit', hour12: language === 'en' }))}
                 </Text>
               </View>

@@ -6,6 +6,7 @@ import Svg, { Path, Circle as SvgCircle, Rect, Polygon, Line, G, Defs, LinearGra
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import * as api from '../services/api';
+import { IconSparkles, IconPalette, IconFileText, IconMusic, IconBookmark } from './Icons';
 
 const { width: SCREEN_W } = Dimensions.get('window');
 
@@ -56,11 +57,11 @@ function IconClock({ size = 14, color = '#fff' }) {
 
 // ─── Category Pills ───
 const TV_CATEGORIES = [
-  { key: 'all', emoji: '\uD83C\uDF1F', color: '#111111', i18nKey: null },
-  { key: 'cartoons', emoji: '\uD83C\uDFA8', color: '#111111', i18nKey: 'kids.categories.cartoons' },
-  { key: 'educational', emoji: '\uD83D\uDCDA', color: '#10b981', i18nKey: 'kids.categories.educational' },
-  { key: 'music', emoji: '\uD83C\uDFB5', color: '#111111', i18nKey: 'kids.categories.music' },
-  { key: 'stories', emoji: '\uD83D\uDCDA', color: '#f59e0b', i18nKey: 'kids.categories.stories' },
+  { key: 'all', Icon: IconSparkles, color: '#111111', i18nKey: null },
+  { key: 'cartoons', Icon: IconPalette, color: '#111111', i18nKey: 'kids.categories.cartoons' },
+  { key: 'educational', Icon: IconFileText, color: '#10b981', i18nKey: 'kids.categories.educational' },
+  { key: 'music', Icon: IconMusic, color: '#111111', i18nKey: 'kids.categories.music' },
+  { key: 'stories', Icon: IconBookmark, color: '#f59e0b', i18nKey: 'kids.categories.stories' },
 ];
 
 // ─── BounceIn animation ───
@@ -76,8 +77,8 @@ function BounceIn({ children, delay = 0 }) {
   return <Animated.View style={{ transform: [{ scale }], opacity }}>{children}</Animated.View>;
 }
 
-// Channel icon: colored circle with emoji/initial
-function ChannelIcon({ name, emoji, color, size = 60 }) {
+// Channel icon: colored circle with initial (no emoji chrome)
+function ChannelIcon({ name, color, size = 60 }) {
   const letter = (name || '?')[0].toUpperCase();
   return (
     <View style={{
@@ -85,7 +86,7 @@ function ChannelIcon({ name, emoji, color, size = 60 }) {
       backgroundColor: color || '#111111', alignItems: 'center', justifyContent: 'center',
       ...(Platform.OS === 'web' ? { boxShadow: `0 4px 12px ${(color || '#111111')}40` } : {}),
     }}>
-      <Text style={{ fontSize: size * 0.35, fontWeight: '800', color: '#fff' }}>{emoji || letter}</Text>
+      <Text style={{ fontSize: size * 0.35, fontWeight: '800', color: '#fff' }}>{letter}</Text>
     </View>
   );
 }
@@ -188,7 +189,7 @@ export default function KidsTVTab() {
           </View>
         ) : (
           <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
-            <Text style={{ color: '#fff', fontSize: 18 }}>Abrindo video...</Text>
+            <Text style={{ color: '#fff', fontSize: 18 }}>{t('kidsTV.openingVideo')}</Text>
           </View>
         )}
       </View>
@@ -290,12 +291,12 @@ export default function KidsTVTab() {
                   }]}
                   onPress={() => setSelectedCategory(cat.key)}
                   activeOpacity={0.7}
-                  accessibilityLabel={cat.i18nKey ? t(cat.i18nKey) : 'All'}
+                  accessibilityLabel={cat.i18nKey ? t(cat.i18nKey) : t('common.all')}
                   accessibilityRole="button"
                 >
-                  <Text style={{ fontSize: 18 }}>{cat.emoji}</Text>
+                  <cat.Icon size={18} color={isActive ? '#fff' : textColor} />
                   <Text style={[st.catPillText, { color: isActive ? '#fff' : textColor }]}>
-                    {cat.i18nKey ? t(cat.i18nKey) : 'Todos'}
+                    {cat.i18nKey ? t(cat.i18nKey) : t('common.all')}
                   </Text>
                 </TouchableOpacity>
               );
@@ -336,7 +337,7 @@ export default function KidsTVTab() {
 
           {/* Channels grid - large colorful cards */}
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 18, marginTop: 28, marginBottom: 14 }}>
-            <Text style={{ fontSize: 20 }}>{'\uD83D\uDCFA'}</Text>
+            <IconTV size={20} color={textColor} />
             <Text style={[st.sectionTitle, { color: textColor, marginBottom: 0, paddingHorizontal: 0 }]}>{t('kids.channels')}</Text>
           </View>
           <View style={st.channelGrid}>
@@ -349,7 +350,7 @@ export default function KidsTVTab() {
                     onPress={() => openChannel(ch)} activeOpacity={0.8}
                     accessibilityLabel={ch.name} accessibilityRole="button"
                   >
-                    <ChannelIcon name={ch.name} emoji={ch.emoji} color={chColor} size={64} />
+                    <ChannelIcon name={ch.name} color={chColor} size={64} />
                     <Text style={[st.channelName, { color: textColor }]} numberOfLines={1}>{ch.name}</Text>
                     <Text style={[st.channelDesc, { color: subColor }]} numberOfLines={1}>{ch.description}</Text>
                     {ch.video_count > 0 && (

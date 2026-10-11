@@ -4,7 +4,7 @@ import { View, Text, TouchableOpacity, StyleSheet, ScrollView, TextInput, Activi
 import { useRouter } from 'expo-router';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
-import { IconArrowLeft, IconSend, IconZap } from '../components/Icons';
+import { IconArrowLeft, IconSend, IconZap, IconHash, IconFileText, IconSparkles, IconBuilding, IconTranslate, IconPalette, IconMusic, IconGlobe, IconBookmark, IconFilm, IconClock, IconAward } from '../components/Icons';
 import Svg, { Path, Circle as SvgCircle } from 'react-native-svg';
 import * as api from '../services/api';
 import ErrorBoundary from '../components/ErrorBoundary';
@@ -41,43 +41,43 @@ function BounceIn({ children, delay = 0 }) {
 }
 
 const CATEGORIES = [
-  { key: 'math', emoji: '\uD83D\uDD22', color: '#111111', videos: [
-    { title: 'Como fazer conta de dividir', duration: '5 min', url: 'https://youtube.com/results?search_query=como+dividir+para+criancas' },
-    { title: 'O que sao fracoes', duration: '7 min', url: 'https://youtube.com/results?search_query=fracoes+para+criancas+explicacao' },
-    { title: 'Tabuada divertida', duration: '4 min', url: 'https://youtube.com/results?search_query=tabuada+divertida+criancas' },
-    { title: 'Geometria: formas e areas', duration: '6 min', url: 'https://youtube.com/results?search_query=geometria+para+criancas' },
+  { key: 'math', Icon: IconHash, color: '#111111', videos: [
+    { titleKey: 'kidsLearn.video.divide', duration: '5 min', url: 'https://youtube.com/results?search_query=como+dividir+para+criancas' },
+    { titleKey: 'kidsLearn.video.fractions', duration: '7 min', url: 'https://youtube.com/results?search_query=fracoes+para+criancas+explicacao' },
+    { titleKey: 'kidsLearn.video.timesTable', duration: '4 min', url: 'https://youtube.com/results?search_query=tabuada+divertida+criancas' },
+    { titleKey: 'kidsLearn.video.geometry', duration: '6 min', url: 'https://youtube.com/results?search_query=geometria+para+criancas' },
   ]},
-  { key: 'portuguese', emoji: '\uD83D\uDCD6', color: '#22c55e', videos: [
-    { title: 'Acentuacao: quando usar', duration: '5 min', url: 'https://youtube.com/results?search_query=acentuacao+portugues+criancas' },
-    { title: 'Sujeito e predicado', duration: '6 min', url: 'https://youtube.com/results?search_query=sujeito+predicado+criancas' },
-    { title: 'Como fazer uma redacao', duration: '8 min', url: 'https://youtube.com/results?search_query=como+fazer+redacao+criancas' },
+  { key: 'portuguese', Icon: IconFileText, color: '#22c55e', videos: [
+    { titleKey: 'kidsLearn.video.accents', duration: '5 min', url: 'https://youtube.com/results?search_query=acentuacao+portugues+criancas' },
+    { titleKey: 'kidsLearn.video.subjectPredicate', duration: '6 min', url: 'https://youtube.com/results?search_query=sujeito+predicado+criancas' },
+    { titleKey: 'kidsLearn.video.essay', duration: '8 min', url: 'https://youtube.com/results?search_query=como+fazer+redacao+criancas' },
   ]},
-  { key: 'science', emoji: '\uD83D\uDD2C', color: '#f59e0b', videos: [
-    { title: 'Sistema Solar explicado', duration: '7 min', url: 'https://youtube.com/results?search_query=sistema+solar+criancas+manual+do+mundo' },
-    { title: 'Como funciona o corpo humano', duration: '6 min', url: 'https://youtube.com/results?search_query=corpo+humano+criancas' },
-    { title: 'Experimentos caseiros faceis', duration: '5 min', url: 'https://youtube.com/results?search_query=experimentos+caseiros+criancas+manual+do+mundo' },
+  { key: 'science', Icon: IconSparkles, color: '#f59e0b', videos: [
+    { titleKey: 'kidsLearn.video.solarSystem', duration: '7 min', url: 'https://youtube.com/results?search_query=sistema+solar+criancas+manual+do+mundo' },
+    { titleKey: 'kidsLearn.video.humanBody', duration: '6 min', url: 'https://youtube.com/results?search_query=corpo+humano+criancas' },
+    { titleKey: 'kidsLearn.video.experiments', duration: '5 min', url: 'https://youtube.com/results?search_query=experimentos+caseiros+criancas+manual+do+mundo' },
   ]},
-  { key: 'history', emoji: '\uD83C\uDFDB\uFE0F', color: '#111111', videos: [
-    { title: 'Descobrimento do Brasil', duration: '6 min', url: 'https://youtube.com/results?search_query=descobrimento+brasil+criancas' },
-    { title: 'Povos indigenas', duration: '7 min', url: 'https://youtube.com/results?search_query=povos+indigenas+brasil+criancas' },
-    { title: 'Independencia do Brasil', duration: '5 min', url: 'https://youtube.com/results?search_query=independencia+brasil+criancas' },
+  { key: 'history', Icon: IconBuilding, color: '#111111', videos: [
+    { titleKey: 'kidsLearn.video.discoveryBrazil', duration: '6 min', url: 'https://youtube.com/results?search_query=descobrimento+brasil+criancas' },
+    { titleKey: 'kidsLearn.video.indigenous', duration: '7 min', url: 'https://youtube.com/results?search_query=povos+indigenas+brasil+criancas' },
+    { titleKey: 'kidsLearn.video.independence', duration: '5 min', url: 'https://youtube.com/results?search_query=independencia+brasil+criancas' },
   ]},
-  { key: 'english', emoji: '\uD83C\uDDEC\uD83C\uDDE7', color: '#111111', videos: [
-    { title: 'Cores em ingles', duration: '3 min', url: 'https://youtube.com/results?search_query=colors+in+english+for+kids' },
-    { title: 'Numeros em ingles', duration: '4 min', url: 'https://youtube.com/results?search_query=numbers+in+english+for+kids' },
-    { title: 'Animais em ingles', duration: '5 min', url: 'https://youtube.com/results?search_query=animals+in+english+for+kids' },
+  { key: 'english', Icon: IconTranslate, color: '#111111', videos: [
+    { titleKey: 'kidsLearn.video.colorsEn', duration: '3 min', url: 'https://youtube.com/results?search_query=colors+in+english+for+kids' },
+    { titleKey: 'kidsLearn.video.numbersEn', duration: '4 min', url: 'https://youtube.com/results?search_query=numbers+in+english+for+kids' },
+    { titleKey: 'kidsLearn.video.animalsEn', duration: '5 min', url: 'https://youtube.com/results?search_query=animals+in+english+for+kids' },
   ]},
-  { key: 'art', emoji: '\uD83C\uDFA8', color: '#ef4444', videos: [
-    { title: 'Como desenhar animais', duration: '8 min', url: 'https://youtube.com/results?search_query=como+desenhar+animais+facil+criancas' },
-    { title: 'Cores primarias e secundarias', duration: '4 min', url: 'https://youtube.com/results?search_query=cores+primarias+secundarias+criancas' },
+  { key: 'art', Icon: IconPalette, color: '#ef4444', videos: [
+    { titleKey: 'kidsLearn.video.drawAnimals', duration: '8 min', url: 'https://youtube.com/results?search_query=como+desenhar+animais+facil+criancas' },
+    { titleKey: 'kidsLearn.video.primaryColors', duration: '4 min', url: 'https://youtube.com/results?search_query=cores+primarias+secundarias+criancas' },
   ]},
-  { key: 'music', emoji: '\uD83C\uDFB5', color: '#06b6d4', videos: [
-    { title: 'Instrumentos musicais', duration: '5 min', url: 'https://youtube.com/results?search_query=instrumentos+musicais+para+criancas' },
-    { title: 'Ritmo e compasso', duration: '4 min', url: 'https://youtube.com/results?search_query=ritmo+compasso+musica+criancas' },
+  { key: 'music', Icon: IconMusic, color: '#06b6d4', videos: [
+    { titleKey: 'kidsLearn.video.instruments', duration: '5 min', url: 'https://youtube.com/results?search_query=instrumentos+musicais+para+criancas' },
+    { titleKey: 'kidsLearn.video.rhythm', duration: '4 min', url: 'https://youtube.com/results?search_query=ritmo+compasso+musica+criancas' },
   ]},
-  { key: 'geography', emoji: '\uD83C\uDF0E', color: '#84cc16', videos: [
-    { title: 'Continentes do mundo', duration: '6 min', url: 'https://youtube.com/results?search_query=continentes+do+mundo+criancas' },
-    { title: 'Paises da America do Sul', duration: '5 min', url: 'https://youtube.com/results?search_query=paises+america+sul+criancas' },
+  { key: 'geography', Icon: IconGlobe, color: '#84cc16', videos: [
+    { titleKey: 'kidsLearn.video.continents', duration: '6 min', url: 'https://youtube.com/results?search_query=continentes+do+mundo+criancas' },
+    { titleKey: 'kidsLearn.video.southAmerica', duration: '5 min', url: 'https://youtube.com/results?search_query=paises+america+sul+criancas' },
   ]},
 ];
 
@@ -102,13 +102,13 @@ function KidsLearnScreenInner() {
         `Voce e a Professora ONE. A crianca perguntou: "${question.trim()}". Ensine o raciocinio passo a passo, NUNCA de a resposta direta. Use emojis e linguagem amigavel.`,
         'kids_tutor'
       );
-      setTutorResponse(r?.data?.response || r?.data?.text || r?.message || 'Hmm, nao consegui pensar agora. Tenta de novo!');
+      setTutorResponse(r?.data?.response || r?.data?.text || r?.message || t('kidsLearn.tutorEmpty'));
       setStars(prev => prev + 1);
     } catch {
-      setTutorResponse('Ops, algo deu errado. Tenta de novo!');
+      setTutorResponse(t('kidsLearn.tutorError'));
     }
     setTutorLoading(false);
-  }, [question, tutorLoading]);
+  }, [question, tutorLoading, t]);
 
   const openVideo = (url) => {
     Linking.openURL(url).catch(() => {});
@@ -122,10 +122,10 @@ function KidsLearnScreenInner() {
           ? { background: 'linear-gradient(135deg, #111111 0%, #111111 40%, #111111 70%, #f43f5e 100%)' }
           : { backgroundColor: '#111111' }
       ]}>
-        <TouchableOpacity onPress={() => router.back()} style={s.backBtn} accessibilityLabel="Back" accessibilityRole="button">
+        <TouchableOpacity onPress={() => router.back()} style={s.backBtn} accessibilityLabel={t('common.back')} accessibilityRole="button">
           <IconArrowLeft size={24} color="#fff" />
         </TouchableOpacity>
-        <Text style={s.headerEmoji}>{'\uD83D\uDCDA'}</Text>
+        <View style={s.headerEmoji}><IconBookmark size={22} color="#fff" /></View>
         <Text style={s.headerTitle}>{t('kids.learn') || 'Aprender'}</Text>
         {stars > 0 && (
           <View style={s.starBadge}>
@@ -150,7 +150,7 @@ function KidsLearnScreenInner() {
                 accessibilityLabel={t(`kids.categories.${cat.key}`) || cat.key}
                 accessibilityRole="button"
               >
-                <Text style={s.catEmoji}>{cat.emoji}</Text>
+                <View style={s.catEmoji}><cat.Icon size={20} color={activeCategory === cat.key ? '#fff' : (isDark ? '#F1F3F5' : '#1e1b4b')} /></View>
                 <Text style={[s.catLabel, { color: activeCategory === cat.key ? '#fff' : (isDark ? '#F1F3F5' : '#1e1b4b') }]}>
                   {t(`kids.categories.${cat.key}`) || cat.key}
                 </Text>
@@ -160,9 +160,12 @@ function KidsLearnScreenInner() {
         </ScrollView>
 
         {/* Video cards - large, colorful */}
-        <Text style={[s.sectionTitle, { color: isDark ? '#F1F3F5' : '#1e1b4b' }]}>
-          {'\uD83C\uDFAC'} {t('kids.videos') || 'Videos'}
-        </Text>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 14 }}>
+          <IconFilm size={20} color={isDark ? '#F1F3F5' : '#1e1b4b'} />
+          <Text style={[s.sectionTitle, { color: isDark ? '#F1F3F5' : '#1e1b4b', marginBottom: 0 }]}>
+            {t('kids.videos') || 'Vídeos'}
+          </Text>
+        </View>
         {category.videos.map((video, i) => (
           <BounceIn key={i} delay={i * 60}>
             <TouchableOpacity
@@ -173,16 +176,16 @@ function KidsLearnScreenInner() {
               }]}
               onPress={() => openVideo(video.url)}
               activeOpacity={0.7}
-              accessibilityLabel={video.title}
+              accessibilityLabel={t(video.titleKey)}
               accessibilityRole="button"
             >
               <View style={[s.videoThumb, { backgroundColor: category.color + '20' }]}>
-                <Text style={{ fontSize: 32 }}>{category.emoji}</Text>
+                <category.Icon size={30} color={category.color} />
               </View>
               <View style={s.videoInfo}>
-                <Text style={[s.videoTitle, { color: isDark ? '#F1F3F5' : '#1e1b4b' }]}>{video.title}</Text>
+                <Text style={[s.videoTitle, { color: isDark ? '#F1F3F5' : '#1e1b4b' }]}>{t(video.titleKey)}</Text>
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 6 }}>
-                  <Text style={{ fontSize: 12 }}>{'\u23F1'}</Text>
+                  <IconClock size={13} color={isDark ? '#8E8E93' : '#6b7280'} />
                   <Text style={[s.videoDuration, { color: isDark ? '#111111' : '#6b7280' }]}>{video.duration}</Text>
                 </View>
               </View>
@@ -198,7 +201,7 @@ function KidsLearnScreenInner() {
         }]}>
           <View style={s.tutorHeader}>
             <View style={{ width: 52, height: 52, borderRadius: 18, backgroundColor: '#11111120', alignItems: 'center', justifyContent: 'center' }}>
-              <Text style={{ fontSize: 30 }}>{'\uD83C\uDF93'}</Text>
+              <IconAward size={28} color={isDark ? '#F1F3F5' : '#111111'} />
             </View>
             <View style={{ flex: 1, marginLeft: 14 }}>
               <Text style={[s.tutorTitle, { color: isDark ? '#F1F3F5' : '#1e1b4b' }]}>{t('kids.homework') || 'Dever de Casa'}</Text>
@@ -213,7 +216,7 @@ function KidsLearnScreenInner() {
                 color: isDark ? '#F1F3F5' : '#1e1b4b',
                 borderColor: isDark ? '#161618' : '#e5e7eb',
               }]}
-              placeholder={t('kids.homeworkPlaceholder') || 'Qual sua duvida?'}
+              placeholder={t('kids.homeworkPlaceholder') || 'Qual sua dúvida?'}
               placeholderTextColor={isDark ? '#8E8E93' : '#111111'}
               value={question}
               onChangeText={setQuestion}
@@ -226,7 +229,7 @@ function KidsLearnScreenInner() {
               }]}
               onPress={askTutor}
               disabled={!question.trim() || tutorLoading}
-              accessibilityLabel="Send" accessibilityRole="button"
+              accessibilityLabel={t('common.send')} accessibilityRole="button"
             >
               {tutorLoading ? <ActivityIndicator size="small" color="#fff" /> : <IconSend size={20} color={question.trim() ? '#fff' : (isDark ? '#F5F5F7' : '#111111')} />}
             </TouchableOpacity>
@@ -260,7 +263,7 @@ const s = StyleSheet.create({
     paddingTop: Platform.OS === 'ios' ? 56 : androidTopInset(18), gap: 10,
   },
   backBtn: { padding: 8, minWidth: 48, minHeight: 48, alignItems: 'center', justifyContent: 'center' },
-  headerEmoji: { fontSize: 24 },
+  headerEmoji: { alignItems: 'center', justifyContent: 'center' },
   headerTitle: { fontSize: 22, fontWeight: '800', color: '#fff', flex: 1 },
   starBadge: {
     flexDirection: 'row', alignItems: 'center', gap: 4,
@@ -275,7 +278,7 @@ const s = StyleSheet.create({
     paddingHorizontal: 18, paddingVertical: 14, borderRadius: 20, borderWidth: 2,
     minHeight: 52,
   },
-  catEmoji: { fontSize: 22, marginRight: 8 },
+  catEmoji: { marginRight: 8 },
   catLabel: { fontSize: 16, fontWeight: '700' },
   sectionTitle: { fontSize: 20, fontWeight: '800', marginBottom: 14 },
   videoCard: {

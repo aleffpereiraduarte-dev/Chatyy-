@@ -15,7 +15,7 @@ import {
   IconArrowLeft, IconPlus, IconSearch, IconX, IconCheck,
   IconStickyNote, IconPin, IconTrash, IconArchive, IconEdit, IconFolder,
   IconMail, IconCopy, IconDownload, IconSend, IconMenu, IconZap, IconRotateCcw,
-  IconBell, IconClock, IconGrid,
+  IconBell, IconClock, IconGrid, IconSmile, IconLink, IconBrush, IconChevronLeft,
 } from '../components/Icons';
 import * as api from '../services/api';
 import { getCached, setCache } from '../services/cache';
@@ -88,15 +88,16 @@ function getRandomRotation(noteId) {
 }
 
 // Notion-style "Salvo há Xs" — re-evaluated whenever savedTick changes
-function formatSavedAgo(savedAt /* ms */, _tick) {
+function formatSavedAgo(savedAt /* ms */, _tick, t) {
   if (!savedAt) return '';
+  const tt = typeof t === 'function' ? t : null;
   const sec = Math.max(1, Math.round((Date.now() - savedAt) / 1000));
-  if (sec < 5) return 'agora';
-  if (sec < 60) return `há ${sec}s`;
+  if (sec < 5) return tt ? tt('notesEditor.agoNow') : 'agora';
+  if (sec < 60) return tt ? tt('notesEditor.agoSec', { n: sec }) : `há ${sec}s`;
   const min = Math.round(sec / 60);
-  if (min < 60) return `há ${min}m`;
+  if (min < 60) return tt ? tt('notesEditor.agoMin', { n: min }) : `há ${min}m`;
   const h = Math.round(min / 60);
-  return `há ${h}h`;
+  return tt ? tt('notesEditor.agoHour', { n: h }) : `há ${h}h`;
 }
 
 // Board canvas dimensions
@@ -2716,18 +2717,18 @@ function NoteEditor({ note, colors, isDark, t, notebooks, titleRef, contentRef, 
 
   // ---- Slash menu options ----
   const slashOptions = useMemo(() => ([
-    { id: 'h1', label: 'Heading 1', hint: '# título grande', icon: 'H1', insert: '\n# ' },
-    { id: 'h2', label: 'Heading 2', hint: '## título médio', icon: 'H2', insert: '\n## ' },
-    { id: 'h3', label: 'Heading 3', hint: '### título pequeno', icon: 'H3', insert: '\n### ' },
-    { id: 'bullet', label: 'Lista', hint: 'tópicos com bullet', icon: '•', insert: '\n- ' },
-    { id: 'num', label: 'Numerada', hint: '1. 2. 3.', icon: '1.', insert: '\n1. ' },
-    { id: 'todo', label: 'Tarefa', hint: 'checkbox', icon: '[ ]', insert: '\n[] ' },
-    { id: 'code', label: 'Código', hint: 'bloco mono', icon: '</>', insert: '\n```\n\n```\n' },
-    { id: 'quote', label: 'Citação', hint: 'aspas', icon: '"', insert: '\n> ' },
-    { id: 'divider', label: 'Divisor', hint: '---', icon: '—', insert: '\n---\n' },
-    { id: 'image', label: 'Imagem', hint: 'cole URL', icon: 'IMG', insert: '\n![](url)\n' },
-    { id: 'toggle', label: 'Toggle', hint: 'expandível', icon: '▸', insert: '\n▸ ' },
-  ]), []);
+    { id: 'h1', label: t('notesEditor.slashH1'), hint: '# ' + t('notesEditor.slashH1Hint'), icon: 'H1', insert: '\n# ' },
+    { id: 'h2', label: t('notesEditor.slashH2'), hint: '## ' + t('notesEditor.slashH2Hint'), icon: 'H2', insert: '\n## ' },
+    { id: 'h3', label: t('notesEditor.slashH3'), hint: '### ' + t('notesEditor.slashH3Hint'), icon: 'H3', insert: '\n### ' },
+    { id: 'bullet', label: t('notesEditor.slashBullet'), hint: t('notesEditor.slashBulletHint'), icon: '•', insert: '\n- ' },
+    { id: 'num', label: t('notesEditor.slashNumbered'), hint: '1. 2. 3.', icon: '1.', insert: '\n1. ' },
+    { id: 'todo', label: t('notesEditor.slashTodo'), hint: t('notesEditor.slashTodoHint'), icon: '[ ]', insert: '\n[] ' },
+    { id: 'code', label: t('notesEditor.slashCode'), hint: t('notesEditor.slashCodeHint'), icon: '</>', insert: '\n```\n\n```\n' },
+    { id: 'quote', label: t('notesEditor.slashQuote'), hint: t('notesEditor.slashQuoteHint'), icon: '"', insert: '\n> ' },
+    { id: 'divider', label: t('notesEditor.slashDivider'), hint: '---', icon: '—', insert: '\n---\n' },
+    { id: 'image', label: t('notesEditor.slashImage'), hint: t('notesEditor.slashImageHint'), icon: 'IMG', insert: '\n![](url)\n' },
+    { id: 'toggle', label: t('notesEditor.slashToggle'), hint: t('notesEditor.slashToggleHint'), icon: '▸', insert: '\n▸ ' },
+  ]), [t]);
   const filteredSlash = useMemo(() => {
     if (!slashQuery) return slashOptions;
     const q = slashQuery.toLowerCase();
@@ -3206,7 +3207,7 @@ function NoteEditor({ note, colors, isDark, t, notebooks, titleRef, contentRef, 
                   borderColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.06)',
                 }]}
               >
-                <Text style={{ fontSize: 14 }}>{'\u{1F642}'}</Text>
+                <IconSmile size={14} color={secondaryText} />
                 <Text style={[s.editorTopBarBtnText, { color: secondaryText }]}>{t('notes.addEmoji') || 'Add icon'}</Text>
               </TouchableOpacity>
               <TouchableOpacity
@@ -3391,7 +3392,7 @@ function NoteEditor({ note, colors, isDark, t, notebooks, titleRef, contentRef, 
             {savingPulse
               ? (t('notes.saving') || 'Salvando…')
               : savedAgo
-                ? (t('notes.savedAgo') ? `${t('notes.savedAgo')} ${formatSavedAgo(savedAgo, savedTick)}` : `Salvo ${formatSavedAgo(savedAgo, savedTick)}`)
+                ? `${t('notes.savedAgo')} ${formatSavedAgo(savedAgo, savedTick, t)}`
                 : (t('notes.notSaved') || 'Aguardando alterações')}
           </Text>
         </View>
@@ -3405,7 +3406,7 @@ function NoteEditor({ note, colors, isDark, t, notebooks, titleRef, contentRef, 
           borderColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)',
         }]}
       >
-        <Text style={[s.sidebarPeekArrow, { color: textColor }]}>{'‹'}</Text>
+        <IconChevronLeft size={16} color={textColor} />
       </TouchableOpacity>
 
       {/* Sidebar peek panel */}
@@ -3488,8 +3489,8 @@ function NoteEditor({ note, colors, isDark, t, notebooks, titleRef, contentRef, 
             { id: 'I', label: 'I', wrap: '*', style: { fontStyle: 'italic' } },
             { id: 'U', label: 'U', wrap: '__', style: { textDecorationLine: 'underline' } },
             { id: 'S', label: 'S', wrap: '~~', style: { textDecorationLine: 'line-through' } },
-            { id: 'L', label: '\u{1F517}', wrap: null, style: {} },
-            { id: 'H', label: '\u{2592}', wrap: '==', style: {} },
+            { id: 'L', label: '', Icon: IconLink, wrap: null, style: {} },
+            { id: 'H', label: '', Icon: IconBrush, wrap: '==', style: {} },
           ].map(b => (
             <TouchableOpacity
               key={b.id}
@@ -3512,7 +3513,9 @@ function NoteEditor({ note, colors, isDark, t, notebooks, titleRef, contentRef, 
               }}
               style={[s.formatBtn, b.id === 'H' && { backgroundColor: '#FEF3C7' }]}
             >
-              <Text style={[s.formatBtnText, b.style, { color: b.id === 'H' ? '#92400E' : textColor }]}>{b.label}</Text>
+              {b.Icon
+                ? <b.Icon size={15} color={b.id === 'H' ? '#92400E' : textColor} />
+                : <Text style={[s.formatBtnText, b.style, { color: b.id === 'H' ? '#92400E' : textColor }]}>{b.label}</Text>}
             </TouchableOpacity>
           ))}
           <View style={{ width: 1, height: 22, backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)', marginHorizontal: 4 }} />

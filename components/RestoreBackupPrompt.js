@@ -37,6 +37,7 @@ import {
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useTheme } from '../context/ThemeContext';
+import { useLanguage } from '../context/LanguageContext';
 import { BorderRadius, FontSize, Spacing } from '../constants/theme';
 import { IconLock, IconCloud, IconCheck, IconAlertTriangle, IconRefresh } from './Icons';
 
@@ -46,12 +47,12 @@ const SKIP_KEY = '@chatyy_skip_restore';
 // progress callbacks from the native module so the labels just rotate by
 // time elapsed (downloading → decrypting → restoring).
 const PHASES = [
-  { atMs: 0,    label: Platform.OS === 'ios' ? 'Baixando da iCloud...' : 'Baixando do Google Drive...' },
-  { atMs: 4500, label: 'Decifrando...' },
-  { atMs: 9000, label: 'Restaurando mensagens...' },
+  { atMs: 0,    labelKey: Platform.OS === 'ios' ? 'restorePrompt.phaseDownloadIcloud' : 'restorePrompt.phaseDownloadDrive' },
+  { atMs: 4500, labelKey: 'restorePrompt.phaseDecrypt' },
+  { atMs: 9000, labelKey: 'restorePrompt.phaseRestore' },
 ];
 
-function formatRelative(iso) {
+function formatRelative(iso, t) {
   if (!iso) return '';
   let d;
   try { d = new Date(iso); } catch { return ''; }
@@ -59,16 +60,16 @@ function formatRelative(iso) {
   const now = Date.now();
   const diffMs = now - d.getTime();
   const min = Math.round(diffMs / 60000);
-  if (min < 1) return 'agora mesmo';
-  if (min < 60) return `há ${min} min`;
+  if (min < 1) return t('restorePrompt.justNow');
+  if (min < 60) return t('restorePrompt.agoMin', { n: min });
   const hr = Math.round(min / 60);
-  if (hr < 24) return `há ${hr} h`;
+  if (hr < 24) return t('restorePrompt.agoHours', { n: hr });
   const day = Math.round(hr / 24);
-  if (day === 1) return 'ontem';
-  if (day < 7) return `há ${day} dias`;
+  if (day === 1) return t('time.yesterday');
+  if (day < 7) return t('restorePrompt.agoDays', { n: day });
   if (day < 30) {
     const w = Math.round(day / 7);
-    return w === 1 ? 'há 1 semana' : `há ${w} semanas`;
+    return w === 1 ? t('restorePrompt.agoWeek') : t('restorePrompt.agoWeeks', { n: w });
   }
   // Fallback to a plain date for old backups.
   try { return d.toLocaleDateString(); } catch { return iso; }
@@ -93,6 +94,7 @@ function formatBytes(n) {
  */
 export default function RestoreBackupPrompt({ visible, onClose, backups: backupsProp, onRestored }) {
   const { colors, isDark } = useTheme();
+  const { t } = useLanguage();
 
   // Web kill-switch — the native module isn't loadable on web, so refuse to
   // even render. (Login.js also gates the mount, this is belt-and-braces.)
@@ -105,7 +107,7 @@ export default function RestoreBackupPrompt({ visible, onClose, backups: backups
   const [stage, setStage] = useState('list');
   const [selected, setSelected] = useState(null);
   const [password, setPassword] = useState('');
-  const [phaseLabel, setPhaseLabel] = useState(PHASES[0].label);
+  const [phaseLabel, setPhaseLabel] = useState(() => t(PHASES[0].labelKey));
   const [restoreError, setRestoreError] = useState(null);
   const [restoredCount, setRestoredCount] = useState(0);
 
@@ -144,10 +146,10 @@ export default function RestoreBackupPrompt({ visible, onClose, backups: backups
     const id = setInterval(() => {
       const elapsed = Date.now() - start;
       const current = [...PHASES].reverse().find((p) => elapsed >= p.atMs);
-      if (current) setPhaseLabel(current.label);
+      if (current) setPhaseLabel(t(current.labelKey));
     }, 700);
     return () => clearInterval(id);
-  }, [stage]);
+  }, [stage, t]);
 
   const reset = useCallback(() => {
     setStage('list');
@@ -178,11 +180,11 @@ export default function RestoreBackupPrompt({ visible, onClose, backups: backups
   const handleRestore = useCallback(async () => {
     if (!selected?.filename) return;
     if (!password || password.length < 1) {
-      setRestoreError('Digite a senha do backup.');
+      setRestoreError(t('restorePrompt.enterPassword'));
       return;
     }
     setStage('restoring');
-    setPhaseLabel(PHASES[0].label);
+    setPhaseLabel(t(PHASES[0].labelKey));
     setRestoreError(null);
 
     try {
@@ -201,11 +203,11 @@ export default function RestoreBackupPrompt({ visible, onClose, backups: backups
         }
         const r = await chatBackupCloud.downloadAndRestore(selected.id, password, {
           onProgress: (p) => {
-            if (p?.stage === 'download') setPhaseLabel(PHASES[0].label);
-            else if (p?.stage === 'decrypt') setPhaseLabel(PHASES[1].label);
+            if (p?.stage === 'download') setPhaseLabel(t(PHASES[0].labelKey));
+            else if (p?.stage === 'decrypt') setPhaseLabel(t(PHASES[1].labelKey));
             else if (p?.stage === 'restore') {
               const pct = p.total ? Math.round((p.done / p.total) * 100) : 0;
-              setPhaseLabel(`Restaurando mensagens... ${pct}%`);
+              setPhaseLabel(t('restorePrompt.phaseRestorePct', { pct }));
             }
           },
         });
@@ -213,7 +215,7 @@ export default function RestoreBackupPrompt({ visible, onClose, backups: backups
       } else {
         // Legacy iCloud/Drive native path.
         if (!ChatBackup?.restoreFromBackup) {
-          throw new Error('Modulo de backup nao disponivel.');
+          throw new Error(t('restorePrompt.moduleUnavailable'));
         }
         const r = await ChatBackup.restoreFromBackup(selected.filename, password);
         restoredCount = r?.messageCount || 0;
@@ -232,18 +234,18 @@ export default function RestoreBackupPrompt({ visible, onClose, backups: backups
       if (code === 'ERR_DECRYPT' || lower.includes('mac') || lower.includes('gcm') ||
           lower.includes('decrypt') || lower.includes('password') || lower.includes('senha') ||
           lower.includes('wrong passphrase')) {
-        userMsg = 'Senha incorreta. Tente novamente.';
+        userMsg = t('restorePrompt.errWrongPassword');
       } else if (lower.includes('corrupt') || lower.includes('magic') || lower.includes('format')) {
-        userMsg = 'Backup corrompido. Tente outro arquivo.';
+        userMsg = t('restorePrompt.errCorrupt');
       } else if (code === 'ERR_DOWNLOAD' || lower.includes('network') || lower.includes('download') || lower.includes('timeout')) {
-        userMsg = 'Falha ao baixar do cloud. Verifique sua conexao.';
+        userMsg = t('restorePrompt.errDownload');
       } else {
-        userMsg = msg || 'Falha ao restaurar.';
+        userMsg = msg || t('backup.restoreFailed');
       }
       setRestoreError(userMsg);
       setStage('error');
     }
-  }, [selected, password, ChatBackup, onRestored]);
+  }, [selected, password, ChatBackup, onRestored, t]);
 
   const isGoogleSigninError = useMemo(() => {
     if (!listError) return false;
@@ -286,16 +288,16 @@ export default function RestoreBackupPrompt({ visible, onClose, backups: backups
             <View style={styles.headerIcon}>
               <IconCloud size={28} color={colors.primary} />
             </View>
-            <Text style={styles.title}>Restaurar suas conversas</Text>
+            <Text style={styles.title}>{t('restorePrompt.title')}</Text>
             <Text style={styles.subtitle}>
               {(() => {
                 // Tailor the copy to the actual source — server-hosted
                 // backups should NOT advertise iCloud/Drive when the user
                 // has only the Wave-7 backend blob.
                 const hasServer = Array.isArray(backups) && backups.some((b) => b.source === 'server');
-                if (hasServer) return 'Encontramos backups na nuvem da Chatyy. Restaure para trazer suas mensagens de volta.';
-                if (Platform.OS === 'ios') return 'Encontramos backups na sua iCloud. Restaure para trazer suas mensagens de volta.';
-                return 'Encontramos backups no seu Google Drive. Restaure para trazer suas mensagens de volta.';
+                if (hasServer) return t('restorePrompt.subtitleServer');
+                if (Platform.OS === 'ios') return t('restorePrompt.subtitleIcloud');
+                return t('restorePrompt.subtitleDrive');
               })()}
             </Text>
           </View>
@@ -307,10 +309,10 @@ export default function RestoreBackupPrompt({ visible, onClose, backups: backups
               <View style={styles.errBox}>
                 <IconAlertTriangle size={18} color="#f59e0b" />
                 <Text style={styles.errText}>
-                  Conecte sua conta Google pra restaurar os backups.
+                  {t('restorePrompt.connectGoogle')}
                 </Text>
                 <TouchableOpacity onPress={retrySignIn} style={styles.smallBtn}>
-                  <Text style={styles.smallBtnText}>Conectar</Text>
+                  <Text style={styles.smallBtnText}>{t('restorePrompt.connect')}</Text>
                 </TouchableOpacity>
               </View>
             )}
@@ -318,11 +320,11 @@ export default function RestoreBackupPrompt({ visible, onClose, backups: backups
               <View style={styles.errBox}>
                 <IconAlertTriangle size={18} color="#f59e0b" />
                 <Text style={styles.errText} numberOfLines={3}>
-                  Nao foi possivel listar backups: {listError}
+                  {t('restorePrompt.listFailed', { error: listError })}
                 </Text>
                 <TouchableOpacity onPress={retrySignIn} style={styles.smallBtn}>
                   <IconRefresh size={14} color={colors.primary} />
-                  <Text style={styles.smallBtnText}>Tentar novamente</Text>
+                  <Text style={styles.smallBtnText}>{t('common.tryAgain')}</Text>
                 </TouchableOpacity>
               </View>
             )}
@@ -330,14 +332,14 @@ export default function RestoreBackupPrompt({ visible, onClose, backups: backups
             {listing && (
               <View style={styles.center}>
                 <ActivityIndicator color={colors.primary} />
-                <Text style={styles.mutedSmall}>Procurando backups...</Text>
+                <Text style={styles.mutedSmall}>{t('restorePrompt.searching')}</Text>
               </View>
             )}
 
             {empty && !listError && (
               <View style={styles.center}>
                 <Text style={styles.mutedSmall}>
-                  Nenhum backup encontrado na sua conta de cloud.
+                  {t('restorePrompt.noneFound')}
                 </Text>
               </View>
             )}
@@ -355,10 +357,10 @@ export default function RestoreBackupPrompt({ visible, onClose, backups: backups
                     <View style={{ flex: 1 }}>
                       <Text style={styles.backupName} numberOfLines={1}>{b.filename}</Text>
                       <Text style={styles.backupMeta}>
-                        {formatRelative(b.createdAt)} · {formatBytes(b.size)}
+                        {formatRelative(b.createdAt, t)} · {formatBytes(b.size)}
                       </Text>
                     </View>
-                    <Text style={styles.pickCta}>Restaurar</Text>
+                    <Text style={styles.pickCta}>{t('backup.restore')}</Text>
                   </TouchableOpacity>
                 ))}
               </View>
@@ -371,14 +373,14 @@ export default function RestoreBackupPrompt({ visible, onClose, backups: backups
                   <IconLock size={16} color={colors.textMuted} />
                   <Text style={styles.selectedName} numberOfLines={1}>{selected.filename}</Text>
                 </View>
-                <Text style={styles.label}>Senha do backup</Text>
+                <Text style={styles.label}>{t('backup.passwordLabel')}</Text>
                 <TextInput
                   value={password}
                   onChangeText={(v) => { setPassword(v); if (restoreError) setRestoreError(null); }}
                   secureTextEntry
                   autoCapitalize="none"
                   autoCorrect={false}
-                  placeholder="A senha que voce usou no backup"
+                  placeholder={t('restorePrompt.passwordPlaceholder')}
                   placeholderTextColor={colors.textMuted}
                   style={styles.input}
                   autoFocus
@@ -387,7 +389,7 @@ export default function RestoreBackupPrompt({ visible, onClose, backups: backups
                   <Text style={styles.inlineErr}>{restoreError}</Text>
                 ) : (
                   <Text style={styles.mutedSmall}>
-                    A Chatyy nunca viu sua senha — ela so existe no seu aparelho.
+                    {t('restorePrompt.passwordHint')}
                   </Text>
                 )}
                 <TouchableOpacity
@@ -395,14 +397,14 @@ export default function RestoreBackupPrompt({ visible, onClose, backups: backups
                   onPress={handleRestore}
                   activeOpacity={0.85}
                 >
-                  <Text style={styles.primaryBtnText}>Restaurar</Text>
+                  <Text style={styles.primaryBtnText}>{t('backup.restore')}</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
                   style={styles.linkBtn}
                   onPress={() => setStage('list')}
                   activeOpacity={0.7}
                 >
-                  <Text style={styles.linkBtnText}>Voltar</Text>
+                  <Text style={styles.linkBtnText}>{t('common.back')}</Text>
                 </TouchableOpacity>
               </View>
             )}
@@ -412,7 +414,7 @@ export default function RestoreBackupPrompt({ visible, onClose, backups: backups
               <View style={styles.center}>
                 <ActivityIndicator size="large" color={colors.primary} />
                 <Text style={styles.phaseLabel}>{phaseLabel}</Text>
-                <Text style={styles.mutedSmall}>Nao feche o app.</Text>
+                <Text style={styles.mutedSmall}>{t('restorePrompt.dontClose')}</Text>
               </View>
             )}
 
@@ -422,18 +424,18 @@ export default function RestoreBackupPrompt({ visible, onClose, backups: backups
                 <View style={[styles.headerIcon, { backgroundColor: 'rgba(16,185,129,0.15)' }]}>
                   <IconCheck size={28} color="#10b981" />
                 </View>
-                <Text style={styles.doneTitle}>Concluido!</Text>
+                <Text style={styles.doneTitle}>{t('restorePrompt.doneTitle')}</Text>
                 <Text style={styles.mutedSmall}>
                   {restoredCount > 0
-                    ? `${restoredCount} mensagens restauradas.`
-                    : 'Backup restaurado.'}
+                    ? t('ownBackup.restoredNotice', { n: restoredCount })
+                    : t('ownBackup.restoreDoneTitle')}
                 </Text>
                 <TouchableOpacity
                   style={styles.primaryBtn}
                   onPress={() => { reset(); onClose?.(); }}
                   activeOpacity={0.85}
                 >
-                  <Text style={styles.primaryBtnText}>Pronto</Text>
+                  <Text style={styles.primaryBtnText}>{t('common.done')}</Text>
                 </TouchableOpacity>
               </View>
             )}
@@ -443,21 +445,21 @@ export default function RestoreBackupPrompt({ visible, onClose, backups: backups
               <View>
                 <View style={styles.errBox}>
                   <IconAlertTriangle size={18} color="#ef4444" />
-                  <Text style={styles.errText}>{restoreError || 'Falha ao restaurar.'}</Text>
+                  <Text style={styles.errText}>{restoreError || t('backup.restoreFailed')}</Text>
                 </View>
                 <TouchableOpacity
                   style={styles.primaryBtn}
                   onPress={() => { setStage('password'); setRestoreError(null); }}
                   activeOpacity={0.85}
                 >
-                  <Text style={styles.primaryBtnText}>Tentar novamente</Text>
+                  <Text style={styles.primaryBtnText}>{t('common.tryAgain')}</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
                   style={styles.linkBtn}
                   onPress={() => { reset(); }}
                   activeOpacity={0.7}
                 >
-                  <Text style={styles.linkBtnText}>Escolher outro backup</Text>
+                  <Text style={styles.linkBtnText}>{t('restorePrompt.chooseOther')}</Text>
                 </TouchableOpacity>
               </View>
             )}
@@ -467,7 +469,7 @@ export default function RestoreBackupPrompt({ visible, onClose, backups: backups
           {stage !== 'restoring' && stage !== 'done' && (
             <View style={styles.footer}>
               <TouchableOpacity onPress={handleSkip} activeOpacity={0.7} style={styles.skipBtn}>
-                <Text style={styles.skipText}>Pular</Text>
+                <Text style={styles.skipText}>{t('onboarding.skip')}</Text>
               </TouchableOpacity>
             </View>
           )}

@@ -411,7 +411,7 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
   const handleRestoreBackup = async (backupId) => {
     safeAlert(
       t?.('chat.restoreBackupTitle') || 'Restaurar backup',
-      t?.('chat.restoreBackupConfirm') || 'Tem certeza que deseja restaurar este backup? Mensagens existentes nao serao duplicadas.',
+      t?.('chat.restoreBackupConfirm') || 'Tem certeza que deseja restaurar este backup? Mensagens existentes não serão duplicadas.',
       [
         { text: t?.('common.cancel') || 'Cancelar', style: 'cancel' },
         {
@@ -813,9 +813,9 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
     const restrictions = getChildRestrictions() || {};
     const parentEmail = restrictions.parent_email || '';
     const PERM_ITEMS = [
-      { label: 'Enviar emails', allowed: !!restrictions.can_send_email, Icon: KidsIconMailPerm },
-      { label: 'Deletar mensagens', allowed: !!restrictions.can_delete_messages, Icon: KidsIconTrashPerm },
-      { label: 'Trocar senha', allowed: !!restrictions.can_change_password, Icon: KidsIconKeyPerm },
+      { label: t?.('kidsProfile.permSendEmail') || 'Enviar e-mails', allowed: !!restrictions.can_send_email, Icon: KidsIconMailPerm },
+      { label: t?.('kidsProfile.permDeleteMessages') || 'Apagar mensagens', allowed: !!restrictions.can_delete_messages, Icon: KidsIconTrashPerm },
+      { label: t?.('kidsProfile.permChangePassword') || 'Trocar senha', allowed: !!restrictions.can_change_password, Icon: KidsIconKeyPerm },
     ];
     return (
       <View style={[styles.container, { backgroundColor: isDark ? '#000000' : '#f6f8fa' }]}>
@@ -833,7 +833,7 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
               <Text style={{ fontSize: 22, fontWeight: '800', color: isDark ? '#F1F3F5' : '#111111' }}>{name}</Text>
               <View style={{ marginTop: 8, flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: isDark ? 'rgba(17, 17, 17,0.15)' : '#F1F3F5', paddingHorizontal: 12, paddingVertical: 5, borderRadius: 20 }}>
                 <KidsIconShieldUser size={14} color={colors.primary} />
-                <Text style={{ fontSize: 13, fontWeight: '700', color: colors.primary }}>Chatyy Kids</Text>
+                <Text style={{ fontSize: 13, fontWeight: '700', color: colors.primary }}>{t?.('kids.title') || 'Chatyy Kids'}</Text>
               </View>
             </View>
           </View>
@@ -842,9 +842,9 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
           <TouchableOpacity
             onPress={async () => {
               const { Alert } = require('react-native');
-              Alert.alert('EMERGENCIA', 'Enviar alerta de emergencia para seus pais?', [
-                { text: 'Cancelar', style: 'cancel' },
-                { text: 'SIM, PRECISO DE AJUDA', style: 'destructive', onPress: async () => {
+              Alert.alert(t?.('kidsProfile.sosTitle') || 'EMERGÊNCIA', t?.('kidsProfile.sosConfirm') || 'Enviar alerta de emergência para seus pais?', [
+                { text: t?.('common.cancel') || 'Cancelar', style: 'cancel' },
+                { text: t?.('kidsProfile.sosYes') || 'SIM, PRECISO DE AJUDA', style: 'destructive', onPress: async () => {
                   try {
                     const api = require('../services/api');
                     let lat = null, lng = null, acc = null;
@@ -857,8 +857,8 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
                       }
                     } catch {}
                     await api.parentalSOS('general', 'Preciso de ajuda!', lat, lng, acc, -1);
-                    Alert.alert('Alerta enviado!', 'Seus pais foram notificados. Fique calmo!');
-                  } catch { Alert.alert('Erro', 'Tente novamente'); }
+                    Alert.alert(t?.('kidsProfile.sosSentTitle') || 'Alerta enviado!', t?.('kidsProfile.sosSentBody') || 'Seus pais foram notificados. Fique calmo!');
+                  } catch { Alert.alert(t?.('common.error') || 'Erro', t?.('eventDetail.tryAgain') || 'Tente novamente'); }
                 }},
               ]);
             }}
@@ -885,7 +885,7 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
                 <KidsIconFamily size={20} color={colors.primary} />
               </View>
               <View style={{ flex: 1 }}>
-                <Text style={{ fontSize: 12, fontWeight: '600', color: '#6b7280', textTransform: 'uppercase', letterSpacing: 0.5 }}>Responsavel</Text>
+                <Text style={{ fontSize: 12, fontWeight: '600', color: '#6b7280', textTransform: 'uppercase', letterSpacing: 0.5 }}>{t?.('kidsProfile.guardian') || 'Responsável'}</Text>
                 <Text style={{ fontSize: 15, fontWeight: '600', color: isDark ? '#F1F3F5' : '#111111', marginTop: 2 }}>{parentEmail}</Text>
               </View>
               <IconShield size={20} color={colors.primary} />
@@ -896,7 +896,7 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
           <View style={{ marginHorizontal: 16, marginTop: 12, borderRadius: 20, overflow: 'hidden', backgroundColor: isDark ? '#161618' : '#fff',
             ...Platform.select({ ios: { shadowColor: '#111111', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.06, shadowRadius: 8 }, android: { elevation: 2 }, web: { boxShadow: '0 2px 12px rgba(17, 17, 17,0.06)' } }) }}>
             <View style={{ paddingHorizontal: 16, paddingTop: 16, paddingBottom: 8 }}>
-              <Text style={{ fontSize: 12, fontWeight: '700', color: '#6b7280', textTransform: 'uppercase', letterSpacing: 0.5 }}>Permissoes</Text>
+              <Text style={{ fontSize: 12, fontWeight: '700', color: '#6b7280', textTransform: 'uppercase', letterSpacing: 0.5 }}>{t?.('kidsProfile.permissions') || 'Permissões'}</Text>
             </View>
             {PERM_ITEMS.map((item, idx) => (
               <View key={idx} style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 12, borderTopWidth: idx > 0 ? 0.5 : 0, borderTopColor: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)' }}>
@@ -914,7 +914,7 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
                 <View style={{ width: 32, height: 32, borderRadius: 10, backgroundColor: isDark ? 'rgba(17, 17, 17,0.12)' : 'rgba(17,17,17,0.06)', alignItems: 'center', justifyContent: 'center', marginRight: 12 }}>
                   <KidsIconMoon size={16} color={isDark ? '#F5F5F7' : '#111111'} />
                 </View>
-                <Text style={{ flex: 1, fontSize: 15, fontWeight: '500', color: isDark ? '#F1F3F5' : '#111111' }}>Hora de dormir</Text>
+                <Text style={{ flex: 1, fontSize: 15, fontWeight: '500', color: isDark ? '#F1F3F5' : '#111111' }}>{t?.('kids.restriction.bedtime') || 'Hora de dormir'}</Text>
                 <Text style={{ fontSize: 13, fontWeight: '600', color: colors.primary }}>{restrictions.bedtime_start} - {restrictions.bedtime_end}</Text>
               </View>
             )}
@@ -922,7 +922,7 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
 
           <View style={{ alignItems: 'center', marginTop: 24 }}>
             <KidsIconShieldProtected size={28} color={isDark ? '#F5F5F7' : '#111111'} />
-            <Text style={{ fontSize: 13, color: '#9ca3af', textAlign: 'center', marginTop: 8, fontWeight: '500' }}>Sua conta e protegida pelo seu responsavel</Text>
+            <Text style={{ fontSize: 13, color: '#9ca3af', textAlign: 'center', marginTop: 8, fontWeight: '500' }}>{t?.('kidsProfile.protectedBy') || 'Sua conta é protegida pelo seu responsável'}</Text>
           </View>
 
           {/* Logout button */}
@@ -934,7 +934,7 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
             activeOpacity={0.7}
           >
             <IconLogout size={20} color="#ef4444" />
-            <Text style={{ fontSize: 15, fontWeight: '600', color: '#ef4444' }}>Sair da conta</Text>
+            <Text style={{ fontSize: 15, fontWeight: '600', color: '#ef4444' }}>{t?.('settings.logoutAccount') || 'Sair da conta'}</Text>
           </TouchableOpacity>
         </ScrollView>
       </View>
@@ -1000,7 +1000,7 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
           <SectionCard style={{ marginTop: 16 }}>
             {/* Last seen */}
             <Text style={[styles.privacyLabel, { color: isDark ? '#6C6C70' : '#6b7280' }]}>
-              {t?.('config.lastSeen') || 'Visto por ultimo e online'}
+              {t?.('config.lastSeen') || 'Visto por último e online'}
             </Text>
             <View style={styles.radioGroup}>
               {privacyOptions.map(opt => (
@@ -1066,7 +1066,7 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
 
             {/* Default disappearing messages timer */}
             <Text style={[styles.privacyLabel, { color: isDark ? '#6C6C70' : '#6b7280' }]}>
-              {t?.('config.defaultDisappearing') || 'Mensagens temporarias por padrao'}
+              {t?.('config.defaultDisappearing') || 'Mensagens temporárias por padrão'}
             </Text>
             <View style={styles.radioGroup}>
               {[
@@ -1265,8 +1265,8 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
           <SectionCard style={{ marginTop: 16 }}>
             <View style={styles.switchRowModern}>
               <View style={{ flex: 1 }}>
-                <Text style={[styles.switchLabel, { color: colors.text }]}>{t?.('config.notifMessages') || 'Notificacoes de mensagens'}</Text>
-                <Text style={[styles.switchDesc, { color: isDark ? '#6C6C70' : '#9ca3af' }]}>{t?.('config.notifMessagesDesc') || 'Receber notificacoes de novas mensagens'}</Text>
+                <Text style={[styles.switchLabel, { color: colors.text }]}>{t?.('config.notifMessages') || 'Notificações de mensagens'}</Text>
+                <Text style={[styles.switchDesc, { color: isDark ? '#6C6C70' : '#9ca3af' }]}>{t?.('config.notifMessagesDesc') || 'Receber notificações de novas mensagens'}</Text>
               </View>
               <NativeSwitch
                 value={settings.notifications}
@@ -1315,8 +1315,8 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
             <View style={[styles.rowSeparator, { backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.05)' }]} />
             <View style={styles.switchRowModern}>
               <View style={{ flex: 1 }}>
-                <Text style={[styles.switchLabel, { color: colors.text }]}>{t?.('config.notifGroups') || 'Notificacoes de grupos'}</Text>
-                <Text style={[styles.switchDesc, { color: isDark ? '#6C6C70' : '#9ca3af' }]}>{t?.('config.notifGroupsDesc') || 'Receber notificacoes de mensagens em grupos'}</Text>
+                <Text style={[styles.switchLabel, { color: colors.text }]}>{t?.('config.notifGroups') || 'Notificações de grupos'}</Text>
+                <Text style={[styles.switchDesc, { color: isDark ? '#6C6C70' : '#9ca3af' }]}>{t?.('config.notifGroupsDesc') || 'Receber notificações de mensagens em grupos'}</Text>
               </View>
               <NativeSwitch
                 value={settings.notification_groups}
@@ -1330,8 +1330,8 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
             <View style={[styles.rowSeparator, { backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.05)' }]} />
             <View style={styles.switchRowModern}>
               <View style={{ flex: 1 }}>
-                <Text style={[styles.switchLabel, { color: colors.text }]}>{t?.('config.notifCalls') || 'Notificacoes de chamadas'}</Text>
-                <Text style={[styles.switchDesc, { color: isDark ? '#6C6C70' : '#9ca3af' }]}>{t?.('config.notifCallsDesc') || 'Receber notificacoes de chamadas de voz e video'}</Text>
+                <Text style={[styles.switchLabel, { color: colors.text }]}>{t?.('config.notifCalls') || 'Notificações de chamadas'}</Text>
+                <Text style={[styles.switchDesc, { color: isDark ? '#6C6C70' : '#9ca3af' }]}>{t?.('config.notifCallsDesc') || 'Receber notificações de chamadas de voz e vídeo'}</Text>
               </View>
               <NativeSwitch
                 value={settings.notification_calls}
@@ -1344,7 +1344,7 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
             {/* Sound picker */}
             <View style={[styles.rowSeparator, { backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.05)' }]} />
             <View style={[styles.switchRowModern, { flexDirection: 'column', alignItems: 'flex-start' }]}>
-              <Text style={[styles.switchLabel, { color: colors.text, marginBottom: 10 }]}>{t?.('config.soundPicker') || 'Som de notificacao'}</Text>
+              <Text style={[styles.switchLabel, { color: colors.text, marginBottom: 10 }]}>{t?.('config.soundPicker') || 'Som de notificação'}</Text>
               <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
                 {[
                   { val: 'default', label: t?.('config.soundDefault') || 'Padrao' },
@@ -1376,7 +1376,7 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
                 <View style={[styles.rowSeparator, { backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.05)' }]} />
                 <View style={styles.switchRowModern}>
                   <View style={{ flex: 1 }}>
-                    <Text style={[styles.switchLabel, { color: colors.text }]}>{t?.('config.desktopNotifs') || 'Notificacoes do desktop'}</Text>
+                    <Text style={[styles.switchLabel, { color: colors.text }]}>{t?.('config.desktopNotifs') || 'Notificações do desktop'}</Text>
                     <Text style={[styles.switchDesc, { color: isDark ? '#6C6C70' : '#9ca3af' }]}>
                       {Notification.permission === 'granted' ? (t?.('config.notifsEnabled') || 'Ativadas') : (t?.('config.notifsDisabled') || 'Desativadas')}
                     </Text>
@@ -1814,10 +1814,10 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
                   const count = await getAudioCacheCount();
                   const sizeMB = (size / (1024 * 1024)).toFixed(1);
                   const desc = count > 0 ? `${count} audios (${sizeMB} MB)` : (t?.('config.cacheEmpty') || 'Cache vazio');
-                  const doIt = () => clearAudioCache().then(() => safeAlert('Chatyy', t?.('config.audioCacheCleared') || 'Cache de audio limpo!')).catch(() => {});
+                  const doIt = () => clearAudioCache().then(() => safeAlert('Chatyy', t?.('config.audioCacheCleared') || 'Cache de áudio limpo!')).catch(() => {});
                   if (Platform.OS === 'web') { doIt(); } else {
                     Alert.alert(
-                      t?.('config.clearAudioCache') || 'Limpar cache de audio',
+                      t?.('config.clearAudioCache') || 'Limpar cache de áudio',
                       desc,
                       [{ text: t?.('common.cancel') || 'Cancelar', style: 'cancel' }, { text: t?.('common.clear') || 'Limpar', style: 'destructive', onPress: doIt }]
                     );
@@ -1829,7 +1829,7 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
               <View style={[styles.iconCircle, { backgroundColor: isDark ? 'rgba(108,92,231,0.1)' : '#F1F3F5' }]}>
                 <IconTrash size={16} color="#6C5CE7" />
               </View>
-              <Text style={[styles.linkText, { color: colors.text }]}>{t?.('config.clearAudioCache') || 'Limpar cache de audio'}</Text>
+              <Text style={[styles.linkText, { color: colors.text }]}>{t?.('config.clearAudioCache') || 'Limpar cache de áudio'}</Text>
               <IconChevronRight size={16} color={isDark ? '#48484a' : '#c5c5c5'} />
             </TouchableOpacity>
           </SectionCard>
@@ -2480,7 +2480,7 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
             </View>
             <View style={{ flex: 1 }}>
               <Text style={[styles.phoneLabelModern, { color: isDark ? '#6C6C70' : '#6b7280' }]}>
-                {t?.('config.phoneNumber') || 'Numero de telefone'}
+                {t?.('config.phoneNumber') || 'Número de telefone'}
               </Text>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 3 }}>
                 <Text style={[styles.phoneValueModern, { color: colors.text }]}>
@@ -2498,7 +2498,7 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
             </View>
           </View>
           <Text style={[styles.phoneHintModern, { color: isDark ? '#2c2c2e' : '#9ca3af' }]}>
-            {t?.('config.phoneHint') || 'Seus contatos com este numero poderao encontra-lo no Chatyy'}
+            {t?.('config.phoneHint') || 'Seus contatos com este número poderão encontrá-lo no Chatyy'}
           </Text>
         </SectionCard>
 
@@ -2533,12 +2533,12 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
               <View style={{ flex: 1 }}>
                 <Text style={{ fontSize: 15, fontWeight: '700', color: colors.text, marginBottom: 2 }}>
                   {callerVerified
-                    ? (t?.('config.callerIdVerifiedTitle') || 'Numero verificado')
+                    ? (t?.('config.callerIdVerifiedTitle') || 'Número verificado')
                     : (t?.('config.callerIdCtaTitle') || 'Verifique seu número')}
                 </Text>
                 <Text style={{ fontSize: 12, color: isDark ? '#A1A1A6' : '#6b7280', lineHeight: 17 }}>
                   {callerVerified
-                    ? (t?.('config.callerIdVerifiedDesc') || 'Seus amigos verao seu número quando você ligar — mesmo se ainda nao usarem o Chatyy.')
+                    ? (t?.('config.callerIdVerifiedDesc') || 'Seus amigos verão seu número quando você ligar — mesmo se ainda não usarem o Chatyy.')
                     : (t?.('config.callerIdCtaDesc') || 'Quer que seus amigos que ainda não têm Chatyy vejam seu número quando você ligar? Verifique seu número aqui.')}
                 </Text>
               </View>
@@ -2552,15 +2552,15 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
         <SectionCard>
           <SettingItem icon={<IconKey size={18} color={colors.primary} />} iconBg={isDark ? 'rgba(59,130,246,0.1)' : '#F1F3F5'}
             title={t?.('config.account') || 'Conta'}
-            subtitle={t?.('config.accountDesc') || 'Seguranca, alterar senha, excluir conta'}
+            subtitle={t?.('config.accountDesc') || 'Segurança, alterar senha, excluir conta'}
             colors={colors} isDark={isDark} onPress={() => setSubScreen('account')} />
           <SettingItem icon={<IconLock size={18} color={colors.primary} />} iconBg={isDark ? 'rgba(17, 17, 17,0.1)' : '#F1F3F5'}
             title={t?.('config.privacy') || 'Privacidade'}
-            subtitle={t?.('config.privacyDesc') || 'Visto por ultimo, foto de perfil, recado'}
+            subtitle={t?.('config.privacyDesc') || 'Visto por último, foto de perfil, recado'}
             colors={colors} isDark={isDark} onPress={() => setSubScreen('privacy')} />
           <SettingItem icon={<IconBell size={18} color="#f97316" />} iconBg={isDark ? 'rgba(249,115,22,0.1)' : '#fff7ed'}
             title={t?.('config.notifications') || 'Notificacoes'}
-            subtitle={t?.('config.notificationsDesc') || 'Sons, vibracao, notificacoes de mensagem'}
+            subtitle={t?.('config.notificationsDesc') || 'Sons, vibração, notificações de mensagem'}
             colors={colors} isDark={isDark} onPress={() => setSubScreen('notifications')} />
           <SettingItem icon={<IconImage size={18} color="#10b981" />} iconBg={isDark ? 'rgba(16,185,129,0.1)' : '#ecfdf5'}
             title={t?.('config.chatSettings') || 'Conversas'}
@@ -2573,11 +2573,11 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
         <SectionCard>
           <SettingItem icon={<IconSmartphone size={18} color="#f59e0b" />} iconBg={isDark ? 'rgba(245,158,11,0.1)' : '#fef3c7'}
             title={t?.('config.storage') || 'Armazenamento e dados'}
-            subtitle={t?.('config.storageDesc') || 'Uso de rede, download automatico'}
+            subtitle={t?.('config.storageDesc') || 'Uso de rede, download automático'}
             colors={colors} isDark={isDark} onPress={() => setSubScreen('storage')} />
           <SettingItem icon={<IconTranslate size={18} color="#06b6d4" />} iconBg={isDark ? 'rgba(6,182,212,0.1)' : '#ecfeff'}
             title={t?.('config.language') || 'Idioma do app'}
-            subtitle={LANGUAGES.find(l => l.code === language)?.label || 'Portugues (BR)'}
+            subtitle={LANGUAGES.find(l => l.code === language)?.label || 'Português (BR)'}
             colors={colors} isDark={isDark} onPress={() => setSubScreen('language')} last />
         </SectionCard>
 
@@ -2635,7 +2635,7 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
                 {backupRunning
                   ? `${t?.('chat.backupInProgress') || 'Fazendo backup...'} ${backupElapsed}s`
                   : backupResult?.success
-                    ? (t?.('chat.backupComplete') || 'Backup concluido!')
+                    ? (t?.('chat.backupComplete') || 'Backup concluído!')
                     : (t?.('chat.backupNow') || 'Fazer backup agora')}
               </Text>
               {backupRunning ? (

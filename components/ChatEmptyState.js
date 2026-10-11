@@ -112,9 +112,9 @@ function NoStatus({ accent }) {
 const TYPES = {
   'no-chats':    { Comp: NoChats,    title: 'Sem conversas',         subtitle: 'Comece uma nova conversa pra trocar mensagens' },
   'no-messages': { Comp: NoMessages, title: 'Comece a conversa',     subtitle: 'Diga oi e quebre o gelo!' },
-  'no-calls':    { Comp: NoCalls,    title: 'Nenhuma ligacao',       subtitle: 'Seu historico de chamadas aparecera aqui' },
+  'no-calls':    { Comp: NoCalls,    title: 'Nenhuma ligação',       subtitle: 'Seu histórico de chamadas aparecerá aqui' },
   'no-search':   { Comp: NoSearch,   title: 'Nada encontrado',       subtitle: 'Tente outras palavras-chave' },
-  'no-status':   { Comp: NoStatus,   title: 'Nenhum status',         subtitle: 'Os status que voce e seus contatos publicarem aparecem aqui por 24h' },
+  'no-status':   { Comp: NoStatus,   title: 'Nenhum status',         subtitle: 'Os status que você e seus contatos publicarem aparecem aqui por 24h' },
 };
 
 export default function ChatEmptyState({ type = 'no-chats', title, subtitle, action, style }) {

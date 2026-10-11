@@ -51,10 +51,24 @@ const safeAlert = (title, message, buttons) => {
 };
 
 // ─── Business Category icons ───
+// `value` is what gets persisted (kept stable, pt-BR); the label is t(key).
 const CATEGORIES = [
-  'Varejo', 'Alimentação', 'Serviços', 'Saúde & Beleza', 'Educação',
-  'Tecnologia', 'Moda', 'Imóveis', 'Finanças', 'Viagens', 'Outros',
+  { value: 'Varejo', key: 'business.cat.retail' },
+  { value: 'Alimentação', key: 'business.cat.food' },
+  { value: 'Serviços', key: 'business.cat.services' },
+  { value: 'Saúde & Beleza', key: 'business.cat.health' },
+  { value: 'Educação', key: 'business.cat.education' },
+  { value: 'Tecnologia', key: 'business.cat.tech' },
+  { value: 'Moda', key: 'business.cat.fashion' },
+  { value: 'Imóveis', key: 'business.cat.realEstate' },
+  { value: 'Finanças', key: 'business.cat.finance' },
+  { value: 'Viagens', key: 'business.cat.travel' },
+  { value: 'Outros', key: 'business.cat.other' },
 ];
+const categoryLabel = (value, t) => {
+  const c = CATEGORIES.find(x => x.value === value);
+  return c ? t(c.key) : value;
+};
 
 // ─── Label colors (WhatsApp Business style) ───
 const LABEL_COLORS = [
@@ -62,12 +76,13 @@ const LABEL_COLORS = [
   '#3b82f6', '#111111', '#111111', '#14b8a6',
 ];
 
+// Seeded in the user's language (names become user data once created).
 const LABEL_DEFAULTS = [
-  { name: 'Novo cliente', color: '#22c55e' },
-  { name: 'Aguardando', color: '#eab308' },
-  { name: 'Concluído', color: '#3b82f6' },
-  { name: 'Pagamento pendente', color: '#f97316' },
-  { name: 'Cancelado', color: '#ef4444' },
+  { nameKey: 'business.labelDef.newClient', color: '#22c55e' },
+  { nameKey: 'business.labelDef.waiting', color: '#eab308' },
+  { nameKey: 'business.labelDef.done', color: '#3b82f6' },
+  { nameKey: 'business.labelDef.paymentPending', color: '#f97316' },
+  { nameKey: 'business.labelDef.canceled', color: '#ef4444' },
 ];
 
 // ─── Custom Icons ───
@@ -119,11 +134,11 @@ function IconLabel({ size = 24, color = '#666' }) {
 
 // ─── Tab icons ───
 const TABS = [
-  { key: 'profile', label: 'Perfil', icon: IconStore },
-  { key: 'catalog', label: 'Catálogo', icon: IconPackage },
-  { key: 'cart', label: 'Carrinho', icon: IconCartLocal },
-  { key: 'autoreplies', label: 'Respostas', icon: IconReply },
-  { key: 'labels', label: 'Labels', icon: IconLabel },
+  { key: 'profile', labelKey: 'business.profile', icon: IconStore },
+  { key: 'catalog', labelKey: 'business.catalog', icon: IconPackage },
+  { key: 'cart', labelKey: 'business.cart', icon: IconCartLocal },
+  { key: 'autoreplies', labelKey: 'business.autoreplies', icon: IconReply },
+  { key: 'labels', labelKey: 'business.labels', icon: IconLabel },
 ];
 
 // ─── Main Screen ───
@@ -143,7 +158,7 @@ export default function BusinessScreen() {
     <View style={[styles.root, { backgroundColor: colors.background }]}>
       {/* Header */}
       {USE_NATIVE_HEADER && <Stack.Screen options={nativeHeaderOptions({
-        colors, isDark, title: 'Negócios',
+        colors, isDark, title: t('business.title'),
         headerRight: (activeTab === 'catalog' && cartCount > 0) ? () => (
           <HeaderIconButton onPress={() => setActiveTab('cart')} accessibilityLabel={String(cartCount)}>
             <IconCartLocal size={22} color={colors.text} />
@@ -155,12 +170,12 @@ export default function BusinessScreen() {
       })} />}
       {!USE_NATIVE_HEADER && (
       <View style={[styles.header, { backgroundColor: colors.background, paddingTop: insets.top + 8, borderBottomColor: colors.border }]}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.backBtn} accessibilityLabel="Voltar">
+        <TouchableOpacity onPress={() => router.back()} style={styles.backBtn} accessibilityLabel={t('common.back')}>
           <IconArrowLeft size={22} color={colors.text} />
         </TouchableOpacity>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
           <View style={[styles.brandDot, { backgroundColor: ACCENT }]} />
-          <Text style={[styles.headerTitle, { color: colors.text }]}>Negócios</Text>
+          <Text style={[styles.headerTitle, { color: colors.text }]}>{t('business.title')}</Text>
         </View>
         {activeTab === 'catalog' && cartCount > 0 && (
           <TouchableOpacity onPress={() => setActiveTab('cart')} style={styles.cartBtn}>
@@ -186,7 +201,7 @@ export default function BusinessScreen() {
                 style={[styles.tabItem, active && { borderBottomColor: ACCENT, borderBottomWidth: 2 }]}
               >
                 <Icon size={18} color={active ? ACCENT : colors.textSecondary} />
-                <Text style={[styles.tabLabel, { color: active ? ACCENT : colors.textSecondary }]}>{tab.label}</Text>
+                <Text style={[styles.tabLabel, { color: active ? ACCENT : colors.textSecondary }]}>{t(tab.labelKey)}</Text>
               </TouchableOpacity>
             );
           })}
@@ -207,6 +222,7 @@ export default function BusinessScreen() {
 // PROFILE TAB
 // ══════════════════════════════════════════════════
 function ProfileTab({ colors, isDark, user }) {
+  const { t } = useLanguage();
   const [profile, setProfile] = useState(null);
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(false);
@@ -240,7 +256,7 @@ function ProfileTab({ colors, isDark, user }) {
 
   const handleSave = async () => {
     if (!form.company_name.trim()) {
-      safeAlert('Erro', 'Nome da empresa é obrigatório');
+      safeAlert(t('common.error'), t('business.err.companyRequired'));
       return;
     }
     setBusy(true);
@@ -250,10 +266,10 @@ function ProfileTab({ colors, isDark, user }) {
         setProfile({ ...profile, ...form });
         setEditing(false);
       } else {
-        safeAlert('Erro', r?.message || 'Falha ao salvar');
+        safeAlert(t('common.error'), r?.message || t('vacation.saveError'));
       }
     } catch (e) {
-      safeAlert('Erro', String(e));
+      safeAlert(t('common.error'), String(e));
     }
     setBusy(false);
   };
@@ -272,20 +288,20 @@ function ProfileTab({ colors, isDark, user }) {
             <View style={{ flex: 1 }}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
                 <Text style={[styles.companyName, { color: colors.text }]}>
-                  {profile?.company_name || 'Minha Empresa'}
+                  {profile?.company_name || t('business.myCompany')}
                 </Text>
                 {profile?.is_verified && <IconVerified size={18} />}
               </View>
               {profile?.category ? (
                 <View style={[styles.categoryBadge, { backgroundColor: ACCENT + '18' }]}>
-                  <Text style={[styles.categoryText, { color: ACCENT_DARK }]}>{profile.category}</Text>
+                  <Text style={[styles.categoryText, { color: ACCENT_DARK }]}>{categoryLabel(profile.category, t)}</Text>
                 </View>
               ) : null}
             </View>
             <TouchableOpacity
               onPress={() => setEditing(true)}
               style={[styles.editBtn, { backgroundColor: colors.inputBg }]}
-              accessibilityLabel="Editar perfil"
+              accessibilityLabel={t('profile.editProfile')}
             >
               <IconEdit size={18} color={colors.textSecondary} />
             </TouchableOpacity>
@@ -306,7 +322,7 @@ function ProfileTab({ colors, isDark, user }) {
             <View style={[styles.verifyBanner, { backgroundColor: isDark ? '#1c1c1e' : '#f0f9ff', borderColor: '#bae6fd' }]}>
               <IconVerified size={16} color={VERIFIED_COLOR} />
               <Text style={[styles.verifyText, { color: isDark ? '#7dd3fc' : '#0369a1' }]}>
-                Verifique sua conta para obter o selo de negócio verificado
+                {t('business.verifyHint')}
               </Text>
             </View>
           )}
@@ -314,9 +330,9 @@ function ProfileTab({ colors, isDark, user }) {
 
         {/* Stats */}
         <View style={styles.statsRow}>
-          <StatCard label="Produtos" value={profile?.product_count ?? '—'} color={colors.primary} colors={colors} />
-          <StatCard label="Pedidos" value={profile?.order_count ?? '—'} color={ACCENT} colors={colors} />
-          <StatCard label="Avaliação" value={profile?.rating ? `${profile.rating}` : '—'} icon={profile?.rating ? <IconStar size={13} color={ACCENT} /> : null} color={ACCENT} colors={colors} />
+          <StatCard label={t('business.products')} value={profile?.product_count ?? '—'} color={colors.primary} colors={colors} />
+          <StatCard label={t('business.orders')} value={profile?.order_count ?? '—'} color={ACCENT} colors={colors} />
+          <StatCard label={t('business.rating')} value={profile?.rating ? `${profile.rating}` : '—'} icon={profile?.rating ? <IconStar size={13} color={ACCENT} /> : null} color={ACCENT} colors={colors} />
         </View>
       </ScrollView>
 
@@ -327,30 +343,30 @@ function ProfileTab({ colors, isDark, user }) {
             <TouchableOpacity onPress={() => setEditing(false)}>
               <IconX size={22} color={colors.text} />
             </TouchableOpacity>
-            <Text style={[styles.modalTitle, { color: colors.text }]}>Editar Perfil</Text>
+            <Text style={[styles.modalTitle, { color: colors.text }]}>{t('profile.editProfile')}</Text>
             <TouchableOpacity onPress={handleSave} disabled={busy}>
               {busy ? <ActivityIndicator size="small" color={ACCENT} /> : <IconCheck size={22} color={ACCENT} />}
             </TouchableOpacity>
           </View>
           <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
             <ScrollView contentContainerStyle={{ padding: 20, gap: 16 }} showsVerticalScrollIndicator={false}>
-              <FormField label="Nome da empresa *" value={form.company_name} onChangeText={v => setForm(f => ({ ...f, company_name: v }))} placeholder="Ex: Loja da Maria" colors={colors} />
-              <FormField label="Descrição" value={form.description} onChangeText={v => setForm(f => ({ ...f, description: v }))} placeholder="Sobre o negócio" multiline colors={colors} />
-              <FormField label="Telefone" value={form.phone} onChangeText={v => setForm(f => ({ ...f, phone: v }))} placeholder="+55 11 99999-9999" keyboardType="phone-pad" colors={colors} />
-              <FormField label="Endereço" value={form.address} onChangeText={v => setForm(f => ({ ...f, address: v }))} placeholder="Rua, número, cidade" colors={colors} />
-              <FormField label="Site" value={form.website} onChangeText={v => setForm(f => ({ ...f, website: v }))} placeholder="https://..." keyboardType="url" colors={colors} />
-              <FormField label="Horário de funcionamento" value={form.hours} onChangeText={v => setForm(f => ({ ...f, hours: v }))} placeholder="Seg-Sex 9h-18h" colors={colors} />
+              <FormField label={`${t('business.companyName')} *`} value={form.company_name} onChangeText={v => setForm(f => ({ ...f, company_name: v }))} placeholder={t('business.ph.company')} colors={colors} />
+              <FormField label={t('business.description')} value={form.description} onChangeText={v => setForm(f => ({ ...f, description: v }))} placeholder={t('business.ph.about')} multiline colors={colors} />
+              <FormField label={t('profile.phone')} value={form.phone} onChangeText={v => setForm(f => ({ ...f, phone: v }))} placeholder="+55 11 99999-9999" keyboardType="phone-pad" colors={colors} />
+              <FormField label={t('contacts.addressLabel')} value={form.address} onChangeText={v => setForm(f => ({ ...f, address: v }))} placeholder={t('business.ph.address')} colors={colors} />
+              <FormField label={t('profile.websiteLabel')} value={form.website} onChangeText={v => setForm(f => ({ ...f, website: v }))} placeholder="https://..." keyboardType="url" colors={colors} />
+              <FormField label={t('business.hours')} value={form.hours} onChangeText={v => setForm(f => ({ ...f, hours: v }))} placeholder={t('business.ph.hours')} colors={colors} />
               <View style={{ gap: 6 }}>
-                <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>Categoria</Text>
+                <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>{t('channel.categoryLabel')}</Text>
                 <ScrollView horizontal showsHorizontalScrollIndicator={false}>
                   <View style={{ flexDirection: 'row', gap: 8 }}>
-                    {CATEGORIES.map(cat => (
+                    {CATEGORIES.map(({ value: cat, key: catKey }) => (
                       <TouchableOpacity
                         key={cat}
                         onPress={() => setForm(f => ({ ...f, category: cat }))}
                         style={[styles.catChip, { backgroundColor: form.category === cat ? ACCENT : colors.inputBg, borderColor: form.category === cat ? ACCENT : colors.border }]}
                       >
-                        <Text style={[styles.catChipText, { color: form.category === cat ? '#fff' : colors.text }]}>{cat}</Text>
+                        <Text style={[styles.catChipText, { color: form.category === cat ? '#fff' : colors.text }]}>{t(catKey)}</Text>
                       </TouchableOpacity>
                     ))}
                   </View>
@@ -368,6 +384,7 @@ function ProfileTab({ colors, isDark, user }) {
 // CATALOG TAB
 // ══════════════════════════════════════════════════
 function CatalogTab({ colors, isDark, cart, setCart }) {
+  const { t } = useLanguage();
   const [products, setProducts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [editModal, setEditModal] = useState(false);
@@ -407,7 +424,7 @@ function CatalogTab({ colors, isDark, cart, setCart }) {
 
   const handleSave = async () => {
     if (!form.name.trim() || !form.price.trim()) {
-      safeAlert('Erro', 'Nome e preço são obrigatórios');
+      safeAlert(t('common.error'), t('business.err.productRequired'));
       return;
     }
     setBusy(true);
@@ -424,16 +441,16 @@ function CatalogTab({ colors, isDark, cart, setCart }) {
         setEditModal(false);
         load();
       } else {
-        safeAlert('Erro', r?.message || 'Falha ao salvar produto');
+        safeAlert(t('common.error'), r?.message || t('business.err.saveProduct'));
       }
-    } catch (e) { safeAlert('Erro', String(e)); }
+    } catch (e) { safeAlert(t('common.error'), String(e)); }
     setBusy(false);
   };
 
   const handleDelete = (product) => {
-    safeAlert('Excluir produto', `Excluir "${product.name}"?`, [
-      { text: 'Cancelar', style: 'cancel' },
-      { text: 'Excluir', style: 'destructive', onPress: async () => {
+    safeAlert(t('business.deleteProduct'), t('business.deleteConfirm', { name: product.name }), [
+      { text: t('common.cancel'), style: 'cancel' },
+      { text: t('common.delete'), style: 'destructive', onPress: async () => {
         try {
           await api.apiCall('business_delete_product', { product_id: product.id }, 'POST');
           load();
@@ -464,20 +481,20 @@ function CatalogTab({ colors, isDark, cart, setCart }) {
           <IconSearch size={16} color={colors.textSecondary} />
           <TextInput
             style={[styles.searchInput, { color: colors.text }]}
-            placeholder="Buscar produto..."
+            placeholder={t('business.searchProduct')}
             placeholderTextColor={colors.textSecondary}
             value={search}
             onChangeText={setSearch}
           />
         </View>
-        <TouchableOpacity onPress={openNew} style={[styles.addBtn, { backgroundColor: ACCENT }]} accessibilityLabel="Adicionar produto">
+        <TouchableOpacity onPress={openNew} style={[styles.addBtn, { backgroundColor: ACCENT }]} accessibilityLabel={t('business.addProduct')}>
           <IconPlus size={20} color="#fff" />
         </TouchableOpacity>
       </View>
 
       {loading ? <LoadingView colors={colors} /> : (
         filtered.length === 0 ? (
-          <EmptyStateCard Icon={IconPackage} title="Nenhum produto no catálogo" subtitle="Toque + para adicionar o primeiro produto" tone="neutral" />
+          <EmptyStateCard Icon={IconPackage} title={t('business.catalogEmpty')} subtitle={t('business.catalogEmptySub')} tone="neutral" />
         ) : (
           <FlatList
             data={filtered}
@@ -507,7 +524,7 @@ function CatalogTab({ colors, isDark, cart, setCart }) {
             <TouchableOpacity onPress={() => setEditModal(false)}>
               <IconX size={22} color={colors.text} />
             </TouchableOpacity>
-            <Text style={[styles.modalTitle, { color: colors.text }]}>{editProduct ? 'Editar Produto' : 'Novo Produto'}</Text>
+            <Text style={[styles.modalTitle, { color: colors.text }]}>{editProduct ? t('business.editProduct') : t('business.addProduct')}</Text>
             <TouchableOpacity onPress={handleSave} disabled={busy}>
               {busy ? <ActivityIndicator size="small" color={ACCENT} /> : <IconCheck size={22} color={ACCENT} />}
             </TouchableOpacity>
@@ -516,10 +533,10 @@ function CatalogTab({ colors, isDark, cart, setCart }) {
             <ScrollView contentContainerStyle={{ padding: 20, gap: 16 }} showsVerticalScrollIndicator={false}>
               {/* Photo picker */}
               <ProductPhotoPicker photoUrl={form.photo_url} onChange={url => setForm(f => ({ ...f, photo_url: url }))} colors={colors} />
-              <FormField label="Nome do produto *" value={form.name} onChangeText={v => setForm(f => ({ ...f, name: v }))} placeholder="Ex: Camiseta Polo" colors={colors} />
-              <FormField label="Descrição" value={form.description} onChangeText={v => setForm(f => ({ ...f, description: v }))} placeholder="Detalhes do produto" multiline colors={colors} />
-              <FormField label="Preço (R$) *" value={form.price} onChangeText={v => setForm(f => ({ ...f, price: v }))} placeholder="0,00" keyboardType="decimal-pad" colors={colors} />
-              <FormField label="Estoque" value={form.stock} onChangeText={v => setForm(f => ({ ...f, stock: v }))} placeholder="Deixe vazio para ilimitado" keyboardType="number-pad" colors={colors} />
+              <FormField label={`${t('business.productName')} *`} value={form.name} onChangeText={v => setForm(f => ({ ...f, name: v }))} placeholder={t('business.ph.productName')} colors={colors} />
+              <FormField label={t('business.description')} value={form.description} onChangeText={v => setForm(f => ({ ...f, description: v }))} placeholder={t('business.ph.productDetails')} multiline colors={colors} />
+              <FormField label={`${t('business.price')} *`} value={form.price} onChangeText={v => setForm(f => ({ ...f, price: v }))} placeholder="0,00" keyboardType="decimal-pad" colors={colors} />
+              <FormField label={t('business.stock')} value={form.stock} onChangeText={v => setForm(f => ({ ...f, stock: v }))} placeholder={t('business.ph.stock')} keyboardType="number-pad" colors={colors} />
             </ScrollView>
           </KeyboardAvoidingView>
         </View>
@@ -530,6 +547,7 @@ function CatalogTab({ colors, isDark, cart, setCart }) {
 
 // ── Product Card ──
 function ProductCard({ product, colors, isDark, onEdit, onDelete, onAddToCart, cartQty }) {
+  const { t } = useLanguage();
   const price = parseFloat(product.price || 0);
   const inCart = cartQty > 0;
 
@@ -552,23 +570,23 @@ function ProductCard({ product, colors, isDark, onEdit, onDelete, onAddToCart, c
         </Text>
         {product.stock != null && (
           <Text style={[styles.productStock, { color: product.stock > 0 ? colors.textSecondary : '#ef4444' }]}>
-            {product.stock > 0 ? `${product.stock} em estoque` : 'Esgotado'}
+            {product.stock > 0 ? t('business.inStock', { n: product.stock }) : t('business.soldOut')}
           </Text>
         )}
         <View style={styles.productActions}>
-          <TouchableOpacity onPress={onEdit} style={[styles.productActionBtn, { backgroundColor: colors.inputBg }]} accessibilityLabel="Editar produto">
+          <TouchableOpacity onPress={onEdit} style={[styles.productActionBtn, { backgroundColor: colors.inputBg }]} accessibilityLabel={t('business.editProduct')}>
             <IconEdit size={14} color={colors.textSecondary} />
           </TouchableOpacity>
-          <TouchableOpacity onPress={onDelete} style={[styles.productActionBtn, { backgroundColor: '#fee2e222' }]} accessibilityLabel="Excluir produto">
+          <TouchableOpacity onPress={onDelete} style={[styles.productActionBtn, { backgroundColor: '#fee2e222' }]} accessibilityLabel={t('business.deleteProduct')}>
             <IconTrash size={14} color="#ef4444" />
           </TouchableOpacity>
           <TouchableOpacity
             onPress={onAddToCart}
             style={[styles.addCartBtn, { backgroundColor: inCart ? ACCENT : ACCENT + '18', flex: 1 }]}
-            accessibilityLabel={inCart ? `${cartQty} no carrinho` : 'Adicionar ao carrinho'}
+            accessibilityLabel={inCart ? t('business.inCartCount', { n: cartQty }) : t('business.addToCartA11y')}
           >
             <Text style={[styles.addCartText, { color: inCart ? '#fff' : ACCENT_DARK }]}>
-              {inCart ? `+1 (${cartQty})` : 'Carrinho'}
+              {inCart ? `+1 (${cartQty})` : t('business.cart')}
             </Text>
           </TouchableOpacity>
         </View>
@@ -579,6 +597,7 @@ function ProductCard({ product, colors, isDark, onEdit, onDelete, onAddToCart, c
 
 // ── Product Photo Picker ──
 function ProductPhotoPicker({ photoUrl, onChange, colors }) {
+  const { t } = useLanguage();
   const [picking, setPicking] = useState(false);
 
   const pick = async () => {
@@ -587,7 +606,7 @@ function ProductPhotoPicker({ photoUrl, onChange, colors }) {
       let ImagePicker;
       try { ImagePicker = require('expo-image-picker'); } catch { setPicking(false); return; }
       const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-      if (status !== 'granted') { safeAlert('Permissão negada', 'Acesso à galeria necessário'); setPicking(false); return; }
+      if (status !== 'granted') { safeAlert(t('common.permissionDenied'), t('business.galleryRequired')); setPicking(false); return; }
       const result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ['images'],
         allowsEditing: true,
@@ -613,7 +632,7 @@ function ProductPhotoPicker({ photoUrl, onChange, colors }) {
         const data = await res.json();
         if (data?.success && data.data?.url) onChange(data.data.url);
       }
-    } catch (e) { safeAlert('Erro', String(e)); }
+    } catch (e) { safeAlert(t('common.error'), String(e)); }
     setPicking(false);
   };
 
@@ -624,7 +643,7 @@ function ProductPhotoPicker({ photoUrl, onChange, colors }) {
       ) : (
         <View style={{ alignItems: 'center', gap: 8 }}>
           <IconCamera size={28} color={colors.textSecondary} />
-          <Text style={[styles.photoPickerLabel, { color: colors.textSecondary }]}>Toque para adicionar foto</Text>
+          <Text style={[styles.photoPickerLabel, { color: colors.textSecondary }]}>{t('business.tapToAddPhoto')}</Text>
         </View>
       )}
       {picking && (
@@ -640,6 +659,7 @@ function ProductPhotoPicker({ photoUrl, onChange, colors }) {
 // CART TAB
 // ══════════════════════════════════════════════════
 function CartTab({ colors, isDark, cart, setCart, user }) {
+  const { t } = useLanguage();
   const [note, setNote] = useState('');
   const [sending, setSending] = useState(false);
   const [sent, setSent] = useState(false);
@@ -656,13 +676,13 @@ function CartTab({ colors, isDark, cart, setCart, user }) {
     setSending(true);
     try {
       // Build order message in WhatsApp Business style
-      let msg = '*Pedido via Chatyy*\n\n';
+      let msg = `*${t('business.order.header')}*\n\n`;
       cart.forEach(item => {
         const price = parseFloat(item.product.price || 0);
         msg += `• ${item.product.name} x${item.qty} — R$ ${(price * item.qty).toFixed(2).replace('.', ',')}\n`;
       });
-      msg += `\n*Total: R$ ${total.toFixed(2).replace('.', ',')}*`;
-      if (note.trim()) msg += `\n\n_Observação: ${note.trim()}_`;
+      msg += `\n*${t('business.total')}: R$ ${total.toFixed(2).replace('.', ',')}*`;
+      if (note.trim()) msg += `\n\n_${t('wallet.cashoutDetail.note')}: ${note.trim()}_`;
 
       const r = await api.apiCall('business_place_order', {
         items: cart.map(i => ({ product_id: i.product.id, qty: i.qty, price: i.product.price })),
@@ -676,9 +696,9 @@ function CartTab({ colors, isDark, cart, setCart, user }) {
         setCart([]);
         setNote('');
       } else {
-        safeAlert('Erro', r?.message || 'Falha ao enviar pedido');
+        safeAlert(t('common.error'), r?.message || t('business.err.sendOrder'));
       }
-    } catch (e) { safeAlert('Erro', String(e)); }
+    } catch (e) { safeAlert(t('common.error'), String(e)); }
     setSending(false);
   };
 
@@ -688,17 +708,17 @@ function CartTab({ colors, isDark, cart, setCart, user }) {
         <View style={[styles.sentIcon, { backgroundColor: ACCENT + '18' }]}>
           <IconCheck size={40} color={ACCENT} />
         </View>
-        <Text style={[styles.sentTitle, { color: colors.text }]}>Pedido enviado!</Text>
-        <Text style={[styles.sentSub, { color: colors.textSecondary }]}>O vendedor receberá seu pedido via Chatyy</Text>
+        <Text style={[styles.sentTitle, { color: colors.text }]}>{t('business.orderSent')}</Text>
+        <Text style={[styles.sentSub, { color: colors.textSecondary }]}>{t('business.orderSentSub')}</Text>
         <TouchableOpacity onPress={() => setSent(false)} style={[styles.sentBtn, { backgroundColor: ACCENT }]}>
-          <Text style={{ color: '#fff', fontWeight: '600' }}>Ver catálogo</Text>
+          <Text style={{ color: '#fff', fontWeight: '600' }}>{t('business.viewCatalog')}</Text>
         </TouchableOpacity>
       </View>
     );
   }
 
   if (cart.length === 0) {
-    return <EmptyStateCard Icon={IconCartLocal} title="Carrinho vazio" subtitle="Adicione produtos do catálogo" tone="neutral" />;
+    return <EmptyStateCard Icon={IconCartLocal} title={t('business.cartEmpty')} subtitle={t('business.cartEmptySub')} tone="neutral" />;
   }
 
   return (
@@ -710,10 +730,10 @@ function CartTab({ colors, isDark, cart, setCart, user }) {
         ListFooterComponent={() => (
           <View style={{ gap: 16, marginTop: 8 }}>
             <View style={[styles.noteBox, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-              <Text style={[styles.fieldLabel, { color: colors.textSecondary, marginBottom: 6 }]}>Observações</Text>
+              <Text style={[styles.fieldLabel, { color: colors.textSecondary, marginBottom: 6 }]}>{t('business.notes')}</Text>
               <TextInput
                 style={[styles.noteInput, { color: colors.text }]}
-                placeholder="Ex: sem cebola, entrega no andar 3..."
+                placeholder={t('business.ph.notes')}
                 placeholderTextColor={colors.textSecondary}
                 value={note}
                 onChangeText={setNote}
@@ -721,19 +741,19 @@ function CartTab({ colors, isDark, cart, setCart, user }) {
               />
             </View>
             <View style={[styles.totalRow, { backgroundColor: colors.surface }]}>
-              <Text style={[styles.totalLabel, { color: colors.textSecondary }]}>Total</Text>
+              <Text style={[styles.totalLabel, { color: colors.textSecondary }]}>{t('business.total')}</Text>
               <Text style={[styles.totalValue, { color: ACCENT_DARK }]}>R$ {total.toFixed(2).replace('.', ',')}</Text>
             </View>
             <TouchableOpacity
               onPress={handleCheckout}
               disabled={sending}
               style={[styles.checkoutBtn, { backgroundColor: ACCENT, opacity: sending ? 0.7 : 1 }]}
-              accessibilityLabel="Finalizar pedido"
+              accessibilityLabel={t('business.checkoutA11y')}
             >
               {sending ? <ActivityIndicator color="#fff" /> : (
                 <>
                   <IconCartLocal size={20} color="#fff" />
-                  <Text style={styles.checkoutText}>Enviar pedido via Chatyy</Text>
+                  <Text style={styles.checkoutText}>{t('business.checkout')}</Text>
                 </>
               )}
             </TouchableOpacity>
@@ -779,6 +799,7 @@ function CartItem({ item, colors, onUpdateQty }) {
 // AUTO-REPLIES TAB
 // ══════════════════════════════════════════════════
 function AutoRepliesTab({ colors, isDark }) {
+  const { t } = useLanguage();
   const [settings, setSettings] = useState({
     greeting_enabled: false,
     greeting_message: '',
@@ -812,8 +833,8 @@ function AutoRepliesTab({ colors, isDark }) {
     setSaving(true);
     try {
       const r = await api.apiCall('business_save_autoreplies', settings, 'POST');
-      if (!r?.success) safeAlert('Erro', r?.message || 'Falha ao salvar');
-    } catch (e) { safeAlert('Erro', String(e)); }
+      if (!r?.success) safeAlert(t('common.error'), r?.message || t('vacation.saveError'));
+    } catch (e) { safeAlert(t('common.error'), String(e)); }
     setSaving(false);
   };
 
@@ -831,7 +852,7 @@ function AutoRepliesTab({ colors, isDark }) {
 
   const handleSaveQR = async () => {
     if (!qrForm.shortcut.trim() || !qrForm.message.trim()) {
-      safeAlert('Erro', 'Atalho e mensagem são obrigatórios');
+      safeAlert(t('common.error'), t('business.err.shortcutRequired'));
       return;
     }
     setQrBusy(true);
@@ -841,15 +862,15 @@ function AutoRepliesTab({ colors, isDark }) {
       const action = qrEditing ? 'business_update_quick_reply' : 'business_add_quick_reply';
       const r = await api.apiCall(action, payload, 'POST');
       if (r?.success) { setQrModal(false); load(); }
-      else safeAlert('Erro', r?.message || 'Falha ao salvar');
-    } catch (e) { safeAlert('Erro', String(e)); }
+      else safeAlert(t('common.error'), r?.message || t('vacation.saveError'));
+    } catch (e) { safeAlert(t('common.error'), String(e)); }
     setQrBusy(false);
   };
 
   const handleDeleteQR = (qr) => {
-    safeAlert('Excluir resposta rápida', `Excluir "/${qr.shortcut}"?`, [
-      { text: 'Cancelar', style: 'cancel' },
-      { text: 'Excluir', style: 'destructive', onPress: async () => {
+    safeAlert(t('business.deleteQuickReply'), t('business.deleteConfirm', { name: `/${qr.shortcut}` }), [
+      { text: t('common.cancel'), style: 'cancel' },
+      { text: t('common.delete'), style: 'destructive', onPress: async () => {
         try { await api.apiCall('business_delete_quick_reply', { id: qr.id }, 'POST'); load(); } catch {}
       }},
     ]);
@@ -860,9 +881,9 @@ function AutoRepliesTab({ colors, isDark }) {
   return (
     <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 20, gap: 20 }} showsVerticalScrollIndicator={false}>
       {/* Greeting */}
-      <SectionCard title="Mensagem de saudação" colors={colors}>
+      <SectionCard title={t('business.greeting')} colors={colors}>
         <ToggleRow
-          label="Enviar saudação para novos contatos"
+          label={t('business.greetingToggle')}
           value={settings.greeting_enabled}
           onChange={v => setSettings(s => ({ ...s, greeting_enabled: v }))}
           colors={colors}
@@ -870,7 +891,7 @@ function AutoRepliesTab({ colors, isDark }) {
         {settings.greeting_enabled && (
           <TextInput
             style={[styles.autoReplyInput, { color: colors.text, backgroundColor: colors.inputBg, borderColor: colors.border }]}
-            placeholder="Olá! Seja bem-vindo(a). Como posso ajudar?"
+            placeholder={t('business.ph.greeting')}
             placeholderTextColor={colors.textSecondary}
             value={settings.greeting_message}
             onChangeText={v => setSettings(s => ({ ...s, greeting_message: v }))}
@@ -880,9 +901,9 @@ function AutoRepliesTab({ colors, isDark }) {
       </SectionCard>
 
       {/* Away */}
-      <SectionCard title="Mensagem de ausência" colors={colors}>
+      <SectionCard title={t('business.away')} colors={colors}>
         <ToggleRow
-          label="Enviar mensagem quando estiver ausente"
+          label={t('business.awayToggle')}
           value={settings.away_enabled}
           onChange={v => setSettings(s => ({ ...s, away_enabled: v }))}
           colors={colors}
@@ -891,7 +912,7 @@ function AutoRepliesTab({ colors, isDark }) {
           <>
             <TextInput
               style={[styles.autoReplyInput, { color: colors.text, backgroundColor: colors.inputBg, borderColor: colors.border }]}
-              placeholder="No momento estou ausente. Retornarei em breve!"
+              placeholder={t('business.ph.away')}
               placeholderTextColor={colors.textSecondary}
               value={settings.away_message}
               onChangeText={v => setSettings(s => ({ ...s, away_message: v }))}
@@ -908,7 +929,7 @@ function AutoRepliesTab({ colors, isDark }) {
                   }]}
                 >
                   <Text style={{ fontSize: 12, color: settings.away_schedule === opt ? '#fff' : colors.textSecondary }}>
-                    {opt === 'always' ? 'Sempre' : opt === 'outside_hours' ? 'Fora do horário' : 'Personalizado'}
+                    {opt === 'always' ? t('config.autoReplyAlways') : opt === 'outside_hours' ? t('business.schedule.outsideHours') : t('config.autoReplyCustom')}
                   </Text>
                 </TouchableOpacity>
               ))}
@@ -923,23 +944,23 @@ function AutoRepliesTab({ colors, isDark }) {
         style={[styles.saveSettingsBtn, { backgroundColor: ACCENT, opacity: saving ? 0.7 : 1 }]}
       >
         {saving ? <ActivityIndicator color="#fff" size="small" /> : (
-          <Text style={{ color: '#fff', fontWeight: '600', fontSize: 15 }}>Salvar configurações</Text>
+          <Text style={{ color: '#fff', fontWeight: '600', fontSize: 15 }}>{t('business.saveSettings')}</Text>
         )}
       </TouchableOpacity>
 
       {/* Quick replies */}
       <View style={styles.sectionHeader}>
-        <Text style={[styles.sectionTitle, { color: colors.text }]}>Respostas rápidas</Text>
+        <Text style={[styles.sectionTitle, { color: colors.text }]}>{t('business.quickReplies')}</Text>
         <TouchableOpacity onPress={openNewQR} style={[styles.sectionAddBtn, { backgroundColor: ACCENT + '18' }]}>
           <IconPlus size={16} color={ACCENT} />
-          <Text style={{ color: ACCENT, fontSize: 13, fontWeight: '600' }}>Nova</Text>
+          <Text style={{ color: ACCENT, fontSize: 13, fontWeight: '600' }}>{t('business.newShort')}</Text>
         </TouchableOpacity>
       </View>
 
       {quickReplies.length === 0 ? (
         <View style={[styles.emptyInline, { backgroundColor: colors.surface }]}>
           <Text style={[styles.emptyInlineText, { color: colors.textSecondary }]}>
-            Nenhuma resposta rápida. Use "/" no chat para acessar atalhos.
+            {t('business.quickRepliesEmpty')}
           </Text>
         </View>
       ) : (
@@ -950,10 +971,10 @@ function AutoRepliesTab({ colors, isDark }) {
               <Text style={[styles.qrMessage, { color: colors.textSecondary }]} numberOfLines={2}>{qr.message}</Text>
             </View>
             <View style={{ flexDirection: 'row', gap: 8 }}>
-              <TouchableOpacity onPress={() => openEditQR(qr)} accessibilityLabel="Editar resposta rápida">
+              <TouchableOpacity onPress={() => openEditQR(qr)} accessibilityLabel={t('business.editQuickReply')}>
                 <IconEdit size={18} color={colors.textSecondary} />
               </TouchableOpacity>
-              <TouchableOpacity onPress={() => handleDeleteQR(qr)} accessibilityLabel="Excluir resposta rápida">
+              <TouchableOpacity onPress={() => handleDeleteQR(qr)} accessibilityLabel={t('business.deleteQuickReply')}>
                 <IconTrash size={18} color="#ef4444" />
               </TouchableOpacity>
             </View>
@@ -968,7 +989,7 @@ function AutoRepliesTab({ colors, isDark }) {
             <TouchableOpacity onPress={() => setQrModal(false)}>
               <IconX size={22} color={colors.text} />
             </TouchableOpacity>
-            <Text style={[styles.modalTitle, { color: colors.text }]}>{qrEditing ? 'Editar Atalho' : 'Novo Atalho'}</Text>
+            <Text style={[styles.modalTitle, { color: colors.text }]}>{qrEditing ? t('business.editShortcut') : t('business.newShortcut')}</Text>
             <TouchableOpacity onPress={handleSaveQR} disabled={qrBusy}>
               {qrBusy ? <ActivityIndicator size="small" color={ACCENT} /> : <IconCheck size={22} color={ACCENT} />}
             </TouchableOpacity>
@@ -976,17 +997,17 @@ function AutoRepliesTab({ colors, isDark }) {
           <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
             <ScrollView contentContainerStyle={{ padding: 20, gap: 16 }}>
               <FormField
-                label="Atalho (sem /)"
+                label={t('business.shortcutLabel')}
                 value={qrForm.shortcut}
                 onChangeText={v => setQrForm(f => ({ ...f, shortcut: v.replace(/[^a-zA-Z0-9_]/g, '') }))}
-                placeholder="ex: oi, preco, horario"
+                placeholder={t('business.ph.shortcut')}
                 colors={colors}
               />
               <FormField
-                label="Mensagem"
+                label={t('profile.message')}
                 value={qrForm.message}
                 onChangeText={v => setQrForm(f => ({ ...f, message: v }))}
-                placeholder="Texto que será enviado quando usar o atalho"
+                placeholder={t('business.ph.qrMessage')}
                 multiline
                 colors={colors}
               />
@@ -1002,6 +1023,7 @@ function AutoRepliesTab({ colors, isDark }) {
 // LABELS TAB
 // ══════════════════════════════════════════════════
 function LabelsTab({ colors, isDark }) {
+  const { t } = useLanguage();
   const [labels, setLabels] = useState([]);
   const [loading, setLoading] = useState(true);
   const [modal, setModal] = useState(false);
@@ -1033,7 +1055,7 @@ function LabelsTab({ colors, isDark }) {
   };
 
   const handleSave = async () => {
-    if (!form.name.trim()) { safeAlert('Erro', 'Nome é obrigatório'); return; }
+    if (!form.name.trim()) { safeAlert(t('common.error'), t('business.err.nameRequired')); return; }
     setBusy(true);
     try {
       const payload = { ...form };
@@ -1041,15 +1063,15 @@ function LabelsTab({ colors, isDark }) {
       const action = editing ? 'business_update_label' : 'business_add_label';
       const r = await api.apiCall(action, payload, 'POST');
       if (r?.success) { setModal(false); load(); }
-      else safeAlert('Erro', r?.message || 'Falha ao salvar');
-    } catch (e) { safeAlert('Erro', String(e)); }
+      else safeAlert(t('common.error'), r?.message || t('vacation.saveError'));
+    } catch (e) { safeAlert(t('common.error'), String(e)); }
     setBusy(false);
   };
 
   const handleDelete = (label) => {
-    safeAlert('Excluir label', `Excluir "${label.name}"?`, [
-      { text: 'Cancelar', style: 'cancel' },
-      { text: 'Excluir', style: 'destructive', onPress: async () => {
+    safeAlert(t('business.deleteLabel'), t('business.deleteConfirm', { name: label.name }), [
+      { text: t('common.cancel'), style: 'cancel' },
+      { text: t('common.delete'), style: 'destructive', onPress: async () => {
         try { await api.apiCall('business_delete_label', { label_id: label.id }, 'POST'); load(); } catch {}
       }},
     ]);
@@ -1057,7 +1079,7 @@ function LabelsTab({ colors, isDark }) {
 
   const handleSeedDefaults = async () => {
     for (const def of LABEL_DEFAULTS) {
-      try { await api.apiCall('business_add_label', def, 'POST'); } catch {}
+      try { await api.apiCall('business_add_label', { name: t(def.nameKey), color: def.color }, 'POST'); } catch {}
     }
     load();
   };
@@ -1068,18 +1090,18 @@ function LabelsTab({ colors, isDark }) {
     <View style={{ flex: 1 }}>
       <View style={[styles.searchRow, { backgroundColor: colors.background, borderBottomColor: colors.border }]}>
         <Text style={[styles.searchBox, { color: colors.textSecondary, flex: 1, fontSize: 13 }]}>
-          Labels organizam conversas de clientes
+          {t('business.labelsHint')}
         </Text>
-        <TouchableOpacity onPress={openNew} style={[styles.addBtn, { backgroundColor: ACCENT }]} accessibilityLabel="Nova label">
+        <TouchableOpacity onPress={openNew} style={[styles.addBtn, { backgroundColor: ACCENT }]} accessibilityLabel={t('business.newLabel')}>
           <IconPlus size={20} color="#fff" />
         </TouchableOpacity>
       </View>
 
       {labels.length === 0 ? (
         <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 32, gap: 16 }}>
-          <EmptyStateCard Icon={IconLabel} title="Nenhuma label criada" subtitle="Labels ajudam a organizar chats de clientes" tone="neutral" />
+          <EmptyStateCard Icon={IconLabel} title={t('business.labelsEmpty')} subtitle={t('business.labelsEmptySub')} tone="neutral" />
           <TouchableOpacity onPress={handleSeedDefaults} style={[styles.seedBtn, { backgroundColor: ACCENT + '18', borderColor: ACCENT + '44' }]}>
-            <Text style={{ color: ACCENT, fontWeight: '600' }}>Criar labels padrão</Text>
+            <Text style={{ color: ACCENT, fontWeight: '600' }}>{t('business.seedLabels')}</Text>
           </TouchableOpacity>
         </View>
       ) : (
@@ -1097,10 +1119,10 @@ function LabelsTab({ colors, isDark }) {
                 </View>
               )}
               <View style={{ flexDirection: 'row', gap: 12, marginLeft: 'auto' }}>
-                <TouchableOpacity onPress={() => openEdit(item)} accessibilityLabel="Editar label">
+                <TouchableOpacity onPress={() => openEdit(item)} accessibilityLabel={t('business.editLabel')}>
                   <IconEdit size={18} color={colors.textSecondary} />
                 </TouchableOpacity>
-                <TouchableOpacity onPress={() => handleDelete(item)} accessibilityLabel="Excluir label">
+                <TouchableOpacity onPress={() => handleDelete(item)} accessibilityLabel={t('business.deleteLabel')}>
                   <IconTrash size={18} color="#ef4444" />
                 </TouchableOpacity>
               </View>
@@ -1116,28 +1138,28 @@ function LabelsTab({ colors, isDark }) {
             <TouchableOpacity onPress={() => setModal(false)}>
               <IconX size={22} color={colors.text} />
             </TouchableOpacity>
-            <Text style={[styles.modalTitle, { color: colors.text }]}>{editing ? 'Editar Label' : 'Nova Label'}</Text>
+            <Text style={[styles.modalTitle, { color: colors.text }]}>{editing ? t('business.editLabel') : t('business.newLabel')}</Text>
             <TouchableOpacity onPress={handleSave} disabled={busy}>
               {busy ? <ActivityIndicator size="small" color={ACCENT} /> : <IconCheck size={22} color={ACCENT} />}
             </TouchableOpacity>
           </View>
           <View style={{ padding: 20, gap: 20 }}>
             <FormField
-              label="Nome da label"
+              label={t('business.labelName')}
               value={form.name}
               onChangeText={v => setForm(f => ({ ...f, name: v }))}
-              placeholder="Ex: Novo cliente"
+              placeholder={t('business.ph.labelName')}
               colors={colors}
             />
             <View style={{ gap: 10 }}>
-              <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>Cor</Text>
+              <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>{t('calendar.color')}</Text>
               <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 12 }}>
                 {LABEL_COLORS.map(c => (
                   <TouchableOpacity
                     key={c}
                     onPress={() => setForm(f => ({ ...f, color: c }))}
                     style={[styles.colorDot, { backgroundColor: c, borderWidth: form.color === c ? 3 : 0, borderColor: '#fff' }]}
-                    accessibilityLabel={`Cor ${c}`}
+                    accessibilityLabel={`${t('calendar.color')} ${c}`}
                   />
                 ))}
               </View>
@@ -1145,7 +1167,7 @@ function LabelsTab({ colors, isDark }) {
             {/* Preview */}
             <View style={[styles.labelPreview, { backgroundColor: colors.surface }]}>
               <View style={[styles.labelDot, { backgroundColor: form.color }]} />
-              <Text style={[styles.labelName, { color: colors.text }]}>{form.name || 'Prévia'}</Text>
+              <Text style={[styles.labelName, { color: colors.text }]}>{form.name || t('business.preview')}</Text>
             </View>
           </View>
         </View>

@@ -6,7 +6,7 @@
 
 import React, { useEffect, useRef, useState } from 'react';
 import { View, Text, TouchableOpacity, Platform } from 'react-native';
-import { IconX } from './Icons';
+import { IconX, IconCameraFlip } from './Icons';
 
 export default function WebcamCapture({ visible, onClose, onCapture, colors, t }) {
   const videoRef = useRef(null);
@@ -39,7 +39,7 @@ export default function WebcamCapture({ visible, onClose, onCapture, colors, t }
           videoRef.current.play().catch(() => {});
         }
       } catch (e) {
-        setError(e?.message || 'Camera not available');
+        setError(e?.message || t?.('feed.cameraError') || 'Câmera indisponível');
       }
     })();
     return () => {
@@ -175,7 +175,7 @@ export default function WebcamCapture({ visible, onClose, onCapture, colors, t }
           onPress={toggleFacing}
           style={{ width: 48, height: 48, borderRadius: 24, backgroundColor: 'rgba(255,255,255,0.12)', alignItems: 'center', justifyContent: 'center' }}
         >
-          <Text style={{ fontSize: 20, color: '#fff' }}>↺</Text>
+          <IconCameraFlip size={22} color="#fff" />
         </TouchableOpacity>
 
         {/* Shutter */}

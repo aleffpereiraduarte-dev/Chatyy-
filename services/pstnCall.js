@@ -16,7 +16,9 @@
 // pra não disputar o AVAudioSession com o LiveKit.
 
 import { Platform } from 'react-native';
-import { Room, RoomEvent } from 'livekit-client';
+// [2026-10-11 boot-split] livekit-client loaded on demand (services/lkLoader)
+// so it never lands in the web boot bundle.
+import { loadLiveKit } from './lkLoader';
 import { apiCall } from './api';
 
 let LK_AudioSession = null;
@@ -25,7 +27,7 @@ if (Platform.OS !== 'web') {
   // app/_layout.js; make sure they exist before this module can connect a Room.
   try { if (typeof globalThis !== 'undefined' && typeof globalThis.__chatyyEnsureLiveKitGlobals === 'function') globalThis.__chatyyEnsureLiveKitGlobals(); } catch {}
   try {
-    const lkrn = require('@livekit/react-native');
+    const lkrn = require('./lkLoader').lkRn();
     LK_AudioSession = lkrn.AudioSession || null;
   } catch (_) {}
 }
@@ -39,7 +41,7 @@ let _ended = false;
 async function _setupAudio() {
   if (Platform.OS === 'web' || !LK_AudioSession) return;
   try {
-    const lkrn = require('@livekit/react-native');
+    const lkrn = require('./lkLoader').lkRn();
     if (Platform.OS === 'ios'
         && typeof LK_AudioSession.setAppleAudioConfiguration === 'function'
         && typeof lkrn.getDefaultAppleAudioConfigurationForMode === 'function') {
@@ -126,6 +128,11 @@ export async function startPstnCall(phoneNum, name, onStateChange) {
 
   await _setupAudio();
 
+  let Room, RoomEvent;
+  try { ({ Room, RoomEvent } = await loadLiveKit()); } catch (e) {
+    _ended = true; try { _onState('error:' + (e?.message || 'livekit')); } catch (_) {}
+    return;
+  }
   const room = new Room({ adaptiveStream: false, dynacast: false });
   _room = room;
 

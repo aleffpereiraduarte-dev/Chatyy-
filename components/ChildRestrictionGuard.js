@@ -9,7 +9,7 @@ import Svg, { Path, Circle as SvgCircle, Line, Rect, G, Polygon, Defs, LinearGra
 import { isChildAccount, getChildRestrictions, refreshChildRestrictions } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
 import { useRouter } from 'expo-router';
-import { IconLock } from './Icons';
+import { IconLock, IconParty, IconClock, IconSparkles } from './Icons';
 
 let mailWs = null;
 try { mailWs = require('../services/websocket').default; } catch {}
@@ -471,18 +471,18 @@ export default function ChildRestrictionGuard({ children }) {
   // Graduation celebration
   if (graduated) {
     const FEATURES = [
-      { label: 'Email completo', Icon: IconMail, color: '#111111' },
-      { label: 'Chat sem restricoes', Icon: IconMessageCircle, color: '#10b981' },
-      { label: 'Feed e Status', Icon: IconLayout, color: '#111111' },
-      { label: 'Drive e Documentos', Icon: IconFolder, color: '#f59e0b' },
-      { label: 'Lives e Stories', Icon: IconVideo, color: '#111111' },
+      { label: 'kidsGuard.featEmail', Icon: IconMail, color: '#111111' },
+      { label: 'kidsGuard.featChat', Icon: IconMessageCircle, color: '#10b981' },
+      { label: 'kidsGuard.featFeed', Icon: IconLayout, color: '#111111' },
+      { label: 'kidsGuard.featDrive', Icon: IconFolder, color: '#f59e0b' },
+      { label: 'kidsGuard.featLives', Icon: IconVideo, color: '#111111' },
     ];
 
     return (
       <Animated.View style={[sty.graduation, { opacity: fadeAnim }]}>
         <ConfettiDots />
         <Animated.View style={{ alignItems: 'center', zIndex: 1, transform: [{ scale: bounceAnim }] }}>
-          <Text style={{ fontSize: 48 }}>{'\uD83C\uDF89'}</Text>
+          <IconParty size={44} color="#fbbf24" />
           <IconTrophy size={90} />
           <Text style={sty.gradTitle}>{t('kids.graduated.congrats')}{gradName ? ` ${gradName}` : ''}!</Text>
           <Text style={sty.gradSub}>{t('kids.graduated.turned13')}</Text>
@@ -494,7 +494,7 @@ export default function ChildRestrictionGuard({ children }) {
                   <View style={{ width: 40, height: 40, borderRadius: 14, backgroundColor: item.color + '25', alignItems: 'center', justifyContent: 'center' }}>
                     <item.Icon size={18} color={item.color} />
                   </View>
-                  <Text style={sty.gradItem}>{item.label}</Text>
+                  <Text style={sty.gradItem}>{t(item.label)}</Text>
                 </View>
               ))}
             </View>
@@ -522,14 +522,14 @@ export default function ChildRestrictionGuard({ children }) {
     return (
       <Animated.View style={[sty.bedtime, { opacity: fadeAnim, backgroundColor: '#0f172a' }]}>
         <Animated.View style={{ alignItems: 'center', zIndex: 1, transform: [{ scale: bounceAnim }] }}>
-          <Text style={{ fontSize: 72, marginBottom: 16 }}>{'\u23F0'}</Text>
+          <View style={{ marginBottom: 16 }}><IconClock size={72} color="#f59e0b" /></View>
           <Text style={[sty.bedTitle, { color: '#f59e0b' }]}>{t('parental.limitReached') || 'Limite de tempo atingido'}</Text>
           <Text style={[sty.bedSub, { color: '#94a3b8' }]}>
-            {t('parental.limitReachedDesc') || 'Você usou todo o tempo permitido por hoje. Volte amanha!'}
+            {t('parental.limitReachedDesc') || 'Você usou todo o tempo permitido por hoje. Volte amanhã!'}
           </Text>
           <View style={{ marginTop: 24, backgroundColor: '#f59e0b20', borderRadius: 12, paddingHorizontal: 20, paddingVertical: 10 }}>
             <Text style={{ color: '#f59e0b', fontSize: 14, fontWeight: '600', textAlign: 'center' }}>
-              {t('parental.limitReachedHint') || 'Faca uma pausa, leia um livro ou brinque ao ar livre!'}
+              {t('parental.limitReachedHint') || 'Faça uma pausa, leia um livro ou brinque ao ar livre!'}
             </Text>
           </View>
           <TouchableOpacity
@@ -639,11 +639,11 @@ export default function ChildRestrictionGuard({ children }) {
 
           {/* Sweet dreams message */}
           <View style={{ marginTop: 28, flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-            <Text style={{ fontSize: 24 }}>{'\u2728'}</Text>
+            <IconSparkles size={22} color="#fbbf24" />
             <Text style={{ fontSize: 20, color: '#fbbf24', fontWeight: '700' }}>
               {t('kids.restriction.sweetDreams')}
             </Text>
-            <Text style={{ fontSize: 24 }}>{'\u2728'}</Text>
+            <IconSparkles size={22} color="#fbbf24" />
           </View>
 
           {/* Bonus 30min CTA \u2014 distinct from the generic "ask parent" so the

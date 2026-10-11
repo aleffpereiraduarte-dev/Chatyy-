@@ -14,6 +14,7 @@ import {
 import Svg, { Path, Circle as SvgCircle } from 'react-native-svg';
 import * as api from '../services/api';
 import { USE_NATIVE_SHEETS, NativeSheet } from './NativeSheet'; // [2026-10-09 native-sheets]
+import { IconFlag, IconFileText, IconZap, IconAward, IconFlame, IconDiamond, IconStarFilled, IconSparkles, IconVerifiedBadge } from './Icons';
 
 const { width: SCREEN_W } = Dimensions.get('window');
 
@@ -38,6 +39,14 @@ function IconFire({ size = 14, color = '#f97316' }) {
     </Svg>
   );
 }
+
+// Ícones SVG por conquista (o backend ainda manda `emoji`, ignorado na UI).
+const BADGE_ICONS = {
+  first_q: IconFlag, q10: IconFileText, q50: IconZap, q100: IconAward,
+  streak3: IconFlame, streak7: IconDiamond, streak30: IconStarFilled,
+  stars10: IconStar, stars50: IconSparkles, stars200: IconStarFilled,
+  level3: IconAward, level5: IconVerifiedBadge,
+};
 
 function BadgeTile({ badge, delay }) {
   const scale = useRef(new Animated.Value(badge.unlocked ? 0.5 : 1)).current;
@@ -65,7 +74,7 @@ function BadgeTile({ badge, delay }) {
         borderWidth: u ? 2 : 1,
         borderColor: u ? '#fbbf24' : '#d1d5db',
       }}>
-        <Text style={{ fontSize: 36, opacity: u ? 1 : 0.3 }}>{badge.emoji}</Text>
+        {(() => { const BIcon = BADGE_ICONS[badge.key] || IconAward; return <BIcon size={34} color={u ? '#92400e' : '#9ca3af'} />; })()}
       </View>
       <Text numberOfLines={1} style={{ fontSize: 12, fontWeight: '700', color: u ? '#111' : '#9ca3af', textAlign: 'center' }}>
         {badge.name}
@@ -115,7 +124,7 @@ export default function KidsAchievementsModal({ visible, onClose, colors, isDark
                 {unlocked}/{total} {t?.('kids.achievements.unlocked') || 'desbloqueadas'}
               </Text>
             </View>
-            <TouchableOpacity onPress={onClose} style={styles.closeBtn} accessibilityLabel="Fechar">
+            <TouchableOpacity onPress={onClose} style={styles.closeBtn} accessibilityLabel={t?.('common.close') || 'Fechar'}>
               <IconX size={22} color="#fff" />
             </TouchableOpacity>
           </View>
@@ -123,7 +132,7 @@ export default function KidsAchievementsModal({ visible, onClose, colors, isDark
           {/* Stats row */}
           <View style={styles.statsRow}>
             <View style={styles.statPill}>
-              <Text style={styles.statNum}>Lv.{stats.level || 1}</Text>
+              <Text style={styles.statNum}>{t?.('kidsLearn.levelShort', { n: stats.level || 1 }) || ('Lv.' + (stats.level || 1))}</Text>
               <Text style={styles.statLabel}>{t?.('kids.level') || 'Nível'}</Text>
             </View>
             <View style={[styles.statPill, { backgroundColor: '#fef3c7' }]}>

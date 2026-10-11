@@ -54,19 +54,20 @@ import { PLANS_ENABLED } from '../constants/featureFlags';
 // "on-accent" color for filled buttons.
 function useFamilyPalette() {
   const { colors, isDark } = useTheme();
+  const { t } = useLanguage();
   const accent = isDark ? colors.text : colors.primary;
   const onAccent = isDark ? colors.background : '#ffffff';
   const heroBg = isDark ? colors.surfaceVariant : '#f5f6f8';
   const roles = {
-    parent: { bg: accent + '1A', fg: accent, label: 'Pai/Mãe' },
-    spouse: { bg: (isDark ? '#F472B6' : '#DB2777') + '22', fg: isDark ? '#F9A8D4' : '#DB2777', label: 'Cônjuge' },
-    child:  { bg: (colors.success || '#10B981') + '22', fg: colors.success || '#10B981', label: 'Criança' },
+    parent: { bg: accent + '1A', fg: accent, label: t('family.role.parent') },
+    spouse: { bg: (isDark ? '#F472B6' : '#DB2777') + '22', fg: isDark ? '#F9A8D4' : '#DB2777', label: t('family.role.spouse') },
+    child:  { bg: (colors.success || '#10B981') + '22', fg: colors.success || '#10B981', label: t('family.role.child') },
   };
   return { colors, isDark, accent, onAccent, heroBg, roles };
 }
 
 // Relative "last seen" — tolerant of seconds / ms epochs and ISO strings.
-function relativeSeen(lastSeen) {
+function relativeSeen(lastSeen, t) {
   if (!lastSeen) return null;
   let ts = 0;
   if (typeof lastSeen === 'number') ts = lastSeen < 1e12 ? lastSeen * 1000 : lastSeen;
@@ -77,17 +78,17 @@ function relativeSeen(lastSeen) {
   }
   if (!ts) return null;
   const diff = Date.now() - ts;
-  if (diff < 90000) return 'visto agora há pouco';
+  if (diff < 90000) return t('family.seen.now');
   const min = Math.floor(diff / 60000);
-  if (min < 60) return `visto há ${min} min`;
+  if (min < 60) return t('family.seen.min', { n: min });
   const h = Math.floor(min / 60);
-  if (h < 24) return `visto há ${h} h`;
+  if (h < 24) return t('family.seen.hour', { n: h });
   const d = Math.floor(h / 24);
-  if (d < 7) return `visto há ${d} ${d === 1 ? 'dia' : 'dias'}`;
+  if (d < 7) return t(d === 1 ? 'family.seen.day' : 'family.seen.days', { n: d });
   const w = Math.floor(d / 7);
-  if (w < 5) return `visto há ${w} sem`;
+  if (w < 5) return t('family.seen.week', { n: w });
   const mo = Math.floor(d / 30);
-  return `visto há ${mo} ${mo === 1 ? 'mês' : 'meses'}`;
+  return t(mo === 1 ? 'family.seen.month' : 'family.seen.months', { n: mo });
 }
 
 // Normalize any "list" response body into a plain array (the real handlers'
@@ -203,6 +204,7 @@ function CollapsibleFeature({ icon: Icon, color, title, subtitle, colors, badge,
 
 // ── Shared shopping list — fully interactive (get / add {text} / toggle {id}) ──
 function SharedShoppingList({ colors, accent, onAccent }) {
+  const { t } = useLanguage();
   const [items, setItems] = useState(null); // null = not loaded
   const [busy, setBusy] = useState(false);
   const [text, setText] = useState('');
@@ -232,7 +234,7 @@ function SharedShoppingList({ colors, accent, onAccent }) {
     try {
       const r = await api.familyShoppingListAdd(v);
       if (r?.success) { try { haptic.light(); } catch {} load(); }
-      else { setText(v); Alert.alert('Lista', r?.message || 'Não foi possível adicionar.'); }
+      else { setText(v); Alert.alert(t('family.shopping.title'), r?.message || t('notifPref.addFailed')); }
     } catch { setText(v); } finally { setAdding(false); }
   };
 
@@ -245,12 +247,12 @@ function SharedShoppingList({ colors, accent, onAccent }) {
   if (items === null) {
     return busy
       ? <ActivityIndicator color={accent} style={{ marginVertical: 10 }} />
-      : <Text style={{ color: colors.textSecondary, fontSize: FontSize.sm, paddingVertical: 6 }}>Toque pra carregar…</Text>;
+      : <Text style={{ color: colors.textSecondary, fontSize: FontSize.sm, paddingVertical: 6 }}>{t('family.tapToLoad')}</Text>;
   }
   return (
     <View>
       {items.length === 0 && !busy && (
-        <Text style={{ color: colors.textSecondary, fontSize: FontSize.sm, paddingVertical: 8 }}>Lista vazia. Adicione o primeiro item.</Text>
+        <Text style={{ color: colors.textSecondary, fontSize: FontSize.sm, paddingVertical: 8 }}>{t('family.shopping.empty')}</Text>
       )}
       {items.map(it => (
         <TouchableOpacity key={it.id} onPress={() => toggle(it.id)} activeOpacity={0.6} style={{ flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 9 }} accessibilityRole="checkbox" accessibilityState={{ checked: it.checked }} accessibilityLabel={it.text}>
@@ -266,11 +268,11 @@ function SharedShoppingList({ colors, accent, onAccent }) {
           onChangeText={setText}
           onSubmitEditing={add}
           returnKeyType="done"
-          placeholder="Adicionar item…"
+          placeholder={t('family.shopping.addPh')}
           placeholderTextColor={colors.textSecondary}
           style={{ flex: 1, backgroundColor: colors.borderLight, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 9, color: colors.text, fontSize: FontSize.base }}
         />
-        <TouchableOpacity onPress={add} disabled={adding || !text.trim()} style={{ backgroundColor: accent, borderRadius: 10, width: 42, height: 40, alignItems: 'center', justifyContent: 'center', opacity: (adding || !text.trim()) ? 0.5 : 1 }} accessibilityRole="button" accessibilityLabel="Adicionar item">
+        <TouchableOpacity onPress={add} disabled={adding || !text.trim()} style={{ backgroundColor: accent, borderRadius: 10, width: 42, height: 40, alignItems: 'center', justifyContent: 'center', opacity: (adding || !text.trim()) ? 0.5 : 1 }} accessibilityRole="button" accessibilityLabel={t('family.shopping.add')}>
           {adding ? <ActivityIndicator color={onAccent} /> : <IconPlus size={20} color={onAccent} />}
         </TouchableOpacity>
       </View>
@@ -280,6 +282,7 @@ function SharedShoppingList({ colors, accent, onAccent }) {
 
 // ── Shared album — grid of photos + add via picker ──
 function SharedAlbum({ colors, accent }) {
+  const { t } = useLanguage();
   const [items, setItems] = useState(null);
   const [busy, setBusy] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -301,35 +304,35 @@ function SharedAlbum({ colors, accent }) {
   const addPhoto = async () => {
     try {
       const ImagePicker = await import('expo-image-picker').catch(() => null);
-      if (!ImagePicker) { Alert.alert('Álbum', 'Seletor de imagens indisponível.'); return; }
+      if (!ImagePicker) { Alert.alert(t('family.album.short'), t('family.album.pickerUnavailable')); return; }
       const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
-      if (!perm.granted) { Alert.alert('Permissão negada', 'Permita acesso às fotos pra adicionar ao álbum.'); return; }
+      if (!perm.granted) { Alert.alert(t('common.permissionDenied'), t('family.album.permBody')); return; }
       if (Platform.OS === 'ios') await new Promise(r => setTimeout(r, 300));
       const pick = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], quality: 0.9 });
       if (pick.canceled || !pick.assets?.length) return;
       setUploading(true);
       const r = await api.familySharedAlbumAdd(pick.assets[0].uri, '');
       if (r?.success) { try { haptic.success(); } catch {} load(); }
-      else Alert.alert('Álbum', r?.message || 'Falha ao enviar a foto.');
-    } catch { Alert.alert('Álbum', 'Falha ao enviar a foto.'); }
+      else Alert.alert(t('family.album.short'), r?.message || t('profile.avatarUploadFailed'));
+    } catch { Alert.alert(t('family.album.short'), t('profile.avatarUploadFailed')); }
     finally { setUploading(false); }
   };
 
   if (items === null) {
     return busy
       ? <ActivityIndicator color={accent} style={{ marginVertical: 10 }} />
-      : <Text style={{ color: colors.textSecondary, fontSize: FontSize.sm, paddingVertical: 6 }}>Toque pra carregar…</Text>;
+      : <Text style={{ color: colors.textSecondary, fontSize: FontSize.sm, paddingVertical: 6 }}>{t('family.tapToLoad')}</Text>;
   }
   return (
     <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 4 }}>
       {items.map(it => (
         <Image key={it.id} source={{ uri: it.url }} style={{ width: 84, height: 84, borderRadius: 12, backgroundColor: colors.borderLight }} />
       ))}
-      <TouchableOpacity onPress={addPhoto} disabled={uploading} style={{ width: 84, height: 84, borderRadius: 12, borderWidth: 1.5, borderColor: colors.border, borderStyle: 'dashed', alignItems: 'center', justifyContent: 'center', backgroundColor: accent + '0D' }} accessibilityRole="button" accessibilityLabel="Adicionar foto ao álbum">
+      <TouchableOpacity onPress={addPhoto} disabled={uploading} style={{ width: 84, height: 84, borderRadius: 12, borderWidth: 1.5, borderColor: colors.border, borderStyle: 'dashed', alignItems: 'center', justifyContent: 'center', backgroundColor: accent + '0D' }} accessibilityRole="button" accessibilityLabel={t('family.album.add')}>
         {uploading ? <ActivityIndicator color={accent} /> : <IconPlus size={24} color={accent} />}
       </TouchableOpacity>
       {items.length === 0 && !busy && (
-        <Text style={{ color: colors.textSecondary, fontSize: FontSize.sm, width: '100%', marginTop: 8 }}>Nenhuma foto ainda. Adicione a primeira.</Text>
+        <Text style={{ color: colors.textSecondary, fontSize: FontSize.sm, width: '100%', marginTop: 8 }}>{t('family.album.empty')}</Text>
       )}
     </View>
   );
@@ -337,6 +340,7 @@ function SharedAlbum({ colors, accent }) {
 
 // ── Shared calendar — upcoming events list + quick add ──
 function SharedCalendar({ colors, accent, onAccent }) {
+  const { t } = useLanguage();
   const [items, setItems] = useState(null);
   const [busy, setBusy] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
@@ -346,7 +350,7 @@ function SharedCalendar({ colors, accent, onAccent }) {
 
   const normalize = (body) => pickArray(body, 'events', 'items', 'calendar').map((it, i) => ({
     id: it.id ?? it._id ?? String(i),
-    title: (it.title ?? it.name ?? it.summary ?? 'Evento').toString(),
+    title: (it.title ?? it.name ?? it.summary ?? t('eventDetail.title')).toString(),
     date: it.date || it.start || it.when || it.datetime || it.start_date || '',
   }));
 
@@ -360,17 +364,17 @@ function SharedCalendar({ colors, accent, onAccent }) {
 
   const save = async () => {
     const tt = title.trim();
-    if (!tt) { Alert.alert('Evento', 'Dê um título ao evento.'); return; }
+    if (!tt) { Alert.alert(t('eventDetail.title'), t('family.event.needTitle')); return; }
     setSaving(true);
     try {
       const r = await api.familyCalendarAdd({ title: tt, date: date.trim() });
       if (r?.success) { try { haptic.success(); } catch {} setAddOpen(false); setTitle(''); setDate(''); load(); }
-      else Alert.alert('Evento', r?.message || 'Não foi possível salvar.');
-    } catch { Alert.alert('Evento', 'Falha de conexão.'); } finally { setSaving(false); }
+      else Alert.alert(t('eventDetail.title'), r?.message || t('profile.saveFailed'));
+    } catch { Alert.alert(t('eventDetail.title'), t('common.networkError')); } finally { setSaving(false); }
   };
 
   const fmtDate = (d) => {
-    const r = relativeSeen(d); // reuse epoch/ISO parsing; fall back to raw
+    const r = relativeSeen(d, t); // reuse epoch/ISO parsing; fall back to raw
     if (!d) return '';
     const parsed = Date.parse(typeof d === 'number' ? d : d);
     if (!Number.isNaN(parsed)) {
@@ -382,12 +386,12 @@ function SharedCalendar({ colors, accent, onAccent }) {
   if (items === null) {
     return busy
       ? <ActivityIndicator color={accent} style={{ marginVertical: 10 }} />
-      : <Text style={{ color: colors.textSecondary, fontSize: FontSize.sm, paddingVertical: 6 }}>Toque pra carregar…</Text>;
+      : <Text style={{ color: colors.textSecondary, fontSize: FontSize.sm, paddingVertical: 6 }}>{t('family.tapToLoad')}</Text>;
   }
   return (
     <View>
       {items.length === 0 && !busy && (
-        <Text style={{ color: colors.textSecondary, fontSize: FontSize.sm, paddingVertical: 8 }}>Nenhum evento. Crie o primeiro.</Text>
+        <Text style={{ color: colors.textSecondary, fontSize: FontSize.sm, paddingVertical: 8 }}>{t('family.event.empty')}</Text>
       )}
       {items.map(ev => (
         <View key={ev.id} style={{ flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 9 }}>
@@ -398,20 +402,20 @@ function SharedCalendar({ colors, accent, onAccent }) {
           {!!ev.date && <Text style={{ fontSize: FontSize.sm, color: colors.textSecondary, fontWeight: '600' }}>{fmtDate(ev.date)}</Text>}
         </View>
       ))}
-      <TouchableOpacity onPress={() => setAddOpen(true)} activeOpacity={0.7} style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 8, paddingVertical: 8 }} accessibilityRole="button" accessibilityLabel="Novo evento">
+      <TouchableOpacity onPress={() => setAddOpen(true)} activeOpacity={0.7} style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 8, paddingVertical: 8 }} accessibilityRole="button" accessibilityLabel={t('one.newEvent')}>
         <IconPlus size={18} color={accent} />
-        <Text style={{ color: accent, fontWeight: '700', fontSize: FontSize.base }}>Novo evento</Text>
+        <Text style={{ color: accent, fontWeight: '700', fontSize: FontSize.base }}>{t('one.newEvent')}</Text>
       </TouchableOpacity>
 
       <Modal visible={addOpen} transparent animationType="fade" onRequestClose={() => setAddOpen(false)}>
         <View style={s.centerOverlay}>
           <View style={[s.centerCard, { backgroundColor: colors.surface }]}>
-            <Text style={[s.modalTitle, { color: colors.text }]}>Novo evento</Text>
-            <TextInput value={title} onChangeText={setTitle} placeholder="Título" placeholderTextColor={colors.textSecondary} style={[s.input, { color: colors.text, backgroundColor: colors.borderLight, borderColor: colors.border, marginTop: 14 }]} autoFocus />
-            <TextInput value={date} onChangeText={setDate} placeholder="Data (ex: 2026-12-25)" placeholderTextColor={colors.textSecondary} autoCapitalize="none" style={[s.input, { color: colors.text, backgroundColor: colors.borderLight, borderColor: colors.border, marginTop: 10 }]} />
+            <Text style={[s.modalTitle, { color: colors.text }]}>{t('one.newEvent')}</Text>
+            <TextInput value={title} onChangeText={setTitle} placeholder={t('eventDetail.titleField')} placeholderTextColor={colors.textSecondary} style={[s.input, { color: colors.text, backgroundColor: colors.borderLight, borderColor: colors.border, marginTop: 14 }]} autoFocus />
+            <TextInput value={date} onChangeText={setDate} placeholder={t('family.event.datePh')} placeholderTextColor={colors.textSecondary} autoCapitalize="none" style={[s.input, { color: colors.text, backgroundColor: colors.borderLight, borderColor: colors.border, marginTop: 10 }]} />
             <View style={{ flexDirection: 'row', gap: 10, marginTop: 16 }}>
-              <TouchableOpacity onPress={() => setAddOpen(false)} style={[s.btn, { backgroundColor: colors.borderLight, flex: 1 }]}><Text style={[s.btnText, { color: colors.text }]}>Cancelar</Text></TouchableOpacity>
-              <TouchableOpacity onPress={save} disabled={saving} style={[s.btn, { backgroundColor: accent, flex: 1, opacity: saving ? 0.6 : 1 }]}>{saving ? <ActivityIndicator color={onAccent} /> : <Text style={[s.btnText, { color: onAccent }]}>Salvar</Text>}</TouchableOpacity>
+              <TouchableOpacity onPress={() => setAddOpen(false)} style={[s.btn, { backgroundColor: colors.borderLight, flex: 1 }]}><Text style={[s.btnText, { color: colors.text }]}>{t('common.cancel')}</Text></TouchableOpacity>
+              <TouchableOpacity onPress={save} disabled={saving} style={[s.btn, { backgroundColor: accent, flex: 1, opacity: saving ? 0.6 : 1 }]}>{saving ? <ActivityIndicator color={onAccent} /> : <Text style={[s.btnText, { color: onAccent }]}>{t('common.save')}</Text>}</TouchableOpacity>
             </View>
           </View>
         </View>
@@ -421,24 +425,25 @@ function SharedCalendar({ colors, accent, onAccent }) {
 }
 
 function MemberRow({ member, colors, roles, ownerEmail, isMe, onRemove, index = 0 }) {
+  const { t } = useLanguage();
   const safeEmail = (member?.email || member?.child_email || '').toString();
   const safeName = (member?.name || member?.child_name || (safeEmail.includes('@') ? safeEmail.split('@')[0] : safeEmail) || '').toString();
   const online = !!member?.online || member?.presence === 'online';
-  const seen = online ? null : relativeSeen(member?.last_seen);
+  const seen = online ? null : relativeSeen(member?.last_seen, t);
   // Role badge: owner → "Responsável"; else the member's role if the backend
   // provides one; else nothing (the contract's member shape has no role).
   const isOwnerEmail = !!ownerEmail && safeEmail.toLowerCase() === ownerEmail.toLowerCase();
   const palette = isOwnerEmail
-    ? { bg: (colors.primary || '#111') + '00', fg: colors.text, label: 'Responsável', owner: true }
+    ? { bg: (colors.primary || '#111') + '00', fg: colors.text, label: t('family.role.owner'), owner: true }
     : (member?.role && roles[member.role]) ? roles[member.role] : null;
 
   const enter = useRef(new Animated.Value(0)).current;
   const avatarScale = useRef(new Animated.Value(1)).current;
   useEffect(() => {
-    const t = setTimeout(() => {
+    const tm = setTimeout(() => {
       Animated.timing(enter, { toValue: 1, duration: 320, easing: Easing.out(Easing.cubic), useNativeDriver: true }).start();
     }, Math.min(index, 8) * 55);
-    return () => clearTimeout(t);
+    return () => clearTimeout(tm);
   }, [enter, index]);
   const bounceAvatar = () => {
     try { haptic.light(); } catch {}
@@ -450,14 +455,14 @@ function MemberRow({ member, colors, roles, ownerEmail, isMe, onRemove, index = 
 
   return (
     <Animated.View style={[s.memberRow, { borderBottomColor: colors.border }, { opacity: enter, transform: [{ scale: enter.interpolate({ inputRange: [0, 1], outputRange: [0.94, 1] }) }] }]}>
-      <TouchableOpacity activeOpacity={0.85} onPress={bounceAvatar} accessibilityRole="image" accessibilityLabel={safeName || safeEmail || 'Familiar'}>
+      <TouchableOpacity activeOpacity={0.85} onPress={bounceAvatar} accessibilityRole="image" accessibilityLabel={safeName || safeEmail || t('family.memberFallback')}>
         <Animated.View style={{ transform: [{ scale: avatarScale }] }}>
           <AvatarCircle email={safeEmail} name={safeName} size={46} online={online} showStatus ringColor={colors.success || '#10B981'} />
         </Animated.View>
       </TouchableOpacity>
       <View style={{ flex: 1, marginLeft: 12 }}>
         <Text style={[s.memberName, { color: colors.text }]} numberOfLines={1}>
-          {safeName || safeEmail || 'Familiar'}{isMe ? ' (você)' : ''}
+          {safeName || safeEmail || t('family.memberFallback')}{isMe ? ` (${t('chatConv.you')})` : ''}
         </Text>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 4 }}>
           {palette && (
@@ -468,14 +473,14 @@ function MemberRow({ member, colors, roles, ownerEmail, isMe, onRemove, index = 
           {online ? (
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
               <View style={{ width: 7, height: 7, borderRadius: 4, backgroundColor: colors.success || '#10B981' }} />
-              <Text style={{ fontSize: 12, fontWeight: '600', color: colors.success || '#10B981' }}>online agora</Text>
+              <Text style={{ fontSize: 12, fontWeight: '600', color: colors.success || '#10B981' }}>{t('parental.onlineNow')}</Text>
             </View>
           ) : !!seen && <Text style={{ fontSize: 12, color: colors.textSecondary }}>{seen}</Text>}
         </View>
       </View>
       {onRemove && !isMe && (
-        <TouchableOpacity onPress={() => onRemove(member)} accessibilityLabel={`Remover ${safeName || safeEmail}`} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }} style={{ padding: 6 }}>
-          <Text style={{ color: colors.error || '#ef4444', fontSize: 13, fontWeight: '700' }}>Remover</Text>
+        <TouchableOpacity onPress={() => onRemove(member)} accessibilityLabel={t('family.removeA11y', { name: safeName || safeEmail })} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }} style={{ padding: 6 }}>
+          <Text style={{ color: colors.error || '#ef4444', fontSize: 13, fontWeight: '700' }}>{t('common.remove')}</Text>
         </TouchableOpacity>
       )}
     </Animated.View>
@@ -566,8 +571,8 @@ function FamilyScreenInner() {
         // minimal solo family from the signed-in user so the screen never
         // renders blank.
         setFamily({
-          id: 'self', name: 'Minha família', owner_email: myEmail, is_owner: true,
-          members: [{ email: myEmail || 'me', name: user?.name || myEmail || 'Você', online: true, presence: 'online' }],
+          id: 'self', name: '', owner_email: myEmail, is_owner: true,
+          members: [{ email: myEmail || 'me', name: user?.name || myEmail || t('common.you'), online: true, presence: 'online' }],
         });
       }
       if (r2?.success && r2.data) setPlanShare(r2.data);
@@ -576,7 +581,7 @@ function FamilyScreenInner() {
     } finally {
       setLoading(false);
     }
-  }, [myEmail, user?.name]);
+  }, [myEmail, user?.name, t]);
 
   useEffect(() => { try { console.log('[FAMILIA-DIAG][family][mount]'); } catch {} loadInfo(); }, [loadInfo]);
 
@@ -592,11 +597,11 @@ function FamilyScreenInner() {
   // ── Invite → share deep-link ──
   const handleInvite = async () => {
     const target = inviteTarget.trim();
-    if (!target) { Alert.alert('Convite', 'Informe o e-mail ou telefone do familiar.'); return; }
+    if (!target) { Alert.alert(t('family.invite.title'), t('family.invite.needTarget')); return; }
     const tgtLower = target.toLowerCase();
-    if (tgtLower === myEmail) { Alert.alert('Convite', 'Você não pode se convidar.'); return; }
+    if (tgtLower === myEmail) { Alert.alert(t('family.invite.title'), t('family.invite.self')); return; }
     if (members.some(m => (m.email || '').toLowerCase() === tgtLower)) {
-      Alert.alert('Convite', 'Esse familiar já está na sua família.'); return;
+      Alert.alert(t('family.invite.title'), t('family.invite.already')); return;
     }
     setInviteSending(true);
     try {
@@ -606,27 +611,27 @@ function FamilyScreenInner() {
         setInviteOpen(false); setInviteTarget('');
         const link = r?.data?.link;
         if (link) {
-          Alert.alert('Convite criado', `Envie este link pro ${target} entrar na sua família.`, [
-            { text: 'Fechar', style: 'cancel' },
-            { text: 'Compartilhar', onPress: () => { Share.share({ message: `Entre na ${family?.name || 'minha família'} no Chatyy: ${link}` }).catch(() => {}); } },
+          Alert.alert(t('family.invite.created'), t('family.invite.createdBody', { target }), [
+            { text: t('common.close'), style: 'cancel' },
+            { text: t('common.share'), onPress: () => { Share.share({ message: t('family.invite.shareMsg', { family: family?.name || t('family.myFamilyLower'), link }) }).catch(() => {}); } },
           ]);
         } else {
-          Alert.alert('Convite enviado', `${target} vai receber um convite pra entrar na sua família.`);
+          Alert.alert(t('family.invite.sent'), t('family.invite.sentBody', { target }));
         }
         loadInfo();
       } else {
         // Rate-limit (10/24h) and other failures return a pt-BR message.
-        Alert.alert('Convite', r?.message || 'Não foi possível enviar o convite agora.');
+        Alert.alert(t('family.invite.title'), r?.message || t('family.invite.sendFailed'));
       }
     } catch {
-      Alert.alert('Convite', 'Falha de conexão. Tente novamente.');
+      Alert.alert(t('family.invite.title'), t('common.networkError'));
     } finally { setInviteSending(false); }
   };
 
   // ── Join by pasted invite link / token ──
   const handleJoin = async () => {
     const raw = joinValue.trim();
-    if (!raw) { Alert.alert('Convite', 'Cole o link ou o código do convite.'); return; }
+    if (!raw) { Alert.alert(t('family.invite.title'), t('family.join.needValue')); return; }
     const m = raw.match(/family\/join\/([^\s/?#]+)/i);
     const token = m ? m[1] : raw;
     setJoinBusy(true);
@@ -638,9 +643,9 @@ function FamilyScreenInner() {
         setLoading(true);
         await loadInfo();
       } else {
-        Alert.alert('Convite', r?.message || 'Convite inválido ou expirado.');
+        Alert.alert(t('family.invite.title'), r?.message || t('family.join.invalid'));
       }
-    } catch { Alert.alert('Convite', 'Falha de conexão. Tente novamente.'); }
+    } catch { Alert.alert(t('family.invite.title'), t('common.networkError')); }
     finally { setJoinBusy(false); }
   };
 
@@ -660,11 +665,11 @@ function FamilyScreenInner() {
     const label = member.name || member.email;
     const doRemove = async () => { try { await api.familyRemoveMember(member.email); } catch {} loadInfo(); };
     if (Platform.OS === 'web') {
-      if (typeof window !== 'undefined' && window.confirm(`Remover ${label} da família?`)) doRemove();
+      if (typeof window !== 'undefined' && window.confirm(t('family.remove.confirm', { name: label }))) doRemove();
     } else {
-      Alert.alert('Remover familiar', `Remover ${label} da família?`, [
-        { text: 'Cancelar', style: 'cancel' },
-        { text: 'Remover', style: 'destructive', onPress: doRemove },
+      Alert.alert(t('family.remove.title'), t('family.remove.confirm', { name: label }), [
+        { text: t('common.cancel'), style: 'cancel' },
+        { text: t('common.remove'), style: 'destructive', onPress: doRemove },
       ]);
     }
   };
@@ -673,11 +678,11 @@ function FamilyScreenInner() {
   const confirmLeave = () => {
     const doLeave = async () => { try { await api.familyLeave(); } catch {} setLoading(true); await loadInfo(); };
     if (Platform.OS === 'web') {
-      if (typeof window !== 'undefined' && window.confirm('Sair desta família?')) doLeave();
+      if (typeof window !== 'undefined' && window.confirm(t('family.leave.confirmWeb'))) doLeave();
     } else {
-      Alert.alert('Sair da família', 'Você deixará de compartilhar com esta família. Continuar?', [
-        { text: 'Cancelar', style: 'cancel' },
-        { text: 'Sair', style: 'destructive', onPress: doLeave },
+      Alert.alert(t('family.leave.title'), t('family.leave.body'), [
+        { text: t('common.cancel'), style: 'cancel' },
+        { text: t('community.leave'), style: 'destructive', onPress: doLeave },
       ]);
     }
   };
@@ -703,12 +708,12 @@ function FamilyScreenInner() {
     })} />
   ) : (
     <View style={[s.header, { backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
-      <TouchableOpacity onPress={() => router.back()} style={s.backBtn} accessibilityRole="button" accessibilityLabel="Voltar">
+      <TouchableOpacity onPress={() => router.back()} style={s.backBtn} accessibilityRole="button" accessibilityLabel={t('common.back')}>
         <IconArrowLeft size={22} color={colors.text} />
       </TouchableOpacity>
-      <Text style={[s.headerTitle, { color: colors.text }]}>Família</Text>
+      <Text style={[s.headerTitle, { color: colors.text }]}>{t('menu.family')}</Text>
       {isOwner && !loading && !errored ? (
-        <TouchableOpacity onPress={() => setInviteOpen(true)} style={s.backBtn} accessibilityRole="button" accessibilityLabel="Convidar familiar">
+        <TouchableOpacity onPress={() => setInviteOpen(true)} style={s.backBtn} accessibilityRole="button" accessibilityLabel={t('family.invite.cta')}>
           <IconPlus size={22} color={accent} />
         </TouchableOpacity>
       ) : <View style={{ width: 30 }} />}
@@ -727,10 +732,10 @@ function FamilyScreenInner() {
           <View style={{ width: 72, height: 72, borderRadius: 36, backgroundColor: accent + '14', alignItems: 'center', justifyContent: 'center', marginBottom: 16 }}>
             <IconUsers size={34} color={accent} />
           </View>
-          <Text style={{ fontSize: FontSize.lg, fontWeight: '800', color: colors.text, marginBottom: 6 }}>Não deu pra carregar</Text>
-          <Text style={{ fontSize: FontSize.sm, color: colors.textSecondary, textAlign: 'center', marginBottom: 20, lineHeight: 19 }}>Tivemos um probleminha ao buscar sua família. Tente de novo.</Text>
-          <PressableScale onPress={() => { setLoading(true); loadInfo(); }} style={[s.cta, { backgroundColor: accent }]} accessibilityRole="button" accessibilityLabel="Tentar novamente">
-            <Text style={{ color: onAccent, fontWeight: '800', fontSize: FontSize.base }}>Tentar novamente</Text>
+          <Text style={{ fontSize: FontSize.lg, fontWeight: '800', color: colors.text, marginBottom: 6 }}>{t('family.loadErrorTitle')}</Text>
+          <Text style={{ fontSize: FontSize.sm, color: colors.textSecondary, textAlign: 'center', marginBottom: 20, lineHeight: 19 }}>{t('family.loadErrorBody')}</Text>
+          <PressableScale onPress={() => { setLoading(true); loadInfo(); }} style={[s.cta, { backgroundColor: accent }]} accessibilityRole="button" accessibilityLabel={t('common.tryAgain')}>
+            <Text style={{ color: onAccent, fontWeight: '800', fontSize: FontSize.base }}>{t('common.tryAgain')}</Text>
           </PressableScale>
         </View>
       </View>
@@ -750,30 +755,30 @@ function FamilyScreenInner() {
             onPress={() => { setRenameValue(family?.name || ''); setRenameOpen(true); }}
             activeOpacity={0.7}
             accessibilityRole="button"
-            accessibilityLabel={isOwner ? 'Renomear família' : 'Nome da família'}
+            accessibilityLabel={isOwner ? t('family.rename') : t('family.nameTitle')}
             style={{ marginTop: 16, alignItems: 'center' }}
           >
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 7 }}>
-              <Text style={[s.heroTitle, { color: colors.text }]}>{family?.name || 'Minha família'}</Text>
+              <Text style={[s.heroTitle, { color: colors.text }]}>{family?.name || t('family.myFamily')}</Text>
               {isOwner && <IconEdit size={16} color={colors.textSecondary} />}
             </View>
             <Text style={[s.heroSub, { color: colors.textSecondary }]}>
-              {memberCount} {memberCount === 1 ? 'membro' : 'membros'}
-              {onlineCount > 0 ? ` · ${onlineCount} online` : ''}
+              {t(memberCount === 1 ? 'family.memberCount1' : 'family.memberCountN', { n: memberCount })}
+              {onlineCount > 0 ? ` · ${t('family.onlineCount', { n: onlineCount })}` : ''}
             </Text>
           </TouchableOpacity>
 
           {memberCount <= 1 && isOwner && (
-            <PressableScale onPress={() => setInviteOpen(true)} style={[s.cta, { backgroundColor: accent, marginTop: 18, paddingHorizontal: 22 }]} accessibilityRole="button" accessibilityLabel="Convidar familiar">
+            <PressableScale onPress={() => setInviteOpen(true)} style={[s.cta, { backgroundColor: accent, marginTop: 18, paddingHorizontal: 22 }]} accessibilityRole="button" accessibilityLabel={t('family.invite.cta')}>
               <IconPlus size={18} color={onAccent} />
-              <Text style={{ color: onAccent, fontWeight: '800', fontSize: FontSize.base }}>Convidar familiar</Text>
+              <Text style={{ color: onAccent, fontWeight: '800', fontSize: FontSize.base }}>{t('family.invite.cta')}</Text>
             </PressableScale>
           )}
         </View>
 
         {/* Members */}
         <View style={s.section}>
-          <SectionHeader title="Membros" colors={colors} />
+          <SectionHeader title={t('community.members')} colors={colors} />
           <View style={[s.card, { backgroundColor: colors.surface, borderColor: colors.borderLight }]}>
             {members.map((m, idx) => (
               <MemberRow
@@ -788,14 +793,14 @@ function FamilyScreenInner() {
               />
             ))}
             {isOwner && (
-              <TouchableOpacity onPress={() => setInviteOpen(true)} activeOpacity={0.7} style={[s.row, { borderBottomWidth: 0 }]} accessibilityRole="button" accessibilityLabel="Convidar familiar">
+              <TouchableOpacity onPress={() => setInviteOpen(true)} activeOpacity={0.7} style={[s.row, { borderBottomWidth: 0 }]} accessibilityRole="button" accessibilityLabel={t('family.invite.cta')}>
                 <InvitePulseRing active={memberCount <= 1} accent={accent} />
                 <View style={[s.rowIcon, { backgroundColor: accent + '1A' }]}>
                   <IconPlus size={20} color={accent} />
                 </View>
                 <View style={{ flex: 1 }}>
-                  <Text style={[s.rowTitle, { color: accent, fontWeight: '700' }]}>Convidar familiar</Text>
-                  <Text style={[s.rowSub, { color: colors.textSecondary }]}>Adicione pai, mãe, cônjuge ou criança</Text>
+                  <Text style={[s.rowTitle, { color: accent, fontWeight: '700' }]}>{t('family.invite.cta')}</Text>
+                  <Text style={[s.rowSub, { color: colors.textSecondary }]}>{t('family.invite.rowSub')}</Text>
                 </View>
                 <IconChevronRight size={18} color={accent} />
               </TouchableOpacity>
@@ -807,47 +812,47 @@ function FamilyScreenInner() {
         <View style={s.section}>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginLeft: 4, marginBottom: 8 }}>
             <IconSparkles size={14} color={accent} />
-            <Text style={[s.sectionHeader, { color: colors.textSecondary, marginBottom: 0, marginLeft: 0 }]}>Inteligente</Text>
+            <Text style={[s.sectionHeader, { color: colors.textSecondary, marginBottom: 0, marginLeft: 0 }]}>{t('family.smart')}</Text>
           </View>
           <View style={[s.card, { backgroundColor: colors.surface, borderColor: colors.borderLight }]}>
             <FeatureRow
               icon={IconNavigation}
               color={accent}
-              title="Encontrar minha família"
-              subtitle={onlineCount > 0 ? `${onlineCount} ${onlineCount === 1 ? 'membro online agora' : 'membros online agora'} · ver no mapa` : 'Veja todos no mapa em tempo real'}
-              badge={onlineCount > 0 ? `${onlineCount} online` : null}
+              title={t('family.find.title')}
+              subtitle={onlineCount > 0 ? t(onlineCount === 1 ? 'family.find.subOnline1' : 'family.find.subOnlineN', { n: onlineCount }) : t('family.find.sub')}
+              badge={onlineCount > 0 ? t('family.onlineCount', { n: onlineCount }) : null}
               onPress={openFamilyMap}
               colors={colors}
             />
             <FeatureRow
               icon={IconMessageCircle}
               color="#3B82F6"
-              title="Chat da família"
-              subtitle="Converse com todo mundo em um grupo só"
+              title={t('family.chat.title')}
+              subtitle={t('family.chat.sub')}
               onPress={() => router.push('/chat-new')}
               colors={colors}
             />
             <CollapsibleFeature
               icon={IconCheckbox}
               color={colors.success || '#10B981'}
-              title="Lista de compras"
-              subtitle="Marque junto com a família"
+              title={t('family.shopping.title')}
+              subtitle={t('family.shopping.sub')}
               colors={colors}
               renderBody={() => <SharedShoppingList colors={colors} accent={accent} onAccent={onAccent} />}
             />
             <CollapsibleFeature
               icon={IconImage}
               color="#8B5CF6"
-              title="Álbum compartilhado"
-              subtitle="Fotos visíveis pra família toda"
+              title={t('family.album.title')}
+              subtitle={t('family.album.sub')}
               colors={colors}
               renderBody={() => <SharedAlbum colors={colors} accent={accent} />}
             />
             <CollapsibleFeature
               icon={IconCalendar}
               color="#F59E0B"
-              title="Calendário compartilhado"
-              subtitle="Eventos visíveis pra todos"
+              title={t('family.calendar.title')}
+              subtitle={t('family.calendar.sub')}
               colors={colors}
               renderBody={() => <SharedCalendar colors={colors} accent={accent} onAccent={onAccent} />}
               last
@@ -858,14 +863,14 @@ function FamilyScreenInner() {
         {/* Plan / parental (gated) */}
         {(PLANS_ENABLED) && (
           <View style={s.section}>
-            <SectionHeader title="Compartilhado" colors={colors} />
+            <SectionHeader title={t('family.sharedSection')} colors={colors} />
             <View style={[s.card, { backgroundColor: colors.surface, borderColor: colors.borderLight }]}>
               <FeatureRow
                 icon={IconStar}
                 color="#F59E0B"
-                title={planShare?.plan_name ? `Plano ${planShare.plan_name}` : 'Plano Plus/Pro'}
-                subtitle={planShare?.shared ? `Compartilhado com ${planShare.shared_with || memberCount} membros` : 'Compartilhe seu plano com até 6 pessoas'}
-                badge={planShare?.shared ? 'Ativo' : null}
+                title={planShare?.plan_name ? t('family.plan.named', { name: planShare.plan_name }) : t('family.plan.default')}
+                subtitle={planShare?.shared ? t('family.plan.sharedWith', { n: planShare.shared_with || memberCount }) : t('family.plan.shareUpTo')}
+                badge={planShare?.shared ? t('plans.active') : null}
                 onPress={() => router.push('/plans')}
                 colors={colors}
                 last
@@ -876,29 +881,29 @@ function FamilyScreenInner() {
 
         {/* Settings */}
         <View style={s.section}>
-          <SectionHeader title="Configurações da família" colors={colors} />
+          <SectionHeader title={t('family.settings')} colors={colors} />
           <View style={[s.card, { backgroundColor: colors.surface, borderColor: colors.borderLight }]}>
             <FeatureRow
               icon={IconUsers}
               color={accent}
-              title="Nome da família"
-              subtitle={isOwner ? (family?.name || 'Definir nome') : `${family?.name || '—'} · só o responsável edita`}
-              onPress={() => { if (isOwner) { setRenameValue(family?.name || ''); setRenameOpen(true); } else Alert.alert('Nome da família', 'Apenas o responsável pode alterar o nome.'); }}
+              title={t('family.nameTitle')}
+              subtitle={isOwner ? (family?.name || t('family.setName')) : t('family.ownerOnlyEdits', { name: family?.name || '—' })}
+              onPress={() => { if (isOwner) { setRenameValue(family?.name || ''); setRenameOpen(true); } else Alert.alert(t('family.nameTitle'), t('family.ownerOnlyRename')); }}
               colors={colors}
             />
             <FeatureRow
               icon={IconShield}
               color={colors.error || '#EF4444'}
-              title="Controle parental"
-              subtitle="Gerencie contas e limites das crianças"
+              title={t('settings.parentalControls')}
+              subtitle={t('family.parental.sub')}
               onPress={() => router.push('/parental')}
               colors={colors}
             />
             <FeatureRow
               icon={IconKey}
               color="#3B82F6"
-              title="Entrar com um convite"
-              subtitle="Cole o link que você recebeu de outra família"
+              title={t('family.join.rowTitle')}
+              subtitle={t('family.join.rowSub')}
               onPress={() => { setJoinValue(''); setJoinOpen(true); }}
               colors={colors}
               last={isOwner}
@@ -907,8 +912,8 @@ function FamilyScreenInner() {
               <FeatureRow
                 icon={IconLogout}
                 color={colors.error || '#EF4444'}
-                title="Sair da família"
-                subtitle="Deixar de compartilhar com esta família"
+                title={t('family.leave.title')}
+                subtitle={t('family.leave.sub')}
                 onPress={confirmLeave}
                 colors={colors}
                 last
@@ -924,23 +929,23 @@ function FamilyScreenInner() {
         <View style={s.sheetOverlay}>
           <View style={[s.sheet, { backgroundColor: colors.surface }]}>
             <View style={[s.grabber, { backgroundColor: colors.border }]} />
-            <Text style={[s.modalTitle, { color: colors.text }]}>Convidar familiar</Text>
-            <Text style={[s.modalSub, { color: colors.textSecondary }]}>Geramos um link de convite pra compartilhar.</Text>
+            <Text style={[s.modalTitle, { color: colors.text }]}>{t('family.invite.cta')}</Text>
+            <Text style={[s.modalSub, { color: colors.textSecondary }]}>{t('family.invite.sheetSub')}</Text>
 
-            <Text style={[s.label, { color: colors.textSecondary }]}>E-mail ou telefone</Text>
+            <Text style={[s.label, { color: colors.textSecondary }]}>{t('family.invite.targetLabel')}</Text>
             <TextInput
               value={inviteTarget}
               onChangeText={setInviteTarget}
-              placeholder="familiar@chatyy.com.br ou +55..."
+              placeholder={t('family.invite.targetPh')}
               placeholderTextColor={colors.textSecondary}
               keyboardType="email-address"
               autoCapitalize="none"
               style={[s.input, { color: colors.text, backgroundColor: colors.borderLight, borderColor: colors.border }]}
             />
 
-            <Text style={[s.label, { color: colors.textSecondary, marginTop: 16 }]}>Papel na família</Text>
+            <Text style={[s.label, { color: colors.textSecondary, marginTop: 16 }]}>{t('family.invite.roleLabel')}</Text>
             <View style={{ flexDirection: 'row', gap: 8, marginBottom: 18 }}>
-              {[{ key: 'child', label: 'Criança' }, { key: 'parent', label: 'Pai/Mãe' }, { key: 'spouse', label: 'Cônjuge' }].map(opt => {
+              {[{ key: 'child', label: t('family.role.child') }, { key: 'parent', label: t('family.role.parent') }, { key: 'spouse', label: t('family.role.spouse') }].map(opt => {
                 const sel = inviteRole === opt.key;
                 const palette = roles[opt.key];
                 return (
@@ -953,10 +958,10 @@ function FamilyScreenInner() {
 
             <View style={{ flexDirection: 'row', gap: 10 }}>
               <TouchableOpacity onPress={() => setInviteOpen(false)} style={[s.btn, { backgroundColor: colors.borderLight, flex: 1 }]} accessibilityRole="button">
-                <Text style={[s.btnText, { color: colors.text }]}>Cancelar</Text>
+                <Text style={[s.btnText, { color: colors.text }]}>{t('common.cancel')}</Text>
               </TouchableOpacity>
               <TouchableOpacity onPress={handleInvite} disabled={inviteSending} style={[s.btn, { backgroundColor: accent, flex: 1, opacity: inviteSending ? 0.6 : 1 }]} accessibilityRole="button">
-                {inviteSending ? <ActivityIndicator color={onAccent} /> : <View style={{ flexDirection: 'row', alignItems: 'center', gap: 7 }}><IconShare size={16} color={onAccent} /><Text style={[s.btnText, { color: onAccent }]}>Gerar convite</Text></View>}
+                {inviteSending ? <ActivityIndicator color={onAccent} /> : <View style={{ flexDirection: 'row', alignItems: 'center', gap: 7 }}><IconShare size={16} color={onAccent} /><Text style={[s.btnText, { color: onAccent }]}>{t('family.invite.generate')}</Text></View>}
               </TouchableOpacity>
             </View>
           </View>
@@ -967,11 +972,11 @@ function FamilyScreenInner() {
       <Modal visible={renameOpen} transparent animationType="fade" onRequestClose={() => setRenameOpen(false)}>
         <View style={s.centerOverlay}>
           <View style={[s.centerCard, { backgroundColor: colors.surface }]}>
-            <Text style={[s.modalTitle, { color: colors.text }]}>Nome da família</Text>
-            <TextInput value={renameValue} onChangeText={setRenameValue} placeholder="Ex: Família Silva" placeholderTextColor={colors.textSecondary} style={[s.input, { color: colors.text, backgroundColor: colors.borderLight, borderColor: colors.border, marginTop: 14 }]} maxLength={60} autoFocus />
+            <Text style={[s.modalTitle, { color: colors.text }]}>{t('family.nameTitle')}</Text>
+            <TextInput value={renameValue} onChangeText={setRenameValue} placeholder={t('family.renamePh')} placeholderTextColor={colors.textSecondary} style={[s.input, { color: colors.text, backgroundColor: colors.borderLight, borderColor: colors.border, marginTop: 14 }]} maxLength={60} autoFocus />
             <View style={{ flexDirection: 'row', gap: 10, marginTop: 16 }}>
-              <TouchableOpacity onPress={() => setRenameOpen(false)} style={[s.btn, { backgroundColor: colors.borderLight, flex: 1 }]}><Text style={[s.btnText, { color: colors.text }]}>Cancelar</Text></TouchableOpacity>
-              <TouchableOpacity onPress={handleRename} style={[s.btn, { backgroundColor: accent, flex: 1 }]}><Text style={[s.btnText, { color: onAccent }]}>Salvar</Text></TouchableOpacity>
+              <TouchableOpacity onPress={() => setRenameOpen(false)} style={[s.btn, { backgroundColor: colors.borderLight, flex: 1 }]}><Text style={[s.btnText, { color: colors.text }]}>{t('common.cancel')}</Text></TouchableOpacity>
+              <TouchableOpacity onPress={handleRename} style={[s.btn, { backgroundColor: accent, flex: 1 }]}><Text style={[s.btnText, { color: onAccent }]}>{t('common.save')}</Text></TouchableOpacity>
             </View>
           </View>
         </View>
@@ -984,12 +989,12 @@ function FamilyScreenInner() {
             <View style={{ width: 56, height: 56, borderRadius: 28, backgroundColor: accent + '14', alignItems: 'center', justifyContent: 'center', alignSelf: 'center', marginBottom: 12 }}>
               <IconKey size={24} color={accent} />
             </View>
-            <Text style={[s.modalTitle, { color: colors.text, textAlign: 'center' }]}>Entrar com convite</Text>
-            <Text style={[s.modalSub, { color: colors.textSecondary, textAlign: 'center' }]}>Cole o link (chatyy://family/join/…) ou o código que você recebeu.</Text>
-            <TextInput value={joinValue} onChangeText={setJoinValue} placeholder="Link ou código do convite" placeholderTextColor={colors.textSecondary} autoCapitalize="none" autoCorrect={false} style={[s.input, { color: colors.text, backgroundColor: colors.borderLight, borderColor: colors.border }]} autoFocus />
+            <Text style={[s.modalTitle, { color: colors.text, textAlign: 'center' }]}>{t('family.join.modalTitle')}</Text>
+            <Text style={[s.modalSub, { color: colors.textSecondary, textAlign: 'center' }]}>{t('family.join.modalSub')}</Text>
+            <TextInput value={joinValue} onChangeText={setJoinValue} placeholder={t('family.join.ph')} placeholderTextColor={colors.textSecondary} autoCapitalize="none" autoCorrect={false} style={[s.input, { color: colors.text, backgroundColor: colors.borderLight, borderColor: colors.border }]} autoFocus />
             <View style={{ flexDirection: 'row', gap: 10, marginTop: 16 }}>
-              <TouchableOpacity onPress={() => setJoinOpen(false)} style={[s.btn, { backgroundColor: colors.borderLight, flex: 1 }]}><Text style={[s.btnText, { color: colors.text }]}>Cancelar</Text></TouchableOpacity>
-              <TouchableOpacity onPress={handleJoin} disabled={joinBusy} style={[s.btn, { backgroundColor: accent, flex: 1, opacity: joinBusy ? 0.6 : 1 }]}>{joinBusy ? <ActivityIndicator color={onAccent} /> : <Text style={[s.btnText, { color: onAccent }]}>Entrar</Text>}</TouchableOpacity>
+              <TouchableOpacity onPress={() => setJoinOpen(false)} style={[s.btn, { backgroundColor: colors.borderLight, flex: 1 }]}><Text style={[s.btnText, { color: colors.text }]}>{t('common.cancel')}</Text></TouchableOpacity>
+              <TouchableOpacity onPress={handleJoin} disabled={joinBusy} style={[s.btn, { backgroundColor: accent, flex: 1, opacity: joinBusy ? 0.6 : 1 }]}>{joinBusy ? <ActivityIndicator color={onAccent} /> : <Text style={[s.btnText, { color: onAccent }]}>{t('meetings.join')}</Text>}</TouchableOpacity>
             </View>
           </View>
         </View>
