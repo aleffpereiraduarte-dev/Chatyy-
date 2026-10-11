@@ -181,7 +181,7 @@ function getAttachIconComponent(filename) {
   return ATTACH_ICON_MAP[ext] || IconPaperclip;
 }
 
-export default function EmailReader({ email, onReply, onReplyAll, onForward, onForwardAsAttachment, onDelete, onClose, onStar, onAddLabel, onRemoveLabel, folder, onReportSpam, onReportHam, onScrollProgress, onMarkUnread, onAddAsTask }) {
+export default function EmailReader({ email, onReply, onReplyAll, onForward, onForwardAsAttachment, onDelete, onClose, onStar, onAddLabel, onRemoveLabel, folder, onReportSpam, onReportHam, onScrollProgress, onMarkUnread, onAddAsTask, hasActionBar = false }) {
   const { colors, isDark } = useTheme();
   const { t } = useLanguage();
   const { user } = useAuth();
@@ -1304,7 +1304,9 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onF
               </TouchableOpacity>
               {/* Quick-action pills: Reply / Reply All / Forward. Tap goes
                   straight to the full composer — faster than expanding inline. */}
-              <View style={{ flexDirection: 'row', gap: 6 }}>
+              {/* [2026-10-11] Com a barra de baixo (Responder/Encaminhar...) os 3
+                  ícones aqui eram duplicados — some quando hasActionBar. */}
+              {!hasActionBar && <View style={{ flexDirection: 'row', gap: 6 }}>
                 <TouchableOpacity
                   onPress={() => { haptic.light(); onReply?.(email); }}
                   style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: colors.primary + '18', alignItems: 'center', justifyContent: 'center' }}
@@ -1328,7 +1330,7 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onF
                 >
                   <IconForward size={17} color={colors.textSecondary} />
                 </TouchableOpacity>
-              </View>
+              </View>}
             </View>
           ) : (
             <View style={s.inlineReplyExpanded}>
@@ -1434,7 +1436,9 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onF
         </View>
       )}
 
-      {/* Action buttons */}
+      {/* Action buttons — [2026-10-11] escondidos quando a tela tem a barra de
+          baixo (read.js): Responder/Resp. todos/Encaminhar/Excluir já estão lá. */}
+      {!hasActionBar && (
       <View style={[s.actions, { borderTopColor: colors.borderLight }]}>
         <TouchableOpacity
           style={[s.actionBtn, s.actionBtnPrimary, { backgroundColor: colors.primary }]}
@@ -1510,9 +1514,41 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onF
           <Text style={[s.actionText, { color: colors.error }]}>{t('reader.delete')}</Text>
         </TouchableOpacity>
       </View>
+      )}
 
       {/* Secondary actions: Print, Show Original, Block, Mute, Export */}
       <View style={s.secondaryActions}>
+        {hasActionBar && (
+          <TouchableOpacity
+            style={[s.secBtn, { backgroundColor: showTranslation ? colors.primary + '18' : colors.primary + '12' }]}
+            onPress={async () => {
+              if (showTranslation) { setShowTranslation(false); return; }
+              if (translatedHtml) { setShowTranslation(true); return; }
+              await runTranslate(translateTarget);
+            }}
+            onLongPress={() => { try { haptic?.selection?.(); } catch {} setShowLangPicker(true); }}
+            delayLongPress={350}
+            accessibilityLabel={t('reader.translate')}
+            accessibilityRole="button"
+            disabled={translating}
+          >
+            {translating
+              ? <ActivityIndicator size={12} color={colors.textSecondary} style={{ marginRight: 6 }} />
+              : <IconGlobe size={14} color={colors.textSecondary} style={{ marginRight: 6 }} />}
+            <Text style={[s.secBtnText, { color: colors.textSecondary }]}>{t('reader.translate')}</Text>
+          </TouchableOpacity>
+        )}
+        {hasActionBar && (
+          <TouchableOpacity
+            style={[s.secBtn, { backgroundColor: colors.primary + '12' }]}
+            onPress={() => onReportSpam?.(email)}
+            accessibilityLabel={t('reader.spam')}
+            accessibilityRole="button"
+          >
+            <IconAlertTriangle size={14} color={colors.textSecondary} style={{ marginRight: 6 }} />
+            <Text style={[s.secBtnText, { color: colors.textSecondary }]}>{t('reader.spam')}</Text>
+          </TouchableOpacity>
+        )}
         {/* AI: Action items button (only for long emails) */}
         {(email.body_text || '').length > 300 && (
           <TouchableOpacity
@@ -1645,8 +1681,8 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onF
           accessibilityLabel={t('reader.createEvent')}
           accessibilityRole="button"
         >
-          <IconCalendar size={14} color={colors.primary} style={{ marginRight: 6 }} />
-          <Text style={[s.secBtnText, { color: colors.primary }]}>{t('reader.createEvent')}</Text>
+          <IconCalendar size={14} color={colors.textSecondary} style={{ marginRight: 6 }} />
+          <Text style={[s.secBtnText, { color: colors.textSecondary }]}>{t('reader.createEvent')}</Text>
         </TouchableOpacity>
       </View>
 

@@ -608,6 +608,7 @@ export default function ReadScreen() {
           onForwardAsAttachment={handleForwardAsAttachment}
           onAddAsTask={handleAddAsTask}
           onDelete={handleDelete}
+          hasActionBar={!!showChrome}
           onStar={handleStar}
           onAddLabel={handleAddLabel}
           onRemoveLabel={handleRemoveLabel}
