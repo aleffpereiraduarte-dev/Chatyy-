@@ -1490,6 +1490,7 @@ export default {
   'compose.discard': 'Descartar',
   'compose.saveDraft': 'Salvar rascunho',
   'compose.draftSaved': 'Rascunho salvo',
+  'compose.draftSaving': 'Salvando rascunho…',
   'compose.improveText': 'Melhorar',
   'compose.improving': 'Melhorando...',
   'compose.aiImproved': 'Texto melhorado',
@@ -1518,7 +1519,7 @@ export default {
   'compose.forwardedMessage': '--- Mensagem encaminhada ---',
 
   // Undo
-  'undo.deleted': 'Mensagem excluida',
+  'undo.deleted': 'Mensagem excluída',
   'undo.archived': 'Mensagem arquivada',
   'undo.button': 'Desfazer',
 
@@ -2264,6 +2265,7 @@ export default {
 
   // Search extras
   'search.resultCount': '{count} resultados para',
+  'search.resultCountOne': '1 resultado para',
   'search.searching': 'Buscando',
 
   // Sidebar extras
@@ -7038,30 +7040,30 @@ export default {
   'feed.unmute': 'Ativar som',
 
   // Post creation
-  'post.newPost': 'Nova publicacao',
+  'post.newPost': 'Nova publicação',
   'post.share': 'Publicar',
   'post.caption': 'Escreva uma legenda...',
-  'post.addLocation': 'Adicionar localizacao',
+  'post.addLocation': 'Adicionar localização',
   'post.addMusic': 'Adicionar música',
   'post.tagPeople': 'Marcar pessoas',
-  'post.audience': 'Publico',
+  'post.audience': 'Público',
   'post.everyone': 'Todos',
-  'post.everyoneDesc': 'Qualquer pessoa pode ver esta publicacao',
+  'post.everyoneDesc': 'Qualquer pessoa pode ver esta publicação',
   'post.followersOnly': 'Somente seguidores',
   'post.followersDesc': 'Somente seus seguidores podem ver',
-  'post.closeFriends': 'Amigos proximos',
-  'post.closeFriendsDesc': 'Somente amigos proximos podem ver',
-  'post.schedule': 'Agendar publicacao',
+  'post.closeFriends': 'Amigos próximos',
+  'post.closeFriendsDesc': 'Somente amigos próximos podem ver',
+  'post.schedule': 'Agendar publicação',
   'post.scheduled': 'Agendado',
-  'post.aiSuggest': 'Sugestao IA',
+  'post.aiSuggest': 'Sugestão IA',
   'post.gallery': 'Galeria',
   'post.câmera': 'Câmera',
   'post.selectMultiple': 'Selecionar vários',
-  'post.maxMedia': 'Maximo de {max} itens',
+  'post.maxMedia': 'Máximo de {max} itens',
   'post.dragOrSelect': 'Selecione fotos e vídeos',
   'post.postAsReel': 'Publicar como Reel',
   'post.searchPeople': 'Buscar pessoas...',
-  'post.galleryPermission': 'Permita acesso as suas fotos para selecionar mídia',
+  'post.galleryPermission': 'Permita acesso às suas fotos para selecionar mídia',
   'post.loadingGallery': 'Carregando galeria...',
   'post.allowPhotos': 'Permitir Fotos',
   'post.edit': 'Editar',
@@ -10296,4 +10298,6 @@ export default {
   "chat.attach.recentPhoto": "Foto",
   "chat.attach.recentVideo": "Vídeo",
   "chat.attach.recentSelected": "selecionada",
+  "feed.linkCopied": "Link copiado",
+  "feed.findPeople": "Encontrar pessoas",
 };

@@ -1056,6 +1056,7 @@ export default {
   'compose.discard': 'खारिज करें',
   'compose.saveDraft': 'ड्राफ्ट सहेजें',
   'compose.draftSaved': 'ड्राफ्ट सहेजा गया',
+  'compose.draftSaving': 'ड्राफ्ट सहेजा जा रहा है…',
   'compose.improveText': 'सुधारें',
   'compose.improving': 'सुधारना...',
   'compose.aiImproved': '✨ सुधारा गया पाठ',
@@ -1773,6 +1774,7 @@ export default {
 
   // Search extras
   'search.resultCount': '{count} परिणाम के लिए',
+  'search.resultCountOne': '1 परिणाम के लिए',
   'search.searching': 'खोज रहा हूँ',
 
   // Sidebar extras
@@ -10248,4 +10250,6 @@ export default {
   "chat.attach.recentPhoto": "फ़ोटो",
   "chat.attach.recentVideo": "वीडियो",
   "chat.attach.recentSelected": "चयनित",
+  "feed.linkCopied": "लिंक कॉपी हो गया",
+  "feed.findPeople": "लोगों को खोजें",
 };

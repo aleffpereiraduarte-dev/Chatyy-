@@ -44,6 +44,17 @@ function getHintAS() {
   return _swipeHintAS;
 }
 
+let _canHoverMemo = null;
+function _canHover() {
+  if (_canHoverMemo != null) return _canHoverMemo;
+  try {
+    _canHoverMemo = typeof window === 'undefined' || !window.matchMedia
+      ? true
+      : window.matchMedia('(hover: hover) and (pointer: fine)').matches;
+  } catch { _canHoverMemo = true; }
+  return _canHoverMemo;
+}
+
 function getAvatarColor(name) {
   if (!name) return Colors.avatarBg;
   let hash = 0;
@@ -308,7 +319,10 @@ function EmailRow({
   // (com 90ms de atraso pra não disparar em passagem rápida). Baixa o corpo SEM
   // marcar como lido e aquece o cache → o clique abre INSTANTÂNEO. Best-effort.
   const hoverPrefetchTimer = useRef(null);
-  const webHover = Platform.OS === 'web' ? {
+  // [2026-10-11 email-qa] Celular/tablet (sem hover real): o toque disparava
+  // mouseenter → a linha tocada ficava com as ações de hover (arquivar/adiar/
+  // excluir/estrela) por cima do texto e o avatar virava caixa de seleção.
+  const webHover = Platform.OS === 'web' && _canHover() ? {
     onMouseEnter: () => {
       setHovered(true);
       if (hoverPrefetchTimer.current) clearTimeout(hoverPrefetchTimer.current);
@@ -576,7 +590,7 @@ function EmailRow({
             style={[s.hoverBtn, { backgroundColor: colors.hoverActionBg }]}
             onPress={handleStar}
             hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-            accessibilityLabel={isStarred ? 'Remove star' : 'Add star'}
+            accessibilityLabel={isStarred ? t('a11y.removeStar') : t('a11y.addStar')}
             accessibilityRole="button"
           >
             <Animated.View style={{ transform: [{ scale: starScale }, { rotate: starRotateInterp }] }}>

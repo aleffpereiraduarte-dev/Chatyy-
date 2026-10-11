@@ -46,11 +46,25 @@ export async function setupCallKeep() {
     return;
   }
 
-  // Report diagnostic to server
+  // Report diagnostic.
+  // [forense 2026-10-11] Era um POST `callkit_diag` AGUARDADO (await) por etapa
+  // — ~10 idas ao servidor em série ANTES de registrar o listener do token VoIP,
+  // em todo boot iOS/Android. O servidor só responde "ok" e DESCARTA o conteúdo
+  // (email.php case 'callkit_diag': requireAuthLite + jsonResponse), e antes do
+  // login cada um voltava 401 (nginx 48h: ~990× `a=callkit_diag 401` em US/BR/EU).
+  // Agora: etapas normais viram breadcrumb local (sobem junto do próximo crash);
+  // só FALHAS vão ao push_diag (sem auth, com rate-limit), sem bloquear o setup.
   const reportDiag = async (info) => {
     try {
-      const apiMod = require('./api');
-      await apiMod.apiCall('callkit_diag', { info, platform: Platform.OS }, 'POST');
+      const s = String(info || '');
+      const cr = require('./crashReporter');
+      const isFailure = /fail|error|threw|skipping|=null|:null|false$/i.test(s)
+        && !/^native_proxy:true|^setup_ok:true/i.test(s);
+      if (isFailure && typeof cr?.reportStep === 'function') {
+        cr.reportStep('callkit_diag', s.slice(0, 300));
+      } else if (typeof cr?.addBreadcrumb === 'function') {
+        cr.addBreadcrumb('callkit', s.slice(0, 120));
+      }
     } catch {}
   };
 

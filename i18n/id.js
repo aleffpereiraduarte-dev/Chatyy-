@@ -986,6 +986,7 @@ export default {
   'compose.discard': 'Buang',
   'compose.saveDraft': 'Simpan draf',
   'compose.draftSaved': 'Draf disimpan',
+  'compose.draftSaving': 'Menyimpan draf…',
   'compose.improveText': 'Perbaiki',
   'compose.improving': 'Memperbaiki...',
   'compose.aiImproved': '✨ Teks diperbaiki',
@@ -1627,6 +1628,7 @@ export default {
   'theme.light': 'Mode terang',
   'theme.dark': 'Mode gelap',
   'search.resultCount': '{count} hasil untuk',
+  'search.resultCountOne': '1 hasil untuk',
   'search.searching': 'Mencari',
   'sidebar.quickAccess': 'Akses Cepat',
   'sidebar.search': 'Cari',
@@ -9470,4 +9472,6 @@ export default {
   "chat.attach.recentPhoto": "Foto",
   "chat.attach.recentVideo": "Video",
   "chat.attach.recentSelected": "dipilih",
+  "feed.linkCopied": "Tautan disalin",
+  "feed.findPeople": "Temukan orang",
 };

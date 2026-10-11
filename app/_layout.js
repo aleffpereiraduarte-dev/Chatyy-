@@ -849,18 +849,18 @@ function AppInit({ onNotification, setOtaToast }) {
     }, 0);
     // Prime contact nicknames (per-user display-name overrides). The MMKV copy
     // is loaded synchronously at module eval; this is the network refresh.
-    afterFirstPaint(() => { try { import('../services/nicknames').then(m => m.refreshNicknames?.().catch(() => {})); } catch {} }, 0);
+    afterFirstPaint(() => { try { import('../services/nicknames').then(m => m.refreshNicknames?.().catch(() => {})).catch(() => {}); } catch {} }, 0);
     // Outbox drainer — retries any chat_send that was queued while offline.
     // Drains on boot, on network reconnect, on WS reconnect, and every 60s.
     // Server dedup by client_message_id makes double-sends impossible.
-    afterFirstPaint(() => { try { import('../services/outboxDrainer').then(m => m.initOutboxDrainer?.()); } catch {} }, 150);
+    afterFirstPaint(() => { try { import('../services/outboxDrainer').then(m => m.initOutboxDrainer?.()).catch(() => {}); } catch {} }, 150);
 
     // WhatsApp-grade send worker (#1169) — SQLite-backed outbox state machine
     // with WS-first delivery + exponential backoff + per-conversation FIFO.
     // Lives alongside the legacy drainer above; both are idempotent (server
     // dedups by client_message_id), the new worker just provides UI status
     // visibility ("Enviando...", "Tentando de novo (3)") via SendStatusText.
-    afterFirstPaint(() => { try { import('../services/sendWorker').then(m => m.start?.()); } catch {} }, 150);
+    afterFirstPaint(() => { try { import('../services/sendWorker').then(m => m.start?.()).catch(() => {}); } catch {} }, 150);
 
     // Online recovery orchestrator — WhatsApp-grade auto-sync. Listens for
     // NetInfo offline→online flips, WS authenticated reconnects, and

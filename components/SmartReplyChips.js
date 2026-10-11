@@ -106,13 +106,13 @@ export default function SmartReplyChips({ email, onSelectReply, onSendReply, rep
     return (
       <View style={[s.container, { borderTopColor: colors.borderLight }]}>
         <TouchableOpacity
-          style={[s.genBtn, { borderColor: BRAND, backgroundColor: BRAND + '0A' }]}
+          style={[s.genBtn, { borderColor: colors.text, backgroundColor: 'transparent' }]}
           onPress={() => { setTriggered(true); generateReplies(); }}
           activeOpacity={0.7}
           accessibilityLabel={t('smartReply.generate') || 'Gerar resposta com IA'}
         >
-          <IconSparkles size={15} color={BRAND} style={{ marginRight: 7 }} />
-          <Text style={[s.genBtnText, { color: BRAND }]}>
+          <IconSparkles size={15} color={colors.text} style={{ marginRight: 7 }} />
+          <Text style={[s.genBtnText, { color: colors.text }]}>
             {t('smartReply.generate') || 'Gerar resposta com IA'}
           </Text>
         </TouchableOpacity>

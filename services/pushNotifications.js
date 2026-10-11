@@ -1395,11 +1395,18 @@ function _enqueuePendingTokenSend(entry) {
 let _pendingFlushTimer = null;
 let _pendingFlushArms = 0;
 const _PENDING_FLUSH_DELAY_MS = 150 * 1000;
+const _PENDING_FLUSH_FIRST_DELAY_MS = 40 * 1000;
 const _PENDING_FLUSH_MAX_ARMS = 8;
 function _armPendingFlushTimer() {
   if (Platform.OS === 'web') return;
   if (_pendingFlushTimer) return;
   if (_pendingFlushArms >= _PENDING_FLUSH_MAX_ARMS) return;
+  // [forense 2026-10-11] 1ª retentativa em 40s (antes 150s). Conta nova por
+  // telefone: o homedir/push_tokens só nasce quando o drain-signups (timer de
+  // 30s no host) roda; o register_push_token logo após o phone_signup volta
+  // 500/503 e, com 150s, o usuário fechava o app antes da retentativa → ficou
+  // SEM push/chamadas (11/10 00:50: 4× 500, tokens.json vazio 10h depois).
+  const _delay = _pendingFlushArms === 0 ? _PENDING_FLUSH_FIRST_DELAY_MS : _PENDING_FLUSH_DELAY_MS;
   _pendingFlushArms++;
   _pendingFlushTimer = setTimeout(async () => {
     _pendingFlushTimer = null;
@@ -1413,7 +1420,7 @@ function _armPendingFlushTimer() {
         _pendingFlushArms = 0;
       }
     } catch {}
-  }, _PENDING_FLUSH_DELAY_MS);
+  }, _delay);
 }
 
 async function _getActiveEmailSafe() {

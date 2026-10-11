@@ -47,10 +47,12 @@ if (Platform.OS === 'web' && DOMPurify?.addHook) {
     }
     // Constrain tables and images to container width
     if (node.tagName === 'TABLE') {
+      // [2026-10-11 email-qa] Sem display:block — ele quebrava toda tabela
+      // width:100% (a borda ia até a margem e as células ficavam espremidas à
+      // esquerda). A rolagem horizontal de tabela larga fica no contêiner do
+      // corpo (overflowX:auto).
       const s = node.style;
       s.maxWidth = '100%';
-      s.overflowX = 'auto';
-      s.display = 'block';
       s.wordBreak = 'break-word';
     }
     if (node.tagName === 'IMG') {
@@ -537,6 +539,15 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onF
   }
 
   const avatarColor = getAvatarColor(email.from_name || email.from || 'unknown');
+  // [2026-10-11 email-qa] O caminho Rust monta `from` como cabeçalho completo
+  // ("Nome" <end@dominio>) p/ o Responder; na tela isso aparecia cru com aspas
+  // e o avatar buscava a foto pela string inteira (nunca achava).
+  const _fromRaw = String(email.from || '');
+  const _fromAngle = _fromRaw.match(/<([^>]+)>/);
+  const senderAddress = email.from_email || (_fromAngle ? _fromAngle[1] : _fromRaw).trim();
+  const senderDisplayName = (email.from_name && String(email.from_name).trim())
+    || (_fromAngle ? _fromRaw.slice(0, _fromAngle.index).replace(/["']/g, '').trim() : '')
+    || senderAddress;
 
   // Split quoted text from body
   const splitQuoted = (text) => {
@@ -599,6 +610,13 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onF
       const { main, quoted } = splitQuotedHtml(email.body_html);
       const cleanMain = processEmailHtml(sanitizeHtml(main));
       const cleanQuoted = processEmailHtml(sanitizeHtml(quoted));
+      // [2026-10-11 email-qa] Tema escuro: e-mail com cores PRÓPRIAS (newsletter,
+      // texto #333 inline, fundos brancos) ia direto sobre o fundo preto → texto
+      // escuro sumia e blocos brancos "furavam" a tela. Igual Gmail/Apple Mail
+      // (e o nosso nativo): esses vão num cartão branco. E-mail simples (sem
+      // cor nenhuma) continua no tema escuro.
+      const authoredColors = isDark && /(?:[;"'\s]color\s*:|bgcolor\s*=|background(?:-color)?\s*:|<font[^>]+color)/i.test(String(email.body_html || ''));
+      const bodyCard = authoredColors ? { backgroundColor: '#ffffff', color: '#111111', padding: 16, borderRadius: 12 } : null;
       return (
         <View>
           {hasRemoteImages && !showImages && (
@@ -627,6 +645,7 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onF
               wordBreak: 'break-word', overflowWrap: 'break-word',
               fontFamily: 'system-ui, -apple-system, sans-serif',
               maxWidth: '100%', overflowX: 'auto',
+              ...(bodyCard || {}),
             }}
             dangerouslySetInnerHTML={{ __html: cleanMain }}
           />
@@ -657,6 +676,7 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onF
                     padding: 12, fontSize: 13, lineHeight: 1.6, color: colors.textSecondary,
                     wordBreak: 'break-word', fontFamily: 'system-ui, -apple-system, sans-serif',
                     borderLeft: `3px solid ${colors.borderLight}`, marginTop: 8, paddingLeft: 12,
+                    ...(bodyCard ? { backgroundColor: '#ffffff', color: '#444444', borderRadius: 8 } : {}),
                   }}
                   dangerouslySetInnerHTML={{ __html: cleanQuoted }}
                 />
@@ -985,7 +1005,7 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onF
           {email.subject || t('reader.noSubject')}
         </Text>
         <View style={s.headerActions}>
-          <TouchableOpacity onPress={handleStarPress} style={s.headerBtn} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }} accessibilityLabel={email.flagged ? 'Remove star' : 'Add star'} accessibilityRole="button">
+          <TouchableOpacity onPress={handleStarPress} style={s.headerBtn} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }} accessibilityLabel={email.flagged ? t('a11y.removeStar') : t('a11y.addStar')} accessibilityRole="button">
             <Animated.View style={{ transform: [{ scale: starScale }] }}>
               {email.flagged ? (
                 /* Polish 2026-05-13: starred = filled gold (#F5B400) with spring
@@ -1012,15 +1032,15 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onF
           s.senderAvatarRing,
           { borderColor: (colors.primary || '#111111') + '33', shadowColor: colors.primary || '#111111' },
         ]}>
-          <AvatarCircle name={email.from_name || email.from} email={email.from} size={40} />
+          <AvatarCircle name={senderDisplayName} email={senderAddress} size={40} />
         </View>
         <View style={s.senderInfo}>
           <View style={s.senderNameRow}>
-            <Text style={[s.senderName, { color: colors.text }]} numberOfLines={1}>{email.from_name || email.from}</Text>
+            <Text style={[s.senderName, { color: colors.text }]} numberOfLines={1}>{senderDisplayName}</Text>
           </View>
-          <Text style={[s.senderEmail, { color: colors.textTertiary }]} numberOfLines={1}>{email.from}</Text>
+          <Text style={[s.senderEmail, { color: colors.textSecondary }]} numberOfLines={1}>{senderAddress}</Text>
         </View>
-        <Text style={[s.dateText, { color: colors.textTertiary }]}>{formatEmailDate(email.date)}</Text>
+        <Text style={[s.dateText, { color: colors.textSecondary }]}>{formatEmailDate(email.date)}</Text>
       </View>
 
       {/* Recipients */}
@@ -1314,7 +1334,7 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onF
             <View style={s.inlineReplyExpanded}>
               <View style={[s.inlineReplyToRow, { borderBottomColor: colors.borderLight }]}>
                 <Text style={[s.inlineReplyToLabel, { color: colors.textTertiary }]}>{t('compose.to')}:</Text>
-                <Text style={[s.inlineReplyToEmail, { color: colors.textSecondary }]} numberOfLines={1}>{email.from}</Text>
+                <Text style={[s.inlineReplyToEmail, { color: colors.textSecondary }]} numberOfLines={1}>{senderAddress}</Text>
               </View>
               <TextInput
                 style={[s.inlineReplyInput, { color: colors.text, borderColor: colors.borderLight }]}
@@ -1336,7 +1356,7 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onF
                     try {
                       const replySubject = (email.subject || '').startsWith('Re:') ? email.subject : `Re: ${email.subject || ''}`;
                       const dateStr = email.date || '';
-                      const quotedBody = `\n\n---------- ${t('reader.originalMessage')} ----------\n${t('reader.quotedFrom')}: ${email.from_name || email.from} <${email.from}>\n${t('reader.quotedDate')}: ${dateStr}\n${t('reader.quotedSubject')}: ${email.subject || ''}\n${t('reader.quotedTo')}: ${email.to || ''}\n\n${email.body_text || email.body || email.body_html?.replace(/<[^>]+>/g, ' ') || ''}`;
+                      const quotedBody = `\n\n---------- ${t('reader.originalMessage')} ----------\n${t('reader.quotedFrom')}: ${senderDisplayName} <${senderAddress}>\n${t('reader.quotedDate')}: ${dateStr}\n${t('reader.quotedSubject')}: ${email.subject || ''}\n${t('reader.quotedTo')}: ${email.to || ''}\n\n${email.body_text || email.body || email.body_html?.replace(/<[^>]+>/g, ' ') || ''}`;
                       const fullBody = inlineReplyText + quotedBody;
                       const result = await sendEmail(email.from, replySubject, fullBody, '', '', email.uid, folder || 'INBOX');
                       if (result.success) {
@@ -1379,7 +1399,7 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onF
                   onPress={() => {
                     const replySubject = (email.subject || '').startsWith('Re:') ? email.subject : `Re: ${email.subject || ''}`;
                     const dateStr = email.date || '';
-                    const quotedBody = `\n\n---------- ${t('reader.originalMessage')} ----------\n${t('reader.quotedFrom')}: ${email.from_name || email.from} <${email.from}>\n${t('reader.quotedDate')}: ${dateStr}\n${t('reader.quotedSubject')}: ${email.subject || ''}\n${t('reader.quotedTo')}: ${email.to || ''}\n\n${email.body_text || email.body || email.body_html?.replace(/<[^>]+>/g, ' ') || ''}`;
+                    const quotedBody = `\n\n---------- ${t('reader.originalMessage')} ----------\n${t('reader.quotedFrom')}: ${senderDisplayName} <${senderAddress}>\n${t('reader.quotedDate')}: ${dateStr}\n${t('reader.quotedSubject')}: ${email.subject || ''}\n${t('reader.quotedTo')}: ${email.to || ''}\n\n${email.body_text || email.body || email.body_html?.replace(/<[^>]+>/g, ' ') || ''}`;
                     router.push({
                       pathname: '/compose',
                       params: {
@@ -1753,8 +1773,8 @@ const s = StyleSheet.create({
   senderInfo: { flex: 1 },
   senderNameRow: { flexDirection: 'row', alignItems: 'center' },
   senderName: { fontSize: 16, fontWeight: '800', letterSpacing: -0.3 },
-  senderEmail: { fontSize: 12.5, marginTop: 2, opacity: 0.6, fontWeight: '500' },
-  dateText: { fontSize: 12.5, opacity: 0.55, fontWeight: '600', letterSpacing: 0.1 },
+  senderEmail: { fontSize: 12.5, marginTop: 2, fontWeight: '500' },
+  dateText: { fontSize: 12.5, fontWeight: '600', letterSpacing: 0.1 },
   // Recipients
   recipientRow: {
     flexDirection: 'row', alignItems: 'center',

@@ -987,6 +987,7 @@ export default {
   "compose.discard": "破棄",
   "compose.saveDraft": "下書きを保存",
   "compose.draftSaved": "下書きが保存されました",
+  "compose.draftSaving": "下書きを保存中…",
   "compose.improveText": "改善",
   "compose.improving": "改善中...",
   "compose.aiImproved": "✨ テキストが改善されました",
@@ -1628,6 +1629,7 @@ export default {
   "theme.light": "ライトモード",
   "theme.dark": "ダークモード",
   "search.resultCount": "{count} 件の結果",
+  "search.resultCountOne": "1 件の結果",
   "search.searching": "検索中",
   "sidebar.quickAccess": "クイックアクセス",
   "sidebar.search": "検索",
@@ -9470,4 +9472,6 @@ export default {
   "chat.attach.recentPhoto": "写真",
   "chat.attach.recentVideo": "動画",
   "chat.attach.recentSelected": "選択済み",
+  "feed.linkCopied": "リンクをコピーしました",
+  "feed.findPeople": "人を探す",
 };

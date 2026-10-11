@@ -43,7 +43,7 @@ import * as Haptics from 'expo-haptics';
 // counterpart was already in build 442 (transitive expo dep) so no
 // rebuild needed for OTA delivery. The tag scopes the activation to
 // the live-broadcast screen — unmounting auto-releases.
-import { useKeepAwake } from 'expo-keep-awake';
+import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
 
 // Cross-platform WebRTC — same pattern as call.js
 let RTC_PeerConnection, RTC_SessionDescription, RTC_IceCandidate, getUserMediaFn, NativeRTCView;
@@ -235,7 +235,12 @@ export default function LiveBroadcastScreen() {
   // Round 67 #1158 (2026-05-18) — keep the display on for the entire
   // host session. Tag scopes the lock so multi-screen mounts don't
   // collide. Unmount auto-releases via expo-keep-awake's effect.
-  useKeepAwake('live-broadcast');
+  // [2026-10-11] Web: Wake Lock pode ser negado (aba oculta/sem permissão) e o
+  // useKeepAwake deixava a promessa rejeitada sem tratamento. Mesma função, sem erro solto.
+  useEffect(() => {
+    activateKeepAwakeAsync('live-broadcast').catch(() => {});
+    return () => { try { deactivateKeepAwake('live-broadcast'); } catch {} };
+  }, []);
 
   const params = useLocalSearchParams();
   const router = useRouter();

@@ -54,7 +54,7 @@ import ConnectionBars from '../components/ConnectionBars';
 // Round 67 #1158 (2026-05-18) — keep the display on while watching a
 // live. User: "a tela ainda desliga mesmo rolando a live". Tag scopes
 // the wake-lock to this screen; unmount auto-releases.
-import { useKeepAwake } from 'expo-keep-awake';
+import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
 
 // Humanize big counts the way Instagram/TikTok do: 999 → 999, 1.2K, 12.4K, 1.2M.
 // We localize the decimal separator from the user locale where possible.
@@ -219,7 +219,12 @@ export default function LiveViewerScreen() {
   // is engaged in the live. Tagged so simultaneous mounts (e.g. PiP
   // race during navigation) don't race the lock. Auto-released on
   // unmount via expo-keep-awake's effect.
-  useKeepAwake('live-viewer');
+  // [2026-10-11] Web: Wake Lock pode ser negado (aba oculta/sem permissão) e o
+  // useKeepAwake deixava a promessa rejeitada sem tratamento. Mesma função, sem erro solto.
+  useEffect(() => {
+    activateKeepAwakeAsync('live-viewer').catch(() => {});
+    return () => { try { deactivateKeepAwake('live-viewer'); } catch {} };
+  }, []);
 
   const params = useLocalSearchParams();
   // Accept all common param aliases so deep links work regardless of source:

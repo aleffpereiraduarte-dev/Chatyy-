@@ -67,7 +67,7 @@ import AvatarCircle from './AvatarCircle';
 import {
   IconHeart, IconHeartOutline, IconMessageCircle, IconShare,
   IconBookmark, IconBookmarkFilled, IconMoreHorizontal, IconTrash,
-  IconMapPin, IconPlay, IconPause, IconPin, IconMusic, IconImage,
+  IconMapPin, IconPlay, IconPause, IconPin, IconMusic, IconImage, IconLink,
 } from './Icons';
 import * as api from '../services/api';
 import { useLanguage } from '../context/LanguageContext';
@@ -948,6 +948,31 @@ function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated
     setShareMenuOpen(true);
   }, []);
 
+  // [2026-10-11 social-qa] "Copiar link" (padrão Instagram) + toast. No
+  // desktop web sem navigator.share o "Compartilhar fora" não fazia NADA —
+  // agora cai pra copiar o link.
+  const [linkCopied, setLinkCopied] = useState(false);
+  const linkCopiedTimer = useRef(null);
+  useEffect(() => () => { if (linkCopiedTimer.current) clearTimeout(linkCopiedTimer.current); }, []);
+  const handleCopyLink = useCallback(async () => {
+    setShareMenuOpen(false);
+    const url = `${BASE_URL}/feed/${post.id}`;
+    let ok = false;
+    try {
+      if (isWeb && typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(url); ok = true;
+      } else {
+        const Clip = require('expo-clipboard');
+        await Clip.setStringAsync(url); ok = true;
+      }
+    } catch {}
+    if (!ok) return;
+    try { haptic?.('light'); } catch {}
+    setLinkCopied(true);
+    if (linkCopiedTimer.current) clearTimeout(linkCopiedTimer.current);
+    linkCopiedTimer.current = setTimeout(() => setLinkCopied(false), 1800);
+  }, [post.id, isWeb]);
+
   const handleExternalShare = useCallback(async () => {
     setShareMenuOpen(false);
     const url = `${BASE_URL}/feed/${post.id}`;
@@ -958,8 +983,10 @@ function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated
       try { await navigator.share({ title, text: cap || undefined, url }); } catch {}
     } else if (!isWeb) {
       try { await Share.share({ title, message, url }); } catch {}
+    } else {
+      handleCopyLink();
     }
-  }, [post.id, post.caption, isWeb, t]);
+  }, [post.id, post.caption, isWeb, t, handleCopyLink]);
 
   const handleRepost = useCallback(() => {
     setShareMenuOpen(false);
@@ -1913,12 +1940,21 @@ function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated
         </Pressable>
       </Modal>
 
-      {/* Share menu — bottom sheet with Repostar / Compartilhar fora */}
+      {/* [2026-10-11 social-qa] toast "Link copiado" */}
+      {linkCopied && (
+        <View pointerEvents="none" style={{ position: 'absolute', left: 0, right: 0, top: 110, alignItems: 'center', zIndex: 30 }}>
+          <View style={{ backgroundColor: 'rgba(17,17,17,0.92)', paddingHorizontal: 16, paddingVertical: 10, borderRadius: 20 }}>
+            <Text style={{ color: '#fff', fontWeight: '600', fontSize: 14 }}>{t('feed.linkCopied') || 'Link copiado'}</Text>
+          </View>
+        </View>
+      )}
+
+      {/* Share menu — bottom sheet with Repostar / Compartilhar fora / Copiar link */}
       <Modal visible={shareMenuOpen} transparent animationType="slide" onRequestClose={() => setShareMenuOpen(false)}>
         <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' }} onPress={() => setShareMenuOpen(false)}>
           <Pressable
             onPress={(e) => e.stopPropagation()}
-            style={{ backgroundColor: colors.background, borderTopLeftRadius: 20, borderTopRightRadius: 20, paddingTop: 12, paddingBottom: 36 }}
+            style={{ backgroundColor: colors.background, borderTopLeftRadius: 20, borderTopRightRadius: 20, paddingTop: 12, paddingBottom: 36, ...(isWeb ? { width: '100%', maxWidth: 640, alignSelf: 'center' } : {}) }}
           >
             <View style={{ alignItems: 'center', marginBottom: 6 }}>
               <View style={{ width: 36, height: 4, borderRadius: 2, backgroundColor: colors.border }} />
@@ -1939,6 +1975,17 @@ function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated
               <IconShare size={22} color={colors.text} />
               <Text style={{ flex: 1, fontSize: 16, fontWeight: '600', color: colors.text }}>
                 {t('feed.shareOutside') || 'Compartilhar fora'}
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={handleCopyLink}
+              style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 22, paddingVertical: 16, gap: 14 }}
+              accessibilityRole="button"
+              accessibilityLabel={t('feed.copyLink') || 'Copiar link'}
+            >
+              <IconLink size={22} color={colors.text} />
+              <Text style={{ flex: 1, fontSize: 16, fontWeight: '600', color: colors.text }}>
+                {t('feed.copyLink') || 'Copiar link'}
               </Text>
             </TouchableOpacity>
           </Pressable>

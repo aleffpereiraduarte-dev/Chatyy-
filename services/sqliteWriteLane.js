@@ -58,29 +58,52 @@ function _beacon(context, message) {
  * across ALL modules). `task` should do the whole BEGIN … COMMIT/ROLLBACK.
  * NEVER call runExclusive from inside a task (it would wait for itself).
  */
+// [forense 2026-10-11] O relógio do "stall" (a) começava no ENFILEIRAMENTO, não
+// quando a tarefa entrava na faixa — uma tarefa só esperando na fila há 20s
+// "travava" e liberava a próxima, que rodava junto com ela; e (b) contava tempo
+// com o app SUSPENSO (iOS em segundo plano): na volta, o setTimeout de 20s
+// disparava na hora com a transação ainda aberta → a próxima abria BEGIN
+// aninhado. push_diag 10/10 19:31 e 22:19 (b=660): `lane_stall label=db:…
+// after=20000ms` no MESMO ms de "cannot start a transaction within a
+// transaction" + ROLLBACK das duas (cacheSingleMessage id=17319 perdido no cache
+// local). Agora o relógio só começa quando a tarefa roda e soma apenas tempo
+// ACORDADO (tique de 1s; cada tique vale no máx. 2s, então uma suspensão longa
+// não conta).
+const STALL_TICK_MS = 1000;
+
 export function runExclusive(label, task) {
   G.queued++;
+  let releaseFn = null;
+  const released = new Promise((resolve) => { releaseFn = resolve; });
+  let ticker = null;
+  const stopTicker = () => { try { if (ticker) clearInterval(ticker); } catch {} ticker = null; };
   const run = G.tail.then(async () => {
     G.queued = Math.max(0, G.queued - 1);
     G.depth++;
     G.active = String(label || 'tx');
-    try { return await task(); }
-    finally { G.depth = Math.max(0, G.depth - 1); G.active = ''; }
-  });
-  let timer = null;
-  const released = new Promise((resolve) => {
     try {
-      timer = setTimeout(() => {
-        G.stalls++;
-        // The wedged task still counts as "busy" for sync writers until it
-        // settles (its finally{} lowers depth) — only the FIFO moves on.
-        _beacon('lane_stall', `label=${label} after=${STALL_RELEASE_MS}ms`);
-        resolve();
-      }, STALL_RELEASE_MS);
+      let awake = 0;
+      let last = Date.now();
+      ticker = setInterval(() => {
+        try {
+          const now = Date.now();
+          awake += Math.min(Math.max(0, now - last), STALL_TICK_MS * 2);
+          last = now;
+          if (awake >= STALL_RELEASE_MS) {
+            stopTicker();
+            G.stalls++;
+            // The wedged task still counts as "busy" for sync writers until it
+            // settles (its finally{} lowers depth) — only the FIFO moves on.
+            _beacon('lane_stall', `label=${label} after=${STALL_RELEASE_MS}ms awake`);
+            if (releaseFn) releaseFn();
+          }
+        } catch {}
+      }, STALL_TICK_MS);
     } catch {}
+    try { return await task(); }
+    finally { stopTicker(); G.depth = Math.max(0, G.depth - 1); G.active = ''; }
   });
   const settled = run.then(() => {}, () => {});
-  settled.then(() => { try { if (timer) clearTimeout(timer); } catch {} });
   G.tail = Promise.race([settled, released]);
   return run;
 }

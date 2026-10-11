@@ -131,6 +131,7 @@ import NativeSheetDialog from '../components/NativeSheetDialog'; // [2026-10-09 
 import { USE_NATIVE_SHEETS, NativeSheet } from '../components/NativeSheet';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import ReactionBurst from '../components/ReactionBurst';
+import SheetKeyboardAvoider from '../components/chat/SheetKeyboardAvoider'; // [2026-10-11 android-kav]
 import { useTheme } from '../context/ThemeContext';
 import { useConfirm } from '../components/ConfirmModal';
 import MessageTypeIcon, { stripLeadingGlyph, hasLeadingGlyph } from '../components/MessageTypeIcon'; // [2026-10-07 app-feel-ui]
@@ -4856,6 +4857,25 @@ const attachStyles = StyleSheet.create({
 });
 
 // ============================================================
+// [2026-10-11 android-kav] KeyboardAvoidingView behavior='height' dentro de
+// <Modal> no Android guarda altura de teclado "fantasma" (evento perdido ao
+// voltar de câmera/galeria/permissão/outra activity) e encolhe o sheet. Gate:
+// no Android a KAV só fica ativa enquanto um input DELA está focado. O "off"
+// é atrasado um pouco p/ não piscar ao trocar de um campo p/ outro
+// (blur de A e focus de B chegam em renders separados). iOS: sempre ativa.
+// ============================================================
+function useAndroidKavGate(focused) {
+  const [on, setOn] = useState(!!focused);
+  useEffect(() => {
+    if (Platform.OS === 'ios') return undefined;
+    if (focused) { setOn(true); return undefined; }
+    const id = setTimeout(() => setOn(false), 150);
+    return () => clearTimeout(id);
+  }, [focused]);
+  return Platform.OS === 'ios' || on;
+}
+
+// ============================================================
 // POLL CREATOR MODAL
 // ============================================================
 function PollCreatorModal({ colors, t, conversationId, onClose, onCreated }) {
@@ -4897,6 +4917,7 @@ function PollCreatorModal({ colors, t, conversationId, onClose, onCreated }) {
   // Visual-only presentation helpers (unified sheet language) — no logic change.
   const insets = useSafeAreaInsets();
   const [focusedField, setFocusedField] = useState(null);
+  const kavEnabled = useAndroidKavGate(focusedField != null);
   // [2026-10-11 qa] P&B — sem verde: tinta = texto, fundo = surfaceVariant.
   const ACCENT = colors.text;
   const ACCENT_TINT = colors.surfaceVariant;
@@ -4907,6 +4928,7 @@ function PollCreatorModal({ colors, t, conversationId, onClose, onCreated }) {
   return (
     <KeyboardAvoidingView
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      enabled={kavEnabled}
       style={{ flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.45)' }}
       keyboardVerticalOffset={0}
     >
@@ -5075,6 +5097,7 @@ function MeetupCreatorModal({ colors, t, conversationId, onClose, onCreated }) {
   // Visual-only presentation helpers (unified sheet language) — no logic change.
   const insets = useSafeAreaInsets();
   const [focusedField, setFocusedField] = useState(null);
+  const kavEnabled = useAndroidKavGate(focusedField != null);
   const ACCENT = '#25D366';
   const ACCENT_TINT = 'rgba(37,211,102,0.12)';
   const inputBase = { backgroundColor: colors.surfaceVariant, borderRadius: 14, borderWidth: 1, paddingHorizontal: 14, paddingVertical: 12, fontSize: 15, color: colors.text };
@@ -5084,6 +5107,7 @@ function MeetupCreatorModal({ colors, t, conversationId, onClose, onCreated }) {
   return (
     <KeyboardAvoidingView
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      enabled={kavEnabled}
       style={{ flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.45)' }}
       keyboardVerticalOffset={0}
     >
@@ -5351,6 +5375,7 @@ function PlaylistCreatorModal({ colors, t, conversationId, onClose, onCreated, o
   // Visual-only presentation helpers (unified sheet language) — no logic change.
   const insets = useSafeAreaInsets();
   const [focusedField, setFocusedField] = useState(null);
+  const kavEnabled = useAndroidKavGate(focusedField != null);
   const ACCENT = '#25D366';
   const ACCENT_TINT = 'rgba(37,211,102,0.12)';
   const inputBase = { backgroundColor: colors.surfaceVariant, borderRadius: 14, borderWidth: 1, paddingHorizontal: 14, fontSize: 15, color: colors.text };
@@ -5358,6 +5383,7 @@ function PlaylistCreatorModal({ colors, t, conversationId, onClose, onCreated, o
   return (
     <KeyboardAvoidingView
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      enabled={kavEnabled}
       style={{ flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.45)' }}
       keyboardVerticalOffset={0}
     >
@@ -5536,6 +5562,9 @@ function PlaylistEditorModal({ colors, isDark, t, editor, onClose, onUpdated }) 
   const [songs, setSongs] = useState(editor?.playlist?.songs || []);
   const [busy, setBusy] = useState(false);
   const debounceRef = useRef(null);
+  const insets = useSafeAreaInsets();
+  const [searchFocused, setSearchFocused] = useState(false);
+  const kavEnabled = useAndroidKavGate(searchFocused);
 
   useEffect(() => { setSongs(editor?.playlist?.songs || []); }, [editor]);
 
@@ -5588,12 +5617,20 @@ function PlaylistEditorModal({ colors, isDark, t, editor, onClose, onUpdated }) 
   if (!editor) return null;
 
   return (
+    <KeyboardAvoidingView
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      enabled={kavEnabled}
+      style={{ flex: 1 }}
+      keyboardVerticalOffset={0}
+    >
     <Pressable style={{ flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.65)' }} onPress={onClose}>
       <Pressable
         style={{
           backgroundColor: colors.surface,
           borderTopLeftRadius: 28, borderTopRightRadius: 28,
-          paddingTop: 0, paddingBottom: 24,
+          // [2026-10-11 android-e2e] Modal é edge-to-edge no Android: sem o
+          // inset o rodapé do sheet ficava atrás da barra de navegação.
+          paddingTop: 0, paddingBottom: 24 + (insets?.bottom || 0),
           maxHeight: '92%',
           overflow: 'hidden',
           ...(Platform.OS === 'web' ? { boxShadow: '0 -8px 40px rgba(17, 17, 17,0.20)' } : {}),
@@ -5711,6 +5748,8 @@ function PlaylistEditorModal({ colors, isDark, t, editor, onClose, onUpdated }) 
               placeholderTextColor={colors.textTertiary}
               value={searchQuery}
               onChangeText={setSearchQuery}
+              onFocus={() => setSearchFocused(true)}
+              onBlur={() => setSearchFocused(false)}
               autoCapitalize="none"
             />
             {searching && <ActivityIndicator size="small" color="#111111" />}
@@ -5783,6 +5822,7 @@ function PlaylistEditorModal({ colors, isDark, t, editor, onClose, onUpdated }) 
         </View>
       </Pressable>
     </Pressable>
+    </KeyboardAvoidingView>
   );
 }
 
@@ -6203,6 +6243,8 @@ function MediaPreview({ visible, onClose, onSend, files: filesProp, colors, hdMo
   // denied permission, or any error.
   const addMore = async () => {
     try {
+      // [2026-10-11 android-kav] legenda focada + galeria = teclado fantasma na volta.
+      try { Keyboard.dismiss(); } catch {}
       const ImagePicker = require('expo-image-picker');
       const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (!perm.granted) return;
@@ -8519,6 +8561,10 @@ function ChatConversationInner() {
   const confirm = useConfirm();
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  // [2026-10-11 android-e2e] Modais são edge-to-edge no Android (RN 0.83 +
+  // edgeToEdgeEnabled): sheets de baixo precisam somar a barra de navegação
+  // (3 botões ~48dp > os 34 fixos do iPhone) senão o rodapé fica atrás dela.
+  const androidNavPad = Platform.OS === 'android' ? (insets?.bottom || 0) : 0;
   // [2026-10-06 keyboard-controller] Constant bottom inset of the composer
   // (home indicator / Android nav bar). It no longer flips to 0 while the
   // keyboard is open — ThreadKeyboardAvoider lifts the screen by
@@ -9246,6 +9292,7 @@ function ChatConversationInner() {
           if (o.selectionMode) { o.setSelectionMode(false); o.setSelectedIds(new Set()); return true; }
           if (o.editingMsg) { o.setEditingMsg(null); return true; }
           if (o.replyTo) { o.setReplyTo(null); return true; }
+          if (o.showSearchBar && o.closeSearchBar) { o.closeSearchBar(); return true; }
         }
       } catch {}
       goBack();
@@ -11173,6 +11220,9 @@ function ChatConversationInner() {
       selectionMode, setSelectionMode, setSelectedIds,
       editingMsg, setEditingMsg,
       replyTo, setReplyTo,
+      // [2026-10-11 android-back] Voltar com a busca aberta fecha a busca
+      // (WhatsApp), em vez de sair da conversa.
+      showSearchBar, closeSearchBar: () => { setShowSearchBar(false); setSearchQuery(''); setSearchResults([]); },
     };
   });
   // Sticker suggestion strip user-dismissal — resets when the input is
@@ -17924,6 +17974,9 @@ function ChatConversationInner() {
   // input, so this menu slot is explicitly for attaching an existing file.
   const handlePickAudioFile = async () => {
     try {
+      // [2026-10-11 android-kav] fecha o teclado ANTES de abrir activity externa
+      // (senão KAVs voltam com altura de teclado fantasma no Android).
+      if (Platform.OS !== 'web') { try { Keyboard.dismiss(); } catch {} }
       if (Platform.OS === 'web') {
         const picked = await handleWebFilePick('audio/*', false);
         if (!picked) return;
@@ -18111,6 +18164,9 @@ function ChatConversationInner() {
 
   const handleGallery = async () => {
     try {
+      // [2026-10-11 android-kav] fecha o teclado ANTES de abrir activity externa
+      // (senão KAVs voltam com altura de teclado fantasma no Android).
+      if (Platform.OS !== 'web') { try { Keyboard.dismiss(); } catch {} }
       if (Platform.OS === 'web') {
         // Multi-select on web: share the same preview + caption UX as mobile
         // so the batch stays coherent and the album grouper fires via batchId.
@@ -18211,6 +18267,9 @@ function ChatConversationInner() {
 
   const handleAttachFile = async () => {
     try {
+      // [2026-10-11 android-kav] fecha o teclado ANTES de abrir activity externa
+      // (senão KAVs voltam com altura de teclado fantasma no Android).
+      if (Platform.OS !== 'web') { try { Keyboard.dismiss(); } catch {} }
       if (Platform.OS === 'web') {
         // Accept common document types + any file
         const file = await handleWebFilePick('.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.zip,.rar,.csv,.rtf,application/*,text/*,*/*');
@@ -21221,6 +21280,9 @@ function ChatConversationInner() {
   const handleChangeGroupPhoto = async () => {
     if (changingGroupPhoto) return;
     try {
+      // [2026-10-11 android-kav] fecha o teclado ANTES de abrir activity externa
+      // (senão KAVs voltam com altura de teclado fantasma no Android).
+      if (Platform.OS !== 'web') { try { Keyboard.dismiss(); } catch {} }
       let picked = null;
       if (Platform.OS === 'web') {
         picked = await handleWebFilePick('image/*', false);
@@ -31064,6 +31126,8 @@ function ChatConversationInner() {
           animationType="fade"
           onRequestClose={() => setQuoteSelectModal(null)}
         >
+          {/* [2026-10-11 android-kav] Modal edge-to-edge não redimensiona c/ teclado no Android */}
+          <SheetKeyboardAvoider style={{ flex: 1 }}>
           <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.55)', justifyContent: 'center', padding: 20 }}>
             <View style={{ backgroundColor: colors.surface, borderRadius: 16, padding: 18 }}>
               <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
@@ -31122,6 +31186,7 @@ function ChatConversationInner() {
               </View>
             </View>
           </View>
+          </SheetKeyboardAvoider>
         </Modal>
       )}
 
@@ -32829,22 +32894,18 @@ function ChatConversationInner() {
           o keybord fica no caminho".) */}
       {!!playlistEditor && (
         <Modal visible transparent animationType="slide" onRequestClose={() => setPlaylistEditor(null)}>
-          <KeyboardAvoidingView
-            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-            style={{ flex: 1 }}
-            keyboardVerticalOffset={0}
-          >
-            <PlaylistEditorModal
-              colors={colors}
-              isDark={isDark}
-              t={t}
-              editor={playlistEditor}
-              onClose={() => setPlaylistEditor(null)}
-              onUpdated={(updated) => {
-                setMessages(prev => _mapKeep(prev, m => m.id === updated.messageId ? { ...m, content: JSON.stringify(updated.playlist) } : m));
-              }}
-            />
-          </KeyboardAvoidingView>
+          {/* [2026-10-11 android-kav] KAV agora vive DENTRO do PlaylistEditorModal
+              (gate por foco no Android — ver useAndroidKavGate). */}
+          <PlaylistEditorModal
+            colors={colors}
+            isDark={isDark}
+            t={t}
+            editor={playlistEditor}
+            onClose={() => setPlaylistEditor(null)}
+            onUpdated={(updated) => {
+              setMessages(prev => _mapKeep(prev, m => m.id === updated.messageId ? { ...m, content: JSON.stringify(updated.playlist) } : m));
+            }}
+          />
         </Modal>
       )}
 
@@ -33553,7 +33614,7 @@ function ChatConversationInner() {
       {/* Message Info Modal (delivered to / read by) */}
       <Modal visible={!!messageInfo} transparent animationType="slide" onRequestClose={() => setMessageInfo(null)}>
         <Pressable style={styles.modalOverlay} onPress={() => setMessageInfo(null)}>
-          <Pressable style={{ backgroundColor: isDark ? '#1c1c1e' : '#fff', borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 20, width: '100%', position: 'absolute', bottom: 0, maxHeight: '75%' }}>
+          <Pressable style={{ backgroundColor: isDark ? '#1c1c1e' : '#fff', borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 20, paddingBottom: 20 + androidNavPad, width: '100%', position: 'absolute', bottom: 0, maxHeight: '75%' }}>
             <View style={{ width: 40, height: 4, borderRadius: 2, backgroundColor: 'rgba(128,128,128,0.3)', alignSelf: 'center', marginBottom: 12 }} />
             <Text style={{ fontSize: 18, fontWeight: '700', color: colors.text, marginBottom: 16 }}>
               {t('chatConv.messageInfo') || 'Informações da mensagem'}
@@ -35754,7 +35815,7 @@ function ChatConversationInner() {
           and approves or rejects. List refreshes optimistically on action. */}
       <Modal visible={showPendingModal} transparent animationType="slide" onRequestClose={() => setShowPendingModal(false)}>
         <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' }} onPress={() => setShowPendingModal(false)}>
-          <Pressable style={{ backgroundColor: colors.surface, borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 20, maxHeight: '80%' }} onPress={e => e.stopPropagation()}>
+          <Pressable style={{ backgroundColor: colors.surface, borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 20, paddingBottom: 20 + androidNavPad, maxHeight: '80%' }} onPress={e => e.stopPropagation()}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 12 }}>
               <IconUserPlus size={22} color="#f59e0b" />
               <Text style={{ fontSize: 18, fontWeight: '700', color: colors.text, flex: 1 }}>
@@ -35853,8 +35914,10 @@ function ChatConversationInner() {
 
       {/* Topics Modal */}
       <Modal visible={showTopicsModal} transparent animationType="slide" onRequestClose={() => setShowTopicsModal(false)}>
+        {/* [2026-10-11 android-kav] Modal edge-to-edge não redimensiona c/ teclado no Android */}
+        <SheetKeyboardAvoider style={{ flex: 1 }}>
         <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' }} onPress={() => setShowTopicsModal(false)}>
-          <Pressable style={{ backgroundColor: colors.surface, borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 20, maxHeight: '80%' }} onPress={e => e.stopPropagation()}>
+          <Pressable style={{ backgroundColor: colors.surface, borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 20, paddingBottom: 20 + androidNavPad, maxHeight: '80%' }} onPress={e => e.stopPropagation()}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 12 }}>
               <IconHash size={22} color={colors.primary} />
               <Text style={{ fontSize: 18, fontWeight: '700', color: colors.text, flex: 1 }}>
@@ -35956,6 +36019,7 @@ function ChatConversationInner() {
             )}
           </Pressable>
         </Pressable>
+        </SheetKeyboardAvoider>
       </Modal>
 
       {/* Per-conversation notification settings sheet (Notificações entry in header menu) */}
@@ -35973,8 +36037,10 @@ function ChatConversationInner() {
           on the topics row. Color picker + emoji + name input. Optimistic
           append so the new topic shows up instantly. */}
       <Modal visible={showTopicCreate} transparent animationType="slide" onRequestClose={() => setShowTopicCreate(false)}>
+        {/* [2026-10-11 android-kav] Modal edge-to-edge não redimensiona c/ teclado no Android */}
+        <SheetKeyboardAvoider style={{ flex: 1 }}>
         <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' }} onPress={() => setShowTopicCreate(false)}>
-          <Pressable style={{ backgroundColor: colors.surface, borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 20, maxHeight: '80%' }} onPress={e => e.stopPropagation()}>
+          <Pressable style={{ backgroundColor: colors.surface, borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 20, paddingBottom: 20 + androidNavPad, maxHeight: '80%' }} onPress={e => e.stopPropagation()}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 16 }}>
               <IconHash size={22} color={colors.primary} />
               <Text style={{ fontSize: 18, fontWeight: '700', color: colors.text, flex: 1 }}>
@@ -36063,6 +36129,7 @@ function ChatConversationInner() {
             </TouchableOpacity>
           </Pressable>
         </Pressable>
+        </SheetKeyboardAvoider>
       </Modal>
 
       {/* Custom roles / permissions sheet — opened from the "Editar
@@ -36073,7 +36140,7 @@ function ChatConversationInner() {
           (see chat.php L2657-2680). chatHasPermission() reads it. */}
       <Modal visible={!!roleEditTarget} transparent animationType="slide" onRequestClose={() => setRoleEditTarget(null)}>
         <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' }} onPress={() => setRoleEditTarget(null)}>
-          <Pressable style={{ backgroundColor: colors.surface, borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 20, maxHeight: '85%' }} onPress={e => e.stopPropagation()}>
+          <Pressable style={{ backgroundColor: colors.surface, borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 20, paddingBottom: 20 + androidNavPad, maxHeight: '85%' }} onPress={e => e.stopPropagation()}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 6 }}>
               <IconShield size={22} color={colors.primary} />
               <Text style={{ fontSize: 18, fontWeight: '700', color: colors.text, flex: 1 }}>
@@ -36222,6 +36289,8 @@ function ChatConversationInner() {
         animationType="fade"
         onRequestClose={() => setShowLockSetup(false)}
       >
+        {/* [2026-10-11 android-kav] Modal edge-to-edge não redimensiona c/ teclado no Android */}
+        <SheetKeyboardAvoider style={{ flex: 1 }}>
         <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center' }}>
           <View style={{ backgroundColor: colors.background, borderRadius: 16, padding: 24, width: 300, alignItems: 'center' }}>
             <IconLock size={32} color={colors.primary} />
@@ -36260,6 +36329,7 @@ function ChatConversationInner() {
             </View>
           </View>
         </View>
+        </SheetKeyboardAvoider>
       </Modal>
 
       {/* Disappearing Messages Modal */}
@@ -36492,7 +36562,7 @@ function ChatConversationInner() {
       <Modal visible={showStatsModal} transparent animationType="slide" onRequestClose={() => setShowStatsModal(false)}>
         <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'flex-end' }}>
           <Pressable style={{ flex: 1 }} onPress={() => setShowStatsModal(false)} />
-          <View style={{ backgroundColor: colors.background, borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingBottom: 34, maxHeight: '85%', overflow: 'hidden' }}>
+          <View style={{ backgroundColor: colors.background, borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingBottom: Platform.OS === 'android' ? androidNavPad + 16 : 34, maxHeight: '85%', overflow: 'hidden' }}>
             {/* [beauty 2026-10-02] Header neutralized (was green wash + green circle) */}
             <View style={{ paddingHorizontal: 22, paddingTop: 20, paddingBottom: 16, backgroundColor: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(17,17,17,0.03)', borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)' }}>
               <View style={{ flexDirection: 'row', alignItems: 'center' }}>
@@ -36775,7 +36845,7 @@ function ChatConversationInner() {
       <Modal visible={aiSummary.visible} transparent animationType="slide" onRequestClose={_aiClose}>
         <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'flex-end' }}>
           <Pressable style={{ flex: 1 }} onPress={_aiClose} />
-          <View style={{ backgroundColor: colors.background, borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingBottom: 34, maxHeight: '82%', overflow: 'hidden' }}>
+          <View style={{ backgroundColor: colors.background, borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingBottom: Platform.OS === 'android' ? androidNavPad + 16 : 34, maxHeight: '82%', overflow: 'hidden' }}>
             {_aiBody}
           </View>
         </View>

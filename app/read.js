@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef } from 'react';
-import { View, Text, TouchableOpacity, ActivityIndicator, StyleSheet, Platform, Animated, Easing, Alert } from 'react-native';
+import { View, Text, TouchableOpacity, ActivityIndicator, StyleSheet, Platform, Animated, Easing, Alert, useWindowDimensions } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { getMessage, deleteEmail as apiDelete, starEmail, unstarEmail, addLabel, removeLabel, getThread, archiveEmail, aiFollowupReminder } from '../services/api';
@@ -34,12 +34,17 @@ export default function ReadScreen() {
   // payload and shows the suggested message preview + a "Send follow-up"
   // button that hops to /compose with the suggestion pre-filled.
   const [followupSuggestion, setFollowupSuggestion] = useState(null); // {days, suggested_message, urgency}
-  const { emails, refresh, markAsRead, markAsUnread, deleteEmail: ctxDelete, archiveEmail: ctxArchive, snoozeEmail: ctxSnooze } = useMail();
+  const { emails, refresh, markAsRead, markAsUnread, deleteEmail: ctxDelete, archiveEmail: ctxArchive, snoozeEmail: ctxSnooze, starEmail: ctxStar, currentFolder, addLabelToEmail: ctxAddLabel, removeLabelFromEmail: ctxRemoveLabel } = useMail();
   const [showSnooze, setShowSnooze] = useState(false);
   const { colors, isDark } = useTheme();
   const { t } = useLanguage();
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  // [2026-10-11 email-qa] Web no celular (/read só abre com tela < 768) ficava
+  // SEM barra de voltar/anterior/próximo e SEM Arquivar/Adiar (só a grade do
+  // leitor, que não tem Arquivar). Mesma barra do app nativo.
+  const { width: _winW } = useWindowDimensions();
+  const showChrome = Platform.OS !== 'web' || _winW < 768;
 
   // Reading progress indicator
   const scrollProgress = useRef(new Animated.Value(0)).current;
@@ -132,13 +137,21 @@ export default function ReadScreen() {
     // "isso e o email quando eu vou ver o email" — skeleton infinito).
     // The finally still runs because the timeout resolves with null.
     const _timeoutMs = 25000;
-    const _withTimeout = (p, label) => Promise.race([
-      p,
-      new Promise((resolve) => setTimeout(() => {
-        try { console.warn('[read.js] timeout fetching', label); } catch {}
-        resolve(null);
-      }, _timeoutMs)),
-    ]);
+    // [2026-10-11 email-qa] Limpa o timer quando a promessa resolve — antes o
+    // aviso "[read.js] timeout fetching message" saía 25 s depois de TODA
+    // abertura (mesmo com o e-mail carregado em 150 ms), sujando o console.
+    const _withTimeout = (p, label) => {
+      let tid = null;
+      return Promise.race([
+        p,
+        new Promise((resolve) => {
+          tid = setTimeout(() => {
+            try { console.warn('[read.js] timeout fetching', label); } catch {}
+            resolve(null);
+          }, _timeoutMs);
+        }),
+      ]).finally(() => { if (tid) clearTimeout(tid); });
+    };
     // [2026-05-26] A single transient IMAP 401 / edge timeout used to strand
     // the user on an empty reader. Retry the message fetch ONCE on a
     // null/timeout/unsuccessful first result before trusting "no email". The
@@ -328,23 +341,42 @@ export default function ReadScreen() {
     router.back();
   };
 
+  // [2026-10-11 email-qa] Estrela otimista E sincronizada com a lista: antes
+  // esperava a API pra pintar e a linha da caixa de entrada continuava sem
+  // estrela ao voltar (até o próximo refresh). Linha na lista → starEmail do
+  // contexto (mesma proteção anti-revert da lista); senão, API direta.
   const handleStar = async (e) => {
-    if (e.flagged) {
-      await unstarEmail(uid, folder);
-    } else {
-      await starEmail(uid, folder);
+    const was = !!(e?.flagged ?? email?.flagged);
+    setEmail(prev => prev ? { ...prev, flagged: !was } : prev);
+    const inList = String(folder) === String(currentFolder) &&
+      emails.some(r => String(r.uid) === String(uid) && !!r.flagged === was);
+    try {
+      if (inList) {
+        await ctxStar(emails.find(r => String(r.uid) === String(uid)).uid);
+        return;
+      }
+      const r = was ? await unstarEmail(uid, folder) : await starEmail(uid, folder);
+      if (!r?.success) setEmail(prev => prev ? { ...prev, flagged: was } : prev);
+    } catch {
+      setEmail(prev => prev ? { ...prev, flagged: was } : prev);
     }
-    setEmail(prev => prev ? { ...prev, flagged: !prev.flagged } : prev);
   };
 
+  // [2026-10-11 email-qa] Marcador: pinta NA HORA no leitor e na linha da
+  // lista (antes esperava a API e a lista só mostrava o chip após refresh).
+  const _rowInList = (u) => String(folder) === String(currentFolder) && emails.find(r => String(r.uid) === String(u));
   const handleAddLabel = async (emailUid, label) => {
-    await addLabel(emailUid || uid, label, folder);
+    const u = emailUid || uid;
     setEmail(prev => prev ? { ...prev, labels: [...(prev.labels || []).filter(l => l !== label), label] } : prev);
+    const row = _rowInList(u);
+    try { if (row) await ctxAddLabel(row.uid, label); else await addLabel(u, label, folder); } catch {}
   };
 
   const handleRemoveLabel = async (emailUid, label) => {
-    await removeLabel(emailUid || uid, label, folder);
+    const u = emailUid || uid;
     setEmail(prev => prev ? { ...prev, labels: (prev.labels || []).filter(l => l !== label) } : prev);
+    const row = _rowInList(u);
+    try { if (row) await ctxRemoveLabel(row.uid, label); else await removeLabel(u, label, folder); } catch {}
   };
 
   const handleReportSpam = async (e) => {
@@ -364,7 +396,7 @@ export default function ReadScreen() {
   if (loading) {
     return (
       <View style={[s.container, { paddingTop: insets.top, backgroundColor: colors.surface }]}>
-        {Platform.OS !== 'web' && (
+        {showChrome && (
           <View style={[s.navBar, { backgroundColor: colors.headerBgSolid, borderBottomColor: colors.border }]}>
             <TouchableOpacity onPress={() => router.back()} style={s.backBtn} hitSlop={{ top: 12, bottom: 12, left: 16, right: 12 }}>
               <IconChevronLeft size={22} color={colors.text} />
@@ -387,7 +419,7 @@ export default function ReadScreen() {
     try { _online = require('../services/networkInfo').isConnected(); } catch {}
     return (
       <View style={[s.container, { paddingTop: insets.top, backgroundColor: colors.surface }]}>
-        {Platform.OS !== 'web' && (
+        {showChrome && (
           <View style={[s.navBar, { backgroundColor: colors.headerBgSolid, borderBottomColor: colors.border }]}>
             <TouchableOpacity onPress={() => router.back()} style={s.backBtn} hitSlop={{ top: 12, bottom: 12, left: 16, right: 12 }} accessibilityLabel={t('reader.back')} accessibilityRole="button">
               <IconChevronLeft size={22} color={colors.text} />
@@ -420,7 +452,7 @@ export default function ReadScreen() {
   // Back nav bar (mobile) — 2026 LIGHT: clean WHITE bar with a light hairline,
   // dark icons/label. Same white chrome as /chat, /inbox and compose so the
   // whole app reads as one calm light system (black lives only in accents).
-  const navBar = Platform.OS !== 'web' ? (
+  const navBar = showChrome ? (
     <View style={[s.navBar, {
       backgroundColor: colors.headerBgSolid,
       borderBottomColor: colors.border,
@@ -459,19 +491,23 @@ export default function ReadScreen() {
   // Wave 3 consolidação 2026-05-08: Reply ganhou destaque pill (monochrome
   // primary action, Telegram-style hierarquia), outras ações ficam icons
   // neutros — antes os 4 tinham mesmo peso visual e poluía.
-  const actionBar = Platform.OS !== 'web' && email ? (
+  // [2026-10-11 email-qa] 5-6 botões com rótulo não cabem em 390 px ("Arquivar"
+  // cortado, Excluir fora da tela). Em tela estreita os secundários ficam só
+  // com ícone (rótulo continua no accessibilityLabel), como o Gmail.
+  const _barIconOnly = _winW < 440;
+  const actionBar = showChrome && email ? (
     <View style={[s.actionBar, Shadow.lg, { backgroundColor: colors.surface, paddingBottom: insets.bottom + 8, borderTopColor: colors.borderLight }]}>
       <ActionBarButton icon={IconReply} label={t('reader.reply')} color={colors.primary} onPress={() => handleReply(email)} accessibilityLabel={t('reader.reply')} primary />
       {((email.cc && String(email.cc).trim()) || (email.to && String(email.to).split(',').filter(s => s.trim()).length > 1)) ? (
-        <ActionBarButton icon={IconReplyAll} label={t('reader.replyAll')} color={colors.textSecondary} onPress={() => handleReplyAll(email)} accessibilityLabel={t('reader.replyAll')} />
+        <ActionBarButton icon={IconReplyAll} label={t('reader.replyAll')} color={colors.textSecondary} onPress={() => handleReplyAll(email)} accessibilityLabel={t('reader.replyAll')} iconOnly={_barIconOnly} />
       ) : null}
       {/* Wrap: a bare handler ref receives the press EVENT as `emailData`,
           which _replyTarget mistakes for a message (truthy, no uid) — the
           compose then opens with subject "Fwd: " and no context. */}
-      <ActionBarButton icon={IconForward} label={t('reader.forward')} color={colors.textSecondary} onPress={() => handleForward(email)} accessibilityLabel={t('reader.forward')} />
-      <ActionBarButton icon={IconClock} label={t('reader.snooze')} color={colors.textSecondary} onPress={handleSnooze} accessibilityLabel={t('reader.snooze')} />
-      <ActionBarButton icon={IconArchive} label={t('reader.archive')} color={colors.textSecondary} onPress={handleArchive} accessibilityLabel={t('reader.archive')} />
-      <ActionBarButton icon={IconTrash} label={t('reader.delete')} color={colors.error} onPress={handleDelete} accessibilityLabel={t('reader.delete')} />
+      <ActionBarButton icon={IconForward} label={t('reader.forward')} color={colors.textSecondary} onPress={() => handleForward(email)} accessibilityLabel={t('reader.forward')} iconOnly={_barIconOnly} />
+      <ActionBarButton icon={IconClock} label={t('reader.snooze')} color={colors.textSecondary} onPress={handleSnooze} accessibilityLabel={t('reader.snooze')} iconOnly={_barIconOnly} />
+      <ActionBarButton icon={IconArchive} label={t('reader.archive')} color={colors.textSecondary} onPress={handleArchive} accessibilityLabel={t('reader.archive')} iconOnly={_barIconOnly} />
+      <ActionBarButton icon={IconTrash} label={t('reader.delete')} color={colors.error} onPress={handleDelete} accessibilityLabel={t('reader.delete')} iconOnly={_barIconOnly} />
     </View>
   ) : null;
 
@@ -549,7 +585,7 @@ export default function ReadScreen() {
           onReply={handleReply}
           onReplyAll={handleReplyAll}
           onForward={handleForward}
-          onClose={() => router.back()}
+          onClose={showChrome ? undefined : () => router.back()}
         />
         {actionBar}
         <SnoozePickerModal visible={showSnooze} onClose={() => setShowSnooze(false)} onSnooze={onSnoozePick} />
@@ -585,7 +621,9 @@ export default function ReadScreen() {
             refresh();
             router.back();
           }}
-          onClose={() => router.back()}
+          // [2026-10-11 email-qa] Com a barra "Voltar" visível o X do leitor era
+          // um segundo botão de fechar duplicado no topo.
+          onClose={showChrome ? undefined : () => router.back()}
           onScrollProgress={(progress) => {
             scrollProgress.setValue(progress);
           }}
@@ -604,7 +642,7 @@ export default function ReadScreen() {
 // Polish 2026-05-13: rounded 12px container + press scale 0.97 spring + SVG-only
 // (Icon component already SVG via Icons.js). Non-primary buttons get a subtle
 // surface tint on press so the rounded 12 shape reads instead of floating icons.
-function ActionBarButton({ icon: Icon, label, color, onPress, accessibilityLabel, primary }) {
+function ActionBarButton({ icon: Icon, label, color, onPress, accessibilityLabel, primary, iconOnly }) {
   const scaleAnim = useRef(new Animated.Value(1)).current;
   // Filled pill ink must follow the theme: dark primary is near-white, so a
   // hardcoded '#fff' label/icon was invisible on the Reply pill in dark mode.
@@ -643,7 +681,9 @@ function ActionBarButton({ icon: Icon, label, color, onPress, accessibilityLabel
     >
       <Animated.View style={[{ transform: [{ scale: scaleAnim }] }, innerStyle]}>
         <Icon size={primary ? 18 : 22} color={iconColor} />
-        <Text style={[s.actionBarLabel, { color: textColor, fontWeight: primary ? '700' : '500', marginTop: primary ? 0 : 4 }]}>{label}</Text>
+        {iconOnly ? null : (
+          <Text numberOfLines={1} style={[s.actionBarLabel, { color: textColor, fontWeight: primary ? '700' : '500', marginTop: primary ? 0 : 4 }]}>{label}</Text>
+        )}
       </Animated.View>
     </TouchableOpacity>
   );
@@ -698,7 +738,7 @@ const s = StyleSheet.create({
     }),
   },
   actionBarBtn: {
-    alignItems: 'center', paddingVertical: 6, paddingHorizontal: 16,
+    alignItems: 'center', paddingVertical: 6, paddingHorizontal: 4, flexShrink: 1,
     borderRadius: 12,
   },
   actionBarLabel: { fontSize: 11, marginTop: 4, fontWeight: '600', letterSpacing: 0.1 },

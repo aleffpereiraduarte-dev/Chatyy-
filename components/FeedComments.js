@@ -949,12 +949,12 @@ export default function FeedComments({ visible, post, colors, isDark, t, user, o
       statusBarTranslucent
     >
       <KeyboardAvoidingView
-        style={styles.overlay}
+        style={[styles.overlay, isWeb ? { backgroundColor: 'rgba(0,0,0,0.5)' } : null]}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       >
         {/* Backdrop */}
         <Pressable
-          style={styles.backdrop}
+          style={[styles.backdrop, isWeb ? { backgroundColor: 'transparent' } : null]}
           onPress={onClose}
           accessibilityLabel={t('common.close') || 'Fechar'}
           accessibilityRole="button"
@@ -964,7 +964,10 @@ export default function FeedComments({ visible, post, colors, isDark, t, user, o
         <View style={[styles.sheet, {
           backgroundColor: sheetBg, // [2026-10-08 apps-native] was slate-blue #0f172a
           maxHeight: SHEET_HEIGHT,
-          ...(isWeb ? { boxShadow: '0 -4px 30px rgba(0,0,0,0.12)' } : {}),
+          // [2026-10-11 social-qa] Desktop web: folha centralizada (≤640px) em
+          // vez de esticar 1200px de ponta a ponta; o escurecido vai pro overlay
+          // inteiro pra cobrir também as laterais.
+          ...(isWeb ? { boxShadow: '0 -4px 30px rgba(0,0,0,0.12)', width: '100%', maxWidth: 640, alignSelf: 'center' } : {}),
         }]}>
           {/* Header — drag handle + centered title + close X */}
           <ModalHeader
@@ -1119,6 +1122,16 @@ export default function FeedComments({ visible, post, colors, isDark, t, user, o
                 value={text}
                 onChangeText={setText}
                 multiline
+                // [2026-10-11 social-qa] Web: Enter publica (Shift+Enter quebra
+                // linha), igual Instagram web — antes Enter só pulava linha e o
+                // comentário nunca saía pelo teclado.
+                onKeyPress={Platform.OS === 'web' ? (e) => {
+                  const ne = e?.nativeEvent || {};
+                  if (ne.key === 'Enter' && !ne.shiftKey && !ne.isComposing) {
+                    try { e.preventDefault?.(); } catch {}
+                    if (text.trim() && !sending) handleSend();
+                  }
+                } : undefined}
                 maxLength={500}
                 accessibilityLabel={t('feed.writeComment') || 'Adicionar comentário'}
               />

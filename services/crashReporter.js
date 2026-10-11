@@ -423,9 +423,66 @@ async function _flushPersistedCrashes() {
 
 // ─── Fatal/non-fatal error path (shared by global handler + boundaries) ──
 // Returns a promise that settles when the beacons were handed to fetch.
+// [forense 2026-10-11] Web: chunk de rota/serviço que sumiu depois de um deploy
+// ("Loading module https://chatyy.com.br/_expo/static/js/web/outboxDrainer-<hash>.js
+// failed", 10/10 17:21 — outboxDrainer e onlineRecoveryOrchestrator). O import()
+// lazy rejeita e a aba segue SEM o drenador do outbox / recuperação online até o
+// usuário recarregar na mão. Cura: recarrega UMA vez (sessionStorage, 10 min) —
+// na hora se a falha derrubou a tela (ErrorBoundary), senão quando a aba for
+// para o fundo (sem interromper quem está digitando). Nunca em localhost (QA).
+const _RE_CHUNK_FAIL = /Loading (module|chunk) .* failed|ChunkLoadError|Failed to fetch dynamically imported module|Importing a module script failed|error loading dynamically imported module/i;
+const _CHUNK_RELOAD_KEY = '@chatyy/chunk_reload_at';
+let _chunkReloadArmed = false;
+function _maybeHealStaleChunk(msg, source) {
+  try {
+    if (_platform !== 'web' || typeof window === 'undefined' || !window.location) return;
+    if (!_RE_CHUNK_FAIL.test(String(msg || ''))) return;
+    const host = String(window.location.hostname || '');
+    if (!host || host === 'localhost' || host === '127.0.0.1') return;
+    let ss = null;
+    try { ss = window.sessionStorage; } catch { ss = null; }
+    if (!ss) return;
+    const last = Number(ss.getItem(_CHUNK_RELOAD_KEY) || 0);
+    if (last && Date.now() - last < 10 * 60 * 1000) return;
+    const doReload = () => {
+      try {
+        ss.setItem(_CHUNK_RELOAD_KEY, String(Date.now()));
+        addBreadcrumb('chunk_reload', source);
+        _post('chunk_reload', `src=${source} ${String(msg).slice(0, 160)}`, true);
+      } catch {}
+      setTimeout(() => { try { window.location.reload(); } catch {} }, 300);
+    };
+    if (source === 'boundary') { doReload(); return; }
+    if (_chunkReloadArmed || typeof document === 'undefined' || typeof document.addEventListener !== 'function') return;
+    _chunkReloadArmed = true;
+    // Nunca derruba ligação / live / reunião em andamento: espera o próximo "fundo".
+    const busy = () => {
+      try {
+        const p = String(window.location.pathname || '');
+        if (/call|live|meet|record/i.test(p)) return true;
+        const cs = require('./callState');
+        const st = typeof cs?.getCallState === 'function' ? cs.getCallState() : 'idle';
+        if (st && st !== 'idle' && st !== 'ended') return true;
+        if (typeof cs?.getGlobalCall === 'function' && cs.getGlobalCall()) return true;
+      } catch {}
+      return false;
+    };
+    const onVis = () => {
+      try {
+        if (document.visibilityState !== 'hidden') return;
+        if (busy()) return;
+        document.removeEventListener('visibilitychange', onVis);
+        doReload();
+      } catch {}
+    };
+    document.addEventListener('visibilitychange', onVis);
+  } catch {}
+}
+
 export function reportError(error, { fatal = false, source = 'global', extra = '' } = {}) {
   try {
     const msg = (error && error.message) ? error.message : String(error || 'unknown');
+    _maybeHealStaleChunk(msg, source);
     const rawStack = (error && error.stack) ? error.stack : '';
     const stack = normalizeStack(rawStack, 10);
     const sig = _signature(msg, rawStack);

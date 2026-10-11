@@ -4,7 +4,7 @@ import { memo, useState, useEffect, useRef, useCallback } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet, ScrollView,
   Switch, ActivityIndicator, Platform, Alert, Image, Linking, Share, Modal, Pressable,
-  BackHandler,
+  BackHandler, Keyboard,
 } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import { HapticsCompat as Haptics } from '../services/haptics'; // [2026-10-11] same API, routed via the shared haptics shim
@@ -16,6 +16,7 @@ import PressableRow from '../components/PressableRow'; // [2026-10-07 app-feel-u
 // [2026-10-08 settings-redesign] grouped inset lists (iOS/WhatsApp Settings)
 import { SettingsGroup, SettingsRow, SettingsSwitchRow, SettingsPickerRow, SettingsCardContent, SettingsIconTile, OptionSheet, useGroupedColors } from '../components/settings/SettingsKit';
 import NativeSheetDialog from '../components/NativeSheetDialog'; // [2026-10-09 native-sheets] sheet do sistema (web = Modal original)
+import SheetKeyboardAvoider from '../components/chat/SheetKeyboardAvoider'; // [2026-10-11 android-kav]
 import { USE_NATIVE_SHEETS } from '../components/NativeSheet';
 import SettingsSegmented from '../components/SettingsSegmented';
 import { useRouter, useLocalSearchParams, useFocusEffect, Stack } from 'expo-router';
@@ -1290,6 +1291,7 @@ function SettingsScreenInner() {
 
   const handleChangePhoto = async () => {
     try {
+      try { Keyboard.dismiss(); } catch {} // [2026-10-11 android-kav] antes da galeria
       const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (!perm.granted) return;
       const result = await ImagePicker.launchImageLibraryAsync({
@@ -2271,6 +2273,7 @@ function SettingsScreenInner() {
           <TouchableOpacity
             onPress={async () => {
               try {
+                try { Keyboard.dismiss(); } catch {} // [2026-10-11 android-kav] antes da galeria
                 const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
                 if (!perm.granted) return;
                 const result = await ImagePicker.launchImageLibraryAsync({
@@ -3423,6 +3426,8 @@ function SettingsScreenInner() {
         animationType="slide"
         onRequestClose={() => setE2eBackupOpen(false)}
       >
+        {/* [2026-10-11 android-kav] Modal edge-to-edge não redimensiona c/ teclado no Android */}
+        <SheetKeyboardAvoider style={{ flex: 1 }}>
         <Pressable
           style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', padding: 20 }}
           onPress={() => !e2eBackupBusy && setE2eBackupOpen(false)}
@@ -3543,6 +3548,7 @@ function SettingsScreenInner() {
             </View>
           </Pressable>
         </Pressable>
+        </SheetKeyboardAvoider>
       </Modal>
 
       {/* Change Password Modal */}
@@ -3552,6 +3558,8 @@ function SettingsScreenInner() {
         animationType="slide"
         onRequestClose={() => setChangePasswordOpen(false)}
       >
+        {/* [2026-10-11 android-kav] Modal edge-to-edge não redimensiona c/ teclado no Android */}
+        <SheetKeyboardAvoider style={{ flex: 1 }}>
         <Pressable
           style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center' }}
           onPress={() => setChangePasswordOpen(false)}
@@ -3744,6 +3752,7 @@ function SettingsScreenInner() {
             </View>
           </Pressable>
         </Pressable>
+        </SheetKeyboardAvoider>
       </Modal>
 
       {/* 2FA PIN Entry Modal — 4 digit boxes */}
@@ -3753,6 +3762,8 @@ function SettingsScreenInner() {
         animationType="slide"
         onRequestClose={() => setTwoFAOpen(false)}
       >
+        {/* [2026-10-11 android-kav] Modal edge-to-edge não redimensiona c/ teclado no Android */}
+        <SheetKeyboardAvoider style={{ flex: 1 }}>
         <Pressable
           style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center' }}
           onPress={() => setTwoFAOpen(false)}
@@ -3884,6 +3895,7 @@ function SettingsScreenInner() {
             </View>
           </Pressable>
         </Pressable>
+        </SheetKeyboardAvoider>
       </Modal>
 
       {/* Registration Lock PIN Entry Modal — same shape as 2FA but writes a
@@ -3897,6 +3909,8 @@ function SettingsScreenInner() {
         animationType="slide"
         onRequestClose={() => setRegLockOpen(false)}
       >
+        {/* [2026-10-11 android-kav] Modal edge-to-edge não redimensiona c/ teclado no Android */}
+        <SheetKeyboardAvoider style={{ flex: 1 }}>
         <Pressable
           style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center' }}
           onPress={() => setRegLockOpen(false)}
@@ -4027,6 +4041,7 @@ function SettingsScreenInner() {
             </View>
           </Pressable>
         </Pressable>
+        </SheetKeyboardAvoider>
       </Modal>
 
       {/* About modal — version + build + legal links. Read-only surface;
@@ -4092,6 +4107,8 @@ function SettingsScreenInner() {
         animationType="slide"
         onRequestClose={() => setBackupKeyOpen(false)}
       >
+        {/* [2026-10-11 android-kav] Modal edge-to-edge não redimensiona c/ teclado no Android */}
+        <SheetKeyboardAvoider style={{ flex: 1 }}>
         <Pressable
           style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', padding: 20 }}
           onPress={() => !backupKeyBusy && setBackupKeyOpen(false)}
@@ -4202,6 +4219,7 @@ function SettingsScreenInner() {
             </View>
           </Pressable>
         </Pressable>
+        </SheetKeyboardAvoider>
       </Modal>
 
       {/* Multi-account switcher sheet */}

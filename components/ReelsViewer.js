@@ -68,6 +68,15 @@ function pickSubtitle(segments, currentMs) {
 }
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
+// [2026-10-11 social-qa] Largura do reel = largura MEDIDA do container (não a
+// janela): no desktop web a sidebar (72px) empurrava o trilho de ações
+// (curtir/comentar/compartilhar) pra fora da tela. Em tela larga (desktop) o
+// reel vira coluna 9:16 centralizada, como Instagram/TikTok web.
+function _reelItemWidth(containerWidth, height) {
+  const w = containerWidth || SCREEN_WIDTH;
+  if (Platform.OS === 'web' && height > 0 && w > height * 0.8) return Math.max(320, Math.round(height * 9 / 16));
+  return w;
+}
 
 // Native video player — uses the bespoke `expo-shorts` module which loans
 // from a 3-slot AVPlayer (iOS) / ExoPlayer (Android) pool. Replaced the
@@ -1149,7 +1158,7 @@ const BoostToast = memo(function BoostToast({ visible }) {
 });
 
 // ── Single Reel Item ──
-const ReelItem = memo(function ReelItem({ onCreate, reel, isActive, colors, isDark, t, user, containerHeight, onOpenComments, onOpenLikers, onOpenProfile, onUseSound, onDuet, onStitch, onHidePost, onLikeChange, showLiveRing, overlayOpen, router, preload, screenFocused = true, muted = false, onToggleMute }) {
+const ReelItem = memo(function ReelItem({ onCreate, reel, isActive, colors, isDark, t, user, containerHeight, containerWidth, onOpenComments, onOpenLikers, onOpenProfile, onUseSound, onDuet, onStitch, onHidePost, onLikeChange, showLiveRing, overlayOpen, router, preload, screenFocused = true, muted = false, onToggleMute }) {
   // Safe-area insets so the bottom info block (username/caption/music row)
   // doesn't sit on top of the iOS home indicator or Android gesture pill.
   const insets = useSafeAreaInsets();
@@ -1748,7 +1757,7 @@ const ReelItem = memo(function ReelItem({ onCreate, reel, isActive, colors, isDa
   }, []);
 
   return (
-    <View style={[styles.reelContainer, { height, width: SCREEN_WIDTH }]}>
+    <View style={[styles.reelContainer, { height, width: _reelItemWidth(containerWidth, height), alignSelf: 'center' }]}>
       {/* Video - full screen edge to edge. Long-press anywhere → 2× boost.
           Wrapped in PinchZoomBox so two-finger pinch scales 1..3× then springs
           back on release (silent no-op when RNGH isn't on the path). */}
@@ -2331,6 +2340,7 @@ const ReelItem = memo(function ReelItem({ onCreate, reel, isActive, colors, isDa
   if (prev.screenFocused !== next.screenFocused) return false;
   if (prev.showLiveRing !== next.showLiveRing) return false;
   if (prev.containerHeight !== next.containerHeight) return false;
+  if (prev.containerWidth !== next.containerWidth) return false;
   if (prev.isDark !== next.isDark) return false;
   if (!!prev.onCreate !== !!next.onCreate) return false; // [2026-10-08 apps-native] câmera aparece/some
   if (prev.colors !== next.colors) return false;
@@ -2529,6 +2539,7 @@ export default function ReelsViewer({ colors, isDark, t, user, router, feedMode:
   const [commentsReel, setCommentsReel] = useState(null);
   const [likersReel, setLikersReel] = useState(null);
   const [containerHeight, setContainerHeight] = useState(SCREEN_HEIGHT);
+  const [containerWidth, setContainerWidth] = useState(SCREEN_WIDTH);
 
   // ── Infinite scroll (P0) ──
   // Page cursor + has-more + in-flight guard tracked per feed (For You vs
@@ -2756,8 +2767,33 @@ export default function ReelsViewer({ colors, isDark, t, user, router, feedMode:
 
   const onLayout = useCallback((e) => {
     const h = e.nativeEvent.layout.height;
+    const w = e.nativeEvent.layout.width;
     if (h > 0) setContainerHeight(h);
+    if (w > 0) setContainerWidth(w);
   }, []);
+  // [2026-10-11 social-qa] Web: o onLayout do reelsRoot não chegava (QA: item
+  // ficava com a altura da JANELA 844 dentro de um container de 709 → legenda,
+  // @autor e barra de progresso escondidos atrás da tab bar e o paging
+  // desalinhado). ResizeObserver direto no nó DOM garante a altura real.
+  const _rootRoRef = useRef(null);
+  const setRootRef = useCallback((el) => {
+    if (!isWeb) return;
+    try { _rootRoRef.current?.disconnect?.(); } catch {}
+    _rootRoRef.current = null;
+    if (!el || typeof el.getBoundingClientRect !== 'function') return;
+    const apply = () => {
+      try {
+        const r = el.getBoundingClientRect();
+        if (r.height > 0) setContainerHeight(Math.round(r.height));
+        if (r.width > 0) setContainerWidth(Math.round(r.width));
+      } catch {}
+    };
+    apply();
+    if (typeof ResizeObserver !== 'undefined') {
+      try { const ro = new ResizeObserver(apply); ro.observe(el); _rootRoRef.current = ro; } catch {}
+    }
+  }, []);
+  useEffect(() => () => { try { _rootRoRef.current?.disconnect?.(); } catch {} }, []);
 
   const activeReels = reelTab === 'following' ? followingReels : reels;
 
@@ -2897,6 +2933,7 @@ export default function ReelsViewer({ colors, isDark, t, user, router, feedMode:
         user={user}
         router={router}
         containerHeight={containerHeight}
+        containerWidth={containerWidth}
         onOpenComments={handleOpenComments}
         onOpenLikers={handleOpenLikers}
         onOpenProfile={handleOpenProfile}
@@ -2914,9 +2951,32 @@ export default function ReelsViewer({ colors, isDark, t, user, router, feedMode:
         onCreate={onCreate}
       />
     );
-  }, [currentIndex, colors, isDark, t, user, router, containerHeight, handleOpenComments, handleOpenLikers, handleOpenProfile, handleUseSound, handleDuet, handleStitch, handleHidePost, handleReelLikeChange, showLiveRing, overlayOpen, playGate, muted, handleToggleMute, onCreate]);
+  }, [currentIndex, colors, isDark, t, user, router, containerHeight, containerWidth, handleOpenComments, handleOpenLikers, handleOpenProfile, handleUseSound, handleDuet, handleStitch, handleHidePost, handleReelLikeChange, showLiveRing, overlayOpen, playGate, muted, handleToggleMute, onCreate]);
 
   const keyExtractor = useCallback((item) => String(item.id), []);
+
+  // [2026-10-11 social-qa] Desktop web: ↑/↓ (e PageUp/PageDown) trocam de reel,
+  // como Instagram/TikTok web. Antes só a roda do mouse — e no desktop ela não
+  // avançava (QA: rolou 40px e voltou). Ignora quando digitando ou com sheet aberta.
+  useEffect(() => {
+    if (!isWeb || typeof window === 'undefined' || !parentActive) return undefined;
+    const onKey = (e) => {
+      const tg = e?.target; const tag = String(tg?.tagName || '').toLowerCase();
+      if (tag === 'input' || tag === 'textarea' || tg?.isContentEditable) return;
+      if (overlayOpen) return;
+      let d = 0;
+      if (e.key === 'ArrowDown' || e.key === 'PageDown') d = 1;
+      else if (e.key === 'ArrowUp' || e.key === 'PageUp') d = -1;
+      else return;
+      const len = Array.isArray(activeReels) ? activeReels.length : 0;
+      const n = Math.max(0, Math.min(len - 1, currentIndex + d));
+      if (n === currentIndex || len === 0) return;
+      try { e.preventDefault(); } catch {}
+      try { listRef.current?.scrollToOffset?.({ offset: n * containerHeight, animated: true }); } catch {}
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [parentActive, currentIndex, activeReels, containerHeight, overlayOpen]);
 
   if (loading) {
     return (
@@ -2937,7 +2997,7 @@ export default function ReelsViewer({ colors, isDark, t, user, router, feedMode:
   }
 
   return (
-    <View style={styles.reelsRoot} onLayout={onLayout}>
+    <View ref={setRootRef} style={styles.reelsRoot} onLayout={onLayout}>
       {/* Following / For You tabs overlaying the top */}
       <View style={[styles.reelTabBar, { top: Math.max(outerInsets.top, Platform.OS === 'android' ? 12 : 44) + 8 }]} pointerEvents="box-none">
         <Pressable

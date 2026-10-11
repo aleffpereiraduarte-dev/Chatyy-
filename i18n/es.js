@@ -1510,6 +1510,7 @@ export default {
   'compose.discard': 'Descartar',
   'compose.saveDraft': 'Guardar borrador',
   'compose.draftSaved': 'Borrador guardado',
+  'compose.draftSaving': 'Guardando borrador…',
   'compose.improveText': 'Mejorar',
   'compose.improving': 'Mejorando...',
   'compose.aiImproved': 'Texto mejorado',
@@ -2271,6 +2272,7 @@ export default {
 
   // Search extras
   'search.resultCount': '{count} resultados para',
+  'search.resultCountOne': '1 resultado para',
   'search.searching': 'Buscando',
 
   // Sidebar extras
@@ -10217,4 +10219,6 @@ export default {
   "chat.attach.recentPhoto": "Foto",
   "chat.attach.recentVideo": "Vídeo",
   "chat.attach.recentSelected": "seleccionada",
+  "feed.linkCopied": "Enlace copiado",
+  "feed.findPeople": "Encontrar personas",
 };

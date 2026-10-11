@@ -15,7 +15,7 @@ import { useState, useEffect, useRef, useMemo } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet, ActivityIndicator,
   Animated, Platform, ScrollView, Dimensions, Modal,
-  Image, ActionSheetIOS, Easing, Pressable, useWindowDimensions, BackHandler,
+  Image, ActionSheetIOS, Easing, Pressable, useWindowDimensions, BackHandler, Keyboard,
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { HapticsCompat as Haptics } from '../services/haptics'; // [2026-10-11] same API, routed via the shared haptics shim
@@ -865,6 +865,9 @@ export default function SignupPhone() {
   // Android/Web fallback Modal can call them too).
   const _launchGalleryAvatar = async () => {
     try {
+      // [2026-10-11 android-kav] fecha o teclado do nome ANTES da activity externa
+      // (no Android a volta da galeria/câmera deixava altura de teclado fantasma).
+      try { Keyboard.dismiss(); } catch {}
       const r = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: 'Images',
         allowsEditing: true,
@@ -879,6 +882,9 @@ export default function SignupPhone() {
   };
   const _launchCameraAvatar = async () => {
     try {
+      // [2026-10-11 android-kav] fecha o teclado do nome ANTES da activity externa
+      // (no Android a volta da galeria/câmera deixava altura de teclado fantasma).
+      try { Keyboard.dismiss(); } catch {}
       const perm = await ImagePicker.requestCameraPermissionsAsync();
       if (!perm?.granted) return; // permission denied — silent on signup
       const r = await ImagePicker.launchCameraAsync({

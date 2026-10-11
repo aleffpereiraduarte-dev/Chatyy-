@@ -429,7 +429,15 @@ export default function SpotlightScreen() {
         t={t}
         user={user}
         onClose={() => setCreateVisible(false)}
-        onPostCreated={() => { setCreateVisible(false); load(1); setPage(1); }}
+        // [2026-10-11 social-qa] Foto/carrossel não aparece no Spotlight (só
+        // vídeo) → o autor publicava e caía num reel de outra pessoa sem ver o
+        // próprio post. Post que não é vídeo volta pro Feed (topo), como o IG.
+        onPostCreated={(p) => {
+          setCreateVisible(false);
+          const isVid = !!p && (p.is_reel || p.media_type === 'video');
+          if (p && !isVid) { try { router.replace('/chat?tab=feed'); return; } catch {} }
+          load(1); setPage(1);
+        }}
         initialFiles={(params?._shared_uri ? [{
           uri: String(params._shared_uri),
           file: { uri: String(params._shared_uri), name: String(params._shared_name || 'shared'), type: String(params._shared_type || 'image') === 'video' ? 'video/mp4' : 'image/jpeg' },

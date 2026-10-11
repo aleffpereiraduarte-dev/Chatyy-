@@ -1056,6 +1056,7 @@ export default {
   'compose.discard': 'تجاهل',
   'compose.saveDraft': 'حفظ المسودة',
   'compose.draftSaved': 'تم حفظ المسودة',
+  'compose.draftSaving': 'جارٍ حفظ المسودة…',
   'compose.improveText': 'تحسين',
   'compose.improving': 'يتم التحسين...',
   'compose.aiImproved': '✨ تم تحسين النص',
@@ -1773,6 +1774,7 @@ export default {
 
   // Search extras
   'search.resultCount': '{count} نتائج لـ',
+  'search.resultCountOne': 'نتيجة واحدة لـ',
   'search.searching': 'جاري البحث',
 
   // Sidebar extras
@@ -10248,4 +10250,6 @@ export default {
   "chat.attach.recentPhoto": "صورة",
   "chat.attach.recentVideo": "فيديو",
   "chat.attach.recentSelected": "محددة",
+  "feed.linkCopied": "تم نسخ الرابط",
+  "feed.findPeople": "البحث عن أشخاص",
 };

@@ -395,7 +395,10 @@ export default function LiveDiscoverScreen() {
           </View>
         </View>
 
-        {/* Big AO VIVO badge w/ breathing halo + real-time live count. */}
+        {/* Big AO VIVO badge w/ breathing halo + real-time live count.
+            [2026-10-11 social-qa] Só com live real no ar: o selo vermelho
+            pulsando + "0 transmissões agora" contradizia o vazio logo abaixo. */}
+        {liveCount > 0 && (
         <View style={styles.heroBarBadgeRow}>
           <View style={styles.heroBigBadge}>
             <View style={styles.heroBigBadgeDotWrap}>
@@ -421,6 +424,7 @@ export default function LiveDiscoverScreen() {
             </Text>
           )}
         </View>
+        )}
 
         <Text style={styles.heroBarTitle}>
           {t('live.discover') || 'Lives'}

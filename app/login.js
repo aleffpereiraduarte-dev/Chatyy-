@@ -20,6 +20,7 @@ import {
   IconChevronRight, IconChevronDown, IconRefresh,
 } from '../components/Icons';
 import { HelpModal, PrivacyModal, TermsModal } from '../components/LoginModals';
+import SheetKeyboardAvoider from '../components/chat/SheetKeyboardAvoider'; // [2026-10-11 android-kav]
 import SignupIntro from '../components/SignupIntro';
 import RestoreBackupPrompt from '../components/RestoreBackupPrompt';
 import OwnBackupRestorePrompt from '../components/OwnBackupRestorePrompt';
@@ -2939,7 +2940,10 @@ export default function LoginScreen() {
       <TermsModal visible={showTerms} onClose={() => setShowTerms(false)} />
 
       {/* Country code picker modal */}
-      <Modal visible={showCountryPicker} animationType="slide" transparent>
+      {/* [2026-10-11 android-back] sem onRequestClose o Voltar do Android não fechava o seletor */}
+      <Modal visible={showCountryPicker} animationType="slide" transparent statusBarTranslucent onRequestClose={() => setShowCountryPicker(false)}>
+        {/* [2026-10-11 android-kav] Modal edge-to-edge não redimensiona c/ teclado no Android */}
+        <SheetKeyboardAvoider style={{ flex: 1 }}>
         <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' }}>
           <View style={{ backgroundColor: colors.authCardBg, borderTopLeftRadius: 20, borderTopRightRadius: 20, maxHeight: '70%', paddingBottom: 30 + insets.bottom }}>
             <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 16, borderBottomWidth: 0.5, borderBottomColor: colors.border }}>
@@ -2986,6 +2990,7 @@ export default function LoginScreen() {
             />
           </View>
         </View>
+        </SheetKeyboardAvoider>
       </Modal>
 
       {/* Language picker modal */}
@@ -3080,6 +3085,8 @@ export default function LoginScreen() {
           animationType="slide"
           onRequestClose={() => setShowQrScanner(false)}
         >
+          {/* [2026-10-11 android-kav] Modal edge-to-edge não redimensiona c/ teclado no Android */}
+          <SheetKeyboardAvoider style={{ flex: 1 }}>
           <Pressable style={s.langOverlay} onPress={() => setShowQrScanner(false)}>
             <Pressable style={[s.qrScanModal, {
               backgroundColor: colors.authCardBg,
@@ -3138,6 +3145,7 @@ export default function LoginScreen() {
               </View>
             </Pressable>
           </Pressable>
+          </SheetKeyboardAvoider>
         </Modal>
       )}
 

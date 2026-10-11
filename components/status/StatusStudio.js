@@ -24,9 +24,10 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet, Modal, Dimensions, Platform, TextInput,
-  ScrollView, PanResponder, ActivityIndicator, Image, KeyboardAvoidingView, Alert, Pressable,
+  ScrollView, PanResponder, ActivityIndicator, Image, KeyboardAvoidingView, Keyboard, Alert, Pressable,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useAndroidKeyboardInset } from '../chat/SheetKeyboardAvoider'; // [2026-10-11 android-kav]
 import Svg, { Path, Defs, LinearGradient, Stop, Rect } from 'react-native-svg';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
@@ -275,6 +276,9 @@ const blankOverlays = () => ({ items: [], paths: [] });
 export default function StatusStudio({ visible, seed, onClose, onOpenCamera, user, t, router }) {
   const { colors, isDark } = useTheme();
   const insets = useSafeAreaInsets();
+  // [2026-10-11 android-kav] editor de texto: no Android a KAV fica desligada e o
+  // Modal edge-to-edge não redimensiona → teclado cobria a fileira de cores.
+  const androidKb = useAndroidKeyboardInset();
   const filtersOn = filtersAvailable();
 
   const [mode, setMode] = useState('media'); // media | text
@@ -683,6 +687,7 @@ export default function StatusStudio({ visible, seed, onClose, onOpenCamera, use
   // ── adicionar mídia a partir do modo texto / mais fotos ──
   const pickFromGallery = useCallback(async () => {
     try {
+      if (Platform.OS !== 'web') { try { Keyboard.dismiss(); } catch {} } // [2026-10-11 android-kav] legenda/texto focado + galeria
       const IP = await import('expo-image-picker');
       if (Platform.OS !== 'web') {
         const perm = await IP.requestMediaLibraryPermissionsAsync();
@@ -1000,7 +1005,9 @@ export default function StatusStudio({ visible, seed, onClose, onOpenCamera, use
         </View>
 
         {/* Painel da ferramenta + rodapé */}
-        <View style={{ flex: 1, justifyContent: 'flex-end' }}>
+        {/* [2026-10-11 android-kav] Android: legenda focada → rodapé sobe acima do
+            teclado (palco tem altura fixa; Modal edge-to-edge não redimensiona). */}
+        <View style={[{ flex: 1, justifyContent: 'flex-end' }, captionFocus && androidKb > 0 ? { transform: [{ translateY: -androidKb }] } : null]}>
           {renderToolPanel()}
           {mode === 'media' && items.length > 1 ? (
             <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 12, gap: 8 }} style={{ maxHeight: 54, marginBottom: 6 }}>
@@ -1067,7 +1074,7 @@ export default function StatusStudio({ visible, seed, onClose, onOpenCamera, use
 
         {/* ── Editor de texto (sobre tudo) ── */}
         {tool === 'textEdit' && textDraft ? (
-          <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={[StyleSheet.absoluteFill, st.textEditRoot, { paddingTop: insets.top + 8 }]}>
+          <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={[StyleSheet.absoluteFill, st.textEditRoot, { paddingTop: insets.top + 8 }, androidKb > 0 ? { paddingBottom: androidKb } : null]}>
             <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, gap: 8 }}>
               <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 6 }} keyboardShouldPersistTaps="always">
                 {FONTS.map(f => (
@@ -1265,11 +1272,17 @@ function ColorRow({ value, onPick }) {
 }
 
 function Sheet({ onClose, children, bg, border, height }) {
+  // [2026-10-11 android-kav] Android: o Modal edge-to-edge não redimensiona e a
+  // KAV estava desligada (behavior undefined) → teclado cobria os campos de
+  // local/link/menção. Sobe o sheet pela altura do teclado (só c/ input focado,
+  // auto-cura do fantasma) e limita a altura p/ o topo não sair da tela.
+  const kb = useAndroidKeyboardInset();
+  const sheetH = kb > 0 ? Math.min(height, Math.max(200, WIN.height - kb - 72)) : height;
   return (
     <View style={StyleSheet.absoluteFill}>
       <Pressable style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.45)' }]} onPress={onClose} />
-      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ position: 'absolute', left: 0, right: 0, bottom: 0 }}>
-        <View style={{ height, backgroundColor: bg, borderTopLeftRadius: 20, borderTopRightRadius: 20, borderTopWidth: StyleSheet.hairlineWidth, borderColor: border, paddingTop: 8 }}>
+      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ position: 'absolute', left: 0, right: 0, bottom: kb }}>
+        <View style={{ height: sheetH, backgroundColor: bg, borderTopLeftRadius: 20, borderTopRightRadius: 20, borderTopWidth: StyleSheet.hairlineWidth, borderColor: border, paddingTop: 8 }}>
           <View style={{ alignSelf: 'center', width: 38, height: 4, borderRadius: 2, backgroundColor: 'rgba(127,127,127,0.4)', marginBottom: 10 }} />
           {children}
         </View>

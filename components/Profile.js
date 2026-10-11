@@ -821,6 +821,13 @@ const GridItem = memo(function GridItem({ item, size, onPress, isReel }) {
   const renderImg = () => {
     if (!url || imgFailed) return placeholder;
     if (WEB) {
+      // [2026-10-11 social-qa] profile_get manda `thumbnail` = poster JPG do
+      // reel (…/reel_x.thumb.jpg). Antes isso ia pro <video src>, que dava
+      // erro → tile cinza "mídia indisponível" em TODO reel do grid no web.
+      // Se a thumb já é imagem, pinta <img> (igual ao nativo).
+      if (looksLikeVideo && thumbIsImage) {
+        return <img src={url} onError={() => setImgFailed(true)} style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: 3 }} alt="" loading="lazy" decoding="async" />;
+      }
       if (looksLikeVideo) {
         return (
           <video

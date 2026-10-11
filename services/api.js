@@ -2777,7 +2777,26 @@ async function _rustFetchWithRefresh(url, init = {}) {
   return r;
 }
 
-export async function getInbox(folder = 'INBOX', page = 1, perPage = 20, search = '', category = '', label = '', filter = '') {
+// [2026-10-11 email-qa] Single-flight p/ leituras idênticas em voo. Abrir a
+// caixa disparava 3-4 GET /inbox e 3 GET /folders IGUAIS no mesmo segundo
+// (mount + troca de conta + aba de categoria + entrada no poll). Pedidos
+// idênticos simultâneos agora compartilham a mesma resposta.
+const _sfInflight = new Map();
+function _singleFlight(key, fn) {
+  const cur = _sfInflight.get(key);
+  if (cur) return cur;
+  const p = Promise.resolve().then(fn).finally(() => { if (_sfInflight.get(key) === p) _sfInflight.delete(key); });
+  _sfInflight.set(key, p);
+  return p;
+}
+
+export function getInbox(folder = 'INBOX', page = 1, perPage = 20, search = '', category = '', label = '', filter = '') {
+  const acct = (() => { try { return getActiveAccountEmail?.() || ''; } catch { return ''; } })();
+  return _singleFlight(`inbox|${acct}|${folder}|${page}|${perPage}|${search}|${category}|${label}|${filter}`,
+    () => _getInboxImpl(folder, page, perPage, search, category, label, filter));
+}
+
+async function _getInboxImpl(folder = 'INBOX', page = 1, perPage = 20, search = '', category = '', label = '', filter = '') {
   // Rust-first for everything except label/category (Rust 501 → PHP fallback).
   // Search operators (from/to/subject/is:/before/after/larger/smaller) are now
   // handled natively; label KEYWORD maps and category bucketing stay on PHP.
@@ -2966,7 +2985,12 @@ export async function prefetchMessage(uid, folder = 'INBOX') {
   }
 }
 
-export async function getFolders() {
+export function getFolders() {
+  const acct = (() => { try { return getActiveAccountEmail?.() || ''; } catch { return ''; } })();
+  return _singleFlight(`folders|${acct}`, _getFoldersImpl);
+}
+
+async function _getFoldersImpl() {
   // Rust first — much faster (no PHP bootstrap, persistent IMAP LIST).
   // Skip the Rust call entirely when we have no bearer token: the service
   // has no PHP session fallback and would just return 401, spamming logs

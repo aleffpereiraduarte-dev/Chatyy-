@@ -25,6 +25,7 @@ import {
 } from '../components/Icons';
 import AvatarCircle from '../components/AvatarCircle';
 import BroadcastModal from '../components/BroadcastModal';
+import SheetKeyboardAvoider from '../components/chat/SheetKeyboardAvoider'; // [2026-10-11 android-kav]
 import { ListSkeleton } from '../components/SkeletonLoader';
 import PressableScale from '../components/PressableScale'; // [2026-10-11] primary CTAs
 import { CameraView, useCameraPermissions } from 'expo-camera';
@@ -2662,6 +2663,8 @@ export default function ChatNewScreen() {
         animationType="fade"
         onRequestClose={() => setShowQrModal(false)}
       >
+        {/* [2026-10-11 android-kav] Modal edge-to-edge não redimensiona c/ teclado no Android */}
+        <SheetKeyboardAvoider style={{ flex: 1 }}>
         <View style={sty.modalOverlay}>
           <View style={[sty.qrModal, { backgroundColor: colors.surface }]}>
             <View style={sty.qrModalHeader}>
@@ -2761,6 +2764,7 @@ export default function ChatNewScreen() {
             )}
           </View>
         </View>
+        </SheetKeyboardAvoider>
       </Modal>
 
       {/* Broadcast list creator — multi-select contacts + name input.
@@ -2782,6 +2786,8 @@ export default function ChatNewScreen() {
         animationType="fade"
         onRequestClose={() => { if (!broadcastSending) setBroadcastComposeList(null); }}
       >
+        {/* [2026-10-11 android-kav] Modal edge-to-edge não redimensiona c/ teclado no Android */}
+        <SheetKeyboardAvoider style={{ flex: 1 }}>
         <View style={sty.modalOverlay}>
           <View style={[sty.qrModal, { backgroundColor: colors.surface }]}>
             <View style={sty.qrModalHeader}>
@@ -2843,6 +2849,7 @@ export default function ChatNewScreen() {
             </TouchableOpacity>
           </View>
         </View>
+        </SheetKeyboardAvoider>
       </Modal>
     </View>
   );

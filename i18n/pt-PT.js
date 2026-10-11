@@ -1258,6 +1258,7 @@ export default {
   'compose.discard': 'Descartar',
   'compose.saveDraft': 'Guardar rascunho',
   'compose.draftSaved': 'Rascunho guardado',
+  'compose.draftSaving': 'A guardar rascunho…',
   'compose.improveText': 'Melhorar',
   'compose.improving': 'A melhorar...',
   'compose.aiImproved': '✨ Texto melhorado',
@@ -1900,6 +1901,7 @@ export default {
   'theme.light': 'Modo claro',
   'theme.dark': 'Modo escuro',
   'search.resultCount': '{count} resultados para',
+  'search.resultCountOne': '1 resultado para',
   'search.searching': 'A buscar',
   'sidebar.quickAccess': 'Acesso Rápido',
   'sidebar.search': 'Buscar',
@@ -9494,4 +9496,6 @@ export default {
   "chat.attach.recentPhoto": "Fotografia",
   "chat.attach.recentVideo": "Vídeo",
   "chat.attach.recentSelected": "selecionada",
+  "feed.linkCopied": "Ligação copiada",
+  "feed.findPeople": "Encontrar pessoas",
 };

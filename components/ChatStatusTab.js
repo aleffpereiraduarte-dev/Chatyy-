@@ -1,11 +1,12 @@
 import { androidBottomInset } from '../utils/systemInsets'; // [2026-10-07 android-native] edge-to-edge
+import SheetKeyboardAvoider, { useAndroidKeyboardInset } from './chat/SheetKeyboardAvoider'; // [2026-10-11 android-kav]
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import FastImage from './FastImage'; // [2026-10-09 expo-image]
 import {
   View, Text, TouchableOpacity, StyleSheet, ScrollView, Platform,
   Modal, TextInput, Image, Animated, Dimensions, KeyboardAvoidingView,
   ActivityIndicator, PanResponder, Pressable, Alert, StatusBar,
-  Linking, RefreshControl, FlatList, AppState,
+  Linking, RefreshControl, FlatList, AppState, Keyboard,
 } from 'react-native';
 import CachedImage from './CachedImage';
 import AvatarCircle from './AvatarCircle';
@@ -1274,6 +1275,9 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
   // ("dois sistemas"). Lock blocks concurrent handlers for ~600ms after either.
   const statusPressLockRef = useRef(0);
   const [creatorVisible, setCreatorVisible] = useState(false);
+  // [2026-10-11 android-kav] Criador legado: KAV só no iOS; no Android o Modal
+  // edge-to-edge não redimensiona e o teclado cobria a legenda/campos.
+  const creatorKb = useAndroidKeyboardInset(creatorVisible);
   const [creatorMode, setCreatorMode] = useState('text');
   const [textContent, setTextContent] = useState('');
   const [textBgColor, setTextBgColor] = useState(TEXT_BG_COLORS[0]);
@@ -2245,6 +2249,37 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
     return () => { try { sub?.remove?.(); } catch {} };
   }, [viewerVisible]);
 
+  // [2026-10-11 android-kav] Resposta ao status: o teclado cobria o campo
+  // (o viewer é um <Modal> edge-to-edge — nada redimensiona sozinho). Mesmo
+  // esquema do StoryViewer: a barra de resposta sobe com o teclado (translateY
+  // nativo, sem re-render). Auto-cura do "teclado fantasma": ao voltar p/ o app
+  // (câmera/ligação/notificação) sem input focado, ou ao fechar o viewer, zera.
+  const viewerKbOffset = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    if (!viewerVisible || Platform.OS === 'web') { viewerKbOffset.setValue(0); return undefined; }
+    const isIOS = Platform.OS === 'ios';
+    // A barra já tem paddingBottom (36 no iOS = home indicator; no Android a
+    // altura do teclado do RN já exclui a barra de navegação).
+    const lift = (h) => (isIOS ? Math.max(0, h - 28) : h);
+    const anim = (to, d) => Animated.timing(viewerKbOffset, { toValue: to, duration: d || 220, useNativeDriver: true }).start();
+    const s = Keyboard.addListener(isIOS ? 'keyboardWillShow' : 'keyboardDidShow', (e) => {
+      anim(-lift(e?.endCoordinates?.height || 0), e?.duration);
+    });
+    const h = Keyboard.addListener(isIOS ? 'keyboardWillHide' : 'keyboardDidHide', (e) => anim(0, e?.duration));
+    const a = AppState.addEventListener('change', (next) => {
+      if (next !== 'active') return;
+      let focused = false;
+      try { focused = !!TextInput.State?.currentlyFocusedInput?.(); } catch {}
+      if (!focused) viewerKbOffset.setValue(0);
+    });
+    return () => {
+      try { s.remove(); } catch {}
+      try { h.remove(); } catch {}
+      try { a?.remove?.(); } catch {}
+      viewerKbOffset.setValue(0);
+    };
+  }, [viewerVisible, viewerKbOffset]);
+
   // ─── Creator Logic ───
   const openCreator = useCallback((mode = 'text') => {
     if (Date.now() < statusPressLockRef.current) return;
@@ -2303,6 +2338,7 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
         // gallery — previously hard-coded to gallery only.
         const pickFromSource = async (source) => {
           try {
+            try { Keyboard.dismiss(); } catch {} // [2026-10-11 android-kav] antes da câmera/galeria
             const ImagePicker = await import('expo-image-picker');
             const launch = source === 'camera'
               ? ImagePicker.launchCameraAsync
@@ -2758,6 +2794,7 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
           isVideo: (f.type || '').startsWith('video/'),
         }));
       } else {
+        try { Keyboard.dismiss(); } catch {} // [2026-10-11 android-kav] antes da galeria
         const ImagePicker = await import('expo-image-picker');
         const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
         if (!perm.granted) return;
@@ -4276,7 +4313,7 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
 
             {/* Reply input (only for other people's statuses) */}
             {!isOwnStatus && (
-              <>
+              <Animated.View style={{ transform: [{ translateY: viewerKbOffset }] }}>
                 {/* Quick-reply emoji row — WhatsApp parity. Tap = sends that
                     emoji as the reply immediately, without typing. */}
                 <View style={{ flexDirection: 'row', justifyContent: 'space-between', paddingHorizontal: 18, paddingBottom: 6, gap: 6 }}>
@@ -4328,7 +4365,7 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
                   </TouchableOpacity>
                 )}
               </View>
-              </>
+              </Animated.View>
             )}
 
             {/* Own status view count footer — tap to see who viewed */}
@@ -4351,6 +4388,8 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
 
       {/* ─── Highlight picker — Stories permanentes (B) ─── */}
       <Modal visible={!!highlightSheet} transparent animationType="slide" onRequestClose={() => setHighlightSheet(null)}>
+        {/* [2026-10-11 android-kav] Modal edge-to-edge não redimensiona c/ teclado no Android */}
+        <SheetKeyboardAvoider style={{ flex: 1 }}>
         <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.55)', justifyContent: 'flex-end' }} onPress={() => setHighlightSheet(null)}>
           <Pressable style={{
             backgroundColor: isDark ? '#111' : '#fff',
@@ -4419,6 +4458,7 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
             </View>
           </Pressable>
         </Pressable>
+        </SheetKeyboardAvoider>
       </Modal>
 
       {/* ─── Viewers List Modal — WhatsApp-style ─── */}
@@ -4630,7 +4670,7 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
           <Pressable style={{
             backgroundColor: isDark ? '#1c1c1e' : '#fff',
             borderTopLeftRadius: 20, borderTopRightRadius: 20,
-            paddingHorizontal: 20, paddingTop: 12, paddingBottom: 36,
+            paddingHorizontal: 20, paddingTop: 12, paddingBottom: Platform.OS === 'android' ? androidBottomInset(16) : 36, // [2026-10-11 android-e2e]
             minHeight: 360,
           }}>
             <View style={{ alignSelf: 'center', width: 36, height: 4, borderRadius: 2, backgroundColor: isDark ? 'rgba(255,255,255,0.2)' : '#d1d5db', marginBottom: 18 }} />
@@ -4715,7 +4755,7 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
           <Pressable style={{
             backgroundColor: isDark ? '#1c1c1e' : '#fff',
             borderTopLeftRadius: 20, borderTopRightRadius: 20,
-            paddingHorizontal: 16, paddingTop: 12, paddingBottom: 28,
+            paddingHorizontal: 16, paddingTop: 12, paddingBottom: Platform.OS === 'android' ? androidBottomInset(12) : 28, // [2026-10-11 android-e2e]
             maxHeight: '78%',
           }}>
             <View style={{ alignSelf: 'center', width: 36, height: 4, borderRadius: 2, backgroundColor: isDark ? 'rgba(255,255,255,0.2)' : '#d1d5db', marginBottom: 14 }} />
@@ -4837,7 +4877,7 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
       {/* ─── Forward to Chat Modal ─── */}
       <Modal visible={forwardModalVisible} transparent animationType="slide" onRequestClose={() => { setForwardModalVisible(false); setIsPaused(false); }}>
         <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' }} onPress={() => { setForwardModalVisible(false); setIsPaused(false); }}>
-          <Pressable style={{ backgroundColor: isDark ? '#1c1c1e' : '#fff', borderTopLeftRadius: 20, borderTopRightRadius: 20, maxHeight: '60%', paddingBottom: 34 }}>
+          <Pressable style={{ backgroundColor: isDark ? '#1c1c1e' : '#fff', borderTopLeftRadius: 20, borderTopRightRadius: 20, maxHeight: '60%', paddingBottom: Platform.OS === 'android' ? androidBottomInset(12) : 34 }}>
             <View style={{ alignItems: 'center', paddingVertical: 16, borderBottomWidth: 1, borderBottomColor: isDark ? 'rgba(255,255,255,0.1)' : '#e5e7eb' }}>
               <View style={{ width: 36, height: 4, borderRadius: 2, backgroundColor: isDark ? 'rgba(255,255,255,0.2)' : '#d1d5db', marginBottom: 12 }} />
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
@@ -4894,7 +4934,7 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
             devices. iOS already had the 54pt baseline so this is a no-op there
             (translucent on iOS just keeps the existing default). */}
         <StatusBar translucent backgroundColor="transparent" barStyle="light-content" />
-        <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+        <KeyboardAvoidingView style={[{ flex: 1 }, creatorKb > 0 ? { paddingBottom: creatorKb } : null]} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
           {/* ─── Music Picker (rendered INSIDE creator modal to avoid iOS stacking issues) ─── */}
           {musicPickerVisible ? (
             <View style={{ flex: 1, backgroundColor: isDark ? '#1c1c1e' : '#fff' }}>
@@ -5820,7 +5860,7 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
           <View style={{
             backgroundColor: isDark ? '#161618' : '#fff',
             borderTopLeftRadius: 22, borderTopRightRadius: 22,
-            paddingHorizontal: 18, paddingTop: 14, paddingBottom: 28,
+            paddingHorizontal: 18, paddingTop: 14, paddingBottom: Platform.OS === 'android' ? androidBottomInset(12) : 28, // [2026-10-11 android-e2e]
             maxHeight: '72%',
           }}>
             <View style={{

@@ -1388,7 +1388,7 @@ function ChatFeedTab({ colors, isDark, t, user, router, initialFeedMode, onFeedM
         title={t('feed.empty')}
         subtitle={t('feed.emptySubtext')}
         cta={{ label: t('feed.createPost') || 'Criar publicação', onPress: () => { try { haptic.light(); } catch {} setCreateVisible(true); } }}
-        secondary={algorithm === 'following' ? { label: t('feed.forYou') || 'Para você', onPress: () => setAlgorithm('fyp') } : { label: t('feed.unifiedSearch') || 'Pesquisa', onPress: () => { try { router?.push('/search'); } catch {} } }}
+        secondary={algorithm === 'following' ? { label: t('feed.forYou') || 'Para você', onPress: () => setAlgorithm('fyp') } : { label: t('feed.findPeople') || 'Encontrar pessoas', onPress: () => { try { router?.push('/search'); } catch {} } }}
       />
     );
   }, [loading, feedError, t, loadPosts, algorithm, router]);
@@ -1666,6 +1666,7 @@ function ChatFeedTab({ colors, isDark, t, user, router, initialFeedMode, onFeedM
 
       {/* Scroll-to-top FAB */}
       {showScrollTop && (
+        <View pointerEvents="box-none" style={styles.fabScrollTopWrap}>
         <PressableScale
           haptic="light"
           style={[styles.fabScrollTop, {
@@ -1679,6 +1680,7 @@ function ChatFeedTab({ colors, isDark, t, user, router, initialFeedMode, onFeedM
         >
           <IconChevronUp size={22} color={isDark ? '#fff' : '#111'} />
         </PressableScale>
+        </View>
       )}
 
       {/* Go Live FAB — pulse ring + scroll-top glass blur for a more
@@ -1777,13 +1779,23 @@ const styles = StyleSheet.create({
       web: { boxShadow: '0 4px 12px rgba(0,0,0,0.15)' },
     }),
   },
-  fabScrollTop: {
+  // [2026-10-11 social-qa] Voltar-ao-topo = pílula no TOPO-CENTRO (padrão
+  // Instagram "novas publicações"). Antes ficava bottom:156/right:21 e cobria
+  // o ícone Salvar da barra de ações do post + empilhava com os 2 FABs.
+  // PressableScale aplica `style` no Animated.View INTERNO (o Touchable
+  // externo fica no fluxo) → o posicionamento absoluto mora neste wrapper.
+  fabScrollTopWrap: {
     position: 'absolute',
-    bottom: 156,
-    right: 21,
-    width: 46,
-    height: 46,
-    borderRadius: 23,
+    top: 12,
+    left: 0,
+    right: 0,
+    alignItems: 'center',
+    zIndex: 10,
+  },
+  fabScrollTop: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
     alignItems: 'center',
     justifyContent: 'center',
     zIndex: 10,

@@ -349,6 +349,17 @@ function _swPrefetch(mine, others) {
   } catch {}
 }
 
+// [2026-10-11 social-qa] Cada tela tem a SUA instância do hook (faixa de
+// stories do Feed, ChatStatusTab que hospeda o viewer, ChatListTab). O
+// markViewed só atualizava a instância que chamou → depois de ver os stories
+// pelo Feed o anel continuava "não visto" até o poll de 45s. Agora o visto é
+// transmitido pra todas as instâncias montadas (só estado; o _liveStore/MMKV
+// já é gravado pela instância de origem).
+const _viewedListeners = new Set();
+function _broadcastViewed(statusId, stamp, origin) {
+  _viewedListeners.forEach((fn) => { if (fn !== origin) { try { fn(statusId, stamp); } catch {} } });
+}
+
 export default function useStatuses(currentEmail, opts = {}) {
   const {
     warmCacheVideos = true,
@@ -719,8 +730,23 @@ export default function useStatuses(currentEmail, opts = {}) {
   // [WAVE 71 2026-05-21] Also update _liveStore + MMKV so re-mount after
   // a nav-away keeps the viewed flag (was reverting to unviewed for ~1
   // poll cycle, causing ring-color flicker).
+  const _applyViewedRef = useRef(null);
+  useEffect(() => {
+    const fn = (statusId, stamp) => {
+      const mapItem = (it) => (it.id === statusId && !it.viewed) ? { ...it, viewed: true, viewed_at: stamp } : it;
+      setMine(prev => prev.some(it => it.id === statusId && !it.viewed) ? prev.map(mapItem) : prev);
+      setOthers(prev => prev.some(g => (g.items || []).some(it => it.id === statusId && !it.viewed)) ? prev.map(g => ({ ...g, items: (g.items || []).map(mapItem) })) : prev);
+      setGroups(prev => prev.some(g => (g.items || []).some(it => it.id === statusId && !it.viewed)) ? prev.map(g => ({ ...g, items: (g.items || []).map(mapItem) })) : prev);
+      fpRef.current = null;
+    };
+    _applyViewedRef.current = fn;
+    _viewedListeners.add(fn);
+    return () => { _viewedListeners.delete(fn); };
+  }, []);
+
   const markViewed = useCallback((statusId) => {
     const stamp = new Date().toISOString();
+    try { _broadcastViewed(statusId, stamp, _applyViewedRef.current); } catch {}
     // [P2 2026-05-26] If we're offline, the actual status_view receipt is
     // sitting in the offline queue (StoryViewer queues it on failure). Surface
     // that as a subtle pending indicator so the owner-side "viewed" state reads

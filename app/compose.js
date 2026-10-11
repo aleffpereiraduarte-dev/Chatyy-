@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet, ScrollView,
   KeyboardAvoidingView, Platform, ActivityIndicator, Alert,
-  LayoutAnimation, Animated, Modal, Pressable, Switch, AppState,
+  LayoutAnimation, Animated, Modal, Pressable, Switch, AppState, useWindowDimensions,
 } from 'react-native';
 let DOMPurify = null;
 if (Platform.OS === 'web') {
@@ -444,6 +444,10 @@ export default function ComposeScreen() {
   const { t } = useLanguage();
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  // [2026-10-11 email-qa] Tela estreita (celular): o selo "Rascunho salvo HH:MM"
+  // empurrava o botão Enviar pra fora da tela (390 px → "Envia" cortado).
+  const { width: composeWinW } = useWindowDimensions();
+  const compactHeader = composeWinW < 480;
 
   const isReply = !!params.reply_uid;
   const isReplyAll = !!params.reply_all;
@@ -1654,7 +1658,7 @@ export default function ComposeScreen() {
     if (draftStatus === 'idle') return null;
     let label = '';
     if (draftStatus === 'saving') {
-      label = (t('compose.draftSaved') || 'Rascunho salvo') + '...';
+      label = t('compose.draftSaving');
     } else if (draftStatus === 'saved' && lastSavedAt) {
       const hh = String(lastSavedAt.getHours()).padStart(2, '0');
       const mm = String(lastSavedAt.getMinutes()).padStart(2, '0');
@@ -1681,10 +1685,11 @@ export default function ComposeScreen() {
           flexDirection: 'row',
           alignItems: 'center',
           gap: 4,
-          marginRight: 6,
-          paddingHorizontal: 10,
-          paddingVertical: 4,
+          marginRight: compactHeader ? 0 : 6,
+          paddingHorizontal: compactHeader ? 7 : 10,
+          paddingVertical: compactHeader ? 6 : 4,
           borderRadius: 12,
+          flexShrink: 1,
           backgroundColor: pillBg,
           borderWidth: StyleSheet.hairlineWidth,
           borderColor: pillBorder,
@@ -1693,6 +1698,8 @@ export default function ComposeScreen() {
         accessibilityLabel={label}
       >
         {isSaved && <IconCheckCircle size={12} color={tickColor} />}
+        {compactHeader && draftStatus === 'saving' ? <ActivityIndicator size="small" color={colors.textSecondary} style={{ transform: [{ scale: 0.7 }] }} /> : null}
+        {compactHeader && !isError ? null : (
         <Text
           numberOfLines={1}
           style={{
@@ -1701,11 +1708,12 @@ export default function ComposeScreen() {
             fontStyle: draftStatus === 'saving' ? 'italic' : 'normal',
             fontWeight: '600',
             letterSpacing: 0.2,
-            maxWidth: 180,
+            maxWidth: compactHeader ? 96 : 180,
           }}
         >
-          {label}
+          {compactHeader && isError ? '!' : label}
         </Text>
+        )}
       </View>
     );
   };
@@ -2155,7 +2163,7 @@ export default function ComposeScreen() {
                   <Text style={[s.origSender, { color: colors.text }]} numberOfLines={1}>
                     {senderName || senderEmail}
                   </Text>
-                  <Text style={[s.origDate, { color: colors.textTertiary }]}>{origDate}</Text>
+                  <Text style={[s.origDate, { color: colors.textSecondary }]}>{origDate}</Text>
                 </View>
               </View>
 

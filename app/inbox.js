@@ -112,8 +112,8 @@ function InboxScreenInner() {
     emails, folders, currentFolder, selectedEmail, loadingList, loadingMessage,
     page, total, search,
     loadFolders, loadEmails, openEmail, changeFolder, refresh, silentRefresh, doSearch,
-    deleteEmail, setSelectedEmail, setPage, markAsUnread,
-    starEmail: ctxStarEmail, archiveEmail: ctxArchiveEmail,
+    deleteEmail, setSelectedEmail, setPage, markAsUnread, markAsRead: ctxMarkAsRead,
+    starEmail: ctxStarEmail, archiveEmail: ctxArchiveEmail, moveEmail: ctxMoveEmail,
     // Selection
     selectedUids, selectMode, toggleSelect, selectAll, clearSelection,
     // Bulk
@@ -409,6 +409,13 @@ function InboxScreenInner() {
     return false;
   }, [aiPriority, localPriority]);
 
+  const inboxFolderUnread = useMemo(() => {
+    const f = (folders || []).find(x => x && x.name === 'INBOX');
+    if (!f) return null;
+    const n = Number(f.unread ?? f.unseen);
+    return Number.isFinite(n) ? n : null;
+  }, [folders]);
+
   // Compute category counts (uses AI categories if available, falls back to e.category)
   useEffect(() => {
     if (currentFolder !== 'INBOX' || !emails?.length) return;
@@ -420,8 +427,12 @@ function InboxScreenInner() {
       if (!e.seen) counts.unread++;
       if (isImportant(e)) counts.important++;
     }
+    // [2026-10-11 email-qa] "Não lidos" = contador da PASTA (servidor +
+    // ajustes otimistas), não só as ~20 linhas carregadas — com mais de uma
+    // página o chip dizia 12 enquanto a barra lateral dizia 16.
+    if (inboxFolderUnread != null) counts.unread = Math.max(counts.unread, inboxFolderUnread);
     setCategoryCounts(counts);
-  }, [emails, currentFolder, aiCategories, isImportant]);
+  }, [emails, currentFolder, aiCategories, isImportant, inboxFolderUnread]);
 
   // [2026-10-09 on-device-privacy] A importância agora é calculada NO
   // APARELHO (services/emailImportanceLocal: remetente/lista/promo/urgência/
@@ -483,7 +494,11 @@ function InboxScreenInner() {
     return () => { alive = false; };
   }, [emails, currentFolder, aiStoreHydrated, aiEmailKey, persistAiStore]);
 
-  const unreadCount = useMemo(() => emails.filter(e => !e.seen).length, [emails]);
+  const unreadCount = useMemo(() => {
+    const loaded = emails.filter(e => !e.seen).length;
+    // Cabeçalho "N não lidos" do celular: mesmo número da pasta (ver acima).
+    return currentFolder === 'INBOX' && inboxFolderUnread != null ? Math.max(loaded, inboxFolderUnread) : loaded;
+  }, [emails, currentFolder, inboxFolderUnread]);
 
   // "Mark all as read" — bulk-mark every visible unread email in current folder.
   // Confirms first to avoid accidental nuking of an unread queue. Reuses the
@@ -493,9 +508,14 @@ function InboxScreenInner() {
     if (unreadUids.length === 0) return;
     const doMark = async () => {
       try {
+        // [2026-10-11 email-qa] Otimista: as linhas perdem o negrito e o
+        // contador da pasta baixa na hora (antes ficava tudo igual até o
+        // refresh e o número da barra lateral só mudava no poll de 2 min).
+        unreadUids.forEach(u => { try { ctxMarkAsRead(u, currentFolder, true); } catch {} });
         const apiSvc = await import('../services/api');
         await apiSvc.bulkMarkRead(unreadUids, currentFolder);
         refresh();
+        try { loadFolders(); } catch {}
         try { (await import('../services/pushNotifications')).refreshBadgeCount?.(); } catch {}
       } catch (e) { console.warn('markAllRead failed', e); }
     };
@@ -508,6 +528,7 @@ function InboxScreenInner() {
         const apiSvc = await import('../services/api');
         await apiSvc.bulkMarkReadFolder(currentFolder);
         refresh();
+        try { loadFolders(); } catch {}
         try { (await import('../services/pushNotifications')).refreshBadgeCount?.(); } catch {}
       } catch (e) { console.warn('bulkMarkReadFolder failed', e); }
     };
@@ -530,7 +551,7 @@ function InboxScreenInner() {
         (unreadUids.length >= 50 ? doMarkFolder : doMark)();
       }
     }
-  }, [emails, currentFolder, refresh, t]);
+  }, [emails, currentFolder, refresh, t, ctxMarkAsRead, loadFolders]);
 
   // Bundles fetch (round-6 gap-closer). Only INBOX gets bundles — other
   // folders surface flat lists. Refreshed when the folder changes or the
@@ -690,8 +711,22 @@ function InboxScreenInner() {
   }, [recentlyReadLoaded]);
 
   // Reset and reload when user changes (account switch)
+  // [2026-10-11 email-qa] Só numa TROCA real de conta: na montagem o efeito
+  // acima já carrega pastas+INBOX — este rodava junto, zerava a lista (flash
+  // do esqueleto) e repetia os mesmos GET /folders e /inbox.
+  const loadedForEmailRef = useRef(null);
   useEffect(() => {
-    if (user?.email && recentlyReadLoaded) {
+    if (!user?.email || !recentlyReadLoaded) return;
+    if (loadedForEmailRef.current === null || loadedForEmailRef.current === user.email) {
+      const first = loadedForEmailRef.current === null;
+      loadedForEmailRef.current = user.email;
+      // Auth hidratou DEPOIS da montagem (cold start direto em /inbox) e a
+      // lista ainda está vazia → carrega (single-flight evita duplicar).
+      if (first && !emails.length) { loadFolders(); loadEmails('INBOX', 1, ''); }
+      return;
+    }
+    loadedForEmailRef.current = user.email;
+    {
       resetMailState();
       loadFolders();
       loadEmails('INBOX', 1, '');
@@ -701,7 +736,11 @@ function InboxScreenInner() {
   }, [user?.email, recentlyReadLoaded]);
 
   // Reload emails when activeCategory changes (unread is client-side filter)
+  // [2026-10-11 email-qa] Pula a 1ª execução (montagem) — era o 3º GET /inbox
+  // idêntico na abertura da caixa.
+  const categoryEffectRanRef = useRef(false);
   useEffect(() => {
+    if (!categoryEffectRanRef.current) { categoryEffectRanRef.current = true; return; }
     if (currentFolder === 'INBOX') {
       if (activeCategory === 'all' || activeCategory === 'unread') {
         loadEmails('INBOX', 1, search);
@@ -1002,11 +1041,13 @@ function InboxScreenInner() {
   }, [handleFolderPress]);
 
   // Stable callback for sidebar move email
+  // [2026-10-11 email-qa] Arrastar p/ pasta: usa o moveEmail do contexto
+  // (some da lista na hora + contadores das duas pastas) em vez da API crua +
+  // refresh (a linha ficava parada até o refetch e os números não mexiam).
   const handleSidebarMoveEmail = useCallback(async (uid, folder) => {
-    const { moveEmail } = await import('../services/api');
-    await moveEmail(uid, folder, currentFolder);
-    refresh();
-  }, [currentFolder, refresh]);
+    await ctxMoveEmail(uid, folder, currentFolder);
+    try { loadFolders(); } catch {}
+  }, [currentFolder, ctxMoveEmail, loadFolders]);
 
   // Global search overlay state — opened from the sidebar "Search" shortcut
   // and (desktop/web) from the Cmd/Ctrl+K keybinding.
@@ -1795,20 +1836,6 @@ function InboxScreenInner() {
           </>
         )}
 
-        {/* Search results banner */}
-        {search ? (
-          <View style={[s.searchBanner, { backgroundColor: colors.primaryLight + '40', borderBottomColor: colors.border }]}>
-            <IconSearch size={14} color={colors.primary} />
-            <Text style={[s.searchBannerText, { color: colors.text }]}>
-              {total > 0 ? t('search.resultCount', { count: total }) : t('search.searching')} "<Text style={{ fontWeight: '700' }}>{search}</Text>"
-            </Text>
-            <TouchableOpacity onPress={() => { setSearchText(''); doSearch(''); }} style={[s.searchBannerClear, { backgroundColor: colors.primary + '15' }]}>
-              <IconX size={12} color={colors.primary} />
-              <Text style={[s.searchBannerClearText, { color: colors.primary }]}>{t('search.clear')}</Text>
-            </TouchableOpacity>
-          </View>
-        ) : null}
-
         {/* Email List — hidden when an email is open in split mode, OR when 2 side panels are open (no room) */}
         {/* [2026-09-24] No WEB a tela re-monta ao clicar em Inbox, o que re-disparava
             a animação de entrada (opacity 0→1 + slide) → a lista de emails "piscava"
@@ -1820,6 +1847,22 @@ function InboxScreenInner() {
             { translateY: listAnim.interpolate({ inputRange: [0, 1], outputRange: [30, 0] }) },
           ],
         }]}>
+        {/* Search results banner — [2026-10-11 email-qa] DENTRO da coluna da
+            lista: no desktop ele era irmão da barra lateral numa linha flex e
+            virava uma coluna de ~300 px espremendo a lista. */}
+        {search ? (
+          <View style={[s.searchBanner, { backgroundColor: colors.primaryLight + '40', borderBottomColor: colors.border }]}>
+            <IconSearch size={14} color={colors.primary} />
+            <Text style={[s.searchBannerText, { color: colors.text }]}>
+              {total > 0 ? (total === 1 ? t('search.resultCountOne') : t('search.resultCount', { count: total })) : t('search.searching')} "<Text style={{ fontWeight: '700' }}>{search}</Text>"
+            </Text>
+            <TouchableOpacity onPress={() => { setSearchText(''); doSearch(''); }} style={[s.searchBannerClear, { backgroundColor: colors.primary + '15' }]}>
+              <IconX size={12} color={colors.primary} />
+              <Text style={[s.searchBannerClearText, { color: colors.primary }]}>{t('search.clear')}</Text>
+            </TouchableOpacity>
+          </View>
+        ) : null}
+
         {/* AI Briefing card (top of inbox) */}
         {currentFolder === 'INBOX' && aiBriefing && (
           <View style={{
@@ -2059,8 +2102,10 @@ function InboxScreenInner() {
       {/* Unified compose FAB (mobile) — expands into Email / Chat / Status /
           Post. Replaces the email-only fab. Desktop has the compose bar
           above the email list so no floating button there. */}
-      {!isDesktop && (
+      {!isDesktop && !showSidebar && (
         // FAB direto pra compose de email (Telegram-grade glass orb).
+        // [2026-10-11 email-qa] Some com o menu lateral aberto (ficava por cima
+        // do overlay escurecido).
         <BrandFab
           style={{ position: 'absolute', right: 20, bottom: insets.bottom + 24 }}
           size={56}
@@ -2235,11 +2280,16 @@ function InboxScreenInner() {
                 renderItem={({ item: f }) => (
                   <TouchableOpacity
                     style={[s.moveRow, { borderBottomColor: colors.border }]}
-                    onPress={async () => {
-                      const { moveEmail } = await import('../services/api');
-                      await moveEmail(moveToTarget.uid, f.name, currentFolder);
+                    onPress={() => {
+                      // [2026-10-11 email-qa] Fecha NA HORA e move otimista pelo
+                      // contexto (antes esperava a API com o modal aberto e a
+                      // linha/contadores só mudavam no refresh seguinte).
+                      const target = moveToTarget;
                       setMoveToTarget(null);
-                      refresh();
+                      if (selectedEmail?.uid === target.uid) setSelectedEmail(null);
+                      Promise.resolve(ctxMoveEmail(target.uid, f.name, currentFolder))
+                        .then(() => { try { loadFolders(); } catch {} })
+                        .catch(() => {});
                     }}
                     activeOpacity={0.6}
                   >

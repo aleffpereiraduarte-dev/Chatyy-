@@ -235,20 +235,20 @@ export default function EmailList({
             {selectedCount > 1 ? t('bulk.selectedPlural', { count: selectedCount }) : t('bulk.selected', { count: selectedCount })}
           </Text>
           <View style={s.bulkActions}>
-            <TouchableOpacity onPress={onBulkArchive} style={s.bulkBtn} hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}>
+            <TouchableOpacity onPress={onBulkArchive} style={s.bulkBtn} hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }} accessibilityRole="button" accessibilityLabel={t('reader.archive')}>
               <IconArchive size={18} color={colors.textSecondary} />
             </TouchableOpacity>
-            <TouchableOpacity onPress={handleBulkDeleteConfirm} style={s.bulkBtn} hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}>
+            <TouchableOpacity onPress={handleBulkDeleteConfirm} style={s.bulkBtn} hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }} accessibilityRole="button" accessibilityLabel={t('reader.delete')}>
               <IconTrash size={18} color={colors.textSecondary} />
             </TouchableOpacity>
-            <TouchableOpacity onPress={onBulkMarkRead} style={s.bulkBtn} hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}>
+            <TouchableOpacity onPress={onBulkMarkRead} style={s.bulkBtn} hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }} accessibilityRole="button" accessibilityLabel={t('contextMenu.markRead')}>
               <IconMarkRead size={18} color={colors.textSecondary} />
             </TouchableOpacity>
-            <TouchableOpacity onPress={onBulkMarkUnread} style={s.bulkBtn} hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}>
+            <TouchableOpacity onPress={onBulkMarkUnread} style={s.bulkBtn} hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }} accessibilityRole="button" accessibilityLabel={t('contextMenu.markUnread')}>
               <IconMarkUnread size={18} color={colors.textSecondary} />
             </TouchableOpacity>
           </View>
-          <TouchableOpacity onPress={onClearSelection} style={s.bulkClose}>
+          <TouchableOpacity onPress={onClearSelection} style={s.bulkClose} accessibilityRole="button" accessibilityLabel={t('common.close')}>
             <IconX size={16} color={colors.textSecondary} />
           </TouchableOpacity>
         </View>
@@ -335,8 +335,10 @@ export default function EmailList({
         />
       )}
 
-      {/* Pagination */}
-      {totalPages > 1 && (
+      {/* Pagination — [2026-10-11 email-qa] só quando NÃO há rolagem infinita:
+          as duas juntas mostravam "2 / 2" com a lista ainda no topo (a página 2
+          já tinha sido anexada) e "‹" recarregava tudo. */}
+      {totalPages > 1 && !onLoadMore && (
         <View style={[s.pagination, { borderTopColor: colors.borderLight, backgroundColor: colors.surface }]}>
           <TouchableOpacity
             style={[s.pageBtn, page <= 1 && s.pageBtnDisabled]}

@@ -183,6 +183,9 @@ const MailContext = createContext(null);
 // Polling interval: 30s when WS connected (safety net), 10s when WS down
 const POLL_CONNECTED = 30000;
 const POLL_DISCONNECTED = 10000;
+// Janela em que uma resposta de /folders pode ainda não refletir uma ação local
+// (Desfazer = 5 s + POST). Ver loadFolders.
+const FOLDER_SETTLE_MS = 6500;
 
 export function MailProvider({ children }) {
   const { user } = useAuth();
@@ -231,6 +234,12 @@ export function MailProvider({ children }) {
   // Use the native SQLite cache as the initial state so the inbox is rendered
   // with real emails on the very first frame (no empty list flash).
   const [emails, setEmails] = useState(() => _nativeReadEmailsSync('INBOX') || []);
+  // [2026-10-11 email-qa] Leitura SÍNCRONA da lista atual. Os "wasUnread"/
+  // "removed" calculados DENTRO do updater do setEmails só rodam no próximo
+  // render (React 18 batch) → o `if (wasUnread)` logo abaixo via sempre false e
+  // o contador da barra lateral não baixava ao abrir/excluir (só no refetch).
+  const emailsRef = useRef(emails);
+  emailsRef.current = emails;
   const [folders, setFolders] = useState([]);
   const [currentFolder, setCurrentFolder] = useState('INBOX');
   const [selectedEmail, setSelectedEmail] = useState(null);
@@ -242,6 +251,14 @@ export function MailProvider({ children }) {
   const [wsStatus, setWsStatus] = useState('disconnected');
   const [labelCounts, setLabelCounts] = useState({});
   const refreshRef = useRef(null);
+  // [2026-10-11 email-qa] refs p/ os re-fetch atrasados do aviso de chegada.
+  const arrivalRetryRef = useRef({ a: null, b: null });
+  const silentRefreshRef = useRef(null);
+  const loadFoldersRef = useRef(null);
+  // Última mudança OTIMISTA nos contadores de pasta (ver loadFolders).
+  const folderMutAtRef = useRef(0);
+  const folderResyncRef = useRef(null);
+  const foldersPaintedRef = useRef(false);
   const folderRef = useRef(currentFolder);
   const authRef = useRef(null);
   // Tracks the email we *intended* to connect WS for. Survives the brief
@@ -333,6 +350,41 @@ export function MailProvider({ children }) {
     });
   }, []);
 
+  // [2026-10-11 email-qa] Ajuste otimista do contador de não lidos de uma pasta
+  // (barra lateral + badge do e-mail na barra do Chatyy). Usado por excluir/
+  // arquivar/mover/adiar/ações em massa e pelo Desfazer — antes só abrir o
+  // e-mail mexia no número; o resto esperava o loadFolders (até 2 min com WS).
+  const bumpFolderUnread = useCallback((name, delta) => {
+    if (!name || !delta) return;
+    folderMutAtRef.current = Date.now();
+    setFolders(prev => prev.map(f => {
+      if (f.name !== name) return f;
+      const cur = (f.unread ?? f.unseen ?? 0) | 0;
+      const next = Math.max(0, cur + delta);
+      return { ...f, unread: next, unseen: next };
+    }));
+    if (name === 'INBOX') {
+      try { DeviceEventEmitter.emit('mail:unread-changed', { folder: name, delta }); } catch {}
+    }
+  }, []);
+  const unreadIn = (rows) => (rows || []).reduce((n, e) => n + (e && !e.seen ? 1 : 0), 0);
+  // Linhas restauradas (Desfazer / falha da API) voltam na POSIÇÃO certa (UID
+  // decrescente = mais novo primeiro) e com o estado de lido atual — antes iam
+  // pro topo da lista, acima do cabeçalho "Hoje", e voltavam "não lidas".
+  const mergeRestored = useCallback((prev, restored) => {
+    if (!restored?.length) return prev;
+    const have = new Set(prev.map(e => String(e.uid)));
+    const rr = recentlyReadRef.current;
+    const add = restored.filter(e => e && !have.has(String(e.uid)))
+      .map(e => (rr.has(String(e.uid)) && !e.seen ? { ...e, seen: true } : e));
+    if (!add.length) return prev;
+    const all = [...prev, ...add];
+    const allNumeric = all.every(e => Number.isFinite(Number(e.uid)));
+    return allNumeric
+      ? all.sort((a, b) => Number(b.uid) - Number(a.uid))
+      : all.sort((a, b) => _emailDateKey(b) - _emailDateKey(a));
+  }, []);
+
   // Keep folder ref in sync
   useEffect(() => { folderRef.current = currentFolder; }, [currentFolder]);
 
@@ -356,20 +408,49 @@ export function MailProvider({ children }) {
     setSelectedUids(new Set());
     setSelectMode(false);
     setUndoAction(null);
+    foldersPaintedRef.current = false;
+    folderMutAtRef.current = 0;
     // NOTE: Do NOT clear recentlyReadRef here — it persists in localStorage
     // and must survive resets to prevent the read→unread revert bug
   }, []);
 
   const loadFolders = useCallback(async () => {
-    // Show cached folders instantly
-    const cached = await getCached('email_folders');
-    if (cached) setFolders(cached);
+    // Show cached folders instantly — SÓ no primeiro paint. [2026-10-11
+    // email-qa] Antes repintava o cache (velho) a cada chamada, desfazendo o
+    // ajuste otimista do contador (abriu/excluiu → número voltava por ~1-2 s).
+    if (!foldersPaintedRef.current) {
+      const cached = await getCached('email_folders');
+      if (cached && !foldersPaintedRef.current) setFolders(cached);
+    }
+    const reqAt = Date.now();
     try {
       const r = await api.getFolders();
       if (r.success) {
         const folderList = Array.isArray(r.data) ? r.data : r.data?.folders || [];
-        setFolders(folderList);
+        foldersPaintedRef.current = true;
         setCache('email_folders', folderList, 600000).catch(() => {});
+        // [2026-10-11 email-qa] Resposta que saiu ANTES do servidor aplicar a
+        // última ação local (mark_read em voo, excluir/arquivar na janela do
+        // Desfazer, evento IDLE do Rust disparado pela própria ação) traz o
+        // contador VELHO. Nesse caso mantém os não lidos locais, aceita o resto
+        // e reconfere quando a janela fecha.
+        const lastMut = folderMutAtRef.current;
+        if (lastMut && lastMut >= reqAt - FOLDER_SETTLE_MS) {
+          setFolders(prev => {
+            const m = new Map((prev || []).map(f => [f.name, f]));
+            return folderList.map(f => {
+              const p = m.get(f.name);
+              if (!p) return f;
+              const u = (p.unread ?? p.unseen);
+              return u == null ? f : { ...f, unread: u, unseen: u };
+            });
+          });
+          clearTimeout(folderResyncRef.current);
+          folderResyncRef.current = setTimeout(() => { try { loadFoldersRef.current?.(); } catch {} },
+            Math.max(400, lastMut + FOLDER_SETTLE_MS + 300 - Date.now()));
+        } else {
+          setFolders(folderList);
+        }
       }
     } catch {}
   }, []);
@@ -630,11 +711,14 @@ export function MailProvider({ children }) {
     // Optimistic UI update — capture whether the row was actually unread
     // so we only decrement the folder badge once (idempotent re-marks
     // shouldn't drift the counter negative).
-    let wasUnread = false;
+    // Decide SINCRONAMENTE (emailsRef) — o updater do setEmails só roda no
+    // próximo render, então o flag setado lá dentro chegava tarde (sempre false).
+    // Só conta quando a linha é da pasta visível (uids são por pasta).
+    const wasUnread = targetFolder === folderRef.current &&
+      emailsRef.current.some(e => String(e.uid) === uidStr && !e.seen);
     setEmails(prev => prev.map(e => {
       if (String(e.uid) !== uidStr) return e;
       if (e.seen) return e; // already read — no change, no decrement
-      wasUnread = true;
       return { ...e, seen: true };
     }));
     // Optimistic folder badge decrement — Sidebar reads
@@ -643,6 +727,7 @@ export function MailProvider({ children }) {
     // so users see the email move to "read" styling in the list but
     // the sidebar still shows the old unread count. (WAVE 94 fix.)
     if (wasUnread) {
+      folderMutAtRef.current = Date.now();
       setFolders(prev => prev.map(f => {
         if (f.name !== targetFolder) return f;
         const cur = (f.unread ?? f.unseen ?? 0) | 0;
@@ -745,14 +830,18 @@ export function MailProvider({ children }) {
     // merge's "once read always read" clause keys off existing.seen, so the
     // optimistic seen=false here is what lets the server's unread state win
     // on the next refresh.
-    let wasSeen = false;
+    // Síncrono via emailsRef (ver markAsRead). Linha fora da lista visível
+    // (ex.: leitor aberto por link) ainda conta: se não está na lista, o
+    // servidor tinha ela como lida (acabamos de abrir).
+    const _row = emailsRef.current.find(e => String(e.uid) === uidStr);
+    const wasSeen = _row ? !!_row.seen : targetFolder === folderRef.current;
     setEmails(prev => prev.map(e => {
       if (String(e.uid) !== uidStr) return e;
       if (!e.seen) return e; // already unread — no change, no increment
-      wasSeen = true;
       return { ...e, seen: false };
     }));
     if (wasSeen) {
+      folderMutAtRef.current = Date.now();
       setFolders(prev => prev.map(f => {
         if (f.name !== targetFolder) return f;
         const cur = (f.unread ?? f.unseen ?? 0) | 0;
@@ -793,6 +882,8 @@ export function MailProvider({ children }) {
       setPage(1);
       setSearch('');
       recentlyReadRef.current = new Set();
+      foldersPaintedRef.current = false;
+      folderMutAtRef.current = 0;
       // Per-account caches: without these clears, changeFolder instant-paints
       // the PREVIOUS account's remembered rows, and pendingRemoval/arrived
       // windows filter or protect the new account's uids on collision.
@@ -856,6 +947,8 @@ export function MailProvider({ children }) {
   const silentRefresh = useCallback(() => {
     loadEmails(currentFolder, 1, search, '', '', true);
   }, [currentFolder, search, loadEmails]);
+  silentRefreshRef.current = silentRefresh;
+  loadFoldersRef.current = loadFolders;
 
   const doSearch = useCallback((q) => {
     setSearch(q);
@@ -871,9 +964,11 @@ export function MailProvider({ children }) {
     const f = folder || currentFolder;
     animateListChange();
     if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    const removed = emails.find(e => e.uid === uid);
-    setEmails(prev => prev.filter(e => e.uid !== uid));
+    const removed = emailsRef.current.find(e => String(e.uid) === String(uid));
+    setEmails(prev => prev.filter(e => String(e.uid) !== String(uid)));
     if (selectedEmail?.uid === uid) setSelectedEmail(null);
+    const dUnread = removed && !removed.seen ? 1 : 0;
+    bumpFolderUnread(f, -dUnread);
     if (!isOnline()) {
       offlineQueueRef.current = true;
       queueOfflineAction({ type: 'delete', uid, folder: f });
@@ -887,40 +982,49 @@ export function MailProvider({ children }) {
           const r = await api.deleteEmail(uid, f);
           settlePendingRemoval(f, [uid], !r?.success);
           if (!r?.success) {
-            if (removed) setEmails(prev => [removed, ...prev]);
+            if (removed) { setEmails(prev => mergeRestored(prev, [removed])); bumpFolderUnread(f, dUnread); }
             console.warn('deleteEmail failed:', r?.message);
           }
         } catch (e) {
           settlePendingRemoval(f, [uid], true);
-          if (removed) setEmails(prev => [removed, ...prev]);
+          if (removed) { setEmails(prev => mergeRestored(prev, [removed])); bumpFolderUnread(f, dUnread); }
           console.warn('deleteEmail error:', e);
         }
       });
     }
-  }, [currentFolder, selectedEmail, emails]);
+  }, [currentFolder, selectedEmail, bumpFolderUnread, mergeRestored]);
 
-  const moveEmail = useCallback(async (uid, toFolder) => {
+  const moveEmail = useCallback(async (uid, toFolder, fromFolder) => {
+    const from = fromFolder || currentFolder;
     animateListChange();
     if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    const removed = emails.find(e => e.uid === uid);
-    setEmails(prev => prev.filter(e => e.uid !== uid));
+    const removed = emailsRef.current.find(e => String(e.uid) === String(uid));
+    setEmails(prev => prev.filter(e => String(e.uid) !== String(uid)));
     if (selectedEmail?.uid === uid) setSelectedEmail(null);
+    const dUnread = removed && !removed.seen ? 1 : 0;
+    bumpFolderUnread(from, -dUnread);
+    bumpFolderUnread(toFolder, dUnread);
     if (!isOnline()) {
       offlineQueueRef.current = true;
-      queueOfflineAction({ type: 'move', uid, toFolder, fromFolder: currentFolder });
+      queueOfflineAction({ type: 'move', uid, toFolder, fromFolder: from });
     } else {
+      const restore = () => {
+        if (removed) setEmails(prev => mergeRestored(prev, [removed]));
+        bumpFolderUnread(from, dUnread);
+        bumpFolderUnread(toFolder, -dUnread);
+      };
       try {
-        const r = await api.moveEmail(uid, toFolder, currentFolder);
+        const r = await api.moveEmail(uid, toFolder, from);
         if (!r?.success) {
-          if (removed) setEmails(prev => [removed, ...prev]);
+          restore();
           console.warn('moveEmail failed:', r?.message);
         }
       } catch (e) {
-        if (removed) setEmails(prev => [removed, ...prev]);
+        restore();
         console.warn('moveEmail error:', e);
       }
     }
-  }, [currentFolder, selectedEmail, emails]);
+  }, [currentFolder, selectedEmail, bumpFolderUnread, mergeRestored]);
 
   // --- Selection / Bulk ---
 
@@ -956,11 +1060,13 @@ export function MailProvider({ children }) {
 
   const bulkDelete = useCallback(async () => {
     const uids = Array.from(selectedUids);
-    const removed = emails.filter(e => selectedUids.has(e.uid));
+    const removed = emailsRef.current.filter(e => selectedUids.has(e.uid));
     animateListChange();
     setEmails(prev => prev.filter(e => !selectedUids.has(e.uid)));
     clearSelection();
     if (selectedEmail && selectedUids.has(selectedEmail.uid)) setSelectedEmail(null);
+    const dUnread = unreadIn(removed);
+    bumpFolderUnread(currentFolder, -dUnread);
     showUndo('deleted', uids, removed);
     markPendingRemoval(currentFolder, uids);
     const folder = currentFolder;
@@ -969,24 +1075,26 @@ export function MailProvider({ children }) {
         const r = await api.bulkDelete(uids, folder);
         settlePendingRemoval(folder, uids, !r?.success);
         if (!r?.success) {
-          if (removed.length) setEmails(prev => [...removed, ...prev]);
+          if (removed.length) { setEmails(prev => mergeRestored(prev, removed)); bumpFolderUnread(folder, dUnread); }
           console.warn('bulkDelete failed:', r?.message);
         }
       } catch (e) {
         settlePendingRemoval(folder, uids, true);
-        if (removed.length) setEmails(prev => [...removed, ...prev]);
+        if (removed.length) { setEmails(prev => mergeRestored(prev, removed)); bumpFolderUnread(folder, dUnread); }
         console.warn('bulkDelete error:', e);
       }
     });
-  }, [selectedUids, emails, currentFolder, selectedEmail]);
+  }, [selectedUids, currentFolder, selectedEmail, bumpFolderUnread, mergeRestored]);
 
   const bulkArchive = useCallback(async () => {
     const uids = Array.from(selectedUids);
-    const removed = emails.filter(e => selectedUids.has(e.uid));
+    const removed = emailsRef.current.filter(e => selectedUids.has(e.uid));
     animateListChange();
     setEmails(prev => prev.filter(e => !selectedUids.has(e.uid)));
     clearSelection();
     if (selectedEmail && selectedUids.has(selectedEmail.uid)) setSelectedEmail(null);
+    const dUnread = unreadIn(removed);
+    bumpFolderUnread(currentFolder, -dUnread);
     showUndo('archived', uids, removed);
     markPendingRemoval(currentFolder, uids);
     const folder = currentFolder;
@@ -995,33 +1103,42 @@ export function MailProvider({ children }) {
         const r = await api.bulkArchive(uids, folder);
         settlePendingRemoval(folder, uids, !r?.success);
         if (!r?.success) {
-          if (removed.length) setEmails(prev => [...removed, ...prev]);
+          if (removed.length) { setEmails(prev => mergeRestored(prev, removed)); bumpFolderUnread(folder, dUnread); }
           console.warn('bulkArchive failed:', r?.message);
         }
       } catch (e) {
         settlePendingRemoval(folder, uids, true);
-        if (removed.length) setEmails(prev => [...removed, ...prev]);
+        if (removed.length) { setEmails(prev => mergeRestored(prev, removed)); bumpFolderUnread(folder, dUnread); }
         console.warn('bulkArchive error:', e);
       }
     });
-  }, [selectedUids, emails, currentFolder, selectedEmail]);
+  }, [selectedUids, currentFolder, selectedEmail, bumpFolderUnread, mergeRestored]);
 
   const bulkMarkRead = useCallback(async () => {
     const uids = Array.from(selectedUids);
+    const dUnread = unreadIn(emailsRef.current.filter(e => selectedUids.has(e.uid)));
+    // Protege contra o merge "voltar a não lido" com dado velho do servidor.
+    uids.forEach(u => recentlyReadRef.current.add(String(u)));
     setEmails(prev => prev.map(e => selectedUids.has(e.uid) ? { ...e, seen: true } : e));
+    bumpFolderUnread(currentFolder, -dUnread);
     clearSelection();
-    try { await api.bulkMarkRead(uids, currentFolder); } catch (e) { console.warn('bulkMarkRead error:', e); }
-  }, [selectedUids, currentFolder]);
+    try {
+      const r = await api.bulkMarkRead(uids, currentFolder);
+      if (r?.success && currentFolder === 'INBOX') { try { DeviceEventEmitter.emit('mail:unread-changed', { folder: 'INBOX', synced: true }); } catch {} }
+    } catch (e) { console.warn('bulkMarkRead error:', e); }
+  }, [selectedUids, currentFolder, bumpFolderUnread]);
 
   const bulkMarkUnread = useCallback(async () => {
     const uids = Array.from(selectedUids);
     // Without this the recentlyRead protection reverted every uid back to
     // seen=true on the next silent merge (for up to 24h, persisted).
     forgetRecentlyRead(uids).catch(() => {});
+    const dRead = emailsRef.current.filter(e => selectedUids.has(e.uid) && e.seen).length;
     setEmails(prev => prev.map(e => selectedUids.has(e.uid) ? { ...e, seen: false } : e));
+    bumpFolderUnread(currentFolder, dRead);
     clearSelection();
     try { await api.bulkMarkUnread(uids, currentFolder); } catch (e) { console.warn('bulkMarkUnread error:', e); }
-  }, [selectedUids, currentFolder, forgetRecentlyRead]);
+  }, [selectedUids, currentFolder, forgetRecentlyRead, bumpFolderUnread]);
 
   // --- Labels ---
 
@@ -1085,9 +1202,11 @@ export function MailProvider({ children }) {
     const f = folder || currentFolder;
     animateListChange();
     if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    const removed = emails.find(e => e.uid === uid);
-    setEmails(prev => prev.filter(e => e.uid !== uid));
+    const removed = emailsRef.current.find(e => String(e.uid) === String(uid));
+    setEmails(prev => prev.filter(e => String(e.uid) !== String(uid)));
     if (selectedEmail?.uid === uid) setSelectedEmail(null);
+    const dUnread = removed && !removed.seen ? 1 : 0;
+    bumpFolderUnread(f, -dUnread);
     // Gmail-style undo: toast + defer the real archive 5s so it can be taken back.
     showUndo('archived', [uid], removed ? [removed] : []);
     markPendingRemoval(f, [uid]);
@@ -1096,28 +1215,32 @@ export function MailProvider({ children }) {
         const r = await api.archiveEmail(uid, f);
         settlePendingRemoval(f, [uid], !r?.success);
         if (!r?.success && removed) {
-          setEmails(prev => [...prev, removed].sort((a, b) => b.uid - a.uid));
+          setEmails(prev => mergeRestored(prev, [removed]));
+          bumpFolderUnread(f, dUnread);
         }
       } catch {
         settlePendingRemoval(f, [uid], true);
-        if (removed) setEmails(prev => [...prev, removed].sort((a, b) => b.uid - a.uid));
+        if (removed) { setEmails(prev => mergeRestored(prev, [removed])); bumpFolderUnread(f, dUnread); }
       }
     });
-  }, [currentFolder, selectedEmail, emails]);
+  }, [currentFolder, selectedEmail, bumpFolderUnread, mergeRestored]);
 
   // --- Snooze ---
 
   const snoozeEmail = useCallback(async (uid, snoozeUntil, folder) => {
     const f = folder || currentFolder; // reader passes real folder (see deleteEmail)
     animateListChange();
-    const removed = emails.find(e => e.uid === uid);
-    setEmails(prev => prev.filter(e => e.uid !== uid));
+    const removed = emailsRef.current.find(e => String(e.uid) === String(uid));
+    setEmails(prev => prev.filter(e => String(e.uid) !== String(uid)));
     if (selectedEmail?.uid === uid) setSelectedEmail(null);
+    const dUnread = removed && !removed.seen ? 1 : 0;
+    bumpFolderUnread(f, -dUnread);
+    const restore = () => { if (removed) { setEmails(prev => mergeRestored(prev, [removed])); bumpFolderUnread(f, dUnread); } };
     try {
       const r = await api.snoozeEmail(uid, snoozeUntil, f);
-      if (!r?.success && removed) setEmails(prev => [removed, ...prev]);
-    } catch { if (removed) setEmails(prev => [removed, ...prev]); }
-  }, [currentFolder, selectedEmail, emails]);
+      if (!r?.success) restore();
+    } catch { restore(); }
+  }, [currentFolder, selectedEmail, bumpFolderUnread, mergeRestored]);
 
   // --- Undo system ---
 
@@ -1154,6 +1277,9 @@ export function MailProvider({ children }) {
       if (undoTimerRef._visCleanup) { undoTimerRef._visCleanup(); undoTimerRef._visCleanup = null; }
       try { await fn(); } catch {}
       setUndoAction(null);
+      // Ação confirmada no servidor → ressincroniza os contadores das pastas
+      // (o ajuste otimista já mostrou o número certo; isto só confirma).
+      try { loadFolders(); } catch {}
     };
 
     const startTimer = () => {
@@ -1179,7 +1305,7 @@ export function MailProvider({ children }) {
       // Store cleanup so executeUndo/dismissUndo can call it
       undoTimerRef._visCleanup = cleanup;
     }
-  }, [flushPendingAction]);
+  }, [flushPendingAction, loadFolders]);
 
   const executeUndo = useCallback(() => {
     clearTimeout(undoTimerRef.current);
@@ -1199,15 +1325,18 @@ export function MailProvider({ children }) {
       // list may be a different folder by now (the toast survives folder
       // switches). The server was never touched, so a wrong-list prepend
       // would plant ghost rows that the union-merge keeps alive.
+      // [2026-10-11 email-qa] mergeRestored = volta na posição certa (não no
+      // topo acima de "Hoje") + devolve o não-lido ao contador da pasta.
       if (!undoAction.folder || undoAction.folder === folderRef.current) {
-        setEmails(prev => [...undoAction.removedEmails, ...prev]);
+        setEmails(prev => mergeRestored(prev, undoAction.removedEmails));
       } else {
         const rows = folderRowsRef.current.get(undoAction.folder);
-        if (rows) folderRowsRef.current.set(undoAction.folder, [...undoAction.removedEmails, ...rows]);
+        if (rows) folderRowsRef.current.set(undoAction.folder, mergeRestored(rows, undoAction.removedEmails));
       }
+      bumpFolderUnread(undoAction.folder || folderRef.current, unreadIn(undoAction.removedEmails));
     }
     setUndoAction(null);
-  }, [undoAction]);
+  }, [undoAction, mergeRestored, bumpFolderUnread]);
 
   const dismissUndo = useCallback(() => {
     clearTimeout(undoTimerRef.current);
@@ -1232,16 +1361,28 @@ export function MailProvider({ children }) {
     // handlers nunca registravam até o usuário trocar de pasta/buscar.
 
     // Handle new email arrival
-    const offNew = mailWs.on('new_email', (data) => {
+    const offNew = mailWs.on('new_email', (raw) => {
+      // [2026-10-11 email-qa] O hub manda DOIS formatos e nenhum era o que este
+      // handler esperava: Rust IDLE = { email: "<endereço do DONO>", folder, ts }
+      // (string!) e PHP sieve = { from, subject, summary }. A string virava uma
+      // "linha fantasma" (sem remetente, "(sem assunto)", não lida → contador +1)
+      // e o toast "Novo email / (sem assunto)". Só tratamos como linha quando
+      // vem um objeto de e-mail de verdade (com uid); senão = aviso → refresh.
+      const _em = raw && raw.email && typeof raw.email === 'object' && raw.email.uid != null ? raw.email : null;
+      const _hint = !_em && raw && (raw.subject || raw.from)
+        ? { from: raw.from || '', from_name: raw.from_name || '', subject: raw.subject || '', preview: raw.summary || raw.preview || '' }
+        : null;
+      const data = { ...(raw || {}), email: _em };
+      const _notif = _em || _hint;
       // Sound + haptic are handled by NotificationToast when it appears
       // Mobile local notification (triggers NotificationToast via foreground handler)
-      if (data?.email) showLocalEmailNotification(data.email, _tRef.current);
+      if (_notif) showLocalEmailNotification(_notif, _tRef.current);
 
       // Web: trigger in-app toast (toast handles sound + vibration)
-      if (Platform.OS === 'web' && data?.email) {
+      if (Platform.OS === 'web' && _notif) {
         try {
           const { _triggerForegroundToast } = require('../services/pushNotifications');
-          const e = data.email;
+          const e = _notif;
           _triggerForegroundToast({
             title: e.from_name || e.from || _tRef.current('toast.newEmail'),
             body: e.subject || _tRef.current('reader.noSubject'),
@@ -1260,11 +1401,11 @@ export function MailProvider({ children }) {
         animateListChange();
         // Prepend new email to list
         if (data?.email) {
-          let prepended = false;
+          // Decide síncrono (o flag dentro do updater chegava tarde).
+          const prepended = !emailsRef.current.some(e => String(e.uid) === String(data.email.uid));
           setEmails(prev => {
             // Avoid duplicates
-            if (prev.some(e => e.uid === data.email.uid)) return prev;
-            prepended = true;
+            if (prev.some(e => String(e.uid) === String(data.email.uid))) return prev;
             return [data.email, ...prev];
           });
           // Só incrementa total se realmente prependou — antes incrementava
@@ -1276,13 +1417,19 @@ export function MailProvider({ children }) {
             recentlyArrivedRef.current.set(String(data.email.uid), Date.now());
           }
         } else {
-          // No email data provided, silent refresh
+          // No email data provided, silent refresh. [2026-10-11 email-qa] O
+          // aviso do sieve (PHP) sai ANTES da mensagem estar gravada na caixa,
+          // então o refresh imediato voltava sem ela e o e-mail só aparecia no
+          // próximo poll (~20 s medidos). Repete em 1,5 s e 4 s (Rust ~150 ms).
           silentRefresh();
+          clearTimeout(arrivalRetryRef.current.a); clearTimeout(arrivalRetryRef.current.b);
+          arrivalRetryRef.current.a = setTimeout(() => { try { silentRefreshRef.current?.(); loadFoldersRef.current?.(); } catch {} }, 1500);
+          arrivalRetryRef.current.b = setTimeout(() => { try { silentRefreshRef.current?.(); loadFoldersRef.current?.(); } catch {} }, 4000);
         }
       }
       // Desktop browser notification with preview
       if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
-        const e = data?.email;
+        const e = _notif;
         if (e) {
           try {
             const subject = e.subject || _tRef.current('reader.noSubject');
@@ -1290,7 +1437,7 @@ export function MailProvider({ children }) {
             const n = new Notification(e.from_name || e.from || _tRef.current('toast.newEmail'), {
               body: subject + preview,
               icon: '/icon-192.png',
-              tag: `email-${e.uid}`,
+              tag: `email-${e.uid ?? e.subject ?? ''}`,
               silent: false,
             });
             n.onclick = () => { window.focus(); n.close(); };
@@ -1306,13 +1453,12 @@ export function MailProvider({ children }) {
     const offDel = mailWs.on('email_deleted', (data) => {
       if (data?.uid) {
         animateListChange();
-        let removed = false;
-        setEmails(prev => {
-          const next = prev.filter(e => e.uid !== data.uid);
-          removed = next.length !== prev.length;
-          return next;
-        });
-        if (removed) setTotal(prev => Math.max(0, prev - 1));
+        const gone = emailsRef.current.find(e => String(e.uid) === String(data.uid));
+        setEmails(prev => prev.filter(e => String(e.uid) !== String(data.uid)));
+        if (gone) {
+          setTotal(prev => Math.max(0, prev - 1));
+          if (!gone.seen) bumpFolderUnread(folderRef.current, -1);
+        }
       }
     });
 
@@ -1320,13 +1466,12 @@ export function MailProvider({ children }) {
     const offMove = mailWs.on('email_moved', (data) => {
       if (data?.uid && data?.from_folder === folderRef.current) {
         animateListChange();
-        let removed = false;
-        setEmails(prev => {
-          const next = prev.filter(e => e.uid !== data.uid);
-          removed = next.length !== prev.length;
-          return next;
-        });
-        if (removed) setTotal(prev => Math.max(0, prev - 1));
+        const gone = emailsRef.current.find(e => String(e.uid) === String(data.uid));
+        setEmails(prev => prev.filter(e => String(e.uid) !== String(data.uid)));
+        if (gone) {
+          setTotal(prev => Math.max(0, prev - 1));
+          if (!gone.seen) bumpFolderUnread(folderRef.current, -1);
+        }
       } else if (data?.to_folder === folderRef.current) {
         silentRefresh();
       }
@@ -1353,6 +1498,7 @@ export function MailProvider({ children }) {
     });
 
     return () => {
+      clearTimeout(arrivalRetryRef.current.a); clearTimeout(arrivalRetryRef.current.b);
       offNew();
       offDel();
       offMove();
@@ -1360,7 +1506,7 @@ export function MailProvider({ children }) {
       offFolder();
       offConn();
     };
-  }, [refresh, silentRefresh, loadFolders, user?.email]);
+  }, [refresh, silentRefresh, loadFolders, user?.email, bumpFolderUnread]);
 
   // Connect WebSocket when auth token available. The cleanup used to fire
   // `mailWs.disconnect()` on every MailProvider unmount — but the WS is a
