@@ -37,6 +37,7 @@ import {
 import EmptyStateCard from '../components/EmptyStateCard';
 import PressableScale from '../components/PressableScale'; // [2026-10-08 apps-native]
 import { USE_NATIVE_HEADER, nativeHeaderOptions, HeaderIconButton } from '../components/nativeHeader'; // [2026-10-08 apps-native]
+import NativeSwitch from '../components/NativeSwitch'; // [2026-10-11 polish-secondary] P&B (Switch web = teal)
 
 // Try to import expo-calendar (native only)
 let ExpoCalendar = null;
@@ -1680,7 +1681,7 @@ function AddEventModal({ visible, onClose, onSave, colors, calendars, selectedDa
             {/* All Day Toggle */}
             <View style={[styles.switchRow, { borderColor: colors.border }]}>
               <Text style={[styles.switchLabel, { color: colors.text }]}>{t('calendar.allDay')}</Text>
-              <Switch
+              <NativeSwitch
                 value={allDay}
                 onValueChange={setAllDay}
                 trackColor={{ true: colors.primary, false: colors.border }}
@@ -2043,6 +2044,10 @@ function CalendarEmptyState({ colors, isDark, t, onAdd }) {
 
 function CalendarScreenInner() {
   const { colors, isDark } = useTheme();
+  // [2026-10-11 polish-secondary] banda do topo segue o tema no claro.
+  const lb = isDark ? null : calLightBand;
+  const bandInk = isDark ? '#fff' : (colors.text || '#111b21');
+  const bandMuted = isDark ? 'rgba(255,255,255,0.75)' : (colors.textSecondary || '#667781');
   const { t } = useLanguage();
   const { user } = useAuth();
   const router = useRouter();
@@ -2872,9 +2877,12 @@ function CalendarScreenInner() {
               segmented view toggle + day-of-week strip with today highlight
           The diagonal purple→pink gradient gives the band a brand spotlight
           that the rest of the screen pivots around. */}
+      {/* [2026-10-11 polish-secondary] Modo claro: banda na superfície branca
+          (era faixa preta fixa) — mesma linguagem de Conversas/Configurações.
+          Escuro mantém a banda #161618 original. */}
       <View style={[
         styles.headerBand,
-        Platform.OS === 'web'
+        lb ? lb.headerBand : Platform.OS === 'web'
           ? {
               background: isDark
                 ? 'linear-gradient(140deg, #161618 0%, #161618 55%, #161618 100%)'
@@ -2894,16 +2902,16 @@ function CalendarScreenInner() {
             style={styles.headerBtn}
             accessibilityLabel={t('common.back') || 'Voltar'}
           >
-            <IconArrowLeft size={22} color="#fff" />
+            <IconArrowLeft size={22} color={bandInk} />
           </TouchableOpacity>
-          <Text style={[styles.headerTitle, { color: '#fff' }]}>{t('calendar.title')}</Text>
+          <Text style={[styles.headerTitle, { color: bandInk }]}>{t('calendar.title')}</Text>
           <View style={styles.headerRight}>
             <TouchableOpacity
               onPress={() => { setSearchOpen(s => !s); if (searchOpen) setSearchQuery(''); }}
-              style={[styles.headerBtn, searchOpen && styles.headerBtnActive]}
+              style={[styles.headerBtn, searchOpen && styles.headerBtnActive, searchOpen && lb && lb.headerBtnActive]}
               accessibilityLabel={t('calendar.searchEvents') || 'Buscar eventos'}
             >
-              <IconSearch size={20} color="#fff" />
+              <IconSearch size={20} color={bandInk} />
             </TouchableOpacity>
             {!_CAL_HEADER_COMPACT && Platform.OS !== 'web' && ExpoCalendar && (
               <TouchableOpacity
@@ -2912,12 +2920,12 @@ function CalendarScreenInner() {
                 style={styles.headerBtn}
                 accessibilityLabel={t('calendar.syncNow')}
               >
-                {syncingDevice ? <ActivityIndicator size="small" color="#fff" /> : <IconRefresh size={20} color="#fff" />}
+                {syncingDevice ? <ActivityIndicator size="small" color={bandInk} /> : <IconRefresh size={20} color={bandInk} />}
               </TouchableOpacity>
             )}
             <TouchableOpacity
               onPress={() => setShowAddModal(true)}
-              style={[styles.headerBtn, styles.headerFab]}
+              style={[styles.headerBtn, styles.headerFab, lb && lb.headerFab]}
               accessibilityLabel={t('calendar.newEvent')}
             >
               <IconPlus size={22} color="#fff" />
@@ -2938,20 +2946,20 @@ function CalendarScreenInner() {
           ]}
           pointerEvents={searchOpen ? 'auto' : 'none'}
         >
-          <View style={styles.headerSearchInner}>
-            <IconSearch size={16} color="rgba(255,255,255,0.85)" />
+          <View style={[styles.headerSearchInner, lb && lb.headerSearchInner]}>
+            <IconSearch size={16} color={bandMuted} />
             <TextInput
               ref={searchInputRef}
               value={searchQuery}
               onChangeText={setSearchQuery}
               placeholder={t('calendar.searchPlaceholder') || 'Buscar por título, local, descrição…'}
-              placeholderTextColor="rgba(255,255,255,0.6)"
-              style={styles.headerSearchInput}
+              placeholderTextColor={bandMuted}
+              style={[styles.headerSearchInput, lb && lb.headerSearchInput]}
               returnKeyType="search"
             />
             {searchQuery.length > 0 && (
               <TouchableOpacity onPress={() => setSearchQuery('')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
-                <IconX size={16} color="rgba(255,255,255,0.9)" />
+                <IconX size={16} color={bandMuted} />
               </TouchableOpacity>
             )}
           </View>
@@ -2963,10 +2971,10 @@ function CalendarScreenInner() {
             haptic={false}
             scaleTo={0.9}
             onPress={calendarView === 'week' ? handlePrevWeek : handlePrevMonth}
-            style={styles.monthBandChevron}
+            style={[styles.monthBandChevron, lb && lb.monthBandChevron]}
             accessibilityLabel={t('calendar.prevMonth') || 'Mês anterior'}
           >
-            <IconChevronLeft size={22} color="#fff" />
+            <IconChevronLeft size={22} color={bandInk} />
           </PressableScale>
 
           <View style={styles.monthBandCenter}>
@@ -2977,10 +2985,10 @@ function CalendarScreenInner() {
                 alignItems: 'center',
               }}
             >
-              <Text style={styles.monthBandLabel} numberOfLines={1}>
+              <Text style={[styles.monthBandLabel, lb && lb.monthBandLabel]} numberOfLines={1}>
                 {(Array.isArray(t('calendar.months')) ? t('calendar.months') : [])[currentMonth] || ''}
                 {'  '}
-                <Text style={styles.monthBandYear}>{currentYear}</Text>
+                <Text style={[styles.monthBandYear, lb && lb.monthBandYear]}>{currentYear}</Text>
               </Text>
             </Animated.View>
 
@@ -2994,8 +3002,8 @@ function CalendarScreenInner() {
               ]}
               pointerEvents={isViewingCurrentMonth ? 'none' : 'auto'}
             >
-              <PressableScale haptic={false} onPress={handleToday} style={styles.todayPill} accessibilityLabel={t('calendar.today')}>
-                <Text style={styles.todayPillText /* [2026-10-10] pill é sempre branca → tinta fixa #111 (primary vira branco no escuro = invisível) */}>{t('calendar.today')}</Text>
+              <PressableScale haptic={false} onPress={handleToday} style={[styles.todayPill, lb && lb.todayPill]} accessibilityLabel={t('calendar.today')}>
+                <Text style={[styles.todayPillText, lb && lb.todayPillText] /* [2026-10-10] pill é sempre branca → tinta fixa #111 (primary vira branco no escuro = invisível) */}>{t('calendar.today')}</Text>
               </PressableScale>
             </Animated.View>
           </View>
@@ -3004,16 +3012,16 @@ function CalendarScreenInner() {
             haptic={false}
             scaleTo={0.9}
             onPress={calendarView === 'week' ? handleNextWeek : handleNextMonth}
-            style={styles.monthBandChevron}
+            style={[styles.monthBandChevron, lb && lb.monthBandChevron]}
             accessibilityLabel={t('calendar.nextMonth') || 'Próximo mês'}
           >
-            <IconChevronRight size={22} color="#fff" />
+            <IconChevronRight size={22} color={bandInk} />
           </PressableScale>
         </View>
 
         {/* Segmented view toggle — Mês / Semana / Agenda */}
         <View style={styles.viewSegmentRow}>
-          <View style={styles.viewSegment}>
+          <View style={[styles.viewSegment, lb && lb.viewSegment]}>
             {[
               { key: 'month', label: t('calendar.monthView') },
               { key: 'week', label: t('calendar.weekView') },
@@ -3024,11 +3032,11 @@ function CalendarScreenInner() {
                 <TouchableOpacity
                   key={opt.key}
                   onPress={() => { if (!active) haptic.select(); setCalendarView(opt.key); }}
-                  style={[styles.viewSegmentBtn, active && styles.viewSegmentBtnActive]}
+                  style={[styles.viewSegmentBtn, active && styles.viewSegmentBtnActive, active && lb && lb.viewSegmentBtnActive]}
                   accessibilityLabel={opt.label}
                   accessibilityState={{ selected: active }}
                 >
-                  <Text style={[styles.viewSegmentText, active && styles.viewSegmentTextActive]}>
+                  <Text style={[styles.viewSegmentText, lb && lb.viewSegmentText, active && styles.viewSegmentTextActive]}>
                     {opt.label}
                   </Text>
                 </TouchableOpacity>
@@ -3038,14 +3046,14 @@ function CalendarScreenInner() {
           {!_CAL_HEADER_COMPACT && (
             <TouchableOpacity
               onPress={() => setTzPickerOpen(true)}
-              style={[styles.tzGhostBtn, showTz && styles.tzGhostBtnActive]}
+              style={[styles.tzGhostBtn, lb && lb.tzGhostBtn, showTz && styles.tzGhostBtnActive, showTz && lb && lb.tzGhostBtnActive]}
               accessibilityLabel={t('calendar.showTz') || t('calendar.timezones')}
             >
-              <IconClock size={14} color="#fff" />
+              <IconClock size={14} color={bandInk} />
               {/* Show the ACTIVE zone right on the chip so the user always
                   knows which fuso the times are in (device by default). */}
               <Text
-                style={[styles.tzGhostBtnText, { opacity: showTz ? 1 : 0.85 }]}
+                style={[styles.tzGhostBtnText, lb && lb.tzGhostBtnText, { opacity: showTz ? 1 : 0.85 }]}
                 numberOfLines={1}
               >
                 {tzPref === 'system'
@@ -3066,10 +3074,13 @@ function CalendarScreenInner() {
                   <View style={[
                     styles.weekStripPill,
                     isTodayDow && styles.weekStripPillToday,
+                    isTodayDow && lb && lb.weekStripPillToday,
                   ]}>
                     <Text style={[
                       styles.weekStripText,
+                      lb && lb.weekStripText,
                       isTodayDow && styles.weekStripTextToday,
+                      isTodayDow && lb && lb.weekStripTextToday,
                     ]}>
                       {d}
                     </Text>
@@ -3269,7 +3280,7 @@ function CalendarScreenInner() {
               <Text style={{ color: colors.text, fontSize: 14, flex: 1 }}>
                 {t('calendar.showTz') || 'Mostrar fuso (GMT)'}
               </Text>
-              <Switch value={showTz} onValueChange={persistShowTz} />
+              <NativeSwitch value={showTz} onValueChange={persistShowTz} />
             </View>
             <ScrollView>
               {COMMON_TIMEZONES.map((zone) => {
@@ -3324,6 +3335,49 @@ function CalendarScreenInner() {
 // ============================================================
 // Styles
 // ============================================================
+// [2026-10-11 polish-secondary] Overrides da banda do topo no modo claro.
+const calLightBand = StyleSheet.create({
+  headerBand: {
+    backgroundColor: '#ffffff',
+    borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: '#eef0f1',
+    ...Platform.select({
+      ios: { shadowOpacity: 0 },
+      android: { elevation: 0 },
+      web: { boxShadow: 'none' },
+    }),
+  },
+  headerBtnActive: { backgroundColor: 'rgba(0,0,0,0.06)' },
+  headerFab: {
+    backgroundColor: '#111111',
+    ...Platform.select({
+      web: { background: '#111111', boxShadow: '0 2px 8px rgba(0,0,0,0.14)' },
+      default: { shadowOpacity: 0.12 },
+    }),
+  },
+  headerSearchInner: { backgroundColor: '#F0F1F3', borderColor: 'transparent' },
+  headerSearchInput: { color: '#111b21' },
+  monthBandChevron: { backgroundColor: '#F4F5F6', borderColor: '#eef0f1' },
+  monthBandLabel: { color: '#111b21' },
+  monthBandYear: { color: '#667781' },
+  todayPill: { backgroundColor: '#111111' },
+  todayPillText: { color: '#ffffff' },
+  viewSegment: { backgroundColor: '#F0F1F3', borderColor: 'transparent' },
+  viewSegmentBtnActive: {
+    backgroundColor: '#ffffff',
+    ...Platform.select({ web: { boxShadow: '0 1px 4px rgba(0,0,0,0.10)' }, default: { shadowOpacity: 0.08 } }),
+  },
+  viewSegmentText: { color: '#667781' },
+  tzGhostBtn: { backgroundColor: '#F4F5F6', borderColor: '#eef0f1' },
+  tzGhostBtnActive: { backgroundColor: '#E6E8EB' },
+  tzGhostBtnText: { color: '#111b21' },
+  weekStripPillToday: {
+    backgroundColor: '#111111',
+    ...Platform.select({ web: { boxShadow: 'none' }, ios: { shadowOpacity: 0 }, android: { elevation: 0 } }),
+  },
+  weekStripText: { color: '#8696a0' },
+  weekStripTextToday: { color: '#ffffff' },
+});
+
 const styles = StyleSheet.create({
   container: { flex: 1 },
   // Legacy single-row header — kept for any nested screen that still uses it.

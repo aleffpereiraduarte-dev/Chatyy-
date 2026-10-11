@@ -1,5 +1,5 @@
 import { androidTopInset } from '../utils/systemInsets'; // [2026-10-07 android-native] edge-to-edge
-import React, { useState, useEffect, useCallback, useRef, memo, useMemo } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useCallback, useRef, memo, useMemo } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet, FlatList, Dimensions,
   Animated, Platform, Share, TextInput, Modal, KeyboardAvoidingView,
@@ -457,7 +457,31 @@ function LikersSheet({ visible, post, colors, isDark, t, onClose }) {
 // LikersSheet + the Share/Speed sheets still use them.
 
 // ── Spinning Album Art ──
+// [2026-10-11 reels-perf] react-native-web runs JS-driver Animated by
+// RE-RENDERING the Animated component every frame (useAnimatedProps →
+// scheduleUpdate), so each looping decoration below cost ~60 React commits/s
+// on web. On web they now use CSS keyframes (compositor, zero JS); native
+// keeps the Animated (native-driver) loops unchanged.
+const WEB_SPIN_STYLE = isWeb ? {
+  animationKeyframes: [{ from: { transform: 'rotate(0deg)' }, to: { transform: 'rotate(360deg)' } }],
+  animationDuration: '3000ms', animationTimingFunction: 'linear', animationIterationCount: 'infinite',
+} : null;
+
 const SpinningDisc = memo(function SpinningDisc({ authorEmail, authorName }) {
+  if (WEB_SPIN_STYLE) {
+    return (
+      <View style={[styles.albumArt, WEB_SPIN_STYLE]}>
+        <View style={styles.albumArtInner}>
+          <View style={styles.albumArtCenter}>
+            <AvatarCircle email={authorEmail} name={authorName} size={18} />
+          </View>
+        </View>
+      </View>
+    );
+  }
+  return <SpinningDiscNative authorEmail={authorEmail} authorName={authorName} />;
+});
+const SpinningDiscNative = memo(function SpinningDiscNative({ authorEmail, authorName }) {
   const spinValue = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
@@ -555,7 +579,38 @@ const LiveBadgeRing = memo(function LiveBadgeRing({ size = 44, children }) {
 // audio actually being present (the reel is muted in the UI; this is
 // purely visual flair). 3 thin vertical bars, each on its own loop
 // with offset phase + duration so they look like real EQ levels.
+const WEB_EQ_CFGS = [
+  { dur: [280, 400], min: 0.25, max: 1, rest: 0.4 },
+  { dur: [330, 450], min: 0.40, max: 0.95, rest: 0.85 },
+  { dur: [290, 410], min: 0.30, max: 0.90, rest: 0.55 },
+];
 const MusicEqualizer = memo(function MusicEqualizer({ active = true }) {
+  if (isWeb) {
+    // CSS keyframes on transform:scaleY (bar height 3..12 ≈ scale 0.25..1).
+    return (
+      <View style={{ flexDirection: 'row', alignItems: 'flex-end', gap: 1.5, height: 12, marginRight: 2 }}>
+        {WEB_EQ_CFGS.map((c, i) => {
+          const total = c.dur[0] + c.dur[1];
+          const upPct = Math.round((c.dur[0] / total) * 100);
+          return (
+            <View
+              key={i}
+              style={{
+                width: 2.5, height: 12, borderRadius: 1.25, backgroundColor: '#fff', transformOrigin: 'bottom',
+                ...(active ? {
+                  animationKeyframes: [{ '0%': { transform: `scaleY(${c.min})` }, [`${upPct}%`]: { transform: `scaleY(${c.max})` }, '100%': { transform: `scaleY(${c.min})` } }],
+                  animationDuration: `${total}ms`, animationTimingFunction: 'ease-in-out', animationIterationCount: 'infinite',
+                } : { transform: `scaleY(${c.rest})` }),
+              }}
+            />
+          );
+        })}
+      </View>
+    );
+  }
+  return <MusicEqualizerNative active={active} />;
+});
+const MusicEqualizerNative = memo(function MusicEqualizerNative({ active = true }) {
   const bars = useRef([
     new Animated.Value(0.4),
     new Animated.Value(0.85),
@@ -606,7 +661,25 @@ const MusicEqualizer = memo(function MusicEqualizer({ active = true }) {
 });
 
 // ── Music Marquee (scrolling text) ──
+const WEB_MARQUEE_STYLE = isWeb ? {
+  // Track holds the text twice → -50% is exactly one copy (seamless loop).
+  animationKeyframes: [{ from: { transform: 'translateX(0%)' }, to: { transform: 'translateX(-50%)' } }],
+  animationDuration: '6000ms', animationTimingFunction: 'linear', animationIterationCount: 'infinite',
+} : null;
 const MusicMarquee = memo(function MusicMarquee({ text: musicText }) {
+  if (WEB_MARQUEE_STYLE) {
+    return (
+      <View style={styles.marqueeContainer}>
+        <View style={[styles.marqueeTrack, WEB_MARQUEE_STYLE]}>
+          <Text style={styles.marqueeText}>{musicText}    </Text>
+          <Text style={styles.marqueeText}>{musicText}    </Text>
+        </View>
+      </View>
+    );
+  }
+  return <MusicMarqueeNative text={musicText} />;
+});
+const MusicMarqueeNative = memo(function MusicMarqueeNative({ text: musicText }) {
   const scrollX = useRef(new Animated.Value(0)).current;
   const textWidth = useRef(200);
 
@@ -1028,57 +1101,133 @@ function SpeedPickerSheet({ visible, current, onSelect, onClose, t }) {
   );
 }
 
+// ── Playback clock (per ReelItem) ──
+// [2026-10-11 reels-perf] Tiny pub/sub that carries playback position
+// WITHOUT React state. Before, a 100ms setInterval did setProgress/setCurrentMs
+// on ReelItem → whole item (rail, caption, sheets) re-rendered 10×/s → 17 long
+// tasks on desktop. Now only the leaf subscribers (Scrubber fill via
+// Animated.Value.setValue, SubtitleOverlay only when the LINE changes) react.
+function createPlaybackClock() {
+  const subs = new Set();
+  let pct = 0;
+  let ms = 0;
+  return {
+    get pct() { return pct; },
+    get ms() { return ms; },
+    publish(nextPct, nextMs) {
+      pct = Number.isFinite(nextPct) ? Math.max(0, Math.min(1, nextPct)) : 0;
+      ms = Number.isFinite(nextMs) ? nextMs : 0;
+      subs.forEach((fn) => { try { fn(pct, ms); } catch {} });
+    },
+    subscribe(fn) { subs.add(fn); return () => subs.delete(fn); },
+  };
+}
+
+// Subtitle line isolated from ReelItem: re-renders only when the visible
+// caption text actually changes (a few times per segment, not 10×/s).
+const SubtitleOverlay = memo(function SubtitleOverlay({ clock, segments, enabled }) {
+  const [line, setLine] = useState(() => (enabled ? pickSubtitle(segments, clock?.ms) : ''));
+  useEffect(() => {
+    if (!enabled || !clock || !segments?.length) { setLine(''); return undefined; }
+    setLine(pickSubtitle(segments, clock.ms));
+    return clock.subscribe((_p, ms) => {
+      const next = pickSubtitle(segments, ms);
+      setLine((prev) => (prev === next ? prev : next));
+    });
+  }, [clock, segments, enabled]);
+  if (!line) return null;
+  return (
+    <View pointerEvents="none" style={styles.subtitleOverlay}>
+      <View style={styles.subtitleBg}>
+        <Text style={styles.subtitleText}>{line}</Text>
+      </View>
+    </View>
+  );
+});
+
 // ── Scrubber (draggable progress bar) ──
 // TikTok/Instagram parity: horizontal bar at the very bottom — tap to jump,
 // drag to scrub. While the user is touching it we suspend the auto-progress
 // update so the thumb doesn't fight the finger. Calls onSeek(progressNormalized)
 // once on release (web) or live (native) so the underlying <video> seeks.
-const Scrubber = memo(function Scrubber({ progress, onSeek, onScrubStart, onScrubEnd }) {
+// [2026-10-11 reels-perf] Fill is driven by the playback clock with ZERO
+// React renders while playing. Web: imperative transform on the fill's DOM
+// node (an Animated.Value on react-native-web re-renders the AnimatedComponent
+// on every setValue = 60 commits/s). Native: Animated.Value.setValue (direct
+// prop update, no React commit). translateX keeps it compositor-only.
+// Only scrub start/end re-render.
+const Scrubber = memo(function Scrubber({ clock, onSeek, onScrubStart, onScrubEnd }) {
   const [width, setWidth] = useState(0);
   const [scrubbing, setScrubbing] = useState(false);
-  const [livePct, setLivePct] = useState(progress);
+  const pctAnim = useRef(new Animated.Value(clock?.pct || 0)).current;
+  const pctRef = useRef(clock?.pct || 0);
+  const fillRef = useRef(null);
+  const thumbRef = useRef(null);
   const widthRef = useRef(0);
+  const scrubbingRef = useRef(false);
   useEffect(() => { widthRef.current = width; }, [width]);
-  useEffect(() => { if (!scrubbing) setLivePct(progress); }, [progress, scrubbing]);
+  const paint = useCallback((p) => {
+    pctRef.current = p;
+    if (isWeb) {
+      const pc = Math.round(Math.max(0, Math.min(1, p)) * 10000) / 100;
+      const f = fillRef.current;
+      if (f && f.style) f.style.transform = `translateX(${pc - 100}%)`;
+      const th = thumbRef.current;
+      if (th && th.style) th.style.left = `${pc}%`;
+    } else {
+      pctAnim.setValue(p);
+    }
+  }, [pctAnim]);
+  // Re-apply after any re-render (scrub toggle) so React never resets it.
+  useLayoutEffect(() => { if (isWeb) paint(pctRef.current); });
+  useEffect(() => {
+    if (!clock) return undefined;
+    paint(clock.pct || 0);
+    return clock.subscribe((p) => { if (!scrubbingRef.current) paint(p); });
+  }, [clock, paint]);
 
+  const pctFromEvent = (e) => {
+    const x = e.nativeEvent.locationX;
+    const w = widthRef.current || 1;
+    return Math.max(0, Math.min(1, x / w));
+  };
   const panResponder = useRef(
     PanResponder.create({
       onStartShouldSetPanResponder: () => true,
       onMoveShouldSetPanResponder: () => true,
       onPanResponderTerminationRequest: () => false,
       onPanResponderGrant: (e) => {
+        scrubbingRef.current = true;
         setScrubbing(true);
         onScrubStart?.();
-        const x = e.nativeEvent.locationX;
-        const w = widthRef.current || 1;
-        const pct = Math.max(0, Math.min(1, x / w));
-        setLivePct(pct);
+        const pct = pctFromEvent(e);
+        paint(pct);
         onSeek?.(pct, false);
       },
       onPanResponderMove: (e) => {
-        const x = e.nativeEvent.locationX;
-        const w = widthRef.current || 1;
-        const pct = Math.max(0, Math.min(1, x / w));
-        setLivePct(pct);
+        const pct = pctFromEvent(e);
+        paint(pct);
         onSeek?.(pct, false);
       },
       onPanResponderRelease: (e) => {
-        const x = e.nativeEvent.locationX;
-        const w = widthRef.current || 1;
-        const pct = Math.max(0, Math.min(1, x / w));
-        setLivePct(pct);
+        const pct = pctFromEvent(e);
+        paint(pct);
         onSeek?.(pct, true);
+        scrubbingRef.current = false;
         setScrubbing(false);
         onScrubEnd?.();
       },
       onPanResponderTerminate: () => {
+        scrubbingRef.current = false;
         setScrubbing(false);
         onScrubEnd?.();
       },
     })
   ).current;
 
-  const shown = scrubbing ? livePct : progress;
+  const w = width || 1;
+  const fillX = pctAnim.interpolate({ inputRange: [0, 1], outputRange: [-w, 0], extrapolate: 'clamp' });
+  const thumbX = pctAnim.interpolate({ inputRange: [0, 1], outputRange: [0, w], extrapolate: 'clamp' });
   return (
     <View
       {...panResponder.panHandlers}
@@ -1088,12 +1237,18 @@ const Scrubber = memo(function Scrubber({ progress, onSeek, onScrubStart, onScru
       style={styles.scrubberHit}
       accessibilityRole="adjustable"
     >
-      <View style={[styles.progressBar, scrubbing ? { height: 5 } : null]}>
-        <View style={[styles.progressFill, { width: `${Math.min(shown * 100, 100)}%` }]} />
-        {scrubbing ? (
-          <View pointerEvents="none" style={[styles.scrubberThumb, { left: `${Math.min(shown * 100, 100)}%` }]} />
-        ) : null}
+      <View style={[styles.progressBar, { overflow: 'hidden' }, scrubbing ? { height: 5 } : null]}>
+        {isWeb ? (
+          <View ref={fillRef} style={[styles.progressFill, { width: '100%', willChange: 'transform' }]} />
+        ) : (
+          <Animated.View style={[styles.progressFill, { width: '100%', transform: [{ translateX: fillX }] }]} />
+        )}
       </View>
+      {scrubbing ? (isWeb ? (
+        <View ref={thumbRef} pointerEvents="none" style={[styles.scrubberThumb, { bottom: -4, top: undefined }]} />
+      ) : (
+        <Animated.View pointerEvents="none" style={[styles.scrubberThumb, { left: 0, bottom: -4, top: undefined, transform: [{ translateX: thumbX }] }]} />
+      )) : null}
     </View>
   );
 });
@@ -1210,11 +1365,12 @@ const ReelItem = memo(function ReelItem({ onCreate, reel, isActive, colors, isDa
   const [likeCount, setLikeCount] = useState(Number(reel.like_count) || 0);
   const [bookmarked, setBookmarked] = useState(!!reel.user_bookmarked);
   const [captionExpanded, setCaptionExpanded] = useState(false);
-  const [progress, setProgress] = useState(0);
-  const [currentMs, setCurrentMs] = useState(0);
-  const [isScrubbing, setIsScrubbing] = useState(false);
+  // [2026-10-11 reels-perf] playback position lives in a clock (no state) —
+  // see createPlaybackClock. Scrubbing is a ref only (no re-render needed).
+  const clockRef = useRef(null);
+  if (!clockRef.current) clockRef.current = createPlaybackClock();
+  const playbackClock = clockRef.current;
   const scrubbingRef = useRef(false);
-  useEffect(() => { scrubbingRef.current = isScrubbing; }, [isScrubbing]);
   const [showPauseFlash, setShowPauseFlash] = useState(false);
   // Burst particle key — bump to remount HeartParticleBurst so the
   // animation reruns on every double-tap or like-button trigger.
@@ -1258,7 +1414,6 @@ const ReelItem = memo(function ReelItem({ onCreate, reel, isActive, colors, isDa
   const heartOpacity = useRef(new Animated.Value(0)).current;
   const likeScale = useRef(new Animated.Value(1)).current;
   const bookmarkScale = useRef(new Animated.Value(1)).current;
-  const progressIntervalRef = useRef(null);
   const pauseFlashKey = useRef(0);
 
   // Reels P1 — tip sheet (reuses LivePaidGiftSheet) + floating diamond burst.
@@ -1360,8 +1515,8 @@ const ReelItem = memo(function ReelItem({ onCreate, reel, isActive, colors, isDa
     }
   }, [reel, soundSaved, t]);
 
-  // [PERF] ReelItem re-renders ~10×/sec while playing (currentMs ticks), so
-  // avoid re-running JSON.parse on media_urls every tick — memoize it.
+  // Memoize media URL parsing (ReelItem no longer ticks with playback, but
+  // likes/sheets still re-render it).
   const mediaUrls = useMemo(() => parseMediaUrls(reel.media_urls), [reel.media_urls]);
   const videoUrl = useMemo(() => resolveMediaUrl(mediaUrls[0]), [mediaUrls]);
   const authorDisplay = reel.author_name || reel.author_email?.split('@')[0] || '?';
@@ -1417,31 +1572,30 @@ const ReelItem = memo(function ReelItem({ onCreate, reel, isActive, colors, isDa
     }
   }, [isActive, effectivePaused, muted]);
 
-  // Progress tracking (web). Also drives subtitle current-time so the
-  // overlay re-paints in sync with playback. 100ms tick is generous —
-  // captions feel stuttery below ~250ms but TikTok runs ~16ms; we
-  // compromise at 100ms because RN setState batches anyway. Suspend the
-  // tick while the user is dragging the scrubber so the thumb tracks the
-  // finger instead of the underlying playhead. (scrubbingRef declared above
-  // alongside isScrubbing state so handleNativeTime can read it.)
+  // Progress tracking (web). [2026-10-11 reels-perf] requestAnimationFrame
+  // reads <video>.currentTime and publishes to the playback clock — no React
+  // state, so ReelItem no longer re-renders 10×/s (was a 100ms setInterval →
+  // 17 long tasks on desktop). Throttled to only publish when time moved.
+  // Suspended while scrubbing so the thumb tracks the finger.
   useEffect(() => {
-    if (!isWeb) return;
-    if (isActive) {
-      progressIntervalRef.current = setInterval(() => {
-        if (scrubbingRef.current) return;
-        if (videoRef.current && videoRef.current.duration) {
-          setProgress(videoRef.current.currentTime / videoRef.current.duration);
-          setCurrentMs(videoRef.current.currentTime * 1000);
-        }
-      }, 100);
-    } else {
-      setProgress(0);
-      setCurrentMs(0);
-    }
-    return () => {
-      if (progressIntervalRef.current) clearInterval(progressIntervalRef.current);
+    if (!isWeb) return undefined;
+    if (!isActive) { playbackClock.publish(0, 0); return undefined; }
+    if (typeof requestAnimationFrame !== 'function') return undefined;
+    let raf = 0;
+    let lastT = -1;
+    const tick = () => {
+      raf = requestAnimationFrame(tick);
+      if (scrubbingRef.current) return;
+      const v = videoRef.current;
+      if (!v || !v.duration || !Number.isFinite(v.duration)) return;
+      const ct = v.currentTime;
+      if (ct === lastT) return; // paused / buffering → no work
+      lastT = ct;
+      playbackClock.publish(ct / v.duration, ct * 1000);
     };
-  }, [isActive]);
+    raf = requestAnimationFrame(tick);
+    return () => { if (raf) cancelAnimationFrame(raf); };
+  }, [isActive, playbackClock]);
 
   // Auto-transcribe own reel that doesn't yet have captions. Whisper
   // hits the existing `ai_transcribe_audio` endpoint; the result is
@@ -1470,8 +1624,8 @@ const ReelItem = memo(function ReelItem({ onCreate, reel, isActive, colors, isDa
     })();
   }, [isActive, reel?.id, reel?.author_email, user?.email, subtitleSegments.length, videoUrl]);
 
-  // Compute the visible caption line for the current playback time.
-  const subtitleLine = subtitlesEnabled ? pickSubtitle(subtitleSegments, currentMs) : '';
+  // Visible caption line is computed inside <SubtitleOverlay> (subscribes to
+  // the playback clock) so the line change doesn't re-render ReelItem.
 
   // Reset paused state when becoming active
   useEffect(() => {
@@ -1739,22 +1893,26 @@ const ReelItem = memo(function ReelItem({ onCreate, reel, isActive, colors, isDa
     if (!durMs) return;
     nativeDurMsRef.current = durMs;
     if (scrubbingRef.current) return;
-    setProgress(ms / durMs);
-    setCurrentMs(ms);
-  }, []);
+    playbackClock.publish(ms / durMs, ms);
+  }, [playbackClock]);
 
   // Scrubber seek handler. `final` is true on PanResponder release; false
   // during the live drag. We seek the underlying video either way so the
   // viewer sees the frame they're scrubbing to immediately.
   const handleScrub = useCallback((pct, final) => {
-    setProgress(pct);
+    // Keep subtitles in sync with the scrub position (bypasses the
+    // scrubbing guard: the Scrubber already ignores clock while dragging).
+    const durMs = isWeb ? ((videoRef.current?.duration || 0) * 1000) : (nativeDurMsRef.current || 0);
+    playbackClock.publish(pct, durMs * pct);
     if (isWeb && videoRef.current && Number.isFinite(videoRef.current.duration)) {
       try { videoRef.current.currentTime = videoRef.current.duration * pct; } catch {}
     } else if (!isWeb && nativeSeekRef.current?.seek) {
       const dur = nativeDurMsRef.current || 0;
       if (dur > 0) nativeSeekRef.current.seek(dur * pct);
     }
-  }, []);
+  }, [playbackClock]);
+  const onScrubStart = useCallback(() => { scrubbingRef.current = true; }, []);
+  const onScrubEnd = useCallback(() => { scrubbingRef.current = false; }, []);
 
   return (
     <View style={[styles.reelContainer, { height, width: _reelItemWidth(containerWidth, height), alignSelf: 'center' }]}>
@@ -2110,13 +2268,7 @@ const ReelItem = memo(function ReelItem({ onCreate, reel, isActive, colors, isDa
           Sits above the bottom info block so the visible caption doesn't
           fight for the same vertical space. We pin to bottom-center with
           a max-width of 78% so it never collides with the right rail. */}
-      {!!subtitleLine && (
-        <View pointerEvents="none" style={styles.subtitleOverlay}>
-          <View style={styles.subtitleBg}>
-            <Text style={styles.subtitleText}>{subtitleLine}</Text>
-          </View>
-        </View>
-      )}
+      <SubtitleOverlay clock={playbackClock} segments={subtitleSegments} enabled={subtitlesEnabled} />
 
       {/* ── BOTTOM LEFT INFO ── */}
       <View style={[styles.bottomInfo, { paddingBottom: insets.bottom + 16 }]}>
@@ -2191,10 +2343,10 @@ const ReelItem = memo(function ReelItem({ onCreate, reel, isActive, colors, isDa
 
       {/* ── DRAGGABLE SCRUBBER ── (tap to jump / drag to seek) */}
       <Scrubber
-        progress={progress}
+        clock={playbackClock}
         onSeek={handleScrub}
-        onScrubStart={() => setIsScrubbing(true)}
-        onScrubEnd={() => setIsScrubbing(false)}
+        onScrubStart={onScrubStart}
+        onScrubEnd={onScrubEnd}
       />
 
       {/* Share drawer (Repost / Copy link / External) */}

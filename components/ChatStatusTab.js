@@ -12,7 +12,7 @@ import CachedImage from './CachedImage';
 import AvatarCircle from './AvatarCircle';
 import StatusCamera from './StatusCamera';
 import BrandFab from './BrandFab';
-import { IconPlus, IconCamera, IconEdit, IconX, IconSearch, IconTrash, IconEye, IconChevronLeft, IconChevronRight, IconSend, IconPause, IconPlay, IconForward, IconSmile, IconType, IconBrush, IconUndo2, IconRotateCw, IconBookmark, IconBarChart, IconHelpCircle, IconClock, IconAtSign, IconAward, IconMapPin, IconLink, IconArrowRight, IconArchive, IconSliders, IconFeedShare, IconCheck, IconCheckbox, IconCheckboxChecked, IconChevronUp, IconChevronDown, IconMic } from './Icons';
+import { IconPlus, IconCamera, IconEdit, IconX, IconSearch, IconTrash, IconEye, IconChevronLeft, IconChevronRight, IconSend, IconPause, IconPlay, IconForward, IconSmile, IconType, IconBrush, IconUndo2, IconRotateCw, IconBookmark, IconBarChart, IconHelpCircle, IconClock, IconAtSign, IconAward, IconMapPin, IconLink, IconArrowRight, IconArchive, IconSliders, IconFeedShare, IconCheck, IconCheckbox, IconCheckboxChecked, IconChevronUp, IconChevronDown, IconMic, IconHeart, IconHeartOutline, IconFlame, IconLaughFace, IconSurpriseFace, IconSadFace, IconClap, IconThumbsUp } from './Icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as api from '../services/api';
 import { HapticsCompat as Haptics } from '../services/haptics'; // [2026-10-11] same API, routed via the shared haptics shim
@@ -34,7 +34,6 @@ let mailWs = null;
 try { mailWs = require('../services/websocket').default; } catch {}
 import Svg, { Circle as SvgCircle, Path, Rect, Defs, LinearGradient, Stop } from 'react-native-svg';
 import AnimatedStatusText from './status/AnimatedStatusText';
-import ReactionSwipeUp from './status/ReactionSwipeUp';
 // Shared text-status gradient presets + resolver — single source of truth so
 // the composer picker, StoryViewer and AnimatedStatusText never drift apart.
 import { TEXT_BG_GRADIENTS, resolveTextGradient as resolveGradient } from './status/textGradients';
@@ -305,6 +304,26 @@ function stopStatusAudio() {
 
 // [2026-10-10 i18n] "N visualização/visualizações" was hardcoded pt-BR.
 // Singular/plural via i18n keys with {count}.
+// [2026-10-11 social-qa] Status reactions rendered as SVG (never emoji glyphs
+// in UI). Keys are the emoji VALUES the backend whitelists (chat.php
+// status_react); unknown values fall back to the heart glyph.
+const STATUS_LIKE_EMOJI = '\u2764\uFE0F';
+const STATUS_TRAY_REACTIONS = [STATUS_LIKE_EMOJI, '\u{1F525}', '\u{1F602}', '\u{1F62E}', '\u{1F622}', '\u{1F44F}'];
+const _STATUS_REACTION_DEFS = {
+  [STATUS_LIKE_EMOJI]: { Icon: IconHeart, color: '#ff3040', labelKey: 'status.like', fallback: 'Curtir' },
+  '\u2764': { Icon: IconHeart, color: '#ff3040', labelKey: 'status.like', fallback: 'Curtir' },
+  '\u{1F60D}': { Icon: IconHeart, color: '#ff3040', labelKey: 'status.like', fallback: 'Curtir' },
+  '\u{1F525}': { Icon: IconFlame, color: '#ffffff', labelKey: 'status.reactFire', fallback: 'Fogo' },
+  '\u{1F602}': { Icon: IconLaughFace, color: '#ffffff', labelKey: 'status.reactLaugh', fallback: 'Engraçado' },
+  '\u{1F62E}': { Icon: IconSurpriseFace, color: '#ffffff', labelKey: 'status.reactWow', fallback: 'Uau' },
+  '\u{1F622}': { Icon: IconSadFace, color: '#ffffff', labelKey: 'status.reactSad', fallback: 'Triste' },
+  '\u{1F44F}': { Icon: IconClap, color: '#ffffff', labelKey: 'status.reactClap', fallback: 'Aplausos' },
+  '\u{1F44D}': { Icon: IconThumbsUp, color: '#ffffff', labelKey: 'status.like', fallback: 'Curtir' },
+};
+function _statusReactionDef(emoji) {
+  return _STATUS_REACTION_DEFS[emoji] || _STATUS_REACTION_DEFS[STATUS_LIKE_EMOJI];
+}
+
 function _viewCountLabel(t, n) {
   const c = Number(n) || 0;
   if (typeof t !== 'function') return String(c);
@@ -1088,9 +1107,14 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
   const [viewersLoading, setViewersLoading] = useState(false);
 
   // Reaction state
-  const QUICK_REACTIONS = ['\u{1F60D}', '\u{1F525}', '\u{1F602}', '\u{1F62E}', '\u{1F622}', '\u{1F44F}'];
   const [statusReactions, setStatusReactions] = useState({}); // { [status_id]: [{ emoji, user_email }] }
   const [myReactions, setMyReactions] = useState({}); // { [status_id]: emoji }
+  // [2026-10-11 social-qa] Instagram-like viewer footer: one reply bar + heart
+  // quick-like + a tray (opened on tap) with the other reactions. Replaces the
+  // 3 overlapping mechanisms (swipe-up picker, 6-emoji bar, 5-emoji row).
+  const [reactTrayOpen, setReactTrayOpen] = useState(false);
+  const reactTrayAnim = useRef(new Animated.Value(0)).current;
+  const likePopAnim = useRef(new Animated.Value(1)).current;
 
   // Forward modal state
   const [forwardModalVisible, setForwardModalVisible] = useState(false);
@@ -1196,6 +1220,34 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
       if (__DEV__) console.warn('[Status] React failed:', err?.message);
     }
   }, [viewerStatuses, viewerIndex, currentEmail]);
+
+  // [2026-10-11 social-qa] Reaction tray + heart quick-like (Instagram).
+  const openReactTray = useCallback(() => {
+    setIsPaused(true);
+    if (timerRef.current) clearTimeout(timerRef.current);
+    if (animRef.current) animRef.current.stop();
+    setReactTrayOpen(true);
+    reactTrayAnim.setValue(0);
+    Animated.spring(reactTrayAnim, { toValue: 1, tension: 180, friction: 16, useNativeDriver: Platform.OS !== 'web' }).start();
+  }, [reactTrayAnim]);
+  const closeReactTray = useCallback(() => {
+    Animated.timing(reactTrayAnim, { toValue: 0, duration: 140, useNativeDriver: Platform.OS !== 'web' }).start(() => setReactTrayOpen(false));
+    if (!replyFocusedRef.current) setIsPaused(false);
+  }, [reactTrayAnim]);
+  const toggleReactTray = useCallback(() => {
+    try { Haptics.selectionAsync?.(); } catch {}
+    if (reactTrayOpen) closeReactTray(); else openReactTray();
+  }, [reactTrayOpen, openReactTray, closeReactTray]);
+  const handleQuickLike = useCallback(() => {
+    try { Haptics.impactAsync?.(Haptics.ImpactFeedbackStyle?.Light); } catch {}
+    likePopAnim.setValue(0.7);
+    Animated.spring(likePopAnim, { toValue: 1, tension: 260, friction: 6, useNativeDriver: Platform.OS !== 'web' }).start();
+    handleReact(STATUS_LIKE_EMOJI);
+  }, [likePopAnim, handleReact]);
+  // Tray never carries over to the next story / a closed viewer.
+  useEffect(() => {
+    if (reactTrayOpen) { setReactTrayOpen(false); reactTrayAnim.setValue(0); }
+  }, [viewerIndex, viewerVisible]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Open forward modal
   const handleOpenForward = useCallback(async () => {
@@ -4253,7 +4305,7 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
               )}
             </TouchableOpacity>
 
-            {/* Reaction badges on current status */}
+            {/* Reaction badges on current status — SVG glyphs (no emoji in UI). */}
             {(() => {
               const itemReactions = statusReactions[currentViewerItem?.id] || [];
               if (itemReactions.length === 0) return null;
@@ -4261,76 +4313,60 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
               itemReactions.forEach(r => { grouped[r.emoji] = (grouped[r.emoji] || 0) + 1; });
               return (
                 <View style={styles.reactionBadgesRow} pointerEvents="none">
-                  {Object.entries(grouped).map(([emoji, count]) => (
-                    <View key={emoji} style={styles.reactionBadge}>
-                      <Text style={styles.reactionBadgeEmoji}>{emoji}</Text>
-                      {count > 1 && <Text style={styles.reactionBadgeCount}>{count}</Text>}
-                    </View>
-                  ))}
+                  {Object.entries(grouped).map(([emoji, count]) => {
+                    const def = _statusReactionDef(emoji);
+                    const Ico = def.Icon;
+                    return (
+                      <View key={emoji} style={styles.reactionBadge}>
+                        <Ico size={14} color={def.color} />
+                        {count > 1 && <Text style={styles.reactionBadgeCount}>{count}</Text>}
+                      </View>
+                    );
+                  })}
                 </View>
               );
             })()}
 
-            {/* Instagram-style swipe-up emoji reaction picker. The picker
-                is rendered at the bottom; its gesture strip lives above the
-                reply bar so swiping up is intuitive. Tapping the inline
-                emoji row is kept as a fallback (WhatsApp-style). */}
-            {!isOwnStatus && (
-              <>
-                <ReactionSwipeUp
-                  activeEmoji={myReactions[currentViewerItem?.id]}
-                  emojis={QUICK_REACTIONS}
-                  onOpen={() => {
-                    setIsPaused(true);
-                    if (timerRef.current) clearTimeout(timerRef.current);
-                    if (animRef.current) animRef.current.stop();
-                  }}
-                  onClose={() => setIsPaused(false)}
-                  onReact={(emoji) => handleReact(emoji)}
-                  bottomOffset={78}
-                />
-                <View style={styles.reactionBar}>
-                  {QUICK_REACTIONS.map((emoji) => (
-                    <TouchableOpacity
-                      key={emoji}
-                      onPress={() => handleReact(emoji)}
-                      style={[styles.reactionBtn, myReactions[currentViewerItem?.id] === emoji && styles.reactionBtnActive]}
-                      activeOpacity={0.6}
-                    >
-                      <Text style={styles.reactionEmoji}>{emoji}</Text>
-                    </TouchableOpacity>
-                  ))}
-                  <TouchableOpacity
-                    onPress={handleOpenForward}
-                    style={styles.forwardBtn}
-                    activeOpacity={0.7}
-                  >
-                    <IconForward size={20} color="#fff" />
-                  </TouchableOpacity>
-                </View>
-              </>
-            )}
-
-            {/* Reply input (only for other people's statuses) */}
+            {/* Reply bar (only for other people's statuses) */}
             {!isOwnStatus && (
               <Animated.View style={{ transform: [{ translateY: viewerKbOffset }] }}>
-                {/* Quick-reply emoji row — WhatsApp parity. Tap = sends that
-                    emoji as the reply immediately, without typing. */}
-                <View style={{ flexDirection: 'row', justifyContent: 'space-between', paddingHorizontal: 18, paddingBottom: 6, gap: 6 }}>
-                  {['❤️', '\u{1F602}', '\u{1F62E}', '\u{1F622}', '\u{1F44F}'].map((emoji) => (
-                    <TouchableOpacity
-                      key={'qr-' + emoji}
-                      onPress={() => handleStatusReply(emoji)}
-                      disabled={sendingReply}
-                      activeOpacity={0.6}
-                      style={{ flex: 1, alignItems: 'center', paddingVertical: 8, borderRadius: 20, backgroundColor: 'rgba(255,255,255,0.08)' }}
-                      accessibilityRole="button"
-                      accessibilityLabel={(t?.('status.replyWithEmoji') || 'Responder com {emoji}').replace('{emoji}', emoji)}
-                    >
-                      <Text style={{ fontSize: 22 }}>{emoji}</Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
+                {/* Quick-reaction tray — opens from the smile button in the
+                    reply bar (Instagram). SVG only; values map to the
+                    backend status_react whitelist. Pauses the story while open. */}
+                {reactTrayOpen && (
+                  <Animated.View
+                    style={[styles.reactTray, {
+                      opacity: reactTrayAnim,
+                      transform: [
+                        { translateY: reactTrayAnim.interpolate({ inputRange: [0, 1], outputRange: [12, 0] }) },
+                        { scale: reactTrayAnim.interpolate({ inputRange: [0, 1], outputRange: [0.92, 1] }) },
+                      ],
+                    }]}
+                  >
+                    {STATUS_TRAY_REACTIONS.map((emoji) => {
+                      const def = _statusReactionDef(emoji);
+                      const Ico = def.Icon;
+                      const active = myReactions[currentViewerItem?.id] === emoji;
+                      return (
+                        <TouchableOpacity
+                          key={'rt-' + emoji}
+                          onPress={() => {
+                            try { Haptics.selectionAsync?.(); } catch {}
+                            handleReact(emoji);
+                            closeReactTray();
+                          }}
+                          style={[styles.reactTrayBtn, active && styles.reactTrayBtnActive]}
+                          activeOpacity={0.6}
+                          accessibilityRole="button"
+                          accessibilityLabel={t?.(def.labelKey) || def.fallback}
+                          accessibilityState={{ selected: active }}
+                        >
+                          <Ico size={24} color={def.color} />
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </Animated.View>
+                )}
               <View style={styles.replyBar}>
                 <View style={styles.replyInputWrap}>
                   <TextInput
@@ -4344,6 +4380,7 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
                     editable={!sendingReply}
                     onFocus={() => {
                       replyFocusedRef.current = true;
+                      if (reactTrayOpen) { setReactTrayOpen(false); reactTrayAnim.setValue(0); }
                       setIsPaused(true);
                       if (timerRef.current) clearTimeout(timerRef.current);
                       if (animRef.current) animRef.current.stop();
@@ -4351,6 +4388,46 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
                     onBlur={() => { replyFocusedRef.current = false; setIsPaused(false); }}
                   />
                 </View>
+                {viewerReply.trim().length === 0 && (
+                  <>
+                    <TouchableOpacity
+                      onPress={toggleReactTray}
+                      style={styles.replyIconBtn}
+                      activeOpacity={0.6}
+                      hitSlop={6}
+                      accessibilityRole="button"
+                      accessibilityLabel={t?.('status.react') || 'Reagir'}
+                      accessibilityState={{ expanded: reactTrayOpen }}
+                    >
+                      <IconSmile size={24} color="#fff" />
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      onPress={handleQuickLike}
+                      style={styles.replyIconBtn}
+                      activeOpacity={0.6}
+                      hitSlop={6}
+                      accessibilityRole="button"
+                      accessibilityLabel={myReactions[currentViewerItem?.id] === STATUS_LIKE_EMOJI ? (t?.('status.unlike') || 'Descurtir') : (t?.('status.like') || 'Curtir')}
+                      accessibilityState={{ selected: myReactions[currentViewerItem?.id] === STATUS_LIKE_EMOJI }}
+                    >
+                      <Animated.View style={{ transform: [{ scale: likePopAnim }] }}>
+                        {myReactions[currentViewerItem?.id] === STATUS_LIKE_EMOJI
+                          ? <IconHeart size={25} color="#ff3040" />
+                          : <IconHeartOutline size={25} color="#fff" />}
+                      </Animated.View>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      onPress={handleOpenForward}
+                      style={styles.replyIconBtn}
+                      activeOpacity={0.6}
+                      hitSlop={6}
+                      accessibilityRole="button"
+                      accessibilityLabel={t?.('status.forwardStatus') || 'Encaminhar'}
+                    >
+                      <IconSend size={23} color="#fff" />
+                    </TouchableOpacity>
+                  </>
+                )}
                 {viewerReply.trim().length > 0 && (
                   <TouchableOpacity
                     style={styles.replySendBtn}
@@ -6494,39 +6571,37 @@ const styles = StyleSheet.create({
     fontSize: 13,
   },
 
-  // Reaction bar
-  reactionBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 14,
-    paddingVertical: 6,
-    gap: 4,
-  },
-  reactionBtn: {
-    width: 42,
-    height: 42,
-    borderRadius: 21,
-    backgroundColor: 'rgba(255,255,255,0.1)',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  reactionBtnActive: {
-    backgroundColor: 'rgba(17, 17, 17,0.4)',
-    borderWidth: 1.5,
-    borderColor: 'rgba(17, 17, 17,0.7)',
-  },
-  reactionEmoji: {
-    fontSize: 22,
-  },
-  forwardBtn: {
-    width: 42,
-    height: 42,
-    borderRadius: 21,
-    backgroundColor: 'rgba(255,255,255,0.1)',
+  // [2026-10-11 social-qa] Instagram-style reply bar actions + reaction tray
+  replyIconBtn: {
+    width: 40,
+    height: 44,
     alignItems: 'center',
     justifyContent: 'center',
     marginLeft: 4,
+  },
+  reactTray: {
+    flexDirection: 'row',
+    alignSelf: 'center',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+    marginBottom: 2,
+    borderRadius: 32,
+    backgroundColor: 'rgba(20,20,20,0.92)',
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: 'rgba(255,255,255,0.14)',
+    ...(Platform.OS === 'web' ? { boxShadow: '0 6px 24px rgba(0,0,0,0.45)' } : { elevation: 8 }),
+  },
+  reactTrayBtn: {
+    width: 46,
+    height: 46,
+    borderRadius: 23,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  reactTrayBtnActive: {
+    backgroundColor: 'rgba(255,255,255,0.16)',
   },
 
   // Reaction badges on status
@@ -6546,9 +6621,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
     paddingVertical: 4,
     gap: 3,
-  },
-  reactionBadgeEmoji: {
-    fontSize: 16,
   },
   reactionBadgeCount: {
     color: 'rgba(255,255,255,0.8)',

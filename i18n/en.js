@@ -10222,4 +10222,12 @@ export default {
   "chat.attach.recentSelected": "selected",
   "feed.linkCopied": "Link copied",
   "feed.findPeople": "Find people",
+  // [2026-10-11 social-qa] status viewer reactions
+  "status.like": "Like",
+  "status.unlike": "Unlike",
+  "status.reactFire": "Fire",
+  "status.reactLaugh": "Funny",
+  "status.reactWow": "Wow",
+  "status.reactSad": "Sad",
+  "status.reactClap": "Applause",
 };

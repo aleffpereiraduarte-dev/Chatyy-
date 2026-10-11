@@ -731,11 +731,9 @@ function MeetingsScreenInner() {
           ),
         })} />
       ) : (
-      <View style={[styles.header, { backgroundColor: isDark ? (colors.headerBgSolid || colors.surface) : colors.primary }]}>
-        {/* [2026-10-08 polish-leftovers] dark: primary is white → the brand header
-            (white title/back, white CTA pill) went white-on-white. Dark uses the
-            neutral solid header surface; CTA pill flips to primary/onPrimary. */}
-        <View style={[styles.headerGradientOverlay, { backgroundColor: isDark ? 'transparent' : colors.primaryDark }]} />
+      <View style={[styles.header, { backgroundColor: colors.headerBgSolid || colors.surface, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border }]}>
+        {/* [2026-10-11 polish-secondary] header na superfície do tema nos dois
+            modos (era faixa preta no claro) — igual Conversas/Configurações. */}
         <View style={styles.headerRow}>
           <TouchableOpacity
             onPress={() => {
@@ -745,19 +743,21 @@ function MeetingsScreenInner() {
             }}
             style={styles.headerBtn}
             hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            accessibilityRole="button"
+            accessibilityLabel={t('common.back') || 'Voltar'}
           >
-            <IconArrowLeft size={22} color="#fff" />
+            <IconArrowLeft size={24} color={colors.text} />
           </TouchableOpacity>
-          <Text style={styles.headerTitle} numberOfLines={1}>{t('meetings.title')}</Text>
+          <Text style={[styles.headerTitle, { color: colors.text }]} numberOfLines={1}>{t('meetings.title')}</Text>
           <TouchableOpacity
             onPress={() => router.push('/meeting-create')}
-            style={[styles.headerCta, isDark && { backgroundColor: colors.primary }]}
+            style={[styles.headerCta, { backgroundColor: colors.primary }]}
             activeOpacity={0.85}
             accessibilityLabel={t('meetings.scheduleCta')}
             accessibilityRole="button"
           >
-            <IconPlus size={14} color={isDark ? colors.onPrimary : colors.primary} />
-            <Text style={[styles.headerCtaText, { color: isDark ? colors.onPrimary : colors.primary }]} numberOfLines={1}>
+            <IconPlus size={14} color={colors.onPrimary} />
+            <Text style={[styles.headerCtaText, { color: colors.onPrimary }]} numberOfLines={1}>
               {tl(t, language, 'meetings.create', { pt: 'Criar', en: 'Create', es: 'Crear' })}
             </Text>
           </TouchableOpacity>
@@ -783,7 +783,7 @@ function MeetingsScreenInner() {
               <Text style={[styles.tabText, { color: active ? (colors.onPrimary || '#fff') : colors.textSecondary }]} numberOfLines={1}>
                 {tabLabels[key]}
                 {typeof cnt === 'number' && cnt > 0 ? (
-                  <Text style={{ color: active ? 'rgba(255,255,255,0.85)' : colors.textTertiary, fontWeight: '600' }}>{`  ${cnt}`}</Text>
+                  <Text style={{ color: active ? (colors.onPrimary || '#fff') : colors.textTertiary, opacity: active ? 0.75 : 1, fontWeight: '600' }}>{`  ${cnt}`}</Text>
                 ) : null}
               </Text>
             </TouchableOpacity>
@@ -860,15 +860,15 @@ const styles = StyleSheet.create({
   container: { flex: 1 },
   header: {
     paddingHorizontal: Spacing.md,
-    paddingVertical: Spacing.md,
+    paddingVertical: Spacing.sm,
     overflow: 'hidden',
   },
   headerGradientOverlay: {
     position: 'absolute', right: -40, top: -30, width: 220, height: 220, borderRadius: 110, opacity: 0.55,
   },
   headerRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
-  headerBtn: { width: 36, height: 36, alignItems: 'center', justifyContent: 'center', borderRadius: 18, backgroundColor: 'rgba(255,255,255,0.12)' },
-  headerTitle: { flex: 1, fontSize: 22, fontWeight: '600', color: '#fff', textAlign: 'left', marginLeft: 4 },
+  headerBtn: { width: 36, height: 36, alignItems: 'center', justifyContent: 'center', borderRadius: 18 },
+  headerTitle: { flex: 1, fontSize: 20, fontWeight: '700', textAlign: 'left', marginLeft: 4, letterSpacing: -0.3 },
   headerCta: {
     flexDirection: 'row', alignItems: 'center', gap: 5,
     backgroundColor: '#fff', paddingHorizontal: 12, paddingVertical: 7, borderRadius: 999,

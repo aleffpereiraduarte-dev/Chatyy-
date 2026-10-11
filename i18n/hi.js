@@ -10252,4 +10252,12 @@ export default {
   "chat.attach.recentSelected": "चयनित",
   "feed.linkCopied": "लिंक कॉपी हो गया",
   "feed.findPeople": "लोगों को खोजें",
+  // [2026-10-11 social-qa] status viewer reactions
+  "status.like": "पसंद करें",
+  "status.unlike": "पसंद हटाएं",
+  "status.reactFire": "आग",
+  "status.reactLaugh": "मज़ेदार",
+  "status.reactWow": "वाह",
+  "status.reactSad": "दुखी",
+  "status.reactClap": "तालियाँ",
 };

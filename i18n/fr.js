@@ -10253,4 +10253,12 @@ export default {
   "chat.attach.recentSelected": "sélectionnée",
   "feed.linkCopied": "Lien copié",
   "feed.findPeople": "Trouver des personnes",
+  // [2026-10-11 social-qa] status viewer reactions
+  "status.like": "J'aime",
+  "status.unlike": "Je n'aime plus",
+  "status.reactFire": "Feu",
+  "status.reactLaugh": "Drôle",
+  "status.reactWow": "Waouh",
+  "status.reactSad": "Triste",
+  "status.reactClap": "Applaudissements",
 };

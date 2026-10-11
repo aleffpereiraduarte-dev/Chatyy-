@@ -492,7 +492,7 @@ function BoardMinimap({ notes, isDark, colors, boardScale, scrollOffset, viewpor
 
   return (
     <View style={[boardStyles.minimap, {
-      backgroundColor: isDark ? 'rgba(20,20,35,0.85)' : 'rgba(255,255,255,0.88)',
+      backgroundColor: isDark ? 'rgba(28,28,30,0.85)' : 'rgba(255,255,255,0.88)',
       borderColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.08)',
       ...(Platform.OS === 'web' ? {
         backdropFilter: 'blur(12px)',
@@ -655,7 +655,7 @@ function BoardView({
 
       {/* Zoom controls */}
       <View style={[boardStyles.zoomControls, {
-        backgroundColor: isDark ? 'rgba(20,20,35,0.9)' : 'rgba(255,255,255,0.92)',
+        backgroundColor: isDark ? 'rgba(28,28,30,0.9)' : 'rgba(255,255,255,0.92)',
         borderColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.06)',
         ...(Platform.OS === 'web' ? {
           backdropFilter: 'blur(16px)',
@@ -1789,7 +1789,7 @@ export default function NotesScreen() {
       // ---- Header (Frosted Glass, web) ----
       <View style={[s.header, {
         paddingTop: (Platform.OS === 'web' ? 16 : (insets.top || 0) + 8),
-        backgroundColor: isDark ? 'rgba(18,18,30,0.88)' : 'rgba(255,255,255,0.88)',
+        backgroundColor: isDark ? 'rgba(11,11,11,0.92)' : 'rgba(255,255,255,0.88)',
         borderBottomColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)',
         ...(Platform.OS === 'web' ? {
           backdropFilter: 'blur(20px)',
@@ -2215,7 +2215,7 @@ export default function NotesScreen() {
             onPress={handleQuickNote}
             disabled={quickNoteLoading}
             style={[s.quickNoteFabBtn, {
-              backgroundColor: isDark ? 'rgba(30,30,50,0.9)' : 'rgba(255,255,255,0.95)',
+              backgroundColor: isDark ? 'rgba(28,28,30,0.92)' : 'rgba(255,255,255,0.95)',
               borderColor: colors.primary + '33',
               ...(Platform.OS === 'web' ? {
                 backdropFilter: 'blur(12px)',

@@ -95,6 +95,25 @@ try { enableFreeze(true); } catch {}
 // recarrega a página UMA vez (guarda em sessionStorage). No-op no nativo.
 import { installChunkErrorReload } from '../services/chunkReload';
 try { installChunkErrorReload(); } catch {}
+// [2026-10-11 boot-web] Route-chunk prefetch. With asyncRoutes the chat list's
+// chunk (app/chat.js) was only requested after this layout rendered AND (from
+// "/") after the index chunk loaded and redirected — 1-2 extra serialized
+// round-trips before the first row on a phone. A logged-in phone-width visit
+// to "/" or "/chat" lands on the chat list (app/index.js), so start that
+// download now, in parallel with the root render. Same module/chunk the router
+// loads (module registry dedupes); failures are swallowed (the router retries
+// and installChunkErrorReload still covers a stale deploy).
+try {
+  if (Platform.OS === 'web' && typeof window !== 'undefined' && window.location) {
+    const _p = String(window.location.pathname || '/');
+    let _tok = '';
+    try { _tok = window.localStorage ? (window.localStorage.getItem('mail_token') || '') : ''; } catch {}
+    const _phone = (window.innerWidth || 0) > 0 && window.innerWidth < 768;
+    if (_tok && (_p === '/chat' || (_p === '/' && _phone))) {
+      import('./chat').catch(() => {});
+    }
+  }
+} catch {}
 import React, { Suspense } from "react";
 import { Platform, View as RNView, Text as RNText, Linking, Alert, Animated as _RNAnimated, InteractionManager, useColorScheme as _useColorScheme } from 'react-native';
 // ─── Sentry crash reporting ───

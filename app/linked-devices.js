@@ -349,9 +349,9 @@ export default function LinkedDevicesScreen() {
       <View style={styles.ctaRow}>
         {/* flex do botão no wrapper: o style do PressableScale vai pro Animated.View
             interno, então o Touchable externo não esticava e o rótulo cortava. */}
-        <View style={{ flex: 1, minWidth: 0 }}>
+        <View style={{ alignSelf: 'stretch' }}>
         <PressableScale
-          style={[styles.ctaBtn, { flex: 0, backgroundColor: colors.primary }]}
+          style={[styles.ctaBtn, { flex: 0, alignSelf: 'stretch', backgroundColor: colors.primary }]}
           onPress={() => router.push('/companion-qr')}
         >
           <IconUserPlus size={18} color={colors.onPrimary} />
@@ -360,15 +360,15 @@ export default function LinkedDevicesScreen() {
           </Text>
         </PressableScale>
         </View>
-        <TouchableOpacity
-          style={[styles.ctaBtn, styles.ctaBtnSecondary, { borderColor: colors.primary }]}
+        <PressableScale
+          style={[styles.ctaBtn, styles.ctaBtnSecondary, { flex: 0, alignSelf: 'stretch', borderColor: colors.border }]}
           onPress={openScanner}
         >
           <IconCamera size={18} color={colors.primary} />
           <Text style={[styles.ctaBtnText, { color: colors.primary }]} numberOfLines={1}>
             {t('devices.scanCompanion') || 'Escanear QR'}
           </Text>
-        </TouchableOpacity>
+        </PressableScale>
       </View>
 
       {loading ? (
@@ -485,10 +485,12 @@ const styles = StyleSheet.create({
   emptyText: { textAlign: 'center', fontSize: 13, paddingHorizontal: 16 },
   revokeAllBtn: { margin: 16, padding: 14, borderRadius: 12, backgroundColor: '#FEF2F2', alignItems: 'center', borderWidth: 1, borderColor: '#FEE2E2' },
   revokeAllText: { color: '#EF4444', fontSize: 14, fontWeight: '700' },
-  ctaRow: { flexDirection: 'row', gap: 10, paddingHorizontal: 16, paddingTop: 8, paddingBottom: 8 },
-  ctaBtn: { flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingVertical: 12, paddingHorizontal: 10, borderRadius: 12 },
+  // [2026-10-11 polish-secondary] CTAs empilhados em largura total (lado a lado
+  // o rótulo "Vincular outro celular" truncava e as alturas não batiam).
+  ctaRow: { flexDirection: 'column', gap: 8, paddingHorizontal: 16, paddingTop: 8, paddingBottom: 8 },
+  ctaBtn: { flex: 1, minWidth: 0, minHeight: 46, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingVertical: 12, paddingHorizontal: 10, borderRadius: 12 },
   ctaBtnSecondary: { backgroundColor: 'transparent', borderWidth: 1 },
-  ctaBtnText: { color: '#fff', fontWeight: '700', fontSize: 13, flexShrink: 1 },
+  ctaBtnText: { color: '#fff', fontWeight: '700', fontSize: 15, flexShrink: 1 },
   scanRoot: { flex: 1, backgroundColor: '#000' },
   scanHeader: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingTop: 50, paddingBottom: 14 },
   scanTitle: { color: '#fff', fontSize: 18, fontWeight: '700', marginLeft: 8 },

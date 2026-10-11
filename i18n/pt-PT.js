@@ -9498,4 +9498,12 @@ export default {
   "chat.attach.recentSelected": "selecionada",
   "feed.linkCopied": "Ligação copiada",
   "feed.findPeople": "Encontrar pessoas",
+  // [2026-10-11 social-qa] status viewer reactions
+  "status.like": "Gostar",
+  "status.unlike": "Deixar de gostar",
+  "status.reactFire": "Fogo",
+  "status.reactLaugh": "Engraçado",
+  "status.reactWow": "Uau",
+  "status.reactSad": "Triste",
+  "status.reactClap": "Aplausos",
 };

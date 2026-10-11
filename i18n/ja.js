@@ -9474,4 +9474,12 @@ export default {
   "chat.attach.recentSelected": "選択済み",
   "feed.linkCopied": "リンクをコピーしました",
   "feed.findPeople": "人を探す",
+  // [2026-10-11 social-qa] status viewer reactions
+  "status.like": "いいね",
+  "status.unlike": "いいねを取り消す",
+  "status.reactFire": "ファイヤー",
+  "status.reactLaugh": "面白い",
+  "status.reactWow": "すごい",
+  "status.reactSad": "悲しい",
+  "status.reactClap": "拍手",
 };

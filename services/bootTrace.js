@@ -125,8 +125,12 @@ export function markFirstPaintOther(reason) {
 // Hard cap so deferred work can't be starved if no first-paint signal ever
 // arrives (crash in the list, a non-chat deep link, etc.).
 const AFTER_PAINT_CAP_MS = 2500;
+// [2026-10-11 boot-web] Web now queues too (see afterFirstPaint). The cap is a
+// bit longer there because module eval of the web bundle already ate the
+// download/parse time and the chat list mounts only after the route chunk.
+const AFTER_PAINT_CAP_WEB_MS = 3000;
 try {
-  if (Platform.OS !== 'web') setTimeout(() => markFirstPaintOther('cap'), AFTER_PAINT_CAP_MS);
+  setTimeout(() => markFirstPaintOther('cap'), Platform.OS === 'web' ? AFTER_PAINT_CAP_WEB_MS : AFTER_PAINT_CAP_MS);
 } catch {}
 
 function _drainAfterPaint() {
@@ -160,10 +164,15 @@ function _drainAfterPaint() {
 }
 
 // Schedule `fn` after the first paint. `delay` adds an extra wait (ms) on top
-// of the staggering. Web: runs immediately-ish (no native splash / no queue).
+// of the staggering.
+// [2026-10-11 boot-web] Web used to run these immediately (setTimeout(fn,
+// delay)), so ~15 service inits + their lazy chunks (outboxDrainer, sendWorker,
+// relayResponder, onlineRecovery, shareOutbox…) and their API calls competed
+// with the chat list's first render on a 4x-throttled phone. Web now uses the
+// same queue as native: released by the list's first paint (ChatListTab),
+// app/index.js (other destinations) or the 3 s cap above — delayed, never lost.
 export function afterFirstPaint(fn, delay = 0) {
   if (typeof fn !== 'function') return;
-  if (Platform.OS === 'web') { try { setTimeout(fn, delay || 0); } catch {} return; }
   if (_firstPaint) {
     try { setTimeout(() => { try { fn(); } catch {} }, delay || 0); } catch {}
     return;

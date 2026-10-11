@@ -101,25 +101,27 @@ export default function StarredMessagesScreen() {
 
   // [2026-10-09 more-native] Com header nativo (fundo = superfície do tema) as
   // abas seguem a mesma superfície (texto/hairline), sem a faixa preta fixa.
-  const tabAccent = USE_NATIVE_HEADER ? colors.text : (isDark ? '#111111' : '#fff');
-  const tabInactive = USE_NATIVE_HEADER ? (colors.textSecondary || colors.secondaryText) : 'rgba(255,255,255,0.6)';
-  const tabBarBg = USE_NATIVE_HEADER ? (colors.headerBgSolid || colors.surface || colors.background) : (isDark ? '#1c1c1e' : '#111111');
+  // [2026-10-11 polish-secondary] Web também segue a superfície do tema (era
+  // faixa preta fixa no claro + aba ativa #111 invisível no escuro).
+  const tabAccent = colors.text;
+  const tabInactive = colors.textSecondary;
+  const tabBarBg = colors.headerBgSolid || colors.surface || colors.background;
 
   return (
     <View style={[styles.container, { backgroundColor: colors.background, paddingTop: USE_NATIVE_HEADER ? 0 : insets.top }]}>
       {USE_NATIVE_HEADER ? (
         <Stack.Screen options={nativeHeaderOptions({ colors, isDark, title: t('saved.unifiedTitle'), headerShadowVisible: false })} />
       ) : (
-      <View style={[styles.header, { backgroundColor: isDark ? '#1c1c1e' : '#111111', paddingTop: 10 }]}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
-          <IconArrowLeft size={24} color="#fff" />
+      <View style={[styles.header, { backgroundColor: tabBarBg, paddingTop: 10 }]}>
+        <TouchableOpacity onPress={() => router.back()} style={styles.backBtn} accessibilityRole="button" accessibilityLabel={t('common.back') || 'Voltar'}>
+          <IconArrowLeft size={24} color={colors.text} />
         </TouchableOpacity>
-        <Text style={styles.title}>{t('saved.unifiedTitle') || 'Salvas e favoritas'}</Text>
+        <Text style={[styles.title, { color: colors.text }]}>{t('saved.unifiedTitle') || 'Salvas e favoritas'}</Text>
       </View>
       )}
 
       {/* Tab switcher — Salvas | Favoritas */}
-      <View style={[styles.tabBar, { backgroundColor: tabBarBg }, USE_NATIVE_HEADER && { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border }]}>
+      <View style={[styles.tabBar, { backgroundColor: tabBarBg, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border }]}>
         <TouchableOpacity
           style={[styles.tab, tab === 'saved' && { borderBottomColor: tabAccent }]}
           onPress={() => setTab('saved')}
@@ -145,7 +147,7 @@ export default function StarredMessagesScreen() {
       <FadeSlideIn>
       {tab === 'saved' ? (
         <View style={styles.savedPane}>
-          <Text style={[styles.paneExplain, { color: colors.secondaryText }]}>
+          <Text style={[styles.paneExplain, { color: colors.textSecondary }]}>
             {t('saved.savedExplain') || 'Suas anotações pessoais — uma conversa só sua, estilo bloco de notas.'}
           </Text>
           <TouchableOpacity
@@ -160,11 +162,11 @@ export default function StarredMessagesScreen() {
               <Text style={[styles.savedCardTitle, { color: colors.text }]}>
                 {t('chat.savedMessages') || 'Mensagens Salvas'}
               </Text>
-              <Text style={[styles.savedCardSub, { color: colors.secondaryText }]}>
+              <Text style={[styles.savedCardSub, { color: colors.textSecondary }]}>
                 {t('saved.openHint') || 'Abrir sua conversa de anotações'}
               </Text>
             </View>
-            <IconArrowRight size={20} color={colors.secondaryText} />
+            <IconArrowRight size={20} color={colors.textSecondary} />
           </TouchableOpacity>
         </View>
       ) : loading ? (
@@ -177,7 +179,7 @@ export default function StarredMessagesScreen() {
           <Text style={[styles.emptyTitle, { color: colors.text }]}>
             {t('starred.empty') || 'No starred messages yet'}
           </Text>
-          <Text style={[styles.emptySubtitle, { color: colors.secondaryText }]}>
+          <Text style={[styles.emptySubtitle, { color: colors.textSecondary }]}>
             {t('starred.emptyHint') || 'Tap and hold any message to star it.'}
           </Text>
         </View>
@@ -186,7 +188,7 @@ export default function StarredMessagesScreen() {
           data={messages}
           keyExtractor={(m) => String(m.id)}
           ListHeaderComponent={(
-            <Text style={[styles.paneExplain, { color: colors.secondaryText, paddingTop: 14 }]}>
+            <Text style={[styles.paneExplain, { color: colors.textSecondary, paddingTop: 14 }]}>
               {t('saved.starredExplain') || 'Mensagens marcadas com estrela em qualquer conversa.'}
             </Text>
           )}
@@ -207,18 +209,18 @@ export default function StarredMessagesScreen() {
                       return isMine && where ? `${who}  ›  ${where}` : who;
                     })()}
                   </Text>
-                  <Text style={[styles.rowTime, { color: colors.secondaryText }]}>
+                  <Text style={[styles.rowTime, { color: colors.textSecondary }]}>
                     {formatDate(item.created_at)}
                   </Text>
                 </View>
                 {!!item.conversation_name && item.conversation_type === 'group' && (
-                  <Text style={[styles.rowGroup, { color: colors.secondaryText }]} numberOfLines={1}>
+                  <Text style={[styles.rowGroup, { color: colors.textSecondary }]} numberOfLines={1}>
                     {item.conversation_name}
                   </Text>
                 )}
                 <View style={styles.rowContent}>
-                  <IconStar size={12} color={colors.secondaryText} />
-                  <Text style={[styles.rowPreview, { color: colors.secondaryText }]} numberOfLines={2}>
+                  <IconStar size={12} color={colors.textSecondary} />
+                  <Text style={[styles.rowPreview, { color: colors.textSecondary }]} numberOfLines={2}>
                     {item.content || ''}
                   </Text>
                 </View>

@@ -3,7 +3,7 @@ import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import {
   View, FlatList, Text, TouchableOpacity, StyleSheet, RefreshControl,
   ActivityIndicator, Platform, Dimensions, ScrollView, Animated, TextInput,
-  Image, Modal,
+  Image, Modal, Easing,
 } from 'react-native';
 // [2026-09-24 nível-WhatsApp] Motor de lista NATIVO (FlashList v2, New-Arch). O v1
 // travava no iOS SDK55; a v2 auto-mede altura variável (posts do feed) e já roda
@@ -111,6 +111,9 @@ const FeedPostRow = React.memo(function FeedPostRow(props) {
 // — a translucent red halo expands behind it on a 1.6 s loop so the
 // user reads "this is live" without the icon visibly bouncing every
 // frame. Subtle but signals tech-grade attention.
+// FAB band height: bottom offset 24 + FAB 56 + breathing room 16.
+const FEED_FAB_INSET = 96;
+
 function LiveFab({ onPress, t, isWeb, styles, colors, isDark }) {
   const pulse = useRef(new Animated.Value(0)).current;
   useEffect(() => {
@@ -370,7 +373,7 @@ const StoriesStrip = React.memo(function StoriesStrip({ user, colors, isDark, t,
   );
 });
 
-function ChatFeedTab({ colors, isDark, t, user, router, initialFeedMode, onFeedModeConsumed, tabActive, requestOpenStatus, requestNewStatus }) {
+function ChatFeedTab({ colors, isDark, t, user, router, initialFeedMode, onFeedModeConsumed, onFeedModeChange, tabActive, requestOpenStatus, requestNewStatus }) {
   // [#1247 2026-05-20] parentActive prop chega pro ReelsViewer. ChatFeedTab
   // fica mounted (display:none) quando user troca pra aba Chats — sem isso
   // o ShortsPlayer continuava tocando áudio em background. tabActive vem
@@ -434,6 +437,11 @@ function ChatFeedTab({ colors, isDark, t, user, router, initialFeedMode, onFeedM
     if (initialFeedMode === 'reels' && feedMode !== 'reels') setFeedMode('reels');
     if (initialFeedMode && typeof onFeedModeConsumed === 'function') onFeedModeConsumed();
   }, [initialFeedMode]); // eslint-disable-line react-hooks/exhaustive-deps
+  // [2026-10-11 social-qa] tell the chat shell which sub-mode is showing so it
+  // can hide its "Feed" header while Reels is full-bleed.
+  useEffect(() => {
+    if (typeof onFeedModeChange === 'function') onFeedModeChange(feedMode);
+  }, [feedMode, onFeedModeChange]);
   // Initial state reads from MMKV preload so the very first render already has data.
   const _initialPosts = Array.isArray(_preloadedFeedPosts) ? _preloadedFeedPosts : [];
   const [posts, setPosts] = useState(() => _initialPosts);
@@ -493,11 +501,37 @@ function ChatFeedTab({ colors, isDark, t, user, router, initialFeedMode, onFeedM
   const searchRequestIdRef = useRef(0);
   const feedListRef = useRef(null);
   const [showScrollTop, setShowScrollTop] = useState(false);
+  // [2026-10-11 social-qa] Instagram-like FABs: hide (slide down + fade) when
+  // scrolling DOWN, reveal when scrolling UP / near the top / at the end of
+  // the list. One Animated.Value (native driver) — no React re-render per
+  // scroll event; only the direction flip starts a timing.
+  const fabHide = useRef(new Animated.Value(0)).current; // 0 = shown, 1 = hidden
+  const fabHiddenRef = useRef(false);
+  const lastScrollYRef = useRef(0);
+  const setFabsHidden = useCallback((hidden) => {
+    if (fabHiddenRef.current === hidden) return;
+    fabHiddenRef.current = hidden;
+    Animated.timing(fabHide, {
+      toValue: hidden ? 1 : 0,
+      duration: hidden ? 180 : 220,
+      easing: hidden ? Easing.in(Easing.quad) : Easing.out(Easing.cubic),
+      useNativeDriver: Platform.OS !== 'web',
+    }).start();
+  }, [fabHide]);
   const handleFeedScroll = useCallback((e) => {
-    const y = e.nativeEvent.contentOffset.y;
+    const ne = e.nativeEvent || {};
+    const y = ne.contentOffset?.y || 0;
     const shouldShow = y > 800; // ~2 posts scrolled
     setShowScrollTop(prev => (prev !== shouldShow ? shouldShow : prev));
-  }, []);
+    const dy = y - lastScrollYRef.current;
+    lastScrollYRef.current = y;
+    const viewportH = ne.layoutMeasurement?.height || 0;
+    const contentH = ne.contentSize?.height || 0;
+    const nearEnd = contentH > 0 && viewportH > 0 && y + viewportH >= contentH - 24;
+    if (y < 80 || nearEnd) setFabsHidden(false);
+    else if (dy > 6) setFabsHidden(true);
+    else if (dy < -6) setFabsHidden(false);
+  }, [setFabsHidden]);
   const scrollFeedToTop = useCallback(() => {
     try { feedListRef.current?.scrollToOffset?.({ offset: 0, animated: true }); } catch {}
   }, []);
@@ -1660,7 +1694,9 @@ function ChatFeedTab({ colors, isDark, t, user, router, initialFeedMode, onFeedM
         ListEmptyComponent={renderEmpty}
         ListFooterComponent={renderFooter}
         showsVerticalScrollIndicator={false}
-        contentContainerStyle={posts.length === 0 && activeLives.length === 0 ? { flex: 1 } : undefined}
+        // [2026-10-11 social-qa] bottom inset = FAB area (24 + 56 + 16) so the
+        // last post's caption / "Ver comentários" is never under Live / "+".
+        contentContainerStyle={posts.length === 0 && activeLives.length === 0 ? { flex: 1 } : { paddingBottom: FEED_FAB_INSET }}
         keyboardShouldPersistTaps="handled"
       />
 
@@ -1686,10 +1722,14 @@ function ChatFeedTab({ colors, isDark, t, user, router, initialFeedMode, onFeedM
       {/* Go Live FAB — pulse ring + scroll-top glass blur for a more
           "tech" feel. Pulse signals "ready to broadcast" without being
           distracting (1 cycle per 1.6s, max scale 1.45). */}
+      <Animated.View
+        pointerEvents="box-none"
+        style={[StyleSheet.absoluteFill, {
+          opacity: fabHide.interpolate({ inputRange: [0, 1], outputRange: [1, 0] }),
+          transform: [{ translateY: fabHide.interpolate({ inputRange: [0, 1], outputRange: [0, FEED_FAB_INSET] }) }],
+        }]}
+      >
       <LiveFab onPress={() => router.push('/live-broadcast')} t={t} isWeb={isWeb} styles={styles} colors={colors} isDark={isDark} />
-
-      {/* [2026-10-08 reels-publish] progresso do reel em 2º plano + "Ver" → aba Reels */}
-      <ReelPublishProgress email={user?.email} t={t} bottom={96} onView={() => setFeedMode('reels')} />
 
       {/* Unified compose FAB (replaces the old per-tab "new post" FAB) */}
       <UnifiedComposeFab
@@ -1701,6 +1741,10 @@ function ChatFeedTab({ colors, isDark, t, user, router, initialFeedMode, onFeedM
         bottom={24}
         right={16}
       />
+      </Animated.View>
+
+      {/* [2026-10-08 reels-publish] progresso do reel em 2º plano + "Ver" → aba Reels */}
+      <ReelPublishProgress email={user?.email} t={t} bottom={96} onView={() => setFeedMode('reels')} />
 
       {/* Create post modal */}
       <CreatePostModal

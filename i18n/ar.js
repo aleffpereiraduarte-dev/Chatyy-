@@ -10252,4 +10252,12 @@ export default {
   "chat.attach.recentSelected": "محددة",
   "feed.linkCopied": "تم نسخ الرابط",
   "feed.findPeople": "البحث عن أشخاص",
+  // [2026-10-11 social-qa] status viewer reactions
+  "status.like": "إعجاب",
+  "status.unlike": "إلغاء الإعجاب",
+  "status.reactFire": "نار",
+  "status.reactLaugh": "مضحك",
+  "status.reactWow": "واو",
+  "status.reactSad": "حزين",
+  "status.reactClap": "تصفيق",
 };

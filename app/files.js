@@ -2601,14 +2601,12 @@ function FilesScreenInner() {
       ) : (
       <View style={[
         styles.header,
+        // [2026-10-11 polish-secondary] header na superfície do tema (era faixa
+        // preta/gradiente fixa no claro — destoava de Conversas/Configurações).
         {
-          ...(isWeb
-            ? { background: isDark
-                ? 'linear-gradient(180deg, #161618 0%, #0a0a0a 100%)'
-                : `linear-gradient(180deg, ${colors.primaryDark} 0%, ${colors.primary} 100%)` }
-            : { backgroundColor: isDark ? '#0d0a14' : '#111111' }),
-          borderBottomColor: 'transparent',
-          borderBottomWidth: 0,
+          backgroundColor: colors.headerBgSolid || colors.surface,
+          borderBottomColor: colors.border,
+          borderBottomWidth: StyleSheet.hairlineWidth,
         },
       ]}>
         <TouchableOpacity
@@ -2624,32 +2622,32 @@ function FilesScreenInner() {
           }}
           style={styles.headerBtn}
         >
-          <IconArrowLeft size={22} color="#fff" />
+          <IconArrowLeft size={22} color={colors.text} />
         </TouchableOpacity>
         {searchMode ? (
           <View style={[
             styles.searchInputWrap,
             {
-              backgroundColor: 'rgba(255,255,255,0.18)',
-              borderColor: 'rgba(255,255,255,0.25)',
+              backgroundColor: colors.surfaceVariant,
+              borderColor: 'transparent',
             },
           ]}>
-            <IconSearch size={16} color="rgba(255,255,255,0.85)" />
+            <IconSearch size={16} color={colors.textSecondary} />
             <TextInput
-              style={[styles.searchInput, { color: '#fff' }]}
+              style={[styles.searchInput, { color: colors.text }]}
               placeholder={t('files.searchPlaceholder')}
-              placeholderTextColor="rgba(255,255,255,0.65)"
+              placeholderTextColor={colors.textTertiary}
               value={searchText}
               onChangeText={onSearchChange}
               autoFocus
             />
           </View>
         ) : (
-          <Text style={[styles.headerTitle, { color: '#fff' }]}>{headerTitle}</Text>
+          <Text style={[styles.headerTitle, { color: colors.text, textAlign: 'left', marginLeft: 4 }]} numberOfLines={1}>{headerTitle}</Text>
         )}
         {searchMode ? (
           <TouchableOpacity onPress={() => toggleSearchMode(false)} style={styles.headerBtn}>
-            <IconX size={20} color="#fff" />
+            <IconX size={20} color={colors.text} />
           </TouchableOpacity>
         ) : (
           <>
@@ -2659,25 +2657,25 @@ function FilesScreenInner() {
                   onPress={() => setViewMode(v => v === 'list' ? 'grid' : 'list')}
                   style={[
                     styles.viewToggleBtn,
-                    { backgroundColor: 'rgba(255,255,255,0.16)' },
+                    { backgroundColor: colors.surfaceVariant },
                   ]}
                 >
                   {viewMode === 'list' ? (
                     <View style={styles.gridIcon}>
                       <View style={styles.gridIconRow}>
-                        <View style={[styles.gridIconDot, { backgroundColor: '#fff' }]} />
-                        <View style={[styles.gridIconDot, { backgroundColor: '#fff' }]} />
+                        <View style={[styles.gridIconDot, { backgroundColor: colors.text }]} />
+                        <View style={[styles.gridIconDot, { backgroundColor: colors.text }]} />
                       </View>
                       <View style={styles.gridIconRow}>
-                        <View style={[styles.gridIconDot, { backgroundColor: '#fff' }]} />
-                        <View style={[styles.gridIconDot, { backgroundColor: '#fff' }]} />
+                        <View style={[styles.gridIconDot, { backgroundColor: colors.text }]} />
+                        <View style={[styles.gridIconDot, { backgroundColor: colors.text }]} />
                       </View>
                     </View>
                   ) : (
                     <View style={styles.listIcon}>
-                      <View style={[styles.listIconLine, { backgroundColor: '#fff' }]} />
-                      <View style={[styles.listIconLine, { backgroundColor: '#fff' }]} />
-                      <View style={[styles.listIconLine, { backgroundColor: '#fff' }]} />
+                      <View style={[styles.listIconLine, { backgroundColor: colors.text }]} />
+                      <View style={[styles.listIconLine, { backgroundColor: colors.text }]} />
+                      <View style={[styles.listIconLine, { backgroundColor: colors.text }]} />
                     </View>
                   )}
                 </TouchableOpacity>
@@ -2685,17 +2683,17 @@ function FilesScreenInner() {
                   onPress={() => setShowSortMenu(v => !v)}
                   style={[
                     styles.viewToggleBtn,
-                    { backgroundColor: 'rgba(255,255,255,0.16)', marginLeft: 4 },
+                    { backgroundColor: colors.surfaceVariant, marginLeft: 4 },
                   ]}
                 >
-                  <Text style={{ fontSize: 11, fontWeight: '700', color: '#fff' }}>
+                  <Text style={{ fontSize: 11, fontWeight: '700', color: colors.text }}>
                     {sortBy === 'name' ? 'A-Z' : sortBy === 'date' ? (t('files.sortDate') || 'Date') : sortBy === 'size' ? (t('files.sortSize') || 'Size') : (t('files.sortType') || 'Type')}
                   </Text>
                 </TouchableOpacity>
               </>
             )}
             <TouchableOpacity onPress={() => toggleSearchMode(true)} style={styles.headerBtn}>
-              <IconSearch size={20} color="#fff" />
+              <IconSearch size={20} color={colors.text} />
             </TouchableOpacity>
           </>
         )}
@@ -2982,7 +2980,9 @@ function FilesScreenInner() {
           totalPhotos={photosTotalCount}
         />
       ) : loading && !refreshing && files.length === 0 && folders.length === 0 ? (
-        <ListSkeleton count={6} />
+        // [2026-10-11 polish-secondary] flex:1 — sem isso a barra de armazenamento
+        // + "Nova Pasta/Enviar" subiam pro meio da tela durante o carregamento.
+        <View style={{ flex: 1 }}><ListSkeleton count={6} /></View>
       ) : (
         <View style={{ flex: 1 }}>
           <FlatList

@@ -9474,4 +9474,12 @@ export default {
   "chat.attach.recentSelected": "dipilih",
   "feed.linkCopied": "Tautan disalin",
   "feed.findPeople": "Temukan orang",
+  // [2026-10-11 social-qa] status viewer reactions
+  "status.like": "Suka",
+  "status.unlike": "Batal suka",
+  "status.reactFire": "Api",
+  "status.reactLaugh": "Lucu",
+  "status.reactWow": "Wow",
+  "status.reactSad": "Sedih",
+  "status.reactClap": "Tepuk tangan",
 };

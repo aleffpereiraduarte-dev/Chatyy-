@@ -60,7 +60,7 @@ export async function openInApp(url, opts = {}) {
 }
 
 export const NATIVE_WEBVIEW_PROPS = {
-  decelerationRate: 'normal',
+  decelerationRate: 0.998, // Fabric RNCWebView spec = Double (a string 'normal' crashes Android: ClassCastException String->Double)
   setSupportMultipleWindows: false,
   javaScriptCanOpenWindowsAutomatically: false,
   overScrollMode: 'never',

@@ -3567,7 +3567,7 @@ export default function OneScreen() {
   };
 
   // ChatGPT-style canvas: white in light mode, near-black in dark.
-  const canvasBg = isDark ? '#1A1A1A' : '#FFFFFF';
+  const canvasBg = isDark ? '#000000' : '#FFFFFF'; // [2026-10-11 polish-secondary] escuro = preto real do app (era #1A1A1A cinza)
 
   return (
     <KeyboardAvoidingView
@@ -3898,8 +3898,10 @@ const st = StyleSheet.create({
     width: 40, height: 40, alignItems: 'center', justifyContent: 'center',
   },
   headerCleanCenter: {
-    flex: 1, alignItems: 'center', justifyContent: 'flex-start',
-    paddingTop: 6,
+    // [2026-10-11 polish-secondary] título centrado na tela (1 botão à esq. ×
+    // 2 à dir. puxava 20px p/ esquerda) e no eixo vertical dos ícones (40px).
+    flex: 1, alignItems: 'center', justifyContent: 'center',
+    height: 40, paddingLeft: 40,
   },
   headerCleanTitle: {
     // [beauty2 2026-05-31] a touch larger/heavier so "One" anchors the bar.

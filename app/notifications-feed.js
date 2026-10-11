@@ -49,10 +49,11 @@ function timeAgo(iso, t) {
 }
 
 function NotificationIcon({ type, colors }) {
-  if (type === 'feed_like') return <IconHeart size={22} color="#ef4444" />;
-  if (type === 'feed_comment') return <IconMessageCircle size={22} color={colors.primary} />;
-  if (type === 'follow') return <IconUser size={22} color={ACCENT} />;
-  if (type === 'one_alert') return <IconSparkles size={20} color="#f59e0b" />;
+  // [2026-10-11 polish-secondary] P&B: tipo pelo ícone (era vermelho/âmbar).
+  if (type === 'feed_like') return <IconHeart size={22} color={colors.text} />;
+  if (type === 'feed_comment') return <IconMessageCircle size={22} color={colors.text} />;
+  if (type === 'follow') return <IconUser size={22} color={colors.text} />;
+  if (type === 'one_alert') return <IconSparkles size={20} color={colors.text} />;
   return <IconMessageCircle size={22} color={colors.textSecondary} />;
 }
 
@@ -234,7 +235,7 @@ export default function NotificationsFeedScreen() {
             </View>
           )}
           {item.type === 'follow' && item.action_taken === 'follow_back' && (
-            <Text style={{ marginTop: 6, fontSize: 12, color: '#10b981', fontWeight: '600' }}>
+            <Text style={{ marginTop: 6, fontSize: 12, color: colors.textSecondary, fontWeight: '600' }}>
               {t?.('notifications.followingNow') || 'Seguindo'}
             </Text>
           )}
@@ -314,7 +315,7 @@ export default function NotificationsFeedScreen() {
                 : { elevation: 8 }),
           }}
         >
-          <IconCheck size={16} color="#10b981" />
+          <IconCheck size={16} color="#fff" />
           <Text style={{ flex: 1, color: '#fff', fontSize: 13.5, fontWeight: '600', letterSpacing: -0.1 }}>
             {toastMsg}
           </Text>

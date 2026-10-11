@@ -22,7 +22,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { canNavigateNow } from '../services/navGuard';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
-import { IconCheck, IconPlus, IconTrash, IconMail, IconChevronLeft } from '../components/Icons';
+import { IconCheck, IconPlus, IconTrash, IconMail, IconArrowLeft } from '../components/Icons';
 import { taskList, taskCreate, taskUpdate, taskDelete } from '../services/api';
 import { USE_NATIVE_HEADER, nativeHeaderOptions, nativeScrollInsetProps, IOS_NATIVE_INSET } from '../components/nativeHeader';
 import SettingsSegmented from '../components/SettingsSegmented';
@@ -262,7 +262,7 @@ export default function TasksScreen() {
             accessibilityRole="button"
             accessibilityLabel={t('common.back') || 'Voltar'}
           >
-            <IconChevronLeft size={26} color={g.text} />
+            <IconArrowLeft size={24} color={g.text} />
           </TouchableOpacity>
           <Text style={[s.webTitle, { color: g.text }]} accessibilityRole="header">{t('tasks.title') || 'Tarefas'}</Text>
         </View>

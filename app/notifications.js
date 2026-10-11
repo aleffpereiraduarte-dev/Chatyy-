@@ -17,7 +17,7 @@ import { USE_NATIVE_HEADER, nativeHeaderOptions, nativeScrollInsetProps } from '
 import { ListSkeleton } from '../components/SkeletonLoader';
 import AvatarCircle from '../components/AvatarCircle';
 import {
-  IconChevronLeft, IconCheck, IconBell, IconAtSign, IconHeart,
+  IconArrowLeft, IconCheck, IconBell, IconAtSign, IconHeart,
   IconUser, IconMessageSquare, IconMail, IconFilm,
 } from '../components/Icons';
 import EmptyStateCard from '../components/EmptyStateCard';
@@ -82,10 +82,12 @@ function TypeBadge({ type, size = 18, ringColor = '#fff' }) {
   const map = {
     email:   { Icon: IconMail,          bg: BRAND,    color: '#fff' },
     chat:    { Icon: IconMessageSquare, bg: BRAND,    color: '#fff' },
-    mention: { Icon: IconAtSign,        bg: '#0ea5e9', color: '#fff' },
-    like:    { Icon: IconHeart,         bg: '#ef4444', color: '#fff' },
-    comment: { Icon: IconMessageSquare, bg: '#f59e0b', color: '#fff' },
-    follow:  { Icon: IconUser,          bg: '#10b981', color: '#fff' },
+    // [2026-10-11 polish-secondary] P&B: tipos diferenciados pelo ÍCONE, não
+    // pela cor (era azul/vermelho/âmbar/verde — fora da paleta).
+    mention: { Icon: IconAtSign,        bg: BRAND, color: '#fff' },
+    like:    { Icon: IconHeart,         bg: BRAND, color: '#fff' },
+    comment: { Icon: IconMessageSquare, bg: BRAND, color: '#fff' },
+    follow:  { Icon: IconUser,          bg: BRAND, color: '#fff' },
     contact_joined: { Icon: IconUser,   bg: BRAND,    color: '#fff' }, // [2026-10-08 contact-joined-push]
     live:    { Icon: IconFilm,          bg: '#111111', color: '#fff' },
   };
@@ -206,7 +208,7 @@ function NotifRow({ item, colors, isDark, onPress, onAction, t }) {
     body = '';
   }
 
-  const unreadBg = isDark ? 'rgba(17, 17, 17,0.10)' : 'rgba(17, 17, 17,0.05)';
+  const unreadBg = isDark ? 'rgba(255,255,255,0.06)' : 'rgba(17, 17, 17,0.05)'; // [2026-10-11] escuro: #111 a 10% sobre preto era invisível
 
   // Right-side thumbnail (post preview) for likes/comments referencing a post
   const thumbUri = item.thumbnail_url || item.post_thumbnail || null;
@@ -224,7 +226,7 @@ function NotifRow({ item, colors, isDark, onPress, onAction, t }) {
     >
       {/* Left unread dot rail */}
       {!item.read ? (
-        <View style={[styles.unreadRail, { backgroundColor: BRAND }]} />
+        <View style={[styles.unreadRail, { backgroundColor: colors.text }]} />
       ) : (
         <View style={styles.unreadRailSpacer} />
       )}
@@ -265,12 +267,12 @@ function NotifRow({ item, colors, isDark, onPress, onAction, t }) {
           <View style={styles.actionRow}>
             <PressableScale
               onPress={(e) => { e?.stopPropagation?.(); onAction?.(item, 'follow_back'); }}
-              style={[styles.pillPrimary, { backgroundColor: BRAND }]}
+              style={[styles.pillPrimary, { backgroundColor: colors.primary }]}
               haptic="medium"
               accessibilityRole="button"
               accessibilityLabel={t('notifications.followBack')}
             >
-              <Text style={styles.pillPrimaryText}>
+              <Text style={[styles.pillPrimaryText, { color: colors.onPrimary || '#fff' }]}>
                 {t('notifications.followBack')}
               </Text>
             </PressableScale>
@@ -291,12 +293,12 @@ function NotifRow({ item, colors, isDark, onPress, onAction, t }) {
           <View style={styles.actionRow}>
             <PressableScale
               onPress={(e) => { e?.stopPropagation?.(); onAction?.(item, 'say_hi'); }}
-              style={[styles.pillPrimary, { backgroundColor: BRAND }]}
+              style={[styles.pillPrimary, { backgroundColor: colors.primary }]}
               haptic="medium"
               accessibilityRole="button"
               accessibilityLabel={tl(t, 'notifications.sayHi', { pt: 'Dizer oi', en: 'Say hi', es: 'Saludar' })}
             >
-              <Text style={styles.pillPrimaryText}>
+              <Text style={[styles.pillPrimaryText, { color: colors.onPrimary || '#fff' }]}>
                 {tl(t, 'notifications.sayHi', { pt: 'Dizer oi', en: 'Say hi', es: 'Saludar' })}
               </Text>
             </PressableScale>
@@ -374,8 +376,8 @@ function TabBar({ activeTab, onChange, colors, t, unreadCounts = {} }) {
                 {t(tab.labelKey) || tab.label}
               </Text>
               {unread > 0 && (
-                <View style={[styles.tabBadge, { backgroundColor: BRAND }]}>
-                  <Text style={styles.tabBadgeText}>{unread > 99 ? '99+' : unread}</Text>
+                <View style={[styles.tabBadge, { backgroundColor: colors.primary }]}>
+                  <Text style={[styles.tabBadgeText, { color: colors.onPrimary || '#fff' }]}>{unread > 99 ? '99+' : unread}</Text>
                 </View>
               )}
             </View>
@@ -391,7 +393,7 @@ function TabBar({ activeTab, onChange, colors, t, unreadCounts = {} }) {
             {
               width: tabWidth - 32,
               left: 16,
-              backgroundColor: BRAND,
+              backgroundColor: colors.text,
               transform: [{ translateX: indicatorX }],
             },
           ]}
@@ -775,7 +777,7 @@ function NotificationsScreenInner() {
           style={styles.backBtn}
           hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
         >
-          <IconChevronLeft size={24} color={colors.text} />
+          <IconArrowLeft size={24} color={colors.text} />
         </TouchableOpacity>
 
         <Text style={[styles.headerTitle, { color: colors.text }]}>
@@ -785,13 +787,13 @@ function NotificationsScreenInner() {
         {hasUnread ? (
           <TouchableOpacity
             onPress={markAllRead}
-            style={[styles.markAllPill, { backgroundColor: 'rgba(17, 17, 17,0.10)' }]}
+            style={[styles.markAllPill, { backgroundColor: colors.surfaceVariant }]}
             hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
             accessibilityRole="button"
             accessibilityLabel={t('notifications.markAll') || 'Marcar todas'}
           >
-            <IconCheck size={13} color={BRAND} />
-            <Text style={[styles.markAllPillText, { color: BRAND }]}>
+            <IconCheck size={13} color={colors.text} />
+            <Text style={[styles.markAllPillText, { color: colors.text }]}>
               {t('notifications.markAllShort') || 'Marcar todas'}
             </Text>
           </TouchableOpacity>
@@ -853,7 +855,7 @@ function NotificationsScreenInner() {
                 translateY: toastAnim.interpolate({ inputRange: [0, 1], outputRange: [24, 0] }),
               }],
               bottom: 24 + (insets.bottom || 0),
-              backgroundColor: isDark ? 'rgba(20,20,28,0.95)' : 'rgba(20,20,28,0.92)',
+              backgroundColor: isDark ? 'rgba(44,44,46,0.96)' : 'rgba(17,17,17,0.92)',
             },
           ]}
         >

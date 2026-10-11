@@ -1336,7 +1336,7 @@ function DriveScreenInner() {
             {!isFolder && <Text style={[styles.listItemSize, { color: colors.textTertiary }]}>{formatBytes(item.size)}</Text>}
             <Text style={[styles.listItemDate, { color: colors.textTertiary }]}>{formatDate(item.created_at || item.uploaded_at, t)}</Text>
             {Boolean(hasShare) && <IconUsers size={12} color={colors.primary} style={{ marginLeft: 6 }} />}
-            {Boolean(item.is_starred) && <IconStarFilled size={12} color="#f59e0b" style={{ marginLeft: 4 }} />}
+            {Boolean(item.is_starred) && <IconStarFilled size={12} color={colors.text} style={{ marginLeft: 4 }} />}
           </View>
         </View>
         <TouchableOpacity style={styles.moreBtn} onPress={(e) => handleItemLongPress(item, e)}>
@@ -1666,7 +1666,7 @@ function DriveScreenInner() {
       { label: t('drive.share'), icon: <IconShare size={18} color={colors.text} />, onPress: () => { setContextMenu(null); setShareModal(item); } },
       { label: t('drive.rename'), icon: <IconEdit size={18} color={colors.text} />, onPress: () => { setContextMenu(null); setRenameModal(item); setRenameText(item.name); } },
       { label: t('drive.moveTo'), icon: <IconFolder size={18} color={colors.text} />, onPress: () => { setContextMenu(null); setMoveModal(item); loadMoveFolders(); } },
-      { label: item.is_starred ? t('drive.unstar') : t('drive.star'), icon: item.is_starred ? <IconStarFilled size={18} color="#f59e0b" /> : <IconStar size={18} color={colors.text} />, onPress: () => handleStar(item) },
+      { label: item.is_starred ? t('drive.unstar') : t('drive.star'), icon: item.is_starred ? <IconStarFilled size={18} color={colors.text} /> : <IconStar size={18} color={colors.text} />, onPress: () => handleStar(item) },
       !item.is_folder && { label: t('drive.fileInfo'), icon: <IconFileText size={18} color={colors.text} />, onPress: () => { setContextMenu(null); setDetailsFile(item); } },
       { label: t('drive.delete'), icon: <IconTrash size={18} color="#dc2626" />, onPress: () => handleDelete(item), danger: true },
     ].filter(Boolean);

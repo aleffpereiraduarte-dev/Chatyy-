@@ -149,12 +149,11 @@ export function preloadBootLanguage(maxWaitMs = 900) {
   _bootPromise = (async () => {
     let code = null;
     try {
-      const m = await _kvGet(LANG_MANUAL_KEY);
+      // [2026-10-11 boot] As duas chaves em paralelo (antes: 2 idas seriais ao
+      // AsyncStorage no gate do 1º frame). Mesma precedência: manual > conta.
+      const [m, a] = await Promise.all([_kvGet(LANG_MANUAL_KEY), _kvGet(LANG_ACCOUNT_KEY)]);
       if (m && isLocaleSupported(m)) { code = m; _bootManual = m; }
-      else {
-        const a = await _kvGet(LANG_ACCOUNT_KEY);
-        if (a && isLocaleSupported(a)) code = a;
-      }
+      else if (a && isLocaleSupported(a)) code = a;
     } catch {}
     if (!code) { try { code = detectLanguage(); } catch { code = DEFAULT_LANGUAGE; } }
     _bootLang = code || DEFAULT_LANGUAGE;

@@ -16,6 +16,7 @@ import {
   IconVideo, IconCopy, IconCheck, IconChevronDown, IconChevronUp,
 } from '../components/Icons';
 import { DateTimePickerModal } from '../components/ScheduleModals';
+import NativeSwitch from '../components/NativeSwitch'; // [2026-10-11 polish-secondary] P&B (Switch web = teal)
 
 let DateTimePicker = null;
 if (Platform.OS !== 'web') {
@@ -380,7 +381,7 @@ export default function MeetingCreateScreen() {
               <Text style={s.toggleLabel}>{t('meetingCreate.lobbyLabel')}</Text>
               <Text style={s.toggleDesc}>{t('meetingCreate.lobbyDesc')}</Text>
             </View>
-            <Switch value={lobbyEnabled} onValueChange={setLobbyEnabled} trackColor={{ true: colors.primary, false: colors.border }} thumbColor="#fff" />
+            <NativeSwitch value={lobbyEnabled} onValueChange={setLobbyEnabled} trackColor={{ true: colors.primary, false: colors.border }} thumbColor="#fff" />
           </View>
 {/* Recording toggle hidden until feature is implemented */}
         </View>

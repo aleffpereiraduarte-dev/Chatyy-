@@ -82,7 +82,13 @@ export function CurrencyProvider({ children }) {
       }
       // Warm the FX cache so the very first formatMoney() call in render
       // doesn't have to fall back to static rates.
-      getRates().catch(() => {});
+      // [2026-10-11 boot] Off the cold-start path: nothing on the chat list
+      // formats money, and this was a POST (chat_currency_rates) racing the
+      // first render. getRates() reads the persisted copy first; after the
+      // first paint (+2 s) is still long before any wallet/marketplace screen.
+      try {
+        require('../services/bootTrace').afterFirstPaint(() => { getRates().catch(() => {}); }, 2000);
+      } catch { getRates().catch(() => {}); }
     })();
     return () => { cancelled = true; };
   }, []);

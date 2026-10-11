@@ -288,7 +288,12 @@ function ChatHub() {
   // ?tab=reels / ?tab=apps are special — they trigger handleTabPress side-effects
   // (setPendingReels+goto feed / openAppsDrawer) instead of mapping 1:1 to a
   // renderable tab. We start on 'chats' and let a useEffect below dispatch them.
-  const _initialTab = VALID_TABS.includes(params.tab) ? params.tab : 'chats';
+  // [2026-10-11 social-qa] ?tab=reels used to fall through to 'chats' (the
+  // dispatch effect mentioned above never existed). Now 'reels' starts on the
+  // feed tab already in reels mode; 'apps'/'email'/'one' are dispatched by the
+  // ?tab= effect further below (also handles param changes while mounted).
+  const _tabParam = typeof params.tab === 'string' ? params.tab : '';
+  const _initialTab = _tabParam === 'reels' ? 'feed' : (VALID_TABS.includes(_tabParam) ? _tabParam : 'chats');
   // Composer deep-link (`?new=1`, from the share sheet / UnifiedComposeFab /
   // notifications) needs the hidden status surface mounted so ChatStatusTab's
   // camera composer Modal can open over the current tab on first mount.
@@ -872,7 +877,12 @@ function ChatHub() {
   // autoNewStatus acima sumia em 500ms e, se o tab lazy ainda não tinha
   // montado, o compositor simplesmente não abria (o "+" parecia morto).
   const [newStatusNonce, setNewStatusNonce] = useState(() => (params.new === '1' ? Date.now() : 0));
-  const [pendingReels, setPendingReels] = useState(false);
+  const [pendingReels, setPendingReels] = useState(() => _tabParam === 'reels');
+  // [2026-10-11 social-qa] ChatFeedTab reports its sub-mode so the mobile
+  // shell can drop the "Feed" header and go full-bleed while Reels is open
+  // (Instagram parity — was showing the feed header over the reel).
+  const [feedReelsMode, setFeedReelsMode] = useState(() => _tabParam === 'reels');
+  const onFeedModeChange = useCallback((mode) => setFeedReelsMode(mode === 'reels'), []);
   // [2026-05-30 STATUS CONSOLIDATION] When the chat-list home strip (ChatListTab)
   // taps a story ring, it flips to the canonical `status` tab and stashes the
   // tapped email here so ChatStatusTab deep-opens that user's viewer. This
@@ -919,10 +929,23 @@ function ChatHub() {
   // [2026-10-07 apps-menu] Apps drawer "Reels" tile → feed tab in reels mode
   // (ChatFeedTab consumes initialFeedMode='reels' → full-screen ReelsViewer).
   const openReelsFromApps = useCallback(() => { setShowAppsDrawer(false); setPendingReels(true); handleTabPress('feed'); }, [handleTabPress]);
+  // [2026-10-11 social-qa] Respect ?tab= for EVERY tab, on mount and when the
+  // param changes while /chat stays mounted (router.push('/chat?tab=reels')).
+  // Renderable tabs were already applied by useState on mount; the special
+  // ones (reels/apps/email/one) are dispatched here.
+  const lastTabParamRef = useRef(VALID_TABS.includes(_tabParam) || _tabParam === 'reels' ? _tabParam : null);
+  useEffect(() => {
+    const tp = typeof params.tab === 'string' ? params.tab : '';
+    if (!tp || tp === lastTabParamRef.current) return;
+    lastTabParamRef.current = tp;
+    if (tp === 'reels') { setPendingReels(true); handleTabPress('feed'); return; }
+    if (tp === 'apps' || tp === 'email' || tp === 'one') { handleTabPress(tp); return; }
+    if (VALID_TABS.includes(tp)) handleTabPress(tp);
+  }, [params.tab]); // eslint-disable-line react-hooks/exhaustive-deps
   // PERF: tabProps was a fresh object every render and is spread into ALL
   // mounted tabs. Memoizing it means a tab only re-renders when a value it
   // actually consumes changes, not on every parent re-render.
-  const tabProps = useMemo(() => ({ colors, isDark, t, user, router, searchQuery, setActiveTab, autoNewStatus, newStatusNonce, openStatusEmail, onOpenStatusConsumed, requestOpenStatus, requestNewStatus, initialFeedMode: pendingReels ? 'reels' : undefined, onFeedModeConsumed, tabActive: activeTab }), [colors, isDark, t, user, router, searchQuery, setActiveTab, autoNewStatus, newStatusNonce, openStatusEmail, onOpenStatusConsumed, requestOpenStatus, requestNewStatus, pendingReels, onFeedModeConsumed, activeTab]);
+  const tabProps = useMemo(() => ({ colors, isDark, t, user, router, searchQuery, setActiveTab, autoNewStatus, newStatusNonce, openStatusEmail, onOpenStatusConsumed, requestOpenStatus, requestNewStatus, initialFeedMode: pendingReels ? 'reels' : undefined, onFeedModeConsumed, onFeedModeChange, tabActive: activeTab }), [colors, isDark, t, user, router, searchQuery, setActiveTab, autoNewStatus, newStatusNonce, openStatusEmail, onOpenStatusConsumed, requestOpenStatus, requestNewStatus, pendingReels, onFeedModeConsumed, onFeedModeChange, activeTab]);
 
   const titles = {
     feed: t('feed.title') || 'Feed',
@@ -1203,14 +1226,18 @@ function ChatHub() {
   }
 
   // ── MOBILE LAYOUT (bottom tab bar) ──
+  // Reels = full-bleed immersive (Instagram): no shell header / search bar;
+  // ChatFeedTab's own "Posts" pill is the way back.
+  const reelsImmersive = activeTab === 'feed' && feedReelsMode;
   return (
     <View style={[styles.container, {
-      backgroundColor: isDark ? SHELL_DARK : '#ffffff',
+      backgroundColor: reelsImmersive ? '#000' : (isDark ? SHELL_DARK : '#ffffff'),
       paddingTop: insets.top,
     }]}>
       {/* WhatsApp-style header — no back arrow on mobile (Chatyy IS home) */}
       <View style={[styles.header, {
         ...glassHeader,
+        ...(reelsImmersive ? { display: 'none' } : null),
         paddingLeft: 14,
         // [2026-10-07 native-ui-build] large title: sem hairline fixa — ela
         // aparece (fade) só quando a lista rola por baixo do header.
@@ -1277,6 +1304,7 @@ function ChatHub() {
         // hairline still rendered on web (border-box) → 9px blank band + double
         // divider under the header on every tab. Only pad/border while open.
         ...(searchOpen ? null : { paddingBottom: 0, borderBottomWidth: 0 }),
+        ...(reelsImmersive ? { display: 'none' } : null),
       }]}>
         {searchOpen && (
           <View style={[styles.searchBar, {

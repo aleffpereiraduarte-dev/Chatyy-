@@ -1439,6 +1439,7 @@ function _inflightKey(action, params) {
 // whose caller opts in via { swr: true } or the `allowSwr` allowlist.
 const _swrCache = new Map();
 const _SWR_MAX = 400;
+const _SWR_REVALIDATE_MIN_AGE_MS = 2500; // [2026-10-11] see SWR fresh path
 const _SWR_TTL_DEFAULT = 60_000; // 60s — was 15s; the tight TTL was why
                                   // navigating back to a screen triggered a
                                   // round-trip even though nothing changed.
@@ -1809,17 +1810,40 @@ async function _apiCallCore(action, params = {}, method = 'GET', opts = {}) {
       const fresh = cached && (Date.now() - cached.at < ttl);
       if (fresh) {
         // Background revalidate so next call is even fresher.
+        // [2026-10-11 boot-dedupe] …but at most ONE refetch per
+        // _SWR_REVALIDATE_MIN_AGE_MS. On cold start 4-6 independent callers
+        // (ChatListTab, initialSync, onlineRecovery, layout preload,
+        // useStatuses…) read chat_list / status_list / chat_get_settings
+        // within ~1-2 s of each other and each fired its own background
+        // refetch of data that had just arrived (web QA: chat_list ×5-6 in the
+        // first 10 s). A read of a very young copy now schedules a single
+        // revalidation for when it reaches the min age, so "the next call
+        // gets a fresher copy" still holds. Mutations still drop the key
+        // (swrInvalidate), so a read right after a write never lands here.
         if (!cached.revalidating) {
-          cached.revalidating = true;
-          _apiCallImpl(action, params, method).then((r) => {
-            // Only overwrite the warm cache with a SUCCESSFUL revalidation.
-            // A failed/network-error body must not clobber the good copy.
-            if (_swrCacheable(r)) {
-              _swrCache.set(key, { data: r, at: Date.now(), revalidating: false });
-            } else {
-              cached.revalidating = false;
-            }
-          }).catch(() => { cached.revalidating = false; });
+          const _reval = () => {
+            cached.revalidating = true;
+            _apiCallImpl(action, params, method).then((r) => {
+              // Only overwrite the warm cache with a SUCCESSFUL revalidation.
+              // A failed/network-error body must not clobber the good copy.
+              if (_swrCacheable(r)) {
+                _swrCache.set(key, { data: r, at: Date.now(), revalidating: false });
+              } else {
+                cached.revalidating = false;
+              }
+            }).catch(() => { cached.revalidating = false; });
+          };
+          const _age = Date.now() - cached.at;
+          if (_age >= _SWR_REVALIDATE_MIN_AGE_MS) {
+            if (cached.revalTimer) { try { clearTimeout(cached.revalTimer); } catch {} cached.revalTimer = null; }
+            _reval();
+          } else if (!cached.revalTimer) {
+            cached.revalTimer = setTimeout(() => {
+              cached.revalTimer = null;
+              // Skip if a newer fetch/invalidation replaced this entry meanwhile.
+              if (_swrCache.get(key) === cached && !cached.revalidating) _reval();
+            }, _SWR_REVALIDATE_MIN_AGE_MS - _age);
+          }
         }
         return cached.data;
       }

@@ -19,6 +19,7 @@ import {
   IconPlus, IconBell,
 } from '../components/Icons';
 import { DateTimePickerModal } from '../components/ScheduleModals';
+import NativeSwitch from '../components/NativeSwitch'; // [2026-10-11 polish-secondary] P&B (Switch web = teal)
 
 // Human-readable recurrence label — never surface the raw RRULE
 // (e.g. "FREQ=MONTHLY;BYMONTHDAY=15") to the user.
@@ -308,7 +309,7 @@ function EditEventView({ event, onSave, onCancel, colors, t }) {
       {/* All Day Toggle */}
       <View style={[styles.editSwitchRow, { borderColor: colors.border }]}>
         <Text style={[styles.editSwitchLabel, { color: colors.text }]}>{t('eventDetail.allDay')}</Text>
-        <Switch
+        <NativeSwitch
           value={allDay}
           onValueChange={setAllDay}
           trackColor={{ true: colors.primary, false: colors.border }}
