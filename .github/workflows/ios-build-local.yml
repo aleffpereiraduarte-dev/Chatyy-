@@ -62,14 +62,14 @@ jobs:
     env:
       KEYCHAIN_NAME: chatyy-build.keychain-db
       KEYCHAIN_PASS: ci-build-pass
-      MAIN_PROFILE_UUID: 480ef27d-fe7a-4986-af2e-57c75bf3e0d7
+      MAIN_PROFILE_UUID: d49242ff-d32d-471a-bb3a-779e9765ec4b
       SHAREEXT_PROFILE_UUID: d302e18b-f58a-43b8-8b1f-9bf4b2d05194
       # [2026-05-18 NSE] Profile created via ASC API (scripts/asc-create-nse-profile.js)
       # — bundle com.onemundo.mail.notificationservice. No App Group linked
       # because public ASC API doesn't expose that relationship; the NSE
       # entitlements file is empty (no app-groups requested), which matches.
       NSE_BUNDLE_ID: com.onemundo.mail.notificationservice
-      NSE_PROFILE_UUID: 695e2ec7-6a2f-4193-8919-9ad98a4e81c5
+      NSE_PROFILE_UUID: d8c38194-78fa-4497-9072-aec2151ac884
       # [2026-05-15 #827] BROADCAST_PROFILE_UUID lido do conteúdo decoded
       # do secret IOS_PROFILE_BROADCAST_BASE64 em runtime (UUID dentro do
       # .mobileprovision). Bundle id: com.onemundo.mail.broadcast.

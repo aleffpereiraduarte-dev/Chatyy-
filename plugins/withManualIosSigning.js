@@ -22,7 +22,7 @@ const SIGNING = {
     // [2026-10-07 recv-native] IOS_MAIN_PROFILE_UUID overrides after
     // scripts/asc-enable-communication-notifications.js regenerates the main
     // profile with the Communication Notifications capability.
-    profile: process.env.IOS_MAIN_PROFILE_UUID || '480ef27d-fe7a-4986-af2e-57c75bf3e0d7',
+    profile: process.env.IOS_MAIN_PROFILE_UUID || 'd49242ff-d32d-471a-bb3a-779e9765ec4b',
   },
   'com.onemundo.mail.share-extension': {
     profile: 'd302e18b-f58a-43b8-8b1f-9bf4b2d05194',
