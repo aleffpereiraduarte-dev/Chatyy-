@@ -3,8 +3,8 @@
 #ifndef COMMON_H
 #define COMMON_H
 
-#include "stdlib.h"
-#include "string.h"
+#include <stdlib.h> /* [chatyy] was "stdlib.h": quote form hit folly/portability/Stdlib.h via Xcode header maps (case-insensitive) */
+#include <string.h> /* [chatyy] was "string.h" (same reason) */
 
 #define RNN_INLINE inline
 #define OPUS_INLINE inline

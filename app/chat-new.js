@@ -489,6 +489,11 @@ export default function ChatNewScreen() {
   }, [searchFocused, searchBorderAnim]);
   const [selectedMembers, setSelectedMembers] = useState([]);
   const [groupName, setGroupName] = useState('');
+  // [2026-10-11 qa-sweep2] A 1-member group with no name used to be created
+  // silently as "Grupo" (meaningless in the list). WhatsApp requires a subject;
+  // we require one only in that case and point at the field.
+  const [groupNameError, setGroupNameError] = useState(false);
+  const groupNameInputRef = useRef(null);
   const [creating, setCreating] = useState(false);
 
   // Contact lists — seeded synchronously from cache (instant first paint).
@@ -1304,9 +1309,13 @@ export default function ChatNewScreen() {
 
   const handleCreateGroup = async () => {
     if (creating || selectedMembers.length === 0) return;
-    const finalName = groupName.trim() || (selectedMembers.length > 1
-      ? selectedMembers.slice(0, 3).map(m => (m.name || m.email).split('@')[0]).join(', ')
-      : t('chat.group'));
+    if (!groupName.trim() && selectedMembers.length === 1) {
+      setGroupNameError(true);
+      try { groupNameInputRef.current?.focus?.(); } catch {}
+      return;
+    }
+    const finalName = groupName.trim() || selectedMembers.slice(0, 3)
+      .map(m => api.emailToDisplayName(m.name || m.email)).join(', ');
     if (!groupName.trim() && selectedMembers.length > 1) {
       setGroupName(finalName);
     }
@@ -1944,11 +1953,18 @@ export default function ChatNewScreen() {
         <View style={[sty.groupNameWrap, { borderBottomColor: colors.border }]}>
           <TextInput
             style={[sty.groupNameInput, { color: colors.text, borderColor: isDark ? '#333' : '#e0e0e0', backgroundColor: isDark ? '#1e1e1e' : '#f5f5f7' }]}
+            ref={groupNameInputRef}
             placeholder={mode === 'channel' ? (t('chat.channelName') || 'Nome do canal') : t('chat.groupNamePlaceholder')}
             placeholderTextColor={colors.textTertiary}
             value={groupName}
-            onChangeText={setGroupName}
+            onChangeText={(v) => { setGroupName(v); if (groupNameError && v.trim()) setGroupNameError(false); }}
+            accessibilityLabel={mode === 'channel' ? (t('chat.channelName') || 'Nome do canal') : t('chat.groupNamePlaceholder')}
           />
+          {groupNameError && mode === 'group' ? (
+            <Text style={{ color: colors.error || '#E5484D', fontSize: 13, marginTop: 6, marginHorizontal: 4 }} accessibilityLiveRegion="polite">
+              {t('chat.groupNameRequired')}
+            </Text>
+          ) : null}
         </View>
       )}
 

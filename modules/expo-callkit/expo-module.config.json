@@ -4,6 +4,11 @@
     "android"
   ],
   "apple": {
+    "podspecPath": [
+      "ios/ExpoCallKit.podspec",
+      "ios/ChatyyNS/ChatyyNoise.podspec"
+    ],
+    "swiftModuleName": "ExpoCallKit",
     "modules": [
       "ExpoCallKitModule",
       "ChatCoreModule"

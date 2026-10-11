@@ -18,7 +18,7 @@
 //                      Pressable press delay so scroll flicks don't flash).
 // Zero native deps — ships via OTA.
 import React from 'react';
-import { Pressable, Platform } from 'react-native';
+import { Pressable, Platform, View } from 'react-native';
 import { useTheme } from '../context/ThemeContext';
 import { haptic as themeHaptic } from '../constants/theme';
 import PressableScale from './PressableScale';
@@ -36,7 +36,13 @@ export default function PressableRow({
   const { isDark } = useTheme() || {};
 
   if (Platform.OS === 'web') {
-    return (
+    // [2026-10-11 qa-sweep2] RN-web TouchableOpacity spreads its own
+    // press-responder handlers AFTER the caller's props, so a caller
+    // onContextMenu was silently replaced — right-click on a chat-list row did
+    // nothing on desktop (only a 300ms mouse hold opened the menu). Catch the
+    // bubbling contextmenu on a plain wrapper View (RN-web forwards it).
+    const { onContextMenu, ...rest } = props;
+    const btn = (
       <PressableScale
         style={style}
         haptic={haptic}
@@ -44,11 +50,12 @@ export default function PressableRow({
         activeOpacity={0.85}
         delayPressIn={delayPressIn}
         onPressIn={onPressIn}
-        {...props}
+        {...rest}
       >
         {children}
       </PressableScale>
     );
+    return onContextMenu ? <View onContextMenu={onContextMenu}>{btn}</View> : btn;
   }
 
   // OPAQUE by default: rows inside swipeables sit on top of the colored

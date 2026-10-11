@@ -2,6 +2,7 @@ import React from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Appearance } from 'react-native';
 import { IconAlertTriangle } from './Icons';
 import { Sentry } from '../services/sentry';
+import { reloadOnceForChunkError } from '../services/chunkReload';
 
 function getColors() {
   const scheme = Appearance?.getColorScheme?.() || 'light';
@@ -43,16 +44,7 @@ export default class ErrorBoundary extends React.Component {
     // reload (guarded per session) fixes it instead of showing "Algo deu
     // errado" until the user refreshes by hand.
     try {
-      const m = String(error?.message || '');
-      const isChunkFail = /Loading module .* failed|AsyncRequireError|ChunkLoadError|Importing a module script failed|Failed to fetch dynamically imported module/i.test(m)
-        || String(error?.name || '') === 'AsyncRequireError';
-      if (isChunkFail && typeof window !== 'undefined' && typeof sessionStorage !== 'undefined' && typeof window.location?.reload === 'function') {
-        const KEY = '@chatyy/chunk_reload_once';
-        if (!sessionStorage.getItem(KEY)) {
-          sessionStorage.setItem(KEY, String(Date.now()));
-          setTimeout(() => { try { window.location.reload(); } catch {} }, 150);
-        }
-      }
+      if (reloadOnceForChunkError(error)) this.setState({ chunkReloading: true });
     } catch {}
     // Per-device diagnostics (push_diag): message + normalized stack + ctx
     // + breadcrumbs, deduped by signature. Never throws.
@@ -98,6 +90,9 @@ export default class ErrorBoundary extends React.Component {
   }
 
   render() {
+    // Chunk failure with a reload already scheduled: blank for ~150ms instead
+    // of flashing "Algo deu errado".
+    if (this.state.hasError && this.state.chunkReloading) return null;
     if (this.state.hasError) {
       const c = getColors();
       // In __DEV__ we show error details so devs can debug; in production we

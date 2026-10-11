@@ -3,8 +3,9 @@
 //
 // Shared by iOS (Swift → LiveKit AudioManager.capturePostProcessingDelegate)
 // and Android (JNI → LiveKit AudioProcessorInterface). This is the ONLY public
-// header of the ExpoCallKit pod — keep it plain C, no macros, no includes, so
-// it is safe inside the pod's umbrella header / Swift underlying module.
+// header of the iOS `ChatyyNoise` pod (ChatyyNoise.podspec) — keep it plain C,
+// no macros, no includes, so it is safe inside the pod's umbrella header /
+// clang module imported by Swift (`import ChatyyNoise`).
 //
 // Audio contract (both platforms hand us WebRTC APM's capture AudioBuffer,
 // channel 0, AFTER WebRTC's own AEC/NS/AGC):

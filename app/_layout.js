@@ -91,6 +91,10 @@ import { mark as _bootMark, armSplashFallback, afterFirstPaint, reportBootMarksS
 // thread JS e menos memória (react-native-screens já está no bundle nativo).
 import { enableFreeze } from 'react-native-screens';
 try { enableFreeze(true); } catch {}
+// [2026-10-11 async-routes] Web: chunk de rota/lazy que falha (deploy novo, rede) →
+// recarrega a página UMA vez (guarda em sessionStorage). No-op no nativo.
+import { installChunkErrorReload } from '../services/chunkReload';
+try { installChunkErrorReload(); } catch {}
 import React, { Suspense } from "react";
 import { Platform, View as RNView, Text as RNText, Linking, Alert, Animated as _RNAnimated, InteractionManager, useColorScheme as _useColorScheme } from 'react-native';
 // ─── Sentry crash reporting ───

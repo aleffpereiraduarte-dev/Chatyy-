@@ -431,6 +431,12 @@ export function LanguageProvider({ children }) {
   );
 }
 
+// [2026-10-11 qa-sweep2] Non-throwing variant for leaf components that can
+// render outside the provider (overlays, call UI). Returns null without one.
+export function useLanguageOptional() {
+  return useContext(LanguageContext);
+}
+
 export function useLanguage() {
   const ctx = useContext(LanguageContext);
   if (!ctx) throw new Error('useLanguage must be inside LanguageProvider');

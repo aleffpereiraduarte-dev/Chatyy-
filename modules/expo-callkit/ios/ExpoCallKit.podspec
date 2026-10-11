@@ -62,17 +62,18 @@ Pod::Spec.new do |s|
   # extension side. SampleHandler.swift already extends `LKSampleHandler`.
 
   # [2026-10-11 noise] RNNoise (BSD-3, vendored v0.1.1) for real ML noise
-  # suppression in native calls — RNNoiseAudioProcessor.swift. ONE C
-  # translation unit (chatyy_ns.c #includes ChatyyNS/rnnoise/*.c) + ONE plain-C
-  # public header (chatyy_ns.h → pod umbrella → visible to the pod's Swift via
-  # -import-underlying-module). The vendored rnnoise/ files are NOT compiled on
-  # their own (would duplicate symbols) and their headers are NOT public (macro
-  # soup must stay out of the umbrella) → preserve_paths only.
-  # [2026-10-11] C do RNNoise FORA do pod por ora (folly sombreia stdlib.h em .c
-  # neste target → "'cstdlib' file not found"). Próximo passo: pod próprio sem
-  # React (ChatyyNS) + -DCHATYY_NS_C. Swift compila em pass-through.
+  # suppression in native calls — RNNoiseAudioProcessor.swift.
+  # [2026-10-11 noise-ios] The C lives in its OWN pure-C pod `ChatyyNoise`
+  # (ios/ChatyyNS/ChatyyNoise.podspec, zero dependencies, USE_HEADERMAP=NO):
+  # compiled inside THIS pod the quote include "stdlib.h" of rnnoise/common.h
+  # resolved (case-insensitive header map) to ReactNativeDependencies'
+  # folly/portability/Stdlib.h → "'cstdlib' file not found" (CI 38109542058).
+  # ChatyyNoise is autolinked via expo-module.config.json apple.podspecPath
+  # (array) and imported in Swift with `import ChatyyNoise` (canImport-guarded
+  # → pass-through if the pod is ever missing). ExpoCallKit itself is Swift-only.
+  s.dependency 'ChatyyNoise'
   s.source_files = ['**/*.swift']
-  s.preserve_paths = 'ChatyyNS/**/*'
+  s.exclude_files = 'ChatyyNS/**/*'
 
   # [2026-10-07 bgsync] BackgroundTasks → ChatBgSyncAppDelegateSubscriber (BGAppRefreshTask).
   s.frameworks = 'CallKit', 'PushKit', 'AVFoundation', 'CoreImage', 'CoreVideo', 'Intents', 'BackgroundTasks'

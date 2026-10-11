@@ -3,6 +3,7 @@ import { View, Text, StyleSheet, Platform, TouchableOpacity } from 'react-native
 import Svg, { Defs, LinearGradient as SvgLinearGradient, Stop, Rect } from 'react-native-svg';
 import { getAvatarUrlForEmail } from '../services/api';
 import ChatyyOneAvatar from './ChatyyOneAvatar';
+import { useLanguageOptional } from '../context/LanguageContext';
 // Disk-persistent avatar cache (documentDirectory/avatar-saved). Survives
 // OS cache evictions so a contact's profile photo paints from disk on
 // cold-start / offline — even if expo-image's NSURLCache got purged.
@@ -346,11 +347,16 @@ function _CollageTile({ member, size, width, height }) {
   return (
     <View style={{ width: w, height: h, backgroundColor: bg, alignItems: 'center', justifyContent: 'center' }}>
       <GradientBg c1={grad.c1} c2={grad.c2} gid={grad.gid} size={Math.max(w, h)} w={w} h={h} />
+      {/* [2026-10-11 qa-sweep2] Half-width tiles (2-member layout) are as
+          narrow as they are tall, so two bold initials per half ran edge to
+          edge and the pair read as one word ("APQA"). One letter per narrow
+          tile, slightly smaller glyph. */}
       <Text
-        style={{ color: '#fff', fontWeight: '700', fontSize: Math.max(8, Math.min(w, h) * 0.4), position: 'absolute' }}
+        style={{ color: '#fff', fontWeight: '700', fontSize: Math.max(8, Math.min(w, h) * (w < h ? 0.42 : 0.36)), position: 'absolute' }}
         allowFontScaling={false}
+        numberOfLines={1}
       >
-        {initials}
+        {w < h ? String(initials || '').slice(0, 1) : initials}
       </Text>
       {uri && !tileErr ? (
         <ImageComponent
@@ -374,6 +380,8 @@ function _CollageTile({ member, size, width, height }) {
 // 3 members → big tile on the left, 2 stacked on the right (WhatsApp 1+2).
 // 4+ members → 2×2 grid with the first 4 entries.
 function _GroupCollage({ members, size, style }) {
+  const _lang = useLanguageOptional();
+  const _gl = _lang?.t ? _lang.t('a11y.groupAvatar') : null;
   const radius = size / 2;
   const m = (members || []).slice(0, 4);
   const count = m.length;
@@ -382,7 +390,7 @@ function _GroupCollage({ members, size, style }) {
   return (
     <View
       style={[{ width: size, height: size, borderRadius: radius, overflow: 'hidden', backgroundColor: '#000', flexDirection: 'row' }, style, { width: size, height: size, borderRadius: radius }]}
-      accessibilityLabel="Group avatar"
+      accessibilityLabel={_gl && _gl !== 'a11y.groupAvatar' ? _gl : 'Foto do grupo'}
       accessibilityRole="image"
     >
       {count === 2 && (
@@ -421,6 +429,7 @@ function _GroupCollage({ members, size, style }) {
 }
 
 function AvatarCircle({ name, email, uri, size = 48, style, online = false, ringColor = '#111111', showStatus = false, members, onPress }) {
+  const _lang = useLanguageOptional();
   const [imgError, setImgError] = useState(false);
   const [version, setVersion] = useState(() => getAvatarVersion(email));
   // Holds the file:// URI from avatarCache once a background download
@@ -619,7 +628,13 @@ function AvatarCircle({ name, email, uri, size = 48, style, online = false, ring
   const _colorSeed = (displayName || email || '').toLowerCase();
   const _grad = gradientFor(_colorSeed);
   const bgColor = _grad.c2; // solid fallback behind the premium gradient layer
-  const accessLabel = displayName ? `Avatar of ${displayName}` : 'User avatar';
+  // [2026-10-11 qa-sweep2] Was hardcoded English ("Avatar of Qa2") for every
+  // screen reader user, whatever the app language.
+  const _t = _lang?.t;
+  const _tx = (k, fb) => { const v = _t ? _t(k) : null; return v && v !== k ? v : fb; };
+  const accessLabel = displayName
+    ? _tx('a11y.avatarOf', 'Foto de perfil de {name}').replace('{name}', displayName)
+    : _tx('a11y.userAvatar', 'Foto de perfil');
 
   const ImageComponent = ExpoImage || RNImage;
 

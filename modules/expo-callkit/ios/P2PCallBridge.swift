@@ -248,6 +248,28 @@ final class P2PCallBridge {
             nativeCallDiag("p2p_fallback_no_room", callId, "attempt=\(attempt)")
             return
         }
+        // [2026-10-11 p2p-keepalive] The warm-standby Room may have DIED while
+        // P2P owned the media (LiveKit gives up after its reconnect attempts;
+        // CallViewController keeps the call alive on P2P). Rejoin it, then
+        // publish — instead of polling 10 s and leaving the call silent.
+        if r.connectionState == .disconnected {
+            DispatchQueue.main.async {
+                guard let rejoin = NativeCallRoom.shared.rejoinIfDead(callId: callId, reason: "p2p_fallback") else {
+                    nativeCallDiag("p2p_fallback_room_dead", callId, "no_rejoin")
+                    return
+                }
+                Task {
+                    let ok = await rejoin.value
+                    nativeCallDiag("p2p_fallback_rejoin", callId, "ok=\(ok)")
+                    if ok {
+                        DispatchQueue.main.async {
+                            publishLiveKitMic(callId: callId, enabled: enabled, attempt: attempt + 1)
+                        }
+                    }
+                }
+            }
+            return
+        }
         if r.connectionState != .connected {
             if attempt >= 50 {
                 nativeCallDiag("p2p_fallback_room_not_connected", callId)

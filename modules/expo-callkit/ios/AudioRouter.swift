@@ -522,6 +522,14 @@ import LiveKitClient
                 self.speakerOn = self.userSpeakerChoice ?? (self.hasVideo || self.localVideoActive)
             }
             applyPolicy(reason: "old_device_gone")
+        case .noSuitableRouteForCategory, .wakeFromSleep:
+            // [2026-10-11] BT HFP dropped / car audio (CarPlay) went away or
+            // the device woke mid-call: iOS can leave the call with NO usable
+            // output until something re-asserts category + port override.
+            lockQueue.sync {
+                self.speakerOn = self.userSpeakerChoice ?? (self.hasVideo || self.localVideoActive)
+            }
+            if allowSelfHeal() { applyPolicy(reason: "no_route_\(reason.rawValue)") } else { postRouteChanged() }
         case .categoryChange, .override, .routeConfigurationChange:
             // Self-heal: if someone (LiveKit, expo-audio, RN WebRTC) changed
             // category/mode behind our back, applyPolicy restores it; if

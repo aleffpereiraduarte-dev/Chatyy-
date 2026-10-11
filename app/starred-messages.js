@@ -9,6 +9,7 @@ import { IconArrowLeft, IconStar, IconMessageSquare, IconBookmark, IconArrowRigh
 import AvatarCircle from '../components/AvatarCircle';
 import FadeSlideIn from '../components/FadeSlideIn';
 import * as api from '../services/api';
+import { useAuth } from '../context/AuthContext';
 
 // Unified "Salvas | Favoritas" screen (E.3).
 //
@@ -24,6 +25,14 @@ export default function StarredMessagesScreen() {
   const insets = useSafeAreaInsets();
   const { colors, isDark } = useTheme();
   const { t } = useLanguage();
+  const { user } = useAuth() || {};
+  const myEmail = String(user?.email || '').toLowerCase();
+  // [2026-10-11 qa-sweep2] conversation_id → { title, peerEmail, type }. The
+  // starred API only carries conversation_name for groups, so direct rows
+  // showed the raw handle ("apitest") of your OWN message with no hint of the
+  // chat, and tapping one of your own messages opened the thread with YOUR
+  // e-mail as the peer. WhatsApp: "Você ▸ Qa2".
+  const [convMap, setConvMap] = useState({});
 
   const [tab, setTab] = useState('starred'); // 'saved' | 'starred'
   const [messages, setMessages] = useState([]);
@@ -32,14 +41,31 @@ export default function StarredMessagesScreen() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const r = await api.chatStarredMessages();
+      const [r, cv] = await Promise.all([
+        api.chatStarredMessages(),
+        api.chatConversations().catch(() => null),
+      ]);
       if (r?.success && r.data) {
         const list = Array.isArray(r.data) ? r.data : (r.data.items || r.data.messages || []);
         setMessages(list);
       }
+      const convs = Array.isArray(cv?.data) ? cv.data : (Array.isArray(cv?.data?.conversations) ? cv.data.conversations : []);
+      if (convs.length) {
+        const m = {};
+        for (const c of convs) {
+          if (!c || c.id == null) continue;
+          const others = (Array.isArray(c.members) ? c.members : []).filter(x => String(x?.email || '').toLowerCase() !== myEmail);
+          const peerEmail = c.type === 'direct' ? (c.other_email || c.contact_email || others[0]?.email || '') : '';
+          const title = c.type === 'direct'
+            ? api.emailToDisplayName(c.contact_name || c.display_name || others[0]?.display_name || c.name || peerEmail)
+            : (c.name || '');
+          m[String(c.id)] = { title, peerEmail, type: c.type };
+        }
+        setConvMap(m);
+      }
     } catch (e) { console.warn('[starred] load:', e); }
     setLoading(false);
-  }, []);
+  }, [myEmail]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -49,8 +75,12 @@ export default function StarredMessagesScreen() {
 
   const openConversation = (msg) => {
     if (!msg?.conversation_id) return;
+    const cm = convMap[String(msg.conversation_id)] || {};
+    const isMine = String(msg.sender_email || '').toLowerCase() === myEmail;
+    const peer = cm.peerEmail || (isMine ? '' : (msg.sender_email || ''));
+    const name = msg.conversation_name || cm.title || '';
     try {
-      router.push(`/chat-conversation?id=${msg.conversation_id}&name=${encodeURIComponent(msg.conversation_name || '')}&type=${msg.conversation_type || 'direct'}&email=${encodeURIComponent(msg.sender_email || '')}`);
+      router.push(`/chat-conversation?id=${msg.conversation_id}&name=${encodeURIComponent(name)}&type=${msg.conversation_type || cm.type || 'direct'}${peer ? `&email=${encodeURIComponent(peer)}` : ''}${msg.id ? `&scrollToMessageId=${encodeURIComponent(msg.id)}` : ''}`);
     } catch (e) { console.warn('[starred] nav:', e); }
   };
 
@@ -166,7 +196,16 @@ export default function StarredMessagesScreen() {
               <View style={styles.rowBody}>
                 <View style={styles.rowHead}>
                   <Text style={[styles.rowName, { color: colors.text }]} numberOfLines={1}>
-                    {item.sender_name || item.sender_email}
+                    {(() => {
+                      const isMine = String(item.sender_email || '').toLowerCase() === myEmail;
+                      const who = isMine ? (t('chat.you') || 'Você') : api.emailToDisplayName(item.sender_name || item.sender_email || '');
+                      const cm = convMap[String(item.conversation_id)];
+                      // Direct: the peer's own messages already name the chat;
+                      // mine get "Você › Qa2" (WhatsApp). Groups show the group
+                      // name on the line below.
+                      const where = item.conversation_type === 'group' ? '' : (cm?.title || '');
+                      return isMine && where ? `${who}  ›  ${where}` : who;
+                    })()}
                   </Text>
                   <Text style={[styles.rowTime, { color: colors.secondaryText }]}>
                     {formatDate(item.created_at)}
@@ -178,7 +217,7 @@ export default function StarredMessagesScreen() {
                   </Text>
                 )}
                 <View style={styles.rowContent}>
-                  <IconStar size={12} color="#FFC107" />
+                  <IconStar size={12} color={colors.secondaryText} />
                   <Text style={[styles.rowPreview, { color: colors.secondaryText }]} numberOfLines={2}>
                     {item.content || ''}
                   </Text>

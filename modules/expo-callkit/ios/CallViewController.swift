@@ -380,9 +380,19 @@ final class CallViewController: UIViewController, @unchecked Sendable {
             // [2026-10-10 call-states] …and even then only after 25s (the
             // muted-mic case); before that we only nudge subscriptions.
             let peerPresent = (self.room?.remoteParticipants.isEmpty == false)
+            let lkState = self.room.map { NativeCallRoom.stateName($0.connectionState) } ?? "no_room"
             nativeCallDiag("connect_watchdog_no_media", self.callId,
-                           "reason=\(reason) t=\(Int(seconds))s peer=\(peerPresent) accepted=\(self.outgoingMicGateOpen) p2p=\(P2PCallBridge.ownsMedia(self.callId))")
+                           "reason=\(reason) t=\(Int(seconds))s peer=\(peerPresent) accepted=\(self.outgoingMicGateOpen) p2p=\(P2PCallBridge.ownsMedia(self.callId)) lk=\(lkState)")
             self.nudgeRemoteSubscriptions()
+            // [2026-10-11 publisher-nil] Answered incoming call whose (adopted
+            // ring-window) Room is DEAD: it dropped before this VC attached as
+            // RoomDelegate, so no didDisconnect ever reached us and nothing
+            // would bring it back (call_1791692112285_b4n0z80v9: callee left
+            // the room on answer, caller watchdog peer=false until 25 s
+            // "Não foi possível conectar"). Rejoin the same Room, then
+            // republish the mic (mute-aware) — the 17 s fail timer below still
+            // ends the call if the rejoin does not bring media.
+            self.rejoinIncomingRoomIfDead(reason: "watchdog_\(Int(seconds))s")
             let fail = DispatchWorkItem { [weak self] in
                 guard let self = self else { return }
                 self.outgoingConnectFallbackTimer = nil
@@ -402,6 +412,51 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         }
         outgoingConnectFallbackTimer = work
         DispatchQueue.main.asyncAfter(deadline: .now() + seconds, execute: work)
+    }
+
+    /// [2026-10-11 publisher-nil] See the watchdog above. Incoming only (an
+    /// outgoing VC owns its Room from the start and gets didDisconnect).
+    private func rejoinIncomingRoomIfDead(reason: String) {
+        guard !isOutgoing, !didHangup, let r = room, r.connectionState == .disconnected else { return }
+        if NativeCallRoom.shared.currentRoom() == nil {
+            // The singleton was cleared under us (e.g. ring-window connect
+            // failure path) — re-own the VC's Room so it can be rejoined.
+            NativeCallRoom.shared.publish(room: r, callId: callId, roomName: callId, url: lkUrl, token: lkToken)
+        }
+        guard NativeCallRoom.shared.currentRoom() === r,
+              let rejoin = NativeCallRoom.shared.rejoinIfDead(callId: callId, reason: reason) else { return }
+        Task { [weak self] in
+            let ok = await rejoin.value
+            guard ok, let self = self else { return }
+            let micTask: Task<LocalTrackPublication?, Never>? = await MainActor.run {
+                guard !self.didHangup, self.session.micEnabled, !P2PCallBridge.ownsMedia(self.callId) else { return nil }
+                return NativeCallRoom.shared.ensureIncomingMicPublished(callId: self.callId, reason: "rejoin_\(reason)")
+            }
+            if let pub = await micTask?.value, let track = pub.track as? LocalAudioTrack {
+                await MainActor.run { self.localAudioTrackRef = track }
+            }
+            // Video calls: the camera track died with the Room too.
+            if self.hasVideo {
+                let camOn: Bool = await MainActor.run { self.session.camEnabled }
+                if camOn {
+                    do {
+                        let pub = try await r.localParticipant.setCamera(
+                            enabled: true,
+                            captureOptions: Self.defaultCameraCaptureOptions(position: self.currentCameraPosition),
+                            publishOptions: Self.defaultVideoPublishOptions()
+                        )
+                        if let track = pub?.track as? LocalVideoTrack {
+                            await MainActor.run {
+                                self.session.localVideoTrack = track
+                                self.applyLocalVideoTrack(track)
+                            }
+                        }
+                    } catch {
+                        nativeCallDiag("rejoin_cam_publish_failed", self.callId, "\(error)")
+                    }
+                }
+            }
+        }
     }
 
     /// [2026-10-10 call-states] Cheap recovery for "answered but no media":
@@ -1331,11 +1386,20 @@ final class CallViewController: UIViewController, @unchecked Sendable {
                         if let shared = sharedMicTask {
                             micPub = await shared.value
                         }
+                        // [2026-10-11 publisher-nil] The shared publish already
+                        // waited/rejoined/retried; a direct setMicrophone on a
+                        // Room that is not connected only throws "Publisher is
+                        // nil". Leave it to the watchdog rejoin in that case.
                         if micPub == nil && !P2PCallBridge.ownsMedia(self.callId) {
-                            micPub = try await r.localParticipant.setMicrophone(
-                                enabled: true,
-                                captureOptions: Self.defaultAudioCaptureOptions()
-                            )
+                            if r.connectionState == .connected {
+                                micPub = try await r.localParticipant.setMicrophone(
+                                    enabled: true,
+                                    captureOptions: Self.defaultAudioCaptureOptions()
+                                )
+                            } else {
+                                nativeCallDiag("adopt_mic_skip_not_connected", self.callId,
+                                               "lk=\(NativeCallRoom.stateName(r.connectionState))")
+                            }
                         }
                         if let track = micPub?.track as? LocalAudioTrack {
                             await MainActor.run { self.localAudioTrackRef = track }
@@ -1464,7 +1528,7 @@ final class CallViewController: UIViewController, @unchecked Sendable {
             // `.connecting` until didConnect lands). Publishing here also
             // covers paths where Room.connect throws — `clear()` runs in
             // didDisconnect / catch so JS doesn't get a stale snapshot.
-            NativeCallRoom.shared.publish(room: r, callId: callId, roomName: callId)
+            NativeCallRoom.shared.publish(room: r, callId: callId, roomName: callId, url: url, token: token)
 
             // [Wave WhatsApp parity, 2026-05-20 gap C5+F3 iOS] Bind the
             // BackgroundProcessor (MediaPipe blur / wallpaper) to this Room so
@@ -1549,7 +1613,8 @@ final class CallViewController: UIViewController, @unchecked Sendable {
                     // future adoptNativeRoom doesn't hand JS a stale dead
                     // reference. JS will fall back to its own Room.connect
                     // (the legacy path) which is fine for the error case.
-                    NativeCallRoom.shared.clear()
+                    // [2026-10-11 publisher-nil] Only if it still is OUR Room.
+                    NativeCallRoom.shared.clear(ifCurrent: r, reason: "callvc_connect_failed")
                     await MainActor.run {
                         self.session.status = "Erro"
                     }
@@ -1675,7 +1740,9 @@ final class CallViewController: UIViewController, @unchecked Sendable {
             // adoptNativeRoom() returns nil for any subsequent call. Mirrors
             // didDisconnect path; runs in handleHangup because user-initiated
             // hangup teardown happens BEFORE the LK disconnect callback lands.
-            NativeCallRoom.shared.clear()
+            // [2026-10-11 publisher-nil] Scoped to OUR Room: a late hangup of a
+            // previous call must not wipe the next call's preconnect Room.
+            NativeCallRoom.shared.clear(ifCurrent: r, reason: "callvc_hangup")
             // [WAVE 166 battle-tested disconnect 2026-05-23] Task.detached +
             // timeout + retry pattern from LiveKit Swift SDK Issues #583,
             // #729, #757 (officially recommended workaround thread maintainer
@@ -3026,6 +3093,14 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         ) { [weak self] _ in
             guard let self = self, let r = self.room else { return }
             let desired = self.session.micEnabled
+            // [2026-10-11 publisher-nil] Room not connected yet → setMicrophone
+            // would only throw "Publisher is nil" (the "benign" error below,
+            // which polluted voip_diag as a failure). The post-connect publish
+            // runs with the session already active — the good ordering.
+            if r.connectionState != .connected {
+                nativeCallDiag("outgoing_mic_republish_deferred", self.callId, "lk=\(NativeCallRoom.stateName(r.connectionState))")
+                return
+            }
             print("[CallVC] audio session activated — re-applying mic(\(desired)) — callId=\(self.callId)")
             nativeCallDiag("outgoing_mic_republish_didactivate", self.callId, "desired=\(desired)")
             Task { [weak self] in
@@ -3736,7 +3811,8 @@ final class CallViewController: UIViewController, @unchecked Sendable {
             // or didDisconnect have already cleared the singleton by the time
             // deinit runs, but force-quit can short-circuit those. Idempotent —
             // clear() on an already-empty singleton is a no-op print.
-            NativeCallRoom.shared.clear()
+            // [2026-10-11 publisher-nil] Scoped to OUR Room (see clear(ifCurrent:)).
+            NativeCallRoom.shared.clear(ifCurrent: r, reason: "callvc_deinit")
             Task { await r.disconnect() }
         } else if isMinimizing || cededToJs {
             print("[CallVC] deinit while \(cededToJs ? "ceding to JS" : "minimizing") — keeping Room alive (owned by NativeCallRoom.shared) callId=\(callId)")
@@ -3847,7 +3923,9 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         // the singleton's published Room reference. Until then, NativeCallRoom
         // .didConnect forwarders fire via the JS adoptNativeRoom listener bag.
         let r = Room(delegate: nil, roomOptions: roomOptions)
-        NativeCallRoom.shared.publish(room: r, callId: callId, roomName: callId)
+        // [2026-10-11 publisher-nil] Keep url/token so a Room that dies during
+        // the ring can be REJOINED on answer (NativeCallRoom.rejoinIfDead).
+        NativeCallRoom.shared.publish(room: r, callId: callId, roomName: callId, url: url, token: token)
         kPreconnectRoomLock.unlock()
         Task.detached(priority: .userInitiated) {
             do {
@@ -5191,14 +5269,34 @@ extension CallViewController: RoomDelegate {
         // [CALL-CLOSE diag 2026-05-27] LK Room disconnected — if this fires
         // right after answer, the SFU/token/network dropped the room (NOT the
         // stale-call_end path). Distinguishes "Room died" from "UI dismissed".
+        // [2026-10-11 p2p-keepalive] 1:1 voice whose media is on a CONNECTED
+        // P2P path: the LiveKit Room is only a warm standby. Losing it (LK
+        // gave up its 10 reconnect attempts during a long network blip that
+        // P2P survived via ICE restart) must not hang up a call whose audio is
+        // flowing. Keep the call, rejoin the standby Room in the background
+        // (P2PCallBridge.publishLiveKitMic also rejoins on a later fallback).
+        // error == nil = our own leave (handleHangup) → normal teardown below.
+        if error != nil, !didHangup, P2PCallBridge.isConnected(callId), NativeCallRoom.shared.currentRoom() === room {
+            nativeCallDiag("lk_disconnect_p2p_keepalive", callId, "err=\(String(describing: error))")
+            let cid = callId
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+                NativeCallRoom.shared.rejoinIfDead(callId: cid, reason: "p2p_keepalive")
+            }
+            return
+        }
         nativeCallDiag("call_close_lk_disconnect", callId, "err=\(String(describing: error))")
         // [#1207 NativeCallRoom REAL] Fanout to JS BEFORE we tear down the
         // session. JS listeners need the disconnect event so they can swap
         // back to the chat header / call list. We also clear() so a future
         // adoptNativeRoom call doesn't see a stale snapshot.
         let reasonStr: String = (error.map { String(describing: $0) }) ?? "remote_ended"
-        NativeCallRoom.shared.didDisconnect(reason: reasonStr)
-        NativeCallRoom.shared.clear()
+        // [2026-10-11 publisher-nil] Only fan out / clear when the singleton
+        // still holds THIS Room (a previous call's Room dying late must not
+        // wipe the next call's preconnect Room).
+        if NativeCallRoom.shared.currentRoom() === room {
+            NativeCallRoom.shared.didDisconnect(reason: reasonStr)
+        }
+        NativeCallRoom.shared.clear(ifCurrent: room, reason: "callvc_lk_disconnect")
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
             // [#1171 redux dismiss, 2026-05-19] Mark didHangup so a follow-up

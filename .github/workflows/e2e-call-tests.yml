@@ -1,128 +1,122 @@
 name: e2e-call-tests
 
-# Continuous E2E test harness for calls + live. Runs on PRs to main and on
-# every push to main. Self-hosted runner on prod (217.216.67.99) because:
-#   - already SSHs to emulator host (213.136.72.141)
-#   - already SSHs to Mac 207 over Tailscale for iOS builds
-#   - reads C++ WS logs at /opt/chatyy-ws-cpp/logs/ws.log directly
-#   - reads `docker logs livekit`
+# [2026-10-11] Teste REAL de ligação 1:1 (apitest -> qa2) — mesma lógica do
+# /root/ligacao-melhorias/01-testar-ligacao.sh: sinalização no hub Go de produção
+# (wss://ws.chatyy.com.br/ws), mídia no LiveKit de produção, 2 Chromium com mic
+# falso (Playwright). O callee pode rodar num network namespace próprio
+# (slirp4netns) para simular quedas de rede de 3s/10s/25s sem mexer em firewall.
+# Não muda nada em produção (só cria ligações de teste entre as contas QA).
 #
-# Phase 0: T1 + T7 implemented; T2..T6, T8..T10 are stubs that exit SKIP.
-# Phase 1 (later): ship.sh reads /var/lib/e2e/last_green.txt and gates deploys.
+# Antes: runner [self-hosted, prod] + build de APK no Mac 207 (aposentado) →
+# nunca rodava. Agora: runner ubuntu do GitHub (nada roda no servidor de prod).
+#
+# SEGURANÇA (repositório PÚBLICO): sem pull_request / pull_request_target / push.
+# Só workflow_dispatch (quem tem escrita no repo) e agenda diária. As senhas QA
+# vêm de secrets (nunca impressas); secrets não são expostos a forks.
+#
+# Secrets necessários (o founder cadastra uma vez — o valor é pedido no prompt,
+# nada fica no histórico do shell):
+#   gh secret set QA_APITEST_PASSWORD --repo aleffpereiraduarte-dev/Chatyy-
+#   gh secret set QA_QA2_PASSWORD     --repo aleffpereiraduarte-dev/Chatyy-
+# (mesmos valores de APITEST_PASSWORD / QA2_PASSWORD em /etc/mail-api.env)
 
 on:
-  # [2026-10-10] SEGURANÇA: removido pull_request — o repositório é público e este job roda
-  # no runner self-hosted de PRODUÇÃO; um PR de terceiros executaria código no servidor.
-  push:
-    branches: [main]
   workflow_dispatch:
     inputs:
-      scenarios:
-        description: "Comma-separated scenario IDs (e.g. T1,T7). Empty = all."
+      plan:
+        description: "Cenários (vírgula): basic, turn, outage, lk, tune — ou all"
         required: false
-        default: ""
-      skip_build:
-        description: "Skip APK build, reuse existing /tmp/chatyy-e2e.apk"
-        required: false
-        default: "false"
+        default: "basic,turn,outage"
+  schedule:
+    # Diário 09:17 UTC (06:17 BRT) — fora do pico de uso.
+    - cron: "17 9 * * *"
+
+permissions:
+  contents: read
 
 concurrency:
-  group: e2e-call-tests-${{ github.ref }}
-  cancel-in-progress: true
+  group: e2e-call-tests
+  cancel-in-progress: false
 
 jobs:
-  wave:
-    runs-on: [self-hosted, prod]
-    timeout-minutes: 20
-
+  call:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
     env:
-      EMUL_HOST: 213.136.72.141
-      EMUL_USER: root
-      # SSHPASS only used as a fallback if the prod runner doesn't have the
-      # ed25519 key for the emul host. Set this secret in repo settings.
-      SSHPASS: ${{ secrets.EMUL_SSH_PASSWORD }}
-      MAC207_HOST: 100.103.47.109
-      MAC207_USER: administrator
-      R2_BUCKET: chatyy-e2e
-      R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
-      AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-      SLACK_E2E_WEBHOOK: ${{ secrets.SLACK_E2E_WEBHOOK }}
-
+      PLAN: ${{ github.event.inputs.plan || 'basic,turn,outage' }}
+      QA_APITEST_PASSWORD: ${{ secrets.QA_APITEST_PASSWORD }}
+      QA_QA2_PASSWORD: ${{ secrets.QA_QA2_PASSWORD }}
     steps:
+      - name: Secrets presentes?
+        run: |
+          missing=""
+          [ -n "$QA_APITEST_PASSWORD" ] || missing="$missing QA_APITEST_PASSWORD"
+          [ -n "$QA_QA2_PASSWORD" ] || missing="$missing QA_QA2_PASSWORD"
+          if [ -n "$missing" ]; then
+            echo "::error::Faltam secrets:$missing. Cadastre com: gh secret set <NOME> --repo ${{ github.repository }}"
+            exit 1
+          fi
+          case "$PLAN" in
+            *[!a-z,]*) echo "::error::plan inválido: só letras minúsculas e vírgulas"; exit 1;;
+          esac
+
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          sparse-checkout: scripts/e2e/call
+          sparse-checkout-cone-mode: false
 
-      - name: Show wave parameters
-        run: |
-          echo "sha=${{ github.sha }}"
-          echo "scenarios=${{ github.event.inputs.scenarios }}"
-          echo "skip_build=${{ github.event.inputs.skip_build }}"
-          echo "ref=${{ github.ref }}"
+      - name: Node 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
 
-      - name: Build APK on Mac 207 (Tailscale)
-        if: ${{ github.event.inputs.skip_build != 'true' }}
-        timeout-minutes: 12
+      - name: Playwright + Chromium (+ slirp4netns p/ quedas de rede)
+        working-directory: scripts/e2e/call
         run: |
           set -e
-          ssh -o StrictHostKeyChecking=no "${MAC207_USER}@${MAC207_HOST}" \
-            "cd ~/apps/chatyy && eas build -p android --local --profile preview --non-interactive --output ~/apps/chatyy/e2e.apk"
-          scp -o StrictHostKeyChecking=no \
-            "${MAC207_USER}@${MAC207_HOST}:~/apps/chatyy/e2e.apk" \
-            /tmp/chatyy-e2e.apk
-          ls -la /tmp/chatyy-e2e.apk
+          npm init -y >/dev/null
+          npm install --no-audit --no-fund playwright@1.59.1
+          npx playwright install --with-deps chromium
+          sudo apt-get install -y --no-install-recommends slirp4netns iproute2 >/dev/null
 
-      - name: Run wave
-        id: wave
-        timeout-minutes: 12
+      - name: Login das contas QA
+        working-directory: scripts/e2e/call
+        run: bash mint-ci.sh "$RUNNER_TEMP/bearers.json"
+
+      - name: Ligações de teste
+        id: run
+        working-directory: scripts/e2e/call
         run: |
           set +e
-          APK_ARG=""
-          [ -f /tmp/chatyy-e2e.apk ] && APK_ARG="--apk /tmp/chatyy-e2e.apk"
-          SCEN_ARG=""
-          if [ -n "${{ github.event.inputs.scenarios }}" ]; then
-            SCEN_ARG="--scenarios ${{ github.event.inputs.scenarios }}"
-          fi
-          chmod +x scripts/e2e/run-wave.sh scripts/e2e/scenarios/*.sh scripts/e2e/lib/*.sh
-          scripts/e2e/run-wave.sh \
-            --out /tmp/e2e-run-${{ github.sha }} \
-            --sha ${{ github.sha }} \
-            $APK_ARG $SCEN_ARG
-          echo "wave_exit=$?" >> "$GITHUB_OUTPUT"
+          mkdir -p "$RUNNER_TEMP/out"
+          # root: o cenário "outage" cria um network namespace (ip netns) p/ o callee.
+          sudo -E env "PATH=$PATH" \
+            PW_MODULE="$PWD/node_modules/playwright" \
+            PLAYWRIGHT_BROWSERS_PATH="$HOME/.cache/ms-playwright" \
+            BEARERS="$RUNNER_TEMP/bearers.json" \
+            QA_OUT="$RUNNER_TEMP/out" \
+            timeout --kill-after=30 1500 node call_e2e.js "$PLAN" > "$RUNNER_TEMP/out/saida.txt" 2>&1
+          echo "node_exit=$?" >> "$GITHUB_OUTPUT"
+          # Log sem tokens (o script nunca imprime bearer); só as linhas de progresso.
+          grep -v '^###' "$RUNNER_TEMP/out/saida.txt" | tail -n 80 || true
 
-      - name: Show verdict
+      - name: Resultado
+        run: python3 -B scripts/e2e/call/summarize.py "$RUNNER_TEMP/out/call_e2e.json"
+
+      - name: Artefatos
         if: always()
-        run: |
-          if [ -f /tmp/e2e-run-${{ github.sha }}/verdict.json ]; then
-            cat /tmp/e2e-run-${{ github.sha }}/verdict.json
-          else
-            echo "no verdict.json produced"
-          fi
-
-      - name: Upload artifacts on failure
-        if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: e2e-dumps-${{ github.sha }}
-          path: /tmp/e2e-run-${{ github.sha }}
+          name: e2e-call-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/out/call_e2e.json
+            ${{ runner.temp }}/out/saida.txt
           retention-days: 14
           if-no-files-found: warn
 
-      - name: PR comment on failure
-        if: failure() && github.event_name == 'pull_request'
+      - name: Limpeza
+        if: always()
         run: |
-          if [ -f /tmp/e2e-run-${{ github.sha }}/verdict.json ]; then
-            SUMMARY=$(jq -r '.scenarios[] | "- **\(.id)** \(.name // ""): \(.status) \(.failure_class // "")"' \
-              /tmp/e2e-run-${{ github.sha }}/verdict.json)
-            BODY="### E2E wave FAIL on \`${{ github.sha }}\`\n\n${SUMMARY}\n\nDumps uploaded to artifacts + R2."
-            gh pr comment ${{ github.event.pull_request.number }} --body "$BODY" || true
-          fi
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Mark last green (push to main only)
-        if: success() && github.ref == 'refs/heads/main' && github.event_name == 'push'
-        run: |
-          mkdir -p /var/lib/e2e 2>/dev/null || sudo mkdir -p /var/lib/e2e
-          echo "${{ github.sha }}" | sudo tee /var/lib/e2e/last_green.txt >/dev/null
-          echo "marked ${{ github.sha }} as last green"
+          sudo ip netns del qacall 2>/dev/null || true
+          rm -f "$RUNNER_TEMP/bearers.json"

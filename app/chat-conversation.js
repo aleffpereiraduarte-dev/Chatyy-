@@ -150,6 +150,7 @@ import { isTablet as RESP_IS_TABLET, isNativeTabletSplit } from '../utils/respon
 import { SCAN_DOCUMENT_ENABLED } from '../constants/featureFlags';
 import * as api from '../services/api';
 import { emailToDisplayName } from '../services/api';
+import { humanizeSystemText } from '../utils/systemMessageText';
 import { formatBytes } from '../services/format';
 import * as e2eService from '../services/e2e';
 import * as DocumentPicker from 'expo-document-picker';
@@ -212,7 +213,85 @@ import LocationViewerModal from '../components/LocationViewerModal';
 import ChatNotificationSettingsSheet from '../components/ChatNotificationSettingsSheet';
 import SafetyNumberSheet from '../components/SafetyNumberSheet';
 import SendStatusText from '../components/SendStatusText';
-import { getCachedUri, preCacheUrls, cacheMedia, saveMediaPermanent, saveConversationMedia, initSyncCache, getThumbB64Sync, ingestThumbB64FromMessages, getLocalUriSyncJs } from '../services/mediaCache';
+import { getCachedUri, preCacheUrls, cacheMedia, saveMediaPermanent, saveConversationMedia, initSyncCache, getThumbB64Sync, ingestThumbB64FromMessages, getLocalUriSyncJs, getLocalUriForMessage } from '../services/mediaCache';
+// [2026-10-11 media-cache-key] "A foto não fica salva, toda vez que abre o chat
+// volta a carregar." Rows persist ABSOLUTE file:// paths (`_localUri` in
+// raw_json + `local_path` column). On iOS the app container UUID
+// (/Data/Application/<UUID>/) changes on every app update/TestFlight install,
+// so those paths go dead: ExpoImage errors → ChatMedia falls back to the
+// remote URL (re-download + blur/fade) — and since the stale path is never
+// rewritten, EVERY open repeated it. Fix: (1) the canonical local index
+// (mediaStore by url-key / message id → current container) wins over a
+// persisted path; (2) a persisted path is rebased onto the CURRENT container.
+let _curContainerSeg; // undefined = not resolved; '' = n/a
+const _CONTAINER_RE = /\/Data\/Application\/[0-9A-Fa-f-]{36}\//;
+function _rebaseContainerUri(uri) {
+  if (typeof uri !== 'string' || !uri || Platform.OS !== 'ios' || !uri.startsWith('file://')) return uri || null;
+  if (_curContainerSeg === undefined) {
+    _curContainerSeg = '';
+    try {
+      let fsm; try { fsm = require('expo-file-system/legacy'); } catch { fsm = require('expo-file-system'); }
+      const m = String(fsm?.documentDirectory || '').match(_CONTAINER_RE);
+      if (m) _curContainerSeg = m[0];
+    } catch {}
+  }
+  if (!_curContainerSeg) return uri;
+  return uri.replace(_CONTAINER_RE, _curContainerSeg);
+}
+// [2026-10-11 open-perf] Run secondary open-time fetches (pinned, block
+// status, settings, wallpaper) AFTER the push/transition settles so the
+// critical message delta + first paint don't compete with them. Hard cap so a
+// busy InteractionManager (JS-driven loops) can't starve them. Returns cancel.
+function _afterOpenSettled(fn, maxMs = 700) {
+  let done = false; let h = null; let t2 = null;
+  const run = () => {
+    if (done) return; done = true;
+    try { clearTimeout(t1); } catch {} try { if (t2) clearTimeout(t2); } catch {}
+    try { fn(); } catch {}
+  };
+  const t1 = setTimeout(run, maxMs);
+  if (Platform.OS === 'web') t2 = setTimeout(run, 250);
+  else { try { h = InteractionManager.runAfterInteractions(run); } catch {} }
+  return () => { done = true; try { clearTimeout(t1); } catch {} try { if (t2) clearTimeout(t2); } catch {} try { h?.cancel?.(); } catch {} };
+}
+// chat_get_settings is account-wide: fetch once per session per account and
+// re-fetch only when stale (10 min) or after a local chat_update_settings
+// (api.js bumps globalThis.__chatyy_chat_settings_rev).
+const _chatSettingsFetch = { acct: '', at: 0, rev: -1 };
+// [2026-10-11 open-perf] Photo bubbles paint the server's medium DISPLAY
+// variant (image_variants.display, ≤1280px JPEG made by chat_upload) instead of
+// the full original while the original isn't on disk; fullscreen keeps the
+// original. Ids whose variant failed fall back to the original for the session.
+const _dispFailedIds = new Set();
+const _LOCAL_MEDIA_TYPES = new Set(['image','video','audio','voice','gif','sticker','file']);
+const _isRemoteMediaRef = (u) => typeof u === 'string' && !!u && !/^(file|content|ph|asset|assets-library|blob|data):/i.test(u);
+// Local file for a media row from the canonical index only (sync, zero I/O).
+function _indexedLocalUri(m) {
+  if (!m || Platform.OS === 'web') return null;
+  try {
+    if (_isRemoteMediaRef(m.file_url)) {
+      const hit = getLocalUriSyncJs(api.getMediaUrl(m.file_url));
+      if (hit) return hit;
+    }
+    if (typeof m.id === 'number' && m.id > 0) return getLocalUriForMessage(m.id) || null;
+  } catch {}
+  return null;
+}
+// In-place hydrate of rows read from any local store / the server: index wins,
+// stale container paths are rebased. Never touches in-flight uploads.
+function _hydrateLocalMediaRows(rows) {
+  if (!Array.isArray(rows) || Platform.OS === 'web') return rows;
+  for (const m of rows) {
+    if (!m || !m.file_url || !_LOCAL_MEDIA_TYPES.has(m.type) || m._uploading || m._pending) continue;
+    try {
+      const idx = _indexedLocalUri(m);
+      if (idx) { m._localUri = idx; continue; }
+      if (m._localUri) m._localUri = _rebaseContainerUri(m._localUri);
+      if (typeof m.local_path === 'string' && m.local_path.startsWith('file://')) m.local_path = _rebaseContainerUri(m.local_path);
+    } catch {}
+  }
+  return rows;
+}
 // [WAVE 45 2026-05-21] Root cause Android thumb sumindo: ExpoImage was aliased
 // to react-native's <Image>, which does NOT understand `source={{ blurhash }}`
 // nor `cachePolicy`/`contentFit`/`priority` props. The blurhash backdrop layer
@@ -2029,7 +2108,7 @@ function _renderInline(parts, style, colors, keyBase) {
         return (
           <Text key={key}>
             {ce.map((seg, j) => seg.ce ? (
-              <Image key={j} source={{ uri: seg.ce }} style={{ width: 20, height: 20, marginHorizontal: 1, transform: [{ translateY: 4 }] }} accessibilityLabel="custom-emoji" />
+              <Image key={j} source={{ uri: seg.ce, cache: 'force-cache' /* [2026-10-11 open-perf] iOS: serve from URL cache without revalidating; RN Image kept because it is the only image view RN lays out INLINE inside <Text> */ }} style={{ width: 20, height: 20, marginHorizontal: 1, transform: [{ translateY: 4 }] }} accessibilityLabel="custom-emoji" />
             ) : (
               <Text key={j}>{seg.text}</Text>
             ))}
@@ -2209,7 +2288,7 @@ const FormattedText = React.memo(function FormattedText({ text, style, colors })
       <Text style={style} selectable={true}>
         {ce.map((seg, i) =>
           seg.ce ? (
-            <Image key={i} source={{ uri: seg.ce }}
+            <Image key={i} source={{ uri: seg.ce, cache: 'force-cache' /* [2026-10-11 open-perf] iOS: serve from URL cache without revalidating; RN Image kept because it is the only image view RN lays out INLINE inside <Text> */ }}
               style={{ width: 20, height: 20, marginHorizontal: 1, transform: [{ translateY: 4 }] }}
               accessibilityLabel="custom-emoji" />
           ) : (
@@ -2251,7 +2330,7 @@ const FormattedText = React.memo(function FormattedText({ text, style, colors })
               <Text key={i}>
                 {ce.map((seg, j) =>
                   seg.ce ? (
-                    <Image key={j} source={{ uri: seg.ce }}
+                    <Image key={j} source={{ uri: seg.ce, cache: 'force-cache' /* [2026-10-11 open-perf] iOS: serve from URL cache without revalidating; RN Image kept because it is the only image view RN lays out INLINE inside <Text> */ }}
                       style={{ width: 20, height: 20, marginHorizontal: 1, transform: [{ translateY: 4 }] }}
                       accessibilityLabel="custom-emoji" />
                   ) : (
@@ -5083,7 +5162,7 @@ function MeetupCreatorModal({ colors, t, conversationId, onClose, onCreated }) {
 // ============================================================
 // PLAYLIST CREATOR MODAL — with Deezer song search
 // ============================================================
-function PlaylistCreatorModal({ colors, t, conversationId, onClose, onCreated }) {
+function PlaylistCreatorModal({ colors, t, conversationId, onClose, onCreated, onOptimistic, onPatch }) {
   const [name, setName] = useState('');
   const [sending, setSending] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -5121,7 +5200,13 @@ function PlaylistCreatorModal({ colors, t, conversationId, onClose, onCreated })
     });
   };
 
-  const handleCreate = async () => {
+  // [2026-10-11 playlist-fast] Was: await create, then await add_song for EACH
+  // song in series with the modal blocked ("criar playlist demorou"). Now the
+  // card appears in the thread at once (optimistic), the modal closes, songs go
+  // in the create call (new server: songs_saved), and only an old server falls
+  // back to the serial adds (row lock read-modify-write on the server → series
+  // on purpose), with "Adicionando i/n" on the card.
+  const handleCreate = () => {
     if (!name.trim()) return;
     if (selectedSongs.length === 0) {
       // Don't create empty playlists — bug repro: user creates a 0-song playlist
@@ -5129,38 +5214,81 @@ function PlaylistCreatorModal({ colors, t, conversationId, onClose, onCreated })
       try { (typeof window !== 'undefined' ? window : global).alert?.('Adicione pelo menos uma música'); } catch {}
       return;
     }
+    if (sending) return;
     setSending(true);
-    try {
-      const r = await api.chatCreatePlaylist(conversationId, name.trim());
-      if (r?.success && r.data) {
-        const playlistMsg = r.data.message || r.data;
-        // Add all selected songs to the playlist
-        for (const song of selectedSongs) {
-          try {
-            await api.chatPlaylistAddSong(playlistMsg.id, {
-              title: song.title,
-              artist: song.artist,
-              url: '',
-              cover: song.coverUrl || '',
-              preview_url: song.previewUrl || '',
-              duration: song.duration || 30,
-            });
-          } catch {}
-        }
-        onCreated(playlistMsg);
-      } else {
-        try { Platform.OS === 'web' ? window.alert(r?.message || 'Erro ao criar playlist') : Alert.alert('Erro', r?.message || 'Erro ao criar playlist'); } catch {}
-        onClose();
-      }
-    } catch (e) {
+    const plName = name.trim().slice(0, 100);
+    const songsPayload = selectedSongs.map((song) => ({
+      title: song.title || '',
+      artist: song.artist || '',
+      url: '',
+      cover: song.coverUrl || '',
+      preview_url: song.previewUrl || '',
+      duration: song.duration || 30,
+    }));
+    const total = songsPayload.length;
+    let me = '';
+    try { me = String(api.getActiveAccountEmail?.() || '').toLowerCase(); } catch {}
+    const tempId = 'tmp_pl_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+    const optimistic = {
+      id: tempId,
+      conversation_id: conversationId,
+      sender_email: me,
+      type: 'playlist',
+      content: JSON.stringify({ playlist_name: plName, created_by: me, songs: songsPayload.map(s => ({ ...s, added_by: me })) }),
+      created_at: new Date().toISOString(),
+      _pending: true,
+      pending_state: 'sending',
+    };
+    try { onOptimistic ? onOptimistic(optimistic) : null; } catch {}
+    const patch = (id, p) => { try { onPatch && onPatch(id, p); } catch {} };
+    const fail = (id, message) => {
+      patch(id, null);
       try {
-        if (__DEV__) console.warn('[chat-conversation]', e);
-        const msg = (t && t('common.genericError')) || 'Não foi possível completar a ação. Tente de novo em instantes.';
+        const msg = message || (t && t('common.genericError')) || 'Não foi possível completar a ação. Tente de novo em instantes.';
         Platform.OS === 'web' ? window.alert(msg) : Alert.alert(t?.('common.error') || 'Erro', msg);
       } catch {}
-      onClose();
-    }
-    setSending(false);
+    };
+    (async () => {
+      let curId = tempId;
+      try {
+        const r = await api.chatCreatePlaylist(conversationId, plName, songsPayload);
+        if (!r?.success || !r.data) { fail(curId, r?.message || 'Erro ao criar playlist'); return; }
+        if (r.data._blocked_drop) { patch(curId, { _pending: false, pending_state: 'sent' }); return; }
+        const serverMsg = r.data.message || r.data;
+        const serverId = Number(serverMsg?.id) || 0;
+        if (!serverId) { patch(curId, { _pending: false, pending_state: 'sent' }); return; }
+        const saved = Number(r.data.songs_saved ?? serverMsg.songs_saved);
+        if (saved === total) {
+          // New server: everything saved in ONE request.
+          const finalContent = typeof serverMsg.content === 'string' && serverMsg.content
+            ? serverMsg.content
+            : (serverMsg.playlist ? JSON.stringify(serverMsg.playlist) : optimistic.content);
+          patch(curId, { ...serverMsg, id: serverId, content: finalContent, _pending: false, pending_state: 'sent', _plProgress: null });
+          return;
+        }
+        // Old server: swap to the real id now (dedups against the row arriving
+        // by sync/WS), then add the songs IN ORDER, one at a time.
+        patch(curId, { ...serverMsg, id: serverId, content: optimistic.content, _pending: true, _plProgress: '0/' + total });
+        curId = serverId;
+        let lastPl = null;
+        let ok = 0;
+        for (let i = 0; i < total; i++) {
+          try {
+            const r2 = await api.chatPlaylistAddSong(serverId, songsPayload[i]);
+            if (r2?.success) { ok++; if (r2.data?.playlist) lastPl = r2.data.playlist; }
+          } catch {}
+          patch(curId, { _plProgress: (i + 1) + '/' + total });
+        }
+        patch(curId, {
+          ...(lastPl ? { content: JSON.stringify(lastPl) } : {}),
+          _pending: false, pending_state: 'sent', _plProgress: null,
+        });
+        if (ok < total && __DEV__) console.warn('[playlist] songs added', ok, '/', total);
+      } catch (e) {
+        if (__DEV__) console.warn('[chat-conversation] playlist create', e);
+        fail(curId);
+      }
+    })();
   };
 
   // Visual-only presentation helpers (unified sheet language) — no logic change.
@@ -5426,7 +5554,7 @@ function PlaylistEditorModal({ colors, isDark, t, editor, onClose, onUpdated }) 
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 14 }}>
             {/* Big album-art tile — uses first song cover or fallback */}
             {songs[0]?.cover ? (
-              <Image source={{ uri: songs[0].cover }} style={{
+              <ExpoImage source={{ uri: songs[0].cover }} cachePolicy="memory-disk" recyclingKey={songs[0].cover} transition={0} style={{
                 width: 64, height: 64, borderRadius: 12, borderWidth: 2, borderColor: 'rgba(255,255,255,0.3)',
                 ...(Platform.OS === 'web' ? { boxShadow: '0 4px 18px rgba(0,0,0,0.25)' } : {}),
               }} />
@@ -9190,8 +9318,22 @@ function ChatConversationInner() {
         setLastReadWatermark(prev => (prev == null || w > prev) ? w : prev);
       }
     };
-    getCachedConversations().then(cached => {
-      const conv = cached.find(c => c.id === conversationId || String(c.id) === String(conversationId));
+    // [2026-10-11 open-perf] Synchronous row from the local chat list
+    // (chatStore — same snapshot the list painted) instead of downloading the
+    // WHOLE conversation list (chat_conversations) to read one row: header
+    // name/avatar/watermark land before the first network byte. The network
+    // list is only fetched when the row is missing locally or predates the
+    // last_read_message_id field (divider watermark).
+    const _localConv = (() => {
+      try {
+        const _cs = require('../services/chatStore');
+        if (_cs.isLocked?.()) return null;
+        const list = _cs.getConversationsSync() || [];
+        return list.find(c => c && (c.id === conversationId || String(c.id) === String(conversationId))) || null;
+      } catch { return null; }
+    })();
+    const _localHasMeta = !!(_localConv && Object.prototype.hasOwnProperty.call(_localConv, 'last_read_message_id'));
+    const _applyCachedConv = (conv) => {
       _applyConvName(conv);
       // [2026-10-08 open-at-bottom] teto do divisor (antes do watermark → o
       // effect do divisor já o enxerga no re-render que o setState dispara).
@@ -9200,8 +9342,18 @@ function ChatConversationInner() {
         unreadCapSrcRef.current = 'cache';
       }
       _applyConvWatermark(conv);
-    }).catch(() => {});
-    api.chatConversations().then(r => {
+    };
+    if (_localConv) {
+      _applyCachedConv(_localConv);
+    } else {
+      getCachedConversations().then(cached => {
+        _applyCachedConv((cached || []).find(c => c.id === conversationId || String(c.id) === String(conversationId)));
+      }).catch(() => {});
+    }
+    (_localHasMeta
+      ? Promise.resolve({ success: true, data: [_localConv] })
+      : api.chatConversations()
+    ).then(r => {
       if (!r.success) { setConvMetaResolved(true); return; }
       const convs = Array.isArray(r.data) ? r.data : (r.data?.conversations || []);
       const conv = convs.find(c => c.id === conversationId || String(c.id) === String(conversationId));
@@ -9260,8 +9412,23 @@ function ChatConversationInner() {
   const settingsRef = useRef(chatyySettings);
   settingsRef.current = chatyySettings;
   useEffect(() => {
+    // [2026-10-11 open-perf] once per session/account (+10 min TTL, + local
+    // update invalidation), and after the open transition.
+    const _acct = String(user?.email || api.getActiveAccountEmail?.() || '').toLowerCase();
+    const _rev = Number(globalThis.__chatyy_chat_settings_rev || 0);
+    if (_chatSettingsFetch.acct === _acct && _chatSettingsFetch.rev === _rev && Date.now() - _chatSettingsFetch.at < 600000) {
+      // Fresh this session: frame-1 state already came from getCachedChatSettings;
+      // only re-arm the WS typing gate from it.
+      try {
+        const c = getCachedChatSettings(_acct);
+        if (c && typeof c.read_receipts !== 'undefined') require('../services/websocket').default?.setTypingPrivacy?.({ read_receipts: c.read_receipts }, user?.email);
+      } catch {}
+      return;
+    }
+    return _afterOpenSettled(() => {
     api.chatGetSettings().then(r => {
       if (r.success && r.data) {
+        _chatSettingsFetch.acct = _acct; _chatSettingsFetch.at = Date.now(); _chatSettingsFetch.rev = _rev;
         setChatyySettings(r.data);
         try { setCachedChatSettings(user?.email || api.getActiveAccountEmail?.() || '', r.data); } catch {} // [2026-10-08 chat-open-flicker]
         // [2026-10-06 rt-client] read_receipts aqui já vem mesclado de
@@ -9273,6 +9440,7 @@ function ChatConversationInner() {
         } catch {}
       }
     }).catch(() => {});
+    });
   }, []);
 
   // ── Device-local composer/appearance prefs (settings.js KV consumers) ─────
@@ -9597,27 +9765,14 @@ function ChatConversationInner() {
       if (!_cs.isLocked?.()) {
         const rows = _cs.getMessagesSync(conversationId, 50);
         if (Array.isArray(rows) && rows.length > 0) {
-          try {
-            const _hydrate = require('../services/mediaCache').getLocalUriSyncJs;
-            if (_hydrate) {
-              for (const m of rows) {
-                if (m && !m._localUri && m.file_url && ['image','video','audio','voice','gif','sticker','file'].includes(m.type)) {
-                  try {
-                    const abs = api.getMediaUrl(m.file_url);
-                    const local = _hydrate(abs);
-                    if (local) m._localUri = local;
-                  } catch {}
-                }
-              }
-            }
-          } catch {}
+          try { _hydrateLocalMediaRows(rows); } catch {} // [2026-10-11 media-cache-key] index wins + container rebase
           return rows;
         }
       }
     } catch {}
     try {
       const cached = SmartCache.getCachedMessagesSync(conversationId, 50);
-      if (Array.isArray(cached) && cached.length > 0) return cached;
+      if (Array.isArray(cached) && cached.length > 0) { try { _hydrateLocalMediaRows(cached); } catch {} return cached; }
     } catch {}
     // [2026-10-10] Native Swift cache (gated; null unless flag ON + schema>=2).
     try {
@@ -9640,20 +9795,7 @@ function ChatConversationInner() {
         // Hydrate _localUri from the media sync-index so media bubbles paint
         // file:// from disk on the very first frame — same pattern the async
         // load path uses (no remote→file switcheroo, offline-safe).
-        try {
-          const _hydrate = require('../services/mediaCache').getLocalUriSyncJs;
-          if (_hydrate) {
-            for (const m of rows) {
-              if (m && !m._localUri && m.file_url && ['image','video','audio','voice','gif','sticker','file'].includes(m.type)) {
-                try {
-                  const abs = api.getMediaUrl(m.file_url);
-                  const local = _hydrate(abs);
-                  if (local) m._localUri = local;
-                } catch {}
-              }
-            }
-          }
-        } catch {}
+        try { _hydrateLocalMediaRows(rows); } catch {} // [2026-10-11 media-cache-key] index wins + container rebase
         return rows;
       }
     } catch {}
@@ -11368,7 +11510,9 @@ function ChatConversationInner() {
   useEffect(() => {
     let alive = true;
     if (!conversationId) return;
-    (async () => {
+    // [2026-10-11 open-perf] frame 1 already has the MMKV value; the server
+    // revalidation waits for the open transition.
+    const _cancelWp = _afterOpenSettled(() => { (async () => {
       try {
         const res = await api.chatGetWallpaper(conversationId);
         if (alive && res?.success && res.data?.wallpaper) {
@@ -11386,8 +11530,8 @@ function ChatConversationInner() {
         const v = await AS.getItem(`chatyy_wallpaper_${conversationId}`);
         if (alive) setPerConvWallpaper(prev => prev === v ? prev : v);
       } catch { if (alive) setPerConvWallpaper(null); }
-    })();
-    return () => { alive = false; };
+    })(); });
+    return () => { alive = false; try { _cancelWp(); } catch {} };
   }, [conversationId]);
   // Resolution order: per-conversation override → account-wide chat setting →
   // device-local `wallpaper_default` KV (written by /settings, previously had
@@ -12622,7 +12766,22 @@ function ChatConversationInner() {
       // - First open: last 20 messages (sinceId=0, beforeId=null)
       // - Has cache: only new messages since last sync (sinceId > 0)
       // - Scroll up: 20 older messages (beforeId = oldest visible)
-      const r = await api.chatMessages(conversationId, PAGE_SIZE, beforeId, sinceId, activeTopic?.id);
+      // [2026-10-11 open-perf] Push-tap open: services/chatOpenPrefetch may
+      // already have the SAME delta in flight (id > its since, limit 30). When
+      // it covers ours (its since <= ours, same page size, no topic filter),
+      // adopt its response instead of a second overlapping request; on
+      // failure/timeout fall back to our own fetch.
+      let r = null;
+      if (!beforeId && sinceId > 0 && PAGE_SIZE === 30 && !activeTopic?.id) {
+        try {
+          const _pf = require('../services/chatOpenPrefetch').peekInflightDelta?.(conversationId);
+          if (_pf && Number(_pf.since) > 0 && Number(_pf.since) <= sinceId) {
+            const _pr = await _pf.p;
+            if (_pr && _pr.success && Array.isArray(_pr.data?.messages)) r = _pr;
+          }
+        } catch {}
+      }
+      if (!r) r = await api.chatMessages(conversationId, PAGE_SIZE, beforeId, sinceId, activeTopic?.id);
       // Drop stale responses: a newer loadMessages() call started while this
       // one was in flight. WITHOUT this, an older response can overwrite
       // fresher state and jump the viewport. BUT if there are NO messages
@@ -12686,20 +12845,7 @@ function ChatConversationInner() {
         // Hydrate _localUri for media messages from syncIndex BEFORE setMessages
         // so the very first render already paints file:// instead of the
         // remote URL → no flash, no flicker, no re-fetch.
-        try {
-          const _hydrate = require('../services/mediaCache').getLocalUriSyncJs;
-          if (_hydrate) {
-            for (const m of newMsgs) {
-              if (m && !m._localUri && m.file_url && ['image','video','audio','voice','gif','sticker','file'].includes(m.type)) {
-                try {
-                  const abs = api.getMediaUrl(m.file_url);
-                  const local = _hydrate(abs);
-                  if (local) m._localUri = local;
-                } catch {}
-              }
-            }
-          }
-        } catch {}
+        try { _hydrateLocalMediaRows(newMsgs); } catch {} // [2026-10-11 media-cache-key] index wins + container rebase
         // Advance the pts watermark to the max pts we just loaded so the
         // next chat_sync doesn't re-fetch these rows. Rows without conv_pts
         // (pre-migration history) are ignored — observePts is a no-op for 0.
@@ -13218,19 +13364,7 @@ function ChatConversationInner() {
               // FIRST render already has the file:// path — no remote → file
               // switcheroo, no visible flicker. Silent no-op when the media
               // isn't cached yet (render falls through to remote URL).
-              let _hydrate = null;
-              try { _hydrate = require('../services/mediaCache').getLocalUriSyncJs; } catch {}
-              if (_hydrate) {
-                for (const m of cached) {
-                  if (m && !m._localUri && m.file_url && ['image','video','audio','voice','gif','sticker','file'].includes(m.type)) {
-                    try {
-                      const abs = api.getMediaUrl(m.file_url);
-                      const local = _hydrate(abs);
-                      if (local) m._localUri = local;
-                    } catch {}
-                  }
-                }
-              }
+              try { _hydrateLocalMediaRows(cached); } catch {} // [2026-10-11 media-cache-key]
               // Bug 2026-05-04: cache hit bypassava normalizer, entao msgs
               // antigas com type='text' contendo JSON status_reply caiam no
               // text bubble (markdown italic comendo `_` e mostrando JSON cru
@@ -13270,9 +13404,34 @@ function ChatConversationInner() {
         // keeps identical rows' identity — _sameServerRow) goes out NOW, in
         // parallel with the WS reconnect and the pts sync; both dedup by id.
         // Kill-switch OTA: globalThis.__chatyy_open_fast_delta = false.
+        let _fastDeltaP = null;
         if (globalThis.__chatyy_open_fast_delta !== false) {
-          try { loadMessages(false); } catch {}
+          try { _fastDeltaP = loadMessages(false); } catch {}
         }
+        // [2026-10-11 open-perf] Cached open fires the fast delta above AND a
+        // chat_sync below (still needed for non-message events: edit/delete/
+        // reaction/read on older rows). The chat_sync is now SKIPPED when the
+        // local list row says the conversation is idle relative to our pts —
+        // exactly the server's own idle check (since_pts >= sync_seq → empty
+        // answer). Needs `sync_seq` on chat_list rows (backend); without it the
+        // gate is inert and behavior is unchanged. NOT awaited on the fast
+        // delta on purpose: measured on web, waiting made the screen's sync
+        // miss chatSync's 500 ms debounce batch with the global list sync and
+        // cost one EXTRA request. Kill-switch: globalThis.__chatyy_open_sync_gate = false.
+        void _fastDeltaP;
+        const _openSyncIsIdle = async () => {
+          if (globalThis.__chatyy_open_sync_gate === false) return false;
+          if (!mountedRef.current) return true;
+          try {
+            const _cs = require('../services/chatStore');
+            if (_cs.isLocked?.()) return false;
+            const row = (_cs.getConversationsSync() || []).find(c => c && String(c.id) === String(conversationId));
+            const seq = Number(row?.sync_seq);
+            if (!row || !Number.isFinite(seq) || seq <= 0) return false;
+            const pts = Number(require('../services/chatSync').getLastPts(conversationId)) || 0;
+            return pts > 0 && pts >= seq;
+          } catch { return false; }
+        };
 
         // WhatsApp-grade offline path (#1194): if the per-conv bootstrap has
         // already drained this conversation's history into SQLite, skip the
@@ -13288,6 +13447,7 @@ function ChatConversationInner() {
             // Fully-synced: never hit chat_messages on open. Just delta-sync
             // for new arrivals via pts. The cached paint above is the entire
             // initial render.
+            if (await _openSyncIsIdle()) return;
             try {
               const { syncConversations: syncConvs2, applyEvents: applyEvents2 } = require('../services/chatSync');
               const r2 = await syncConvs2([conversationId]);
@@ -13318,6 +13478,7 @@ function ChatConversationInner() {
           }
         } catch {}
 
+        if (await _openSyncIsIdle()) return;
         const { syncConversations, applyEvents } = require('../services/chatSync');
         const results = await syncConversations([conversationId]);
         if (!mountedRef.current) return;
@@ -13548,9 +13709,13 @@ function ChatConversationInner() {
     } // end disabled pending restore
     // Load pinned messages — backend returns `items`; keep `messages` fallback
     // for older deployments / for clients that hit a transitional API.
-    api.chatPinnedMessages(conversationId).then(r => {
-      if (r.success) setPinnedMessages(r.data?.items || r.data?.messages || []);
-    }).catch(() => {});
+    // [2026-10-11 open-perf] deferred past the open transition.
+    _afterOpenSettled(() => {
+      if (!mountedRef.current) return;
+      api.chatPinnedMessages(conversationId).then(r => {
+        if (r.success && mountedRef.current) setPinnedMessages(r.data?.items || r.data?.messages || []);
+      }).catch(() => {});
+    });
     // Load members on mount (needed for mentions, calls, group info)
     api.chatMembers(conversationId).then(r => {
       if (r.success) setMembers(r.data?.members || []);
@@ -13559,12 +13724,17 @@ function ChatConversationInner() {
     }).catch(() => {});
     // Check block status for direct conversations
     if (conversationType === 'direct' && params.email) {
-      api.chatCheckBlocked(params.email).then(r => {
-        if (r.success) {
-          setIBlockedThem(!!r.data?.i_blocked_them);
-          setTheyBlockedMe(!!r.data?.they_blocked_me);
-        }
-      }).catch(() => {});
+      // [2026-10-11 open-perf] deferred (the chat_messages response already
+      // carries blocked_by_peer / i_blocked_peer for the composer banner).
+      _afterOpenSettled(() => {
+        if (!mountedRef.current) return;
+        api.chatCheckBlocked(params.email).then(r => {
+          if (r.success && mountedRef.current) {
+            setIBlockedThem(!!r.data?.i_blocked_them);
+            setTheyBlockedMe(!!r.data?.they_blocked_me);
+          }
+        }).catch(() => {});
+      });
     }
   }, [loadMessages]);
 
@@ -21415,7 +21585,7 @@ function ChatConversationInner() {
       const r = await api.chatConversations();
       if (r.success) {
         const convs = Array.isArray(r.data) ? r.data : (r.data?.conversations || []);
-        setForwardConversations(convs.filter(c => String(c.id) !== String(conversationId)));
+        setForwardConversations([...convs].sort((a, b) => (String(b.id) === String(conversationId)) - (String(a.id) === String(conversationId))));
       }
     } catch {} finally {
       setForwardLoading(false);
@@ -24170,6 +24340,9 @@ function ChatConversationInner() {
       let displayText = msg.content;
       if (displayText && displayText.startsWith('{')) {
         try { const parsed = JSON.parse(displayText); displayText = parsed.status || parsed.message || ''; } catch {}
+      } else if (displayText) {
+        // [2026-10-11 QA] "apitest criou o grupo" → "Você criou o grupo" (traduzido, nomes formatados)
+        try { displayText = humanizeSystemText(displayText, { t, myEmail: currentEmail, myNames: [user?.name].filter(Boolean), senderEmail: msg.sender_email, formatName: emailToDisplayName }); } catch {}
       }
       if (!displayText) return null;
       return (
@@ -24316,9 +24489,15 @@ function ChatConversationInner() {
           // (e.g. cold-open after iOS reinstall, hydrate from cache without
           // syncIndex hit). Coerce to file:// if the column stored a bare path.
           const imgLocalPath = (typeof msg.local_path === 'string' && msg.local_path)
-            ? (msg.local_path.startsWith('file://') ? msg.local_path : `file://${msg.local_path}`)
+            ? _rebaseContainerUri(msg.local_path.startsWith('file://') ? msg.local_path : `file://${msg.local_path}`)
             : null;
-          const fullUri = msg._localUri || imgLocalPath || resolveMediaUri(msg.file_url);
+          // [2026-10-11 media-cache-key] Canonical index first (current
+          // container, keyed by host-less URL path / message id), then the
+          // persisted paths rebased onto the current container, then remote.
+          // In-flight uploads keep their picker preview.
+          const _imgIdx = msg._uploading ? null : _indexedLocalUri(msg);
+          const fullUri = _imgIdx || _rebaseContainerUri(msg._localUri) || imgLocalPath || resolveMediaUri(msg.file_url);
+          const _imgIsLocal = typeof fullUri === 'string' && fullUri.startsWith('file://');
           // [WAVE 34 2026-05-20] Dynamic aspect ratio. Backend stores width/
           // height on the message row (chat_messages.width + .height) and
           // image_variants.full_w/full_h for the high-res. Use them to size
@@ -24343,6 +24522,12 @@ function ChatConversationInner() {
           // [WAVE 34 2026-05-20] Per-msg error flag — see mediaErrors state up
           // top. When onError fires AND there's no local cache to fall back
           // to, we render a tap-to-retry placeholder instead of the bare box.
+          // [2026-10-11 open-perf] medium display variant for the bubble (see _dispFailedIds).
+          const _dispRaw = (imgVariants && typeof imgVariants.display === 'string' && imgVariants.display) ? imgVariants.display : null;
+          const dispUri = (!_imgIsLocal && !msg._uploading && !msg._blurred && _dispRaw && !_dispFailedIds.has(msg.id))
+            ? (() => { try { return api.getMediaUrl(_dispRaw); } catch { return null; } })()
+            : null;
+          const bubbleUri = dispUri || fullUri;
           const imgFailed = __ov.err;
           // [BUG-1 2026-10-01] True once ChatMedia has painted the full bytes.
           // Used to retire the blur backdrops + loading ring so they behave as
@@ -24352,7 +24537,7 @@ function ChatConversationInner() {
           // re-mounted and flashed under a photo whose bytes are already in
           // expo-image's cache. Painted earlier THIS session = loaded now
           // (an onError still clears it via imgFailed).
-          const imgLoaded = __ov.loaded || (!imgFailed && !msg._uploading && wasImageLoaded(fullUri));
+          const imgLoaded = __ov.loaded || (!imgFailed && !msg._uploading && (wasImageLoaded(fullUri) || (dispUri && wasImageLoaded(dispUri)) || (_isRemoteMediaRef(msg.file_url) && wasImageLoaded(api.getMediaUrl(msg.file_url)))));
           // PERF: reuse `imgVariants` parsed just above instead of re-running
           // JSON.parse on the same string a second time per image-row render.
           const thumbUri = imgVariants?.thumb
@@ -24668,7 +24853,10 @@ function ChatConversationInner() {
                     AND we have a remote file_url. msg._localUri / imgLocalPath
                     skip this layer because the file:// path already paints
                     instantly via ChatMedia. */}
-                {!imgUploading && !imgFailed && !msg.blurhash && !lqipUri && !thumbUri && !msg._localUri && !imgLocalPath && msg.file_url && !imgLoaded && (
+                {/* [2026-10-11 media-cache-key] + !_imgIsLocal: with the photo on
+                    disk this layer re-downloaded the FULL original from the
+                    network on every cold open just to paint a blur under it. */}
+                {!imgUploading && !imgFailed && !msg.blurhash && !lqipUri && !thumbUri && !msg._localUri && !imgLocalPath && !_imgIsLocal && msg.file_url && !imgLoaded && (
                   <ExpoImage
                     key={`remote-bd-${msg.id}`}
                     source={{ uri: typeof fullUri === 'string' && fullUri.startsWith('http') ? fullUri : (msg.file_url.startsWith('http') ? msg.file_url : `https://chatyy.com.br${msg.file_url}`) }}
@@ -24696,7 +24884,7 @@ function ChatConversationInner() {
                     above the remote blurred bg) so we never see only the
                     skeleton. Gated on no local file (file:// renders instantly
                     via ChatMedia, no backdrop needed) and no upload-in-flight. */}
-                {Platform.OS === 'ios' && !imgUploading && !imgFailed && !msg._localUri && !imgLocalPath && msg.file_url && (msg.blurhash || lqipUri || thumbUri) && !imgLoaded && (
+                {Platform.OS === 'ios' && !imgUploading && !imgFailed && !msg._localUri && !imgLocalPath && !_imgIsLocal && msg.file_url && (msg.blurhash || lqipUri || thumbUri) && !imgLoaded && (
                   <ExpoImage
                     key={`ios-bd-${msg.id}`}
                     source={{ uri: typeof fullUri === 'string' && fullUri.startsWith('http') ? fullUri : (msg.file_url.startsWith('http') ? msg.file_url : `https://chatyy.com.br${msg.file_url}`) }}
@@ -24741,7 +24929,7 @@ function ChatConversationInner() {
                   </View>
                 )}
                 <ChatMedia
-                  uri={fullUri}
+                  uri={bubbleUri}
                   messageId={msg.id}
                   fileSize={msg.file_size || 0}
                   /* [WAVE 58 2026-05-21] Explicit zIndex 3 so the main image
@@ -24808,6 +24996,12 @@ function ChatConversationInner() {
                     setLoadedImages(prev => prev[msg.id] ? prev : ({ ...prev, [msg.id]: true }));
                   }}
                   onError={() => {
+                    if (dispUri && bubbleUri === dispUri) {
+                      // [2026-10-11 open-perf] display variant missing → original.
+                      _dispFailedIds.add(msg.id);
+                      setLoadedImages(prev => ({ ...prev }));
+                      return;
+                    }
                     setDownloadProgress(prev => { if (prev[msg.id] === undefined) return prev; const n = { ...prev }; delete n[msg.id]; return n; });
                     // [WAVE 34] Flip error flag so the placeholder paints.
                     // Cleared on successful re-load (onLoadEnd above) or on
@@ -25005,7 +25199,7 @@ function ChatConversationInner() {
             const sVLocalPath = (typeof msg.local_path === 'string' && msg.local_path)
               ? (msg.local_path.startsWith('file://') ? msg.local_path : `file://${msg.local_path}`)
               : null;
-            const sVUri = msg._localUri || sVLocalPath || resolveMediaUri(msg.file_url);
+            const sVUri = (msg._uploading ? null : _indexedLocalUri(msg)) || _rebaseContainerUri(msg._localUri) || _rebaseContainerUri(sVLocalPath) || resolveMediaUri(msg.file_url); // [2026-10-11 media-cache-key]
             const sVMeta = (typeof msg.meta === 'string') ? _memoJSONSafe(msg.meta) : (msg.meta || null); // [2026-10-06 thread-tech]
             return (
               <ShortVideoBubble
@@ -25040,7 +25234,7 @@ function ChatConversationInner() {
           const videoLocalPath = (typeof msg.local_path === 'string' && msg.local_path)
             ? (msg.local_path.startsWith('file://') ? msg.local_path : `file://${msg.local_path}`)
             : null;
-          const videoUrl = msg._localUri || videoLocalPath || resolveMediaUri(msg.file_url);
+          const videoUrl = (msg._uploading ? null : _indexedLocalUri(msg)) || _rebaseContainerUri(msg._localUri) || _rebaseContainerUri(videoLocalPath) || resolveMediaUri(msg.file_url); // [2026-10-11 media-cache-key]
           const _vidLqipB64 = msg.thumb_b64 || (Platform.OS !== 'web' ? getThumbB64Sync(msg.id) : null);
           const vidUploading = !!msg._uploading;
           const vidProgress = msg._uploadPct || 0;
@@ -26819,10 +27013,24 @@ function ChatConversationInner() {
               )}
               <View style={{ marginTop: 6, paddingTop: 6, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: isDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.08)', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4 }}>
                 {/* [2026-10-10 conv-polish] SVG no lugar do emoji ✏️ + tinta legível no escuro. */}
-                <IconPencil size={11} color={isDark ? 'rgba(255,255,255,0.7)' : '#111111'} />
-                <Text style={{ fontSize: 10, color: isDark ? 'rgba(255,255,255,0.7)' : '#111111', fontWeight: '600' }}>
-                  {t('chatConv.tapToEdit') || 'Toque pra editar'}
-                </Text>
+                {msg._pending ? (
+                  /* [2026-10-11 playlist-fast] optimistic card: creating / adding i/n */
+                  <>
+                    <ActivityIndicator size="small" color={isDark ? 'rgba(255,255,255,0.7)' : '#111111'} style={{ transform: [{ scale: 0.6 }] }} />
+                    <Text style={{ fontSize: 10, color: isDark ? 'rgba(255,255,255,0.7)' : '#111111', fontWeight: '600' }}>
+                      {msg._plProgress
+                        ? ((t('chatConv.playlistAdding') && t('chatConv.playlistAdding') !== 'chatConv.playlistAdding' ? t('chatConv.playlistAdding') : 'Adicionando') + ' ' + msg._plProgress)
+                        : ((t('chatConv.playlistCreating') && t('chatConv.playlistCreating') !== 'chatConv.playlistCreating' ? t('chatConv.playlistCreating') : 'Criando playlist...'))}
+                    </Text>
+                  </>
+                ) : (
+                  <>
+                    <IconPencil size={11} color={isDark ? 'rgba(255,255,255,0.7)' : '#111111'} />
+                    <Text style={{ fontSize: 10, color: isDark ? 'rgba(255,255,255,0.7)' : '#111111', fontWeight: '600' }}>
+                      {t('chatConv.tapToEdit') || 'Toque pra editar'}
+                    </Text>
+                  </>
+                )}
               </View>
             </TouchableOpacity>
           );
@@ -27166,6 +27374,8 @@ function ChatConversationInner() {
           // net beneath normalizeMessageTypes — which also handles this
           // case at the message-shape level.
           let poll = msg.poll;
+          // [2026-10-11 QA] servidor manda poll.votes=[n,...]; o card lia só vote_counts/total_votes
+          if (poll && !Array.isArray(poll.vote_counts) && Array.isArray(poll.votes)) poll = { ...poll, vote_counts: poll.votes, total_votes: typeof poll.total_votes === 'number' ? poll.total_votes : poll.votes.reduce((acc, v) => acc + (v || 0), 0) };
           if (!poll && typeof msg.content === 'string') {
             try {
               const parsed = JSON.parse(msg.content.trim());
@@ -32391,6 +32601,26 @@ function ChatConversationInner() {
             conversationId={conversationId}
             onClose={() => setShowPlaylistCreator(false)}
             onCreated={(msg) => { const normalized = normalizeMessageTypes([msg])[0]; setMessages(prev => prev.some(m => m.id === normalized.id) ? prev : [...prev, normalized]); setShowPlaylistCreator(false); setTimeout(() => flatListRef.current?.scrollToOffset?.({ offset: 0, animated: true }), 200); }}
+            onOptimistic={(msg) => { const normalized = normalizeMessageTypes([msg])[0]; setMessages(prev => [...prev, normalized]); setShowPlaylistCreator(false); setTimeout(() => flatListRef.current?.scrollToOffset?.({ offset: 0, animated: true }), 200); }}
+            onPatch={(matchId, p) => setMessages(prev => {
+              // [2026-10-11 playlist-fast] null = drop the optimistic card.
+              if (p === null) return prev.filter(m => m.id !== matchId);
+              let target = matchId;
+              let list = prev;
+              if (p.id != null && p.id !== matchId && prev.some(m => m.id === p.id)) {
+                // Real row already arrived (sync/WS) → keep it, drop the temp.
+                list = prev.filter(m => m.id !== matchId);
+                target = p.id;
+              }
+              let changed = false;
+              const out = list.map(m => {
+                if (m.id !== target) return m;
+                changed = true;
+                const merged = { ...m, ...p };
+                return p.content ? normalizeMessageTypes([merged])[0] : merged;
+              });
+              return changed || list !== prev ? out : prev;
+            })}
           />
         </Modal>
       )}
@@ -32887,7 +33117,7 @@ function ChatConversationInner() {
                 const tot = Math.max(0, Math.floor(remaining / 1000));
                 const m = Math.floor(tot / 60);
                 const s = tot % 60;
-                const ttl = m > 0 ? `${m}m ${s}s` : `${s}s`;
+                const ttl = m >= 60 ? `${Math.floor(m / 60)} h ${m % 60} min` : m > 0 ? `${m} min` : `${s} s`;
                 if (within) {
                   return (
                     <PressableRow highlightColor={isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)'}
@@ -32901,7 +33131,7 @@ function ChatConversationInner() {
                           {t('chatConv.deleteForEveryone') || 'Apagar para todos'}
                         </Text>
                         <Text style={{ fontSize: 11, color: colors.textTertiary, marginTop: 2 }}>
-                          {`Disponível por ${ttl} mais`}
+                          {String(t('chatConv.deleteForAllRemaining')).replace('{time}', ttl)}
                         </Text>
                       </View>
                     </PressableRow>

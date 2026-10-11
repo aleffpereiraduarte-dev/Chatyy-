@@ -269,7 +269,11 @@
       [
         "expo-router",
         {
-          "origin": "https://chatyy.com.br"
+          "origin": "https://chatyy.com.br",
+          "asyncRoutes": {
+            "web": "production",
+            "default": false
+          }
         }
       ],
       "expo-splash-screen",

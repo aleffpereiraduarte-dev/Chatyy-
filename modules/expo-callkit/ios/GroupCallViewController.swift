@@ -437,13 +437,15 @@ final class GroupCallViewController: UIViewController, @unchecked Sendable {
                 guard let self = self else { return }
                 self.rejoinPending = false
                 guard !self.flags.didHangup else { return }
-                if let old = self.room {
+                let oldRoom = self.room
+                if let old = oldRoom {
                     self.room = nil
                     old.remove(delegate: self)
                     Task { await old.disconnect() }
                 }
                 if self.adoptedPreconnect {
-                    NativeCallRoom.shared.clear()
+                    // [2026-10-11] Scoped: never wipe another call's Room.
+                    NativeCallRoom.shared.clear(ifCurrent: oldRoom, reason: "group_rejoin")
                     self.adoptedPreconnect = false
                 }
                 // Fresh token: the old one may be expired / bound to a
@@ -508,7 +510,7 @@ final class GroupCallViewController: UIViewController, @unchecked Sendable {
         )
         if let r = self.room {
             self.room = nil
-            if adoptedPreconnect { NativeCallRoom.shared.clear() }
+            if adoptedPreconnect { NativeCallRoom.shared.clear(ifCurrent: r, reason: "group_leave") }
             // Same bounded-disconnect pattern as CallViewController (#583/#729).
             Task.detached(priority: .userInitiated) {
                 await withTaskGroup(of: Void.self) { group in

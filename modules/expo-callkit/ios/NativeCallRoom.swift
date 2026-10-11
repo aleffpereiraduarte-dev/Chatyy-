@@ -65,7 +65,7 @@ public enum NativeCallRoomEvent {
     case connectionQualityChanged(participantIdentity: String, quality: String)
 }
 
-@objc public class NativeCallRoom: NSObject {
+@objc public class NativeCallRoom: NSObject, @unchecked Sendable {
 
     @objc public static let shared = NativeCallRoom()
 
@@ -120,15 +120,44 @@ public enum NativeCallRoomEvent {
     private var micPublishCallId: String?
     private var micPublishTask: Task<LocalTrackPublication?, Never>?
 
+    // [2026-10-11 publisher-nil] Credentials the current Room was (or is being)
+    // connected with, so a Room that died during the ring window (delegate=nil
+    // → nobody noticed) can be REJOINED on answer instead of failing the mic
+    // publish with "Invalid state(Publisher is nil)" (voip_diag
+    // call_1791692478723_eu1upbkts: preconnected=true, connected=false at
+    // answer, publish failed 10 s later, caller heard nothing). Rejoining the
+    // SAME Room object keeps every attached RoomDelegate (CallViewController,
+    // OutgoingAnswerWatcher) wired. Main-thread only.
+    private var connectUrl: String?
+    private var connectToken: String?
+    private var rejoinTask: Task<Bool, Never>?
+    private var rejoinGeneration = 0
+    /// The single-flight mic publish for `micPublishCallId` completed with a
+    /// publication (its track dies with the Room if the Room later drops).
+    private var micPublishFinished = false
+
     // --- Publication API (called from CallViewController) ---------------------
 
     /// CallViewController calls this AFTER its own Room.connect await
     /// resolves. After this, JS `adoptNativeRoom(callId)` will see a non-nil
     /// connected snapshot and skip its own Room.connect.
-    public func publish(room: Room, callId: String, roomName: String) {
+    public func publish(room: Room, callId: String, roomName: String,
+                        url: String? = nil, token: String? = nil) {
+        let isNewRoom = (self.room !== room)
+        if isNewRoom {
+            // New Room → forget the previous one's rejoin state + credentials.
+            self.rejoinTask = nil
+            self.rejoinGeneration += 1
+            self.connectUrl = nil
+            self.connectToken = nil
+        }
         self.room = room
         self._callId = callId
         self.lastRoomName = roomName
+        if let u = url, !u.isEmpty, let t = token, !t.isEmpty {
+            self.connectUrl = u
+            self.connectToken = t
+        }
         // Identity may not be available the instant Room.connect resolves;
         // grab the best-effort value now, the `didConnect` forwarder updates
         // it once LK has populated localParticipant.identity.
@@ -153,18 +182,78 @@ public enum NativeCallRoomEvent {
             self.answeredIncomingCallId = nil
             self.micPublishCallId = nil
             self.micPublishTask = nil
+            self.micPublishFinished = false
         } else {
             DispatchQueue.main.async {
                 self.answeredIncomingCallId = nil
                 self.micPublishCallId = nil
                 self.micPublishTask = nil
+                self.micPublishFinished = false
             }
         }
         self.room = nil
         self._callId = nil
         self.lastRoomName = nil
         self.lastIdentity = nil
+        self.connectUrl = nil
+        self.connectToken = nil
+        self.rejoinTask = nil
+        self.rejoinGeneration += 1
         self.state = .idle
+    }
+
+    /// [2026-10-11 publisher-nil] clear() ONLY if the singleton still points at
+    /// `r`. Every CallViewController teardown path (hangup / deinit / LK
+    /// didDisconnect / connect failure) used to call clear() unconditionally,
+    /// so the teardown of a PREVIOUS call that lands while the next call is
+    /// ringing wiped the next call's ring-window preconnect Room from the
+    /// singleton (voip_diag shows old-call teardown interleaved with new-call
+    /// answers: dismiss_skip_stale_callid). The orphan Room then stayed in the
+    /// SFU as a zombie and the answer built a 2nd Room (duplicate identity).
+    /// Returns true when it cleared.
+    @discardableResult
+    public func clear(ifCurrent r: Room?, reason: String) -> Bool {
+        guard let r = r else { return false }
+        if Thread.isMainThread {
+            guard room === r else {
+                if room != nil {
+                    nativeCallDiag("room_clear_skip_not_current", _callId ?? "", "reason=\(reason)")
+                }
+                return false
+            }
+            clear()
+            return true
+        }
+        // Off-main (LiveKit delegate queue): hop async — never main.sync.
+        DispatchQueue.main.async { _ = self.clear(ifCurrent: r, reason: reason) }
+        return false
+    }
+
+    /// [2026-10-11 publisher-nil] CXEnd for `callId` → disconnect the shared
+    /// Room only if it belongs to that call. With maximumCallGroups=1, iOS
+    /// ENDS the previous/stale CallKit call the moment the user answers a new
+    /// one; the stub CXEnd handler then ran an unconditional disconnect() and
+    /// killed the call that had JUST been answered (LiveKit log
+    /// call_1791692112285_b4n0z80v9: callee preconnect CLIENT_REQUEST_LEAVE
+    /// 0.7 s after Accept, never rejoined; caller watchdog peer=false).
+    public func disconnect(ifCallId callId: String, reason: String) {
+        if !Thread.isMainThread {
+            DispatchQueue.main.async { self.disconnect(ifCallId: callId, reason: reason) }
+            return
+        }
+        guard let r = room else { return }
+        let active = _callId ?? ""
+        if !callId.isEmpty && !active.isEmpty && active != callId {
+            nativeCallDiag("room_disconnect_skip_other_call", callId, "reason=\(reason) current=\(active)")
+            return
+        }
+        // Unknown ending callId while the current call was answered here →
+        // never kill a live call on a guess.
+        if callId.isEmpty, let answered = answeredIncomingCallId, answered == active {
+            nativeCallDiag("room_disconnect_skip_unknown_end", active, "reason=\(reason)")
+            return
+        }
+        Task { await r.disconnect() }
     }
 
     public func currentCallId() -> String? { return _callId }
@@ -241,40 +330,200 @@ public enum NativeCallRoomEvent {
             return nil
         }
         micPublishCallId = callId
+        micPublishFinished = false
         let t0 = Date()
-        nativeCallDiag("fast_mic_publish_start", callId, "reason=\(reason) connected=\(r.connectionState == .connected)")
+        nativeCallDiag("fast_mic_publish_start", callId, "reason=\(reason) connected=\(r.connectionState == .connected) lk=\(NativeCallRoom.stateName(r.connectionState))")
         // [2026-10-11 noise] CallKit-answer fast path publishes the mic before
         // any call VC exists → attach RNNoise here too (idempotent, never throws).
         RNNoiseAudioProcessor.install()
-        let task = Task<LocalTrackPublication?, Never> {
-            // A Room still finishing its ring-window connect throws
-            // "Publisher is nil" on publish — wait (bounded) for .connected.
+        // [2026-10-11 publisher-nil] Robust publish. Before: poll 50 ms × 10 s
+        // for .connected, then ONE setMicrophone → "Publisher is nil" whenever
+        // the ring-window Room had died (it has no delegate, so nobody saw it
+        // drop) or was still mid-(re)connect. Now, up to 3 rounds of:
+        //   1. wait for .connected on the Room's own connectionState event
+        //      (RoomStateWaiter, no polling; bounded);
+        //   2. Room .disconnected (dead) → REJOIN the same Room (single-flight
+        //      rejoinIfDead: stored token → App Group → fresh token);
+        //   3. setMicrophone; a failure (Publisher is nil / transport not
+        //      ready) loops back to 1 instead of giving up.
+        let task = Task<LocalTrackPublication?, Never> { [weak self] in
+            var lastErr = "none"
             var waitedMs = 0
-            while r.connectionState != .connected && waitedMs < 10_000 {
-                try? await Task.sleep(nanoseconds: 50_000_000)
-                waitedMs += 50
-            }
-            do {
-                let pub = try await r.localParticipant.setMicrophone(
-                    enabled: true,
-                    captureOptions: CallViewController.defaultAudioCaptureOptions()
-                )
-                let ms = Int(Date().timeIntervalSince(t0) * 1000)
-                nativeCallDiag("fast_mic_published", callId, "reason=\(reason) ms=\(ms) waitedMs=\(waitedMs)")
-                return pub
-            } catch {
-                nativeCallDiag("fast_mic_publish_failed", callId, "reason=\(reason) err=\(error)")
-                // Let a later caller (CallViewController adopt path) retry.
-                DispatchQueue.main.async {
-                    if self.micPublishCallId == callId {
-                        self.micPublishCallId = nil
-                        self.micPublishTask = nil
+            for attempt in 1...3 {
+                guard let self = self else { return nil }
+                // The call may have been torn down / replaced meanwhile.
+                let stillOurs: Bool = await MainActor.run {
+                    self.room === r && self._callId == callId && self.micPublishCallId == callId
+                }
+                if !stillOurs {
+                    nativeCallDiag("fast_mic_publish_abandoned", callId, "reason=\(reason) attempt=\(attempt)")
+                    return nil
+                }
+                if r.connectionState != .connected {
+                    let w0 = Date()
+                    var st = r.connectionState
+                    if st != .disconnected {
+                        // .connecting / .reconnecting → let LiveKit finish.
+                        st = await RoomStateWaiter.wait(room: r, timeout: attempt == 1 ? 8.0 : 5.0)
+                    }
+                    if st != .connected {
+                        // Dead (or stuck) → rejoin the same Room.
+                        let rejoin: Task<Bool, Never>? = await MainActor.run {
+                            self.rejoinIfDead(callId: callId, reason: "mic_publish_\(reason)")
+                        }
+                        if let rejoin = rejoin {
+                            _ = await rejoin.value
+                        }
+                        if r.connectionState != .connected {
+                            st = await RoomStateWaiter.wait(room: r, timeout: 4.0)
+                        } else {
+                            st = .connected
+                        }
+                    }
+                    waitedMs += Int(Date().timeIntervalSince(w0) * 1000)
+                    if st != .connected {
+                        lastErr = "not_connected lk=\(NativeCallRoom.stateName(r.connectionState))"
+                        nativeCallDiag("fast_mic_publish_wait_timeout", callId, "reason=\(reason) attempt=\(attempt) \(lastErr)")
+                        continue
                     }
                 }
-                return nil
+                do {
+                    let pub = try await r.localParticipant.setMicrophone(
+                        enabled: true,
+                        captureOptions: CallViewController.defaultAudioCaptureOptions()
+                    )
+                    let ms = Int(Date().timeIntervalSince(t0) * 1000)
+                    nativeCallDiag("fast_mic_published", callId, "reason=\(reason) ms=\(ms) waitedMs=\(waitedMs) attempt=\(attempt)")
+                    DispatchQueue.main.async {
+                        if self.micPublishCallId == callId { self.micPublishFinished = true }
+                    }
+                    return pub
+                } catch {
+                    lastErr = "\(error)"
+                    nativeCallDiag("fast_mic_publish_retry", callId, "reason=\(reason) attempt=\(attempt) lk=\(NativeCallRoom.stateName(r.connectionState)) err=\(error)")
+                    // Publisher transport not ready yet / Room dropped between
+                    // the check and the publish → short pause, next round.
+                    try? await Task.sleep(nanoseconds: 400_000_000)
+                }
             }
+            nativeCallDiag("fast_mic_publish_failed", callId, "reason=\(reason) err=\(lastErr)")
+            // Let a later caller (CallViewController adopt path / watchdog) retry.
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                if self.micPublishCallId == callId {
+                    self.micPublishCallId = nil
+                    self.micPublishTask = nil
+                }
+            }
+            return nil
         }
         micPublishTask = task
+        return task
+    }
+
+    static func stateName(_ s: ConnectionState) -> String {
+        switch s {
+        case .disconnected: return "disconnected"
+        case .connecting: return "connecting"
+        case .reconnecting: return "reconnecting"
+        case .connected: return "connected"
+        @unknown default: return "unknown"
+        }
+    }
+
+    /// [2026-10-11 publisher-nil] Single-flight REJOIN of the call Room when it
+    /// is DEAD (`.disconnected`). Only then: forcing connect() on a Room that is
+    /// still .connecting/.reconnecting would run LiveKit's cleanUp →
+    /// didDisconnectWithError → CallViewController ends the call. Reuses the
+    /// SAME Room object (Room.connect() runs its own cleanUp first; from
+    /// .disconnected that fires no disconnect event), so CallViewController /
+    /// OutgoingAnswerWatcher stay attached and get roomDidConnect again; a
+    /// failed rejoin fires didFailToConnect (not handled by the VC → its 25 s
+    /// watchdog decides). Credentials: the ones the Room was published with →
+    /// App Group lk_token_<callId> → a fresh token (2nd try).
+    /// MAIN THREAD. Returns nil when there is nothing to do (no Room for this
+    /// call, or it is not dead); otherwise the shared Task (true = connected).
+    @discardableResult
+    public func rejoinIfDead(callId: String, reason: String) -> Task<Bool, Never>? {
+        guard let r = room, let active = _callId, active == callId else { return nil }
+        if let inFlight = rejoinTask { return inFlight }
+        let st = r.connectionState
+        guard st == .disconnected else { return nil }
+        let gen = rejoinGeneration
+        var url0 = connectUrl ?? ""
+        var token0 = connectToken ?? ""
+        let ud = UserDefaults(suiteName: "group.com.onemundo.mail")
+        if url0.isEmpty || token0.isEmpty,
+           let t = ud?.string(forKey: "lk_token_\(callId)"), !t.isEmpty,
+           let u = ud?.string(forKey: "lk_url_\(callId)"), !u.isEmpty {
+            url0 = u; token0 = t
+        }
+        let storedUrl = url0
+        let storedToken = token0
+        let identity = ud?.string(forKey: "user_email") ?? ""
+        nativeCallDiag("room_rejoin_start", callId, "reason=\(reason) haveCreds=\(!storedToken.isEmpty)")
+        let t0 = Date()
+        let task = Task<Bool, Never> { [weak self] in
+            var url = storedUrl
+            var token = storedToken
+            for attempt in 1...2 {
+                if attempt == 2 || token.isEmpty || url.isEmpty {
+                    // 2nd try (or no stored creds): mint a fresh token. The dead
+                    // Room already left the SFU, so a new token can't create a
+                    // duplicate identity.
+                    do {
+                        let fresh = try await NativeCallTokenFetcher.shared.fetchToken(
+                            roomName: callId, identity: identity, role: "publisher")
+                        url = fresh.url; token = fresh.token
+                    } catch {
+                        nativeCallDiag("room_rejoin_token_failed", callId, "attempt=\(attempt) err=\(error)")
+                        break
+                    }
+                }
+                // Still the current Room of this call?
+                let current: Bool = await MainActor.run {
+                    guard let self = self else { return false }
+                    return self.room === r && self._callId == callId && self.rejoinGeneration == gen
+                }
+                if !current { return false }
+                if r.connectionState == .connected { return true }
+                do {
+                    try await r.connect(url: url, token: token,
+                                        connectOptions: NativeCallTokenFetcher.connectOptions(forToken: token))
+                    let ms = Int(Date().timeIntervalSince(t0) * 1000)
+                    nativeCallDiag("room_rejoined", callId, "reason=\(reason) attempt=\(attempt) ms=\(ms)")
+                    await MainActor.run {
+                        guard let self = self, self.room === r else { return }
+                        self.connectUrl = url
+                        self.connectToken = token
+                        self.didConnect() // state=.connected + onLkConnected to JS
+                        if self.micPublishCallId == callId && self.micPublishFinished {
+                            // The mic WAS published before the Room died; that
+                            // track is gone. Reset the single-flight so the
+                            // mute-aware caller (CallViewController watchdog /
+                            // P2P fallback) republishes. An in-flight publish
+                            // (the usual answer-path case) simply continues and
+                            // publishes after this rejoin.
+                            self.micPublishCallId = nil
+                            self.micPublishTask = nil
+                            self.micPublishFinished = false
+                        }
+                    }
+                    return true
+                } catch {
+                    nativeCallDiag("room_rejoin_failed", callId, "attempt=\(attempt) err=\(error)")
+                }
+            }
+            return false
+        }
+        rejoinTask = task
+        Task { [weak self] in
+            _ = await task.value
+            await MainActor.run {
+                guard let self = self, self.rejoinGeneration == gen else { return }
+                self.rejoinTask = nil
+            }
+        }
         return task
     }
 
@@ -629,6 +878,61 @@ final class OutgoingAnswerWatcher: NSObject, RoomDelegate {
               didSubscribeTrack publication: RemoteTrackPublication) {
         DispatchQueue.main.async { [weak self] in
             self?.publishOnAnswer(reason: "remote_track_subscribed")
+        }
+    }
+}
+
+/// [2026-10-11 publisher-nil] Awaits a Room's next terminal connection state
+/// (.connected or .disconnected) via RoomDelegate.didUpdateConnectionState —
+/// no polling — bounded by `timeout`. Returns the Room's state at the end.
+/// LiveKit's MulticastDelegate holds delegates weakly, so the waiter is kept
+/// alive by the continuation/timeout closures and removed explicitly.
+final class RoomStateWaiter: NSObject, RoomDelegate, @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<ConnectionState, Never>?
+    private var finished = false
+
+    private override init() {
+        super.init()
+    }
+
+    static func wait(room: Room, timeout: TimeInterval) async -> ConnectionState {
+        let cur = room.connectionState
+        if cur == .connected || cur == .disconnected { return cur }
+        let w = RoomStateWaiter()
+        let result: ConnectionState = await withCheckedContinuation { (c: CheckedContinuation<ConnectionState, Never>) in
+            w.lock.lock()
+            w.continuation = c
+            w.lock.unlock()
+            room.add(delegate: w)
+            // Re-check after subscribing: the transition may have happened
+            // between the first read and add(delegate:).
+            let again = room.connectionState
+            if again == .connected || again == .disconnected {
+                w.finish(again)
+                return
+            }
+            DispatchQueue.global().asyncAfter(deadline: .now() + timeout) {
+                w.finish(room.connectionState)
+            }
+        }
+        room.remove(delegate: w)
+        return result
+    }
+
+    private func finish(_ s: ConnectionState) {
+        lock.lock()
+        if finished { lock.unlock(); return }
+        finished = true
+        let c = continuation
+        continuation = nil
+        lock.unlock()
+        c?.resume(returning: s)
+    }
+
+    func room(_ room: Room, didUpdateConnectionState connectionState: ConnectionState, from oldConnectionState: ConnectionState) {
+        if connectionState == .connected || connectionState == .disconnected {
+            finish(connectionState)
         }
     }
 }

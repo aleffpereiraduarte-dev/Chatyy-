@@ -6789,6 +6789,8 @@ export async function chatGetSettings() {
 }
 
 export async function chatUpdateSettings(data) {
+  // [2026-10-11 open-perf] invalidates chat-conversation's per-session settings cache.
+  try { globalThis.__chatyy_chat_settings_rev = (Number(globalThis.__chatyy_chat_settings_rev) || 0) + 1; } catch {}
   return apiCall('chat_update_settings', data, 'POST');
 }
 
@@ -8015,8 +8017,13 @@ export async function chatMeetupRsvp(messageId, status) {
 }
 
 // Shared Playlist
-export async function chatCreatePlaylist(conversationId, name) {
-  return apiCall('chat_create_playlist', { conversation_id: conversationId, name }, 'POST');
+export async function chatCreatePlaylist(conversationId, name, songs) {
+  // [2026-10-11 playlist-fast] Optional `songs` (array of {title, artist, url,
+  // cover, preview_url, duration}) — new servers save them in the same request
+  // and answer `songs_saved: n`; old servers ignore the field.
+  const body = { conversation_id: conversationId, name };
+  if (Array.isArray(songs) && songs.length) body.songs = songs;
+  return apiCall('chat_create_playlist', body, 'POST');
 }
 
 export async function chatPlaylistAddSong(messageId, song) {

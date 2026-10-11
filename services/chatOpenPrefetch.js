@@ -24,6 +24,11 @@ import { AppState } from 'react-native';
 
 const _num = (v) => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
 const _inflight = new Map(); // cid → at
+// [2026-10-11 open-perf] cid → { since, p } of the chat_messages request in
+// flight, so the conversation screen's loadMessages can ADOPT it instead of
+// firing an overlapping delta (push-tap open used to send 3 requests).
+const _inflightReq = new Map();
+export function peekInflightDelta(cid) { return _inflightReq.get(_num(cid)) || null; }
 const TIMEOUT_MS = 6000;
 
 function _off() { return globalThis.__chatyy_open_prefetch === false; }
@@ -86,13 +91,15 @@ export function prefetchConversationDelta(cid, reason = '') {
   const run = async () => {
     try {
       const api = require('./api');
-      const r = await _withTimeout(api.chatMessages(id, 30, null, since), TIMEOUT_MS);
+      const p = _withTimeout(api.chatMessages(id, 30, null, since), TIMEOUT_MS);
+      _inflightReq.set(id, { since, p });
+      const r = await p;
       if (!r || !r.success) return 0;
       const rows = _storeRows(id, Array.isArray(r.data?.messages) ? r.data.messages : []);
       _emitRows(rows);
       try { require('./bootTrace').mark?.('open_prefetch_' + (reason || 'x')); } catch {}
       return rows.length;
-    } catch { return 0; } finally { _inflight.delete(id); }
+    } catch { return 0; } finally { _inflight.delete(id); _inflightReq.delete(id); }
   };
   return run();
 }
@@ -169,4 +176,4 @@ export function init() {
   } catch {}
 }
 
-export default { prefetchConversationDelta, foregroundCatchUp, init };
+export default { prefetchConversationDelta, foregroundCatchUp, init, peekInflightDelta };

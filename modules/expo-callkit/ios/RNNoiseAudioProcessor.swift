@@ -2,10 +2,11 @@
 //
 // [2026-10-11 noise] Replaces the 2026-10-04 "honest disabled stub". RNNoise
 // (Xiph/Mozilla, BSD-3) is now vendored as C in ./ChatyyNS (chatyy_ns.{h,c} +
-// rnnoise/ v0.1.1, default model compiled in) and exposed to Swift through
-// the pod's public header `chatyy_ns.h` (CocoaPods: Swift static-lib pods get
-// `-import-underlying-module`, so the C functions are in scope without an
-// import line).
+// rnnoise/ v0.1.1, default model compiled in) and built as its OWN pure-C pod
+// `ChatyyNoise` (ChatyyNS/ChatyyNoise.podspec — no React deps, no header maps;
+// inside this pod folly's Stdlib.h shadowed libc). Swift sees the C API
+// (chatyy_ns.h) through `import ChatyyNoise`; `#if canImport(ChatyyNoise)`
+// keeps a pass-through build if that pod is ever missing.
 //
 // Hook point (verified in client-sdk-swift 2.0.18 sources):
 //   AudioManager.shared.capturePostProcessingDelegate: AudioCustomProcessingDelegate?
@@ -36,6 +37,9 @@
 import Foundation
 import os.log
 import LiveKitClient
+#if canImport(ChatyyNoise)
+import ChatyyNoise
+#endif
 
 @objc final class RNNoiseAudioProcessor: NSObject, AudioCustomProcessingDelegate {
 
@@ -54,11 +58,9 @@ import LiveKitClient
 
     /// Runtime on/off (atomic in C, read by the audio thread every frame).
     /// Does NOT persist — callers persist `rnnoise_enabled` themselves.
-    // [2026-10-11] O C do RNNoise ficou FORA do pod no iOS por enquanto: no target
-    // ExpoCallKit os headers do folly (Stdlib.h/String.h…) sombreiam os da libc em
-    // arquivos .c ("'cstdlib' file not found"). Sem CHATYY_NS_C este processador
-    // é pass-through (o WebRTC continua com NS/AEC/AGC próprios). Android tem RNNoise.
-    #if CHATYY_NS_C
+    // [2026-10-11 noise-ios] RNNoise real via pod ChatyyNoise. Sem o módulo
+    // (canImport falso) este processador é pass-through (WebRTC NS/AEC/AGC).
+    #if canImport(ChatyyNoise)
     @objc var enabled: Bool {
         get { return chatyy_ns_is_enabled() != 0 }
         set { chatyy_ns_set_enabled(newValue ? 1 : 0) }
@@ -75,7 +77,7 @@ import LiveKitClient
         // chatyy_ns_create also pre-builds RNNoise's global tables, so this must
         // run off the audio thread — `shared` is first touched from install()
         // (main thread) or the ExpoCallKit module functions (JS thread).
-        #if CHATYY_NS_C
+        #if canImport(ChatyyNoise)
         self.ns = chatyy_ns_create()
         #else
         self.ns = nil
@@ -95,9 +97,18 @@ import LiveKitClient
 
     /// Attach to LiveKit's shared capture APM (idempotent). Call before the mic
     /// is published. Never throws; on any problem the call keeps WebRTC NS only.
+    /// One voip_diag beacon per process: proves on a TestFlight build whether
+    /// the ChatyyNoise pod really linked (available=true) or the Swift side
+    /// compiled in pass-through (canImport false).
+    private static var reportedAvailability = false
+
     @objc static func install() {
         let p = shared
         p.enabled = persistedEnabled()
+        if !reportedAvailability {
+            reportedAvailability = true
+            nativeCallDiag("rnnoise_install", "", "available=\(p.ns != nil) enabled=\(p.enabled)")
+        }
         guard p.ns != nil else {
             os_log("install skipped — RNNoise unavailable", log: p.log, type: .error)
             return
@@ -124,7 +135,7 @@ import LiveKitClient
 
     @objc func audioProcessingInitialize(sampleRate sampleRateHz: Int, channels: Int) {
         // New stream / rate: start the recurrent state clean (no allocation).
-        #if CHATYY_NS_C
+        #if canImport(ChatyyNoise)
         if let ns = ns { chatyy_ns_reset(ns) }
         #endif
     }
@@ -132,7 +143,7 @@ import LiveKitClient
     @objc func audioProcessingProcess(audioBuffer: LKAudioBuffer) {
         // Mono only (LiveKit mic capture is mono); anything else passes through
         // so a stereo source never ends up with denoised-L / raw-R.
-        #if CHATYY_NS_C
+        #if canImport(ChatyyNoise)
         guard let ns = ns, audioBuffer.channels == 1 else { return }
         let frames = audioBuffer.frames
         guard frames == 480 else { return } // 10 ms @ 48 kHz only (C re-checks)

@@ -287,6 +287,11 @@ export default function StatusStudio({ visible, seed, onClose, onOpenCamera, use
   const [captionFocus, setCaptionFocus] = useState(false);
   const [audience, setAudience] = useState('all');
   const [exceptList, setExceptList] = useState([]);
+  // [2026-10-11 qa-sweep2] Close-friends roster size (null = unknown). Picking
+  // "Melhores amigos" with an empty roster published a status nobody could see
+  // and gave no hint — Instagram blocks that and asks to build the list first.
+  const [closeFriendsCount, setCloseFriendsCount] = useState(null);
+  const textInputRef = useRef(null);
   const [publishing, setPublishing] = useState(false);
   const [capturing, setCapturing] = useState(null); // { uri } durante o achatamento
   const [dragInfo, setDragInfo] = useState({ dragging: false, trash: false });
@@ -345,6 +350,14 @@ export default function StatusStudio({ visible, seed, onClose, onOpenCamera, use
       try {
         const pv = await api.chatPrivacyGet?.();
         if (pv?.success && Array.isArray(pv.data?.status_except)) setExceptList(pv.data.status_except.map(e => String(e || '').toLowerCase()).filter(Boolean));
+      } catch {}
+      try {
+        const cf = await api.closeFriendsList?.();
+        if (cf?.success) {
+          const d = cf.data || {};
+          const list = d.close_friends || d.list || d.friends || [];
+          setCloseFriendsCount(typeof d.count === 'number' ? d.count : (Array.isArray(list) ? list.length : null));
+        }
       } catch {}
     })();
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -567,6 +580,13 @@ export default function StatusStudio({ visible, seed, onClose, onOpenCamera, use
 
   const publish = useCallback(async () => {
     if (publishing) return;
+    if (audience === 'close_friends' && closeFriendsCount === 0) {
+      // Empty roster → nobody would see it. Re-open the audience sheet, which
+      // now shows the "lista vazia" warning + Editar shortcut.
+      setTool('audience');
+      try { _Haptics?.notificationAsync?.(_Haptics.NotificationFeedbackType?.Warning); } catch {}
+      return;
+    }
     const email = user?.email || '';
     const base = audienceMeta();
     if (mode === 'text') {
@@ -643,7 +663,22 @@ export default function StatusStudio({ visible, seed, onClose, onOpenCamera, use
       setCapturing(null);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [publishing, user, audienceMeta, mode, txt, items, edits, ovs, caption, stageW, stageH, filtersOn, onClose, t, seed]);
+  }, [publishing, user, audienceMeta, audience, closeFriendsCount, mode, txt, items, edits, ovs, caption, stageW, stageH, filtersOn, onClose, t, seed]);
+
+  // [2026-10-11 qa-sweep2] Web: autoFocus is off on web (it fired mid slide-in
+  // and the Modal focus trap swallowed it), so the caret never reached the
+  // text-status field and typing did nothing until a click. Focus once the
+  // modal has painted instead.
+  useEffect(() => {
+    if (Platform.OS !== 'web' || !visible || mode !== 'text') return undefined;
+    const tms = [120, 450].map(ms => setTimeout(() => {
+      try {
+        const el = textInputRef.current;
+        if (el && (typeof document === 'undefined' || document.activeElement !== el)) el.focus?.();
+      } catch {}
+    }, ms));
+    return () => tms.forEach(clearTimeout);
+  }, [visible, mode]);
 
   // ── adicionar mídia a partir do modo texto / mais fotos ──
   const pickFromGallery = useCallback(async () => {
@@ -703,6 +738,7 @@ export default function StatusStudio({ visible, seed, onClose, onOpenCamera, use
         <View style={{ width: stageW, height: stageH, alignItems: 'center', justifyContent: 'center' }}>
           <GradientFill colors={g.colors} id={`stg_${g.id}`} />
           <TextInput
+            ref={textInputRef}
             value={txt.text}
             onChangeText={(v) => setTxt(s => ({ ...s, text: v.slice(0, 700) }))}
             placeholder={t('status.studio.textPlaceholder')}
@@ -1157,7 +1193,7 @@ export default function StatusStudio({ visible, seed, onClose, onOpenCamera, use
             {[
               { id: 'all', Icon: IconGlobe, label: t('status.audience.all'), sub: t('status.audience.allSub') },
               { id: 'contacts', Icon: IconUsers, label: t('status.audience.contacts'), sub: t('status.audience.contactsSub') },
-              { id: 'close_friends', Icon: IconStar, label: t('status.audience.closeFriends'), sub: t('status.audience.closeFriendsSub'), edit: '/close-friends' },
+              { id: 'close_friends', Icon: IconStar, label: t('status.audience.closeFriends'), sub: closeFriendsCount === 0 ? t('status.audience.closeFriendsEmpty') : (closeFriendsCount > 0 ? `${closeFriendsCount} · ${t('status.audience.closeFriendsSub')}` : t('status.audience.closeFriendsSub')), warn: closeFriendsCount === 0, edit: '/close-friends' },
               { id: 'except', Icon: IconEyeOff, label: t('status.audience.except'), sub: exceptList.length ? `${exceptList.length} · ${t('status.audience.exceptSub')}` : t('status.audience.exceptSub'), edit: '/status-except' },
             ].map(o => {
               const on = audience === o.id;
@@ -1169,7 +1205,7 @@ export default function StatusStudio({ visible, seed, onClose, onOpenCamera, use
                   </View>
                   <View style={{ flex: 1, marginLeft: 12 }}>
                     <Text style={{ color: sheetText, fontWeight: '700', fontSize: 15 }}>{o.label}</Text>
-                    <Text style={{ color: sheetSub, fontSize: 12.5, marginTop: 1 }} numberOfLines={2}>{o.sub}</Text>
+                    <Text style={{ color: o.warn && on ? (colors.danger || colors.error || '#E5484D') : sheetSub, fontSize: 12.5, marginTop: 1, fontWeight: o.warn && on ? '600' : '400' }} numberOfLines={2}>{o.sub}</Text>
                   </View>
                   {o.edit && router ? (
                     <TouchableOpacity onPress={() => { chooseAudience(o.id); setTool(null); onClose?.(); setTimeout(() => { try { router.push(o.edit); } catch {} }, 200); }} hitSlop={8} style={{ paddingHorizontal: 6 }}>

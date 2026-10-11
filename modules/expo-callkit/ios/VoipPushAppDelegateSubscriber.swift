@@ -1350,7 +1350,21 @@ extension VoipPushAppDelegateSubscriber: CXProviderDelegate {
         }
         // [stage 2] Tear the native LK room. Safe to call even if connect never
         // fired — disconnect() is idempotent.
-        NativeCallRoom.shared.disconnect()
+        // [2026-10-11 publisher-nil] …but ONLY the Room of the call that is
+        // ending. With maximumCallGroups=1 iOS ends the previous/stale CallKit
+        // call the instant the user answers a new one; the unconditional
+        // disconnect() here killed the JUST-answered call (LiveKit log
+        // call_1791692112285_b4n0z80v9: callee CLIENT_REQUEST_LEAVE 0.7 s after
+        // Accept, never came back).
+        let endingRoomCallId: String = {
+            if !endingCallId.isEmpty { return endingCallId }
+            if let p = endingPayload {
+                if let s = p["call_id"] as? String, !s.isEmpty { return s }
+                if let s = p["callId"] as? String, !s.isEmpty { return s }
+            }
+            return ""
+        }()
+        NativeCallRoom.shared.disconnect(ifCallId: endingRoomCallId, reason: "stub_cxend")
 
         // Do NOT manually setActive(false) here. CallKit fires didDeactivate
         // automatically after fulfill(); calling setActive ourselves competes

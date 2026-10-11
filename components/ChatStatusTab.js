@@ -3824,7 +3824,15 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
             <View style={[styles.viewerHeader, _viewerHdrNarrow && isOwnStatus && { flexWrap: 'wrap', justifyContent: 'flex-end', rowGap: 6 }]}>
               <AvatarCircle name={viewerOwnerName} email={viewerOwnerEmail} size={40} />
               <View style={[styles.viewerHeaderInfo, _viewerHdrNarrow && isOwnStatus && { minWidth: Math.max(80, SCREEN_WIDTH - 130) }]}>
-                <Text style={styles.viewerName} numberOfLines={1}>{viewerOwnerName}</Text>
+                {/* [2026-10-11 qa-sweep2] Own status said "apitest" (raw handle);
+                    WhatsApp shows "Meu status". Others: humanized name, and a
+                    close-friends badge when the item was shared to that list. */}
+                <Text style={styles.viewerName} numberOfLines={1}>
+                  {isOwnStatus ? (t?.('status.myStatus') || 'Meu status') : emailToDisplayName(viewerOwnerName || viewerOwnerEmail || '')}
+                  {((currentViewerItem?.meta?.privacy || currentViewerItem?.privacy) === 'close_friends') ? (
+                    <Text style={{ color: '#22C55E', fontSize: 12, fontWeight: '700' }}>{`  ${t?.('status.closeFriends') || 'Melhores amigos'}`}</Text>
+                  ) : null}
+                </Text>
                 <Text style={styles.viewerTime} numberOfLines={1}>
                   {timeAgo(currentViewerItem?.timestamp, t)}
                 </Text>
@@ -4280,7 +4288,7 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
                       activeOpacity={0.6}
                       style={{ flex: 1, alignItems: 'center', paddingVertical: 8, borderRadius: 20, backgroundColor: 'rgba(255,255,255,0.08)' }}
                       accessibilityRole="button"
-                      accessibilityLabel={'Reply ' + emoji}
+                      accessibilityLabel={(t?.('status.replyWithEmoji') || 'Responder com {emoji}').replace('{emoji}', emoji)}
                     >
                       <Text style={{ fontSize: 22 }}>{emoji}</Text>
                     </TouchableOpacity>

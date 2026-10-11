@@ -71,6 +71,7 @@ import PressableRow from './PressableRow';
 import { BlurBackdrop } from './NativeBlur'; // [2026-10-07 native-ui-build]
 import FadeSlideIn from './FadeSlideIn';
 import { haptic } from '../constants/theme';
+import { humanizeSystemText } from '../utils/systemMessageText';
 
 let NativeSwipeable = null;
 if (Platform.OS !== 'web') {
@@ -740,6 +741,20 @@ const ConversationRow = React.memo(function ConversationRow({
       else statusType = 'sent';
     }
 
+    // [2026-10-11 qa-sweep2] Deleted last message: the server rewrites content
+    // to a pt-BR tombstone ("Você apagou esta mensagem") and the own-message
+    // branch below then prefixed "Você:" → "Você: Você apagou esta mensagem"
+    // (and the peer side read "Você apagou…" about the OTHER person). Render the
+    // localized tombstone from the viewer's perspective, no ticks/prefix.
+    if (lastMsg.deleted || lastMsg.deleted_at) {
+      const _ownDel = (lastMsg.sender_email || '').toLowerCase() === _me;
+      const _tomb = _ownDel
+        ? (t('chatConv.deletedMessageOwn') || 'Você apagou esta mensagem')
+        : (t('chatConv.deletedMessage') || 'Esta mensagem foi apagada');
+      const _who = (!_ownDel && (isGroup || isChannel)) ? emailToDisplayName(lastMsg.sender_name || lastMsg.sender_email || '') : null;
+      return { preview: _tomb, previewSender: _who || null, statusType: null };
+    }
+
     let content = typeof lastMsg.content === 'string' ? lastMsg.content : (lastMsg.content ? JSON.stringify(lastMsg.content) : '');
     // Caption captured separately so media-type labels can surface real text
     // ("📷 sunset at the beach" instead of "📷 Foto").
@@ -881,10 +896,13 @@ const ConversationRow = React.memo(function ConversationRow({
       // so the client can localize it. Only the open-thread renderer
       // (chat-conversation.js) knew how to decode it, so the raw token showed
       // up verbatim in this preview row whenever a leave was the last event.
-      if (typeof content === 'string' && content.startsWith('__sys.user_left__|')) {
-        const leftName = content.split('|').slice(1).join('|');
-        content = (t('chatConv.userLeft') || '{name} saiu do grupo').replace('{name}', leftName);
-      }
+      // [2026-10-11 qa-sweep2] Server rows are pt-BR sentences with the actor's
+      // handle ("apitest criou o grupo") — humanize to "Você criou o grupo" and
+      // localize. Also decodes the __sys.user_left__ token.
+      const _myNames = (Array.isArray(conversation.members) ? conversation.members : [])
+        .filter(m => String(m?.email || '').toLowerCase() === _me)
+        .map(m => m.display_name || m.name).filter(Boolean);
+      content = humanizeSystemText(content, { t, myEmail: _me, myNames: _myNames, senderEmail: lastMsg.sender_email, formatName: emailToDisplayName });
       preview = content;
     } else if ((isGroup || isChannel) && (lastMsg.sender_email || '').toLowerCase() !== _me) {
       const sender = emailToDisplayName(lastMsg.sender_name || lastMsg.sender_email || '');
@@ -899,7 +917,7 @@ const ConversationRow = React.memo(function ConversationRow({
     }
     }
     return { preview, previewSender, statusType };
-  }, [lastMsg, isGroup, isChannel, _me, t]);
+  }, [lastMsg, isGroup, isChannel, _me, t, conversation.members]);
 
   // ── [perf 2026-10-06] FlashList v2 RECYCLES this component instance for a
   // different conversation. The "previous value" refs below (muted / mentions /
@@ -2527,9 +2545,13 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab, reque
                   badge={null}
                   isDark={isDark}
                   colors={colors}
+                  // [2026-10-11 qa-sweep2] Close-friends items get the green ring
+                  // here too (the Status tab already did; the strip didn't).
+                  closeFriends={!isLive && (s.items || []).some(it => (it?.meta?.privacy || it?.privacy) === 'close_friends')}
                 />
                 <Text style={{ fontSize: 11.5, color: colors.text, marginTop: 6, fontWeight: '500', letterSpacing: -0.1 }} numberOfLines={1}>
-                  {s.name || s.email?.split('@')[0]}
+                  {/* [2026-10-11 qa-sweep2] humanized like the rows ("apitest" → "Apitest") */}
+                  {emailToDisplayName(s.name || s.email?.split('@')[0] || '')}
                 </Text>
               </TouchableOpacity>
             </View>
@@ -5386,13 +5408,16 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
     } catch {}
   }, []);
 
-  const handleMuteConversation = useCallback(async (conv) => {
+  const handleMuteConversation = useCallback(async (conv, untilEpoch) => {
     // Optimistic toggle
     const wasMuted = !!conv.muted;
     setConversations(prev => prev.map(c => c.id === conv.id ? { ...c, muted: !wasMuted } : c));
     try {
       // muteUntil null toggles. Pass 0 to unmute, or a unix ts to mute until.
-      await api.chatMute(conv.id, wasMuted ? 0 : (Math.floor(Date.now()/1000) + 8*3600));
+      // [2026-10-11 qa-sweep2] The long-press sheet now asks for a duration
+      // (8 h / 1 semana / sempre, like WhatsApp); swipe keeps the 8 h default.
+      const _until = (typeof untilEpoch === 'number' && untilEpoch > 0) ? untilEpoch : (Math.floor(Date.now()/1000) + 8*3600);
+      await api.chatMute(conv.id, wasMuted ? 0 : _until);
       loadConversations(false);
     } catch {
       setConversations(prev => prev.map(c => c.id === conv.id ? { ...c, muted: wasMuted } : c));
@@ -5488,7 +5513,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
   useEffect(() => {
     lpActions.current = {
       onPin: (conv) => handlePinConversation(conv),
-      onMute: (conv) => handleMuteConversation(conv),
+      onMute: (conv, until) => handleMuteConversation(conv, until),
       onMarkUnread: (conv) => handleMarkUnreadConversation(conv),
       onArchive: (conv) => handleArchiveConversation(conv),
       onSelect: (conv) => enterSelectionMode(conv.id),
@@ -8094,6 +8119,9 @@ function ChatLongPressSheet({ conv, onClose, actions, colors, isDark, t, current
   const onCloseRef = React.useRef(onClose);
   React.useEffect(() => { onCloseRef.current = onClose; }, [onClose]);
   const [previewMsgs, setPreviewMsgs] = React.useState([]);
+  // [2026-10-11 qa-sweep2] "Silenciar" opens a duration step inside the sheet.
+  const [muteStep, setMuteStep] = React.useState(false);
+  React.useEffect(() => { setMuteStep(false); }, [conv]);
   // Fix 3 — track async-refresh state so the peek shows skeleton bubbles
   // (instead of "Sem mensagens ainda") while api.chatMessages is in flight
   // on cold cache + missing last_message.
@@ -8128,7 +8156,12 @@ function ChatLongPressSheet({ conv, onClose, actions, colors, isDark, t, current
         try {
           const r = await api.chatMessages(conv.id, 40);
           if (cancelled) return;
-          const fresh = Array.isArray(r?.messages) ? r.messages
+          // [2026-10-11 qa-sweep2] apiCall returns { success, data: { messages } };
+          // only the bare/legacy shapes were read, so with a cold local cache
+          // (fresh web session) the peek always said "Sem mensagens ainda".
+          const fresh = Array.isArray(r?.data?.messages) ? r.data.messages
+                       : Array.isArray(r?.messages) ? r.messages
+                       : Array.isArray(r?.data) ? r.data
                        : Array.isArray(r) ? r : [];
           if (fresh.length >= initial.length && fresh.length > 0) {
             setPreviewMsgs(fresh.slice(-40));
@@ -8307,11 +8340,19 @@ function ChatLongPressSheet({ conv, onClose, actions, colors, isDark, t, current
     ),
   };
 
-  const items = [
+  const _nowSec = Math.floor(Date.now() / 1000);
+  const muteItems = [
+    { label: t('chatConv.muteFor8h') || 'Silenciar por 8 horas', icon: Ic.Bell, color: text, onPress: () => actions.onMute?.(conv, _nowSec + 8 * 3600) },
+    { label: t('chatConv.muteFor1w') || 'Silenciar por 1 semana', icon: Ic.Bell, color: text, onPress: () => actions.onMute?.(conv, _nowSec + 7 * 86400) },
+    { label: t('chatConv.muteForever') || 'Silenciar sempre', icon: Ic.Bell, color: text, onPress: () => actions.onMute?.(conv, 4070908800) },
+    { divider: true },
+    { label: t('common.cancel') || 'Cancelar', icon: null, color: subText, keepOpen: true, onPress: () => setMuteStep(false) },
+  ];
+  const mainItems = [
     { label: hasUnread ? (t('chat.markRead') || 'Marcar como lida') : (t('chat.markUnread') || 'Marcar como não lida'), icon: Ic.Bubble, color: text, onPress: () => actions.onMarkUnread?.(conv) },
     { label: isPinned ? (t('chat.unpin') || 'Desafixar') : (t('chat.pin') || 'Fixar'), icon: Ic.Pin, color: text, onPress: () => actions.onPin?.(conv) },
     ...(isPinned ? [{ label: t('chat.reorderPinned') || 'Reorganizar fixados', icon: Ic.List, color: text, onPress: () => actions.onReorderPinned?.() }] : []),
-    { label: isMuted ? (t('chat.unmute') || 'Reativar som') : (t('chat.mute') || 'Silenciar'), icon: Ic.Bell, color: text, onPress: () => actions.onMute?.(conv) },
+    { label: isMuted ? (t('chat.unmute') || 'Reativar som') : (t('chat.mute') || 'Silenciar'), icon: Ic.Bell, color: text, keepOpen: !isMuted, onPress: () => (isMuted ? actions.onMute?.(conv) : setMuteStep(true)) },
     { label: isLocked ? (t('chat.unlockChat') || 'Desbloquear chat') : (t('chat.lockChat') || 'Bloquear chat'), icon: Ic.Lock, color: text, onPress: () => actions.onLockToggle?.(conv) },
     { label: t('chat.archive') || 'Arquivar', icon: Ic.Archive, color: text, onPress: () => actions.onArchive?.(conv) },
     { label: t('chat.addToList') || 'Adicionar a lista', icon: Ic.List, color: text, onPress: () => actions.onAddToList?.(conv) },
@@ -8324,6 +8365,7 @@ function ChatLongPressSheet({ conv, onClose, actions, colors, isDark, t, current
     { label: t('chat.clearChat') || 'Limpar conversa', icon: Ic.XCircle, color: danger, onPress: () => actions.onClear?.(conv) },
     { label: t('chat.delete') || 'Excluir', icon: Ic.Trash, color: danger, onPress: () => actions.onDelete?.(conv) },
   ];
+  const items = muteStep ? muteItems : mainItems;
 
   const handleTap = (fn) => {
     onClose();
@@ -8409,8 +8451,8 @@ function ChatLongPressSheet({ conv, onClose, actions, colors, isDark, t, current
                 : (isDark ? 'rgba(255,255,255,0.08)' : '#f3f4f6');
               return (
                 <PressableRow
-                  key={i}
-                  onPress={() => handleTap(it.onPress)}
+                  key={`${muteStep ? 'm' : 'a'}-${i}`}
+                  onPress={() => (it.keepOpen ? it.onPress?.() : handleTap(it.onPress))}
                   highlightColor={isDark ? '#2c2c2e' : '#f1f2f4'}
                   style={{
                     flexDirection: 'row', alignItems: 'center', gap: 14,
@@ -8421,13 +8463,15 @@ function ChatLongPressSheet({ conv, onClose, actions, colors, isDark, t, current
                   accessibilityRole="button"
                   accessibilityLabel={it.label}
                 >
-                  <View style={{
-                    width: 34, height: 34, borderRadius: 17,
-                    alignItems: 'center', justifyContent: 'center',
-                    backgroundColor: chipBg,
-                  }}>
-                    {Ico ? <Ico color={it.color} size={19} /> : null}
-                  </View>
+                  {Ico ? (
+                    <View style={{
+                      width: 34, height: 34, borderRadius: 17,
+                      alignItems: 'center', justifyContent: 'center',
+                      backgroundColor: chipBg,
+                    }}>
+                      <Ico color={it.color} size={19} />
+                    </View>
+                  ) : <View style={{ width: 34, height: 34 }} />}
                   <Text style={{ flex: 1, fontSize: 16, color: it.color, fontWeight: '500', letterSpacing: -0.2 }}>
                     {it.label}
                   </Text>
@@ -8454,7 +8498,11 @@ function ConversationPeekCard({ conv, previewMsgs, currentUserEmail, colors, isD
   const peerText = isDark ? '#F5F5F7' : '#0f172a';
   const meta = isDark ? 'rgba(255,255,255,0.55)' : '#6b7280';
   const peerEmail = conv?.other_email || conv?.contact_email || conv?.email || '';
-  const peerName = conv?.display_name || conv?.name || (peerEmail ? peerEmail.split('@')[0] : '');
+  // [2026-10-11 qa-sweep2] Same name as the list row (nickname → humanized):
+  // the peek header said "qa2" over a row reading "Qa2".
+  let _peekNick = '';
+  if (peerEmail) { try { _peekNick = require('../services/nicknames').getNickname(peerEmail) || ''; } catch {} }
+  const peerName = _peekNick || emailToDisplayName(conv?.display_name || conv?.name || (peerEmail ? peerEmail.split('@')[0] : ''));
   const lastSeen = conv?.last_seen_text || conv?.presence_text || '';
   const isGroup = (conv?.type || 'direct') === 'group';
   const isLocked = !!conv?.locked;
@@ -8670,10 +8718,14 @@ function ConversationPeekCard({ conv, previewMsgs, currentUserEmail, colors, isD
   // Peek height adapta ao numero de mensagens. Round 3 (2026-05-04): bumpado
   // pra suportar ate 30 msgs sem corte — user pediu "puxar conversa antiga
   // alem de ontem". Maior limite: 60% da tela.
-  const peekHeight = rows.length <= 1 ? 200
+  const _peekRaw = rows.length <= 1 ? 200
                     : rows.length <= 3 ? 280
                     : rows.length <= 8 ? 380
                     : Math.min(560, 380 + (rows.length - 8) * 24);
+  // [2026-10-11 qa-sweep2] The action menu below is ~11 rows tall; on short
+  // viewports (desktop 800px, small phones) peek + menu overflowed the top and
+  // the header/name was cut off. Leave room for the menu.
+  const peekHeight = Math.max(120, Math.min(_peekRaw, Dimensions.get('window').height - 640));
   return (
     <TouchableOpacity activeOpacity={0.95} onPress={onOpen} accessibilityRole="button" accessibilityLabel={peerName}>
       <View style={{
@@ -8725,6 +8777,11 @@ function ConversationPeekCard({ conv, previewMsgs, currentUserEmail, colors, isD
               // bad payload slipped past the validator — coerce to string
               // safely so the bubble never reads "[object Object]".
               let body = (typeof m.content === 'string' ? m.content : '').slice(0, 200);
+              // [2026-10-11 qa-sweep2] Deleted rows came through with empty
+              // content and painted as "—" bubbles in the peek.
+              if (m.deleted_at || m.deleted || m.is_deleted) {
+                body = isOwn ? (t?.('chatConv.deletedMessageOwn') || 'Você apagou esta mensagem') : (t?.('chatConv.deletedMessage') || 'Esta mensagem foi apagada');
+              }
               body = body
                 .replace(/```([\s\S]*?)```/g, '$1')
                 .replace(/\|\|([^|]+)\|\|/g, '$1')
