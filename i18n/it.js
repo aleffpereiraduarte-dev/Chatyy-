@@ -8385,7 +8385,7 @@ export default {
   'settings.roaming.title': 'Consenti in roaming',
   'settings.roaming.desc': 'Consenti il download dei media mentre sei in roaming. Disattiva per risparmiare dati internazionali.',
   'settings.lowDataCalls.title': 'Usa meno dati nelle chiamate',
-  'settings.lowDataCalls.desc': 'Limita i video a 360p / 15 fps. Utile su reti lente o mobili. Si attiva automaticamente in roaming.',
+  'settings.lowDataCalls.desc': 'Le videochiamate sono in Full HD automatico. Attiva per limitare l’invio a 720p e ricevere in qualità inferiore: utile con i dati mobili.',
   'settings.wallpaperDefault.title': 'Sfondo predefinito',
   'settings.wallpaperDefault.desc': 'Applicato alle nuove chat. Ogni chat può avere il proprio.',
   'settings.wallpaperDefault.custom': '+ Carica immagine personalizzata',
@@ -10260,4 +10260,13 @@ export default {
   "status.reactWow": "Wow",
   "status.reactSad": "Triste",
   "status.reactClap": "Applausi",
+  // [2026-10-11 video-fullhd]
+  "settings.mediaUploadQuality.title": "Qualità di invio dei contenuti multimediali",
+  "settings.mediaUploadQuality.standard": "Standard",
+  "settings.mediaUploadQuality.hd": "HD",
+  "settings.mediaUploadQuality.standardDesc": "Invio più rapido, usa meno dati (720p)",
+  "settings.mediaUploadQuality.hdDesc": "Qualità migliore, file fino a 3 volte più grandi (Full HD 1080p)",
+  "settings.mediaUploadQuality.footer": "Usata come predefinita per i video. Con il risparmio dati attivo o con una rete debole viene usata la qualità standard. Puoi cambiarla a ogni invio con il pulsante HD.",
+  "chatConv.hdOn": "Qualità HD",
+  "chatConv.hdOff": "Qualità standard",
 };

@@ -30,6 +30,7 @@ import LiveKitClient
 import AVKit
 import Network  // [video-quality 2026-10-06] NWPathMonitor snapshot for the profile picker
 import AVFoundation
+import CoreMedia  // [2026-10-11 full-hd] CMVideoFormatDescriptionGetDimensions (1080p capability probe)
 import Combine
 // [#1184 dismiss fix, 2026-05-19] CXEndCallAction / CXCallController for the
 // handleHangup → CallKit dismissal path. Previously handleHangup only ended
@@ -250,6 +251,12 @@ final class CallViewController: UIViewController, @unchecked Sendable {
     private var preHoldCamEnabled: Bool = false
     // [2026-10-11 call-parity] The PEER put the call on hold ({type:"hold"}).
     private var peerOnHold: Bool = false
+    // [2026-10-11 full-hd] WhatsApp "Conexão fraca" pill (debounced).
+    private var localWeak = false
+    private var peerWeak = false
+    private var localWeakWork: DispatchWorkItem?
+    private var peerWeakWork: DispatchWorkItem?
+    private weak var weakPill: UIView?
     // [2026-10-11 call-parity] Outgoing call refused (declined/busy/unavailable):
     // showing the label ~1.5 s with a busy tone before dismissing.
     private var remoteRefusalActive: Bool = false
@@ -1549,7 +1556,11 @@ final class CallViewController: UIViewController, @unchecked Sendable {
                 // [HD tuning 2026-05-26] Pin DTX + RED on the published Opus
                 // stream from the very first packet (loss resilience on cellular).
                 defaultAudioPublishOptions: Self.defaultAudioPublishOptions(),
-                adaptiveStream: true,
+                // [2026-10-11 full-hd] adaptiveStream sizes the subscription to
+                // the view (full screen → 1080p layer, PiP → small). With
+                // "Economizar dados" it's OFF so we can pin the MEDIUM layer
+                // (applyReceivePreference in didSubscribeTrack).
+                adaptiveStream: !CallVideoQuality.isDataSaver,
                 dynacast: true,
                 // [video-quality 2026-10-06] Enables Track.statistics (1 Hz
                 // getStats) so the "video_quality" diag can report the REAL
@@ -3749,54 +3760,69 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         }
     }
 
-    // MARK: - Video quality profiles (2026-10-06 "melhorar a qualidade do vídeo")
+    // MARK: - Video quality: Full HD adaptive (2026-10-11 "nível WhatsApp")
     //
     // SINGLE SOURCE OF TRUTH for every camera publish on iOS: the 1:1
-    // CallViewController (3 publish sites + switchCamera), the NativeCallRoom
-    // warm/outgoing path and GroupCallViewController all call the two static
-    // builders below. Mirror of Android `NativeCallRoom.CallVideoQuality` and
-    // app/call.js `VIDEO_QUALITY` — the SFU forwards whatever each publisher
-    // offers, so an asymmetric ladder shows up as "um lado nítido, o outro
-    // borrado". Change the numbers HERE, then mirror them on the other two.
+    // CallViewController (publish sites + switchCamera), the NativeCallRoom
+    // warm/outgoing path and GroupCallViewController all call the static
+    // builders below. Mirror of Android `NativeCallRoom.kt › CallVideoQuality`
+    // — change the numbers HERE and THERE together.
     //
-    // Ladder (16:9, 30 fps, H.264 hardware, single encoding — see the codec
-    // note on `defaultVideoPublishOptions`):
-    //   hd1080   1920x1080  3.5 Mbps   Wi-Fi/ethernet + "Qualidade HD" toggle
-    //   hd720    1280x720   2.3 Mbps   default 1:1 (Wi-Fi or healthy cellular)
-    //   sd540     960x540   1.1 Mbps   cellular + constrained/poor link
-    //   group540  960x540   0.7 Mbps   group tiles (small on screen; N×uplink)
-    // Degradation = .balanced for camera (WebRTC default: sheds a bit of fps
-    // AND res under congestion — maintainFramerate made a congested face go
-    // 180p-blurry while staying 30 fps, which is what the founder saw as
-    // "vídeo ruim"). Screen share is pinned to maintainResolution in
-    // ScreenShareSupport / `screenSharePublishOptions()`.
+    // Capture rungs (16:9, 30 fps) + 3-layer simulcast (H.264 hardware via
+    // LK's VideoEncoderFactorySimulcast; dynacast pauses layers nobody watches,
+    // so in 1:1 only the layer the peer renders flows):
+    //   hd1080  1920x1080  3.2 Mbps | 960x540 800k @30 | 480x270 200k @15  (default)
+    //   hd720   1280x720   1.7 Mbps | 640x360 450k @30 | 320x180 150k @15
+    //   sd540    960x540   0.9 Mbps | 480x270 300k @30 | 240x135 100k @15
+    //   "Economizar dados": capture ≤ hd720, top layer 1.0 Mbps (640x360 350k |
+    //   320x180 120k) and the receive side asks the SFU for the MEDIUM layer.
+    // Default = Full HD on Wi-Fi AND cellular when the camera has a 1080p30
+    // format (Low Data Mode / weak link start at 720p). No manual resolution
+    // choice — adaptation is automatic (WhatsApp model):
+    //   - bandwidth: WebRTC BWE + simulcast shed top layers by themselves; the
+    //     AdaptiveVideoController below also steps the CAPTURE down one rung
+    //     after ~10 s of poor/lost local quality, back up after ~20 s good;
+    //   - CPU: degradation .balanced (encoder sheds some fps AND res);
+    //   - thermal: ProcessInfo.thermalState .serious → 720p, .critical → 540p,
+    //     recovering when the device cools down.
+    // The 2026-05-26 "H.264 + simulcast = dead track" note was really the
+    // missing CAMERA permission fixed in the same commit; LK Swift 2.0.18
+    // builds every PeerConnection with LKRTCVideoEncoderFactorySimulcast
+    // (Core/RTC.swift), the SDK default path. Safety net: if the t+8s diag
+    // finds the camera track up but ZERO encoded frames, simulcast is turned
+    // off on this device for 7 days (single 1080p encoding) and logged.
+    // Screen share stays single-layer 1080p15 ~3 Mbps maintainResolution
+    // (screencast source = content hint "detail"/text).
     enum CallVideoProfile: String {
-        case hd1080, hd720, sd540, group540
+        case hd1080, hd720, sd540
 
         var dimensions: Dimensions {
             switch self {
-            case .hd1080:   return Dimensions(width: Int32(1920), height: Int32(1080))
-            case .hd720:    return Dimensions(width: Int32(1280), height: Int32(720))
-            case .sd540, .group540: return Dimensions(width: Int32(960), height: Int32(540))
+            case .hd1080: return Dimensions(width: Int32(1920), height: Int32(1080))
+            case .hd720:  return Dimensions(width: Int32(1280), height: Int32(720))
+            case .sd540:  return Dimensions(width: Int32(960), height: Int32(540))
             }
         }
         var maxBitrate: Int {
             switch self {
-            case .hd1080:   return 3_500_000
-            case .hd720:    return 2_300_000
-            case .sd540:    return 1_100_000
-            case .group540: return 700_000
+            case .hd1080: return 3_200_000
+            case .hd720:  return 1_700_000
+            case .sd540:  return 900_000
             }
         }
         var maxFps: Int { 30 }
-        /// Rank used by the step-down logic (higher = more demanding).
+        /// Rank used by the adaptive controller (higher = more demanding).
         var rank: Int {
             switch self {
             case .hd1080: return 3
             case .hd720:  return 2
             case .sd540:  return 1
-            case .group540: return 0
             }
+        }
+        static func ofRank(_ r: Int) -> CallVideoProfile {
+            if r >= 3 { return .hd1080 }
+            if r == 2 { return .hd720 }
+            return .sd540
         }
     }
 
@@ -3837,45 +3863,162 @@ final class CallViewController: UIViewController, @unchecked Sendable {
     }
 
     enum CallVideoQuality {
-        /// UserDefaults key for the "Qualidade HD (1080p)" toggle in the native
-        /// "Mais opções" menu. Only honoured on Wi-Fi/ethernet.
+        /// Legacy "Qualidade HD" key (2026-10-06..10-11) — no longer read.
         static let hdPrefKey = "chatyy_call_hd"
+        /// "Usar menos dados em chamadas" (Configurações) == "Economizar dados"
+        /// (Mais opções da chamada). Per device, UserDefaults.standard.
+        static let dataSaverKey = "chatyy_call_data_saver"
+        /// Auto safety net (see header): Date until which simulcast stays off.
+        static let simulcastOffUntilKey = "chatyy_call_simulcast_off_until"
         /// Screen share: 1080p @ 15 fps, ~3 Mbps, keep resolution (text must
         /// stay legible; frame rate is secondary for slides/documents).
         static let screenShareDimensions = Dimensions(width: Int32(1920), height: Int32(1080))
         static let screenShareEncoding = VideoEncoding(maxBitrate: 3_000_000, maxFps: 15)
-        /// Last profile handed to a publish site (diag + step-down read it).
-        /// Default hd720 so the diag never prints "?" before the first publish.
+        /// Top-layer envelope when "Economizar dados" is on.
+        static let saverMaxBitrate = 1_000_000
+
         private static let lock = NSLock()
-        private static var _current: CallVideoProfile = .hd720
+        private static var _current: CallVideoProfile = .hd1080
+        private static var _published: CallVideoProfile = .hd1080
+        private static var _adaptiveCapRank: Int = 3
+        /// Last profile handed to a capture (diag + controller read it).
         static var current: CallVideoProfile {
             get { lock.lock(); defer { lock.unlock() }; return _current }
             set { lock.lock(); _current = newValue; lock.unlock() }
         }
-        static var isHdPreferred: Bool {
-            get { UserDefaults.standard.bool(forKey: hdPrefKey) }
-            set { UserDefaults.standard.set(newValue, forKey: hdPrefKey) }
+        /// Profile the camera ENCODINGS were last computed for.
+        static var publishedProfile: CallVideoProfile {
+            get { lock.lock(); defer { lock.unlock() }; return _published }
+            set { lock.lock(); _published = newValue; lock.unlock() }
         }
-        /// Network-aware pick. `localQualityScore` is the 0-3 bars score the VC
-        /// keeps in `session.connectionQuality` (3 = excellent … 0 = lost).
-        static func profile(isGroup: Bool, localQualityScore: Int = 3) -> CallVideoProfile {
-            if isGroup { return .group540 }
-            let net = CallNetworkSnapshot.shared
-            if net.isCellular || net.isExpensive {
-                if net.isConstrained || localQualityScore <= 1 { return .sd540 }
-                return .hd720
+        /// Bandwidth term of the live controller (3 = no cap). A camera
+        /// published mid-call (audio→video, rejoin) starts at this rung.
+        static var adaptiveCapRank: Int {
+            get { lock.lock(); defer { lock.unlock() }; return _adaptiveCapRank }
+            set { lock.lock(); _adaptiveCapRank = newValue; lock.unlock() }
+        }
+        static var isDataSaver: Bool {
+            get { UserDefaults.standard.bool(forKey: dataSaverKey) }
+            set { UserDefaults.standard.set(newValue, forKey: dataSaverKey) }
+        }
+        /// Legacy bridge: HD is the default now → "HD preferred" == saver OFF.
+        static var isHdPreferred: Bool {
+            get { !isDataSaver }
+            set { isDataSaver = !newValue }
+        }
+        static var simulcastEnabled: Bool {
+            let until = UserDefaults.standard.double(forKey: simulcastOffUntilKey)
+            return until <= Date().timeIntervalSince1970
+        }
+        static func disableSimulcastTemporarily(days: Double = 7) {
+            UserDefaults.standard.set(Date().timeIntervalSince1970 + days * 86_400, forKey: simulcastOffUntilKey)
+        }
+
+        /// Any built-in camera (front or back) with a ≥1920x1080 format that
+        /// runs at 30 fps. LK crops/scales DOWN to the requested size, never up,
+        /// so a lens without it just publishes its best ≤1080 format. Cached.
+        private static var _cam1080: Bool?
+        static var cameraSupports1080: Bool {
+            lock.lock()
+            if let v = _cam1080 { lock.unlock(); return v }
+            lock.unlock()
+            var ok = false
+            let ds = AVCaptureDevice.DiscoverySession(deviceTypes: [.builtInWideAngleCamera],
+                                                      mediaType: .video,
+                                                      position: .unspecified)
+            outer: for d in ds.devices {
+                for f in d.formats {
+                    let dims = CMVideoFormatDescriptionGetDimensions(f.formatDescription)
+                    guard dims.width >= 1920 && dims.height >= 1080 else { continue }
+                    if f.videoSupportedFrameRateRanges.contains(where: { $0.maxFrameRate >= 30 }) {
+                        ok = true
+                        break outer
+                    }
+                }
             }
-            return isHdPreferred ? .hd1080 : .hd720
+            lock.lock(); _cam1080 = ok; lock.unlock()
+            return ok
+        }
+
+        static var thermalLabel: String {
+            switch ProcessInfo.processInfo.thermalState {
+            case .nominal: return "nominal"
+            case .fair: return "fair"
+            case .serious: return "serious"
+            case .critical: return "critical"
+            @unknown default: return "unknown"
+            }
+        }
+
+        /// Ceiling right now (no bandwidth term): device, data saver, Low Data
+        /// Mode, thermal. Returns profile + reason (diag).
+        static func ceiling() -> (CallVideoProfile, String) {
+            var p: CallVideoProfile = cameraSupports1080 ? .hd1080 : .hd720
+            var why = cameraSupports1080 ? "device_1080" : "camera_no_1080"
+            if isDataSaver && p.rank > CallVideoProfile.hd720.rank { p = .hd720; why = "data_saver" }
+            if CallNetworkSnapshot.shared.isConstrained && p.rank > CallVideoProfile.hd720.rank { p = .hd720; why = "low_data_mode" }
+            switch ProcessInfo.processInfo.thermalState {
+            case .critical:
+                if p.rank > CallVideoProfile.sd540.rank { p = .sd540; why = "thermal_critical" }
+            case .serious:
+                if p.rank > CallVideoProfile.hd720.rank { p = .hd720; why = "thermal_serious" }
+            default: break
+            }
+            return (p, why)
+        }
+
+        /// Profile for a NEW capture. `localQualityScore` is the 0-3 bars score
+        /// (3 = excellent … 0 = lost; pass 3 when unknown). Groups use the same
+        /// ladder — tiles pull 270p/540p via adaptiveStream, dynacast pauses
+        /// the 1080p layer until someone spotlights the tile.
+        static func profile(isGroup: Bool, localQualityScore: Int = 3) -> CallVideoProfile {
+            var p = ceiling().0
+            if localQualityScore <= 1 && p.rank > CallVideoProfile.hd720.rank { p = .hd720 }
+            p = CallVideoProfile.ofRank(min(p.rank, adaptiveCapRank))
+            return p
+        }
+
+        /// The two extra simulcast layers (smallest first) for top rung `p`.
+        static func simulcastLayers(_ p: CallVideoProfile, saver: Bool) -> [VideoParameters] {
+            func vp(_ w: Int32, _ h: Int32, _ fps: Int, _ bps: Int) -> VideoParameters {
+                VideoParameters(dimensions: Dimensions(width: w, height: h),
+                                encoding: VideoEncoding(maxBitrate: bps, maxFps: fps))
+            }
+            switch p {
+            case .hd1080: return [vp(480, 270, 15, 200_000), vp(960, 540, 30, 800_000)]
+            case .hd720:  return saver ? [vp(320, 180, 15, 120_000), vp(640, 360, 30, 350_000)]
+                                       : [vp(320, 180, 15, 150_000), vp(640, 360, 30, 450_000)]
+            case .sd540:  return [vp(240, 135, 15, 100_000), vp(480, 270, 30, 300_000)]
+            }
+        }
+
+        static func topBitrate(_ p: CallVideoProfile, saver: Bool) -> Int {
+            return (saver && p.rank >= CallVideoProfile.hd720.rank) ? min(p.maxBitrate, saverMaxBitrate) : p.maxBitrate
+        }
+
+        /// "1920x1080@3200k|480x270@200k|960x540@800k" (+ "|single").
+        static func layersLabel(_ p: CallVideoProfile? = nil) -> String {
+            let pp = p ?? publishedProfile
+            let saver = isDataSaver
+            var s = "\(pp.dimensions.width)x\(pp.dimensions.height)@\(topBitrate(pp, saver: saver) / 1000)k"
+            if simulcastEnabled {
+                for l in simulcastLayers(pp, saver: saver) {
+                    s += "|\(l.dimensions.width)x\(l.dimensions.height)@\(l.encoding.maxBitrate / 1000)k"
+                }
+            } else {
+                s += "|single"
+            }
+            return s
         }
     }
 
-    /// CameraCaptureOptions for the given (or network-picked) profile.
+    /// CameraCaptureOptions for the given (or adaptive-picked) profile.
     /// `position` lets switchCamera() rebuild the same options against the
-    /// flipped device; everything else stays constant so the capture stack
-    /// doesn't have to reinit when we just rotate the lens.
+    /// flipped device. LK picks the smallest camera format ≥ dimensions @ fps
+    /// (CameraCapturer.startCapture) and crops/scales to exactly 16:9; the
+    /// capturer rotates frames itself, so portrait stays 1080x1920 upright.
     /// [2026-05-19 forward-fix] Dimensions(width: Int32, height: Int32) — Swift
     /// does NOT auto-promote Int literals to Int32 (Archive compile, LK 2.0.x).
-    /// LK clamps to the nearest supported camera format automatically.
     static func defaultCameraCaptureOptions(position: AVCaptureDevice.Position = .front,
                                             profile: CallVideoProfile? = nil,
                                             isGroup: Bool = false) -> CameraCaptureOptions {
@@ -3890,26 +4033,25 @@ final class CallViewController: UIViewController, @unchecked Sendable {
 
     /// VideoPublishOptions for the given (or current) profile.
     ///
-    /// [remote-video render fix 2026-05-26] `preferredCodec: .h264` — VP9 lacks
-    /// reliable HW DECODE on many phones (remote stayed on the avatar). H.264 is
-    /// hardware-decoded on every iPhone + Android. Mirror change in
-    /// NativeCallRoom.swift, Android CallActivity/NativeCallRoom and app/call.js —
-    /// all publish sites must agree or the SFU negotiation goes asymmetric.
-    /// [VIDEO FIX 2026-05-26] `simulcast: false` — with `.h264` + simulcast:true
-    /// this SDK built an invalid multi-encoding offer → setCamera() returned a
-    /// dead track (no self-view, remote saw only the avatar). Single H.264
-    /// encoding; adaptiveStream + dynacast + degradation still shed under load.
-    /// [video-quality 2026-10-06] bitrate/dimensions come from the profile
-    /// ladder above; `screenShareEncoding` pinned (1080p15 ~3 Mbps) so a screen
-    /// share published through the Room defaults no longer rides the camera cap;
-    /// degradationPreference .maintainFramerate → .balanced (see ladder note).
+    /// `preferredCodec: .h264` — hardware encode/decode on every iPhone and
+    /// Android (VP9 lacked reliable HW decode). Mirror on Android
+    /// (CallVideoQuality.publishDefaults). [2026-10-11 full-hd] simulcast ON
+    /// with the explicit 3-layer ladder (see header); `degradationPreference`
+    /// .balanced (camera); screen share keeps its own options below.
+    /// LK Swift 2.0.18 init: (name:encoding:screenShareEncoding:simulcast:
+    /// simulcastLayers:screenShareSimulcastLayers:preferredCodec:
+    /// preferredBackupCodec:degradationPreference:streamName:).
     static func defaultVideoPublishOptions(profile: CallVideoProfile? = nil) -> VideoPublishOptions {
         let p = profile ?? CallVideoQuality.current
+        let saver = CallVideoQuality.isDataSaver
+        let simulcast = CallVideoQuality.simulcastEnabled
+        CallVideoQuality.publishedProfile = p
         return VideoPublishOptions(
             name: nil,
-            encoding: VideoEncoding(maxBitrate: p.maxBitrate, maxFps: p.maxFps),
+            encoding: VideoEncoding(maxBitrate: CallVideoQuality.topBitrate(p, saver: saver), maxFps: p.maxFps),
             screenShareEncoding: CallVideoQuality.screenShareEncoding,
-            simulcast: false,
+            simulcast: simulcast,
+            simulcastLayers: simulcast ? CallVideoQuality.simulcastLayers(p, saver: saver) : [],
             preferredCodec: .h264,
             // [Wave 19 fix] LK iOS 2.0.x has no backupCodec param; the SFU falls
             // back to the negotiated codec list automatically.
@@ -3928,6 +4070,152 @@ final class CallViewController: UIViewController, @unchecked Sendable {
             preferredCodec: .h264,
             degradationPreference: .maintainResolution
         )
+    }
+
+    /// [2026-10-11 full-hd] Per-call capture controller shared by the 1:1 VC
+    /// and GroupCallViewController (main thread only). Every 5 s: ceiling
+    /// (device / data saver / Low Data Mode / thermal) ∧ bandwidth term
+    /// (poor/lost ≥ 2 ticks → one rung down; good ≥ 4 ticks → one rung up,
+    /// 20 s cool-down between upward moves) → retarget the LIVE capturer in
+    /// place (CameraCapturer.set(options:) = capture restart, same track, no
+    /// republish). Thermal changes re-evaluate immediately.
+    final class AdaptiveVideoController {
+        private weak var room: Room?
+        private let callId: String
+        private let canApply: () -> Bool
+        private var timer: Timer?
+        private var thermalObserver: NSObjectProtocol?
+        private(set) var lastScore = -1
+        private var poorTicks = 0
+        private var goodTicks = 0
+        private var bwLevel = 3
+        private var lastChangeAt = Date()
+        private var lastThermal = ""
+        private var applying = false
+
+        init(room: Room, callId: String, canApply: @escaping () -> Bool = { true }) {
+            self.room = room
+            self.callId = callId
+            self.canApply = canApply
+        }
+
+        func start() {
+            stop()
+            CallVideoQuality.adaptiveCapRank = 3
+            // Start from the rung the call actually opened at: climbing above
+            // a cautious start (Low Data Mode / poor bars) needs ~20 s of good.
+            bwLevel = CallVideoQuality.current.rank
+            lastChangeAt = Date()
+            lastThermal = CallVideoQuality.thermalLabel
+            let t = Timer(timeInterval: 5.0, repeats: true) { [weak self] _ in self?.evaluate("tick") }
+            RunLoop.main.add(t, forMode: .common)
+            timer = t
+            thermalObserver = NotificationCenter.default.addObserver(
+                forName: ProcessInfo.thermalStateDidChangeNotification, object: nil, queue: .main
+            ) { [weak self] _ in self?.evaluate("thermal") }
+        }
+
+        func stop() {
+            timer?.invalidate()
+            timer = nil
+            if let o = thermalObserver { NotificationCenter.default.removeObserver(o) }
+            thermalObserver = nil
+        }
+
+        deinit { stop() }
+
+        /// Local ConnectionQuality (0 lost, 1 poor, 2 good, 3 excellent).
+        func noteLocalQuality(_ score: Int) { lastScore = score }
+
+        /// "Economizar dados" flipped: allow an immediate move either way.
+        func dataSaverChanged() {
+            lastChangeAt = .distantPast
+            if !CallVideoQuality.isDataSaver { bwLevel = CallVideoProfile.hd1080.rank }
+            evaluate("data_saver")
+        }
+
+        private func evaluate(_ reason: String) {
+            let now = Date()
+            let since = now.timeIntervalSince(lastChangeAt)
+            let score = lastScore
+            if score >= 0 && score <= 1 { poorTicks += 1; goodTicks = 0 } else if score >= 2 { goodTicks += 1; poorTicks = 0 }
+            let cur = CallVideoQuality.current
+            if poorTicks >= 2 && since >= 8 && bwLevel > CallVideoProfile.sd540.rank {
+                bwLevel = max(CallVideoProfile.sd540.rank, min(bwLevel, cur.rank) - 1)
+                poorTicks = 0
+            } else if goodTicks >= 4 && since >= 20 && bwLevel < CallVideoProfile.hd1080.rank {
+                bwLevel = min(CallVideoProfile.hd1080.rank, bwLevel + 1)
+                goodTicks = 0
+            }
+            CallVideoQuality.adaptiveCapRank = bwLevel
+            let (ceil, why) = CallVideoQuality.ceiling()
+            let th = CallVideoQuality.thermalLabel
+            if th != lastThermal {
+                nativeCallDiag("video_thermal", callId, "state=\(th) ceiling=\(ceil.rawValue)")
+                lastThermal = th
+            }
+            let target = CallVideoProfile.ofRank(min(ceil.rank, bwLevel))
+            guard target != cur else { return }
+            if target.rank > cur.rank && since < 20 { return }
+            let cause: String
+            if target.rank < cur.rank {
+                cause = bwLevel < ceil.rank ? "bandwidth_bars\(score)" : why
+            } else {
+                cause = target.rank < ceil.rank ? "bandwidth_recovered" : "ceiling_\(why)"
+            }
+            apply(target, reason: "\(cause)/\(reason)")
+        }
+
+        private func apply(_ target: CallVideoProfile, reason: String) {
+            guard !applying, canApply(), let r = room else { return }
+            lastChangeAt = Date()
+            let from = CallVideoQuality.current
+            guard let pub = r.localParticipant.videoTracks.first(where: { $0.source == .camera }),
+                  let track = pub.track as? LocalVideoTrack,
+                  let cap = track.capturer as? CameraCapturer else {
+                // No camera yet: the next publish picks the rung up through
+                // defaultCameraCaptureOptions() → profile() (adaptiveCapRank).
+                CallVideoQuality.current = target
+                return
+            }
+            let position: AVCaptureDevice.Position = cap.position != .unspecified ? cap.position : cap.options.position
+            let opts = CameraCaptureOptions(position: position, dimensions: target.dimensions, fps: target.maxFps)
+            applying = true
+            let cid = callId
+            Task { [weak self] in
+                guard let self = self else { return }
+                do {
+                    _ = try await cap.set(options: opts)
+                    CallVideoQuality.current = target
+                    let net = CallNetworkSnapshot.shared
+                    let info = "from=\(from.rawValue) to=\(target.rawValue) reason=\(reason) net=\(net.label) bars=\(self.lastScore) thermal=\(CallVideoQuality.thermalLabel) saver=\(CallVideoQuality.isDataSaver ? 1 : 0) env=\(CallVideoQuality.layersLabel())"
+                    print("[VideoQ] video_profile_change \(info)")
+                    nativeCallDiag("video_profile_change", cid, info)
+                } catch {
+                    print("[VideoQ] video profile change failed: \(error)")
+                    nativeCallDiag("video_profile_change_failed", cid, "to=\(target.rawValue) err=\(error)")
+                }
+                await MainActor.run { self.applying = false }
+            }
+        }
+    }
+
+    /// [2026-10-11 full-hd] Receive side: "Economizar dados" → ask the SFU
+    /// for the MEDIUM layer (540p of a Full HD sender), else HIGH. LK throws
+    /// `invalidState` when adaptiveStream manages the track (1:1 Rooms are
+    /// built with adaptiveStream OFF while the saver is on) — ignored.
+    static func applyReceivePreference(_ publication: RemoteTrackPublication) {
+        guard publication.kind == .video, publication.source == .camera else { return }
+        let q: VideoQuality = CallVideoQuality.isDataSaver ? .medium : .high
+        Task { try? await publication.set(videoQuality: q) }
+    }
+
+    static func applyReceivePreference(room: Room) {
+        for rp in room.remoteParticipants.values {
+            for case let pub as RemoteTrackPublication in rp.trackPublications.values {
+                applyReceivePreference(pub)
+            }
+        }
     }
 
     /// [HD tuning 2026-05-26] AudioPublishOptions — Opus voice resilience knobs.
@@ -4126,7 +4414,8 @@ final class CallViewController: UIViewController, @unchecked Sendable {
             defaultVideoPublishOptions: Self.defaultVideoPublishOptions(),
             // [HD tuning 2026-05-26] DTX + RED on the published Opus stream.
             defaultAudioPublishOptions: Self.defaultAudioPublishOptions(),
-            adaptiveStream: true,
+            // [2026-10-11 full-hd] OFF with "Economizar dados" → MEDIUM layer pinned.
+            adaptiveStream: !CallVideoQuality.isDataSaver,
             dynacast: true,
             // [video-quality 2026-10-06] Track.statistics for the diag beacon.
             reportRemoteTrackStatistics: true
@@ -4532,16 +4821,14 @@ final class CallViewController: UIViewController, @unchecked Sendable {
             moreMenuRow(symbol: holdSymbol,             title: holdTitle,                       tag: 9074, action: #selector(moreMenuHold)),
             moreMenuRow(symbol: "person.badge.plus",    title: CallStrings.s("addParticipant"), tag: 9075, action: #selector(moreMenuAddMember)),
         ]
-        // [video-quality 2026-10-06] "Qualidade HD" — video calls only. Label
-        // tells the truth: 1080p only on Wi-Fi, 720p on mobile data.
+        // [2026-10-11 full-hd] "Economizar dados" replaces "Qualidade HD" (same
+        // slot as Android). No manual resolution — Full HD adaptive is automatic;
+        // this mirrors Configurações › "Usar menos dados em chamadas".
         if hasVideo || session.camEnabled {
-            let hdOn = CallVideoQuality.isHdPreferred
-            let net = CallNetworkSnapshot.shared
-            let cell = net.isCellular || net.isExpensive
-            let title = !hdOn ? CallStrings.s("hdOff") : CallStrings.s(cell ? "hdOnCell" : "hdOnWifi")
-            rows.append(moreMenuRow(symbol: hdOn ? "checkmark.circle.fill" : "tv",
-                                    title: title,
-                                    tag: 9076, action: #selector(moreMenuToggleHd)))
+            let saver = CallVideoQuality.isDataSaver
+            rows.append(moreMenuRow(symbol: saver ? "checkmark.circle.fill" : "arrow.down.circle",
+                                    title: CallStrings.s(saver ? "dataSaverOn" : "dataSaver"),
+                                    tag: 9076, action: #selector(moreMenuToggleDataSaver)))
         }
         let rowStack = UIStackView(arrangedSubviews: rows)
         rowStack.translatesAutoresizingMaskIntoConstraints = false
@@ -4695,37 +4982,18 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         dismissMoreMenu()
         handleAddMember()
     }
-    /// [video-quality 2026-10-06] Toggle the 1080p preference. Applied live
-    /// (capturer restart, no republish) only when the network allows it —
-    /// on cellular the preference is stored and honoured on the next Wi-Fi call.
-    @objc private func moreMenuToggleHd() {
+    /// [2026-10-11 full-hd] "Economizar dados" (same UserDefaults key as the
+    /// Settings switch). ON: capture ≤720p now + MEDIUM receive layer; the
+    /// 1.0 Mbps send envelope is exact from the next camera publish (LK 2.0.18
+    /// has no public API to re-cap a live sender). OFF: climbs back to Full HD.
+    @objc private func moreMenuToggleDataSaver() {
         tapFeedback(view.viewWithTag(9076) as? UIButton)
         dismissMoreMenu()
-        let next = !CallVideoQuality.isHdPreferred
-        CallVideoQuality.isHdPreferred = next
-        // [2026-10-11 call-parity] Turning HD ON must never LOWER the capture
-        // (log: hd_toggle on=1 → profile sd540 reason=hd_on on cellular, because
-        // profile() also folded in the poor-bars step-down). HD ON = 1080p on
-        // Wi-Fi, 720p on cellular (Low Data Mode keeps the current). HD OFF =
-        // 720p (the cellular poor-link step-down still applies on its own).
-        let net = CallNetworkSnapshot.shared
-        let cellular = net.isCellular || net.isExpensive
-        let cur = CallVideoQuality.current
-        let target: CallVideoProfile
-        if session.isGroup {
-            target = .group540
-        } else if next {
-            target = cellular ? (net.isConstrained ? cur : .hd720) : .hd1080
-        } else {
-            target = .hd720
-        }
-        nativeCallDiag("video_hd_toggle", callId, "on=\(next ? 1 : 0) net=\(net.label) cur=\(cur.rawValue) target=\(target.rawValue)")
-        guard hasVideo || session.camEnabled else { return }
-        if next && target.rank <= cur.rank { return }
-        if target != cur {
-            if next { videoStepDownDone = false; localPoorQualityStreak = 0 }
-            applyVideoProfile(target, reason: next ? "hd_on" : "hd_off")
-        }
+        let next = !CallVideoQuality.isDataSaver
+        CallVideoQuality.isDataSaver = next
+        nativeCallDiag("video_data_saver", callId, "on=\(next ? 1 : 0) cur=\(CallVideoQuality.current.rawValue) env=\(CallVideoQuality.layersLabel()) net=\(CallNetworkSnapshot.shared.label)")
+        if let r = room { Self.applyReceivePreference(room: r) }
+        adaptiveVideo?.dataSaverChanged()
     }
 
     /// Nested emoji picker for the More → Reactions path. Each emoji calls the
@@ -4774,11 +5042,20 @@ final class CallViewController: UIViewController, @unchecked Sendable {
     // handles the fine-grained ladder below that.
 
     private var videoQualityDiagWork: [DispatchWorkItem] = []
-    private var localPoorQualityStreak = 0
-    private var videoStepDownDone = false
+    /// [2026-10-11 full-hd] Per-call capture controller (bandwidth / thermal /
+    /// data saver). Started with the first video beacon, stopped on teardown.
+    private var adaptiveVideo: AdaptiveVideoController?
 
     private func scheduleVideoQualityDiag() {
         guard videoQualityDiagWork.isEmpty, hasVideo || session.camEnabled else { return }
+        if adaptiveVideo == nil, let r = room {
+            let c = AdaptiveVideoController(room: r, callId: callId, canApply: { [weak self] in
+                guard let self = self else { return false }
+                return !self.didHangup
+            })
+            c.start()
+            adaptiveVideo = c
+        }
         for (delay, tag) in [(8.0, "t8"), (45.0, "t45")] {
             let w = DispatchWorkItem { [weak self] in self?.reportVideoQuality(tag: tag) }
             videoQualityDiagWork.append(w)
@@ -4804,7 +5081,10 @@ final class CallViewController: UIViewController, @unchecked Sendable {
             "profile=\(CallVideoQuality.current.rawValue)",
             "net=\(CallNetworkSnapshot.shared.label)",
             "bars=\(session.connectionQuality)",
-            "hd_pref=\(CallVideoQuality.isHdPreferred ? 1 : 0)",
+            "saver=\(CallVideoQuality.isDataSaver ? 1 : 0)",
+            "thermal=\(CallVideoQuality.thermalLabel)",
+            "max=\(CallVideoQuality.ceiling().0.rawValue)/\(CallVideoQuality.ceiling().1)",
+            "layers=\(CallVideoQuality.layersLabel())",
         ]
         if let t = localCameraTrack() {
             if let d = t.dimensions { parts.append("cap=\(d.width)x\(d.height)") }
@@ -4818,6 +5098,22 @@ final class CallViewController: UIViewController, @unchecked Sendable {
                 }
                 if let c = s.codec.first(where: { ($0.mimeType ?? "").hasPrefix("video") }) ?? s.codec.first {
                     parts.append("codec=\(c.mimeType ?? "?")")
+                }
+                // [2026-10-11 full-hd] Every simulcast layer actually encoded
+                // (rid q/h/f → low/mid/high; dynacast pauses unwatched ones).
+                let layers = s.outboundRtpStream.map { o in
+                    "\(o.rid ?? "-"):\(o.frameWidth ?? 0)x\(o.frameHeight ?? 0)@\(Int(o.framesPerSecond ?? 0))/\(Int((o.targetBitrate ?? 0) / 1000))k"
+                }
+                if !layers.isEmpty { parts.append("out_layers=\(layers.joined(separator: ","))") }
+                // Safety net: camera live + unmuted at t+8s but NOT ONE frame
+                // encoded on any layer while simulcast is on → this device's
+                // encoder rejected the multi-encoding H.264 setup. Single
+                // encoding for the next 7 days (still Full HD) + diag.
+                let encoded = s.outboundRtpStream.reduce(UInt(0)) { $0 + ($1.framesEncoded ?? 0) }
+                if tag == "t8", CallVideoQuality.simulcastEnabled, !t.isMuted,
+                   !s.outboundRtpStream.isEmpty, encoded == 0 {
+                    CallVideoQuality.disableSimulcastTemporarily()
+                    parts.append("simulcast_autodisabled=1")
                 }
             } else {
                 parts.append("out=nostats")
@@ -4842,42 +5138,100 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         nativeCallDiag("video_quality", callId, detail)
     }
 
-    private func noteLocalConnectionQuality(_ score: Int) {
-        if score <= 1 { localPoorQualityStreak += 1 } else { localPoorQualityStreak = 0 }
-        guard !videoStepDownDone, localPoorQualityStreak >= 2 else { return }
-        let net = CallNetworkSnapshot.shared
-        guard net.isCellular || net.isExpensive || net.isConstrained else { return }
-        guard CallVideoQuality.current.rank > CallVideoProfile.sd540.rank else { return }
-        videoStepDownDone = true
-        applyVideoProfile(.sd540, reason: "poor_cellular_x\(localPoorQualityStreak)")
-    }
+    // MARK: - [2026-10-11 full-hd] "Conexão fraca" pill (Android parity:
+    // CallActivity.WeakConnectionPill). POOR/LOST → shown after 3 s, hidden
+    // 2 s after recovery; local wins over the peer; hidden while on hold or
+    // reconnecting (the status line already says it).
 
-    /// Re-targets the LIVE camera capture to `profile` without republishing.
-    /// If no camera track is up yet, just records the profile — the next
-    /// setCamera() picks it up through defaultCameraCaptureOptions().
-    private func applyVideoProfile(_ profile: CallVideoProfile, reason: String) {
-        guard let track = localCameraTrack(), let cap = track.capturer as? CameraCapturer else {
-            CallVideoQuality.current = profile
+    fileprivate func setWeakConnection(local: Bool, isWeak: Bool) {
+        let cur = local ? localWeak : peerWeak
+        let pending = local ? localWeakWork : peerWeakWork
+        if cur == isWeak {
+            pending?.cancel()
+            if local { localWeakWork = nil } else { peerWeakWork = nil }
             return
         }
-        let opts = Self.defaultCameraCaptureOptions(position: currentCameraPosition, profile: profile)
-        Task { [weak self] in
+        if let p = pending, !p.isCancelled { return } // already heading there
+        let w = DispatchWorkItem { [weak self] in
             guard let self = self else { return }
-            do {
-                _ = try await cap.set(options: opts)
-                print("[CallVC] video profile → \(profile.rawValue) (\(reason))")
-                nativeCallDiag("video_profile_change", self.callId,
-                               "to=\(profile.rawValue) reason=\(reason) net=\(CallNetworkSnapshot.shared.label)")
-            } catch {
-                print("[CallVC] video profile change failed: \(error)")
-                nativeCallDiag("video_profile_change_failed", self.callId, "to=\(profile.rawValue) err=\(error)")
-            }
+            if local { self.localWeak = isWeak; self.localWeakWork = nil } else { self.peerWeak = isWeak; self.peerWeakWork = nil }
+            nativeCallDiag("call_weak_connection", self.callId, "side=\(local ? "local" : "peer") weak=\(isWeak ? 1 : 0) profile=\(CallVideoQuality.current.rawValue)")
+            self.updateWeakConnectionPill()
         }
+        if local { localWeakWork = w } else { peerWeakWork = w }
+        DispatchQueue.main.asyncAfter(deadline: .now() + (isWeak ? 3.0 : 2.0), execute: w)
+    }
+
+    private func updateWeakConnectionPill() {
+        let reconnecting = session.status.hasPrefix("Reconectando")
+        let text: String?
+        if didHangup || session.onHold || peerOnHold || reconnecting {
+            text = nil
+        } else if localWeak {
+            text = CallStrings.s("weakConnection")
+        } else if peerWeak {
+            let who = callerName.isEmpty ? (callerEmail.components(separatedBy: "@").first ?? callerEmail) : callerName
+            text = CallStrings.s("peerWeakConnection", ["name": who])
+        } else {
+            text = nil
+        }
+        let pill: UIView
+        if let p = weakPill {
+            pill = p
+        } else {
+            guard text != nil else { return }
+            let p = UIView()
+            p.translatesAutoresizingMaskIntoConstraints = false
+            p.backgroundColor = UIColor.black.withAlphaComponent(0.55)
+            p.layer.cornerRadius = 15
+            p.isUserInteractionEnabled = false
+            p.alpha = 0
+            let icon = UIImageView(image: UIImage(systemName: "wifi.exclamationmark"))
+            icon.translatesAutoresizingMaskIntoConstraints = false
+            icon.tintColor = UIColor(red: 0xF1 / 255.0, green: 0xC4 / 255.0, blue: 0x0F / 255.0, alpha: 1)
+            icon.contentMode = .scaleAspectFit
+            let lbl = UILabel()
+            lbl.translatesAutoresizingMaskIntoConstraints = false
+            lbl.textColor = .white
+            lbl.font = .systemFont(ofSize: 13, weight: .medium)
+            lbl.tag = 9091
+            p.addSubview(icon)
+            p.addSubview(lbl)
+            view.addSubview(p)
+            NSLayoutConstraint.activate([
+                p.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 60),
+                p.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+                p.widthAnchor.constraint(lessThanOrEqualTo: view.widthAnchor, constant: -32),
+                icon.leadingAnchor.constraint(equalTo: p.leadingAnchor, constant: 12),
+                icon.centerYAnchor.constraint(equalTo: p.centerYAnchor),
+                icon.widthAnchor.constraint(equalToConstant: 14),
+                icon.heightAnchor.constraint(equalToConstant: 14),
+                lbl.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 6),
+                lbl.trailingAnchor.constraint(equalTo: p.trailingAnchor, constant: -12),
+                lbl.topAnchor.constraint(equalTo: p.topAnchor, constant: 6),
+                lbl.bottomAnchor.constraint(equalTo: p.bottomAnchor, constant: -6),
+            ])
+            weakPill = p
+            pill = p
+        }
+        view.bringSubviewToFront(pill)
+        if let t = text { (pill.viewWithTag(9091) as? UILabel)?.text = t }
+        UIView.animate(withDuration: 0.25) { pill.alpha = (text == nil) ? 0 : 1 }
+    }
+
+    /// [2026-10-11 full-hd] Local quality → adaptive controller (the old
+    /// one-way "cellular + 2× poor → 540p" step-down is folded into it).
+    private func noteLocalConnectionQuality(_ score: Int) {
+        adaptiveVideo?.noteLocalQuality(score)
     }
 
     private func cleanupCallTimers() {
         // [video-quality 2026-10-06] Drop pending quality beacons on teardown.
         cancelVideoQualityDiag()
+        adaptiveVideo?.stop()
+        adaptiveVideo = nil
+        localWeakWork?.cancel()
+        peerWeakWork?.cancel()
         dotsTimer?.invalidate()
         dotsTimer = nil
         durationTimer?.invalidate()
@@ -5683,6 +6037,8 @@ extension CallViewController: RoomDelegate {
         NativeCallRoom.shared.trackSubscribed(participantId: identity,
                                               trackSid: "\(publication.sid)",
                                               kind: kind)
+        // [2026-10-11 full-hd] "Economizar dados" → MEDIUM (540p) layer.
+        Self.applyReceivePreference(publication)
         // [2026-07-15 media-truth connect] The outgoing CALLER flips to
         // "Conectado" only via participantDidConnect (LK skips peers already
         // in the room — the callee preconnects subscribe-only BEFORE answering,
@@ -5927,9 +6283,21 @@ extension CallViewController: RoomDelegate {
         // surface remote quality in the group/cohost grids.
         let identity = participant.identity?.stringValue ?? "?"
         NativeCallRoom.shared.connectionQualityChanged(identity: identity, quality: qualityStr)
+        // [2026-10-11 full-hd] WhatsApp "Conexão fraca" pill: POOR/LOST on
+        // either side (lost maps to the default branch).
+        let isLocal = participant.identity?.stringValue == room.localParticipant.identity?.stringValue
+        let isWeak: Bool
+        switch quality {
+        case .excellent, .good: isWeak = false
+        case .poor, .lost: isWeak = true
+        default: isWeak = false // .unknown
+        }
+        DispatchQueue.main.async { [weak self] in
+            self?.setWeakConnection(local: isLocal, isWeak: isWeak)
+        }
         // Only react locally for the local participant; remote participants'
         // quality bars don't surface in the 1:1 UI.
-        guard participant.identity?.stringValue == room.localParticipant.identity?.stringValue else { return }
+        guard isLocal else { return }
         let score: Int
         switch quality {
         case .excellent: score = 3
@@ -5939,7 +6307,7 @@ extension CallViewController: RoomDelegate {
         }
         DispatchQueue.main.async { [weak self] in
             self?.session.connectionQuality = score
-            // [video-quality 2026-10-06] cellular + sustained poor → 540p capture.
+            // [2026-10-11 full-hd] feeds the adaptive capture controller.
             self?.noteLocalConnectionQuality(score)
         }
     }

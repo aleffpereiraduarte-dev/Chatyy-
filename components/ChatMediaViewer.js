@@ -993,6 +993,18 @@ if (Platform.OS === 'ios') {
   try { _NativeVideoPlayerView = require('../modules/expo-native-toolkit').VideoPlayer; } catch {}
 }
 
+// [2026-10-11 video-fullhd] Web: can this browser's <video> play an HLS
+// playlist by itself (Safari / iOS web)? Cached after the first probe.
+let _hlsNativeWeb = null;
+function _canPlayHlsNatively() {
+  if (_hlsNativeWeb !== null) return _hlsNativeWeb;
+  try {
+    const v = typeof document !== 'undefined' ? document.createElement('video') : null;
+    _hlsNativeWeb = !!(v && v.canPlayType && v.canPlayType('application/vnd.apple.mpegurl'));
+  } catch { _hlsNativeWeb = false; }
+  return _hlsNativeWeb;
+}
+
 function NativeVideoPlayer({ url, isActive = true, allowPip = true, noCache = false }) {
   // Prefer expo-video — has native AVPlayerViewController controls,
   // PiP, fullscreen, scrubbing, captions. Custom AVPlayerLayer view
@@ -2092,7 +2104,13 @@ export default function ChatMediaViewer({ visible, onClose, fileUrl, hlsUrl, fil
   // (resolved in the effect above), substitute it for the streaming URL so
   // expo-video reads the rewritten manifest + .ts segments off disk. This is
   // the user-visible fix for "video bubble spins forever on a dropped wifi".
-  let url = (_active?.type === 'video' && _active?.hlsUrl)
+  // [2026-10-11 video-fullhd] The chat HLS is now an adaptive ladder (master
+  // playlist → 1080p/720p/480p): AVPlayer / ExoPlayer pick the best rendition
+  // the network allows and switch mid-play. Web: <video> only plays HLS
+  // natively on Safari — Chrome/Firefox/Edge would show a dead player, so they
+  // keep the progressive MP4.
+  const _webHlsOk = Platform.OS !== 'web' || _canPlayHlsNatively();
+  let url = (_active?.type === 'video' && _active?.hlsUrl && _webHlsOk)
     ? getFullUrl(_active.hlsUrl)
     : getFullUrl(_active?.fileUrl);
   if (_active?.type === 'video' && _hlsLocalUri && typeof _hlsLocalUri === 'string'

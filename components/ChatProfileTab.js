@@ -331,6 +331,14 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
     documents: { mobile: 0, wifi: 1, roaming: 0 },
   }));
 
+  // [2026-10-11 video-fullhd] "Qualidade de envio de mídia" (Padrão / HD).
+  const [uploadQuality, setUploadQuality] = useState(() => {
+    try { return require('../services/mediaUploadQuality').getMediaUploadQuality(); } catch { return 'hd'; }
+  });
+  useEffect(() => {
+    try { return require('../services/mediaUploadQuality').onMediaUploadQualityChange(setUploadQuality); } catch { return undefined; }
+  }, []);
+
   // Backup state
   const [backupRunning, setBackupRunning] = useState(false);
   const [backupElapsed, setBackupElapsed] = useState(0);
@@ -1693,6 +1701,33 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
                 </View>
               );
             })}
+          </SectionCard>
+
+          {/* [2026-10-11 video-fullhd] WhatsApp "Qualidade de envio de mídia". */}
+          <SectionCard style={{ marginTop: 16 }}>
+            <Text style={[styles.sectionTitle, { color: colors.text, marginBottom: 10 }]}>
+              {t?.('settings.mediaUploadQuality.title') || 'Qualidade de envio de mídia'}
+            </Text>
+            <SettingsSegmented
+              colors={colors}
+              isDark={isDark}
+              compact
+              value={uploadQuality}
+              onChange={(v) => {
+                try { setUploadQuality(require('../services/mediaUploadQuality').setMediaUploadQuality(v)); } catch {}
+              }}
+              options={[
+                { value: 'standard', label: t?.('settings.mediaUploadQuality.standard') || 'Padrão' },
+                { value: 'hd', label: t?.('settings.mediaUploadQuality.hd') || 'HD' },
+              ]}
+            />
+            <Text style={{ fontSize: 12, color: isDark ? '#6C6C70' : '#9ca3af', marginTop: 10, paddingHorizontal: 4 }}>
+              {uploadQuality === 'hd'
+                ? (t?.('settings.mediaUploadQuality.hdDesc') || 'Melhor qualidade, arquivos até 3x maiores (Full HD 1080p)')
+                : (t?.('settings.mediaUploadQuality.standardDesc') || 'Envio mais rápido, usa menos dados (720p)')}
+              {' · '}
+              {t?.('settings.mediaUploadQuality.footer') || 'Vale como padrão para vídeos. No modo economia de dados ou em rede fraca, o envio usa a qualidade padrão. Você pode trocar em cada envio pelo botão HD.'}
+            </Text>
           </SectionCard>
 
           <SectionCard style={{ marginTop: 16 }}>

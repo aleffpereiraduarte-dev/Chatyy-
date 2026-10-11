@@ -246,9 +246,16 @@ export async function compressImage(uri, profile, name) {
 async function _compressVideo(p, uri, signal, onPct) {
   try {
     const vsp = require('./videoSendPipeline');
-    const base = vsp.getQualityProfile?.(p.hd ? '1080p' : '720p');
+    // [2026-10-11 video-fullhd] p.hd = chip choice captured at send time
+    // (true/false); null/undefined (older rows / other callers) → saved
+    // "Qualidade de envio de mídia" default, network-aware (1080p unless
+    // Padrão / Data Saver / weak link).
+    const label = (p.hd === true || p.hd === false)
+      ? (p.hd ? '1080p' : '720p')
+      : (vsp.resolveVideoLabel?.(null) || '720p');
+    const base = vsp.getQualityProfile?.(label);
     if (!base) return null;
-    const profile = { ...base, audioBitrate: Math.min(base.audioBitrate || 128000, p.hd ? 128000 : 96000) };
+    const profile = { ...base, audioBitrate: Math.min(base.audioBitrate || 128000, label === '1080p' ? 128000 : 96000) };
     const r = await vsp.prepareCompressed(uri, profile, (f) => onPct(Math.round((Number(f) || 0) * 100)), signal);
     if (!r || r.skipped || !r.uri || r.uri === uri) return null;
     return { uri: r.uri, size: r.size || 0, width: r.width || 0, height: r.height || 0, durationMs: r.durationMs || 0 };

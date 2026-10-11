@@ -14,9 +14,9 @@
 //   • Surface compression progress to the bubble — the AVAssetExportSession
 //     export runs as a single promise with no progress signal, so the
 //     overlay ring sits at 0% during the whole transcode.
-//   • Honor an HD toggle (720p / 1080p / Original). The current call
-//     hard-codes 720p @ 1.5Mbps. WhatsApp lets you pick HD per-message; we
-//     have the bitrate knob in the native bridge but no UI plumbing.
+//   • Honor an HD toggle (720p / 1080p / Original). [2026-10-11 video-fullhd]
+//     Default is now 1080p (short side 1080 @ ~4.5 Mbps) from the saved
+//     "Qualidade de envio de mídia" setting; the preview HD chip flips it.
 //   • Detect "GIF candidate" videos (<6s, muted) so the bubble can render
 //     them with autoplay + loop instead of the normal play-tap gate.
 //   • Resume a chunked upload — the network drop today restarts from byte 0.
@@ -65,11 +65,21 @@ function loadNativeMod() {
 
 // ─── Quality profiles ────────────────────────────────────────────────────────
 //
-// WhatsApp 2026 effectively ships three buckets:
-//   • Standard (720p, ~1.5 Mbps H.264) — default
-//   • HD       (1080p, ~3.0 Mbps H.264) — toggle, opt-in per message
-//   • Original (no transcode) — surfaces "Send as document" in WA; here it
-//     just bypasses the compress step
+// [2026-10-11 video-fullhd] WhatsApp-HD parity, smart about data:
+//   • 720p  "Padrão" — short side 720,  ~1.5 Mbps H.264 High  (~11 MB/min)
+//   • 1080p "HD"     — short side 1080, ~4.5 Mbps H.264 High  (~34 MB/min) — DEFAULT
+//                      (Settings › Armazenamento e dados › Qualidade de envio
+//                      de mídia; auto-drops to 720p on Data Saver / weak link —
+//                      see services/mediaUploadQuality.js)
+//   • original      — no transcode while the source fits 4K + the size cap;
+//                     bigger sources are brought down to 2160p @ ~16 Mbps.
+// maxWidth/maxHeight are a LONG×SHORT box: iOS (AVAssetWriter path) fits the
+// display size orientation-agnostically. Android binaries with
+// compressApiVersion >= 2 (2026-10-11) take maxShortSide/maxLongSide and fit
+// the same way (+ rotation hint, High/VBR, faststart). OLDER Android binaries
+// fit the CODED size against (maxWidth × maxHeight) literally, so for them
+// nativeCompressOptions() keeps the square long×long box (a portrait clip
+// coded 1080×1920 would otherwise be squashed to 607×1080). Never upscales.
 const QUALITY_PROFILES = {
   '720p': {
     maxWidth: 1280,
@@ -81,40 +91,108 @@ const QUALITY_PROFILES = {
   '1080p': {
     maxWidth: 1920,
     maxHeight: 1080,
-    bitrate: 3_000_000,
+    bitrate: 4_500_000,
+    audioBitrate: 128_000,
+    fps: 30,
+  },
+  '2160p': {
+    maxWidth: 3840,
+    maxHeight: 2160,
+    bitrate: 16_000_000,
     audioBitrate: 192_000,
     fps: 30,
   },
-  'original': null, // sentinel — skip compress
+  'original': null, // sentinel — skip compress (see getQualityProfile)
 };
+
+// Server hard cap is 200 MB (chat_upload / Rust upload → 413). Keep a margin
+// for container overhead so a long HD clip never trips it.
+export const VIDEO_SIZE_CAP_BYTES = 190 * 1024 * 1024;
+const ORIGINAL_MAX_LONG_EDGE = 3840;
 
 /**
  * Returns the encoder profile for a quality label, or null for "original"
  * (which means "do not transcode"). Falls back to 720p for unknown labels.
+ * 'original' with a known source above 4K or above the size cap → 2160p.
  */
 export function getQualityProfile(label, info = null) {
-  if (label === 'original') return null;
+  if (label === 'original') {
+    const longEdge = Math.max(info?.width || 0, info?.height || 0);
+    const size = info?.sizeBytes || 0;
+    if (longEdge > ORIGINAL_MAX_LONG_EDGE || size > VIDEO_SIZE_CAP_BYTES) return QUALITY_PROFILES['2160p'];
+    return null;
+  }
   const p = QUALITY_PROFILES[label];
   if (p) return p;
   return QUALITY_PROFILES['720p'];
 }
 
 /**
- * Suggest a default HD toggle state based on the source clip.
- *
- * Heuristics (WhatsApp parity):
- *   • Source already ≤ 720p           → default = 'original' (no gain transcoding)
- *   • Source 720p-1080p, <20MB        → default = '720p' (snappy)
- *   • Source >1080p OR >20MB          → default = '720p', show HD prominently
+ * Lower the video bitrate so `durationMs` of footage fits under the 200 MB
+ * cap (a 10-min clip at 4.5 Mbps would be ~340 MB). Floor 600 kbps.
+ */
+export function fitBitrateToCap(profile, durationMs) {
+  if (!profile || !(durationMs > 0)) return profile;
+  const sec = durationMs / 1000;
+  const budget = Math.floor((VIDEO_SIZE_CAP_BYTES * 8) / sec) - (profile.audioBitrate || 128_000);
+  if (budget >= profile.bitrate) return profile;
+  return { ...profile, bitrate: Math.max(600_000, budget) };
+}
+
+function nativeCompressApiVersion() {
+  try {
+    const m = loadNativeMod();
+    const v = m && typeof m.getCompressApiVersion === 'function' ? m.getCompressApiVersion() : 0;
+    return typeof v === 'number' && Number.isFinite(v) ? v : 0;
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * Options for ExpoNativeVideo.compressVideo(). iOS + new Android (api >= 2):
+ * long×short box + explicit maxShortSide/maxLongSide. Legacy Android binaries
+ * get the square long×long box workaround. `apiVersion` is injectable for tests.
+ */
+export function nativeCompressOptions(profile, apiVersion) {
+  const p = profile || QUALITY_PROFILES['720p'];
+  const long = Math.max(p.maxWidth || 0, p.maxHeight || 0) || 1280;
+  const short = Math.min(p.maxWidth || 0, p.maxHeight || 0) || 720;
+  const isAndroid = Platform.OS === 'android';
+  const api = typeof apiVersion === 'number' ? apiVersion : (isAndroid ? nativeCompressApiVersion() : 0);
+  const legacyAndroid = isAndroid && api < 2;
+  return {
+    maxWidth: long,
+    maxHeight: legacyAndroid ? long : short,
+    ...(legacyAndroid ? null : { maxShortSide: short, maxLongSide: long }),
+    bitrate: p.bitrate,
+    audioBitrate: p.audioBitrate,
+    fps: p.fps,
+  };
+}
+
+/**
+ * Effective label for one send: explicit HD chip (true/false) or the saved
+ * "Qualidade de envio de mídia" default (null/undefined), network-aware.
+ */
+export function resolveVideoLabel(hd = null) {
+  try { return require('./mediaUploadQuality').resolveVideoQuality(hd); } catch {}
+  return hd ? '1080p' : '720p';
+}
+
+/**
+ * Suggest a default HD toggle state for the media preview chip.
+ *   • Source short side ≤ 720 and small → 'original' (no gain transcoding)
+ *   • otherwise → the saved default ('1080p' unless "Padrão"/Data Saver/weak link)
  */
 export function suggestHdToggle(info) {
-  const longestEdge = Math.max(info?.width || 0, info?.height || 0);
+  const shortEdge = Math.min(info?.width || 0, info?.height || 0);
   const sizeMB = (info?.sizeBytes || 0) / (1024 * 1024);
-  if (longestEdge > 0 && longestEdge <= 720 && sizeMB < 12) {
+  if (shortEdge > 0 && shortEdge <= 720 && sizeMB < 12) {
     return { defaultLabel: 'original', options: ['original', '720p', '1080p'] };
   }
   return {
-    defaultLabel: '720p',
+    defaultLabel: resolveVideoLabel(null),
     options: ['720p', '1080p', 'original'],
   };
 }
@@ -165,7 +243,7 @@ export async function prepareCompressed(srcUri, opts = {}, onProgress = null, si
   if (!mod || !srcUri) {
     return { uri: srcUri, size: 0, width: 0, height: 0, durationMs: 0, skipped: true };
   }
-  const profile = opts && Object.keys(opts).length ? opts : QUALITY_PROFILES['720p'];
+  const baseProfile = opts && Object.keys(opts).length ? opts : QUALITY_PROFILES['720p'];
 
   // Probe info up-front so the wall-clock progress ramp matches reality.
   let durationMs = 0;
@@ -206,7 +284,10 @@ export async function prepareCompressed(srcUri, opts = {}, onProgress = null, si
   }
 
   try {
-    const result = await mod.compressVideo(srcUri, profile);
+    // [2026-10-11 video-fullhd] long clips: shave bitrate to stay under the
+    // 200 MB cap; Android: short-side fit (api>=2) or legacy square box.
+    const profile = fitBitrateToCap(baseProfile, durationMs);
+    const result = await mod.compressVideo(srcUri, nativeCompressOptions(profile));
     cancelled = true;
     if (progressTimer) { clearTimeout(progressTimer); progressTimer = null; }
     if (typeof onProgress === 'function') {
@@ -278,7 +359,7 @@ export async function trimVideo(/* srcUri, startMs, endMs */) {
  * can wrap this without coupling.
  */
 export async function prepareVideoForSend(srcUri, {
-  quality = '720p',
+  quality = null, // null → saved default (resolveVideoLabel)
   onPosterReady = null,
   onCompressProgress = null,
   signal = null,
@@ -299,7 +380,7 @@ export async function prepareVideoForSend(srcUri, {
     return p;
   });
 
-  const profile = getQualityProfile(quality, info);
+  const profile = getQualityProfile(quality || resolveVideoLabel(null), info);
   let compressed = null;
   if (profile) {
     compressed = await prepareCompressed(srcUri, profile, onCompressProgress, signal);
@@ -331,5 +412,8 @@ export default {
   detectGifLike,
   getQualityProfile,
   suggestHdToggle,
+  resolveVideoLabel,
+  fitBitrateToCap,
+  nativeCompressOptions,
   trimVideo,
 };

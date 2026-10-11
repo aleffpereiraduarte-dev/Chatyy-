@@ -876,6 +876,9 @@ final class OutgoingAnswerWatcher: NSObject, RoomDelegate {
     func room(_ room: Room,
               participant: RemoteParticipant,
               didSubscribeTrack publication: RemoteTrackPublication) {
+        // [2026-10-11 full-hd] "Economizar dados" → MEDIUM (540p) layer, also
+        // for tracks subscribed on the warm Room before the VC attaches.
+        CallViewController.applyReceivePreference(publication)
         DispatchQueue.main.async { [weak self] in
             self?.publishOnAnswer(reason: "remote_track_subscribed")
         }

@@ -2539,6 +2539,13 @@ function fmtBytesSheet(b) {
 function StorageDataScreen({ colors, isDark, t, push }) {
   const [policy, setPolicy] = useState(AUTO_DL_DEFAULT);
   const [usage, setUsage] = useState(null);
+  // [2026-10-11 video-fullhd] "Qualidade de envio de mídia" (Padrão / HD).
+  const [uploadQuality, setUploadQuality] = useState(() => {
+    try { return require('../services/mediaUploadQuality').getMediaUploadQuality(); } catch { return 'hd'; }
+  });
+  useEffect(() => {
+    try { return require('../services/mediaUploadQuality').onMediaUploadQualityChange(setUploadQuality); } catch { return undefined; }
+  }, []);
 
   useEffect(() => {
     let alive = true;
@@ -2646,6 +2653,31 @@ function StorageDataScreen({ colors, isDark, t, push }) {
       </Section>
       <Footnote colors={colors}>
         {t?.('settings.autoDownload.subtitle') || 'Escolha quando o app baixa mídias automaticamente'}
+      </Footnote>
+
+      <Section title={t?.('settings.mediaUploadQuality.title') || 'Qualidade de envio de mídia'} colors={colors}>
+        <View style={{ paddingHorizontal: 16, paddingVertical: 13 }}>
+          <SettingsSegmented
+            colors={colors}
+            isDark={isDark}
+            compact
+            value={uploadQuality}
+            onChange={(v) => {
+              try { setUploadQuality(require('../services/mediaUploadQuality').setMediaUploadQuality(v)); } catch {}
+            }}
+            options={[
+              { value: 'standard', label: t?.('settings.mediaUploadQuality.standard') || 'Padrão' },
+              { value: 'hd', label: t?.('settings.mediaUploadQuality.hd') || 'HD' },
+            ]}
+          />
+        </View>
+      </Section>
+      <Footnote colors={colors}>
+        {uploadQuality === 'hd'
+          ? (t?.('settings.mediaUploadQuality.hdDesc') || 'Melhor qualidade, arquivos até 3x maiores (Full HD 1080p)')
+          : (t?.('settings.mediaUploadQuality.standardDesc') || 'Envio mais rápido, usa menos dados (720p)')}
+        {' · '}
+        {t?.('settings.mediaUploadQuality.footer') || 'Vale como padrão para vídeos. No modo economia de dados ou em rede fraca, o envio usa a qualidade padrão. Você pode trocar em cada envio pelo botão HD.'}
       </Footnote>
 
       <Section title={t?.('storageData.cloud') || 'Nuvem'} colors={colors}>

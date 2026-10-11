@@ -257,6 +257,8 @@ class GroupCallActivity : ComponentActivity() {
 
   // LiveKit.
   private var room: Room? = null
+  /** [2026-10-11 full-hd] local link POOR/LOST → "Conexão fraca" status. */
+  private var localWeak = false
   private var eventsJob: Job? = null
   private var connectJob: Job? = null
   private var rejoinAttempts = 0
@@ -456,19 +458,22 @@ class GroupCallActivity : ComponentActivity() {
   private fun bringUpRoom(url: String, token: String) {
     // [Wave C] adaptive stream + dynacast: each tile subscribes to the layer
     // it renders; dynacast pauses layers nobody's looking at.
+    // [2026-10-11 full-hd] Same Full HD adaptive ladder as 1:1 (3-layer
+    // simulcast): small tiles pull 270p/540p, the 1080p layer only flows when
+    // someone spotlights the tile (dynacast pauses it otherwise).
+    val groupCapture = CallVideoQuality.captureDefaults(applicationContext, isGroup = true)
     val roomOptions = try {
       RoomOptions(
         adaptiveStream = true,
         dynacast = true,
-        // [video-quality 2026-10-06] GROUP540 = 960x540@30, 700 kbps per tile.
-        videoTrackPublishDefaults = CallVideoQuality.publishDefaults(CallVideoQuality.Profile.GROUP540),
+        videoTrackPublishDefaults = CallVideoQuality.publishDefaults(),
         // [HD tuning 2026-05-26] Opus dtx + red, 48 kbps mono HD voice.
         audioTrackPublishDefaults = AudioTrackPublishDefaults(
           audioBitrate = 48_000,
           dtx = true,
           red = true
         ),
-        videoTrackCaptureDefaults = CallVideoQuality.captureDefaults(applicationContext, isGroup = true),
+        videoTrackCaptureDefaults = groupCapture,
         screenShareTrackCaptureDefaults = CallVideoQuality.screenShareCaptureDefaults(),
         screenShareTrackPublishDefaults = CallVideoQuality.screenSharePublishDefaults()
       )
@@ -500,7 +505,26 @@ class GroupCallActivity : ComponentActivity() {
               stopRingback(); ui.removeCallbacks(noAnswerRunnable)
             }
             try { expo.modules.callkit.audio.AudioRouter.get(applicationContext).attachLiveKit(r, hasVideo) } catch (_: Throwable) {}
+            // [2026-10-11 full-hd] adaptive capture controller (bandwidth/thermal/saver).
+            try { CallVideoQuality.startAdaptive(applicationContext, roomName, room = { room }, canApply = { !finished }) } catch (_: Throwable) {}
             renderStatus()
+          }
+          is RoomEvent.ConnectionQualityChanged -> {
+            // [2026-10-11 full-hd] local quality feeds the controller + the
+            // WhatsApp "Conexão fraca" notice in the status line.
+            if (event.participant === r.localParticipant) {
+              val qn = event.quality.name.uppercase()
+              val score = when (qn) { "EXCELLENT" -> 3; "GOOD" -> 2; "POOR" -> 1; else -> 0 }
+              try { CallVideoQuality.noteLocalQuality(applicationContext, r, score, false, roomName) } catch (_: Throwable) {}
+              val weak = qn == "POOR" || qn == "LOST"
+              if (weak != localWeak) {
+                localWeak = weak
+                if (statusOverride == null || statusOverride == CallStrings.s("weakConnection")) {
+                  statusOverride = if (weak) CallStrings.s("weakConnection") else null
+                  renderStatus()
+                }
+              }
+            }
           }
           is RoomEvent.Reconnecting -> {
             statusOverride = GroupCallStrings.s("reconnecting"); renderStatus()
@@ -1329,6 +1353,7 @@ class GroupCallActivity : ComponentActivity() {
     try { ExpoCallKitModule.emitCallUiChanged() } catch (_: Throwable) {}
     try { unregisterReceiver(closeReceiver) } catch (_: Exception) {}
     ui.removeCallbacksAndMessages(null)
+    try { CallVideoQuality.stopAdaptive() } catch (_: Throwable) {}
     stopRingback()
     eventsJob?.cancel()
     connectJob?.cancel()

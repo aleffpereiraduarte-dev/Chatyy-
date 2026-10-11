@@ -8385,7 +8385,7 @@ export default {
   'settings.roaming.title': 'रोमिंग में अनुमति दें',
   'settings.roaming.desc': 'रोमिंग में होने पर मीडिया डाउनलोड करने की अनुमति देता है। अंतरराष्ट्रीय डेटा बचाने के लिए बंद करें।',
   'settings.lowDataCalls.title': 'कॉल में कम डेटा का उपयोग करें',
-  'settings.lowDataCalls.desc': 'वीडियो को 360p / 15 fps पर सीमित करता है। धीमी या मोबाइल नेटवर्क पर उपयोगी। रोमिंग में स्वचालित रूप से सक्रिय होता है।',
+  'settings.lowDataCalls.desc': 'वीडियो कॉल अपने-आप Full HD में होती हैं। भेजने को 720p तक सीमित करने और कम गुणवत्ता में पाने के लिए चालू करें — मोबाइल डेटा पर उपयोगी।',
   'settings.wallpaperDefault.title': 'डिफ़ॉल्ट वॉलपेपर',
   'settings.wallpaperDefault.desc': 'नई बातचीत में लागू होता है। प्रत्येक चैट का अपना हो सकता है।',
   'settings.wallpaperDefault.custom': '+ अपनी छवि भेजें',
@@ -10260,4 +10260,13 @@ export default {
   "status.reactWow": "वाह",
   "status.reactSad": "दुखी",
   "status.reactClap": "तालियाँ",
+  // [2026-10-11 video-fullhd]
+  "settings.mediaUploadQuality.title": "मीडिया भेजने की गुणवत्ता",
+  "settings.mediaUploadQuality.standard": "मानक",
+  "settings.mediaUploadQuality.hd": "HD",
+  "settings.mediaUploadQuality.standardDesc": "तेज़ी से भेजें, कम डेटा (720p)",
+  "settings.mediaUploadQuality.hdDesc": "सर्वश्रेष्ठ गुणवत्ता, फ़ाइलें 3 गुना तक बड़ी (फ़ुल HD 1080p)",
+  "settings.mediaUploadQuality.footer": "वीडियो के लिए डिफ़ॉल्ट के रूप में उपयोग होता है। डेटा सेवर चालू होने या कमज़ोर नेटवर्क पर मानक गुणवत्ता का उपयोग होता है। आप हर बार भेजते समय HD बटन से इसे बदल सकते हैं।",
+  "chatConv.hdOn": "HD गुणवत्ता",
+  "chatConv.hdOff": "मानक गुणवत्ता",
 };

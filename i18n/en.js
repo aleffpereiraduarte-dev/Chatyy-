@@ -9146,7 +9146,7 @@ export default {
   'settings.roaming.title': 'Allow on roaming',
   'settings.roaming.desc': 'Allow media downloads while roaming. Turn off to save on international data.',
   'settings.lowDataCalls.title': 'Use less data in calls',
-  'settings.lowDataCalls.desc': 'Caps video at 360p / 15 fps. Useful on slow or mobile networks. Auto-enables on roaming.',
+  'settings.lowDataCalls.desc': 'Video calls are automatic Full HD. Turn on to cap sending at 720p and receive lower quality — useful on mobile data.',
   'settings.wallpaperDefault.title': 'Default wallpaper',
   'settings.wallpaperDefault.desc': 'Applied to new chats. Each chat can have its own.',
   'settings.wallpaperDefault.custom': '+ Upload custom image',
@@ -10230,4 +10230,13 @@ export default {
   "status.reactWow": "Wow",
   "status.reactSad": "Sad",
   "status.reactClap": "Applause",
+  // [2026-10-11 video-fullhd]
+  "settings.mediaUploadQuality.title": "Media upload quality",
+  "settings.mediaUploadQuality.standard": "Standard",
+  "settings.mediaUploadQuality.hd": "HD",
+  "settings.mediaUploadQuality.standardDesc": "Faster to send, uses less data (720p)",
+  "settings.mediaUploadQuality.hdDesc": "Best quality, files up to 3x larger (Full HD 1080p)",
+  "settings.mediaUploadQuality.footer": "Used as the default for videos. With Data Saver on or on a weak network, standard quality is used. You can change it for each send with the HD button.",
+  "chatConv.hdOn": "HD quality",
+  "chatConv.hdOff": "Standard quality",
 };

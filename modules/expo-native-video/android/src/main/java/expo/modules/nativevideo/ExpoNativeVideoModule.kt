@@ -60,10 +60,17 @@ class ExpoNativeVideoModule : Module() {
 
   companion object {
     private const val TAG = "ExpoNativeVideo"
+    private const val COMPRESS_API_VERSION = 2
   }
 
   override fun definition() = ModuleDefinition {
     Name("ExpoNativeVideo")
+
+    // [2026-10-11 video-shortside] Feature flag for JS: 2 = compressVideo
+    // accepts maxShortSide/maxLongSide (orientation-agnostic fit), writes the
+    // source rotation (orientation hint), AVC High/VBR and faststart MP4.
+    // Absent (undefined) on older binaries → JS keeps its legacy workaround.
+    Constant("compressApiVersion") { COMPRESS_API_VERSION }
 
     AsyncFunction("getInfo") { srcUri: String ->
       return@AsyncFunction readInfo(srcUri)
@@ -208,6 +215,12 @@ class ExpoNativeVideoModule : Module() {
     val maxWidth = (options["maxWidth"] as? Number)?.toInt() ?: 1280
     val maxHeight = (options["maxHeight"] as? Number)?.toInt() ?: 720
     val targetBitrate = (options["bitrate"] as? Number)?.toLong() ?: 1_500_000L
+    // [2026-10-11 video-shortside] Orientation-agnostic envelope: the box is
+    // read as LONG×SHORT (same as iOS); explicit maxShortSide/maxLongSide win.
+    val maxShortSide = (options["maxShortSide"] as? Number)?.toInt()?.takeIf { it > 0 }
+      ?: maxOf(1, minOf(maxWidth, maxHeight))
+    val maxLongSide = (options["maxLongSide"] as? Number)?.toInt()?.takeIf { it > 0 }
+      ?: maxOf(maxWidth, maxHeight, maxShortSide)
 
     // Read source info to decide if we even NEED to re-encode.
     val info = readInfo(srcUri)
@@ -222,11 +235,11 @@ class ExpoNativeVideoModule : Module() {
     // (e.g., a video downloaded from another chat, screen recordings, etc.).
     val srcBitrate = if (durationMs > 0) (srcSize * 8L * 1000L) / durationMs else Long.MAX_VALUE
     val withinEnvelope = srcW > 0 && srcH > 0
-      && srcW <= maxWidth && srcH <= maxHeight
+      && minOf(srcW, srcH) <= maxShortSide && maxOf(srcW, srcH) <= maxLongSide
       && srcBitrate <= (targetBitrate * 12L / 10L) // 20% tolerance — re-encoding to save 10% isn't worth it
 
     if (withinEnvelope) {
-      Log.i(TAG, "compressVideo: src ${srcW}x${srcH} ${srcBitrate}bps already within envelope (${maxWidth}x${maxHeight} ${targetBitrate}bps) — skipping transcode")
+      Log.i(TAG, "compressVideo: src ${srcW}x${srcH} ${srcBitrate}bps already within envelope (short<=${maxShortSide} long<=${maxLongSide} ${targetBitrate}bps) — skipping transcode")
       return mapOf(
         "uri" to srcUri,
         "size" to srcSize,
@@ -247,7 +260,7 @@ class ExpoNativeVideoModule : Module() {
     val cacheDir = appContext.reactContext?.cacheDir
     if (srcPath != null && cacheDir != null) {
       try {
-        val r = VideoTranscoder.transcode(srcPath, cacheDir, maxWidth, maxHeight, targetBitrate, fps)
+        val r = VideoTranscoder.transcodeShortSide(srcPath, cacheDir, maxShortSide, maxLongSide, targetBitrate, fps)
         if (r != null && r.size in 1L until srcSize) {
           // Only adopt the transcode if it actually got SMALLER — a re-encode
           // that grew the file (rare, e.g. already-efficient source) isn't worth

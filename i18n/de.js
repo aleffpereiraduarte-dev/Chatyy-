@@ -8385,7 +8385,7 @@ export default {
   'settings.roaming.title': 'Im Roaming erlauben',
   'settings.roaming.desc': 'Medien-Downloads im Roaming erlauben. Deaktivieren, um internationale Daten zu sparen.',
   'settings.lowDataCalls.title': 'Weniger Daten bei Anrufen nutzen',
-  'settings.lowDataCalls.desc': 'Begrenzt Video auf 360p / 15 fps. Nützlich bei langsamen oder mobilen Netzwerken. Aktiviert sich automatisch im Roaming.',
+  'settings.lowDataCalls.desc': 'Videoanrufe laufen automatisch in Full HD. Aktivieren, um das Senden auf 720p zu begrenzen und in geringerer Qualität zu empfangen – nützlich bei mobilen Daten.',
   'settings.wallpaperDefault.title': 'Standard-Hintergrundbild',
   'settings.wallpaperDefault.desc': 'Wird auf neue Chats angewendet. Jeder Chat kann sein eigenes haben.',
   'settings.wallpaperDefault.custom': '+ Benutzerdefiniertes Bild hochladen',
@@ -10260,4 +10260,13 @@ export default {
   "status.reactWow": "Wow",
   "status.reactSad": "Traurig",
   "status.reactClap": "Applaus",
+  // [2026-10-11 video-fullhd]
+  "settings.mediaUploadQuality.title": "Qualität beim Senden von Medien",
+  "settings.mediaUploadQuality.standard": "Standard",
+  "settings.mediaUploadQuality.hd": "HD",
+  "settings.mediaUploadQuality.standardDesc": "Schneller gesendet, verbraucht weniger Daten (720p)",
+  "settings.mediaUploadQuality.hdDesc": "Beste Qualität, bis zu 3x größere Dateien (Full HD 1080p)",
+  "settings.mediaUploadQuality.footer": "Gilt standardmäßig für Videos. Mit Datensparmodus oder bei schwachem Netz wird Standardqualität verwendet. Du kannst das bei jedem Senden über die HD-Taste ändern.",
+  "chatConv.hdOn": "HD-Qualität",
+  "chatConv.hdOff": "Standardqualität",
 };

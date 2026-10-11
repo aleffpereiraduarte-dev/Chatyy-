@@ -7610,7 +7610,7 @@ export default {
   'settings.roaming.title': 'Izinkan saat roaming',
   'settings.roaming.desc': 'Mengizinkan unduh media saat roaming. Matikan untuk menghemat data internasional.',
   'settings.lowDataCalls.title': 'Gunakan lebih sedikit data saat panggilan',
-  'settings.lowDataCalls.desc': 'Membatasi video ke 360p / 15 fps. Berguna di jaringan lambat atau seluler. Aktif secara otomatis saat roaming.',
+  'settings.lowDataCalls.desc': 'Panggilan video otomatis Full HD. Aktifkan untuk membatasi pengiriman ke 720p dan menerima kualitas lebih rendah — berguna saat memakai data seluler.',
   'settings.wallpaperDefault.title': 'Wallpaper default',
   'settings.wallpaperDefault.desc': 'Diterapkan pada percakapan baru. Setiap chat bisa memiliki wallpaper sendiri.',
   'settings.wallpaperDefault.custom': '+ Kirim gambar sendiri',
@@ -9482,4 +9482,13 @@ export default {
   "status.reactWow": "Wow",
   "status.reactSad": "Sedih",
   "status.reactClap": "Tepuk tangan",
+  // [2026-10-11 video-fullhd]
+  "settings.mediaUploadQuality.title": "Kualitas pengiriman media",
+  "settings.mediaUploadQuality.standard": "Standar",
+  "settings.mediaUploadQuality.hd": "HD",
+  "settings.mediaUploadQuality.standardDesc": "Lebih cepat dikirim, hemat data (720p)",
+  "settings.mediaUploadQuality.hdDesc": "Kualitas terbaik, file hingga 3x lebih besar (Full HD 1080p)",
+  "settings.mediaUploadQuality.footer": "Dipakai sebagai default untuk video. Saat Penghemat Data aktif atau jaringan lemah, kualitas standar yang dipakai. Anda bisa mengubahnya di setiap pengiriman lewat tombol HD.",
+  "chatConv.hdOn": "Kualitas HD",
+  "chatConv.hdOff": "Kualitas standar",
 };

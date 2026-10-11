@@ -88,6 +88,9 @@ import androidx.compose.material.icons.filled.Cameraswitch
 import androidx.compose.material.icons.filled.Chat
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Dialpad
+import androidx.compose.material.icons.filled.DataSaverOff
+import androidx.compose.material.icons.filled.DataSaverOn
+import androidx.compose.material.icons.filled.SignalCellularAlt1Bar
 import androidx.compose.material.icons.filled.EmojiEmotions
 import androidx.compose.material.icons.filled.ExpandMore
 // [button-removal 2026-05-26] FrontHand (hand-raise) + GraphicEq (noise toggle)
@@ -957,7 +960,7 @@ class CallActivity : ComponentActivity() {
     try { remoteRenderer?.setScalingType(RendererCommon.ScalingType.SCALE_ASPECT_FILL) } catch (_: Throwable) {}
     try { localRenderer?.setScalingType(RendererCommon.ScalingType.SCALE_ASPECT_FILL) } catch (_: Throwable) {}
 
-    refreshHdState() // [2026-10-11 call-parity] More-sheet HD label
+    refreshDataSaverState() // [2026-10-11 full-hd] More-sheet "Economizar dados" state
     // Mount the Compose UI.
     setContent {
       MaterialTheme(colorScheme = darkColorScheme()) {
@@ -1234,7 +1237,7 @@ class CallActivity : ComponentActivity() {
           onRequestVideoUpgrade = { requestVideoUpgrade() },
           onRespondVideoRequest = { accept -> respondVideoRequest(accept) },
           onToggleHold = { applyUserHold(!state.isOnHold) },
-          onToggleHd = { toggleHd() },
+          onToggleDataSaver = { toggleDataSaver() },
         )
       }
     }
@@ -1501,6 +1504,7 @@ class CallActivity : ComponentActivity() {
     try { ExpoCallKitModule.emitCallUiChanged() } catch (_: Throwable) {}
     try { videoQualityDiagJob?.cancel() } catch (_: Throwable) {}
     try { closeP2P("destroy") } catch (_: Throwable) {}
+    try { CallVideoQuality.stopAdaptive() } catch (_: Throwable) {}
     try { CallVideoQuality.resetCallState() } catch (_: Throwable) {}
     try { unregisterReceiver(closeReceiver) } catch (_: Exception) {}
     try { unregisterReceiver(dtmfReceiver) } catch (_: Exception) {}
@@ -2436,6 +2440,15 @@ class CallActivity : ComponentActivity() {
     // Profile pick is network-aware (Wi-Fi → 720p, or 1080p with the HD pref;
     // cellular → 720p; cellular + poor bars → 540p). Quality is unknown at
     // bringUpRoom time, so we pass 3 (never start a call pessimistically).
+    // [2026-10-11 full-hd] Capture FIRST: captureDefaults() picks the rung
+    // (Full HD by default) and publishDefaults() builds the simulcast
+    // envelope for THAT rung (it used to read the previous call's profile).
+    val captureDefaults = try {
+      CallVideoQuality.captureDefaults(applicationContext, isGroup = false, localQualityScore = 3)
+    } catch (t: Throwable) {
+      Log.w(TAG, "CallVideoQuality.captureDefaults failed: ${t.message} — SDK defaults")
+      LocalVideoTrackOptions()
+    }
     val publishDefaults = try {
       CallVideoQuality.publishDefaults()
     } catch (t: Throwable) {
@@ -2457,7 +2470,7 @@ class CallActivity : ComponentActivity() {
         adaptiveStream = false,
         dynacast = true,
         videoTrackPublishDefaults = publishDefaults,
-        videoTrackCaptureDefaults = CallVideoQuality.captureDefaults(applicationContext, isGroup = false, localQualityScore = 3),
+        videoTrackCaptureDefaults = captureDefaults,
         screenShareTrackCaptureDefaults = CallVideoQuality.screenShareCaptureDefaults(),
         screenShareTrackPublishDefaults = CallVideoQuality.screenSharePublishDefaults()
       )
@@ -2468,7 +2481,7 @@ class CallActivity : ComponentActivity() {
       Log.w(TAG, "RoomOptions ctor failed: ${t.message} — falling back to defaults")
       RoomOptions()
     }
-    Log.i(TAG, "bringUpRoom video profile=${CallVideoQuality.current.name} codec=${publishDefaults.videoCodec} simulcast=${publishDefaults.simulcast} enc=${publishDefaults.videoEncoding?.maxBitrate}")
+    Log.i(TAG, "bringUpRoom video profile=${CallVideoQuality.current.name} codec=${publishDefaults.videoCodec} simulcast=${publishDefaults.simulcast} layers=${CallVideoQuality.layersLabel()}")
     // [Wave B audio, 2026-05-18] Pin LocalAudioTrackOptions on the RoomOptions
     // reflectively. The LK Android 2.x SDK already defaults AEC/AGC/NS on,
     // but a future SDK upgrade could silently flip a default — explicit pin
@@ -3098,6 +3111,9 @@ class CallActivity : ComponentActivity() {
           }
           // [video-quality 2026-10-06] t+8s / t+45s "video_quality" beacons.
           scheduleVideoQualityDiag(r)
+          // [2026-10-11 full-hd] "Economizar dados" → ask the SFU for the
+          // MEDIUM layer (540p of a Full HD sender); otherwise HIGH.
+          try { CallVideoQuality.applyReceivePreference(applicationContext, r) } catch (_: Throwable) {}
           // [WAVE 142 GPT-5.5-pro] Snippet #6 — flip remoteFirstFrame on a
           // ~180ms post-subscribe delay so the Crossfade audio→video kicks
           // in once the first I-frame has decoded. The LK Android Room API
@@ -3305,7 +3321,8 @@ class CallActivity : ComponentActivity() {
         }
         if (event.participant === r.localParticipant) {
           state.localQuality = q
-          // [video-quality 2026-10-06] cellular + 2× poor → 540p capture in place.
+          // [2026-10-11 full-hd] feeds the adaptive controller (poor ~10 s →
+          // one rung down; good ~20 s → one rung up) + the "Conexão fraca" pill.
           try {
             val bgOn = try {
               val proc = expo.modules.callkit.video.BackgroundProcessor.get(applicationContext)
@@ -3316,6 +3333,12 @@ class CallActivity : ComponentActivity() {
         } else {
           state.peerQuality = q
         }
+        // [2026-10-11 full-hd] "Conexão fraca" pill — only POOR/LOST count
+        // (UNKNOWN also maps to 0 for the bars), shown after 3 s, hidden 2 s
+        // after recovery (no flicker on one bad reading).
+        val qn = event.quality.name.uppercase()
+        val weak = qn == "POOR" || qn == "LOST"
+        setWeakDebounced(local = event.participant === r.localParticipant, weak = weak)
       }
       is RoomEvent.ActiveSpeakersChanged -> {
         // Peer is the "active speaker" anytime a remote participant is in
@@ -3563,6 +3586,18 @@ class CallActivity : ComponentActivity() {
   private var videoQualityDiagJob: Job? = null
   private fun scheduleVideoQualityDiag(r: Room) {
     if (videoQualityDiagJob != null) return
+    // [2026-10-11 full-hd] Per-call adaptive controller (bandwidth / thermal /
+    // data saver → capture rung) starts with the first video track.
+    try {
+      CallVideoQuality.startAdaptive(
+        applicationContext, callId,
+        room = { room },
+        canApply = { p2p == null && !isFinishing },
+        onApplied = { rr -> bindLocalCameraIfReady(rr) },
+      )
+    } catch (_: Throwable) {}
+    // Tracks subscribed on the warm Room before adoption miss TrackSubscribed.
+    try { CallVideoQuality.applyReceivePreference(applicationContext, r) } catch (_: Throwable) {}
     videoQualityDiagJob = lifecycleScope.launch {
       try {
         delay(8_000)
@@ -4272,46 +4307,38 @@ class CallActivity : ComponentActivity() {
     try { android.widget.Toast.makeText(this, msg, android.widget.Toast.LENGTH_LONG).show() } catch (_: Throwable) {}
   }
 
-  // ────────────── [2026-10-11 call-parity] "Qualidade HD" (iOS menu parity)
-  //
-  // ON  → Wi-Fi/ethernet: 1080p; cellular: 720p (never 1080p on data).
-  // OFF → 720p (cellular may still step down to 540p on sustained poor bars).
-  // Turning HD ON never LOWERS the current capture (iOS log: hd_on → sd540).
-  private fun refreshHdState() {
-    state.hdPreferred = CallVideoQuality.isHdPreferred(applicationContext)
-    state.hdOnCellular = CallVideoQuality.isCellular(applicationContext)
+  // ────────────── [2026-10-11 full-hd] "Conexão fraca" debounce
+  private var localWeakJob: Job? = null
+  private var peerWeakJob: Job? = null
+  private fun setWeakDebounced(local: Boolean, weak: Boolean) {
+    val cur = if (local) state.localWeak else state.peerWeak
+    val pending = if (local) localWeakJob else peerWeakJob
+    if (cur == weak) { pending?.cancel(); if (local) localWeakJob = null else peerWeakJob = null; return }
+    if (pending?.isActive == true) return // already heading there
+    val job = lifecycleScope.launch {
+      delay(if (weak) 3_000 else 2_000)
+      if (local) state.localWeak = weak else state.peerWeak = weak
+      CallDiag.log("call_weak_connection", callId, "side=${if (local) "local" else "peer"} weak=${if (weak) 1 else 0} profile=${CallVideoQuality.current.name}", applicationContext)
+    }
+    if (local) localWeakJob = job else peerWeakJob = job
   }
 
-  private fun toggleHd() {
-    val next = !CallVideoQuality.isHdPreferred(applicationContext)
-    CallVideoQuality.setHdPreferred(applicationContext, next)
-    refreshHdState()
-    val cell = state.hdOnCellular
-    val target = when {
-      next && !cell -> CallVideoQuality.Profile.HD1080
-      else -> CallVideoQuality.Profile.HD720
-    }
-    val cur = CallVideoQuality.current
-    CallDiag.log("video_hd_toggle", callId, "on=${if (next) 1 else 0} net=${CallVideoQuality.networkLabel(applicationContext)} cur=${cur.name} target=${target.name}", applicationContext)
-    if (next && target.rank <= cur.rank) return // never lower on HD ON
-    if (target == cur) return
-    val bgOn = try {
-      val proc = expo.modules.callkit.video.BackgroundProcessor.get(applicationContext)
-      proc.available && proc.mode != expo.modules.callkit.video.BackgroundProcessor.Mode.OFF
-    } catch (_: Throwable) { false }
-    val track = try { room?.localParticipant?.getTrackPublication(Track.Source.CAMERA)?.track as? LocalVideoTrack } catch (_: Throwable) { null }
-    if (track == null || bgOn || p2p != null) {
-      CallVideoQuality.current = target // applied on the next camera publish
-      return
-    }
-    try {
-      track.restartTrack(track.options.copy(captureParams = CallVideoQuality.captureParams(target)))
-      CallVideoQuality.current = target
-      bindLocalCameraIfReady(room ?: return)
-      CallDiag.log("video_profile_change", callId, "to=${target.name} reason=${if (next) "hd_on" else "hd_off"} net=${CallVideoQuality.networkLabel(applicationContext)}", applicationContext)
-    } catch (t: Throwable) {
-      Log.w(TAG, "HD restartTrack failed: ${t.message}")
-    }
+  // ────────────── [2026-10-11 full-hd] "Economizar dados" (iOS menu parity)
+  //
+  // Same per-device pref as Configurações › Armazenamento e dados › "Usar
+  // menos dados em chamadas" (CallVideoQuality.DATA_SAVER_KEY). There is NO
+  // manual resolution choice: Full HD adaptive is the default; ON caps the
+  // send at 720p (1.0 Mbps from the next publish) and asks the SFU for the
+  // 540p layer of the peer.
+  private fun refreshDataSaverState() {
+    state.dataSaver = CallVideoQuality.isDataSaver(applicationContext)
+  }
+
+  private fun toggleDataSaver() {
+    val next = !CallVideoQuality.isDataSaver(applicationContext)
+    CallVideoQuality.setDataSaver(applicationContext, next)
+    refreshDataSaverState()
+    try { CallVideoQuality.onDataSaverChanged(applicationContext, room, callId) } catch (_: Throwable) {}
   }
 
   // ────────────── PiP
@@ -4618,9 +4645,11 @@ class CallSessionStateAndroid {
   var isOnHold by mutableStateOf(false)
   /** The PEER put the call on hold ({type:"hold"} data frame). */
   var peerOnHold by mutableStateOf(false)
-  /** "Qualidade HD" preference mirrored for the More sheet label. */
-  var hdPreferred by mutableStateOf(false)
-  var hdOnCellular by mutableStateOf(false)
+  /** [2026-10-11 full-hd] "Economizar dados" pref mirrored for the More sheet. */
+  var dataSaver by mutableStateOf(false)
+  /** [2026-10-11 full-hd] "Conexão fraca" pill (debounced in CallActivity). */
+  var localWeak by mutableStateOf(false)
+  var peerWeak by mutableStateOf(false)
 }
 
 /** One floating emoji burst. The activity scope removes it after ~3s. */
@@ -4757,7 +4786,7 @@ private fun CallScreen(
   /** [2026-10-11 call-parity] "Colocar em espera" / "Retomar". */
   onToggleHold: () -> Unit = {},
   /** [2026-10-11 call-parity] "Qualidade HD" toggle. */
-  onToggleHd: () -> Unit = {},
+  onToggleDataSaver: () -> Unit = {},
 ) {
   var elapsedSeconds by remember { mutableStateOf(0) }
   /** [2026-10-11 call-parity] iOS "Mais opções" sheet. */
@@ -4938,6 +4967,9 @@ private fun CallScreen(
         onOpenChat = onOpenChat,
         onShowMore = { showMore = true },
       )
+      // [2026-10-11 full-hd] WhatsApp-style discreet notice instead of a
+      // frozen picture: "Conexão fraca" (ours) / "A conexão de X está fraca".
+      WeakConnectionPill(state = state)
       Spacer(Modifier.height(24.dp))
 
       // Avatar block hides once we have a remote video frame to show OR when
@@ -5147,7 +5179,7 @@ private fun CallScreen(
         onScreenShare = { showMore = false; onStartScreenshare() },
         onHold = { showMore = false; onToggleHold() },
         onAddParticipant = { showMore = false; addParticipantError = null; showAddParticipant = true },
-        onToggleHd = { showMore = false; onToggleHd() },
+        onToggleDataSaver = { showMore = false; onToggleDataSaver() },
         onKeypad = { showMore = false; showKeypad = true; dtmfBuffer = "" },
       )
     }
@@ -5292,6 +5324,48 @@ private fun TopBar(
       tint = Color.White.copy(alpha = 0.5f),
       modifier = Modifier.size(16.dp),
     )
+  }
+}
+
+/**
+ * [2026-10-11 full-hd] WhatsApp "Conexão fraca" pill. Local POOR/LOST (score
+ * ≤1 after the first reading) wins over the peer's; hidden while reconnecting
+ * (the status line already says "Reconectando…") and on hold. Same strings
+ * and rule as iOS CallViewController.updateWeakConnectionPill().
+ */
+@Composable
+private fun WeakConnectionPill(state: CallSessionStateAndroid) {
+  val connected = state.connectionStartedAt > 0L && !state.isReconnecting && !state.isOnHold && !state.peerOnHold
+  val text: String? = when {
+    !connected -> null
+    state.localWeak -> CallStrings.s("weakConnection")
+    state.peerWeak -> CallStrings.s("peerWeakConnection", "name" to state.callerName.ifEmpty { state.callerEmail.substringBefore('@') })
+    else -> null
+  }
+  androidx.compose.animation.AnimatedVisibility(
+    visible = text != null,
+    enter = androidx.compose.animation.fadeIn(),
+    exit = androidx.compose.animation.fadeOut(),
+    modifier = Modifier.fillMaxWidth(),
+  ) {
+    Box(Modifier.fillMaxWidth().padding(top = 10.dp), contentAlignment = Alignment.Center) {
+      Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+          .clip(RoundedCornerShape(16.dp))
+          .background(Color.Black.copy(alpha = 0.55f))
+          .padding(horizontal = 12.dp, vertical = 6.dp),
+      ) {
+        Icon(
+          imageVector = Icons.Filled.SignalCellularAlt1Bar,
+          contentDescription = null,
+          tint = Color(0xFFF1C40F),
+          modifier = Modifier.size(14.dp),
+        )
+        Spacer(Modifier.width(6.dp))
+        Text(text = text ?: "", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Medium, maxLines = 1)
+      }
+    }
   }
 }
 
@@ -5907,7 +5981,7 @@ private fun MoreOptionsSheet(
   onScreenShare: () -> Unit,
   onHold: () -> Unit,
   onAddParticipant: () -> Unit,
-  onToggleHd: () -> Unit,
+  onToggleDataSaver: () -> Unit,
   onKeypad: () -> Unit,
 ) {
   Box(
@@ -5949,13 +6023,14 @@ private fun MoreOptionsSheet(
         onHold,
       )
       MoreRow(Icons.Filled.PersonAdd, CallStrings.s("addParticipant"), onAddParticipant)
+      // [2026-10-11 full-hd] "Economizar dados" replaces "Qualidade HD" (same
+      // slot as iOS). No manual resolution — Full HD adaptive is automatic.
       if (state.isVideo) {
-        val label = when {
-          !state.hdPreferred -> CallStrings.s("hdOff")
-          state.hdOnCellular -> CallStrings.s("hdOnCell")
-          else -> CallStrings.s("hdOnWifi")
-        }
-        MoreRow(if (state.hdPreferred) Icons.Filled.CheckCircle else Icons.Filled.Hd, label, onToggleHd)
+        MoreRow(
+          if (state.dataSaver) Icons.Filled.DataSaverOn else Icons.Filled.DataSaverOff,
+          CallStrings.s(if (state.dataSaver) "dataSaverOn" else "dataSaver"),
+          onToggleDataSaver,
+        )
       }
       // Android extra (DTMF for PSTN/IVR bridges) — kept, last row.
       MoreRow(Icons.Filled.Dialpad, CallStrings.s("keypad"), onKeypad)

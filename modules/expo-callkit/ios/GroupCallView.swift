@@ -247,6 +247,11 @@ struct GroupCallView: View {
     }
 
     private var statusLine: String {
+        // [2026-10-11 full-hd] WhatsApp "Conexão fraca" (local POOR/LOST) —
+        // same text as the 1:1 pill and Android GroupCallActivity.
+        if session.status == GroupCallStrings.connected && session.connectionQuality <= 1 {
+            return CallStrings.s("weakConnection")
+        }
         if session.status == GroupCallStrings.connected {
             let count = remoteParticipants.count + (localParticipant != nil ? 1 : 0)
             return "\(GroupCallStrings.participants(count)) · \(formatDuration(elapsedSeconds))"

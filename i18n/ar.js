@@ -8385,7 +8385,7 @@ export default {
   'settings.roaming.title': 'السماح بالتجوال',
   'settings.roaming.desc': 'يسمح بتنزيل الوسائط عند التجوال. قم بإيقافه لتوفير البيانات الدولية.',
   'settings.lowDataCalls.title': 'استخدام بيانات أقل في المكالمات',
-  'settings.lowDataCalls.desc': 'يحد الفيديو إلى 360p / 15 fps. مفيد في الشبكات البطيئة أو المتنقلة. يتم تفعيله تلقائيًا عند التجوال.',
+  'settings.lowDataCalls.desc': 'مكالمات الفيديو بدقة Full HD تلقائيًا. فعّل الخيار لتحديد الإرسال بـ 720p والاستقبال بجودة أقل — مفيد عند استخدام بيانات الجوال.',
   'settings.wallpaperDefault.title': 'خلفية افتراضية',
   'settings.wallpaperDefault.desc': 'يطبق في المحادثات الجديدة. يمكن أن تحتوي كل محادثة على خلفيتها الخاصة.',
   'settings.wallpaperDefault.custom': '+ إرسال صورة خاصة',
@@ -10260,4 +10260,13 @@ export default {
   "status.reactWow": "واو",
   "status.reactSad": "حزين",
   "status.reactClap": "تصفيق",
+  // [2026-10-11 video-fullhd]
+  "settings.mediaUploadQuality.title": "جودة إرسال الوسائط",
+  "settings.mediaUploadQuality.standard": "عادية",
+  "settings.mediaUploadQuality.hd": "HD",
+  "settings.mediaUploadQuality.standardDesc": "إرسال أسرع ويستهلك بيانات أقل (720p)",
+  "settings.mediaUploadQuality.hdDesc": "أفضل جودة، ملفات أكبر حتى 3 مرات (Full HD 1080p)",
+  "settings.mediaUploadQuality.footer": "تُستخدم افتراضيًا لمقاطع الفيديو. عند تفعيل توفير البيانات أو ضعف الشبكة تُستخدم الجودة العادية. يمكنك تغييرها في كل إرسال من زر HD.",
+  "chatConv.hdOn": "جودة HD",
+  "chatConv.hdOff": "جودة عادية",
 };

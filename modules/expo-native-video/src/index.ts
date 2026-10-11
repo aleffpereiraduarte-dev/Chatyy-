@@ -39,6 +39,14 @@ export interface CompressOptions {
   audioBitrate?: number;
   /** Max frame rate. Default 30 (capped, never up-samples). */
   fps?: number;
+  /**
+   * [compressApiVersion >= 2, Android] Max SHORT side (orientation-agnostic).
+   * Older binaries ignore it and use maxWidth × maxHeight. iOS already reads
+   * the maxWidth/maxHeight box as long×short.
+   */
+  maxShortSide?: number;
+  /** [compressApiVersion >= 2, Android] Max LONG side. */
+  maxLongSide?: number;
 }
 
 export interface CompressResult {
@@ -93,6 +101,8 @@ declare class ExpoNativeVideoModuleType extends NativeModule {
   getInfo(srcUri: string): Promise<VideoInfo>;
   segmentVideo(srcUri: string, segmentMs: number): Promise<SegmentResult>;
   trimVideo?(srcUri: string, startMs: number, endMs: number): Promise<TrimResult>;
+  /** Android ≥ 2026-10-11 binaries: 2 (short-side fit, rotation, High/VBR, faststart). */
+  readonly compressApiVersion?: number;
 }
 
 export interface TrimResult {
@@ -126,13 +136,32 @@ export function isAvailable(): boolean {
   return !!getModule();
 }
 
-const DEFAULT_OPTS: Required<CompressOptions> = {
+const DEFAULT_OPTS: Required<Omit<CompressOptions, 'maxShortSide' | 'maxLongSide'>> = {
   maxWidth: 1280,
   maxHeight: 720,
   bitrate: 1_500_000,
   audioBitrate: 128_000,
   fps: 30,
 };
+
+/**
+ * [2026-10-11 video-shortside] Native compressVideo capability level:
+ *   0 — module missing / legacy binary (Android fits the CODED size against
+ *       maxWidth × maxHeight literally, no rotation hint, no faststart)
+ *   2 — Android: maxShortSide/maxLongSide honoured (orientation-agnostic),
+ *       source rotation preserved, AVC High/VBR, faststart MP4.
+ * iOS does not export it (0) but already fits orientation-agnostically.
+ */
+export function getCompressApiVersion(): number {
+  const m = getModule();
+  if (!m) return 0;
+  try {
+    const v = (m as any).compressApiVersion;
+    return typeof v === 'number' && Number.isFinite(v) ? v : 0;
+  } catch {
+    return 0;
+  }
+}
 
 /**
  * Re-encode a video to H.264/AAC at the target dimensions + bitrate. Output
@@ -226,6 +255,7 @@ export async function trimVideo(
 
 export default {
   isAvailable,
+  getCompressApiVersion,
   isTrimAvailable,
   trimVideo,
   compressVideo,

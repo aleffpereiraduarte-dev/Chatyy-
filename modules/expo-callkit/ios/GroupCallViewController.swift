@@ -307,7 +307,10 @@ final class GroupCallViewController: UIViewController, @unchecked Sendable {
             // in-app capture otherwise — see ScreenShareSupport.swift.
             defaultScreenShareCaptureOptions: ScreenShareSupport.captureOptions(),
             defaultAudioCaptureOptions: CallViewController.defaultAudioCaptureOptions(),
-            defaultVideoPublishOptions: CallViewController.defaultVideoPublishOptions(profile: .group540),
+            // [2026-10-11 full-hd] Same Full HD adaptive 3-layer ladder as 1:1:
+            // small tiles pull 270p/540p, dynacast pauses the 1080p layer until
+            // someone spotlights this tile.
+            defaultVideoPublishOptions: CallViewController.defaultVideoPublishOptions(),
             adaptiveStream: true,
             dynacast: true
         )
@@ -341,15 +344,16 @@ final class GroupCallViewController: UIViewController, @unchecked Sendable {
     }
 
     private func publishCamera(on r: Room) async {
-        let captureOpts = CallViewController.defaultCameraCaptureOptions(position: currentCameraPosition, profile: .group540)
-        let publishOpts = CallViewController.defaultVideoPublishOptions(profile: .group540)
+        let captureOpts = CallViewController.defaultCameraCaptureOptions(position: currentCameraPosition, isGroup: true)
+        let publishOpts = CallViewController.defaultVideoPublishOptions()
         if let pub = try? await r.localParticipant.setCamera(
             enabled: true,
             captureOptions: captureOpts,
             publishOptions: publishOpts
         ), let track = pub.track as? LocalVideoTrack {
             await MainActor.run { self.updateLocalParticipant(videoTrack: track) }
-            print("[GroupCallVC] camera published (profile=group540) — room=\(roomName)")
+            print("[GroupCallVC] camera published (profile=\(CallViewController.CallVideoQuality.current.rawValue) layers=\(CallViewController.CallVideoQuality.layersLabel())) — room=\(roomName)")
+            await MainActor.run { self.startAdaptiveVideo(r) }
         }
     }
 
@@ -731,7 +735,7 @@ final class GroupCallViewController: UIViewController, @unchecked Sendable {
                 }
             }
             do {
-                let opts = CallViewController.defaultCameraCaptureOptions(position: next, profile: .group540)
+                let opts = CallViewController.defaultCameraCaptureOptions(position: next, profile: CallViewController.CallVideoQuality.current)
                 let pub = try await r.localParticipant.setCamera(enabled: true, captureOptions: opts)
                 if let track = pub?.track as? LocalVideoTrack {
                     await MainActor.run { self.updateLocalParticipant(videoTrack: track) }
@@ -1039,7 +1043,19 @@ final class GroupCallViewController: UIViewController, @unchecked Sendable {
         }
     }
 
+    /// [2026-10-11 full-hd] Per-call capture controller (bandwidth / thermal /
+    /// data saver), shared implementation with the 1:1 VC.
+    private var adaptiveVideo: CallViewController.AdaptiveVideoController?
+
+    private func startAdaptiveVideo(_ r: Room) {
+        guard adaptiveVideo == nil else { return }
+        let c = CallViewController.AdaptiveVideoController(room: r, callId: roomName)
+        c.start()
+        adaptiveVideo = c
+    }
+
     deinit {
+        adaptiveVideo?.stop()
         // [2026-10-06 screen-share iOS] Darwin observer holds an unretained token.
         if let tok = broadcastStopToken { ScreenShareSupport.stopObserving(tok) }
         if let tok = systemMuteObserver { NotificationCenter.default.removeObserver(tok) }
@@ -1339,6 +1355,8 @@ extension GroupCallViewController: RoomDelegate {
             guard let self = self else { return }
             if isLocal {
                 self.session.connectionQuality = score
+                // [2026-10-11 full-hd] feeds the adaptive capture controller.
+                self.adaptiveVideo?.noteLocalQuality(score)
             } else {
                 self.upsertRemote(identity: identity, connectionQuality: score)
             }

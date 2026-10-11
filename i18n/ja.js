@@ -7610,7 +7610,7 @@ export default {
   "settings.roaming.title": "ローミングを許可",
   "settings.roaming.desc": "ローミング中にメディアをダウンロードできます。国際データを節約するためにオフにします。",
   "settings.lowDataCalls.title": "通話時のデータ使用を減らす",
-  "settings.lowDataCalls.desc": "動画を360p / 15 fpsに制限します。遅いまたはモバイルネットワークで便利です。ローミング中に自動的に有効になります。",
+  "settings.lowDataCalls.desc": "ビデオ通話は自動でフルHDになります。オンにすると送信を720pに制限し、受信画質も下げます。モバイルデータ通信時に便利です。",
   "settings.wallpaperDefault.title": "デフォルトの壁紙",
   "settings.wallpaperDefault.desc": "新しい会話に適用します。各チャットは独自のものを持つことができます。",
   "settings.wallpaperDefault.custom": "+ 自分の画像を送信",
@@ -9482,4 +9482,13 @@ export default {
   "status.reactWow": "すごい",
   "status.reactSad": "悲しい",
   "status.reactClap": "拍手",
+  // [2026-10-11 video-fullhd]
+  "settings.mediaUploadQuality.title": "メディアの送信画質",
+  "settings.mediaUploadQuality.standard": "標準",
+  "settings.mediaUploadQuality.hd": "HD",
+  "settings.mediaUploadQuality.standardDesc": "送信が速く、データ使用量が少ない (720p)",
+  "settings.mediaUploadQuality.hdDesc": "最高画質、ファイルサイズは最大3倍 (フルHD 1080p)",
+  "settings.mediaUploadQuality.footer": "動画の既定の画質として使用されます。データセーバーがオンのときや電波が弱いときは標準画質で送信されます。送信ごとにHDボタンで変更できます。",
+  "chatConv.hdOn": "HD画質",
+  "chatConv.hdOff": "標準画質",
 };

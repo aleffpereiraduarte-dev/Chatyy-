@@ -423,21 +423,30 @@ function SettingsScreenInner() {
   // when this is OFF the auto-roaming detector force-enables low-data when
   // NetInfo flags an expensive cellular link.
   const [lowDataCalls, setLowDataCalls] = useState(false);
-  // [2026-10-06 UX2] "Qualidade HD (1080p)" em chamadas. Lives in the NATIVE
-  // pref the call engine reads (Android SharedPreferences chatyy_call_hd /
-  // iOS UserDefaults chatyy_call_hd) via the expo-callkit bridge — not in
-  // AsyncStorage. The row is hidden until the installed binary exposes the
-  // bridge (OTA'd JS on an older build must not crash).
-  const [hdCalls, setHdCalls] = useState(false);
-  const [hdCallsAvailable, setHdCallsAvailable] = useState(false);
+  // [2026-10-11 video-fullhd] "Qualidade de envio de mídia" (Padrão / HD).
+  const [mediaUploadQuality, setMediaUploadQualityUI] = useState(() => {
+    try { return require('../services/mediaUploadQuality').getMediaUploadQuality(); } catch { return 'hd'; }
+  });
+  useEffect(() => {
+    try { return require('../services/mediaUploadQuality').onMediaUploadQualityChange(setMediaUploadQualityUI); } catch { return undefined; }
+  }, []);
+  // [2026-10-11 full-hd] Calls are Full HD adaptive by default (no manual
+  // resolution, WhatsApp model). "Usar menos dados em chamadas" is the ONLY
+  // knob; on native it lives in the pref the call engine reads at call start
+  // (Android SharedPreferences chatyy_call_prefs/chatyy_call_data_saver, iOS
+  // UserDefaults chatyy_call_data_saver) — the in-call "Mais opções ›
+  // Economizar dados" flips the SAME pref, so native is the source of truth.
+  // AsyncStorage `chatyy_low_data_calls` is mirrored for web call.js/backup.
+  const nativeCallDataSaver = useRef(null); // null = bridge unavailable (web / old binary)
   useEffect(() => {
     if (Platform.OS === 'web') return;
     try {
       const ck = require('../modules/expo-callkit');
-      if (typeof ck.isCallHdPreferenceAvailable === 'function' && ck.isCallHdPreferenceAvailable()
-          && typeof ck.getCallHdPreferred === 'function') {
-        const v = ck.getCallHdPreferred();
-        if (typeof v === 'boolean') { setHdCalls(v); setHdCallsAvailable(true); }
+      if (typeof ck.isCallDataSaverAvailable === 'function' && ck.isCallDataSaverAvailable()) {
+        const v = !!ck.getCallDataSaver();
+        nativeCallDataSaver.current = v;
+        setLowDataCalls(v);
+        setStorage('chatyy_low_data_calls', String(v));
       }
     } catch {}
   }, []);
@@ -652,7 +661,7 @@ function SettingsScreenInner() {
       if (typeof kv.notif_led_color === 'string' && /^#[0-9a-fA-F]{6}$/.test(kv.notif_led_color)) setNotifLedColor(kv.notif_led_color);
       if (kv.media_auto_dl_roaming === 'true') setMediaRoaming(true);
       if (typeof kv.wallpaper_default === 'string' && kv.wallpaper_default.length > 0) setWallpaperDefault(kv.wallpaper_default);
-      if (kv.chatyy_low_data_calls === 'true' || kv.chatyy_low_data_calls === '1') setLowDataCalls(true);
+      if ((kv.chatyy_low_data_calls === 'true' || kv.chatyy_low_data_calls === '1') && nativeCallDataSaver.current === null) setLowDataCalls(true);
       // Default ON — only an explicit 'false' turns it off.
       if (kv.autoSaveMediaToGallery === 'false' || kv.autoSaveMediaToGallery === '0') setAutoSaveGallery(false);
     };
@@ -2777,7 +2786,7 @@ function SettingsScreenInner() {
         {/* Mídia automática — 4 buckets × 3 modes. Writes chat_user_defaults
             via updateChatDefault (debounced PATCH) and mirrors into
             mediaCache so the cellular gate applies without a restart. */}
-        {sectionMatches(t('settings.mediaAutoDownload'), t('settings.mediaPhotos'), t('settings.mediaAudio'), t('settings.mediaVideos'), t('settings.mediaDocs'), t('settings.roaming.title'), t('settings.autoSaveGallery'), 'storage', 'auto-download', 'roaming', 'galeria', 'gallery') && (
+        {sectionMatches(t('settings.mediaAutoDownload'), t('settings.mediaPhotos'), t('settings.mediaAudio'), t('settings.mediaVideos'), t('settings.mediaDocs'), t('settings.roaming.title'), t('settings.autoSaveGallery'), t('settings.mediaUploadQuality.title'), 'storage', 'auto-download', 'roaming', 'galeria', 'gallery', 'HD', 'qualidade', 'quality') && (
         <View ref={registerSectionRef('mediaAutoDownload')}>
           <SettingsGroup header={t('settings.mediaAutoDownload')} footer={t('settings.mediaAutoDownloadDesc')}>
             {[
@@ -2835,6 +2844,25 @@ function SettingsScreenInner() {
             />
           </SettingsGroup>
 
+          {/* [2026-10-11 video-fullhd] WhatsApp "Qualidade de envio de mídia".
+              Default HD = videos 1080p; Padrão = 720p. The preview HD chip
+              starts from this and flips it per send. */}
+          <SettingsGroup footer={t('settings.mediaUploadQuality.footer') || 'Vale como padrão para vídeos. No modo economia de dados ou em rede fraca, o envio usa a qualidade padrão. Você pode trocar em cada envio pelo botão HD.'}>
+            <SettingsPickerRow
+              title={t('settings.mediaUploadQuality.title') || 'Qualidade de envio de mídia'}
+              value={mediaUploadQuality}
+              sheetTitle={t('settings.mediaUploadQuality.title') || 'Qualidade de envio de mídia'}
+              cancelLabel={t('common.cancel') || 'Cancelar'}
+              options={[
+                { value: 'standard', label: t('settings.mediaUploadQuality.standard') || 'Padrão', sub: t('settings.mediaUploadQuality.standardDesc') || 'Envio mais rápido, usa menos dados (720p)' },
+                { value: 'hd', label: t('settings.mediaUploadQuality.hd') || 'HD', sub: t('settings.mediaUploadQuality.hdDesc') || 'Melhor qualidade, arquivos até 3x maiores (Full HD 1080p)' },
+              ]}
+              onChange={(v) => {
+                try { setMediaUploadQualityUI(require('../services/mediaUploadQuality').setMediaUploadQuality(v)); } catch {}
+              }}
+            />
+          </SettingsGroup>
+
           <SettingsGroup header={t('settings.rd.calls') || 'Chamadas'}>
             {/* [gap C3] Low-data calls — caps video at 360p/15fps. */}
             <SettingsSwitchRow
@@ -2844,25 +2872,15 @@ function SettingsScreenInner() {
               onValueChange={(v) => {
                 setLowDataCalls(v);
                 setStorage('chatyy_low_data_calls', String(v));
+                // [2026-10-11 full-hd] Same native pref as the in-call
+                // "Economizar dados" (Full HD adaptive otherwise; no manual
+                // resolution row — the old "Qualidade HD" switch is gone).
+                try {
+                  const ck = require('../modules/expo-callkit');
+                  if (typeof ck.setCallDataSaver === 'function' && ck.setCallDataSaver(v)) nativeCallDataSaver.current = v;
+                } catch {}
               }}
             />
-            {/* [2026-10-06 UX2] HD (1080p) — native pref via expo-callkit;
-                hidden when the binary lacks the bridge. */}
-            {hdCallsAvailable && (
-              <SettingsSwitchRow
-                title={t('settings.hdCalls.title') || 'Qualidade HD (1080p)'}
-                subtitle={t('settings.hdCalls.desc') || 'Usa mais dados; só em Wi-Fi/rede boa'}
-                value={hdCalls}
-                onValueChange={(v) => {
-                  setHdCalls(v);
-                  try { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); } catch {}
-                  try {
-                    const ck = require('../modules/expo-callkit');
-                    if (typeof ck.setCallHdPreferred === 'function') ck.setCallHdPreferred(v);
-                  } catch {}
-                }}
-              />
-            )}
           </SettingsGroup>
         </View>
         )}

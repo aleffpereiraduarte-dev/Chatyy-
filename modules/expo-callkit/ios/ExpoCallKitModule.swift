@@ -743,17 +743,29 @@ public class ExpoCallKitModule: Module {
       return RNNoiseAudioProcessor.shared.available
     }
 
-    // [2026-10-06 UX2] "Qualidade HD (1080p)" toggle — same UserDefaults key
-    // the native in-call "Mais opções" menu flips (CallViewController
-    // CallVideoQuality.hdPrefKey = "chatyy_call_hd"), exposed to JS so the
-    // Settings screen can show one switch for both platforms.
+    // [2026-10-11 full-hd] "Usar menos dados em chamadas" (Configurações ›
+    // Armazenamento e dados) == "Economizar dados" in the call's Mais opções.
+    // Same UserDefaults key the call engine reads at call start
+    // (CallViewController.CallVideoQuality.dataSaverKey). A live call picks the
+    // change up on its next adaptive tick (capture) / next publish (envelope).
+    Function("setCallDataSaver") { (on: Bool) -> Bool in
+      CallViewController.CallVideoQuality.isDataSaver = on
+      return true
+    }
+
+    Function("getCallDataSaver") { () -> Bool in
+      return CallViewController.CallVideoQuality.isDataSaver
+    }
+
+    // [2026-10-06 UX2 → 2026-10-11] Legacy "Qualidade HD" bridge kept for OTA'd
+    // JS on this binary: HD is the default now, so HD preferred == saver OFF.
     Function("setCallHdPreferred") { (on: Bool) -> Bool in
-      UserDefaults.standard.set(on, forKey: "chatyy_call_hd")
+      CallViewController.CallVideoQuality.isDataSaver = !on
       return true
     }
 
     Function("getCallHdPreferred") { () -> Bool in
-      return UserDefaults.standard.bool(forKey: "chatyy_call_hd")
+      return !CallViewController.CallVideoQuality.isDataSaver
     }
 
     // ─── MediaPipe Background blur / virtual background (2026-05-17) ────

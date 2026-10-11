@@ -184,6 +184,11 @@ declare class ExpoCallKitModuleType extends NativeModule<ExpoCallKitEvents> {
   // chatyy_call_hd). Optional: binaries built before 2026-10-06 lack them.
   setCallHdPreferred?(on: boolean): boolean;
   getCallHdPreferred?(): boolean;
+  // [2026-10-11 full-hd] "Usar menos dados em chamadas" == in-call "Economizar
+  // dados" (Android chatyy_call_prefs/chatyy_call_data_saver, iOS UserDefaults
+  // chatyy_call_data_saver). Optional: binaries built before 2026-10-11 lack them.
+  setCallDataSaver?(on: boolean): boolean;
+  getCallDataSaver?(): boolean;
 
   // [#1205 live muting fix, 2026-05-19] Reset audio session before live
   // broadcast getUserMedia. Wipes a leaked MODE_IN_COMMUNICATION (Android)
@@ -969,6 +974,29 @@ export function getCallHdPreferred(): boolean {
   const m = getModule();
   if (!m || typeof m.getCallHdPreferred !== 'function') return false;
   try { return !!m.getCallHdPreferred(); } catch { return false; }
+}
+
+// ─── [2026-10-11 full-hd] Call data saver ───────────────────────────────────
+// Calls are Full HD adaptive by default; this is the only quality knob
+// (Configurações › Armazenamento e dados › "Usar menos dados em chamadas", and
+// "Economizar dados" in the native call's Mais opções — same pref). Guarded:
+// binaries built before 2026-10-11 don't have the native functions.
+export function isCallDataSaverAvailable(): boolean {
+  const m = getModule();
+  if (!m) return false;
+  try { return typeof m.getCallDataSaver === 'function' && typeof m.setCallDataSaver === 'function'; } catch { return false; }
+}
+
+export function setCallDataSaver(on: boolean): boolean {
+  const m = getModule();
+  if (!m || typeof m.setCallDataSaver !== 'function') return false;
+  try { return !!m.setCallDataSaver(!!on); } catch { return false; }
+}
+
+export function getCallDataSaver(): boolean {
+  const m = getModule();
+  if (!m || typeof m.getCallDataSaver !== 'function') return false;
+  try { return !!m.getCallDataSaver(); } catch { return false; }
 }
 
 // ─── Background blur / virtual background (2026-05-17) ───────────────────────

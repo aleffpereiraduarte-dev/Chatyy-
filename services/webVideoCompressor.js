@@ -7,9 +7,15 @@
 // huge uploads (audit gap).
 //
 // Strategy: re-encode in-browser using a canvas captureStream piped through
-// MediaRecorder. Downscales to maxWidth (default 1280, "HD ready") and
-// re-encodes at a fixed bitrate (default 1.5 Mbps VP9/webm) — same ballpark
-// WhatsApp Web targets. Result: 5–15MB for a typical 30s clip.
+// MediaRecorder. [2026-10-11 video-fullhd] Downscales by the SHORT side
+// (default 1080 → landscape 1920×1080, portrait 1080×1920; never upscales)
+// and re-encodes at ~4.5 Mbps, preferring MP4/H.264 (plays natively on
+// iOS/Android/every browser) over WebM/VP9. Skips the re-encode entirely when
+// the source already fits (short side ≤ target, bitrate ≤ target+20%, and a
+// universally playable MP4/MOV) — re-encoding would only lose quality.
+// The AUDIO track is carried over through WebAudio (the old canvas-only
+// stream sent SILENT videos); if audio can't be captured we return the
+// original file instead of muting it (unless it would blow the 200 MB cap).
 //
 // Limitations / fallbacks:
 //   - Requires browser MediaRecorder API. Safari < 14.1 has no VP9 — we try
@@ -37,11 +43,16 @@ function looksLikeVideo(file) {
 }
 
 // Pick the best MediaRecorder mime the current browser supports.
+// MP4/H.264 first: iOS (AVPlayer) cannot play WebM/VP9 sent from the web.
 function pickMimeType() {
   if (typeof MediaRecorder === 'undefined' || !MediaRecorder.isTypeSupported) {
     return '';
   }
   const candidates = [
+    'video/mp4;codecs=avc1.640028,mp4a.40.2',
+    'video/mp4;codecs=avc1.4d0028,mp4a.40.2',
+    'video/mp4;codecs=avc1,mp4a.40.2',
+    'video/mp4;codecs=avc1',
     'video/webm;codecs=vp9,opus',
     'video/webm;codecs=vp9',
     'video/webm;codecs=vp8,opus',
@@ -59,18 +70,43 @@ function pickMimeType() {
   return '';
 }
 
+const SIZE_CAP_BYTES = 190 * 1024 * 1024; // server hard cap 200 MB (413)
+
+/** Target canvas size: fit short side ≤ maxShort and long side ≤ maxLong, never upscale. */
+export function fitShortSide(srcW, srcH, maxShort = 1080, maxLong = 1920) {
+  if (!srcW || !srcH) return { w: 0, h: 0, scale: 1 };
+  const short = Math.min(srcW, srcH);
+  const long = Math.max(srcW, srcH);
+  const scale = Math.min(1, maxShort / short, maxLong / long);
+  // Round to even numbers — many encoders require it.
+  return {
+    w: Math.max(2, Math.round((srcW * scale) / 2) * 2),
+    h: Math.max(2, Math.round((srcH * scale) / 2) * 2),
+    scale,
+  };
+}
+
 /**
  * Compress a video File/Blob in the browser.
  *
  * @param {File|Blob} file - source video
  * @param {Object}  opts
- * @param {number}  opts.maxWidth   - downscale target, in pixels. Default 1280.
- * @param {number}  opts.bitrate    - video bits/sec. Default 1_500_000 (1.5 Mbps).
+ * @param {number}  opts.maxShortSide - short-side target, px. Default 1080 (Full HD).
+ * @param {number}  opts.maxLongSide  - long-side cap, px. Default 1920.
+ * @param {number}  opts.maxWidth     - LEGACY width box (only when maxShortSide is absent).
+ * @param {number}  opts.maxHeight    - LEGACY height box.
+ * @param {number}  opts.bitrate      - video bits/sec. Default 4_500_000 (alias videoBitsPerSecond).
+ * @param {number}  opts.audioBitrate - audio bits/sec. Default 128_000 (alias audioBitsPerSecond).
  * @param {(p:number)=>void} opts.onProgress - 0..1 progress callback (best-effort)
  * @returns {Promise<File|Blob>} compressed Blob, or the original file on any failure.
  */
 export async function compressVideoWeb(file, opts = {}) {
-  const { maxWidth = 1280, bitrate = 1_500_000, onProgress } = opts;
+  const { onProgress } = opts;
+  const bitrate = Number(opts.bitrate || opts.videoBitsPerSecond) || 4_500_000;
+  const audioBitrate = Number(opts.audioBitrate || opts.audioBitsPerSecond) || 128_000;
+  const legacyBox = opts.maxShortSide == null && (opts.maxWidth != null || opts.maxHeight != null);
+  const maxShort = Number(opts.maxShortSide) || 1080;
+  const maxLong = Number(opts.maxLongSide) || Math.round(maxShort * 16 / 9);
 
   // Native or non-browser env → no-op.
   if (Platform.OS !== 'web') return file;
@@ -80,6 +116,7 @@ export async function compressVideoWeb(file, opts = {}) {
 
   let url = null;
   let video = null;
+  let audioCtx = null;
   try {
     url = URL.createObjectURL(file);
     video = document.createElement('video');
@@ -107,10 +144,28 @@ export async function compressVideoWeb(file, opts = {}) {
     const srcH = video.videoHeight || 0;
     if (!srcW || !srcH) return file;
 
-    const scale = Math.min(1, maxWidth / srcW);
-    // Round to even numbers — many encoders require it.
-    const w = Math.max(2, Math.round((srcW * scale) / 2) * 2);
-    const h = Math.max(2, Math.round((srcH * scale) / 2) * 2);
+    let w; let h; let scale;
+    if (legacyBox) {
+      const mw = Number(opts.maxWidth) || 1280;
+      const mh = Number(opts.maxHeight) || 100000;
+      scale = Math.min(1, mw / srcW, mh / srcH);
+      w = Math.max(2, Math.round((srcW * scale) / 2) * 2);
+      h = Math.max(2, Math.round((srcH * scale) / 2) * 2);
+    } else {
+      ({ w, h, scale } = fitShortSide(srcW, srcH, maxShort, maxLong));
+    }
+
+    // Already within envelope → keep the original bytes (no generation loss,
+    // no realtime wait). Only for containers every player handles (MP4/MOV);
+    // a WebM/MKV source still gets re-encoded so iOS can play it.
+    const dur = Number(video.duration) || 0;
+    const srcType = String(file.type || '').toLowerCase();
+    const srcName = String(file.name || '').toLowerCase();
+    const playableEverywhere = /video\/(mp4|quicktime)/.test(srcType) || /\.(mp4|m4v|mov)$/.test(srcName);
+    if (scale >= 1 && dur > 0 && playableEverywhere
+      && (file.size || 0) * 8 / dur <= (bitrate + audioBitrate) * 1.2) {
+      return file;
+    }
 
     const canvas = document.createElement('canvas');
     canvas.width = w;
@@ -121,8 +176,32 @@ export async function compressVideoWeb(file, opts = {}) {
     if (typeof canvas.captureStream !== 'function') return file;
     const stream = canvas.captureStream(30);
 
+    // Audio: route the element through WebAudio into the recorder stream
+    // (not to the speakers, so nothing is heard). Needs the element unmuted;
+    // autoplay of an unmuted element can be refused outside a user gesture →
+    // handled below (fallback = original file, never a silent video).
+    let audioOk = false;
+    try {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (AC) {
+        audioCtx = new AC();
+        const srcNode = audioCtx.createMediaElementSource(video);
+        const dest = audioCtx.createMediaStreamDestination();
+        srcNode.connect(dest);
+        const at = dest.stream.getAudioTracks();
+        if (at && at.length) { at.forEach((tr) => stream.addTrack(tr)); audioOk = true; }
+        try { await audioCtx.resume(); } catch (_) { /* ignore */ }
+        video.muted = false;
+      }
+    } catch (_) {
+      audioOk = false;
+    }
+    // Without an audio path we only proceed when sending the original is
+    // impossible (over the cap); otherwise keep the original (with sound).
+    if (!audioOk && (file.size || 0) <= SIZE_CAP_BYTES) return file;
+
     const mimeType = pickMimeType();
-    const recorderOpts = { videoBitsPerSecond: bitrate };
+    const recorderOpts = { videoBitsPerSecond: bitrate, audioBitsPerSecond: audioBitrate };
     if (mimeType) recorderOpts.mimeType = mimeType;
 
     let recorder;
@@ -145,11 +224,11 @@ export async function compressVideoWeb(file, opts = {}) {
       recorder.onstop = res;
     });
 
-    recorder.start();
+    recorder.start(1000);
     try {
       await video.play();
     } catch (_) {
-      // Autoplay rejected — bail out cleanly.
+      // Autoplay (unmuted) rejected — bail out cleanly with the original.
       try { recorder.stop(); } catch (_e) { /* ignore */ }
       return file;
     }
@@ -183,6 +262,9 @@ export async function compressVideoWeb(file, opts = {}) {
   } catch (_err) {
     return file;
   } finally {
+    if (audioCtx) {
+      try { audioCtx.close(); } catch (_) { /* ignore */ }
+    }
     if (url) {
       try { URL.revokeObjectURL(url); } catch (_) { /* ignore */ }
     }

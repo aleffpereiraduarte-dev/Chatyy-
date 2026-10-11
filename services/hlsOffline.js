@@ -106,7 +106,10 @@ function parseManifest(text) {
       if (line.startsWith('#EXT-X-STREAM-INF')) {
         isMaster = true;
         const next = (lines[i + 1] || '').trim();
-        if (next && !next.startsWith('#')) variants.push({ uri: next });
+        const bw = Number((/BANDWIDTH=(\d+)/.exec(line) || [])[1]) || 0;
+        const res = /RESOLUTION=(\d+)x(\d+)/.exec(line);
+        const shortSide = res ? Math.min(Number(res[1]), Number(res[2])) : 0;
+        if (next && !next.startsWith('#')) variants.push({ uri: next, bandwidth: bw, shortSide });
       }
       continue;
     }
@@ -114,6 +117,27 @@ function parseManifest(text) {
     if (!isMaster) segments.push({ uri: line });
   }
   return isMaster ? { isMaster, variants } : { isMaster, segments };
+}
+
+function pickOfflineVariant(variants) {
+  if (!variants.length) return null;
+  if (!variants.some((v) => v.shortSide > 0 || v.bandwidth > 0)) return variants[0];
+  let roomy = false;
+  try {
+    const ns = require('./networkInfo').getNetworkState?.();
+    roomy = !!(ns && ns.isWifi);
+  } catch {}
+  try { if (require('./mediaCache').isDataSaverOn?.()) roomy = false; } catch {}
+  const cap = roomy ? 1080 : 720;
+  const fits = variants.filter((v) => !v.shortSide || v.shortSide <= cap);
+  if (!fits.length) {
+    return variants.reduce((a, v) => ((v.shortSide || 0) < (a.shortSide || 0) ? v : a), variants[0]);
+  }
+  const pool = fits;
+  return pool.reduce((best, v) => (
+    (v.shortSide || 0) > (best.shortSide || 0)
+    || ((v.shortSide || 0) === (best.shortSide || 0) && (v.bandwidth || 0) > (best.bandwidth || 0))
+  ) ? v : best, pool[0]);
 }
 
 // Rewrite a media manifest so each segment URI points at the local
@@ -158,11 +182,13 @@ export async function downloadHls(videoId, manifestUrl, onProgress) {
     manifestText = await r.text();
   } catch { return null; }
 
-  // 2. If master, drop down to the first variant. (Adaptive bitrate
-  //    selection is out of scope offline.)
+  // 2. If master, drop down to ONE variant (ABR is out of scope offline).
+  //    [2026-10-11 video-fullhd] Chat videos now ship a 1080p/720p/480p
+  //    ladder: keep the best (≤1080p) on Wi-Fi, ≤720p on cellular / Data
+  //    Saver. Unknown attributes → first listed (old behaviour).
   const parsed = parseManifest(manifestText);
   if (parsed.isMaster) {
-    const first = parsed.variants?.[0];
+    const first = pickOfflineVariant(parsed.variants || []);
     if (!first?.uri) return null;
     mediaManifestUrl = resolveRelative(manifestUrl, first.uri);
     try {

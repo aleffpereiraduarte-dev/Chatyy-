@@ -1185,25 +1185,37 @@ class ExpoCallKitModule : Module() {
       catch (_: Throwable) { false }
     }
 
-    // [2026-10-06 UX2] "Qualidade HD (1080p)" toggle. Backed by the same
-    // SharedPreferences key CallVideoQuality reads at publish time
-    // ("chatyy_call_prefs" / "chatyy_call_hd"), so flipping it here changes
-    // the ladder of the NEXT call. Android CallActivity has no "more" menu,
-    // so the switch lives in JS (app/settings.js). Mirrors iOS UserDefaults.
-    Function("setCallHdPreferred") { on: Boolean ->
+    // [2026-10-11 full-hd] "Usar menos dados em chamadas" (Configurações ›
+    // Armazenamento e dados) == "Economizar dados" in the call's Mais opções.
+    // Same SharedPreferences key the call engine reads at call start
+    // (chatyy_call_prefs / chatyy_call_data_saver). Flipping it during a live
+    // call re-targets capture + receive layer right away.
+    Function("setCallDataSaver") { on: Boolean ->
       try {
-        CallVideoQuality.setHdPreferred(context, on)
-        Log.d(TAG, "setCallHdPreferred: $on")
+        CallVideoQuality.setDataSaver(context, on)
+        try { CallVideoQuality.onDataSaverChanged(context, null, null) } catch (_: Throwable) {}
+        Log.d(TAG, "setCallDataSaver: $on")
         true
       } catch (t: Throwable) {
-        Log.w(TAG, "setCallHdPreferred failed: ${t.message}")
+        Log.w(TAG, "setCallDataSaver failed: ${t.message}")
         false
       }
     }
 
+    Function("getCallDataSaver") {
+      try { CallVideoQuality.isDataSaver(appContext.reactContext) }
+      catch (_: Throwable) { false }
+    }
+
+    // [2026-10-06 UX2 → 2026-10-11] Legacy "Qualidade HD" bridge kept for OTA'd
+    // JS on this binary: HD is the default now, so HD preferred == saver OFF.
+    Function("setCallHdPreferred") { on: Boolean ->
+      try { CallVideoQuality.setHdPreferred(context, on); true } catch (_: Throwable) { false }
+    }
+
     Function("getCallHdPreferred") {
       try { CallVideoQuality.isHdPreferred(appContext.reactContext) }
-      catch (_: Throwable) { false }
+      catch (_: Throwable) { true }
     }
 
     // ─── MediaPipe background blur / virtual background (2026-05-17) ──────

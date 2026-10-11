@@ -7993,7 +7993,7 @@ export default {
   'settings.roaming.title': 'Permitir em roaming',
   'settings.roaming.desc': "Permite transferir multimédia quando estiver em roaming. Desliga para economizar dados internacionais.",
   'settings.lowDataCalls.title': 'Usar menos dados em chamadas',
-  'settings.lowDataCalls.desc': 'Limita o vídeo a 360p / 15 fps. Útil em redes lentas ou móveis. Ativa automaticamente em roaming.',
+  'settings.lowDataCalls.desc': 'As chamadas de vídeo são Full HD automático. Ative para limitar o envio a 720p e receber com menor qualidade — útil com dados móveis.',
   'settings.wallpaperDefault.title': 'Papel de parede padrão',
   'settings.wallpaperDefault.desc': "Aplica em conversas novas. Cada chat pode ter o teu próprio.",
   'settings.wallpaperDefault.custom': '+ Enviar imagem própria',
@@ -9506,4 +9506,13 @@ export default {
   "status.reactWow": "Uau",
   "status.reactSad": "Triste",
   "status.reactClap": "Aplausos",
+  // [2026-10-11 video-fullhd]
+  "settings.mediaUploadQuality.title": "Qualidade de envio de multimédia",
+  "settings.mediaUploadQuality.standard": "Padrão",
+  "settings.mediaUploadQuality.hd": "HD",
+  "settings.mediaUploadQuality.standardDesc": "Envio mais rápido, usa menos dados (720p)",
+  "settings.mediaUploadQuality.hdDesc": "Melhor qualidade, ficheiros até 3x maiores (Full HD 1080p)",
+  "settings.mediaUploadQuality.footer": "Aplica-se por predefinição aos vídeos. No modo de poupança de dados ou com rede fraca, o envio usa a qualidade padrão. Pode alterar em cada envio no botão HD.",
+  "chatConv.hdOn": "Qualidade HD",
+  "chatConv.hdOff": "Qualidade padrão",
 };

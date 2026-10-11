@@ -6072,7 +6072,7 @@ function VideoPreviewNativeInner({ uri, trim, Video, useVideoPlayer }) {
   );
 }
 
-function MediaPreview({ visible, onClose, onSend, files: filesProp, colors, hdMode, onToggleHD }) {
+function MediaPreview({ visible, onClose, onSend, files: filesProp, colors, hdMode, onToggleHD, videoHdDefault = false }) {
   const { t } = useLanguage();
   const _previewInsets = useSafeAreaInsets(); // [2026-10-07 native-ui-build] bottomBar = safe-area real
   const [caption, setCaption] = useState('');
@@ -6379,11 +6379,31 @@ function MediaPreview({ visible, onClose, onSend, files: filesProp, colors, hdMo
               <TouchableOpacity onPress={() => setDrawOpen(true)} disabled={editing} style={previewStyles.headerBtn} accessibilityLabel={t('chatConv.draw') || 'Desenhar'}>
                 <IconPencil size={20} color="#fff" />
               </TouchableOpacity>
-              <TouchableOpacity onPress={onToggleHD} style={[previewStyles.headerBtn, hdMode && { backgroundColor: '#111111' }]} accessibilityLabel="HD">
-                <Text style={{ color: '#fff', fontSize: 12, fontWeight: '800', letterSpacing: 0.5 }}>HD</Text>
-              </TouchableOpacity>
             </View>
           )}
+          {/* [2026-10-11 video-fullhd] HD chip (WhatsApp): visible for photos AND
+              videos (was hidden on videos). Starts from the saved "Qualidade de
+              envio de mídia" default for videos; a tap flips it for this send. */}
+          {(() => {
+            const _hdOn = activeIsVideo ? (hdMode == null ? !!videoHdDefault : !!hdMode) : hdMode === true;
+            return (
+              <TouchableOpacity
+                onPress={() => onToggleHD?.(_hdOn)}
+                style={previewStyles.headerBtn}
+                accessibilityRole="switch"
+                accessibilityState={{ checked: _hdOn }}
+                accessibilityLabel={_hdOn ? (t('chatConv.hdOn') || 'Qualidade HD') : (t('chatConv.hdOff') || 'Qualidade padrão')}
+              >
+                <View style={{
+                  paddingHorizontal: 5, paddingVertical: 1.5, borderRadius: 5,
+                  borderWidth: 1.5, borderColor: _hdOn ? '#fff' : 'rgba(255,255,255,0.75)',
+                  backgroundColor: _hdOn ? '#fff' : 'transparent',
+                }}>
+                  <Text style={{ color: _hdOn ? '#111111' : 'rgba(255,255,255,0.9)', fontSize: 11, fontWeight: '800', letterSpacing: 0.5 }}>HD</Text>
+                </View>
+              </TouchableOpacity>
+            );
+          })()}
         </View>
 
         {drawOpen && !activeIsVideo && (
@@ -10659,7 +10679,14 @@ function ChatConversationInner() {
   // [2026-10-07 send-media] Default STANDARD (WhatsApp parity: HD is opt-in per
   // send via the MediaPreview "HD" toggle). Was true → every photo/video went
   // out at HD size by default (1080p@3Mbps video, 2048-4096px photos).
-  const [hdMode, setHdMode] = useState(false);
+  // [2026-10-11 video-fullhd] null = follow Settings › Armazenamento e dados ›
+  // "Qualidade de envio de mídia" (default HD → videos 1080p; auto-standard on
+  // Data Saver / weak link). true/false = the user tapped the preview chip for
+  // THIS send (reset to null every time the preview opens, WhatsApp-style).
+  // Photos stay standard unless the chip is explicitly ON (4096px photos by
+  // default would multiply the data cost of every photo).
+  const [hdMode, setHdMode] = useState(null);
+  useEffect(() => { if (mediaPreview.visible) setHdMode(null); }, [mediaPreview.visible]);
 
   // Share-to-Chatyy hand-off — if user came in from /share-receive with a file
   // or text, surface it as a pending media preview or pre-fill the composer.
@@ -18351,6 +18378,14 @@ function ChatConversationInner() {
       : mimeType.startsWith('video/') ? 'video'
       : mimeType.startsWith('audio/') ? 'audio'
       : 'file';
+    // [2026-10-11 video-fullhd] Effective quality for THIS send: explicit chip
+    // (true/false) or the saved default (null → 1080p unless Padrão / Data
+    // Saver / weak link). Photos: HD only when the chip was explicitly ON.
+    let _vidHd = hdMode === true;
+    if (hdMode == null && fileType === 'video') {
+      try { _vidHd = require('../services/mediaUploadQuality').defaultVideoHd(); } catch { _vidHd = false; }
+    }
+    const _vidLabel = _vidHd ? '1080p' : '720p';
     // Use local URI as preview so images/videos show INSTANTLY before upload completes
     const localUri = file.blob ? URL.createObjectURL(file.blob) : file.uri;
     const optimisticMsg = {
@@ -18359,6 +18394,7 @@ function ChatConversationInner() {
       sender_name: '',
       content: caption || '',
       type: fileType,
+      ...(fileType === 'video' && _vidHd ? { _hd: true } : null),
       file_name: file.name,
       file_url: localUri || '',
       _localUri: localUri, // Keep reference for display during upload
@@ -18451,7 +18487,7 @@ function ChatConversationInner() {
           file_size: file.size || 0,
           caption: caption || '',
           view_once: forceViewOnce ? 1 : 0,
-          hd: !!hdMode,
+          hd: fileType === 'video' ? _vidHd : hdMode === true,
           sender_email: user?.email,
           created_at: optimisticMsg.created_at,
           batch_id: batchId || null,
@@ -18656,20 +18692,20 @@ function ChatConversationInner() {
         try {
           const ExpoNativeVideo = require('../modules/expo-native-video').default;
           if (ExpoNativeVideo?.isAvailable?.()) {
-            // HD toggle (MediaPreview header): HD on → 1080p @3Mbps,
-            // Standard → 720p @1.5Mbps. Both iOS (AVAssetExportSession) and
-            // Android (MediaCodec Stage 2 transcoder) honour the profile; the
-            // native side skips the transcode automatically when the source is
-            // already within envelope, so this is cheap on small/efficient clips.
-            const _qp = (_videoSendPipeline?.getQualityProfile?.(hdMode ? '1080p' : '720p'))
+            // HD chip / saved default ([2026-10-11 video-fullhd]): HD → 1080p
+            // (short side 1080) @4.5Mbps, Padrão → 720p @1.5Mbps. Both iOS
+            // (AVAssetWriter) and Android (MediaCodec transcoder) honour the
+            // profile; the native side skips the transcode automatically when
+            // the source is already within envelope. Long clips get their
+            // bitrate trimmed to stay under the 200 MB cap.
+            let _qp = (_videoSendPipeline?.getQualityProfile?.(_vidLabel))
               || { maxWidth: 1280, maxHeight: 720, bitrate: 1_500_000, audioBitrate: 128_000, fps: 30 };
-            const compressed = await ExpoNativeVideo.compressVideo(file.uri, {
-              maxWidth: _qp.maxWidth,
-              maxHeight: _qp.maxHeight,
-              bitrate: _qp.bitrate,
-              audioBitrate: _qp.audioBitrate,
-              fps: _qp.fps,
-            });
+            const _durMs = (Number(file.duration) || 0) > 1000 ? Number(file.duration) : (Number(file.duration) || 0) * 1000;
+            if (_videoSendPipeline?.fitBitrateToCap) _qp = _videoSendPipeline.fitBitrateToCap(_qp, _durMs);
+            const compressed = await ExpoNativeVideo.compressVideo(file.uri,
+              _videoSendPipeline?.nativeCompressOptions
+                ? _videoSendPipeline.nativeCompressOptions(_qp)
+                : { maxWidth: _qp.maxWidth, maxHeight: _qp.maxHeight, bitrate: _qp.bitrate, audioBitrate: _qp.audioBitrate, fps: _qp.fps });
             if (compressed?.uri && compressed?.size > 0) {
               file = {
                 ...file,
@@ -18712,13 +18748,15 @@ function ChatConversationInner() {
             setMessages(prev => _mapKeep(prev, m => m.id === tempId ? { ...m, _compressing: true } : m));
             setUploadProgress(prev => ({ ...prev, [tempId]: 0 }));
           }
-          // Match the native quality profile: HD toggle → higher bitrate, both
-          // capped to a 1280px "HD ready" width. getQualityProfile is optional
-          // (older pipeline builds) so we fall back to sane 720p defaults.
-          const _qpW = (_videoSendPipeline?.getQualityProfile?.(hdMode ? '1080p' : '720p')) || null;
+          // Match the native quality profile ([2026-10-11 video-fullhd]): HD →
+          // short side 1080 @~4.5Mbps, Padrão → short side 720 @1.5Mbps.
+          // getQualityProfile is optional (older pipeline builds) so we fall
+          // back to sane defaults.
+          const _qpW = (_videoSendPipeline?.getQualityProfile?.(_vidLabel)) || null;
           const compressed = await compressVideoWeb(_webVidBlob, {
-            maxWidth: _qpW?.maxWidth || 1280,
-            bitrate: _qpW?.bitrate || (hdMode ? 3_000_000 : 1_500_000),
+            maxShortSide: _qpW ? Math.min(_qpW.maxWidth, _qpW.maxHeight) : (_vidHd ? 1080 : 720),
+            maxLongSide: _qpW ? Math.max(_qpW.maxWidth, _qpW.maxHeight) : (_vidHd ? 1920 : 1280),
+            bitrate: _qpW?.bitrate || (_vidHd ? 4_500_000 : 1_500_000),
             onProgress: (p) => {
               if (mountedRef.current) setUploadProgress(prev => ({ ...prev, [tempId]: Math.round((Number(p) || 0) * 100) }));
             },
@@ -25510,7 +25548,13 @@ function ChatConversationInner() {
               _vidWidth = _vidWidth || Number(_iv?.full_w) || 0;
             } catch {}
           }
-          const _vidQuality = _vidHeight >= 2160 ? '4K' : _vidHeight >= 1080 ? 'HD' : '';
+          // [2026-10-11 video-fullhd] Classify by the SHORT side (a portrait
+          // 720×1280 clip was tagged "HD" by its height); also honour the
+          // sender-side flag (_hd/is_hd) when the server row only carries
+          // the 640px poster aspect.
+          const _vidShort = (_vidWidth > 0 && _vidHeight > 0) ? Math.min(_vidWidth, _vidHeight) : 0;
+          const _vidQuality = _vidShort >= 2000 ? '4K'
+            : (_vidShort >= 1000 || msg._hd || msg.is_hd) ? 'HD' : '';
           // [2026-07-03] Size the video bubble to the REAL aspect ratio (from
           // image_variants.full_w/full_h or msg.width/height) instead of a
           // fixed 280×200 landscape box. A portrait 9:16 clip was being
@@ -34199,7 +34243,8 @@ function ChatConversationInner() {
       {/* Media preview before send (WhatsApp style, multi-thumb) */}
       <MediaPreview
         hdMode={hdMode}
-        onToggleHD={() => setHdMode(v => !v)}
+        videoHdDefault={(() => { try { return require('../services/mediaUploadQuality').defaultVideoHd(); } catch { return false; } })()}
+        onToggleHD={(cur) => setHdMode(typeof cur === 'boolean' ? !cur : (v => !v))}
         visible={mediaPreview.visible}
         files={mediaPreview.files || []}
         colors={colors}
