@@ -268,7 +268,7 @@ export default function CommunitiesTab({ colors: propColors, isDark: propIsDark 
                   <PressableRow
                     key={g.conversation_id}
                     style={[styles.groupRow, { backgroundColor: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.02)' }]}
-                    onPress={() => router.push({ pathname: '/chat-conversation', params: { id: g.conversation_id, name: g.name || '' } })}
+                    onPress={() => require('../services/openConversation').openConversation({ pathname: '/chat-conversation', params: { id: g.conversation_id, name: g.name || '' } })}
                   >
                     <View style={[styles.groupDot, { backgroundColor: colors.text }]} />
                     <View style={{ flex: 1 }}>

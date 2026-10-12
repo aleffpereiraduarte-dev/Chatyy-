@@ -1,0 +1,221 @@
+// [2026-10-12 nav-dedup] Single entry point for "open this conversation".
+//
+// Founder (iPhone): "quando abre o chat às vezes abre o mesmo chat 2 vezes" —
+// the same /chat-conversation got pushed twice and back revealed the SAME chat
+// again. Causes found (see report): every entry point did its own blind
+// router.push/replace (list row, push tap, deep link, search, contacts,
+// chat-new, voicemail recorder, starred, status reply…); the list's 800 ms
+// time lock is measured when the JS thread processes the tap, so a second tap
+// queued while the 38k-line conversation screen was mounting slipped through;
+// "replace back into the conversation" flows (chat-new add-member, voicemail
+// recorder, saved-messages) stacked a 2nd copy of a chat already below them;
+// and the push path's "chat already open" check was cleared by the OLD
+// screen's unmount after a replace.
+//
+// This helper, for any href aimed at /chat-conversation:
+//   1. ignores a 2nd open of the same conversation within WINDOW_MS;
+//   2. top screen already shows that conversation → no-op (router.setParams for
+//      jump targets such as scrollToMessageId);
+//   3. that conversation already in the stack below → pops back to it instead
+//      of pushing a duplicate (WhatsApp: one instance per chat);
+//   4. otherwise push (or replace when the caller asked for it, or when the top
+//      screen is ANOTHER conversation: chat→chat hops never stack).
+// Notification-response id dedup lives in pushNotifications.js and also goes
+// through here.
+import { router as globalRouter } from 'expo-router';
+
+const WINDOW_MS = 1200;
+const CONV_PATH = '/chat-conversation';
+// Params that ask the screen to DO something on mount. When the target chat is
+// already open we remount it (replace) so the action is not silently lost.
+const ACTION_PARAMS = ['autocall', 'startCall', 'autoCall', 'prefill', 'replyTo', 'replyStatus',
+  '_shared_uri', '_shared_type', '_shared_text', '_shared_name', 'voicemail_id'];
+// Params the open screen can take via setParams without a remount.
+const SOFT_PARAMS = ['scrollToMessageId', 'highlightMessageId'];
+
+let _last = null; // { key, at }
+
+function _decode(v) {
+  try { return decodeURIComponent(String(v).replace(/\+/g, ' ')); } catch { return String(v); }
+}
+
+// href (string | { pathname, params }) → { pathname, params }
+export function parseConversationHref(href) {
+  if (href && typeof href === 'object') {
+    return { pathname: String(href.pathname || ''), params: { ...(href.params || {}) } };
+  }
+  const s = String(href || '');
+  const q = s.indexOf('?');
+  const pathname = q >= 0 ? s.slice(0, q) : s;
+  const params = {};
+  if (q >= 0) {
+    for (const kv of s.slice(q + 1).split('&')) {
+      if (!kv) continue;
+      const i = kv.indexOf('=');
+      const k = i >= 0 ? kv.slice(0, i) : kv;
+      if (k) params[_decode(k)] = i >= 0 ? _decode(kv.slice(i + 1)) : '';
+    }
+  }
+  return { pathname, params };
+}
+
+function _isConvPath(p) {
+  const s = String(p || '').replace(/^\/+/, '/');
+  return s === CONV_PATH || s === 'chat-conversation';
+}
+
+function _lc(v) { return String(v || '').trim().toLowerCase(); }
+
+// Identity of the conversation a param bag points at.
+function _convKey(params) {
+  const id = parseInt(params?.id, 10);
+  if (id > 0) return 'id:' + id;
+  const em = _lc(params?.email || params?.peer);
+  if (em) return 'em:' + em;
+  return null;
+}
+
+// Does an existing stack route show the conversation `params` points at?
+function _routeMatches(route, params) {
+  if (!route || route.name !== 'chat-conversation') return false;
+  const rp = route.params || {};
+  const id = parseInt(params?.id, 10);
+  const rid = parseInt(rp.id, 10);
+  if (id > 0 && rid > 0) return id === rid;
+  const em = _lc(params?.email || params?.peer);
+  const rem = _lc(rp.email || rp.peer);
+  // Email-only open vs a direct chat in the stack (its id may have been
+  // resolved in place via setParams, the email param stays).
+  if (em && rem && em === rem) {
+    const t = String(params?.type || 'direct');
+    const rt = String(rp.type || 'direct');
+    return t === 'direct' && rt === 'direct';
+  }
+  return false;
+}
+
+function _rootState() {
+  try {
+    const { store } = require('expo-router/build/global-state/router-store');
+    const nav = store?.navigationRef?.current;
+    if (nav && typeof nav.getRootState === 'function') return { nav, state: nav.getRootState() };
+  } catch {}
+  return { nav: null, state: null };
+}
+
+// The focused navigator that holds chat-conversation routes (root Stack today;
+// walks the focused chain so a future nested layout keeps working).
+function _findConvStack(state) {
+  let s = state;
+  let guard = 0;
+  while (s && Array.isArray(s.routes) && guard++ < 8) {
+    if (Array.isArray(s.routeNames) ? s.routeNames.includes('chat-conversation') : s.routes.some(r => r.name === 'chat-conversation')) return s;
+    const focused = s.routes[typeof s.index === 'number' ? s.index : s.routes.length - 1];
+    s = focused && focused.state;
+  }
+  return null;
+}
+
+// QA/diagnostics: how many /chat-conversation instances are in the stack.
+export function getConversationStackInfo() {
+  try {
+    const { state } = _rootState();
+    const st = _findConvStack(state);
+    if (!st) return { depth: 0, convs: [], top: null };
+    const convs = st.routes.filter(r => r.name === 'chat-conversation').map(r => ({
+      id: r.params?.id ?? null, email: r.params?.email ?? null,
+    }));
+    const top = st.routes[st.index]?.name || null;
+    return { depth: st.routes.length, convs, top, names: st.routes.map(r => r.name) };
+  } catch { return { depth: 0, convs: [], top: null }; }
+}
+try { if (typeof globalThis !== 'undefined') globalThis.__chatyyConvStack = getConversationStackInfo; } catch {}
+
+// Reset the time window (e.g. tests or after an explicit close).
+export function resetConversationOpenGuard() { _last = null; }
+
+/**
+ * Open a conversation without ever stacking a duplicate.
+ * @param href   string or { pathname, params } — same shapes router.push takes.
+ * @param opts   { router?, replace?: boolean, source?: string }
+ *   router  — router-like object (ChatListTab's tablet-split listRouter); its
+ *             push is used for the plain "new screen" case.
+ *   replace — caller is a transient screen (chat-new, recorder, loader) that
+ *             should leave the stack when the chat opens.
+ * @returns 'dedup' | 'same' | 'pop' | 'replace' | 'push' | 'passthrough'
+ */
+export function openConversation(href, opts = {}) {
+  const r = opts.router || globalRouter;
+  const { pathname, params } = parseConversationHref(href);
+  const now = Date.now();
+
+  if (!_isConvPath(pathname)) {
+    // Non-conversation targets (e.g. /saved-messages) still get the
+    // double-tap window, nothing else.
+    const k = 'path:' + pathname;
+    if (_last && _last.key === k && now - _last.at < WINDOW_MS) return 'dedup';
+    _last = { key: k, at: now };
+    if (opts.replace) r.replace(href); else r.push(href);
+    return 'passthrough';
+  }
+
+  const key = _convKey(params);
+  if (key && _last && _last.key === key && now - _last.at < WINDOW_MS) return 'dedup';
+  if (key) _last = { key, at: now };
+
+  const hasAction = ACTION_PARAMS.some(k => params[k] != null && params[k] !== '');
+  let stack = null;
+  let nav = null;
+  try { const rs = _rootState(); nav = rs.nav; stack = _findConvStack(rs.state); } catch {}
+
+  // Active-conversation tracker (set by the open chat on mount) is a second
+  // signal for "already on top" when nav state isn't readable yet.
+  let activeId = null;
+  try { activeId = require('./pushNotifications').getActiveConversation?.(); } catch {}
+
+  if (stack && Array.isArray(stack.routes) && stack.routes.length) {
+    const topIdx = typeof stack.index === 'number' ? stack.index : stack.routes.length - 1;
+    const top = stack.routes[topIdx];
+    if (key && _routeMatches(top, params)) {
+      if (hasAction) { r.replace(href); return 'replace'; }
+      const soft = {};
+      for (const k of SOFT_PARAMS) if (params[k] != null && params[k] !== '') soft[k] = String(params[k]);
+      if (Object.keys(soft).length) { try { r.setParams?.(soft); } catch {} }
+      return 'same';
+    }
+    if (key) {
+      let found = -1;
+      for (let i = topIdx - 1; i >= 0; i--) {
+        if (_routeMatches(stack.routes[i], params)) { found = i; break; }
+      }
+      if (found >= 0 && nav) {
+        try {
+          const { StackActions } = require('@react-navigation/native');
+          nav.dispatch({ ...StackActions.pop(topIdx - found), target: stack.key });
+          if (hasAction) { r.replace(href); return 'replace'; }
+          const soft = {};
+          for (const k of SOFT_PARAMS) if (params[k] != null && params[k] !== '') soft[k] = String(params[k]);
+          if (Object.keys(soft).length) { try { r.setParams?.(soft); } catch {} }
+          return 'pop';
+        } catch {}
+      }
+    }
+    if (opts.replace || (top && top.name === 'chat-conversation' && !opts.router)) {
+      r.replace(href);
+      return 'replace';
+    }
+    r.push(href);
+    return 'push';
+  }
+
+  // No readable nav state: fall back to the active-conversation tracker.
+  const id = parseInt(params.id, 10);
+  if (id > 0 && activeId != null && String(activeId) === String(id) && !hasAction) return 'same';
+  if (opts.replace || (activeId != null && !opts.router)) { r.replace(href); return 'replace'; }
+  r.push(href);
+  return 'push';
+}
+
+export default openConversation;
+// QA hook (web Playwright + debugging): drive the guard without UI.
+try { if (typeof globalThis !== 'undefined') globalThis.__chatyyOpenConv = openConversation; } catch {}

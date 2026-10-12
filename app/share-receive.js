@@ -444,20 +444,20 @@ export default function ShareReceiveScreen() {
       // user never loses the share (old behaviour).
       const conv = selected[0];
       setSending(false);
-      router.replace({
+      require('../services/openConversation').openConversation({
         pathname: '/chat-conversation',
         params: {
           id: String(conv.id), name: displayNameOf(conv), email: conv.other_email || '',
           _shared_uri: first?.uri || '', _shared_text: hasMedia ? '' : textBody,
           _shared_type: first ? first.kind : 'text', _shared_name: first?.name || '',
         },
-      });
+      }, { replace: true });
       return;
     }
     if (failed) { setSending(false); setSendError(true); return; }
     if (selected.length === 1) {
       const conv = selected[0];
-      router.replace({ pathname: '/chat-conversation', params: { id: String(conv.id), name: displayNameOf(conv), email: conv.other_email || '' } });
+      require('../services/openConversation').openConversation({ pathname: '/chat-conversation', params: { id: String(conv.id), name: displayNameOf(conv), email: conv.other_email || '' } }, { replace: true });
     } else {
       router.replace('/chat');
     }

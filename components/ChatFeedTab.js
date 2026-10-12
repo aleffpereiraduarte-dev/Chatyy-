@@ -1604,8 +1604,8 @@ function ChatFeedTab({ colors, isDark, t, user, router, initialFeedMode, onFeedM
           isDark={isDark}
           t={t}
           router={router}
-          onOpenChat={(email) => email && router?.push(`/chat-conversation?email=${encodeURIComponent(email)}`)}
-          onOpenCall={(email, isVideo) => email && router?.push(`/chat-conversation?email=${encodeURIComponent(email)}&startCall=${isVideo ? 'video' : 'audio'}`)}
+          onOpenChat={(email) => email && require('../services/openConversation').openConversation(`/chat-conversation?email=${encodeURIComponent(email)}`)}
+          onOpenCall={(email, isVideo) => email && require('../services/openConversation').openConversation(`/chat-conversation?email=${encodeURIComponent(email)}&startCall=${isVideo ? 'video' : 'audio'}`)}
           onOpenEmail={(email) => email && router?.push(`/compose?to=${encodeURIComponent(email)}`)}
         />
       </View>

@@ -131,7 +131,7 @@ export default function ProfileQRScreen() {
     // /chat-new (legacy JSON), /u/<handle> profile links and group invites.
     const parsed = parseContactQr(data);
     if (parsed?.kind === 'email') {
-      router.push(`/chat-conversation?email=${encodeURIComponent(parsed.email)}&name=${encodeURIComponent(parsed.name || parsed.email.split('@')[0])}`);
+      require('../services/openConversation').openConversation(`/chat-conversation?email=${encodeURIComponent(parsed.email)}&name=${encodeURIComponent(parsed.name || parsed.email.split('@')[0])}`);
       return;
     }
     if (parsed?.kind === 'profile') { router.push(`/u/${encodeURIComponent(parsed.slug)}`); return; }

@@ -29,7 +29,7 @@ export default function UserProfileScreen() {
 
   const handleChat = useCallback((email) => {
     if (!email) return;
-    router.push(`/chat-conversation?name=${encodeURIComponent(email.split('@')[0])}&email=${encodeURIComponent(email)}`);
+    require('../../services/openConversation').openConversation(`/chat-conversation?name=${encodeURIComponent(email.split('@')[0])}&email=${encodeURIComponent(email)}`);
   }, [router]);
 
   // [2026-10-08 apps-native] Ligar/vídeo do perfil caíam no chat sem ligar:

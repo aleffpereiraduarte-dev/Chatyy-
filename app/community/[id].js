@@ -406,7 +406,7 @@ export default function CommunityScreen() {
           <View style={sty.tabContent}>
             {community.announcement_conv_id && (
               <TouchableOpacity
-                onPress={() => router.push(`/chat-conversation?id=${community.announcement_conv_id}&name=${encodeURIComponent(community.name + ' — Avisos')}`)}
+                onPress={() => require('../../services/openConversation').openConversation(`/chat-conversation?id=${community.announcement_conv_id}&name=${encodeURIComponent(community.name + ' — Avisos')}`)}
                 style={[sty.row, { backgroundColor: isDark ? '#1c1c1e' : '#f8f8fa' }]}
               >
                 <Text style={[sty.rowTitle, { color: colors.text }]}>
@@ -474,7 +474,7 @@ export default function CommunityScreen() {
             {groups.map(g => (
               <TouchableOpacity
                 key={g.conversation_id}
-                onPress={() => router.push(`/chat-conversation?id=${g.conversation_id}&name=${encodeURIComponent(g.name || '')}`)}
+                onPress={() => require('../../services/openConversation').openConversation(`/chat-conversation?id=${g.conversation_id}&name=${encodeURIComponent(g.name || '')}`)}
                 style={[sty.row, { backgroundColor: isDark ? '#1c1c1e' : '#f8f8fa' }]}
               >
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>

@@ -158,7 +158,7 @@ function PostItem({ post, author, colors, width, onClose, router, t, onOpenLiker
             </TouchableOpacity>
           ) : p.conversation_id ? (
             <TouchableOpacity
-              onPress={() => { onClose?.(); router?.push(`/chat-conversation?id=${p.conversation_id}`); }}
+              onPress={() => { onClose?.(); require('../services/openConversation').openConversation(`/chat-conversation?id=${p.conversation_id}`); }}
               style={{ paddingHorizontal: 10, paddingVertical: 5, backgroundColor: 'rgba(255,255,255,0.15)', borderRadius: 12 }}
             >
               <Text style={{ color: '#fff', fontSize: 12 }}>{t?.('profile.openChat') || 'Abrir conversa'}</Text>

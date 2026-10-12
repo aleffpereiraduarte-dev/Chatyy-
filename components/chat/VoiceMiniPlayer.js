@@ -79,7 +79,7 @@ export default function VoiceMiniPlayer() {
     const it = st?.item;
     if (!it || it.conversationId == null) return;
     const name = getVoiceConversationTitle(it.conversationId) || it.title || '';
-    try { router.push({ pathname: '/chat-conversation', params: { id: String(it.conversationId), name } }); } catch {}
+    try { require('../../services/openConversation').openConversation({ pathname: '/chat-conversation', params: { id: String(it.conversationId), name } }); } catch {}
   }, [st?.item, router]);
 
   if (!st || st.surfaced || !st.item || pathname === '/call') return null;

@@ -80,7 +80,7 @@ export default function StarredMessagesScreen() {
     const peer = cm.peerEmail || (isMine ? '' : (msg.sender_email || ''));
     const name = msg.conversation_name || cm.title || '';
     try {
-      router.push(`/chat-conversation?id=${msg.conversation_id}&name=${encodeURIComponent(name)}&type=${msg.conversation_type || cm.type || 'direct'}${peer ? `&email=${encodeURIComponent(peer)}` : ''}${msg.id ? `&scrollToMessageId=${encodeURIComponent(msg.id)}` : ''}`);
+      require('../services/openConversation').openConversation(`/chat-conversation?id=${msg.conversation_id}&name=${encodeURIComponent(name)}&type=${msg.conversation_type || cm.type || 'direct'}${peer ? `&email=${encodeURIComponent(peer)}` : ''}${msg.id ? `&scrollToMessageId=${encodeURIComponent(msg.id)}` : ''}`);
     } catch (e) { console.warn('[starred] nav:', e); }
   };
 

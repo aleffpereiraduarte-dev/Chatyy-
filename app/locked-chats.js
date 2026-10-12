@@ -101,7 +101,7 @@ export default function LockedChatsScreen() {
 
   const openConversation = useCallback((conv) => {
     const name = conv.name || conv.display_name || conv.other_email || '';
-    router.push(`/chat-conversation?id=${conv.id}&name=${encodeURIComponent(emailToDisplayName(name) || name || '')}&type=${conv.type || 'direct'}`);
+    require('../services/openConversation').openConversation(`/chat-conversation?id=${conv.id}&name=${encodeURIComponent(emailToDisplayName(name) || name || '')}&type=${conv.type || 'direct'}`);
   }, [router]);
 
   const onUnlocked = useCallback((lockedNow) => {

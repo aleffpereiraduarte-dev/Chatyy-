@@ -1650,7 +1650,7 @@ export default function Profile({
     // Shared chat media — open inside the conversation
     if (!item.id && item.conversation_id && router) {
       if (mode === 'peek') onClose?.();
-      router.push(`/chat-conversation?id=${item.conversation_id}`);
+      require('../services/openConversation').openConversation(`/chat-conversation?id=${item.conversation_id}`);
       return;
     }
     if (!item.id) return;
@@ -2743,7 +2743,7 @@ export default function Profile({
             }}>
               {commonChats.slice(0, 5).map((c, i, arr) => (
                 <TouchableOpacity key={c.id} style={{ flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 12, paddingVertical: 8, minHeight: 50, borderBottomWidth: i < arr.length - 1 ? StyleSheet.hairlineWidth : 0, borderBottomColor: colors?.border }} activeOpacity={0.7}
-                  onPress={() => { router?.push(`/chat-conversation?id=${c.id}`); onClose?.(); }}>
+                  onPress={() => { require('../services/openConversation').openConversation(`/chat-conversation?id=${c.id}`); onClose?.(); }}>
                   <AvatarCircle name={c.name} size={36} />
                   <Text style={{ flex: 1, fontSize: 15, color: colors?.text, fontWeight: '500' }} numberOfLines={1}>{c.name}</Text>
                   <IconChevronRight size={18} color={colors?.textTertiary} />

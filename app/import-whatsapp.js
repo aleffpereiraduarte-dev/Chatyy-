@@ -179,7 +179,7 @@ export default function ImportWhatsAppScreen() {
 
   const openConversation = useCallback((convId, name) => {
     try {
-      router.replace({ pathname: '/chat-conversation', params: { id: String(convId), name: name || '', type: 'group' } });
+      require('../services/openConversation').openConversation({ pathname: '/chat-conversation', params: { id: String(convId), name: name || '', type: 'group' } }, { replace: true });
     } catch {}
   }, [router]);
 

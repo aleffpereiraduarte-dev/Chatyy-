@@ -2607,7 +2607,7 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab, reque
                         const cid = r?.data?.conversation_id || r?.data?.id;
                         if (!cid) return;
                         const name = encodeURIComponent(peerName);
-                        router.push(`/chat-conversation?id=${cid}&name=${name}&type=direct&email=${encodeURIComponent(s.email)}&replyStatus=1`);
+                        require('../services/openConversation').openConversation(`/chat-conversation?id=${cid}&name=${name}&type=direct&email=${encodeURIComponent(s.email)}&replyStatus=1`, { router });
                       }).catch(() => {});
                     } catch {}
                   };
@@ -5280,7 +5280,9 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
     // the next deliberate tap.
     const now = Date.now();
     const last = _navLockRef.current;
-    if (last && last.id === conv.id && (now - last.at) < 800) return;
+    // [2026-10-12 nav-dedup] 800→1200ms here + the GLOBAL guard in
+    // services/openConversation (same-top no-op / pop-to-existing) below.
+    if (last && last.id === conv.id && (now - last.at) < 1200) return;
     _navLockRef.current = { id: conv.id, at: now };
     // [fix P2] Optimistically clear this conversation's unread badge the
     // instant the user taps in — WhatsApp parity, no wait for the read-ack
@@ -5329,13 +5331,13 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
     const peerLc = String(otherEmail || '').toLowerCase();
     const isSelf = conv.type === 'saved' || (conv.type === 'direct' && peerLc && peerLc === meLc);
     if (isSelf) {
-      router.push('/saved-messages');
+      require('../services/openConversation').openConversation('/saved-messages', { router });
       return;
     }
     // [2026-10-08 chat-open-flicker] Hand the tapped row to the thread so its
     // first frame already has the group photo etc. (sync, no I/O).
     try { require('../utils/chatOpenHandoff').stashOpenConversation(conv); } catch {}
-    router.push(`/chat-conversation?id=${conv.id}&name=${encodeURIComponent(displayName)}&type=${conv.type}${emailParam}${unreadParam}`);
+    require('../services/openConversation').openConversation(`/chat-conversation?id=${conv.id}&name=${encodeURIComponent(displayName)}&type=${conv.type}${emailParam}${unreadParam}`, { router, source: 'list' });
   }, [user?.email, router]);
 
   const toggleFabMenu = useCallback(() => {
@@ -5352,7 +5354,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
     setShowCreateChannel(false);
     loadConversations(false);
     if (result?.id) {
-      router.push(`/chat-conversation?id=${result.id}&name=${encodeURIComponent(result.name || '')}&type=${result.type || 'group'}`);
+      require('../services/openConversation').openConversation(`/chat-conversation?id=${result.id}&name=${encodeURIComponent(result.name || '')}&type=${result.type || 'group'}`, { router });
     }
   }, [router, loadConversations]);
 
@@ -7566,7 +7568,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
           return (
             <TouchableOpacity
               key={`hit-${hit.id}`}
-              onPress={() => router.push({
+              onPress={() => require('../services/openConversation').openConversation({
                 pathname: '/chat-conversation',
                 params: {
                   id: String(hit.conversation_id),
@@ -7576,7 +7578,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
                   scrollToMessageId: String(hit.id),
                   highlightMessageId: String(hit.id),
                 },
-              })}
+              }, { router })}
               activeOpacity={0.7}
               style={{
                 flexDirection: 'row', alignItems: 'center',
@@ -8417,7 +8419,7 @@ function ChatLongPressSheet({ conv, onClose, actions, colors, isDark, t, current
     setTimeout(() => {
       try {
         const emailParam = peerEmail ? `&email=${encodeURIComponent(peerEmail)}` : '';
-        router?.push(`/chat-conversation?id=${conv.id}&name=${encodeURIComponent(peerName)}&type=${conv.type || 'direct'}${emailParam}`);
+        require('../services/openConversation').openConversation(`/chat-conversation?id=${conv.id}&name=${encodeURIComponent(peerName)}&type=${conv.type || 'direct'}${emailParam}`, router ? { router } : {});
       } catch {}
     }, 80);
   };

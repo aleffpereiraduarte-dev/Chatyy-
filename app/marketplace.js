@@ -523,7 +523,7 @@ function ListingDetail({ listing: initial, onClose, savedIds, onToggleSave }) {
       const res = await api.chatCreate([listing.seller_email]);
       if (res?.success && res.data?.id) {
         onClose();
-        router.push(`/chat-conversation?id=${res.data.id}`);
+        require('../services/openConversation').openConversation(`/chat-conversation?id=${res.data.id}`);
       }
     } catch {
       safeAlert(t('marketplace.error'), t('marketplace.errChat'));

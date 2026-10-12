@@ -202,9 +202,16 @@ export async function dismissConversationNotifications(conversationId) {
     }
   } catch {}
 }
-export function clearActiveConversation() {
+// [2026-10-12 nav-dedup] `conversationId` (optional): only clear when it is
+// still the active one. After a chat→chat replace the OLD screen unmounts
+// AFTER the new one mounted; an unconditional clear wiped the new chat's id,
+// so the next push tap for it pushed a 2nd copy instead of no-op.
+export function clearActiveConversation(conversationId) {
+  if (conversationId != null && _activeConversationId != null && String(_activeConversationId) !== String(conversationId)) return;
   _activeConversationId = null;
   try { _nativeChat()?.setActiveChatConversation?.(''); } catch {}
+  // Leaving the chat (back) re-arms the open guard so an immediate re-open works.
+  try { require('./openConversation').resetConversationOpenGuard(); } catch {}
 }
 // Exposed so ChatListTab can also skip bumping unread_count for messages
 // arriving INTO the conversation the user is currently viewing — without
@@ -1347,6 +1354,10 @@ const _lastTokenSendAt = Object.create(null);
 // Cold-start notification-tap replay guards (see setupNotificationListeners).
 let _coldStartTapHandled = false;
 let _lastHandledResponseId = null;
+// [2026-10-12 nav-dedup] Every handled tap id (not just the last one): the
+// cold-start replay (getLastNotificationResponseAsync) can arrive after the
+// live listener already handled the same tap AND another tap in between.
+const _handledResponseIds = new Set();
 function _markFlushed(key) {
   if (!key) return;
   if (_flushedTokensInSession.has(key)) return;
@@ -2152,8 +2163,11 @@ export async function setupNotificationListeners() {
     // can't fire twice across setup re-runs).
     const _rid = response?.notification?.request?.identifier;
     if (_rid) {
-      if (_rid === _lastHandledResponseId) return;
+      const _ridKey = String(_rid) + '|' + String(response?.actionIdentifier || '');
+      if (_rid === _lastHandledResponseId || _handledResponseIds.has(_ridKey)) return;
       _lastHandledResponseId = _rid;
+      _handledResponseIds.add(_ridKey);
+      if (_handledResponseIds.size > 100) { try { _handledResponseIds.delete(_handledResponseIds.values().next().value); } catch {} }
     }
     const data = response.notification.request.content.data;
     const actionId = response.actionIdentifier;
@@ -2491,7 +2505,12 @@ export async function ensureNotificationAccount(data) {
 // Shared "open this conversation" navigation. With a chat already open, a
 // push stacked a 2nd /chat-conversation (back needed 2x): REPLACE instead,
 // no-op when it is the same chat, push only from list/other screens.
+// [2026-10-12 nav-dedup] Delegates to services/openConversation.js (window
+// dedup + same-top no-op + pop-to-existing-instance, chat→chat = replace).
 export function openConversation(target, convId) {
+  try {
+    return require('./openConversation').openConversation(target, { source: 'push' });
+  } catch {}
   if (_activeConversationId != null) {
     if (convId != null && String(_activeConversationId) === String(convId)) return;
     router.replace(target);
@@ -2594,7 +2613,7 @@ function _navigateForNotification(data) {
       return;
     }
     if ((data.type === 'follow' || data.type === 'feed_follow') && data.follower_email) {
-      router.push(`/chat-conversation?email=${encodeURIComponent(data.follower_email)}&type=direct`);
+      openConversation(`/chat-conversation?email=${encodeURIComponent(data.follower_email)}&type=direct`);
       return;
     }
     // "X entrou no Chatyy" — someone whose number you had saved just joined.
@@ -2906,7 +2925,7 @@ function handleViewFromNotification(data) {
     if (data?.post_id) {
       router.push(`/chat?tab=feed&post_id=${data.post_id}`);
     } else if (data?.follower_email) {
-      router.push(`/chat-conversation?email=${encodeURIComponent(data.follower_email)}&type=direct`);
+      openConversation(`/chat-conversation?email=${encodeURIComponent(data.follower_email)}&type=direct`);
     } else {
       router.push('/chat?tab=feed');
     }

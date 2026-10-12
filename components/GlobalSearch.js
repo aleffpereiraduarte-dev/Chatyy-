@@ -359,7 +359,13 @@ export default function GlobalSearch({
     // Persist current query so the Recentes section reflects what user just opened.
     if (q.trim().length >= 2) pushRecent(q.trim());
     close();
-    setTimeout(() => router?.push(path), 60);
+    setTimeout(() => {
+      // [2026-10-12 nav-dedup] conversation targets go through the shared guard.
+      if (typeof path === 'string' && path.startsWith('/chat-conversation')) {
+        try { require('../services/openConversation').openConversation(path, { source: 'search' }); return; } catch {}
+      }
+      router?.push(path);
+    }, 60);
   };
 
   const hasAny = (viewResults.users?.length ?? 0) + (viewResults.chats?.length ?? 0) + (viewResults.emails?.length ?? 0) + (viewResults.posts?.length ?? 0) > 0;

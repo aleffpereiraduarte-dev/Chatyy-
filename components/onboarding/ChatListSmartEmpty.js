@@ -62,7 +62,7 @@ export default function ChatListSmartEmpty({ router, t, filtered, currentEmail, 
       const convId = r?.data?.conversation_id || r?.data?.id;
       if (r?.success && convId) {
         const nm = r.data?.name || f.name || em;
-        router.push(`/chat-conversation?id=${convId}&name=${encodeURIComponent(nm)}&type=direct&email=${encodeURIComponent(em)}`);
+        require('../../services/openConversation').openConversation(`/chat-conversation?id=${convId}&name=${encodeURIComponent(nm)}&type=direct&email=${encodeURIComponent(em)}`);
       } else {
         router.push('/chat-new');
       }
@@ -77,7 +77,7 @@ export default function ChatListSmartEmpty({ router, t, filtered, currentEmail, 
       const rs = await api.chatSaved();
       const sid = rs?.data?.id || rs?.data?.conversation_id;
       if (rs?.success && sid) {
-        router.push({ pathname: '/chat-conversation', params: { id: String(sid), name: t?.('chat.savedMessages') || c('empty.savedTitle') } });
+        require('../../services/openConversation').openConversation({ pathname: '/chat-conversation', params: { id: String(sid), name: t?.('chat.savedMessages') || c('empty.savedTitle') } });
       }
     } catch {}
   }, [router, t, c]);

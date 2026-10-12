@@ -502,7 +502,7 @@ export default function VoicemailRecorder() {
       setTimeout(() => {
         try {
           if (cid) {
-            router.replace('/chat-conversation?id=' + cid);
+            require('../services/openConversation').openConversation('/chat-conversation?id=' + cid, { replace: true });
           } else {
             router.replace('/chat');
           }

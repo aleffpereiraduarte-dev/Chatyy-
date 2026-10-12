@@ -503,6 +503,10 @@ export default function NotificationsHub({
   const go = (path) => {
     close();
     setTimeout(() => {
+      // [2026-10-12 nav-dedup] conversation targets go through the shared guard.
+      if (typeof path === 'string' && path.startsWith('/chat-conversation')) {
+        try { require('../services/openConversation').openConversation(path, { source: 'hub' }); return; } catch {}
+      }
       try { router?.push(path); } catch {}
     }, 60);
   };

@@ -124,8 +124,51 @@ function KCThreadKeyboardAvoider({ style, bottomInset, children }) {
       try { if (!Keyboard.isVisible()) settle(); } catch {}
     };
     settleIfHidden();
-    const subHide = Keyboard.addListener('keyboardDidHide', settle);
-    const subShow = Keyboard.addListener(Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow', () => { settled.value = 0; });
+    // [2026-10-12 composer-under-keyboard] Founder (iPhone): "às vezes" só o
+    // teclado aparece, a barra de digitar fica ATRÁS dele. RAIZ: `settle()`
+    // escrevia height.value = 0 a partir da thread JS no keyboardDidHide. Com a
+    // JS ocupada (lista de imagens grandes pintando, abrir o teclado logo após
+    // a conversa renderizar, fechar+abrir rápido), o didHide de um fechamento
+    // ANTERIOR era processado DEPOIS de o KC (thread de UI) já ter levado o
+    // height a -alturaDoTeclado da nova abertura → zerava o valor do teclado
+    // ABERTO; o willShow seguinte só limpava `settled`, e como o KC não emite
+    // mais nada até o próximo movimento, paddingBottom ficava 0 = composer
+    // coberto. Fix: (1) o didHide só "assenta" depois de confirmar (fila JS
+    // drenada) que o teclado continua fechado; (2) didShow com height ~0 =
+    // valor perdido → restaura com a altura real do evento (auto-cura).
+    let hideTimer = null;
+    const onHide = () => {
+      if (hideTimer) clearTimeout(hideTimer);
+      hideTimer = setTimeout(() => {
+        hideTimer = null;
+        // KC still reports a keyboard (UI thread) → a re-open may be in
+        // flight; give its willShow time to arrive (it cancels this timer)
+        // before trusting "closed" (a hide lost under a Modal still settles).
+        let kcOpen = false;
+        try { kcOpen = Math.abs(height.value) > 1; } catch {}
+        if (!kcOpen) { settleIfHidden(); return; }
+        hideTimer = setTimeout(() => { hideTimer = null; settleIfHidden(); }, 450);
+      }, 120);
+    };
+    const onWillShow = () => {
+      if (hideTimer) { clearTimeout(hideTimer); hideTimer = null; }
+      settled.value = 0;
+    };
+    // End of the open animation: KC must report the keyboard by now. ~0 here
+    // = its value was lost/overwritten → restore it (composer back on top).
+    const onDidShow = (e) => {
+      onWillShow();
+      try {
+        const kh = Number(e?.endCoordinates?.height) || 0;
+        if (kh > 0 && Math.abs(height.value) < 1) {
+          height.value = -kh;
+          progress.value = 1;
+        }
+      } catch {}
+    };
+    const subHide = Keyboard.addListener('keyboardDidHide', onHide);
+    const subShow = Platform.OS === 'ios' ? Keyboard.addListener('keyboardWillShow', onWillShow) : null;
+    const subShow2 = Keyboard.addListener('keyboardDidShow', onDidShow);
     let appStateTimer = null;
     const subApp = AppState.addEventListener('change', (s) => {
       if (s !== 'active') return;
@@ -136,7 +179,9 @@ function KCThreadKeyboardAvoider({ style, bottomInset, children }) {
     });
     return () => {
       try { subHide.remove(); } catch {}
-      try { subShow.remove(); } catch {}
+      try { subShow?.remove(); } catch {}
+      try { subShow2.remove(); } catch {}
+      if (hideTimer) clearTimeout(hideTimer);
       try { subApp.remove(); } catch {}
       if (appStateTimer) clearTimeout(appStateTimer);
       _enabledRefs = Math.max(0, _enabledRefs - 1);

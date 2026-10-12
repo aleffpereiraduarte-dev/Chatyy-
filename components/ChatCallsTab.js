@@ -2981,13 +2981,13 @@ function ChatCallsTab({ colors, isDark, t, user, router }) {
       const r = await chatCreate([email], '', 'direct');
       const convId = r?.data?.conversation_id || r?.data?.id;
       if (r?.success && convId) {
-        router.push(`/chat-conversation?id=${convId}&name=${encodeURIComponent(r?.data?.name || name)}&type=direct&email=${encodeURIComponent(email)}${prefillQ}`);
+        require('../services/openConversation').openConversation(`/chat-conversation?id=${convId}&name=${encodeURIComponent(r?.data?.name || name)}&type=direct&email=${encodeURIComponent(email)}${prefillQ}`);
         return;
       }
     } catch {}
     // Fallback: open with email only — chat-conversation has its own resolver
     // for direct chats with a known peer.
-    router.push({
+    require('../services/openConversation').openConversation({
       pathname: '/chat-conversation',
       params: { id: '0', type: 'direct', email, name, ...(prefillText ? { prefill: prefillText } : {}) },
     });

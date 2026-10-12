@@ -313,7 +313,7 @@ export default function NotificationToast({ notification, onDismiss }) {
     // push handler (switch-account + replace-not-stack).
     if (data && data.conversation_id && /^(chat_message|chat_mention|chat_keyword|voicemail|group|group_message)$/.test(String(data.type || ''))) {
       try { require('../services/pushNotifications').handleNotificationNavigation(data); } catch {
-        router.push(`/chat-conversation?id=${data.conversation_id}`);
+        require('../services/openConversation').openConversation(`/chat-conversation?id=${data.conversation_id}`);
       }
       return;
     }

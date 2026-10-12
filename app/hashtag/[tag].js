@@ -62,7 +62,7 @@ export default function ChatHashtagScreen() {
 
   const openConversation = useCallback((m) => {
     if (!m?.conversation_id) return;
-    router.push({
+    require('../../services/openConversation').openConversation({
       pathname: '/chat-conversation',
       params: {
         id: String(m.conversation_id),

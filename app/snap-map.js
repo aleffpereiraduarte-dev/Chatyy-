@@ -2450,14 +2450,14 @@ export default function SnapMapScreen() {
                     user reaches the most common verbs in one tap. */}
                 <View style={{ flexDirection: 'row', gap: 10, marginTop: 18 }}>
                   <TouchableOpacity
-                    onPress={() => { setSelected(null); router.push(`/chat-conversation?email=${encodeURIComponent(selected.email)}`); }}
+                    onPress={() => { setSelected(null); require('../services/openConversation').openConversation(`/chat-conversation?email=${encodeURIComponent(selected.email)}`); }}
                     style={{ flex: 1, paddingVertical: 14, borderRadius: 22, backgroundColor: colors.primary, alignItems: 'center', flexDirection: 'row', justifyContent: 'center', gap: 8 }}
                   >
                     <IconMessageSquare size={18} color={colors.onPrimary || '#fff'} />
                     <Text style={{ color: colors.onPrimary || '#fff', fontWeight: '700' }}>{t?.('snapmap.message') || 'Conversar'}</Text>
                   </TouchableOpacity>
                   <TouchableOpacity
-                    onPress={() => { setSelected(null); router.push(`/chat-conversation?email=${encodeURIComponent(selected.email)}&autoCall=1`); }}
+                    onPress={() => { setSelected(null); require('../services/openConversation').openConversation(`/chat-conversation?email=${encodeURIComponent(selected.email)}&autoCall=1`); }}
                     style={{ paddingVertical: 14, paddingHorizontal: 18, borderRadius: 22, backgroundColor: colors.primary, alignItems: 'center', flexDirection: 'row', justifyContent: 'center', gap: 8 }}
                     accessibilityLabel={t?.('snapmap.call') || 'Ligar'}
                   >

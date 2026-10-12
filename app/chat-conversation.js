@@ -2823,7 +2823,7 @@ function TextWithLinks({ text, style, linkColor, colors, mentionColor, router: r
                   // do chat empilhava telas /chat-conversation → ao arrastar de
                   // volta apareciam "várias janelas de chat". replace mantém só
                   // 1 chat na pilha (back vai direto pra lista, igual WhatsApp).
-                  routerProp?.replace({ pathname: '/chat-conversation', params: { email: handle, type: 'direct' } });
+                  try { require('../services/openConversation').openConversation({ pathname: '/chat-conversation', params: { email: handle, type: 'direct' } }, { replace: true }); } catch { routerProp?.replace({ pathname: '/chat-conversation', params: { email: handle, type: 'direct' } }); }
                 } else {
                   routerProp?.push({ pathname: '/profile', params: { handle } });
                 }
@@ -9498,7 +9498,7 @@ function ChatConversationInner() {
       const sub = AppState.addEventListener('change', (s) => {
         if (s === 'active') { try { dismissConversationNotifications(conversationId); } catch {} }
       });
-      return () => { clearActiveConversation(); try { sub?.remove?.(); } catch {} };
+      return () => { clearActiveConversation(conversationId); try { sub?.remove?.(); } catch {} };
     } catch {}
   }, [conversationId]);
 
@@ -18612,6 +18612,11 @@ function ChatConversationInner() {
       _client_id: msgId,
       _batch_id: batchId || null,
       is_view_once: forceViewOnce ? 1 : 0,
+      // [2026-10-12 thread-overlap] Picker dims → the media box has its final
+      // aspect from the 1st frame (was 280×220 until the server echo brought
+      // width/height → row height jumped while the list was laying out).
+      ...((fileType === 'image' || fileType === 'video') && Number(file.width) > 0 && Number(file.height) > 0
+        ? { width: Math.round(Number(file.width)), height: Math.round(Number(file.height)) } : null),
     };
     setMessages(prev => [...prev, optimisticMsg]);
     // [LQIP 2026-07-12] Wire imageSendPipeline's blur placeholder into the
@@ -21813,7 +21818,7 @@ function ChatConversationInner() {
     try {
       const r = await api.chatCreateSecret(peerEmail);
       if (r?.success && r.data?.id) {
-        router.replace({ pathname: '/chat-conversation', params: { id: r.data.id, name: r.data.name || (t('chat.startSecret') || 'Secret Chat'), email: peerEmail }});
+        require('../services/openConversation').openConversation({ pathname: '/chat-conversation', params: { id: r.data.id, name: r.data.name || (t('chat.startSecret') || 'Secret Chat'), email: peerEmail }}, { replace: true });
       } else {
         safeAlert(t('common.error') || 'Error', r?.message || 'Failed to create secret chat');
       }
@@ -23676,7 +23681,7 @@ function ChatConversationInner() {
   // [2026-10-06 thread-tech] live ref for onViewableItemsChanged prefetch
   // (its `index` refers to THIS array, newest-first — not messagesRef).
   const flatListDataRef = useRef(null);
-  const flatListData = useMemo(() => {
+  const _flatListDataRaw = useMemo(() => {
     // Disappearing messages: hide bubbles older than the TTL ON-SCREEN even
     // before the server cron hard-deletes them. The cron (cron-disappearing.php)
     // deletes silently with no WS push, so on an open thread the expired bubble
@@ -23731,6 +23736,44 @@ function ChatConversationInner() {
       return true;
     });
   }, [selectionOverlayMessages, isSavedMode, savedSearch, savedFilter, disappearingTimer, disappearingSetAt, vanishTickNow, activeTopic]); // [2026-10-07 group-admin] +activeTopic
+  // [2026-10-12 thread-overlap] UNIQUE keys, always. Founder print (iPhone):
+  // bolhas de imagem desenhadas umas POR CIMA das outras + chip "Hoje" no meio
+  // de uma foto. FlashList v2 mapeia célula↔item pela key: key repetida (2
+  // separadores do mesmo dia quando uma msg fora de ordem — relógio do
+  // aparelho/pendente/agendada — faz a data "voltar"; a mesma msg 2× no
+  // estado, otimista + confirmada) => duas posições disputam a mesma célula,
+  // o layout entra em loop e o FlashList desiste após 40 renders sem commit
+  // ("Exceeded max renders without commit… duplicate keys") e COMMITA o
+  // layout velho = linhas sobrepostas. A FlatList (fallback) só descartava a
+  // duplicata em silêncio. Aqui: separador repetido ganha sufixo; mensagem
+  // repetida (mesma key = mesma msg) aparece uma vez só. O(n), só quando os
+  // dados mudam; sem duplicata devolve o MESMO array (memo das rows intacto).
+  const flatListData = useMemo(() => {
+    const src = _flatListDataRaw;
+    if (!Array.isArray(src) || src.length < 2) return src;
+    const seen = new Set();
+    let out = null;
+    for (let i = 0; i < src.length; i++) {
+      const it = src[i];
+      let k;
+      try { k = it ? msgKeyExtractor(it) : 'null-' + i; } catch { k = 'err-' + i; }
+      if (!seen.has(k)) {
+        seen.add(k);
+        if (out) out.push(it);
+        continue;
+      }
+      if (!out) out = src.slice(0, i);
+      if (it && (it._type === 'separator' || it._type === 'unread_separator')) {
+        let n = 2;
+        while (seen.has(k + '#' + n)) n++;
+        const nk = k + '#' + n;
+        seen.add(nk);
+        out.push({ ...it, _key: nk });
+      }
+      // duplicate message row → dropped (same key = same message)
+    }
+    return out || src;
+  }, [_flatListDataRaw, msgKeyExtractor]);
   flatListDataRef.current = flatListData; // [2026-10-06 thread-tech]
   // [2026-10-07 flashlist] Data in the mounted list's RENDER order. The whole
   // pipeline above (grouping/receipts/overlays) stays newest-first for the
@@ -33531,7 +33574,7 @@ function ChatConversationInner() {
                       }
                       // [2026-10-02] replace (não push) — ver nota do @mention:
                       // evita empilhar telas de chat ao trocar de conversa.
-                      router.replace({
+                      require('../services/openConversation').openConversation({
                         pathname: '/chat-conversation',
                         params: {
                           id: newId,
@@ -33542,7 +33585,7 @@ function ChatConversationInner() {
                           // preview bar on mount.
                           replyTo: encodeURIComponent(JSON.stringify(payload)),
                         },
-                      });
+                      }, { replace: true });
                     } catch (e) {
                       safeAlert(t('common.error') || 'Erro', String(e?.message || e));
                     }
@@ -34781,7 +34824,7 @@ function ChatConversationInner() {
                             <React.Fragment key={String(g.id)}>
                               {gi > 0 && <GroupDivider colors={colors} />}
                               <PressableRow
-                                onPress={() => contactInfoGo(() => router.replace({ pathname: '/chat-conversation', params: { id: g.id, name: g.name || '', type: 'group' } }))}
+                                onPress={() => contactInfoGo(() => require('../services/openConversation').openConversation({ pathname: '/chat-conversation', params: { id: g.id, name: g.name || '', type: 'group' } }, { replace: true }))}
                                 accessibilityRole="button" accessibilityLabel={g.name}
                                 style={{ flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 14, paddingVertical: 10, minHeight: 56 }}
                               >
@@ -37189,7 +37232,7 @@ function ChatConversationInner() {
                     } else if (item.conversation_id != null) {
                       // [WA-parity 2026-06-29] Star from ANOTHER chat — open that
                       // chat and land on the message (was a dead no-op before).
-                      router.push({ pathname: '/chat-conversation', params: {
+                      require('../services/openConversation').openConversation({ pathname: '/chat-conversation', params: {
                         id: String(item.conversation_id),
                         type: item.conversation_type || undefined,
                         scrollToMessageId: String(item.id),

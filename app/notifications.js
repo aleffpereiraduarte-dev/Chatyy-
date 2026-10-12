@@ -636,7 +636,7 @@ function NotificationsScreenInner() {
       let d = notif.data || {};
       if (typeof d === 'string') { try { d = JSON.parse(d || '{}'); } catch { d = {}; } }
       if (kind === 'say_hi' && !notif.read) { api.notificationsMarkRead(notif.id).catch(() => {}); }
-      router.push({ pathname: '/chat-conversation', params: { email: notif.author_email, type: 'direct', ...(d.name ? { name: d.name } : {}) } });
+      require('../services/openConversation').openConversation({ pathname: '/chat-conversation', params: { email: notif.author_email, type: 'direct', ...(d.name ? { name: d.name } : {}) } });
     }
   }, [router, showToast, t]);
 
@@ -667,7 +667,7 @@ function NotificationsScreenInner() {
         break;
       case 'chat':
       case 'mention':
-        router.push({ pathname: '/chat-conversation', params: { id: data.conversation_id } });
+        require('../services/openConversation').openConversation({ pathname: '/chat-conversation', params: { id: data.conversation_id } });
         break;
       case 'like':
       case 'comment':
@@ -677,7 +677,7 @@ function NotificationsScreenInner() {
         router.push(`/u/${encodeURIComponent(notif.author_email)}`);
         break;
       case 'contact_joined':
-        router.push({ pathname: '/chat-conversation', params: { email: notif.author_email, type: 'direct', ...(data.name ? { name: data.name } : {}) } });
+        require('../services/openConversation').openConversation({ pathname: '/chat-conversation', params: { email: notif.author_email, type: 'direct', ...(data.name ? { name: data.name } : {}) } });
         break;
       case 'live':
         router.push({ pathname: '/live-viewer', params: {

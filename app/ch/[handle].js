@@ -32,10 +32,10 @@ export default function ChannelFollowScreen() {
         const r = await api.chatChannelJoin(bare);
         const convId = r?.data?.conversation_id || r?.data?.id;
         if (r?.success && convId) {
-          router.replace({
+          require('../../services/openConversation').openConversation({
             pathname: '/chat-conversation',
             params: { id: String(convId), name: r.data.name || '', type: r.data.type || 'channel' },
-          });
+          }, { replace: true });
           return;
         }
         setErr(r?.message || t?.('chat.channelJoinFailed') || 'Falha ao seguir o canal');

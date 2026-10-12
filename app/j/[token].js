@@ -50,7 +50,7 @@ export default function GroupJoinScreen() {
           return;
         }
         if (r?.success && convId) {
-          router.replace({ pathname: '/chat-conversation', params: { id: String(convId), name: r.data.name || 'Grupo' } });
+          require('../../services/openConversation').openConversation({ pathname: '/chat-conversation', params: { id: String(convId), name: r.data.name || 'Grupo' } }, { replace: true });
           return;
         }
         setErr(r?.message || t?.('chat.inviteFailed') || 'Falha ao entrar no grupo');

@@ -884,10 +884,10 @@ export default function ChatNewScreen() {
       const r = await api.chatChannelJoin(Number(channel.id));
       if (r?.success) {
         const cid = r.data?.conversation_id || channel.id;
-        router.replace({
+        require('../services/openConversation').openConversation({
           pathname: '/chat-conversation',
           params: { id: String(cid), name: channel.name || '', type: channel.type || 'channel' },
-        });
+        }, { replace: true });
       } else {
         safeAlert(t('common.error') || 'Erro', r?.message || t('uiG.chatNew.joinChannelFailed'));
       }
@@ -902,7 +902,7 @@ export default function ChatNewScreen() {
   // The chat-conversation screen handles preview vs. member view.
   const handleOpenChannel = useCallback((channel) => {
     if (!channel?.id) return;
-    router.push({
+    require('../services/openConversation').openConversation({
       pathname: '/chat-conversation',
       params: { id: String(channel.id), name: channel.name || '', type: channel.type || 'channel' },
     });
@@ -1234,7 +1234,7 @@ export default function ChatNewScreen() {
             // remounted the group as type='direct' (chat-conversation falls
             // back to 'direct' when params.type is absent). 'group' fallback:
             // pick-mode only ever starts from the group/channel info modal.
-            router.replace({ pathname: '/chat-conversation', params: { id: String(addMemberConvId), type: pageParams.addMemberConvType || 'group', name: pageParams.addMemberConvName || '' } });
+            require('../services/openConversation').openConversation({ pathname: '/chat-conversation', params: { id: String(addMemberConvId), type: pageParams.addMemberConvType || 'group', name: pageParams.addMemberConvName || '' } }, { replace: true });
           } else {
             safeAlert(t('common.error') || 'Erro', r?.message || t('uiG.chatNew.addFailed'));
           }
@@ -1280,7 +1280,7 @@ export default function ChatNewScreen() {
         const rs = await api.chatSaved();
         const sid = rs?.data?.id || rs?.data?.conversation_id;
         if (rs?.success && sid) {
-          router.replace({ pathname: '/chat-conversation', params: { id: String(sid), name: t('chat.savedMessages') || 'Saved Messages' } });
+          require('../services/openConversation').openConversation({ pathname: '/chat-conversation', params: { id: String(sid), name: t('chat.savedMessages') || 'Saved Messages' } }, { replace: true });
         }
       } catch {}
       return;
@@ -1291,7 +1291,7 @@ export default function ChatNewScreen() {
       const convId = r.data?.conversation_id || r.data?.id;
       const convName = r.data?.name || targetName;
       if (r.success && convId) {
-        router.replace(`/chat-conversation?id=${convId}&name=${encodeURIComponent(convName)}&type=direct&email=${encodeURIComponent(em)}`);
+        require('../services/openConversation').openConversation(`/chat-conversation?id=${convId}&name=${encodeURIComponent(convName)}&type=direct&email=${encodeURIComponent(em)}`, { replace: true });
       } else if (/yourself|voc[eê] mesmo|si mesmo/i.test(String(r?.message || ''))) {
         // [2026-07-04 QA] Belt-and-suspenders: server rejected a self-DM. On web the
         // pre-guard (getActiveAccountEmail) can be empty, so catch the 400 here and
@@ -1299,7 +1299,7 @@ export default function ChatNewScreen() {
         try {
           const rs = await api.chatSaved();
           const sid = rs?.data?.id || rs?.data?.conversation_id;
-          if (rs?.success && sid) router.replace({ pathname: '/chat-conversation', params: { id: String(sid), name: t('chat.savedMessages') || 'Saved Messages' } });
+          if (rs?.success && sid) require('../services/openConversation').openConversation({ pathname: '/chat-conversation', params: { id: String(sid), name: t('chat.savedMessages') || 'Saved Messages' } }, { replace: true });
         } catch {}
       } else {
         safeAlert(t('common.error'), r?.message || t('chat.createError'));
@@ -1327,7 +1327,7 @@ export default function ChatNewScreen() {
       const r = await api.chatCreate(members, finalName, 'group');
       const convId = r.data?.conversation_id || r.data?.id;
       if (r.success && convId) {
-        router.replace(`/chat-conversation?id=${convId}&name=${encodeURIComponent(r.data?.name || finalName)}&type=group`);
+        require('../services/openConversation').openConversation(`/chat-conversation?id=${convId}&name=${encodeURIComponent(r.data?.name || finalName)}&type=group`, { replace: true });
       } else {
         safeAlert(t('common.error'), r?.message || t('chat.createGroupError'));
       }
@@ -1343,7 +1343,7 @@ export default function ChatNewScreen() {
       const r = await api.chatCreateChannel(groupName.trim(), '');
       const convId = r.data?.id;
       if (r.success && convId) {
-        router.replace(`/chat-conversation?id=${convId}&name=${encodeURIComponent(groupName.trim())}&type=channel`);
+        require('../services/openConversation').openConversation(`/chat-conversation?id=${convId}&name=${encodeURIComponent(groupName.trim())}&type=channel`, { replace: true });
       } else {
         safeAlert(t('common.error'), r?.message || t('common.genericError'));
       }
@@ -1769,13 +1769,13 @@ export default function ChatNewScreen() {
     try {
       const r = await api.chatSaved();
       if (r?.success && r.data?.id) {
-        router.replace({
+        require('../services/openConversation').openConversation({
           pathname: '/chat-conversation',
           params: {
             id: String(r.data.id),
             name: t('chat.savedMessages') || 'Saved Messages',
           },
-        });
+        }, { replace: true });
       }
     } catch {}
   }, [router, t]);
@@ -2326,7 +2326,7 @@ export default function ChatNewScreen() {
                         try {
                           const r = await api.chatSaved();
                           if (r?.success && r.data?.id) {
-                            router.replace({ pathname: '/chat-conversation', params: { id: r.data.id, name: t('chat.savedMessages') || 'Saved Messages' } });
+                            require('../services/openConversation').openConversation({ pathname: '/chat-conversation', params: { id: r.data.id, name: t('chat.savedMessages') || 'Saved Messages' } }, { replace: true });
                           }
                         } catch {}
                       }}

@@ -48,7 +48,7 @@ export default function AssistantActionScreen() {
       } catch {}
       if (res && res.href) {
         doneRef.current = true;
-        try { router.replace(res.href); } catch {}
+        try { require('../../services/openConversation').openConversation(res.href, { replace: true, source: 'assistant' }); } catch { try { router.replace(res.href); } catch {} }
         return;
       }
       // Cold start: the conversation cache may still be hydrating.

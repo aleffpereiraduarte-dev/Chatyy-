@@ -816,9 +816,9 @@ function ContactsScreenInner() {
       const Haptics = require('expo-haptics');
       Haptics.selectionAsync?.().catch?.(() => {});
     } catch {}
-    const goChat = () => router.push(`/chat-conversation?name=${encodeURIComponent(display)}&email=${encodeURIComponent(email)}`);
-    const goCall = () => router.push(`/chat-conversation?email=${encodeURIComponent(email)}&startCall=audio`);
-    const goVideo = () => router.push(`/chat-conversation?email=${encodeURIComponent(email)}&startCall=video`);
+    const goChat = () => require('../services/openConversation').openConversation(`/chat-conversation?name=${encodeURIComponent(display)}&email=${encodeURIComponent(email)}`);
+    const goCall = () => require('../services/openConversation').openConversation(`/chat-conversation?email=${encodeURIComponent(email)}&startCall=audio`);
+    const goVideo = () => require('../services/openConversation').openConversation(`/chat-conversation?email=${encodeURIComponent(email)}&startCall=video`);
     const goEmail = () => router.push(`/compose?to=${encodeURIComponent(email)}`);
     const goEdit = () => handleEditContact(c);
     // [WA-parity 2026-05-31] Share this contact's card to a conversation.
@@ -894,7 +894,7 @@ function ContactsScreenInner() {
       const r = await api.chatSend(conv.id, content, 'contact', null, null, null, tempId, clientMessageId);
       if (!r?.success) throw new Error(r?.message || 'send_failed');
       setShareContactCard(null);
-      router.push({ pathname: '/chat-conversation', params: { id: String(conv.id), name: conv.name || conv.display_name || conv.other_email || '' } });
+      require('../services/openConversation').openConversation({ pathname: '/chat-conversation', params: { id: String(conv.id), name: conv.name || conv.display_name || conv.other_email || '' } });
     } catch (e) {
       const msg = t('chatConv.contactSendError') || 'Não foi possível enviar o contato';
       if (Platform.OS === 'web') { try { window.alert(msg); } catch {} }

@@ -47,7 +47,7 @@ export default function SavedMessagesScreen() {
           // replace() not push() so the back button skips this loader and
           // returns straight to wherever the user came from (chat list /
           // sidebar) — Telegram-parity.
-          router.replace(`/chat-conversation?id=${cid}&name=${name}&type=saved&saved=1`);
+          require('../services/openConversation').openConversation(`/chat-conversation?id=${cid}&name=${name}&type=saved&saved=1`, { replace: true });
         } else {
           setErr(r?.message || 'Erro ao abrir Mensagens Salvas');
         }
