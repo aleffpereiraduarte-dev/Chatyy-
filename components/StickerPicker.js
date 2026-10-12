@@ -758,7 +758,9 @@ export default function StickerPicker({ onSelect, onClose, colors, t, userEmail,
       {/* Favoritos preview row — only shown when user has favorites and isn't
           on the favorites or recents tab. Long-press a sticker to add it to
           favorites (handled in the main grid). */}
-      {!showSearch && activePack !== 'favorites' && activePack !== 'recent' && favorites.length > 0 && (
+      {/* [2026-10-12] Founder: a fileira fixa de Favoritos espremia a grade e cortava as
+          figurinhas — favoritos já têm a aba da estrela. Desligada. */}
+      {false && !showSearch && activePack !== 'favorites' && activePack !== 'recent' && favorites.length > 0 && (
         <View style={{ borderBottomWidth: 1, borderBottomColor: colors.border }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 10, paddingTop: 4, gap: 4 }}>
             <IconStarFilled size={10} color={colors.primary} />
