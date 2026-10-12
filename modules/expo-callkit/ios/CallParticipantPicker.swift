@@ -9,9 +9,9 @@
 // (group.com.onemundo.mail → auth_token + api_base) — no new auth plumbing.
 //
 // Backend contracts:
-//   GET  <base>/api/chat.php?action=chat_contacts
+//   GET  <base>/api/email.php?action=chat_contacts
 //        → { success, data: [ { email, name, status, last_seen }, ... ] }
-//   POST <base>/api/chat.php?action=chat_call_add
+//   POST <base>/api/email.php?action=chat_call_add
 //        body { action, call_id, conversation_id, video, emails:[email] }
 //        → rings the invitee into the EXISTING room (room == call_id).
 
@@ -43,7 +43,7 @@ enum CallParticipantsAPI {
     /// Fetch the caller's Chatyy contacts. Returns [] on any failure.
     static func fetchContacts() async -> [Contact] {
         guard let auth = resolveAuth(),
-              let url = URL(string: "\(auth.base)/api/chat.php?action=chat_contacts") else {
+              let url = URL(string: "\(auth.base)/api/email.php?action=chat_contacts") else {
             return []
         }
         var req = URLRequest(url: url, timeoutInterval: 10.0)
@@ -86,7 +86,7 @@ enum CallParticipantsAPI {
     static func ringIntoCall(callId: String, conversationId: String, email: String, isVideo: Bool) async -> Bool {
         guard !callId.isEmpty, !email.isEmpty,
               let auth = resolveAuth(),
-              let url = URL(string: "\(auth.base)/api/chat.php?action=chat_call_add") else {
+              let url = URL(string: "\(auth.base)/api/email.php?action=chat_call_add") else {
             return false
         }
         var body: [String: Any] = [

@@ -21,9 +21,9 @@ import java.nio.charset.StandardCharsets
  * Dispatchers.IO / a background coroutine) — blocking I/O here is fine.
  *
  * Backend contracts:
- *   GET  <base>/api/chat.php?action=chat_contacts
+ *   GET  <base>/api/email.php?action=chat_contacts
  *        → { success, data: [ { email, name, status, last_seen }, ... ] }
- *   POST <base>/api/chat.php?action=chat_call_add
+ *   POST <base>/api/email.php?action=chat_call_add
  *        body { action, call_id, conversation_id, video, emails:[email] }
  *        → rings the invitee into the EXISTING room (room == call_id) via
  *          VoIP/FCM/WS fanout. Backend filters caller + blocked users.
@@ -50,7 +50,7 @@ object CallContacts {
         }
         val (token, apiBase) = auth
         val base = apiBase.trimEnd('/')
-        val urlStr = "$base/api/chat.php?action=chat_contacts"
+        val urlStr = "$base/api/email.php?action=chat_contacts"
         var conn: HttpURLConnection? = null
         return try {
             conn = (URL(urlStr).openConnection() as HttpURLConnection).apply {
@@ -123,7 +123,7 @@ object CallContacts {
         }
         val (token, apiBase) = auth
         val base = apiBase.trimEnd('/')
-        val urlStr = "$base/api/chat.php?action=chat_call_add"
+        val urlStr = "$base/api/email.php?action=chat_call_add"
         val body = JSONObject().apply {
             put("action", "chat_call_add")
             put("call_id", callId)
