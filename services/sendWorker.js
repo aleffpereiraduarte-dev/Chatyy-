@@ -285,6 +285,14 @@ async function _processRow(row) {
   const payload = row.payload || {};
   const ptype = payload.type || 'text';
 
+  // [2026-10-12 confiabilidade] Conversa E2E: a linha nasce com texto puro e só
+  // vira envelope depois da criptografia. Se o app morreu nesse intervalo, NUNCA
+  // reenviar o texto puro ao servidor — vira "não enviada".
+  if (payload._e2eWanted && !payload._e2e) {
+    await markFailed(cmi, 'e2ee_not_encrypted', { kind: 'hard' });
+    return;
+  }
+
   // Media branch — upload local_uri then chain chat_send. WS-first path is
   // text-only because the WS hub has no upload primitive.
   if (MEDIA_TYPES.has(ptype)) {

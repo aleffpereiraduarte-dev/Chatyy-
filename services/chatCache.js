@@ -792,7 +792,7 @@ function _rescueUnsentPending(rows) {
       if (created && now - created > 7 * 24 * 60 * 60 * 1000) continue;
       const snd = String(p.sender_email || '').toLowerCase();
       if (snd && me && snd !== me) continue;
-      if (p._e2e || p.e2e) continue;
+      if (p._e2e || p.e2e || p._e2eWanted) continue;
       try { if (e2e && typeof e2e.isConversationE2ee === 'function' && e2e.isConversationE2ee(p.conversation_id)) continue; } catch {}
       const fu = String(p.file_url || '');
       const fuRemote = /^https?:\/\//i.test(fu) || fu.indexOf('/data/') === 0;

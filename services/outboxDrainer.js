@@ -118,7 +118,7 @@ async function _webAdoptAndReplay(reason) {
       if (['image', 'video', 'audio', 'voice', 'video_note', 'file'].includes(p.type) && !fuRemote) continue;
       // The pending row stores the PLAINTEXT; never replay it into an E2EE v4
       // conversation (the screen's own queue entry carries the ciphertext).
-      if (p._e2e || p.e2e || await _isE2eeV4(p.conversation_id)) continue;
+      if (p._e2e || p.e2e || p._e2eWanted || await _isE2eeV4(p.conversation_id)) continue;
       try {
         await oc.queueOfflineAction({
           type: 'chat_send',

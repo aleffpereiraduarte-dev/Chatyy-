@@ -10718,7 +10718,13 @@ function ChatConversationInner() {
   useEffect(() => composerStore.subscribe((inputText) => {
     if (!inputText) return;
     const sinceSend = Date.now() - lastSentAtRef.current;
-    if (sinceSend < 250 && !autocorrectSquashedRef.current) {
+    // [2026-10-12 confiabilidade] Só iOS (onde o autocorrect repovoa o campo) e só
+    // quando o texto parece a variante corrigida do que foi enviado (tamanho
+    // parecido) — 1ª tecla de uma mensagem nova não é mais apagada.
+    const _last = lastSentTextRef.current || '';
+    const _looksLikeVariant = inputText.length >= 2 && _last.length > 0
+      && Math.abs(inputText.length - _last.length) <= Math.max(3, Math.ceil(_last.length * 0.3));
+    if (Platform.OS === 'ios' && _looksLikeVariant && sinceSend < 250 && !autocorrectSquashedRef.current) {
       autocorrectSquashedRef.current = true;
       // Deferred like the old post-commit effect (never set inside a notify).
       setTimeout(() => setInputText(''), 0);
@@ -15360,8 +15366,12 @@ function ChatConversationInner() {
         }));
         // Remove the row from persisted pending-store so it doesn't come back
         // as a phantom unsent message on next mount.
+        // [2026-10-12 confiabilidade] Ack de relay (hub) não prova gravação no PG:
+        // tirar do pending-store aqui perdia a mensagem se o app morresse antes
+        // da resposta do chat_send. Só remove em ack de persistência.
+        const _relayOnly = !cid && (data.message_id == null || String(data.message_id).startsWith('tmp_'));
         const toRemove = matchedTempId || tempId;
-        if (toRemove) removePendingMessage(conversationId, toRemove).catch(() => {});
+        if (toRemove && !_relayOnly) removePendingMessage(conversationId, toRemove).catch(() => {});
       });
       wsUnsubs.push(unsubAck);
 
@@ -17185,7 +17195,7 @@ function ChatConversationInner() {
     // to the SQLite messageOutbox (single source of truth). The state
     // machine there feeds SendStatusText.js + sendWorker.js. Legacy MMKV
     // path retained for emergency rollback only — under V2 it never fires.
-    const pendingData = { temp_id: tempId, client_message_id: msgId, conversation_id: conversationId, content: text, type: 'text', reply_to_id: replyId, mentions: currentMentions, created_at: optimisticMsg.created_at, sender_email: currentEmail };
+    const pendingData = { temp_id: tempId, client_message_id: msgId, conversation_id: conversationId, content: text, type: 'text', reply_to_id: replyId, mentions: currentMentions, created_at: optimisticMsg.created_at, sender_email: currentEmail, _e2eWanted: !!(e2eEnabled && e2eKeys) }; // [2026-10-12 confiabilidade] E2E: nunca reenviar antes de cifrar
     // [2026-10-06 latency] The outbox write used to be TWO awaited SQLite
     // transactions (enqueue + markSending) sitting BEFORE the WS relay and the
     // HTTP chat_send — 15-40ms idle, up to busy_timeout (5s) when db.js's
@@ -17209,6 +17219,7 @@ function ChatConversationInner() {
             // is swapped for the E2E envelope below once encryption finishes.
             display_content: text,
             type: 'text',
+            _e2eWanted: !!(e2eEnabled && e2eKeys),
             reply_to_id: replyId,
             mentions: currentMentions,
             sender_email: currentEmail,
