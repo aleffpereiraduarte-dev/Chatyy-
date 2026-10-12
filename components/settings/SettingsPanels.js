@@ -395,7 +395,7 @@ export function ChatyyOnePanel() {
               <Text style={{ fontSize: 19, fontWeight: '700', color: g.text }}>{planDisplayName(planNorm.planId, t)}</Text>
               <Text style={{ fontSize: 13, color: g.secondary, marginTop: 2 }}>{`${gbTxt} ${t('chatyyOne.included')}`}</Text>
             </View>
-            <Text style={{ fontSize: 12, fontWeight: '700', color: isPaid ? '#16a34a' : g.secondary }}>
+            <Text style={{ fontSize: 12, fontWeight: '700', color: isPaid ? g.ink : g.secondary }}>
               {isPaid ? t('chatyyOne.statusActive') : t('chatyyOne.statusFree')}
             </Text>
           </View>

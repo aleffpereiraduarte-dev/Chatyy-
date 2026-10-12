@@ -69,7 +69,7 @@ export default function StorageShopSheet({ visible, onClose, currentTier = 'free
   const hasUsage = Number.isFinite(used);
   const pct = hasUsage ? Math.min(100, Math.max(0, (used / limit) * 100)) : 0;
   const nearFull = pct >= 80;
-  const barColor = pct >= 95 ? RED : pct >= 80 ? AMBER : (colors.tint || '#0a84ff');
+  const barColor = pct >= 95 ? RED : pct >= 80 ? AMBER : colors.text;
 
   const onBuy = useCallback(async (tier) => {
     if (pendingTier) return;
@@ -146,9 +146,12 @@ export default function StorageShopSheet({ visible, onClose, currentTier = 'free
   const showPortal = isStripeCardAvailable();
 
   const tiers = useMemo(() => STORAGE_TIERS, []);
-  const tint = colors.tint || '#0a84ff';
+  // [2026-10-12] Repaginado P&B premium: destaque = cor do texto; sobre ele, cor do fundo.
+  const tint = colors.text;
+  const onTint = colors.background;
+  const line = colors.border || (isDark ? '#2c2c2e' : '#e5e5ea');
   const cardBg = colors.cardBackground || colors.surface || (isDark ? '#0b0b0b' : '#fff');
-  const soft = isDark ? '#1c1c1e' : '#f1f5f9';
+  const soft = isDark ? '#1c1c1e' : '#f2f2f7';
   const selected = tiers.find((x) => x.id === selectedId) || tiers[0];
   const selectedIsCurrent = currentTier === selected.id;
   const selectedPending = pendingTier === selected.id;
@@ -165,9 +168,9 @@ export default function StorageShopSheet({ visible, onClose, currentTier = 'free
   const body = (
         <>
           {/* Header */}
-          <View style={styles.head}>
+          <View style={[styles.head, { backgroundColor: colors.background, borderBottomColor: line }]}>
             <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1, gap: 8 }}>
-              <IconCloud size={22} color={tint} />
+              <IconCloud size={22} color={colors.text} />
               <Text style={[styles.title, { color: colors.text }]}>
                 {t('storage.shopTitle') || 'Mais armazenamento'}
               </Text>
@@ -178,8 +181,8 @@ export default function StorageShopSheet({ visible, onClose, currentTier = 'free
           </View>
 
           <ScrollView
-            style={{ flexShrink: 1 }}
-            contentContainerStyle={{ paddingBottom: 8 }}
+            style={{ flex: 1 }}
+            contentContainerStyle={{ paddingTop: 16, paddingBottom: 16 }}
             showsVerticalScrollIndicator={false}
           >
             {/* Barra de uso */}
@@ -214,8 +217,8 @@ export default function StorageShopSheet({ visible, onClose, currentTier = 'free
             <View style={styles.perks}>
               {perks.map(({ Icon, text }) => (
                 <View key={text} style={styles.perkRow}>
-                  <View style={[styles.perkIcon, { backgroundColor: isDark ? '#0b3a6b' : '#e0efff' }]}>
-                    <Icon size={15} color={tint} />
+                  <View style={[styles.perkIcon, { backgroundColor: soft }]}>
+                    <Icon size={16} color={colors.text} />
                   </View>
                   <Text style={[styles.perkText, { color: colors.text }]}>{text}</Text>
                 </View>
@@ -230,15 +233,15 @@ export default function StorageShopSheet({ visible, onClose, currentTier = 'free
                   <TouchableOpacity
                     key={c}
                     onPress={() => setCycle(c)}
-                    style={[styles.toggleBtn, active && { backgroundColor: tint }]}
+                    style={[styles.toggleBtn, active && { backgroundColor: colors.background, shadowColor: '#000', shadowOpacity: isDark ? 0 : 0.08, shadowRadius: 4, shadowOffset: { width: 0, height: 1 }, elevation: 1 }]}
                     activeOpacity={0.85}
                   >
-                    <Text style={[styles.toggleText, { color: active ? '#fff' : colors.text }]}>
+                    <Text style={[styles.toggleText, { color: active ? colors.text : colors.muted }]}>
                       {c === 'monthly' ? (t('storage.cycle.monthly') || 'Mensal') : (t('storage.cycle.annual') || 'Anual')}
                     </Text>
                     {c === 'annual' && (
-                      <View style={[styles.togglePill, { backgroundColor: active ? 'rgba(255,255,255,0.25)' : GREEN }]}>
-                        <Text style={styles.togglePillText}>{t('storage.monthsFree') || '2 meses grátis'}</Text>
+                      <View style={[styles.togglePill, { backgroundColor: tint }]}>
+                        <Text style={[styles.togglePillText, { color: onTint }]}>{t('storage.monthsFree') || '2 meses grátis'}</Text>
                       </View>
                     )}
                   </TouchableOpacity>
@@ -259,7 +262,7 @@ export default function StorageShopSheet({ visible, onClose, currentTier = 'free
               const perMonthEq = cycle === 'annual' ? formatBrl(tier.priceAnnual / 12) : null;
               const saved = cycle === 'annual' ? Math.max(0, tier.priceMonthly * 12 - tier.priceAnnual) : 0;
               const pending = pendingTier === tier.id;
-              const accent = isRec ? tint : (colors.border || '#e5e7eb');
+              const accent = line;
 
               return (
                 <TouchableOpacity
@@ -269,36 +272,36 @@ export default function StorageShopSheet({ visible, onClose, currentTier = 'free
                   disabled={!!pendingTier}
                   style={[
                     styles.tierCard,
-                    { borderColor: isSel ? tint : accent, backgroundColor: isSel ? (isDark ? '#0b2540' : '#f0f7ff') : cardBg,
-                      borderWidth: isSel || isRec ? 2 : 1.5, opacity: pending ? 0.6 : 1 },
+                    { borderColor: isSel ? tint : accent, backgroundColor: cardBg,
+                      borderWidth: isSel ? 2 : 1, opacity: pending ? 0.6 : 1 },
                   ]}
                 >
                   {isRec && (
                     <View style={[styles.recRibbon, { backgroundColor: tint }]}>
-                      <Text style={styles.badgeText}>{t('storage.recommended') || 'Recomendado'}</Text>
+                      <Text style={[styles.badgeText, { color: onTint }]}>{t('storage.recommended') || 'Recomendado'}</Text>
                     </View>
                   )}
                   <View style={[styles.radio, { borderColor: isSel ? tint : (colors.muted || '#9ca3af'), backgroundColor: isSel ? tint : 'transparent' }]}>
-                    {isSel && <IconCheck size={12} color="#fff" />}
+                    {isSel && <IconCheck size={12} color={onTint} />}
                   </View>
                   <View style={{ flex: 1 }}>
                     <View style={styles.tierTitleRow}>
                       <Text style={[styles.tierName, { color: colors.text }]}>{gbLabel(tier.gb)}</Text>
                       {isCurrent && (
-                        <View style={[styles.badge, { backgroundColor: GREEN }]}>
-                          <Text style={styles.badgeText}>{t('storage.currentPlan') || 'Seu plano atual'}</Text>
+                        <View style={[styles.badge, { backgroundColor: soft }]}>
+                          <Text style={[styles.badgeText, { color: colors.text }]}>{t('storage.currentPlan') || 'Seu plano atual'}</Text>
                         </View>
                       )}
                     </View>
                     {saved > 0 && (
-                      <Text style={[styles.tierSave, { color: GREEN }]}>
+                      <Text style={[styles.tierSave, { color: colors.muted }]}>
                         {(t('storage.youSave') || 'Você economiza {amount} por ano').replace('{amount}', formatBrl(saved))}
                       </Text>
                     )}
                   </View>
                   <View style={{ alignItems: 'flex-end' }}>
                     {pending ? (
-                      <ActivityIndicator color={tint} />
+                      <ActivityIndicator color={colors.text} />
                     ) : (
                       <>
                         <Text style={[styles.tierPrice, { color: colors.text }]}>
@@ -323,10 +326,10 @@ export default function StorageShopSheet({ visible, onClose, currentTier = 'free
           </ScrollView>
 
           {/* CTA fixo */}
-          <View style={styles.ctaWrap}>
+          <View style={[styles.ctaWrap, { backgroundColor: colors.background, borderTopColor: line }]}>
             {selectedIsCurrent ? (
               <View style={[styles.cta, { backgroundColor: soft }]}>
-                <IconCheckCircle size={18} color={GREEN} />
+                <IconCheckCircle size={18} color={colors.text} />
                 <Text style={[styles.ctaText, { color: colors.text }]}>{t('storage.currentPlan') || 'Seu plano atual'}</Text>
               </View>
             ) : (
@@ -336,8 +339,8 @@ export default function StorageShopSheet({ visible, onClose, currentTier = 'free
                 activeOpacity={0.85}
                 style={[styles.cta, { backgroundColor: tint, opacity: pendingTier ? 0.6 : 1 }]}
               >
-                {selectedPending ? <ActivityIndicator color="#fff" /> : (
-                  <Text style={styles.ctaText}>
+                {selectedPending ? <ActivityIndicator color={onTint} /> : (
+                  <Text style={[styles.ctaText, { color: onTint }]}>
                     {(t('storage.ctaUpgrade') || 'Fazer upgrade para {size}').replace('{size}', gbLabel(selected.gb))}
                   </Text>
                 )}
@@ -347,17 +350,17 @@ export default function StorageShopSheet({ visible, onClose, currentTier = 'free
               <TouchableOpacity
                 onPress={() => onPayCard(selected)}
                 disabled={!!pendingTier}
-                style={[styles.cardBtn, { borderColor: tint }]}
+                style={[styles.cardBtn, { borderColor: colors.text }]}
                 activeOpacity={0.8}
               >
-                <Text style={[styles.cardBtnText, { color: tint }]}>
+                <Text style={[styles.cardBtnText, { color: colors.text }]}>
                   {t('storage.payCard') || 'Pagar com cartão'}
                 </Text>
               </TouchableOpacity>
             )}
             {showPortal && (
               <TouchableOpacity onPress={onManageCard} style={{ alignSelf: 'center', paddingVertical: 6 }}>
-                <Text style={{ color: tint, fontSize: 14, fontWeight: '600' }}>
+                <Text style={{ color: colors.text, fontSize: 14, fontWeight: '600', textDecorationLine: 'underline' }}>
                   {t('storage.manageCard') || 'Gerenciar cartão / assinatura'}
                 </Text>
               </TouchableOpacity>
@@ -387,7 +390,7 @@ export default function StorageShopSheet({ visible, onClose, currentTier = 'free
   return (
     <Modal visible={!!visible} transparent animationType="slide" onRequestClose={onClose}>
       <View style={styles.backdrop}>
-        <View style={[styles.sheet, { backgroundColor: colors.background, maxHeight: winH * 0.92 }]}>
+        <View style={[styles.sheet, { backgroundColor: colors.background, height: winH * 0.92, maxWidth: 560, width: '100%', alignSelf: 'center' }]}>
           {body}
         </View>
       </View>
@@ -401,8 +404,8 @@ const styles = StyleSheet.create({
     borderTopLeftRadius: 22, borderTopRightRadius: 22,
     paddingHorizontal: 18, paddingTop: 14, paddingBottom: 18,
   },
-  head: { flexDirection: 'row', alignItems: 'center', paddingBottom: 10 },
-  title: { fontSize: 18, fontWeight: '700' },
+  head: { flexDirection: 'row', alignItems: 'center', paddingBottom: 12, borderBottomWidth: StyleSheet.hairlineWidth },
+  title: { fontSize: 17, fontWeight: '700' },
   usageCard: { borderRadius: 14, borderWidth: 1.5, padding: 12, marginBottom: 14 },
   usageRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   usageTitle: { fontSize: 14, fontWeight: '700', flex: 1 },
@@ -410,13 +413,13 @@ const styles = StyleSheet.create({
   usageTrack: { height: 10, borderRadius: 6, marginTop: 10, overflow: 'hidden' },
   usageFill: { height: '100%', borderRadius: 6 },
   usageWarn: { fontSize: 13, fontWeight: '600', marginTop: 10, lineHeight: 18 },
-  hero: { fontSize: 22, fontWeight: '800', marginTop: 2 },
-  heroSub: { fontSize: 14, lineHeight: 20, marginTop: 4 },
-  perks: { marginTop: 12, marginBottom: 16, gap: 10 },
+  hero: { fontSize: 26, fontWeight: '800', marginTop: 2, letterSpacing: -0.4, lineHeight: 31 },
+  heroSub: { fontSize: 15, lineHeight: 21, marginTop: 6 },
+  perks: { marginTop: 18, marginBottom: 22, gap: 12 },
   perkRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  perkIcon: { width: 28, height: 28, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
-  perkText: { fontSize: 14, fontWeight: '500', flex: 1 },
-  toggleWrap: { flexDirection: 'row', borderRadius: 12, padding: 3, marginBottom: 14 },
+  perkIcon: { width: 32, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center' },
+  perkText: { fontSize: 15, fontWeight: '500', flex: 1 },
+  toggleWrap: { flexDirection: 'row', borderRadius: 12, padding: 3, marginBottom: 18 },
   toggleBtn: {
     flex: 1, paddingVertical: 9, borderRadius: 10,
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
@@ -432,20 +435,20 @@ const styles = StyleSheet.create({
   recRibbon: { position: 'absolute', top: -10, left: 14, paddingHorizontal: 10, paddingVertical: 3, borderRadius: 8 },
   radio: { width: 22, height: 22, borderRadius: 11, borderWidth: 2, alignItems: 'center', justifyContent: 'center' },
   tierTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
-  tierName: { fontSize: 22, fontWeight: '800' },
-  tierSave: { fontSize: 12, fontWeight: '600', marginTop: 3 },
+  tierName: { fontSize: 20, fontWeight: '800' },
+  tierSave: { fontSize: 12.5, fontWeight: '500', marginTop: 3 },
   tierPrice: { fontSize: 17, fontWeight: '800' },
   tierPer: { fontSize: 12, fontWeight: '500', marginTop: 2 },
   badge: { paddingHorizontal: 8, paddingVertical: 2, borderRadius: 8 },
   badgeText: { color: '#fff', fontSize: 11, fontWeight: '700' },
-  freeNote: { fontSize: 12, textAlign: 'center', marginTop: 4, marginBottom: 6 },
-  ctaWrap: { paddingTop: 10 },
+  freeNote: { fontSize: 13, textAlign: 'center', marginTop: 10, marginBottom: 4, lineHeight: 18 },
+  ctaWrap: { paddingTop: 12, borderTopWidth: StyleSheet.hairlineWidth },
   cta: {
-    minHeight: 52, borderRadius: 14, paddingHorizontal: 16,
+    minHeight: 52, borderRadius: 26, paddingHorizontal: 16,
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
   },
-  ctaText: { color: '#fff', fontSize: 16, fontWeight: '800' },
-  cardBtn: { marginTop: 8, paddingVertical: 12, borderRadius: 14, borderWidth: 1.5, alignItems: 'center' },
+  ctaText: { fontSize: 16, fontWeight: '700' },
+  cardBtn: { marginTop: 8, paddingVertical: 13, borderRadius: 26, borderWidth: 1.5, alignItems: 'center' },
   cardBtnText: { fontSize: 15, fontWeight: '700' },
   foot: { fontSize: 12, textAlign: 'center', marginTop: 8 },
 });
