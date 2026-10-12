@@ -2,7 +2,7 @@ import React, { useEffect, useState, useCallback, useMemo, useRef, lazy, Suspens
 import {
   View, FlatList, Text, TouchableOpacity, StyleSheet, Modal, Pressable, TextInput,
   ActivityIndicator, useWindowDimensions, Platform, Animated, Easing, Alert, AppState,
-  KeyboardAvoidingView,
+  KeyboardAvoidingView, BackHandler,
 } from 'react-native';
 // FlashList reverted to FlatList
 import { useRouter, useFocusEffect } from 'expo-router';
@@ -134,6 +134,14 @@ function InboxScreenInner() {
   const { colors, isDark, toggle } = useTheme();
   const { t } = useLanguage();
   const router = useRouter();
+  // [2026-10-12] Founder: "no e-mail deveria ter uma forma mais fácil de voltar pro
+  // chat". O chat abre o e-mail com router.replace (sem pilha), então o voltar do
+  // Android fechava o app e não havia botão. Agora: seta "Conversas" no topo e o
+  // voltar do Android levam para /chat (se nada estiver aberto por cima).
+  const goToChats = useCallback(() => {
+    try { if (router.canGoBack?.()) { router.back(); return; } } catch {}
+    try { router.replace('/chat'); } catch {}
+  }, [router]);
 
   // ⚡ Gmail-grade freshness: silently re-pull the current folder every time the
   // inbox regains focus (navigating back from read/compose/another tab) AND when
@@ -169,6 +177,17 @@ function InboxScreenInner() {
   const { width } = useWindowDimensions();
   const isDesktop = width >= 768;
   const [showSidebar, setShowSidebar] = useState(false);
+  // Voltar do Android na caixa de entrada: fecha o menu lateral se aberto; senão
+  // vai para as conversas (antes fechava o app). Só enquanto esta tela está em foco.
+  useFocusEffect(useCallback(() => {
+    if (Platform.OS !== 'android') return undefined;
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (showSidebar) { setShowSidebar(false); return true; }
+      goToChats();
+      return true;
+    });
+    return () => { try { sub.remove(); } catch {} };
+  }, [showSidebar, goToChats]));
   const [searchText, setSearchText] = useState('');
   // Saved searches state — PG-backed via email_search_list. Loaded lazily on
   // the first time the user opens the saved-searches menu.
@@ -1569,6 +1588,16 @@ function InboxScreenInner() {
           transform: [{ translateY: headerAnim.interpolate({ inputRange: [0, 1], outputRange: [-40, 0] }) }],
         },
       ]}>
+        <TouchableOpacity
+          onPress={goToChats}
+          style={[s.menuBtn, { flexDirection: 'row', alignItems: 'center', paddingRight: isDesktop ? 10 : 2 }]}
+          accessibilityLabel={t('chat.tabChats')}
+          accessibilityRole="button"
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+        >
+          <IconChevronLeft size={24} color={colors.text} />
+          {isDesktop && <Text style={{ color: colors.text, fontSize: 14, fontWeight: '600', marginLeft: 2 }}>{t('chat.tabChats')}</Text>}
+        </TouchableOpacity>
         {!isDesktop && (
           <TouchableOpacity onPress={() => { setShowSidebar(!showSidebar); if (!showSidebar) setShowMenu(false); }} style={s.menuBtn} accessibilityLabel={showSidebar ? 'Close menu' : 'Open menu'} accessibilityRole="button">
             {showSidebar ? (
