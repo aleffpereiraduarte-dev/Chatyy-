@@ -10228,4 +10228,15 @@ export default {
   "liveSetup.cameraDeniedWeb": "カメラへのアクセスがブロックされています。ブラウザの設定で許可してください。",
   "liveSetup.openSettings": "設定を開く",
   "liveSetup.countdownHint": "まもなくライブ配信が始まります",
+  // [2026-10-12 call-review] post-call quality prompt
+  "callRating.title": "通話の品質はいかがでしたか？",
+  "callRating.whatWrong": "どんな問題がありましたか？",
+  "callRating.issueEcho": "エコー",
+  "callRating.issueChoppy": "音声が途切れる",
+  "callRating.issueDelay": "遅延",
+  "callRating.issueVideo": "ビデオが止まる",
+  "callRating.issueDropped": "通話が切れた",
+  "callRating.send": "送信",
+  "callRating.notNow": "今はしない",
+  "callRating.starsA11y": "5段階中{n}",
 };

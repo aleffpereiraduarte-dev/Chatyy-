@@ -10976,4 +10976,15 @@ export default {
   "liveSetup.cameraDeniedWeb": "Camera access is blocked. Enable it in your browser settings.",
   "liveSetup.openSettings": "Open Settings",
   "liveSetup.countdownHint": "You're about to go live",
+  // [2026-10-12 call-review] post-call quality prompt
+  "callRating.title": "How was the call quality?",
+  "callRating.whatWrong": "What went wrong?",
+  "callRating.issueEcho": "Echo",
+  "callRating.issueChoppy": "Choppy audio",
+  "callRating.issueDelay": "Delay",
+  "callRating.issueVideo": "Frozen video",
+  "callRating.issueDropped": "Call dropped",
+  "callRating.send": "Send",
+  "callRating.notNow": "Not now",
+  "callRating.starsA11y": "{n} out of 5",
 };

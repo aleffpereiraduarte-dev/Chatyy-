@@ -11005,4 +11005,15 @@ export default {
   "liveSetup.cameraDeniedWeb": "कैमरा एक्सेस ब्लॉक है। ब्राउज़र सेटिंग्स में इसे चालू करें।",
   "liveSetup.openSettings": "सेटिंग्स खोलें",
   "liveSetup.countdownHint": "आप लाइव होने वाले हैं",
+  // [2026-10-12 call-review] post-call quality prompt
+  "callRating.title": "कॉल की गुणवत्ता कैसी थी?",
+  "callRating.whatWrong": "क्या गड़बड़ हुई?",
+  "callRating.issueEcho": "गूंज",
+  "callRating.issueChoppy": "आवाज़ टूट रही थी",
+  "callRating.issueDelay": "देरी",
+  "callRating.issueVideo": "वीडियो रुक रहा था",
+  "callRating.issueDropped": "कॉल कट गई",
+  "callRating.send": "भेजें",
+  "callRating.notNow": "अभी नहीं",
+  "callRating.starsA11y": "5 में से {n}",
 };

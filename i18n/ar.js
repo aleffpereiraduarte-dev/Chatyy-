@@ -11006,4 +11006,15 @@ export default {
   "liveSetup.cameraDeniedWeb": "الوصول إلى الكاميرا محظور. فعّله من إعدادات المتصفح.",
   "liveSetup.openSettings": "فتح الإعدادات",
   "liveSetup.countdownHint": "ستبدأ البث المباشر الآن",
+  // [2026-10-12 call-review] post-call quality prompt
+  "callRating.title": "كيف كانت جودة المكالمة؟",
+  "callRating.whatWrong": "ما المشكلة؟",
+  "callRating.issueEcho": "صدى",
+  "callRating.issueChoppy": "صوت متقطع",
+  "callRating.issueDelay": "تأخير",
+  "callRating.issueVideo": "فيديو متجمّد",
+  "callRating.issueDropped": "انقطعت المكالمة",
+  "callRating.send": "إرسال",
+  "callRating.notNow": "ليس الآن",
+  "callRating.starsA11y": "{n} من 5",
 };

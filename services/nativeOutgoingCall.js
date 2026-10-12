@@ -80,6 +80,17 @@ export function nativeOwnsCall(callId) {
   }
 }
 
+/** callId of the Room the native singleton currently owns ('' if none/unknown). */
+function _nativeRoomCallId() {
+  try {
+    const ck = _ck();
+    const d = ck && typeof ck.getDiagnostics === 'function' ? ck.getDiagnostics() : null;
+    return d && (d.nativeRoomCallId || d.lkNativeCallId) ? String(d.nativeRoomCallId || d.lkNativeCallId) : '';
+  } catch {
+    return '';
+  }
+}
+
 // ─── Tracker ────────────────────────────────────────────────────────────────
 
 const _sessions = new Map(); // callId → session
@@ -175,7 +186,17 @@ export function track(p) {
         if (!s.mediaAt && !s.ended) s.mediaAt = Date.now(); // [2026-10-10 call-states]
         onConnected('remote_track');
       }));
-      s.unsubs.push(ck.onLkEvent('onLkDisconnected', (d) => { if (matches(d)) onEnded('lk_disconnected', d?.reason); }));
+      s.unsubs.push(ck.onLkEvent('onLkDisconnected', (d) => {
+        if (!matches(d)) return;
+        // [2026-10-12 call-review] onLk* events carry no callId and the native
+        // Room is a singleton: when ANOTHER call's room (glare / 2nd incoming
+        // presented over this one) disconnected, this tracker ended a live
+        // call and wrote it as 1 s (call_1791817906844_jx79nhhuc: 'ended
+        // lk_disconnected remote_ended' while its own room stayed up).
+        const owner = _nativeRoomCallId();
+        if (owner && owner !== callId) { _diag('lk_disc_other_room', callId, { owner }); return; }
+        onEnded('lk_disconnected', d?.reason);
+      }));
       s.unsubs.push(ck.onLkEvent('onCallDeclinedRemote', (d) => { if (matches(d)) onEnded('declined_remote', 'declined'); }));
     }
     if (ck?.onCallEnded) {
@@ -246,5 +267,9 @@ function _finish(s, reason) {
     api.callStatus?.(s.callId, terminal, dur).catch(() => {});
   } catch {}
   try { if (globalThis.__chatyyLastCallInviteId === s.callId) delete globalThis.__chatyyLastCallInviteId; } catch {}
+  // [2026-10-12 call-review] "Como foi a ligação?" (sampled, ≥ 20 s of media).
+  if (s.mediaAt || s.connectedAt) {
+    try { require('./callQualityPrompt').noteCallEnded({ callId: s.callId, durationSec: dur, video: s.isVideo, role: 'caller' }); } catch {}
+  }
   void reason;
 }

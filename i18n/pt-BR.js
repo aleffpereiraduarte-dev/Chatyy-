@@ -11054,4 +11054,15 @@ export default {
   "liveSetup.cameraDeniedWeb": "Acesso à câmera bloqueado. Libere nas configurações do navegador.",
   "liveSetup.openSettings": "Abrir Ajustes",
   "liveSetup.countdownHint": "Você vai entrar ao vivo",
+  // [2026-10-12 call-review] post-call quality prompt
+  "callRating.title": "Como foi a qualidade da ligação?",
+  "callRating.whatWrong": "O que deu errado?",
+  "callRating.issueEcho": "Eco",
+  "callRating.issueChoppy": "Som cortando",
+  "callRating.issueDelay": "Atraso",
+  "callRating.issueVideo": "Vídeo travando",
+  "callRating.issueDropped": "A ligação caiu",
+  "callRating.send": "Enviar",
+  "callRating.notNow": "Agora não",
+  "callRating.starsA11y": "{n} de 5",
 };

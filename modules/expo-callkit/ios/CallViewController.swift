@@ -297,6 +297,28 @@ final class CallViewController: UIViewController, @unchecked Sendable {
 
     private var remoteParticipantCount: Int = 0
 
+    // [2026-10-12 peer-gone] 1:1 parity with Android CallActivity
+    // (PEER_GONE_GRACE_MS): when the only remote leaves the SFU after media
+    // flowed, show "Reconectando…" and end the call if nobody is back in 15 s.
+    // Before, iOS never ended on peer-leave — the call ended only via WS
+    // call_end, so a peer whose end frame was lost (hub BLOCKED "declined
+    // after accepted", killed app) left this side alone in a silent call for
+    // 16–25 s (call_1791817916407_zb2unnfa0, call_1791581586090_6zok4m0f3,
+    // call_1791692518038_sm6ld6796).
+    private var peerGoneWork: DispatchWorkItem?
+    private var peerGoneRearms = 0
+    private static let peerGoneGraceSeconds: Double = 15
+
+    // [2026-10-12 deinit-guard] Live CallViewController instances (weak). A
+    // duplicate VC for the same call (safety-net re-present, redial while the
+    // previous screen is still up) adopts the SAME NativeCallRoom Room; when
+    // the stale twin deallocates, its deinit must not disconnect the Room the
+    // live VC is using (call_1791817895316_lkdicey1a: caller left the room
+    // 208 ms after media connected, CLIENT_REQUEST_LEAVE right after
+    // native_ios_call_close_deinit_teardown; call_1791758720473_8mf5y1m8b:
+    // callee's room torn down at Accept). Main-thread only.
+    private static let liveInstances = NSHashTable<CallViewController>.weakObjects()
+
     // Stash for the mic-enabled state we owned right before an AVAudioSession
     // interruption. Read back when the interruption ends so the user comes
     // out in the same state they went in.
@@ -369,6 +391,66 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         var t = displayStatus(s)
         while t.hasSuffix("…") || t.hasSuffix(".") { t.removeLast() }
         return t
+    }
+
+    // MARK: - [2026-10-12 peer-gone] 1:1 peer left the SFU
+
+    /// Last remote left the Room after media flowed (1:1). Not a hangup — a
+    /// real hangup arrives as WS call_end / LK data `call_end` and ends us
+    /// immediately. Give the peer `peerGoneGraceSeconds` to come back
+    /// (network switch, NEGOTIATE_FAILED, full reconnect); otherwise end.
+    private func startPeerGoneGrace(identity: String) {
+        guard peerGoneWork == nil, !didHangup else { return }
+        guard !session.isGroup, callConnectedAt != nil else { return }
+        guard !P2PCallBridge.ownsMedia(callId) else { return }
+        guard (room?.remoteParticipants.isEmpty ?? false) else { return }
+        let who = identity.components(separatedBy: "#").first ?? ""
+        nativeCallDiag("peer_left_grace", callId, "identity=\(who) t=\(Int(Self.peerGoneGraceSeconds))s")
+        session.isReconnecting = true
+        session.status = "Reconectando..."
+        schedulePeerGoneTimeout()
+    }
+
+    private func schedulePeerGoneTimeout() {
+        let work = DispatchWorkItem { [weak self] in
+            guard let self = self else { return }
+            self.peerGoneWork = nil
+            guard !self.didHangup else { return }
+            let remotes = self.room?.remoteParticipants.count ?? 0
+            if remotes > 0 {
+                self.restoreAfterPeerBack(reason: "timer_peer_present")
+                return
+            }
+            // WE are the ones offline (our Room is reconnecting): the peer's
+            // absence says nothing yet — LiveKit's own reconnect decides
+            // (didDisconnectWithError ends the call if it gives up).
+            if let r = self.room, r.connectionState == .reconnecting || r.connectionState == .connecting,
+               self.peerGoneRearms < 3 {
+                self.peerGoneRearms += 1
+                nativeCallDiag("peer_left_grace_rearm", self.callId, "lk=\(NativeCallRoom.stateName(r.connectionState)) n=\(self.peerGoneRearms)")
+                self.schedulePeerGoneTimeout()
+                return
+            }
+            nativeCallDiag("peer_gone_timeout", self.callId, "remotes=0")
+            self.handleHangup(reason: "peer_left", statusText: "Encerrada", sendCallEnd: true)
+        }
+        peerGoneWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.peerGoneGraceSeconds, execute: work)
+    }
+
+    /// Peer rejoined inside the grace window (or was back when it expired).
+    private func restoreAfterPeerBack(reason: String) {
+        let wasPending = peerGoneWork != nil
+        peerGoneWork?.cancel(); peerGoneWork = nil
+        peerGoneRearms = 0
+        guard !didHangup, session.status.hasPrefix("Reconectando") else { return }
+        if wasPending || reason.hasPrefix("timer") {
+            nativeCallDiag("peer_rejoined", callId, reason)
+        }
+        // Our own Room may still be reconnecting — its delegate restores then.
+        if let r = room, r.connectionState == .reconnecting { return }
+        session.isReconnecting = false
+        session.status = (callConnectedAt != nil) ? "Conectado" : statusDotsBase
     }
 
     /// Single place that commits "Conectado": opens the caller gate, stops
@@ -684,6 +766,14 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         super.init(nibName: nil, bundle: nil)
         self.modalPresentationStyle = .fullScreen
         self.isModalInPresentation = true
+        // [2026-10-12 deinit-guard] VCs are created on main (present paths).
+        if Thread.isMainThread {
+            Self.liveInstances.add(self)
+        } else {
+            DispatchQueue.main.async { [weak self] in
+                if let self = self { Self.liveInstances.add(self) }
+            }
+        }
     }
 
     required init?(coder: NSCoder) {
@@ -696,6 +786,12 @@ final class CallViewController: UIViewController, @unchecked Sendable {
     // in-app "Toque para voltar à ligação" bar (JS) — re-read the snapshot now.
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
+        // [2026-10-12 stacked-callvc] A hung-up screen that stayed hidden under
+        // another call's screen (forceDismissSelf skip) leaves as soon as it
+        // is uncovered.
+        if didHangup && hasAppearedOnce {
+            DispatchQueue.main.async { [weak self] in self?.forceDismissSelf(reason: "uncovered_after_child_call") }
+        }
         hasAppearedOnce = true
         OngoingCallState.shared.notifyChanged()
     }
@@ -1747,6 +1843,7 @@ final class CallViewController: UIViewController, @unchecked Sendable {
             return
         }
         didHangup = true
+        peerGoneWork?.cancel(); peerGoneWork = nil // [2026-10-12 peer-gone]
         P2PCallBridge.close(callId: callId, reason: "hangup") // [2026-10-09 p2p-ios]
         cancelOutgoingRingTimer()
         cancelOutgoingConnectFallback()
@@ -1943,8 +2040,27 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         // call CallKit knows about. Ending a call that's already ended is
         // a no-op (CXCallController dedupes). This is the same approach
         // WhatsApp uses — they end ALL calls on hangup, never look up by ID.
+        // [2026-10-12 nuclear-scope] …but NEVER the CXCall of ANOTHER live call
+        // (new outgoing/answered call presented while this one shows
+        // "Encerrada", redial, glare): ending it killed the fresh call a
+        // second after it connected (redial storms 10-11 04:15, 13:15, 22:42
+        // and 10-12 15:11 — 3 to 6 attempts to get one working call).
+        var protectedUUIDs = Set<UUID>()
+        var otherCallIds = Set<String>()
+        for other in Self.liveInstances.allObjects where other !== self && !other.didHangup && other.callId != callId {
+            otherCallIds.insert(other.callId)
+        }
+        if let cur = NativeCallRoom.shared.currentCallId(), !cur.isEmpty, cur != callId {
+            otherCallIds.insert(cur)
+        }
+        for cid in otherCallIds {
+            if let u = ExpoCallKitModule.sharedCallKitUUID(forCallId: cid) { protectedUUIDs.insert(u) }
+        }
+        if !protectedUUIDs.isEmpty {
+            nativeCallDiag("hangup_nuclear_scoped", callId, "protected=\(protectedUUIDs.count)")
+        }
         let observer = CXCallObserver()
-        let activeCalls = observer.calls.filter { !$0.hasEnded }
+        let activeCalls = observer.calls.filter { !$0.hasEnded && !protectedUUIDs.contains($0.uuid) }
         if !activeCalls.isEmpty {
             print("[CallVC] handleHangup: NUCLEAR ending \(activeCalls.count) active CXCall(s)")
             let ctrl = CXCallController(queue: .main)
@@ -1983,6 +2099,16 @@ final class CallViewController: UIViewController, @unchecked Sendable {
     ///      the call VC up. Walking up via `presentingViewController` lets the
     ///      presenter tear down its chain (which UIKit cascades through children).
     private func forceDismissSelf(reason: String) {
+        // [2026-10-12 stacked-callvc] Another call's live screen is presented
+        // ABOVE this one: `self.dismiss` would dismiss THAT child (UIKit
+        // dismisses the receiver's presented chain), killing the new call.
+        // Stay hidden underneath; this screen leaves with the stack later
+        // (a re-tap of Encerrar re-enters here once the child is gone).
+        if let child = self.presentedViewController as? CallViewController,
+           child.callId != callId, !child.didHangup {
+            nativeCallDiag("callvc_dismiss_skip_child_call", callId, "child=\(child.callId) reason=\(reason)")
+            return
+        }
         // Path 1 — standard dismiss. UIKit cascades to children correctly when
         // the receiver is the presenter.
         let presenter = self.presentingViewController
@@ -2014,7 +2140,9 @@ final class CallViewController: UIViewController, @unchecked Sendable {
             // dismiss any VC named CallViewController. This is what
             // ProviderDelegate.dismissActiveCallSurfaces does and it's known
             // to handle the cross-window cases.
-            ExpoCallKitModule.dismissActiveCallSurfacesFromVC(reason: "verify_" + reason)
+            // [2026-10-12 stacked-callvc] Scoped to THIS call — the global
+            // sweep also dismissed a newer call's screen.
+            ExpoCallKitModule.dismissActiveCallSurfacesFromVC(reason: "verify_" + reason, forCallId: self.callId)
         }
     }
 
@@ -4300,7 +4428,18 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         // (End button → handleHangup, or remote didDisconnect) already
         // disconnects the Room + clears the singleton, and leaves isMinimizing
         // false so this belt-and-braces path still cleans up on those flows.
-        if let r = self.room, !isMinimizing, !cededToJs {
+        peerGoneWork?.cancel(); peerGoneWork = nil
+        // [2026-10-12 deinit-guard] Another live CallViewController still drives
+        // this exact Room (duplicate present for the same call) → it owns the
+        // teardown; disconnecting here would kill its live call. Weak table:
+        // `self` is already gone from it while deinit runs.
+        let roomSharedWithLiveVC: Bool = {
+            guard let r = self.room, Thread.isMainThread else { return false }
+            return Self.liveInstances.allObjects.contains { $0.room === r && !$0.didHangup }
+        }()
+        if roomSharedWithLiveVC {
+            nativeCallDiag("call_close_deinit_skip_shared_room", callId)
+        } else if let r = self.room, !isMinimizing, !cededToJs {
             // [CALL-CLOSE diag 2026-05-27] The VC deallocated while NOT
             // minimizing/ceding → this tears down the Room. If this fires right
             // after answer, a premature dismiss/double-present dropped the VC's
@@ -4482,7 +4621,8 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         lkUrl: String?,
         lkToken: String?,
         isOutgoing: Bool = false,
-        conversationId: String = ""
+        conversationId: String = "",
+        replacingStale: Bool = false
     ) {
         // [2026-10-09 native-group-call] A CallKit-answered GROUP call gets the
         // native N-way screen (GroupCallViewController adopts the preconnected
@@ -4510,6 +4650,52 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         if let existing = existingCallVC(from: base), existing.callId == callId {
             NSLog("[CallVC.present] already presenting callId=\(callId) — skipping duplicate")
             nativeCallDiag("callvc_present_dedup_skip", callId)
+            return
+        }
+        // [2026-10-12 stacked-callvc] A CallViewController of ANOTHER call is
+        // still on screen (redial / glare / answer of a 2nd call while the
+        // previous screen shows "Encerrada"). Presenting on top of it was
+        // fatal: when the old VC later dismissed itself, UIKit dismissed the
+        // NEW call's VC (the child above it) → deinit → Room disconnect
+        // (call_1791817895316_lkdicey1a: caller left 208 ms after media; 4×
+        // "top=CallViewController" in 72 h). With maximumCallGroups=1 the old
+        // call is already ending, so replace it: dismiss the old stack without
+        // animation, then present the new call from its presenter.
+        if !replacingStale,
+           let stale = existingCallVC(from: base), stale.callId != callId,
+           let presenter = stale.presentingViewController {
+            nativeCallDiag("callvc_replace_stale", callId, "stale=\(stale.callId) staleHungUp=\(stale.didHangup)")
+            // Old call still "live" on this screen → tell its peer it ended
+            // (WS call_end only). NOT handleHangup: its CallKit "end ALL
+            // calls" fallback would also end the call being presented now.
+            // The Room goes with the old VC's deinit (scoped clear).
+            if !stale.didHangup {
+                stale.didHangup = true
+                stale.peerGoneWork?.cancel(); stale.peerGoneWork = nil
+                CallSignalWs.shared.fireCallEnd(
+                    callId: stale.callId,
+                    conversationId: stale.conversationId,
+                    reason: "replaced_by_new_call",
+                    targetEmail: stale.callerEmail
+                )
+            }
+            // Old call's Room leaves now (not only when/if the VC deallocs).
+            // Scoped: clear(ifCurrent:) never touches the new call's Room.
+            if let oldRoom = stale.room {
+                NativeCallRoom.shared.clear(ifCurrent: oldRoom, reason: "callvc_replaced")
+                Task { await oldRoom.disconnect() }
+            }
+            let presentNew = {
+                // Idempotent: the dedup guard at the top skips a 2nd present
+                // once the new VC is in the chain.
+                CallViewController.present(from: base, callId: callId, callerName: callerName, callerEmail: callerEmail,
+                        hasVideo: hasVideo, lkUrl: lkUrl, lkToken: lkToken, isOutgoing: isOutgoing,
+                        conversationId: conversationId, replacingStale: true)
+            }
+            presenter.dismiss(animated: false) { presentNew() }
+            // UIKit drops a dismiss requested mid-transition WITHOUT calling the
+            // completion — never leave the new call without a screen.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) { presentNew() }
             return
         }
         let vc = CallViewController(
@@ -5990,6 +6176,8 @@ extension CallViewController: RoomDelegate {
             // presence = the callee's ring preconnect = its phone is ringing →
             // "Tocando…", ringback keeps playing. Post-answer / incoming: make
             // sure the connect watchdog is armed.
+            // [2026-10-12 peer-gone] Peer back inside the grace window → resume.
+            self.restoreAfterPeerBack(reason: "participant_connected")
             if self.isOutgoing && !self.outgoingMicGateOpen {
                 NSLog("[CallVC] ParticipantConnected pre-answer (outgoing) — callee ringing → Tocando callId=\(self.callId)")
                 self.markPeerRinging(reason: "participant_connected")
@@ -6020,6 +6208,8 @@ extension CallViewController: RoomDelegate {
             self.mutedRemoteVideoTrack = nil
             self.remoteParticipantCount = max(0, self.remoteParticipantCount - 1)
             self.updateParticipantCountLabel()
+            // [2026-10-12 peer-gone] 1:1: last remote gone after media → grace.
+            self.startPeerGoneGrace(identity: identity)
         }
         // [#1207 NativeCallRoom REAL] Fanout so JS can drop the peer tile.
         NativeCallRoom.shared.participantDisconnected(identity: identity)

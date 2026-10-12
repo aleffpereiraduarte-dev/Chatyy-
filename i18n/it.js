@@ -11006,4 +11006,15 @@ export default {
   "liveSetup.cameraDeniedWeb": "Accesso alla fotocamera bloccato. Abilitalo nelle impostazioni del browser.",
   "liveSetup.openSettings": "Apri Impostazioni",
   "liveSetup.countdownHint": "Stai per andare in diretta",
+  // [2026-10-12 call-review] post-call quality prompt
+  "callRating.title": "Com’era la qualità della chiamata?",
+  "callRating.whatWrong": "Cosa non ha funzionato?",
+  "callRating.issueEcho": "Eco",
+  "callRating.issueChoppy": "Audio a scatti",
+  "callRating.issueDelay": "Ritardo",
+  "callRating.issueVideo": "Video bloccato",
+  "callRating.issueDropped": "Chiamata caduta",
+  "callRating.send": "Invia",
+  "callRating.notNow": "Non ora",
+  "callRating.starsA11y": "{n} su 5",
 };

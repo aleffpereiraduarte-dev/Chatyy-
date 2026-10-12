@@ -4272,8 +4272,13 @@ class CallActivity : ComponentActivity() {
           onStop = {
             runOnUiThread {
               if (state.isScreenSharing) {
-                state.isScreenSharing = false
                 CallDiag.log("screen_share_stopped_by_system", callId, "", applicationContext)
+                // [2026-10-12 call-review] The projection is dead but the
+                // LiveKit track stayed PUBLISHED (frozen tile on the peer; a
+                // re-share then published a 2nd screen track — SFU log
+                // call_1791742654298_ds29kd5kg: 2× SCREEN_SHARE 1920x1080).
+                // Unpublish like the user's Stop.
+                stopScreenShare("system")
               }
             }
           },

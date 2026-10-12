@@ -428,6 +428,8 @@ import EmailUndoBar from '../components/EmailUndoBar';
 
 // Lazy-load call components to break circular dependency
 const IncomingCallListener = React.lazy(() => import('../components/IncomingCallListener'));
+// [2026-10-12 call-review] "Como foi a ligação?" (sampled post-call feedback).
+const CallQualityPrompt = React.lazy(() => import('../components/CallQualityPrompt'));
 const LiveLocationPingListener = React.lazy(() => import('../components/LiveLocationPingListener'));
 const LiveLocationHeartbeat = React.lazy(() => import('../components/LiveLocationHeartbeat'));
 // Hidden WebView host that runs Firebase Phone Auth (Google sends the OTP SMS).
@@ -2119,6 +2121,11 @@ export default function RootLayout() {
                 <Suspense fallback={null}>
                   <IncomingCallListener />
                 </Suspense>
+                {Platform.OS !== 'web' ? (
+                  <Suspense fallback={null}>
+                    <CallQualityPrompt />
+                  </Suspense>
+                ) : null}
                 <Suspense fallback={null}>
                   <LiveLocationPingListener />
                 </Suspense>

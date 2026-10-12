@@ -10227,4 +10227,15 @@ export default {
   "liveSetup.cameraDeniedWeb": "Akses kamera diblokir. Aktifkan di pengaturan browser.",
   "liveSetup.openSettings": "Buka Pengaturan",
   "liveSetup.countdownHint": "Kamu akan segera siaran langsung",
+  // [2026-10-12 call-review] post-call quality prompt
+  "callRating.title": "Bagaimana kualitas panggilannya?",
+  "callRating.whatWrong": "Apa yang bermasalah?",
+  "callRating.issueEcho": "Gema",
+  "callRating.issueChoppy": "Suara putus-putus",
+  "callRating.issueDelay": "Jeda",
+  "callRating.issueVideo": "Video macet",
+  "callRating.issueDropped": "Panggilan terputus",
+  "callRating.send": "Kirim",
+  "callRating.notNow": "Nanti saja",
+  "callRating.starsA11y": "{n} dari 5",
 };
