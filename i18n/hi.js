@@ -10998,4 +10998,11 @@ export default {
   "settings.update.error": "अभी अपडेट नहीं हो सका। फिर से कोशिश करें।",
   "settings.update.current": "इंस्टॉल किया गया संस्करण",
   "settings.update.tap": "खोजने और इंस्टॉल करने के लिए टैप करें",
+  "liveSetup.titlePlaceholder": "शीर्षक जोड़ें…",
+  "liveSetup.cameraOffHint": "अपना प्रीव्यू देखने के लिए कैमरा चालू करें",
+  "liveSetup.allowCamera": "कैमरा की अनुमति दें",
+  "liveSetup.cameraDenied": "कैमरा एक्सेस ब्लॉक है। डिवाइस सेटिंग्स में इसे चालू करें।",
+  "liveSetup.cameraDeniedWeb": "कैमरा एक्सेस ब्लॉक है। ब्राउज़र सेटिंग्स में इसे चालू करें।",
+  "liveSetup.openSettings": "सेटिंग्स खोलें",
+  "liveSetup.countdownHint": "आप लाइव होने वाले हैं",
 };

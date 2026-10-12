@@ -10221,4 +10221,11 @@ export default {
   "settings.update.error": "今はアップデートできません。もう一度お試しください。",
   "settings.update.current": "インストール済みのバージョン",
   "settings.update.tap": "タップして確認・インストール",
+  "liveSetup.titlePlaceholder": "タイトルを追加…",
+  "liveSetup.cameraOffHint": "カメラをオンにしてプレビューを表示",
+  "liveSetup.allowCamera": "カメラを許可",
+  "liveSetup.cameraDenied": "カメラへのアクセスがブロックされています。端末の設定で許可してください。",
+  "liveSetup.cameraDeniedWeb": "カメラへのアクセスがブロックされています。ブラウザの設定で許可してください。",
+  "liveSetup.openSettings": "設定を開く",
+  "liveSetup.countdownHint": "まもなくライブ配信が始まります",
 };

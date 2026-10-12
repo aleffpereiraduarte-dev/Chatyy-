@@ -10220,4 +10220,11 @@ export default {
   "settings.update.error": "Tidak bisa memperbarui sekarang. Coba lagi.",
   "settings.update.current": "Versi terpasang",
   "settings.update.tap": "Ketuk untuk memeriksa dan memasang",
+  "liveSetup.titlePlaceholder": "Tambahkan judul…",
+  "liveSetup.cameraOffHint": "Nyalakan kamera untuk melihat pratinjau",
+  "liveSetup.allowCamera": "Izinkan kamera",
+  "liveSetup.cameraDenied": "Akses kamera diblokir. Aktifkan di Pengaturan perangkat.",
+  "liveSetup.cameraDeniedWeb": "Akses kamera diblokir. Aktifkan di pengaturan browser.",
+  "liveSetup.openSettings": "Buka Pengaturan",
+  "liveSetup.countdownHint": "Kamu akan segera siaran langsung",
 };

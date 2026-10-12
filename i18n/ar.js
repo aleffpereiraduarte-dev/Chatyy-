@@ -10999,4 +10999,11 @@ export default {
   "settings.update.error": "تعذّر التحديث الآن. حاول مرة أخرى.",
   "settings.update.current": "الإصدار المثبّت",
   "settings.update.tap": "انقر للبحث والتثبيت",
+  "liveSetup.titlePlaceholder": "أضف عنوانًا…",
+  "liveSetup.cameraOffHint": "شغّل الكاميرا لرؤية المعاينة",
+  "liveSetup.allowCamera": "السماح بالكاميرا",
+  "liveSetup.cameraDenied": "الوصول إلى الكاميرا محظور. فعّله من إعدادات الجهاز.",
+  "liveSetup.cameraDeniedWeb": "الوصول إلى الكاميرا محظور. فعّله من إعدادات المتصفح.",
+  "liveSetup.openSettings": "فتح الإعدادات",
+  "liveSetup.countdownHint": "ستبدأ البث المباشر الآن",
 };

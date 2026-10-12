@@ -11000,4 +11000,11 @@ export default {
   "settings.update.error": "Impossible de mettre à jour maintenant. Réessayez.",
   "settings.update.current": "Version installée",
   "settings.update.tap": "Touchez pour rechercher et installer",
+  "liveSetup.titlePlaceholder": "Ajoutez un titre…",
+  "liveSetup.cameraOffHint": "Activez la caméra pour voir votre aperçu",
+  "liveSetup.allowCamera": "Autoriser la caméra",
+  "liveSetup.cameraDenied": "Accès à la caméra bloqué. Autorisez-le dans les Réglages de l'appareil.",
+  "liveSetup.cameraDeniedWeb": "Accès à la caméra bloqué. Autorisez-le dans les paramètres du navigateur.",
+  "liveSetup.openSettings": "Ouvrir les Réglages",
+  "liveSetup.countdownHint": "Vous allez passer en direct",
 };

@@ -10999,4 +10999,11 @@ export default {
   "settings.update.error": "Update gerade nicht möglich. Versuche es erneut.",
   "settings.update.current": "Installierte Version",
   "settings.update.tap": "Tippen zum Suchen und Installieren",
+  "liveSetup.titlePlaceholder": "Titel hinzufügen…",
+  "liveSetup.cameraOffHint": "Aktiviere die Kamera, um deine Vorschau zu sehen",
+  "liveSetup.allowCamera": "Kamera erlauben",
+  "liveSetup.cameraDenied": "Kamerazugriff blockiert. Erlaube ihn in den Geräteeinstellungen.",
+  "liveSetup.cameraDeniedWeb": "Kamerazugriff blockiert. Erlaube ihn in den Browsereinstellungen.",
+  "liveSetup.openSettings": "Einstellungen öffnen",
+  "liveSetup.countdownHint": "Gleich bist du live",
 };

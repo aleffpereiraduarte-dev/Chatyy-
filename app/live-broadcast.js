@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet, Platform, Animated,
   Alert, TextInput, Dimensions, StatusBar, FlatList, Keyboard,
-  ActionSheetIOS, Modal, ScrollView, DeviceEventEmitter,
+  ActionSheetIOS, Modal, ScrollView, DeviceEventEmitter, BackHandler, Linking,
 } from 'react-native';
 import { useLocalSearchParams, useRouter, useFocusEffect } from 'expo-router';
 import { useIsFocused } from '@react-navigation/native';
@@ -12,10 +12,12 @@ import { useLanguage } from '../context/LanguageContext';
 import * as api from '../services/api';
 import LiveChat from '../components/LiveChat'; // eslint-disable-line no-unused-vars -- kept for fallback
 import LiveChatOverlay from '../components/live/LiveChatOverlay';
+// [live-setup 2026-10-12] Tela pré-live redesenhada (prévia da câmera em tela cheia).
+import LiveSetupScreen from '../components/live/LiveSetupScreen';
 import AvatarCircle from '../components/AvatarCircle';
 import { cleanParticipantName, prettifyHandle } from '../services/displayName';
 import formatLiveChatContent from '../utils/formatLiveChatContent';
-import { IconX, IconCameraFlip, IconMic, IconMicOff, IconVideo, IconVideoOff, IconHeart, IconShare, IconSend, IconSettings, IconUserPlus, IconSparkles, IconFilter, IconPin, IconStar, IconStarFilled, IconGlobe, IconLock, IconUsers, IconEye, IconStop, IconCheck, IconBookmark, IconChevronRight, IconChevronDown, IconBarChart, IconBrush, IconBookmarkFilled, IconPlay, IconRepeat, IconCalendar, IconFlashlight } from '../components/Icons';
+import { IconX, IconCameraFlip, IconMic, IconMicOff, IconVideo, IconVideoOff, IconHeart, IconShare, IconSend, IconSettings, IconUserPlus, IconSparkles, IconFilter, IconPin, IconStar, IconStarFilled, IconUsers, IconEye, IconStop, IconCheck, IconBookmark, IconChevronRight, IconChevronDown, IconBarChart, IconBrush, IconBookmarkFilled, IconPlay, IconFlashlight } from '../components/Icons';
 import { useTheme } from '../context/ThemeContext';
 import AnimatedViewerCount from '../components/AnimatedViewerCount';
 import LiveTopGifters from '../components/LiveTopGifters';
@@ -606,18 +608,6 @@ function LiveBroadcastScreen() {
   // pendingGiftsRef and drain after the current one completes.
   const [activeGiftAnim, setActiveGiftAnim] = useState(null);
   const pendingGiftsRef = useRef([]);
-  // Pre-live title placeholder fade — soft sin-wave loop so the input invites
-  // the host to type a title even when empty (Instagram Live parity).
-  const placeholderFade = useRef(new Animated.Value(1)).current;
-  useEffect(() => {
-    if (!preStart) return undefined;
-    const loop = Animated.loop(Animated.sequence([
-      Animated.timing(placeholderFade, { toValue: 0.45, duration: 1400, useNativeDriver: true }),
-      Animated.timing(placeholderFade, { toValue: 1, duration: 1400, useNativeDriver: true }),
-    ]));
-    loop.start();
-    return () => loop.stop();
-  }, [preStart, placeholderFade]);
   // End-card spring entrance — scale + opacity from below for the summary.
   const endCardScale = useRef(new Animated.Value(0.85)).current;
   const endCardOpacity = useRef(new Animated.Value(0)).current;
@@ -633,45 +623,18 @@ function LiveBroadcastScreen() {
     return () => loop.stop();
   }, []);
 
-  // ----- Pre-live polish animations (Instagram-grade) -----
-  // Avatar red ring breath — pulses 0.18→0.6 opacity at 1.4s loop so the host
-  // sees a heartbeat hint around their face ("you're about to go live").
-  const preRingPulse = useRef(new Animated.Value(0)).current;
-  // Go-live button red glow halo — same beat as the avatar ring so the eye
-  // ties hero + CTA together as one "going live" rhythm.
+  // ----- Pre-live polish animations -----
+  // Pulso do ponto vermelho do botão "Ao vivo" (LiveSetupScreen).
   const preBtnGlow = useRef(new Animated.Value(0)).current;
-  // Audience pill scale — bumps to 1.05 on selection (spring) so the user
-  // feels the choice land instead of a static color swap.
-  const preAudScale = useRef({
-    public: new Animated.Value(audience === 'public' ? 1.05 : 1),
-    friends: new Animated.Value(audience === 'friends' ? 1.05 : 1),
-    private: new Animated.Value(audience === 'private' ? 1.05 : 1),
-  }).current;
   useEffect(() => {
     if (!preStart) return undefined;
-    const ringLoop = Animated.loop(Animated.sequence([
-      Animated.timing(preRingPulse, { toValue: 1, duration: 1400, useNativeDriver: true }),
-      Animated.timing(preRingPulse, { toValue: 0, duration: 1400, useNativeDriver: true }),
-    ]));
     const glowLoop = Animated.loop(Animated.sequence([
       Animated.timing(preBtnGlow, { toValue: 1, duration: 1400, useNativeDriver: true }),
       Animated.timing(preBtnGlow, { toValue: 0, duration: 1400, useNativeDriver: true }),
     ]));
-    ringLoop.start();
     glowLoop.start();
-    return () => { ringLoop.stop(); glowLoop.stop(); };
-  }, [preStart, preRingPulse, preBtnGlow]);
-  // Spring the active pill up, the rest back to 1. Native driver = no jank.
-  useEffect(() => {
-    ['public', 'friends', 'private'].forEach((key) => {
-      Animated.spring(preAudScale[key], {
-        toValue: audience === key ? 1.05 : 1,
-        friction: 5,
-        tension: 140,
-        useNativeDriver: true,
-      }).start();
-    });
-  }, [audience, preAudScale]);
+    return () => { glowLoop.stop(); };
+  }, [preStart, preBtnGlow]);
 
   // ICE config
   const iceConfig = {
@@ -820,6 +783,70 @@ function LiveBroadcastScreen() {
   // handleViewerJoined (declared further down) without creating a
   // forward-reference TDZ crash on first render.
   const handleViewerJoinedRef = useRef(null);
+
+  // [live-setup 2026-10-12] Prévia da câmera na tela pré-live (TikTok/IG).
+  // Nunca dispara prompt sozinha (Apple rejeitou prompt eager): só abre a
+  // câmera automaticamente se câmera+mic JÁ estão concedidas; senão mostra o
+  // CTA "Permitir câmera" (toque do usuário → ensureCameraStream, o MESMO
+  // stream que o "Ao vivo" reaproveita). checking | on | needs | denied
+  const [preCam, setPreCam] = useState('checking');
+  const [preGoing, setPreGoing] = useState(false);
+  const preCamTriedRef = useRef(false);
+  const openPreCamera = useCallback(async () => {
+    if (localStreamRef.current) { setPreCam('on'); return true; }
+    setPreCam('checking');
+    const ok = await ensureCameraStream();
+    if (ok) { setPreCam('on'); return true; }
+    // ensureCameraStream marca `error` (tela de erro) — na prévia o erro é só
+    // "sem permissão": volta pro setup com o aviso + atalho p/ Ajustes.
+    try { setError(''); } catch {}
+    setPreCam('denied');
+    return false;
+  }, [ensureCameraStream]);
+  useEffect(() => {
+    if (!preStart || !isFocused || preCamTriedRef.current) return undefined;
+    preCamTriedRef.current = true;
+    if (localStreamRef.current) { setPreCam('on'); return undefined; }
+    if (!getUserMediaFn) { setPreCam('needs'); return undefined; }
+    let alive = true;
+    (async () => {
+      let cam = 'prompt';
+      let mic = 'prompt';
+      try {
+        if (Platform.OS === 'web') {
+          const q = (typeof navigator !== 'undefined' && navigator.permissions && navigator.permissions.query)
+            ? (name) => navigator.permissions.query({ name }).then(r => r?.state || 'prompt').catch(() => 'prompt')
+            : null;
+          if (q) { [cam, mic] = await Promise.all([q('camera'), q('microphone')]); }
+        } else {
+          const ec = require('expo-camera');
+          const C = ec?.Camera || ec;
+          const [c, m] = await Promise.all([
+            C.getCameraPermissionsAsync ? C.getCameraPermissionsAsync() : Promise.resolve(null),
+            C.getMicrophonePermissionsAsync ? C.getMicrophonePermissionsAsync() : Promise.resolve(null),
+          ]);
+          cam = c?.granted ? 'granted' : (c && c.canAskAgain === false ? 'denied' : 'prompt');
+          mic = m?.granted ? 'granted' : (m && m.canAskAgain === false ? 'denied' : 'prompt');
+        }
+      } catch {}
+      if (!alive) return;
+      if (cam === 'granted' && mic === 'granted') { openPreCamera(); return; }
+      setPreCam(cam === 'denied' ? 'denied' : 'needs');
+    })();
+    return () => { alive = false; };
+  }, [preStart, isFocused, openPreCamera]);
+  // Android voltar na pré-live: fecha o sheet aberto (filtro/multistream/
+  // agendar) antes; sem sheet, deixa o voltar padrão fechar a tela.
+  useEffect(() => {
+    if (Platform.OS !== 'android' || !preStart) return undefined;
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (filterOpen) { setFilterOpen(false); return true; }
+      if (multistreamOpen) { setMultistreamOpen(false); return true; }
+      if (scheduleOpen) { setScheduleOpen(false); return true; }
+      return false;
+    });
+    return () => { try { sub.remove(); } catch {} };
+  }, [preStart, filterOpen, multistreamOpen, scheduleOpen]);
 
   // Connect to signaling WebSocket. Returns a Promise that resolves on
   // `live_started` ack so handleStartLive can await it before flipping the
@@ -3848,6 +3875,175 @@ function LiveBroadcastScreen() {
     })();
   }, [mgHasGuests, battleSplit]);
 
+  // [live-setup 2026-10-12] Sheets compartilhados entre a pré-live e a live.
+  // Antes só existiam na árvore da live → Multistream/Agendar na pré-live
+  // não abriam nada.
+  const renderFilterSheet = () => (filterOpen ? (
+        <View style={liveSheetStyles.backdrop}>
+          <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={() => setFilterOpen(false)} />
+          <View style={[liveSheetStyles.sheet, { paddingBottom: insets.bottom + 16 }]}>
+            <View style={liveSheetStyles.grabber} />
+            <Text style={liveSheetStyles.title}>{t('live.filter') || 'Filtros'}</Text>
+            <View style={liveSheetStyles.filterRow}>
+              {[
+                { key: 'none', label: t('live.filterNone') || 'Nenhum', color: 'transparent' },
+                { key: 'bw', label: 'P&B', color: '#000' },
+                { key: 'warm', label: 'Quente', color: '#ff8c00' },
+                { key: 'cool', label: 'Frio', color: '#3b82f6' },
+                { key: 'vivid', label: 'Vivid', color: '#111111' },
+              ].map(f => (
+                <TouchableOpacity
+                  key={f.key}
+                  onPress={() => { setActiveFilter(f.key); setFilterOpen(false); }}
+                  style={[liveSheetStyles.filterChip, activeFilter === f.key && liveSheetStyles.filterChipActive]}
+                  activeOpacity={0.7}
+                >
+                  <View style={[liveSheetStyles.filterSwatch, { backgroundColor: f.color }]} />
+                  <Text style={[liveSheetStyles.filterLabel, activeFilter === f.key && { color: '#fff', fontWeight: '700' }]}>{f.label}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </View>
+        </View>
+      ) : null);
+  const renderMultistreamSheet = () => (multistreamOpen ? (
+        <View style={liveSheetStyles.backdrop}>
+          <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={() => setMultistreamOpen(false)} />
+          <View style={[liveSheetStyles.sheet, { paddingBottom: Math.max(insets.bottom + 16, kbHeight + 12), maxHeight: '85%' }]}>
+            <View style={liveSheetStyles.grabber} />
+            <Text style={liveSheetStyles.title}>{t('live.multistream') || 'Multistream'}</Text>
+            <Text style={liveSheetStyles.subtitle}>
+              {t('live.multistreamHint') || 'Transmita simultaneamente para YouTube, Twitch e Facebook'}
+            </Text>
+            {multistreamDests.length > 0 ? (
+              <View style={{ marginTop: 8, marginBottom: 12 }}>
+                {multistreamDests.map(d => (
+                  <View key={d.id} style={styles.multistreamDestRow}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.multistreamDestLabel} numberOfLines={1}>
+                        {d.label || d.rtmp_url}
+                      </Text>
+                      <Text style={styles.multistreamDestStatus}>
+                        {d.status === 'live'
+                          ? (t('live.multistreamLive') || 'Transmitindo')
+                          : (t('live.multistreamReady') || 'Pronto')}
+                      </Text>
+                    </View>
+                    <TouchableOpacity
+                      onPress={() => removeMultistreamDest(d.id)}
+                      style={styles.multistreamDestRemove}
+                      activeOpacity={0.7}
+                      accessibilityLabel={t('common.remove') || 'Remover'}
+                    >
+                      <IconX size={14} color="rgba(255,255,255,0.8)" />
+                    </TouchableOpacity>
+                  </View>
+                ))}
+              </View>
+            ) : null}
+            <Text style={[liveSheetStyles.subtitle, { marginTop: 8 }]}>
+              {t('live.multistreamAddTitle') || 'Adicionar destino'}
+            </Text>
+            <TextInput
+              value={multistreamForm.label}
+              onChangeText={(v) => setMultistreamForm(f => ({ ...f, label: v }))}
+              placeholder={t('live.multistreamLabel') || 'Nome (ex: YouTube)'}
+              placeholderTextColor="rgba(255,255,255,0.45)"
+              style={styles.multistreamInput}
+              autoCapitalize="none"
+              autoCorrect={false}
+            />
+            <TextInput
+              value={multistreamForm.rtmpUrl}
+              onChangeText={(v) => setMultistreamForm(f => ({ ...f, rtmpUrl: v }))}
+              placeholder="rtmp://a.rtmp.youtube.com/live2"
+              placeholderTextColor="rgba(255,255,255,0.45)"
+              style={styles.multistreamInput}
+              autoCapitalize="none"
+              autoCorrect={false}
+              keyboardType="url"
+            />
+            <TextInput
+              value={multistreamForm.streamKey}
+              onChangeText={(v) => setMultistreamForm(f => ({ ...f, streamKey: v }))}
+              placeholder={t('live.multistreamKey') || 'Chave de transmissão'}
+              placeholderTextColor="rgba(255,255,255,0.45)"
+              style={styles.multistreamInput}
+              autoCapitalize="none"
+              autoCorrect={false}
+              secureTextEntry
+            />
+            <TouchableOpacity
+              onPress={addMultistreamDest}
+              disabled={multistreamSaving || !multistreamForm.rtmpUrl || !multistreamForm.streamKey}
+              style={[liveSheetStyles.closeBtn, (multistreamSaving || !multistreamForm.rtmpUrl || !multistreamForm.streamKey) && { opacity: 0.5 }]}
+              activeOpacity={0.85}
+            >
+              <Text style={liveSheetStyles.closeText}>
+                {multistreamSaving ? (t('common.saving') || 'Salvando...') : (t('live.multistreamAddBtn') || 'Adicionar destino')}
+              </Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      ) : null);
+  const renderScheduleSheet = () => (scheduleOpen ? (
+        <View style={liveSheetStyles.backdrop}>
+          <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={() => setScheduleOpen(false)} />
+          <View style={[liveSheetStyles.sheet, { paddingBottom: Math.max(insets.bottom + 16, kbHeight + 12) }]}>
+            <View style={liveSheetStyles.grabber} />
+            <Text style={liveSheetStyles.title}>{t('live.scheduleTitle') || 'Agendar live'}</Text>
+            <Text style={liveSheetStyles.subtitle}>
+              {t('live.scheduleHint') || 'Seguidores recebem lembrete 15 min antes e no início.'}
+            </Text>
+            <View style={{ flexDirection: 'row', gap: 8, marginTop: 12 }}>
+              <TextInput
+                value={scheduleDate.toISOString().slice(0, 10)}
+                onChangeText={(v) => {
+                  const parts = v.split('-').map(p => parseInt(p, 10));
+                  if (parts.length === 3 && parts.every(n => !isNaN(n))) {
+                    const d = new Date(scheduleDate);
+                    d.setFullYear(parts[0], parts[1] - 1, parts[2]);
+                    setScheduleDate(d);
+                  }
+                }}
+                placeholder="YYYY-MM-DD"
+                placeholderTextColor="rgba(255,255,255,0.45)"
+                style={[styles.multistreamInput, { flex: 1 }]}
+                autoCapitalize="none"
+              />
+              <TextInput
+                value={scheduleDate.toTimeString().slice(0, 5)}
+                onChangeText={(v) => {
+                  const parts = v.split(':').map(p => parseInt(p, 10));
+                  if (parts.length === 2 && parts.every(n => !isNaN(n))) {
+                    const d = new Date(scheduleDate);
+                    d.setHours(parts[0], parts[1], 0, 0);
+                    setScheduleDate(d);
+                  }
+                }}
+                placeholder="HH:MM"
+                placeholderTextColor="rgba(255,255,255,0.45)"
+                style={[styles.multistreamInput, { flex: 1 }]}
+                autoCapitalize="none"
+              />
+            </View>
+            <Text style={[liveSheetStyles.subtitle, { marginTop: 8 }]}>
+              {scheduleDate.toLocaleString()}
+            </Text>
+            <TouchableOpacity
+              onPress={saveScheduledLive}
+              disabled={scheduleSaving}
+              style={[liveSheetStyles.closeBtn, scheduleSaving && { opacity: 0.5 }]}
+              activeOpacity={0.85}
+            >
+              <Text style={liveSheetStyles.closeText}>
+                {scheduleSaving ? (t('common.saving') || 'Salvando...') : (t('live.scheduleSave') || 'Agendar')}
+              </Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      ) : null);
+
   // Ended state — rich summary card with duration / unique viewers / likes
   // and two CTAs (share recap + save replay toggle). Spring entrance.
   if (ended) {
@@ -4013,272 +4209,68 @@ function LiveBroadcastScreen() {
     );
   }
 
-  // Pre-start screen — Instagram Live setup: hero glass card, audience pill,
-  // pre-camera flip, animated placeholder sparkle, gradient brand CTA.
+  // Pre-start screen — [live-setup 2026-10-12] TikTok/IG Live: prévia da
+  // câmera em tela cheia + sheet inferior (components/live/LiveSetupScreen).
+  // Só apresentação — handleStartLive/estado continuam aqui.
   if (preStart) {
-    const audOptions = [
-      { key: 'public',  Icon: IconGlobe, label: t('live.audPublic')  || 'Público' },
-      { key: 'friends', Icon: IconUsers, label: t('live.audFriends') || 'Amigos' },
-      { key: 'private', Icon: IconLock,  label: t('live.audPrivate') || 'Privado' },
-    ];
+    const filterTint = activeFilter === 'bw' ? 'rgba(0,0,0,0.35)'
+      : activeFilter === 'warm' ? 'rgba(255,140,0,0.18)'
+      : activeFilter === 'cool' ? 'rgba(0,128,255,0.16)'
+      : activeFilter === 'vivid' ? 'rgba(17, 17, 17,0.14)'
+      : null;
+    const onPreFlip = async () => {
+      if (localStreamRef.current) {
+        await handleFlipCamera();
+        setPreFacing(facingRef.current === 'environment' ? 'environment' : 'user');
+      } else {
+        setPreFacing(f => f === 'user' ? 'environment' : 'user');
+      }
+    };
+    const onPreGoLive = () => {
+      if (preGoing) return;
+      try { Keyboard.dismiss(); } catch {}
+      setPreGoing(true);
+      Promise.resolve(handleStartLive()).catch(() => {}).finally(() => setPreGoing(false));
+    };
     return (
       <View style={styles.fullScreen}>
-        {renderLocalVideo()}
-        {/* Dark gradient overlay — radial brand purple bleed bottom + dim top.
-            Plays nice on top of the camera preview (when granted) and reads
-            beautifully even when the preview is black (no permission yet). */}
-        <View style={styles.preOverlay}>
-          {/* Brand purple radial glow at the bottom — pure View w/ huge
-              borderRadius so it works on native (no expo-linear-gradient dep).
-              Adds the "warm" Instagram-Live vibe under the card. */}
-          <View pointerEvents="none" style={styles.preGlowPurple} />
-          <View pointerEvents="none" style={styles.preGlowRed} />
-          {/* Close X — wrapped in a glass circular backdrop for contrast. */}
-          <TouchableOpacity
-            onPress={() => router.back()}
-            style={[styles.closeBtn, { top: insets.top + 16 }]}
-            accessibilityLabel={t('common.close') || 'Fechar'}
-            accessibilityRole="button"
-          >
-            <IconX size={22} color="#fff" />
-          </TouchableOpacity>
-
-          {/* Pre-live flip-camera — top-left, mirrors Instagram. Toggles the
-              facing preference; the actual stream is opened with this value
-              when the host taps "Começar". Uses IconCameraFlip (28px) to
-              match the brand SVG language across call/live surfaces. */}
-          <TouchableOpacity
-            onPress={() => setPreFacing(f => f === 'user' ? 'environment' : 'user')}
-            style={[styles.preFlipBtn, { top: insets.top + 16 }]}
-            activeOpacity={0.8}
-            accessibilityRole="button"
-            accessibilityLabel={t('live.flipCamera') || 'Virar câmera'}
-          >
-            <IconCameraFlip size={22} color="#fff" />
-          </TouchableOpacity>
-
-          {/* Hero glass card */}
-          <View style={styles.preHero}>
-            {/* Avatar with breathing red ring — telegraphs the "live" state
-                before the host even taps Começar. NativeDriver opacity loop. */}
-            <View style={styles.preAvatarWrap}>
-              <Animated.View
-                pointerEvents="none"
-                style={[styles.preAvatarPulseRing, {
-                  opacity: preRingPulse.interpolate({ inputRange: [0, 1], outputRange: [0.18, 0.6] }),
-                  transform: [{ scale: preRingPulse.interpolate({ inputRange: [0, 1], outputRange: [1, 1.12] }) }],
-                }]}
-              />
-              <AvatarCircle
-                name={user?.name || user?.email}
-                email={user?.email}
-                size={84}
-                style={styles.preAvatar}
-              />
-            </View>
-            <Text style={styles.preName} numberOfLines={1}>{user?.name || user?.email?.split('@')[0]}</Text>
-            <Text style={styles.preHint}>{t('live.preHint') || 'Tudo pronto pra ir ao vivo'}</Text>
-
-            <View style={styles.preTitleWrap}>
-              <TextInput
-                style={styles.titleInput}
-                value={titleInput}
-                onChangeText={setTitleInput}
-                placeholder={t('live.enterTitle') || 'Adicione um título à sua live...'}
-                placeholderTextColor="rgba(255,255,255,0.4)"
-                returnKeyType="done"
-                accessibilityLabel={t('live.enterTitle') || 'Título da live'}
-                maxLength={100}
-              />
-              {!titleInput ? (
-                <Animated.View pointerEvents="none" style={[styles.preTitleSparkle, { opacity: placeholderFade }]}>
-                  <IconSparkles size={14} color="rgba(255,255,255,0.55)" />
-                </Animated.View>
-              ) : (
-                <TouchableOpacity
-                  onPress={() => setTitleInput('')}
-                  style={styles.preTitleClear}
-                  hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-                  accessibilityRole="button"
-                  accessibilityLabel={t('common.clear') || 'Limpar'}
-                >
-                  <View style={styles.preTitleClearCircle}>
-                    <IconX size={11} color="rgba(255,255,255,0.85)" />
-                  </View>
-                </TouchableOpacity>
-              )}
-            </View>
-
-            {/* Audience selector — public/friends/private with brand-tinted
-                active state. Sent as `audience` to liveStart so the backend
-                can scope the announce push. Spring-scaled active pill. */}
-            <View style={styles.preAudRow}>
-              <Text style={styles.preAudLabel}>{t('live.whoCanSee') || 'Quem pode ver'}</Text>
-              <View style={styles.preAudPills}>
-                {audOptions.map(opt => {
-                  const Icon = opt.Icon;
-                  const active = audience === opt.key;
-                  return (
-                    <Animated.View
-                      key={opt.key}
-                      style={{ transform: [{ scale: preAudScale[opt.key] }] }}
-                    >
-                      <TouchableOpacity
-                        onPress={() => setAudience(opt.key)}
-                        style={[styles.preAudPill, active && styles.preAudPillActive]}
-                        activeOpacity={0.85}
-                        accessibilityRole="button"
-                        accessibilityState={{ selected: active }}
-                        accessibilityLabel={opt.label}
-                      >
-                        <Icon size={14} color={active ? '#000' : 'rgba(255,255,255,0.75)'} />
-                        <Text style={[styles.preAudPillText, active && { color: '#000', fontWeight: '800' }]}>
-                          {opt.label}
-                        </Text>
-                      </TouchableOpacity>
-                    </Animated.View>
-                  );
-                })}
-              </View>
-            </View>
-
-            {/* Category picker — 1 of 8 backend-known keys (gaming, music,
-                chat, food, travel, tech, sports, learning) + a "Geral"
-                opt-out. Renders as a horizontal pill rail. Used by the
-                discover page filter. Empty selection ships no category to
-                the backend (column stays NULL). */}
-            <View style={styles.preCatRow}>
-              <Text style={styles.preAudLabel}>{t('live.category') || 'Categoria'}</Text>
-              <ScrollView
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                contentContainerStyle={{ gap: 8, paddingRight: 8 }}
-              >
-                {[
-                  { key: '',         label: t('live.catGeneral')  || 'Geral',       color: '#6B7280' },
-                  { key: 'gaming',   label: t('live.catGaming')   || 'Gaming',      color: '#111111' },
-                  { key: 'music',    label: t('live.catMusic')    || 'Música',      color: '#111111' },
-                  { key: 'chat',     label: t('live.catChat')     || 'Bate-papo',   color: '#22D3EE' },
-                  { key: 'food',     label: t('live.catFood')     || 'Comida',      color: '#FBBF24' },
-                  { key: 'travel',   label: t('live.catTravel')   || 'Viagens',     color: '#34D399' },
-                  { key: 'tech',     label: t('live.catTech')     || 'Tecnologia',  color: '#60A5FA' },
-                  { key: 'sports',   label: t('live.catSports')   || 'Esportes',    color: '#F97316' },
-                  { key: 'learning', label: t('live.catLearning') || 'Aprendizado', color: '#10B981' },
-                ].map(c => {
-                  const active = liveCategory === c.key;
-                  return (
-                    <TouchableOpacity
-                      key={c.key || 'general'}
-                      onPress={() => setLiveCategory(c.key)}
-                      style={[
-                        styles.preCatPill,
-                        active && { backgroundColor: '#fff', borderColor: '#fff' }, // [lives-2] P&B — ativo = branco sólido (igual ao público/amigos)
-                      ]}
-                      activeOpacity={0.85}
-                      accessibilityRole="button"
-                      accessibilityState={{ selected: active }}
-                      accessibilityLabel={c.label}
-                    >
-                      <Text style={[styles.preCatPillText, active && { color: '#000', fontWeight: '800' }]}>
-                        {c.label}
-                      </Text>
-                    </TouchableOpacity>
-                  );
-                })}
-              </ScrollView>
-            </View>
-
-            {/* Subscriber-only toggle — gates the live so only viewers with
-                an active subscription to this host can join. Backend
-                enforces in live_discover + the host could also call
-                live_set_category to flip mid-stream. */}
-            <TouchableOpacity
-              onPress={() => setSubscribersOnly(s => !s)}
-              style={styles.preSubRow}
-              activeOpacity={0.85}
-              accessibilityRole="switch"
-              accessibilityState={{ checked: subscribersOnly }}
-              accessibilityLabel={t('live.subscribersOnly') || 'Só assinantes'}
-            >
-              <View style={styles.preSubLabel}>
-                <Text style={styles.preSubLabelText}>{t('live.subscribersOnly') || 'Só assinantes'}</Text>
-                <Text style={styles.preSubHint}>{t('live.subscribersOnlyHint') || 'Bloqueia entrada de quem não te assina'}</Text>
-              </View>
-              <View style={[styles.preSubSwitch, subscribersOnly && styles.preSubSwitchOn]}>
-                <View style={[styles.preSubKnob, subscribersOnly && styles.preSubKnobOn]} />
-              </View>
-            </TouchableOpacity>
-
-            {/* Multistream + Schedule row — wave 16 (2026-05-17). Twin
-                actions to configure RTMP fan-out and pre-announce the live. */}
-            <View style={styles.preExtrasRow}>
-              <TouchableOpacity
-                onPress={() => { setMultistreamOpen(true); loadMultistreamDests(); }}
-                style={styles.preExtraBtn}
-                activeOpacity={0.85}
-                accessibilityRole="button"
-                accessibilityLabel={t('live.multistream') || 'Multistream'}
-              >
-                <IconRepeat size={16} color="#fff" />
-                <Text style={styles.preExtraBtnText} numberOfLines={1}>
-                  {t('live.multistream') || 'Multistream'}
-                </Text>
-                {multistreamDests.length > 0 ? (
-                  <View style={styles.preExtraBtnBadge}>
-                    <Text style={styles.preExtraBtnBadgeText}>{multistreamDests.length}</Text>
-                  </View>
-                ) : null}
-              </TouchableOpacity>
-              <TouchableOpacity
-                onPress={() => setScheduleOpen(true)}
-                style={styles.preExtraBtn}
-                activeOpacity={0.85}
-                accessibilityRole="button"
-                accessibilityLabel={t('live.scheduleTitle') || 'Agendar live'}
-              >
-                <IconCalendar size={16} color="#fff" />
-                <Text style={styles.preExtraBtnText} numberOfLines={1}>
-                  {t('live.scheduleLive') || 'Agendar'}
-                </Text>
-              </TouchableOpacity>
-            </View>
-
-            {/* CTA — wrapped in an Animated.View so the red glow loops behind
-                the button (web only via boxShadow). On native, the live dot
-                pulses inside the button instead (same red-heartbeat rhythm). */}
-            <Animated.View style={[styles.startBtnWrap, Platform.OS === 'web' ? {
-              shadowOpacity: preBtnGlow.interpolate({ inputRange: [0, 1], outputRange: [0.35, 0.7] }),
-            } : null]}>
-              <TouchableOpacity
-                onPress={handleStartLive}
-                style={styles.startBtn}
-                activeOpacity={0.9}
-                accessibilityLabel={t('live.goLive') || 'Começar'}
-                accessibilityRole="button"
-              >
-                <Animated.View style={[styles.startBtnDot, {
-                  transform: [{ scale: preBtnGlow.interpolate({ inputRange: [0, 1], outputRange: [0.85, 1.15] }) }],
-                  opacity: preBtnGlow.interpolate({ inputRange: [0, 1], outputRange: [0.85, 1] }),
-                }]} />
-                <Text style={styles.startBtnText}>{t('live.goLive') || 'Começar'}</Text>
-              </TouchableOpacity>
-            </Animated.View>
-
-            <Text style={styles.preTip}>{t('live.preTip') || 'Sua câmera ficará visível pros viewers'}</Text>
-          </View>
-
-          {/* Countdown overlay */}
-          {countdown !== null && (
-            <View style={styles.countdownOverlay}>
-              <Animated.Text style={[styles.countdownText, {
-                transform: [{ scale: countdownScale }],
-                opacity: countdownOpacity,
-              }]}>
-                {countdown}
-              </Animated.Text>
-            </View>
-          )}
-        </View>
+        <StatusBar barStyle="light-content" translucent backgroundColor="transparent" />
+        <LiveSetupScreen
+          t={t}
+          insets={insets}
+          user={user}
+          kbHeight={kbHeight}
+          cameraState={preCam === 'on' && !localStreamRef.current && !localStreamUrl ? 'checking' : preCam}
+          renderPreview={() => renderLocalVideo()}
+          filterTint={filterTint}
+          onAllowCamera={openPreCamera}
+          onOpenSettings={() => { try { Linking.openSettings(); } catch {} }}
+          onClose={() => router.back()}
+          onFlip={onPreFlip}
+          onFilters={() => setFilterOpen(true)}
+          filterActive={activeFilter !== 'none'}
+          title={titleInput}
+          onChangeTitle={setTitleInput}
+          audience={audience}
+          onChangeAudience={setAudience}
+          category={liveCategory}
+          onChangeCategory={setLiveCategory}
+          subscribersOnly={subscribersOnly}
+          onToggleSubscribers={() => setSubscribersOnly(v => !v)}
+          multistreamCount={multistreamDests.length}
+          onMultistream={() => { setMultistreamOpen(true); loadMultistreamDests(); }}
+          onSchedule={() => setScheduleOpen(true)}
+          onGoLive={onPreGoLive}
+          going={preGoing && countdown === null}
+          countdown={countdown}
+          countdownScale={countdownScale}
+          countdownOpacity={countdownOpacity}
+          dotPulse={preBtnGlow}
+        >
+          {renderFilterSheet()}
+          {renderMultistreamSheet()}
+          {renderScheduleSheet()}
+        </LiveSetupScreen>
       </View>
     );
   }
@@ -5233,34 +5225,7 @@ function LiveBroadcastScreen() {
       ) : null}
 
       {/* Filter sheet — 5 looks. Tap applies live; tap "Nenhum" clears. */}
-      {filterOpen ? (
-        <View style={liveSheetStyles.backdrop}>
-          <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={() => setFilterOpen(false)} />
-          <View style={[liveSheetStyles.sheet, { paddingBottom: insets.bottom + 16 }]}>
-            <View style={liveSheetStyles.grabber} />
-            <Text style={liveSheetStyles.title}>{t('live.filter') || 'Filtros'}</Text>
-            <View style={liveSheetStyles.filterRow}>
-              {[
-                { key: 'none', label: t('live.filterNone') || 'Nenhum', color: 'transparent' },
-                { key: 'bw', label: 'P&B', color: '#000' },
-                { key: 'warm', label: 'Quente', color: '#ff8c00' },
-                { key: 'cool', label: 'Frio', color: '#3b82f6' },
-                { key: 'vivid', label: 'Vivid', color: '#111111' },
-              ].map(f => (
-                <TouchableOpacity
-                  key={f.key}
-                  onPress={() => { setActiveFilter(f.key); setFilterOpen(false); }}
-                  style={[liveSheetStyles.filterChip, activeFilter === f.key && liveSheetStyles.filterChipActive]}
-                  activeOpacity={0.7}
-                >
-                  <View style={[liveSheetStyles.filterSwatch, { backgroundColor: f.color }]} />
-                  <Text style={[liveSheetStyles.filterLabel, activeFilter === f.key && { color: '#fff', fontWeight: '700' }]}>{f.label}</Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-          </View>
-        </View>
-      ) : null}
+      {renderFilterSheet()}
 
       {/* Join requests pill — Instagram-style "Pedidos" chip pinned at right:16
           top:100 (relative to insets) with a small red badge bubble showing
@@ -5525,145 +5490,10 @@ function LiveBroadcastScreen() {
       {/* Multistream sheet — host adds RTMP destinations (YouTube/Twitch/FB).
           Backend persists in chat_live_multistream_destinations and calls
           LK StartRoomCompositeEgress if the broadcast is live. */}
-      {multistreamOpen ? (
-        <View style={liveSheetStyles.backdrop}>
-          <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={() => setMultistreamOpen(false)} />
-          <View style={[liveSheetStyles.sheet, { paddingBottom: insets.bottom + 16, maxHeight: '85%' }]}>
-            <View style={liveSheetStyles.grabber} />
-            <Text style={liveSheetStyles.title}>{t('live.multistream') || 'Multistream'}</Text>
-            <Text style={liveSheetStyles.subtitle}>
-              {t('live.multistreamHint') || 'Transmita simultaneamente para YouTube, Twitch e Facebook'}
-            </Text>
-            {multistreamDests.length > 0 ? (
-              <View style={{ marginTop: 8, marginBottom: 12 }}>
-                {multistreamDests.map(d => (
-                  <View key={d.id} style={styles.multistreamDestRow}>
-                    <View style={{ flex: 1 }}>
-                      <Text style={styles.multistreamDestLabel} numberOfLines={1}>
-                        {d.label || d.rtmp_url}
-                      </Text>
-                      <Text style={styles.multistreamDestStatus}>
-                        {d.status === 'live'
-                          ? (t('live.multistreamLive') || 'Transmitindo')
-                          : (t('live.multistreamReady') || 'Pronto')}
-                      </Text>
-                    </View>
-                    <TouchableOpacity
-                      onPress={() => removeMultistreamDest(d.id)}
-                      style={styles.multistreamDestRemove}
-                      activeOpacity={0.7}
-                      accessibilityLabel={t('common.remove') || 'Remover'}
-                    >
-                      <IconX size={14} color="rgba(255,255,255,0.8)" />
-                    </TouchableOpacity>
-                  </View>
-                ))}
-              </View>
-            ) : null}
-            <Text style={[liveSheetStyles.subtitle, { marginTop: 8 }]}>
-              {t('live.multistreamAddTitle') || 'Adicionar destino'}
-            </Text>
-            <TextInput
-              value={multistreamForm.label}
-              onChangeText={(v) => setMultistreamForm(f => ({ ...f, label: v }))}
-              placeholder={t('live.multistreamLabel') || 'Nome (ex: YouTube)'}
-              placeholderTextColor="rgba(255,255,255,0.45)"
-              style={styles.multistreamInput}
-              autoCapitalize="none"
-              autoCorrect={false}
-            />
-            <TextInput
-              value={multistreamForm.rtmpUrl}
-              onChangeText={(v) => setMultistreamForm(f => ({ ...f, rtmpUrl: v }))}
-              placeholder="rtmp://a.rtmp.youtube.com/live2"
-              placeholderTextColor="rgba(255,255,255,0.45)"
-              style={styles.multistreamInput}
-              autoCapitalize="none"
-              autoCorrect={false}
-              keyboardType="url"
-            />
-            <TextInput
-              value={multistreamForm.streamKey}
-              onChangeText={(v) => setMultistreamForm(f => ({ ...f, streamKey: v }))}
-              placeholder={t('live.multistreamKey') || 'Chave de transmissão'}
-              placeholderTextColor="rgba(255,255,255,0.45)"
-              style={styles.multistreamInput}
-              autoCapitalize="none"
-              autoCorrect={false}
-              secureTextEntry
-            />
-            <TouchableOpacity
-              onPress={addMultistreamDest}
-              disabled={multistreamSaving || !multistreamForm.rtmpUrl || !multistreamForm.streamKey}
-              style={[liveSheetStyles.closeBtn, (multistreamSaving || !multistreamForm.rtmpUrl || !multistreamForm.streamKey) && { opacity: 0.5 }]}
-              activeOpacity={0.85}
-            >
-              <Text style={liveSheetStyles.closeText}>
-                {multistreamSaving ? (t('common.saving') || 'Salvando...') : (t('live.multistreamAddBtn') || 'Adicionar destino')}
-              </Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      ) : null}
+      {renderMultistreamSheet()}
 
       {/* Schedule live sheet — pre-screen modal. Date+time picker + button. */}
-      {scheduleOpen ? (
-        <View style={liveSheetStyles.backdrop}>
-          <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={() => setScheduleOpen(false)} />
-          <View style={[liveSheetStyles.sheet, { paddingBottom: insets.bottom + 16 }]}>
-            <View style={liveSheetStyles.grabber} />
-            <Text style={liveSheetStyles.title}>{t('live.scheduleTitle') || 'Agendar live'}</Text>
-            <Text style={liveSheetStyles.subtitle}>
-              {t('live.scheduleHint') || 'Seguidores recebem lembrete 15 min antes e no início.'}
-            </Text>
-            <View style={{ flexDirection: 'row', gap: 8, marginTop: 12 }}>
-              <TextInput
-                value={scheduleDate.toISOString().slice(0, 10)}
-                onChangeText={(v) => {
-                  const parts = v.split('-').map(p => parseInt(p, 10));
-                  if (parts.length === 3 && parts.every(n => !isNaN(n))) {
-                    const d = new Date(scheduleDate);
-                    d.setFullYear(parts[0], parts[1] - 1, parts[2]);
-                    setScheduleDate(d);
-                  }
-                }}
-                placeholder="YYYY-MM-DD"
-                placeholderTextColor="rgba(255,255,255,0.45)"
-                style={[styles.multistreamInput, { flex: 1 }]}
-                autoCapitalize="none"
-              />
-              <TextInput
-                value={scheduleDate.toTimeString().slice(0, 5)}
-                onChangeText={(v) => {
-                  const parts = v.split(':').map(p => parseInt(p, 10));
-                  if (parts.length === 2 && parts.every(n => !isNaN(n))) {
-                    const d = new Date(scheduleDate);
-                    d.setHours(parts[0], parts[1], 0, 0);
-                    setScheduleDate(d);
-                  }
-                }}
-                placeholder="HH:MM"
-                placeholderTextColor="rgba(255,255,255,0.45)"
-                style={[styles.multistreamInput, { flex: 1 }]}
-                autoCapitalize="none"
-              />
-            </View>
-            <Text style={[liveSheetStyles.subtitle, { marginTop: 8 }]}>
-              {scheduleDate.toLocaleString()}
-            </Text>
-            <TouchableOpacity
-              onPress={saveScheduledLive}
-              disabled={scheduleSaving}
-              style={[liveSheetStyles.closeBtn, scheduleSaving && { opacity: 0.5 }]}
-              activeOpacity={0.85}
-            >
-              <Text style={liveSheetStyles.closeText}>
-                {scheduleSaving ? (t('common.saving') || 'Salvando...') : (t('live.scheduleSave') || 'Agendar')}
-              </Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      ) : null}
+      {renderScheduleSheet()}
 
       {/* Effects sheet — shows a status pill on the live confirming sparkles
           mode. Real AR effects require native bindings; this gives the user
@@ -6184,145 +6014,12 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
 
-  // Pre-start
-  preOverlay: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(0,0,0,0.65)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    ...(Platform.OS === 'web' ? { backdropFilter: 'blur(4px)', WebkitBackdropFilter: 'blur(4px)' } : {}),
-  },
   preContent: {
     alignItems: 'center',
     width: '85%',
     maxWidth: 380,
   },
-  preAvatarWrap: {
-    width: 96, height: 96,
-    alignItems: 'center', justifyContent: 'center',
-    marginBottom: 14,
-    marginTop: 2,
-  },
-  preAvatarPulseRing: {
-    position: 'absolute',
-    width: 96, height: 96, borderRadius: 48,
-    borderWidth: 3,
-    borderColor: LIVE_RED,
-    ...(Platform.OS === 'web' ? {
-      boxShadow: '0 0 24px rgba(255,255,255,0.35)',
-    } : {}),
-  },
-  preAvatar: {
-    borderRadius: 999,
-  },
-  preName: {
-    color: '#fff',
-    fontSize: 22,
-    fontWeight: '800',
-    marginBottom: 4,
-    letterSpacing: 0.2,
-  },
-  titleInput: {
-    width: '100%',
-    height: 54,
-    borderRadius: 16,
-    backgroundColor: 'rgba(255,255,255,0.08)',
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.1)',
-    paddingHorizontal: 38,
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: '600',
-    textAlign: 'center',
-    ...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {}),
-  },
-  preTitleClear: {
-    position: 'absolute',
-    right: 10, top: 0, bottom: 0,
-    justifyContent: 'center',
-  },
-  preTitleClearCircle: {
-    width: 22, height: 22, borderRadius: 11,
-    backgroundColor: 'rgba(255,255,255,0.15)',
-    alignItems: 'center', justifyContent: 'center',
-  },
-  startBtnWrap: {
-    width: '100%',
-    alignItems: 'center',
-    ...(Platform.OS === 'web' ? {
-      shadowColor: LIVE_RED,
-      shadowOffset: { width: 0, height: 0 },
-      shadowRadius: 28,
-    } : {}),
-  },
-  startBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    height: 60,
-    paddingHorizontal: 44,
-    borderRadius: 30,
-    backgroundColor: LIVE_RED,
-    gap: 12,
-    minWidth: 220,
-    ...(Platform.OS === 'web' ? {
-      boxShadow: '0 8px 26px rgba(0, 0, 0, 0.45)',
-    } : {}),
-  },
-  startBtnDot: {
-    width: 12,
-    height: 12,
-    borderRadius: 6,
-    backgroundColor: LIVE_DOT_RED,
-  },
-  startBtnText: {
-    color: '#000',
-    fontSize: 18,
-    fontWeight: '800',
-    letterSpacing: 0.6,
-  },
-  preTip: {
-    color: 'rgba(255,255,255,0.45)',
-    fontSize: 11,
-    fontWeight: '500',
-    marginTop: 14,
-    textAlign: 'center',
-    letterSpacing: 0.1,
-    maxWidth: 280,
-  },
-  closeBtn: {
-    position: 'absolute',
-    right: 20,
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: 'rgba(0,0,0,0.5)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    zIndex: 10,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.12)',
-    ...(Platform.OS === 'web' ? {
-      backdropFilter: 'blur(10px)', WebkitBackdropFilter: 'blur(10px)',
-    } : {}),
-  },
 
-  // Countdown
-  countdownOverlay: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(0,0,0,0.7)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    zIndex: 20,
-  },
-  countdownText: {
-    color: '#fff',
-    fontSize: 120,
-    fontWeight: '900',
-    textShadowColor: LIVE_RED,
-    textShadowOffset: { width: 0, height: 0 },
-    textShadowRadius: 40,
-  },
 
   // Live screen
   videoOffOverlay: {
@@ -7041,181 +6738,8 @@ const styles = StyleSheet.create({
     color: '#000', fontSize: 14, fontWeight: '800', letterSpacing: 0.3,
   },
 
-  // ----- Pre-live hero card -----
-  // Glass card sitting on top of the brand-purple radial glow. The card hosts
-  // avatar + hint + title input + audience pills + CTA + tip line — full
-  // Instagram-Live grade pre-roll surface.
-  preHero: {
-    width: '88%',
-    maxWidth: 400,
-    alignItems: 'center',
-    backgroundColor: 'rgba(20,20,30,0.62)',
-    borderRadius: 26,
-    paddingVertical: 24,
-    paddingHorizontal: 22,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.12)',
-    ...(Platform.OS === 'web' ? {
-      backdropFilter: 'blur(22px) saturate(140%)', WebkitBackdropFilter: 'blur(22px) saturate(140%)',
-      boxShadow: '0 24px 60px rgba(0,0,0,0.6), 0 0 1px rgba(17, 17, 17,0.55)',
-    } : {}),
-  },
-  preHint: {
-    color: 'rgba(255,255,255,0.7)',
-    fontSize: 13,
-    fontWeight: '500',
-    letterSpacing: 0.1,
-    marginTop: 0,
-    marginBottom: 18,
-  },
-  // Radial brand glows sitting behind the card. We can't do a real radial
-  // gradient w/o expo-linear-gradient, so we fake it with two huge circles —
-  // purple bottom, red top-right — at very low alpha for that "live energy"
-  // ambient lighting (Instagram Live signature).
-  preGlowPurple: {
-    position: 'absolute',
-    width: 520, height: 520,
-    borderRadius: 260,
-    backgroundColor: 'rgba(17, 17, 17,0.35)',
-    bottom: -200,
-    alignSelf: 'center',
-    ...(Platform.OS === 'web' ? {
-      filter: 'blur(80px)', WebkitFilter: 'blur(80px)',
-    } : { opacity: 0.5 }),
-  },
-  preGlowRed: {
-    position: 'absolute',
-    width: 320, height: 320,
-    borderRadius: 160,
-    backgroundColor: 'rgba(255,255,255,0.08)',
-    top: -100, right: -80,
-    ...(Platform.OS === 'web' ? {
-      filter: 'blur(70px)', WebkitFilter: 'blur(70px)',
-    } : { opacity: 0.45 }),
-  },
-  preTitleWrap: {
-    width: '100%',
-    position: 'relative',
-    marginBottom: 16,
-  },
-  preTitleSparkle: {
-    position: 'absolute',
-    right: 14, top: 0, bottom: 0,
-    justifyContent: 'center',
-  },
-  preAudRow: {
-    width: '100%',
-    marginBottom: 20,
-    alignItems: 'center',
-  },
-  preAudLabel: {
-    color: 'rgba(255,255,255,0.55)',
-    fontSize: 11,
-    fontWeight: '700',
-    letterSpacing: 0.7,
-    textTransform: 'uppercase',
-    marginBottom: 8,
-  },
-  preAudPills: {
-    flexDirection: 'row',
-    gap: 8,
-    justifyContent: 'center',
-  },
-  preAudPill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 18,
-    backgroundColor: 'rgba(255,255,255,0.07)',
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.08)',
-  },
-  // [2026-10-12 live-polish] P&B: ativo = pílula branca sólida (o fill
-  // #111 translúcido sumia no vidro escuro — não dava pra ver a seleção).
-  preAudPillActive: {
-    backgroundColor: '#fff',
-    borderColor: '#fff',
-  },
-  preAudPillText: {
-    color: 'rgba(255,255,255,0.78)',
-    fontSize: 12,
-    fontWeight: '600',
-    letterSpacing: 0.2,
-  },
-  // ----- Pre-live category pill rail -----
-  preCatRow: {
-    width: '100%',
-    marginTop: 14,
-  },
-  preCatPill: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.18)',
-    backgroundColor: 'rgba(255,255,255,0.06)',
-  },
-  preCatPillText: {
-    color: 'rgba(255,255,255,0.82)',
-    fontSize: 12,
-    fontWeight: '600',
-    letterSpacing: 0.2,
-  },
-  // ----- Pre-live subscriber-only toggle row -----
-  preSubRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    width: '100%',
-    marginTop: 14,
-    paddingHorizontal: 4,
-  },
-  preSubLabel: { flexShrink: 1, paddingRight: 12 },
-  preSubLabelText: { color: '#fff', fontSize: 13, fontWeight: '700' },
-  preSubHint: { color: 'rgba(255,255,255,0.55)', fontSize: 11, marginTop: 2 },
-  preSubSwitch: {
-    width: 44, height: 26, borderRadius: 13,
-    backgroundColor: 'rgba(255,255,255,0.18)',
-    padding: 3,
-  },
-  preSubSwitchOn: { backgroundColor: 'rgba(255,255,255,0.55)' },
-  preSubKnob: {
-    width: 20, height: 20, borderRadius: 10,
-    backgroundColor: '#fff',
-  },
-  preSubKnobOn: { transform: [{ translateX: 18 }] },
 
-  // ----- Pre-screen extras row (Multistream + Schedule) -----
-  preExtrasRow: {
-    flexDirection: 'row',
-    width: '100%',
-    gap: 8,
-    marginTop: 14,
-    paddingHorizontal: 2,
-  },
-  preExtraBtn: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    borderRadius: 12,
-    backgroundColor: 'rgba(255,255,255,0.08)',
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.12)',
-  },
   preExtraBtnIcon: { fontSize: 16 },
-  preExtraBtnText: { color: '#fff', fontSize: 13, fontWeight: '700', flex: 1 },
-  preExtraBtnBadge: {
-    minWidth: 18, height: 18, borderRadius: 9,
-    paddingHorizontal: 5,
-    backgroundColor: '#fff',
-    alignItems: 'center', justifyContent: 'center',
-  },
-  preExtraBtnBadgeText: { color: '#000', fontSize: 10, fontWeight: '800' },
 
   // ----- AR filter carousel -----
   arCarouselWrap: {
@@ -7332,16 +6856,6 @@ const styles = StyleSheet.create({
     marginTop: 8,
   },
 
-  preFlipBtn: {
-    position: 'absolute',
-    left: 20,
-    width: 44, height: 44, borderRadius: 22,
-    backgroundColor: 'rgba(0,0,0,0.4)',
-    alignItems: 'center', justifyContent: 'center',
-    zIndex: 10,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.1)',
-  },
 
   // ----- Live insights pill (bottom-left compact stats chip) -----
   insightsPill: {
