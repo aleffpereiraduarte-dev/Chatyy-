@@ -1741,9 +1741,11 @@ function SettingsScreenInner() {
           // categoria → tocar em voltar chamava setActiveCategory(null) de
           // novo e NADA acontecia (iOS/Android). Idem a busca da raiz vazava
           // para dentro das categorias.
-          ...(activeCategory !== null || !canGoBackNow ? {
-            headerLeft: () => <HeaderBackButton onPress={handleBack} color={colors.text} accessibilityLabel={t('common.back') || 'Voltar'} />,
-          } : { headerLeft: undefined, headerBackVisible: true }),
+          // [2026-10-12] UM botão só: o nosso (handleBack já resolve categoria →
+          // lista → sair/conversas). Com headerBackVisible ligado junto, o iOS
+          // mostrava DOIS "‹" lado a lado.
+          headerLeft: () => <HeaderBackButton onPress={handleBack} color={colors.text} accessibilityLabel={t('common.back') || 'Voltar'} />,
+          headerBackVisible: false,
           ...(activeCategory !== null ? {
             headerSearchBarOptions: undefined,
           } : {

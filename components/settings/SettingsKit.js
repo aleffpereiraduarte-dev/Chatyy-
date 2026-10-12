@@ -318,6 +318,7 @@ export function SettingsScreen({ title, children, headerRight, onBack, contentSt
           // onBack custom também precisa do nosso botão (o nativo só faz pop).
           ...((onBack || !canGoBackNow) ? {
             headerLeft: () => <HeaderBackButton onPress={goBack} color={colors.text || g.text} accessibilityLabel={(_lang?.t?.('common.back')) || 'Voltar'} />,
+            headerBackVisible: false, // [2026-10-12] senão o iOS mostra 2 "‹"
           } : {}),
         })} />
       ) : (
