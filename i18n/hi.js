@@ -11016,4 +11016,11 @@ export default {
   "callRating.send": "भेजें",
   "callRating.notNow": "अभी नहीं",
   "callRating.starsA11y": "5 में से {n}",
+  // [2026-10-12 chatlist-wa]
+  "chat.missedVoiceCall": "मिस्ड वॉइस कॉल",
+  "chat.missedVideoCall": "मिस्ड वीडियो कॉल",
+  "chat.pinLimitTitle": "पिन की गई चैट की सीमा",
+  "chat.pinLimitMsg": "आप अधिकतम {n} चैट पिन कर सकते हैं।",
+  "chat.listSearchContacts": "संपर्क",
+  "chat.archivedKeepInfo": "नए संदेश मिलने पर भी ये चैट आर्काइव रहती हैं।",
 };

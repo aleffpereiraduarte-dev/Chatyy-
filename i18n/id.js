@@ -10238,4 +10238,11 @@ export default {
   "callRating.send": "Kirim",
   "callRating.notNow": "Nanti saja",
   "callRating.starsA11y": "{n} dari 5",
+  // [2026-10-12 chatlist-wa]
+  "chat.missedVoiceCall": "Panggilan suara tak terjawab",
+  "chat.missedVideoCall": "Panggilan video tak terjawab",
+  "chat.pinLimitTitle": "Batas chat yang disematkan",
+  "chat.pinLimitMsg": "Anda hanya dapat menyematkan hingga {n} chat.",
+  "chat.listSearchContacts": "Kontak",
+  "chat.archivedKeepInfo": "Chat ini tetap diarsipkan saat ada pesan baru.",
 };

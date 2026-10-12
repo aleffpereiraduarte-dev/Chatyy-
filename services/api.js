@@ -1747,6 +1747,12 @@ export function purgeOfflineLastKnown() {
 }
 
 export async function apiCall(action, params = {}, method = 'GET', opts = {}) {
+  const _r0 = await _apiCallOuter(action, params, method, opts);
+  try { _ingestAvatarFrom(action, _r0); } catch {}
+  return _r0;
+}
+
+async function _apiCallOuter(action, params = {}, method = 'GET', opts = {}) {
   if (OFFLINE_LAST_KNOWN.has(action)) {
     let _r;
     try {
@@ -3813,69 +3819,49 @@ export async function uploadAvatar(file) {
   }
 }
 
-// Per-email cache-bust token. Bumped via bustAvatarCache() after the user
-// updates their profile photo so every <img> / expo-image target sees a
-// fresh URL instead of the HTTP-cached old one.
-//
-// Persisted to AsyncStorage as `avatar_v_map` so the bust survives full
-// app restarts (without this, after killing+reopening the app, the
-// browser/CDN still served the old cached avatar — the user reported
-// "atualizei a foto mas n atualizou em todo lugar").
-const _avatarCacheBust = new Map();
-let _avatarMapHydrated = false;
-let _avatarMapWriteTimer = null;
-async function _hydrateAvatarMap() {
-  if (_avatarMapHydrated) return;
-  _avatarMapHydrated = true;
+// Per-email cache-bust token (`v=` of every get_avatar URL).
+// [2026-10-12 avatar-realtime] Agora vive num store ÚNICO (services/avatarVersions.js,
+// persistido em MMKV `avatar_versions_v1` + migra o antigo AsyncStorage `avatar_v_map`),
+// compartilhado com o <AvatarCircle>. Antes eram 2 mapas que divergiam (este, hidratado
+// async, e o do AvatarCircle) e quase nada os alimentava → "trocou a foto e não atualiza".
+// Alimentado por: WS `avatar_updated` (bustAvatarCache), upload_avatar (abaixo) e
+// qualquer payload de API com avatar_version / URL get_avatar&v= (_ingestAvatarFrom).
+// Só AVANÇA (payload velho do cache nunca volta a URL pra foto antiga).
+export function bustAvatarCache(email, version) {
+  if (!email) return;
+  const hasServerVer = (typeof version === 'number' && version > 0);
   try {
-    const AsyncStorage = require('@react-native-async-storage/async-storage').default;
-    const raw = await AsyncStorage.getItem('avatar_v_map');
-    if (raw) {
-      const obj = JSON.parse(raw);
-      if (obj && typeof obj === 'object') {
-        for (const k of Object.keys(obj)) _avatarCacheBust.set(k, obj[k]);
-      }
+    const av = require('./avatarVersions');
+    const changed = av.setAvatarVersion(email, hasServerVer ? version : undefined, { force: !hasServerVer });
+    // Upload próprio / WS explícito: limpa o cache de MEMÓRIA do expo-image (barato) —
+    // nunca o de disco (ver comentário em AvatarCircle.bumpAvatarCache).
+    if (changed) {
+      try {
+        const ExpoImage = require('expo-image').Image;
+        ExpoImage?.clearMemoryCache?.();
+      } catch {}
     }
   } catch {}
 }
-// Fire hydrate at module load (no await — UI doesn't block on this).
-try { _hydrateAvatarMap(); } catch {}
-function _scheduleAvatarMapWrite() {
-  if (_avatarMapWriteTimer) clearTimeout(_avatarMapWriteTimer);
-  _avatarMapWriteTimer = setTimeout(async () => {
-    try {
-      const AsyncStorage = require('@react-native-async-storage/async-storage').default;
-      const obj = {};
-      for (const [k, v] of _avatarCacheBust.entries()) obj[k] = v;
-      await AsyncStorage.setItem('avatar_v_map', JSON.stringify(obj));
-    } catch {}
-  }, 250);
-}
-export function bustAvatarCache(email, version) {
-  if (!email) return;
-  const key = String(email).toLowerCase();
-  const hasServerVer = (typeof version === 'number' && version > 0);
-  // Skip entirely when the server avatar_version we already recorded matches
-  // the incoming one — nothing changed, so bumping would just thrash the
-  // cache (new URL → miss → remount → disk pileup) on every profile open.
-  if (hasServerVer && _avatarCacheBust.get(key) === version) return;
-  const v = hasServerVer ? version : Date.now();
-  _avatarCacheBust.set(key, v);
-  _scheduleAvatarMapWrite();
-  // Bump AvatarCircle's local version registry too — its <AvatarCircle>
-  // listeners subscribe to that map to know when to re-render. Without this
-  // call, the URL has the new ?v=… but no component knows to rebind to it,
-  // so the photo only changes after a manual refresh / app reopen. (User
-  // reported: "atualizo a foto e n atualiza automaticamente instantaneamente").
-  // Pass the server version through so AvatarCircle stores the AUTHORITATIVE
-  // avatar_version (enabling ETag/304) instead of a fresh Date.now() per open.
-  try {
-    const ac = require('../components/AvatarCircle');
-    ac?.bumpAvatarCache?.(key, hasServerVer ? version : undefined);
-  } catch {}
-}
 function _avatarV(email) {
-  return _avatarCacheBust.get(String(email || '').toLowerCase()) || '';
+  try { return require('./avatarVersions').getAvatarVersion(email) || ''; } catch { return ''; }
+}
+// Ações cujas respostas carregam usuários (e-mail + avatar_version ou URL get_avatar&v=).
+const _AVATAR_INGEST_ACTIONS = new Set([
+  'chat_list', 'chat_conversations', 'chat_info', 'chat_members', 'chat_get_conversation',
+  'get_profile', 'profile_get', 'get_public_profile', 'get_followers', 'get_following',
+  'search_users', 'follow_suggestions', 'mutual_followers', 'status_list', 'feed_list',
+  'feed_following', 'get_contacts', 'contacts_list', 'chat_contacts', 'chat_users',
+  'chat_search_users', 'chat_discover_contacts', 'chat_call_history',
+]);
+function _ingestAvatarFrom(action, r) {
+  if (!r || typeof r !== 'object' || r.success === false || !_AVATAR_INGEST_ACTIONS.has(action)) return;
+  const data = r.data !== undefined ? r.data : r;
+  if (!data || typeof data !== 'object') return;
+  // fora do caminho crítico da resposta
+  setTimeout(() => {
+    try { require('./avatarVersions').ingestAvatarVersions(data); } catch {}
+  }, 0);
 }
 
 // Daily-rotating cache-bust fallback. When `bumpAvatarCache(email)` hasn't

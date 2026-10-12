@@ -202,6 +202,82 @@ export async function dismissConversationNotifications(conversationId) {
     }
   } catch {}
 }
+// [2026-10-12 push-parity] Server silent push `chat_notif_clear` (no title):
+//   kind=read    → this chat was read on ANOTHER device / the web (up_to = last
+//                  read id) → drop its banners here too (WhatsApp multi-device);
+//   kind=deleted → message_id was deleted for everyone → drop that banner;
+//   kind=edited  → Android native updates the text; iOS can't edit a delivered
+//                  banner → no-op.
+// Android binaries with the native handler consume it before JS ever sees it;
+// this path covers iOS (foreground handler + background task when the app is
+// suspended) and older Android binaries. Payload shapes vary (Expo `body` dict
+// or JSON string, APNs `body`) → shallow bounded search.
+function _findClearPayload(node, depth = 0) {
+  if (node == null || depth > 5) return null;
+  if (typeof node === 'string') {
+    const t = node.trim();
+    if (t.length > 2 && t.length < 8192 && t[0] === '{' && t.includes('chat_notif_clear')) {
+      try { return _findClearPayload(JSON.parse(t), depth + 1); } catch { return null; }
+    }
+    return null;
+  }
+  if (typeof node !== 'object') return null;
+  if (node.type === 'chat_notif_clear' && node.conversation_id != null) return node;
+  for (const k of Object.keys(node)) {
+    const r = _findClearPayload(node[k], depth + 1);
+    if (r) return r;
+  }
+  return null;
+}
+export function isNotifClearPayload(raw) {
+  try { return !!_findClearPayload(raw); } catch { return false; }
+}
+export async function applyNotifClear(raw) {
+  try {
+    if (Platform.OS === 'web') return false;
+    const d = _findClearPayload(raw);
+    if (!d) return false;
+    const cid = String(d.conversation_id ?? '');
+    if (!cid) return false;
+    const kind = String(d.kind || 'read');
+    if (kind !== 'read' && kind !== 'deleted') return true;
+    const upTo = Number(d.up_to) || 0;
+    const mid = String(d.message_id ?? '');
+    if (kind === 'read') { try { _nativeChat()?.dismissChatNotification?.(cid); } catch {} }
+    if (!Notifications) {
+      try { Notifications = await import('expo-notifications'); } catch { return false; }
+    }
+    if (!Notifications?.getPresentedNotificationsAsync) return false;
+    const presented = (await Notifications.getPresentedNotificationsAsync()) || [];
+    let cleared = 0;
+    for (const n of presented) {
+      const nd = n?.request?.content?.data || {};
+      if (String(nd.conversation_id ?? '') !== cid) continue;
+      if (nd.type === 'chat_notif_clear') continue;
+      const nMid = Number(nd.message_id) || 0;
+      const hit = kind === 'read'
+        ? (!upTo || !nMid || nMid <= upTo)
+        : (!!mid && String(nd.message_id ?? '') === mid && nd.type !== 'chat_reaction');
+      if (!hit) continue;
+      const id = n?.request?.identifier;
+      if (id) { try { await Notifications.dismissNotificationAsync(id); cleared++; } catch {} }
+    }
+    // The server sends the fresh badge with kind=read (iOS applies it itself);
+    // older servers don't → trim locally like dismissConversationNotifications.
+    if (cleared > 0 && kind === 'read' && d.badge == null && Notifications.getBadgeCountAsync && Notifications.setBadgeCountAsync) {
+      try {
+        const cur = await Notifications.getBadgeCountAsync();
+        const next = Math.max(0, (cur || 0) - cleared);
+        await Notifications.setBadgeCountAsync(next);
+        _mirrorBadge(next);
+      } catch {}
+    } else if (kind === 'read' && d.badge != null && Number.isFinite(Number(d.badge))) {
+      _mirrorBadge(Math.max(0, Number(d.badge)));
+    }
+    return true;
+  } catch { return false; }
+}
+
 // [2026-10-12 nav-dedup] `conversationId` (optional): only clear when it is
 // still the active one. After a chat→chat replace the OLD screen unmounts
 // AFTER the new one mounted; an unconditional clear wiped the new chat's id,
@@ -320,6 +396,19 @@ async function loadModules() {
         const data = notification.request?.content?.data;
 
         // Silent sync push — background data refresh, no visible notification
+        // [2026-10-12 push-parity] read elsewhere / deleted → clear banners,
+        // never show anything (the server badge still applies on iOS).
+        if (data?.type === 'chat_notif_clear') {
+          applyNotifClear(data).catch(() => {});
+          return {
+            shouldShowAlert: false,
+            shouldShowBanner: false,
+            shouldShowList: false,
+            shouldPlaySound: false,
+            shouldSetBadge: true,
+          };
+        }
+
         if (data?.type === 'silent_sync') {
           triggerBackgroundSync(data);
           return {
@@ -1091,6 +1180,19 @@ export async function registerForPushNotifications(opts = {}) {
         buttonTitle: L.markRead,
         options: { isDestructive: false, isAuthenticationRequired: false, opensAppToForeground: false },
       },
+      // [2026-10-12 push-parity] WhatsApp mute options straight from the banner
+      // (iOS shows all 4 on long-press; Android expo-rendered shows the first 3).
+      // Handled natively with the app killed (ChatNotifActions / ChatActionReceiver).
+      {
+        identifier: 'mute_8h',
+        buttonTitle: L.mute8h,
+        options: { isDestructive: false, isAuthenticationRequired: false, opensAppToForeground: false },
+      },
+      {
+        identifier: 'mute_1w',
+        buttonTitle: L.mute1w,
+        options: { isDestructive: false, isAuthenticationRequired: false, opensAppToForeground: false },
+      },
     ]);
 
     await Notifications.setNotificationCategoryAsync('new_email', [
@@ -1139,6 +1241,19 @@ export async function registerForPushNotifications(opts = {}) {
       {
         identifier: 'MARK_READ',
         buttonTitle: L.markRead,
+        options: { isDestructive: false, isAuthenticationRequired: false, opensAppToForeground: false },
+      },
+      // [2026-10-12 push-parity] WhatsApp mute options straight from the banner
+      // (iOS shows all 4 on long-press; Android expo-rendered shows the first 3).
+      // Handled natively with the app killed (ChatNotifActions / ChatActionReceiver).
+      {
+        identifier: 'mute_8h',
+        buttonTitle: L.mute8h,
+        options: { isDestructive: false, isAuthenticationRequired: false, opensAppToForeground: false },
+      },
+      {
+        identifier: 'mute_1w',
+        buttonTitle: L.mute1w,
         options: { isDestructive: false, isAuthenticationRequired: false, opensAppToForeground: false },
       },
     ]);
@@ -1636,16 +1751,26 @@ async function _deviceLangCode() {
     } catch {}
   }
   code = String(code || '').toLowerCase().slice(0, 2);
-  return ['pt', 'en', 'es'].includes(code) ? code : 'pt';
+  // [2026-10-12 push-parity] 11 app languages; also sent as `lang` with the
+  // push token so the server localizes previews (pt-BR/pt-PT → pt).
+  return ['pt', 'en', 'es', 'fr', 'de', 'it', 'ja', 'ar', 'id', 'hi'].includes(code) ? code : 'pt';
 }
 
 // Localized titles for the notification ACTION buttons. iOS/Android render
 // these natively from the registered category, so they must be literal strings
 // at registration time (re-registered on every registerForPushNotifications).
+// [2026-10-12 push-parity] 11 app languages (pt-BR/pt-PT → pt).
 const _NOTIF_ACTION_LABELS = {
-  pt: { reply: 'Responder', send: 'Enviar', placeholder: 'Mensagem...', markRead: 'Marcar como lida', view: 'Ver', mute8h: 'Silenciar 8h', snooze1h: 'Soneca 1h', replyMention: 'Responder menção...' },
-  en: { reply: 'Reply', send: 'Send', placeholder: 'Message...', markRead: 'Mark as read', view: 'View', mute8h: 'Mute 8h', snooze1h: 'Snooze 1h', replyMention: 'Reply to mention...' },
-  es: { reply: 'Responder', send: 'Enviar', placeholder: 'Mensaje...', markRead: 'Marcar como leído', view: 'Ver', mute8h: 'Silenciar 8h', snooze1h: 'Posponer 1h', replyMention: 'Responder mención...' },
+  pt: { reply: 'Responder', send: 'Enviar', placeholder: 'Mensagem...', markRead: 'Marcar como lida', view: 'Ver', mute8h: 'Silenciar 8h', mute1w: 'Silenciar 1 semana', snooze1h: 'Soneca 1h', replyMention: 'Responder menção...' },
+  en: { reply: 'Reply', send: 'Send', placeholder: 'Message...', markRead: 'Mark as read', view: 'View', mute8h: 'Mute 8h', mute1w: 'Mute 1 week', snooze1h: 'Snooze 1h', replyMention: 'Reply to mention...' },
+  es: { reply: 'Responder', send: 'Enviar', placeholder: 'Mensaje...', markRead: 'Marcar como leído', view: 'Ver', mute8h: 'Silenciar 8 h', mute1w: 'Silenciar 1 semana', snooze1h: 'Posponer 1h', replyMention: 'Responder mención...' },
+  fr: { reply: 'Répondre', send: 'Envoyer', placeholder: 'Message...', markRead: 'Marquer comme lu', view: 'Voir', mute8h: 'Silence 8 h', mute1w: 'Silence 1 semaine', snooze1h: 'Reporter 1 h', replyMention: 'Répondre à la mention...' },
+  de: { reply: 'Antworten', send: 'Senden', placeholder: 'Nachricht...', markRead: 'Als gelesen markieren', view: 'Ansehen', mute8h: '8 Std. stumm', mute1w: '1 Woche stumm', snooze1h: '1 Std. pausieren', replyMention: 'Auf Erwähnung antworten...' },
+  it: { reply: 'Rispondi', send: 'Invia', placeholder: 'Messaggio...', markRead: 'Segna come letto', view: 'Vedi', mute8h: 'Silenzia 8 h', mute1w: 'Silenzia 1 settimana', snooze1h: 'Posticipa 1 h', replyMention: 'Rispondi alla menzione...' },
+  ja: { reply: '返信', send: '送信', placeholder: 'メッセージ...', markRead: '既読にする', view: '表示', mute8h: '8時間ミュート', mute1w: '1週間ミュート', snooze1h: '1時間スヌーズ', replyMention: 'メンションに返信...' },
+  ar: { reply: 'رد', send: 'إرسال', placeholder: 'رسالة...', markRead: 'وضع علامة كمقروءة', view: 'عرض', mute8h: 'كتم 8 ساعات', mute1w: 'كتم أسبوع', snooze1h: 'غفوة ساعة', replyMention: 'الرد على الإشارة...' },
+  id: { reply: 'Balas', send: 'Kirim', placeholder: 'Pesan...', markRead: 'Tandai dibaca', view: 'Lihat', mute8h: 'Bisukan 8 jam', mute1w: 'Bisukan 1 minggu', snooze1h: 'Tunda 1 jam', replyMention: 'Balas sebutan...' },
+  hi: { reply: 'जवाब दें', send: 'भेजें', placeholder: 'मैसेज...', markRead: 'पढ़ा हुआ मार्क करें', view: 'देखें', mute8h: '8 घंटे म्यूट', mute1w: '1 हफ़्ते म्यूट', snooze1h: '1 घंटा स्नूज़', replyMention: 'मेंशन का जवाब दें...' },
 };
 async function _notifActionLabels() {
   const code = await _deviceLangCode();
@@ -2241,16 +2366,20 @@ export async function setupNotificationListeners() {
     // [notif-p0p1] Mute-from-notification (8h). Identifier `mute_8h` is
     // registered statically (chat_with_mute) and dynamically (NSE smart
     // category). Sends chat_user_conv_settings_set with mute_until = now+8h.
-    if (actionId === 'mute_8h' && data?.conversation_id) {
-      try {
-        const { apiCall } = require('./api');
-        const muteUntil = new Date(Date.now() + 8 * 60 * 60 * 1000).toISOString();
-        apiCall('chat_user_conv_settings_set', {
-          conversation_id: data.conversation_id,
-          mute_until: muteUntil,
-        }, 'POST').catch(() => {});
-      } catch {}
-      try { Notifications.dismissNotificationAsync(response.notification.request.identifier); } catch {}
+    // [2026-10-12 push-parity] + `mute_1w` (WhatsApp: 8 horas / 1 semana).
+    if ((actionId === 'mute_8h' || actionId === 'mute_1w') && data?.conversation_id) {
+      if (!_handledNatively(response)) {
+        try {
+          const { apiCall } = require('./api');
+          const hours = actionId === 'mute_1w' ? 7 * 24 : 8;
+          const muteUntil = new Date(Date.now() + hours * 60 * 60 * 1000).toISOString();
+          apiCall('chat_user_conv_settings_set', {
+            conversation_id: data.conversation_id,
+            mute_until: muteUntil,
+          }, 'POST').catch(() => {});
+        } catch {}
+      }
+      _dismissAfterChatAction(response, data.conversation_id);
       return;
     }
     // [notif-p0p1] Snooze user-level for 1h. Pushes for the next hour fold

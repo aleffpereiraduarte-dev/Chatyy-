@@ -11017,4 +11017,11 @@ export default {
   "callRating.send": "إرسال",
   "callRating.notNow": "ليس الآن",
   "callRating.starsA11y": "{n} من 5",
+  // [2026-10-12 chatlist-wa]
+  "chat.missedVoiceCall": "مكالمة صوتية فائتة",
+  "chat.missedVideoCall": "مكالمة فيديو فائتة",
+  "chat.pinLimitTitle": "حد الدردشات المثبتة",
+  "chat.pinLimitMsg": "يمكنك تثبيت {n} دردشات كحد أقصى.",
+  "chat.listSearchContacts": "جهات الاتصال",
+  "chat.archivedKeepInfo": "تظل هذه الدردشات مؤرشفة عند تلقي رسائل جديدة.",
 };

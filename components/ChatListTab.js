@@ -641,6 +641,8 @@ const ConversationRow = React.memo(function ConversationRow({
   // avatar stays a non-tappable visual element (legacy behavior).
   onAvatarPress,
 }) {
+  // QA perf probe (Playwright sets globalThis.__chatyyListProbe); no-op otherwise.
+  { const _pp = globalThis.__chatyyListProbe; if (_pp) _pp.row++; }
   const isGroup = conversation.type === 'group';
   const isChannel = conversation.type === 'channel';
   // For direct chats, check if the user has set a local nickname for the peer.
@@ -770,6 +772,7 @@ const ConversationRow = React.memo(function ConversationRow({
       return { preview: _tomb, previewSender: _who || null, statusType: null };
     }
 
+    let _callLabeled = false;
     let content = typeof lastMsg.content === 'string' ? lastMsg.content : (lastMsg.content ? JSON.stringify(lastMsg.content) : '');
     // Caption captured separately so media-type labels can surface real text
     // ("📷 sunset at the beach" instead of "📷 Foto").
@@ -810,10 +813,17 @@ const ConversationRow = React.memo(function ConversationRow({
           const _lbl = t('e2ee.listPreview');
           content = _pk != null ? _pk : (_lbl && _lbl !== 'e2ee.listPreview' ? _lbl : 'Mensagem criptografada');
         } else if (isCall) {
+          _callLabeled = true;
           const isVideo = parsed.call_type === 'video' || parsed.video === true;
-          const st = parsed.status || '';
-          if (st === 'missed' || st === 'declined' || st === 'rejected' || st === 'no_answer') {
-            content = '\uD83D\uDCDE ' + (t('chat.callMissed') || 'Chamada perdida');
+          const st = parsed.status || parsed.call_status || '';
+          // [2026-10-12 chatlist-wa] "perdida" only from the CALLEE's side —
+          // WhatsApp shows the caller a plain voice/video call row when the
+          // other side didn't pick up / declined.
+          const _caller = String(parsed.caller_email || parsed.from || lastMsg.sender_email || '').toLowerCase();
+          const _iCalled = !!_caller && _caller === _me;
+          if (!_iCalled && (st === 'missed' || st === 'declined' || st === 'rejected' || st === 'no_answer')) {
+            const _mk = isVideo ? t('chat.missedVideoCall') : t('chat.missedVoiceCall');
+            content = (isVideo ? '\uD83D\uDCF9 ' : '\uD83D\uDCDE ') + ((_mk && !/^chat\./.test(_mk)) ? _mk : (t('chat.callMissed') || 'Chamada perdida'));
           } else if (isVideo) {
             content = '\uD83D\uDCF9 ' + (t('chat.videoCall') || 'Chamada de v\u00EDdeo');
           } else {
@@ -830,6 +840,11 @@ const ConversationRow = React.memo(function ConversationRow({
         else if (parsed.type === 'contact' || lastMsg.type === 'contact') content = '\uD83D\uDC64 ' + (t('chat.contact') || 'Contato');
         else if (parsed.file_url || parsed.attachment_url || parsed.media_url || (parsed.url && parsed.mime_type)) {
           content = '\uD83D\uDCCE ' + (t('chat.attachment') || 'Anexo');
+        }
+        // Poll payload {question, options}: WhatsApp previews the question.
+        else if ((lastMsg.type === 'poll' || parsed.type === 'poll') && typeof parsed.question === 'string') {
+          if (!caption && parsed.question.trim()) caption = parsed.question.trim();
+          content = '';
         }
         else if (typeof parsed.text === 'string') content = parsed.text;
         else if (typeof parsed.body === 'string') content = parsed.body;
@@ -866,7 +881,7 @@ const ConversationRow = React.memo(function ConversationRow({
           : (t('chat.message') || 'Mensagem');
       }
     }
-    if (lastMsg.type === 'call_card' && !/Chamada/.test(content)) {
+    if (lastMsg.type === 'call_card' && !_callLabeled) {
       content = '\uD83D\uDCDE ' + (t('chat.voiceCall') || 'Chamada');
     }
     // [2026-10-05] Preview de foto/v\u00EDdeo: N\u00C3O mostrar nome de arquivo/URL (feio,
@@ -1649,6 +1664,17 @@ const ConversationRow = React.memo(function ConversationRow({
   if ((prevConv.unread_mentions || 0) !== (nextConv.unread_mentions || 0)) return false;
   if ((prevConv.last_message_at) !== (nextConv.last_message_at)) return false;
   if ((prevConv.display_name || prevConv.name) !== (nextConv.display_name || nextConv.name)) return false;
+  // [2026-10-12 chatlist-wa] Fields the row paints that the comparator used to
+  // ignore: a new group photo / peer avatar, archive state (swipe label),
+  // media kind/caption/duration edits, a language switch (t/locale) or theme
+  // colors left rows stale until a new message arrived.
+  if ((prevConv.avatar || '') !== (nextConv.avatar || '')) return false;
+  if (!!prevConv.archived !== !!nextConv.archived) return false;
+  if (prevConv.type !== nextConv.type) return false;
+  if ((prevConv.last_message?.type || '') !== (nextConv.last_message?.type || '')) return false;
+  if ((prevConv.last_message?.caption || '') !== (nextConv.last_message?.caption || '')) return false;
+  if ((prevConv.last_message?.duration || 0) !== (nextConv.last_message?.duration || 0)) return false;
+  if (prev.t !== next.t || prev.language !== next.language || prev.colors !== next.colors) return false;
 
   // Compare typing only for THIS conversation, not all (comparing all caused every row to re-render when anyone typed)
   // typingUsers[convId] is a per-typer object array; compare by a signature of
@@ -3218,7 +3244,90 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab, reque
   );
 }
 
+let _webConvCacheTimer = null;
+let _webConvCacheLatest = null;
+function _scheduleWebConvCache(list) {
+  _webConvCacheLatest = list;
+  if (_webConvCacheTimer) return;
+  _webConvCacheTimer = setTimeout(() => {
+    _webConvCacheTimer = null;
+    const l = _webConvCacheLatest; _webConvCacheLatest = null;
+    try { if (l) cacheConversations(l).catch(() => {}); } catch {}
+  }, 1500);
+}
+
+// [2026-10-12 chatlist-wa] Search results: bold the matched term (WhatsApp)
+// and center long message snippets on the match so it is actually visible.
+function _foldIdx(text, q) {
+  const fold = (v) => String(v || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+  const ft = fold(text), fq = fold(q);
+  // NFD folding can change lengths when the source had precomposed accents;
+  // only trust the index when lengths line up, else fall back to plain search.
+  if (!fq) return -1;
+  if (ft.length === String(text || '').length) return ft.indexOf(fq);
+  return String(text || '').toLowerCase().indexOf(String(q || '').toLowerCase());
+}
+function _snippetAround(text, q, max = 90) {
+  const str = String(text || '');
+  if (str.length <= max) return str;
+  const i = _foldIdx(str, q);
+  if (i < 30) return str;
+  return '…' + str.slice(Math.max(0, i - 25));
+}
+function _highlightQuery(text, q, color) {
+  const str = String(text || '');
+  const qq = String(q || '').trim();
+  if (!qq || !str) return str;
+  const i = _foldIdx(str, qq);
+  if (i < 0) return str;
+  return (
+    <>
+      {str.slice(0, i)}
+      <Text style={{ fontWeight: '700', color }}>{str.slice(i, i + qq.length)}</Text>
+      {str.slice(i + qq.length)}
+    </>
+  );
+}
+
+// [2026-10-12 chatlist-wa perf] Server refreshes (focus / background delta)
+// return brand-new objects for EVERY conversation, so each refresh handed the
+// list 500 new row identities. Reuse the previous object whenever the fields a
+// row actually paints are unchanged; when nothing changed at all (same order,
+// same rows) return the previous ARRAY so React bails out entirely.
+function _sameVal(x, y) {
+  if (x === y) return true;
+  if (x == null || y == null) return (x ?? null) === (y ?? null);
+  if (typeof x !== 'object' || typeof y !== 'object') return false;
+  try { return JSON.stringify(x) === JSON.stringify(y); } catch { return false; }
+}
+// Full shallow compare (nested objects/arrays by value) — never keeps a stale
+// field: ANY difference anywhere hands the row the fresh server object.
+function _sameConvRow(a, b) {
+  if (a === b) return true;
+  if (!a || !b || a.id !== b.id) return false;
+  const ka = Object.keys(a), kb = Object.keys(b);
+  if (ka.length !== kb.length) return false;
+  for (const k of ka) if (!_sameVal(a[k], b[k])) return false;
+  return true;
+}
+function _reuseConvRows(prev, next) {
+  if (!Array.isArray(prev) || !Array.isArray(next) || prev.length === 0) return next;
+  const byId = new Map();
+  for (const p of prev) if (p && p.id != null) byId.set(p.id, p);
+  let allSame = prev.length === next.length;
+  const out = new Array(next.length);
+  for (let i = 0; i < next.length; i++) {
+    const n = next[i];
+    const o = n ? byId.get(n.id) : null;
+    const keep = o && _sameConvRow(o, n);
+    out[i] = keep ? o : n;
+    if (allSame && out[i] !== prev[i]) allSame = false;
+  }
+  return allSame ? prev : out;
+}
+
 function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuery = '', setActiveTab, requestOpenStatus, requestNewStatus, largeTitle, onLargeTitleCollapsedChange, bottomInset = 0 }) {
+  { const _pp = globalThis.__chatyyListProbe; if (_pp) _pp.list++; }
   // [2026-10-08 chat-beauty-list] Neutral B&W surface for everything the list
   // paints (rows, chips, sheets): near-black #0b0b0b in dark instead of the
   // global navy, neutral greys instead of the bluish WhatsApp text tones.
@@ -3459,6 +3568,29 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
     return () => clearTimeout(id);
   }, [searchQuery]);
   const [filter, setFilter] = useState('all');
+  // [2026-10-12 chatlist-wa] WhatsApp "Manter conversas arquivadas" (Settings →
+  // Conversas, server chat_user_privacy.keep_archived, default TRUE). The WS
+  // handler used to ALWAYS pull an archived chat back to the main list on a new
+  // message AND persist chatArchive(false) — overriding the user's setting (the
+  // server itself never un-archives unless keep_archived is OFF). Read once per
+  // mount + on focus (throttled) so a toggle in Settings applies on return.
+  const keepArchivedRef = useRef(true);
+  const [keepArchived, setKeepArchived] = useState(true);
+  const _keepArchFetchedAt = useRef(0);
+  const refreshKeepArchived = useCallback(() => {
+    const now = Date.now();
+    if (now - _keepArchFetchedAt.current < 60000) return;
+    _keepArchFetchedAt.current = now;
+    try {
+      api.chatPrivacyGet?.().then((r) => {
+        if (r?.success && r.data && r.data.keep_archived !== undefined && r.data.keep_archived !== null) {
+          keepArchivedRef.current = !(r.data.keep_archived === false || r.data.keep_archived === 0 || r.data.keep_archived === 'f' || r.data.keep_archived === '0');
+          setKeepArchived(keepArchivedRef.current);
+        }
+      }).catch(() => {});
+    } catch {}
+  }, []);
+  useEffect(() => { refreshKeepArchived(); }, [refreshKeepArchived]);
   const presencesRef = useRef(new Map());
   const [presenceVersion, setPresenceVersion] = useState(0);
   // [FIX P2] Real-time online-dot repaint. presenceVersion is deliberately kept
@@ -3738,40 +3870,77 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
     ]);
   }, [selectedIds, t, exitSelectionMode]);
 
-  const handleBulkArchive = useCallback(async () => {
+  // [2026-10-12 chatlist-wa] Bulk actions, WhatsApp semantics:
+  //  - optimistic + parallel (was N sequential awaits before the UI moved);
+  //  - archive toggles: inside "Arquivadas" it un-archives;
+  //  - mute: if every selected chat is muted → unmute all, else mute all
+  //    "sempre" (the server toggles when mute_until is omitted, so a mixed
+  //    selection used to flip the already-muted ones back ON);
+  //  - pin: all pinned → unpin; else pin, refusing past MAX_PINNED_CHATS.
+  const handleBulkArchive = useCallback(() => {
     const ids = [...selectedIds];
-    for (const id of ids) {
-      try { await api.chatArchive(id, true); } catch {}
+    if (!ids.length) return;
+    const sel = new Set(ids);
+    const unarchive = filter === 'archived';
+    try { LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut); } catch {}
+    if (unarchive) {
+      setArchivedConversations(prev => {
+        const moved = prev.filter(c => sel.has(c.id));
+        if (moved.length) setConversations(cv => [...moved.map(c => ({ ...c, archived: 0 })), ...cv.filter(c => !sel.has(c.id))]);
+        return prev.filter(c => !sel.has(c.id));
+      });
+    } else {
+      setConversations(prev => {
+        const moved = prev.filter(c => sel.has(c.id));
+        if (moved.length) setArchivedConversations(ar => [...ar.filter(c => !sel.has(c.id)), ...moved.map(c => ({ ...c, archived: 1 }))]);
+        return prev.filter(c => !sel.has(c.id));
+      });
     }
-    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
-    setConversations(prev => {
-      const moved = prev.filter(c => selectedIds.has(c.id));
-      setArchivedConversations(ar => [...ar, ...moved.map(c => ({ ...c, archived: 1 }))]);
-      return prev.filter(c => !selectedIds.has(c.id));
-    });
     exitSelectionMode();
-  }, [selectedIds, exitSelectionMode]);
+    Promise.all(ids.map(id => api.chatArchive(id, !unarchive).catch(() => null)))
+      .then((rs) => { if (rs.some(r => !r || r.success === false)) loadConvRef.current?.(false); });
+  }, [selectedIds, exitSelectionMode, filter]);
 
-  const handleBulkMute = useCallback(async () => {
+  const handleBulkMute = useCallback(() => {
     const ids = [...selectedIds];
-    for (const id of ids) {
-      try { await api.chatMute(id); } catch {}
-    }
-    loadConversations(false);
+    if (!ids.length) return;
+    const sel = new Set(ids);
+    const pool = filter === 'archived' ? archivedConversations : conversations;
+    const chosen = pool.filter(c => sel.has(c.id));
+    const unmute = chosen.length > 0 && chosen.every(c => !!c.muted);
+    const until = unmute ? 0 : 4070908800; // 0 = unmute, 2099 = "sempre"
+    const patch = (arr) => arr.map(c => (sel.has(c.id) ? { ...c, muted: unmute ? 0 : 1, mute_until: unmute ? null : until } : c));
+    setConversations(patch);
+    setArchivedConversations(patch);
     exitSelectionMode();
-  }, [selectedIds, exitSelectionMode]);
+    Promise.all(ids.map(id => api.chatMute(id, until).catch(() => null)))
+      .then(() => loadConvRef.current?.(false));
+  }, [selectedIds, exitSelectionMode, filter, conversations, archivedConversations]);
 
-  const handleBulkPin = useCallback(async () => {
+  const handleBulkPin = useCallback(() => {
     const ids = [...selectedIds];
-    for (const id of ids) {
-      // [2026-06-04] usava api.chatPin(id) — esse action fixa MENSAGEM (exige
-      // message_id) → 400 silencioso e o bulk-pin nunca fixava nada (caçada
-      // R2). Fixar CONVERSA é chat_pin_conversation (igual handlePinConversation).
-      try { await api.apiCall('chat_pin_conversation', { conversation_id: id, pinned: true }, 'POST'); } catch {}
+    if (!ids.length) return;
+    const sel = new Set(ids);
+    const chosen = conversations.filter(c => sel.has(c.id));
+    const unpin = chosen.length > 0 && chosen.every(c => !!c.pinned);
+    if (!unpin) {
+      const already = conversations.filter(c => !!c.pinned && !sel.has(c.id)).length;
+      if (already + chosen.length > MAX_PINNED_CHATS) {
+        safeAlert(
+          t('chat.pinLimitTitle') || 'Limite de conversas fixadas',
+          (t('chat.pinLimitMsg') || 'Você só pode fixar até {n} conversas.').replace('{n}', String(MAX_PINNED_CHATS)),
+          [{ text: t('common.ok') || 'OK' }],
+        );
+        return;
+      }
     }
-    loadConversations(false);
+    setConversations(prev => prev.map(c => (sel.has(c.id) ? { ...c, pinned: unpin ? 0 : 1 } : c)));
     exitSelectionMode();
-  }, [selectedIds, exitSelectionMode]);
+    // [2026-06-04] chat_pin fixa MENSAGEM; conversa = chat_pin_conversation
+    // (set explícito, não toggle).
+    Promise.all(ids.map(id => api.apiCall('chat_pin_conversation', { conversation_id: id, pinned: !unpin }, 'POST').catch(() => null)))
+      .then(() => loadConvRef.current?.(false));
+  }, [selectedIds, exitSelectionMode, conversations, t]);
 
   // Toggle read/unread on the selected chats. Mirrors WhatsApp: if any
   // selected chat has unread, the action marks ALL as read; if all are
@@ -3781,12 +3950,14 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
   const handleBulkToggleUnread = useCallback(async () => {
     const ids = [...selectedIds];
     if (ids.length === 0) return;
-    const selected = conversations.filter(c => selectedIds.has(c.id));
+    const selected = (filter === 'archived' ? archivedConversations : conversations).filter(c => selectedIds.has(c.id));
     const anyUnread = selected.some(c => (c.unread_count || 0) > 0);
-    setConversations(prev => prev.map(c => {
+    const _patchUnread = (prev) => prev.map(c => {
       if (!selectedIds.has(c.id)) return c;
       return anyUnread ? { ...c, unread_count: 0 } : { ...c, unread_count: Math.max(c.unread_count || 0, 1) };
-    }));
+    });
+    setConversations(_patchUnread);
+    setArchivedConversations(_patchUnread);
     for (const id of ids) {
       try {
         if (anyUnread) await api.chatReadAck?.(id);
@@ -3795,7 +3966,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
     }
     loadConversations(false);
     exitSelectionMode();
-  }, [selectedIds, conversations, exitSelectionMode]);
+  }, [selectedIds, conversations, archivedConversations, filter, exitSelectionMode]);
 
   const loadConversations = useCallback(async (showLoader) => {
     // Single-flight sequencing: focus + refresh + WS fallback + search debounce
@@ -3843,7 +4014,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
         setConversations(prev => {
           if (!Array.isArray(prev) || prev.length === 0) return _active;
           const prevById = new Map(prev.map(p => [p.id, p]));
-          return _active.map(c => {
+          return _reuseConvRows(prev, _active.map(c => {
             const old = prevById.get(c.id);
             if (!old) return c;
             const oldLm = old.last_message || {};
@@ -3862,9 +4033,9 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
               : { ...c };
             base.unread_count = Math.max(c.unread_count || 0, old.unread_count || 0);
             return base;
-          });
+          }));
         });
-        setArchivedConversations(_arch);
+        setArchivedConversations(prev => _reuseConvRows(prev, _arch));
         cacheConversations(convs).catch(() => {});
         _saveNativeConversations(convs);
       }).catch((e) => {
@@ -4210,8 +4381,10 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
             // the Archived list too (was only ever updating the active list).
             const _active = []; const _arch = [];
             for (const c of convs) (c.archived ? _arch : _active).push(c);
-            setConversations(_active);
-            setArchivedConversations(_arch);
+            // [2026-10-12 perf] keep the previous object for rows that did not
+            // change → memoized rows skip, the list doesn't re-diff 500 cells.
+            setConversations(prev => _reuseConvRows(prev, _active));
+            setArchivedConversations(prev => _reuseConvRows(prev, _arch));
             cacheConversations(convs).catch(() => {});
           }
         }
@@ -4238,7 +4411,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
     }).catch(() => {});
   }, []);
   useEffect(() => { refreshLockedIds(); }, [refreshLockedIds]);
-  useFocusEffect(useCallback(() => { refreshLockedIds(); }, [refreshLockedIds]));
+  useFocusEffect(useCallback(() => { refreshLockedIds(); refreshKeepArchived(); }, [refreshLockedIds, refreshKeepArchived]));
   // Rows flagged `locked` by the server (another device locked it) join the
   // id-set. ADD-ONLY on purpose: a stale cached row must never un-hide a
   // locked chat — removals come from 'chatyy:lockChanged' (this device) and
@@ -4526,14 +4699,17 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
           // below can re-insert it with full metadata instead of building a
           // bare placeholder.
           let unarchivedConv = null;
+          let keptInArchive = false;
           setArchivedConversations(prevArch => {
             const ai = prevArch.findIndex(c => c.id == data.conversation_id || c.conversation_id == data.conversation_id);
             if (ai === -1) return prevArch;
-            // WhatsApp parity: a MUTED archived chat stays archived when a new
-            // message lands — muting is the user's explicit "leave it in the
-            // archive" signal. We just bump its last_message in place so the
-            // archived bucket shows the fresh preview, and skip the promote.
-            if (prevArch[ai].muted) {
+            // WhatsApp parity: an archived chat STAYS archived when a new
+            // message lands while "Manter conversas arquivadas" is ON (the
+            // default) — and a MUTED one always stays. We just bump its
+            // last_message in place so the archived bucket shows the fresh
+            // preview, and skip the promote.
+            if (keepArchivedRef.current || prevArch[ai].muted) {
+              keptInArchive = true;
               const senderLc = String(data.sender_email || data.sender || '').toLowerCase();
               const meLc = String(user?.email || '').toLowerCase();
               const nextArch = [...prevArch];
@@ -4564,9 +4740,8 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
               return nextArch;
             }
             unarchivedConv = { ...prevArch[ai], archived: 0 };
-            // Persist the unarchive server-side so the next chat_list fetch
-            // doesn't bounce the conv back into the archived bucket.
-            try { api.chatArchive(unarchivedConv.id, false).catch(() => {}); } catch {}
+            // keep_archived OFF: chat_send already flipped archived=0 for us
+            // server-side (chat.php keep_archived block) — no client write.
             const nextArch = [...prevArch];
             nextArch.splice(ai, 1);
             return nextArch;
@@ -4574,6 +4749,9 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
           let nextConvsForCache = null;
           setConversations(prev => {
             const idx = prev.findIndex(c => c.id == data.conversation_id || c.conversation_id == data.conversation_id);
+            // Stayed in the archive (keep_archived / muted): never mint a
+            // placeholder for it in the main list.
+            if (idx === -1 && keptInArchive) return prev;
             if (idx === -1 && unarchivedConv) {
               // Conv was archived — promote it to top with the fresh msg.
               const senderLc = String(data.sender_email || data.sender || '').toLowerCase();
@@ -4681,7 +4859,9 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
           // placeholder branch already triggers loadConversations(false), which
           // caches on its own — so only the promoted/updated paths need this.
           if (Platform.OS === 'web' && nextConvsForCache) {
-            try { cacheConversations(nextConvsForCache).catch(() => {}); } catch {}
+            // [2026-10-12 perf] trailing debounce: a burst of N messages did N
+            // JSON.stringify(100 convs)×2 + IndexedDB writes on the main thread.
+            _scheduleWebConvCache(nextConvsForCache);
           }
         }, 0));
       };
@@ -5427,19 +5607,24 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
 
   const handleArchiveConversation = useCallback(async (conv) => {
     const newArchived = !conv.archived;
+    // [2026-10-12 chatlist-wa] Optimistic (WhatsApp: the row leaves instantly
+    // on swipe) — was waiting the round-trip, so the swiped row snapped back
+    // and sat there ~300 ms. Reverts if the server refuses.
+    const move = (toArchive) => {
+      try { LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut); } catch {}
+      if (toArchive) {
+        setConversations(prev => prev.filter(c => c.id !== conv.id));
+        setArchivedConversations(prev => [...prev.filter(c => c.id !== conv.id), { ...conv, archived: 1 }]);
+      } else {
+        setArchivedConversations(prev => prev.filter(c => c.id !== conv.id));
+        setConversations(prev => [{ ...conv, archived: 0 }, ...prev.filter(c => c.id !== conv.id)]);
+      }
+    };
+    move(newArchived);
     try {
       const r = await api.chatArchive(conv.id, newArchived);
-      if (r.success) {
-        LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
-        if (newArchived) {
-          setConversations(prev => prev.filter(c => c.id !== conv.id));
-          setArchivedConversations(prev => [...prev, { ...conv, archived: 1 }]);
-        } else {
-          setArchivedConversations(prev => prev.filter(c => c.id !== conv.id));
-          setConversations(prev => [{ ...conv, archived: 0 }, ...prev]);
-        }
-      }
-    } catch {}
+      if (!r?.success) move(!newArchived);
+    } catch { move(!newArchived); }
   }, []);
 
   const handleMuteConversation = useCallback(async (conv, untilEpoch) => {
@@ -5469,11 +5654,14 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
     if (willPin) {
       const currentPins = conversations.filter(c => !!c.pinned && c.id !== conv.id);
       if (currentPins.length >= MAX_PINNED_CHATS) {
-        const _recency = (c) => new Date(
-          c.last_message_at || c.last_message?.created_at || c.updated_at || c.last_activity || 0
-        ).getTime();
-        const oldest = currentPins.slice().sort((a, b) => _recency(a) - _recency(b))[0];
-        displaceId = oldest?.id || null;
+        // [2026-10-12] Founder: igual WhatsApp — bloqueia com aviso em vez de
+        // desafixar a mais antiga em silêncio.
+        safeAlert(
+          t('chat.pinLimitTitle') || 'Limite de conversas fixadas',
+          (t('chat.pinLimitMsg') || 'Você só pode fixar até {n} conversas.').replace('{n}', String(MAX_PINNED_CHATS)),
+          [{ text: t('common.ok') || 'OK' }],
+        );
+        return;
       }
     }
 
@@ -5504,7 +5692,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
         return c;
       }));
     }
-  }, [conversations, loadConversations]);
+  }, [conversations, loadConversations, t]);
 
   // [2026-10-06 UX2] Toggle read/unread. Every caller (swipe, long-press
   // sheet, ActionSheet) already renders a toggle-aware label
@@ -5938,11 +6126,26 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
     router.push(`/compose?${params.toString()}`);
   }, [router, user?.email]);
 
-  const unreadCount = useMemo(() => conversations.filter(c => c.unread_count > 0).length, [conversations]);
-  const groupCount = useMemo(() => conversations.filter(c => c.type === 'group').length, [conversations]);
-  const channelCount = useMemo(() => conversations.filter(c => c.type === 'channel').length, [conversations]);
-  const favoritesCount = useMemo(() => conversations.filter(c => c.pinned).length, [conversations]);
+  // [2026-10-12 chatlist-wa] Chip counts = exactly what tapping the chip shows:
+  // locked chats live in their own folder (never in the filtered lists), so
+  // they must not inflate "Não lidas (N)" etc. One pass instead of 4 filters.
+  const { unreadCount, groupCount, channelCount, favoritesCount } = useMemo(() => {
+    let u = 0, g = 0, ch = 0, f = 0;
+    for (const c of conversations) {
+      if (!c || c.locked || lockedIds.has(c.id)) continue;
+      if (c.unread_count > 0) u++;
+      if (c.type === 'group') g++;
+      else if (c.type === 'channel') ch++;
+      if (c.pinned) f++;
+    }
+    return { unreadCount: u, groupCount: g, channelCount: ch, favoritesCount: f };
+  }, [conversations, lockedIds]);
   const archivedCount = archivedConversations.length;
+  const archivedUnreadCount = useMemo(() => {
+    let n = 0;
+    for (const c of archivedConversations) if (c && (c.unread_count || 0) > 0 && !c.muted) n++;
+    return n;
+  }, [archivedConversations]);
 
   // ─── Pinned avatar grid: user-defined order + size ───
   // Persisted per user in AsyncStorage (chatyy:pinned_order_v1 = id[],
@@ -6169,7 +6372,10 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
   const lockedCount = lockedConversations.length;
 
   const filteredConversations = useMemo(() => {
-    if (filter === 'archived') return archivedConversations;
+    // [2026-10-12 chatlist-wa] "Arquivadas" used to return the raw bucket:
+    // unsorted (archive/WS appends landed at the bottom) and ignoring the
+    // search box. It now goes through the same search + recency sort below.
+    const _isArchView = filter === 'archived';
     // Dedicated "locked" pseudo-filter (entered by tapping the hidden
     // section footer). Lives outside the standard partition so locked
     // rows never leak into search/unread/folder filters.
@@ -6191,7 +6397,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
     // up as "Desconhecido / Nenhuma mensagem" rows. They get created when a
     // chat is initiated but never receives a message and the peer email
     // wasn't persisted; pure clutter for the user.
-    let list = conversations.filter(c => {
+    let list = (_isArchView ? archivedConversations : conversations).filter(c => {
       // Locked chats live in the dedicated hidden folder. Excluding them
       // here keeps the main list free of "redacted" rows that would
       // otherwise leak metadata (timestamp, unread count) to a shoulder-
@@ -6280,17 +6486,23 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
     // updated_at. Fall back so the re-sort doesn't collapse to a no-op (which
     // would freeze the list order on stale data).
     const _sortKey = (c) => String(c.last_message_at || c.last_message?.created_at || c.updated_at || '');
-    list.sort((a, b) => {
-      const aPinned = (a.pinned || isSelfChat(a)) ? 1 : 0;
-      const bPinned = (b.pinned || isSelfChat(b)) ? 1 : 0;
-      if (aPinned !== bPinned) return bPinned - aPinned;
+    // [2026-10-12 perf] decorate once: the comparator used to Date.parse +
+    // isSelfChat both sides on every comparison (~2·n·log n parses per WS
+    // message on a 500-chat list).
+    const _pinK = new Map(); const _timeK = new Map();
+    for (const c of list) {
+      _pinK.set(c, (c.pinned || isSelfChat(c)) ? 1 : 0);
       // Compare numerically by parsed time, NOT localeCompare on the ISO
       // string: a millisecond stamp "...17.789Z" vs "...17Z" compares wrong
       // lexically ('.' < 'Z'), sinking an optimistic just-sent row below
       // same-second server rows. Date.parse folds both to epoch ms.
-      const ka = Date.parse(_sortKey(a)) || 0;
-      const kb = Date.parse(_sortKey(b)) || 0;
-      return kb - ka;
+      _timeK.set(c, Date.parse(_sortKey(c)) || 0);
+    }
+    list.sort((a, b) => {
+      const aPinned = _pinK.get(a);
+      const bPinned = _pinK.get(b);
+      if (aPinned !== bPinned) return bPinned - aPinned;
+      return _timeK.get(b) - _timeK.get(a);
     });
     return list;
   }, [filter, conversations, archivedConversations, lockedConversations, lockedIds, debouncedQuery, chatFolders, user?.email]);
@@ -6453,6 +6665,55 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
     }, 300);
     return () => clearTimeout(timer);
   }, [searchQuery]);
+
+  // [2026-10-12 chatlist-wa] WhatsApp search has 3 sections: Conversas,
+  // Contatos (people on Chatyy you have NO chat with yet) and Mensagens. The
+  // contacts section was missing — you could only reach a new person via the
+  // "+" flow. Sources: agenda matches cached by contactSync (native, already
+  // consented) + the chatyy_users directory search (same one chat-new uses).
+  const [contactHits, setContactHits] = useState([]);
+  const contactSearchReqId = useRef(0);
+  useEffect(() => {
+    const q = (searchQuery || '').trim();
+    const myId = ++contactSearchReqId.current;
+    if (q.length < 2 || filter === 'archived' || filter === 'locked') { setContactHits([]); return undefined; }
+    const strip = (v) => String(v || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+    const nq = strip(q);
+    const meLc = String(user?.email || '').toLowerCase();
+    const chatPeers = new Set();
+    for (const c of _searchConvIndexRef.current.values()) {
+      if (!c || c.type !== 'direct') continue;
+      const pe = String(c.other_email || c.contact_email || '').toLowerCase();
+      if (pe) chatPeers.add(pe);
+    }
+    const out = new Map();
+    const add = (email, name) => {
+      const em = String(email || '').toLowerCase();
+      if (!em || em === meLc || chatPeers.has(em) || out.has(em)) return;
+      const nm = emailToDisplayName(String(name || '').trim() || em) || em;
+      if (!strip(nm).includes(nq) && !strip(em).includes(nq)) return;
+      out.set(em, { email: em, name: nm });
+    };
+    let cancelled = false;
+    const timer = setTimeout(async () => {
+      if (Platform.OS !== 'web') {
+        try {
+          const cached = await require('../services/contactSync').getCachedContacts();
+          for (const c of (cached?.chatyContacts || [])) add(c.email, c.name);
+        } catch {}
+      }
+      if (cancelled || myId !== contactSearchReqId.current) return;
+      if (out.size) setContactHits(Array.from(out.values()).slice(0, 8));
+      try {
+        const r = await api.chatyyUsers(q, 12);
+        if (cancelled || myId !== contactSearchReqId.current) return;
+        for (const u of (r?.data?.users || [])) add(u.email, u.name);
+      } catch {}
+      if (cancelled || myId !== contactSearchReqId.current) return;
+      setContactHits(Array.from(out.values()).slice(0, 8));
+    }, 250);
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [searchQuery, filter, user?.email]);
 
   const pinnedCount = useMemo(() => filteredConversations.filter(c => c.pinned).length, [filteredConversations]);
 
@@ -7078,9 +7339,13 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
             {t('chat.archived') || 'Arquivadas'}
           </Text>
         </View>
-        <View style={s.archivedCountBadge}>
-          <Text maxFontSizeMultiplier={1.3} style={[s.archivedCountText, { color: P.sub }]}>{archivedCount}</Text>
-        </View>
+        {/* [2026-10-12 chatlist-wa] WhatsApp: the Arquivadas row counts the
+            archived chats with UNREAD messages (bold), not the archive size. */}
+        {archivedUnreadCount > 0 ? (
+          <View style={s.archivedCountBadge}>
+            <Text maxFontSizeMultiplier={1.3} style={[s.archivedCountText, { color: P.text, fontWeight: '700' }]}>{archivedUnreadCount}</Text>
+          </View>
+        ) : null}
       </TouchableOpacity>
     );
   };
@@ -7412,6 +7677,11 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
         <StatusStoriesRow colors={colors} isDark={isDark} user={user} router={router} t={t} setActiveTab={setActiveTab} requestOpenStatus={requestOpenStatus} requestNewStatus={requestNewStatus} />
       )}
       {renderArchivedHeader()}
+      {filter === 'archived' && archivedCount > 0 && keepArchived ? (
+        <Text maxFontSizeMultiplier={1.3} style={{ fontSize: 13, color: P.sub, textAlign: 'center', paddingHorizontal: 32, paddingVertical: 10 }}>
+          {t('chat.archivedKeepInfo') || 'Essas conversas continuam arquivadas quando você recebe novas mensagens.'}
+        </Text>
+      ) : null}
       {renderLockedHeader()}
       {/* Contact-discovery banner (WhatsApp pattern) — auto-shown only on
           native and only if not dismissed in the last 7 days. Tap → opens
@@ -7494,7 +7764,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
   ), [filter, pinnedCount, isDark, colors, t, archivedCount, lockedCount, searchQuery, debouncedQuery, secretCode, filteredConversations.length, user, router, pinnedAvatarsMode, pinnedConversations, selectionMode, selectedIds, handleConversationPress, enterSelectionMode, toggleSelected, contactBanner, contactBannerSyncing, handleContactBannerPress, dismissContactBanner, pinnedEditMode, pinnedSize, pinnedSizes, pinDraggingId, typingUsers, lockedIds, unlockedIds,
     // [2026-10-08 offline-first] banners rendered inside this header were missing
     // from the deps → their show/hide only landed on an unrelated re-render.
-    wsDownBanner, netOffline, syncingBadge, loadError, loading, reactionToast]);
+    wsDownBanner, netOffline, syncingBadge, loadError, loading, reactionToast, keepArchived, P, archivedUnreadCount]);
 
   // Footer: "MENSAGENS" section with chat_search hits, shown when searching
   const ListFooterComponent = useMemo(() => {
@@ -7502,6 +7772,31 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
     if (sq.length < 2) return null;
     return (
       <View style={{ paddingTop: 8 }}>
+        {contactHits.length > 0 && (
+          <View style={{ paddingBottom: 6 }}>
+            <View style={{ paddingHorizontal: 16, paddingVertical: 8 }}>
+              <Text style={{ fontSize: 13, fontWeight: '700', color: colors.textSecondary, letterSpacing: 0.3, textTransform: 'uppercase' }}>
+                {t('chat.listSearchContacts') || 'Contatos'}
+              </Text>
+            </View>
+            {contactHits.map((ch) => (
+              <TouchableOpacity
+                key={`ct-${ch.email}`}
+                onPress={() => require('../services/openConversation').openConversation(
+                  `/chat-conversation?name=${encodeURIComponent(ch.name || '')}&email=${encodeURIComponent(ch.email)}&type=direct`, { router })}
+                activeOpacity={0.7}
+                accessibilityRole="button"
+                style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 8, gap: 12 }}
+              >
+                <AvatarCircle name={ch.name || ch.email} email={ch.email} size={40} />
+                <View style={{ flex: 1 }}>
+                  <Text style={{ fontSize: 15, fontWeight: '600', color: colors.text }} numberOfLines={1}>{_highlightQuery(ch.name, sq, colors.text)}</Text>
+                  <Text style={{ fontSize: 13, color: P.sub }} numberOfLines={1}>{ch.email}</Text>
+                </View>
+              </TouchableOpacity>
+            ))}
+          </View>
+        )}
         <View style={{ paddingHorizontal: 16, paddingVertical: 8, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
           <Text style={{ fontSize: 13, fontWeight: '700', color: colors.textSecondary, letterSpacing: 0.3, textTransform: 'uppercase' }}>
             {t('chat.listSearchMessages')}
@@ -7572,7 +7867,9 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
                 pathname: '/chat-conversation',
                 params: {
                   id: String(hit.conversation_id),
-                  name: encodeURIComponent(convName || ''),
+                  // object params are encoded by the router — encoding here
+                  // too showed "Ana%20Paula" in the conversation header.
+                  name: convName || '',
                   type: hitType,
                   ...(peerEmail ? { email: peerEmail } : {}),
                   scrollToMessageId: String(hit.id),
@@ -7604,7 +7901,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
                   </Text>
                 </View>
                 <Text style={{ fontSize: 13, color: isDark ? 'rgba(255,255,255,0.6)' : 'rgba(0,0,0,0.55)', marginTop: 2 }} numberOfLines={2}>
-                  {snippet}
+                  {_highlightQuery(_snippetAround(snippet, sq), sq, colors.text)}
                 </Text>
               </View>
             </TouchableOpacity>
@@ -7612,7 +7909,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
         })}
       </View>
     );
-  }, [searchQuery, messageHits, searchingMessages, isDark, colors, router, wsDownBanner, t, hasDraftSection, draftConversations.length, draftsSectionOpen, language, P, conversations, user?.email]);
+  }, [searchQuery, messageHits, searchingMessages, isDark, colors, router, wsDownBanner, t, hasDraftSection, draftConversations.length, draftsSectionOpen, language, P, conversations, user?.email, contactHits]);
 
   // [2026-10-07 welcome] Smart empty state: friends already on Chatyy +
   // Nova conversa / Convidar + Saved Messages tip. With a filter/search (or
@@ -7622,12 +7919,15 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
     || (Array.isArray(conversations) && conversations.length > 0);
   const _emptyClearFilter = useCallback(() => { setFilter('all'); }, []);
   const _emptyNewGroup = useCallback(() => { setShowCreateGroup(true); }, []);
-  const ListEmptyComponent = useMemo(() => loading ? null : (
+  // Searching and only CONTATOS/MENSAGENS matched: no big "nothing found"
+  // illustration above real results (the footer sections carry them).
+  const _searchHasOtherHits = !!String(searchQuery || '').trim() && (contactHits.length > 0 || messageHits.length > 0);
+  const ListEmptyComponent = useMemo(() => (loading || _searchHasOtherHits) ? null : (
     <ChatListSmartEmpty router={router} t={t} filtered={_emptyIsFiltered} currentEmail={user?.email}
       filter={filter} query={searchQuery}
       onClearFilter={filter !== 'all' ? _emptyClearFilter : undefined}
       onNewGroup={_emptyNewGroup} />
-  ), [loading, t, router, _emptyIsFiltered, user?.email, filter, searchQuery, _emptyClearFilter, _emptyNewGroup]);
+  ), [loading, t, router, _emptyIsFiltered, user?.email, filter, searchQuery, _emptyClearFilter, _emptyNewGroup, _searchHasOtherHits]);
 
   // [2026-10-08 chat-beauty-list] iOS/web: hairline inset under the text
   // column (starts where the name starts). Android/Material: no dividers —

@@ -4269,7 +4269,7 @@ export default {
   'profile.privacyContactsOnly': 'Só meus contatos',
   'profile.privacyNobody': 'Ninguém',
   'common.add': 'Adicionar',
-  'chatConv.forwarded': 'Encaminhado',
+  'chatConv.forwarded': 'Encaminhada',
   'chatConv.vanishModeOn': 'Ativar modo invisível',
   'chatConv.vanishModeOff': 'Desligar modo invisível',
   'chatConv.forwardSelected': 'selecionada(s)',
@@ -4277,7 +4277,7 @@ export default {
   'chatConv.forwardedPartial': 'enviadas — algumas falharam',
   'chatConv.forwarding': 'Encaminhando...',
   'chatConv.forwardedMany': 'Encaminhada v\u00E1rias vezes',
-  'chatConv.forwardedManyTimes': 'Encaminhada muitas vezes',
+  'chatConv.forwardedManyTimes': 'Encaminhada com frequência',
   'chatConv.forwardTo': 'Encaminhar para...',
   // WhatsApp-style multi-target forward CTA — {n} is the count
   'chat.forwardToMultiple': 'Encaminhar para {n}',
@@ -11065,4 +11065,11 @@ export default {
   "callRating.send": "Enviar",
   "callRating.notNow": "Agora não",
   "callRating.starsA11y": "{n} de 5",
+  // [2026-10-12 chatlist-wa]
+  "chat.missedVoiceCall": "Chamada de voz perdida",
+  "chat.missedVideoCall": "Chamada de vídeo perdida",
+  "chat.pinLimitTitle": "Limite de conversas fixadas",
+  "chat.pinLimitMsg": "Você só pode fixar até {n} conversas.",
+  "chat.listSearchContacts": "Contatos",
+  "chat.archivedKeepInfo": "Essas conversas continuam arquivadas quando você recebe novas mensagens.",
 };

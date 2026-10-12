@@ -10987,4 +10987,11 @@ export default {
   "callRating.send": "Send",
   "callRating.notNow": "Not now",
   "callRating.starsA11y": "{n} out of 5",
+  // [2026-10-12 chatlist-wa]
+  "chat.missedVoiceCall": "Missed voice call",
+  "chat.missedVideoCall": "Missed video call",
+  "chat.pinLimitTitle": "Pinned chats limit",
+  "chat.pinLimitMsg": "You can only pin up to {n} chats.",
+  "chat.listSearchContacts": "Contacts",
+  "chat.archivedKeepInfo": "These chats stay archived when new messages are received.",
 };

@@ -39,76 +39,32 @@ const _NativeCache = (() => {
 // Persistido em MMKV pra sobreviver cold-start — antes era só Map em memória,
 // e na re-abertura do app a version voltava pra 0, fazendo nativeLocal apontar
 // pro arquivo cacheado antigo (foto velha aparecia de novo).
-const _avatarVersions = new Map(); // email → version number
-const _versionListeners = new Set();
-const AVATAR_VER_KEY = 'avatar_versions_v1';
-let _mmkv = null;
-try { _mmkv = require('../services/mmkv'); } catch {}
-// Hidrata o Map com o que ficou persistido na sessão anterior (sync read)
-try {
-  const raw = _mmkv?.getString?.(AVATAR_VER_KEY);
-  if (raw) {
-    const parsed = JSON.parse(raw);
-    if (parsed && typeof parsed === 'object') {
-      for (const [k, v] of Object.entries(parsed)) {
-        if (typeof v === 'number' && v > 0) _avatarVersions.set(String(k).toLowerCase(), v);
-      }
-    }
-  }
-} catch {}
-function _persistVersions() {
-  try {
-    const obj = {};
-    for (const [k, v] of _avatarVersions) obj[k] = v;
-    _mmkv?.setString?.(AVATAR_VER_KEY, JSON.stringify(obj));
-  } catch {}
-}
+// [2026-10-12 avatar-realtime] O registro agora é o store ÚNICO
+// services/avatarVersions.js (MMKV `avatar_versions_v1`, mesma chave de antes,
+// re-hidratado no cache-ready). Este módulo só expõe os wrappers antigos.
+const _AV = require('../services/avatarVersions');
 export function bumpAvatarCache(email, version) {
   if (!email) return;
-  const e = String(email).toLowerCase();
-  const cur = _avatarVersions.get(e) || 0;
-  // When a real server `avatar_version` is supplied (WS avatar_updated /
-  // profile fetch via bustAvatarCache), store THAT authoritative value and
-  // SKIP when it already matches — so the URL's `v=` equals the server's
-  // avatar_version (ETag/304 can hit) and we don't remount + refetch on every
-  // profile open. The old code set Date.now() on every call, so each open was
-  // a guaranteed cache miss + remount + disk pileup. When no version is known
-  // (e.g. own upload just happened), fall back to Date.now() to force a
-  // one-time bust so the freshly-uploaded photo shows immediately.
-  let next;
-  if (typeof version === 'number' && version > 0) {
-    if (version === cur) return; // unchanged → nothing to do
-    next = version;
-  } else {
-    next = Date.now();
-  }
-  _avatarVersions.set(e, next);
-  _persistVersions();
-  _versionListeners.forEach(fn => { try { fn(e); } catch {} });
+  // Versão do servidor → só avança (store monotônico). Sem versão (upload próprio
+  // sem avatar_version na resposta) → bump local Date.now() pra forçar 1 refetch.
+  const hasVer = typeof version === 'number' && version > 0;
+  const changed = _AV.setAvatarVersion(email, hasVer ? version : undefined, { force: !hasVer });
   // ⚠️ Importante: NÃO chamar ExpoImage.clearDiskCache() aqui. Ele apaga
-  // o disco INTEIRO do expo-image — todas as fotos do app (chat, feed,
-  // status, profile, avatares de OUTROS users) somem por uma fração de
-  // segundo enquanto recarregam do servidor. Como o WS dispara
-  // `avatar_updated` pra cada user que troca a foto, em um chat ativo
-  // isso acontece dezenas de vezes por sessão e o usuário vê "as fotos
-  // do pessoal sumindo". O cache-buster `?v=<timestamp>` na URL já é
-  // suficiente: expo-image keys o cache pela URL completa, então um
-  // novo `?v=` é tratado como um recurso novo (miss → fetch → cache),
-  // sem afetar todas as outras imagens. (Regression introduzida no
-  // mega wave 2026-05-18 / OTA 406a396 — usuário reportou
-  // "as fotos do pessoal do app sumiu".)
-  // Mantemos só o clear do memory-cache porque é barato e o problema
-  // de NSURLCache servindo a foto antiga só acontece no nível de
-  // resolução da própria URL — uma URL diferente é cache miss.
-  try {
-    if (ExpoImage && typeof ExpoImage.clearMemoryCache === 'function') {
-      ExpoImage.clearMemoryCache();
-    }
-  } catch {}
+  // o disco INTEIRO do expo-image — todas as fotos do app somem por uma
+  // fração de segundo (regression mega wave 2026-05-18 / OTA 406a396 —
+  // "as fotos do pessoal do app sumiu"). O `?v=` novo na URL já é um cache
+  // miss só DAQUELE avatar. Mantemos só o clear do memory-cache (barato).
+  if (changed) {
+    try {
+      if (ExpoImage && typeof ExpoImage.clearMemoryCache === 'function') {
+        ExpoImage.clearMemoryCache();
+      }
+    } catch {}
+  }
 }
 function getAvatarVersion(email) {
   if (!email) return 0;
-  return _avatarVersions.get(String(email).toLowerCase()) || 0;
+  return _AV.getAvatarVersion(email) || 0;
 }
 
 // ─── Defensive daily-bust for backend-supplied avatar URLs ────────
@@ -148,6 +104,11 @@ function normalizeAvatarUrl(url) {
   if (!url || typeof url !== 'string') return url;
   // Only target our own avatar endpoint — leave R2/CDN/data: URLs alone.
   if (url.indexOf('get_avatar') === -1) return url;
+  // [2026-10-12 avatar-realtime] URL montada pelo servidor (conv.avatar_url,
+  // member.avatar_url…) pode estar sem `v=` ou com `v=` velho: sobrepõe a
+  // versão mais nova conhecida (WS avatar_updated / payloads) — senão a foto
+  // nova de um contato nunca aparecia em quem renderiza via `uri`.
+  url = _AV.withLatestAvatarVersion(url);
   // ⚠️ Do NOT strip an existing `v=`. That carries the WS-pushed
   // `avatar_version` which the backend uses for ETag/304 negotiation, and
   // stripping it caused friend photos to revert to whatever version was
@@ -295,6 +256,9 @@ function _CollageTile({ member, size, width, height }) {
   useEffect(() => { setTileErr(false); setTileCachedUri(null); }, [member?.email, member?.avatar_url]);
   const ImageComponent = ExpoImage || RNImage;
   const memberEmail = typeof member?.email === 'string' ? member.email : '';
+  // [2026-10-12 avatar-realtime] re-render quando a versão da foto do membro muda.
+  const _tileVer = _AV.useAvatarVersion(memberEmail);
+  useEffect(() => { if (_tileVer) { setTileErr(false); setTileCachedUri(null); } }, [_tileVer]);
   const memberName = member?.display_name || member?.name || memberEmail || '';
   const looksLikeEmail = /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(memberEmail);
   const baseUrl = looksLikeEmail ? getAvatarUrlForEmail(memberEmail) : null;
@@ -431,7 +395,10 @@ function _GroupCollage({ members, size, style }) {
 function AvatarCircle({ name, email, uri, size = 48, style, online = false, ringColor = '#111111', showStatus = false, members, onPress }) {
   const _lang = useLanguageOptional();
   const [imgError, setImgError] = useState(false);
-  const [version, setVersion] = useState(() => getAvatarVersion(email));
+  // [2026-10-12 avatar-realtime] e-mail p/ versão: prop `email` OU o `email=` de
+  // uma URL get_avatar passada em `uri` (chat list/headers passam conv.avatar_url).
+  const _verEmail = email || _AV.emailFromAvatarUrl(uri);
+  const [version, setVersion] = useState(() => getAvatarVersion(_verEmail));
   // Holds the file:// URI from avatarCache once a background download
   // lands mid-session. Initial value comes from the sync index inside
   // the render below; this state only flips when the very FIRST fetch
@@ -445,7 +412,7 @@ function AvatarCircle({ name, email, uri, size = 48, style, online = false, ring
   // warning (+ wasted re-render scheduling).
   const isMountedRef = useRef(true);
   useEffect(() => () => { isMountedRef.current = false; }, []);
-  useEffect(() => { setImgError(false); setVersion(getAvatarVersion(email)); setCachedFileUri(null); }, [email, uri]);
+  useEffect(() => { setImgError(false); setVersion(getAvatarVersion(_verEmail)); setCachedFileUri(null); }, [email, uri]);
 
   // Subscribe to global cache bumps so this avatar refreshes when the user uploads a new pic.
   // IMPORTANT: this useEffect MUST run UNCONDITIONALLY before ANY early return so the hook
@@ -455,16 +422,14 @@ function AvatarCircle({ name, email, uri, size = 48, style, online = false, ring
   // conversation would render one FEWER hook than a 1:1 chat, and React throws
   // "Rendered more/fewer hooks than during the previous render" (P0 crash #1343 / WAVE 127).
   useEffect(() => {
-    const listener = (changedEmail) => {
-      if (!email) return;
-      if (String(changedEmail).toLowerCase() === String(email).toLowerCase()) {
-        setVersion(getAvatarVersion(email));
-        setImgError(false);
-      }
-    };
-    _versionListeners.add(listener);
-    return () => { _versionListeners.delete(listener); };
-  }, [email]);
+    if (!_verEmail) return undefined;
+    // Assinatura por e-mail no store (WS avatar_updated / payloads / upload).
+    return _AV.subscribeAvatarVersion(_verEmail, () => {
+      setVersion(getAvatarVersion(_verEmail));
+      setImgError(false);
+      setCachedFileUri(null);
+    });
+  }, [_verEmail]);
 
   // ── Group collage short-circuit ────────────────────────────────
   // When the caller passes `members` and there's no single image to show

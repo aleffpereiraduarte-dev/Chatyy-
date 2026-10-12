@@ -20,7 +20,7 @@ import React, { useEffect, useState, useCallback } from 'react';
 import {
   View, Text, StyleSheet, FlatList, TouchableOpacity, ActivityIndicator,
 } from 'react-native';
-import { useRouter, Stack } from 'expo-router';
+import { useRouter, Stack, useFocusEffect } from 'expo-router';
 import { USE_NATIVE_HEADER, nativeHeaderOptions } from '../components/nativeHeader'; // [2026-10-09 more-native]
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../context/ThemeContext';
@@ -32,12 +32,24 @@ import ChatLockSheet from '../components/ChatLockSheet';
 import * as api from '../services/api';
 import { emailToDisplayName } from '../services/api';
 import { confirmWithBiometric } from '../services/biometricGate';
+import { regionalLocale } from '../utils/dateFormat';
 
 function previewText(conv, t) {
   const lm = conv?.last_message;
   if (!lm) return t('chat.noMessages') || 'Sem mensagens';
   if (typeof lm === 'string') return lm;
+  // [2026-10-12 chatlist-wa] tombstone / calls / polls / raw JSON envelopes
+  // used to leak through as "{...}" or as the deleted text.
+  if (lm.deleted || lm.deleted_at) return t('chatConv.deletedMessage') || 'Esta mensagem foi apagada';
   const type = lm.type || 'text';
+  if (type === 'call_card') return t('chat.voiceCall') || 'Chamada';
+  if (type === 'poll') return t('chat.poll') || 'Enquete';
+  if (type === 'voice') return t('chat.audio') || 'Áudio';
+  if (type === 'system') return '';
+  if (type === 'text' && /^\s*\{/.test(String(lm.content || ''))) {
+    try { const p = JSON.parse(lm.content); const v = p.text || p.body || p.caption || p.content; if (typeof v === 'string') return v; } catch {}
+    return t('chat.message') || 'Mensagem';
+  }
   if (type !== 'text') {
     const map = {
       image: t('chat.photo') || 'Foto',
@@ -54,9 +66,27 @@ function previewText(conv, t) {
   return String(lm.content || '');
 }
 
+// Same calendar-day rule as the chat list rows: HH:MM today, "Ontem",
+// weekday within a week, dd/mm/aa otherwise.
+function _fmtWhen(iso, t, locale) {
+  if (!iso) return '';
+  const d = new Date(String(iso).replace(' ', 'T'));
+  if (isNaN(d.getTime())) return '';
+  const day = (x) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+  const diff = Math.round((day(new Date()) - day(d)) / 86400000);
+  const loc = locale || undefined;
+  try {
+    if (diff <= 0) return d.toLocaleTimeString(loc, { hour: '2-digit', minute: '2-digit' });
+    if (diff === 1) return t('time.yesterday') || 'Ontem';
+    if (diff < 7) { const w = d.toLocaleDateString(loc, { weekday: 'long' }); return w.charAt(0).toUpperCase() + w.slice(1); }
+    return d.toLocaleDateString(loc, { day: '2-digit', month: '2-digit', year: '2-digit' });
+  } catch { return ''; }
+}
+
 export default function LockedChatsScreen() {
   const { colors, isDark } = useTheme();
-  const { t } = useLanguage();
+  const { t, language } = useLanguage();
+  const _loc = (() => { try { return regionalLocale(language); } catch { return language; } })();
   const router = useRouter();
   const insets = useSafeAreaInsets();
 
@@ -66,18 +96,26 @@ export default function LockedChatsScreen() {
   const [convs, setConvs] = useState([]);
   const [sheetConv, setSheetConv] = useState(null);
 
-  const load = useCallback(async () => {
-    setLoading(true);
+  const load = useCallback(async (silent = false) => {
+    if (!silent) setLoading(true);
     try {
       const r = await api.chatLockedConversations();
       const list = Array.isArray(r?.data) ? r.data : (r?.data?.conversations || []);
-      setConvs(list);
+      // most recent first (WhatsApp) — server order was by id
+      const _k = (c) => Date.parse(String(c?.last_message_at || c?.last_message?.created_at || c?.updated_at || '')) || 0;
+      setConvs(list.slice().sort((a, b) => _k(b) - _k(a)));
     } catch {
-      setConvs([]);
+      if (!silent) setConvs([]);
     } finally {
       setLoading(false);
     }
   }, []);
+  // Back from a locked chat → refresh unread/preview silently (no spinner).
+  const phaseRef = React.useRef(phase);
+  phaseRef.current = phase;
+  useFocusEffect(useCallback(() => {
+    if (phaseRef.current === 'ok') load(true);
+  }, [load]));
 
   const authenticate = useCallback(async () => {
     setPhase('auth');
@@ -101,7 +139,8 @@ export default function LockedChatsScreen() {
 
   const openConversation = useCallback((conv) => {
     const name = conv.name || conv.display_name || conv.other_email || '';
-    require('../services/openConversation').openConversation(`/chat-conversation?id=${conv.id}&name=${encodeURIComponent(emailToDisplayName(name) || name || '')}&type=${conv.type || 'direct'}`);
+    const peer = conv.type === 'direct' ? (conv.other_email || conv.contact_email || '') : '';
+    require('../services/openConversation').openConversation(`/chat-conversation?id=${conv.id}&name=${encodeURIComponent(emailToDisplayName(name) || name || '')}&type=${conv.type || 'direct'}${peer ? `&email=${encodeURIComponent(peer)}` : ''}`);
   }, [router]);
 
   const onUnlocked = useCallback((lockedNow) => {
@@ -112,14 +151,26 @@ export default function LockedChatsScreen() {
 
   const renderRow = ({ item }) => {
     const name = emailToDisplayName(item.name || item.display_name || item.other_email || '') || item.name || '—';
+    const unread = (item.unread_count || 0) > 0;
+    const when = _fmtWhen(item.last_message?.created_at || item.last_message_at, t, _loc);
     return (
       <PressableScale onPress={() => openConversation(item)} style={styles.row}>
         <AvatarCircle name={name} email={item.other_email || item.contact_email} uri={item.avatar} size={48} />
         <View style={{ flex: 1, marginLeft: 12 }}>
-          <Text style={[styles.rowName, { color: colors.text }]} numberOfLines={1}>{name}</Text>
-          <Text style={[styles.rowPreview, { color: colors.textTertiary || colors.textSecondary || '#888' }]} numberOfLines={1}>
-            {previewText(item, t)}
-          </Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+            <Text style={[styles.rowName, { color: colors.text, flex: 1 }]} numberOfLines={1}>{name}</Text>
+            {when ? <Text style={{ fontSize: 12, marginLeft: 8, color: unread ? colors.text : (colors.textTertiary || '#888'), fontWeight: unread ? '700' : '400' }}>{when}</Text> : null}
+          </View>
+          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+            <Text style={[styles.rowPreview, { flex: 1, color: unread ? colors.text : (colors.textTertiary || colors.textSecondary || '#888'), fontWeight: unread ? '600' : '400' }]} numberOfLines={1}>
+              {previewText(item, t)}
+            </Text>
+            {unread ? (
+              <View style={{ minWidth: 20, height: 20, borderRadius: 10, paddingHorizontal: 6, marginLeft: 8, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.text }}>
+                <Text style={{ fontSize: 12, fontWeight: '700', color: colors.background }}>{item.unread_count > 99 ? '99+' : item.unread_count}</Text>
+              </View>
+            ) : null}
+          </View>
         </View>
         <TouchableOpacity
           onPress={() => setSheetConv(item)}

@@ -11018,4 +11018,11 @@ export default {
   "callRating.send": "Envoyer",
   "callRating.notNow": "Plus tard",
   "callRating.starsA11y": "{n} sur 5",
+  // [2026-10-12 chatlist-wa]
+  "chat.missedVoiceCall": "Appel vocal manqué",
+  "chat.missedVideoCall": "Appel vidéo manqué",
+  "chat.pinLimitTitle": "Limite de discussions épinglées",
+  "chat.pinLimitMsg": "Vous pouvez épingler jusqu’à {n} discussions.",
+  "chat.listSearchContacts": "Contacts",
+  "chat.archivedKeepInfo": "Ces discussions restent archivées lorsque vous recevez de nouveaux messages.",
 };

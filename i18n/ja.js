@@ -10239,4 +10239,11 @@ export default {
   "callRating.send": "送信",
   "callRating.notNow": "今はしない",
   "callRating.starsA11y": "5段階中{n}",
+  // [2026-10-12 chatlist-wa]
+  "chat.missedVoiceCall": "不在着信（音声）",
+  "chat.missedVideoCall": "不在着信（ビデオ）",
+  "chat.pinLimitTitle": "ピン留めの上限",
+  "chat.pinLimitMsg": "ピン留めできるのは{n}件までです。",
+  "chat.listSearchContacts": "連絡先",
+  "chat.archivedKeepInfo": "新しいメッセージを受信しても、これらのチャットはアーカイブされたままです。",
 };

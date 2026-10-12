@@ -67,6 +67,10 @@ export async function ackPushDelivered(payload) {
     const r = await fetch(ACK_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
+      // [2026-10-12] Sem cookie: o token d_ack (HMAC) já autentica. Com o
+      // cookie de sessão do app o gate CSRF do email.php devolvia 403
+      // (23 de 91 acks em 2 dias).
+      credentials: 'omit',
       body: JSON.stringify({ d_ack: tok }),
       signal: ctl ? ctl.signal : undefined,
     });
@@ -91,6 +95,16 @@ if (Platform.OS !== 'web') {
         if (error || !data) return NoData;
         // Toque numa ação (Android) não é "chegou" — ignora.
         if (data && typeof data === 'object' && 'actionIdentifier' in data) return NoData;
+        // [2026-10-12 push-parity] chat_notif_clear (lida em OUTRO aparelho /
+        // apagada p/ todos): tira os banners daquela conversa aqui também.
+        // Também em 1º plano (push background no iOS não passa pelo handler).
+        try {
+          const pn = require('./pushNotifications');
+          if (pn?.isNotifClearPayload?.(data)) {
+            const ok = await pn.applyNotifClear(data);
+            return ok ? NewData : NoData;
+          }
+        } catch {}
         // Em 1º plano o socket/handler de foreground já acka (WS delivery_ack).
         try { if (AppState.currentState === 'active') return NoData; } catch {}
         // [2026-10-09 open-instant] App suspended in 2º plano (iOS acorda via

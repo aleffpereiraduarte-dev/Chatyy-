@@ -13,6 +13,7 @@ import { USE_NATIVE_HEADER, nativeHeaderOptions, HeaderIconButton, NativeHeaderS
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
+import { useAuth } from '../context/AuthContext';
 import { FontSize, Spacing, BorderRadius, Shadow } from '../constants/theme';
 import { Colors } from '../constants/theme';
 import * as api from '../services/api';
@@ -131,9 +132,10 @@ const BATCH_SIZE = 50;
 
 // ---------- Memoized contact row components ----------
 
-const DeviceContactRow = React.memo(({ dc, colors, saved, onAdd, t, isRegistered, onOpenProfile, onQuickActions }) => {
+const DeviceContactRow = React.memo(({ dc, colors, saved, onAdd, t, isRegistered, chatyyEmail, onOpenProfile, onQuickActions }) => {
   const name = dc.name || `${dc.firstName || ''} ${dc.lastName || ''}`.trim() || t('contacts.unknown');
-  const email = dc.emails?.[0]?.email || '';
+  // matched by phone → the agenda entry has no e-mail; use the account's.
+  const email = dc.emails?.[0]?.email || chatyyEmail || '';
   const phone = dc.phoneNumbers?.[0]?.number || '';
 
   // Registered Chatyy users get the same tap = profile / long-press = quick
@@ -195,16 +197,12 @@ const FamilyUserRow = React.memo(({ user, colors, saved, onAdd, t, onOpenProfile
       delayLongPress={350}
       activeOpacity={0.6}
     >
-      <View style={[s.avatar, { backgroundColor: getAvatarColor(safeDisplay || safeEmail) }]}>
-        <Text style={s.avatarText}>{fallbackInitial.toUpperCase()}</Text>
-      </View>
+      {/* [2026-10-12 chatlist-wa] real profile photo (was initials only) and no
+          "Família" badge — every row in this tab is a Chatyy user. */}
+      <AvatarCircle name={safeDisplay || safeEmail || fallbackInitial} email={safeEmail} size={40} style={{ marginRight: Spacing.md }} />
       <View style={s.contactInfo}>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-          <Text style={[s.contactName, { color: colors.text }]}>{displayName}</Text>
-          <View style={[s.familyBadge, { backgroundColor: colors.primary + '18' }]}>
-            <IconStar size={10} color={colors.primary} />
-            <Text style={[s.familyBadgeText, { color: colors.primary }]}>{t('contacts.family')}</Text>
-          </View>
+          <Text style={[s.contactName, { color: colors.text }]} numberOfLines={1}>{displayName}</Text>
         </View>
         {!!safeEmail && <Text style={[s.contactEmail, { color: colors.textSecondary }]}>{safeEmail}</Text>}
         {!!user?.phone && <Text style={[s.contactPhone, { color: colors.textTertiary }]}>{user.phone}</Text>}
@@ -302,6 +300,9 @@ function ContactsEmptyState({ colors, isDark, t, searching, onAdd, onClearSearch
 function ContactsScreenInner() {
   const { colors, isDark } = useTheme();
   const { t } = useLanguage();
+  const { user: _authUser } = useAuth();
+  const myEmailRef = useRef('');
+  myEmailRef.current = String(_authUser?.email || '');
   const router = useRouter();
   const insets = useSafeAreaInsets();
 
@@ -348,11 +349,13 @@ function ContactsScreenInner() {
   const deviceLoadedRef = useRef(false);
 
   // Chatyy family
-  const [familyUsers, setFamilyUsers] = useState([]);
+  const familyLoadedRef = useRef(false);
+  const [familyUsers, setFamilyUsers] = useState(() => { try { const c = getCachedSync('contacts_on_chatyy_v1'); return Array.isArray(c) ? c : []; } catch { return []; } });
   const [loadingFamily, setLoadingFamily] = useState(false);
 
   // Chatyy registered contacts (emails/phones found on Chatyy)
   const [registeredEmails, setRegisteredEmails] = useState(new Set());
+  const [registeredPhones, setRegisteredPhones] = useState(() => new Map()); // last-8-digits -> account email
 
   // Sync
   const [syncing, setSyncing] = useState(false);
@@ -385,7 +388,7 @@ function ContactsScreenInner() {
   const TABS = [
     { key: 'my', label: t('contacts.tabMy') },
     { key: 'device', label: t('contacts.tabDevice') },
-    { key: 'family', label: t('contacts.tabFamily') },
+    { key: 'family', label: t('contacts.onChatyy') || 'No Chatyy' },
   ];
 
   useEffect(() => { loadContacts(); }, []);
@@ -411,7 +414,9 @@ function ContactsScreenInner() {
       const reqId = ++searchReqRef.current;
       setSearchingUsers(true);
       try {
-        const r = await api.searchOneMundoUsers(debouncedSearch);
+        // [2026-10-12 chatlist-wa] search_onemundo_users is a stub that always
+        // answers [] — use the real directory search (same as chat-new).
+        const r = await api.chatyyUsers(debouncedSearch, 30);
         // Stale-response guard: a previous, slower query must not clobber the
         // results of a newer one the user has since typed.
         if (reqId !== searchReqRef.current) return;
@@ -419,7 +424,8 @@ function ContactsScreenInner() {
         // `data` be a non-array. Filter out null entries that could crash the
         // family tab merge in filteredItems below.
         if (r?.success) {
-          const safe = (Array.isArray(r?.data) ? r.data : []).filter(u => u && typeof u === 'object');
+          const _rows = Array.isArray(r?.data) ? r.data : (Array.isArray(r?.data?.users) ? r.data.users : []);
+          const safe = _rows.filter(u => u && typeof u === 'object' && u.email);
           try { console.log('[FAMILIA-DIAG][contacts][searchUsers][ok]', 'count=', safe.length); } catch {}
           setSearchResults(safe);
         } else {
@@ -447,7 +453,7 @@ function ContactsScreenInner() {
   useEffect(() => {
     try { console.log('[FAMILIA-DIAG][contacts][activeTab]', activeTab); } catch {}
     if (activeTab === 'device' && !deviceLoadedRef.current) loadDeviceContacts();
-    if (activeTab === 'family' && familyUsers.length === 0) loadFamilyUsers();
+    if (activeTab === 'family' && !familyLoadedRef.current) { familyLoadedRef.current = true; loadFamilyUsers(); }
   }, [activeTab]);
 
   useEffect(() => {
@@ -545,14 +551,23 @@ function ContactsScreenInner() {
           .map(dc => dc.emails?.[0]?.email)
           .filter(Boolean)
           .map(e => e.toLowerCase());
-        const phones = allContacts
-          .map(dc => dc.phoneNumbers?.[0]?.number)
-          .filter(Boolean);
+        const phones = [];
+        for (const dc of allContacts) for (const pn of (dc.phoneNumbers || [])) { if (pn?.number) phones.push(pn.number); }
         if (emails.length > 0 || phones.length > 0) {
-          const r = await api.checkContacts(emails, phones);
+          // server caps each list at 500 (400 above that → nothing matched).
+          const r = await api.checkContacts(emails.slice(0, 500), phones.slice(0, 500));
           if (r.success && r.data?.registered) {
-            const regEmails = (r.data.registered || []).map(u => (u.email || u).toLowerCase());
+            const regEmails = (r.data.registered || []).map(u => String(u?.email || u || '').toLowerCase()).filter(Boolean);
             setRegisteredEmails(new Set(regEmails));
+            // [2026-10-12 chatlist-wa] Phone matches come back keyed by the
+            // ACCOUNT email + the number WE sent — most agenda entries have no
+            // e-mail, so matching by e-mail alone left "No Chatyy" empty.
+            const regPhones = new Map();
+            for (const u of (r.data.registered || [])) {
+              const d = String(u?.phone || '').replace(/\D/g, '');
+              if (d.length >= 8 && u?.email) regPhones.set(d.slice(-8), String(u.email).toLowerCase());
+            }
+            setRegisteredPhones(regPhones);
           }
         }
       } catch (err) {
@@ -565,25 +580,65 @@ function ContactsScreenInner() {
   };
 
   // Load Chatyy family users
+  // [2026-10-12 chatlist-wa] "No Chatyy" tab was ALWAYS empty: it called
+  // list_onemundo_users, which the server deliberately answers with [] (no
+  // global user enumeration). Build it like WhatsApp's "Contatos no Chatyy"
+  // instead, from sources that are allowed + real:
+  //   1. my agenda matched on Chatyy (contactSync cache / sync — native, only
+  //      after the user's contact-upload consent; never prompts from here);
+  //   2. people I already have a direct chat with (they are on Chatyy);
+  //   3. web: the same chatyy_users directory chat-new already shows.
   const loadFamilyUsers = async () => {
-    try { console.log('[FAMILIA-DIAG][contacts][loadFamilyUsers][start]'); } catch {}
     setLoadingFamily(true);
+    const meLc = String(myEmailRef.current || '').toLowerCase();
+    const byEmail = new Map();
+    const add = (email, name, extra) => {
+      const em = String(email || '').trim().toLowerCase();
+      if (!em || em === meLc || !em.includes('@')) return;
+      const prev = byEmail.get(em);
+      const nm = String(name || '').trim();
+      byEmail.set(em, {
+        ...(prev || {}),
+        ...(extra || {}),
+        email: em,
+        // humanize handles ("bruno.demo" → "Bruno Demo"), same as the chat list
+        display_name: (prev && prev.display_name) || api.emailToDisplayName(nm || em) || nm || em,
+      });
+    };
     try {
-      const r = await api.listOneMundoUsers();
-      // [WAVE 63 #fam-crash] Defensive: never accept non-array data.
-      // Backend used to return `{success:true, data:null}` on empty — and
-      // `setFamilyUsers(null)` then made every `.filter`/`.map` crash later.
-      if (r?.success) {
-        const safe = (Array.isArray(r?.data) ? r.data : []).filter(u => u && typeof u === 'object');
-        try { console.log('[FAMILIA-DIAG][contacts][loadFamilyUsers][ok]', 'count=', safe.length); } catch {}
-        setFamilyUsers(safe);
-      } else {
-        try { console.log('[FAMILIA-DIAG][contacts][loadFamilyUsers][not_success]', r?.message); } catch {}
-        setFamilyUsers([]);
+      if (Platform.OS !== 'web') {
+        try {
+          const cs = require('../services/contactSync');
+          let res = await cs.getCachedContacts();
+          if (!res || !Array.isArray(res.chatyContacts) || res.chatyContacts.length === 0) {
+            // silent: never shows the consent sheet / OS prompt from this tab.
+            const r2 = await cs.syncContacts(false, t, { silent: true }).catch(() => null);
+            if (r2 && Array.isArray(r2.chatyContacts) && r2.chatyContacts.length) res = r2;
+          }
+          for (const c of (res?.chatyContacts || [])) add(c.email, c.name, { phone: c.phone || '', _fromAgenda: true });
+        } catch {}
       }
-    } catch (e) {
-      try { console.log('[FAMILIA-DIAG][contacts][loadFamilyUsers][error]', e?.message); } catch {}
-      setFamilyUsers([]);
+      try {
+        const r = await api.chatConversations('', false);
+        const convs = Array.isArray(r?.data) ? r.data : (r?.data?.conversations || []);
+        for (const c of convs) {
+          if (!c || c.type !== 'direct') continue;
+          const peer = c.other_email || c.contact_email
+            || ((c.members || []).map(m => (typeof m === 'string' ? m : m?.email)).find(e => e && String(e).toLowerCase() !== meLc));
+          add(peer, c.display_name || c.name, { _hasChat: true });
+        }
+      } catch {}
+      if (Platform.OS === 'web') {
+        try {
+          const r = await api.chatyyUsers('', 200);
+          for (const u of (r?.data?.users || [])) add(u.email, u.name);
+        } catch {}
+      }
+      const list = Array.from(byEmail.values()).sort((a, b) => String(a.display_name || '').localeCompare(String(b.display_name || ''), undefined, { sensitivity: 'base' }));
+      setFamilyUsers(list);
+      try { setCache('contacts_on_chatyy_v1', list, 6 * 3600 * 1000); } catch {}
+    } catch {
+      setFamilyUsers(prev => (Array.isArray(prev) ? prev : []));
     } finally { setLoadingFamily(false); }
   };
 
@@ -1133,7 +1188,12 @@ function ContactsScreenInner() {
   const renderDeviceItem = useCallback(({ item: dc }) => {
     const email = dc.emails?.[0]?.email || '';
     const saved = email ? isContactSaved(email) : false;
-    const isRegistered = email ? registeredEmails.has(email.toLowerCase()) : false;
+    let _phoneEmail = null;
+    for (const p of (dc.phoneNumbers || [])) {
+      const d = String(p?.number || '').replace(/\D/g, '');
+      if (d.length >= 8 && registeredPhones.has(d.slice(-8))) { _phoneEmail = registeredPhones.get(d.slice(-8)); break; }
+    }
+    const isRegistered = (email ? registeredEmails.has(email.toLowerCase()) : false) || !!_phoneEmail;
     return (
       <DeviceContactRow
         dc={dc}
@@ -1142,20 +1202,25 @@ function ContactsScreenInner() {
         onAdd={addDeviceContact}
         t={t}
         isRegistered={isRegistered}
+        chatyyEmail={_phoneEmail || ''}
         onOpenProfile={handleOpenProfile}
         onQuickActions={handleQuickActions}
       />
     );
-  }, [colors, isContactSaved, addDeviceContact, t, registeredEmails, handleOpenProfile, handleQuickActions]);
+  }, [colors, isContactSaved, addDeviceContact, t, registeredEmails, registeredPhones, handleOpenProfile, handleQuickActions]);
 
   // Device contacts split into "On Chatyy" and "Invite to Chatyy" sections
   const deviceSections = useMemo(() => {
-    if (activeTab !== 'device' || filteredItems.length === 0 || registeredEmails.size === 0) return [];
+    if (activeTab !== 'device' || filteredItems.length === 0 || (registeredEmails.size === 0 && registeredPhones.size === 0)) return [];
     const onChatyy = [];
     const invite = [];
     for (const dc of filteredItems) {
       const email = dc.emails?.[0]?.email || '';
-      if (email && registeredEmails.has(email.toLowerCase())) {
+      const byPhone = (dc.phoneNumbers || []).some(p => {
+        const d = String(p?.number || '').replace(/\D/g, '');
+        return d.length >= 8 && registeredPhones.has(d.slice(-8));
+      });
+      if ((email && registeredEmails.has(email.toLowerCase())) || byPhone) {
         onChatyy.push(dc);
       } else {
         invite.push(dc);
@@ -1165,7 +1230,7 @@ function ContactsScreenInner() {
     if (onChatyy.length > 0) sections.push({ title: t('contacts.onChatyy') || 'On Chatyy', key: 'on_chatyy', data: onChatyy });
     if (invite.length > 0) sections.push({ title: t('contacts.inviteToChatyy') || 'Invite to Chatyy', key: 'invite', data: invite });
     return sections;
-  }, [activeTab, filteredItems, registeredEmails, t]);
+  }, [activeTab, filteredItems, registeredEmails, registeredPhones, t]);
 
   // Render section header for device tab
   const renderDeviceSectionHeader = useCallback(({ section }) => (

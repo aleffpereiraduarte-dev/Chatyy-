@@ -11017,4 +11017,11 @@ export default {
   "callRating.send": "Invia",
   "callRating.notNow": "Non ora",
   "callRating.starsA11y": "{n} su 5",
+  // [2026-10-12 chatlist-wa]
+  "chat.missedVoiceCall": "Chiamata vocale persa",
+  "chat.missedVideoCall": "Videochiamata persa",
+  "chat.pinLimitTitle": "Limite di chat fissate",
+  "chat.pinLimitMsg": "Puoi fissare al massimo {n} chat.",
+  "chat.listSearchContacts": "Contatti",
+  "chat.archivedKeepInfo": "Queste chat restano archiviate quando ricevi nuovi messaggi.",
 };

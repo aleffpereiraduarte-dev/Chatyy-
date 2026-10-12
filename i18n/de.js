@@ -3710,7 +3710,7 @@ export default {
   'chatConv.forwardedPartial': 'gesendet — einige fehlgeschlagen',
   'chatConv.forwarding': 'Weiterleiten...',
   'chatConv.forwardedMany': 'Mehrfach weitergeleitet',
-  'chatConv.forwardedManyTimes': 'Viele Male weitergeleitet',
+  'chatConv.forwardedManyTimes': 'Häufig weitergeleitet',
   'chatConv.forwardTo': 'Weiterleiten an...',
   // WhatsApp-style multi-target forward CTA — {n} is the count
   'chat.forwardToMultiple': 'Weiterleiten an {n}',
@@ -11017,4 +11017,11 @@ export default {
   "callRating.send": "Senden",
   "callRating.notNow": "Nicht jetzt",
   "callRating.starsA11y": "{n} von 5",
+  // [2026-10-12 chatlist-wa]
+  "chat.missedVoiceCall": "Verpasster Sprachanruf",
+  "chat.missedVideoCall": "Verpasster Videoanruf",
+  "chat.pinLimitTitle": "Limit für angeheftete Chats",
+  "chat.pinLimitMsg": "Du kannst bis zu {n} Chats anheften.",
+  "chat.listSearchContacts": "Kontakte",
+  "chat.archivedKeepInfo": "Diese Chats bleiben archiviert, wenn neue Nachrichten eingehen.",
 };
