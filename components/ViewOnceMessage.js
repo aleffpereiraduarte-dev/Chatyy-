@@ -148,7 +148,7 @@ function ViewOnceFullscreen({ uri, isVideo, t, senderName, onClose, onLoaded, on
     })();
     return () => {
       try { sub?.remove?.(); } catch {}
-      try { SC.allowScreenCaptureAsync?.('chatyy-view-once'); } catch {}
+      try { SC.allowScreenCaptureAsync?.('chatyy-view-once')?.catch?.(() => {}); } catch {}
     };
   }, [conversationId, messageId]);
 

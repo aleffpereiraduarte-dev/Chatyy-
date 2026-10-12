@@ -1912,7 +1912,7 @@ export default function ChatMediaViewer({ visible, onClose, fileUrl, hlsUrl, fil
     })();
     return () => {
       try { sub?.remove?.(); } catch {}
-      try { ScreenCapture.allowScreenCaptureAsync?.('chatyy-view-once'); } catch {}
+      try { ScreenCapture.allowScreenCaptureAsync?.('chatyy-view-once')?.catch?.(() => {}); } catch {}
       _setWatermarkVisible(false);
     };
   }, [visible, viewOnce]);

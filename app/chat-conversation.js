@@ -2003,6 +2003,7 @@ function LiveLocationPulse({ size = 14, color = '#22c55e' }) {
 // slide reuses the renderCell helper from the bubble so the cell visuals
 // (video play overlay, +N badge, etc.) stay 100% consistent with the grid
 // fallback. Dots indicator below tracks the active page via onScroll.
+const ALBUM_CAROUSEL = false; // [2026-10-12 wa-parity] grade WhatsApp por padrão
 function AlbumCarousel({ items, slideW, slideH, renderCell, resolveMediaUri, isDark }) {
   const [active, setActive] = useState(0);
   // [MONO 2026-09-30] Defensive clamp. If a non-finite/out-of-range slide
@@ -3862,6 +3863,8 @@ const MemoizedMessageRow = React.memo(function MemoizedMessageRow({ item, render
     a._e2e === b._e2e &&
     a.view_once_opened === b.view_once_opened &&
     a.view_once_viewed_count === b.view_once_viewed_count &&
+    a.viewed_by === b.viewed_by &&
+    a.expired_at === b.expired_at &&
     a.is_view_once === b.is_view_once &&
     a.isViewOnce === b.isViewOnce &&
     a._isHighlighted === b._isHighlighted &&
@@ -6650,6 +6653,10 @@ function MediaPreview({ visible, onClose, onSend, files: filesProp, colors, hdMo
             <TouchableOpacity
               onPress={() => setViewOnce(v => !v)}
               style={[previewStyles.viewOnceBtn, viewOnce && previewStyles.viewOnceBtnActive]}
+              // [2026-10-12 wa-parity] botão "1" sem rótulo: leitor de tela lia só "1".
+              accessibilityRole="switch"
+              accessibilityState={{ checked: !!viewOnce }}
+              accessibilityLabel={t('a11y.viewOnce') || 'Visualização única'}
             >
               <Text style={[previewStyles.viewOnceBtnText, viewOnce && { color: '#fff' }]}>1</Text>
             </TouchableOpacity>
@@ -12047,7 +12054,7 @@ function ChatConversationInner() {
       try { await SC.preventScreenCaptureAsync('chatyy-chat-private'); } catch {}
     })();
     return () => {
-      try { SC.allowScreenCaptureAsync?.('chatyy-chat-private'); } catch {}
+      try { SC.allowScreenCaptureAsync?.('chatyy-chat-private')?.catch?.(() => {}); } catch {}
     };
   }, [chatLocked]);
 
@@ -12704,6 +12711,37 @@ function ChatConversationInner() {
       }
     };
   }, [conversationId, conversationType, currentEmail, params.email]);
+
+  // [2026-10-12 wa-parity] "gravando áudio…" durante TODA a gravação (WhatsApp).
+  // O início da gravação mandava UM typing(recording) — o destinatário apaga o
+  // indicador após 5s sem ping e o próprio websocket.js dispara stopped_typing
+  // em 6s, então numa nota de voz de 20s o "gravando" sumia no 5º segundo.
+  // Mantém o ping enquanto grava (o throttle do sendTyping limita a 1 frame/3s).
+  useEffect(() => {
+    if (!isRecording || !conversationId) return undefined;
+    let ws = null;
+    try { ws = require('../services/websocket').default; } catch { return undefined; }
+    const iv = setInterval(() => { try { ws.sendTyping(conversationId, true); } catch {} }, 1500);
+    return () => {
+      clearInterval(iv);
+      try { ws.sendStoppedTyping?.(conversationId); } catch {}
+    };
+  }, [isRecording, conversationId]);
+
+  // [2026-10-12 wa-parity] Conversa aberta SEM ?email= (toast in-app, deep link
+  // do widget/Siri, marketplace, /chat-conversation?id=N) ficava sem online/
+  // "visto por último", sem watchPresence, sem checagem de bloqueio e com
+  // Bloquear/Denunciar do menu mandando e-mail vazio. Resolve o par pelo
+  // membro da conversa e injeta no param — todos os ~40 usos de params.email
+  // (presença, bloqueio, denúncia, leitura) passam a funcionar sem tocar cada um.
+  useEffect(() => {
+    if (conversationType !== 'direct' || params.email) return;
+    const me = String(currentEmail || '').toLowerCase();
+    if (!me || !Array.isArray(members) || members.length === 0) return;
+    const peer = members.map(m => String(m?.email || '').toLowerCase()).find(em => em && em !== me && em.includes('@'));
+    if (!peer) return;
+    try { router.setParams({ email: peer }); } catch {}
+  }, [conversationType, params.email, members, currentEmail, router]);
 
   // ============================================================
   // MESSAGES
@@ -13566,8 +13604,9 @@ function ChatConversationInner() {
           if (needsRead) {
             markReadUpTo(lastMsg.id);
           }
-          // Clear push notification badge when viewing conversation
-          try { const { clearBadge } = require('../services/pushNotifications'); clearBadge(); } catch {}
+          // [2026-10-12 wa-parity] Recalcula o badge (soma das OUTRAS conversas
+          // não lidas) em vez de zerar o ícone inteiro ao abrir uma conversa.
+          try { require('../services/pushNotifications').refreshBadgeCount?.()?.catch?.(() => {}); } catch {}
         }
 
         // Pre-cache media in background (native only — web uses browser cache).
@@ -15158,6 +15197,55 @@ function ChatConversationInner() {
         setMessages(prev => _mapKeep(prev, row => String(row.id) === String(m.id) ? { ...row, reactions: m.reactions } : row));
       };
       wsUnsubs.push(_wsOnB('reaction', onWsReaction));
+
+      // [2026-10-12 wa-parity] Fixar/desafixar ao vivo no OUTRO lado. O hub Go
+      // entrega 'pin'/'unpin' (broadcastChatMessage) mas a tela só escutava o
+      // 'chat_pin' do tcp-client legado → o banner "Mensagem fixada" só
+      // aparecia no destinatário depois de reabrir a conversa (QA E2E 971).
+      // Refaz a lista do servidor (fonte da verdade: limite de 3, expiração).
+      let _pinRefetchT = null;
+      const onWsPin = (payload) => {
+        if (!mountedRef.current) return;
+        const m = _extractWsMsg(payload) || payload || {};
+        const cid = m.conversation_id ?? payload?.conversation_id;
+        if (cid != null && String(cid) !== String(conversationId)) return;
+        if (_pinRefetchT) clearTimeout(_pinRefetchT);
+        _pinRefetchT = setTimeout(() => {
+          _pinRefetchT = null;
+          if (!mountedRef.current) return;
+          // chat_pinned_messages é leitura SWR (60s) — sem invalidar, o
+          // refetch devolvia a lista velha do cache (QA: banner do B ficava
+          // com o pin antigo).
+          try { api.swrInvalidate?.('chat_pinned_messages'); } catch {}
+          api.chatPinnedMessages(conversationId).then(r => {
+            if (r?.success && mountedRef.current) setPinnedMessages(r.data?.items || r.data?.messages || []);
+          }).catch(() => {});
+        }, 250);
+      };
+      // [2026-10-12 wa-parity] Visualização única: o servidor (chat_view_once_open)
+      // transmite 'update' com viewed_by/expired_at quando o destinatário abre,
+      // mas ninguém escutava → o remetente só via "Aberta" ao reabrir a conversa.
+      // Mescla SÓ os campos de visualização única (não sobrescreve conteúdo
+      // decifrado/local da linha).
+      const onWsUpdate = (payload) => {
+        if (!mountedRef.current) return;
+        const m = _extractWsMsg(payload);
+        if (!m || m.id == null || String(m.conversation_id) !== String(conversationId)) return;
+        if (!(m.is_view_once || m.isViewOnce || m.viewed_by !== undefined || m.expired_at !== undefined)) return;
+        setMessages(prev => _mapKeep(prev, row => {
+          if (String(row.id) !== String(m.id)) return row;
+          const next = { ...row };
+          let changed = false;
+          for (const k of ['viewed_by', 'expired_at', 'view_once_opened', 'view_once_viewed_count']) {
+            if (m[k] !== undefined && m[k] !== row[k]) { next[k] = m[k]; changed = true; }
+          }
+          return changed ? next : row;
+        }));
+      };
+      wsUnsubs.push(_wsOnB('update', onWsUpdate));
+      wsUnsubs.push(_wsOnB('pin', onWsPin));
+      wsUnsubs.push(_wsOnB('unpin', onWsPin));
+      wsUnsubs.push(() => { if (_pinRefetchT) { clearTimeout(_pinRefetchT); _pinRefetchT = null; } });
 
       const onWsDelete = (payload) => {
         if (!mountedRef.current) return;
@@ -20860,6 +20948,21 @@ function ChatConversationInner() {
     // antes de mostrar a reação, dando feel "lento". WhatsApp/iMessage atualiza
     // na hora — server vira fonte de verdade quando responde.
     let prevReactions = null;
+    // [2026-10-12 wa-parity] WhatsApp = UMA reação por pessoa: escolher outro
+    // emoji TROCA a reação. O servidor (chat_react) faz toggle por emoji e
+    // empilhava — trocar ❤️→👍 e depois tirar o 👍 fazia o ❤️ "voltar" (QA
+    // E2E 971). Antes do toggle do novo emoji, tira as reações antigas minhas.
+    const _meLcR = String(currentEmail || '').toLowerCase();
+    const _usersOfR = (r) => (Array.isArray(r?.users) ? r.users : (typeof r?.users === 'string' ? r.users.split(',') : []));
+    let _oldMine = [];
+    if (!isSticker) {
+      try {
+        const _cur = (messagesRef?.current || []).find(m => m && m.id === msgId);
+        _oldMine = ((_cur && _cur.reactions) || [])
+          .filter(r => { const e = r?.emoji || r?.reaction; return e && e !== emoji && _usersOfR(r).some(u => String(u || '').toLowerCase() === _meLcR); })
+          .map(r => r.emoji || r.reaction);
+      } catch { _oldMine = []; }
+    }
     setMessages(prev => _mapKeep(prev, m => {
       if (m.id !== msgId) return m;
       prevReactions = m.reactions || [];
@@ -20870,7 +20973,14 @@ function ChatConversationInner() {
       // optimistic reaction only appeared once the server echoed back
       // ~200-500ms later. Toggle by adding/removing currentEmail from
       // the matching emoji group instead of splicing a flat row.
-      const next = (prevReactions || []).map(r => ({ ...r, users: Array.isArray(r.users) ? [...r.users] : (typeof r.users === 'string' ? r.users.split(',') : []) }));
+      let next = (prevReactions || []).map(r => ({ ...r, users: Array.isArray(r.users) ? [...r.users] : (typeof r.users === 'string' ? r.users.split(',') : []) }));
+      if (_oldMine.length) {
+        next = next.map(r => {
+          if (!_oldMine.includes(r.emoji || r.reaction)) return r;
+          const users = r.users.filter(u => String(u || '').toLowerCase() !== _meLcR);
+          return { ...r, users, count: users.length };
+        }).filter(r => r.users.length > 0);
+      }
       const gIdx = next.findIndex(r => (r.emoji || r.reaction) === emoji);
       if (gIdx >= 0) {
         const group = next[gIdx];
@@ -20895,6 +21005,9 @@ function ChatConversationInner() {
     // as strings (local msgId here can be number or tmp_* string).
     inflightReactionMsgIdsRef.current.add(String(msgId));
     try {
+      for (const _oe of _oldMine) {
+        try { await api.chatReact(msgId, _oe); } catch {}
+      }
       const r = await api.chatReact(msgId, isSticker ? null : emoji, isSticker ? stickerUrl : undefined);
       if (r.success) {
         // Reconcile com truth do server (caso outro device/peer tenha mudado).
@@ -21265,7 +21378,9 @@ function ChatConversationInner() {
         setPinnedMessages(prev => {
           const exists = prev.find(p => p.id === msg.id);
           if (exists) return prev.filter(p => p.id !== msg.id);
-          return [{ ...msg, pinned_until: pinnedUntil }, ...prev];
+          // [2026-10-12 wa-parity] Máx. 3 fixadas (o servidor já descarta a
+          // mais antiga); localmente o banner chegava a "4 mensagens fixadas".
+          return [{ ...msg, pinned_until: pinnedUntil }, ...prev].slice(0, 3);
         });
       } else {
         // Server rejected — don't leave the user thinking it pinned.
@@ -22143,12 +22258,11 @@ function ChatConversationInner() {
     setForwardSearch('');
     setForwardSelected(new Set());
     if (fail === 0) {
-      safeAlert(
-        t('chatConv.forwarded') || 'Encaminhada',
-        ok === 1
-          ? (t('chatConv.forwardedSuccess') || 'Mensagem encaminhada.')
-          : `${ok} ${t('chatConv.forwardedMany') || 'conversas receberam a mensagem.'}`
-      );
+      // [2026-10-12 wa-parity] Sucesso é silencioso (WhatsApp só fecha o
+      // seletor). O alerta bloqueante "Mensagem encaminhada" no web era um
+      // window.alert a cada encaminhamento — e no plural lia a chave
+      // duplicada chatConv.forwardedMany ("3 Encaminhada várias vezes").
+      try { if (Platform.OS !== 'web') Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success); } catch {}
     } else {
       safeAlert(
         t('chatConv.forwardError') || 'Erro',
@@ -22175,7 +22289,6 @@ function ChatConversationInner() {
         setForwardMsg(null);
         setForwardSearch('');
         setForwardSelected(new Set());
-        safeAlert(t('chatConv.forwarded') || 'Encaminhada', t('chatConv.forwardedSuccess') || 'Mensagem encaminhada.');
       } else {
         const detail = r?.message || r?.error || 'unknown_error';
         safeAlert(t('chatConv.forwardError') || 'Erro', detail);
@@ -24650,7 +24763,11 @@ function ChatConversationInner() {
       // dependency needed (react-native-pager-view isn't installed). Dots
       // indicator below the strip, tap a slide → opens fullscreen viewer.
       const allImages = items.every(m => m && (m.type === 'image' || m.type === 'photo' || m.type === 'gif'));
-      const useCarousel = n >= 2 && n <= 30 && allImages;
+      // [2026-10-12 wa-parity] WhatsApp mostra álbum em GRADE (2 lado a lado,
+      // 3 = 1 grande + 2, 4+ = 2x2 com "+N" na última) — o carrossel 1/4 com
+      // bolinhas escondia 3 das 4 fotos atrás de um swipe que no web (mouse)
+      // nem existe. Carrossel fica atrás de ALBUM_CAROUSEL (desligado).
+      const useCarousel = ALBUM_CAROUSEL && n >= 2 && n <= 30 && allImages;
       let grid;
       if (useCarousel) {
         const slideW = maxW;
@@ -28987,11 +29104,12 @@ function ChatConversationInner() {
             const fromName = (msg.forwarded_from_name && String(msg.forwarded_from_name).trim())
               || (msg.forwarded_from ? emailToDisplayName(msg.forwarded_from) : '')
               || (msg.forwarded_from ? String(msg.forwarded_from).split('@')[0] : '');
+            // [2026-10-12 wa-parity] WhatsApp só tem 2 rótulos: "Encaminhada"
+            // (1–4 saltos) e "Encaminhada com frequência" (5+). O degrau
+            // intermediário "várias vezes" não existe lá.
             const baseLabel = fc >= 5
-              ? (t('chatConv.forwardedManyTimes') || 'Encaminhada muitas vezes')
-              : fc > 1
-                ? (t('chatConv.forwardedMany') || 'Encaminhada varias vezes')
-                : (t('chatConv.forwarded') || 'Encaminhada');
+              ? (t('chatConv.forwardedManyTimes') || 'Encaminhada com frequência')
+              : (t('chatConv.forwarded') || 'Encaminhada');
             // [2026-10-10 conv-polish] "de" estava fixo em PT ("Forwarded de X" no en).
             const fullLabel = fromName ? t('chatConv.forwardedFromFmt').replace('{label}', baseLabel).replace('{name}', fromName) : baseLabel;
             return (
@@ -30810,7 +30928,7 @@ function ChatConversationInner() {
               });
               return;
             }
-            setMessageMenu({ message: msg });
+            handleLongPress(msg); // [2026-10-12] setMessageMenu não existe (ReferenceError)
           }}
           onReachTop={() => { if (hasMore && !loadingMoreRef.current) handleLoadMore(); }}
           onReactionTap={(e) => {
@@ -30994,7 +31112,7 @@ function ChatConversationInner() {
                 if (emoji) api.chatReact(messageId, emoji).catch(() => {});
                 break;
               case 'info':
-                setMessageMenu({ message: msg, infoOnly: true });
+                handleMessageInfo(msg); // [2026-10-12] setMessageMenu não existe
                 break;
               case 'select':
                 setSelectionMode(true);
@@ -31876,6 +31994,20 @@ function ChatConversationInner() {
               setInputText(newText);
               setMentionedEmails(prev => [...prev.filter(e => e !== mentionedEmail), mentionedEmail]);
               setShowMentionPopup(false);
+              // [2026-10-12 wa-parity] WhatsApp: depois de escolher a menção o
+              // teclado continua no campo com o cursor DEPOIS do "@nome ". No web
+              // o toque na sugestão tirava o foco e o cursor voltava ao início —
+              // o resto da frase entrava ANTES da menção (QA E2E grupo 982).
+              const _end = newText.length;
+              inputSelectionRef.current = { start: _end, end: _end };
+              requestAnimationFrame(() => {
+                try {
+                  const el = inputRef.current;
+                  el?.focus?.();
+                  if (Platform.OS === 'web') el?.setSelectionRange?.(_end, _end);
+                  else el?.setSelection?.(_end, _end);
+                } catch {}
+              });
             }}
             colors={colors}
             t={t}
@@ -33566,8 +33698,24 @@ function ChatConversationInner() {
                       };
                       // chatCreate upserts the DM via direct_key dedup —
                       // returns existing id if a conversation already exists.
-                      const r = await api.chatCreate([srcMsg.sender_email], '', 'direct');
-                      const newId = r?.data?.id || r?.data?.conversation_id;
+                      // [2026-10-12 wa-parity] Reaproveita o direct JÁ existente
+                      // com esse remetente antes do chatCreate: o servidor
+                      // reescreve @onemundo.com.br→@chatyy.com.br e criava um
+                      // 2º direct vazio ("Diga olá") em vez de abrir o de sempre
+                      // (QA E2E: grupo 982 → abria conv 991, não a 971).
+                      let newId = null;
+                      try {
+                        const _se = String(srcMsg.sender_email || '').toLowerCase();
+                        const _cl = await api.chatConversations();
+                        const _convs = Array.isArray(_cl?.data) ? _cl.data : (_cl?.data?.conversations || []);
+                        const _hit = _se && _convs.find(c => c && c.type === 'direct'
+                          && [c.other_email, c.contact_email].some(e => String(e || '').toLowerCase() === _se));
+                        if (_hit?.id) newId = _hit.id;
+                      } catch {}
+                      if (!newId) {
+                        const r = await api.chatCreate([srcMsg.sender_email], '', 'direct');
+                        newId = r?.data?.id || r?.data?.conversation_id;
+                      }
                       if (!newId) {
                         safeAlert(t('common.error') || 'Erro', t('chatConv.replyPrivatelyFailed') || 'Não foi possível abrir a conversa.');
                         return;
@@ -35185,11 +35333,21 @@ function ChatConversationInner() {
             const q = (forwardSearch || '').trim().toLowerCase();
             const filtered = forwardConversations.filter(c => {
               if (!q) return true;
-              const hay = [c.name, c.email, c.members?.map(m => m.email || m.name).join(' ')].filter(Boolean).join(' ').toLowerCase();
+              // [2026-10-12 wa-parity] Directs chegam com name vazio — o "Qa2"
+              // da linha vem de other_email/apelido. Buscar "qa2" não achava a
+              // própria linha listada (QA E2E 971). Indexa o mesmo nome exibido.
+              const _peerF = c.type === 'direct' ? (c.other_email || c.contact_email || c.members?.find(m => m.email !== currentEmail)?.email || c.email || '') : '';
+              let _nnF = '';
+              if (_peerF) { try { _nnF = require('../services/nicknames').getNickname?.(_peerF) || ''; } catch {} }
+              const hay = [c.name, c.email, c.other_email, c.contact_email, c.other_name, c.display_name, _nnF, _peerF ? emailToDisplayName(_peerF) : '', c.members?.map(m => [m.email, m.name, m.display_name].filter(Boolean).join(' ')).join(' ')].filter(Boolean).join(' ').toLowerCase();
               return hay.includes(q);
             });
-            const recents = filtered.slice(0, 5);
-            const rest = filtered.slice(5);
+            // [2026-10-12 wa-parity] Com busca ativa a seção "Recentes" some
+            // (!q) e "rest" começava no 6º item → os 5 primeiros resultados
+            // NUNCA apareciam (buscar "qa2" mostrava lista vazia, sem nem o
+            // "Nenhuma conversa"). Com busca: todos os resultados em "rest".
+            const recents = q ? [] : filtered.slice(0, 5);
+            const rest = q ? filtered : filtered.slice(5);
             const renderRow = ({ item }) => {
               const peerEmail = item.type === 'direct'
                 ? (item.other_email || item.contact_email || item.members?.find(m => m.email !== currentEmail)?.email || item.email)

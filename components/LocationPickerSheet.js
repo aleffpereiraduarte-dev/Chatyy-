@@ -243,7 +243,18 @@ function MapPreviewCard({ lat, lng, accuracy, height, radius = 18, colors, isDar
       )}
 
       {/* real map — fades itself in once tiles paint; stays hidden on failure */}
-      {!nativeMap && !failed && (
+      {/* [2026-10-12 wa-parity] Web: react-native-webview não existe no
+          navegador e pintava "React Native WebView does not support this
+          platform." em vermelho sobre o mapa. Mesmo HTML num <iframe>. */}
+      {!nativeMap && !failed && Platform.OS === 'web' && React.createElement('iframe', {
+        key: `${lat.toFixed(5)},${lng.toFixed(5)},${isDark ? 'd' : 'l'}`,
+        srcDoc: mapPreviewHtml({ lat, lng, isDark }),
+        title: 'map',
+        sandbox: 'allow-scripts allow-same-origin',
+        loading: 'lazy',
+        style: { position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', border: 0, background: 'transparent', pointerEvents: 'none' },
+      })}
+      {!nativeMap && !failed && Platform.OS !== 'web' && (
         <WebView
           key={`${lat.toFixed(5)},${lng.toFixed(5)},${isDark ? 'd' : 'l'}`}
           source={{ html: mapPreviewHtml({ lat, lng, isDark }), baseUrl: 'https://boraum.com.br/' }}
