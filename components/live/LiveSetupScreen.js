@@ -43,11 +43,20 @@ function Scrim({ id, from, to, mid = null, style }) {
     <View pointerEvents="none" style={style}>
       <Svg width="100%" height="100%" preserveAspectRatio="none">
         <Defs>
-          <LinearGradient id={id} x1="0" y1="0" x2="0" y2="1">
-            <Stop offset="0" stopColor="#000" stopOpacity={from} />
-            {mid != null ? <Stop offset="0.45" stopColor="#000" stopOpacity={mid} /> : null}
-            <Stop offset="1" stopColor="#000" stopOpacity={to} />
-          </LinearGradient>
+          {/* [2026-10-12] Nunca passar filho null ao LinearGradient: o react-native-svg
+              nativo faz cloneElement em cada filho e quebra a tela no iPhone. */}
+          {mid != null ? (
+            <LinearGradient id={id} x1="0" y1="0" x2="0" y2="1">
+              <Stop offset="0" stopColor="#000" stopOpacity={from} />
+              <Stop offset="0.45" stopColor="#000" stopOpacity={mid} />
+              <Stop offset="1" stopColor="#000" stopOpacity={to} />
+            </LinearGradient>
+          ) : (
+            <LinearGradient id={id} x1="0" y1="0" x2="0" y2="1">
+              <Stop offset="0" stopColor="#000" stopOpacity={from} />
+              <Stop offset="1" stopColor="#000" stopOpacity={to} />
+            </LinearGradient>
+          )}
         </Defs>
         <Rect x="0" y="0" width="100%" height="100%" fill={`url(#${id})`} />
       </Svg>
