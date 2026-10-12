@@ -1558,6 +1558,23 @@ function MediaStatusFooter({ msg, isOwn, variant }) {
   );
 }
 
+// [2026-10-12 bubble-wa-tail] Rabicho WhatsApp: SVG 8×13 colado no canto de
+// cima (reto) da 1ª bolha do grupo, do lado do autor, com a cor exata da
+// bolha. Geometria = tail-in/tail-out do WhatsApp (viewBox deslocado 1px p/
+// a borda de cima coincidir com a da bolha). Estilos estáticos + memo: só
+// re-renderiza se lado/cor mudarem. pointerEvents none → gestos intactos.
+const _TAIL_PATH_OWN = 'M5.188 1H0v11.193l6.467-8.625C7.526 2.156 6.958 1 5.188 1z';
+const _TAIL_PATH_OTHER = 'M1.533 3.568L8 12.193V1H2.812C1.042 1 .474 2.156 1.533 3.568z';
+const BubbleTail = React.memo(function BubbleTail({ own, color }) {
+  return (
+    <View pointerEvents="none" style={own ? styles.bubbleTailOwn : styles.bubbleTailOther}>
+      <Svg width={8} height={13} viewBox="0 1 8 13">
+        <Path d={own ? _TAIL_PATH_OWN : _TAIL_PATH_OTHER} fill={color} />
+      </Svg>
+    </View>
+  );
+});
+
 // ============================================================
 // UNREAD SEPARATOR with pulse glow on mount
 // ============================================================
@@ -9879,20 +9896,26 @@ function ChatConversationInner() {
   // regardless of the overall radius.
   const bubbleRadius = bubbleShape === 'square' ? 4 : (bubbleShape === 'classic' ? 10 : 18);
   const bubbleTailRadius = bubbleShape === 'square' ? 2 : (bubbleShape === 'classic' ? 4 : 5);
-  // Per-side override: all corners get bubbleRadius, the tail corner shrinks.
-  // Recomputed only when the shape changes.
-  const ownBubbleShapeStyle = useMemo(() => ({
-    borderTopLeftRadius: bubbleRadius,
-    borderTopRightRadius: bubbleRadius,
-    borderBottomLeftRadius: bubbleRadius,
-    borderBottomRightRadius: bubbleTailRadius,
-  }), [bubbleRadius, bubbleTailRadius]);
-  const otherBubbleShapeStyle = useMemo(() => ({
-    borderTopLeftRadius: bubbleRadius,
-    borderTopRightRadius: bubbleRadius,
-    borderBottomLeftRadius: bubbleTailRadius,
-    borderBottomRightRadius: bubbleRadius,
-  }), [bubbleRadius, bubbleTailRadius]);
+  // [2026-10-12 bubble-wa-tail] Cantos por posição no grupo (WhatsApp):
+  // 1ª do grupo = rabicho no topo do lado do autor (canto de cima reto, o SVG
+  // BubbleTail completa a curva); meio do grupo = cantos do lado do autor
+  // justos (bloco único, 2px entre bolhas); última = canto de baixo redondo.
+  // Bolhas sem rabicho (mídia com overflow:hidden, figurinha…) mantêm o canto
+  // de cima redondo. 16 objetos ESTÁVEIS (memo pela forma) → a lista de
+  // estilos da bolha não cria objeto novo por render (MemoizedMessageRow).
+  const bubbleCornerStyles = useMemo(() => {
+    const R = bubbleRadius;
+    const r = bubbleTailRadius;
+    const out = {};
+    for (const own of [0, 1]) for (const first of [0, 1]) for (const last of [0, 1]) for (const tail of [0, 1]) {
+      const topA = first ? (tail ? 0 : R) : r;
+      const botA = last ? R : r;
+      out[`${own}${first}${last}${tail}`] = own
+        ? { borderTopLeftRadius: R, borderTopRightRadius: topA, borderBottomLeftRadius: R, borderBottomRightRadius: botA }
+        : { borderTopLeftRadius: topA, borderTopRightRadius: R, borderBottomLeftRadius: botA, borderBottomRightRadius: R };
+    }
+    return out;
+  }, [bubbleRadius, bubbleTailRadius]);
 
   // Native chat cache (iOS only) — synchronous SQLite read in Swift.
   // Used by both the initial render (useState initializer below) and by
@@ -25652,9 +25675,19 @@ function ChatConversationInner() {
               </MediaPopIn>
               {hasCaption && (
                 <View>
-                  <Text style={[styles.msgText, { color: isOwn ? ownTextColor : colors.text, fontSize: msgFontSize, lineHeight: msgLineHeight, marginTop: 6, paddingHorizontal: 12 }]}>{msg.content}</Text>
+                  {/* [2026-10-12 bubble-wa-tail] Legenda com hora/✓ FLUTUANDO no fim
+                      da última linha (ghost spacer, igual texto puro) — antes a
+                      hora ocupava uma linha própria embaixo da legenda. */}
+                  <Text style={[styles.msgText, styles.captionText, { color: isOwn ? ownTextColor : colors.text, fontSize: msgFontSize, lineHeight: msgLineHeight }]}>
+                    {msg.content}
+                    {!imgUploading && (
+                      <Text style={styles.metaGhost} selectable={false} accessible={false} importantForAccessibility="no">
+                        {_waMetaGhost({ time: formatTime(msg.created_at), own: isOwn, edited: msg.edited_at ? t('chatConv.edited') : '', icons: 0 })}
+                      </Text>
+                    )}
+                  </Text>
                   {!imgUploading && (
-                    <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 3, paddingHorizontal: 10, paddingTop: 2, paddingBottom: 3 }}>
+                    <View style={styles.captionMeta}>
                       {!!msg.edited_at && (
                         <Text style={[styles.editedLabel, { color: isOwn ? ownMetaColor : otherMetaColor }]}>{t('chatConv.edited')}</Text>
                       )}
@@ -28627,6 +28660,14 @@ function ChatConversationInner() {
 
     const isLastInGroup = msg._isLastInGroup !== false;
     const isFirstInGroup = msg._isFirstInGroup !== false;
+    // [2026-10-12 bubble-wa-tail] Bolha "nua" (sem fundo): figurinha/GIF,
+    // vídeo redondo e emoji grande — sem rabicho/sombra. Mídia (foto/vídeo)
+    // usa overflow:'hidden' (cortaria o rabicho) → sem rabicho também, igual
+    // ao recorte atual; a 1ª do grupo mantém o canto redondo.
+    const _bubbleBare = !isDeleted && (msg.type === 'sticker' || msg.type === 'gif' || isVideoNoteMessage(msg) || _jumboNoBubble);
+    const _bubbleClips = !isDeleted && (msg.type === 'image' || msg.type === 'video');
+    const _showTail = isFirstInGroup && !_bubbleBare && !_bubbleClips;
+    const _bubbleBg = isOwn ? ownBubbleBg : (isUserMentioned(msg, currentEmail) ? (isDark ? '#2A2A2E' : '#E2E2E6') : otherBubbleBg);
     // Album grouping (WhatsApp-style): consecutive image/video messages from
     // the same sender within 30s share an _albumKey and collapse into a
     // visually-bonded block. Inner rows use 1px vertical separation to read
@@ -28810,20 +28851,14 @@ function ChatConversationInner() {
               // sutil) pra descolar do fundo sem glow. Zero cor.
               // [2026-10-08 chat-beauty-bubbles] P&B: enviada = superfície
               // escura chapada (sem hairline/sombra — flat iMessage/Telegram).
-              ? [styles.bubbleOwn, { backgroundColor: ownBubbleBg }]
+              ? [styles.bubbleOwn, { backgroundColor: _bubbleBg }]
               // RECEBIDO = cinza claro / grafite. Menção = tom um pouco mais
               // forte do mesmo cinza (sem verde).
-              : [styles.bubbleOther, {
-                  backgroundColor: isUserMentioned(msg, currentEmail) ? (isDark ? '#2A2A2E' : '#E2E2E6') : otherBubbleBg,
-                }],
+              : [styles.bubbleOther, { backgroundColor: _bubbleBg }, !isDark && !_bubbleBare && styles.bubbleOtherLift],
             // Bubble shape (settings.js `bubble_shape`). Layered AFTER the
             // default bubbleOwn/bubbleOther corner radii so it overrides them.
-            isOwn ? ownBubbleShapeStyle : otherBubbleShapeStyle,
-            // [2026-10-08 chat-beauty-bubbles] Cantos agrupados (iMessage/
-            // Telegram): sem rabicho SVG. O canto de baixo do lado do autor é
-            // sempre justo (âncora); quando a msg CONTINUA um grupo, o canto de
-            // cima do mesmo lado também fica justo → o grupo vira um bloco.
-            !isFirstInGroup && (isOwn ? { borderTopRightRadius: bubbleTailRadius } : { borderTopLeftRadius: bubbleTailRadius }),
+            // [2026-10-12 bubble-wa-tail] cantos por posição no grupo (tabela memo).
+            bubbleCornerStyles[`${isOwn ? 1 : 0}${isFirstInGroup ? 1 : 0}${isLastInGroup ? 1 : 0}${_showTail ? 1 : 0}`],
             isDeleted && styles.bubbleDeleted,
             (msg.type === 'sticker' || msg.type === 'gif') && !isDeleted && { backgroundColor: 'transparent', borderWidth: 0, paddingHorizontal: 0, paddingVertical: 0, elevation: 0, shadowOpacity: 0 },
             // [2026-10-10] Vídeo redondo = só o círculo (sem a bolha preta atrás), igual WhatsApp.
@@ -28835,6 +28870,7 @@ function ChatConversationInner() {
             msg._pending && { opacity: 0.7 },
             msg._failed && { opacity: 0.5 },
           ]}>
+          {_showTail && <BubbleTail own={isOwn} color={_bubbleBg} />}
           {/* Jump-to-message flash — animated green wash pulse (was a static
               amber border that snapped on/off). Overlay inside the bubble so
               it clips to the rounded corners; pointerEvents none. */}
@@ -37419,7 +37455,12 @@ function ChatConversationInner() {
 // da palavra (foto do founder: "coca ca", "valac"). Um valor em px derivado da
 // TELA é estável desde o primeiro frame. Capado em 620 pra não ficar gigante em
 // iPad/web (lá a coluna já é centralizada).
-const BUBBLE_MAX_W = Math.round(Math.min(Dimensions.get('window').width, 620) * 0.78); // [2026-10-08 chat-beauty-bubbles] 0.80→0.78
+// [2026-10-12 bubble-wa-tail] Web largo (desktop, coluna ao lado da lista):
+// ~65% do painel da conversa (WhatsApp Web) em vez de 78% de 620 = 484px.
+const _BUBBLE_WIN_W = Dimensions.get('window').width || 390;
+const BUBBLE_MAX_W = (Platform.OS === 'web' && _BUBBLE_WIN_W >= 900)
+  ? Math.round(Math.max(484, Math.min(_BUBBLE_WIN_W - 340, 960) * 0.65))
+  : Math.round(Math.min(_BUBBLE_WIN_W, 620) * 0.78); // [2026-10-08 chat-beauty-bubbles] 0.80→0.78
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
@@ -37621,6 +37662,17 @@ const styles = StyleSheet.create({
     borderBottomLeftRadius: 5, borderBottomRightRadius: 18,
     borderWidth: 0, borderColor: 'transparent',
   },
+  // [2026-10-12 bubble-wa-tail] Rabicho (ver BubbleTail): fora da bolha, no
+  // topo, do lado do autor. A margem lateral de 8px da linha acomoda os 8px.
+  // Legenda de foto: hora/✓ absolutos no canto (ghost reserva o espaço).
+  captionText: { marginTop: 6, paddingLeft: 12, paddingRight: 15, paddingBottom: 3 }, // = bolha pad 12 + msgText 3 (mesma calibragem do ghost)
+  captionMeta: { position: 'absolute', right: 10, bottom: 2, flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 3 },
+  bubbleTailOwn: { position: 'absolute', top: 0, right: -8, width: 8, height: 13 },
+  bubbleTailOther: { position: 'absolute', top: 0, left: -8, width: 8, height: 13 },
+  // [2026-10-12 bubble-wa-tail] Recebida no CLARO: sombra-fio (web) p/ a bolha
+  // cinza não "lavar" no fundo branco. Nativo segue chapado (sem custo de
+  // composição na rolagem).
+  bubbleOtherLift: Platform.OS === 'web' ? { boxShadow: '0 1px 0.5px rgba(11,20,26,0.10)' } : {},
   // [beauty 2026-05-31] Match the live bubble's horizontal padding (13) so a
   // deleted-message bubble lines up exactly with its neighbours instead of
   // sitting 1px narrower.
