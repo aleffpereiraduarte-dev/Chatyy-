@@ -29,6 +29,13 @@ const FOLDER_ICONS = {
 };
 import { confirmAsync } from '../utils/confirm'; // [2026-10-12 overlays] diálogo estilizado no web
 
+// [2026-10-12 snapmap-speed] Warm "Amigos no Mapa" data on TAP (friends query
+// in flight before the screen even mounts). Lazy require: no import cost.
+function _prefetchRoute(route) {
+  if (route !== '/snap-map') return;
+  try { require('../services/snapMapPrefetch').prefetchSnapMap(); } catch {}
+}
+
 // Folder icon colors — MONOCHROME 2026: every folder reads as the single
 // neutral accent (#111111). Active = solid, inactive = 60% (see FolderItem).
 const FOLDER_COLORS = {
@@ -402,7 +409,7 @@ function Sidebar({ folders, currentFolder, onFolderPress, onCompose, onFoldersCh
               isActive={isActive}
               iconColor={iconColor}
               colors={colors}
-              onPress={item.onPress || (() => onNavigate?.(item.route))}
+              onPress={item.onPress || (() => { _prefetchRoute(item.route); onNavigate?.(item.route); })}
             />
           );
         })}
@@ -489,7 +496,7 @@ function Sidebar({ folders, currentFolder, onFolderPress, onCompose, onFoldersCh
                 item={item}
                 colors={colors}
                 isActive={Array.isArray(activeSidePanel) ? activeSidePanel.includes(item.route) : activeSidePanel === item.route}
-                onPress={() => onNavigate?.(item.route)}
+                onPress={() => { _prefetchRoute(item.route); onNavigate?.(item.route); }}
               />
             ))}
             {/* [beauty2 2026-05-31] align with QuickAccessItem rows (shared folderItem/iconWrap) */}

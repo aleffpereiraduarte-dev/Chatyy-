@@ -1879,6 +1879,8 @@ const AppsDrawerModal = React.memo(function AppsDrawerModal({ visible, onClose, 
     } catch {}
     if (it.action) { it.action(); return; }
     onClose();
+    // [2026-10-12 snapmap-speed] start the friends query on TAP, not on mount.
+    if (it.route === '/snap-map') { try { require('../services/snapMapPrefetch').prefetchSnapMap(); } catch {} }
     try { router.push(it.route); } catch (e) { console.warn('[chat] router.push failed:', e); }
   }, [onClose, router]);
 

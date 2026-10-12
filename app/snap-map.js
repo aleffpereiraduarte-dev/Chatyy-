@@ -65,6 +65,10 @@ import { coverageStyleFor, boraStyleUrl, boraMapHtml } from '../components/BoraM
 // Binaries without ChatyyMapView (and web) keep the MapLibre-GL-JS WebView below.
 import { ChatyyMap, isNativeMapAvailable, nativeMapStyleUrl } from '../components/NativeMap';
 import { MapSearchBar, MapFab } from '../components/MapControls';
+// [2026-10-12 snapmap-speed] per-account cache (last region + friends) + prefetch.
+import {
+  getSnapMapCacheSync, readSnapMapCache, writeSnapMapCache, prefetchSnapMap,
+} from '../services/snapMapPrefetch';
 import {
   IconArrowLeft, IconMapPin, IconUser, IconMessageSquare, IconX, IconNavigation,
   IconPhone, IconEyeOff, IconClock, IconRefresh, IconFilter,
@@ -90,6 +94,14 @@ try { mailWs = require('../services/websocket').default; } catch {}
 const { width: SW, height: SH } = Dimensions.get('window');
 
 const DEFAULT_ZOOM = 14;
+// [2026-10-12 snapmap-speed] When we know NOTHING about where the user is,
+// show the whole country (zoom 4) instead of zoom 14 on the Brazil centroid —
+// that spot is rural Mato Grosso, which MapKit/MapLibre paint as an empty
+// beige canvas ("o mapa demora carregar" — it never "loaded", it was just
+// looking at a field). Better sources upgrade the camera (CENTER_RANK).
+const FALLBACK_CENTER = { lat: -14.235, lng: -51.925, src: 'fallback' };
+const FALLBACK_ZOOM = 4;
+const CENTER_RANK = { fallback: 0, friend: 1, ip: 2, cache: 3, gps: 4 };
 
 // Build the HTML document that runs MapLibre GL JS (CDN unpkg) reading the
 // BoraUm self-hosted style.json + a custom DOM avatar marker per friend.
@@ -866,6 +878,8 @@ window.RNbridge = function(json) {
     if (msg.type === 'pins' && window.__renderPins) window.__renderPins(msg.pins || []);
     else if (msg.type === 'me' && window.__renderMe) window.__renderMe(msg.me);
     else if (msg.type === 'pan' && window.__panTo) window.__panTo(msg.lat, msg.lng);
+    else if (msg.type === 'fit' && window.__fitAll) window.__fitAll(!!msg.animate);
+    else if (msg.type === 'center' && __map) __map.easeTo({ center: [msg.lng, msg.lat], zoom: msg.zoom || 14, duration: 600 });
   } catch (e) {}
 };
 window.addEventListener('message', function(ev) {
@@ -1040,13 +1054,16 @@ export default function SnapMapScreen() {
     } catch {}
   }, [params?.incoming_request, params?.requester_name, params?.message]);
 
-  const [shares, setShares] = useState([]);   // friends sharing with me
-  const [loading, setLoading] = useState(true);
+  // [2026-10-12 snapmap-speed] Seed from the in-memory per-account cache so a
+  // re-entry paints friends + region on the FIRST frame, then refreshes.
+  const _seed = useMemo(() => getSnapMapCacheSync(user?.email), []); // eslint-disable-line react-hooks/exhaustive-deps
+  const [shares, setShares] = useState(() => (Array.isArray(_seed?.shares) ? _seed.shares : []));   // friends sharing with me
+  const [loading, setLoading] = useState(() => !Array.isArray(_seed?.shares));
   const [refreshing, setRefreshing] = useState(false);
   const [myLocation, setMyLocation] = useState(null);
   const [selected, setSelected] = useState(null); // bottom sheet pin
   const [mapErr, setMapErr] = useState(null); // basemap diagnostic (gray-map cause)
-  const [pendingReqs, setPendingReqs] = useState([]); // incoming requests
+  const [pendingReqs, setPendingReqs] = useState(() => (Array.isArray(_seed?.pending) ? _seed.pending : [])); // incoming requests
   // [WAVE 69 2026-05-21] IP-based fallback location + permission state.
   // ipLocation = result of `geo_locate_ip` (Cloudflare or ipapi.co). Used
   // ONLY when GPS unavailable. usingIpFallback drives the banner that
@@ -1123,21 +1140,15 @@ export default function SnapMapScreen() {
   const refreshShares = useCallback(async () => {
     setRefreshing(true);
     try {
-      const r = await api.friendsMapShares?.();
-      if (r?.success && r.data) {
-        setShares(Array.isArray(r.data.shares) ? r.data.shares : []);
-      }
-    } catch {}
-    try {
-      const g = await api.friendLocationGrants?.();
-      if (g?.success && g.data) {
-        setPendingReqs(g.data.pending_incoming || []);
-      }
+      // [2026-10-12 snapmap-speed] shares + grants in PARALLEL (was serial).
+      const res = await prefetchSnapMap(user?.email, { force: true });
+      if (res?.shares) setShares(res.shares);
+      if (res?.pending) setPendingReqs(res.pending);
     } catch {}
     // Guarantee the spinner is visible for at least ~400ms; instant
     // resolutions feel unresponsive otherwise.
     setTimeout(() => setRefreshing(false), 400);
-  }, []);
+  }, [user?.email]);
 
   // ── Initial load: my GPS + friends + pending requests ─────────────
   // [WAVE 69 2026-05-21] Smart fallback chain so a brand-new user (no GPS
@@ -1154,7 +1165,22 @@ export default function SnapMapScreen() {
   // wondering why the map shows the wrong city.
   useEffect(() => {
     let alive = true;
-    const load = async () => {
+    // [2026-10-12 snapmap-speed] Friends + pending requests NO LONGER wait for
+    // the GPS fix (getCurrentPositionAsync could hold them up to 10s on iOS
+    // cold GPS). They run in parallel and reuse the prefetch fired on tap of
+    // the map entry (services/snapMapPrefetch).
+    const loadFriends = async (force) => {
+      try {
+        const res = await prefetchSnapMap(user?.email, { force });
+        if (alive && res?.shares) {
+          setShares(res.shares);
+          writeSnapMapCache(user?.email, { shares: res.shares });
+        }
+        if (alive && res?.pending) setPendingReqs(res.pending);
+      } catch {}
+      if (alive) setLoading(false);
+    };
+    const locate = async () => {
       // My own location for centering. We DON'T auto-share — that's a
       // separate explicit user action (in-chat live-location bubble or
       // an accepted request).
@@ -1260,24 +1286,12 @@ export default function SnapMapScreen() {
         } catch {}
       }
 
-      try {
-        const r = await api.friendsMapShares?.();
-        if (alive && r?.success && r.data) {
-          setShares(Array.isArray(r.data.shares) ? r.data.shares : []);
-        }
-      } catch {}
-      try {
-        const g = await api.friendLocationGrants?.();
-        if (alive && g?.success && g.data) {
-          setPendingReqs(g.data.pending_incoming || []);
-        }
-      } catch {}
-      if (alive) setLoading(false);
     };
-    load();
-    const t1 = setInterval(load, 30000); // 30s poll fallback
+    loadFriends(false);
+    locate();
+    const t1 = setInterval(() => { loadFriends(true); locate(); }, 30000); // 30s poll fallback
     return () => { alive = false; clearInterval(t1); };
-  }, []);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── WS live patches ────────────────────────────────────────────────
   // Subscribes to two events:
@@ -1358,21 +1372,36 @@ export default function SnapMapScreen() {
   // [WAVE 65 2026-05-21] Read sync cached last-known location from AsyncStorage
   // (set every time we obtain a fresh fix) so cold-start paints near the user
   // instead of Brasília while expo-location warms up.
-  const [cachedHomeLoc, setCachedHomeLoc] = useState(null);
+  // [2026-10-12 snapmap-speed] Per-account cache (services/snapMapPrefetch):
+  // sync from memory on re-entry, AsyncStorage on cold start (falls back to the
+  // legacy device-wide 'snap_map_last_loc:v1'). `seedReady` gates the FIRST
+  // map mount/camera (≤300ms) so we never paint the Brazil centroid and then
+  // remount/jump to the real region.
+  const _seedCenter = _seed?.center && Number.isFinite(_seed.center.lat) && Number.isFinite(_seed.center.lng) ? _seed.center : null;
+  const [cachedHomeLoc, setCachedHomeLoc] = useState(_seedCenter);
+  const [seedReady, setSeedReady] = useState(!!_seed);
   useEffect(() => {
     let alive = true;
+    const failsafe = setTimeout(() => { if (alive) setSeedReady(true); }, 300);
     (async () => {
       try {
-        const AsyncStorage = require('@react-native-async-storage/async-storage').default;
-        const raw = await AsyncStorage.getItem('snap_map_last_loc:v1');
-        if (alive && raw) {
-          const parsed = JSON.parse(raw);
-          if (parsed && Number.isFinite(parsed.lat) && Number.isFinite(parsed.lng)) setCachedHomeLoc(parsed);
+        const c = await readSnapMapCache(user?.email);
+        if (!alive || !c) return;
+        if (c.center && Number.isFinite(c.center.lat) && Number.isFinite(c.center.lng)) {
+          setCachedHomeLoc((prev) => prev || c.center);
+        }
+        // Paint last-known friends instantly; the live fetch overwrites them.
+        if (Array.isArray(c.shares) && c.shares.length) {
+          setShares((prev) => (prev && prev.length ? prev : c.shares));
+        }
+        if (Array.isArray(c.pending) && c.pending.length) {
+          setPendingReqs((prev) => (prev && prev.length ? prev : c.pending));
         }
       } catch {}
+      finally { if (alive) { clearTimeout(failsafe); setSeedReady(true); } }
     })();
-    return () => { alive = false; };
-  }, []);
+    return () => { alive = false; clearTimeout(failsafe); };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
   // Persist every fresh fix so next cold-start has a near-real seed.
   useEffect(() => {
     if (myLocation && Number.isFinite(myLocation.lat) && Number.isFinite(myLocation.lng)) {
@@ -1380,6 +1409,7 @@ export default function SnapMapScreen() {
         const AsyncStorage = require('@react-native-async-storage/async-storage').default;
         AsyncStorage.setItem('snap_map_last_loc:v1', JSON.stringify({ lat: myLocation.lat, lng: myLocation.lng, ts: Date.now() })).catch(() => {});
       } catch {}
+      writeSnapMapCache(user?.email, { center: { lat: myLocation.lat, lng: myLocation.lng, ts: Date.now() } });
     }
   }, [myLocation?.lat, myLocation?.lng]);
   // First paint: prefer fresh GPS → cached last-known → IP geo → first
@@ -1388,14 +1418,24 @@ export default function SnapMapScreen() {
   // because a brand-new user (no GPS perm yet, no cached fix) was seeing
   // Cuiabá. IP geo gives city-precision before GPS warms up.
   // After mount, panning is preserved (we don't re-center on every update).
-  const initialCenter = useMemo(() => {
-    if (myLocation) return myLocation;
-    if (cachedHomeLoc) return cachedHomeLoc;
-    if (ipLocation && Number.isFinite(ipLocation.lat)) return { lat: ipLocation.lat, lng: ipLocation.lng };
-    if (shares[0] && Number.isFinite(shares[0].latitude)) return { lat: shares[0].latitude, lng: shares[0].longitude };
-    return { lat: -14.235, lng: -51.925 }; // Brazil geographic centroid (Cuiabá-ish) — neutral, not Brasília
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cachedHomeLoc ? 1 : 0, ipLocation ? 1 : 0]);   // re-seed once when cache OR ip-loc loads
+  // [2026-10-12 snapmap-speed] `bestCenter` = best region we know RIGHT NOW
+  // (with its source). The map is mounted ONCE with the best center available
+  // when `seedReady` flips (frozen in initialCenterRef → no WebView remount),
+  // and the camera is upgraded in place when a better source lands (see the
+  // camera-upgrade effect below). Before, native seeded the centroid and
+  // never moved again; the WebView rebuilt its whole HTML when cache/IP came.
+  const firstShare = shares.find((x) => Number.isFinite(Number(x?.latitude)) && Number.isFinite(Number(x?.longitude)));
+  const bestCenter = useMemo(() => {
+    if (myLocation && Number.isFinite(myLocation.lat)) return { lat: myLocation.lat, lng: myLocation.lng, src: 'gps' };
+    if (cachedHomeLoc) return { lat: cachedHomeLoc.lat, lng: cachedHomeLoc.lng, src: 'cache' };
+    if (ipLocation && Number.isFinite(ipLocation.lat) && Number.isFinite(ipLocation.lng)) return { lat: ipLocation.lat, lng: ipLocation.lng, src: 'ip' };
+    if (firstShare) return { lat: Number(firstShare.latitude), lng: Number(firstShare.longitude), src: 'friend' };
+    return null;
+  }, [myLocation?.lat, myLocation?.lng, cachedHomeLoc, ipLocation, firstShare?.latitude, firstShare?.longitude]); // eslint-disable-line react-hooks/exhaustive-deps
+  const initialCenterRef = useRef(null);
+  if (!initialCenterRef.current && seedReady) initialCenterRef.current = bestCenter || FALLBACK_CENTER;
+  const initialCenter = initialCenterRef.current || bestCenter || FALLBACK_CENTER;
+  const initialZoom = initialCenter.src === 'fallback' ? FALLBACK_ZOOM : DEFAULT_ZOOM;
 
   // [WAVE 49 2026-05-21] Apply the filter pill before computing the pin
   // payload. We compute it here (vs inside pinsPayload) so the list panel
@@ -1563,7 +1603,7 @@ export default function SnapMapScreen() {
   // pan/zoom). All pin/me updates flow through injectJavaScript.
   const mapHtml = useMemo(() => buildMapHtml({
     center: initialCenter,
-    zoom: DEFAULT_ZOOM,
+    zoom: initialZoom,
     isDark,
     initialPins: pinsPayload,
     initialMe: mePayload,
@@ -1671,17 +1711,26 @@ export default function SnapMapScreen() {
     return true;
   }, [nativeMarkers, nativeCameraTo]);
 
-  // First paint (native): fit everyone once markers exist; else initial center.
+  // [2026-10-12 snapmap-speed] Camera policy (native + WebView):
+  //   1. first camera = best center known when seedReady flips (cache/GPS),
+  //      zoom 4 over Brazil only when we know nothing;
+  //   2. friends present (cached or live) → fit everyone (+ me) once; refit
+  //      once more when MY position shows up after that;
+  //   3. otherwise upgrade the camera in place when a better source lands
+  //      (fallback < friend < ip < cache < gps) — never after a user gesture.
+  const appliedRankRef = useRef(-1);
+  const userMovedRef = useRef(false);
+  const fitHadMeRef = useRef(false);
+  const [mapReadyState, setMapReadyState] = useState(false);
   useEffect(() => {
-    if (!nativeMap) return;
-    if (!nativeCamera) {
-      nativeCameraTo({ latitude: initialCenter.lat, longitude: initialCenter.lng, zoom: DEFAULT_ZOOM });
-    }
-    if (!nativeFittedRef.current && nativeMarkers.some((m) => m.kind === 'avatar')) {
-      nativeFittedRef.current = true;
-      nativeFitAll(false);
-    }
-  }, [nativeMap, nativeMarkers, initialCenter]); // eslint-disable-line react-hooks/exhaustive-deps
+    if (!nativeMap || !seedReady || nativeCamera) return;
+    appliedRankRef.current = CENTER_RANK[initialCenter.src] ?? 0;
+    nativeCameraTo({ latitude: initialCenter.lat, longitude: initialCenter.lng, zoom: initialZoom });
+  }, [nativeMap, seedReady]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (nativeMap) return;
+    if (seedReady && appliedRankRef.current < 0) appliedRankRef.current = CENTER_RANK[initialCenter.src] ?? 0;
+  }, [nativeMap, seedReady]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!mapReadyRef.current) { pendingPinsRef.current = pinsPayload; return; }
@@ -1691,22 +1740,41 @@ export default function SnapMapScreen() {
     if (!mapReadyRef.current) { pendingMeRef.current = mePayload; return; }
     pushToMap({ type: 'me', me: mePayload });
   }, [mePayload, pushToMap]);
-
-  // [WAVE 69 2026-05-21] Pan to IP-fallback location when it arrives AFTER
-  // the map already mounted. initialCenter only seeds the HTML — without
-  // this, a user who opens snap-map with no GPS sees Brazil-centroid for
-  // ~300-1500ms (until the backend round-trip resolves) before the map
-  // would otherwise stay frozen on Brazil. We pan once, gently, and only
-  // if the user hasn't already received a real GPS fix.
-  const ipPannedRef = useRef(false);
+  // Runs AFTER the pins/me pushes above so a WebView 'fit' sees the markers.
+  const hasFriendPins = pinsPayload.length > 0;
+  const hasMe = !!mePayload;
   useEffect(() => {
-    if (ipPannedRef.current) return;
-    if (!ipLocation || !Number.isFinite(ipLocation.lat) || !Number.isFinite(ipLocation.lng)) return;
-    if (myLocation || cachedHomeLoc) return; // GPS won — don't override.
-    if (!mapReadyRef.current) return;
-    ipPannedRef.current = true;
-    pushToMap({ type: 'pan', lat: ipLocation.lat, lng: ipLocation.lng });
-  }, [ipLocation, myLocation, cachedHomeLoc, pushToMap]);
+    if (!seedReady || userMovedRef.current) return;
+    if (!nativeMap && !mapReadyState) return; // WebView: bridge only after map_ready
+    if (nativeMap && !nativeCamera) return;
+    if (hasFriendPins) {
+      if (nativeFittedRef.current && (fitHadMeRef.current || !hasMe)) return;
+      nativeFittedRef.current = true;
+      fitHadMeRef.current = hasMe;
+      if (nativeMap) nativeFitAll(mapReadyState);
+      else pushToMap({ type: 'fit', animate: true });
+      return;
+    }
+    if (nativeFittedRef.current || !bestCenter) return;
+    const r = CENTER_RANK[bestCenter.src] ?? 0;
+    if (r <= appliedRankRef.current) return;
+    const prevRank = appliedRankRef.current;
+    appliedRankRef.current = r;
+    // cache → GPS a few hundred metres apart: not worth a camera jump.
+    if (prevRank >= CENTER_RANK.cache) {
+      const d = haversineMeters(initialCenter.lat, initialCenter.lng, bestCenter.lat, bestCenter.lng);
+      if (d !== null && d < 400) return;
+    }
+    if (nativeMap) {
+      nativeCameraTo({ latitude: bestCenter.lat, longitude: bestCenter.lng, zoom: DEFAULT_ZOOM, animated: mapReadyState });
+    } else {
+      pushToMap({ type: 'center', lat: bestCenter.lat, lng: bestCenter.lng, zoom: DEFAULT_ZOOM });
+    }
+  }, [seedReady, nativeMap, !!nativeCamera, mapReadyState, hasFriendPins, hasMe, bestCenter]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // [2026-10-12 snapmap-speed] The old one-shot IP pan lived here; it bailed
+  // when the IP landed before map_ready (the common case) and never re-ran.
+  // Replaced by the camera-upgrade effect above.
 
   // Bridge messages from the WebView (pin tap → open bottom sheet,
   // map_ready → flush pending pins + dismiss loading spinner).
@@ -1715,6 +1783,7 @@ export default function SnapMapScreen() {
       const msg = typeof raw === 'string' ? JSON.parse(raw) : raw;
       if (msg.type === 'map_ready') {
         mapReadyRef.current = true;
+        setMapReadyState(true);
         setMapErr(null); // map recovered (incl. after an auto-retry) → drop the error chip
         if (pendingPinsRef.current) {
           pushToMap({ type: 'pins', pins: pendingPinsRef.current });
@@ -1935,7 +2004,8 @@ export default function SnapMapScreen() {
           the bottom sheet below. Real pan/zoom comes for free; we keep the
           loading + empty overlays absolutely-positioned on top of the WebView. */}
       <View style={{ flex: 1, position: 'relative', backgroundColor: isDark ? '#1a1a1a' : '#e5e7eb' }}>
-        {Platform.OS === 'web' ? (
+        {/* [2026-10-12 snapmap-speed] mount once, after the ≤300ms cache seed. */}
+        {!seedReady ? null : Platform.OS === 'web' ? (
           <iframe
             ref={iframeRef}
             srcDoc={mapHtml}
@@ -1960,6 +2030,7 @@ export default function SnapMapScreen() {
               if (id === '__search') { setSelectedSearch(null); return; }
               onWebMessage({ type: 'pin_tap', email: id });
             }}
+            onRegionWillChange={(r) => { if (r?.gesture) userMovedRef.current = true; }}
             onRegionDidChange={(r) => { if (Number.isFinite(r?.zoom)) nativeZoomRef.current = r.zoom; }}
           />
         ) : (

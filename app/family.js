@@ -690,6 +690,7 @@ function FamilyScreenInner() {
   // ── Find My Family → prefetch locations, then open the map ──
   const openFamilyMap = () => {
     api.familyLocationAll().catch(() => {}); // warm the map's data source
+    try { require('../services/snapMapPrefetch').prefetchSnapMap(); } catch {} // [2026-10-12 snapmap-speed]
     router.push('/snap-map');
   };
 
