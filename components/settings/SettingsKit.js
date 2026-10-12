@@ -23,7 +23,7 @@ import { useLanguageOptional } from '../../context/LanguageContext';
 import PressableRow from '../PressableRow';
 import NativeSwitch from '../NativeSwitch';
 import { IconChevronRight, IconCheck, IconArrowLeft } from '../Icons';
-import { USE_NATIVE_HEADER, nativeHeaderOptions } from '../nativeHeader';
+import { USE_NATIVE_HEADER, nativeHeaderOptions, HeaderBackButton } from '../nativeHeader';
 import { USE_NATIVE_SHEETS, NativeSheet, nativeSheetBottomPad } from '../NativeSheet'; // [2026-10-09 native-sheets]
 
 // Palette for grouped lists. Light = iOS systemGroupedBackground; dark keeps
@@ -297,6 +297,8 @@ export function SettingsScreen({ title, children, headerRight, onBack, contentSt
   const { colors = {}, isDark } = useTheme() || {};
   const insets = useSafeAreaInsets();
   const router = useRouter();
+  let canGoBackNow = true;
+  try { canGoBackNow = !!router.canGoBack?.(); } catch {}
   const goBack = onBack || (() => {
     try { if (router.canGoBack?.()) { router.back(); return; } } catch {}
     try { router.replace('/settings'); } catch {}
@@ -311,6 +313,12 @@ export function SettingsScreen({ title, children, headerRight, onBack, contentSt
           blur: true,
           contentStyle: { backgroundColor: g.pageBg },
           ...(headerRight ? { headerRight } : {}),
+          // [2026-10-12 settings-back] Aberta sem histórico (link/push/replace)
+          // o header nativo fica SEM voltar → botão próprio que cai no hub.
+          // onBack custom também precisa do nosso botão (o nativo só faz pop).
+          ...((onBack || !canGoBackNow) ? {
+            headerLeft: () => <HeaderBackButton onPress={goBack} color={colors.text || g.text} accessibilityLabel={(_lang?.t?.('common.back')) || 'Voltar'} />,
+          } : {}),
         })} />
       ) : (
         <View style={[st.webHeader, { paddingTop: insets.top, backgroundColor: g.pageBg }]}>

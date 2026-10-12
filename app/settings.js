@@ -1226,7 +1226,11 @@ function SettingsScreenInner() {
 
   // Android hardware back: if we're inside a category sub-page, pop back to
   // the category list instead of leaving the screen.
-  useEffect(() => {
+  // [2026-10-12 settings-back] useFocusEffect (não useEffect): com uma sub-tela
+  // pushada por cima (/notification-preferences, /settings-one…) este listener
+  // continuava ativo e era o 1º a responder → o voltar do aparelho mexia na
+  // categoria das Configurações escondida em vez de fechar a sub-tela.
+  useFocusEffect(useCallback(() => {
     if (Platform.OS !== 'android') return undefined;
     const sub = BackHandler.addEventListener('hardwareBackPress', () => {
       if (activeCategory !== null && !requestedSection) { setActiveCategory(null); return true; }
@@ -1235,7 +1239,7 @@ function SettingsScreenInner() {
       return false;
     });
     return () => { try { sub.remove(); } catch {} };
-  }, [activeCategory]);
+  }, [activeCategory, requestedSection]));
 
   // Load referral code
   useEffect(() => {
@@ -1324,6 +1328,11 @@ function SettingsScreenInner() {
   // [2026-10-12] Founder: "o botão voltar nas configurações não está funcionando".
   // router.back() não faz nada quando Configurações abriu sem histórico (link direto,
   // recarga no web, ou aberta por replace) → cai para as conversas.
+  const inCategorySubpage = activeCategory !== null && !twoPane && !requestedSection;
+  // Sem histórico (link direto, push, aberta por replace) o header nativo não
+  // tem botão voltar nenhum → usamos o nosso, que leva às conversas.
+  let canGoBackNow = true;
+  try { canGoBackNow = !!router.canGoBack?.(); } catch {}
   const exitSettings = () => {
     try { if (router.canGoBack?.()) { router.back(); return; } } catch {}
     try { router.replace('/chat'); } catch {}
@@ -1332,20 +1341,14 @@ function SettingsScreenInner() {
     // Inside a category sub-page: back returns to the category LIST first,
     // not out of the screen — exceto quando a seção veio por link (?section=),
     // aí o voltar sai direto para onde a pessoa estava.
-    if (activeCategory !== null && !twoPane && !requestedSection) { setActiveCategory(null); return; }
-    if (isDirty()) {
-      Alert.alert(
-        t('settings.unsavedTitle') || 'Alterações não salvas',
-        t('settings.unsavedMessage') || 'Quer salvar antes de sair?',
-        [
-          { text: t('settings.discard') || 'Descartar', style: 'destructive', onPress: exitSettings },
-          { text: t('common.cancel') || 'Cancelar', style: 'cancel' },
-          { text: t('settings.save') || 'Salvar', onPress: async () => { await handleSave(); exitSettings(); } },
-        ]
-      );
-    } else {
-      exitSettings();
-    }
+    if (inCategorySubpage) { setActiveCategory(null); return; }
+    // [2026-10-12 settings-back] Tudo aqui é salvo automaticamente (auto-save
+    // com debounce de 700 ms). O antigo alerta "Alterações não salvas" só
+    // aparecia quando a pessoa voltava antes do debounce (ou quando um save
+    // falhava → isDirty preso em true → TODO voltar abria o alerta, e no
+    // swipe/back nativo nem aparecia). Agora: grava na hora e sai.
+    if (isDirty()) { try { if (_autoSaveTimer.current) clearTimeout(_autoSaveTimer.current); } catch {} handleSave().catch?.(() => {}); }
+    exitSettings();
   };
   const handleSave = async () => {
     setSaving(true);
@@ -1726,10 +1729,23 @@ function SettingsScreenInner() {
           isDark,
           blur: activeCategory !== null, // [2026-10-07 native-ui-build] iOS: vidro do sistema; Android sólido
           title: activeCategory !== null ? activeCategoryTitle : (t('settings.title') || 'Configurações'),
-          gestureEnabled: activeCategory === null,
+          // [2026-10-12 settings-back] Swipe-back só fica desligado DENTRO de
+          // uma categoria aberta pela lista (o voltar dela leva à lista); com
+          // ?section= o voltar sai da tela → swipe nativo liberado.
+          gestureEnabled: !inCategorySubpage,
           contentStyle: { backgroundColor: gc.pageBg },
-          ...(activeCategory !== null ? {
+          // [2026-10-12 settings-back] Stack.Screen = navigation.setOptions, que
+          // MESCLA com as opções anteriores: sem zerar explicitamente, o
+          // headerLeft custom (closure velha com activeCategory≠null) e o
+          // headerBackVisible:false ficavam na RAIZ depois de visitar uma
+          // categoria → tocar em voltar chamava setActiveCategory(null) de
+          // novo e NADA acontecia (iOS/Android). Idem a busca da raiz vazava
+          // para dentro das categorias.
+          ...(activeCategory !== null || !canGoBackNow ? {
             headerLeft: () => <HeaderBackButton onPress={handleBack} color={colors.text} accessibilityLabel={t('common.back') || 'Voltar'} />,
+          } : { headerLeft: undefined, headerBackVisible: true }),
+          ...(activeCategory !== null ? {
+            headerSearchBarOptions: undefined,
           } : {
             search: {
               placeholder: t('settings.searchPlaceholder') || 'Buscar configuração...',
