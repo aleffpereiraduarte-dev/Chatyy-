@@ -1,4 +1,13 @@
 export default {
+  // [2026-10-11 bughunt] chaves usadas com || fallback (t() devolve a chave crua → fallback nunca aparecia)
+  "attachment.previewOpenWith": "Tap \"Open with\" to view the PDF",
+  "attachment.openWith": "Open with",
+  "attachment.remove": "Remove attachment",
+  "storage.cardFailed": "Could not open card payment. Please try again in a moment.",
+  "storage.payCard": "Pay with card",
+  "storage.manageCard": "Manage card / subscription",
+  "chatConv.playlistAdding": "Adding",
+  "chatConv.playlistCreating": "Creating playlist...",
   // [2026-10-11 email-qa]
   "thread.olderMessages": "{count} older messages",
   "inbox.aiBriefing": "AI briefing",
@@ -10894,4 +10903,20 @@ export default {
   "chatConv.transcriptHeading": "Transcript",
   "chatConv.waitingForMessage": "Waiting for this message",
   "chatConv.noSongsFound": "No songs found",
+  // [2026-10-11 settings-unify]
+  "settings.cat.accessibility": "Accessibility",
+  "settings.cat.language": "App language",
+  "settings.cat.invite": "Invite a friend",
+  "settings.cat.chats": "Chats",
+  "settings.cat.privacyOnly": "Privacy",
+  "settings.privacyAbout": "About",
+  "settings.editProfileSub": "Photo, name, @username, about and links",
+  "settings.backupSub": "Back up your chats and media to the cloud",
+  "settings.blockedContacts": "Blocked contacts",
+  "settings.blockedFooter": "Blocked contacts can no longer call you or send you messages. Tap to unblock. To block someone, open their profile.",
+  "settings.rd2.mediaPrivacy": "Media and messages",
+  "editProfile.contactInfo": "Contact",
+  "editProfile.email": "Email",
+  "editProfile.phone": "Phone",
+  "editProfile.contactReadOnly": "To change your number, go to Settings › Account.",
 };

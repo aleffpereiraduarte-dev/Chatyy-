@@ -1,4 +1,13 @@
 export default {
+  // [2026-10-11 bughunt] chaves usadas com || fallback (t() devolve a chave crua → fallback nunca aparecia)
+  "attachment.previewOpenWith": "Tocca \"Apri con\" per vedere il PDF",
+  "attachment.openWith": "Apri con",
+  "attachment.remove": "Rimuovi allegato",
+  "storage.cardFailed": "Impossibile aprire il pagamento con carta. Riprova tra poco.",
+  "storage.payCard": "Paga con carta",
+  "storage.manageCard": "Gestisci carta / abbonamento",
+  "chatConv.playlistAdding": "Aggiunta in corso",
+  "chatConv.playlistCreating": "Creazione playlist...",
   // [2026-10-11 email-qa]
   "thread.olderMessages": "{count} messaggi precedenti",
   "inbox.aiBriefing": "Riepilogo IA",
@@ -10924,4 +10933,20 @@ export default {
   "chatConv.transcriptHeading": "Trascrizione",
   "chatConv.waitingForMessage": "In attesa di questo messaggio",
   "chatConv.noSongsFound": "Nessun brano trovato",
+  // [2026-10-11 settings-unify]
+  "settings.cat.accessibility": "Accessibilità",
+  "settings.cat.language": "Lingua dell'app",
+  "settings.cat.invite": "Invita un amico",
+  "settings.cat.chats": "Chat",
+  "settings.cat.privacyOnly": "Privacy",
+  "settings.privacyAbout": "Info",
+  "settings.editProfileSub": "Foto, nome, @utente, info e link",
+  "settings.backupSub": "Esegui il backup di chat e media nel cloud",
+  "settings.blockedContacts": "Contatti bloccati",
+  "settings.blockedFooter": "I contatti bloccati non possono chiamarti né scriverti. Tocca per sbloccare. Per bloccare qualcuno, apri il suo profilo.",
+  "settings.rd2.mediaPrivacy": "Media e messaggi",
+  "editProfile.contactInfo": "Contatto",
+  "editProfile.email": "Email",
+  "editProfile.phone": "Telefono",
+  "editProfile.contactReadOnly": "Per cambiare numero, vai su Impostazioni › Account.",
 };

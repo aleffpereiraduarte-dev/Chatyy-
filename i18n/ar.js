@@ -1,4 +1,13 @@
 export default {
+  // [2026-10-11 bughunt] chaves usadas com || fallback (t() devolve a chave crua → fallback nunca aparecia)
+  "attachment.previewOpenWith": "اضغط على \"فتح باستخدام\" لعرض ملف PDF",
+  "attachment.openWith": "فتح باستخدام",
+  "attachment.remove": "إزالة المرفق",
+  "storage.cardFailed": "تعذّر فتح الدفع بالبطاقة. حاول مرة أخرى بعد قليل.",
+  "storage.payCard": "الدفع بالبطاقة",
+  "storage.manageCard": "إدارة البطاقة / الاشتراك",
+  "chatConv.playlistAdding": "جارٍ الإضافة",
+  "chatConv.playlistCreating": "جارٍ إنشاء قائمة التشغيل...",
   // [2026-10-11 email-qa]
   "thread.olderMessages": "{count} رسائل سابقة",
   "inbox.aiBriefing": "ملخص بالذكاء الاصطناعي",
@@ -10924,4 +10933,20 @@ export default {
   "chatConv.transcriptHeading": "النص المفرغ",
   "chatConv.waitingForMessage": "في انتظار هذه الرسالة",
   "chatConv.noSongsFound": "لم يتم العثور على أغانٍ",
+  // [2026-10-11 settings-unify]
+  "settings.cat.accessibility": "إمكانية الوصول",
+  "settings.cat.language": "لغة التطبيق",
+  "settings.cat.invite": "دعوة صديق",
+  "settings.cat.chats": "الدردشات",
+  "settings.cat.privacyOnly": "الخصوصية",
+  "settings.privacyAbout": "الحالة",
+  "settings.editProfileSub": "الصورة والاسم و@اسم المستخدم والحالة والروابط",
+  "settings.backupSub": "انسخ دردشاتك ووسائطك احتياطيًا إلى السحابة",
+  "settings.blockedContacts": "جهات الاتصال المحظورة",
+  "settings.blockedFooter": "لا يمكن لجهات الاتصال المحظورة الاتصال بك أو مراسلتك. انقر لإلغاء الحظر. لحظر شخص ما، افتح ملفه الشخصي.",
+  "settings.rd2.mediaPrivacy": "الوسائط والرسائل",
+  "editProfile.contactInfo": "جهة الاتصال",
+  "editProfile.email": "البريد الإلكتروني",
+  "editProfile.phone": "الهاتف",
+  "editProfile.contactReadOnly": "لتغيير رقمك، انتقل إلى الإعدادات › الحساب.",
 };

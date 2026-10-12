@@ -1,4 +1,13 @@
 export default {
+  // [2026-10-11 bughunt] chaves usadas com || fallback (t() devolve a chave crua → fallback nunca aparecia)
+  "attachment.previewOpenWith": "Toque em \"Abrir com\" para ver o PDF",
+  "attachment.openWith": "Abrir com",
+  "attachment.remove": "Remover anexo",
+  "storage.cardFailed": "Não foi possível abrir o pagamento com cartão. Tente novamente em instantes.",
+  "storage.payCard": "Pagar com cartão",
+  "storage.manageCard": "Gerenciar cartão / assinatura",
+  "chatConv.playlistAdding": "Adicionando",
+  "chatConv.playlistCreating": "Criando playlist...",
   // [2026-10-11 email-qa]
   "thread.olderMessages": "{count} mensagens anteriores",
   "inbox.aiBriefing": "Resumo com IA",
@@ -10972,4 +10981,20 @@ export default {
   "chatConv.transcriptHeading": "Transcrição",
   "chatConv.waitingForMessage": "Aguardando esta mensagem",
   "chatConv.noSongsFound": "Nenhuma música encontrada",
+  // [2026-10-11 settings-unify]
+  "settings.cat.accessibility": "Acessibilidade",
+  "settings.cat.language": "Idioma do app",
+  "settings.cat.invite": "Convidar um amigo",
+  "settings.cat.chats": "Conversas",
+  "settings.cat.privacyOnly": "Privacidade",
+  "settings.privacyAbout": "Recado",
+  "settings.editProfileSub": "Foto, nome, @usuário, recado e links",
+  "settings.backupSub": "Copie suas conversas e mídias para a nuvem",
+  "settings.blockedContacts": "Contatos bloqueados",
+  "settings.blockedFooter": "Contatos bloqueados não podem ligar nem enviar mensagens para você. Toque para desbloquear. Para bloquear alguém, abra o perfil da pessoa.",
+  "settings.rd2.mediaPrivacy": "Mídia e mensagens",
+  "editProfile.contactInfo": "Contato",
+  "editProfile.email": "E-mail",
+  "editProfile.phone": "Telefone",
+  "editProfile.contactReadOnly": "Para trocar o número, vá em Configurações › Conta.",
 };

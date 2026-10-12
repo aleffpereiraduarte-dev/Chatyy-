@@ -1,4 +1,13 @@
 export default {
+  // [2026-10-11 bughunt] chaves usadas com || fallback (t() devolve a chave crua → fallback nunca aparecia)
+  "attachment.previewOpenWith": "PDF देखने के लिए \"इसके साथ खोलें\" पर टैप करें",
+  "attachment.openWith": "इसके साथ खोलें",
+  "attachment.remove": "अटैचमेंट हटाएँ",
+  "storage.cardFailed": "कार्ड भुगतान नहीं खुल सका। कुछ देर बाद फिर कोशिश करें।",
+  "storage.payCard": "कार्ड से भुगतान करें",
+  "storage.manageCard": "कार्ड / सदस्यता प्रबंधित करें",
+  "chatConv.playlistAdding": "जोड़ा जा रहा है",
+  "chatConv.playlistCreating": "प्लेलिस्ट बनाई जा रही है...",
   // [2026-10-11 email-qa]
   "thread.olderMessages": "{count} पुराने संदेश",
   "inbox.aiBriefing": "AI सारांश",
@@ -10924,4 +10933,20 @@ export default {
   "chatConv.transcriptHeading": "ट्रांसक्रिप्ट",
   "chatConv.waitingForMessage": "इस संदेश की प्रतीक्षा",
   "chatConv.noSongsFound": "कोई गाना नहीं मिला",
+  // [2026-10-11 settings-unify]
+  "settings.cat.accessibility": "सुलभता",
+  "settings.cat.language": "ऐप की भाषा",
+  "settings.cat.invite": "मित्र को आमंत्रित करें",
+  "settings.cat.chats": "चैट",
+  "settings.cat.privacyOnly": "गोपनीयता",
+  "settings.privacyAbout": "परिचय",
+  "settings.editProfileSub": "फ़ोटो, नाम, @यूज़रनेम, परिचय और लिंक",
+  "settings.backupSub": "अपनी चैट और मीडिया का क्लाउड पर बैकअप लें",
+  "settings.blockedContacts": "ब्लॉक किए गए संपर्क",
+  "settings.blockedFooter": "ब्लॉक किए गए संपर्क आपको कॉल या संदेश नहीं भेज सकते। अनब्लॉक करने के लिए टैप करें। किसी को ब्लॉक करने के लिए उसकी प्रोफ़ाइल खोलें।",
+  "settings.rd2.mediaPrivacy": "मीडिया और संदेश",
+  "editProfile.contactInfo": "संपर्क",
+  "editProfile.email": "ईमेल",
+  "editProfile.phone": "फ़ोन",
+  "editProfile.contactReadOnly": "नंबर बदलने के लिए सेटिंग्स › खाता पर जाएं।",
 };

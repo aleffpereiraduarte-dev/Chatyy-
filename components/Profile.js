@@ -2287,8 +2287,9 @@ export default function Profile({
             // (+) button used to live here too, but it was redundant — you can
             // already open chat-new from the dedicated tab/FAB, and "follow
             // yourself" reads as a bug to users. Removed 2026-05-08.
-            <TouchableOpacity onPress={() => (onOpenSettings ? onOpenSettings() : setSettingsOpen(true))} style={{ padding: 6 }} accessibilityLabel={t?.('settings.title') || 'Configurações'}>
-              <IconMoreHorizontal size={24} color={colors?.text} />
+            <TouchableOpacity onPress={() => (onOpenSettings ? onOpenSettings() : (router?.push ? router.push('/settings') : setSettingsOpen(true)))} style={{ padding: 6 }} accessibilityLabel={t?.('settings.title') || 'Configurações'} testID="profile-open-settings">
+              {/* [2026-10-11 settings-unify] engrenagem → hub único /settings */}
+              <IconSettings size={23} color={colors?.text} />
             </TouchableOpacity>
           ) : (
             <TouchableOpacity onPress={() => setMenuOpen(true)} style={{ padding: 6 }} accessibilityLabel={t?.('a11y.moreOptions') || 'Mais opções'}>

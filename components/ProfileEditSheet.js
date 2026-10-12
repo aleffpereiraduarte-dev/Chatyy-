@@ -836,7 +836,7 @@ export default function ProfileEditSheet({
                       style={{
                         paddingHorizontal: 12, paddingVertical: 7, borderRadius: 16,
                         borderWidth: 1,
-                        borderColor: selected ? '#111111' : (colors?.border || 'rgba(0,0,0,0.12)'),
+                        borderColor: selected ? (colors?.text || '#111111') : (colors?.border || 'rgba(0,0,0,0.12)'), // [2026-10-11 settings-unify] #111 sumia no escuro
                         backgroundColor: selected
                           ? (isDark ? 'rgba(255,255,255,0.10)' : 'rgba(17,17,17,0.06)')
                           : 'transparent',
@@ -854,6 +854,31 @@ export default function ProfileEditSheet({
                   );
                 })}
               </View>
+
+              {/* [2026-10-11 settings-unify] Contato (somente leitura) — e-mail e
+                  telefone da conta. Trocar número é em Configurações › Conta. */}
+              {(!!(currentEmail || initial?.email) || !!(initial?.phone || initial?.verified_phone)) && (
+                <View style={{ marginTop: 16, paddingHorizontal: 16 }} testID="edit-profile-readonly">
+                  <Text style={{ fontSize: 12, fontWeight: '700', letterSpacing: 0.6, color: colors?.textSecondary || '#6b7280', textTransform: 'uppercase', marginBottom: 6 }}>
+                    {t?.('editProfile.contactInfo') || 'Contato'}
+                  </Text>
+                  {!!(currentEmail || initial?.email) && (
+                    <View style={{ flexDirection: 'row', paddingVertical: 8 }}>
+                      <Text style={{ width: 96, fontSize: 13, color: colors?.textSecondary || '#6b7280' }}>{t?.('editProfile.email') || 'E-mail'}</Text>
+                      <Text style={{ flex: 1, fontSize: 15, color: colors?.text || '#111' }} numberOfLines={1} selectable>{currentEmail || initial?.email}</Text>
+                    </View>
+                  )}
+                  {!!(initial?.phone || initial?.verified_phone) && (
+                    <View style={{ flexDirection: 'row', paddingVertical: 8 }}>
+                      <Text style={{ width: 96, fontSize: 13, color: colors?.textSecondary || '#6b7280' }}>{t?.('editProfile.phone') || 'Telefone'}</Text>
+                      <Text style={{ flex: 1, fontSize: 15, color: colors?.text || '#111' }} numberOfLines={1} selectable>{initial?.phone || initial?.verified_phone}</Text>
+                    </View>
+                  )}
+                  <Text style={{ fontSize: 12, color: colors?.textTertiary || colors?.textSecondary || '#9ca3af', marginTop: 2 }}>
+                    {t?.('editProfile.contactReadOnly') || 'Para trocar o número, vá em Configurações › Conta.'}
+                  </Text>
+                </View>
+              )}
 
               {/* Multi-link section — up to 5 link-in-bio chips that render
                   below the bio on the public profile. Each row: label (left,

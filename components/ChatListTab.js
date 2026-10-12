@@ -1977,6 +1977,82 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab, reque
     const stopLivePoll = setActiveInterval(tick, 45000); // [2026-10-10 perf-battery] fg-only
     return () => { cancelled = true; stopLivePoll(); };
   }, [user?.email]);
+  // [2026-10-11 bughunt] Atualização instantânea do anel AO VIVO via WS
+  // (antes vivia no ChatListTab, fora do escopo de setLivesByEmail).
+  useEffect(() => {
+    if (!user?.email) return undefined;
+    let _ws = null;
+    try { _ws = require('../services/websocket').default; } catch {}
+    if (!_ws || typeof _ws.on !== 'function') return undefined;
+    try { _ws.subscribe?.('lives_global'); } catch {}
+    const _unsubs = [];
+    _unsubs.push(_ws.on('live_started', (payload) => {
+      const data = payload?.data || payload || {};
+      const email = (data.host_email || '').toLowerCase();
+      if (!email || email === (user?.email || '').toLowerCase()) return;
+      // [WAVE 38 2026-05-20] BEFORE: o handler retornava `prev` sem update
+      // se já houvesse entry pra esse email — isso causava bug "AO VIVO
+      // mostra session antiga". Cenário: host A inicia live #1, fecha
+      // (live_ended limpa), inicia live #2 imediato. Em race, live_list
+      // tick antigo poderia ter recriado a entry de #1 antes do
+      // live_started #2 chegar — e o handler ignorava o evento novo. Agora
+      // SEMPRE atualiza a entry com o session_id + host_name novos.
+      // Stale-protection: comparamos started_at (se vier) com 6h
+      // freshness gate igual o Profile.js (WAVE 37) pra rejeitar replay
+      // de eventos durante reconnect.
+      if (data.started_at) {
+        try {
+          const startedMs = api.parseServerDate(data.started_at).getTime();
+          if (Number.isFinite(startedMs) && (Date.now() - startedMs) > 6 * 3600 * 1000) {
+            console.warn('[StatusStoriesRow.live] ignoring stale live_started echo, age>6h');
+            return;
+          }
+        } catch {}
+      }
+      setLivesByEmail(prev => {
+        const existing = prev[email];
+        const sid = data.session_id;
+        // Same session_id already painted? Skip — no churn.
+        if (existing && String(existing.id || '') === String(sid)) return prev;
+        // Different session → replace (host re-broadcast scenario).
+        return { ...prev, [email]: { id: sid, host_name: data.host_name || email.split('@')[0], viewer_count: 0 } };
+      });
+    }));
+    _unsubs.push(_ws.on('live_ended', (payload) => {
+      const data = payload?.data || payload || {};
+      const email = (data.host_email || '').toLowerCase();
+      const sid = String(data.session_id || data.id || '');
+      // Drop by EITHER host_email OR session_id — server payloads vary
+      // (auto-staled lives carry both; legacy `live_end` from WS path may
+      // carry only host_email or only session_id depending on which hub
+      // forwarded it). Belt-and-suspenders so the strip always clears.
+      if (!email && !sid) return;
+      // [#1161, 2026-05-18] Stamp the per-host end timestamp so an
+      // in-flight live_list poll that lands AFTER this WS event can't
+      // resurrect the badge. See `liveEndedAtByHostRef` declaration.
+      // We resolve host_email from the entry when the payload only
+      // carries session_id — covers both legacy + CF live_end payloads.
+      const stampedHosts = new Set();
+      if (email) stampedHosts.add(email);
+      setLivesByEmail(prev => {
+        let mutated = false;
+        const next = { ...prev };
+        for (const k of Object.keys(prev)) {
+          const entry = prev[k];
+          if (email && k === email) { delete next[k]; mutated = true; stampedHosts.add(k); continue; }
+          if (sid && String(entry?.id || '') === sid) { delete next[k]; mutated = true; stampedHosts.add(k); }
+        }
+        return mutated ? next : prev;
+      });
+      const now = Date.now();
+      try {
+        stampedHosts.forEach((h) => {
+          if (h) liveEndedAtByHostRef.current[h] = now;
+        });
+      } catch {}
+    }));
+    return () => { _unsubs.forEach((u) => { try { typeof u === 'function' && u(); } catch {} }); };
+  }, [user?.email]);
   const liveAoVivo = (t('live.aoVivo') || 'AO VIVO').toUpperCase();
   const openLiveViewer = useCallback(async (email, sessionId, hostName) => {
     try {
@@ -3566,7 +3642,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
     // [2026-05-28] Persist dismissal on TAP too (not only the X). #878:
     // tapping "Encontrar amigos" navigated away but never stamped the
     // dismissed-at key, so the banner reappeared every cold start.
-    try { AsyncStorage.setItem('chat:contactBannerDismissedAt', String(Date.now())).catch(() => {}); } catch {}
+    try { require('@react-native-async-storage/async-storage').default.setItem('chat:contactBannerDismissedAt', String(Date.now())).catch(() => {}); } catch {}
     if (contactBanner === 'cta') {
       // First run: ask permission, sync, jump to chat-new with the matches.
       setContactBannerSyncing(true);
@@ -4250,71 +4326,9 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
       //   live_started — push entry into livesByEmail
       //   live_ended   — remove entry from livesByEmail
       try { mailWs.subscribe('lives_global'); } catch {}
-      unsubs.push(mailWs.on('live_started', (payload) => {
-        const data = payload?.data || payload || {};
-        const email = (data.host_email || '').toLowerCase();
-        if (!email || email === (user?.email || '').toLowerCase()) return;
-        // [WAVE 38 2026-05-20] BEFORE: o handler retornava `prev` sem update
-        // se já houvesse entry pra esse email — isso causava bug "AO VIVO
-        // mostra session antiga". Cenário: host A inicia live #1, fecha
-        // (live_ended limpa), inicia live #2 imediato. Em race, live_list
-        // tick antigo poderia ter recriado a entry de #1 antes do
-        // live_started #2 chegar — e o handler ignorava o evento novo. Agora
-        // SEMPRE atualiza a entry com o session_id + host_name novos.
-        // Stale-protection: comparamos started_at (se vier) com 6h
-        // freshness gate igual o Profile.js (WAVE 37) pra rejeitar replay
-        // de eventos durante reconnect.
-        if (data.started_at) {
-          try {
-            const startedMs = api.parseServerDate(data.started_at).getTime();
-            if (Number.isFinite(startedMs) && (Date.now() - startedMs) > 6 * 3600 * 1000) {
-              console.warn('[ChatListTab.live] ignoring stale live_started echo, age>6h');
-              return;
-            }
-          } catch {}
-        }
-        setLivesByEmail(prev => {
-          const existing = prev[email];
-          const sid = data.session_id;
-          // Same session_id already painted? Skip — no churn.
-          if (existing && String(existing.id || '') === String(sid)) return prev;
-          // Different session → replace (host re-broadcast scenario).
-          return { ...prev, [email]: { id: sid, host_name: data.host_name || email.split('@')[0], viewer_count: 0 } };
-        });
-      }));
-      unsubs.push(mailWs.on('live_ended', (payload) => {
-        const data = payload?.data || payload || {};
-        const email = (data.host_email || '').toLowerCase();
-        const sid = String(data.session_id || data.id || '');
-        // Drop by EITHER host_email OR session_id — server payloads vary
-        // (auto-staled lives carry both; legacy `live_end` from WS path may
-        // carry only host_email or only session_id depending on which hub
-        // forwarded it). Belt-and-suspenders so the strip always clears.
-        if (!email && !sid) return;
-        // [#1161, 2026-05-18] Stamp the per-host end timestamp so an
-        // in-flight live_list poll that lands AFTER this WS event can't
-        // resurrect the badge. See `liveEndedAtByHostRef` declaration.
-        // We resolve host_email from the entry when the payload only
-        // carries session_id — covers both legacy + CF live_end payloads.
-        const stampedHosts = new Set();
-        if (email) stampedHosts.add(email);
-        setLivesByEmail(prev => {
-          let mutated = false;
-          const next = { ...prev };
-          for (const k of Object.keys(prev)) {
-            const entry = prev[k];
-            if (email && k === email) { delete next[k]; mutated = true; stampedHosts.add(k); continue; }
-            if (sid && String(entry?.id || '') === sid) { delete next[k]; mutated = true; stampedHosts.add(k); }
-          }
-          return mutated ? next : prev;
-        });
-        const now = Date.now();
-        try {
-          stampedHosts.forEach((h) => {
-            if (h) liveEndedAtByHostRef.current[h] = now;
-          });
-        } catch {}
-      }));
+      // [2026-10-11 bughunt] live_started/live_ended moram no StatusStoriesRow
+      // (dono de livesByEmail) — aqui setLivesByEmail não existia (ReferenceError
+      // engolido pelo WS → anel AO VIVO só atualizava no poll de 45s).
 
       // [2026-10-06 rt-client] Frames já chegam normalizados por websocket.js
       // (hub Go flat OU evento PHP {data:{…}} → mesmo shape plano, email em
@@ -5062,12 +5076,13 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
       // other device) publishes a status. Triggers a load() so the new
       // status circle appears in the row instantly instead of waiting up
       // to 2 minutes for the polling interval.
-      unsubs.push(mailWs.on('status_new', (data) => {
-        try { load(); } catch {}
-      }));
-      unsubs.push(mailWs.on('status_published', () => { try { load(); } catch {} }));
-      unsubs.push(mailWs.on('status_added', () => { try { load(); } catch {} }));
-      unsubs.push(mailWs.on('status_deleted', () => { try { load(); } catch {} }));
+      // [2026-10-11 bughunt] load() é do StatusStoriesRow (fora deste escopo →
+      // ReferenceError engolido): avisa a faixa pelo statusRefreshBus.
+      const _statusPing = () => { try { require('./statusRefreshBus').default.emit?.('refresh'); } catch {} };
+      unsubs.push(mailWs.on('status_new', _statusPing));
+      unsubs.push(mailWs.on('status_published', _statusPing));
+      unsubs.push(mailWs.on('status_added', _statusPing));
+      unsubs.push(mailWs.on('status_deleted', _statusPing));
 
       // Native AppState backup — the WS 'foreground' event only fires when
       // the WS is still connected. If the device suspended long enough that
@@ -5848,7 +5863,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
               // Lester QA #34 STILL: this iOS-only ActionSheet path bypassed
               // the onAddToList fix because it called router.push directly.
               // Delegate to the same handler the other entry points use.
-              try { actions?.onAddToList?.(conv); } catch {}
+              try { lpActions.current?.onAddToList?.(conv); } catch {}
             }
             else if (idx === 6) enterSelectionMode(conv.id);
             else if (idx === blockIdx) confirmBlock();
@@ -7218,7 +7233,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
               // canonical status tab (one viewer), not ChatListTab's own.
               const me = (user?.email || '').toLowerCase();
               if (typeof requestOpenStatus === 'function') { requestOpenStatus(me); }
-              else { setStatusViewerEmail(me); }
+              else { try { setActiveTab?.('status'); } catch {} }
               if (reactionToastTimer.current) clearTimeout(reactionToastTimer.current);
               Animated.timing(reactionToastY, { toValue: -120, duration: 180, useNativeDriver: true })
                 .start(() => setReactionToast(null));

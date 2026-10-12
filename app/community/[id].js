@@ -507,7 +507,7 @@ export default function CommunityScreen() {
             <View style={{
               flexDirection: 'row', alignItems: 'center',
               backgroundColor: isDark ? '#1c1c1e' : '#f0f0f3',
-              borderRadius: BorderRadius.medium,
+              borderRadius: BorderRadius.md,
               paddingHorizontal: 10, paddingVertical: 6,
               marginBottom: 6,
             }}>

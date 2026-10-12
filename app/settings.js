@@ -19,6 +19,8 @@ import NativeSheetDialog from '../components/NativeSheetDialog'; // [2026-10-09 
 import SheetKeyboardAvoider from '../components/chat/SheetKeyboardAvoider'; // [2026-10-11 android-kav]
 import { USE_NATIVE_SHEETS } from '../components/NativeSheet';
 import SettingsSegmented from '../components/SettingsSegmented';
+// [2026-10-11 settings-unify] painéis únicos (antes duplicados no ProfileSettingsSheet / ChatProfileTab)
+import { PrivacyExtrasGroup, PushMasterSwitchRow, AccentColorGroup, WallpaperRow, ProfileHeaderCard } from '../components/settings/SettingsPanels';
 import { useRouter, useLocalSearchParams, useFocusEffect, Stack } from 'expo-router';
 import { USE_NATIVE_HEADER, nativeHeaderOptions, HeaderBackButton, useBlurHeaderInset } from '../components/nativeHeader'; // [2026-10-07 app-feel-nav] · blur [2026-10-07 native-ui-build]
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -34,6 +36,7 @@ import {
   IconShield, IconFileText, IconUser, IconUsers, IconPlus, IconShare, IconCheck,
   IconMail, IconPhone, IconAlertTriangle, IconCopy, IconDatabase, IconRefresh,
   IconX, IconChevronDown, IconBrush, IconHelpCircle, IconSearch, IconDownload,
+  IconUserPlus, IconType,
 } from '../components/Icons';
 import Svg, { Defs, LinearGradient as SvgLinearGradient, Stop, Rect as SvgRect, Circle as SvgCircle } from 'react-native-svg';
 import { useBiometric } from '../context/BiometricContext';
@@ -279,7 +282,39 @@ function CollapsibleGroup({ title, icon: Icon, defaultOpen = false, forceOpen = 
   );
 }
 
+// [2026-10-11 settings-unify] ?section=<âncora|categoria> → categoria do hub.
+// Mantém compatíveis as âncoras antigas (ProfileSettingsSheet usava
+// ?section=security; QuickSettings/links usam notifications/storage…).
+const SECTION_TO_CATEGORY = {
+  account: 'account', profile: 'account', security: 'account', devices: 'account', one: 'account',
+  privacy: 'privacy', privacy_granular: 'privacy', defaultDisappearing: 'privacy', blocked: 'privacy',
+  chat: 'chat', chats: 'chat', appearance: 'chat', theme: 'chat', wallpaper: 'chat', mutedWords: 'chat',
+  notifications: 'notifications',
+  storage: 'storage_data', storage_data: 'storage_data', mediaAutoDownload: 'storage_data', data: 'storage_data',
+  accessibility: 'accessibility', reading: 'accessibility', fontSize: 'accessibility',
+  language: 'language',
+  email: 'email', vacation: 'email', forwarding: 'email',
+  bia: 'bia', ai: 'bia',
+  help: 'help', about: 'help', support: 'help',
+  invite: 'invite', referral: 'invite',
+};
+function sectionToCategory(section) {
+  if (!section || typeof section !== 'string') return null;
+  return SECTION_TO_CATEGORY[section] || null;
+}
+
 function SettingsScreenInner() {
+  // [2026-10-11 settings-unify] BUG: as leituras de preferências são SWR
+  // (services/api POST_READ_SWR, persistido no sessionStorage no web) e os
+  // *_set não invalidam o *_get → ao reabrir Configurações o switch mostrava o
+  // valor ANTIGO (ex.: "Não perturbe" desligado aparecia ligado). Invalida no
+  // 1º render, antes dos effects de carga.
+  useState(() => {
+    try {
+      for (const a of ['chat_user_notif_prefs_get', 'chat_privacy_get', 'chat_user_defaults_get', 'chat_get_user_defaults']) api.swrInvalidate?.(a);
+    } catch {}
+    return 0;
+  });
   const { colors, isDark, toggle, density, setDensity, themeMode, setThemeMode: setThemeModeCtx } = useTheme();
   const gc = useGroupedColors(); // [2026-10-08 settings-redesign]
   const { t, language, changeLanguage } = useLanguage();
@@ -308,7 +343,10 @@ function SettingsScreenInner() {
   const blurTopRaw = useBlurHeaderInset(USE_NATIVE_HEADER); // [2026-10-08 settings-redesign] só sub-páginas usam vidro
   // Responsividade: em tablet/desktop/web centraliza a coluna de settings numa
   // largura confortável (contentMaxWidth) em vez de esticar de ponta a ponta.
-  const { contentMaxWidth } = useResponsive();
+  const { contentMaxWidth, width: _winW } = useResponsive();
+  // [2026-10-11 settings-unify] Desktop/web largo: hub em 2 painéis
+  // (categorias à esquerda, detalhe à direita), como WhatsApp Desktop.
+  const twoPane = Platform.OS === 'web' && (_winW || 0) >= 900;
 
   // Scroll-to-section when opened from ProfileSettingsSheet with ?section=X.
   // onLayout y-coords are relative to the PARENT view, which doesn't work
@@ -485,6 +523,41 @@ function SettingsScreenInner() {
   const [loginHistory, setLoginHistory] = useState([]);
   const [loginHistoryLoading, setLoginHistoryLoading] = useState(false);
   const [avatarKey, setAvatarKey] = useState(Date.now());
+  // [2026-10-11 settings-unify] Identidade p/ o cartão do topo (nome, recado,
+  // @usuário). Recarrega ao voltar do /edit-profile.
+  const [myProfile, setMyProfile] = useState(null);
+  const _profileFetchedAt = useRef(0);
+  useFocusEffect(useCallback(() => {
+    if (!user?.email) return undefined;
+    const now = Date.now();
+    if (now - _profileFetchedAt.current < 3000) return undefined;
+    _profileFetchedAt.current = now;
+    let alive = true;
+    api.profileGet?.(user.email).then(r => {
+      if (alive && r?.success && r.data?.identity) {
+        setMyProfile(r.data.identity);
+        setAvatarKey(Date.now());
+      }
+    }).catch(() => {});
+    return () => { alive = false; };
+  }, [user?.email]));
+  // [2026-10-11 settings-unify] Switches de IA (antes só no ProfileSettingsSheet).
+  // Chaves locais ai_smart_reply / ai_summary / ai_enhance (default ON).
+  const [aiFlags, setAiFlags] = useState({ ai_smart_reply: true, ai_summary: true, ai_enhance: true });
+  useEffect(() => {
+    const KEYS = ['ai_smart_reply', 'ai_summary', 'ai_enhance'];
+    const apply = (vals) => setAiFlags(prev => {
+      const next = { ...prev };
+      KEYS.forEach((k, i) => { if (vals[i] === 'false') next[k] = false; });
+      return next;
+    });
+    if (Platform.OS === 'web') apply(KEYS.map(k => getStorage(k)));
+    else import('@react-native-async-storage/async-storage').then(m => Promise.all(KEYS.map(k => m.default.getItem(k)))).then(apply).catch(() => {});
+  }, []);
+  const setAiFlag = useCallback((k, v) => {
+    setAiFlags(prev => ({ ...prev, [k]: !!v }));
+    setStorage(k, v ? 'true' : 'false');
+  }, []);
   // Live search across settings rows. Filters out sections whose section
   // title and row labels don't match the typed query (case-insensitive).
   // Empty query = no filtering. Provides a fast jump-to-config without
@@ -497,7 +570,11 @@ function SettingsScreenInner() {
   const searching = !!_q;
   // Category navigation (WhatsApp/iOS style). null = show the category LIST
   // (home). A value = show only the sections that belong to that category.
-  const [activeCategory, setActiveCategory] = useState(null);
+  // [2026-10-11 settings-unify] ?section=X (deep link de qualquer entrada:
+  // perfil, /profile?section=, notificações…) abre DIRETO a categoria certa
+  // do hub. Antes o hub abria na raiz com a seção escondida (a âncora só
+  // existia dentro da categoria) → "?section=security" não levava a nada.
+  const [activeCategory, setActiveCategory] = useState(() => sectionToCategory(requestedSection));
   // [2026-10-08 settings-redesign] Raiz = header opaco c/ busca nativa (sem inset); sub-páginas = vidro.
   // [2026-10-08 settings-cut-fix] iOS: o conteúdo era CORTADO sob o header
   // nativo da raiz (título + barra de busca UISearchController). A raiz
@@ -607,6 +684,16 @@ function SettingsScreenInner() {
         setChatPrivacy(prev => ({ ...prev, hide_reactions_in_notifs: !!d.hide_reactions_in_notifs }));
       }
       if (d.contact_joined_push !== undefined && d.contact_joined_push !== null) setContactJoinedPush(!!d.contact_joined_push);
+      // [2026-10-11 settings-unify] DND vem de chat_user_notif_prefs (o mesmo
+      // que o gate de push e /notification-preferences usam).
+      if (d.dnd_enabled !== undefined) {
+        setDnd(prev => ({
+          ...prev,
+          enabled: !!d.dnd_enabled,
+          start_time: d.dnd_start_time || prev.start_time,
+          end_time: d.dnd_end_time || prev.end_time,
+        }));
+      }
       setSettings(prev => {
         const next = { ...prev };
         if (d.morning_briefing !== undefined && d.morning_briefing !== null) next.morning_briefing = !!d.morning_briefing;
@@ -762,29 +849,18 @@ function SettingsScreenInner() {
   // chatDndGet/Set wrote to. Switched this inline DND UI to read/write
   // chat_user_defaults.{dnd_enabled,dnd_start_time,dnd_end_time} via
   // chatUserDefaultsGet/Set so the toggle here actually mutes pushes.
-  useEffect(() => {
-    (async () => {
-      try {
-        const r = await api.chatUserDefaultsGet?.();
-        const d = r?.data;
-        if (r?.success && d) {
-          setDnd({
-            enabled: !!d.dnd_enabled,
-            start_time: d.dnd_start_time || '22:00',
-            end_time: d.dnd_end_time || '07:00',
-            tz_offset: 0,
-          });
-        }
-      } catch {}
-    })();
-  }, []);
+  // [2026-10-11 settings-unify] BUG: lia/gravava DND via chat_user_defaults_get/
+  // chat_user_defaults_set — o get não devolve dnd_* e o set NÃO EXISTE no
+  // backend ("Unknown action") → o switch "Não perturbe" daqui nunca salvava.
+  // Agora hidrata no effect de chatGetNotifPrefs (acima) e grava via
+  // chat_user_notif_prefs_set, igual a /notification-preferences.
   const saveDnd = useCallback(async (patch) => {
     setDnd(prev => {
       const next = { ...prev, ...patch };
       (async () => {
         setDndSaving(true);
         try {
-          await api.chatUserDefaultsSet?.({
+          await api.chatSetNotifPrefs?.({
             dnd_enabled: next.enabled,
             dnd_start_time: next.start_time,
             dnd_end_time: next.end_time,
@@ -818,13 +894,28 @@ function SettingsScreenInner() {
       try {
         const r = await api.chatUserDefaultsGet?.();
         if (r?.success && r.data) {
-          const next = {
-            default_disappearing: Number.isFinite(+r.data.default_disappearing) ? +r.data.default_disappearing : 0,
-            media_auto_dl_photos: r.data.media_auto_dl_photos || 'wifi',
-            media_auto_dl_audio:  r.data.media_auto_dl_audio  || 'wifi',
-            media_auto_dl_videos: r.data.media_auto_dl_videos || 'never',
-            media_auto_dl_docs:   r.data.media_auto_dl_docs   || 'never',
+          // [2026-10-11 settings-unify] BUG: lia `default_disappearing` e
+          // `media_auto_dl_*`, que chat_get_user_defaults NÃO devolve → a tela
+          // sempre mostrava os padrões. O servidor devolve
+          // default_disappearing_seconds + auto_download_policy (matriz 4×3,
+          // a MESMA que o gate do mediaCache usa no boot).
+          const pol = (r.data.auto_download_policy && typeof r.data.auto_download_policy === 'object') ? r.data.auto_download_policy : null;
+          const modeOf = (b, fb) => {
+            const row = pol && pol[b];
+            if (!row) return fb;
+            if (row.mobile) return 'mobile';
+            if (row.wifi) return 'wifi';
+            return 'never';
           };
+          const dd = r.data.default_disappearing_seconds ?? r.data.default_disappearing;
+          const next = {
+            default_disappearing: Number.isFinite(+dd) ? +dd : 0,
+            media_auto_dl_photos: modeOf('photos', 'mobile'),
+            media_auto_dl_audio:  modeOf('audio', 'mobile'),
+            media_auto_dl_videos: modeOf('videos', 'wifi'),
+            media_auto_dl_docs:   modeOf('documents', 'wifi'),
+          };
+          if (pol) { try { require('../services/mediaCache').setAutoDownloadPolicy?.(pol); } catch {} }
           setChatDefaults(next);
           // Login alerts persist under the same chat_user_defaults blob —
           // backend column `login_alerts_enabled` (boolean, default true).
@@ -833,17 +924,6 @@ function SettingsScreenInner() {
           if (r.data.login_alerts_enabled !== undefined && r.data.login_alerts_enabled !== null) {
             setLoginAlertsEnabled(!!r.data.login_alerts_enabled);
           }
-          // Push the media prefs into mediaCache so the cellular gate updates
-          // without waiting for the next app launch.
-          try {
-            const mc = require('../services/mediaCache');
-            mc.setMediaDownloadPrefs?.({
-              media_auto_dl_photos: next.media_auto_dl_photos,
-              media_auto_dl_audio:  next.media_auto_dl_audio,
-              media_auto_dl_videos: next.media_auto_dl_videos,
-              media_auto_dl_docs:   next.media_auto_dl_docs,
-            });
-          } catch {}
         }
       } catch {}
       _chatDefaultsHydrated.current = true;
@@ -876,15 +956,23 @@ function SettingsScreenInner() {
       // accumulated patch when the timer fires. The frontend state was
       // already correct via `setChatDefaults(prev => next)`; this fix just
       // makes the backend match.
-      Object.assign(_chatDefaultsPendingPatch.current, patch);
-      if (_chatDefaultsSaveTimer.current) clearTimeout(_chatDefaultsSaveTimer.current);
-      _chatDefaultsSaveTimer.current = setTimeout(() => {
-        const toSend = _chatDefaultsPendingPatch.current;
-        _chatDefaultsPendingPatch.current = {};
-        if (Object.keys(toSend).length) {
-          api.chatUserDefaultsSet?.(toSend).catch(() => {});
+      // [2026-10-11 settings-unify] BUG: o PATCH ia p/ chat_user_defaults_set,
+      // ação que NÃO existe no backend → nada era salvo no servidor (só o
+      // espelho local). Agora usa as ações reais, as mesmas do resto do app:
+      //   media_auto_dl_* → chat_set_auto_download_policy (célula a célula)
+      //   default_disappearing → chat_set_default_disappearing
+      const BUCKET = { media_auto_dl_photos: 'photos', media_auto_dl_audio: 'audio', media_auto_dl_videos: 'videos', media_auto_dl_docs: 'documents' };
+      for (const k of Object.keys(patch)) {
+        if (BUCKET[k]) {
+          const mode = patch[k];
+          const mobile = mode === 'mobile' ? 1 : 0;
+          const wifi = mode === 'never' ? 0 : 1;
+          api.chatSetAutoDownloadPolicy?.({ bucket: BUCKET[k], column: 'mobile', value: mobile })?.catch?.(() => {});
+          api.chatSetAutoDownloadPolicy?.({ bucket: BUCKET[k], column: 'wifi', value: wifi })?.catch?.(() => {});
+        } else if (k === 'default_disappearing') {
+          api.apiCall?.('chat_set_default_disappearing', { seconds: Number(patch[k]) || 0 }, 'POST')?.catch?.(() => {});
         }
-      }, 500);
+      }
       return next;
     });
   }, []);
@@ -931,6 +1019,10 @@ function SettingsScreenInner() {
     // [2026-10-09 wa-real #12] "Bloquear mensagens de desconhecidos"
     // (chat_user_defaults.block_unknown, aplicado no servidor no chat_send).
     block_unknown: false,
+    // [2026-10-11 settings-unify] vieram do ProfileSettingsSheet (só existiam lá).
+    phone_visibility: 'contacts',
+    about: 'everyone',
+    cloud_chats_default: true,
   });
   const [privacyPickerOpen, setPrivacyPickerOpen] = useState(null); // 'last_seen' | 'profile_photo' | 'story_privacy' | 'group_add' | null
   useEffect(() => {
@@ -957,6 +1049,9 @@ function SettingsScreenInner() {
             mute_call_ringtone:
               r.data.mute_call_ringtone !== undefined ? !!r.data.mute_call_ringtone : false,
             block_unknown: r.data.block_unknown === true,
+            phone_visibility: r.data.phone_visibility || 'contacts',
+            about: r.data.about || 'everyone',
+            cloud_chats_default: r.data.cloud_chats_default !== false,
           }));
           // [2026-10-06 rt-client] Espelha o gate de typing no WS (typing agora
           // é só via socket; o gate do PHP chat_typing deixou de ser chamado).
@@ -1227,7 +1322,7 @@ function SettingsScreenInner() {
   const handleBack = () => {
     // Inside a category sub-page: back returns to the category LIST first,
     // not out of the screen.
-    if (activeCategory !== null) { setActiveCategory(null); return; }
+    if (activeCategory !== null && !twoPane) { setActiveCategory(null); return; }
     if (isDirty()) {
       Alert.alert(
         t('settings.unsavedTitle') || 'Alterações não salvas',
@@ -1357,6 +1452,16 @@ function SettingsScreenInner() {
   // the en→pt-BR fallback chain covers every other locale — no raw-key leak).
   // Inline pt-BR kept as a `||` fallback belt-and-suspenders.
   const categoryList = [
+    // [2026-10-11 settings-unify] Modelo WhatsApp: Conta · Privacidade ·
+    // Conversas · Notificações · Armazenamento e dados · Acessibilidade ·
+    // Idioma do app · (Email · Bia) · Ajuda · Convidar amigo. "Aparência"
+    // virou parte de Conversas (tema/cor/papel de parede) e Idioma tem
+    // página própria; Segurança mudou de Privacidade para Conta.
+    { key: 'accessibility', Icon: IconType,        title: t('settings.cat.accessibility'), sub: '' },
+    { key: 'language',     Icon: IconGlobe,        title: t('settings.cat.language'), sub: '' },
+    { key: 'invite',       Icon: IconUserPlus,     title: t('settings.cat.invite'), sub: '' },
+    { key: 'chats',        Icon: IconMessageSquare,title: t('settings.cat.chats'), sub: '' },
+    { key: 'privacyOnly',  Icon: IconShield,       title: t('settings.cat.privacyOnly'), sub: '' },
     { key: 'account',      Icon: IconUser,         title: t('settings.cat.account') || 'Conta',                   sub: t('settings.cat.accountSub') || 'Perfil, foto, trocar conta' },
     { key: 'appearance',   Icon: IconBrush,        title: t('settings.cat.appearance') || 'Aparência',            sub: t('settings.cat.appearanceSub') || 'Tema e idioma' },
     { key: 'notifications',Icon: IconBell,         title: t('settings.cat.notifications') || 'Notificações',      sub: t('settings.cat.notificationsSub') || 'Alertas e preferências' },
@@ -1367,18 +1472,23 @@ function SettingsScreenInner() {
     { key: 'storage_data', Icon: IconDatabase,     title: t('settings.cat.storageData') || 'Armazenamento e dados', sub: t('settings.cat.storageDataSub') || 'Mídia e armazenamento' },
     { key: 'help',         Icon: IconHelpCircle,   title: t('settings.cat.help') || 'Ajuda e sobre',              sub: t('settings.cat.helpSub') || 'Central de ajuda, sobre, legal' },
   ];
-  const activeCategoryTitle = (categoryList.find(c => c.key === activeCategory) || {}).title || t('settings.title');
+  const activeCategoryTitle = (categoryList.find(c => c.key === ({ privacy: 'privacyOnly', chat: 'chats' }[activeCategory] || activeCategory)) || {}).title || t('settings.title');
 
   // [2026-10-08 settings-redesign] Root groups (iOS Settings layout): the
   // profile card on top, then the categories split into three inset groups.
+  // [2026-10-11 settings-unify] 'privacy' e 'chat' mantêm as chaves internas
+  // (gates abaixo); só o rótulo mudou (privacyOnly/chats). Armazenamento e
+  // dados agora tem conteúdo no web (qualidade de envio, chamadas, nuvem).
+  const _catAlias = { privacy: 'privacyOnly', chat: 'chats' };
   const categoryGroups = [
-    ['account', 'privacy', 'notifications', 'appearance'],
-    // [2026-10-10 settings-polish] web: todas as seções de "Armazenamento e
-    // dados" são nativas (Platform.OS !== 'web') → a categoria abria uma página
-    // VAZIA. No web ela sai da lista.
-    ['chat', 'email', ...(Platform.OS === 'web' ? [] : ['storage_data'])],
-    ['bia', 'help'],
-  ].map(keys => keys.map(k => categoryList.find(c => c.key === k)).filter(Boolean));
+    ['account', 'privacy', 'chat', 'notifications', 'storage_data'],
+    ['accessibility', 'language'],
+    ['email', 'bia'],
+    ['help', 'invite'],
+  ].map(keys => keys.map(k => {
+    const c = categoryList.find(x => x.key === (_catAlias[k] || k));
+    return c ? { ...c, key: k } : null;
+  }).filter(Boolean));
   const displayName = (user?.name || user?.display_name || '').trim()
     || (user?.email ? user.email.split('@')[0] : '');
   // [2026-10-09 settings-logout] Sair da conta direto da raiz das Configurações.
@@ -1396,6 +1506,10 @@ function SettingsScreenInner() {
     try { await logout(); } catch {}
     try { router.replace('/login'); } catch {}
   };
+  // 2 painéis: sempre há uma categoria aberta à direita (padrão: Conta).
+  useEffect(() => {
+    if (twoPane && activeCategory === null) setActiveCategory('account');
+  }, [twoPane, activeCategory]);
   const openCategory = (key) => {
     setActiveCategory(key);
     if (!IOS_AUTO_INSET) { try { scrollRef.current?.scrollTo?.({ y: 0, animated: false }); } catch {} }
@@ -1442,6 +1556,8 @@ function SettingsScreenInner() {
       : field === 'online' ? t('settings.privacyOnline')
       : field === 'story_privacy' ? t('settings.privacyStatus')
       : field === 'group_add' ? t('settings.privacyGroups')
+      : field === 'phone_visibility' ? t('privacy.phoneNumber')
+      : field === 'about' ? t('settings.privacyAbout')
       : ''
   );
   const AUTO_LOCK_OPTIONS = [
@@ -1473,6 +1589,72 @@ function SettingsScreenInner() {
     value: code,
     label: (I18N_LANGUAGES.find((l) => l.code === code) || {}).label || code,
   }));
+
+  // [2026-10-11 settings-unify] Raiz do hub (cartão do perfil + categorias +
+  // Sair) e busca — reutilizados na coluna esquerda do layout de 2 painéis.
+  const searchBarNode = (
+          <View style={[s.searchBar, { backgroundColor: gc.fill }]}>
+            <IconSearch size={17} color={gc.secondary} />
+            <TextInput
+              value={searchQuery}
+              onChangeText={setSearchQuery}
+              placeholder={t('settings.searchPlaceholder') || 'Buscar configuração...'}
+              placeholderTextColor={gc.secondary}
+              style={[s.searchInput, { color: colors.text }]}
+              autoCorrect={false}
+              autoCapitalize="none"
+              returnKeyType="search"
+              accessibilityLabel={t('settings.searchPlaceholder') || 'Buscar configuração'}
+            />
+            {!!searchQuery && (
+              <TouchableOpacity
+                onPress={() => setSearchQuery('')}
+                style={{ padding: 4 }}
+                accessibilityLabel={t('common.clear') || 'Limpar'}
+                accessibilityRole="button"
+              >
+                <IconX size={15} color={gc.secondary} />
+              </TouchableOpacity>
+            )}
+          </View>
+  );
+  const homeListNode = (
+          <View>
+            {/* [2026-10-11 settings-unify] Cartão do perfil (WhatsApp): foto,
+                nome, recado/@ e QR. Toque → a ÚNICA tela "Editar perfil". */}
+            <ProfileHeaderCard
+              user={user}
+              profile={myProfile}
+              avatarKey={avatarKey}
+              onPress={() => safeNav('/edit-profile')}
+              onPressQr={() => safeNav('/profile-qr')}
+            />
+            {categoryGroups.map((grp, gi) => (
+              <SettingsGroup key={gi} inset={58}>
+                {grp.map((cat) => (
+                  <SettingsRow
+                    key={cat.key}
+                    icon={cat.Icon}
+                    title={cat.title}
+                    titleStyle={twoPane && activeCategory === cat.key ? { fontWeight: '700' } : undefined}
+                    accessibilityState={twoPane ? { selected: activeCategory === cat.key } : undefined}
+                    testID={'settings-cat-' + cat.key}
+                    onPress={() => openCategory(cat.key)}
+                  />
+                ))}
+              </SettingsGroup>
+            ))}
+            {/* [2026-10-09 settings-logout] "Sair" só existia em Perfil → engrenagem → Zona de perigo.
+                Mesmo fluxo de logout (AuthContext.logout + /login), com confirmação. */}
+            <SettingsGroup>
+              <SettingsRow
+                title={t('settings.logoutAccount')}
+                destructive
+                onPress={handleSettingsLogout}
+              />
+            </SettingsGroup>
+          </View>
+  );
 
   return (
     <View style={[s.container, { backgroundColor: gc.pageBg, paddingTop: USE_NATIVE_HEADER ? 0 : insets.top }]}>
@@ -1507,7 +1689,7 @@ function SettingsScreenInner() {
         <TouchableOpacity onPress={handleBack} style={s.backBtn} accessibilityLabel={t('common.back') || 'Voltar'} accessibilityRole="button">
           <IconArrowLeft size={24} color={colors.text} />
         </TouchableOpacity>
-        <Text style={[s.headerTitle, { color: colors.text }]} numberOfLines={1} accessibilityRole="header">{activeCategory !== null ? activeCategoryTitle : t('settings.title')}</Text>
+        <Text style={[s.headerTitle, { color: colors.text }]} numberOfLines={1} accessibilityRole="header">{activeCategory !== null && !twoPane ? activeCategoryTitle : t('settings.title')}</Text>
         {/* Save button removed — settings now persist automatically (see the
             auto-save effect). Spacer keeps the title centered. */}
         <View style={s.backBtn} />
@@ -1517,7 +1699,20 @@ function SettingsScreenInner() {
       {loading ? (
         <ScrollView scrollEnabled={false} contentInsetAdjustmentBehavior={IOS_AUTO_INSET ? 'automatic' : undefined}><SettingsSkeleton sections={4} rows={3} /></ScrollView>
       ) : (
-      <FadeSlideIn>
+      <View style={twoPane ? s.twoPaneRow : s.flex1}>
+      {twoPane && (
+        <ScrollView
+          style={[s.twoPaneLeft, { borderRightColor: colors.border }]}
+          contentContainerStyle={[s.scroll, { paddingBottom: 40 }]}
+          keyboardShouldPersistTaps="handled"
+          testID="settings-left-pane"
+        >
+          {searchBarNode}
+          {homeListNode}
+        </ScrollView>
+      )}
+      <View style={s.flex1}>
+      <FadeSlideIn style={s.flex1}>
       <ScrollView
         key={activeCategory || 'root'}
         ref={scrollRef}
@@ -1528,32 +1723,7 @@ function SettingsScreenInner() {
       >
         {/* Web: busca inline (estilo barra de busca iOS) — SÓ na raiz. No
             nativo a busca é a barra do header (acima). */}
-        {!USE_NATIVE_HEADER && activeCategory === null && (
-          <View style={[s.searchBar, { backgroundColor: gc.fill }]}>
-            <IconSearch size={17} color={gc.secondary} />
-            <TextInput
-              value={searchQuery}
-              onChangeText={setSearchQuery}
-              placeholder={t('settings.searchPlaceholder') || 'Buscar configuração...'}
-              placeholderTextColor={gc.secondary}
-              style={[s.searchInput, { color: colors.text }]}
-              autoCorrect={false}
-              autoCapitalize="none"
-              returnKeyType="search"
-              accessibilityLabel={t('settings.searchPlaceholder') || 'Buscar configuração'}
-            />
-            {!!searchQuery && (
-              <TouchableOpacity
-                onPress={() => setSearchQuery('')}
-                style={{ padding: 4 }}
-                accessibilityLabel={t('common.clear') || 'Limpar'}
-                accessibilityRole="button"
-              >
-                <IconX size={15} color={gc.secondary} />
-              </TouchableOpacity>
-            )}
-          </View>
-        )}
+        {!twoPane && !USE_NATIVE_HEADER && activeCategory === null && searchBarNode}
 
         {/* Search summary — one quiet line instead of a chip cloud. */}
         {!!_q && _matchedLabels.length > 0 && (
@@ -1573,73 +1743,38 @@ function SettingsScreenInner() {
         {/* ── Category home list (iOS Settings): profile card + inset groups.
             Tapping a row opens that category's sub-page (sets
             activeCategory); the section gates below reveal its blocks. ── */}
-        {activeCategory === null && !searching && (
-          <View>
-            <SettingsGroup>
-              <PressableRow
-                onPress={() => openCategory('account')}
-                accessibilityRole="button"
-                accessibilityLabel={`${displayName || ''} ${user?.email || ''}`.trim()}
-              >
-                <View style={s.profileCardRow}>
-                  <AvatarCircle key={avatarKey} email={user?.email} name={displayName || user?.email} size={58} />
-                  <View style={{ flex: 1, minWidth: 0, marginLeft: 14 }}>
-                    <Text style={[s.profileCardName, { color: colors.text }]} numberOfLines={1}>{displayName}</Text>
-                    <Text style={[s.profileCardEmail, { color: gc.secondary }]} numberOfLines={1}>{user?.email}</Text>
-                  </View>
-                  <IconChevronRight size={17} color={gc.tertiary} />
-                </View>
-              </PressableRow>
-            </SettingsGroup>
-            {categoryGroups.map((grp, gi) => (
-              <SettingsGroup key={gi} inset={58}>
-                {grp.map((cat) => (
-                  <SettingsRow
-                    key={cat.key}
-                    icon={cat.Icon}
-                    title={cat.title}
-                    onPress={() => openCategory(cat.key)}
-                  />
-                ))}
-              </SettingsGroup>
-            ))}
-            {/* [2026-10-09 settings-logout] "Sair" só existia em Perfil → engrenagem → Zona de perigo.
-                Mesmo fluxo de logout (AuthContext.logout + /login), com confirmação. */}
-            <SettingsGroup>
-              <SettingsRow
-                title={t('settings.logoutAccount')}
-                destructive
-                onPress={handleSettingsLogout}
-              />
-            </SettingsGroup>
-          </View>
-        )}
+        {!twoPane && activeCategory === null && !searching && homeListNode}
 
         {/* ── Conta: cabeçalho limpo (avatar, nome, email) + linhas normais.
             "Trocar conta" deixou de ser pílula cinza com borda. ── */}
-        {(searching || activeCategory === 'account') && sectionMatches(t('settings.profile') || 'profile', user?.email) && (
-        <SettingsGroup>
-          <View style={s.accountHeader}>
-            <Pressable onPress={handleChangePhoto} accessibilityRole="button" accessibilityLabel={t('settings.changePhoto') || 'Alterar foto'}>
-              <AvatarCircle key={avatarKey} email={user?.email} name={displayName || user?.email} size={84} />
-            </Pressable>
-            {!!displayName && <Text style={[s.accountHeaderName, { color: colors.text }]} numberOfLines={1}>{displayName}</Text>}
-            <Text style={[s.accountHeaderEmail, { color: gc.secondary }]} numberOfLines={1}>{user?.email}</Text>
-          </View>
-          <SettingsRow title={t('settings.changePhoto') || 'Alterar foto'} onPress={handleChangePhoto} />
-          {/* Multi-account switcher — opens the sheet listing every signed-in
-              account (AuthContext.switchAccount). */}
-          <SettingsRow
-            title={t('account.switch') || 'Trocar conta'}
-            value={(accounts?.length || 0) > 1 ? String(accounts.length) : undefined}
-            onPress={() => setAccountSwitcherOpen(true)}
-          />
-        </SettingsGroup>
+        {/* ── Conta — [2026-10-11 settings-unify] perfil, contas, plano,
+            números, aparelhos, dados; Segurança logo abaixo (veio de
+            Privacidade). Cada item existe SÓ aqui. ── */}
+        {(searching || activeCategory === 'account') && sectionMatches(t('settings.profile') || 'profile', t('settings.editProfile'), t('account.switch'), 'Chatyy One', t('linkedPhones.title'), t('settings.linkedDevices'), t('settings.exportData'), t('profile.creatorDashboard'), user?.email) && (
+        <View ref={registerSectionRef('account')}>
+          <SettingsGroup>
+            <SettingsRow title={t('settings.editProfile')} subtitle={t('settings.editProfileSub')} onPress={() => safeNav('/edit-profile')} testID="settings-row-edit-profile" />
+            <SettingsRow
+              title={t('account.switch') || 'Trocar conta'}
+              value={(accounts?.length || 0) > 1 ? String(accounts.length) : undefined}
+              onPress={() => setAccountSwitcherOpen(true)}
+            />
+          </SettingsGroup>
+          <SettingsGroup>
+            <SettingsRow title="Chatyy One" subtitle={t('chatyyOne.rowDesc')} onPress={() => safeNav('/settings-one')} />
+            <SettingsRow title={t('linkedPhones.title')} onPress={() => safeNav('/linked-phones')} />
+            <SettingsRow title={t('settings.linkedDevices')} onPress={() => safeNav('/linked-devices')} />
+          </SettingsGroup>
+          <SettingsGroup>
+            <SettingsRow title={t('settings.exportData')} onPress={() => safeNav('/settings-export')} />
+            <SettingsRow title={t('profile.creatorDashboard')} onPress={() => safeNav('/profile-creator-dashboard')} />
+          </SettingsGroup>
+        </View>
         )}
 
         {/* Aparência — Tema = segmented (3 opções curtas). ThemeContext owns
             the 3-state mode + persistence (theme_mode). */}
-        {(searching || activeCategory === 'appearance') && sectionMatches(t('settings.appearance'), t('settings.theme.light'), t('settings.theme.dark'), t('settings.theme.system')) && (
+        {(searching || activeCategory === 'chat') && sectionMatches(t('settings.appearance'), t('settings.theme.label'), t('settings.theme.light'), t('settings.theme.dark'), t('settings.theme.system')) && (
         <SettingsGroup header={t('settings.theme.label') || 'Tema'} footer={t('settings.rd.themeFooter') || 'Sistema acompanha o modo claro/escuro do aparelho.'}>
           <SettingsCardContent>
             <SettingsSegmented
@@ -1655,6 +1790,18 @@ function SettingsScreenInner() {
             />
           </SettingsCardContent>
         </SettingsGroup>
+        )}
+        {/* [2026-10-11 settings-unify] Conversas: cor de destaque (vinha do
+            ProfileSettingsSheet), papel de parede padrão (só existia no
+            ChatProfileTab morto) e backup (só no menu Apps). */}
+        {(searching || activeCategory === 'chat') && sectionMatches(t('settings.accentColor')) && (
+          <AccentColorGroup />
+        )}
+        {(searching || activeCategory === 'chat') && sectionMatches(t('config.wallpaper'), t('sidebar.backup'), 'wallpaper', 'papel de parede', 'backup') && (
+          <SettingsGroup>
+            <WallpaperRow />
+            <SettingsRow title={t('sidebar.backup')} subtitle={t('settings.backupSub')} onPress={() => safeNav('/backup')} />
+          </SettingsGroup>
         )}
 
         {/* ── GROUP: Email. [2026-10-08 settings-redesign] Inset grouped lists:
@@ -1908,7 +2055,7 @@ function SettingsScreenInner() {
         {/* Idioma — follow-system switch + picker row (sheet) for the app
             language; Moeda = picker row with "Automático" as first option
             (no chip cloud, no green badge). */}
-        {(searching || activeCategory === 'appearance') && sectionMatches(t('settings.language'), t('settings.languageLabel'), t('settings.language.autoDetect')) && (
+        {(searching || activeCategory === 'language') && sectionMatches(t('settings.language'), t('settings.languageLabel'), t('settings.language.autoDetect')) && (
         <View ref={registerSectionRef('language')}>
           <SettingsGroup header={t('settings.language')}>
             {/* Auto-detect — when ON, clears the manual override key so the
@@ -2020,10 +2167,13 @@ function SettingsScreenInner() {
             switch (was a hand-made toggle; now NativeSwitch). */}
         {(searching || activeCategory === 'email') && sectionMatches(t('settings.ai'), t('settings.aiSmartReply'), t('settings.aiDrafts'), t('settings.aiSummary'), t('settings.aiEnhance'), t('settings.smartCompose')) && (
         <SettingsGroup header={t('settings.ai')} footer={t('settings.aiDesc')} inset={52}>
-          <SettingsRow icon={IconMessageSquare} iconTile={false} title={t('settings.aiSmartReply')} />
+          {/* [2026-10-11 settings-unify] Eram linhas estáticas (sem ação); os
+              switches reais (ai_smart_reply / ai_summary / ai_enhance) só
+              existiam no ProfileSettingsSheet. Mesmas chaves locais. */}
+          <SettingsSwitchRow icon={IconMessageSquare} iconTile={false} title={t('settings.smartReply')} subtitle={t('settings.smartReplyDesc')} value={aiFlags.ai_smart_reply} onValueChange={(v) => setAiFlag('ai_smart_reply', v)} />
           <SettingsRow icon={IconPenTool} iconTile={false} title={t('settings.aiDrafts')} />
-          <SettingsRow icon={IconDraft} iconTile={false} title={t('settings.aiSummary')} />
-          <SettingsRow icon={IconSparkles} iconTile={false} title={t('settings.aiEnhance')} />
+          <SettingsSwitchRow icon={IconDraft} iconTile={false} title={t('settings.aiSummary')} subtitle={t('settings.aiSummaryDesc')} value={aiFlags.ai_summary} onValueChange={(v) => setAiFlag('ai_summary', v)} />
+          <SettingsSwitchRow icon={IconSparkles} iconTile={false} title={t('settings.aiEnhance')} subtitle={t('settings.aiEnhanceDesc')} value={aiFlags.ai_enhance} onValueChange={(v) => setAiFlag('ai_enhance', v)} />
           <SettingsSwitchRow
             title={t('settings.smartCompose')}
             subtitle={t('settings.smartComposeDesc')}
@@ -2460,20 +2610,50 @@ function SettingsScreenInner() {
         )}
 
         {/* Reading — font size picker (3 options, labels can be long → sheet). */}
-        {(searching || activeCategory === 'email') && sectionMatches(t('settings.reading'), t('settings.fontSize'), t('settings.readReceipts'), t('settings.referrals') || 'referral') && (
+        {/* ── Acessibilidade — [2026-10-11 settings-unify] tamanho da fonte das
+            conversas (chat_user_defaults.font_size, lido pelo chat) +
+            densidade das listas (ThemeContext). ── */}
+        {(searching || activeCategory === 'accessibility') && sectionMatches(t('settings.cat.accessibility'), t('settings.fontSize'), t('quickSettings.density')) && (
         <View ref={registerSectionRef('reading')}>
-          <SettingsGroup header={t('settings.reading')}>
+          <SettingsGroup header={t('settings.cat.accessibility')} footer={t('settings.fontSizeDesc')}>
             <SettingsPickerRow
               title={t('settings.fontSize')}
               value={settings.font_size}
               cancelLabel={t('common.cancel') || 'Cancelar'}
               sheetMessage={t('settings.fontSizeDesc')}
               options={[{ value: 'small', label: t('settings.fontSmall') }, { value: 'medium', label: t('settings.fontMedium') }, { value: 'large', label: t('settings.fontLarge') }]}
-              onChange={(v) => { setSettings(prev => ({ ...prev, font_size: v })); saveNotifPref({ font_size: v }); }}
+              onChange={(v) => {
+                setSettings(prev => ({ ...prev, font_size: v }));
+                saveNotifPref({ font_size: v });
+                // BUG fix: o chat cacheia chat_get_settings por 10 min; sem
+                // invalidar, a fonte nova só aparecia depois do TTL.
+                try { globalThis.__chatyy_chat_settings_rev = (Number(globalThis.__chatyy_chat_settings_rev) || 0) + 1; } catch {}
+              }}
+            />
+            {typeof setDensity === 'function' && (
+              <SettingsPickerRow
+                title={t('quickSettings.density')}
+                value={density}
+                cancelLabel={t('common.cancel') || 'Cancelar'}
+                options={[
+                  { value: 'compact', label: t('settings.densityCompact') },
+                  { value: 'comfortable', label: t('settings.densityComfortable') },
+                  { value: 'spacious', label: t('settings.densitySpacious') },
+                ]}
+                onChange={(v) => setDensity(v)}
+              />
+            )}
+          </SettingsGroup>
+        </View>
+        )}
+        {(searching || activeCategory === 'email') && sectionMatches(t('settings.reading'), t('settings.emailReadReceipts')) && (
+          <SettingsGroup header={t('settings.reading')} footer={t('settings.emailReadReceiptsDesc')}>
+            <SettingsSwitchRow
+              title={t('settings.emailReadReceipts')}
+              value={!!settings.read_receipts}
+              onValueChange={(v) => setSettings(prev => ({ ...prev, read_receipts: !!v }))}
             />
           </SettingsGroup>
-          {/* Read-receipts live in the Privacy section (dedupe). */}
-        </View>
         )}
 
         {/* ── Privacidade e segurança — [2026-10-08 settings-redesign2]
@@ -2485,7 +2665,7 @@ function SettingsScreenInner() {
         {(searching || activeCategory === 'privacy') && sectionMatches(t('settings.privacyTitle'), t('settings.privacyLastSeen'), t('settings.privacyProfilePhoto'), t('settings.privacyReadReceipts'), t('settings.privacyStatus'), t('settings.privacyGroups'), t('settings.privacyOnline'), t('settings.privacyKeepArchived'), t('settings.blockUnknown'), 'privacy', 'privacidade') && (
         <View ref={registerSectionRef('privacy_granular')}>
           <SettingsGroup header={t('settings.rd2.whoCanSee') || 'Quem pode ver'} footer={t('settings.rd2.whoCanSeeFooter') || 'Escolha quem vê suas informações no Chatyy.'}>
-            {['last_seen', 'online', 'profile_photo', 'story_privacy', 'group_add'].map(field => (
+            {['last_seen', 'online', 'profile_photo', 'about', 'phone_visibility', 'story_privacy', 'group_add'].map(field => (
               <SettingsRow
                 key={field}
                 title={privacyFieldTitle(field)}
@@ -2527,14 +2707,21 @@ function SettingsScreenInner() {
               value={!!chatPrivacy.block_unknown}
               onValueChange={(v) => saveChatPrivacy({ block_unknown: !!v })}
             />
+            {/* [2026-10-11 settings-unify] lista de bloqueados: só existia no
+                ChatProfileTab (aba morta) → era inalcançável no app. */}
+            <SettingsRow title={t('settings.blockedContacts')} onPress={() => safeNav('/settings-blocked')} testID="settings-row-blocked" />
           </SettingsGroup>
+          <PrivacyExtrasGroup
+            cloudChats={chatPrivacy.cloud_chats_default}
+            onCloudChatsChange={(v) => saveChatPrivacy({ cloud_chats_default: !!v })}
+          />
         </View>
         )}
 
         {/* Segurança — bloqueio do app, acesso à conta, atividade, criptografia,
             privacidade avançada, família. Web: só "Alterar senha" (o resto
             depende de recursos nativos). */}
-        {(searching || activeCategory === 'privacy') && sectionMatches(t('settings.security'), 'biometric', 'face id', 'parental', 'família', 'family', 'segurança', 'senha', 'password', t('settings.changePassword'), '2fa', t('settings.twoFactor'), 'pin', 'backup', t('settings.e2eBackup'), t('settings.backupKey.rotate'), t('settings.activityLog'), 'byok', t('settings.advancedKey'), t('settings.loginAlerts.title') || 'Alertas de login', t('settings.advancedPrivacy') || 'Privacidade avançada') && (
+        {(searching || activeCategory === 'account') && sectionMatches(t('settings.security'), 'biometric', 'face id', 'parental', 'família', 'family', 'segurança', 'senha', 'password', t('settings.changePassword'), '2fa', t('settings.twoFactor'), 'pin', 'backup', t('settings.e2eBackup'), t('settings.backupKey.rotate'), t('settings.activityLog'), 'byok', t('settings.advancedKey'), t('settings.loginAlerts.title') || 'Alertas de login', t('settings.advancedPrivacy') || 'Privacidade avançada') && (
         <View ref={registerSectionRef('security')}>
           {Platform.OS !== 'web' && biometricAvailable && (
             <SettingsGroup header={t('settings.rd2.appLock') || 'Bloqueio do app'} footer={t('settings.biometricDesc')}>
@@ -2557,7 +2744,7 @@ function SettingsScreenInner() {
             </SettingsGroup>
           )}
 
-          <SettingsGroup header={t('settings.rd2.accountAccess') || 'Acesso à conta'}>
+          <SettingsGroup header={t('settings.security') || 'Segurança'}>
             <SettingsRow
               title={t('settings.changePassword') || 'Alterar senha'}
               subtitle={t('settings.changePasswordDesc') || 'Atualize sua senha de acesso a qualquer momento'}
@@ -2610,16 +2797,10 @@ function SettingsScreenInner() {
 
           {Platform.OS !== 'web' && (
             <SettingsGroup header={t('settings.rd2.activity') || 'Atividade'}>
-              {/* Alertas de login — chat_user_defaults.login_alerts_enabled */}
-              <SettingsSwitchRow
-                title={t('settings.loginAlerts.title') || 'Alertas de login'}
-                subtitle={t('settings.loginAlerts.subtitle') || 'Receba notif quando novo dispositivo logar'}
-                value={loginAlertsEnabled}
-                onValueChange={(v) => {
-                  setLoginAlertsEnabled(v);
-                  try { api.chatUserDefaultsSet?.({ login_alerts_enabled: v }).catch(() => {}); } catch {}
-                }}
-              />
+              {/* [2026-10-11 settings-unify] Switch "Alertas de login" REMOVIDO:
+                  gravava em chat_user_defaults_set (ação inexistente) e o
+                  backend (login_alert.php) avisa SEMPRE, sem ler preferência
+                  → o switch mentia. Volta quando houver pref no servidor. */}
               <SettingsRow
                 title={t('settings.loginAlerts.history') || 'Histórico de logins'}
                 onPress={openLoginHistory}
@@ -2681,7 +2862,7 @@ function SettingsScreenInner() {
         )}
 
         {/* Encaminhamento de email (privacy page, all platforms). */}
-        {(searching || activeCategory === 'privacy') && sectionMatches(t('settings.forwarding'), t('settings.forwardingEnable'), t('settings.forwardingDesc')) && (
+        {(searching || activeCategory === 'email') && sectionMatches(t('settings.forwarding'), t('settings.forwardingEnable'), t('settings.forwardingDesc')) && (
         <SettingsGroup header={t('settings.forwarding')} footer={t('settings.forwardingDesc')}>
           <SettingsSwitchRow
             title={t('settings.forwardingEnable')}
@@ -2711,6 +2892,12 @@ function SettingsScreenInner() {
             de Privacidade (são preferências de notificação); mesmas chaves:
             chat_user_notif_prefs_set / chat_privacy_set. ── */}
         {(searching || activeCategory === 'notifications') && sectionMatches(t('settings.notificationsTitle'), t('settings.notifAll'), t('settings.notifUrgent'), t('settings.notifSilent')) && (
+        <>
+        {Platform.OS !== 'web' && (
+          <SettingsGroup footer={t('notif.pushDesc')}>
+            <PushMasterSwitchRow />
+          </SettingsGroup>
+        )}
         <SettingsGroup header={t('settings.notificationsTitle')} footer={t('settings.rd2.pushFooter') || 'Vale para todas as notificações push do app.'}>
           {[
             { val: 'all', label: t('settings.notifAll'), sub: t('settings.notifAllSub') },
@@ -2731,6 +2918,7 @@ function SettingsScreenInner() {
             />
           ))}
         </SettingsGroup>
+        </>
         )}
         {(searching || activeCategory === 'notifications') && sectionMatches(t('settings.privacyHideReactions'), t('settings.rd2.muteCalls') || 'Modo silencioso para ligações', t('settings.rd2.chatsAndCalls') || 'Conversas e chamadas', t('settings.contactJoinedPush')) && (
         <SettingsGroup header={t('settings.rd2.chatsAndCalls') || 'Conversas e chamadas'}>
@@ -2780,7 +2968,7 @@ function SettingsScreenInner() {
             WhatsApp "Armazenamento e dados" layout: auto-download = 4 picker
             rows (Wi-Fi e dados móveis / Só Wi-Fi / Nunca) — the old 3-pill
             control rendered as blank pills on iOS. ── */}
-        {(searching || activeCategory === 'storage_data') && Platform.OS !== 'web' && (
+        {(searching || activeCategory === 'storage_data') && (
         <CollapsibleGroup title={t('settings.group.storage') || 'Armazenamento e dados'} icon={IconDatabase} forceOpen={!!_q || activeCategory === 'storage_data'} hideHeader={activeCategory === 'storage_data' && !searching}>
 
         {/* Mídia automática — 4 buckets × 3 modes. Writes chat_user_defaults
@@ -2788,6 +2976,12 @@ function SettingsScreenInner() {
             mediaCache so the cellular gate applies without a restart. */}
         {sectionMatches(t('settings.mediaAutoDownload'), t('settings.mediaPhotos'), t('settings.mediaAudio'), t('settings.mediaVideos'), t('settings.mediaDocs'), t('settings.roaming.title'), t('settings.autoSaveGallery'), t('settings.mediaUploadQuality.title'), 'storage', 'auto-download', 'roaming', 'galeria', 'gallery', 'HD', 'qualidade', 'quality') && (
         <View ref={registerSectionRef('mediaAutoDownload')}>
+          {/* [2026-10-11 settings-unify] Nuvem/plano — todas as plataformas. */}
+          <SettingsGroup header={t('storageData.cloud')}>
+            <SettingsRow title={t('storage.title')} onPress={() => safeNav('/storage')} />
+            <SettingsRow title="Chatyy One" subtitle={t('chatyyOne.rowDesc')} onPress={() => safeNav('/settings-one')} />
+          </SettingsGroup>
+          {Platform.OS !== 'web' && (<>
           <SettingsGroup header={t('settings.mediaAutoDownload')} footer={t('settings.mediaAutoDownloadDesc')}>
             {[
               { key: 'media_auto_dl_photos', label: t('settings.mediaPhotos') },
@@ -2843,6 +3037,7 @@ function SettingsScreenInner() {
               }}
             />
           </SettingsGroup>
+          </>)}
 
           {/* [2026-10-11 video-fullhd] WhatsApp "Qualidade de envio de mídia".
               Default HD = videos 1080p; Padrão = 720p. The preview HD chip
@@ -2887,7 +3082,7 @@ function SettingsScreenInner() {
 
         {/* Storage — per-bucket usage + app cache + history + clear cache.
             Stats via mediaCache.getStorageStats(); refreshed after clear. */}
-        {sectionMatches(t('settings.storage.title'), t('settings.storage.photos'), t('settings.storage.videos'), t('settings.storage.audios'), t('settings.storage.documents'), 'storage', 'cache', 'armazenamento', 'cache') && (() => {
+        {Platform.OS !== 'web' && sectionMatches(t('settings.storage.title'), t('settings.storage.photos'), t('settings.storage.videos'), t('settings.storage.audios'), t('settings.storage.documents'), 'storage', 'cache', 'armazenamento', 'cache') && (() => {
           const fmtBytes = (b) => {
             const bytes = Math.max(0, Number(b) || 0);
             if (bytes < 1024) return bytes === 0 ? '0 KB' : '< 1 KB';
@@ -3030,7 +3225,7 @@ function SettingsScreenInner() {
         {/* Mensagens temporárias por padrão — applied at chat_create time
             only (existing convs unaffected). [2026-10-08 settings-redesign2]
             picker row (sheet c/ checkmark) em vez de 4 linhas de rádio. */}
-        {(searching || activeCategory === 'chat') && sectionMatches(t('settings.defaultDisappearing'), t('settings.disappearingOff'), t('settings.disappearing24h'), t('settings.disappearing7d'), t('settings.disappearing90d'), 'privacy', 'disappearing') && (
+        {(searching || activeCategory === 'privacy') && sectionMatches(t('settings.defaultDisappearing'), t('settings.disappearingOff'), t('settings.disappearing24h'), t('settings.disappearing7d'), t('settings.disappearing90d'), 'privacy', 'disappearing') && (
         <View ref={registerSectionRef('defaultDisappearing')}>
           <SettingsGroup header={t('settings.defaultDisappearing')} footer={t('settings.defaultDisappearingDesc')}>
             <SettingsPickerRow
@@ -3124,7 +3319,7 @@ function SettingsScreenInner() {
 
         {/* Convidar amigos — [2026-10-08 settings-redesign] grouped list
             (código + compartilhar) instead of the black hero card. */}
-        {(searching || activeCategory === 'account') && sectionMatches(t('referral.inviteFriends') || 'Convidar amigos', t('referral.subtitle') || 'GB grátis', 'invite', 'amigos', 'referral') && (
+        {(searching || activeCategory === 'invite') && sectionMatches(t('referral.inviteFriends') || 'Convidar amigos', t('referral.subtitle') || 'GB grátis', 'invite', 'amigos', 'referral') && (
         <SettingsGroup
           header={t('referral.inviteFriends') || 'Convidar amigos'}
           footer={`${t('referral.subtitle') || '1 GB grátis pra cada amigo que entrar'} · ${(referralCount === 1
@@ -3341,6 +3536,8 @@ function SettingsScreenInner() {
         )}
       </ScrollView>
       </FadeSlideIn>
+      </View>
+      </View>
       )}
 
       <FilterRuleEditor visible={showFilters} onClose={() => setShowFilters(false)} />
@@ -4247,6 +4444,10 @@ function SettingsScreenInner() {
 }
 
 const s = StyleSheet.create({
+  // [2026-10-11 settings-unify] layout 2 painéis (web largo)
+  flex1: { flex: 1 },
+  twoPaneRow: { flex: 1, flexDirection: 'row' },
+  twoPaneLeft: { width: 360, flexGrow: 0, flexShrink: 0, borderRightWidth: StyleSheet.hairlineWidth },
   container: { flex: 1 },
   loadingContainer: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   // Header — [beauty2 2026-05-31] hairline divider + tighter vertical rhythm

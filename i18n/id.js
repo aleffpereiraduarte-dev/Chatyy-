@@ -1,4 +1,13 @@
 export default {
+  // [2026-10-11 bughunt] chaves usadas com || fallback (t() devolve a chave crua → fallback nunca aparecia)
+  "attachment.previewOpenWith": "Ketuk \"Buka dengan\" untuk melihat PDF",
+  "attachment.openWith": "Buka dengan",
+  "attachment.remove": "Hapus lampiran",
+  "storage.cardFailed": "Tidak dapat membuka pembayaran kartu. Coba lagi sebentar lagi.",
+  "storage.payCard": "Bayar dengan kartu",
+  "storage.manageCard": "Kelola kartu / langganan",
+  "chatConv.playlistAdding": "Menambahkan",
+  "chatConv.playlistCreating": "Membuat playlist...",
   // [2026-10-11 email-qa]
   "thread.olderMessages": "{count} pesan sebelumnya",
   "inbox.aiBriefing": "Ringkasan AI",
@@ -10146,4 +10155,20 @@ export default {
   "chatConv.transcriptHeading": "Transkrip",
   "chatConv.waitingForMessage": "Menunggu pesan ini",
   "chatConv.noSongsFound": "Tidak ada lagu ditemukan",
+  // [2026-10-11 settings-unify]
+  "settings.cat.accessibility": "Aksesibilitas",
+  "settings.cat.language": "Bahasa aplikasi",
+  "settings.cat.invite": "Undang teman",
+  "settings.cat.chats": "Chat",
+  "settings.cat.privacyOnly": "Privasi",
+  "settings.privacyAbout": "Info",
+  "settings.editProfileSub": "Foto, nama, @username, info, dan tautan",
+  "settings.backupSub": "Cadangkan chat dan media ke cloud",
+  "settings.blockedContacts": "Kontak yang diblokir",
+  "settings.blockedFooter": "Kontak yang diblokir tidak dapat menelepon atau mengirimi Anda pesan. Ketuk untuk membuka blokir. Untuk memblokir, buka profil orang tersebut.",
+  "settings.rd2.mediaPrivacy": "Media dan pesan",
+  "editProfile.contactInfo": "Kontak",
+  "editProfile.email": "Email",
+  "editProfile.phone": "Telepon",
+  "editProfile.contactReadOnly": "Untuk mengganti nomor, buka Pengaturan › Akun.",
 };

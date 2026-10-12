@@ -1,4 +1,13 @@
 export default {
+  // [2026-10-11 bughunt] chaves usadas com || fallback (t() devolve a chave crua → fallback nunca aparecia)
+  "attachment.previewOpenWith": "PDFを表示するには「このアプリで開く」をタップ",
+  "attachment.openWith": "このアプリで開く",
+  "attachment.remove": "添付ファイルを削除",
+  "storage.cardFailed": "カード決済を開けませんでした。しばらくしてからもう一度お試しください。",
+  "storage.payCard": "カードで支払う",
+  "storage.manageCard": "カード / サブスクリプションを管理",
+  "chatConv.playlistAdding": "追加中",
+  "chatConv.playlistCreating": "プレイリストを作成中...",
   // [2026-10-11 email-qa]
   "thread.olderMessages": "以前のメッセージ {count} 件",
   "inbox.aiBriefing": "AI ブリーフィング",
@@ -10146,4 +10155,20 @@ export default {
   "chatConv.transcriptHeading": "文字起こし",
   "chatConv.waitingForMessage": "このメッセージを待っています",
   "chatConv.noSongsFound": "曲が見つかりません",
+  // [2026-10-11 settings-unify]
+  "settings.cat.accessibility": "アクセシビリティ",
+  "settings.cat.language": "アプリの言語",
+  "settings.cat.invite": "友達を招待",
+  "settings.cat.chats": "チャット",
+  "settings.cat.privacyOnly": "プライバシー",
+  "settings.privacyAbout": "自己紹介",
+  "settings.editProfileSub": "写真、名前、@ユーザー名、自己紹介、リンク",
+  "settings.backupSub": "チャットとメディアをクラウドにバックアップ",
+  "settings.blockedContacts": "ブロック中の連絡先",
+  "settings.blockedFooter": "ブロック中の連絡先からは通話やメッセージが届きません。タップでブロック解除。ブロックするには相手のプロフィールを開きます。",
+  "settings.rd2.mediaPrivacy": "メディアとメッセージ",
+  "editProfile.contactInfo": "連絡先",
+  "editProfile.email": "メール",
+  "editProfile.phone": "電話番号",
+  "editProfile.contactReadOnly": "番号を変更するには、設定 › アカウントへ。",
 };

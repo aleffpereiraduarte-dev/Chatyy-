@@ -21748,6 +21748,10 @@ function ChatConversationInner() {
             const r = await api.chatClearHistory(conversationId);
             if (r?.success) {
               setMessages([]);
+              // [2026-10-11 bughunt] AsyncStorage não é importado no topo deste
+              // arquivo → ReferenceError engolido: o watermark cleared_at nunca
+              // era gravado e o histórico limpo voltava no próximo bootstrap.
+              const AsyncStorage = require('@react-native-async-storage/async-storage').default;
               try { await AsyncStorage.removeItem(`chatMsgs_${conversationId}`); } catch {}
               // Watermark + local wipe so cleared history doesn't
               // resurrect via envelope pull / bootstrap / cold-open.

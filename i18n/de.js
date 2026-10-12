@@ -1,4 +1,13 @@
 export default {
+  // [2026-10-11 bughunt] chaves usadas com || fallback (t() devolve a chave crua → fallback nunca aparecia)
+  "attachment.previewOpenWith": "Tippe auf „Öffnen mit“, um das PDF anzusehen",
+  "attachment.openWith": "Öffnen mit",
+  "attachment.remove": "Anhang entfernen",
+  "storage.cardFailed": "Kartenzahlung konnte nicht geöffnet werden. Versuche es gleich noch einmal.",
+  "storage.payCard": "Mit Karte bezahlen",
+  "storage.manageCard": "Karte / Abo verwalten",
+  "chatConv.playlistAdding": "Wird hinzugefügt",
+  "chatConv.playlistCreating": "Playlist wird erstellt...",
   // [2026-10-11 email-qa]
   "thread.olderMessages": "{count} ältere Nachrichten",
   "inbox.aiBriefing": "KI-Zusammenfassung",
@@ -10924,4 +10933,20 @@ export default {
   "chatConv.transcriptHeading": "Transkript",
   "chatConv.waitingForMessage": "Warte auf diese Nachricht",
   "chatConv.noSongsFound": "Keine Musik gefunden",
+  // [2026-10-11 settings-unify]
+  "settings.cat.accessibility": "Bedienungshilfen",
+  "settings.cat.language": "App-Sprache",
+  "settings.cat.invite": "Freund einladen",
+  "settings.cat.chats": "Chats",
+  "settings.cat.privacyOnly": "Datenschutz",
+  "settings.privacyAbout": "Info",
+  "settings.editProfileSub": "Foto, Name, @Benutzername, Info und Links",
+  "settings.backupSub": "Chats und Medien in der Cloud sichern",
+  "settings.blockedContacts": "Blockierte Kontakte",
+  "settings.blockedFooter": "Blockierte Kontakte können dich nicht mehr anrufen oder dir schreiben. Tippe zum Entsperren. Zum Blockieren öffne das Profil der Person.",
+  "settings.rd2.mediaPrivacy": "Medien und Nachrichten",
+  "editProfile.contactInfo": "Kontakt",
+  "editProfile.email": "E-Mail",
+  "editProfile.phone": "Telefon",
+  "editProfile.contactReadOnly": "Um deine Nummer zu ändern, gehe zu Einstellungen › Konto.",
 };

@@ -1,4 +1,13 @@
 export default {
+  // [2026-10-11 bughunt] chaves usadas com || fallback (t() devolve a chave crua → fallback nunca aparecia)
+  "attachment.previewOpenWith": "Touchez « Ouvrir avec » pour voir le PDF",
+  "attachment.openWith": "Ouvrir avec",
+  "attachment.remove": "Retirer la pièce jointe",
+  "storage.cardFailed": "Impossible d’ouvrir le paiement par carte. Réessayez dans un instant.",
+  "storage.payCard": "Payer par carte",
+  "storage.manageCard": "Gérer la carte / l’abonnement",
+  "chatConv.playlistAdding": "Ajout en cours",
+  "chatConv.playlistCreating": "Création de la playlist...",
   // [2026-10-11 email-qa]
   "thread.olderMessages": "{count} messages précédents",
   "inbox.aiBriefing": "Résumé IA",
@@ -10925,4 +10934,20 @@ export default {
   "chatConv.transcriptHeading": "Transcription",
   "chatConv.waitingForMessage": "En attente de ce message",
   "chatConv.noSongsFound": "Aucune musique trouvée",
+  // [2026-10-11 settings-unify]
+  "settings.cat.accessibility": "Accessibilité",
+  "settings.cat.language": "Langue de l'app",
+  "settings.cat.invite": "Inviter un ami",
+  "settings.cat.chats": "Discussions",
+  "settings.cat.privacyOnly": "Confidentialité",
+  "settings.privacyAbout": "Actu",
+  "settings.editProfileSub": "Photo, nom, @pseudo, actu et liens",
+  "settings.backupSub": "Sauvegardez vos discussions et médias dans le cloud",
+  "settings.blockedContacts": "Contacts bloqués",
+  "settings.blockedFooter": "Les contacts bloqués ne peuvent plus vous appeler ni vous écrire. Touchez pour débloquer. Pour bloquer quelqu’un, ouvrez son profil.",
+  "settings.rd2.mediaPrivacy": "Médias et messages",
+  "editProfile.contactInfo": "Contact",
+  "editProfile.email": "E-mail",
+  "editProfile.phone": "Téléphone",
+  "editProfile.contactReadOnly": "Pour changer de numéro, allez dans Réglages › Compte.",
 };

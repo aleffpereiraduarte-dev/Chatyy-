@@ -786,7 +786,7 @@ function SavedListingsTab({ savedIds, onToggleSave, onSelectListing }) {
 }
 
 // ─── Browse tab ───────────────────────────────────────────────────────────────
-function BrowseTab({ savedIds, onToggleSave, onSelectListing }) {
+function BrowseTab({ savedIds, onToggleSave, onSelectListing, onSell }) {
   const { colors } = useTheme();
   const { t } = useLanguage();
   const [listings, setListings] = useState([]);
@@ -885,7 +885,7 @@ function BrowseTab({ savedIds, onToggleSave, onSelectListing }) {
           subtitle={errored ? (t('marketplace.errGeneric') || 'Verifique sua conexão e tente novamente.') : t('marketplace.emptySub')}
           cta={errored
             ? { label: t('common.retry') || 'Tentar novamente', icon: 'search', onPress: () => { setRefreshing(true); load(); } }
-            : { label: t('marketplace.sell'), icon: 'plus', onPress: () => setCreateVisible(true) }}
+            : { label: t('marketplace.sell'), icon: 'plus', onPress: () => { /* [2026-10-11 bughunt] setCreateVisible era do pai → ReferenceError */ try { onSell?.(); } catch {} } }}
           tips={errored ? null : [
             { icon: 'plus', label: t('marketplace.tipSell') },
             { icon: 'search', label: t('marketplace.tipBrowse') },
@@ -1009,6 +1009,7 @@ export default function MarketplaceScreen() {
           savedIds={savedIds}
           onToggleSave={handleToggleSave}
           onSelectListing={setDetailListing}
+          onSell={() => setCreateVisible(true)}
         />
       )}
       {activeTab === 'my' && (
