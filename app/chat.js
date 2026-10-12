@@ -238,11 +238,13 @@ const TAB_KEYS_FULL = ['chats', 'email', 'calls', 'apps'];
 // Desktop keeps the classic email-hub layout — user asked for it to stay as-is.
 // Profile is no longer a chat tab — tap the avatar in the header to reach
 // /u/{email}. Keeps a single profile surface across the whole app.
-const TAB_KEYS_DESKTOP = ['feed', 'calls', 'chats'];
+// [2026-10-12 chatlist-polish] Conversas first (WhatsApp Web rail order).
+const TAB_KEYS_DESKTOP = ['chats', 'calls', 'feed'];
 const TAB_KEYS_KIDS = ['chats', 'learn', 'tv'];
 
 // Gradient brand title for "Chatyy" (web only renders as two-tone, native as well)
 function BrandTitle({ colors, size = 22, light }) {
+  const { t } = useLanguage();
   return (
     <View style={styles.brandWrap}>
       {isChildAccount() ? (
@@ -253,7 +255,7 @@ function BrandTitle({ colors, size = 22, light }) {
           </Svg>
           <Text style={[styles.brandTitle, { color: colors.text, fontSize: size }]}>Chatyy</Text>
           <View style={{ backgroundColor: '#111111', borderRadius: 8, paddingHorizontal: 6, paddingVertical: 2 }}>
-            <Text style={{ color: '#fff', fontSize: size - 6, fontWeight: '800' }}>Kids</Text>
+            <Text style={{ color: '#fff', fontSize: size - 6, fontWeight: '800' }}>{t('kids.brandBadge') || 'Kids'}</Text>
           </View>
         </View>
       ) : (
@@ -952,13 +954,13 @@ function ChatHub() {
   const titles = {
     feed: t('feed.title') || 'Feed',
     status: 'Status',
-    calls: t('chat.tabCalls') || 'Ligacoes',
+    calls: t('chat.tabCalls') || 'Ligações',
     chats: t('chat.tabChats') || 'Conversas',
-    config: t('chat.tabConfig') || 'Configuracoes',
+    config: t('chat.tabConfig') || 'Configurações',
     learn: 'Professora ONE',
     tv: 'Chatyy TV',
-    channels: t('channel.title') || 'Channels',
-    communities: t('community.title') || 'Communities',
+    channels: t('channel.title') || 'Canais',
+    communities: t('community.title') || 'Comunidades',
   };
 
   const renderHeaderAction = () => {
@@ -1098,7 +1100,7 @@ function ChatHub() {
                   key={key}
                   tabKey={key}
                   icon={key === 'feed' ? IconFeedTab : key === 'status' ? IconStatusTab : key === 'calls' ? IconCallsTab : key === 'chats' ? IconChatsTab : IconConfigTab}
-                  label={key === 'chats' ? 'Chats' : key === 'feed' ? 'Feed' : key === 'status' ? 'Status' : key === 'calls' ? (t('chat.tabCalls') || 'Ligacoes') : (t('chat.tabConfig') || 'Config')}
+                  label={key === 'chats' ? (t('chat.tabChats') || 'Conversas') : key === 'feed' ? (t('feed.title') || 'Feed') : key === 'status' ? 'Status' : key === 'calls' ? (t('chat.tabCalls') || 'Ligações') : (t('chat.tabConfig') || 'Configurações')}
                   active={activeTab === key}
                   onPress={() => handleTabPress(key)}
                   isDark={isDark}
@@ -1106,6 +1108,20 @@ function ChatHub() {
                 />
               );
             })}
+            {/* [2026-10-12 chatlist-polish] Desktop had no way into the Apps
+                drawer (Email, Reuniões, Canais, Comunidades, Agenda…). Same
+                drawer as the mobile "Apps" tab. */}
+            {!isKids && (
+              <DesktopTabItem
+                tabKey="apps"
+                icon={IconAppsTab}
+                label={t('chat.tabApps') || 'Apps'}
+                active={showAppsDrawer}
+                onPress={() => handleTabPress('apps')}
+                isDark={isDark}
+                badge={0}
+              />
+            )}
           </View>
 
           {/* Back button at bottom (hidden for kids) */}
@@ -1221,6 +1237,22 @@ function ChatHub() {
           {/* ChatListTab has its own FAB (new chat/group/channel), and
               ChatFeedTab has its own composer — nothing to render here. */}
         </View>
+        {!isKids && (
+          <AppsDrawerModal
+            visible={showAppsDrawer}
+            onClose={closeAppsDrawer}
+            router={router}
+            colors={colors}
+            isDark={isDark}
+            t={t}
+            userEmail={user?.email}
+            onOpenFeed={openFeedFromApps}
+            onOpenReels={openReelsFromApps}
+            onOpenChannels={openChannelsFromApps}
+            onOpenCommunities={openCommunitiesFromApps}
+            badges={appsBadges}
+          />
+        )}
         {/* [2026-10-07 welcome] per-account first-run (renders null when done) */}
         {!isKids ? <FirstRunGate /> : null}
       </View>
@@ -1438,7 +1470,7 @@ function ChatHub() {
                   </Svg>
                 );
               }}
-              label="TV"
+              label={t('kids.tv') || 'TV'}
               active={activeTab === 'tv'}
               onPress={() => handleTabPress('tv')}
               isDark={isDark}
@@ -1726,7 +1758,7 @@ function AppsSection({ title, items, badges, onItemPress, colors, isDark, t }) {
   return (
     <View style={{ marginBottom: 16 }} accessibilityRole="none">
       <Text
-        style={{ fontSize: 13, fontWeight: '700', color: colors.textSecondary || (isDark ? '#A1A1A6' : '#667781'), letterSpacing: 0.2, marginBottom: 8, paddingHorizontal: 6 }}
+        style={{ fontSize: 13, fontWeight: '700', color: isDark ? '#A1A1A6' : '#6b6b70', letterSpacing: 0.2, marginBottom: 8, paddingHorizontal: 6 }}
         accessibilityRole="header"
       >
         {title}
@@ -1951,6 +1983,7 @@ const AppsDrawerModal = React.memo(function AppsDrawerModal({ visible, onClose, 
             paddingTop: 8,
             paddingHorizontal: 16,
             maxHeight: '90%',
+            width: '100%', maxWidth: 640, alignSelf: 'center',
             ...(Platform.OS === 'web' ? { boxShadow: '0 -8px 32px rgba(0,0,0,0.18)' } : {}),
           }}
           accessibilityViewIsModal
@@ -2035,7 +2068,7 @@ const AppsDrawerModal = React.memo(function AppsDrawerModal({ visible, onClose, 
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
                     <Text style={{ fontSize: 17, fontWeight: '700', color: isDark ? '#0b0b0b' : '#ffffff', letterSpacing: -0.2 }}>Bia</Text>
                     <View style={{ backgroundColor: isDark ? 'rgba(17,27,33,0.12)' : 'rgba(255,255,255,0.20)', borderRadius: 6, paddingHorizontal: 6, paddingVertical: 2 }}>
-                      <Text style={{ fontSize: 9, fontWeight: '800', letterSpacing: 0.5, color: isDark ? '#0b0b0b' : '#ffffff' }}>AI</Text>
+                      <Text style={{ fontSize: 9, fontWeight: '800', letterSpacing: 0.5, color: isDark ? '#0b0b0b' : '#ffffff' }}>{t('chat.aiBadge') || 'IA'}</Text>
                     </View>
                   </View>
                   <Text style={{ fontSize: 13, color: isDark ? 'rgba(17,27,33,0.7)' : 'rgba(255,255,255,0.75)', marginTop: 2 }} numberOfLines={1}>
@@ -2102,6 +2135,9 @@ function DesktopTabItem({ tabKey, icon: IconComp, label, active, onPress, isDark
     <TouchableOpacity
       onPress={onPress}
       activeOpacity={0.8}
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      accessibilityState={{ selected: !!active }}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
       style={[styles.desktopTabItem, {

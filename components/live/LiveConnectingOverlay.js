@@ -159,9 +159,10 @@ const styles = StyleSheet.create({
     top: 0, left: 0, right: 0, bottom: 0,
     borderRadius: 50,
     borderWidth: 2.5,
-    borderColor: LIVE_RED,
+    // [2026-10-12 live-polish] P&B: conectando ainda não é "ao vivo" → anel branco.
+    borderColor: 'rgba(255,255,255,0.85)',
     ...(Platform.OS === 'web' ? {
-      boxShadow: '0 0 24px rgba(220,38,38,0.55)',
+      boxShadow: '0 0 24px rgba(255,255,255,0.25)',
     } : {}),
   },
   avatar: {
@@ -181,7 +182,7 @@ const styles = StyleSheet.create({
     letterSpacing: 0.3,
   },
   errorText: {
-    color: '#ef4444',
+    color: 'rgba(255,255,255,0.92)',
     fontSize: 14,
     fontWeight: '700',
     marginTop: 14,

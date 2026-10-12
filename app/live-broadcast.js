@@ -811,7 +811,7 @@ function LiveBroadcastScreen() {
       return true;
     } catch (err) {
       console.warn('[Live] Camera error:', err);
-      setError(t('live.connectionFailed') || 'Failed to access camera');
+      setError(t('live.connectionFailed') || 'Não foi possível acessar a câmera');
       return false;
     }
   }, [t, preFacing]);
@@ -2290,7 +2290,7 @@ function LiveBroadcastScreen() {
         const sidMissing = res?.success && !sid ? 'no session_id' : '';
         const parts = [status, code, sidMissing, msg].filter(Boolean);
         const detail = parts.length ? ` (${parts.join(' · ')})` : '';
-        setError((t('live.connectionFailed') || 'Connection failed') + detail);
+        setError((t('live.connectionFailed') || 'Falha na conexão') + detail);
       }
     } catch (e) {
       // Was empty `catch {}` — masked real reason (e.g., auth expired,
@@ -2306,7 +2306,7 @@ function LiveBroadcastScreen() {
       const errMsg = e?.message || '';
       const parts = [errName, errMsg].filter(Boolean);
       const detail = parts.length ? ` (${parts.join(': ')})` : '';
-      setError((t('live.connectionFailed') || 'Connection failed') + detail);
+      setError((t('live.connectionFailed') || 'Falha na conexão') + detail);
     } finally {
       // Release the single-flight gate. If the start succeeded sessionIdRef
       // is now set so the early-return at the top still blocks re-entry.
@@ -2873,7 +2873,7 @@ function LiveBroadcastScreen() {
     const entry = new Animated.Value(0);
     const msg = {
       id: String(++chatIdRef.current),
-      name: user?.name || user?.email?.split('@')[0] || 'You',
+      name: user?.name || user?.email?.split('@')[0] || 'Você',
       email: user?.email,
       content: trimmed,
       type: 'chat',
@@ -2927,7 +2927,7 @@ function LiveBroadcastScreen() {
     if (!trimmed) return;
     // If the host prefixes "📌 " they pin the next message instead of sending.
     if (trimmed.startsWith('📌 ')) {
-      const pinName = user?.name || user?.email?.split('@')[0] || 'You';
+      const pinName = user?.name || user?.email?.split('@')[0] || 'Você';
       const pinContent = trimmed.slice(2).trim();
       setPinnedComment({ name: pinName, content: pinContent });
       // Broadcast pin to viewers so the yellow TikTok-style pinned chip shows
@@ -4004,10 +4004,10 @@ function LiveBroadcastScreen() {
         <TouchableOpacity
           onPress={() => router.back()}
           style={styles.backBtn}
-          accessibilityLabel="Go back"
+          accessibilityLabel={t('common.back') || 'Voltar'}
           accessibilityRole="button"
         >
-          <Text style={styles.backBtnText}>{t('common.cancel') || 'Back'}</Text>
+          <Text style={styles.backBtnText}>{t('common.back') || 'Voltar'}</Text>
         </TouchableOpacity>
       </View>
     );
@@ -4037,7 +4037,7 @@ function LiveBroadcastScreen() {
           <TouchableOpacity
             onPress={() => router.back()}
             style={[styles.closeBtn, { top: insets.top + 16 }]}
-            accessibilityLabel="Close"
+            accessibilityLabel={t('common.close') || 'Fechar'}
             accessibilityRole="button"
           >
             <IconX size={22} color="#fff" />
@@ -4052,7 +4052,7 @@ function LiveBroadcastScreen() {
             style={[styles.preFlipBtn, { top: insets.top + 16 }]}
             activeOpacity={0.8}
             accessibilityRole="button"
-            accessibilityLabel={t('live.flipCamera') || 'Flip camera'}
+            accessibilityLabel={t('live.flipCamera') || 'Virar câmera'}
           >
             <IconCameraFlip size={22} color="#fff" />
           </TouchableOpacity>
@@ -4087,12 +4087,12 @@ function LiveBroadcastScreen() {
                 placeholder={t('live.enterTitle') || 'Adicione um título à sua live...'}
                 placeholderTextColor="rgba(255,255,255,0.4)"
                 returnKeyType="done"
-                accessibilityLabel={t('live.enterTitle') || 'Live title'}
+                accessibilityLabel={t('live.enterTitle') || 'Título da live'}
                 maxLength={100}
               />
               {!titleInput ? (
                 <Animated.View pointerEvents="none" style={[styles.preTitleSparkle, { opacity: placeholderFade }]}>
-                  <IconSparkles size={14} color="rgba(17, 17, 17,0.9)" />
+                  <IconSparkles size={14} color="rgba(255,255,255,0.55)" />
                 </Animated.View>
               ) : (
                 <TouchableOpacity
@@ -4100,7 +4100,7 @@ function LiveBroadcastScreen() {
                   style={styles.preTitleClear}
                   hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
                   accessibilityRole="button"
-                  accessibilityLabel={t('common.clear') || 'Clear'}
+                  accessibilityLabel={t('common.clear') || 'Limpar'}
                 >
                   <View style={styles.preTitleClearCircle}>
                     <IconX size={11} color="rgba(255,255,255,0.85)" />
@@ -4131,8 +4131,8 @@ function LiveBroadcastScreen() {
                         accessibilityState={{ selected: active }}
                         accessibilityLabel={opt.label}
                       >
-                        <Icon size={14} color={active ? '#fff' : 'rgba(255,255,255,0.75)'} />
-                        <Text style={[styles.preAudPillText, active && { color: '#fff', fontWeight: '800' }]}>
+                        <Icon size={14} color={active ? '#000' : 'rgba(255,255,255,0.75)'} />
+                        <Text style={[styles.preAudPillText, active && { color: '#000', fontWeight: '800' }]}>
                           {opt.label}
                         </Text>
                       </TouchableOpacity>
@@ -4172,14 +4172,14 @@ function LiveBroadcastScreen() {
                       onPress={() => setLiveCategory(c.key)}
                       style={[
                         styles.preCatPill,
-                        active && { backgroundColor: 'rgba(255,255,255,0.32)', borderColor: '#fff' }, // [lives-2] P&B
+                        active && { backgroundColor: '#fff', borderColor: '#fff' }, // [lives-2] P&B — ativo = branco sólido (igual ao público/amigos)
                       ]}
                       activeOpacity={0.85}
                       accessibilityRole="button"
                       accessibilityState={{ selected: active }}
                       accessibilityLabel={c.label}
                     >
-                      <Text style={[styles.preCatPillText, active && { color: '#fff', fontWeight: '800' }]}>
+                      <Text style={[styles.preCatPillText, active && { color: '#000', fontWeight: '800' }]}>
                         {c.label}
                       </Text>
                     </TouchableOpacity>
@@ -4253,7 +4253,7 @@ function LiveBroadcastScreen() {
                 onPress={handleStartLive}
                 style={styles.startBtn}
                 activeOpacity={0.9}
-                accessibilityLabel={t('live.goLive') || 'Go Live'}
+                accessibilityLabel={t('live.goLive') || 'Começar'}
                 accessibilityRole="button"
               >
                 <Animated.View style={[styles.startBtnDot, {
@@ -4364,7 +4364,7 @@ function LiveBroadcastScreen() {
             onPress={kickGuest}
             style={{ position: 'absolute', top: 4, right: 4, width: 22, height: 22, borderRadius: 11, backgroundColor: 'rgba(0,0,0,0.7)', alignItems: 'center', justifyContent: 'center' }}
             activeOpacity={0.7}
-            accessibilityLabel={t('live.kickGuest') || 'Remove collab'}
+            accessibilityLabel={t('live.kickGuest') || 'Remover convidado'}
           >
             <IconX size={12} color="#fff" />
           </TouchableOpacity>
@@ -4379,7 +4379,7 @@ function LiveBroadcastScreen() {
             email={user?.email}
             size={80}
           />
-          <Text style={styles.videoOffText}>{t('live.cameraOff') || 'Camera off'}</Text>
+          <Text style={styles.videoOffText}>{t('live.cameraOff') || 'Câmera desligada'}</Text>
         </View>
       )}
 
@@ -4425,7 +4425,7 @@ function LiveBroadcastScreen() {
                 transform: [{ scale: livePulse }],
                 opacity: livePulse.interpolate({ inputRange: [1, 1.5], outputRange: [1, 0.6] }),
               }]} />
-              <Text style={styles.liveBadgeText}>LIVE</Text>
+              <Text style={styles.liveBadgeText}>{t('live.live') || 'AO VIVO'}</Text>
             </View>
             {/* Round 66 (2026-05-18) issue #5 — tap the "N assistindo" pill
                 to open the Insights/viewers BottomSheet. Before this, the pill
@@ -4473,7 +4473,7 @@ function LiveBroadcastScreen() {
           <TouchableOpacity
             onPress={handleEndLive}
             style={styles.endLiveBtn}
-            accessibilityLabel={t('live.endLive') || 'End live'}
+            accessibilityLabel={t('live.endLive') || 'Encerrar live'}
             accessibilityRole="button"
             activeOpacity={0.85}
           >
@@ -4590,7 +4590,7 @@ function LiveBroadcastScreen() {
                 }
               }}
               style={styles.pinnedClose}
-              accessibilityLabel="Unpin"
+              accessibilityLabel={t('live.unpinComment')}
               accessibilityRole="button"
             >
               <IconX size={14} color="rgba(255,255,255,0.7)" />
@@ -4639,7 +4639,7 @@ function LiveBroadcastScreen() {
           onPress={() => setSettingsOpen(true)}
           style={styles.rightBtn}
           activeOpacity={0.7}
-          accessibilityLabel={t('live.settings') || 'Settings'}
+          accessibilityLabel={t('live.settings') || 'Configurações'}
           accessibilityRole="button"
         >
           <IconSettings size={18} color="#fff" />
@@ -4722,7 +4722,7 @@ function LiveBroadcastScreen() {
           }}
           style={[styles.rightBtn, saveReplay && styles.rightBtnActiveSave]}
           activeOpacity={0.7}
-          accessibilityLabel={t('live.saveReplay') || 'Save replay'}
+          accessibilityLabel={t('live.saveReplay') || 'Salvar replay'}
           accessibilityRole="button"
           accessibilityState={{ checked: saveReplay }}
         >
@@ -4736,7 +4736,7 @@ function LiveBroadcastScreen() {
           onPress={pinLatestComment}
           style={styles.rightBtn}
           activeOpacity={0.7}
-          accessibilityLabel={t('live.pinComment') || 'Pin latest'}
+          accessibilityLabel={t('live.pinComment') || 'Fixar o último'}
           accessibilityRole="button"
         >
           <IconPin size={18} color="#fff" />
@@ -4764,7 +4764,7 @@ function LiveBroadcastScreen() {
           onPress={handleFlipCamera}
           style={styles.rightBtn}
           activeOpacity={0.7}
-          accessibilityLabel={t('live.flipCamera') || 'Flip camera'}
+          accessibilityLabel={t('live.flipCamera') || 'Virar câmera'}
           accessibilityRole="button"
         >
           <IconCameraFlip size={18} color="#fff" />
@@ -4981,7 +4981,7 @@ function LiveBroadcastScreen() {
             onPress={handleShare}
             style={styles.invitePill}
             activeOpacity={0.85}
-            accessibilityLabel={t('live.inviteFriends') || 'Invite friends'}
+            accessibilityLabel={t('live.inviteFriends') || 'Convidar amigos'}
             accessibilityRole="button"
           >
             <IconUserPlus size={14} color="#fff" />
@@ -5009,7 +5009,7 @@ function LiveBroadcastScreen() {
                 onPress={submitComposer}
                 style={styles.composerSendBtn}
                 activeOpacity={0.7}
-                accessibilityLabel={t('live.send') || 'Send'}
+                accessibilityLabel={t('live.send') || 'Enviar'}
                 accessibilityRole="button"
               >
                 <IconSend size={16} color="#fff" />
@@ -5033,7 +5033,7 @@ function LiveBroadcastScreen() {
             onPress={handleShare}
             style={styles.composerIconBtn}
             activeOpacity={0.7}
-            accessibilityLabel={t('live.share') || 'Share'}
+            accessibilityLabel={t('live.share') || 'Compartilhar'}
             accessibilityRole="button"
           >
             <IconShare size={18} color="#fff" />
@@ -5045,7 +5045,7 @@ function LiveBroadcastScreen() {
             }}
             style={[styles.composerIconBtn, audioMuted && styles.composerIconBtnActive, !audioMuted && styles.composerIconBtnMicLive]}
             activeOpacity={0.7}
-            accessibilityLabel={audioMuted ? (t('live.unmute') || 'Unmute') : (t('live.mute') || 'Mute')}
+            accessibilityLabel={audioMuted ? (t('live.unmute') || 'Ativar som') : (t('live.mute') || 'Silenciar')}
             accessibilityRole="button"
           >
             {audioMuted ? <IconMicOff size={18} color="#fff" /> : <IconMic size={18} color="#fff" />}
@@ -5054,7 +5054,7 @@ function LiveBroadcastScreen() {
             onPress={handleToggleVideo}
             style={[styles.composerIconBtn, videoOff && styles.composerIconBtnActive]}
             activeOpacity={0.7}
-            accessibilityLabel={videoOff ? 'Turn on camera' : 'Turn off camera'}
+            accessibilityLabel={videoOff ? (t('call.videoOn') || 'Ligar vídeo') : (t('call.videoOff') || 'Desligar vídeo')}
             accessibilityRole="button"
           >
             {videoOff ? <IconVideoOff size={18} color="#fff" /> : <IconVideo size={18} color="#fff" />}
@@ -5101,7 +5101,7 @@ function LiveBroadcastScreen() {
               style={styles.endModalToggleRow}
               accessibilityRole="switch"
               accessibilityState={{ checked: saveReplay }}
-              accessibilityLabel={t('live.saveReplay') || 'Save replay'}
+              accessibilityLabel={t('live.saveReplay') || 'Salvar replay'}
             >
               <View style={styles.endModalToggleLabelWrap}>
                 <Text style={styles.endModalToggleLabel}>
@@ -5121,7 +5121,7 @@ function LiveBroadcastScreen() {
                 onPress={() => setEndModal(false)}
                 style={styles.endModalCancel}
                 activeOpacity={0.7}
-                accessibilityLabel={t('common.cancel') || 'Cancel'}
+                accessibilityLabel={t('common.cancel') || 'Cancelar'}
                 accessibilityRole="button"
               >
                 <Text style={styles.endModalCancelText}>{t('common.cancel') || 'Cancelar'}</Text>
@@ -5130,7 +5130,7 @@ function LiveBroadcastScreen() {
                 onPress={performEndLive}
                 style={styles.endModalConfirm}
                 activeOpacity={0.85}
-                accessibilityLabel={t('live.endLive') || 'End live'}
+                accessibilityLabel={t('live.endLive') || 'Encerrar live'}
                 accessibilityRole="button"
               >
                 <Text style={styles.endModalConfirmText}>{t('live.endLive') || 'Encerrar'}</Text>
@@ -6179,7 +6179,7 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(255,255,255,0.1)',
   },
   backBtnText: {
-    color: '#94a3b8',
+    color: '#fff',
     fontSize: 16,
     fontWeight: '600',
   },
@@ -6559,7 +6559,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
-    backgroundColor: 'rgba(0,0,0,0.6)',
+    // [2026-10-12 live-polish] selo AO VIVO vermelho sólido — mesmo selo da
+    // grade de lives e do espectador (único vermelho da tela além do encerrar).
+    backgroundColor: '#dc2626',
     paddingHorizontal: 7,
     paddingVertical: 2,
     borderRadius: 6,
@@ -6575,11 +6577,11 @@ const styles = StyleSheet.create({
     left: -2, right: -2, top: -2, bottom: -2,
     borderRadius: 8,
     borderWidth: 2,
-    borderColor: LIVE_RED,
+    borderColor: '#dc2626',
     backgroundColor: 'transparent',
   },
   liveBadgeDot: {
-    width: 6, height: 6, borderRadius: 3, backgroundColor: LIVE_DOT_RED,
+    width: 6, height: 6, borderRadius: 3, backgroundColor: '#fff',
   },
   liveBadgeText: {
     color: '#fff', fontSize: 10, fontWeight: '900', letterSpacing: 0.8,
@@ -7062,7 +7064,6 @@ const styles = StyleSheet.create({
     color: 'rgba(255,255,255,0.7)',
     fontSize: 13,
     fontWeight: '500',
-    fontStyle: 'italic',
     letterSpacing: 0.1,
     marginTop: 0,
     marginBottom: 18,
@@ -7131,12 +7132,11 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.08)',
   },
+  // [2026-10-12 live-polish] P&B: ativo = pílula branca sólida (o fill
+  // #111 translúcido sumia no vidro escuro — não dava pra ver a seleção).
   preAudPillActive: {
-    backgroundColor: 'rgba(17, 17, 17,0.55)',
-    borderColor: 'rgba(17, 17, 17,0.85)',
-    ...(Platform.OS === 'web' ? {
-      boxShadow: '0 0 14px rgba(17, 17, 17,0.4)',
-    } : {}),
+    backgroundColor: '#fff',
+    borderColor: '#fff',
   },
   preAudPillText: {
     color: 'rgba(255,255,255,0.78)',
@@ -7190,6 +7190,7 @@ const styles = StyleSheet.create({
   // ----- Pre-screen extras row (Multistream + Schedule) -----
   preExtrasRow: {
     flexDirection: 'row',
+    width: '100%',
     gap: 8,
     marginTop: 14,
     paddingHorizontal: 2,

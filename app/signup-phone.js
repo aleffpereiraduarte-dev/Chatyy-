@@ -971,6 +971,13 @@ export default function SignupPhone() {
   const _topPad = Math.max(_insets.top, Platform.OS === 'android' ? (require('react-native').StatusBar.currentHeight || 24) : (Platform.OS === 'web' ? 12 : 44));
   const _stepOrder = ['phone', 'otp', 'name', 'handle'];
   const _stepIdx = _stepOrder.indexOf(step);
+  // CTA disabled (not busy): the step's input isn't complete yet.
+  const _ctaOff = !busy && (
+    (step === 'phone' && phone.replace(/\D/g, '').length < 8) ||
+    (step === 'otp'   && (lockRequired ? lockPin.length < 4 : code.length !== 6)) ||
+    (step === 'name'  && (firstName || '').trim().length < 2) ||
+    (step === 'handle' && (!username || usernameAvailable !== true || !!usernameLocalError(username) || (password.length > 0 && password.length < 8)))
+  );
 
   return (
     <ThreadKeyboardAvoider
@@ -982,7 +989,7 @@ export default function SignupPhone() {
           wordmark (≈70pt of chrome) so the question sits higher and the input
           stays above the keyboard on small phones. */}
       {step !== 'done' ? (
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 12, paddingTop: _topPad + 6, paddingBottom: 6 }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 12, paddingTop: _topPad + 6, paddingBottom: 6, width: '100%', maxWidth: 520, alignSelf: 'center' }}>
           <Animated.View style={{ opacity: backFade }}>
             <TouchableOpacity onPress={goBack} style={styles.backBtn} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }} accessibilityRole="button" accessibilityLabel={t('common.back') || 'Voltar'}>
               <IconArrowLeft size={22} color={colors.text} />
@@ -1139,9 +1146,11 @@ export default function SignupPhone() {
                             Windows web the OS falls back to two ISO letters,
                             still readable. Monogram chip experiment was uglier
                             and less recognizable than the flag. */}
-                        <Text style={{ fontSize: 22, marginRight: 12 }}>
-                          {_country?.flag || ''}
-                        </Text>
+                        {/* [2026-10-12 first-run polish] ISO monogram chip instead
+                            of the flag emoji (no-emoji rule; flags render as
+                            tofu boxes on Windows/Linux web). Same chip as the
+                            login field's country button. */}
+                        <IsoChip code={_country?.code} colors={colors} />
                         <Text style={{ flex: 1, fontSize: 16, fontWeight: '500', color: colors.text }}>
                           {countryDisplayName(_country, language) || (t('login.selectCountry') || 'País')}
                         </Text>
@@ -1928,16 +1937,11 @@ export default function SignupPhone() {
           <TouchableOpacity
             style={[
               styles.cta,
-              {
-                backgroundColor: colors.primary,
-                shadowColor: colors.primary,
-                opacity: busy ? 0.7 : (
-                  (step === 'phone' && phone.replace(/\D/g, '').length < 8) ||
-                  (step === 'otp'   && (lockRequired ? lockPin.length < 4 : code.length !== 6)) ||
-                  (step === 'name'  && (firstName || '').trim().length < 2) ||
-                  (step === 'handle' && (!username || usernameAvailable !== true || !!usernameLocalError(username) || (password.length > 0 && password.length < 8)))
-                ) ? 0.5 : 1,
-              },
+              // [2026-10-12 first-run polish] disabled = neutral fill + muted
+              // label (login parity) instead of a 50%-faded black slab.
+              _ctaOff
+                ? [{ backgroundColor: colors.border }, styles.ctaFlat]
+                : { backgroundColor: colors.primary, opacity: busy ? 0.85 : 1 },
             ]}
             disabled={busy ||
               (step === 'phone' && phone.replace(/\D/g, '').length < 8) ||
@@ -1971,11 +1975,11 @@ export default function SignupPhone() {
               </>
             ) : (
               <>
-                <Text style={[styles.ctaText, { color: colors.onPrimary || '#fff' }]}>
+                <Text style={[styles.ctaText, { color: _ctaOff ? colors.textTertiary : (colors.onPrimary || '#fff') }]}>
                   {step === 'handle' ? (t('signupPhone.finish') || 'Criar conta')
                   : (t('onb.continue') || 'Continuar')}
                 </Text>
-                {step !== 'handle' && <IconArrowRight size={18} color={colors.onPrimary || '#fff'} style={{ marginLeft: 8 }} />}
+                {step !== 'handle' && <IconArrowRight size={18} color={_ctaOff ? colors.textTertiary : (colors.onPrimary || '#fff')} style={{ marginLeft: 8 }} />}
               </>
             )}
           </TouchableOpacity>
@@ -2104,7 +2108,7 @@ export default function SignupPhone() {
                     backgroundColor: c.code === countryCode ? `${colors.primary}10` : 'transparent',
                   }}
                 >
-                  <Text style={{ fontSize: 22, marginRight: 12 }}>{c.flag}</Text>
+                  <IsoChip code={c.code} colors={colors} />
                   <Text style={{ flex: 1, fontSize: 15, color: colors.text }} numberOfLines={1}>{countryDisplayName(c, language)}</Text>
                   <Text style={{ fontSize: 14, color: colors.textSecondary }}>{c.dial}</Text>
                 </TouchableOpacity>
@@ -2163,6 +2167,21 @@ export default function SignupPhone() {
   );
 }
 
+// [2026-10-12 first-run polish] Country monogram chip ("BR") — replaces the
+// flag emoji in the country row + picker (same look as the login field chip).
+function IsoChip({ code, colors }) {
+  return (
+    <View style={{
+      minWidth: 34, height: 24, paddingHorizontal: 6, borderRadius: 7, marginRight: 12,
+      alignItems: 'center', justifyContent: 'center',
+      backgroundColor: colors.authCardBg || colors.surface,
+      borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border,
+    }}>
+      <Text style={{ fontSize: 11, fontWeight: '800', letterSpacing: 0.5, color: colors.text }}>{String(code || '').toUpperCase()}</Text>
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
   container: { flex: 1 },
   header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingTop: Platform.OS === 'ios' ? 56 : androidTopInset(24), paddingBottom: 12 },
@@ -2187,17 +2206,24 @@ const styles = StyleSheet.create({
     borderTopWidth: 0, // [2026-10-07 signup-ux] no rule in the centered column
     backgroundColor: 'transparent',
   },
+  // [2026-10-12 first-run polish] 50pt / r14 + quiet lift — same CTA as login.
   cta: {
-    height: 52, borderRadius: 12,
+    height: 50, borderRadius: 14,
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
     ...Platform.select({
       web: {
-        boxShadow: '0 10px 26px rgba(17, 17, 17,0.35), 0 2px 6px rgba(17, 17, 17,0.20)',
-        transition: 'transform 140ms ease, box-shadow 140ms ease',
+        boxShadow: '0 1px 2px rgba(0,0,0,0.10), 0 6px 16px rgba(0,0,0,0.12)',
+        transition: 'transform 140ms ease, box-shadow 140ms ease, background-color 140ms ease',
       },
-      ios: { shadowColor: '#111111', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.35, shadowRadius: 14 },
-      android: { elevation: 6 },
+      ios: { shadowColor: '#000000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.14, shadowRadius: 10 },
+      android: { elevation: 2 },
     }),
   },
+  ctaFlat: Platform.select({
+    web: { boxShadow: 'none', cursor: 'default' },
+    ios: { shadowOpacity: 0 },
+    android: { elevation: 0 },
+    default: {},
+  }),
   ctaText: { color: '#fff', fontSize: 16, fontWeight: '700', letterSpacing: 0.2 },
 });

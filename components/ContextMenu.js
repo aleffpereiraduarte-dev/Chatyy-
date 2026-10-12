@@ -1,11 +1,10 @@
 import { useState, useEffect, useRef } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, Platform, Modal, Animated } from 'react-native';
+import { TouchableOpacity, StyleSheet, Platform, Animated } from 'react-native';
 import { useTheme } from '../context/ThemeContext';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import PressableRow from './PressableRow'; // [2026-10-07 app-feel-ui]
-import { BlurBackdrop } from './NativeBlur'; // [2026-10-07 native-ui-build]
 import { useLanguage } from '../context/LanguageContext';
-import { FontSize, Spacing, BorderRadius, Shadow } from '../constants/theme';
+import { Overlay, OverlayShadow, overlayColors } from '../constants/theme';
+import Sheet from './ui/Sheet';
+import ActionList from './ui/ActionList';
 import {
   IconSend, IconArchive, IconTrash, IconStar, IconStarFilled,
   IconMarkRead, IconMarkUnread, IconClock, IconAlertTriangle,
@@ -18,7 +17,7 @@ const SEPARATOR = { _separator: true };
 export default function ContextMenu({ visible, position, email, onClose, actions, mutedUids }) {
   const { colors, isDark } = useTheme();
   const { t } = useLanguage();
-  const insets = useSafeAreaInsets();
+  const oc = overlayColors(colors, !!isDark);
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const scaleAnim = useRef(new Animated.Value(0.96)).current;
 
@@ -34,6 +33,14 @@ export default function ContextMenu({ visible, position, email, onClose, actions
       ]).start();
     }
   }, [visible]);
+
+  // [2026-10-12 overlays] Popover do desktop: Esc fecha (como todo menu de SO).
+  useEffect(() => {
+    if (Platform.OS !== 'web' || !visible || typeof window === 'undefined') return undefined;
+    const onKey = (e) => { if (e.key === 'Escape') { try { onClose?.(); } catch {} } };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [visible, onClose]);
 
   if (!visible || !email) return null;
 
@@ -64,7 +71,14 @@ export default function ContextMenu({ visible, position, email, onClose, actions
     item.action();
   };
 
-  // Web: fixed position dropdown at cursor
+  // [2026-10-12 overlays] Design system único: ActionList (linhas 52/ícone 22
+  // no sheet; 36/18 no menu de desktop) + Sheet (alça, raio 20, backdrop 0.4,
+  // mola, safe-area, back do Android). Itens/ações idênticos aos de antes.
+  const listItems = items.map((item, i) => (item._separator
+    ? { separator: true, key: `sep-${i}` }
+    : { key: item.key, label: item.label, icon: item.icon, destructive: item.color === colors.error, onPress: () => handleAction(item), keepOpen: true }));
+
+  // Web: popover fixo no cursor
   if (Platform.OS === 'web') {
     const menuStyle = {
       position: 'fixed',
@@ -75,8 +89,8 @@ export default function ContextMenu({ visible, position, email, onClose, actions
 
     // Ensure menu doesn't go off screen
     if (typeof window !== 'undefined') {
-      if (position?.x > window.innerWidth - 220) menuStyle.left = window.innerWidth - 220;
-      if (position?.y > window.innerHeight - 400) menuStyle.top = window.innerHeight - 400;
+      if (position?.x > window.innerWidth - 232) menuStyle.left = Math.max(8, window.innerWidth - 232);
+      if (position?.y > window.innerHeight - 490) menuStyle.top = Math.max(8, window.innerHeight - 490);
     }
 
     return (
@@ -86,110 +100,30 @@ export default function ContextMenu({ visible, position, email, onClose, actions
           onPress={onClose}
           activeOpacity={1}
         />
-        <Animated.View style={[
-          s.menu, Shadow.lg,
-          { backgroundColor: colors.surface, borderColor: colors.borderLight, opacity: fadeAnim, transform: [{ scale: scaleAnim }], transformOrigin: 'top left' },
-          menuStyle,
-          s.menuWeb,
-        ]}>
-          {items.map((item, i) => {
-            if (item._separator) return <View key={`sep-${i}`} style={[s.separator, { borderTopColor: colors.borderLight }]} />;
-            const Icon = item.icon;
-            return (
-              <TouchableOpacity
-                key={item.key}
-                style={[s.menuItem, Platform.OS === 'web' && s.menuItemWeb]}
-                onPress={() => handleAction(item)}
-              >
-                <Icon size={16} color={item.color || colors.textSecondary} />
-                <Text style={[s.menuItemText, { color: item.color || colors.text }]}>{item.label}</Text>
-              </TouchableOpacity>
-            );
-          })}
+        <Animated.View
+          accessibilityRole="menu"
+          style={[
+            s.menu, OverlayShadow,
+            { backgroundColor: oc.menuBg, borderColor: oc.border, opacity: fadeAnim, transform: [{ scale: scaleAnim }], transformOrigin: 'top left' },
+            menuStyle,
+          ]}
+        >
+          <ActionList variant="menu" items={listItems} />
         </Animated.View>
       </>
     );
   }
 
-  // Mobile: bottom sheet modal
-  // [2026-10-07 app-feel-ui] Native sheet feel: backdrop FADES (Modal "slide"
-  // dragged the dim layer up with the sheet — a web-modal tell), the sheet
-  // springs up from below, rows get native cell feedback (iOS highlight /
-  // Android ripple) and the bottom inset follows the device safe area.
+  // Mobile: bottom sheet do design system
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose} statusBarTranslucent>
-      <TouchableOpacity style={s.modalBackdrop} onPress={onClose} activeOpacity={1}>
-        {/* [2026-10-07 native-ui-build] iOS: lista de e-mails borrada atrás
-            do sheet (material nativo); Android/web: dim sólido 0.4 de antes. */}
-        <BlurBackdrop isDark={isDark} dim={0.4} pointerEvents="none" />
-        <Animated.View
-          onStartShouldSetResponder={() => true}
-          style={[s.bottomSheet, {
-            backgroundColor: colors.surface,
-            paddingBottom: Math.max(16, (insets?.bottom || 0) + 8),
-            transform: [{ translateY: fadeAnim.interpolate({ inputRange: [0, 1], outputRange: [48, 0] }) }],
-          }]}
-        >
-          <View style={[s.sheetHandle, { backgroundColor: colors.divider }]} />
-          <View style={s.sheetContent}>
-            {items.map((item, i) => {
-              if (item._separator) return <View key={`sep-${i}`} style={[s.separator, { borderTopColor: colors.borderLight }]} />;
-              const Icon = item.icon;
-              return (
-                <PressableRow
-                  key={item.key}
-                  style={s.sheetItem}
-                  highlightColor={isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)'}
-                  onPress={() => handleAction(item)}
-                  accessibilityRole="button"
-                  accessibilityLabel={item.label}
-                >
-                  <Icon size={20} color={item.color || colors.textSecondary} />
-                  <Text style={[s.sheetItemText, { color: item.color || colors.text }]}>{item.label}</Text>
-                </PressableRow>
-              );
-            })}
-          </View>
-        </Animated.View>
-      </TouchableOpacity>
-    </Modal>
+    <Sheet visible={visible} onClose={onClose} scroll>
+      <ActionList items={listItems} />
+    </Sheet>
   );
 }
 
 const s = StyleSheet.create({
   menu: {
-    borderRadius: BorderRadius.md, borderWidth: 1, paddingVertical: 4, minWidth: 200,
+    borderRadius: Overlay.menuRadius, borderWidth: StyleSheet.hairlineWidth, paddingVertical: 2, minWidth: 220,
   },
-  menuWeb: Platform.OS === 'web' ? {
-    animation: 'fadeIn 0.12s ease-out',
-    boxShadow: '0 4px 16px rgba(0,0,0,0.12)',
-  } : {},
-  menuItem: {
-    flexDirection: 'row', alignItems: 'center', paddingVertical: 8, paddingHorizontal: 14, gap: 10,
-  },
-  menuItemWeb: Platform.OS === 'web' ? {
-    cursor: 'pointer', transition: 'background-color 0.1s ease',
-    // Tap target gets a hover bg via inline pseudo since RN-Web strips :hover —
-    // the WebkitTapHighlight + active state covers most clicks; on mouse, browsers
-    // honor cursor:pointer + the transition prepares the bg-color animation.
-    WebkitTapHighlightColor: 'rgba(17, 17, 17,0.12)',
-  } : {},
-  menuItemText: { fontSize: FontSize.sm },
-  separator: { borderTopWidth: 1, marginVertical: 4 },
-  // Mobile bottom sheet
-  modalBackdrop: {
-    flex: 1, justifyContent: 'flex-end', // dim/blur = <BlurBackdrop/> [2026-10-07 native-ui-build]
-  },
-  bottomSheet: {
-    borderTopLeftRadius: 16, borderTopRightRadius: 16,
-  },
-  sheetHandle: {
-    width: 36, height: 4, borderRadius: 2, alignSelf: 'center', marginTop: 10, marginBottom: 10,
-  },
-  sheetContent: { paddingHorizontal: Spacing.md },
-  sheetItem: {
-    flexDirection: 'row', alignItems: 'center', paddingVertical: 14, paddingHorizontal: Spacing.md, gap: 14,
-    borderRadius: 10,
-  },
-  sheetItemText: { fontSize: FontSize.lg },
 });

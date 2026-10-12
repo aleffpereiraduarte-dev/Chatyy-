@@ -15,6 +15,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   View, Text, FlatList, TouchableOpacity, StyleSheet, ActivityIndicator,
   RefreshControl, ScrollView, Image, Platform, Animated, Easing, Modal, Pressable,
+  useWindowDimensions,
 } from 'react-native';
 import Svg, {
   Circle, Path, Rect, G, Defs, Line, Polyline,
@@ -333,16 +334,24 @@ export default function LiveDiscoverScreen() {
   // Render a single live card — full-bleed 9:16 thumbnail with overlays.
   // Delegates to LiveCard so each card owns its entrance animation + breathing
   // pulse refs without bloating the parent.
+  // [2026-10-12 live-polish] Grade responsiva: 2 colunas no celular, até 5
+  // no desktop (antes eram 2 cards de ~620px a 1280px de largura). Largura
+  // exata por card para a última linha incompleta não esticar.
+  const { width: winW } = useWindowDimensions();
+  const numCols = winW >= 1200 ? 5 : winW >= 960 ? 4 : winW >= 640 ? 3 : 2;
+  const cardW = Math.max(120, Math.floor((winW - 12 - 8 * (numCols - 1)) / numCols) - 7);
+
   const renderItem = useCallback(({ item, index }) => (
     <LiveCard
       item={item}
       index={index}
       isDark={isDark}
       t={t}
+      width={cardW}
       onPress={onOpenLive}
       onLongPress={onLongPressCard}
     />
-  ), [isDark, onLongPressCard, onOpenLive, t]);
+  ), [isDark, onLongPressCard, onOpenLive, t, cardW]);
 
   const keyExtractor = useCallback((item) => String(item.id || item.session_id || item.host_email), []);
 
@@ -491,7 +500,8 @@ export default function LiveDiscoverScreen() {
           data={sessions}
           renderItem={renderItem}
           keyExtractor={keyExtractor}
-          numColumns={2}
+          key={`cols${numCols}`}
+          numColumns={numCols}
           columnWrapperStyle={styles.colWrap}
           contentContainerStyle={styles.listPad}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.primary} />}
@@ -528,7 +538,7 @@ export default function LiveDiscoverScreen() {
 // One live tile: 9:16 thumbnail + AO VIVO breathing pulse + viewer glass pill +
 // bottom gradient overlay with avatar/title/host. Owns its entrance animation
 // (fade + slide-up 8px) staggered by index*40ms so the grid waterfalls in.
-function LiveCard({ item, index, isDark, t, onPress, onLongPress }) {
+function LiveCard({ item, index, isDark, t, width, onPress, onLongPress }) {
   const thumb = item.thumbnail_url || '';
   const viewerCount = Number(item.viewer_count) || 0;
   const creatorName = item.creator_name || item.host_name || item.host_email || '';
@@ -571,15 +581,15 @@ function LiveCard({ item, index, isDark, t, onPress, onLongPress }) {
   const dotScale = pulse.interpolate({ inputRange: [0, 1], outputRange: [0.9, 1.15] });
 
   return (
-    <Animated.View style={[styles.cardOuter, { opacity: fade, transform: [{ translateY: slide }] }]}>
+    <Animated.View style={[styles.cardOuter, width ? { flexGrow: 0, flexShrink: 0, flexBasis: width, width } : null, { opacity: fade, transform: [{ translateY: slide }] }]}>
       <TouchableOpacity
         onPress={() => onPress(item)}
         onLongPress={() => onLongPress(item)}
         delayLongPress={350}
         activeOpacity={0.9}
-        style={[styles.card, { backgroundColor: isDark ? '#0b0b0b' : '#F1F5F9' }]}
+        style={[styles.card, width ? { flexGrow: 0, flexShrink: 0, flexBasis: 'auto', width: '100%' } : null, { backgroundColor: isDark ? '#0b0b0b' : '#F1F5F9' }]}
         accessibilityRole="button"
-        accessibilityLabel={`${title} — ${creatorName} — ${viewerCount} viewers`}
+        accessibilityLabel={`${title} — ${creatorName} — ${formatViewers(viewerCount)} ${t('live.viewersLower') || 'espectadores'}`}
       >
         <View style={styles.thumbWrap}>
           {thumb ? (
@@ -588,19 +598,37 @@ function LiveCard({ item, index, isDark, t, onPress, onLongPress }) {
             // Skeleton fallback: 3-band gradient (lights/mid/dark) — no
             // expo-linear-gradient dep, just stacked Views with alpha. Same
             // trick used in ChatReelsTab's bottomFade.
+            // [2026-10-12 live-polish] Sem capa: fundo grafite neutro (antes
+            // eram 3 faixas azul-ardósia que pareciam um bug) + avatar grande do
+            // host com anel, no estilo das capas do TikTok/IG Live.
             <View style={[styles.thumb, styles.skeleton]}>
-              <View style={[styles.skelBand, { backgroundColor: '#1E293B' }]} />
-              <View style={[styles.skelBand, { backgroundColor: '#334155', opacity: 0.85 }]} />
-              <View style={[styles.skelBand, { backgroundColor: '#0F172A' }]} />
+              <View style={[styles.skelBand, { backgroundColor: '#26262a' }]} />
+              <View style={[styles.skelBand, { backgroundColor: '#1c1c1f' }]} />
+              <View style={[styles.skelBand, { backgroundColor: '#121214' }]} />
+              <View pointerEvents="none" style={styles.coverAvatarWrap}>
+                <View style={styles.coverAvatarRing}>
+                  <AvatarCircle name={creatorName} email={creatorEmail} avatarUrl={creatorAvatar} size={64} />
+                </View>
+              </View>
             </View>
           )}
 
           {/* Bottom dark→transparent overlay for legibility. Three stacked
               translucent bands fake a linear gradient (no dep). */}
+          {/* [2026-10-12 live-polish] degradê contínuo via SVG (as 3 faixas
+              chapadas deixavam "degraus" visíveis no card). */}
           <View pointerEvents="none" style={styles.gradOverlay}>
-            <View style={[styles.gradBand, { height: '40%', backgroundColor: 'rgba(0,0,0,0)' }]} />
-            <View style={[styles.gradBand, { height: '30%', backgroundColor: 'rgba(0,0,0,0.35)' }]} />
-            <View style={[styles.gradBand, { height: '30%', backgroundColor: 'rgba(0,0,0,0.7)' }]} />
+            <Svg width="100%" height="100%" preserveAspectRatio="none">
+              <Defs>
+                <SvgLinearGradient id={`lcGrad${index}`} x1="0" y1="0" x2="0" y2="1">
+                  <Stop offset="0" stopColor="#000" stopOpacity="0.28" />
+                  <Stop offset="0.22" stopColor="#000" stopOpacity="0" />
+                  <Stop offset="0.5" stopColor="#000" stopOpacity="0" />
+                  <Stop offset="1" stopColor="#000" stopOpacity="0.78" />
+                </SvgLinearGradient>
+              </Defs>
+              <Rect x="0" y="0" width="100%" height="100%" fill={`url(#lcGrad${index})`} />
+            </Svg>
           </View>
 
           {/* AO VIVO badge (top-left, breathing). */}
@@ -617,12 +645,14 @@ function LiveCard({ item, index, isDark, t, onPress, onLongPress }) {
 
           {/* Bottom overlay: avatar + title + creator name */}
           <View style={styles.bottomOverlay} pointerEvents="none">
-            <AvatarCircle
-              name={creatorName}
-              email={creatorEmail}
-              avatarUrl={creatorAvatar}
-              size={28}
-            />
+            <View style={styles.hostAvatarRing}>
+              <AvatarCircle
+                name={creatorName}
+                email={creatorEmail}
+                avatarUrl={creatorAvatar}
+                size={28}
+              />
+            </View>
             <View style={styles.bottomOverlayText}>
               <Text numberOfLines={1} style={styles.bottomTitle}>{title}</Text>
               <Text numberOfLines={1} style={styles.bottomHost}>{creatorName}</Text>
@@ -802,6 +832,9 @@ function EmptyLiveDiscover({ colors, isDark, t, router, refreshing, onRefresh })
 
       {/* 2. Primary CTA with pulse halo */}
       <View style={styles.ctaWrap}>
+        <View style={styles.ctaInner}>
+        {/* [2026-10-12 live-polish] halo do tamanho exato do botão (antes era
+            uma pílula fixa de 260px que aparecia como caixa cinza atrás). */}
         <Animated.View
           pointerEvents="none"
           style={[
@@ -821,6 +854,7 @@ function EmptyLiveDiscover({ colors, isDark, t, router, refreshing, onRefresh })
             {t('live.startNowCta') || 'Você poderia começar agora!'}
           </Text>
         </TouchableOpacity>
+        </View>
       </View>
 
       {/* 3. Próximas lives agendadas — only when loading or there is real data */}
@@ -1248,12 +1282,26 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 4 },
     elevation: 3,
   },
-  thumbWrap: { aspectRatio: 9 / 16, position: 'relative' },
+  thumbWrap: { width: '100%', aspectRatio: 9 / 16, position: 'relative' },
   thumb: { width: '100%', height: '100%' },
 
   // 3-band skeleton (no expo-linear-gradient dep).
   skeleton: { flexDirection: 'column' },
   skelBand: { flex: 1, width: '100%' },
+  coverAvatarWrap: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: 'center', justifyContent: 'center',
+    paddingBottom: 36,
+  },
+  coverAvatarRing: {
+    padding: 3, borderRadius: 999,
+    borderWidth: 2, borderColor: 'rgba(255,255,255,0.9)',
+  },
+  // Anel branco fino no avatar do host (legível sobre qualquer capa).
+  hostAvatarRing: {
+    padding: 1.5, borderRadius: 999,
+    borderWidth: 1.5, borderColor: '#fff',
+  },
 
   // Bottom dark→transparent overlay (stacked translucent bands).
   gradOverlay: {
@@ -1263,17 +1311,17 @@ const styles = StyleSheet.create({
   gradBand: { width: '100%' },
 
   liveBadge: {
-    position: 'absolute', top: 12, left: 12,
+    position: 'absolute', top: 10, left: 10,
     flexDirection: 'row', alignItems: 'center',
     backgroundColor: '#DC2626',
     paddingHorizontal: 7, paddingVertical: 3,
-    borderRadius: 999,
+    borderRadius: 6,
   },
   liveDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: '#fff', marginRight: 5 },
   liveBadgeText: { color: '#fff', fontSize: 10, fontWeight: '800', letterSpacing: 0.4 },
 
   viewerPill: {
-    position: 'absolute', top: 12, right: 12,
+    position: 'absolute', top: 10, right: 10,
     flexDirection: 'row', alignItems: 'center',
     // Glass: dark base + slight border for the "blur" suggestion. We can't do
     // a real backdrop-filter on native without expo-blur, so this is the
@@ -1282,9 +1330,9 @@ const styles = StyleSheet.create({
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: 'rgba(255,255,255,0.15)',
     paddingHorizontal: 7, paddingVertical: 3,
-    borderRadius: 999, gap: 4,
+    borderRadius: 6, gap: 4,
   },
-  viewerPillText: { color: '#fff', fontSize: 11, fontWeight: '700' },
+  viewerPillText: { color: '#fff', fontSize: 11, fontWeight: '700', fontVariant: ['tabular-nums'] },
 
   // Bottom info block sits on top of the gradient overlay. Padding tuned so
   // the avatar + 2-line text never collide with the safe edge.
@@ -1293,8 +1341,8 @@ const styles = StyleSheet.create({
     flexDirection: 'row', alignItems: 'center', gap: 8,
   },
   bottomOverlayText: { flex: 1, minWidth: 0 },
-  bottomTitle: { color: '#fff', fontSize: 13, fontWeight: '600' },
-  bottomHost: { color: 'rgba(255,255,255,0.78)', fontSize: 11, fontWeight: '500', marginTop: 1 },
+  bottomTitle: { color: '#fff', fontSize: 13, fontWeight: '700', letterSpacing: -0.1, textShadowColor: 'rgba(0,0,0,0.45)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 3 },
+  bottomHost: { color: 'rgba(255,255,255,0.8)', fontSize: 11, fontWeight: '500', marginTop: 1, textShadowColor: 'rgba(0,0,0,0.45)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 3 },
 
   // Long-press popover.
   popoverBackdrop: {
@@ -1325,9 +1373,10 @@ const styles = StyleSheet.create({
     alignItems: 'center', justifyContent: 'center',
     marginTop: 18, marginBottom: 8, height: 60,
   },
+  ctaInner: { position: 'relative', alignSelf: 'center' },
   ctaHalo: {
-    position: 'absolute',
-    width: 260, height: 60, borderRadius: 999,
+    ...StyleSheet.absoluteFillObject,
+    borderRadius: 999,
     backgroundColor: BRAND_PURPLE,
   },
   ctaBtn: {

@@ -342,8 +342,12 @@ function EmailRow({
   const nativeMenuOn = !selectMode && Platform.OS === 'ios' && !!onContextMenu && isNativeContextMenuAvailable();
   const nativeMenuActions = nativeMenuOn ? buildEmailNativeMenuActions(email, { t, isMuted }) : null;
 
+  // [2026-10-12 overlays] RN-web TouchableOpacity sobrescreve o onContextMenu
+  // do chamador com os próprios handlers → clique direito numa linha de e-mail
+  // não abria o menu (mesmo bug já corrigido no PressableRow). Captura o
+  // contextmenu que borbulha no wrapper.
   const row = (
-    <Animated.View style={{ opacity: fadeAnim }}>
+    <Animated.View style={{ opacity: fadeAnim }} {...(Platform.OS === 'web' ? { onContextMenu: handleContextMenu } : {})}>
     <Animated.View style={{
       opacity: entranceAnim,
       transform: [{ translateY: entranceAnim.interpolate({ inputRange: [0, 1], outputRange: [8, 0] }) }],

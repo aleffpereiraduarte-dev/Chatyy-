@@ -153,7 +153,7 @@ const styles = StyleSheet.create({
     color: '#fff', fontWeight: '900', fontSize: 10, letterSpacing: 1,
   },
   closedText: {
-    color: '#facc15', fontSize: 11, fontWeight: '700', flex: 1,
+    color: 'rgba(255,255,255,0.6)', fontSize: 11, fontWeight: '700', flex: 1,
   },
   dismissBtn: { marginLeft: 'auto', paddingHorizontal: 6, paddingVertical: 0 },
   dismissText: { color: 'rgba(255,255,255,0.7)', fontSize: 22, lineHeight: 22, fontWeight: '300' },

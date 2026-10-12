@@ -58,6 +58,7 @@ import * as api from '../services/api';
 import { classifyImportanceLocal, buildImportanceContext } from '../services/emailImportanceLocal'; // [2026-10-09 on-device-privacy]
 import CompleteProfileModal, { isProfileComplete, COMPLETE_PROFILE_SKIP_KEY } from '../components/CompleteProfileModal';
 import { canNavigateNow } from '../services/navGuard';
+import { confirmAsync } from '../utils/confirm'; // [2026-10-12 overlays] diálogo estilizado no web
 
 const MUTED_UIDS_KEY = '@onemundo_muted_uids';
 
@@ -554,7 +555,8 @@ function InboxScreenInner() {
       } catch (e) { console.warn('bulkMarkReadFolder failed', e); }
     };
     const title = t('contextMenu.markRead') || 'Marcar como lido';
-    const msg = `${unreadUids.length} ${unreadUids.length > 1 ? (t('inbox.unreadPlural', { count: unreadUids.length }) || 'mensagens') : (t('inbox.unread', { count: unreadUids.length }) || 'mensagem')}?`;
+    // [2026-10-12] As chaves já trazem {count} — o número saía duplicado ("6 6 não lidos?").
+    const msg = `${unreadUids.length > 1 ? t('inbox.unreadPlural', { count: unreadUids.length }) : t('inbox.unread', { count: unreadUids.length })}?`;
     const buttons = [
       { text: t('common.cancel'), style: 'cancel' },
       { text: t('contextMenu.markRead') || 'Marcar', onPress: doMark },
@@ -1006,7 +1008,7 @@ function InboxScreenInner() {
       || 'Tem certeza? Você terá que fazer login de novo.';
     if (Platform.OS === 'web') {
       try {
-        if (typeof window !== 'undefined' && !window.confirm(`${title}\n\n${msg}`)) return;
+        if (!(await confirmAsync({ title, message: msg, confirmLabel: title, destructive: true }))) return;
       } catch {}
       await doIt();
       return;
@@ -1747,9 +1749,8 @@ function InboxScreenInner() {
                         // buttons array on web — the destructive callback
                         // never fires. Use window.confirm there instead.
                         if (Platform.OS === 'web') {
-                          if (typeof window !== 'undefined' && window.confirm(`${title}\n\n${msg}`)) {
-                            removeAccount(acc.email);
-                          }
+                          confirmAsync({ title, message: msg, confirmLabel: t('account.remove') || 'Remover', cancelLabel: t('account.cancel') || 'Cancelar', destructive: true })
+                            .then((ok) => { if (ok) removeAccount(acc.email); });
                         } else {
                           Alert.alert(title, msg, [
                             { text: t('account.cancel') || 'Cancelar', style: 'cancel' },

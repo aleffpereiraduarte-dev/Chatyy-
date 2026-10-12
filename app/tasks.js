@@ -29,6 +29,7 @@ import SettingsSegmented from '../components/SettingsSegmented';
 import ScreenEmptyState from '../components/ScreenEmptyState';
 import SwipeableRow from '../components/SwipeableRow';
 import { useGroupedColors } from '../components/settings/SettingsKit';
+import { confirmAsync } from '../utils/confirm'; // [2026-10-12 overlays] diálogo estilizado no web
 
 const FILTERS = [
   { key: 'pending', label: 'Pendentes' },
@@ -100,8 +101,8 @@ export default function TasksScreen() {
   const removeTask = useCallback((task) => {
     if (Platform.OS === 'web') {
       // RN-web Alert has no buttons → window.confirm.
-      const ok = typeof window !== 'undefined' && window.confirm(`${t('tasks.deleteConfirm') || 'Apagar tarefa?'}\n${task.title}`);
-      if (ok) deleteNow(task);
+      confirmAsync({ title: t('tasks.deleteConfirm') || 'Apagar tarefa?', message: task.title, destructive: true })
+        .then((ok) => { if (ok) deleteNow(task); });
       return;
     }
     Alert.alert(

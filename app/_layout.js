@@ -213,6 +213,13 @@ if (Platform.OS === 'web' && _RNAnimated && !_RNAnimated.__WEB_PATCHED) {
 if (Platform.OS === 'web' && Alert && !Alert.__CHATYY_WEB_PATCHED) {
   Alert.alert = function (title, message, buttons) {
     if (typeof window === 'undefined') return;
+    // [2026-10-12 overlays] Com o ConfirmProvider montado: diálogo ESTILIZADO
+    // do app (cartão do design system, 1..N botões, Esc/backdrop = cancelar)
+    // em vez do window.confirm cinza do navegador. Nativo já era assíncrono,
+    // então nenhum chamador depende do bloqueio síncrono do confirm.
+    if (_hasDialogHost()) {
+      try { _showDialog(title || '', message || '', Array.isArray(buttons) && buttons.length ? buttons : undefined); return; } catch {}
+    }
     const text = (title ? String(title) + (message ? '\n\n' + String(message) : '') : String(message || '')) || '';
     if (!buttons || !Array.isArray(buttons) || buttons.length <= 1) {
       try { window.alert(text); } catch {}
@@ -411,6 +418,8 @@ import { ChatyyKeyboardProvider } from '../utils/threadKeyboard';
 import ErrorBoundary from '../components/ErrorBoundary';
 import OfflineNotice from '../components/OfflineNotice';
 import NotificationToast from '../components/NotificationToast';
+import { ToastHost } from '../components/ui/Toast'; // [2026-10-12 overlays] snackbar global único
+import { hasDialogHost as _hasDialogHost, showDialog as _showDialog } from '../utils/confirm';
 import { CallProvider } from '../context/CallContext';
 import CallStatusBar, { CallBarInsetProvider, callBarScreenLayout } from '../components/CallStatusBar';
 // [2026-10-07 voice-native] global voice-note mini player (leaves the chat → keeps playing)
@@ -2142,6 +2151,7 @@ export default function RootLayout() {
                   notification={toastNotif}
                   onDismiss={() => setToastNotif(null)}
                 />
+                <ToastHost />
                 </ConfirmProvider>
               </PhotosProvider>
               </MailProvider>

@@ -445,8 +445,9 @@ const st = StyleSheet.create({
   backupTitle: { fontSize: 15, fontWeight: '700' },
   backupSub: { fontSize: 13, marginTop: 2 },
   footer: { paddingHorizontal: 24, paddingTop: 8, alignSelf: 'center', width: '100%', maxWidth: 460 },
-  primary: { minHeight: 54, borderRadius: 27, alignItems: 'center', justifyContent: 'center' },
-  primaryText: { fontSize: 17, fontWeight: '700' },
+  // [2026-10-12 first-run polish] 50pt CTA — same height as login/signup.
+  primary: { minHeight: 50, borderRadius: 25, alignItems: 'center', justifyContent: 'center' },
+  primaryText: { fontSize: 16, fontWeight: '700', letterSpacing: 0.2 },
   secondary: { minHeight: 48, alignItems: 'center', justifyContent: 'center', marginTop: 4 },
   secondaryText: { fontSize: 16, fontWeight: '600' },
 });

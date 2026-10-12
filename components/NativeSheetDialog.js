@@ -9,7 +9,7 @@ import { Modal, Pressable, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { USE_NATIVE_SHEETS, NativeSheet, nativeSheetBottomPad } from './NativeSheet';
 
-const DEFAULT_OVERLAY = { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center' };
+const DEFAULT_OVERLAY = { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'center', alignItems: 'center' };
 
 // Props de estilo que só fazem sentido p/ o painel "flutuante" JS.
 const DROP = ['width', 'maxWidth', 'minWidth', 'borderRadius', 'borderTopLeftRadius', 'borderTopRightRadius',

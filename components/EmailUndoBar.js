@@ -7,6 +7,7 @@ import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useLanguage } from '../context/LanguageContext';
 import { useTheme } from '../context/ThemeContext';
+import { Overlay, OverlayShadow, overlayColors } from '../constants/theme';
 import { subscribeEmailUndo, getEmailUndo, undoEmailSend, dismissEmailUndo } from '../services/emailUndo';
 import { initEmailOutbox } from '../services/emailOutbox';
 
@@ -19,7 +20,12 @@ export default function EmailUndoBar() {
   // Dark mode: a #111 bar vanishes on the black app background — lift it to
   // the elevated surface with a hairline border (iOS-dark snackbar look).
   const { colors, isDark } = useTheme();
-  const barTheme = isDark ? { backgroundColor: colors.surfaceVariant, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border } : null;
+  // [2026-10-12 overlays] cores/forma do Toast do design system (mesmo snackbar do app todo).
+  const oc = overlayColors(colors, !!isDark);
+  const barTheme = { backgroundColor: oc.toastBg };
+  const fg = { color: oc.toastText };
+  const btnTheme = { backgroundColor: oc.toastActionBg };
+  const btnFg = { color: oc.toastAction };
 
   useEffect(() => subscribeEmailUndo(setSt), []);
   // [2026-10-08 email-outbox] this bar is mounted once globally — wire the
@@ -46,20 +52,20 @@ export default function EmailUndoBar() {
   return (
     <View pointerEvents="box-none" style={[st_.wrap, { bottom: Math.max(insets.bottom, 12) + 64 }]}>
       <View style={[st_.bar, barTheme]} accessibilityLiveRegion="polite">
-        <Text style={st_.text} numberOfLines={1}>
+        <Text style={[st_.text, fg]} numberOfLines={1}>
           {pending || st.phase === 'sending' ? t('compose.sendingUndo') : outbox ? t('emailOutbox.queuedToast') : t('compose.sentToast')}
         </Text>
         {outbox ? (
-          <TouchableOpacity onPress={() => { dismissEmailUndo(); try { router.push('/email-outbox'); } catch {} }} hitSlop={10} accessibilityRole="button" style={st_.btn}>
-            <Text style={st_.btnText}>{t('emailOutbox.view')}</Text>
+          <TouchableOpacity onPress={() => { dismissEmailUndo(); try { router.push('/email-outbox'); } catch {} }} hitSlop={10} accessibilityRole="button" style={[st_.btn, btnTheme]}>
+            <Text style={[st_.btnText, btnFg]}>{t('emailOutbox.view')}</Text>
           </TouchableOpacity>
         ) : pending ? (
-          <TouchableOpacity onPress={onUndo} hitSlop={10} accessibilityRole="button" style={st_.btn}>
-            <Text style={st_.btnText}>{t('undo.button') + (left > 0 ? ` (${left})` : '')}</Text>
+          <TouchableOpacity onPress={onUndo} hitSlop={10} accessibilityRole="button" style={[st_.btn, btnTheme]}>
+            <Text style={[st_.btnText, btnFg]}>{t('undo.button') + (left > 0 ? ` (${left})` : '')}</Text>
           </TouchableOpacity>
         ) : (
-          <TouchableOpacity onPress={dismissEmailUndo} hitSlop={10} accessibilityRole="button" style={st_.btn}>
-            <Text style={st_.btnText}>{t('common.ok')}</Text>
+          <TouchableOpacity onPress={dismissEmailUndo} hitSlop={10} accessibilityRole="button" style={[st_.btn, btnTheme]}>
+            <Text style={[st_.btnText, btnFg]}>{t('common.ok')}</Text>
           </TouchableOpacity>
         )}
       </View>
@@ -70,11 +76,11 @@ export default function EmailUndoBar() {
 const st_ = StyleSheet.create({
   wrap: { position: 'absolute', left: 12, right: 12, alignItems: 'center', zIndex: 9999, elevation: 30 },
   bar: {
-    width: '100%', maxWidth: 520, flexDirection: 'row', alignItems: 'center',
-    backgroundColor: '#111111', borderRadius: 12, paddingLeft: 16, paddingRight: 6, minHeight: 48,
-    ...(Platform.OS === 'web' ? { boxShadow: '0 6px 24px rgba(0,0,0,0.25)' } : { shadowColor: '#000', shadowOpacity: 0.25, shadowRadius: 12, shadowOffset: { width: 0, height: 4 } }),
+    width: '100%', maxWidth: Overlay.toastMaxWidth, flexDirection: 'row', alignItems: 'center',
+    borderRadius: Overlay.toastRadius, paddingLeft: 16, paddingRight: 6, minHeight: Overlay.toastMinHeight,
+    ...OverlayShadow,
   },
-  text: { flex: 1, color: '#ffffff', fontSize: 15, fontWeight: '500' },
-  btn: { paddingHorizontal: 12, paddingVertical: 10 },
-  btnText: { color: '#ffffff', fontSize: 15, fontWeight: '700' },
+  text: { flex: 1, fontSize: 14, fontWeight: '500' },
+  btn: { paddingHorizontal: 14, height: 36, borderRadius: 10, justifyContent: 'center', marginLeft: 8 },
+  btnText: { fontSize: 14, fontWeight: '700' },
 });

@@ -30,11 +30,24 @@ function releaseShimmerClock() {
   }
 }
 
+/** Shared placeholder fill (light / dark). */
+export function skeletonBase(isDark) {
+  return isDark ? 'rgba(255,255,255,0.08)' : 'rgba(17,17,17,0.06)';
+}
+
+// [2026-10-12 skeleton system] Deterministic 0..1 "random" per row/slot —
+// Math.random() in render re-rolled every bar width on each re-render (the
+// list visibly jittered while data streamed in).
+function _jit(i, salt) {
+  const x = Math.sin((i + 1) * 12.9898 + salt * 78.233) * 43758.5453;
+  return x - Math.floor(x);
+}
+
 // Soft bell of slices that fakes a gradient highlight (no linear-gradient dep,
 // so this stays OTA-safe). Opacities are multiplied by the highlight color.
 const SHIMMER_BELL = [0.1, 0.35, 0.7, 1, 0.7, 0.35, 0.1];
 
-function Shimmer({ style, delay = 0 }) {
+export function Shimmer({ style, delay = 0 }) {
   const { colors, isDark } = useTheme();
   const clock = useRef(null);
   if (!clock.current) clock.current = acquireShimmerClock();
@@ -54,8 +67,12 @@ function Shimmer({ style, delay = 0 }) {
     return () => { fade.stop(); releaseShimmerClock(); };
   }, []);
 
-  const base = colors.borderLight || (isDark ? '#26272b' : '#e5e7eb');
-  const hi = isDark ? 'rgba(255,255,255,0.07)' : 'rgba(255,255,255,0.75)';
+  // [2026-10-12 skeleton system] ONE placeholder tone app-wide (shared with
+  // Skeleton.js): a translucent ink wash, so bars read on ANY surface — page,
+  // card, or a chat bubble (an opaque gray vanished inside dark #1C1C1E
+  // bubbles; the old borderLight #F4F5F6 nearly vanished on white).
+  const base = skeletonBase(isDark);
+  const hi = isDark ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.7)';
   const band = Math.max(60, w * 0.7);
   const translateX = clock.current.interpolate({ inputRange: [0, 1], outputRange: [-band, w] });
 
@@ -63,14 +80,16 @@ function Shimmer({ style, delay = 0 }) {
     <Animated.View
       onLayout={(e) => { const nw = Math.round(e.nativeEvent.layout.width); if (nw && nw !== w) setW(nw); }}
       style={[
+        // Default radius FIRST so a caller's borderRadius (round avatars,
+        // pills) wins — it used to be forced to 8 after `style`.
+        { borderRadius: 8 },
         style,
         {
           backgroundColor: base,
-          borderRadius: 8,
           overflow: 'hidden',
           opacity: fadeAnim,
           ...(Platform.OS === 'web' ? {
-            background: `linear-gradient(90deg, ${base} 25%, ${isDark ? 'rgba(255,255,255,0.09)' : (colors.surfaceVariant || '#f3f4f6')} 50%, ${base} 75%)`,
+            background: `linear-gradient(90deg, ${base} 25%, ${isDark ? 'rgba(255,255,255,0.13)' : 'rgba(17,17,17,0.025)'} 50%, ${base} 75%)`,
             backgroundSize: '200% 100%',
             animation: 'shimmerSlide 1.4s infinite ease-in-out',
           } : {}),
@@ -98,9 +117,9 @@ export function EmailSkeleton({ count = 6 }) {
         <Animated.View key={i} style={s.row}>
           <Shimmer style={s.avatar} delay={i * AnimTiming.staggerFast} />
           <View style={s.lines}>
-            <Shimmer style={[s.line1, { width: `${60 + Math.random() * 20}%` }]} delay={i * AnimTiming.staggerFast + 30} />
-            <Shimmer style={[s.line2, { width: `${75 + Math.random() * 15}%` }]} delay={i * AnimTiming.staggerFast + 60} />
-            <Shimmer style={[s.line3, { width: `${40 + Math.random() * 30}%` }]} delay={i * AnimTiming.staggerFast + 90} />
+            <Shimmer style={[s.line1, { width: `${60 + _jit(i, 1) * 20}%` }]} delay={i * AnimTiming.staggerFast + 30} />
+            <Shimmer style={[s.line2, { width: `${75 + _jit(i, 2) * 15}%` }]} delay={i * AnimTiming.staggerFast + 60} />
+            <Shimmer style={[s.line3, { width: `${40 + _jit(i, 3) * 30}%` }]} delay={i * AnimTiming.staggerFast + 90} />
           </View>
           <Shimmer style={s.date} delay={i * AnimTiming.staggerFast + 50} />
         </Animated.View>
@@ -147,7 +166,7 @@ export function ProfileSkeleton() {
           <Shimmer style={{ width: 36, height: 36, borderRadius: 10 }} delay={120 + i * 40} />
           <View style={{ flex: 1, gap: 6, marginLeft: 12 }}>
             <Shimmer style={{ width: 60, height: 10, borderRadius: 5 }} delay={140 + i * 40} />
-            <Shimmer style={{ width: `${50 + Math.random() * 30}%`, height: 14, borderRadius: 7 }} delay={160 + i * 40} />
+            <Shimmer style={{ width: `${50 + _jit(i, 4) * 30}%`, height: 14, borderRadius: 7 }} delay={160 + i * 40} />
           </View>
         </View>
       ))}
@@ -163,8 +182,8 @@ export function ListSkeleton({ count = 6, showIcon = true }) {
         <View key={i} style={s.row}>
           {showIcon && <Shimmer style={{ width: 40, height: 40, borderRadius: 10 }} delay={i * 40} />}
           <View style={[s.lines, { marginLeft: showIcon ? 12 : 0 }]}>
-            <Shimmer style={[s.line1, { width: `${50 + Math.random() * 30}%` }]} delay={i * 40 + 20} />
-            <Shimmer style={[s.line2, { width: `${30 + Math.random() * 30}%` }]} delay={i * 40 + 40} />
+            <Shimmer style={[s.line1, { width: `${50 + _jit(i, 5) * 30}%` }]} delay={i * 40 + 20} />
+            <Shimmer style={[s.line2, { width: `${30 + _jit(i, 6) * 30}%` }]} delay={i * 40 + 40} />
           </View>
         </View>
       ))}
@@ -197,8 +216,8 @@ export function CalendarSkeleton() {
         <View key={i} style={[s.row, { paddingHorizontal: 16 }]}>
           <Shimmer style={{ width: 4, height: 40, borderRadius: 2 }} delay={200 + i * 40} />
           <View style={[s.lines, { marginLeft: 12 }]}>
-            <Shimmer style={[s.line1, { width: `${40 + Math.random() * 30}%` }]} delay={220 + i * 40} />
-            <Shimmer style={[s.line2, { width: `${30 + Math.random() * 20}%` }]} delay={240 + i * 40} />
+            <Shimmer style={[s.line1, { width: `${40 + _jit(i, 7) * 30}%` }]} delay={220 + i * 40} />
+            <Shimmer style={[s.line2, { width: `${30 + _jit(i, 8) * 20}%` }]} delay={240 + i * 40} />
           </View>
         </View>
       ))}
@@ -238,7 +257,7 @@ export function CallListSkeleton({ count = 6 }) {
         <View key={i} style={s.row}>
           <Shimmer style={{ width: 44, height: 44, borderRadius: 22 }} delay={i * 40} />
           <View style={[s.lines, { marginLeft: 12 }]}>
-            <Shimmer style={[s.line1, { width: `${35 + Math.random() * 30}%` }]} delay={i * 40 + 15} />
+            <Shimmer style={[s.line1, { width: `${35 + _jit(i, 9) * 30}%` }]} delay={i * 40 + 15} />
             <View style={{ flexDirection: 'row', gap: 6, alignItems: 'center' }}>
               <Shimmer style={{ width: 12, height: 12, borderRadius: 6 }} delay={i * 40 + 30} />
               <Shimmer style={{ width: 80, height: 10, borderRadius: 5 }} delay={i * 40 + 35} />
@@ -271,7 +290,7 @@ export function SettingsSkeleton({ sections = 4, rows = 3 }) {
             <View key={i} style={[s.row, { paddingVertical: 10 }]}>
               <Shimmer style={{ width: 36, height: 36, borderRadius: 10 }} delay={120 + s_idx * 60 + i * 25} />
               <View style={[s.lines, { marginLeft: 12 }]}>
-                <Shimmer style={[s.line1, { width: `${40 + Math.random() * 30}%` }]} delay={140 + s_idx * 60 + i * 25} />
+                <Shimmer style={[s.line1, { width: `${40 + _jit(i, 10) * 30}%` }]} delay={140 + s_idx * 60 + i * 25} />
               </View>
             </View>
           ))}
@@ -309,7 +328,7 @@ export function NoteGridSkeleton({ count = 6, columns = 2 }) {
           const h = heights[i % heights.length];
           return (
             <View key={i} style={{ width: `${100 / columns - 2}%`, marginBottom: 10, borderRadius: 12, overflow: 'hidden' }}>
-              <Shimmer style={{ height: 18, width: `${50 + Math.random() * 30}%`, borderRadius: 9, marginBottom: 8 }} delay={i * 50} />
+              <Shimmer style={{ height: 18, width: `${50 + _jit(i, 11) * 30}%`, borderRadius: 9, marginBottom: 8 }} delay={i * 50} />
               <Shimmer style={{ height: h, width: '100%', borderRadius: 10 }} delay={i * 50 + 20} />
               <View style={{ flexDirection: 'row', gap: 6, marginTop: 8 }}>
                 <Shimmer style={{ width: 50, height: 10, borderRadius: 5 }} delay={i * 50 + 40} />
@@ -345,7 +364,7 @@ export function ChatBubbleSkeleton({ count = 8 }) {
           <View key={i} style={{ alignSelf: isRight ? 'flex-end' : 'flex-start', width: `${w * 70}%`, maxWidth: 280 }}>
             <View style={{ borderRadius: 16, padding: 14, overflow: 'hidden', backgroundColor: bubbleBg, borderWidth: 1, borderColor: bubbleBorder }}>
               <Shimmer style={{ height: 12, borderRadius: 6, width: '100%', marginBottom: 6 }} delay={i * 60} />
-              <Shimmer style={{ height: 12, borderRadius: 6, width: `${50 + Math.random() * 30}%` }} delay={i * 60 + 25} />
+              <Shimmer style={{ height: 12, borderRadius: 6, width: `${50 + _jit(i, 12) * 30}%` }} delay={i * 60 + 25} />
               {w > 0.5 && <Shimmer style={{ height: 12, borderRadius: 6, width: '40%', marginTop: 6 }} delay={i * 60 + 50} />}
             </View>
           </View>
@@ -363,8 +382,8 @@ export function DriveGridSkeleton({ count = 8, columns = 4 }) {
         {Array.from({ length: count }).map((_, i) => (
           <View key={i} style={{ width: `${100 / columns - 2}%`, minWidth: 140, marginBottom: 12 }}>
             <Shimmer style={{ height: 100, width: '100%', borderRadius: 10, marginBottom: 8 }} delay={i * 40} />
-            <Shimmer style={{ height: 12, width: `${50 + Math.random() * 30}%`, borderRadius: 6, marginBottom: 4 }} delay={i * 40 + 20} />
-            <Shimmer style={{ height: 10, width: `${30 + Math.random() * 20}%`, borderRadius: 5 }} delay={i * 40 + 35} />
+            <Shimmer style={{ height: 12, width: `${50 + _jit(i, 13) * 30}%`, borderRadius: 6, marginBottom: 4 }} delay={i * 40 + 20} />
+            <Shimmer style={{ height: 10, width: `${30 + _jit(i, 14) * 20}%`, borderRadius: 5 }} delay={i * 40 + 35} />
           </View>
         ))}
       </View>
@@ -380,8 +399,8 @@ export function DriveListSkeleton({ count = 8 }) {
         <View key={i} style={s.row}>
           <Shimmer style={{ width: 40, height: 40, borderRadius: 8 }} delay={i * 35} />
           <View style={[s.lines, { marginLeft: 12 }]}>
-            <Shimmer style={[s.line1, { width: `${45 + Math.random() * 35}%` }]} delay={i * 35 + 15} />
-            <Shimmer style={[s.line2, { width: `${25 + Math.random() * 20}%` }]} delay={i * 35 + 30} />
+            <Shimmer style={[s.line1, { width: `${45 + _jit(i, 15) * 35}%` }]} delay={i * 35 + 15} />
+            <Shimmer style={[s.line2, { width: `${25 + _jit(i, 16) * 20}%` }]} delay={i * 35 + 30} />
           </View>
           <Shimmer style={{ width: 28, height: 10, borderRadius: 5 }} delay={i * 35 + 20} />
         </View>

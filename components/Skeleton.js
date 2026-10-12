@@ -18,45 +18,19 @@
 import React, { useRef, useEffect } from 'react';
 import { View, Animated, StyleSheet, Platform } from 'react-native';
 import { useTheme } from '../context/ThemeContext';
+import { Shimmer } from './SkeletonLoader';
 
 // A single shimmering block. Everything else is built from this.
 //   • width / height — number (px) or string ('60%'). Default 100% × 12.
 //   • radius         — border radius (default 8).
 //   • delay          — ms before the pulse starts (for a subtle stagger).
 //   • style          — extra style on the box.
+// [2026-10-12 skeleton system] Delegates to the shared Shimmer (one synced
+// sweep + one placeholder tone app-wide) — this primitive used to run its own
+// 0.45↔0.9 opacity pulse on an opaque gray, so screens mixing Skeleton and
+// SkeletonLoader pieces blinked out of step and in two different grays.
 export function Skeleton({ width = '100%', height = 12, radius = 8, delay = 0, style }) {
-  const { colors } = useTheme();
-  const pulse = useRef(new Animated.Value(0)).current;
-
-  useEffect(() => {
-    // Gentle opacity wave — 1.4s cycle reads as "loading, fast" (matches the
-    // shared Shimmer in SkeletonLoader). Sine easing so the peak feels like a
-    // wave rather than a step. useNativeDriver → runs on the UI thread.
-    const loop = Animated.loop(
-      Animated.sequence([
-        Animated.timing(pulse, { toValue: 1, duration: 700, delay, useNativeDriver: true }),
-        Animated.timing(pulse, { toValue: 0, duration: 700, useNativeDriver: true }),
-      ])
-    );
-    loop.start();
-    return () => loop.stop();
-  }, [pulse, delay]);
-
-  const opacity = pulse.interpolate({ inputRange: [0, 1], outputRange: [0.45, 0.9] });
-  // surfaceVariant is the neutral gray step above the page background in both
-  // themes (light #F0F1F3 / dark #202022) — the correct monochrome placeholder.
-  const bg = colors.surfaceVariant || colors.borderLight || '#EEE';
-
-  return (
-    <Animated.View
-      style={[
-        { width, height, borderRadius: radius, backgroundColor: bg, opacity },
-        // On web the opacity animation still runs; keep the same look.
-        Platform.OS === 'web' ? { opacity } : null,
-        style,
-      ]}
-    />
-  );
+  return <Shimmer style={[{ width, height, borderRadius: radius }, style]} delay={delay} />;
 }
 
 // A list/chat-list row placeholder: round avatar + two text lines + a trailing

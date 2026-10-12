@@ -13,7 +13,6 @@ import {
 } from 'react-native';
 import { IconUserPlus, IconCheck } from '../Icons';
 
-const ACCENT = '#111111';
 
 export default function LiveJoinPill({
   joinRequested = false,
@@ -32,8 +31,8 @@ export default function LiveJoinPill({
     >
       {joinRequested
         ? <IconCheck size={14} color="#fff" />
-        : <IconUserPlus size={14} color="#fff" />}
-      <Text style={styles.text} numberOfLines={1}>
+        : <IconUserPlus size={14} color="#000" />}
+      <Text style={[styles.text, !joinRequested && styles.textCta]} numberOfLines={1}>
         {joinRequested ? sentLabel : label}
       </Text>
     </TouchableOpacity>
@@ -48,12 +47,14 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 8,
     borderRadius: 20,
-    backgroundColor: ACCENT,
+    // [2026-10-12 live-polish] CTA P&B: pílula branca sólida sobre o vídeo
+    // (o #111 com borda se perdia em cenas escuras).
+    backgroundColor: '#fff',
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.35)',
+    borderColor: '#fff',
     alignSelf: 'flex-start',
     ...(Platform.OS === 'web' ? {
-      boxShadow: '0 4px 14px rgba(17, 17, 17,0.55)',
+      boxShadow: '0 4px 14px rgba(0,0,0,0.35)',
     } : {}),
   },
   pillSent: {
@@ -67,4 +68,5 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     letterSpacing: 0.2,
   },
+  textCta: { color: '#000' },
 });

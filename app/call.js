@@ -136,7 +136,7 @@ try {
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuth } from '../context/AuthContext';
-import { useLanguage } from '../context/LanguageContext';
+import { useLanguage, useLanguageOptional } from '../context/LanguageContext';
 import AvatarCircle from '../components/AvatarCircle';
 import ConnectionBars from '../components/ConnectionBars';
 import CallAudioStats from '../components/CallAudioStats';
@@ -5793,7 +5793,7 @@ function CallScreenInner() {
 
       <TouchableOpacity activeOpacity={1} onPress={handleScreenTap} style={StyleSheet.absoluteFill}>
         <View style={[styles.audioOverlay, {
-          backgroundColor: showRemoteVideo ? 'transparent' : (isVideoCall ? 'rgba(6,78,59,0.55)' : 'transparent'),
+          backgroundColor: showRemoteVideo ? 'transparent' : (isVideoCall ? 'rgba(0,0,0,0.45)' : 'transparent'),
         }]}>
           {/* Status strip */}
           {peerConnected && !ended && (
@@ -5818,7 +5818,7 @@ function CallScreenInner() {
                   activeOpacity={1}
                   style={{ flexDirection: 'row', alignItems: 'center' }}
                   accessibilityRole="button"
-                  accessibilityLabel="Estatísticas (segure para abrir)"
+                  accessibilityLabel={t('call.statsHoldHint')}
                 >
                   {showSignalBars && <SignalBars quality={connectionQuality} score={qualityScore} />}
                 </TouchableOpacity>
@@ -5922,7 +5922,7 @@ function CallScreenInner() {
                   ? (t('call.bothRecording') || 'Both sides recording')
                   : isRecording
                     ? (t('call.recording') || 'Recording...')
-                    : (t('call.remoteRecording') || 'Other party is recording')}
+                    : (t('call.remoteRecording') || 'A outra pessoa está gravando')}
               </Text>
             </View>
           )}
@@ -5966,10 +5966,10 @@ function CallScreenInner() {
             <View style={[styles.screenShareBanner, (isRecording || remoteIsRecording) && { top: 120 }]}>
               <IconScreenShare size={16} color="#fff" />
               <Text style={styles.screenShareBannerText}>
-                {t('call.youAreSharing') || 'You are sharing your screen'}
+                {t('call.youAreSharing') || 'Você está compartilhando sua tela'}
               </Text>
               <TouchableOpacity onPress={handleScreenShare} style={styles.screenShareStopBtn} activeOpacity={0.7}>
-                <Text style={styles.screenShareStopBtnText}>{t('call.stopSharing') || 'Stop'}</Text>
+                <Text style={styles.screenShareStopBtnText}>{t('call.stopSharing') || 'Parar'}</Text>
               </TouchableOpacity>
             </View>
           )}
@@ -5979,7 +5979,7 @@ function CallScreenInner() {
             <View style={[styles.peerScreenShareBanner, (isRecording || remoteIsRecording) && { top: 120 }]}>
               <IconScreenShare size={16} color="#fff" />
               <Text style={styles.screenShareBannerText}>
-                {t('call.peerSharing') || 'Peer is sharing their screen'}
+                {t('call.peerSharing') || 'A outra pessoa está compartilhando a tela'}
               </Text>
             </View>
           )}
@@ -6125,6 +6125,10 @@ function CallScreenInner() {
               (pre-connect) so the "calling…" UI isn't blank. */}
           {!showRemoteVideo && !(isGroupCall && peerConnected) && (
             <View style={[styles.centerArea, { paddingTop: insets.top, paddingBottom: insets.bottom + 180 }]}>
+              {/* [2026-10-12 live-polish] anéis + avatar num bloco próprio: os
+                  anéis absolutos centravam na área inteira (avatar + nome +
+                  status) e apareciam deslocados para baixo do avatar. */}
+              <View style={styles.avatarStack}>
               {!peerConnected && (
                 <>
                   <Animated.View style={[styles.pulseRing, styles.pulseRingOuter, {
@@ -6190,6 +6194,7 @@ function CallScreenInner() {
                   </View>
                 )}
               </Animated.View>
+              </View>
               <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
                 <Text style={[styles.centerName, !isVideoCall && styles.centerNameAudio]} numberOfLines={1}>{callerName}</Text>
                 {peerVerified && (
@@ -6214,8 +6219,11 @@ function CallScreenInner() {
                   </View>
                 )}
               </View>
-              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center' }}>
-                <Text style={[styles.centerStatus, connectionFailed && { color: '#ef4444' }]}>{statusText}</Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 28, maxWidth: '100%' }}>
+                {/* [2026-10-12 live-polish] status quebra linha dentro da tela (antes
+                    o texto de falha vazava das bordas) e fica em branco — vermelho só
+                    no botão de desligar, como na tela nativa. */}
+                <Text style={[styles.centerStatus, { flexShrink: 1, textAlign: 'center' }, connectionFailed && { color: 'rgba(255,255,255,0.88)' }]}>{statusText}</Text>
                 {waitingPhase && <AnimatedEllipsis color="rgba(255,255,255,0.85)" size={16} />}
               </View>
               {ended && (
@@ -6230,7 +6238,7 @@ function CallScreenInner() {
                     accessibilityLabel={t('call.reconnect') || 'Reconectar'}
                     accessibilityRole="button"
                   >
-                    <IconPhone size={18} color="#fff" />
+                    <IconPhone size={18} color="#000" />
                     <Text style={styles.reconnectBtnText}>{t('call.reconnect') || 'Reconectar'}</Text>
                   </TouchableOpacity>
                   {/* #1183 — PSTN fallback button. Only when peer has a verified
@@ -6246,9 +6254,9 @@ function CallScreenInner() {
                       accessibilityRole="button"
                     >
                       {pstnFallbackBusy ? (
-                        <ActivityIndicator size="small" color="#fff" />
+                        <ActivityIndicator size="small" color="#000" />
                       ) : (
-                        <IconPhone size={18} color="#fff" />
+                        <IconPhone size={18} color="#000" />
                       )}
                       <Text style={styles.reconnectBtnText}>
                         {t('call.via.phone') || 'Ligar via telefone'}
@@ -6342,7 +6350,7 @@ function CallScreenInner() {
           <TouchableOpacity activeOpacity={1} style={[styles.moreSheet, { paddingBottom: insets.bottom + 20 }]}>
             <View style={styles.moreSheetHandle} />
 
-            <Text style={styles.moreSheetSectionTitle}>{t('call.reactions') || 'Reacoes'}</Text>
+            <Text style={styles.moreSheetSectionTitle}>{t('call.reactions') || 'Reações'}</Text>
             <View style={styles.moreSheetEmojiRow}>
               {CALL_EMOJIS.map(emoji => (
                 <TouchableOpacity key={emoji} onPress={() => { handleSendEmoji(emoji); setShowMoreSheet(false); }} style={styles.emojiBtnItem}>
@@ -6367,7 +6375,7 @@ function CallScreenInner() {
                   de ruído fica sempre ON por padrão (noiseCancellation=true). */}
             </View>
 
-            <Text style={[styles.moreSheetSectionTitle, { marginTop: 16 }]}>{t('call.recordSection') || 'Record'}</Text>
+            <Text style={[styles.moreSheetSectionTitle, { marginTop: 16 }]}>{t('call.recordSection') || 'Gravar'}</Text>
             <TouchableOpacity
               onPress={() => { handleToggleRecording(); setShowMoreSheet(false); }}
               style={styles.recordSheetBtn}
@@ -6377,7 +6385,7 @@ function CallScreenInner() {
                 <IconRecord size={20} color={isRecording ? '#fff' : '#ef4444'} />
               </View>
               <Text style={styles.recordSheetLabel}>
-                {isRecording ? (t('call.stopRecording') || 'Stop recording') : (t('call.startRecording') || 'Record call')}
+                {isRecording ? (t('call.stopRecording') || 'Parar gravação') : (t('call.startRecording') || 'Gravar chamada')}
               </Text>
             </TouchableOpacity>
 
@@ -6539,7 +6547,7 @@ function CallScreenInner() {
                     }
                   }}
                   style={styles.quickReactionBtn}
-                  accessibilityLabel={`React ${emoji}`}
+                  accessibilityLabel={`${t('call.reactions') || 'Reações'} ${emoji}`}
                   activeOpacity={0.7}
                 >
                   <Text style={{ fontSize: 30 }}>{emoji}</Text>
@@ -7098,15 +7106,16 @@ const styles = StyleSheet.create({
   },
   e2eeLockChipText: { color: '#34d399', fontSize: 10.5, fontWeight: '700', letterSpacing: 0.2 },
   centerArea: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingBottom: 180 },
+  avatarStack: { alignItems: 'center', justifyContent: 'center' },
   pulseRing: { position: 'absolute', borderRadius: 999, borderWidth: 1 },
-  pulseRingOuter: { width: 212, height: 212, borderColor: 'rgba(17, 17, 17,0.10)' },
-  pulseRingInner: { width: 182, height: 182, borderColor: 'rgba(221,214,254,0.16)' },
+  pulseRingOuter: { width: 212, height: 212, borderColor: 'rgba(255,255,255,0.08)' },
+  pulseRingInner: { width: 182, height: 182, borderColor: 'rgba(255,255,255,0.14)' },
   // Outgoing "calling" rings — soft brand-tinted white expanding rings.
   callingPulseRing: {
     position: 'absolute',
     borderRadius: 999,
     borderWidth: 2,
-    borderColor: 'rgba(221,214,254,0.5)',
+    borderColor: 'rgba(255,255,255,0.45)',
   },
   // 1:1 active-speaker green halo.
   speakingRing: {
@@ -7238,8 +7247,8 @@ const styles = StyleSheet.create({
   // Soft, subtle ring hugging the audio-call avatar (premium FaceTime feel).
   centerAvatarRing: {
     borderRadius: 999, padding: 7,
-    borderWidth: 1, borderColor: 'rgba(17, 17, 17,0.18)',
-    backgroundColor: 'rgba(17, 17, 17,0.06)',
+    borderWidth: 1, borderColor: 'rgba(255,255,255,0.14)',
+    backgroundColor: 'rgba(255,255,255,0.04)',
     shadowColor: '#111111', shadowOpacity: 0.4, shadowRadius: 34, shadowOffset: { width: 0, height: 0 }, elevation: 12,
   },
   centerName: { color: '#fff', fontSize: 31, fontWeight: '700', marginTop: 30, textAlign: 'center', letterSpacing: -0.6 },
@@ -7248,10 +7257,11 @@ const styles = StyleSheet.create({
   reconnectContainer: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', justifyContent: 'center', gap: 12, marginTop: 26, paddingHorizontal: 16 },
   reconnectBtn: {
     flexDirection: 'row', alignItems: 'center', gap: 8,
-    backgroundColor: '#111111', paddingHorizontal: 22, paddingVertical: 13, borderRadius: 30,
-    shadowColor: '#111111', shadowOpacity: 0.4, shadowRadius: 14, shadowOffset: { width: 0, height: 5 }, elevation: 6,
+    // P&B: ação primária = pílula branca (o #111 sumia no fundo preto).
+    backgroundColor: '#fff', paddingHorizontal: 22, paddingVertical: 13, borderRadius: 30,
+    shadowColor: '#000', shadowOpacity: 0.3, shadowRadius: 14, shadowOffset: { width: 0, height: 5 }, elevation: 6,
   },
-  reconnectBtnText: { color: '#fff', fontSize: 15.5, fontWeight: '700', letterSpacing: -0.2 },
+  reconnectBtnText: { color: '#000', fontSize: 15.5, fontWeight: '700', letterSpacing: -0.2 },
   reconnectEndBtn: {
     flexDirection: 'row', alignItems: 'center', gap: 8,
     backgroundColor: '#ef4444', paddingHorizontal: 22, paddingVertical: 13, borderRadius: 30,
@@ -7597,6 +7607,63 @@ const styles = StyleSheet.create({
 // show a "tente novamente" page that does NOT tear down the LiveKit room —
 // the user can't even hang up. Show a single big red "Desligar" button that
 // disconnects via __chatyyTeardownActiveCall + router.back().
+// [2026-10-12 live-polish] Tela de erro da chamada traduzida (o boundary é
+// classe → o texto vem de um componente-função com o contexto de idioma).
+function CallCrashFallback({ onHangup, errorMessage }) {
+  let lang = null;
+  try { lang = useLanguageOptional(); } catch {}
+  const tr = (k, fb) => {
+    try { const v = lang?.t?.(k); if (typeof v === 'string' && v && v !== k) return v; } catch {}
+    return fb;
+  };
+  const hangLabel = tr('call.hangUp', 'Desligar');
+  return (
+    <View style={{
+      flex: 1, backgroundColor: '#000',
+      alignItems: 'center', justifyContent: 'center', padding: 32,
+    }}>
+      <View style={{
+        width: 72, height: 72, borderRadius: 36,
+        backgroundColor: 'rgba(255,255,255,0.08)',
+        borderWidth: 1, borderColor: 'rgba(255,255,255,0.14)',
+        alignItems: 'center', justifyContent: 'center', marginBottom: 22,
+      }}>
+        <Svg width={30} height={30} viewBox="0 0 24 24" fill="none">
+          <SvgPath d="M12 9v4M12 17h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" stroke="#fff" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" />
+        </Svg>
+      </View>
+      <Text style={{ color: '#fff', fontSize: 19, fontWeight: '700', marginBottom: 8, textAlign: 'center', letterSpacing: -0.2 }}>
+        {tr('call.crashTitle', 'A tela da chamada teve um erro')}
+      </Text>
+      <Text style={{ color: 'rgba(255,255,255,0.6)', fontSize: 14, marginBottom: 32, textAlign: 'center', lineHeight: 20, maxWidth: 300 }}>
+        {tr('call.crashBody', 'Toque para desligar e tente novamente.')}
+      </Text>
+      <TouchableOpacity
+        onPress={onHangup}
+        activeOpacity={0.85}
+        style={{
+          backgroundColor: '#dc2626',
+          paddingVertical: 15, paddingHorizontal: 34,
+          borderRadius: 999,
+          flexDirection: 'row', alignItems: 'center',
+        }}
+        accessibilityRole="button"
+        accessibilityLabel={hangLabel}
+      >
+        <IconPhoneOff size={20} color="#fff" />
+        <Text style={{ color: '#fff', fontSize: 15, fontWeight: '700', marginLeft: 10 }}>
+          {hangLabel}
+        </Text>
+      </TouchableOpacity>
+      {__DEV__ && errorMessage ? (
+        <Text selectable style={{ color: 'rgba(255,255,255,0.5)', fontSize: 11, marginTop: 24, fontFamily: 'monospace', textAlign: 'center' }} numberOfLines={4}>
+          {errorMessage}
+        </Text>
+      ) : null}
+    </View>
+  );
+}
+
 class CallErrorBoundary extends React.Component {
   state = { hasError: false, error: null };
   static getDerivedStateFromError(error) { return { hasError: true, error }; }
@@ -7636,51 +7703,7 @@ class CallErrorBoundary extends React.Component {
   };
   render() {
     if (this.state.hasError) {
-      return (
-        <View style={{
-          flex: 1, backgroundColor: '#0a0a0f',
-          alignItems: 'center', justifyContent: 'center', padding: 32,
-        }}>
-          <View style={{
-            width: 64, height: 64, borderRadius: 32,
-            backgroundColor: 'rgba(239,68,68,0.15)',
-            alignItems: 'center', justifyContent: 'center', marginBottom: 20,
-          }}>
-            <Svg width={32} height={32} viewBox="0 0 24 24" fill="none">
-              <SvgPath d="M12 9v4M12 17h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" stroke="#ef4444" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
-            </Svg>
-          </View>
-          <Text style={{ color: '#fff', fontSize: 18, fontWeight: '700', marginBottom: 8, textAlign: 'center' }}>
-            Tela de chamada teve um erro
-          </Text>
-          <Text style={{ color: '#94a3b8', fontSize: 14, marginBottom: 28, textAlign: 'center', lineHeight: 20 }}>
-            Toque para desligar e tentar novamente.
-          </Text>
-          <TouchableOpacity
-            onPress={this._hangup}
-            activeOpacity={0.85}
-            style={{
-              backgroundColor: '#dc2626',
-              paddingVertical: 14, paddingHorizontal: 32,
-              borderRadius: 999,
-              flexDirection: 'row', alignItems: 'center',
-              shadowColor: '#dc2626', shadowOpacity: 0.4, shadowRadius: 16,
-            }}
-            accessibilityRole="button"
-            accessibilityLabel="Desligar"
-          >
-            <IconPhoneOff size={20} color="#fff" />
-            <Text style={{ color: '#fff', fontSize: 15, fontWeight: '700', marginLeft: 10 }}>
-              Desligar
-            </Text>
-          </TouchableOpacity>
-          {__DEV__ && this.state.error?.message ? (
-            <Text selectable style={{ color: '#f87171', fontSize: 11, marginTop: 24, fontFamily: 'monospace', textAlign: 'center' }} numberOfLines={4}>
-              {this.state.error.message}
-            </Text>
-          ) : null}
-        </View>
-      );
+      return <CallCrashFallback onHangup={this._hangup} errorMessage={this.state.error?.message} />;
     }
     return this.props.children;
   }

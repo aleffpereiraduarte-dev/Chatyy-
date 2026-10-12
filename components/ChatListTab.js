@@ -29,7 +29,7 @@ import { RECONNECT_BANNER_GRACE_MS } from '../constants/theme';
 import { isTablet as RESP_IS_TABLET, CONTENT_MAX_WIDTH } from '../utils/responsive';
 import { getCachedMessagesSync } from '../services/smartChatCache';
 import CachedImage from './CachedImage';
-import { IconMessageSquare, IconSearch, IconX, IconTrash, IconArchive, IconVolume2, IconCheck, IconMail, IconEye, IconMusic, IconUserPlus, IconSparkles, IconHeart, IconUsers, IconBell, IconType, IconCamera, IconPhone, IconVideo, IconPaperclip, IconMapPin, IconFilm, IconMic, IconUser, IconBarChart, IconCalendar } from './Icons';
+import { IconMessageSquare, IconSearch, IconX, IconTrash, IconArchive, IconVolume2, IconCheck, IconMail, IconEye, IconMusic, IconUserPlus, IconSparkles, IconHeart, IconUsers, IconBell, IconType, IconCamera, IconPhone, IconVideo, IconPaperclip, IconMapPin, IconFilm, IconMic, IconUser, IconBarChart, IconCalendar, IconFileText, IconFolder } from './Icons';
 import AvatarCircle from './AvatarCircle';
 import HomeHubCard from './HomeHubCard';
 import AvatarLightbox from './AvatarLightbox';
@@ -271,8 +271,16 @@ const PREVIEW_EMOJI_ICONS = {
   '\uD83D\uDCF7': IconCamera, '\uD83C\uDFAC': IconFilm, '\uD83C\uDFA5': IconVideo,
   '\uD83C\uDFB5': IconMusic, '\uD83C\uDF99': IconMic, '\uD83D\uDCCD': IconMapPin,
   '\uD83D\uDC64': IconUser, '\uD83D\uDCCA': IconBarChart, '\uD83D\uDCC5': IconCalendar,
-  '\uD83D\uDCAB': IconSparkles,
+  '\uD83D\uDCAB': IconSparkles, '\uD83D\uDCC4': IconFileText,
 };
+// [2026-10-12 chatlist-polish] Voice-note length in the preview (WhatsApp:
+// mic glyph + "0:12"). `duration` = seconds (chat_upload / chat_forward probe).
+function _fmtVoiceDur(d) {
+  const n = Math.round(Number(d) || 0);
+  if (!(n > 0)) return '';
+  const m = Math.floor(n / 60); const sec = n % 60;
+  return m + ':' + (sec < 10 ? '0' : '') + sec;
+}
 function withPreviewIcon(str, color) {
   if (typeof str !== 'string' || str.length < 2) return str;
   const Ic = PREVIEW_EMOJI_ICONS[str.slice(0, 2)];
@@ -280,7 +288,7 @@ function withPreviewIcon(str, color) {
   const rest = str.slice(2).replace(/^[\uFE0F\s]+/, '');
   return (
     <>
-      <View style={{ marginRight: 4, justifyContent: 'center' }}><Ic size={13} color={color} /></View>
+      <View style={{ marginRight: 4, justifyContent: 'center', ...(isWeb ? { display: 'inline-flex', verticalAlign: '-2px' } : null) }}><Ic size={14} color={color} /></View>
       {rest}
     </>
   );
@@ -876,9 +884,9 @@ const ConversationRow = React.memo(function ConversationRow({
     if (lastMsg.type === 'image') content = '\uD83D\uDCF7 ' + (_mediaCap(caption, _plainBody) || t('chat.photo') || 'Foto');
     else if (lastMsg.type === 'gif') content = '\uD83C\uDFAC ' + (caption || 'GIF');
     else if (lastMsg.type === 'sticker') content = '\uD83D\uDCAB ' + (caption || t('chat.sticker') || 'Sticker');
-    else if (lastMsg.type === 'video' && !content.startsWith('\uD83C\uDFA5')) content = '\uD83C\uDFA5 ' + (_mediaCap(caption, _plainBody) || t('chat.video') || 'Video');
-    else if (lastMsg.type === 'audio' && !content.startsWith('\uD83D\uDCDE')) content = '\uD83C\uDFB5 ' + (caption || t('chat.audio') || 'Audio');
-    else if (lastMsg.type === 'file') content = '\uD83D\uDCCE ' + (lastMsg.file_name || caption || _plainBody || t('chat.file') || 'Arquivo');
+    else if (lastMsg.type === 'video' && !content.startsWith('\uD83C\uDFA5')) content = '\uD83C\uDFA5 ' + (_mediaCap(caption, _plainBody) || t('chat.video') || 'V\u00EDdeo');
+    else if ((lastMsg.type === 'audio' || lastMsg.type === 'voice') && !content.startsWith('\uD83D\uDCDE')) content = '\uD83C\uDF99 ' + (_fmtVoiceDur(lastMsg.duration) || caption || t('chat.audio') || '\u00C1udio');
+    else if (lastMsg.type === 'file') content = '\uD83D\uDCC4 ' + (lastMsg.file_name || caption || _plainBody || t('chat.file') || 'Arquivo');
     else if (lastMsg.type === 'poll') content = '\uD83D\uDCCA ' + (caption || t('chat.poll') || 'Enquete');
     else if (lastMsg.type === 'playlist') content = '\uD83C\uDFB5 ' + (caption || t('chatConv.playlist') || 'Playlist');
     else if (lastMsg.type === 'meetup') content = '\uD83D\uDCC5 ' + (caption || t('chatConv.meetup') || 'Encontro');
@@ -911,6 +919,8 @@ const ConversationRow = React.memo(function ConversationRow({
         .map(m => m.display_name || m.name).filter(Boolean);
       content = humanizeSystemText(content, { t, myEmail: _me, myNames: _myNames, senderEmail: lastMsg.sender_email, formatName: emailToDisplayName });
       preview = content;
+      // [2026-10-12 chatlist-polish] System events carry no receipts.
+      statusType = null;
     } else if ((isGroup || isChannel) && (lastMsg.sender_email || '').toLowerCase() !== _me) {
       const sender = emailToDisplayName(lastMsg.sender_name || lastMsg.sender_email || '');
       preview = content;
@@ -1441,7 +1451,7 @@ const ConversationRow = React.memo(function ConversationRow({
                   return [pre, unit, pre ? '' : suf].filter(Boolean).join(' ').trim();
                 })();
                 const muted = P.sub;
-                const tint = isFresh ? '#dc2626' : muted;
+                const tint = isFresh ? P.text : muted;
                 // [beauty 2026-10-01] Draft preview is now plain inline text
                 // (dropped the filled box) — WhatsApp shows a red "Draft:" prefix
                 // inline, no container, which keeps the row rhythm clean.
@@ -5673,7 +5683,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
             return !ids.map(Number).includes(Number(conv.id));
           });
           const buttons = eligible.map(f => ({
-            text: `${f.icon || '📂'}  ${f.name}`,
+            text: String(f.name || ''),
             onPress: async () => {
               try {
                 const nextIds = [...(Array.isArray(f.conversation_ids) ? f.conversation_ids : []), Number(conv.id)];
@@ -6588,6 +6598,8 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
         accessibilityRole="button"
         accessibilityState={{ selected: active }}
       >
+        {/* [2026-10-12 chatlist-polish] folder chips: SVG glyph instead of the stored emoji icon */}
+        {folder ? <IconFolder size={14} color={pillTxt} /> : null}
         <Text maxFontSizeMultiplier={1.25} style={[s.chipText, { color: pillTxt, fontWeight: active ? '600' : '500' }]}>
           {label}
         </Text>
@@ -7368,7 +7380,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
                 backgroundColor: P.chipBg,
                 borderRadius: 5, paddingHorizontal: 5, paddingVertical: 1,
               }}>
-                <Text maxFontSizeMultiplier={1.1} style={{ color: P.sub, fontSize: 10, fontWeight: '700', letterSpacing: 0.5 }}>AI</Text>
+                <Text maxFontSizeMultiplier={1.1} style={{ color: P.sub, fontSize: 10, fontWeight: '700', letterSpacing: 0.5 }}>{t?.('chat.aiBadge') || 'IA'}</Text>
               </View>
             </View>
             <Text maxFontSizeMultiplier={1.3} style={[s.rowPreview, { color: P.sub, marginTop: 3, marginRight: 0 }]} numberOfLines={1}>
@@ -7702,7 +7714,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
         <FilterChip label={t('chat.filterGroups') || 'Grupos'} value="groups" count={groupCount} />
         <FilterChip label={t('chat.channels') || 'Canais'} value="channels" count={channelCount} />
         {chatFolders.map(f => (
-          <FilterChip key={f.id} label={(f.icon ? f.icon + ' ' : '') + f.name} value={`folder_${f.id}`} folder={f} />
+          <FilterChip key={f.id} label={f.name} value={`folder_${f.id}`} folder={f} />
         ))}
         <FilterChip label={t('chat.filterArchived') || 'Arquivadas'} value="archived" count={archivedCount} />
       </ScrollView>
@@ -8882,10 +8894,10 @@ function ConversationPeekCard({ conv, previewMsgs, currentUserEmail, colors, isD
 
               if (m.type === 'image') body = '📷 ' + (t?.('chat.photo') || 'Foto');
               else if (m.type === 'video' && !body.startsWith('🎥')) body = '🎬 ' + (t?.('chat.video') || 'Vídeo');
-              else if ((m.type === 'audio' || m.type === 'voice') && !body.startsWith('📞')) body = '🎙 ' + (t?.('chat.audio') || 'Áudio');
+              else if ((m.type === 'audio' || m.type === 'voice') && !body.startsWith('📞')) body = '🎙 ' + (_fmtVoiceDur(m.duration) || t?.('chat.audio') || 'Áudio');
               else if (m.type === 'sticker') body = '💫 ' + (t?.('chat.sticker') || 'Sticker');
               else if (m.type === 'gif') body = '🎬 GIF';
-              else if (m.type === 'file') body = '📎 ' + (m.file_name || t?.('chat.file') || 'Arquivo');
+              else if (m.type === 'file') body = '\uD83D\uDCC4 ' + (m.file_name || t?.('chat.file') || 'Arquivo');
               else if (m.type === 'poll') body = '📊 ' + (t?.('chat.poll') || 'Enquete');
               else if (m.type === 'location') body = '📍 ' + (t?.('chat.location') || 'Localização');
               else if (m.type === 'contact') body = '👤 ' + (t?.('chat.contact') || 'Contato');
@@ -9203,7 +9215,7 @@ const s = StyleSheet.create({
   // tracking; read rows sit at semibold so the unread→bold step is a real,
   // legible contrast jump (iMessage-style) rather than a subtle weight nudge.
   rowName: {
-    fontSize: 16.5,
+    fontSize: 16,
     fontWeight: '600',
     flex: 1,
     letterSpacing: -0.3,
@@ -9216,7 +9228,7 @@ const s = StyleSheet.create({
   // across rows regardless of "agora" vs "14:32" vs "Ontem".
   // [beauty 2026-05-31] Timestamp flush-right, tabular so the right column stays
   // pixel-aligned across "agora" / "14:32" / "Ontem".
-  rowTime: { fontSize: 12.5, letterSpacing: -0.05, fontWeight: '400', fontVariant: ['tabular-nums'] },
+  rowTime: { fontSize: 12, letterSpacing: 0, fontWeight: '400', fontVariant: ['tabular-nums'] },
   rowBottom: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -9227,11 +9239,11 @@ const s = StyleSheet.create({
   // so it reads as the quiet secondary line under the name — never competing
   // with it for weight.
   rowPreview: {
-    fontSize: 14.5,
+    fontSize: 14,
     flex: 1,
     marginRight: 10,
-    lineHeight: 20,
-    letterSpacing: -0.15,
+    lineHeight: 19,
+    letterSpacing: -0.1,
   },
   // Unread badge — brand-purple pill (was WhatsApp green). Crisp squircle pill
   // with a soft brand glow so a fresh count reads as the colored attention dot.

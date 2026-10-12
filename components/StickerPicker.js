@@ -5,12 +5,15 @@ import {
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import CachedImage from './CachedImage';
-import { IconX, IconPlus, IconSearch, IconHeart, IconStar, IconStarFilled, IconTrash, IconFilm, IconPackage, IconClock, IconPalette } from './Icons';
+import { IconX, IconPlus, IconSearch, IconHeart, IconStar, IconStarFilled, IconTrash, IconFilm, IconPackage, IconClock, IconPalette, IconImage, IconCamera, IconSend, IconChevronUp } from './Icons';
 import * as api from '../services/api';
 // [2026-10-08 sticker-maker] criador novo (recorte automático + contorno +
 // texto/desenho/emoji + WebP 512) substitui o StickerEditor antigo aqui.
 import StickerMaker, { pickStickerSourceImage } from './stickers/StickerMaker';
 import Svg, { Path as SvgPath } from 'react-native-svg';
+import Sheet from './ui/Sheet';
+import ActionList from './ui/ActionList';
+import { Overlay, overlayColors } from '../constants/theme';
 
 function _tr(t, key, fb) {
   try { const v = t ? t(key) : ''; return v && v !== key ? v : fb; } catch { return fb; }
@@ -29,26 +32,36 @@ function IconStickerPlus({ size = 26, color = '#111' }) {
 }
 
 // Folha de opções simples (funciona igual no web — Alert do web só tem OK/Cancelar).
+// [2026-10-12 overlays] Agora usa o Sheet + ActionList do design system
+// (alça, raio 20, backdrop 0.4, mola, safe-area, back do Android). A opção
+// 'cancel' vira o botão Cancelar separado no rodapé (padrão iOS/WhatsApp).
+const CHOICE_ICONS = {
+  gallery: IconImage, camera: IconCamera, video: IconFilm,
+  send: IconSend, front: IconChevronUp, fav: IconStar, del: IconTrash,
+};
 function ChoiceSheet({ visible, title, options, onClose, colors }) {
-  if (!visible) return null;
+  const opts = options || [];
+  const cancel = opts.find((o) => o.key === 'cancel');
+  const items = opts.filter((o) => o.key !== 'cancel').map((o) => ({
+    key: o.key, label: o.label, icon: o.icon || CHOICE_ICONS[o.key], destructive: !!o.destructive,
+    onPress: () => { setTimeout(() => o.onPress && o.onPress(), 60); },
+  }));
   return (
-    <Modal visible transparent animationType="fade" onRequestClose={onClose}>
-      <Pressable onPress={onClose} style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.45)', justifyContent: 'flex-end' }}>
-        <Pressable onPress={() => {}} style={{ backgroundColor: colors.surface || '#fff', borderTopLeftRadius: 18, borderTopRightRadius: 18, paddingTop: 10, paddingBottom: 24 }}>
-          {title ? <Text style={{ textAlign: 'center', fontSize: 13, fontWeight: '700', color: colors.textSecondary, paddingVertical: 8 }}>{title}</Text> : null}
-          {options.map((o) => (
-            <TouchableOpacity
-              key={o.key}
-              onPress={() => { onClose(); setTimeout(() => o.onPress && o.onPress(), 60); }}
-              style={{ paddingVertical: 15, paddingHorizontal: 22, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border }}
-              accessibilityRole="button"
-            >
-              <Text style={{ fontSize: 16, fontWeight: o.destructive ? '700' : '600', color: o.destructive ? (colors.error || '#EF4444') : colors.text, textAlign: 'center' }}>{o.label}</Text>
-            </TouchableOpacity>
-          ))}
-        </Pressable>
-      </Pressable>
-    </Modal>
+    <Sheet visible={!!visible} onClose={onClose} subtitle={title || undefined}>
+      <ActionList items={items} onDone={onClose} separators />
+      {cancel ? (
+        <View style={{ paddingHorizontal: 16, paddingTop: 8 }}>
+          <TouchableOpacity
+            onPress={() => { onClose(); setTimeout(() => cancel.onPress && cancel.onPress(), 60); }}
+            style={{ height: 48, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: overlayColors(colors, colors.background === '#000000').neutralButton }}
+            accessibilityRole="button"
+            accessibilityLabel={cancel.label}
+          >
+            <Text style={{ fontSize: 16, fontWeight: '600', color: colors.text }}>{cancel.label}</Text>
+          </TouchableOpacity>
+        </View>
+      ) : null}
+    </Sheet>
   );
 }
 
@@ -641,7 +654,7 @@ export default function StickerPicker({ onSelect, onClose, colors, t, userEmail,
   }, []);
 
   return (
-    <View style={{ height: 340 + _bi, paddingBottom: _bi, backgroundColor: colors.surface, borderTopWidth: 1, borderTopColor: colors.border }}>
+    <View style={{ height: 340 + _bi, paddingBottom: _bi, backgroundColor: colors.surface, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border, ...(Platform.OS === 'web' ? { borderTopLeftRadius: Overlay.cardRadius, borderTopRightRadius: Overlay.cardRadius, overflow: 'hidden' } : null) }}>
       <StickerMaker
         visible={!!editorUri}
         sourceUri={editorUri}

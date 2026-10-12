@@ -36,12 +36,12 @@ const AC = '#111111'; // brand accent
 // Each glyph is a single stroked icon drawn on a 96×96 canvas, centered inside
 // the gradient halo. Kept minimal + line-based for a clean, modern Apple/Linear
 // feel rather than busy clip-art.
-function Glyph({ kind, color }) {
+function Glyph({ kind, color, size = 96 }) {
   const s = { stroke: color, strokeWidth: 4, strokeLinecap: 'round', strokeLinejoin: 'round', fill: 'none' };
   switch (kind) {
     case 'feed':
       return (
-        <Svg width={96} height={96} viewBox="0 0 96 96">
+        <Svg width={size} height={size} viewBox="0 0 96 96">
           <Rect x={20} y={18} width={56} height={60} rx={10} {...s} />
           <Line x1={32} y1={34} x2={64} y2={34} {...s} />
           <Line x1={32} y1={46} x2={64} y2={46} {...s} />
@@ -50,28 +50,28 @@ function Glyph({ kind, color }) {
       );
     case 'contacts':
       return (
-        <Svg width={96} height={96} viewBox="0 0 96 96">
+        <Svg width={size} height={size} viewBox="0 0 96 96">
           <Circle cx={48} cy={38} r={13} {...s} />
           <Path d="M26 74 C26 60 38 54 48 54 C58 54 70 60 70 74" {...s} />
         </Svg>
       );
     case 'meetings':
       return (
-        <Svg width={96} height={96} viewBox="0 0 96 96">
+        <Svg width={size} height={size} viewBox="0 0 96 96">
           <Rect x={18} y={30} width={42} height={36} rx={8} {...s} />
           <Path d="M60 44 L78 34 L78 62 L60 52 Z" {...s} />
         </Svg>
       );
     case 'marketplace':
       return (
-        <Svg width={96} height={96} viewBox="0 0 96 96">
+        <Svg width={size} height={size} viewBox="0 0 96 96">
           <Path d="M24 34 L72 34 L68 70 C67.5 73 65 75 62 75 L34 75 C31 75 28.5 73 28 70 Z" {...s} />
           <Path d="M36 34 C36 24 42 20 48 20 C54 20 60 24 60 34" {...s} />
         </Svg>
       );
     case 'bots':
       return (
-        <Svg width={96} height={96} viewBox="0 0 96 96">
+        <Svg width={size} height={size} viewBox="0 0 96 96">
           <Rect x={24} y={34} width={48} height={36} rx={10} {...s} />
           <Line x1={48} y1={22} x2={48} y2={34} {...s} />
           <Circle cx={48} cy={20} r={3.5} fill={color} />
@@ -81,13 +81,13 @@ function Glyph({ kind, color }) {
       );
     case 'files':
       return (
-        <Svg width={96} height={96} viewBox="0 0 96 96">
+        <Svg width={size} height={size} viewBox="0 0 96 96">
           <Path d="M22 30 C22 26 25 23 29 23 L42 23 L50 31 L67 31 C71 31 74 34 74 38 L74 66 C74 70 71 73 67 73 L29 73 C25 73 22 70 22 66 Z" {...s} />
         </Svg>
       );
     case 'photos':
       return (
-        <Svg width={96} height={96} viewBox="0 0 96 96">
+        <Svg width={size} height={size} viewBox="0 0 96 96">
           <Rect x={20} y={26} width={56} height={44} rx={9} {...s} />
           <Circle cx={36} cy={42} r={6} {...s} />
           <Path d="M24 64 L44 48 L58 60 L66 54 L72 60" {...s} />
@@ -95,14 +95,14 @@ function Glyph({ kind, color }) {
       );
     case 'notifications':
       return (
-        <Svg width={96} height={96} viewBox="0 0 96 96">
+        <Svg width={size} height={size} viewBox="0 0 96 96">
           <Path d="M34 44 C34 33 40 26 48 26 C56 26 62 33 62 44 C62 58 68 62 68 62 L28 62 C28 62 34 58 34 44 Z" {...s} />
           <Path d="M42 68 C42 72 45 74 48 74 C51 74 54 72 54 68" {...s} />
         </Svg>
       );
     case 'lives':
       return (
-        <Svg width={96} height={96} viewBox="0 0 96 96">
+        <Svg width={size} height={size} viewBox="0 0 96 96">
           <Circle cx={48} cy={48} r={10} {...s} />
           <Path d="M30 30 C20 40 20 56 30 66" {...s} />
           <Path d="M66 30 C76 40 76 56 66 66" {...s} />
@@ -110,14 +110,14 @@ function Glyph({ kind, color }) {
       );
     case 'search':
       return (
-        <Svg width={96} height={96} viewBox="0 0 96 96">
+        <Svg width={size} height={size} viewBox="0 0 96 96">
           <Circle cx={44} cy={44} r={20} {...s} />
           <Line x1={59} y1={59} x2={72} y2={72} {...s} />
         </Svg>
       );
     case 'tasks':
       return (
-        <Svg width={96} height={96} viewBox="0 0 96 96">
+        <Svg width={size} height={size} viewBox="0 0 96 96">
           <Rect x={22} y={22} width={52} height={52} rx={12} {...s} />
           <Path d="M36 48 L45 57 L62 38" {...s} />
         </Svg>
@@ -125,7 +125,7 @@ function Glyph({ kind, color }) {
     case 'chat':
     default:
       return (
-        <Svg width={96} height={96} viewBox="0 0 96 96">
+        <Svg width={size} height={size} viewBox="0 0 96 96">
           <Path d="M22 38 C22 30 28 24 36 24 L60 24 C68 24 74 30 74 38 L74 54 C74 62 68 68 60 68 L40 68 L28 78 L30 68 C25 67 22 62 22 56 Z" {...s} />
           <Circle cx={40} cy={46} r={3.5} fill={color} />
           <Circle cx={48} cy={46} r={3.5} fill={color} />
@@ -183,54 +183,35 @@ export default function ScreenEmptyState({
   const ink = A === colors.primary ? (colors.onPrimary || '#fff') : '#fff';
 
   const fade = useRef(new Animated.Value(0)).current;
-  const slide = useRef(new Animated.Value(16)).current;
+  const slide = useRef(new Animated.Value(12)).current;
   const scale = useRef(new Animated.Value(0.92)).current;
-  const float = useRef(new Animated.Value(0)).current;
 
+  // [2026-10-12 empty-state system] Calm entrance only — the endless float
+  // loop + gradient halo were dropped for the shared premium look (soft
+  // neutral circle + ink glyph, same as EmptyStateCard).
   useEffect(() => {
     Animated.parallel([
-      Animated.timing(fade, { toValue: 1, duration: 420, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
-      Animated.timing(slide, { toValue: 0, duration: 480, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
-      Animated.spring(scale, { toValue: 1, friction: 7, tension: 80, useNativeDriver: true }),
+      Animated.timing(fade, { toValue: 1, duration: 320, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
+      Animated.timing(slide, { toValue: 0, duration: 360, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
+      Animated.spring(scale, { toValue: 1, friction: 7, tension: 90, useNativeDriver: true }),
     ]).start();
-    const loop = Animated.loop(
-      Animated.sequence([
-        Animated.timing(float, { toValue: 1, duration: 2400, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
-        Animated.timing(float, { toValue: 0, duration: 2400, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
-      ])
-    );
-    loop.start();
-    return () => loop.stop();
-  }, [fade, slide, scale, float]);
+  }, [fade, slide, scale]);
 
-  const translateY = float.interpolate({ inputRange: [0, 1], outputRange: [0, -8] });
-  const haloSize = compact ? 120 : 148;
+  const circle = compact ? 72 : 88;
+  // Default ink → neutral gray circle; a caller accent (tasks group ink…)
+  // tints the circle softly instead.
+  const circleBg = (A === colors.primary || A === AC) ? (colors.surfaceVariant || '#F0F1F3') : A + '1A';
 
   return (
     <Animated.View style={[styles.wrapBase, compact ? styles.wrapCompact : styles.wrapFull, { opacity: fade, transform: [{ translateY: slide }] }, style]}>
-      {/* Illustration: gradient halo + floating glyph */}
-      <Animated.View style={{ transform: [{ translateY }, { scale }] }}>
-        <View style={{ width: haloSize, height: haloSize, alignItems: 'center', justifyContent: 'center' }}>
-          <Svg width={haloSize} height={haloSize} viewBox="0 0 148 148" style={StyleSheet.absoluteFill}>
-            <Defs>
-              <RadialGradient id="halo" cx="50%" cy="46%" r="55%">
-                <Stop offset="0" stopColor={A} stopOpacity={0.20} />
-                <Stop offset="0.7" stopColor={A} stopOpacity={0.07} />
-                <Stop offset="1" stopColor={A} stopOpacity={0} />
-              </RadialGradient>
-              <LinearGradient id="ring" x1="0" y1="0" x2="1" y2="1">
-                <Stop offset="0" stopColor={A} stopOpacity={0.9} />
-                <Stop offset="1" stopColor={A} stopOpacity={0.4} />
-              </LinearGradient>
-            </Defs>
-            <Circle cx={74} cy={70} r={70} fill="url(#halo)" />
-            <Circle cx={74} cy={70} r={46} fill={colors.surface} opacity={0.0} />
-          </Svg>
-          <Glyph kind={kind} color={A} />
+      {/* Soft circle + glyph */}
+      <Animated.View style={{ transform: [{ scale }] }}>
+        <View style={{ width: circle, height: circle, borderRadius: circle / 2, backgroundColor: circleBg, alignItems: 'center', justifyContent: 'center' }}>
+          <Glyph kind={kind} color={A} size={Math.round(circle * 0.55)} />
         </View>
       </Animated.View>
 
-      {!!title && <Text style={[styles.title, { color: colors.text }]}>{title}</Text>}
+      {!!title && <Text accessibilityRole="header" style={[styles.title, { color: colors.text }]}>{title}</Text>}
       {!!subtitle && <Text style={[styles.subtitle, { color: colors.textSecondary }]}>{subtitle}</Text>}
 
       {!!cta && (
@@ -240,7 +221,7 @@ export default function ScreenEmptyState({
           onPress={cta.onPress}
           accessibilityRole="button"
           accessibilityLabel={cta.label}
-          style={[styles.cta, { backgroundColor: A }, Shadow.purpleGlow]}
+          style={[styles.cta, { backgroundColor: A }]}
         >
           {!!cta.icon && <View style={{ marginRight: 8 }}><TipIcon name={cta.icon} color={ink} /></View>}
           <Text style={[styles.ctaText, { color: ink }]}>{cta.label}</Text>
@@ -249,7 +230,7 @@ export default function ScreenEmptyState({
 
       {!!secondary && (
         <TouchableOpacity activeOpacity={0.7} onPress={secondary.onPress} style={styles.secondary}>
-          <Text style={[styles.secondaryText, { color: A }]}>{secondary.label}</Text>
+          <Text style={[styles.secondaryText, { color: A === colors.primary ? colors.text : A }]}>{secondary.label}</Text>
         </TouchableOpacity>
       )}
 
@@ -288,16 +269,18 @@ const styles = StyleSheet.create({
   wrapCompact: Platform.OS === 'web'
     ? { flexGrow: 0, flexShrink: 0, flexBasis: 'auto', paddingVertical: 24 }
     : { flex: 0, paddingVertical: 24 },
-  title: { fontSize: FontSize.title, fontWeight: '800', marginTop: Spacing.lg, textAlign: 'center', letterSpacing: -0.3 },
-  subtitle: { fontSize: FontSize.base, lineHeight: 21, marginTop: Spacing.sm, textAlign: 'center', maxWidth: 320 },
+  // [2026-10-12 empty-state system] fixed scale shared with EmptyStateCard:
+  // title 18/700, body 14/20, 46pt pill CTA.
+  title: { fontSize: 18, fontWeight: '700', lineHeight: 23, marginTop: 18, textAlign: 'center', letterSpacing: -0.2 },
+  subtitle: { fontSize: 14, lineHeight: 20, marginTop: 6, textAlign: 'center', maxWidth: 320 },
   cta: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
-    marginTop: Spacing.xl, paddingHorizontal: 24, paddingVertical: 13,
+    marginTop: 22, paddingHorizontal: 24, minHeight: 46,
     borderRadius: BorderRadius.full,
   },
-  ctaText: { color: '#fff', fontSize: FontSize.lg, fontWeight: '700', letterSpacing: 0.2 },
-  secondary: { marginTop: Spacing.md, paddingVertical: 8, paddingHorizontal: 12 },
-  secondaryText: { fontSize: FontSize.base, fontWeight: '600' },
+  ctaText: { color: '#fff', fontSize: 15, fontWeight: '600' },
+  secondary: { marginTop: 8, minHeight: 44, justifyContent: 'center', paddingHorizontal: 12 },
+  secondaryText: { fontSize: 14, fontWeight: '600' },
   tips: {
     marginTop: Spacing.xxl, width: '100%', maxWidth: 380,
     borderRadius: BorderRadius.xl, borderWidth: StyleSheet.hairlineWidth, overflow: 'hidden',

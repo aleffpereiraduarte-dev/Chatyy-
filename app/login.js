@@ -1946,7 +1946,9 @@ export default function LoginScreen() {
           accessibilityLabel={label}
           accessibilityState={{ disabled: !!busy || off, busy: !!busy }}
           style={({ pressed }) => [s.igPrimaryBtn, {
-            marginTop: 0, height: 54, borderRadius: 14,
+            // [2026-10-12 first-run polish] 50pt — one CTA height across
+            // login / signup / first-run (Apple large button).
+            marginTop: 0, height: 50, borderRadius: 14,
             backgroundColor: off ? colors.border : colors.primary,
             opacity: pressed && !off ? 0.9 : 1,
           }, off && Platform.select({
@@ -2250,7 +2252,7 @@ export default function LoginScreen() {
         <TextInput
           ref={passwordRef}
           style={[s.igInput, {
-            height: 56, borderRadius: 14, fontSize: 17,
+            height: 52, borderRadius: 14, fontSize: 17,
             backgroundColor: colors.surfaceVariant,
             borderWidth: focused === 'pass' || error ? 1.5 : 1,
             borderColor: error ? colors.error : (focused === 'pass' ? colors.text : colors.authInputBorder),
@@ -2389,7 +2391,9 @@ export default function LoginScreen() {
                                   <Animated.View
                                     key={i}
                                     style={{
-                                      width: 42, height: 52, borderRadius: 12,
+                                      // [2026-10-12 first-run polish] never wider than the
+                                      // card on 320pt phones (6 boxes + 5 gaps).
+                                      width: Math.min(46, Math.floor((Math.min(width, 450) - 48 - 40) / 6)), height: 54, borderRadius: 12,
                                       borderWidth: _focused ? 2 : 1.5,
                                       borderColor: _otpBorder,
                                       backgroundColor: _otpBg,
@@ -2481,34 +2485,14 @@ export default function LoginScreen() {
                             </View>
                           )}
 
-                          <TouchableOpacity
-                            style={[s.primaryBtn, {
-                              backgroundColor: colors.primary,
-                              opacity: phoneVerifying ? 0.7 : (
-                                phoneRequiresLock
-                                  ? (phoneLockPin.length < 4 ? 0.5 : 1)
-                                  : (phoneOtp.join('').length !== 6 ? 0.5 : 1)
-                              ),
-                              width: '100%', alignSelf: 'stretch',
-                              alignItems: 'center', justifyContent: 'center',
-                            }]}
-                            onPress={handlePhoneVerifyOtp}
-                            disabled={phoneVerifying || (
-                              phoneRequiresLock
-                                ? (phoneLockPin.length < 4)
-                                : (phoneOtp.join('').length !== 6)
-                            )}
-                            activeOpacity={0.85}
-                          >
-                            {phoneVerifying ? (
-                              <View style={s.loadingBtnContent}>
-                                <DotLoader color={colors.onPrimary || '#fff'} />
-                                <Text style={[s.primaryBtnText, { marginLeft: 10, color: colors.onPrimary || '#fff' }]}>{t('login.phoneVerify')}</Text>
-                              </View>
-                            ) : (
-                              <Text style={[s.primaryBtnText, { color: colors.onPrimary || '#fff' }]}>{phoneRequiresLock ? (t('login.phoneLockPinSubmit') || 'Confirmar PIN') : t('login.phoneVerify')}</Text>
-                            )}
-                          </TouchableOpacity>
+                          {/* [2026-10-12 first-run polish] same CTA as the other login
+                              steps (50pt, disabled = neutral fill, DotLoader). */}
+                          {renderPrimary({
+                            label: phoneRequiresLock ? (t('login.phoneLockPinSubmit') || 'Confirmar PIN') : t('login.phoneVerify'),
+                            onPress: handlePhoneVerifyOtp,
+                            busy: phoneVerifying,
+                            disabled: phoneRequiresLock ? (phoneLockPin.length < 4) : (phoneOtp.join('').length !== 6),
+                          })}
 
                           {/* (generic "Código enviado por WhatsApp e SMS" row removed —
                               it was false on the Firebase SMS-only path; the header
@@ -3416,7 +3400,7 @@ const s = StyleSheet.create({
      toggles via state (RN can't smoothly animate border color natively, so
      simple swap is the canonical choice). */
   igInput: {
-    height: 54, borderRadius: 12, borderWidth: 1, paddingHorizontal: 16,
+    height: 52, borderRadius: 14, borderWidth: 1, paddingHorizontal: 16,
     fontSize: 15, fontWeight: '400',
     ...Platform.select({ web: { outlineStyle: 'none', transition: 'box-shadow 140ms ease, border-color 140ms ease' }, default: {} }),
   },
@@ -3435,11 +3419,13 @@ const s = StyleSheet.create({
     ...Platform.select({
       web: {
         cursor: 'pointer',
-        boxShadow: '0 8px 22px rgba(17, 17, 17,0.35), 0 2px 6px rgba(17, 17, 17,0.20)',
-        transition: 'transform 140ms ease, box-shadow 140ms ease',
+        // [2026-10-12 first-run polish] quieter lift (was a 0.35 glow that
+        // read heavy on the white auth canvas).
+        boxShadow: '0 1px 2px rgba(0,0,0,0.10), 0 6px 16px rgba(0,0,0,0.12)',
+        transition: 'transform 140ms ease, box-shadow 140ms ease, background-color 140ms ease',
       },
-      ios: { shadowColor: '#111111', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.35, shadowRadius: 14 },
-      android: { elevation: 6 },
+      ios: { shadowColor: '#000000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.14, shadowRadius: 10 },
+      android: { elevation: 2 },
     }),
   },
   igPrimaryBtnText: { color: '#fff', fontSize: 16, fontWeight: '700', letterSpacing: 0.2 },

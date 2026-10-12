@@ -14,6 +14,7 @@ import { IconArrowLeft, IconSearch, IconX, IconUsers, IconCheck, IconPlus } from
 import AvatarCircle from './AvatarCircle';
 import { Image as ExpoImage } from 'expo-image';
 import Svg, { Path, Circle as SvgCircle } from 'react-native-svg';
+import { safeAlert as _sharedSafeAlert } from '../services/alerts';
 
 const ACCENT = '#111111';
 const isWeb = Platform.OS === 'web';
@@ -27,14 +28,8 @@ function IconCamera({ size = 24, color = '#666' }) {
   );
 }
 
-function safeAlert(title, message, buttons) {
-  if (Platform.OS === 'web') {
-    if (buttons?.length) {
-      const ok = buttons.find(b => b.style !== 'cancel');
-      if (ok?.onPress && window.confirm(`${title}\n${message || ''}`)) ok.onPress();
-    } else { try { window.alert(message || title); } catch {} }
-  } else { Alert.alert(title, message, buttons); }
-}
+// [2026-10-12 overlays] cópia local → services/alerts (web = diálogo estilizado do app).
+function safeAlert(title, message, buttons) { _sharedSafeAlert(title, message, buttons); }
 
 export default function CreateGroupFlow({ visible, onClose, onCreated, mode = 'group' }) {
   const { colors, isDark } = useTheme();

@@ -91,7 +91,7 @@ const LiveCommentInput = forwardRef(function LiveCommentInput({
             style={[styles.actionPill, { backgroundColor: brandAccent }]}
             activeOpacity={0.85}
             accessibilityRole="button"
-            accessibilityLabel={a11yLabels.send || 'Send'}
+            accessibilityLabel={a11yLabels.send || 'Enviar'}
           >
             <IconSend size={15} color="#fff" />
           </TouchableOpacity>
@@ -103,7 +103,7 @@ const LiveCommentInput = forwardRef(function LiveCommentInput({
             style={[styles.actionPill, styles.heartPill]}
             activeOpacity={0.7}
             accessibilityRole="button"
-            accessibilityLabel={a11yLabels.like || 'Like'}
+            accessibilityLabel={a11yLabels.like || 'Curtir'}
           >
             <IconHeart size={16} color="#000" />
           </TouchableOpacity>
@@ -118,7 +118,7 @@ const LiveCommentInput = forwardRef(function LiveCommentInput({
           style={styles.giftBtn}
           activeOpacity={0.75}
           accessibilityRole="button"
-          accessibilityLabel={a11yLabels.gift || 'Send gift'}
+          accessibilityLabel={a11yLabels.gift || 'Enviar presente'}
         >
           <IconGiftBox size={22} color="#fff" />
         </TouchableOpacity>

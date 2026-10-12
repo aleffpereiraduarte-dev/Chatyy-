@@ -21,6 +21,7 @@ import PressableScale from '../PressableScale';
 import { isReduceMotionEnabled } from '../reducedMotion';
 import { useLanguageOptional } from '../../context/LanguageContext';
 import AttachSheetRecentStrip, { recentStripSupported } from './AttachSheetRecentStrip';
+import { Overlay, overlayColors } from '../../constants/theme';
 
 let Rea = null;
 let GH = null;
@@ -190,12 +191,12 @@ export default function AttachSheet({ visible, onClose, onPick, colors, items, o
         <A.View
           onLayout={onSheetLayout}
           style={[styles.sheet, {
-            backgroundColor: isDarkColors(colors) ? '#1c1c1e' : '#ffffff',
+            backgroundColor: overlayColors(colors, isDarkColors(colors)).sheetBg,
             paddingBottom: Math.max(insets.bottom, 12) + 12,
           }, sheetStyle]}
         >
           <View style={styles.grabZone}>
-            <View style={[styles.handle, { backgroundColor: isDarkColors(colors) ? 'rgba(255,255,255,0.22)' : 'rgba(0,0,0,0.16)' }]} />
+            <View style={[styles.handle, { backgroundColor: overlayColors(colors, isDarkColors(colors)).handle }]} />
           </View>
           {showRecent ? (
             <AttachSheetRecentStrip
@@ -230,16 +231,16 @@ export default function AttachSheet({ visible, onClose, onPick, colors, items, o
 
 const styles = StyleSheet.create({
   fullscreen: { ...StyleSheet.absoluteFillObject, zIndex: 9998 },
-  backdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.38)' },
+  backdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: `rgba(0,0,0,${Overlay.backdrop})` }, // [2026-10-12 overlays] tokens únicos
   sheet: {
     position: 'absolute', left: 0, right: 0, bottom: 0,
-    borderTopLeftRadius: 24, borderTopRightRadius: 24,
+    borderTopLeftRadius: Overlay.sheetRadius, borderTopRightRadius: Overlay.sheetRadius,
     alignItems: 'center',
     shadowColor: '#000', shadowOffset: { width: 0, height: -2 }, shadowOpacity: 0.10, shadowRadius: 20,
     elevation: 24,
   },
-  grabZone: { alignSelf: 'stretch', alignItems: 'center', paddingTop: 8, paddingBottom: 18 },
-  handle: { width: 36, height: 5, borderRadius: 2.5 },
+  grabZone: { alignSelf: 'stretch', alignItems: 'center', paddingTop: Overlay.handle.marginTop, paddingBottom: 18 },
+  handle: { width: Overlay.handle.width, height: Overlay.handle.height, borderRadius: Overlay.handle.radius },
   grid: { flexDirection: 'row', flexWrap: 'wrap' },
   item: { alignItems: 'center', paddingVertical: 6, marginBottom: 10 },
   iconCircle: { width: 60, height: 60, borderRadius: 30, borderWidth: StyleSheet.hairlineWidth, alignItems: 'center', justifyContent: 'center', marginBottom: 8 },

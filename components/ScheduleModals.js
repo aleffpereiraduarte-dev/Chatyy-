@@ -3,7 +3,7 @@ import {
   View, Text, TouchableOpacity, Modal, Pressable, TextInput,
   ScrollView, StyleSheet, Platform,
 } from 'react-native';
-import { Shadow } from '../constants/theme';
+import { Shadow, Overlay, OverlayShadow, overlayColors } from '../constants/theme';
 import { IconClock, IconX, IconTrash } from './Icons';
 
 /**
@@ -136,17 +136,25 @@ export function WheelDateTimePicker({ colors, t, onChange, initial }) {
 /**
  * Schedule Toast - shows confirmation after scheduling
  */
+// [2026-10-12 overlays] Mesmo visual do Toast global (components/ui/Toast):
+// pílula escura raio 14, texto 14/500, sombra única. É o toast genérico do
+// chat ("Copiado", "Agendada para…", modo lento) — o relógio fixo saiu.
 export function ScheduleToast({ visible, message, colors }) {
   if (!visible || !message) return null;
+  const isDark = !!colors && (colors.background === '#000000' || colors.background === '#000');
+  const oc = overlayColors(colors, isDark);
   return (
-    <View style={{
-      position: 'absolute', bottom: 80, alignSelf: 'center',
-      backgroundColor: colors.surface, borderRadius: 20, paddingHorizontal: 16, paddingVertical: 10,
-      flexDirection: 'row', alignItems: 'center', gap: 8,
-      borderWidth: 1, borderColor: colors.border, ...Shadow.md,
-    }}>
-      <IconClock size={14} color={colors.primary} />
-      <Text style={{ fontSize: 13, color: colors.text }}>{message}</Text>
+    <View
+      pointerEvents="none"
+      accessibilityLiveRegion="polite"
+      style={[{
+        position: 'absolute', bottom: 80, alignSelf: 'center', maxWidth: Overlay.toastMaxWidth,
+        backgroundColor: oc.toastBg, borderRadius: Overlay.toastRadius,
+        paddingHorizontal: 16, paddingVertical: 12, minHeight: 44,
+        flexDirection: 'row', alignItems: 'center', gap: 8,
+      }, OverlayShadow]}
+    >
+      <Text style={{ fontSize: 14, fontWeight: '500', color: oc.toastText }}>{message}</Text>
     </View>
   );
 }

@@ -1999,7 +1999,7 @@ export default function LiveViewerScreen() {
                   Animated.timing(toastAnim, { toValue: 0, duration: 250, useNativeDriver: true }),
                 ]).start();
               } catch (e) {
-                try { require('react-native').Alert.alert(t('live.aoVivo') || 'AO VIVO', (t('live.requestApproved') || 'O host aceitou seu pedido') + (Platform.OS === 'web' ? ' (camera permission?)' : '')); } catch {}
+                try { require('react-native').Alert.alert(t('live.aoVivo') || 'AO VIVO', (t('live.requestApproved') || 'O host aceitou seu pedido') ); } catch {}
               }
             })();
           }
@@ -2113,7 +2113,7 @@ export default function LiveViewerScreen() {
       // viewer sees a real error instead of looping forever on a dead session.
       attempt += 1;
       if (attempt > 5) {
-        setError(t('live.connectionFailed') || 'Connection failed');
+        setError(t('live.connectionFailed') || 'Falha na conexão');
         return;
       }
       const delay = Math.min(1000 * attempt, 8000);
@@ -2450,7 +2450,7 @@ export default function LiveViewerScreen() {
   const handleOffer = useCallback(async (msg) => {
     if (!msg.sdp) return;
     if (!RTC_PeerConnection) {
-      setError(t('live.connectionFailed') || 'WebRTC not supported on this device');
+      setError(t('live.connectionFailed') || 'WebRTC não é compatível com este dispositivo');
       return;
     }
 
@@ -2511,7 +2511,7 @@ export default function LiveViewerScreen() {
       }
     } catch (err) {
       console.error('Failed to handle offer:', err);
-      setError(t('live.connectionFailed') || 'Connection failed');
+      setError(t('live.connectionFailed') || 'Falha na conexão');
     }
   }, [paramSessionId, t]);
 
@@ -2584,7 +2584,7 @@ export default function LiveViewerScreen() {
     }
     lastChatSendAtRef.current = now;
 
-    const senderName = user?.name || user?.email?.split('@')[0] || 'You';
+    const senderName = user?.name || user?.email?.split('@')[0] || 'Você';
     const entry = new Animated.Value(0);
     const msgId = String(++chatIdRef.current);
 
@@ -3458,7 +3458,7 @@ export default function LiveViewerScreen() {
           <TouchableOpacity
             onPress={handleShare}
             style={[styles.endedBtn, styles.endedBtnGhost]}
-            accessibilityLabel={t('live.share') || 'Share'}
+            accessibilityLabel={t('live.share') || 'Compartilhar'}
             accessibilityRole="button"
             activeOpacity={0.85}
           >
@@ -3559,8 +3559,8 @@ export default function LiveViewerScreen() {
           accessibilityRole="button"
           activeOpacity={0.7}
         >
-          <IconRotateCcw size={14} color="rgba(255,255,255,0.65)" />
-          <Text style={styles.endedBackLinkText}>{t('live.replay') || 'Voltar'}</Text>
+          {/* [2026-10-12 live-polish] o link só volta — o rótulo dizia "Replay". */}
+          <Text style={styles.endedBackLinkText}>{t('common.back') || 'Voltar'}</Text>
         </TouchableOpacity>
 
         {/* Suggestion footer — drives the viewer back to the live tab so they
@@ -4330,7 +4330,7 @@ export default function LiveViewerScreen() {
             brandAccent={brandAccent}
             a11yLabels={{
               comment: t('live.placeholderComment') || 'Comment',
-              send: t('live.sendMessage') || 'Send',
+              send: t('live.sendMessage') || 'Enviar',
               like: t('live.like') || 'Curtir',
               gift: t('live.sendGift') || 'Enviar presente',
             }}
@@ -4755,9 +4755,12 @@ const styles = StyleSheet.create({
     minWidth: 140,
     justifyContent: 'center',
   },
+  // [2026-10-12 live-polish] o #111 sumia no fundo preto → vidro claro com
+  // contorno (P&B), texto/ícone brancos continuam legíveis.
   endedBtnPrimary: {
-    backgroundColor: ACCENT,
-    ...(Platform.OS === 'web' ? { boxShadow: '0 6px 20px rgba(17, 17, 17,0.55)' } : {}),
+    backgroundColor: 'rgba(255,255,255,0.22)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.55)',
   },
   endedBtnGhost: {
     backgroundColor: 'rgba(255,255,255,0.1)',
@@ -4788,9 +4791,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 18,
     paddingVertical: 8,
     borderRadius: 18,
-    backgroundColor: 'rgba(17, 17, 17,0.18)',
+    backgroundColor: 'rgba(255,255,255,0.06)',
     borderWidth: 1,
-    borderColor: 'rgba(17, 17, 17,0.35)',
+    borderColor: 'rgba(255,255,255,0.18)',
   },
   endedDiscoverText: {
     color: '#F1F3F5',

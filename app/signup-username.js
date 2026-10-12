@@ -73,7 +73,6 @@ export default function SignupUsername() {
   // Soft breathing halo behind the orb — parity with signup-phone so the
   // username path feels equally alive. 4s cycle, opacity + scale only on the
   // halos (the orb itself stays still). Calm, not flashy.
-  const heroPulse = useRef(new Animated.Value(0)).current;
   useEffect(() => {
     if (step === 'done') return;
     heroScale.setValue(0.6);
@@ -81,17 +80,6 @@ export default function SignupUsername() {
     heroIconFade.setValue(0);
     Animated.timing(heroIconFade, { toValue: 1, duration: 280, easing: Easing.bezier(0.23, 1, 0.32, 1), useNativeDriver: true }).start();
   }, [step, heroScale, heroIconFade]);
-  useEffect(() => {
-    if (step === 'done') return;
-    const loop = Animated.loop(
-      Animated.sequence([
-        Animated.timing(heroPulse, { toValue: 1, duration: 2000, easing: Easing.inOut(Easing.quad), useNativeDriver: true }),
-        Animated.timing(heroPulse, { toValue: 0, duration: 2000, easing: Easing.inOut(Easing.quad), useNativeDriver: true }),
-      ])
-    );
-    loop.start();
-    return () => loop.stop();
-  }, [step, heroPulse]);
 
   useEffect(() => {
     if (step === 'done') {
@@ -212,88 +200,70 @@ export default function SignupUsername() {
   }[step];
 
   const _hairline = colors.border;
+  const _ctaOff = !busy && (
+    (step === 'handle' && (!username || usernameAvailable !== true || password.length < 8)) ||
+    (step === 'name' && (name || '').trim().length < 2)
+  );
 
   return (
     <KeyboardAvoidingView
       style={[styles.container, { backgroundColor: colors.background }]}
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
     >
-      {/* Header — back button + brand */}
-      <View style={[styles.header, { paddingTop: Math.max(insets.top, Platform.OS === 'android' ? (require('react-native').StatusBar.currentHeight || 24) : 44) + 8 }]}>
-        <TouchableOpacity onPress={goBack} style={styles.backBtn} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }} accessibilityLabel={t('common.back') || 'Voltar'}>
+      {/* [2026-10-12 first-run polish] One compact top row — back · progress ·
+          n/2 — identical to /signup-phone (was a centered "Chatyy" wordmark
+          + a separate full-bleed bar), constrained to the 520pt column. */}
+      <View style={[styles.header, { paddingTop: Math.max(insets.top, Platform.OS === 'android' ? (require('react-native').StatusBar.currentHeight || 24) : (Platform.OS === 'web' ? 12 : 44)) + 6 }]}>
+        <TouchableOpacity onPress={goBack} style={styles.backBtn} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }} accessibilityRole="button" accessibilityLabel={t('common.back') || 'Voltar'}>
           <IconArrowLeft size={22} color={colors.text} />
         </TouchableOpacity>
-        <Text style={[styles.brand, { color: colors.text }]}>Chatyy</Text>
-        <View style={{ width: 32 }} />
-      </View>
-
-      {/* Segmented progress bar — 2 segments (handle, name) */}
-      {step !== 'done' && (
-        <View style={{ height: 3, flexDirection: 'row', gap: 2, marginHorizontal: 24, marginTop: 4, marginBottom: 18 }}>
-          {(() => {
-            const order = ['handle', 'name'];
-            const cur = order.indexOf(step);
-            return order.map((s, idx) => (
+        {step !== 'done' ? (() => {
+          const order = ['handle', 'name'];
+          const cur = order.indexOf(step);
+          return (
+            <>
               <View
-                key={s}
-                style={{
-                  flex: 1,
-                  height: 3,
-                  borderRadius: 2,
-                  backgroundColor: idx <= cur ? colors.primary : (colors.border),
-                }}
-              />
-            ));
-          })()}
-        </View>
-      )}
+                style={{ flex: 1, height: 4, flexDirection: 'row', gap: 4 }}
+                accessibilityRole="progressbar"
+                accessibilityLabel={t('onb.stepLabel', { n: cur + 1, total: order.length })}
+                accessibilityValue={{ min: 1, max: order.length, now: cur + 1 }}
+              >
+                {order.map((k, idx) => (
+                  <View key={k} style={{ flex: 1, height: 4, borderRadius: 2, backgroundColor: idx <= cur ? colors.text : colors.border }} />
+                ))}
+              </View>
+              <Text style={{ minWidth: 28, textAlign: 'right', fontSize: 13, fontWeight: '700', color: colors.textSecondary, fontVariant: ['tabular-nums'] }}>
+                {`${cur + 1}/${order.length}`}
+              </Text>
+            </>
+          );
+        })() : <View style={{ flex: 1 }} />}
+      </View>
 
       <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
         <Animated.View style={{ opacity: fade, transform: [{ translateY: slide }, { scale: stepScale }], width: '100%' }}>
 
           {/* Hero orb — same pattern as signup-phone, only on the handle step
               where the user is being introduced to the @ choice. */}
+          {/* [2026-10-12 first-run polish] Compact ink tile (signup-phone
+              parity) replaces the 200pt breathing purple orb. */}
           {step === 'handle' && (
-            <View style={{ alignItems: 'center', marginBottom: 18 }}>
-              <Animated.View style={{
-                width: 200, height: 200, alignItems: 'center', justifyContent: 'center',
-                transform: [{ scale: heroScale }],
-              }}>
-                {/* Outer halo — biggest, softest, breathes with heroPulse. */}
-                <Animated.View style={{
-                  position: 'absolute', width: 200, height: 200, borderRadius: 100,
-                  backgroundColor: `${colors.primary}1A`,
-                  opacity: heroPulse.interpolate({ inputRange: [0, 1], outputRange: [0.45, 0.85] }),
-                  transform: [{ scale: heroPulse.interpolate({ inputRange: [0, 1], outputRange: [0.95, 1.08] }) }],
-                }} />
-                {/* Middle halo — primary brand glow, in-phase with the breath. */}
-                <Animated.View style={{
-                  position: 'absolute', width: 148, height: 148, borderRadius: 74,
-                  backgroundColor: `${colors.primary}26`,
-                  opacity: heroPulse.interpolate({ inputRange: [0, 1], outputRange: [0.5, 0.9] }),
-                  transform: [{ scale: heroPulse.interpolate({ inputRange: [0, 1], outputRange: [1, 1.06] }) }],
-                }} />
-                <View style={{
-                  width: 92, height: 92, borderRadius: 46,
-                  backgroundColor: colors.primary,
-                  alignItems: 'center', justifyContent: 'center',
-                  shadowColor: colors.primary,
-                  shadowOffset: { width: 0, height: 12 },
-                  shadowOpacity: 0.42, shadowRadius: 26, elevation: 12,
-                  ...(Platform.OS === 'web' ? { boxShadow: `0 14px 36px ${colors.primary}66, inset 0 1px 0 rgba(255,255,255,0.18)` } : {}),
-                }}>
-                  <Animated.View style={{ opacity: heroIconFade, transform: [{ scale: heroIconFade.interpolate({ inputRange: [0, 1], outputRange: [0.7, 1] }) }] }}>
-                    <IconAtSign size={42} color={colors.onPrimary || '#fff'} />
-                  </Animated.View>
-                </View>
+            <Animated.View style={{
+              width: 52, height: 52, borderRadius: 16, marginBottom: 20,
+              backgroundColor: colors.text,
+              alignItems: 'center', justifyContent: 'center',
+              transform: [{ scale: heroScale }],
+            }}>
+              <Animated.View style={{ opacity: heroIconFade }}>
+                <IconAtSign size={24} color={colors.background} />
               </Animated.View>
-            </View>
+            </Animated.View>
           )}
 
           {step !== 'done' && (
             <>
-              <Text style={[styles.title, { color: colors.text, textAlign: 'center' }]}>{headerTitle}</Text>
-              <Text style={[styles.sub, { color: colors.textSecondary, textAlign: 'center' }]}>{headerSub}</Text>
+              <Text style={[styles.title, { color: colors.text }]} accessibilityRole="header">{headerTitle}</Text>
+              <Text style={[styles.sub, { color: colors.textSecondary }]}>{headerSub}</Text>
             </>
           )}
 
@@ -313,10 +283,11 @@ export default function SignupUsername() {
                     borderBottomWidth: _bottomWidth,
                     borderBottomColor: _bottomColor,
                   }}>
-                    <IconAtSign size={18} color={_isFocused ? colors.primary : colors.textSecondary} />
+                    {/* flexShrink 0: on narrow web widths the glyph was squeezed to a dot. */}
+                    <View style={{ flexShrink: 0 }}><IconAtSign size={18} color={_isFocused ? colors.primary : colors.textSecondary} /></View>
                     <TextInput
                       style={[{
-                        flex: 1, fontSize: 16, paddingVertical: 14, color: colors.text,
+                        flex: 1, minWidth: 0, fontSize: 16, paddingVertical: 14, color: colors.text,
                       }, Platform.OS === 'web' && { outlineStyle: 'none' }]}
                       placeholder={t('signupUsername.handlePlaceholder')}
                       placeholderTextColor={colors.textTertiary}
@@ -329,7 +300,7 @@ export default function SignupUsername() {
                       onFocus={() => setFocused('handle')}
                       onBlur={() => setFocused('')}
                     />
-                    <Text style={{ fontSize: 13, color: colors.textSecondary }}>@chatyy.com.br</Text>
+                    <Text style={{ fontSize: 13, color: colors.textSecondary, flexShrink: 0 }}>@chatyy.com.br</Text>
                     {usernameChecking ? (
                       <ActivityIndicator size="small" color={colors.primary} style={{ marginLeft: 6 }} />
                     ) : usernameAvailable === true ? (
@@ -529,13 +500,8 @@ export default function SignupUsername() {
           <TouchableOpacity
             style={[
               styles.cta,
-              {
-                backgroundColor: colors.primary,
-                opacity: busy ? 0.7 : (
-                  (step === 'handle' && (!username || usernameAvailable !== true || password.length < 8)) ||
-                  (step === 'name' && (name || '').trim().length < 2)
-                ) ? 0.5 : 1,
-              },
+              // [2026-10-12 first-run polish] disabled = neutral fill (login parity).
+              _ctaOff ? [{ backgroundColor: colors.border }, styles.ctaFlat] : { backgroundColor: colors.primary, opacity: busy ? 0.85 : 1 },
             ]}
             disabled={busy ||
               (step === 'handle' && (!username || usernameAvailable !== true || password.length < 8)) ||
@@ -550,10 +516,10 @@ export default function SignupUsername() {
               <ActivityIndicator color={colors.onPrimary || '#fff'} />
             ) : (
               <>
-                <Text style={[styles.ctaText, { color: colors.onPrimary || '#fff' }]}>
+                <Text style={[styles.ctaText, { color: _ctaOff ? colors.textTertiary : (colors.onPrimary || '#fff') }]}>
                   {step === 'name' ? (t('signupPhone.finish') || 'Criar conta') : (t('common.next') || 'Próximo')}
                 </Text>
-                {step !== 'name' && <IconArrowRight size={18} color={colors.onPrimary || '#fff'} style={{ marginLeft: 8 }} />}
+                {step !== 'name' && <IconArrowRight size={18} color={_ctaOff ? colors.textTertiary : (colors.onPrimary || '#fff')} style={{ marginLeft: 8 }} />}
               </>
             )}
           </TouchableOpacity>
@@ -565,34 +531,41 @@ export default function SignupUsername() {
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingTop: Platform.OS === 'ios' ? 56 : androidTopInset(24), paddingBottom: 12 },
+  // [2026-10-12 first-run polish] same column / type scale as /signup-phone.
+  header: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 12, paddingTop: Platform.OS === 'ios' ? 56 : androidTopInset(24), paddingBottom: 6, width: '100%', maxWidth: 520, alignSelf: 'center' },
   backBtn: { width: 32, height: 32, alignItems: 'center', justifyContent: 'center' },
-  brand: { fontSize: 22, fontWeight: '800', letterSpacing: -0.5 },
-  scroll: { paddingHorizontal: 22, paddingBottom: 24 },
-  title: { fontSize: 30, fontWeight: '800', letterSpacing: -0.8, marginBottom: 8, lineHeight: 36 },
-  sub: { fontSize: 15, lineHeight: 22, fontWeight: '400' },
+  scroll: { paddingHorizontal: 24, paddingTop: 12, paddingBottom: 32, width: '100%', maxWidth: 520, alignSelf: 'center' },
+  title: { fontSize: 32, fontWeight: '800', letterSpacing: -0.9, marginBottom: 10, lineHeight: 38 },
+  sub: { fontSize: 16, lineHeight: 23, fontWeight: '400' },
   hint: { fontSize: 12, marginTop: 12, lineHeight: 17 },
   // Sticky footer — NOT position:absolute, otherwise on web/Android it
   // anchors to the screen and the keyboard occludes it. KeyboardAvoidingView
   // (padding behavior on iOS) pushes the whole flex column up so the footer
   // floats just above the keyboard naturally.
   footer: {
+    width: '100%', maxWidth: 520, alignSelf: 'center',
     paddingHorizontal: 22, paddingTop: 12,
     paddingBottom: Platform.OS === 'ios' ? 30 : androidBottomInset(16),
-    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopWidth: 0,
     backgroundColor: 'transparent',
   },
   cta: {
-    height: 52, borderRadius: 12,
+    height: 50, borderRadius: 14,
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
     ...Platform.select({
       web: {
-        boxShadow: '0 10px 26px rgba(17, 17, 17,0.35), 0 2px 6px rgba(17, 17, 17,0.20)',
-        transition: 'transform 140ms ease, box-shadow 140ms ease',
+        boxShadow: '0 1px 2px rgba(0,0,0,0.10), 0 6px 16px rgba(0,0,0,0.12)',
+        transition: 'transform 140ms ease, box-shadow 140ms ease, background-color 140ms ease',
       },
-      ios: { shadowColor: '#111111', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.35, shadowRadius: 14 },
-      android: { elevation: 6 },
+      ios: { shadowColor: '#000000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.14, shadowRadius: 10 },
+      android: { elevation: 2 },
     }),
   },
+  ctaFlat: Platform.select({
+    web: { boxShadow: 'none', cursor: 'default' },
+    ios: { shadowOpacity: 0 },
+    android: { elevation: 0 },
+    default: {},
+  }),
   ctaText: { color: '#fff', fontSize: 16, fontWeight: '700', letterSpacing: 0.2 },
 });

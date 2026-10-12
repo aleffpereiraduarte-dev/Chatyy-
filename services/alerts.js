@@ -4,6 +4,7 @@
 // window.confirm/alert on web for environments where native Alert.alert
 // shim doesn't render a styled modal.
 import { Alert, Platform } from 'react-native';
+import { hasDialogHost, showDialog } from '../utils/confirm';
 
 /**
  * Cross-platform alert. Use exactly like `Alert.alert`:
@@ -31,6 +32,13 @@ export function safeAlert(title, message, buttons) {
   // destrutivas (Esvaziar Lixeira, Excluir permanente Drive, deletar fotos,
   // deletar backup) NÃO disparavam nada no navegador. Vai DIRETO pro
   // window.confirm/alert no web.
+  // [2026-10-12 overlays] Web: diálogo ESTILIZADO do app (ConfirmProvider →
+  // utils/confirm) em vez do window.confirm cinza do navegador. Mesma
+  // semântica: cancel → onPress do botão 'cancel'; senão o botão escolhido
+  // (agora também suporta 3+ botões). Sem host montado → window.confirm abaixo.
+  if (hasDialogHost()) {
+    try { showDialog(title || '', message || '', buttons && buttons.length ? buttons : undefined); return; } catch {}
+  }
   if (typeof window !== 'undefined') {
     const text = (title ? title + (message ? '\n\n' + message : '') : message) || '';
     if (!buttons || buttons.length <= 1) {

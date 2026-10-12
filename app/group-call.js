@@ -364,7 +364,7 @@ export default function GroupCallScreen() {
       if (!data || data.call_id !== (roomName || room)) return;
       Alert.alert(
         t('call.group.removed') || 'Participante removido',
-        t('call.group.removedByHost') || 'O host removeu você da chamada.',
+        t('call.group.removedByHost') || 'O anfitrião removeu você da chamada.',
         [{ text: 'OK', onPress: () => router.back() }]
       );
     }) || (() => {}));
@@ -828,7 +828,7 @@ export default function GroupCallScreen() {
     if (/PARTICIPANT_REMOVED/i.test(name)) {
       Alert.alert(
         t('call.group.removed') || 'Participante removido',
-        t('call.group.removedByHost') || 'O host removeu você da chamada.',
+        t('call.group.removedByHost') || 'O anfitrião removeu você da chamada.',
         [{ text: 'OK', onPress: () => router.back() }]
       );
       return;
@@ -927,7 +927,7 @@ export default function GroupCallScreen() {
             )}
           </View>
           <Text style={styles.gridName} numberOfLines={1}>
-            {(p.email || '').toLowerCase() === myEmail ? (t('call.group.you') || 'You') : p.name}
+            {(p.email || '').toLowerCase() === myEmail ? (t('call.group.you') || 'Você') : p.name}
           </Text>
         </Pressable>
       );
@@ -1035,7 +1035,7 @@ export default function GroupCallScreen() {
         <View style={styles.recDot} />
         <Text style={styles.recPillText}>REC</Text>
       </Animated.View>
-      <Text style={styles.recBannerText}>{t('call.group.recordedBadge') || 'Being recorded'}</Text>
+      <Text style={styles.recBannerText}>{t('call.group.recordedBadge') || 'Sendo gravada'}</Text>
     </View>
   ) : null;
 
@@ -1064,13 +1064,13 @@ export default function GroupCallScreen() {
               <Svg width={10} height={10} viewBox="0 0 24 24" fill="none">
                 <SvgPath d="M5 11h14a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2zM7 11V7a5 5 0 0 1 10 0v4" stroke="#fff" strokeWidth={2} strokeLinejoin="round" />
               </Svg>
-              <Text style={styles.lockChipText}>{t('call.group.lockOn') || 'Locked'}</Text>
+              <Text style={styles.lockChipText}>{t('call.group.lockOn') || 'Trancada'}</Text>
             </View>
           )}
           <TouchableOpacity
             onPress={openAddPerson}
             style={styles.headerIconBtn}
-            accessibilityLabel={t('call.addParticipant') || 'Add'}
+            accessibilityLabel={t('call.addParticipant') || 'Adicionar'}
           >
             <Svg width={18} height={18} viewBox="0 0 24 24" fill="none">
               <SvgPath d="M19 8v6M16 11h6M9 11a4 4 0 100-8 4 4 0 000 8zM3 21a6 6 0 0112 0" stroke="#fff" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
@@ -1080,7 +1080,7 @@ export default function GroupCallScreen() {
             <TouchableOpacity
               onPress={() => setShowHostControls(true)}
               style={[styles.headerIconBtn, recording && styles.headerIconBtnRec]}
-              accessibilityLabel={t('call.group.hostControls') || 'Host controls'}
+              accessibilityLabel={t('call.group.hostControls') || 'Controles do anfitrião'}
             >
               <Svg width={18} height={18} viewBox="0 0 24 24" fill="none">
                 <SvgPath d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" stroke="#fff" strokeWidth={2} strokeLinejoin="round" />
@@ -1108,7 +1108,7 @@ export default function GroupCallScreen() {
       <TouchableOpacity
         onPress={() => setShowReactionBar(s => !s)}
         style={styles.reactionToggle}
-        accessibilityLabel={t('call.reactions') || 'Reactions'}
+        accessibilityLabel={t('call.reactions') || 'Reações'}
       >
         <IconSmile size={22} color="#fff" />
       </TouchableOpacity>

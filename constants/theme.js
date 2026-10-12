@@ -766,6 +766,84 @@ export const AnimTiming = {
   overshoot: 'cubic-bezier(0.34, 1.56, 0.64, 1)',
 };
 
+// ── Overlay design system (2026-10-12 "deixar mais bonito") ────────────
+// UMA linguagem visual p/ tudo que flutua: bottom sheets, action sheets,
+// menus de long-press, popovers de desktop, diálogos de confirmação e toasts.
+// Primitivos que consomem isto: components/ui/Sheet.js, components/ui/ActionList.js,
+// components/ui/Toast.js, components/ConfirmModal.js. Referência = iOS 17
+// (UISheetPresentationController / UIAlertController) + WhatsApp.
+// Mapa completo das diferenças antigas: /root/overlays-mapa.md.
+export const Overlay = {
+  backdrop: 0.4,              // escurecida sólida (Android/web); iOS = BlurBackdrop
+  sheetRadius: 20,            // = sheetCornerRadius do sheet NATIVO (NativeSheet)
+  dialogRadius: 16,
+  menuRadius: 12,             // popover/menu de desktop
+  cardRadius: 16,             // menus flutuantes (long-press) e toasts grandes
+  handle: { width: 36, height: 5, radius: 2.5, marginTop: 8, marginBottom: 6 },
+  maxHeightRatio: 0.9,        // sheet nunca passa de 90% da altura
+  sheetMaxWidth: 560,         // web largo: sheet vira cartão centralizado
+  padX: 16,
+  // Linhas de ação (ActionList)
+  rowHeight: 52,
+  rowGap: 16,
+  iconSize: 22,
+  labelSize: 16,
+  labelWeight: '400',
+  // Menu compacto de desktop (clique direito)
+  menuRowHeight: 36,
+  menuIconSize: 18,
+  menuLabelSize: 14,
+  // Cabeçalho de sheet
+  titleSize: 17,
+  titleWeight: '600',
+  subtitleSize: 13,
+  // Diálogo
+  dialogMaxWidth: 320,
+  dialogButtonHeight: 44,
+  // Toast
+  toastRadius: 14,
+  toastMinHeight: 48,
+  toastMaxWidth: 520,
+  // Movimento — mola criticamente amortecida (sem "pulo"), saída curta.
+  spring: { stiffness: 320, damping: 32, mass: 1 },
+  enterMs: 200,
+  exitMs: 180,
+};
+
+// Cores do overlay a partir do tema ativo (claro/escuro). Superfície ELEVADA no
+// escuro (#1c1c1e, igual iOS) — o #0b0b0b da lista sumia contra o backdrop.
+export function overlayColors(colors, isDark) {
+  const c = colors || {};
+  return {
+    sheetBg: isDark ? '#1c1c1e' : '#ffffff',
+    menuBg: isDark ? '#2c2c2e' : '#ffffff',
+    handle: isDark ? 'rgba(235,235,245,0.30)' : 'rgba(60,60,67,0.30)',
+    separator: isDark ? 'rgba(255,255,255,0.10)' : 'rgba(60,60,67,0.14)',
+    groupGap: isDark ? '#000000' : '#f2f2f7',
+    pressed: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)',
+    text: c.text || (isDark ? '#F5F5F7' : '#111111'),
+    textSecondary: c.textSecondary || (isDark ? '#8E8E93' : '#667781'),
+    icon: isDark ? '#AEAEB2' : '#54656F',
+    danger: isDark ? '#FF453A' : '#E5484D',
+    dangerTint: isDark ? 'rgba(255,69,58,0.16)' : 'rgba(229,72,77,0.10)',
+    neutralButton: isDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.06)',
+    primaryButton: isDark ? '#F5F5F7' : '#111111',
+    onPrimaryButton: isDark ? '#000000' : '#ffffff',
+    toastBg: isDark ? '#F5F5F7' : '#1F2124',
+    toastText: isDark ? '#000000' : '#F5F5F7',
+    toastAction: isDark ? '#000000' : '#ffffff',
+    toastActionBg: isDark ? 'rgba(0,0,0,0.08)' : 'rgba(255,255,255,0.14)',
+    border: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)',
+  };
+}
+
+// Sombra única de superfícies flutuantes (menus, diálogos, toasts).
+export const OverlayShadow = Platform.select({
+  web: { boxShadow: '0 12px 40px rgba(0,0,0,0.18), 0 2px 8px rgba(0,0,0,0.08)' },
+  ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 10 }, shadowOpacity: 0.18, shadowRadius: 24 },
+  default: { elevation: 16 },
+});
+
 // Grace period (ms) before the "Reconectando…" banner is shown after a WS
 // disconnect. Shared across the chat conversation screen and the chat list so
 // the banner appears/disappears at the same cadence everywhere — previously

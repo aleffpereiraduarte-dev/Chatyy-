@@ -28,6 +28,7 @@ import AvatarCircle from './AvatarCircle';
 import { IconPlus, IconLogout, IconCheck, IconX } from './Icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { USE_NATIVE_SHEETS, NativeSheet, nativeSheetBottomPad } from './NativeSheet'; // [2026-10-09 native-sheets]
+import { confirmAsync } from '../utils/confirm'; // [2026-10-12 overlays] diálogo estilizado no web
 
 export default function AccountSwitcherSheet({ visible, onClose }) {
   const router = useRouter();
@@ -69,7 +70,8 @@ export default function AccountSwitcherSheet({ visible, onClose }) {
     const title = t('account.removeTitle') || 'Desvincular conta';
     const msg = `${t('account.removeMessage') || 'Deseja desvincular a conta'} ${email}?`;
     if (Platform.OS === 'web') {
-      if (typeof window !== 'undefined' && window.confirm(`${title}\n\n${msg}`)) removeAccount(email);
+      confirmAsync({ title, message: msg, confirmLabel: t('account.remove') || 'Remover', cancelLabel: t('account.cancel') || 'Cancelar', destructive: true })
+        .then((ok) => { if (ok) removeAccount(email); });
     } else {
       Alert.alert(title, msg, [
         { text: t('account.cancel') || 'Cancelar', style: 'cancel' },

@@ -12,6 +12,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { IconArrowLeft, IconSearch, IconX } from './Icons';
 import AvatarCircle from './AvatarCircle';
 import Svg, { Path, Rect, Defs, LinearGradient as SvgLinearGradient, Stop } from 'react-native-svg';
+import { safeAlert as _sharedSafeAlert } from '../services/alerts';
 
 const ACCENT = '#111111';
 const isWeb = Platform.OS === 'web';
@@ -107,13 +108,8 @@ function IconHashtag({ size = 20, color = '#666' }) {
   );
 }
 
-function safeAlert(title, message) {
-  if (Platform.OS === 'web') {
-    try { window.alert(message || title); } catch {}
-  } else {
-    Alert.alert(title, message);
-  }
-}
+// [2026-10-12 overlays] cópia local → services/alerts (web = diálogo estilizado do app).
+function safeAlert(title, message, buttons) { _sharedSafeAlert(title, message, buttons); }
 
 export default function ChannelDiscoverModal({ visible, onClose, onJoined }) {
   const { colors, isDark } = useTheme();

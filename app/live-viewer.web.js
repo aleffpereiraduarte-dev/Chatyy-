@@ -33,7 +33,7 @@ import * as api from '../services/api';
 import { lkSync as _lkSync, withLiveKit as _withLiveKit } from '../services/lkLoader';
 let Room, RoomEvent, Track;
 function _bindLiveKit() { if (Room) return; const lk = _lkSync(); if (lk) ({ Room, RoomEvent, Track } = lk); }
-import { IconEye, IconSend, IconHeart } from '../components/Icons';
+import { IconEye, IconSend, IconHeart, IconVolumeX, IconChevronLeft, IconVideoOff, IconWifiOff } from '../components/Icons';
 // [multi-guest 2026-10-10] Palco multi-convidados também no web.
 import useLiveStage from '../hooks/useLiveStage';
 import LiveGuestStage from '../components/liveGuests/LiveGuestStage';
@@ -42,6 +42,8 @@ import LiveBattleStage from '../components/liveBattle/LiveBattleStage';
 import LiveBattleLayer from '../components/liveBattle/LiveBattleLayer';
 import { useLiveBattleController, useBattleSelector, selSplitVisible } from '../components/liveBattle/battleStore';
 import { useLanguage } from '../context/LanguageContext';
+import { useAuth } from '../context/AuthContext';
+import LiveFollowButton from '../components/live/LiveFollowButton';
 
 // [lives 2026-10-10] Interação no web: comentários em tempo real pelo hub WS
 // (sem polling), corações SVG animados por CSS (compositor do browser, sem
@@ -59,7 +61,10 @@ function ensureLiveCss() {
     const st = document.createElement('style');
     st.textContent = '@keyframes lvwFloat{0%{transform:translate(0,0) scale(.6);opacity:0}12%{opacity:1;transform:translate(0,-30px) scale(1.05)}100%{transform:translate(var(--dx),-340px) scale(.9);opacity:0}}'
       + '.lvw-heart{position:absolute;right:28px;bottom:96px;width:30px;height:30px;pointer-events:none;animation:lvwFloat 1.9s cubic-bezier(.2,.7,.3,1) forwards;will-change:transform,opacity;filter:drop-shadow(0 2px 6px rgba(0,0,0,.45))}'
-      + '@keyframes lvwIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}.lvw-c{animation:lvwIn .22s ease-out}';
+      + '@keyframes lvwIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}.lvw-c{animation:lvwIn .22s ease-out}'
+      // [2026-10-12 live-polish] anel "respirando" do conectando + entrada suave dos cartões.
+      + '@keyframes lvwRing{0%{transform:scale(1);opacity:.55}100%{transform:scale(1.55);opacity:0}}.lvw-ring{position:absolute;inset:0;border-radius:999px;border:2px solid rgba(255,255,255,.7);animation:lvwRing 1.6s ease-out infinite;pointer-events:none}'
+      + '.lvw-card{animation:lvwIn .32s cubic-bezier(.2,.7,.3,1)}';
     document.head.appendChild(st);
   } catch {}
 }
@@ -67,7 +72,6 @@ function ensureLiveCss() {
 // hls.js is loaded dynamically only when we need it (CF HLS pipeline). Keeps
 // the initial bundle smaller for LiveKit-only viewers.
 
-const BRAND = '#111111';
 
 function prettifyHandle(handle) {
   if (!handle) return '';
@@ -86,6 +90,7 @@ function LiveViewerWeb() {
   const params = useLocalSearchParams();
   const router = useRouter();
   const { t } = useLanguage();
+  const { user } = useAuth() || {};
   const sessionId = String(params.sessionId || params.id || '');
 
   // Pipeline state.
@@ -178,7 +183,7 @@ function LiveViewerWeb() {
   useEffect(() => {
     if (!sessionId) {
       setPhase('unavailable');
-      setErrorMsg('Sessão inválida');
+      setErrorMsg(t('liveWeb.invalidSession') || 'Sessão inválida');
       return undefined;
     }
 
@@ -231,20 +236,20 @@ function LiveViewerWeb() {
         // Pipeline known but no playable URL yet — surface "publisher missing"
         if (pipeline === 'cf_stream' && !hlsUrl) {
           setPhase('unavailable');
-          setErrorMsg('Aguardando o host publicar a transmissão...');
+          setErrorMsg(t('live.publisherMissing') || 'Aguardando o host publicar a transmissão...');
           return;
         }
 
         // Unknown / legacy_p2p — web has no P2P client; show fallback.
         setPhase('unavailable');
         setErrorMsg(pipeline === 'legacy_p2p'
-          ? 'Esta live usa um formato antigo (P2P) incompatível com o navegador. Abra no app.'
-          : 'Live indisponível');
+          ? (t('liveWeb.legacyP2p') || 'Esta live usa um formato antigo (P2P) incompatível com o navegador. Abra no app.')
+          : (t('liveWeb.tryLater') || 'Tente novamente em alguns instantes.'));
       } catch (e) {
         if (cancelled) return;
         console.warn('[live-viewer.web] discover failed:', e?.message || e);
         setPhase('unavailable');
-        setErrorMsg('Não foi possível carregar a live');
+        setErrorMsg(t('liveWeb.loadFailed') || 'Não foi possível carregar a live');
       }
     })();
 
@@ -357,7 +362,7 @@ function LiveViewerWeb() {
     } catch (e) {
       console.warn('[live-viewer.web] LK connect failed:', e?.message || e);
       setPhase('unavailable');
-      setErrorMsg('Não foi possível conectar à live');
+      setErrorMsg(t('liveWeb.connectFailed') || 'Não foi possível conectar à live');
     }
   }, [sessionId, muted]);
 
@@ -387,7 +392,7 @@ function LiveViewerWeb() {
         const Hls = mod.default || mod;
         if (!Hls.isSupported || !Hls.isSupported()) {
           setPhase('unavailable');
-          setErrorMsg('Navegador não suporta HLS');
+          setErrorMsg(t('liveWeb.hlsUnsupported') || 'Este navegador não consegue reproduzir a live');
           return;
         }
         const hls = new Hls({ enableWorker: true, lowLatencyMode: true });
@@ -414,7 +419,7 @@ function LiveViewerWeb() {
             try { hls.destroy(); } catch {}
             if (hlsInstanceRef.current === hls) hlsInstanceRef.current = null;
             setPhase('unavailable');
-            setErrorMsg('Erro de reprodução da live');
+            setErrorMsg(t('liveWeb.playbackError') || 'Erro de reprodução da live');
             return;
           }
           // Within budget — attempt the matching hls.js recovery.
@@ -428,20 +433,20 @@ function LiveViewerWeb() {
               try { hls.destroy(); } catch {}
               if (hlsInstanceRef.current === hls) hlsInstanceRef.current = null;
               setPhase('unavailable');
-              setErrorMsg('Erro de reprodução da live');
+              setErrorMsg(t('liveWeb.playbackError') || 'Erro de reprodução da live');
             }
           } catch (recErr) {
             console.warn('[live-viewer.web] HLS recovery threw:', recErr?.message || recErr);
             try { hls.destroy(); } catch {}
             if (hlsInstanceRef.current === hls) hlsInstanceRef.current = null;
             setPhase('unavailable');
-            setErrorMsg('Erro de reprodução da live');
+            setErrorMsg(t('liveWeb.playbackError') || 'Erro de reprodução da live');
           }
         });
       } catch (e) {
         console.warn('[live-viewer.web] hls.js import failed:', e?.message || e);
         setPhase('unavailable');
-        setErrorMsg('Não foi possível carregar o player de live');
+        setErrorMsg(t('liveWeb.playerLoadFailed') || 'Não foi possível carregar o player da live');
       }
     }, 0);
   }, [muted]);
@@ -621,39 +626,74 @@ function LiveViewerWeb() {
 
   // ─── Render branches ─────────────────────────────────────────────────
 
-  if (phase === 'ended') {
-    return (
-      <View style={styles.fullScreen}>
-        <View style={styles.card}>
-          <Text style={styles.cardTitle}>Esta live já terminou</Text>
-          <Text style={styles.cardSub}>
-            {host.name ? `${host.name} encerrou a transmissão.` : 'A transmissão foi encerrada.'}
-          </Text>
-          <Pressable onPress={handleBack} style={styles.primaryBtn}>
-            <Text style={styles.primaryBtnText}>Voltar</Text>
-          </Pressable>
-        </View>
+  // [2026-10-12 live-polish] Estados (encerrada / indisponível) no mesmo
+  // visual do app: fundo preto, avatar do host, CTA branco, link secundário.
+  const goDiscover = () => {
+    teardownLk();
+    teardownHls();
+    try { router.replace('/live-discover'); } catch { try { router.push('/live-discover'); } catch {} }
+  };
+  const renderAvatar = (size, dim) => (
+    <View style={[styles.avatarCircle, { width: size, height: size, borderRadius: size / 2 }, dim && { opacity: 0.55 }]}>
+      {host.avatar
+        ? React.createElement('img', {
+            src: host.avatar,
+            alt: host.name || '',
+            style: { width: size, height: size, borderRadius: size / 2, objectFit: 'cover', filter: dim ? 'grayscale(1)' : 'none' },
+          })
+        : <Text style={[styles.avatarInitial, { fontSize: Math.round(size * 0.4) }]}>{getInitial(host.name, host.email)}</Text>}
+    </View>
+  );
+  const renderStateCard = ({ Icon, title, body }) => (
+    <View style={styles.fullScreen}>
+      {React.createElement('div', { style: { position: 'absolute', inset: 0, pointerEvents: 'none', background: 'radial-gradient(120% 70% at 50% 0%, rgba(255,255,255,0.10) 0%, rgba(0,0,0,0) 60%)' } })}
+      <View style={styles.stateWrap}>
+        {React.createElement('div', { className: 'lvw-card', style: { display: 'flex', flexDirection: 'column', alignItems: 'center', width: '100%' } },
+          <View style={styles.stateMedia}>
+            {(host.avatar || host.name || host.email) ? renderAvatar(88, true) : (
+              <View style={styles.stateIconCircle}><Icon size={34} color="#fff" /></View>
+            )}
+            {(host.avatar || host.name || host.email) ? (
+              <View style={styles.stateIconBadge}><Icon size={14} color="#000" /></View>
+            ) : null}
+          </View>,
+          <Text key="t" style={styles.cardTitle}>{title}</Text>,
+          <Text key="b" style={styles.cardSub}>{body}</Text>,
+          <Pressable key="p" onPress={handleBack} style={({ hovered, pressed }) => [styles.primaryBtn, (hovered || pressed) && { opacity: 0.88 }]} accessibilityRole="button">
+            <Text style={styles.primaryBtnText}>{t('common.back') || 'Voltar'}</Text>
+          </Pressable>,
+          <Pressable key="s" onPress={goDiscover} style={({ hovered }) => [styles.ghostBtn, hovered && { opacity: 0.75 }]} accessibilityRole="button">
+            <Text style={styles.ghostBtnText}>{t('live.seeOtherLives') || 'Ver outras lives'}</Text>
+          </Pressable>,
+        )}
       </View>
-    );
+    </View>
+  );
+
+  if (phase === 'ended') {
+    ensureLiveCss();
+    return renderStateCard({
+      Icon: IconVideoOff,
+      title: t('liveWeb.endedTitle') || 'Esta live já terminou',
+      body: host.name
+        ? (t('liveWeb.endedByHost', { name: host.name }) || `${host.name} encerrou a transmissão.`)
+        : (t('liveWeb.endedGeneric') || 'A transmissão foi encerrada.'),
+    });
   }
 
   if (phase === 'unavailable') {
-    return (
-      <View style={styles.fullScreen}>
-        <View style={styles.card}>
-          <Text style={styles.cardTitle}>Live indisponível</Text>
-          <Text style={styles.cardSub}>{errorMsg || 'Tente novamente em alguns instantes.'}</Text>
-          <Pressable onPress={handleBack} style={styles.primaryBtn}>
-            <Text style={styles.primaryBtnText}>Voltar</Text>
-          </Pressable>
-        </View>
-      </View>
-    );
+    ensureLiveCss();
+    return renderStateCard({
+      Icon: IconWifiOff,
+      title: t('liveWeb.unavailableTitle') || 'Live indisponível',
+      body: errorMsg || t('liveWeb.tryLater') || 'Tente novamente em alguns instantes.',
+    });
   }
 
   // loading / livekit / hls — all share the player layout.
   const showLoading = phase === 'loading' || !connected;
   const hostLabel = host.name || (host.email ? prettifyHandle(host.email.split('@')[0]) : 'Live');
+  const fmtCount = (n) => (n >= 1000000 ? (Math.floor(n / 100000) / 10) + 'M' : n >= 1000 ? (Math.floor(n / 100) / 10) + 'K' : String(n));
 
   return (
     <View style={styles.fullScreen}>
@@ -691,40 +731,55 @@ function LiveViewerWeb() {
       ) : null}
       <LiveBattleLayer battle={battle} t={t} isHost={false} topInset={0} />
 
+      {/* [2026-10-12 live-polish] Degradês de leitura (topo + base) — o texto
+          branco fica legível em qualquer vídeo, sem faixa preta chapada. */}
+      {React.createElement('div', { style: { position: 'absolute', top: 0, left: 0, right: 0, height: 150, pointerEvents: 'none', zIndex: 4, background: 'linear-gradient(180deg, rgba(0,0,0,0.55) 0%, rgba(0,0,0,0.18) 60%, rgba(0,0,0,0) 100%)' } })}
+      {React.createElement('div', { style: { position: 'absolute', bottom: 0, left: 0, right: 0, height: '46%', pointerEvents: 'none', zIndex: 4, background: 'linear-gradient(0deg, rgba(0,0,0,0.72) 0%, rgba(0,0,0,0.35) 45%, rgba(0,0,0,0) 100%)' } })}
+
       {/* Top overlay: host pill + viewer count */}
       <View style={styles.topRow} pointerEvents="box-none">
         <View style={styles.hostPill}>
-          <View style={styles.avatarCircle}>
-            {host.avatar
-              ? React.createElement('img', {
-                  src: host.avatar,
-                  alt: hostLabel,
-                  style: { width: 28, height: 28, borderRadius: 14, objectFit: 'cover' },
-                })
-              : <Text style={styles.avatarInitial}>{getInitial(host.name, host.email)}</Text>}
-          </View>
-          <View style={{ marginLeft: 8 }}>
+          {renderAvatar(32, false)}
+          <View style={styles.hostMeta}>
             <Text style={styles.hostName} numberOfLines={1}>{hostLabel}</Text>
-            <View style={styles.liveBadge}>
-              <View style={styles.liveDot} />
-              <Text style={styles.liveText}>{t('live.live') || 'AO VIVO'}</Text>
-            </View>
+            {likesTotal > 0 ? (
+              <View style={styles.hostSubRow}>
+                <IconHeart size={11} color="rgba(255,255,255,0.75)" />
+                <Text style={styles.hostSubText}>{fmtCount(likesTotal)}</Text>
+              </View>
+            ) : null}
           </View>
+          {/* [2026-10-12 live-polish] Seguir direto do vídeo (igual ao app). */}
+          {host.email && user?.email ? (
+            <View style={styles.followWrap}>
+              <LiveFollowButton hostEmail={host.email} myEmail={user?.email} />
+            </View>
+          ) : null}
         </View>
 
-        <View style={styles.viewerPill}>
-          <IconEye size={16} color="#fff" />
-          <Text style={styles.viewerCount}>{viewerCount}</Text>
-          {likesTotal > 0 ? <IconHeart size={14} color="#fff" style={{ marginLeft: 8 }} /> : null}
-          {likesTotal > 0 ? <Text style={styles.viewerCount}>{likesTotal >= 1000 ? (Math.floor(likesTotal / 100) / 10) + 'K' : likesTotal}</Text> : null}
+        <View style={styles.topRight}>
+          <View style={styles.liveBadge}>
+            <View style={styles.liveDot} />
+            <Text style={styles.liveText}>{t('live.live') || 'AO VIVO'}</Text>
+          </View>
+          <View style={styles.viewerPill}>
+            <IconEye size={14} color="#fff" />
+            <Text style={styles.viewerCount}>{fmtCount(viewerCount)}</Text>
+          </View>
         </View>
       </View>
 
       {/* Loading / connecting overlay */}
       {showLoading && (
         <View style={styles.loadingOverlay} pointerEvents="none">
-          <ActivityIndicator size="large" color={BRAND} />
-          <Text style={styles.loadingText}>Conectando à live...</Text>
+          <View style={styles.loadingAvatarWrap}>
+            {React.createElement('div', { className: 'lvw-ring' })}
+            {renderAvatar(76, false)}
+          </View>
+          <View style={styles.loadingRow}>
+            <ActivityIndicator size="small" color="#fff" />
+            <Text style={styles.loadingText}>{t('liveWeb.connecting') || 'Conectando à live…'}</Text>
+          </View>
         </View>
       )}
 
@@ -740,7 +795,7 @@ function LiveViewerWeb() {
       {pinned ? (
         <View style={styles.pinned} pointerEvents="none">
           <Text style={styles.pinnedText} numberOfLines={2}>
-            {pinned.name ? <Text style={styles.commentName}>{pinned.name}  </Text> : null}
+            {pinned.name ? <Text style={styles.pinnedName}>{pinned.name}  </Text> : null}
             {pinned.text}
           </Text>
         </View>
@@ -770,21 +825,21 @@ function LiveViewerWeb() {
       {liveActive ? (
         <View style={styles.composerRow}>
           <Pressable onPress={handleBack} style={styles.roundBtn} accessibilityLabel={t('common.back') || 'Voltar'}>
-            <Text style={styles.backChevron}>‹</Text>
+            <IconChevronLeft size={22} color="#fff" />
           </Pressable>
           <TextInput
             value={draft}
             onChangeText={setDraft}
             onSubmitEditing={sendComment}
             placeholder={t('live.commentPlaceholder') || ''}
-            placeholderTextColor="rgba(255,255,255,0.55)"
+            placeholderTextColor="rgba(255,255,255,0.6)"
             maxLength={300}
             style={styles.composerInput}
             returnKeyType="send"
           />
           {draft.trim() ? (
-            <Pressable onPress={sendComment} style={styles.roundBtn} accessibilityLabel={t('live.send') || 'Enviar'}>
-              <IconSend size={18} color="#fff" />
+            <Pressable onPress={sendComment} style={[styles.roundBtn, styles.sendBtn]} accessibilityLabel={t('live.send') || 'Enviar'}>
+              <IconSend size={18} color="#000" />
             </Pressable>
           ) : (
             <Pressable onPress={sendHeart} style={[styles.roundBtn, styles.heartBtn]} accessibilityLabel={t('live.react')}>
@@ -796,20 +851,31 @@ function LiveViewerWeb() {
 
       {/* Tap-to-unmute prompt (only while muted and connected) */}
       {muted && connected && (
-        <Pressable onPress={handleUnmute} style={styles.unmuteBanner}>
-          <Text style={styles.unmuteText}>Toque para ativar o som</Text>
+        <Pressable onPress={handleUnmute} style={styles.unmuteBanner} accessibilityRole="button">
+          <IconVolumeX size={16} color="#000" />
+          <Text style={styles.unmuteText}>{t('liveWeb.tapUnmute') || 'Toque para ativar o som'}</Text>
         </Pressable>
       )}
 
       {/* Back button (bottom-left) — a barra de comentários já tem voltar */}
       {!liveActive && (
-      <Pressable onPress={handleBack} style={styles.backBtn}>
-        <Text style={styles.backBtnText}>‹ {t('common.back') || 'Voltar'}</Text>
+      <Pressable onPress={handleBack} style={styles.backBtn} accessibilityRole="button" accessibilityLabel={t('common.back') || 'Voltar'}>
+        <IconChevronLeft size={18} color="#fff" />
+        <Text style={styles.backBtnText}>{t('common.back') || 'Voltar'}</Text>
       </Pressable>
       )}
     </View>
   );
 }
+
+const GLASS = {
+  backgroundColor: 'rgba(0,0,0,0.38)',
+  borderWidth: StyleSheet.hairlineWidth,
+  borderColor: 'rgba(255,255,255,0.16)',
+  backdropFilter: 'blur(14px) saturate(140%)',
+  WebkitBackdropFilter: 'blur(14px) saturate(140%)',
+};
+const TEXT_SHADOW = { textShadowColor: 'rgba(0,0,0,0.55)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 3 };
 
 const styles = StyleSheet.create({
   fullScreen: {
@@ -819,66 +885,119 @@ const styles = StyleSheet.create({
     position: 'relative',
     overflow: 'hidden',
   },
-  card: {
-    margin: 'auto',
-    padding: 24,
-    maxWidth: 380,
-    width: '90%',
-    backgroundColor: '#111',
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: '#222',
+  stateWrap: {
+    flex: 1,
     alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 28,
+    maxWidth: 420,
+    width: '100%',
+    alignSelf: 'center',
+  },
+  stateMedia: {
+    width: 88,
+    height: 88,
+    marginBottom: 22,
+    position: 'relative',
+  },
+  stateIconCircle: {
+    width: 88,
+    height: 88,
+    borderRadius: 44,
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.14)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  stateIconBadge: {
+    position: 'absolute',
+    right: -2,
+    bottom: -2,
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    backgroundColor: '#fff',
+    borderWidth: 3,
+    borderColor: '#000',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   cardTitle: {
     color: '#fff',
-    fontSize: 20,
-    fontWeight: '700',
+    fontSize: 22,
+    fontWeight: '800',
+    letterSpacing: -0.3,
     marginBottom: 8,
     textAlign: 'center',
   },
   cardSub: {
-    color: '#aaa',
-    fontSize: 14,
+    color: 'rgba(255,255,255,0.62)',
+    fontSize: 15,
     textAlign: 'center',
-    marginBottom: 20,
-    lineHeight: 20,
+    marginBottom: 28,
+    lineHeight: 21,
+    maxWidth: 320,
   },
   primaryBtn: {
-    backgroundColor: BRAND,
-    paddingHorizontal: 24,
-    paddingVertical: 12,
+    backgroundColor: '#fff',
+    height: 48,
+    minWidth: 220,
+    paddingHorizontal: 28,
     borderRadius: 999,
+    alignItems: 'center',
+    justifyContent: 'center',
+    cursor: 'pointer',
   },
   primaryBtnText: {
-    color: '#fff',
-    fontWeight: '600',
+    color: '#000',
+    fontWeight: '700',
     fontSize: 15,
+  },
+  ghostBtn: {
+    marginTop: 10,
+    height: 44,
+    paddingHorizontal: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+    cursor: 'pointer',
+  },
+  ghostBtnText: {
+    color: 'rgba(255,255,255,0.8)',
+    fontWeight: '600',
+    fontSize: 14,
   },
   topRow: {
     position: 'absolute',
-    top: 16,
-    left: 16,
-    right: 16,
+    top: 14,
+    left: 12,
+    right: 12,
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'flex-start',
+    alignItems: 'center',
     zIndex: 10,
   },
   hostPill: {
+    ...GLASS,
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'rgba(0,0,0,0.55)',
-    paddingVertical: 6,
-    paddingHorizontal: 10,
+    paddingVertical: 4,
+    paddingLeft: 4,
+    paddingRight: 14,
     borderRadius: 999,
-    maxWidth: '70%',
+    maxWidth: '62%',
   },
+  hostMeta: { marginLeft: 8, flexShrink: 1, minWidth: 0 },
+  followWrap: { marginLeft: 10, marginRight: -6 },
+  hostSubRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 1 },
+  hostSubText: { color: 'rgba(255,255,255,0.75)', fontSize: 11, fontWeight: '600' },
   avatarCircle: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    backgroundColor: BRAND,
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#2a2a2a',
+    borderWidth: 1.5,
+    borderColor: 'rgba(255,255,255,0.9)',
     alignItems: 'center',
     justifyContent: 'center',
     overflow: 'hidden',
@@ -890,64 +1009,69 @@ const styles = StyleSheet.create({
   },
   hostName: {
     color: '#fff',
-    fontWeight: '600',
-    fontSize: 13,
+    fontWeight: '700',
+    fontSize: 14,
+    letterSpacing: -0.1,
   },
+  topRight: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   liveBadge: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginTop: 2,
+    backgroundColor: '#dc2626',
+    paddingHorizontal: 8,
+    height: 24,
+    borderRadius: 6,
   },
   liveDot: {
     width: 6,
     height: 6,
     borderRadius: 3,
     backgroundColor: '#fff',
-    marginRight: 4,
+    marginRight: 5,
   },
   liveText: {
     color: '#fff',
-    fontSize: 10,
+    fontSize: 11,
     fontWeight: '800',
-    letterSpacing: 1,
+    letterSpacing: 0.6,
   },
   commentsWrap: {
     position: 'absolute',
     left: 12,
     right: 88,
-    bottom: 84,
+    bottom: 80,
     zIndex: 9,
   },
   commentRow: {
     alignSelf: 'flex-start',
-    backgroundColor: 'rgba(0,0,0,0.42)',
+    backgroundColor: 'rgba(0,0,0,0.28)',
     borderRadius: 14,
     paddingVertical: 6,
     paddingHorizontal: 10,
     marginTop: 6,
     maxWidth: '100%',
   },
-  commentText: { color: '#fff', fontSize: 14, lineHeight: 19 },
-  commentName: { color: 'rgba(255,255,255,0.7)', fontWeight: '700', fontSize: 13 },
+  commentText: { color: '#fff', fontSize: 14, lineHeight: 19, ...TEXT_SHADOW },
+  commentName: { color: 'rgba(255,255,255,0.72)', fontWeight: '700', fontSize: 13, ...TEXT_SHADOW },
   pinned: {
     position: 'absolute',
-    top: 72,
-    left: 16,
-    right: 16,
-    backgroundColor: 'rgba(255,255,255,0.92)',
+    top: 64,
+    left: 12,
+    right: 12,
+    backgroundColor: 'rgba(255,255,255,0.94)',
     borderRadius: 14,
-    paddingVertical: 8,
+    paddingVertical: 9,
     paddingHorizontal: 12,
     zIndex: 10,
   },
   pinnedText: { color: '#000', fontSize: 13, fontWeight: '500' },
+  pinnedName: { color: '#000', fontWeight: '800', fontSize: 13 },
   notice: {
+    ...GLASS,
     position: 'absolute',
     top: '42%',
     alignSelf: 'center',
-    backgroundColor: 'rgba(0,0,0,0.78)',
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.18)',
+    backgroundColor: 'rgba(0,0,0,0.7)',
     borderRadius: 999,
     paddingVertical: 10,
     paddingHorizontal: 18,
@@ -958,92 +1082,103 @@ const styles = StyleSheet.create({
     position: 'absolute',
     left: 12,
     right: 12,
-    bottom: 18,
+    bottom: 16,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
     zIndex: 11,
   },
   composerInput: {
+    ...GLASS,
     flex: 1,
     height: 44,
     borderRadius: 22,
     paddingHorizontal: 16,
     color: '#fff',
     fontSize: 15,
-    backgroundColor: 'rgba(0,0,0,0.45)',
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.28)',
+    backgroundColor: 'rgba(255,255,255,0.14)',
     outlineStyle: 'none',
   },
   roundBtn: {
+    ...GLASS,
     width: 44,
     height: 44,
     borderRadius: 22,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: 'rgba(0,0,0,0.45)',
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.28)',
+    cursor: 'pointer',
   },
   heartBtn: { backgroundColor: '#fff', borderColor: '#fff' },
-  backChevron: { color: '#fff', fontSize: 26, lineHeight: 28, marginTop: -2 },
+  sendBtn: { backgroundColor: '#fff', borderColor: '#fff' },
   viewerPill: {
+    ...GLASS,
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'rgba(0,0,0,0.55)',
-    paddingVertical: 6,
-    paddingHorizontal: 10,
-    borderRadius: 999,
-  },
-  viewerEye: {
-    color: '#fff',
-    fontSize: 13,
-    marginRight: 4,
+    gap: 5,
+    height: 24,
+    paddingHorizontal: 9,
+    borderRadius: 6,
   },
   viewerCount: {
     color: '#fff',
-    fontSize: 13,
-    fontWeight: '600',
+    fontSize: 12,
+    fontWeight: '700',
+    fontVariant: ['tabular-nums'],
   },
   loadingOverlay: {
     position: 'absolute',
     inset: 0,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: 'rgba(0,0,0,0.4)',
+    backgroundColor: 'rgba(0,0,0,0.55)',
     zIndex: 5,
   },
+  loadingAvatarWrap: {
+    width: 76,
+    height: 76,
+    marginBottom: 22,
+    position: 'relative',
+  },
+  loadingRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   loadingText: {
-    color: '#fff',
-    marginTop: 12,
+    color: 'rgba(255,255,255,0.9)',
     fontSize: 14,
-    fontWeight: '500',
+    fontWeight: '600',
   },
   unmuteBanner: {
     position: 'absolute',
-    bottom: 140,
+    top: 64,
     alignSelf: 'center',
-    backgroundColor: BRAND,
-    paddingVertical: 10,
-    paddingHorizontal: 18,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: '#fff',
+    paddingVertical: 9,
+    paddingHorizontal: 16,
     borderRadius: 999,
     zIndex: 11,
+    cursor: 'pointer',
+    boxShadow: '0 6px 20px rgba(0,0,0,0.35)',
   },
   unmuteText: {
-    color: '#fff',
-    fontWeight: '600',
+    color: '#000',
+    fontWeight: '700',
     fontSize: 14,
   },
   backBtn: {
+    ...GLASS,
     position: 'absolute',
-    bottom: 24,
-    left: 16,
-    backgroundColor: 'rgba(0,0,0,0.55)',
-    paddingVertical: 8,
-    paddingHorizontal: 14,
+    bottom: 20,
+    left: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 2,
+    paddingVertical: 9,
+    paddingLeft: 10,
+    paddingRight: 16,
     borderRadius: 999,
     zIndex: 11,
+    cursor: 'pointer',
   },
   backBtnText: {
     color: '#fff',

@@ -18,21 +18,12 @@ import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import { ORIGIN_BASE, getAuthHeaders } from '../services/api'; // [2026-10-10] /api/rust/one só existe no US (edges devolviam o SPA)
 import { IconArrowLeft, IconTrash, IconSparkles } from '../components/Icons';
+import { safeAlert as _sharedSafeAlert } from '../services/alerts';
 
 const ACCENT = '#111111';
 
-function safeAlert(title, message, buttons) {
-  if (Platform.OS === 'web') {
-    if (buttons?.length) {
-      if (window.confirm(`${title}\n${message || ''}`)) {
-        const ok = buttons.find(b => b.style !== 'cancel');
-        ok?.onPress?.();
-      }
-    } else { window.alert(message || title); }
-  } else {
-    Alert.alert(title, message, buttons);
-  }
-}
+// [2026-10-12 overlays] cópia local → services/alerts (web = diálogo estilizado do app).
+function safeAlert(title, message, buttons) { _sharedSafeAlert(title, message, buttons); }
 
 // Soft purple orb for the empty state — keeps the same brand color but lets us
 // drop the bare-icon look. The radial gradient gives it some depth without

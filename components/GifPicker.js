@@ -1,11 +1,12 @@
 import React, { useState, useEffect, useRef, useCallback, memo } from 'react';
 import {
-  View, Text, TouchableOpacity, TextInput, FlatList, Platform, ActivityIndicator,
+  View, Text, TouchableOpacity, TextInput, FlatList, Platform, ActivityIndicator, StyleSheet,
 } from 'react-native';
 import { IconX, IconSearch } from './Icons';
 import * as api from '../services/api';
 import { cacheMedia, getLocalUriSyncJs, preCacheUrls } from '../services/mediaCache';
 import useIsMounted from '../hooks/useIsMounted';
+import { Overlay } from '../constants/theme';
 
 let ExpoImage = null;
 try { ExpoImage = require('expo-image').Image; } catch {}
@@ -184,8 +185,9 @@ export default function GifPickerPanel({ onSelect, onClose, colors, t, bottomIns
   return (
     <View style={{
       height: 320 + _bi, paddingBottom: _bi, backgroundColor: colors.surface,
-      borderTopWidth: 1, borderTopColor: colors.border,
-      ...(Platform.OS === 'web' ? { borderTopLeftRadius: 16, borderTopRightRadius: 16 } : {}),
+      borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border,
+      // [2026-10-12 overlays] mesmo container do StickerPicker (tokens únicos)
+      ...(Platform.OS === 'web' ? { borderTopLeftRadius: Overlay.cardRadius, borderTopRightRadius: Overlay.cardRadius, overflow: 'hidden' } : {}),
     }}>
       {/* Search bar */}
       <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 8, paddingTop: 8, paddingBottom: 4, gap: 8 }}>

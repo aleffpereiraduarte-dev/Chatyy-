@@ -24,6 +24,7 @@ import React, { useEffect } from 'react';
 import { Image, Platform, StyleSheet } from 'react-native';
 import { KEYBOARD_CONTROLLER_ACTIVE } from '../../utils/threadKeyboard';
 import { isReduceMotionEnabled } from '../reducedMotion';
+import { Overlay } from '../../constants/theme';
 
 let Rea = null;
 if (KEYBOARD_CONTROLLER_ACTIVE) {
@@ -197,6 +198,8 @@ export function LiftReactionBar({ top, alignRight, edgeInset = 10, maxWidth, sca
 
 // Style overrides for the action card when it is a vertical list under the
 // lifted bubble (WhatsApp/iOS context-menu look) instead of the icon grid.
+// [2026-10-12 overlays] Rótulos/altura no token único (Overlay): linhas de
+// menu 44 (iOS UIContextMenu), rótulo 16/400 como o resto dos menus/sheets.
 export const LIFT_LIST_STYLES = {
   ctxIconBar: {
     flexDirection: 'column', flexWrap: 'nowrap', alignItems: 'stretch', justifyContent: 'flex-start',
@@ -204,19 +207,19 @@ export const LIFT_LIST_STYLES = {
   },
   ctxIconBtn: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-start',
-    paddingVertical: 8, paddingHorizontal: 10, borderRadius: 10,
+    paddingVertical: 7, paddingHorizontal: 10, borderRadius: 10, minHeight: 44,
   },
   ctxIconCircle: {
     width: 30, height: 30, borderRadius: 9, marginRight: 12,
     justifyContent: 'center', alignItems: 'center',
   },
-  ctxIconLabel: { fontSize: 15, fontWeight: '500', textAlign: 'left', flexShrink: 1 },
+  ctxIconLabel: { fontSize: Overlay.labelSize, fontWeight: Overlay.labelWeight, letterSpacing: -0.2, textAlign: 'left', flexShrink: 1 },
   ctxSecondaryList: { paddingVertical: 4, paddingHorizontal: 6 },
   ctxSecondaryItem: {
     flexDirection: 'row', alignItems: 'center', gap: 18,
-    paddingVertical: 12, paddingLeft: 16, paddingRight: 10, borderRadius: 10,
+    paddingVertical: 11, paddingLeft: 16, paddingRight: 10, borderRadius: 10, minHeight: 44,
   },
-  ctxSecondaryText: { fontSize: 15, fontWeight: '500' },
+  ctxSecondaryText: { fontSize: Overlay.labelSize, fontWeight: Overlay.labelWeight, letterSpacing: -0.2 },
 };
 
 const styles = StyleSheet.create({

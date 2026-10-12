@@ -27,6 +27,7 @@ const FOLDER_ICONS = {
   Flagged: IconStarFilled,
   Snoozed: IconClock,
 };
+import { confirmAsync } from '../utils/confirm'; // [2026-10-12 overlays] diálogo estilizado no web
 
 // Folder icon colors — MONOCHROME 2026: every folder reads as the single
 // neutral accent (#111111). Active = solid, inactive = 60% (see FolderItem).
@@ -308,7 +309,7 @@ function Sidebar({ folders, currentFolder, onFolderPress, onCompose, onFoldersCh
 
   const confirmAction = (title, message, onConfirm) => {
     if (Platform.OS === 'web') {
-      if (typeof window !== 'undefined' && window.confirm(message)) onConfirm();
+      confirmAsync({ title, message, destructive: true }).then((ok) => { if (ok) onConfirm(); });
     } else {
       Alert.alert(title, message, [
         { text: t('common.cancel'), style: 'cancel' },
@@ -658,7 +659,12 @@ function Sidebar({ folders, currentFolder, onFolderPress, onCompose, onFoldersCh
         onPress={() => onNavigate?.('/profile')}
         onLogout={async () => {
           const ok = Platform.OS === 'web'
-            ? window.confirm(t('sidebar.logoutConfirm') || 'Deseja sair da conta?')
+            ? await confirmAsync({
+                title: t('sidebar.logout') || 'Sair',
+                message: t('sidebar.logoutConfirm') || 'Deseja sair da conta?',
+                confirmLabel: t('sidebar.logout') || 'Sair',
+                destructive: true,
+              })
             : await confirm({
                 title: t('sidebar.logout') || 'Sair',
                 message: t('sidebar.logoutConfirm') || 'Deseja sair da conta?',

@@ -47,11 +47,12 @@ function fmtTs(ts) {
 
 function levelColor(level, colors) {
   if (level === 'error') return '#ef4444';
-  if (level === 'warn') return '#f59e0b';
+  // P&B: só erro ganha cor (vermelho = problema); aviso = tinta cheia.
+  if (level === 'warn') return colors.text || '#111';
   return colors.textSecondary || '#6b7280';
 }
 
-function summarizeEntries(entries) {
+function summarizeEntries(entries, t) {
   // Quick heuristic so the user can see "what broke" at the top without
   // having to read every line. We look for known failure signatures from
   // services/cfStreamPublisher.js.
@@ -59,26 +60,26 @@ function summarizeEntries(entries) {
   const errs = entries.filter(e => e.level === 'error');
   if (errs.length === 0) {
     const ok = entries.find(e => e.msg && e.msg.includes('WHIP publish OK'));
-    if (ok) return { ok: true, summary: 'Última transmissão publicada com sucesso. RTP fluindo para CF Stream.' };
+    if (ok) return { ok: true, summary: t('liveDiag.okSummary') };
     return null;
   }
   const last = errs[errs.length - 1];
   const m = String(last.msg || '');
   let summary = m;
   if (m.includes('ICE failed') || m.includes('NAT')) {
-    summary = 'ICE/NAT bloqueado: o celular não conseguiu estabelecer rota com o servidor Cloudflare. Comum em 4G/5G atrás de NAT simétrico. Tente WiFi.';
+    summary = t('liveDiag.iceNat');
   } else if (m.includes('ICE connect timeout')) {
-    summary = 'ICE não completou em 20s. Provavelmente bloqueado por firewall ou rede corporativa. Tente outra rede.';
+    summary = t('liveDiag.iceTimeout');
   } else if (m.includes('CF answered with a=inactive')) {
-    summary = 'Cloudflare recusou a direção do stream (sendrecv → inactive). Isso era o bug raiz histórico — o fix WAVE 98 força sendonly. Se aparecer aqui, abra um ticket.';
+    summary = t('liveDiag.inactive');
   } else if (m.includes('WHIP failed: 4')) {
-    summary = 'Cloudflare recusou o offer SDP (4xx). Tente terminar a live e começar de novo; se persistir, é incompatibilidade de codec ou cert.';
+    summary = t('liveDiag.whip4xx');
   } else if (m.includes('no audio or video tracks')) {
-    summary = 'Câmera ou microfone não disponíveis. Confira as permissões em Ajustes > Chatyy.';
+    summary = t('liveDiag.noTracks');
   } else if (m.includes('WHIP POST network failure')) {
-    summary = 'A requisição HTTP para Cloudflare não chegou. Sem internet ou DNS bloqueado.';
+    summary = t('liveDiag.network');
   } else if (m.includes('no localStream')) {
-    summary = 'A captura da câmera não estava pronta quando começamos a publicar. Reabra a tela e tente de novo.';
+    summary = t('liveDiag.noStream');
   }
   return { ok: false, summary, raw: m };
 }
@@ -86,7 +87,7 @@ function summarizeEntries(entries) {
 export default function LiveDiagnose() {
   const router = useRouter();
   const { colors } = useTheme();
-  const { t } = useLanguage(); // eslint-disable-line no-unused-vars
+  const { t } = useLanguage();
   const [entries, setEntries] = useState([]);
   const [refreshing, setRefreshing] = useState(false);
 
@@ -110,12 +111,12 @@ export default function LiveDiagnose() {
 
   const clearAll = useCallback(() => {
     Alert.alert(
-      'Limpar diagnóstico?',
-      'Apaga todos os registros de erro do publish da live. Use isso depois de reportar pro suporte.',
+      t('liveDiag.clearTitle'),
+      t('liveDiag.clearBody'),
       [
-        { text: 'Cancelar', style: 'cancel' },
+        { text: t('common.cancel') || 'Cancelar', style: 'cancel' },
         {
-          text: 'Limpar',
+          text: t('liveDiag.clear'),
           style: 'destructive',
           onPress: async () => {
             await liveDiagClear();
@@ -124,27 +125,27 @@ export default function LiveDiagnose() {
         },
       ],
     );
-  }, [load]);
+  }, [load, t]);
 
-  const summary = summarizeEntries([...entries].reverse());
+  const summary = summarizeEntries([...entries].reverse(), t);
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.background }}>
       {USE_NATIVE_HEADER && <Stack.Screen options={nativeHeaderOptions({
-        colors, title: 'Diagnóstico de transmissão',
+        colors, title: t('liveDiag.title'),
         headerRight: () => (
-          <HeaderIconButton onPress={clearAll} accessibilityLabel="Limpar">
+          <HeaderIconButton onPress={clearAll} accessibilityLabel={t('liveDiag.clear')}>
             <IconTrash size={21} color={colors.text} />
           </HeaderIconButton>
         ),
       })} />}
       {!USE_NATIVE_HEADER && (
       <View style={[styles.header, { borderBottomColor: colors.border }]}>
-        <TouchableOpacity onPress={() => router.back()} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
+        <TouchableOpacity onPress={() => router.back()} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }} accessibilityRole="button" accessibilityLabel={t('common.back') || 'Voltar'}>
           <IconArrowLeft size={24} color={colors.text} />
         </TouchableOpacity>
-        <Text style={[styles.title, { color: colors.text }]}>Diagnóstico de transmissão</Text>
-        <TouchableOpacity onPress={clearAll} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
+        <Text style={[styles.title, { color: colors.text }]} numberOfLines={1}>{t('liveDiag.title')}</Text>
+        <TouchableOpacity onPress={clearAll} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }} accessibilityRole="button" accessibilityLabel={t('liveDiag.clear')}>
           <IconTrash size={22} color={colors.textSecondary || '#6b7280'} />
         </TouchableOpacity>
       </View>
@@ -156,13 +157,9 @@ export default function LiveDiagnose() {
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.text} />}
       >
         <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
-          <Text style={[styles.cardTitle, { color: colors.text }]}>O que é isso?</Text>
+          <Text style={[styles.cardTitle, { color: colors.text }]}>{t('liveDiag.whatTitle')}</Text>
           <Text style={[styles.cardBody, { color: colors.textSecondary }]}>
-            Quando você abre uma live, o app envia a câmera+mic via WHIP para o servidor
-            Cloudflare Stream — que então distribui o vídeo via HLS para todos os viewers. Se
-            algo falhar nesse envio (rede, permissão, NAT), os viewers ficam em "Conectando..."
-            sem fim, porque a playlist HLS nunca recebe segmentos. Aqui ficam os logs do último
-            envio para você (ou suporte) saber exatamente onde travou.
+            {t('liveDiag.whatBody')}
           </Text>
         </View>
 
@@ -170,19 +167,18 @@ export default function LiveDiagnose() {
           <View
             style={[
               styles.card,
-              summary.ok
-                ? { backgroundColor: '#ecfdf5', borderColor: '#a7f3d0' }
-                : { backgroundColor: '#fef2f2', borderColor: '#fecaca' },
+              styles.summaryCard,
+              { backgroundColor: colors.card, borderColor: colors.border, borderLeftColor: summary.ok ? (colors.text || '#111') : '#ef4444' },
             ]}
           >
-            <Text style={[styles.cardTitle, { color: summary.ok ? '#065f46' : '#991b1b' }]}>
-              {summary.ok ? 'Última transmissão' : 'O que aconteceu'}
+            <Text style={[styles.cardTitle, { color: summary.ok ? colors.text : '#ef4444' }]}>
+              {summary.ok ? t('liveDiag.lastBroadcast') : t('liveDiag.whatHappened')}
             </Text>
-            <Text style={[styles.cardBody, { color: summary.ok ? '#065f46' : '#7f1d1d', marginTop: 4 }]}>
+            <Text style={[styles.cardBody, { color: colors.text, marginTop: 4 }]}>
               {summary.summary}
             </Text>
             {!summary.ok && summary.raw && (
-              <Text style={[styles.cardBody, { color: '#7f1d1d', marginTop: 8, fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace', fontSize: 11 }]} selectable>
+              <Text style={[styles.cardBody, { color: colors.textSecondary, marginTop: 8, fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace', fontSize: 11 }]} selectable>
                 {summary.raw.slice(0, 300)}
               </Text>
             )}
@@ -190,14 +186,13 @@ export default function LiveDiagnose() {
         )}
 
         <Text style={[styles.sectionTitle, { color: colors.text }]}>
-          Eventos ({entries.length})
+          {t('liveDiag.events', { n: entries.length })}
         </Text>
 
         {entries.length === 0 ? (
           <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
             <Text style={[styles.cardBody, { color: colors.textSecondary }]}>
-              Nenhum registro ainda. Abra uma live (tela "Live") e tente transmitir; volte aqui
-              depois para ver o que aconteceu.
+              {t('liveDiag.empty')}
             </Text>
           </View>
         ) : (
@@ -265,18 +260,19 @@ const styles = StyleSheet.create({
     borderBottomWidth: StyleSheet.hairlineWidth,
     gap: 16,
   },
-  title: { flex: 1, fontSize: 17, fontWeight: '700' },
+  title: { flex: 1, fontSize: 17, fontWeight: '700', letterSpacing: -0.2 },
   card: {
-    borderRadius: 12,
+    borderRadius: 16,
     borderWidth: StyleSheet.hairlineWidth,
-    padding: 14,
+    padding: 16,
     marginBottom: 12,
   },
+  summaryCard: { borderLeftWidth: 3 },
   cardTitle: { fontSize: 15, fontWeight: '700', marginBottom: 6 },
   cardBody: { fontSize: 14, lineHeight: 20 },
-  sectionTitle: { fontSize: 13, fontWeight: '700', marginTop: 8, marginBottom: 8, textTransform: 'uppercase', letterSpacing: 0.5 },
+  sectionTitle: { fontSize: 12, fontWeight: '700', marginTop: 12, marginBottom: 10, textTransform: 'uppercase', letterSpacing: 0.6, opacity: 0.7 },
   row: {
-    borderRadius: 10,
+    borderRadius: 12,
     borderWidth: StyleSheet.hairlineWidth,
     borderLeftWidth: 3,
     padding: 12,

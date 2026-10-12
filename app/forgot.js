@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet,
   KeyboardAvoidingView, Platform, ScrollView, ActivityIndicator, Animated, Easing, Linking,
+  useWindowDimensions,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams } from 'expo-router';
@@ -30,6 +31,10 @@ export default function ForgotPassword() {
   const router = useRouter();
   const params = useLocalSearchParams();
   const insets = useSafeAreaInsets();
+  // [2026-10-12 first-run polish] Card chrome only on wide web (login parity);
+  // phones get the flat full-bleed layout the login uses.
+  const { width: _winW } = useWindowDimensions();
+  const isDesktop = Platform.OS === 'web' && _winW >= 768;
   const [showHelp, setShowHelp] = useState(false);
   const [showPrivacy, setShowPrivacy] = useState(false);
   const [showTerms, setShowTerms] = useState(false);
@@ -768,25 +773,12 @@ export default function ForgotPassword() {
 
   return (
     <View style={[s.outerRoot, { backgroundColor: colors.authBg }]}>
-      {/* Decorative background */}
-      <View style={s.bgDecor} pointerEvents="none">
-        <View style={[s.bgCircle1, { backgroundColor: colors.primary + '08' }]} />
-        <View style={[s.bgCircle2, { backgroundColor: colors.primary + '05' }]} />
-        <View style={[s.bgCircle3, { backgroundColor: (colors.authSuccessGreen || '#10b981') + '06' }]} />
-      </View>
+      {/* [2026-10-12 first-run polish] decorative blobs removed (one was
+          green-tinted — off-brand for the B&W auth screens). */}
 
       {/* Theme toggle */}
       <TouchableOpacity onPress={toggle} style={[s.themeToggle, { top: insets.top + 16 }]} activeOpacity={0.7} accessibilityRole="button" accessibilityLabel={isDark ? t('a11y.switchToLight') : t('a11y.switchToDark')}>
-        <View style={[s.themeBtn, {
-          backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : colors.surface,
-          borderColor: colors.authInputBorder,
-          ...(Platform.OS === 'web' ? {
-            boxShadow: '0 1px 4px rgba(0,0,0,0.06)',
-          } : {
-            shadowColor: colors.shadow, shadowOffset: { width: 0, height: 1 },
-            shadowOpacity: 0.06, shadowRadius: 3, elevation: 2,
-          }),
-        }]}>
+        <View style={s.themeBtn}>
           {isDark ? <IconSun size={16} color={colors.textSecondary} /> : <IconMoon size={16} color={colors.textSecondary} />}
         </View>
       </TouchableOpacity>
@@ -796,9 +788,9 @@ export default function ForgotPassword() {
       bottomOffset={96}
       keyboardVerticalOffset={Platform.OS === 'ios' ? insets.top : 0}
     >
-        <View style={[s.center, { paddingBottom: 48 + insets.bottom }]}>
+        <View style={[s.center, { paddingBottom: 48 + insets.bottom }, !isDesktop && { justifyContent: 'flex-start', paddingTop: insets.top + 72 }]}>
           <Animated.View style={[s.cardWrap, { opacity: fadeAnim, transform: [{ scale: entryScale }, { translateY: slideAnim }] }]}>
-            <View style={[s.card, {
+            <View style={[s.card, !isDesktop ? s.cardFlat : {
               backgroundColor: colors.authCardBg,
               ...(Platform.OS === 'web' ? {
                 boxShadow: isDark
@@ -813,15 +805,13 @@ export default function ForgotPassword() {
               }),
               borderColor: isDark ? colors.authCardBorder : 'transparent',
               borderWidth: isDark ? 1 : 0,
+              borderRadius: 24, paddingHorizontal: 40, paddingTop: 36, paddingBottom: 28,
             }]}>
               {/* Icon with glow */}
               <View style={s.iconRow}>
                 <View style={s.iconWrap}>
-                  <View style={[s.iconGlow, { backgroundColor: colors.primary + '0a' }]} />
-                  <View style={[s.iconCircle, {
-                    backgroundColor: isDark ? colors.primary + '15' : colors.primary + '08',
-                  }]}>
-                    <IconMailLogo size={26} color={colors.primary} />
+                  <View style={[s.iconCircle, { backgroundColor: colors.surfaceVariant }]}>
+                    <IconMailLogo size={26} color={colors.text} />
                   </View>
                 </View>
               </View>
@@ -834,7 +824,7 @@ export default function ForgotPassword() {
             </View>
 
             {/* Footer */}
-            <View style={s.footer}>
+            <View style={[s.footer, !isDesktop && s.footerStacked]}>
               <Text style={[s.footerItem, { color: colors.authFooterText }]}>{t('forgot.footerLanguage')}</Text>
               <View style={s.footerLinks}>
                 <TouchableOpacity onPress={() => setShowHelp(true)}><Text style={[s.footerItem, { color: colors.authFooterText }]}>{t('forgot.help')}</Text></TouchableOpacity>
@@ -881,7 +871,6 @@ const s = StyleSheet.create({
   themeToggle: { position: 'absolute', top: 16, right: 16, zIndex: 10 },
   themeBtn: {
     width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center',
-    borderWidth: 1,
     ...Platform.select({ web: { cursor: 'pointer', transition: 'all 0.2s ease' }, default: {} }),
   },
 
@@ -894,18 +883,21 @@ const s = StyleSheet.create({
   card: {
     borderRadius: 16, paddingHorizontal: 28, paddingTop: 28, paddingBottom: 24, width: '100%',
   },
+  // Phones: no card, same gutters as /login (center 16 + card 8).
+  cardFlat: { backgroundColor: 'transparent', paddingHorizontal: 8, paddingTop: 0, paddingBottom: 8 },
 
-  iconRow: { alignItems: 'center', marginBottom: 10 },
+  iconRow: { alignItems: 'center', marginBottom: 14 },
   iconWrap: { alignItems: 'center', justifyContent: 'center' },
   iconGlow: {
     position: 'absolute', width: 56, height: 56, borderRadius: 28,
   },
   iconCircle: {
-    width: 40, height: 40, borderRadius: 12,
+    width: 60, height: 60, borderRadius: 20,
     alignItems: 'center', justifyContent: 'center',
   },
-  title: { fontSize: 22, fontWeight: '700', textAlign: 'center', marginBottom: 2, letterSpacing: -0.3 },
-  subtitle: { fontSize: 13, textAlign: 'center', marginBottom: 14, lineHeight: 18 },
+  // [2026-10-12 first-run polish] login type scale (28/800 + 15/22).
+  title: { fontSize: 28, fontWeight: '800', textAlign: 'center', marginBottom: 8, letterSpacing: -0.7, lineHeight: 34 },
+  subtitle: { fontSize: 15, textAlign: 'center', marginBottom: 22, lineHeight: 22 },
 
   errorBox: {
     flexDirection: 'row', alignItems: 'center', gap: 8,
@@ -916,54 +908,55 @@ const s = StyleSheet.create({
   hintRow: { flexDirection: 'row', gap: 10, alignItems: 'flex-start', marginBottom: 8 },
   hintText: { fontSize: 13, lineHeight: 19, flex: 1 },
 
-  label: { fontSize: 11, fontWeight: '500', marginBottom: 4, marginTop: 12, textTransform: 'uppercase', letterSpacing: 0.5 },
+  label: { fontSize: 12, fontWeight: '600', marginBottom: 6, marginTop: 14, textTransform: 'uppercase', letterSpacing: 0.5 },
   inputBox: {
-    flexDirection: 'row', alignItems: 'center', minHeight: 44,
-    borderWidth: 1, borderRadius: 8,
+    flexDirection: 'row', alignItems: 'center', minHeight: 52,
+    borderWidth: 1, borderRadius: 14,
     ...Platform.select({ web: { transition: 'all 0.2s ease' }, default: {} }),
   },
   textInput: {
-    flex: 1, fontSize: 14, paddingVertical: Platform.OS === 'web' ? 12 : 11,
+    flex: 1, minWidth: 0, fontSize: 16, paddingVertical: Platform.OS === 'web' ? 14 : 12,
     paddingHorizontal: 14,
     ...Platform.select({ web: { outlineStyle: 'none' }, default: {} }),
   },
   inputSuffix: { fontSize: 13, fontWeight: '500', paddingRight: 16 },
   eyeBtn: { padding: 8, marginRight: 4 },
 
-  btnCol: { marginTop: 16 },
+  btnCol: { marginTop: 20 },
   primaryBtn: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
     // [2026-10-10 visual] match login CTA (radius 14, ~52pt tall)
-    borderRadius: 14, paddingVertical: 12, minHeight: 52,
+    // [2026-10-12 first-run polish] 50pt + quiet lift (login/signup CTA).
+    borderRadius: 14, paddingVertical: 12, minHeight: 50,
     ...Platform.select({
       web: {
         cursor: 'pointer', transition: 'all 0.2s ease',
-        boxShadow: '0 8px 22px rgba(17,17,17,0.35), 0 2px 6px rgba(17,17,17,0.20)',
+        boxShadow: '0 1px 2px rgba(0,0,0,0.10), 0 6px 16px rgba(0,0,0,0.12)',
       },
       default: {
-        shadowColor: '#111111', shadowOffset: { width: 0, height: 3 },
-        shadowOpacity: 0.35, shadowRadius: 10, elevation: 6,
+        shadowColor: '#000000', shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.14, shadowRadius: 10, elevation: 2,
       },
     }),
   },
-  primaryBtnText: { color: '#fff', fontSize: 14, fontWeight: '600' },
-  backBtn: { paddingVertical: 10, alignItems: 'center', marginTop: 4 },
+  primaryBtnText: { color: '#fff', fontSize: 16, fontWeight: '700', letterSpacing: 0.2 },
+  backBtn: { paddingVertical: 10, minHeight: 44, justifyContent: 'center', alignItems: 'center', marginTop: 4 },
   backText: { fontSize: 14, fontWeight: '600' },
 
   // Method selection cards (Step 2)
   methodsList: { gap: 12, marginTop: 4 },
   methodCard: {
     flexDirection: 'row', alignItems: 'center', gap: 12,
-    padding: 12, borderRadius: 10, borderWidth: 1,
+    padding: 14, borderRadius: 14, borderWidth: 1, minHeight: 64,
     ...Platform.select({ web: { cursor: 'pointer', transition: 'all 0.15s ease' }, default: {} }),
   },
   methodIconWrap: {
-    width: 36, height: 36, borderRadius: 18,
+    width: 40, height: 40, borderRadius: 20,
     alignItems: 'center', justifyContent: 'center',
   },
   methodInfo: { flex: 1 },
-  methodTitle: { fontSize: 14, fontWeight: '600', marginBottom: 1 },
-  methodDesc: { fontSize: 11 },
+  methodTitle: { fontSize: 15, fontWeight: '600', marginBottom: 2 },
+  methodDesc: { fontSize: 12.5 },
 
   // No methods available
   noMethodsBox: { alignItems: 'center', paddingVertical: 16 },
@@ -1009,6 +1002,7 @@ const s = StyleSheet.create({
     flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
     marginTop: 24, paddingHorizontal: 8,
   },
+  footerStacked: { flexDirection: 'column', gap: 8, marginTop: 32 },
   footerLinks: { flexDirection: 'row', alignItems: 'center' },
   footerItem: { fontSize: 12 },
   footerDot: { fontSize: 12 },

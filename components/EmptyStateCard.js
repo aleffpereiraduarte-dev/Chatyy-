@@ -31,7 +31,7 @@ export default function EmptyStateCard({
   onPress,
   secondaryAction,
   tone = 'primary',
-  iconSize = 28,
+  iconSize = 30,
   containerStyle,
 }) {
   const { colors } = useTheme();
@@ -49,6 +49,14 @@ export default function EmptyStateCard({
     : tone === 'warning' ? (colors.warning || '#f59e0b')
     : tone === 'neutral' ? (colors.textSecondary || '#64748b')
     : colors.primary;
+  // [2026-10-12 empty-state system] One look app-wide (ScreenEmptyState
+  // parity): 72pt soft neutral circle + ink glyph, title 18/700, body 14,
+  // one 46pt pill CTA. Semantic tones keep their tint on the glyph only.
+  const semantic = tone === 'success' || tone === 'warning';
+  const circleBg = semantic ? tint + '1A' : (colors.surfaceVariant || colors.borderLight || '#F0F1F3');
+  const glyph = semantic ? tint : (tone === 'neutral' ? colors.textSecondary : colors.text);
+  const ctaBg = semantic ? tint : colors.primary;
+  const ctaInk = semantic ? '#fff' : (colors.onPrimary || '#fff');
 
   return (
     <Animated.View
@@ -63,24 +71,24 @@ export default function EmptyStateCard({
       ) : Icon ? (
         <View
           style={{
-            width: 64, height: 64, borderRadius: 32,
-            backgroundColor: tint + '15',
+            width: 72, height: 72, borderRadius: 36,
+            backgroundColor: circleBg,
             alignItems: 'center', justifyContent: 'center',
-            marginBottom: 16,
+            marginBottom: 18,
           }}
         >
-          <Icon size={iconSize} color={tint} />
+          <Icon size={iconSize} color={glyph} />
         </View>
       ) : null}
 
       {title ? (
-        <Text style={{ fontSize: 16, fontWeight: '700', color: colors.text, textAlign: 'center', marginBottom: 6 }}>
+        <Text accessibilityRole="header" style={{ fontSize: 18, fontWeight: '700', color: colors.text, textAlign: 'center', marginBottom: 6, letterSpacing: -0.2, lineHeight: 23 }}>
           {title}
         </Text>
       ) : null}
 
       {subtitle ? (
-        <Text style={{ fontSize: 13, color: colors.textSecondary, textAlign: 'center', lineHeight: 18, maxWidth: 320 }}>
+        <Text style={{ fontSize: 14, color: colors.textSecondary, textAlign: 'center', lineHeight: 20, maxWidth: 320 }}>
           {subtitle}
         </Text>
       ) : null}
@@ -94,12 +102,13 @@ export default function EmptyStateCard({
           accessibilityRole="button"
           accessibilityLabel={ctaLabel}
           style={{
-            marginTop: 20,
-            paddingVertical: 12, paddingHorizontal: 22,
-            borderRadius: 12, backgroundColor: tint,
+            marginTop: 22,
+            minHeight: 46, paddingHorizontal: 24,
+            alignItems: 'center', justifyContent: 'center',
+            borderRadius: 23, backgroundColor: ctaBg,
           }}
         >
-          <Text style={{ color: colors.onPrimary, fontSize: 14, fontWeight: '700' }}>{ctaLabel}</Text>
+          <Text style={{ color: ctaInk, fontSize: 15, fontWeight: '600' }}>{ctaLabel}</Text>
         </PressableScale>
       ) : null}
 
@@ -108,9 +117,9 @@ export default function EmptyStateCard({
           onPress={secondaryAction.onPress}
           activeOpacity={0.6}
           accessibilityRole="button"
-          style={{ marginTop: 12, paddingVertical: 6, paddingHorizontal: 12 }}
+          style={{ marginTop: 8, minHeight: 44, justifyContent: 'center', paddingHorizontal: 12 }}
         >
-          <Text style={{ color: tint, fontSize: 13, fontWeight: '600' }}>{secondaryAction.label}</Text>
+          <Text style={{ color: semantic ? tint : colors.text, fontSize: 14, fontWeight: '600' }}>{secondaryAction.label}</Text>
         </TouchableOpacity>
       ) : null}
     </Animated.View>

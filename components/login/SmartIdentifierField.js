@@ -133,7 +133,8 @@ export default function SmartIdentifierField({
     <View>
       <View style={{
         flexDirection: 'row', alignItems: 'center',
-        minHeight: 56, borderRadius: 14,
+        // [2026-10-12 first-run polish] 52pt field (pairs with the 50pt CTA).
+        minHeight: 52, borderRadius: 14,
         borderWidth: focused || invalid ? 1.5 : 1,
         borderColor,
         backgroundColor: colors.surfaceVariant,
@@ -193,9 +194,11 @@ export default function SmartIdentifierField({
           enterKeyHint="next"
           blurOnSubmit={false}
           style={[{
-            flex: 1, fontSize: 17, fontWeight: isNationalPhone ? '600' : '400',
+            // minWidth 0: on web a flex TextInput keeps its intrinsic ~20ch
+            // width, pushing the clear (x) button OUTSIDE the field at 375pt.
+            flex: 1, minWidth: 0, fontSize: 17, fontWeight: isNationalPhone ? '600' : '400',
             letterSpacing: isNationalPhone ? 0.3 : 0,
-            color: colors.text, paddingVertical: 14,
+            color: colors.text, paddingVertical: 12,
           }, Platform.OS === 'web' && { outlineStyle: 'none' }]}
         />
         {!!raw && focused && editable ? (
