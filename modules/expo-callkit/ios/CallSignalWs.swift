@@ -107,6 +107,11 @@ final class CallSignalWs: NSObject {
     // doesn't ring twice. Bounded — 32 entries, FIFO eviction.
     private var seenIncomingInvites: [String] = []
     private let kSeenInvitesMax = 32
+    // [2026-10-12 ring-first-try] Call ids this socket saw END/CANCEL. Only
+    // consulted for the JS-socket copy of an invite (handleExternalCallInvite):
+    // that copy can reach us after the native call_end already dropped the id
+    // from seenIncomingInvites → it must not ring a dead call.
+    private var endedCallIds: [String] = []
 
     // [#1179 cleanup, 2026-05-19] Map of native-surfaced callId → CallKit UUID.
     // Populated when we report an inbound invite to CallKit; consumed when an
@@ -349,6 +354,25 @@ final class CallSignalWs: NSObject {
         }
     }
 
+    /// [2026-10-12 ring-first-try] A `call_invite` the JS WebSocket received
+    /// (services/websocket.js — a SEPARATE socket from ours). Prod 2026-10-12:
+    /// the hub wrote the invite to this native socket 1s before it died (EOF)
+    /// while the JS socket stayed healthy — and on mobile JS renders nothing
+    /// (WAVE 141), so that copy was wasted. Feed it through the exact same
+    /// native path; seenIncomingInvites + the shared callId→UUID registry
+    /// de-dupe it against our own frame and the VoIP push. Never throws.
+    func handleExternalCallInvite(_ obj: [String: Any]) {
+        queue.async { [weak self] in
+            guard let self = self else { return }
+            let callId = (obj["call_id"] as? String) ?? (obj["room_id"] as? String) ?? ""
+            if !callId.isEmpty && self.endedCallIds.contains(callId) {
+                NSLog("[CallSignalWs] JS call_invite \(callId): already ended here — not ringing")
+                return
+            }
+            self.handleIncomingCallInviteLocked(obj)
+        }
+    }
+
     /// [P0 2026-05-18 #1132] Open the WS now (if not already open) and keep it
     /// open across reconnects so inbound `call_invite` frames can ring CallKit.
     /// JS should call this after login + on app foreground. Idempotent.
@@ -520,6 +544,13 @@ final class CallSignalWs: NSObject {
         case "call_declined":
             handleIncomingCallDeclinedLocked(obj)
         case "call_cancel":
+            handleIncomingCallCancelLocked(obj)
+        case "call_missed":
+            // [2026-10-12 ring-first-try] Hub 50s no-answer timeout (sent only
+            // while the call is still RINGING). A ring this socket reported to
+            // CallKit (now also in foreground) has no local ring timer — the
+            // push path's 45s timer is only armed when the push reports — so
+            // stop it here like a cancel (reason "timeout").
             handleIncomingCallCancelLocked(obj)
         case "call_end":
             // [#1179 cleanup, 2026-05-19] Native CallKit fallback for REMOTE
@@ -704,6 +735,10 @@ final class CallSignalWs: NSObject {
         // active set so reconnect retries wind down (covers inbound call_cancel
         // too, which routes through this handler). Runs on `queue`.
         activeCallIds.remove(callId)
+        if !endedCallIds.contains(callId) {
+            endedCallIds.append(callId)
+            while endedCallIds.count > kSeenInvitesMax { endedCallIds.removeFirst() }
+        }
 
         // Drop the dedup entry so a follow-up invite with the same id (rare,
         // but possible across server reconnects) is not silently filtered.
@@ -852,7 +887,8 @@ final class CallSignalWs: NSObject {
             return
         }
 
-        // [foreground gate, 2026-05-21] WhatsApp/Telegram parity for INCOMING.
+        // [foreground gate, 2026-05-21 — SUPERSEDED 2026-10-12, kept for history]
+        // WhatsApp/Telegram parity for INCOMING.
         // When the app is currently foreground, the JS WS subscription
         // (services/websocket.js → IncomingCallListener.js `mailWs.on
         // 'call_invite'`) has already received this same frame and is
@@ -882,12 +918,26 @@ final class CallSignalWs: NSObject {
                 return s == .active || s == .inactive
             }
         }()
+        // [2026-10-12 ring-first-try] The foreground `return` that used to sit
+        // here is GONE. The JS in-app ring sheet it deferred to was retired on
+        // mobile (WAVE 141 — IncomingCallListener renders null off-web), so a
+        // WS invite landing while the app was .active/.inactive surfaced
+        // NOTHING and the ring depended 100% on the VoIP push arriving on
+        // time. Prod 2026-10-12 call_1791825921868_guw5ucoyg: callee had just
+        // switched Wi-Fi→4G with the app open; hub delivered the WS invite at
+        // 13:25:22, APNs only handed the PushKit push over ~22s later (LiveKit
+        // ring preconnect started 17:25:44.9Z) → she saw the ring as the
+        // caller gave up → "tem que ligar 2 vezes". Android dropped the same
+        // gate on 2026-10-06. Now foreground falls through to the SAME
+        // dedupe → yield-to-push → report path as background (CallKit shows
+        // its in-app banner / full screen; the shared registry still
+        // guarantees a single CallKit entry when the push lands too).
         if isAppForeground {
-            NSLog("[CallSignalWs] call_invite \(callId): app foreground — JS WS handler owns the UI, skipping CallKit report")
+            NSLog("[CallSignalWs] call_invite \(callId): app foreground — reporting to CallKit too (JS ring sheet is retired on mobile)")
+            nativeCallDiag("ws_invite_foreground", callId)
             // Best-effort: nudge ExpoCallKitModule so any onIncomingCall
             // listener wired through the module also gets a copy (parity
-            // with the VoIP push path). JS-side primary surface remains
-            // the mailWs `call_invite` subscription.
+            // with the VoIP push path).
             let payload: [String: Any] = [
                 "callId": callId,
                 "callerName": callerName,
@@ -904,8 +954,21 @@ final class CallSignalWs: NSObject {
                     userInfo: payload
                 )
             }
-            return
+            // [2026-10-12 ring-first-try] no `return` — fall through.
         }
+
+        // [2026-10-12 ring-first-try] Inline LiveKit creds from the PHP-side WS
+        // broadcast (chat_call_invite_v2 puts the callee's pre-minted lk_token
+        // in the frame). Carried into the WS report path so the ring-window
+        // preconnect runs even when the PushKit push is late — which also flips
+        // the caller's screen "Chamando…" → "Tocando…" (caller watches for the
+        // callee's preconnect in the LK room).
+        let lkExtras: [String: Any] = {
+            var d: [String: Any] = [:]
+            if let s = obj["lk_token"] as? String, !s.isEmpty { d["lk_token"] = s }
+            if let s = obj["lk_url"] as? String, !s.isEmpty { d["lk_url"] = s }
+            return d
+        }()
 
         // [cross-path dedup 2026-10-04 P1.2] Before minting a NEW UUID + calling
         // reportNewIncomingCall, consult the module's shared callId→UUID store.
@@ -946,7 +1009,7 @@ final class CallSignalWs: NSObject {
             return false
         }()
         if voipPushRegistered {
-            NSLog("[CallSignalWs] call_invite \(callId): app background + VoIP registered — yielding \(kWsInviteYieldToPushSeconds)s to the push path")
+            NSLog("[CallSignalWs] call_invite \(callId): VoIP registered (fg=\(isAppForeground)) — yielding \(kWsInviteYieldToPushSeconds)s to the push path")
             nativeCallDiag("ws_yield_to_push", callId, "delayMs=\(Int(kWsInviteYieldToPushSeconds * 1000))")
             queue.asyncAfter(deadline: .now() + kWsInviteYieldToPushSeconds) { [weak self] in
                 guard let self = self else { return }
@@ -971,7 +1034,8 @@ final class CallSignalWs: NSObject {
                     callerName: callerName,
                     callerEmail: callerEmail,
                     conversationId: conversationId,
-                    hasVideo: hasVideo
+                    hasVideo: hasVideo,
+                    lkExtras: lkExtras
                 )
             }
             return
@@ -982,7 +1046,8 @@ final class CallSignalWs: NSObject {
             callerName: callerName,
             callerEmail: callerEmail,
             conversationId: conversationId,
-            hasVideo: hasVideo
+            hasVideo: hasVideo,
+            lkExtras: lkExtras
         )
     }
 
@@ -1005,7 +1070,8 @@ final class CallSignalWs: NSObject {
                                              callerName: String,
                                              callerEmail: String,
                                              conversationId: String,
-                                             hasVideo: Bool) {
+                                             hasVideo: Bool,
+                                             lkExtras: [String: Any] = [:]) {
         NSLog("[CallSignalWs] call_invite \(callId) from \(callerEmail) — reporting to CallKit")
         let minted = UUID()
         // [cross-path dedup 2026-10-04 P1.2] Eagerly mirror our minted UUID into
@@ -1033,7 +1099,7 @@ final class CallSignalWs: NSObject {
         // call_answered from this payload; its CXEnd fires call_end "declined"
         // from it. Same shape the VoIP push stashes (callId/call_id,
         // callerName/caller_name, caller_email, conversation_id, hasVideo/video).
-        let stubPayload: [String: Any] = [
+        var stubPayload: [String: Any] = [
             "callId": callId,
             "call_id": callId,
             "callerName": callerName.isEmpty ? "Chatyy" : callerName,
@@ -1043,6 +1109,14 @@ final class CallSignalWs: NSObject {
             "hasVideo": hasVideo,
             "video": hasVideo ? "1" : "0",
             "source": "ws",
+        ]
+        // [2026-10-12 ring-first-try] lk_token/lk_url from the PHP WS frame.
+        for (k, v) in lkExtras { stubPayload[k] = v }
+        // Same key shape the VoIP push hands to kickRingWindowPreconnect.
+        let preconnectDict: [AnyHashable: Any] = [
+            "call_id": callId,
+            "lk_token": (lkExtras["lk_token"] as? String) ?? "",
+            "lk_url": (lkExtras["lk_url"] as? String) ?? "",
         ]
         VoipPushAppDelegateSubscriber.stashAnswerPayload(uuid: uuid, callId: callId, payload: stubPayload)
         nativeCallDiag("ws_invite_reported", callId, "uuid=\(uuid.uuidString) hasVideo=\(hasVideo)")
@@ -1078,8 +1152,18 @@ final class CallSignalWs: NSObject {
             provider.reportNewIncomingCall(with: uuid, update: update) { error in
                 if let error = error {
                     NSLog("[CallSignalWs] reportNewIncomingCall failed: \(error.localizedDescription)")
+                    // [2026-10-12 ring-first-try] Surface WHY CallKit refused
+                    // (e.g. Focus/DND filter = CXErrorCodeIncomingCallError 3).
+                    nativeCallDiag("ws_invite_report_failed", callId,
+                                   "code=\((error as NSError).code) err=\(error.localizedDescription)")
                 } else {
                     NSLog("[CallSignalWs] reportNewIncomingCall succeeded for \(callId)")
+                    // [2026-10-12 ring-first-try] Same ring-window LiveKit
+                    // preconnect the VoIP push path runs (idempotent per callId
+                    // — preconnectRoom de-dupes under kPreconnectRoomLock). The
+                    // callee joining the room is what flips the caller to
+                    // "Tocando…", and makes the answer instant.
+                    VoipPushAppDelegateSubscriber.kickRingWindowPreconnect(callId: callId, dict: preconnectDict)
                 }
             }
 

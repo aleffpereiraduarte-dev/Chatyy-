@@ -308,11 +308,75 @@ function isNativeRingingActive() {
 // rules-of-hooks invariant holds — the inner component (the one with hooks +
 // modal + ringtone wiring) only ever mounts on web.
 export default function IncomingCallListener() {
+  if (Platform.OS === 'ios') {
+    // [WAVE 141] WhatsApp arch: native owns call UI, no JS modal on mobile.
+    // [2026-10-12 ring-first-try] …but the JS socket's copy of `call_invite`
+    // is still handed to native so CallKit rings when the native socket
+    // missed it.
+    return <IosCallInviteBridge />;
+  }
   if (Platform.OS !== 'web') {
     // [WAVE 141] WhatsApp arch: native owns call UI, no JS modal on mobile.
     return null;
   }
   return <IncomingCallListenerWeb />;
+}
+
+// [2026-10-12 ring-first-try] "Tem que ligar 2 vezes" (prod 2026-10-12,
+// call_1791825921868_guw5ucoyg): the hub delivered the invite to the callee's
+// native CallSignalWs socket 1s before that socket died, while the JS socket
+// (healthy) also got it — and on mobile nothing listens to the JS copy, so the
+// ring waited ~22s for a late VoIP push. Forward the JS copy to the native
+// CallKit path (ExpoCallKit.handleJsCallInvite, binaries >= 2026-10-12; no-op
+// before). Native de-dupes by call_id against its own frame and the push.
+const _MAX_INVITE_AGE_MS = 90 * 1000;
+function _inviteAgeMs(callId) {
+  // call ids are `call_<epoch ms>_<rand>` (caller clock) — skip replays.
+  const m = /^call_(\d{13})_/.exec(String(callId || ''));
+  if (!m) return 0;
+  const age = Date.now() - Number(m[1]);
+  return Number.isFinite(age) ? age : 0;
+}
+
+function IosCallInviteBridge() {
+  const { user } = useAuth();
+  const myEmail = (user?.email || '').toLowerCase();
+  useEffect(() => {
+    if (!myEmail) return undefined;
+    let ck = null;
+    try { ck = require('../modules/expo-callkit'); } catch { ck = null; }
+    if (!ck || typeof ck.handleJsCallInvite !== 'function') return undefined;
+    let unsub = null;
+    try {
+      const mailWs = require('../services/websocket').default;
+      unsub = mailWs.on('call_invite', (data) => {
+        try {
+          const callId = String(data?.call_id || data?.room_id || '');
+          if (!callId) return;
+          const caller = String(data?.caller_email || '').toLowerCase();
+          if (!caller || caller === myEmail) return;
+          if (_inviteAgeMs(callId) > _MAX_INVITE_AGE_MS) {
+            voipDiag('js_invite_bridge_skip_stale', callId, { age_ms: _inviteAgeMs(callId) });
+            return;
+          }
+          const payload = {
+            call_id: callId,
+            room_id: String(data?.room_id || callId),
+            caller_email: caller,
+            caller_name: String(data?.caller_name || ''),
+            conversation_id: String(data?.conversation_id ?? ''),
+            video: _isVideoFlag(data?.video) ? '1' : '0',
+          };
+          if (typeof data?.lk_token === 'string' && data.lk_token) payload.lk_token = data.lk_token;
+          if (typeof data?.lk_url === 'string' && data.lk_url) payload.lk_url = data.lk_url;
+          const ok = ck.handleJsCallInvite(payload);
+          voipDiag('js_invite_bridged', callId, { ok: !!ok, app: AppState.currentState });
+        } catch {}
+      });
+    } catch {}
+    return () => { try { if (typeof unsub === 'function') unsub(); } catch {} };
+  }, [myEmail]);
+  return null;
 }
 
 function IncomingCallListenerWeb() {

@@ -253,18 +253,59 @@ extension VoipPushAppDelegateSubscriber: PKPushRegistryDelegate {
             || pushType == "cancel"
             || pushType == "answered_elsewhere"
             || (dict["reason"] as? String)?.lowercased() == "answered_elsewhere"
+
+        // [2026-10-12 ring-first-try] APNs delivery latency, measured on the
+        // device: the server stamps `timestamp` (unix seconds) when it sends.
+        // Prod 2026-10-12 a ring arrived ~22s late and NOTHING on the device
+        // said so (this path emitted no diag) — now every push is logged.
+        var serverTs: Double = 0
+        if let n = dict["timestamp"] as? NSNumber {
+            serverTs = n.doubleValue
+        } else if let str = dict["timestamp"] as? String, let d = Double(str) {
+            serverTs = d
+        }
+        let pushLagMs: Int = serverTs > 0 ? Int((Date().timeIntervalSince1970 - serverTs) * 1000) : -1
+        nativeCallDiag("voip_push_recv", callId,
+                       "type=\(pushType.isEmpty ? "invite" : pushType) lag_ms=\(pushLagMs)")
+
         if isCancelPush {
             kCallIdToUUIDLock.lock()
             let existing = kCallIdToUUID[callId]
             kCallIdToUUID.removeValue(forKey: callId)
             kCallIdToUUIDLock.unlock()
             let provider = VoipPushAppDelegateSubscriber.earlyProvider ?? makeEphemeralProvider()
-            if let endUUID = existing {
+            if let staleUUID = existing {
                 // Cancel the ring timer + clear stashed payload for this UUID.
-                VoipPushAppDelegateSubscriber.cancelRingTimeout(uuid: endUUID)
+                VoipPushAppDelegateSubscriber.cancelRingTimeout(uuid: staleUUID)
                 kPendingAnswerPayloadsLock.lock()
-                kPendingAnswerPayloads.removeValue(forKey: endUUID)
+                kPendingAnswerPayloads.removeValue(forKey: staleUUID)
                 kPendingAnswerPayloadsLock.unlock()
+            }
+            // [2026-10-12 ring-first-try] PushKit contract: every VoIP push must
+            // leave a call reported to CallKit, or iOS kills the app and, after
+            // repeats, THROTTLES/DELAYS further VoIP pushes. kCallIdToUUID is not
+            // cleared when the WS call_end already ended the call (its
+            // reportCall(endedAt:) makes the follow-up CXEndCallAction fail, so
+            // the stub's CXEnd cleanup never runs) — and the WS call_end almost
+            // always beats the APNs cancel. Ending an ALREADY-ENDED UUID reports
+            // nothing → contract violation on most caller hang-ups. Only treat
+            // the UUID as live if CallKit still has it un-ended; otherwise fall
+            // through to the compliant report-then-end throwaway below.
+            let observedExisting: CXCall? = {
+                guard let e = existing else { return nil }
+                return CXCallObserver().calls.first { $0.uuid == e && !$0.hasEnded }
+            }()
+            let liveExisting: UUID? = observedExisting?.uuid
+            if existing != nil && liveExisting == nil {
+                nativeCallDiag("voip_cancel_stale_uuid_throwaway", callId, "type=\(pushType)")
+            }
+            if let live = observedExisting, live.hasConnected {
+                // THIS device is in the call (it answered) — an
+                // answered_elsewhere/cancel for it must not hang it up. The
+                // connected CallKit call already satisfies the PushKit contract.
+                print("[VoipSubscriber] cancel push type=\(pushType) for \(callId) — local call is connected; ignoring")
+                nativeCallDiag("voip_cancel_ignored_connected", callId, "type=\(pushType)")
+            } else if let endUUID = liveExisting {
                 print("[VoipSubscriber] cancel push type=\(pushType) for \(callId) — reporting .remoteEnded on \(endUUID.uuidString)")
                 provider.reportCall(with: endUUID, endedAt: Date(), reason: .remoteEnded)
             } else {
@@ -442,6 +483,10 @@ extension VoipPushAppDelegateSubscriber: PKPushRegistryDelegate {
         provider.reportNewIncomingCall(with: uuid, update: update) { [weak self] error in
             if let error = error {
                 print("[VoipSubscriber] reportNewIncomingCall failed: \(error.localizedDescription)")
+                // [2026-10-12 ring-first-try] e.g. code 3 = filteredByDoNotDisturb
+                // (Focus) — the phone does not ring; previously invisible.
+                nativeCallDiag("voip_report_failed", callId,
+                               "code=\((error as NSError).code) err=\(error.localizedDescription)")
             } else {
                 print("[VoipSubscriber] reportNewIncomingCall succeeded")
                 // [Wave WhatsApp parity, 2026-05-20 gap A1 iOS] Arm the ring
@@ -521,7 +566,7 @@ extension VoipPushAppDelegateSubscriber: PKPushRegistryDelegate {
     /// fresh-UUID path and the reuse-existing-UUID path (callId already
     /// reported by the native WS invite) run the identical preconnect. See the
     /// STAGE-A / WAVE 104D comments inside for the history.
-    fileprivate static func kickRingWindowPreconnect(callId: String, dict: [AnyHashable: Any]) {
+    static func kickRingWindowPreconnect(callId: String, dict: [AnyHashable: Any]) {
         // [STAGE-A 2026-05-20] GAP #2 — Kick Room.connect during the ring
         // window, BEFORE the user taps Accept. Audio is hot the instant
         // they answer (WhatsApp parity). The push may carry an inline

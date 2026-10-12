@@ -230,6 +230,10 @@ declare class ExpoCallKitModuleType extends NativeModule<ExpoCallKitEvents> {
   // CallRingingService (Android) even if the JS WS path is broken/paused.
   // Idempotent.
   warmCallSignalWs(): void;
+  // [2026-10-12 ring-first-try] iOS: feed a `call_invite` received on the JS
+  // WebSocket into the native CallKit path (de-duped natively). Optional —
+  // absent on binaries built before 2026-10-12.
+  handleJsCallInvite?(payload: Record<string, unknown>): boolean;
 
   /** [share outbox feedback, 2026-05-19] Drain the App Group share_outbox
    *  queue written by the native iOS ShareExtension. iOS-only; returns an
@@ -1082,6 +1086,16 @@ export function warmCallSignalWs(): void {
   const m = getModule();
   if (!m) return;
   try { m.warmCallSignalWs(); } catch {}
+}
+
+// [2026-10-12 ring-first-try] iOS: hand a JS-socket `call_invite` to native so
+// CallKit rings even when the native socket missed it (it is de-duped against
+// the native frame + VoIP push by call_id). Returns false when unsupported
+// (older binary / Android / web) or rejected.
+export function handleJsCallInvite(payload: Record<string, unknown>): boolean {
+  const m = getModule();
+  if (!m || typeof m.handleJsCallInvite !== 'function') return false;
+  try { return !!m.handleJsCallInvite(payload); } catch { return false; }
 }
 
 // ─── ShareExtension outbox feedback (iOS, 2026-05-19) ────────────────────

@@ -1674,6 +1674,16 @@ public class ExpoCallKitModule: Module {
       CallSignalWs.shared.warmConnect()
     }
 
+    // [2026-10-12 ring-first-try] JS-socket copy of an inbound `call_invite`
+    // → native CallKit path (see CallSignalWs.handleExternalCallInvite).
+    // Returns false for frames without a call id.
+    Function("handleJsCallInvite") { (payload: [String: Any]) -> Bool in
+      let callId = (payload["call_id"] as? String) ?? (payload["room_id"] as? String) ?? ""
+      if callId.isEmpty { return false }
+      CallSignalWs.shared.handleExternalCallInvite(payload)
+      return true
+    }
+
     // ─── DTMF keypad (2026-05-19) ────────────────────────────────────────
     //
     // Two-tier dispatch:
