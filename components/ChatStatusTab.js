@@ -1310,7 +1310,7 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
         await chatSend(conv.id, `${statusLabel}\n\n"${statusPreview}"\n\n- ${viewerOwnerName}`, 'text');
       }
       // Navigate to the conversation
-      router.push(`/chat-conversation?id=${conv.id}&name=${encodeURIComponent(conv.name || conv.other_name || '')}`);
+      require('../services/openConversation').openConversation(`/chat-conversation?id=${conv.id}&name=${encodeURIComponent(conv.name || conv.other_name || '')}`);
       closeViewerRef.current?.();
     } catch (err) {
       console.warn('[Status] Forward failed:', err);
@@ -3160,6 +3160,197 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
     );
   }
 
+  // [2026-10-12] Conteúdo do sheet "quem viu" — usado dentro do viewer (iOS) e solto.
+  const renderViewersSheet = () => (
+        <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.55)', justifyContent: 'flex-end' }} onPress={() => { setViewersModal(false); setIsPaused(false); viewersModalStatusIdRef.current = null; }}>
+          <Pressable style={{
+            backgroundColor: isDark ? '#111' : '#fff',
+            borderTopLeftRadius: 24, borderTopRightRadius: 24,
+            maxHeight: '75%', paddingBottom: Platform.OS === 'ios' ? 34 : androidBottomInset(18),
+            ...(Platform.OS === 'web' ? { boxShadow: '0 -8px 32px rgba(0,0,0,0.35)' } : {}),
+          }}>
+            {/* Drag handle */}
+            <View style={{ alignItems: 'center', paddingTop: 10, paddingBottom: 4 }}>
+              <View style={{ width: 42, height: 5, borderRadius: 3, backgroundColor: isDark ? 'rgba(255,255,255,0.18)' : 'rgba(0,0,0,0.15)' }} />
+            </View>
+            {/* Header — gradient eye badge + big count */}
+            <View style={{
+              paddingHorizontal: 20, paddingTop: 12, paddingBottom: 16,
+              borderBottomWidth: StyleSheet.hairlineWidth,
+              borderBottomColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.07)',
+            }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+                {/* Gradient SVG badge — Instagram-style vibrant icon */}
+                <View style={{
+                  width: 44, height: 44, borderRadius: 14,
+                  overflow: 'hidden', alignItems: 'center', justifyContent: 'center',
+                  ...(Platform.OS === 'web' ? { boxShadow: '0 4px 14px rgba(17, 17, 17,0.35)' } : {
+                    shadowColor: '#111111', shadowOffset: { width: 0, height: 4 },
+                    shadowOpacity: 0.3, shadowRadius: 8, elevation: 4,
+                  }),
+                }}>
+                  <Svg width={44} height={44} viewBox="0 0 44 44" style={{ position: 'absolute' }}>
+                    <Defs>
+                      <LinearGradient id="viewerGrad" x1="0" y1="0" x2="1" y2="1">
+                        <Stop offset="0" stopColor="#111111" />
+                        <Stop offset="1" stopColor="#111111" />
+                      </LinearGradient>
+                    </Defs>
+                    <Rect x="0" y="0" width="44" height="44" rx="14" fill="url(#viewerGrad)" />
+                    {/* Eye glyph — curved lid + pupil */}
+                    <Path d="M12 22 C16 15 28 15 32 22 C28 29 16 29 12 22 Z" stroke="#fff" strokeWidth="2" fill="none" />
+                    <SvgCircle cx="22" cy="22" r="3.5" fill="#fff" />
+                  </Svg>
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={{ fontSize: 22, fontWeight: '800', color: isDark ? '#fff' : '#111', letterSpacing: -0.4 }}>
+                    {_viewCountLabel(t, viewersList.length)}
+                  </Text>
+                  {viewersList.length > 0 && (
+                    <Text style={{ fontSize: 12.5, color: isDark ? 'rgba(255,255,255,0.5)' : 'rgba(0,0,0,0.48)', marginTop: 2 }}>
+                      {t?.('status.viewersSubtitle') || 'Quem viu seu status'}
+                    </Text>
+                  )}
+                </View>
+              </View>
+            </View>
+
+            {viewersLoading ? (
+              <View style={{ paddingVertical: 60 }}>
+                <ActivityIndicator size="large" color={colors.primary} />
+              </View>
+            ) : viewersList.length === 0 ? (
+              <View style={{ alignItems: 'center', paddingVertical: 60, paddingHorizontal: 28 }}>
+                <View style={{
+                  width: 72, height: 72, borderRadius: 36,
+                  backgroundColor: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.04)',
+                  alignItems: 'center', justifyContent: 'center', marginBottom: 16,
+                }}>
+                  <IconEye size={32} color={isDark ? 'rgba(255,255,255,0.3)' : 'rgba(0,0,0,0.25)'} />
+                </View>
+                <Text style={{ fontSize: 16, fontWeight: '600', color: isDark ? '#fff' : '#111', marginBottom: 4 }}>
+                  {t?.('status.noViewersTitle') || 'Ninguém viu ainda'}
+                </Text>
+                <Text style={{ fontSize: 13, color: isDark ? 'rgba(255,255,255,0.5)' : 'rgba(0,0,0,0.45)', textAlign: 'center' }}>
+                  {t?.('status.noViewersBody') || 'Seus contatos verão quando abrirem o app.'}
+                </Text>
+              </View>
+            ) : (
+              <ScrollView
+                showsVerticalScrollIndicator={false}
+                contentContainerStyle={{ paddingVertical: 6 }}
+              >
+                {(() => {
+                  // Group viewers by day — HOJE / ONTEM / date. Assumes server
+                  // returns viewed_at sorted desc; if not we sort defensively.
+                  const sorted = [...viewersList].sort((a, b) => {
+                    const ta = Date.parse(a.viewed_at || 0) || 0;
+                    const tb = Date.parse(b.viewed_at || 0) || 0;
+                    return tb - ta;
+                  });
+                  const now = new Date();
+                  const today = now.toDateString();
+                  const yday = new Date(now.getTime() - 86400000).toDateString();
+                  const groups = {};
+                  const order = [];
+                  for (const v of sorted) {
+                    const d = v.viewed_at ? new Date(v.viewed_at) : now;
+                    let key;
+                    if (d.toDateString() === today) key = t?.('date.today') || 'HOJE';
+                    else if (d.toDateString() === yday) key = t?.('date.yesterday') || 'ONTEM';
+                    else key = d.toLocaleDateString();
+                    if (!groups[key]) { groups[key] = []; order.push(key); }
+                    groups[key].push(v);
+                  }
+                  return order.map(dayLabel => (
+                    <View key={dayLabel}>
+                      <Text style={{
+                        fontSize: 11, fontWeight: '700',
+                        color: isDark ? 'rgba(255,255,255,0.4)' : 'rgba(0,0,0,0.4)',
+                        letterSpacing: 0.8, textTransform: 'uppercase',
+                        paddingHorizontal: 20, paddingTop: 14, paddingBottom: 6,
+                      }}>
+                        {dayLabel.toUpperCase()}
+                      </Text>
+                      {groups[dayLabel].map((v, i) => {
+                        // If this viewer also reacted, we surface their emoji on the right.
+                        const reactEmoji = v.reaction_emoji || null;
+                        const name = emailToDisplayName(v.name || v.viewer_email);
+                        return (
+                          <TouchableOpacity
+                            key={i}
+                            activeOpacity={0.65}
+                            onPress={() => {
+                              // Tap viewer → open their profile
+                              try {
+                                setViewersModal(false);
+                                router.push('/u/' + encodeURIComponent(v.viewer_email));
+                              } catch {}
+                            }}
+                            style={{
+                              flexDirection: 'row', alignItems: 'center',
+                              paddingHorizontal: 20, paddingVertical: 11, gap: 14,
+                            }}
+                          >
+                            <View style={{ position: 'relative', width: 48, height: 48, alignItems: 'center', justifyContent: 'center' }}>
+                              {/* Gradient ring when the viewer reacted — Instagram story-ring vibe */}
+                              {reactEmoji && (
+                                <Svg width={48} height={48} viewBox="0 0 48 48" style={{ position: 'absolute' }}>
+                                  <Defs>
+                                    <LinearGradient id={`vring${i}`} x1="0" y1="0" x2="1" y2="1">
+                                      <Stop offset="0" stopColor="#111111" />
+                                      <Stop offset="0.5" stopColor="#111111" />
+                                      <Stop offset="1" stopColor="#111111" />
+                                    </LinearGradient>
+                                  </Defs>
+                                  <SvgCircle cx="24" cy="24" r="22" stroke={`url(#vring${i})`} strokeWidth="2.2" fill="none" />
+                                </Svg>
+                              )}
+                              <AvatarCircle name={name} email={v.viewer_email} size={40} />
+                              {reactEmoji && (
+                                <View style={{
+                                  position: 'absolute', right: -1, bottom: -1,
+                                  width: 22, height: 22, borderRadius: 11,
+                                  backgroundColor: isDark ? '#111' : '#fff',
+                                  alignItems: 'center', justifyContent: 'center',
+                                  borderWidth: 2, borderColor: isDark ? '#111' : '#fff',
+                                  ...(Platform.OS === 'web' ? { boxShadow: '0 1px 3px rgba(0,0,0,0.2)' } : {}),
+                                }}>
+                                  <Text style={{ fontSize: 12 }}>{reactEmoji}</Text>
+                                </View>
+                              )}
+                            </View>
+                            <View style={{ flex: 1 }}>
+                              <Text style={{ fontSize: 15.5, fontWeight: '600', color: isDark ? '#fff' : '#111', letterSpacing: -0.1 }} numberOfLines={1}>
+                                {name}
+                              </Text>
+                              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 2 }}>
+                                {/* Tiny SVG clock icon next to the timestamp */}
+                                <Svg width={11} height={11} viewBox="0 0 24 24" fill="none">
+                                  <SvgCircle cx="12" cy="12" r="9.5" stroke={isDark ? 'rgba(255,255,255,0.4)' : 'rgba(0,0,0,0.4)'} strokeWidth="1.8" />
+                                  <Path d="M12 7v5l3 2" stroke={isDark ? 'rgba(255,255,255,0.4)' : 'rgba(0,0,0,0.4)'} strokeWidth="1.8" strokeLinecap="round" />
+                                </Svg>
+                                <Text style={{ fontSize: 12.5, color: isDark ? 'rgba(255,255,255,0.45)' : 'rgba(0,0,0,0.45)' }} numberOfLines={1}>
+                                  {v.viewed_at ? timeAgo(v.viewed_at, t) : ''}
+                                </Text>
+                              </View>
+                            </View>
+                            {/* Right-side chevron — invites tap */}
+                            <Svg width={16} height={16} viewBox="0 0 24 24" fill="none">
+                              <Path d="M9 6l6 6-6 6" stroke={isDark ? 'rgba(255,255,255,0.28)' : 'rgba(0,0,0,0.28)'} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                            </Svg>
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </View>
+                  ));
+                })()}
+              </ScrollView>
+            )}
+          </Pressable>
+        </Pressable>
+  );
+
   return (
     <View style={[styles.container, { backgroundColor: isDark ? colors.background : '#f6f8fa' }]}>
       {/* Search */}
@@ -4461,6 +4652,13 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
             )}
           </Animated.View>
         </Animated.View>
+        {/* [2026-10-12] Lista "quem viu" DENTRO do Modal do viewer: no iOS um Modal irmão
+            não abre por cima de outro Modal já aberto → tocar em "visualizações" não fazia nada. */}
+        {viewersModal && viewerVisible ? (
+          <View style={[StyleSheet.absoluteFill, { zIndex: 60, elevation: 60 }]}>
+            {renderViewersSheet()}
+          </View>
+        ) : null}
       </Modal>
 
       {/* ─── Highlight picker — Stories permanentes (B) ─── */}
@@ -4539,194 +4737,8 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
       </Modal>
 
       {/* ─── Viewers List Modal — WhatsApp-style ─── */}
-      <Modal visible={viewersModal} transparent animationType="slide" onRequestClose={() => { setViewersModal(false); setIsPaused(false); viewersModalStatusIdRef.current = null; }}>
-        <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.55)', justifyContent: 'flex-end' }} onPress={() => { setViewersModal(false); setIsPaused(false); viewersModalStatusIdRef.current = null; }}>
-          <Pressable style={{
-            backgroundColor: isDark ? '#111' : '#fff',
-            borderTopLeftRadius: 24, borderTopRightRadius: 24,
-            maxHeight: '75%', paddingBottom: Platform.OS === 'ios' ? 34 : androidBottomInset(18),
-            ...(Platform.OS === 'web' ? { boxShadow: '0 -8px 32px rgba(0,0,0,0.35)' } : {}),
-          }}>
-            {/* Drag handle */}
-            <View style={{ alignItems: 'center', paddingTop: 10, paddingBottom: 4 }}>
-              <View style={{ width: 42, height: 5, borderRadius: 3, backgroundColor: isDark ? 'rgba(255,255,255,0.18)' : 'rgba(0,0,0,0.15)' }} />
-            </View>
-            {/* Header — gradient eye badge + big count */}
-            <View style={{
-              paddingHorizontal: 20, paddingTop: 12, paddingBottom: 16,
-              borderBottomWidth: StyleSheet.hairlineWidth,
-              borderBottomColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.07)',
-            }}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
-                {/* Gradient SVG badge — Instagram-style vibrant icon */}
-                <View style={{
-                  width: 44, height: 44, borderRadius: 14,
-                  overflow: 'hidden', alignItems: 'center', justifyContent: 'center',
-                  ...(Platform.OS === 'web' ? { boxShadow: '0 4px 14px rgba(17, 17, 17,0.35)' } : {
-                    shadowColor: '#111111', shadowOffset: { width: 0, height: 4 },
-                    shadowOpacity: 0.3, shadowRadius: 8, elevation: 4,
-                  }),
-                }}>
-                  <Svg width={44} height={44} viewBox="0 0 44 44" style={{ position: 'absolute' }}>
-                    <Defs>
-                      <LinearGradient id="viewerGrad" x1="0" y1="0" x2="1" y2="1">
-                        <Stop offset="0" stopColor="#111111" />
-                        <Stop offset="1" stopColor="#111111" />
-                      </LinearGradient>
-                    </Defs>
-                    <Rect x="0" y="0" width="44" height="44" rx="14" fill="url(#viewerGrad)" />
-                    {/* Eye glyph — curved lid + pupil */}
-                    <Path d="M12 22 C16 15 28 15 32 22 C28 29 16 29 12 22 Z" stroke="#fff" strokeWidth="2" fill="none" />
-                    <SvgCircle cx="22" cy="22" r="3.5" fill="#fff" />
-                  </Svg>
-                </View>
-                <View style={{ flex: 1 }}>
-                  <Text style={{ fontSize: 22, fontWeight: '800', color: isDark ? '#fff' : '#111', letterSpacing: -0.4 }}>
-                    {_viewCountLabel(t, viewersList.length)}
-                  </Text>
-                  {viewersList.length > 0 && (
-                    <Text style={{ fontSize: 12.5, color: isDark ? 'rgba(255,255,255,0.5)' : 'rgba(0,0,0,0.48)', marginTop: 2 }}>
-                      {t?.('status.viewersSubtitle') || 'Quem viu seu status'}
-                    </Text>
-                  )}
-                </View>
-              </View>
-            </View>
-
-            {viewersLoading ? (
-              <View style={{ paddingVertical: 60 }}>
-                <ActivityIndicator size="large" color={colors.primary} />
-              </View>
-            ) : viewersList.length === 0 ? (
-              <View style={{ alignItems: 'center', paddingVertical: 60, paddingHorizontal: 28 }}>
-                <View style={{
-                  width: 72, height: 72, borderRadius: 36,
-                  backgroundColor: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.04)',
-                  alignItems: 'center', justifyContent: 'center', marginBottom: 16,
-                }}>
-                  <IconEye size={32} color={isDark ? 'rgba(255,255,255,0.3)' : 'rgba(0,0,0,0.25)'} />
-                </View>
-                <Text style={{ fontSize: 16, fontWeight: '600', color: isDark ? '#fff' : '#111', marginBottom: 4 }}>
-                  {t?.('status.noViewersTitle') || 'Ninguém viu ainda'}
-                </Text>
-                <Text style={{ fontSize: 13, color: isDark ? 'rgba(255,255,255,0.5)' : 'rgba(0,0,0,0.45)', textAlign: 'center' }}>
-                  {t?.('status.noViewersBody') || 'Seus contatos verão quando abrirem o app.'}
-                </Text>
-              </View>
-            ) : (
-              <ScrollView
-                showsVerticalScrollIndicator={false}
-                contentContainerStyle={{ paddingVertical: 6 }}
-              >
-                {(() => {
-                  // Group viewers by day — HOJE / ONTEM / date. Assumes server
-                  // returns viewed_at sorted desc; if not we sort defensively.
-                  const sorted = [...viewersList].sort((a, b) => {
-                    const ta = Date.parse(a.viewed_at || 0) || 0;
-                    const tb = Date.parse(b.viewed_at || 0) || 0;
-                    return tb - ta;
-                  });
-                  const now = new Date();
-                  const today = now.toDateString();
-                  const yday = new Date(now.getTime() - 86400000).toDateString();
-                  const groups = {};
-                  const order = [];
-                  for (const v of sorted) {
-                    const d = v.viewed_at ? new Date(v.viewed_at) : now;
-                    let key;
-                    if (d.toDateString() === today) key = t?.('date.today') || 'HOJE';
-                    else if (d.toDateString() === yday) key = t?.('date.yesterday') || 'ONTEM';
-                    else key = d.toLocaleDateString();
-                    if (!groups[key]) { groups[key] = []; order.push(key); }
-                    groups[key].push(v);
-                  }
-                  return order.map(dayLabel => (
-                    <View key={dayLabel}>
-                      <Text style={{
-                        fontSize: 11, fontWeight: '700',
-                        color: isDark ? 'rgba(255,255,255,0.4)' : 'rgba(0,0,0,0.4)',
-                        letterSpacing: 0.8, textTransform: 'uppercase',
-                        paddingHorizontal: 20, paddingTop: 14, paddingBottom: 6,
-                      }}>
-                        {dayLabel.toUpperCase()}
-                      </Text>
-                      {groups[dayLabel].map((v, i) => {
-                        // If this viewer also reacted, we surface their emoji on the right.
-                        const reactEmoji = v.reaction_emoji || null;
-                        const name = emailToDisplayName(v.name || v.viewer_email);
-                        return (
-                          <TouchableOpacity
-                            key={i}
-                            activeOpacity={0.65}
-                            onPress={() => {
-                              // Tap viewer → open their profile
-                              try {
-                                setViewersModal(false);
-                                router.push('/u/' + encodeURIComponent(v.viewer_email));
-                              } catch {}
-                            }}
-                            style={{
-                              flexDirection: 'row', alignItems: 'center',
-                              paddingHorizontal: 20, paddingVertical: 11, gap: 14,
-                            }}
-                          >
-                            <View style={{ position: 'relative', width: 48, height: 48, alignItems: 'center', justifyContent: 'center' }}>
-                              {/* Gradient ring when the viewer reacted — Instagram story-ring vibe */}
-                              {reactEmoji && (
-                                <Svg width={48} height={48} viewBox="0 0 48 48" style={{ position: 'absolute' }}>
-                                  <Defs>
-                                    <LinearGradient id={`vring${i}`} x1="0" y1="0" x2="1" y2="1">
-                                      <Stop offset="0" stopColor="#111111" />
-                                      <Stop offset="0.5" stopColor="#111111" />
-                                      <Stop offset="1" stopColor="#111111" />
-                                    </LinearGradient>
-                                  </Defs>
-                                  <SvgCircle cx="24" cy="24" r="22" stroke={`url(#vring${i})`} strokeWidth="2.2" fill="none" />
-                                </Svg>
-                              )}
-                              <AvatarCircle name={name} email={v.viewer_email} size={40} />
-                              {reactEmoji && (
-                                <View style={{
-                                  position: 'absolute', right: -1, bottom: -1,
-                                  width: 22, height: 22, borderRadius: 11,
-                                  backgroundColor: isDark ? '#111' : '#fff',
-                                  alignItems: 'center', justifyContent: 'center',
-                                  borderWidth: 2, borderColor: isDark ? '#111' : '#fff',
-                                  ...(Platform.OS === 'web' ? { boxShadow: '0 1px 3px rgba(0,0,0,0.2)' } : {}),
-                                }}>
-                                  <Text style={{ fontSize: 12 }}>{reactEmoji}</Text>
-                                </View>
-                              )}
-                            </View>
-                            <View style={{ flex: 1 }}>
-                              <Text style={{ fontSize: 15.5, fontWeight: '600', color: isDark ? '#fff' : '#111', letterSpacing: -0.1 }} numberOfLines={1}>
-                                {name}
-                              </Text>
-                              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 2 }}>
-                                {/* Tiny SVG clock icon next to the timestamp */}
-                                <Svg width={11} height={11} viewBox="0 0 24 24" fill="none">
-                                  <SvgCircle cx="12" cy="12" r="9.5" stroke={isDark ? 'rgba(255,255,255,0.4)' : 'rgba(0,0,0,0.4)'} strokeWidth="1.8" />
-                                  <Path d="M12 7v5l3 2" stroke={isDark ? 'rgba(255,255,255,0.4)' : 'rgba(0,0,0,0.4)'} strokeWidth="1.8" strokeLinecap="round" />
-                                </Svg>
-                                <Text style={{ fontSize: 12.5, color: isDark ? 'rgba(255,255,255,0.45)' : 'rgba(0,0,0,0.45)' }} numberOfLines={1}>
-                                  {v.viewed_at ? timeAgo(v.viewed_at, t) : ''}
-                                </Text>
-                              </View>
-                            </View>
-                            {/* Right-side chevron — invites tap */}
-                            <Svg width={16} height={16} viewBox="0 0 24 24" fill="none">
-                              <Path d="M9 6l6 6-6 6" stroke={isDark ? 'rgba(255,255,255,0.28)' : 'rgba(0,0,0,0.28)'} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                            </Svg>
-                          </TouchableOpacity>
-                        );
-                      })}
-                    </View>
-                  ));
-                })()}
-              </ScrollView>
-            )}
-          </Pressable>
-        </Pressable>
+      <Modal visible={viewersModal && !viewerVisible} transparent animationType="slide" onRequestClose={() => { setViewersModal(false); setIsPaused(false); viewersModalStatusIdRef.current = null; }}>
+        {renderViewersSheet()}
       </Modal>
 
       {/* ─── Per-Status Analytics Modal (creator-only) ─── */}
