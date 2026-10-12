@@ -17,7 +17,7 @@ import { STORAGE_TIERS, purchaseStorage, getStorageLocalizedPrice } from '../ser
 import { getOriginBase, storageUsage } from '../services/api'; // [2026-10-10] loja web = host canônico
 import { startStripeCheckout, openStripePortal, isStripeCardAvailable, isStripeStorageCheckoutAvailable } from '../services/stripeCheckout';
 import { IconX, IconCloud, IconCheck, IconCheckCircle, IconUsers, IconImage, IconShield, IconZap } from './Icons';
-import { USE_NATIVE_SHEETS, NativeSheet } from './NativeSheet'; // [2026-10-09 native-sheets]
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 function formatBrl(v) {
   const n = Number(v) || 0;
@@ -46,7 +46,8 @@ function fmtBytes(b) {
 export default function StorageShopSheet({ visible, onClose, currentTier = 'free', usedBytes, limitBytes, native = true }) {
   const { colors, isDark } = useTheme();
   const { t } = useLanguage();
-  const { height: winH } = useWindowDimensions();
+  const { height: winH, width: winW } = useWindowDimensions();
+  const insets = useSafeAreaInsets();
   const [cycle, setCycle] = useState('annual'); // monthly|annual (anual = default vendedor)
   const [pendingTier, setPendingTier] = useState(null);
   const [selectedId, setSelectedId] = useState(currentTier === RECOMMENDED_TIER ? '5tb' : RECOMMENDED_TIER);
@@ -377,29 +378,39 @@ export default function StorageShopSheet({ visible, onClose, currentTier = 'free
         </>
   );
 
-  if (USE_NATIVE_SHEETS && native) {
+  // [2026-10-12] Refeito: o formSheet nativo não dava altura ao conteúdo e cortava a
+  // tela. Agora é TELA CHEIA (título fixo · planos rolando · botão fixo) no celular,
+  // respeitando entalhe e barra; no computador, cartão central de 560px.
+  const wide = Platform.OS === 'web' && winW >= 700;
+  if (wide) {
     return (
-      <NativeSheet visible={!!visible} onClose={onClose} detents={[0.92]} backgroundColor={colors.background}>
-        <View style={[styles.sheet, { flex: 1, paddingTop: 22, backgroundColor: colors.background }]}>
-          {body}
+      <Modal visible={!!visible} transparent animationType="fade" onRequestClose={onClose}>
+        <View style={[styles.backdrop, { justifyContent: 'center', alignItems: 'center', padding: 24 }]}>
+          <View style={[styles.sheet, styles.card, { backgroundColor: colors.background, height: Math.min(winH * 0.9, 860) }]}>
+            {body}
+          </View>
         </View>
-      </NativeSheet>
+      </Modal>
     );
   }
-
   return (
-    <Modal visible={!!visible} transparent animationType="slide" onRequestClose={onClose}>
-      <View style={styles.backdrop}>
-        <View style={[styles.sheet, { backgroundColor: colors.background, height: winH * 0.92, maxWidth: 560, width: '100%', alignSelf: 'center' }]}>
-          {body}
-        </View>
+    <Modal
+      visible={!!visible}
+      animationType="slide"
+      presentationStyle={Platform.OS === 'ios' ? 'fullScreen' : undefined}
+      statusBarTranslucent
+      onRequestClose={onClose}
+    >
+      <View style={{ flex: 1, backgroundColor: colors.background, paddingTop: Math.max(insets.top, 12) + 4, paddingBottom: Math.max(insets.bottom, 12), paddingHorizontal: 18 }}>
+        {body}
       </View>
     </Modal>
   );
 }
 
 const styles = StyleSheet.create({
-  backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
+  backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' },
+  card: { width: '100%', maxWidth: 560, borderRadius: 20, overflow: 'hidden' },
   sheet: {
     borderTopLeftRadius: 22, borderTopRightRadius: 22,
     paddingHorizontal: 18, paddingTop: 14, paddingBottom: 18,

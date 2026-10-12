@@ -1229,7 +1229,9 @@ function SettingsScreenInner() {
   useEffect(() => {
     if (Platform.OS !== 'android') return undefined;
     const sub = BackHandler.addEventListener('hardwareBackPress', () => {
-      if (activeCategory !== null) { setActiveCategory(null); return true; }
+      if (activeCategory !== null && !requestedSection) { setActiveCategory(null); return true; }
+      // Sem histórico, o voltar padrão fechava o app → leva às conversas.
+      try { if (!router.canGoBack?.()) { router.replace('/chat'); return true; } } catch {}
       return false;
     });
     return () => { try { sub.remove(); } catch {} };
@@ -1319,22 +1321,30 @@ function SettingsScreenInner() {
   const isDirty = () => {
     try { return initialSettingsRef.current && JSON.stringify(settings) !== initialSettingsRef.current; } catch { return false; }
   };
+  // [2026-10-12] Founder: "o botão voltar nas configurações não está funcionando".
+  // router.back() não faz nada quando Configurações abriu sem histórico (link direto,
+  // recarga no web, ou aberta por replace) → cai para as conversas.
+  const exitSettings = () => {
+    try { if (router.canGoBack?.()) { router.back(); return; } } catch {}
+    try { router.replace('/chat'); } catch {}
+  };
   const handleBack = () => {
     // Inside a category sub-page: back returns to the category LIST first,
-    // not out of the screen.
-    if (activeCategory !== null && !twoPane) { setActiveCategory(null); return; }
+    // not out of the screen — exceto quando a seção veio por link (?section=),
+    // aí o voltar sai direto para onde a pessoa estava.
+    if (activeCategory !== null && !twoPane && !requestedSection) { setActiveCategory(null); return; }
     if (isDirty()) {
       Alert.alert(
         t('settings.unsavedTitle') || 'Alterações não salvas',
         t('settings.unsavedMessage') || 'Quer salvar antes de sair?',
         [
-          { text: t('settings.discard') || 'Descartar', style: 'destructive', onPress: () => router.back() },
+          { text: t('settings.discard') || 'Descartar', style: 'destructive', onPress: exitSettings },
           { text: t('common.cancel') || 'Cancelar', style: 'cancel' },
-          { text: t('settings.save') || 'Salvar', onPress: async () => { await handleSave(); router.back(); } },
+          { text: t('settings.save') || 'Salvar', onPress: async () => { await handleSave(); exitSettings(); } },
         ]
       );
     } else {
-      router.back();
+      exitSettings();
     }
   };
   const handleSave = async () => {
