@@ -10213,4 +10213,12 @@ export default {
   "call.statsHoldHint": "統計（長押しで表示）",
   "call.crashTitle": "通話画面でエラーが発生しました",
   "call.crashBody": "タップして通話を終了し、もう一度お試しください。",
+  "settings.update.title": "アプリのアップデート",
+  "settings.update.checking": "アップデートを確認中…",
+  "settings.update.downloading": "アップデートをダウンロード中…",
+  "settings.update.ready": "アップデート準備完了 — 再起動中…",
+  "settings.update.latest": "最新バージョンです",
+  "settings.update.error": "今はアップデートできません。もう一度お試しください。",
+  "settings.update.current": "インストール済みのバージョン",
+  "settings.update.tap": "タップして確認・インストール",
 };

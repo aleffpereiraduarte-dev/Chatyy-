@@ -10991,4 +10991,12 @@ export default {
   "call.statsHoldHint": "Statistiken (zum Öffnen gedrückt halten)",
   "call.crashTitle": "Beim Anrufbildschirm ist ein Fehler aufgetreten",
   "call.crashBody": "Tippe zum Auflegen und versuche es erneut.",
+  "settings.update.title": "App-Update",
+  "settings.update.checking": "Suche nach Updates…",
+  "settings.update.downloading": "Update wird geladen…",
+  "settings.update.ready": "Update bereit – Neustart…",
+  "settings.update.latest": "Du hast die neueste Version",
+  "settings.update.error": "Update gerade nicht möglich. Versuche es erneut.",
+  "settings.update.current": "Installierte Version",
+  "settings.update.tap": "Tippen zum Suchen und Installieren",
 };

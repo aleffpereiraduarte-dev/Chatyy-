@@ -10992,4 +10992,12 @@ export default {
   "call.statsHoldHint": "Statistiques (appui long pour ouvrir)",
   "call.crashTitle": "L’écran d’appel a rencontré une erreur",
   "call.crashBody": "Touchez pour raccrocher, puis réessayez.",
+  "settings.update.title": "Mise à jour de l'app",
+  "settings.update.checking": "Recherche de mise à jour…",
+  "settings.update.downloading": "Téléchargement de la mise à jour…",
+  "settings.update.ready": "Mise à jour prête — redémarrage…",
+  "settings.update.latest": "Vous avez la dernière version",
+  "settings.update.error": "Impossible de mettre à jour maintenant. Réessayez.",
+  "settings.update.current": "Version installée",
+  "settings.update.tap": "Touchez pour rechercher et installer",
 };

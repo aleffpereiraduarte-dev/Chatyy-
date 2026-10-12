@@ -10991,4 +10991,12 @@ export default {
   "call.statsHoldHint": "Statistiche (tieni premuto per aprire)",
   "call.crashTitle": "La schermata della chiamata ha avuto un errore",
   "call.crashBody": "Tocca per riagganciare e riprova.",
+  "settings.update.title": "Aggiornamento app",
+  "settings.update.checking": "Ricerca aggiornamenti…",
+  "settings.update.downloading": "Download dell'aggiornamento…",
+  "settings.update.ready": "Aggiornamento pronto — riavvio…",
+  "settings.update.latest": "Hai già l'ultima versione",
+  "settings.update.error": "Impossibile aggiornare ora. Riprova.",
+  "settings.update.current": "Versione installata",
+  "settings.update.tap": "Tocca per cercare e installare",
 };

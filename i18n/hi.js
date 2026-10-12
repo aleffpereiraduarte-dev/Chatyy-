@@ -10990,4 +10990,12 @@ export default {
   "call.statsHoldHint": "आँकड़े (खोलने के लिए दबाकर रखें)",
   "call.crashTitle": "कॉल स्क्रीन में त्रुटि आई",
   "call.crashBody": "फ़ोन रखने के लिए टैप करें और फिर से कोशिश करें।",
+  "settings.update.title": "ऐप अपडेट",
+  "settings.update.checking": "अपडेट खोजा जा रहा है…",
+  "settings.update.downloading": "अपडेट डाउनलोड हो रहा है…",
+  "settings.update.ready": "अपडेट तैयार — फिर से शुरू हो रहा है…",
+  "settings.update.latest": "आपके पास नवीनतम संस्करण है",
+  "settings.update.error": "अभी अपडेट नहीं हो सका। फिर से कोशिश करें।",
+  "settings.update.current": "इंस्टॉल किया गया संस्करण",
+  "settings.update.tap": "खोजने और इंस्टॉल करने के लिए टैप करें",
 };

@@ -10212,4 +10212,12 @@ export default {
   "call.statsHoldHint": "Statistik (tekan dan tahan untuk membuka)",
   "call.crashTitle": "Layar panggilan mengalami kesalahan",
   "call.crashBody": "Ketuk untuk menutup panggilan dan coba lagi.",
+  "settings.update.title": "Pembaruan aplikasi",
+  "settings.update.checking": "Memeriksa pembaruan…",
+  "settings.update.downloading": "Mengunduh pembaruan…",
+  "settings.update.ready": "Pembaruan siap — memulai ulang…",
+  "settings.update.latest": "Kamu sudah memakai versi terbaru",
+  "settings.update.error": "Tidak bisa memperbarui sekarang. Coba lagi.",
+  "settings.update.current": "Versi terpasang",
+  "settings.update.tap": "Ketuk untuk memeriksa dan memasang",
 };

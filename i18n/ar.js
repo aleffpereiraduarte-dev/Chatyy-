@@ -10991,4 +10991,12 @@ export default {
   "call.statsHoldHint": "الإحصاءات (اضغط مطولًا للفتح)",
   "call.crashTitle": "حدث خطأ في شاشة المكالمة",
   "call.crashBody": "اضغط لإنهاء المكالمة ثم حاول مرة أخرى.",
+  "settings.update.title": "تحديث التطبيق",
+  "settings.update.checking": "جارٍ البحث عن تحديث…",
+  "settings.update.downloading": "جارٍ تنزيل التحديث…",
+  "settings.update.ready": "التحديث جاهز — جارٍ إعادة التشغيل…",
+  "settings.update.latest": "لديك أحدث إصدار",
+  "settings.update.error": "تعذّر التحديث الآن. حاول مرة أخرى.",
+  "settings.update.current": "الإصدار المثبّت",
+  "settings.update.tap": "انقر للبحث والتثبيت",
 };

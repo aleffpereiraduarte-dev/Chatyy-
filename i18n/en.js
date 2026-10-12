@@ -10961,4 +10961,12 @@ export default {
   "call.statsHoldHint": "Statistics (press and hold to open)",
   "call.crashTitle": "The call screen ran into an error",
   "call.crashBody": "Tap to hang up and try again.",
+  "settings.update.title": "App update",
+  "settings.update.checking": "Checking for updates…",
+  "settings.update.downloading": "Downloading update…",
+  "settings.update.ready": "Update ready — restarting…",
+  "settings.update.latest": "You're on the latest version",
+  "settings.update.error": "Couldn't update right now. Try again.",
+  "settings.update.current": "Installed version",
+  "settings.update.tap": "Tap to check and install",
 };

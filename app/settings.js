@@ -1582,6 +1582,51 @@ function SettingsScreenInner() {
     const build = Constants?.expoConfig?.ios?.buildNumber || Constants?.expoConfig?.android?.versionCode || '';
     return build ? `${ver} (${build})` : String(ver);
   })();
+  // [2026-10-12] Founder: "Ajuda e sobre deveria ter uma opção de atualização".
+  // Procura e aplica a atualização (OTA) na hora — sem precisar fechar/abrir 2x.
+  const [updState, setUpdState] = useState('idle'); // idle|checking|downloading|ready|latest|error
+  const updInfo = (() => {
+    try {
+      const U = require('expo-updates');
+      const id = U?.updateId ? String(U.updateId).slice(0, 8) : null;
+      const at = U?.createdAt ? new Date(U.createdAt) : null;
+      return { id, at, embedded: !!U?.isEmbeddedLaunch };
+    } catch { return { id: null, at: null, embedded: true }; }
+  })();
+  const checkAppUpdate = async () => {
+    if (updState === 'checking' || updState === 'downloading') return;
+    if (Platform.OS === 'web') {
+      try { setUpdState('downloading'); window.location.reload(); } catch { setUpdState('error'); }
+      return;
+    }
+    let U = null;
+    try { U = require('expo-updates'); } catch {}
+    if (!U || !U.isEnabled) { setUpdState('error'); return; }
+    try {
+      setUpdState('checking');
+      const r = await U.checkForUpdateAsync();
+      if (!r?.isAvailable) { setUpdState('latest'); return; }
+      setUpdState('downloading');
+      await U.fetchUpdateAsync();
+      setUpdState('ready');
+      setTimeout(() => { U.reloadAsync().catch(() => setUpdState('error')); }, 900);
+    } catch { setUpdState('error'); }
+  };
+  const updSubtitle = (() => {
+    switch (updState) {
+      case 'checking': return t('settings.update.checking');
+      case 'downloading': return t('settings.update.downloading');
+      case 'ready': return t('settings.update.ready');
+      case 'latest': return t('settings.update.latest');
+      case 'error': return t('settings.update.error');
+      default: {
+        const parts = [];
+        if (updInfo.id) parts.push(updInfo.id);
+        if (updInfo.at && !isNaN(updInfo.at)) parts.push(updInfo.at.toLocaleDateString());
+        return parts.length ? `${t('settings.update.current')}: ${parts.join(' · ')}` : t('settings.update.tap');
+      }
+    }
+  })();
   const openLoginHistory = async () => {
     setLoginHistoryOpen(true);
     setLoginHistoryLoading(true);
@@ -2528,12 +2573,18 @@ function SettingsScreenInner() {
           />
         </SettingsGroup>
         )}
-        {(searching || activeCategory === 'help') && sectionMatches(t('settings.about.title') || 'Sobre', 'about', 'sobre', 'version') && (
+        {(searching || activeCategory === 'help') && sectionMatches(t('settings.about.title') || 'Sobre', 'about', 'sobre', 'version', t('settings.update.title'), 'atualiza', 'update') && (
         <SettingsGroup header={t('settings.about.title') || 'Sobre'}>
           <SettingsRow
             title={t('settings.rd2.aboutApp') || 'Sobre o Chatyy'}
             value={appVersionLabel}
             onPress={() => setAboutOpen(true)}
+          />
+          <SettingsRow
+            title={t('settings.update.title')}
+            subtitle={updSubtitle}
+            value={(updState === 'checking' || updState === 'downloading') ? '…' : undefined}
+            onPress={checkAppUpdate}
           />
           {/* [WAVE 104F] Call diagnostics — visible in __DEV__ or developer_mode */}
           {(__DEV__ || settings?.developer_mode) && (
