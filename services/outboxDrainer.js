@@ -52,6 +52,97 @@ function isHardError(r) {
   return false;
 }
 
+// [2026-10-12 send-reliability-web] WEB: one executor per message. Before, a
+// failed web send lived in TWO retry queues (this pending store, drained every
+// 60s, and offlineCache's queue, replayed on mount/+5s) that raced each other
+// and the foreground: same message sent 2-3× (server dedup), and a newer
+// message could go out before an older pending one (order broken). Now this
+// drainer only ADOPTS pending rows the queue doesn't know yet — the typical case
+// is a page reload/close while a send was in flight (QA: message typed, tab
+// reloaded 1.5s later → it sat unsent until the 60s tick) — into offlineCache's
+// queue (typed-order ts = created_at), and the single web pump replays it.
+const _e2eeCache = new Map(); // convId -> { v4: bool, at }
+async function _isE2eeV4(convId) {
+  const k = String(convId);
+  const c = _e2eeCache.get(k);
+  if (c && Date.now() - c.at < 10 * 60 * 1000) return c.v4;
+  let v4 = false;
+  try {
+    const e = require('./e2eeV4');
+    const m = e.default || e;
+    if (typeof m.isConversationE2ee === 'function' && m.isConversationE2ee(convId)) v4 = true;
+    else if (typeof m.getStatus === 'function') {
+      const st = await m.getStatus(convId);
+      v4 = !!(st && st.conversation && st.conversation.enabled);
+    }
+  } catch { v4 = false; }
+  _e2eeCache.set(k, { v4, at: Date.now() });
+  return v4;
+}
+async function _webAdoptAndReplay(reason) {
+  if (_draining) return { skipped: 'already-draining' };
+  _draining = true;
+  _lastDrainAt = Date.now();
+  let adopted = 0, dropped = 0;
+  let oc = null;
+  try { oc = require('./offlineCache'); } catch {}
+  try {
+    if (!oc) return { adopted, reason };
+    const pending = await getAllPendingMessages();
+    let me = '';
+    try { me = String(api.getActiveAccountEmail?.() || '').toLowerCase(); } catch {}
+    const now = Date.now();
+    const sorted = [...(pending || [])].sort((a, b) => (Date.parse(a?.created_at || '') || 0) - (Date.parse(b?.created_at || '') || 0));
+    for (const p of sorted) {
+      if (!p?.temp_id || !p?.conversation_id) continue;
+      const cmi = p.client_message_id || p.temp_id;
+      const createdAt = Date.parse(p.created_at || '') || 0;
+      if (createdAt && now - createdAt > PENDING_TTL_MS) {
+        try { await removePendingMessage(p.conversation_id, p.temp_id); } catch {}
+        dropped++;
+        continue;
+      }
+      // A live foreground send of THIS page owns its first seconds (same 5s
+      // grace as before); rows left by a previous page load go right away.
+      let _live = true;
+      try { _live = require('./chatCache').isSessionPending?.(cmi) !== false; } catch {}
+      if (createdAt && now - createdAt < 5000 && _live) continue;
+      // Pending keys are not account-scoped: never send another account's row.
+      const snd = String(p.sender_email || '').toLowerCase();
+      if (snd && me && snd !== me) continue;
+      if (oc.hasQueuedCmi?.(cmi)) continue;
+      // Media without a server URL can't be re-sent from here (web blob died
+      // with the page); the screen's upload path / tap-to-retry owns it.
+      const fu = String(p.file_url || '');
+      const fuRemote = /^https?:\/\//i.test(fu) || fu.indexOf('/data/') === 0;
+      if (['image', 'video', 'audio', 'voice', 'video_note', 'file'].includes(p.type) && !fuRemote) continue;
+      // The pending row stores the PLAINTEXT; never replay it into an E2EE v4
+      // conversation (the screen's own queue entry carries the ciphertext).
+      if (p._e2e || p.e2e || await _isE2eeV4(p.conversation_id)) continue;
+      try {
+        await oc.queueOfflineAction({
+          type: 'chat_send',
+          conversation_id: p.conversation_id,
+          content: p.content,
+          msgType: p.type || 'text',
+          reply_to_id: p.reply_to_id || null,
+          mentions: p.mentions || null,
+          file_url: fuRemote ? fu : null,
+          temp_id: p.temp_id,
+          client_message_id: cmi,
+          ts: createdAt || now,
+          _adopted: 1,
+        });
+        adopted++;
+      } catch {}
+    }
+  } catch {} finally {
+    _draining = false;
+  }
+  try { if (oc) { if (adopted) oc.kickSendQueue?.('adopt'); else oc.startWebSendPump?.(); } } catch {}
+  return { adopted, dropped, reason };
+}
+
 async function drainOnce(reason = 'manual') {
   // V2 consolidation: messageOutbox + sendWorker own the send queue now.
   // The MMKV-backed legacy path here would compete with the SQLite state
@@ -59,6 +150,10 @@ async function drainOnce(reason = 'manual') {
   // server dedup'ing but UI state ("Enviando..." vs "✓") flickering.
   // No-op the entire drain when V2 is on; sendWorker.poke() takes over.
   if (OUTBOX_V2_ONLY) return { skipped: 'v2-only', reason };
+  if (Platform.OS === 'web') {
+    if (Date.now() - _lastDrainAt < MIN_DRAIN_GAP_MS) return { skipped: 'cooldown' };
+    return _webAdoptAndReplay(reason);
+  }
   if (_draining) return { skipped: 'already-draining' };
   if (Date.now() - _lastDrainAt < MIN_DRAIN_GAP_MS) return { skipped: 'cooldown' };
   _draining = true;
@@ -211,6 +306,17 @@ export function initOutboxDrainer() {
   // Initial drain ~3s after boot so chat screens have a chance to mount and
   // the app's primary work isn't competing for CPU.
   setTimeout(() => { drainOnce('boot').catch(() => {}); }, 3000);
+  // [2026-10-12 send-reliability-web] Web: start the offline-queue pump now
+  // (flushes what a previous page load left) + re-adopt on tab visible / online.
+  if (Platform.OS === 'web') {
+    try { require('./offlineCache').startWebSendPump?.(); } catch {}
+    try {
+      if (typeof window !== 'undefined') window.addEventListener('online', () => { drainOnce('online').catch(() => {}); });
+      if (typeof document !== 'undefined') document.addEventListener('visibilitychange', () => {
+        try { if (document.visibilityState === 'visible') drainOnce('visible').catch(() => {}); } catch {}
+      });
+    } catch {}
+  }
 
   // Network reconnect → drain
   try {
@@ -228,6 +334,9 @@ export function initOutboxDrainer() {
     const mailWs = require('./websocket').default;
     mailWs?.on?.('authenticated', () => { drainOnce('ws-authed').catch(() => {}); });
     mailWs?.on?.('reconnected', () => { drainOnce('ws-reconnected').catch(() => {}); });
+    // [2026-10-12] The WS class never emits bare 'authenticated'/'reconnected'
+    // (see sendWorker.start) — the real signal is 'connection' {status}.
+    mailWs?.on?.('connection', (d) => { if (d && d.status === 'authenticated') drainOnce('ws-auth').catch(() => {}); });
   } catch {}
 
   // Periodic safety net every 60s. Cheap when queue is empty.

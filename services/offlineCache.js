@@ -447,10 +447,164 @@ export async function getCachedProfile() {
 export async function queueOfflineAction(action) {
   _migrateLegacyQueueOnce();
   const qk = _queueKey();
+  // [2026-10-12 send-reliability-web] Send actions are keyed by their
+  // client_message_id: the same message can be queued by several paths (the
+  // screen's catch, the FIFO deferral in api.chatSend, the orphan adoption in
+  // outboxDrainer). Before, each call PUSHED a new entry → the replay sent the
+  // same message 2-3× (server dedup saved the row, but each copy burned an
+  // attempt, a 30/min rate-limit slot and re-emitted UI events). Now a repeat
+  // MERGES into the existing entry, keeping its queue position (ts), id and
+  // retry bookkeeping.
+  let ts = Date.now();
+  if (action && _isSendType(action.type) && action.client_message_id) {
+    // Order key = when the user TYPED the message (pending row created_at), not
+    // when the failure was noticed — so a message deferred behind an older one
+    // can never sort ahead of it.
+    if (Number(action.ts) > 0) ts = Number(action.ts);
+    else if (Platform.OS === 'web') { const c = _pendingCreatedAt(action.client_message_id); if (c) ts = c; }
+  }
   const queue = getJSON(qk) || [];
+  if (action && _isSendType(action.type) && action.client_message_id) {
+    const idx = queue.findIndex(a => a && a.type === action.type && a.client_message_id === action.client_message_id);
+    if (idx >= 0) {
+      const prev = queue[idx];
+      const merged = { ...prev };
+      for (const k of Object.keys(action)) {
+        if (k === 'ts' || k === 'id' || k === 'retries' || k === 'next_retry_at' || k === '_acct') continue;
+        if (action[k] !== undefined && action[k] !== null) merged[k] = action[k];
+      }
+      queue[idx] = merged;
+      setJSON(qk, queue);
+      _schedulePump(300);
+      return;
+    }
+  }
   // _acct carimba a conta DONA da ação — garante que só replaya pela conta certa.
-  queue.push({ ...action, _acct: _acctNS(), ts: Date.now(), id: Date.now() + '_' + Math.random().toString(36).slice(2, 8) });
+  const { ts: _ignoredTs, ...rest } = action || {};
+  void _ignoredTs;
+  queue.push({ ...rest, _acct: _acctNS(), ts, id: Date.now() + '_' + Math.random().toString(36).slice(2, 8) });
   setJSON(qk, queue);
+  if (action && _isSendType(action.type)) _schedulePump(300);
+}
+
+// ─── [2026-10-12 send-reliability-web] Web send pump ───────────────────────
+// Native sends live in the SQLite messageOutbox + sendWorker (wake timers,
+// NetInfo/WS/foreground kicks). On WEB the only durable retry for a failed
+// send is this queue — and it was replayed ONLY when a conversation screen
+// mounted, on a send failure (+5s, once) or on a manual retry tap. QA
+// (2026-10-12, Playwright on flaky network / 429 / two tabs) proved it: a
+// message whose +5s replay also failed sat at "Enviando" with a 30s-1h backoff
+// and NOTHING re-ran the queue — 2 of 10 flaky sends, the 29th-30th of a burst
+// and 6 two-tab sends never reached the server while the tab stayed open, and
+// newer messages overtook them (order broken). The pump below is the web twin
+// of sendWorker: replay soon after anything is queued, at the earliest
+// next_retry_at, and immediately (backoff reset) on online / WS re-auth /
+// tab visible.
+const _SEND_TYPES = ['chat_send', 'chat_file_upload', 'chat_voice_upload', 'chat_audio_upload'];
+function _isSendType(t) { return _SEND_TYPES.indexOf(t) >= 0; }
+function _pendingCreatedAt(cmi) {
+  try {
+    const keys = (getAllKeys() || []).filter(k => typeof k === 'string' && k.indexOf('chat_pending_') === 0);
+    for (const k of keys) {
+      const arr = getJSON(k);
+      if (!Array.isArray(arr)) continue;
+      for (const p of arr) {
+        if (p && p.client_message_id === cmi) { const t = Date.parse(p.created_at || ''); return Number.isFinite(t) && t > 0 ? t : 0; }
+      }
+    }
+  } catch {}
+  return 0;
+}
+/** True when a send action with this client_message_id is already queued. */
+export function hasQueuedCmi(cmi) {
+  if (!cmi) return false;
+  try { return (getJSON(_queueKey()) || []).some(a => a && _isSendType(a.type) && a.client_message_id === cmi); }
+  catch { return false; }
+}
+/** True when the queue holds an unsent message-producing action for this
+ *  conversation other than `exceptCmi` (web FIFO gate in api.chatSend). */
+export function hasQueuedSend(conversationId, exceptCmi = null) {
+  if (conversationId == null) return false;
+  try {
+    const q = getJSON(_queueKey()) || [];
+    const c = String(conversationId);
+    return q.some(a => a && _isSendType(a.type) && String(a.conversation_id) === c && (!exceptCmi || a.client_message_id !== exceptCmi));
+  } catch { return false; }
+}
+let _pumpTimer = null;
+let _pumpAt = 0;
+let _pumpInstalled = false;
+function _pumpApi() { try { return require('./api'); } catch { return null; } }
+function _schedulePump(delayMs) {
+  if (Platform.OS !== 'web') return;
+  _installPump();
+  const d = Math.max(0, Number(delayMs) || 0);
+  const at = Date.now() + d;
+  if (_pumpTimer && _pumpAt && _pumpAt <= at) return; // an earlier run is already armed
+  if (_pumpTimer) { try { clearTimeout(_pumpTimer); } catch {} }
+  _pumpAt = at;
+  _pumpTimer = setTimeout(_runPump, d);
+}
+async function _runPump() {
+  _pumpTimer = null; _pumpAt = 0;
+  const api = _pumpApi();
+  if (!api) return;
+  // Offline: the 'online' listener re-kicks; don't burn a pass.
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) return;
+  try { await replayOfflineQueue(api); } catch {}
+  _armFromQueue();
+}
+function _armFromQueue() {
+  let q = [];
+  try { q = getJSON(_queueKey()) || []; } catch {}
+  let min = Infinity;
+  for (const a of q) {
+    if (!a || !_isSendType(a.type)) continue; // other actions ride along on mount/kicks
+    const t = Number(a.next_retry_at) || 0;
+    if (t < min) min = t;
+  }
+  if (min === Infinity) return;
+  _schedulePump(Math.max(1000, min - Date.now()));
+}
+/** Connectivity came back (online / WS re-auth): send queued messages NOW. */
+export function kickSendQueue(reason = 'kick') {
+  if (Platform.OS !== 'web') return;
+  void reason;
+  try {
+    const qk = _queueKey();
+    const q = getJSON(qk) || [];
+    let changed = false;
+    for (const a of q) {
+      // Rate-limited entries keep their 60s floor (re-kicking just 429s again).
+      if (a && _isSendType(a.type) && a.next_retry_at && !a._rl) { a.next_retry_at = 0; changed = true; }
+    }
+    if (changed) setJSON(qk, q);
+  } catch {}
+  _schedulePump(250);
+}
+function _installPump() {
+  if (_pumpInstalled || Platform.OS !== 'web' || typeof window === 'undefined') return;
+  _pumpInstalled = true;
+  try { window.addEventListener('online', () => kickSendQueue('online')); } catch {}
+  try {
+    if (typeof document !== 'undefined') {
+      document.addEventListener('visibilitychange', () => {
+        try { if (document.visibilityState === 'visible') _schedulePump(400); } catch {}
+      });
+    }
+  } catch {}
+  try {
+    const ws = require('./websocket').default;
+    ws?.on?.('connection', (d) => { if (d && d.status === 'authenticated') kickSendQueue('ws_auth'); });
+  } catch {}
+  // Safety net (cheap: reads one key) — re-arms the wake timer if a pass was lost.
+  try { setInterval(() => { _armFromQueue(); }, 30000); } catch {}
+}
+/** Web boot: start the pump and flush whatever a previous page load left. */
+export function startWebSendPump() {
+  if (Platform.OS !== 'web') return;
+  _installPump();
+  _schedulePump(1500);
 }
 
 // 7d TTL — WhatsApp keeps unsent indefinitely, but at some point a stuck
@@ -509,6 +663,18 @@ export async function removeChatSendFromQueueByClientMsgId(clientMsgId) {
 // frontend flickers (success state set twice) and burns network. The mutex
 // makes subsequent calls return early until the first one finishes.
 let _replayInFlight = null;
+
+// [2026-10-12 send-reliability-web] A send dropped from the queue (hard reject /
+// poison-pill cap) must also leave the web pending store — otherwise
+// outboxDrainer re-adopts it on the next pass and the dead message loops
+// forever (the 2026-07-06 ghost class). The bubble keeps its red tap-to-retry.
+function _dropPendingTwin(action) {
+  try {
+    if (Platform.OS !== 'web' || !action || !action.temp_id || action.conversation_id == null) return;
+    const { removePendingMessage } = require('./chatCache');
+    removePendingMessage(action.conversation_id, action.temp_id)?.catch?.(() => {});
+  } catch {}
+}
 
 export async function replayOfflineQueue(api) {
   if (_replayInFlight) return _replayInFlight;
@@ -840,7 +1006,9 @@ export async function replayOfflineQueue(api) {
                 // consumed by Rust on the first attempt, so re-hitting Rust
                 // 500s and demotes the whole session to PHP-only. Go straight
                 // to PHP (idempotent via client_message_id).
-                { skipRust: true },
+                // _replay: this IS the queue head — bypass the web FIFO gate in
+                // api.chatSend (it would defer the message behind itself).
+                { skipRust: true, _replay: true },
               ),
               new Promise((_, reject) =>
                 // [send-reliability 2026-10-06] 5s < api.js chat_send budget
@@ -883,7 +1051,10 @@ export async function replayOfflineQueue(api) {
                 outbox.markFailed?.(action.client_message_id, new Error(_permanent ? ('chat_send_rejected:' + _rejMsg) : 'chat_send_failed'));
               } catch {}
             }
-            const _sendErr = new Error(_permanent ? ('chat_send_rejected:' + _rejMsg) : 'chat_send_failed');
+            // [2026-10-12] Keep the server reason on soft failures too so the
+            // retry ladder can see a 429 ("Sending too fast") and wait out the
+            // rate window instead of burning attempts every few seconds.
+            const _sendErr = new Error(_permanent ? ('chat_send_rejected:' + _rejMsg) : ('chat_send_failed' + (_rejMsg ? ':' + _rejMsg.slice(0, 120) : '') + (r && r.__httpStatus === 429 ? ' 429' : '')));
             if (_permanent) _sendErr.isHardError = true;
             throw _sendErr;
           }
@@ -1380,6 +1551,7 @@ export async function replayOfflineQueue(api) {
       // dropa da fila silenciosamente em vez de bater no servidor pra
       // sempre. Ainda chama emitSendFail pro balão refletir o estado.
       if (err && err.isHardError) {
+        _dropPendingTwin(action);
         if ((action.type === 'chat_file_upload' || action.type === 'chat_send' || action.type === 'chat_voice_upload' || action.type === 'chat_audio_upload') && action.temp_id) {
           try {
             const evt = require('./sendFailEvents');
@@ -1403,12 +1575,30 @@ export async function replayOfflineQueue(api) {
       // 60s then resume the normal cadence. Detect via err message containing
       // 429 or "Sending too fast" (text from chat.php rate limiter).
       const errMsg = String(err?.message || err || '');
-      const isRateLimit = /\b429\b|too fast|rate.?limit/i.test(errMsg);
+      const isRateLimit = /\b429\b|too fast|rate.?limit|r.pido demais/i.test(errMsg);
       // Backoff: 0s, 30s, 2min, 10min, 30min, 1h, 1h, 1h... — never drop
-      const delaysMs = [0, 30000, 120000, 600000, 1800000, 3600000];
+      // [2026-10-12 send-reliability-web] Message sends retry on a WhatsApp-like
+      // short ladder (3s, 10s, 30s, 1m, 2m, 5m, 15m…): the web pump now actually
+      // fires at next_retry_at, and a 30s first retry left a flaky-network
+      // message at "Enviando" long after the network was fine again.
+      const _isSendAction = _SEND_TYPES.indexOf(action.type) >= 0;
+      // Web only — native message sends live in messageOutbox (own ladder) and
+      // the few native send actions here (voice upload, push quick-reply) keep
+      // the long ladder so a long offline spell can't burn MAX_SEND_ATTEMPTS.
+      const delaysMs = (_isSendAction && Platform.OS === 'web')
+        ? [0, 3000, 10000, 30000, 60000, 120000, 300000, 900000]
+        : [0, 30000, 120000, 600000, 1800000, 3600000];
       const delay = isRateLimit
         ? Math.max(60000, delaysMs[Math.min(attempts, delaysMs.length - 1)])
         : delaysMs[Math.min(attempts, delaysMs.length - 1)];
+      // Offline (web) failures don't count as attempts — the device simply had
+      // no network; the 'online' kick resends. Mirrors messageOutbox 'offline'.
+      const _offlineNow = Platform.OS === 'web' && typeof navigator !== 'undefined' && navigator.onLine === false;
+      if (_isSendAction && _offlineNow) {
+        failedActions.push({ ...action, next_retry_at: Date.now() + 30000 });
+        if (action.conversation_id) blockedConvIds.add(action.conversation_id);
+        continue;
+      }
       // POISON-PILL GUARD (2026-07-06): a chat_send that keeps failing on a
       // *soft* error (timeout, 5xx, or a rejection string the permanent-classifier
       // at the send site didn't recognize — e.g. not_found / conversation deleted)
@@ -1427,6 +1617,7 @@ export async function replayOfflineQueue(api) {
       // adicionava o conversation_id em blockedConvIds abaixo, travando TODA a
       // conversa (head-of-line). Mesma classe do fantasma de 2026-07-06.
       if ((action.type === 'chat_send' || action.type === 'chat_file_upload' || action.type === 'chat_voice_upload' || action.type === 'chat_audio_upload') && attempts >= MAX_SEND_ATTEMPTS) {
+        _dropPendingTwin(action);
         if (action.temp_id) {
           try {
             const evt = require('./sendFailEvents');
@@ -1439,6 +1630,7 @@ export async function replayOfflineQueue(api) {
         ...action,
         retries: attempts,
         next_retry_at: Date.now() + delay,
+        _rl: isRateLimit || undefined,
         // Mark as "permanently failing" once we hit attempt 5 so the UI
         // can show ❗ + tap-to-retry. Doesn't remove from queue.
         permanent_fail: attempts >= 5,

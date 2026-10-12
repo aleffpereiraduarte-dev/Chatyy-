@@ -549,7 +549,7 @@ export async function removeConversationFromCache(conversationId) {
   // Drop any cached messages + pending for that conversation too.
   try { _hotCache.delete(_msgsKey(cid)); _hotCache.delete(`chat_msgs_${cid}`); } catch {}
   try { _kvRemove(_msgsKey(cid)); _kvRemove(`chat_msgs_${cid}`); } catch {}
-  try { await clearPendingMessages(cid); } catch {}
+  try { await clearPendingMessages(cid, { drop: true }); } catch {}
   // Web: IndexedDB + localStorage scoped mirror.
   if (Platform.OS === 'web') {
     try {
@@ -625,7 +625,7 @@ export async function clearConversationMessages(conversationId) {
   }
   try { _hotCache.delete(_msgsKey(cid)); _hotCache.delete(`chat_msgs_${cid}`); } catch {}
   try { _kvRemove(_msgsKey(cid)); _kvRemove(`chat_msgs_${cid}`); } catch {}
-  try { await clearPendingMessages(cid); } catch {}
+  try { await clearPendingMessages(cid, { drop: true }); } catch {}
   if (Platform.OS === 'web') {
     try {
       // [2026-10-06] localDb nunca exportou webSaveMessagesForConversation
@@ -709,8 +709,14 @@ function _warnDeprecatedPending() {
   } catch {}
 }
 
+// cmis whose pending row was written by THIS page/JS session (a live send owns
+// them for a few seconds); rows NOT in here were left by a previous page load.
+const _sessionPendingCmi = new Set();
+export function isSessionPending(cmi) { return !!cmi && _sessionPendingCmi.has(String(cmi)); }
+
 export async function savePendingMessage(conversationId, message) {
   _warnDeprecatedPending();
+  try { if (message && message.client_message_id) { _sessionPendingCmi.add(String(message.client_message_id)); if (_sessionPendingCmi.size > 500) _sessionPendingCmi.delete(_sessionPendingCmi.values().next().value); } } catch {}
   if (isNative && isDbReady()) {
     try { await dbSavePending({ ...message, conversation_id: conversationId }); return; } catch {}
   }
@@ -758,8 +764,65 @@ export async function removePendingMessage(conversationId, tempId) {
 }
 
 // Clear ALL pending messages for a conversation (called when server confirms messages loaded)
-export async function clearPendingMessages(conversationId) {
+// [2026-10-12 send-reliability-web] On WEB the pending store is the ONLY durable
+// record of a send that was in flight when the page reloaded/closed (no SQLite
+// outbox there). chat-conversation's loadMessages calls clearPendingMessages()
+// after every server refetch ("stale pending would reappear") — QA proved it
+// wiped UNSENT messages: typed 3 messages, reload 1.5s later → the screen's
+// first load cleared the pending rows before outboxDrainer could adopt them →
+// the 3 messages were gone for good (no bubble, never sent). Now the default
+// clear first hands every row older than 15s to offlineCache's send queue
+// (server dedups by client_message_id, so a row that DID land just confirms)
+// and KEEPS rows younger than 15s (owned by a live send; the drainer adopts
+// them if they outlive it). Callers that really mean "forget" (conversation
+// deleted / cleared) pass { drop: true }.
+function _rescueUnsentPending(rows) {
+  const keep = [];
+  try {
+    const oc = require('./offlineCache');
+    let me = '';
+    try { const { getActiveAccountEmail } = require('./api'); me = String((getActiveAccountEmail && getActiveAccountEmail()) || '').toLowerCase(); } catch {}
+    let e2e = null;
+    try { const m = require('./e2eeV4'); e2e = m.default || m; } catch {}
+    const now = Date.now();
+    for (const p of rows || []) {
+      if (!p || !p.temp_id || !p.conversation_id) continue;
+      const created = Date.parse(p.created_at || '') || 0;
+      if (created && now - created < 15000 && isSessionPending(p.client_message_id)) { keep.push(p); continue; }
+      if (created && now - created > 7 * 24 * 60 * 60 * 1000) continue;
+      const snd = String(p.sender_email || '').toLowerCase();
+      if (snd && me && snd !== me) continue;
+      if (p._e2e || p.e2e) continue;
+      try { if (e2e && typeof e2e.isConversationE2ee === 'function' && e2e.isConversationE2ee(p.conversation_id)) continue; } catch {}
+      const fu = String(p.file_url || '');
+      const fuRemote = /^https?:\/\//i.test(fu) || fu.indexOf('/data/') === 0;
+      if (['image', 'video', 'audio', 'voice', 'video_note', 'file'].includes(p.type) && !fuRemote) continue;
+      const cmi = p.client_message_id || p.temp_id;
+      if (oc.hasQueuedCmi?.(cmi)) continue;
+      oc.queueOfflineAction?.({
+        type: 'chat_send',
+        conversation_id: p.conversation_id,
+        content: p.content,
+        msgType: p.type || 'text',
+        reply_to_id: p.reply_to_id || null,
+        mentions: p.mentions || null,
+        file_url: fuRemote ? fu : null,
+        temp_id: p.temp_id,
+        client_message_id: cmi,
+        ts: created || now,
+        _adopted: 1,
+      })?.catch?.(() => {});
+    }
+  } catch {}
+  return keep;
+}
+
+export async function clearPendingMessages(conversationId, opts = null) {
   const key = `chat_pending_${conversationId}`;
+  let _keepPending = [];
+  if (!isNative && !(opts && opts.drop)) {
+    try { _keepPending = _rescueUnsentPending(_readMessages(key)); } catch { _keepPending = []; }
+  }
   // Atomicity across all 3 tiers (SQLite + MMKV + hotCache). Order matters:
   //   1. Cancel any pending debounced write FIRST — otherwise a timer queued
   //      by savePendingMessage could fire AFTER we clear and re-serialize the
@@ -783,6 +846,9 @@ export async function clearPendingMessages(conversationId) {
       const pending = await dbGetPending(conversationId);
       for (const p of pending) { try { await dbRemovePending(p.temp_id); } catch {} }
     } catch {}
+  }
+  if (_keepPending.length) {
+    try { _hotCache.set(key, _keepPending); _kvSet(key, JSON.stringify(_keepPending)); } catch {}
   }
 }
 

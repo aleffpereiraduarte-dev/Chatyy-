@@ -4667,6 +4667,33 @@ async function _tryNativeWsSend(payload) {
   });
 }
 
+// [2026-10-12 send-reliability-web] Web FIFO gate helpers. A transient failure
+// is remembered (in memory, synchronously, before the caller even sees it) so
+// the NEXT message of the same conversation can't slip out in the few ms
+// between "older send failed" and "older send written to the offline queue".
+const _webSendFail = new Map(); // String(conversationId) -> { cmi, at }
+const WEB_FAIL_HOLD_MS = 15000;
+function _webMustQueueBehind(conversationId, cmi) {
+  try { if (require('./offlineCache').hasQueuedSend?.(conversationId, cmi)) return true; } catch {}
+  const f = _webSendFail.get(String(conversationId));
+  return !!(f && f.cmi !== cmi && Date.now() - f.at < WEB_FAIL_HOLD_MS);
+}
+function _webNoteSendOutcome(conversationId, cmi, result, opts) {
+  if (Platform.OS !== 'web') return;
+  try {
+    const k = String(conversationId);
+    const ok = !!(result && (result.success || result.message_id || result.data?.message_id));
+    if (ok) { const f = _webSendFail.get(k); if (f && f.cmi === cmi) _webSendFail.delete(k); return; }
+    if (result && result._deferred) return;
+    const st = Number(result && result.__httpStatus) || 0;
+    // Only TRANSIENT outcomes hold the conversation (thrown / no answer / 5xx /
+    // 429 / timeout). A definitive 4xx turns the bubble red and must not block
+    // the messages after it.
+    const transient = !result || st === 0 || st >= 500 || st === 429 || st === 408;
+    if (transient && !opts?._replay) _webSendFail.set(k, { cmi, at: Date.now() });
+  } catch {}
+}
+
 export async function chatSend(conversationId, content, type = 'text', replyToId = null, mentions = null, fileUrl = null, tempId = null, clientMessageId = null, topicId = null, opts = null) {
   // Guard: server raises an unhelpful 400 when conversation_id is empty/0,
   // and the client bubble sticks as "pending" because the error message
@@ -4755,6 +4782,32 @@ export async function chatSend(conversationId, content, type = 'text', replyToId
   // o US rejeitou (evento chat_send_rejected): pede o caminho direto ao US —
   // senão o edge repete a rejeição guardada no spool. Corpo (não header: CORS).
   try { if (require('./regionalAccept').shouldBypassRegional(stableCMI)) payload.regional_off = 1; } catch {}
+  // [2026-10-12 send-reliability-web] Per-conversation FIFO on WEB. Native has
+  // it in sendWorker (isConversationBusy → messageOutbox.release); web had
+  // nothing: once an older message of this conversation failed and sat in the
+  // offline queue, the next message went straight out and OVERTOOK it (QA
+  // flaky-network run: #7 landed after #8/#9). Queue this one behind it — the
+  // offline queue replays in typed order (services/offlineCache web pump).
+  // The screen sees a soft failure → keeps the clock bubble and its own
+  // queueOfflineAction merges into this entry (same client_message_id).
+  if (Platform.OS === 'web' && !opts?._replay && _webMustQueueBehind(conversationId, stableCMI)) {
+    try {
+      await require('./offlineCache').queueOfflineAction({
+        type: 'chat_send',
+        conversation_id: conversationId,
+        content,
+        msgType: type || 'text',
+        reply_to_id: replyToId || null,
+        mentions: mentions || null,
+        file_url: fileUrl || null,
+        temp_id: localTempId,
+        client_message_id: stableCMI,
+        topic_id: topicId || null,
+        effect: opts?.effect || null,
+      });
+    } catch {}
+    return { success: false, _deferred: true, message: 'queued_behind_older', error: 'queued_behind_older' };
+  }
   // Try Rust — inserts in PG, broadcasts to WS hub, returns ~5ms vs 30-50ms PHP.
   // topic_id still goes through PHP (threaded replies not yet in Rust).
   //
@@ -4937,10 +4990,12 @@ export async function chatSend(conversationId, content, type = 'text', replyToId
     } catch (e) {
       // Network error / abort. Mark the optimistic row failed so the outbox
       // drainer can pick it up. Re-throw so the caller's catch keeps running.
+      _webNoteSendOutcome(conversationId, stableCMI, null, opts);
       await _localMarkFailed(localTempId, e);
       throw e;
     }
   }
+  _webNoteSendOutcome(conversationId, stableCMI, result, opts);
 
   // [2026-10-10 regional-accept] Edge aceitou (id tmp_…, spool durável) mas o
   // id numérico ainda vem do US → o outbox segura a linha ('accepted') até o

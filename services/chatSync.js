@@ -109,6 +109,40 @@ let _pending = null;                      // {convIds, resolvers[]}
 let _debounceTimer = null;
 const DEBOUNCE_MS = 500;
 
+// [2026-10-12 cold-cursor] A conversation with NO local cursor (fresh login /
+// new device / cleared web storage) was synced from pts 0 = the OLDEST 500
+// events. The newest messages — the ones this device must ack as delivered —
+// were never reached: has_more caps latest_pts at the page end, the 2nd page
+// trips needsFullReload and the walk stops. QA 2026-10-12: receiver came online
+// on the chat list → acked 15 ancient ids, the 3 new messages stayed at a single
+// ✓ until the conversation was opened. Now: one cheap probe (since_pts beyond
+// any seq → the server's idle path answers {events:[], latest_pts:sync_seq})
+// learns the real head, and cold conversations sync only their TAIL (last 300
+// events). Older history is the conversation screen's job (chat_messages), and
+// needsFullReload tells an open screen to reload. Probe failure → old behaviour.
+const COLD_TAIL_EVENTS = 300;
+const _PTS_PROBE = 9007199254740991;
+const _smallConv = new Map(); // id -> ts: probed, ≤ COLD_TAIL_EVENTS events → plain pts-0 sync is already a tail
+async function _coldTailSince(rows) {
+  const tails = new Map(); // id -> since
+  const now = Date.now();
+  const cold = rows.filter(x => !x.since_pts && !(now - (_smallConv.get(x.id) || 0) < 10 * 60 * 1000));
+  if (!cold.length) return tails;
+  try {
+    const r = await api.apiCall('chat_sync', {
+      conversations: cold.map(x => ({ id: x.id, since_pts: _PTS_PROBE, limit: 1 })),
+    }, 'POST');
+    const arr = (r?.success && Array.isArray(r.data?.conversations)) ? r.data.conversations : [];
+    for (const c of arr) {
+      if (!c || c.denied || (Array.isArray(c.events) && c.events.length)) continue;
+      const latest = Number(c.latest_pts) || 0;
+      if (latest > COLD_TAIL_EVENTS) tails.set(Number(c.id), latest - COLD_TAIL_EVENTS);
+      else _smallConv.set(Number(c.id), now);
+    }
+  } catch {}
+  return tails;
+}
+
 async function _runSync(convIds) {
   if (convIds.length > MAX_CONVS_PER_REQ) convIds = convIds.slice(0, MAX_CONVS_PER_REQ);
   const body = {
@@ -118,6 +152,12 @@ async function _runSync(convIds) {
       .map(id => ({ id, since_pts: getLastPts(id), limit: 500 })),
   };
   if (body.conversations.length === 0) return [];
+  const _coldTail = await _coldTailSince(body.conversations);
+  if (_coldTail.size) {
+    for (const x of body.conversations) {
+      if (_coldTail.has(x.id)) x.since_pts = _coldTail.get(x.id);
+    }
+  }
 
   let lastErr = null;
   for (let attempt = 0; attempt < 3; attempt++) {
@@ -141,6 +181,7 @@ async function _runSync(convIds) {
       }
       const out = Array.isArray(r.data?.conversations) ? r.data.conversations : [];
       for (const c of out) {
+        if (c && _coldTail.has(Number(c.id))) c.needsFullReload = true;
         if (c?.denied) { gapStreak.delete(c.id); continue; }
         const latest = Number(c.latest_pts || 0);
         // Watermark fix (2026-06-28): when has_more, the server only returned a
