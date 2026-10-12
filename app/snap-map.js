@@ -1801,6 +1801,10 @@ export default function SnapMapScreen() {
         // this is what we read on-device to stop guessing why MapLibre is
         // blank inside the WKWebView (WebGL ctx, CDN script, tile fetch…).
         console.warn('[SNAPMAP] map_error', JSON.stringify(msg));
+        // [2026-10-12] O MapKit (iOS) avisa falha de alguns tiles mesmo com o mapa
+        // já desenhado (ruas visíveis) → aviso falso "Sem conexão com o mapa".
+        // Depois que o mapa ficou pronto, erro passageiro não mostra o aviso.
+        if (mapReadyRef.current) return;
         setMapErr(msg);
       }
     } catch {}
