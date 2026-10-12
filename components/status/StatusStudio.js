@@ -26,7 +26,7 @@ import {
   View, Text, TouchableOpacity, StyleSheet, Modal, Dimensions, Platform, TextInput,
   ScrollView, PanResponder, ActivityIndicator, Image, KeyboardAvoidingView, Keyboard, Alert, Pressable,
 } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useSafeAreaInsets, initialWindowMetrics } from 'react-native-safe-area-context';
 import { useAndroidKeyboardInset } from '../chat/SheetKeyboardAvoider'; // [2026-10-11 android-kav]
 import Svg, { Path, Defs, LinearGradient, Stop, Rect } from 'react-native-svg';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -275,7 +275,16 @@ const blankOverlays = () => ({ items: [], paths: [] });
 
 export default function StatusStudio({ visible, seed, onClose, onOpenCamera, user, t, router }) {
   const { colors, isDark } = useTheme();
-  const insets = useSafeAreaInsets();
+  // [2026-10-12] Dentro de Modal o iOS devolve insets 0 → botões do topo em cima do
+  // relógio/ilha. Usa a margem real da janela como piso.
+  const _rawInsets = useSafeAreaInsets();
+  const _win = (initialWindowMetrics && initialWindowMetrics.insets) || { top: 0, bottom: 0, left: 0, right: 0 };
+  const insets = {
+    top: Math.max(_rawInsets.top || 0, _win.top || 0),
+    bottom: Math.max(_rawInsets.bottom || 0, _win.bottom || 0),
+    left: Math.max(_rawInsets.left || 0, _win.left || 0),
+    right: Math.max(_rawInsets.right || 0, _win.right || 0),
+  };
   // [2026-10-11 android-kav] editor de texto: no Android a KAV fica desligada e o
   // Modal edge-to-edge não redimensiona → teclado cobria a fileira de cores.
   const androidKb = useAndroidKeyboardInset();
