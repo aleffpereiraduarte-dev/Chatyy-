@@ -178,9 +178,21 @@ final class CallViewController: UIViewController, @unchecked Sendable {
     private var pipResignObserver: NSObjectProtocol?
 
     // Ringback
-    private var ringbackEngine: AVAudioEngine?
-    private var ringbackPlayer: AVAudioPlayerNode?
+    // [2026-10-13 ringback] AVAudioPlayer (in-memory WAV, 425 Hz 1 s on / 4 s
+    // off) instead of a private AVAudioEngine: the engine was started in
+    // viewDidLoad BEFORE CallKit's didActivate, so the CallKit activation /
+    // LiveKit VPIO bring-up reconfigured the session (new HW sample rate,
+    // AVAudioEngineConfigurationChange) and the engine stopped silently with
+    // nothing restarting it ("não toca o tuu… tuu…"). See startRingbackTone.
+    private var ringbackPlayer: AVAudioPlayer?
     private var ringbackResignObserver: NSObjectProtocol?
+    /// Caller wants the ringback (set at dial, cleared by stopRingbackTone).
+    private var ringbackWanted: Bool = false
+    private var ringbackStartWork: DispatchWorkItem?
+    private var ringbackWatchdog: Timer?
+    private var ringbackSessionObservers: [NSObjectProtocol] = []
+    private var ringbackRebuilds: Int = 0
+    private var ringbackStartedAt: Date?
 
     // [WAVE 177] Video views — remote fullscreen + local PiP corner
     private var remoteVideoView: VideoView?
@@ -230,7 +242,6 @@ final class CallViewController: UIViewController, @unchecked Sendable {
     private var durationTimer: Timer?
     private var callConnectedAt: Date?
     private var dotCount = 0
-    private var ringbackActive: Bool = false
 
     // [DTMF, 2026-05-19] Listen for ExpoCallKitPlayDTMF (posted by the
     // module's playDTMF Function + the CXPlayDTMFCallAction handler) and
@@ -260,7 +271,7 @@ final class CallViewController: UIViewController, @unchecked Sendable {
     // [2026-10-11 call-parity] Outgoing call refused (declined/busy/unavailable):
     // showing the label ~1.5 s with a busy tone before dismissing.
     private var remoteRefusalActive: Bool = false
-    private var busyToneEngine: AVAudioEngine?
+    private var busyTonePlayer: AVAudioPlayer?
 
     // [Wave WhatsApp parity, 2026-05-20 gap B5 iOS] Listen for AVAudioSession
     // interruptions (Siri, alarm, PSTN call) and recover the mic after the
@@ -1791,8 +1802,11 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         }
 
         // Ringback only fires for the caller side, while we're still waiting.
-        if isOutgoing && session.status == "Conectando\u{2026}" {
-            startRingbackTone()
+        // [2026-10-13 ringback] Arm (not play): the tone starts on CallKit's
+        // didActivate, or after ~1 s if the session was already active /
+        // didActivate never comes — never against a not-yet-activated session.
+        if isOutgoing && callConnectedAt == nil && !didHangup {
+            armRingbackTone()
             installBackgroundObserverForRingback()
         }
     }
@@ -3546,86 +3560,261 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         }
     }
 
-    // MARK: - Ringback (unchanged from prior round)
+    // MARK: - Ringback [2026-10-13 ringback rewrite]
+    //
+    // Founder bug (iOS 5.0.5 ~676/677): "quando estou chamando o amigo NÃO toca
+    // o tuu… tuu…". Root cause: the old AVAudioEngine ringback was started in
+    // viewDidLoad, ~0.8 s BEFORE CallKit's provider(_:didActivate:) (voip_diag:
+    // callvc present 54.8 → lk_audio_bridge_activated 55.6). The engine bound to
+    // the pre-activation session format; CallKit's activation + the LiveKit
+    // audio-unit bring-up (LKAudioSessionCallKitBridge) reconfigured the session
+    // → AVAudioEngineConfigurationChange → the engine STOPS ITSELF and nothing
+    // restarted it (ringbackActive stayed true, so even a 2nd start was a no-op).
+    // A brief app-inactive blip (CallKit UI) also hard-stopped it for good via
+    // willResignActive.
+    //
+    // Now:
+    //  * armRingbackTone() at dial; the tone starts on didActivate (+250 ms so
+    //    the LK unit settles) or after 1 s fallback (session already active /
+    //    didActivate late) — WhatsApp-like "~1 s after dialing".
+    //  * AVAudioPlayer on an in-memory WAV (425 Hz, 1 s on / 4 s off = BR/CEPT).
+    //    It follows the CURRENT route (earpiece by default via AudioRouter,
+    //    speaker / BT when selected) and survives HW format changes.
+    //  * Self-healing: didActivate rebuilds, interruption-ended / didBecomeActive
+    //    / mediaServicesReset resume, and a 1 s watchdog re-plays if anything
+    //    stopped it while ringbackWanted.
+    //  * stopRingbackTone(reason:) clears ringbackWanted first, so every
+    //    answer/decline/busy/no-answer/hangup path stops it immediately and no
+    //    pending restart can bring it back.
 
-    private func startRingbackTone() {
-        guard !ringbackActive else { return }
-        let engine = AVAudioEngine()
-        let player = AVAudioPlayerNode()
-        let outputFormat = engine.mainMixerNode.outputFormat(forBus: 0)
-        let format: AVAudioFormat
-        if outputFormat.channelCount == 0 || outputFormat.sampleRate == 0 {
-            guard let fallback = AVAudioFormat(standardFormatWithSampleRate: 44100, channels: 1) else {
-                print("[CallVC] ringback: could not build fallback AVAudioFormat")
-                return
+    private static let kRingbackFallbackDelay: Double = 1.0
+    private static let kRingbackAfterActivateDelay: Double = 0.25
+    private static let kRingbackMaxRebuilds: Int = 30
+    private static var cachedRingbackWav: Data?
+    private static var cachedBusyWav: Data?
+
+    /// Mono 16-bit PCM WAV. `pattern` = [(onSeconds, offSeconds)] played once;
+    /// 15 ms fade in/out on every burst (no clicks).
+    fileprivate static func makeToneWav(frequency: Double,
+                                        pattern: [(Double, Double)],
+                                        amplitude: Double,
+                                        sampleRate: Int = 16000) -> Data {
+        var samples: [Int16] = []
+        let fade = max(1, Int(Double(sampleRate) * 0.015))
+        let step = 2.0 * Double.pi * frequency / Double(sampleRate)
+        for (onSec, offSec) in pattern {
+            let on = Int(Double(sampleRate) * onSec)
+            let off = Int(Double(sampleRate) * offSec)
+            var phase = 0.0
+            for i in 0..<on {
+                var env = 1.0
+                if i < fade { env = Double(i) / Double(fade) }
+                else if i > on - fade { env = Double(on - i) / Double(fade) }
+                let v = max(-1.0, min(1.0, sin(phase) * amplitude * env))
+                samples.append(Int16(v * 32767.0))
+                phase += step
+                if phase > 2.0 * Double.pi { phase -= 2.0 * Double.pi }
             }
-            format = fallback
-        } else {
-            format = outputFormat
+            if off > 0 { samples.append(contentsOf: repeatElement(Int16(0), count: off)) }
         }
-        engine.attach(player)
-        engine.connect(player, to: engine.mainMixerNode, format: format)
-        guard let buffer = makeRingbackBuffer(format: format) else {
-            print("[CallVC] ringback: makeRingbackBuffer returned nil")
-            return
+        let dataBytes = samples.count * 2
+        var b: [UInt8] = []
+        b.reserveCapacity(44 + dataBytes)
+        func le32(_ v: UInt32) {
+            b.append(UInt8(v & 0xff)); b.append(UInt8((v >> 8) & 0xff))
+            b.append(UInt8((v >> 16) & 0xff)); b.append(UInt8((v >> 24) & 0xff))
         }
-        do {
-            try engine.start()
-        } catch {
-            print("[CallVC] ringback: engine.start() failed: \(error)")
-            return
+        func le16(_ v: UInt16) {
+            b.append(UInt8(v & 0xff)); b.append(UInt8((v >> 8) & 0xff))
         }
-        player.volume = 0.4
-        player.scheduleBuffer(buffer, at: nil, options: [.loops], completionHandler: nil)
-        player.play()
-        self.ringbackEngine = engine
-        self.ringbackPlayer = player
-        self.ringbackActive = true
-        print("[CallVC] ringback: started")
+        b.append(contentsOf: Array("RIFF".utf8)); le32(UInt32(36 + dataBytes))
+        b.append(contentsOf: Array("WAVE".utf8))
+        b.append(contentsOf: Array("fmt ".utf8)); le32(16)
+        le16(1)                                 // PCM
+        le16(1)                                 // mono
+        le32(UInt32(sampleRate))
+        le32(UInt32(sampleRate * 2))            // byte rate
+        le16(2)                                 // block align
+        le16(16)                                // bits/sample
+        b.append(contentsOf: Array("data".utf8)); le32(UInt32(dataBytes))
+        for s in samples {
+            let u = UInt16(bitPattern: s)
+            b.append(UInt8(u & 0xff)); b.append(UInt8(u >> 8))
+        }
+        return Data(b)
     }
 
-    private func makeRingbackBuffer(format: AVAudioFormat) -> AVAudioPCMBuffer? {
-        let sampleRate = format.sampleRate
-        let totalFrames = AVAudioFrameCount(sampleRate * 5.0)
-        guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: totalFrames) else { return nil }
-        buffer.frameLength = totalFrames
-        let toneFrames = Int(sampleRate * 1.0)
-        let frequency: Double = 440.0
-        let twoPi = 2.0 * Double.pi
-        let amplitude: Float = 0.5
-        guard let channels = buffer.floatChannelData else { return nil }
-        let channelCount = Int(format.channelCount)
-        for ch in 0..<channelCount {
-            let ptr = channels[ch]
-            for i in 0..<Int(totalFrames) {
-                if i < toneFrames {
-                    let theta = twoPi * frequency * Double(i) / sampleRate
-                    ptr[i] = Float(sin(theta)) * amplitude
-                } else {
-                    ptr[i] = 0
-                }
-            }
+    private static func ringbackWav() -> Data {
+        if let d = cachedRingbackWav { return d }
+        // BR (Anatel) / CEPT ringback: 425 Hz, 1 s on, 4 s off.
+        let d = makeToneWav(frequency: 425.0, pattern: [(1.0, 4.0)], amplitude: 0.32)
+        cachedRingbackWav = d
+        return d
+    }
+
+    private static func busyWav() -> Data {
+        if let d = cachedBusyWav { return d }
+        // BR busy: 425 Hz, 250 ms on / 250 ms off, x3 (~1.5 s = refusal label time).
+        let d = makeToneWav(frequency: 425.0, pattern: [(0.25, 0.25), (0.25, 0.25), (0.25, 0.25)], amplitude: 0.32)
+        cachedBusyWav = d
+        return d
+    }
+
+    private static func currentOutputName() -> String {
+        return AVAudioSession.sharedInstance().currentRoute.outputs.map { $0.portType.rawValue }.joined(separator: ",")
+    }
+
+    /// Caller dialed: want the ringback. Does NOT touch the audio session yet.
+    private func armRingbackTone() {
+        guard isOutgoing, !ringbackWanted, callConnectedAt == nil, !didHangup else { return }
+        ringbackWanted = true
+        ringbackRebuilds = 0
+        ringbackStartedAt = nil
+        installRingbackSessionObservers()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self = self, self.ringbackWanted else { return }
+            self.startRingbackTone(reason: "fallback_1s")
         }
-        return buffer
+        ringbackStartWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.kRingbackFallbackDelay, execute: work)
+        scheduleRingbackWatchdogTick()
+        print("[CallVC] ringback: armed — callId=\(callId)")
+    }
+
+    /// Start (or resume) the tone. `rebuild` = drop the current player first
+    /// (session (re)activated → bind a fresh player to the live session).
+    private func startRingbackTone(reason: String, rebuild: Bool = false) {
+        guard ringbackWanted, !didHangup, callConnectedAt == nil, !remoteRefusalActive else { return }
+        ringbackStartWork?.cancel()
+        ringbackStartWork = nil
+        if rebuild, let old = ringbackPlayer {
+            old.stop()
+            ringbackPlayer = nil
+        }
+        if let p = ringbackPlayer {
+            if p.isPlaying { return }
+            // Paused by an interruption / route or category change → resume.
+            if p.play() {
+                print("[CallVC] ringback: resumed (\(reason))")
+                nativeCallDiag("ringback_resume", callId, "reason=\(reason) route=\(Self.currentOutputName())")
+                return
+            }
+            p.stop()
+            ringbackPlayer = nil
+        }
+        guard ringbackRebuilds < Self.kRingbackMaxRebuilds else { return }
+        ringbackRebuilds += 1
+        do {
+            let p = try AVAudioPlayer(data: Self.ringbackWav(), fileTypeHint: AVFileType.wav.rawValue)
+            p.numberOfLoops = -1
+            p.volume = 1.0
+            p.prepareToPlay()
+            if p.play() {
+                ringbackPlayer = p
+                let first = ringbackStartedAt == nil
+                if first { ringbackStartedAt = Date() }
+                print("[CallVC] ringback: started (\(reason)) route=\(Self.currentOutputName())")
+                nativeCallDiag(first ? "ringback_start" : "ringback_rebuild", callId,
+                               "reason=\(reason) n=\(ringbackRebuilds) route=\(Self.currentOutputName())")
+            } else {
+                print("[CallVC] ringback: play() returned false (\(reason))")
+                nativeCallDiag("ringback_play_false", callId, "reason=\(reason) n=\(ringbackRebuilds)")
+            }
+        } catch {
+            print("[CallVC] ringback: AVAudioPlayer init failed (\(reason)): \(error)")
+            nativeCallDiag("ringback_init_failed", callId, "reason=\(reason) err=\(error.localizedDescription)")
+        }
+    }
+
+    /// 1 s self-heal loop while the caller waits. Stops by itself when
+    /// ringbackWanted goes false (no Timer → no thread-affinity issues).
+    private func scheduleRingbackWatchdogTick() {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+            guard let self = self, self.ringbackWanted else { return }
+            // Before the first start the arm/fallback path owns it.
+            if self.ringbackStartWork == nil,
+               self.ringbackPlayer?.isPlaying != true,
+               !self.remoteRefusalActive {
+                self.startRingbackTone(reason: "watchdog")
+            }
+            self.scheduleRingbackWatchdogTick()
+        }
+    }
+
+    private func installRingbackSessionObservers() {
+        guard ringbackSessionObservers.isEmpty else { return }
+        let nc = NotificationCenter.default
+        // CallKit activated the session (posted by both provider delegates).
+        ringbackSessionObservers.append(nc.addObserver(
+            forName: Notification.Name("ExpoCallKitAudioSessionActivated"),
+            object: nil, queue: .main
+        ) { [weak self] _ in
+            guard let self = self, self.ringbackWanted else { return }
+            self.ringbackStartWork?.cancel()
+            let work = DispatchWorkItem { [weak self] in
+                guard let self = self, self.ringbackWanted else { return }
+                self.startRingbackTone(reason: "didActivate", rebuild: true)
+            }
+            self.ringbackStartWork = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + Self.kRingbackAfterActivateDelay, execute: work)
+        })
+        ringbackSessionObservers.append(nc.addObserver(
+            forName: AVAudioSession.interruptionNotification,
+            object: nil, queue: .main
+        ) { [weak self] note in
+            guard let self = self, self.ringbackWanted else { return }
+            guard let raw = note.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt,
+                  let kind = AVAudioSession.InterruptionType(rawValue: raw) else { return }
+            if kind == .ended {
+                self.startRingbackTone(reason: "interruption_ended")
+            }
+        })
+        ringbackSessionObservers.append(nc.addObserver(
+            forName: AVAudioSession.mediaServicesWereResetNotification,
+            object: nil, queue: .main
+        ) { [weak self] _ in
+            guard let self = self, self.ringbackWanted else { return }
+            self.startRingbackTone(reason: "media_services_reset", rebuild: true)
+        })
+        ringbackSessionObservers.append(nc.addObserver(
+            forName: UIApplication.didBecomeActiveNotification,
+            object: nil, queue: .main
+        ) { [weak self] _ in
+            guard let self = self, self.ringbackWanted else { return }
+            self.startRingbackTone(reason: "did_become_active")
+        })
     }
 
     private func stopRingbackTone(reason: String) {
-        guard ringbackActive else { return }
-        ringbackActive = false
-        if let player = ringbackPlayer { player.stop() }
-        if let engine = ringbackEngine, engine.isRunning { engine.stop() }
+        let wasWanted = ringbackWanted
+        ringbackWanted = false
+        ringbackStartWork?.cancel()
+        ringbackStartWork = nil
+        for o in ringbackSessionObservers { NotificationCenter.default.removeObserver(o) }
+        ringbackSessionObservers.removeAll()
+        let hadPlayer = ringbackPlayer != nil
+        ringbackPlayer?.stop()
         ringbackPlayer = nil
-        ringbackEngine = nil
-        print("[CallVC] ringback: stopped (\(reason))")
+        guard wasWanted || hadPlayer else { return }
+        let playedMs = ringbackStartedAt.map { Int(Date().timeIntervalSince($0) * 1000) } ?? -1
+        print("[CallVC] ringback: stopped (\(reason)) played_ms=\(playedMs)")
+        nativeCallDiag("ringback_stop", callId, "reason=\(reason) played_ms=\(playedMs) n=\(ringbackRebuilds)")
     }
 
     private func installBackgroundObserverForRingback() {
+        // [2026-10-13 ringback] Do NOT stop on willResignActive any more: the
+        // CallKit outgoing transaction can blip the app to .inactive (voip_diag
+        // presentVC_waiting_active state=1) and that killed the tone for good.
+        // A CallKit call keeps the session (UIBackgroundModes audio+voip), so
+        // the tone continues like WhatsApp; every end path stops it explicitly.
+        guard ringbackResignObserver == nil else { return }
         ringbackResignObserver = NotificationCenter.default.addObserver(
             forName: UIApplication.willResignActiveNotification,
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            self?.stopRingbackTone(reason: "willResignActive")
+            guard let self = self, self.ringbackWanted else { return }
+            print("[CallVC] ringback: willResignActive — keeping tone (CallKit owns the session)")
         }
     }
 
@@ -3691,50 +3880,28 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         }
     }
 
-    /// ~1.2 s "tu-tu-tu" (480 Hz, 0.25 s on / 0.15 s off ×3).
+    /// [2026-10-13 ringback] ~1.5 s BR busy "tu-tu-tu" (425 Hz, 250 ms on /
+    /// 250 ms off ×3) on an AVAudioPlayer — same robust path as the ringback
+    /// (the old AVAudioEngine could be silently stopped by a session reconfig).
     private func playBusyToneShort() {
-        let engine = AVAudioEngine()
-        let player = AVAudioPlayerNode()
-        let outFmt = engine.mainMixerNode.outputFormat(forBus: 0)
-        let fmt: AVAudioFormat
-        if outFmt.channelCount == 0 || outFmt.sampleRate == 0 {
-            guard let f = AVAudioFormat(standardFormatWithSampleRate: 44100, channels: 1) else { return }
-            fmt = f
-        } else {
-            fmt = outFmt
-        }
-        let sr = fmt.sampleRate
-        let total = AVAudioFrameCount(sr * 1.2)
-        guard let buf = AVAudioPCMBuffer(pcmFormat: fmt, frameCapacity: total),
-              let chans = buf.floatChannelData else { return }
-        buf.frameLength = total
-        let period = Int(sr * 0.4)
-        let on = Int(sr * 0.25)
-        for ch in 0..<Int(fmt.channelCount) {
-            let ptr = chans[ch]
-            for i in 0..<Int(total) {
-                if i % period < on {
-                    ptr[i] = Float(sin(2.0 * Double.pi * 480.0 * Double(i) / sr)) * 0.45
-                } else {
-                    ptr[i] = 0
-                }
+        stopBusyTone()
+        do {
+            let p = try AVAudioPlayer(data: Self.busyWav(), fileTypeHint: AVFileType.wav.rawValue)
+            p.numberOfLoops = 0
+            p.volume = 1.0
+            p.prepareToPlay()
+            if !p.play() {
+                print("[CallVC] busy tone play() returned false")
             }
+            busyTonePlayer = p
+        } catch {
+            print("[CallVC] busy tone init failed: \(error)")
         }
-        engine.attach(player)
-        engine.connect(player, to: engine.mainMixerNode, format: fmt)
-        do { try engine.start() } catch {
-            print("[CallVC] busy tone engine.start failed: \(error)")
-            return
-        }
-        player.volume = 0.4
-        player.scheduleBuffer(buf, at: nil, options: [], completionHandler: nil)
-        player.play()
-        busyToneEngine = engine
     }
 
     private func stopBusyTone() {
-        if let e = busyToneEngine, e.isRunning { e.stop() }
-        busyToneEngine = nil
+        busyTonePlayer?.stop()
+        busyTonePlayer = nil
     }
 
     /// Snapshot dict (same keys as CallStateSnapshot + minimized/isGroup/

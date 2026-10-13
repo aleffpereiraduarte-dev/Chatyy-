@@ -3358,15 +3358,34 @@ class CallActivity : ComponentActivity() {
 
   // ────────────── Ringback (outgoing only)
 
+  // [2026-10-13 ringback] TONE_SUP_RINGTONE = CEPT/BR 425 Hz, 1 s on / 4 s
+  // off. It used to be started with a 30 s cap (startTone(…, 30_000)) while
+  // the caller keeps ringing for 45 s → the last ~15 s were silent. Now it
+  // loops until stopRingback() (answer / refusal / no-answer / hangup /
+  // onDestroy all call it). STREAM_VOICE_CALL follows the call route chosen
+  // by AudioRouter (MODE_IN_COMMUNICATION set in onCreate → earpiece, or
+  // speaker / BT when selected).
+  private var ringbackStartedAtMs = 0L
+
   private fun startRingback() {
     if (toneGen != null) return
+    if (peerAnswered || mediaFlowing || finishing) return
     try {
-      val tg = ToneGenerator(AudioManager.STREAM_VOICE_CALL, 60)
-      tg.startTone(ToneGenerator.TONE_SUP_RINGTONE, 30_000)
+      try {
+        val am = getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+        if (am != null && am.mode != AudioManager.MODE_IN_COMMUNICATION) {
+          am.mode = AudioManager.MODE_IN_COMMUNICATION
+        }
+      } catch (_: Throwable) {}
+      val tg = ToneGenerator(AudioManager.STREAM_VOICE_CALL, 80)
+      val ok = tg.startTone(ToneGenerator.TONE_SUP_RINGTONE)
       toneGen = tg
-      Log.d(TAG, "ringback: started (TONE_SUP_RINGTONE, 30s cap)")
+      ringbackStartedAtMs = System.currentTimeMillis()
+      Log.d(TAG, "ringback: started (TONE_SUP_RINGTONE, loop until stop) ok=$ok")
+      try { CallDiag.log("ringback_start", callId, "ok=$ok", applicationContext) } catch (_: Throwable) {}
     } catch (t: Throwable) {
       Log.w(TAG, "ringback init failed: ${t.message}")
+      try { CallDiag.log("ringback_init_failed", callId, "err=${t.message?.take(80)}", applicationContext) } catch (_: Throwable) {}
       toneGen = null
     }
     scheduleOutgoingTimeout()
@@ -3378,7 +3397,10 @@ class CallActivity : ComponentActivity() {
     toneGen = null
     try { tg.stopTone() } catch (_: Throwable) {}
     try { tg.release() } catch (_: Throwable) {}
-    Log.d(TAG, "ringback: stopped")
+    val played = if (ringbackStartedAtMs > 0L) System.currentTimeMillis() - ringbackStartedAtMs else -1L
+    ringbackStartedAtMs = 0L
+    Log.d(TAG, "ringback: stopped played_ms=$played")
+    try { CallDiag.log("ringback_stop", callId, "played_ms=$played", applicationContext) } catch (_: Throwable) {}
   }
 
   /** [WAVE 163 Android, 2026-05-22] Schedule 45s outgoing no-answer timeout.

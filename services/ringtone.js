@@ -7,6 +7,8 @@ let ringtoneSound = null;
 let callingSound = null;
 let nativePlayer = null;
 let ringtoneGeneration = 0; // Track generation to cancel async creation
+// [2026-10-13 ringback] Web Audio nodes still scheduled/playing (stopRingtone cuts them).
+let webToneNodes = [];
 
 // [mute-call-ringtone, 2026-05-19] Cached value of the "Modo silencioso
 // para ligações" toggle. Hydrated lazily from AsyncStorage on first
@@ -258,27 +260,43 @@ export function startCallingTone() {
   const generation = ++ringtoneGeneration;
 
   if (Platform.OS === 'web') {
+    // [2026-10-13 ringback] Ringback de verdade (padrão BR/CEPT): 425 Hz,
+    // 1 s ligado / 4 s desligado, envelope com rampas curtas (sem clique).
+    // Antes: "bong" de 1.2 s com decaimento exponencial a partir de 0.08 —
+    // quase inaudível e não soava como "tuu… tuu…". Os osciladores ficam
+    // registrados em webToneNodes p/ stopRingtone() cortar o tom NA HORA
+    // (antes um burst agendado seguia tocando até 1 s depois de atender).
     const ctx = getAudioContext();
     if (!ctx) return;
 
     const playTone = () => {
+      if (generation !== ringtoneGeneration) return;
       if (!ctx || ctx.state === 'closed') return;
       if (ctx.state === 'suspended') ctx.resume().catch(() => {});
-      const now = ctx.currentTime;
+      const now = ctx.currentTime + 0.02;
       const gainNode = ctx.createGain();
       gainNode.connect(ctx.destination);
-      gainNode.gain.setValueAtTime(0.08, now);
-      gainNode.gain.exponentialRampToValueAtTime(0.001, now + 1.2);
+      gainNode.gain.setValueAtTime(0.0001, now);
+      gainNode.gain.linearRampToValueAtTime(0.14, now + 0.02);
+      gainNode.gain.setValueAtTime(0.14, now + 0.98);
+      gainNode.gain.linearRampToValueAtTime(0.0001, now + 1.0);
       const osc = ctx.createOscillator();
       osc.type = 'sine';
       osc.frequency.setValueAtTime(425, now);
       osc.connect(gainNode);
       osc.start(now);
-      osc.stop(now + 1.2);
+      osc.stop(now + 1.02);
+      const node = { osc, gainNode };
+      webToneNodes.push(node);
+      osc.onended = () => {
+        const i = webToneNodes.indexOf(node);
+        if (i >= 0) webToneNodes.splice(i, 1);
+        try { gainNode.disconnect(); } catch {}
+      };
     };
 
     playTone();
-    ringtoneInterval = setInterval(playTone, 4000);
+    ringtoneInterval = setInterval(playTone, 5000);
   } else {
     // Native: ringback tone (caller waiting for callee to answer).
     // [WAVE 72 2026-05-21] NO vibration on the caller's side — only the
@@ -437,6 +455,14 @@ export function playEndTone() {
 
 export function stopRingtone() {
   ringtoneGeneration++; // Cancel any pending async player creation
+  if (webToneNodes.length) {
+    const nodes = webToneNodes;
+    webToneNodes = [];
+    nodes.forEach(({ osc, gainNode }) => {
+      try { osc.onended = null; osc.stop(); } catch {}
+      try { gainNode.disconnect(); } catch {}
+    });
+  }
   if (ringtoneInterval) {
     clearInterval(ringtoneInterval);
     ringtoneInterval = null;
