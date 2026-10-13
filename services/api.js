@@ -1189,7 +1189,7 @@ if (Platform.OS === 'web') {
 let _reloginPromise = null;
 
 // [send-reliability 2026-10-06] Per-action fetch timeout overrides (ms).
-const _ACTION_TIMEOUT_MS = { chat_send: 10000 };
+const _ACTION_TIMEOUT_MS = { chat_send: 10000, chat_ai_digest: 45000 }; // [2026-10-13 bia-summary] IA lê até 300 msgs
 // [2026-10-09 net-resilience] HTTP respondeu = a rede VOLTOU. Se o WS está
 // parado no backoff (até 10s entre tentativas depois de uma queda "muda" —
 // túnel, elevador, 2G que some sem o SO avisar), antecipa a reconexão agora em
@@ -5880,6 +5880,17 @@ export async function chatAiSummarize(conversationId, sinceMessageId = 0) {
     conversation_id: conversationId,
     since_message_id: sinceMessageId,
   }, 'POST');
+}
+
+// [2026-10-13 bia-summary] "Resumir com a Bia" — resumo ESTRUTURADO (format 'v2':
+// summary, topics, decisions, todos, dates, open_questions, mentions_me, refs) e
+// modo pergunta (params.question → { answer, refs }). params: conversation_id,
+// range ('unread'|'today'|'last100'|'last300'), since_message_id, since_ts,
+// locale, me_name, refresh, messages (só p/ E2EE quando o servidor pede
+// need_messages). Servidor sem a action → "Unknown chat action" e a folha cai
+// no ai_summarize (texto livre). Ver components/chat/ConversationSummarySheet.js.
+export async function chatAiDigest(params = {}) {
+  return apiCall('chat_ai_digest', params, 'POST');
 }
 
 // Jump-to-date: find the first message in the conversation at/after the

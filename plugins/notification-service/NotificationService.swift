@@ -55,7 +55,13 @@ class NotificationService: UNNotificationServiceExtension {
         self.bestAttemptContent = best
 
         let p = Self.payload(request.content.userInfo)
-        Self.reportDelivered(p)
+        // [2026-10-13 dack-wait] O POST do ✓✓ entra no MESMO DispatchGroup das
+        // mídias: antes era fire-and-forget e, em texto puro (avatar em cache →
+        // finish em ms), o iOS podia congelar/matar a extensão logo após o
+        // contentHandler, levando o POST junto (APNs 200, sem ✓✓). Limite curto
+        // (ackTimeout) — não atrasa o banner de forma perceptível.
+        let group = DispatchGroup()
+        Self.reportDelivered(p, group: group) { [weak self] t in self?.addTask(t) }
         // [2026-10-07 bgsync] Store the message in the App Group journal so the
         // app shows it instantly on open (merged before first paint by
         // services/bgJournal.js). No-op without the App Group entitlement.
@@ -95,7 +101,6 @@ class NotificationService: UNNotificationServiceExtension {
             ?? (imageIsAvatar ? Self.str(p, "image") : nil)) : nil
         let groupAvatarURL: URL? = (isChat && !locked && isGroup) ? Self.httpsURL(Self.str(p, "group_avatar")) : nil
 
-        let group = DispatchGroup()
         var mediaAttachment: UNNotificationAttachment?
         var avatarData: Data?
         var groupAvatarData: Data?
@@ -338,15 +343,81 @@ class NotificationService: UNNotificationServiceExtension {
     // [2026-10-07] Reads the MERGED payload: on the Expo route (all iOS
     // devices) d_ack lives inside the "body" dictionary, which the previous
     // string-only parser never saw.
-    private static func reportDelivered(_ p: [String: Any]) {
-        guard let dAck = str(p, "d_ack"),
-              let url = URL(string: "https://chatyy.com.br/api/email.php?action=chat_push_delivered")
-        else { return }
-        var req = URLRequest(url: url, timeoutInterval: 8)
+    // [2026-10-13 dack-wait] Agora: (1) entra no DispatchGroup do didReceive
+    // (finish espera o POST, ≤ ackTimeout); (2) sessão EPHEMERAL (sem cookies —
+    // o gate CSRF do email.php devolvia 403 quando ia cookie); (3) falha de rede
+    // / 5xx / timeout → token vai p/ uma fila no App Group e é reenviado no
+    // próximo push que acordar a NSE (token vale 24 h; servidor é idempotente).
+    private static let ackURL = URL(string: "https://chatyy.com.br/api/email.php?action=chat_push_delivered")
+    private static let ackTimeout: TimeInterval = 6
+    private static let pendingAckKey = "chatyy.dack.pending"
+    private static let pendingAckMax = 40
+    private static let ackLock = NSLock()
+    private static let ackSession: URLSession = {
+        let cfg = URLSessionConfiguration.ephemeral
+        cfg.timeoutIntervalForRequest = ackTimeout
+        cfg.timeoutIntervalForResource = ackTimeout + 2
+        cfg.httpShouldSetCookies = false
+        cfg.httpCookieAcceptPolicy = .never
+        cfg.waitsForConnectivity = false
+        return URLSession(configuration: cfg)
+    }()
+
+    private static func reportDelivered(_ p: [String: Any], group: DispatchGroup,
+                                        track: (URLSessionTask) -> Void) {
+        var toks: [String] = []
+        if let dAck = str(p, "d_ack"), dAck.contains(".") { toks.append(dAck) }
+        // Reenvia até 5 pendentes de pushes anteriores (rede caiu / NSE expirou).
+        for t in takePendingAcks(max: 5) where !toks.contains(t) { toks.append(t) }
+        for tok in toks {
+            guard let t = postAck(tok, group: group) else { continue }
+            track(t)
+        }
+    }
+
+    private static func postAck(_ dAck: String, group: DispatchGroup) -> URLSessionTask? {
+        guard let url = ackURL,
+              let body = try? JSONSerialization.data(withJSONObject: ["d_ack": dAck]) else { return nil }
+        var req = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: ackTimeout)
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        req.httpBody = try? JSONSerialization.data(withJSONObject: ["d_ack": dAck])
-        URLSession.shared.dataTask(with: req).resume()
+        req.setValue("application/json", forHTTPHeaderField: "Accept")
+        req.httpBody = body
+        group.enter()
+        let task = ackSession.dataTask(with: req) { _, response, error in
+            let code = (response as? HTTPURLResponse)?.statusCode ?? 0
+            // 2xx = servidor gravou (ou já estava entregue). 4xx = definitivo
+            // (token inválido/expirado) → não reenvia. Resto = tenta depois.
+            if error != nil || code == 0 || code >= 500 || code == 429 {
+                addPendingAck(dAck)
+            }
+            group.leave()
+        }
+        task.resume()
+        return task
+    }
+
+    private static func takePendingAcks(max n: Int) -> [String] {
+        guard FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroupId) != nil,
+              let ud = UserDefaults(suiteName: appGroupId) else { return [] }
+        ackLock.lock(); defer { ackLock.unlock() }
+        var arr = ud.stringArray(forKey: pendingAckKey) ?? []
+        if arr.isEmpty { return [] }
+        let take = Array(arr.suffix(n))
+        arr.removeLast(take.count)
+        ud.set(arr, forKey: pendingAckKey)
+        return take
+    }
+
+    private static func addPendingAck(_ tok: String) {
+        guard FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroupId) != nil,
+              let ud = UserDefaults(suiteName: appGroupId) else { return }
+        ackLock.lock(); defer { ackLock.unlock() }
+        var arr = ud.stringArray(forKey: pendingAckKey) ?? []
+        if arr.contains(tok) { return }
+        arr.append(tok)
+        if arr.count > pendingAckMax { arr.removeFirst(arr.count - pendingAckMax) }
+        ud.set(arr, forKey: pendingAckKey)
     }
 
     // MARK: - App-icon badge ([2026-10-11])

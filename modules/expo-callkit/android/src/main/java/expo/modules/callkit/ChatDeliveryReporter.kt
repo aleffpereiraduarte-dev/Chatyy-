@@ -2,6 +2,13 @@ package expo.modules.callkit
 
 import android.content.Context
 import android.util.Log
+import androidx.work.Constraints
+import androidx.work.ExistingWorkPolicy
+import androidx.work.NetworkType
+import androidx.work.OneTimeWorkRequestBuilder
+import androidx.work.WorkManager
+import androidx.work.Worker
+import androidx.work.WorkerParameters
 import org.json.JSONArray
 import org.json.JSONObject
 import java.net.HttpURLConnection
@@ -63,7 +70,14 @@ object ChatDeliveryReporter {
                 Log.d(TAG, "already acked $dedupeKey — skip")
                 return
             }
-            Thread({ post(dAck) }, "chatyy-dack").apply { isDaemon = true }.start()
+            // [2026-10-13 dack-retry] Falha de rede/5xx não perde mais o ✓✓: o token
+            // vai p/ uma fila (SharedPreferences) drenada aqui no próximo push e por
+            // um WorkManager one-shot com rede (sobrevive ao processo morrer).
+            val app = ctx.applicationContext
+            Thread({
+                if (!post(dAck)) { addPending(app, dAck); scheduleRetry(app) }
+                else drainPending(app, 5) // rede ok → reenvia pendentes antigos
+            }, "chatyy-dack").apply { isDaemon = true }.start()
         } catch (t: Throwable) {
             Log.w(TAG, "maybeReport failed: ${t.message}")
         }
@@ -92,7 +106,8 @@ object ChatDeliveryReporter {
         }
     }
 
-    private fun post(dAck: String) {
+    /** true = servidor respondeu definitivo (2xx, ou 4xx = token inválido/expirado → não reenvia). */
+    internal fun post(dAck: String): Boolean {
         var conn: HttpURLConnection? = null
         try {
             conn = (URL(ENDPOINT).openConnection() as HttpURLConnection).apply {
@@ -107,10 +122,81 @@ object ChatDeliveryReporter {
             conn.outputStream.use { it.write(body) }
             val code = conn.responseCode
             Log.d(TAG, "delivered ack HTTP $code")
+            try { (if (code < 400) conn.inputStream else conn.errorStream)?.use { it.readBytes() } } catch (_: Throwable) {}
+            return code in 200..499 && code != 429 && code != 408
         } catch (t: Throwable) {
             Log.w(TAG, "delivered ack failed: ${t.message}")
+            return false
         } finally {
             try { conn?.disconnect() } catch (e: Throwable) {}
+        }
+    }
+
+    // ---- fila de reenvio ([2026-10-13 dack-retry]) — token HMAC vale 24 h; servidor idempotente.
+    private const val KEY_PENDING = "pending"
+    private const val MAX_PENDING = 40
+    private const val RETRY_WORK = "chatyy_dack_retry"
+
+    @Synchronized
+    private fun addPending(ctx: Context, dAck: String) {
+        try {
+            val prefs = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            val arr = try { JSONArray(prefs.getString(KEY_PENDING, "[]") ?: "[]") } catch (e: Throwable) { JSONArray() }
+            for (i in 0 until arr.length()) if (arr.optString(i) == dAck) return
+            arr.put(dAck)
+            val out = if (arr.length() > MAX_PENDING) {
+                JSONArray().also { o -> for (i in (arr.length() - MAX_PENDING) until arr.length()) o.put(arr.optString(i)) }
+            } else arr
+            prefs.edit().putString(KEY_PENDING, out.toString()).apply()
+        } catch (_: Throwable) {}
+    }
+
+    @Synchronized
+    private fun takePending(ctx: Context, max: Int): List<String> {
+        return try {
+            val prefs = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            val arr = try { JSONArray(prefs.getString(KEY_PENDING, "[]") ?: "[]") } catch (e: Throwable) { JSONArray() }
+            if (arr.length() == 0) return emptyList()
+            val n = minOf(max, arr.length())
+            val taken = ArrayList<String>(n)
+            for (i in (arr.length() - n) until arr.length()) taken.add(arr.optString(i))
+            val rest = JSONArray()
+            for (i in 0 until arr.length() - n) rest.put(arr.optString(i))
+            prefs.edit().putString(KEY_PENDING, rest.toString()).apply()
+            taken.filter { it.isNotBlank() }
+        } catch (_: Throwable) { emptyList() }
+    }
+
+    /** Reenvia até [max] pendentes; o que falhar de novo volta p/ a fila. Retorna true se a fila esvaziou. */
+    internal fun drainPending(ctx: Context, max: Int): Boolean {
+        var allOk = true
+        for (tok in takePending(ctx, max)) {
+            if (!post(tok)) { addPending(ctx, tok); allOk = false }
+        }
+        return allOk
+    }
+
+    private fun scheduleRetry(ctx: Context) {
+        try {
+            val req = OneTimeWorkRequestBuilder<ChatDeliveryAckWorker>()
+                .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
+                .setBackoffCriteria(androidx.work.BackoffPolicy.EXPONENTIAL, 30, java.util.concurrent.TimeUnit.SECONDS)
+                .build()
+            WorkManager.getInstance(ctx.applicationContext).enqueueUniqueWork(RETRY_WORK, ExistingWorkPolicy.KEEP, req)
+        } catch (t: Throwable) {
+            Log.w(TAG, "scheduleRetry failed: ${t.message}")
+        }
+    }
+}
+
+/** [2026-10-13 dack-retry] Drena a fila de ✓✓ pendentes quando houver rede (até ~5 tentativas). */
+class ChatDeliveryAckWorker(ctx: Context, params: WorkerParameters) : Worker(ctx, params) {
+    override fun doWork(): Result {
+        return try {
+            val ok = ChatDeliveryReporter.drainPending(applicationContext, 40)
+            if (ok || runAttemptCount >= 5) Result.success() else Result.retry()
+        } catch (_: Throwable) {
+            if (runAttemptCount >= 5) Result.success() else Result.retry()
         }
     }
 }

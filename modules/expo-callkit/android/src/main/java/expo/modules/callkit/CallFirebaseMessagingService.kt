@@ -692,6 +692,9 @@ class CallFirebaseMessagingService : FirebaseMessagingService() {
 
     override fun onNewToken(token: String) {
         Log.d(TAG, "New FCM token received")
+        // [2026-10-13 push-token-always] registra o token novo no servidor JÁ,
+        // mesmo com o app fechado (antes só na próxima abertura do app).
+        try { PushTokenRegistrar.onNewToken(applicationContext, token) } catch (_: Throwable) {}
         // Forward to Expo's token handler
         try {
             val delegateClass = Class.forName(

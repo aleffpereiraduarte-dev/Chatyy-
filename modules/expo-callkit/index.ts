@@ -643,6 +643,20 @@ export function dismissChatNotification(conversationId: string | number | null |
   try { m.dismissChatNotification(String(conversationId)); } catch {}
 }
 
+// [2026-10-13 push-token-always] Android: device_id + versão do app p/ o
+// PushTokenRegistrar nativo re-registrar o token FCM em onNewToken (app
+// fechado, sem JS). No-op em iOS/web/binários sem a função.
+export function supportsNativePushRegistrar(): boolean {
+  const m: any = getModule();
+  return !!(m && typeof m.setPushRegistrationInfo === 'function');
+}
+
+export function setPushRegistrationInfo(deviceId: string, appVersion: string): void {
+  const m: any = getModule();
+  if (!m || typeof m.setPushRegistrationInfo !== 'function') return;
+  try { m.setPushRegistrationInfo(deviceId || '', appVersion || ''); } catch {}
+}
+
 export function clearChatNotificationAuth(): void {
   const m: any = getModule();
   if (!m || typeof m.clearChatNotificationAuth !== 'function') return;

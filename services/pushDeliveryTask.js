@@ -75,17 +75,53 @@ function _isLocationPing(node, depth = 0) {
   return false;
 }
 
-export async function ackPushDelivered(payload) {
-  const tok = _findDack(payload);
-  if (!tok || _seen.has(tok)) return false;
-  _seen.add(tok);
-  if (_seen.size > 300) { const first = _seen.values().next().value; _seen.delete(first); }
+// [2026-10-13 dack-retry] Fila PERSISTENTE de ✓✓ que falharam (rede caiu,
+// timeout, 5xx). Antes: falha de rede só liberava o token em memória e, se o
+// iOS suspendesse o app em seguida, o "entregue" se perdia até a pessoa abrir
+// a conversa. Agora o token (HMAC, vale 24 h) vai p/ o AsyncStorage e é
+// reenviado na próxima task de push / ao voltar p/ 1º plano. Servidor é
+// idempotente (repetido = skipped:already_delivered).
+const PENDING_KEY = '@chatyy_dack_pending_v1';
+const PENDING_MAX = 60;
+let _flushing = null;
+
+function _AS() {
+  try { return require('@react-native-async-storage/async-storage').default; } catch { return null; }
+}
+
+async function _readPending() {
+  const AS = _AS();
+  if (!AS) return [];
+  try {
+    const raw = await AS.getItem(PENDING_KEY);
+    const arr = raw ? JSON.parse(raw) : [];
+    return Array.isArray(arr) ? arr.filter((x) => typeof x === 'string' && x.includes('.')) : [];
+  } catch { return []; }
+}
+
+async function _writePending(arr) {
+  const AS = _AS();
+  if (!AS) return;
+  try {
+    if (!arr.length) await AS.removeItem(PENDING_KEY);
+    else await AS.setItem(PENDING_KEY, JSON.stringify(arr.slice(-PENDING_MAX)));
+  } catch {}
+}
+
+async function _addPending(tok) {
+  const arr = await _readPending();
+  if (!arr.includes(tok)) arr.push(tok);
+  await _writePending(arr);
+}
+
+// 'ok' (2xx) | 'definitive' (4xx exceto 408/429 — token inválido/expirado) | 'retry'
+async function _postAck(tok) {
   try {
     const ctl = typeof AbortController !== 'undefined' ? new AbortController() : null;
     const timer = ctl ? setTimeout(() => { try { ctl.abort(); } catch {} }, 8000) : null;
     const r = await fetch(ACK_URL, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
       // [2026-10-12] Sem cookie: o token d_ack (HMAC) já autentica. Com o
       // cookie de sessão do app o gate CSRF do email.php devolvia 403
       // (23 de 91 acks em 2 dias).
@@ -94,11 +130,51 @@ export async function ackPushDelivered(payload) {
       signal: ctl ? ctl.signal : undefined,
     });
     if (timer) clearTimeout(timer);
-    return !!(r && r.ok);
+    const st = Number(r && r.status) || 0;
+    if (st >= 200 && st < 300) return 'ok';
+    if (st >= 400 && st < 500 && st !== 408 && st !== 429) return 'definitive';
+    return 'retry';
   } catch {
+    return 'retry';
+  }
+}
+
+/** Reenvia os ✓✓ pendentes (single-flight). Seguro chamar a qualquer momento. */
+export function flushPendingPushAcks() {
+  if (_flushing) return _flushing;
+  _flushing = (async () => {
+    try {
+      const arr = await _readPending();
+      if (!arr.length) return 0;
+      const keep = [];
+      let sent = 0;
+      for (const tok of arr.slice(-20)) {
+        const res = await _postAck(tok);
+        if (res === 'retry') keep.push(tok); else sent++;
+      }
+      // Itens além dos 20 mais novos ficam p/ a próxima rodada.
+      const rest = arr.slice(0, Math.max(0, arr.length - 20));
+      await _writePending([...rest, ...keep]);
+      return sent;
+    } catch { return 0; } finally { _flushing = null; }
+  })();
+  return _flushing;
+}
+
+export async function ackPushDelivered(payload) {
+  const tok = _findDack(payload);
+  if (!tok || _seen.has(tok)) return false;
+  _seen.add(tok);
+  if (_seen.size > 300) { const first = _seen.values().next().value; _seen.delete(first); }
+  const res = await _postAck(tok);
+  if (res === 'retry') {
     _seen.delete(tok); // deixa um re-push / próxima wake tentar de novo
+    try { await _addPending(tok); } catch {}
     return false;
   }
+  // Aproveita a rede acordada p/ drenar pendentes antigos (não bloqueia).
+  try { flushPendingPushAcks(); } catch {}
+  return res === 'ok';
 }
 
 if (Platform.OS !== 'web') {
@@ -150,5 +226,12 @@ if (Platform.OS !== 'web') {
       });
       Notifications?.registerTaskAsync?.(PUSH_DACK_TASK)?.catch?.(() => {});
     }
+  } catch {}
+  // [2026-10-13 dack-retry] Drena a fila ao iniciar e sempre que o app volta p/ 1º plano.
+  try {
+    setTimeout(() => { try { flushPendingPushAcks(); } catch {} }, 4000);
+    AppState.addEventListener?.('change', (st) => {
+      if (st === 'active') { try { flushPendingPushAcks(); } catch {} }
+    });
   } catch {}
 }

@@ -374,6 +374,8 @@ let UnknownSenderCard = null; try { UnknownSenderCard = require('../components/c
 let _videoSendPipeline = null;
 try { _videoSendPipeline = require('../services/videoSendPipeline'); } catch {}
 let AISummarizeModal = null; try { AISummarizeModal = require('../components/chat/AISummarizeModal').default; } catch {}
+// [2026-10-13 bia-summary] "Resumir com a Bia" — folha única (menu, Dados do contato, pill e chip de não lidas).
+let ConversationSummarySheet = null; try { ConversationSummarySheet = require('../components/chat/ConversationSummarySheet').default; } catch {}
 let SmartRepliesBar = null; try { SmartRepliesBar = require('../components/chat/SmartRepliesBar').default; } catch {}
 // [2026-05-31] Group invite QR — render the QR LOCALLY with react-native-qrcode-svg
 // (same lazy-require used in profile-qr.js / WalletReceiveSheet.js). The old modal
@@ -11455,6 +11457,8 @@ function ChatConversationInner() {
   // Chat 2026 — AI summarize unread modal. Triggered from the header pill
   // when unread_count is >= 5.
   const [showSummarizeModal, setShowSummarizeModal] = _useStateT(false);
+  // [2026-10-13 bia-summary] chip "30 não lidas · Resumir" (≥ SUMMARY_UNREAD_CHIP_MIN) dispensável.
+  const [summaryChipDismissed, setSummaryChipDismissed] = _useStateT(false);
   const [uploading, setUploading] = _useStateT(false);
   const [uploadProgress, setUploadProgress] = _useStateT({}); // { [tempId]: 0-100 }
   // Download progress for remote media bubbles (WhatsApp-style ring while the
@@ -22511,18 +22515,12 @@ function ChatConversationInner() {
   // [2026-10-10 contact-info] Ações compartilhadas entre o menu ⋮ (enxuto) e
   // "Dados do contato/grupo" — antes viviam inline só no menu. Quem chama
   // fecha a própria superfície (menu ou sheet) antes.
-  const runAiSummary = async () => {
-    const items = (messages || []).slice(-50)
-      .filter(m => !m._pending && m.type !== 'system' && m.content && typeof m.content === 'string' && !m.content.startsWith('🔒'))
-      .map(m => ({
-        sender: m.sender_email === currentEmail ? (t('chatConv.me') || 'Eu') : (m.sender_name || m.sender_email?.split('@')[0] || 'Outro'),
-        content: m.content,
-        type: m.type || 'text',
-      }));
-    if (items.length < 3) {
-      safeAlert(t('chatConv.aiSummary') || 'Resumir', t('chatConv.aiSummaryEmpty') || 'Conversa muito curta pra resumir.');
-      return;
-    }
+  // [2026-10-13 bia-summary] Abre a folha "Resumir com a Bia"
+  // (components/chat/ConversationSummarySheet.js) — ela mesma busca o resumo
+  // (chat_ai_digest; servidor velho → ai_summarize) e escolhe o alcance.
+  // `range` opcional: 'unread' | 'today' | 'last100' | 'last300'.
+  const runAiSummary = async (range) => {
+    const initialRange = typeof range === 'string' ? range : 'last100';
     try {
       const { canUseFeature, trackFeatureUsage, getUpsellMessage } = require('../services/premium');
       const check = await canUseFeature('ai_summarize');
@@ -22530,18 +22528,7 @@ function ChatConversationInner() {
       trackFeatureUsage('ai_summarize');
     } catch {}
     if (USE_NATIVE_SHEETS && Platform.OS === 'ios') await new Promise((r) => setTimeout(r, 380)); // [2026-10-09 native-sheets] menu (Modal RN) descendo
-    setAiSummary({ visible: true, loading: true, text: '', error: '', messageCount: items.length });
-    try {
-      const r = await api.aiSummarize(items);
-      const summary = r?.data?.summary || '';
-      if (r?.success && summary) {
-        setAiSummary(s => ({ ...s, loading: false, text: summary }));
-      } else {
-        setAiSummary(s => ({ ...s, loading: false, error: r?.message || (t('chatConv.aiSummaryFailed') || 'Não foi possível resumir.') }));
-      }
-    } catch (e) {
-      setAiSummary(s => ({ ...s, loading: false, error: e?.message || (t('chatConv.aiSummaryFailed') || 'Não foi possível resumir.') }));
-    }
+    setAiSummary({ visible: true, range: initialRange });
   };
   const confirmClearHistory = () => {
     safeAlert(
@@ -30897,7 +30884,7 @@ function ChatConversationInner() {
             real unread context (not the open AI chooser sheet). */}
         {(initialUnreadCountRef.current >= 5) && (
           <TouchableOpacity
-            onPress={() => setShowSummarizeModal(true)}
+            onPress={() => runAiSummary('unread')} // [2026-10-13 bia-summary] folha nova (alcance Não lidas)
             style={[styles.headerBtn, { flexDirection: 'row', alignItems: 'center', gap: 4 }]}
             accessibilityLabel={t('chatConv.summarize') || 'Summarize unread'}
             accessibilityRole="button"
@@ -31373,6 +31360,34 @@ function ChatConversationInner() {
           row shows a "Xd restantes" countdown in the right gutter when the
           pin has a finite TTL. Permanent legacy pins (NULL pinned_until)
           omit the countdown entirely. */}
+      {/* [2026-10-13 bia-summary] Muitas não lidas (≥ 30): chip discreto
+          "30 não lidas · Resumir" → folha da Bia no alcance Não lidas. */}
+      {ConversationSummarySheet && !summaryChipDismissed && !showSearchBar && (initialUnreadCountRef.current || 0) >= 30 ? (
+        <View style={{ alignItems: 'center', paddingTop: 8, paddingBottom: 2 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', borderRadius: 16, backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)', borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border }}>
+            <TouchableOpacity
+              onPress={() => runAiSummary('unread')}
+              style={{ flexDirection: 'row', alignItems: 'center', gap: 6, height: 32, paddingLeft: 12, paddingRight: 6 }}
+              accessibilityRole="button"
+              accessibilityLabel={t('chatSum.menuLabel') || 'Resumir com a Bia'}
+            >
+              <IconSparkles size={13} color={colors.text} />
+              <Text style={{ color: colors.text, fontSize: 13, fontWeight: '600' }}>
+                {(t('chatSum.unreadChip') || '{n} não lidas · Resumir').replace('{n}', initialUnreadCountRef.current > 999 ? '999+' : String(initialUnreadCountRef.current))}
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={() => setSummaryChipDismissed(true)}
+              hitSlop={8}
+              style={{ height: 32, paddingLeft: 4, paddingRight: 10, justifyContent: 'center' }}
+              accessibilityRole="button"
+              accessibilityLabel={t('chatSum.close') || 'Fechar'}
+            >
+              <IconX size={12} color={colors.textSecondary} />
+            </TouchableOpacity>
+          </View>
+        </View>
+      ) : null}
       {/* [2026-10-09 wa-real #12] remetente desconhecido: não está na
           agenda, grupos em comum, país — some quando o usuário responde. */}
       {UnknownSenderCard && conversationType === 'direct' && !isSavedMode && !showSearchBar ? (
@@ -33045,6 +33060,11 @@ function ChatConversationInner() {
                 fontSize: 16,
                 // [2026-10-09 a11y-font] ~6 linhas também com fonte grande do sistema
                 minHeight: 42, maxHeight: _composerMaxH(),
+                // [2026-10-13] Nativo: depois de enviar um texto de várias linhas o
+                // TextInput (iOS/Fabric) mantinha a altura antiga com o valor ''
+                // limpo por código. Vazio → altura fixa de 1 linha; ao digitar volta
+                // ao auto-crescimento. (Web tem o próprio ajuste via scrollHeight.)
+                ...(Platform.OS !== 'web' && !inputText ? { height: 42 } : {}),
                 paddingHorizontal: 4,
                 paddingTop: Platform.OS === 'ios' ? 11 : 9,
                 paddingBottom: Platform.OS === 'ios' ? 11 : 9,
@@ -35686,7 +35706,7 @@ function ChatConversationInner() {
                     <GroupSectionLabel colors={colors}>{t('common.more') || 'Mais'}</GroupSectionLabel>
                     <GroupCard colors={colors} isDark={isDark}>
                       <GroupRow colors={colors} Icon={IconSparkles}
-                        title={t('chatConv.aiSummary') || 'Resumir com IA'} right="chevron"
+                        title={t('chatSum.menuLabel') || 'Resumir com a Bia'} right="chevron"
                         onPress={() => contactInfoGo(runAiSummary)} />
                       <GroupDivider colors={colors} />
                       <GroupRow colors={colors} Icon={IconBarChart}
@@ -35898,7 +35918,7 @@ function ChatConversationInner() {
                 ]},
                 { divider: true, items: [
                   { Icon: IconForward, label: t('chatConv.exportChat') || 'Exportar conversa', onPress: () => { closeMenu(); setShowExportModal(true); }},
-                  { Icon: IconSparkles, label: t('chatConv.aiSummary') || 'Resumir com IA', onPress: () => { closeMenu(); runAiSummary(); }},
+                  { Icon: IconSparkles, label: t('chatSum.menuLabel') || 'Resumir com a Bia', onPress: () => { closeMenu(); runAiSummary(); }},
                   // [2026-10-10 wa-import] Importar histórico do WhatsApp (cópia pessoal vinculada a este contato).
                   ...(waImported ? [] : [{ Icon: IconDownload, label: t('waImport.menuItem'), onPress: () => { closeMenu(); openWhatsAppImport(); }}]),
                   { Icon: IconTrash, danger: true, label: t('chatConv.clearChat') || 'Limpar conversa', onPress: () => { closeMenu(); confirmClearHistory(); }},
@@ -36959,7 +36979,7 @@ function ChatConversationInner() {
             <GroupSectionLabel colors={colors}>{t('common.more') || 'Mais'}</GroupSectionLabel>
             <GroupCard colors={colors} isDark={isDark}>
               <GroupRow colors={colors} Icon={IconSparkles}
-                title={t('chatConv.aiSummary') || 'Resumir com IA'} right="chevron"
+                title={t('chatSum.menuLabel') || 'Resumir com a Bia'} right="chevron"
                 onPress={() => groupInfoGo(runAiSummary)} />
               <GroupDivider colors={colors} />
               <GroupRow colors={colors} Icon={IconBarChart}
@@ -37931,126 +37951,35 @@ function ChatConversationInner() {
         </View>
       </Modal>
 
-      {/* ✨ AI Summary Modal — powered by gpt-4o-mini, beautifully rendered */}
-      {(() => { // [2026-10-09 native-sheets] iOS/Android: sheet do sistema [0.6, 1]; web: Modal original
-        const _aiClose = () => setAiSummary(s => ({ ...s, visible: false }));
-        const _aiBody = (<>
-            {/* Gradient header */}
-            <View style={{ paddingHorizontal: 22, paddingTop: 20, paddingBottom: 16, backgroundColor: isDark ? 'rgba(17, 17, 17,0.12)' : 'rgba(17, 17, 17,0.08)', borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: isDark ? 'rgba(17, 17, 17,0.25)' : 'rgba(17, 17, 17,0.2)' }}>
-              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                <View style={{ width: 38, height: 38, borderRadius: 19, backgroundColor: '#111111', alignItems: 'center', justifyContent: 'center', marginRight: 12, shadowColor: '#111111', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.3, shadowRadius: 8, elevation: 5 }}>
-                  <IconSparkles size={20} color="#fff" />
-                </View>
-                <View style={{ flex: 1 }}>
-                  <Text style={{ fontSize: 18, fontWeight: '800', color: colors.text, letterSpacing: -0.3 }}>
-                    {t('chatConv.aiSummaryTitle') || 'Resumo da conversa'}
-                  </Text>
-                  <Text style={{ fontSize: 12, color: colors.textSecondary, marginTop: 2, fontWeight: '500' }}>
-                    {aiSummary.messageCount > 0
-                      ? `${t('chatConv.aiSummaryFromLast') || 'Resumo das últimas'} ${aiSummary.messageCount} ${t('chatConv.aiSummaryMsgs') || 'mensagens'}`
-                      : (t('chatConv.aiSummaryDesc') || 'Resumo das mensagens recentes')}
-                  </Text>
-                </View>
-                <TouchableOpacity onPress={() => setAiSummary(s => ({ ...s, visible: false }))} style={{ width: 34, height: 34, alignItems: 'center', justifyContent: 'center', borderRadius: 17, backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)' }}>
-                  <IconX size={18} color={colors.text} />
-                </TouchableOpacity>
-              </View>
-            </View>
-
-            <ScrollView contentContainerStyle={{ padding: 22 }} showsVerticalScrollIndicator={false}>
-              {aiSummary.loading ? (
-                <View style={{ alignItems: 'center', paddingVertical: 40 }}>
-                  <ActivityIndicator size="large" color="#111111" />
-                  <Text style={{ marginTop: 14, fontSize: 14, color: colors.textSecondary, fontWeight: '500' }}>
-                    {t('chatConv.aiSummarizing') || 'Gerando resumo...'}
-                  </Text>
-                </View>
-              ) : aiSummary.error ? (
-                <View style={{ alignItems: 'center', paddingVertical: 30 }}>
-                  <View style={{ marginBottom: 10 }}><IconAlertCircle size={40} color={colors.textSecondary} /></View>
-                  <Text style={{ fontSize: 15, color: colors.text, fontWeight: '600', textAlign: 'center', marginBottom: 6 }}>
-                    {t('chatConv.aiSummaryFailed') || 'Não foi possível resumir'}
-                  </Text>
-                  <Text style={{ fontSize: 13, color: colors.textSecondary, textAlign: 'center' }}>
-                    {aiSummary.error}
-                  </Text>
-                </View>
-              ) : (
-                <View>
-                  {aiSummary.text.split(/\n/).map((line, idx) => {
-                    const ln = line.trim();
-                    if (!ln) return <View key={idx} style={{ height: 8 }} />;
-                    // Heading like "TL;DR:", "Resumo:", "Tópicos:", "Decisões:".
-                    // Se o modelo escapou e produziu "TL;DR" ou "DR", traduz no
-                    // cliente pra "Resumo" — usuário não quer ver siglas em
-                    // inglês na UI.
-                    if (/^(tl;?\s*dr|^dr|resumo|t[óo]picos|principais\s+t[óo]picos|decis[õo]es|a[çc][õo]es)/i.test(ln) && ln.endsWith(':')) {
-                      const heading = /^(tl;?\s*dr|^dr)/i.test(ln) ? 'Resumo' : ln.replace(/:$/, '');
-                      return (
-                        <Text key={idx} style={{ fontSize: 12, fontWeight: '700', color: '#111111', letterSpacing: 0.6, textTransform: 'uppercase', marginTop: idx === 0 ? 0 : 14, marginBottom: 6 }}>
-                          {heading}
-                        </Text>
-                      );
-                    }
-                    // Numbered or bulleted
-                    const bulletMatch = ln.match(/^(?:[-•*]|\d+[.)])\s+(.+)$/);
-                    if (bulletMatch) {
-                      return (
-                        <View key={idx} style={{ flexDirection: 'row', alignItems: 'flex-start', marginVertical: 4, paddingRight: 8 }}>
-                          <View style={{ width: 5, height: 5, borderRadius: 2.5, backgroundColor: '#111111', marginTop: 8, marginRight: 10 }} />
-                          <Text style={{ flex: 1, fontSize: 15, color: colors.text, lineHeight: 22 }}>{bulletMatch[1]}</Text>
-                        </View>
-                      );
-                    }
-                    // Bold markers **...** — strip them but bold
-                    const parts = ln.split(/(\*\*[^*]+\*\*)/g);
-                    return (
-                      <Text key={idx} style={{ fontSize: 15, color: colors.text, lineHeight: 22, marginVertical: 3 }}>
-                        {parts.map((p, i) => p.startsWith('**') && p.endsWith('**')
-                          ? <Text key={i} style={{ fontWeight: '700', color: colors.text }}>{p.slice(2, -2)}</Text>
-                          : p)}
-                      </Text>
-                    );
-                  })}
-
-                  {/* Footer actions */}
-                  <View style={{ flexDirection: 'row', gap: 10, marginTop: 22, paddingTop: 18, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border }}>
-                    <TouchableOpacity
-                      onPress={() => { try { if (Platform.OS === 'web') navigator.clipboard?.writeText?.(aiSummary.text); else Clipboard.setStringAsync(aiSummary.text); safeAlert(t('common.copied') || 'Copiado'); } catch {} }}
-                      style={{ flex: 1, height: 44, borderRadius: 12, backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.05)', alignItems: 'center', justifyContent: 'center', flexDirection: 'row', gap: 8 }}
-                    >
-                      <IconCopy size={16} color={colors.text} />
-                      <Text style={{ color: colors.text, fontSize: 14, fontWeight: '600' }}>{t('common.copy') || 'Copiar'}</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      onPress={() => setAiSummary(s => ({ ...s, visible: false }))}
-                      style={{ flex: 1, height: 44, borderRadius: 12, backgroundColor: '#111111', alignItems: 'center', justifyContent: 'center' }}
-                    >
-                      <Text style={{ color: '#fff', fontSize: 14, fontWeight: '700' }}>{t('common.done') || 'Concluído'}</Text>
-                    </TouchableOpacity>
-                  </View>
-                </View>
-              )}
-            </ScrollView>
-        </>);
-        if (USE_NATIVE_SHEETS) {
-          return (
-            <NativeSheet visible={!!aiSummary.visible} onClose={_aiClose} detents={[0.6, 1]} backgroundColor={colors.background}>
-              <View style={{ flex: 1, backgroundColor: colors.background, paddingTop: 8, paddingBottom: Platform.OS === 'ios' ? 0 : insets.bottom }}>{_aiBody}</View>
-            </NativeSheet>
-          );
-        }
-        return (
-      <Modal visible={aiSummary.visible} transparent animationType="slide" onRequestClose={_aiClose}>
-        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'flex-end' }}>
-          <Pressable style={{ flex: 1 }} onPress={_aiClose} />
-          <View style={{ backgroundColor: colors.background, borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingBottom: Platform.OS === 'android' ? androidNavPad + 16 : 34, maxHeight: '82%', overflow: 'hidden' }}>
-            {_aiBody}
-          </View>
-        </View>
-      </Modal>
-        );
-      })()}
+      {/* [2026-10-13 bia-summary] "Resumir com a Bia" — folha extraída p/
+          components/chat/ConversationSummarySheet.js (cabeçalho fixo de fundo
+          sólido; antes o texto rolava por baixo do título semitransparente). */}
+      {ConversationSummarySheet && aiSummary.visible ? (
+        <ConversationSummarySheet
+          visible
+          onClose={() => setAiSummary(s => ({ ...s, visible: false }))}
+          conversationId={conversationId}
+          messages={messages}
+          currentEmail={currentEmail}
+          myName={user?.name || ''}
+          unreadCount={initialUnreadCountRef.current || 0}
+          firstUnreadId={firstUnreadIdRef.current || null}
+          initialRange={aiSummary.range || 'last100'}
+          onJumpToMessage={(id) => { try { safeScrollToMsg({ id }); } catch {} }}
+          onMarkRead={() => {
+            try {
+              const lastId = messages.length ? messages[messages.length - 1].id : 0;
+              if (lastId) api.chatRead?.(conversationId, lastId).catch(() => {});
+            } catch {}
+            firstUnreadIdRef.current = null;
+            initialUnreadCountRef.current = 0;
+            setSummaryChipDismissed(true);
+          }}
+          colors={colors}
+          isDark={isDark}
+          t={t}
+        />
+      ) : null}
 
       {/* Starred Messages Modal */}
       {(() => { // [2026-10-09 native-sheets] iOS/Android: sheet do sistema [0.6, 1]; web: Modal original

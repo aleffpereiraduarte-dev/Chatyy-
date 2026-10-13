@@ -118,7 +118,8 @@ export async function setupCallKeep() {
     try {
       ExpoCallKit.onVoipTokenReceived(({ token }) => {
         reportDiag('voip_token_received:' + (token?.substring(0, 8) || 'null'));
-        sendVoipToken(token);
+        // Token NOVO do PushKit → sempre envia (ignora o cache de 24h).
+        sendVoipToken(token, { force: token !== _lastVoipTokenSent });
       });
       await reportDiag('voip_listener_registered');
     } catch (le) {
@@ -224,14 +225,57 @@ export async function setupCallKeep() {
   }
 }
 
-async function sendVoipToken(token) {
+// [2026-10-13 push-token-always] VoIP (PushKit) com os mesmos metadados do
+// push comum: device_id estável, versão do app, ambiente APNs (TestFlight/App
+// Store = production; Debug = development) e as contas deste aparelho (o
+// servidor tira este token das contas que não estão mais aqui — um iPhone
+// reinstalado mantém o token VoIP e tocaria ligação de outra conta).
+// "Só manda se mudou ou >24h" por {conta, token, versão}; o AppState a cada
+// 5 min (AuthContext) deixou de re-postar à toa. Também registra nas OUTRAS
+// contas logadas (multi-conta: ligação p/ qualquer conta toca o CallKit).
+const VOIP_SENT_KEY = 'voip_token_sent_v1';
+const VOIP_RESEND_MS = 24 * 60 * 60 * 1000;
+async function _voipMeta() {
+  const meta = {};
+  try {
+    const pn = require('./pushNotifications');
+    if (typeof pn._pushRegistrationMeta === 'function') Object.assign(meta, await pn._pushRegistrationMeta());
+  } catch {}
+  return meta;
+}
+async function _voipSentRecently(key) {
+  const c = (await _readJsonKey(VOIP_SENT_KEY, {})) || {};
+  const e = c[key];
+  return !!(e && Date.now() - Number(e.at || 0) < VOIP_RESEND_MS);
+}
+async function _markVoipSent(key) {
+  try {
+    const c = (await _readJsonKey(VOIP_SENT_KEY, {})) || {};
+    c[key] = { at: Date.now() };
+    const ks = Object.keys(c);
+    if (ks.length > 20) {
+      ks.sort((a, b) => Number(c[a]?.at || 0) - Number(c[b]?.at || 0));
+      for (const k of ks.slice(0, ks.length - 20)) delete c[k];
+    }
+    await _writeJsonKey(VOIP_SENT_KEY, c);
+  } catch {}
+}
+
+async function sendVoipToken(token, opts = {}) {
   if (!token) return;
   try {
     const api = require('./api');
-    const resp = await api.apiCall('register_voip_token', { token }, 'POST');
+    const meta = await _voipMeta();
+    const active = String((typeof api.getActiveAccountEmail === 'function' ? api.getActiveAccountEmail() : '') || '').toLowerCase();
+    const ver = String(meta.app_version || '');
+    const key = `${active}|${token}|${ver}`;
+    if (!opts.force && (await _voipSentRecently(key))) { _lastVoipTokenSent = token; return true; }
+    const resp = await api.apiCall('register_voip_token', { token, ...meta }, 'POST');
     if (resp?.success) {
       console.log('[CallKeep] VoIP token sent to server');
       _lastVoipTokenSent = token;
+      _markVoipSent(key);
+      _sendVoipForOtherAccounts(token, meta, active, opts.force).catch(() => {});
       return true;
     }
     // Backend now returns success:false when the file_put_contents silently
@@ -243,6 +287,40 @@ async function sendVoipToken(token) {
   } catch (e) {
     console.warn('[CallKeep] Failed to send VoIP token:', e);
     return false;
+  }
+}
+
+/** Logout / push desligado: o próximo login re-envia o VoIP na hora. */
+export async function forgetVoipSent() {
+  _lastVoipTokenSent = null;
+  try { await _writeJsonKey(VOIP_SENT_KEY, {}); } catch {}
+}
+
+async function _sendVoipForOtherAccounts(token, meta, active, force) {
+  const api = require('./api');
+  const accts = (typeof api.getStoredAccounts === 'function' ? api.getStoredAccounts() : []) || [];
+  const url = typeof api.getApiUrl === 'function' ? api.getApiUrl() : '';
+  if (!url || !Array.isArray(accts)) return;
+  let n = 0;
+  for (const a of accts) {
+    const em = String(a?.email || '').toLowerCase();
+    if (!em || em === active || typeof a?.token !== 'string' || !a.token) continue;
+    if (++n > 4) break;
+    const key = `${em}|${token}|${String(meta.app_version || '')}`;
+    if (!force && (await _voipSentRecently(key))) continue;
+    try {
+      const ctl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+      const to = setTimeout(() => { try { ctl?.abort(); } catch {} }, 8000);
+      const resp = await fetch(`${url}?action=register_voip_token`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${a.token}` },
+        body: JSON.stringify({ token, ...meta }),
+        signal: ctl?.signal,
+      });
+      clearTimeout(to);
+      const j = await resp.json().catch(() => null);
+      if (j?.success) await _markVoipSent(key);
+    } catch {}
   }
 }
 

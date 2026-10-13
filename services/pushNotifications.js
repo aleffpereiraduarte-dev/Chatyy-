@@ -311,6 +311,7 @@ const pushNotificationsState = {
   deviceToken: null,
   apnsToken: null,     // [2026-10-09] iOS APNs hex token (token_type apns | apns_sandbox)
   apnsTokenType: null,
+  expoToken: null,     // [2026-10-13] último ExponentPushToken (fallback)
 };
 
 // [2026-10-09 native-transport] device_id que pareia o token APNs com o token
@@ -321,6 +322,72 @@ function _apnsPairId(expoToken) {
   if (!m) return '';
   return ('expo:' + m[1].replace(/[^A-Za-z0-9._:-]/g, '')).slice(0, 100);
 }
+
+// [2026-10-13 push-token-always] Token nativo (FCM/APNs) é o transporte
+// PRINCIPAL; o Expo vira fallback p/ binário antigo. Ajudantes:
+function _isExpoToken(t) {
+  return typeof t === 'string' && /^Expo(nent)?PushToken\[/.test(t);
+}
+// device_id ESTÁVEL do aparelho em TODAS as entradas (expo, fcm_device, apns,
+// voip): o servidor deduplica por (device_id, tipo) e pareia nativo↔Expo do
+// mesmo aparelho (sem banner duplo). "expo:<id>" quando há token Expo (mesmo
+// formato que o pareamento APNs já usa); senão "inst:<id da instalação>".
+function _pushDeviceId(expoToken) {
+  const p = _apnsPairId(expoToken || pushNotificationsState.expoToken || _cachedPushToken);
+  if (p) return p;
+  const iid = _pushInstallId();
+  return iid ? ('inst:' + iid).slice(0, 100) : '';
+}
+// Contas logadas NESTE aparelho (multi-conta): o servidor tira o token deste
+// aparelho de qualquer OUTRA conta que não esteja aqui (push de uma conta não
+// aparece em outra — ex.: iPhone reinstalado mantém o mesmo token APNs/VoIP).
+function _pushDeviceAccounts(activeEmail) {
+  const out = [];
+  try {
+    const add = (e) => {
+      const v = String(e || '').trim().toLowerCase();
+      if (v && v.includes('@') && !out.includes(v)) out.push(v);
+    };
+    add(activeEmail);
+    const api = require('./api');
+    const accts = (typeof api.getStoredAccounts === 'function' ? api.getStoredAccounts() : []) || [];
+    for (const a of (Array.isArray(accts) ? accts : [])) add(a?.email);
+  } catch {}
+  return out.slice(0, 10);
+}
+// iOS: ambiente APNs (TestFlight/App Store = production; Debug = development)
+// + bundle id — o servidor escolhe o host da Apple certo na 1ª tentativa.
+let _iosPushMetaCache = null;
+async function _iosPushMeta() {
+  if (Platform.OS !== 'ios') return {};
+  if (_iosPushMetaCache) return _iosPushMetaCache;
+  const meta = {};
+  try {
+    const App = require('expo-application');
+    if (App?.applicationId) meta.bundle_id = String(App.applicationId).slice(0, 100);
+    if (typeof App?.getIosPushNotificationServiceEnvironmentAsync === 'function') {
+      const env = await App.getIosPushNotificationServiceEnvironmentAsync();
+      if (env === 'development' || env === 'production') meta.apns_env = env;
+    }
+  } catch {}
+  _iosPushMetaCache = meta;
+  return meta;
+}
+// Metadados comuns de registro (também usados pelo VoIP em callkeep.js).
+export async function _pushRegistrationMeta() {
+  const email = await _getActiveEmailSafe();
+  return {
+    device_id: _pushDeviceId(null),
+    app_version: _pushAppVersion(),
+    device_accounts: _pushDeviceAccounts(email),
+    notif_perm: _lastRegisterPerm || _lastPermStatus || '',
+    ...(await _iosPushMeta()),
+  };
+}
+// Permissão de notificação no último registro ('granted' | 'denied' | …). O
+// token é registrado MESMO negada (push silencioso, ✓✓ de entrega e VoIP
+// continuam funcionando; o alerta o SO descarta) — e re-enviado quando muda.
+let _lastRegisterPerm = '';
 
 // Remote diagnostic: posts each step of registerForPushNotifications to the
 // backend so we can see WHERE on Android the chain breaks (Android has zero
@@ -854,10 +921,11 @@ export async function registerForPushNotifications(opts = {}) {
         // registration below — APNs registration doesn't need authorization.
         finalStatus = 'granted';
       } else {
-        // Android 13+: no quiet mode; wait for the primer.
+        // Android 13+: no quiet mode; wait for the primer (no OS dialog now).
+        // [2026-10-13 push-token-always] …mas o TOKEN sai já: FCM não precisa
+        // de POST_NOTIFICATIONS (push de dados / ✓✓ de entrega / ligação).
         _lastRegisterDeferred = true;
         _diagPush('primer_deferred', existingStatus);
-        return null;
       }
     } else if (existingStatus !== 'granted') {
       // [2026-10-09 wa-real #15] Pedir UMA vez. Um iPhone "pediu" 58× com
@@ -890,9 +958,14 @@ export async function registerForPushNotifications(opts = {}) {
     try { globalThis.__chatyy_push_denied = (finalStatus !== 'granted' && !_primerGate); } catch {}
 
     _lastPermStatus = (Platform.OS === 'ios' && _primerGate) ? 'provisional' : String(finalStatus || '');
+    _lastRegisterPerm = _lastPermStatus || String(finalStatus || '');
     if (finalStatus !== 'granted') {
-      _diagPush('perm_denied', finalStatus);
-      return null;
+      // [2026-10-13 push-token-always] Antes: return null → aparelho com
+      // permissão negada ficava SEM token no servidor (118 "perm_denied" em
+      // 7 dias): sem push silencioso, sem ✓✓ de entrega, e ao reativar nos
+      // Ajustes nada era re-registrado. Agora o token é registrado do mesmo
+      // jeito (com notif_perm) — o SO só descarta o alerta.
+      _diagPush('perm_denied', finalStatus + ':token_anyway');
     }
 
     // Android notification channels.
@@ -1121,14 +1194,16 @@ export async function registerForPushNotifications(opts = {}) {
         if (!/SERVICE_NOT_AVAILABLE|TIMEOUT|TIMEDOUT|network/i.test(msg)) break;
       }
     }
-    if (lastErr || !tokenData?.data) {
-      _diagPush('expo_token_err_final', lastErr ? (lastErr.message || String(lastErr)) : 'no token after retries');
-      if (lastErr) throw lastErr;
-      // No error thrown but every retry returned empty data. Bail out cleanly
-      // instead of falling through — otherwise the `_setCachedPushToken(tokenData.data)`
-      // below would TypeError on `undefined.data` and we'd hit the outer
-      // catch with a misleading message.
-      return null;
+    // [2026-10-13 push-token-always] Falha do Expo (exp.host fora, projeto sem
+    // credencial, SERVICE_NOT_AVAILABLE) NÃO aborta mais o registro: o token
+    // NATIVO (FCM/APNs, abaixo) é o transporte principal e sai mesmo assim.
+    // Só desiste no fim se nem Expo nem nativo vierem.
+    const _expoErr = (lastErr || !tokenData?.data) ? (lastErr || new Error('no expo token after retries')) : null;
+    if (_expoErr) {
+      _diagPush('expo_token_err_final', _expoErr.message || String(_expoErr));
+      tokenData = null;
+    } else {
+      pushNotificationsState.expoToken = tokenData.data;
     }
 
     // Register notification categories with actions
@@ -1403,7 +1478,14 @@ export async function registerForPushNotifications(opts = {}) {
       pushNotificationsState.apnsToken = null;
       pushNotificationsState.apnsTokenType = null;
       try {
-        const dt = await Notifications.getDevicePushTokenAsync();
+        // [2026-10-13] 2 tentativas (o 1º registerForRemoteNotifications do
+        // boot às vezes volta antes da Apple responder).
+        let dt = null;
+        for (let a = 1; a <= 2; a++) {
+          try { dt = await Notifications.getDevicePushTokenAsync(); } catch (e) { if (a === 2) throw e; }
+          if (dt?.data) break;
+          await new Promise((r) => setTimeout(r, 1200));
+        }
         if (dt?.data && typeof dt.data === 'string' && /^[0-9a-fA-F]{32,200}$/.test(dt.data)) {
           let env = null;
           try {
@@ -1423,9 +1505,18 @@ export async function registerForPushNotifications(opts = {}) {
       }
     }
 
-    try { _setCachedPushToken(tokenData.data); } catch {}
-    _diagPush('register_done', 'ok');
-    return tokenData.data;
+    // [2026-10-13 push-token-always] Retorna o token Expo (fallback) quando
+    // existe; senão o NATIVO — sendTokenToBackend registra o nativo de
+    // qualquer jeito (e o Expo só se for mesmo um ExponentPushToken).
+    const _nativeTok = pushNotificationsState.deviceToken || pushNotificationsState.apnsToken || null;
+    if (!tokenData?.data && !_nativeTok) {
+      _diagPush('register_no_token', _expoErr ? (_expoErr.message || String(_expoErr)) : 'none');
+      if (_expoErr && lastErr) throw lastErr;
+      return null;
+    }
+    if (tokenData?.data) { try { _setCachedPushToken(tokenData.data); } catch {} }
+    _diagPush('register_done', tokenData?.data ? 'ok' : 'native_only');
+    return tokenData?.data || _nativeTok;
   } catch (err) {
     _diagPush('register_failed', err?.message || String(err));
     console.warn('[Push] Registration failed:', err.message);
@@ -1601,16 +1692,19 @@ function _readPushSentCache() {
     return v && typeof v === 'object' && !Array.isArray(v) ? v : {};
   } catch { return {}; }
 }
-function _pushSentRecently(token, email, type) {
+// [2026-10-13] `perm` (opcional) entra na comparação: permissão de notificação
+// mudou (negada → permitida nos Ajustes, ou o contrário) → re-envia na hora.
+function _pushSentRecently(token, email, type, perm) {
   if (!token || Date.now() < _pushForceUntil) return false;
   const e = _readPushSentCache()[_pushSentKey(token, email, type)];
+  if (e && perm !== undefined && String(e.p || '') !== String(perm || '')) return false;
   return !!(e && e.v === _pushAppVersion() && Date.now() - Number(e.at || 0) < PUSH_RESEND_MS);
 }
-function _markPushSent(token, email, type) {
+function _markPushSent(token, email, type, perm) {
   if (!token) return;
   try {
     const c = _readPushSentCache();
-    c[_pushSentKey(token, email, type)] = { at: Date.now(), v: _pushAppVersion() };
+    c[_pushSentKey(token, email, type)] = { at: Date.now(), v: _pushAppVersion(), p: String(perm || '') };
     const keys = Object.keys(c);
     if (keys.length > 40) {
       keys.sort((a, b) => Number(c[a]?.at || 0) - Number(c[b]?.at || 0));
@@ -1698,7 +1792,7 @@ async function _registerForOtherAccounts(entries, activeEmail) {
       if (++n > 4) break;
       try { if ((await AsyncStorage.getItem(`push_enabled:${em}`)) === 'false') continue; } catch {}
       for (const p of entries) {
-        if (!p?.token || _pushSentRecently(p.token, em, p.token_type || 'expo')) continue;
+        if (!p?.token || _pushSentRecently(p.token, em, p.token_type || 'expo', p.notif_perm)) continue;
         try {
           const ctl = typeof AbortController !== 'undefined' ? new AbortController() : null;
           const to = setTimeout(() => { try { ctl?.abort(); } catch {} }, 8000);
@@ -1710,7 +1804,7 @@ async function _registerForOtherAccounts(entries, activeEmail) {
           });
           clearTimeout(to);
           const j = await resp.json().catch(() => null);
-          if (j?.success) _markPushSent(p.token, em, p.token_type || 'expo');
+          if (j?.success) _markPushSent(p.token, em, p.token_type || 'expo', p.notif_perm);
         } catch {}
       }
     }
@@ -1799,10 +1893,36 @@ async function _sendTokenToBackendInner(pushToken) {
     // versão do app (o servidor guarda por token: app antigo vs novo).
     const _ver = _pushAppVersion();
     const _sent = [];
+    // [2026-10-13 push-token-always] Metadados em TODA entrada: device_id
+    // estável, permissão de notificação, contas deste aparelho (anti-vazamento
+    // entre contas), ambiente APNs + bundle (iOS) e capacidades do binário.
+    const _isExpo = _isExpoToken(pushToken);
+    const _devId = _pushDeviceId(_isExpo ? pushToken : null);
+    const _perm = _lastRegisterPerm || _lastPermStatus || '';
+    const _meta = {
+      device_id: _devId,
+      notif_perm: _perm,
+      device_accounts: _pushDeviceAccounts(email),
+      ...(await _iosPushMeta()),
+    };
+    if (Platform.OS === 'android') {
+      // Binário com o FirebaseMessagingService nativo que desenha o chat
+      // (MessagingStyle) a partir do payload FCM direto/Expo + re-registra o
+      // token em onNewToken (PushTokenRegistrar) → o servidor pode mandar
+      // FCM DIRETO em vez do Expo.
+      try {
+        const ck = _nativeChat();
+        if (ck && typeof ck.supportsNativePushRegistrar === 'function' && ck.supportsNativePushRegistrar()) {
+          _meta.caps = 'fcm_native_v1';
+          ck.setPushRegistrationInfo(_devId, _ver);
+        }
+      } catch {}
+    }
     const _one = async (payload, diagStep) => {
       const type = payload.token_type || 'expo';
+      payload = { ..._meta, ...payload };
       _sent.push(payload);
-      if (_pushSentRecently(payload.token, email, type)) {
+      if (_pushSentRecently(payload.token, email, type, _perm)) {
         _diagPush(diagStep, 'fresh_skip');
         return;
       }
@@ -1810,16 +1930,16 @@ async function _sendTokenToBackendInner(pushToken) {
       _diagPush(diagStep, r?.success ? 'ok' : ('fail:' + (r?.error || 'unknown')));
       if (r?.success) {
         _markFlushed(payload.token + '|' + email + '|' + (payload.token_type || ''));
-        _markPushSent(payload.token, email, type);
+        _markPushSent(payload.token, email, type, _perm);
       } else {
         // API returned a non-throwing failure (e.g. 5xx wrapped in success:false).
         // Queue for retry just like a network throw.
         _enqueuePendingTokenSend({ ...payload, email });
       }
     };
-    await _one({ token: pushToken, platform: Platform.OS }, 'send_expo');
-
-    // Also register the raw FCM device token for Android incoming calls
+    // [2026-10-13 push-token-always] NATIVO primeiro (transporte principal);
+    // Expo depois, só como fallback (e só se for mesmo um ExponentPushToken —
+    // quando o Expo falhou, pushToken é o próprio token nativo).
     if (Platform.OS === 'android') {
       if (pushNotificationsState.deviceToken) {
         await _one({ token: pushNotificationsState.deviceToken, platform: 'android', token_type: 'fcm_device' }, 'send_fcm');
@@ -1834,8 +1954,11 @@ async function _sendTokenToBackendInner(pushToken) {
         token: pushNotificationsState.apnsToken,
         platform: 'ios',
         token_type: pushNotificationsState.apnsTokenType || 'apns',
-        device_id: _apnsPairId(pushToken),
       }, 'send_apns');
+    }
+
+    if (_isExpo) {
+      await _one({ token: pushToken, platform: Platform.OS }, 'send_expo');
     }
     // Multi-conta: as outras contas logadas neste aparelho também recebem o token.
     _registerForOtherAccounts(_sent.map((p) => ({ ...p, lang: _lang, app_version: _ver })), email).catch(() => {});
@@ -1847,13 +1970,17 @@ async function _sendTokenToBackendInner(pushToken) {
     // device happens to be online at that moment (incident 2026-05-12:
     // Android had zero tokens registered because every cold start retry
     // hit the same offline window).
-    _enqueuePendingTokenSend({ token: pushToken, email, platform: Platform.OS });
+    const _qDev = _pushDeviceId(_isExpoToken(pushToken) ? pushToken : null);
+    if (_isExpoToken(pushToken)) {
+      _enqueuePendingTokenSend({ token: pushToken, email, platform: Platform.OS, device_id: _qDev });
+    }
     if (Platform.OS === 'android' && pushNotificationsState.deviceToken) {
       _enqueuePendingTokenSend({
         token: pushNotificationsState.deviceToken,
         email,
         platform: 'android',
         token_type: 'fcm_device',
+        device_id: _qDev,
       });
     }
     if (Platform.OS === 'ios' && pushNotificationsState.apnsToken) {
@@ -1862,7 +1989,7 @@ async function _sendTokenToBackendInner(pushToken) {
         email,
         platform: 'ios',
         token_type: pushNotificationsState.apnsTokenType || 'apns',
-        device_id: _apnsPairId(pushToken),
+        device_id: _qDev,
       });
     }
   }
@@ -1928,11 +2055,16 @@ export async function flushPendingTokens() {
       if (entry.device_id) payload.device_id = entry.device_id;
       try { payload.lang = await _deviceLangCode(); } catch {}
       payload.app_version = _pushAppVersion();
+      // [2026-10-13 push-token-always] mesmos metadados do envio direto.
+      payload.notif_perm = _lastRegisterPerm || _lastPermStatus || '';
+      payload.device_accounts = _pushDeviceAccounts(entry.email || _activeEmail);
+      try { Object.assign(payload, await _iosPushMeta()); } catch {}
+      if (!payload.device_id) payload.device_id = _pushDeviceId(null);
       const r = await apiCall('register_push_token', payload, 'POST');
       if (r?.success) {
         flushed++;
         _markFlushed(dedupKey);
-        _markPushSent(entry.token, entry.email || _activeEmail, entry.token_type || 'expo');
+        _markPushSent(entry.token, entry.email || _activeEmail, entry.token_type || 'expo', payload.notif_perm);
       } else {
         // Server returned a structured failure. If the response shape
         // suggests a permanent error (invalid token format, account
@@ -2083,6 +2215,9 @@ export async function ensurePushTokenFresh(opts = {}) {
   } catch (e) {
     _diagPush('ensure_fresh_send_threw', e?.message || String(e));
   }
+  // [2026-10-13 push-token-always] Primer pendente (Android 13+): o token já
+  // subiu, mas a próxima volta ao app re-checa a permissão (sem throttle).
+  if (_lastRegisterDeferred) { try { await _writeJsonKey(PUSH_REFRESH_LAST_KEY, 0); } catch {} }
   // Reset failure counter on any successful round-trip.
   await _writeJsonKey(PUSH_REFRESH_FAIL_KEY, 0);
   try { globalThis.__chatyy_push_token_stale = false; } catch {}
@@ -2139,6 +2274,9 @@ export async function removeTokenFromBackend(pushToken) {
   if (Platform.OS !== 'web') try {
     const mine = [tok, pushNotificationsState.deviceToken, pushNotificationsState.apnsToken].filter((x) => typeof x === 'string' && x);
     const body = { tokens: mine, platform: Platform.OS };
+    // [2026-10-13] device_id: o servidor (script push-tokens) também remove por
+    // aparelho — cobre token que rotacionou e o app não tem mais em memória.
+    try { const d = _pushDeviceId(null); if (d) body.device_id = d; } catch {}
     if (Platform.OS === 'ios') {
       try {
         const ck = require('../modules/expo-callkit');
@@ -2150,6 +2288,7 @@ export async function removeTokenFromBackend(pushToken) {
   } catch {}
   // Próximo login/reativação desta conta re-envia na hora (sem o cache de 24h).
   try { forgetSentPushTokens(await _getActiveEmailSafe()); } catch {}
+  if (Platform.OS === 'ios') { try { await require('./callkeep').forgetVoipSent?.(); } catch {} }
   // 3. Web platform path — FCM Web SDK lives in services/webPush.js and
   // talks to a different backend table (web_tokens.json). Without this
   // call, logging out on a browser leaves the SW receiving pushes until
@@ -2199,6 +2338,11 @@ export async function setupNotificationListeners() {
           if (!raw || typeof raw !== 'string') return;
           if (_lastRotatedToken === raw) return;
           if (Platform.OS === 'android' && pushNotificationsState.deviceToken === raw) return;
+          // [2026-10-13] iOS: o próprio getDevicePushTokenAsync do registro
+          // re-emite este evento com o MESMO token → era 1 re-registro forçado
+          // extra por boot (355 "token_rotated" em 7 dias). Só token NOVO conta.
+          if (Platform.OS === 'ios' && pushNotificationsState.apnsToken
+              && pushNotificationsState.apnsToken === String(raw).toLowerCase()) return;
           const now = Date.now();
           if (now - _lastRotationHandledAt < 60 * 1000) return;
           _lastRotationHandledAt = now;
@@ -2217,6 +2361,10 @@ export async function setupNotificationListeners() {
     // local store NOW (SQLite + list preview) — no-op when the WS already
     // delivered it (dedup by server id). services/bgJournal.ingestPushPayload.
     try { require('./bgJournal').ingestPushPayload(notification.request?.content, 'push_fg'); } catch {}
+    // [2026-10-13 dack-retry] ✓✓ pelo token assinado do push (d_ack) também com
+    // o app aberto: não depende de bearer/WS saudável (o chatDeliveryAckBatched
+    // abaixo depende). Idempotente no servidor e deduplicado por token.
+    try { require('./pushDeliveryTask').ackPushDelivered?.(notification.request?.content?.data ?? data); } catch {}
     if (data?.conversation_id) {
       // Trigger immediate message fetch for this conversation
       try {

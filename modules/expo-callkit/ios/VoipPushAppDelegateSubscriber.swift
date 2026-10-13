@@ -223,6 +223,9 @@ extension VoipPushAppDelegateSubscriber: PKPushRegistryDelegate {
             object: nil,
             userInfo: ["token": token]
         )
+        // [2026-10-13 push-token-always] PushKit pode renovar o token com o app
+        // em 2º plano/sem JS → registra direto no servidor se mudou.
+        VoipPushAppDelegateSubscriber.postVoipTokenIfChanged(token: token)
     }
 
     public func pushRegistry(_ registry: PKPushRegistry, didInvalidatePushTokenFor type: PKPushType) {
@@ -1564,4 +1567,40 @@ fileprivate func retryRobustPresent(reason: String,
         }
     }
     tick(attempts)
+}
+
+
+// [2026-10-13 push-token-always] Registro nativo do token VoIP (sem JS).
+// Mesmo padrão do postCallStatus: bearer + api_base do App Group. Só envia se
+// o token difere do último confirmado ("voipTokenSent"); o JS (callkeep.js)
+// continua registrando com os metadados completos ao abrir o app.
+extension VoipPushAppDelegateSubscriber {
+    fileprivate static func postVoipTokenIfChanged(token: String) {
+        guard !token.isEmpty,
+              let ud = UserDefaults(suiteName: kAppGroupId),
+              ud.string(forKey: "voipTokenSent") != token,
+              let authToken = ud.string(forKey: "auth_token"), !authToken.isEmpty,
+              let apiBase = ud.string(forKey: "api_base"), !apiBase.isEmpty else { return }
+        let baseTrimmed = apiBase.hasSuffix("/") ? String(apiBase.dropLast()) : apiBase
+        // Sempre o master US (o token mora no mail-store de lá; edges não gravam).
+        _ = baseTrimmed
+        guard let url = URL(string: "https://chatyy.com.br/api/email.php?action=register_voip_token") else { return }
+        var req = URLRequest(url: url, timeoutInterval: 10.0)
+        req.httpMethod = "POST"
+        req.setValue("Bearer \(authToken)", forHTTPHeaderField: "Authorization")
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.setValue("application/json", forHTTPHeaderField: "Accept")
+        var body: [String: Any] = ["token": token, "source": "native_pushkit"]
+        if let bid = Bundle.main.bundleIdentifier { body["bundle_id"] = bid }
+        if let v = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String,
+           let b = Bundle.main.infoDictionary?["CFBundleVersion"] as? String {
+            body["app_version"] = "\(v)+\(b)"
+        }
+        req.httpBody = try? JSONSerialization.data(withJSONObject: body, options: [])
+        URLSession.shared.dataTask(with: req) { _, resp, err in
+            if let http = resp as? HTTPURLResponse, (200...299).contains(http.statusCode), err == nil {
+                UserDefaults(suiteName: kAppGroupId)?.set(token, forKey: "voipTokenSent")
+            }
+        }.resume()
+    }
 }

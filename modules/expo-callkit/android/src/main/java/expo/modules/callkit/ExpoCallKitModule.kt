@@ -661,6 +661,16 @@ class ExpoCallKitModule : Module() {
       try { ChatNotifStore.clearAuth(context) } catch (_: Throwable) {}
     }
 
+    // [2026-10-13 push-token-always] JS → native: device_id estável + versão do
+    // app, usados pelo PushTokenRegistrar quando o FCM renova o token com o
+    // app fechado (CallFirebaseMessagingService.onNewToken).
+    Function("setPushRegistrationInfo") { deviceId: String, appVersion: String ->
+      try {
+        PushTokenRegistrar.setInfo(context, deviceId, appVersion)
+        PushTokenRegistrar.flushPending(context)
+      } catch (_: Throwable) {}
+    }
+
     // [2026-10-07 bgsync] Background message journal + periodic bg sync.
     //   bgJournalRead()            → {text, bytes} (sync; JS merges before 1st paint)
     //   bgJournalCommit(bytes, keep) → drop what JS consumed, keep `keep` lines +
