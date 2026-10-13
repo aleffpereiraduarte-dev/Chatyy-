@@ -21,6 +21,38 @@ public class ExpoNativeAudioModule: Module {
     /// the main queue (race window: stop+start back-to-back).
     private var recSession: UInt64 = 0
     private let stateLock = NSLock()
+    /// [2026-10-12 rec-audit P1-14] Observer de AVAudioSession.interruption
+    /// (ligação/CallKit, Siri, alarme): com gravação ativa emite
+    /// onInterrupted → o JS para e vai pro preview (antes o arquivo ficava
+    /// truncado/silencioso e a UI seguia "gravando").
+    private var interruptionObserver: NSObjectProtocol?
+
+    private func installInterruptionObserver() {
+        if interruptionObserver != nil { return }
+        interruptionObserver = NotificationCenter.default.addObserver(
+            forName: AVAudioSession.interruptionNotification,
+            object: AVAudioSession.sharedInstance(),
+            queue: .main
+        ) { [weak self] note in
+            guard let self = self else { return }
+            guard let raw = note.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt,
+                  let type = AVAudioSession.InterruptionType(rawValue: raw),
+                  type == .began else { return }
+            self.stateLock.lock()
+            let active = self.recorder != nil
+            self.stateLock.unlock()
+            if active {
+                self.sendEvent("onInterrupted", ["source": "session", "reason": "interruption"])
+            }
+        }
+    }
+
+    private func removeInterruptionObserver() {
+        if let o = interruptionObserver {
+            NotificationCenter.default.removeObserver(o)
+            interruptionObserver = nil
+        }
+    }
 
     /// Try to deactivate the audio session, notifying other apps so the
     /// system reroutes audio (Spotify resumes, etc). Safe to call multiple
@@ -54,9 +86,10 @@ public class ExpoNativeAudioModule: Module {
         Name("ExpoNativeAudio")
 
         // [2026-10-07 voice-native] voice-note player events.
-        Events("onVoiceStatus", "onVoiceProximity")
+        Events("onVoiceStatus", "onVoiceProximity", "onInterrupted")
 
         OnDestroy {
+            self.removeInterruptionObserver()
             DispatchQueue.main.async { [weak self] in
                 self?.voiceNowPlaying?.clear()
                 self?.voiceNowPlaying = nil
@@ -176,6 +209,7 @@ public class ExpoNativeAudioModule: Module {
             self.recPausedAt = 0
             self.samples.removeAll()
             self.stateLock.unlock()
+            DispatchQueue.main.async { [weak self] in self?.installInterruptionObserver() }
 
             // Sample level at 30 Hz for the waveform
             DispatchQueue.main.async { [weak self] in
@@ -225,6 +259,13 @@ public class ExpoNativeAudioModule: Module {
             self.stateLock.unlock()
             r?.stop()
             let path = r?.url.absoluteString ?? ""
+            // [2026-10-12 rec-audit P0-2] tamanho real p/ o JS descartar arquivo
+            // vazio/corrompido (paridade com o Android).
+            var sizeBytes = 0
+            if let u = r?.url, let attrs = try? FileManager.default.attributesOfItem(atPath: u.path),
+               let n = attrs[.size] as? NSNumber {
+                sizeBytes = n.intValue
+            }
             // Release the audio session so calls / Spotify / other apps
             // can take it back. The previous version left it active and
             // interfered with the next CallKit incoming call.
@@ -232,6 +273,7 @@ public class ExpoNativeAudioModule: Module {
             return [
                 "path": path,
                 "durationMs": durationMs,
+                "sizeBytes": sizeBytes,
                 "samples": snapshotSamples,
             ]
         }

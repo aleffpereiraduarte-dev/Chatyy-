@@ -1,6 +1,9 @@
 package expo.modules.nativetoolkit
 
 import android.content.Context
+import android.media.AudioAttributes
+import android.media.AudioFocusRequest
+import android.media.AudioManager
 import android.media.MediaPlayer
 import android.media.MediaRecorder
 import android.net.Uri
@@ -65,6 +68,11 @@ class ExpoNativeAudioModule : Module() {
   private var recordPausedAccumMs: Long = 0L
   private var recordPausedAtMs: Long = 0L
   private var isPaused: Boolean = false
+  // [2026-10-12 rec-audit P1-14] Audio focus enquanto grava: ligação (GSM ou
+  // VoIP), alarme etc. tiram o foco → emitimos onInterrupted e o JS para a
+  // gravação (preview) em vez de gravar silêncio/cortar no meio.
+  private var recFocusRequest: AudioFocusRequest? = null
+  private var recFocusListener: AudioManager.OnAudioFocusChangeListener? = null
 
   @Volatile private var latestAmplitude: Int = 0
   @Volatile private var latestLevel: Float = 0f
@@ -113,7 +121,7 @@ class ExpoNativeAudioModule : Module() {
     // Events surfaced to JS. iOS doesn't ship these (uses sync polling) but
     // emitting them on Android removes the JS-side setInterval reading
     // currentLevelSync — saves one bridge hop per sample.
-    Events("onLevel", "onComplete", "onError", "onVoiceStatus", "onVoiceProximity")
+    Events("onLevel", "onComplete", "onError", "onVoiceStatus", "onVoiceProximity", "onInterrupted")
 
     OnCreate {
       Log.d(TAG, "OnCreate")
@@ -212,6 +220,12 @@ class ExpoNativeAudioModule : Module() {
       outFile.parentFile?.mkdirs()
 
       val rec = buildRecorder(outFile)
+      // [2026-10-12 rec-audit P1-14] erro do encoder/servidor de mídia no meio
+      // da gravação (ex.: mic tomado por ligação) → JS para e valida o arquivo.
+      rec.setOnErrorListener { _, what, extra ->
+        Log.w(TAG, "MediaRecorder error what=$what extra=$extra")
+        sendEventSafe("onInterrupted", mapOf("source" to "recorder", "reason" to "error", "what" to what, "extra" to extra))
+      }
       try {
         rec.prepare()
         rec.start()
@@ -234,6 +248,7 @@ class ExpoNativeAudioModule : Module() {
         latestLevel = 0f
         samples.clear()
       }
+      requestRecordFocus(mySession)
 
       // 30 Hz amplitude poll loop. Reads MediaRecorder.maxAmplitude (which
       // resets after each call — that's the desired peak-since-last-poll
@@ -488,17 +503,23 @@ class ExpoNativeAudioModule : Module() {
 
     pollJob?.cancel()
     pollJob = null
+    abandonRecordFocus()
 
-    try { rec?.stop() } catch (_: Throwable) {
-      // stop() throws if no audio data was captured (record button mashed).
-      // Swallowing is consistent with the iOS path which silences the symmetric
-      // AVAudioRecorder failure.
+    // [2026-10-12 rec-audit P0-2] stop() lança quando nada foi capturado (toque
+    // rápido, mic tomado, encoder morto) e o .m4a fica sem moov atom (ex.: 557
+    // bytes) — antes engolíamos e devolvíamos o caminho como se fosse válido.
+    // Agora: apaga o arquivo e devolve path "" + error → o JS descarta e avisa.
+    var stopError: String? = null
+    try { rec?.setOnErrorListener(null) } catch (_: Throwable) {}
+    try { rec?.stop() } catch (t: Throwable) {
+      stopError = t.message ?: "stop_failed"
+      Log.w(TAG, "MediaRecorder.stop failed: $stopError")
     }
     try { rec?.release() } catch (_: Throwable) {}
 
     var sizeBytes = 0L
     val pathOut: String
-    if (deleteFile) {
+    if (deleteFile || stopError != null) {
       try { outFile?.delete() } catch (_: Throwable) {}
       pathOut = ""
     } else {
@@ -506,13 +527,68 @@ class ExpoNativeAudioModule : Module() {
       sizeBytes = outFile?.length() ?: 0L
     }
 
-    return mapOf(
+    val out = mutableMapOf<String, Any?>(
       "path" to pathOut,
       "uri" to pathOut,
       "durationMs" to durationMs,
       "sizeBytes" to sizeBytes,
       "samples" to snapshotSamples.map { it.toDouble() }
     )
+    if (stopError != null && !deleteFile) out["error"] = stopError
+    return out
+  }
+
+  // [2026-10-12 rec-audit P1-14] Foco de áudio da gravação. GAIN_TRANSIENT
+  // (pausa a música enquanto grava, como o WhatsApp). Só LOSS / LOSS_TRANSIENT
+  // interrompem — LOSS_TRANSIENT_CAN_DUCK (som de notificação) é ignorado.
+  private fun requestRecordFocus(session: Int) {
+    try {
+      val am = ctx.getSystemService(Context.AUDIO_SERVICE) as? AudioManager ?: return
+      val listener = AudioManager.OnAudioFocusChangeListener { change ->
+        if (change == AudioManager.AUDIOFOCUS_LOSS || change == AudioManager.AUDIOFOCUS_LOSS_TRANSIENT) {
+          val stillRecording = synchronized(stateLock) { sessionCounter.get() == session && recorder != null }
+          if (stillRecording) {
+            sendEventSafe("onInterrupted", mapOf("source" to "focus", "reason" to "focus_loss", "change" to change))
+          }
+        }
+      }
+      recFocusListener = listener
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+        val req = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT)
+          .setAudioAttributes(
+            AudioAttributes.Builder()
+              .setUsage(AudioAttributes.USAGE_MEDIA)
+              .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+              .build()
+          )
+          .setOnAudioFocusChangeListener(listener, android.os.Handler(android.os.Looper.getMainLooper()))
+          .build()
+        recFocusRequest = req
+        am.requestAudioFocus(req)
+      } else {
+        @Suppress("DEPRECATION")
+        am.requestAudioFocus(listener, AudioManager.STREAM_MUSIC, AudioManager.AUDIOFOCUS_GAIN_TRANSIENT)
+      }
+    } catch (t: Throwable) {
+      Log.w(TAG, "requestRecordFocus: ${t.message}")
+    }
+  }
+
+  private fun abandonRecordFocus() {
+    try {
+      val am = ctx.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+      val req = recFocusRequest
+      val l = recFocusListener
+      recFocusRequest = null
+      recFocusListener = null
+      if (am == null) return
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && req != null) {
+        am.abandonAudioFocusRequest(req)
+      } else if (l != null) {
+        @Suppress("DEPRECATION")
+        am.abandonAudioFocus(l)
+      }
+    } catch (_: Throwable) {}
   }
 
   private fun stopAllPlayers() {
@@ -527,6 +603,7 @@ class ExpoNativeAudioModule : Module() {
   private fun releaseAll() {
     pollJob?.cancel()
     pollJob = null
+    abandonRecordFocus()
     try { recorder?.stop() } catch (_: Throwable) {}
     try { recorder?.release() } catch (_: Throwable) {}
     recorder = null
