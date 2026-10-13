@@ -404,6 +404,8 @@ export function applyEvents(events, messagesById, setMessages, hydratedMessages 
         }
       } else if (ev.type === 'delete') {
         const convId = ev?.payload?.conversation_id;
+        // [2026-10-13 delete-for-all] apaga a mídia local + lápide anti-download.
+        try { require('./mediaCache').purgeDeletedMessageMedia?.(mid, { conversationId: convId }); } catch {}
         // Soft-delete → facade tombstone (keyed by id) when present; else the
         // legacy chatCache soft-delete (which needs convId). One path only.
         if (cs && typeof cs.tombstoneMessage === 'function') {

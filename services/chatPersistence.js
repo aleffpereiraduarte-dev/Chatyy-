@@ -224,6 +224,10 @@ function _onDelete(data) {
     }
   });
   _safe(async () => {
+    // [2026-10-13 delete-for-all] Apaga TODAS as cópias locais da mídia
+    // (store/cache/local_path/HLS/expo-image) + lápide anti-download ANTES do
+    // hard delete (a purga lê local_path/file_url da linha do SQLite).
+    try { await require('./mediaCache').purgeDeletedMessageMedia?.(mid, { conversationId: convId, file_url: data.file_url, thumbnail_url: data.thumbnail_url }); } catch {}
     const nativeDb = require('./db');
     if (!nativeDb.dbDeleteMessage) return;
     try {
@@ -284,6 +288,16 @@ export function startChatPersistence() {
     _unsubs.push(mailWs.on('message_edited', _onEdit));
     _unsubs.push(mailWs.on('chat_delete', _onDelete));
     _unsubs.push(mailWs.on('message_deleted', _onDelete));
+    // [2026-10-13 delete-for-all] O hub manda 'delete' (broadcastChatMessage
+    // type=delete) — só a tela da conversa escutava; com ela fechada a mídia
+    // auto-baixada ficava no aparelho. Mesmo shape de _extractWsMsg.
+    _unsubs.push(mailWs.on('delete', (payload) => {
+      const m = payload && (payload.id && payload.conversation_id ? payload
+        : (payload.message && payload.message.id ? payload.message
+          : (payload.data && payload.data.id ? payload.data : null)));
+      if (!m || m.conversation_id == null) return;
+      _onDelete({ conversation_id: m.conversation_id, message_id: m.id, deleted_by: m.deleted_by || '', file_url: m.file_url, thumbnail_url: m.thumbnail_url });
+    }));
     _unsubs.push(mailWs.on('chat_read', _onRead));
 
     // [#1188 Agent A 2026-05-19] ENVELOPE-MODE LIST WAKE

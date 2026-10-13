@@ -14153,6 +14153,9 @@ function ChatConversationInner() {
               }
             }
           } catch {}
+          // [2026-10-13 delete-for-all] Reabrir conversa: linhas que vieram
+          // apagadas do servidor → apaga mídia que ficou no disco (store/cache).
+          try { require('../services/mediaCache').purgeDeletedFromMessages?.(newMsgs); } catch {}
           let isWifi = false;
           try {
             const { getNetworkState } = require('../services/networkInfo');
@@ -15802,19 +15805,17 @@ function ChatConversationInner() {
             content: '', file_url: '', file_name: '', file_size: 0, thumb_b64: null,
           });
         } catch {}
+        // [2026-10-13 delete-for-all] Purga TODAS as cópias locais da mídia
+        // (store por id, cache, local_path, HLS, expo-image, galeria pendente)
+        // ANTES do hard delete — priorFileUrl (capturado no updater) pode vir
+        // vazio; a purga resolve pelo id da mensagem.
         try {
-          const nativeDb = require('../services/db');
-          nativeDb.dbDeleteMessage?.(conversationId, m.id);
+          const mc = require('../services/mediaCache');
+          Promise.resolve(mc.purgeDeletedMessageMedia?.(m.id, { conversationId, url: priorFileUrl || m.file_url }))
+            .catch(() => {})
+            .then(() => { try { require('../services/db').dbDeleteMessage?.(conversationId, m.id)?.catch?.(() => {}); } catch {} });
         } catch {}
-        // Evict the local media cache so a cached file:// can't replay the
-        // image/video after delete. Best-effort — if the file isn't cached
-        // the call no-ops.
-        if (priorFileUrl) {
-          try {
-            const mc = require('../services/mediaCache');
-            mc.deleteCachedUrl?.(priorFileUrl)?.catch?.(() => {});
-          } catch {}
-        }
+        try { setRoundVideoViewer(v => (v && v.visible && v.messageId != null && String(v.messageId) === String(m.id)) ? { visible: false, uri: null } : v); } catch {}
       };
       wsUnsubs.push(_wsOnB('delete', onWsDelete));
 
@@ -16877,16 +16878,14 @@ function ChatConversationInner() {
                 deleted_at: now, content: '', file_url: '', file_name: '', file_size: 0, thumb_b64: null,
               });
             } catch {}
+            // [2026-10-13 delete-for-all] purga por id antes do hard delete.
             try {
-              const nativeDb = require('../services/db');
-              nativeDb.dbDeleteMessage?.(conversationId, mid);
+              const mc = require('../services/mediaCache');
+              Promise.resolve(mc.purgeDeletedMessageMedia?.(mid, { conversationId, url: priorFileUrl }))
+                .catch(() => {})
+                .then(() => { try { require('../services/db').dbDeleteMessage?.(conversationId, mid)?.catch?.(() => {}); } catch {} });
             } catch {}
-            if (priorFileUrl) {
-              try {
-                const mc = require('../services/mediaCache');
-                mc.deleteCachedUrl?.(priorFileUrl)?.catch?.(() => {});
-              } catch {}
-            }
+            try { setRoundVideoViewer(v => (v && v.visible && v.messageId != null && String(v.messageId) === String(mid)) ? { visible: false, uri: null } : v); } catch {}
           } else {
             // "Delete for me" — animated fade-out then remove
             animateDeleteThenRemove(mid);
@@ -22526,7 +22525,7 @@ function ChatConversationInner() {
   // (chat_ai_digest; servidor velho → ai_summarize) e escolhe o alcance.
   // `range` opcional: 'unread' | 'today' | 'last100' | 'last300'.
   const runAiSummary = async (range) => {
-    const initialRange = typeof range === 'string' ? range : 'last100';
+    const initialRange = typeof range === 'string' ? range : 'auto'; // [bia-summary-v2] auto = Não lidas se houver
     try {
       const { canUseFeature, trackFeatureUsage, getUpsellMessage } = require('../services/premium');
       const check = await canUseFeature('ai_summarize');
@@ -27844,7 +27843,7 @@ function ChatConversationInner() {
               onPress={() => {
                 if (selectionMode) return toggleSelection(msg.id);
                 // Open circular viewer (WhatsApp parity — stays round, never rect)
-                setRoundVideoViewer({ visible: true, uri: noteUrl });
+                setRoundVideoViewer({ visible: true, uri: noteUrl, messageId: msg.id });
               }}
               onLongPress={() => { if (selectionMode) toggleSelection(msg.id); else handleLongPress(msg); }}
               delayLongPress={350}
@@ -37984,7 +37983,8 @@ function ChatConversationInner() {
           myName={user?.name || ''}
           unreadCount={initialUnreadCountRef.current || 0}
           firstUnreadId={firstUnreadIdRef.current || null}
-          initialRange={aiSummary.range || 'last100'}
+          initialRange={aiSummary.range || 'auto'}
+          isGroup={conversationType === 'group'}
           onJumpToMessage={(id) => { try { safeScrollToMsg({ id }); } catch {} }}
           onMarkRead={() => {
             try {

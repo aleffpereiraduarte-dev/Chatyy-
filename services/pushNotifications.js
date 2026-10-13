@@ -244,6 +244,11 @@ export async function applyNotifClear(raw) {
     const upTo = Number(d.up_to) || 0;
     const mid = String(d.message_id ?? '');
     if (kind === 'read') { try { _nativeChat()?.dismissChatNotification?.(cid); } catch {} }
+    // [2026-10-13 delete-for-all] push de "apagada p/ todos" (app em 2º plano /
+    // suspenso) → apaga já a mídia auto-baixada + lápide anti-download/galeria.
+    if (kind === 'deleted' && mid) {
+      try { require('./mediaCache').purgeDeletedMessageMedia?.(mid, { conversationId: cid }); } catch {}
+    }
     if (!Notifications) {
       try { Notifications = await import('expo-notifications'); } catch { return false; }
     }

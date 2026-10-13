@@ -319,6 +319,30 @@ export function forgetUrlKey(urlKey) {
   _schedulePersist();
 }
 
+// [2026-10-13 delete-for-all] Tira do índice TODAS as entradas de uma mensagem
+// (original `<mid>.<ext>` + variantes `<mid>_<hash>.<ext>`, ex.: miniatura) e
+// devolve [{ abs, urlKey }] p/ o mediaCache apagar os arquivos.
+export function forgetMessage(messageId) {
+  const out = [];
+  if (messageId == null || messageId === '' || !ensureAccount()) return out;
+  const mid = String(messageId);
+  const ek = 'm' + _safeSeg(mid);
+  for (const [c, m] of _convs.entries()) {
+    for (const [k, e] of [...m.entries()]) {
+      if (!e) continue;
+      const hit = (e.m != null && String(e.m) === mid) || k === ek || k.startsWith(ek + '_');
+      if (!hit) continue;
+      out.push({ abs: _abs(e.r), urlKey: e.u || null });
+      m.delete(k);
+      if (e.u) { const bu = _byUrl.get(e.u); if (bu && bu.c === c && bu.k === k) _byUrl.delete(e.u); }
+      _dirty.add(c);
+    }
+  }
+  _byMsg.delete(mid);
+  if (out.length) _schedulePersist();
+  return out;
+}
+
 // [[urlKey, absPath]] da conta ativa (p/ semear o syncIndex do mediaCache).
 export function entriesForSyncIndex() {
   if (!ensureAccount()) return [];

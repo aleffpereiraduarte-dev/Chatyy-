@@ -406,7 +406,12 @@ function _applyParsedSync(parsed, reason, t0) {
                 $cmid, 'sent', $raw${cols.messages ? ', $acct' : ''})`
           );
           try {
+            let _mcTomb = null;
+            try { _mcTomb = require('./mediaCache').isMessageDeletedLocally; } catch {}
             for (const m of plan.messages) {
+              // [2026-10-13 delete-for-all] journal do NSE não ressuscita
+              // mensagem já apagada p/ todos (senão o auto-sync rebaixava a mídia).
+              try { if (_mcTomb && _mcTomb(m.id)) continue; } catch {}
               stmt.executeSync({
                 $id: m.id, $cid: m.conversation_id, $sender: m.sender_email, $sname: m.sender_name,
                 $content: m.content, $type: m.type, $furl: m.file_url || '', $fname: m.file_name || '',

@@ -152,7 +152,11 @@ export async function applyRealtimeEvent(event) {
         // Soft-delete only (deleteMessage sets deleted_at). The row stays in
         // SQLite so disappearing-timer + history search keep working until
         // user explicitly purges.
-        if (event.data?.id) await localDb.deleteMessage(event.data.id);
+        if (event.data?.id) {
+          // [2026-10-13 delete-for-all] mídia local + lápide anti-download.
+          try { require('./mediaCache').purgeDeletedMessageMedia?.(event.data.id, { conversationId: event.data.conversation_id, file_url: event.data.file_url }); } catch {}
+          await localDb.deleteMessage(event.data.id);
+        }
         break;
       case 'conversation_updated':
         if (event.data) await localDb.saveConversations([event.data]);

@@ -1076,6 +1076,7 @@ export async function getMissingMediaMessages(limit = 500) {
        FROM messages
        WHERE type IN ('image','video','audio','voice','short_video','gif','sticker','file','document')
          AND (local_path IS NULL OR local_path = '')
+         AND (deleted_at IS NULL OR deleted_at = '')
          AND (
            (file_url IS NOT NULL AND file_url <> '')
            OR (type IN ('gif','sticker') AND content LIKE 'http%')
@@ -1103,6 +1104,32 @@ export async function getMissingMediaMessages(limit = 500) {
     if (__DEV__) console.warn('[db] getMissingMediaMessages failed:', e?.message);
     return [];
   }
+}
+
+// [2026-10-13 delete-for-all] Refs de mídia de UMA mensagem (antes do hard
+// delete) e varredura de apagadas que ainda têm arquivo local (boot).
+export async function dbGetMessageMediaRefs(messageId) {
+  if (isWeb || !_db || messageId == null) return null;
+  try {
+    return await _db.getFirstAsync(
+      'SELECT id, conversation_id, file_url, local_path FROM messages WHERE id = ? LIMIT 1',
+      [messageId]
+    );
+  } catch { return null; }
+}
+export async function getDeletedMessagesWithMedia(limit = 2000) {
+  if (isWeb || !_db) return [];
+  try {
+    return (await _db.getAllAsync(
+      `SELECT id, conversation_id, file_url, local_path
+       FROM messages
+       WHERE deleted_at IS NOT NULL AND deleted_at <> ''
+         AND ((local_path IS NOT NULL AND local_path <> '') OR (file_url IS NOT NULL AND file_url <> ''))
+       ORDER BY id DESC
+       LIMIT ?`,
+      [Math.max(1, Math.min(limit, 20000))]
+    )) || [];
+  } catch { return []; }
 }
 
 // [2026-10-12 P0 view-once] Linhas view-once com mídia (p/ a limpeza única
