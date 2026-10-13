@@ -27,6 +27,7 @@ import { useConfirm } from '../components/ConfirmModal';
 import {
   IconDownload, IconFileText, IconLock, IconCheck, IconCheckCircle, IconAlertTriangle,
   IconUser, IconUsers, IconMessageSquare, IconTrash, IconRefresh, IconChevronRight, IconX,
+  IconChevronLeft,
 } from '../components/Icons';
 import { takeSharedText } from '../services/waImport/importer';
 import * as job from '../services/waImport/job';
@@ -71,6 +72,12 @@ function fmtDate(tsLocal, lang) {
 
 export default function ImportWhatsAppScreen() {
   const router = useRouter();
+  // [2026-10-13] Aberta pelo menu Compartilhar do WhatsApp não há tela anterior →
+  // sem botão voltar. Volta se der; senão vai para as Conversas.
+  const goBackSafe = useCallback(() => {
+    try { if (router.canGoBack && router.canGoBack()) { router.back(); return; } } catch {}
+    try { router.replace('/chat'); } catch {}
+  }, [router]);
   const params = useLocalSearchParams();
   const insets = useSafeAreaInsets();
   const { colors, isDark } = useTheme();
@@ -527,7 +534,7 @@ export default function ImportWhatsAppScreen() {
         {j.status === 'running' && p.etaSec != null ? <Text style={{ color: sub, textAlign: 'center', fontSize: 13, marginTop: 6 }}>{etaText(p.etaSec)}</Text> : null}
         <Text style={[s.small, { color: sub, textAlign: 'center', marginTop: 16 }]}>{t('waImport.backgroundHint')}</Text>
         <View style={{ height: 20 }} />
-        <Btn label={t('waImport.backToChat')} onPress={() => { try { router.back(); } catch {} }} icon={IconMessageSquare} />
+        <Btn label={t('waImport.backToChat')} onPress={goBackSafe} icon={IconMessageSquare} />
         <View style={{ height: 10 }} />
         {j.status === 'paused'
           ? <Btn label={t('waImport.resume')} solid={false} onPress={() => job.resume()} />
@@ -614,9 +621,13 @@ export default function ImportWhatsAppScreen() {
   return (
     <View style={{ flex: 1, backgroundColor: colors.background }}>
       {USE_NATIVE_HEADER ? (
-        <Stack.Screen options={nativeHeaderOptions({ colors, isDark, title: t('waImport.title') })} />
+        <Stack.Screen options={nativeHeaderOptions({ colors, isDark, title: t('waImport.title'), headerLeft: () => (
+          <TouchableOpacity onPress={goBackSafe} hitSlop={12} accessibilityRole="button" accessibilityLabel={t('common.back') || 'Voltar'} style={{ paddingRight: 8 }}>
+            <IconChevronLeft size={26} color={colors.text} />
+          </TouchableOpacity>
+        ) })} />
       ) : (
-        <ModalHeader title={t('waImport.title')} onClose={() => router.back()} />
+        <ModalHeader title={t('waImport.title')} onClose={goBackSafe} />
       )}
       <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 32 + insets.bottom, maxWidth: 640, width: '100%', alignSelf: 'center' }} keyboardShouldPersistTaps="handled">
         {step === 'intro' && renderIntro()}
