@@ -227,8 +227,33 @@ function normPeople(arr) {
   return out;
 }
 
+// [2026-10-13] Servidor antigo/IA cortada devolvia o JSON CRU como texto do resumo
+// ('{"summary": …, "topics": [ …' cortado). Nunca mostrar isso: tenta ler o JSON,
+// senão resgata os campos de texto; se nada servir, vira vazio (tela de erro/tentar).
+const _JSONISH_RE = /^\s*[{[]|"(summary|prose|topics|decisions)"\s*:/;
+function _salvageJsonText(s) {
+  try { const o = JSON.parse(s); if (o && typeof o === 'object') return { obj: o }; } catch {}
+  for (const k of ['prose', 'summary']) {
+    const m = s.match(new RegExp('"' + k + '"\\s*:\\s*"((?:[^"\\\\]|\\\\.)*)'));
+    if (m) {
+      let v = m[1];
+      try { v = JSON.parse('"' + v + '"'); } catch { v = v.replace(/\\"/g, '"').replace(/\\n/g, '\n'); }
+      if (v && v.trim().length >= 20) return { text: v.trim() };
+    }
+  }
+  return {};
+}
+
 export function normalizeDigest(d) {
   if (!d || typeof d !== 'object') return null;
+  for (const key of ['prose', 'summary']) {
+    const raw = d[key];
+    if (typeof raw === 'string' && _JSONISH_RE.test(raw)) {
+      const sv = _salvageJsonText(raw);
+      if (sv.obj && !sv.obj.__nested) return normalizeDigest({ ...d, ...sv.obj, __nested: true, prose: sv.obj.prose ?? (key === 'prose' ? '' : d.prose), summary: sv.obj.summary ?? (key === 'summary' ? '' : d.summary) });
+      d = { ...d, [key]: sv.text || '' };
+    }
+  }
   const summary = cleanText(d.summary || d.tldr || '');
   const out = {
     summary: summary && !NOISE_RE.test(summary) ? summary : '',

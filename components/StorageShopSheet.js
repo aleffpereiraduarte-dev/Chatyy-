@@ -8,7 +8,7 @@
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  View, Text, StyleSheet, TouchableOpacity, Modal, Platform,
+  View, Text, StyleSheet, TouchableOpacity, Modal, Platform, StatusBar,
   ActivityIndicator, ScrollView, Alert, Linking, useWindowDimensions,
 } from 'react-native';
 import { useTheme } from '../context/ThemeContext';
@@ -17,7 +17,7 @@ import { STORAGE_TIERS, purchaseStorage, getStorageLocalizedPrice } from '../ser
 import { getOriginBase, storageUsage } from '../services/api'; // [2026-10-10] loja web = host canônico
 import { startStripeCheckout, openStripePortal, isStripeCardAvailable, isStripeStorageCheckoutAvailable } from '../services/stripeCheckout';
 import { IconX, IconCloud, IconCheck, IconCheckCircle, IconUsers, IconImage, IconShield, IconZap } from './Icons';
-import { useSafeAreaInsets, SafeAreaView as SACSafeAreaView } from 'react-native-safe-area-context';
+import { useSafeAreaInsets, initialWindowMetrics } from 'react-native-safe-area-context';
 
 function formatBrl(v) {
   const n = Number(v) || 0;
@@ -419,6 +419,12 @@ export default function StorageShopSheet({ visible, onClose, currentTier = 'free
   // tela. Agora é TELA CHEIA (título fixo · planos rolando · botão fixo) no celular,
   // respeitando entalhe e barra; no computador, cartão central de 560px.
   const wide = Platform.OS === 'web' && winW >= 700;
+  // [2026-10-13] Dentro do Modal fullScreen (aberto por cima de outra folha) o
+  // useSafeAreaInsets e o SafeAreaView vinham 0 no iOS → cabeçalho sob a status bar.
+  // Usa o maior entre o insets atual e a métrica real do aparelho no boot.
+  const _wm = (initialWindowMetrics && initialWindowMetrics.insets) || {};
+  const _topInset = Math.max(insets.top || 0, _wm.top || 0, Platform.OS === 'ios' ? 20 : (StatusBar.currentHeight || 0));
+  const _botInset = Math.max(insets.bottom || 0, _wm.bottom || 0);
   if (wide) {
     return (
       <Modal visible={!!visible} transparent animationType="fade" onRequestClose={onClose}>
@@ -441,11 +447,9 @@ export default function StorageShopSheet({ visible, onClose, currentTier = 'free
       {/* [2026-10-13] Aberto por cima de outra folha, o insets do dono vinha 0 →
           cabeçalho por baixo da status bar. SafeAreaView nativo mede a própria
           área segura dentro do Modal. */}
-      <SACSafeAreaView edges={['top', 'bottom']} style={{ flex: 1, backgroundColor: colors.background }}>
-        <View style={{ flex: 1, paddingTop: 4, paddingBottom: insets.bottom > 0 ? 0 : 12, paddingHorizontal: 18 }}>
-          {body}
-        </View>
-      </SACSafeAreaView>
+      <View style={{ flex: 1, backgroundColor: colors.background, paddingTop: _topInset + 6, paddingBottom: Math.max(_botInset, 12), paddingHorizontal: 18 }}>
+        {body}
+      </View>
     </Modal>
   );
 }
