@@ -11,6 +11,13 @@ import { resolveUniversalLink } from '../utils/universalLinks';
 
 export function redirectSystemPath({ path, initial }) {
   try {
+    // [2026-10-13] Compartilhar de outro app (Share Extension iOS / expo-share-intent):
+    // chega como onemundomail:///dataUrl=onemundomailShareKey (às vezes sem o '?').
+    // O expo-router tentava rotear isso como caminho → "Unmatched Route". Quem trata
+    // é o _layout (useShareIntent → /share-receive); aqui só não navega.
+    if (typeof path === 'string' && (path.includes('dataUrl=') || /sharekey/i.test(path))) {
+      return initial ? '/' : null;
+    }
     // [2026-10-12 nav-dedup] Warm-start chat deep links (Android native
     // notification tap, widgets, Siri/shortcuts: onemundomail://chat-conversation?id=…)
     // used to be routed by expo-router as a blind NAVIGATE → a chat already in
