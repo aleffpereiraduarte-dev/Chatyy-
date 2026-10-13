@@ -4594,7 +4594,9 @@ function _nativeSendSocket() {
   } catch {}
   let ws = null;
   try { ws = require('./websocket').default; } catch { return null; }
-  if (!ws || !ws.isConnected || !Array.isArray(ws.serverCaps) || !ws.serverCaps.includes('native_send')) return null;
+  // [chat-send-rapido 2026-10-13] isHealthy (pong recente) em vez de isConnected: socket meio-morto
+  // segurava a fila de envio 4-8 s esperando o chat_send_ack antes de cair no HTTP.
+  if (!ws || !ws.isConnected || ws.isHealthy === false || !Array.isArray(ws.serverCaps) || !ws.serverCaps.includes('native_send')) return null;
   if (!ws.ws || ws.ws.readyState !== 1) return null;
   return ws;
 }

@@ -2380,6 +2380,8 @@ function _hasBlockMarkdown(text) {
 // Block-level renderer: quote lines (accent bar + muted text), bullet lists,
 // numbered lists. Each line's text still runs through inline markdown.
 function _renderBlocks(text, style, colors) {
+  // [2026-10-13] flex:1 no texto das linhas de lista/citação colapsava a largura
+  // (a bolha se ajusta ao conteúdo → sobra 0) = 1 letra por linha. flexShrink:1.
   const lines = text.split('\n');
   const accent = (colors && (colors.primary || colors.accent)) || '#25D366';
   const muted = (colors && (colors.textSecondary || colors.textTertiary)) || 'rgba(120,120,120,0.9)';
@@ -2389,9 +2391,9 @@ function _renderBlocks(text, style, colors) {
         const q = line.match(_QUOTE_LINE_RE);
         if (q) {
           return (
-            <View key={i} style={{ flexDirection: 'row', marginVertical: 1 }}>
+            <View key={i} style={{ flexDirection: 'row', marginVertical: 1, maxWidth: '100%' }}>
               <View style={{ width: 3, borderRadius: 2, backgroundColor: accent, marginRight: 8, alignSelf: 'stretch', opacity: 0.85 }} />
-              <Text style={[style, { color: muted, flex: 1 }]} selectable={true}>
+              <Text style={[style, { color: muted, flexShrink: 1 }]} selectable={true}>
                 {_renderInline(_segmentInline(q[1]), [style, { color: muted }], colors, `q${i}`)}
               </Text>
             </View>
@@ -2400,18 +2402,18 @@ function _renderBlocks(text, style, colors) {
         const b = line.match(_BULLET_LINE_RE);
         if (b) {
           return (
-            <View key={i} style={{ flexDirection: 'row', marginVertical: 0.5, paddingLeft: b[1] ? 12 : 0 }}>
+            <View key={i} style={{ flexDirection: 'row', maxWidth: '100%', marginVertical: 0.5, paddingLeft: b[1] ? 12 : 0 }}>
               <Text style={[style, { marginRight: 6 }]}>{'•'}</Text>
-              <Text style={[style, { flex: 1 }]} selectable={true}>{_renderInline(_segmentInline(b[2]), style, colors, `b${i}`)}</Text>
+              <Text style={[style, { flexShrink: 1 }]} selectable={true}>{_renderInline(_segmentInline(b[2]), style, colors, `b${i}`)}</Text>
             </View>
           );
         }
         const n = line.match(_NUM_LINE_RE);
         if (n) {
           return (
-            <View key={i} style={{ flexDirection: 'row', marginVertical: 0.5, paddingLeft: n[1] ? 12 : 0 }}>
+            <View key={i} style={{ flexDirection: 'row', maxWidth: '100%', marginVertical: 0.5, paddingLeft: n[1] ? 12 : 0 }}>
               <Text style={[style, { marginRight: 6 }]}>{`${n[2]}.`}</Text>
-              <Text style={[style, { flex: 1 }]} selectable={true}>{_renderInline(_segmentInline(n[3]), style, colors, `n${i}`)}</Text>
+              <Text style={[style, { flexShrink: 1 }]} selectable={true}>{_renderInline(_segmentInline(n[3]), style, colors, `n${i}`)}</Text>
             </View>
           );
         }
