@@ -14150,7 +14150,10 @@ function ChatConversationInner() {
           } catch {}
           const SMALL_TYPES = ['image', 'audio', 'voice', 'gif', 'sticker'];
           const HEAVY_TYPES = ['video', 'file'];
-          const allowedTypes = isWifi ? [...SMALL_TYPES, ...HEAVY_TYPES] : SMALL_TYPES;
+          // [2026-10-12] vídeo segue a política de auto-download (padrão: também nos dados móveis).
+          let _videoOk = isWifi;
+          try { _videoOk = isWifi || !!require('../services/mediaCache').shouldAutoDownload('video'); } catch {}
+          const allowedTypes = isWifi ? [...SMALL_TYPES, ...HEAVY_TYPES] : (_videoOk ? [...SMALL_TYPES, 'video'] : SMALL_TYPES);
           // Task #886 — explicit audio sweep BEFORE the general media batch.
           // Audio is the only "must always have offline" media; getCachedUri
           // returns the remote URL if not yet cached, so a separate sweep

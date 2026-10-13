@@ -768,9 +768,14 @@ const AUTO_DL_POLICY_KEY = 'chatyy:auto_download_policy';
 const _defaultPolicy = {
   photos:    { mobile: 1, wifi: 1, roaming: 0 },
   audio:     { mobile: 1, wifi: 1, roaming: 0 },
-  videos:    { mobile: 0, wifi: 1, roaming: 0 },
+  // [2026-10-12 founder] vídeo baixa sozinho também nos dados móveis (como foto/
+  // áudio/figurinha) p/ abrir offline. Ajustes > Armazenamento ainda permite desligar.
+  videos:    { mobile: 1, wifi: 1, roaming: 0 },
   documents: { mobile: 0, wifi: 1, roaming: 0 },
 };
+// Matriz padrão ANTIGA (vídeo só Wi-Fi). Quem nunca personalizou chega com ela
+// (servidor e cache local) → promovida ao padrão novo em _normalizePolicy.
+const _OLD_DEFAULT_SIG = '1,1,0|1,1,0|0,1,0|0,1,0';
 let _autoDlPolicy = JSON.parse(JSON.stringify(_defaultPolicy));
 let _autoDlPolicyHydrated = false;
 // 60s cache so the gate can be queried at message-pump rate without parsing
@@ -790,6 +795,10 @@ function _normalizePolicy(raw) {
       }
     }
   }
+  try {
+    const sig = ['photos', 'audio', 'videos', 'documents'].map(k => [out[k].mobile, out[k].wifi, out[k].roaming].join(',')).join('|');
+    if (sig === _OLD_DEFAULT_SIG) out.videos.mobile = 1;
+  } catch {}
   return out;
 }
 
