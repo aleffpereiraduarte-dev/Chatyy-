@@ -24,6 +24,14 @@
 //         rótulos ("Resumo curto:", "Principais tópicos", "Decisões…") em seções,
 //         descartando "Nenhuma decisão…". Perguntar fica indisponível.
 // Privacidade: nada de conteúdo de mensagem em log (nem console).
+//
+// v2 (2026-10-13 bia-summary-v2): modos no topo — "Resumo" (padrão: RESUMO DE
+// VERDADE em texto corrido, Curto/Detalhado, "Ouvir" com expo-speech) e
+// "Tópicos" (o estruturado acima; em grupos, "Por pessoa"). Com não lidas o
+// alcance padrão é Não lidas ("Enquanto você estava fora…"). Servidor v2
+// (/root/resumo-ia-v2-servidor.sh) devolve `prose`/`by_person`; servidor v1
+// (sem prose) → texto corrido montado de summary + decisões + pendências.
+// Feedback (polegares SVG): servidor v2 grava só o voto; senão log local.
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -35,7 +43,9 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   IconX, IconCopy, IconShare, IconRefresh, IconArrowRight, IconCheck, IconAlertCircle,
   IconCalendar, IconAtSign, IconHelpCircle, IconMessageSquare, IconCheckCircle, IconSend,
+  IconPlay, IconPause, IconUsers,
 } from '../Icons';
+import SegmentedControl from '../ui/SegmentedControl';
 import { USE_NATIVE_SHEETS, NativeSheet, runAfterNativeSheet } from '../NativeSheet';
 import { Shimmer } from '../SkeletonLoader';
 import FadeSlideIn from '../FadeSlideIn';
@@ -191,6 +201,32 @@ function normList(arr, max = 8) {
   return out;
 }
 
+function cleanProse(s) {
+  if (typeof s !== 'string') return '';
+  return s
+    .replace(/\*\*([^*]+)\*\*/g, '$1')
+    .replace(/__([^_]+)__/g, '$1')
+    .replace(/`([^`]+)`/g, '$1')
+    .split(/\r?\n\s*\r?\n|\r?\n/)
+    .map((p) => p.replace(/^\s*(#{1,6}|[-•*])\s+/, '').replace(/\s+/g, ' ').trim())
+    .filter((p) => p && !NOISE_RE.test(p))
+    .slice(0, 4)
+    .join('\n\n');
+}
+function normPeople(arr) {
+  if (!Array.isArray(arr)) return [];
+  const out = [];
+  for (const x of arr) {
+    if (!x || typeof x !== 'object') continue;
+    const name = cleanText(x.name || x.who || '');
+    const n = normItem(x);
+    if (!name || !n) continue;
+    out.push({ name, text: n.text, refs: n.refs });
+    if (out.length >= 10) break;
+  }
+  return out;
+}
+
 export function normalizeDigest(d) {
   if (!d || typeof d !== 'object') return null;
   const summary = cleanText(d.summary || d.tldr || '');
@@ -201,9 +237,14 @@ export function normalizeDigest(d) {
     todos: normList(d.todos || d.action_items || d.tasks),
     dates: normList(d.dates || d.dates_places || d.events),
     questions: normList(d.open_questions || d.questions),
+    prose: cleanProse(d.prose),
+    byPerson: normPeople(d.by_person),
+    hasProse: typeof d.prose === 'string' && !!cleanProse(d.prose),
+    serverV2: d.mode !== undefined || d.prose !== undefined,
     mentionsMe: !!d.mentions_me,
     tone: cleanText(d.tone || ''),
     count: parseInt(d.message_count || d.count || 0, 10) || 0,
+    participants: Array.isArray(d.participants) ? d.participants.length : 0,
     fromMs: parseMsgTime(d.first_at),
     toMs: parseMsgTime(d.last_at),
     legacy: false,
@@ -281,7 +322,116 @@ export function digestToText(d, t, title) {
   return parts.join('\n').trim();
 }
 
+// Pendência pedida AO usuário ("você", "eu", primeiro nome dele).
+function isMeWho(who, myName) {
+  const w = String(who || '').trim().toLowerCase();
+  if (!w) return false;
+  if (/^(voc[êe]|vc|eu|me|you|t[úu]|vous|du|sie)$/.test(w)) return true;
+  const first = String(myName || '').trim().split(/\s+/)[0].toLowerCase();
+  return !!first && first.length > 1 && w.split(/[\s,]+/)[0] === first;
+}
+
+function endDot(s) { const x = String(s || '').trim(); return !x ? '' : (/[.!?…]$/.test(x) ? x : x + '.'); }
+function joinItems(list, fmt) { return list.map(fmt).join('; '); }
+
+// Servidor sem `prose` (v1/legado): texto corrido montado das seções.
+export function composeProse(d, t, { unread = false, length = 'short' } = {}) {
+  if (!d) return '';
+  const long = length === 'long';
+  const who = (x) => x.text + (x.who ? ' (' + x.who + (x.when ? ', ' + x.when : '') + ')' : (x.when ? ' (' + x.when + ')' : ''));
+  const p1 = []; const p2 = []; const p3 = [];
+  if (d.summary) p1.push(endDot(d.summary));
+  else if (d.topics.length) p1.push(endDot(d.topics[0].text));
+  const dec = d.decisions.slice(0, long ? 4 : 2);
+  const todo = d.todos.slice(0, long ? 4 : 2);
+  if (dec.length) p2.push(endDot(tr(t, 'chatSum.proseDecided', 'Ficou combinado: {x}', { x: joinItems(dec, (x) => x.text) })));
+  if (todo.length) p2.push(endDot(tr(t, 'chatSum.proseTodo', 'Ficou pendente: {x}', { x: joinItems(todo, who) })));
+  if (long) {
+    if (d.dates.length) p3.push(endDot(tr(t, 'chatSum.proseDates', 'Marcado: {x}', { x: joinItems(d.dates.slice(0, 3), (x) => x.text + (x.when ? ' (' + x.when + ')' : '')) })));
+    if (d.questions.length) p3.push(endDot(tr(t, 'chatSum.proseQuestions', 'Ainda sem resposta: {x}', { x: joinItems(d.questions.slice(0, 3), who) })));
+  }
+  let paras;
+  if (long) paras = [p1.join(' '), p2.join(' '), p3.join(' ')].filter(Boolean);
+  else paras = [[...p1, ...p2].join(' ')].filter(Boolean);
+  if (!paras.length) return '';
+  if (unread) paras[0] = tr(t, 'chatSum.whileAway', 'Enquanto você estava fora…') + ' ' + paras[0];
+  return paras.join('\n\n');
+}
+
+// Servidor sem `by_person`: 1 linha por participante a partir das mensagens locais.
+export function localByPerson(items, meLabel, youLabel) {
+  const map = new Map();
+  for (const it of items || []) {
+    const k = it.me ? '\u0000me' : it.sender;
+    const e = map.get(k) || { name: it.me ? youLabel : String(it.sender || '?').split(/\s+/)[0], n: 0, last: null };
+    e.n += 1;
+    if (it.type === 'text' && it.content && it.content.length >= 8) e.last = it;
+    map.set(k, e);
+  }
+  return [...map.values()].sort((a, b) => b.n - a.n).slice(0, 8).map((e) => ({
+    name: e.name,
+    text: e.last ? '“' + (e.last.content.length > 110 ? e.last.content.slice(0, 107).trim() + '…' : e.last.content) + '”' : '',
+    count: e.n,
+    refs: e.last && e.last.id ? [Number(e.last.id)] : [],
+  }));
+}
+
+// expo-speech só se o módulo nativo existe no binário (requireNativeModule lança
+// no Android quando falta) — web usa speechSynthesis.
+let _speech;
+function getSpeech() {
+  if (_speech !== undefined) return _speech;
+  _speech = null;
+  try {
+    if (Platform.OS === 'web') {
+      if (typeof window === 'undefined' || !window.speechSynthesis) return _speech;
+    } else {
+      const core = require('expo');
+      if (!core || typeof core.requireOptionalNativeModule !== 'function' || !core.requireOptionalNativeModule('ExpoSpeech')) return _speech;
+    }
+    const m = require('expo-speech');
+    if (m && typeof m.speak === 'function') _speech = m;
+  } catch { _speech = null; }
+  return _speech;
+}
+// Pedaços curtos (frases agrupadas até ~220 chars): pausar = parar e lembrar o
+// pedaço (Speech.pause não existe no Android); continuar = falar dali.
+function speechChunks(text) {
+  const out = [];
+  String(text || '').split(/\n+/).forEach((para) => {
+    const sents = para.match(/[^.!?…]+[.!?…]+["”’)]*\s*|[^.!?…]+$/g) || [para];
+    let cur = '';
+    sents.forEach((x) => {
+      if ((cur + x).length > 220 && cur) { out.push(cur.trim()); cur = ''; }
+      cur += x;
+    });
+    if (cur.trim()) out.push(cur.trim());
+  });
+  return out.filter(Boolean);
+}
+
+async function logFeedbackLocal(entry) {
+  try {
+    const AS = require('@react-native-async-storage/async-storage').default;
+    const k = 'bia_summary_feedback_v1';
+    let arr = [];
+    try { arr = JSON.parse((await AS.getItem(k)) || '[]'); } catch {}
+    if (!Array.isArray(arr)) arr = [];
+    arr.push(entry);
+    await AS.setItem(k, JSON.stringify(arr.slice(-50)));
+  } catch {}
+}
+
 // ───────────────────────────── visuais ─────────────────────────────
+
+function ThumbGlyph({ size = 18, color, down = false, filled = false }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" style={down ? { transform: [{ rotate: '180deg' }] } : null}>
+      <Path d="M7 10v11H4.5A1.5 1.5 0 0 1 3 19.5v-8A1.5 1.5 0 0 1 4.5 10H7Z" fill={filled ? color : 'none'} stroke={color} strokeWidth={1.7} strokeLinejoin="round" />
+      <Path d="M7 10l4.2-7.2a1.9 1.9 0 0 1 3.4 1.5L13.8 9h5.3a2 2 0 0 1 2 2.4l-1.5 7.8a2.2 2.2 0 0 1-2.2 1.8H7" fill={filled ? color : 'none'} stroke={color} strokeWidth={1.7} strokeLinejoin="round" strokeLinecap="round" />
+    </Svg>
+  );
+}
 
 // Brilho da Bia: estrela de 4 pontas + estrela menor (SVG, sem emoji).
 export function BiaGlyph({ size = 18, color = '#fff' }) {
@@ -313,7 +463,30 @@ function PulsingGlyph({ size, color }) {
   );
 }
 
+// "Bia está escrevendo" — três pontos pulsando.
+function TypingDots({ color }) {
+  const v = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    if (isReduceMotionEnabled()) { v.setValue(1); return undefined; }
+    const loop = Animated.loop(Animated.timing(v, { toValue: 3, duration: 1200, easing: Easing.linear, useNativeDriver: true }));
+    loop.start();
+    return () => loop.stop();
+  }, [v]);
+  return (
+    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3, marginLeft: 2 }}>
+      {[0, 1, 2].map((i) => (
+        <Animated.View key={i} style={{
+          width: 4, height: 4, borderRadius: 2, backgroundColor: color,
+          opacity: v.interpolate({ inputRange: [0, i, i + 0.5, i + 1, 3], outputRange: [0.25, 0.25, 1, 0.25, 0.25], extrapolate: 'clamp' }),
+        }} />
+      ))}
+    </View>
+  );
+}
+
 const RANGES = ['unread', 'today', 'last100', 'last300'];
+// Preferências da sessão (modo/tamanho lembrados entre aberturas).
+const _prefs = { view: 'prose', length: 'short' };
 
 // ───────────────────────────── componente ─────────────────────────────
 
@@ -326,7 +499,8 @@ export default function ConversationSummarySheet({
   myName,
   unreadCount = 0,
   firstUnreadId = null,
-  initialRange = 'last100',
+  initialRange = 'auto',
+  isGroup = false,
   onJumpToMessage,
   onMarkRead,
   colors: c = {},
@@ -353,7 +527,9 @@ export default function ConversationSummarySheet({
 
   const hasUnread = (Number(unreadCount) || 0) > 0 || !!firstUnreadId;
   const ranges = useMemo(() => RANGES.filter((r) => r !== 'unread' || hasUnread), [hasUnread]);
-  const startRange = ranges.includes(initialRange) ? initialRange : (initialRange === 'recent' ? 'last100' : ranges[0]);
+  // "O que eu perdi": sem alcance explícito ('auto') e com não lidas → Não lidas.
+  const wantRange = (!initialRange || initialRange === 'auto') ? (hasUnread ? 'unread' : 'last100') : (initialRange === 'recent' ? 'last100' : initialRange);
+  const startRange = ranges.includes(wantRange) ? wantRange : (ranges.includes('last100') ? 'last100' : ranges[0]);
 
   const [range, setRange] = useState(startRange);
   const [status, setStatus] = useState('loading'); // loading | ready | error | empty
@@ -365,12 +541,20 @@ export default function ConversationSummarySheet({
   const [ask, setAsk] = useState(null); // { q, loading, answer, refs, error }
   const [scrolled, setScrolled] = useState(false);
   const [version, setVersion] = useState(0);
+  const [view, setViewState] = useState(_prefs.view); // 'prose' | 'topics'
+  const [length, setLengthState] = useState(_prefs.length); // 'short' | 'long'
+  const [perPerson, setPerPerson] = useState(false);
+  const [speak, setSpeak] = useState('idle'); // idle | playing | paused
+  const [vote, setVote] = useState(null); // null | 'up' | 'down'
+  const speakRef = useRef({ idx: 0, token: 0, chunks: [] });
+  const setView = (v) => { _prefs.view = v; setViewState(v); };
+  const setLength = (v) => { _prefs.length = v; setLengthState(v); };
   const reqRef = useRef(0);
   const askReqRef = useRef(0);
   const messagesRef = useRef(messages);
   messagesRef.current = messages;
 
-  useEffect(() => { if (visible) { setRange(startRange); setAsk(null); setQuestion(''); } }, [visible]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (visible) { setRange(startRange); setAsk(null); setQuestion(''); setPerPerson(false); } }, [visible]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const meLabel = tr(t, 'chatConv.me', 'Eu');
   const lastId = useMemo(() => {
@@ -409,7 +593,9 @@ export default function ConversationSummarySheet({
 
   const load = useCallback(async (r, refresh = false) => {
     const my = ++reqRef.current;
-    const key = conversationId + '|' + r + '|' + lastId + '|' + locale;
+    const pp = perPerson ? 1 : 0;
+    const key = conversationId + '|' + r + '|' + lastId + '|' + locale + '|' + length + '|' + pp;
+    const v2 = { mode: view === 'prose' ? 'prose' : 'structured', length, per_person: pp };
     if (!refresh && _memo.has(key)) {
       const m = _memo.get(key);
       setData(m.data); setLegacy(m.legacy); setStatus(m.data ? 'ready' : 'empty'); setErrMsg('');
@@ -419,7 +605,7 @@ export default function ConversationSummarySheet({
     const api = require('../../services/api');
     const done = (d, isLegacy) => {
       if (my !== reqRef.current) return;
-      const empty = !d || (!d.summary && !d.topics.length && !d.decisions.length && !d.todos.length && !d.dates.length && !d.questions.length);
+      const empty = !d || (!d.summary && !d.prose && !d.topics.length && !d.decisions.length && !d.todos.length && !d.dates.length && !d.questions.length);
       setLegacy(!!isLegacy);
       setData(empty ? null : d);
       setStatus(empty ? 'empty' : 'ready');
@@ -436,12 +622,12 @@ export default function ConversationSummarySheet({
     let res = null; let thrown = null;
     if (typeof api.chatAiDigest === 'function') {
       try {
-        res = await api.chatAiDigest(baseParams(r, refresh ? { refresh: 1 } : {}));
+        res = await api.chatAiDigest(baseParams(r, { ...v2, ...(refresh ? { refresh: 1 } : {}) }));
         if (res && res.success && res.data && res.data.need_messages) {
           // Conversa cifrada (E2EE): o servidor só vê ciphertext → manda o que o app já decifrou.
           const items = localItems(r);
           if (!items.length) { done(null, false); return; }
-          res = await api.chatAiDigest(baseParams(r, { messages: items, ...(refresh ? { refresh: 1 } : {}) }));
+          res = await api.chatAiDigest(baseParams(r, { ...v2, messages: items, ...(refresh ? { refresh: 1 } : {}) }));
         }
       } catch (e) { thrown = e; }
     }
@@ -469,13 +655,14 @@ export default function ConversationSummarySheet({
       else if (r2 && r2.success) done(null, true);
       else fail(r2 && r2.message);
     } catch (e) { fail(e && e.message); }
-  }, [conversationId, lastId, locale, baseParams, localItems]);
+  }, [conversationId, lastId, locale, baseParams, localItems, length, perPerson, view]);
 
+  // Trocar Resumo/Tópicos NÃO refaz (a resposta traz os dois); tamanho e "Por pessoa" sim.
   useEffect(() => {
     if (!visible || !conversationId) return;
     load(range, false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [visible, range, conversationId]);
+  }, [visible, range, conversationId, length, perPerson]);
 
   const sendQuestion = useCallback(async () => {
     const q = question.trim();
@@ -504,7 +691,79 @@ export default function ConversationSummarySheet({
 
   // ── ações ──
   const title = tr(t, 'chatSum.title', 'Resumo da Bia');
-  const shareText = useMemo(() => digestToText(data, t, tr(t, 'chatSum.shareTitle', 'Resumo da conversa')), [data, t]);
+  const youLabel = tr(t, 'chatSum.you', 'Você');
+  const proseText = useMemo(() => {
+    if (!data) return '';
+    return data.prose || composeProse(data, t, { unread: range === 'unread', length });
+  }, [data, t, range, length]);
+  const showPerPerson = !!isGroup || (!!data && data.participants >= 2);
+  const people = useMemo(() => {
+    if (!perPerson || !data) return [];
+    if (data.byPerson && data.byPerson.length) return data.byPerson;
+    return localByPerson(localItems(range), meLabel, youLabel);
+  }, [perPerson, data, localItems, range, meLabel, youLabel]);
+  const askedOfMe = useMemo(() => (data ? data.todos.filter((x) => isMeWho(x.who, myName)) : []), [data, myName]);
+  const topicsText = useMemo(() => {
+    let s0 = digestToText(data, t, '');
+    if (people.length) s0 += '\n\n' + tr(t, 'chatSum.byPerson', 'Por pessoa') + '\n' + people.map((x) => '• ' + x.name + (x.text ? ': ' + x.text : '')).join('\n');
+    return s0.trim();
+  }, [data, t, people]);
+  const shareText = useMemo(() => {
+    if (!data) return '';
+    const body0 = view === 'prose' ? proseText : topicsText;
+    return body0 ? tr(t, 'chatSum.shareTitle', 'Resumo da conversa') + '\n\n' + body0 : '';
+  }, [data, view, proseText, topicsText, t]);
+  const speechText = view === 'prose' ? proseText : topicsText.replace(/^• /gm, '');
+
+  // ── Ouvir (expo-speech; voz do idioma do app) ──
+  const speechAvail = useMemo(() => !!getSpeech(), []);
+  const stopSpeech = useCallback(() => {
+    speakRef.current.token += 1;
+    try { const S = getSpeech(); if (S) S.stop(); } catch {}
+  }, []);
+  const speakFrom = (i) => {
+    const S = getSpeech();
+    const ref = speakRef.current;
+    if (!S) { setSpeak('idle'); return; }
+    if (i >= ref.chunks.length) { ref.idx = 0; setSpeak('idle'); return; }
+    ref.idx = i;
+    const my = ++ref.token;
+    try {
+      S.speak(ref.chunks[i], {
+        language: locale,
+        onDone: () => { if (my === ref.token) speakFrom(i + 1); },
+        onError: () => { if (my === ref.token) { ref.idx = 0; setSpeak('idle'); } },
+      });
+    } catch { setSpeak('idle'); }
+  };
+  const toggleSpeak = () => {
+    const ref = speakRef.current;
+    if (speak === 'playing') { stopSpeech(); setSpeak('paused'); return; }
+    if (speak === 'idle') { ref.chunks = speechChunks(speechText); ref.idx = 0; }
+    if (!ref.chunks.length) return;
+    setSpeak('playing');
+    speakFrom(ref.idx);
+  };
+  useEffect(() => {
+    stopSpeech(); speakRef.current.idx = 0; setSpeak('idle');
+  }, [speechText, visible, stopSpeech]);
+  useEffect(() => () => stopSpeech(), [stopSpeech]);
+
+  // ── Útil? (polegares) ──
+  useEffect(() => { setVote(null); }, [version, view]);
+  const sendVote = (v) => {
+    if (vote === v || !data) return;
+    setVote(v);
+    const entry = { ts: Date.now(), conversation_id: conversationId, vote: v, range, mode: view === 'prose' ? 'prose' : 'structured', length, last_id: lastId };
+    logFeedbackLocal(entry);
+    if (data.serverV2) {
+      try {
+        const api = require('../../services/api');
+        const pr = api.chatAiDigest && api.chatAiDigest({ conversation_id: conversationId, feedback: v, range, mode: entry.mode, length, last_id: lastId });
+        if (pr && pr.catch) pr.catch(() => {});
+      } catch {}
+    }
+  };
 
   const doCopy = async () => {
     if (!shareText) return;
@@ -617,6 +876,17 @@ export default function ConversationSummarySheet({
           <IconX size={16} color={C.text} />
         </TouchableOpacity>
       </View>
+      <View style={st.modeRow}>
+        <SegmentedControl
+          size="sm"
+          options={[
+            { value: 'prose', label: tr(t, 'chatSum.modeProse', 'Resumo') },
+            { value: 'topics', label: tr(t, 'chatSum.topics', 'Tópicos') },
+          ]}
+          value={view}
+          onChange={setView}
+        />
+      </View>
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={st.rangeRow} keyboardShouldPersistTaps="handled">
         {ranges.map((r) => {
           const on = r === range;
@@ -629,6 +899,20 @@ export default function ConversationSummarySheet({
           );
         })}
       </ScrollView>
+    </View>
+  );
+
+  const proseSkeleton = (
+    <View style={{ paddingTop: 2 }}>
+      <View style={st.writingRow}>
+        <PulsingGlyph size={13} color={C.text2} />
+        <Text style={[st.writingText, { color: C.text2 }]}>{tr(t, 'chatSum.writing', 'Bia está escrevendo')}</Text>
+        <TypingDots color={C.text2} />
+      </View>
+      {(length === 'long' ? ['98%', '94%', '97%', '88%', '95%', '60%', '', '96%', '91%', '72%'] : ['98%', '94%', '97%', '90%', '58%']).map((w, i) => (
+        w ? <Shimmer key={i} style={{ height: 15, width: w, borderRadius: 7, marginBottom: 11 }} delay={i * 45} />
+          : <View key={i} style={{ height: 14 }} />
+      ))}
     </View>
   );
 
@@ -649,7 +933,7 @@ export default function ConversationSummarySheet({
   );
 
   let content;
-  if (status === 'loading') content = skeleton;
+  if (status === 'loading') content = view === 'prose' ? proseSkeleton : skeleton;
   else if (status === 'error') {
     content = (
       <FadeSlideIn>
@@ -674,8 +958,103 @@ export default function ConversationSummarySheet({
       </FadeSlideIn>
     );
   } else {
+    const paragraphs = proseText ? proseText.split(/\n\n+/) : [];
+    const lengthToggle = (
+      <View style={[st.lenToggle, { backgroundColor: C.soft }]}>
+        {['short', 'long'].map((l) => {
+          const on = l === length;
+          return (
+            <PressableScale key={l} onPress={() => { if (!on) setLength(l); }} haptic="select" scaleTo={0.95}
+              style={[st.lenOpt, on && { backgroundColor: C.ink }]}
+              accessibilityRole="button" accessibilityState={{ selected: on }}>
+              <Text style={[st.lenText, { color: on ? C.onInk : C.text2 }]}>
+                {l === 'short' ? tr(t, 'chatSum.lenShort', 'Curto') : tr(t, 'chatSum.lenLong', 'Detalhado')}
+              </Text>
+            </PressableScale>
+          );
+        })}
+      </View>
+    );
+    const proseBody = (
+      <>
+        <View style={st.kickerRow}>
+          <Text style={[st.kicker, { color: C.text3, marginBottom: 0, flexShrink: 1 }]} numberOfLines={1}>
+            {range === 'unread' ? tr(t, 'chatSum.whatYouMissed', 'O que você perdeu') : tr(t, 'chatSum.inShort', 'Em resumo')}
+          </Text>
+          {lengthToggle}
+        </View>
+        <FadeSlideIn distance={4} duration={420}>
+          {paragraphs.map((para, i) => (
+            <Text key={i} style={[st.prose, { color: C.text }, i > 0 && { marginTop: 14 }]} selectable>{para}</Text>
+          ))}
+        </FadeSlideIn>
+        {renderSection(IconAtSign, tr(t, 'chatSum.askedYou', 'Pediram a você'), askedOfMe, 'todo', 120)}
+      </>
+    );
+    const peopleSection = showPerPerson ? (
+      <>
+        <PressableScale onPress={() => setPerPerson((x) => !x)} haptic="select" scaleTo={0.96}
+          style={[st.ppChip, perPerson ? { backgroundColor: C.ink, borderColor: C.ink } : { borderColor: C.border }]}
+          accessibilityRole="button" accessibilityState={{ selected: perPerson }}>
+          <IconUsers size={13} color={perPerson ? C.onInk : C.text} />
+          <Text style={[st.rangeText, { color: perPerson ? C.onInk : C.text }]}>{tr(t, 'chatSum.byPerson', 'Por pessoa')}</Text>
+        </PressableScale>
+        {perPerson && people.length ? (
+          <FadeSlideIn distance={8}>
+            <View style={[st.section, { backgroundColor: C.softer, borderColor: C.border }]}>
+              <View style={st.sectionHead}>
+                <IconUsers size={14} color={C.text2} />
+                <Text style={[st.sectionLabel, { color: C.text2 }]}>{tr(t, 'chatSum.byPerson', 'Por pessoa')}</Text>
+              </View>
+              {people.map((pp, i) => (
+                <View key={i} style={[st.itemRow, i > 0 && { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: C.border }]}>
+                  <View style={[st.avatar, { backgroundColor: C.soft }]}>
+                    <Text style={[st.avatarText, { color: C.text }]}>{(pp.name || '?').slice(0, 1).toUpperCase()}</Text>
+                  </View>
+                  <View style={{ flex: 1, minWidth: 0 }}>
+                    <Text style={[st.itemText, { color: C.text }]}>
+                      <Text style={{ fontWeight: '700' }}>{pp.name}</Text>
+                      {pp.text ? '  ' + pp.text : (pp.count ? '  ' + tr(t, 'chatSum.metaMessages', '{n} mensagens', { n: pp.count }) : '')}
+                    </Text>
+                    {renderRefs(pp.refs)}
+                  </View>
+                </View>
+              ))}
+            </View>
+          </FadeSlideIn>
+        ) : null}
+      </>
+    ) : null;
+    const listenFeedback = (
+      <View style={st.lfRow}>
+        {speechAvail && speechText ? (
+          <PressableScale onPress={toggleSpeak} haptic="light" scaleTo={0.95}
+            style={[st.listenBtn, { backgroundColor: speak === 'playing' ? C.ink : C.soft }]}
+            accessibilityRole="button"
+            accessibilityLabel={speak === 'playing' ? tr(t, 'chatSum.pause', 'Pausar') : tr(t, 'chatSum.listen', 'Ouvir')}>
+            {speak === 'playing' ? <IconPause size={13} color={C.onInk} /> : <IconPlay size={13} color={C.text} />}
+            <Text style={[st.listenText, { color: speak === 'playing' ? C.onInk : C.text }]}>
+              {speak === 'playing' ? tr(t, 'chatSum.pause', 'Pausar') : speak === 'paused' ? tr(t, 'chatSum.resume', 'Continuar') : tr(t, 'chatSum.listen', 'Ouvir')}
+            </Text>
+          </PressableScale>
+        ) : <View />}
+        <View style={st.voteWrap}>
+          <Text style={[st.voteLabel, { color: C.text3 }]}>
+            {vote ? tr(t, 'chatSum.thanks', 'Obrigado') : tr(t, 'chatSum.helpful', 'Útil?')}
+          </Text>
+          {['up', 'down'].map((v) => (
+            <PressableScale key={v} onPress={() => sendVote(v)} haptic="select" scaleTo={0.88}
+              style={[st.voteBtn, { backgroundColor: vote === v ? C.soft : 'transparent' }]}
+              accessibilityRole="button" accessibilityState={{ selected: vote === v }}
+              accessibilityLabel={v === 'up' ? tr(t, 'chatSum.voteUp', 'Foi útil') : tr(t, 'chatSum.voteDown', 'Não foi útil')}>
+              <ThumbGlyph size={17} down={v === 'down'} filled={vote === v} color={vote === v ? C.text : C.text2} />
+            </PressableScale>
+          ))}
+        </View>
+      </View>
+    );
     content = (
-      <View key={'v' + version}>
+      <View key={'v' + version + view}>
         {data.mentionsMe ? (
           <FadeSlideIn distance={6}>
             <View style={[st.mentionPill, { backgroundColor: C.ink }]}>
@@ -684,18 +1063,24 @@ export default function ConversationSummarySheet({
             </View>
           </FadeSlideIn>
         ) : null}
-        {data.summary ? (
+        {view === 'prose' ? proseBody : null}
+        {view !== 'prose' && data.summary ? (
           <FadeSlideIn distance={10}>
             <Text style={[st.kicker, { color: C.text3 }]}>{tr(t, 'chatSum.inShort', 'Em resumo')}</Text>
             <Text style={[st.summary, { color: C.text }]} selectable>{data.summary}</Text>
             {data.tone ? <Text style={[st.tone, { color: C.text2 }]}>{data.tone}</Text> : null}
           </FadeSlideIn>
         ) : null}
-        {renderSection(IconCheckCircle, tr(t, 'chatSum.decisions', 'Decisões'), data.decisions, null, 50)}
-        {renderSection(IconCheck, tr(t, 'chatSum.todos', 'Para fazer'), data.todos, 'todo', 90)}
-        {renderSection(IconMessageSquare, tr(t, 'chatSum.topics', 'Tópicos'), data.topics, null, 130)}
-        {renderSection(IconCalendar, tr(t, 'chatSum.dates', 'Datas e lugares'), data.dates, null, 170)}
-        {renderSection(IconHelpCircle, tr(t, 'chatSum.questions', 'Perguntas sem resposta'), data.questions, null, 210)}
+        {view !== 'prose' ? (
+          <>
+            {renderSection(IconCheckCircle, tr(t, 'chatSum.decisions', 'Decisões'), data.decisions, null, 50)}
+            {renderSection(IconCheck, tr(t, 'chatSum.todos', 'Para fazer'), data.todos, 'todo', 90)}
+            {renderSection(IconMessageSquare, tr(t, 'chatSum.topics', 'Tópicos'), data.topics, null, 130)}
+            {renderSection(IconCalendar, tr(t, 'chatSum.dates', 'Datas e lugares'), data.dates, null, 170)}
+            {renderSection(IconHelpCircle, tr(t, 'chatSum.questions', 'Perguntas sem resposta'), data.questions, null, 210)}
+            {peopleSection}
+          </>
+        ) : null}
         {ask ? (
           <FadeSlideIn distance={8}>
             <View style={[st.section, { backgroundColor: C.softer, borderColor: C.border }]}>
@@ -720,6 +1105,7 @@ export default function ConversationSummarySheet({
             </View>
           </FadeSlideIn>
         ) : null}
+        {listenFeedback}
         <Text style={[st.disclaimer, { color: C.text3 }]}>{tr(t, 'chatSum.disclaimer', 'Feito pela Bia · pode conter erros')}</Text>
       </View>
     );
@@ -857,7 +1243,24 @@ const st = StyleSheet.create({
   title: { fontSize: 17, fontWeight: '700', letterSpacing: -0.3 },
   meta: { fontSize: 12.5, marginTop: 2, fontWeight: '500' },
   closeBtn: { width: 30, height: 30, borderRadius: 15, alignItems: 'center', justifyContent: 'center' },
-  rangeRow: { paddingHorizontal: 20, paddingTop: 12, paddingBottom: 12, gap: 8 },
+  modeRow: { paddingHorizontal: 20, paddingTop: 12 },
+  rangeRow: { paddingHorizontal: 20, paddingTop: 10, paddingBottom: 12, gap: 8 },
+  kickerRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginBottom: 12 },
+  lenToggle: { flexDirection: 'row', borderRadius: 13, padding: 2 },
+  lenOpt: { height: 24, paddingHorizontal: 10, borderRadius: 11, alignItems: 'center', justifyContent: 'center' },
+  lenText: { fontSize: 12, fontWeight: '600' },
+  prose: { fontSize: 17, lineHeight: 26, fontWeight: '400', letterSpacing: -0.1 },
+  writingRow: { flexDirection: 'row', alignItems: 'center', gap: 7, marginBottom: 16 },
+  writingText: { fontSize: 13, fontWeight: '600' },
+  ppChip: { flexDirection: 'row', alignSelf: 'flex-start', alignItems: 'center', gap: 6, height: 30, paddingHorizontal: 12, borderRadius: 15, borderWidth: StyleSheet.hairlineWidth, marginTop: 16 },
+  avatar: { width: 26, height: 26, borderRadius: 13, alignItems: 'center', justifyContent: 'center', marginTop: -2 },
+  avatarText: { fontSize: 12, fontWeight: '700' },
+  lfRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 20 },
+  listenBtn: { flexDirection: 'row', alignItems: 'center', gap: 7, height: 34, paddingHorizontal: 14, borderRadius: 17 },
+  listenText: { fontSize: 13.5, fontWeight: '600' },
+  voteWrap: { flexDirection: 'row', alignItems: 'center', gap: 2 },
+  voteLabel: { fontSize: 12.5, fontWeight: '500', marginRight: 4 },
+  voteBtn: { width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center' },
   rangeChip: { height: 30, paddingHorizontal: 13, borderRadius: 15, borderWidth: StyleSheet.hairlineWidth, alignItems: 'center', justifyContent: 'center' },
   rangeText: { fontSize: 13, fontWeight: '600' },
   kicker: { fontSize: 11.5, fontWeight: '700', letterSpacing: 0.8, textTransform: 'uppercase', marginBottom: 8 },

@@ -352,6 +352,11 @@ import SyncBar from '../components/SyncBar';
 import ErrorBoundary from '../components/ErrorBoundary';
 // Mapas self-hosted BoraUm (OpenStreetMap/MapLibre) — ZERO Google Maps (billing).
 import { coverageStyleFor, boraStyleUrl, boraMapHtml, boraStaticMapUrl } from '../components/BoraMap';
+// [2026-10-13 web-focus] Web com mouse+teclado (desktop). Web mobile/touch = false.
+const _IS_DESKTOP_WEB = (() => {
+  if (Platform.OS !== 'web') return false;
+  try { return !!(typeof window !== 'undefined' && window.matchMedia && window.matchMedia('(hover: hover) and (pointer: fine)').matches); } catch { return false; }
+})();
 // Chat 2026 features (top-3): video notes recorder, AI summarize, smart replies.
 // Lazy-required inside the file when needed to keep the initial parse fast.
 let VideoNoteRecorder = null; try { VideoNoteRecorder = require('../components/chat/VideoNoteRecorder').default; } catch {}
@@ -11837,6 +11842,9 @@ function ChatConversationInner() {
   // painel e o teclado abre sozinho. Antes o teclado ficava aberto POR CIMA do
   // painel e escondia as abas de pacotes ("tá sobrando embaixo").
   const dismissComposerKeyboard = useCallback(() => {
+    // [2026-10-13 web-focus] Desktop web não tem teclado virtual: manter o foco
+    // no campo com o painel de figurinhas/GIF aberto (WhatsApp Web).
+    if (_IS_DESKTOP_WEB) return false;
     let wasOpen = false;
     try { wasOpen = !!Keyboard.isVisible?.(); } catch {}
     try { inputRef.current?.blur?.(); } catch {}
@@ -11941,6 +11949,92 @@ function ChatConversationInner() {
       showSearchBar, closeSearchBar: () => { setShowSearchBar(false); setSearchQuery(''); setSearchResults([]); },
     };
   });
+  // [2026-10-13 web-focus] Web DESKTOP (mouse+teclado) = WhatsApp Web: o campo
+  // de mensagem fica focado ao abrir a conversa, depois de enviar, ao fechar
+  // painéis (figurinhas/GIF/emoji/anexo) e resposta/edição; digitar em qualquer
+  // lugar da conversa escreve no campo. Celular (web mobile e nativo) NÃO —
+  // abrir o teclado sozinho lá é ruim.
+  const _desktopWebFocusRef = useRef({});
+  useEffect(() => {
+    _desktopWebFocusRef.current = { isScreenFocused, replyTo, editingMsg, setReplyTo, setEditingMsg, setInputText };
+  });
+  const focusComposerWeb = useCallback((delay = 0) => {
+    if (!_IS_DESKTOP_WEB) return;
+    const run = () => {
+      try {
+        const el = inputRef.current;
+        if (!el || typeof document === 'undefined') return;
+        if (!_desktopWebFocusRef.current.isScreenFocused) return;
+        // Modal aberto (RN-web Modal = aria-modal) → não roubar o foco dele.
+        if (document.querySelector('[aria-modal="true"]')) return;
+        const ae = document.activeElement;
+        if (ae === el) return;
+        // Outro campo em uso (busca, legenda…) → não roubar.
+        const tag = (ae?.tagName || '').toLowerCase();
+        if (tag === 'input' || tag === 'textarea' || tag === 'select' || ae?.isContentEditable) return;
+        el.focus?.();
+        const n = (el.value || '').length;
+        try { el.setSelectionRange?.(n, n); } catch {}
+      } catch {}
+    };
+    if (delay > 0) setTimeout(run, delay); else requestAnimationFrame(run);
+  }, []);
+  // Abrir/trocar de conversa → campo focado (após o mount assentar; o
+  // Keyboard.dismiss do mount no web também faria blur).
+  useEffect(() => {
+    if (!_IS_DESKTOP_WEB) return undefined;
+    const t1 = setTimeout(() => focusComposerWeb(), 120);
+    const t2 = setTimeout(() => focusComposerWeb(), 600);
+    return () => { clearTimeout(t1); clearTimeout(t2); };
+  }, [conversationId, isScreenFocused, focusComposerWeb]);
+  // Painel/menu fechou (inclui escolher figurinha/GIF/anexo) → volta ao campo.
+  const _anyComposerPanelOpen = !!(showAttachMenu || showGifPicker || showStickerPicker || showFullEmojiPicker);
+  const _prevPanelOpenRef = useRef(false);
+  useEffect(() => {
+    const was = _prevPanelOpenRef.current;
+    _prevPanelOpenRef.current = _anyComposerPanelOpen;
+    if (was && !_anyComposerPanelOpen) { focusComposerWeb(150); focusComposerWeb(450); }
+  }, [_anyComposerPanelOpen, focusComposerWeb]);
+  // Resposta/edição abriu ou fechou → foco no campo (o menu da mensagem é um
+  // Modal; ao fechar ele devolve o foco ao elemento antigo, por isso o atraso).
+  useEffect(() => {
+    if (!_IS_DESKTOP_WEB) return;
+    focusComposerWeb(60);
+    focusComposerWeb(250);
+    focusComposerWeb(500);
+  }, [replyTo, editingMsg, focusComposerWeb]);
+  // Digitar em qualquer lugar (sem outro campo focado) → começa a escrever no
+  // composer. Focar no keydown faz o caractere cair no textarea. Esc fecha
+  // resposta/edição.
+  useEffect(() => {
+    if (!_IS_DESKTOP_WEB || typeof document === 'undefined') return undefined;
+    const onKey = (e) => {
+      try {
+        const o = _desktopWebFocusRef.current;
+        if (!o.isScreenFocused || e.defaultPrevented || e.isComposing) return;
+        const el = inputRef.current;
+        if (!el) return;
+        const ae = document.activeElement;
+        const tag = (ae?.tagName || '').toLowerCase();
+        if (ae === el || tag === 'input' || tag === 'textarea' || tag === 'select' || ae?.isContentEditable) return;
+        if (document.querySelector('[aria-modal="true"]')) return;
+        if (e.key === 'Escape') {
+          if (o.editingMsg) { o.setEditingMsg(null); o.setInputText(''); o.setReplyTo(null); e.preventDefault(); }
+          else if (o.replyTo) { o.setReplyTo(null); e.preventDefault(); }
+          return;
+        }
+        if (e.ctrlKey || e.metaKey || e.altKey) return;
+        if (typeof e.key !== 'string' || e.key.length !== 1) return; // só caractere imprimível
+        // Espaço com foco num botão = "clicar" nele; não sequestrar.
+        if (e.key === ' ' && (tag === 'button' || ae?.getAttribute?.('role') === 'button')) return;
+        el.focus?.();
+        const n = (el.value || '').length;
+        try { el.setSelectionRange?.(n, n); } catch {}
+      } catch {}
+    };
+    document.addEventListener('keydown', onKey, true);
+    return () => document.removeEventListener('keydown', onKey, true);
+  }, []);
   // Sticker suggestion strip user-dismissal — resets when the input is
   // cleared so the next message gets a fresh chance at suggestions.
   const [stickerSuggestionsHidden, setStickerSuggestionsHidden] = _useStateT(false);
@@ -33226,8 +33320,31 @@ function ChatConversationInner() {
               // newline behavior (blurOnSubmit=false) and the Return key is a
               // literal newline. Default: web true / native false. The guard
               // against `sending` prevents a double-send race.
-              onSubmitEditing={enterSends ? () => { if (!sending) handleSend(); } : undefined}
-              blurOnSubmit={enterSends}
+              // [2026-10-13 web-focus] WEB: blurOnSubmit=true fazia o RN-web dar
+              // hostNode.blur() depois de cada Enter → "tenho que clicar toda
+              // vez". No web o Enter é tratado no onKeyPress (preventDefault faz o
+              // RN-web pular submit+blur); Shift+Enter = nova linha; Esc fecha
+              // resposta/edição sem sair do campo.
+              onSubmitEditing={(enterSends && Platform.OS !== 'web') ? () => { if (!sending) handleSend(); } : undefined}
+              blurOnSubmit={Platform.OS === 'web' ? false : enterSends}
+              onKeyPress={Platform.OS === 'web' ? (e) => {
+                try {
+                  const ne = e?.nativeEvent || {};
+                  if (ne.isComposing || e?.isComposing) return;
+                  if (e.key === 'Enter' || ne.key === 'Enter') {
+                    if (!enterSends || e.shiftKey || ne.shiftKey) return;
+                    e.preventDefault?.();
+                    if (!sendingRef.current) handleSend();
+                    return;
+                  }
+                  if ((e.key === 'Escape' || ne.key === 'Escape') && (replyTo || editingMsg)) {
+                    e.preventDefault?.();
+                    const _wasEditing = !!editingMsg;
+                    setReplyTo(null); setEditingMsg(null);
+                    if (_wasEditing) setInputText('');
+                  }
+                } catch {}
+              } : undefined}
               onFocus={() => {
                 setInputFocused(true);
                 // [2026-10-10] Tocar no campo com figurinhas/GIF abertos = teclado no lugar do painel.
@@ -33367,7 +33484,9 @@ function ChatConversationInner() {
               { rotate: sendBoomRotate.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '14deg'] }) },
             ] }}>
               <TouchableOpacity
-                onPress={() => { if (!sending) { triggerSendBoom(); handleSend(); } }}
+                // [2026-10-13 web-focus] Web desktop: o clique foca o botão (tabIndex) →
+                // devolve o foco ao campo na hora (nativo segue igual).
+                onPress={() => { if (!sending) { triggerSendBoom(); handleSend(); } if (_IS_DESKTOP_WEB) { try { inputRef.current?.focus?.(); } catch {} } }}
                 onPressIn={() => { Animated.spring(sendPressScale, { toValue: 0.88, tension: 380, friction: 10, useNativeDriver: true }).start(); }}
                 onPressOut={() => { Animated.spring(sendPressScale, { toValue: 1, tension: 280, friction: 8, useNativeDriver: true }).start(); }}
                 onLongPress={() => {
