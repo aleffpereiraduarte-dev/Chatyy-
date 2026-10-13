@@ -1,4 +1,23 @@
 export default {
+  // [2026-10-12 srv-audit]
+  "chatConv.deleteWindowExpired": "Ya no se puede eliminar este mensaje para todos.",
+  "chatConv.deleteWindowExpiredShort": "caducado",
+  "chatConv.notEditable": "Este mensaje no se puede editar.",
+  "chatConv.editWindowExpired": "Solo se puede editar hasta 15 minutos después del envío.",
+  "chatConv.forwardLimitFrequent": "Los mensajes reenviados con frecuencia solo pueden enviarse a 1 chat a la vez.",
+  "chatConv.forwardLimitReached": "Límite de reenvío: hasta 5 chats, o 1 para mensajes reenviados con frecuencia.",
+  "chatConv.pinDurationHint": "Puedes dejar de fijarlo cuando quieras.",
+  "chatConv.liveLoc15m": "15 minutos",
+  "chatConv.liveLoc1h": "1 hora",
+  "chatConv.liveLoc8h": "8 horas",
+  "chatConv.recModuleUnavailableBody": "La grabación no está disponible en este dispositivo.",
+  "chatConv.recStartFailedBody": "No se pudo iniciar la grabación. Inténtalo de nuevo.",
+  "chatConv.recMicNoResponseBody": "El micrófono no respondió. Reinicia la app e inténtalo de nuevo.",
+  "chatConv.markViewOnce": "Marcar como visualización única",
+  "chatMedia.redownload": "Descargar de nuevo",
+  "chatMedia.offlineUnavailable": "Archivo no disponible sin conexión",
+  "chatMedia.loadFailed": "No se pudo cargar",
+  "chatMedia.tapToRetry": "Toca para reintentar",
   // [2026-10-12 reply-wa] citação/barra de resposta
   "chat.replyVideoNote": "Mensaje de video",
   "chat.replyEncrypted": "Mensaje cifrado",

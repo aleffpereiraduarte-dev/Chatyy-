@@ -634,7 +634,8 @@ async function loadModules() {
             // Mutate the body to a generic safe value. Backend already
             // does this — covered here only for clients that received a
             // push from an older backend that hadn't propagated yet.
-            notification.request.content.body = '🔒 Nova mensagem';
+            // [2026-10-12 srv-audit] sem emoji + idioma do app.
+            notification.request.content.body = (await _notifActionLabels()).newMessage || 'Nova mensagem';
           } catch {}
         }
 
@@ -1761,16 +1762,16 @@ async function _deviceLangCode() {
 // at registration time (re-registered on every registerForPushNotifications).
 // [2026-10-12 push-parity] 11 app languages (pt-BR/pt-PT → pt).
 const _NOTIF_ACTION_LABELS = {
-  pt: { reply: 'Responder', send: 'Enviar', placeholder: 'Mensagem...', markRead: 'Marcar como lida', view: 'Ver', mute8h: 'Silenciar 8h', mute1w: 'Silenciar 1 semana', snooze1h: 'Soneca 1h', replyMention: 'Responder menção...' },
-  en: { reply: 'Reply', send: 'Send', placeholder: 'Message...', markRead: 'Mark as read', view: 'View', mute8h: 'Mute 8h', mute1w: 'Mute 1 week', snooze1h: 'Snooze 1h', replyMention: 'Reply to mention...' },
-  es: { reply: 'Responder', send: 'Enviar', placeholder: 'Mensaje...', markRead: 'Marcar como leído', view: 'Ver', mute8h: 'Silenciar 8 h', mute1w: 'Silenciar 1 semana', snooze1h: 'Posponer 1h', replyMention: 'Responder mención...' },
-  fr: { reply: 'Répondre', send: 'Envoyer', placeholder: 'Message...', markRead: 'Marquer comme lu', view: 'Voir', mute8h: 'Silence 8 h', mute1w: 'Silence 1 semaine', snooze1h: 'Reporter 1 h', replyMention: 'Répondre à la mention...' },
-  de: { reply: 'Antworten', send: 'Senden', placeholder: 'Nachricht...', markRead: 'Als gelesen markieren', view: 'Ansehen', mute8h: '8 Std. stumm', mute1w: '1 Woche stumm', snooze1h: '1 Std. pausieren', replyMention: 'Auf Erwähnung antworten...' },
-  it: { reply: 'Rispondi', send: 'Invia', placeholder: 'Messaggio...', markRead: 'Segna come letto', view: 'Vedi', mute8h: 'Silenzia 8 h', mute1w: 'Silenzia 1 settimana', snooze1h: 'Posticipa 1 h', replyMention: 'Rispondi alla menzione...' },
-  ja: { reply: '返信', send: '送信', placeholder: 'メッセージ...', markRead: '既読にする', view: '表示', mute8h: '8時間ミュート', mute1w: '1週間ミュート', snooze1h: '1時間スヌーズ', replyMention: 'メンションに返信...' },
-  ar: { reply: 'رد', send: 'إرسال', placeholder: 'رسالة...', markRead: 'وضع علامة كمقروءة', view: 'عرض', mute8h: 'كتم 8 ساعات', mute1w: 'كتم أسبوع', snooze1h: 'غفوة ساعة', replyMention: 'الرد على الإشارة...' },
-  id: { reply: 'Balas', send: 'Kirim', placeholder: 'Pesan...', markRead: 'Tandai dibaca', view: 'Lihat', mute8h: 'Bisukan 8 jam', mute1w: 'Bisukan 1 minggu', snooze1h: 'Tunda 1 jam', replyMention: 'Balas sebutan...' },
-  hi: { reply: 'जवाब दें', send: 'भेजें', placeholder: 'मैसेज...', markRead: 'पढ़ा हुआ मार्क करें', view: 'देखें', mute8h: '8 घंटे म्यूट', mute1w: '1 हफ़्ते म्यूट', snooze1h: '1 घंटा स्नूज़', replyMention: 'मेंशन का जवाब दें...' },
+  pt: { newMessage: 'Nova mensagem', reply: 'Responder', send: 'Enviar', placeholder: 'Mensagem...', markRead: 'Marcar como lida', view: 'Ver', mute8h: 'Silenciar 8h', mute1w: 'Silenciar 1 semana', snooze1h: 'Soneca 1h', replyMention: 'Responder menção...' },
+  en: { newMessage: 'New message', reply: 'Reply', send: 'Send', placeholder: 'Message...', markRead: 'Mark as read', view: 'View', mute8h: 'Mute 8h', mute1w: 'Mute 1 week', snooze1h: 'Snooze 1h', replyMention: 'Reply to mention...' },
+  es: { newMessage: 'Nuevo mensaje', reply: 'Responder', send: 'Enviar', placeholder: 'Mensaje...', markRead: 'Marcar como leído', view: 'Ver', mute8h: 'Silenciar 8 h', mute1w: 'Silenciar 1 semana', snooze1h: 'Posponer 1h', replyMention: 'Responder mención...' },
+  fr: { newMessage: 'Nouveau message', reply: 'Répondre', send: 'Envoyer', placeholder: 'Message...', markRead: 'Marquer comme lu', view: 'Voir', mute8h: 'Silence 8 h', mute1w: 'Silence 1 semaine', snooze1h: 'Reporter 1 h', replyMention: 'Répondre à la mention...' },
+  de: { newMessage: 'Neue Nachricht', reply: 'Antworten', send: 'Senden', placeholder: 'Nachricht...', markRead: 'Als gelesen markieren', view: 'Ansehen', mute8h: '8 Std. stumm', mute1w: '1 Woche stumm', snooze1h: '1 Std. pausieren', replyMention: 'Auf Erwähnung antworten...' },
+  it: { newMessage: 'Nuovo messaggio', reply: 'Rispondi', send: 'Invia', placeholder: 'Messaggio...', markRead: 'Segna come letto', view: 'Vedi', mute8h: 'Silenzia 8 h', mute1w: 'Silenzia 1 settimana', snooze1h: 'Posticipa 1 h', replyMention: 'Rispondi alla menzione...' },
+  ja: { newMessage: '新しいメッセージ', reply: '返信', send: '送信', placeholder: 'メッセージ...', markRead: '既読にする', view: '表示', mute8h: '8時間ミュート', mute1w: '1週間ミュート', snooze1h: '1時間スヌーズ', replyMention: 'メンションに返信...' },
+  ar: { newMessage: 'رسالة جديدة', reply: 'رد', send: 'إرسال', placeholder: 'رسالة...', markRead: 'وضع علامة كمقروءة', view: 'عرض', mute8h: 'كتم 8 ساعات', mute1w: 'كتم أسبوع', snooze1h: 'غفوة ساعة', replyMention: 'الرد على الإشارة...' },
+  id: { newMessage: 'Pesan baru', reply: 'Balas', send: 'Kirim', placeholder: 'Pesan...', markRead: 'Tandai dibaca', view: 'Lihat', mute8h: 'Bisukan 8 jam', mute1w: 'Bisukan 1 minggu', snooze1h: 'Tunda 1 jam', replyMention: 'Balas sebutan...' },
+  hi: { newMessage: 'नया मैसेज', reply: 'जवाब दें', send: 'भेजें', placeholder: 'मैसेज...', markRead: 'पढ़ा हुआ मार्क करें', view: 'देखें', mute8h: '8 घंटे म्यूट', mute1w: '1 हफ़्ते म्यूट', snooze1h: '1 घंटा स्नूज़', replyMention: 'मेंशन का जवाब दें...' },
 };
 async function _notifActionLabels() {
   const code = await _deviceLangCode();

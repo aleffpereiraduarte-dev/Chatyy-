@@ -1,4 +1,23 @@
 export default {
+  // [2026-10-12 srv-audit]
+  "chatConv.deleteWindowExpired": "لم يعد بالإمكان حذف هذه الرسالة لدى الجميع.",
+  "chatConv.deleteWindowExpiredShort": "انتهت المهلة",
+  "chatConv.notEditable": "لا يمكن تعديل هذه الرسالة.",
+  "chatConv.editWindowExpired": "يمكن تعديل الرسالة خلال 15 دقيقة فقط من إرسالها.",
+  "chatConv.forwardLimitFrequent": "الرسائل التي أُعيد توجيهها كثيرًا يمكن إرسالها إلى محادثة واحدة فقط في كل مرة.",
+  "chatConv.forwardLimitReached": "حد إعادة التوجيه: 5 محادثات كحد أقصى، أو محادثة واحدة للرسائل التي أُعيد توجيهها كثيرًا.",
+  "chatConv.pinDurationHint": "يمكنك إلغاء التثبيت في أي وقت.",
+  "chatConv.liveLoc15m": "15 دقيقة",
+  "chatConv.liveLoc1h": "ساعة واحدة",
+  "chatConv.liveLoc8h": "8 ساعات",
+  "chatConv.recModuleUnavailableBody": "التسجيل غير متاح على هذا الجهاز.",
+  "chatConv.recStartFailedBody": "تعذّر بدء التسجيل. حاول مرة أخرى.",
+  "chatConv.recMicNoResponseBody": "لم يستجب الميكروفون. أعد تشغيل التطبيق وحاول مرة أخرى.",
+  "chatConv.markViewOnce": "تعيين كعرض لمرة واحدة",
+  "chatMedia.redownload": "التنزيل مرة أخرى",
+  "chatMedia.offlineUnavailable": "الوسائط غير متاحة دون اتصال",
+  "chatMedia.loadFailed": "تعذّر التحميل",
+  "chatMedia.tapToRetry": "انقر لإعادة المحاولة",
   // [2026-10-12 reply-wa] citação/barra de resposta
   "chat.replyVideoNote": "رسالة فيديو",
   "chat.replyEncrypted": "رسالة مشفرة",

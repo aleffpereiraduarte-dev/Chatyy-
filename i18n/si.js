@@ -1,4 +1,23 @@
 export default {
+  // [2026-10-12 srv-audit]
+  "chatConv.deleteWindowExpired": "This message can no longer be deleted for everyone.",
+  "chatConv.deleteWindowExpiredShort": "expired",
+  "chatConv.notEditable": "This message can't be edited.",
+  "chatConv.editWindowExpired": "Messages can only be edited up to 15 minutes after sending.",
+  "chatConv.forwardLimitFrequent": "Frequently forwarded messages can only be sent to 1 chat at a time.",
+  "chatConv.forwardLimitReached": "Forwarding limit: up to 5 chats, or 1 for frequently forwarded messages.",
+  "chatConv.pinDurationHint": "You can unpin it at any time.",
+  "chatConv.liveLoc15m": "15 minutes",
+  "chatConv.liveLoc1h": "1 hour",
+  "chatConv.liveLoc8h": "8 hours",
+  "chatConv.recModuleUnavailableBody": "Recording isn't available on this device.",
+  "chatConv.recStartFailedBody": "Couldn't start recording. Please try again.",
+  "chatConv.recMicNoResponseBody": "The microphone didn't respond. Restart the app and try again.",
+  "chatConv.markViewOnce": "Mark as view once",
+  "chatMedia.redownload": "Download again",
+  "chatMedia.offlineUnavailable": "Media not available offline",
+  "chatMedia.loadFailed": "Couldn't load",
+  "chatMedia.tapToRetry": "Tap to retry",
   // [2026-10-12 reply-wa] citação/barra de resposta
   "chat.replyVideoNote": "වීඩියෝ පණිවිඩය",
   "chat.replyEncrypted": "සංකේතනය කළ පණිවිඩය",

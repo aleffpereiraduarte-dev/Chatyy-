@@ -1,4 +1,23 @@
 export default {
+  // [2026-10-12 srv-audit]
+  "chatConv.deleteWindowExpired": "यह मैसेज अब सभी के लिए डिलीट नहीं किया जा सकता।",
+  "chatConv.deleteWindowExpiredShort": "समय समाप्त",
+  "chatConv.notEditable": "यह मैसेज एडिट नहीं किया जा सकता।",
+  "chatConv.editWindowExpired": "मैसेज भेजने के 15 मिनट तक ही एडिट किया जा सकता है।",
+  "chatConv.forwardLimitFrequent": "बार-बार फ़ॉरवर्ड किए गए मैसेज एक बार में सिर्फ़ 1 चैट में भेजे जा सकते हैं।",
+  "chatConv.forwardLimitReached": "फ़ॉरवर्ड सीमा: ज़्यादा से ज़्यादा 5 चैट, या बार-बार फ़ॉरवर्ड किए गए मैसेज के लिए 1।",
+  "chatConv.pinDurationHint": "आप इसे कभी भी अनपिन कर सकते हैं।",
+  "chatConv.liveLoc15m": "15 मिनट",
+  "chatConv.liveLoc1h": "1 घंटा",
+  "chatConv.liveLoc8h": "8 घंटे",
+  "chatConv.recModuleUnavailableBody": "इस डिवाइस पर रिकॉर्डिंग उपलब्ध नहीं है।",
+  "chatConv.recStartFailedBody": "रिकॉर्डिंग शुरू नहीं हो सकी। कृपया फिर से कोशिश करें।",
+  "chatConv.recMicNoResponseBody": "माइक्रोफ़ोन ने जवाब नहीं दिया। ऐप रीस्टार्ट करके फिर कोशिश करें।",
+  "chatConv.markViewOnce": "एक बार देखें के रूप में मार्क करें",
+  "chatMedia.redownload": "फिर से डाउनलोड करें",
+  "chatMedia.offlineUnavailable": "मीडिया ऑफ़लाइन उपलब्ध नहीं है",
+  "chatMedia.loadFailed": "लोड नहीं हो सका",
+  "chatMedia.tapToRetry": "फिर से कोशिश करने के लिए टैप करें",
   // [2026-10-12 reply-wa] citação/barra de resposta
   "chat.replyVideoNote": "वीडियो संदेश",
   "chat.replyEncrypted": "एन्क्रिप्टेड संदेश",

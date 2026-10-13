@@ -1,4 +1,23 @@
 export default {
+  // [2026-10-12 srv-audit]
+  "chatConv.deleteWindowExpired": "Diese Nachricht kann nicht mehr für alle gelöscht werden.",
+  "chatConv.deleteWindowExpiredShort": "abgelaufen",
+  "chatConv.notEditable": "Diese Nachricht kann nicht bearbeitet werden.",
+  "chatConv.editWindowExpired": "Nachrichten können nur bis 15 Minuten nach dem Senden bearbeitet werden.",
+  "chatConv.forwardLimitFrequent": "Häufig weitergeleitete Nachrichten können nur an 1 Chat gleichzeitig gesendet werden.",
+  "chatConv.forwardLimitReached": "Weiterleitungslimit: höchstens 5 Chats, oder 1 bei häufig weitergeleiteten Nachrichten.",
+  "chatConv.pinDurationHint": "Du kannst sie jederzeit wieder lösen.",
+  "chatConv.liveLoc15m": "15 Minuten",
+  "chatConv.liveLoc1h": "1 Stunde",
+  "chatConv.liveLoc8h": "8 Stunden",
+  "chatConv.recModuleUnavailableBody": "Aufnahmen sind auf diesem Gerät nicht verfügbar.",
+  "chatConv.recStartFailedBody": "Aufnahme konnte nicht gestartet werden. Bitte versuche es erneut.",
+  "chatConv.recMicNoResponseBody": "Das Mikrofon reagiert nicht. Starte die App neu und versuche es erneut.",
+  "chatConv.markViewOnce": "Als einmal ansehen markieren",
+  "chatMedia.redownload": "Erneut herunterladen",
+  "chatMedia.offlineUnavailable": "Medien offline nicht verfügbar",
+  "chatMedia.loadFailed": "Laden fehlgeschlagen",
+  "chatMedia.tapToRetry": "Zum Wiederholen tippen",
   // [2026-10-12 reply-wa] citação/barra de resposta
   "chat.replyVideoNote": "Videonachricht",
   "chat.replyEncrypted": "Verschlüsselte Nachricht",

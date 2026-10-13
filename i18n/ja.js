@@ -1,4 +1,23 @@
 export default {
+  // [2026-10-12 srv-audit]
+  "chatConv.deleteWindowExpired": "このメッセージはもう全員から削除できません。",
+  "chatConv.deleteWindowExpiredShort": "期限切れ",
+  "chatConv.notEditable": "このメッセージは編集できません。",
+  "chatConv.editWindowExpired": "メッセージは送信後15分以内のみ編集できます。",
+  "chatConv.forwardLimitFrequent": "頻繁に転送されたメッセージは一度に1件のチャットにのみ送信できます。",
+  "chatConv.forwardLimitReached": "転送の上限：最大5件のチャット、頻繁に転送されたメッセージは1件まで。",
+  "chatConv.pinDurationHint": "いつでも固定を解除できます。",
+  "chatConv.liveLoc15m": "15分",
+  "chatConv.liveLoc1h": "1時間",
+  "chatConv.liveLoc8h": "8時間",
+  "chatConv.recModuleUnavailableBody": "このデバイスでは録音を利用できません。",
+  "chatConv.recStartFailedBody": "録音を開始できませんでした。もう一度お試しください。",
+  "chatConv.recMicNoResponseBody": "マイクが応答しません。アプリを再起動してもう一度お試しください。",
+  "chatConv.markViewOnce": "1回表示に設定",
+  "chatMedia.redownload": "再ダウンロード",
+  "chatMedia.offlineUnavailable": "オフラインではメディアを表示できません",
+  "chatMedia.loadFailed": "読み込めませんでした",
+  "chatMedia.tapToRetry": "タップして再試行",
   // [2026-10-12 reply-wa] citação/barra de resposta
   "chat.replyVideoNote": "ビデオメッセージ",
   "chat.replyEncrypted": "暗号化されたメッセージ",

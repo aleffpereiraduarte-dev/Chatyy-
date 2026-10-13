@@ -1229,7 +1229,10 @@ export async function replayOfflineQueue(api) {
             );
             if (r && r.success === false) {
               const msg = String(r.message || r.error || '');
-              const isHardError = /not_found|invalid|permission|forbidden|expired|window/i.test(msg);
+              // [2026-10-12 srv-audit] 4xx = recusa definitiva do servidor (ex.: 403 em pt
+              // do servidor antigo, code forward_limit/not_editable do novo) → descarta.
+              const _st = Number(r.__httpStatus) || 0;
+              const isHardError = (_st >= 400 && _st < 500) || !!(r.data && r.data.code) || /not_found|invalid|permission|forbidden|expired|window/i.test(msg);
               if (!isHardError) throw new Error('chat_delete_failed:' + msg);
             }
           } catch (e) {
@@ -1247,7 +1250,10 @@ export async function replayOfflineQueue(api) {
             const r = await api.chatEdit(action.message_id, action.content);
             if (r && r.success === false) {
               const msg = String(r.message || r.error || '');
-              const isHardError = /not_found|invalid|permission|forbidden|expired|window/i.test(msg);
+              // [2026-10-12 srv-audit] 4xx = recusa definitiva do servidor (ex.: 403 em pt
+              // do servidor antigo, code forward_limit/not_editable do novo) → descarta.
+              const _st = Number(r.__httpStatus) || 0;
+              const isHardError = (_st >= 400 && _st < 500) || !!(r.data && r.data.code) || /not_found|invalid|permission|forbidden|expired|window/i.test(msg);
               if (!isHardError) throw new Error('chat_edit_failed:' + msg);
             }
           } catch (e) {
@@ -1268,11 +1274,16 @@ export async function replayOfflineQueue(api) {
             const r = await api.chatForwardMulti(
               action.message_id,
               convIds,
-              { hideOrigin: !!action.hide_origin },
+              // [2026-10-12 srv-audit] mesmos ids da tentativa original → o servidor
+              // novo não duplica se a 1ª chamada chegou e só a resposta se perdeu.
+              { hideOrigin: !!action.hide_origin, clientActionIds: action.client_action_ids || null },
             );
             if (r && r.success === false) {
               const msg = String(r.message || r.error || '');
-              const isHardError = /not_found|invalid|permission|forbidden|expired|window/i.test(msg);
+              // [2026-10-12 srv-audit] 4xx = recusa definitiva do servidor (ex.: 403 em pt
+              // do servidor antigo, code forward_limit/not_editable do novo) → descarta.
+              const _st = Number(r.__httpStatus) || 0;
+              const isHardError = (_st >= 400 && _st < 500) || !!(r.data && r.data.code) || /not_found|invalid|permission|forbidden|expired|window/i.test(msg);
               if (!isHardError) throw new Error('chat_forward_multi_failed:' + msg);
             }
           } catch (e) {
@@ -1289,11 +1300,14 @@ export async function replayOfflineQueue(api) {
             const r = await api.chatForward(
               action.message_id,
               action.conversation_id,
-              { hideOrigin: !!action.hide_origin },
+              { hideOrigin: !!action.hide_origin, clientActionId: action.client_action_id || null },
             );
             if (r && r.success === false) {
               const msg = String(r.message || r.error || '');
-              const isHardError = /not_found|invalid|permission|forbidden|expired|window/i.test(msg);
+              // [2026-10-12 srv-audit] 4xx = recusa definitiva do servidor (ex.: 403 em pt
+              // do servidor antigo, code forward_limit/not_editable do novo) → descarta.
+              const _st = Number(r.__httpStatus) || 0;
+              const isHardError = (_st >= 400 && _st < 500) || !!(r.data && r.data.code) || /not_found|invalid|permission|forbidden|expired|window/i.test(msg);
               if (!isHardError) throw new Error('chat_forward_failed:' + msg);
             }
           } catch (e) {

@@ -1,4 +1,23 @@
 export default {
+  // [2026-10-12 srv-audit]
+  "chatConv.deleteWindowExpired": "Pesan ini tidak bisa lagi dihapus untuk semua orang.",
+  "chatConv.deleteWindowExpiredShort": "kedaluwarsa",
+  "chatConv.notEditable": "Pesan ini tidak dapat diedit.",
+  "chatConv.editWindowExpired": "Pesan hanya bisa diedit hingga 15 menit setelah dikirim.",
+  "chatConv.forwardLimitFrequent": "Pesan yang sering diteruskan hanya bisa dikirim ke 1 chat sekaligus.",
+  "chatConv.forwardLimitReached": "Batas penerusan: maksimal 5 chat, atau 1 untuk pesan yang sering diteruskan.",
+  "chatConv.pinDurationHint": "Anda bisa melepas sematan kapan saja.",
+  "chatConv.liveLoc15m": "15 menit",
+  "chatConv.liveLoc1h": "1 jam",
+  "chatConv.liveLoc8h": "8 jam",
+  "chatConv.recModuleUnavailableBody": "Perekaman tidak tersedia di perangkat ini.",
+  "chatConv.recStartFailedBody": "Tidak dapat memulai perekaman. Silakan coba lagi.",
+  "chatConv.recMicNoResponseBody": "Mikrofon tidak merespons. Mulai ulang aplikasi dan coba lagi.",
+  "chatConv.markViewOnce": "Tandai sebagai sekali lihat",
+  "chatMedia.redownload": "Unduh lagi",
+  "chatMedia.offlineUnavailable": "Media tidak tersedia secara offline",
+  "chatMedia.loadFailed": "Gagal memuat",
+  "chatMedia.tapToRetry": "Ketuk untuk mencoba lagi",
   // [2026-10-12 reply-wa] citação/barra de resposta
   "chat.replyVideoNote": "Pesan video",
   "chat.replyEncrypted": "Pesan terenkripsi",

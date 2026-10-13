@@ -39,6 +39,17 @@ import { Image as ExpoImage } from 'expo-image';
 import { getLocalUriSyncJs, cacheMedia, requestRedownload, formatBytesShort } from '../services/mediaCache';
 import * as api from '../services/api';
 import { seenAwareTransition, markImageLoaded } from '../utils/imageSeen'; // [2026-10-08 chat-open-flicker]
+import { useTheme } from '../context/ThemeContext';
+import { useLanguageOptional } from '../context/LanguageContext';
+
+// [2026-10-12 srv-audit] Chip de falha: textos traduzidos (antes fixos em pt-BR)
+// e cor do tema (rgba(0,0,0,0.55) sumia no modo escuro).
+function _cmTr(lang, key, fb) {
+  try {
+    const v = lang && typeof lang.t === 'function' ? lang.t(key) : '';
+    return (typeof v === 'string' && v && v !== key) ? v : fb;
+  } catch { return fb; }
+}
 
 function resolveAbsolute(url) {
   if (!url) return '';
@@ -124,6 +135,10 @@ export default function ChatMedia({
   // re-check + bump swap us to file://. Without the fallback, a single
   // miss leaves the bubble stuck on the spinner indefinitely.
   const localUri = useChatMediaUri(uri, { allowRemoteFallback: true });
+  // Fora dos providers (overlay/preview isolado) → sem tema/idioma: cai nos padrões.
+  let _theme = null;
+  try { _theme = useTheme(); } catch { _theme = null; }
+  const _lang = useLanguageOptional();
   // Failure state: ExpoImage reports onError when the source is broken.
   // We surface a tap-to-retry chip instead of the platform's "broken
   // image" icon — that icon is jarring inside a polished chat bubble
@@ -230,20 +245,20 @@ export default function ChatMedia({
         // geometry (no hard square corners) with generous breathing room so
         // the retry copy sits centered and legible instead of cramped.
         style={[{ backgroundColor: placeholderColor, alignItems: 'center', justifyContent: 'center', paddingVertical: 16, paddingHorizontal: 14, borderRadius: 14, overflow: 'hidden' }, style]}
-        accessibilityLabel={isDeleted ? 'Mensagem apagada' : 'Baixar de novo'}
+        accessibilityLabel={isDeleted ? _cmTr(_lang, 'chatConv.deletedMessage', 'Mensagem apagada') : _cmTr(_lang, 'chatMedia.redownload', 'Baixar de novo')}
         accessibilityRole="button"
       >
         {redownloading ? (
-          <ActivityIndicator size="small" color="#999" />
+          <ActivityIndicator size="small" color={(_theme && _theme.colors && _theme.colors.textSecondary) || '#999'} />
         ) : (
-          <Text style={{ fontSize: 12, lineHeight: 17, color: 'rgba(0,0,0,0.55)', fontWeight: '600', textAlign: 'center', letterSpacing: 0.1 }}>
+          <Text style={{ fontSize: 12, lineHeight: 17, color: (_theme && _theme.colors && _theme.colors.textSecondary) || (_theme && _theme.isDark ? 'rgba(255,255,255,0.7)' : 'rgba(0,0,0,0.55)'), fontWeight: '600', textAlign: 'center', letterSpacing: 0.1 }}>
             {isDeleted
-              ? 'Mensagem apagada'
+              ? _cmTr(_lang, 'chatConv.deletedMessage', 'Mensagem apagada')
               : (_offline
-                  ? 'Mídia não disponível offline'
+                  ? _cmTr(_lang, 'chatMedia.offlineUnavailable', 'Mídia não disponível offline')
                   : (messageId
-                      ? `Baixar de novo${sizeLabel ? ` (${sizeLabel})` : ''}`
-                      : 'Falha ao carregar\nToque pra tentar'))}
+                      ? `${_cmTr(_lang, 'chatMedia.redownload', 'Baixar de novo')}${sizeLabel ? ` (${sizeLabel})` : ''}`
+                      : `${_cmTr(_lang, 'chatMedia.loadFailed', 'Falha ao carregar')}\n${_cmTr(_lang, 'chatMedia.tapToRetry', 'Toque para tentar de novo')}`))}
           </Text>
         )}
       </TouchableOpacity>

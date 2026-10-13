@@ -1,4 +1,23 @@
 export default {
+  // [2026-10-12 srv-audit]
+  "chatConv.deleteWindowExpired": "Ce message ne peut plus être supprimé pour tout le monde.",
+  "chatConv.deleteWindowExpiredShort": "expiré",
+  "chatConv.notEditable": "Ce message ne peut pas être modifié.",
+  "chatConv.editWindowExpired": "Un message ne peut être modifié que dans les 15 minutes suivant l'envoi.",
+  "chatConv.forwardLimitFrequent": "Les messages transférés fréquemment ne peuvent être envoyés qu'à 1 discussion à la fois.",
+  "chatConv.forwardLimitReached": "Limite de transfert : 5 discussions au maximum, ou 1 pour les messages transférés fréquemment.",
+  "chatConv.pinDurationHint": "Vous pouvez le désépingler à tout moment.",
+  "chatConv.liveLoc15m": "15 minutes",
+  "chatConv.liveLoc1h": "1 heure",
+  "chatConv.liveLoc8h": "8 heures",
+  "chatConv.recModuleUnavailableBody": "L'enregistrement n'est pas disponible sur cet appareil.",
+  "chatConv.recStartFailedBody": "Impossible de démarrer l'enregistrement. Réessayez.",
+  "chatConv.recMicNoResponseBody": "Le micro ne répond pas. Redémarrez l'app et réessayez.",
+  "chatConv.markViewOnce": "Marquer comme vue unique",
+  "chatMedia.redownload": "Télécharger à nouveau",
+  "chatMedia.offlineUnavailable": "Média indisponible hors ligne",
+  "chatMedia.loadFailed": "Échec du chargement",
+  "chatMedia.tapToRetry": "Touchez pour réessayer",
   // [2026-10-12 reply-wa] citação/barra de resposta
   "chat.replyVideoNote": "Message vidéo",
   "chat.replyEncrypted": "Message chiffré",

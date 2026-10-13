@@ -559,6 +559,66 @@ function _setAppLocale(lang) { _appLocale = regionalLocale(lang) || undefined; }
 let _appT;
 function _setAppT(t) { _appT = t; }
 function _mt(key, fallback) { try { return (_appT && _appT(key)) || fallback; } catch (e) { return fallback; } }
+// [2026-10-12 srv-audit] Janela de "Apagar para todos" = 60 h (WhatsApp ~2 d 12 h;
+// servidor novo nega com code 'delete_window_expired' após 216000 s).
+const DELETE_FOR_ALL_WINDOW_MS = 216000 * 1000;
+// [2026-10-12 srv-audit] Folha de opções preto e branco (WhatsApp-style):
+// título + linhas de texto + "Cancelar". Sistema nativo via NativeSheetDialog
+// (web = Modal). Usada p/ a duração de fixar (Android/web) e da localização ao
+// vivo (web — substitui o window.prompt).
+function BWOptionSheet({ visible, onClose, title, subtitle, options, colors, cancelLabel }) {
+  const opts = Array.isArray(options) ? options : [];
+  return (
+    <NativeSheetDialog
+      visible={!!visible}
+      onClose={onClose}
+      overlayStyle={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' }}
+      panelStyle={{ backgroundColor: colors.surface, borderTopLeftRadius: 16, borderTopRightRadius: 16, paddingTop: 18, paddingBottom: 24, paddingHorizontal: 20, width: '100%', maxWidth: 520, alignSelf: 'center' }}
+    >
+      {!!title && (
+        <Text style={{ fontSize: 16, fontWeight: '700', color: colors.text, marginBottom: subtitle ? 4 : 10 }}>{title}</Text>
+      )}
+      {!!subtitle && (
+        <Text style={{ fontSize: 13, color: colors.textSecondary, marginBottom: 10 }}>{subtitle}</Text>
+      )}
+      {opts.map((opt, i) => (
+        <TouchableOpacity
+          key={opt.key != null ? String(opt.key) : String(i)}
+          onPress={opt.onPress}
+          activeOpacity={0.6}
+          accessibilityRole="button"
+          accessibilityState={opt.selected ? { selected: true } : undefined}
+          style={{
+            flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+            paddingVertical: 15,
+            borderBottomWidth: StyleSheet.hairlineWidth,
+            borderBottomColor: colors.border,
+          }}
+        >
+          <Text style={{ fontSize: 15.5, color: colors.text, fontWeight: opt.selected ? '600' : '400' }}>{opt.label}</Text>
+          {opt.selected ? <IconCheck size={18} color={colors.text} /> : null}
+        </TouchableOpacity>
+      ))}
+      <TouchableOpacity onPress={onClose} activeOpacity={0.6} accessibilityRole="button" style={{ paddingVertical: 15, alignItems: 'center' }}>
+        <Text style={{ fontSize: 15.5, color: colors.textSecondary, fontWeight: '600' }}>{cancelLabel}</Text>
+      </TouchableOpacity>
+    </NativeSheetDialog>
+  );
+}
+// [2026-10-12 srv-audit] Tópico sem ícone escolhido (ou o antigo padrão '💬')
+// mostra o ícone SVG "#" — nada de emoji como ícone padrão na UI.
+function _isDefaultTopicIcon(icon) {
+  const v = typeof icon === 'string' ? icon.trim() : '';
+  return !v || v === '\u{1F4AC}';
+}
+function _fmtDeleteWindowLeft(ms) {
+  const tot = Math.max(0, Math.floor((Number(ms) || 0) / 1000));
+  const h = Math.floor(tot / 3600);
+  const m = Math.floor((tot % 3600) / 60);
+  if (h > 0) return m > 0 ? `${h} h ${m} min` : `${h} h`;
+  if (m > 0) return `${m} min`;
+  return `${tot % 60} s`;
+}
 // [perf 2026-10-06] toLocaleTimeString(locale, opts) constructs a fresh
 // Intl.DateTimeFormat on EVERY call (≈8 call sites per bubble render). Cache
 // one formatter per locale; falls back to the original call if Intl is absent.
@@ -1467,6 +1527,32 @@ function AnimatedCheckStatus({ status, color, pending = false, size = 15, readCo
 // (`/data/chat-files/<conv>/<time>_<hex>_video_note_<ts>.mp4`). So a `video`
 // row whose name/url carries the `video_note` marker is a round note.
 // Regular landscape videos never match this pattern, so they stay rectangular.
+// [2026-10-12 srv-audit] O que pode ser EDITADO (WhatsApp; espelha chat_edit do
+// servidor novo, que responde code 'not_editable' fora disso): texto, ou
+// legenda REAL de foto/vídeo/arquivo/GIF — sem legenda o upload grava o NOME
+// do arquivo em content, que não é legenda. Nunca: sistema, enquete, local,
+// contato, áudio, figurinha, encontro, vídeo-recado, visualização única,
+// encaminhada. Janela de 15 min e "só o autor" ficam com o chamador.
+const _EDIT_CAPTION_TYPES = new Set(['image', 'video', 'file', 'gif', 'short_video']);
+const _EDIT_FILENAME_RE = /^[^\s/\\]+\.[A-Za-z0-9]{2,5}$/;
+function _msgEditKind(msg) {
+  if (!msg || msg.deleted_at || msg.is_deleted) return null;
+  if (msg.is_view_once || msg.isViewOnce || msg.view_once) return null;
+  const cmi = String(msg.client_message_id || '');
+  if (msg.forwarded_from || msg.is_forwarded || cmi.startsWith('fwd_') || cmi.startsWith('fwd:')) return null;
+  const type = String(msg.type || 'text');
+  if (type === 'text') return 'text';
+  if (!_EDIT_CAPTION_TYPES.has(type) || isVideoNoteMessage(msg)) return null;
+  const cap = typeof msg.content === 'string' ? msg.content.trim() : '';
+  if (!cap) return null;
+  const fname = typeof msg.file_name === 'string' ? msg.file_name.trim() : '';
+  if (fname && cap === fname) return null;
+  if (/^(https?:\/\/|\/?data\/)/i.test(cap)) return null;   // URL do arquivo/GIF, não legenda
+  if (_EDIT_FILENAME_RE.test(cap)) return null;              // "IMG_1234.jpg" sem file_name
+  if (cap.startsWith('🔒') || cap.startsWith('[E2E:') || /^\{\s*"/.test(cap)) return null; // envelope/JSON
+  return 'caption';
+}
+
 function isVideoNoteMessage(msg) {
   if (!msg) return false;
   if (msg.type === 'video_note') return true;
@@ -4011,6 +4097,15 @@ function describeReplyTarget(rt, ref, t) {
     return { Icon: IconTrash, label: tr('chatConv.deletedMessage', 'Mensagem apagada'), italic: true, lines: 1, thumb: null };
   }
   const m = L ? { ...r, ...L } : r;
+  // [2026-10-12 srv-audit] Servidor novo manda reply_to.duration / file_name:
+  // original NÃO carregado → usa direto (duração do áudio/vídeo, nome do
+  // arquivo, e a legenda deixa de confundir nome de arquivo com texto). Linha
+  // local carregada mas sem esses campos → não deixa o undefined apagar os do
+  // servidor.
+  if (L) {
+    if (!(Number(m.duration) > 0) && Number(r.duration) > 0) m.duration = r.duration;
+    if (!m.file_name && r.file_name) m.file_name = r.file_name;
+  }
   let type = String(m.type || 'text');
   const content = typeof m.content === 'string' ? m.content.trim() : '';
   const fileUrl = m.file_url ? String(m.file_url) : '';
@@ -7691,7 +7786,7 @@ function AudioRecorder({ onSend, onCancel, colors, t, conversationId, holdMode =
             const { Alert } = require('react-native');
             Alert.alert(
               t('chatConv.audioModuleUnavailable') || 'Áudio indisponível',
-              'O módulo de gravação não está disponível neste dispositivo.',
+              _mt('chatConv.recModuleUnavailableBody', 'O módulo de gravação não está disponível neste dispositivo.'),
             );
           } catch {}
         }
@@ -7795,7 +7890,7 @@ function AudioRecorder({ onSend, onCancel, colors, t, conversationId, holdMode =
               const { Alert } = require('react-native');
               Alert.alert(
                 t('chatConv.audioModuleUnavailable') || 'Falha ao gravar áudio',
-                'Não foi possível iniciar a gravação. Tente novamente.',
+                _mt('chatConv.recStartFailedBody', 'Não foi possível iniciar a gravação. Tente novamente.'),
               );
             } catch {}
           }
@@ -7815,7 +7910,7 @@ function AudioRecorder({ onSend, onCancel, colors, t, conversationId, holdMode =
               const { Alert } = require('react-native');
               Alert.alert(
                 t('chatConv.recordingStartError') || 'Falha ao gravar áudio',
-                'O microfone não respondeu. Reinicie o app e tente novamente.',
+                _mt('chatConv.recMicNoResponseBody', 'O microfone não respondeu. Reinicie o app e tente novamente.'),
               );
             } catch {}
           }
@@ -7842,7 +7937,7 @@ function AudioRecorder({ onSend, onCancel, colors, t, conversationId, holdMode =
           const { Alert } = require('react-native');
           Alert.alert(
             t('chatConv.recordingStartError') || 'Falha ao gravar áudio',
-            e?.message || 'Não foi possível iniciar a gravação. Tente novamente.',
+            _mt('chatConv.recStartFailedBody', 'Não foi possível iniciar a gravação. Tente novamente.'),
           );
         } catch {}
       }
@@ -8381,7 +8476,7 @@ function AudioRecorder({ onSend, onCancel, colors, t, conversationId, holdMode =
         </TouchableOpacity>
 
         {/* Play / Pause */}
-        <TouchableOpacity onPress={togglePreviewPlay} style={[recStyles.previewPlayBtn, { backgroundColor: recBtnBg }]} accessibilityLabel={previewPlaying ? 'Pausar' : 'Reproduzir'}>
+        <TouchableOpacity onPress={togglePreviewPlay} style={[recStyles.previewPlayBtn, { backgroundColor: recBtnBg }]} accessibilityLabel={previewPlaying ? (t('common.pause') || 'Pausar') : (t('common.play') || 'Reproduzir')}>
           {previewPlaying
             ? <IconPause size={20} color={recBtnInk} />
             : <IconPlay size={20} color={recBtnInk} />}
@@ -8424,7 +8519,7 @@ function AudioRecorder({ onSend, onCancel, colors, t, conversationId, holdMode =
             previewData.viewOnce ? recStyles.voiceOnceBtnActive : { borderColor: colors.border || 'rgba(17, 17, 17,0.35)' },
           ]}
           accessibilityRole="button"
-          accessibilityLabel={previewData.viewOnce ? (t('chatConv.viewOnceVoiceLabel') || 'Áudio único') : 'Marcar como visualização única'}
+          accessibilityLabel={previewData.viewOnce ? (t('chatConv.viewOnceVoiceLabel') || 'Áudio único') : _mt('chatConv.markViewOnce', 'Marcar como visualização única')}
         >
           <Text style={[recStyles.voiceOnceBtnText, { color: previewData.viewOnce ? '#fff' : (colors.textTertiary || '#9ca3af') }]}>1</Text>
         </TouchableOpacity>
@@ -8593,7 +8688,7 @@ function AudioRecorder({ onSend, onCancel, colors, t, conversationId, holdMode =
           voiceViewOnce ? recStyles.voiceOnceBtnActive : { borderColor: colors.border || 'rgba(17, 17, 17,0.35)' },
         ]}
         accessibilityRole="button"
-        accessibilityLabel={voiceViewOnce ? (t('chatConv.viewOnceVoiceLabel') || 'Áudio único') : 'Marcar como visualização única'}
+        accessibilityLabel={voiceViewOnce ? (t('chatConv.viewOnceVoiceLabel') || 'Áudio único') : _mt('chatConv.markViewOnce', 'Marcar como visualização única')}
       >
         <Text style={[recStyles.voiceOnceBtnText, { color: voiceViewOnce ? '#fff' : (colors.textTertiary || '#9ca3af') }]}>1</Text>
       </TouchableOpacity>
@@ -12070,7 +12165,7 @@ function ChatConversationInner() {
   const [topics, setTopics] = _useStateT([]);
   const [activeTopic, setActiveTopic] = _useStateT(null); // { id, name, icon } | null
   const [newTopicName, setNewTopicName] = _useStateT('');
-  const [newTopicIcon, setNewTopicIcon] = _useStateT('💬');
+  const [newTopicIcon, setNewTopicIcon] = _useStateT(''); // [2026-10-12 srv-audit] '' = ícone padrão (SVG #)
   // Admin-only "create topic" sheet (separate from the read-only topic
   // filter — keeps the picker UI out of the way for non-admins).
   const [showTopicCreate, setShowTopicCreate] = _useStateT(false);
@@ -16799,9 +16894,11 @@ function ChatConversationInner() {
           setPinnedMessages(prev => prev.filter(p => p.id !== mid));
         } else {
           setPinnedMessages(prev => {
-            if (prev.find(p => p.id === mid)) return prev;
+            // [2026-10-12 srv-audit] pinned_until do evento (servidor novo), se vier.
+            const _pu = data?.pinned_until || null;
+            if (prev.find(p => p.id === mid)) return _pu ? prev.map(p => (p.id === mid ? { ...p, pinned_until: _pu } : p)) : prev;
             const msg = (messagesRef.current || []).find(m => m.id === mid);
-            return msg ? [msg, ...prev] : prev;
+            return msg ? [{ ...msg, pinned_until: _pu }, ...prev].slice(0, 3) : prev;
           });
         }
       };
@@ -17433,7 +17530,10 @@ function ChatConversationInner() {
           const r = await api.chatEdit(_editId, editContent);
           if (!r.success) {
             const reason = String(r?.message || '');
-            const isHard = /expired|window|permission|forbidden|not_found|invalid/i.test(reason);
+            // [2026-10-12 srv-audit] 4xx / code = recusa definitiva (não vai p/ fila).
+            const _st = Number(r?.__httpStatus) || 0;
+            const _code = api.chatErrorCode ? api.chatErrorCode(r) : '';
+            const isHard = (_st >= 400 && _st < 500) || !!_code || /expired|window|permission|forbidden|not_found|invalid/i.test(reason);
             if (isHard) {
               // Restore the original row + surface the reason.
               if (_prevEditRow) {
@@ -17444,7 +17544,13 @@ function ChatConversationInner() {
                   SmartCache.updateCachedMessage?.(conversationId, _editId, { content: _prevEditRow.content, edited_at: _prevEditRow.edited_at || null });
                 } catch {}
               }
-              safeAlert(t('common.error') || 'Error', r?.message || t('chatConv.editFailed') || 'Failed to edit message');
+              if (_code === 'not_editable') {
+                safeAlert(t('common.error') || 'Error', _mt('chatConv.notEditable', 'Esta mensagem não pode ser editada.'));
+              } else if (/expired|15 ?min/i.test(reason)) {
+                safeAlert(t('common.error') || 'Error', _mt('chatConv.editWindowExpired', 'Só dá para editar até 15 minutos após o envio.'));
+              } else {
+                safeAlert(t('common.error') || 'Error', t('chatConv.editFailed') || 'Failed to edit message');
+              }
             } else {
               // Transient soft failure — keep the optimistic edit, enqueue replay.
               try {
@@ -20486,20 +20592,19 @@ function ChatConversationInner() {
     }
   };
 
+  // [2026-10-12 srv-audit] Durações traduzidas (antes: '15 minutos/1 hora/
+  // 8 horas' fixos em pt-BR + window.prompt no web).
+  const _liveLocDurations = () => [
+    { label: _mt('chatConv.liveLoc15m', '15 minutos'), value: 15 * 60 },
+    { label: _mt('chatConv.liveLoc1h', '1 hora'), value: 60 * 60 },
+    { label: _mt('chatConv.liveLoc8h', '8 horas'), value: 8 * 60 * 60 },
+  ];
   const handleShareLiveLocation = async () => {
     // Ask for duration
-    const durations = [
-      { label: '15 minutos', value: 15 * 60 },
-      { label: '1 hora', value: 60 * 60 },
-      { label: '8 horas', value: 8 * 60 * 60 },
-    ];
+    const durations = _liveLocDurations();
 
     if (Platform.OS === 'web') {
-      const choice = window.prompt('Compartilhar localização ao vivo por:\n1 - 15 minutos\n2 - 1 hora\n3 - 8 horas', '1');
-      if (!choice) return;
-      const idx = parseInt(choice) - 1;
-      if (idx < 0 || idx > 2) return;
-      startLiveLocation(durations[idx].value);
+      setLiveLocDurationSheet(true);
     } else {
       Alert.alert(
         t('chatConv.liveLocation') || 'Localização ao vivo',
@@ -21180,10 +21285,12 @@ function ChatConversationInner() {
     //   • group chats:              3 hours
     // Helps surface a "(expirado)" hint in the alert + a countdown subtitle
     // when within the window so users know how long they have left.
-    // Must match the server window (chat.php delete-for-all: age > 10800s);
-    // at 1h the UI hid the option 2h before the server stopped honoring it.
+    // Must match the server window (chat.php delete-for-all). [2026-10-12
+    // srv-audit] WhatsApp: ~2 d 12 h = 60 h (216000 s). Servidor antigo ainda
+    // nega após 3 h com 403 → tratado como recusa definitiva abaixo (restaura a
+    // linha + aviso), nunca vai p/ a fila.
     const isGroupChat = conversationType === 'group';
-    const deleteForAllWindowMs = 10800 * 1000;
+    const deleteForAllWindowMs = DELETE_FOR_ALL_WINDOW_MS;
     const createdMs = (() => {
       try {
         if (!msg?.created_at) return 0;
@@ -21197,13 +21304,8 @@ function ChatConversationInner() {
     const remainingMs = Math.max(0, deleteForAllWindowMs - elapsedMs);
     const isWithinWindow = createdMs > 0 && elapsedMs < deleteForAllWindowMs;
     const canDeleteForAll = isMine && isWithinWindow;
-    // Format remaining as "Xm Ys" (or "Ys" when <60s) for the subtitle.
-    const remainingLabel = (() => {
-      const tot = Math.max(0, Math.floor(remainingMs / 1000));
-      const m = Math.floor(tot / 60);
-      const s = tot % 60;
-      return m > 0 ? `${m}m ${s}s` : `${s}s`;
-    })();
+    // Remaining time for the subtitle ("2 h 15 min" / "12 min" / "40 s").
+    const remainingLabel = _fmtDeleteWindowLeft(remainingMs);
 
     const deleteForEveryone = async () => {
       setSelectedMsg(null);
@@ -21265,11 +21367,19 @@ function ChatConversationInner() {
         if (!r?.success) {
           // Soft failure with a server message that's a HARD error (expired
           // window, no permission) → restore the row + surface the reason.
+          // [2026-10-12 srv-audit] Qualquer resposta 4xx do servidor é recusa
+          // definitiva (o servidor antigo responde 403 em pt "Você só pode
+          // apagar…", que o regex não pegava → ia p/ a fila e reenviava pra
+          // sempre). code 'delete_window_expired' (servidor novo) → aviso traduzido.
           const reason = String(r?.message || '');
-          const isHard = /expired|window|permission|forbidden|not_found|invalid/i.test(reason);
+          const _st = Number(r?.__httpStatus) || 0;
+          const _code = api.chatErrorCode ? api.chatErrorCode(r) : '';
+          const isHard = (_st >= 400 && _st < 500) || !!_code || /expired|window|permission|forbidden|not_found|invalid/i.test(reason);
           if (isHard) {
             if (_prevRow) setMessages(prev => _mapKeep(prev, m => String(m.id) === String(msgId) ? _prevRow : m));
-            if (reason) safeAlert(t('common.error'), r.message);
+            if (_code === 'delete_window_expired' || /expired|window|s[oó] (d[aá]|pode) apagar/i.test(reason)) {
+              safeAlert(t('common.error'), _mt('chatConv.deleteWindowExpired', 'Não dá mais para apagar esta mensagem para todos.'));
+            } else if (reason) safeAlert(t('common.error'), r.message);
           } else {
             // Transient soft failure — keep the optimistic tombstone, enqueue
             // for replay so the delete eventually reaches the server.
@@ -21368,7 +21478,7 @@ function ChatConversationInner() {
         // Disabled (expired) marker — surfaced as a non-actionable entry so
         // the user can see retraction is no longer possible.
         buttons.push({
-          text: `${t('chatConv.deleteForEveryone') || 'Apagar para todos'} (expirado)`,
+          text: `${t('chatConv.deleteForEveryone') || 'Apagar para todos'} (${_mt('chatConv.deleteWindowExpiredShort', 'expirado')})`,
           style: 'cancel',
           onPress: () => {},
         });
@@ -21504,16 +21614,44 @@ function ChatConversationInner() {
     // as strings (local msgId here can be number or tmp_* string).
     inflightReactionMsgIdsRef.current.add(String(msgId));
     try {
-      for (const _oe of _oldMine) {
-        try { await api.chatReact(msgId, _oe); } catch {}
+      // [2026-10-12 srv-audit] UMA chamada só: o servidor novo troca a reação
+      // atomicamente (1 por pessoa; mesmo emoji = remove). Compat. com o
+      // servidor antigo (toggle por emoji, empilhava): a resposta traz o
+      // estado real — se uma reação ANTIGA minha ainda aparece lá, o servidor
+      // é o antigo e só então tiramos as antigas (comportamento anterior, agora
+      // depois do add). Sem `reactions` na resposta (replay idempotente) não
+      // mexe em nada: no servidor novo, mandar o emoji antigo de novo o
+      // RE-ADICIONARIA no lugar do novo.
+      let r = await api.chatReact(msgId, isSticker ? null : emoji, isSticker ? stickerUrl : undefined);
+      if (r?.success && _oldMine.length && Array.isArray(r.data?.reactions)) {
+        const _stillMine = r.data.reactions
+          .filter(x => { const e = x?.emoji || x?.reaction; return e && _oldMine.includes(e) && _usersOfR(x).some(u => String(u || '').toLowerCase() === _meLcR); })
+          .map(x => x.emoji || x.reaction);
+        for (const _oe of _stillMine) {
+          try {
+            const r2 = await api.chatReact(msgId, _oe);
+            if (r2?.success && Array.isArray(r2.data?.reactions)) r = r2;
+          } catch {}
+        }
       }
-      const r = await api.chatReact(msgId, isSticker ? null : emoji, isSticker ? stickerUrl : undefined);
-      if (r.success) {
+      if (r?.success) {
         // Reconcile com truth do server (caso outro device/peer tenha mudado).
-        setMessages(prev => _mapKeep(prev, m => {
-          if (m.id !== msgId) return m;
-          return { ...m, reactions: r.data?.reactions || [] };
-        }));
+        if (Array.isArray(r.data?.reactions)) {
+          setMessages(prev => _mapKeep(prev, m => {
+            if (m.id !== msgId) return m;
+            return { ...m, reactions: r.data.reactions };
+          }));
+        }
+      } else if (r?._queuedOffline || (api.chatIsTransportFailure && api.chatIsTransportFailure(r))) {
+        // Sem rede: api.chatReact já enfileirou na fila nativa (só falha de
+        // transporte) — mantém o chip otimista; o replay confirma. Sem fila
+        // nativa (web) → fila durável do offlineCache, como no catch abaixo.
+        if (!r?._queuedOffline) {
+          try {
+            const { queueOfflineAction } = require('../services/offlineCache');
+            queueOfflineAction({ type: 'chat_react', message_id: msgId, emoji: isSticker ? null : emoji, sticker_url: isSticker ? stickerUrl : null }).catch(() => {});
+          } catch {}
+        }
       } else {
         // Rollback se servidor rejeitou (gating premium etc).
         if (prevReactions) {
@@ -21720,7 +21858,10 @@ function ChatConversationInner() {
   const handleSearchMessages = useCallback(async (q, filters = searchFilters) => {
     setSearchQuery(q);
     if (!q.trim()) { setSearchResults([]); setSearchIdx(0); return; }
-    const lower = q.toLowerCase();
+    // [2026-10-12 srv-audit] Sem acento/caixa: "acao" acha "ação" (NFD + tira
+    // diacríticos dos dois lados), como o FTS do servidor.
+    const _fold = (v) => { try { return String(v || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase(); } catch { return String(v || '').toLowerCase(); } };
+    const lower = _fold(q);
     // Race guard: rapid typing can have a slower server response overwrite
     // the newer query's results. Tag each call with a sequence id.
     const searchSeq = ++searchSeqRef.current;
@@ -21735,7 +21876,7 @@ function ChatConversationInner() {
     let localResults = messages.filter(m => {
       // Text filter
       if (!m.content || m._type || m.type === 'system') return false;
-      if (!m.content.toLowerCase().includes(lower)) return false;
+      if (!_fold(m.content).includes(lower)) return false;
 
       // Date range filter
       if (filters.dateFrom || filters.dateTo) {
@@ -21766,6 +21907,10 @@ function ChatConversationInner() {
     if (localResults.length > 0) {
       safeScrollToMsg(localResults[0]);
     }
+    // [2026-10-12 srv-audit] Conjunto JÁ mesclado (memória + FTS local): o
+    // merge do servidor parte dele — antes partia só da memória e descartava
+    // o FTS local (histórico em disco sumia ao chegar a resposta do servidor).
+    let mergedSoFar = localResults;
 
     // Local SQLite FTS5 — covers messages that aren't in the in-memory
     // window (older history cached on disk). Returns in <50ms vs ~300ms
@@ -21797,6 +21942,7 @@ function ChatConversationInner() {
             }
             // Sort newest-first to match the reverse() applied to localResults.
             merged.sort((a, b) => (new Date(b.created_at).getTime()) - (new Date(a.created_at).getTime()));
+            mergedSoFar = merged;
             setSearchResults(merged);
             if (merged.length > localResults.length && localResults.length === 0) {
               safeScrollToMsg(merged[0]);
@@ -21812,10 +21958,10 @@ function ChatConversationInner() {
         const r = await api.apiCall('chat_search', { query: q.trim(), conversation_id: conversationId, limit: 50 });
         if (!isFreshSearch()) return;
         if (r?.success && Array.isArray(r.data)) {
-          // Filter to current conversation + de-dupe with local
-          const localIds = new Set(localResults.map(m => m.id));
+          // Filter to current conversation + de-dupe with local (memória + FTS)
+          const localIds = new Set(mergedSoFar.map(m => String(m.id)));
           const serverNew = r.data
-            .filter(m => m.conversation_id === conversationId && !localIds.has(m.id))
+            .filter(m => String(m.conversation_id) === String(conversationId) && !localIds.has(String(m.id)))
             .map(m => ({
               id: m.id,
               conversation_id: m.conversation_id,
@@ -21841,10 +21987,11 @@ function ChatConversationInner() {
               return true;
             });
           if (serverNew.length > 0) {
-            // Merge: local first (already in view), then server-only
-            const merged = [...localResults, ...serverNew];
-            // Sort by id desc so most recent is first
-            merged.sort((a, b) => (b.id || 0) - (a.id || 0));
+            // Merge: local (memória + FTS) first, then server-only
+            const merged = [...mergedSoFar, ...serverNew];
+            // Newest first (ids temporários "tmp_*" não são numéricos → data)
+            const _k = (m) => { const n = Number(m.id); return Number.isFinite(n) && n > 0 ? n : Number.MAX_SAFE_INTEGER; };
+            merged.sort((a, b) => (_k(b) - _k(a)) || ((new Date(b.created_at).getTime() || 0) - (new Date(a.created_at).getTime() || 0)));
             setSearchResults(merged);
           }
         }
@@ -21865,18 +22012,29 @@ function ChatConversationInner() {
   // (24h / 7d / 30d, default 7d). Unpinning is a single confirm-less tap.
   const _pinPicker = useRef({ msg: null, resolve: null });
   const [pinDurationModal, setPinDurationModal] = _useStateT(null); // { msg } when open
+  const [liveLocDurationSheet, setLiveLocDurationSheet] = _useStateT(false); // [2026-10-12 srv-audit] web
   const _executePin = useCallback(async (msg, durationSeconds) => {
     try {
-      const r = await api.chatPinMessage(msg.id, durationSeconds);
+      let r = await api.chatPinMessage(msg.id, durationSeconds);
+      // [2026-10-12 srv-audit] chat_pin_message é TOGGLE. Uma fixação VENCIDA
+      // (pinned_until passou, cron ainda não limpou) faz o servidor "desafixar"
+      // quando a intenção era fixar → repete uma vez (agora insere de novo).
+      if (r?.success && durationSeconds && r.data && r.data.pinned === false) {
+        try { r = await api.chatPinMessage(msg.id, durationSeconds); } catch {}
+      }
       if (r.success) {
         // Optimistic update — server will broadcast pts/event for other
         // devices. We only need to surface it locally right now.
+        // Servidor antigo ignora a duração (fixa sem prazo); o banner local
+        // esconde ao vencer e a próxima leitura da lista volta a mostrar.
         const pinnedUntil = durationSeconds
           ? new Date(Date.now() + durationSeconds * 1000).toISOString()
           : null;
+        const _srvPinned = r.data && typeof r.data.pinned === 'boolean' ? r.data.pinned : null;
         setPinnedMessages(prev => {
           const exists = prev.find(p => p.id === msg.id);
-          if (exists) return prev.filter(p => p.id !== msg.id);
+          if (_srvPinned === false || (_srvPinned === null && exists && !durationSeconds)) return prev.filter(p => p.id !== msg.id);
+          if (exists) return prev.map(p => (p.id === msg.id ? { ...p, pinned_until: pinnedUntil } : p));
           // [2026-10-12 wa-parity] Máx. 3 fixadas (o servidor já descarta a
           // mais antiga); localmente o banner chegava a "4 mensagens fixadas".
           return [{ ...msg, pinned_until: pinnedUntil }, ...prev].slice(0, 3);
@@ -21895,8 +22053,11 @@ function ChatConversationInner() {
   }, []);
 
   const handlePinMessage = useCallback(async (msg) => {
-    // Unpin path — no duration prompt, just toggle off.
-    const isAlreadyPinned = pinnedMessages.some(p => String(p.id) === String(msg.id));
+    // Unpin path — no duration prompt, just toggle off. Fixação vencida conta
+    // como NÃO fixada (pede a duração de novo).
+    const _nowP = Date.now();
+    const isAlreadyPinned = pinnedMessages.some(p => String(p.id) === String(msg.id)
+      && (!p.pinned_until || !(Date.parse(p.pinned_until) <= _nowP)));
     if (isAlreadyPinned) {
       _executePin(msg, undefined);
       return;
@@ -22681,23 +22842,28 @@ function ChatConversationInner() {
   };
 
   // Toggle inclusion of a conv in the multi-forward selection. Enforces the
-  // WhatsApp 2025 anti-misinformation cap of 5 chats per forward batch — once
-  // 5 targets are selected, additional taps are rejected with a haptic and a
-  // toast. Deselect is always allowed regardless of cap.
+  // WhatsApp anti-misinformation cap — 5 chats per forward, or 1 when the
+  // message was already "forwarded many times" (forward_count >= 5; o servidor
+  // novo nega acima disso com code 'forward_limit'). Deselect is always allowed.
   const FORWARD_MAX_TARGETS = 5;
+  const forwardCapRef = useRef(FORWARD_MAX_TARGETS);
+  forwardCapRef.current = (Number(forwardMsg?.forward_count) || 0) >= 5 ? 1 : FORWARD_MAX_TARGETS;
   const toggleForwardTarget = useCallback((convId) => {
+    const cap = forwardCapRef.current || FORWARD_MAX_TARGETS;
     setForwardSelected(prev => {
       const next = new Set(prev);
       const key = String(convId);
       if (next.has(key)) {
         next.delete(key);
       } else {
-        if (next.size >= FORWARD_MAX_TARGETS) {
+        if (next.size >= cap) {
           // Cap reached — short warn haptic + toast, no state change
           try { if (Platform.OS !== 'web') Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning); } catch {}
           safeAlert(
             t('chatConv.forwardCapTitle') || 'Limite de encaminhamento',
-            (t('chatConv.forwardCapMsg') || 'Você pode encaminhar para no máximo {n} conversas por vez.').replace('{n}', String(FORWARD_MAX_TARGETS))
+            cap === 1
+              ? _mt('chatConv.forwardLimitFrequent', 'Mensagens encaminhadas com frequência só podem ir para 1 conversa por vez.')
+              : (t('chatConv.forwardCapMsg') || 'Você pode encaminhar para no máximo {n} conversas por vez.').replace('{n}', String(cap))
           );
           return prev;
         }
@@ -22708,9 +22874,14 @@ function ChatConversationInner() {
   }, []);
 
   // Multi-target send. Prefers single-round-trip `chat_forward_multi` so
-  // a 10-conv forward becomes 1 HTTP call instead of 10 (cheaper, atomic
-  // per-target reporting). Falls back to per-conv parallel `chatForward`
-  // if the server doesn't know the new action (older backends).
+  // a 5-conv forward becomes 1 HTTP call instead of 5 (cheaper, per-target
+  // reporting). [2026-10-12 srv-audit] Idempotente: cada destino ganha UM
+  // client_action_id gerado aqui e reutilizado em qualquer retry/fila (servidor
+  // novo grava fwd:<id>:<conv> no UNIQUE; servidor antigo ignora e segue o
+  // dedup por balde de 60 s). Timeout/sem rede NÃO dispara mais o fan-out
+  // per-conv "às cegas" (duplicava quando a 1ª chamada tinha chegado): vai p/
+  // a fila com os MESMOS ids. Fan-out per-conv só quando o servidor RESPONDEU
+  // que não conhece o lote (backend muito antigo), e também com os mesmos ids.
   const handleForwardSendMulti = async () => {
     if (!forwardMsg || forwardSelected.size === 0 || forwardSending) return;
     const msgId = forwardMsg.id;
@@ -22723,49 +22894,86 @@ function ChatConversationInner() {
     }
     setForwardSending(true);
     // Defensive cap re-enforced here in case state was mutated externally.
-    // Mirrors toggleForwardTarget's FORWARD_MAX_TARGETS = 5.
-    const targets = Array.from(forwardSelected).map(id => Number(id)).filter(n => n > 0).slice(0, 5);
+    const cap = (Number(forwardMsg?.forward_count) || 0) >= 5 ? 1 : FORWARD_MAX_TARGETS;
+    const targets = Array.from(forwardSelected).map(id => Number(id)).filter(n => n > 0).slice(0, cap);
+    const caids = {};
+    for (const id of targets) caids[String(id)] = api.chatNewActionId ? api.chatNewActionId() : ('a_' + Date.now().toString(36) + '_' + id);
+    const isNet = (r) => (api.chatIsTransportFailure ? api.chatIsTransportFailure(r) : (!r || r.success === false));
     let ok = 0;
-    try {
-      const r = await api.chatForwardMulti(msgId, targets);
-      if (r?.success && r?.data?.results) {
-        ok = Number(r.data.success) || (Array.isArray(r.data.results)
-          ? r.data.results.filter(x => x.success).length
-          : 0);
-      } else {
-        // Backend rejected the batch endpoint — fan out per-conv as fallback
-        const results = await Promise.allSettled(targets.map(id => api.chatForward(msgId, id)));
-        ok = results.filter(x => x.status === 'fulfilled' && x.value?.success).length;
-      }
-    } catch (_e) {
-      const results = await Promise.allSettled(targets.map(id => api.chatForward(msgId, id)));
-      ok = results.filter(x => x.status === 'fulfilled' && x.value?.success).length;
-    }
-    const fail = targets.length - ok;
-    // Durable offline retry: if EVERY target failed (batch endpoint threw AND
-    // the per-conv fallback all rejected — almost always "offline / server
-    // unreachable"), enqueue the forward so it replays when connectivity
-    // returns. Replay handler: offlineCache 'chat_forward_multi' case.
-    if (ok === 0 && targets.length > 0) {
+    let limitHit = false;
+    const queuedTargets = [];
+    const failedTargets = [];
+    const queueTargets = (ids) => {
+      if (!ids.length) return;
+      queuedTargets.push(...ids);
       try {
         const { queueOfflineAction } = require('../services/offlineCache');
-        queueOfflineAction({ type: 'chat_forward_multi', message_id: msgId, conversation_ids: targets, hide_origin: false }).catch(() => {});
+        const ids2 = {};
+        for (const id of ids) ids2[String(id)] = caids[String(id)];
+        queueOfflineAction({ type: 'chat_forward_multi', message_id: msgId, conversation_ids: ids, client_action_ids: ids2, hide_origin: false }).catch(() => {});
       } catch {}
+    };
+    const perConv = async () => {
+      const results = await Promise.allSettled(targets.map(id => api.chatForward(msgId, id, { clientActionId: caids[String(id)] })));
+      const netIds = [];
+      results.forEach((x, i) => {
+        const id = targets[i];
+        if (x.status === 'fulfilled' && x.value?.success) { ok++; return; }
+        const v = x.status === 'fulfilled' ? x.value : null;
+        if (x.status === 'rejected' || isNet(v)) { netIds.push(id); return; }
+        if (api.chatErrorCode && api.chatErrorCode(v) === 'forward_limit') limitHit = true;
+        failedTargets.push(id);
+      });
+      queueTargets(netIds);
+    };
+    try {
+      const r = await api.chatForwardMulti(msgId, targets, { clientActionIds: caids });
+      if (r?.success && r?.data?.results) {
+        const res = Array.isArray(r.data.results) ? r.data.results : [];
+        for (const id of targets) {
+          const e = res.find(x => String(x?.conversation_id) === String(id));
+          if (e?.success) ok++;
+          else {
+            if (e?.error === 'forward_limit') limitHit = true;
+            failedTargets.push(id);
+          }
+        }
+        if (!res.length) ok = Number(r.data.success) || 0;
+      } else if (isNet(r)) {
+        queueTargets(targets);
+      } else if (api.chatErrorCode && api.chatErrorCode(r) === 'forward_limit') {
+        limitHit = true;
+        failedTargets.push(...targets);
+      } else if (/unknown|not supported|invalid action|no such action/i.test(String(r?.message || ''))) {
+        // Backend sem chat_forward_multi — fan out per-conv (mesmos ids).
+        await perConv();
+      } else {
+        failedTargets.push(...targets);
+      }
+    } catch (_e) {
+      // Sem rede / timeout: NÃO refaz às cegas — fila com os mesmos ids.
+      queueTargets(targets);
     }
     setForwardSending(false);
     setForwardMsg(null);
     setForwardSearch('');
     setForwardSelected(new Set());
+    const fail = failedTargets.length;
     if (fail === 0) {
       // [2026-10-12 wa-parity] Sucesso é silencioso (WhatsApp só fecha o
-      // seletor). O alerta bloqueante "Mensagem encaminhada" no web era um
-      // window.alert a cada encaminhamento — e no plural lia a chave
-      // duplicada chatConv.forwardedMany ("3 Encaminhada várias vezes").
-      try { if (Platform.OS !== 'web') Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success); } catch {}
+      // seletor). Itens que ficaram na fila (sem rede) também não contam como
+      // falha: o replay os envia ao reconectar.
+      try { if (Platform.OS !== 'web' && ok > 0) Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success); } catch {}
+    } else if (limitHit) {
+      safeAlert(
+        t('chatConv.forwardCapTitle') || 'Limite de encaminhamento',
+        _mt('chatConv.forwardLimitReached', 'Limite de encaminhamento: no máximo 5 conversas, ou 1 para mensagens encaminhadas com frequência.')
+      );
     } else {
+      const sent = ok + queuedTargets.length;
       safeAlert(
         t('chatConv.forwardError') || 'Erro',
-        `${ok}/${targets.length} ${t('chatConv.forwardedPartial') || 'enviadas — algumas falharam'}.`
+        `${sent}/${targets.length} ${t('chatConv.forwardedPartial') || 'enviadas — algumas falharam'}.`
       );
     }
   };
@@ -22782,24 +22990,37 @@ function ChatConversationInner() {
       );
       return;
     }
+    const _caid = api.chatNewActionId ? api.chatNewActionId() : '';
+    const _queue1 = () => {
+      try {
+        const { queueOfflineAction } = require('../services/offlineCache');
+        queueOfflineAction({ type: 'chat_forward_multi', message_id: msgId, conversation_ids: [targetConvId], client_action_ids: _caid ? { [String(targetConvId)]: _caid } : null, hide_origin: false }).catch(() => {});
+      } catch {}
+    };
     try {
-      const r = await api.chatForward(msgId, targetConvId);
+      const r = await api.chatForward(msgId, targetConvId, { clientActionId: _caid });
       if (r?.success) {
         setForwardMsg(null);
         setForwardSearch('');
         setForwardSelected(new Set());
+      } else if (api.chatIsTransportFailure && api.chatIsTransportFailure(r)) {
+        // [2026-10-12 srv-audit] sem rede → fila (mesmo id), sem alerta de falha.
+        _queue1();
+        setForwardMsg(null);
+        setForwardSearch('');
+        setForwardSelected(new Set());
+      } else if (api.chatErrorCode && api.chatErrorCode(r) === 'forward_limit') {
+        safeAlert(
+          t('chatConv.forwardCapTitle') || 'Limite de encaminhamento',
+          _mt('chatConv.forwardLimitReached', 'Limite de encaminhamento: no máximo 5 conversas, ou 1 para mensagens encaminhadas com frequência.')
+        );
       } else {
-        const detail = r?.message || r?.error || 'unknown_error';
-        safeAlert(t('chatConv.forwardError') || 'Erro', detail);
+        safeAlert(t('chatConv.forwardError') || 'Erro', r?.message || r?.error || '');
       }
     } catch (e) {
       // Network failure — enqueue for durable offline replay (unified under the
       // chat_forward_multi action with a single-target conversation list).
-      try {
-        const { queueOfflineAction } = require('../services/offlineCache');
-        queueOfflineAction({ type: 'chat_forward_multi', message_id: msgId, conversation_ids: [targetConvId], hide_origin: false }).catch(() => {});
-      } catch {}
-      safeAlert(t('chatConv.forwardError') || 'Erro', String(e?.message || e));
+      _queue1();
     }
   };
 
@@ -24243,6 +24464,22 @@ function ChatConversationInner() {
   // could still display an expired pin until the next refetch. Reading the
   // current Date.now() each render keeps the banner self-healing within
   // seconds of expiry without needing a setInterval.
+  // [2026-10-12 srv-audit] O memo só recalculava quando pinnedMessages
+  // mudava → uma fixada vencia e o banner ficava. Agora um timer agenda um
+  // "tick" no próximo pinned_until (servidor novo manda o campo; o antigo não
+  // manda → nada é agendado e o comportamento é o de antes).
+  const [pinExpiryTick, setPinExpiryTick] = _useStateT(0);
+  useEffect(() => {
+    const now = Date.now();
+    let next = Infinity;
+    for (const p of pinnedMessages) {
+      const ts = p && p.pinned_until ? Date.parse(p.pinned_until) : NaN;
+      if (Number.isFinite(ts) && ts > now && ts < next) next = ts;
+    }
+    if (!Number.isFinite(next)) return undefined;
+    const h = setTimeout(() => setPinExpiryTick(x => x + 1), Math.min(next - now + 500, 2147483000));
+    return () => clearTimeout(h);
+  }, [pinnedMessages, pinExpiryTick]);
   const visiblePinnedMessages = useMemo(() => {
     const now = Date.now();
     return pinnedMessages.filter(p => {
@@ -24250,7 +24487,7 @@ function ChatConversationInner() {
       const t = Date.parse(p.pinned_until);
       return !Number.isFinite(t) || t > now;
     });
-  }, [pinnedMessages]);
+  }, [pinnedMessages, pinExpiryTick]);
 
   // Format "Xd / Xh / Xm restantes" for the pin countdown shown beside the
   // header in the banner. Same dimensions WhatsApp uses (days down to minutes).
@@ -24279,12 +24516,13 @@ function ChatConversationInner() {
   // Set<string> once per pinnedMessages change so per-row lookup is O(1).
   const pinnedIdSet = useMemo(() => {
     const s = new Set();
-    for (let i = 0; i < pinnedMessages.length; i++) {
-      const p = pinnedMessages[i];
+    // [2026-10-12 srv-audit] só as NÃO vencidas (pinned_until) marcam a bolha.
+    for (let i = 0; i < visiblePinnedMessages.length; i++) {
+      const p = visiblePinnedMessages[i];
       if (p && p.id != null) s.add(String(p.id));
     }
     return s;
-  }, [pinnedMessages]);
+  }, [visiblePinnedMessages]);
 
   // PERF: was an inline IIFE on the FlatList `data` prop — that runs the
   // full filter loop on every parent re-render (typing, presence WS, etc.)
@@ -34267,7 +34505,7 @@ function ChatConversationInner() {
               )}
 
               {/* Delete — available on BOTH sent and received messages. Own
-                  messages within 3h offer "Delete for everyone" vs "Delete
+                  messages within 60h offer "Delete for everyone" vs "Delete
                   for me"; received messages always delete locally ("for me")
                   so the user can clear clutter/spam from their own view
                   without affecting the sender. Matches WhatsApp behaviour. */}
@@ -34297,9 +34535,8 @@ function ChatConversationInner() {
                 // (DM was 5 min before 2026-05-18 — see handleDelete).
                 const isGroupChat = conversationType === 'group';
                 // [2026-10-08 chat-ab-test] 3600→10800: igual ao handleDelete e ao
-                // servidor (chat.php age > 10800s). Com 1h a linha virava
-                // "(expirado)" entre 1h e 3h embora o servidor ainda aceitasse.
-                const winMs = 10800 * 1000;
+                // servidor. [2026-10-12 srv-audit] → 60 h (servidor novo, 216000 s).
+                const winMs = DELETE_FOR_ALL_WINDOW_MS;
                 const cAt = (() => {
                   try {
                     if (!selectedMsg?.created_at) return 0;
@@ -34313,10 +34550,7 @@ function ChatConversationInner() {
                 const elapsed = longPressNow - cAt;
                 const within = elapsed < winMs;
                 const remaining = Math.max(0, winMs - elapsed);
-                const tot = Math.max(0, Math.floor(remaining / 1000));
-                const m = Math.floor(tot / 60);
-                const s = tot % 60;
-                const ttl = m >= 60 ? `${Math.floor(m / 60)} h ${m % 60} min` : m > 0 ? `${m} min` : `${s} s`;
+                const ttl = _fmtDeleteWindowLeft(remaining);
                 if (within) {
                   return (
                     <PressableRow highlightColor={isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)'}
@@ -34343,7 +34577,7 @@ function ChatConversationInner() {
                   >
                     <IconTrash size={18} color={colors.textTertiary} />
                     <Text style={[ctxS.ctxSecondaryText, { color: colors.textTertiary }]}>
-                      {`${t('chatConv.deleteForEveryone') || 'Apagar para todos'} (expirado)`}
+                      {`${t('chatConv.deleteForEveryone') || 'Apagar para todos'} (${_mt('chatConv.deleteWindowExpiredShort', 'expirado')})`}
                     </Text>
                   </View>
                 );
@@ -34483,11 +34717,19 @@ function ChatConversationInner() {
                 </PressableRow>
               )}
 
-              {/* Edit (own text messages, within 15 min) */}
-              {selectedMsg?.sender_email === currentEmail && !selectedMsg?.deleted_at && selectedMsg?.type === 'text' && (
+              {/* Edit (own text messages or real media captions, within 15 min).
+                  [2026-10-12 srv-audit] _msgEditKind: legenda de foto/vídeo/
+                  arquivo/GIF também; nunca encaminhada/visualização única/
+                  enquete/local/contato/áudio/figurinha/encontro. Legenda em
+                  conversa E2E fica de fora (a edição seria cifrada e a legenda
+                  original da mídia não é). */}
+              {selectedMsg?.sender_email === currentEmail && !selectedMsg?.deleted_at && typeof selectedMsg?.id === 'number' && (() => {
+                const _ek = _msgEditKind(selectedMsg);
+                return _ek === 'text' || (_ek === 'caption' && !e2eEnabled);
+              })() && (
                 (() => {
                   const createdAt = selectedMsg?.created_at;
-                  const canEdit = createdAt ? (Date.now() - new Date(createdAt.endsWith('Z') ? createdAt : createdAt + 'Z').getTime()) < 15 * 60 * 1000 : true;
+                  const canEdit = createdAt ? (Date.now() - new Date(String(createdAt).endsWith('Z') ? createdAt : createdAt + 'Z').getTime()) < 15 * 60 * 1000 : true;
                   return canEdit ? (
                     <PressableRow highlightColor={isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)'}
                       style={ctxS.ctxSecondaryItem}
@@ -36453,7 +36695,7 @@ function ChatConversationInner() {
                         {t('chat.topics') || 'Tópicos'}
                       </Text>
                       <Text style={{ fontSize: 12.5, color: colors.textSecondary, marginTop: 2 }}>
-                        {activeTopic ? `${activeTopic.icon || '💬'} ${activeTopic.name}` : (t('chat.topicsHint') || 'Organize conversas por tema')}
+                        {activeTopic ? (_isDefaultTopicIcon(activeTopic.icon) ? activeTopic.name : `${activeTopic.icon} ${activeTopic.name}`) : (t('chat.topicsHint') || 'Organize conversas por tema')}
                       </Text>
                     </View>
                   </TouchableOpacity>
@@ -36467,7 +36709,7 @@ function ChatConversationInner() {
                           if (r?.success) setTopics(r.data?.topics || r.data?.items || []); // [2026-10-07 group-admin] server returned only `items` → sheet was always empty
                         } catch {}
                         setNewTopicName('');
-                        setNewTopicIcon('💬');
+                        setNewTopicIcon('');
                         setNewTopicColor('#111111');
                         groupInfoGo(() => setShowTopicCreate(true), true); // [2026-10-07 group-admin]
                       }}
@@ -36905,7 +37147,9 @@ function ChatConversationInner() {
                     onPress={() => { setActiveTopic(topic); setShowTopicsModal(false); }}
                     style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 12 }}
                   >
-                    <Text style={{ fontSize: 22 }}>{topic.icon || '💬'}</Text>
+                    {_isDefaultTopicIcon(topic.icon)
+                      ? <View style={{ width: 28, alignItems: 'center' }}><IconHash size={20} color={colors.text} /></View>
+                      : <Text style={{ fontSize: 22 }}>{topic.icon}</Text>}
                     <View style={{ flex: 1 }}>
                       <Text style={{ fontSize: 15, color: colors.text, fontWeight: '500' }}>{topic.name}</Text>
                       <Text style={{ fontSize: 12, color: colors.textSecondary }}>
@@ -36964,7 +37208,7 @@ function ChatConversationInner() {
                         if (r?.success) {
                           setTopics(prev => [...prev, { id: r.data.id, name: r.data.name, icon: r.data.icon, message_count: 0 }]);
                           setNewTopicName('');
-                          setNewTopicIcon('💬');
+                          setNewTopicIcon('');
                         }
                       } catch {}
                     }}
@@ -37025,15 +37269,19 @@ function ChatConversationInner() {
               {t('chat.topicEmoji') || 'Emoji'}
             </Text>
             <View style={{ flexDirection: 'row', gap: 8, marginBottom: 14 }}>
-              {['💬', '📌', '🎯', '🔥', '📣', '✅'].map(em => (
-                <TouchableOpacity
-                  key={em}
-                  onPress={() => setNewTopicIcon(em)}
-                  style={{ width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center', backgroundColor: newTopicIcon === em ? colors.primary + '22' : colors.background, borderWidth: 1, borderColor: newTopicIcon === em ? colors.primary : colors.border }}
-                >
-                  <Text style={{ fontSize: 22 }}>{em}</Text>
-                </TouchableOpacity>
-              ))}
+              {/* [2026-10-12 srv-audit] 1ª opção = ícone padrão (SVG "#"), não emoji. */}
+              {['', '📌', '🎯', '🔥', '📣', '✅'].map(em => {
+                const _sel = em === '' ? _isDefaultTopicIcon(newTopicIcon) : newTopicIcon === em;
+                return (
+                  <TouchableOpacity
+                    key={em || 'default'}
+                    onPress={() => setNewTopicIcon(em)}
+                    style={{ width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center', backgroundColor: _sel ? colors.primary + '22' : colors.background, borderWidth: 1, borderColor: _sel ? colors.primary : colors.border }}
+                  >
+                    {em === '' ? <IconHash size={20} color={colors.text} /> : <Text style={{ fontSize: 22 }}>{em}</Text>}
+                  </TouchableOpacity>
+                );
+              })}
             </View>
 
             <Text style={{ fontSize: 12, fontWeight: '600', color: colors.textSecondary, marginBottom: 6 }}>
@@ -37063,7 +37311,7 @@ function ChatConversationInner() {
                 setTopics(prev => [...prev, { id: tempId, name, icon: emoji, color, message_count: 0 }]);
                 setShowTopicCreate(false);
                 setNewTopicName('');
-                setNewTopicIcon('💬');
+                setNewTopicIcon('');
                 setNewTopicColor('#111111');
                 try {
                   const r = await api.chatTopicCreate(conversationId, { name, color, emoji });
@@ -37325,57 +37573,47 @@ function ChatConversationInner() {
             })}
       </NativeSheetDialog>
 
-      {/* Pin Duration Modal (Android / web) — iOS uses native ActionSheetIOS
+      {/* Pin Duration sheet (Android / web) — iOS uses native ActionSheetIOS
           in handlePinMessage. Same 3 buckets WhatsApp exposes:
-          24h / 7d (default) / 30d. */}
-      <Modal
+          24h / 7d (default) / 30d. [2026-10-12 srv-audit] folha P&B; a
+          duração vai como duration '24h'|'7d'|'30d' (servidor novo grava
+          pinned_until; o antigo ignora). */}
+      <BWOptionSheet
         visible={!!pinDurationModal}
-        transparent
-        animationType="fade"
-        onRequestClose={() => { setPinDurationModal(null); setSelectedMsg(null); }}
-      >
-        <Pressable
-          style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center' }}
-          onPress={() => { setPinDurationModal(null); setSelectedMsg(null); }}
-        >
-          <Pressable
-            style={{ backgroundColor: colors.surface, borderRadius: 16, width: 300, padding: 20 }}
-            onPress={e => e.stopPropagation()}
-          >
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 16 }}>
-              <IconPin size={20} color="#f59e0b" />
-              <Text style={{ fontSize: 17, fontWeight: '600', color: colors.text }}>
-                {t('chatConv.pinDuration') || 'Por quanto tempo?'}
-              </Text>
-            </View>
-            {[
-              { label: t('chatConv.pin24h') || '24 horas', value: 86400, isDefault: false },
-              { label: t('chatConv.pin7d')  || '7 dias',   value: 604800, isDefault: true  },
-              { label: t('chatConv.pin30d') || '30 dias',  value: 2592000, isDefault: false },
-            ].map(opt => (
-              <TouchableOpacity
-                key={opt.value}
-                onPress={() => {
-                  const m = pinDurationModal?.msg;
-                  setPinDurationModal(null);
-                  if (m) _executePin(m, opt.value);
-                }}
-                style={{
-                  flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-                  paddingVertical: 14,
-                  borderBottomWidth: opt.value === 2592000 ? 0 : 0.5,
-                  borderBottomColor: colors.border,
-                }}
-              >
-                <Text style={{ fontSize: 15, color: colors.text }}>{opt.label}</Text>
-                {opt.isDefault && (
-                  <IconCheck size={18} color={colors.primary} />
-                )}
-              </TouchableOpacity>
-            ))}
-          </Pressable>
-        </Pressable>
-      </Modal>
+        onClose={() => { setPinDurationModal(null); setSelectedMsg(null); }}
+        title={t('chatConv.pinDuration') || 'Por quanto tempo?'}
+        subtitle={_mt('chatConv.pinDurationHint', 'Você pode desafixar quando quiser.')}
+        colors={colors}
+        cancelLabel={t('common.cancel') || 'Cancelar'}
+        options={[
+          { key: 86400, label: t('chatConv.pin24h') || '24 horas', selected: false },
+          { key: 604800, label: t('chatConv.pin7d') || '7 dias', selected: true },
+          { key: 2592000, label: t('chatConv.pin30d') || '30 dias', selected: false },
+        ].map(opt => ({
+          ...opt,
+          onPress: () => {
+            const m = pinDurationModal?.msg;
+            setPinDurationModal(null);
+            if (m) _executePin(m, opt.key);
+          },
+        }))}
+      />
+
+      {/* [2026-10-12 srv-audit] Localização ao vivo — duração (web; nativo usa o
+          alerta do sistema). Substitui o window.prompt fixo em pt-BR. */}
+      <BWOptionSheet
+        visible={!!liveLocDurationSheet}
+        onClose={() => setLiveLocDurationSheet(false)}
+        title={t('chatConv.liveLocation') || 'Localização ao vivo'}
+        subtitle={t('chatConv.liveLocationDuration') || 'Compartilhar por quanto tempo?'}
+        colors={colors}
+        cancelLabel={t('common.cancel') || 'Cancelar'}
+        options={_liveLocDurations().map(d => ({
+          key: d.value,
+          label: d.label,
+          onPress: () => { setLiveLocDurationSheet(false); startLiveLocation(d.value); },
+        }))}
+      />
 
       {/* Report User Modal */}
       <Modal visible={showReportModal} transparent animationType="fade" onRequestClose={() => setShowReportModal(false)}>

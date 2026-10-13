@@ -5350,6 +5350,26 @@ export async function chatStopLiveLocation(messageId, opts) {
 function _chatActionId() {
   return 'a_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 8);
 }
+// [2026-10-12 srv-audit] Id de ação gerado UMA vez pelo chamador e reutilizado
+// em retry/fila (encaminhar idempotente: servidor novo grava fwd:<id>:<conv>).
+export function chatNewActionId() { return _chatActionId(); }
+// Falha de TRANSPORTE (rede/timeout/gateway) — não uma resposta do servidor.
+// Servidor que respondeu 4xx = recusa definitiva; 502/503/504 = proxy/edge.
+function _isTransportFailureRes(r) {
+  if (!r) return true;
+  if (r.success !== false) return false;
+  const st = Number(r.__httpStatus);
+  if (st === 0) return true;
+  if (st === 502 || st === 503 || st === 504) return true;
+  if (st >= 400 && st < 500) return false;
+  const m = String(r.message || (r.data && r.data.message) || '');
+  return m === 'Connection error' || m === 'Tempo limite excedido' || m === 'offline' || m === 'Servidor indisponivel';
+}
+export function chatIsTransportFailure(r) { return _isTransportFailureRes(r); }
+// Código de erro estruturado do servidor ({success:false, data:{code}}).
+export function chatErrorCode(r) {
+  try { return String((r && r.data && r.data.code) || (r && r.code) || ''); } catch { return ''; }
+}
 
 // Best-effort read of the current local content/edited_at for a message so
 // chatEdit can do a FULL revert (content + edited_at) on server rejection.
@@ -5480,22 +5500,41 @@ export async function chatReact(messageId, emoji, stickerUrl) {
   // offline_queue drain >5min later re-fired the toggle and SILENTLY REMOVED
   // the reaction (broadcasting the removal to everyone). Mirror chatPin: POST
   // first, queue ONLY on genuine failure so the toggle applies exactly once.
+  // [2026-10-12 srv-audit] Só falha de TRANSPORTE (offline/timeout/gateway) vai
+  // p/ a fila: uma recusa do servidor (4xx: premium, não membro, limite…) nunca
+  // é reenviada — o replay de um toggle recusado só gerava ruído. O resultado
+  // enfileirado leva _queuedOffline=true p/ a tela manter o chip otimista.
   const _queueReactOnFail = async (res) => {
-    if ((!res || res.success === false) && ld && typeof ld.queueOfflineAction === 'function') {
+    if ((!res || res.success === false) && _isTransportFailureRes(res) && ld && typeof ld.queueOfflineAction === 'function') {
       try {
         await ld.queueOfflineAction('chat_react', {
           message_id: messageId, emoji: emoji || null,
           sticker_url: stickerUrl || null, client_action_id: actionId,
         });
+        if (res && typeof res === 'object' && !Object.isFrozen(res)) {
+          try { Object.defineProperty(res, '_queuedOffline', { value: true, enumerable: false, configurable: true }); } catch {}
+        }
       } catch {}
     }
     return res;
+  };
+  const _reactPost = async (payload) => {
+    try {
+      return await apiCall('chat_react', payload, 'POST');
+    } catch (e) {
+      // apiCall lança {offline:true} quando a rede está pausada → mesmo caminho
+      // de falha de transporte (fila + chip otimista), sem estourar na tela.
+      if (e && (e.offline || /offline|network|timeout|abort/i.test(String(e.message || '')))) {
+        return _withHttpStatus({ success: false, message: 'offline' }, 0);
+      }
+      throw e;
+    }
   };
 
   // Sticker reaction (premium): URL up to 512 chars. Server gates by plan.
   if (typeof stickerUrl === 'string' && stickerUrl.length > 0) {
     if (stickerUrl.length > 512) return { success: false, message: 'sticker_url_too_long' };
-    return _queueReactOnFail(_normalizeReactResult(await apiCall('chat_react', { message_id: messageId, sticker_url: stickerUrl, client_action_id: actionId }, 'POST')));
+    return _queueReactOnFail(_normalizeReactResult(await _reactPost({ message_id: messageId, sticker_url: stickerUrl, client_action_id: actionId })));
   }
 
   // Emoji reaction. Reject silly payloads — sanity guard before hitting network.
@@ -5504,7 +5543,7 @@ export async function chatReact(messageId, emoji, stickerUrl) {
   }
   const rust = await _rustChatPost('react', { message_id: messageId, emoji, client_action_id: actionId });
   if (rust) return _queueReactOnFail(_normalizeReactResult(rust));
-  return _queueReactOnFail(_normalizeReactResult(await apiCall('chat_react', { message_id: messageId, emoji, client_action_id: actionId }, 'POST')));
+  return _queueReactOnFail(_normalizeReactResult(await _reactPost({ message_id: messageId, emoji, client_action_id: actionId })));
 }
 
 // [P2 2026-05-26] Treat a server "reaction already exists" / idempotent
@@ -5926,6 +5965,9 @@ export async function chatForward(messageId, targetConversationId, opts = null) 
   // Hide origin: forwarded message appears as if the sender wrote it.
   // Telegram parity — "Forward without attribution" option.
   if (opts?.hideOrigin) payload.hide_origin = true;
+  // [2026-10-12 srv-audit] Idempotência explícita (servidor novo: fwd:<id>:<conv>);
+  // servidor antigo ignora o campo (segue o balde de 60 s).
+  if (opts?.clientActionId) payload.client_action_id = String(opts.clientActionId);
   return apiCall('chat_forward', payload, 'POST');
 }
 
@@ -5938,6 +5980,13 @@ export async function chatForwardMulti(messageId, targetConversationIds, opts = 
     conversation_ids: Array.isArray(targetConversationIds) ? targetConversationIds : [],
   };
   if (opts?.hideOrigin) payload.hide_origin = true;
+  // [2026-10-12 srv-audit] {conv_id: id} — o MESMO id em todo retry/replay da
+  // fila; servidor antigo ignora.
+  if (opts?.clientActionIds && typeof opts.clientActionIds === 'object') {
+    const ids = {};
+    for (const [k, v] of Object.entries(opts.clientActionIds)) { if (v) ids[String(k)] = String(v); }
+    if (Object.keys(ids).length) payload.client_action_ids = ids;
+  }
   return apiCall('chat_forward_multi', payload, 'POST');
 }
 
@@ -8230,6 +8279,10 @@ export async function chatPinMessage(messageId, durationSeconds) {
   const payload = { message_id: messageId };
   if (durationSeconds && Number.isFinite(durationSeconds)) {
     payload.duration_seconds = durationSeconds;
+    // [2026-10-12 srv-audit] Servidor novo lê `duration` ('24h'|'7d'|'30d') e
+    // grava pinned_until; servidor antigo ignora (fixação sem expiração).
+    const _pinDur = { 86400: '24h', 604800: '7d', 2592000: '30d' }[Number(durationSeconds)];
+    if (_pinDur) payload.duration = _pinDur;
   }
   // chat_pin_message is a TOGGLE on the server (pin if absent, unpin if present).
   // We must NOT both POST online AND pre-queue an offline replay: the localDb
