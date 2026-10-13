@@ -36,6 +36,9 @@ export const waImportDelete = (importId) => _post('wa_import_delete', { import_i
 // [wa-import-v2 2026-10-13] quem importou histórico nesta conversa (qualquer membro) / ocultar p/ mim.
 export const waImportConvInfo = (conversationId) => _post('wa_import_conv_info', { conversation_id: conversationId }, 15000);
 export const waImportHide = (importId, hidden) => _post('wa_import_hide', { import_id: importId, hidden: !!hidden });
+// [import-ordem 2026-10-13] só leitura: "quem sou eu" no export + com quem é a conversa (telefone/nome), e
+// confirmação da conversa de origem. Servidor antigo → erro (o app cai na sugestão local estrita).
+export const waImportMatch = (p) => _post('wa_import_match', p, 15000);
 
 /**
  * Sobe 1 arquivo de mídia. file: nativo { uri, name, type } | web Blob/File.

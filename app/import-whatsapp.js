@@ -10,7 +10,8 @@
  * a conversa continua utilizável (faixa "Importando do WhatsApp · N%" lá). Destino padrão de um
  * export 1:1 com um contato do Chatyy = CONTINUAÇÃO na conversa direta com a pessoa (verificada
  * no servidor por telefone/nome; senão pede confirmação explícita). Grupo / sem contato / E2EE /
- * conversa que já tem mensagens → cópia separada só sua. Resumo final + "Resumir com a Bia".
+ * (servidor antigo: conversa que já tem mensagens) → cópia separada só sua; servidor novo intercala
+ * o histórico pela data/hora original [import-ordem 2026-10-13]. Resumo final + "Resumir com a Bia".
  */
 import React, { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import {
@@ -32,7 +33,8 @@ import {
 import { takeSharedText } from '../services/waImport/importer';
 import * as job from '../services/waImport/job';
 import { refreshImports, forgetImport } from '../services/waImport/registry';
-import { waImportDelete } from '../services/waImport/api';
+import { waImportDelete, waImportMatch } from '../services/waImport/api';
+import { bestLocalMatch, nameScore, NAME_MIN_SCORE } from '../services/waImport/match';
 
 let ConversationSummarySheet = null;
 try { ConversationSummarySheet = require('../components/chat/ConversationSummarySheet').default; } catch {}
@@ -97,7 +99,14 @@ export default function ImportWhatsAppScreen() {
   const [prep, setPrep] = useState(() => job.getPrepared());
   const [meName, setMeName] = useState(() => job.getPrepared()?.guessedMe || null);
   const [title, setTitle] = useState(() => job.getPrepared()?.title || '');
-  const [link, setLink] = useState(null); // { email, name, convId? }
+  const [link, setLink] = useState(null); // { email, name, convId?, reason?: 'phone'|'name'|'mismatch', matched?, tail? }
+  // [import-ordem 2026-10-13] wa_import_match: "quem sou eu" + com quem é a conversa (telefone/nome).
+  const [matchInfo, setMatchInfo] = useState(null);
+  const [meManual, setMeManual] = useState(false);
+  const meManualRef = useRef(false);
+  const [showMePicker, setShowMePicker] = useState(false);
+  const matchSeqRef = useRef(0);
+  const matchedOnceRef = useRef(false);
   const [showLinkPicker, setShowLinkPicker] = useState(false);
   const [dest, setDest] = useState('direct'); // direct | copy
   const [mismatchOk, setMismatchOk] = useState(false);
@@ -146,16 +155,42 @@ export default function ImportWhatsAppScreen() {
     return t('waImport.errGeneric');
   }, [t]);
 
-  // Sugere o contato pelo título do arquivo (conversas 1:1 do cache local).
-  const suggestLink = useCallback((p) => {
+  // [import-ordem 2026-10-13] Sugestão LOCAL estrita (servidor antigo / sem rede): só os autores que NÃO
+  // são "eu" + título do arquivo, com pontuação mínima (Carol × Thalisa = 0 → nada sugerido; antes o
+  // próprio nome do usuário entrava na busca e o 1º nome parecido de qualquer conversa ganhava).
+  const suggestLink = useCallback((p, me) => {
     if (params.linkEmail) return;
-    const cands = [p.fileTitle, ...(p.participants || []).map((x) => x.name)].filter(Boolean);
-    const convs = readLocalConversations().filter((c) => (c.type || 'direct') === 'direct' && convPeerEmail(c));
-    for (const cand of cands) {
-      const hit = convs.find((c) => nameLike(convName(c), cand));
-      if (hit) { setLink({ email: convPeerEmail(hit), name: convName(hit), convId: String(hit.id || '') }); return; }
-    }
+    const names = [p.fileTitle, ...(p.participants || []).map((x) => x.name).filter((n) => n !== me)].filter(Boolean);
+    const convs = readLocalConversations()
+      .filter((c) => (c.type || 'direct') === 'direct' && convPeerEmail(c))
+      .map((c) => ({ email: convPeerEmail(c), name: convName(c), convId: String(c.id || '') }));
+    const hit = bestLocalMatch(names, convs);
+    if (hit) setLink({ email: hit.email, name: hit.name, convId: hit.convId, reason: 'name', matched: hit.matched });
   }, [params.linkEmail]);
+
+  // [import-ordem 2026-10-13] Servidor: telefone do export × cadastro (certeza) ou nome normalizado ×
+  // nome/@ de quem tem conversa comigo; deduz "eu" (meu número / eliminação) e confirma a conversa de origem.
+  const runMatch = useCallback(async (p) => {
+    if (!p) return;
+    const seq = ++matchSeqRef.current;
+    const names = (p.participants || []).map((x) => x.name);
+    let r = null;
+    try {
+      r = await waImportMatch({ participants: names, file_title: p.fileTitle || '', origin_conversation_id: originConvId ? (Number(originConvId) || undefined) : undefined });
+    } catch {}
+    if (seq !== matchSeqRef.current) return; // outro arquivo foi escolhido nesse meio-tempo
+    if (!r?.success) { suggestLink(p, p.guessedMe); return; }
+    const d = r.data || {};
+    setMatchInfo(d);
+    if (d.me && names.includes(d.me) && !meManualRef.current) setMeName(d.me);
+    if (!params.linkEmail) {
+      const c = (d.candidates || [])[0];
+      if (c) setLink({ email: c.email, name: c.name || c.email, convId: c.conversation_id ? String(c.conversation_id) : '', reason: c.reason, matched: c.matched, tail: c.phone_tail });
+    } else if (d.origin) {
+      setLink((l) => (l && String(l.email).toLowerCase() === String(d.origin.email || '').toLowerCase()
+        ? { ...l, reason: d.origin.verdict, matched: d.origin.matched, tail: d.origin.phone_tail } : l));
+    }
+  }, [params.linkEmail, originConvId, suggestLink]);
 
   const loadFiles = useCallback(async (files) => {
     if (job.isActive()) { setError(errText({ message: 'already_running' })); setStep('error'); return; }
@@ -172,13 +207,22 @@ export default function ImportWhatsAppScreen() {
       setPrep(p);
       setTitle(p.title || '');
       setMeName(p.guessedMe);
-      suggestLink(p);
+      setMatchInfo(null); setMeManual(false); meManualRef.current = false; setShowMePicker(false);
+      matchedOnceRef.current = true;
+      runMatch(p); // [import-ordem 2026-10-13]
       setStep('review');
     } catch (e) {
       setError(errText(e));
       setStep('error');
     }
-  }, [language, user, params.linkName, originConvId, errText, suggestLink]);
+  }, [language, user, params.linkName, originConvId, errText, runMatch]);
+
+  // Voltou para a revisão de um export já preparado (job em memória) → refaz a verificação.
+  useEffect(() => {
+    if (matchedOnceRef.current || !prep || step !== 'review') return;
+    matchedOnceRef.current = true;
+    if (!matchInfo) runMatch(prep);
+  }, [prep, step, matchInfo, runMatch]);
 
   const sharedOnce = useRef(false);
   useEffect(() => {
@@ -220,6 +264,8 @@ export default function ImportWhatsAppScreen() {
   const exportPeer = others.length === 1 ? others[0].name : '';
   const localMatch = useMemo(() => {
     if (!link || !prep) return null;
+    if (link.reason === 'phone' || link.reason === 'name') return true; // [import-ordem 2026-10-13] confirmado no servidor
+    if (link.reason === 'mismatch') return false;
     if (exportPeer && nameLike(exportPeer, link.name)) return true;
     if (prep.fileTitle && nameLike(prep.fileTitle, link.name)) return true;
     return false;
@@ -314,13 +360,29 @@ export default function ImportWhatsAppScreen() {
     if (ok) job.cancel();
   }, [confirm, t]);
 
+  // [import-ordem 2026-10-13] sugestões do servidor (com motivo) no topo; depois as conversas locais.
+  const serverCands = useMemo(() => (matchInfo?.candidates || []).map((c) => ({
+    email: c.email, name: c.name || c.email, convId: c.conversation_id ? String(c.conversation_id) : '', reason: c.reason, matched: c.matched, tail: c.phone_tail,
+  })), [matchInfo]);
   const linkCandidates = useMemo(() => {
     if (!showLinkPicker) return [];
-    return readLocalConversations()
-      .filter((c) => (c.type || 'direct') === 'direct' && convPeerEmail(c))
+    const seen = new Set(serverCands.map((c) => String(c.email).toLowerCase()));
+    const local = readLocalConversations()
+      .filter((c) => (c.type || 'direct') === 'direct' && convPeerEmail(c) && !seen.has(String(convPeerEmail(c)).toLowerCase()))
       .slice(0, 80)
       .map((c) => ({ email: convPeerEmail(c), name: convName(c) || convPeerEmail(c), convId: String(c.id || '') }));
-  }, [showLinkPicker]);
+    return [...serverCands, ...local];
+  }, [showLinkPicker, serverCands]);
+  const linkReasonText = !link ? '' : link.reason === 'phone'
+    ? t('waImport.matchPhone', { tail: link.tail || '' })
+    : link.reason === 'name'
+      ? t('waImport.matchName', { name: link.matched || '' })
+      : link.reason === 'mismatch'
+        ? t('waImport.matchOriginMismatch', { export: exportPeer || prep?.fileTitle || '', name: link.name })
+        : (localMatch ? t('waImport.verifiedOk', { name: link.name }) : '');
+  const betterCand = link?.reason === 'mismatch' ? serverCands.find((c) => String(c.email).toLowerCase() !== String(link.email).toLowerCase()) : null;
+  const meConfident = !!meName && !!prep && (prep.participants || []).length === 2 && !meManual
+    && (matchInfo?.me === meName || prep.guessedMe === meName);
 
   // ── UI pieces ──────────────────────────────────────────────────────────
   const Btn = ({ label, onPress, solid = true, disabled, icon: Icon }) => (
@@ -419,15 +481,26 @@ export default function ImportWhatsAppScreen() {
           {prep.format ? <Text style={{ color: sub, fontSize: 12, marginTop: 4 }}>{t('waImport.format', { fmt: prep.format })}</Text> : null}
         </View>
 
+        {meConfident && !showMePicker ? (
+          // [import-ordem 2026-10-13] quem importa é o dono da conta: deduzido (meu número / "Você" / o outro
+          // autor é a pessoa da conversa) → não pergunta; só mostra e deixa trocar.
+          <View style={[s.card, s.linkRow, { backgroundColor: card, borderColor: line }]}>
+            <IconUser size={18} color={ink} />
+            <Text style={{ color: ink, fontSize: 15, flex: 1, marginLeft: 10 }} numberOfLines={1}>{t('waImport.youAre', { name: meName })}</Text>
+            <TouchableOpacity onPress={() => setShowMePicker(true)} hitSlop={10} accessibilityRole="button">
+              <Text style={{ color: ink, fontSize: 14, fontWeight: '600' }}>{t('waImport.change')}</Text>
+            </TouchableOpacity>
+          </View>
+        ) : (<>
         <Text style={[s.section, { color: sub }]}>{t('waImport.whoAreYou')}</Text>
         <View style={[s.card, { backgroundColor: card, borderColor: line, paddingVertical: 4 }]}>
           {prep.participants.slice(0, 50).map((p) => {
             const on = meName === p.name;
             return (
-              <TouchableOpacity key={p.name} onPress={() => { setMeName(p.name); setServerMismatch(null); setMismatchOk(false); }} style={s.partRow} accessibilityRole="radio" accessibilityState={{ checked: on }}>
+              <TouchableOpacity key={p.name} onPress={() => { setMeName(p.name); setMeManual(true); meManualRef.current = true; setServerMismatch(null); setMismatchOk(false); }} style={s.partRow} accessibilityRole="radio" accessibilityState={{ checked: on }}>
                 <View style={[s.radio, { borderColor: ink }, on && { backgroundColor: ink }]}>{on ? <IconCheck size={12} color={colors.background} /> : null}</View>
                 <Text style={{ color: ink, fontSize: 15, flex: 1 }} numberOfLines={1}>{p.name}</Text>
-                {p.name === prep.guessedMe ? <Text style={[s.pill, { color: sub, borderColor: line }]}>{t('waImport.suggested')}</Text> : null}
+                {p.name === (matchInfo?.me || prep.guessedMe) ? <Text style={[s.pill, { color: sub, borderColor: line }]}>{t('waImport.suggested')}</Text> : null}
                 <Text style={{ color: sub, fontSize: 12 }}>{t('waImport.msgCount', { n: p.count })}</Text>
               </TouchableOpacity>
             );
@@ -435,18 +508,31 @@ export default function ImportWhatsAppScreen() {
           {prep.participants.length > 50 ? <Text style={[s.small, { color: sub, paddingHorizontal: 12 }]}>+{prep.participants.length - 50}</Text> : null}
         </View>
         {!meName ? <Text style={[s.small, { color: sub, marginBottom: 8 }]}>{t('waImport.pickMeHint')}</Text> : null}
+        </>)}
 
         <Text style={[s.section, { color: sub }]}>{t('waImport.linkLabel')}</Text>
         <TouchableOpacity onPress={() => setShowLinkPicker((v) => !v)} style={[s.card, s.linkRow, { backgroundColor: card, borderColor: line }]} accessibilityRole="button">
           {link ? <IconUser size={18} color={ink} /> : <IconUsers size={18} color={ink} />}
           <View style={{ flex: 1, marginLeft: 10 }}>
             <Text style={{ color: ink, fontSize: 15 }} numberOfLines={1}>{link ? link.name : t('waImport.linkNone')}</Text>
-            {link && localMatch ? <Text style={{ color: sub, fontSize: 12, marginTop: 2 }}>{t('waImport.verifiedOk', { name: link.name })}</Text> : null}
+            {linkReasonText ? <Text style={{ color: sub, fontSize: 12, marginTop: 2 }} numberOfLines={2}>{linkReasonText}</Text> : null}
           </View>
           {link ? (
             <TouchableOpacity onPress={() => { setLink(null); setServerMismatch(null); }} hitSlop={10} accessibilityLabel={t('common.remove')}><IconX size={16} color={sub} /></TouchableOpacity>
           ) : <IconChevronRight size={18} color={sub} />}
         </TouchableOpacity>
+        {betterCand ? (
+          <TouchableOpacity onPress={() => { setLink(betterCand); setServerMismatch(null); setMismatchOk(false); }} style={[s.card, s.linkRow, { backgroundColor: card, borderColor: ink }]} accessibilityRole="button">
+            <IconUser size={18} color={ink} />
+            <View style={{ flex: 1, marginLeft: 10 }}>
+              <Text style={{ color: ink, fontSize: 15 }} numberOfLines={1}>{t('waImport.useSuggested', { name: betterCand.name })}</Text>
+              <Text style={{ color: sub, fontSize: 12, marginTop: 2 }} numberOfLines={1}>
+                {betterCand.reason === 'phone' ? t('waImport.matchPhone', { tail: betterCand.tail || '' }) : t('waImport.matchName', { name: betterCand.matched || '' })}
+              </Text>
+            </View>
+            <IconChevronRight size={18} color={sub} />
+          </TouchableOpacity>
+        ) : null}
         {showLinkPicker && (
           <View style={[s.card, { backgroundColor: card, borderColor: line, paddingVertical: 4, maxHeight: 260 }]}>
             <ScrollView nestedScrollEnabled>
@@ -455,7 +541,7 @@ export default function ImportWhatsAppScreen() {
                 <TouchableOpacity key={c.email} onPress={() => { setLink(c); setShowLinkPicker(false); setServerMismatch(null); setMismatchOk(false); }} style={s.partRow}>
                   <IconUser size={16} color={ink} />
                   <Text style={{ color: ink, fontSize: 15, marginLeft: 10, flex: 1 }} numberOfLines={1}>{c.name}</Text>
-                  {exportPeer && nameLike(exportPeer, c.name) ? <Text style={[s.pill, { color: sub, borderColor: line }]}>{t('waImport.suggested')}</Text> : null}
+                  {c.reason || (exportPeer && nameScore(exportPeer, c.name) >= NAME_MIN_SCORE) ? <Text style={[s.pill, { color: sub, borderColor: line }]}>{t('waImport.suggested')}</Text> : null}
                 </TouchableOpacity>
               ))}
             </ScrollView>
@@ -466,7 +552,7 @@ export default function ImportWhatsAppScreen() {
         <View style={[s.card, { backgroundColor: card, borderColor: line, paddingVertical: 4 }]}>
           <Radio on={effDest === 'direct'} disabled={!directPossible} onPress={() => setDest('direct')}
             title={t('waImport.destDirect', { name: link?.name || '…' })}
-            subtitle={isGroupExport ? t('waImport.groupToCopy') : e2eeTarget ? t('waImport.errE2ee') : t('waImport.destDirectSub', { name: link?.name || '' })} />
+            subtitle={isGroupExport ? t('waImport.groupToCopy') : e2eeTarget ? t('waImport.errE2ee') : t('waImport.destDirectSubDate', { name: link?.name || '' })} />
           <Radio on={effDest === 'copy'} onPress={() => setDest('copy')} title={t('waImport.destCopy')} subtitle={t('waImport.destCopySub')} />
         </View>
 

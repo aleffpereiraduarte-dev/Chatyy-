@@ -176,7 +176,11 @@ export function getMessagesSync(convId, limit = 50, beforeId = null) {
   if (beforeId) { query += ' AND id < ?'; params.push(beforeId); }
   const af = _acctFilter(db);
   if (af.sql) { query += af.sql; params.push(...af.params); }
-  query += ' ORDER BY id DESC LIMIT ?';
+  // [import-ordem 2026-10-13] conversa com histórico importado: as N mais NOVAS por data
+  // (created_at UTC normalizado; empate → id). Demais conversas: por id, como sempre.
+  let _byTime = false;
+  if (!beforeId) { try { _byTime = require('./chatOrder').isTimeOrdered(convId); } catch {} }
+  query += _byTime ? ` ORDER BY ${require('./chatOrder').SQL_SORT_EXPR} DESC, id DESC LIMIT ?` : ' ORDER BY id DESC LIMIT ?';
   params.push(limit);
   let rows;
   try {

@@ -146,8 +146,11 @@ function _ensureWsHook() {
     ws.on('history_imported', (data) => {
       const cid = data?.conversation_id;
       if (!cid) return;
+      // [import-ordem 2026-10-13] histórico entrou/saiu → conversa passa a ser "por data"
+      // e a tela aberta recarrega a JANELA inteira (wa_reset), não só o delta por id.
+      try { const co = require('../chatOrder'); co.markTimeOrdered(cid); co.forgetImportRev(cid); } catch {}
       // A conversa aberta já recarrega com push_chat_refresh (chat-conversation).
-      try { ws._emit?.('push_chat_refresh', { conversation_id: cid }); } catch {}
+      try { ws._emit?.('push_chat_refresh', { conversation_id: cid, wa_reset: true }); } catch {}
       try { require('./registry').refreshImports(true).catch(() => {}); } catch {}
       _convListeners.forEach((fn) => { try { fn(data); } catch {} });
     });

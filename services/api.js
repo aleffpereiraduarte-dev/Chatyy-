@@ -4347,12 +4347,17 @@ export async function chatMessages(conversationId, limit = 20, beforeId = null, 
   if (beforeId) params.before_id = beforeId;
   else if (sinceId > 0) params.since_id = sinceId;
   if (topicId !== undefined && topicId !== null) params.topic_id = topicId;
+  // [import-ordem 2026-10-13] Pede a ordem cronológica (sort_ts, id): servidor novo
+  // pagina before_id por data e manda wa_import_rev; servidor velho ignora (ordem por id).
+  params.order = 'time';
 
   // Stage 6 — read via WS relay when web companion is paired + phone online.
   // Skip relay when sinceId/topicId are set: relayResponder.get_messages only
   // implements limit + before_id; sinceId (delta) and topicId (threads) need
   // the PHP path until the phone-side handler grows those filters.
-  if (WEB_PHONE_RELAY && Platform.OS === 'web' && !sinceId && topicId === undefined) {
+  let _timeConv = false;
+  try { _timeConv = require('./chatOrder').isTimeOrdered(conversationId); } catch {}
+  if (WEB_PHONE_RELAY && Platform.OS === 'web' && !sinceId && topicId === undefined && !_timeConv) {
     try {
       const relay = require('./relayClient');
       if (await relay.isAvailable()) {
@@ -5911,6 +5916,7 @@ export async function chatLoadAround(conversationId, messageId, before = 30, aft
     message_id: messageId,
     before,
     after,
+    order: 'time', // [import-ordem 2026-10-13] janela por data (servidor velho ignora)
   }, 'POST');
 }
 

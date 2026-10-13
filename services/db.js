@@ -950,7 +950,11 @@ export async function dbGetMessages(conversationId, limit = 50, beforeId = null)
     params.push(beforeId);
   }
   if (_acctScoped()) { const ac = _acctSql(); query += ac.sql; params.push(...ac.params); }
-  query += ' ORDER BY id DESC LIMIT ?';
+  // [import-ordem 2026-10-13] conversa com histórico importado: as N mais NOVAS por data
+  // (created_at UTC normalizado; empate → id). Demais conversas: por id, como sempre.
+  let _byTime = false;
+  if (!beforeId) { try { _byTime = require('./chatOrder').isTimeOrdered(conversationId); } catch {} }
+  query += _byTime ? ` ORDER BY ${require('./chatOrder').SQL_SORT_EXPR} DESC, id DESC LIMIT ?` : ' ORDER BY id DESC LIMIT ?';
   params.push(limit);
   // [#1206 2026-05-19] Wrap the read so a sudden getAllAsync failure (DB
   // locked / corrupted page / migration race) lands a beacon instead of

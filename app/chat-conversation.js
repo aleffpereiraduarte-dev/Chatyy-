@@ -41,6 +41,9 @@ import { NativeModules } from 'react-native';
 // etc.) and ships via OTA. Spacing + animation match behaves identically to
 // WhatsApp/Telegram now. Re-enable by replacing with the require() below.
 const _NativeChatView = null;
+// [import-ordem 2026-10-13] ordem por data nas conversas com histórico importado (lazy).
+let _chatOrderMod = null;
+const _chatOrder = () => (_chatOrderMod || (_chatOrderMod = require('../services/chatOrder')));
 import Svg, { Path } from 'react-native-svg';
 import CircularProgressArc from '../components/CircularProgressArc';
 // [2026-10-06 thread-tech] per-row overlay store (download %, painted, error, delete-fade, translation)
@@ -9571,7 +9574,11 @@ function ChatConversationInner() {
           }
         }
         if (!added) return prev;
-        const out = Array.from(map.values()).sort((a, b) => Number(a.id) - Number(b.id));
+        // [import-ordem 2026-10-13] conversa com histórico importado → ordem por data.
+        const _vals = Array.from(map.values());
+        const out = _chatOrder().timeModeFor(conversationId, _vals)
+          ? _vals.sort(_chatOrder().compareMsgs)
+          : _vals.sort((a, b) => Number(a.id) - Number(b.id));
         return out;
       });
       // Wait a tick for state to flush, then scroll. [2026-10-07 flashlist]
@@ -9583,7 +9590,9 @@ function ChatConversationInner() {
     // [2026-10-08 chat-gaps2] 1º o SQLite local (síncrono, sem rede) — só
     // vai ao servidor se o alvo não estiver no aparelho (web: sempre servidor).
     try {
-      const local = require('../services/sqliteStore').getMessagesAroundSync?.(conversationId, numericId, 30, 10);
+      // [import-ordem 2026-10-13] o SQLite local recorta a janela por id — na conversa
+      // por data a janela certa vem do servidor (chat_load_around order=time).
+      const local = _chatOrder().isTimeOrdered(conversationId) ? null : require('../services/sqliteStore').getMessagesAroundSync?.(conversationId, numericId, 30, 10);
       if (Array.isArray(local) && local.length > 0 && spliceAndScroll(local)) return;
     } catch {}
     try {
@@ -10584,7 +10593,10 @@ function ChatConversationInner() {
   // the JS thread. Consumers only ever needed the open-time snapshot.
   const _initialCachedRef = useRef({ cid: undefined, rows: null });
   if (_initialCachedRef.current.cid !== conversationId) {
-    _initialCachedRef.current = { cid: conversationId, rows: _readInitialCached() };
+    let _initRows = _readInitialCached();
+    // [import-ordem 2026-10-13] conversa com histórico importado → 1ª pintura já por data.
+    try { if (Array.isArray(_initRows) && _initRows.length > 1 && _chatOrder().timeModeFor(conversationId, _initRows)) _initRows = _chatOrder().sortByTime(_initRows); } catch {}
+    _initialCachedRef.current = { cid: conversationId, rows: _initRows };
   }
   const _initialCached = _initialCachedRef.current.rows;
   function _readInitialCached() {
@@ -13683,8 +13695,15 @@ function ChatConversationInner() {
     return normalizeMessageTypes(decryptMessages(msgs));
   }, [decryptMessages, normalizeMessageTypes]);
 
+  // [import-ordem 2026-10-13] Conversa com histórico importado (ordem por data): o 1º
+  // fetch da abertura e o fetch logo após uma importação SUBSTITUEM a janela (as linhas
+  // do cache local podem ter vindo recortadas por id → buraco no meio da conversa).
+  const _timeWinRef = useRef({ cid: null, ok: false, reset: false });
   const loadMessages = useCallback(async (showLoader, beforeId = null) => {
     if (_PERF_WHY_ON) _whyHit(beforeId ? 'fn:loadOlder' : 'fn:loadMessages');
+    if (_timeWinRef.current.cid !== conversationId) _timeWinRef.current = { cid: conversationId, ok: false, reset: false };
+    let _resetWin = false;
+    try { _resetWin = !beforeId && (_timeWinRef.current.reset || (!_timeWinRef.current.ok && _chatOrder().isTimeOrdered(conversationId))); } catch {}
     const seq = ++loadMessagesSeqRef.current;
     const isFresh = () => seq === loadMessagesSeqRef.current;
     // Fresh-install fetch (no cache hit): pull 100 messages so the user sees
@@ -13716,7 +13735,7 @@ function ChatConversationInner() {
           const _storeHasMsgs = Array.isArray(_have) && _have.length > 0;
           const _cur = _cs.getCursor('conv:' + conversationId);
           const _lastId = Number(_cur?.last_msg_id || 0);
-          if (_storeHasMsgs && _lastId > 0) {
+          if (_storeHasMsgs && _lastId > 0 && !_resetWin) {
             sinceId = _lastId; // delta-only
             // [2026-10-08 web-receipts-i18n] RECIBOS no delta-open. O delta só
             // traz id > cursor, então os balões MEUS já guardados no store local
@@ -13846,6 +13865,14 @@ function ChatConversationInner() {
         setIBlockedPeer(!!r.data?.i_blocked_peer);
         setBlockerName(r.data?.blocker_name || null);
         let newMsgs = processIncoming(r.data?.messages || []);
+        // [import-ordem 2026-10-13] servidor novo manda wa_import_rev quando a conversa tem
+        // histórico importado → conversa passa a ser "por data"; rev novo nesta sessão
+        // (1ª vez ou importou/apagou/ocultou de novo) → recarrega a janela inteira.
+        let _scheduleReset = false;
+        try {
+          const _rev = r.data?.wa_import_rev;
+          if (_rev && _chatOrder().noteImportRev(conversationId, _rev) && !beforeId && !_resetWin) _scheduleReset = true;
+        } catch {}
         // Hydrate _localUri for media messages from syncIndex BEFORE setMessages
         // so the very first render already paints file:// instead of the
         // remote URL → no flash, no flicker, no re-fetch.
@@ -13868,7 +13895,10 @@ function ChatConversationInner() {
             const existingIds = new Set(prev.map(m => m.id));
             const uniqueOlder = newMsgs.filter(m => !existingIds.has(m.id));
             if (uniqueOlder.length === 0) return prev;
-            return [...uniqueOlder, ...prev];
+            const _joined = [...uniqueOlder, ...prev];
+            // [import-ordem 2026-10-13] conversa por data → ordena (página antiga pode intercalar).
+            try { if (_chatOrder().timeModeFor(conversationId, _joined)) return _chatOrder().sortByTime(_joined); } catch {}
+            return _joined;
           });
           // WhatsApp parity: older messages from paginate must also land in
           // local SQLite + MMKV so a future cold-start hydrate has them.
@@ -13891,7 +13921,10 @@ function ChatConversationInner() {
         } else if (newMsgs.length > 0) {
           // Fresh load or refresh — merge with existing, skip if unchanged to prevent flicker
           setMessages(prev => {
-            if (prev.length === 0) return newMsgs;
+            // [import-ordem 2026-10-13] ordem por data se a conversa tem histórico importado.
+            let _tm = false;
+            try { _tm = _chatOrder().timeModeFor(conversationId, newMsgs) || _chatOrder().timeModeFor(null, prev); } catch {}
+            if (prev.length === 0) return _tm ? _chatOrder().sortByTime(newMsgs) : newMsgs;
             // Quick fingerprint: compare IDs to detect if data actually changed.
             // [receipt-sync cold-load 2026-06-24] The ID set alone is NOT enough:
             // on a cold open the thread first paints from the SmartCache snapshot
@@ -13932,7 +13965,7 @@ function ChatConversationInner() {
             };
             const prevIds = prev.filter(m => typeof m.id === 'number').map(m => m.id).join(',');
             const newIds = newMsgs.map(m => m.id).join(',');
-            if (prevIds === newIds && _rcptSig(prev) === _rcptSig(newMsgs)) return prev; // Same messages AND same receipts — skip setState (no flicker)
+            if (prevIds === newIds && _rcptSig(prev) === _rcptSig(newMsgs) && !(_tm && _resetWin)) return prev; // Same messages AND same receipts — skip setState (no flicker)
             // Merge: keep pending/tmp messages, replace server ones. If we
             // already have a decrypted plaintext locally (sent-by-us or
             // previously-decrypted), prefer it over the server's encrypted
@@ -13959,7 +13992,7 @@ function ChatConversationInner() {
             for (const nm of newMsgs) {
               if (typeof nm.id === 'number' && nm.id < oldestNewId) oldestNewId = nm.id;
             }
-            const keptOlder = prev.filter(m => typeof m.id === 'number' && m.id < oldestNewId);
+            let keptOlder = prev.filter(m => typeof m.id === 'number' && m.id < oldestNewId);
             // [msg "aparece e some" fix] Keep numeric-id messages NEWER than
             // this server batch too. loadMessages always pulls the last
             // PAGE_SIZE (sinceId=0); a message that landed via WS/TCP AFTER the
@@ -13972,7 +14005,23 @@ function ChatConversationInner() {
             for (const nm of newMsgs) {
               if (typeof nm.id === 'number' && nm.id > newestNewId) newestNewId = nm.id;
             }
-            const keptNewer = prev.filter(m => typeof m.id === 'number' && m.id > newestNewId && !newById.has(m.id));
+            let keptNewer = prev.filter(m => typeof m.id === 'number' && m.id > newestNewId && !newById.has(m.id));
+            if (_tm) {
+              // [import-ordem 2026-10-13] "mais antiga/mais nova do lote" por DATA (não por id).
+              // Janela substituída (_resetWin): nada mais antigo que o lote sobrevive — evita
+              // buraco entre o cache local e a janela nova; o scroll p/ cima busca o resto.
+              const _cmp = _chatOrder().compareMsgs;
+              let _lo = null; let _hi = null;
+              for (const nm of newMsgs) {
+                if (!nm || typeof nm.id !== 'number') continue;
+                if (!_lo || _cmp(nm, _lo) < 0) _lo = nm;
+                if (!_hi || _cmp(nm, _hi) > 0) _hi = nm;
+              }
+              if (_lo && _hi) {
+                keptOlder = _resetWin ? [] : prev.filter(m => typeof m.id === 'number' && !newById.has(m.id) && _cmp(m, _lo) < 0);
+                keptNewer = prev.filter(m => typeof m.id === 'number' && !newById.has(m.id) && _cmp(m, _hi) > 0);
+              }
+            }
             // [#1188 Agent investigation 2026-05-19] Envelope-mode messages
             // get a CMI-string id (not tmp_*, not numeric) because the
             // server never creates a chat_messages row for them — only
@@ -14058,7 +14107,8 @@ function ChatConversationInner() {
               const t = m && m.created_at ? Date.parse(m.created_at) : 0;
               return Number.isFinite(t) ? t : 0;
             };
-            merged.sort((a, b) => {
+            if (_tm) merged.sort(_chatOrder().compareMsgs);
+            else merged.sort((a, b) => {
               const ai = typeof a.id === 'number' ? a.id : (a._negId || 0);
               const bi = typeof b.id === 'number' ? b.id : (b._negId || 0);
               if (ai !== bi) return ai - bi;
@@ -14130,6 +14180,15 @@ function ChatConversationInner() {
         if (beforeId || sinceId === 0) {
           setHasMore(r.data?.has_more !== false);
         }
+        // [import-ordem 2026-10-13] janela por data confirmada / recarga após importação.
+        try {
+          if (_resetWin) { _timeWinRef.current.ok = true; _timeWinRef.current.reset = false; }
+          else if (!beforeId && sinceId === 0 && _chatOrder().isTimeOrdered(conversationId)) _timeWinRef.current.ok = true;
+          if (_scheduleReset) {
+            _timeWinRef.current.reset = true;
+            setTimeout(() => { if (mountedRef.current) { try { loadMessages(false); } catch {} } }, 0);
+          }
+        } catch {}
         // [WAVE 39 2026-05-20] BUG 2 — per-conv auto-bootstrap trigger.
         // User reports: "vamos fazer as conversas antigas todo baixar no celular".
         // If the server says there are more messages (has_more=true) AND we only
@@ -14340,7 +14399,8 @@ function ChatConversationInner() {
         try {
           const cached = await getCachedMessages(conversationId, 100);
           if (Array.isArray(cached) && cached.length > 0 && mountedRef.current) {
-            const cachedNorm = normalizeMessageTypes(cached);
+            let cachedNorm = normalizeMessageTypes(cached);
+            try { if (_chatOrder().timeModeFor(conversationId, cachedNorm)) cachedNorm = _chatOrder().sortByTime(cachedNorm); } catch {} // [import-ordem 2026-10-13]
             setMessages(cachedNorm);
             setLoadError(null);
             return;
@@ -14399,7 +14459,8 @@ function ChatConversationInner() {
               // `{replytext...}`). Normalizar aqui garante que todo msg que
               // vai pro state tem o type/payload correto, independente da
               // origem (API ou cache local).
-              const cachedNormalized = normalizeMessageTypes(cached);
+              let cachedNormalized = normalizeMessageTypes(cached);
+              try { if (_chatOrder().timeModeFor(conversationId, cachedNormalized)) cachedNormalized = _chatOrder().sortByTime(cachedNormalized); } catch {} // [import-ordem 2026-10-13]
               setMessages(prev => prev.length > 0 ? prev : cachedNormalized);
               setLoading(false);
               try {
@@ -16013,6 +16074,8 @@ function ChatConversationInner() {
       const unsubPush = mailWs.on('push_chat_refresh', (data) => {
         _whyHit('ev:push_chat_refresh');
         if (String(data?.conversation_id) === String(conversationId) && mountedRef.current) {
+          // [import-ordem 2026-10-13] history_imported → recarrega a janela por data.
+          if (data?.wa_reset) { try { _timeWinRef.current.reset = true; } catch {} }
           loadMessages(false);
         }
       });
@@ -16823,6 +16886,8 @@ function ChatConversationInner() {
             return [...prev, _newRow];
           }
           const appended = [...prev, _newRow];
+          // [import-ordem 2026-10-13] conversa com histórico importado → ordem por data.
+          if (_chatOrder().timeModeFor(conversationId, prev)) return appended.sort(_chatOrder().compareMsgs);
           appended.sort((a, b) => _tcpSortKey(a) - _tcpSortKey(b));
           return appended;
           // [2026-10-06 thread-tech] (former inline cache/sound/haptic/ack block now lives in _tcpNewMsgFx above)
@@ -17319,6 +17384,8 @@ function ChatConversationInner() {
               }
               next.splice(at, 0, m);
             }
+            // [import-ordem 2026-10-13] conversa com histórico importado → ordem por data.
+            try { if (_chatOrder().timeModeFor(conversationId, next)) return next.sort(_chatOrder().compareMsgs); } catch {}
             return next;
           });
         } catch {}
@@ -17364,6 +17431,17 @@ function ChatConversationInner() {
       if (typeof id === 'number' && id < oldestId) oldestId = id;
     }
     if (!isFinite(oldestId)) return;
+    // [import-ordem 2026-10-13] Conversa por data: a mais antiga é a 1ª da lista (não o
+    // menor id — importadas têm id alto e data antiga) e a página vem do servidor
+    // (before_id → (sort_ts,id)); o cache local recorta por id e abriria buraco.
+    let _timeConv = false;
+    try { _timeConv = _chatOrder().timeModeFor(conversationId, messages); } catch {}
+    if (_timeConv) {
+      for (let i = 0; i < messages.length; i++) {
+        const id = messages[i]?.id;
+        if (typeof id === 'number') { oldestId = id; break; }
+      }
+    }
 
     loadingMoreRef.current = true;
     setLoadingMore(true);
@@ -17377,6 +17455,7 @@ function ChatConversationInner() {
         // beforeId so the read returns ~PAGE rows (id < oldestId) instead of
         // a 500-row (web: full-thread) sweep that we then filter client-side.
         let olderCached = [];
+        if (_timeConv) { loadMessages(false, oldestId); return; } // [import-ordem 2026-10-13]
         try {
           const allCached = await getCachedMessages(conversationId, PAGE, oldestId);
           // Pick the NEAREST older window, not the oldest. The previous
@@ -23947,6 +24026,7 @@ function ChatConversationInner() {
         const m = messages[i];
         if (!m || m._type || m.type === 'system') continue;
         if (m.sender_email === currentEmail) continue;
+        if (_chatOrder().isImportedMsg(m)) continue; // [import-ordem 2026-10-13] histórico importado nunca é "não lida"
         count++; oldest = m.id;
         if (count >= cap) break;
       }
@@ -23963,6 +24043,7 @@ function ChatConversationInner() {
         const m = messages[i];
         if (!m || m._type || m.type === 'system') continue;
         if (m.sender_email === currentEmail) continue;
+        if (_chatOrder().isImportedMsg(m)) continue; // [import-ordem 2026-10-13] histórico importado nunca é "não lida"
         if (Number(m.id) > lastReadWatermark) { firstIdx = i; break; }
       }
       if (firstIdx < 0) return;
@@ -23973,6 +24054,8 @@ function ChatConversationInner() {
           const m = messages[i];
           if (!m || m._type || m.type === 'system') continue;
           if (m.sender_email === currentEmail) continue;
+          if (_chatOrder().isImportedMsg(m)) continue; // [import-ordem 2026-10-13]
+        if (_chatOrder().isImportedMsg(m)) continue; // [import-ordem 2026-10-13] histórico importado nunca é "não lida"
           count++;
           if (count === cap) nth = m.id;
         }

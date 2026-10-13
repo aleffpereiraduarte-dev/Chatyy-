@@ -20,6 +20,7 @@
 // key = sha256(tsLocal|sender|kind|text|attachment|n) (n = ocorrência idêntica) —
 // estável entre reexportações → servidor deduplica (importar de novo não duplica).
 
+import { nameScore } from './match'; // [import-ordem 2026-10-13]
 import { sha256Hex } from './sha256';
 
 const BIDI_RE = /[\u200e\u200f‪-‮⁦-⁩\ufeff]/g;
@@ -464,7 +465,8 @@ export function guessMe(participants, { myName = '', title = '', myPhone = '', p
   { const hit = names.find((n) => SELF_WORDS.includes(norm(n))); if (hit) return hit; }
   // 0c) 1:1 com a pessoa conhecida (contato do Chatyy) → eu sou o outro
   if (names.length === 2 && (peerName || peerPhone)) {
-    const isPeer = (n) => (peerPhone && phoneLike(n, peerPhone)) || (peerName && norm(n) === norm(peerName));
+    // [import-ordem 2026-10-13] nome da pessoa com grafia/emoji diferente ("Thalisa 🌿" × "Thalissa") também conta
+    const isPeer = (n) => (peerPhone && phoneLike(n, peerPhone)) || (peerName && (norm(n) === norm(peerName) || nameScore(n, peerName) >= 78));
     if (isPeer(names[0]) && !isPeer(names[1])) return names[1];
     if (isPeer(names[1]) && !isPeer(names[0])) return names[0];
   }

@@ -248,6 +248,9 @@ export async function runImport(prep, opts, onProgress, signal = {}) {
     peer_hint_name: opts.peerHintName || '', file_title: opts.fileTitle || prep.fileTitle || '',
     confirm_mismatch: opts.confirmMismatch ? 1 : 0,
     prefer_import_id: opts.preferImportId || undefined,
+    // [import-ordem 2026-10-13] este app ordena por data → servidor novo aceita importar
+    // na conversa que JÁ tem mensagens (intercala pela data). Servidor velho ignora → 409 has_messages.
+    interleave: direct ? 1 : undefined,
   }), { tries: 3, signal });
   if (!st?.success) {
     const reason = st?.data?.reason || st?.message || 'start_failed';
