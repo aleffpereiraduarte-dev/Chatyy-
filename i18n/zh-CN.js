@@ -8048,6 +8048,7 @@ export default {
   "status.reactionsCount": "{count} 个回应",
   // [wa-import-v2 2026-10-13] importação em 2º plano / continuação / resumo
   "waImport.bannerRunning": "正在从 WhatsApp 导入 · {pct}%",
+  "waImport.homeDone": "WhatsApp 导入完成",
   "waImport.bannerPaused": "导入已暂停 · {pct}%",
   "waImport.bannerError": "导入已停止 · 点按查看",
   "waImport.peerNotice": "{name} 导入了此聊天的 WhatsApp 记录",

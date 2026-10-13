@@ -8048,6 +8048,7 @@ export default {
   "status.reactionsCount": "반응 {count}개",
   // [wa-import-v2 2026-10-13] importação em 2º plano / continuação / resumo
   "waImport.bannerRunning": "WhatsApp에서 가져오는 중 · {pct}%",
+  "waImport.homeDone": "WhatsApp 가져오기 완료",
   "waImport.bannerPaused": "가져오기 일시중지 · {pct}%",
   "waImport.bannerError": "가져오기가 멈췄습니다 · 탭하여 보기",
   "waImport.peerNotice": "{name}님이 이 채팅의 WhatsApp 기록을 가져왔습니다",

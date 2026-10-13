@@ -8010,6 +8010,7 @@ export default {
   "status.reactionsCount": "{count} reactions",
   // [wa-import-v2 2026-10-13] importação em 2º plano / continuação / resumo
   "waImport.bannerRunning": "Inaingiza kutoka WhatsApp · {pct}%",
+  "waImport.homeDone": "WhatsApp import finished",
   "waImport.bannerPaused": "Uingizaji umesitishwa · {pct}%",
   "waImport.bannerError": "Uingizaji umesimama · gusa kuona",
   "waImport.peerNotice": "{name} ameingiza historia ya WhatsApp ya gumzo hili",

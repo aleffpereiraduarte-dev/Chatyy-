@@ -11612,6 +11612,7 @@ export default {
   "status.reactionsCount": "{count} reazioni",
   // [wa-import-v2 2026-10-13] importação em 2º plano / continuação / resumo
   "waImport.bannerRunning": "Importazione da WhatsApp · {pct}%",
+  "waImport.homeDone": "Importazione da WhatsApp completata",
   "waImport.bannerPaused": "Importazione in pausa · {pct}%",
   "waImport.bannerError": "Importazione interrotta · tocca per vedere",
   "waImport.peerNotice": "{name} ha importato la cronologia WhatsApp di questa chat",

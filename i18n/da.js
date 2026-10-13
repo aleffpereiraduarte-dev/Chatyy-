@@ -1,4 +1,5 @@
 export default {
+  "waImport.homeDone": "WhatsApp-import fuldført",
   // [2026-10-13 creator-dash-v2 + account-sheet]
   "creatorDash.available": "Available",
   "creatorDash.availableSub": "Ready to withdraw via Pix",

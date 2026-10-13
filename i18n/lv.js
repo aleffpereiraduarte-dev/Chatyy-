@@ -8010,6 +8010,7 @@ export default {
   "status.reactionsCount": "{count} reactions",
   // [wa-import-v2 2026-10-13] importação em 2º plano / continuação / resumo
   "waImport.bannerRunning": "Importē no WhatsApp · {pct}%",
+  "waImport.homeDone": "WhatsApp import finished",
   "waImport.bannerPaused": "Imports pauzēts · {pct}%",
   "waImport.bannerError": "Imports apstājās · pieskarieties, lai skatītu",
   "waImport.peerNotice": "{name} importēja šīs sarunas WhatsApp vēsturi",

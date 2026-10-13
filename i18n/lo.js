@@ -8006,6 +8006,7 @@ export default {
   "status.reactionsCount": "{count} reactions",
   // [wa-import-v2 2026-10-13] importação em 2º plano / continuação / resumo
   "waImport.bannerRunning": "ກຳລັງນຳເຂົ້າຈາກ WhatsApp · {pct}%",
+  "waImport.homeDone": "WhatsApp import finished",
   "waImport.bannerPaused": "ຢຸດນຳເຂົ້າຊົ່ວຄາວ · {pct}%",
   "waImport.bannerError": "ການນຳເຂົ້າຢຸດແລ້ວ · ແຕະເພື່ອເບິ່ງ",
   "waImport.peerNotice": "{name} ໄດ້ນຳເຂົ້າປະຫວັດ WhatsApp ຂອງແຊັດນີ້",

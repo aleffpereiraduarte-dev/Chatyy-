@@ -8010,6 +8010,7 @@ export default {
   "status.reactionsCount": "{count} reactions",
   // [wa-import-v2 2026-10-13] importação em 2º plano / continuação / resumo
   "waImport.bannerRunning": "מייבא מ-WhatsApp · {pct}%",
+  "waImport.homeDone": "WhatsApp import finished",
   "waImport.bannerPaused": "הייבוא מושהה · {pct}%",
   "waImport.bannerError": "הייבוא נעצר · הקש לצפייה",
   "waImport.peerNotice": "{name} ייבא/ה את היסטוריית ה-WhatsApp של הצ'אט הזה",

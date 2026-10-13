@@ -8010,6 +8010,7 @@ export default {
   "status.reactionsCount": "{count} reactions",
   // [wa-import-v2 2026-10-13] importação em 2º plano / continuação / resumo
   "waImport.bannerRunning": "در حال وارد کردن از واتس‌اپ · {pct}%",
+  "waImport.homeDone": "WhatsApp import finished",
   "waImport.bannerPaused": "وارد کردن متوقف شد · {pct}%",
   "waImport.bannerError": "وارد کردن متوقف شد · برای دیدن ضربه بزنید",
   "waImport.peerNotice": "{name} سابقهٔ واتس‌اپ این گفتگو را وارد کرد",

@@ -1354,6 +1354,7 @@ export default {
   "status.reactionsCount": "{count} reactions",
   // [wa-import-v2 2026-10-13] importação em 2º plano / continuação / resumo
   "waImport.bannerRunning": "WhatsApp ನಿಂದ ಆಮದು ಆಗುತ್ತಿದೆ · {pct}%",
+  "waImport.homeDone": "WhatsApp import finished",
   "waImport.bannerPaused": "ಆಮದು ವಿರಾಮ · {pct}%",
   "waImport.bannerError": "ಆಮದು ನಿಂತಿದೆ · ನೋಡಲು ಟ್ಯಾಪ್ ಮಾಡಿ",
   "waImport.peerNotice": "{name} ಈ ಚಾಟ್‌ನ WhatsApp ಇತಿಹಾಸವನ್ನು ಆಮದು ಮಾಡಿದ್ದಾರೆ",

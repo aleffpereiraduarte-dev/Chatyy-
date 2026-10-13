@@ -8010,6 +8010,7 @@ export default {
   "status.reactionsCount": "{count} reactions",
   // [wa-import-v2 2026-10-13] importação em 2º plano / continuação / resumo
   "waImport.bannerRunning": "Nag-i-import mula sa WhatsApp · {pct}%",
+  "waImport.homeDone": "WhatsApp import finished",
   "waImport.bannerPaused": "Naka-pause ang import · {pct}%",
   "waImport.bannerError": "Huminto ang import · i-tap para makita",
   "waImport.peerNotice": "Inimport ni {name} ang WhatsApp history ng chat na ito",

@@ -565,6 +565,7 @@ export default {
   "status.reactionsCount": "{count} reactions",
   // [wa-import-v2 2026-10-13] importação em 2º plano / continuação / resumo
   "waImport.bannerRunning": "واٹس ایپ سے درآمد ہو رہا ہے · {pct}%",
+  "waImport.homeDone": "WhatsApp import finished",
   "waImport.bannerPaused": "درآمد موقوف · {pct}%",
   "waImport.bannerError": "درآمد رک گئی · دیکھنے کے لیے ٹیپ کریں",
   "waImport.peerNotice": "{name} نے اس چیٹ کی واٹس ایپ ہسٹری درآمد کی",

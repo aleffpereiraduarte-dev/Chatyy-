@@ -8010,6 +8010,7 @@ export default {
   "status.reactionsCount": "{count} tepki",
   // [wa-import-v2 2026-10-13] importação em 2º plano / continuação / resumo
   "waImport.bannerRunning": "WhatsApp'tan içe aktarılıyor · %{pct}",
+  "waImport.homeDone": "WhatsApp import finished",
   "waImport.bannerPaused": "İçe aktarma duraklatıldı · %{pct}",
   "waImport.bannerError": "İçe aktarma durdu · görmek için dokunun",
   "waImport.peerNotice": "{name} bu sohbetin WhatsApp geçmişini içe aktardı",

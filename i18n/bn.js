@@ -8010,6 +8010,7 @@ export default {
   "status.reactionsCount": "{count} reactions",
   // [wa-import-v2 2026-10-13] importação em 2º plano / continuação / resumo
   "waImport.bannerRunning": "WhatsApp থেকে ইমপোর্ট হচ্ছে · {pct}%",
+  "waImport.homeDone": "WhatsApp import finished",
   "waImport.bannerPaused": "ইমপোর্ট থামানো · {pct}%",
   "waImport.bannerError": "ইমপোর্ট থেমে গেছে · দেখতে ট্যাপ করুন",
   "waImport.peerNotice": "{name} এই চ্যাটের WhatsApp ইতিহাস ইমপোর্ট করেছেন",

@@ -8010,6 +8010,7 @@ export default {
   "status.reactionsCount": "{count} reactions",
   // [wa-import-v2 2026-10-13] importação em 2º plano / continuação / resumo
   "waImport.bannerRunning": "Mengimport dari WhatsApp · {pct}%",
+  "waImport.homeDone": "WhatsApp import finished",
   "waImport.bannerPaused": "Import dijeda · {pct}%",
   "waImport.bannerError": "Import terhenti · ketik untuk lihat",
   "waImport.peerNotice": "{name} mengimport sejarah WhatsApp sembang ini",

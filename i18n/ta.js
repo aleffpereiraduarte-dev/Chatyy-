@@ -3756,6 +3756,7 @@ export default {
   "status.reactionsCount": "{count} reactions",
   // [wa-import-v2 2026-10-13] importação em 2º plano / continuação / resumo
   "waImport.bannerRunning": "WhatsApp இலிருந்து இறக்குமதி · {pct}%",
+  "waImport.homeDone": "WhatsApp import finished",
   "waImport.bannerPaused": "இறக்குமதி இடைநிறுத்தம் · {pct}%",
   "waImport.bannerError": "இறக்குமதி நின்றது · பார்க்க தட்டவும்",
   "waImport.peerNotice": "{name} இந்த அரட்டையின் WhatsApp வரலாற்றை இறக்குமதி செய்தார்",

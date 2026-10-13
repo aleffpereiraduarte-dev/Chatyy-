@@ -8006,6 +8006,7 @@ export default {
   "status.reactionsCount": "{count} reactions",
   // [wa-import-v2 2026-10-13] importação em 2º plano / continuação / resumo
   "waImport.bannerRunning": "იმპორტი WhatsApp-იდან · {pct}%",
+  "waImport.homeDone": "WhatsApp import finished",
   "waImport.bannerPaused": "იმპორტი შეჩერებულია · {pct}%",
   "waImport.bannerError": "იმპორტი შეჩერდა · შეეხეთ სანახავად",
   "waImport.peerNotice": "{name}-მა ამ ჩატის WhatsApp-ის ისტორია შემოიტანა",

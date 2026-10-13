@@ -8010,6 +8010,7 @@ export default {
   "status.reactionsCount": "{count} lượt bày tỏ cảm xúc",
   // [wa-import-v2 2026-10-13] importação em 2º plano / continuação / resumo
   "waImport.bannerRunning": "Đang nhập từ WhatsApp · {pct}%",
+  "waImport.homeDone": "WhatsApp import finished",
   "waImport.bannerPaused": "Đã tạm dừng nhập · {pct}%",
   "waImport.bannerError": "Quá trình nhập đã dừng · chạm để xem",
   "waImport.peerNotice": "{name} đã nhập lịch sử WhatsApp của cuộc trò chuyện này",

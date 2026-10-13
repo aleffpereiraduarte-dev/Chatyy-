@@ -11660,6 +11660,7 @@ export default {
   "status.reactionsCount": "{count} reações",
   // [wa-import-v2 2026-10-13] importação em 2º plano / continuação / resumo
   "waImport.bannerRunning": "Importando do WhatsApp · {pct}%",
+  "waImport.homeDone": "Importação do WhatsApp concluída",
   "waImport.bannerPaused": "Importação pausada · {pct}%",
   "waImport.bannerError": "A importação parou · toque para ver",
   "waImport.peerNotice": "{name} importou o histórico do WhatsApp desta conversa",

@@ -35,6 +35,7 @@ import HomeHubCard from './HomeHubCard';
 import AvatarLightbox from './AvatarLightbox';
 import ChatyyOneAvatar from './ChatyyOneAvatar';
 import SyncStatusTitle from './SyncStatusTitle'; // [2026-10-13 sync-status]
+import WaImportBanner from './WaImportBanner'; // [2026-10-13] importação do WhatsApp visível na home
 import { setActiveInterval } from '../utils/activeInterval'; // [2026-10-10 perf-battery]
 // [2026-10-11 boot-split] Heavy, rarely-opened surfaces are code-split: the chat
 // list is the boot screen, so StatusCamera (native-only here), the group/channel
@@ -7965,6 +7966,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
   const _listHeaderEl = useMemo(() => (largeTitle ? (
     <>
       {_largeTitleEl}
+      {!selectionMode && <WaImportBanner global />}
       {!selectionMode && _topChromeEl}
       {ListHeaderComponent}
     </>

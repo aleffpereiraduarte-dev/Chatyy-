@@ -11612,6 +11612,7 @@ export default {
   "status.reactionsCount": "{count} تفاعلات",
   // [wa-import-v2 2026-10-13] importação em 2º plano / continuação / resumo
   "waImport.bannerRunning": "جارٍ الاستيراد من واتساب · {pct}%",
+  "waImport.homeDone": "اكتمل الاستيراد من واتساب",
   "waImport.bannerPaused": "الاستيراد متوقف مؤقتًا · {pct}%",
   "waImport.bannerError": "توقف الاستيراد · اضغط للعرض",
   "waImport.peerNotice": "استورد {name} سجل واتساب لهذه الدردشة",

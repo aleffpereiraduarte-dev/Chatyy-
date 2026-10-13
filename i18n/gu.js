@@ -6158,6 +6158,7 @@ export default {
   "status.reactionsCount": "{count} reactions",
   // [wa-import-v2 2026-10-13] importação em 2º plano / continuação / resumo
   "waImport.bannerRunning": "WhatsAppમાંથી ઇમ્પોર્ટ થઈ રહ્યું છે · {pct}%",
+  "waImport.homeDone": "WhatsApp import finished",
   "waImport.bannerPaused": "ઇમ્પોર્ટ થોભાવ્યું · {pct}%",
   "waImport.bannerError": "ઇમ્પોર્ટ અટક્યું · જોવા ટૅપ કરો",
   "waImport.peerNotice": "{name}એ આ ચેટનો WhatsApp ઇતિહાસ ઇમ્પોર્ટ કર્યો",

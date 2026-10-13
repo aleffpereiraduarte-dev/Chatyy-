@@ -11612,6 +11612,7 @@ export default {
   "status.reactionsCount": "{count} Reaktionen",
   // [wa-import-v2 2026-10-13] importação em 2º plano / continuação / resumo
   "waImport.bannerRunning": "Import aus WhatsApp · {pct} %",
+  "waImport.homeDone": "WhatsApp-Import abgeschlossen",
   "waImport.bannerPaused": "Import pausiert · {pct} %",
   "waImport.bannerError": "Import gestoppt · tippen für Details",
   "waImport.peerNotice": "{name} hat den WhatsApp-Verlauf dieses Chats importiert",

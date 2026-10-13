@@ -26,7 +26,7 @@ job.onHistoryImported((d) => {
 
 const _infoCache = new Map(); // cid → { at, items }
 
-export default function WaImportBanner({ conversationId }) {
+export default function WaImportBanner({ conversationId, global: isGlobal = false }) {
   const router = useRouter();
   const { colors, isDark } = useTheme();
   const { t } = useLanguage();
@@ -63,7 +63,21 @@ export default function WaImportBanner({ conversationId }) {
     if (String(d?.conversation_id) === cid && d?.mode === 'direct') { _infoCache.delete(cid); loadInfo(true); }
   }), [cid, loadInfo]);
 
-  const relevant = cid && (String(j.conversationId || '') === cid || String(j.originConvId || '') === cid || String(j.targetConversationId || '') === cid);
+  // [2026-10-13] global = faixa na HOME (lista de conversas): mostra qualquer
+  // importação em andamento e, ao terminar, "concluída" por alguns segundos.
+  const relevant = isGlobal || (cid && (String(j.conversationId || '') === cid || String(j.originConvId || '') === cid || String(j.targetConversationId || '') === cid));
+  const [doneFlash, setDoneFlash] = useState(false);
+  const _prevStatus = React.useRef(j.status);
+  useEffect(() => {
+    if (!isGlobal) return undefined;
+    const was = _prevStatus.current; _prevStatus.current = j.status;
+    if (j.status === 'done' && was !== 'done') {
+      setDoneFlash(true);
+      const tm = setTimeout(() => setDoneFlash(false), 9000);
+      return () => clearTimeout(tm);
+    }
+    return undefined;
+  }, [isGlobal, j.status]);
   const running = relevant && (j.status === 'running' || j.status === 'paused' || j.status === 'error');
   const bg = isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)';
   const ink = colors.text;
@@ -85,6 +99,19 @@ export default function WaImportBanner({ conversationId }) {
       </TouchableOpacity>
     );
   }
+
+  if (isGlobal && doneFlash && j.status === 'done') {
+    const conv = j.conversationId || (j.result && j.result.conversationId);
+    const label = t('waImport.homeDone') || 'Importação do WhatsApp concluída';
+    return (
+      <TouchableOpacity onPress={() => { setDoneFlash(false); try { if (conv) router.push({ pathname: '/chat-conversation', params: { id: String(conv) } }); } catch {} }}
+        accessibilityRole="button" accessibilityLabel={label} style={[s.row, { backgroundColor: bg }]}>
+        <IconCheck size={14} color={ink} />
+        <Text style={[s.text, { color: ink }]} numberOfLines={1}>{label}</Text>
+      </TouchableOpacity>
+    );
+  }
+  if (isGlobal) return null;
 
   if (notice && !notice.dismissed && !notice.hidden) {
     const hide = async () => {

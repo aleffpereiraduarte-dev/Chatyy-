@@ -10833,6 +10833,7 @@ export default {
   "status.reactionsCount": "{count} reaksi",
   // [wa-import-v2 2026-10-13] importação em 2º plano / continuação / resumo
   "waImport.bannerRunning": "Mengimpor dari WhatsApp · {pct}%",
+  "waImport.homeDone": "Impor WhatsApp selesai",
   "waImport.bannerPaused": "Impor dijeda · {pct}%",
   "waImport.bannerError": "Impor berhenti · ketuk untuk melihat",
   "waImport.peerNotice": "{name} mengimpor riwayat WhatsApp chat ini",

@@ -555,6 +555,7 @@ export default {
   "status.reactionsCount": "{count} reactions",
   // [wa-import-v2 2026-10-13] importação em 2º plano / continuação / resumo
   "waImport.bannerRunning": "WhatsApp-ൽ നിന്ന് ഇമ്പോർട്ട് ചെയ്യുന്നു · {pct}%",
+  "waImport.homeDone": "WhatsApp import finished",
   "waImport.bannerPaused": "ഇമ്പോർട്ട് താൽക്കാലികമായി നിർത്തി · {pct}%",
   "waImport.bannerError": "ഇമ്പോർട്ട് നിന്നു · കാണാൻ ടാപ്പ് ചെയ്യുക",
   "waImport.peerNotice": "{name} ഈ ചാറ്റിന്റെ WhatsApp ചരിത്രം ഇമ്പോർട്ട് ചെയ്തു",

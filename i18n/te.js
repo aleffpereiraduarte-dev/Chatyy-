@@ -8006,6 +8006,7 @@ export default {
   "status.reactionsCount": "{count} reactions",
   // [wa-import-v2 2026-10-13] importação em 2º plano / continuação / resumo
   "waImport.bannerRunning": "WhatsApp నుండి దిగుమతి అవుతోంది · {pct}%",
+  "waImport.homeDone": "WhatsApp import finished",
   "waImport.bannerPaused": "దిగుమతి పాజ్ చేయబడింది · {pct}%",
   "waImport.bannerError": "దిగుమతి ఆగింది · చూడటానికి నొక్కండి",
   "waImport.peerNotice": "{name} ఈ చాట్ WhatsApp చరిత్రను దిగుమతి చేశారు",

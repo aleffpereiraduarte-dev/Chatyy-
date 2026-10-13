@@ -8006,6 +8006,7 @@ export default {
   "status.reactionsCount": "{count} reactions",
   // [wa-import-v2 2026-10-13] importação em 2º plano / continuação / resumo
   "waImport.bannerRunning": "ከWhatsApp በማስመጣት ላይ · {pct}%",
+  "waImport.homeDone": "WhatsApp import finished",
   "waImport.bannerPaused": "ማስመጣቱ ቆሟል · {pct}%",
   "waImport.bannerError": "ማስመጣቱ ተቋርጧል · ለማየት ይንኩ",
   "waImport.peerNotice": "{name} የዚህን ውይይት የWhatsApp ታሪክ አስመጥቷል",

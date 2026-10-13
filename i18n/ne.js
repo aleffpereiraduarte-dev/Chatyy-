@@ -552,6 +552,7 @@ export default {
   "status.reactionsCount": "{count} reactions",
   // [wa-import-v2 2026-10-13] importação em 2º plano / continuação / resumo
   "waImport.bannerRunning": "WhatsApp बाट आयात हुँदैछ · {pct}%",
+  "waImport.homeDone": "WhatsApp import finished",
   "waImport.bannerPaused": "आयात रोकिएको छ · {pct}%",
   "waImport.bannerError": "आयात रोकियो · हेर्न ट्याप गर्नुहोस्",
   "waImport.peerNotice": "{name} ले यो च्याटको WhatsApp इतिहास आयात गर्नुभयो",

@@ -8010,6 +8010,7 @@ export default {
   "status.reactionsCount": "{count} reactions",
   // [wa-import-v2 2026-10-13] importação em 2º plano / continuação / resumo
   "waImport.bannerRunning": "Εισαγωγή από WhatsApp · {pct}%",
+  "waImport.homeDone": "WhatsApp import finished",
   "waImport.bannerPaused": "Η εισαγωγή σε παύση · {pct}%",
   "waImport.bannerError": "Η εισαγωγή σταμάτησε · πατήστε για λεπτομέρειες",
   "waImport.peerNotice": "{name} εισήγαγε το ιστορικό WhatsApp αυτής της συνομιλίας",

@@ -8010,6 +8010,7 @@ export default {
   "status.reactionsCount": "{count} reactions",
   // [wa-import-v2 2026-10-13] importação em 2º plano / continuação / resumo
   "waImport.bannerRunning": "Importálás WhatsAppból · {pct}%",
+  "waImport.homeDone": "WhatsApp import finished",
   "waImport.bannerPaused": "Importálás szüneteltetve · {pct}%",
   "waImport.bannerError": "Az importálás leállt · koppints a részletekért",
   "waImport.peerNotice": "{name} importálta ennek a csevegésnek a WhatsApp-előzményeit",

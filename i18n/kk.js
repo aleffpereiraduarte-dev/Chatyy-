@@ -8006,6 +8006,7 @@ export default {
   "status.reactionsCount": "{count} reactions",
   // [wa-import-v2 2026-10-13] importação em 2º plano / continuação / resumo
   "waImport.bannerRunning": "WhatsApp-тан импорттау · {pct}%",
+  "waImport.homeDone": "WhatsApp import finished",
   "waImport.bannerPaused": "Импорт кідіртілді · {pct}%",
   "waImport.bannerError": "Импорт тоқтады · көру үшін түртіңіз",
   "waImport.peerNotice": "{name} осы чаттың WhatsApp тарихын импорттады",

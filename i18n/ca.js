@@ -8010,6 +8010,7 @@ export default {
   "status.reactionsCount": "{count} reactions",
   // [wa-import-v2 2026-10-13] importação em 2º plano / continuação / resumo
   "waImport.bannerRunning": "Important de WhatsApp · {pct}%",
+  "waImport.homeDone": "WhatsApp import finished",
   "waImport.bannerPaused": "Importació en pausa · {pct}%",
   "waImport.bannerError": "La importació s'ha aturat · toca per veure",
   "waImport.peerNotice": "{name} ha importat l'historial de WhatsApp d'aquest xat",

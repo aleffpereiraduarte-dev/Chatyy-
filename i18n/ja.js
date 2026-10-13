@@ -10834,6 +10834,7 @@ export default {
   "status.reactionsCount": "リアクション {count}件",
   // [wa-import-v2 2026-10-13] importação em 2º plano / continuação / resumo
   "waImport.bannerRunning": "WhatsAppからインポート中 · {pct}%",
+  "waImport.homeDone": "WhatsAppのインポートが完了しました",
   "waImport.bannerPaused": "インポートを一時停止中 · {pct}%",
   "waImport.bannerError": "インポートが停止しました · タップして確認",
   "waImport.peerNotice": "{name}がこのトークのWhatsApp履歴をインポートしました",

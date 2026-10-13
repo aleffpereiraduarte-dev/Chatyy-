@@ -8788,6 +8788,7 @@ export default {
   "status.reactionsCount": "Reakcje: {count}",
   // [wa-import-v2 2026-10-13] importação em 2º plano / continuação / resumo
   "waImport.bannerRunning": "Importowanie z WhatsApp · {pct}%",
+  "waImport.homeDone": "WhatsApp import finished",
   "waImport.bannerPaused": "Import wstrzymany · {pct}%",
   "waImport.bannerError": "Import zatrzymany · dotknij, aby zobaczyć",
   "waImport.peerNotice": "{name} zaimportował(a) historię WhatsApp tego czatu",

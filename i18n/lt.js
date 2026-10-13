@@ -8010,6 +8010,7 @@ export default {
   "status.reactionsCount": "{count} reactions",
   // [wa-import-v2 2026-10-13] importação em 2º plano / continuação / resumo
   "waImport.bannerRunning": "Importuojama iš WhatsApp · {pct} %",
+  "waImport.homeDone": "WhatsApp import finished",
   "waImport.bannerPaused": "Importavimas pristabdytas · {pct} %",
   "waImport.bannerError": "Importavimas sustojo · bakstelėkite, kad pamatytumėte",
   "waImport.peerNotice": "{name} importavo šio pokalbio WhatsApp istoriją",

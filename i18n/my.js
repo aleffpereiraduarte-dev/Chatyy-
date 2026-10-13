@@ -8006,6 +8006,7 @@ export default {
   "status.reactionsCount": "{count} reactions",
   // [wa-import-v2 2026-10-13] importação em 2º plano / continuação / resumo
   "waImport.bannerRunning": "WhatsApp မှ တင်သွင်းနေသည် · {pct}%",
+  "waImport.homeDone": "WhatsApp import finished",
   "waImport.bannerPaused": "တင်သွင်းမှု ခေတ္တရပ်ထားသည် · {pct}%",
   "waImport.bannerError": "တင်သွင်းမှု ရပ်သွားသည် · ကြည့်ရန် နှိပ်ပါ",
   "waImport.peerNotice": "{name} က ဤချက်တင်၏ WhatsApp မှတ်တမ်းကို တင်သွင်းခဲ့သည်",

@@ -552,6 +552,7 @@ export default {
   "status.reactionsCount": "{count} reactions",
   // [wa-import-v2 2026-10-13] importação em 2º plano / continuação / resumo
   "waImport.bannerRunning": "WhatsApp වෙතින් ආයාත කරමින් · {pct}%",
+  "waImport.homeDone": "WhatsApp import finished",
   "waImport.bannerPaused": "ආයාතය විරාම කර ඇත · {pct}%",
   "waImport.bannerError": "ආයාතය නැවතුණා · බැලීමට තට්ටු කරන්න",
   "waImport.peerNotice": "{name} මෙම කතාබහේ WhatsApp ඉතිහාසය ආයාත කළා",

@@ -8006,6 +8006,7 @@ export default {
   "status.reactionsCount": "{count} reactions",
   // [wa-import-v2 2026-10-13] importação em 2º plano / continuação / resumo
   "waImport.bannerRunning": "Ներմուծում WhatsApp-ից · {pct}%",
+  "waImport.homeDone": "WhatsApp import finished",
   "waImport.bannerPaused": "Ներմուծումը դադարեցված է · {pct}%",
   "waImport.bannerError": "Ներմուծումը կանգ առավ · հպեք՝ տեսնելու համար",
   "waImport.peerNotice": "{name}-ը ներմուծել է այս զրույցի WhatsApp պատմությունը",

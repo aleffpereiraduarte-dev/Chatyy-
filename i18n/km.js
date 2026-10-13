@@ -8006,6 +8006,7 @@ export default {
   "status.reactionsCount": "{count} reactions",
   // [wa-import-v2 2026-10-13] importação em 2º plano / continuação / resumo
   "waImport.bannerRunning": "កំពុងនាំចូលពី WhatsApp · {pct}%",
+  "waImport.homeDone": "WhatsApp import finished",
   "waImport.bannerPaused": "ការនាំចូលបានផ្អាក · {pct}%",
   "waImport.bannerError": "ការនាំចូលបានឈប់ · ចុចដើម្បីមើល",
   "waImport.peerNotice": "{name} បាននាំចូលប្រវត្តិ WhatsApp នៃការជជែកនេះ",

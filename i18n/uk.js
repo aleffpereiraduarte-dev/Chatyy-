@@ -8010,6 +8010,7 @@ export default {
   "status.reactionsCount": "Реакції: {count}",
   // [wa-import-v2 2026-10-13] importação em 2º plano / continuação / resumo
   "waImport.bannerRunning": "Імпорт із WhatsApp · {pct}%",
+  "waImport.homeDone": "WhatsApp import finished",
   "waImport.bannerPaused": "Імпорт призупинено · {pct}%",
   "waImport.bannerError": "Імпорт зупинився · торкніться, щоб переглянути",
   "waImport.peerNotice": "{name} імпортував(ла) історію WhatsApp цього чату",
