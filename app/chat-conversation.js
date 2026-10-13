@@ -17920,7 +17920,7 @@ function ChatConversationInner() {
   // the optimistic bubble by cmi; failures reach it via the [send-media]
   // effect. Returns false when the outbox is unavailable (web / SQLite down)
   // so callers fall back to their legacy inline path.
-  const _sendRichViaOutbox = async ({ msgId, tempId, type, content, fileUrl = null, createdAt }) => {
+  const _sendRichViaOutbox = async ({ msgId, tempId, type, content, fileUrl = null, createdAt, replyToId = null }) => {
     if (!OUTBOX_V2_ONLY) return false;
     try {
       const r = await messageOutbox.enqueue({
@@ -17930,6 +17930,7 @@ function ChatConversationInner() {
         type,
         content,
         file_url: fileUrl || null,
+        reply_to_id: replyToId || null, // [2026-10-12] figurinha respondendo
         sender_email: currentEmail,
         created_at: createdAt || new Date().toISOString(),
       });
@@ -18082,12 +18083,26 @@ function ChatConversationInner() {
     // Aquece o cache de imagem (o picker já baixou a miniatura) p/ a bolha pintar
     // a figurinha no 1º frame em vez de um quadro vazio + fade.
     if (isImage && _expoImagePrefetch) { try { _expoImagePrefetch(api.getMediaUrl(sticker) || sticker, 'memory-disk')?.catch?.(() => {}); } catch {} }
+    // [2026-10-12] Arrastou p/ responder e mandou figurinha → vai como RESPOSTA
+    // (antes ia solta: reply_to_id null e a barra de resposta continuava aberta).
+    const _rt = replyTo;
+    const replyId = (_rt?.id && !(typeof _rt.id === 'string' && _rt.id.startsWith('tmp_'))) ? _rt.id : null;
+    if (_rt) setReplyTo(null);
     const msgId = 'msg_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
     const tempId = `tmp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     const optimisticMsg = {
       id: tempId, _negId: Date.now() * 1000 + Math.floor(Math.random() * 1000), conversation_id: conversationId, sender_email: currentEmail,
       content: sticker, type: 'sticker',
       file_url: isImage ? sticker : null,
+      reply_to_id: replyId,
+      reply_to: (replyId && _rt) ? {
+        id: _rt.id || 0,
+        sender_email: _rt.sender_email || '',
+        sender_name: _rt.sender_name || (_rt.sender_email || '').split('@')[0] || 'Unknown',
+        content: (_rt.content || '').substring(0, 200),
+        type: _rt.type || 'text',
+        file_url: _rt.file_url || null,
+      } : null,
       created_at: new Date().toISOString(), _pending: true, _client_id: msgId,
     };
     setMessages(prev => [...prev, optimisticMsg]);
@@ -18115,17 +18130,17 @@ function ChatConversationInner() {
     } catch {}
 
     // [2026-10-07 send-media] Native: durable outbox.
-    if (await _sendRichViaOutbox({ msgId, tempId, type: 'sticker', content: sticker, fileUrl: isImage ? sticker : null, createdAt: optimisticMsg.created_at })) {
+    if (await _sendRichViaOutbox({ msgId, tempId, type: 'sticker', content: sticker, fileUrl: isImage ? sticker : null, createdAt: optimisticMsg.created_at, replyToId: replyId })) {
       requestAnimationFrame(() => { flatListRef.current?.scrollToOffset?.({ offset: 0, animated: true }); });
       return;
     }
     // ⭐ Save pending sticker BEFORE network attempt
-    const pendingData = { temp_id: tempId, client_message_id: msgId, conversation_id: conversationId, content: sticker, type: 'sticker', file_url: isImage ? sticker : null, created_at: optimisticMsg.created_at, sender_email: currentEmail };
+    const pendingData = { temp_id: tempId, client_message_id: msgId, conversation_id: conversationId, content: sticker, type: 'sticker', file_url: isImage ? sticker : null, reply_to_id: replyId, created_at: optimisticMsg.created_at, sender_email: currentEmail };
     await savePendingMessage(conversationId, pendingData).catch(() => {});
 
     requestAnimationFrame(() => { flatListRef.current?.scrollToOffset?.({ offset: 0, animated: true }); });
     try {
-      const r = await enqueueChatSend(() => api.chatSend(conversationId, sticker, 'sticker', null, null, isImage ? sticker : null, tempId, msgId));
+      const r = await enqueueChatSend(() => api.chatSend(conversationId, sticker, 'sticker', replyId, null, isImage ? sticker : null, tempId, msgId));
       if (r.success && r.data?.id) {
         // [#1188 fix] Preserve sender_email — envelope mode returns null.
         setMessages(prev => _mapKeep(prev, m => m.id === tempId ? { ...r.data, _pending: false, sender_email: r.data.sender_email || m.sender_email || currentEmail } : m));
@@ -18134,7 +18149,7 @@ function ChatConversationInner() {
       } else {
         try {
           const { queueOfflineAction } = require('../services/offlineCache');
-          await queueOfflineAction({ type: 'chat_send', conversation_id: conversationId, content: sticker, msgType: 'sticker', reply_to_id: null, mentions: null, temp_id: tempId, client_message_id: msgId, file_url: isImage ? sticker : null });
+          await queueOfflineAction({ type: 'chat_send', conversation_id: conversationId, content: sticker, msgType: 'sticker', reply_to_id: replyId, mentions: null, temp_id: tempId, client_message_id: msgId, file_url: isImage ? sticker : null });
           setMessages(prev => _mapKeep(prev, m => m.id === tempId ? { ...m, _pending: true, _failed: false, _queued: true } : m));
         } catch {
           setMessages(prev => _mapKeep(prev, m => m.id === tempId ? { ...m, _failed: true, _pending: false } : m));
@@ -18143,7 +18158,7 @@ function ChatConversationInner() {
     } catch {
       try {
         const { queueOfflineAction } = require('../services/offlineCache');
-        await queueOfflineAction({ type: 'chat_send', conversation_id: conversationId, content: sticker, msgType: 'sticker', reply_to_id: null, mentions: null, temp_id: tempId, client_message_id: msgId, file_url: isImage ? sticker : null });
+        await queueOfflineAction({ type: 'chat_send', conversation_id: conversationId, content: sticker, msgType: 'sticker', reply_to_id: replyId, mentions: null, temp_id: tempId, client_message_id: msgId, file_url: isImage ? sticker : null });
         setMessages(prev => _mapKeep(prev, m => m.id === tempId ? { ...m, _pending: true, _failed: false, _queued: true } : m));
       } catch {
         setMessages(prev => _mapKeep(prev, m => m.id === tempId ? { ...m, _failed: true, _pending: false } : m));
