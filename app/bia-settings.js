@@ -6,6 +6,7 @@ import { View, Text, TextInput, ActivityIndicator, StyleSheet } from 'react-nati
 import { useLanguage } from '../context/LanguageContext';
 import { IconSparkles } from '../components/Icons';
 import { aiMemoryGet, aiMemorySet, aiMemoryLearnStyle } from '../services/api';
+import * as settingsCache from '../services/settingsCache'; // [2026-10-13 settings-instant]
 import {
   SettingsScreen, SettingsGroup, SettingsRow, SettingsIconTile, useGroupedColors, useSettingsInputStyle,
 } from '../components/settings/SettingsKit';
@@ -15,7 +16,8 @@ export default function BiaSettings() {
   const g = useGroupedColors();
   const inputStyle = useSettingsInputStyle();
 
-  const [loading, setLoading] = useState(true);
+  // [2026-10-13 settings-instant] memória da Bia salva no aparelho → abre na hora.
+  const [loading, setLoading] = useState(() => settingsCache.peek('bia_memory') == null);
   const [saving, setSaving] = useState(false);
   const [learning, setLearning] = useState(false);
   const [toast, setToast] = useState(null);
@@ -37,10 +39,14 @@ export default function BiaSettings() {
   }, []);
 
   useEffect(() => {
+    hydrate(settingsCache.peek('bia_memory'));
     (async () => {
       try {
         const r = await aiMemoryGet();
-        if (r?.success) hydrate(r.data?.memory);
+        if (r?.success) {
+          hydrate(r.data?.memory);
+          if (r.data?.memory && typeof r.data.memory === 'object') settingsCache.put('bia_memory', r.data.memory);
+        }
       } catch {}
       setLoading(false);
     })();
@@ -51,6 +57,7 @@ export default function BiaSettings() {
     try {
       if (tone.trim()) await aiMemorySet('tone', tone.trim());
       if (signature.trim()) await aiMemorySet('signature', signature.trim());
+      try { settingsCache.patch('bia_memory', { ...(tone.trim() ? { tone: tone.trim() } : {}), ...(signature.trim() ? { signature: signature.trim() } : {}) }); } catch {}
       showToast(t('bia.saved') || 'Preferências salvas ✓');
     } catch {
       showToast(t('bia.saveError') || 'Não consegui salvar agora');

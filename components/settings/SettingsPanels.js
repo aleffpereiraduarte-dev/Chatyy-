@@ -16,6 +16,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { View, Text, ActivityIndicator, Alert, Linking, Platform, Pressable } from 'react-native';
 import * as api from '../../services/api';
+import * as settingsCache from '../../services/settingsCache'; // [2026-10-13 settings-instant]
 import { useTheme, ACCENT_PRESETS } from '../../context/ThemeContext';
 import { useLanguage } from '../../context/LanguageContext';
 import { SettingsGroup, SettingsRow, SettingsSwitchRow, SettingsCardContent, useGroupedColors } from './SettingsKit';
@@ -44,6 +45,15 @@ async function _store() {
   }
   return (await import('@react-native-async-storage/async-storage')).default;
 }
+// [2026-10-13 settings-instant] Espelho síncrono (settingsCache, por conta)
+// das flags locais → o switch já nasce no valor salvo (sem piscar pelo
+// getItem assíncrono do AsyncStorage).
+function peekAcctFlag(base) {
+  try { const c = settingsCache.peek('local_flags'); return c && typeof c === 'object' && base in c ? c[base] : null; } catch { return null; }
+}
+function _mirrorFlag(base, value) {
+  try { settingsCache.patch('local_flags', { [base]: value }); } catch {}
+}
 // Per-account read with one-time fallback to the legacy global key.
 async function readAcctFlag(base) {
   const s = await _store();
@@ -51,10 +61,12 @@ async function readAcctFlag(base) {
   let v = null;
   try { v = await s.getItem(nk); } catch {}
   if (v == null && nk !== base) { try { v = await s.getItem(base); } catch {} }
+  if (v != null && peekAcctFlag(base) !== v) _mirrorFlag(base, v);
   return v;
 }
 // Dual-write: per-account key + legacy global key (chat send pipeline reads it).
 async function writeAcctFlag(base, value, { mirrorGlobal = true } = {}) {
+  if (peekAcctFlag(base) !== value) _mirrorFlag(base, value);
   const s = await _store();
   try { await s.setItem(_acctKey(base), value); } catch {}
   if (mirrorGlobal) { try { await s.setItem(base, value); } catch {} }
@@ -71,8 +83,8 @@ function fmtBytes(b) {
 // ─── Privacidade › Mídia e mensagens (EXIF, sealed sender, nuvem) ─────────
 export function PrivacyExtrasGroup({ cloudChats, onCloudChatsChange }) {
   const { t } = useLanguage();
-  const [stripExif, setStripExif] = useState(true);
-  const [sealed, setSealed] = useState(false);
+  const [stripExif, setStripExif] = useState(() => peekAcctFlag('chatyy_strip_exif') !== 'false');
+  const [sealed, setSealed] = useState(() => peekAcctFlag('chatyy_sealed_sender') === 'true');
   useEffect(() => {
     let alive = true;
     (async () => {
@@ -116,7 +128,7 @@ export function PrivacyExtrasGroup({ cloudChats, onCloudChatsChange }) {
 // ─── Notificações › chave geral de push (por aparelho) ─────────────────────
 export function PushMasterSwitchRow() {
   const { t } = useLanguage();
-  const [enabled, setEnabled] = useState(true);
+  const [enabled, setEnabled] = useState(() => peekAcctFlag('push_enabled') !== 'false');
   useEffect(() => {
     let alive = true;
     (async () => {
@@ -188,15 +200,13 @@ export function WallpaperRow() {
   const { t } = useLanguage();
   const { colors, isDark } = useTheme();
   const [open, setOpen] = useState(false);
-  const [current, setCurrent] = useState('none');
+  // [2026-10-13 settings-instant] snapshot 'chat_settings' (por conta) + revalidação.
+  const { data: chatSettings } = settingsCache.useSettingsSection('chat_settings');
+  const [current, setCurrent] = useState(() => (chatSettings && typeof chatSettings.wallpaper === 'string' && chatSettings.wallpaper) || 'none');
   const [Picker, setPicker] = useState(null);
   useEffect(() => {
-    let alive = true;
-    api.chatGetSettings?.().then(r => {
-      if (alive && r?.success && r.data && typeof r.data.wallpaper === 'string') setCurrent(r.data.wallpaper || 'none');
-    }).catch(() => {});
-    return () => { alive = false; };
-  }, []);
+    if (chatSettings && typeof chatSettings.wallpaper === 'string') setCurrent(chatSettings.wallpaper || 'none');
+  }, [chatSettings]);
   const openPicker = () => {
     if (!Picker) { try { setPicker(() => require('../WallpaperPicker').default); } catch {} }
     setOpen(true);
@@ -222,7 +232,9 @@ export function WallpaperRow() {
           defaultScope="all"
           onApply={(value) => {
             setCurrent(value);
-            api.chatUpdateSettings?.({ wallpaper: value })?.catch?.(() => {});
+            try { globalThis.__chatyy_chat_settings_rev = (Number(globalThis.__chatyy_chat_settings_rev) || 0) + 1; } catch {} // = api.chatUpdateSettings
+            settingsCache.commit('chat_settings', { patch: { wallpaper: value }, action: 'chat_update_settings', params: { wallpaper: value } })
+              .then((res) => { if (res && res.ok === false) settingsCache.notifySaveFailed(t); }).catch(() => {});
           }}
         />
       ) : null}
@@ -286,17 +298,19 @@ export function ExportDataPanel() {
 export function BlockedContactsPanel() {
   const { t } = useLanguage();
   const g = useGroupedColors();
-  const [list, setList] = useState(null);
-  const load = useCallback(() => {
-    api.chatBlockedList?.().then(r => {
-      setList(r?.success ? (Array.isArray(r.data) ? r.data : []) : []);
-    }).catch(() => setList([]));
-  }, []);
-  useEffect(() => { load(); }, [load]);
+  // [2026-10-13 settings-instant] lista salva no aparelho → abre na hora;
+  // revalida em 2º plano. Spinner só na 1ª vez na vida (sem cache).
+  const { data: cached, revalidating } = settingsCache.useSettingsSection('blocked');
+  const list = Array.isArray(cached) ? cached : (revalidating ? null : []);
   const unblock = (email) => {
     const doIt = async () => {
-      try { await api.chatUnblockUser(email); } catch {}
-      setList(prev => (prev || []).filter(b => b.blocked_email !== email));
+      // Otimista: some da lista na hora; volta se o servidor recusar.
+      settingsCache.patch('blocked', (prev) => (Array.isArray(prev) ? prev : []).filter(b => b.blocked_email !== email));
+      try {
+        const r = await api.chatUnblockUser(email);
+        if (r && r.success === false) { settingsCache.revalidate('blocked', { force: true }).catch(() => {}); settingsCache.notifySaveFailed(t); }
+        else { try { api.swrInvalidate?.('chat_blocked_list'); } catch {} }
+      } catch { settingsCache.revalidate('blocked', { force: true }).catch(() => {}); }
     };
     const title = t('config.unblock');
     const msg = String(t('config.unblockConfirm') || '').replace('{email}', email);
@@ -312,7 +326,12 @@ export function BlockedContactsPanel() {
     ]);
   };
   if (list === null) {
-    return <View style={{ paddingVertical: 40, alignItems: 'center' }}><ActivityIndicator color={g.secondary} /></View>;
+    // 1ª abertura sem cache: indicador discreto numa linha (não tela cheia).
+    return (
+      <SettingsGroup footer={t('settings.blockedFooter')}>
+        <SettingsRow title=" " chevron={false} right={<ActivityIndicator size="small" color={g.secondary} />} />
+      </SettingsGroup>
+    );
   }
   return (
     <SettingsGroup footer={t('settings.blockedFooter')}>
@@ -336,23 +355,14 @@ export function BlockedContactsPanel() {
 export function ChatyyOnePanel() {
   const { t, language } = useLanguage();
   const g = useGroupedColors();
-  const [plan, setPlan] = useState(null);
-  const [usage, setUsage] = useState(null);
-  const [loading, setLoading] = useState(true);
+  // [2026-10-13 settings-instant] plano + uso salvos no aparelho (seção
+  // 'plan' = plan_info ‖ chat_storage_usage em paralelo) → abre na hora.
+  const { data: planSnap, revalidating, refresh: load } = settingsCache.useSettingsSection('plan');
+  const plan = planSnap?.plan || null;
+  const usage = planSnap?.usage || null;
+  const loading = !planSnap && revalidating;
   const [busy, setBusy] = useState(false);
   const [shop, setShop] = useState(false);
-  const load = useCallback(async () => {
-    try {
-      const [p, u] = await Promise.all([
-        api.planInfo?.().catch(() => null),
-        api.storageUsage?.().catch(() => null),
-      ]);
-      if (p?.success && p.data) setPlan(p.data);
-      if (u?.success && u.data) setUsage(u.data);
-    } catch {}
-    setLoading(false);
-  }, []);
-  useEffect(() => { load(); }, [load]);
   if (loading) return <View style={{ paddingVertical: 40, alignItems: 'center' }}><ActivityIndicator color={g.secondary} /></View>;
 
   const planNorm = normalizePlanState(plan, usage);

@@ -12,6 +12,7 @@ import { USE_NATIVE_HEADER, nativeHeaderOptions, nativeScrollInsetProps, NativeI
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import * as api from '../services/api';
+import * as settingsCache from '../services/settingsCache'; // [2026-10-13 settings-instant]
 import AvatarCircle from '../components/AvatarCircle';
 import { IconArrowLeft, IconSearch, IconEyeOff, IconCheck } from '../components/Icons';
 import { emailToDisplayName } from '../services/api';
@@ -20,33 +21,37 @@ export default function StatusExceptScreen() {
   const { colors, isDark } = useTheme();
   const { t } = useLanguage();
   const router = useRouter();
-  const [contacts, setContacts] = useState([]);
-  const [excluded, setExcluded] = useState(new Set());
-  const [loading, setLoading] = useState(true);
+  // [2026-10-13 settings-instant] snapshot local (privacidade + contatos enxutos).
+  const [_pvSnap] = useState(() => {
+    const pv = settingsCache.peek('privacy');
+    return pv && Array.isArray(pv.status_except) ? pv.status_except.map(e => (e || '').toLowerCase()) : null;
+  });
+  const [contacts, setContacts] = useState(() => { const c = settingsCache.peek('contacts_lite'); return Array.isArray(c) ? c : []; });
+  const [excluded, setExcluded] = useState(() => new Set(_pvSnap || []));
+  const [loading, setLoading] = useState(() => settingsCache.peek('contacts_lite') == null);
   const [query, setQuery] = useState('');
   // Last server-confirmed exclusion list + persist sequence for latest-wins.
   // Without these, a failed chatPrivacySet left the UI showing the contact as
   // hidden while the server never saved it — the user believes their status
   // is hidden from someone and it isn't.
-  const savedRef = useRef(new Set());
+  const savedRef = useRef(new Set(_pvSnap || []));
   const seqRef = useRef(0);
 
+  // Revalida privacidade + contatos em paralelo (não sobrescreve se a
+  // pessoa já começou a marcar — seqRef > 0).
   useEffect(() => {
     (async () => {
       try {
         const [pv, cs] = await Promise.all([
-          api.chatPrivacyGet?.(),
-          api.chatContacts?.(),
+          settingsCache.revalidate('privacy', { force: true }),
+          settingsCache.revalidate('contacts_lite', { force: true }),
         ]);
-        if (pv?.success && pv.data && Array.isArray(pv.data.status_except)) {
-          const initial = new Set(pv.data.status_except.map(e => (e || '').toLowerCase()));
+        if (pv && Array.isArray(pv.status_except) && seqRef.current === 0) {
+          const initial = new Set(pv.status_except.map(e => (e || '').toLowerCase()));
           savedRef.current = new Set(initial);
           setExcluded(initial);
         }
-        if (cs?.success) {
-          const list = Array.isArray(cs.data) ? cs.data : (cs.data?.contacts || []);
-          setContacts(list);
-        }
+        if (Array.isArray(cs)) setContacts(cs);
       } catch {}
       setLoading(false);
     })();
@@ -69,6 +74,7 @@ export default function StatusExceptScreen() {
     if (seq !== seqRef.current) return; // a newer persist superseded this one
     if (ok) {
       savedRef.current = new Set(arr);
+      try { settingsCache.patch('privacy', { status_except: arr }); } catch {}
     } else {
       setExcluded(new Set(savedRef.current));
     }

@@ -29,7 +29,7 @@ import { Shimmer } from '../components/SkeletonLoader';
 // [2026-05-22 monetization-pause] hidden by MONETIZATION_ENABLED flag
 import { MONETIZATION_ENABLED } from '../constants/featureFlags';
 // [2026-10-09 plans-consistency] plano/cota = fonte única (services/planState).
-import { loadPlanState, planDisplayName, formatQuotaBytes } from '../services/planState';
+import { loadPlanState, getCachedPlanState, planDisplayName, formatQuotaBytes } from '../services/planState';
 
 function formatBytes(b) {
   const v = Number(b) || 0;
@@ -53,9 +53,11 @@ export default function StorageScreen() {
   const ink = colors.primary;
   const { t } = useLanguage();
 
-  const [usage, setUsage] = useState(null);
-  const [planState, setPlanState] = useState(null);
-  const [loading, setLoading] = useState(true);
+  // [2026-10-13 settings-instant] último plano/uso salvo no aparelho → abre
+  // na hora; skeleton só na 1ª vez na vida. load() revalida em 2º plano.
+  const [planState, setPlanState] = useState(() => getCachedPlanState());
+  const [usage, setUsage] = useState(() => getCachedPlanState()?.usage || null);
+  const [loading, setLoading] = useState(() => !getCachedPlanState());
   const [refreshing, setRefreshing] = useState(false);
   const [showShop, setShowShop] = useState(false);
 

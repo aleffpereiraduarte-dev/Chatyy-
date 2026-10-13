@@ -1,10 +1,10 @@
 import NativeSwitch from '../components/NativeSwitch'; // [2026-10-07 app-feel-ui] themed native toggle
 import ErrorBoundary from "../components/ErrorBoundary";
-import { memo, useState, useEffect, useRef, useCallback } from 'react';
+import { memo, useState, useEffect, useLayoutEffect, useRef, useCallback } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet, ScrollView,
   Switch, ActivityIndicator, Platform, Alert, Image, Linking, Share, Modal, Pressable,
-  BackHandler, Keyboard,
+  BackHandler, Keyboard, RefreshControl,
 } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import { HapticsCompat as Haptics } from '../services/haptics'; // [2026-10-11] same API, routed via the shared haptics shim
@@ -46,8 +46,9 @@ import { useAuth } from '../context/AuthContext';
 import FilterRuleEditor from '../components/FilterRuleEditor';
 import { PrivacyModal, TermsModal } from '../components/LoginModals';
 import * as api from '../services/api';
+import * as settingsCache from '../services/settingsCache'; // [2026-10-13 settings-instant]
 import { getCached, setCache } from '../services/cache';
-import { SettingsSkeleton } from '../components/SkeletonLoader';
+import { SettingsSkeleton, Shimmer } from '../components/SkeletonLoader';
 import Constants from 'expo-constants';
 
 function getStorage(key) {
@@ -309,12 +310,9 @@ function SettingsScreenInner() {
   // *_set não invalidam o *_get → ao reabrir Configurações o switch mostrava o
   // valor ANTIGO (ex.: "Não perturbe" desligado aparecia ligado). Invalida no
   // 1º render, antes dos effects de carga.
-  useState(() => {
-    try {
-      for (const a of ['chat_user_notif_prefs_get', 'chat_privacy_get', 'chat_user_defaults_get', 'chat_get_user_defaults']) api.swrInvalidate?.(a);
-    } catch {}
-    return 0;
-  });
+  // [2026-10-13 settings-instant] Agora services/settingsCache: render com o
+  // último valor salvo no aparelho (por conta) + revalidação em 2º plano que
+  // descarta o SWR do api.js antes de buscar (o *_set atualiza o snapshot).
   const { colors, isDark, toggle, density, setDensity, themeMode, setThemeMode: setThemeModeCtx } = useTheme();
   const gc = useGroupedColors(); // [2026-10-08 settings-redesign]
   const { t, language, changeLanguage } = useLanguage();
@@ -512,7 +510,7 @@ function SettingsScreenInner() {
   // Palavras silenciadas (mute words) — user's per-feed blocklist. Posts
   // whose caption contains any of these words are filtered server-side
   // inside feed_list. CRUD via feed_muted_words_* endpoints.
-  const [mutedWords, setMutedWords] = useState([]);
+  const [mutedWords, setMutedWords] = useState(() => { const c = settingsCache.peek('muted_words'); return Array.isArray(c) ? c : []; });
   const [mutedWordsInput, setMutedWordsInput] = useState('');
   const [mutedWordsLoading, setMutedWordsLoading] = useState(false);
   // Login alerts — opt-in push when a NEW device signs into this account.
@@ -525,21 +523,18 @@ function SettingsScreenInner() {
   const [avatarKey, setAvatarKey] = useState(Date.now());
   // [2026-10-11 settings-unify] Identidade p/ o cartão do topo (nome, recado,
   // @usuário). Recarrega ao voltar do /edit-profile.
-  const [myProfile, setMyProfile] = useState(null);
+  const [myProfile, setMyProfile] = useState(() => settingsCache.peek('profile'));
   const _profileFetchedAt = useRef(0);
   useFocusEffect(useCallback(() => {
     if (!user?.email) return undefined;
     const now = Date.now();
     if (now - _profileFetchedAt.current < 3000) return undefined;
+    // 1º foco: respeita o TTL (prefetch do boot já trouxe); voltas (ex.: do
+    // /edit-profile) forçam a revalidação. O valor chega via subscribe.
+    const force = _profileFetchedAt.current !== 0;
     _profileFetchedAt.current = now;
-    let alive = true;
-    api.profileGet?.(user.email).then(r => {
-      if (alive && r?.success && r.data?.identity) {
-        setMyProfile(r.data.identity);
-        setAvatarKey(Date.now());
-      }
-    }).catch(() => {});
-    return () => { alive = false; };
+    settingsCache.revalidate('profile', { force }).catch(() => {});
+    return undefined;
   }, [user?.email]));
   // [2026-10-11 settings-unify] Switches de IA (antes só no ProfileSettingsSheet).
   // Chaves locais ai_smart_reply / ai_summary / ai_enhance (default ON).
@@ -616,48 +611,53 @@ function SettingsScreenInner() {
     l => String(l).toLowerCase().includes(_q)
   );
   // Referral system
-  const [referralCode, setReferralCode] = useState('');
-  const [referralCount, setReferralCount] = useState(0);
+  const [referralCode, setReferralCode] = useState(() => { const c = settingsCache.peek('referral'); return (c && c.code) || ''; });
+  const [referralCount, setReferralCount] = useState(() => { const c = settingsCache.peek('referral'); return (c && c.referred_count) || 0; });
   const [referralLoading, setReferralLoading] = useState(false);
 
   // Auto-reply (vacation responder) — loads via vacation_get, saves via
   // vacation_set. Previously the UI wrote to settings.auto_reply* which went
   // nowhere; now it persists server-side.
-  const [vacation, setVacation] = useState({ enabled: false, subject: '', body: '', start_date: null, end_date: null });
+  const _vacationFrom = (d) => ({
+    enabled: !!d.enabled,
+    subject: d.subject || '',
+    body: d.body || '',
+    start_date: d.start_date || null,
+    end_date: d.end_date || null,
+  });
+  const [vacation, setVacation] = useState(() => {
+    const c = settingsCache.peek('vacation');
+    return c && typeof c === 'object' ? _vacationFrom(c) : { enabled: false, subject: '', body: '', start_date: null, end_date: null };
+  });
   const _vacationSaveTimer = useRef(null);
-  useEffect(() => {
-    let alive = true;
-    api.vacationGet?.().then(r => {
-      if (!alive) return;
-      const d = r?.data || r;
-      if (d && (r?.success || d.enabled !== undefined)) {
-        setVacation({
-          enabled: !!d.enabled,
-          subject: d.subject || '',
-          body: d.body || '',
-          start_date: d.start_date || null,
-          end_date: d.end_date || null,
-        });
-      }
-    }).catch(() => {});
-    return () => { alive = false; };
+  // [2026-10-13 settings-instant] Hidratação/revalidação no bloco único de
+  // settingsCache (useLayoutEffect mais abaixo). Ignora o eco do servidor
+  // enquanto houver um save pendente (não apaga o que a pessoa digita).
+  const applyVacation = useCallback((d) => {
+    if (!d || typeof d !== 'object' || _vacationSaveTimer.current) return;
+    setVacation(_vacationFrom(d));
   }, []);
   const saveVacation = useCallback((patch) => {
     setVacation(prev => {
       const next = { ...prev, ...patch };
       if (_vacationSaveTimer.current) clearTimeout(_vacationSaveTimer.current);
       _vacationSaveTimer.current = setTimeout(() => {
-        api.vacationSet?.({
+        _vacationSaveTimer.current = null;
+        const body = {
           enabled: next.enabled,
           subject: next.subject,
           body: next.body,
           start_date: next.start_date,
           end_date: next.end_date,
-        }).catch(() => {});
+          only_contacts: false,
+        };
+        settingsCache.commit('vacation', { patch: body, action: 'vacation_set', params: body })
+          .then((res) => { if (res && res.ok === false) settingsCache.notifySaveFailed(t); })
+          .catch(() => {});
       }, 500);
       return next;
     });
-  }, []);
+  }, [t]);
   useEffect(() => () => { if (_vacationSaveTimer.current) clearTimeout(_vacationSaveTimer.current); }, []);
 
   // ── Notification preferences (server-backed) ────────────────────────
@@ -667,17 +667,19 @@ function SettingsScreenInner() {
   // We hydrate these on mount (overriding the local-storage defaults set
   // elsewhere) and write through chatSetNotifPrefs on change. Helper below
   // is used by every consumer so the backend always sees the change.
+  // [2026-10-13 settings-instant] Otimista via settingsCache.commit: snapshot
+  // local na hora; recusa do servidor desfaz (o subscribe re-aplica o valor
+  // anterior) + aviso; sem rede → fila offline reenviada ao reconectar.
   const saveNotifPref = useCallback((patch) => {
-    try { api.chatSetNotifPrefs?.(patch).catch(() => {}); } catch {}
-  }, []);
+    settingsCache.commit('notif', { patch, action: 'chat_user_notif_prefs_set', params: patch })
+      .then((res) => { if (res && res.ok === false) settingsCache.notifySaveFailed(t); })
+      .catch(() => {});
+  }, [t]);
   // [2026-10-08 contact-joined-push] "Contatos que entraram no Chatyy" (default ON).
   const [contactJoinedPush, setContactJoinedPush] = useState(true);
-  useEffect(() => {
-    let alive = true;
-    api.chatGetNotifPrefs?.().then(r => {
-      if (!alive) return;
-      const d = r?.data || (r?.success ? r : null);
-      if (!d) return;
+  const applyNotif = useCallback((d) => {
+    {
+      if (!d || typeof d !== 'object') return;
       if (typeof d.push_notif_level === 'string') setPushNotifLevel(d.push_notif_level);
       if (typeof d.led_color_default === 'string' && /^#[0-9a-fA-F]{6}$/.test(d.led_color_default)) setNotifLedColor(d.led_color_default);
       if (d.hide_reactions_in_notifs !== undefined && d.hide_reactions_in_notifs !== null) {
@@ -694,14 +696,19 @@ function SettingsScreenInner() {
           end_time: d.dnd_end_time || prev.end_time,
         }));
       }
-      setSettings(prev => {
-        const next = { ...prev };
-        if (d.morning_briefing !== undefined && d.morning_briefing !== null) next.morning_briefing = !!d.morning_briefing;
-        if (typeof d.font_size === 'string') next.font_size = d.font_size;
-        return next;
-      });
-    }).catch(() => {});
-    return () => { alive = false; };
+      const _mb = d.morning_briefing !== undefined && d.morning_briefing !== null;
+      const _fs = typeof d.font_size === 'string';
+      if ((_mb || _fs) && !_autoSaveTimer.current) {
+        // Hidratação (não é edição da pessoa) → não ecoa no auto-save.
+        _skipAutosaveRef.current = true;
+        setSettings(prev => {
+          const next = { ...prev };
+          if (_mb) next.morning_briefing = !!d.morning_briefing;
+          if (_fs) next.font_size = d.font_size;
+          return next;
+        });
+      }
+    }
   }, []);
 
   useEffect(() => {
@@ -711,7 +718,8 @@ function SettingsScreenInner() {
       const ol = getStorage('one_notif_level');
       if (ol) setOneNotifLevel(ol);
       const pl = getStorage('push_notif_level');
-      if (pl) setPushNotifLevel(pl);
+      // [2026-10-13 settings-instant] o snapshot do servidor (settingsCache) vence o espelho local.
+      if (pl && !settingsCache.peek('notif')?.push_notif_level) setPushNotifLevel(pl);
     } else {
       import('@react-native-async-storage/async-storage').then(m => {
         Promise.all([
@@ -721,7 +729,7 @@ function SettingsScreenInner() {
         ]).then(([enabled, level, pushLevel]) => {
           if (enabled === 'false') setOneEnabled(false);
           if (level) setOneNotifLevel(level);
-          if (pushLevel) setPushNotifLevel(pushLevel);
+          if (pushLevel && !settingsCache.peek('notif')?.push_notif_level) setPushNotifLevel(pushLevel);
         }).catch(() => {});
       }).catch(() => {});
     }
@@ -825,8 +833,15 @@ function SettingsScreenInner() {
     // THIS account on frame 1 (api.js offline last-known store) instead of a
     // skeleton → defaults; the network refresh below still wins.
     ...(_settingsLastKnown && _settingsLastKnown.data && typeof _settingsLastKnown.data === 'object' ? _settingsLastKnown.data : {}),
+    // [2026-10-13 settings-instant] snapshot do aparelho (settingsCache) vence.
+    ...((() => { const c = settingsCache.peek('settings'); return c && typeof c === 'object' ? c : {}; })()),
   });
-  const [loading, setLoading] = useState(() => !(_settingsLastKnown && _settingsLastKnown.data));
+  // [2026-10-13 settings-instant] Sem skeleton de tela cheia: a tela abre na
+  // hora com o último valor salvo (ou os padrões na 1ª vez na vida) e a
+  // revalidação atualiza em 2º plano. `loading` fica só p/ compat.
+  const [loading, setLoading] = useState(false);
+  // Hidratação vinda do cache/servidor não é edição → não dispara auto-save.
+  const _skipAutosaveRef = useRef(false);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const savedTimerRef = require('react').useRef(null);
@@ -860,17 +875,19 @@ function SettingsScreenInner() {
       (async () => {
         setDndSaving(true);
         try {
-          await api.chatSetNotifPrefs?.({
+          const body = {
             dnd_enabled: next.enabled,
             dnd_start_time: next.start_time,
             dnd_end_time: next.end_time,
-          });
+          };
+          const res = await settingsCache.commit('notif', { patch: body, action: 'chat_user_notif_prefs_set', params: body });
+          if (res && res.ok === false) settingsCache.notifySaveFailed(t);
         } catch {}
         setDndSaving(false);
       })();
       return next;
     });
-  }, []);
+  }, [t]);
 
   // ── Chat user defaults: media auto-download + default disappearing ──
   // Loaded from /chat.php?action=chat_user_defaults_get on mount; mutations
@@ -889,10 +906,10 @@ function SettingsScreenInner() {
   // [2026-05-18] Pending coalesced patch — see updateChatDefault comments.
   const _chatDefaultsPendingPatch = useRef({});
 
-  useEffect(() => {
-    (async () => {
+  const applyDefaults = useCallback((data) => {
+    {
       try {
-        const r = await api.chatUserDefaultsGet?.();
+        const r = { success: true, data };
         if (r?.success && r.data) {
           // [2026-10-11 settings-unify] BUG: lia `default_disappearing` e
           // `media_auto_dl_*`, que chat_get_user_defaults NÃO devolve → a tela
@@ -927,7 +944,7 @@ function SettingsScreenInner() {
         }
       } catch {}
       _chatDefaultsHydrated.current = true;
-    })();
+    }
   }, []);
 
   // Debounced save: any change to chatDefaults schedules a PATCH 500ms later.
@@ -967,15 +984,26 @@ function SettingsScreenInner() {
           const mode = patch[k];
           const mobile = mode === 'mobile' ? 1 : 0;
           const wifi = mode === 'never' ? 0 : 1;
-          api.chatSetAutoDownloadPolicy?.({ bucket: BUCKET[k], column: 'mobile', value: mobile })?.catch?.(() => {});
-          api.chatSetAutoDownloadPolicy?.({ bucket: BUCKET[k], column: 'wifi', value: wifi })?.catch?.(() => {});
+          // [2026-10-13 settings-instant] snapshot local (matriz igual à do servidor) + envio c/ fila offline.
+          const b = BUCKET[k];
+          const polPatch = (prevD) => {
+            const base = prevD && typeof prevD === 'object' ? prevD : {};
+            const pol = { ...(base.auto_download_policy && typeof base.auto_download_policy === 'object' ? base.auto_download_policy : {}) };
+            pol[b] = { ...(pol[b] || {}), mobile: !!mobile, wifi: !!wifi };
+            return { ...base, auto_download_policy: pol };
+          };
+          settingsCache.commit('defaults', { patch: polPatch, action: 'chat_set_auto_download_policy', params: { bucket: b, column: 'mobile', value: mobile } })
+            .then((res) => { if (res && res.ok === false) settingsCache.notifySaveFailed(t); }).catch(() => {});
+          settingsCache.commit('defaults', { action: 'chat_set_auto_download_policy', params: { bucket: b, column: 'wifi', value: wifi } }).catch(() => {});
         } else if (k === 'default_disappearing') {
-          api.apiCall?.('chat_set_default_disappearing', { seconds: Number(patch[k]) || 0 }, 'POST')?.catch?.(() => {});
+          const sec = Number(patch[k]) || 0;
+          settingsCache.commit('defaults', { patch: { default_disappearing_seconds: sec }, action: 'chat_set_default_disappearing', params: { seconds: sec } })
+            .then((res) => { if (res && res.ok === false) settingsCache.notifySaveFailed(t); }).catch(() => {});
         }
       }
       return next;
     });
-  }, []);
+  }, [t]);
 
   useEffect(() => () => { if (_chatDefaultsSaveTimer.current) clearTimeout(_chatDefaultsSaveTimer.current); }, []);
 
@@ -1025,10 +1053,10 @@ function SettingsScreenInner() {
     cloud_chats_default: true,
   });
   const [privacyPickerOpen, setPrivacyPickerOpen] = useState(null); // 'last_seen' | 'profile_photo' | 'story_privacy' | 'group_add' | null
-  useEffect(() => {
-    (async () => {
+  const applyPrivacy = useCallback((data) => {
+    {
       try {
-        const r = await api.chatPrivacyGet?.();
+        const r = { success: true, data };
         if (r?.success && r.data) {
           setChatPrivacy(prev => ({
             ...prev,
@@ -1079,7 +1107,7 @@ function SettingsScreenInner() {
           } catch {}
         }
       } catch {}
-    })();
+    }
   }, []);
   const saveChatPrivacy = useCallback((patch) => {
     setChatPrivacy(prev => {
@@ -1111,17 +1139,16 @@ function SettingsScreenInner() {
         if (!('read_receipts' in patch) && !('last_seen' in patch) && !('online' in patch)) return;
         try { require('../services/websocket').default?.setTypingPrivacy?.(patch); } catch {}
       };
-      const _p = api.chatPrivacySet?.(patch);
-      if (_p && typeof _p.then === 'function') {
-        _p.then((r) => { if (r?.success !== false) { _mirrorMuteRingtone(); _mirrorTypingPrivacy(); } }).catch(() => {});
-      } else {
-        // No promise returned (API stub missing) — fall back to mirroring so
-        // local-only builds still pick up the toggle.
-        _mirrorMuteRingtone();
-      }
+      // [2026-10-13 settings-instant] commit otimista (snapshot local + fila
+      // offline). Recusa do servidor → snapshot desfeito → applyPrivacy (via
+      // subscribe) devolve o switch ao valor anterior + aviso.
+      settingsCache.commit('privacy', { patch, action: 'chat_privacy_set', params: patch }).then((res) => {
+        if (res && res.ok === false) { settingsCache.notifySaveFailed(t); return; }
+        _mirrorMuteRingtone(); _mirrorTypingPrivacy();
+      }).catch(() => {});
       return next;
     });
-  }, []);
+  }, [t]);
 
   // ── Storage stats (Settings → Storage section) ──────────────────────
   // Scans the local mediaCache dirs (cache + saved-permanent) once on mount
@@ -1130,7 +1157,9 @@ function SettingsScreenInner() {
   // Web platforms get a null result and the section is hidden — there's no
   // on-disk store in the browser, only IndexedDB which isn't user-relevant
   // here.
-  const [storageStats, setStorageStats] = useState(null);
+  // [2026-10-13 settings-instant] Último resultado salvo (por conta) → a linha
+  // mostra o valor na hora; o scan (pesado) só roda com a categoria aberta.
+  const [storageStats, setStorageStats] = useState(() => (Platform.OS === 'web' ? null : settingsCache.peek('storage_stats')));
   const [storageBusy, setStorageBusy] = useState(false);
   // [2026-10-08 media-local-store] nomes das conversas p/ "Mídia por conversa"
   // (lista local da conta ativa) + expandir lista + limpeza em andamento.
@@ -1145,6 +1174,7 @@ function SettingsScreenInner() {
       if (typeof mc.getStorageStats !== 'function') return;
       const stats = await mc.getStorageStats();
       setStorageStats(stats);
+      try { if (stats && typeof stats === 'object') settingsCache.put('storage_stats', stats); } catch {}
       if (stats && Array.isArray(stats.conversations) && stats.conversations.length) {
         try {
           const cc = require('../services/chatCache');
@@ -1161,7 +1191,18 @@ function SettingsScreenInner() {
     } catch {}
   }, []);
 
-  useEffect(() => { refreshStorageStats(); }, [refreshStorageStats]);
+  // Sob demanda: só escaneia quando a categoria Armazenamento está visível
+  // (ou a busca pode mostrá-la) — não mais a cada abertura do hub.
+  const _storageVisible = activeCategory === 'storage_data' || !!_q;
+  const _storageScanAtRef = useRef(0);
+  useEffect(() => {
+    if (!_storageVisible || Platform.OS === 'web') return;
+    const now = Date.now();
+    if (now - _storageScanAtRef.current > 30000) {
+      _storageScanAtRef.current = now;
+      refreshStorageStats();
+    }
+  }, [_storageVisible, refreshStorageStats]);
 
   // [2026-05-18] Re-scan storage every time the screen regains focus.
   // User clears a chat / saves a media file in another screen → coming back
@@ -1169,10 +1210,9 @@ function SettingsScreenInner() {
   // only — web has no on-disk store so the stats are always zero.
   // [2026-10-09 native-sheets] pickers viram rota (formSheet) → cada fechar
   // re-foca a tela; throttle p/ não repetir o scan de armazenamento a cada picker.
-  const _storageScanAtRef = useRef(0);
   useFocusEffect(
     useCallback(() => {
-      if (Platform.OS !== 'web') {
+      if (Platform.OS !== 'web' && _storageVisible) {
         const now = Date.now();
         if (now - _storageScanAtRef.current > 30000) {
           _storageScanAtRef.current = now;
@@ -1180,11 +1220,11 @@ function SettingsScreenInner() {
         }
       }
       return undefined;
-    }, [refreshStorageStats])
+    }, [refreshStorageStats, _storageVisible])
   );
 
   useEffect(() => {
-    loadSettings();
+    // [2026-10-13 settings-instant] get_settings: ver bloco settingsCache.
     // Load undo delay + smart compose + notif prefs
     if (Platform.OS === 'web') {
       const d = getStorage('undo_send_delay');
@@ -1195,6 +1235,7 @@ function SettingsScreenInner() {
         const np = getStorage('notif_prefs');
         if (np) {
           const parsed = JSON.parse(np);
+          _skipAutosaveRef.current = true;
           setSettings(prev => ({ ...prev, ...parsed }));
         }
       } catch {}
@@ -1210,6 +1251,7 @@ function SettingsScreenInner() {
           if (v) {
             try {
               const parsed = JSON.parse(v);
+              _skipAutosaveRef.current = true;
               setSettings(prev => ({ ...prev, ...parsed }));
             } catch {}
           }
@@ -1241,28 +1283,8 @@ function SettingsScreenInner() {
     return () => { try { sub.remove(); } catch {} };
   }, [activeCategory, requestedSection]));
 
-  // Load referral code
-  useEffect(() => {
-    api.getReferralCode().then(r => {
-      if (r.success && r.data) {
-        setReferralCode(r.data.code || '');
-        setReferralCount(r.data.referred_count || 0);
-      }
-    }).catch(() => {});
-  }, []);
-
-  // Load the viewer's muted words once (Privacy section). The backend returns
-  // most-recent-first; we drop the timestamps and just keep the strings.
-  useEffect(() => {
-    let alive = true;
-    api.feedMutedWordsList().then(r => {
-      if (!alive) return;
-      if (r?.success && Array.isArray(r.data?.words)) {
-        setMutedWords(r.data.words);
-      }
-    }).catch(() => {});
-    return () => { alive = false; };
-  }, []);
+  // [2026-10-13 settings-instant] Referral + palavras silenciadas: hidratam
+  // do settingsCache (useState acima) e revalidam no bloco único abaixo.
 
   const handleAddMutedWord = useCallback(async () => {
     const w = mutedWordsInput.trim().toLowerCase();
@@ -1274,19 +1296,28 @@ function SettingsScreenInner() {
     // Optimistic — prepend and clear input; revert on failure.
     setMutedWords(prev => [w, ...prev]);
     setMutedWordsInput('');
+    const _cachePut = (fn) => { try { const c = settingsCache.peek('muted_words'); settingsCache.put('muted_words', fn(Array.isArray(c) ? c : [])); } catch {} };
     try {
       const r = await api.feedMutedWordsAdd(w);
-      if (!r?.success) setMutedWords(prev => prev.filter(x => x !== w));
+      if (!r?.success) { setMutedWords(prev => prev.filter(x => x !== w)); settingsCache.notifySaveFailed(t); }
+      else _cachePut(list => [w, ...list.filter(x => x !== w)]);
     } catch {
       setMutedWords(prev => prev.filter(x => x !== w));
+      settingsCache.notifySaveFailed(t);
     } finally {
       setMutedWordsLoading(false);
     }
-  }, [mutedWordsInput, mutedWords]);
+  }, [mutedWordsInput, mutedWords, t]);
 
   const handleRemoveMutedWord = useCallback(async (word) => {
     setMutedWords(prev => prev.filter(x => x !== word));
-    try { await api.feedMutedWordsRemove(word); } catch {}
+    try {
+      const r = await api.feedMutedWordsRemove(word);
+      if (r?.success !== false) {
+        const c = settingsCache.peek('muted_words');
+        settingsCache.put('muted_words', (Array.isArray(c) ? c : []).filter(x => x !== word));
+      }
+    } catch {}
   }, []);
 
   const handleShareReferral = async () => {
@@ -1304,23 +1335,19 @@ function SettingsScreenInner() {
     }
   };
 
-  const loadSettings = async () => {
-    try {
-      const { getSettings } = await import('../services/api');
-      const r = await getSettings();
-      if (r.success && r.data) {
-        setSettings(prev => {
-          const merged = { ...prev, ...r.data };
-          initialSettingsRef.current = JSON.stringify(merged);
-          return merged;
-        });
-      } else {
-        setSettings(prev => { initialSettingsRef.current = JSON.stringify(prev); return prev; });
-      }
-    } catch {} finally {
-      setLoading(false);
-    }
-  };
+  // [2026-10-13 settings-instant] Aplica o blob get_settings (snapshot local
+  // ou revalidação). Não sobrescreve uma edição ainda não salva (auto-save
+  // pendente) e não ecoa de volta ao servidor.
+  const applySettings = useCallback((data) => {
+    if (!data || typeof data !== 'object') return;
+    if (_autoSaveTimer.current) return;
+    _skipAutosaveRef.current = true;
+    setSettings(prev => {
+      const merged = { ...prev, ...data };
+      initialSettingsRef.current = JSON.stringify(merged);
+      return merged;
+    });
+  }, []);
 
   const isDirty = () => {
     try { return initialSettingsRef.current && JSON.stringify(settings) !== initialSettingsRef.current; } catch { return false; }
@@ -1354,9 +1381,10 @@ function SettingsScreenInner() {
     setSaving(true);
     setSaved(false);
     try {
-      const { updateSettings } = await import('../services/api');
-      const r = await updateSettings(settings);
-      if (r.success) {
+      // [2026-10-13 settings-instant] commit: snapshot local + fila offline.
+      const res = await settingsCache.commit('settings', { patch: settings, action: 'update_settings', params: settings });
+      if (res?.ok === false) settingsCache.notifySaveFailed(t);
+      if (res?.ok !== false) {
         setSaved(true);
         initialSettingsRef.current = JSON.stringify(settings);
         if (savedTimerRef.current) clearTimeout(savedTimerRef.current);
@@ -1401,10 +1429,59 @@ function SettingsScreenInner() {
     // Skip the first run after the initial load so hydrating server data
     // doesn't immediately echo straight back to the server.
     if (!_autoSaveArmed.current) { _autoSaveArmed.current = true; return undefined; }
+    // [2026-10-13 settings-instant] mudança veio da hidratação (cache/servidor).
+    if (_skipAutosaveRef.current) { _skipAutosaveRef.current = false; return undefined; }
     if (_autoSaveTimer.current) clearTimeout(_autoSaveTimer.current);
-    _autoSaveTimer.current = setTimeout(() => { handleSave(); }, 700);
-    return () => { if (_autoSaveTimer.current) clearTimeout(_autoSaveTimer.current); };
+    // Sem cleanup que cancele: uma hidratação no meio do debounce não pode
+    // descartar a edição pendente (applySettings/applyNotif a respeitam).
+    _autoSaveTimer.current = setTimeout(() => { _autoSaveTimer.current = null; handleSave(); }, 700);
+    return undefined;
   }, [settings, loading]);
+
+  // ── [2026-10-13 settings-instant] Bloco único de hidratação + revalidação ──
+  // ANTES: 8 leituras de rede independentes a cada abertura (get_settings,
+  // chat_user_notif_prefs_get, chat_privacy_get, chat_user_defaults_get,
+  // vacation_get, profile_get, get_referral_code, feed_muted_words_list), o
+  // SWR invalidado no 1º render (= sempre rede), switches começando nos
+  // PADRÕES e trocando quando cada resposta chegava, e skeleton de tela cheia
+  // até o get_settings voltar.
+  // AGORA: useLayoutEffect aplica o snapshot local (por conta) ANTES da 1ª
+  // pintura; as seções vencidas (TTL 5 min) revalidam em PARALELO
+  // (settingsCache.prefetchAll → Promise.all) e chegam via subscribe sem piscar.
+  const _sectionAppliers = useRef(null);
+  _sectionAppliers.current = {
+    settings: applySettings,
+    notif: applyNotif,
+    privacy: applyPrivacy,
+    defaults: applyDefaults,
+    vacation: applyVacation,
+    profile: (v) => { if (v && typeof v === 'object') { setMyProfile(v); setAvatarKey(Date.now()); } },
+    referral: (v) => { if (v && typeof v === 'object') { setReferralCode(v.code || ''); setReferralCount(v.referred_count || 0); } },
+    muted_words: (v) => { if (Array.isArray(v)) setMutedWords(v); },
+  };
+  useLayoutEffect(() => {
+    const appliers = _sectionAppliers.current;
+    const unsubs = [];
+    for (const sec of Object.keys(appliers)) {
+      // profile/referral/muted_words já entraram pelos useState iniciais.
+      if (sec !== 'profile' && sec !== 'referral' && sec !== 'muted_words') {
+        const v = settingsCache.peek(sec);
+        if (v != null) { try { appliers[sec](v); } catch {} }
+      }
+      unsubs.push(settingsCache.subscribe(sec, (v) => { if (v != null) { try { _sectionAppliers.current[sec]?.(v); } catch {} } }));
+    }
+    // Ao ABRIR a tela o TTL é curto (30 s): outras telas/aparelhos podem ter
+    // mudado algo — a revalidação é silenciosa (sem spinner, sem piscar).
+    settingsCache.prefetchAll({ ttl: 30000 }).catch(() => {});
+    return () => { unsubs.forEach((u) => { try { u(); } catch {} }); };
+  }, []);
+  // Puxar para baixo = força revalidar tudo (em paralelo).
+  const [pullRefreshing, setPullRefreshing] = useState(false);
+  const onPullRefresh = useCallback(() => {
+    setPullRefreshing(true);
+    settingsCache.prefetchAll({ force: true }).finally(() => setPullRefreshing(false));
+    if (activeCategory === 'storage_data') refreshStorageStats();
+  }, [activeCategory, refreshStorageStats]);
 
   const handleChangePhoto = async () => {
     try {
@@ -1793,6 +1870,7 @@ function SettingsScreenInner() {
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
         contentContainerStyle={[s.scroll, { paddingBottom: (IOS_AUTO_INSET ? 40 : 80 + insets.bottom), maxWidth: contentMaxWidth, width: '100%', alignSelf: 'center' }]}
+        refreshControl={Platform.OS === 'web' ? undefined : <RefreshControl refreshing={pullRefreshing} onRefresh={onPullRefresh} tintColor={gc.secondary} colors={[colors.primary]} />}
       >
         {/* Web: busca inline (estilo barra de busca iOS) — SÓ na raiz. No
             nativo a busca é a barra do header (acima). */}
@@ -3230,7 +3308,9 @@ function SettingsScreenInner() {
                 accessibilityLabel={t('common.refresh') || 'Atualizar'}
                 right={(
                   <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                    <Text style={{ fontSize: 16, color: gc.secondary, marginRight: 8 }}>{fmtBytes(mediaTotal)}</Text>
+                    {storageStats == null
+                      ? <Shimmer style={{ width: 64, height: 14, borderRadius: 7, marginRight: 8 }} />
+                      : <Text style={{ fontSize: 16, color: gc.secondary, marginRight: 8 }}>{fmtBytes(mediaTotal)}</Text>}
                     {storageBusy ? <ActivityIndicator size="small" color={colors.text} /> : <IconRefresh size={16} color={gc.tertiary} />}
                   </View>
                 )}

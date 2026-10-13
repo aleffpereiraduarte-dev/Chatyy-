@@ -12,7 +12,8 @@ import CachedImage from './CachedImage';
 import AvatarCircle from './AvatarCircle';
 import StatusCamera from './StatusCamera';
 import BrandFab from './BrandFab';
-import { IconPlus, IconCamera, IconEdit, IconX, IconSearch, IconTrash, IconEye, IconChevronLeft, IconChevronRight, IconSend, IconPause, IconPlay, IconForward, IconSmile, IconType, IconBrush, IconUndo2, IconRotateCw, IconBookmark, IconBarChart, IconHelpCircle, IconClock, IconAtSign, IconAward, IconMapPin, IconLink, IconArrowRight, IconArchive, IconSliders, IconFeedShare, IconCheck, IconCheckbox, IconCheckboxChecked, IconChevronUp, IconChevronDown, IconMic, IconHeart, IconHeartOutline, IconFlame, IconLaughFace, IconSurpriseFace, IconSadFace, IconClap, IconThumbsUp, IconSparkles } from './Icons';
+import { IconPlus, IconCamera, IconEdit, IconX, IconSearch, IconTrash, IconEye, IconChevronLeft, IconChevronRight, IconSend, IconPause, IconPlay, IconForward, IconSmile, IconType, IconBrush, IconUndo2, IconRotateCw, IconBookmark, IconBarChart, IconHelpCircle, IconClock, IconAtSign, IconAward, IconMapPin, IconLink, IconArrowRight, IconArchive, IconSliders, IconFeedShare, IconCheck, IconCheckbox, IconCheckboxChecked, IconChevronUp, IconChevronDown, IconMic, IconHeart, IconHeartOutline, IconFlame, IconLaughFace, IconSurpriseFace, IconSadFace, IconClap, IconThumbsUp, IconSparkles, IconMoreHorizontal, IconMessageCircle } from './Icons';
+import ScreenEmptyState from './ScreenEmptyState'; // [2026-10-13 status-viewers]
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as api from '../services/api';
 import { HapticsCompat as Haptics } from '../services/haptics'; // [2026-10-11] same API, routed via the shared haptics shim
@@ -41,6 +42,7 @@ import { segmentVideoForStatus } from '../services/statusVideoSegments';
 // [2026-10-09 status-composer] Estúdio nível Instagram (filtros reais, texto,
 // figurinhas, público) + fila durável com progresso no anel do "Seu status".
 import StatusStudio from './status/StatusStudio';
+import { formatTime, formatDateTime } from '../utils/dateFormat'; // [2026-10-13 status-viewers]
 import { cachedVideoSource } from '../services/videoCacheSource'; // [2026-10-10 native-audit] native video disk cache
 
 // Android status bar safe area — `StatusBar.currentHeight` is null on iOS
@@ -328,6 +330,38 @@ function _viewCountLabel(t, n) {
   const c = Number(n) || 0;
   if (typeof t !== 'function') return String(c);
   return t(c === 1 ? 'status.viewCountOne' : 'status.viewCountOther', { count: c });
+}
+
+// [2026-10-13 status-viewers] PG devolve "2026-10-13 16:29:00.123+00" (espaço,
+// "+00" sem minutos). `new Date()` disso é Invalid Date no Hermes/Safari → a
+// folha de visualizações mostrava "INVALID DATE". Normaliza p/ ISO 8601 e
+// trata texto SEM fuso como UTC (PG/servidor grava em UTC).
+function _parseStatusTs(input) {
+  if (!input) return null;
+  if (input instanceof Date) return isNaN(input.getTime()) ? null : input;
+  if (typeof input === 'number') { const d = new Date(input < 1e12 ? input * 1000 : input); return isNaN(d.getTime()) ? null : d; }
+  let str = String(input).trim();
+  if (!str) return null;
+  if (/^\d{9,13}$/.test(str)) return _parseStatusTs(Number(str));
+  if (!str.includes('T')) str = str.replace(' ', 'T');
+  if (/[+-]\d{2}$/.test(str)) str += ':00';
+  else if (/[+-]\d{4}$/.test(str)) str = str.replace(/([+-]\d{2})(\d{2})$/, '$1:$2');
+  if (!/Z$/i.test(str) && !/[+-]\d{2}:\d{2}$/.test(str)) str += 'Z';
+  const d = new Date(str);
+  return isNaN(d.getTime()) ? null : d;
+}
+
+// "Hoje 13:29" / "Ontem 22:10" / "ter 14:30" / "12 out 09:15"
+function _viewedAtLabel(input, t) {
+  const d = _parseStatusTs(input);
+  if (!d) return '';
+  const time = formatTime(d);
+  const d0 = new Date(d); d0.setHours(0, 0, 0, 0);
+  const n0 = new Date(); n0.setHours(0, 0, 0, 0);
+  const dayDiff = Math.round((n0 - d0) / 86400000);
+  if (dayDiff <= 0) return `${t?.('date.today') || 'Hoje'} ${time}`;
+  if (dayDiff === 1) return `${t?.('date.yesterday') || 'Ontem'} ${time}`;
+  return formatDateTime(d, t);
 }
 
 function timeAgo(dateStr, t) {
@@ -983,6 +1017,11 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
 
   // Viewers modal state
   const [viewersModal, setViewersModal] = useState(false);
+  // [2026-10-13 status-viewers] Menu "…" do próprio status (salvar/estatísticas/
+  // repostar/apagar) — substitui a fileira de 6 botões no topo do viewer.
+  const [ownMenuOpen, setOwnMenuOpen] = useState(false);
+  const [ownMenuTop, setOwnMenuTop] = useState(110);
+  const _viewerChatBusyRef = useRef(false); // evita abrir 2 conversas no toque duplo
   const [viewersList, setViewersList] = useState([]);
   // [P2 2026-05-26] Which status the "Vistos" sheet is currently showing.
   // A ref (not state) so the WS status_view listener can read it without
@@ -1145,16 +1184,45 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
     }
   }, []);
 
+  // [2026-10-13 status-viewers] Folha "Visualizações": entra deslizando de
+  // baixo e fecha arrastando p/ baixo pela alça/cabeçalho (Instagram).
+  const viewersSheetY = useRef(new Animated.Value(0)).current;
+  const closeViewersSheet = useCallback(() => {
+    Animated.timing(viewersSheetY, { toValue: 700, duration: 200, useNativeDriver: Platform.OS !== 'web' }).start(() => {
+      setViewersModal(false);
+      setIsPaused(false);
+      viewersModalStatusIdRef.current = null;
+      viewersSheetY.setValue(0);
+    });
+  }, [viewersSheetY]);
+  const closeViewersSheetRef = useRef(null);
+  closeViewersSheetRef.current = closeViewersSheet;
+  const viewersSheetPan = useRef(PanResponder.create({
+    onStartShouldSetPanResponder: () => false,
+    onMoveShouldSetPanResponder: (_, gs) => gs.dy > 6 && gs.dy > Math.abs(gs.dx) * 1.2,
+    onPanResponderTerminationRequest: () => false,
+    onPanResponderMove: (_, gs) => { viewersSheetY.setValue(Math.max(0, gs.dy)); },
+    onPanResponderRelease: (_, gs) => {
+      if (gs.dy > 80 || gs.vy > 0.5) closeViewersSheetRef.current?.();
+      else Animated.spring(viewersSheetY, { toValue: 0, tension: 120, friction: 14, useNativeDriver: Platform.OS !== 'web' }).start();
+    },
+    onPanResponderTerminate: () => {
+      Animated.spring(viewersSheetY, { toValue: 0, tension: 120, friction: 14, useNativeDriver: Platform.OS !== 'web' }).start();
+    },
+  })).current;
+
   const handleShowViewers = useCallback(async (statusId) => {
     viewersModalStatusIdRef.current = statusId;
     setViewersLoading(true);
+    viewersSheetY.setValue(420);
+    Animated.spring(viewersSheetY, { toValue: 0, tension: 90, friction: 14, useNativeDriver: Platform.OS !== 'web' }).start();
     setViewersModal(true);
     setIsPaused(true);
     if (timerRef.current) clearTimeout(timerRef.current);
     if (animRef.current) animRef.current.stop();
     await refreshViewersList(statusId, { silent: true });
     setViewersLoading(false);
-  }, [refreshViewersList]);
+  }, [refreshViewersList, viewersSheetY]);
 
   // [P2 2026-05-26] Live "Vistos" refresh. When a viewer opens one of my
   // statuses the backend fires a `status_view` WS event. If the viewers sheet
@@ -1580,6 +1648,10 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
   // engages the drag, then close on dy>80 OR a fast flick (vy>0.55).
   // Was previously trying GestureDetector from RNGH but that broke the
   // VideoView render inside Modal — reverted to PanResponder only.
+  // [2026-10-13 status-viewers] Swipe-UP: próprio status → folha "Visualizações";
+  // status de outra pessoa → foca o "Responder". Handler é reatribuído a cada
+  // render (o PanResponder abaixo é criado 1x e lê pelo ref). null = desligado.
+  const swipeUpRef = useRef(null);
   const panResponder = useRef(
     PanResponder.create({
       onStartShouldSetPanResponder: () => false,
@@ -1588,11 +1660,18 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
       // swipe almost immediately. Was too tight: small intentional drags
       // weren't claiming the responder, so the inner TouchableOpacity ate
       // the gesture and the modal didn't follow the finger nor close.
-      onMoveShouldSetPanResponder: (_, gs) => gs.dy > 6 && gs.dy > Math.abs(gs.dx) * 1.2,
-      onMoveShouldSetPanResponderCapture: (_, gs) => gs.dy > 6 && gs.dy > Math.abs(gs.dx) * 1.2,
+      onMoveShouldSetPanResponder: (_, gs) => (gs.dy > 6 && gs.dy > Math.abs(gs.dx) * 1.2)
+        || (!!swipeUpRef.current && gs.dy < -10 && -gs.dy > Math.abs(gs.dx) * 1.2),
+      onMoveShouldSetPanResponderCapture: (_, gs) => (gs.dy > 6 && gs.dy > Math.abs(gs.dx) * 1.2)
+        || (!!swipeUpRef.current && gs.dy < -10 && -gs.dy > Math.abs(gs.dx) * 1.2),
       onPanResponderTerminationRequest: () => false,
       onPanResponderMove: (_, gs) => { if (gs.dy > 0) panY.setValue(gs.dy); },
       onPanResponderRelease: (_, gs) => {
+        if (gs.dy < -50 || (gs.dy < -20 && gs.vy < -0.4)) {
+          panY.setValue(0);
+          try { swipeUpRef.current?.(); } catch {}
+          return;
+        }
         // Looser dismiss thresholds (was 80px or vy>0.55) so a normal
         // downward flick closes — matching Stories' feel.
         if (gs.dy > 60 || gs.vy > 0.4) closeViewerRef.current?.();
@@ -1862,6 +1941,7 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
     if (animRef.current) animRef.current.stop();
     progressAnim.setValue(0);
     panY.setValue(0);
+    setOwnMenuOpen(false);
     loadStatuses();
   }, [progressAnim, viewerOpacity, panY, loadStatuses, viewerIndex]);
 
@@ -2294,6 +2374,7 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
   // keyboard open un-pauses the timer, the story advances mid-typing and the
   // reply lands on the WRONG status/contact.
   const replyFocusedRef = useRef(false);
+  const replyInputRef = useRef(null); // [2026-10-13] swipe-up em status alheio foca o Responder
   useEffect(() => {
     if (!viewerVisible) return undefined;
     const sub = AppState.addEventListener('change', (next) => {
@@ -3055,6 +3136,13 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
   const isOwnStatus = String(viewerOwnerEmail || '').toLowerCase() === String(currentEmail || '').toLowerCase();
   const currentViewerItem = viewerStatuses[viewerIndex];
 
+  // [2026-10-13 status-viewers] Alvo do swipe-up (lido pelo panResponder via ref).
+  swipeUpRef.current = (!viewerVisible || viewersModal || ownMenuOpen || !currentViewerItem?.id || replyFocusedRef.current)
+    ? null
+    : isOwnStatus
+      ? () => { try { Haptics.selectionAsync?.(); } catch {} handleShowViewers(currentViewerItem.id); }
+      : () => { try { replyInputRef.current?.focus?.(); } catch {} };
+
   const renderStatusRow = (statusGroup) => {
     const latestItem = statusGroup.items[statusGroup.items.length - 1];
     const time = timeAgo(latestItem?.timestamp, t);
@@ -3163,196 +3251,185 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
     );
   }
 
-  // [2026-10-12] Conteúdo do sheet "quem viu" — usado dentro do viewer (iOS) e solto.
-  const renderViewersSheet = () => (
-        <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.55)', justifyContent: 'flex-end' }} onPress={() => { setViewersModal(false); setIsPaused(false); viewersModalStatusIdRef.current = null; }}>
-          <Pressable style={{
-            backgroundColor: isDark ? '#111' : '#fff',
-            borderTopLeftRadius: 24, borderTopRightRadius: 24,
-            maxHeight: '75%', paddingBottom: Platform.OS === 'ios' ? 34 : androidBottomInset(18),
-            ...(Platform.OS === 'web' ? { boxShadow: '0 -8px 32px rgba(0,0,0,0.35)' } : {}),
-          }}>
-            {/* Drag handle */}
-            <View style={{ alignItems: 'center', paddingTop: 10, paddingBottom: 4 }}>
-              <View style={{ width: 42, height: 5, borderRadius: 3, backgroundColor: isDark ? 'rgba(255,255,255,0.18)' : 'rgba(0,0,0,0.15)' }} />
-            </View>
-            {/* Header — gradient eye badge + big count */}
-            <View style={{
-              paddingHorizontal: 20, paddingTop: 12, paddingBottom: 16,
-              borderBottomWidth: StyleSheet.hairlineWidth,
-              borderBottomColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.07)',
-            }}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
-                {/* Gradient SVG badge — Instagram-style vibrant icon */}
-                <View style={{
-                  width: 44, height: 44, borderRadius: 14,
-                  overflow: 'hidden', alignItems: 'center', justifyContent: 'center',
-                  ...(Platform.OS === 'web' ? { boxShadow: '0 4px 14px rgba(17, 17, 17,0.35)' } : {
-                    shadowColor: '#111111', shadowOffset: { width: 0, height: 4 },
-                    shadowOpacity: 0.3, shadowRadius: 8, elevation: 4,
-                  }),
-                }}>
-                  <Svg width={44} height={44} viewBox="0 0 44 44" style={{ position: 'absolute' }}>
-                    <Defs>
-                      <LinearGradient id="viewerGrad" x1="0" y1="0" x2="1" y2="1">
-                        <Stop offset="0" stopColor="#111111" />
-                        <Stop offset="1" stopColor="#111111" />
-                      </LinearGradient>
-                    </Defs>
-                    <Rect x="0" y="0" width="44" height="44" rx="14" fill="url(#viewerGrad)" />
-                    {/* Eye glyph — curved lid + pupil */}
-                    <Path d="M12 22 C16 15 28 15 32 22 C28 29 16 29 12 22 Z" stroke="#fff" strokeWidth="2" fill="none" />
-                    <SvgCircle cx="22" cy="22" r="3.5" fill="#fff" />
-                  </Svg>
-                </View>
-                <View style={{ flex: 1 }}>
-                  <Text style={{ fontSize: 22, fontWeight: '800', color: isDark ? '#fff' : '#111', letterSpacing: -0.4 }}>
-                    {_viewCountLabel(t, viewersList.length)}
-                  </Text>
-                  {viewersList.length > 0 && (
-                    <Text style={{ fontSize: 12.5, color: isDark ? 'rgba(255,255,255,0.5)' : 'rgba(0,0,0,0.48)', marginTop: 2 }}>
-                      {t?.('status.viewersSubtitle') || 'Quem viu seu status'}
-                    </Text>
-                  )}
-                </View>
-              </View>
-            </View>
-
-            {viewersLoading ? (
-              <View style={{ paddingVertical: 60 }}>
-                <ActivityIndicator size="large" color={colors.primary} />
-              </View>
-            ) : viewersList.length === 0 ? (
-              <View style={{ alignItems: 'center', paddingVertical: 60, paddingHorizontal: 28 }}>
-                <View style={{
-                  width: 72, height: 72, borderRadius: 36,
-                  backgroundColor: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.04)',
-                  alignItems: 'center', justifyContent: 'center', marginBottom: 16,
-                }}>
-                  <IconEye size={32} color={isDark ? 'rgba(255,255,255,0.3)' : 'rgba(0,0,0,0.25)'} />
-                </View>
-                <Text style={{ fontSize: 16, fontWeight: '600', color: isDark ? '#fff' : '#111', marginBottom: 4 }}>
-                  {t?.('status.noViewersTitle') || 'Ninguém viu ainda'}
-                </Text>
-                <Text style={{ fontSize: 13, color: isDark ? 'rgba(255,255,255,0.5)' : 'rgba(0,0,0,0.45)', textAlign: 'center' }}>
-                  {t?.('status.noViewersBody') || 'Seus contatos verão quando abrirem o app.'}
-                </Text>
-              </View>
-            ) : (
-              <ScrollView
-                showsVerticalScrollIndicator={false}
-                contentContainerStyle={{ paddingVertical: 6 }}
-              >
-                {(() => {
-                  // Group viewers by day — HOJE / ONTEM / date. Assumes server
-                  // returns viewed_at sorted desc; if not we sort defensively.
-                  const sorted = [...viewersList].sort((a, b) => {
-                    const ta = Date.parse(a.viewed_at || 0) || 0;
-                    const tb = Date.parse(b.viewed_at || 0) || 0;
-                    return tb - ta;
-                  });
-                  const now = new Date();
-                  const today = now.toDateString();
-                  const yday = new Date(now.getTime() - 86400000).toDateString();
-                  const groups = {};
-                  const order = [];
-                  for (const v of sorted) {
-                    const d = v.viewed_at ? new Date(v.viewed_at) : now;
-                    let key;
-                    if (d.toDateString() === today) key = t?.('date.today') || 'HOJE';
-                    else if (d.toDateString() === yday) key = t?.('date.yesterday') || 'ONTEM';
-                    else key = d.toLocaleDateString();
-                    if (!groups[key]) { groups[key] = []; order.push(key); }
-                    groups[key].push(v);
-                  }
-                  return order.map(dayLabel => (
-                    <View key={dayLabel}>
-                      <Text style={{
-                        fontSize: 11, fontWeight: '700',
-                        color: isDark ? 'rgba(255,255,255,0.4)' : 'rgba(0,0,0,0.4)',
-                        letterSpacing: 0.8, textTransform: 'uppercase',
-                        paddingHorizontal: 20, paddingTop: 14, paddingBottom: 6,
-                      }}>
-                        {dayLabel.toUpperCase()}
-                      </Text>
-                      {groups[dayLabel].map((v, i) => {
-                        // If this viewer also reacted, we surface their emoji on the right.
-                        const reactEmoji = v.reaction_emoji || null;
-                        const name = emailToDisplayName(v.name || v.viewer_email);
-                        return (
-                          <TouchableOpacity
-                            key={i}
-                            activeOpacity={0.65}
-                            onPress={() => {
-                              // Tap viewer → open their profile
-                              try {
-                                setViewersModal(false);
-                                router.push('/u/' + encodeURIComponent(v.viewer_email));
-                              } catch {}
-                            }}
-                            style={{
-                              flexDirection: 'row', alignItems: 'center',
-                              paddingHorizontal: 20, paddingVertical: 11, gap: 14,
-                            }}
-                          >
-                            <View style={{ position: 'relative', width: 48, height: 48, alignItems: 'center', justifyContent: 'center' }}>
-                              {/* Gradient ring when the viewer reacted — Instagram story-ring vibe */}
-                              {reactEmoji && (
-                                <Svg width={48} height={48} viewBox="0 0 48 48" style={{ position: 'absolute' }}>
-                                  <Defs>
-                                    <LinearGradient id={`vring${i}`} x1="0" y1="0" x2="1" y2="1">
-                                      <Stop offset="0" stopColor="#111111" />
-                                      <Stop offset="0.5" stopColor="#111111" />
-                                      <Stop offset="1" stopColor="#111111" />
-                                    </LinearGradient>
-                                  </Defs>
-                                  <SvgCircle cx="24" cy="24" r="22" stroke={`url(#vring${i})`} strokeWidth="2.2" fill="none" />
-                                </Svg>
-                              )}
-                              <AvatarCircle name={name} email={v.viewer_email} size={40} />
-                              {reactEmoji && (
-                                <View style={{
-                                  position: 'absolute', right: -1, bottom: -1,
-                                  width: 22, height: 22, borderRadius: 11,
-                                  backgroundColor: isDark ? '#111' : '#fff',
-                                  alignItems: 'center', justifyContent: 'center',
-                                  borderWidth: 2, borderColor: isDark ? '#111' : '#fff',
-                                  ...(Platform.OS === 'web' ? { boxShadow: '0 1px 3px rgba(0,0,0,0.2)' } : {}),
-                                }}>
-                                  <Text style={{ fontSize: 12 }}>{reactEmoji}</Text>
-                                </View>
-                              )}
-                            </View>
-                            <View style={{ flex: 1 }}>
-                              <Text style={{ fontSize: 15.5, fontWeight: '600', color: isDark ? '#fff' : '#111', letterSpacing: -0.1 }} numberOfLines={1}>
-                                {name}
-                              </Text>
-                              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 2 }}>
-                                {/* Tiny SVG clock icon next to the timestamp */}
-                                <Svg width={11} height={11} viewBox="0 0 24 24" fill="none">
-                                  <SvgCircle cx="12" cy="12" r="9.5" stroke={isDark ? 'rgba(255,255,255,0.4)' : 'rgba(0,0,0,0.4)'} strokeWidth="1.8" />
-                                  <Path d="M12 7v5l3 2" stroke={isDark ? 'rgba(255,255,255,0.4)' : 'rgba(0,0,0,0.4)'} strokeWidth="1.8" strokeLinecap="round" />
-                                </Svg>
-                                <Text style={{ fontSize: 12.5, color: isDark ? 'rgba(255,255,255,0.45)' : 'rgba(0,0,0,0.45)' }} numberOfLines={1}>
-                                  {v.viewed_at ? timeAgo(v.viewed_at, t) : ''}
-                                </Text>
-                              </View>
-                            </View>
-                            {/* Right-side chevron — invites tap */}
-                            <Svg width={16} height={16} viewBox="0 0 24 24" fill="none">
-                              <Path d="M9 6l6 6-6 6" stroke={isDark ? 'rgba(255,255,255,0.28)' : 'rgba(0,0,0,0.28)'} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                            </Svg>
-                          </TouchableOpacity>
-                        );
-                      })}
-                    </View>
-                  ));
-                })()}
-              </ScrollView>
+  // [2026-10-13 status-viewers] Folha "Visualizações" repaginada (Instagram/WhatsApp):
+  // alça + "Visualizações · N" (+ reações), lista FlatList mais recente primeiro,
+  // avatar 44, nome 16 semibold, "Hoje 13:29"/"Ontem 22:10", reação à direita e
+  // atalho de mensagem. Dentro do viewer (fundo preto) a folha é sempre escura.
+  const renderViewersSheet = () => {
+    const dark = viewerVisible || isDark;
+    const C = dark
+      ? { bg: '#141414', text: '#fff', sub: 'rgba(255,255,255,0.55)', line: 'rgba(255,255,255,0.08)', handle: 'rgba(255,255,255,0.24)', skel: 'rgba(255,255,255,0.08)', btn: 'rgba(255,255,255,0.10)' }
+      : { bg: '#fff', text: '#111', sub: 'rgba(0,0,0,0.5)', line: 'rgba(0,0,0,0.07)', handle: 'rgba(0,0,0,0.16)', skel: 'rgba(0,0,0,0.06)', btn: 'rgba(0,0,0,0.05)' };
+    const sorted = [...viewersList].sort((a, b) => {
+      const ta = _parseStatusTs(a?.viewed_at)?.getTime() || 0;
+      const tb = _parseStatusTs(b?.viewed_at)?.getTime() || 0;
+      return tb - ta;
+    });
+    const reactCount = viewersList.reduce((n, v) => n + (v?.reaction_emoji ? 1 : 0), 0);
+    const leaveTo = (fn) => {
+      setViewersModal(false);
+      viewersModalStatusIdRef.current = null;
+      setIsPaused(false);
+      if (viewerVisible) closeViewerRef.current?.();
+      setTimeout(() => { try { fn(); } catch {} }, viewerVisible ? 220 : 0);
+    };
+    const openViewerChat = async (v) => {
+      if (_viewerChatBusyRef.current) return;
+      _viewerChatBusyRef.current = true;
+      try {
+        try { Haptics.selectionAsync?.(); } catch {}
+        const r = await chatCreate([v.viewer_email], '', 'direct');
+        const convId = r?.data?.conversation_id || r?.data?.id;
+        if (!convId) return;
+        const nm = emailToDisplayName(v.name || v.viewer_email);
+        leaveTo(() => require('../services/openConversation').openConversation(`/chat-conversation?id=${convId}&name=${encodeURIComponent(nm)}`));
+      } catch (err) {
+        console.warn('[Status] open viewer chat failed:', err);
+      } finally {
+        _viewerChatBusyRef.current = false;
+      }
+    };
+    const renderReaction = (emoji) => {
+      if (!emoji) return null;
+      const def = _STATUS_REACTION_DEFS[emoji];
+      if (def) {
+        const Ico = def.Icon;
+        return <Ico size={20} color={def.color === '#ffffff' ? C.text : def.color} />;
+      }
+      // Reação fora do mapa = conteúdo do usuário → mostra o caractere dele.
+      return <Text style={{ fontSize: 19 }} allowFontScaling={false}>{emoji}</Text>;
+    };
+    const renderRow = ({ item: v }) => {
+      const name = emailToDisplayName(v.name || v.viewer_email);
+      const when = _viewedAtLabel(v.viewed_at, t);
+      return (
+        <TouchableOpacity
+          activeOpacity={0.6}
+          onPress={() => leaveTo(() => router.push('/u/' + encodeURIComponent(v.viewer_email)))}
+          style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 9, gap: 12 }}
+          accessibilityRole="button"
+          accessibilityLabel={when ? `${name}, ${when}` : name}
+        >
+          <AvatarCircle name={name} email={v.viewer_email} size={44} />
+          <View style={{ flex: 1, minWidth: 0 }}>
+            <Text style={{ fontSize: 16, fontWeight: '600', color: C.text, letterSpacing: -0.2 }} numberOfLines={1}>{name}</Text>
+            {!!when && (
+              <Text style={{ fontSize: 13, color: C.sub, marginTop: 2 }} numberOfLines={1}>{when}</Text>
             )}
-          </Pressable>
-        </Pressable>
-  );
+          </View>
+          {v.reaction_emoji ? (
+            <View style={{ width: 30, alignItems: 'center', justifyContent: 'center' }}>{renderReaction(v.reaction_emoji)}</View>
+          ) : null}
+          <TouchableOpacity
+            onPress={() => openViewerChat(v)}
+            hitSlop={8}
+            activeOpacity={0.6}
+            style={{ width: 38, height: 38, borderRadius: 19, backgroundColor: C.btn, alignItems: 'center', justifyContent: 'center' }}
+            accessibilityRole="button"
+            accessibilityLabel={`${t?.('status.viewerMessage') || 'Enviar mensagem'} ${name}`}
+          >
+            <IconMessageCircle size={19} color={C.text} />
+          </TouchableOpacity>
+        </TouchableOpacity>
+      );
+    };
+    const skeleton = (
+      <View style={{ paddingVertical: 6 }}>
+        {[0, 1, 2, 3, 4].map(i => (
+          <View key={`vsk-${i}`} style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 9, gap: 12 }}>
+            <View style={{ width: 44, height: 44, borderRadius: 22, backgroundColor: C.skel }} />
+            <View style={{ flex: 1, gap: 7 }}>
+              <View style={{ height: 13, width: `${58 - i * 6}%`, borderRadius: 6, backgroundColor: C.skel }} />
+              <View style={{ height: 11, width: '28%', borderRadius: 6, backgroundColor: C.skel }} />
+            </View>
+            <View style={{ width: 38, height: 38, borderRadius: 19, backgroundColor: C.skel }} />
+          </View>
+        ))}
+      </View>
+    );
+    const empty = (dark === !!isDark) ? (
+      <ScreenEmptyState
+        kind="contacts"
+        compact
+        title={t?.('status.noViewersTitle') || 'Ninguém viu ainda'}
+        subtitle={t?.('status.noViewersBody') || 'Seus contatos verão quando abrirem o app.'}
+        style={{ backgroundColor: 'transparent' }}
+      />
+    ) : (
+      <View style={{ alignItems: 'center', paddingVertical: 44, paddingHorizontal: 28 }}>
+        <View style={{ width: 72, height: 72, borderRadius: 36, backgroundColor: C.btn, alignItems: 'center', justifyContent: 'center', marginBottom: 14 }}>
+          <IconEye size={32} color={C.sub} />
+        </View>
+        <Text style={{ fontSize: 17, fontWeight: '600', color: C.text, marginBottom: 4 }}>
+          {t?.('status.noViewersTitle') || 'Ninguém viu ainda'}
+        </Text>
+        <Text style={{ fontSize: 14, color: C.sub, textAlign: 'center' }}>
+          {t?.('status.noViewersBody') || 'Seus contatos verão quando abrirem o app.'}
+        </Text>
+      </View>
+    );
+    const backdropOpacity = viewersSheetY.interpolate({ inputRange: [0, 420], outputRange: [1, 0], extrapolate: 'clamp' });
+    return (
+      <View style={{ flex: 1, justifyContent: 'flex-end' }}>
+        <Animated.View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.5)', opacity: backdropOpacity }]}>
+          <Pressable
+            style={StyleSheet.absoluteFill}
+            onPress={closeViewersSheet}
+            accessibilityRole="button"
+            accessibilityLabel={t?.('common.close') || 'Fechar'}
+          />
+        </Animated.View>
+        <Animated.View style={{
+          backgroundColor: C.bg,
+          borderTopLeftRadius: 20, borderTopRightRadius: 20,
+          maxHeight: '80%', minHeight: '38%',
+          paddingBottom: Platform.OS === 'ios' ? 30 : androidBottomInset(14),
+          transform: [{ translateY: viewersSheetY }],
+          ...(Platform.OS === 'web' ? { boxShadow: '0 -8px 32px rgba(0,0,0,0.35)' } : {}),
+        }}>
+          {/* Alça + cabeçalho: arrastar p/ baixo fecha */}
+          <View {...viewersSheetPan.panHandlers}>
+            <View style={{ alignItems: 'center', paddingTop: 8, paddingBottom: 6 }}>
+              <View style={{ width: 36, height: 5, borderRadius: 3, backgroundColor: C.handle }} />
+            </View>
+            <View style={{
+              flexDirection: 'row', alignItems: 'center',
+              paddingHorizontal: 16, paddingTop: 6, paddingBottom: 12,
+              borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: C.line,
+            }}>
+              <Text style={{ flex: 1, fontSize: 17, fontWeight: '700', color: C.text, letterSpacing: -0.3 }} numberOfLines={1} accessibilityRole="header">
+                {t?.('status.seenBy') || 'Visualizações'}
+                <Text style={{ color: C.sub, fontWeight: '600' }}>{viewersLoading && viewersList.length === 0 ? '' : `  ·  ${viewersList.length}`}</Text>
+              </Text>
+              {reactCount > 0 && (
+                <View
+                  style={{ flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 10, paddingVertical: 5, borderRadius: 14, backgroundColor: C.btn }}
+                  accessibilityLabel={(t?.('status.reactionsCount', { count: reactCount })) || `${reactCount}`}
+                >
+                  <IconHeart size={14} color="#ff3040" />
+                  <Text style={{ fontSize: 13, fontWeight: '600', color: C.text }}>{reactCount}</Text>
+                </View>
+              )}
+            </View>
+          </View>
+
+          {viewersLoading ? skeleton : sorted.length === 0 ? empty : (
+            <FlatList
+              data={sorted}
+              keyExtractor={(v, i) => String(v?.viewer_email || v?.email || i)}
+              renderItem={renderRow}
+              style={{ flexGrow: 0 }}
+              contentContainerStyle={{ paddingVertical: 6 }}
+              showsVerticalScrollIndicator={false}
+              initialNumToRender={14}
+              windowSize={7}
+              removeClippedSubviews={Platform.OS === 'android'}
+            />
+          )}
+        </Animated.View>
+      </View>
+    );
+  };
 
   return (
     <View style={[styles.container, { backgroundColor: isDark ? colors.background : '#f2f2f7' }]}>
@@ -4075,7 +4152,17 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
       {/* ─── Full-Screen Status Viewer Modal ─── */}
       {/* Reverted to PanResponder only (was breaking VideoView render
           inside Modal when wrapped in GestureDetector). */}
-      <Modal visible={viewerVisible} animationType="none" transparent statusBarTranslucent onRequestClose={closeViewer}>
+      <Modal
+        visible={viewerVisible}
+        animationType="none"
+        transparent
+        statusBarTranslucent
+        onRequestClose={() => {
+          if (viewersModal) { closeViewersSheet(); return; }
+          if (ownMenuOpen) { setOwnMenuOpen(false); setIsPaused(false); return; }
+          closeViewer();
+        }}
+      >
         <Animated.View
           style={[styles.viewerContainer, { opacity: viewerOpacity }]}
           {...panResponder.panHandlers}
@@ -4104,9 +4191,15 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
                 contador não cabiam numa linha → a coluna do nome encolhia até
                 1 caractere ("a/g/o/r/a" na vertical). Agora: linha 1 = avatar +
                 nome + X; ações quebram p/ linha 2, alinhadas à direita. */}
-            <View style={[styles.viewerHeader, _viewerHdrNarrow && isOwnStatus && { flexWrap: 'wrap', justifyContent: 'flex-end', rowGap: 6 }]}>
+            {/* [2026-10-13 status-viewers] Topo enxuto: avatar/nome/tempo + (próprio)
+                "+" e "…" + fechar. Salvar/estatísticas/repostar/apagar foram p/ o
+                menu "…"; a contagem de visualizações fica no rodapé (swipe-up). */}
+            <View
+              style={styles.viewerHeader}
+              onLayout={(e) => { try { const l = e.nativeEvent.layout; setOwnMenuTop(l.y + l.height - 4); } catch {} }}
+            >
               <AvatarCircle name={viewerOwnerName} email={viewerOwnerEmail} size={40} />
-              <View style={[styles.viewerHeaderInfo, _viewerHdrNarrow && isOwnStatus && { minWidth: Math.max(80, SCREEN_WIDTH - 130) }]}>
+              <View style={styles.viewerHeaderInfo}>
                 {/* [2026-10-11 qa-sweep2] Own status said "apitest" (raw handle);
                     WhatsApp shows "Meu status". Others: humanized name, and a
                     close-friends badge when the item was shared to that list. */}
@@ -4120,111 +4213,41 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
                   {timeAgo(currentViewerItem?.timestamp, t)}
                 </Text>
               </View>
-              {_viewerHdrNarrow && isOwnStatus && (
-                <TouchableOpacity onPress={closeViewer} style={styles.viewerClose} accessibilityRole="button" accessibilityLabel={t?.('common.close')}>
-                  <IconX size={26} color="#fff" />
-                </TouchableOpacity>
-              )}
-              {isOwnStatus && currentViewerItem?.view_count != null && (
-                <TouchableOpacity
-                  style={styles.viewCountBadge}
-                  onPress={() => handleShowViewers(currentViewerItem?.id)}
-                  activeOpacity={0.7}
-                >
-                  <IconEye size={14} color="rgba(255,255,255,0.8)" />
-                  <Text style={styles.viewCountText}>{currentViewerItem?.view_count}</Text>
-                </TouchableOpacity>
-              )}
-              {/* Own status: trash to delete this story + plus to post another. */}
-              {isOwnStatus && currentViewerItem?.id && (
+              {isOwnStatus && !!currentViewerItem?.id && (
                 <>
-                  {/* Save to highlights — Stories permanentes (B) */}
-                  <TouchableOpacity
-                    onPress={() => openHighlightSheet(currentViewerItem)}
-                    style={[styles.viewerClose, { marginRight: 4 }]}
-                    accessibilityLabel={t?.('status.saveToHighlight') || 'Salvar em destaques'}
-                  >
-                    <IconBookmark size={22} color="#fff" />
-                  </TouchableOpacity>
-                  {/* Per-status analytics (impressions, exit rate, etc).
-                      Lazily fetched on tap. Backend returns the aggregate
-                      shape; the modal renders skeleton numbers while we
-                      wait so the panel doesn't feel laggy on slow links. */}
-                  <TouchableOpacity
-                    onPress={() => openAnalytics(currentViewerItem.id)}
-                    style={[styles.viewerClose, { marginRight: 4 }]}
-                    accessibilityLabel={t?.('status.analytics') || 'Estatísticas'}
-                  >
-                    <IconBarChart size={22} color="#fff" />
-                  </TouchableOpacity>
-                  {/* Repost own status — generates a fresh 24h row from
-                      the same media + caption. Wrapped in a confirm so the
-                      user doesn't double-post by accident. */}
-                  <TouchableOpacity
-                    onPress={() => {
-                      const id = currentViewerItem.id;
-                      const doRepost = async () => {
-                        const out = await repostMyStatus(id);
-                        if (out?.status_id) {
-                          closeViewer();
-                        }
-                      };
-                      if (Platform.OS === 'web') {
-                        if (window.confirm(t?.('status.repostConfirm') || 'Repostar este status?')) doRepost();
-                      } else {
-                        Alert.alert(
-                          t?.('status.repostTitle') || 'Repostar',
-                          t?.('status.repostConfirm') || 'Publicar este status de novo por mais 24h?',
-                          [
-                            { text: t?.('common.cancel') || 'Cancelar', style: 'cancel' },
-                            { text: t?.('status.repost') || 'Repostar', onPress: doRepost },
-                          ]
-                        );
-                      }
-                    }}
-                    style={[styles.viewerClose, { marginRight: 4 }]}
-                    accessibilityLabel={t?.('status.repost') || 'Repostar'}
-                  >
-                    <IconRotateCw size={22} color="#fff" />
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    onPress={() => {
-                      const id = currentViewerItem.id;
-                      if (Platform.OS === 'web') {
-                        if (window.confirm(t?.('status.deleteConfirm') || 'Apagar este status?')) deleteMyStatus(id);
-                      } else {
-                        Alert.alert(
-                          t?.('status.deleteTitle') || 'Apagar status',
-                          t?.('status.deleteConfirm') || 'Apagar este status?',
-                          [
-                            { text: t?.('common.cancel') || 'Cancelar', style: 'cancel' },
-                            { text: t?.('common.delete') || 'Excluir', style: 'destructive', onPress: () => deleteMyStatus(id) },
-                          ]
-                        );
-                      }
-                    }}
-                    style={[styles.viewerClose, { marginRight: 4 }]}
-                    accessibilityLabel={t?.('common.delete') || 'Excluir'}
-                  >
-                    <IconTrash size={22} color="#ef4444" />
-                  </TouchableOpacity>
                   <TouchableOpacity
                     onPress={() => {
                       closeViewer();
                       setTimeout(() => { try { openCreator?.('camera'); } catch {} }, 120);
                     }}
-                    style={[styles.viewerClose, { marginRight: 4 }]}
+                    style={[styles.viewerClose, { marginRight: 8 }]}
+                    hitSlop={6}
+                    accessibilityRole="button"
                     accessibilityLabel={t?.('status.addMore') || 'Adicionar outro'}
                   >
-                    <IconPlus size={24} color="#fff" />
+                    <IconPlus size={22} color="#fff" />
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    onPress={() => {
+                      try { Haptics.selectionAsync?.(); } catch {}
+                      setIsPaused(true);
+                      if (timerRef.current) clearTimeout(timerRef.current);
+                      if (animRef.current) animRef.current.stop();
+                      setOwnMenuOpen(true);
+                    }}
+                    style={[styles.viewerClose, { marginRight: 8 }]}
+                    hitSlop={6}
+                    accessibilityRole="button"
+                    accessibilityLabel={t?.('status.moreOptions') || 'Mais opções'}
+                    accessibilityState={{ expanded: ownMenuOpen }}
+                  >
+                    <IconMoreHorizontal size={22} color="#fff" />
                   </TouchableOpacity>
                 </>
               )}
-              {!(_viewerHdrNarrow && isOwnStatus) && (
-                <TouchableOpacity onPress={closeViewer} style={styles.viewerClose}>
-                  <IconX size={26} color="#fff" />
-                </TouchableOpacity>
-              )}
+              <TouchableOpacity onPress={closeViewer} style={styles.viewerClose} hitSlop={6} accessibilityRole="button" accessibilityLabel={t?.('common.close') || 'Fechar'}>
+                <IconX size={22} color="#fff" />
+              </TouchableOpacity>
             </View>
 
             {/* Content area with tap zones */}
@@ -4564,6 +4587,7 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
               <View style={styles.replyBar}>
                 <View style={styles.replyInputWrap}>
                   <TextInput
+                    ref={replyInputRef}
                     style={styles.replyInput}
                     value={viewerReply}
                     onChangeText={setViewerReply}
@@ -4639,20 +4663,85 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
               </Animated.View>
             )}
 
-            {/* Own status view count footer — tap to see who viewed */}
-            {isOwnStatus && currentViewerItem?.view_count > 0 && (
+            {/* Own status view count footer — tap (ou swipe-up) p/ ver quem viu */}
+            {isOwnStatus && !!currentViewerItem?.id && (
               <TouchableOpacity
                 style={styles.viewersFooter}
                 onPress={() => handleShowViewers(currentViewerItem?.id)}
                 activeOpacity={0.7}
+                accessibilityRole="button"
+                accessibilityLabel={_viewCountLabel(t, Number(currentViewerItem?.view_count) || 0)}
               >
-                <IconEye size={16} color="rgba(255,255,255,0.6)" />
-                <Text style={styles.viewersText}>
-                  {_viewCountLabel(t, Number(currentViewerItem?.view_count) || 0)}
-                </Text>
-                <IconChevronRight size={14} color="rgba(255,255,255,0.4)" />
+                <IconChevronUp size={18} color="rgba(255,255,255,0.85)" />
+                <View style={styles.viewersFooterRow}>
+                  <IconEye size={15} color="rgba(255,255,255,0.85)" />
+                  <Text style={styles.viewersText}>
+                    {_viewCountLabel(t, Number(currentViewerItem?.view_count) || 0)}
+                  </Text>
+                </View>
               </TouchableOpacity>
             )}
+
+            {/* [2026-10-13 status-viewers] Menu "…" do próprio status */}
+            {isOwnStatus && ownMenuOpen && currentViewerItem?.id ? (
+              <Pressable
+                style={[StyleSheet.absoluteFill, { zIndex: 50, elevation: 50 }]}
+                onPress={() => { setOwnMenuOpen(false); setIsPaused(false); }}
+              >
+                <View style={[styles.ownMenuCard, { top: ownMenuTop }]}>
+                  {[
+                    { key: 'hl', label: t?.('status.saveToHighlight') || 'Salvar em destaques', Icon: IconBookmark, run: () => openHighlightSheet(currentViewerItem) },
+                    { key: 'an', label: t?.('status.analytics') || 'Estatísticas', Icon: IconBarChart, run: () => openAnalytics(currentViewerItem.id) },
+                    { key: 'rp', label: t?.('status.repost') || 'Repostar', Icon: IconRotateCw, run: () => {
+                      const id = currentViewerItem.id;
+                      const doRepost = async () => {
+                        const out = await repostMyStatus(id);
+                        if (out?.status_id) closeViewer();
+                      };
+                      if (Platform.OS === 'web') {
+                        if (window.confirm(t?.('status.repostConfirm') || 'Repostar este status?')) doRepost();
+                      } else {
+                        Alert.alert(
+                          t?.('status.repostTitle') || 'Repostar',
+                          t?.('status.repostConfirm') || 'Publicar este status de novo por mais 24h?',
+                          [
+                            { text: t?.('common.cancel') || 'Cancelar', style: 'cancel' },
+                            { text: t?.('status.repost') || 'Repostar', onPress: doRepost },
+                          ]
+                        );
+                      }
+                    } },
+                    { key: 'del', danger: true, label: t?.('status.deleteStatusAction') || 'Apagar status', Icon: IconTrash, run: () => {
+                      const id = currentViewerItem.id;
+                      if (Platform.OS === 'web') {
+                        if (window.confirm(t?.('status.deleteConfirm') || 'Apagar este status?')) deleteMyStatus(id);
+                      } else {
+                        Alert.alert(
+                          t?.('status.deleteTitle') || 'Apagar status',
+                          t?.('status.deleteConfirm') || 'Apagar este status?',
+                          [
+                            { text: t?.('common.cancel') || 'Cancelar', style: 'cancel' },
+                            { text: t?.('common.delete') || 'Excluir', style: 'destructive', onPress: () => deleteMyStatus(id) },
+                          ]
+                        );
+                      }
+                    } },
+                  ].map((it, i) => (
+                    <TouchableOpacity
+                      key={it.key}
+                      activeOpacity={0.6}
+                      onPress={() => { setOwnMenuOpen(false); setIsPaused(false); try { it.run(); } catch {} }}
+                      style={[styles.ownMenuItem, i > 0 && styles.ownMenuItemSep]}
+                      accessibilityRole="menuitem"
+                      accessibilityLabel={it.label}
+                    >
+                      <Text style={[styles.ownMenuText, it.danger && { color: '#FF453A' }]} numberOfLines={1}>{it.label}</Text>
+                      <it.Icon size={19} color={it.danger ? '#FF453A' : '#fff'} />
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </Pressable>
+            ) : null}
           </Animated.View>
         </Animated.View>
         {/* [2026-10-12] Lista "quem viu" DENTRO do Modal do viewer: no iOS um Modal irmão
@@ -4740,7 +4829,7 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
       </Modal>
 
       {/* ─── Viewers List Modal — WhatsApp-style ─── */}
-      <Modal visible={viewersModal && !viewerVisible} transparent animationType="slide" onRequestClose={() => { setViewersModal(false); setIsPaused(false); viewersModalStatusIdRef.current = null; }}>
+      <Modal visible={viewersModal && !viewerVisible} transparent animationType="fade" statusBarTranslucent onRequestClose={closeViewersSheet}>
         {renderViewersSheet()}
       </Modal>
 
@@ -6571,17 +6660,40 @@ const styles = StyleSheet.create({
 
   // Viewers footer
   viewersFooter: {
-    flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 18,
-    paddingVertical: 14,
-    paddingBottom: Platform.OS === 'ios' ? 36 : androidBottomInset(18),
-    gap: 8,
+    alignSelf: 'center',
+    paddingHorizontal: 24,
+    paddingTop: 8,
+    paddingBottom: Platform.OS === 'ios' ? 30 : androidBottomInset(14),
+    gap: 2,
   },
+  viewersFooterRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   viewersText: {
-    color: 'rgba(255,255,255,0.6)',
-    fontSize: 13,
+    color: 'rgba(255,255,255,0.92)',
+    fontSize: 14,
+    fontWeight: '600',
+    letterSpacing: -0.1,
   },
+  // [2026-10-13 status-viewers] menu "…" do próprio status
+  ownMenuCard: {
+    position: 'absolute',
+    right: 12,
+    minWidth: 232,
+    borderRadius: 14,
+    backgroundColor: 'rgba(28,28,30,0.97)',
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: 'rgba(255,255,255,0.12)',
+    overflow: 'hidden',
+    ...(Platform.OS === 'web'
+      ? { boxShadow: '0 12px 32px rgba(0,0,0,0.5)' }
+      : { shadowColor: '#000', shadowOffset: { width: 0, height: 10 }, shadowOpacity: 0.45, shadowRadius: 20, elevation: 12 }),
+  },
+  ownMenuItem: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    paddingHorizontal: 16, paddingVertical: 13, gap: 16,
+  },
+  ownMenuItemSep: { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: 'rgba(255,255,255,0.1)' },
+  ownMenuText: { color: '#fff', fontSize: 15.5, fontWeight: '500', letterSpacing: -0.2, flexShrink: 1 },
 
   // [2026-10-11 social-qa] Instagram-style reply bar actions + reaction tray
   replyIconBtn: {

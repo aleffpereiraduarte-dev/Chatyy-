@@ -20,6 +20,7 @@ import * as proxyCfg from '../services/proxyConfig';
 import * as screenGate from '../services/screenCaptureGate';
 import * as vpnDetect from '../services/vpnDetect';
 import * as api from '../services/api';
+import * as settingsCache from '../services/settingsCache'; // [2026-10-13 settings-instant]
 import FadeSlideIn from '../components/FadeSlideIn';
 import {
   SettingsScreen, SettingsGroup, SettingsRow, SettingsSwitchRow, useGroupedColors,
@@ -30,18 +31,23 @@ export default function AdvancedPrivacyScreen() {
   const router = useRouter();
   const g = useGroupedColors();
 
+  // [2026-10-13 settings-instant] Último estado salvo no aparelho (por conta)
+  // → abre na hora; o load abaixo atualiza em 2º plano. Senha do proxy NÃO
+  // vai para o snapshot (fica só no proxyConfig).
+  const [_snap] = useState(() => settingsCache.peek('adv_privacy'));
   // Proxy config
-  const [proxy, setProxy] = useState({
+  const [proxy, setProxy] = useState(() => ({
     enabled: false, type: 'socks5', host: '', port: 1080, username: '', password: '', useTor: false,
-  });
+    ...(_snap && _snap.proxy && typeof _snap.proxy === 'object' ? _snap.proxy : {}),
+  }));
   // Screen capture block
-  const [screenBlock, setScreenBlock] = useState(false);
+  const [screenBlock, setScreenBlock] = useState(() => !!(_snap && _snap.screenBlock));
   // Discoverable
-  const [discoverable, setDiscoverable] = useState(true);
+  const [discoverable, setDiscoverable] = useState(() => settingsCache.peek('discoverable') !== false);
   // VPN suggestion
-  const [vpnActive, setVpnActive] = useState(true);
-  // Loading state
-  const [loading, setLoading] = useState(true);
+  const [vpnActive, setVpnActive] = useState(() => (_snap ? _snap.vpnActive !== false : true));
+  // Loading state (só na 1ª vez na vida, sem snapshot)
+  const [loading, setLoading] = useState(() => !_snap);
 
   useEffect(() => {
     (async () => {
@@ -49,13 +55,14 @@ export default function AdvancedPrivacyScreen() {
         const [p, s, d, v] = await Promise.all([
           proxyCfg.getProxyConfig(),
           screenGate.isScreenCaptureBlocked(),
-          api.chatDiscoverableGet().then(r => r?.data?.discoverable ?? r?.discoverable ?? true).catch(() => true),
+          settingsCache.revalidate('discoverable', { force: true }).then(x => (x === null || x === undefined ? true : x)).catch(() => true),
           vpnDetect.isVpnActive(),
         ]);
         setProxy(p);
         setScreenBlock(!!s);
         setDiscoverable(!!d);
         setVpnActive(!!v);
+        try { settingsCache.put('adv_privacy', { proxy: { ...(p || {}), password: '' }, screenBlock: !!s, vpnActive: !!v }); } catch {}
       } catch (e) {
         console.warn('[advanced-privacy] load failed', e?.message);
       } finally { setLoading(false); }
@@ -65,15 +72,21 @@ export default function AdvancedPrivacyScreen() {
   async function saveProxy(patch) {
     const next = { ...proxy, ...patch };
     setProxy(next);
+    try { settingsCache.patch('adv_privacy', (prev) => ({ ...(prev || {}), proxy: { ...next, password: '' } })); } catch {}
     try { await proxyCfg.setProxyConfig(patch); } catch {}
   }
   async function saveScreenBlock(v) {
     setScreenBlock(v);
+    try { settingsCache.patch('adv_privacy', (prev) => ({ ...(prev || {}), screenBlock: !!v })); } catch {}
     try { await screenGate.setScreenCaptureBlocked(v); } catch {}
   }
   async function saveDiscoverable(v) {
     setDiscoverable(v);
-    try { await api.chatDiscoverableSet(v); } catch {}
+    settingsCache.put('discoverable', !!v);
+    try {
+      const r = await api.chatDiscoverableSet(v);
+      if (r && r.success === false) { setDiscoverable(!v); settingsCache.put('discoverable', !v); settingsCache.notifySaveFailed(t); }
+    } catch {}
   }
 
   // [2026-10-08 settings-redesign2] Header nativo único + listas agrupadas

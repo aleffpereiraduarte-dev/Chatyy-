@@ -591,6 +591,8 @@ async function clearAllPerAccountCaches() {
   // [2026-10-08 offline-first] api.js last-known offline copies (per-account
   // hashed keys, but a full wipe removes every account's).
   try { api.purgeOfflineLastKnown?.(); } catch {}
+  // [2026-10-13 settings-instant] snapshots locais das Configurações (todas as contas).
+  try { require('../services/settingsCache').purgeAll?.(); } catch {}
 
   // 2. AsyncStorage sweep — anything that smells user-scoped
   try {
@@ -1216,6 +1218,16 @@ export function AuthProvider({ children }) {
   // Also updates user.name with the profile display name
   const prefetchProfile = useCallback((email) => {
     if (!email) return;
+    // [2026-10-13 settings-instant] Aquece o cache local das Configurações
+    // (todas as seções em paralelo, respeitando TTL) logo após boot/login/troca
+    // de conta → a 1ª abertura de Configurações já pinta com valores reais.
+    // Atrasado p/ não competir com o boot (chat_list/sync vêm primeiro).
+    setTimeout(() => {
+      try {
+        const sc = require('../services/settingsCache');
+        if (sc.activeAccount() === String(email).trim().toLowerCase()) sc.prefetchAll().catch(() => {});
+      } catch {}
+    }, 4000);
     api.getProfile().then(r => {
       if (r && r.success && r.data && typeof r.data === 'object') {
         import('../services/cache').then(({ setCache }) => {

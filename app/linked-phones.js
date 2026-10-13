@@ -28,6 +28,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import * as api from '../services/api';
+import * as settingsCache from '../services/settingsCache'; // [2026-10-13 settings-instant]
 import useIsMounted from '../hooks/useIsMounted';
 import { COUNTRIES } from '../constants/countries';
 import {
@@ -44,8 +45,8 @@ export default function LinkedPhones() {
   const insets = useSafeAreaInsets();
   const mountedRef = useIsMounted();
 
-  const [items, setItems] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const [items, setItems] = useState(() => { const c = settingsCache.peek('linked_phones'); return Array.isArray(c) ? c : []; });
+  const [loading, setLoading] = useState(() => !Array.isArray(settingsCache.peek('linked_phones')));
 
   // Add-modal state.
   const [addOpen, setAddOpen] = useState(false);
@@ -72,13 +73,18 @@ export default function LinkedPhones() {
   }, [country, phone]);
 
   const reload = useCallback(async () => {
-    setLoading(true);
+    // [2026-10-13 settings-instant] com lista salva no aparelho: sem spinner.
+    const cached = settingsCache.peek('linked_phones');
+    if (Array.isArray(cached)) setItems(cached); else setLoading(true);
     try {
       const r = await api.linkedPhonesList();
       if (!mountedRef.current) return;
-      setItems(Array.isArray(r?.items) ? r.items : []);
+      if (r && r.success === false && Array.isArray(cached)) return; // falha → mantém o salvo
+      const list = Array.isArray(r?.items) ? r.items : [];
+      setItems(list);
+      try { settingsCache.put('linked_phones', list); } catch {}
     } catch {
-      if (mountedRef.current) setItems([]);
+      if (mountedRef.current && !Array.isArray(cached)) setItems([]);
     } finally {
       if (mountedRef.current) setLoading(false);
     }

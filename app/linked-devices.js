@@ -8,6 +8,7 @@ import { useLanguage } from '../context/LanguageContext';
 import { useAuth } from '../context/AuthContext';
 import { IconArrowLeft, IconShield, IconMonitor, IconSmartphone, IconCamera, IconUserPlus, IconX } from '../components/Icons';
 import * as api from '../services/api';
+import * as settingsCache from '../services/settingsCache'; // [2026-10-13 settings-instant]
 import { loadDeviceRegistry, installAppStateHook } from '../services/deviceRegistry';
 import FadeSlideIn from '../components/FadeSlideIn';
 import PressableScale from '../components/PressableScale';
@@ -77,8 +78,10 @@ export default function LinkedDevicesScreen() {
   const { t } = useLanguage();
   const { user } = useAuth();
 
-  const [sessions, setSessions] = useState([]);
-  const [loading, setLoading] = useState(true);
+  // [2026-10-13 settings-instant] última lista de sessões salva no aparelho
+  // (por conta) → abre na hora; spinner só na 1ª vez na vida.
+  const [sessions, setSessions] = useState(() => { const c = settingsCache.peek('sessions'); return Array.isArray(c) ? c : []; });
+  const [loading, setLoading] = useState(() => settingsCache.peek('sessions') == null);
   const [revoking, setRevoking] = useState(null);
   // Companion-mode scanner state. We use the same modal-camera shape that
   // profile-qr.js / chat-new.js do — lazy-loaded expo-camera, with a
@@ -90,7 +93,7 @@ export default function LinkedDevicesScreen() {
   const [permission, requestPermission] = _useCamPerm();
 
   const load = useCallback(async () => {
-    setLoading(true);
+    if (settingsCache.peek('sessions') == null) setLoading(true);
     // sessions_list requires auth; on a cold mount the auth can lag a tick
     // behind the screen (QA robot flagged a transient 401 here). Preflight:
     // wait for auth to be READY before the FIRST request so it goes out authed.
@@ -113,6 +116,7 @@ export default function LinkedDevicesScreen() {
         if (r?.success && r.data) {
           const list = Array.isArray(r.data) ? r.data : (r.data.sessions || []);
           setSessions(list);
+          try { settingsCache.put('sessions', list); } catch {}
           break;
         }
         if (r && r.success === false && attempt < 2) {

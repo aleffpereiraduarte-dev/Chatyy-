@@ -116,7 +116,17 @@ function _acct() {
 
 export function getCachedPlanState() {
   const hit = _cache.get(_acct());
-  return hit ? hit.state : null;
+  if (hit) return hit.state;
+  // [2026-10-13 settings-instant] Fallback no snapshot do aparelho
+  // (settingsCache 'plan', por conta) → telas de plano/armazenamento abrem
+  // com o último valor mesmo após reiniciar o app.
+  try {
+    const sc = require('./settingsCache');
+    if (sc.activeAccount() !== _acct()) return null;
+    const snap = sc.peek('plan');
+    if (snap && (snap.plan || snap.usage)) return normalizePlanState(snap.plan || null, snap.usage || null);
+  } catch {}
+  return null;
 }
 
 export function invalidatePlanState() {
@@ -140,6 +150,7 @@ export async function loadPlanState({ force = false } = {}) {
     // Conta pode ter trocado durante o fetch: só grava se ainda é a mesma.
     if (_acct() === acct) {
       _cache.set(acct, { at: Date.now(), state });
+      try { const sc = require('./settingsCache'); if (sc.activeAccount() === acct) sc.put('plan', { plan: info || null, usage: usage || null }); } catch {}
       _subs.forEach((fn) => { try { fn(state); } catch {} });
     }
     return state;

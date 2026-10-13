@@ -9,6 +9,7 @@ import { USE_NATIVE_HEADER, nativeHeaderOptions, nativeScrollInsetProps, NativeI
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import * as api from '../services/api';
+import * as settingsCache from '../services/settingsCache'; // [2026-10-13 settings-instant]
 import AvatarCircle from '../components/AvatarCircle';
 import FadeSlideIn from '../components/FadeSlideIn';
 import { IconArrowLeft, IconSearch, IconStar, IconCheck } from '../components/Icons';
@@ -18,26 +19,21 @@ export default function CloseFriendsScreen() {
   const { colors, isDark } = useTheme();
   const { t } = useLanguage();
   const router = useRouter();
-  const [contacts, setContacts] = useState([]);
-  const [closeFriends, setCloseFriends] = useState(new Set());
-  const [loading, setLoading] = useState(true);
+  // [2026-10-13 settings-instant] abre com a última lista salva no aparelho.
+  const [contacts, setContacts] = useState(() => { const c = settingsCache.peek('contacts_lite'); return Array.isArray(c) ? c : []; });
+  const [closeFriends, setCloseFriends] = useState(() => { const c = settingsCache.peek('close_friends'); return new Set(Array.isArray(c) ? c : []); });
+  const [loading, setLoading] = useState(() => settingsCache.peek('contacts_lite') == null);
   const [query, setQuery] = useState('');
 
   useEffect(() => {
     (async () => {
       try {
         const [cf, cs] = await Promise.all([
-          api.closeFriendsList?.(),
-          api.chatContacts?.(),
+          settingsCache.revalidate('close_friends', { force: true }),
+          settingsCache.revalidate('contacts_lite', { force: true }),
         ]);
-        if (cf?.success) {
-          const list = cf.data?.close_friends || cf.data?.list || [];
-          setCloseFriends(new Set(list.map(f => f.friend_email || f.email || f)));
-        }
-        if (cs?.success) {
-          const list = Array.isArray(cs.data) ? cs.data : (cs.data?.contacts || []);
-          setContacts(list);
-        }
+        if (Array.isArray(cf)) setCloseFriends(new Set(cf));
+        if (Array.isArray(cs)) setContacts(cs);
       } catch {}
       setLoading(false);
     })();
@@ -55,8 +51,15 @@ export default function CloseFriendsScreen() {
       return n;
     });
     try {
-      if (isIn) await api.closeFriendsRemove(email);
-      else await api.closeFriendsAdd(email);
+      const r = isIn ? await api.closeFriendsRemove(email) : await api.closeFriendsAdd(email);
+      if (r && r.success === false) throw new Error('rejected');
+      try {
+        settingsCache.patch('close_friends', (prev) => {
+          const set = new Set(Array.isArray(prev) ? prev : []);
+          isIn ? set.delete(email) : set.add(email);
+          return Array.from(set);
+        });
+      } catch {}
     } catch {
       // Revert exata da operação que tentamos aplicar
       setCloseFriends(prev => {

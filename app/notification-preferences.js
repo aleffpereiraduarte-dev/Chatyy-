@@ -12,7 +12,7 @@
 //
 // 2026-05-17 — gap_notifications P0+P1 steps 3, 4, 7, 8, 9, 10.
 
-import { useEffect, useState, useCallback, useMemo } from 'react';
+import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import {
   View,
   Text,
@@ -26,6 +26,7 @@ import { IconTrash } from '../components/Icons';
 import FadeSlideIn from '../components/FadeSlideIn';
 import { useLanguage } from '../context/LanguageContext';
 import { apiCall } from '../services/api';
+import * as settingsCache from '../services/settingsCache'; // [2026-10-13 settings-instant]
 import {
   SettingsScreen, SettingsGroup, SettingsRow, SettingsSwitchRow, SettingsPickerRow,
   OptionSheet, useGroupedColors, useSettingsInputStyle,
@@ -79,21 +80,34 @@ export default function NotificationPreferences() {
   const { t } = useLanguage();
 
   // Global prefs (mention_only, dnd, preview, visibility, respect_system_dnd)
-  const [prefs, setPrefs] = useState({
-    mention_only: false,
-    snooze_until: null,
-    dnd_enabled: false,
-    dnd_start_time: '22:00',
-    dnd_end_time: '07:00',
-    preview_global: 'always',
-    lockscreen_visibility: 'public',
-    respect_system_dnd: false,
+  // [2026-10-13 settings-instant] Abre com o último valor salvo no aparelho
+  // (settingsCache 'notif' — o MESMO snapshot que Configurações usa) e
+  // revalida em 2º plano em paralelo com as palavras-chave.
+  const [prefs, setPrefs] = useState(() => {
+    const base = {
+      mention_only: false,
+      snooze_until: null,
+      dnd_enabled: false,
+      dnd_start_time: '22:00',
+      dnd_end_time: '07:00',
+      preview_global: 'always',
+      lockscreen_visibility: 'public',
+      respect_system_dnd: false,
+    };
+    const c = settingsCache.peek('notif');
+    return c && typeof c === 'object' ? { ...base, ...c } : base;
   });
 
   // Keywords (each row: { id, keyword, sound })
-  const [keywords, setKeywords] = useState([]);
+  const [keywords, setKeywords] = useState(() => { const c = settingsCache.peek('notif_keywords'); return Array.isArray(c) ? c : []; });
   const [newKeyword, setNewKeyword] = useState('');
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(() => settingsCache.peek('notif') == null);
+  // Espelha a lista de palavras-chave no cache local após cada mudança.
+  const _kwHydrated = useRef(false);
+  useEffect(() => {
+    if (!_kwHydrated.current) { _kwHydrated.current = true; return; }
+    try { settingsCache.put('notif_keywords', keywords); } catch {}
+  }, [keywords]);
   const [editingSoundForId, setEditingSoundForId] = useState(null);
 
   // Initial load: pull prefs + keywords in parallel. chat_user_notif_prefs_get
@@ -103,32 +117,26 @@ export default function NotificationPreferences() {
   // endpoint isn't deployed yet (graceful fallback below).
   useEffect(() => {
     let alive = true;
+    const u1 = settingsCache.subscribe('notif', (v) => { if (alive && v && typeof v === 'object') setPrefs(p => ({ ...p, ...v })); });
+    const u2 = settingsCache.subscribe('notif_keywords', (v) => { if (alive && Array.isArray(v)) setKeywords(v); });
     (async () => {
       try {
-        const [prefRes, moRes, kwRes] = await Promise.all([
-          apiCall('chat_user_notif_prefs_get', {}, 'POST').catch(() => null),
-          apiCall('chat_user_mention_only_get', {}, 'POST').catch(() => null),
-          apiCall('chat_user_keywords_list', {}, 'POST').catch(() => null),
+        const [n] = await Promise.all([
+          settingsCache.revalidate('notif'),
+          settingsCache.revalidate('notif_keywords'),
         ]);
-        if (!alive) return;
-        // Prefer the aggregate prefs payload when present; otherwise fall
-        // back to the standalone mention_only response.
-        const next = { ...prefs };
-        if (prefRes?.success && prefRes.data) {
-          Object.assign(next, prefRes.data);
-        } else if (moRes?.success && moRes.data) {
-          next.mention_only = !!moRes.data.mention_only;
+        // Sem o agregado (deploy antigo / falha) → fallback mention_only.
+        if (!n && alive) {
+          const moRes = await apiCall('chat_user_mention_only_get', {}, 'POST').catch(() => null);
+          if (alive && moRes?.success && moRes.data) setPrefs(p => ({ ...p, mention_only: !!moRes.data.mention_only }));
         }
-        setPrefs(next);
-        if (kwRes?.success && kwRes.data) setKeywords(kwRes.data.keywords || []);
       } catch (e) {
         if (alive) console.warn('[notif-pref/load]', e?.message);
       } finally {
         if (alive) setLoading(false);
       }
     })();
-    return () => { alive = false; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    return () => { alive = false; u1(); u2(); };
   }, []);
 
   // Optimistic single-field save. On failure roll back the UI to the
@@ -136,9 +144,11 @@ export default function NotificationPreferences() {
   const savePref = useCallback(async (patch) => {
     const prev = prefs;
     setPrefs(p => ({ ...p, ...patch }));
+    // [2026-10-13 settings-instant] commit otimista: snapshot local + fila
+    // offline (sem rede não desfaz — reenvia ao reconectar).
     try {
-      const r = await apiCall('chat_user_notif_prefs_set', patch, 'POST');
-      if (r?.success === false) throw new Error(r?.error || 'failed');
+      const res = await settingsCache.commit('notif', { patch, action: 'chat_user_notif_prefs_set', params: patch });
+      if (res && res.ok === false) throw new Error(res.r?.error || 'failed');
     } catch (e) {
       setPrefs(prev);
       Alert.alert(t('common.error'), t('notifPref.saveFailed'));
@@ -204,6 +214,7 @@ export default function NotificationPreferences() {
       const r = await apiCall('chat_user_snooze_set', { minutes }, 'POST');
       if (r?.success) {
         setPrefs(p => ({ ...p, snooze_until: r.data?.snooze_until || null }));
+        settingsCache.patch('notif', { snooze_until: r.data?.snooze_until || null });
       }
     } catch (e) {
       Alert.alert(t('common.error'), e?.message || t('notifPref.genericFail'));
@@ -213,6 +224,7 @@ export default function NotificationPreferences() {
     try {
       await apiCall('chat_user_snooze_clear', {}, 'POST');
       setPrefs(p => ({ ...p, snooze_until: null }));
+      settingsCache.patch('notif', { snooze_until: null });
     } catch {}
   }, []);
 
