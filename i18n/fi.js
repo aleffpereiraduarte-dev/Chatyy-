@@ -1,4 +1,7 @@
 export default {
+  // [2026-10-12 reply-wa] citação/barra de resposta
+  "chat.replyVideoNote": "Videoviesti",
+  "chat.replyEncrypted": "Salattu viesti",
   // [2026-10-12 sticker-picker-fix] galeria/câmera do criador de figurinhas
   "stickerMaker.photosPermTitle": "Kuvien käyttöoikeus",
   "stickerMaker.photosPermBody": "Valitse kuva tarralle sallimalla kuvien käyttö laitteen Asetuksissa.",
@@ -8253,4 +8256,9 @@ export default {
   'settings.currency.COP': 'Kolumbian peso',
   'settings.currency.PEN': 'Perun sol',
   'settings.currency.CLP': 'Chilen peso',
+  // [2026-10-12 rec-audit] gravação de áudio
+  "chatConv.micDeniedBody": "Salli mikrofonin käyttö Asetuksissa äänen tallentamiseksi.",
+  "chatConv.recordingFailedRetry": "Tallennus epäonnistui, yritä uudelleen",
+  "chatConv.voiceTooShort": "Ääni on liian lyhyt",
+  "chatConv.recordingInterruptedCall": "Puhelu keskeytti tallennuksen",
 };

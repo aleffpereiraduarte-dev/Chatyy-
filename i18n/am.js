@@ -1,4 +1,7 @@
 export default {
+  // [2026-10-12 reply-wa] citação/barra de resposta
+  "chat.replyVideoNote": "የቪዲዮ መልዕክት",
+  "chat.replyEncrypted": "የተመሰጠረ መልዕክት",
   // [2026-10-12 sticker-picker-fix] galeria/câmera do criador de figurinhas
   "stickerMaker.photosPermTitle": "የፎቶ መዳረሻ",
   "stickerMaker.photosPermBody": "ለስቲከሩ ፎቶ ለመምረጥ በመሣሪያው ቅንብሮች ውስጥ የፎቶ መዳረሻን ይፍቀዱ።",
@@ -7471,4 +7474,9 @@ export default {
   'settings.currency.COP': 'ኮሎምቢያዊ ፔሶ',
   'settings.currency.PEN': 'ፔሩዋን ሶል',
   'settings.currency.CLP': 'ቺሊያዊ ፔሶ',
+  // [2026-10-12 rec-audit] gravação de áudio
+  "chatConv.micDeniedBody": "ድምፅ ለመቅዳት በቅንብሮች ውስጥ የማይክሮፎን መዳረሻ ይፍቀዱ።",
+  "chatConv.recordingFailedRetry": "መቅዳት አልተሳካም፣ እንደገና ይሞክሩ",
+  "chatConv.voiceTooShort": "ድምፁ በጣም አጭር ነው",
+  "chatConv.recordingInterruptedCall": "ቀረጻው በጥሪ ተቋርጧል",
 };

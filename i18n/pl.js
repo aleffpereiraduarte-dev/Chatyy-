@@ -1,4 +1,7 @@
 export default {
+  // [2026-10-12 reply-wa] citação/barra de resposta
+  "chat.replyVideoNote": "Wiadomość wideo",
+  "chat.replyEncrypted": "Zaszyfrowana wiadomość",
   // [2026-10-12 sticker-picker-fix] galeria/câmera do criador de figurinhas
   "stickerMaker.photosPermTitle": "Dostęp do zdjęć",
   "stickerMaker.photosPermBody": "Aby wybrać zdjęcie do naklejki, zezwól na dostęp do zdjęć w Ustawieniach urządzenia.",
@@ -8253,4 +8256,9 @@ export default {
   'settings.currency.COP': 'Peso kolumbijskie',
   'settings.currency.PEN': 'Sol peruwiański',
   'settings.currency.CLP': 'Peso chilijskie',
+  // [2026-10-12 rec-audit] gravação de áudio
+  "chatConv.micDeniedBody": "Zezwól na dostęp do mikrofonu w Ustawieniach, aby nagrywać dźwięk.",
+  "chatConv.recordingFailedRetry": "Nagrywanie nie powiodło się, spróbuj ponownie",
+  "chatConv.voiceTooShort": "Nagranie jest za krótkie",
+  "chatConv.recordingInterruptedCall": "Nagrywanie przerwane przez połączenie",
 };

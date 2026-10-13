@@ -3947,6 +3947,283 @@ function ReplyThumb({ uri }) {
   );
 }
 
+// [2026-10-12 reply-wa] Citação nível WhatsApp — UMA descrição por tipo usada
+// pela citação dentro da bolha E pela barra acima do composer:
+//   { Icon, label, italic, lines, thumb: { kind, uris[] } | null }
+// `rt` = payload reply_to (servidor: id/sender/content≤200/type/file_url/
+// deleted_at) ou a própria mensagem (barra do composer); `ref` = a linha local
+// completa (messagesById) quando carregada — traz duração, nome do arquivo,
+// enquete/contato hidratados, texto E2E já decifrado, poster de vídeo.
+// Privacidade: apagada → só "Mensagem apagada" (nunca content/mídia/miniatura).
+const _RT_MEDIA_NAME_RE = /^[\w\-. ()]+\.(jpe?g|png|heic|heif|webp|gif|bmp|mp4|mov|m4v|3gp|webm|mkv|m4a|mp3|aac|ogg|opus|wav|caf|amr)$/i;
+function _rtTr(t, key, fb, vars) {
+  try {
+    const v = typeof t === 'function' ? t(key, vars) : '';
+    return (typeof v === 'string' && v && v !== key) ? v : fb;
+  } catch { return fb; }
+}
+function _rtFmtDur(v, msHeuristic) {
+  let n = Number(v) || 0;
+  if (n <= 0) return '';
+  if (msHeuristic && n >= 1000) n = n / 1000;
+  const s = Math.max(1, Math.round(n));
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), ss = s % 60;
+  return h ? `${h}:${String(m).padStart(2, '0')}:${String(ss).padStart(2, '0')}` : `${m}:${String(ss).padStart(2, '0')}`;
+}
+function _rtLooksE2E(s) {
+  if (typeof s !== 'string' || !s) return false;
+  return s.startsWith('🔒') || s.startsWith('[E2E:') || /^\{\s*"e2e"\s*:/.test(s);
+}
+function _rtJSON(s) {
+  if (typeof s !== 'string') return (s && typeof s === 'object') ? s : null;
+  const c = s.trim();
+  if (!c.startsWith('{')) return null;
+  try { const j = JSON.parse(c); return (j && typeof j === 'object') ? j : null; } catch { return null; }
+}
+// Campo de JSON TRUNCADO (o servidor corta content em 200 chars → JSON.parse falha).
+function _rtField(s, key) {
+  if (typeof s !== 'string') return '';
+  const mm = s.match(new RegExp('"' + key + '"\\s*:\\s*"((?:[^"\\\\]|\\\\.)*)"'));
+  if (!mm) return '';
+  try { return JSON.parse('"' + mm[1] + '"'); } catch { return mm[1]; }
+}
+function _rtCleanFileName(s) {
+  let n = String(s || '').trim();
+  if (!n) return '';
+  n = n.split('?')[0].split('#')[0];
+  n = n.split('/').pop() || '';
+  try { n = decodeURIComponent(n); } catch {}
+  // chaves de upload: "<ts>_<hex>_nome.ext" / "<hex8>_nome.ext"
+  n = n.replace(/^\d{9,}_[0-9a-f]{4,}_/i, '').replace(/^[0-9a-f]{8,}_/i, '');
+  return n;
+}
+function _rtMediaUri(u) {
+  if (!u) return '';
+  const s = String(u);
+  if (/^(https?:|data:|blob:|file:|content:|ph:|assets-library:)/i.test(s)) return s;
+  try { return api.getMediaUrl(s) || s; } catch { return s; }
+}
+function describeReplyTarget(rt, ref, t) {
+  const r = rt || {};
+  const L = ref || null;
+  const tr = (k, fb, vars) => _rtTr(t, k, fb, vars);
+  if (r.deleted_at || r.is_deleted || (L && (L.deleted_at || L.is_deleted))) {
+    return { Icon: IconTrash, label: tr('chatConv.deletedMessage', 'Mensagem apagada'), italic: true, lines: 1, thumb: null };
+  }
+  const m = L ? { ...r, ...L } : r;
+  let type = String(m.type || 'text');
+  const content = typeof m.content === 'string' ? m.content.trim() : '';
+  const fileUrl = m.file_url ? String(m.file_url) : '';
+  const isUrl = (s) => /^(https?:\/\/|\/?data\/)/i.test(String(s || ''));
+  const caption = (s) => (s && !isUrl(s) && s !== m.file_name && !_RT_MEDIA_NAME_RE.test(s) && !_rtLooksE2E(s)) ? s : '';
+  const withDur = (label, d) => (d ? `${label} ${d}` : label);
+  const videoUris = () => [
+    m.thumbnail_url, m.poster_url, m._posterUri, m.video_thumb,
+    fileUrl && /^https?:|^\//i.test(fileUrl) ? fileUrl + '.thumb.jpg' : '',
+    m.thumb_b64 ? `data:image/jpeg;base64,${m.thumb_b64}` : '',
+  ].filter(Boolean).map(_rtMediaUri);
+
+  // E2E: envelope não decifrado / sentinela "🔒" → nunca o texto cifrado.
+  if (_rtLooksE2E(content) || m._e2eFailed || (m._e2e && (!content || content === '...'))) {
+    return { Icon: IconLock, label: tr('chat.replyEncrypted', 'Mensagem criptografada'), italic: true, lines: 1, thumb: null };
+  }
+
+  // 'file' que na verdade é foto/vídeo/áudio (extensão) → descreve como tal.
+  if (type === 'file') {
+    const nm = (m.file_name || (!isUrl(content) ? content : '') || fileUrl).toLowerCase();
+    if (/\.(jpe?g|png|heic|heif|webp|bmp)(\?|$)/i.test(nm)) type = 'image';
+    else if (/\.(mp4|mov|m4v|3gp|webm|mkv)(\?|$)/i.test(nm)) type = 'video';
+    else if (/\.(m4a|mp3|aac|ogg|opus|wav|caf|amr)(\?|$)/i.test(nm)) type = 'audio';
+  }
+
+  switch (type) {
+    case 'image': {
+      const cap = caption(content);
+      return {
+        Icon: IconCamera, label: cap || tr('chat.photo', 'Foto'), lines: cap ? 2 : 1,
+        thumb: { kind: 'image', uris: [fileUrl || (isUrl(content) ? content : ''), m._localUri, m.thumb_b64 ? `data:image/jpeg;base64,${m.thumb_b64}` : ''].filter(Boolean).map(_rtMediaUri) },
+      };
+    }
+    case 'video_note':
+    case 'video_message':
+    case 'video':
+    case 'short_video': {
+      const round = type === 'video_note' || type === 'video_message' || isVideoNoteMessage(m);
+      if (round) {
+        return {
+          Icon: IconVideoNote, lines: 1,
+          label: withDur(tr('chat.replyVideoNote', 'Vídeo-recado'), _rtFmtDur(m.duration, true)),
+          thumb: { kind: 'round', uris: videoUris() },
+        };
+      }
+      const cap = caption(content);
+      return {
+        Icon: IconVideo, lines: cap ? 2 : 1,
+        label: cap || withDur(tr('chat.video', 'Vídeo'), _rtFmtDur(m.duration, false)),
+        thumb: { kind: 'video', uris: videoUris() },
+      };
+    }
+    case 'audio':
+    case 'voice':
+    case 'voicemail': {
+      const nm = _rtCleanFileName(m.file_name || '');
+      const isVoice = type !== 'audio' || !!m.waveform || !nm || /^(audio|voice|ptt|rec|recording|gravacao)[_\-]?\d/i.test(nm);
+      const d = _rtFmtDur(m.duration || m.audio_duration, false);
+      return isVoice
+        ? { Icon: IconMic, label: withDur(tr('chatConv.voice', 'Mensagem de voz'), d), lines: 1, thumb: null }
+        : { Icon: IconMusic, label: withDur(tr('chat.audio', 'Áudio'), d), lines: 1, thumb: null };
+    }
+    case 'file': {
+      const nm = _rtCleanFileName(m.file_name || (!isUrl(content) && !content.startsWith('{') ? content : '') || fileUrl);
+      return { Icon: IconFileText, label: nm || tr('chat.file', 'Arquivo'), lines: 1, thumb: null };
+    }
+    case 'gif': {
+      const src = fileUrl || (isUrl(content) ? content : '');
+      const cap = fileUrl ? caption(content) : '';
+      return { Icon: IconFilm, label: cap || tr('chat.gif', 'GIF'), lines: 1, thumb: src ? { kind: 'gif', uris: [_rtMediaUri(src)] } : null };
+    }
+    case 'sticker':
+    case 'lottie_sticker': {
+      const src = type === 'sticker' ? (fileUrl || (isUrl(content) ? content : '')) : '';
+      return { Icon: IconStickyNote, label: tr('chat.sticker', 'Figurinha'), lines: 1, thumb: src ? { kind: 'sticker', uris: [_rtMediaUri(src)] } : null };
+    }
+    case 'location': {
+      const j = _rtJSON(m.content) || {};
+      const live = !!(j.live || m.live || /"live"\s*:\s*true/.test(content));
+      const addr = String(j.address || j.label || j.name || m.address || _rtField(content, 'address') || _rtField(content, 'label') || '').trim();
+      return { Icon: IconMapPin, label: live ? tr('chatConv.liveLocation', 'Localização ao vivo') : (addr || tr('chatConv.location', 'Localização')), lines: 1, thumb: null };
+    }
+    case 'contact': {
+      const j = (m.contact && typeof m.contact === 'object') ? m.contact : (_rtJSON(m.content) || {});
+      let nm = String(j.name || j.full_name || j.fullName || j.displayName || j.display_name || '').trim();
+      if (!nm && /^BEGIN:VCARD/i.test(content)) { const fn = content.match(/^FN[^:\n]*:(.+)$/im); if (fn) nm = fn[1].trim(); }
+      if (!nm) nm = _rtField(content, 'name') || _rtField(content, 'full_name');
+      return { Icon: IconUser, label: nm || tr('chatConv.contact', 'Contato'), lines: 1, thumb: null };
+    }
+    case 'poll': {
+      const q = String((m.poll && m.poll.question) || (_rtJSON(m.content) || {}).question || _rtField(content, 'question') || '').trim();
+      return { Icon: IconBarChart, label: q || tr('chat.poll', 'Enquete'), lines: 1, thumb: null };
+    }
+    case 'call_card': {
+      const j = _rtJSON(m.content) || {};
+      const isVideo = (m.call_type || j.call_type || _rtField(content, 'call_type')) === 'video';
+      return isVideo
+        ? { Icon: IconVideo, label: tr('chat.videoCall', 'Chamada de vídeo'), lines: 1, thumb: null }
+        : { Icon: IconPhone, label: tr('chat.voiceCall', 'Chamada de voz'), lines: 1, thumb: null };
+    }
+    case 'meetup': {
+      const ttl = String((m.meetup && m.meetup.title) || (_rtJSON(m.content) || {}).title || _rtField(content, 'title') || '').trim();
+      return { Icon: IconCalendar, label: ttl || tr('chat.meetup', 'Reunião'), lines: 1, thumb: null };
+    }
+    case 'playlist': {
+      const nm = String((m.playlist && m.playlist.playlist_name) || _rtField(content, 'playlist_name') || '').trim();
+      return { Icon: IconMusic, label: nm || tr('chat.playlist', 'Playlist'), lines: 1, thumb: null };
+    }
+    case 'status_reply': {
+      let sr = m.status_reply || _rtJSON(m.content) || {};
+      const txt = String(sr.reply_text || _rtField(content, 'reply_text') || '').trim();
+      const stType = (sr.status && sr.status.type) || '';
+      const tag = stType === 'image' ? tr('status.typePhoto', 'Foto') : stType === 'video' ? tr('status.typeVideo', 'Vídeo') : tr('status.statusLabel', 'Status');
+      return { Icon: null, label: txt ? `${txt} · ${tag}` : tag, lines: 1, thumb: null };
+    }
+    default: break;
+  }
+
+  // Texto (ou JSON legado sem type).
+  if (!content) return { Icon: null, label: '', lines: 1, thumb: null };
+  if (content.startsWith('{')) {
+    const j = _rtJSON(content);
+    const q = (j && j.question) || _rtField(content, 'question');
+    if (q && (/"options"/.test(content))) return { Icon: IconBarChart, label: q, lines: 1, thumb: null };
+    if ((j && (j.call_id || j.room_id || j.call_type)) || /"(call_id|room_id)"/.test(content)) {
+      return { Icon: IconPhone, label: tr('chat.call', 'Chamada'), lines: 1, thumb: null };
+    }
+    if ((j && j.reply_text !== undefined) || /"reply_text"/.test(content)) {
+      const txt = String((j && j.reply_text) || _rtField(content, 'reply_text') || '').trim();
+      const tag = tr('status.statusLabel', 'Status');
+      return { Icon: null, label: txt ? `${txt} · ${tag}` : tag, lines: 1, thumb: null };
+    }
+    if ((j && (j.latitude != null || j.lat != null)) || /"(latitude|lat)"\s*:/.test(content)) {
+      const addr = String((j && (j.address || j.label)) || _rtField(content, 'address') || '').trim();
+      return { Icon: IconMapPin, label: addr || tr('chatConv.location', 'Localização'), lines: 1, thumb: null };
+    }
+    if (j || /^\{\s*"/.test(content)) {
+      const nm = (j && (j.name || j.full_name)) || _rtField(content, 'name');
+      if (nm && ((j && (j.phone || j.phones || j.email)) || /"(phone|phones|tel)"/.test(content))) {
+        return { Icon: IconUser, label: String(nm), lines: 1, thumb: null };
+      }
+      return { Icon: null, label: tr('chat.message', 'Mensagem'), lines: 1, thumb: null };
+    }
+  }
+  if (/^https?:\/\/\S+$/i.test(content)) {
+    if (/\.(gif)(\?|$)/i.test(content) || /giphy\.com|tenor\.com/i.test(content)) {
+      return { Icon: IconFilm, label: tr('chat.gif', 'GIF'), lines: 1, thumb: { kind: 'gif', uris: [content] } };
+    }
+    return { Icon: IconLink, label: content, lines: 1, thumb: null };
+  }
+  if (/^\/?data\/(chat|sticker)-files\//i.test(content)) {
+    return { Icon: IconImage, label: tr('chat.photo', 'Foto'), lines: 1, thumb: null };
+  }
+  return { Icon: null, label: content, lines: 2, thumb: null };
+}
+
+// Miniatura da citação (direita do cartão). Tenta as URLs em ordem (poster →
+// .thumb.jpg → b64) e, se todas falharem, mostra o glifo do tipo. Figurinha =
+// sem fundo (contain); vídeo-recado = círculo; vídeo = selo de play.
+function ReplyQuoteThumb({ thumb, size = 44, flush = false }) {
+  const uris = (thumb && Array.isArray(thumb.uris)) ? thumb.uris.filter(Boolean) : [];
+  const key = uris.join('|');
+  const [idx, setIdx] = useState(0);
+  useEffect(() => { setIdx(0); }, [key]);
+  if (!thumb) return null;
+  const kind = thumb.kind;
+  const uri = uris[idx];
+  const round = kind === 'round';
+  const sticker = kind === 'sticker';
+  if (sticker && !uri) return null;
+  const radius = round ? size / 2 : (flush ? 0 : 6);
+  const FallbackIcon = kind === 'video' || kind === 'round' ? IconVideo : kind === 'gif' ? IconFilm : IconImage;
+  return (
+    <View style={{
+      width: size, height: size, borderRadius: radius, overflow: 'hidden',
+      backgroundColor: sticker ? 'transparent' : 'rgba(127,127,127,0.22)',
+      alignItems: 'center', justifyContent: 'center',
+    }}>
+      {uri ? (
+        <ExpoImage
+          source={{ uri: _encMediaUri(uri) }}
+          style={{ width: '100%', height: '100%' }}
+          contentFit={sticker ? 'contain' : 'cover'}
+          cachePolicy="memory-disk"
+          recyclingKey={uri}
+          onError={() => setIdx(i => i + 1)}
+        />
+      ) : (
+        <FallbackIcon size={Math.round(size * 0.4)} color="rgba(255,255,255,0.85)" />
+      )}
+      {kind === 'video' && !!uri && (
+        <View pointerEvents="none" style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.18)' }}>
+          <View style={{ width: 20, height: 20, borderRadius: 10, backgroundColor: 'rgba(0,0,0,0.55)', alignItems: 'center', justifyContent: 'center' }}>
+            <IconPlay size={10} color="#fff" />
+          </View>
+        </View>
+      )}
+    </View>
+  );
+}
+
+// Alvo do "Responder" para o estado replyTo: apagada → cópia SEM content/mídia
+// (privacidade — o otimista do envio copia content/file_url do replyTo).
+function _replyTargetOf(msg) {
+  if (!msg || !(msg.deleted_at || msg.is_deleted)) return msg;
+  return {
+    id: msg.id, sender_email: msg.sender_email, sender_name: msg.sender_name,
+    type: 'text', content: '', file_url: null, file_name: null,
+    deleted_at: msg.deleted_at || new Date().toISOString(), created_at: msg.created_at,
+    _client_id: msg._client_id,
+  };
+}
+
 // [2026-10-07 voice-native] The locally-played set ("I listened" dot) and the
 // persisted speed moved to services/voiceNotePlayer — ONE source shared by
 // every bubble, the global engine and the mini player (two in-memory copies
@@ -5015,7 +5292,7 @@ function useAndroidKavGate(focused) {
 // ============================================================
 // POLL CREATOR MODAL
 // ============================================================
-function PollCreatorModal({ colors, t, conversationId, onClose, onCreated }) {
+function PollCreatorModal({ colors, t, conversationId, onClose, onCreated, replyToId = null }) {
   const [question, setQuestion] = useState('');
   const [options, setOptions] = useState(['', '']);
   const [multipleChoice, setMultipleChoice] = useState(false);
@@ -5032,7 +5309,7 @@ function PollCreatorModal({ colors, t, conversationId, onClose, onCreated }) {
     if (opts.length < 2) return;
     setSending(true);
     try {
-      const r = await api.chatCreatePoll(conversationId, q, opts, multipleChoice);
+      const r = await api.chatCreatePoll(conversationId, q, opts, multipleChoice, null, replyToId); // [2026-10-12 reply-media]
       if (r?.success && r.data) {
         const msg = r.data.message || r.data;
         onCreated(msg);
@@ -5135,7 +5412,7 @@ function PollCreatorModal({ colors, t, conversationId, onClose, onCreated }) {
 // ============================================================
 // MEETUP CREATOR MODAL
 // ============================================================
-function MeetupCreatorModal({ colors, t, conversationId, onClose, onCreated }) {
+function MeetupCreatorModal({ colors, t, conversationId, onClose, onCreated, replyToId = null }) {
   const [title, setTitle] = useState('');
   const [location, setLocation] = useState('');
   const [dateText, setDateText] = useState('');
@@ -5208,7 +5485,7 @@ function MeetupCreatorModal({ colors, t, conversationId, onClose, onCreated }) {
       const locStr = pickedCoords
         ? `${addressLine}|${pickedCoords.lat},${pickedCoords.lng}`
         : addressLine;
-      const r = await api.chatCreateMeetup(conversationId, title.trim(), dateText.trim(), locStr, description.trim());
+      const r = await api.chatCreateMeetup(conversationId, title.trim(), dateText.trim(), locStr, description.trim(), replyToId); // [2026-10-12 reply-media]
       if (r?.success && r.data) {
         const msg = r.data.message || r.data;
         onCreated({
@@ -6969,8 +7246,39 @@ function prewarmVoiceRecorder() {
     }
   } catch {}
 }
+// [2026-10-12 rec-audit P1-13] Microfone negado: Alert em TODO nativo (no iOS
+// o setError+onCancel desmontava o banner na hora → nada aparecia) com atalho
+// pros Ajustes do app.
+function _alertVoiceMicDenied(t) {
+  if (Platform.OS === 'web') return;
+  try {
+    const { Alert, Linking } = require('react-native');
+    Alert.alert(
+      t('chatConv.micPermissionDenied') || 'Permissão de microfone negada',
+      t('chatConv.micDeniedBody') || 'Permita o acesso ao microfone nos Ajustes para gravar áudio.',
+      [
+        { text: t('common.cancel') || 'Cancelar', style: 'cancel' },
+        { text: t('common.openSettings') || 'Abrir Ajustes', onPress: () => { try { Linking.openSettings(); } catch {} } },
+      ],
+    );
+  } catch {}
+}
+// [2026-10-12 rec-audit P0-2] Tamanho real do arquivo gravado (iOS/expo-audio
+// não devolvem sizeBytes no stop). null = desconhecido (não bloqueia o envio).
+async function _voiceFileSize(uri) {
+  if (!uri || Platform.OS === 'web') return null;
+  try {
+    let fs; try { fs = require('expo-file-system/legacy'); } catch { fs = require('expo-file-system'); }
+    const info = await fs.getInfoAsync(uri);
+    if (!info?.exists) return 0;
+    return typeof info.size === 'number' ? info.size : null;
+  } catch { return null; }
+}
+const VOICE_MIN_BYTES = 1500;
+const VOICE_MIN_MS = 700;
+const VOICE_MIN_SEND_MS = 1000;
 
-function AudioRecorder({ onSend, onCancel, colors, t, conversationId, holdMode = null, holdCtlRef = null, onShortHold }) {
+function AudioRecorder({ onSend, onCancel, colors, t, conversationId, holdMode = null, holdCtlRef = null, onShortHold, onLiveChange, onNotice }) {
   const [recording, setRecording] = useState(null);
   const [duration, setDuration] = useState(0);
   const [error, setError] = useState(null);
@@ -7135,6 +7443,48 @@ function AudioRecorder({ onSend, onCancel, colors, t, conversationId, holdMode =
     });
     return () => { try { sub?.remove?.(); } catch {} };
   }, []);
+
+  // [2026-10-12 rec-audit P1-12] "gravando áudio…" só enquanto o microfone
+  // grava DE FATO: o ping do pai olhava só isRecording, que segue true no
+  // preview e no banner de erro (permissão web negada) → indicador preso.
+  const onLiveChangeRef = useRef(onLiveChange);
+  onLiveChangeRef.current = onLiveChange;
+  const setLive = (v) => { try { onLiveChangeRef.current?.(!!v); } catch {} };
+  useEffect(() => { if (error) setLive(false); }, [error]);
+  useEffect(() => () => setLive(false), []);
+
+  // [2026-10-12 rec-audit P1-14] Ligação chegando/começando durante a
+  // gravação: o bloqueio (blockRecordingDuringCall) só valia no INÍCIO. Agora
+  // para a gravação → preview (ou descarta se < 1 s, via handleStop). Fontes:
+  // isCallOngoing() (mesmo sinal do bloqueio) a cada 1 s + evento nativo
+  // onInterrupted (AVAudioSession interruption / perda de audio focus;
+  // binários novos — feature-detect por addListener).
+  const interruptedRef = useRef(false);
+  const interruptRecording = () => {
+    if (interruptedRef.current || !recordingRef.current) return;
+    interruptedRef.current = true;
+    const L = latestRef.current || {};
+    try {
+      if (holdModeRef.current === 'hold') L.handleCancel?.();
+      else L.handleStop?.();
+    } catch {}
+    try { onNotice?.(t('chatConv.recordingInterruptedCall') || 'Gravação interrompida pela ligação'); } catch {}
+  };
+  useEffect(() => {
+    if (!recording) return undefined;
+    interruptedRef.current = false;
+    const iv = setInterval(() => {
+      let busy = false;
+      try { busy = require('../services/ongoingCall').isCallOngoing(); } catch {}
+      if (busy) interruptRecording();
+    }, 1000);
+    let sub = null;
+    if (recording !== 'web' && recording.__native && typeof recording.NativeAudio?.addListener === 'function') {
+      try { sub = recording.NativeAudio.addListener('onInterrupted', () => interruptRecording()); } catch { sub = null; }
+    }
+    return () => { clearInterval(iv); try { sub?.remove?.(); } catch {} };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [recording]);
 
   // Direct-send: handleStop assembles the audio into `previewData`; if the user
   // asked to send straight away (tapped Send on the recorder pill) we confirm
@@ -7314,6 +7664,7 @@ function AudioRecorder({ onSend, onCancel, colors, t, conversationId, holdMode =
         } catch {}
         setRecording('web');
         startTimer();
+        setLive(true); // [rec-audit P1-12]
         // Notify conversation members that we're recording
         try {
           const tcpClient = require('../services/tcp-client').getTCPClient();
@@ -7354,29 +7705,13 @@ function AudioRecorder({ onSend, onCancel, colors, t, conversationId, holdMode =
         if (perm?.granted) _voiceMicGranted = true;
       } catch (permErr) {
         console.warn('[startRecording] permission request failed:', permErr?.message);
-        if (Platform.OS === 'android') {
-          try {
-            const { Alert } = require('react-native');
-            Alert.alert(
-              t('chatConv.micPermissionDenied') || 'Permissão negada',
-              'Habilite o microfone nas configurações do Android para gravar áudio.',
-            );
-          } catch {}
-        }
+        _alertVoiceMicDenied(t); // [rec-audit P1-13] iOS + Android, c/ "Abrir Ajustes"
         setError(t('chatConv.micPermissionDenied'));
         onCancel();
         return;
       }
       if (!perm?.granted) {
-        if (Platform.OS === 'android') {
-          try {
-            const { Alert } = require('react-native');
-            Alert.alert(
-              t('chatConv.micPermissionDenied') || 'Permissão de microfone necessária',
-              'Habilite o microfone nas configurações do Android para gravar áudio.',
-            );
-          } catch {}
-        }
+        _alertVoiceMicDenied(t); // [rec-audit P1-13] iOS + Android, c/ "Abrir Ajustes"
         setError(t('chatConv.micPermissionDenied'));
         onCancel();
         return;
@@ -7497,6 +7832,7 @@ function AudioRecorder({ onSend, onCancel, colors, t, conversationId, holdMode =
       }
       setRecording(recorder);
       startTimer();
+      setLive(true); // [rec-audit P1-12]
     } catch (e) {
       console.warn('Recording error:', e);
       // [WAVE 39] On Android surface the error as Alert so the user sees a clear
@@ -7534,11 +7870,38 @@ function AudioRecorder({ onSend, onCancel, colors, t, conversationId, holdMode =
     if (waveIntervalRef.current) clearInterval(waveIntervalRef.current);
     if (voiceDraftPersistRef.current) { clearInterval(voiceDraftPersistRef.current); voiceDraftPersistRef.current = null; }
     if (pulseLoopRef.current) pulseLoopRef.current.stop();
-    // Notify others that recording stopped
-    try {
-      const tcpClient = require('../services/tcp-client').getTCPClient();
-      tcpClient.sendStoppedRecording(conversationId);
-    } catch {}
+    setLive(false); // [rec-audit P1-12] preview/erro não é mais "gravando"
+    // [2026-10-12 rec-audit P0-3] Duração real em ms (relógio sem as pausas);
+    // o nativo devolve durationMs e tem prioridade. O `duration` de estado é
+    // Math.floor de um tick de 1 s → 0:00 / 1 s a menos.
+    const _stopNow = Date.now();
+    const _clockMs = startTimeRef.current
+      ? Math.max(0, _stopNow - startTimeRef.current - pausedTotalRef.current - (pausedAtRef.current ? _stopNow - pausedAtRef.current : 0))
+      : 0;
+    // [2026-10-12 rec-audit P0-2] Gravação vazia/corrompida (ex.: .m4a de 557
+    // bytes quando o MediaRecorder.stop() falha) ou curta demais NÃO vira
+    // mensagem: descarta, apaga o arquivo e avisa.
+    const _rejectVoice = async (kind, fileUri) => {
+      pendingDirectSendRef.current = false;
+      if (voiceSessionRef.current) voiceSessionRef.current.alive = false;
+      if (Platform.OS !== 'web') {
+        try { const { setAudioModeAsync } = require('expo-audio'); await setAudioModeAsync({ allowsRecording: false }); } catch {}
+        if (fileUri) {
+          try {
+            let fs; try { fs = require('expo-file-system/legacy'); } catch { fs = require('expo-file-system'); }
+            await fs.deleteAsync(fileUri, { idempotent: true });
+          } catch {}
+        }
+      }
+      clearVoiceDraft();
+      try {
+        onNotice?.(kind === 'short'
+          ? (t('chatConv.voiceTooShort') || 'Áudio muito curto')
+          : (t('chatConv.recordingFailedRetry') || 'Falha na gravação, tente de novo'));
+      } catch {}
+      setRecording(null);
+      onCancel();
+    };
     try {
       if (Platform.OS === 'web') {
         await stopWebRecorder();
@@ -7547,6 +7910,10 @@ function AudioRecorder({ onSend, onCancel, colors, t, conversationId, holdMode =
         _closeAudioCtxSafe(audioCtxRef.current); audioCtxRef.current = null;
         if (chunksRef.current.length === 0) { onCancel(); return; }
         const blob = new Blob(chunksRef.current, { type: 'audio/webm' });
+        // [rec-audit P0-2/P0-3] valida antes de virar preview/mensagem.
+        if ((blob.size || 0) < VOICE_MIN_BYTES || _clockMs < VOICE_MIN_MS) { await _rejectVoice('fail'); return; }
+        if (_clockMs < VOICE_MIN_SEND_MS) { await _rejectVoice('short'); return; }
+        const _webDurSec = Math.max(1, Math.round(_clockMs / 1000));
         const uri = URL.createObjectURL(blob);
         voiceDraftUriRef.current = uri;
         // Snapshot the captured waveform for preview rendering
@@ -7557,7 +7924,7 @@ function AudioRecorder({ onSend, onCancel, colors, t, conversationId, holdMode =
           const AsyncStorage = require('@react-native-async-storage/async-storage').default;
           await AsyncStorage.setItem(
             'voice_draft:' + conversationId,
-            JSON.stringify({ uri, duration, waveform: snapshot, type: 'audio/webm' })
+            JSON.stringify({ uri, duration: _webDurSec, waveform: snapshot, type: 'audio/webm' })
           );
         } catch {}
         // Drain any pending pre-upload chunks before handing preview off so
@@ -7596,7 +7963,8 @@ function AudioRecorder({ onSend, onCancel, colors, t, conversationId, holdMode =
           uri, blob,
           name: `audio_${Date.now()}.webm`,
           type: 'audio/webm',
-          duration,
+          duration: _webDurSec, // [rec-audit P0-3] s inteiros ≥1 (relógio sem pausas)
+          durationMs: _clockMs,
           waveform: snapshot,
           voiceSessionId, // null → legacy upload fallback (also used for view-once)
           voiceSessionMime: 'audio/webm',
@@ -7605,12 +7973,23 @@ function AudioRecorder({ onSend, onCancel, colors, t, conversationId, holdMode =
       } else {
         let uri;
         let nativeWaveform = [];
+        let _recMs = _clockMs;
+        let _recBytes = null; // null = desconhecido
         if (recording.__native) {
           // Native iOS recorder: stop() returns { path, durationMs, samples }
           const result = await recording.stop();
+          // [rec-audit P0-2] stop() que falhou: Android (build novo) devolve
+          // path '' + error; iOS path '' sem recorder. Não cair no
+          // recording.path (arquivo truncado/vazio).
+          if (result && (result.error || (typeof result.path === 'string' && !result.path))) {
+            await _rejectVoice('fail', recording.path || null);
+            return;
+          }
           const rawPath = result?.path || recording.path || '';
           // Ensure file:// prefix for React Native FormData upload
           uri = rawPath.startsWith('file://') ? rawPath : `file://${rawPath}`;
+          if (Number(result?.durationMs) > 0) _recMs = Number(result.durationMs);
+          if (typeof result?.sizeBytes === 'number') _recBytes = result.sizeBytes;
           // [2026-10-07 voice-native] 30 Hz meter samples → 40 peak bars for the
           // whole note (send path slices to 64 — raw samples meant the bubble
           // only showed the first ~2 s of the recording).
@@ -7620,6 +7999,11 @@ function AudioRecorder({ onSend, onCancel, colors, t, conversationId, holdMode =
           uri = recording.uri;
         }
         try { const { setAudioModeAsync } = require('expo-audio'); await setAudioModeAsync({ allowsRecording: false }); } catch {}
+        // [rec-audit P0-2/P0-3] arquivo vazio/corrompido ou curto demais → descarta.
+        if (uri && _recBytes == null) _recBytes = await _voiceFileSize(uri);
+        if (!uri || (_recBytes != null && _recBytes < VOICE_MIN_BYTES) || _recMs < VOICE_MIN_MS) { await _rejectVoice('fail', uri || null); return; }
+        if (_recMs < VOICE_MIN_SEND_MS) { await _rejectVoice('short', uri); return; }
+        const _natDurSec = Math.max(1, Math.round(_recMs / 1000));
         // [2026-10-10 voice-peaks] Real waveform from the recorded FILE
         // (native readVoicePeaks / iOS readWaveform; off the JS/main thread).
         // expo-audio fallback has no meter samples → wait briefly (direct-send
@@ -7629,7 +8013,7 @@ function AudioRecorder({ onSend, onCancel, colors, t, conversationId, holdMode =
         if (uri) {
           try {
             const { readVoiceWaveform } = require('../utils/onDeviceML');
-            _peaksP = readVoiceWaveform(uri, { bars: 40, durationSec: duration });
+            _peaksP = readVoiceWaveform(uri, { bars: 40, durationSec: _natDurSec });
           } catch { _peaksP = null; }
         }
         if (_peaksP && nativeWaveform.length < 8) {
@@ -7649,10 +8033,11 @@ function AudioRecorder({ onSend, onCancel, colors, t, conversationId, holdMode =
             const AsyncStorage = require('@react-native-async-storage/async-storage').default;
             await AsyncStorage.setItem(
               'voice_draft:' + conversationId,
-              JSON.stringify({ uri, duration, waveform: nativeWaveform, type: 'audio/mp4' })
+              JSON.stringify({ uri, duration: _natDurSec, waveform: nativeWaveform, type: 'audio/mp4' })
             );
           } catch {}
-          setPreviewData({ uri, name: `audio_${Date.now()}.m4a`, type: 'audio/mp4', duration, waveform: nativeWaveform, viewOnce: voiceViewOnce });
+          // [rec-audit P0-3] duration = s inteiros ≥1 do durationMs nativo.
+          setPreviewData({ uri, name: `audio_${Date.now()}.m4a`, type: 'audio/mp4', duration: _natDurSec, durationMs: _recMs, waveform: nativeWaveform, viewOnce: voiceViewOnce });
         } else {
           onCancel();
         }
@@ -7853,6 +8238,7 @@ function AudioRecorder({ onSend, onCancel, colors, t, conversationId, holdMode =
 
   const handleCancel = async () => {
     recordingRef.current = null; // [2026-10-06 UX2] we own the teardown now
+    setLive(false); // [rec-audit P1-12]
     if (intervalRef.current) clearInterval(intervalRef.current);
     // Release the preview player + audio session too (covers cancelling
     // straight from the preview pill, not just an in-progress recording).
@@ -10492,6 +10878,10 @@ function ChatConversationInner() {
   }, [messages.length, user, playScreenEffect]);
 
   const [replyTo, setReplyTo] = _useStateT(null);
+  // [2026-10-12 reply-media] Espelho sempre-atual p/ envios disparados por
+  // closures antigas (gravador de voz, vídeo-recado, timers) — ver _takeReplyFor.
+  const replyToLatestRef = useRef(null);
+  replyToLatestRef.current = replyTo;
   // Hydrate the reply preview bar from a navigation param — used by the
   // "Reply privately" action in group chats, which navigates here with a
   // JSON-encoded snapshot of the original message so this DM starts with
@@ -10960,6 +11350,10 @@ function ChatConversationInner() {
   const voiceRecCtlRef = useRef(null); // { move, cancel, lock, release } — set by AudioRecorder
   const voiceHoldOwnRef = useRef(false); // this touch owns the recorder (ignore a 2nd hold while one is finishing)
   useEffect(() => { if (!isRecording) setVoiceHoldMode(null); }, [isRecording]);
+  // [2026-10-12 rec-audit P1-12] mic gravando DE FATO (AudioRecorder avisa via
+  // onLiveChange) — gate do ping "gravando áudio…" (preview/erro = false).
+  const [voiceRecLive, setVoiceRecLive] = _useStateT(false);
+  useEffect(() => { if (!isRecording) setVoiceRecLive(false); }, [isRecording]);
   // Chat 2026 — round-video-note recorder (Telegram-style). Lives in its
   // own component so the composer doesn't gain another 400 LoC.
   const [showVideoNoteRecorder, setShowVideoNoteRecorder] = _useStateT(false);
@@ -11220,7 +11614,8 @@ function ChatConversationInner() {
       const tid = ev.temp_id;
       const cmi = ev.client_message_id;
       if (ev.phase === 'compress' || ev.phase === 'upload' || ev.phase === 'commit') {
-        if (tid) setUploadProgress(prev => (prev[tid] === ev.pct ? prev : { ...prev, [tid]: ev.pct }));
+        // [2026-10-12 P2] monotônico: o anel nunca volta (fila já pondera fases).
+        if (tid) setUploadProgress(prev => ((typeof prev[tid] === 'number' && prev[tid] >= ev.pct) ? prev : { ...prev, [tid]: ev.pct }));
         patchMsg(tid, cmi, { _uploading: ev.phase !== 'commit', _compressing: ev.phase === 'compress', _queued: false, _failed: false, _pending: true });
       } else if (ev.phase === 'queued') {
         dropPct(tid);
@@ -12724,7 +13119,7 @@ function ChatConversationInner() {
   // em 6s, então numa nota de voz de 20s o "gravando" sumia no 5º segundo.
   // Mantém o ping enquanto grava (o throttle do sendTyping limita a 1 frame/3s).
   useEffect(() => {
-    if (!isRecording || !conversationId) return undefined;
+    if (!isRecording || !voiceRecLive || !conversationId) return undefined; // [rec-audit P1-12] voiceRecLive
     let ws = null;
     try { ws = require('../services/websocket').default; } catch { return undefined; }
     const iv = setInterval(() => { try { ws.sendTyping(conversationId, true); } catch {} }, 1500);
@@ -12732,7 +13127,7 @@ function ChatConversationInner() {
       clearInterval(iv);
       try { ws.sendStoppedTyping?.(conversationId); } catch {}
     };
-  }, [isRecording, conversationId]);
+  }, [isRecording, voiceRecLive, conversationId]);
 
   // [2026-10-12 wa-parity] Conversa aberta SEM ?email= (toast in-app, deep link
   // do widget/Siri, marketplace, /chat-conversation?id=N) ficava sem online/
@@ -13638,7 +14033,7 @@ function ChatConversationInner() {
           // lightweight and always safe (it's just a decode-ahead hint).
           try {
             const recentImgs = newMsgs
-              .filter(m => m && m.type === 'image' && m.file_url && !m._uploading)
+              .filter(m => m && m.type === 'image' && m.file_url && !m._uploading && !_isViewOnceMsg(m))
               .slice(-10);
             if (recentImgs.length) {
               let ExpoImg = null;
@@ -13669,7 +14064,7 @@ function ChatConversationInner() {
           // before the general preCacheUrls round-trip. force-bypass cellular
           // gate is implicit via saveMediaPermanent (no _isHeavyByUrl check).
           try {
-            const audioMsgs = newMsgs.filter(m => (m.type === 'audio' || m.type === 'voice') && m.file_url);
+            const audioMsgs = newMsgs.filter(m => (m.type === 'audio' || m.type === 'voice') && m.file_url && !_isViewOnceMsg(m));
             if (audioMsgs.length > 0) {
               const { prefetchAudioMessage } = require('../services/mediaCache');
               try { console.log('[audio_offline] load sweep', audioMsgs.length, 'msgs'); } catch {}
@@ -13688,7 +14083,7 @@ function ChatConversationInner() {
             if ((m.type === 'gif' || m.type === 'sticker') && typeof m.content === 'string' && m.content.startsWith('http')) return m.content;
             return null;
           };
-          const mediaMsgs = newMsgs.filter(m => allowedTypes.includes(m.type) && getMediaSrc(m));
+          const mediaMsgs = newMsgs.filter(m => allowedTypes.includes(m.type) && getMediaSrc(m) && !_isViewOnceMsg(m));
           if (mediaMsgs.length > 0) {
             const remoteUrls = mediaMsgs.map(m => api.getMediaUrl(getMediaSrc(m)));
             Promise.allSettled(remoteUrls.map(url => getCachedUri(url).then(local => ({ url, local })))).then(results => {
@@ -13708,7 +14103,7 @@ function ChatConversationInner() {
               // baixa tudo cegamente, então em cellular não passamos vídeos.
               // [WAVE 36 2026-05-20] Pass conversationId so SQLite local_path
               // write-back works for rows missing conversation_id property.
-              const allowedMsgs = newMsgs.filter(m => allowedTypes.includes(m.type));
+              const allowedMsgs = newMsgs.filter(m => allowedTypes.includes(m.type) && !_isViewOnceMsg(m));
               saveConversationMedia(allowedMsgs, conversationId).catch(() => {});
             }).catch(() => {});
           }
@@ -17940,6 +18335,27 @@ function ChatConversationInner() {
     } catch { return false; }
   };
 
+  // [2026-10-12 reply-media] WhatsApp: com a barra "Respondendo" aberta,
+  // QUALQUER envio (foto, áudio, vídeo-recado, GIF, local, contato…) vai como
+  // resposta. Captura o replyTo no início do envio, ignora alvo ainda não
+  // confirmado (tmp_*), devolve o objeto reply_to p/ a citação aparecer na
+  // bolha otimista e fecha a barra. `rtOverride` (álbum) = alvo explícito sem
+  // mexer na barra (null = sem resposta).
+  const _takeReplyFor = (rtOverride) => {
+    const _rt = rtOverride !== undefined ? rtOverride : (replyToLatestRef.current !== undefined ? replyToLatestRef.current : replyTo);
+    if (rtOverride === undefined && _rt) { setReplyTo(null); replyToLatestRef.current = null; }
+    const replyId = (_rt?.id && !(typeof _rt.id === 'string' && _rt.id.startsWith('tmp_'))) ? _rt.id : null;
+    const replyObj = (replyId && _rt) ? {
+      id: _rt.id || 0,
+      sender_email: _rt.sender_email || '',
+      sender_name: _rt.sender_name || (_rt.sender_email || '').split('@')[0] || 'Unknown',
+      content: (_rt.content || '').substring(0, 200),
+      type: _rt.type || 'text',
+      file_url: _rt.file_url || null,
+    } : null;
+    return { replyId, replyObj, rt: _rt || null };
+  };
+
   const handleSendGif = async (gif, caption = '') => {
     setShowGifPicker(false);
     // WhatsApp/Telegram parity: prefer Tenor's mediumgif URL (200-800KB) so
@@ -17982,11 +18398,13 @@ function ChatConversationInner() {
         return;
       }
     } catch {}
+    // [2026-10-12 reply-media] GIF respondendo (legenda vai solta, atrás).
+    const { replyId, replyObj } = _takeReplyFor();
     const msgId = 'msg_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
     const tempId = `tmp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     const optimisticMsg = {
       id: tempId, _negId: Date.now() * 1000 + Math.floor(Math.random() * 1000), conversation_id: conversationId, sender_email: currentEmail,
-      content: bodyContent, file_url: fileUrlArg, type: 'gif', created_at: new Date().toISOString(), _pending: true, _client_id: msgId,
+      content: bodyContent, file_url: fileUrlArg, type: 'gif', reply_to_id: replyId, reply_to: replyObj, created_at: new Date().toISOString(), _pending: true, _client_id: msgId,
     };
     setMessages(prev => [...prev, optimisticMsg]);
 
@@ -18003,7 +18421,7 @@ function ChatConversationInner() {
 
     // [2026-10-07 send-media] Native: durable outbox (GIF, then the caption as
     // its own text row right behind it — FIFO keeps the order).
-    if (await _sendRichViaOutbox({ msgId, tempId, type: 'gif', content: bodyContent, fileUrl: fileUrlArg, createdAt: optimisticMsg.created_at })) {
+    if (await _sendRichViaOutbox({ msgId, tempId, type: 'gif', content: bodyContent, fileUrl: fileUrlArg, createdAt: optimisticMsg.created_at, replyToId: replyId })) {
       requestAnimationFrame(() => { flatListRef.current?.scrollToOffset?.({ offset: 0, animated: true }); });
       if (_cap) {
         const capMsgId = 'msg_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
@@ -18015,12 +18433,12 @@ function ChatConversationInner() {
       return;
     }
     // ⭐ Save pending GIF BEFORE network attempt
-    const pendingData = { temp_id: tempId, client_message_id: msgId, conversation_id: conversationId, content: bodyContent, file_url: fileUrlArg, type: 'gif', created_at: optimisticMsg.created_at, sender_email: currentEmail };
+    const pendingData = { temp_id: tempId, client_message_id: msgId, conversation_id: conversationId, content: bodyContent, file_url: fileUrlArg, type: 'gif', reply_to_id: replyId, created_at: optimisticMsg.created_at, sender_email: currentEmail };
     await savePendingMessage(conversationId, pendingData).catch(() => {});
 
     requestAnimationFrame(() => { flatListRef.current?.scrollToOffset?.({ offset: 0, animated: true }); });
     try {
-      const r = await enqueueChatSend(() => api.chatSend(conversationId, bodyContent, 'gif', null, null, fileUrlArg, tempId, msgId));
+      const r = await enqueueChatSend(() => api.chatSend(conversationId, bodyContent, 'gif', replyId, null, fileUrlArg, tempId, msgId));
       if (r.success && r.data?.id) {
         // [#1188 fix] Preserve sender_email — envelope mode returns null and
         // would flip the bubble to incoming side.
@@ -18044,7 +18462,7 @@ function ChatConversationInner() {
         // Mirror text-send fallback: queue for retry instead of dropping.
         try {
           const { queueOfflineAction } = require('../services/offlineCache');
-          await queueOfflineAction({ type: 'chat_send', conversation_id: conversationId, content: bodyContent, file_url: fileUrlArg, msgType: 'gif', reply_to_id: null, mentions: null, temp_id: tempId, client_message_id: msgId });
+          await queueOfflineAction({ type: 'chat_send', conversation_id: conversationId, content: bodyContent, file_url: fileUrlArg, msgType: 'gif', reply_to_id: replyId, mentions: null, temp_id: tempId, client_message_id: msgId });
           setMessages(prev => _mapKeep(prev, m => m.id === tempId ? { ...m, _pending: true, _failed: false, _queued: true } : m));
         } catch {
           setMessages(prev => _mapKeep(prev, m => m.id === tempId ? { ...m, _failed: true, _pending: false } : m));
@@ -18058,7 +18476,7 @@ function ChatConversationInner() {
       }
       try {
         const { queueOfflineAction } = require('../services/offlineCache');
-        await queueOfflineAction({ type: 'chat_send', conversation_id: conversationId, content: bodyContent, file_url: fileUrlArg, msgType: 'gif', reply_to_id: null, mentions: null, temp_id: tempId, client_message_id: msgId });
+        await queueOfflineAction({ type: 'chat_send', conversation_id: conversationId, content: bodyContent, file_url: fileUrlArg, msgType: 'gif', reply_to_id: replyId, mentions: null, temp_id: tempId, client_message_id: msgId });
         setMessages(prev => _mapKeep(prev, m => m.id === tempId ? { ...m, _pending: true, _failed: false, _queued: true } : m));
       } catch {
         setMessages(prev => _mapKeep(prev, m => m.id === tempId ? { ...m, _failed: true, _pending: false } : m));
@@ -18694,7 +19112,7 @@ function ChatConversationInner() {
     }
   };
 
-  const uploadAndSendFile = async (file, forceViewOnce = false, caption = '', batchId = null) => {
+  const uploadAndSendFile = async (file, forceViewOnce = false, caption = '', batchId = null, rtOverride = undefined) => {
     // ⭐ SECURITY: Block dangerous executable/script extensions only.
     // Archives (.zip/.rar/.7z) and installer packages (.dmg/.pkg/.deb) are
     // legitimate document attachments people share daily — blocking them
@@ -18708,6 +19126,9 @@ function ChatConversationInner() {
     }
 
     setUploading(true);
+    // [2026-10-12 reply-media] Foto/vídeo/arquivo respondendo. Álbum passa
+    // rtOverride (só a 1ª mídia cita; as demais null) — ver MediaPreview onSend.
+    const { replyId, replyObj } = _takeReplyFor(rtOverride);
     const tempId = 'tmp_upload_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
     // Stable client_message_id so server-side dedup, recipient WS dedup, and
     // retry-after-timeout all reconcile to a single message row. Without it,
@@ -18745,6 +19166,8 @@ function ChatConversationInner() {
       _uploading: true,
       _client_id: msgId,
       _batch_id: batchId || null,
+      reply_to_id: replyId,
+      reply_to: replyObj,
       is_view_once: forceViewOnce ? 1 : 0,
       // [2026-10-12 thread-overlap] Picker dims → the media box has its final
       // aspect from the 1st frame (was 280×220 until the server echo brought
@@ -18839,6 +19262,7 @@ function ChatConversationInner() {
           created_at: optimisticMsg.created_at,
           batch_id: batchId || null,
           duration: file.duration || null,
+          reply_to_id: replyId,
         });
       } catch { _queued = null; }
       if (_queued) {
@@ -18866,6 +19290,7 @@ function ChatConversationInner() {
         created_at: optimisticMsg.created_at,
         sender_email: user?.email,
         is_view_once: forceViewOnce ? 1 : 0,
+        reply_to_id: replyId,
       };
       await savePendingMessage(conversationId, mediaPendingData);
     } catch {}
@@ -18906,6 +19331,7 @@ function ChatConversationInner() {
           view_once: forceViewOnce ? 1 : 0,
           sender_email: user?.email,
           created_at: optimisticMsg.created_at,
+          reply_to_id: replyId,
           _blob_lost: false,
         });
       } catch {}
@@ -19178,6 +19604,7 @@ function ChatConversationInner() {
           view_once: forceViewOnce ? 1 : 0,
           client_message_id: msgId,
           temp_id: tempId,
+          ...(replyId ? { reply_to_id: replyId } : {}),
         }, 'POST');
       }
 
@@ -19195,7 +19622,7 @@ function ChatConversationInner() {
           if (mountedRef.current) {
             setUploadProgress(prev => ({ ...prev, [tempId]: Math.round(progress * 100) }));
           }
-        }, fileType, abortCtrl.signal, false, msgId));
+        }, fileType, abortCtrl.signal, false, msgId, replyId));
       }
 
       if (isAborted()) break;
@@ -19227,6 +19654,9 @@ function ChatConversationInner() {
           // Preserve _client_id so msgKeyExtractor keeps a stable FlatList key
           // across the optimistic→server swap (same as the text path #1182).
           const swapped = { ...msg, _pending: false, _batch_id: batchId || m._batch_id || null, sender_email: msg.sender_email || m.sender_email || currentEmail, _client_id: m._client_id || msgId };
+          // [2026-10-12 reply-media] Servidor confirmou reply_to_id mas não mandou
+          // o objeto → mantém a citação otimista (senão some no swap).
+          if (!swapped.reply_to && swapped.reply_to_id && m.reply_to) swapped.reply_to = m.reply_to;
           if (_alreadyDeliveredM && swapped.status !== 'read') {
             swapped.status = 'delivered';
             swapped._delivered = true;
@@ -19356,6 +19786,7 @@ function ChatConversationInner() {
                 temp_id: tempId,
                 caption: caption || '',
                 view_once: forceViewOnce ? 1 : 0,
+                reply_to_id: replyId,
               });
             } catch {}
             // Silent offline path — bubble keeps the WhatsApp ⏱ clock icon
@@ -19418,6 +19849,8 @@ function ChatConversationInner() {
     // the text/gif/sticker send paths. Also set `_client_id` so server-side
     // `client_message_id` retry-dedup works (was missing → if upload retried
     // after a transient 5xx, server created two rows for the same voice).
+    // [2026-10-12 reply-media] Áudio de voz respondendo (segurar ou travado).
+    const { replyId, replyObj } = _takeReplyFor();
     const tempId = `tmp_audio_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     const audioMsgId = 'msg_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
     const localUri = audioData.blob ? URL.createObjectURL(audioData.blob) : audioData.uri;
@@ -19441,6 +19874,8 @@ function ChatConversationInner() {
       // instantly; the server echo (ffmpeg *.peaks.json) replaces them.
       waveform: (Array.isArray(audioData.waveform) && audioData.waveform.length >= 8) ? audioData.waveform.slice(0, 64) : undefined,
       created_at: new Date().toISOString(),
+      reply_to_id: replyId,
+      reply_to: replyObj,
       _pending: true,
       _uploading: true,
       _client_id: audioMsgId,
@@ -19471,6 +19906,7 @@ function ChatConversationInner() {
           waveform: Array.isArray(audioData.waveform) ? audioData.waveform.slice(0, 64) : null,
           sender_email: user?.email,
           created_at: optimisticMsg.created_at,
+          reply_to_id: replyId,
         });
       } catch { _queued = null; }
       if (_queued) {
@@ -19494,6 +19930,7 @@ function ChatConversationInner() {
         duration: audioData.duration,
         created_at: optimisticMsg.created_at,
         sender_email: user?.email,
+        reply_to_id: replyId,
       };
       await savePendingMessage(conversationId, audioPendingData);
     } catch {}
@@ -19519,6 +19956,7 @@ function ChatConversationInner() {
           // succeeds server-side but the response is lost, the fallback
           // dedups against the finalize row instead of landing the audio twice.
           clientMessageId: audioMsgId,
+          replyToId: replyId,
         });
       }
       if (!r || !r.success) {
@@ -19537,7 +19975,7 @@ function ChatConversationInner() {
         // after a lost response dedups server-side instead of duplicating.
         r = await api.chatUploadFile(conversationId, filePayload, `Audio (${formatDuration(audioData.duration)})`, audioViewOnce, (progress) => {
           if (mountedRef.current) setUploadProgress(prev => ({ ...prev, [tempId]: Math.round(progress * 100) }));
-        }, 'audio', null, false, audioMsgId);
+        }, 'audio', null, false, audioMsgId, replyId, audioData.duration); // [rec-audit P0-3] POST duration (s)
       }
       // Null guard: if both the voice-session finalize and the fallback upload
       // returned undefined (e.g., a thrown error inside chatUploadFile that
@@ -19549,7 +19987,7 @@ function ChatConversationInner() {
         const msg = r.data.message || r.data;
         // [#1188 fix] Preserve sender_email on the audio swap so the bubble
         // doesn't flip to incoming when server returns an envelope-mode synth.
-        setMessages(prev => _mapKeep(prev, m => m.id === tempId ? { ...msg, _pending: false, sender_email: msg.sender_email || m.sender_email || currentEmail } : m));
+        setMessages(prev => _mapKeep(prev, m => m.id === tempId ? { ...msg, _pending: false, sender_email: msg.sender_email || m.sender_email || currentEmail, ...((!msg.reply_to && msg.reply_to_id && m.reply_to) ? { reply_to: m.reply_to } : null) } : m));
         // Clear the durable pending row now that the server owns the message —
         // otherwise outboxDrainer re-posts this audio as a ghost every tick.
         removePendingMessage(conversationId, tempId).catch(() => {});
@@ -19593,6 +20031,7 @@ function ChatConversationInner() {
             // Same cmi as the live send (9th arg above) so a lost-response
             // retry dedups against the row the server may already have.
             client_message_id: audioMsgId,
+            reply_to_id: replyId,
           });
           setMessages(prev => _mapKeep(prev, m => m.id === tempId ? { ...m, _pending: true, _queued: true, _uploading: false } : m));
         } catch {
@@ -19622,6 +20061,7 @@ function ChatConversationInner() {
           temp_id: tempId,
           view_once: audioViewOnce ? 1 : 0, // was silently dropped on this path
           client_message_id: audioMsgId,
+          reply_to_id: replyId,
         });
         setMessages(prev => _mapKeep(prev, m => m.id === tempId ? { ...m, _pending: true, _queued: true, _uploading: false } : m));
       } catch {
@@ -19651,6 +20091,8 @@ function ChatConversationInner() {
     setShowVideoNoteRecorder(false);
     setUploading(true);
     try { if (Platform.OS !== 'web') Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success); } catch {}
+    // [2026-10-12 reply-media] Vídeo-recado (bolinha) respondendo.
+    const { replyId, replyObj } = _takeReplyFor();
     const tempId = `tmp_vnote_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     const clientId = 'msg_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
     const optimisticMsg = {
@@ -19665,6 +20107,8 @@ function ChatConversationInner() {
       file_name: file.name,
       duration: file.duration || 0,
       created_at: new Date().toISOString(),
+      reply_to_id: replyId,
+      reply_to: replyObj,
       _pending: true,
       _uploading: true,
       _client_id: clientId,
@@ -19685,6 +20129,7 @@ function ChatConversationInner() {
         duration: file.duration || 0,
         created_at: optimisticMsg.created_at,
         sender_email: user?.email,
+        reply_to_id: replyId,
       };
       await savePendingMessage(conversationId, vnotePendingData);
     } catch {}
@@ -19753,6 +20198,7 @@ function ChatConversationInner() {
         null,
         false,
         clientId, // outbox cmi — replay after lost response dedups server-side
+        replyId, // [2026-10-12 reply-media]
       );
       if (r?.success && r.data) {
         const msg = r.data.message || r.data;
@@ -19764,7 +20210,7 @@ function ChatConversationInner() {
         // (RoundVideoViewer). We also stamp the relayed payload so receivers
         // render it round too.
         const noteMsg = { ...msg, type: 'video_note' };
-        setMessages(prev => _mapKeep(prev, m => m.id === tempId ? { ...noteMsg, _pending: false, sender_email: noteMsg.sender_email || m.sender_email || currentEmail } : m));
+        setMessages(prev => _mapKeep(prev, m => m.id === tempId ? { ...noteMsg, _pending: false, sender_email: noteMsg.sender_email || m.sender_email || currentEmail, ...((!noteMsg.reply_to && noteMsg.reply_to_id && m.reply_to) ? { reply_to: m.reply_to } : null) } : m));
         // Clear the durable pending row now that the server owns the message —
         // otherwise outboxDrainer re-posts this note as a ghost every tick.
         removePendingMessage(conversationId, tempId).catch(() => {});
@@ -19780,7 +20226,7 @@ function ChatConversationInner() {
           await queueOfflineAction({
             type: 'chat_file_upload', conversation_id: conversationId,
             uri: file.uri, name: file.name || '', file_type: file.type || 'video/mp4',
-            msg_type: 'video_note', client_message_id: clientId, temp_id: tempId, caption: '',
+            msg_type: 'video_note', client_message_id: clientId, temp_id: tempId, caption: '', reply_to_id: replyId,
           });
           setMessages(prev => _mapKeep(prev, m => m.id === tempId ? { ...m, _pending: true, _failed: false, _queued: true, _uploading: false } : m));
         } catch {
@@ -19794,7 +20240,7 @@ function ChatConversationInner() {
         await queueOfflineAction({
           type: 'chat_file_upload', conversation_id: conversationId,
           uri: file.uri, name: file.name || '', file_type: file.type || 'video/mp4',
-          msg_type: 'video_note', client_message_id: clientId, temp_id: tempId, caption: '',
+          msg_type: 'video_note', client_message_id: clientId, temp_id: tempId, caption: '', reply_to_id: replyId,
         });
         setMessages(prev => _mapKeep(prev, m => m.id === tempId ? { ...m, _pending: true, _failed: false, _queued: true, _uploading: false } : m));
       } catch {
@@ -19919,6 +20365,8 @@ function ChatConversationInner() {
       // Send IMMEDIATELY without waiting for reverse geocoding (do that in parallel/background)
       const optimisticLabel = `${latitude.toFixed(5)}, ${longitude.toFixed(5)}`;
       const content = JSON.stringify({ latitude, longitude, label: presetAddress || optimisticLabel, address: presetAddress || '' });
+      // [2026-10-12 reply-media] Localização respondendo.
+      const { replyId: locReplyId, replyObj: locReplyObj } = _takeReplyFor();
       const locMsgId = 'msg_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
       const locTempId = `tmp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 
@@ -19931,10 +20379,10 @@ function ChatConversationInner() {
         const _locCreated = new Date().toISOString();
         let _locOpt = null;
         try {
-          _locOpt = normalizeMessageTypes([{ id: locTempId, _negId: Date.now() * 1000 + Math.floor(Math.random() * 1000), conversation_id: conversationId, sender_email: currentEmail, content, type: 'location', created_at: _locCreated, _pending: true, _client_id: locMsgId }])[0];
+          _locOpt = normalizeMessageTypes([{ id: locTempId, _negId: Date.now() * 1000 + Math.floor(Math.random() * 1000), conversation_id: conversationId, sender_email: currentEmail, content, type: 'location', reply_to_id: locReplyId, reply_to: locReplyObj, created_at: _locCreated, _pending: true, _client_id: locMsgId }])[0];
         } catch {}
         if (_locOpt) setMessages(prev => [...prev, _locOpt]);
-        if (await _sendRichViaOutbox({ msgId: locMsgId, tempId: locTempId, type: 'location', content, createdAt: _locCreated })) {
+        if (await _sendRichViaOutbox({ msgId: locMsgId, tempId: locTempId, type: 'location', content, createdAt: _locCreated, replyToId: locReplyId })) {
           _locViaOutbox = true;
           requestAnimationFrame(() => flatListRef.current?.scrollToOffset?.({ offset: 0, animated: true }));
           inserted = await new Promise((resolve) => {
@@ -19957,11 +20405,11 @@ function ChatConversationInner() {
       }
       if (!_locViaOutbox) {
         // ⭐ Save pending location BEFORE network attempt
-        const locPendingData = { temp_id: locTempId, client_message_id: locMsgId, conversation_id: conversationId, content, type: 'location', created_at: new Date().toISOString(), sender_email: currentEmail };
+        const locPendingData = { temp_id: locTempId, client_message_id: locMsgId, conversation_id: conversationId, content, type: 'location', reply_to_id: locReplyId, created_at: new Date().toISOString(), sender_email: currentEmail };
         await savePendingMessage(conversationId, locPendingData).catch(() => {});
 
         console.log('[loc] about to chatSend static', { lat: latitude, lng: longitude });
-        const r = await enqueueChatSend(() => api.chatSend(conversationId, content, 'location', null, null, null, locTempId, locMsgId));
+        const r = await enqueueChatSend(() => api.chatSend(conversationId, content, 'location', locReplyId, null, null, locTempId, locMsgId));
         console.log('[loc] chatSend result', { success: r?.success, hasId: !!r?.data?.id, msg: r?.message });
         if (r.success && r.data?.id) {
           inserted = normalizeMessageTypes([r.data])[0];
@@ -20239,15 +20687,18 @@ function ChatConversationInner() {
         address, updated_at: new Date().toISOString(),
       });
 
+      // [2026-10-12 reply-media] Localização ao vivo respondendo (sem bolha
+      // otimista aqui — a citação vem na linha do servidor).
+      const { replyId: liveReplyId } = _takeReplyFor();
       const liveMsgId = 'msg_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
       const liveTempId = `tmp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 
       // ⭐ Save pending live location BEFORE network attempt
-      const livePendingData = { temp_id: liveTempId, client_message_id: liveMsgId, conversation_id: conversationId, content, type: 'location', created_at: new Date().toISOString(), sender_email: currentEmail };
+      const livePendingData = { temp_id: liveTempId, client_message_id: liveMsgId, conversation_id: conversationId, content, type: 'location', reply_to_id: liveReplyId, created_at: new Date().toISOString(), sender_email: currentEmail };
       await savePendingMessage(conversationId, livePendingData).catch(() => {});
 
       console.log('[liveloc] about to chatSend', { lat: latitude, lng: longitude, hasAddr: !!address });
-      const r = await enqueueChatSend(() => api.chatSend(conversationId, content, 'location', null, null, null, liveTempId, liveMsgId));
+      const r = await enqueueChatSend(() => api.chatSend(conversationId, content, 'location', liveReplyId, null, null, liveTempId, liveMsgId));
       console.log('[liveloc] chatSend result', { success: r?.success, hasId: !!r?.data?.id, msg: r?.message });
       if (!r?.success) {
         // Surface backend failure — previously silent, user saw nothing.
@@ -20538,15 +20989,17 @@ function ChatConversationInner() {
       phone,
       email,
     });
+    // [2026-10-12 reply-media] Contato respondendo.
+    const { replyId: ctReplyId } = _takeReplyFor();
     try {
       const contactMsgId = 'msg_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
       const contactTempId = `tmp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 
       // Save pending contact BEFORE network attempt so it survives offline
-      const contactPendingData = { temp_id: contactTempId, client_message_id: contactMsgId, conversation_id: conversationId, content, type: 'contact', created_at: new Date().toISOString(), sender_email: currentEmail };
+      const contactPendingData = { temp_id: contactTempId, client_message_id: contactMsgId, conversation_id: conversationId, content, type: 'contact', reply_to_id: ctReplyId, created_at: new Date().toISOString(), sender_email: currentEmail };
       await savePendingMessage(conversationId, contactPendingData).catch(() => {});
 
-      const r = await enqueueChatSend(() => api.chatSend(conversationId, content, 'contact', null, null, null, contactTempId, contactMsgId));
+      const r = await enqueueChatSend(() => api.chatSend(conversationId, content, 'contact', ctReplyId, null, null, contactTempId, contactMsgId));
       if (r.success && r.data?.id) {
         const normalizedMsg = normalizeMessageTypes([r.data])[0];
         setMessages(prev => prev.some(m => m.id === normalizedMsg.id) ? prev : [...prev, normalizedMsg]);
@@ -21108,7 +21561,7 @@ function ChatConversationInner() {
   };
 
   const handleReply = (msg) => {
-    setReplyTo(msg);
+    setReplyTo(_replyTargetOf(msg)); // apagada → alvo sem conteúdo/mídia
     setSelectedMsg(null);
     inputRef.current?.focus();
   };
@@ -22370,7 +22823,9 @@ function ChatConversationInner() {
   };
 
   const handleLongPress = (msg) => {
-    if (msg.type === 'system' || msg.deleted_at) return;
+    // [2026-10-12 reply-wa] Apagada abre o menu, mas SÓ com "Responder"
+    // (sem reações/encaminhar/copiar — ver o gate deleted_at no menu).
+    if (msg.type === 'system') return;
     // [2026-10-08 chat-native] Medium (not Heavy) = WhatsApp/iOS context-menu
     // "lift" feel; the selection tick on mount stays as the second beat.
     try { if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium); } catch {}
@@ -25196,6 +25651,9 @@ function ChatConversationInner() {
       switch (_effectiveMsgType) {
         case 'image': {
           const imgUploading = !!msg._uploading;
+          // [2026-10-12 P2] Na fila (offline/backoff) o overlay segue ativo:
+          // spinner indeterminado + X p/ cancelar (antes sumia sem como cancelar).
+          const imgSendOverlay = imgUploading || (Platform.OS !== 'web' && !!msg._queued && msg.pending_state === 'queued' && !msg._failed && typeof msg.id === 'string' && msg.id.startsWith('tmp'));
           const imgProgress = msg._uploadPct || 0;
           const imgIndeterminate = imgUploading && (msg._uploadPct === undefined);
           // [#1239 2026-05-20] Prefer SQLite local_path so tap-to-open works
@@ -25828,11 +26286,11 @@ function ChatConversationInner() {
                   </View>
                 )}
                 <MediaSendOverlay
-                  active={imgUploading}
-                  progress={imgIndeterminate ? undefined : imgProgress}
+                  active={imgSendOverlay}
+                  progress={(imgIndeterminate || (!imgUploading && imgSendOverlay && msg._uploadPct === undefined)) ? undefined : imgProgress}
                   compressing={false}
                   sizeBytes={msg.file_size || 0}
-                  failed={!!msg._failed && !imgUploading}
+                  failed={!!msg._failed && !imgSendOverlay}
                   onCancel={() => cancelUpload(msg.id)}
                   onRetry={() => retryFailedMediaSend(msg)}
                   cancelLabel={t('common.cancel') || 'Cancelar'}
@@ -25961,6 +26419,8 @@ function ChatConversationInner() {
           const videoUrl = (msg._uploading ? null : _indexedLocalUri(msg)) || _rebaseContainerUri(msg._localUri) || _rebaseContainerUri(videoLocalPath) || resolveMediaUri(msg.file_url); // [2026-10-11 media-cache-key]
           const _vidLqipB64 = msg.thumb_b64 || (Platform.OS !== 'web' ? getThumbB64Sync(msg.id) : null);
           const vidUploading = !!msg._uploading;
+          // [2026-10-12 P2] fila → spinner indeterminado + X (ver imgSendOverlay).
+          const vidSendOverlay = vidUploading || (Platform.OS !== 'web' && !!msg._queued && msg.pending_state === 'queued' && !msg._failed && typeof msg.id === 'string' && msg.id.startsWith('tmp'));
           const vidProgress = msg._uploadPct || 0;
           const vidIndeterminate = vidUploading && (msg._uploadPct === undefined);
           // Web pre-upload re-encode (compressVideoWeb): while this runs the
@@ -26218,11 +26678,11 @@ function ChatConversationInner() {
                     />
                   ) : null}
                   <MediaSendOverlay
-                    active={vidUploading}
-                    progress={vidIndeterminate ? undefined : vidProgress}
+                    active={vidSendOverlay}
+                    progress={(vidIndeterminate || (!vidUploading && vidSendOverlay && msg._uploadPct === undefined)) ? undefined : vidProgress}
                     compressing={vidCompressing}
                     sizeBytes={msg.file_size || 0}
-                    failed={!!msg._failed && !vidUploading}
+                    failed={!!msg._failed && !vidSendOverlay}
                     onCancel={() => cancelUpload(msg.id)}
                     onRetry={() => retryFailedMediaSend(msg)}
                     cancelLabel={t('common.cancel') || 'Cancelar'}
@@ -28896,8 +29356,10 @@ function ChatConversationInner() {
       <MessageDeleteAnim deleting={__ov.deleting}>
       {/* [2026-10-08 send-motion] entrada movida p/ RowEnterMotion (MemoizedMessageRow) */}
       <SwipeReplyWrap
-        disabled={isDeleted || isSystem}
-        onReply={() => { setReplyTo(msg); inputRef.current?.focus(); }}
+        // [2026-10-12 reply-wa] Apagada também aceita "arrastar p/ responder"
+        // ("por que você apagou?") — o alvo vai SEM conteúdo/mídia (_replyTargetOf).
+        disabled={isSystem}
+        onReply={() => { setReplyTo(_replyTargetOf(msg)); inputRef.current?.focus(); }}
         onInfo={isOwn && !isDeleted ? () => handleMessageInfo(msg) : null}
         colors={colors}
         style={{ marginBottom: wrapMargin }}
@@ -28905,7 +29367,7 @@ function ChatConversationInner() {
           // Web: clique direito = long-press (menu completo: responder / reagir /
           // encaminhar / copiar / apagar). Seleção múltipla: alterna a linha.
           try { e.preventDefault?.(); } catch {}
-          if (isDeleted || isSystem) return;
+          if (isSystem) return; // apagada → menu só com "Responder" (handleLongPress)
           if (selectionMode) toggleSelection(msg.id); else handleLongPress(msg);
         } : undefined}
       >
@@ -28981,7 +29443,9 @@ function ChatConversationInner() {
           accessibilityLabel={_a11yMsgLabel(msg, { t, isOwn, isGroup: conversationType === 'group', isDeleted, readStatus: msg._readStatus, reactionGroups, me: currentEmail })}
           accessibilityHint={(selectionMode || isDeleted || isSystem) ? undefined : _a11yT(t, 'a11y.msgHint', 'Há ações para responder, reagir, encaminhar ou apagar.')}
           accessibilityState={selectionMode ? { selected: selectedIds.has(msg.id) } : undefined}
-          accessibilityActions={(selectionMode || isDeleted || isSystem) ? undefined : [
+          accessibilityActions={(selectionMode || isSystem) ? undefined : isDeleted ? [
+            { name: 'reply', label: _a11yT(t, 'chatConv.reply', 'Responder') },
+          ] : [
             { name: 'reply', label: _a11yT(t, 'chatConv.reply', 'Responder') },
             { name: 'react', label: _a11yT(t, 'a11y.react', 'Reagir') },
             { name: 'forward', label: _a11yT(t, 'chatConv.forward', 'Encaminhar') },
@@ -28992,7 +29456,8 @@ function ChatConversationInner() {
           onAccessibilityAction={(e) => {
             const n = e?.nativeEvent?.actionName;
             try {
-              if (n === 'reply') { setReplyTo(msg); inputRef.current?.focus(); }
+              if (n === 'reply') { setReplyTo(_replyTargetOf(msg)); inputRef.current?.focus(); }
+              else if (isDeleted) return;
               else if (n === 'react') setSelectedMsg(msg);
               else if (n === 'forward') handleForward(msg);
               else if (n === 'delete') handleDelete(msg.id);
@@ -29077,6 +29542,10 @@ function ChatConversationInner() {
             isVideoNoteMessage(msg) && !isDeleted && { backgroundColor: 'transparent', borderWidth: 0, paddingHorizontal: 0, paddingTop: 0, paddingBottom: 0, elevation: 0, shadowOpacity: 0 },
             // [2026-10-08 location-bubble-fast] emoji-only = sem bolha; localização = mapa rente à bolha (inset 4).
             _jumboNoBubble && { backgroundColor: 'transparent', borderWidth: 0, paddingHorizontal: 0, paddingTop: 0, paddingBottom: 0, elevation: 0, shadowOpacity: 0, minWidth: 0 },
+            // [2026-10-12 reply-wa] Bolha nua COM citação: sem a largura mínima
+            // de 200 da bolha de texto (a figurinha ficava deslocada) e mídia +
+            // cartão da citação alinhados ao lado do remetente.
+            _bubbleBare && !!msg.reply_to && { minWidth: 0, alignItems: isOwn ? 'flex-end' : 'flex-start' },
             msg.type === 'location' && !isDeleted && { paddingHorizontal: 4, paddingTop: 4, paddingBottom: 5 },
             (msg.type === 'image' || msg.type === 'video') && !isDeleted && !isVideoNoteMessage(msg) && { paddingHorizontal: 3, paddingTop: 3, paddingBottom: 4, overflow: 'hidden' },
             msg._pending && { opacity: 0.7 },
@@ -29243,156 +29712,65 @@ function ChatConversationInner() {
                 }}
                 style={[styles.replyIndicator, {
                   // Brand purple wash — sutil tint that contrasts against the
-                  // bubble background on BOTH own (lavender) and other (white/
-                  // dark) bubbles. Previous neutral overlays blended with the
-                  // own-bubble fill on light theme so the quote section
-                  // disappeared visually. Wash uses ~8% brand purple per spec.
+                  // bubble background on BOTH own and other bubbles.
                   backgroundColor: isOwn
                     ? 'rgba(255,255,255,0.12)'
                     : (isDark ? 'rgba(255,255,255,0.07)' : 'rgba(0,0,0,0.05)'),
                   borderLeftColor: replyAccent,
-                }]}
+                },
+                // [2026-10-12 reply-wa] Figurinha/GIF/vídeo-recado/emoji grande
+                // (bolha "nua", sem fundo): a citação vira um cartão com fundo
+                // próprio acima da mídia (WhatsApp) — antes era texto solto sobre
+                // o papel de parede.
+                _bubbleBare && {
+                  backgroundColor: _bubbleBg,
+                  alignSelf: isOwn ? 'flex-end' : 'flex-start',
+                  minWidth: 180, maxWidth: 260,
+                  borderRadius: 12, marginTop: 0, marginBottom: 4,
+                  ...(!isDark && !isOwn ? { borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(0,0,0,0.08)', borderLeftWidth: 3, borderLeftColor: replyAccent } : null),
+                },
+                // Foto/vídeo: a citação fica DENTRO da bolha (padding 3) acima da
+                // mídia — cantos de cima quase concêntricos à bolha (18 − 3).
+                _bubbleClips && !_bubbleBare && { marginTop: 0, marginBottom: 3, borderTopLeftRadius: 12, borderTopRightRadius: 12 },
+                ]}
               >
-                <View style={{ flexDirection: 'row', alignItems: 'flex-start' }}>
-                  {/* WAVE 128 (2026-05-22): #7168 reply quote width fix without IIFE wrap.
-                      Apply maxWidth+marginRight ONLY when an image/video thumb actually
-                      renders to the right; otherwise let the text fill the full bubble.
-                      Previous IIFE wrap shipped in WAVE 127 was suspected of causing a
-                      hooks-order violation crash on group open ("Rendered fewer hooks
-                      than previous render"). Inline ternary keeps the same visual fix
-                      without any function-wrapping that might confuse the renderer. */}
-                  <View style={{
-                    flex: 1,
-                    ...((msg.reply_to?.type === 'image' || msg.reply_to?.type === 'video') && msg.reply_to?.file_url && !msg.reply_to?.deleted_at
-                      ? { maxWidth: '70%', marginRight: 8 }
-                      : null)
-                  }}>
-                    <Text style={[styles.replyName, { color: replyAccent }]} numberOfLines={1}>
-                      {replyDisplayName}
-                    </Text>
-                    {(() => {
-                      // Build the preview as { icon, label } so non-text
-                      // replies render an inline SVG glyph instead of an
-                      // emoji prefix (project rule: no emoji in UI chrome).
-                      // Falls back to a plain string for pure text/quote
-                      // replies — Text wraps those naturally.
-                      const baseTextStyle = [
-                        styles.replyText,
-                        { color: isOwn ? ownMetaColor : colors.textSecondary },
-                        msg.reply_to?.deleted_at && { fontStyle: 'italic', opacity: 0.7 },
-                      ];
-                      const iconColor = isOwn ? ownMetaColor : colors.textSecondary;
-                      const renderIconLabel = (IconCmp, label) => (
-                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-                          <IconCmp size={12} color={iconColor} />
-                          <Text style={baseTextStyle} numberOfLines={1} ellipsizeMode="tail">
-                            {label}
-                          </Text>
-                        </View>
-                      );
-                      if (msg.reply_to?.deleted_at) {
-                        return (
-                          <Text style={baseTextStyle} numberOfLines={1} ellipsizeMode="tail">
-                            {t('chatConv.deletedMessage') || 'Esta mensagem foi apagada'}
-                          </Text>
-                        );
-                      }
-                      // Partial-text quote (Telegram premium)
-                      // WAVE 67 (2026-05-21): allow up to 3 lines for real
-                      // text content so the inline quote bubble matches
-                      // WhatsApp instead of truncating mid-sentence.
-                      if (msg.reply_quote_text) {
-                        return (
-                          <Text style={baseTextStyle} numberOfLines={2} ellipsizeMode="tail">
-                            {'“' + msg.reply_quote_text + '”'}
-                          </Text>
-                        );
-                      }
-                      // Image: real caption beats type-tag
-                      if (msg.reply_to?.type === 'image') {
-                        const hasCaption = msg.reply_to?.content && !/^https?:\/\//i.test(msg.reply_to?.content) && msg.reply_to?.content !== msg.reply_to?.file_name;
-                        return hasCaption
-                          ? <Text style={baseTextStyle} numberOfLines={2} ellipsizeMode="tail">{msg.reply_to?.content}</Text>
-                          : renderIconLabel(IconImage, t('chat.photo') || 'Foto');
-                      }
-                      if (msg.reply_to?.type === 'video') {
-                        const hasCaption = msg.reply_to?.content && !/^https?:\/\//i.test(msg.reply_to?.content) && msg.reply_to?.content !== msg.reply_to?.file_name;
-                        return hasCaption
-                          ? <Text style={baseTextStyle} numberOfLines={2} ellipsizeMode="tail">{msg.reply_to?.content}</Text>
-                          : renderIconLabel(IconFilm, t('chat.video') || 'Vídeo');
-                      }
-                      if (msg.reply_to?.type === 'audio')    return renderIconLabel(IconMic, t('chat.audio') || 'Áudio');
-                      if (msg.reply_to?.type === 'file')     return renderIconLabel(IconFileText, msg.reply_to?.file_name || t('chat.file') || 'Arquivo');
-                      if (msg.reply_to?.type === 'gif')      return renderIconLabel(IconFilm, 'GIF');
-                      if (msg.reply_to?.type === 'sticker')  return renderIconLabel(IconImage, t('chat.sticker') || 'Figurinha');
-                      if (msg.reply_to?.type === 'location') return renderIconLabel(IconMapPin, t('chatConv.location') || 'Localização');
-                      if (msg.reply_to?.type === 'contact')  return renderIconLabel(IconUser, t('chatConv.contact') || 'Contato');
-                      if (msg.reply_to?.type === 'poll')     return renderIconLabel(IconBarChart, t('chat.poll') || 'Enquete');
-                      if (msg.reply_to?.type === 'call_card') return renderIconLabel(IconPhone, t('chat.call') || 'Chamada');
-                      // status_reply: never dump the raw JSON. Show the
-                      // user's reply text + the underlying status type tag
-                      // so it reads as "Q limdooo · Vídeo" instead of the
-                      // unparsed payload.
-                      if (msg.reply_to?.type === 'status_reply') {
-                        let sr = msg.reply_to?.status_reply;
-                        if (!sr) { try { sr = JSON.parse(msg.reply_to?.content || '{}'); } catch { sr = {}; } }
-                        const txt = (sr?.reply_text || '').trim();
-                        const stType = sr?.status?.type;
-                        const tag = stType === 'image' ? (t('status.typePhoto') || 'Foto')
-                                  : stType === 'video' ? (t('status.typeVideo') || 'Vídeo')
-                                  : (t('status.statusLabel') || 'Status');
-                        const label = txt ? (txt + ' · ' + tag) : tag;
-                        return (
-                          <Text style={baseTextStyle} numberOfLines={1} ellipsizeMode="tail">{label}</Text>
-                        );
-                      }
-                      // Text content fallback. Strip raw URLs that leaked
-                      // from media fields; detect JSON status_reply payloads
-                      // that old clients shipped untyped; show a link icon
-                      // for plain links instead of the bare URL.
-                      const c = String(msg.reply_to?.content || '').trim();
-                      if (!c) {
-                        return <Text style={baseTextStyle} numberOfLines={1} ellipsizeMode="tail">{''}</Text>;
-                      }
-                      if (c.startsWith('{') && c.endsWith('}')) {
-                        try {
-                          const j = JSON.parse(c);
-                          if (j && typeof j === 'object' && j.reply_text !== undefined && j.status && typeof j.status === 'object') {
-                            const txt = (j.reply_text || '').trim();
-                            const stType = j.status.type;
-                            const tag = stType === 'image' ? (t('status.typePhoto') || 'Foto')
-                                      : stType === 'video' ? (t('status.typeVideo') || 'Vídeo')
-                                      : (t('status.statusLabel') || 'Status');
-                            const label = txt ? (txt + ' · ' + tag) : tag;
-                            return <Text style={baseTextStyle} numberOfLines={1} ellipsizeMode="tail">{label}</Text>;
-                          }
-                        } catch {}
-                      }
-                      if (/^https?:\/\//i.test(c)) {
-                        if (msg.reply_to?.file_url || /\.(gif|webp)(\?|$)/i.test(c)) {
-                          return renderIconLabel(IconFilm, 'GIF');
-                        }
-                        return renderIconLabel(IconLink, t('chat.link') || 'Link');
-                      }
-                      // WAVE 67 (2026-05-21): real message text quote shown
-                      // in 3 lines (WhatsApp parity); was numberOfLines={1}
-                      // and cut off mid-word.
-                      return <Text style={baseTextStyle} numberOfLines={2} ellipsizeMode="tail">{c}</Text>;
-                    })()}
-                  </View>
-                  {!msg.reply_to?.deleted_at && (msg.reply_to?.type === 'image' || msg.reply_to?.type === 'video') && msg.reply_to?.file_url && (
-                    <View style={{ width: 48, height: 48, borderRadius: 6, overflow: 'hidden', position: 'relative', backgroundColor: 'rgba(0,0,0,0.18)' }}>
-                      <ReplyThumb uri={api.getMediaUrl(msg.reply_to?.file_url)} />
-                      {msg.reply_to?.type === 'video' && (
-                        <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.25)' }}>
-                          <View style={{ width: 22, height: 22, borderRadius: 11, backgroundColor: 'rgba(0,0,0,0.6)', alignItems: 'center', justifyContent: 'center' }}>
-                            <IconPlay size={12} color="#fff" />
+                {(() => {
+                  // [2026-10-12 reply-wa] Uma descrição por tipo (describeReplyTarget):
+                  // ícone + rótulo (voz com duração, arquivo com nome, contato,
+                  // enquete, local, E2E, apagada…) + miniatura quadrada à direita
+                  // (figurinha sem fundo, vídeo-recado redondo). Sem URL crua.
+                  const _rd = describeReplyTarget(msg.reply_to, localRef, t);
+                  const _rTint = isOwn ? ownMetaColor : colors.textSecondary;
+                  const _rTxt = [styles.replyText, { color: _rTint }, _rd.italic && { fontStyle: 'italic' }];
+                  const _rQuote = (!_rd.italic && msg.reply_quote_text) ? String(msg.reply_quote_text) : '';
+                  const _RIcon = _rQuote ? null : _rd.Icon;
+                  return (
+                    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                      <View style={{ flex: 1, minWidth: 0, paddingRight: _rd.thumb ? 8 : 0 }}>
+                        <Text style={[styles.replyName, { color: replyAccent }]} numberOfLines={1}>
+                          {replyDisplayName}
+                        </Text>
+                        {_RIcon ? (
+                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                            <_RIcon size={13} color={_rTint} />
+                            <Text style={[..._rTxt, { flexShrink: 1 }]} numberOfLines={_rd.lines || 1} ellipsizeMode="tail">
+                              {_rd.label}
+                            </Text>
                           </View>
+                        ) : (
+                          <Text style={_rTxt} numberOfLines={_rQuote ? 2 : (_rd.lines || 2)} ellipsizeMode="tail">
+                            {_rQuote ? ('\u201C' + _rQuote + '\u201D') : _rd.label}
+                          </Text>
+                        )}
+                      </View>
+                      {_rd.thumb ? (
+                        <View style={{ marginTop: -5, marginBottom: -5, marginRight: -10, alignSelf: 'stretch', justifyContent: 'center' }}>
+                          <ReplyQuoteThumb thumb={_rd.thumb} size={50} flush={_rd.thumb.kind !== 'round' && _rd.thumb.kind !== 'sticker'} />
                         </View>
-                      )}
+                      ) : null}
                     </View>
-                  )}
-                </View>
+                  );
+                })()}
               </TouchableOpacity>
             );
           })()}
@@ -31046,7 +31424,7 @@ function ChatConversationInner() {
             const id = e?.nativeEvent?.messageId;
             const msg = messages.find(m => String(m.id) === String(id) || m.id == id);
             if (msg) {
-              setReplyTo(msg);
+              setReplyTo(_replyTargetOf(msg));
               inputRef.current?.focus();
             }
           }}
@@ -31156,7 +31534,7 @@ function ChatConversationInner() {
             const msg = messages.find(m => String(m.id) === String(messageId) || m.id == messageId);
             if (!msg) return;
             switch (action) {
-              case 'reply': setReplyTo(msg); break;
+              case 'reply': setReplyTo(_replyTargetOf(msg)); try { inputRef.current?.focus(); } catch {} break;
               case 'forward': setForwardMsg(msg); break;
               case 'star': handleStarMessage?.(msg); break;
               case 'delete': handleDelete?.(msg?.id); break;
@@ -31819,6 +32197,9 @@ function ChatConversationInner() {
         // (SENDER_COLORS) is dark-on-dark in dark mode — the bar + label now
         // use the text color in both themes (reads as WhatsApp's quote card).
         const _composerReplyColor = colors.text;
+        const _replyBarDesc = (!editingMsg && replyTo)
+          ? describeReplyTarget(replyTo, (replyTo.id != null && messagesById.get(replyTo.id)) || null, t)
+          : null;
         return (
         <ReplyPreviewBar style={[styles.replyBar, {
           backgroundColor: isDark ? '#1c1c1e' : '#ffffff',
@@ -31855,49 +32236,35 @@ function ChatConversationInner() {
                 // Partial-text quote takes priority over the type-based
                 // preview so the user sees exactly what snippet they're
                 // replying to.
-                if (replyTo?.quoteText) return _plain('“' + _trim(replyTo.quoteText) + '”');
-                if (replyTo?.type === 'image')   return _iconLabel(IconImage, (t('chat.photo') || 'Foto'));
-                if (replyTo?.type === 'video')   return _iconLabel(IconVideo, (t('chat.video') || 'Vídeo'));
-                if (replyTo?.type === 'audio')   return _iconLabel(IconMic, (t('chat.audio') || 'Áudio'));
-                if (replyTo?.type === 'file')    return _iconLabel(IconFileText, _trim(replyTo?.file_name || t('chat.file') || 'Arquivo'));
-                if (replyTo?.type === 'gif')     return _iconLabel(IconFilm, 'GIF');
-                if (replyTo?.type === 'sticker') return _iconLabel(IconImage, (t('chat.sticker') || 'Figurinha'));
-                if (replyTo?.type === 'location') return _iconLabel(IconMapPin, (t('chatConv.location') || 'Localização'));
-                if (replyTo?.type === 'contact')  return _iconLabel(IconUser, (t('chatConv.contact') || 'Contato'));
-                if (replyTo?.type === 'poll')     return _iconLabel(IconBarChart, (t('chat.poll') || 'Enquete'));
-                if (replyTo?.type === 'call_card') return _iconLabel(IconPhone, (t('chat.call') || 'Chamada'));
-                // status_reply payload is { reply_text, status:{ type, ... } }.
-                // Show the human-readable reply text + a type-tag so the
-                // compose preview doesn't dump the raw JSON.
-                if (replyTo?.type === 'status_reply') {
-                  const sr = replyTo?.status_reply || (() => { try { return JSON.parse(replyTo?.content || '{}'); } catch { return {}; }})();
-                  const txt = (sr?.reply_text || '').trim();
-                  const stType = sr?.status?.type;
-                  const tag = stType === 'image' ? (t('status.typePhoto') || 'Foto')
-                            : stType === 'video' ? (t('status.typeVideo') || 'Vídeo')
-                            : (t('status.statusLabel') || 'Status');
-                  return _plain(txt ? (_trim(txt) + ' · ' + tag) : tag);
+                if (replyTo?.quoteText && !replyTo?.deleted_at) return _plain('“' + _trim(replyTo.quoteText) + '”');
+                // [2026-10-12 reply-wa] Mesmo descritor da citação na bolha:
+                // ícone + rótulo por tipo (voz + duração, vídeo-recado, arquivo
+                // com nome, contato, enquete, local, E2E, apagada em itálico).
+                const _rd = _replyBarDesc;
+                if (_rd.italic) {
+                  return (
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                      {_rd.Icon ? <_rd.Icon size={13} color={colors.textSecondary} /> : null}
+                      <Text style={[...(_txtStyle), { flex: 1, fontStyle: 'italic' }]} numberOfLines={1} ellipsizeMode="tail">{_rd.label}</Text>
+                    </View>
+                  );
                 }
-                const c = String(replyTo?.content || '').trim();
-                if (!c) return _plain('');
-                if (/^https?:\/\//i.test(c)) {
-                  if (replyTo?.file_url || /\.(gif|webp)(\?|$)/i.test(c)) return _iconLabel(IconFilm, 'GIF');
-                  return _iconLabel(IconLink, (t('chat.link') || 'Link'));
-                }
-                return _plain(_trim(c));
+                if (_rd.Icon) return _iconLabel(_rd.Icon, _trim(_rd.label));
+                return _plain(_trim(_rd.label));
               })()}
             </View>
-            {!editingMsg && (replyTo?.type === 'image' || replyTo?.type === 'video') && replyTo?.file_url && (
-              <ExpoImage
-                source={{ uri: api.getMediaUrl(replyTo.file_url) }}
-                style={{ width: 40, height: 40, borderRadius: 6 }}
-                contentFit="cover"
-                cachePolicy="memory-disk"
-              />
-            )}
+            {_replyBarDesc && _replyBarDesc.thumb ? (
+              <ReplyQuoteThumb thumb={_replyBarDesc.thumb} size={42} />
+            ) : null}
           </View>
           <TouchableOpacity
-            onPress={() => { setReplyTo(null); setEditingMsg(null); setInputText(''); }}
+            onPress={() => {
+              // [2026-10-12 reply-wa] Fechar a RESPOSTA não apaga o que já foi
+              // digitado (WhatsApp); só a edição descarta o texto pré-carregado.
+              const _wasEditing = !!editingMsg;
+              setReplyTo(null); setEditingMsg(null);
+              if (_wasEditing) setInputText('');
+            }}
             style={styles.replyBarClose}
             accessibilityRole="button"
             accessibilityLabel={t('common.cancel') || 'Cancelar'}
@@ -32027,6 +32394,12 @@ function ChatConversationInner() {
               onShortHold={() => {
                 setScheduleToast(t('chatConv.holdToRecordHint') || 'Segure para gravar, solte para enviar');
                 setTimeout(() => setScheduleToast(''), 2400);
+              }}
+              onLiveChange={setVoiceRecLive}
+              onNotice={(msg) => {
+                if (!msg) return;
+                setScheduleToast(msg);
+                setTimeout(() => setScheduleToast(''), 2600);
               }}
             />
           </ErrorBoundary>
@@ -33365,8 +33738,9 @@ function ChatConversationInner() {
             colors={colors}
             t={t}
             conversationId={conversationId}
+            replyToId={(replyTo?.id && !(typeof replyTo.id === 'string' && replyTo.id.startsWith('tmp_'))) ? replyTo.id : null}
             onClose={() => setShowPollCreator(false)}
-            onCreated={(msg) => { const normalized = normalizeMessageTypes([msg])[0]; setMessages(prev => prev.some(m => m.id === normalized.id) ? prev : [...prev, normalized]); setShowPollCreator(false); setTimeout(() => flatListRef.current?.scrollToOffset?.({ offset: 0, animated: true }), 200); }}
+            onCreated={(msg) => { if (replyTo) setReplyTo(null); const normalized = normalizeMessageTypes([msg])[0]; setMessages(prev => prev.some(m => m.id === normalized.id) ? prev : [...prev, normalized]); setShowPollCreator(false); setTimeout(() => flatListRef.current?.scrollToOffset?.({ offset: 0, animated: true }), 200); }}
           />
         </Modal>
       )}
@@ -33378,8 +33752,9 @@ function ChatConversationInner() {
             colors={colors}
             t={t}
             conversationId={conversationId}
+            replyToId={(replyTo?.id && !(typeof replyTo.id === 'string' && replyTo.id.startsWith('tmp_'))) ? replyTo.id : null}
             onClose={() => setShowMeetupCreator(false)}
-            onCreated={(msg) => { const normalized = normalizeMessageTypes([msg])[0]; setMessages(prev => prev.some(m => m.id === normalized.id) ? prev : [...prev, normalized]); setShowMeetupCreator(false); setTimeout(() => flatListRef.current?.scrollToOffset?.({ offset: 0, animated: true }), 200); }}
+            onCreated={(msg) => { if (replyTo) setReplyTo(null); const normalized = normalizeMessageTypes([msg])[0]; setMessages(prev => prev.some(m => m.id === normalized.id) ? prev : [...prev, normalized]); setShowMeetupCreator(false); setTimeout(() => flatListRef.current?.scrollToOffset?.({ offset: 0, animated: true }), 200); }}
           />
         </Modal>
       )}
@@ -33477,7 +33852,7 @@ function ChatConversationInner() {
           {ctxAnchor && _liftLayout ? (
             <>
               <LiftedBubble anchor={ctxAnchor} layout={ctxMenuH ? _liftLayout : null} />
-              {ctxMenuH ? (
+              {ctxMenuH && !selectedMsg?.deleted_at ? (
                 <LiftReactionBar
                   top={_liftLayout.reactTop}
                   alignRight={ctxAnchor.isOwn}
@@ -33523,6 +33898,8 @@ function ChatConversationInner() {
                   </Text>
                   {/* [2026-10-07 app-feel-ui] SVG type glyph instead of emoji prefix (founder rule). */}
                   {(() => { const _ctxRaw = (() => {
+                      // [2026-10-12 reply-wa] apagada: nunca o content antigo.
+                      if (selectedMsg.deleted_at) return t('chatConv.deletedMessage') || 'Mensagem apagada';
                       const t_ = selectedMsg.type;
                       if (t_ === 'gif')      return '🎞 ' + (t('chatConv.gif')     || 'GIF');
                       if (t_ === 'sticker')  return '🏷️ ' + (t('chatConv.sticker') || 'Sticker');
@@ -33603,8 +33980,25 @@ function ChatConversationInner() {
 
             {/* Quick Reactions Row — classic menu only; with a lifted bubble
                 it floats ABOVE the bubble (LiftReactionBar). [2026-10-08 chat-native] */}
-            {!ctxAnchor && renderCtxReactionsRow()}
+            {!ctxAnchor && !selectedMsg?.deleted_at && renderCtxReactionsRow()}
 
+            {/* [2026-10-12 reply-wa] Mensagem APAGADA: menu só com "Responder"
+                (WhatsApp: "por que você apagou?"). Nada de reagir/encaminhar/
+                copiar/salvar — o resto do menu (CtxBody) nem monta. */}
+            {selectedMsg?.deleted_at ? (
+              <View style={[ctxS.ctxIconBar, { borderBottomColor: 'transparent' }]}>
+                <PressableScale haptic={false}
+                  style={ctxS.ctxIconBtn}
+                  onPress={() => handleReply(selectedMsg)}
+                  activeOpacity={0.6}
+                >
+                  <View style={[ctxS.ctxIconCircle, { backgroundColor: colors.primary + '22' }]}>
+                    <IconReply size={20} color={colors.primary} />
+                  </View>
+                  <Text style={[ctxS.ctxIconLabel, { color: colors.primary }]}>{t('chatConv.reply') || 'Responder'}</Text>
+                </PressableScale>
+              </View>
+            ) : (
             <CtxBody {...ctxBodyProps}>
             {/* Primary Action Bar — Horizontal Icons (iMessage-style) */}
             <View style={[ctxS.ctxIconBar, { borderBottomColor: colors.border + '40' }]}>
@@ -34155,6 +34549,7 @@ function ChatConversationInner() {
               )}
             </View>
             </CtxBody>
+            )}
           </Animated.View>
         </Pressable>
       </Modal>
@@ -34773,6 +35168,11 @@ function ChatConversationInner() {
           // let history render the album bubble without the 30s grouper
           // heuristic. Tracking issue: backend chat.php chat_send media
           // array fan-out.
+          // [2026-10-12 reply-media] Respondendo com foto(s): só a 1ª mídia do
+          // álbum cita (a bolha de álbum mostra a citação uma vez, como o
+          // WhatsApp); as demais vão sem reply. Barra fecha já.
+          const _albumRt = replyToLatestRef.current || replyTo || null;
+          if (_albumRt) { setReplyTo(null); replyToLatestRef.current = null; }
           const albumBatchId = batch.length > 1
             ? `batch_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
             : null;
@@ -34794,7 +35194,7 @@ function ChatConversationInner() {
               return v !== 'false'; // default ON
             } catch { return true; }
           })();
-          const kickoff = async (f, cap, stripExif) => {
+          const kickoff = async (f, cap, stripExif, rt = null) => {
             // [deep-20260816-032528] GIFs must NEVER go through the canvas /
             // ImageManipulator re-encode: both output a single JPEG frame, so
             // an animated GIF arrived as a frozen still (with .gif name/type
@@ -34823,7 +35223,7 @@ function ChatConversationInner() {
                   // await so the worker pool below can pace concurrent
                   // uploads — without await, kickoff returns immediately
                   // and all N uploads fire in parallel regardless of pool.
-                  try { await uploadAndSendFile({ ...f, blob: compressed, uri: tempUri }, viewOnce, cap, albumBatchId); }
+                  try { await uploadAndSendFile({ ...f, blob: compressed, uri: tempUri }, viewOnce, cap, albumBatchId, rt); }
                   finally { try { URL.revokeObjectURL(tempUri); } catch {} }
                   return;
                 }
@@ -34851,7 +35251,7 @@ function ChatConversationInner() {
                 }
               } catch {}
             }
-            await uploadAndSendFile(f, viewOnce, cap, albumBatchId);
+            await uploadAndSendFile(f, viewOnce, cap, albumBatchId, rt);
           };
           // Caption is per-photo (album legend-per-photo): MediaPreview hands
           // back a `captions` array aligned to the batch; fall back to "first
@@ -34863,13 +35263,13 @@ function ChatConversationInner() {
           // stays bounded and the user still gets fast wifi throughput.
           (async () => {
             const stripExif = await stripExifPromise;
-            const queue = batch.map((f, i) => ({ file: f, cap: (Array.isArray(captions) && captions[i] != null) ? String(captions[i]) : (i === 0 ? (caption || '') : '') }));
+            const queue = batch.map((f, i) => ({ file: f, rt: i === 0 ? _albumRt : null, cap: (Array.isArray(captions) && captions[i] != null) ? String(captions[i]) : (i === 0 ? (caption || '') : '') }));
             const workers = Math.min(4, queue.length);
             await Promise.all(Array.from({ length: workers }, async () => {
               while (queue.length) {
                 const item = queue.shift();
                 if (!item) break;
-                try { await Promise.resolve(kickoff(item.file, item.cap, stripExif)); } catch {}
+                try { await Promise.resolve(kickoff(item.file, item.cap, stripExif, item.rt)); } catch {}
               }
             }));
           })().catch(() => {});

@@ -1,4 +1,7 @@
 export default {
+  // [2026-10-12 reply-wa] citação/barra de resposta
+  "chat.replyVideoNote": "ವೀಡಿಯೊ ಸಂದೇಶ",
+  "chat.replyEncrypted": "ಎನ್‌ಕ್ರಿಪ್ಟ್ ಮಾಡಿದ ಸಂದೇಶ",
   // [2026-10-12 sticker-picker-fix] galeria/câmera do criador de figurinhas
   "stickerMaker.photosPermTitle": "ಫೋಟೋ ಪ್ರವೇಶ",
   "stickerMaker.photosPermBody": "ಸ್ಟಿಕರ್‌ಗಾಗಿ ಫೋಟೋ ಆಯ್ಕೆ ಮಾಡಲು, ಸಾಧನದ ಸೆಟ್ಟಿಂಗ್‌ಗಳಲ್ಲಿ ಫೋಟೋ ಪ್ರವೇಶವನ್ನು ಅನುಮತಿಸಿ.",
@@ -819,4 +822,9 @@ export default {
   'signup.footerLanguage': 'ಕನ್ನಡ',
   'config.language': 'ಅಪ್ಲಿಕೇಶನ್ ಭಾಷೆ',
   'config.logout': 'ಲಾಗ್ಔಟ್',
+  // [2026-10-12 rec-audit] gravação de áudio
+  "chatConv.micDeniedBody": "ಆಡಿಯೋ ರೆಕಾರ್ಡ್ ಮಾಡಲು ಸೆಟ್ಟಿಂಗ್‌ಗಳಲ್ಲಿ ಮೈಕ್ರೊಫೋನ್ ಪ್ರವೇಶವನ್ನು ಅನುಮತಿಸಿ.",
+  "chatConv.recordingFailedRetry": "ರೆಕಾರ್ಡಿಂಗ್ ವಿಫಲವಾಗಿದೆ, ಮತ್ತೆ ಪ್ರಯತ್ನಿಸಿ",
+  "chatConv.voiceTooShort": "ಆಡಿಯೋ ತುಂಬಾ ಚಿಕ್ಕದಾಗಿದೆ",
+  "chatConv.recordingInterruptedCall": "ಕರೆಯಿಂದಾಗಿ ರೆಕಾರ್ಡಿಂಗ್ ನಿಂತಿದೆ",
 };

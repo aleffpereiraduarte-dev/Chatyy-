@@ -1,4 +1,7 @@
 export default {
+  // [2026-10-12 reply-wa] citação/barra de resposta
+  "chat.replyVideoNote": "વિડિયો સંદેશ",
+  "chat.replyEncrypted": "એન્ક્રિપ્ટેડ સંદેશ",
   // [2026-10-12 sticker-picker-fix] galeria/câmera do criador de figurinhas
   "stickerMaker.photosPermTitle": "ફોટો ઍક્સેસ",
   "stickerMaker.photosPermBody": "સ્ટીકર માટે ફોટો પસંદ કરવા, ડિવાઇસના સેટિંગ્સમાં ફોટો ઍક્સેસની મંજૂરી આપો.",
@@ -5623,4 +5626,9 @@ export default {
   'post.câmera': 'કેમેરા',
   'post.selectMultiple': 'બહુ પસંદ કરો',
   'post.maxMedia': 'મહત્તમ {max} વસ્તુઓ',
+  // [2026-10-12 rec-audit] gravação de áudio
+  "chatConv.micDeniedBody": "ઑડિયો રેકોર્ડ કરવા માટે સેટિંગ્સમાં માઇક્રોફોન ઍક્સેસની મંજૂરી આપો.",
+  "chatConv.recordingFailedRetry": "રેકોર્ડિંગ નિષ્ફળ, ફરી પ્રયાસ કરો",
+  "chatConv.voiceTooShort": "ઑડિયો ખૂબ ટૂંકો છે",
+  "chatConv.recordingInterruptedCall": "કૉલને કારણે રેકોર્ડિંગ અટકી ગયું",
 };

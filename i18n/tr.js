@@ -1,4 +1,7 @@
 export default {
+  // [2026-10-12 reply-wa] citação/barra de resposta
+  "chat.replyVideoNote": "Görüntülü mesaj",
+  "chat.replyEncrypted": "Şifreli mesaj",
   // [2026-10-12 sticker-picker-fix] galeria/câmera do criador de figurinhas
   "stickerMaker.photosPermTitle": "Fotoğraf erişimi",
   "stickerMaker.photosPermBody": "Çıkartma için fotoğraf seçmek üzere cihaz Ayarlarından fotoğraflara erişime izin verin.",
@@ -7475,4 +7478,9 @@ export default {
   'settings.currency.COP': 'Kolombiya Pesosu',
   'settings.currency.PEN': 'Peru Solu',
   'settings.currency.CLP': 'Şili Pesosu',
+  // [2026-10-12 rec-audit] gravação de áudio
+  "chatConv.micDeniedBody": "Ses kaydetmek için Ayarlar’dan mikrofon erişimine izin verin.",
+  "chatConv.recordingFailedRetry": "Kayıt başarısız, tekrar deneyin",
+  "chatConv.voiceTooShort": "Ses çok kısa",
+  "chatConv.recordingInterruptedCall": "Kayıt arama nedeniyle kesildi",
 };

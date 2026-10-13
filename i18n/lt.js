@@ -1,4 +1,7 @@
 export default {
+  // [2026-10-12 reply-wa] citação/barra de resposta
+  "chat.replyVideoNote": "Vaizdo žinutė",
+  "chat.replyEncrypted": "Šifruota žinutė",
   // [2026-10-12 sticker-picker-fix] galeria/câmera do criador de figurinhas
   "stickerMaker.photosPermTitle": "Prieiga prie nuotraukų",
   "stickerMaker.photosPermBody": "Norėdami pasirinkti lipduko nuotrauką, įrenginio Nustatymuose leiskite prieigą prie nuotraukų.",
@@ -7475,4 +7478,9 @@ export default {
   'settings.currency.COP': 'Kolumbijos pesas',
   'settings.currency.PEN': 'Peruano solas',
   'settings.currency.CLP': 'Čilės pesas',
+  // [2026-10-12 rec-audit] gravação de áudio
+  "chatConv.micDeniedBody": "Leiskite prieigą prie mikrofono Nustatymuose, kad galėtumėte įrašyti garsą.",
+  "chatConv.recordingFailedRetry": "Įrašyti nepavyko, bandykite dar kartą",
+  "chatConv.voiceTooShort": "Garso įrašas per trumpas",
+  "chatConv.recordingInterruptedCall": "Įrašymą nutraukė skambutis",
 };

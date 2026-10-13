@@ -339,6 +339,8 @@ export function initSyncCache() {
     // Promove (1×, em background) mídia de conversa que ainda está no
     // cacheDirectory purgável p/ o store permanente.
     try { setTimeout(() => { _migrateLegacyCacheToStore().catch(() => {}); }, 8000); } catch {}
+    // [2026-10-12 P0 view-once] limpeza única de view-once já gravado.
+    try { setTimeout(() => { runViewOnceCacheCleanupOnce().catch(() => {}); }, 12000); } catch {}
   })();
   return syncInitPromise;
 }
@@ -1435,10 +1437,110 @@ async function _migrateLegacyCacheToStore() {
 // `opts.force` (default false): bypass the cellular gate. Use this for the
 // user's explicit "tap to download" gesture on a media bubble — the
 // background prefetch path leaves opts.force unset so cellular saves data.
+// ── [2026-10-12 P0 view-once] Registro de mídia de visualização única ──
+// cacheMedia/saveMediaPermanent/preCacheUrls recebem só a URL; qualquer
+// caminho que veja a MENSAGEM (render do bubble, sweep da conversa, WS
+// prefetch) registra aqui url+id, e as funções de gravação recusam. Assim
+// nenhum caminho (auto-sync, histórico, pre-cache) grava view-once em disco.
+const _viewOnceKeys = new Set();
+const _viewOnceMsgIds = new Set();
+export function isViewOnceMessage(m) {
+  if (!m || typeof m !== 'object') return false;
+  const v = m.is_view_once ?? m.isViewOnce ?? m.view_once;
+  return v === true || v === 1 || v === '1' || v === 't' || v === 'true';
+}
+function _absMediaUrl(u) {
+  if (!u || typeof u !== 'string') return null;
+  return u.startsWith('http') ? u : `https://chatyy.com.br${u}`;
+}
+export function markViewOnceMedia(url, messageId) {
+  try {
+    if (messageId != null && messageId !== '') _viewOnceMsgIds.add(String(messageId));
+    const abs = _absMediaUrl(url);
+    if (abs) _viewOnceKeys.add(urlToKey(abs));
+    if (url && typeof url === 'string' && url !== abs) _viewOnceKeys.add(urlToKey(url));
+  } catch {}
+}
+export function markViewOnceFromMessages(messages) {
+  if (!Array.isArray(messages)) return;
+  for (const m of messages) {
+    if (isViewOnceMessage(m)) markViewOnceMedia(m.file_url, m.id);
+  }
+}
+function _isViewOnceBlocked(url, opts) {
+  if (opts && (opts.viewOnce || opts.isViewOnce)) return true;
+  try {
+    if (opts && opts.messageId != null && _viewOnceMsgIds.has(String(opts.messageId))) return true;
+    if (url && _viewOnceKeys.size && _viewOnceKeys.has(urlToKey(url))) return true;
+  } catch {}
+  return false;
+}
+// Apaga do aparelho qualquer cópia (cache plano, saved, store permanente)
+// de uma mídia view-once. Idempotente.
+export async function purgeViewOnceMedia(url, messageId) {
+  if (Platform.OS === 'web') return;
+  markViewOnceMedia(url, messageId);
+  const fs = getFS();
+  const abs = _absMediaUrl(url);
+  if (abs) { try { await deleteCachedUrl(abs); } catch {} }
+  if (messageId != null && fs) {
+    try {
+      const st = _store();
+      const p = st ? st.lookupByMessage(messageId) : null;
+      if (p) {
+        try { await fs.deleteAsync(p, { idempotent: true }); } catch {}
+        for (const [k, v] of syncIndex) { if (v === p) { syncIndex.delete(k); try { st.forgetUrlKey(k); } catch {} } }
+        _schedulePersistIndex();
+      }
+    } catch {}
+  }
+}
+
+// Limpeza ÚNICA (flag em AsyncStorage): versões anteriores gravavam mídia
+// view-once no store permanente / cache. Varre o SQLite pelas mensagens
+// view-once, apaga arquivos (local_path + chave da URL), zera local_path e
+// limpa o cache de disco do expo-image (o prefetch da conversa aquecia
+// view-once lá). Re-executa até concluir sem erro.
+const VO_CLEANUP_FLAG = 'chatyy.viewOnceCachePurge.v1';
+let _voCleanupRunning = null;
+export function runViewOnceCacheCleanupOnce() {
+  if (Platform.OS === 'web') return Promise.resolve();
+  if (_voCleanupRunning) return _voCleanupRunning;
+  _voCleanupRunning = (async () => {
+    let AS = null;
+    try { AS = require('@react-native-async-storage/async-storage').default; } catch {}
+    try { if (AS && (await AS.getItem(VO_CLEANUP_FLAG)) === '1') return; } catch {}
+    let rows = [];
+    try {
+      const dbm = require('./db');
+      rows = (await dbm.getViewOnceMediaMessages?.()) || [];
+    } catch { return; }
+    const fs = getFS();
+    for (const r of rows) {
+      try {
+        markViewOnceMedia(r.file_url, r.id);
+        if (fs && r.local_path && typeof r.local_path === 'string' && r.local_path.startsWith('file://')) {
+          try { await fs.deleteAsync(r.local_path, { idempotent: true }); } catch {}
+        }
+        await purgeViewOnceMedia(r.file_url, r.id);
+        if (r.local_path && r.conversation_id != null) {
+          try { await require('./db').dbUpdateMessageFields(r.conversation_id, r.id, { local_path: null }); } catch {}
+        }
+      } catch {}
+    }
+    try {
+      const EI = require('expo-image').Image;
+      await EI?.clearDiskCache?.();
+    } catch {}
+    try { AS && (await AS.setItem(VO_CLEANUP_FLAG, '1')); } catch {}
+  })().catch(() => {}).finally(() => { _voCleanupRunning = null; });
+  return _voCleanupRunning;
+}
+
 export async function cacheMedia(url, opts = {}) {
   if (!url || Platform.OS === 'web') return url;
   // view-once media must never be written to the disk cache.
-  if (opts.viewOnce) return url;
+  if (_isViewOnceBlocked(url, opts)) return url;
   // [2026-05-26] Already-local URIs (file://, content://, ph://, etc.) are not
   // remote assets to download — the bytes are already on the device. Callers
   // can reach here when a chat image bubble's pre-resolved `file://` path is
@@ -1828,7 +1930,7 @@ export async function saveMediaPermanent(url, opts = {}) {
   const fs = getFS();
   if (!fs) return url;
 
-  if (opts && opts.viewOnce) return url;
+  if (_isViewOnceBlocked(url, opts)) return url;
   const key = urlToKey(url);
   // [2026-10-08 media-local-store] Mídia de conversa → store permanente por
   // conta/conversa; o dir plano "saved" fica só p/ o que não tem conversa.
@@ -2043,7 +2145,10 @@ export function prefetchIncomingMessageMedia(message) {
   // auto-saves it to the camera roll BEFORE the recipient ever opens it,
   // defeating the whole point of view-once. Bail out entirely; the bubble's
   // explicit tap-to-view path handles fetching a view-once item on demand.
-  if (message && (message.is_view_once || message.view_once || message.isViewOnce)) return;
+  if (message && (message.is_view_once || message.view_once || message.isViewOnce)) {
+    if (isViewOnceMessage(message)) markViewOnceMedia(message.file_url, message.id);
+    return;
+  }
 
   // GIFs / stickers ship their URL in `content` (Tenor / sticker server),
   // not file_url. Other types use file_url. Support both shapes.
@@ -2288,8 +2393,10 @@ export async function saveConversationMedia(messages, convIdHint) {
   // have a local_path (file already on disk). Without this filter, every
   // chat reopen would re-issue saveMediaPermanent for hundreds of msgs,
   // burning CPU + battery on no-op filesystem stats.
+  try { markViewOnceFromMessages(messages); } catch {}
   const mediaMessages = messages.filter(m => {
     if (!types.includes(m.type)) return false;
+    if (isViewOnceMessage(m)) return false;
     if (!pickUrl(m)) return false;
     // Skip if SQLite already says we have it. The bubble's getCachedUri will
     // still re-validate file existence at render time, so this is safe.

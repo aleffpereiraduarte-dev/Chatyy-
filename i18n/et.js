@@ -1,4 +1,7 @@
 export default {
+  // [2026-10-12 reply-wa] citação/barra de resposta
+  "chat.replyVideoNote": "Videosõnum",
+  "chat.replyEncrypted": "Krüpteeritud sõnum",
   // [2026-10-12 sticker-picker-fix] galeria/câmera do criador de figurinhas
   "stickerMaker.photosPermTitle": "Juurdepääs fotodele",
   "stickerMaker.photosPermBody": "Kleebise foto valimiseks luba seadme Seadetes juurdepääs fotodele.",
@@ -7475,4 +7478,9 @@ export default {
   'settings.currency.COP': 'Kolumbia peso',
   'settings.currency.PEN': 'Peruu sol',
   'settings.currency.CLP': 'Tšiili peso',
+  // [2026-10-12 rec-audit] gravação de áudio
+  "chatConv.micDeniedBody": "Luba seadetes juurdepääs mikrofonile, et heli salvestada.",
+  "chatConv.recordingFailedRetry": "Salvestamine ebaõnnestus, proovi uuesti",
+  "chatConv.voiceTooShort": "Heli on liiga lühike",
+  "chatConv.recordingInterruptedCall": "Kõne katkestas salvestamise",
 };

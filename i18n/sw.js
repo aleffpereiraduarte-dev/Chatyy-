@@ -1,4 +1,7 @@
 export default {
+  // [2026-10-12 reply-wa] citação/barra de resposta
+  "chat.replyVideoNote": "Ujumbe wa video",
+  "chat.replyEncrypted": "Ujumbe uliosimbwa",
   // [2026-10-12 sticker-picker-fix] galeria/câmera do criador de figurinhas
   "stickerMaker.photosPermTitle": "Ufikiaji wa picha",
   "stickerMaker.photosPermBody": "Ili kuchagua picha ya kibandiko, ruhusu ufikiaji wa picha kwenye Mipangilio ya kifaa.",
@@ -7475,4 +7478,9 @@ export default {
   'settings.currency.COP': 'Peso ya Kolombia',
   'settings.currency.PEN': 'Sol ya Peru',
   'settings.currency.CLP': 'Peso ya Chile',
+  // [2026-10-12 rec-audit] gravação de áudio
+  "chatConv.micDeniedBody": "Ruhusu ufikiaji wa maikrofoni kwenye Mipangilio ili kurekodi sauti.",
+  "chatConv.recordingFailedRetry": "Kurekodi kumeshindwa, jaribu tena",
+  "chatConv.voiceTooShort": "Sauti ni fupi mno",
+  "chatConv.recordingInterruptedCall": "Kurekodi kumekatizwa na simu",
 };

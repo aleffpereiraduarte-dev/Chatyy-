@@ -1,4 +1,7 @@
 export default {
+  // [2026-10-12 reply-wa] citação/barra de resposta
+  "chat.replyVideoNote": "ভিডিও বার্তা",
+  "chat.replyEncrypted": "এনক্রিপ্ট করা বার্তা",
   // [2026-10-12 sticker-picker-fix] galeria/câmera do criador de figurinhas
   "stickerMaker.photosPermTitle": "ছবিতে অ্যাক্সেস",
   "stickerMaker.photosPermBody": "স্টিকারের জন্য ছবি বাছতে ডিভাইসের সেটিংসে ছবিতে অ্যাক্সেসের অনুমতি দিন।",
@@ -7475,4 +7478,9 @@ export default {
   'settings.currency.COP': 'কলম্বিয়ান পেসো',
   'settings.currency.PEN': 'পেরুভিয়ান সোল',
   'settings.currency.CLP': 'চিলিয়ান পেসো',
+  // [2026-10-12 rec-audit] gravação de áudio
+  "chatConv.micDeniedBody": "অডিও রেকর্ড করতে সেটিংসে মাইক্রোফোন অ্যাক্সেসের অনুমতি দিন।",
+  "chatConv.recordingFailedRetry": "রেকর্ডিং ব্যর্থ হয়েছে, আবার চেষ্টা করুন",
+  "chatConv.voiceTooShort": "অডিও খুব ছোট",
+  "chatConv.recordingInterruptedCall": "কলের কারণে রেকর্ডিং বন্ধ হয়েছে",
 };

@@ -1,4 +1,7 @@
 export default {
+  // [2026-10-12 reply-wa] citação/barra de resposta
+  "chat.replyVideoNote": "សារវីដេអូ",
+  "chat.replyEncrypted": "សារដែលបានអ៊ិនគ្រីប",
   // [2026-10-12 sticker-picker-fix] galeria/câmera do criador de figurinhas
   "stickerMaker.photosPermTitle": "ការចូលប្រើរូបថត",
   "stickerMaker.photosPermBody": "ដើម្បីជ្រើសរូបថតសម្រាប់ស្ទីគ័រ សូមអនុញ្ញាតការចូលប្រើរូបថតនៅក្នុងការកំណត់ឧបករណ៍។",
@@ -7471,4 +7474,9 @@ export default {
   'settings.currency.COP': 'ពេសូកូឡុំប៊ី',
   'settings.currency.PEN': 'សូលពេរូ',
   'settings.currency.CLP': 'ពេសូឈីល',
+  // [2026-10-12 rec-audit] gravação de áudio
+  "chatConv.micDeniedBody": "អនុញ្ញាតឱ្យចូលប្រើមីក្រូហ្វូននៅក្នុងការកំណត់ ដើម្បីថតសំឡេង។",
+  "chatConv.recordingFailedRetry": "ការថតបានបរាជ័យ សូមព្យាយាមម្តងទៀត",
+  "chatConv.voiceTooShort": "សំឡេងខ្លីពេក",
+  "chatConv.recordingInterruptedCall": "ការថតត្រូវបានរំខានដោយការហៅ",
 };

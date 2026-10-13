@@ -1,4 +1,7 @@
 export default {
+  // [2026-10-12 reply-wa] citação/barra de resposta
+  "chat.replyVideoNote": "ข้อความวิดีโอ",
+  "chat.replyEncrypted": "ข้อความที่เข้ารหัส",
   // [2026-10-12 sticker-picker-fix] galeria/câmera do criador de figurinhas
   "stickerMaker.photosPermTitle": "การเข้าถึงรูปภาพ",
   "stickerMaker.photosPermBody": "หากต้องการเลือกรูปสำหรับสติกเกอร์ ให้อนุญาตการเข้าถึงรูปภาพในการตั้งค่าของอุปกรณ์",
@@ -7475,4 +7478,9 @@ export default {
   'settings.currency.COP': 'เปโซโคลอมเบีย',
   'settings.currency.PEN': 'โซลเปรู',
   'settings.currency.CLP': 'เปโซชิลี',
+  // [2026-10-12 rec-audit] gravação de áudio
+  "chatConv.micDeniedBody": "อนุญาตการเข้าถึงไมโครโฟนในการตั้งค่าเพื่ออัดเสียง",
+  "chatConv.recordingFailedRetry": "การอัดเสียงล้มเหลว ลองอีกครั้ง",
+  "chatConv.voiceTooShort": "เสียงสั้นเกินไป",
+  "chatConv.recordingInterruptedCall": "การอัดเสียงถูกขัดจังหวะโดยสายเรียกเข้า",
 };

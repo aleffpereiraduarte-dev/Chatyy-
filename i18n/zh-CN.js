@@ -1,4 +1,7 @@
 export default {
+  // [2026-10-12 reply-wa] citação/barra de resposta
+  "chat.replyVideoNote": "视频消息",
+  "chat.replyEncrypted": "加密消息",
   // [2026-10-12 sticker-picker-fix] galeria/câmera do criador de figurinhas
   "stickerMaker.photosPermTitle": "照片访问权限",
   "stickerMaker.photosPermBody": "要为贴纸选择照片，请在设备设置中允许访问照片。",
@@ -7513,4 +7516,9 @@ export default {
   "call.statsHoldHint": "统计信息（长按打开）",
   "call.crashTitle": "通话界面出现错误",
   "call.crashBody": "点按挂断后重试。",
+  // [2026-10-12 rec-audit] gravação de áudio
+  "chatConv.micDeniedBody": "请在设置中允许访问麦克风以录制音频。",
+  "chatConv.recordingFailedRetry": "录音失败，请重试",
+  "chatConv.voiceTooShort": "音频太短",
+  "chatConv.recordingInterruptedCall": "录音因来电而中断",
 };

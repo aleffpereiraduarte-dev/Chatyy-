@@ -1,4 +1,7 @@
 export default {
+  // [2026-10-12 reply-wa] citação/barra de resposta
+  "chat.replyVideoNote": "Videobericht",
+  "chat.replyEncrypted": "Versleuteld bericht",
   // [2026-10-12 sticker-picker-fix] galeria/câmera do criador de figurinhas
   "stickerMaker.photosPermTitle": "Toegang tot foto's",
   "stickerMaker.photosPermBody": "Sta toegang tot foto's toe in de Instellingen van je apparaat om een foto voor je sticker te kiezen.",
@@ -8253,4 +8256,9 @@ export default {
   'settings.currency.COP': 'Colombiaanse peso',
   'settings.currency.PEN': 'Peruaanse sol',
   'settings.currency.CLP': 'Chilense peso',
+  // [2026-10-12 rec-audit] gravação de áudio
+  "chatConv.micDeniedBody": "Sta microfoontoegang toe in Instellingen om audio op te nemen.",
+  "chatConv.recordingFailedRetry": "Opname mislukt, probeer het opnieuw",
+  "chatConv.voiceTooShort": "Audio te kort",
+  "chatConv.recordingInterruptedCall": "Opname onderbroken door een oproep",
 };

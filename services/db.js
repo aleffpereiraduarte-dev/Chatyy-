@@ -1051,25 +1051,75 @@ export async function getSyncStats() {
  * at 500 per call so we don't load the whole table into RAM on big
  * accounts; caller paginates if needed.
  */
+// [2026-10-12 P0 view-once] Visualização única NUNCA entra no sync de mídia
+// (seria gravada para sempre no aparelho do destinatário). O flag vive no
+// raw_json (is_view_once | isViewOnce | view_once; 1/true/"1"/"t"/"true").
+function _rawIsViewOnce(raw) {
+  if (!raw) return false;
+  try {
+    const m = typeof raw === 'string' ? JSON.parse(raw) : raw;
+    const v = m && (m.is_view_once ?? m.isViewOnce ?? m.view_once);
+    return v === true || v === 1 || v === '1' || v === 't' || v === 'true';
+  } catch { return false; }
+}
+const _VO_SQL_EXCLUDE = `
+         AND COALESCE(CAST(json_extract(raw_json, '$.is_view_once') AS TEXT), '') NOT IN ('1','t','true')
+         AND COALESCE(CAST(json_extract(raw_json, '$.isViewOnce') AS TEXT), '') NOT IN ('1','t','true')
+         AND COALESCE(CAST(json_extract(raw_json, '$.view_once') AS TEXT), '') NOT IN ('1','t','true')`;
+
 export async function getMissingMediaMessages(limit = 500) {
   if (isWeb || !_db) return [];
-  try {
-    const rows = await _db.getAllAsync(
-      `SELECT id, conversation_id, type, file_url, content, thumb_b64
+  const _lim = Math.max(1, Math.min(limit, 2000));
+  const _base = `SELECT id, conversation_id, type, file_url, content, thumb_b64%RAW%
        FROM messages
        WHERE type IN ('image','video','audio','voice','short_video','gif','sticker','file','document')
          AND (local_path IS NULL OR local_path = '')
          AND (
            (file_url IS NOT NULL AND file_url <> '')
            OR (type IN ('gif','sticker') AND content LIKE 'http%')
-         )
+         )%VO%
        ORDER BY id DESC
-       LIMIT ?`,
-      [Math.max(1, Math.min(limit, 2000))]
-    );
+       LIMIT ?`;
+  try {
+    let rows;
+    try {
+      rows = await _db.getAllAsync(
+        _base.replace('%RAW%', '').replace('%VO%', _VO_SQL_EXCLUDE),
+        [_lim]
+      );
+    } catch (eJson) {
+      if (!/json/i.test(String(eJson?.message || ''))) throw eJson;
+      // SQLite sem JSON1 (raro) → filtra no JS pelo raw_json.
+      const all = await _db.getAllAsync(
+        _base.replace('%RAW%', ', raw_json').replace('%VO%', ''),
+        [_lim]
+      );
+      rows = (all || []).filter(r => !_rawIsViewOnce(r.raw_json)).map(({ raw_json, ...r }) => r);
+    }
     return rows || [];
   } catch (e) {
     if (__DEV__) console.warn('[db] getMissingMediaMessages failed:', e?.message);
+    return [];
+  }
+}
+
+// [2026-10-12 P0 view-once] Linhas view-once com mídia (p/ a limpeza única
+// em mediaCache.runViewOnceCacheCleanupOnce). Prefiltra por LIKE (sem JSON1
+// obrigatório) e confirma no JS.
+export async function getViewOnceMediaMessages(limit = 5000) {
+  if (isWeb || !_db) return [];
+  try {
+    const rows = await _db.getAllAsync(
+      `SELECT id, conversation_id, file_url, local_path, raw_json
+       FROM messages
+       WHERE raw_json LIKE '%once%'
+       ORDER BY id DESC
+       LIMIT ?`,
+      [Math.max(1, Math.min(limit, 20000))]
+    );
+    return (rows || []).filter(r => _rawIsViewOnce(r.raw_json)).map(({ raw_json, ...r }) => r);
+  } catch (e) {
+    if (__DEV__) console.warn('[db] getViewOnceMediaMessages failed:', e?.message);
     return [];
   }
 }

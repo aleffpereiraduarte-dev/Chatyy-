@@ -5,7 +5,7 @@ declare class AudioClass {
   /** Start recording to a file. Returns the file path. */
   startRecording(filePath?: string, sampleHz?: number): Promise<string>;
   /** Stop recording. Returns { path, durationMs, samples, sizeBytes? } (Android also adds sizeBytes/uri). */
-  stopRecording(): Promise<{ path: string; durationMs: number; samples: number[]; sizeBytes?: number; uri?: string }>;
+  stopRecording(): Promise<{ path: string; durationMs: number; samples: number[]; sizeBytes?: number; uri?: string; error?: string }>;
   /** Cancel recording without saving. */
   cancelRecording(): Promise<void>;
   /** Pause recording (Android 7+ and iOS). */
@@ -46,7 +46,8 @@ declare class AudioClass {
   voiceSetProximityEnabled?(enabled: boolean): Promise<void>;
   voiceGetStatus?(): Promise<{ token: number; positionMs: number; durationMs: number; playing: boolean; earpiece: boolean }>;
   /** Subscribe to events (Android emits onLevel/onComplete/onError; both emit onVoiceStatus/onVoiceProximity). */
-  addListener?(eventName: 'onLevel' | 'onComplete' | 'onError' | 'onVoiceStatus' | 'onVoiceProximity', listener: (e: any) => void): { remove: () => void };
+  /** onInterrupted (builds >= 2026-10-12): recording lost the mic (call / audio focus / interruption). */
+  addListener?(eventName: 'onLevel' | 'onComplete' | 'onError' | 'onVoiceStatus' | 'onVoiceProximity' | 'onInterrupted', listener: (e: any) => void): { remove: () => void };
 }
 
 // The native module is shipped on both iOS and Android. requireNativeModule

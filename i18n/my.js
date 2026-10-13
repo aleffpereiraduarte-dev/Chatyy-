@@ -1,4 +1,7 @@
 export default {
+  // [2026-10-12 reply-wa] citação/barra de resposta
+  "chat.replyVideoNote": "ဗီဒီယို မက်ဆေ့ချ်",
+  "chat.replyEncrypted": "ကုဒ်ဝှက်ထားသော မက်ဆေ့ချ်",
   // [2026-10-12 sticker-picker-fix] galeria/câmera do criador de figurinhas
   "stickerMaker.photosPermTitle": "ဓာတ်ပုံ ဝင်ရောက်ခွင့်",
   "stickerMaker.photosPermBody": "စတစ်ကာအတွက် ဓာတ်ပုံရွေးရန် စက်ပစ္စည်း ဆက်တင်များတွင် ဓာတ်ပုံဝင်ရောက်ခွင့် ပေးပါ။",
@@ -7471,4 +7474,9 @@ export default {
   'settings.currency.COP': 'ကိုလံဘီယာပေဆို',
   'settings.currency.PEN': 'ပီရူးဆိုးလ်',
   'settings.currency.CLP': 'ချီလီပေဆို',
+  // [2026-10-12 rec-audit] gravação de áudio
+  "chatConv.micDeniedBody": "အသံဖမ်းရန် ဆက်တင်များတွင် မိုက်ခရိုဖုန်းအသုံးပြုခွင့် ပေးပါ။",
+  "chatConv.recordingFailedRetry": "အသံဖမ်းခြင်း မအောင်မြင်ပါ၊ ထပ်စမ်းကြည့်ပါ",
+  "chatConv.voiceTooShort": "အသံ တိုလွန်းသည်",
+  "chatConv.recordingInterruptedCall": "ဖုန်းခေါ်ဆိုမှုကြောင့် အသံဖမ်းခြင်း ရပ်သွားသည်",
 };

@@ -1,4 +1,7 @@
 export default {
+  // [2026-10-12 reply-wa] citação/barra de resposta
+  "chat.replyVideoNote": "Տեսահաղորդագրություն",
+  "chat.replyEncrypted": "Գաղտնագրված հաղորդագրություն",
   // [2026-10-12 sticker-picker-fix] galeria/câmera do criador de figurinhas
   "stickerMaker.photosPermTitle": "Լուսանկարների հասանելիություն",
   "stickerMaker.photosPermBody": "Սթիքերի համար լուսանկար ընտրելու համար թույլատրեք լուսանկարների հասանելիությունը սարքի Կարգավորումներում։",
@@ -7471,4 +7474,9 @@ export default {
   'settings.currency.COP': 'Կոլումբիական պեսո',
   'settings.currency.PEN': 'Պերուական սոլ',
   'settings.currency.CLP': 'Չիլիական պեսո',
+  // [2026-10-12 rec-audit] gravação de áudio
+  "chatConv.micDeniedBody": "Ձայն ձայնագրելու համար Կարգավորումներում թույլատրեք խոսափողի հասանելիությունը։",
+  "chatConv.recordingFailedRetry": "Ձայնագրումը ձախողվեց, փորձեք կրկին",
+  "chatConv.voiceTooShort": "Ձայնը չափազանց կարճ է",
+  "chatConv.recordingInterruptedCall": "Ձայնագրումն ընդհատվեց զանգի պատճառով",
 };

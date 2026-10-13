@@ -1,4 +1,7 @@
 export default {
+  // [2026-10-12 reply-wa] citação/barra de resposta
+  "chat.replyVideoNote": "වීඩියෝ පණිවිඩය",
+  "chat.replyEncrypted": "සංකේතනය කළ පණිවිඩය",
   // [2026-10-12 sticker-picker-fix] galeria/câmera do criador de figurinhas
   "stickerMaker.photosPermTitle": "ඡායාරූප ප්‍රවේශය",
   "stickerMaker.photosPermBody": "ස්ටිකරය සඳහා ඡායාරූපයක් තෝරා ගැනීමට, උපාංග සැකසීම්වල ඡායාරූප ප්‍රවේශයට ඉඩ දෙන්න.",
@@ -17,4 +20,9 @@ export default {
   'sidebar.messages': 'Chatyy',
   'config.language': 'යෙදුම් භාෂාව',
   'signup.footerLanguage': 'සිංහල',
+  // [2026-10-12 rec-audit] gravação de áudio
+  "chatConv.micDeniedBody": "ශ්‍රව්‍ය පටිගත කිරීමට සැකසීම් තුළ මයික්‍රොෆෝන ප්‍රවේශයට ඉඩ දෙන්න.",
+  "chatConv.recordingFailedRetry": "පටිගත කිරීම අසාර්ථකයි, නැවත උත්සාහ කරන්න",
+  "chatConv.voiceTooShort": "ශ්‍රව්‍යය ඉතා කෙටියි",
+  "chatConv.recordingInterruptedCall": "ඇමතුමක් නිසා පටිගත කිරීම නැවතුණි",
 };

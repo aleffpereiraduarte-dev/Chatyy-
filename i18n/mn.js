@@ -1,4 +1,7 @@
 export default {
+  // [2026-10-12 reply-wa] citação/barra de resposta
+  "chat.replyVideoNote": "Видео мессеж",
+  "chat.replyEncrypted": "Шифрлэгдсэн мессеж",
   // [2026-10-12 sticker-picker-fix] galeria/câmera do criador de figurinhas
   "stickerMaker.photosPermTitle": "Зурагт хандах",
   "stickerMaker.photosPermBody": "Стикерт зураг сонгохын тулд төхөөрөмжийн Тохиргоонд зурагт хандахыг зөвшөөрнө үү.",
@@ -7471,4 +7474,9 @@ export default {
   'settings.currency.COP': 'Колумбийн песо',
   'settings.currency.PEN': 'Перугийн сол',
   'settings.currency.CLP': 'Чилийн песо',
+  // [2026-10-12 rec-audit] gravação de áudio
+  "chatConv.micDeniedBody": "Аудио бичихийн тулд Тохиргоонд микрофоны зөвшөөрөл олгоно уу.",
+  "chatConv.recordingFailedRetry": "Бичлэг амжилтгүй боллоо, дахин оролдоно уу",
+  "chatConv.voiceTooShort": "Аудио хэт богино байна",
+  "chatConv.recordingInterruptedCall": "Дуудлагын улмаас бичлэг тасарлаа",
 };

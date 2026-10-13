@@ -1,4 +1,7 @@
 export default {
+  // [2026-10-12 reply-wa] citação/barra de resposta
+  "chat.replyVideoNote": "Videóüzenet",
+  "chat.replyEncrypted": "Titkosított üzenet",
   // [2026-10-12 sticker-picker-fix] galeria/câmera do criador de figurinhas
   "stickerMaker.photosPermTitle": "Fotóhozzáférés",
   "stickerMaker.photosPermBody": "A matrica fotójának kiválasztásához engedélyezd a fotókhoz való hozzáférést az eszköz Beállításaiban.",
@@ -7475,4 +7478,9 @@ export default {
   'settings.currency.COP': 'Kolumbiai peso',
   'settings.currency.PEN': 'Perui sol',
   'settings.currency.CLP': 'Chileni peso',
+  // [2026-10-12 rec-audit] gravação de áudio
+  "chatConv.micDeniedBody": "Engedélyezd a mikrofon-hozzáférést a Beállításokban a hangfelvételhez.",
+  "chatConv.recordingFailedRetry": "A felvétel sikertelen, próbáld újra",
+  "chatConv.voiceTooShort": "Túl rövid hang",
+  "chatConv.recordingInterruptedCall": "A felvételt egy hívás megszakította",
 };

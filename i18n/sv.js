@@ -1,4 +1,7 @@
 export default {
+  // [2026-10-12 reply-wa] citação/barra de resposta
+  "chat.replyVideoNote": "Videomeddelande",
+  "chat.replyEncrypted": "Krypterat meddelande",
   // [2026-10-12 sticker-picker-fix] galeria/câmera do criador de figurinhas
   "stickerMaker.photosPermTitle": "Åtkomst till bilder",
   "stickerMaker.photosPermBody": "Tillåt åtkomst till bilder i enhetens Inställningar för att välja en bild till ditt klistermärke.",
@@ -8253,4 +8256,9 @@ export default {
   'settings.currency.COP': 'Colombiansk peso',
   'settings.currency.PEN': 'Peruansk sol',
   'settings.currency.CLP': 'Chilensk peso',
+  // [2026-10-12 rec-audit] gravação de áudio
+  "chatConv.micDeniedBody": "Tillåt mikrofonåtkomst i Inställningar för att spela in ljud.",
+  "chatConv.recordingFailedRetry": "Inspelningen misslyckades, försök igen",
+  "chatConv.voiceTooShort": "Ljudet är för kort",
+  "chatConv.recordingInterruptedCall": "Inspelningen avbröts av ett samtal",
 };

@@ -1,4 +1,7 @@
 export default {
+  // [2026-10-12 reply-wa] citação/barra de resposta
+  "chat.replyVideoNote": "Videobesked",
+  "chat.replyEncrypted": "Krypteret besked",
   // [2026-10-12 sticker-picker-fix] galeria/câmera do criador de figurinhas
   "stickerMaker.photosPermTitle": "Adgang til billeder",
   "stickerMaker.photosPermBody": "Giv adgang til billeder i enhedens Indstillinger for at vælge et billede til dit klistermærke.",
@@ -8253,4 +8256,9 @@ export default {
   'settings.currency.COP': 'Colombianske peso',
   'settings.currency.PEN': 'Peruansk sol',
   'settings.currency.CLP': 'Chilenske peso',
+  // [2026-10-12 rec-audit] gravação de áudio
+  "chatConv.micDeniedBody": "Tillad mikrofonadgang i Indstillinger for at optage lyd.",
+  "chatConv.recordingFailedRetry": "Optagelsen mislykkedes, prøv igen",
+  "chatConv.voiceTooShort": "Lyden er for kort",
+  "chatConv.recordingInterruptedCall": "Optagelsen blev afbrudt af et opkald",
 };

@@ -1,4 +1,7 @@
 export default {
+  // [2026-10-12 reply-wa] citação/barra de resposta
+  "chat.replyVideoNote": "پیام ویدیویی",
+  "chat.replyEncrypted": "پیام رمزگذاری‌شده",
   // [2026-10-12 sticker-picker-fix] galeria/câmera do criador de figurinhas
   "stickerMaker.photosPermTitle": "دسترسی به عکس‌ها",
   "stickerMaker.photosPermBody": "برای انتخاب عکس برچسب، دسترسی به عکس‌ها را در تنظیمات دستگاه مجاز کنید.",
@@ -7475,4 +7478,9 @@ export default {
   'settings.currency.COP': 'پزو کلمبیایی',
   'settings.currency.PEN': 'سول پرویی',
   'settings.currency.CLP': 'پزو شیلیایی',
+  // [2026-10-12 rec-audit] gravação de áudio
+  "chatConv.micDeniedBody": "برای ضبط صدا، دسترسی به میکروفون را در تنظیمات مجاز کنید.",
+  "chatConv.recordingFailedRetry": "ضبط ناموفق بود، دوباره تلاش کنید",
+  "chatConv.voiceTooShort": "صدا خیلی کوتاه است",
+  "chatConv.recordingInterruptedCall": "ضبط به دلیل تماس متوقف شد",
 };

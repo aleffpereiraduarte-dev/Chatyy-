@@ -46,7 +46,16 @@ import * as api from '../services/api';
 // payload shape sent by chat.php case chat_friend_location_request.
 let _showModal = null;
 export function triggerLocationRequestModal(data) {
-  if (_showModal) _showModal(data);
+  if (_showModal) { _showModal(data); return true; }
+  return false;
+}
+
+// [2026-10-12 mapa-amigos] Quem quiser saber que um pedido foi respondido aqui
+// (ex.: snap-map tira o pedido da lista e recarrega os grants).
+const _resolvedListeners = new Set();
+export function onLocationRequestResolved(cb) {
+  _resolvedListeners.add(cb);
+  return () => { _resolvedListeners.delete(cb); };
 }
 
 export default function LocationRequestModal() {
@@ -95,15 +104,24 @@ export default function LocationRequestModal() {
         await api.friendLocationDecline?.(reqData.email);
       } else {
         // action = durationSeconds (number). -1 = unlimited.
-        await api.friendLocationAccept?.(reqData.email, action);
+        const r = await api.friendLocationAccept?.(reqData.email, action);
+        // [2026-10-12 mapa-amigos] Liga o envio (1º/2º plano) e explica o
+        // "Permitir sempre" — sem isso o amigo nunca via o pin atualizado.
+        if (r?.success !== false) {
+          try {
+            const fms = require('../services/friendMapShare');
+            setTimeout(() => { fms.onFriendShareAccepted(t).catch?.(() => {}); }, 350);
+          } catch {}
+        }
       }
     } catch (err) {
       // Backend errors are surfaced via the push retry / WS reconcile — we
       // still dismiss so the modal doesn't get stuck on a transient 500.
       try { console.warn('[LocationRequest] respond failed:', err?.message); } catch {}
     }
+    _resolvedListeners.forEach((cb) => { try { cb({ email: reqData.email, accepted: action !== 'decline' }); } catch {} });
     dismiss();
-  }, [reqData, busy, dismiss]);
+  }, [reqData, busy, dismiss, t]);
 
   if (!visible || !reqData) return null;
 
@@ -154,47 +172,41 @@ export default function LocationRequestModal() {
 
             {/* Action buttons — match snap-map's three-tier accept + decline */}
             <View style={{ marginTop: 18, gap: 10 }}>
-              <TouchableOpacity
-                onPress={() => respond(-1)}
-                disabled={busy}
-                style={[lrm.btnPrimary, { backgroundColor: '#111111', opacity: busy ? 0.6 : 1 }]}
-                accessibilityLabel={t?.('location.acceptForever') || 'Sempre'}
-              >
-                <Text style={lrm.btnPrimaryText}>{t?.('location.acceptForever') || 'Sempre'}</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                onPress={() => respond(3600)}
-                disabled={busy}
-                style={[lrm.btnSecondary, {
-                  backgroundColor: isDark ? 'rgba(17, 17, 17,0.18)' : '#F1F3F5',
-                  opacity: busy ? 0.6 : 1,
-                }]}
-                accessibilityLabel={t?.('location.acceptOneHour') || '1 hora'}
-              >
-                <Text style={[lrm.btnSecondaryText, { color: colors.primary }]}>
-                  {t?.('location.acceptOneHour') || '1 hora'}
-                </Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                onPress={() => respond(900)}
-                disabled={busy}
-                style={[lrm.btnSecondary, {
-                  backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : '#f3f4f6',
-                  opacity: busy ? 0.6 : 1,
-                }]}
-                accessibilityLabel={t?.('location.acceptOnce') || 'Apenas esta vez'}
-              >
-                <Text style={[lrm.btnSecondaryText, { color: colors.text }]}>
-                  {t?.('location.acceptOnce') || 'Apenas esta vez'}
-                </Text>
-              </TouchableOpacity>
+              <Text style={{ color: colors.textSecondary, fontSize: 12, fontWeight: '700', marginBottom: 2 }}>
+                {t?.('fmap.durationTitle') || 'Por quanto tempo?'}
+              </Text>
+              {[
+                { dur: 3600, label: t?.('fmap.dur1h') || '1 hora', primary: true },
+                { dur: 8 * 3600, label: t?.('fmap.dur8h') || '8 horas' },
+                { dur: -1, label: t?.('fmap.durForever') || 'Até eu desligar' },
+              ].map((o) => (
+                <TouchableOpacity
+                  key={String(o.dur)}
+                  onPress={() => respond(o.dur)}
+                  disabled={busy}
+                  style={[o.primary ? lrm.btnPrimary : lrm.btnSecondary, {
+                    backgroundColor: o.primary
+                      ? (isDark ? '#FFFFFF' : '#111111')
+                      : (isDark ? 'rgba(255,255,255,0.08)' : '#F1F3F5'),
+                    opacity: busy ? 0.6 : 1,
+                  }]}
+                  accessibilityLabel={o.label}
+                >
+                  <Text style={o.primary
+                    ? [lrm.btnPrimaryText, { color: isDark ? '#111111' : '#FFFFFF' }]
+                    : [lrm.btnSecondaryText, { color: colors.text }]}
+                  >
+                    {o.label}
+                  </Text>
+                </TouchableOpacity>
+              ))}
               <TouchableOpacity
                 onPress={() => respond('decline')}
                 disabled={busy}
                 style={[lrm.btnGhost, { opacity: busy ? 0.6 : 1 }]}
                 accessibilityLabel={t?.('location.decline') || 'Recusar'}
               >
-                <Text style={[lrm.btnGhostText, { color: '#ef4444' }]}>
+                <Text style={[lrm.btnGhostText, { color: colors.textSecondary }]}>
                   {t?.('location.decline') || 'Recusar'}
                 </Text>
               </TouchableOpacity>

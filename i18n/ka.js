@@ -1,4 +1,7 @@
 export default {
+  // [2026-10-12 reply-wa] citação/barra de resposta
+  "chat.replyVideoNote": "ვიდეო შეტყობინება",
+  "chat.replyEncrypted": "დაშიფრული შეტყობინება",
   // [2026-10-12 sticker-picker-fix] galeria/câmera do criador de figurinhas
   "stickerMaker.photosPermTitle": "ფოტოებზე წვდომა",
   "stickerMaker.photosPermBody": "სტიკერისთვის ფოტოს ასარჩევად, მოწყობილობის პარამეტრებში დაუშვით ფოტოებზე წვდომა.",
@@ -7471,4 +7474,9 @@ export default {
   'settings.currency.COP': 'კოლუმბიური პესო',
   'settings.currency.PEN': 'პერუანული სოლი',
   'settings.currency.CLP': 'ჩილე პესო',
+  // [2026-10-12 rec-audit] gravação de áudio
+  "chatConv.micDeniedBody": "აუდიოს ჩასაწერად პარამეტრებში მიკროფონზე წვდომა დაუშვით.",
+  "chatConv.recordingFailedRetry": "ჩაწერა ვერ მოხერხდა, სცადეთ ხელახლა",
+  "chatConv.voiceTooShort": "აუდიო ძალიან მოკლეა",
+  "chatConv.recordingInterruptedCall": "ჩაწერა ზარმა შეწყვიტა",
 };

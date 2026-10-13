@@ -67,25 +67,37 @@ export default function LiveLocationHeartbeat() {
     // task wake-ups have a handler (no-op if not native).
     try { bgMod?.registerBackgroundLocationTask?.(); } catch {}
 
-    async function isActiveShareEnabled() {
+    // [2026-10-12 mapa-amigos] Duas razões para publicar: localização ao vivo
+    // da conversa (`live_location_active`) OU ≥1 grant ativo no Mapa de amigos
+    // (`friend_map_share_active`, reconciliado por services/friendMapShare).
+    // Modo fantasma desliga as duas. Só para quando NENHUMA está ativa.
+    let fms = null;
+    try { fms = require('../services/friendMapShare'); } catch {}
+    async function shareReasons() {
       try {
-        if (!AsyncStorage) return false;
+        if (fms?.getShareReasons) return await fms.getShareReasons();
+        if (!AsyncStorage) return { live: false, friend: false, ghost: false, any: false };
         const v = await AsyncStorage.getItem('live_location_active');
-        return v === '1' || v === 'true';
-      } catch { return false; }
+        const live = v === '1' || v === 'true';
+        return { live, friend: false, ghost: false, any: live };
+      } catch { return { live: false, friend: false, ghost: false, any: false }; }
     }
 
-    // Reconcile OS background updates with the share-flag every tick:
-    // when share-active flips true and we haven't started bg updates, kick
-    // them off (with permission gating inside bgMod). When false, stop.
+    // Reconcile OS background updates with the share reasons every tick.
+    // Consulta o estado REAL da tarefa (start é no-op se já rodando) — antes um
+    // stop externo (ex.: "Parar" da conversa) deixava bgWasStarted=true e a
+    // tarefa nunca religava para a razão do mapa.
     async function reconcileBackground() {
       try {
         if (!bgMod) return;
-        const enabled = await isActiveShareEnabled();
-        if (enabled && !bgWasStarted) {
-          const ok = await bgMod.startBackgroundLocationUpdates();
+        const r = await shareReasons();
+        if (r.any) {
+          // Só a localização ao vivo da conversa pode pedir "Sempre" aqui
+          // (comportamento antigo); a razão do mapa pede só ao aceitar.
+          const ok = await bgMod.startBackgroundLocationUpdates({ prompt: !!r.live });
           bgWasStarted = !!ok;
-        } else if (!enabled && bgWasStarted) {
+        } else {
+          // stop é no-op se a tarefa não está rodando (checa hasStarted).
           await bgMod.stopBackgroundLocationUpdates();
           bgWasStarted = false;
         }
@@ -98,8 +110,14 @@ export default function LiveLocationHeartbeat() {
         await reconcileBackground();
         const now = Date.now();
         if (now - lastPostRef.current < MIN_POST_GAP_MS) return; // overlap guard
-        const enabled = await isActiveShareEnabled();
-        if (!enabled) return;
+        const reasons = await shareReasons();
+        if (!reasons.any) return;
+        // Só o Mapa de amigos (sem ao vivo na conversa): ~2 min entre envios,
+        // compartilhado com o envio ao abrir o app / tarefa em 2º plano.
+        if (!reasons.live && fms?.lastPublishedAt) {
+          const lastPub = await fms.lastPublishedAt();
+          if (now - lastPub < (fms.FRIEND_PUBLISH_GAP_MS || 120000)) return;
+        }
 
         let Location;
         try { Location = require('expo-location'); } catch { return; }
@@ -118,6 +136,7 @@ export default function LiveLocationHeartbeat() {
         if (!loc?.coords) return;
 
         lastPostRef.current = now;
+        try { await fms?.markPublished?.(); } catch {}
         await api.apiCall('chat_friend_location_share_update', {
           latitude:  loc.coords.latitude,
           longitude: loc.coords.longitude,
@@ -155,7 +174,8 @@ export default function LiveLocationHeartbeat() {
       // the OS-managed task in reconcileBackground handles true suspension.
       startInterval();
       if (next === 'active') {
-        tick().catch(() => {});
+        // Reconcilia a razão do mapa (cacheado 10 min) antes do tick.
+        Promise.resolve(fms?.syncFriendMapShare?.()).catch(() => {}).then(() => tick().catch(() => {}));
       }
     });
 
@@ -163,7 +183,10 @@ export default function LiveLocationHeartbeat() {
     startInterval();
     // One delayed first tick so we don't fire before the app is ready
     // (e.g. AsyncStorage hydrating).
-    setTimeout(() => { tick().catch(() => {}); }, 2000);
+    setTimeout(() => {
+      try { fms?.ensureGhostSyncedToServer?.(); } catch {}
+      Promise.resolve(fms?.syncFriendMapShare?.()).catch(() => {}).then(() => tick().catch(() => {}));
+    }, 2000);
 
     return () => {
       stopped = true;

@@ -1,4 +1,7 @@
 export default {
+  // [2026-10-12 reply-wa] citação/barra de resposta
+  "chat.replyVideoNote": "Missatge de vídeo",
+  "chat.replyEncrypted": "Missatge xifrat",
   // [2026-10-12 sticker-picker-fix] galeria/câmera do criador de figurinhas
   "stickerMaker.photosPermTitle": "Accés a les fotos",
   "stickerMaker.photosPermBody": "Per triar la foto de l'adhesiu, permet l'accés a les fotos a la Configuració del dispositiu.",
@@ -7475,4 +7478,9 @@ export default {
   'settings.currency.COP': 'Peso colombià',
   'settings.currency.PEN': 'Sol peruà',
   'settings.currency.CLP': 'Peso xilè',
+  // [2026-10-12 rec-audit] gravação de áudio
+  "chatConv.micDeniedBody": "Permet l'accés al micròfon a Configuració per gravar àudio.",
+  "chatConv.recordingFailedRetry": "Error en la gravació, torna-ho a provar",
+  "chatConv.voiceTooShort": "Àudio massa curt",
+  "chatConv.recordingInterruptedCall": "Gravació interrompuda per la trucada",
 };

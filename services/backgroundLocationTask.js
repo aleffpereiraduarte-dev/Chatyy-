@@ -61,8 +61,12 @@ export function registerBackgroundLocationTask() {
         let AsyncStorage = null;
         try { AsyncStorage = require('@react-native-async-storage/async-storage').default; } catch {}
         if (AsyncStorage) {
+          // [2026-10-12 mapa-amigos] Duas razões independentes: localização ao
+          // vivo da conversa OU ≥1 grant ativo no Mapa de amigos.
           const flag = await AsyncStorage.getItem('live_location_active').catch(() => null);
-          if (flag !== '1' && flag !== 'true') return;
+          const fmap = await AsyncStorage.getItem('friend_map_share_active').catch(() => null);
+          const on = (v) => v === '1' || v === 'true';
+          if (!on(flag) && !on(fmap)) return;
           // Ghost/invisible mode (snap-map `snap_map_ghost_mode`='1'): MUST
           // suppress background location POSTs, else the user stays trackable
           // after enabling "invisível" — privacy breach. Bug-hunt P1 (2026-05-30).
@@ -78,6 +82,7 @@ export function registerBackgroundLocationTask() {
         try { api = require('./api'); } catch {}
         if (!api?.apiCall) return;
 
+        try { await AsyncStorage?.setItem('friend_map_last_publish_ts', String(Date.now())); } catch {}
         await api.apiCall('chat_friend_location_share_update', {
           latitude:  last.coords.latitude,
           longitude: last.coords.longitude,
@@ -95,7 +100,9 @@ export function registerBackgroundLocationTask() {
 // Helper: start / stop the OS-managed background updates. Called by
 // LiveLocationHeartbeat when the user toggles "Share Live Location"
 // or by the app boot if the flag was persisted from a prior session.
-export async function startBackgroundLocationUpdates() {
+// `prompt:false` = nunca abre o pedido de "Sempre" (usado pela reconciliação
+// do Mapa de amigos no boot; o pedido só aparece ao aceitar, com explicação).
+export async function startBackgroundLocationUpdates({ prompt = true } = {}) {
   if (Platform.OS === 'web') return false;
   // [Play compliance 2026-06-04] Android: ACCESS_BACKGROUND_LOCATION foi
   // REMOVIDA do manifest (Google tirou o app da loja por falta de prominent
@@ -116,6 +123,7 @@ export async function startBackgroundLocationUpdates() {
     if (fg?.status !== 'granted') return false;
     let bg = await Location.getBackgroundPermissionsAsync().catch(() => ({ status: 'denied' }));
     if (bg?.status !== 'granted') {
+      if (!prompt) return false;
       const ask = await Location.requestBackgroundPermissionsAsync().catch(() => ({ status: 'denied' }));
       if (ask?.status !== 'granted') return false;
       bg = ask;

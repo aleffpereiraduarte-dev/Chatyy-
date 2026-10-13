@@ -1,4 +1,7 @@
 export default {
+  // [2026-10-12 reply-wa] citação/barra de resposta
+  "chat.replyVideoNote": "동영상 메시지",
+  "chat.replyEncrypted": "암호화된 메시지",
   // [2026-10-12 sticker-picker-fix] galeria/câmera do criador de figurinhas
   "stickerMaker.photosPermTitle": "사진 접근",
   "stickerMaker.photosPermBody": "스티커 사진을 선택하려면 기기 설정에서 사진 접근을 허용하세요.",
@@ -7513,4 +7516,9 @@ export default {
   "call.statsHoldHint": "통계 (길게 눌러 열기)",
   "call.crashTitle": "통화 화면에 오류가 발생했습니다",
   "call.crashBody": "탭하여 통화를 끊고 다시 시도하세요.",
+  // [2026-10-12 rec-audit] gravação de áudio
+  "chatConv.micDeniedBody": "오디오를 녹음하려면 설정에서 마이크 접근을 허용하세요.",
+  "chatConv.recordingFailedRetry": "녹음에 실패했습니다. 다시 시도하세요",
+  "chatConv.voiceTooShort": "오디오가 너무 짧습니다",
+  "chatConv.recordingInterruptedCall": "통화로 인해 녹음이 중단되었습니다",
 };

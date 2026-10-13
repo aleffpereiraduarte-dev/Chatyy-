@@ -1,4 +1,7 @@
 export default {
+  // [2026-10-12 reply-wa] citação/barra de resposta
+  "chat.replyVideoNote": "Video xabar",
+  "chat.replyEncrypted": "Shifrlangan xabar",
   // [2026-10-12 sticker-picker-fix] galeria/câmera do criador de figurinhas
   "stickerMaker.photosPermTitle": "Rasmlarga ruxsat",
   "stickerMaker.photosPermBody": "Stiker uchun rasm tanlash uchun qurilma Sozlamalarida rasmlarga ruxsat bering.",
@@ -7471,4 +7474,9 @@ export default {
   'settings.currency.COP': 'Kolumbiyalik peso',
   'settings.currency.PEN': 'Perulik sol',
   'settings.currency.CLP': 'Chililik peso',
+  // [2026-10-12 rec-audit] gravação de áudio
+  "chatConv.micDeniedBody": "Audio yozish uchun Sozlamalarda mikrofonga ruxsat bering.",
+  "chatConv.recordingFailedRetry": "Yozib bo‘lmadi, qaytadan urinib ko‘ring",
+  "chatConv.voiceTooShort": "Audio juda qisqa",
+  "chatConv.recordingInterruptedCall": "Yozuv qo‘ng‘iroq sababli to‘xtatildi",
 };

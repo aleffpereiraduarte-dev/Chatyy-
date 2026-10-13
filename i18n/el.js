@@ -1,4 +1,7 @@
 export default {
+  // [2026-10-12 reply-wa] citação/barra de resposta
+  "chat.replyVideoNote": "Μήνυμα βίντεο",
+  "chat.replyEncrypted": "Κρυπτογραφημένο μήνυμα",
   // [2026-10-12 sticker-picker-fix] galeria/câmera do criador de figurinhas
   "stickerMaker.photosPermTitle": "Πρόσβαση στις φωτογραφίες",
   "stickerMaker.photosPermBody": "Για να επιλέξετε φωτογραφία για το αυτοκόλλητο, επιτρέψτε την πρόσβαση στις φωτογραφίες από τις Ρυθμίσεις της συσκευής.",
@@ -7475,4 +7478,9 @@ export default {
   'settings.currency.COP': 'Κολομβιανό Πέσο',
   'settings.currency.PEN': 'Περούβιανο Σολ',
   'settings.currency.CLP': 'Χιλιανό Πέσο',
+  // [2026-10-12 rec-audit] gravação de áudio
+  "chatConv.micDeniedBody": "Επιτρέψτε την πρόσβαση στο μικρόφωνο από τις Ρυθμίσεις για εγγραφή ήχου.",
+  "chatConv.recordingFailedRetry": "Η εγγραφή απέτυχε, δοκιμάστε ξανά",
+  "chatConv.voiceTooShort": "Πολύ σύντομος ήχος",
+  "chatConv.recordingInterruptedCall": "Η εγγραφή διακόπηκε από κλήση",
 };

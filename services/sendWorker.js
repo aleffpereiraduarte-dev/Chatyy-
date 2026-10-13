@@ -342,6 +342,32 @@ async function _processRow(row) {
 //   - Web: blob:URLs die when the tab closes. payload._blob_lost=true is set
 //     on hydrate (by chat-conversation's replay UI). We hard-fail those rows
 //     so the UI can prompt re-attach instead of looping forever.
+// [2026-10-12 P2] Metadados que o caminho legado (foreground) já mandava ou
+// que o servidor aceita: duração (s), LQIP (thumb_b64), dimensões e álbum.
+// Só inclui o que existir no payload (mediaSendQueue._prepare / enqueueMedia).
+function _mediaMetaFields(p, msgType) {
+  const out = {};
+  try {
+    let dur = 0;
+    try { dur = require('./mediaSendQueue').mediaDurationSec?.(p) || 0; } catch {}
+    if (dur > 0 && (msgType === 'video' || msgType === 'audio' || msgType === 'voice' || msgType === 'video_note')) out.duration = dur;
+    let tb = typeof p.thumb_b64 === 'string' ? p.thumb_b64 : null;
+    if (!tb && !p.view_once) {
+      try {
+        const mc = require('./mediaCache');
+        tb = mc.getThumbB64Sync?.(p.temp_id) || mc.getThumbB64Sync?.(p.client_message_id) || null;
+      } catch {}
+    }
+    // view-once: sem prévia borrada (vazaria o conteúdo antes de abrir).
+    if (tb && !p.view_once && tb.length < 6000 && /^[A-Za-z0-9+/=]+$/.test(tb)) out.thumb_b64 = tb;
+    const w = Math.round(Number(p.image_width || p.width) || 0);
+    const h = Math.round(Number(p.image_height || p.height) || 0);
+    if (w > 0 && h > 0) { out.image_width = w; out.image_height = h; out.width = w; out.height = h; }
+    if (p.batch_id) out.batch_id = String(p.batch_id);
+  } catch {}
+  return out;
+}
+
 async function _uploadAndSendMedia(row) {
   const api = _api();
   if (!api) {
@@ -414,6 +440,7 @@ async function _uploadAndSendMedia(row) {
         client_message_id: cmi,
         temp_id: p.temp_id || null,
         ...(p.reply_to_id ? { reply_to_id: p.reply_to_id } : {}),
+        ..._mediaMetaFields(p, msgType),
       }, 'POST');
     } else if (api.chatUploadFile && localUri) {
       // PHP fallback — single combined upload + chat_send. Pass cmi so a
@@ -429,6 +456,8 @@ async function _uploadAndSendMedia(row) {
         null,
         false,
         cmi,
+        p.reply_to_id || null, // [2026-10-12 reply-media]
+        _mediaMetaFields(p, msgType).duration || null, // [2026-10-12 P2]
       );
     }
 

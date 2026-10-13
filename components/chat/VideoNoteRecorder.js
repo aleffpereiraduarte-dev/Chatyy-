@@ -180,8 +180,15 @@ export default function VideoNoteRecorder({ visible, onClose, onComplete, colors
     })();
   }, [visible]);
 
+  // [2026-10-12 rec-audit P1-15] Estado de gravação também em ref: o
+  // PanResponder (criado 1x) e o setInterval do timer guardam as funções da
+  // render em que foram criados — liam `recording=false` para sempre, então
+  // soltar após segurar não parava/enviava e o auto-stop de 60s era no-op.
+  const recordingRef = useRef(false);
+  const fnRef = useRef({});
   const startRecording = async () => {
-    if (!cameraRef.current || recording) return;
+    if (!cameraRef.current || recordingRef.current) return;
+    recordingRef.current = true;
     cancelledRef.current = false;
     startedAtRef.current = Date.now();
     setRecording(true);
@@ -205,7 +212,7 @@ export default function VideoNoteRecorder({ visible, onClose, onComplete, colors
           hapticImpact('warning');
         }
       }
-      if (e >= MAX_MS) stopRecording(false);
+      if (e >= MAX_MS) fnRef.current.stopRecording?.(false);
     }, 100);
     try {
       const p = cameraRef.current.recordAsync({
@@ -223,7 +230,9 @@ export default function VideoNoteRecorder({ visible, onClose, onComplete, colors
           name: `video_note_${Date.now()}.mp4`,
           type: 'video/mp4',
           size: 0, // backend trusts filesize($destPath); 0 is fine.
-          duration: dur,
+          // [2026-10-12 rec-audit P1-15] SEGUNDOS (era ms). A bolha aceita os
+          // dois (>=1000 = ms), mas o resto do app (fila/sync) usa segundos.
+          duration: Math.max(1, Math.round(dur / 1000)),
         };
         onComplete?.(file);
         onClose?.();
@@ -235,6 +244,7 @@ export default function VideoNoteRecorder({ visible, onClose, onComplete, colors
       if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
       progressAnim.stopAnimation();
       progressAnim.setValue(0);
+      recordingRef.current = false;
       setRecording(false);
       setLocked(false);
       recordPromiseRef.current = null;
@@ -251,7 +261,7 @@ export default function VideoNoteRecorder({ visible, onClose, onComplete, colors
   }, [visible, cameraReady, error, micPerm?.granted]);
 
   const stopRecording = async (cancel = false) => {
-    if (!recording || !cameraRef.current) return;
+    if (!recordingRef.current || !cameraRef.current) return;
     if (cancel) {
       cancelledRef.current = true;
       hapticImpact('heavy'); // distinct from success — "tossed in trash"
@@ -260,6 +270,7 @@ export default function VideoNoteRecorder({ visible, onClose, onComplete, colors
     }
     try { cameraRef.current.stopRecording(); } catch {}
     if (cancel) {
+      recordingRef.current = false;
       setRecording(false);
       setLocked(false);
       setCancelIntent(false);
@@ -279,6 +290,7 @@ export default function VideoNoteRecorder({ visible, onClose, onComplete, colors
   // below to avoid stale-closure bugs when re-recording within the same modal.
   const lockedRef = useRef(false);
   const cancelIntentRef = useRef(false);
+  fnRef.current = { startRecording, stopRecording };
   useEffect(() => { lockedRef.current = locked; }, [locked]);
   useEffect(() => { cancelIntentRef.current = cancelIntent; }, [cancelIntent]);
 
@@ -287,7 +299,7 @@ export default function VideoNoteRecorder({ visible, onClose, onComplete, colors
       onStartShouldSetPanResponder: () => true,
       onMoveShouldSetPanResponder: () => true,
       onPanResponderGrant: () => {
-        startRecording();
+        fnRef.current.startRecording?.();
       },
       onPanResponderMove: (_e, gesture) => {
         if (lockedRef.current) return; // gestures inert once locked
@@ -331,7 +343,7 @@ export default function VideoNoteRecorder({ visible, onClose, onComplete, colors
         if (lockedRef.current) return; // stays recording until user taps stop
         // Tossed past the cancel threshold → discard regardless of hold time.
         if (cancelIntentRef.current) {
-          stopRecording(true);
+          fnRef.current.stopRecording?.(true);
           Animated.parallel([
             Animated.spring(slideX, { toValue: 0, useNativeDriver: true }),
             Animated.spring(trashScale, { toValue: 0.8, useNativeDriver: true }),
@@ -344,7 +356,7 @@ export default function VideoNoteRecorder({ visible, onClose, onComplete, colors
           lockedRef.current = true;
           setLocked(true);
         } else {
-          stopRecording(false);
+          fnRef.current.stopRecording?.(false);
         }
         Animated.parallel([
           Animated.spring(slideY, { toValue: 0, useNativeDriver: true }),
@@ -353,7 +365,7 @@ export default function VideoNoteRecorder({ visible, onClose, onComplete, colors
       },
       onPanResponderTerminate: () => {
         // System interrupted gesture (e.g. modal popped) — treat as cancel.
-        if (!lockedRef.current && recording) stopRecording(true);
+        if (!lockedRef.current && recordingRef.current) fnRef.current.stopRecording?.(true);
       },
     })
   ).current;
@@ -389,7 +401,18 @@ export default function VideoNoteRecorder({ visible, onClose, onComplete, colors
   const remainingS = Math.max(0, Math.ceil((MAX_MS - elapsed) / 1000));
 
   return (
-    <Modal visible transparent animationType="fade" onRequestClose={() => onClose?.()}>
+    <Modal
+      visible
+      transparent
+      animationType="fade"
+      onRequestClose={() => {
+        // [2026-10-12 rec-audit P1-15] Voltar (Android) durante a gravação =
+        // CANCELAR (sem enviar). Antes só fechava o modal: o recordAsync
+        // resolvia depois e o vídeo era enviado sem o usuário querer.
+        if (recordingRef.current) { cancelledRef.current = true; stopRecording(true); return; }
+        onClose?.();
+      }}
+    >
       <Pressable
         onPress={() => { if (!recording) onClose?.(); }}
         style={s.backdrop}

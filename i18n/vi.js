@@ -1,4 +1,7 @@
 export default {
+  // [2026-10-12 reply-wa] citação/barra de resposta
+  "chat.replyVideoNote": "Tin nhắn video",
+  "chat.replyEncrypted": "Tin nhắn được mã hóa",
   // [2026-10-12 sticker-picker-fix] galeria/câmera do criador de figurinhas
   "stickerMaker.photosPermTitle": "Quyền truy cập ảnh",
   "stickerMaker.photosPermBody": "Để chọn ảnh cho nhãn dán, hãy cho phép truy cập ảnh trong Cài đặt của thiết bị.",
@@ -7475,4 +7478,9 @@ export default {
   'settings.currency.COP': 'Peso Colombia',
   'settings.currency.PEN': 'Sol Peru',
   'settings.currency.CLP': 'Peso Chile',
+  // [2026-10-12 rec-audit] gravação de áudio
+  "chatConv.micDeniedBody": "Cho phép truy cập micrô trong Cài đặt để ghi âm.",
+  "chatConv.recordingFailedRetry": "Ghi âm thất bại, vui lòng thử lại",
+  "chatConv.voiceTooShort": "Âm thanh quá ngắn",
+  "chatConv.recordingInterruptedCall": "Ghi âm bị gián đoạn do cuộc gọi",
 };

@@ -1,4 +1,7 @@
 export default {
+  // [2026-10-12 reply-wa] citação/barra de resposta
+  "chat.replyVideoNote": "வீடியோ செய்தி",
+  "chat.replyEncrypted": "மறைகுறியாக்கப்பட்ட செய்தி",
   // [2026-10-12 sticker-picker-fix] galeria/câmera do criador de figurinhas
   "stickerMaker.photosPermTitle": "புகைப்பட அணுகல்",
   "stickerMaker.photosPermBody": "ஸ்டிக்கருக்கு புகைப்படத்தைத் தேர்வுசெய்ய, சாதன அமைப்புகளில் புகைப்பட அணுகலை அனுமதிக்கவும்.",
@@ -3221,4 +3224,9 @@ export default {
   'chatConv.empty': 'இன்னும் எந்த செய்தியும் இல்லை. வணக்கம் சொல்லுங்கள்!',
   'config.language': 'ஆப் மொழி',
   'config.logout': 'வெளியேறு',
+  // [2026-10-12 rec-audit] gravação de áudio
+  "chatConv.micDeniedBody": "ஆடியோ பதிவுசெய்ய அமைப்புகளில் மைக்ரோஃபோன் அணுகலை அனுமதிக்கவும்.",
+  "chatConv.recordingFailedRetry": "பதிவு தோல்வியடைந்தது, மீண்டும் முயலவும்",
+  "chatConv.voiceTooShort": "ஆடியோ மிகவும் குறுகியது",
+  "chatConv.recordingInterruptedCall": "அழைப்பால் பதிவு நிறுத்தப்பட்டது",
 };

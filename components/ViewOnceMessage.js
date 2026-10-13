@@ -22,6 +22,23 @@ function loadExpoAudio() {
   return _expoAudioMod;
 }
 
+// [2026-10-12 P0 view-once] expo-image com cachePolicy="none" no viewer: o
+// <Image> do RN gravava a foto no cache de disco do SO (NSURLCache/Fresco).
+let _expoImageMod = null;
+function loadExpoImage() {
+  if (_expoImageMod !== null) return _expoImageMod;
+  if (Platform.OS === 'web') { _expoImageMod = false; return _expoImageMod; }
+  try { _expoImageMod = require('expo-image'); }
+  catch { _expoImageMod = false; }
+  return _expoImageMod;
+}
+
+// Registro view-once no mediaCache (recusa gravar em disco) + purge.
+function _mc() {
+  if (Platform.OS === 'web') return null;
+  try { return require('../services/mediaCache'); } catch { return null; }
+}
+
 // expo-screen-capture is native-only (no-op on web). Load defensively so the
 // view-once viewer still mounts if the module is absent (web bundle / older
 // native build that predates the dependency).
@@ -72,7 +89,8 @@ function FullscreenVideoPlayer({ uri, onLoaded, onEnded, onError }) {
   const loadedRef = useRef(false);
   const endedRef = useRef(false);
 
-  const player = useVideoPlayer(uri, (p) => {
+  // useCaching:false — view-once nunca vai pro cache de vídeo do expo-video.
+  const player = useVideoPlayer(uri ? { uri, useCaching: false } : null, (p) => {
     p.loop = false;
     try { const r = p.play?.(); if (r?.catch) r.catch(() => {}); } catch {}
   });
@@ -226,13 +244,30 @@ function ViewOnceFullscreen({ uri, isVideo, t, senderName, onClose, onLoaded, on
               onError={handleError}
             />
           ) : !!uri ? (
-            <Image
-              source={{ uri }}
-              style={fs.fullImage}
-              resizeMode="contain"
-              onLoad={handleLoaded}
-              onError={handleError}
-            />
+            (() => {
+              const EI = loadExpoImage();
+              if (EI && EI.Image) {
+                return (
+                  <EI.Image
+                    source={{ uri }}
+                    style={fs.fullImage}
+                    contentFit="contain"
+                    cachePolicy="none"
+                    onLoad={handleLoaded}
+                    onError={handleError}
+                  />
+                );
+              }
+              return (
+                <Image
+                  source={{ uri, cache: 'reload' }}
+                  style={fs.fullImage}
+                  resizeMode="contain"
+                  onLoad={handleLoaded}
+                  onError={handleError}
+                />
+              );
+            })()
           ) : (
             <View style={fs.errorBox}>
               <Text style={fs.errorText}>
@@ -339,6 +374,13 @@ export default function ViewOnceMessage({ msg, colors = {}, isOwn, onView, t, cu
   // <Image> source). Holding the opened URI in state keeps the already-decoded
   // image on screen until the user dismisses it — true WhatsApp view-once UX.
   const [openedUri, setOpenedUri] = useState(null);
+  // [2026-10-12 P1] Só "queima" a visualização se a mídia carregou de fato.
+  const viewLoadedRef = useRef(false);
+  // Receptor: registra a mídia como view-once p/ nenhum caminho de cache gravar.
+  useEffect(() => {
+    if (isOwn || !msg) return;
+    try { _mc()?.markViewOnceMedia?.(msg.file_url, msg.id); } catch {}
+  }, [isOwn, msg?.id, msg?.file_url]);
 
   // ───────────── SENDER BRANCH ─────────────
   if (isOwn) {
@@ -431,7 +473,7 @@ export default function ViewOnceMessage({ msg, colors = {}, isOwn, onView, t, cu
   return (
     <>
       <TouchableOpacity
-        onPress={() => { if (!modalOpen) { setOpenedUri(fileUrl); setModalOpen(true); } }}
+        onPress={() => { if (!modalOpen) { viewLoadedRef.current = false; setOpenedUri(fileUrl); setModalOpen(true); } }}
         activeOpacity={0.7}
         style={s.tapRow}
         accessibilityRole="button"
@@ -468,12 +510,17 @@ export default function ViewOnceMessage({ msg, colors = {}, isOwn, onView, t, cu
             // saw anything ("abre e fecha na hora"). WhatsApp parity: lock
             // only after user dismisses.
             setModalOpen(false);
+            // [2026-10-12 P1] Falhou/fechou antes de carregar → NÃO queima:
+            // o pill continua "Toque para ver" p/ tentar de novo.
+            if (!viewLoadedRef.current) return;
             if (msg?.id != null) { _markLocalViewed(msg.id).catch(() => {}); }
             setLocalViewed(true);
+            try { _mc()?.purgeViewOnceMedia?.(openedUri || fileUrl, msg?.id)?.catch?.(() => {}); } catch {}
           }}
           onLoaded={() => {
             // Tell the server it was opened (so the sender sees "Aberta") but
             // DO NOT flip local state yet — that would unmount the Modal.
+            viewLoadedRef.current = true;
             onView?.(msg?.id);
           }}
           onError={() => { /* keep pill open for retry */ }}

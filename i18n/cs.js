@@ -1,4 +1,7 @@
 export default {
+  // [2026-10-12 reply-wa] citação/barra de resposta
+  "chat.replyVideoNote": "Videozpráva",
+  "chat.replyEncrypted": "Šifrovaná zpráva",
   // [2026-10-12 sticker-picker-fix] galeria/câmera do criador de figurinhas
   "stickerMaker.photosPermTitle": "Přístup k fotkám",
   "stickerMaker.photosPermBody": "Chcete-li vybrat fotku pro nálepku, povolte přístup k fotkám v Nastavení zařízení.",
@@ -7475,4 +7478,9 @@ export default {
   'settings.currency.COP': 'Kolumbijské peso',
   'settings.currency.PEN': 'Peruánský sol',
   'settings.currency.CLP': 'Chilské peso',
+  // [2026-10-12 rec-audit] gravação de áudio
+  "chatConv.micDeniedBody": "Povolte přístup k mikrofonu v Nastavení, abyste mohli nahrávat zvuk.",
+  "chatConv.recordingFailedRetry": "Nahrávání se nezdařilo, zkuste to znovu",
+  "chatConv.voiceTooShort": "Zvuk je příliš krátký",
+  "chatConv.recordingInterruptedCall": "Nahrávání přerušeno hovorem",
 };

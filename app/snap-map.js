@@ -48,12 +48,15 @@ import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet, Platform,
   ScrollView, Dimensions, Modal, Pressable, ActivityIndicator, Alert,
-  Linking, StatusBar, AppState,
+  Linking, StatusBar, AppState, TextInput,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { WebView } from 'react-native-webview';
 import { useRouter, useLocalSearchParams } from 'expo-router';
-import { triggerLocationRequestModal } from '../components/LocationRequestModal';
+import { triggerLocationRequestModal, onLocationRequestResolved } from '../components/LocationRequestModal';
+// [2026-10-12 mapa-amigos] envio da minha posição (razão do mapa), modo
+// fantasma no servidor, nome do lugar (cache) e rota no app de mapas.
+import * as fms from '../services/friendMapShare';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import { useAuth } from '../context/AuthContext';
@@ -71,7 +74,7 @@ import {
 } from '../services/snapMapPrefetch';
 import {
   IconArrowLeft, IconMapPin, IconUser, IconMessageSquare, IconX, IconNavigation,
-  IconPhone, IconEyeOff, IconClock, IconRefresh, IconFilter,
+  IconPhone, IconEyeOff, IconClock, IconRefresh, IconFilter, IconUserPlus, IconSettings,
 } from '../components/Icons';
 
 // 2026-06-24 DE-GOOGLE: arrancamos o Google Maps (Maps JS API + billing pago)
@@ -188,7 +191,12 @@ function buildMapHtml({ center, zoom, isDark, initialPins, initialMe, labels }) 
   /* "há Xmin · 1.2km" badge. Rendered ONLY when it has content so old/missing
      rows degrade. Shows distance-from-you when available (Find-My style). */
   .pin .ago{margin-top:2px;background:rgba(255,255,255,0.92);color:#111;font-size:9px;font-weight:600;padding:1px 7px;border-radius:9px;max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  .pin.stale .ago{background:rgba(239,68,68,0.92);color:#fff}
+  .pin.stale .ago{background:rgba(55,65,81,0.92);color:#fff}
+  /* [2026-10-12 mapa-amigos] Último local conhecido VELHO (>15 min): pin
+     esmaecido e em cinza — continua no mapa com "há 7 d". */
+  .pin.old{opacity:.62}
+  .pin.old .ring{background:linear-gradient(135deg,#9ca3af,#6b7280)}
+  .pin.old .ring img{filter:grayscale(1)}
   /* MapLibre centers this marker (anchor:'center'); no absolute transform. */
   .me{pointer-events:none;position:relative;display:flex;align-items:center;justify-content:center}
   .me .me-av{width:46px;height:46px;border-radius:50%;object-fit:cover;display:block;border:3px solid #2563eb;box-shadow:0 4px 14px rgba(0,0,0,0.45),0 0 0 2px #fff,0 0 16px rgba(37,99,235,0.6);background:#111111}
@@ -318,7 +326,7 @@ function pinHtml(pin) {
     : '';
   // [premium] Directional cone when the backend sent a GPS heading. Rendered
   // behind the ring; applyHeadings() keeps it correct under map rotation.
-  var coneHtml = (pin.heading != null && isFinite(pin.heading))
+  var coneHtml = (!pin.is_old && pin.heading != null && isFinite(pin.heading))
     ? '<div class="cone" data-h="' + Number(pin.heading) + '"></div>'
     : '';
   return coneHtml + '<div class="ring">' + img + '</div><div class="label">' + escapeHtml(nameShort) + '</div>' + agoHtml;
@@ -343,7 +351,8 @@ function pinClass(pin) {
   // online = fresh (non-stale) sharer → drives the pulsing GREEN ring.
   return 'pin'
     + (pin.is_unlimited ? ' unlimited' : '')
-    + (pin.is_stale ? ' stale' : ' online');
+    + (pin.is_stale ? ' stale' : ' online')
+    + (pin.is_old ? ' old' : '');
 }
 function makePinEl(pin) {
   var el = document.createElement('div');
@@ -950,6 +959,25 @@ function ago(updatedAt) {
   return _t ? _t('uiG.snapmap.agoDay', { n: Math.round(s / 86400) }) : `há ${Math.round(s / 86400)}d`;
 }
 
+// [2026-10-12 mapa-amigos] Idade de um updated_at do backend ("YYYY-MM-DD
+// HH:MM:SS" em UTC) em ms; null quando ausente/inválido.
+function ageMsOf(updatedAt, now = Date.now()) {
+  if (!updatedAt) return null;
+  try {
+    const ts = new Date(String(updatedAt).replace(' ', 'T') + (/[zZ]|[+-]\d\d:?\d\d$/.test(String(updatedAt)) ? '' : 'Z')).getTime();
+    return ts ? Math.max(0, now - ts) : null;
+  } catch { return null; }
+}
+const OLD_SHARE_MS = 15 * 60 * 1000;
+// Velho = servidor marcou `stale` (servidor novo) ou >15 min (servidor antigo
+// só devolve ≤10 min, então nunca fica velho lá).
+function isOldShare(s, now = Date.now()) {
+  if (!s) return false;
+  if (s.stale === true) return true;
+  const a = ageMsOf(s.updated_at, now);
+  return a !== null && a > OLD_SHARE_MS;
+}
+
 // [WAVE 49 2026-05-21] Active sessions chip. Renders ONLY when the user is
 // actively sharing their location OUT to one or more people. We hide it in
 // ghost mode (a separate banner takes over) and on first paint until the
@@ -1022,7 +1050,7 @@ function ActiveSessionsChip({ grantsData, isDark, colors, t, ghostMode, onOpen, 
 
 export default function SnapMapScreen() {
   const { colors, isDark } = useTheme();
-  const { t } = useLanguage();
+  const { t, language } = useLanguage();
   _agoT = t;
   const { user } = useAuth();
   const router = useRouter();
@@ -1078,6 +1106,15 @@ export default function SnapMapScreen() {
   // avatars + count). Two-position toggle keeps gesture surface tiny and
   // avoids fighting with the WebView's native pan/zoom touches.
   const [listExpanded, setListExpanded] = useState(false);
+  // [2026-10-12 mapa-amigos] "Adicionar amigo ao mapa" (escolher contato →
+  // pedido), status da permissão "Sempre" (aviso discreto) e nomes de lugar.
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [contacts, setContacts] = useState(null);
+  const [contactQuery, setContactQuery] = useState('');
+  const [requestingEmail, setRequestingEmail] = useState(null);
+  const [bgPermStatus, setBgPermStatus] = useState('unsupported');
+  const [, setPlaceTick] = useState(0);
+  const [pingedEmail, setPingedEmail] = useState(null);
 
   // [WAVE 49 2026-05-21] Filter pills above the map — Snapchat-style.
   // 'all'      = everyone I have a grant from
@@ -1106,13 +1143,13 @@ export default function SnapMapScreen() {
     })();
     return () => { alive = false; };
   }, []);
+  // [2026-10-12 mapa-amigos] Modo fantasma = pausa o MEU envio para todos sem
+  // apagar os compartilhamentos: flag local (heartbeat/tarefa/ping) + servidor
+  // apaga minha última posição (ninguém vê pin velho). Desligar volta a publicar.
   const toggleGhostMode = useCallback(async () => {
     const next = !ghostMode;
     setGhostMode(next);
-    try {
-      const AsyncStorage = require('@react-native-async-storage/async-storage').default;
-      await AsyncStorage.setItem('snap_map_ghost_mode', next ? '1' : '0');
-    } catch {}
+    try { await fms.setGhostMode(next); } catch {}
   }, [ghostMode]);
 
   // Now-tick: drives the "há Xs/Xmin" labels + stale ring re-renders. We
@@ -1130,6 +1167,7 @@ export default function SnapMapScreen() {
 
   const sharesRef = useRef([]);
   sharesRef.current = shares;
+  const refreshSharesRef = useRef(null);
 
   // Manual refresh for the friends panel — pulls shares + grants in
   // parallel without touching the GPS / map. Used by pull-to-refresh in
@@ -1145,10 +1183,48 @@ export default function SnapMapScreen() {
       if (res?.shares) setShares(res.shares);
       if (res?.pending) setPendingReqs(res.pending);
     } catch {}
+    loadGrantsRef.current?.();
     // Guarantee the spinner is visible for at least ~400ms; instant
     // resolutions feel unresponsive otherwise.
     setTimeout(() => setRefreshing(false), 400);
   }, [user?.email]);
+
+  // [2026-10-12 mapa-amigos] Grants (quem vê minha localização / de quem
+  // recebo / pedidos) — sempre carregados: alimentam a privacidade, o
+  // "Recebendo de" e a razão do envio em 2º plano (friendMapShare).
+  const loadGrantsRef = useRef(null);
+  const loadGrants = useCallback(async () => {
+    try {
+      const g = await api.friendLocationGrants?.();
+      if (g?.success && g.data) {
+        setGrantsData(g.data);
+        if (Array.isArray(g.data.pending_incoming)) {
+          setPendingReqs(g.data.pending_incoming.map((r) => ({ email: r.email, name: r.name, message: r.message })));
+        }
+        fms.syncFriendMapShare({ grantsData: g.data }).catch(() => {});
+        return g.data;
+      }
+    } catch {}
+    return null;
+  }, []);
+  loadGrantsRef.current = loadGrants;
+  const refreshBgPerm = useCallback(async () => {
+    try { setBgPermStatus(await fms.getBackgroundPermissionStatus()); } catch {}
+  }, []);
+  useEffect(() => {
+    loadGrants();
+    refreshBgPerm();
+    // Abriu o mapa com grant ativo → publica já (throttle ~2 min no serviço).
+    fms.publishMyLocationNow().catch(() => {});
+    const sub = AppState.addEventListener('change', (n) => { if (n === 'active') refreshBgPerm(); });
+    const off = onLocationRequestResolved(({ email }) => {
+      setPendingReqs((prev) => prev.filter((r) => r.email !== email));
+      setTimeout(() => { loadGrants(); refreshBgPerm(); }, 800);
+    });
+    return () => { try { sub?.remove?.(); } catch {} try { off?.(); } catch {} };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  refreshSharesRef.current = refreshShares;
 
   // ── Initial load: my GPS + friends + pending requests ─────────────
   // [WAVE 69 2026-05-21] Smart fallback chain so a brand-new user (no GPS
@@ -1328,6 +1404,16 @@ export default function SnapMapScreen() {
     const subRevoke = mailWs.on('location_share_revoked', (data) => {
       if (!data?.sharer_email) return;
       setShares((prev) => prev.filter((p) => (p.email || '').toLowerCase() !== data.sharer_email.toLowerCase()));
+      setTimeout(() => { loadGrantsRef.current?.(); }, 500);
+    });
+    // [2026-10-12 mapa-amigos] Amigo ligou o modo fantasma → some na hora.
+    const subHidden = mailWs.on('location_share_hidden', (data) => {
+      if (!data?.sharer_email) return;
+      setShares((prev) => prev.filter((p) => (p.email || '').toLowerCase() !== data.sharer_email.toLowerCase()));
+    });
+    // Aceitaram meu pedido → recarrega pins + grants.
+    const subAccepted = mailWs.on('location_share_accepted', () => {
+      setTimeout(() => { try { refreshSharesRef.current?.(); } catch {} }, 800);
     });
     const subReq = mailWs.on('location_share_request', (data) => {
       if (!data?.requester_email) return;
@@ -1339,6 +1425,8 @@ export default function SnapMapScreen() {
     return () => {
       try { subUpdate?.(); } catch {}
       try { subRevoke?.(); } catch {}
+      try { subHidden?.(); } catch {}
+      try { subAccepted?.(); } catch {}
       try { subReq?.(); } catch {}
     };
   }, []);
@@ -1487,7 +1575,8 @@ export default function SnapMapScreen() {
             if (ts) ageMs = Math.max(0, nowTick - ts);
           } catch {}
         }
-        const isStale = ageMs !== null && ageMs > STALE_THRESHOLD_MS;
+        const isOld = isOldShare(s, nowTick);
+        const isStale = isOld || (ageMs !== null && ageMs > STALE_THRESHOLD_MS);
         // [premium 2026-10-03] Distance-from-me label shown right on the pin
         // (Find-My style). Only when I have my own GPS + the friend has coords.
         let distLabel = '';
@@ -1502,6 +1591,7 @@ export default function SnapMapScreen() {
           lng: Number(s.longitude),
           is_unlimited: !!s.is_unlimited,
           is_stale: isStale,
+          is_old: isOld,
           ago_label: ageMs !== null ? ago(s.updated_at) : '',
           dist_label: distLabel,
           avatar_url: s.email ? getAvatarUrlForEmail(s.email) : null,
@@ -1539,7 +1629,8 @@ export default function SnapMapScreen() {
       try { ageMs = now - new Date(share.updated_at.replace(' ', 'T') + 'Z').getTime(); } catch { return; }
       if (ageMs < STALE_PING_MS) return;
       const last = lastPingedRef.current[p.email] || 0;
-      if (now - last < COOLDOWN_MS) return;
+      // Pin velho (servidor novo devolve até 7 d): 1 ping a cada 10 min no máx.
+      if (now - last < (ageMs > OLD_SHARE_MS ? 10 * 60 * 1000 : COOLDOWN_MS)) return;
       lastPingedRef.current[p.email] = now;
       // Fire-and-forget; backend handles throttle + grant check.
       api.friendLocationPing(p.email).catch(() => {});
@@ -1677,7 +1768,8 @@ export default function SnapMapScreen() {
         imageUrl: p.avatar_url || undefined,
         initials: nm.trim().charAt(0).toUpperCase(),
         stale: !!p.is_stale,
-        color: p.is_unlimited ? '#111111' : '#22C55E',
+        // [2026-10-12 mapa-amigos] anel preto/branco (sem verde).
+        color: isDark ? '#FFFFFF' : '#111111',
         highlight: !!(selected && selected.email && selected.email === p.email),
       };
     });
@@ -1685,10 +1777,10 @@ export default function SnapMapScreen() {
       list.push({ id: '__me', latitude: mePayload.lat, longitude: mePayload.lng, kind: 'me', color: '#2563EB', imageUrl: mePayload.avatar_url || undefined });
     }
     if (selectedSearch) {
-      list.push({ id: '__search', latitude: selectedSearch.latitude, longitude: selectedSearch.longitude, kind: 'search', color: '#F43F5E', label: selectedSearch.title });
+      list.push({ id: '__search', latitude: selectedSearch.latitude, longitude: selectedSearch.longitude, kind: 'search', color: isDark ? '#FFFFFF' : '#111111', label: selectedSearch.title });
     }
     return list;
-  }, [nativeMap, pinsPayload, mePayload, selected, selectedSearch]);
+  }, [nativeMap, pinsPayload, mePayload, selected, selectedSearch, isDark]);
 
   // Fit every friend (+ me) — native counterpart of the WebView's __fitAll.
   const nativeFitAll = useCallback((animated) => {
@@ -1822,56 +1914,193 @@ export default function SnapMapScreen() {
   }, [onWebMessage]);
 
   // ── Pending request handling ───────────────────────────────────────
+  // [2026-10-12 mapa-amigos] Aceitar abre a MESMA folha global do push
+  // (1 h / 8 h / Até eu desligar / Recusar). Fallback em Alert se a folha
+  // (lazy no _layout) ainda não montou.
   const respondToRequest = (req, accept) => {
     if (accept) {
+      const shown = triggerLocationRequestModal({ requester_email: req.email, requester_name: req.name || req.email, message: req.message || '' });
+      if (shown) return;
       Alert.alert(
         t?.('snapmap.acceptTitle') || 'Compartilhar localização',
         (t?.('snapmap.acceptBody') || 'Por quanto tempo compartilhar com {name}?').replace('{name}', req.name || req.email),
         [
-          { text: '1 hora', onPress: () => doAccept(req.email, 3600) },
-          { text: '8 horas', onPress: () => doAccept(req.email, 8 * 3600) },
-          { text: 'Sempre', onPress: () => doAccept(req.email, -1), style: 'destructive' },
+          { text: t?.('fmap.dur1h') || '1 hora', onPress: () => doAccept(req.email, 3600) },
+          { text: t?.('fmap.dur8h') || '8 horas', onPress: () => doAccept(req.email, 8 * 3600) },
+          { text: t?.('fmap.durForever') || 'Até eu desligar', onPress: () => doAccept(req.email, -1) },
           { text: t?.('common.cancel') || 'Cancelar', style: 'cancel' },
         ],
       );
     } else {
-      api.friendLocationDecline?.(req.email).catch(() => {});
+      api.friendLocationDecline?.(req.email).then(() => loadGrants()).catch(() => {});
       setPendingReqs((prev) => prev.filter((r) => r.email !== req.email));
     }
   };
   const doAccept = async (email, dur) => {
+    let ok = true;
     try {
-      await api.friendLocationAccept?.(email, dur);
-    } catch {}
+      const r = await api.friendLocationAccept?.(email, dur);
+      ok = r?.success !== false;
+    } catch { ok = false; }
     setPendingReqs((prev) => prev.filter((r) => r.email !== email));
+    if (ok) {
+      try { await fms.onFriendShareAccepted(t); } catch {}
+      refreshBgPerm();
+    }
+    loadGrants();
   };
 
   const openGrants = async () => {
     setGrantsOpen(true);
-    try {
-      const g = await api.friendLocationGrants?.();
-      if (g?.success && g.data) setGrantsData(g.data);
-    } catch {}
+    loadGrants();
   };
 
-  const revokeGrant = async (email) => {
+  // direction: 'sharing' (paro de mostrar a MINHA localização para ele) ou
+  // 'receiving' (paro de ver a dele). Servidor antigo apaga as duas.
+  const revokeGrant = (email, direction = 'sharing', name = '') => {
+    const who = name || email;
+    const sharing = direction === 'sharing';
     Alert.alert(
-      t?.('snapmap.revokeTitle') || 'Cancelar compartilhamento',
-      (t?.('snapmap.revokeBody') || 'Parar de compartilhar localização com {name}?').replace('{name}', email),
+      sharing ? (t?.('fmap.stopSharingTitle') || 'Parar de compartilhar') : (t?.('snapmap.stopReceiving') || 'Parar de receber'),
+      sharing
+        ? (t?.('fmap.stopSharingBody') || '{name} não verá mais sua localização.').replace('{name}', who)
+        : (t?.('snapmap.stopReceivingBody') || 'Você não verá mais a localização de {name} aqui.').replace('{name}', who),
       [
         { text: t?.('common.cancel') || 'Cancelar', style: 'cancel' },
         {
-          text: t?.('snapmap.revoke') || 'Cancelar',
+          text: t?.('common.confirm') || 'Confirmar',
           style: 'destructive',
           onPress: async () => {
-            try { await api.friendLocationRevoke?.(email); } catch {}
-            const g = await api.friendLocationGrants?.().catch(() => null);
-            if (g?.success) setGrantsData(g.data);
+            try { await api.friendLocationRevoke?.(email, direction); } catch {}
+            if (!sharing) setShares((p) => p.filter((x) => (x.email || '').toLowerCase() !== String(email).toLowerCase()));
+            const g = await loadGrants();
+            if (!g) fms.syncFriendMapShare({ force: true }).catch(() => {});
           },
         },
       ],
     );
   };
+
+  // "Parar de compartilhar com todos" — revoga cada grant de saída (só a
+  // minha direção) e desliga o envio em 2º plano.
+  const stopSharingWithEveryone = () => {
+    const outgoing = fms.activeSharingGrants(grantsData);
+    if (!outgoing.length) return;
+    Alert.alert(
+      t?.('fmap.stopAll') || 'Parar de compartilhar com todos',
+      t?.('fmap.stopAllBody') || 'Ninguém mais verá sua localização. Seus amigos precisarão pedir de novo.',
+      [
+        { text: t?.('common.cancel') || 'Cancelar', style: 'cancel' },
+        {
+          text: t?.('common.confirm') || 'Confirmar',
+          style: 'destructive',
+          onPress: async () => {
+            for (const g of outgoing) {
+              try { await api.friendLocationRevoke?.(g.email, 'sharing'); } catch {}
+            }
+            const fresh = await loadGrants();
+            if (!fresh) fms.syncFriendMapShare({ force: true }).catch(() => {});
+          },
+        },
+      ],
+    );
+  };
+
+  // ── Adicionar amigo ao mapa: escolher contato → pedido ───────────────
+  const openPicker = async () => {
+    setContactQuery('');
+    setPickerOpen(true);
+    if (!contacts) {
+      try {
+        const r = await api.chatContacts?.();
+        const list = Array.isArray(r?.data) ? r.data : (Array.isArray(r?.data?.contacts) ? r.data.contacts : []);
+        const me = String(user?.email || '').toLowerCase();
+        const seen = new Set();
+        const clean = [];
+        for (const c of list) {
+          const em = String(c?.email || '').toLowerCase();
+          if (!em || em === me || seen.has(em)) continue;
+          seen.add(em);
+          clean.push({ email: em, name: c.name || c.display_name || em.split('@')[0] });
+        }
+        clean.sort((x, y) => String(x.name).localeCompare(String(y.name)));
+        setContacts(clean);
+      } catch { setContacts([]); }
+    }
+  };
+  const sendMapRequest = async (c) => {
+    if (requestingEmail) return;
+    setRequestingEmail(c.email);
+    let ok = false;
+    try {
+      const r = await api.friendLocationRequest?.(c.email, '');
+      ok = r?.success !== false;
+    } catch { ok = false; }
+    setRequestingEmail(null);
+    if (ok) {
+      setPickerOpen(false);
+      loadGrants();
+      Alert.alert(
+        t?.('fmap.requestSent') || 'Pedido enviado',
+        (t?.('fmap.requestSentBody') || '{name} vai receber seu pedido para ver a localização.').replace('{name}', c.name || c.email),
+      );
+    } else {
+      Alert.alert(t?.('fmap.requestFailed') || 'Não foi possível enviar o pedido');
+    }
+  };
+  const cancelMyRequest = async (email) => {
+    let ok = false;
+    try { const r = await api.friendLocationRequestCancel?.(email); ok = r?.success !== false; } catch { ok = false; }
+    if (!ok) { Alert.alert(t?.('fmap.cancelFailed') || 'Não foi possível cancelar agora'); return; }
+    loadGrants();
+  };
+
+  // Pedir atualização (silent push → app do amigo publica posição nova).
+  const askForUpdate = async (email) => {
+    try { await api.friendLocationPing?.(email); } catch {}
+    lastPingedRef.current[email] = Date.now();
+    setPingedEmail(email);
+    setTimeout(() => setPingedEmail((cur) => (cur === email ? null : cur)), 4000);
+  };
+
+  // Tocar num amigo (lista/"Recebendo de") → centraliza no último local.
+  const focusFriend = (s) => {
+    if (!s) return;
+    if (Number.isFinite(Number(s.latitude)) && Number.isFinite(Number(s.longitude))) {
+      userMovedRef.current = true;
+      pushToMap({ type: 'pan', lat: Number(s.latitude), lng: Number(s.longitude) });
+    }
+    setSelected(s);
+  };
+
+  // Nomes de lugar (bairro/cidade) — só para o amigo aberto e a lista
+  // expandida (máx. 10), com cache por ~100 m e fila de 1 req/s.
+  const langCode = language || '';
+  useEffect(() => {
+    const targets = [];
+    if (selected) targets.push(selected);
+    if (listExpanded) targets.push(...shares.slice(0, 10));
+    targets.forEach((x) => {
+      if (!x) return;
+      const la = Number(x.latitude); const lo = Number(x.longitude);
+      if (!Number.isFinite(la) || !Number.isFinite(lo) || fms.placeNameSync(la, lo)) return;
+      fms.placeName(la, lo, langCode).then((n) => { if (n) setPlaceTick((v) => v + 1); }).catch(() => {});
+    });
+  }, [selected?.email, selected?.latitude, listExpanded, shares]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const shareByEmail = useMemo(() => {
+    const m = {};
+    shares.forEach((x) => { if (x?.email) m[String(x.email).toLowerCase()] = x; });
+    return m;
+  }, [shares]);
+  const outgoingActive = fms.activeSharingGrants(grantsData);
+  const isSharingWith = (email) => outgoingActive.some((g) => String(g.email).toLowerCase() === String(email || '').toLowerCase());
+  // Aviso discreto: compartilho com alguém mas o iOS só deixa "Durante o uso".
+  const showAlwaysHint = Platform.OS === 'ios' && !ghostMode && outgoingActive.length > 0
+    && (bgPermStatus === 'denied' || bgPermStatus === 'undetermined');
+  const inkBg = isDark ? '#FFFFFF' : '#111111';
+  const inkFg = isDark ? '#111111' : '#FFFFFF';
+  const softBg = isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)';
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.background }}>
@@ -1965,12 +2194,7 @@ export default function SnapMapScreen() {
         t={t}
         ghostMode={ghostMode}
         onOpen={openGrants}
-        onLoad={async () => {
-          try {
-            const g = await api.friendLocationGrants?.();
-            if (g?.success && g.data) setGrantsData(g.data);
-          } catch {}
-        }}
+        onLoad={() => {}}
       />
 
       {/* Pending-request banner */}
@@ -2125,7 +2349,7 @@ export default function SnapMapScreen() {
               shadowColor: '#000', shadowOpacity: 0.3, shadowRadius: 8,
               shadowOffset: { width: 0, height: 4 }, elevation: 5,
             }}>
-              <IconMapPin size={18} color="#fbbf24" />
+              <IconMapPin size={18} color="#FFFFFF" />
               <View style={{ flex: 1 }}>
                 <Text style={{ color: '#fff', fontSize: 13, fontWeight: '600' }} numberOfLines={1}>
                   {permissionDenied
@@ -2175,6 +2399,44 @@ export default function SnapMapScreen() {
               >
                 <Text style={{ color: colors.onPrimary || '#fff', fontSize: 12, fontWeight: '700' }}>
                   {t?.('snapmap.enableLocation') || 'Ativar'}
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        )}
+
+        {/* [2026-10-12 mapa-amigos] Modo fantasma ativo + aviso discreto de
+            permissão "Sempre" (iOS) quando compartilho com alguém. */}
+        {(ghostMode || showAlwaysHint) && (
+          <View pointerEvents="box-none" style={{ position: 'absolute', left: 12, right: 12, top: (nativeMap ? 66 : 64) + ((!myLocation && (permissionDenied || usingIpFallback)) ? 62 : 0), alignItems: 'center', zIndex: 15 }}>
+            <View style={{
+              flexDirection: 'row', alignItems: 'center', gap: 10, maxWidth: 460, width: '100%',
+              backgroundColor: isDark ? 'rgba(20,21,26,0.92)' : 'rgba(255,255,255,0.96)',
+              borderWidth: StyleSheet.hairlineWidth, borderColor: isDark ? 'rgba(255,255,255,0.18)' : 'rgba(0,0,0,0.12)',
+              paddingHorizontal: 12, paddingVertical: 9, borderRadius: 14,
+              shadowColor: '#000', shadowOpacity: 0.18, shadowRadius: 8, shadowOffset: { width: 0, height: 3 }, elevation: 4,
+            }}>
+              {ghostMode ? <IconEyeOff size={16} color={colors.text} /> : <IconMapPin size={16} color={colors.text} />}
+              <Text style={{ flex: 1, color: colors.text, fontSize: 12, lineHeight: 16 }} numberOfLines={3}>
+                {ghostMode
+                  ? (t?.('fmap.ghostBanner') || 'Modo fantasma ativo — ninguém vê sua localização')
+                  : (t?.('fmap.alwaysHint') || 'Para seus amigos te verem com o app fechado, permita localização Sempre')}
+              </Text>
+              <TouchableOpacity
+                onPress={async () => {
+                  if (ghostMode) { toggleGhostMode(); return; }
+                  if (bgPermStatus === 'undetermined') {
+                    try { await fms.reconcileBackgroundUpdates({ prompt: true }); } catch {}
+                    refreshBgPerm();
+                    return;
+                  }
+                  try { Linking.openSettings(); } catch {}
+                }}
+                style={{ paddingHorizontal: 12, paddingVertical: 6, borderRadius: 12, backgroundColor: inkBg }}
+                accessibilityRole="button"
+              >
+                <Text style={{ color: inkFg, fontSize: 12, fontWeight: '700' }}>
+                  {ghostMode ? (t?.('fmap.ghostTurnOff') || 'Desativar') : (t?.('fmap.openSettings') || 'Abrir Ajustes')}
                 </Text>
               </TouchableOpacity>
             </View>
@@ -2240,6 +2502,23 @@ export default function SnapMapScreen() {
             expanded list triggers a full reload of shares + grants.
             Hidden entirely when shares.length === 0 — the empty-state
             cloud above stays in charge of the "no one is sharing" UI. */}
+        {/* [2026-10-12 mapa-amigos] Ninguém no mapa → atalho "Adicionar amigo ao mapa". */}
+        {shares.length === 0 && (
+          <View pointerEvents="box-none" style={{ position: 'absolute', left: 0, right: 0, bottom: 22, alignItems: 'center' }}>
+            <TouchableOpacity
+              onPress={openPicker}
+              style={{
+                flexDirection: 'row', alignItems: 'center', gap: 8,
+                paddingHorizontal: 18, paddingVertical: 12, borderRadius: 24, backgroundColor: inkBg,
+                shadowColor: '#000', shadowOpacity: 0.25, shadowRadius: 10, shadowOffset: { width: 0, height: 4 }, elevation: 6,
+              }}
+              accessibilityRole="button"
+            >
+              <IconUserPlus size={18} color={inkFg} />
+              <Text style={{ color: inkFg, fontSize: 14, fontWeight: '700' }}>{t?.('fmap.addFriend') || 'Adicionar amigo ao mapa'}</Text>
+            </TouchableOpacity>
+          </View>
+        )}
         {shares.length > 0 && (
           <View
             pointerEvents="box-none"
@@ -2254,32 +2533,35 @@ export default function SnapMapScreen() {
               elevation: 12,
             }}
           >
-            {/* Drag handle + tap-to-toggle header — handle has a 36×4 pill
-                like Apple's sheets, and the whole header is a Pressable so
-                tap anywhere in the row toggles expand. Title shows
-                "N amigos ao vivo" so users know what they're seeing
-                without expanding. */}
-            <Pressable
-              onPress={() => setListExpanded((v) => !v)}
-              accessibilityRole="button"
-              accessibilityLabel={listExpanded ? (t?.('snapmap.tapToCollapse') || 'Recolher') : (t?.('reader.expand') || 'Expandir')}
-              style={{ paddingTop: 8, paddingBottom: 6, alignItems: 'center' }}
-            >
-              <View style={{ width: 36, height: 4, borderRadius: 2, backgroundColor: isDark ? 'rgba(255,255,255,0.30)' : 'rgba(0,0,0,0.18)' }} />
-              <View style={{ flexDirection: 'row', alignItems: 'center', width: '100%', paddingHorizontal: 16, marginTop: 6 }}>
-                <Text style={{ flex: 1, color: colors.text, fontSize: 15, fontWeight: '700' }}>
-                  {shares.length === 1
-                    ? (t?.('snapmap.oneFriendLive') || '1 amigo ao vivo')
-                    : (t?.('snapmap.friendsLive') || '{n} amigos ao vivo').replace('{n}', shares.length)}
-                </Text>
-                <Text style={{ color: colors.textSecondary, fontSize: 12 }}>
-                  {listExpanded ? (t?.('snapmap.tapToCollapse') || 'Recolher') : (t?.('snapmap.tapToExpand') || 'Ver todos')}
-                </Text>
-              </View>
-            </Pressable>
+            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+              <Pressable
+                onPress={() => setListExpanded((v) => !v)}
+                accessibilityRole="button"
+                accessibilityLabel={listExpanded ? (t?.('snapmap.tapToCollapse') || 'Recolher') : (t?.('reader.expand') || 'Expandir')}
+                style={{ flex: 1, paddingTop: 8, paddingBottom: 6, alignItems: 'center' }}
+              >
+                <View style={{ width: 36, height: 4, borderRadius: 2, backgroundColor: isDark ? 'rgba(255,255,255,0.30)' : 'rgba(0,0,0,0.18)' }} />
+                <View style={{ flexDirection: 'row', alignItems: 'center', width: '100%', paddingLeft: 16, paddingRight: 4, marginTop: 6 }}>
+                  <Text style={{ flex: 1, color: colors.text, fontSize: 15, fontWeight: '700' }}>
+                    {shares.length === 1
+                      ? (t?.('fmap.oneFriendOnMap') || '1 amigo no mapa')
+                      : (t?.('fmap.friendsOnMap') || '{n} amigos no mapa').replace('{n}', shares.length)}
+                  </Text>
+                  <Text style={{ color: colors.textSecondary, fontSize: 12 }}>
+                    {listExpanded ? (t?.('snapmap.tapToCollapse') || 'Recolher') : (t?.('snapmap.tapToExpand') || 'Ver todos')}
+                  </Text>
+                </View>
+              </Pressable>
+              <TouchableOpacity
+                onPress={openPicker}
+                style={{ marginTop: 14, marginRight: 12, marginLeft: 6, width: 34, height: 34, borderRadius: 17, backgroundColor: softBg, alignItems: 'center', justifyContent: 'center' }}
+                accessibilityRole="button"
+                accessibilityLabel={t?.('fmap.addFriend') || 'Adicionar amigo ao mapa'}
+              >
+                <IconUserPlus size={17} color={colors.text} />
+              </TouchableOpacity>
+            </View>
 
-            {/* Peek view (collapsed): horizontal avatar strip. Tap to pan
-                + open action sheet, just like tapping the pin on the map. */}
             {!listExpanded && (
               <ScrollView
                 horizontal
@@ -2290,26 +2572,22 @@ export default function SnapMapScreen() {
                   const dist = myLocation && Number.isFinite(s.latitude) && Number.isFinite(s.longitude)
                     ? haversineMeters(myLocation.lat, myLocation.lng, Number(s.latitude), Number(s.longitude))
                     : null;
+                  const old = isOldShare(s, nowTick);
                   return (
                     <TouchableOpacity
                       key={'peek-' + s.email}
-                      onPress={() => {
-                        if (Number.isFinite(s.latitude) && Number.isFinite(s.longitude)) {
-                          pushToMap({ type: 'pan', lat: Number(s.latitude), lng: Number(s.longitude) });
-                        }
-                        setSelected(s);
-                      }}
+                      onPress={() => focusFriend(s)}
                       style={{ alignItems: 'center', width: 72 }}
                       accessibilityLabel={`${s.name || s.email}, ${ago(s.updated_at)}`}
                     >
-                      <View style={{ borderWidth: 2, borderColor: s.is_unlimited ? '#111111' : colors.primary, borderRadius: 30, padding: 2 }}>
+                      <View style={{ borderWidth: 2, borderColor: old ? '#9ca3af' : colors.text, borderRadius: 30, padding: 2, opacity: old ? 0.55 : 1 }}>
                         <AvatarCircle name={s.name || s.email} email={s.email} size={50} />
                       </View>
                       <Text numberOfLines={1} style={{ color: colors.text, fontSize: 11, fontWeight: '600', marginTop: 4, maxWidth: 70, textAlign: 'center' }}>
                         {(s.name || s.email?.split('@')[0] || '').split(' ')[0]}
                       </Text>
                       <Text numberOfLines={1} style={{ color: colors.textSecondary, fontSize: 10, maxWidth: 70, textAlign: 'center' }}>
-                        {dist !== null ? formatDistance(dist) : ago(s.updated_at)}
+                        {old ? ago(s.updated_at) : (dist !== null ? formatDistance(dist) : ago(s.updated_at))}
                       </Text>
                     </TouchableOpacity>
                   );
@@ -2317,11 +2595,6 @@ export default function SnapMapScreen() {
               </ScrollView>
             )}
 
-            {/* Expanded list view — vertical FlatList-style rows with
-                avatar/name/distance/last-update. Pull-down to refresh
-                via the inline chip (RN's RefreshControl needs a
-                ScrollView/FlatList in vertical mode which fights the
-                bottom-sheet height clamp on web). */}
             {listExpanded && (
               <ScrollView
                 style={{ maxHeight: SH * 0.55 }}
@@ -2330,11 +2603,11 @@ export default function SnapMapScreen() {
                 <View style={{ flexDirection: 'row', justifyContent: 'flex-end', paddingHorizontal: 16, paddingVertical: 4 }}>
                   <TouchableOpacity
                     onPress={refreshShares}
-                    style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 12, backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.05)' }}
+                    style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 12, backgroundColor: softBg }}
                     accessibilityLabel={t?.('common.refresh') || 'Atualizar'}
                   >
-                    {refreshing ? <ActivityIndicator size="small" color={colors.primary} /> : null}
-                    <Text style={{ color: colors.primary, fontSize: 12, fontWeight: '700' }}>
+                    {refreshing ? <ActivityIndicator size="small" color={colors.text} /> : null}
+                    <Text style={{ color: colors.text, fontSize: 12, fontWeight: '700' }}>
                       {t?.('common.refresh') || 'Atualizar'}
                     </Text>
                   </TouchableOpacity>
@@ -2343,20 +2616,16 @@ export default function SnapMapScreen() {
                   const dist = myLocation && Number.isFinite(s.latitude) && Number.isFinite(s.longitude)
                     ? haversineMeters(myLocation.lat, myLocation.lng, Number(s.latitude), Number(s.longitude))
                     : null;
+                  const old = isOldShare(s, nowTick);
+                  const place = fms.placeNameSync(s.latitude, s.longitude);
                   return (
                     <TouchableOpacity
                       key={'row-' + s.email}
-                      onPress={() => {
-                        if (Number.isFinite(s.latitude) && Number.isFinite(s.longitude)) {
-                          pushToMap({ type: 'pan', lat: Number(s.latitude), lng: Number(s.longitude) });
-                        }
-                        setSelected(s);
-                        setListExpanded(false);
-                      }}
+                      onPress={() => { focusFriend(s); setListExpanded(false); }}
                       style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 10, gap: 12 }}
                       accessibilityRole="button"
                     >
-                      <View style={{ borderWidth: 2, borderColor: s.is_unlimited ? '#111111' : colors.primary, borderRadius: 28, padding: 2 }}>
+                      <View style={{ borderWidth: 2, borderColor: old ? '#9ca3af' : colors.text, borderRadius: 28, padding: 2, opacity: old ? 0.55 : 1 }}>
                         <AvatarCircle name={s.name || s.email} email={s.email} size={46} />
                       </View>
                       <View style={{ flex: 1 }}>
@@ -2364,12 +2633,11 @@ export default function SnapMapScreen() {
                           {s.name || s.email}
                         </Text>
                         <Text numberOfLines={1} style={{ color: colors.textSecondary, fontSize: 12, marginTop: 2 }}>
-                          {ago(s.updated_at)}
-                          {s.is_unlimited ? ` · ∞ ${t?.('snapmap.alwaysOn') || 'sempre ativo'}` : ''}
+                          {[ago(s.updated_at), place].filter(Boolean).join(' · ')}
                         </Text>
                       </View>
                       {dist !== null && (
-                        <View style={{ paddingHorizontal: 10, paddingVertical: 4, borderRadius: 10, backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)' }}>
+                        <View style={{ paddingHorizontal: 10, paddingVertical: 4, borderRadius: 10, backgroundColor: softBg }}>
                           <Text style={{ color: colors.text, fontSize: 12, fontWeight: '700' }}>
                             {formatDistance(dist)}
                           </Text>
@@ -2378,13 +2646,11 @@ export default function SnapMapScreen() {
                     </TouchableOpacity>
                   );
                 })}
-                {/* Spacer + manage privacy CTA so the user can reach the
-                    grants modal even with the panel expanded. */}
                 <TouchableOpacity
                   onPress={() => { setListExpanded(false); openGrants(); }}
-                  style={{ marginTop: 6, marginHorizontal: 16, paddingVertical: 12, borderRadius: 14, alignItems: 'center', backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)' }}
+                  style={{ marginTop: 6, marginHorizontal: 16, paddingVertical: 12, borderRadius: 14, alignItems: 'center', backgroundColor: softBg }}
                 >
-                  <Text style={{ color: colors.primary, fontSize: 13, fontWeight: '700' }}>
+                  <Text style={{ color: colors.text, fontSize: 13, fontWeight: '700' }}>
                     {t?.('snapmap.managePrivacy') || 'Gerenciar privacidade'}
                   </Text>
                 </TouchableOpacity>
@@ -2398,123 +2664,112 @@ export default function SnapMapScreen() {
       <Modal visible={!!selected} transparent animationType="slide" onRequestClose={() => setSelected(null)}>
         <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.45)' }} onPress={() => setSelected(null)}>
           <View style={{ flex: 1 }} />
-          <Pressable onPress={(e) => e.stopPropagation?.()} style={{ backgroundColor: colors.surface, padding: 22, borderTopLeftRadius: 24, borderTopRightRadius: 24 }}>
+          <Pressable onPress={(e) => e.stopPropagation?.()} style={{ backgroundColor: colors.surface, padding: 22, paddingBottom: 22 + (insets.bottom || 0), borderTopLeftRadius: 24, borderTopRightRadius: 24 }}>
             {selected && (() => {
-              // [WAVE 49 2026-05-21] Compute freshness for the bottom sheet
-              // so the "Atualizado há Xmin" line can flip into a red
-              // staleness warning when the peer hasn't ticked in a while.
-              // This is the explicit answer to the user's "ta
-              // desconectando" feedback at the bottom-sheet level: instead
-              // of the pin silently vanishing, the user now SEES a
-              // "Sem atualização há Xh" red label and understands the
-              // share is alive but the peer hasn't moved/heartbeat'd.
-              let ageMs = null;
-              if (selected.updated_at) {
-                try { ageMs = Math.max(0, nowTick - new Date(String(selected.updated_at).replace(' ', 'T') + 'Z').getTime()); } catch {}
-              }
+              const ageMs = ageMsOf(selected.updated_at, nowTick);
               const isStale = ageMs !== null && ageMs > 2 * 60 * 1000;
-              const dist = myLocation && Number.isFinite(selected.latitude) && Number.isFinite(selected.longitude)
+              const old = isOldShare(selected, nowTick);
+              const hasPos = Number.isFinite(Number(selected.latitude)) && Number.isFinite(Number(selected.longitude));
+              const dist = myLocation && hasPos
                 ? haversineMeters(myLocation.lat, myLocation.lng, Number(selected.latitude), Number(selected.longitude))
                 : null;
-              const midLat = myLocation && Number.isFinite(selected.latitude)
-                ? (myLocation.lat + Number(selected.latitude)) / 2 : null;
-              const midLng = myLocation && Number.isFinite(selected.longitude)
-                ? (myLocation.lng + Number(selected.longitude)) / 2 : null;
+              const midLat = myLocation && hasPos ? (myLocation.lat + Number(selected.latitude)) / 2 : null;
+              const midLng = myLocation && hasPos ? (myLocation.lng + Number(selected.longitude)) / 2 : null;
+              const place = hasPos ? fms.placeNameSync(selected.latitude, selected.longitude) : '';
+              const sharingWithThem = isSharingWith(selected.email);
+              const nm = selected.name || selected.email;
+              const actionBtn = { flex: 1, paddingVertical: 12, borderRadius: 18, backgroundColor: softBg, alignItems: 'center', flexDirection: 'row', justifyContent: 'center', gap: 8 };
               return (
               <>
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 14 }}>
-                  <View style={{ borderWidth: 3, borderColor: isStale ? '#9ca3af' : (selected.is_unlimited ? '#111111' : colors.primary), borderRadius: 36, padding: 2 }}>
-                    <AvatarCircle name={selected.name || selected.email} email={selected.email} size={60} />
+                  <View style={{ borderWidth: 3, borderColor: (isStale || old) ? '#9ca3af' : colors.text, borderRadius: 36, padding: 2, opacity: old ? 0.6 : 1 }}>
+                    <AvatarCircle name={nm} email={selected.email} size={60} />
                   </View>
                   <View style={{ flex: 1 }}>
                     <Text style={{ color: colors.text, fontSize: 18, fontWeight: '700' }} numberOfLines={1}>
-                      {selected.name || selected.email}
+                      {nm}
                     </Text>
-                    <Text style={{ color: isStale ? '#ef4444' : colors.textSecondary, fontSize: 12, marginTop: 3, fontWeight: isStale ? '700' : '400' }}>
-                      {isStale
-                        ? `${t?.('snapmap.staleHeader') || 'Sem atualização'} ${ago(selected.updated_at)}`
-                        : `${t?.('snapmap.updated') || 'Atualizado'} ${ago(selected.updated_at)}`}
-                      {selected.is_unlimited ? ` · ∞ ${t?.('snapmap.alwaysOn') || 'sempre ativo'}` : ''}
+                    <Text style={{ color: colors.textSecondary, fontSize: 12, marginTop: 3, fontWeight: isStale ? '700' : '400' }}>
+                      {!selected.updated_at
+                        ? (t?.('fmap.noLocationYet') || 'sem localização ainda')
+                        : isStale
+                          ? `${t?.('snapmap.staleHeader') || 'Sem atualização'} ${ago(selected.updated_at)}`
+                          : `${t?.('snapmap.updated') || 'Atualizado'} ${ago(selected.updated_at)}`}
                     </Text>
-                    {dist !== null && (
-                      <Text style={{ color: colors.textSecondary, fontSize: 12, marginTop: 2 }}>
-                        {formatDistance(dist)} {t?.('snapmap.awayFromYou') || 'de você'}
+                    {(place || dist !== null) ? (
+                      <Text style={{ color: colors.textSecondary, fontSize: 12, marginTop: 2 }} numberOfLines={1}>
+                        {[place, dist !== null ? `${formatDistance(dist)} ${t?.('snapmap.awayFromYou') || 'de você'}` : ''].filter(Boolean).join(' · ')}
                       </Text>
-                    )}
+                    ) : null}
                   </View>
                 </View>
 
-                {/* Primary actions row — Chat + Call. Call jumps to chat-
-                    conversation with autoCall=1 so the existing call flow
-                    fires (same handler Live tab uses). Kept inline so the
-                    user reaches the most common verbs in one tap. */}
+                {/* Conversar + Ligar */}
                 <View style={{ flexDirection: 'row', gap: 10, marginTop: 18 }}>
                   <TouchableOpacity
                     onPress={() => { setSelected(null); require('../services/openConversation').openConversation(`/chat-conversation?email=${encodeURIComponent(selected.email)}`); }}
-                    style={{ flex: 1, paddingVertical: 14, borderRadius: 22, backgroundColor: colors.primary, alignItems: 'center', flexDirection: 'row', justifyContent: 'center', gap: 8 }}
+                    style={{ flex: 1, paddingVertical: 14, borderRadius: 22, backgroundColor: inkBg, alignItems: 'center', flexDirection: 'row', justifyContent: 'center', gap: 8 }}
                   >
-                    <IconMessageSquare size={18} color={colors.onPrimary || '#fff'} />
-                    <Text style={{ color: colors.onPrimary || '#fff', fontWeight: '700' }}>{t?.('snapmap.message') || 'Conversar'}</Text>
+                    <IconMessageSquare size={18} color={inkFg} />
+                    <Text style={{ color: inkFg, fontWeight: '700' }}>{t?.('snapmap.message') || 'Conversar'}</Text>
                   </TouchableOpacity>
                   <TouchableOpacity
                     onPress={() => { setSelected(null); require('../services/openConversation').openConversation(`/chat-conversation?email=${encodeURIComponent(selected.email)}&autoCall=1`); }}
-                    style={{ paddingVertical: 14, paddingHorizontal: 18, borderRadius: 22, backgroundColor: colors.primary, alignItems: 'center', flexDirection: 'row', justifyContent: 'center', gap: 8 }}
+                    style={{ paddingVertical: 14, paddingHorizontal: 18, borderRadius: 22, backgroundColor: inkBg, alignItems: 'center', flexDirection: 'row', justifyContent: 'center', gap: 8 }}
                     accessibilityLabel={t?.('snapmap.call') || 'Ligar'}
                   >
-                    <IconPhone size={18} color={colors.onPrimary || '#fff'} />
+                    <IconPhone size={18} color={inkFg} />
                   </TouchableOpacity>
                 </View>
 
-                {/* Secondary row — Directions to friend + Meet halfway.
-                    Meet-halfway opens maps centered between me and the
-                    friend with a search for "café/restaurant" — the
-                    canonical "find somewhere to meet up" pattern from
-                    Find-My-Friends. Only rendered when I have my own GPS
-                    (otherwise the midpoint is meaningless). */}
+                {/* Como chegar + Pedir atualização */}
                 <View style={{ flexDirection: 'row', gap: 10, marginTop: 10 }}>
-                  <TouchableOpacity
-                    onPress={() => {
-                      const url = `https://www.google.com/maps/dir/?api=1&destination=${selected.latitude},${selected.longitude}`;
-                      Linking.openURL(url).catch(() => {});
-                    }}
-                    style={{ flex: 1, paddingVertical: 12, borderRadius: 18, backgroundColor: colors.border + '50', alignItems: 'center', flexDirection: 'row', justifyContent: 'center', gap: 8 }}
-                  >
-                    <IconNavigation size={16} color={colors.text} />
-                    <Text style={{ color: colors.text, fontWeight: '600', fontSize: 13 }}>{t?.('snapmap.directions') || 'Como chegar'}</Text>
-                  </TouchableOpacity>
-                  {myLocation && midLat !== null && midLng !== null && (
-                    <TouchableOpacity
-                      onPress={() => {
-                        const url = `https://www.google.com/maps/search/?api=1&query=cafe&query_place_id=&center=${midLat},${midLng}&zoom=15`;
-                        Linking.openURL(url).catch(() => {});
-                      }}
-                      style={{ flex: 1, paddingVertical: 12, borderRadius: 18, backgroundColor: colors.border + '50', alignItems: 'center', flexDirection: 'row', justifyContent: 'center', gap: 8 }}
-                    >
-                      <IconMapPin size={16} color={colors.text} />
-                      <Text style={{ color: colors.text, fontWeight: '600', fontSize: 13 }}>{t?.('snapmap.meetHalfway') || 'Local intermediário'}</Text>
+                  {hasPos && (
+                    <TouchableOpacity onPress={() => fms.openDirections(selected.latitude, selected.longitude, nm)} style={actionBtn}>
+                      <IconNavigation size={16} color={colors.text} />
+                      <Text style={{ color: colors.text, fontWeight: '600', fontSize: 13 }}>{t?.('snapmap.directions') || 'Como chegar'}</Text>
                     </TouchableOpacity>
                   )}
+                  <TouchableOpacity
+                    onPress={() => askForUpdate(selected.email)}
+                    disabled={pingedEmail === selected.email}
+                    style={[actionBtn, { opacity: pingedEmail === selected.email ? 0.6 : 1 }]}
+                    accessibilityRole="button"
+                  >
+                    <IconRefresh size={16} color={colors.text} />
+                    <Text style={{ color: colors.text, fontWeight: '600', fontSize: 13 }} numberOfLines={1}>
+                      {pingedEmail === selected.email ? (t?.('fmap.updateRequested') || 'Pedido enviado') : (t?.('fmap.requestUpdate') || 'Pedir atualização')}
+                    </Text>
+                  </TouchableOpacity>
                 </View>
+                {myLocation && midLat !== null && midLng !== null && (
+                  <TouchableOpacity
+                    onPress={() => {
+                      const url = `https://www.google.com/maps/search/?api=1&query=cafe&query_place_id=&center=${midLat},${midLng}&zoom=15`;
+                      Linking.openURL(url).catch(() => {});
+                    }}
+                    style={[actionBtn, { flex: 0, marginTop: 10 }]}
+                  >
+                    <IconMapPin size={16} color={colors.text} />
+                    <Text style={{ color: colors.text, fontWeight: '600', fontSize: 13 }}>{t?.('snapmap.meetHalfway') || 'Local intermediário'}</Text>
+                  </TouchableOpacity>
+                )}
 
+                {sharingWithThem && (
+                  <TouchableOpacity
+                    onPress={() => { const em = selected.email; setSelected(null); revokeGrant(em, 'sharing', nm); }}
+                    style={{ marginTop: 12, alignItems: 'center', paddingVertical: 10 }}
+                  >
+                    <Text style={{ color: colors.text, fontSize: 14, fontWeight: '600' }}>
+                      {(t?.('fmap.stopSharingWith') || 'Parar de compartilhar com {name}').replace('{name}', String(nm).split(' ')[0])}
+                    </Text>
+                  </TouchableOpacity>
+                )}
                 <TouchableOpacity
-                  onPress={() => {
-                    const peer = selected.email;
-                    setSelected(null);
-                    Alert.alert(
-                      t?.('snapmap.stopReceiving') || 'Parar de receber',
-                      (t?.('snapmap.stopReceivingBody') || 'Você não verá mais a localização de {name} aqui.').replace('{name}', peer),
-                      [
-                        { text: t?.('common.cancel') || 'Cancelar', style: 'cancel' },
-                        { text: t?.('common.confirm') || 'Confirmar', style: 'destructive', onPress: async () => {
-                          try { await api.friendLocationRevoke?.(peer); } catch {}
-                          setShares((p) => p.filter((s) => s.email !== peer));
-                        } },
-                      ],
-                    );
-                  }}
-                  style={{ marginTop: 12, alignItems: 'center', paddingVertical: 12 }}
+                  onPress={() => { const em = selected.email; setSelected(null); revokeGrant(em, 'receiving', nm); }}
+                  style={{ marginTop: sharingWithThem ? 0 : 12, alignItems: 'center', paddingVertical: 10 }}
                 >
-                  <Text style={{ color: '#ef4444', fontSize: 14, fontWeight: '600' }}>
+                  <Text style={{ color: colors.textSecondary, fontSize: 14, fontWeight: '600' }}>
                     {t?.('snapmap.stopReceiving') || 'Parar de receber localização'}
                   </Text>
                 </TouchableOpacity>
@@ -2525,45 +2780,122 @@ export default function SnapMapScreen() {
         </Pressable>
       </Modal>
 
-      {/* Privacy / grants modal */}
+      {/* Privacy / grants modal — [2026-10-12 mapa-amigos] quem vê minha
+          localização (parar por pessoa / todos), modo fantasma, pedidos
+          recebidos/enviados e de quem recebo (com "atualizado há X"). */}
       <Modal visible={grantsOpen} transparent animationType="slide" onRequestClose={() => setGrantsOpen(false)}>
         <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)' }}>
-          <View style={{ flex: 1 }} />
-          <View style={{ backgroundColor: colors.surface, padding: 22, borderTopLeftRadius: 24, borderTopRightRadius: 24, maxHeight: SH * 0.78 }}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 14 }}>
+          <Pressable style={{ flex: 1 }} onPress={() => setGrantsOpen(false)} />
+          <View style={{ backgroundColor: colors.surface, padding: 22, paddingBottom: 12 + (insets.bottom || 0), borderTopLeftRadius: 24, borderTopRightRadius: 24, maxHeight: SH * 0.82 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 10 }}>
               <Text style={{ flex: 1, fontSize: 18, fontWeight: '700', color: colors.text }}>
                 {t?.('snapmap.privacyTitle') || 'Privacidade de localização'}
               </Text>
-              <TouchableOpacity onPress={() => setGrantsOpen(false)} style={{ padding: 8 }}>
+              <TouchableOpacity onPress={() => setGrantsOpen(false)} style={{ padding: 8 }} accessibilityLabel={t?.('common.close') || 'Fechar'}>
                 <IconX size={22} color={colors.textSecondary} />
               </TouchableOpacity>
             </View>
             <ScrollView>
-              <Text style={{ color: colors.textSecondary, fontSize: 12, fontWeight: '700', marginBottom: 8 }}>
-                {(t?.('snapmap.sharingWith') || 'COMPARTILHANDO COM').toUpperCase()}
+              {/* Modo fantasma */}
+              <TouchableOpacity
+                onPress={toggleGhostMode}
+                style={{ flexDirection: 'row', alignItems: 'center', gap: 12, padding: 12, borderRadius: 14, backgroundColor: softBg, marginBottom: 16 }}
+                accessibilityRole="switch"
+                accessibilityState={{ checked: ghostMode }}
+              >
+                <IconEyeOff size={20} color={colors.text} />
+                <View style={{ flex: 1 }}>
+                  <Text style={{ color: colors.text, fontSize: 14, fontWeight: '700' }}>{t?.('fmap.ghostTitle') || 'Modo fantasma'}</Text>
+                  <Text style={{ color: colors.textSecondary, fontSize: 11, marginTop: 2 }}>
+                    {t?.('fmap.ghostHint') || 'Pausa sua localização para todos sem apagar os compartilhamentos'}
+                  </Text>
+                </View>
+                <View style={{ width: 44, height: 26, borderRadius: 13, padding: 3, backgroundColor: ghostMode ? inkBg : (isDark ? 'rgba(255,255,255,0.18)' : 'rgba(0,0,0,0.15)'), alignItems: ghostMode ? 'flex-end' : 'flex-start' }}>
+                  <View style={{ width: 20, height: 20, borderRadius: 10, backgroundColor: ghostMode ? inkFg : '#FFFFFF' }} />
+                </View>
+              </TouchableOpacity>
+
+              {/* Quem vê minha localização */}
+              <Text style={{ color: colors.textSecondary, fontSize: 12, fontWeight: '700', marginBottom: 6 }}>
+                {(t?.('fmap.whoSeesMe') || 'Quem vê minha localização').toUpperCase()}
               </Text>
-              {(grantsData?.sharing_with || []).length === 0 ? (
-                <Text style={{ color: colors.textSecondary, fontSize: 13, marginBottom: 18 }}>
+              {outgoingActive.length === 0 ? (
+                <Text style={{ color: colors.textSecondary, fontSize: 13, marginBottom: 14 }}>
                   {t?.('snapmap.noShares') || 'Você não está compartilhando com ninguém.'}
                 </Text>
               ) : (
-                (grantsData?.sharing_with || []).map((g) => (
-                  <View key={'s-' + g.email} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 10, gap: 12 }}>
-                    <AvatarCircle name={g.name || g.email} email={g.email} size={36} />
-                    <View style={{ flex: 1 }}>
-                      <Text style={{ color: colors.text, fontSize: 14, fontWeight: '600' }} numberOfLines={1}>{g.name || g.email}</Text>
-                      <Text style={{ color: colors.textSecondary, fontSize: 11 }}>
-                        {g.is_unlimited ? `∞ ${t('snapmap.alwaysOn')}` : (g.expires_at ? t('uiG.snapmap.expiresInMin', { n: Math.max(0, Math.round((g.expires_at - Date.now() / 1000) / 60)) }) : '')}
-                      </Text>
+                <>
+                  {outgoingActive.map((g) => (
+                    <View key={'s-' + g.email} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 9, gap: 12 }}>
+                      <AvatarCircle name={g.name || g.email} email={g.email} size={36} />
+                      <View style={{ flex: 1 }}>
+                        <Text style={{ color: colors.text, fontSize: 14, fontWeight: '600' }} numberOfLines={1}>{g.name || g.email}</Text>
+                        <Text style={{ color: colors.textSecondary, fontSize: 11 }}>
+                          {ghostMode
+                            ? (t?.('fmap.pausedGhost') || 'pausado (modo fantasma)')
+                            : (g.is_unlimited || g.expires_at == null) ? (t?.('fmap.durForever') || 'Até eu desligar') : t('uiG.snapmap.expiresInMin', { n: Math.max(0, Math.round((g.expires_at - Date.now() / 1000) / 60)) })}
+                        </Text>
+                      </View>
+                      <TouchableOpacity onPress={() => revokeGrant(g.email, 'sharing', g.name)} style={{ paddingHorizontal: 12, paddingVertical: 6, borderRadius: 14, backgroundColor: softBg }}>
+                        <Text style={{ color: colors.text, fontSize: 12, fontWeight: '700' }}>{t?.('snapmap.stop') || 'Parar'}</Text>
+                      </TouchableOpacity>
                     </View>
-                    <TouchableOpacity onPress={() => revokeGrant(g.email)} style={{ paddingHorizontal: 12, paddingVertical: 6, borderRadius: 14, backgroundColor: '#ef444420' }}>
-                      <Text style={{ color: '#ef4444', fontSize: 12, fontWeight: '700' }}>{t?.('snapmap.stop') || 'Parar'}</Text>
+                  ))}
+                  {outgoingActive.length > 1 && (
+                    <TouchableOpacity onPress={stopSharingWithEveryone} style={{ alignSelf: 'flex-start', marginTop: 4, marginBottom: 6, paddingHorizontal: 12, paddingVertical: 7, borderRadius: 14, borderWidth: 1, borderColor: colors.text }}>
+                      <Text style={{ color: colors.text, fontSize: 12, fontWeight: '700' }}>{t?.('fmap.stopAll') || 'Parar de compartilhar com todos'}</Text>
                     </TouchableOpacity>
-                  </View>
-                ))
+                  )}
+                </>
               )}
 
-              <Text style={{ color: colors.textSecondary, fontSize: 12, fontWeight: '700', marginTop: 18, marginBottom: 8 }}>
+              {/* Pedidos recebidos */}
+              {(grantsData?.pending_incoming || []).length > 0 && (
+                <>
+                  <Text style={{ color: colors.textSecondary, fontSize: 12, fontWeight: '700', marginTop: 14, marginBottom: 6 }}>
+                    {(t?.('fmap.pendingIncoming') || 'Pedidos recebidos').toUpperCase()}
+                  </Text>
+                  {(grantsData?.pending_incoming || []).map((r) => (
+                    <View key={'pi-' + r.email} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 9, gap: 10 }}>
+                      <AvatarCircle name={r.name || r.email} email={r.email} size={36} />
+                      <View style={{ flex: 1 }}>
+                        <Text style={{ color: colors.text, fontSize: 14, fontWeight: '600' }} numberOfLines={1}>{r.name || r.email}</Text>
+                        <Text style={{ color: colors.textSecondary, fontSize: 11 }} numberOfLines={1}>{t?.('snapmap.wantsToSee') || 'Quer ver sua localização'}</Text>
+                      </View>
+                      <TouchableOpacity onPress={() => { setGrantsOpen(false); setTimeout(() => respondToRequest(r, true), 350); }} style={{ paddingHorizontal: 12, paddingVertical: 6, borderRadius: 14, backgroundColor: inkBg }}>
+                        <Text style={{ color: inkFg, fontSize: 12, fontWeight: '700' }}>{t?.('common.accept') || 'Aceitar'}</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity onPress={() => respondToRequest(r, false)} style={{ paddingHorizontal: 10, paddingVertical: 6, borderRadius: 14, backgroundColor: softBg }}>
+                        <Text style={{ color: colors.text, fontSize: 12, fontWeight: '700' }}>{t?.('location.decline') || 'Recusar'}</Text>
+                      </TouchableOpacity>
+                    </View>
+                  ))}
+                </>
+              )}
+
+              {/* Pedidos enviados */}
+              {(grantsData?.pending_outgoing || []).length > 0 && (
+                <>
+                  <Text style={{ color: colors.textSecondary, fontSize: 12, fontWeight: '700', marginTop: 14, marginBottom: 6 }}>
+                    {(t?.('fmap.pendingOutgoing') || 'Pedidos enviados').toUpperCase()}
+                  </Text>
+                  {(grantsData?.pending_outgoing || []).map((r) => (
+                    <View key={'po-' + r.email} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 9, gap: 10 }}>
+                      <AvatarCircle name={r.name || r.email} email={r.email} size={36} />
+                      <View style={{ flex: 1 }}>
+                        <Text style={{ color: colors.text, fontSize: 14, fontWeight: '600' }} numberOfLines={1}>{r.name || r.email}</Text>
+                        <Text style={{ color: colors.textSecondary, fontSize: 11 }} numberOfLines={1}>{t?.('fmap.waiting') || 'Aguardando resposta'}</Text>
+                      </View>
+                      <TouchableOpacity onPress={() => cancelMyRequest(r.email)} style={{ paddingHorizontal: 12, paddingVertical: 6, borderRadius: 14, backgroundColor: softBg }}>
+                        <Text style={{ color: colors.text, fontSize: 12, fontWeight: '700' }}>{t?.('fmap.cancelRequest') || 'Cancelar pedido'}</Text>
+                      </TouchableOpacity>
+                    </View>
+                  ))}
+                </>
+              )}
+
+              {/* Recebendo de — com "atualizado há X" / "sem localização ainda" */}
+              <Text style={{ color: colors.textSecondary, fontSize: 12, fontWeight: '700', marginTop: 16, marginBottom: 6 }}>
                 {(t?.('snapmap.receivingFrom') || 'RECEBENDO DE').toUpperCase()}
               </Text>
               {(grantsData?.receiving_from || []).length === 0 ? (
@@ -2571,22 +2903,118 @@ export default function SnapMapScreen() {
                   {t?.('snapmap.noReceives') || 'Você não está recebendo localização de ninguém.'}
                 </Text>
               ) : (
-                (grantsData?.receiving_from || []).map((g) => (
-                  <View key={'r-' + g.email} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 10, gap: 12 }}>
-                    <AvatarCircle name={g.name || g.email} email={g.email} size={36} />
-                    <View style={{ flex: 1 }}>
-                      <Text style={{ color: colors.text, fontSize: 14, fontWeight: '600' }} numberOfLines={1}>{g.name || g.email}</Text>
-                      <Text style={{ color: colors.textSecondary, fontSize: 11 }}>
-                        {g.is_unlimited ? `∞ ${t('snapmap.alwaysOn')}` : ''}
-                      </Text>
-                    </View>
-                    <TouchableOpacity onPress={() => revokeGrant(g.email)} style={{ paddingHorizontal: 12, paddingVertical: 6, borderRadius: 14, backgroundColor: '#ef444420' }}>
-                      <Text style={{ color: '#ef4444', fontSize: 12, fontWeight: '700' }}>{t?.('snapmap.stop') || 'Parar'}</Text>
+                (grantsData?.receiving_from || []).map((g) => {
+                  const sh = shareByEmail[String(g.email || '').toLowerCase()];
+                  const hasPos = !!sh && Number.isFinite(Number(sh.latitude)) && Number.isFinite(Number(sh.longitude));
+                  const old = hasPos && isOldShare(sh, nowTick);
+                  return (
+                    <TouchableOpacity
+                      key={'r-' + g.email}
+                      disabled={!hasPos}
+                      onPress={() => { setGrantsOpen(false); setTimeout(() => focusFriend(sh), 250); }}
+                      style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 9, gap: 12 }}
+                      accessibilityRole="button"
+                    >
+                      <View style={{ opacity: (!hasPos || old) ? 0.55 : 1 }}>
+                        <AvatarCircle name={g.name || g.email} email={g.email} size={36} />
+                      </View>
+                      <View style={{ flex: 1 }}>
+                        <Text style={{ color: colors.text, fontSize: 14, fontWeight: '600' }} numberOfLines={1}>{g.name || g.email}</Text>
+                        <Text style={{ color: colors.textSecondary, fontSize: 11 }} numberOfLines={1}>
+                          {hasPos
+                            ? (t?.('fmap.updatedAgo') || 'atualizado {ago}').replace('{ago}', ago(sh.updated_at))
+                            : (t?.('fmap.noLocationYet') || 'sem localização ainda')}
+                        </Text>
+                      </View>
+                      <TouchableOpacity onPress={() => revokeGrant(g.email, 'receiving', g.name)} style={{ paddingHorizontal: 12, paddingVertical: 6, borderRadius: 14, backgroundColor: softBg }}>
+                        <Text style={{ color: colors.text, fontSize: 12, fontWeight: '700' }}>{t?.('fmap.remove') || 'Remover'}</Text>
+                      </TouchableOpacity>
                     </TouchableOpacity>
-                  </View>
-                ))
+                  );
+                })
               )}
+
+              <TouchableOpacity
+                onPress={() => { setGrantsOpen(false); setTimeout(openPicker, 300); }}
+                style={{ marginTop: 18, marginBottom: 6, paddingVertical: 12, borderRadius: 14, alignItems: 'center', flexDirection: 'row', justifyContent: 'center', gap: 8, backgroundColor: inkBg }}
+                accessibilityRole="button"
+              >
+                <IconUserPlus size={16} color={inkFg} />
+                <Text style={{ color: inkFg, fontSize: 13, fontWeight: '700' }}>{t?.('fmap.addFriend') || 'Adicionar amigo ao mapa'}</Text>
+              </TouchableOpacity>
             </ScrollView>
+          </View>
+        </View>
+      </Modal>
+
+      {/* [2026-10-12 mapa-amigos] Escolher contato → pedido de localização */}
+      <Modal visible={pickerOpen} transparent animationType="slide" onRequestClose={() => setPickerOpen(false)}>
+        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)' }}>
+          <Pressable style={{ flex: 1 }} onPress={() => setPickerOpen(false)} />
+          <View style={{ backgroundColor: colors.surface, paddingTop: 18, paddingHorizontal: 18, paddingBottom: 12 + (insets.bottom || 0), borderTopLeftRadius: 24, borderTopRightRadius: 24, height: SH * 0.72 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 10 }}>
+              <Text style={{ flex: 1, fontSize: 18, fontWeight: '700', color: colors.text }}>
+                {t?.('fmap.addFriend') || 'Adicionar amigo ao mapa'}
+              </Text>
+              <TouchableOpacity onPress={() => setPickerOpen(false)} style={{ padding: 8 }} accessibilityLabel={t?.('common.close') || 'Fechar'}>
+                <IconX size={22} color={colors.textSecondary} />
+              </TouchableOpacity>
+            </View>
+            <Text style={{ color: colors.textSecondary, fontSize: 12, marginBottom: 10 }}>
+              {t?.('fmap.pickContactHint') || 'Escolha um contato. Ele recebe um pedido e decide se compartilha a localização com você.'}
+            </Text>
+            <TextInput
+              value={contactQuery}
+              onChangeText={setContactQuery}
+              placeholder={t?.('fmap.searchContacts') || 'Buscar contato'}
+              placeholderTextColor={colors.textSecondary}
+              autoCorrect={false}
+              autoCapitalize="none"
+              style={{ backgroundColor: softBg, color: colors.text, borderRadius: 12, paddingHorizontal: 14, paddingVertical: Platform.OS === 'ios' ? 11 : 8, fontSize: 15, marginBottom: 8 }}
+            />
+            {contacts === null ? (
+              <ActivityIndicator style={{ marginTop: 24 }} color={colors.text} />
+            ) : (() => {
+              const q = contactQuery.trim().toLowerCase();
+              const receiving = new Set((grantsData?.receiving_from || []).map((g) => String(g.email).toLowerCase()));
+              const pendingOut = new Set((grantsData?.pending_outgoing || []).map((g) => String(g.email).toLowerCase()));
+              const list = contacts.filter((c) => !q || String(c.name).toLowerCase().includes(q) || c.email.includes(q)).slice(0, 200);
+              if (!list.length) {
+                return <Text style={{ color: colors.textSecondary, fontSize: 13, marginTop: 16, textAlign: 'center' }}>{t?.('fmap.noContacts') || 'Nenhum contato encontrado'}</Text>;
+              }
+              return (
+                <ScrollView keyboardShouldPersistTaps="handled">
+                  {list.map((c) => {
+                    const already = receiving.has(c.email);
+                    const pending = pendingOut.has(c.email);
+                    return (
+                      <TouchableOpacity
+                        key={'c-' + c.email}
+                        disabled={already || pending || requestingEmail === c.email}
+                        onPress={() => sendMapRequest(c)}
+                        style={{ flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 9 }}
+                        accessibilityRole="button"
+                      >
+                        <AvatarCircle name={c.name || c.email} email={c.email} size={40} />
+                        <View style={{ flex: 1 }}>
+                          <Text style={{ color: colors.text, fontSize: 15, fontWeight: '600' }} numberOfLines={1}>{c.name || c.email}</Text>
+                          <Text style={{ color: colors.textSecondary, fontSize: 11 }} numberOfLines={1}>
+                            {already ? (t?.('fmap.alreadyOnMap') || 'Já está no seu mapa') : pending ? (t?.('fmap.waiting') || 'Aguardando resposta') : c.email}
+                          </Text>
+                        </View>
+                        {requestingEmail === c.email ? (
+                          <ActivityIndicator size="small" color={colors.text} />
+                        ) : (!already && !pending) ? (
+                          <View style={{ paddingHorizontal: 12, paddingVertical: 6, borderRadius: 14, backgroundColor: inkBg }}>
+                            <Text style={{ color: inkFg, fontSize: 12, fontWeight: '700' }}>{t?.('fmap.ask') || 'Pedir'}</Text>
+                          </View>
+                        ) : null}
+                      </TouchableOpacity>
+                    );
+                  })}
+                </ScrollView>
+              );
+            })()}
           </View>
         </View>
       </Modal>

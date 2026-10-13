@@ -41,6 +41,13 @@ export default function LiveLocationPingListener() {
         try {
           const now = Date.now();
           if (now - lastRunRef.current < 60_000) return;
+          // [2026-10-12 mapa-amigos] Modo fantasma: nunca responde wake-ping
+          // (paridade com o handler de push em pushNotifications.js).
+          try {
+            const AS = require('@react-native-async-storage/async-storage').default;
+            const ghost = await AS.getItem('snap_map_ghost_mode').catch(() => null);
+            if (ghost === '1' || ghost === 'true') return;
+          } catch {}
           lastRunRef.current = now;
 
           let Location;

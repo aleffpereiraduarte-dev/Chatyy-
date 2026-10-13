@@ -1,4 +1,7 @@
 export default {
+  // [2026-10-12 reply-wa] citação/barra de resposta
+  "chat.replyVideoNote": "Видеосообщение",
+  "chat.replyEncrypted": "Зашифрованное сообщение",
   // [2026-10-12 sticker-picker-fix] galeria/câmera do criador de figurinhas
   "stickerMaker.photosPermTitle": "Доступ к фото",
   "stickerMaker.photosPermBody": "Чтобы выбрать фото для стикера, разрешите доступ к фото в Настройках устройства.",
@@ -8253,4 +8256,9 @@ export default {
   'settings.currency.COP': 'Колумбийское песо',
   'settings.currency.PEN': 'Перуанский соль',
   'settings.currency.CLP': 'Чилийское песо',
+  // [2026-10-12 rec-audit] gravação de áudio
+  "chatConv.micDeniedBody": "Разрешите доступ к микрофону в Настройках, чтобы записывать аудио.",
+  "chatConv.recordingFailedRetry": "Не удалось записать, попробуйте ещё раз",
+  "chatConv.voiceTooShort": "Слишком короткое аудио",
+  "chatConv.recordingInterruptedCall": "Запись прервана звонком",
 };

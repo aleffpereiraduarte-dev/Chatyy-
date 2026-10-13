@@ -1,4 +1,7 @@
 export default {
+  // [2026-10-12 reply-wa] citação/barra de resposta
+  "chat.replyVideoNote": "വീഡിയോ സന്ദേശം",
+  "chat.replyEncrypted": "എൻക്രിപ്റ്റ് ചെയ്ത സന്ദേശം",
   // [2026-10-12 sticker-picker-fix] galeria/câmera do criador de figurinhas
   "stickerMaker.photosPermTitle": "ഫോട്ടോ ആക്സസ്",
   "stickerMaker.photosPermBody": "സ്റ്റിക്കറിനായി ഫോട്ടോ തിരഞ്ഞെടുക്കാൻ, ഉപകരണ ക്രമീകരണങ്ങളിൽ ഫോട്ടോ ആക്സസ് അനുവദിക്കുക.",
@@ -20,4 +23,9 @@ export default {
   'config.language': 'ആപ്പ് ഭാഷ',
   'config.logout': 'ലോഗ്ഔട്ട്',
   'signup.footerLanguage': 'മലയാളം',
+  // [2026-10-12 rec-audit] gravação de áudio
+  "chatConv.micDeniedBody": "ഓഡിയോ റെക്കോർഡ് ചെയ്യാൻ ക്രമീകരണങ്ങളിൽ മൈക്രോഫോൺ ആക്‌സസ് അനുവദിക്കുക.",
+  "chatConv.recordingFailedRetry": "റെക്കോർഡിംഗ് പരാജയപ്പെട്ടു, വീണ്ടും ശ്രമിക്കുക",
+  "chatConv.voiceTooShort": "ഓഡിയോ വളരെ ചെറുതാണ്",
+  "chatConv.recordingInterruptedCall": "കോൾ കാരണം റെക്കോർഡിംഗ് നിലച്ചു",
 };

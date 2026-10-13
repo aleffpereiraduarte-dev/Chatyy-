@@ -1,4 +1,7 @@
 export default {
+  // [2026-10-12 reply-wa] citação/barra de resposta
+  "chat.replyVideoNote": "వీడియో సందేశం",
+  "chat.replyEncrypted": "ఎన్‌క్రిప్ట్ చేసిన సందేశం",
   // [2026-10-12 sticker-picker-fix] galeria/câmera do criador de figurinhas
   "stickerMaker.photosPermTitle": "ఫోటోల యాక్సెస్",
   "stickerMaker.photosPermBody": "స్టిక్కర్ కోసం ఫోటోను ఎంచుకోవడానికి, పరికర సెట్టింగ్‌లలో ఫోటోల యాక్సెస్‌ను అనుమతించండి.",
@@ -7471,4 +7474,9 @@ export default {
   'settings.currency.COP': 'కొలంబియన్ Peso',
   'settings.currency.PEN': 'పెరూ Sol',
   'settings.currency.CLP': 'చిలీ Peso',
+  // [2026-10-12 rec-audit] gravação de áudio
+  "chatConv.micDeniedBody": "ఆడియో రికార్డ్ చేయడానికి సెట్టింగ్‌లలో మైక్రోఫోన్ యాక్సెస్‌ను అనుమతించండి.",
+  "chatConv.recordingFailedRetry": "రికార్డింగ్ విఫలమైంది, మళ్లీ ప్రయత్నించండి",
+  "chatConv.voiceTooShort": "ఆడియో చాలా చిన్నది",
+  "chatConv.recordingInterruptedCall": "కాల్ కారణంగా రికార్డింగ్ ఆగిపోయింది",
 };

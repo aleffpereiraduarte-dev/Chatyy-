@@ -1,4 +1,7 @@
 export default {
+  // [2026-10-12 reply-wa] citação/barra de resposta
+  "chat.replyVideoNote": "Mesej video",
+  "chat.replyEncrypted": "Mesej disulitkan",
   // [2026-10-12 sticker-picker-fix] galeria/câmera do criador de figurinhas
   "stickerMaker.photosPermTitle": "Akses foto",
   "stickerMaker.photosPermBody": "Untuk memilih foto pelekat, benarkan akses foto dalam Tetapan peranti.",
@@ -7475,4 +7478,9 @@ export default {
   'settings.currency.COP': 'Peso Colombia',
   'settings.currency.PEN': 'Sol Peru',
   'settings.currency.CLP': 'Peso Chile',
+  // [2026-10-12 rec-audit] gravação de áudio
+  "chatConv.micDeniedBody": "Benarkan akses mikrofon dalam Tetapan untuk merakam audio.",
+  "chatConv.recordingFailedRetry": "Rakaman gagal, cuba lagi",
+  "chatConv.voiceTooShort": "Audio terlalu pendek",
+  "chatConv.recordingInterruptedCall": "Rakaman terganggu oleh panggilan",
 };

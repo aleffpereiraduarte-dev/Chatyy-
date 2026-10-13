@@ -96,11 +96,31 @@ export function subscribeProgress(fn) {
 }
 export function getProgress(cmi) { return _lastProgress.get(String(cmi)) || null; }
 
+// [2026-10-12 P2] Progresso ÚNICO por mensagem: compressão ocupa 0–30 e o
+// upload 30–100 (sem compressão, upload = 0–100), e nunca diminui (retry,
+// fallback Rust→PHP, retomada) — o anel não "volta".
+const _maxPct = new Map();      // cmi -> maior pct já emitido (fases ativas)
+const _hadCompress = new Set(); // cmi que passou pela fase de compressão
+const COMPRESS_WEIGHT = 30;
+function _overallPct(key, raw, phase) {
+  if (phase === 'compress') { _hadCompress.add(key); return (raw * COMPRESS_WEIGHT) / 100; }
+  if (phase === 'upload') return _hadCompress.has(key) ? COMPRESS_WEIGHT + (raw * (100 - COMPRESS_WEIGHT)) / 100 : raw;
+  if (phase === 'commit' || phase === 'done') return 100;
+  return raw;
+}
+
 function _emit(p, cmi, pct, phase) {
   const key = String(cmi);
   const now = Date.now();
   const prev = _lastProgress.get(key);
-  const v = Math.max(0, Math.min(100, Math.round(Number(pct) || 0)));
+  const raw = Math.max(0, Math.min(100, Number(pct) || 0));
+  let v = Math.max(0, Math.min(100, Math.round(_overallPct(key, raw, phase))));
+  if (phase === 'compress' || phase === 'upload' || phase === 'commit') {
+    const mx = _maxPct.get(key) || 0;
+    if (v < mx) v = mx; else _maxPct.set(key, v);
+  } else if (phase === 'done' || phase === 'cancelled' || phase === 'failed') {
+    _maxPct.delete(key); _hadCompress.delete(key);
+  }
   // Throttle same-phase ticks to ~8/s (bridge + React re-render cost).
   if (prev && prev.phase === phase && phase !== 'done' && (now - prev.at) < 120 && Math.abs(v - prev.pct) < 10) return;
   const ev = { client_message_id: key, temp_id: p?.temp_id || null, conversation_id: p?.conversation_id, pct: v, phase };
@@ -296,11 +316,16 @@ async function _prepare(row, p, signal) {
         uri = out.uri; size = out.size; mime = 'video/mp4'; ownTemp = true;
         name = (String(name || 'video').replace(/\.\w+$/, '') || 'video') + '.mp4';
       }
+      // [2026-10-12 P2] metadados do vídeo p/ o chat_send (duração/dimensões).
+      if (out?.durationMs > 0) extra.duration_ms = Math.round(out.durationMs);
+      if (out?.width > 0 && out?.height > 0) { extra.image_width = out.width; extra.image_height = out.height; }
     }
   }
   if (signal?.aborted) return null;
 
   const durable = await _makeDurable(cmi, uri, name, mime, ownTemp);
+  // [2026-10-12 P2] cancelado durante a cópia → não deixa órfão nem grava payload.
+  if (signal?.aborted) { if (durable) await _deleteDurable({ durable_name: durable }); return null; }
   const finalUri = durable ? (_FS().documentDirectory + DURABLE_DIR + durable) : uri;
   const info = await _fileInfo(finalUri);
   if (info?.size) size = info.size;
@@ -336,12 +361,33 @@ function _kindFor(r, err) {
   return k === 'ok' ? 'transient' : k;
 }
 
+/**
+ * [2026-10-12 P2] Duração em SEGUNDOS inteiros de um payload da fila.
+ * duration_ms (saída da compressão) tem prioridade; `duration` de voz já vem
+ * em segundos; o de vídeo vem do picker (expo-image-picker = ms) → valores
+ * ≥1000 são tratados como ms.
+ */
+export function mediaDurationSec(p) {
+  if (!p) return 0;
+  const ms = Number(p.duration_ms) || 0;
+  if (ms > 0) return Math.max(1, Math.round(ms / 1000));
+  const d = Number(p.duration) || 0;
+  if (!(d > 0)) return 0;
+  const isVoice = p.type === 'voice' || p.type === 'audio';
+  if (!isVoice && d >= 1000) return Math.max(1, Math.round(d / 1000));
+  return Math.max(1, Math.round(d));
+}
+
 /** PHP combined upload + message insert (audio always; Rust fallback). */
 async function _phpCombined(api, p, cmi, file, signal) {
   const r = await api.chatUploadFile(
     p.conversation_id, file, p.caption || p.content || '', !!p.view_once,
     (f) => _emit(p, cmi, Math.round((Number(f) || 0) * 100), 'upload'),
     p.type === 'voice' ? 'audio' : (p.type || null), signal, false, cmi,
+    p.reply_to_id || null, // [2026-10-12 reply-media]
+    // [2026-10-12 rec-audit P0-3] duração (s) do áudio de voz no POST.
+    (p.type === 'audio' || p.type === 'voice') ? (Number(p.duration) || null)
+      : (p.type === 'video' ? (mediaDurationSec(p) || null) : null), // [2026-10-12 P2] vídeo também
   );
   return r;
 }
@@ -389,10 +435,13 @@ async function _process(row) {
   // runs longer than that.
   const hb = setInterval(() => { try { touchOwned(cmi); } catch {} }, 20000);
   let p = row.payload || {};
+  // [2026-10-12 P1 álbum] Toda falha DEFINITIVA libera os 'ready' de trás
+  // (promoteReady + poke no finally) — senão o resto do álbum fica no relógio.
+  let hardFailed = false;
   try {
     const api = _api();
     if (!api) { await markFailed(cmi, 'api_unavailable', { kind: 'transient' }); return; }
-    if (p._blob_lost) { await markFailed(cmi, 'blob_lost', { kind: 'hard' }); return; }
+    if (p._blob_lost) { hardFailed = true; await markFailed(cmi, 'blob_lost', { kind: 'hard' }); _emit(p, cmi, 0, 'failed'); return; }
     if (_offline()) { await markFailed(cmi, 'offline', { kind: 'offline' }); _emit(p, cmi, 0, 'queued'); return; }
 
     // 1. Prepare (compress + durable copy) — once per message.
@@ -403,15 +452,18 @@ async function _process(row) {
     }
     const localUri = resolveLocalUri(p);
     const info = await _fileInfo(localUri);
+    if (ctrl.signal.aborted) return;
     if (!info) {
       // Source vanished (OS purge / user deleted the original). Nothing to
       // retry with — surface the red "!" so the user can re-attach.
+      hardFailed = true;
       await markFailed(cmi, 'file_missing', { kind: 'hard' });
       _emit(p, cmi, 0, 'failed');
       return;
     }
     const size = info.size || Number(p.file_size) || 0;
     if (size > MAX_MEDIA_BYTES) {
+      hardFailed = true;
       await markFailed(cmi, TOO_LARGE_REASON, { kind: 'hard' });
       _emit(p, cmi, 0, 'failed');
       return;
@@ -429,6 +481,7 @@ async function _process(row) {
           mime: p.voice_session_mime || p.mime_type || 'audio/mp4',
           waveform: Array.isArray(p.waveform) ? p.waveform : null,
           clientMessageId: cmi,
+          replyToId: p.reply_to_id || null, // [2026-10-12 reply-media]
         });
         if (fr?.success && fr.data) {
           const msg = fr.data.message || fr.data;
@@ -475,9 +528,9 @@ async function _process(row) {
         // [2026-10-08 upload-br] Over the server cap → permanent, never retried
         // (neither here nor via the PHP fallback, which would 413 the same bytes).
         if (!rr?.success && (rr?.code === 'file_too_large' || Number(rr?.status) === 413 || TOO_LARGE_RE.test(String(rr?.error || '')))) {
+          hardFailed = true;
           await markFailed(cmi, TOO_LARGE_REASON, { kind: 'hard' });
           _emit(p, cmi, 0, 'failed');
-          try { await promoteReady(conv); } catch {}
           return;
         }
         // Network-ish Rust failure → keep the resumable session, retry later
@@ -490,6 +543,7 @@ async function _process(row) {
         if (rr?.success && rr.cdn_url) {
           p = { ...p, cdn_url: rr.cdn_url, server_size: rr.size || size, server_file_name: rr.filename || p.file_name };
           await markUploadReady(cmi, { cdn_url: p.cdn_url, server_size: p.server_size, server_file_name: p.server_file_name, rust_upload_id: null });
+          if (ctrl.signal.aborted) return;
         }
       }
       if (!p.cdn_url) {
@@ -501,9 +555,9 @@ async function _process(row) {
         catch (e) {
           if (ctrl.signal.aborted) return;
           const k = _kindFor(null, e);
+          if (k === 'hard') hardFailed = true;
           await markFailed(cmi, e, { kind: k });
           _emit(p, cmi, 0, k === 'hard' ? 'failed' : 'queued');
-          if (k === 'hard') { try { await promoteReady(conv); } catch {} }
           return;
         }
         if (ctrl.signal.aborted || r?.aborted) return;
@@ -517,14 +571,17 @@ async function _process(row) {
         const k = _kindFor(r, null);
         const _why = String(r?.message || r?.error || 'upload_failed');
         const _tooBig = r?.data?.code === 'file_too_large' || TOO_LARGE_RE.test(_why);
+        if (k === 'hard' || _tooBig) hardFailed = true;
         await markFailed(cmi, _tooBig ? TOO_LARGE_REASON : _why, { kind: _tooBig ? 'hard' : k });
         _emit(p, cmi, 0, (k === 'hard' || _tooBig) ? 'failed' : 'queued');
-        if (k === 'hard' || _tooBig) { try { await promoteReady(conv); } catch {} }
         return;
       }
     } else {
+      if (ctrl.signal.aborted) return;
       await markUploadReady(cmi, null);
     }
+    // [2026-10-12 P2] cancelado durante o upload/markUploadReady → não promove.
+    if (ctrl.signal.aborted) return;
 
     // 3. Bytes on the CDN → hand to the ordered chat_send FIFO.
     _emit(p, cmi, 100, 'commit');
@@ -535,12 +592,19 @@ async function _process(row) {
   } catch (e) {
     if (ctrl.signal.aborted) return;
     const k = _kindFor(null, e);
+    if (k === 'hard') hardFailed = true;
     await markFailed(cmi, e, { kind: k });
     _emit(p, cmi, 0, k === 'hard' ? 'failed' : 'queued');
   } finally {
     clearInterval(hb);
     _running.delete(cmi);
     _endBg(bg);
+    if (hardFailed && conv != null) {
+      try {
+        const pr = await promoteReady(conv);
+        if (pr.length) { try { require('./sendWorker').poke?.(); } catch {} }
+      } catch {}
+    }
   }
 }
 

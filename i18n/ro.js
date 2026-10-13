@@ -1,4 +1,7 @@
 export default {
+  // [2026-10-12 reply-wa] citação/barra de resposta
+  "chat.replyVideoNote": "Mesaj video",
+  "chat.replyEncrypted": "Mesaj criptat",
   // [2026-10-12 sticker-picker-fix] galeria/câmera do criador de figurinhas
   "stickerMaker.photosPermTitle": "Acces la poze",
   "stickerMaker.photosPermBody": "Pentru a alege poza pentru sticker, permite accesul la poze în Setările dispozitivului.",
@@ -7475,4 +7478,9 @@ export default {
   'settings.currency.COP': 'Peso columbian',
   'settings.currency.PEN': 'Sol peruan',
   'settings.currency.CLP': 'Peso chilian',
+  // [2026-10-12 rec-audit] gravação de áudio
+  "chatConv.micDeniedBody": "Permite accesul la microfon din Setări pentru a înregistra audio.",
+  "chatConv.recordingFailedRetry": "Înregistrarea a eșuat, încearcă din nou",
+  "chatConv.voiceTooShort": "Audio prea scurt",
+  "chatConv.recordingInterruptedCall": "Înregistrare întreruptă de apel",
 };

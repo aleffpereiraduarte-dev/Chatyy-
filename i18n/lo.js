@@ -1,4 +1,7 @@
 export default {
+  // [2026-10-12 reply-wa] citação/barra de resposta
+  "chat.replyVideoNote": "ຂໍ້ຄວາມວິດີໂອ",
+  "chat.replyEncrypted": "ຂໍ້ຄວາມທີ່ເຂົ້າລະຫັດ",
   // [2026-10-12 sticker-picker-fix] galeria/câmera do criador de figurinhas
   "stickerMaker.photosPermTitle": "ການເຂົ້າເຖິງຮູບພາບ",
   "stickerMaker.photosPermBody": "ເພື່ອເລືອກຮູບສຳລັບສະຕິກເກີ, ໃຫ້ອະນຸຍາດການເຂົ້າເຖິງຮູບພາບໃນການຕັ້ງຄ່າຂອງອຸປະກອນ.",
@@ -7471,4 +7474,9 @@ export default {
   'settings.currency.COP': 'ເພຊໂອຄລອບອນ',
   'settings.currency.PEN': 'ໂຊລ໌ເປອຣູ',
   'settings.currency.CLP': 'ເພຊໂອຊິລີ',
+  // [2026-10-12 rec-audit] gravação de áudio
+  "chatConv.micDeniedBody": "ອະນຸຍາດການເຂົ້າເຖິງໄມໂຄຣໂຟນໃນການຕັ້ງຄ່າເພື່ອບັນທຶກສຽງ.",
+  "chatConv.recordingFailedRetry": "ການບັນທຶກລົ້ມເຫຼວ, ລອງໃໝ່ອີກຄັ້ງ",
+  "chatConv.voiceTooShort": "ສຽງສັ້ນເກີນໄປ",
+  "chatConv.recordingInterruptedCall": "ການບັນທຶກຖືກຂັດຈັງຫວະໂດຍການໂທ",
 };

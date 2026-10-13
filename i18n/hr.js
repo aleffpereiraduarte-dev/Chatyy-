@@ -1,4 +1,7 @@
 export default {
+  // [2026-10-12 reply-wa] citação/barra de resposta
+  "chat.replyVideoNote": "Video poruka",
+  "chat.replyEncrypted": "Šifrirana poruka",
   // [2026-10-12 sticker-picker-fix] galeria/câmera do criador de figurinhas
   "stickerMaker.photosPermTitle": "Pristup fotografijama",
   "stickerMaker.photosPermBody": "Da biste odabrali fotografiju za naljepnicu, dopustite pristup fotografijama u Postavkama uređaja.",
@@ -7475,4 +7478,9 @@ export default {
   'settings.currency.COP': 'Kolumbijski pezo',
   'settings.currency.PEN': 'Peruanski sol',
   'settings.currency.CLP': 'Čileanski pezo',
+  // [2026-10-12 rec-audit] gravação de áudio
+  "chatConv.micDeniedBody": "Dopustite pristup mikrofonu u Postavkama za snimanje zvuka.",
+  "chatConv.recordingFailedRetry": "Snimanje nije uspjelo, pokušajte ponovno",
+  "chatConv.voiceTooShort": "Zvuk je prekratak",
+  "chatConv.recordingInterruptedCall": "Snimanje prekinuto pozivom",
 };

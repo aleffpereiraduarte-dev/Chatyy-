@@ -1,4 +1,7 @@
 export default {
+  // [2026-10-12 reply-wa] citação/barra de resposta
+  "chat.replyVideoNote": "הודעת וידאו",
+  "chat.replyEncrypted": "הודעה מוצפנת",
   // [2026-10-12 sticker-picker-fix] galeria/câmera do criador de figurinhas
   "stickerMaker.photosPermTitle": "גישה לתמונות",
   "stickerMaker.photosPermBody": "כדי לבחור תמונה למדבקה, יש לאפשר גישה לתמונות בהגדרות המכשיר.",
@@ -7475,4 +7478,9 @@ export default {
   'settings.currency.COP': 'peso קולומביאני',
   'settings.currency.PEN': 'סול פרואני',
   'settings.currency.CLP': 'peso צ\'יליאני',
+  // [2026-10-12 rec-audit] gravação de áudio
+  "chatConv.micDeniedBody": "אפשרו גישה למיקרופון בהגדרות כדי להקליט אודיו.",
+  "chatConv.recordingFailedRetry": "ההקלטה נכשלה, נסו שוב",
+  "chatConv.voiceTooShort": "השמע קצר מדי",
+  "chatConv.recordingInterruptedCall": "ההקלטה הופסקה בגלל שיחה",
 };

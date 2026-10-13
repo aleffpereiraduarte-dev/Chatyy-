@@ -5160,7 +5160,7 @@ export async function chatVoiceSessionChunk(sessionId, chunkIndex, chunkBlob) {
   try { return await resp.json(); } catch { return { success: false, message: 'parse_failed' }; }
 }
 
-export async function chatVoiceSessionFinalize(sessionId, { duration = 0, mime = 'audio/webm', waveform = null, clientMessageId = '' } = {}) {
+export async function chatVoiceSessionFinalize(sessionId, { duration = 0, mime = 'audio/webm', waveform = null, clientMessageId = '', replyToId = null } = {}) {
   // clientMessageId = the SAME cmi the chat_upload fallback sends. The
   // finalize row carries it so that when a finalize response is lost and the
   // client falls back to multipart upload, the server's UNIQUE(sender, cmi)
@@ -5171,6 +5171,7 @@ export async function chatVoiceSessionFinalize(sessionId, { duration = 0, mime =
     mime,
     waveform,
     ...(clientMessageId ? { client_message_id: clientMessageId } : {}),
+    ...(replyToId ? { reply_to_id: replyToId } : {}), // [2026-10-12 reply-media]
   }, 'POST');
 }
 
@@ -6251,8 +6252,18 @@ export async function friendLocationPing(sharerEmail) {
 /**
  * Either side ends an active grant. `peerEmail` = the other party.
  */
-export async function friendLocationRevoke(peerEmail) {
-  return apiCall('chat_friend_location_revoke', { peer_email: peerEmail }, 'POST');
+// [2026-10-12 mapa-amigos] `direction`: 'sharing' (só eu→peer), 'receiving'
+// (só peer→eu) ou omitido (as duas — comportamento antigo). Servidor antigo
+// ignora o campo e apaga as duas direções.
+export async function friendLocationRevoke(peerEmail, direction) {
+  const body = { peer_email: peerEmail };
+  if (direction === 'sharing' || direction === 'receiving') body.direction = direction;
+  return apiCall('chat_friend_location_revoke', body, 'POST');
+}
+
+/** Cancela um pedido que EU enviei e ainda está pendente (servidor novo). */
+export async function friendLocationRequestCancel(targetEmail) {
+  return apiCall('chat_friend_location_request_cancel', { target_email: targetEmail }, 'POST');
 }
 
 /**
@@ -7576,11 +7587,14 @@ async function rustChunkedUploadNative(file, userEmail, context, onProgress, ext
   }
 }
 
-export async function chatUploadFile(conversationId, file, content = '', viewOnce = false, onProgress = null, msgType = null, externalSignal = null, silent = false, clientMessageId = null) {
+export async function chatUploadFile(conversationId, file, content = '', viewOnce = false, onProgress = null, msgType = null, externalSignal = null, silent = false, clientMessageId = null, replyToId = null, durationSec = null) {
   const formData = new FormData();
   formData.append('action', 'chat_upload');
   formData.append('conversation_id', String(conversationId));
   if (content) formData.append('content', content);
+  // [2026-10-12 rec-audit P0-3] Duração (SEGUNDOS inteiros) do áudio de voz:
+  // o servidor nem sempre consegue sondar o arquivo (ffprobe) → bolha 0:00.
+  { const _d = Math.round(Number(durationSec) || 0); if (_d > 0) formData.append('duration', String(_d)); }
   if (viewOnce) formData.append('view_once', '1');
   // Stable per-logical-message id so a retry (outbox replay, Rust→PHP
   // fallback after a lost chat_send response) dedups server-side on the
@@ -7590,6 +7604,8 @@ export async function chatUploadFile(conversationId, file, content = '', viewOnc
   // Forward the message type (image/video/audio/file) so the backend doesn't
   // have to re-guess from extension and downgrade videos/audio to "file".
   if (msgType) formData.append('type', msgType);
+  // [2026-10-12 reply-media] Foto/áudio/arquivo respondendo a uma mensagem.
+  if (replyToId && !silent) formData.append('reply_to_id', String(replyToId));
   // silent=1 uploads the file and returns only the URL, no chat message
   // is created and no broadcast/push is fired. Used for group avatar changes.
   if (silent) formData.append('silent', '1');
@@ -7707,8 +7723,9 @@ export async function chatUnreadCount() {
   return r;
 }
 
-export async function chatCreatePoll(conversationId, question, options, multipleChoice = false, quiz = null) {
+export async function chatCreatePoll(conversationId, question, options, multipleChoice = false, quiz = null, replyToId = null) {
   const payload = { conversation_id: conversationId, question, options, multiple_choice: multipleChoice };
+  if (replyToId) payload.reply_to_id = replyToId; // [2026-10-12 reply-media]
   // Quiz mode (Telegram parity): pass `quiz = { correctOption: N, explanation: '...' }`
   // to render the poll as a quiz with a single correct answer + optional
   // explanation shown after voting.
@@ -8141,8 +8158,8 @@ export async function drivePhotoSyncList(page = 1, limit = 50, month = null) {
 }
 
 // Meetup / Hangout
-export async function chatCreateMeetup(conversationId, title, datetime, location = '', description = '') {
-  return apiCall('chat_create_meetup', { conversation_id: conversationId, title, datetime, location, description }, 'POST');
+export async function chatCreateMeetup(conversationId, title, datetime, location = '', description = '', replyToId = null) {
+  return apiCall('chat_create_meetup', { conversation_id: conversationId, title, datetime, location, description, ...(replyToId ? { reply_to_id: replyToId } : {}) }, 'POST'); // [2026-10-12 reply-media]
 }
 
 export async function chatMeetupRsvp(messageId, status) {

@@ -1,4 +1,7 @@
 export default {
+  // [2026-10-12 reply-wa] citação/barra de resposta
+  "chat.replyVideoNote": "Video ziņa",
+  "chat.replyEncrypted": "Šifrēta ziņa",
   // [2026-10-12 sticker-picker-fix] galeria/câmera do criador de figurinhas
   "stickerMaker.photosPermTitle": "Piekļuve fotoattēliem",
   "stickerMaker.photosPermBody": "Lai izvēlētos uzlīmes fotoattēlu, ierīces Iestatījumos atļaujiet piekļuvi fotoattēliem.",
@@ -7475,4 +7478,9 @@ export default {
   'settings.currency.COP': 'Kolumbijas peso',
   'settings.currency.PEN': 'Peru sols',
   'settings.currency.CLP': 'Čīles peso',
+  // [2026-10-12 rec-audit] gravação de áudio
+  "chatConv.micDeniedBody": "Atļaujiet piekļuvi mikrofonam Iestatījumos, lai ierakstītu audio.",
+  "chatConv.recordingFailedRetry": "Ierakstīšana neizdevās, mēģiniet vēlreiz",
+  "chatConv.voiceTooShort": "Audio ir pārāk īss",
+  "chatConv.recordingInterruptedCall": "Ierakstu pārtrauca zvans",
 };

@@ -1,4 +1,7 @@
 export default {
+  // [2026-10-12 reply-wa] citação/barra de resposta
+  "chat.replyVideoNote": "Video message",
+  "chat.replyEncrypted": "Naka-encrypt na mensahe",
   // [2026-10-12 sticker-picker-fix] galeria/câmera do criador de figurinhas
   "stickerMaker.photosPermTitle": "Access sa mga larawan",
   "stickerMaker.photosPermBody": "Para pumili ng larawan para sa sticker, payagan ang access sa mga larawan sa Settings ng device.",
@@ -7475,4 +7478,9 @@ export default {
   'settings.currency.COP': 'Colombian Peso',
   'settings.currency.PEN': 'Peruvian Sol',
   'settings.currency.CLP': 'Peso ng Chile',
+  // [2026-10-12 rec-audit] gravação de áudio
+  "chatConv.micDeniedBody": "Payagan ang access sa mikropono sa Settings para makapag-record ng audio.",
+  "chatConv.recordingFailedRetry": "Nabigo ang pag-record, subukan ulit",
+  "chatConv.voiceTooShort": "Masyadong maikli ang audio",
+  "chatConv.recordingInterruptedCall": "Naantala ang pag-record dahil sa tawag",
 };

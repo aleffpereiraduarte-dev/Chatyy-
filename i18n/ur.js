@@ -1,4 +1,7 @@
 export default {
+  // [2026-10-12 reply-wa] citação/barra de resposta
+  "chat.replyVideoNote": "ویڈیو پیغام",
+  "chat.replyEncrypted": "خفیہ کردہ پیغام",
   // [2026-10-12 sticker-picker-fix] galeria/câmera do criador de figurinhas
   "stickerMaker.photosPermTitle": "تصاویر تک رسائی",
   "stickerMaker.photosPermBody": "اسٹیکر کے لیے تصویر منتخب کرنے کو، ڈیوائس کی ترتیبات میں تصاویر تک رسائی کی اجازت دیں۔",
@@ -30,4 +33,9 @@ export default {
   'config.language': 'ایپ کی زبان',
   'config.logout': 'لاگ آؤٹ',
   'signup.footerLanguage': 'اردو',
+  // [2026-10-12 rec-audit] gravação de áudio
+  "chatConv.micDeniedBody": "آڈیو ریکارڈ کرنے کے لیے ترتیبات میں مائیکروفون تک رسائی کی اجازت دیں۔",
+  "chatConv.recordingFailedRetry": "ریکارڈنگ ناکام ہو گئی، دوبارہ کوشش کریں",
+  "chatConv.voiceTooShort": "آڈیو بہت مختصر ہے",
+  "chatConv.recordingInterruptedCall": "کال کی وجہ سے ریکارڈنگ رک گئی",
 };
