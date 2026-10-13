@@ -276,6 +276,13 @@ const ACCENT = '#111111';
 const DOUBLE_TAP_DELAY = 300;
 const BASE_URL = 'https://chatyy.com.br';
 const isWeb = Platform.OS === 'web';
+// [2026-10-13 reels-visual] Linha do cabeçalho (abas/criar/interesses): logo abaixo da
+// status bar — o vídeo agora começa atrás dela (chat.js tira o paddingTop na aba Reels).
+const REEL_HEADER_H = 44;
+function reelHeaderTop(insets) {
+  if (isWeb) return 10;
+  return Math.max(insets?.top || 0, Platform.OS === 'android' ? 24 : 44) + 2;
+}
 const useNative = Platform.OS !== 'web';
 
 // [2026-10-13 visual] Native scrim. topGradient/bottomGradient only had a CSS
@@ -290,7 +297,7 @@ const ReelScrim = memo(function ReelScrim({ edge }) {
     <Svg width="100%" height="100%" style={StyleSheet.absoluteFill} preserveAspectRatio="none">
       <Defs>
         <SvgLinearGradient id={id} x1="0" y1={top ? '0' : '1'} x2="0" y2={top ? '1' : '0'}>
-          <Stop offset="0" stopColor="#000" stopOpacity={top ? 0.35 : 0.55} />
+          <Stop offset="0" stopColor="#000" stopOpacity={top ? 0.55 : 0.7} />
           <Stop offset="1" stopColor="#000" stopOpacity={0} />
         </SvgLinearGradient>
       </Defs>
@@ -707,58 +714,80 @@ const MusicEqualizerNative = memo(function MusicEqualizerNative({ active = true 
   );
 });
 
+// ── Desktop web frame ──
+// [2026-10-13 reels-visual] Web largo: coluna 9:16 centralizada sobre o pôster desfocado
+// (nível Instagram/TikTok web) e o trilho de ações AO LADO do vídeo (reelContainerDesktop).
+function ReelDesktopFrame({ enabled, width, height, poster, children }) {
+  if (!enabled) return children;
+  return (
+    <View style={{ width, height, backgroundColor: '#000', overflow: 'hidden', alignItems: 'center' }}>
+      {poster ? (
+        <Image
+          source={{ uri: poster }}
+          resizeMode="cover"
+          style={[StyleSheet.absoluteFill, { opacity: 0.32, filter: 'blur(40px) saturate(1.2)', transform: [{ scale: 1.15 }] }]}
+          accessibilityIgnoresInvertColors
+        />
+      ) : null}
+      <View pointerEvents="none" style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.35)' }]} />
+      {children}
+    </View>
+  );
+}
+
 // ── Music Marquee (scrolling text) ──
-const WEB_MARQUEE_STYLE = isWeb ? {
-  // Track holds the text twice → -50% is exactly one copy (seamless loop).
-  animationKeyframes: [{ from: { transform: 'translateX(0%)' }, to: { transform: 'translateX(-50%)' } }],
-  animationDuration: '6000ms', animationTimingFunction: 'linear', animationIterationCount: 'infinite',
-} : null;
-const MusicMarquee = memo(function MusicMarquee({ text: musicText }) {
-  if (WEB_MARQUEE_STYLE) {
-    return (
-      <View style={styles.marqueeContainer}>
-        <View style={[styles.marqueeTrack, WEB_MARQUEE_STYLE]}>
-          <Text style={styles.marqueeText}>{musicText}    </Text>
-          <Text style={styles.marqueeText}>{musicText}    </Text>
-        </View>
-      </View>
-    );
-  }
-  return <MusicMarqueeNative text={musicText} />;
-});
-const MusicMarqueeNative = memo(function MusicMarqueeNative({ text: musicText }) {
+// [2026-10-13 reels-visual] Antes rolava SEMPRE com o texto duplicado ("… - Áudio original
+// azharkhandeena - Áudio ori"). Agora mede: cabe → uma linha parada; não cabe → rola
+// (2 cópias só nesse caso, com pausa entre voltas).
+const MARQUEE_GAP = 36;
+const MusicMarquee = memo(function MusicMarquee({ text: musicText, active = true }) {
+  const [boxW, setBoxW] = useState(0);
+  const [textW, setTextW] = useState(0);
+  const overflow = boxW > 0 && textW > boxW + 1;
   const scrollX = useRef(new Animated.Value(0)).current;
-  const textWidth = useRef(200);
 
   useEffect(() => {
+    scrollX.setValue(0);
+    if (isWeb || !overflow || !active) return undefined;
+    const dist = textW + MARQUEE_GAP;
     const anim = Animated.loop(
       Animated.sequence([
-        Animated.timing(scrollX, {
-          toValue: -textWidth.current,
-          duration: 6000,
-          easing: Easing.linear,
-          useNativeDriver: true,
-        }),
-        Animated.timing(scrollX, {
-          toValue: 0,
-          duration: 0,
-          useNativeDriver: true,
-        }),
+        Animated.delay(1200),
+        Animated.timing(scrollX, { toValue: -dist, duration: Math.max(4000, dist * 28), easing: Easing.linear, useNativeDriver: true }),
+        Animated.timing(scrollX, { toValue: 0, duration: 0, useNativeDriver: true }),
       ])
     );
     anim.start();
     return () => anim.stop();
-  }, [musicText]);
+  }, [overflow, active, textW, musicText, scrollX]);
+
+  const webAnim = (isWeb && overflow && active) ? {
+    animationKeyframes: [{ from: { transform: 'translateX(0px)' }, to: { transform: `translateX(-${Math.round(textW + MARQUEE_GAP)}px)` } }],
+    animationDuration: `${Math.max(4000, Math.round((textW + MARQUEE_GAP) * 28))}ms`,
+    animationTimingFunction: 'linear', animationIterationCount: 'infinite', animationDelay: '1200ms',
+  } : null;
 
   return (
-    <View style={styles.marqueeContainer}>
-      <Animated.View
-        style={[styles.marqueeTrack, { transform: [{ translateX: scrollX }] }]}
-        onLayout={(e) => { textWidth.current = e.nativeEvent.layout.width / 2; }}
-      >
-        <Text style={styles.marqueeText}>{musicText}    </Text>
-        <Text style={styles.marqueeText}>{musicText}    </Text>
-      </Animated.View>
+    <View style={styles.marqueeContainer} onLayout={(e) => setBoxW(Math.round(e.nativeEvent.layout.width))}>
+      {/* medidor invisível: largura natural do texto */}
+      <View pointerEvents="none" style={styles.marqueeMeasure}>
+        <Text style={styles.marqueeText} onLayout={(e) => setTextW(Math.ceil(e.nativeEvent.layout.width))}>{musicText}</Text>
+      </View>
+      {overflow ? (
+        isWeb ? (
+          <View style={[styles.marqueeTrack, { width: textW * 2 + MARQUEE_GAP + 8 }, webAnim]}>
+            <Text style={[styles.marqueeText, { marginRight: MARQUEE_GAP }]} numberOfLines={1}>{musicText}</Text>
+            <Text style={styles.marqueeText} numberOfLines={1}>{musicText}</Text>
+          </View>
+        ) : (
+          <Animated.View style={[styles.marqueeTrack, { width: textW * 2 + MARQUEE_GAP + 8, transform: [{ translateX: scrollX }] }]}>
+            <Text style={[styles.marqueeText, { marginRight: MARQUEE_GAP }]} numberOfLines={1}>{musicText}</Text>
+            <Text style={styles.marqueeText} numberOfLines={1}>{musicText}</Text>
+          </Animated.View>
+        )
+      ) : (
+        <Text style={styles.marqueeText} numberOfLines={1}>{musicText}</Text>
+      )}
     </View>
   );
 });
@@ -1577,7 +1606,8 @@ const ReelItem = memo(function ReelItem({ onCreate, reel, isActive, colors, isDa
   const videoUrl = useMemo(() => resolveMediaUrl(mediaUrls[0]), [mediaUrls]);
   const authorDisplay = reel.author_name || reel.author_email?.split('@')[0] || '?';
   const commentCount = Number(reel.comment_count ?? reel.comments_count ?? reel.comments) || 0;
-  const musicName = reel.audio_name || `${authorDisplay} - ${t('feed.originalAudio') || 'Áudio original'}`;
+  // [2026-10-13 reels-visual] "♫ Áudio original · autor" (uma linha; marquee só se não couber)
+  const musicName = reel.audio_name || `${t('feed.originalAudio') || 'Áudio original'} · ${authorDisplay}`;
 
   // Sync with prop changes
   useEffect(() => {
@@ -1923,6 +1953,8 @@ const ReelItem = memo(function ReelItem({ onCreate, reel, isActive, colors, isDa
   }, [reel.id, router]);
 
   const height = containerHeight || SCREEN_HEIGHT;
+  // [2026-10-13 reels-visual] web desktop → coluna 9:16 + trilho ao lado
+  const desktopFrame = isWeb && _reelItemWidth(containerWidth, height) < (containerWidth || SCREEN_WIDTH) - 1;
 
   // Long-press anywhere on the video → boost playbackRate to 2× (TikTok parity).
   // Snap back on release. (isScrubbing declared earlier so the progress effect
@@ -1985,7 +2017,13 @@ const ReelItem = memo(function ReelItem({ onCreate, reel, isActive, colors, isDa
   const onScrubEnd = useCallback(() => { scrubbingRef.current = false; }, []);
 
   return (
-    <View style={[styles.reelContainer, { height, width: _reelItemWidth(containerWidth, height), alignSelf: 'center' }]}>
+    <ReelDesktopFrame
+      enabled={desktopFrame}
+      width={containerWidth || SCREEN_WIDTH}
+      height={height}
+      poster={reel.thumbnail_url ? resolveMediaUrl(reel.thumbnail_url) : null}
+    >
+    <View style={[styles.reelContainer, { height, width: _reelItemWidth(containerWidth, height), alignSelf: 'center' }, desktopFrame ? styles.reelContainerDesktop : null]}>
       {/* Video - full screen edge to edge. Long-press anywhere → 2× boost.
           Wrapped in PinchZoomBox so two-finger pinch scales 1..3× then springs
           back on release (silent no-op when RNGH isn't on the path). */}
@@ -2077,7 +2115,9 @@ const ReelItem = memo(function ReelItem({ onCreate, reel, isActive, colors, isDa
           paddingTop:16 from styles.topBar was cropping into the system
           clock/battery. Override with the runtime inset (with a tiny
           floor for devices that report 0). */}
-      <View style={[styles.topBar, { paddingTop: Math.max(insets.top, Platform.OS === 'android' ? 12 : 44) + 8 }]}>
+      {/* [2026-10-13 reels-visual] Linha secundária (AO VIVO / CC) abaixo do cabeçalho do
+          viewer — antes mudo/criar ficavam na MESMA altura das abas e se sobrepunham. */}
+      <View pointerEvents="box-none" style={[styles.topBar, { paddingTop: reelHeaderTop(insets) + REEL_HEADER_H + 4 }]}>
         {/* Top-left LIVE banner — only renders when the reel author is
             broadcasting. Red bg + white dot + "AO VIVO" text. Tapping
             routes to the live viewer through onOpenProfile (parent wires
@@ -2108,25 +2148,6 @@ const ReelItem = memo(function ReelItem({ onCreate, reel, isActive, colors, isDa
           <View />
         )}
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 16 }}>
-          <TouchableOpacity
-            onPress={toggleMute}
-            activeOpacity={0.7}
-            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-            style={{
-              backgroundColor: muted ? 'rgba(17, 17, 17,0.85)' : 'rgba(0,0,0,0.45)',
-              borderRadius: 20,
-              width: 36,
-              height: 36,
-              alignItems: 'center',
-              justifyContent: 'center',
-              borderWidth: muted ? 0 : StyleSheet.hairlineWidth,
-              borderColor: 'rgba(255,255,255,0.18)',
-            }}
-            accessibilityLabel={muted ? (t('feed.unmute') || 'Unmute') : (t('feed.mute') || 'Mute')}
-            accessibilityRole="button"
-          >
-            {muted ? <IconVolumeX size={20} color="#fff" /> : <IconVolume2 size={20} color="#fff" />}
-          </TouchableOpacity>
           {/* CC toggle — only renders when the post has segments. Tap
               hides/shows the bottom subtitle overlay. Persists to AsyncStorage. */}
           {subtitleSegments.length > 0 && (
@@ -2141,28 +2162,11 @@ const ReelItem = memo(function ReelItem({ onCreate, reel, isActive, colors, isDa
               <Text style={{ color: subtitlesEnabled ? '#000' : '#fff', fontSize: 12, fontWeight: '800', letterSpacing: 0.5 }}>CC</Text>
             </TouchableOpacity>
           )}
-          {/* [2026-10-08 apps-native] botão câmera era MORTO (sem onPress).
-              Agora só aparece quando o host passa onCreate (abre o criador). */}
-          {!!onCreate && (
-            <PressableScale
-              onPress={onCreate}
-              activeOpacity={0.85}
-              scaleTo={0.9}
-              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-              accessibilityLabel={t?.('reels.create') || 'Criar reel'}
-              accessibilityRole="button"
-              style={{ flexDirection: 'row', alignItems: 'center', gap: 4, height: 30, paddingHorizontal: 11, borderRadius: 15, borderWidth: 1.5, borderColor: '#fff', backgroundColor: 'rgba(0,0,0,0.25)' }}
-            >
-              {/* [2026-10-13 video-studio] "+ Criar" → câmera de criação */}
-              <IconPlus size={15} color="#fff" />
-              <Text style={{ color: '#fff', fontSize: 13, fontWeight: '700' }}>{t?.('videoStudio.create') || 'Criar'}</Text>
-            </PressableScale>
-          )}
         </View>
       </View>
 
       {/* ── RIGHT SIDE BUTTONS ── */}
-      <View style={styles.rightSidebar}>
+      <View style={[styles.rightSidebar, { bottom: insets.bottom + 78 }, desktopFrame && { right: -68, bottom: 24 }]}>
         {/* Profile avatar with white border + follow badge. Tapping opens
             the author's unified profile at /u/{email}. Previously had no
             onPress so the tap was a silent no-op. */}
@@ -2199,7 +2203,8 @@ const ReelItem = memo(function ReelItem({ onCreate, reel, isActive, colors, isDa
         </TouchableOpacity>
 
         {/* Like */}
-        <Animated.View style={{ transform: [{ scale: likeScale }] }}>
+        {/* [2026-10-13 reels-visual] contagem centralizada SOB o ícone; "0" escondido (Instagram) */}
+        <Animated.View style={[styles.sidebarItem, { transform: [{ scale: likeScale }] }]}>
           <TouchableOpacity
             style={styles.sidebarBtn}
             onPress={toggleLike}
@@ -2207,15 +2212,19 @@ const ReelItem = memo(function ReelItem({ onCreate, reel, isActive, colors, isDa
             accessibilityLabel={liked ? (t('feed.unlike') || 'Unlike') : (t('feed.like') || 'Like')}
             accessibilityRole="button"
           >
-            {liked ? (
-              <IconHeart size={28} color="#FF2D55" />
-            ) : (
-              <IconHeartOutline size={28} color="#fff" />
-            )}
+            <View style={styles.sidebarIcon}>
+              {liked ? (
+                <IconHeart size={30} color="#FF2D55" />
+              ) : (
+                <IconHeartOutline size={30} color="#fff" />
+              )}
+            </View>
           </TouchableOpacity>
-          <TouchableOpacity onPress={() => onOpenLikers?.(reel)} activeOpacity={0.7}>
-            <Text style={styles.sidebarCount}>{formatCount(likeCount)}</Text>
-          </TouchableOpacity>
+          {likeCount > 0 ? (
+            <TouchableOpacity onPress={() => onOpenLikers?.(reel)} activeOpacity={0.7} hitSlop={{ top: 4, bottom: 6, left: 10, right: 10 }}>
+              <Text style={styles.sidebarCount}>{formatCount(likeCount)}</Text>
+            </TouchableOpacity>
+          ) : null}
         </Animated.View>
 
         {/* Tip / Diamond — Reels P1 monetization. Opens LivePaidGiftSheet,
@@ -2244,8 +2253,8 @@ const ReelItem = memo(function ReelItem({ onCreate, reel, isActive, colors, isDa
           accessibilityLabel={t('feed.comment') || 'Comment'}
           accessibilityRole="button"
         >
-          <IconMessageCircle size={28} color="#fff" />
-          <Text style={styles.sidebarCount}>{formatCount(commentCount)}</Text>
+          <View style={styles.sidebarIcon}><IconMessageCircle size={29} color="#fff" /></View>
+          {commentCount > 0 ? <Text style={styles.sidebarCount}>{formatCount(commentCount)}</Text> : null}
         </PressableScale>
 
         {/* Share */}
@@ -2257,39 +2266,10 @@ const ReelItem = memo(function ReelItem({ onCreate, reel, isActive, colors, isDa
           accessibilityLabel={t('feed.share') || 'Compartilhar'}
           accessibilityRole="button"
         >
-          <IconShare size={28} color="#fff" />
+          <View style={styles.sidebarIcon}><IconSend size={28} color="#fff" /></View>
         </PressableScale>
 
-        {/* Playback speed — TikTok parity. Tap cycles 1x → 1.5x → 2x → 0.5x.
-            Hidden when at 1x to keep the rail clean; reveals as a small pill
-            once user opted into a non-default speed. */}
-        <PressableScale
-          style={[styles.sidebarBtn, { paddingVertical: 6 }]}
-          onPress={cyclePlaybackRate}
-          haptic={false}
-          activeOpacity={0.85}
-          scaleTo={0.9}
-          accessibilityLabel={`${t?.('feed.speed') || 'Velocidade'} ${playbackRate}x`}
-          accessibilityRole="button"
-        >
-          <View style={{
-            paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12,
-            backgroundColor: playbackRate === 1 ? 'rgba(255,255,255,0.15)' : 'rgba(255,255,255,0.92)',
-            minWidth: 36, alignItems: 'center',
-          }}>
-            <Text style={{ color: playbackRate === 1 ? '#fff' : '#000', fontSize: 12, fontWeight: '700' }}>
-              {playbackRate === 0.5 ? '0.5×' : playbackRate === 1 ? '1×' : playbackRate === 1.5 ? '1.5×' : '2×'}
-            </Text>
-          </View>
-        </PressableScale>
-
-        {/* Views */}
-        {viewCount > 0 && (
-          <View style={styles.sidebarBtn}>
-            <IconEye size={28} color="#fff" />
-            <Text style={styles.sidebarCount}>{formatCount(viewCount)}</Text>
-          </View>
-        )}
+        {/* [2026-10-13 reels-visual] Velocidade e visualizações saíram do trilho → menu "…". */}
 
         {/* Bookmark */}
         <Animated.View style={{ transform: [{ scale: bookmarkScale }] }}>
@@ -2302,11 +2282,13 @@ const ReelItem = memo(function ReelItem({ onCreate, reel, isActive, colors, isDa
             accessibilityLabel={bookmarked ? (t('feed.removeBookmark') || 'Remove') : (t('feed.bookmark') || 'Save')}
             accessibilityRole="button"
           >
-            {bookmarked ? (
-              <IconBookmarkFilled size={28} color="#fff" />
-            ) : (
-              <IconBookmark size={28} color="#fff" />
-            )}
+            <View style={styles.sidebarIcon}>
+              {bookmarked ? (
+                <IconBookmarkFilled size={28} color="#fff" />
+              ) : (
+                <IconBookmark size={28} color="#fff" />
+              )}
+            </View>
           </PressableScale>
         </Animated.View>
 
@@ -2320,7 +2302,7 @@ const ReelItem = memo(function ReelItem({ onCreate, reel, isActive, colors, isDa
           accessibilityLabel={t?.('common.more') || 'More'}
           accessibilityRole="button"
         >
-          <IconMoreHorizontal size={28} color="#fff" />
+          <View style={styles.sidebarIcon}><IconMoreHorizontal size={28} color="#fff" /></View>
         </PressableScale>
 
         {/* Spinning album art disc — tap to jump to the sound feed
@@ -2344,7 +2326,7 @@ const ReelItem = memo(function ReelItem({ onCreate, reel, isActive, colors, isDa
       <SubtitleOverlay clock={playbackClock} segments={subtitleSegments} enabled={subtitlesEnabled} />
 
       {/* ── BOTTOM LEFT INFO ── */}
-      <View style={[styles.bottomInfo, { paddingBottom: insets.bottom + 16 }]}>
+      <View style={[styles.bottomInfo, { paddingBottom: insets.bottom + 16 }, desktopFrame && { right: 56 }]}>
         {/* Username */}
         <Text style={styles.username}>{reel.is_catalog ? authorDisplay : `@${authorDisplay}`}</Text>
         {/* [reels-v1 2026-10-13] Crédito obrigatório da fonte licenciada ("Vídeo: Nome · Pexels") → página do vídeo */}
@@ -2368,40 +2350,38 @@ const ReelItem = memo(function ReelItem({ onCreate, reel, isActive, colors, isDa
             <Text style={styles.caption} numberOfLines={captionExpanded ? undefined : 2}>
               {reel.caption}
             </Text>
-            {!captionExpanded && reel.caption.length > 80 && (
+            {!captionExpanded && (reel.caption.length > 80 || (String(reel.caption).match(/\n/g) || []).length >= 2) && (
               <Text style={styles.moreText}>{t('feed.more') || 'mais'}</Text>
             )}
           </TouchableOpacity>
         ) : null}
 
-        {/* Music row with marquee + tiny equalizer. Tapping the row jumps
-            to "Use this sound". The 💾 button on the right saves the sound
-            to the user's favorites (chat_user_saved_sounds) so it shows up
-            in CreatePostModal's "Meus salvos" tab. */}
-        <View style={[styles.musicRow, { flexDirection: 'row', alignItems: 'center' }]}>
-          <TouchableOpacity
-            style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 6 }}
-            activeOpacity={0.7}
-            onPress={() => onUseSound && onUseSound(reel)}
-            accessibilityLabel={t?.('feed.useThisSound') || 'Usar este som'}
-            accessibilityRole="button"
-          >
-            <IconMusic size={12} color="#fff" />
-            <MusicEqualizer active={isActive} />
-            <MusicMarquee text={musicName} />
-          </TouchableOpacity>
-          {/* Reels P1 — save sound favorite. 💾 toggles persistence. */}
-          <TouchableOpacity
-            onPress={handleToggleSoundSave}
-            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-            style={{ paddingLeft: 8, paddingRight: 2 }}
-            accessibilityRole="button"
-            accessibilityLabel={soundSaved ? (t?.('feed.unsaveSound') || 'Remover som dos salvos') : (t?.('feed.saveSound') || 'Salvar som')}
-          >
-            {soundSaved ? <IconBookmarkFilled size={16} color="#fff" /> : <IconBookmark size={16} color="#fff" />}
-          </TouchableOpacity>
-        </View>
+        {/* Music row — tocar leva a "Usar este som". [2026-10-13 reels-visual] uma linha só:
+            sem equalizer duplicando o ♫ e sem o salvar-som solto (foi pro menu "…"). */}
+        <TouchableOpacity
+          style={styles.musicRow}
+          activeOpacity={0.7}
+          onPress={() => onUseSound && onUseSound(reel)}
+          accessibilityLabel={t?.('feed.useThisSound') || 'Usar este som'}
+          accessibilityRole="button"
+        >
+          <View style={styles.sidebarIcon}><IconMusic size={13} color="#fff" /></View>
+          <MusicMarquee text={musicName} active={isActive} />
+        </TouchableOpacity>
       </View>
+
+      {/* Mudo discreto no canto inferior direito (alinhado à linha da música). Tocar no
+          vídeo continua pausando/retomando com o ícone central. */}
+      <TouchableOpacity
+        onPress={toggleMute}
+        activeOpacity={0.7}
+        hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+        style={[styles.muteChip, { bottom: insets.bottom + 34 }]}
+        accessibilityLabel={muted ? (t('feed.unmute') || 'Ativar som') : (t('feed.mute') || 'Silenciar')}
+        accessibilityRole="button"
+      >
+        {muted ? <IconVolumeX size={16} color="#fff" /> : <IconVolume2 size={16} color="#fff" />}
+      </TouchableOpacity>
 
       {/* Floating diamond bursts — mounted briefly on each tip event. */}
       {diamondBursts.map(b => (
@@ -2546,6 +2526,30 @@ const ReelItem = memo(function ReelItem({ onCreate, reel, isActive, colors, isDa
               </Text>
             </TouchableOpacity>
 
+            {/* [2026-10-13 reels-visual] Salvar som — saiu da linha da música. */}
+            <TouchableOpacity
+              style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 14, gap: 14 }}
+              onPress={() => { setMoreSheetOpen(false); handleToggleSoundSave(); }}
+              activeOpacity={0.7}
+              accessibilityRole="button"
+            >
+              {soundSaved ? <IconBookmarkFilled size={22} color="#fff" /> : <IconBookmark size={22} color="#fff" />}
+              <Text style={{ color: '#fff', fontSize: 16, fontWeight: '600' }}>
+                {soundSaved ? (t?.('feed.unsaveSound') || 'Remover som dos salvos') : (t?.('feed.saveSound') || 'Salvar som')}
+              </Text>
+            </TouchableOpacity>
+
+            {/* [2026-10-13 reels-visual] Visualizações — saiu do trilho (informativo). */}
+            {viewCount > 0 && (
+              <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 14, gap: 14 }}>
+                <IconEye size={22} color="#fff" />
+                <Text style={{ color: '#fff', fontSize: 16, fontWeight: '600', flex: 1 }}>
+                  {t?.('feed.views') || 'Visualizações'}
+                </Text>
+                <Text style={{ color: 'rgba(255,255,255,0.7)', fontSize: 14, fontWeight: '700' }}>{formatCount(viewCount)}</Text>
+              </View>
+            )}
+
             {/* Speed picker entry — opens dedicated 5-option sheet. */}
             <TouchableOpacity
               style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 14, gap: 14 }}
@@ -2583,6 +2587,7 @@ const ReelItem = memo(function ReelItem({ onCreate, reel, isActive, colors, isDa
         t={t}
       />
     </View>
+    </ReelDesktopFrame>
   );
 }, (prev, next) => {
   // [perf] Custom equality so a parent re-render (containerHeight settling,
@@ -2620,10 +2625,43 @@ const ReelItem = memo(function ReelItem({ onCreate, reel, isActive, colors, isDa
   return true;
 });
 
+// ── Loading skeleton ──
+function ReelsSkeleton({ insets }) {
+  const pulse = useRef(new Animated.Value(0.55)).current;
+  useEffect(() => {
+    const a = Animated.loop(Animated.sequence([
+      Animated.timing(pulse, { toValue: 1, duration: 750, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
+      Animated.timing(pulse, { toValue: 0.55, duration: 750, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
+    ]));
+    a.start();
+    return () => a.stop();
+  }, [pulse]);
+  const bone = (st) => <View style={[{ backgroundColor: 'rgba(255,255,255,0.10)' }, st]} />;
+  return (
+    <View style={[styles.loadingContainer, { backgroundColor: '#0a0a0a' }]}>
+      <Animated.View pointerEvents="none" style={[StyleSheet.absoluteFill, { opacity: pulse }]}>
+        <View style={{ position: 'absolute', top: reelHeaderTop(insets) + 12, left: 0, right: 0, flexDirection: 'row', justifyContent: 'center', gap: 22 }}>
+          {bone({ width: 72, height: 14, borderRadius: 7 })}
+          {bone({ width: 72, height: 14, borderRadius: 7, backgroundColor: 'rgba(255,255,255,0.16)' })}
+        </View>
+        <View style={{ position: 'absolute', right: 14, bottom: (insets?.bottom || 0) + 86, alignItems: 'center', gap: 24 }}>
+          {[42, 30, 30, 30, 30].map((d, i) => <View key={i}>{bone({ width: d, height: d, borderRadius: d / 2 })}</View>)}
+        </View>
+        <View style={{ position: 'absolute', left: 14, right: 84, bottom: (insets?.bottom || 0) + 40, gap: 10 }}>
+          {bone({ width: '38%', height: 14, borderRadius: 7, backgroundColor: 'rgba(255,255,255,0.14)' })}
+          {bone({ width: '88%', height: 12, borderRadius: 6 })}
+          {bone({ width: '62%', height: 12, borderRadius: 6 })}
+          {bone({ width: '46%', height: 10, borderRadius: 5, backgroundColor: 'rgba(255,255,255,0.07)' })}
+        </View>
+      </Animated.View>
+    </View>
+  );
+}
+
 // ── Empty state ──
 // [2026-10-08 apps-native] variante de ERRO + botão "Tentar novamente" (antes
 // o vazio era um beco sem saída: early-return sem FlatList = sem pull-to-refresh).
-function EmptyReels({ colors, isDark, t, error = false, following = false, onRetry, height, onCreate }) {
+function EmptyReels({ colors, isDark, t, error = false, following = false, onRetry, height, onCreate, onSeeForYou }) {
   const title = error
     ? (t('feed.loadError') || 'Erro ao carregar')
     : following
@@ -2638,12 +2676,23 @@ function EmptyReels({ colors, isDark, t, error = false, following = false, onRet
     <View style={[styles.emptyContainer, height ? { height } : null]}>
       <View style={styles.emptyIcon}>
         {error
-          ? <IconRepeat size={40} color="rgba(255,255,255,0.7)" />
-          : <IconPlay size={42} color="rgba(255,255,255,0.7)" />}
+          ? <IconRepeat size={32} color="rgba(255,255,255,0.75)" />
+          : <IconPlay size={32} color="rgba(255,255,255,0.75)" />}
       </View>
       <Text style={styles.emptyTitle}>{title}</Text>
       <Text style={styles.emptySubtext}>{sub}</Text>
-      {!!onRetry && (
+      {/* [2026-10-13 reels-visual] "Seguindo" vazio → atalho primário pro "Para você" */}
+      {!error && following && !!onSeeForYou && (
+        <PressableScale
+          onPress={onSeeForYou}
+          style={styles.emptyRetryBtn}
+          accessibilityRole="button"
+          accessibilityLabel={t('feed.forYou') || 'Para você'}
+        >
+          <Text style={styles.emptyRetryText}>{t('feed.forYou') || 'Para você'}</Text>
+        </PressableScale>
+      )}
+      {!!onRetry && !(following && !error && onSeeForYou) && (
         <PressableScale
           onPress={onRetry}
           style={styles.emptyRetryBtn}
@@ -3324,20 +3373,8 @@ export default function ReelsViewer({ colors, isDark, t, user, router, feedMode:
 
   if (loading) {
     return (
-      // [2026-10-13 visual] reel-shaped skeleton (rail + caption lines) instead of a bare spinner
-      <View style={styles.loadingContainer}>
-        <View pointerEvents="none" style={{ position: 'absolute', right: 14, bottom: 110, alignItems: 'center', gap: 22 }}>
-          {[40, 34, 34, 34].map((d, i) => (
-            <View key={i} style={{ width: d, height: d, borderRadius: d / 2, backgroundColor: 'rgba(255,255,255,0.10)' }} />
-          ))}
-        </View>
-        <View pointerEvents="none" style={{ position: 'absolute', left: 14, right: 76, bottom: 40, gap: 10 }}>
-          <View style={{ width: '40%', height: 14, borderRadius: 7, backgroundColor: 'rgba(255,255,255,0.12)' }} />
-          <View style={{ width: '85%', height: 12, borderRadius: 6, backgroundColor: 'rgba(255,255,255,0.08)' }} />
-          <View style={{ width: '60%', height: 12, borderRadius: 6, backgroundColor: 'rgba(255,255,255,0.08)' }} />
-        </View>
-        <ActivityIndicator size="small" color="rgba(255,255,255,0.6)" />
-      </View>
+      // [2026-10-13 reels-visual] skeleton em forma de reel (cabeçalho + trilho + legenda), pulsando — sem spinner cru
+      <ReelsSkeleton insets={outerInsets} />
     );
   }
 
@@ -3354,51 +3391,69 @@ export default function ReelsViewer({ colors, isDark, t, user, router, feedMode:
 
   return (
     <View ref={setRootRef} style={styles.reelsRoot} onLayout={onLayout}>
-      {/* Following / For You tabs overlaying the top */}
-      <View style={[styles.reelTabBar, { top: Math.max(outerInsets.top, Platform.OS === 'android' ? 12 : 44) + 8 }]} pointerEvents="box-none">
-        <Pressable
-          onPress={() => { if (reelTab !== 'following') handleTabChange('following'); }}
-          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-          accessibilityRole="tab"
-          accessibilityState={{ selected: reelTab === 'following' }}
-          style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1 })}
-        >
-          <Text style={[
-            styles.reelTabText,
-            reelTab === 'following' && styles.reelTabTextActive,
-          ]}>
-            {t('feed.followingReels') || 'Following'}
-          </Text>
-          {reelTab === 'following' && <View style={styles.reelTabIndicator} />}
-        </Pressable>
-        <Pressable
-          onPress={() => { if (reelTab !== 'forYou') handleTabChange('forYou'); }}
-          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-          accessibilityRole="tab"
-          accessibilityState={{ selected: reelTab === 'forYou' }}
-          style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1 })}
-        >
-          <Text style={[
-            styles.reelTabText,
-            reelTab === 'forYou' && styles.reelTabTextActive,
-          ]}>
-            {t('feed.forYou') || 'For You'}
-          </Text>
-          {reelTab === 'forYou' && <View style={styles.reelTabIndicator} />}
-        </Pressable>
+      {/* [2026-10-13 reels-visual] Cabeçalho único (TikTok/Instagram): abas centralizadas com
+          indicador; à direita interesses + criar, espaçados. Mudo saiu do topo (canto inferior). */}
+      <View style={[styles.reelHeader, { top: reelHeaderTop(outerInsets) }]} pointerEvents="box-none">
+        <View style={styles.reelTabBar} pointerEvents="box-none">
+          <Pressable
+            onPress={() => { if (reelTab !== 'following') handleTabChange('following'); }}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            accessibilityRole="tab"
+            accessibilityState={{ selected: reelTab === 'following' }}
+            style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1 })}
+          >
+            <Text style={[
+              styles.reelTabText,
+              reelTab === 'following' && styles.reelTabTextActive,
+            ]}>
+              {t('feed.followingReels') || 'Following'}
+            </Text>
+            <View style={[styles.reelTabIndicator, reelTab !== 'following' && { backgroundColor: 'transparent' }]} />
+          </Pressable>
+          <Pressable
+            onPress={() => { if (reelTab !== 'forYou') handleTabChange('forYou'); }}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            accessibilityRole="tab"
+            accessibilityState={{ selected: reelTab === 'forYou' }}
+            style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1 })}
+          >
+            <Text style={[
+              styles.reelTabText,
+              reelTab === 'forYou' && styles.reelTabTextActive,
+            ]}>
+              {t('feed.forYou') || 'For You'}
+            </Text>
+            <View style={[styles.reelTabIndicator, reelTab !== 'forYou' && { backgroundColor: 'transparent' }]} />
+          </Pressable>
+        </View>
+        <View style={styles.reelHeaderRight} pointerEvents="box-none">
+          {recActive && reelTab === 'forYou' ? (
+            <Pressable
+              onPress={() => { try { haptic.select(); } catch {} setPickerMode('manage'); }}
+              hitSlop={{ top: 8, bottom: 8, left: 6, right: 6 }}
+              accessibilityRole="button"
+              accessibilityLabel={t('reels.interests.manageTitle') || 'Seus interesses'}
+              style={({ pressed }) => [styles.reelHeaderIconBtn, { opacity: pressed ? 0.6 : 1 }]}
+            >
+              <IconSliders size={21} color="#fff" />
+            </Pressable>
+          ) : null}
+          {!!onCreate && (
+            <PressableScale
+              onPress={onCreate}
+              activeOpacity={0.85}
+              scaleTo={0.9}
+              hitSlop={{ top: 8, bottom: 8, left: 6, right: 6 }}
+              accessibilityLabel={t?.('reels.create') || 'Criar reel'}
+              accessibilityRole="button"
+              style={styles.reelHeaderIconBtn}
+            >
+              <IconCamera size={23} color="#fff" />
+              <View style={styles.reelCreatePlus}><IconPlus size={9} color="#000" /></View>
+            </PressableScale>
+          )}
+        </View>
       </View>
-
-      {recActive && reelTab === 'forYou' ? (
-        <Pressable
-          onPress={() => { try { haptic.select(); } catch {} setPickerMode('manage'); }}
-          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-          accessibilityRole="button"
-          accessibilityLabel={t('reels.interests.manageTitle') || 'Seus interesses'}
-          style={({ pressed }) => [styles.interestsBtn, { top: Math.max(outerInsets.top, Platform.OS === 'android' ? 12 : 44) + 2, opacity: pressed ? 0.6 : 1 }]}
-        >
-          <IconSliders size={20} color="#fff" />
-        </Pressable>
-      ) : null}
 
       <FlatList
         ref={listRef}
@@ -3435,7 +3490,7 @@ export default function ReelsViewer({ colors, isDark, t, user, router, feedMode:
           // null on Discover/For You looked like a hung load.
           // [2026-10-08 apps-native] EmptyReels unificado + retry/erro.
           <View style={[styles.loadingContainer, { height: containerHeight }]}>
-            <EmptyReels t={t} error={loadError} following={reelTab === 'following'} onRetry={() => loadReels(false)} onCreate={onCreate} />
+            <EmptyReels t={t} error={loadError} following={reelTab === 'following'} onRetry={() => loadReels(false)} onCreate={onCreate} onSeeForYou={() => handleTabChange('forYou')} />
           </View>
         }
       />
@@ -3487,11 +3542,11 @@ const styles = StyleSheet.create({
   },
   // [reels-v1 2026-10-13] crédito da fonte + botão de interesses
   creditText: {
-    color: 'rgba(255,255,255,0.78)',
-    fontSize: 12.5,
-    fontWeight: '600',
-    marginTop: 2,
-    marginBottom: 4,
+    color: 'rgba(255,255,255,0.72)',
+    fontSize: 12,
+    fontWeight: '500',
+    marginTop: -4,
+    marginBottom: 0,
     textShadowColor: 'rgba(0,0,0,0.5)',
     textShadowOffset: { width: 0, height: 1 },
     textShadowRadius: 3,
@@ -3535,6 +3590,10 @@ const styles = StyleSheet.create({
     position: 'relative',
     overflow: 'hidden',
   },
+  // web desktop: deixa o trilho (right negativo) aparecer ao lado da coluna 9:16
+  reelContainerDesktop: {
+    overflow: 'visible',
+  },
 
   // ── Gradient overlays ──
   topGradient: {
@@ -3542,8 +3601,8 @@ const styles = StyleSheet.create({
     top: 0,
     left: 0,
     right: 0,
-    height: 120,
-    background: isWeb ? 'linear-gradient(to bottom, rgba(0,0,0,0.4) 0%, transparent 100%)' : undefined,
+    height: 170,
+    background: isWeb ? 'linear-gradient(to bottom, rgba(0,0,0,0.55) 0%, rgba(0,0,0,0.18) 55%, transparent 100%)' : undefined,
     backgroundColor: isWeb ? undefined : 'transparent',
     zIndex: 1,
   },
@@ -3552,8 +3611,8 @@ const styles = StyleSheet.create({
     bottom: 0,
     left: 0,
     right: 0,
-    height: 300,
-    background: isWeb ? 'linear-gradient(to top, rgba(0,0,0,0.6) 0%, transparent 100%)' : undefined,
+    height: 340,
+    background: isWeb ? 'linear-gradient(to top, rgba(0,0,0,0.7) 0%, rgba(0,0,0,0.25) 50%, transparent 100%)' : undefined,
     backgroundColor: isWeb ? undefined : 'transparent',
     zIndex: 1,
   },
@@ -3609,9 +3668,37 @@ const styles = StyleSheet.create({
     position: 'absolute',
     right: 8,
     bottom: 90,
+    width: 52,
     alignItems: 'center',
     zIndex: 10,
-    gap: 18,
+    gap: 14,
+  },
+  // [2026-10-13 reels-visual] item do trilho (ícone + contagem) sempre centrado
+  sidebarItem: {
+    alignItems: 'center',
+    width: 52,
+  },
+  // sombra sutil no ícone (legível em vídeo claro): iOS usa a alfa do conteúdo; web drop-shadow
+  sidebarIcon: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    ...(isWeb
+      ? { filter: 'drop-shadow(0 1px 3px rgba(0,0,0,0.55))' }
+      : { shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.45, shadowRadius: 3 }),
+  },
+  // mudo discreto no canto inferior direito (saiu do cabeçalho)
+  muteChip: {
+    position: 'absolute',
+    right: 16,
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: 'rgba(0,0,0,0.42)',
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: 'rgba(255,255,255,0.22)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 11,
   },
   profileAvatarBtn: {
     alignItems: 'center',
@@ -3648,17 +3735,18 @@ const styles = StyleSheet.create({
   sidebarBtn: {
     alignItems: 'center',
     justifyContent: 'center',
-    width: 48,
-    minHeight: 48,
-    gap: 4,
+    width: 52,
+    minHeight: 44,
+    gap: 3,
   },
   // Bumped from 12/600 → 11/700 with stronger shadow so the count reads as
   // a label glued to the icon (TikTok pattern) instead of floating text.
   sidebarCount: {
     color: '#fff',
-    fontSize: 11,
-    fontWeight: '700',
-    letterSpacing: 0.2,
+    fontSize: 12.5,
+    fontWeight: '600',
+    textAlign: 'center',
+    letterSpacing: 0.1,
     textShadowColor: 'rgba(0,0,0,0.85)',
     textShadowOffset: { width: 0, height: 1 },
     textShadowRadius: 4,
@@ -3702,12 +3790,12 @@ const styles = StyleSheet.create({
     left: 14,
     right: 76,
     zIndex: 10,
-    gap: 9,
+    gap: 8,
   },
   username: {
     color: '#fff',
     fontSize: 16,
-    fontWeight: '800',
+    fontWeight: '600',
     letterSpacing: -0.2,
     ...TEXT_SHADOW,
   },
@@ -3729,8 +3817,10 @@ const styles = StyleSheet.create({
   musicRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
-    marginTop: 4,
+    gap: 7,
+    marginTop: 2,
+    // não encosta no mudo (canto inferior direito)
+    marginRight: 6,
   },
   marqueeContainer: {
     flex: 1,
@@ -3740,6 +3830,14 @@ const styles = StyleSheet.create({
   marqueeTrack: {
     flexDirection: 'row',
     alignItems: 'center',
+  },
+  marqueeMeasure: {
+    position: 'absolute',
+    left: 0,
+    top: 0,
+    width: 4000,
+    flexDirection: 'row',
+    opacity: 0,
   },
   marqueeText: {
     color: '#fff',
@@ -3839,11 +3937,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: 40,
   },
   emptyIcon: {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
-    borderWidth: 2,
-    borderColor: 'rgba(255,255,255,0.18)',
+    width: 76,
+    height: 76,
+    borderRadius: 38,
+    borderWidth: 1.5,
+    borderColor: 'rgba(255,255,255,0.2)',
+    backgroundColor: 'rgba(255,255,255,0.04)',
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: 8,
@@ -3984,22 +4083,58 @@ const styles = StyleSheet.create({
   },
 
   // ── Reel tab bar (Following / For You) ──
-  reelTabBar: {
+  // [2026-10-13 reels-visual] cabeçalho: abas centradas + ações à direita (sem sobreposição)
+  reelHeader: {
     position: 'absolute',
-    top: Platform.OS === 'ios' ? 54 : androidTopInset(16),
     left: 0,
     right: 0,
+    height: REEL_HEADER_H,
+    zIndex: 20,
+    justifyContent: 'center',
+  },
+  reelTabBar: {
+    position: 'absolute',
+    top: 0,
+    bottom: 0,
+    left: 92,
+    right: 92,
     flexDirection: 'row',
     justifyContent: 'center',
     alignItems: 'center',
-    gap: 28,
-    zIndex: 20,
-    paddingVertical: 8,
+    gap: 22,
+  },
+  reelHeaderRight: {
+    position: 'absolute',
+    right: 8,
+    top: 0,
+    bottom: 0,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  reelHeaderIconBtn: {
+    width: 40,
+    height: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
+    ...(isWeb ? { filter: 'drop-shadow(0 1px 3px rgba(0,0,0,0.55))' } : { shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.45, shadowRadius: 3 }),
+  },
+  reelCreatePlus: {
+    position: 'absolute',
+    right: 5,
+    bottom: 7,
+    width: 13,
+    height: 13,
+    borderRadius: 6.5,
+    backgroundColor: '#fff',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   reelTabText: {
-    color: 'rgba(255,255,255,0.6)',
+    color: 'rgba(255,255,255,0.62)',
     fontSize: 16,
     fontWeight: '600',
+    letterSpacing: -0.1,
     textAlign: 'center',
     textShadowColor: 'rgba(0,0,0,0.5)',
     textShadowOffset: { width: 0, height: 1 },
@@ -4010,12 +4145,12 @@ const styles = StyleSheet.create({
     fontWeight: '800',
   },
   reelTabIndicator: {
-    width: 22,
-    height: 3,
+    width: 20,
+    height: 2.5,
     borderRadius: 2,
     backgroundColor: '#fff',
     alignSelf: 'center',
-    marginTop: 5,
+    marginTop: 6,
     ...(isWeb ? { boxShadow: '0 0 8px rgba(255,255,255,0.5)' } : {}),
   },
 

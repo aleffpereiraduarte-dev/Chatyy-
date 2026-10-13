@@ -1307,7 +1307,9 @@ function ChatHub() {
   return (
     <View style={[styles.container, {
       backgroundColor: reelsImmersive ? '#000' : (isDark ? SHELL_DARK : '#ffffff'),
-      paddingTop: insets.top,
+      // [2026-10-13 reels-visual] Aba Reels = vídeo de borda a borda (TikTok/Instagram):
+      // começa atrás da status bar; o ReelsViewer aplica o inset no cabeçalho + gradiente.
+      paddingTop: activeTab === 'reels' ? 0 : insets.top,
     }]}>
       {/* WhatsApp-style header — no back arrow on mobile (Chatyy IS home) */}
       <View style={[styles.header, {

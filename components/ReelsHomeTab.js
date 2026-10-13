@@ -6,6 +6,7 @@
 import React, { useCallback } from 'react';
 import { View, StyleSheet } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { StatusBar } from 'expo-status-bar';
 import ReelPublishProgress from './ReelPublishProgress';
 
 const ReelsViewer = React.lazy(() => import('./ReelsViewer'));
@@ -16,6 +17,8 @@ export default function ReelsHomeTab({ colors, isDark, t, user, router, tabActiv
   const onCreate = useCallback(() => { try { router?.push('/video-studio/camera'); } catch {} }, [router]);
   return (
     <View style={styles.root}>
+      {/* [2026-10-13 reels-visual] vídeo começa atrás da status bar → relógio/bateria claros */}
+      {active ? <StatusBar style="light" /> : null}
       <React.Suspense fallback={<View style={styles.root} />}>
         <ReelsViewer colors={colors} isDark={isDark} t={t} user={user} router={router}
           parentActive={active} onCreate={onCreate} recommended />
