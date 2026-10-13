@@ -8070,4 +8070,7 @@ export default {
   "waImport.sumBlocked": "Imezuiwa kwa usalama",
   "waImport.askBia": "Fupisha na Bia",
   "waImport.cancelledTitle": "Uingizaji umeghairiwa",
+  // [2026-10-13 reels-android] erro do player no Reels
+  "reels.videoError": "Imeshindwa kucheza video hii",
+  "reels.videoRetry": "Jaribu tena",
 };

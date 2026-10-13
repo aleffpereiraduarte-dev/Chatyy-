@@ -1414,4 +1414,7 @@ export default {
   "waImport.sumBlocked": "ಸುರಕ್ಷತೆಗಾಗಿ ನಿರ್ಬಂಧಿಸಲಾಗಿದೆ",
   "waImport.askBia": "Bia ಜೊತೆ ಸಾರಾಂಶ",
   "waImport.cancelledTitle": "ಆಮದು ರದ್ದಾಗಿದೆ",
+  // [2026-10-13 reels-android] erro do player no Reels
+  "reels.videoError": "ಈ ವೀಡಿಯೊ ಪ್ಲೇ ಮಾಡಲಾಗಲಿಲ್ಲ",
+  "reels.videoRetry": "ಮತ್ತೆ ಪ್ರಯತ್ನಿಸಿ",
 };

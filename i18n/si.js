@@ -612,4 +612,7 @@ export default {
   "waImport.sumBlocked": "ආරක්ෂාව සඳහා අවහිර කළා",
   "waImport.askBia": "Bia සමඟ සාරාංශය",
   "waImport.cancelledTitle": "ආයාතය අවලංගු කළා",
+  // [2026-10-13 reels-android] erro do player no Reels
+  "reels.videoError": "මෙම වීඩියෝව ධාවනය කළ නොහැකි විය",
+  "reels.videoRetry": "නැවත උත්සාහ කරන්න",
 };

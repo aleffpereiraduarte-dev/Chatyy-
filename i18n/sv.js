@@ -8848,4 +8848,7 @@ export default {
   "waImport.sumBlocked": "Blockerade av säkerhetsskäl",
   "waImport.askBia": "Sammanfatta med Bia",
   "waImport.cancelledTitle": "Importen avbröts",
+  // [2026-10-13 reels-android] erro do player no Reels
+  "reels.videoError": "Det gick inte att spela upp videon",
+  "reels.videoRetry": "Försök igen",
 };

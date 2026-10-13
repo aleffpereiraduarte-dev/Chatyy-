@@ -8066,4 +8066,7 @@ export default {
   "waImport.sumBlocked": "భద్రత కోసం బ్లాక్",
   "waImport.askBia": "Biaతో సారాంశం",
   "waImport.cancelledTitle": "దిగుమతి రద్దయింది",
+  // [2026-10-13 reels-android] erro do player no Reels
+  "reels.videoError": "ఈ వీడియోను ప్లే చేయలేకపోయాం",
+  "reels.videoRetry": "మళ్లీ ప్రయత్నించండి",
 };

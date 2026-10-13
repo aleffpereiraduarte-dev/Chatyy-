@@ -8070,4 +8070,7 @@ export default {
   "waImport.sumBlocked": "נחסם מטעמי אבטחה",
   "waImport.askBia": "סיכום עם Bia",
   "waImport.cancelledTitle": "הייבוא בוטל",
+  // [2026-10-13 reels-android] erro do player no Reels
+  "reels.videoError": "לא ניתן להפעיל את הסרטון",
+  "reels.videoRetry": "נסה שוב",
 };

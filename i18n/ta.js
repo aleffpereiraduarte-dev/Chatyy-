@@ -3816,4 +3816,7 @@ export default {
   "waImport.sumBlocked": "பாதுகாப்புக்காகத் தடுக்கப்பட்டது",
   "waImport.askBia": "Bia உடன் சுருக்கம்",
   "waImport.cancelledTitle": "இறக்குமதி ரத்துசெய்யப்பட்டது",
+  // [2026-10-13 reels-android] erro do player no Reels
+  "reels.videoError": "இந்த வீடியோவை இயக்க முடியவில்லை",
+  "reels.videoRetry": "மீண்டும் முயலவும்",
 };

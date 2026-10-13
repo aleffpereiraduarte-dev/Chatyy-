@@ -8066,4 +8066,7 @@ export default {
   "waImport.sumBlocked": "Аюулгүй байдлын үүднээс хаасан",
   "waImport.askBia": "Bia-тай хураангуйлах",
   "waImport.cancelledTitle": "Импорт цуцлагдсан",
+  // [2026-10-13 reels-android] erro do player no Reels
+  "reels.videoError": "Энэ видеог тоглуулж чадсангүй",
+  "reels.videoRetry": "Дахин оролдох",
 };

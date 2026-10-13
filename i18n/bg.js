@@ -8070,4 +8070,7 @@ export default {
   "waImport.sumBlocked": "Блокирани от съображения за сигурност",
   "waImport.askBia": "Обобщи с Бия",
   "waImport.cancelledTitle": "Импортът е отменен",
+  // [2026-10-13 reels-android] erro do player no Reels
+  "reels.videoError": "Видеото не може да бъде възпроизведено",
+  "reels.videoRetry": "Опитай отново",
 };

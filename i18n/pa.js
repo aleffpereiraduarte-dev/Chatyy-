@@ -613,4 +613,7 @@ export default {
   "waImport.sumBlocked": "ਸੁਰੱਖਿਆ ਲਈ ਬਲੌਕ",
   "waImport.askBia": "Bia ਨਾਲ ਸਾਰ",
   "waImport.cancelledTitle": "ਇੰਪੋਰਟ ਰੱਦ ਹੋਇਆ",
+  // [2026-10-13 reels-android] erro do player no Reels
+  "reels.videoError": "ਇਹ ਵੀਡੀਓ ਚਲਾਈ ਨਹੀਂ ਜਾ ਸਕੀ",
+  "reels.videoRetry": "ਦੁਬਾਰਾ ਕੋਸ਼ਿਸ਼ ਕਰੋ",
 };

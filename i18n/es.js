@@ -11641,4 +11641,7 @@ export default {
   "waImport.sumBlocked": "Bloqueados por seguridad",
   "waImport.askBia": "Resumir con Bia",
   "waImport.cancelledTitle": "Importación cancelada",
+  // [2026-10-13 reels-android] erro do player no Reels
+  "reels.videoError": "No se pudo reproducir este video",
+  "reels.videoRetry": "Reintentar",
 };

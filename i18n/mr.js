@@ -6220,4 +6220,7 @@ export default {
   "waImport.sumBlocked": "सुरक्षेसाठी ब्लॉक",
   "waImport.askBia": "Bia सह सारांश",
   "waImport.cancelledTitle": "आयात रद्द झाली",
+  // [2026-10-13 reels-android] erro do player no Reels
+  "reels.videoError": "हा व्हिडिओ चालवता आला नाही",
+  "reels.videoRetry": "पुन्हा प्रयत्न करा",
 };

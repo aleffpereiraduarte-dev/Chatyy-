@@ -615,4 +615,7 @@ export default {
   "waImport.sumBlocked": "സുരക്ഷയ്ക്കായി തടഞ്ഞു",
   "waImport.askBia": "Bia-യോടൊപ്പം സംഗ്രഹം",
   "waImport.cancelledTitle": "ഇമ്പോർട്ട് റദ്ദാക്കി",
+  // [2026-10-13 reels-android] erro do player no Reels
+  "reels.videoError": "ഈ വീഡിയോ പ്ലേ ചെയ്യാനായില്ല",
+  "reels.videoRetry": "വീണ്ടും ശ്രമിക്കുക",
 };

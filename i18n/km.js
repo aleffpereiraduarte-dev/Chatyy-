@@ -8066,4 +8066,7 @@ export default {
   "waImport.sumBlocked": "ត្រូវបានទប់ស្កាត់ដើម្បីសុវត្ថិភាព",
   "waImport.askBia": "សង្ខេបជាមួយ Bia",
   "waImport.cancelledTitle": "ការនាំចូលត្រូវបានបោះបង់",
+  // [2026-10-13 reels-android] erro do player no Reels
+  "reels.videoError": "មិនអាចចាក់វីដេអូនេះបានទេ",
+  "reels.videoRetry": "ព្យាយាមម្ដងទៀត",
 };

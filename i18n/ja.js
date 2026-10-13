@@ -10894,4 +10894,7 @@ export default {
   "waImport.sumBlocked": "安全のためブロック",
   "waImport.askBia": "Biaで要約",
   "waImport.cancelledTitle": "インポートを中止しました",
+  // [2026-10-13 reels-android] erro do player no Reels
+  "reels.videoError": "この動画を再生できませんでした",
+  "reels.videoRetry": "再試行",
 };

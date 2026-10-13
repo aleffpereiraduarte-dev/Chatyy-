@@ -8066,4 +8066,7 @@ export default {
   "waImport.sumBlocked": "လုံခြုံရေးအတွက် ပိတ်ထားသည်",
   "waImport.askBia": "Bia ဖြင့် အနှစ်ချုပ်ရန်",
   "waImport.cancelledTitle": "တင်သွင်းမှု ပယ်ဖျက်ပြီး",
+  // [2026-10-13 reels-android] erro do player no Reels
+  "reels.videoError": "ဤဗီဒီယိုကို ဖွင့်၍မရပါ",
+  "reels.videoRetry": "ထပ်စမ်းကြည့်ပါ",
 };

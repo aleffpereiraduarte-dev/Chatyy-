@@ -8070,4 +8070,7 @@ export default {
   "waImport.sumBlocked": "Блокирано из безбедносних разлога",
   "waImport.askBia": "Сажми уз Бију",
   "waImport.cancelledTitle": "Увоз је отказан",
+  // [2026-10-13 reels-android] erro do player no Reels
+  "reels.videoError": "Овај видео није могуће пустити",
+  "reels.videoRetry": "Покушај поново",
 };

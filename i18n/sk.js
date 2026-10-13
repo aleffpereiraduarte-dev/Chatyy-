@@ -8070,4 +8070,7 @@ export default {
   "waImport.sumBlocked": "Blokované z bezpečnostných dôvodov",
   "waImport.askBia": "Zhrnúť s Biou",
   "waImport.cancelledTitle": "Import zrušený",
+  // [2026-10-13 reels-android] erro do player no Reels
+  "reels.videoError": "Toto video sa nepodarilo prehrať",
+  "reels.videoRetry": "Skúsiť znova",
 };

@@ -11672,4 +11672,7 @@ export default {
   "waImport.sumBlocked": "Aus Sicherheitsgründen blockiert",
   "waImport.askBia": "Mit Bia zusammenfassen",
   "waImport.cancelledTitle": "Import abgebrochen",
+  // [2026-10-13 reels-android] erro do player no Reels
+  "reels.videoError": "Dieses Video konnte nicht abgespielt werden",
+  "reels.videoRetry": "Erneut versuchen",
 };

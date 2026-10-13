@@ -8070,4 +8070,7 @@ export default {
   "waImport.sumBlocked": "Blokirano zbog sigurnosti",
   "waImport.askBia": "Sažmi s Biom",
   "waImport.cancelledTitle": "Uvoz otkazan",
+  // [2026-10-13 reels-android] erro do player no Reels
+  "reels.videoError": "Ovaj videozapis nije moguće reproducirati",
+  "reels.videoRetry": "Pokušaj ponovno",
 };

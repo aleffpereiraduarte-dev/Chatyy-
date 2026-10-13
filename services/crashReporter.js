@@ -353,6 +353,33 @@ export function reportCrash(payload) {
   } catch {}
 }
 
+// [2026-10-13 reels-android] Evento diagnóstico curto no log de crashes
+// (data/crashes/YYYYMMDD.log, action=crash_report), ex.: "[REELS] player_error".
+// Sem dados pessoais: o chamador passa só plataforma/estado/código. Teto de 12
+// por boot e 1 por (tag+código) a cada 60s — nunca vira enxurrada.
+const _taggedSeen = Object.create(null);
+let _taggedCount = 0;
+export function reportTaggedEvent(tag, event, data) {
+  try {
+    const now = Date.now();
+    const key = `${tag}|${event}|${data && data.code ? String(data.code).slice(0, 40) : ''}`;
+    if (_taggedCount >= 12) return;
+    if (_taggedSeen[key] && now - _taggedSeen[key] < 60000) return;
+    _taggedSeen[key] = now;
+    _taggedCount++;
+    let stack = '';
+    try { stack = JSON.stringify({ ...(data || {}), plat: _platform }).slice(0, 1500); } catch {}
+    let comp = '';
+    try { comp = _buildTag(); } catch {}
+    addBreadcrumb(`${String(tag).replace(/\W/g, '')}_${event}`, '');
+    fetch('https://chatyy.com.br/api/email.php?action=crash_report', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message: `[${tag}] ${event}`, stack, component: comp, fatal: false }),
+    }).catch(() => {});
+  } catch {}
+}
+
 export function setReporterIdentity({ email, bearer } = {}) {
   if (bearer) _bearer = String(bearer);
   if (email) _post('identity', `email=${email}`);

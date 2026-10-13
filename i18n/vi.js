@@ -8070,4 +8070,7 @@ export default {
   "waImport.sumBlocked": "Bị chặn vì an toàn",
   "waImport.askBia": "Tóm tắt với Bia",
   "waImport.cancelledTitle": "Đã hủy nhập",
+  // [2026-10-13 reels-android] erro do player no Reels
+  "reels.videoError": "Không thể phát video này",
+  "reels.videoRetry": "Thử lại",
 };

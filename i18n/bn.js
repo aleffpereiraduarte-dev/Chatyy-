@@ -8070,4 +8070,7 @@ export default {
   "waImport.sumBlocked": "নিরাপত্তার জন্য ব্লক",
   "waImport.askBia": "Bia দিয়ে সারাংশ",
   "waImport.cancelledTitle": "ইমপোর্ট বাতিল হয়েছে",
+  // [2026-10-13 reels-android] erro do player no Reels
+  "reels.videoError": "ভিডিওটি চালানো যায়নি",
+  "reels.videoRetry": "আবার চেষ্টা করুন",
 };

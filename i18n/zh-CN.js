@@ -8108,4 +8108,7 @@ export default {
   "waImport.sumBlocked": "因安全原因被拦截",
   "waImport.askBia": "让 Bia 总结",
   "waImport.cancelledTitle": "导入已取消",
+  // [2026-10-13 reels-android] erro do player no Reels
+  "reels.videoError": "无法播放此视频",
+  "reels.videoRetry": "重试",
 };

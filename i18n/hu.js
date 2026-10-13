@@ -8070,4 +8070,7 @@ export default {
   "waImport.sumBlocked": "Biztonsági okból letiltva",
   "waImport.askBia": "Összefoglalás Biával",
   "waImport.cancelledTitle": "Importálás megszakítva",
+  // [2026-10-13 reels-android] erro do player no Reels
+  "reels.videoError": "A videó nem játszható le",
+  "reels.videoRetry": "Próbáld újra",
 };

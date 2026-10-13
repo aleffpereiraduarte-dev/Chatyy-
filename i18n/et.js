@@ -8070,4 +8070,7 @@ export default {
   "waImport.sumBlocked": "Turvalisuse tõttu blokeeritud",
   "waImport.askBia": "Kokkuvõte Biaga",
   "waImport.cancelledTitle": "Import tühistatud",
+  // [2026-10-13 reels-android] erro do player no Reels
+  "reels.videoError": "Videot ei õnnestunud esitada",
+  "reels.videoRetry": "Proovi uuesti",
 };

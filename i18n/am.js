@@ -8066,4 +8066,7 @@ export default {
   "waImport.sumBlocked": "ለደህንነት ታግደዋል",
   "waImport.askBia": "ከBia ጋር አጠቃልል",
   "waImport.cancelledTitle": "ማስመጣቱ ተሰርዟል",
+  // [2026-10-13 reels-android] erro do player no Reels
+  "reels.videoError": "ይህን ቪዲዮ ማጫወት አልተቻለም",
+  "reels.videoRetry": "እንደገና ሞክር",
 };

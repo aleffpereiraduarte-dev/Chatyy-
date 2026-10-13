@@ -10893,4 +10893,7 @@ export default {
   "waImport.sumBlocked": "Diblokir demi keamanan",
   "waImport.askBia": "Ringkas dengan Bia",
   "waImport.cancelledTitle": "Impor dibatalkan",
+  // [2026-10-13 reels-android] erro do player no Reels
+  "reels.videoError": "Tidak dapat memutar video ini",
+  "reels.videoRetry": "Coba lagi",
 };

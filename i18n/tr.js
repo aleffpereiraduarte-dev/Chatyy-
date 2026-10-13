@@ -8070,4 +8070,7 @@ export default {
   "waImport.sumBlocked": "Güvenlik nedeniyle engellendi",
   "waImport.askBia": "Bia ile özetle",
   "waImport.cancelledTitle": "İçe aktarma iptal edildi",
+  // [2026-10-13 reels-android] erro do player no Reels
+  "reels.videoError": "Bu video oynatılamadı",
+  "reels.videoRetry": "Tekrar dene",
 };

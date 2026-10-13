@@ -8066,4 +8066,7 @@ export default {
   "waImport.sumBlocked": "დაბლოკილია უსაფრთხოებისთვის",
   "waImport.askBia": "შეჯამება Bia-სთან",
   "waImport.cancelledTitle": "იმპორტი გაუქმდა",
+  // [2026-10-13 reels-android] erro do player no Reels
+  "reels.videoError": "ვიდეოს დაკვრა ვერ მოხერხდა",
+  "reels.videoRetry": "ხელახლა ცდა",
 };

@@ -8066,4 +8066,7 @@ export default {
   "waImport.sumBlocked": "Xavfsizlik uchun bloklandi",
   "waImport.askBia": "Bia bilan xulosa",
   "waImport.cancelledTitle": "Import bekor qilindi",
+  // [2026-10-13 reels-android] erro do player no Reels
+  "reels.videoError": "Bu videoni ijro etib bo'lmadi",
+  "reels.videoRetry": "Qayta urinish",
 };

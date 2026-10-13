@@ -8848,4 +8848,7 @@ export default {
   "waImport.sumBlocked": "Estetty turvallisuussyistä",
   "waImport.askBia": "Tiivistä Bian kanssa",
   "waImport.cancelledTitle": "Tuonti peruutettu",
+  // [2026-10-13 reels-android] erro do player no Reels
+  "reels.videoError": "Videota ei voitu toistaa",
+  "reels.videoRetry": "Yritä uudelleen",
 };

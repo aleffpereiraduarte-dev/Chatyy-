@@ -8108,4 +8108,7 @@ export default {
   "waImport.sumBlocked": "안전을 위해 차단됨",
   "waImport.askBia": "Bia로 요약",
   "waImport.cancelledTitle": "가져오기 취소됨",
+  // [2026-10-13 reels-android] erro do player no Reels
+  "reels.videoError": "이 동영상을 재생할 수 없습니다",
+  "reels.videoRetry": "다시 시도",
 };

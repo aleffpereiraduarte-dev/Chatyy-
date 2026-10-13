@@ -8066,4 +8066,7 @@ export default {
   "waImport.sumBlocked": "Қауіпсіздік үшін бұғатталды",
   "waImport.askBia": "Biа-мен түйіндеу",
   "waImport.cancelledTitle": "Импорт болдырылмады",
+  // [2026-10-13 reels-android] erro do player no Reels
+  "reels.videoError": "Бұл бейнені ойнату мүмкін болмады",
+  "reels.videoRetry": "Қайталау",
 };

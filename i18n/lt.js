@@ -8070,4 +8070,7 @@ export default {
   "waImport.sumBlocked": "Užblokuota dėl saugumo",
   "waImport.askBia": "Apibendrinti su Bia",
   "waImport.cancelledTitle": "Importavimas atšauktas",
+  // [2026-10-13 reels-android] erro do player no Reels
+  "reels.videoError": "Nepavyko paleisti šio vaizdo įrašo",
+  "reels.videoRetry": "Bandyti dar kartą",
 };

@@ -8070,4 +8070,7 @@ export default {
   "waImport.sumBlocked": "Bloquejats per seguretat",
   "waImport.askBia": "Resumeix amb la Bia",
   "waImport.cancelledTitle": "Importació cancel·lada",
+  // [2026-10-13 reels-android] erro do player no Reels
+  "reels.videoError": "No s'ha pogut reproduir aquest vídeo",
+  "reels.videoRetry": "Torna-ho a provar",
 };

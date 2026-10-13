@@ -8070,4 +8070,7 @@ export default {
   "waImport.sumBlocked": "Αποκλείστηκαν για ασφάλεια",
   "waImport.askBia": "Σύνοψη με τη Bia",
   "waImport.cancelledTitle": "Η εισαγωγή ακυρώθηκε",
+  // [2026-10-13 reels-android] erro do player no Reels
+  "reels.videoError": "Δεν ήταν δυνατή η αναπαραγωγή του βίντεο",
+  "reels.videoRetry": "Δοκιμάστε ξανά",
 };

@@ -8848,4 +8848,7 @@ export default {
   "waImport.sumBlocked": "Zablokowane ze względów bezpieczeństwa",
   "waImport.askBia": "Podsumuj z Bią",
   "waImport.cancelledTitle": "Import anulowany",
+  // [2026-10-13 reels-android] erro do player no Reels
+  "reels.videoError": "Nie udało się odtworzyć tego filmu",
+  "reels.videoRetry": "Spróbuj ponownie",
 };

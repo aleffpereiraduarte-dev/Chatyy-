@@ -8848,4 +8848,7 @@ export default {
   "waImport.sumBlocked": "Заблокировано ради безопасности",
   "waImport.askBia": "Кратко с Бией",
   "waImport.cancelledTitle": "Импорт отменён",
+  // [2026-10-13 reels-android] erro do player no Reels
+  "reels.videoError": "Не удалось воспроизвести видео",
+  "reels.videoRetry": "Повторить",
 };

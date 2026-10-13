@@ -8070,4 +8070,7 @@ export default {
   "waImport.sumBlocked": "Bloķēts drošības dēļ",
   "waImport.askBia": "Apkopot ar Bia",
   "waImport.cancelledTitle": "Imports atcelts",
+  // [2026-10-13 reels-android] erro do player no Reels
+  "reels.videoError": "Neizdevās atskaņot šo video",
+  "reels.videoRetry": "Mēģināt vēlreiz",
 };

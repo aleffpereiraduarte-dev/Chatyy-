@@ -8066,4 +8066,7 @@ export default {
   "waImport.sumBlocked": "Արգելափակված է անվտանգության համար",
   "waImport.askBia": "Ամփոփել Bia-ի հետ",
   "waImport.cancelledTitle": "Ներմուծումը չեղարկվեց",
+  // [2026-10-13 reels-android] erro do player no Reels
+  "reels.videoError": "Չհաջողվեց նվագարկել տեսանյութը",
+  "reels.videoRetry": "Կրկին փորձել",
 };

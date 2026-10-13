@@ -42,6 +42,20 @@ import Svg, { Defs, LinearGradient as SvgLinearGradient, Stop, Rect as SvgRect }
 // degrade gracefully when these are null.
 let _expoShorts = null;
 try { _expoShorts = require('expo-shorts'); } catch {}
+// [2026-10-13 reels-android] Android: expo-shorts DESLIGADO (Reels "não abria" — tela preta).
+// Causa (nativo, ExoPoolManager.kt): prefetch/releasePool são AsyncFunction → rodam na
+// HandlerThread "expo.modules.AsyncFunctionQueue" (tem Looper). O prefetch do próximo reel
+// costuma chegar ANTES de a view nativa montar → ensureSlot cria os 3 ExoPlayer nessa thread
+// (applicationLooper = fila de módulos) → na thread principal PlayerView.setPlayer() exige
+// applicationLooper == main e lança → attachPlayerForUrl cai no placeholder preto ("Shorts
+// player") e o pool fica envenenado; ao voltar pra aba (releasePool) o ciclo se repete. O
+// onError da view não era ouvido no JS. Android usa expo-video (ExoPlayer correto, TextureView).
+// Religar só p/ teste: globalThis.__chatyy_reels_shorts_android = true (antes de abrir o Reels).
+const _shortsAllowedHere = () => {
+  if (Platform.OS !== 'android') return true;
+  try { return globalThis.__chatyy_reels_shorts_android === true; } catch { return false; }
+};
+if (!_shortsAllowedHere()) _expoShorts = null;
 const prefetchShortsVideoFn = _expoShorts?.prefetchShortsVideo || null;
 const releaseShortsPoolFn = _expoShorts?.releaseShortsPool || null;
 const setShortsAudioSessionPlaybackFn = _expoShorts?.setShortsAudioSessionPlayback || null;
@@ -111,6 +125,7 @@ const ShortsPlayerLazy = (() => {
     const wrapper = mod?.ShortsPlayer;
     if (!wrapper) return null;
     if (Platform.OS === 'web') return null;
+    if (!_shortsAllowedHere()) return null; // [2026-10-13 reels-android] ver topo do arquivo
     try {
       // [fix 2026-07-05] The native module/view registers as "ExpoShorts" (see
       // ShortsPlayer.tsx requireNativeViewManager/requireNativeModule('ExpoShorts')),
@@ -138,7 +153,7 @@ const ShortsPlayerLazy = (() => {
 // lives as a sibling component and we mount it only when ShortsPlayerLazy
 // is missing. Supports the same isActive/paused/muted semantics so the
 // rest of the feed (scroll-to-play, mute toggle) keeps working.
-function VideoFallbackPlayer({ videoUrl, isActive, paused, muted, playbackRate = 1, onTimeUpdate, onReady }) {
+function VideoFallbackPlayer({ videoUrl, isActive, paused, muted, playbackRate = 1, onTimeUpdate, onReady, onPlaybackReady, onError }) {
   const VideoView = _expoVideo?.VideoView;
   const useVideoPlayer = _expoVideo?.useVideoPlayer;
   const player = useVideoPlayer && useVideoPlayer(cachedVideoSource(videoUrl || ''), (p) => {
@@ -165,6 +180,28 @@ function VideoFallbackPlayer({ videoUrl, isActive, paused, muted, playbackRate =
     if (!player) return;
     try { player.muted = !!muted; } catch {}
   }, [muted, player]);
+
+  // [2026-10-13 reels-android] Pronto/erro do player → NativeReelVideo (estado de erro +
+  // "Tentar de novo" + evento [REELS]). Antes um erro de decodificação/rede = tela preta muda.
+  const onPlaybackReadyRef = useRef(onPlaybackReady);
+  const onErrorRef = useRef(onError);
+  onPlaybackReadyRef.current = onPlaybackReady;
+  onErrorRef.current = onError;
+  useEffect(() => {
+    if (!player || typeof player.addListener !== 'function') return undefined;
+    let sub = null;
+    try {
+      if (player.status === 'readyToPlay') onPlaybackReadyRef.current?.();
+      sub = player.addListener('statusChange', (ev) => {
+        try {
+          const st = ev?.status;
+          if (st === 'readyToPlay') onPlaybackReadyRef.current?.();
+          else if (st === 'error') onErrorRef.current?.(ev?.error?.message || 'status_error');
+        } catch {}
+      });
+    } catch {}
+    return () => { try { sub?.remove?.(); } catch {} };
+  }, [player]);
 
   // Playback rate (rare, but supported by ShortsPlayer so we mirror it).
   useEffect(() => {
@@ -203,12 +240,61 @@ function VideoFallbackPlayer({ videoUrl, isActive, paused, muted, playbackRate =
       nativeControls={false}
       allowsFullscreen={false}
       allowsPictureInPicture={false}
+      // [2026-10-13 reels-android] SurfaceView dentro de FlatList paginada (removeClippedSubviews)
+      // pode ficar preta/fora de posição no Android; TextureView acompanha o scroll.
+      {...(Platform.OS === 'android' ? { surfaceType: 'textureView' } : null)}
     />
   );
 }
 
-const NativeReelVideo = memo(function NativeReelVideo({ videoUrl, poster, isActive, paused, playbackRate = 1, isPreload = false, muted = true, onTimeUpdate, onReady, hardGateClosed = false }) {
+// [2026-10-13 reels-android] Diagnóstico leve: código de erro sem URL/e-mail (sem dado pessoal).
+function _reelErrCode(msg) {
+  try {
+    return String(msg || 'unknown')
+      .replace(/https?:\/\/\S+/gi, '<url>')
+      .replace(/[\w.+-]+@[\w.-]+/g, '<email>')
+      .slice(0, 80);
+  } catch { return 'unknown'; }
+}
+function _reportReels(event, data) {
+  try { require('../services/crashReporter').reportTaggedEvent('REELS', event, data); } catch {}
+}
+const REEL_READY_TIMEOUT_MS = 15000;
+
+const NativeReelVideo = memo(function NativeReelVideo({ videoUrl, poster, isActive, paused, playbackRate = 1, isPreload = false, muted = true, onTimeUpdate, onReady, hardGateClosed = false, t }) {
   const shortsRef = useRef(null);
+  // [2026-10-13 reels-android] Erro/timeout do player → aviso + "Tentar de novo" (remonta o
+  // player via key) em vez de tela preta muda, e 1 evento [REELS] no log de crashes.
+  const [failed, setFailed] = useState(null);
+  const [attempt, setAttempt] = useState(0);
+  const readyRef = useRef(false);
+  const engine = ShortsPlayerLazy ? 'shorts' : (_expoVideo ? 'expo-video' : 'none');
+  useEffect(() => { readyRef.current = false; setFailed(null); }, [videoUrl]);
+  const handlePlayerReady = useCallback(() => { readyRef.current = true; }, []);
+  const handlePlayerError = useCallback((msg) => {
+    const code = _reelErrCode(msg);
+    setFailed(code);
+    _reportReels('player_error', { engine, state: isActive ? 'active' : 'preload', attempt, code });
+  }, [engine, isActive, attempt]);
+  const shouldPlayNow = !!isActive && !paused && !isPreload && !hardGateClosed;
+  useEffect(() => {
+    if (!shouldPlayNow || failed || readyRef.current || !videoUrl) return undefined;
+    const id = setTimeout(() => {
+      if (readyRef.current) return;
+      setFailed('timeout');
+      _reportReels('player_timeout', { engine, state: 'active', attempt, code: 'timeout' });
+    }, REEL_READY_TIMEOUT_MS);
+    return () => clearTimeout(id);
+  }, [shouldPlayNow, failed, videoUrl, attempt, engine]);
+  const retry = useCallback(() => { readyRef.current = false; setFailed(null); setAttempt((a) => a + 1); }, []);
+  const errorOverlay = (failed && isActive) ? (
+    <View style={[StyleSheet.absoluteFill, styles.reelErrorWrap]} pointerEvents="box-none">
+      <Text style={styles.reelErrorText}>{t?.('reels.videoError') || 'Não foi possível reproduzir este vídeo'}</Text>
+      <Pressable onPress={retry} hitSlop={10} accessibilityRole="button" style={({ pressed }) => [styles.reelErrorBtn, { opacity: pressed ? 0.7 : 1 }]}>
+        <Text style={styles.reelErrorBtnText}>{t?.('reels.videoRetry') || 'Tentar de novo'}</Text>
+      </Pressable>
+    </View>
+  ) : null;
 
   // Expose the imperative seek API to the parent through onReady — keeps the
   // callsite identical to the old WebView-backed component.
@@ -223,6 +309,8 @@ const NativeReelVideo = memo(function NativeReelVideo({ videoUrl, poster, isActi
 
   // Time updates from native (~8fps). Replaces the WebView postMessage tick.
   const handleNativeTime = useCallback((ms, durMs) => {
+    // [2026-10-13 reels-android] playhead andando = tocando (iOS não reemite ready p/ item pré-carregado)
+    if (ms > 0) readyRef.current = true;
     if (onTimeUpdate) onTimeUpdate(ms, durMs);
   }, [onTimeUpdate]);
 
@@ -241,15 +329,21 @@ const NativeReelVideo = memo(function NativeReelVideo({ videoUrl, poster, isActi
   if (!ShortsPlayerLazy) {
     if (_expoVideo) {
       return (
-        <VideoFallbackPlayer
-          videoUrl={videoUrl}
-          isActive={isActive && !isPreload && !hardGateClosed}
-          paused={paused || hardGateClosed}
-          muted={effectiveMuted}
-          playbackRate={playbackRate}
-          onTimeUpdate={onTimeUpdate}
-          onReady={onReady}
-        />
+        <>
+          <VideoFallbackPlayer
+            key={`a${attempt}`}
+            videoUrl={videoUrl}
+            isActive={isActive && !isPreload && !hardGateClosed}
+            paused={paused || hardGateClosed}
+            muted={effectiveMuted}
+            playbackRate={playbackRate}
+            onTimeUpdate={handleNativeTime}
+            onReady={onReady}
+            onPlaybackReady={handlePlayerReady}
+            onError={handlePlayerError}
+          />
+          {errorOverlay}
+        </>
       );
     }
     return <View style={[StyleSheet.absoluteFill, { backgroundColor: '#000' }]} />;
@@ -261,13 +355,17 @@ const NativeReelVideo = memo(function NativeReelVideo({ videoUrl, poster, isActi
   return (
     <View style={StyleSheet.absoluteFill}>
       <ShortsPlayerLazy
+        key={`a${attempt}`}
         ref={shortsRef}
         videoUrl={videoUrl}
         playWhenInFocus={shouldPlay}
         muted={effectiveMuted}
         playbackRate={Number(playbackRate) || 1}
         onTime={handleNativeTime}
+        onPlaybackReady={handlePlayerReady}
+        onError={handlePlayerError}
       />
+      {errorOverlay}
     </View>
   );
 });
@@ -2078,6 +2176,7 @@ const ReelItem = memo(function ReelItem({ onCreate, reel, isActive, colors, isDa
             onReady={handleNativeReady}
             isPreload={!!preload && !isActive}
             hardGateClosed={!screenFocused}
+            t={t}
           />
         )}
       </TouchableOpacity>
@@ -2928,12 +3027,16 @@ export default function ReelsViewer({ colors, isDark, t, user, router, feedMode:
       if (!r || r.success === false) {
         const msg = `${r?.message || ''} ${r?.data?.error || ''}`;
         if (/unknown|not_migrated/i.test(msg)) recSupportedRef.current = false;
+        _reportReels('rec_feed_error', { state: reset ? 'first' : 'more', code: _reelErrCode(msg.trim() || 'no_response') });
         return null;
       }
       const d = r.data || {};
       recCursorRef.current = d.next_cursor || null;
       return { posts: Array.isArray(d.posts) ? d.posts : [], hasMore: !!d.has_more, onboarding: !!d.onboarding_needed };
-    } catch { return null; }
+    } catch (e) {
+      _reportReels('rec_feed_error', { state: reset ? 'first' : 'more', code: _reelErrCode(e?.message) });
+      return null;
+    }
   };
   const interestsKey = `@chatyy:reels_interests_asked_v1:${String(user?.email || '').toLowerCase()}`;
   const maybeAskInterests = async () => {
@@ -2993,7 +3096,10 @@ export default function ReelsViewer({ colors, isDark, t, user, router, feedMode:
           if (recR.onboarding) maybeAskInterests();
         }
         // [2026-10-08 apps-native] as duas falharam → erro (não "vazio")
-        if (!recR && (!allR || !allR.success) && (!followR || !followR.success)) setLoadError(true);
+        if (!recR && (!allR || !allR.success) && (!followR || !followR.success)) {
+          setLoadError(true);
+          _reportReels('feed_error', { state: 'load', code: _reelErrCode(allR?.message || followR?.message || 'no_response') });
+        }
         if (allR && allR.success && allR.data) {
           const rawPosts = allR.data.posts || allR.data;
           const allPosts = Array.isArray(rawPosts) ? rawPosts : [];
@@ -3014,6 +3120,7 @@ export default function ReelsViewer({ colors, isDark, t, user, router, feedMode:
     } catch (e) {
       console.warn('Reels load error:', e);
       setLoadError(true); // [2026-10-08 apps-native]
+      _reportReels('feed_error', { state: 'exception', code: _reelErrCode(e?.message) });
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -3535,6 +3642,11 @@ export default function ReelsViewer({ colors, isDark, t, user, router, feedMode:
 }
 
 const styles = StyleSheet.create({
+  // [2026-10-13 reels-android] erro do player (sobre o vídeo, centro)
+  reelErrorWrap: { alignItems: 'center', justifyContent: 'center', paddingHorizontal: 32, backgroundColor: 'rgba(0,0,0,0.35)' },
+  reelErrorText: { color: '#fff', fontSize: 15, fontWeight: '600', textAlign: 'center', marginBottom: 14, ...TEXT_SHADOW },
+  reelErrorBtn: { paddingHorizontal: 22, paddingVertical: 10, borderRadius: 22, backgroundColor: 'rgba(255,255,255,0.18)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.6)' },
+  reelErrorBtnText: { color: '#fff', fontSize: 15, fontWeight: '700' },
   // ── Root ──
   reelsRoot: {
     flex: 1,

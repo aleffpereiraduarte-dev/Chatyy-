@@ -8070,4 +8070,7 @@ export default {
   "waImport.sumBlocked": "Disekat demi keselamatan",
   "waImport.askBia": "Ringkaskan dengan Bia",
   "waImport.cancelledTitle": "Import dibatalkan",
+  // [2026-10-13 reels-android] erro do player no Reels
+  "reels.videoError": "Video ini tidak dapat dimainkan",
+  "reels.videoRetry": "Cuba lagi",
 };
