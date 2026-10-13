@@ -1264,6 +1264,8 @@ async function _runGallerySave(item) {
       // NOT undo the save — the asset is already in the library.
       if (savedAsset && savedAsset.id) {
         try {
+          // [2026-10-13] Android 11+: mover para o álbum pede 'Permitir que o app modifique essa foto?' — no Android fica só na galeria.
+          if (Platform.OS === 'android') throw new Error('skip-album-android');
           const album = await ML.getAlbumAsync('Chatyy');
           if (album) await ML.addAssetsToAlbumAsync([savedAsset], album, false);
           else await ML.createAlbumAsync('Chatyy', savedAsset, false);

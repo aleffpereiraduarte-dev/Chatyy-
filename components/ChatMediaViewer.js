@@ -2311,6 +2311,8 @@ export default function ChatMediaViewer({ visible, onClose, fileUrl, hlsUrl, fil
         // Best-effort: failure here doesn't undo the save.
         if (ok && savedAsset && savedAsset.id) {
           try {
+            // [2026-10-13] Android 11+: mover para o álbum pede 'Permitir que o app modifique essa foto?' — no Android fica só na galeria.
+            if (Platform.OS === 'android') throw new Error('skip-album-android');
             const album = await ML.getAlbumAsync('Chatyy');
             if (album) {
               await ML.addAssetsToAlbumAsync([savedAsset], album, false);
