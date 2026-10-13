@@ -187,6 +187,9 @@ function _normalizeForKey(url) {
       /^api(-[a-z]+)?(-edge)?\.chatyy\.com\.br$/.test(host)
     ) {
       // Path-only key — host stripped, query/fragment dropped by the caller.
+      // [2026-10-13] …exceto endpoints dinâmicos (*.php / /api/): a query é que
+      // identifica o arquivo (urlToKey filtra os parâmetros voláteis).
+      if (/\.php$/i.test(u.pathname) || /\/api\//i.test(u.pathname)) return u.pathname + (u.search || '');
       return u.pathname;
     }
     return String(url);
@@ -231,8 +234,20 @@ function urlToKey(url) {
   // doesn't bust the cache. Same R2/CDN object with a fresh signature must hit
   // the same local file. Anything that's ACTUALLY a different resource will
   // have a different path component.
-  const base = normalized.split('?')[0].split('#')[0];
-  const ext = base.match(
+  let base = normalized.split('?')[0].split('#')[0];
+  // [2026-10-13] Endpoints dinâmicos (…/api/*.php?action=…&m=ID) identificam o
+  // ARQUIVO pela query (ex.: mídia importada do WhatsApp: wa_import_file&m=174).
+  // Sem a query, TODAS as mídias importadas viravam a MESMA chave de cache →
+  // fotos/áudios trocados ou em branco. Mantém a query (sem parâmetros voláteis
+  // de assinatura/expiração) só nesses endpoints; CDN/R2 seguem sem query.
+  if (/\.php$/i.test(base) || /\/api\//i.test(base)) {
+    const q = normalized.split('#')[0].split('?')[1] || '';
+    if (q) {
+      const keep = q.split('&').filter((kv) => kv && !/^(x-amz-[^=]*|expires|exp|ts|t|token|sig|signature|_)=/i.test(kv)).sort().join('&');
+      if (keep) base = base + '?' + keep;
+    }
+  }
+  const ext = base.split('?')[0].match(
     /\.(jpg|jpeg|png|gif|webp|heic|heif|bmp|tiff|mp4|mov|webm|mkv|m4v|3gp|avi|mp3|m4a|ogg|opus|wav|aac|flac|tgs|pdf|doc|docx|xls|xlsx|ppt|pptx|zip|rar|7z|txt|csv|json)$/i
   )?.[1] || 'bin';
   return _hash128(base) + '.' + ext;
