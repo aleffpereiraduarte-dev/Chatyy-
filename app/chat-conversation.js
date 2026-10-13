@@ -30310,12 +30310,8 @@ function ChatConversationInner() {
               {!!msg._e2e && (
                 <IconLock size={10} color={isOwn ? ownMetaColor : otherMetaColor} style={{ marginRight: 2 }} />
               )}
-              {/* [2026-10-10 wa-import] selo discreto "Importada do WhatsApp" */}
-              {typeof msg.client_message_id === 'string' && msg.client_message_id.startsWith('wai:') && (
-                <View accessible accessibilityLabel={t('waImport.badge')} style={{ marginRight: 3, opacity: 0.7 }}>
-                  <IconDownload size={10} color={isOwn ? ownMetaColor : otherMetaColor} />
-                </View>
-              )}
+              {/* [2026-10-13] selo por bolha removido (founder: poluía a conversa). A origem
+                  "Importada do WhatsApp" segue para leitores de tela e no menu/info. */}
               {msg.edited_at && !isDeleted && (() => {
                 // Show "(editada Nx)" when the server reports more than one
                 // revision so heavy editing reads at a glance. Falls back to
