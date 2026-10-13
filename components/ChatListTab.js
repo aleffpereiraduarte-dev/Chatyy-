@@ -4615,7 +4615,10 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
           // by relay) — without this, the badge counts the user's own
           // outgoing messages.
           const senderEmail = (data.sender_email || data.sender || '').toLowerCase();
-          const isSelf = senderEmail && user?.email && senderEmail === String(user.email).toLowerCase();
+          // [2026-10-13] Ecos locais do próprio envio (sendWorker/_local) contam como
+          // enviados mesmo se a linha vier sem sender_email.
+          const isSelf = !!(rawData?._self || data._self || data._local || rawData?._local)
+            || !!(senderEmail && user?.email && senderEmail === String(user.email).toLowerCase());
           // Sound + soft haptic when someone else's message lands and the
           // user is NOT inside that conversation (chat-conversation fires
           // its own receive sound for the open thread). Throttled to 1/1.2s.
@@ -4694,14 +4697,14 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
                   delivered_at: data.delivered_at || null,
                   content: data.content || data.message,
                   type: data.type || 'text',
-                  sender_email: data.sender_email || data.sender,
+                  sender_email: data.sender_email || data.sender || (isSelf ? user?.email : undefined),
                   sender_name: data.sender_name || data.sender_email || data.sender,
                   created_at: data.created_at || new Date().toISOString(),
                 },
                 last_message_type: data.type || 'text',
-                last_message_sender: data.sender_email || data.sender,
+                last_message_sender: data.sender_email || data.sender || (isSelf ? user?.email : undefined),
                 last_message_at: data.created_at || new Date().toISOString(),
-                unread_count: senderLc === meLc ? (nextArch[ai].unread_count || 0) : ((nextArch[ai].unread_count || 0) + 1),
+                unread_count: (isSelf || senderLc === meLc) ? (nextArch[ai].unread_count || 0) : ((nextArch[ai].unread_count || 0) + 1),
               };
               return nextArch;
             }
@@ -4732,14 +4735,14 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
                   delivered_at: data.delivered_at || null,
                   content: data.content || data.message,
                   type: data.type || 'text',
-                  sender_email: data.sender_email || data.sender,
+                  sender_email: data.sender_email || data.sender || (isSelf ? user?.email : undefined),
                   sender_name: data.sender_name || data.sender_email || data.sender,
                   created_at: data.created_at || new Date().toISOString(),
                 },
                 last_message_type: data.type || 'text',
-                last_message_sender: data.sender_email || data.sender,
+                last_message_sender: data.sender_email || data.sender || (isSelf ? user?.email : undefined),
                 last_message_at: data.created_at || new Date().toISOString(),
-                unread_count: senderLc === meLc ? 0 : ((unarchivedConv.unread_count || 0) + 1),
+                unread_count: (isSelf || senderLc === meLc) ? 0 : ((unarchivedConv.unread_count || 0) + 1),
               };
               const pinned = prev.filter(c => !!c.pinned);
               const unpinned = prev.filter(c => !c.pinned);
@@ -4768,14 +4771,14 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
                   delivered_at: data.delivered_at || null,
                   content: data.content || data.message,
                   type: data.type || 'text',
-                  sender_email: data.sender_email || data.sender,
+                  sender_email: data.sender_email || data.sender || (isSelf ? user?.email : undefined),
                   sender_name: data.sender_name || data.sender_email || data.sender,
                   created_at: data.created_at || new Date().toISOString(),
                 },
                 last_message_at: data.created_at || new Date().toISOString(),
-                last_message_sender: data.sender_email || data.sender,
+                last_message_sender: data.sender_email || data.sender || (isSelf ? user?.email : undefined),
                 last_message_type: data.type || 'text',
-                unread_count: senderLc === meLc ? 0 : 1,
+                unread_count: (isSelf || senderLc === meLc) ? 0 : 1,
                 muted: 0,
                 pinned: 0,
               };
@@ -4791,12 +4794,12 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
                 delivered_at: data.delivered_at || null,
                 content: data.content || data.message,
                 type: data.type || 'text',
-                sender_email: data.sender_email || data.sender,
+                sender_email: data.sender_email || data.sender || (isSelf ? user?.email : undefined),
                 sender_name: data.sender_name || data.sender_email || data.sender,
                 created_at: data.created_at || new Date().toISOString(),
               },
               last_message_type: data.type || 'text',
-              last_message_sender: data.sender_email || data.sender,
+              last_message_sender: data.sender_email || data.sender || (isSelf ? user?.email : undefined),
               last_message_at: data.created_at || new Date().toISOString(),
               // Don't bump unread for a message landing IN the chat the user
               // is currently inside — they're reading it now, so the badge

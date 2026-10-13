@@ -622,7 +622,12 @@ function _publishServerRow(p, r, cmi) {
   try {
     const row = (r && r.data && r.data.id != null) ? r.data : null;
     if (!row || r.envelope_mode) return;
-    const serverMsg = { ...row, client_message_id: row.client_message_id || cmi };
+    // [2026-10-13] Eco LOCAL do próprio envio: a linha do servidor às vezes vem
+    // sem sender_email (modo envelope / Rust) → a lista tratava como RECEBIDA
+    // (não lida +1, sem "Você:"/✓) até atualizar. Garante o remetente + _self.
+    let _me = '';
+    try { const a = require('./api'); _me = String((a.getActiveAccountEmail && a.getActiveAccountEmail()) || ''); } catch {}
+    const serverMsg = { ...row, client_message_id: row.client_message_id || cmi, sender_email: row.sender_email || p.sender_email || _me || row.sender_email, _self: true };
     if (p && p.display_content && serverMsg.content !== p.display_content && p._e2e) {
       serverMsg.content = p.display_content; serverMsg._e2e = true;
     }
