@@ -9670,6 +9670,8 @@ export default {
   "storage.youSave": "توفر {amount} سنوياً",
   "storage.freeNote": "الجميع يبدأ بـ 20 جيجابايت مجاناً. قم بالترقية عند الحاجة.",
   "storage.ctaUpgrade": "الترقية إلى {size}",
+  "storage.ctaDowngrade": "التبديل إلى {size}",
+  "storage.downgradeTooSmall": "أنت تستخدم {used} — أفرغ مساحة للتبديل إلى {size}",
   "storage.manageSite": "أدِر اشتراكك عبر الموقع chatyy.com.br",
   "storage.graceBodyAmount": "أنت فوق حد {n} لخطة اشتراكك. سيتم حظر التحميلات خلال 7 أيام. قم بالترقية أو حرر مساحة.",
   "storage.freeNoteAmount": "الجميع يبدأ بـ {n} مجاناً. قم بالترقية عند الحاجة.",

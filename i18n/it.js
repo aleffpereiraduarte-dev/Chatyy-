@@ -9736,6 +9736,8 @@ export default {
   "storage.youSave": "Risparmi {amount} all'anno",
   "storage.freeNote": "Tutti iniziano con 20 GB gratis. Fai l'upgrade quando ne hai bisogno.",
   "storage.ctaUpgrade": "Fai l'upgrade a {size}",
+  "storage.ctaDowngrade": "Passa a {size}",
+  "storage.downgradeTooSmall": "Stai usando {used}: libera spazio per passare a {size}",
   "storage.manageSite": "Gestisci il tuo abbonamento su chatyy.com.br",
   "storage.graceBodyAmount": "Sei oltre il limite di {n} del tuo piano. Gli upload saranno bloccati entro 7 giorni. Fai l'upgrade o libera spazio.",
   "storage.freeNoteAmount": "Tutti iniziano con {n} gratis. Fai l'upgrade quando ne hai bisogno.",

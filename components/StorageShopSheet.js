@@ -156,6 +156,11 @@ export default function StorageShopSheet({ visible, onClose, currentTier = 'free
   const selected = tiers.find((x) => x.id === selectedId) || tiers[0];
   const selectedIsCurrent = currentTier === selected.id;
   const selectedPending = pendingTier === selected.id;
+  // [2026-10-13] Plano menor que o atual = DOWNGRADE (antes dizia "Fazer upgrade").
+  // Se o uso atual não cabe no plano escolhido, bloqueia com aviso.
+  const _selBytes = Number(selected.gb || 0) * 1024 ** 3;
+  const isDowngrade = !selectedIsCurrent && _selBytes > 0 && _selBytes < limit * 0.98;
+  const downgradeBlocked = isDowngrade && hasUsage && used > _selBytes;
 
   const perks = [
     { Icon: IconCloud, text: t('storage.perk.backup') || 'Backup automático das suas conversas e mídia' },
@@ -333,6 +338,12 @@ export default function StorageShopSheet({ visible, onClose, currentTier = 'free
                 <IconCheckCircle size={18} color={colors.text} />
                 <Text style={[styles.ctaText, { color: colors.text }]}>{t('storage.currentPlan') || 'Seu plano atual'}</Text>
               </View>
+            ) : downgradeBlocked ? (
+              <View style={[styles.cta, { backgroundColor: soft, paddingHorizontal: 16 }]}>
+                <Text style={[styles.ctaText, { color: colors.text, fontSize: 14, textAlign: 'center' }]} numberOfLines={2}>
+                  {(t('storage.downgradeTooSmall') || 'Você usa {used} — libere espaço para mudar para {size}').replace('{used}', fmtBytes(used)).replace('{size}', gbLabel(selected.gb))}
+                </Text>
+              </View>
             ) : (
               <TouchableOpacity
                 onPress={() => onBuy(selected)}
@@ -342,12 +353,14 @@ export default function StorageShopSheet({ visible, onClose, currentTier = 'free
               >
                 {selectedPending ? <ActivityIndicator color={onTint} /> : (
                   <Text style={[styles.ctaText, { color: onTint }]}>
-                    {(t('storage.ctaUpgrade') || 'Fazer upgrade para {size}').replace('{size}', gbLabel(selected.gb))}
+                    {isDowngrade
+                      ? (t('storage.ctaDowngrade') || 'Mudar para {size}').replace('{size}', gbLabel(selected.gb))
+                      : (t('storage.ctaUpgrade') || 'Fazer upgrade para {size}').replace('{size}', gbLabel(selected.gb))}
                   </Text>
                 )}
               </TouchableOpacity>
             )}
-            {showCard && !selectedIsCurrent && !selectedPending && (
+            {showCard && !selectedIsCurrent && !selectedPending && !downgradeBlocked && (
               <TouchableOpacity
                 onPress={() => onPayCard(selected)}
                 disabled={!!pendingTier}

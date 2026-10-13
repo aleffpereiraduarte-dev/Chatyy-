@@ -6120,6 +6120,8 @@ export default {
   'storage.youSave': 'Ahorras {amount} al año',
   'storage.freeNote': 'Todos empiezan con 20 GB gratis. Mejora cuando lo necesites.',
   'storage.ctaUpgrade': 'Mejorar a {size}',
+  'storage.ctaDowngrade': 'Cambiar a {size}',
+  'storage.downgradeTooSmall': 'Usas {used}: libera espacio para cambiar a {size}',
   'storage.manageSite': 'Gestiona tu suscripción en chatyy.com.br',
   'storage.renewsOn': 'Se renueva el',
   'storage.shopTitle': 'Más almacenamiento',

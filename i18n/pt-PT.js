@@ -9140,6 +9140,8 @@ export default {
   "storage.youSave": "Poupas {amount} por ano",
   "storage.freeNote": "Toda a gente começa com 20 GB grátis. Faz upgrade quando precisares.",
   "storage.ctaUpgrade": "Fazer upgrade para {size}",
+  "storage.ctaDowngrade": "Mudar para {size}",
+  "storage.downgradeTooSmall": "Está a usar {used} — liberte espaço para mudar para {size}",
   "storage.manageSite": "Gere a tua assinatura pelo site chatyy.com.br",
   "bots.empty.title": "Nenhum bot ainda",
   "bots.empty.sub": "Cria um bot para automatizar respostas, executar comandos e conectar os teus serviços.",

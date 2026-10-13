@@ -8892,6 +8892,8 @@ export default {
   "storage.youSave": "年間{amount}節約",
   "storage.freeNote": "全員に20GBの無料ストレージが提供されます。必要に応じてアップグレードしてください。",
   "storage.ctaUpgrade": "{size}にアップグレード",
+  "storage.ctaDowngrade": "{size} に変更",
+  "storage.downgradeTooSmall": "{used} を使用中です。{size} に変更するには空き容量を増やしてください",
   "storage.manageSite": "chatyy.com.brでサブスクリプションを管理",
   "storage.graceBodyAmount": "プランの上限{n}を超えています。7日以内にアップロードがブロックされます。アップグレードするか、スペースを空けてください。",
   "storage.freeNoteAmount": "全員に{n}の無料ストレージが提供されます。必要に応じてアップグレードしてください。",

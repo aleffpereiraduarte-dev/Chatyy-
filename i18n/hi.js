@@ -9670,6 +9670,8 @@ export default {
   "storage.youSave": "आप प्रति वर्ष {amount} बचाते हैं",
   "storage.freeNote": "हर कोई 20 GB मुफ्त से शुरू करता है। जब जरूरत हो तब अपग्रेड करें।",
   "storage.ctaUpgrade": "{size} के लिए अपग्रेड करें",
+  "storage.ctaDowngrade": "{size} पर स्विच करें",
+  "storage.downgradeTooSmall": "आप {used} इस्तेमाल कर रहे हैं — {size} पर जाने के लिए जगह खाली करें",
   "storage.manageSite": "अपनी सब्सक्रिप्शन को chatyy.com.br पर प्रबंधित करें",
   "storage.graceBodyAmount": "आप अपने प्लान की {n} सीमा से ऊपर हैं। 7 दिनों के भीतर अपलोड ब्लॉक हो जाएंगे। अपग्रेड करें या स्थान खाली करें।",
   "storage.freeNoteAmount": "हर कोई {n} मुफ्त से शुरू करता है। जब भी जरूरत हो तब अपग्रेड करें।",

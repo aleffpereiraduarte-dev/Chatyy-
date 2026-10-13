@@ -8795,6 +8795,8 @@ export default {
   "storage.youSave": "Kamu hemat {amount} per tahun",
   "storage.freeNote": "Semua orang mulai dengan 20 GB gratis. Upgrade saat kamu butuh.",
   "storage.ctaUpgrade": "Upgrade ke {size}",
+  "storage.ctaDowngrade": "Beralih ke {size}",
+  "storage.downgradeTooSmall": "Anda memakai {used} — kosongkan ruang untuk beralih ke {size}",
   "storage.manageSite": "Kelola langgananmu di situs chatyy.com.br",
   "storage.graceBodyAmount": "Kamu melebihi batas {n} dari paketmu. Dalam 7 hari, unggahan akan diblokir. Upgrade atau kosongkan ruang.",
   "storage.freeNoteAmount": "Semua orang mulai dengan {n} gratis. Upgrade kapan saja kamu butuh.",

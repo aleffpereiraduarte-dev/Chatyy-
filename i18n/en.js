@@ -6120,6 +6120,8 @@ export default {
   'storage.youSave': 'You save {amount} per year',
   'storage.freeNote': 'Everyone starts with 20 GB free. Upgrade when you need to.',
   'storage.ctaUpgrade': 'Upgrade to {size}',
+  'storage.ctaDowngrade': 'Switch to {size}',
+  'storage.downgradeTooSmall': 'You\'re using {used} — free up space to switch to {size}',
   'storage.manageSite': 'Manage your subscription at chatyy.com.br',
   'storage.renewsOn': 'Renews on',
   'storage.shopTitle': 'More storage',
