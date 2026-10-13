@@ -34,6 +34,7 @@ import AvatarCircle from './AvatarCircle';
 import HomeHubCard from './HomeHubCard';
 import AvatarLightbox from './AvatarLightbox';
 import ChatyyOneAvatar from './ChatyyOneAvatar';
+import SyncStatusTitle from './SyncStatusTitle'; // [2026-10-13 sync-status]
 import { setActiveInterval } from '../utils/activeInterval'; // [2026-10-10 perf-battery]
 // [2026-10-11 boot-split] Heavy, rarely-opened surfaces are code-split: the chat
 // list is the boot screen, so StatusCamera (native-only here), the group/channel
@@ -3484,69 +3485,9 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
     } catch {}
     return () => { try { unsub && unsub(); } catch {} };
   }, []);
-  // Auto-sync badge — fires from onlineRecoveryOrchestrator when an outbox
-  // flush + delta sync round is running after coming back online. WhatsApp
-  // shows the same kind of subtle "Connecting..." → "Updating..." hint at
-  // the top of the chat list. Hidden when wsDownBanner is on (the WS-down
-  // banner already represents the same "we're catching up" state).
-  const [syncingBadge, setSyncingBadge] = useState(false);
-  useEffect(() => {
-    // WhatsApp Web parity (2026-05-18, #1131): web NEVER shows the inline
-    // "Sincronizando..." pill at the top of the chat list. WhatsApp Web's
-    // sync feedback is the rare "Computer not connected" full-screen state,
-    // not a chronic banner. Users complained the pill stayed visible
-    // permanently on cold start + every brief WS flap. Skip the subscription
-    // entirely on web so it's impossible to render. Native keeps the
-    // delayed-show + 5s ceiling.
-    if (Platform.OS === 'web') return;
-    let unsub = null;
-    let cancelled = false;
-    let showTimer = null;       // gate: only flip true after 2500ms
-    let hideFailsafe = null;    // hard 4s ceiling
-    (async () => {
-      try {
-        const m = await import('../services/onlineRecoveryOrchestrator');
-        if (cancelled) return;
-        if (typeof m.subscribeSyncStatus === 'function') {
-          unsub = m.subscribeSyncStatus(({ running }) => {
-            if (cancelled) return;
-            if (running) {
-              // WhatsApp-invisible-sync (2026-09-28): suppress reconnect flashes.
-              // Raised 2500ms→7000ms — com o servidor em NY o sync roda em 3-5s
-              // (latência BR↔NY) e o badge "Sincronizando" aparecia TODA abertura.
-              // Com 7s, em uso normal ele NUNCA aparece (sync silencioso no fundo,
-              // igual WhatsApp); só surge se travar de verdade (>7s = problema real).
-              // A migração pro Brasil deixa o sync <1s e resolve na raiz.
-              if (showTimer) { try { clearTimeout(showTimer); } catch {} }
-              showTimer = setTimeout(() => {
-                showTimer = null;
-                setSyncingBadge(true);
-                // Hard ceiling — clear after 4s no matter what orchestrator
-                // says. Covers WS reconnect loops that get stuck on
-                // running:true.
-                if (hideFailsafe) { try { clearTimeout(hideFailsafe); } catch {} }
-                hideFailsafe = setTimeout(() => {
-                  hideFailsafe = null;
-                  setSyncingBadge(false);
-                }, 4000);
-              }, 7000);
-            } else {
-              // Recovery finished — clear pending "show" timer + hide now.
-              if (showTimer) { try { clearTimeout(showTimer); } catch {} showTimer = null; }
-              if (hideFailsafe) { try { clearTimeout(hideFailsafe); } catch {} hideFailsafe = null; }
-              setSyncingBadge(false);
-            }
-          });
-        }
-      } catch {}
-    })();
-    return () => {
-      cancelled = true;
-      if (showTimer) { try { clearTimeout(showTimer); } catch {} showTimer = null; }
-      if (hideFailsafe) { try { clearTimeout(hideFailsafe); } catch {} hideFailsafe = null; }
-      if (typeof unsub === 'function') { try { unsub(); } catch {} }
-    };
-  }, []);
+  // [2026-10-13 sync-status] O badge "Sincronizando..." (orchestrator, gate 7 s)
+  // e a faixa "Reconectando…" saíram daqui: o status agora é UM só, no título
+  // da home (components/SyncStatusTitle ← services/syncStatus.js).
   // [silent-fail-w3] Surface a load failure when the cold-start fetch fails
   // AND the user has nothing on screen — previously the catch swallowed it,
   // leaving the user staring at the empty-state copy "start a new chat" even
@@ -5140,7 +5081,9 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
             // We pull conv IDs from the cached chat list (chatCache) instead
             // of the React state closure (which can be stale at WS-connect
             // time) so cold-start reconnects catch up correctly.
-            (async () => {
+            // [2026-10-13 sync-status] catch-up conta como "Atualizando…" no
+            // título (só aparece se passar do debounce de 2 s).
+            const _catchUp = (async () => {
               try {
                 const { getCachedConversations } = require('../services/chatCache');
                 const cs = (await getCachedConversations?.()) || [];
@@ -5160,6 +5103,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
                 applyEventsAndReceipts(perConv);
               } catch {}
             })();
+            try { require('../services/syncStatus').trackUpdate(_catchUp); } catch {}
           }
           wasConnected = true;
           if (bannerTimer) { clearTimeout(bannerTimer); bannerTimer = null; }
@@ -7573,53 +7517,6 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
           </TouchableOpacity>
         </Animated.View>
       )}
-      {/* Sync badge — WhatsApp-style subtle "Sincronizando..." while the
-          onlineRecoveryOrchestrator is flushing the outbox + delta-pulling
-          missed messages after a reconnect. Hidden while wsDownBanner is
-          visible (that banner already represents the catching-up state).
-          Tiny, muted purple-gray so it doesn't compete with content. */}
-      {syncingBadge && !wsDownBanner && (
-        <View
-          accessibilityLiveRegion="polite"
-          accessibilityLabel={t?.('chat.syncing') || 'Sincronizando...'}
-          style={{
-            flexDirection: 'row', alignItems: 'center', gap: 8,
-            paddingHorizontal: 14, paddingVertical: 5,
-            backgroundColor: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(17, 17, 17,0.06)',
-            borderBottomWidth: StyleSheet.hairlineWidth,
-            borderBottomColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(17, 17, 17,0.14)',
-          }}>
-          <ActivityIndicator size="small" color={isDark ? 'rgba(255,255,255,0.5)' : '#111111'} />
-          <Text style={{ flex: 1, fontSize: 11.5, color: isDark ? 'rgba(255,255,255,0.6)' : '#111111', fontWeight: '500' }}>
-            {t?.('chat.syncing') || 'Sincronizando...'}
-          </Text>
-        </View>
-      )}
-      {/* WS down banner — only shown after 12s delay (15s if we just
-          returned from background, to absorb sleep/wake blips). Visual
-          tuned to WhatsApp pattern: subtle muted gray (not alarming yellow)
-          since this is informational, not an error — most reconnects succeed
-          in seconds and the user shouldn't feel the app is broken. Fades
-          out over 500ms on reconnect instead of flipping abruptly. */}
-      {wsDownBanner && !netOffline && (
-        <Animated.View
-          accessibilityRole="alert"
-          accessibilityLiveRegion="polite"
-          accessibilityLabel={t?.('chat.reconnecting') || 'Reconectando…'}
-          style={{
-          flexDirection: 'row', alignItems: 'center', gap: 8,
-          paddingHorizontal: 14, paddingVertical: 6,
-          backgroundColor: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.03)',
-          borderBottomWidth: StyleSheet.hairlineWidth,
-          borderBottomColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)',
-          opacity: wsDownBannerOpacity,
-        }}>
-          <ActivityIndicator size="small" color={isDark ? 'rgba(255,255,255,0.5)' : 'rgba(0,0,0,0.45)'} />
-          <Text style={{ flex: 1, fontSize: 12, color: isDark ? 'rgba(255,255,255,0.6)' : 'rgba(0,0,0,0.55)', fontWeight: '500' }}>
-            {t?.('chat.reconnecting') || 'Reconectando…'}
-          </Text>
-        </Animated.View>
-      )}
       {/* [silent-fail-w3] Cold-start fetch failed and nothing is cached →
           1-line banner with a tap-to-retry pill. Tinted red so users
           distinguish it from the gray WS reconnecting banner above. */}
@@ -7787,7 +7684,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
   ), [filter, pinnedCount, isDark, colors, t, archivedCount, lockedCount, searchQuery, debouncedQuery, secretCode, filteredConversations.length, user, router, pinnedAvatarsMode, pinnedConversations, selectionMode, selectedIds, handleConversationPress, enterSelectionMode, toggleSelected, contactBanner, contactBannerSyncing, handleContactBannerPress, dismissContactBanner, pinnedEditMode, pinnedSize, pinnedSizes, pinDraggingId, typingUsers, lockedIds, unlockedIds,
     // [2026-10-08 offline-first] banners rendered inside this header were missing
     // from the deps → their show/hide only landed on an unrelated re-render.
-    wsDownBanner, netOffline, syncingBadge, loadError, loading, reactionToast, keepArchived, P, archivedUnreadCount]);
+    wsDownBanner, netOffline, loadError, loading, reactionToast, keepArchived, P, archivedUnreadCount]);
 
   // Footer: "MENSAGENS" section with chat_search hits, shown when searching
   const ListFooterComponent = useMemo(() => {
@@ -8050,8 +7947,15 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
   // Large title "Conversas" (iOS UINavigationBar large title / M3 large top
   // app bar): rola 1:1 com a lista; o chat.js faz o título compacto aparecer
   // quando ele passa por baixo do header (onLargeTitleCollapsedChange).
+  // [2026-10-13 sync-status] O large title vira o status de sincronização
+  // ("Conectando…", "Atualizando…", "Baixando conversas 37%") — WhatsApp.
   const _largeTitleEl = useMemo(() => (largeTitle ? (
-    <Text accessibilityRole="header" numberOfLines={1} style={[s.largeTitle, { color: colors.text }]}>{largeTitle}</Text>
+    <SyncStatusTitle
+      title={largeTitle}
+      announce
+      containerStyle={s.largeTitleWrap}
+      titleStyle={[s.largeTitleText, { color: colors.text }]}
+    />
   ) : null), [largeTitle, colors.text]);
   const _listHeaderEl = useMemo(() => (largeTitle ? (
     <>
@@ -9726,6 +9630,8 @@ const s = StyleSheet.create({
     fontSize: 34, fontWeight: '700', letterSpacing: -0.9,
     paddingHorizontal: 16, paddingTop: 2, paddingBottom: 8,
   },
+  largeTitleWrap: { paddingHorizontal: 16, paddingTop: 2, paddingBottom: 8 },
+  largeTitleText: { fontSize: 34, fontWeight: '700', letterSpacing: -0.9 },
   fab: {
     position: 'absolute',
     right: 20,

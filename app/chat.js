@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect, useCallback, useMemo, Suspense } from 'react';
 import { View, Text, TouchableOpacity, ScrollView, StyleSheet, Platform, Animated, Dimensions, TextInput, Modal, Pressable, KeyboardAvoidingView, AppState, PanResponder, DeviceEventEmitter } from 'react-native';
-import { useRouter, useLocalSearchParams } from 'expo-router';
+import { useRouter, useLocalSearchParams, useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../context/ThemeContext';
 import { useAuth, isChildAccount } from '../context/AuthContext';
@@ -37,7 +37,11 @@ const ChannelsTab = React.lazy(() => import('../components/ChannelsTab'));
 const CommunitiesTab = React.lazy(() => import('../components/CommunitiesTab'));
 const KidsLearnTab = React.lazy(() => import('../components/KidsLearnTab'));
 const KidsTVTab = React.lazy(() => import('../components/KidsTVTab'));
-import SyncBar from '../components/SyncBar';
+// [2026-10-13 sync-status] SyncBar (faixa no topo) saiu da home: o status de
+// sincronização agora troca o TÍTULO ("Conversas" → "Conectando…"), padrão
+// WhatsApp, via services/syncStatus.js (fonte única). SyncBar segue na conversa.
+import SyncStatusTitle from '../components/SyncStatusTitle';
+import { claimHomeSyncSurface } from '../services/syncStatus';
 import { CallListSkeleton } from '../components/SkeletonLoader'; // [2026-10-11 boot-split] lazy Calls fallback
 import { isSyncComplete, runInitialSync } from '../services/initialSync';
 import PlusOnboardingTour, { checkShouldShowPlusOnboarding } from '../components/PlusOnboardingTour';
@@ -303,6 +307,9 @@ function ChatHub() {
   // camera composer Modal can open over the current tab on first mount.
   const _wantsStatusComposer = params.new === '1';
   const [activeTab, setActiveTab] = useState(_initialTab);
+  // [2026-10-13 sync-status] Home focada na aba Conversas = o título já diz
+  // "Aguardando rede"/"Conectando…" → OfflineNotice raiz não pinta 2ª faixa.
+  useFocusEffect(useCallback(() => (activeTab === 'chats' ? claimHomeSyncSurface() : undefined), [activeTab]));
   const [mountedTabs, setMountedTabs] = useState(() => {
     const s = new Set(['chats', _initialTab]); // lazy mount: include initial tab to avoid white screen on deep-link
     if (_wantsStatusComposer) s.add('status');
@@ -1142,7 +1149,11 @@ function ChatHub() {
             ...glassHeader,
           }]}>
             <View style={styles.titleWrap}>
-              <Text style={[styles.title, { color: colors.text }]}>{titles[activeTab]}</Text>
+              {activeTab === 'chats' ? (
+                <SyncStatusTitle title={titles.chats} titleStyle={[styles.title, { color: colors.text }]} announce />
+              ) : (
+                <Text style={[styles.title, { color: colors.text }]}>{titles[activeTab]}</Text>
+              )}
             </View>
             <View style={styles.headerActions}>
               {renderHeaderAction()}
@@ -1184,8 +1195,6 @@ function ChatHub() {
             )}
           </Animated.View>
 
-          {/* WhatsApp-style sync bar */}
-          <SyncBar />
 
           {/* Content - lazy mount: only mount tab once visited, then keep mounted hidden */}
           <Animated.View style={{ flex: 1, opacity: contentOpacity, transform: [{ translateX: contentTranslateX }] }}>
@@ -1279,10 +1288,13 @@ function ChatHub() {
       }]}>
         {LIST_LARGE_TITLE && activeTab === 'chats' && (
           <>
-            <Animated.View pointerEvents="none" style={[styles.compactTitleWrap, { opacity: chatTitleAnim }]}>
-              <Text numberOfLines={1} accessibilityElementsHidden importantForAccessibility="no" style={[styles.compactTitle, { color: colors.text }]}>
-                {titles.chats}
-              </Text>
+            <Animated.View pointerEvents="none" accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={[styles.compactTitleWrap, { opacity: chatTitleAnim }]}>
+              <SyncStatusTitle
+                title={titles.chats}
+                align="center"
+                accessibilityRole="none"
+                titleStyle={[styles.compactTitle, { color: colors.text }]}
+              />
             </Animated.View>
             <Animated.View
               pointerEvents="none"
@@ -1310,9 +1322,11 @@ function ChatHub() {
             // [2026-10-07 native-ui-build] Nativo: o título grande foi p/ dentro
             // da lista (large title que colapsa); aqui fica vazio.
             LIST_LARGE_TITLE ? null : (
-            <Text style={[styles.bigTitle, { color: colors.text }]} numberOfLines={1}>
-              {titles.chats}
-            </Text>
+            <SyncStatusTitle
+              title={titles.chats}
+              announce
+              titleStyle={[styles.bigTitle, { color: colors.text }]}
+            />
             )
           ) : (
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
@@ -1358,8 +1372,6 @@ function ChatHub() {
         )}
       </Animated.View>
 
-      {/* WhatsApp-style sync bar */}
-      <SyncBar />
 
       {/* Tab content with fade - lazy mount: only mount tab once visited */}
       {/* [2026-10-07 native-ui-build] Tab bar de vidro (iOS) é absoluta: as

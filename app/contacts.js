@@ -32,6 +32,8 @@ import SwipeAction from '../components/SwipeAction';
 import ScreenEmptyState from '../components/ScreenEmptyState';
 import FadeSlideIn from '../components/FadeSlideIn';
 import PressableScale from '../components/PressableScale';
+import InviteContactSheet from '../components/InviteContactSheet'; // [2026-10-13 contacts-invite]
+import { shareInvite as shareInviteLink, prefetchInviteRef } from '../services/inviteContact';
 
 // Try to import expo-contacts (available on native, unavailable on web)
 let Contacts = null;
@@ -132,16 +134,35 @@ const BATCH_SIZE = 50;
 
 // ---------- Memoized contact row components ----------
 
-const DeviceContactRow = React.memo(({ dc, colors, saved, onAdd, t, isRegistered, chatyyEmail, onOpenProfile, onQuickActions }) => {
+// [2026-10-13 contacts-invite] Pílula "Convidar" (WhatsApp) — linhas de quem
+// NÃO tem Chatyy. Preto/branco do app (texto = cor do tema, contorno fino).
+function InvitePill({ onPress, colors, t }) {
+  const label = t('chat.invite') || 'Convidar';
+  return (
+    <TouchableOpacity
+      onPress={onPress}
+      activeOpacity={0.6}
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      hitSlop={{ top: 8, bottom: 8, left: 6, right: 6 }}
+      style={[s.invitePill, { borderColor: colors.text }]}
+    >
+      <Text style={[s.invitePillText, { color: colors.text }]}>{label}</Text>
+    </TouchableOpacity>
+  );
+}
+
+const DeviceContactRow = React.memo(({ dc, colors, saved, onAdd, t, isRegistered, chatyyEmail, onOpenProfile, onQuickActions, checked, onInvite }) => {
   const name = dc.name || `${dc.firstName || ''} ${dc.lastName || ''}`.trim() || t('contacts.unknown');
   // matched by phone → the agenda entry has no e-mail; use the account's.
   const email = dc.emails?.[0]?.email || chatyyEmail || '';
   const phone = dc.phoneNumbers?.[0]?.number || '';
 
   // Registered Chatyy users get the same tap = profile / long-press = quick
-  // actions affordance the saved-contacts list has. Non-registered rows stay
-  // passive (only the Add button does anything) — there's no profile to open.
-  const Wrapper = isRegistered && (onOpenProfile || onQuickActions) ? PressableRow : View; // [2026-10-07 app-feel-ui] native cell feedback
+  // actions affordance the saved-contacts list has.
+  // [2026-10-13 contacts-invite] Sem conta Chatyy NÃO há perfil p/ abrir: o
+  // toque abre a folha "Convidar para o Chatyy" (+ ligar/SMS/copiar número).
+  const Wrapper = (isRegistered && (onOpenProfile || onQuickActions)) || (!isRegistered && onInvite) ? PressableRow : View; // [2026-10-07 app-feel-ui] native cell feedback
   const wrapperProps = isRegistered && (onOpenProfile || onQuickActions)
     ? {
         onPress: () => onOpenProfile?.({ email, name, phone }),
@@ -149,7 +170,14 @@ const DeviceContactRow = React.memo(({ dc, colors, saved, onAdd, t, isRegistered
         delayLongPress: 350,
         activeOpacity: 0.6,
       }
-    : {};
+    : (!isRegistered && onInvite ? {
+        onPress: () => onInvite(dc),
+        onLongPress: () => onInvite(dc),
+        delayLongPress: 350,
+        activeOpacity: 0.6,
+        accessibilityRole: 'button',
+        accessibilityHint: t('invite.toChatyy') || 'Convidar para o Chatyy',
+      } : {});
 
   return (
     <Wrapper style={[s.contactRow, { borderBottomColor: colors.borderLight }]} {...wrapperProps}>
@@ -168,7 +196,9 @@ const DeviceContactRow = React.memo(({ dc, colors, saved, onAdd, t, isRegistered
         {!!email && <Text style={[s.contactEmail, { color: colors.textSecondary }]}>{email}</Text>}
         {!!phone && <Text style={[s.contactPhone, { color: colors.textTertiary }]}>{phone}</Text>}
       </View>
-      {saved ? (
+      {!isRegistered && checked && onInvite ? (
+        <InvitePill onPress={() => onInvite(dc)} colors={colors} t={t} />
+      ) : saved ? (
         <View style={s.savedBadge}>
           <IconCheck size={14} color={colors.primary} />
         </View>
@@ -220,7 +250,7 @@ const FamilyUserRow = React.memo(({ user, colors, saved, onAdd, t, onOpenProfile
   );
 });
 
-const MyContactRow = React.memo(({ c, colors, onEdit, onDelete, onToggleFav, onOpenProfile, onQuickActions }) => {
+const MyContactRow = React.memo(({ c, colors, onEdit, onDelete, onToggleFav, onOpenProfile, onQuickActions, notOnChatyy, onInvite }) => {
   const { t } = useLanguage();
   return (
     <SwipeAction
@@ -258,6 +288,7 @@ const MyContactRow = React.memo(({ c, colors, onEdit, onDelete, onToggleFav, onO
           )}
         </View>
       </View>
+      {notOnChatyy && onInvite ? <InvitePill onPress={() => onInvite(c)} colors={colors} t={t} /> : null}
       <TouchableOpacity onPress={() => onToggleFav(c)} style={s.starBtn} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
         <IconStar size={18} color={c.favorite ? colors.warning : colors.textTertiary} style={c.favorite ? { opacity: 1 } : { opacity: 0.4 }} />
       </TouchableOpacity>
@@ -356,6 +387,17 @@ function ContactsScreenInner() {
   // Chatyy registered contacts (emails/phones found on Chatyy)
   const [registeredEmails, setRegisteredEmails] = useState(new Set());
   const [registeredPhones, setRegisteredPhones] = useState(() => new Map()); // last-8-digits -> account email
+  // [2026-10-13 contacts-invite] true quando o check_contacts da agenda rodou
+  // (com consentimento) → "não registrado" passa a ser um fato, não um "não sei".
+  const [deviceChecked, setDeviceChecked] = useState(false);
+  // Folha "Convidar para o Chatyy" ({ name, phone, email, _my?, _dc? }).
+  const [inviteTarget, setInviteTarget] = useState(null);
+  // Meus contatos: e-mail do contato → e-mail da conta Chatyy ('' = sem conta).
+  // UM check_contacts em lote (≤500) só p/ os ainda desconhecidos; cache 24h.
+  const [myChatyyStatus, setMyChatyyStatus] = useState(() => {
+    try { const c = getCachedSync('contacts_chatyy_status_v1'); return c && typeof c === 'object' && !Array.isArray(c) ? c : {}; } catch { return {}; }
+  });
+  const myCheckRef = useRef(false);
 
   // Sync
   const [syncing, setSyncing] = useState(false);
@@ -568,6 +610,7 @@ function ContactsScreenInner() {
               if (d.length >= 8 && u?.email) regPhones.set(d.slice(-8), String(u.email).toLowerCase());
             }
             setRegisteredPhones(regPhones);
+            setDeviceChecked(true);
           }
         }
       } catch (err) {
@@ -1033,6 +1076,89 @@ function ContactsScreenInner() {
   const contactEmailSet = useMemo(() => new Set(contacts.map(c => (c.email || '').toLowerCase())), [contacts]);
   const isContactSaved = useCallback((email) => contactEmailSet.has((email || '').toLowerCase()), [contactEmailSet]);
 
+  // ── [2026-10-13 contacts-invite] Quem dos MEUS contatos tem Chatyy ─────────
+  // Fontes (sem chamada extra quando dá): "No Chatyy" em cache (agenda casada +
+  // DMs) e o mapa persistido; só os desconhecidos vão num check_contacts em
+  // lote (os mesmos dados que já estão na agenda do servidor). Desconhecido =
+  // comportamento antigo (abre perfil) — nunca rotulamos "Convidar" no chute.
+  const familyEmailSet = useMemo(() => new Set((Array.isArray(familyUsers) ? familyUsers : [])
+    .map(u => String(u?.email || '').toLowerCase()).filter(Boolean)), [familyUsers]);
+  useEffect(() => {
+    if (myCheckRef.current || !Array.isArray(contacts) || contacts.length === 0) return;
+    const lc = (v) => String(v || '').trim().toLowerCase();
+    const digits = (v) => String(v || '').replace(/\D/g, '');
+    const meLc = lc(myEmailRef.current);
+    const unknown = contacts.filter(c => {
+      const e = lc(c?.email);
+      return e && e.includes('@') && e !== meLc && !familyEmailSet.has(e) && !Object.prototype.hasOwnProperty.call(myChatyyStatus, e);
+    }).slice(0, 500);
+    if (unknown.length === 0) return;
+    myCheckRef.current = true;
+    (async () => {
+      try {
+        const emails = unknown.map(c => lc(c.email));
+        const phones = unknown.map(c => String(c?.phone || '')).filter(p => digits(p).length >= 8).slice(0, 500);
+        const r = await api.checkContacts(emails, phones);
+        if (!r?.success || !Array.isArray(r?.data?.registered)) return;
+        const regE = new Set();
+        const regP = new Map();
+        for (const u of r.data.registered) {
+          const em = lc(u?.email || u);
+          if (!em) continue;
+          regE.add(em);
+          const d = digits(u?.phone);
+          if (d.length >= 8) regP.set(d.slice(-8), em);
+        }
+        setMyChatyyStatus(prev => {
+          const next = { ...(prev || {}) };
+          for (const c of unknown) {
+            const e = lc(c.email);
+            const d = digits(c.phone);
+            next[e] = regE.has(e) ? e : ((d.length >= 8 && regP.get(d.slice(-8))) || '');
+          }
+          try { setCache('contacts_chatyy_status_v1', next, 24 * 3600 * 1000); } catch {}
+          return next;
+        });
+      } catch {}
+    })();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [contacts, familyEmailSet]);
+
+  // { state: 'yes'|'no'|'unknown', email? } — email = conta Chatyy p/ abrir.
+  const myChatyyOf = useCallback((c) => {
+    const e = String(c?.email || '').trim().toLowerCase();
+    if (!e) return { state: 'unknown' };
+    if (familyEmailSet.has(e) || e === String(myEmailRef.current || '').toLowerCase()) return { state: 'yes', email: e };
+    const v = myChatyyStatus[e];
+    if (typeof v === 'string') return v ? { state: 'yes', email: v } : { state: 'no' };
+    return { state: 'unknown' };
+  }, [familyEmailSet, myChatyyStatus]);
+
+  const openMyInvite = useCallback((c) => {
+    try { prefetchInviteRef(); } catch {}
+    setInviteTarget({ name: c?.name || '', phone: c?.phone || '', email: c?.email || '', _my: c });
+  }, []);
+  const openDeviceInvite = useCallback((dc) => {
+    try { prefetchInviteRef(); } catch {}
+    setInviteTarget({
+      name: dc?.name || `${dc?.firstName || ''} ${dc?.lastName || ''}`.trim(),
+      phone: dc?.phoneNumbers?.[0]?.number || '',
+      email: dc?.emails?.[0]?.email || '',
+      _dc: dc,
+    });
+  }, []);
+  // Toque em "Meus contatos": sem Chatyy → folha de convite; com/desconhecido → perfil.
+  const handleMyContactPress = useCallback((c) => {
+    const st = myChatyyOf(c);
+    if (st.state === 'no') { openMyInvite(c); return; }
+    handleOpenProfile(st.email && st.email !== String(c?.email || '').toLowerCase() ? { ...c, email: st.email } : c);
+  }, [myChatyyOf, openMyInvite, handleOpenProfile]);
+  const handleMyContactLongPress = useCallback((c) => {
+    const st = myChatyyOf(c);
+    if (st.state === 'no') { openMyInvite(c); return; }
+    handleQuickActions(st.email && st.email !== String(c?.email || '').toLowerCase() ? { ...c, email: st.email } : c);
+  }, [myChatyyOf, openMyInvite, handleQuickActions]);
+
   // Filter logic per tab - uses debouncedSearch
   const filteredItems = useMemo(() => {
     const q = debouncedSearch.toLowerCase();
@@ -1138,9 +1264,18 @@ function ContactsScreenInner() {
     }
     const recentData = recent.map(x => enrich(x.c));
 
+    // [2026-10-13 contacts-invite] Quem comprovadamente NÃO tem Chatyy sai das
+    // letras e vai p/ uma seção final "Convidar para o Chatyy" (WhatsApp).
+    const inviteData = [];
+    const onChatyyOrUnknown = [];
+    for (const c of nonFav) {
+      if (myChatyyOf(c).state === 'no') inviteData.push(enrich(c));
+      else onChatyyOrUnknown.push(c);
+    }
+
     // Alphabetical buckets.
     const grouped = {};
-    for (const c of nonFav) {
+    for (const c of onChatyyOrUnknown) {
       const letter = ((c.name || c.email || '?')[0] || '?').toUpperCase();
       const key = /[A-Z]/.test(letter) ? letter : '#';
       if (!grouped[key]) grouped[key] = [];
@@ -1162,8 +1297,16 @@ function ContactsScreenInner() {
         data: recentData,
       });
     }
-    return out.concat(alpha);
-  }, [filteredItems, activeTab, t]);
+    const all = out.concat(alpha);
+    if (inviteData.length > 0) {
+      all.push({
+        title: t('contacts.inviteToChatyy') || 'Convidar para o Chatyy',
+        key: '__invite__',
+        data: inviteData.sort((a, b) => collator.compare((a.name || a.email || ''), (b.name || b.email || ''))),
+      });
+    }
+    return all;
+  }, [filteredItems, activeTab, t, myChatyyOf]);
 
   // Render favorite contact (larger avatar). Tap = profile (Instagram/WA
   // pattern) so the favorites row stops being a "shortcut to the edit
@@ -1172,8 +1315,8 @@ function ContactsScreenInner() {
     <TouchableOpacity
       key={c.id || i}
       style={[s.favoriteItem]}
-      onPress={() => handleOpenProfile(c)}
-      onLongPress={() => handleQuickActions(c)}
+      onPress={() => handleMyContactPress(c)}
+      onLongPress={() => handleMyContactLongPress(c)}
       delayLongPress={350}
       activeOpacity={0.6}
     >
@@ -1205,13 +1348,15 @@ function ContactsScreenInner() {
         chatyyEmail={_phoneEmail || ''}
         onOpenProfile={handleOpenProfile}
         onQuickActions={handleQuickActions}
+        checked={deviceChecked}
+        onInvite={openDeviceInvite}
       />
     );
-  }, [colors, isContactSaved, addDeviceContact, t, registeredEmails, registeredPhones, handleOpenProfile, handleQuickActions]);
+  }, [colors, isContactSaved, addDeviceContact, t, registeredEmails, registeredPhones, handleOpenProfile, handleQuickActions, deviceChecked, openDeviceInvite]);
 
   // Device contacts split into "On Chatyy" and "Invite to Chatyy" sections
   const deviceSections = useMemo(() => {
-    if (activeTab !== 'device' || filteredItems.length === 0 || (registeredEmails.size === 0 && registeredPhones.size === 0)) return [];
+    if (activeTab !== 'device' || filteredItems.length === 0 || (!deviceChecked && registeredEmails.size === 0 && registeredPhones.size === 0)) return [];
     const onChatyy = [];
     const invite = [];
     for (const dc of filteredItems) {
@@ -1230,7 +1375,7 @@ function ContactsScreenInner() {
     if (onChatyy.length > 0) sections.push({ title: t('contacts.onChatyy') || 'On Chatyy', key: 'on_chatyy', data: onChatyy });
     if (invite.length > 0) sections.push({ title: t('contacts.inviteToChatyy') || 'Invite to Chatyy', key: 'invite', data: invite });
     return sections;
-  }, [activeTab, filteredItems, registeredEmails, registeredPhones, t]);
+  }, [activeTab, filteredItems, registeredEmails, registeredPhones, deviceChecked, t]);
 
   // Render section header for device tab
   const renderDeviceSectionHeader = useCallback(({ section }) => (
@@ -1247,16 +1392,9 @@ function ContactsScreenInner() {
   ), [colors]);
 
   // Share invite link
+  // [2026-10-13 contacts-invite] mesmo texto/link (com ref) da folha de convite.
   const handleShareInvite = useCallback(async () => {
-    const msg = t('contacts.inviteMessage') || 'Join me on Chatyy! Download at https://chatyy.com.br';
-    if (Platform.OS === 'web') {
-      try { await navigator.clipboard.writeText(msg); Alert.alert(t('common.success'), t('contacts.linkCopied') || 'Link copied!'); } catch {}
-    } else {
-      try {
-        const { Share } = require('react-native');
-        await Share.share({ message: msg });
-      } catch {}
-    }
+    try { await shareInviteLink(t); } catch {}
   }, [t]);
 
   // FlatList render items for family tab
@@ -1290,11 +1428,13 @@ function ContactsScreenInner() {
         onEdit={handleEditContact}
         onDelete={handleDelete}
         onToggleFav={toggleFavorite}
-        onOpenProfile={handleOpenProfile}
-        onQuickActions={handleQuickActions}
+        onOpenProfile={handleMyContactPress}
+        onQuickActions={handleMyContactLongPress}
+        notOnChatyy={myChatyyOf(item).state === 'no'}
+        onInvite={openMyInvite}
       />
     );
-  }, [colors, handleEditContact, handleDelete, toggleFavorite, handleOpenProfile, handleQuickActions]);
+  }, [colors, handleEditContact, handleDelete, toggleFavorite, handleMyContactPress, handleMyContactLongPress, myChatyyOf, openMyInvite]);
 
   // Section list header renderer — alphabet letter with subtle brand accent
   // bar so each section reads as a navigation anchor (iOS Contacts pattern).
@@ -1864,6 +2004,14 @@ function ContactsScreenInner() {
 
       {/* [WA-parity 2026-05-31] Share-contact: pick a conversation to send the
           contact card to. Self-contained picker (no extra screen needed). */}
+      {/* [2026-10-13 contacts-invite] Contato sem Chatyy → convidar (não abre perfil). */}
+      <InviteContactSheet
+        visible={!!inviteTarget}
+        contact={inviteTarget}
+        onClose={() => setInviteTarget(null)}
+        onEdit={inviteTarget?._my ? () => handleEditContact(inviteTarget._my) : undefined}
+        onSave={inviteTarget?._dc && !(inviteTarget.email && isContactSaved(inviteTarget.email)) ? () => addDeviceContact(inviteTarget._dc) : undefined}
+      />
       <Modal visible={!!shareContactCard} animationType="slide" transparent onRequestClose={() => setShareContactCard(null)}>
         <TouchableOpacity style={s.overlay} onPress={() => setShareContactCard(null)} activeOpacity={1}>
           <TouchableOpacity activeOpacity={1} style={[s.modal, Shadow.xl, { backgroundColor: colors.surface, maxHeight: '80%' }]}>
@@ -2129,6 +2277,11 @@ const s = StyleSheet.create({
   familyBadgeText: { fontSize: 10, fontWeight: '700' },
 
   // Add contact button (device/family rows)
+  invitePill: {
+    borderWidth: 1, borderRadius: 14, paddingHorizontal: 12, paddingVertical: 5,
+    marginLeft: Spacing.sm, alignItems: 'center', justifyContent: 'center',
+  },
+  invitePillText: { fontSize: 13, fontWeight: '600', letterSpacing: 0.1 },
   addContactBtn: {
     width: 34, height: 34, borderRadius: 17, borderWidth: 1.5,
     alignItems: 'center', justifyContent: 'center',

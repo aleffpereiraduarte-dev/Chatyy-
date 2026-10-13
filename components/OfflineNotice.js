@@ -21,6 +21,15 @@ export default function OfflineNotice() {
   const [queueCount, setQueueCount] = useState(0);
   const [slideAnim] = useState(new Animated.Value(-60));
   const wasOffline = useRef(false);
+  // [2026-10-13 sync-status] Na home (aba Conversas focada) o título já mostra
+  // "Aguardando rede" → não empilha esta faixa (WhatsApp: UMA indicação).
+  // A lógica de fila/replay abaixo continua rodando; só o visual é omitido.
+  const [homeOwnsStatus, setHomeOwnsStatus] = useState(() => {
+    try { return require('../services/syncStatus').isHomeSyncSurfaceActive(); } catch { return false; }
+  });
+  useEffect(() => {
+    try { return require('../services/syncStatus').subscribeHomeSyncSurface(setHomeOwnsStatus); } catch { return undefined; }
+  }, []);
 
   useEffect(() => {
     // [2026-09-30 WhatsApp-invisible-reconnect] Debounce SHOWING the offline
@@ -158,7 +167,7 @@ export default function OfflineNotice() {
     }).start();
   }, [isOffline]);
 
-  if (!isOffline) return null;
+  if (!isOffline || homeOwnsStatus) return null;
 
   // WhatsApp-style: slim, neutral-gray bar — NOT a loud yellow alert. The
   // user already knows they're offline (system status bar shows airplane /
