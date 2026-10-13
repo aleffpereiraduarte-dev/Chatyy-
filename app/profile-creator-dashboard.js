@@ -1,21 +1,28 @@
 // Painel de criador — Pro tier creator monetization dashboard.
-// Surfaces, for the logged-in creator:
-//   • subscriber_count + monthly_revenue_cents (chat_creator_subscriptions)
-//   • weekly_tip_cents + monthly_tip_cents (chat_feed_tips payouts)
-//   • pending_payout_cents (chat_wallet_balances)
-//   • top tippers (last 30d)
-//   • 7-day daily tip sparkline
+// Backend: creator_dashboard (email.php) + wallet_balance + creator_earnings_summary.
 //
-// Backend: creator_dashboard action in email.php.
+// [2026-10-13 creator-dash-v2] Redesenho P&B (Instagram/TikTok Creator/YouTube
+// Studio): saldo "A receber" em destaque + botão "Sacar" (desabilitado abaixo
+// do mínimo, com barra de progresso e "Faltam X"), diamantes como linha
+// secundária com "Comprar", grade compacta de métricas, gráfico de barras só
+// quando há dados, maiores apoiadores (lista ou vazio compacto + como ganhar),
+// atividade recente (→ /creator-earnings). Skeleton, pull-to-refresh, escuro.
+//
+// MOEDA: o servidor guarda TUDO em centavos de BRL (chat_wallet_balances,
+// chat_feed_tips.creator_payout_cents, chat_creator_subscriptions). A tela
+// formata tudo pela moeda de exibição do usuário (formatMoneyActive converte
+// BRL→moeda ativa) — inclusive o mínimo de saque (R$ 50,00 = 5000 centavos,
+// validado em chat.php wallet_cashout_request). Antes o mínimo era um texto
+// fixo "R$ 50,00" ao lado de valores em US$.
 
-import { androidTopInset } from '../utils/systemInsets'; // [2026-10-07 android-native] edge-to-edge
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import {
-  View, Text, ScrollView, TouchableOpacity, ActivityIndicator, Platform, StyleSheet, RefreshControl,
+  View, Text, ScrollView, StyleSheet, RefreshControl, Pressable,
 } from 'react-native';
 import { useRouter, Stack } from 'expo-router';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { USE_NATIVE_HEADER, nativeHeaderOptions } from '../components/nativeHeader'; // [2026-10-09 native-sheets-headers] header NATIVO
-import Svg, { Path, Circle } from 'react-native-svg';
+import Svg, { Path } from 'react-native-svg';
 // [2026-05-22 monetization-pause] hidden by MONETIZATION_ENABLED flag
 import { MONETIZATION_ENABLED } from '../constants/featureFlags';
 import { useTheme } from '../context/ThemeContext';
@@ -24,354 +31,367 @@ import AvatarCircle from '../components/AvatarCircle';
 import * as api from '../services/api';
 import { formatMoneyActive } from '../services/currencyService';
 import { useCurrency } from '../context/CurrencyContext';
-import { IconArrowLeft } from '../components/Icons';
+import { IconChevronRight } from '../components/Icons';
 import DiamondTopUpSheet from '../components/DiamondTopUpSheet';
+import {
+  Button, Card, SectionHeader, TopBar, useSurface, PressableRow, Skeleton, SkeletonFadeIn,
+  Type, Space, Radius, Layout,
+} from '../components/ui';
+import { formatInt } from '../utils/dateFormat';
 
-const ACCENT = '#111111';
-const ACCENT_DEEP = '#111111';
-const ACCENT_PINK = '#111111';
-const GREEN = '#10B981';
-const AMBER = '#F59E0B';
+// Mínimo de saque em centavos BRL — espelha chat.php wallet_cashout_request
+// (amount_cents < 5000 → 'min_cashout') e app/wallet-cashout.js MIN_CENTS.
+const MIN_CASHOUT_CENTS = 5000;
 
-// Display-only: revenue/tip stats are stored in BRL cents; render them
-// in the user's selected display currency (read-only dashboard — no
-// charge or cashout entry happens here).
-function formatCents(cents) {
-  return formatMoneyActive(Number(cents) || 0);
-}
+function tr(t, k, fb) { const v = t ? t(k) : ''; return v && v !== k ? v : fb; }
+function money(cents) { return formatMoneyActive(Number(cents) || 0); }
 
-// Same Sparkline shape as profile-insights — pure SVG, 7-point curve.
-function Sparkline({ data, color = ACCENT, width = 260, height = 64 }) {
-  const arr = Array.isArray(data) && data.length > 0 ? data : [0, 0, 0, 0, 0, 0, 0];
-  const max = Math.max(1, ...arr);
-  const stepX = arr.length > 1 ? width / (arr.length - 1) : 0;
-  const points = arr.map((v, i) => {
-    const x = i * stepX;
-    const y = height - (v / max) * (height - 4) - 2;
-    return [x, y];
-  });
-  let d = '';
-  if (points.length > 0) {
-    d = `M ${points[0][0]} ${points[0][1]}`;
-    for (let i = 1; i < points.length; i++) d += ` L ${points[i][0]} ${points[i][1]}`;
-  }
-  const allZero = arr.every(v => v === 0);
+// Losango P&B (substitui o glifo de texto e o IconDiamond azul).
+function DiamondGlyph({ size = 16, color }) {
   return (
-    <Svg width={width} height={height}>
-      {allZero ? (
-        <Path d={`M 0 ${height - 4} L ${width} ${height - 4}`} stroke={color} strokeOpacity={0.25} strokeWidth={1.5} strokeDasharray="4,4" />
-      ) : (
-        <>
-          <Path d={d} stroke={color} strokeWidth={2} fill="none" strokeLinejoin="round" strokeLinecap="round" />
-          {points.map(([x, y], i) => (
-            <Circle key={i} cx={x} cy={y} r={i === points.length - 1 ? 3.5 : 2} fill={color} />
-          ))}
-        </>
-      )}
+    <Svg width={size} height={size} viewBox="0 0 24 24">
+      <Path d="M6 3h12l4 6-10 12L2 9l4-6Z" fill={color} />
     </Svg>
   );
 }
 
-export default function CreatorDashboardScreen() {
+// Variação percentual vs período anterior — só quando o servidor mandar o
+// valor anterior (prev_*). Sem base → nada (não inventa variação).
+function Delta({ cur, prev, s }) {
+  if (prev == null || !isFinite(Number(prev))) return null;
+  const p = Number(prev) || 0; const c = Number(cur) || 0;
+  if (p <= 0 && c <= 0) return null;
+  const pct = p > 0 ? Math.round(((c - p) / p) * 100) : 100;
+  const up = pct >= 0;
+  return (
+    <Text style={[Type.caption, { color: up ? s.success : s.danger, fontWeight: '600', marginTop: 2 }]} numberOfLines={1}>
+      {(up ? '+' : '') + pct + '%'}
+    </Text>
+  );
+}
+
+function MetricTile({ label, value, sub, delta, s }) {
+  return (
+    <View style={[styles.tile, { backgroundColor: s.surface, borderColor: s.border, borderWidth: s.isDark ? 0 : StyleSheet.hairlineWidth }]}>
+      <Text style={[Type.caption, { color: s.textSecondary }]} numberOfLines={1}>{label}</Text>
+      <Text style={[Type.title3, { color: s.text, marginTop: Space.xs }]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.7}>{value}</Text>
+      {delta}
+      {sub ? <Text style={[Type.caption, { color: s.textTertiary, marginTop: 2 }]} numberOfLines={1}>{sub}</Text> : null}
+    </View>
+  );
+}
+
+// Barras dos últimos 7 dias. Série única → sem legenda (o título nomeia).
+// Toque numa barra mostra o valor do dia (equivalente ao hover).
+function WeekBars({ series, s, language }) {
+  const vals = series.map(x => Number(x.tip_cents) || 0);
+  const max = Math.max(1, ...vals);
+  const peak = vals.indexOf(Math.max(...vals));
+  const [sel, setSel] = useState(peak);
+  const label = (d) => {
+    try {
+      const dt = new Date(String(d) + 'T12:00:00');
+      const w = dt.toLocaleDateString(language || undefined, { weekday: 'short' });
+      return String(w).replace('.', '').slice(0, 3);
+    } catch { return String(d).slice(8, 10); }
+  };
+  const H = 96;
+  return (
+    <View>
+      <Text style={[Type.footnote, { color: s.textSecondary }]} numberOfLines={1}>
+        {series[sel] ? `${label(series[sel].date)} · ${money(vals[sel])}` : ''}
+      </Text>
+      <View style={[styles.bars, { height: H, borderBottomColor: s.separator }]}>
+        {vals.map((v, i) => {
+          const h = v > 0 ? Math.max(4, Math.round((v / max) * (H - 8))) : 2;
+          const on = i === sel;
+          return (
+            <Pressable key={i} onPress={() => setSel(i)} style={styles.barHit} accessibilityRole="button"
+              accessibilityLabel={`${label(series[i]?.date)} ${money(v)}`}>
+              <View style={{
+                height: h, width: '100%', borderTopLeftRadius: 4, borderTopRightRadius: 4,
+                backgroundColor: v > 0 ? s.ink : s.fill, opacity: v > 0 && !on ? 0.55 : 1,
+              }} />
+            </Pressable>
+          );
+        })}
+      </View>
+      <View style={styles.barLabels}>
+        {series.map((x, i) => (
+          <Text key={i} style={[Type.caption2, styles.barLabel, { color: i === sel ? s.text : s.textTertiary }]} numberOfLines={1}>
+            {label(x.date)}
+          </Text>
+        ))}
+      </View>
+    </View>
+  );
+}
+
+function DashboardSkeleton() {
+  return (
+    <View style={{ padding: Layout.gutter, gap: Space.md }}>
+      <Skeleton height={176} radius={Radius.card} />
+      <Skeleton height={64} radius={Radius.card} delay={40} />
+      <View style={{ flexDirection: 'row', gap: Space.md }}>
+        <Skeleton height={84} radius={Radius.card} style={{ flex: 1 }} delay={60} />
+        <Skeleton height={84} radius={Radius.card} style={{ flex: 1 }} delay={80} />
+      </View>
+      <View style={{ flexDirection: 'row', gap: Space.md }}>
+        <Skeleton height={84} radius={Radius.card} style={{ flex: 1 }} delay={100} />
+        <Skeleton height={84} radius={Radius.card} style={{ flex: 1 }} delay={120} />
+      </View>
+      <Skeleton height={140} radius={Radius.card} delay={140} />
+    </View>
+  );
+}
+
+function sourceLabel(t, refKind) {
+  const k = String(refKind || '');
+  if (k === 'live_gift') return tr(t, 'creatorEarnings.source.live', 'Ao vivo');
+  if (k === 'reel_tip') return tr(t, 'creatorEarnings.source.reel', 'Reel');
+  if (k === 'feed_tip') return tr(t, 'creatorEarnings.source.feed', 'Post');
+  return tr(t, 'creatorEarnings.source.other', 'Direto');
+}
+
+function CreatorDashboard() {
   const { colors, isDark } = useTheme();
-  const { t } = useLanguage();
+  const { t, language } = useLanguage();
   const router = useRouter();
-  // Re-render the stat cards (formatted via module-level formatCents →
-  // formatMoneyActive) when the user switches display currency.
+  const insets = useSafeAreaInsets();
+  const s = useSurface();
+  // Re-render quando o usuário troca a moeda de exibição.
   useCurrency();
 
-  // [2026-05-22 monetization-pause] The whole dashboard is paid-monetization
-  // aggregates (tips, payouts, subscribers). While MONETIZATION_ENABLED is
-  // off we DON'T flip the global flag — instead we render a clean "em breve"
-  // empty state so the screen never appears broken/blank when reached.
-  // NOTE: re-enabling the panel = set MONETIZATION_ENABLED=true in
-  // constants/featureFlags.js (business decision), not an edit here.
-  if (!MONETIZATION_ENABLED) {
-    return (
-      <View style={{ flex: 1, backgroundColor: colors.background }}>
-        {USE_NATIVE_HEADER && <Stack.Screen options={nativeHeaderOptions({ colors, isDark, title: t('profile.creatorDashboard') })} />}
-        {!USE_NATIVE_HEADER && (
-        <View style={[styles.header, { borderBottomColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)' }]}>
-          <TouchableOpacity onPress={() => { try { router.back(); } catch {} }} style={styles.backBtn} accessibilityLabel={t?.('common.back') || 'Voltar'}>
-            <IconArrowLeft size={22} color={colors.text} />
-          </TouchableOpacity>
-          <Text style={[styles.headerTitle, { color: colors.text }]} numberOfLines={1}>
-            {t?.('profile.creatorDashboard') || 'Painel de criador'}
-          </Text>
-          <View style={{ width: 22 }} />
-        </View>
-        )}
-        <ScrollView contentContainerStyle={styles.gateBody} showsVerticalScrollIndicator={false}>
-          <View style={[styles.gateBadge, { backgroundColor: ACCENT_DEEP }]}>
-            <View style={[styles.heroOverlay, { backgroundColor: ACCENT_PINK }]} />
-            <View style={[styles.heroOverlay2, { backgroundColor: ACCENT }]} />
-            <Text style={styles.gateBadgeIcon}>◆</Text>
-          </View>
-          <Text style={[styles.gateTitle, { color: colors.text }]}>
-            {t?.('creatorDashboard.comingSoonTitle') || 'Recursos de criador em breve'}
-          </Text>
-          <Text style={[styles.gateSub, { color: colors.textSecondary }]}>
-            {t?.('creatorDashboard.comingSoonBody')
-              || 'Diamantes, gorjetas, assinaturas e saques ainda não estão disponíveis. Continue postando e crescendo — quando a monetização abrir, seus ganhos vão aparecer aqui.'}
-          </Text>
-          <View style={[styles.gateList, { borderColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.07)' }]}>
-            {[
-              t?.('creatorDashboard.perk1') || 'Receba diamantes e gorjetas dos fãs',
-              t?.('creatorDashboard.perk2') || 'Assinaturas mensais do seu conteúdo',
-              t?.('creatorDashboard.perk3') || 'Saque dos seus ganhos via Pix',
-            ].map((line, i) => (
-              <View key={i} style={styles.gateListRow}>
-                <View style={[styles.gateDot, { backgroundColor: ACCENT }]} />
-                <Text style={[styles.gateListText, { color: colors.text }]}>{line}</Text>
-              </View>
-            ))}
-          </View>
-          <TouchableOpacity
-            activeOpacity={0.85}
-            onPress={() => { try { router.back(); } catch {} }}
-            style={[styles.gateCta, { backgroundColor: ACCENT }]}
-            accessibilityRole="button"
-          >
-            <Text style={styles.gateCtaText}>
-              {t?.('creatorDashboard.backToApp') || 'Voltar'}
-            </Text>
-          </TouchableOpacity>
-        </ScrollView>
-      </View>
-    );
-  }
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [failed, setFailed] = useState(false);
   const [data, setData] = useState({
-    subscriber_count: 0,
-    monthly_revenue_cents: 0,
-    weekly_tip_cents: 0,
-    monthly_tip_cents: 0,
-    pending_payout_cents: 0,
-    top_tippers: [],
-    tip_series_7d: [],
+    subscriber_count: 0, monthly_revenue_cents: 0, weekly_tip_cents: 0, monthly_tip_cents: 0,
+    pending_payout_cents: 0, top_tippers: [], tip_series_7d: [],
   });
-  const [topupOpen, setTopupOpen] = useState(false);
   const [diamondBalance, setDiamondBalance] = useState(0);
-
-  // Pull the creator's own diamond balance — drives the "Comprar diamantes"
-  // chip + helps creators tip back the people who tip them.
-  useEffect(() => {
-    (async () => {
-      try {
-        const r = await api.walletBalance?.();
-        if (r?.success && r.data) setDiamondBalance(Number(r.data.diamond_balance) || 0);
-      } catch {}
-    })();
-  }, []);
+  const [recent, setRecent] = useState([]);
+  const [topupOpen, setTopupOpen] = useState(false);
 
   const load = useCallback(async () => {
-    try {
-      const r = await api.creatorDashboard?.();
-      if (r?.success && r.data) setData(r.data);
-    } catch {}
+    const [dash, wallet, earn] = await Promise.allSettled([
+      api.creatorDashboard?.(),
+      api.walletBalance?.(),
+      api.creatorEarningsSummary?.({ limit: 5 }),
+    ]);
+    const d = dash.status === 'fulfilled' ? dash.value : null;
+    if (d?.success && d.data) { setData(d.data); setFailed(false); } else { setFailed(true); }
+    const w = wallet.status === 'fulfilled' ? wallet.value : null;
+    if (w?.success && w.data) setDiamondBalance(Number(w.data.diamond_balance) || 0);
+    const e = earn.status === 'fulfilled' ? earn.value : null;
+    if (e?.success && e.data && Array.isArray(e.data.timeline)) setRecent(e.data.timeline.slice(0, 5));
     setLoading(false);
     setRefreshing(false);
   }, []);
 
   useEffect(() => { load(); }, [load]);
+  const onRefresh = useCallback(() => { setRefreshing(true); load(); }, [load]);
 
-  const onRefresh = useCallback(() => {
-    setRefreshing(true);
-    load();
-  }, [load]);
+  const pending = Number(data.pending_payout_cents) || 0;
+  const canCashout = pending >= MIN_CASHOUT_CENTS;
+  const progress = Math.max(0, Math.min(1, pending / MIN_CASHOUT_CENTS));
+  const series = useMemo(() => (Array.isArray(data.tip_series_7d) ? data.tip_series_7d : []), [data.tip_series_7d]);
+  const hasSeries = series.some(x => (Number(x.tip_cents) || 0) > 0);
+  const tippers = Array.isArray(data.top_tippers) ? data.top_tippers : [];
+  const go = (path) => () => { try { router.push(path); } catch {} };
 
-  const cardBg = isDark ? '#1a1625' : '#ffffff';
-  const cardBorder = isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)';
-  const sparkData = (data.tip_series_7d || []).map(s => Number(s.tip_cents) || 0);
+  const title = tr(t, 'profile.creatorDashboard', 'Painel de criador');
 
-  // 2026-05-20 — Painel de criador visual upgrade.
-  // Pre-2026-05-20 the layout was a stack of 5 flat cards plus a wallet card.
-  // It worked but felt like an admin debug view. Reworked into:
-  //  • Hero gradient header (brand purple → pink) com saldo de diamantes + CTA top-up.
-  //  • Stat grid 2×2: receita mensal, 7d, 30d, a receber — visualmente paritários.
-  //  • Card de série temporal (7d) com Sparkline maior + receita semanal.
-  //  • Top tippers com pódio coloreado pros 3 primeiros (#FFD700/#C0C0C0/#CD7F32).
-  //  • Empty state ilustrado quando não há tippers.
-  //  • CTA "Solicitar saque" → /creator-earnings.
-  const hasAnyEarnings =
-    (data.monthly_revenue_cents || 0) > 0 ||
-    (data.weekly_tip_cents || 0) > 0 ||
-    (data.monthly_tip_cents || 0) > 0 ||
-    (data.pending_payout_cents || 0) > 0;
-
-  const rankColor = (idx) => {
-    if (idx === 0) return '#FFD700';
-    if (idx === 1) return '#C0C0C0';
-    if (idx === 2) return '#CD7F32';
-    return colors.textTertiary;
-  };
-
-  return (
-    <View style={{ flex: 1, backgroundColor: colors.background }}>
-      {USE_NATIVE_HEADER && <Stack.Screen options={nativeHeaderOptions({ colors, isDark, title: t('profile.creatorDashboard') })} />}
-      {!USE_NATIVE_HEADER && (
-      <View style={[styles.header, { borderBottomColor: cardBorder }]}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.backBtn} accessibilityLabel={t?.('common.back') || 'Voltar'}>
-          <IconArrowLeft size={22} color={colors.text} />
-        </TouchableOpacity>
-        <Text style={[styles.headerTitle, { color: colors.text }]} numberOfLines={1}>
-          {t?.('profile.creatorDashboard') || 'Painel de criador'}
+  const body = (
+    <>
+      {/* ── Saldo a receber + Sacar ───────────────────────────── */}
+      <Card elevated padding={Space.xl}>
+        <Text style={[Type.footnote, { color: s.textSecondary, fontWeight: '600' }]}>
+          {tr(t, 'creatorDash.available', 'A receber')}
         </Text>
-        <View style={{ width: 22 }} />
+        <Text style={[Type.largeTitle, { color: s.text, marginTop: Space.xs }]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.6}>
+          {money(pending)}
+        </Text>
+        {canCashout ? (
+          <Text style={[Type.footnote, { color: s.textSecondary, marginTop: Space.xs }]}>
+            {tr(t, 'creatorDash.availableSub', 'Disponível para saque via Pix')}
+          </Text>
+        ) : (
+          <View style={{ marginTop: Space.md }}>
+            <View style={[styles.track, { backgroundColor: s.fill }]}
+              accessibilityRole="progressbar"
+              accessibilityValue={{ min: 0, max: 100, now: Math.round(progress * 100) }}>
+              <View style={[styles.trackFill, { width: `${Math.max(progress * 100, progress > 0 ? 2 : 0)}%`, backgroundColor: s.ink }]} />
+            </View>
+            <Text style={[Type.footnote, { color: s.textSecondary, marginTop: Space.sm }]}>
+              {tr(t, 'creatorDash.missing', 'Faltam {missing} para o saque mínimo de {min}')
+                .replace('{missing}', money(MIN_CASHOUT_CENTS - pending))
+                .replace('{min}', money(MIN_CASHOUT_CENTS))}
+            </Text>
+          </View>
+        )}
+        <Button
+          title={tr(t, 'creatorDash.withdraw', 'Sacar')}
+          size="lg"
+          fullWidth
+          disabled={!canCashout}
+          onPress={go('/wallet-cashout')}
+          style={{ marginTop: Space.lg }}
+        />
+      </Card>
+
+      {/* ── Diamantes (linha secundária) ──────────────────────── */}
+      <Card padding={0}>
+        <PressableRow onPress={() => setTopupOpen(true)} style={styles.diamondRow} accessibilityRole="button">
+          <View style={[styles.diamondTile, { backgroundColor: s.fill }]}>
+            <DiamondGlyph size={18} color={s.text} />
+          </View>
+          <View style={{ flex: 1, minWidth: 0, marginLeft: Space.md }}>
+            <Text style={[Type.headline, { color: s.text }]} numberOfLines={1}>
+              {tr(t, 'creatorDash.diamonds', '{n} diamantes').replace('{n}', formatInt(diamondBalance, language))}
+            </Text>
+            <Text style={[Type.footnote, { color: s.textSecondary }]} numberOfLines={1}>
+              {tr(t, 'creatorDash.diamondsSub', 'Seu saldo para enviar presentes')}
+            </Text>
+          </View>
+          <Button title={tr(t, 'creatorDash.buy', 'Comprar')} variant="secondary" size="sm" onPress={() => setTopupOpen(true)} />
+        </PressableRow>
+      </Card>
+
+      {/* ── Métricas ──────────────────────────────────────────── */}
+      <View style={styles.grid}>
+        <MetricTile s={s}
+          label={tr(t, 'creatorDash.monthRevenue', 'Receita do mês')}
+          value={money(data.monthly_revenue_cents)}
+          delta={<Delta s={s} cur={data.monthly_revenue_cents} prev={data.prev_monthly_revenue_cents} />}
+        />
+        <MetricTile s={s}
+          label={tr(t, 'creatorDash.subscribers', 'Assinantes')}
+          value={formatInt(data.subscriber_count || 0, language)}
+          delta={<Delta s={s} cur={data.subscriber_count} prev={data.prev_subscriber_count} />}
+        />
       </View>
+      <View style={styles.grid}>
+        <MetricTile s={s}
+          label={tr(t, 'creatorDash.gifts7d', 'Presentes · 7 dias')}
+          value={money(data.weekly_tip_cents)}
+          delta={<Delta s={s} cur={data.weekly_tip_cents} prev={data.prev_weekly_tip_cents} />}
+        />
+        <MetricTile s={s}
+          label={tr(t, 'creatorDash.gifts30d', 'Presentes · 30 dias')}
+          value={money(data.monthly_tip_cents)}
+          delta={<Delta s={s} cur={data.monthly_tip_cents} prev={data.prev_monthly_tip_cents} />}
+        />
+      </View>
+
+      {/* ── Gráfico (só com dados) ────────────────────────────── */}
+      <Card>
+        <Text style={[Type.headline, { color: s.text, marginBottom: Space.xs }]}>
+          {tr(t, 'creatorDash.chartTitle', 'Últimos 7 dias')}
+        </Text>
+        {hasSeries ? (
+          <WeekBars series={series} s={s} language={language} />
+        ) : (
+          <Text style={[Type.footnote, { color: s.textSecondary }]}>
+            {tr(t, 'creatorDash.chartEmpty', 'Sem presentes nos últimos 7 dias.')}
+          </Text>
+        )}
+      </Card>
+
+      {/* ── Maiores apoiadores ───────────────────────────────── */}
+      <SectionHeader variant="grouped" inset={Space.xs} style={{ paddingTop: Space.sm }} title={tr(t, 'creatorDash.topSupporters', 'Maiores apoiadores · 30 dias')} />
+      {tippers.length > 0 ? (
+        <Card padding={0}>
+          {tippers.map((tp, idx) => (
+            <View key={(tp.email || '') + idx}
+              style={[styles.personRow, idx < tippers.length - 1 && { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: s.separator }]}>
+              <Text style={[Type.footnote, styles.rank, { color: idx < 3 ? s.text : s.textTertiary }]}>{idx + 1}</Text>
+              <AvatarCircle email={tp.email} name={tp.name} size={36} colors={colors} />
+              <View style={{ flex: 1, minWidth: 0, marginLeft: Space.md }}>
+                <Text style={[Type.callout, { color: s.text, fontWeight: '600' }]} numberOfLines={1}>
+                  {tp.name || (tp.email || '').split('@')[0]}
+                </Text>
+                <Text style={[Type.caption, { color: s.textSecondary }]} numberOfLines={1}>
+                  {tr(t, 'creatorDash.supporterLine', '{d} diamantes · {n} presentes')
+                    .replace('{d}', formatInt(tp.total_diamonds || 0, language))
+                    .replace('{n}', formatInt(tp.tip_count || 0, language))}
+                </Text>
+              </View>
+              <Text style={[Type.callout, { color: s.text, fontWeight: '600' }]}>{money(tp.total_cents)}</Text>
+            </View>
+          ))}
+        </Card>
+      ) : (
+        <Card padding={0}>
+          <View style={{ paddingHorizontal: Space.lg, paddingTop: Space.lg, paddingBottom: Space.sm }}>
+            <Text style={[Type.headline, { color: s.text }]}>{tr(t, 'creatorDash.noSupporters', 'Ainda sem apoiadores')}</Text>
+            <Text style={[Type.footnote, { color: s.textSecondary, marginTop: 2 }]}>
+              {tr(t, 'creatorDash.noSupportersSub', 'Quem mandar diamantes para você aparece aqui. Formas de ganhar:')}
+            </Text>
+          </View>
+          <EarnRow s={s} title={tr(t, 'creatorDash.earnLive', 'Fazer uma live')} sub={tr(t, 'creatorDash.earnLiveSub', 'Receba presentes ao vivo')} onPress={go('/live-broadcast')} separator />
+          <EarnRow s={s} title={tr(t, 'creatorDash.earnReel', 'Publicar um reel')} sub={tr(t, 'creatorDash.earnReelSub', 'Fãs podem mandar diamantes no reel')} onPress={go('/reels-compose')} />
+        </Card>
       )}
 
+      {/* ── Atividade recente / Ver ganhos ───────────────────── */}
+      <SectionHeader variant="grouped" inset={Space.xs} style={{ paddingTop: Space.sm }} title={tr(t, 'creatorDash.recent', 'Atividade recente')} />
+      <Card padding={0}>
+        {recent.map((item, idx) => {
+          const who = String(item.counterparty || '').split('@')[0] || tr(t, 'creatorEarnings.someone', 'Alguém');
+          let when = '';
+          try { const ts = Number(item.created_at_ts) * 1000; if (ts) when = new Date(ts).toLocaleDateString(language || undefined); } catch {}
+          return (
+            <View key={String(item.id || idx)} style={[styles.personRow, { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: s.separator }]}>
+              <AvatarCircle email={item.counterparty} size={36} />
+              <View style={{ flex: 1, minWidth: 0, marginLeft: Space.md }}>
+                <Text style={[Type.callout, { color: s.text, fontWeight: '600' }]} numberOfLines={1}>{who}</Text>
+                <Text style={[Type.caption, { color: s.textSecondary }]} numberOfLines={1}>
+                  {sourceLabel(t, item.ref_kind)}{when ? ' · ' + when : ''}
+                </Text>
+              </View>
+              <View style={styles.amount}>
+                <Text style={[Type.callout, { color: s.text, fontWeight: '600' }]}>+{formatInt(item.amount || 0, language)}</Text>
+                <DiamondGlyph size={12} color={s.text} />
+              </View>
+            </View>
+          );
+        })}
+        {recent.length === 0 ? (
+          <Text style={[Type.footnote, { color: s.textSecondary, paddingHorizontal: Space.lg, paddingTop: Space.md, paddingBottom: Space.xs }]}>
+            {tr(t, 'creatorDash.noActivity', 'Nenhum ganho ainda.')}
+          </Text>
+        ) : null}
+        <PressableRow onPress={go('/creator-earnings')} style={styles.linkRow} accessibilityRole="button">
+          <Text style={[Type.callout, { color: s.text, fontWeight: '600', flex: 1 }]}>{tr(t, 'creatorEarnings.cta', 'Ver ganhos')}</Text>
+          <IconChevronRight size={18} color={s.iconMuted} />
+        </PressableRow>
+      </Card>
+
+      {failed ? (
+        <Text style={[Type.footnote, { color: s.textSecondary, textAlign: 'center', marginTop: Space.sm }]}>
+          {tr(t, 'creatorDash.loadError', 'Não foi possível atualizar. Puxe para tentar de novo.')}
+        </Text>
+      ) : null}
+    </>
+  );
+
+  return (
+    <View style={{ flex: 1, backgroundColor: s.bgGrouped }}>
+      {USE_NATIVE_HEADER ? (
+        <Stack.Screen options={nativeHeaderOptions({ colors, isDark, title })} />
+      ) : (
+        <TopBar title={title} onBack={() => { try { router.back(); } catch {} }} maxWidth={Layout.contentMaxWidth} />
+      )}
       {loading ? (
-        <View style={styles.loadingWrap}>
-          <ActivityIndicator color={ACCENT} />
-        </View>
+        <DashboardSkeleton />
       ) : (
         <ScrollView
-          contentContainerStyle={styles.scrollBody}
+          contentContainerStyle={[styles.scrollBody, { paddingBottom: Math.max(Space.xxxl, (insets.bottom || 0) + Space.xl) }]}
           showsVerticalScrollIndicator={false}
-          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={ACCENT} />}
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={s.textSecondary} />}
         >
-          {/* Hero — Diamond wallet + top-up CTA.
-              Fake-gradient effect via stacked layers (sem expo-linear-gradient
-              pra evitar dep nativa). Deep purple base + pink overlay diagonal. */}
-          <TouchableOpacity
-            activeOpacity={0.9}
-            onPress={() => setTopupOpen(true)}
-            style={[styles.hero, { backgroundColor: ACCENT_DEEP }]}
-            accessibilityRole="button"
-            accessibilityLabel={t?.('wallet.topup') || 'Comprar diamantes'}
-          >
-            <View style={[styles.heroOverlay, { backgroundColor: ACCENT_PINK }]} />
-            <View style={[styles.heroOverlay2, { backgroundColor: ACCENT }]} />
-            <View style={{ flex: 1, zIndex: 2 }}>
-              <Text style={styles.heroLabel}>
-                {t?.('wallet.myDiamonds') || 'Meus diamantes'}
-              </Text>
-              <Text style={styles.heroValue}>{diamondBalance.toLocaleString('pt-BR')} ◆</Text>
-              <Text style={styles.heroSub}>
-                {t?.('wallet.topupCta') || 'Tocar para comprar diamantes'}
-              </Text>
-            </View>
-            <View style={styles.heroCta}>
-              <Text style={styles.heroCtaText}>+</Text>
-            </View>
-          </TouchableOpacity>
-
-          {/* Quick action row — Saque + Ver ganhos */}
-          <View style={styles.actionRow}>
-            <TouchableOpacity
-              activeOpacity={0.85}
-              onPress={() => { try { router.push('/creator-earnings'); } catch {} }}
-              style={[styles.actionPill, { backgroundColor: GREEN }]}
-              accessibilityRole="button"
-              accessibilityLabel={t?.('creatorEarnings.cashoutCta') || 'Solicitar saque'}
-            >
-              <Text style={styles.actionPillText}>
-                {t?.('creatorEarnings.cashoutCta') || 'Solicitar saque'}
-              </Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              activeOpacity={0.85}
-              onPress={() => { try { router.push('/creator-earnings'); } catch {} }}
-              style={[styles.actionPillSecondary, { borderColor: cardBorder, backgroundColor: cardBg }]}
-              accessibilityRole="button"
-              accessibilityLabel={t?.('creatorEarnings.cta') || 'Ver ganhos'}
-            >
-              <Text style={[styles.actionPillSecondaryText, { color: colors.text }]}>
-                {t?.('creatorEarnings.cta') || 'Ver ganhos'}
-              </Text>
-            </TouchableOpacity>
-          </View>
-
-          {/* Stat grid 2x2 — paired KPIs */}
-          <View style={styles.gridRow}>
-            <View style={[styles.statCard, { backgroundColor: cardBg, borderColor: cardBorder }]}>
-              <View style={[styles.statDot, { backgroundColor: ACCENT }]} />
-              <Text style={[styles.statLabel, { color: colors.textSecondary }]} numberOfLines={1}>
-                {t?.('profile.monthlyRevenue') || 'Receita mensal'}
-              </Text>
-              <Text style={[styles.statValue, { color: colors.text }]} numberOfLines={1}>
-                {formatCents(data.monthly_revenue_cents)}
-              </Text>
-              <Text style={[styles.statSub, { color: colors.textTertiary }]} numberOfLines={1}>
-                {(t?.('profile.subscriberCountLine') || '{n} assinantes ativos').replace('{n}', data.subscriber_count || 0)}
-              </Text>
-            </View>
-            <View style={[styles.statCard, { backgroundColor: cardBg, borderColor: cardBorder }]}>
-              <View style={[styles.statDot, { backgroundColor: GREEN }]} />
-              <Text style={[styles.statLabel, { color: colors.textSecondary }]} numberOfLines={1}>
-                {t?.('profile.pendingPayout') || 'A receber'}
-              </Text>
-              <Text style={[styles.statValue, { color: colors.text }]} numberOfLines={1}>
-                {formatCents(data.pending_payout_cents)}
-              </Text>
-              <Text style={[styles.statSub, { color: colors.textTertiary }]} numberOfLines={1}>
-                {t?.('profile.payoutHint') || 'Saque a partir de R$ 50,00'}
-              </Text>
-            </View>
-          </View>
-
-          {/* Sparkline card — 7d tips trend */}
-          <View style={[styles.card, { backgroundColor: cardBg, borderColor: cardBorder }]}>
-            <View style={styles.sparkHeader}>
-              <View style={{ flex: 1 }}>
-                <Text style={[styles.cardTitle, { color: colors.textSecondary }]}>
-                  {t?.('profile.tipsLast7d') || 'Diamantes recebidos (7d)'}
-                </Text>
-                <Text style={[styles.cardValue, { color: colors.text }]}>{formatCents(data.weekly_tip_cents)}</Text>
-              </View>
-              <View style={[styles.badge30d, { backgroundColor: AMBER + '22', borderColor: AMBER + '55' }]}>
-                <Text style={[styles.badge30dLabel, { color: AMBER }]}>30d</Text>
-                <Text style={[styles.badge30dValue, { color: colors.text }]}>{formatCents(data.monthly_tip_cents)}</Text>
-              </View>
-            </View>
-            <View style={styles.sparkWrap}>
-              <Sparkline data={sparkData} color={AMBER} />
-            </View>
-          </View>
-
-          {/* Top tippers list — podium colors for top 3 */}
-          <View style={[styles.card, { backgroundColor: cardBg, borderColor: cardBorder }]}>
-            <Text style={[styles.cardTitle, { color: colors.textSecondary, marginBottom: 12 }]}>
-              {t?.('profile.topTippers') || 'Maiores apoiadores (30d)'}
-            </Text>
-            {(data.top_tippers || []).length === 0 ? (
-              <View style={styles.emptyState}>
-                <View style={[styles.emptyIcon, { backgroundColor: ACCENT + '18' }]}>
-                  <Text style={styles.emptyIconText}>◆</Text>
-                </View>
-                <Text style={[styles.emptyTitle, { color: colors.text }]}>
-                  {t?.('profile.noTippersYet') || 'Ninguém mandou diamantes ainda.'}
-                </Text>
-                <Text style={[styles.emptySub, { color: colors.textTertiary }]}>
-                  {hasAnyEarnings
-                    ? (t?.('profile.emptyTippersWithEarnings') || 'Os primeiros fãs vão aparecer aqui assim que mandarem um presente.')
-                    : (t?.('profile.emptyTippersNoEarnings') || 'Comece a postar pra ver suas métricas crescerem.')}
-                </Text>
-              </View>
-            ) : (
-              (data.top_tippers || []).map((tp, idx) => (
-                <View key={tp.email + idx} style={styles.tipperRow}>
-                  <Text style={[styles.tipperRank, { color: rankColor(idx), fontWeight: idx < 3 ? '800' : '700' }]}>#{idx + 1}</Text>
-                  <AvatarCircle email={tp.email} name={tp.name} size={36} colors={colors} />
-                  <View style={{ flex: 1, marginLeft: 10 }}>
-                    <Text style={[styles.tipperName, { color: colors.text }]} numberOfLines={1}>
-                      {tp.name || tp.email?.split('@')[0]}
-                    </Text>
-                    <Text style={[styles.tipperSub, { color: colors.textSecondary }]} numberOfLines={1}>
-                      {(t?.('profile.tipperLine') || '{d} ◆ · {n} presentes')
-                        .replace('{d}', tp.total_diamonds || 0)
-                        .replace('{n}', tp.tip_count || 0)}
-                    </Text>
-                  </View>
-                  <Text style={[styles.tipperAmount, { color: '#FBBF24' }]}>
-                    {formatCents(tp.total_cents)}
-                  </Text>
-                </View>
-              ))
-            )}
-          </View>
+          <SkeletonFadeIn style={{ gap: Space.md }}>{body}</SkeletonFadeIn>
         </ScrollView>
       )}
 
@@ -384,195 +404,92 @@ export default function CreatorDashboardScreen() {
   );
 }
 
+function EarnRow({ s, title, sub, onPress, separator }) {
+  return (
+    <PressableRow onPress={onPress} style={styles.earnRow} accessibilityRole="button">
+      <View style={[{ flex: 1, minWidth: 0, paddingVertical: Space.md, flexDirection: 'row', alignItems: 'center' },
+        separator && { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: s.separator }]}>
+        <View style={{ flex: 1, minWidth: 0 }}>
+          <Text style={[Type.callout, { color: s.text, fontWeight: '600' }]} numberOfLines={1}>{title}</Text>
+          <Text style={[Type.caption, { color: s.textSecondary }]} numberOfLines={1}>{sub}</Text>
+        </View>
+        <IconChevronRight size={18} color={s.iconMuted} />
+      </View>
+    </PressableRow>
+  );
+}
+
+// [2026-05-22 monetization-pause] While MONETIZATION_ENABLED is off, a clean
+// "em breve" state (re-enable = constants/featureFlags.js, business decision).
+function ComingSoon() {
+  const { colors, isDark } = useTheme();
+  const { t } = useLanguage();
+  const router = useRouter();
+  const s = useSurface();
+  const title = tr(t, 'profile.creatorDashboard', 'Painel de criador');
+  return (
+    <View style={{ flex: 1, backgroundColor: s.bg }}>
+      {USE_NATIVE_HEADER ? (
+        <Stack.Screen options={nativeHeaderOptions({ colors, isDark, title })} />
+      ) : (
+        <TopBar title={title} onBack={() => { try { router.back(); } catch {} }} />
+      )}
+      <ScrollView contentContainerStyle={styles.gateBody} showsVerticalScrollIndicator={false}>
+        <View style={[styles.gateBadge, { backgroundColor: s.ink }]}>
+          <DiamondGlyph size={40} color={s.onInk} />
+        </View>
+        <Text style={[Type.title2, { color: s.text, textAlign: 'center' }]}>
+          {tr(t, 'creatorDashboard.comingSoonTitle', 'Recursos de criador em breve')}
+        </Text>
+        <Text style={[Type.subhead, { color: s.textSecondary, textAlign: 'center', marginTop: Space.sm }]}>
+          {tr(t, 'creatorDashboard.comingSoonBody', 'Diamantes, gorjetas, assinaturas e saques ainda não estão disponíveis. Continue postando e crescendo — quando a monetização abrir, seus ganhos vão aparecer aqui.')}
+        </Text>
+        <View style={[styles.gateList, { borderColor: s.separator }]}>
+          {[
+            tr(t, 'creatorDashboard.perk1', 'Receba diamantes e gorjetas dos fãs'),
+            tr(t, 'creatorDashboard.perk2', 'Assinaturas mensais do seu conteúdo'),
+            tr(t, 'creatorDashboard.perk3', 'Saque dos seus ganhos via Pix'),
+          ].map((line, i) => (
+            <View key={i} style={styles.gateListRow}>
+              <View style={[styles.gateDot, { backgroundColor: s.text }]} />
+              <Text style={[Type.subhead, { flex: 1, color: s.text, fontWeight: '600' }]}>{line}</Text>
+            </View>
+          ))}
+        </View>
+        <Button title={tr(t, 'creatorDashboard.backToApp', 'Voltar')} size="lg" fullWidth
+          onPress={() => { try { router.back(); } catch {} }} style={{ marginTop: Space.xxl }} />
+      </ScrollView>
+    </View>
+  );
+}
+
+export default function CreatorDashboardScreen() {
+  return MONETIZATION_ENABLED ? <CreatorDashboard /> : <ComingSoon />;
+}
+
 const styles = StyleSheet.create({
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 12,
-    paddingTop: Platform.OS === 'ios' ? 50 : androidTopInset(16),
-    paddingBottom: 12,
-    borderBottomWidth: StyleSheet.hairlineWidth,
+  scrollBody: {
+    padding: Layout.gutter, gap: Space.md,
+    width: '100%', maxWidth: Layout.contentMaxWidth, alignSelf: 'center',
   },
-  backBtn: { width: 38, height: 38, borderRadius: 19, alignItems: 'center', justifyContent: 'center' },
-  headerTitle: { flex: 1, textAlign: 'center', fontSize: 16, fontWeight: '700' },
-  loadingWrap: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingTop: 80 },
-  scrollBody: { padding: 14, gap: 12, paddingBottom: 40 },
-  card: {
-    borderRadius: 14,
-    borderWidth: StyleSheet.hairlineWidth,
-    padding: 16,
-    gap: 4,
-  },
-  // Hero — fake-gradient via stacked translucent overlays so we don't pull in
-  // expo-linear-gradient (would force a native rebuild). Deep purple base,
-  // pink overlay diagonal, accent purple second diagonal.
-  hero: {
-    borderRadius: 18,
-    padding: 18,
-    flexDirection: 'row',
-    alignItems: 'center',
-    overflow: 'hidden',
-    minHeight: 120,
-  },
-  heroOverlay: {
-    position: 'absolute',
-    width: 260,
-    height: 260,
-    borderRadius: 200,
-    right: -90,
-    top: -90,
-    opacity: 0.55,
-  },
-  heroOverlay2: {
-    position: 'absolute',
-    width: 200,
-    height: 200,
-    borderRadius: 200,
-    left: -70,
-    bottom: -70,
-    opacity: 0.4,
-  },
-  heroLabel: {
-    fontSize: 11,
-    fontWeight: '700',
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-    color: 'rgba(255,255,255,0.85)',
-  },
-  heroValue: {
-    fontSize: 32,
-    fontWeight: '800',
-    color: '#fff',
-    marginTop: 6,
-    letterSpacing: -0.5,
-  },
-  heroSub: {
-    fontSize: 12,
-    color: 'rgba(255,255,255,0.78)',
-    marginTop: 4,
-  },
-  heroCta: {
-    width: 52,
-    height: 52,
-    borderRadius: 26,
-    backgroundColor: 'rgba(255,255,255,0.22)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginLeft: 12,
-    zIndex: 2,
-  },
-  heroCtaText: { color: '#fff', fontSize: 30, fontWeight: '700', lineHeight: 32 },
-  // Quick action row (Saque CTA + Ver ganhos secondary)
-  actionRow: {
-    flexDirection: 'row',
-    gap: 8,
-  },
-  actionPill: {
-    flex: 1,
-    paddingVertical: 12,
-    borderRadius: 12,
-    alignItems: 'center',
-  },
-  actionPillText: { color: '#fff', fontWeight: '700', fontSize: 14 },
-  actionPillSecondary: {
-    flex: 1,
-    paddingVertical: 12,
-    borderRadius: 12,
-    alignItems: 'center',
-    borderWidth: StyleSheet.hairlineWidth,
-  },
-  actionPillSecondaryText: { fontWeight: '700', fontSize: 14 },
-  // Stat grid 2x2
-  gridRow: {
-    flexDirection: 'row',
-    gap: 12,
-  },
-  statCard: {
-    flex: 1,
-    borderRadius: 14,
-    borderWidth: StyleSheet.hairlineWidth,
-    padding: 14,
-    gap: 4,
-    minHeight: 110,
-  },
-  statDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    marginBottom: 4,
-  },
-  statLabel: {
-    fontSize: 11,
-    fontWeight: '700',
-    textTransform: 'uppercase',
-    letterSpacing: 0.4,
-  },
-  statValue: {
-    fontSize: 20,
-    fontWeight: '800',
-    marginTop: 4,
-    letterSpacing: -0.3,
-  },
-  statSub: { fontSize: 11, marginTop: 2 },
-  // Sparkline card header
-  sparkHeader: { flexDirection: 'row', alignItems: 'flex-start', gap: 12 },
-  badge30d: {
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 10,
-    borderWidth: StyleSheet.hairlineWidth,
-    alignItems: 'flex-end',
-  },
-  badge30dLabel: { fontSize: 10, fontWeight: '800', letterSpacing: 0.5 },
-  badge30dValue: { fontSize: 13, fontWeight: '700', marginTop: 2 },
-  cardTitle: { fontSize: 12, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.4 },
-  cardValue: { fontSize: 22, fontWeight: '800', marginTop: 6 },
-  cardSub: { fontSize: 12 },
-  sparkWrap: { marginTop: 6 },
-  // Top tippers
-  tipperRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 8,
-    gap: 8,
-  },
-  tipperRank: { width: 28, fontSize: 13 },
-  tipperName: { fontSize: 14, fontWeight: '700' },
-  tipperSub: { fontSize: 12 },
-  tipperAmount: { fontSize: 14, fontWeight: '800' },
-  // Empty state
-  emptyState: { alignItems: 'center', paddingVertical: 20, gap: 8 },
-  emptyIcon: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 4,
-  },
-  emptyIconText: { fontSize: 28, color: ACCENT, fontWeight: '700' },
-  emptyTitle: { fontSize: 14, fontWeight: '700', textAlign: 'center' },
-  emptySub: { fontSize: 12, textAlign: 'center', paddingHorizontal: 20 },
-  // Monetization-paused gate (empty state)
-  gateBody: { paddingHorizontal: 28, paddingTop: 48, paddingBottom: 40, alignItems: 'center' },
-  gateBadge: {
-    width: 96, height: 96, borderRadius: 28,
-    alignItems: 'center', justifyContent: 'center',
-    overflow: 'hidden', marginBottom: 24,
-  },
-  gateBadgeIcon: { fontSize: 44, color: '#fff', fontWeight: '700', zIndex: 2 },
-  gateTitle: { fontSize: 20, fontWeight: '800', textAlign: 'center', letterSpacing: -0.3 },
-  gateSub: { fontSize: 14, lineHeight: 21, textAlign: 'center', marginTop: 10 },
-  gateList: {
-    alignSelf: 'stretch', marginTop: 24, borderRadius: 16,
-    borderWidth: StyleSheet.hairlineWidth, paddingVertical: 6, paddingHorizontal: 14,
-  },
-  gateListRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 11 },
-  gateDot: { width: 7, height: 7, borderRadius: 4, marginRight: 12 },
-  gateListText: { flex: 1, fontSize: 14, fontWeight: '600' },
-  gateCta: {
-    alignSelf: 'stretch', marginTop: 28, paddingVertical: 14,
-    borderRadius: 14, alignItems: 'center',
-  },
-  gateCtaText: { color: '#fff', fontSize: 15, fontWeight: '700' },
+  track: { height: 6, borderRadius: 3, overflow: 'hidden' },
+  trackFill: { height: 6, borderRadius: 3 },
+  diamondRow: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: Space.lg, paddingVertical: Space.md, minHeight: Layout.rowMinHeightTall },
+  diamondTile: { width: 36, height: 36, borderRadius: Radius.control, alignItems: 'center', justifyContent: 'center' },
+  grid: { flexDirection: 'row', gap: Space.md },
+  tile: { flex: 1, borderRadius: Radius.card, padding: Space.lg, minHeight: 84 },
+  bars: { flexDirection: 'row', alignItems: 'flex-end', gap: 2, marginTop: Space.md, borderBottomWidth: StyleSheet.hairlineWidth },
+  barHit: { flex: 1, height: '100%', justifyContent: 'flex-end', paddingHorizontal: 4 },
+  barLabels: { flexDirection: 'row', gap: 2, marginTop: Space.xs },
+  barLabel: { flex: 1, textAlign: 'center' },
+  personRow: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: Space.lg, paddingVertical: Space.md },
+  rank: { width: 22, fontWeight: '700' },
+  amount: { flexDirection: 'row', alignItems: 'center', gap: 4, marginLeft: Space.sm },
+  earnRow: { paddingLeft: Space.lg, paddingRight: Space.md },
+  linkRow: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: Space.lg, minHeight: Layout.rowMinHeight },
+  gateBody: { paddingHorizontal: Space.xxl, paddingTop: Space.huge, paddingBottom: Space.xxxl, alignItems: 'center' },
+  gateBadge: { width: 88, height: 88, borderRadius: 24, alignItems: 'center', justifyContent: 'center', marginBottom: Space.xxl },
+  gateList: { alignSelf: 'stretch', marginTop: Space.xxl, borderRadius: Radius.card, borderWidth: StyleSheet.hairlineWidth, paddingVertical: Space.xs, paddingHorizontal: Space.lg },
+  gateListRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: Space.md },
+  gateDot: { width: 6, height: 6, borderRadius: 3, marginRight: Space.md },
 });
