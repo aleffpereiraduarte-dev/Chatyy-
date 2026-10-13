@@ -78,6 +78,15 @@ export function ChatyyKeyboardProvider({ children }) {
   return <KC.KeyboardProvider enabled={false}>{children}</KC.KeyboardProvider>;
 }
 
+// [2026-10-13 android-kbd-flicker] Handler de teclado (worklets no UI thread)
+// só no Android; iOS recebe um no-op estável (árvore/efeitos do iOS intactos).
+// useGeneric… = sem o useResizeMode extra (useReanimatedKeyboardAnimation já faz).
+const _IS_ANDROID = Platform.OS === 'android';
+function _noopKbHandler() {}
+const _useKbHandlerAndroid = (_IS_ANDROID && KC && typeof KC.useGenericKeyboardHandler === 'function')
+  ? KC.useGenericKeyboardHandler
+  : _noopKbHandler;
+
 // Ref-count of mounted threads (chat → chat pushes) so unmounting one thread
 // doesn't disable KC under another that is still on the stack.
 let _enabledRefs = 0;
@@ -110,6 +119,27 @@ function KCThreadKeyboardAvoider({ style, bottomInset, children }) {
   // keyboardHeight - bottomInset for the composer to sit flush on the keyboard.
   const { height, progress } = KC.useReanimatedKeyboardAnimation();
   const settled = Rea.useSharedValue(0);
+  // [2026-10-13 android-kbd-flicker] bottomInset atual p/ o restore do Android
+  // (o effect abaixo só depende de setEnabled).
+  const insetRef = React.useRef(bottomInset || 0);
+  insetRef.current = bottomInset || 0;
+
+  // [2026-10-13 android-kbd-flicker] ANDROID: o KC só sai do `settled` quando
+  // uma ABERTURA começa (onStart com altura > 0) ou num arraste interativo — no
+  // UI thread, já no 1º frame. Antes, no Android, QUALQUER movimento limpava
+  // (useAnimatedReaction abaixo, que fica só p/ iOS): abrir a conversa com o
+  // teclado da tela anterior ainda descendo (busca da lista / nova conversa) =
+  // composer pulava ~altura do teclado e descia durante o push = "pisca".
+  _useKbHandlerAndroid({
+    onStart: (e) => {
+      'worklet';
+      if (e && e.height > 0) settled.value = 0;
+    },
+    onInteractive: () => {
+      'worklet';
+      settled.value = 0;
+    },
+  }, []);
 
   useEffect(() => {
     _enabledRefs += 1;
@@ -123,7 +153,20 @@ function KCThreadKeyboardAvoider({ style, bottomInset, children }) {
     const settleIfHidden = () => {
       try { if (!Keyboard.isVisible()) settle(); } catch {}
     };
-    settleIfHidden();
+    // [2026-10-13 android-kbd-flicker] Android: assenta SEMPRE na montagem (a
+    // conversa faz Keyboard.dismiss() ao montar; o teclado da tela anterior que
+    // ainda está fechando não pode levantar o composer). Se depois do push o
+    // teclado continuar aberto de verdade, volta a seguir o KC.
+    let mountTimer = null;
+    if (Platform.OS === 'android') {
+      settle();
+      mountTimer = setTimeout(() => {
+        mountTimer = null;
+        try { if (Keyboard.isVisible() && Math.abs(height.value) > 1) settled.value = 0; } catch {}
+      }, 700);
+    } else {
+      settleIfHidden();
+    }
     // [2026-10-12 composer-under-keyboard] Founder (iPhone): "às vezes" só o
     // teclado aparece, a barra de digitar fica ATRÁS dele. RAIZ: `settle()`
     // escrevia height.value = 0 a partir da thread JS no keyboardDidHide. Com a
@@ -137,7 +180,9 @@ function KCThreadKeyboardAvoider({ style, bottomInset, children }) {
     // drenada) que o teclado continua fechado; (2) didShow com height ~0 =
     // valor perdido → restaura com a altura real do evento (auto-cura).
     let hideTimer = null;
+    let showTimer = null; // [2026-10-13 android-kbd-flicker]
     const onHide = () => {
+      if (showTimer) { clearTimeout(showTimer); showTimer = null; }
       if (hideTimer) clearTimeout(hideTimer);
       hideTimer = setTimeout(() => {
         hideTimer = null;
@@ -156,15 +201,36 @@ function KCThreadKeyboardAvoider({ style, bottomInset, children }) {
     };
     // End of the open animation: KC must report the keyboard by now. ~0 here
     // = its value was lost/overwritten → restore it (composer back on top).
-    const onDidShow = (e) => {
-      onWillShow();
+    const restoreIfLost = (kh) => {
       try {
-        const kh = Number(e?.endCoordinates?.height) || 0;
         if (kh > 0 && Math.abs(height.value) < 1) {
           height.value = -kh;
           progress.value = 1;
         }
       } catch {}
+    };
+    const onDidShow = (e) => {
+      onWillShow();
+      const kh = Number(e?.endCoordinates?.height) || 0;
+      // [2026-10-13 android-kbd-flicker] ANDROID: o RN emite keyboardDidShow no
+      // 1º global layout com o IME visível = INÍCIO da animação
+      // (ReactRootView.checkForKeyboardEvents), quando o KC (que no Android só
+      // atualiza `height` em onKeyboardMove, frame a frame) ainda está em ~0.
+      // O restore imediato jogava o composer direto pro topo e o frame seguinte
+      // do KC o puxava de volta pra baixo → "tela pisca" a cada abertura.
+      // Além disso esse `height` do RN exclui a barra de navegação (ime −
+      // systemBars) e o do KC inclui. Agora: confere só depois da animação e
+      // soma a barra (bottomInset). iOS: inalterado (didShow = fim da animação).
+      if (Platform.OS === 'android') {
+        if (showTimer) clearTimeout(showTimer);
+        showTimer = setTimeout(() => {
+          showTimer = null;
+          try { if (!Keyboard.isVisible()) return; } catch {}
+          restoreIfLost(kh > 0 ? kh + (insetRef.current || 0) : 0);
+        }, 450);
+        return;
+      }
+      restoreIfLost(kh);
     };
     const subHide = Keyboard.addListener('keyboardDidHide', onHide);
     const subShow = Platform.OS === 'ios' ? Keyboard.addListener('keyboardWillShow', onWillShow) : null;
@@ -182,6 +248,8 @@ function KCThreadKeyboardAvoider({ style, bottomInset, children }) {
       try { subShow?.remove(); } catch {}
       try { subShow2.remove(); } catch {}
       if (hideTimer) clearTimeout(hideTimer);
+      if (showTimer) clearTimeout(showTimer);
+      if (mountTimer) clearTimeout(mountTimer);
       try { subApp.remove(); } catch {}
       if (appStateTimer) clearTimeout(appStateTimer);
       _enabledRefs = Math.max(0, _enabledRefs - 1);
@@ -195,10 +263,12 @@ function KCThreadKeyboardAvoider({ style, bottomInset, children }) {
   }, [setEnabled]);
 
   // Any real keyboard movement (open / interactive drag) → follow KC again.
+  // [2026-10-13 android-kbd-flicker] iOS only — Android usa onStart/onInteractive acima.
   Rea.useAnimatedReaction(
     () => height.value,
     (cur, prev) => {
       'worklet';
+      if (_IS_ANDROID) return;
       if (prev !== null && prev !== undefined && cur !== prev && cur !== 0) settled.value = 0;
     },
     [],

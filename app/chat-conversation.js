@@ -12987,7 +12987,24 @@ function ChatConversationInner() {
   useEffect(() => {
     if (Platform.OS === 'web') return;
     const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    let _kbSnapTimer = null; // [2026-10-13 android-kbd-flicker]
     const onShow = () => {
+      // [2026-10-13 android-kbd-flicker] Android: keyboardDidShow chega no INÍCIO
+      // da animação do IME (o viewport ainda vai encolher ~15 frames). Um
+      // scrollToEnd ANIMADO aqui (+ outro 180 ms depois) brigava com o
+      // pinSettle instantâneo de cada frame → lista tremendo/piscando. Grudado
+      // no fim = o pinSettle já mantém a última msg visível; senão, rola só
+      // depois da animação.
+      if (Platform.OS === 'android') {
+        if (isScrolledUpRef.current) return;
+        if (THREAD_OLDEST_FIRST && threadScrollStateRef.current.pinned) return;
+        if (_kbSnapTimer) clearTimeout(_kbSnapTimer);
+        _kbSnapTimer = setTimeout(() => {
+          _kbSnapTimer = null;
+          if (!isScrolledUpRef.current) threadScroll.toLatest({ animated: true });
+        }, 320);
+        return;
+      }
       // Only snap to newest when already near the bottom. If the user is reading
       // history (scrolled up — e.g. to quote/reply), opening the keyboard must
       // NOT yank them down. Inverted list: offset 0 == bottom (newest).
@@ -13711,7 +13728,11 @@ function ChatConversationInner() {
     // plenty of history on first open, WhatsApp-style. Subsequent loads use
     // 30 (the scroll-up "load more" page size).
     const alreadyHasCache = _messagesCountRef.current > 0;
-    const PAGE_SIZE = (beforeId || alreadyHasCache) ? 30 : 100;
+    // [2026-10-13 open-flicker] Janela SUBSTITUÍDA (conversa por data, 1º fetch):
+    // o cache pintou até 50 linhas; buscar só 30 encolhia a lista na hora
+    // (keptOlder=[]) e o onStartReached recarregava 30 antigas logo em seguida
+    // = 2 trocas de layout extras ao abrir. 100 cobre a janela do cache.
+    const PAGE_SIZE = beforeId ? 30 : (_resetWin ? 100 : (alreadyHasCache ? 30 : 100));
     let sinceId = 0;
     let alreadyHasVisible = _messagesCountRef.current > 0;
 
@@ -25476,7 +25497,22 @@ function ChatConversationInner() {
     threadScroll.pinSettle();
   }, []);
   const onThreadViewportLayout = useCallback(() => {
-    if (THREAD_OLDEST_FIRST && threadScrollStateRef.current.pinned) threadScroll.pinSettle();
+    // [2026-10-13 android-kbd-flicker] Android: o KC encolhe o viewport FRAME A
+    // FRAME (paddingBottom no UI thread; no iOS a mudança é 1 só, dentro da
+    // animação do UIKit). O ScrollView mantém o offset → a última msg some
+    // atrás do composer a cada frame e o pinSettle (rAF) só a traz de volta
+    // 1-2 frames depois = "pisca". Rola o ScrollView nativo já, sem esperar o
+    // rAF (scrollToEnd instantâneo é idempotente). Fora da janela de envio
+    // animado (send-motion) p/ não cortar a rolagem suave da bolha nova.
+    const st = threadScrollStateRef.current;
+    if (!THREAD_OLDEST_FIRST || !st.pinned) return;
+    if (Platform.OS === 'android' && !st.dragging && Date.now() >= (_sendMotionState.smoothUntil || 0)) {
+      try {
+        const sv = flashListRef.current?.getNativeScrollRef?.();
+        if (sv && typeof sv.scrollToEnd === 'function') sv.scrollToEnd({ animated: false });
+      } catch {}
+    }
+    threadScroll.pinSettle();
   }, []);
   // Arraste do usuário (nativo): nunca brigar com o dedo; ao soltar, o
   // onScroll decide (no fim = gruda, longe = solto).
