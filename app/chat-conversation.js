@@ -381,6 +381,8 @@ try { _videoSendPipeline = require('../services/videoSendPipeline'); } catch {}
 let AISummarizeModal = null; try { AISummarizeModal = require('../components/chat/AISummarizeModal').default; } catch {}
 // [2026-10-13 bia-summary] "Resumir com a Bia" — folha única (menu, Dados do contato, pill e chip de não lidas).
 let ConversationSummarySheet = null; try { ConversationSummarySheet = require('../components/chat/ConversationSummarySheet').default; } catch {}
+// [wa-import-v2 2026-10-13] faixa de importação do WhatsApp em 2º plano.
+let WaImportBanner = null; try { WaImportBanner = require('../components/WaImportBanner').default; } catch {}
 let SmartRepliesBar = null; try { SmartRepliesBar = require('../components/chat/SmartRepliesBar').default; } catch {}
 // [2026-05-31] Group invite QR — render the QR LOCALLY with react-native-qrcode-svg
 // (same lazy-require used in profile-qr.js / WalletReceiveSheet.js). The old modal
@@ -22674,7 +22676,7 @@ function ChatConversationInner() {
     }
   };
   const openWhatsAppImport = () => {
-    try { router.push({ pathname: '/import-whatsapp', params: { linkEmail: conversationType === 'direct' ? (getContactPeerEmail() || params.email || '') : '', linkName: conversationName || '' } }); } catch {}
+    try { router.push({ pathname: '/import-whatsapp', params: { linkEmail: conversationType === 'direct' ? (getContactPeerEmail() || params.email || '') : '', linkName: conversationName || '', originConvId: String(conversationId || '') /* [wa-import-v2] continuação nesta conversa + faixa de progresso aqui */ } }); } catch {}
   };
   const startSecretChat = async () => {
     const peerEmail = (members.find(m => m.email !== currentEmail)?.email) || params.email || '';
@@ -31458,6 +31460,10 @@ function ChatConversationInner() {
           </Text>
         </View>
       ) : null}
+
+      {/* [wa-import-v2 2026-10-13] "Importando do WhatsApp · N%" (import em 2º plano, conversa
+          segue utilizável) / aviso "X importou o histórico" + Ocultar para mim. */}
+      {WaImportBanner && conversationId ? <WaImportBanner conversationId={conversationId} /> : null}
 
       {/* Pinned messages list — WhatsApp parity: up to 3 stacked pins, each
           tappable to scroll-to-message, long-press to unpin. visiblePinned

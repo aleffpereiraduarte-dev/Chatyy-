@@ -10,6 +10,20 @@
 import { Inflate } from './vendor/fflate';
 import { utf8Decode } from './parser';
 
+// [wa-import-v2 2026-10-13] Segurança: nº de entradas, razão de compressão (zip bomb),
+// saída real limitada ao tamanho declarado (cabeçalho mentiroso), nomes perigosos
+// marcados (zip slip — de todo jeito só usamos o basename, nunca gravamos o caminho).
+export const ZIP_MAX_ENTRIES = 50000;
+export const ZIP_MAX_RATIO = 250;          // descomprimido / comprimido
+export const ZIP_MAX_TOTAL = 8 * 1024 * 1024 * 1024; // 8 GB descomprimidos no total
+let _lastYield = 0;
+// Cede o event loop só se o JS está ocupado há > 16 ms (sem custo extra em arquivo pequeno).
+const _yield = () => {
+  const now = Date.now();
+  if (now - _lastYield < 16) return null;
+  return new Promise((r) => setTimeout(() => { _lastYield = Date.now(); r(); }, 0));
+};
+
 const SIG_EOCD = 0x06054b50;
 const SIG_EOCD64_LOC = 0x07064b50;
 const SIG_EOCD64 = 0x06064b50;
@@ -60,6 +74,8 @@ export async function listZipEntries(source) {
     }
   }
   if (cdSize > 64 * 1024 * 1024) throw new Error('zip_cd_too_big');
+  if (count > ZIP_MAX_ENTRIES) throw new Error('zip_too_many');
+  if (cdOff + cdSize > size) throw new Error('zip_bad_cd');
   const cd = await source.read(cdOff, cdSize);
   const out = [];
   let p = 0;
@@ -88,9 +104,13 @@ export async function listZipEntries(source) {
       }
       q += 4 + len;
     }
-    out.push({ name, method, compSize, size: usize, localOffset, isDir: name.endsWith('/'), encrypted: !!(flags & 1) });
+    const unsafeName = /(^|[\\/])\.\.([\\/]|$)|^[\\/]|^[A-Za-z]:|[\u0000-\u001f]/.test(name);
+    const bomb = usize > 32 * 1024 * 1024 && compSize > 0 && usize / compSize > ZIP_MAX_RATIO;
+    out.push({ name, method, compSize, size: usize, localOffset, isDir: name.endsWith('/'), encrypted: !!(flags & 1), unsafeName, bomb });
     p += 46 + nameLen + extraLen + commentLen;
   }
+  const total = out.reduce((a, e) => a + (e.size || 0), 0);
+  if (total > ZIP_MAX_TOTAL) throw new Error('zip_too_big');
   return out;
 }
 
@@ -110,8 +130,17 @@ async function dataOffset(source, entry) {
  * Extrai uma entrada em pedaços: onChunk(Uint8Array) (pode ser async).
  * onProgress(bytesLidos, total) opcional.
  */
-export async function extractZipEntry(source, entry, onChunk, { chunkSize = 512 * 1024, onProgress } = {}) {
+export async function extractZipEntry(source, entry, onChunk, { chunkSize = 512 * 1024, onProgress, maxOut } = {}) {
   if (entry.encrypted) throw new Error('zip_encrypted');
+  if (entry.bomb) throw new Error('zip_bomb');
+  // Nunca produz mais que o tamanho declarado (+ folga) — inflate "infinito" aborta.
+  const cap = Math.min(Number(maxOut) || Infinity, (Number(entry.size) || 0) + 64 * 1024);
+  let produced = 0;
+  const _emit = async (c) => {
+    produced += c.length;
+    if (produced > cap) throw new Error('zip_bomb');
+    await onChunk(c);
+  };
   if (entry.method !== 0 && entry.method !== 8) throw new Error('zip_method_' + entry.method);
   const start = await dataOffset(source, entry);
   const total = entry.compSize;
@@ -121,23 +150,33 @@ export async function extractZipEntry(source, entry, onChunk, { chunkSize = 512 
       const n = Math.min(chunkSize, total - pos);
       const buf = await source.read(start + pos, n);
       pos += n;
-      await onChunk(buf);
+      await _emit(buf);
       if (onProgress) onProgress(pos, total);
+      await _yield();
     }
     return;
   }
   const pending = [];
-  const inf = new Inflate((data) => { if (data && data.length) pending.push(data); });
+  // Conta a saída DENTRO do callback: um bloco-bomba aborta antes de acumular na memória.
+  let inflated = 0;
+  const inf = new Inflate((data) => {
+    if (!data || !data.length) return;
+    inflated += data.length;
+    if (inflated > cap) throw new Error('zip_bomb');
+    pending.push(data);
+  });
+  const inChunk = Math.min(chunkSize, 64 * 1024);
   while (pos < total) {
-    const n = Math.min(chunkSize, total - pos);
+    const n = Math.min(inChunk, total - pos);
     const buf = await source.read(start + pos, n);
     pos += n;
     inf.push(buf, pos >= total);
-    while (pending.length) await onChunk(pending.shift());
+    while (pending.length) await _emit(pending.shift());
     if (onProgress) onProgress(pos, total);
+    await _yield();
   }
   if (total === 0) inf.push(new Uint8Array(0), true);
-  while (pending.length) await onChunk(pending.shift());
+  while (pending.length) await _emit(pending.shift());
 }
 
 /** Lê uma entrada inteira para a memória (só para arquivos pequenos: _chat.txt). */
@@ -145,7 +184,7 @@ export async function readZipEntryBytes(source, entry, maxBytes = 64 * 1024 * 10
   if (entry.size > maxBytes) throw new Error('zip_entry_too_big');
   const parts = [];
   let len = 0;
-  await extractZipEntry(source, entry, (c) => { parts.push(c); len += c.length; });
+  await extractZipEntry(source, entry, (c) => { parts.push(c); len += c.length; }, { maxOut: maxBytes });
   const out = new Uint8Array(len);
   let o = 0;
   for (const c of parts) { out.set(c, o); o += c.length; }

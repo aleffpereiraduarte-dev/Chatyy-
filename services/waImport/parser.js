@@ -170,6 +170,33 @@ export function looksLikeWhatsAppChat(text) {
  * @param {{ fileName?: string, localeHint?: string, mediaNames?: string[] }} opts
  */
 export function parseWhatsAppChat(text, opts = {}) {
+  const g = _parseGen(text, opts);
+  let r = g.next();
+  while (!r.done) r = g.next();
+  return r.value;
+}
+
+// [wa-import-v2 2026-10-13] Mesmo parser em fatias: cede o event loop a cada ~12 ms
+// (setTimeout 0 = macrotask → a UI/lista/teclado continuam respondendo durante o parse
+// de exports grandes). onProgress(0..1).
+export function yieldToUI() { return new Promise((res) => setTimeout(res, 0)); }
+export async function parseWhatsAppChatAsync(text, opts = {}, onProgress) {
+  const g = _parseGen(text, opts);
+  let r = g.next();
+  let t0 = Date.now();
+  while (!r.done) {
+    if (Date.now() - t0 > 12) {
+      try { onProgress?.(r.value); } catch {}
+      await yieldToUI();
+      if (opts.signal?.cancelled) throw new Error('cancelled');
+      t0 = Date.now();
+    }
+    r = g.next();
+  }
+  return r.value;
+}
+
+function* _parseGen(text, opts = {}) {
   const src = String(text || '').replace(/^\ufeff/, '');
   const rawLines = src.split('\n');
   const mediaSet = new Set((opts.mediaNames || []).map((n) => String(n).replace(/^.*[\\/]/, '').toLowerCase()));
@@ -179,7 +206,10 @@ export function parseWhatsAppChat(text, opts = {}) {
   let cur = null;
   let bracketCount = 0;
   let dashCount = 0;
+  const nLines = rawLines.length || 1;
+  let li = 0;
   for (const raw of rawLines) {
+    if ((++li & 255) === 0) yield 0.4 * (li / nLines);
     const line = cleanLine(raw);
     const probe = line.replace(/^[\u200e\u200f‪-‮⁦-⁩\ufeff\s]+/, '');
     const m = HEADER_RE.exec(probe);
@@ -247,7 +277,10 @@ export function parseWhatsAppChat(text, opts = {}) {
     if (sp) nameCandidates.set(sp.name.trim(), (nameCandidates.get(sp.name.trim()) || 0) + 1);
   }
 
+  const nEnt = entries.length || 1;
+  let ei = 0;
   for (const e of entries) {
+    if ((++ei & 63) === 0) yield 0.4 + 0.6 * (ei / nEnt);
     const ts = buildTs(e, dateOrder);
     if (!ts) continue;
     let rest = e.rest;
@@ -329,7 +362,8 @@ export function parseWhatsAppChat(text, opts = {}) {
     first: messages.length ? messages[0].tsLocal : null,
     last: messages.length ? messages[messages.length - 1].tsLocal : null,
   };
-  return { messages, participants, title, dateOrder, platform, stats };
+  const clock = entries.some((e) => e.ampm) ? '12h' : '24h';
+  return { messages, participants, title, dateOrder, platform, stats, clock };
 }
 
 function isSystemLike(plain, sender, opts) {
@@ -368,6 +402,14 @@ function buildTs(e, order) {
   return `${p.y}-${pad2(p.mo)}-${pad2(p.d)}T${pad2(hour24(e))}:${pad2(e.M)}:${pad2(e.S)}`;
 }
 
+/** Descrição curta do formato detectado: "iPhone · dd/mm/aa · 24h". */
+export function describeFormat(parsed) {
+  if (!parsed) return '';
+  const plat = parsed.platform === 'ios' ? 'iPhone' : parsed.platform === 'android' ? 'Android' : 'WhatsApp';
+  const ord = parsed.dateOrder === 'mdy' ? 'mm/dd/aa' : parsed.dateOrder === 'ymd' ? 'aaaa/mm/dd' : 'dd/mm/aa';
+  return [plat, ord, parsed.clock || '24h'].join(' · ');
+}
+
 /**
  * Converte o horário local do export (sem fuso) em ISO UTC usando o fuso do aparelho.
  */
@@ -399,9 +441,33 @@ export function mediaKindFromName(name) {
  *   2) 1:1 (2 participantes) com título = um deles → o outro;
  *   3) senão null (a tela pergunta).
  */
-export function guessMe(participants, { myName = '', title = '' } = {}) {
+const SELF_WORDS = ['voce', 'você', 'you', 'tu', 'tú', 'usted', 'du', 'vous', 'anda', 'kamu', 'jij', 'ty', 'sen', 'eu', 'me', 'yo', 'ich', 'moi', 'io'];
+function _digits(s) { return String(s || '').replace(/\D/g, ''); }
+/** "+55 11 98888-7777" ~ "11988887777" (compara os últimos 8–11 dígitos). */
+export function phoneLike(a, b) {
+  const x = _digits(a), y = _digits(b);
+  if (x.length < 8 || y.length < 8) return false;
+  const n = Math.min(x.length, y.length, 11);
+  return x.slice(-n) === y.slice(-n);
+}
+export function isPhoneName(name) {
+  const s = stripBidi(String(name || ''));
+  return _digits(s).length >= 8 && !/[A-Za-zÀ-ÿ\u0370-\u03ff\u0400-\u04ff\u0600-\u06ff\u3040-\u30ff\u4e00-\u9fff]/.test(s);
+}
+
+export function guessMe(participants, { myName = '', title = '', myPhone = '', peerName = '', peerPhone = '' } = {}) {
   const norm = (s) => stripBidi(String(s || '')).normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
   const names = (participants || []).map((p) => p.name);
+  // 0) telefone do próprio usuário (export de quem não salvou o próprio nome)
+  if (myPhone) { const hit = names.find((n) => isPhoneName(n) && phoneLike(n, myPhone)); if (hit) return hit; }
+  // 0b) "Você"/"You" como remetente (alguns exports/traduções)
+  { const hit = names.find((n) => SELF_WORDS.includes(norm(n))); if (hit) return hit; }
+  // 0c) 1:1 com a pessoa conhecida (contato do Chatyy) → eu sou o outro
+  if (names.length === 2 && (peerName || peerPhone)) {
+    const isPeer = (n) => (peerPhone && phoneLike(n, peerPhone)) || (peerName && norm(n) === norm(peerName));
+    if (isPeer(names[0]) && !isPeer(names[1])) return names[1];
+    if (isPeer(names[1]) && !isPeer(names[0])) return names[0];
+  }
   const mine = norm(myName);
   if (mine) {
     const hit = names.find((n) => norm(n) === mine) || names.find((n) => mine && norm(n).split(' ')[0] === mine.split(' ')[0] && names.filter((x) => norm(x).split(' ')[0] === mine.split(' ')[0]).length === 1);

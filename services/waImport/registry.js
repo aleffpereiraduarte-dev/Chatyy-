@@ -17,7 +17,10 @@ function _storage() {
 }
 
 function _apply(email, items, at) {
-  _mem = { email, items: Array.isArray(items) ? items : [], ids: new Set((items || []).map((i) => Number(i.conversation_id))), at: at || Date.now() };
+  // [wa-import-v2] Só CÓPIAS pessoais são "conversa importada" (só leitura). Histórico importado
+  // na conversa direta real (mode 'direct') NÃO trava a conversa.
+  const list = Array.isArray(items) ? items : [];
+  _mem = { email, items: list, ids: new Set(list.filter((i) => (i.mode || 'copy') !== 'direct').map((i) => Number(i.conversation_id))), at: at || Date.now() };
 }
 
 async function _hydrate(email) {
@@ -67,7 +70,7 @@ export async function isImportedConversation(convId) {
   // Só consulta o servidor se o cache estiver velho (evita 1 request por conversa aberta).
   if (_mem.email === email && Date.now() - _mem.at < TTL_MS) return false;
   const items = await refreshImports(true);
-  return (items || []).some((i) => Number(i.conversation_id) === Number(convId));
+  return (items || []).some((i) => Number(i.conversation_id) === Number(convId) && (i.mode || 'copy') !== 'direct');
 }
 
 export function rememberImport(item) {

@@ -33,6 +33,9 @@ export const waImportBatch = (importId, messages) => _post('wa_import_batch', { 
 export const waImportFinish = (importId) => _post('wa_import_finish', { import_id: importId });
 export const waImportList = () => _post('wa_import_list', {}, 20000);
 export const waImportDelete = (importId) => _post('wa_import_delete', { import_id: importId });
+// [wa-import-v2 2026-10-13] quem importou histórico nesta conversa (qualquer membro) / ocultar p/ mim.
+export const waImportConvInfo = (conversationId) => _post('wa_import_conv_info', { conversation_id: conversationId }, 15000);
+export const waImportHide = (importId, hidden) => _post('wa_import_hide', { import_id: importId, hidden: !!hidden });
 
 /**
  * Sobe 1 arquivo de mídia. file: nativo { uri, name, type } | web Blob/File.
