@@ -428,8 +428,10 @@ export default function ReadScreen() {
           </View>
         )}
         <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 32 }}>
-          <IconWifiOff size={44} color={colors.textSecondary} />
-          <Text style={{ marginTop: 16, fontSize: 16, fontWeight: '600', color: colors.text, textAlign: 'center' }}>
+          <View style={{ width: 72, height: 72, borderRadius: 36, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.surfaceVariant }}>
+            <IconWifiOff size={30} color={colors.textSecondary} />
+          </View>
+          <Text style={{ marginTop: 16, fontSize: 17, fontWeight: '600', color: colors.text, textAlign: 'center', letterSpacing: -0.3 }}>
             {_online ? t('reader.openFailedTitle') : t('reader.offlineTitle')}
           </Text>
           <Text style={{ marginTop: 8, fontSize: 14, color: colors.textSecondary, textAlign: 'center', lineHeight: 20 }}>
@@ -437,7 +439,7 @@ export default function ReadScreen() {
           </Text>
           <TouchableOpacity
             onPress={() => { setLoading(true); setRetryEpoch(e => e + 1); }}
-            style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 24, paddingVertical: 10, paddingHorizontal: 20, borderRadius: 24, backgroundColor: colors.primary }}
+            style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 24, minHeight: 44, paddingHorizontal: 20, borderRadius: 12, backgroundColor: colors.primary }}
             accessibilityLabel={t('offline.retry')}
             accessibilityRole="button"
           >
@@ -496,7 +498,7 @@ export default function ReadScreen() {
   // com ícone (rótulo continua no accessibilityLabel), como o Gmail.
   const _barIconOnly = _winW < 440;
   const actionBar = showChrome && email ? (
-    <View style={[s.actionBar, Shadow.lg, { backgroundColor: colors.surface, paddingBottom: insets.bottom + 8, borderTopColor: colors.borderLight }]}>
+    <View style={[s.actionBar, { backgroundColor: colors.surface, paddingBottom: insets.bottom + 8, borderTopColor: colors.border }]}>
       <ActionBarButton icon={IconReply} label={t('reader.reply')} color={colors.primary} onPress={() => handleReply(email)} accessibilityLabel={t('reader.reply')} primary />
       {((email.cc && String(email.cc).trim()) || (email.to && String(email.to).split(',').filter(s => s.trim()).length > 1)) ? (
         <ActionBarButton icon={IconReplyAll} label={t('reader.replyAll')} color={colors.textSecondary} onPress={() => handleReplyAll(email)} accessibilityLabel={t('reader.replyAll')} iconOnly={_barIconOnly} />
@@ -655,8 +657,8 @@ function ActionBarButton({ icon: Icon, label, color, onPress, accessibilityLabel
   const onFill = themeColors.onPrimary || '#fff';
 
   const innerStyle = primary
-    ? { backgroundColor: color, paddingHorizontal: 18, paddingVertical: 10, borderRadius: 12, flexDirection: 'row', alignItems: 'center', gap: 8 }
-    : { alignItems: 'center', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 12 };
+    ? { backgroundColor: color, paddingHorizontal: 18, minHeight: 44, borderRadius: 12, flexDirection: 'row', alignItems: 'center', gap: 8 }
+    : { alignItems: 'center', justifyContent: 'center', minWidth: 44, minHeight: 44, paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12 };
   const iconColor = primary ? onFill : color;
   const textColor = primary ? onFill : color;
 
@@ -687,7 +689,7 @@ function ActionBarButton({ icon: Icon, label, color, onPress, accessibilityLabel
       <Animated.View style={[{ transform: [{ scale: scaleAnim }] }, innerStyle]}>
         <Icon size={primary ? 18 : 22} color={iconColor} />
         {iconOnly ? null : (
-          <Text numberOfLines={1} style={[s.actionBarLabel, { color: textColor, fontWeight: primary ? '700' : '500', marginTop: primary ? 0 : 4 }]}>{label}</Text>
+          <Text numberOfLines={1} style={[s.actionBarLabel, { color: textColor, fontWeight: primary ? '600' : '500', marginTop: primary ? 0 : 3 }, primary && { fontSize: 15, letterSpacing: -0.1 }]}>{label}</Text>
         )}
       </Animated.View>
     </TouchableOpacity>
@@ -698,7 +700,7 @@ const s = StyleSheet.create({
   container: { flex: 1 },
   loader: { marginTop: 60 },
   progressBar: {
-    height: 3,
+    height: 2,
     // Monochrome accent (#111111) — matches the send button and header so the
     // reading-progress strip reads as part of the one 2026 system.
     backgroundColor: '#111111',
@@ -712,7 +714,7 @@ const s = StyleSheet.create({
   },
   navBar: {
     flexDirection: 'row', alignItems: 'center',
-    paddingHorizontal: Spacing.md, paddingVertical: 10,
+    paddingHorizontal: Spacing.md, paddingVertical: 2, minHeight: 52,
     borderBottomWidth: StyleSheet.hairlineWidth,
   },
   // Why: back button hit area was thin (paddingVertical 6, padLeft 4) which
@@ -725,10 +727,10 @@ const s = StyleSheet.create({
     borderRadius: 12,
     ...(Platform.OS === 'web' ? { cursor: 'pointer', transition: 'background-color 160ms ease' } : {}),
   },
-  backText: { fontSize: FontSize.base, fontWeight: '600', marginLeft: 4, letterSpacing: -0.2 },
-  navArrows: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  backText: { fontSize: 17, fontWeight: '400', marginLeft: 2, letterSpacing: -0.3 },
+  navArrows: { flexDirection: 'row', alignItems: 'center', gap: 0 },
   navArrowBtn: {
-    padding: 10, borderRadius: 10,
+    width: 44, height: 44, alignItems: 'center', justifyContent: 'center', borderRadius: 22,
     ...(Platform.OS === 'web' ? { cursor: 'pointer', transition: 'background-color 160ms ease' } : {}),
   },
   actionBar: {
@@ -746,5 +748,5 @@ const s = StyleSheet.create({
     alignItems: 'center', paddingVertical: 6, paddingHorizontal: 4, flexShrink: 1,
     borderRadius: 12,
   },
-  actionBarLabel: { fontSize: 11, marginTop: 4, fontWeight: '600', letterSpacing: 0.1 },
+  actionBarLabel: { fontSize: 11, marginTop: 3, fontWeight: '500', letterSpacing: 0 },
 });

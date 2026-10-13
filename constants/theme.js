@@ -850,3 +850,151 @@ export const OverlayShadow = Platform.select({
 // chat-conversation used 5000ms and ChatListTab used 12000-15000ms, which made
 // the banner flicker on one screen but not the other during the same blip.
 export const RECONNECT_BANNER_GRACE_MS = 9000;
+
+// ═════════════════════════════════════════════════════════════════════════
+// DESIGN SYSTEM 2026 "P&B premium" (2026-10-13) — tokens NOVOS, aditivos.
+// Nada acima foi alterado. Os primitivos de components/ui/ consomem isto;
+// telas novas/refeitas devem preferir estes tokens às escalas antigas
+// (Spacing/FontSize são "densas" e escalam com a tela; estes são fixos, na
+// grade de 4/8, iguais ao iOS HIG / Material 3 — o que dá consistência).
+// ═════════════════════════════════════════════════════════════════════════
+
+// Escala tipográfica NOMEADA (iOS HIG, levemente compacta). lineHeight fixo
+// p/ ritmo vertical previsível. Uso: <Text style={[Type.headline, {color}]}>.
+// Corpo 16 (entre o 17 do iOS e o 14 denso antigo); secundário = subhead/footnote.
+export const Type = {
+  largeTitle: { fontSize: 32, lineHeight: 38, fontWeight: '700', letterSpacing: -0.6 },
+  title1:     { fontSize: 26, lineHeight: 32, fontWeight: '700', letterSpacing: -0.5 },
+  title2:     { fontSize: 22, lineHeight: 28, fontWeight: '700', letterSpacing: -0.4 },
+  title3:     { fontSize: 19, lineHeight: 24, fontWeight: '600', letterSpacing: -0.3 },
+  headline:   { fontSize: 16, lineHeight: 21, fontWeight: '600', letterSpacing: -0.2 },
+  body:       { fontSize: 16, lineHeight: 22, fontWeight: '400', letterSpacing: -0.1 },
+  callout:    { fontSize: 15, lineHeight: 20, fontWeight: '400', letterSpacing: -0.1 },
+  subhead:    { fontSize: 14, lineHeight: 19, fontWeight: '400', letterSpacing: 0 },
+  footnote:   { fontSize: 13, lineHeight: 18, fontWeight: '400', letterSpacing: 0 },
+  caption:    { fontSize: 12, lineHeight: 16, fontWeight: '400', letterSpacing: 0 },
+  caption2:   { fontSize: 11, lineHeight: 13, fontWeight: '500', letterSpacing: 0.1 },
+  // Rótulo de seção agrupada (iOS "FOOTNOTE CAPS").
+  sectionCaps: { fontSize: 12, lineHeight: 16, fontWeight: '600', letterSpacing: 0.4, textTransform: 'uppercase' },
+  // Botões.
+  button:     { fontSize: 16, lineHeight: 20, fontWeight: '600', letterSpacing: -0.1 },
+  buttonSm:   { fontSize: 14, lineHeight: 18, fontWeight: '600', letterSpacing: 0 },
+};
+
+// Grade de 4/8 (px fixos). Use p/ padding/margin/gap em telas novas.
+export const Space = {
+  none: 0,
+  xxs: 2,
+  xs: 4,
+  sm: 8,
+  md: 12,
+  lg: 16,   // gutter padrão de tela
+  xl: 20,
+  xxl: 24,
+  xxxl: 32,
+  huge: 48,
+};
+
+// Raios padrão (um por papel — não invente valores avulsos).
+export const Radius = {
+  xs: 4,       // chips internos, marcações
+  sm: 8,       // inputs pequenos, thumbs
+  control: 10, // botões, campos, segmented
+  card: 14,    // cards, grupos de lista (inset grouped)
+  sheet: 20,   // sheets / modais (= Overlay.sheetRadius)
+  pill: 999,   // badges, avatares, pílulas
+};
+
+// Durações (ms) + curvas. Curto e suave: nada passa de ~320ms.
+export const Duration = {
+  instant: 100,  // flash de toque, troca de cor
+  fast: 150,     // hover, ícone ativo
+  base: 200,     // fade/slide padrão (FadeSlideIn)
+  slow: 260,     // reordenar listas, crossfade de conteúdo
+  page: 320,     // troca de tela
+};
+export const Easing2026 = {
+  standard: 'cubic-bezier(0.2, 0, 0, 1)',   // M3 emphasized-ish
+  decelerate: 'cubic-bezier(0, 0, 0.2, 1)',
+  accelerate: 'cubic-bezier(0.3, 0, 1, 1)',
+};
+
+// Medidas de layout / acessibilidade.
+export const Layout = {
+  hitTarget: 44,          // alvo de toque mínimo (HIG 44pt / M3 48dp)
+  gutter: 16,             // margem lateral de tela
+  rowMinHeight: 52,       // célula de lista com 1 linha
+  rowMinHeightTall: 64,   // célula com título + subtítulo
+  topBarHeight: 52,       // conteúdo do header (sem safe-area)
+  iconSize: 22,           // ícone de linha / header
+  iconStroke: 1.75,       // traço padrão dos ícones SVG
+  contentMaxWidth: 720,   // web desktop: coluna de leitura
+  wideMaxWidth: 1080,     // web desktop: grade/feeds
+  desktopBreakpoint: 900,
+};
+
+// Tokens de SUPERFÍCIE — níveis de cinza (escuro) / branco+hairline (claro).
+// Todos os textos passam WCAG AA (≥4.5:1) sobre `bg` e `surface`; `textTertiary`
+// é p/ metadados não essenciais (≥3:1, AA-large).
+export const SurfaceTokens = {
+  light: {
+    bg: '#FFFFFF',
+    bgGrouped: '#F2F2F7',          // fundo de lista "inset grouped"
+    surface: '#FFFFFF',            // card / célula
+    surfaceRaised: '#FFFFFF',
+    surfaceMuted: '#F4F4F5',       // campo de busca, trilho de segmented
+    fill: 'rgba(120,120,128,0.12)',
+    pressed: 'rgba(0,0,0,0.05)',
+    hover: 'rgba(0,0,0,0.035)',
+    separator: 'rgba(60,60,67,0.16)',
+    border: 'rgba(0,0,0,0.08)',
+    text: '#0B0B0C',
+    textSecondary: '#5F5F66',      // 6.3:1 sobre branco
+    textTertiary: '#8A8A90',       // 3.4:1 — só metadado
+    icon: '#3C3C43',
+    iconMuted: '#6E6E73',
+    ink: '#0B0B0C',                // botão primário (P&B)
+    onInk: '#FFFFFF',
+    danger: '#D92D20',
+    success: '#12805C',
+    unread: '#0B0B0C',
+    focusRing: 'rgba(11,11,12,0.35)',
+    shadow: { shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.04, shadowRadius: 3, elevation: 1 },
+  },
+  dark: {
+    bg: '#000000',
+    bgGrouped: '#000000',
+    surface: '#111111',
+    surfaceRaised: '#1C1C1E',
+    surfaceMuted: '#1C1C1E',
+    fill: 'rgba(120,120,128,0.24)',
+    pressed: 'rgba(255,255,255,0.08)',
+    hover: 'rgba(255,255,255,0.05)',
+    separator: 'rgba(255,255,255,0.12)',
+    border: 'rgba(255,255,255,0.08)',
+    text: '#F5F5F7',
+    textSecondary: '#A1A1A6',      // 8:1 sobre #000 / 7:1 sobre #1c1c1e
+    textTertiary: '#6E6E73',
+    icon: '#E5E5EA',
+    iconMuted: '#98989D',
+    ink: '#F5F5F7',
+    onInk: '#000000',
+    danger: '#FF453A',
+    success: '#30D158',
+    unread: '#F5F5F7',
+    focusRing: 'rgba(245,245,247,0.40)',
+    shadow: {},                    // escuro: separação por nível de cinza, sem sombra
+  },
+};
+
+// Resolve os tokens de superfície do tema ativo. Usa as cores do ThemeContext
+// quando existem (respeita overrides), senão cai nos tokens acima.
+export function surfaceColors(colors, isDark) {
+  const base = isDark ? SurfaceTokens.dark : SurfaceTokens.light;
+  const c = colors || {};
+  return {
+    ...base,
+    bg: c.background || base.bg,
+    text: c.text || base.text,
+  };
+}

@@ -110,11 +110,11 @@ function AnimatedBadge({ count, isActive, colors, showTotal, folderColor, isInbo
 
   if (count <= 0 && prevCount.current === 0) return null;
 
-  const badgeBg = isActive
-    ? (folderColor || colors.primary)
-    : showTotal
-      ? colors.textTertiary
-      : (folderColor || colors.badge);
+  // [2026-10-13 redesign P&B] Contador estilo Apple Mail: número puro, sem
+  // pílula colorida/sombra. Não lidas = tinta forte; totais (Lixeira/Spam/
+  // Rascunhos) = cinza terciário. Antes: pílula cinza c/ texto branco (#fff em
+  // textTertiary no escuro = contraste < AA).
+  const badgeInk = showTotal ? colors.textTertiary : (isActive ? colors.text : colors.textSecondary);
 
   return (
     <Animated.View
@@ -122,13 +122,13 @@ function AnimatedBadge({ count, isActive, colors, showTotal, folderColor, isInbo
         s.badgeWrap,
         isInbox && s.badgeWrapInbox,
         {
-          backgroundColor: badgeBg,
+          backgroundColor: 'transparent',
           transform: [{ scale: scaleAnim }],
           opacity: scaleAnim,
         },
       ]}
     >
-      <Text style={[s.badgeText, { fontWeight: '700' }, isInbox && s.badgeTextInbox, badgeBg === colors.primary ? { color: colors.onPrimary } : null]}>
+      <Text style={[s.badgeText, isInbox && s.badgeTextInbox, { color: badgeInk, fontWeight: showTotal ? '500' : '600' }]}>
         {count || prevCount.current}
       </Text>
     </Animated.View>
@@ -181,8 +181,7 @@ function FolderItem({ folder, isActive, onPress, colors, t, dragOverFolder, setD
             {
               backgroundColor: colors.folderActive,
               opacity: bgOpacity,
-              borderTopRightRadius: BorderRadius.xxl,
-              borderBottomRightRadius: BorderRadius.xxl,
+              borderRadius: 10,
             },
           ]}
           pointerEvents="none"
@@ -191,7 +190,6 @@ function FolderItem({ folder, isActive, onPress, colors, t, dragOverFolder, setD
           style={[
             s.folderItem,
             hovered && !isActive && { backgroundColor: colors.folderHover },
-            hovered && !isActive && Platform.OS === 'web' && s.folderItemHoverShadow,
             dragOverFolder === folder.name && { backgroundColor: colors.primaryLight, borderColor: colors.primary, borderWidth: 1 },
             Platform.OS === 'web' && s.folderTransition,
           ]}
@@ -211,26 +209,16 @@ function FolderItem({ folder, isActive, onPress, colors, t, dragOverFolder, setD
             },
           } : {})}
         >
-          {/* Animated active left border — 3px purple accent for clear selection */}
-          <Animated.View
-            style={[
-              s.activeIndicator,
-              {
-                width: activeIndicatorWidth,
-                backgroundColor: colors.text,
-                borderRadius: 2,
-              },
-            ]}
-          />
-          {/* Colored icon background pill — keep dimensions stable on activate so
-              the label doesn't jump; only the tinted fill fades in. [beauty2 2026-05-31] */}
-          <View style={[s.folderIconWrap, isActive && { backgroundColor: folderBgColor }]}>
+          {/* [2026-10-13 redesign P&B] Seleção = só a pílula cinza (folderActiveBg)
+              + rótulo forte. Saíram a barra esquerda de 3px e o fundo extra no
+              ícone (3 sinais pro mesmo estado = ruído). */}
+          <View style={s.folderIconWrap}>
             <FolderIcon size={18} color={isActive ? colors.text : colors.textSecondary} />
           </View>
           <Text style={[
             s.folderLabel,
             { color: colors.text },
-            isActive && { fontWeight: '700', color: colors.text },
+            isActive && { fontWeight: '600', color: colors.text },
           ]}>
             {folder.name === 'INBOX' ? (t('folder.allMail') || 'Todos os emails') : (FOLDER_KEYS[folder.name] ? t(FOLDER_KEYS[folder.name]) : folder.name)}
           </Text>
@@ -422,7 +410,7 @@ function Sidebar({ folders, currentFolder, onFolderPress, onCompose, onFoldersCh
       {/* Compose */}
       <Animated.View style={{ transform: [{ scale: composeScale }] }}>
         <TouchableOpacity
-          style={[s.composeBtn, Shadow.sm, { backgroundColor: colors.composeBg }]}
+          style={[s.composeBtn, { backgroundColor: colors.composeBg }]}
           onPress={onCompose}
           onPressIn={handleComposePressIn}
           onPressOut={handleComposePressOut}
@@ -508,7 +496,7 @@ function Sidebar({ folders, currentFolder, onFolderPress, onCompose, onFoldersCh
               <View style={s.folderIconWrap}>
                 <IconPlus size={17} color={colors.textSecondary} />
               </View>
-              <Text style={[s.folderLabel, { color: colors.textSecondary, fontWeight: '500' }]}>
+              <Text style={[s.folderLabel, { color: colors.textSecondary }]}>
                 {showMoreQuick ? (t('sidebar.less') || 'Menos') : (t('sidebar.more') || 'Mais')}
               </Text>
             </TouchableOpacity>
@@ -854,17 +842,17 @@ function QuickAccessItem({ item, colors, onPress, isActive }) {
       style={[
         s.folderItem,
         hovered && { backgroundColor: colors.folderHover },
-        isActive && { backgroundColor: iconColor + '12' },
+        isActive && { backgroundColor: colors.folderActive },
         Platform.OS === 'web' && s.folderTransition,
       ]}
       onPress={onPress}
       activeOpacity={0.6}
       {...webHover}
     >
-      <View style={[s.folderIconWrap, { backgroundColor: isActive ? iconColor + '18' : (hovered ? iconColor + '0a' : 'transparent'), borderRadius: BorderRadius.md }]}>
+      <View style={s.folderIconWrap}>
         <item.icon size={18} color={isActive ? iconColor : colors.textSecondary} />
       </View>
-      <Text style={[s.folderLabel, { color: isActive ? iconColor : colors.text, fontWeight: isActive ? '700' : '500' }]}>{item.label}</Text>
+      <Text style={[s.folderLabel, { color: isActive ? iconColor : colors.text, fontWeight: isActive ? '600' : '400' }]}>{item.label}</Text>
       {item.badge > 0 && (
         <View style={[s.quickBadge, { backgroundColor: colors.primary }]}>
           <Text style={[s.quickBadgeText, { color: colors.onPrimary }]}>{item.badge > 99 ? '99+' : item.badge}</Text>
@@ -923,35 +911,36 @@ const s = StyleSheet.create({
   sidebar: { flex: 1 },
   sidebarContent: { paddingHorizontal: Spacing.sm, paddingTop: Spacing.md, paddingBottom: Spacing.xxl },
   // [beauty2 2026-05-31] softer brand-tinted shadow + a touch more breathing room
+  // [2026-10-13 redesign P&B] CTA sólido sem sombra/brilho; 48px de altura,
+  // cantos 12 (mesma família dos botões do app). Cor vem do tema (composeBg).
   composeBtn: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
-    borderRadius: 12, paddingVertical: 12, paddingHorizontal: 22,
-    marginBottom: Spacing.md, marginHorizontal: Spacing.sm,
+    borderRadius: 12, minHeight: 48, paddingHorizontal: 22,
+    marginBottom: Spacing.lg, marginHorizontal: Spacing.sm,
     ...Platform.select({
       web: {
-        transition: 'all 0.2s cubic-bezier(0.34, 1.56, 0.64, 1)',
+        transition: 'opacity 0.15s ease, transform 0.15s ease',
         cursor: 'pointer',
-        boxShadow: '0 1px 3px rgba(17, 17, 17,0.18)',
-        backgroundColor: '#111111',
       },
       default: {},
     }),
   },
-  composeBtnText: { fontSize: 15, fontWeight: '700', letterSpacing: 0.3 },
+  composeBtnText: { fontSize: 15, fontWeight: '600', letterSpacing: -0.1 },
+  // Linha de pasta: pílula uniforme (raio 10) com recuo dos dois lados, alvo ≥ 44.
   folderItem: {
     flexDirection: 'row', alignItems: 'center',
-    paddingVertical: 9, paddingHorizontal: Spacing.lg,
-    borderRadius: 12, borderTopRightRadius: 22, borderBottomRightRadius: 22,
-    marginBottom: 2, marginRight: Spacing.xs,
+    minHeight: 44, paddingVertical: 7, paddingHorizontal: Spacing.md,
+    borderRadius: 10,
+    marginBottom: 1, marginHorizontal: Spacing.xs,
     position: 'relative',
     overflow: 'hidden',
   },
   folderActiveBg: {
     position: 'absolute',
     top: 0,
-    left: 0,
+    left: Spacing.xs,
     right: Spacing.xs,
-    bottom: 0,
+    bottom: 1,
   },
   activeIndicator: {
     position: 'absolute',
@@ -962,29 +951,22 @@ const s = StyleSheet.create({
     borderBottomRightRadius: 3,
   },
   folderTransition: Platform.OS === 'web' ? {
-    transition: 'background-color 0.18s ease, transform 0.15s ease, box-shadow 0.18s ease',
+    transition: 'background-color 0.15s ease',
     cursor: 'pointer',
   } : {},
   folderItemHoverShadow: Platform.OS === 'web' ? {
     boxShadow: '0 2px 8px rgba(0,0,0,0.06)',
     transform: [{ translateX: 2 }],
   } : {},
-  folderIconWrap: { marginRight: 14, width: 30, height: 30, alignItems: 'center', justifyContent: 'center', borderRadius: 9 },
-  folderLabel: { fontSize: 14, flex: 1, fontWeight: '500', letterSpacing: -0.15 },
+  folderIconWrap: { marginRight: 12, width: 28, height: 28, alignItems: 'center', justifyContent: 'center', borderRadius: 8 },
+  folderLabel: { fontSize: 15, flex: 1, fontWeight: '400', letterSpacing: -0.2 },
   folderCount: { fontSize: 11, fontWeight: '600', marginRight: 6, minWidth: 18, textAlign: 'right' },
   badgeWrap: {
-    borderRadius: 12, paddingHorizontal: 8, paddingVertical: 3, minWidth: 24, alignItems: 'center',
-    ...(Platform.OS === 'web' ? {
-      boxShadow: '0 1px 3px rgba(0,0,0,0.10)',
-    } : {
-      shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.10, shadowRadius: 2, elevation: 1,
-    }),
+    paddingLeft: 8, minWidth: 24, alignItems: 'flex-end',
   },
-  badgeWrapInbox: {
-    borderRadius: 14, paddingHorizontal: 10, paddingVertical: 4, minWidth: 28,
-  },
-  badgeText: { color: '#fff', fontSize: 11, fontWeight: '800', letterSpacing: 0.2 },
-  badgeTextInbox: { fontSize: 12, fontWeight: '800' },
+  badgeWrapInbox: {},
+  badgeText: { fontSize: 13, fontVariant: ['tabular-nums'], letterSpacing: 0 },
+  badgeTextInbox: {},
   quickBadge: {
     borderRadius: 12, paddingHorizontal: 8, paddingVertical: 3, minWidth: 22, alignItems: 'center',
   },
@@ -994,7 +976,7 @@ const s = StyleSheet.create({
   divider: { borderTopWidth: StyleSheet.hairlineWidth, marginVertical: Spacing.md, marginHorizontal: Spacing.lg },
   // [beauty2 2026-05-31] crisper, more premium uppercase header
   sectionLabel: {
-    fontSize: 11, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.8,
+    fontSize: 12, fontWeight: '600', textTransform: 'uppercase', letterSpacing: 0.6,
     paddingHorizontal: Spacing.lg, marginBottom: Spacing.sm, marginTop: 2,
   },
   labelItem: {
@@ -1034,7 +1016,7 @@ const s = StyleSheet.create({
   deleteFolderBtn: { padding: 6, marginRight: Spacing.sm },
   // Align exactly under the folder label: row side padding (Spacing.lg) + icon
   // wrap (30) + gap (14). Was a hardcoded 60 that drifted from the real offset.
-  emptyTrashBtn: { paddingLeft: Spacing.lg + 44, paddingVertical: 4, paddingBottom: 8 },
+  emptyTrashBtn: { paddingLeft: Spacing.xs + Spacing.md + 40, paddingVertical: 4, paddingBottom: 8 },
   emptyTrashText: { fontSize: FontSize.xs, fontWeight: '600', letterSpacing: 0.1 },
   // Collapsed sidebar styles
   collapsedContent: { alignItems: 'center', paddingTop: Spacing.md, paddingBottom: Spacing.xxl, paddingHorizontal: 4 },
@@ -1045,9 +1027,7 @@ const s = StyleSheet.create({
     marginBottom: Spacing.md,
     ...(Platform.OS === 'web' ? {
       cursor: 'pointer',
-      boxShadow: '0 1px 3px rgba(17, 17, 17,0.18)',
-      backgroundColor: '#111111',
-      transition: 'transform 0.15s ease, box-shadow 0.15s ease',
+      transition: 'transform 0.15s ease, opacity 0.15s ease',
     } : {}),
   },
   collapsedItem: {

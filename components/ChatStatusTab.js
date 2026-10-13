@@ -763,7 +763,9 @@ function EmptyStatusIllustration({ isDark }) {
 }
 
 /** Renders a segmented ring around an avatar (one arc per status item) */
-const SegmentedRing = React.memo(function SegmentedRing({ items, size, viewed, closeFriends = false }) {
+const SegmentedRing = React.memo(function SegmentedRing({ items, size, viewed, closeFriends = false, isDark = false }) {
+  // [2026-10-13 visual] ink follows theme: #111 ring vanished on the dark card.
+  const _ink = isDark ? '#F5F5F7' : '#111111';
   const count = items?.length || 1;
   const ringSize = size + 10;
   const radius = (ringSize / 2) - 3;
@@ -776,16 +778,16 @@ const SegmentedRing = React.memo(function SegmentedRing({ items, size, viewed, c
   // Close-friends ring: bright IG-style green gradient. Default is the
   // brand purple. ID is parameterized so multiple rings on the same
   // screen with different palettes don't collide on the Defs registry.
-  const gradId = closeFriends ? 'ringGradCF' : 'ringGrad';
+  const gradId = closeFriends ? 'ringGradCF' : (isDark ? 'ringGradD' : 'ringGrad');
 
   return (
     <View style={{ position: 'absolute', top: -5, left: -5 }}>
       <Svg width={ringSize} height={ringSize}>
         <Defs>
           <LinearGradient id={gradId} x1="0" y1="0" x2="1" y2="1">
-            <Stop offset="0" stopColor={closeFriends ? '#34D399' : '#111111'} />
-            <Stop offset="0.5" stopColor={closeFriends ? '#10B981' : '#111111'} />
-            <Stop offset="1" stopColor={closeFriends ? '#047857' : '#111111'} />
+            <Stop offset="0" stopColor={closeFriends ? '#34D399' : _ink} />
+            <Stop offset="0.5" stopColor={closeFriends ? '#10B981' : _ink} />
+            <Stop offset="1" stopColor={closeFriends ? '#047857' : _ink} />
           </LinearGradient>
         </Defs>
         {Array.from({ length: count }).map((_, i) => {
@@ -895,7 +897,7 @@ const StoryScroller = React.memo(function StoryScroller({ statuses, myStatuses, 
                   is audio before tapping. Kept inline (not part of
                   StoryRingAvatar) because it's specific to this surface. */}
               {group.items?.some(it => it.music_title) ? (
-                <View style={styles.storyMusicBadge}>
+                <View style={[styles.storyMusicBadge, isDark && { backgroundColor: '#2c2c2e', borderColor: '#000' }]}>
                   <IconMusicNote size={10} color="#fff" />
                 </View>
               ) : null}
@@ -3068,7 +3070,7 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
     return (
       <TouchableOpacity
         key={statusGroup.ownerEmail}
-        style={[styles.statusRow, { backgroundColor: isDark ? colors.card : '#fff' }]}
+        style={[styles.statusRow, { backgroundColor: isDark ? (colors.card || '#1c1c1e') : '#fff' }]}
         // Pre-warm the first video + its poster the moment the finger
         // touches down (~150ms before onPress fires). Cuts perceived
         // open time by giving the network a head-start while the user's
@@ -3114,6 +3116,7 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
             size={52}
             viewed={allViewed}
             closeFriends={rowCloseFriends}
+            isDark={isDark}
           />
           <AvatarCircle name={statusGroup.ownerName} email={statusGroup.ownerEmail} size={52} />
         </Animated.View>
@@ -3139,7 +3142,7 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
     // user sees the row layout immediately and the rows just "fill in"
     // when data lands. Matches Instagram/Telegram pattern.
     const SkeletonRow = ({ rowKey }) => (
-      <View key={rowKey} style={[styles.statusRow, { backgroundColor: isDark ? colors.card : '#fff' }]}>
+      <View key={rowKey} style={[styles.statusRow, { backgroundColor: isDark ? (colors.card || '#1c1c1e') : '#fff' }]}>
         <View style={[styles.avatarWrapper, {
           width: 52, height: 52, borderRadius: 26,
           backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)',
@@ -3151,8 +3154,8 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
       </View>
     );
     return (
-      <View style={[styles.container, { backgroundColor: isDark ? colors.background : '#f6f8fa' }]}>
-        <View style={[styles.sectionHeader, { backgroundColor: isDark ? colors.background : '#f6f8fa' }]}>
+      <View style={[styles.container, { backgroundColor: isDark ? colors.background : '#f2f2f7' }]}>
+        <View style={[styles.sectionHeader, { backgroundColor: isDark ? colors.background : '#f2f2f7' }]}>
           <View style={{ height: 14, width: 140, borderRadius: 6, backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)' }} />
         </View>
         {[0,1,2,3,4,5].map(i => <SkeletonRow key={`sk-${i}`} rowKey={`sk-${i}`} />)}
@@ -3352,11 +3355,11 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
   );
 
   return (
-    <View style={[styles.container, { backgroundColor: isDark ? colors.background : '#f6f8fa' }]}>
+    <View style={[styles.container, { backgroundColor: isDark ? colors.background : '#f2f2f7' }]}>
       {/* Search */}
       {showSearch && (
         <View style={[styles.searchBar, {
-          backgroundColor: isDark ? colors.card : '#fff',
+          backgroundColor: isDark ? (colors.card || '#1c1c1e') : '#fff',
         }]}>
           <IconSearch size={18} color={colors.textSecondary} />
           <TextInput
@@ -3382,7 +3385,7 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
         <View style={styles.inlineSearchRow}>
           <TouchableOpacity
             style={[styles.searchToggle, {
-              backgroundColor: isDark ? colors.card : '#fff',
+              backgroundColor: isDark ? (colors.card || '#1c1c1e') : '#fff',
             }]}
             onPress={() => setShowSearch(true)}
           >
@@ -3428,8 +3431,7 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
             Replaces the old rectangular row card for an Instagram-grade
             hero feel. */}
         <View style={[styles.myStatusCard, {
-          backgroundColor: isDark ? colors.card : '#fff',
-          ...(Platform.OS === 'web' ? { boxShadow: '0 2px 12px rgba(0,0,0,0.08)' } : {}),
+          backgroundColor: isDark ? (colors.card || '#1c1c1e') : '#fff',
         }]}>
           <View style={styles.myStatusRow}>
             <TouchableOpacity
@@ -3460,9 +3462,10 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
                 <AvatarCircle name={currentName} email={currentEmail} size={96} />
                 {!hasMyStatus && (
                   <View style={[styles.plusBadgeHero, {
-                    borderColor: isDark ? colors.card : '#fff',
+                    borderColor: isDark ? (colors.card || '#1c1c1e') : '#fff',
+                    ...(isDark ? { backgroundColor: '#F5F5F7', shadowOpacity: 0 } : null),
                   }]}>
-                    <IconPlus size={16} color="#fff" />
+                    <IconPlus size={16} color={isDark ? '#000' : '#fff'} />
                   </View>
                 )}
               </View>
@@ -3676,12 +3679,12 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
             </Text>
             <Text style={[styles.emptySubtext, { color: colors.textSecondary }]}>{disappearsLabel}</Text>
             <TouchableOpacity
-              style={styles.emptyButton}
+              style={[styles.emptyButton, isDark && { backgroundColor: '#F5F5F7', shadowOpacity: 0 }]}
               onPress={() => openCreator()}
               activeOpacity={0.85}
             >
-              <IconPlus size={18} color="#fff" />
-              <Text style={styles.emptyButtonText}>{t?.('status.addStatus') || 'Adicionar status'}</Text>
+              <IconPlus size={18} color={isDark ? '#000' : '#fff'} />
+              <Text style={[styles.emptyButtonText, isDark && { color: '#000' }]}>{t?.('status.addStatus') || 'Adicionar status'}</Text>
             </TouchableOpacity>
           </View>
         )}
@@ -6164,11 +6167,8 @@ const styles = StyleSheet.create({
     marginHorizontal: 16,
     marginTop: 6,
     marginBottom: 6,
-    borderRadius: 18,
-    ...Platform.select({
-      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.08, shadowRadius: 10 },
-      android: { elevation: 3 },
-    }),
+    // [2026-10-13 visual] flat grouped card (white on #f2f2f7 / #1c1c1e on #000)
+    borderRadius: 16,
   },
   myStatusRow: {
     flexDirection: 'row',
@@ -6269,13 +6269,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 18,
     paddingVertical: 14,
     marginHorizontal: 16,
-    marginBottom: 3,
-    borderRadius: 16,
-    ...Platform.select({
-      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.04, shadowRadius: 4 },
-      android: { elevation: 1 },
-      web: { boxShadow: '0 1px 4px rgba(0,0,0,0.04)' },
-    }),
+    marginBottom: 6,
+    borderRadius: 14,
+    minHeight: 72,
   },
   avatarWrapper: { position: 'relative' },
   statusInfo: { flex: 1, marginLeft: 16 },
@@ -6294,25 +6290,26 @@ const styles = StyleSheet.create({
 
   // Section headers
   section: { marginTop: 14 },
+  // [2026-10-13 visual] header text aligned with the rows' content inset
+  // (16 card margin + 18 pad); the ink accent bar is hidden (invisible on
+  // dark, decorative noise on light).
   sectionHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingVertical: 10,
-    marginLeft: 16,
+    paddingLeft: 34,
+    paddingRight: 18,
+    paddingTop: 10,
+    paddingBottom: 8,
+    minHeight: 36,
   },
   sectionAccent: {
-    width: 3,
-    height: 16,
-    borderRadius: 2,
-    backgroundColor: ACCENT,
-    marginRight: 10,
+    display: 'none',
   },
   sectionTitle: {
-    fontSize: 11.5,
-    fontWeight: '700',
+    fontSize: 12,
+    fontWeight: '600',
     textTransform: 'uppercase',
-    letterSpacing: 1.3,
+    letterSpacing: 0.6,
     flex: 1,
   },
   sectionCount: {

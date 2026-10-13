@@ -74,6 +74,12 @@ const AI_STORE_MAX = 2000; // cap persisted entries (insertion-ordered → keep 
 
 // MONOCHROME 2026: side-panel header accents unified to the single neutral
 // accent (#111111) — no per-route color. Tints derive from this one hex.
+// [2026-10-13] Título do cabeçalho mobile = nome da pasta (i18n).
+const HEADER_FOLDER_KEYS = {
+  INBOX: 'folder.inbox', Sent: 'folder.sent', Drafts: 'folder.drafts', Trash: 'folder.trash',
+  Spam: 'folder.spam', Junk: 'folder.spam', Archive: 'folder.archive', Flagged: 'folder.flagged', Snoozed: 'folder.snoozed',
+};
+
 const SIDE_PANEL_ROUTES = {
   '/chat': { key: 'chat', icon: IconMessageSquare, label: 'sidebar.messages', color: '#111111' },
   '/calendar': { key: 'calendar', icon: IconCalendar, label: 'sidebar.calendar', color: '#111111' },
@@ -1620,8 +1626,14 @@ function InboxScreenInner() {
             <Text style={[s.logoText, { color: colors.text }]}>Chatyy</Text>
           ) : (
             <View>
-              <Text style={[s.greetingText, { color: colors.text }]}>
-                {getGreeting()}{user?.name ? `, ${user.name.split(' ')[0]}` : ''}
+              {/* [2026-10-13 redesign P&B] Título = pasta atual (Apple Mail), não
+                  mais a saudação "Bom dia, Fulano" (founder pediu fora). */}
+              <Text style={[s.greetingText, { color: colors.text }]} numberOfLines={1}>
+                {activeLabel
+                  ? (activeLabel.charAt(0).toUpperCase() + activeLabel.slice(1))
+                  : (HEADER_FOLDER_KEYS[currentFolder]
+                    ? t(HEADER_FOLDER_KEYS[currentFolder])
+                    : (currentFolder || t('folder.inbox')))}
               </Text>
               {unreadCount > 0 && (
                 <Text style={[s.unreadHint, { color: colors.textSecondary }]}>
@@ -1850,8 +1862,7 @@ function InboxScreenInner() {
                 // height with a faint brand-tinted ring for a more finished look.
                 width: 40, height: 40, borderRadius: 20, marginLeft: 8,
                 alignItems: 'center', justifyContent: 'center',
-                backgroundColor: colors.primaryLight,
-                borderWidth: StyleSheet.hairlineWidth, borderColor: colors.primary + '22',
+                backgroundColor: colors.surfaceVariant,
                 position: 'relative',
               }}
               hitSlop={8}
@@ -1859,9 +1870,9 @@ function InboxScreenInner() {
               accessibilityRole="button"
             >
               {searchText.trim() ? (
-                <IconBookmark size={18} color={colors.primary} />
+                <IconBookmark size={18} color={colors.text} />
               ) : (
-                <IconStar size={18} color={colors.primary} />
+                <IconStar size={18} color={colors.textSecondary} />
               )}
               {!searchText.trim() && savedSearches.length > 0 && (
                 <View style={{
@@ -1884,8 +1895,9 @@ function InboxScreenInner() {
             <Modal visible transparent animationType="fade" onRequestClose={() => setShowSavedSearches(false)}>
               <TouchableOpacity activeOpacity={1} onPress={() => setShowSavedSearches(false)}
                 style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' }}>
-                <View style={{ backgroundColor: colors.background, borderTopLeftRadius: 16, borderTopRightRadius: 16, padding: 16, maxHeight: '60%' }}>
-                  <Text style={{ fontSize: 17, fontWeight: '700', color: colors.text, marginBottom: 12 }}>
+                <View style={{ backgroundColor: colors.surfaceElevated || colors.surface, borderTopLeftRadius: 16, borderTopRightRadius: 16, paddingHorizontal: 20, paddingTop: 8, paddingBottom: 16 + insets.bottom, maxHeight: '60%' }}>
+                  <View style={{ alignSelf: 'center', width: 36, height: 5, borderRadius: 3, backgroundColor: colors.border, marginBottom: 14 }} />
+                  <Text style={{ fontSize: 17, fontWeight: '600', color: colors.text, marginBottom: 8, letterSpacing: -0.3 }}>
                     {t('search.savedSearches') || 'Buscas salvas'}
                   </Text>
                   {savedSearches.length === 0 ? (
@@ -1901,13 +1913,13 @@ function InboxScreenInner() {
                           setShowSavedSearches(false);
                           doSearch(item.query);
                         }}
-                        style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 12, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.borderLight }}
+                        style={{ flexDirection: 'row', alignItems: 'center', minHeight: 52, paddingVertical: 10, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.divider }}
                       >
                         <View style={{ flex: 1 }}>
-                          <Text numberOfLines={1} style={{ fontSize: 14, color: colors.text, fontWeight: '500' }}>{item.name}</Text>
-                          <Text numberOfLines={1} style={{ fontSize: 11, color: colors.textTertiary, marginTop: 2 }}>{item.query}</Text>
+                          <Text numberOfLines={1} style={{ fontSize: 15, color: colors.text, fontWeight: '500' }}>{item.name}</Text>
+                          <Text numberOfLines={1} style={{ fontSize: 13, color: colors.textSecondary, marginTop: 2 }}>{item.query}</Text>
                         </View>
-                        <TouchableOpacity onPress={() => handleDeleteSavedSearch(item.id)} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+                        <TouchableOpacity onPress={() => handleDeleteSavedSearch(item.id)} hitSlop={{ top: 14, bottom: 14, left: 14, right: 14 }} accessibilityRole="button" accessibilityLabel={t('common.delete') || 'Excluir'}>
                           <IconX size={16} color={colors.textTertiary} />
                         </TouchableOpacity>
                       </TouchableOpacity>
@@ -2033,14 +2045,13 @@ function InboxScreenInner() {
             backgroundColor: colors.surface,
             borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border,
             borderRadius: BorderRadius.xl, padding: Spacing.lg,
-            ...Shadow.cardRest,
           }}>
             <View style={{
               width: 32, height: 32, borderRadius: BorderRadius.md,
-              backgroundColor: colors.primaryLight,
+              backgroundColor: colors.surfaceVariant,
               alignItems: 'center', justifyContent: 'center',
             }}>
-              <IconSparkles size={17} color={colors.primary} />
+              <IconSparkles size={17} color={colors.text} />
             </View>
             <View style={{ flex: 1 }}>
               <View style={{ flexDirection:'row', alignItems:'center', marginBottom: 4 }}>
@@ -2122,15 +2133,12 @@ function InboxScreenInner() {
               </ErrorBoundary>
             ) : (
               <View style={s.noSelection}>
+                {/* [2026-10-13 redesign P&B] Estado vazio calmo: um círculo
+                    neutro com ícone fino — saíram anéis concêntricos + pulso
+                    infinito (movimento constante no canto da tela distrai). */}
                 <View style={s.noSelectionRings}>
-                  <View style={[s.noSelectionOuterRing, { borderColor: colors.primary + '06' }]} />
-                  <View style={[s.noSelectionMiddleRing, { borderColor: colors.primary + '10' }]} />
-                  <View style={[
-                    s.noSelectionCircle,
-                    { backgroundColor: colors.primaryLight, opacity: 0.7 },
-                    Platform.OS === 'web' && { animation: 'pulseGlow 3s ease-in-out infinite' },
-                  ]}>
-                    <IconMail size={40} color={colors.primary} style={{ opacity: 0.6 }} />
+                  <View style={[s.noSelectionCircle, { backgroundColor: colors.surfaceVariant }]}>
+                    <IconMail size={34} color={colors.textSecondary} />
                   </View>
                 </View>
                 <Text style={[s.noSelectionTitle, { color: colors.textSecondary }]}>{t('inbox.selectEmail')}</Text>
@@ -2145,15 +2153,13 @@ function InboxScreenInner() {
                   accessibilityLabel={t('compose.new') || 'Compose'}
                   style={{
                     marginTop: 20, flexDirection: 'row', alignItems: 'center', gap: 8,
-                    backgroundColor: colors.primary, borderRadius: 14,
-                    paddingHorizontal: 18, paddingVertical: 11,
-                    ...(Platform.OS === 'web'
-                      ? { cursor: 'pointer', boxShadow: `0 4px 16px ${colors.primary}40` }
-                      : { shadowColor: colors.primary, shadowOpacity: 0.35, shadowRadius: 10, shadowOffset: { width: 0, height: 4 }, elevation: 4 }),
+                    backgroundColor: colors.primary, borderRadius: 12,
+                    minHeight: 44, paddingHorizontal: 20,
+                    ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
                   }}
                 >
                   <IconCompose size={16} color={colors.onPrimary || '#fff'} />
-                  <Text style={{ color: colors.onPrimary || '#fff', fontSize: 14, fontWeight: '700', letterSpacing: 0.1 }}>
+                  <Text style={{ color: colors.onPrimary || '#fff', fontSize: 15, fontWeight: '600', letterSpacing: -0.1 }}>
                     {t('compose.new') || 'New email'}
                   </Text>
                 </TouchableOpacity>
@@ -2645,7 +2651,7 @@ const s = StyleSheet.create({
   // [beauty2 2026-05-31] Tighter optical tracking on the brand wordmark + a
   // hair more line-height room under the greeting so the unread hint breathes.
   logoText: { fontSize: 22, fontWeight: '800', letterSpacing: -0.7 },
-  greetingText: { fontSize: 17, fontWeight: '800', letterSpacing: -0.4 },
+  greetingText: { fontSize: 20, fontWeight: '700', letterSpacing: -0.5 },
   unreadHint: { fontSize: FontSize.xs, marginTop: 2, letterSpacing: 0.2, fontWeight: '600' },
   searchRow: {
     flexDirection: 'row',
@@ -2762,7 +2768,7 @@ const s = StyleSheet.create({
   },
   noSelection: { flex: 1, justifyContent: 'center', alignItems: 'center', paddingHorizontal: Spacing.xxl },
   noSelectionRings: {
-    width: 180, height: 180, alignItems: 'center', justifyContent: 'center', marginBottom: 32,
+    alignItems: 'center', justifyContent: 'center', marginBottom: 20,
   },
   noSelectionOuterRing: {
     position: 'absolute', width: 180, height: 180, borderRadius: 90, borderWidth: 1,
@@ -2771,11 +2777,11 @@ const s = StyleSheet.create({
     position: 'absolute', width: 140, height: 140, borderRadius: 70, borderWidth: 1,
   },
   noSelectionCircle: {
-    width: 100, height: 100, borderRadius: 50,
+    width: 80, height: 80, borderRadius: 40,
     justifyContent: 'center', alignItems: 'center',
   },
-  noSelectionTitle: { fontSize: 22, fontWeight: '700', letterSpacing: LetterSpacing.tightest },
-  noSelectionSub: { fontSize: FontSize.base, marginTop: Spacing.sm, textAlign: 'center', maxWidth: 300, lineHeight: 23, opacity: 0.7 },
+  noSelectionTitle: { fontSize: 20, fontWeight: '600', letterSpacing: -0.4 },
+  noSelectionSub: { fontSize: 15, marginTop: 6, textAlign: 'center', maxWidth: 300, lineHeight: 21 },
   loader: { marginTop: 60 },
   fab: {
     position: 'absolute', right: 20, alignItems: 'center', justifyContent: 'center',

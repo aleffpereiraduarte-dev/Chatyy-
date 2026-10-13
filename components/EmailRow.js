@@ -197,7 +197,7 @@ function EmailRow({
   const pressScale = useRef(new Animated.Value(1)).current;
   const handlePressIn = useCallback(() => {
     Animated.spring(pressScale, {
-      toValue: 0.97,
+      toValue: 0.985,
       useNativeDriver: false,
       friction: 10,
       tension: 400,
@@ -298,12 +298,13 @@ function EmailRow({
     }
   }
 
+  // [2026-10-13 redesign P&B] Não lida NÃO pinta mais a linha de cinza (era
+  // fundo cinza + barra + negrito = 3 sinais). Estilo Apple Mail: fundo limpo,
+  // ponto à esquerda + remetente/assunto em peso forte.
   const bgColor = isChecked
     ? colors.selectedBg
     : isSelected
     ? colors.selectedBg
-    : isUnread
-    ? colors.unreadBg
     : hovered
     ? colors.surfaceHover
     : colors.surface;
@@ -359,13 +360,11 @@ function EmailRow({
         // pra caber mais e-mails por tela, estilo Gmail web denso. No app fica
         // no valor da densidade escolhida.
         { backgroundColor: bgColor, borderBottomColor: colors.borderLight,
-          paddingVertical: Platform.OS === 'web' ? Math.max(4, dc.paddingV - 2) : dc.paddingV,
+          // [2026-10-13] +respiro vertical (grade de 4): linhas de 3 níveis com
+          // tipografia 16/15/14 ficavam espremidas no "confortável".
+          paddingVertical: Platform.OS === 'web' ? Math.max(6, dc.paddingV) : dc.paddingV + 3,
           minHeight: Platform.OS === 'web' ? Math.max(44, dc.rowMinHeight - 8) : dc.rowMinHeight },
         Platform.OS === 'web' && s.rowTransition,
-        Platform.OS === 'web' && hovered && {
-          boxShadow: '0 1px 3px rgba(0,0,0,0.06), 0 4px 12px rgba(0,0,0,0.04)',
-          zIndex: 2,
-        },
       ]}
       onPress={() => onPress(email)}
       onLongPress={nativeMenuOn ? undefined : () => onContextMenu?.(email, { x: 0, y: 0 })}
@@ -450,9 +449,9 @@ function EmailRow({
           {!hovered && (
             <View style={s.dateRow}>
               {hasAttachments && (
-                <IconPaperclip size={13} color={colors.textTertiary} style={{ marginRight: 5, opacity: 0.7 }} />
+                <IconPaperclip size={13} color={colors.textTertiary} style={{ marginRight: 6 }} />
               )}
-              <Text style={[s.date, { color: isUnread ? colors.primary : colors.textTertiary }]}>
+              <Text style={[s.date, { color: isUnread ? colors.text : colors.textTertiary, fontWeight: isUnread ? '600' : '400' }]}>
                 {relativeDate || email.date_short || email.date}
               </Text>
             </View>
@@ -485,7 +484,7 @@ function EmailRow({
 
         {/* Line 3: Preview (separate line — easier to skim 10 emails at a glance) */}
         {dc.showPreview && email.preview ? (
-          <Text numberOfLines={1} style={[s.preview, { color: colors.textTertiary, marginTop: 2 }]}>
+          <Text numberOfLines={1} style={[s.preview, { color: colors.textSecondary, marginTop: 1 }]}>
             {searchQuery ? highlightText(cleanPreview(email.preview), searchQuery) : cleanPreview(email.preview)}
           </Text>
         ) : null}
@@ -499,7 +498,7 @@ function EmailRow({
         )}
         {/* Snoozed indicator */}
         {currentFolder === 'Snoozed' && (
-          <View style={[s.snoozedChip, { backgroundColor: colors.primaryLight || '#e8f0fe' }]}>
+          <View style={[s.snoozedChip, { backgroundColor: colors.surfaceVariant }]}>
             <IconClock size={12} color={colors.primary} style={{ marginRight: 4 }} />
             <Text style={[s.snoozedText, { color: colors.primary }]}>
               {t('snooze.snoozed')}
@@ -616,9 +615,9 @@ function EmailRow({
         >
           <Animated.View style={{ transform: [{ scale: starScale }, { rotate: starRotateInterp }] }}>
             {isStarred ? (
-              <IconStarFilled size={20} color={colors.starColor} />
+              <IconStarFilled size={18} color={colors.starColor} />
             ) : (
-              <IconStar size={20} color={colors.starEmpty} />
+              <IconStar size={18} color={colors.starEmpty} />
             )}
           </Animated.View>
         </TouchableOpacity>
@@ -677,13 +676,15 @@ const s = StyleSheet.create({
   },
   rowInner: { flexDirection: 'row', alignItems: 'center', flex: 1 },
   rowTransition: Platform.OS === 'web' ? {
-    transition: 'background-color 0.18s ease, box-shadow 0.2s ease, transform 0.18s ease',
+    transition: 'background-color 0.15s ease',
     animation: 'emailRowIn 0.25s ease-out both',
   } : {},
   // Modern accent bar on the left for unread emails (instead of a dot)
+  // [2026-10-13] Ponto de não lida (8px) centrado na altura do remetente,
+  // estilo Apple Mail — no lugar da barra vertical de 3px.
   unreadDotLeft: {
-    position: 'absolute', left: 6, top: 8, bottom: 8,
-    width: 3, borderRadius: 2,
+    position: 'absolute', left: 5, top: '50%', marginTop: -4,
+    width: 8, height: 8, borderRadius: 4,
     // [beauty 2026-10-01] Dropped the blue glow (off-palette rgba(37,99,235))
     // — the accent bar itself carries the unread cue, no glow needed.
   },
@@ -692,15 +693,15 @@ const s = StyleSheet.create({
   topRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 2 },
   senderRow: { flexDirection: 'row', alignItems: 'center', flex: 1, minWidth: 0, marginRight: Spacing.sm },
   dateRow: { flexDirection: 'row', alignItems: 'center', flexShrink: 0 },
-  from: { fontSize: 15, flexShrink: 1, letterSpacing: -0.15 },
-  date: { fontSize: 11.5, letterSpacing: 0.1, fontWeight: '600' },
+  from: { fontSize: 16, lineHeight: 21, flexShrink: 1, fontWeight: '500', letterSpacing: -0.25 },
+  date: { fontSize: 13, letterSpacing: -0.05, fontVariant: ['tabular-nums'] },
   subjectLine: { marginTop: 1 },
-  subject: { fontSize: 14, lineHeight: 19, letterSpacing: -0.05 },
-  unreadSubject: { fontWeight: '700' },
-  preview: { fontSize: 13, lineHeight: 18, letterSpacing: 0 },
-  unreadText: { fontWeight: '800', letterSpacing: -0.2 },
+  subject: { fontSize: 15, lineHeight: 20, letterSpacing: -0.15 },
+  unreadSubject: { fontWeight: '600' },
+  preview: { fontSize: 14, lineHeight: 19, letterSpacing: -0.1 },
+  unreadText: { fontWeight: '700', letterSpacing: -0.25 },
   starBtn: {
-    padding: Spacing.xs, marginLeft: Spacing.sm,
+    width: 36, height: 36, alignItems: 'center', justifyContent: 'center', marginLeft: Spacing.xs, marginRight: -6,
     ...Platform.select({
       web: { transition: 'transform 0.2s ease', cursor: 'pointer' },
       default: {},
@@ -708,9 +709,9 @@ const s = StyleSheet.create({
   },
   // Thread badge
   threadBadge: {
-    borderRadius: 10, paddingHorizontal: 7, paddingVertical: 2, marginLeft: 6, marginRight: 2,
+    borderRadius: 999, paddingHorizontal: 7, paddingVertical: 1, marginLeft: 6, marginRight: 2,
   },
-  threadBadgeText: { fontSize: 11, fontWeight: '800' },
+  threadBadgeText: { fontSize: 12, fontWeight: '600', fontVariant: ['tabular-nums'] },
   mutedIcon: { marginLeft: 4, opacity: 0.5 },
   // Nudge
   nudgeChip: { alignSelf: 'flex-start', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 8, marginTop: 4 },
@@ -729,11 +730,11 @@ const s = StyleSheet.create({
   // Hover actions
   hoverActions: { flexDirection: 'row', gap: 6, marginLeft: Spacing.sm },
   hoverBtn: {
-    width: 34, height: 34, borderRadius: 12,
+    width: 34, height: 34, borderRadius: 17,
     justifyContent: 'center', alignItems: 'center',
     ...Platform.select({
       web: {
-        transition: 'all 0.18s cubic-bezier(0.34, 1.56, 0.64, 1)',
+        transition: 'background-color 0.15s ease',
         cursor: 'pointer',
       },
       default: {},

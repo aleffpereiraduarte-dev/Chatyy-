@@ -25,6 +25,7 @@ import StorageShopSheet from '../components/StorageShopSheet';
 import FadeSlideIn from '../components/FadeSlideIn';
 import { useGroupedColors } from '../components/settings/SettingsKit'; // [2026-10-10 settings-polish] P&B grouped
 import PressableScale from '../components/PressableScale';
+import { Shimmer } from '../components/SkeletonLoader';
 // [2026-05-22 monetization-pause] hidden by MONETIZATION_ENABLED flag
 import { MONETIZATION_ENABLED } from '../constants/featureFlags';
 // [2026-10-09 plans-consistency] plano/cota = fonte única (services/planState).
@@ -139,13 +140,13 @@ export default function StorageScreen() {
         })} />
       ) : (
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()} hitSlop={12}>
+        <TouchableOpacity onPress={() => router.back()} hitSlop={12} accessibilityRole="button" accessibilityLabel={t('common.back') || 'Voltar'}>
           <IconArrowLeft size={26} color={colors.text} />
         </TouchableOpacity>
         <Text style={[styles.title, { color: colors.text }]} numberOfLines={1}>
           {t('storage.title') || 'Armazenamento'}
         </Text>
-        <TouchableOpacity onPress={onRefresh} hitSlop={12}>
+        <TouchableOpacity onPress={onRefresh} hitSlop={12} accessibilityRole="button" accessibilityLabel={t('common.refresh')}>
           <IconRefresh size={22} color={colors.text} />
         </TouchableOpacity>
       </View>
@@ -154,12 +155,23 @@ export default function StorageScreen() {
       <FadeSlideIn>
       <ScrollView
         {...nativeScrollInsetProps()}
-        contentContainerStyle={{ paddingBottom: IOS_NATIVE_INSET ? 24 : (insets.bottom || 0) + 24 }}
+        contentContainerStyle={{ paddingBottom: IOS_NATIVE_INSET ? 24 : (insets.bottom || 0) + 24, width: '100%', maxWidth: 720, alignSelf: 'center' }}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={ink} />}
       >
         {loading ? (
-          <View style={{ padding: 40, alignItems: 'center' }}>
-            <ActivityIndicator color={ink} />
+          // [2026-10-13 visual] skeleton no formato do cartão (era spinner cru)
+          <View style={[styles.card, { backgroundColor: g.cardBg }]}>
+            <View style={styles.cardHead}>
+              <Shimmer style={{ width: 28, height: 28, borderRadius: 8 }} />
+              <View style={{ flex: 1, marginLeft: 10 }}>
+                <Shimmer style={{ width: '62%', height: 15, borderRadius: 6 }} delay={40} />
+                <Shimmer style={{ width: '40%', height: 11, borderRadius: 5, marginTop: 8 }} delay={80} />
+              </View>
+            </View>
+            <Shimmer style={{ height: 8, borderRadius: 4, marginTop: 16 }} delay={120} />
+            {[0, 1, 2, 3].map((i) => (
+              <Shimmer key={i} style={{ width: `${55 + (i % 2) * 25}%`, height: 12, borderRadius: 5, marginTop: 14 }} delay={160 + i * 30} />
+            ))}
           </View>
         ) : (
           <>
@@ -192,7 +204,7 @@ export default function StorageScreen() {
                     feed:  t('storage.breakdown.feed')  || 'Feed',
                   };
                   return (
-                    <View key={k} style={styles.breakdownRow}>
+                    <View key={k} style={[styles.breakdownRow, k !== 'drive' && { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: g.separator }]}>
                       <Text style={[styles.breakdownLabel, { color: muted }]}>{labelMap[k]}</Text>
                       <Text style={[styles.breakdownValue, { color: colors.text }]}>{formatBytes(v)}</Text>
                     </View>
@@ -215,11 +227,12 @@ export default function StorageScreen() {
               )}
 
               {overGrace && (
-                <View style={[styles.warnBanner, { backgroundColor: '#fef3c7', borderColor: '#fcd34d' }]}>
-                  <Text style={[styles.warnTitle, { color: '#92400e' }]}>
+                // [2026-10-13 visual] tons fixos de claro → ilegível no escuro
+                <View style={[styles.warnBanner, { backgroundColor: isDark ? 'rgba(245,158,11,0.10)' : '#fef3c7', borderColor: isDark ? 'rgba(245,158,11,0.35)' : '#fcd34d' }]}>
+                  <Text style={[styles.warnTitle, { color: isDark ? '#fcd34d' : '#92400e' }]}>
                     {t('storage.graceTitle') || 'Acima do limite gratuito'}
                   </Text>
-                  <Text style={[styles.warnBody, { color: '#92400e' }]}>
+                  <Text style={[styles.warnBody, { color: isDark ? '#fcd34d' : '#92400e' }]}>
                     {t('storage.graceBodyAmount', { n: limitLabel })}
                   </Text>
                 </View>
@@ -276,14 +289,15 @@ export default function StorageScreen() {
               </PressableScale>
             )}
 
-            <TouchableOpacity
+            <PressableScale
               onPress={() => router.push('/files')}
-              style={[styles.secondaryBtn, { borderColor: g.separator, backgroundColor: g.cardBg }]}
+              style={[styles.secondaryBtn, { backgroundColor: g.cardBg }]}
+              accessibilityRole="button"
             >
               <Text style={[styles.secondaryBtnText, { color: colors.text }]}>
                 {t('storage.freeSpace') || 'Liberar espaço'}
               </Text>
-            </TouchableOpacity>
+            </PressableScale>
 
             {MONETIZATION_ENABLED && (
               <Text style={[styles.helpText, { color: muted }]}>
@@ -315,20 +329,20 @@ const styles = StyleSheet.create({
     flexDirection: 'row', alignItems: 'center',
     paddingHorizontal: 16, paddingVertical: 12, gap: 10,
   },
-  title: { flex: 1, fontSize: 20, fontWeight: '700' },
+  title: { flex: 1, fontSize: 20, fontWeight: '700', letterSpacing: -0.3 },
   card: {
-    marginHorizontal: 14, marginTop: 6, padding: 16,
-    borderRadius: 16,
+    marginHorizontal: 16, marginTop: 8, padding: 16,
+    borderRadius: 12,
   },
   cardHead: { flexDirection: 'row', alignItems: 'center' },
-  cardTitle: { fontSize: 16, fontWeight: '700' },
-  cardSubtitle: { fontSize: 13, marginTop: 2 },
-  barWrap: { height: 10, borderRadius: 6, marginTop: 14, overflow: 'hidden' },
-  bar: { height: '100%', borderRadius: 6 },
-  breakdown: { marginTop: 14, gap: 6 },
-  breakdownRow: { flexDirection: 'row', justifyContent: 'space-between' },
-  breakdownLabel: { fontSize: 13 },
-  breakdownValue: { fontSize: 13, fontWeight: '600' },
+  cardTitle: { fontSize: 17, fontWeight: '600', letterSpacing: -0.2 },
+  cardSubtitle: { fontSize: 13, marginTop: 3 },
+  barWrap: { height: 8, borderRadius: 4, marginTop: 16, overflow: 'hidden' },
+  bar: { height: '100%', borderRadius: 4 },
+  breakdown: { marginTop: 10 },
+  breakdownRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', minHeight: 40 },
+  breakdownLabel: { fontSize: 15 },
+  breakdownValue: { fontSize: 15, fontWeight: '500', fontVariant: ['tabular-nums'] },
   warnBanner: {
     marginTop: 14, padding: 12,
     borderRadius: 10, borderWidth: 1,
@@ -336,8 +350,8 @@ const styles = StyleSheet.create({
   warnTitle: { fontSize: 14, fontWeight: '700', marginBottom: 4 },
   warnBody: { fontSize: 13, lineHeight: 18 },
   tierCard: {
-    marginHorizontal: 14, marginTop: 12, padding: 14,
-    borderRadius: 14,
+    marginHorizontal: 16, marginTop: 16, padding: 16,
+    borderRadius: 12,
   },
   tierName: { fontSize: 16, fontWeight: '700' },
   tierMeta: { fontSize: 13, marginTop: 4 },
@@ -346,20 +360,21 @@ const styles = StyleSheet.create({
     borderWidth: 1, borderRadius: 10, alignSelf: 'flex-start',
   },
   manageBtnText: { fontSize: 14, fontWeight: '600' },
-  promo: { marginHorizontal: 14, marginTop: 12, padding: 14, borderRadius: 14 },
-  promoTitle: { fontSize: 15, fontWeight: '800' },
+  promo: { marginHorizontal: 16, marginTop: 16, padding: 16, borderRadius: 12 },
+  promoTitle: { fontSize: 15, fontWeight: '700' },
   promoBody: { fontSize: 13, lineHeight: 19, marginTop: 4 },
   upgradeBtn: {
-    marginHorizontal: 14, marginTop: 14, paddingVertical: 14,
+    marginHorizontal: 16, marginTop: 16, paddingVertical: 14, minHeight: 50,
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
     gap: 8, borderRadius: 12,
   },
   upgradeBtnText: { color: '#fff', fontSize: 16, fontWeight: '700' },
+  // [2026-10-13 visual] linha de ação agrupada (cartão sólido, sem borda)
   secondaryBtn: {
-    marginHorizontal: 14, marginTop: 10, paddingVertical: 12,
-    borderWidth: 1, borderRadius: 12, alignItems: 'center',
+    marginHorizontal: 16, marginTop: 16, paddingVertical: 12, minHeight: 48,
+    borderRadius: 12, alignItems: 'center', justifyContent: 'center',
   },
-  secondaryBtnText: { fontSize: 15, fontWeight: '600' },
+  secondaryBtnText: { fontSize: 16, fontWeight: '500' },
   helpText: {
     marginTop: 14, marginHorizontal: 18, fontSize: 12,
     textAlign: 'center', lineHeight: 18,

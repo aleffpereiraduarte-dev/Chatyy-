@@ -3957,11 +3957,11 @@ const styles = StyleSheet.create({
   calBadgeText: { fontSize: FontSize.xs, fontWeight: '600' },
   joinMeetingBtn: {
     flexDirection: 'row', alignItems: 'center', gap: 4,
-    backgroundColor: '#111111', borderRadius: 8,
-    paddingHorizontal: 10, paddingVertical: 6,
-    marginTop: 6,
+    backgroundColor: '#111111', borderRadius: 10,
+    paddingHorizontal: 12, paddingVertical: 8,
+    marginTop: 8,
   },
-  joinMeetingBtnText: { color: '#fff', fontSize: 11, fontWeight: '700' },
+  joinMeetingBtnText: { color: '#fff', fontSize: 13, fontWeight: '600' },
   syncBadgeSmall: {
     width: 22, height: 22, borderRadius: 11,
     alignItems: 'center', justifyContent: 'center',

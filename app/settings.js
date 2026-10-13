@@ -264,12 +264,12 @@ function CollapsibleGroup({ title, icon: Icon, defaultOpen = false, forceOpen = 
         accessibilityState={{ expanded: visible }}
         accessibilityLabel={title}
         style={{
-          flexDirection: 'row', alignItems: 'center',
-          paddingVertical: 12, paddingHorizontal: 4,
+          flexDirection: 'row', alignItems: 'center', minHeight: 44,
+          paddingVertical: 10, paddingHorizontal: 16,
         }}
       >
-        {Icon ? <Icon size={18} color={colors.primary} style={{ marginRight: 10 }} /> : null}
-        <Text style={{ flex: 1, color: colors.text, fontSize: FontSize.md, fontWeight: '700' }}>
+        {Icon ? <Icon size={18} color={colors.text} style={{ marginRight: 10 }} /> : null}
+        <Text style={{ flex: 1, color: colors.text, fontSize: 17, fontWeight: '600', letterSpacing: -0.2 }}>
           {title}
         </Text>
         {/* Chevron points down when open, right when collapsed. */}
@@ -4556,7 +4556,7 @@ const s = StyleSheet.create({
     }),
   },
   backBtn: { padding: Spacing.sm, marginRight: Spacing.xs, borderRadius: BorderRadius.md, marginLeft: -Spacing.xs },
-  headerTitle: { flex: 1, fontSize: FontSize.title, fontWeight: '800', letterSpacing: LetterSpacing.tighter },
+  headerTitle: { flex: 1, fontSize: FontSize.title, fontWeight: '700', letterSpacing: LetterSpacing.tighter },
   saveBtn: {
     borderRadius: BorderRadius.md, paddingVertical: Spacing.sm + 2, paddingHorizontal: Spacing.lg + 2,
     ...Platform.select({

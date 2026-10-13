@@ -1148,8 +1148,9 @@ function HighlightFlash({ active }) {
       pointerEvents="none"
       style={{
         position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
-        borderRadius: ChatBubble.radius,
-        backgroundColor: 'rgba(37,211,102,0.22)',
+        borderRadius: 18, // = styles.bubble
+        // [2026-10-13 conv-pb] lavada NEUTRA (era verde) — lê nas bolhas preta e cinza, nos 2 temas.
+        backgroundColor: 'rgba(142,142,147,0.38)',
         opacity: op,
       }}
     />
@@ -1213,7 +1214,7 @@ function ScrollDownFabAnim({ onPress, isDark, colors, newMsgCount, t }) {
         {newMsgCount > 0 && (
           <Animated.View style={[styles.scrollDownBadge, {
             backgroundColor: isDark ? '#ffffff' : '#111111',
-            borderColor: isDark ? '#000000' : '#f0f2f5',
+            borderColor: isDark ? '#000000' : '#ffffff', // [2026-10-13 conv-pb] = fundo da conversa (era #f0f2f5 antigo)
             transform: [{ scale: badgeScale }],
           }]}>
             <Text style={[styles.scrollDownBadgeText, { color: isDark ? '#111111' : '#ffffff' }]}>{newMsgCount > 99 ? '99+' : newMsgCount}</Text>
@@ -1897,10 +1898,13 @@ function TypingBubble({ name, colors, recording, t, active = true, entries = nul
           sumia no fundo branco e não parecia mensagem. */}
       <View style={{
         backgroundColor: _typingDark ? '#1C1C1E' : '#EEEEF0',
-        borderRadius: 18, borderBottomLeftRadius: 5,
+        // [2026-10-13 conv-pb] mesma forma da 1ª bolha recebida do grupo:
+        // canto sup. esquerdo reto + rabicho (era canto inf. 5 — outra forma).
+        borderRadius: 18, borderTopLeftRadius: stackList ? 18 : 0,
         paddingHorizontal: 14, paddingVertical: 12,
         flexDirection: 'row', gap: 5, alignItems: 'center', minWidth: 56,
       }}>
+        {!stackList && <BubbleTail own={false} color={_typingDark ? '#1C1C1E' : '#EEEEF0'} />}
         {recording ? (
           <>
             <IconMic size={15} color={colors.error || '#EF4444'} style={{ marginRight: 3 }} />
@@ -5609,8 +5613,9 @@ function MeetupCreatorModal({ colors, t, conversationId, onClose, onCreated, rep
   const insets = useSafeAreaInsets();
   const [focusedField, setFocusedField] = useState(null);
   const kavEnabled = useAndroidKavGate(focusedField != null);
-  const ACCENT = '#25D366';
-  const ACCENT_TINT = 'rgba(37,211,102,0.12)';
+  const ACCENT = colors.text; // [2026-10-13 conv-pb] P&B (era verde #25D366) — igual à enquete
+  const ACCENT_TINT = colors.surfaceVariant;
+  const ON_ACCENT = colors.background || colors.surface;
   const inputBase = { backgroundColor: colors.surfaceVariant, borderRadius: 14, borderWidth: 1, paddingHorizontal: 14, paddingVertical: 12, fontSize: 15, color: colors.text };
   const labelStyle = { fontSize: 13, color: colors.textSecondary, fontWeight: '600', marginBottom: 8 };
   const canCreate = !!title.trim() && !!dateText.trim();
@@ -5736,11 +5741,11 @@ function MeetupCreatorModal({ colors, t, conversationId, onClose, onCreated, rep
           style={{ backgroundColor: canCreate ? ACCENT : colors.border, borderRadius: 14, paddingVertical: 15, alignItems: 'center', opacity: sending ? 0.7 : 1 }}
         >
           {sending
-            ? <ActivityIndicator color="#fff" />
+            ? <ActivityIndicator color={ON_ACCENT} />
             : (
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                <IconMapPin size={17} color={canCreate ? '#fff' : colors.textTertiary} />
-                <Text style={{ color: canCreate ? '#fff' : colors.textTertiary, fontSize: 16, fontWeight: '700' }}>{(t('chatConv.createMeetupBtn') || 'Marcar Encontro').replace(/\s*\u{1F4CD}\s*/gu, '')}</Text>
+                <IconMapPin size={17} color={canCreate ? ON_ACCENT : colors.textTertiary} />
+                <Text style={{ color: canCreate ? ON_ACCENT : colors.textTertiary, fontSize: 16, fontWeight: '700' }}>{(t('chatConv.createMeetupBtn') || 'Marcar Encontro').replace(/\s*\u{1F4CD}\s*/gu, '')}</Text>
               </View>
             )
           }
@@ -5887,8 +5892,9 @@ function PlaylistCreatorModal({ colors, t, conversationId, onClose, onCreated, o
   const insets = useSafeAreaInsets();
   const [focusedField, setFocusedField] = useState(null);
   const kavEnabled = useAndroidKavGate(focusedField != null);
-  const ACCENT = '#25D366';
-  const ACCENT_TINT = 'rgba(37,211,102,0.12)';
+  const ACCENT = colors.text; // [2026-10-13 conv-pb] P&B (era verde #25D366) — igual à enquete
+  const ACCENT_TINT = colors.surfaceVariant;
+  const ON_ACCENT = colors.background || colors.surface;
   const inputBase = { backgroundColor: colors.surfaceVariant, borderRadius: 14, borderWidth: 1, paddingHorizontal: 14, fontSize: 15, color: colors.text };
 
   return (
@@ -6032,7 +6038,7 @@ function PlaylistCreatorModal({ colors, t, conversationId, onClose, onCreated, o
                   backgroundColor: isSelected ? ACCENT : 'transparent',
                   alignItems: 'center', justifyContent: 'center',
                 }}>
-                  {isSelected && <IconCheck size={14} color="#fff" strokeWidth={3} />}
+                  {isSelected && <IconCheck size={14} color={ON_ACCENT} strokeWidth={3} />}
                 </View>
               </TouchableOpacity>
             );
@@ -6050,8 +6056,8 @@ function PlaylistCreatorModal({ colors, t, conversationId, onClose, onCreated, o
           }}
         >
           {sending
-            ? <ActivityIndicator color="#fff" />
-            : <Text style={{ color: !name.trim() ? colors.textTertiary : '#fff', fontSize: 16, fontWeight: '700' }}>
+            ? <ActivityIndicator color={ON_ACCENT} />
+            : <Text style={{ color: !name.trim() ? colors.textTertiary : ON_ACCENT, fontSize: 16, fontWeight: '700' }}>
                 {selectedSongs.length === 0
                   ? (t('chatConv.createPlaylistEmpty') || 'Criar playlist vazia')
                   : `Criar playlist com ${selectedSongs.length} música${selectedSongs.length > 1 ? 's' : ''}`}
@@ -24783,7 +24789,7 @@ function ChatConversationInner() {
           </View>
         </View>
         <Text style={{
-          fontSize: 16, fontWeight: '800', textAlign: 'center',
+          fontSize: 17, fontWeight: '700', textAlign: 'center', // [2026-10-13 conv-pb] 17/700 = título de empty state
           color: isDark ? '#F5F5F7' : '#111b21',
           marginBottom: 6, letterSpacing: -0.2,
         }}>
@@ -24794,13 +24800,14 @@ function ChatConversationInner() {
         <Text style={{
           fontSize: 13.5, textAlign: 'center', lineHeight: 19,
           paddingHorizontal: 48,
-          color: isDark ? 'rgba(233,237,239,0.55)' : 'rgba(17,27,33,0.55)',
+          color: isDark ? 'rgba(233,237,239,0.55)' : 'rgba(17,27,33,0.64)', // AA ≥ 4.5 no branco
         }}>
           {e2eEnabled
             ? (t('chatConv.e2eEmpty') || 'Mensagens protegidas com criptografia de ponta a ponta. Ninguém fora desta conversa pode ler.')
             : (t('chatConv.empty') || 'Envie uma mensagem para iniciar a conversa.')}
         </Text>
-        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginTop: 16, opacity: 0.6 }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginTop: 16 }}>
+          {/* [2026-10-13 conv-pb] sem opacity 0.6 extra (0.6×0.55 ≈ 2:1, ilegível) */}
           <IconSparkles size={12} color={isDark ? 'rgba(233,237,239,0.55)' : 'rgba(17,27,33,0.55)'} />
           <Text style={{
             marginLeft: 6,
@@ -29803,7 +29810,10 @@ function ChatConversationInner() {
               theme primary tint) so it reads as a status hint, not a CTA.
               Skipped on sticker/gif bubbles (transparent background) and
               media bubbles where the chrome would clash with the image. */}
-          {e2eEnabled && msg.type !== 'sticker' && msg.type !== 'gif' && msg.type !== 'image' && msg.type !== 'video' && (
+          {/* [2026-10-13 conv-pb] cadeado POR BOLHA desligado: encostava na 1ª
+              linha do texto (canto sup. direito) e poluía a conversa; o E2EE
+              segue sinalizado pelo cadeado ao lado do nome no cabeçalho. */}
+          {false && e2eEnabled && msg.type !== 'sticker' && msg.type !== 'gif' && msg.type !== 'image' && msg.type !== 'video' && (
             <View pointerEvents="none" style={{ position: 'absolute', top: 4, right: 4, opacity: 0.6, zIndex: 2 }}>
               <IconLock size={12} color={isOwn ? ownMetaColor : otherMetaColor} />
             </View>
@@ -30604,8 +30614,11 @@ function ChatConversationInner() {
     return (
       <View style={[styles.container, { backgroundColor: colors.background, justifyContent: 'center', alignItems: 'center' }]}>
         <View style={[styles.header, { backgroundColor: isDark ? '#0b0b0b' : '#ffffff', borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: isDark ? '#262628' : 'rgba(0,0,0,0.10)', paddingTop: insets.top + 6, position: 'absolute', top: 0, left: 0, right: 0 }]}>
-          <TouchableOpacity onPress={goBack} style={styles.headerBtn}>
-            <IconArrowLeft size={22} color={colors.text} />
+          <TouchableOpacity onPress={goBack} hitSlop={8} style={[styles.headerBtn, { width: 36 }, Platform.OS === 'ios' && { marginLeft: -4 }]} accessibilityLabel={t('common.back') || 'Back'} accessibilityRole="button">
+            {/* [2026-10-13 conv-pb] mesma seta do cabeçalho principal (chevron iOS / seta 24) */}
+            {Platform.OS === 'ios'
+              ? <IconChevronLeft size={30} color={colors.text} />
+              : <IconArrowLeft size={24} color={colors.text} />}
           </TouchableOpacity>
           <View style={styles.headerInfo}>
             <Text style={[styles.headerTitle, { color: colors.text }]} numberOfLines={1} maxFontSizeMultiplier={1.3}>{conversationName}</Text>
@@ -30668,7 +30681,7 @@ function ChatConversationInner() {
           }}
         >
           <View style={{
-            backgroundColor: isDark ? '#1E1A2C' : '#FFFFFF',
+            backgroundColor: isDark ? '#1c1c1e' : '#FFFFFF', // [2026-10-13 conv-pb] era #1E1A2C (roxo)
             paddingHorizontal: 32, paddingVertical: 24, borderRadius: 16,
             alignItems: 'center',
             shadowColor: '#000', shadowOpacity: 0.25, shadowRadius: 24,
@@ -30774,9 +30787,9 @@ function ChatConversationInner() {
           <View style={{ position: 'relative', width: 38, height: 38 }}>
             {/* Halo violeta respirando ao redor do avatar quando online —
                 "presence as ambient glow" (iOS Messages active-now feel). */}
-            {presence?.status === 'online' && conversationType === 'direct' && (
-              <AvatarHalo size={38} />
-            )}
+            {/* [2026-10-13 conv-pb] halo pulsante em loop infinito DESLIGADO:
+                sumia no escuro (anel #111 sobre #0b0b0b), animava pra sempre no
+                cabeçalho e duplicava o texto "online" logo abaixo do nome. */}
             <AvatarCircle
               name={conversationName}
               email={(() => {
@@ -32823,7 +32836,14 @@ function ChatConversationInner() {
           const suggestions = getStickerSuggestions ? getStickerSuggestions(inputText) : [];
           if (suggestions.length === 0) return null;
           return (
-            <View style={{ flexDirection: 'row', alignItems: 'center', maxHeight: 36, paddingLeft: 6, paddingRight: 4, borderTopWidth: 1, borderTopColor: colors.border }}>
+            <View style={{
+              // [2026-10-13 conv-pb] mesma superfície + hairline do compositor
+              // (antes flutuava transparente sobre o papel de parede).
+              flexDirection: 'row', alignItems: 'center', maxHeight: 44, paddingLeft: 6, paddingRight: 4,
+              backgroundColor: isDark ? '#0b0b0b' : '#ffffff',
+              borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: isDark ? '#262628' : 'rgba(0,0,0,0.10)',
+              ...(Platform.OS === 'web' ? { maxWidth: 960, alignSelf: 'center', width: '100%' } : {}),
+            }}>
               <ScrollView
                 horizontal
                 showsHorizontalScrollIndicator={false}
@@ -32834,10 +32854,10 @@ function ChatConversationInner() {
                   <TouchableOpacity
                     key={i}
                     onPress={() => { setInputText(''); handleSendSticker(sticker); }}
-                    style={{ paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6 }}
+                    style={{ minWidth: 40, height: 40, alignItems: 'center', justifyContent: 'center', borderRadius: 10 }}
                     activeOpacity={0.5}
                   >
-                    <Text style={{ fontSize: 22 }}>{sticker}</Text>
+                    <Text style={{ fontSize: 24 }}>{sticker}</Text>
                   </TouchableOpacity>
                 ))}
               </ScrollView>
@@ -36166,7 +36186,7 @@ function ChatConversationInner() {
                       disabled={forwardSending}
                       activeOpacity={0.85}
                       style={{
-                        backgroundColor: '#111111',
+                        backgroundColor: isDark ? '#F5F5F7' : '#111111', // [2026-10-13 conv-pb] invertido no escuro (preto sumia no sheet escuro)
                         borderRadius: 28,
                         paddingVertical: 14,
                         paddingHorizontal: 22,
@@ -36183,9 +36203,9 @@ function ChatConversationInner() {
                       }}
                     >
                       {forwardSending
-                        ? <ActivityIndicator size="small" color="#fff" />
-                        : <IconForward size={18} color="#fff" />}
-                      <Text style={{ color: '#fff', fontWeight: '700', fontSize: 15 }}>
+                        ? <ActivityIndicator size="small" color={isDark ? '#111111' : '#fff'} />
+                        : <IconForward size={18} color={isDark ? '#111111' : '#fff'} />}
+                      <Text style={{ color: isDark ? '#111111' : '#fff', fontWeight: '700', fontSize: 15 }}>
                         {forwardSending
                           ? (t('chatConv.forwarding') || 'Encaminhando...')
                           : (

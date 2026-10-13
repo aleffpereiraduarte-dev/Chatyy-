@@ -619,7 +619,8 @@ const CallHistoryRow = memo(function CallHistoryRow({ item, isDark, t, language,
   const direction = callDirection(item);
   const isMissed = direction === 'missed';
   const nameColor = isMissed ? RED : (isDark ? '#ffffff' : '#000000');
-  const subColor = isDark ? '#8e8e93' : '#8e8e93';
+  // [2026-10-13 visual] light #8e8e93 on white = 3.3:1 (fails AA) -> #6c6c70
+  const subColor = isDark ? '#8e8e93' : '#6c6c70';
   const label = getCallLabel(direction, t);
   const isVideoCall = callIsVideo(item);
   const durationStr = formatDuration(item.duration);
@@ -3426,8 +3427,8 @@ function ChatCallsTab({ colors, isDark, t, user, router }) {
             hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
             style={{
               flexDirection: 'row', alignItems: 'center', gap: 5,
-              paddingHorizontal: 11, paddingVertical: 6, borderRadius: 14,
-              backgroundColor: isDark ? 'rgba(255, 255, 255,0.12)' : 'rgba(17, 17, 17,0.10)',
+              paddingHorizontal: 12, paddingVertical: 7, borderRadius: 16,
+              backgroundColor: isDark ? 'rgba(255, 255, 255,0.12)' : 'rgba(17, 17, 17,0.07)',
             }}
             accessibilityLabel={t?.('calls.schedule') || 'Agendar'}
           >
@@ -3442,8 +3443,8 @@ function ChatCallsTab({ colors, isDark, t, user, router }) {
               hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
               style={{
                 flexDirection: 'row', alignItems: 'center', gap: 5,
-                paddingHorizontal: 11, paddingVertical: 6, borderRadius: 14,
-                backgroundColor: isDark ? 'rgba(255, 255, 255,0.08)' : 'rgba(17, 17, 17,0.06)',
+                paddingHorizontal: 12, paddingVertical: 7, borderRadius: 16,
+                backgroundColor: isDark ? 'rgba(255, 255, 255,0.12)' : 'rgba(17, 17, 17,0.07)',
               }}
               accessibilityLabel={t?.('calls.scheduled') || 'Agendadas'}
             >
@@ -3458,13 +3459,13 @@ function ChatCallsTab({ colors, isDark, t, user, router }) {
               hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
               style={[s.editBtn, {
                 flexDirection: 'row', alignItems: 'center', gap: 5,
-                paddingHorizontal: 11, paddingVertical: 6, borderRadius: 14,
+                paddingHorizontal: 12, paddingVertical: 7, borderRadius: 16,
                 backgroundColor: isDark ? 'rgba(255,69,58,0.15)' : 'rgba(255,69,58,0.10)',
               }]}
               accessibilityLabel={t?.('calls.clearAll') || 'Limpar histórico'}
             >
-              <IconTrash size={13} color="#ff453a" />
-              <Text style={{ color: '#ff453a', fontSize: 13, fontWeight: '600' }}>
+              <IconTrash size={13} color={isDark ? '#ff453a' : '#D70015'} />
+              <Text style={{ color: isDark ? '#ff453a' : '#D70015', fontSize: 13, fontWeight: '600' }}>
                 {t?.('calls.clearAll') || 'Limpar'}
               </Text>
             </TouchableOpacity>
@@ -3487,15 +3488,15 @@ function ChatCallsTab({ colors, isDark, t, user, router }) {
       <View style={{
         flexDirection: 'row', alignItems: 'center',
         marginHorizontal: 16, marginTop: 8, marginBottom: 4,
-        paddingVertical: 12, paddingHorizontal: 16, borderRadius: 12,
+        paddingVertical: 12, paddingHorizontal: 16, borderRadius: 14, minHeight: 64,
         // [2026-10-10 visual] was #f2f2f7 = same as the light page bg (card vanished)
         backgroundColor: cardBg,
       }}>
         <View style={{ flex: 1, marginRight: 12 }}>
-          <Text style={{ fontSize: 14, fontWeight: '500', color: isDark ? '#fff' : '#000' }}>
+          <Text style={{ fontSize: 15, fontWeight: '600', color: textColor }}>
             {t?.('calls.silenceUnknown') || 'Silenciar chamadas desconhecidas'}
           </Text>
-          <Text style={{ fontSize: 11, color: isDark ? '#8e8e93' : '#8e8e93', marginTop: 2 }}>
+          <Text style={{ fontSize: 13, lineHeight: 17, color: subColor, marginTop: 2 }}>
             {t?.('calls.silenceUnknownDesc') || 'Chamadas de números fora dos contatos serão silenciadas'}
           </Text>
         </View>
@@ -3510,7 +3511,7 @@ function ChatCallsTab({ colors, isDark, t, user, router }) {
         style={{
           flexDirection: 'row', alignItems: 'center',
           marginHorizontal: 16, marginTop: 8, marginBottom: 4,
-          paddingVertical: 12, paddingHorizontal: 16, borderRadius: 12,
+          paddingVertical: 12, paddingHorizontal: 16, borderRadius: 14, minHeight: 64,
           backgroundColor: cardBg,
           opacity: creatingLink ? 0.6 : 1,
         }}
@@ -3527,10 +3528,10 @@ function ChatCallsTab({ colors, isDark, t, user, router }) {
             : <IconLink size={20} color={isDark ? '#F5F5F7' : '#111111'} />}
         </View>
         <View style={{ flex: 1 }}>
-          <Text style={{ fontSize: 15, fontWeight: '600', color: isDark ? '#F5F5F7' : '#111111' }}>
+          <Text style={{ fontSize: 15, fontWeight: '600', color: textColor }}>
             {t?.('calls.createCallLink') || 'Criar link de chamada'}
           </Text>
-          <Text style={{ fontSize: 11, color: isDark ? '#8e8e93' : '#8e8e93', marginTop: 2 }}>
+          <Text style={{ fontSize: 13, lineHeight: 17, color: subColor, marginTop: 2 }}>
             {t?.('calls.createCallLinkDesc') || 'Compartilhe um link para uma chamada'}
           </Text>
         </View>
@@ -3753,27 +3754,22 @@ const s = StyleSheet.create({
   },
 
   // Section headers — tighter, brand-weighted (R-callspolish)
+  // [2026-10-13 visual] header aligned to the card's text inset (16+16),
+  // card on the same 16 gutter/14 radius as the toggles above; no tinted shadow
+  // (the old slate #0f172a shadow read blue-ish on the P&B brand).
   sectionHeader: {
-    fontSize: 12.5,
-    fontWeight: '700',
+    fontSize: 12,
+    fontWeight: '600',
     textTransform: 'uppercase',
-    letterSpacing: 0.8,
-    paddingHorizontal: 18,
-    paddingTop: 22,
+    letterSpacing: 0.6,
+    paddingHorizontal: 32,
+    paddingTop: 24,
     paddingBottom: 8,
   },
   sectionCard: {
-    marginHorizontal: 14,
-    borderRadius: 16,
+    marginHorizontal: 16,
+    borderRadius: 14,
     overflow: 'hidden',
-    ...(Platform.OS === 'web' ? {
-      boxShadow: '0 1px 3px rgba(15,23,42,0.05)',
-    } : Platform.OS === 'ios' ? {
-      shadowColor: '#0f172a',
-      shadowOffset: { width: 0, height: 1 },
-      shadowOpacity: 0.05,
-      shadowRadius: 4,
-    } : { elevation: 1 }),
   },
 
   // History rows
@@ -3810,7 +3806,7 @@ const s = StyleSheet.create({
   },
   // WhatsApp-grade: name is semibold so it reads as the row's anchor.
   historyName: {
-    fontSize: 16.5,
+    fontSize: 16,
     fontWeight: '600',
     letterSpacing: -0.2,
     flex: 1,
@@ -3830,7 +3826,6 @@ const s = StyleSheet.create({
     fontSize: 12,
     fontWeight: '500',
     letterSpacing: 0.2,
-    opacity: 0.8,
     fontVariant: ['tabular-nums'],
   },
   infoBtn: {
@@ -3844,9 +3839,10 @@ const s = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  // 16 pad + 51 avatar ring + 13 gap = 80 -> separator starts under the name
   separator: {
     height: StyleSheet.hairlineWidth,
-    marginStart: 73,
+    marginStart: 80,
   },
 
   // Empty state

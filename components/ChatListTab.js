@@ -29,7 +29,7 @@ import { RECONNECT_BANNER_GRACE_MS } from '../constants/theme';
 import { isTablet as RESP_IS_TABLET, CONTENT_MAX_WIDTH } from '../utils/responsive';
 import { getCachedMessagesSync } from '../services/smartChatCache';
 import CachedImage from './CachedImage';
-import { IconMessageSquare, IconSearch, IconX, IconTrash, IconArchive, IconVolume2, IconCheck, IconMail, IconEye, IconMusic, IconUserPlus, IconSparkles, IconHeart, IconUsers, IconBell, IconType, IconCamera, IconPhone, IconVideo, IconPaperclip, IconMapPin, IconFilm, IconMic, IconUser, IconBarChart, IconCalendar, IconFileText, IconFolder } from './Icons';
+import { IconMessageSquare, IconSearch, IconX, IconTrash, IconArchive, IconVolume2, IconCheck, IconMail, IconEye, IconMusic, IconUserPlus, IconSparkles, IconHeart, IconUsers, IconBell, IconType, IconCamera, IconPhone, IconVideo, IconPaperclip, IconMapPin, IconFilm, IconMic, IconUser, IconBarChart, IconCalendar, IconFileText, IconFolder, IconArrowRight } from './Icons';
 import AvatarCircle from './AvatarCircle';
 import HomeHubCard from './HomeHubCard';
 import AvatarLightbox from './AvatarLightbox';
@@ -122,6 +122,8 @@ const LP_DARK = {
   card: '#1c1c1e', surface: '#141414',
 };
 // Swipe actions: escala de cinzas + vermelho só no destrutivo.
+// 44pt icon buttons in the multi-select toolbar (WCAG/HIG touch target).
+const _selBtnStyle = { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' };
 const SWIPE_C = { read: '#1c1c1e', mute: '#3a3a3c', pin: '#636366', email: '#8e8e93', archive: '#3a3a3c', del: '#FF3B30' };
 // Row rhythm: avatar 54 + gutter 16 + gap 14 → separator inset 84 (iOS).
 const ROW_AVATAR = 54;
@@ -341,7 +343,7 @@ function SkeletonRow({ isDark, index }) {
   return (
     <Animated.View style={[s.row, { opacity }]}>
       <View style={[{
-        width: 50, height: 50, borderRadius: 25, backgroundColor: bg, marginRight: 15,
+        width: ROW_AVATAR, height: ROW_AVATAR, borderRadius: ROW_AVATAR / 2, backgroundColor: bg, marginRight: 14,
         ...(isWeb ? { background: isDark
           ? 'linear-gradient(135deg, rgba(255,255,255,0.08) 0%, rgba(255,255,255,0.04) 100%)'
           : 'linear-gradient(135deg, rgba(0,0,0,0.06) 0%, rgba(0,0,0,0.03) 100%)'
@@ -3215,7 +3217,7 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab, reque
               }}
               style={{ width:54, height:54, borderRadius:27, backgroundColor:'#111111', alignItems:'center', justifyContent:'center', opacity: statusPublishing ? 0.6 : 1 }}
             >
-              {statusPublishing ? <ActivityIndicator color="#fff" /> : <Text style={{ color:'#fff', fontSize:22, fontWeight:'700' }}>→</Text>}
+              {statusPublishing ? <ActivityIndicator color="#fff" /> : <IconArrowRight size={24} color="#fff" />}
             </TouchableOpacity>
           </View>
           </KeyboardAvoidingView>
@@ -7632,7 +7634,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
                 {contactBanner.preview.slice(0, 4).map((c, i) => (
                   <View key={(c?.email || c?.id || c?.name || i) + ':' + i} style={{
                     position: 'absolute', left: i * 18, top: 0,
-                    borderWidth: 2, borderColor: isDark ? '#0f1c14' : '#fff',
+                    borderWidth: 2, borderColor: isDark ? '#1c1c1e' : '#F2F2F4',
                     borderRadius: 19,
                     zIndex: 4 - i,
                   }}>
@@ -7675,7 +7677,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
       {renderPinnedLabel()}
       {(searchQuery || '').trim().length >= 2 && filteredConversations.length > 0 && (
         <View style={{ paddingHorizontal: 16, paddingTop: 10, paddingBottom: 6 }}>
-          <Text style={{ fontSize: 13, fontWeight: '700', color: colors.textSecondary, letterSpacing: 0.3, textTransform: 'uppercase' }}>
+          <Text maxFontSizeMultiplier={1.3} style={[s.sectionLabelText, { color: P.sub }]}>
             {t('chat.listSearchChats')}
           </Text>
         </View>
@@ -7695,7 +7697,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
         {contactHits.length > 0 && (
           <View style={{ paddingBottom: 6 }}>
             <View style={{ paddingHorizontal: 16, paddingVertical: 8 }}>
-              <Text style={{ fontSize: 13, fontWeight: '700', color: colors.textSecondary, letterSpacing: 0.3, textTransform: 'uppercase' }}>
+              <Text maxFontSizeMultiplier={1.3} style={[s.sectionLabelText, { color: P.sub }]}>
                 {t('chat.listSearchContacts') || 'Contatos'}
               </Text>
             </View>
@@ -7718,7 +7720,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
           </View>
         )}
         <View style={{ paddingHorizontal: 16, paddingVertical: 8, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-          <Text style={{ fontSize: 13, fontWeight: '700', color: colors.textSecondary, letterSpacing: 0.3, textTransform: 'uppercase' }}>
+          <Text maxFontSizeMultiplier={1.3} style={[s.sectionLabelText, { color: P.sub }]}>
             {t('chat.listSearchMessages')}
           </Text>
           {searchingMessages && <ActivityIndicator size="small" color={colors.textSecondary} />}
@@ -7987,37 +7989,37 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
       {selectionMode && (
         <View style={{
           flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-          paddingHorizontal: 16, paddingVertical: 10,
+          paddingHorizontal: 16, paddingVertical: 4, minHeight: 52,
           backgroundColor: P.press,
           borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: P.hair,
         }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
-            <TouchableOpacity onPress={exitSelectionMode} style={{ padding: 4 }}>
+            <TouchableOpacity onPress={exitSelectionMode} style={{ width: 44, height: 44, marginLeft: -10, alignItems: 'center', justifyContent: 'center' }} accessibilityRole="button" accessibilityLabel={_a11yT(t, 'common.cancel', 'Cancelar')}>
               <IconX size={22} color={colors.text} />
             </TouchableOpacity>
             <Text style={{ fontSize: 17, fontWeight: '700', color: colors.text }}>
               {(t('chat.selected') || '{count} selected').replace('{count}', String(selectedIds.size))}
             </Text>
           </View>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 16 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 2, marginRight: -10 }}>
             <TouchableOpacity
               onPress={handleBulkToggleUnread}
-              style={{ padding: 6 }}
+              style={_selBtnStyle}
               accessibilityLabel={t('chat.markUnread') || 'Mark unread'}
               accessibilityRole="button"
             >
               <IconMail size={20} color={colors.text} />
             </TouchableOpacity>
-            <TouchableOpacity onPress={handleBulkPin} style={{ padding: 6 }} accessibilityRole="button" accessibilityLabel={_a11yT(t, 'chat.pin', 'Fixar')}>
+            <TouchableOpacity onPress={handleBulkPin} style={_selBtnStyle} accessibilityRole="button" accessibilityLabel={_a11yT(t, 'chat.pin', 'Fixar')}>
               <IconPin size={20} color={colors.text} />
             </TouchableOpacity>
-            <TouchableOpacity onPress={handleBulkMute} style={{ padding: 6 }} accessibilityRole="button" accessibilityLabel={_a11yT(t, 'chat.mute', 'Silenciar')}>
+            <TouchableOpacity onPress={handleBulkMute} style={_selBtnStyle} accessibilityRole="button" accessibilityLabel={_a11yT(t, 'chat.mute', 'Silenciar')}>
               <IconVolume2 size={20} color={colors.text} />
             </TouchableOpacity>
-            <TouchableOpacity onPress={handleBulkArchive} style={{ padding: 6 }} accessibilityRole="button" accessibilityLabel={_a11yT(t, 'chat.archive', 'Arquivar')}>
+            <TouchableOpacity onPress={handleBulkArchive} style={_selBtnStyle} accessibilityRole="button" accessibilityLabel={_a11yT(t, 'chat.archive', 'Arquivar')}>
               <IconArchive size={20} color={colors.text} />
             </TouchableOpacity>
-            <TouchableOpacity onPress={handleBulkDelete} style={{ padding: 6 }} accessibilityRole="button" accessibilityLabel={_a11yT(t, 'chat.delete', 'Apagar')}>
+            <TouchableOpacity onPress={handleBulkDelete} style={_selBtnStyle} accessibilityRole="button" accessibilityLabel={_a11yT(t, 'chat.delete', 'Apagar')}>
               <IconTrash size={20} color={colors.error || '#EF4444'} />
             </TouchableOpacity>
           </View>
@@ -8124,8 +8126,8 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
               onPress={() => { toggleFabMenu(); router.push('/chat-new'); }}
               activeOpacity={0.7}
             >
-              <View style={[s.fabMenuIcon, { backgroundColor: ACCENT }]}>
-                <IconMessageSquare size={18} color="#fff" />
+              <View style={[s.fabMenuIcon, { backgroundColor: P.pillBg }]}>
+                <IconMessageSquare size={18} color={P.pillTxt} />
               </View>
               <Text style={[s.fabMenuLabel, { color: colors.text }]}>{t('chat.newChat')}</Text>
             </TouchableOpacity>
@@ -8139,8 +8141,8 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
               onPress={() => { toggleFabMenu(); setShowCreateGroup(true); }}
               activeOpacity={0.7}
             >
-              <View style={[s.fabMenuIcon, { backgroundColor: '#111111' }]}>
-                <Svg width={18} height={18} viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+              <View style={[s.fabMenuIcon, { backgroundColor: P.pillBg }]}>
+                <Svg width={18} height={18} viewBox="0 0 24 24" fill="none" stroke={P.pillTxt} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
                   <Path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2" />
                   <SvgCircle cx="9" cy="7" r="4" />
                   <Path d="M23 21v-2a4 4 0 00-3-3.87" />
@@ -8159,8 +8161,8 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
               onPress={() => { toggleFabMenu(); setShowCreateChannel(true); }}
               activeOpacity={0.7}
             >
-              <View style={[s.fabMenuIcon, { backgroundColor: '#111111' }]}>
-                <Svg width={18} height={18} viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round">
+              <View style={[s.fabMenuIcon, { backgroundColor: P.pillBg }]}>
+                <Svg width={18} height={18} viewBox="0 0 24 24" fill="none" stroke={P.pillTxt} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
                   <Path d="M3 11l18-5v12L3 13v-2z" />
                   <Path d="M11.6 16.8a3 3 0 11-5.8-1.6" />
                 </Svg>
@@ -8177,8 +8179,8 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
               onPress={() => { toggleFabMenu(); setShowDiscoverChannels(true); }}
               activeOpacity={0.7}
             >
-              <View style={[s.fabMenuIcon, { backgroundColor: '#111111' }]}>
-                <IconSearch size={18} color="#fff" />
+              <View style={[s.fabMenuIcon, { backgroundColor: P.pillBg }]}>
+                <IconSearch size={18} color={P.pillTxt} />
               </View>
               <Text style={[s.fabMenuLabel, { color: colors.text }]}>{t('channel.discover')}</Text>
             </TouchableOpacity>

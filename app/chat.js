@@ -66,7 +66,7 @@ function IconFeedTab({ size = 24, color = '#666', active }) {
 
 function IconCallsTab({ size = 24, color = '#666', active }) {
   return (
-    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={active ? 2.2 : 1.8} strokeLinecap="round" strokeLinejoin="round">
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill={active ? color : 'none'} stroke={color} strokeWidth={active ? 1.6 : 1.8} strokeLinecap="round" strokeLinejoin="round">
       <Path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07 19.5 19.5 0 01-6-6 19.79 19.79 0 01-3.07-8.67A2 2 0 014.11 2h3a2 2 0 012 1.72 12.84 12.84 0 00.7 2.81 2 2 0 01-.45 2.11L8.09 9.91a16 16 0 006 6l1.27-1.27a2 2 0 012.11-.45 12.84 12.84 0 002.81.7A2 2 0 0122 16.92z" />
     </Svg>
   );
@@ -89,9 +89,10 @@ function IconReelsTab({ size = 24, color = '#666', active }) {
 function IconChatsTab({ size = 24, color = '#666', active }) {
   return (
     <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={active ? 2.2 : 1.8} strokeLinecap="round" strokeLinejoin="round">
-      <Path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" />
-      <Line x1="8" y1="9" x2="16" y2="9" stroke={color} strokeWidth="1.5" />
-      <Line x1="8" y1="13" x2="13" y2="13" stroke={color} strokeWidth="1.5" />
+      <Path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" fill={active ? color : 'none'} />
+      {/* [2026-10-13 design-system] ativo = balão PREENCHIDO (sem as linhas) */}
+      {!active && <Line x1="8" y1="9" x2="16" y2="9" stroke={color} strokeWidth="1.5" />}
+      {!active && <Line x1="8" y1="13" x2="13" y2="13" stroke={color} strokeWidth="1.5" />}
     </Svg>
   );
 }
@@ -126,16 +127,14 @@ function IconOneTab({ size = 24, color = '#666', active }) {
 
 function IconAppsTab({ size = 24, color = '#666', active }) {
   return (
-    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
-      <SvgCircle cx="5" cy="5" r="2" fill={color} />
-      <SvgCircle cx="12" cy="5" r="2" fill={color} />
-      <SvgCircle cx="19" cy="5" r="2" fill={color} />
-      <SvgCircle cx="5" cy="12" r="2" fill={color} />
-      <SvgCircle cx="12" cy="12" r="2" fill={color} />
-      <SvgCircle cx="19" cy="12" r="2" fill={color} />
-      <SvgCircle cx="5" cy="19" r="2" fill={color} />
-      <SvgCircle cx="12" cy="19" r="2" fill={color} />
-      <SvgCircle cx="19" cy="19" r="2" fill={color} />
+    // [2026-10-13 design-system] Era uma grade de 9 bolinhas cheias (pesada,
+    // destoava do traço fino dos outros ícones). Agora 2x2 quadrados
+    // arredondados no mesmo traço; preenchidos quando ativo.
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill={active ? color : 'none'} stroke={color} strokeWidth={1.8} strokeLinejoin="round">
+      <Rect x="3.5" y="3.5" width="7" height="7" rx="2" />
+      <Rect x="13.5" y="3.5" width="7" height="7" rx="2" />
+      <Rect x="3.5" y="13.5" width="7" height="7" rx="2" />
+      <Rect x="13.5" y="13.5" width="7" height="7" rx="2" />
     </Svg>
   );
 }
@@ -241,8 +240,10 @@ const WA_GREEN = '#25D366';
 const SHELL_DARK = '#0b0b0b';
 const TAB_ON_LIGHT = '#0b0b0b';
 const TAB_ON_DARK = '#f5f5f5';
-const TAB_OFF_LIGHT = '#9a9a9e';
-const TAB_OFF_DARK = '#7c7c80';
+// [2026-10-13 design-system] inativos com contraste AA (era #9a9a9e 2.8:1 /
+// #7c7c80) — o estado ativo agora se distingue por ícone PREENCHIDO + pílula.
+const TAB_OFF_LIGHT = '#6e6e73';
+const TAB_OFF_DARK = '#8e8e93';
 const DESKTOP_BREAKPOINT = 900;
 
 // Mobile bottom bar: 4 tabs — Reels + Chats + Calls + Apps.
@@ -1472,15 +1473,11 @@ function ChatHub() {
         {/* [2026-10-07 native-ui-build] iOS: material translúcido do sistema
             (systemChromeMaterial, igual UITabBar) atrás dos itens. */}
         {GLASS_TAB_BAR && <BarMaterial isDark={barDark} solidColor={barDark ? SHELL_DARK : '#ffffff'} />}
-        {!isKids && Platform.OS !== 'ios' && (
-          <Animated.View
-            pointerEvents="none"
-            style={[styles.tabIndicator, {
-              backgroundColor: barDark ? '#f5f5f5' : '#0b0b0b',
-              transform: [{ translateX: indicatorTranslateX }, { scaleX: indicatorScale }],
-            }]}
-          />
-        )}
+        {/* [2026-10-13 design-system] A barrinha deslizante de 3px no topo
+            (Android/web) foi trocada pela pílula M3 atrás do ícone ativo
+            (TabBarItem). A barra ficava "estacionada" sob Conversas quando a
+            aba ativa não estava na barra (Feed/Status via Apps) e não seguia
+            o Apps aberto. */}
         {isKids ? (
           <>
             <TabBarItem
@@ -1553,7 +1550,7 @@ function ChatHub() {
             {/* [2026-10-03] Email no lugar do Reels — diferencial do super-app
                 + utilidade diária. Abre o inbox (/inbox) via handleTabPress('email'). */}
             <TabBarItem
-              icon={(active) => <IconMail size={22} color={active ? (barDark ? TAB_ON_DARK : TAB_ON_LIGHT) : (barDark ? TAB_OFF_DARK : TAB_OFF_LIGHT)} />}
+              icon={(active) => <IconEmailTab size={22} color={active ? (barDark ? TAB_ON_DARK : TAB_ON_LIGHT) : (barDark ? TAB_OFF_DARK : TAB_OFF_LIGHT)} active={active} />}
               label={t('chat.tabEmail') || 'Email'}
               active={false}
               onPress={() => handleTabPress('email')}
@@ -2233,7 +2230,7 @@ function DesktopTabItem({ tabKey, icon: IconComp, label, active, onPress, isDark
 // 2026-05-13 hotfix: drives transform.scale only — native-compatible. Flipping
 // useNativeDriver to true removes any chance of cross-driver leakage with the
 // surrounding TabBarItem animations and frees the JS thread on cold start.
-function PulseBadge({ badge, isDark }) {
+function PulseBadge({ badge, isDark, style }) {
   const pulseAnim = useRef(new Animated.Value(1)).current;
   const isWeb = Platform.OS === 'web';
 
@@ -2266,7 +2263,7 @@ function PulseBadge({ badge, isDark }) {
       backgroundColor: isDark ? TAB_ON_DARK : TAB_ON_LIGHT,
       borderWidth: 2, borderColor: isDark ? SHELL_DARK : '#ffffff',
       transform: [{ scale: pulseAnim }],
-    }]}>
+    }, style]}>
       <Text style={[styles.badgeText, { color: isDark ? '#0b0b0b' : '#ffffff' }]}>{badge > 99 ? '99+' : badge}</Text>
     </Animated.View>
   );
@@ -2281,12 +2278,19 @@ function TabBarItem({ icon, label, active, onPress, onLongPress, isDark, badge, 
   // (non-native) timing on every activation but was never referenced in the
   // JSX, so it was pure wasted work on the exact frame the new tab paints.
   const isWeb = Platform.OS === 'web';
+  // [2026-10-13 design-system] Android/web: pílula M3 atrás do ícone ativo
+  // (fade + leve expansão horizontal). iOS segue UITabBar: só cor/preenchimento.
+  const showPill = Platform.OS !== 'ios';
+  const pillAnim = useRef(new Animated.Value(active ? 1 : 0)).current;
 
   useEffect(() => {
-    if (active) {
+    if (showPill) {
+      Animated.spring(pillAnim, { toValue: active ? 1 : 0, useNativeDriver: true, tension: 260, friction: 24 }).start();
+    }
+    if (active && !showPill) {
       Animated.sequence([
-        Animated.spring(bounceAnim, { toValue: -3, useNativeDriver: true, tension: 400, friction: 10 }),
-        Animated.spring(bounceAnim, { toValue: 0, useNativeDriver: true, tension: 260, friction: 14 }),
+        Animated.spring(bounceAnim, { toValue: -2, useNativeDriver: true, tension: 400, friction: 12 }),
+        Animated.spring(bounceAnim, { toValue: 0, useNativeDriver: true, tension: 260, friction: 16 }),
       ]).start();
     }
   }, [active]);
@@ -2323,11 +2327,18 @@ function TabBarItem({ icon, label, active, onPress, onLongPress, isDark, badge, 
         transform: [{ scale: scaleAnim }, { translateY: bounceAnim }],
         backgroundColor: 'transparent',
       }]}>
+        {showPill && (
+          <Animated.View pointerEvents="none" style={[styles.tabPill, {
+            backgroundColor: isDark ? 'rgba(255,255,255,0.14)' : 'rgba(0,0,0,0.07)',
+            opacity: pillAnim,
+            transform: [{ scaleX: pillAnim.interpolate({ inputRange: [0, 1], outputRange: [0.6, 1] }) }],
+          }]} />
+        )}
         {icon(active)}
-        {badge > 0 && <PulseBadge badge={badge} isDark={isDark} />}
+        {badge > 0 && <PulseBadge badge={badge} isDark={isDark} style={styles.tabBadgePos} />}
         {!badge && dot && (
           <View style={{
-            position: 'absolute', top: 2, right: 2,
+            position: 'absolute', top: 2, right: 12,
             width: 8, height: 8, borderRadius: 4,
             backgroundColor: colors.badge,
             borderWidth: 1.5, borderColor: isDark ? SHELL_DARK : '#ffffff', // [2026-10-10 polish-list] was navy #0f1115
@@ -2336,8 +2347,8 @@ function TabBarItem({ icon, label, active, onPress, onLongPress, isDark, badge, 
       </Animated.View>
       <Text selectable={false} numberOfLines={1} maxFontSizeMultiplier={1.3} style={[styles.tabLabel, {
         color: active ? (isDark ? TAB_ON_DARK : TAB_ON_LIGHT) : (isDark ? TAB_OFF_DARK : TAB_OFF_LIGHT),
-        fontWeight: active ? '600' : '500',
-        ...(isWeb ? { transition: 'color 0.18s ease' } : {}),
+        fontWeight: active ? '700' : '500',
+        ...(isWeb ? { transition: 'color 0.15s ease' } : {}),
       }]}>
         {label}
       </Text>
@@ -2488,18 +2499,33 @@ const styles = StyleSheet.create({
     position: 'relative',
   },
   tabIconWrap: {
-    width: 48,
+    width: 56,
     height: 32,
     alignItems: 'center',
     justifyContent: 'center',
     position: 'relative',
     borderRadius: 16,
   },
+  // [2026-10-13 design-system] pílula do ativo (Android/web) + badge alinhado
+  // ao canto do ícone (o wrap ficou 56 de largura).
+  tabPill: {
+    position: 'absolute',
+    top: 0,
+    bottom: 0,
+    left: 0,
+    right: 0,
+    borderRadius: 16,
+  },
+  tabBadgePos: {
+    top: -4,
+    right: 5,
+  },
   tabLabel: {
-    fontSize: 10.5,
+    fontSize: 11,
+    lineHeight: 13,
     marginTop: 3,
     fontWeight: '500',
-    letterSpacing: 0.1,
+    letterSpacing: 0,
   },
   tabActiveDot: {
     width: 5,

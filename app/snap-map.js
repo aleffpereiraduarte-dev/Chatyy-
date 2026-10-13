@@ -1024,15 +1024,16 @@ function ActiveSessionsChip({ grantsData, isDark, colors, t, ghostMode, onOpen, 
       style={{
         marginHorizontal: 12, marginTop: 8, marginBottom: 4,
         paddingHorizontal: 14, paddingVertical: 10, borderRadius: 14,
-        backgroundColor: isDark ? 'rgba(17, 17, 17,0.18)' : 'rgba(17, 17, 17,0.10)',
-        borderWidth: 1, borderColor: 'rgba(17, 17, 17,0.40)',
+        // [2026-10-13 visual] ink tints vanished on dark (#111 on #000); neutral surface + hairline
+        backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(17, 17, 17,0.05)',
+        borderWidth: StyleSheet.hairlineWidth, borderColor: isDark ? 'rgba(255,255,255,0.14)' : 'rgba(0,0,0,0.10)',
         flexDirection: 'row', alignItems: 'center', gap: 10,
       }}
       accessibilityRole="button"
       accessibilityLabel={t?.('snapmap.activeSessionsA11y') || 'Ver sessões ativas'}
     >
-      <View style={{ width: 28, height: 28, borderRadius: 14, backgroundColor: '#111111', alignItems: 'center', justifyContent: 'center' }}>
-        <IconMapPin size={16} color="#fff" />
+      <View style={{ width: 28, height: 28, borderRadius: 14, backgroundColor: isDark ? '#F5F5F7' : '#111111', alignItems: 'center', justifyContent: 'center' }}>
+        <IconMapPin size={16} color={isDark ? '#000' : '#fff'} />
       </View>
       <View style={{ flex: 1 }}>
         <Text numberOfLines={1} style={{ color: colors.text, fontSize: 13, fontWeight: '700' }}>
@@ -2201,17 +2202,18 @@ export default function SnapMapScreen() {
                   key={p.id}
                   onPress={() => setFilter(p.id)}
                   style={{
-                    paddingHorizontal: 14, paddingVertical: 7, borderRadius: 16,
-                    backgroundColor: active ? '#111111' : (isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)'),
+                    paddingHorizontal: 14, paddingVertical: 8, borderRadius: 16,
+                    // [2026-10-13 visual] active = theme ink (was #111 + onPrimary #000 text on dark = unreadable)
+                    backgroundColor: active ? inkBg : softBg,
                     flexDirection: 'row', alignItems: 'center', gap: 6,
                   }}
                   accessibilityRole="button"
                   accessibilityState={{ selected: active }}
                 >
                   {p.icon === 'live' && (
-                    <View style={{ width: 7, height: 7, borderRadius: 4, backgroundColor: active ? (colors.onPrimary || '#fff') : colors.primary }} />
+                    <View style={{ width: 7, height: 7, borderRadius: 4, backgroundColor: active ? inkFg : '#ef4444' }} />
                   )}
-                  <Text style={{ color: active ? (colors.onPrimary || '#fff') : colors.text, fontSize: 12, fontWeight: '700' }}>
+                  <Text style={{ color: active ? inkFg : colors.text, fontSize: 13, fontWeight: '600' }}>
                     {p.label}
                   </Text>
                 </TouchableOpacity>
@@ -2242,10 +2244,10 @@ export default function SnapMapScreen() {
         <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ maxHeight: 90 }} contentContainerStyle={{ paddingHorizontal: 12, paddingVertical: 8, gap: 8 }}>
           {pendingReqs.map((r) => (
             <View key={r.email} style={{
-              backgroundColor: isDark ? '#1a1a1a' : '#f3f4f6',
+              backgroundColor: isDark ? '#1c1c1e' : '#f2f2f7',
               borderRadius: 14, paddingHorizontal: 12, paddingVertical: 10,
               flexDirection: 'row', alignItems: 'center', gap: 10,
-              borderWidth: 1, borderColor: '#111111',
+              borderWidth: StyleSheet.hairlineWidth, borderColor: isDark ? 'rgba(255,255,255,0.14)' : 'rgba(0,0,0,0.10)',
             }}>
               <AvatarCircle name={r.name || r.email} email={r.email} size={32} />
               <View style={{ maxWidth: 160 }}>
@@ -2256,10 +2258,10 @@ export default function SnapMapScreen() {
                   {t?.('snapmap.wantsToSee') || 'Quer ver sua localização'}
                 </Text>
               </View>
-              <TouchableOpacity onPress={() => respondToRequest(r, true)} style={{ backgroundColor: '#111111', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 14 }}>
-                <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700' }}>{t?.('common.accept') || 'Aceitar'}</Text>
+              <TouchableOpacity onPress={() => respondToRequest(r, true)} hitSlop={{ top: 6, bottom: 6, left: 4, right: 4 }} style={{ backgroundColor: inkBg, paddingHorizontal: 14, paddingVertical: 8, borderRadius: 16 }}>
+                <Text style={{ color: inkFg, fontSize: 13, fontWeight: '600' }}>{t?.('common.accept') || 'Aceitar'}</Text>
               </TouchableOpacity>
-              <TouchableOpacity onPress={() => respondToRequest(r, false)} style={{ padding: 6 }}>
+              <TouchableOpacity onPress={() => respondToRequest(r, false)} style={{ padding: 6 }} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
                 <IconX size={18} color={colors.textSecondary} />
               </TouchableOpacity>
             </View>
@@ -2358,14 +2360,14 @@ export default function SnapMapScreen() {
           <View pointerEvents="box-none" style={{ position: 'absolute', bottom: 90, left: 16, right: 16, alignItems: 'center' }}>
             <View style={{ backgroundColor: 'rgba(28,28,33,0.95)', borderRadius: 14, paddingHorizontal: 14, paddingVertical: 10, maxWidth: 340, borderWidth: 1, borderColor: 'rgba(255,255,255,0.18)' }}>
               <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700' }}>{t?.('snapmap.mapOffline') || 'Sem conexão com o mapa'}</Text>
-              <Text style={{ color: 'rgba(255,255,255,0.8)', fontSize: 10, marginTop: 2 }} numberOfLines={2}>
+              <Text style={{ color: 'rgba(255,255,255,0.8)', fontSize: 12, marginTop: 2 }} numberOfLines={2}>
                 {t('uiG.snapmap.offlineHint')}
               </Text>
               <TouchableOpacity
                 onPress={() => { setMapErr(null); mapReadyRef.current = false; if (nativeMap) { setNativeKey((k) => k + 1); return; } try { webRef.current?.reload?.(); } catch(_){} }}
-                style={{ marginTop: 8, alignSelf: 'flex-start', backgroundColor: '#111111', paddingHorizontal: 14, paddingVertical: 6, borderRadius: 12 }}
+                style={{ marginTop: 8, alignSelf: 'flex-start', backgroundColor: '#FFFFFF', paddingHorizontal: 14, paddingVertical: 8, borderRadius: 16 }}
               >
-                <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700' }}>{t?.('snapmap.retry') || 'Tentar de novo'}</Text>
+                <Text style={{ color: '#000', fontSize: 13, fontWeight: '600' }}>{t?.('snapmap.retry') || 'Tentar de novo'}</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -2565,7 +2567,7 @@ export default function SnapMapScreen() {
             style={{
               position: 'absolute', left: 0, right: 0, bottom: 0,
               maxHeight: listExpanded ? SH * 0.6 : 130,
-              backgroundColor: isDark ? '#0d0d0d' : '#fff',
+              backgroundColor: isDark ? '#111111' : '#fff',
               borderTopLeftRadius: 22, borderTopRightRadius: 22,
               borderTopWidth: StyleSheet.hairlineWidth,
               borderColor: isDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.08)',
@@ -2594,7 +2596,8 @@ export default function SnapMapScreen() {
               </Pressable>
               <TouchableOpacity
                 onPress={openPicker}
-                style={{ marginTop: 14, marginRight: 12, marginLeft: 6, width: 34, height: 34, borderRadius: 17, backgroundColor: softBg, alignItems: 'center', justifyContent: 'center' }}
+                hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+                style={{ marginTop: 12, marginRight: 12, marginLeft: 6, width: 38, height: 38, borderRadius: 19, backgroundColor: softBg, alignItems: 'center', justifyContent: 'center' }}
                 accessibilityRole="button"
                 accessibilityLabel={t?.('fmap.addFriend') || 'Adicionar amigo ao mapa'}
               >
@@ -2620,7 +2623,7 @@ export default function SnapMapScreen() {
                       style={{ alignItems: 'center', width: 72 }}
                       accessibilityLabel={`${s.name || s.email}, ${ago(s.updated_at)}`}
                     >
-                      <View style={{ borderWidth: 2, borderColor: old ? '#9ca3af' : colors.text, borderRadius: 30, padding: 2, opacity: old ? 0.55 : 1 }}>
+                      <View style={{ borderWidth: 2, borderColor: old ? '#8e8e93' : colors.text, borderRadius: 30, padding: 2, opacity: old ? 0.55 : 1 }}>
                         <AvatarCircle name={s.name || s.email} email={s.email} size={50} />
                       </View>
                       <Text numberOfLines={1} style={{ color: colors.text, fontSize: 11, fontWeight: '600', marginTop: 4, maxWidth: 70, textAlign: 'center' }}>
@@ -2665,7 +2668,7 @@ export default function SnapMapScreen() {
                       style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 10, gap: 12 }}
                       accessibilityRole="button"
                     >
-                      <View style={{ borderWidth: 2, borderColor: old ? '#9ca3af' : colors.text, borderRadius: 28, padding: 2, opacity: old ? 0.55 : 1 }}>
+                      <View style={{ borderWidth: 2, borderColor: old ? '#8e8e93' : colors.text, borderRadius: 28, padding: 2, opacity: old ? 0.55 : 1 }}>
                         <AvatarCircle name={s.name || s.email} email={s.email} size={46} />
                       </View>
                       <View style={{ flex: 1 }}>
@@ -2727,7 +2730,7 @@ export default function SnapMapScreen() {
               return (
               <>
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 14 }}>
-                  <View style={{ borderWidth: 3, borderColor: (isStale || old) ? '#9ca3af' : colors.text, borderRadius: 36, padding: 2, opacity: old ? 0.6 : 1 }}>
+                  <View style={{ borderWidth: 3, borderColor: (isStale || old) ? '#8e8e93' : colors.text, borderRadius: 36, padding: 2, opacity: old ? 0.6 : 1 }}>
                     <AvatarCircle name={nm} email={selected.email} size={60} />
                   </View>
                   <View style={{ flex: 1 }}>

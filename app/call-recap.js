@@ -21,7 +21,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import { BorderRadius, FontSize, Spacing } from '../constants/theme';
-import { IconArrowLeft, IconClock, IconMessageCircle } from '../components/Icons';
+import { IconArrowLeft, IconClock, IconMessageCircle, IconChevronDown, IconChevronUp } from '../components/Icons';
 import * as api from '../services/api';
 
 const POLL_INTERVAL_MS = 4000;
@@ -94,8 +94,8 @@ export default function CallRecapScreen() {
     <View style={[styles.root, { backgroundColor: colors.background }]}>
       {USE_NATIVE_HEADER && <Stack.Screen options={nativeHeaderOptions({ colors, isDark, title: t('callRecap.title') })} />}
       {!USE_NATIVE_HEADER && (
-      <View style={[styles.header, { paddingTop: insets.top + 8, borderBottomColor: isDark ? '#1c1c1e' : '#E5E7EB' }]}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.backBtn} activeOpacity={0.7}>
+      <View style={[styles.header, { paddingTop: insets.top + 8, borderBottomColor: isDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.08)' }]}>
+        <TouchableOpacity onPress={() => router.back()} style={styles.backBtn} activeOpacity={0.7} hitSlop={10} accessibilityRole="button" accessibilityLabel={t('common.back') || 'Voltar'}>
           <IconArrowLeft size={22} color={colors.text} />
         </TouchableOpacity>
         <Text style={[styles.title, { color: colors.text }]}>{t('callRecap.title') || 'Resumo da chamada'}</Text>
@@ -105,8 +105,8 @@ export default function CallRecapScreen() {
       <ScrollView contentContainerStyle={{ padding: Spacing.lg, paddingBottom: insets.bottom + 24 }}>
         {(loading || pending) && (
           <View style={styles.center}>
-            <ActivityIndicator size="large" color={colors.tint || '#111111'} />
-            <Text style={[styles.muted, { color: colors.subText }]}>
+            <ActivityIndicator size="large" color={colors.text} />
+            <Text style={[styles.muted, { color: colors.textSecondary }]}>
               {pending
                 ? (t('callRecap.processing') || 'Processando áudio...')
                 : (t('callRecap.loading') || 'Carregando...')}
@@ -124,14 +124,14 @@ export default function CallRecapScreen() {
           <>
             {recap.duration > 0 && (
               <View style={styles.metaRow}>
-                <IconClock size={16} color={colors.subText} />
-                <Text style={[styles.meta, { color: colors.subText }]}>
+                <IconClock size={16} color={colors.textSecondary} />
+                <Text style={[styles.meta, { color: colors.textSecondary }]}>
                   {t('callRecap.duration') || 'Duração'}: {formatDuration(recap.duration)}
                 </Text>
               </View>
             )}
 
-            <View style={[styles.card, { backgroundColor: isDark ? '#1c1c1e' : '#F9FAFB' }]}>
+            <View style={[styles.card, { backgroundColor: isDark ? '#1c1c1e' : '#F2F2F7' }]}>
               <Text style={[styles.cardTitle, { color: colors.text }]}>
                 {t('callRecap.summary') || 'Resumo'}
               </Text>
@@ -141,7 +141,7 @@ export default function CallRecapScreen() {
             </View>
 
             {!!recap.transcript && (
-              <View style={[styles.card, { backgroundColor: isDark ? '#1c1c1e' : '#F9FAFB' }]}>
+              <View style={[styles.card, { backgroundColor: isDark ? '#1c1c1e' : '#F2F2F7' }]}>
                 <TouchableOpacity
                   onPress={() => setShowFullTranscript(!showFullTranscript)}
                   style={styles.transcriptHeader}
@@ -151,9 +151,11 @@ export default function CallRecapScreen() {
                   <Text style={[styles.cardTitle, { color: colors.text, marginLeft: 8, marginBottom: 0 }]}>
                     {t('callRecap.transcript') || 'Transcrição completa'}
                   </Text>
-                  <Text style={[styles.muted, { color: colors.subText, marginLeft: 'auto' }]}>
-                    {showFullTranscript ? '−' : '+'}
-                  </Text>
+                  <View style={{ marginLeft: 'auto' }}>
+                    {showFullTranscript
+                      ? <IconChevronUp size={18} color={colors.textSecondary} />
+                      : <IconChevronDown size={18} color={colors.textSecondary} />}
+                  </View>
                 </TouchableOpacity>
                 {showFullTranscript && (
                   <Text style={[styles.cardBody, { color: colors.text, marginTop: 8 }]}>
@@ -171,16 +173,16 @@ export default function CallRecapScreen() {
 
 const styles = StyleSheet.create({
   root: { flex: 1 },
-  header: { paddingHorizontal: 16, paddingBottom: 12, borderBottomWidth: 1, flexDirection: 'row', alignItems: 'center', gap: 12 },
-  backBtn: { padding: 4 },
+  header: { paddingHorizontal: 16, paddingBottom: 12, borderBottomWidth: StyleSheet.hairlineWidth, flexDirection: 'row', alignItems: 'center', gap: 12 },
+  backBtn: { padding: 8, marginLeft: -8 },
   title: { fontSize: 18, fontWeight: '600' },
   center: { paddingVertical: 40, alignItems: 'center', gap: 12 },
   muted: { fontSize: 13 },
   error: { fontSize: 14, textAlign: 'center' },
   metaRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 12 },
   meta: { fontSize: 13 },
-  card: { padding: 16, borderRadius: 12, marginBottom: 12 },
+  card: { padding: 16, borderRadius: 14, marginBottom: 12 },
   cardTitle: { fontSize: 15, fontWeight: '600', marginBottom: 8 },
-  cardBody: { fontSize: 14, lineHeight: 20 },
-  transcriptHeader: { flexDirection: 'row', alignItems: 'center' },
+  cardBody: { fontSize: 15, lineHeight: 22 },
+  transcriptHeader: { flexDirection: 'row', alignItems: 'center', minHeight: 32 },
 });

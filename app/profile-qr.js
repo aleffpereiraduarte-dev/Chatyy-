@@ -146,7 +146,7 @@ export default function ProfileQRScreen() {
         <Stack.Screen options={nativeHeaderOptions({ colors, isDark, title: t('profile.qrCode') })} />
       ) : (
       <View style={[s.header, { borderBottomColor: colors.borderLight }]}>
-        <TouchableOpacity onPress={() => router.back()} style={s.iconBtn}>
+        <TouchableOpacity onPress={() => router.back()} style={s.iconBtn} accessibilityRole="button" accessibilityLabel={t('common.close') || 'Fechar'}>
           <IconX size={22} color={colors.text} />
         </TouchableOpacity>
         <Text style={[s.title, { color: colors.text }]}>{t('profile.qrCode') || 'QR de contato'}</Text>
@@ -154,20 +154,26 @@ export default function ProfileQRScreen() {
       </View>
       )}
 
-      <View style={[s.tabs, { borderColor: colors.borderLight }]}>
+      {/* [2026-10-13 visual] controle segmentado estilo iOS (trilho cinza +
+          pílula selecionada) em vez de abas com borda e preenchimento preto. */}
+      <View style={[s.tabs, { backgroundColor: colors.surfaceVariant || colors.borderLight }]} accessibilityRole="tablist">
         <TouchableOpacity
-          style={[s.tab, mode === 'show' && { backgroundColor: colors.primary }]}
+          style={[s.tab, mode === 'show' && [s.tabOn, { backgroundColor: isDark ? '#3A3A3C' : '#FFFFFF' }]]}
           onPress={() => setMode('show')}
+          accessibilityRole="tab"
+          accessibilityState={{ selected: mode === 'show' }}
         >
-          <Text style={[s.tabText, { color: mode === 'show' ? colors.onPrimary : colors.text }]}>
+          <Text style={[s.tabText, { color: mode === 'show' ? colors.text : colors.textSecondary }]}>
             {t('profile.myQr') || 'Meu QR'}
           </Text>
         </TouchableOpacity>
         <TouchableOpacity
-          style={[s.tab, mode === 'scan' && { backgroundColor: colors.primary }]}
+          style={[s.tab, mode === 'scan' && [s.tabOn, { backgroundColor: isDark ? '#3A3A3C' : '#FFFFFF' }]]}
           onPress={() => { setMode('scan'); setScanned(false); }}
+          accessibilityRole="tab"
+          accessibilityState={{ selected: mode === 'scan' }}
         >
-          <Text style={[s.tabText, { color: mode === 'scan' ? colors.onPrimary : colors.text }]}>
+          <Text style={[s.tabText, { color: mode === 'scan' ? colors.text : colors.textSecondary }]}>
             {t('profile.scanQr') || 'Escanear'}
           </Text>
         </TouchableOpacity>
@@ -207,10 +213,10 @@ export default function ProfileQRScreen() {
             {/* [WA-parity 2026-05-31] Share a public https profile link */}
             <TouchableOpacity
               onPress={handleShareLink}
-              style={[s.cta, s.ctaSecondary, { borderColor: colors.primary, marginTop: 12 }]}
+              style={[s.cta, { backgroundColor: colors.surfaceVariant || colors.borderLight, marginTop: 10 }]}
             >
-              <IconShare size={18} color={colors.primary} />
-              <Text style={[s.ctaText, { color: colors.primary }]}>{t('profile.shareLink') || 'Compartilhar link'}</Text>
+              <IconShare size={18} color={colors.text} />
+              <Text style={[s.ctaText, { color: colors.text }]}>{t('profile.shareLink') || 'Compartilhar link'}</Text>
             </TouchableOpacity>
           </>
         ) : (
@@ -264,19 +270,24 @@ export default function ProfileQRScreen() {
 
 const s = StyleSheet.create({
   root: { flex: 1 },
-  header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 10, borderBottomWidth: 1 },
-  title: { flex: 1, textAlign: 'center', fontSize: 16, fontWeight: '700' },
-  iconBtn: { width: 34, height: 34, alignItems: 'center', justifyContent: 'center' },
-  tabs: { flexDirection: 'row', margin: 12, borderRadius: BorderRadius.lg, borderWidth: 1, overflow: 'hidden' },
-  tab: { flex: 1, paddingVertical: 10, alignItems: 'center' },
-  tabText: { fontSize: 14, fontWeight: '700' },
-  body: { padding: 16, paddingBottom: 40 },
-  name: { fontSize: 18, fontWeight: '700', marginTop: 10 },
-  email: { fontSize: 13, marginTop: 2 },
-  hint: { fontSize: 13, textAlign: 'center', marginTop: 12, paddingHorizontal: 24 },
-  cta: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingVertical: 14, borderRadius: BorderRadius.lg, marginTop: 20, alignSelf: 'stretch' },
+  header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 8, paddingVertical: 4, borderBottomWidth: StyleSheet.hairlineWidth },
+  title: { flex: 1, textAlign: 'center', fontSize: 17, fontWeight: '600' },
+  iconBtn: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
+  tabs: { flexDirection: 'row', marginTop: 12, marginBottom: 4, padding: 2, borderRadius: 10, width: '92%', maxWidth: 448, alignSelf: 'center' },
+  tab: { flex: 1, minHeight: 34, paddingVertical: 7, alignItems: 'center', justifyContent: 'center', borderRadius: 8 },
+  tabOn: Platform.select({
+    web: { boxShadow: '0 1px 3px rgba(0,0,0,0.12)' },
+    ios: { shadowColor: '#000', shadowOpacity: 0.1, shadowRadius: 3, shadowOffset: { width: 0, height: 1 } },
+    default: { elevation: 1 },
+  }),
+  tabText: { fontSize: 14, fontWeight: '600' },
+  body: { padding: 16, paddingBottom: 40, width: '100%', maxWidth: 480, alignSelf: 'center' },
+  name: { fontSize: 20, fontWeight: '700', marginTop: 12, letterSpacing: -0.3 },
+  email: { fontSize: 14, marginTop: 2 },
+  hint: { fontSize: 14, lineHeight: 20, textAlign: 'center', marginTop: 16, paddingHorizontal: 24 },
+  cta: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingVertical: 14, minHeight: 50, borderRadius: 14, marginTop: 24, alignSelf: 'stretch' },
   ctaSecondary: { backgroundColor: 'transparent', borderWidth: 1.5 }, // [WA-parity 2026-05-31]
-  ctaText: { color: '#fff', fontWeight: '700', fontSize: 15 },
+  ctaText: { color: '#fff', fontWeight: '600', fontSize: 16 },
   scanBox: { width: 280, height: 280, borderRadius: 18, overflow: 'hidden', backgroundColor: '#000' },
   scanFrame: { ...StyleSheet.absoluteFillObject, borderRadius: 18, borderWidth: 2, borderColor: '#fff', margin: 30 },
 });

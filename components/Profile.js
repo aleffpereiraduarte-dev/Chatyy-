@@ -221,11 +221,13 @@ const FlatButton = memo(function FlatButton({ label, onPress, isPrimary, colors,
       transform: [{ scale }],
       // Subtle lift only for the primary CTA — soft, no heavy black glow.
       ...(isPrimary && Platform.OS !== 'web' ? {
-        shadowColor: '#111111',
-        shadowOpacity: isDark ? 0.28 : 0.16,
-        shadowRadius: 9,
-        shadowOffset: { width: 0, height: 4 },
-        elevation: 4,
+        // [2026-10-13 visual] sombra só no claro — no escuro o CTA é claro
+        // (invertido) e a sombra preta sobre #000 só sujava a borda.
+        shadowColor: '#000000',
+        shadowOpacity: isDark ? 0 : 0.12,
+        shadowRadius: 8,
+        shadowOffset: { width: 0, height: 3 },
+        elevation: isDark ? 0 : 3,
       } : {}),
     }}>
       <TouchableOpacity
@@ -235,14 +237,17 @@ const FlatButton = memo(function FlatButton({ label, onPress, isPrimary, colors,
         activeOpacity={0.85}
         accessibilityRole="button"
         accessibilityLabel={label}
+        hitSlop={{ top: 4, bottom: 4 }}
         style={{
           paddingVertical: 9,
           paddingHorizontal: 14,
           borderRadius: 10, // modern rounded-rect (segmented control feel)
-          minHeight: 34,
+          minHeight: 38,
           alignItems: 'center',
           justifyContent: 'center',
-          backgroundColor: isPrimary ? '#111111' : secondaryFill,
+          // [2026-10-13 visual] P&B invertido no escuro: #111 sobre fundo #000
+          // ficava praticamente invisível → usa primary/onPrimary do tema.
+          backgroundColor: isPrimary ? (colors?.primary || '#111111') : secondaryFill,
           borderWidth: 0,
         }}
       >
@@ -250,7 +255,7 @@ const FlatButton = memo(function FlatButton({ label, onPress, isPrimary, colors,
           fontSize: 14,
           fontWeight: '600',
           letterSpacing: 0.2,
-          color: isPrimary ? '#fff' : (colors?.text || (isDark ? '#fff' : '#111')),
+          color: isPrimary ? (colors?.onPrimary || '#fff') : (colors?.text || (isDark ? '#fff' : '#111')),
         }} numberOfLines={1}>
           {label}
         </Text>
@@ -395,10 +400,10 @@ const ActionButton = memo(function ActionButton({ icon: Icon, label, onPress, co
     >
       <View style={{
         width: 44, height: 44, borderRadius: 22,
-        backgroundColor: isPrimary ? '#111111' : (colors?.surface || '#f4f4f4'),
+        backgroundColor: isPrimary ? (colors?.primary || '#111111') : (colors?.surfaceVariant || colors?.surface || '#f4f4f4'),
         alignItems: 'center', justifyContent: 'center',
       }}>
-        <Icon size={20} color={isPrimary ? '#fff' : (colors?.text || '#111')} />
+        <Icon size={20} color={isPrimary ? (colors?.onPrimary || '#fff') : (colors?.text || '#111')} />
       </View>
       <Text style={{ fontSize: 11, color: colors?.text || '#111', fontWeight: '500' }} numberOfLines={1}>
         {label}
@@ -1721,7 +1726,7 @@ export default function Profile({
               {/* Gradient-style ring (two concentric views to avoid adding a lib) */}
               <View style={{
                 width: 68, height: 68, borderRadius: 34, padding: 2,
-                backgroundColor: '#111111',
+                backgroundColor: colors?.text || '#111111', // [2026-10-13 visual] anel visível no escuro
               }}>
                 <View style={{
                   width: '100%', height: '100%', borderRadius: 32, padding: 2,
@@ -2135,7 +2140,7 @@ export default function Profile({
                 // it covers this border; if SVG isn't available the user still
                 // sees a purple ring (no silent visual regression).
                 borderWidth: _Svg ? 0 : 2,
-                borderColor: '#111111',
+                borderColor: colors?.text || '#111111',
                 backgroundColor: tone,
               }}>
                 {renderHighlightRing()}
@@ -2258,12 +2263,12 @@ export default function Profile({
             {accountType === 'creator' && (
               <View style={{
                 paddingHorizontal: 8, paddingVertical: 3, borderRadius: 999,
-                backgroundColor: 'rgba(17, 17, 17,0.12)',
-                borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(17, 17, 17,0.28)',
+                backgroundColor: colors?.surfaceVariant || 'rgba(17, 17, 17,0.08)',
+                borderWidth: StyleSheet.hairlineWidth, borderColor: colors?.border || 'rgba(17, 17, 17,0.18)',
                 flexDirection: 'row', alignItems: 'center', gap: 4,
               }} accessibilityLabel={t?.('profile.accountTypeCreator') || 'Criador'}>
-                <IconBrush size={11} color={colors.primary} />
-                <Text style={{ fontSize: 11, color: colors.primary, fontWeight: '700', letterSpacing: 0.1 }}>
+                <IconBrush size={11} color={colors?.text} />
+                <Text style={{ fontSize: 11, color: colors?.text, fontWeight: '600', letterSpacing: 0.1 }}>
                   {t?.('profile.accountTypeCreator') || 'Criador'}
                 </Text>
               </View>
@@ -2271,12 +2276,13 @@ export default function Profile({
             {accountType === 'business' && (
               <View style={{
                 paddingHorizontal: 8, paddingVertical: 3, borderRadius: 999,
-                backgroundColor: 'rgba(37,99,235,0.12)',
-                borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(37,99,235,0.28)',
+                // [2026-10-13 visual] marca P&B — chip neutro igual ao "Criador".
+                backgroundColor: colors?.surfaceVariant || 'rgba(17, 17, 17,0.08)',
+                borderWidth: StyleSheet.hairlineWidth, borderColor: colors?.border || 'rgba(17, 17, 17,0.18)',
                 flexDirection: 'row', alignItems: 'center', gap: 4,
               }} accessibilityLabel={t?.('profile.accountTypeBusiness') || 'Negócio'}>
-                <IconBriefcase size={11} color="#2563EB" />
-                <Text style={{ fontSize: 11, color: '#2563EB', fontWeight: '700', letterSpacing: 0.1 }}>
+                <IconBriefcase size={11} color={colors?.text} />
+                <Text style={{ fontSize: 11, color: colors?.text, fontWeight: '600', letterSpacing: 0.1 }}>
                   {t?.('profile.accountTypeBusiness') || 'Negócio'}
                 </Text>
               </View>
@@ -2547,9 +2553,10 @@ export default function Profile({
                       flexDirection: 'row', alignItems: 'center', gap: 6,
                       paddingHorizontal: 13, paddingVertical: 7,
                       borderRadius: 999, // pill — matches the action-button family
-                      backgroundColor: isDark ? 'rgba(17, 17, 17,0.14)' : 'rgba(17, 17, 17,0.09)',
+                      // [2026-10-13 visual] no escuro o tom rgba(17,17,17) sumia no #000
+                      backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(17, 17, 17,0.06)',
                       borderWidth: StyleSheet.hairlineWidth,
-                      borderColor: isDark ? 'rgba(17, 17, 17,0.40)' : 'rgba(17, 17, 17,0.26)',
+                      borderColor: isDark ? 'rgba(255,255,255,0.14)' : 'rgba(17, 17, 17,0.14)',
                     }}
                     accessibilityRole="link"
                     accessibilityLabel={label}
@@ -2637,11 +2644,12 @@ export default function Profile({
                 alignItems: 'center',
                 justifyContent: 'center',
                 gap: 8,
-                backgroundColor: '#111111',
+                minHeight: 44,
+                backgroundColor: colors?.primary || '#111111',
               }}
             >
-              <IconGiftBox size={18} color="#fff" />
-              <Text style={{ color: '#fff', fontSize: 14, fontWeight: '800' }}>
+              <IconGiftBox size={18} color={colors?.onPrimary || '#fff'} />
+              <Text style={{ color: colors?.onPrimary || '#fff', fontSize: 14, fontWeight: '700' }}>
                 {t?.('walletSend.openCta') || 'Enviar diamante'}
               </Text>
             </TouchableOpacity>
@@ -3013,7 +3021,7 @@ export default function Profile({
                   backgroundColor: e.from_me ? (colors?.surfaceVariant || '#11111211') : (colors?.surfaceVariant || '#f3f4f6'),
                   alignItems: 'center', justifyContent: 'center',
                 }}>
-                  <IconMail size={14} color={e.from_me ? '#111111' : (colors?.text || '#111')} />
+                  <IconMail size={14} color={colors?.text || '#111'} />
                 </View>
                 <View style={{ flex: 1 }}>
                   <Text style={{ fontSize: 14, color: colors?.text, fontWeight: '600' }} numberOfLines={1}>
@@ -3077,12 +3085,12 @@ export default function Profile({
         <TouchableOpacity
           onPress={() => { setErr(null); setErrStatus(0); setLoading(true); setRetryCounter(c => c + 1); }}
           style={{
-            paddingHorizontal: 22, paddingVertical: 11, borderRadius: 12,
-            backgroundColor: '#111111',
+            paddingHorizontal: 22, paddingVertical: 11, borderRadius: 12, minHeight: 44, justifyContent: 'center',
+            backgroundColor: colors?.primary || '#111111',
           }}
           accessibilityRole="button"
         >
-          <Text style={{ color: '#fff', fontWeight: '700', fontSize: 14 }}>
+          <Text style={{ color: colors?.onPrimary || '#fff', fontWeight: '700', fontSize: 14 }}>
             {t?.('common.retry') || 'Tentar de novo'}
           </Text>
         </TouchableOpacity>
@@ -3562,7 +3570,7 @@ export default function Profile({
             </Text>
           </TouchableOpacity>
           <TouchableOpacity onPress={handleReport} style={menuItemStyle(colors)}>
-            <IconAlertTriangle size={20} color="#ef4444" />
+            <IconAlertTriangle size={20} color={colors?.error || '#ef4444'} />
             <Text style={{ fontSize: 15, color: '#ef4444', fontWeight: '500' }}>
               {t?.('profile.report') || 'Denunciar'}
             </Text>
@@ -3626,9 +3634,9 @@ export default function Profile({
                   setNicknameValue(val);
                 } catch {}
               }}
-              style={{ flex: 1, paddingVertical: 12, borderRadius: 12, alignItems: 'center', backgroundColor: '#111111' }}
+              style={{ flex: 1, paddingVertical: 12, minHeight: 44, justifyContent: 'center', borderRadius: 12, alignItems: 'center', backgroundColor: colors?.primary || '#111111' }}
             >
-              <Text style={{ fontSize: 15, color: '#fff', fontWeight: '600' }}>{t?.('common.save') || 'Salvar'}</Text>
+              <Text style={{ fontSize: 15, color: colors?.onPrimary || '#fff', fontWeight: '600' }}>{t?.('common.save') || 'Salvar'}</Text>
             </TouchableOpacity>
           </View>
         </Pressable>

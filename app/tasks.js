@@ -495,7 +495,16 @@ export default function TasksScreen() {
         renderSectionFooter={() => <View style={{ height: 18 }} />}
         ListHeaderComponent={header}
         ListEmptyComponent={loading
-          ? <View style={{ padding: 30 }}><ActivityIndicator color={g.text} /></View>
+          ? ( // [2026-10-13 visual] grouped-row skeleton instead of a bare spinner
+            <View style={[s.cellWrap, s.cellFirst, s.cellLast, { backgroundColor: g.cardBg }]}>
+              {[0.62, 0.48, 0.7, 0.4].map((w, i) => (
+                <View key={i} style={[s.row, i > 0 && { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: g.fill }]}>
+                  <View style={s.checkHit}><View style={{ width: 22, height: 22, borderRadius: 11, backgroundColor: g.fill }} /></View>
+                  <View style={{ flex: 1, height: 12, borderRadius: 6, maxWidth: `${Math.round(w * 100)}%`, backgroundColor: g.fill }} />
+                </View>
+              ))}
+            </View>
+          )
           : (
             <ScreenEmptyState
               kind="tasks"
@@ -539,7 +548,7 @@ const s = StyleSheet.create({
   chipText: { fontSize: 14, fontWeight: '600', maxWidth: 160 },
   chipCount: { fontSize: 13, fontWeight: '600', marginLeft: 6, fontVariant: ['tabular-nums'] },
   summary: { fontSize: 13, paddingHorizontal: 32, marginBottom: 8 },
-  compose: { flexDirection: 'row', alignItems: 'center', marginHorizontal: 16, marginBottom: 20, borderRadius: 12, paddingRight: 8, minHeight: 52 },
+  compose: { flexDirection: 'row', alignItems: 'center', marginHorizontal: 16, marginBottom: 20, borderRadius: 14, paddingRight: 8, minHeight: 52 },
   composeInput: { fontSize: 16, paddingVertical: 12, ...Platform.select({ web: { outlineStyle: 'none' }, default: {} }) },
   previewRow: { flexDirection: 'row', gap: 6, marginTop: -4, marginBottom: 8 },
   previewChip: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 8, height: 22, borderRadius: 11 },
@@ -548,8 +557,9 @@ const s = StyleSheet.create({
   addBtn: { width: 32, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center', marginLeft: 8 },
   listHeader: { fontSize: 13, fontWeight: '600', letterSpacing: 0.2, paddingHorizontal: 32, marginBottom: 7, textTransform: 'uppercase' },
   cellWrap: { marginHorizontal: 16, overflow: 'hidden' },
-  cellFirst: { borderTopLeftRadius: 12, borderTopRightRadius: 12 },
-  cellLast: { borderBottomLeftRadius: 12, borderBottomRightRadius: 12 },
+  // Radius.card (14) — same inset-grouped radius as Calls / Status / Calendar.
+  cellFirst: { borderTopLeftRadius: 14, borderTopRightRadius: 14 },
+  cellLast: { borderBottomLeftRadius: 14, borderBottomRightRadius: 14 },
   sep: { height: StyleSheet.hairlineWidth, marginLeft: 52 },
   row: { flexDirection: 'row', alignItems: 'center', paddingRight: 12, minHeight: 54 },
   rowBody: { flex: 1, minWidth: 0, paddingVertical: 11 },

@@ -36,7 +36,7 @@ export default function PrivacyPersonalizationScreen() {
     <SettingsScreen title={t('consents.title')}>
       {!s.loaded ? null : (
       <FadeSlideIn>
-        <Text style={{ color: g.secondary, fontSize: 14, lineHeight: 20, marginHorizontal: 20, marginBottom: 14 }}>
+        <Text style={{ color: g.secondary, fontSize: 14, lineHeight: 20, marginHorizontal: 16, marginBottom: 14 }}>
           {t('consents.intro')}
         </Text>
 
@@ -68,7 +68,7 @@ export default function PrivacyPersonalizationScreen() {
         </SettingsGroup>
 
         {(failed || s.pendingCount > 0) && (
-          <View style={{ marginHorizontal: 20, marginBottom: 14 }}>
+          <View style={{ marginHorizontal: 16, marginBottom: 14 }}>
             <Text style={{ color: g.secondary, fontSize: 13, lineHeight: 18 }}>{t('consents.saveFailed')}</Text>
           </View>
         )}

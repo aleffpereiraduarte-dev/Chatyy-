@@ -21,7 +21,7 @@ import {
   IconArrowLeft, IconSearch, IconX, IconUsers, IconMessageSquare,
   IconCheck, IconPlus, IconMail, IconRefresh, IconClock, IconUserPlus,
   IllustrationSearch, IconCamera, IconShare,
-  IconChevronDown,
+  IconChevronDown, IconChevronRight,
 } from '../components/Icons';
 import AvatarCircle from '../components/AvatarCircle';
 import BroadcastModal from '../components/BroadcastModal';
@@ -224,7 +224,7 @@ const ContactRow = React.memo(function ContactRow({
   if (item._isPhoneInvite) {
     return (
       <View style={[sty.contactRow, { borderBottomColor: colors.border }]}>
-        <View style={[sty.quickActionIcon, { backgroundColor: colors.onPrimary === '#000000' ? '#2C2C2E' : '#111111', marginRight: 12 }]}>
+        <View style={[sty.quickActionIcon, { backgroundColor: colors.onPrimary === '#000000' ? '#2C2C2E' : '#111111', marginRight: 0 }]}>
           <IconUserPlus size={18} color="#fff" />
         </View>
         <View style={sty.contactInfo}>
@@ -278,7 +278,7 @@ const ContactRow = React.memo(function ContactRow({
   if (item._isInvitePlaceholder) {
     return (
       <View style={[sty.contactRow, { borderBottomColor: colors.border, paddingVertical: 16 }]}>
-        <View style={[sty.quickActionIcon, { backgroundColor: colors.onPrimary === '#000000' ? '#2C2C2E' : '#111111', marginRight: 12 }]}>
+        <View style={[sty.quickActionIcon, { backgroundColor: colors.onPrimary === '#000000' ? '#2C2C2E' : '#111111', marginRight: 0 }]}>
           <IconUserPlus size={18} color="#fff" />
         </View>
         <View style={sty.flex1}>
@@ -331,13 +331,13 @@ const ContactRow = React.memo(function ContactRow({
     };
     return (
       <View style={[sty.contactRow, { borderBottomColor: colors.border }]}>
-        <AvatarCircle email={item.email || ''} name={item.name || item.phone || '?'} size={48} colors={colors} />
+        <AvatarCircle email={item.email || ''} name={item.name || item.phone || '?'} size={46} colors={colors} />
         <View style={sty.contactInfo}>
           <HighlightText
             text={item.name || item.phone || '?'}
             highlight={searchText}
             style={[sty.contactName, { color: colors.text }]}
-            highlightStyle={{ backgroundColor: '#11111130', fontWeight: '700' }}
+            highlightStyle={sty.highlight}
           />
           <Text style={[sty.contactSub, { color: colors.textTertiary }]} numberOfLines={1}>
             {item.email || item.phone || ''}
@@ -380,7 +380,7 @@ const ContactRow = React.memo(function ContactRow({
             text={item.name && !item.name.includes('@') ? item.name : prettifyHandle(item.email || item.name || '')}
             highlight={searchText}
             style={[sty.contactName, { color: colors.text, fontWeight: '700', flexShrink: 1 }]}
-            highlightStyle={{ backgroundColor: '#11111130', fontWeight: '700' }}
+            highlightStyle={sty.highlight}
           />
           {/* Tiny Chatyy badge — purple check circle SVG, signals registered user.
               Less noisy than a pill, more affirmative than nothing. Wrapped in a
@@ -406,7 +406,7 @@ const ContactRow = React.memo(function ContactRow({
             text={item.email}
             highlight={searchText}
             style={[sty.contactSub, { color: colors.textTertiary, flexShrink: 1 }]}
-            highlightStyle={{ backgroundColor: '#11111130' }}
+            highlightStyle={sty.highlightSub}
           />
           {item.username ? (
             <Text style={[sty.usernameInline, { color: colors.text }]} numberOfLines={1}>@{item.username}</Text>
@@ -1635,15 +1635,15 @@ export default function ChatNewScreen() {
           </View>
         </TouchableOpacity>
         <TouchableOpacity
-          style={[sty.inviteBtn, { backgroundColor: '#111111' }]}
+          style={[sty.inviteBtn, { backgroundColor: colors.primary }]}
           onPress={() => handleJoinChannel(channel)}
           disabled={joiningChannelId === channel.id}
           activeOpacity={0.7}
         >
           {joiningChannelId === channel.id ? (
-            <ActivityIndicator size={14} color="#fff" />
+            <ActivityIndicator size={14} color={colors.onPrimary || '#fff'} />
           ) : (
-            <Text style={sty.inviteBtnText}>{t('chat.join') || 'Entrar'}</Text>
+            <Text style={[sty.inviteBtnText, { color: colors.onPrimary || '#fff' }]}>{t('chat.join') || 'Entrar'}</Text>
           )}
         </TouchableOpacity>
       </View>
@@ -1722,13 +1722,13 @@ export default function ChatNewScreen() {
                 style={[
                   sty.discoverChip,
                   active
-                    ? { backgroundColor: '#111111', borderColor: '#111111' }
+                    ? { backgroundColor: colors.primary, borderColor: colors.primary }
                     : { backgroundColor: isDark ? '#1e1e1e' : '#f2f2f7', borderColor: colors.border },
                 ]}
                 activeOpacity={0.7}
               >
                 <Text style={{
-                  color: active ? '#fff' : colors.textSecondary,
+                  color: active ? (colors.onPrimary || '#fff') : colors.textSecondary,
                   fontSize: 13,
                   fontWeight: '600',
                 }}>
@@ -1922,29 +1922,29 @@ export default function ChatNewScreen() {
       {/* Mode Toggle */}
       <View style={[sty.toggleRow, { backgroundColor: isDark ? '#1e1e1e' : '#f2f2f7' }]}>
         <TouchableOpacity
-          style={[sty.toggleBtn, mode === 'direct' && [sty.toggleBtnActive, { backgroundColor: '#111111' }]]}
+          style={[sty.toggleBtn, mode === 'direct' && [sty.toggleBtnActive, { backgroundColor: colors.primary }]]}
           onPress={() => { setMode('direct'); setSelectedMembers([]); }}
         >
-          <IconMessageSquare size={15} color={mode === 'direct' ? '#fff' : colors.textSecondary} />
-          <Text style={[sty.toggleText, { color: mode === 'direct' ? '#fff' : colors.textSecondary }]}>
+          <IconMessageSquare size={15} color={mode === 'direct' ? (colors.onPrimary || '#fff') : colors.textSecondary} />
+          <Text style={[sty.toggleText, { color: mode === 'direct' ? (colors.onPrimary || '#fff') : colors.textSecondary }]}>
             {t('chat.direct')}
           </Text>
         </TouchableOpacity>
         <TouchableOpacity
-          style={[sty.toggleBtn, mode === 'group' && [sty.toggleBtnActive, { backgroundColor: '#111111' }]]}
+          style={[sty.toggleBtn, mode === 'group' && [sty.toggleBtnActive, { backgroundColor: colors.primary }]]}
           onPress={() => setMode('group')}
         >
-          <IconUsers size={15} color={mode === 'group' ? '#fff' : colors.textSecondary} />
-          <Text style={[sty.toggleText, { color: mode === 'group' ? '#fff' : colors.textSecondary }]}>
+          <IconUsers size={15} color={mode === 'group' ? (colors.onPrimary || '#fff') : colors.textSecondary} />
+          <Text style={[sty.toggleText, { color: mode === 'group' ? (colors.onPrimary || '#fff') : colors.textSecondary }]}>
             {t('chat.group')}
           </Text>
         </TouchableOpacity>
         <TouchableOpacity
-          style={[sty.toggleBtn, mode === 'channel' && [sty.toggleBtnActive, { backgroundColor: '#111111' }]]}
+          style={[sty.toggleBtn, mode === 'channel' && [sty.toggleBtnActive, { backgroundColor: colors.primary }]]}
           onPress={() => setMode('channel')}
         >
-          <Text style={{ fontSize: 13, marginRight: 3, color: mode === 'channel' ? '#fff' : colors.textSecondary }}>{'#'}</Text>
-          <Text style={[sty.toggleText, { color: mode === 'channel' ? '#fff' : colors.textSecondary }]}>
+          <Text style={{ fontSize: 13, marginRight: 3, color: mode === 'channel' ? (colors.onPrimary || '#fff') : colors.textSecondary }}>{'#'}</Text>
+          <Text style={[sty.toggleText, { color: mode === 'channel' ? (colors.onPrimary || '#fff') : colors.textSecondary }]}>
             {t('chat.channels') || 'Canal'}
           </Text>
         </TouchableOpacity>
@@ -2020,12 +2020,12 @@ export default function ChatNewScreen() {
               // [2026-10-07 app-feel-ui] native search fields (UISearchBar /
               // Material search) have NO focus ring — the black outline read as
               // a web form. Web keeps the brand focus border.
-              outputRange: ['transparent', Platform.OS === 'web' ? '#111111' : 'transparent'],
+              outputRange: ['transparent', Platform.OS === 'web' ? colors.text : 'transparent'],
             }),
           },
         ]}
       >
-        <IconSearch size={18} color={searchFocused && Platform.OS === 'web' ? '#111111' : colors.textTertiary} />
+        <IconSearch size={18} color={searchFocused && Platform.OS === 'web' ? colors.text : colors.textTertiary} />
         <TextInput
           style={[sty.searchInput, { color: colors.text }]}
           placeholder={t('chat.searchOrType')}
@@ -2061,8 +2061,8 @@ export default function ChatNewScreen() {
             accessibilityRole="button"
             hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
           >
-            <View style={sty.searchClearCircle}>
-              <IconX size={12} color="#fff" />
+            <View style={[sty.searchClearCircle, { backgroundColor: colors.textTertiary }]}>
+              <IconX size={12} color={colors.background} />
             </View>
           </TouchableOpacity>
         ) : null}
@@ -2077,9 +2077,7 @@ export default function ChatNewScreen() {
       ) : searchText.length >= 1 ? (
         /* Search results */
         searching ? (
-          <View style={sty.loaderWrap}>
-            <ActivityIndicator size="small" color={colors.primary} />
-          </View>
+          <ListSkeleton count={5} />
         ) : (
           <FlatList
             data={searchResults}
@@ -2147,24 +2145,24 @@ export default function ChatNewScreen() {
                   </Text>
                   {isPhoneQuery && (
                     <TouchableOpacity
-                      style={[sty.emptyActionBtn, { backgroundColor: '#111111', marginTop: 16 }]}
+                      style={[sty.emptyActionBtn, { backgroundColor: colors.primary, marginTop: 16 }]}
                       onPress={() => handleInvitePhone({ phone: invE164, display: invDisplay })}
                       accessibilityRole="button"
                     >
-                      <IconUserPlus size={16} color="#fff" />
-                      <Text style={sty.emptyActionText}>
+                      <IconUserPlus size={16} color={colors.onPrimary || '#fff'} />
+                      <Text style={[sty.emptyActionText, { color: colors.onPrimary || '#fff' }]}>
                         {t('chat.searchInviteNumberBtn', { number: invDisplay })}
                       </Text>
                     </TouchableOpacity>
                   )}
                   {!isPhoneQuery && !isEmailQuery && (
                     <TouchableOpacity
-                      style={[sty.emptyActionBtn, { backgroundColor: '#111111', marginTop: 16 }]}
+                      style={[sty.emptyActionBtn, { backgroundColor: colors.primary, marginTop: 16 }]}
                       onPress={() => handleInviteShare({})}
                       accessibilityRole="button"
                     >
-                      <IconShare size={16} color="#fff" />
-                      <Text style={sty.emptyActionText}>{t('chat.inviteToChatyy')}</Text>
+                      <IconShare size={16} color={colors.onPrimary || '#fff'} />
+                      <Text style={[sty.emptyActionText, { color: colors.onPrimary || '#fff' }]}>{t('chat.inviteToChatyy')}</Text>
                     </TouchableOpacity>
                   )}
                   {/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test((searchText || '').trim()) && (
@@ -2179,11 +2177,11 @@ export default function ChatNewScreen() {
                         </TouchableOpacity>
                       )}
                       <TouchableOpacity
-                        style={[sty.emptyActionBtn, { backgroundColor: '#111111' }]}
+                        style={[sty.emptyActionBtn, { backgroundColor: colors.primary }]}
                         onPress={() => handleInviteByEmail(searchText.trim())}
                       >
-                        <IconUserPlus size={16} color="#fff" />
-                        <Text style={sty.emptyActionText}>{t('chat.inviteEmail')}</Text>
+                        <IconUserPlus size={16} color={colors.onPrimary || '#fff'} />
+                        <Text style={[sty.emptyActionText, { color: colors.onPrimary || '#fff' }]}>{t('chat.inviteEmail')}</Text>
                       </TouchableOpacity>
                     </View>
                   )}
@@ -2248,11 +2246,11 @@ export default function ChatNewScreen() {
                       <Text style={[sty.findCtaDesc, { color: colors.textSecondary }]}>{t('chat.findContactsCtaDesc')}</Text>
                       <TouchableOpacity
                         onPress={doContactSync}
-                        style={sty.findCtaBtn}
+                        style={[sty.findCtaBtn, { backgroundColor: colors.primary }]}
                         activeOpacity={0.8}
                         accessibilityRole="button"
                       >
-                        <Text style={sty.findCtaBtnText}>{t('chat.findContactsCtaBtn')}</Text>
+                        <Text style={[sty.findCtaBtnText, { color: colors.onPrimary || '#fff' }]}>{t('chat.findContactsCtaBtn')}</Text>
                       </TouchableOpacity>
                     </View>
                   )}
@@ -2369,7 +2367,7 @@ export default function ChatNewScreen() {
                           autoCapitalize="none"
                         />
                         <TouchableOpacity
-                          style={[sty.inviteSendBtn, { backgroundColor: inviteEmail.includes('@') ? '#111111' : colors.border }]}
+                          style={[sty.inviteSendBtn, { backgroundColor: inviteEmail.includes('@') ? colors.primary : colors.border }]}
                           disabled={!inviteEmail.includes('@') || !!invitingEmail}
                           onPress={() => {
                             handleInviteByEmail(inviteEmail.trim());
@@ -2377,9 +2375,9 @@ export default function ChatNewScreen() {
                           }}
                         >
                           {invitingEmail ? (
-                            <ActivityIndicator size={14} color="#fff" />
+                            <ActivityIndicator size={14} color={inviteEmail.includes('@') ? (colors.onPrimary || '#fff') : colors.textTertiary} />
                           ) : (
-                            <Text style={{ color: '#fff', fontSize: 14, fontWeight: '600' }}>
+                            <Text style={{ color: inviteEmail.includes('@') ? (colors.onPrimary || '#fff') : colors.textTertiary, fontSize: 14, fontWeight: '600' }}>
                               {t('chat.sendInvite')}
                             </Text>
                           )}
@@ -2443,10 +2441,10 @@ export default function ChatNewScreen() {
                     >
                       <View style={{
                         width: 40, height: 40, borderRadius: 20,
-                        backgroundColor: '#111111',
+                        backgroundColor: colors.primary,
                         alignItems: 'center', justifyContent: 'center',
                       }}>
-                        <Text style={{ color: '#fff', fontSize: 18, fontWeight: '700' }}>C</Text>
+                        <IconUsers size={20} color={colors.onPrimary || '#fff'} />
                       </View>
                       <View style={{ flex: 1 }}>
                         <Text style={{ color: colors.text, fontSize: 15, fontWeight: '600' }}>
@@ -2456,7 +2454,7 @@ export default function ChatNewScreen() {
                           {t('chat.communitiesSubtitle') || 'Grupos grandes com canal de avisos e sub-grupos'}
                         </Text>
                       </View>
-                      <Text style={{ color: colors.textSecondary, fontSize: 22, fontWeight: '300' }}>›</Text>
+                      <IconChevronRight size={18} color={colors.textTertiary} />
                     </TouchableOpacity>
                   )}
 
@@ -2490,8 +2488,8 @@ export default function ChatNewScreen() {
                           backgroundColor: isDark ? '#1e1e1e' : '#f2f2f7',
                         }}
                       >
-                        <View style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: '#111111', alignItems: 'center', justifyContent: 'center' }}>
-                          <IconBroadcastGlyph size={20} color="#fff" />
+                        <View style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center' }}>
+                          <IconBroadcastGlyph size={20} color={colors.onPrimary || '#fff'} />
                         </View>
                         <View style={{ flex: 1 }}>
                           <Text style={{ color: colors.text, fontSize: 15, fontWeight: '600' }}>
@@ -2666,10 +2664,10 @@ export default function ChatNewScreen() {
         {/* [2026-10-11 android-kav] Modal edge-to-edge não redimensiona c/ teclado no Android */}
         <SheetKeyboardAvoider style={{ flex: 1 }}>
         <View style={sty.modalOverlay}>
-          <View style={[sty.qrModal, { backgroundColor: colors.surface }]}>
-            <View style={sty.qrModalHeader}>
+          <View style={[sty.qrModal, { backgroundColor: isDark ? '#1c1c1e' : colors.surface }]}>
+            <View style={[sty.qrModalHeader, { borderBottomColor: colors.border }]}>
               <Text style={[sty.qrModalTitle, { color: colors.text }]}>{t('chat.qrCode')}</Text>
-              <TouchableOpacity onPress={() => setShowQrModal(false)} style={{ padding: 8 }}>
+              <TouchableOpacity onPress={() => setShowQrModal(false)} style={{ padding: 8 }} hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }} accessibilityRole="button" accessibilityLabel={t('common.close') || 'Fechar'}>
                 <IconX size={22} color={colors.text} />
               </TouchableOpacity>
             </View>
@@ -2789,8 +2787,8 @@ export default function ChatNewScreen() {
         {/* [2026-10-11 android-kav] Modal edge-to-edge não redimensiona c/ teclado no Android */}
         <SheetKeyboardAvoider style={{ flex: 1 }}>
         <View style={sty.modalOverlay}>
-          <View style={[sty.qrModal, { backgroundColor: colors.surface }]}>
-            <View style={sty.qrModalHeader}>
+          <View style={[sty.qrModal, { backgroundColor: isDark ? '#1c1c1e' : colors.surface }]}>
+            <View style={[sty.qrModalHeader, { borderBottomColor: colors.border }]}>
               <Text style={[sty.qrModalTitle, { color: colors.text }]} numberOfLines={1}>
                 {broadcastComposeList?.name || (t('chat.broadcastList') || 'Lista de transmissão')}
               </Text>
@@ -2961,15 +2959,16 @@ const sty = StyleSheet.create({
   recentList: { paddingHorizontal: Spacing.md, gap: 2 },
   recentItem: { alignItems: 'center', width: 72, paddingVertical: 8 },
   recentName: { fontSize: 11, marginTop: 6, textAlign: 'center', fontWeight: '500' },
+  // Online = the one state colour (same green pip as the chat list).
   onlineDot: {
     position: 'absolute', bottom: 2, right: 2,
     width: 14, height: 14, borderRadius: 7,
-    backgroundColor: '#111111', borderWidth: 2,
+    backgroundColor: '#22c55e', borderWidth: 2,
   },
   onlineDotSmall: {
     position: 'absolute', bottom: 0, right: 0,
     width: 12, height: 12, borderRadius: 6,
-    backgroundColor: '#111111', borderWidth: 2,
+    backgroundColor: '#22c55e', borderWidth: 2,
   },
 
   // Quick actions
@@ -3023,7 +3022,10 @@ const sty = StyleSheet.create({
   },
   contactInfo: { flex: 1 },
   contactName: { fontSize: 16, fontWeight: '500' },
-  contactSub: { fontSize: 12, marginTop: 2, opacity: 0.7 },
+  // opacity 0.7 on textTertiary failed WCAG AA → full-strength secondary tone.
+  contactSub: { fontSize: 13, marginTop: 2 },
+  highlight: { backgroundColor: 'rgba(142,142,147,0.28)', fontWeight: '700' },
+  highlightSub: { backgroundColor: 'rgba(142,142,147,0.28)' },
   contactAbout: { fontSize: 12, marginTop: 3, fontStyle: 'italic' },
   // Hoisted static inline objects from the old inline row renderer — keeps the
   // memoized ContactRow from allocating fresh style objects on every render.
@@ -3186,7 +3188,7 @@ const sty = StyleSheet.create({
     justifyContent: 'center', alignItems: 'center',
   },
   qrScanFrame: {
-    width: 200, height: 200, borderWidth: 2, borderColor: '#111111',
+    width: 200, height: 200, borderWidth: 2, borderColor: '#ffffff',
     borderRadius: 16, backgroundColor: 'transparent',
   },
   qrActionBtn: {

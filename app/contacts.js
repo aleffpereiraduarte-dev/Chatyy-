@@ -181,9 +181,8 @@ const DeviceContactRow = React.memo(({ dc, colors, saved, onAdd, t, isRegistered
 
   return (
     <Wrapper style={[s.contactRow, { borderBottomColor: colors.borderLight }]} {...wrapperProps}>
-      <View style={[s.avatar, { backgroundColor: getAvatarColor(name) }]}>
-        <Text style={s.avatarText}>{(name?.[0] || '?').toUpperCase()}</Text>
-      </View>
+      {/* [2026-10-13 visual] avatar P&B do app (era círculo colorido por hash) */}
+      <AvatarCircle name={name} email={isRegistered ? email : undefined} size={40} style={{ marginRight: Spacing.md }} />
       <View style={s.contactInfo}>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
           <Text numberOfLines={1} ellipsizeMode="tail" style={[s.contactName, { color: colors.text, flexShrink: 1 }]}>{name}</Text>
@@ -1625,7 +1624,7 @@ function ContactsScreenInner() {
       {activeTab === 'my' && groups.length > 0 && (
         <ScrollView horizontal showsHorizontalScrollIndicator={false} style={[s.groupTabs, { backgroundColor: colors.surface, borderBottomColor: colors.borderLight }]} contentContainerStyle={s.groupTabsContent}>
           <TouchableOpacity
-            style={[s.groupTab, activeGroup === 'all' && { backgroundColor: colors.primary }]}
+            style={[s.groupTab, { backgroundColor: activeGroup === 'all' ? colors.primary : (colors.surfaceVariant || colors.borderLight) }]}
             onPress={() => setActiveGroup('all')}
           >
             <Text style={[s.groupTabText, { color: activeGroup === 'all' ? colors.onPrimary : colors.text }]}>{t('contacts.all')}</Text>
@@ -1633,7 +1632,7 @@ function ContactsScreenInner() {
           {groups.map(g => (
             <TouchableOpacity
               key={g}
-              style={[s.groupTab, activeGroup === g && { backgroundColor: colors.primary }]}
+              style={[s.groupTab, { backgroundColor: activeGroup === g ? colors.primary : (colors.surfaceVariant || colors.borderLight) }]}
               onPress={() => setActiveGroup(g)}
             >
               <Text style={[s.groupTabText, { color: activeGroup === g ? colors.onPrimary : colors.text }]}>{g}</Text>
@@ -1689,7 +1688,7 @@ function ContactsScreenInner() {
           <TouchableOpacity
             onPress={syncAllDeviceContacts}
             disabled={syncing}
-            style={[s.actionBtn, { borderColor: colors.primary, backgroundColor: colors.primary + '10' }]}
+            style={[s.actionBtn, { borderColor: colors.border, backgroundColor: colors.surfaceVariant || 'transparent' }]}
           >
             {syncing ? <ActivityIndicator size="small" color={colors.primary} /> : <IconRefresh size={14} color={colors.primary} />}
             <Text style={[s.actionBtnText, { color: colors.primary }]}>{t('contacts.syncAll')}</Text>
@@ -2025,9 +2024,7 @@ function ContactsScreenInner() {
             </View>
             {!!shareContactCard && (
               <View style={[s.contactRow, { borderBottomColor: colors.borderLight }]}>
-                <View style={[s.avatar, { backgroundColor: getAvatarColor(shareContactCard.name) }]}>
-                  <Text style={s.avatarText}>{(shareContactCard.name?.[0] || '?').toUpperCase()}</Text>
-                </View>
+                <AvatarCircle name={shareContactCard.name} email={shareContactCard.email} size={40} style={{ marginRight: Spacing.md }} />
                 <View style={s.contactInfo}>
                   <Text numberOfLines={1} style={[s.contactName, { color: colors.text }]}>{shareContactCard.name}</Text>
                   {!!shareContactCard.email && <Text numberOfLines={1} style={[s.contactEmail, { color: colors.textSecondary }]}>{shareContactCard.email}</Text>}
@@ -2095,7 +2092,7 @@ const s = StyleSheet.create({
   header: {
     flexDirection: 'row', alignItems: 'center',
     paddingHorizontal: Spacing.lg, paddingVertical: Spacing.md,
-    borderBottomWidth: 1,
+    borderBottomWidth: StyleSheet.hairlineWidth,
     ...Platform.select({
       web: { backdropFilter: 'blur(20px)', WebkitBackdropFilter: 'blur(20px)' },
       default: {},
@@ -2113,22 +2110,22 @@ const s = StyleSheet.create({
 
   // Tabs
   tabBar: {
-    flexDirection: 'row', borderBottomWidth: 1,
+    flexDirection: 'row', borderBottomWidth: StyleSheet.hairlineWidth,
   },
   tab: {
-    flex: 1, paddingVertical: Spacing.sm + 4, alignItems: 'center',
-    borderBottomWidth: 3, borderBottomColor: 'transparent',
+    flex: 1, paddingVertical: Spacing.sm + 4, alignItems: 'center', justifyContent: 'center', minHeight: 44,
+    borderBottomWidth: 2, borderBottomColor: 'transparent',
     ...Platform.select({
       web: { transition: 'all 0.2s ease', cursor: 'pointer' },
       default: {},
     }),
   },
-  tabText: { fontSize: FontSize.sm, fontWeight: '700', letterSpacing: 0.2 },
+  tabText: { fontSize: 14, fontWeight: '600', letterSpacing: -0.1 },
 
   // Search
   searchRow: {
     flexDirection: 'row', alignItems: 'center',
-    paddingHorizontal: Spacing.lg, paddingVertical: Spacing.sm + 2, borderBottomWidth: 1, gap: 8,
+    paddingHorizontal: Spacing.lg, paddingVertical: Spacing.sm + 2, borderBottomWidth: StyleSheet.hairlineWidth, gap: 8, minHeight: 44,
   },
   searchInput: {
     flex: 1, fontSize: FontSize.base,
@@ -2139,18 +2136,19 @@ const s = StyleSheet.create({
   actionBar: {
     flexDirection: 'row', alignItems: 'center', gap: Spacing.sm,
     paddingHorizontal: Spacing.md, paddingVertical: Spacing.xs + 4,
-    borderBottomWidth: 1, flexWrap: 'wrap',
+    borderBottomWidth: StyleSheet.hairlineWidth, flexWrap: 'wrap',
   },
+  // [2026-10-13 visual] pílula neutra com hairline (era retângulo c/ borda 1.5)
   actionBtn: {
-    flexDirection: 'row', alignItems: 'center', gap: 5,
-    paddingHorizontal: Spacing.md, paddingVertical: 7,
-    borderRadius: 12, borderWidth: 1.5,
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    paddingHorizontal: Spacing.md, paddingVertical: 8, minHeight: 36,
+    borderRadius: 999, borderWidth: StyleSheet.hairlineWidth * 2,
     ...Platform.select({
       web: { transition: 'all 0.15s ease', cursor: 'pointer' },
       default: {},
     }),
   },
-  actionBtnText: { fontSize: FontSize.xs, fontWeight: '700' },
+  actionBtnText: { fontSize: 13, fontWeight: '600' },
   actionHint: { fontSize: FontSize.xs, marginLeft: 'auto' },
   inviteBtn: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
@@ -2168,8 +2166,8 @@ const s = StyleSheet.create({
     borderBottomWidth: StyleSheet.hairlineWidth,
   },
   favoritesSectionTitle: {
-    fontSize: 10, fontWeight: '800', marginBottom: Spacing.sm,
-    textTransform: 'uppercase', letterSpacing: 0.8,
+    fontSize: 13, fontWeight: '600', marginBottom: Spacing.sm,
+    textTransform: 'uppercase', letterSpacing: 0.3,
   },
   favoritesScroll: {
     gap: Spacing.lg, paddingBottom: Spacing.xs,
@@ -2190,13 +2188,13 @@ const s = StyleSheet.create({
     paddingHorizontal: Spacing.lg, paddingVertical: 8, paddingTop: 12,
   },
   sectionHeaderText: {
-    fontSize: 11, fontWeight: '800', textTransform: 'uppercase', letterSpacing: 0.8,
+    fontSize: 13, fontWeight: '600', textTransform: 'uppercase', letterSpacing: 0.3,
   },
 
   // Empty
   emptyContainer: { alignItems: 'center', paddingTop: 48, paddingBottom: 32, paddingHorizontal: Spacing.xl },
-  emptyTitle: { fontSize: FontSize.lg, fontWeight: '500', marginBottom: Spacing.sm, textAlign: 'center' },
-  emptyHint: { fontSize: FontSize.sm, textAlign: 'center', lineHeight: 18, maxWidth: 280 },
+  emptyTitle: { fontSize: 17, fontWeight: '600', marginBottom: Spacing.sm, textAlign: 'center', letterSpacing: -0.2 },
+  emptyHint: { fontSize: 15, textAlign: 'center', lineHeight: 20, maxWidth: 300 },
   emptyIconContainer: {
     width: 160, height: 160,
     alignItems: 'center', justifyContent: 'center', marginBottom: 20,
@@ -2227,7 +2225,7 @@ const s = StyleSheet.create({
   emptyCTAText: { color: '#fff', fontSize: 15, fontWeight: '600' },
   bigActionBtn: {
     flexDirection: 'row', alignItems: 'center', gap: 8,
-    paddingHorizontal: Spacing.lg, paddingVertical: Spacing.sm,
+    paddingHorizontal: Spacing.lg, paddingVertical: Spacing.sm, minHeight: 44,
     borderRadius: BorderRadius.xxl,
   },
   bigActionBtnText: { color: '#fff', fontSize: FontSize.md, fontWeight: '600' },
@@ -2235,7 +2233,7 @@ const s = StyleSheet.create({
   // Contact row
   contactRow: {
     flexDirection: 'row', alignItems: 'center',
-    paddingVertical: Spacing.md + 2, paddingHorizontal: Spacing.lg,
+    paddingVertical: Spacing.md, paddingHorizontal: Spacing.lg, minHeight: 64,
     borderBottomWidth: StyleSheet.hairlineWidth,
     ...Platform.select({
       web: { transition: 'background-color 0.15s ease', cursor: 'pointer' },
@@ -2251,8 +2249,8 @@ const s = StyleSheet.create({
   // Why: contact name weight 600→700 with deeper letter-spacing reads more
   // like "person" labels in iOS Contacts; email line gets explicit 500 weight
   // so it doesn't disappear next to the bumped name.
-  contactName: { fontSize: FontSize.lg, fontWeight: '700', letterSpacing: -0.25 },
-  contactEmail: { fontSize: FontSize.sm, marginTop: 2, opacity: 0.7, fontWeight: '500', letterSpacing: -0.05 },
+  contactName: { fontSize: FontSize.lg, fontWeight: '600', letterSpacing: -0.25 },
+  contactEmail: { fontSize: FontSize.sm, marginTop: 2, fontWeight: '400', letterSpacing: -0.05 },
   contactPhone: { fontSize: FontSize.xs, marginTop: 1, opacity: 0.6 },
   lastContactedText: { fontSize: 10, marginTop: 2 },
   deleteBtn: { padding: Spacing.sm },
@@ -2261,10 +2259,10 @@ const s = StyleSheet.create({
   // Group
   groupChip: { alignSelf: 'flex-start', borderRadius: 4, paddingHorizontal: 6, paddingVertical: 1, marginTop: 3 },
   groupChipText: { fontSize: 10, fontWeight: '600' },
-  groupTabs: { borderBottomWidth: 1, maxHeight: 52 },
+  groupTabs: { borderBottomWidth: StyleSheet.hairlineWidth, maxHeight: 52 },
   groupTabsContent: { paddingHorizontal: Spacing.lg, gap: 8, alignItems: 'center', paddingVertical: 10 },
   groupTab: {
-    paddingHorizontal: Spacing.md + 2, paddingVertical: 7, borderRadius: 20,
+    paddingHorizontal: Spacing.md + 2, paddingVertical: 7, minHeight: 32, justifyContent: 'center', borderRadius: 999,
     ...Platform.select({ web: { transition: 'all 0.15s ease', cursor: 'pointer' }, default: {} }),
   },
   groupTabText: { fontSize: FontSize.sm, fontWeight: '600' },
@@ -2298,7 +2296,7 @@ const s = StyleSheet.create({
   // Modal
   overlay: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.45)' },
   modal: {
-    borderRadius: 24, width: '90%', maxWidth: 440, maxHeight: '85%',
+    borderRadius: 20, width: '90%', maxWidth: 440, maxHeight: '85%', overflow: 'hidden',
     ...Platform.select({
       web: { boxShadow: '0 20px 60px rgba(0,0,0,0.2), 0 0 0 1px rgba(255,255,255,0.06)' },
       default: { elevation: 16 },
@@ -2306,13 +2304,13 @@ const s = StyleSheet.create({
   },
   modalHeader: {
     flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
-    paddingHorizontal: Spacing.xl, paddingVertical: Spacing.lg, borderBottomWidth: 1,
+    paddingHorizontal: Spacing.xl, paddingVertical: Spacing.lg, borderBottomWidth: StyleSheet.hairlineWidth,
   },
-  modalTitle: { fontSize: FontSize.xxl, fontWeight: '700', letterSpacing: -0.3 },
+  modalTitle: { fontSize: 20, fontWeight: '700', letterSpacing: -0.3 },
   formBody: { paddingHorizontal: Spacing.xl, paddingTop: Spacing.lg },
   formRow: { flexDirection: 'row', alignItems: 'center', marginBottom: Spacing.md },
   formSectionLabel: {
-    fontSize: 11, fontWeight: '800', letterSpacing: 1.2,
+    fontSize: 13, fontWeight: '600', letterSpacing: 0.3,
     marginTop: Spacing.sm, marginBottom: Spacing.sm,
   },
   formFieldLabel: {
@@ -2344,9 +2342,12 @@ const s = StyleSheet.create({
     alignItems: 'center', justifyContent: 'center',
   },
   saveBtn: {
-    borderRadius: 24, paddingVertical: 14, alignItems: 'center', marginTop: Spacing.md,
+    borderRadius: 14, paddingVertical: 14, minHeight: 50, justifyContent: 'center', alignItems: 'center', marginTop: Spacing.md,
+    // [2026-10-13 visual] BUG: o `background` gradiente #111 sobrescrevia o
+    // backgroundColor (colors.primary) no web → no escuro o texto onPrimary
+    // (preto) ficava preto sobre #111 = invisível. Cor vem só do tema agora.
     ...Platform.select({
-      web: { background: 'linear-gradient(135deg, #111111 0%, #111111 100%)', boxShadow: '0 4px 14px rgba(17,17,17,0.25)', cursor: 'pointer' },
+      web: { cursor: 'pointer' },
       default: {},
     }),
   },

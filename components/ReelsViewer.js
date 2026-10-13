@@ -36,6 +36,7 @@ import { cachedVideoSource } from '../services/videoCacheSource'; // [2026-10-10
 // [reels-v1 2026-10-13] sinais de comportamento (só dentro do Reels) + cold start de interesses
 import { trackReelEvent, trackReelView, flushReelSignals } from '../services/reelsSignals';
 import ReelsInterestPicker from './ReelsInterestPicker';
+import Svg, { Defs, LinearGradient as SvgLinearGradient, Stop, Rect as SvgRect } from 'react-native-svg';
 // expo-shorts powers the native player + pool. Imported lazily so a missing
 // native binary (dev only) doesn't break the import chain — fallback paths
 // degrade gracefully when these are null.
@@ -276,6 +277,27 @@ const DOUBLE_TAP_DELAY = 300;
 const BASE_URL = 'https://chatyy.com.br';
 const isWeb = Platform.OS === 'web';
 const useNative = Platform.OS !== 'web';
+
+// [2026-10-13 visual] Native scrim. topGradient/bottomGradient only had a CSS
+// `background` (web); on iOS/Android they were transparent, so the white
+// caption/rail sat on bright video with text-shadow alone. SVG gradient keeps
+// it dependency-free (react-native-svg is already in the app).
+const ReelScrim = memo(function ReelScrim({ edge }) {
+  if (isWeb) return null;
+  const id = edge === 'top' ? 'reelScrimTop' : 'reelScrimBottom';
+  const top = edge === 'top';
+  return (
+    <Svg width="100%" height="100%" style={StyleSheet.absoluteFill} preserveAspectRatio="none">
+      <Defs>
+        <SvgLinearGradient id={id} x1="0" y1={top ? '0' : '1'} x2="0" y2={top ? '1' : '0'}>
+          <Stop offset="0" stopColor="#000" stopOpacity={top ? 0.35 : 0.55} />
+          <Stop offset="1" stopColor="#000" stopOpacity={0} />
+        </SvgLinearGradient>
+      </Defs>
+      <SvgRect x="0" y="0" width="100%" height="100%" fill={`url(#${id})`} />
+    </Svg>
+  );
+});
 
 // Text shadow style for readability over video
 const TEXT_SHADOW = {
@@ -2027,8 +2049,8 @@ const ReelItem = memo(function ReelItem({ onCreate, reel, isActive, colors, isDa
       <BoostToast visible={rateBoost} />
 
       {/* Gradient overlays for readability */}
-      <View pointerEvents="none" style={styles.topGradient} />
-      <View pointerEvents="none" style={styles.bottomGradient} />
+      <View pointerEvents="none" style={styles.topGradient}><ReelScrim edge="top" /></View>
+      <View pointerEvents="none" style={styles.bottomGradient}><ReelScrim edge="bottom" /></View>
 
       {/* Pause flash animation */}
       <PauseFlash key={pauseFlashKey.current} visible={paused} />
@@ -3302,8 +3324,19 @@ export default function ReelsViewer({ colors, isDark, t, user, router, feedMode:
 
   if (loading) {
     return (
+      // [2026-10-13 visual] reel-shaped skeleton (rail + caption lines) instead of a bare spinner
       <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color="#fff" />
+        <View pointerEvents="none" style={{ position: 'absolute', right: 14, bottom: 110, alignItems: 'center', gap: 22 }}>
+          {[40, 34, 34, 34].map((d, i) => (
+            <View key={i} style={{ width: d, height: d, borderRadius: d / 2, backgroundColor: 'rgba(255,255,255,0.10)' }} />
+          ))}
+        </View>
+        <View pointerEvents="none" style={{ position: 'absolute', left: 14, right: 76, bottom: 40, gap: 10 }}>
+          <View style={{ width: '40%', height: 14, borderRadius: 7, backgroundColor: 'rgba(255,255,255,0.12)' }} />
+          <View style={{ width: '85%', height: 12, borderRadius: 6, backgroundColor: 'rgba(255,255,255,0.08)' }} />
+          <View style={{ width: '60%', height: 12, borderRadius: 6, backgroundColor: 'rgba(255,255,255,0.08)' }} />
+        </View>
+        <ActivityIndicator size="small" color="rgba(255,255,255,0.6)" />
       </View>
     );
   }
@@ -3361,7 +3394,7 @@ export default function ReelsViewer({ colors, isDark, t, user, router, feedMode:
           hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
           accessibilityRole="button"
           accessibilityLabel={t('reels.interests.manageTitle') || 'Seus interesses'}
-          style={({ pressed }) => [styles.interestsBtn, { top: Math.max(outerInsets.top, Platform.OS === 'android' ? 12 : 44) + 6, opacity: pressed ? 0.6 : 1 }]}
+          style={({ pressed }) => [styles.interestsBtn, { top: Math.max(outerInsets.top, Platform.OS === 'android' ? 12 : 44) + 2, opacity: pressed ? 0.6 : 1 }]}
         >
           <IconSliders size={20} color="#fff" />
         </Pressable>
@@ -3465,11 +3498,11 @@ const styles = StyleSheet.create({
   },
   interestsBtn: {
     position: 'absolute',
-    right: 14,
+    right: 10,
     zIndex: 21,
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -3595,7 +3628,8 @@ const styles = StyleSheet.create({
   profileFollowBadge: {
     position: 'absolute',
     bottom: -6,
-    backgroundColor: '#FF2D55',
+    // [2026-10-13 visual] P&B brand: white badge / black plus (was pink #FF2D55)
+    backgroundColor: '#fff',
     width: 18,
     height: 18,
     borderRadius: 9,
@@ -3605,7 +3639,7 @@ const styles = StyleSheet.create({
     borderColor: '#000',
   },
   profileFollowPlus: {
-    color: '#fff',
+    color: '#000',
     fontSize: 13,
     fontWeight: '800',
     lineHeight: 15,
@@ -3684,10 +3718,11 @@ const styles = StyleSheet.create({
     ...TEXT_SHADOW,
   },
   moreText: {
-    color: '#F1F3F5',
+    color: 'rgba(255,255,255,0.78)',
     fontSize: 14,
-    fontWeight: '700',
+    fontWeight: '600',
     marginTop: 3,
+    ...TEXT_SHADOW,
   },
 
   // ── Music row ──

@@ -1840,21 +1840,21 @@ export default function ComposeScreen() {
         {!showCc && (
           <TouchableOpacity
             onPress={() => { LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut); setShowCc(true); }}
-            style={[s.ccToggleBtn, { backgroundColor: colors.primaryLight }]}
+            style={[s.ccToggleBtn, { backgroundColor: colors.surfaceVariant }]}
             accessibilityLabel={t('compose.addCc') || 'Add Cc'}
             accessibilityRole="button"
           >
-            <Text style={[s.ccToggle, { color: colors.primary }]}>Cc</Text>
+            <Text style={[s.ccToggle, { color: colors.textSecondary }]}>Cc</Text>
           </TouchableOpacity>
         )}
         {!showBcc && (
           <TouchableOpacity
             onPress={() => { LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut); setShowBcc(true); }}
-            style={[s.ccToggleBtn, { backgroundColor: colors.primaryLight }]}
+            style={[s.ccToggleBtn, { backgroundColor: colors.surfaceVariant }]}
             accessibilityLabel={t('compose.addBcc') || 'Add Bcc'}
             accessibilityRole="button"
           >
-            <Text style={[s.ccToggle, { color: colors.primary }]}>{t('compose.bcc')}</Text>
+            <Text style={[s.ccToggle, { color: colors.textSecondary }]}>{t('compose.bcc')}</Text>
           </TouchableOpacity>
         )}
       </View>
@@ -1870,7 +1870,7 @@ export default function ComposeScreen() {
           style={[
             s.toolBtn,
             s.aiBtnHalo,
-            { backgroundColor: colors.primaryLight, borderColor: colors.primary + '33' },
+            { backgroundColor: colors.surfaceVariant, borderColor: colors.border },
           ]}
           accessibilityLabel={showMeet ? t('compose.writeWithAI') : t('compose.ai')}
           accessibilityRole="button"
@@ -1880,7 +1880,7 @@ export default function ComposeScreen() {
         </TouchableOpacity>
         <TouchableOpacity
           onPress={handleImprove}
-          style={[s.toolBtn, { backgroundColor: improving ? colors.primaryLight : colors.primary + '12' }]}
+          style={[s.toolBtn, { backgroundColor: colors.surfaceVariant, borderColor: improving ? colors.text : 'transparent' }]}
           disabled={improving}
           accessibilityLabel={t('compose.improveText')}
           accessibilityRole="button"
@@ -1925,7 +1925,7 @@ export default function ComposeScreen() {
                 }
               } catch {}
             }}
-            style={[s.toolBtn, { backgroundColor: colors.primary + '12' }]}
+            style={[s.toolBtn, { backgroundColor: colors.surfaceVariant }]}
             accessibilityLabel={t('compose.meet') || 'Meet'}
             accessibilityRole="button"
           >
@@ -1936,13 +1936,13 @@ export default function ComposeScreen() {
         {/* Read-receipt opt-in (Confirmar leitura) */}
         <TouchableOpacity
           onPress={() => persistTrackOpens(!trackOpens)}
-          style={[s.toolBtn, { backgroundColor: trackOpens ? colors.primaryLight : colors.primary + '12' }]}
+          style={[s.toolBtn, { backgroundColor: colors.surfaceVariant, borderColor: trackOpens ? colors.text : 'transparent' }]}
           accessibilityLabel={t('compose.trackOpens')}
           accessibilityRole="button"
           accessibilityState={{ checked: trackOpens }}
         >
           {trackOpens ? <IconCheck size={13} color={colors.primary} /> : null}
-          <Text style={[s.toolBtnText, { color: trackOpens ? colors.primary : colors.textSecondary }]}>
+          <Text style={[s.toolBtnText, { color: trackOpens ? colors.text : colors.textSecondary }]}>
             {t('compose.trackOpens') || 'Confirmar leitura'}
           </Text>
         </TouchableOpacity>
@@ -1951,13 +1951,13 @@ export default function ComposeScreen() {
         {/* Confidential mode toggle */}
         <TouchableOpacity
           onPress={() => setConfidentialModal(true)}
-          style={[s.toolBtn, { backgroundColor: confidential ? colors.primaryLight : colors.primary + '12' }]}
+          style={[s.toolBtn, { backgroundColor: colors.surfaceVariant, borderColor: confidential ? colors.text : 'transparent' }]}
           accessibilityLabel={t('compose.confidential') || 'Modo confidencial'}
           accessibilityRole="button"
           accessibilityState={{ checked: confidential }}
         >
           {confidential ? <IconLock size={13} color={colors.primary} /> : null}
-          <Text style={[s.toolBtnText, { color: confidential ? colors.primary : colors.textSecondary }]}>
+          <Text style={[s.toolBtnText, { color: confidential ? colors.text : colors.textSecondary }]}>
             {t('compose.confidential') || 'Confidencial'}
             {confidential ? ` · ${confidentialExpiry}d` : ''}
           </Text>
@@ -1965,13 +1965,13 @@ export default function ComposeScreen() {
         {/* PGP encryption toggle (round-6 gap-closer) */}
         <TouchableOpacity
           onPress={() => setPgpEncrypt(v => !v)}
-          style={[s.toolBtn, { backgroundColor: pgpEncrypt ? colors.primaryLight : colors.primary + '12' }]}
+          style={[s.toolBtn, { backgroundColor: colors.surfaceVariant, borderColor: pgpEncrypt ? colors.text : 'transparent' }]}
           accessibilityLabel={t('compose.pgpEncrypt') || 'Criptografar com PGP'}
           accessibilityRole="button"
           accessibilityState={{ checked: pgpEncrypt }}
         >
           {pgpEncrypt ? <IconLock size={13} color={colors.primary} /> : null}
-          <Text style={[s.toolBtnText, { color: pgpEncrypt ? colors.primary : colors.textSecondary }]}>
+          <Text style={[s.toolBtnText, { color: pgpEncrypt ? colors.text : colors.textSecondary }]}>
             {t('compose.pgpEncrypt') || 'Criptografar'}
           </Text>
         </TouchableOpacity>
@@ -1990,13 +1990,13 @@ export default function ComposeScreen() {
                 }).catch(() => {});
               }
             }}
-            style={[s.toolBtn, { backgroundColor: sendAndArchive ? colors.primaryLight : colors.primary + '12' }]}
+            style={[s.toolBtn, { backgroundColor: colors.surfaceVariant, borderColor: sendAndArchive ? colors.text : 'transparent' }]}
             accessibilityLabel={t('compose.sendAndArchive') || 'Enviar e arquivar'}
             accessibilityRole="button"
             accessibilityState={{ checked: sendAndArchive }}
           >
             <IconArchive size={13} color={sendAndArchive ? colors.primary : colors.textSecondary} />
-            <Text style={[s.toolBtnText, { color: sendAndArchive ? colors.primary : colors.textSecondary }]}>
+            <Text style={[s.toolBtnText, { color: sendAndArchive ? colors.text : colors.textSecondary }]}>
               {t('compose.sendAndArchive') || 'Enviar + Arquivar'}
             </Text>
           </TouchableOpacity>
@@ -2007,7 +2007,7 @@ export default function ComposeScreen() {
           <TouchableOpacity
             onPress={insertUrlPreviewCard}
             disabled={!urlPreview}
-            style={[s.toolBtn, { backgroundColor: colors.primaryLight, opacity: urlPreview ? 1 : 0.5 }]}
+            style={[s.toolBtn, { backgroundColor: colors.surfaceVariant, opacity: urlPreview ? 1 : 0.5 }]}
             accessibilityLabel={t('compose.insertUrlPreview') || 'Inserir preview'}
             accessibilityRole="button"
           >
@@ -2344,17 +2344,17 @@ export default function ComposeScreen() {
                 <View style={{ flex: 1 }}>
                   <TouchableOpacity
                     onPress={() => setShowAliasMenu(v => !v)}
-                    style={[s.fromPill, { backgroundColor: colors.primary + '18', borderColor: colors.primary + '40' }]}
+                    style={[s.fromPill, { backgroundColor: colors.surfaceVariant, borderColor: 'transparent' }]}
                     accessibilityRole="button"
                     accessibilityLabel={t('compose.fromAlias') || 'From'}
                   >
                     <View style={[s.fromDot, { backgroundColor: colors.primary }]} />
-                    <Text style={[s.fromText, { color: colors.primary }]} numberOfLines={1}>
+                    <Text style={[s.fromText, { color: colors.text }]} numberOfLines={1}>
                       {fromAlias || user?.email}
                     </Text>
                     {showAliasMenu
-                      ? <IconChevronUp size={12} color={colors.primary} style={{ marginLeft: 6, opacity: 0.7 }} />
-                      : <IconChevronDown size={12} color={colors.primary} style={{ marginLeft: 6, opacity: 0.7 }} />}
+                      ? <IconChevronUp size={12} color={colors.textSecondary} style={{ marginLeft: 6 }} />
+                      : <IconChevronDown size={12} color={colors.textSecondary} style={{ marginLeft: 6 }} />}
                   </TouchableOpacity>
                   {showAliasMenu && (
                     <View style={{ marginTop: 6, backgroundColor: colors.surface, borderColor: colors.borderLight, borderWidth: 1, borderRadius: 8, overflow: 'hidden' }}>
@@ -2374,9 +2374,9 @@ export default function ComposeScreen() {
                   )}
                 </View>
               ) : (
-                <View style={[s.fromPill, { backgroundColor: colors.primary + '18', borderColor: colors.primary + '40' }]}>
+                <View style={[s.fromPill, { backgroundColor: colors.surfaceVariant, borderColor: 'transparent' }]}>
                   <View style={[s.fromDot, { backgroundColor: colors.primary }]} />
-                  <Text style={[s.fromText, { color: colors.primary }]} numberOfLines={1}>{fromAlias || user?.email}</Text>
+                  <Text style={[s.fromText, { color: colors.text }]} numberOfLines={1}>{fromAlias || user?.email}</Text>
                 </View>
               )}
             </View>
@@ -2423,15 +2423,9 @@ export default function ComposeScreen() {
             <View style={[
               s.bodyCard,
               {
-                borderColor: colors.borderLight,
+                // [2026-10-13 redesign P&B] sem sombra/halo: borda fina só.
+                borderColor: colors.border,
                 backgroundColor: colors.surface,
-                ...Platform.select({
-                  web: { boxShadow: '0 2px 14px rgba(17, 17, 17,0.06), 0 0 0 1px rgba(17, 17, 17,0.04)' },
-                  default: {
-                    shadowColor: '#111111', shadowOpacity: 0.08, shadowRadius: 10,
-                    shadowOffset: { width: 0, height: 3 }, elevation: 2,
-                  },
-                }),
               },
             ]}>
               <RichTextEditor
@@ -2602,23 +2596,10 @@ const s = StyleSheet.create({
   header: {
     flexDirection: 'row', alignItems: 'center',
     paddingHorizontal: Spacing.md, height: 56,
-    ...Platform.select({
-      web: {
-        // No hardcoded white here: the inline colors.headerBgSolid sets the
-        // fill so the bar is correct in dark mode on web too.
-        boxShadow: '0 1px 2px rgba(0, 0, 0, 0.05)',
-      },
-      default: {
-        elevation: 1,
-        shadowColor: '#101114',
-        shadowOpacity: 0.05,
-        shadowRadius: 4,
-        shadowOffset: { width: 0, height: 1 },
-      },
-    }),
+    // [2026-10-13] Sem sombra: a hairline inferior (inline) separa o header.
   },
   backBtn: {
-    width: 40, height: 40, borderRadius: 20,
+    width: 44, height: 44, borderRadius: 22,
     alignItems: 'center', justifyContent: 'center',
     ...Platform.select({ web: { cursor: 'pointer', transition: 'background 0.15s' }, default: {} }),
   },
@@ -2627,7 +2608,7 @@ const s = StyleSheet.create({
   // — compose header is a moment of intent, should look decisive. Subject
   // sub-label gets a touch more weight (was implicit 400) so the original
   // thread context doesn't disappear.
-  headerTitle: { fontSize: 17, fontWeight: '700', letterSpacing: -0.4 },
+  headerTitle: { fontSize: 17, fontWeight: '600', letterSpacing: -0.4 },
   headerSubject: { fontSize: FontSize.xs, marginTop: 2, opacity: 0.75, fontWeight: '500', letterSpacing: -0.1 },
   headerRight: { flexDirection: 'row', alignItems: 'center', gap: 8, flexShrink: 0 },
   headerActionBtn: {
@@ -2636,27 +2617,19 @@ const s = StyleSheet.create({
   },
   sendBtn: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
-    paddingHorizontal: 20, height: 38, borderRadius: 19, gap: 7, marginLeft: 4,
+    paddingHorizontal: 18, height: 38, borderRadius: 19, gap: 7, marginLeft: 4,
     ...Platform.select({
       web: {
         cursor: 'pointer',
-        transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
-        // Clean, flat CTA — subtle lift only (Uber/Gmail style), no heavy glow.
-        boxShadow: '0 2px 8px rgba(17, 17, 17, 0.22)',
+        transition: 'opacity 0.15s ease',
       },
-      default: {
-        elevation: 3,
-        shadowColor: '#111111',
-        shadowOpacity: 0.18,
-        shadowRadius: 8,
-        shadowOffset: { width: 0, height: 2 },
-      },
+      default: {},
     }),
   },
   sendBtnLarge: {
     paddingHorizontal: 28, height: 44, borderRadius: 22, gap: 8,
   },
-  sendBtnText: { color: '#fff', fontSize: 13, fontWeight: '600', letterSpacing: 0.3 },
+  sendBtnText: { color: '#fff', fontSize: 15, fontWeight: '600', letterSpacing: -0.1 },
   sendBtnTextLarge: { fontSize: 15 },
   sendBtnDisabled: { opacity: 0.4 },
 
@@ -2772,24 +2745,24 @@ const s = StyleSheet.create({
   },
   contactFieldInner: { flex: 1, minWidth: 0 },
   fieldLabel: {
-    minWidth: 42, fontSize: 13, fontWeight: '500', marginRight: 10,
-    letterSpacing: 0.2, textTransform: 'capitalize',
+    minWidth: 42, fontSize: 15, fontWeight: '400', marginRight: 10,
+    letterSpacing: -0.2, textTransform: 'capitalize',
   },
-  fieldValue: { flex: 1, fontSize: 14, fontWeight: '400' },
+  fieldValue: { flex: 1, fontSize: 15, fontWeight: '400' },
 
   // From pill — primary-tinted recipient chip (consistency with chips on
   // Cc/Bcc rows and ContactAutocomplete). Uses primary at ~9% bg + ~25%
   // border applied inline so it tracks theme & dark-mode.
   fromPill: {
     flexDirection: 'row', alignItems: 'center',
-    paddingHorizontal: 12, paddingVertical: 6, borderRadius: 20,
+    paddingHorizontal: 12, minHeight: 32, borderRadius: 16,
     maxWidth: '80%',
-    borderWidth: 1,
+    borderWidth: StyleSheet.hairlineWidth,
   },
   fromDot: {
-    width: 8, height: 8, borderRadius: 4, marginRight: 8,
+    width: 6, height: 6, borderRadius: 3, marginRight: 8,
   },
-  fromText: { fontSize: 13, fontWeight: '600', letterSpacing: -0.1 },
+  fromText: { fontSize: 14, fontWeight: '500', letterSpacing: -0.15 },
 
   // Toolbar — visual divider between AI/improve group and toggles group.
   // Acts as a soft vertical rule so the toolbar reads as two clusters
@@ -2815,7 +2788,7 @@ const s = StyleSheet.create({
   // CC/BCC toggles
   ccBtns: { flexDirection: 'row', gap: 6, paddingTop: 8, flexShrink: 0 },
   ccToggleBtn: {
-    paddingHorizontal: 12, paddingVertical: 5, borderRadius: 14,
+    paddingHorizontal: 12, minHeight: 30, justifyContent: 'center', borderRadius: 15,
     ...Platform.select({ web: { cursor: 'pointer', transition: 'all 0.15s' }, default: {} }),
   },
   ccToggle: { fontSize: 12, fontWeight: '600' },
@@ -2829,8 +2802,8 @@ const s = StyleSheet.create({
     marginHorizontal: Spacing.xl,
     marginTop: Spacing.sm,
     marginBottom: 6,
-    borderRadius: 16,
-    borderWidth: 1,
+    borderRadius: 12,
+    borderWidth: StyleSheet.hairlineWidth,
     overflow: 'hidden',
   },
   bodyMetaRow: {
@@ -2863,13 +2836,16 @@ const s = StyleSheet.create({
     flexDirection: 'row', alignItems: 'center',
     paddingHorizontal: 16, gap: 8,
   },
+  // [2026-10-13 redesign P&B] Pílulas neutras; ligado = contorno na cor do
+  // texto (antes: fundo primaryLight ≈ surfaceVariant → ON/OFF indistinguível).
   toolBtn: {
     flexDirection: 'row', alignItems: 'center', gap: 6,
-    paddingHorizontal: 14, paddingVertical: 8, borderRadius: 20,
+    paddingHorizontal: 14, minHeight: 36, borderRadius: 18,
+    borderWidth: 1, borderColor: 'transparent',
     ...Platform.select({
       web: {
         cursor: 'pointer',
-        transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
+        transition: 'background-color 0.15s ease, border-color 0.15s ease',
       },
       default: {},
     }),
@@ -2878,13 +2854,9 @@ const s = StyleSheet.create({
   // glow that reads as "smart" without being loud. Border at ~20% primary
   // tracks theme via inline override.
   aiBtnHalo: {
-    borderWidth: 1,
-    ...Platform.select({
-      web: { boxShadow: '0 0 0 3px rgba(17, 17, 17,0.08), 0 2px 6px rgba(17, 17, 17,0.18)' },
-      default: { shadowColor: '#111111', shadowOpacity: 0.18, shadowRadius: 6, shadowOffset: { width: 0, height: 2 }, elevation: 2 },
-    }),
+    borderWidth: StyleSheet.hairlineWidth,
   },
-  toolBtnText: { fontSize: 12, fontWeight: '600', letterSpacing: 0.2 },
+  toolBtnText: { fontSize: 13, fontWeight: '500', letterSpacing: -0.05 },
 
   // ── Success ──
   successContainer: {

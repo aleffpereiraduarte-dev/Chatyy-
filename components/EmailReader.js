@@ -1038,10 +1038,7 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onF
           Polish 2026-05-13: ring é (colors.primary + '22') 2px border ao redor do
           avatar + leve shadow. Tamanho 40 segue o spec da polish round. */}
       <View style={s.senderRow}>
-        <View style={[
-          s.senderAvatarRing,
-          { borderColor: (colors.primary || '#111111') + '33', shadowColor: colors.primary || '#111111' },
-        ]}>
+        <View style={s.senderAvatarRing}>
           <AvatarCircle name={senderDisplayName} email={senderAddress} size={40} />
         </View>
         <View style={s.senderInfo}>
@@ -1072,7 +1069,7 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onF
           return <LabelChip key={lblKey + i} label={label} />;
         })}
         <TouchableOpacity
-          style={[s.addLabelBtn, { backgroundColor: colors.primary + '12' }]}
+          style={[s.addLabelBtn, { backgroundColor: colors.surfaceVariant }]}
           onPress={() => setShowLabelPicker(true)}
           hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
           accessibilityLabel={t('reader.addLabel') || 'Add label'}
@@ -1246,7 +1243,7 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onF
               return (
                 <TouchableOpacity
                   key={i}
-                  style={[s.attachItem, { backgroundColor: colors.surfaceVariant, borderColor: colors.borderLight }]}
+                  style={[s.attachItem, { backgroundColor: colors.surface, borderColor: colors.border }]}
                   onPress={() => setPreviewAttach({ visible: true, index: i })}
                   activeOpacity={0.7}
                   accessibilityLabel={`${t('reader.openAttachment') || 'Open'} ${a.filename || `attachment ${i + 1}`}`}
@@ -1260,7 +1257,9 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onF
                       recyclingKey={downloadUrl}
                     />
                   ) : (
-                    <AttachIcon size={24} color={colors.primary} style={{ marginRight: Spacing.sm }} />
+                    <View style={[s.attachThumb, s.attachIconTile, { backgroundColor: colors.surfaceVariant }]}>
+                      <AttachIcon size={22} color={colors.textSecondary} />
+                    </View>
                   )}
                   <View style={s.attachInfo}>
                     <Text style={[s.attachName, { color: colors.text }]} numberOfLines={1}>
@@ -1270,8 +1269,8 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onF
                       {a.size ? `${Math.round(a.size / 1024)} KB` : ''}
                     </Text>
                   </View>
-                  <TouchableOpacity onPress={(e) => { e.stopPropagation?.(); handleDownload(); }} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }} accessibilityLabel={`Download ${a.filename || 'attachment'}`} accessibilityRole="button">
-                    <IconDownload size={16} color={colors.primary} />
+                  <TouchableOpacity onPress={(e) => { e.stopPropagation?.(); handleDownload(); }} style={s.attachDlBtn} hitSlop={{ top: 4, bottom: 4, left: 4, right: 4 }} accessibilityLabel={`Download ${a.filename || 'attachment'}`} accessibilityRole="button">
+                    <IconDownload size={18} color={colors.textSecondary} />
                   </TouchableOpacity>
                 </TouchableOpacity>
               );
@@ -1461,35 +1460,35 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onF
         </TouchableOpacity>
         {onReplyAll && (
           <TouchableOpacity
-            style={[s.actionBtn, { backgroundColor: colors.primary + '12', borderColor: colors.primary + '25' }]}
+            style={[s.actionBtn, { backgroundColor: colors.surfaceVariant }]}
             onPress={() => { haptic.light(); onReplyAll?.(email); }}
             accessibilityLabel={t('reader.replyAll')}
             accessibilityRole="button"
           >
-            <IconReplyAll size={16} color={colors.primary} style={{ marginRight: 8 }} />
-            <Text style={[s.actionText, { color: colors.primary }]}>{t('reader.replyAll')}</Text>
+            <IconReplyAll size={16} color={colors.text} style={{ marginRight: 8 }} />
+            <Text style={[s.actionText, { color: colors.text }]}>{t('reader.replyAll')}</Text>
           </TouchableOpacity>
         )}
         <TouchableOpacity
-          style={[s.actionBtn, { backgroundColor: colors.primary + '12', borderColor: 'transparent' }]}
+          style={[s.actionBtn, { backgroundColor: colors.surfaceVariant }]}
           onPress={() => { haptic.light(); onForward?.(); }}
           accessibilityLabel={t('reader.forward')}
           accessibilityRole="button"
         >
-          <IconForward size={16} color={colors.textSecondary} style={{ marginRight: 8 }} />
+          <IconForward size={16} color={colors.text} style={{ marginRight: 8 }} />
           <Text style={[s.actionText, { color: colors.text }]}>{t('reader.forward')}</Text>
         </TouchableOpacity>
         <TouchableOpacity
-          style={[s.actionBtn, { backgroundColor: colors.warning + '12', borderColor: colors.warning + '25' }]}
+          style={[s.actionBtn, { backgroundColor: colors.surfaceVariant }]}
           onPress={() => onReportSpam?.(email)}
           accessibilityLabel={t('reader.spam')}
           accessibilityRole="button"
         >
-          <IconAlertTriangle size={16} color={colors.warning} style={{ marginRight: 8 }} />
-          <Text style={[s.actionText, { color: colors.warning }]}>{t('reader.spam')}</Text>
+          <IconAlertTriangle size={16} color={colors.text} style={{ marginRight: 8 }} />
+          <Text style={[s.actionText, { color: colors.text }]}>{t('reader.spam')}</Text>
         </TouchableOpacity>
         <TouchableOpacity
-          style={[s.actionBtn, { backgroundColor: showTranslation ? colors.primary + '18' : colors.primary + '12', borderColor: showTranslation ? colors.primary + '30' : 'transparent' }]}
+          style={[s.actionBtn, { backgroundColor: colors.surfaceVariant, borderColor: showTranslation ? colors.text : 'transparent' }]}
           onPress={async () => {
             if (showTranslation) {
               setShowTranslation(false);
@@ -1510,12 +1509,12 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onF
           {translating ? (
             <ActivityIndicator size={14} color={colors.primary} style={{ marginRight: 8 }} />
           ) : (
-            <IconGlobe size={16} color={showTranslation ? colors.primary : colors.textSecondary} style={{ marginRight: 8 }} />
+            <IconGlobe size={16} color={colors.text} style={{ marginRight: 8 }} />
           )}
-          <Text style={[s.actionText, { color: showTranslation ? colors.primary : colors.text }]}>{t('reader.translate')}</Text>
+          <Text style={[s.actionText, { color: colors.text }]}>{t('reader.translate')}</Text>
         </TouchableOpacity>
         <TouchableOpacity
-          style={[s.actionBtn, { backgroundColor: colors.error + '10', borderColor: colors.error + '20' }]}
+          style={[s.actionBtn, { backgroundColor: colors.surfaceVariant }]}
           onPress={() => { haptic.warning(); onDelete?.(); }}
           accessibilityLabel={t('reader.delete')}
           accessibilityRole="button"
@@ -1530,7 +1529,7 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onF
       <View style={s.secondaryActions}>
         {hasActionBar && (
           <TouchableOpacity
-            style={[s.secBtn, { backgroundColor: showTranslation ? colors.primary + '18' : colors.primary + '12' }]}
+            style={[s.secBtn, { backgroundColor: colors.surfaceVariant }, showTranslation && { borderColor: colors.text }]}
             onPress={async () => {
               if (showTranslation) { setShowTranslation(false); return; }
               if (translatedHtml) { setShowTranslation(true); return; }
@@ -1550,7 +1549,7 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onF
         )}
         {hasActionBar && (
           <TouchableOpacity
-            style={[s.secBtn, { backgroundColor: colors.primary + '12' }]}
+            style={[s.secBtn, { backgroundColor: colors.surfaceVariant }]}
             onPress={() => onReportSpam?.(email)}
             accessibilityLabel={t('reader.spam')}
             accessibilityRole="button"
@@ -1562,7 +1561,7 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onF
         {/* AI: Action items button (only for long emails) */}
         {(email.body_text || '').length > 300 && (
           <TouchableOpacity
-            style={[s.secBtn, { backgroundColor: colors.primary + '12', borderWidth: 1, borderColor: colors.border }]}
+            style={[s.secBtn, { backgroundColor: colors.surfaceVariant }]}
             onPress={async () => {
               setActionItemsLoading(true);
               try {
@@ -1573,11 +1572,11 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onF
             }}
           >
             {actionItemsLoading ? (
-              <Text style={{ color: colors.text, fontWeight: '600', fontSize: 12 }}>...</Text>
+              <ActivityIndicator size={12} color={colors.textSecondary} />
             ) : (
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-                <IconSparkles size={12} color={colors.text} />
-                <Text style={{ color: colors.text, fontWeight: '600', fontSize: 12 }}>{t('reader.tasks')}</Text>
+                <IconSparkles size={14} color={colors.textSecondary} />
+                <Text style={[s.secBtnText, { color: colors.textSecondary }]}>{t('reader.tasks')}</Text>
               </View>
             )}
           </TouchableOpacity>
@@ -1585,7 +1584,7 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onF
         {/* Print works on both web (window.print via popup) and native
             (expo-print → AirPrint on iOS, print spooler on Android). */}
         <TouchableOpacity
-          style={[s.secBtn, { backgroundColor: colors.primary + '12' }]}
+          style={[s.secBtn, { backgroundColor: colors.surfaceVariant }]}
           onPress={handlePrint}
           accessibilityLabel={t('reader.print')}
           accessibilityRole="button"
@@ -1598,7 +1597,7 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onF
             action (Gmail puts it under the kebab menu; same effect). */}
         {onForwardAsAttachment && (
           <TouchableOpacity
-            style={[s.secBtn, { backgroundColor: colors.primary + '12' }]}
+            style={[s.secBtn, { backgroundColor: colors.surfaceVariant }]}
             onPress={() => onForwardAsAttachment(email)}
             accessibilityLabel={t('reader.forwardAsAttachment') || 'Encaminhar como anexo'}
             accessibilityRole="button"
@@ -1613,7 +1612,7 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onF
             the email so /tasks can deep-link back here. */}
         {onAddAsTask && (
           <TouchableOpacity
-            style={[s.secBtn, { backgroundColor: colors.primary + '12' }]}
+            style={[s.secBtn, { backgroundColor: colors.surfaceVariant }]}
             onPress={() => onAddAsTask(email)}
             accessibilityLabel={t('reader.addAsTask') || 'Adicionar como tarefa'}
             accessibilityRole="button"
@@ -1626,7 +1625,7 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onF
         )}
         {onMarkUnread && (
           <TouchableOpacity
-            style={[s.secBtn, { backgroundColor: colors.primary + '12' }]}
+            style={[s.secBtn, { backgroundColor: colors.surfaceVariant }]}
             onPress={() => { onMarkUnread(email); onClose?.(); }}
             accessibilityLabel={t('contextMenu.markUnread')}
             accessibilityRole="button"
@@ -1636,7 +1635,7 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onF
           </TouchableOpacity>
         )}
         <TouchableOpacity
-          style={[s.secBtn, { backgroundColor: colors.primary + '12' }]}
+          style={[s.secBtn, { backgroundColor: colors.surfaceVariant }]}
           onPress={async () => {
             const r = await blockSender(email.from);
             if (r.success) setBlocked(true);
@@ -1650,7 +1649,7 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onF
           </Text>
         </TouchableOpacity>
         <TouchableOpacity
-          style={[s.secBtn, { backgroundColor: colors.primary + '12' }]}
+          style={[s.secBtn, { backgroundColor: colors.surfaceVariant }]}
           onPress={async () => {
             const r = await muteThread(email.uid, folder || 'INBOX');
             if (r.success) setMuted(true);
@@ -1664,7 +1663,7 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onF
           </Text>
         </TouchableOpacity>
         <TouchableOpacity
-          style={[s.secBtn, { backgroundColor: colors.primary + '12' }]}
+          style={[s.secBtn, { backgroundColor: colors.surfaceVariant }]}
           onPress={() => {
             const url = getExportUrl(email.uid, folder || 'INBOX');
             if (Platform.OS === 'web') {
@@ -1683,7 +1682,7 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onF
           <Text style={[s.secBtnText, { color: colors.textSecondary }]}>{t('reader.export')}</Text>
         </TouchableOpacity>
         <TouchableOpacity
-          style={[s.secBtn, { backgroundColor: colors.primary + '12' }]}
+          style={[s.secBtn, { backgroundColor: colors.surfaceVariant }]}
           onPress={() => {
             // [2026-10-13] antes o /calendar ignorava estes parâmetros.
             const title = encodeURIComponent(String(email.subject || '').replace(/^(re|fw|fwd|enc|res)\s*:\s*/i, '').slice(0, 150));
@@ -1798,7 +1797,7 @@ const s = StyleSheet.create({
   content: { padding: Spacing.xl + 2, paddingBottom: 40 },
   // Header — DENSIDADE 2026: assunto menor + menos respiro (leitura tipo Gmail).
   headerRow: { flexDirection: 'row', alignItems: 'flex-start', marginBottom: Spacing.lg },
-  subject: { flex: 1, fontSize: 22, fontWeight: '700', lineHeight: 29, letterSpacing: -0.3 },
+  subject: { flex: 1, fontSize: 22, fontWeight: '700', lineHeight: 28, letterSpacing: -0.45 },
   headerActions: { flexDirection: 'row', marginLeft: Spacing.sm, gap: 4 },
   headerBtn: {
     width: 38, height: 38, borderRadius: 19,
@@ -1806,7 +1805,7 @@ const s = StyleSheet.create({
     ...(Platform.OS === 'web' ? { transition: 'background-color 0.15s ease', cursor: 'pointer' } : {}),
   },
   // Sender
-  senderRow: { flexDirection: 'row', alignItems: 'center', marginBottom: Spacing.md + 2 },
+  senderRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 8 },
   senderAvatar: {
     width: 44, height: 44, borderRadius: 22,
     justifyContent: 'center', alignItems: 'center', marginRight: Spacing.md + 2,
@@ -1815,7 +1814,7 @@ const s = StyleSheet.create({
   // Smart cards (newsletter / boleto / tracking / meeting) — neutral, themed.
   smartCard: {
     marginHorizontal: 16, marginTop: 12, flexDirection: 'row', alignItems: 'center', gap: 12,
-    borderLeftWidth: 3, paddingVertical: 12, paddingHorizontal: 14, borderRadius: 10,
+    borderLeftWidth: 0, paddingVertical: 12, paddingHorizontal: 14, borderRadius: 12,
   },
   smartCardFlush: { marginHorizontal: 0, marginTop: 0 },
   smartTitle: { fontWeight: '700', fontSize: 14, letterSpacing: -0.1 },
@@ -1831,16 +1830,16 @@ const s = StyleSheet.create({
   },
   senderInfo: { flex: 1 },
   senderNameRow: { flexDirection: 'row', alignItems: 'center' },
-  senderName: { fontSize: 16, fontWeight: '800', letterSpacing: -0.3 },
-  senderEmail: { fontSize: 12.5, marginTop: 2, fontWeight: '500' },
-  dateText: { fontSize: 12.5, fontWeight: '600', letterSpacing: 0.1 },
+  senderName: { fontSize: 16, fontWeight: '600', letterSpacing: -0.3 },
+  senderEmail: { fontSize: 13, marginTop: 1 },
+  dateText: { fontSize: 13, letterSpacing: -0.05, marginLeft: 8 },
   // Recipients
   recipientRow: {
     flexDirection: 'row', alignItems: 'center',
     marginLeft: 56, paddingVertical: 4,
   },
-  recipientLabel: { fontSize: FontSize.sm },
-  recipientText: { fontSize: FontSize.sm, flex: 1 },
+  recipientLabel: { fontSize: 13 },
+  recipientText: { fontSize: 13, flex: 1 },
   // Labels
   labelsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginLeft: 56, marginTop: Spacing.sm, alignItems: 'center' },
   addLabelBtn: {
@@ -1868,11 +1867,11 @@ const s = StyleSheet.create({
   summaryClose: { fontSize: FontSize.sm, marginTop: Spacing.sm },
   // Body
   bodyContainer: { marginTop: Spacing.md, paddingTop: Spacing.lg, borderTopWidth: StyleSheet.hairlineWidth, minHeight: 200 },
-  bodyText: { fontSize: 15.5, lineHeight: 26, letterSpacing: -0.05 },
+  bodyText: { fontSize: 16, lineHeight: 25, letterSpacing: -0.1 },
   // Attachments
   attachments: { marginTop: Spacing.xxl, paddingTop: Spacing.lg, borderTopWidth: StyleSheet.hairlineWidth },
   attachTitleRow: { flexDirection: 'row', alignItems: 'center', marginBottom: Spacing.md },
-  attachTitle: { fontSize: FontSize.md, fontWeight: '600', flex: 1 },
+  attachTitle: { fontSize: 15, fontWeight: '600', flex: 1, letterSpacing: -0.2 },
   downloadAllBtn: {
     flexDirection: 'row', alignItems: 'center',
     paddingHorizontal: 10, paddingVertical: 5, borderRadius: 8,
@@ -1880,20 +1879,25 @@ const s = StyleSheet.create({
   },
   downloadAllText: { fontSize: FontSize.xs, fontWeight: '600' },
   attachGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.md },
+  // [2026-10-13 redesign P&B] Anexo = card neutro (borda fina, raio 12),
+  // miniatura/ícone num quadrado 44 sempre alinhado, download com alvo 44.
   attachItem: {
     flexDirection: 'row', alignItems: 'center',
-    borderRadius: 16, padding: Spacing.md, borderWidth: 1, minWidth: 200,
+    borderRadius: 12, paddingVertical: 8, paddingLeft: 8, paddingRight: 4,
+    borderWidth: StyleSheet.hairlineWidth, minWidth: 220, flexGrow: 1, flexBasis: 220, maxWidth: 360,
     ...Platform.select({
-      web: { transition: 'all 0.18s ease, transform 0.15s ease', cursor: 'pointer' },
+      web: { transition: 'background-color 0.15s ease', cursor: 'pointer' },
       default: {},
     }),
   },
   attachThumb: {
-    width: 48, height: 48, borderRadius: 12, marginRight: Spacing.sm,
+    width: 44, height: 44, borderRadius: 8, marginRight: 12,
   },
-  attachInfo: { flex: 1 },
-  attachName: { fontSize: FontSize.md, fontWeight: '500' },
-  attachSize: { fontSize: FontSize.xs, marginTop: 2, opacity: 0.6 },
+  attachIconTile: { alignItems: 'center', justifyContent: 'center' },
+  attachDlBtn: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
+  attachInfo: { flex: 1, minWidth: 0 },
+  attachName: { fontSize: 14, fontWeight: '500', letterSpacing: -0.1 },
+  attachSize: { fontSize: 12, marginTop: 2 },
   // Meet link cards
   meetCards: { marginTop: Spacing.lg, gap: Spacing.sm },
   meetCard: {
@@ -1915,20 +1919,16 @@ const s = StyleSheet.create({
   actionBtn: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
     flexBasis: '47%', flexGrow: 1, minWidth: 0,
-    borderRadius: 14, paddingVertical: 11, paddingHorizontal: Spacing.md,
-    borderWidth: 1.5, borderColor: 'transparent',
+    borderRadius: 12, minHeight: 44, paddingVertical: 10, paddingHorizontal: Spacing.md,
+    borderWidth: 1, borderColor: 'transparent',
     ...Platform.select({
-      web: { transition: 'all 0.18s ease, transform 0.12s ease', cursor: 'pointer' },
+      web: { transition: 'background-color 0.15s ease, opacity 0.15s ease', cursor: 'pointer' },
       default: {},
     }),
   },
-  actionBtnPrimary: {
-    ...Platform.select({
-      web: { boxShadow: '0 4px 14px rgba(17,17,17,0.22)' },
-      default: {},
-    }),
-  },
-  actionText: { fontSize: FontSize.base, fontWeight: '700', letterSpacing: 0.1 },
+  // [2026-10-13] Sem sombra/glow no CTA — preto sólido basta (P&B).
+  actionBtnPrimary: {},
+  actionText: { fontSize: 15, fontWeight: '600', letterSpacing: -0.1 },
   // Spam
   spamBanner: {
     flexDirection: 'row', alignItems: 'center', padding: Spacing.md,
@@ -1950,14 +1950,14 @@ const s = StyleSheet.create({
   secBtn: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
     flexBasis: '47%', flexGrow: 1, minWidth: 0,
-    paddingHorizontal: Spacing.md, paddingVertical: 10,
-    borderRadius: 14,
+    paddingHorizontal: Spacing.md, minHeight: 44, paddingVertical: 8,
+    borderRadius: 12, borderWidth: 1, borderColor: 'transparent',
     ...Platform.select({
-      web: { transition: 'all 0.15s ease', cursor: 'pointer' },
+      web: { transition: 'background-color 0.15s ease', cursor: 'pointer' },
       default: {},
     }),
   },
-  secBtnText: { fontSize: FontSize.sm, fontWeight: '600', flexShrink: 1 },
+  secBtnText: { fontSize: 14, fontWeight: '500', flexShrink: 1 },
   // Translation
   translationContainer: {
     marginTop: Spacing.lg, padding: Spacing.lg, borderRadius: BorderRadius.lg,
@@ -1976,9 +1976,8 @@ const s = StyleSheet.create({
   quotedToggleText: { fontSize: FontSize.sm, fontWeight: '500' },
   // Inline Reply
   inlineReplyContainer: {
-    marginTop: Spacing.xl, borderWidth: 1, borderRadius: 18,
+    marginTop: Spacing.xl, borderWidth: StyleSheet.hairlineWidth, borderRadius: 14,
     overflow: 'hidden',
-    shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.05, shadowRadius: 8, elevation: 2,
     ...Platform.select({
       web: { transition: 'border-color 0.2s ease' },
       default: {},

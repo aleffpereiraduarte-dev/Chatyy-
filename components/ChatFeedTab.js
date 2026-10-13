@@ -184,8 +184,14 @@ function TrendingHashtagsRail({ colors, isDark, t, router }) {
   }, []);
   if (loading) {
     return (
-      <View style={{ paddingHorizontal: 16, paddingVertical: 12 }}>
-        <ActivityIndicator size="small" color={isDark ? '#888' : '#999'} />
+      // [2026-10-13 visual] chip skeleton instead of a bare spinner
+      <View style={{ paddingHorizontal: 16, paddingTop: 8, paddingBottom: 18 }}>
+        <View style={{ width: 72, height: 14, borderRadius: 7, marginBottom: 12, backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)' }} />
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+          {[84, 64, 104, 72, 92].map((w, i) => (
+            <View key={i} style={{ width: w, height: 32, borderRadius: 16, backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)' }} />
+          ))}
+        </View>
       </View>
     );
   }
@@ -202,14 +208,14 @@ function TrendingHashtagsRail({ colors, isDark, t, router }) {
             onPress={() => { try { router?.push(`/hashtag/${encodeURIComponent(row.hashtag)}`); } catch {} }}
             activeOpacity={0.7}
             style={{
-              paddingHorizontal: 12,
-              paddingVertical: 6,
-              borderRadius: 14,
+              paddingHorizontal: 14,
+              paddingVertical: 8,
+              borderRadius: 16,
               // [beauty 2026-10-01] Dark mode was a black-on-dark chip (bg/border
               // rgba(17,17,17,…) + black text) → unreadable. Branch on isDark.
-              backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(17, 17, 17,0.08)',
-              borderWidth: 1,
-              borderColor: isDark ? 'rgba(255,255,255,0.16)' : 'rgba(17, 17, 17,0.32)',
+              // [2026-10-13 visual] flat filled chip (no outline) = same chip
+              // language as Calls / Snap Map.
+              backgroundColor: isDark ? 'rgba(255,255,255,0.10)' : 'rgba(17, 17, 17,0.06)',
             }}
           >
             <Text style={{ color: colors.text, fontSize: 13, fontWeight: '600' }}>
@@ -1116,12 +1122,12 @@ function ChatFeedTab({ colors, isDark, t, user, router, initialFeedMode, onFeedM
           accessibilityLabel={t('feed.unifiedSearch') || 'Pesquisa'}
           accessibilityRole="button"
         >
-          <IconSearch size={18} color={isDark ? '#888' : '#999'} />
+          <IconSearch size={18} color={isDark ? '#8e8e93' : '#6c6c70'} />
         </TouchableOpacity>
         <TextInput
           style={[styles.searchInput, { color: colors.text }]}
           placeholder={t('feed.searchPlaceholder')}
-          placeholderTextColor={isDark ? '#666' : '#999'}
+          placeholderTextColor={isDark ? '#8e8e93' : '#6c6c70'}
           value={searchQuery}
           onChangeText={(text) => {
             setIsSearchActive(true);
@@ -1136,7 +1142,7 @@ function ChatFeedTab({ colors, isDark, t, user, router, initialFeedMode, onFeedM
         />
         {(searchQuery.length > 0 || isSearchActive) && (
           <TouchableOpacity onPress={clearSearch} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-            <IconX size={18} color={isDark ? '#888' : '#999'} />
+            <IconX size={18} color={isDark ? '#8e8e93' : '#6c6c70'} />
           </TouchableOpacity>
         )}
       </View>
@@ -1146,6 +1152,7 @@ function ChatFeedTab({ colors, isDark, t, user, router, initialFeedMode, onFeedM
         accessibilityLabel={t('notifications.title') || 'Notificações'}
         accessibilityRole="button"
         style={{ padding: 6, position: 'relative' }}
+        hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
       >
         <IconBell size={22} color={colors.text} />
         {unreadNotifs > 0 && (
@@ -1211,8 +1218,17 @@ function ChatFeedTab({ colors, isDark, t, user, router, initialFeedMode, onFeedM
   const renderSearchContent = () => {
     if (searchLoading) {
       return (
-        <View style={styles.searchStatusContainer}>
-          <ActivityIndicator size="small" color={colors.text} />
+        // [2026-10-13 visual] user-row skeletons instead of a bare spinner
+        <View style={styles.searchResultsList}>
+          {[0, 1, 2, 3].map(i => (
+            <View key={i} style={[styles.userCard, { backgroundColor: isDark ? 'rgba(255,255,255,0.04)' : '#fff' }]}>
+              <View style={{ width: 50, height: 50, borderRadius: 25, backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)' }} />
+              <View style={[styles.userCardInfo, { gap: 7 }]}>
+                <View style={{ width: '55%', height: 12, borderRadius: 6, backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)' }} />
+                <View style={{ width: '35%', height: 10, borderRadius: 5, backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.045)' }} />
+              </View>
+            </View>
+          ))}
         </View>
       );
     }
@@ -1231,7 +1247,7 @@ function ChatFeedTab({ colors, isDark, t, user, router, initialFeedMode, onFeedM
       return (
         <View style={{ flex: 1 }}>
           <View style={styles.searchStatusContainer}>
-            <IconSearch size={40} color={isDark ? '#333' : '#ddd'} />
+            <IconSearch size={40} color={isDark ? '#48484a' : '#c7c7cc'} />
             <Text style={[styles.searchStatusText, { color: colors.textSecondary, marginTop: 12 }]}>
               {t('feed.searchHint')}
             </Text>
@@ -1380,10 +1396,8 @@ function ChatFeedTab({ colors, isDark, t, user, router, initialFeedMode, onFeedM
     }
     if (!loadingMore) return null;
     return (
-      <View>
-        <View style={styles.footerLoader}>
-          <ActivityIndicator size="small" color={colors.text} />
-        </View>
+      <View style={{ paddingTop: 12 }}>
+        {/* [2026-10-13 visual] spinner dropped — the skeleton card alone signals loading. */}
         {/* Lightweight skeleton card beneath the spinner so the viewport
             reveals a hint of the next post instead of a blank gap. */}
         <View style={{ opacity: 0.55, paddingHorizontal: 16, paddingBottom: 16 }}>

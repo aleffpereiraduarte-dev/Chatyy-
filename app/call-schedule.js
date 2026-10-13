@@ -19,6 +19,7 @@ import { useLanguage } from '../context/LanguageContext';
 import { Spacing, BorderRadius, FontSize } from '../constants/theme';
 import { IconArrowLeft, IconCalendar, IconPhone, IconX, IconClock } from '../components/Icons';
 import AvatarCircle from '../components/AvatarCircle';
+import ScreenEmptyState from '../components/ScreenEmptyState';
 
 function formatRelative(iso, t) {
   if (!iso) return '';
@@ -136,38 +137,44 @@ export default function CallScheduleScreen() {
       {USE_NATIVE_HEADER ? (
         <Stack.Screen options={nativeHeaderOptions({ colors, isDark, title: t('calls.scheduled') })} />
       ) : (
+      // [2026-10-13 visual] web header follows the theme (was a solid black bar /
+      // purple #110a1f in dark) like every other screen header.
       <View style={[styles.header, {
-        backgroundColor: isDark ? '#110a1f' : '#111111',
+        backgroundColor: colors.background,
+        borderBottomWidth: StyleSheet.hairlineWidth,
+        borderBottomColor: isDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.08)',
         paddingTop: insets.top,
       }]}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.headerBtn} hitSlop={10}>
-          <IconArrowLeft size={22} color="#fff" />
+        <TouchableOpacity onPress={() => router.back()} style={styles.headerBtn} hitSlop={10} accessibilityRole="button" accessibilityLabel={t('common.back') || 'Voltar'}>
+          <IconArrowLeft size={22} color={colors.text} />
         </TouchableOpacity>
         <View style={{ flex: 1 }}>
-          <Text style={styles.headerTitle}>{t('calls.scheduled') || 'Chamadas agendadas'}</Text>
+          <Text style={[styles.headerTitle, { color: colors.text }]}>{t('calls.scheduled') || 'Chamadas agendadas'}</Text>
         </View>
       </View>
       )}
 
       {loading ? (
-        <View style={styles.center}>
-          <ActivityIndicator color={colors.primary} />
+        <View style={{ padding: Spacing.md }}>
+          {[0, 1, 2].map(i => (
+            <View key={i} style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border, gap: 10 }]}>
+              <View style={{ width: '55%', height: 14, borderRadius: 7, backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)' }} />
+              <View style={{ width: '40%', height: 11, borderRadius: 6, backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.045)' }} />
+              <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4 }}>
+                {[0, 1, 2].map(j => <View key={j} style={{ width: 28, height: 28, borderRadius: 14, marginLeft: j ? -6 : 0, backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)' }} />)}
+                <View style={{ flex: 1 }} />
+                <View style={{ width: 92, height: 36, borderRadius: 18, backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)' }} />
+              </View>
+            </View>
+          ))}
         </View>
       ) : calls.length === 0 ? (
         <View style={styles.center}>
-          <View style={{
-            width: 80, height: 80, borderRadius: 40,
-            backgroundColor: colors.surfaceVariant,
-            alignItems: 'center', justifyContent: 'center', marginBottom: 16,
-          }}>
-            <IconCalendar size={40} color={colors.textSecondary} />
-          </View>
-          <Text style={{ color: colors.text, fontSize: FontSize.md, fontWeight: '600' }}>
-            {t('calls.noScheduled') || 'Nenhuma chamada agendada'}
-          </Text>
-          <Text style={{ color: colors.textSecondary, fontSize: FontSize.sm, marginTop: 6, textAlign: 'center', paddingHorizontal: 32 }}>
-            {t('calls.scheduleHint') || 'Toque em "Agendar" na aba de Ligações.'}
-          </Text>
+          <ScreenEmptyState
+            kind="meetings"
+            title={t('calls.noScheduled') || 'Nenhuma chamada agendada'}
+            subtitle={t('calls.scheduleHint') || 'Toque em "Agendar" na aba de Ligações.'}
+          />
         </View>
       ) : (
         <ScrollView
@@ -202,7 +209,7 @@ export default function CallScheduleScreen() {
                     </View>
                   </View>
                   {isOrg && (
-                    <TouchableOpacity onPress={() => handleCancel(call)} style={{ padding: 6 }} hitSlop={8}>
+                    <TouchableOpacity onPress={() => handleCancel(call)} style={{ padding: 6 }} hitSlop={10} accessibilityRole="button" accessibilityLabel={t('common.cancel') || 'Cancelar'}>
                       <IconX size={18} color={colors.textSecondary} />
                     </TouchableOpacity>
                   )}
@@ -225,7 +232,8 @@ export default function CallScheduleScreen() {
                     disabled={!canJoin}
                     style={[
                       styles.startBtn,
-                      { backgroundColor: canJoin ? '#10b981' : colors.surfaceVariant },
+                      // [2026-10-13 visual] green only = 'join now' state (#16a34a = same success green as Calls)
+                      { backgroundColor: canJoin ? '#16a34a' : colors.surfaceVariant },
                     ]}
                   >
                     <IconPhone size={14} color={canJoin ? '#fff' : colors.textTertiary} />
@@ -256,12 +264,12 @@ const styles = StyleSheet.create({
   headerTitle: { color: '#fff', fontSize: 18, fontWeight: '600' },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24 },
   card: {
-    padding: 14, borderRadius: BorderRadius.lg, marginBottom: 10,
+    padding: 16, borderRadius: 14, marginBottom: 10,
     borderWidth: StyleSheet.hairlineWidth,
   },
   title: { fontSize: FontSize.md, fontWeight: '600' },
   startBtn: {
     flexDirection: 'row', alignItems: 'center',
-    paddingHorizontal: 14, paddingVertical: 8, borderRadius: BorderRadius.md,
+    paddingHorizontal: 14, minHeight: 36, borderRadius: 18,
   },
 });

@@ -130,7 +130,7 @@ export default function CallDiagnose() {
         contentContainerStyle={{ padding: 16, paddingBottom: 60 }}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.text} />}
       >
-        <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
+        <View style={[styles.card, { backgroundColor: (colors.card || colors.surface), borderColor: colors.border }]}>
           <Text style={[styles.cardTitle, { color: colors.text }]}>{t('callDiagnose.whatIsThis')}</Text>
           <Text style={[styles.cardBody, { color: colors.textSecondary }]}>
             {t('callDiagnose.whatIsThisBody')}
@@ -153,7 +153,7 @@ export default function CallDiagnose() {
         </Text>
 
         {entries.length === 0 ? (
-          <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
+          <View style={[styles.card, { backgroundColor: (colors.card || colors.surface), borderColor: colors.border }]}>
             <Text style={[styles.cardBody, { color: colors.textSecondary }]}>
               {t('callDiagnose.empty')}
             </Text>
@@ -165,7 +165,7 @@ export default function CallDiagnose() {
               style={[
                 styles.row,
                 {
-                  backgroundColor: colors.card,
+                  backgroundColor: (colors.card || colors.surface),
                   borderColor: colors.border,
                   borderLeftColor: levelColor(e.level, colors),
                 },
