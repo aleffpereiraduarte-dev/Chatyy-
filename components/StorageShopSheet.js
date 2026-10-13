@@ -147,12 +147,30 @@ export default function StorageShopSheet({ visible, onClose, currentTier = 'free
   const showPortal = isStripeCardAvailable();
 
   const tiers = useMemo(() => STORAGE_TIERS, []);
+  // [2026-10-13] iOS: só vender o que a App Store tem no catálogo (planos com
+  // "Missing metadata" no ASC voltavam 'sku_not_in_catalog' → "Plano em aprovação").
+  // Catálogo carregado = algum SKU de armazenamento com preço local. Antes de
+  // carregar, comportamento antigo (tudo visível).
+  const _skuFor = (tier, c) => (Platform.OS === 'ios'
+    ? (c === 'annual' ? tier.skuAnnualApple : tier.skuMonthlyApple)
+    : (c === 'annual' ? tier.skuAnnualGoogle : tier.skuMonthlyGoogle));
+  const _iosCatalog = Platform.OS === 'ios' && tiers.some((tr) => !!getStorageLocalizedPrice(tr.skuMonthlyApple) || !!getStorageLocalizedPrice(tr.skuAnnualApple));
+  const isTierAvailable = (tier, c) => !_iosCatalog || !!getStorageLocalizedPrice(_skuFor(tier, c));
+  const annualAvailable = !_iosCatalog || tiers.some((tr) => isTierAvailable(tr, 'annual'));
   // [2026-10-12] Repaginado P&B premium: destaque = cor do texto; sobre ele, cor do fundo.
   const tint = colors.text;
   const onTint = colors.background;
   const line = colors.border || (isDark ? '#2c2c2e' : '#e5e5ea');
   const cardBg = colors.cardBackground || colors.surface || (isDark ? '#0b0b0b' : '#fff');
   const soft = isDark ? '#1c1c1e' : '#f2f2f7';
+  useEffect(() => { if (!annualAvailable && cycle === 'annual') setCycle('monthly'); }, [annualAvailable, cycle]);
+  useEffect(() => {
+    const cur = tiers.find((x) => x.id === selectedId);
+    if (cur && !isTierAvailable(cur, cycle)) {
+      const alt = tiers.find((x) => isTierAvailable(x, cycle) && x.id !== currentTier);
+      if (alt) setSelectedId(alt.id);
+    }
+  }); // eslint-disable-line react-hooks/exhaustive-deps
   const selected = tiers.find((x) => x.id === selectedId) || tiers[0];
   const selectedIsCurrent = currentTier === selected.id;
   const selectedPending = pendingTier === selected.id;
@@ -233,7 +251,7 @@ export default function StorageShopSheet({ visible, onClose, currentTier = 'free
 
             {/* Cycle toggle */}
             <View style={[styles.toggleWrap, { backgroundColor: soft }]}>
-              {(['monthly', 'annual']).map((c) => {
+              {(annualAvailable ? ['monthly', 'annual'] : ['monthly']).map((c) => {
                 const active = cycle === c;
                 return (
                   <TouchableOpacity
@@ -269,17 +287,18 @@ export default function StorageShopSheet({ visible, onClose, currentTier = 'free
               const saved = cycle === 'annual' ? Math.max(0, tier.priceMonthly * 12 - tier.priceAnnual) : 0;
               const pending = pendingTier === tier.id;
               const accent = line;
+              const unavailable = !isCurrent && !isTierAvailable(tier, cycle);
 
               return (
                 <TouchableOpacity
                   key={tier.id}
                   onPress={() => setSelectedId(tier.id)}
                   activeOpacity={0.9}
-                  disabled={!!pendingTier}
+                  disabled={!!pendingTier || unavailable}
                   style={[
                     styles.tierCard,
                     { borderColor: isSel ? tint : accent, backgroundColor: cardBg,
-                      borderWidth: isSel ? 2 : 1, opacity: pending ? 0.6 : 1 },
+                      borderWidth: isSel ? 2 : 1, opacity: (pending || unavailable) ? 0.5 : 1 },
                   ]}
                 >
                   {isRec && (
@@ -293,6 +312,11 @@ export default function StorageShopSheet({ visible, onClose, currentTier = 'free
                   <View style={{ flex: 1 }}>
                     <View style={styles.tierTitleRow}>
                       <Text style={[styles.tierName, { color: colors.text }]}>{gbLabel(tier.gb)}</Text>
+                      {unavailable && (
+                        <View style={[styles.badge, { backgroundColor: soft }]}>
+                          <Text style={[styles.badgeText, { color: colors.muted }]}>{t('common.comingSoon') || 'Em breve'}</Text>
+                        </View>
+                      )}
                       {isCurrent && (
                         <View style={[styles.badge, { backgroundColor: soft }]}>
                           <Text style={[styles.badgeText, { color: colors.text }]}>{t('storage.currentPlan') || 'Seu plano atual'}</Text>
