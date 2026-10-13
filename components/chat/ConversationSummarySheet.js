@@ -813,7 +813,7 @@ export default function ConversationSummarySheet({
     if (!id || typeof onJumpToMessage !== 'function') return;
     onClose && onClose();
     const go = () => { try { onJumpToMessage(id); } catch {} };
-    if (USE_NATIVE_SHEETS) runAfterNativeSheet(go); else setTimeout(go, 250);
+    if (USE_NATIVE_SHEETS && Platform.OS !== 'ios') runAfterNativeSheet(go); else setTimeout(go, 250);
   };
 
   const msgIndex = useMemo(() => {
@@ -1138,7 +1138,7 @@ export default function ConversationSummarySheet({
 
   const ready = status === 'ready' && !!data;
   const showMarkRead = ready && range === 'unread' && typeof onMarkRead === 'function';
-  const bottomPad = Platform.OS === 'ios' && USE_NATIVE_SHEETS ? 14 : Math.max(14, (insets.bottom || 0) + 8);
+  const bottomPad = Math.max(14, (insets.bottom || 0) + 8);
 
   const footer = (
     <View style={[st.footer, { backgroundColor: C.bg, borderTopColor: C.border, paddingBottom: bottomPad }]}>
@@ -1215,7 +1215,9 @@ export default function ConversationSummarySheet({
 
   if (!visible) return null;
 
-  if (USE_NATIVE_SHEETS) {
+  // [2026-10-13] iOS: o formSheet nativo deslocava o ScrollView (texto começava
+  // cortado por baixo dos chips). No iOS usa o painel próprio (Modal), como no web.
+  if (USE_NATIVE_SHEETS && Platform.OS !== 'ios') {
     return (
       <NativeSheet visible={!!visible} onClose={onClose} detents={[0.72, 1]} backgroundColor={C.bg}>
         <View style={{ flex: 1, paddingTop: 10, backgroundColor: C.bg }}>{body}</View>
