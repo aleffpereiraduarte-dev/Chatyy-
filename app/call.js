@@ -138,6 +138,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuth } from '../context/AuthContext';
 import { useLanguage, useLanguageOptional } from '../context/LanguageContext';
 import AvatarCircle from '../components/AvatarCircle';
+import AddToCallSheet from '../components/AddToCallSheet'; // [2026-10-13 add-to-call]
 import ConnectionBars from '../components/ConnectionBars';
 import CallAudioStats from '../components/CallAudioStats';
 // [2026-05-18 video-quality-push] Adaptive bitrate + frame-drop indicator + stats peek.
@@ -5335,84 +5336,39 @@ function CallScreenInner() {
   }, [sendData, resetControlsTimer, sendSignaling, callId, conversationId, isGroupCall, user]);
 
   // ───── Add participant ─────
-  useEffect(() => {
-    if (!showAddParticipant) return;
-    let cancelled = false;
-    setAddParticipantLoading(true);
-    (async () => {
-      try {
-        const api = require('../services/api');
-        const inCall = new Set([
-          (user?.email || '').toLowerCase(),
-          ...Array.from(groupPeersRef.current?.keys?.() || []).map(e => (e || '').toLowerCase()),
-        ]);
-        if (contactEmail) inCall.add((contactEmail + '').toLowerCase());
-
-        const seen = new Map();
-        const addCandidate = (raw) => {
-          if (!raw) return;
-          const email = ((raw.email || raw.peer_email || raw.member_email || '') + '').toLowerCase();
-          if (!email || inCall.has(email)) return;
-          if (seen.has(email)) return;
-          seen.set(email, {
-            email,
-            name: raw.name || raw.display_name || raw.peer_name || email.split('@')[0],
-          });
-        };
-
-        let members = [];
-        if (conversationId) {
-          try {
-            const r = await api.chatGroupInfo(conversationId);
-            members = r?.data?.members || r?.members || [];
-          } catch {}
-          members.forEach(addCandidate);
-        }
-        const fetches = [];
-        fetches.push((async () => {
-          try {
-            const c = await api.getContactsList?.();
-            const contacts = c?.data?.contacts || c?.contacts || c?.data || c || [];
-            if (Array.isArray(contacts)) contacts.forEach(addCandidate);
-          } catch {}
-        })());
-        fetches.push((async () => {
-          try {
-            const cv = await api.chatConversations?.();
-            const convos = cv?.data?.conversations || cv?.conversations || cv?.data || cv || [];
-            if (Array.isArray(convos)) {
-              convos.forEach(co => {
-                if (co?.peer_email) addCandidate({ email: co.peer_email, name: co.peer_name || co.name });
-                if (Array.isArray(co?.members)) co.members.forEach(addCandidate);
-              });
-            }
-          } catch {}
-        })());
-        await Promise.all(fetches);
-        if (cancelled) return;
-        setAddParticipantCandidates(Array.from(seen.values()));
-      } catch (e) {
-        if (__DEV__) console.warn('[call.addParticipant.load]', e?.message);
-      } finally {
-        if (!cancelled) setAddParticipantLoading(false);
+  // [2026-10-13 add-to-call] Lista/busca/seleção vivem no AddToCallSheet
+  // (chat_call_add_candidates: só conversas direct + agenda). O convite agora
+  // usa chat_call_add (o chat_call_invite exige que o convidado já seja membro
+  // da conversa — numa 1:1 ninguém mais é, então "adicionar" sempre falhava).
+  const addParticipantExisting = useMemo(() => {
+    if (!showAddParticipant) return [];
+    const s = new Set();
+    if (user?.email) s.add(String(user.email).toLowerCase());
+    if (contactEmail) s.add(String(contactEmail).toLowerCase());
+    try { Array.from(groupPeersRef.current?.keys?.() || []).forEach((e) => e && s.add(String(e).toLowerCase())); } catch {}
+    try {
+      const r = roomRef.current;
+      if (r && r.remoteParticipants) {
+        Array.from(r.remoteParticipants.values()).forEach((p) => {
+          const id = String(p?.identity || '').toLowerCase().split('#')[0];
+          if (id.includes('@')) s.add(id);
+        });
       }
-    })();
-    return () => { cancelled = true; };
-  }, [showAddParticipant, conversationId, user?.email, contactEmail]);
+    } catch {}
+    return Array.from(s);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showAddParticipant, user?.email, contactEmail]);
 
-  const handleInviteToCall = useCallback(async (email) => {
-    if (!email || addParticipantBusy) return;
-    // Hard cap (WhatsApp 2025 parity). Count = local + current remotes. We
-    // compare against MAX_CALL_PARTICIPANTS - 1 so the invite slot fits.
+  const handleAddFromSheet = useCallback(async (emails) => {
+    const list = (Array.isArray(emails) ? emails : []).filter(Boolean);
+    if (!list.length) return { ok: false, code: 'no_invitees' };
+    // Hard cap (WhatsApp parity): local + remotos + convidados.
     try {
       const r = roomRef.current;
       const remoteCount = (r && r.remoteParticipants && r.remoteParticipants.size) || 0;
-      const occupied = remoteCount + 1; // include local participant
-      if (occupied >= MAX_CALL_PARTICIPANTS) {
-        if (__DEV__) console.warn('[call.invite] cap reached:', occupied);
-        // [2026-05-26] Surface the cap instead of a silent no-op + lock the UI.
+      if (remoteCount + 1 + list.length > MAX_CALL_PARTICIPANTS) {
         setParticipantLimitReached(true);
-        return;
+        return { ok: false, code: 'limit' };
       }
     } catch {}
     setAddParticipantBusy(true);
@@ -5420,38 +5376,17 @@ function CallScreenInner() {
     // convidado entra na mesma sala; o par recebe call_p2p_fallback e sobe junto).
     try { if (p2pRef.current && !p2pRef.current._done) p2pRef.current.fallback('group'); } catch {}
     try {
-      const { chatCallInvite } = require('../services/api');
-      // The backend ring-fan-out endpoint reuses the same callId — the
-      // invitee will join the same LiveKit room when they accept.
-      const res = await chatCallInvite(conversationId, callId, [email], !!isVideoCall);
-      // [2026-05-26] The backend enforces its own MAX_CALL_PARTICIPANTS. When
-      // it rejects (HTTP 403/409 surfaced via the response body) it returns
-      // success:false. Detect a limit-reached verdict and lock the add UI with
-      // a toast rather than silently swallowing the failure.
-      const data = (res && res.data) ? res.data : res;
-      const status = res && typeof res.status === 'number' ? res.status : 0;
-      const msgStr = String((data && (data.message || data.error || data.code)) || '').toLowerCase();
-      const limitHit = status === 403 || status === 409
-        || (data && (data.code === 'participant_limit' || data.limit_reached === true))
-        || /limit|cheia|lotad|máximo|maximo|full|cap reached|too many/.test(msgStr);
-      if (data && data.success === false && limitHit) {
-        setParticipantLimitReached(true);
-        return;
-      }
-      // Successful invite — remove the contact from the candidate list.
-      setAddParticipantCandidates(prev => prev.filter(c => (c.email || '').toLowerCase() !== email.toLowerCase()));
+      const { addToCall } = require('../services/callAddParticipants');
+      const res = await addToCall({ callId, conversationId, emails: list, video: !!isVideoCall });
+      if (!res.ok && res.code === 'limit') setParticipantLimitReached(true);
+      return res;
     } catch (e) {
-      if (__DEV__) console.warn('[call.invite]', e?.message);
-      // [2026-05-26] A thrown error may also carry a 403/409 status (some
-      // transports reject before returning a body). Treat that as limit-hit.
-      const st = e && (e.status || e.statusCode);
-      if (st === 403 || st === 409 || /limit|lotad|máximo|maximo|full|too many/.test(String(e?.message || '').toLowerCase())) {
-        setParticipantLimitReached(true);
-      }
+      if (__DEV__) console.warn('[call.addToCall]', e?.message);
+      return { ok: false, code: 'generic' };
     } finally {
       setAddParticipantBusy(false);
     }
-  }, [callId, conversationId, isVideoCall, addParticipantBusy]);
+  }, [callId, conversationId, isVideoCall]);
 
   // ───── Video filters (web only — kept as cosmetic stub) ─────
   const VIDEO_FILTERS = useMemo(() => [
@@ -6685,29 +6620,26 @@ function CallScreenInner() {
         </Pressable>
       </Modal>
 
-      {/* Add participant modal */}
-      <Modal visible={showAddParticipant} transparent animationType="fade" onRequestClose={() => setShowAddParticipant(false)}>
-        <Pressable style={styles.addPartOverlay} onPress={() => setShowAddParticipant(false)}>
-          <Pressable style={styles.addPartSheet} onPress={(e) => e.stopPropagation?.()}>
-            <View style={styles.addPartHeader}>
-              <Text style={styles.addPartTitle}>{t('call.addParticipantTitle') || 'Adicionar à chamada'}</Text>
-              <TouchableOpacity onPress={() => setShowAddParticipant(false)} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
-                <IconX size={22} color="#fff" />
-              </TouchableOpacity>
-            </View>
-
-            {/* Currently joined remotes — only shown to the host (isCaller) and
-                only for group calls. Each row has a "Silenciar" affordance that
-                fires chat_call_mute_participant → backend relays call_mute_request
-                → target's local mic is dropped. Avoids the kick/ban concept. */}
-            {isGroupCall && isCaller && (() => {
+      {/* Add participant — [2026-10-13] folha escura com busca/seções/seleção múltipla */}
+      <AddToCallSheet
+        visible={showAddParticipant}
+        onClose={() => setShowAddParticipant(false)}
+        onAdd={handleAddFromSheet}
+        onAdded={(res, rows, info) => { if (!info?.hasProblems) setShowAddParticipant(false); }}
+        callId={callId}
+        conversationId={conversationId}
+        isVideo={!!isVideoCall}
+        existingEmails={addParticipantExisting}
+        t={t}
+        loading={addParticipantBusy}
+        topSlot={isGroupCall && isCaller ? (() => {
               const r = roomRef.current;
               const joined = r && r.remoteParticipants
                 ? Array.from(r.remoteParticipants.values())
                 : [];
               if (joined.length === 0) return null;
               return (
-                <View style={{ marginBottom: 12 }}>
+                <View style={{ marginBottom: 8, paddingHorizontal: 16 }}>
                   <Text style={[styles.addPartEmail, { marginBottom: 8, fontWeight: '600' }]}>
                     {t('call.inCallSection') || 'Em chamada'}
                   </Text>
@@ -6744,41 +6676,8 @@ function CallScreenInner() {
                   })}
                 </View>
               );
-            })()}
-
-            {addParticipantLoading && addParticipantCandidates.length === 0 ? (
-              <Text style={styles.addPartEmpty}>{t('call.addParticipantLoading') || 'Carregando contatos...'}</Text>
-            ) : addParticipantCandidates.length === 0 ? (
-              <Text style={styles.addPartEmpty}>{t('call.addParticipantEmpty') || 'Nenhum contato disponível para adicionar.'}</Text>
-            ) : (
-              <ScrollView style={{ maxHeight: 380 }} showsVerticalScrollIndicator={false}>
-                {addParticipantCandidates.map((m) => {
-                  const email = m.email || '';
-                  const name = m.display_name || m.name || email.split('@')[0];
-                  return (
-                    <TouchableOpacity
-                      key={email}
-                      style={[styles.addPartRow, participantLimitReached && { opacity: 0.4 }]}
-                      onPress={() => handleInviteToCall(email)}
-                      disabled={addParticipantBusy || participantLimitReached}
-                      activeOpacity={0.7}
-                    >
-                      <AvatarCircle email={email} name={name} size={40} />
-                      <View style={{ flex: 1, marginLeft: 12 }}>
-                        <Text style={styles.addPartName} numberOfLines={1}>{name}</Text>
-                        <Text style={styles.addPartEmail} numberOfLines={1}>{email}</Text>
-                      </View>
-                      <View style={styles.addPartCallBtn}>
-                        <IconPhone size={16} color="#fff" />
-                      </View>
-                    </TouchableOpacity>
-                  );
-                })}
-              </ScrollView>
-            )}
-          </Pressable>
-        </Pressable>
-      </Modal>
+        })() : null}
+      />
 
       {/* [bug 2026-05-18 web-mic-permission] Mic permission modal — web only.
           Variants:

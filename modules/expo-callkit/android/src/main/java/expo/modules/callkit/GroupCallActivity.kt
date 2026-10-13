@@ -1294,53 +1294,31 @@ class GroupCallActivity : ComponentActivity() {
   // ─── Add participant ──────────────────────────────────────────────────────
 
   private fun showAddParticipant() {
+    // [2026-10-13 add-to-call] Mesmo seletor do 1:1 (CallAddParticipantSheet):
+    // busca, só conversas direct + agenda, seleção múltipla, motivo do erro.
     val extras = intent?.extras
     val present = HashSet<String>()
     room?.remoteParticipants?.values?.forEach { p -> p.identity?.value?.let { present.add(bareEmail(it)) } }
-    Toast.makeText(this, GroupCallStrings.s("loadingContacts"), Toast.LENGTH_SHORT).show()
-    lifecycleScope.launch {
-      val contacts = withContext(Dispatchers.IO) {
-        try { CallContacts.fetchContacts(applicationContext, extras) } catch (_: Throwable) { emptyList() }
-      }.filter { bareEmail(it.email) !in present }
-      if (finished || isFinishing) return@launch
-      if (contacts.isEmpty()) {
-        Toast.makeText(this@GroupCallActivity, GroupCallStrings.s("noContacts"), Toast.LENGTH_SHORT).show()
-        return@launch
+    invited.forEach { present.add(bareEmail(it.email)) }
+    CallAddParticipantOverlay.show(
+      activity = this,
+      callId = roomName,
+      conversationId = conversationId,
+      isVideo = hasVideo,
+      alreadyInCall = present,
+      intentExtras = extras,
+    ) { rung ->
+      if (finished || isFinishing) return@show
+      var changed = false
+      rung.forEach { (email, name) ->
+        val bare = bareEmail(email)
+        if (tilesByIdentity.keys.none { bareEmail(it) == bare }) {
+          invited.add(InvitedParticipant(bare, name, null))
+          addTile(identity = bare, displayName = name)
+          changed = true
+        }
       }
-      val labels = contacts.map { c -> c.name.ifEmpty { c.email } }.toTypedArray()
-      try {
-        AlertDialog.Builder(this@GroupCallActivity, android.R.style.Theme_DeviceDefault_Dialog_Alert)
-          .setTitle(GroupCallStrings.s("addToCall"))
-          .setItems(labels) { _, which ->
-            val c = contacts.getOrNull(which) ?: return@setItems
-            lifecycleScope.launch {
-              val ok = withContext(Dispatchers.IO) {
-                try {
-                  CallContacts.ringIntoCall(applicationContext, roomName, conversationId, c.email, hasVideo, extras)
-                } catch (_: Throwable) { false }
-              }
-              if (!finished) {
-                Toast.makeText(
-                  this@GroupCallActivity,
-                  if (ok) GroupCallStrings.s("calling", "name" to labels[which]) else GroupCallStrings.s("couldNotCall"),
-                  Toast.LENGTH_SHORT
-                ).show()
-              }
-              if (ok) {
-                val bare = bareEmail(c.email)
-                if (tilesByIdentity.keys.none { bareEmail(it) == bare }) {
-                  invited.add(InvitedParticipant(bare, labels[which], null))
-                  addTile(identity = bare, displayName = labels[which])
-                  relayoutGrid()
-                }
-              }
-            }
-          }
-          .setNegativeButton(GroupCallStrings.s("cancel"), null)
-          .show()
-      } catch (t: Throwable) {
-        Log.w(TAG, "add participant dialog failed: ${t.message}")
-      }
+      if (changed) relayoutGrid()
     }
   }
 

@@ -833,9 +833,14 @@ final class GroupCallViewController: UIViewController, @unchecked Sendable {
             }
         )
         let host = UIHostingController(rootView: picker)
+        // [2026-10-13 add-to-call] Folha escura (a tela de chamada é escura) e alta:
+        // a busca abre o teclado, meia altura escondia a lista.
+        host.overrideUserInterfaceStyle = .dark
+        host.view.backgroundColor = UIColor(white: 0.07, alpha: 1)
         if #available(iOS 15.0, *), let sheet = host.sheetPresentationController {
-            sheet.detents = [.medium(), .large()]
+            sheet.detents = [.large()]
             sheet.prefersGrabberVisible = true
+            sheet.preferredCornerRadius = 22
         }
         present(host, animated: true, completion: nil)
         // Keep the legacy notification for any JS listener.

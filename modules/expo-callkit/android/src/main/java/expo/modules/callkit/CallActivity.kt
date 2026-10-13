@@ -4829,27 +4829,10 @@ private fun CallScreen(
   val ctx = androidx.compose.ui.platform.LocalContext.current
   var audioDevices by remember { mutableStateOf(emptyList<AudioOutputEntry>()) }
 
-  // [add-participant 2026-05-26] Contact-picker state for the person+ button.
+  // [add-participant 2026-05-26] person+ → seletor. [2026-10-13 add-to-call]
+  // Lista/busca/seleção/convite vivem em CallAddParticipantSheet (só conversas
+  // direct + agenda, motivo do erro traduzido).
   var showAddParticipant by remember { mutableStateOf(false) }
-  var addParticipantContacts by remember { mutableStateOf(emptyList<CallContacts.Contact>()) }
-  var addParticipantLoading by remember { mutableStateOf(false) }
-  var addParticipantBusyEmail by remember { mutableStateOf<String?>(null) }
-  var addParticipantInvited by remember { mutableStateOf(setOf<String>()) }
-  var addParticipantError by remember { mutableStateOf<String?>(null) }
-  val addPartScope = rememberCoroutineScope()
-
-  // Load contacts whenever the picker opens (fresh each time so presence is
-  // current). Runs on IO; UI updates back on the composition dispatcher.
-  LaunchedEffect(showAddParticipant) {
-    if (!showAddParticipant) return@LaunchedEffect
-    addParticipantLoading = true
-    addParticipantError = null
-    val list = withContext(Dispatchers.IO) { CallContacts.fetchContacts(ctx) }
-    // Hide anyone already in the call (current remote identities are emails).
-    val present = state.groupParticipants.map { it.identity.lowercase() }.toSet()
-    addParticipantContacts = list.filter { it.email.lowercase() !in present }
-    addParticipantLoading = false
-  }
 
   // 1s timer driving the connected-call duration HUD.
   LaunchedEffect(state.status) {
@@ -5132,35 +5115,11 @@ private fun CallScreen(
       exit = slideOutVertically { it } + fadeOut(),
       modifier = Modifier.fillMaxSize(),
     ) {
-      AddParticipantSheet(
-        contacts = addParticipantContacts,
-        loading = addParticipantLoading,
-        busyEmail = addParticipantBusyEmail,
-        invited = addParticipantInvited,
-        error = addParticipantError,
-        onPick = { email ->
-          if (addParticipantBusyEmail == null) {
-            addParticipantBusyEmail = email
-            addParticipantError = null
-            addPartScope.launch {
-              val ok = withContext(Dispatchers.IO) {
-                CallContacts.ringIntoCall(
-                  ctx = ctx,
-                  callId = callId,
-                  conversationId = conversationId,
-                  email = email,
-                  isVideo = state.isVideo,
-                )
-              }
-              if (ok) {
-                addParticipantInvited = addParticipantInvited + email
-              } else {
-                addParticipantError = CallStrings.s("couldNotCall", "name" to email)
-              }
-              addParticipantBusyEmail = null
-            }
-          }
-        },
+      CallAddParticipantSheet(
+        callId = callId,
+        conversationId = conversationId,
+        isVideo = state.isVideo,
+        alreadyInCall = state.groupParticipants.map { it.identity.substringBefore('#').lowercase() }.toSet(),
         onDismiss = { showAddParticipant = false },
       )
     }
@@ -5205,7 +5164,7 @@ private fun CallScreen(
         onReactions = { showMore = false; showReactions = true },
         onScreenShare = { showMore = false; onStartScreenshare() },
         onHold = { showMore = false; onToggleHold() },
-        onAddParticipant = { showMore = false; addParticipantError = null; showAddParticipant = true },
+        onAddParticipant = { showMore = false; showAddParticipant = true },
         onToggleDataSaver = { showMore = false; onToggleDataSaver() },
         onKeypad = { showMore = false; showKeypad = true; dtmfBuffer = "" },
       )
@@ -6552,158 +6511,6 @@ private fun AudioOutputSheet(
         }
       }
       Spacer(Modifier.height(16.dp))
-    }
-  }
-}
-
-// [add-participant 2026-05-26] Contact picker sheet (WhatsApp "add to call").
-// Mirrors AudioOutputSheet styling: dim scrim + bottom card. Lists the
-// caller's Chatyy contacts; tapping one rings them into the running call.
-@Composable
-private fun AddParticipantSheet(
-  contacts: List<CallContacts.Contact>,
-  loading: Boolean,
-  busyEmail: String?,
-  invited: Set<String>,
-  error: String?,
-  onPick: (String) -> Unit,
-  onDismiss: () -> Unit,
-) {
-  Box(
-    modifier = Modifier
-      .fillMaxSize()
-      .background(Color.Black.copy(alpha = 0.55f))
-      .clickable(
-        indication = null,
-        interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
-      ) { onDismiss() },
-    contentAlignment = Alignment.BottomCenter,
-  ) {
-    Column(
-      modifier = Modifier
-        .fillMaxWidth()
-        .padding(horizontal = 8.dp, vertical = 24.dp)
-        .clip(RoundedCornerShape(24.dp))
-        .background(Color(0xFF14_1F_27))
-        .clickable(
-          indication = null,
-          interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
-        ) { /* swallow */ }
-        .padding(vertical = 16.dp),
-      horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-      Box(
-        modifier = Modifier
-          .width(40.dp)
-          .height(4.dp)
-          .clip(RoundedCornerShape(2.dp))
-          .background(Color.White.copy(alpha = 0.3f))
-      )
-      Spacer(Modifier.height(10.dp))
-      Text(text = "Adicionar à chamada", color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
-      Spacer(Modifier.height(12.dp))
-
-      if (error != null) {
-        Text(text = error, color = Color(0xFF_FF_6B_6B), fontSize = 13.sp)
-        Spacer(Modifier.height(8.dp))
-      }
-
-      when {
-        loading -> {
-          Text(text = "Carregando contatos…", color = Color.White.copy(alpha = 0.7f), fontSize = 14.sp)
-          Spacer(Modifier.height(16.dp))
-        }
-        contacts.isEmpty() -> {
-          Text(text = "Nenhum contato disponível", color = Color.White.copy(alpha = 0.7f), fontSize = 14.sp)
-          Spacer(Modifier.height(16.dp))
-        }
-        else -> {
-          Column(
-            modifier = Modifier
-              .fillMaxWidth()
-              .heightIn(max = 360.dp)
-              .verticalScroll(rememberScrollState())
-              .padding(horizontal = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp),
-          ) {
-            contacts.forEach { c ->
-              AddParticipantRow(
-                contact = c,
-                busy = busyEmail == c.email,
-                invited = c.email in invited,
-                onPick = { onPick(c.email) },
-              )
-            }
-          }
-          Spacer(Modifier.height(16.dp))
-        }
-      }
-    }
-  }
-}
-
-@Composable
-private fun AddParticipantRow(
-  contact: CallContacts.Contact,
-  busy: Boolean,
-  invited: Boolean,
-  onPick: () -> Unit,
-) {
-  Row(
-    modifier = Modifier
-      .fillMaxWidth()
-      .clip(RoundedCornerShape(14.dp))
-      .background(Color.White.copy(alpha = 0.06f))
-      .clickable(enabled = !busy && !invited) { onPick() }
-      .padding(horizontal = 14.dp, vertical = 12.dp),
-    verticalAlignment = Alignment.CenterVertically,
-  ) {
-    // Avatar disc with initial.
-    Box(
-      modifier = Modifier
-        .size(40.dp)
-        .clip(CircleShape)
-        .background(avatarBrush(contact.email)),
-      contentAlignment = Alignment.Center,
-    ) {
-      Text(
-        text = contact.name.firstOrNull()?.uppercase() ?: "?",
-        color = Color.White,
-        fontSize = 16.sp,
-        fontWeight = FontWeight.SemiBold,
-      )
-    }
-    Spacer(Modifier.width(12.dp))
-    Column(modifier = Modifier.weight(1f)) {
-      Text(
-        text = contact.name,
-        color = Color.White,
-        fontSize = 15.sp,
-        fontWeight = FontWeight.Medium,
-        maxLines = 1,
-      )
-      Text(
-        text = if (contact.online) "online" else contact.email,
-        color = if (contact.online) Color(0xFF_4C_D9_64) else Color.White.copy(alpha = 0.5f),
-        fontSize = 12.sp,
-        maxLines = 1,
-      )
-    }
-    Spacer(Modifier.width(8.dp))
-    when {
-      invited -> Icon(
-        imageVector = Icons.Filled.Check,
-        contentDescription = "Convidado",
-        tint = Color(0xFF_4C_D9_64),
-        modifier = Modifier.size(22.dp),
-      )
-      busy -> Text(text = "…", color = Color.White.copy(alpha = 0.8f), fontSize = 18.sp)
-      else -> Icon(
-        imageVector = Icons.Filled.PersonAdd,
-        contentDescription = "Adicionar",
-        tint = SpeakerRing,
-        modifier = Modifier.size(22.dp),
-      )
     }
   }
 }

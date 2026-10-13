@@ -670,37 +670,19 @@ export default function GroupCallScreen() {
   // they join THIS call. The rung users surface via the LiveKit participants
   // feed — nothing optimistic to do here on success.
   const handleAddToCall = useCallback(async (emails) => {
+    // [2026-10-13 add-to-call] O sheet mostra o motivo traduzido (ocupado/sem
+    // permissão/…) com base no código do servidor — aqui só convida e devolve.
     const callId = roomName || room || '';
     const list = (Array.isArray(emails) ? emails : []).slice(0, 16);
-    if (!callId || list.length === 0) return;
+    if (!callId || list.length === 0) return { ok: false, code: 'no_invitees' };
     setAddingMembers(true);
     try {
-      // apiCall resolves with the response BODY ({ success, data, message })
-      // even on HTTP errors (it never throws on non-2xx), so branch on the
-      // body shape. The catch only guards unexpected runtime errors.
-      const r = await api.chatCallAdd(callId, list, conversation_id, video === '1');
-      const ok = r && (r.success !== false);
-      if (ok) {
-        setShowAddSheet(false);
-        return;
-      }
-      const msg = String(r?.message || '');
-      const rateLimited = /rate|429|too many|limit|muita/i.test(msg);
-      Alert.alert(
-        t('call.addParticipant') || 'Adicionar',
-        rateLimited
-          ? (t('call.addRateLimited') || 'Muitas tentativas. Tente novamente em instantes.')
-          : (t('call.addFailed') || 'Não foi possível adicionar agora. Tente novamente.'),
-      );
-    } catch (e) {
-      Alert.alert(
-        t('call.addParticipant') || 'Adicionar',
-        t('call.addFailed') || 'Não foi possível adicionar agora. Tente novamente.',
-      );
+      const { addToCall } = require('../services/callAddParticipants');
+      return await addToCall({ callId, conversationId: conversation_id, emails: list, video: video === '1' });
     } finally {
       setAddingMembers(false);
     }
-  }, [roomName, room, conversation_id, video, t]);
+  }, [roomName, room, conversation_id, video]);
 
   // ─── Room → shell messages ───
   // Single handler for BOTH transports:
@@ -1161,8 +1143,11 @@ export default function GroupCallScreen() {
         visible={showAddSheet}
         onClose={() => setShowAddSheet(false)}
         onAdd={handleAddToCall}
+        onAdded={(res, rows, info) => { if (!info?.hasProblems) setShowAddSheet(false); }}
+        callId={roomName || room || ''}
+        conversationId={conversation_id}
+        isVideo={video === '1'}
         existingEmails={inCallEmails}
-        isDark
         t={t}
         loading={addingMembers}
       />
