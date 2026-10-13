@@ -1256,7 +1256,7 @@ function InboxScreenInner() {
     if (!email) return;
     try {
       const apiSvc = await import('../services/api');
-      const r = await apiSvc.taskCreateFromEmail(email.uid, currentFolder);
+      const r = await apiSvc.taskCreateFromEmail(email.uid, currentFolder, { subject: email.subject || '', from: email.from_email || email.from || '' });
       if (r?.success) {
         Alert.alert(
           t('tasks.added') || 'Tarefa criada',

@@ -37,6 +37,8 @@ const ChannelsTab = React.lazy(() => import('../components/ChannelsTab'));
 const CommunitiesTab = React.lazy(() => import('../components/CommunitiesTab'));
 const KidsLearnTab = React.lazy(() => import('../components/KidsLearnTab'));
 const KidsTVTab = React.lazy(() => import('../components/KidsTVTab'));
+// [reels-v1 2026-10-13] Aba Reels (tela cheia, ranking do servidor) — lazy: só monta ao abrir.
+const ReelsHomeTab = React.lazy(() => import('../components/ReelsHomeTab'));
 // [2026-10-13 sync-status] SyncBar (faixa no topo) saiu da home: o status de
 // sincronização agora troca o TÍTULO ("Conversas" → "Conectando…"), padrão
 // WhatsApp, via services/syncStatus.js (fonte única). SyncBar segue na conversa.
@@ -66,6 +68,20 @@ function IconCallsTab({ size = 24, color = '#666', active }) {
   return (
     <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={active ? 2.2 : 1.8} strokeLinecap="round" strokeLinejoin="round">
       <Path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07 19.5 19.5 0 01-6-6 19.79 19.79 0 01-3.07-8.67A2 2 0 014.11 2h3a2 2 0 012 1.72 12.84 12.84 0 00.7 2.81 2 2 0 01-.45 2.11L8.09 9.91a16 16 0 006 6l1.27-1.27a2 2 0 012.11-.45 12.84 12.84 0 002.81.7A2 2 0 0122 16.92z" />
+    </Svg>
+  );
+}
+
+// [reels-v1 2026-10-13] Reels: quadro arredondado com faixa de claquete + play (mesma família
+// de traço dos outros ícones da barra; play preenchido quando ativo).
+function IconReelsTab({ size = 24, color = '#666', active }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={active ? 2.2 : 1.8} strokeLinecap="round" strokeLinejoin="round">
+      <Rect x="3" y="3" width="18" height="18" rx="5" />
+      <Line x1="3" y1="8.5" x2="21" y2="8.5" />
+      <Line x1="9" y1="3.2" x2="11.5" y2="8.5" />
+      <Line x1="14.5" y1="3.2" x2="17" y2="8.5" />
+      <Path d="M10.5 12.2v5.1l4.2-2.55z" fill={active ? color : 'none'} />
     </Svg>
   );
 }
@@ -238,7 +254,9 @@ const DESKTOP_BREAKPOINT = 900;
 // barra; Reels (engajamento/Instagram) migra pro drawer de Apps (segue acessível
 // pelo botão Apps → Feed). Ordem: Chats (primário/default) · Email (diferencial)
 // · Ligações · Apps (hub/overflow na ponta).
-const TAB_KEYS_FULL = ['chats', 'email', 'calls', 'apps'];
+// [reels-v1 2026-10-13 founder] Reels VOLTA pra barra, no centro (Instagram): "as pessoas gostam
+// de scroll". Ordem: Conversas · Email · Reels · Ligações · Apps.
+const TAB_KEYS_FULL = ['chats', 'email', 'reels', 'calls', 'apps'];
 // Desktop keeps the classic email-hub layout — user asked for it to stay as-is.
 // Profile is no longer a chat tab — tap the avatar in the header to reach
 // /u/{email}. Keeps a single profile surface across the whole app.
@@ -292,7 +310,7 @@ function ChatHub() {
   // over the current tab — never as a visible tab body. A `?tab=status` deep-link
   // therefore falls back to 'chats' (which still shows the stories strip); the
   // composer deep-link (`?new=1`) still mounts the hidden status surface below.
-  const VALID_TABS = ['chats','calls','feed','learn','tv','channels','communities'];
+  const VALID_TABS = ['chats','calls','feed','learn','tv','channels','communities','reels'];
   // ?tab=reels / ?tab=apps are special — they trigger handleTabPress side-effects
   // (setPendingReels+goto feed / openAppsDrawer) instead of mapping 1:1 to a
   // renderable tab. We start on 'chats' and let a useEffect below dispatch them.
@@ -301,7 +319,9 @@ function ChatHub() {
   // feed tab already in reels mode; 'apps'/'email'/'one' are dispatched by the
   // ?tab= effect further below (also handles param changes while mounted).
   const _tabParam = typeof params.tab === 'string' ? params.tab : '';
-  const _initialTab = _tabParam === 'reels' ? 'feed' : (VALID_TABS.includes(_tabParam) ? _tabParam : 'chats');
+  // [reels-v1 2026-10-13] Reels é aba própria no celular; desktop/Kids seguem no modo reels do Feed.
+  const _reelsIsTab = !isKids && !(Platform.OS === 'web' && Dimensions.get('window').width >= DESKTOP_BREAKPOINT);
+  const _initialTab = _tabParam === 'reels' ? (_reelsIsTab ? 'reels' : 'feed') : (VALID_TABS.includes(_tabParam) && (_tabParam !== 'reels') ? _tabParam : 'chats');
   // Composer deep-link (`?new=1`, from the share sheet / UnifiedComposeFab /
   // notifications) needs the hidden status surface mounted so ChatStatusTab's
   // camera composer Modal can open over the current tab on first mount.
@@ -688,7 +708,9 @@ function ChatHub() {
     // default (Reels is the second sub-tab inside the feed). Reverts #896
     // which forced reels mode — user feedback 2026-05-21: clicking Reels
     // should land on Posts so the feed feels like an Instagram-style home.
-    if (tab === 'reels') { handleTabPress('feed'); return; }
+    // [reels-v1 2026-10-13] Celular: Reels é aba própria (cai no fluxo normal abaixo).
+    // Desktop/Kids: modo reels do Feed, como antes.
+    if (tab === 'reels' && (isDesktop || isKids)) { setPendingReels(true); handleTabPress('feed'); return; }
     if (tab === activeTab) return;
     // [beauty 2026-10-01] Tactile tap on a real tab switch (web-safe no-op).
     // [2026-10-07 app-feel-nav] No nativo o haptic sai do próprio TabBarItem
@@ -728,7 +750,7 @@ function ChatHub() {
 
     setActiveTab(tab);
     setMountedTabs(prev => { const next = new Set(prev); next.add(tab); return next; });
-  }, [indicatorAnim, contentOpacity, contentTranslateX, activeTab, TAB_KEYS]);
+  }, [indicatorAnim, contentOpacity, contentTranslateX, activeTab, TAB_KEYS, isDesktop, isKids]);
 
   // Trigger initial sync ONCE per account (not per app-version-bump).
   // Old gate was a global `sync_version` bump that re-ran the 8-phase
@@ -888,11 +910,11 @@ function ChatHub() {
   // autoNewStatus acima sumia em 500ms e, se o tab lazy ainda não tinha
   // montado, o compositor simplesmente não abria (o "+" parecia morto).
   const [newStatusNonce, setNewStatusNonce] = useState(() => (params.new === '1' ? Date.now() : 0));
-  const [pendingReels, setPendingReels] = useState(() => _tabParam === 'reels');
+  const [pendingReels, setPendingReels] = useState(() => _tabParam === 'reels' && !_reelsIsTab);
   // [2026-10-11 social-qa] ChatFeedTab reports its sub-mode so the mobile
   // shell can drop the "Feed" header and go full-bleed while Reels is open
   // (Instagram parity — was showing the feed header over the reel).
-  const [feedReelsMode, setFeedReelsMode] = useState(() => _tabParam === 'reels');
+  const [feedReelsMode, setFeedReelsMode] = useState(() => _tabParam === 'reels' && !_reelsIsTab);
   const onFeedModeChange = useCallback((mode) => setFeedReelsMode(mode === 'reels'), []);
   // [2026-05-30 STATUS CONSOLIDATION] When the chat-list home strip (ChatListTab)
   // taps a story ring, it flips to the canonical `status` tab and stashes the
@@ -939,7 +961,7 @@ function ChatHub() {
   const onFeedModeConsumed = useCallback(() => setPendingReels(false), []);
   // [2026-10-07 apps-menu] Apps drawer "Reels" tile → feed tab in reels mode
   // (ChatFeedTab consumes initialFeedMode='reels' → full-screen ReelsViewer).
-  const openReelsFromApps = useCallback(() => { setShowAppsDrawer(false); setPendingReels(true); handleTabPress('feed'); }, [handleTabPress]);
+  const openReelsFromApps = useCallback(() => { setShowAppsDrawer(false); handleTabPress('reels'); }, [handleTabPress]);
   // [2026-10-11 social-qa] Respect ?tab= for EVERY tab, on mount and when the
   // param changes while /chat stays mounted (router.push('/chat?tab=reels')).
   // Renderable tabs were already applied by useState on mount; the special
@@ -949,7 +971,7 @@ function ChatHub() {
     const tp = typeof params.tab === 'string' ? params.tab : '';
     if (!tp || tp === lastTabParamRef.current) return;
     lastTabParamRef.current = tp;
-    if (tp === 'reels') { setPendingReels(true); handleTabPress('feed'); return; }
+    if (tp === 'reels') { handleTabPress('reels'); return; }
     if (tp === 'apps' || tp === 'email' || tp === 'one') { handleTabPress(tp); return; }
     if (VALID_TABS.includes(tp)) handleTabPress(tp);
   }, [params.tab]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -968,6 +990,7 @@ function ChatHub() {
     tv: 'Chatyy TV',
     channels: t('channel.title') || 'Canais',
     communities: t('community.title') || 'Comunidades',
+    reels: t('reels.title') || 'Reels',
   };
 
   const renderHeaderAction = () => {
@@ -1225,6 +1248,9 @@ function ChatHub() {
             {mountedTabs.has('feed') && <View style={{ display: activeTab === 'feed' ? 'flex' : 'none', flex: activeTab === 'feed' ? 1 : undefined }}>
               <ChatErrorBoundary><Suspense fallback={null}><ChatFeedTab {...tabProps} /></Suspense></ChatErrorBoundary>
             </View>}
+            {mountedTabs.has('reels') && <View style={{ display: activeTab === 'reels' ? 'flex' : 'none', flex: activeTab === 'reels' ? 1 : undefined, backgroundColor: '#000' }}>
+              <ChatErrorBoundary name="reels"><Suspense fallback={null}><ReelsHomeTab {...tabProps} /></Suspense></ChatErrorBoundary>
+            </View>}
             {mountedTabs.has('status') && <View style={_statusSurfaceStyle(activeTab === 'status')} pointerEvents={activeTab === 'status' ? 'auto' : 'box-none'}>
               <ChatErrorBoundary name="status" resetKey={`${newStatusNonce}|${openStatusEmail || ''}`}><Suspense fallback={null}><ChatStatusTab {...tabProps} /></Suspense></ChatErrorBoundary>
             </View>}
@@ -1271,7 +1297,9 @@ function ChatHub() {
   // ── MOBILE LAYOUT (bottom tab bar) ──
   // Reels = full-bleed immersive (Instagram): no shell header / search bar;
   // ChatFeedTab's own "Posts" pill is the way back.
-  const reelsImmersive = activeTab === 'feed' && feedReelsMode;
+  const reelsImmersive = (activeTab === 'feed' && feedReelsMode) || activeTab === 'reels';
+  // [reels-v1 2026-10-13] Barra escura sobre o vídeo (Instagram) quando a aba Reels está ativa.
+  const barDark = isDark || activeTab === 'reels';
   return (
     <View style={[styles.container, {
       backgroundColor: reelsImmersive ? '#000' : (isDark ? SHELL_DARK : '#ffffff'),
@@ -1393,6 +1421,9 @@ function ChatHub() {
         {mountedTabs.has('feed') && <View style={{ display: activeTab === 'feed' ? 'flex' : 'none', flex: activeTab === 'feed' ? 1 : undefined }}>
           <ChatErrorBoundary><Suspense fallback={null}><ChatFeedTab {...tabProps} /></Suspense></ChatErrorBoundary>
         </View>}
+        {mountedTabs.has('reels') && <View style={{ display: activeTab === 'reels' ? 'flex' : 'none', flex: activeTab === 'reels' ? 1 : undefined, backgroundColor: '#000' }}>
+          <ChatErrorBoundary name="reels"><Suspense fallback={null}><ReelsHomeTab {...tabProps} /></Suspense></ChatErrorBoundary>
+        </View>}
         {mountedTabs.has('status') && <View style={_statusSurfaceStyle(activeTab === 'status')} pointerEvents={activeTab === 'status' ? 'auto' : 'box-none'}>
           <ChatErrorBoundary name="status" resetKey={`${newStatusNonce}|${openStatusEmail || ''}`}><Suspense fallback={null}><ChatStatusTab {...tabProps} /></Suspense></ChatErrorBoundary>
         </View>}
@@ -1413,20 +1444,20 @@ function ChatHub() {
           antes era um "card flutuante" (cantos 22 + sombra -4/elevation 16),
           padrão de site. Altura = 49pt iOS / 64-80dp Android + home indicator. */}
       <View accessibilityRole={Platform.OS === 'ios' ? 'tabbar' : 'tablist'} onLayout={GLASS_TAB_BAR ? onTabBarLayout : undefined} style={[styles.tabBar, {
-        backgroundColor: GLASS_TAB_BAR ? 'transparent' : (isDark ? SHELL_DARK : '#ffffff'),
+        backgroundColor: GLASS_TAB_BAR ? 'transparent' : (barDark ? SHELL_DARK : '#ffffff'),
         ...(GLASS_TAB_BAR ? { position: 'absolute', left: 0, right: 0, bottom: 0 } : {}),
         paddingBottom: Platform.OS === 'web' ? (insets.bottom || 10) : Math.max(insets.bottom, Platform.OS === 'android' ? 12 : 8),
         ...(Platform.OS !== 'web' ? {
           borderTopWidth: StyleSheet.hairlineWidth,
-          borderTopColor: isDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.12)',
+          borderTopColor: barDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.12)',
         } : {
           // [2026-10-08 chat-beauty-list] web: flat bar + hairline (same as
           // native) instead of a rounded floating card with a drop shadow.
           borderTopWidth: StyleSheet.hairlineWidth,
-          borderTopColor: isDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.10)',
+          borderTopColor: barDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.10)',
           backdropFilter: 'blur(24px) saturate(180%)',
           WebkitBackdropFilter: 'blur(24px) saturate(180%)',
-          backgroundColor: isDark ? 'rgba(11, 11, 11, 0.94)' : 'rgba(255, 255, 255, 0.94)',
+          backgroundColor: barDark ? 'rgba(11, 11, 11, 0.94)' : 'rgba(255, 255, 255, 0.94)',
         }),
       }]}>
         {/* [beauty 2026-10-01] WhatsApp-style sliding active indicator. The
@@ -1437,12 +1468,12 @@ function ChatHub() {
             só a cor do ícone/label. Mantida no Android/web. */}
         {/* [2026-10-07 native-ui-build] iOS: material translúcido do sistema
             (systemChromeMaterial, igual UITabBar) atrás dos itens. */}
-        {GLASS_TAB_BAR && <BarMaterial isDark={isDark} solidColor={isDark ? SHELL_DARK : '#ffffff'} />}
+        {GLASS_TAB_BAR && <BarMaterial isDark={barDark} solidColor={barDark ? SHELL_DARK : '#ffffff'} />}
         {!isKids && Platform.OS !== 'ios' && (
           <Animated.View
             pointerEvents="none"
             style={[styles.tabIndicator, {
-              backgroundColor: isDark ? '#f5f5f5' : '#0b0b0b',
+              backgroundColor: barDark ? '#f5f5f5' : '#0b0b0b',
               transform: [{ translateX: indicatorTranslateX }, { scaleX: indicatorScale }],
             }]}
           />
@@ -1450,16 +1481,16 @@ function ChatHub() {
         {isKids ? (
           <>
             <TabBarItem
-              icon={(active) => <IconChatsTab size={25} color={active ? (isDark ? TAB_ON_DARK : TAB_ON_LIGHT) : (isDark ? TAB_OFF_DARK : TAB_OFF_LIGHT)} active={active} />}
+              icon={(active) => <IconChatsTab size={25} color={active ? (barDark ? TAB_ON_DARK : TAB_ON_LIGHT) : (barDark ? TAB_OFF_DARK : TAB_OFF_LIGHT)} active={active} />}
               label={t('kids.chat') || 'Chats'}
               active={activeTab === 'chats'}
               onPress={() => handleTabPress('chats')}
-              isDark={isDark}
+              isDark={barDark}
               badge={0}
             />
             <TabBarItem
               icon={(active) => {
-                const c = active ? (isDark ? TAB_ON_DARK : TAB_ON_LIGHT) : (isDark ? TAB_OFF_DARK : TAB_OFF_LIGHT);
+                const c = active ? (barDark ? TAB_ON_DARK : TAB_ON_LIGHT) : (barDark ? TAB_OFF_DARK : TAB_OFF_LIGHT);
                 return (
                   <Svg width={25} height={25} viewBox="0 0 24 24" fill="none">
                     <Path d="M12 3L1 9l11 6 9-4.91V17h2V9L12 3z" fill={c} />
@@ -1470,11 +1501,11 @@ function ChatHub() {
               label={t('kids.learn') || 'ONE'}
               active={activeTab === 'learn'}
               onPress={() => handleTabPress('learn')}
-              isDark={isDark}
+              isDark={barDark}
             />
             <TabBarItem
               icon={(active) => {
-                const c = active ? '#f59e0b' : (isDark ? '#636366' : '#a0a8b4');
+                const c = active ? '#f59e0b' : (barDark ? '#636366' : '#a0a8b4');
                 return (
                   <Svg width={25} height={25} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth={active ? 2.2 : 1.8} strokeLinecap="round" strokeLinejoin="round">
                     <Rect x="2" y="7" width="20" height="15" rx="2" ry="2" />
@@ -1485,13 +1516,13 @@ function ChatHub() {
               label={t('kids.tv') || 'TV'}
               active={activeTab === 'tv'}
               onPress={() => handleTabPress('tv')}
-              isDark={isDark}
+              isDark={barDark}
             />
             {/* Kids: "Perfil" tab now opens the unified profile, no more
                 separate ChatProfileTab duplicate. */}
             <TabBarItem
               icon={(active) => {
-                const c = active ? '#10b981' : (isDark ? '#636366' : '#a0a8b4');
+                const c = active ? '#10b981' : (barDark ? '#636366' : '#a0a8b4');
                 return (
                   <Svg width={25} height={25} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth={active ? 2.2 : 1.8} strokeLinecap="round" strokeLinejoin="round">
                     <SvgCircle cx="12" cy="8" r="5" />
@@ -1502,44 +1533,52 @@ function ChatHub() {
               label={t('kids.profile') || 'Perfil'}
               active={false}
               onPress={() => user?.email && router.push(`/u/${encodeURIComponent(user.email)}`)}
-              isDark={isDark}
+              isDark={barDark}
             />
           </>
         ) : (
           <>
             <TabBarItem
-              icon={(active) => <IconChatsTab size={22} color={active ? (isDark ? TAB_ON_DARK : TAB_ON_LIGHT) : (isDark ? TAB_OFF_DARK : TAB_OFF_LIGHT)} active={active} />}
+              icon={(active) => <IconChatsTab size={22} color={active ? (barDark ? TAB_ON_DARK : TAB_ON_LIGHT) : (barDark ? TAB_OFF_DARK : TAB_OFF_LIGHT)} active={active} />}
               label={t('chat.tabChats') || 'Chats'}
               active={activeTab === 'chats'}
               onPress={() => handleTabPress('chats')}
               onLongPress={requestNewStatus /* [2026-10-09 status-composer] segurar = câmera do status (Instagram) */}
-              isDark={isDark}
+              isDark={barDark}
               badge={chatsBadge}
             />
             {/* [2026-10-03] Email no lugar do Reels — diferencial do super-app
                 + utilidade diária. Abre o inbox (/inbox) via handleTabPress('email'). */}
             <TabBarItem
-              icon={(active) => <IconMail size={22} color={active ? (isDark ? TAB_ON_DARK : TAB_ON_LIGHT) : (isDark ? TAB_OFF_DARK : TAB_OFF_LIGHT)} />}
+              icon={(active) => <IconMail size={22} color={active ? (barDark ? TAB_ON_DARK : TAB_ON_LIGHT) : (barDark ? TAB_OFF_DARK : TAB_OFF_LIGHT)} />}
               label={t('chat.tabEmail') || 'Email'}
               active={false}
               onPress={() => handleTabPress('email')}
-              isDark={isDark}
+              isDark={barDark}
               badge={emailBadge}
             />
+            {/* [reels-v1 2026-10-13] Reels no centro da barra (tela cheia + ranking "Para você"). */}
             <TabBarItem
-              icon={(active) => <IconCallsTab size={22} color={active ? (isDark ? TAB_ON_DARK : TAB_ON_LIGHT) : (isDark ? TAB_OFF_DARK : TAB_OFF_LIGHT)} active={active} />}
+              icon={(active) => <IconReelsTab size={22} color={active ? (barDark ? TAB_ON_DARK : TAB_ON_LIGHT) : (barDark ? TAB_OFF_DARK : TAB_OFF_LIGHT)} active={active} />}
+              label={t('reels.title') || 'Reels'}
+              active={activeTab === 'reels'}
+              onPress={() => handleTabPress('reels')}
+              isDark={barDark}
+            />
+            <TabBarItem
+              icon={(active) => <IconCallsTab size={22} color={active ? (barDark ? TAB_ON_DARK : TAB_ON_LIGHT) : (barDark ? TAB_OFF_DARK : TAB_OFF_LIGHT)} active={active} />}
               label={t('chat.tabCalls') || 'Ligações'}
               active={activeTab === 'calls'}
               onPress={() => handleTabPress('calls')}
-              isDark={isDark}
+              isDark={barDark}
               badge={missedCallBadge}
             />
             <TabBarItem
-              icon={(active) => <IconAppsTab size={22} color={active ? (isDark ? TAB_ON_DARK : TAB_ON_LIGHT) : (isDark ? TAB_OFF_DARK : TAB_OFF_LIGHT)} active={active} />}
+              icon={(active) => <IconAppsTab size={22} color={active ? (barDark ? TAB_ON_DARK : TAB_ON_LIGHT) : (barDark ? TAB_OFF_DARK : TAB_OFF_LIGHT)} active={active} />}
               label={t('chat.tabApps') || 'Apps'}
               active={showAppsDrawer}
               onPress={() => handleTabPress('apps')}
-              isDark={isDark}
+              isDark={barDark}
             />
           </>
         )}

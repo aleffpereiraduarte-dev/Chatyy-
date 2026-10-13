@@ -33,6 +33,7 @@ import {
 } from '../components/Icons';
 // [2026-10-12 auth-polish] same rules / error mapping / strength meter as /signup-phone.
 import SignupPasswordMeter from '../components/signup/SignupPasswordMeter';
+import { SignupConsentBlock } from '../components/consent/ConsentOptions'; // [2026-10-13 consent-lgpd]
 import { usernameLocalError, sanitizeUsernameTyping, friendlyServerError } from '../components/signup/signupSmarts';
 
 export default function SignupUsername() {
@@ -196,8 +197,9 @@ export default function SignupUsername() {
         const lr = await loginWithToken(r.data.token, r.data.email);
         if (!mountedRef.current) return;
         if (lr?.success) {
+          // [2026-10-13 consent-lgpd] sem auto-redirect: a etapa final mostra as 2
+          // opções opcionais (desmarcadas) + "Começar" (ver step === 'done').
           goStep('done');
-          setTimeout(() => { if (mountedRef.current) try { router.replace('/chat'); } catch {} }, 700);
         } else {
           setError(lr?.message ? _errText(lr, 'signupUsername.loginFailed') : (t('signupUsername.loginFailed') || 'Falha ao entrar após criar conta'));
         }
@@ -519,12 +521,17 @@ export default function SignupUsername() {
                         : `Bem-vindo, ${_firstName}!`}
                     </Text>
                   )}
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 12 }}>
-                    <IconSparkles size={16} color={colors.primary} />
-                    <Text style={{ fontSize: 15, color: colors.textSecondary }}>
-                      {t('signupPhone.redirecting') || 'Abrindo seu Chatyy…'}
-                    </Text>
-                  </View>
+                  {/* [2026-10-13 consent-lgpd] opções opcionais depois do aceite dos Termos. */}
+                  <SignupConsentBlock colors={colors} style={{ marginTop: 28 }} />
+                  <TouchableOpacity
+                    onPress={() => { try { router.replace('/chat'); } catch {} }}
+                    activeOpacity={0.85}
+                    style={[styles.cta, { alignSelf: 'stretch', marginTop: 24, backgroundColor: colors.primary }]}
+                    accessibilityRole="button"
+                  >
+                    <Text style={[styles.ctaText, { color: colors.onPrimary || '#fff' }]}>{t('onb.doneStart')}</Text>
+                    <IconArrowRight size={18} color={colors.onPrimary || '#fff'} style={{ marginLeft: 8 }} />
+                  </TouchableOpacity>
                 </View>
               );
             })()}

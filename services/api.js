@@ -9577,6 +9577,25 @@ export async function feedView(postId) {
   return apiCall('feed_view', { post_id: postId }, 'POST');
 }
 
+// [reels-v1 2026-10-13] Reels recomendados (backend reels.php via email.php).
+// Servidor sem o patch responde "Unknown action" → ReelsViewer cai no feedList.
+export async function reelsRecFeed({ cursor = null, limit = 10, excludeIds = [] } = {}) {
+  return apiCall('reels_rec_feed', { cursor: cursor || '', limit, exclude_ids: (excludeIds || []).slice(-300) }, 'POST');
+}
+// events: [{ post_id, type: view|like|unlike|share|save|unsave|comment|follow|not_interested, watch_ms?, duration_ms?, replays? }]
+export async function reelsEvents(events) {
+  return apiCall('reels_events', { events }, 'POST');
+}
+export async function reelsInterestsGet() {
+  return apiCall('reels_interests_get', {}, 'POST');
+}
+export async function reelsInterestsSet(interests, { skip = false } = {}) {
+  return apiCall('reels_interests_set', { interests: interests || [], skip: !!skip }, 'POST');
+}
+export async function reelsInterestsReset() {
+  return apiCall('reels_interests_reset', {}, 'POST');
+}
+
 export async function feedComment(postId, content, replyToId, opts = {}) {
   // Reels P1 — sticker / video / image comment reply. When the user
   // taps the GIF icon or compact-camera icon in FeedComments, we pass
@@ -12155,7 +12174,15 @@ export async function taskDelete(id) {
   return apiCall('task_delete', { id }, 'POST');
 }
 export async function taskCreateFromEmail(uid, folder = 'INBOX', extra = {}) {
-  return apiCall('task_create_from_email', { uid, folder, ...extra }, 'POST');
+  // [2026-10-13 tarefas v2] pim_task_create guarda uid/pasta/remetente (a
+  // tarefa abre o e-mail). O legado exigia `title` e o app só mandava uid →
+  // 400 "title required" em silêncio. Servidor sem pim.php → legado c/ assunto.
+  const title = String(extra.subject || extra.title || '').trim() || '(e-mail)';
+  const r = await apiCall('pim_task_create', {
+    title, email_uid: String(uid), email_folder: folder, email_from: typeof extra.from === 'string' ? extra.from.slice(0, 300) : '', notes: extra.notes || '',
+  }, 'POST');
+  if (r?.success || !/unknown action/i.test(String(r?.message || r?.error || ''))) return r;
+  return apiCall('task_create_from_email', { uid, folder, title, subject: title, ...extra }, 'POST');
 }
 
 // ──────────────────────────────────────────────────────────────────

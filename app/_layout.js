@@ -461,6 +461,7 @@ import PhoneOfflineBanner from '../components/PhoneOfflineBanner';
 // silently drops. Native-only; renders null on web.
 import PushTokenStaleBanner from '../components/PushTokenStaleBanner';
 import PushPermissionPrimer from '../components/PushPermissionPrimer'; // [2026-10-07 native-polish]
+import TermsUpdateGate from '../components/consent/TermsUpdateNotice'; // [2026-10-13 consent-lgpd]
 import { registerBackgroundSync } from '../services/backgroundSync';
 // [2026-10-08 receipts-speed] Side-effect: define+registra a task de push em 2º
 // plano que manda o ✓✓ cinza (chat_push_delivered com o d_ack do push) — cobre
@@ -2035,6 +2036,7 @@ export default function RootLayout() {
                   <Stack.Screen name="activity-log" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR /* [2026-10-09 native-headers] */ }} />
                   <Stack.Screen name="advanced-key" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR /* [2026-10-09 native-headers] */ }} />
                   <Stack.Screen name="advanced-privacy" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR /* [2026-10-09 native-headers] */ }} />
+                  <Stack.Screen name="privacy-personalization" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR /* [2026-10-13 consent-lgpd] */ }} />
                   <Stack.Screen name="passkeys" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR /* [2026-10-09 passkeys] */ }} />
                   <Stack.Screen name="profile-qr" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR /* [2026-10-09 native-headers] */ }} />
                   <Stack.Screen name="email-signatures" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR /* [2026-10-09 native-headers] */ }} />
@@ -2043,6 +2045,7 @@ export default function RootLayout() {
                   <Stack.Screen name="email-import" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR /* [2026-10-09 native-headers] */ }} />
                   <Stack.Screen name="pgp-keys" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR /* [2026-10-09 native-headers] */ }} />
                   <Stack.Screen name="tasks" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR }} />{/* [2026-10-08 settings-redesign] header nativo (título grande) */}
+                  <Stack.Screen name="calendar-sync" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR }} />{/* [2026-10-13 calendario] CalDAV/perfil iPhone */}
                   <Stack.Screen name="notification-preferences" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR /* [2026-10-09 native-headers] */ }} />
                   <Stack.Screen name="spotlight" options={{ presentation: 'card', animation: _navAnim('slide_from_bottom') }} />
                   <Stack.Screen name="bots" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR /* [2026-10-09 native-headers] */ }} />
@@ -2149,6 +2152,8 @@ export default function RootLayout() {
                   <PushLoginRequestModal />
                 </Suspense>
                 <WhatsNewGate />
+                {/* [2026-10-13 consent-lgpd] aviso único "Atualizamos nossos Termos" p/ contas antigas (não bloqueia) */}
+                <TermsUpdateGate />
                 {/* [2026-10-07 native-polish] push pre-permission sheet (gap P0-6) */}
                 <PushPermissionPrimer />
                 <Suspense fallback={null}>

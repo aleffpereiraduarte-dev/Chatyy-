@@ -188,6 +188,16 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onF
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const win = useWindowDimensions();
+  // [2026-10-13 calendario] Data/hora de compromisso no assunto/corpo
+  // ("reunião sexta 15h", "dia 20/10 às 9:30") → botão "Adicionar ao
+  // calendário · sex 15:00" já com data. Parser local (sem IA, sem rede).
+  const detectedEventAt = useMemo(() => {
+    try {
+      if (!email) return null;
+      const body = String(email.body_text || String(email.body_html || '').replace(/<[^>]+>/g, ' ') || email.body || '').slice(0, 1500);
+      return require('../services/pim').detectEventInText(`${email.subject || ''}\n${body}`);
+    } catch { return null; }
+  }, [email?.uid, email?.subject, email?.body_text, email?.body_html]); // eslint-disable-line react-hooks/exhaustive-deps
   const [showLabelPicker, setShowLabelPicker] = useState(false);
   const [blocked, setBlocked] = useState(false);
   const [muted, setMuted] = useState(false);
@@ -1675,14 +1685,27 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onF
         <TouchableOpacity
           style={[s.secBtn, { backgroundColor: colors.primary + '12' }]}
           onPress={() => {
-            const title = encodeURIComponent(email.subject || '');
-            router.push(`/calendar?newEvent=true&title=${title}`);
+            // [2026-10-13] antes o /calendar ignorava estes parâmetros.
+            const title = encodeURIComponent(String(email.subject || '').replace(/^(re|fw|fwd|enc|res)\s*:\s*/i, '').slice(0, 150));
+            if (detectedEventAt) {
+              const p2 = (n) => String(n).padStart(2, '0');
+              const d = detectedEventAt;
+              const iso = `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}T${p2(d.getHours())}:${p2(d.getMinutes())}:00`;
+              router.push(`/calendar?newEvent=true&title=${title}&start=${encodeURIComponent(iso)}`);
+            } else {
+              const body = String(email.body_text || '').slice(0, 400);
+              router.push(`/calendar?newEvent=true&title=${title}${body ? `&text=${encodeURIComponent(`${email.subject || ''} ${body}`.slice(0, 450))}` : ''}`);
+            }
           }}
-          accessibilityLabel={t('reader.createEvent')}
+          accessibilityLabel={detectedEventAt ? (t('reader.addToCalendar') || 'Adicionar ao calendário') : t('reader.createEvent')}
           accessibilityRole="button"
         >
-          <IconCalendar size={14} color={colors.textSecondary} style={{ marginRight: 6 }} />
-          <Text style={[s.secBtnText, { color: colors.textSecondary }]}>{t('reader.createEvent')}</Text>
+          <IconCalendar size={14} color={detectedEventAt ? colors.text : colors.textSecondary} style={{ marginRight: 6 }} />
+          <Text style={[s.secBtnText, { color: detectedEventAt ? colors.text : colors.textSecondary, fontWeight: detectedEventAt ? '700' : undefined }]}>
+            {detectedEventAt
+              ? `${t('reader.addToCalendar') || 'Adicionar ao calendário'} · ${(() => { try { return detectedEventAt.toLocaleDateString(t('_locale') || undefined, { weekday: 'short', day: 'numeric', month: 'short' }) + ' ' + String(detectedEventAt.getHours()).padStart(2, '0') + ':' + String(detectedEventAt.getMinutes()).padStart(2, '0'); } catch { return ''; } })()}`
+              : t('reader.createEvent')}
+          </Text>
         </TouchableOpacity>
       </View>
 

@@ -43,6 +43,7 @@ import { markFreshSignup } from '../services/firstRun'; // [2026-10-11 funnel-qa
 // smarter phone/handle/password helpers.
 import { ThreadKeyboardAvoider } from '../utils/threadKeyboard';
 import SignupPasswordMeter from '../components/signup/SignupPasswordMeter';
+import { SignupConsentBlock } from '../components/consent/ConsentOptions'; // [2026-10-13 consent-lgpd]
 import {
   loadSignupDraft, saveSignupDraft, clearSignupDraft, parsePhoneInput,
   usernameCandidates, usernameLocalError, sanitizeUsernameTyping, friendlyServerError,
@@ -200,6 +201,9 @@ export default function SignupPhone() {
   // module is iOS/Android only). Mirrors login.js:478 pattern so the same
   // RestoreBackupPrompt component handles both entry points.
   const [showRestorePrompt, setShowRestorePrompt] = useState(false);
+  // [2026-10-13 consent-lgpd] Conta NOVA: a etapa final mostra as 2 opções
+  // opcionais (desmarcadas) e só sai com "Começar" — sem auto-redirect.
+  const [consentHold, setConsentHold] = useState(false);
   const [restoreBackups, setRestoreBackups] = useState([]);
   const _postSignupNavRef = useRef(null); // { target: '/chat' } deferred until prompt closes
   // Avatar source picker — Instagram/WhatsApp pattern. iOS uses native
@@ -455,9 +459,13 @@ export default function SignupPhone() {
   // sheet and defer the router.replace('/chat') until the user picks
   // "Restaurar" or "Pular". Web and any failure mode falls through to the
   // immediate navigation so the prompt is never a blocker.
-  const _maybePromptRestoreThenGoChat = () => {
-    _postSignupNavRef.current = { target: '/chat' };
+  const _maybePromptRestoreThenGoChat = (opts = {}) => {
+    // [2026-10-13 consent-lgpd] hold = conta nova: fica na etapa final (opções de
+    // consentimento + "Começar"); fechar o prompt de backup também não navega.
+    const _hold = !!opts.hold;
+    _postSignupNavRef.current = _hold ? null : { target: '/chat' };
     const _navNow = () => {
+      if (_hold) return;
       setTimeout(() => {
         if (mountedRef.current) { try { router.replace('/chat'); } catch {} }
       }, 600);
@@ -795,13 +803,15 @@ export default function SignupPhone() {
             } catch { /* avatar upload best-effort, signup already succeeded */ }
           }
           if (!mountedRef.current) return;
+          setConsentHold(true); // [2026-10-13 consent-lgpd]
           goStep('done');
           // WhatsApp-parity backup-restore prompt: probe iCloud / Drive for
           // existing backups tied to this phone number. If we find ≥1 we
           // defer navigation and let the user pick "Restaurar" vs "Pular".
           // Web + any error path falls back to the immediate router.replace
           // so signup is never blocked by the probe.
-          _maybePromptRestoreThenGoChat();
+          // [2026-10-13 consent-lgpd] conta nova → sem auto-redirect (ver consentHold).
+          _maybePromptRestoreThenGoChat({ hold: true });
         } else {
           setError(lr?.message || (t('signupPhone.signupError') || 'Falha ao entrar após criar conta'));
         }
@@ -1874,12 +1884,14 @@ export default function SignupPhone() {
                       {_welcome}
                     </Text>
                   )}
+                  {!consentHold && (
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 12 }}>
                     <IconSparkles size={16} color={colors.primary} />
                     <Text style={{ fontSize: 15, color: colors.textSecondary }}>
                       {t('signupPhone.redirecting') || 'Abrindo seu Chatyy…'}
                     </Text>
                   </View>
+                  )}
                   <View style={{ alignSelf: 'stretch', marginTop: 28, gap: 10 }}>
                     {[
                       [IconMessageCircle, t('onb.doneTip1')],
@@ -1894,6 +1906,11 @@ export default function SignupPhone() {
                       </View>
                     ))}
                   </View>
+                  {/* [2026-10-13 consent-lgpd] opções opcionais (desmarcadas) depois do
+                      aceite dos Termos — só p/ conta nova; grava a prova ao montar. */}
+                  {consentHold && (
+                    <SignupConsentBlock colors={colors} style={{ marginTop: 24 }} />
+                  )}
                   {!showRestorePrompt && (
                     <TouchableOpacity
                       onPress={() => { try { router.replace('/chat'); } catch {} }}

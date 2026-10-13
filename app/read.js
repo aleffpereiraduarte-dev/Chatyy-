@@ -304,7 +304,7 @@ export default function ReadScreen() {
   const handleAddAsTask = async () => {
     try {
       const { taskCreateFromEmail } = await import('../services/api');
-      const r = await taskCreateFromEmail(uid, folder);
+      const r = await taskCreateFromEmail(uid, folder, { subject: email?.subject || '', from: email?.from_email || email?.from || '' });
       if (r?.success) {
         Alert.alert(
           t('tasks.added') || 'Tarefa criada',

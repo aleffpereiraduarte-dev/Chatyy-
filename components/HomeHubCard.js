@@ -47,7 +47,8 @@ function useHubCounts() {
       // Tasks — pending count (cheap SQLite).
       taskList('pending').then((r) => {
         if (!alive) return;
-        const n = r?.success ? (r.data?.tasks?.length || 0) : 0;
+        // [2026-10-13] o servidor ignora `filter` → conta só as pendentes aqui.
+        const n = r?.success ? (r.data?.tasks || []).filter((x) => !(x.done === true || x.done === 't' || x.done === 1 || x.done === '1')).length : 0;
         _hubCountsCache.tasks = n; setCounts((c) => ({ ...c, tasks: n }));
       }).catch(() => {});
       // Agenda — events happening today (today-only window → count = today's events).

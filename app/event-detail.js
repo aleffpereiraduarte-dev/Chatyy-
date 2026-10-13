@@ -20,6 +20,8 @@ import {
 } from '../components/Icons';
 import { DateTimePickerModal } from '../components/ScheduleModals';
 import NativeSwitch from '../components/NativeSwitch'; // [2026-10-11 polish-secondary] P&B (Switch web = teal)
+// [2026-10-13 calendario] horários de evento = relógio LOCAL (parseServerDate lia como UTC → -3h no BR)
+import { parseCalDate } from '../utils/calDate';
 
 // Human-readable recurrence label — never surface the raw RRULE
 // (e.g. "FREQ=MONTHLY;BYMONTHDAY=15") to the user.
@@ -64,19 +66,19 @@ const safeAlert = (title, message, buttons) => {
 
 function formatDate(dateStr) {
   if (!dateStr) return '';
-  const d = api.parseServerDate(dateStr);
+  const d = parseCalDate(dateStr);
   return d.toLocaleDateString([], { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
 }
 
 function formatTimeRange(startStr, endStr, allDay, allDayLabel) {
   if (allDay) return allDayLabel || 'All day';
-  const startD = api.parseServerDate(startStr);
-  const endD = api.parseServerDate(endStr);
+  const startD = parseCalDate(startStr);
+  const endD = parseCalDate(endStr);
   const sameDay = startD.toDateString() === endD.toDateString();
   if (sameDay) {
-    return `${formatTime(startStr)} - ${formatTime(endStr)}`;
+    return `${formatTime(startD)} - ${formatTime(endD)}`;
   }
-  return `${formatDate(startStr)} ${formatTime(startStr)} - ${formatDate(endStr)} ${formatTime(endStr)}`;
+  return `${formatDate(startStr)} ${formatTime(startD)} - ${formatDate(endStr)} ${formatTime(endD)}`;
 }
 
 function padTwo(n) { return String(n).padStart(2, '0'); }
@@ -195,8 +197,8 @@ function EditEventView({ event, onSave, onCancel, colors, t }) {
   };
   const applyFreeSlot = (slot) => {
     try {
-      const s = api.parseServerDate(slot.start);
-      const e = api.parseServerDate(slot.end);
+      const s = parseCalDate(slot.start);
+      const e = parseCalDate(slot.end);
       setStartDate(dateToDateStr(s));
       setStartTime(dateToTimeStr(s));
       setEndDate(dateToDateStr(e));
@@ -216,12 +218,12 @@ function EditEventView({ event, onSave, onCancel, colors, t }) {
       setRecurrence(event.recurrence_rule || '');
       setReminder(event.reminder || 'none');
       if (event.start_at) {
-        const s = api.parseServerDate(event.start_at);
+        const s = parseCalDate(event.start_at);
         setStartDate(dateToDateStr(s));
         setStartTime(dateToTimeStr(s));
       }
       if (event.end_at) {
-        const e = api.parseServerDate(event.end_at);
+        const e = parseCalDate(event.end_at);
         setEndDate(dateToDateStr(e));
         setEndTime(dateToTimeStr(e));
       }
@@ -517,7 +519,7 @@ function EditEventView({ event, onSave, onCancel, colors, t }) {
               </Text>
               <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
                 {freeSlots.map((sl, i) => {
-                  const d = api.parseServerDate(sl.start);
+                  const d = parseCalDate(sl.start);
                   const label = `${d.toLocaleDateString()} ${d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
                   return (
                     <TouchableOpacity
@@ -699,8 +701,8 @@ function EventDetailScreenInner() {
             const deviceCalendars = await ExpoCalendar.getCalendarsAsync(ExpoCalendar.EntityTypes.EVENT);
             if (deviceCalendars.length > 0) {
               const calendarIds = deviceCalendars.map(c => c.id);
-              const startDate = api.parseServerDate(event.start_at);
-              const endDate = api.parseServerDate(event.end_at);
+              const startDate = parseCalDate(event.start_at);
+              const endDate = parseCalDate(event.end_at);
               const searchStart = new Date(startDate.getTime() - 60000);
               const searchEnd = new Date(endDate.getTime() + 60000);
               const deviceEvents = await ExpoCalendar.getEventsAsync(calendarIds, searchStart, searchEnd);
@@ -783,8 +785,8 @@ function EventDetailScreenInner() {
             // every edit. Accept both for forward compat.
             const _startSrc = data.start_at || data.starts_at;
             const _endSrc = data.end_at || data.ends_at;
-            if (_startSrc) updates.startDate = api.parseServerDate(_startSrc);
-            if (_endSrc) updates.endDate = api.parseServerDate(_endSrc);
+            if (_startSrc) updates.startDate = parseCalDate(_startSrc);
+            if (_endSrc) updates.endDate = parseCalDate(_endSrc);
             if (data.all_day != null) updates.allDay = !!data.all_day;
             await ExpoCal.updateEventAsync(String(deviceEventId), updates);
           }
@@ -1032,7 +1034,7 @@ function EventDetailScreenInner() {
                         const tz = z.tz || z.timeZone;
                         if (!tz) return null;
                         const fmt = new Intl.DateTimeFormat([], { hour: '2-digit', minute: '2-digit', timeZone: tz });
-                        const start = fmt.format(api.parseServerDate(event.start_at));
+                        const start = fmt.format(parseCalDate(event.start_at));
                         const label = z.label || tz.split('/').pop().replace('_', ' ');
                         return (
                           <Text key={'tz-' + i} style={[styles.infoValueSub, { color: colors.textSecondary, fontSize: 12 }]}>

@@ -601,7 +601,7 @@ async function loadModules() {
         // explicitly asked "me lembra amanhã...") must ALWAYS surface: not
         // gated by the push master switch, not suppressed when the same
         // conversation is open, not hidden by the foreground gate.
-        if (data?.type === 'chat_reminder') {
+        if (data?.type === 'chat_reminder' || data?.type === 'task_reminder') { // [2026-10-13] lembrete local de tarefa idem
           return { shouldShowAlert: true, shouldShowBanner: true, shouldShowList: true, shouldPlaySound: true, shouldSetBadge: false };
         }
         if (_pushMasterEnabled === false) {
@@ -2817,6 +2817,16 @@ function _navigateForNotification(data) {
       // through to the generic Inbox route, losing the specific message.
       const folder = data.folder || 'INBOX';
       router.push(`/read?uid=${data.uid}&folder=${encodeURIComponent(folder)}`);
+      return;
+    }
+    // [2026-10-13 calendario] lembrete local de tarefa → Tarefas; lembrete de
+    // evento (cron cal-reminders manda kind=calendar_reminder) → o evento.
+    if (data.type === 'task_reminder') {
+      router.push(data.task_id ? `/tasks?focus=${encodeURIComponent(String(data.task_id))}` : '/tasks');
+      return;
+    }
+    if ((data.type === 'calendar_reminder' || data.kind === 'calendar_reminder') && data.event_id) {
+      router.push(`/event-detail?id=${encodeURIComponent(String(data.event_id))}`);
       return;
     }
     if (data.type === 'meeting_reminder' && data.room_id) {

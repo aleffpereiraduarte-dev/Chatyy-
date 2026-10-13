@@ -2940,6 +2940,20 @@ function SettingsScreenInner() {
         </View>
         )}
 
+        {/* [2026-10-13 consent-lgpd] Ajustes > Privacidade > Personalização e ofertas
+            (recomendações = legítimo interesse c/ opção de desligar; interesses das
+            conversas e ofertas = consentimentos opcionais). Tela: /privacy-personalization. */}
+        {(searching || activeCategory === 'privacy') && sectionMatches(t('settings.personalizationOffers'), t('settings.personalizationOffersDesc'), t('consents.personalizedTitle'), t('consents.marketingTitle'), 'privacy', 'privacidade', 'reels', 'lgpd') && (
+          <SettingsGroup>
+            <SettingsRow
+              title={t('settings.personalizationOffers')}
+              subtitle={t('settings.personalizationOffersDesc')}
+              subtitleLines={2}
+              onPress={() => safeNav('/privacy-personalization')}
+            />
+          </SettingsGroup>
+        )}
+
         {/* Encaminhamento de email (privacy page, all platforms). */}
         {(searching || activeCategory === 'email') && sectionMatches(t('settings.forwarding'), t('settings.forwardingEnable'), t('settings.forwardingDesc')) && (
         <SettingsGroup header={t('settings.forwarding')} footer={t('settings.forwardingDesc')}>

@@ -4,7 +4,7 @@ import {
   View, Text, TouchableOpacity, StyleSheet, FlatList, Dimensions,
   Animated, Platform, Share, TextInput, Modal, KeyboardAvoidingView,
   ActivityIndicator, Pressable, ScrollView, Image, Easing, PanResponder,
-  AppState, ToastAndroid,
+  AppState, ToastAndroid, Linking,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import AvatarCircle from './AvatarCircle';
@@ -22,7 +22,7 @@ import {
   IconHeart, IconHeartOutline, IconMessageCircle, IconShare,
   IconBookmark, IconBookmarkFilled, IconMusic, IconPlay, IconPause,
   IconX, IconSend, IconChevronDown, IconCamera, IconVolume2, IconVolumeX, IconEye,
-  IconRepeat, IconLink, IconCopy, IconMoreHorizontal, IconDiamond,
+  IconRepeat, IconLink, IconCopy, IconMoreHorizontal, IconDiamond, IconSliders,
 } from './Icons';
 // Reels P1 monetization shares the same diamond catalog + wallet ledger
 // as Live gifts. We render a local TipSheetWrapper (defined below) that
@@ -33,6 +33,9 @@ import * as api from '../services/api';
 import { DIAMONDS_ENABLED } from '../constants/featureFlags';
 import { giftLabel } from './live/liveEngageConfig';
 import { cachedVideoSource } from '../services/videoCacheSource'; // [2026-10-10 native-audit] native video disk cache
+// [reels-v1 2026-10-13] sinais de comportamento (só dentro do Reels) + cold start de interesses
+import { trackReelEvent, trackReelView, flushReelSignals } from '../services/reelsSignals';
+import ReelsInterestPicker from './ReelsInterestPicker';
 // expo-shorts powers the native player + pool. Imported lazily so a missing
 // native binary (dev only) doesn't break the import chain — fallback paths
 // degrade gracefully when these are null.
@@ -320,6 +323,27 @@ function isReelVideo(p) {
   if (p.media_type === 'video') return true;
   const urls = parseMediaUrls(p.media_urls);
   return urls.some(u => typeof u === 'string' && (u.endsWith('.mp4') || u.endsWith('.mov') || u.endsWith('.webm')));
+}
+
+// [reels-v1 2026-10-13] Motivo explicável do ranking (reel.rec vindo de reels_rec_feed).
+function reelWhyText(reel, t) {
+  const why = reel?.rec?.why;
+  if (!why) return '';
+  const cat = reel?.rec?.cat ? ((t && t(`reels.cat.${reel.rec.cat}`)) || reel.rec.cat) : '';
+  const name = reel?.author_name || '';
+  const map = {
+    interest: [t?.('reels.why.interest') || 'Porque você costuma assistir {cat}', true],
+    chosen: [t?.('reels.why.chosen') || 'Porque você escolheu {cat} nos seus interesses', true],
+    following: [t?.('reels.why.following') || 'Porque você segue {name}', false],
+    popular: [t?.('reels.why.popular') || 'Está em alta no Chatyy', false],
+    explore: [t?.('reels.why.explore') || 'Para você descobrir algo novo', false],
+    new: [t?.('reels.why.new') || 'Publicado recentemente', false],
+    rewatch: [t?.('reels.why.rewatch') || 'Você já viu este reel', false],
+  };
+  const m = map[why];
+  if (!m) return '';
+  if (m[1] && !cat) return t?.('reels.why.popular') || 'Está em alta no Chatyy';
+  return String(m[0]).replace('{cat}', cat).replace('{name}', name);
 }
 
 function formatCount(n) {
@@ -999,7 +1023,7 @@ const HeartParticleBurst = memo(function HeartParticleBurst() {
 // In-app drawer offering Repost / Copy link / External share. Replaces the
 // previous one-shot navigator.share() call so users can pick a destination
 // (cross-post into the feed, stash the URL, or hand off to the OS sheet).
-function ShareSheet({ visible, reel, t, onClose, onRepost, onCopyLink, onExternal }) {
+function ShareSheet({ visible, reel, t, onClose, onRepost, onCopyLink, onExternal, onSendChat }) {
   const slideAnim = useRef(new Animated.Value(SCREEN_HEIGHT)).current;
   useEffect(() => {
     if (visible) {
@@ -1027,6 +1051,7 @@ function ShareSheet({ visible, reel, t, onClose, onRepost, onCopyLink, onExterna
                 <IconX size={22} color="#999" />
               </TouchableOpacity>
             </View>
+            {onSendChat ? <Row icon={IconSend} label={t?.('reels.sendInChat') || 'Enviar em uma conversa'} onPress={onSendChat} /> : null}
             <Row icon={IconRepeat} label={t?.('feed.repost') || 'Repostar'} onPress={onRepost} />
             <Row icon={IconLink}   label={t?.('feed.copyLink') || t?.('common.copy') || 'Copiar link'} onPress={onCopyLink} />
             <Row icon={IconShare}  label={t?.('feed.shareOutside') || t?.('feed.shareExternal') || 'Compartilhar fora'} onPress={onExternal} />
@@ -1326,6 +1351,7 @@ const ReelItem = memo(function ReelItem({ onCreate, reel, isActive, colors, isDa
   const insets = useSafeAreaInsets();
   // Reels P0 — more-sheet visibility (Not interested / Duet / Stitch / Use sound)
   const [moreSheetOpen, setMoreSheetOpen] = useState(false);
+  const [whyOpen, setWhyOpen] = useState(false); // [reels-v1 2026-10-13]
   const [paused, setPaused] = useState(false);
   // Share drawer (Repost / Copy link / External). Declared early so the
   // effectivePaused expression on the next line can reference it.
@@ -1451,6 +1477,7 @@ const ReelItem = memo(function ReelItem({ onCreate, reel, isActive, colors, isDa
     if (!reel?.author_email) return;
     followInFlightRef.current = true;
     setFollowed(true);
+    try { trackReelEvent(reel.id, 'follow'); } catch {} // [reels-v1]
     try { require('expo-haptics').selectionAsync(); } catch {}
     try {
       await api.followUser?.(reel.author_email);
@@ -1718,6 +1745,7 @@ const ReelItem = memo(function ReelItem({ onCreate, reel, isActive, colors, isDa
     setLiked(nextLiked);
     setLikeCount(optimisticCount);
     try { onLikeChange?.(reel.id, nextLiked, optimisticCount); } catch {}
+    try { trackReelEvent(reel.id, nextLiked ? 'like' : 'unlike'); } catch {} // [reels-v1]
     // Scale-pop 1 → 1.4 → 1 spring (matches TikTok button feedback). Burst
     // particles + light haptic only when *becoming* liked, not on un-like.
     likeScale.setValue(1);
@@ -1786,6 +1814,7 @@ const ReelItem = memo(function ReelItem({ onCreate, reel, isActive, colors, isDa
   const toggleBookmark = useCallback(async () => {
     const was = bookmarked;
     setBookmarked(!was);
+    try { trackReelEvent(reel.id, was ? 'unsave' : 'save'); } catch {} // [reels-v1]
     bookmarkScale.setValue(0.5);
     Animated.spring(bookmarkScale, {
       toValue: 1,
@@ -1817,6 +1846,7 @@ const ReelItem = memo(function ReelItem({ onCreate, reel, isActive, colors, isDa
 
   const handleShareExternal = useCallback(async () => {
     setShareSheetOpen(false);
+    try { trackReelEvent(reel.id, 'share'); } catch {} // [reels-v1]
     const url = `${BASE_URL}/feed/${reel.id}`;
     if (isWeb && typeof navigator !== 'undefined' && navigator.share) {
       try { await navigator.share({ title: reel.caption || '', url }); } catch {}
@@ -1827,6 +1857,7 @@ const ReelItem = memo(function ReelItem({ onCreate, reel, isActive, colors, isDa
 
   const handleShareCopyLink = useCallback(async () => {
     setShareSheetOpen(false);
+    try { trackReelEvent(reel.id, 'share'); } catch {} // [reels-v1]
     const url = `${BASE_URL}/feed/${reel.id}`;
     try {
       if (isWeb && typeof navigator !== 'undefined' && navigator.clipboard) {
@@ -1847,6 +1878,7 @@ const ReelItem = memo(function ReelItem({ onCreate, reel, isActive, colors, isDa
 
   const handleShareRepost = useCallback(() => {
     setShareSheetOpen(false);
+    try { trackReelEvent(reel.id, 'share'); } catch {} // [reels-v1]
     // Mirror FeedPost.handleRepost — defer to the feed surface with a
     // ?repost_of=… query so the existing CreatePostModal flow can pick it up.
     try {
@@ -1858,6 +1890,15 @@ const ReelItem = memo(function ReelItem({ onCreate, reel, isActive, colors, isDa
     // Web/standalone fallback: just copy the link so the user can paste it.
     handleShareCopyLink();
   }, [reel.id, router, handleShareCopyLink]);
+
+  // [reels-v1 2026-10-13] Compartilhar NO CHAT: abre o seletor de conversas (/share-receive)
+  // com o link do reel como texto — mesmo fluxo do "compartilhar da galeria".
+  const handleShareToChat = useCallback(() => {
+    setShareSheetOpen(false);
+    try { trackReelEvent(reel.id, 'share'); } catch {}
+    const url = `${BASE_URL}/feed/${reel.id}`;
+    try { router?.push({ pathname: '/share-receive', params: { text: url } }); } catch {}
+  }, [reel.id, router]);
 
   const height = containerHeight || SCREEN_HEIGHT;
 
@@ -2119,7 +2160,7 @@ const ReelItem = memo(function ReelItem({ onCreate, reel, isActive, colors, isDa
             </View>
           )}
           {/* Plus-badge only when not yet followed and is another user. */}
-          {!followed && isOtherUser ? (
+          {!followed && isOtherUser && !reel.is_catalog ? (
             <TouchableOpacity
               onPress={handleFollow}
               hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
@@ -2280,7 +2321,18 @@ const ReelItem = memo(function ReelItem({ onCreate, reel, isActive, colors, isDa
       {/* ── BOTTOM LEFT INFO ── */}
       <View style={[styles.bottomInfo, { paddingBottom: insets.bottom + 16 }]}>
         {/* Username */}
-        <Text style={styles.username}>@{authorDisplay}</Text>
+        <Text style={styles.username}>{reel.is_catalog ? authorDisplay : `@${authorDisplay}`}</Text>
+        {/* [reels-v1 2026-10-13] Crédito obrigatório da fonte licenciada ("Vídeo: Nome · Pexels") → página do vídeo */}
+        {reel.credit ? (
+          <Text
+            style={styles.creditText}
+            numberOfLines={1}
+            accessibilityRole="link"
+            onPress={() => { const u = reel.credit.page_url || reel.credit.author_url; if (u) { try { Linking.openURL(u); } catch {} } }}
+          >
+            {(t?.('reels.credit') || 'Vídeo: {name} · {source}').replace('{name}', reel.credit.name || reel.credit.source || '').replace('{source}', reel.credit.source || '')}
+          </Text>
+        ) : null}
 
         {/* Caption */}
         {reel.caption ? (
@@ -2365,6 +2417,7 @@ const ReelItem = memo(function ReelItem({ onCreate, reel, isActive, colors, isDa
         onRepost={handleShareRepost}
         onCopyLink={handleShareCopyLink}
         onExternal={handleShareExternal}
+        onSendChat={router ? handleShareToChat : undefined}
       />
 
       {/* Reels P0 — More actions sheet (Duet / Stitch / Use sound /
@@ -2431,6 +2484,28 @@ const ReelItem = memo(function ReelItem({ onCreate, reel, isActive, colors, isDa
                 <Text style={{ color: '#fff', fontSize: 16, fontWeight: '600' }}>
                   {t?.('feed.stitch') || 'Stitch (clip + reagir)'}
                 </Text>
+              </TouchableOpacity>
+            )}
+
+            {/* [reels-v1 2026-10-13] Por que estou vendo isto? (ranking explicável) */}
+            {!!reel.rec?.why && (
+              <TouchableOpacity
+                style={{ paddingHorizontal: 20, paddingVertical: 14 }}
+                onPress={() => setWhyOpen((v) => !v)}
+                activeOpacity={0.7}
+                accessibilityRole="button"
+              >
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 14 }}>
+                  <IconEye size={22} color="#fff" />
+                  <Text style={{ color: '#fff', fontSize: 16, fontWeight: '600' }}>
+                    {t?.('reels.why.title') || 'Por que estou vendo isto?'}
+                  </Text>
+                </View>
+                {whyOpen ? (
+                  <Text style={{ color: 'rgba(255,255,255,0.7)', fontSize: 14, lineHeight: 20, marginTop: 8, marginLeft: 36 }}>
+                    {reelWhyText(reel, t)}
+                  </Text>
+                ) : null}
               </TouchableOpacity>
             )}
 
@@ -2571,7 +2646,15 @@ function EmptyReels({ colors, isDark, t, error = false, following = false, onRet
 }
 
 // ── Main ReelsViewer ──
-export default function ReelsViewer({ colors, isDark, t, user, router, feedMode: feedModeProp, showLiveRing, onAvatarTap, onPullRefresh, soundId: soundIdProp, soundLabel: soundLabelProp, parentActive = true, onCreate }) {
+export default function ReelsViewer({ colors, isDark, t, user, router, feedMode: feedModeProp, showLiveRing, onAvatarTap, onPullRefresh, soundId: soundIdProp, soundLabel: soundLabelProp, parentActive = true, onCreate, recommended = true }) {
+  // [reels-v1 2026-10-13] "Para você" vem do ranking do servidor (reels_rec_feed) — com
+  // fallback automático pro feedList antigo se o servidor ainda não tem o endpoint.
+  const useRec = !!recommended && !soundIdProp;
+  const recCursorRef = useRef(null);
+  const recSupportedRef = useRef(true);
+  const recModeRef = useRef(false);
+  const [recActive, setRecActive] = useState(false);
+  const [pickerMode, setPickerMode] = useState(null); // null | 'onboarding' | 'manage'
   // [#1231 2026-05-20] Screen focus gate — pausa qualquer reel quando a tela
   // sai de foco (user navegou pra /chat-conversation ou outra aba). Sem isso
   // o áudio continuava tocando em background; só `isActive` (per FlatList row)
@@ -2672,6 +2755,8 @@ export default function ReelsViewer({ colors, isDark, t, user, router, feedMode:
     if (feedModeProp === 'foryou' && reelTab !== 'forYou') setReelTab('forYou');
   }, [feedModeProp]); // eslint-disable-line react-hooks/exhaustive-deps
   const [reels, setReels] = useState([]);
+  const reelsRef = useRef(reels);
+  reelsRef.current = reels;
   const [followingReels, setFollowingReels] = useState([]);
   // [2026-10-08 reels-publish] reel publicado em 2º plano (reelPublishQueue) →
   // entra no topo de "Seguindo" e "Pra você" sem esperar o próximo refresh.
@@ -2760,6 +2845,35 @@ export default function ReelsViewer({ colors, isDark, t, user, router, feedMode:
     };
   }, []);
 
+  // [reels-v1 2026-10-13] Uma página do ranking. null = indisponível (usa o feed antigo).
+  const fetchRecPage = async (reset) => {
+    if (!recSupportedRef.current) return null;
+    try {
+      const exclude = reset ? [] : (reelsRef.current || []).map((p) => p.id);
+      const r = await api.reelsRecFeed({ cursor: reset ? null : recCursorRef.current, limit: 10, excludeIds: exclude });
+      if (!r || r.success === false) {
+        const msg = `${r?.message || ''} ${r?.data?.error || ''}`;
+        if (/unknown|not_migrated/i.test(msg)) recSupportedRef.current = false;
+        return null;
+      }
+      const d = r.data || {};
+      recCursorRef.current = d.next_cursor || null;
+      return { posts: Array.isArray(d.posts) ? d.posts : [], hasMore: !!d.has_more, onboarding: !!d.onboarding_needed };
+    } catch { return null; }
+  };
+  const interestsKey = `@chatyy:reels_interests_asked_v1:${String(user?.email || '').toLowerCase()}`;
+  const maybeAskInterests = async () => {
+    try {
+      const asked = await AsyncStorage.getItem(interestsKey);
+      if (!asked) setPickerMode('onboarding');
+    } catch {}
+  };
+  const handlePickerDone = useCallback((selected) => {
+    setPickerMode(null);
+    try { AsyncStorage.setItem(interestsKey, '1'); } catch {}
+    if (Array.isArray(selected) && selected.length) loadReels(true);
+  }, [interestsKey]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const loadReels = async (isRefresh = false) => {
     if (isRefresh) setRefreshing(true);
     else setLoading(true);
@@ -2790,12 +2904,22 @@ export default function ReelsViewer({ colors, isDark, t, user, router, feedMode:
         }
       } else {
         // Fire both feeds in parallel so switching tabs is instant.
-        const [allR, followR] = await Promise.all([
-          api.feedList({ page: 1, limit: 50 }),
+        // [reels-v1 2026-10-13] "Para você" = ranking (reels_rec_feed); feedList só de fallback.
+        let [allR, followR, recR] = await Promise.all([
+          useRec ? Promise.resolve(null) : api.feedList({ page: 1, limit: 50 }),
           api.feedList({ page: 1, limit: 50, type: 'following' }),
+          useRec ? fetchRecPage(true) : Promise.resolve(null),
         ]);
+        if (useRec && !recR) allR = await api.feedList({ page: 1, limit: 50 });
+        recModeRef.current = !!recR;
+        setRecActive(!!recR);
+        if (recR) {
+          setReels(recR.posts.filter(p => !hiddenIdsRef.current.has(String(p.id))));
+          setHasMore(recR.hasMore);
+          if (recR.onboarding) maybeAskInterests();
+        }
         // [2026-10-08 apps-native] as duas falharam → erro (não "vazio")
-        if ((!allR || !allR.success) && (!followR || !followR.success)) setLoadError(true);
+        if (!recR && (!allR || !allR.success) && (!followR || !followR.success)) setLoadError(true);
         if (allR && allR.success && allR.data) {
           const rawPosts = allR.data.posts || allR.data;
           const allPosts = Array.isArray(rawPosts) ? rawPosts : [];
@@ -2848,9 +2972,14 @@ export default function ReelsViewer({ colors, isDark, t, user, router, feedMode:
     loadingMoreRef.current = true;
     try {
       let rawPosts = [];
+      let recHasMore = null;
       if (soundIdProp) {
         const r = await api.chatReelsBySound(soundIdProp, nextPage, 50);
         if (r && r.success && r.data) rawPosts = Array.isArray(r.data.posts) ? r.data.posts : [];
+      } else if (!isFollowing && recModeRef.current) {
+        // [reels-v1 2026-10-13] próxima página do ranking (cursor + exclude dos já carregados)
+        const rp = await fetchRecPage(false);
+        if (rp) { rawPosts = rp.posts; recHasMore = rp.hasMore; } else { recHasMore = false; }
       } else {
         const args = { page: nextPage, limit: 50 };
         if (isFollowing) args.type = 'following';
@@ -2870,7 +2999,7 @@ export default function ReelsViewer({ colors, isDark, t, user, router, feedMode:
       });
       // Cursor + has-more bookkeeping. Base has-more on the *raw* page size so
       // a page full of non-video posts doesn't prematurely halt pagination.
-      const more = rawPosts.length >= 50;
+      const more = recHasMore !== null ? recHasMore : rawPosts.length >= 50;
       if (isFollowing) {
         setFollowingPage(nextPage);
         setFollowingHasMore(more);
@@ -2898,7 +3027,11 @@ export default function ReelsViewer({ colors, isDark, t, user, router, feedMode:
   // right-rail count (reads reel.comment_count at ~2030) refreshes live.
   // Update both feed arrays + the open commentsReel so the sheet header
   // and the rail stay in sync.
+  const commentsReelRef = useRef(null);
+  commentsReelRef.current = commentsReel;
   const handleCommentCountChange = useCallback((newCount) => {
+    const cur = commentsReelRef.current; // [reels-v1] comentou = sinal forte
+    if (cur && Number(newCount) > (Number(cur.comment_count ?? cur.comments_count) || 0)) { try { trackReelEvent(cur.id, 'comment'); } catch {} }
     setCommentsReel(prev => {
       if (!prev) return prev;
       const id = prev.id;
@@ -3008,6 +3141,7 @@ export default function ReelsViewer({ colors, isDark, t, user, router, feedMode:
   }, [reelTab]);
 
   const handleOpenProfile = useCallback((email, item) => {
+    if (item?.is_catalog) { const u = item.credit?.author_url || item.credit?.page_url; if (u) { try { Linking.openURL(u); } catch {} } return; } // [reels-v1]
     // If the parent wired onAvatarTap (ChatReelsTab does for live routing),
     // give it the first shot so tapping a live creator opens the live viewer
     // instead of their profile.
@@ -3048,6 +3182,7 @@ export default function ReelsViewer({ colors, isDark, t, user, router, feedMode:
   // across refreshes regardless of whether the server recorded the signal.
   const handleHidePost = useCallback(async (reel, signal = 'not_interested') => {
     if (!reel?.id) return;
+    try { trackReelEvent(reel.id, 'not_interested'); } catch {} // [reels-v1] sinal negativo forte no perfil
     // Best-effort server signal — ignore failures, the local hide is authoritative.
     try { await api.feedHidePost?.(reel.id, signal); } catch {}
     // Persist locally so the reel stays hidden across sessions.
@@ -3073,7 +3208,32 @@ export default function ReelsViewer({ colors, isDark, t, user, router, feedMode:
     hideToastTimerRef.current = setTimeout(() => setHideToast(''), 2200);
   }, [t]);
 
-  const overlayOpen = !!commentsReel || !!likersReel;
+  const overlayOpen = !!commentsReel || !!likersReel || !!pickerMode;
+
+  // [reels-v1 2026-10-13] Tempo assistido por impressão (relógio de parede enquanto o reel
+  // está ativo, a aba visível, o app em 1º plano e sem sheet por cima). Ao trocar de reel ou
+  // sair da aba → trackReelView(id, watch_ms, duração) → servidor deriva pulo (<2 s), % assistido
+  // e replay. Envio em lote (services/reelsSignals).
+  const watchRef = useRef({ id: null, accum: 0, since: 0, dur: 0 });
+  useEffect(() => {
+    const w = watchRef.current;
+    const now = Date.now();
+    const reel = Array.isArray(activeReels) ? activeReels[currentIndex] : null;
+    const gateOpen = playGate && !overlayOpen;
+    const id = reel && gateOpen ? reel.id : null;
+    if (w.since) { w.accum += now - w.since; w.since = 0; }
+    if (w.id !== id) {
+      if (w.id != null) { try { trackReelView(w.id, w.accum, w.dur); } catch {} }
+      w.id = id; w.accum = 0;
+      w.dur = reel ? (Number(reel.video_duration_ms) || 0) : 0;
+    }
+    if (id != null) w.since = now;
+  }, [currentIndex, activeReels, playGate, overlayOpen]);
+  useEffect(() => () => {
+    const w = watchRef.current;
+    if (w.id != null) { if (w.since) w.accum += Date.now() - w.since; try { trackReelView(w.id, w.accum, w.dur); } catch {} }
+    try { flushReelSignals(); } catch {}
+  }, []);
   // Pre-load window: mark the reel that's one and two ahead as `preload`.
   // On native, the parent's prefetch effect already warmed the pool — this
   // flag just keeps the native view paused (playWhenInFocus=false) while
@@ -3151,6 +3311,7 @@ export default function ReelsViewer({ colors, isDark, t, user, router, feedMode:
     return (
       <View style={styles.loadingContainer}>
         <EmptyReels colors={colors} isDark={isDark} t={t} error={loadError} onRetry={() => loadReels(false)} onCreate={onCreate} />
+        <ReelsInterestPicker visible={!!pickerMode} mode={pickerMode || 'onboarding'} t={t} onDone={handlePickerDone} onClose={() => setPickerMode(null)} />
       </View>
     );
   }
@@ -3190,6 +3351,18 @@ export default function ReelsViewer({ colors, isDark, t, user, router, feedMode:
           {reelTab === 'forYou' && <View style={styles.reelTabIndicator} />}
         </Pressable>
       </View>
+
+      {recActive && reelTab === 'forYou' ? (
+        <Pressable
+          onPress={() => { try { haptic.select(); } catch {} setPickerMode('manage'); }}
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          accessibilityRole="button"
+          accessibilityLabel={t('reels.interests.manageTitle') || 'Seus interesses'}
+          style={({ pressed }) => [styles.interestsBtn, { top: Math.max(outerInsets.top, Platform.OS === 'android' ? 12 : 44) + 6, opacity: pressed ? 0.6 : 1 }]}
+        >
+          <IconSliders size={20} color="#fff" />
+        </Pressable>
+      ) : null}
 
       <FlatList
         ref={listRef}
@@ -3246,6 +3419,9 @@ export default function ReelsViewer({ colors, isDark, t, user, router, feedMode:
         onCommentCountChange={handleCommentCountChange}
       />
 
+      {/* [reels-v1 2026-10-13] cold start (1º acesso) / "Seus interesses" */}
+      <ReelsInterestPicker visible={!!pickerMode} mode={pickerMode || 'onboarding'} t={t} onDone={handlePickerDone} onClose={() => setPickerMode(null)} />
+
       {/* Likers bottom sheet */}
       <LikersSheet
         visible={!!likersReel}
@@ -3272,6 +3448,27 @@ const styles = StyleSheet.create({
   reelsRoot: {
     flex: 1,
     backgroundColor: '#000',
+  },
+  // [reels-v1 2026-10-13] crédito da fonte + botão de interesses
+  creditText: {
+    color: 'rgba(255,255,255,0.78)',
+    fontSize: 12.5,
+    fontWeight: '600',
+    marginTop: 2,
+    marginBottom: 4,
+    textShadowColor: 'rgba(0,0,0,0.5)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 3,
+  },
+  interestsBtn: {
+    position: 'absolute',
+    right: 14,
+    zIndex: 21,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   loadingContainer: {
     flex: 1,

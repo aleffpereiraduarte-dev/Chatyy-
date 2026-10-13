@@ -17,9 +17,15 @@ import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import { IconArrowLeft, IconShield, IconFileText } from '../components/Icons';
 import { openInApp } from '../utils/inAppBrowser';
+import { TERMS_VERSION } from '../services/consents'; // [2026-10-13 consent-lgpd]
 
-const TERMS = ['acceptance', 'services', 'accounts', 'conduct', 'content', 'aiAssistant', 'communications', 'storage', 'privacy', 'intellectualProperty', 'limitation', 'termination', 'disputes', 'changes'];
-const PRIVACY = ['dataCollection', 'dataUsage', 'dataSecurity', 'dataEncryption', 'aiProcessing', 'chatPrivacy', 'meetingsPrivacy', 'pushNotifications', 'cookies', 'thirdParties', 'dataRetention', 'internationalData', 'childrenPrivacy', 'breachNotification', 'rights', 'openSource', 'contact'];
+// [2026-10-13 consent-lgpd] Versão 2026-10-13: + 'recommendations' (Reels/ofertas);
+// 'privacy' (consentimento genérico — nulo pela LGPD) → 'privacyConsent'.
+const TERMS = ['acceptance', 'services', 'accounts', 'conduct', 'content', 'aiAssistant', 'recommendations', 'communications', 'storage', 'privacyConsent', 'intellectualProperty', 'limitation', 'termination', 'disputes', 'changes'];
+// [2026-10-13 consent-lgpd] + 'personalization' e 'optionalConsents'; 'openSource'
+// (dizia "não criamos perfis comportamentais") → 'transparency'; 'rights' → 'titularRights'
+// (art. 18 completo); 'contact' → 'dpo' (encarregado). Chaves antigas ficam no i18n (sem uso aqui).
+const PRIVACY = ['dataCollection', 'dataUsage', 'personalization', 'optionalConsents', 'dataSecurity', 'dataEncryption', 'aiProcessing', 'chatPrivacy', 'meetingsPrivacy', 'pushNotifications', 'cookies', 'thirdParties', 'dataRetention', 'internationalData', 'childrenPrivacy', 'breachNotification', 'titularRights', 'transparency', 'dpo'];
 
 const EMAIL_RE = /([A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})/g;
 
@@ -55,7 +61,8 @@ export default function LegalScreen() {
 
   const title = doc === 'privacy' ? (t('privacy.title') || 'Política de Privacidade') : (t('terms.title') || 'Termos de Serviço');
   const subtitle = t(`${doc}.subtitle`);
-  const updated = t(`${doc}.lastUpdated`);
+  // [2026-10-13 consent-lgpd] versão do texto (a mesma gravada em cada consentimento).
+  const updated = `${t('legal.version')} ${TERMS_VERSION}`;
   const Icon = doc === 'privacy' ? IconShield : IconFileText;
 
   return (
@@ -80,7 +87,7 @@ export default function LegalScreen() {
           </View>
           <Text style={[st.heroTitle, { color: colors.text }]}>{title}</Text>
           {!!subtitle && subtitle !== `${doc}.subtitle` && <Text style={[st.heroSub, { color: colors.textSecondary }]}>{subtitle}</Text>}
-          {!!updated && updated !== `${doc}.lastUpdated` && <Text style={[st.updated, { color: colors.textTertiary || colors.textSecondary }]}>{updated}</Text>}
+          {!!updated && <Text style={[st.updated, { color: colors.textTertiary || colors.textSecondary }]}>{updated}</Text>}
         </View>
         {sections.map((sct, i) => (
           <View key={sct.k} style={[st.card, { backgroundColor: colors.surface, borderColor: isDark ? 'transparent' : (colors.border || '#e5e7eb') }]}>

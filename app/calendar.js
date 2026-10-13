@@ -13,7 +13,7 @@ import {
 // sync) — the FAB and "Hoje" stay. Toggle still works via swipe gesture.
 const _CAL_HEADER_COMPACT = Dimensions.get('window').width < 420;
 // FlashList reverted to FlatList
-import { useRouter, Stack } from 'expo-router';
+import { useRouter, Stack, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
@@ -38,6 +38,13 @@ import EmptyStateCard from '../components/EmptyStateCard';
 import PressableScale from '../components/PressableScale'; // [2026-10-08 apps-native]
 import { USE_NATIVE_HEADER, nativeHeaderOptions, HeaderIconButton } from '../components/nativeHeader'; // [2026-10-08 apps-native]
 import NativeSwitch from '../components/NativeSwitch'; // [2026-10-11 polish-secondary] P&B (Switch web = teal)
+// [2026-10-13 calendario] visão Dia c/ arrastar, topo inteligente (resumo do
+// dia + criar com a Bia + horários livres), Agenda de verdade, tempo real
+// (pim_changed) e datas locais corretas (parseCalDate — ver utils/calDate.js).
+import DayTimeline from '../components/calendar/DayTimeline';
+import CalendarSmartBar from '../components/calendar/CalendarSmartBar';
+import * as pim from '../services/pim';
+import { parseCalDate, toCalString, startOfDay as calStartOfDay, addDays as calAddDays, dayKey as calDayKey } from '../utils/calDate';
 
 // Try to import expo-calendar (native only)
 let ExpoCalendar = null;
@@ -89,12 +96,12 @@ function isSameDay(d1, d2) {
 // international meetings ("10:00 (Brasil) / 14:00 (UTC) / 09:00 (NY)").
 function formatTimeInZone(dateStr, timeZone) {
   if (!dateStr) return '';
-  const d = api.parseServerDate(dateStr);
+  const d = parseCalDate(dateStr);
   if (isNaN(d.getTime())) return '';
   try {
     const fmt = new Intl.DateTimeFormat([], { hour: '2-digit', minute: '2-digit', timeZone });
     return fmt.format(d);
-  } catch { return formatTime(dateStr); }
+  } catch { return formatTime(parseCalDate(dateStr)); }
 }
 
 // "(GMT-3)" suffix for the user's local zone — derived from offset.
@@ -172,7 +179,7 @@ function formatTimeRange(startStr, endStr, allDay, t, opts = {}) {
   const tz = opts.tz;
   const base = tz
     ? `${formatTimeInZone(startStr, tz)} - ${formatTimeInZone(endStr, tz)}`
-    : `${formatTime(startStr)} - ${formatTime(endStr)}`;
+    : `${formatTime(parseCalDate(startStr))} - ${formatTime(parseCalDate(endStr))}`;
   if (opts.showTz) {
     const suffix = tz ? (tzOffsetLabel(tz) || shortTzLabel(tz)) : localTzAbbrev();
     if (suffix) return `${base} (${suffix})`;
@@ -521,7 +528,7 @@ function RecurringBadge({ color }) {
 // grid to render a continuous color stripe across cells.
 function spansMultipleDays(evt) {
   if (!evt || !evt.start_at || !evt.end_at) return false;
-  const s = api.parseServerDate(evt.start_at), e = api.parseServerDate(evt.end_at);
+  const s = parseCalDate(evt.start_at), e = parseCalDate(evt.end_at);
   if (isNaN(s.getTime()) || isNaN(e.getTime())) return false;
   if (e <= s) return false;
   return !isSameDay(s, e);
@@ -536,7 +543,7 @@ function isStale(evt) {
   if (!evt) return false;
   if (evt.status && evt.status !== 'active') return false;
   if (evt.live_ended_at || evt.ended_at) return true;
-  const startMs = api.parseServerDate(
+  const startMs = parseCalDate(
     evt.live_started_at || evt.started_at || evt.start_at || 0
   ).getTime();
   if (!Number.isFinite(startMs) || !startMs) return false;
@@ -630,7 +637,7 @@ function CalendarGrid({ year, month, selectedDate, events, colors, onSelectDate,
   const eventsByDate = useMemo(() => {
     const map = {};
     (events || []).forEach(evt => {
-      const d = api.parseServerDate(evt.start_at);
+      const d = parseCalDate(evt.start_at);
       const key = `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
       if (!map[key]) map[key] = [];
       map[key].push(evt);
@@ -641,7 +648,7 @@ function CalendarGrid({ year, month, selectedDate, events, colors, onSelectDate,
   // Count events in this month
   const monthEventCount = useMemo(() => {
     return (events || []).filter(evt => {
-      const d = api.parseServerDate(evt.start_at);
+      const d = parseCalDate(evt.start_at);
       return d.getFullYear() === year && d.getMonth() === month;
     }).length;
   }, [events, year, month]);
@@ -773,7 +780,7 @@ function CalendarGrid({ year, month, selectedDate, events, colors, onSelectDate,
                   <View style={styles.cellStripeStack} pointerEvents="none">
                     {multiDayEvents.map((evt, mi) => {
                       const accent = evt.color || evt.calendar_color || colors.primary;
-                      const s = api.parseServerDate(evt.start_at), e = api.parseServerDate(evt.end_at);
+                      const s = parseCalDate(evt.start_at), e = parseCalDate(evt.end_at);
                       const isFirst = isSameDay(s, cell.date);
                       const isLast = isSameDay(e, cell.date);
                       return (
@@ -861,6 +868,9 @@ function getWeekStart(date) {
 
 function WeekView({ weekStart, events, colors, onEventPress, onPrevWeek, onNextWeek, t }) {
   const scrollRef = React.useRef(null);
+  // [2026-10-13] linha "agora" anda sozinha (antes congelava no horário de abertura)
+  const [, setNowTick] = useState(0);
+  useEffect(() => { const i = setInterval(() => setNowTick((x) => x + 1), 60000); return () => clearInterval(i); }, []);
   const today = new Date();
   const dayNames = Array.isArray(t('calendar.dayNames')) ? t('calendar.dayNames') : [];
 
@@ -888,8 +898,8 @@ function WeekView({ weekStart, events, colors, onEventPress, onPrevWeek, onNextW
       allDay[i] = [];
     }
     (events || []).forEach(evt => {
-      const evtStart = api.parseServerDate(evt.start_at);
-      const evtEnd = api.parseServerDate(evt.end_at);
+      const evtStart = parseCalDate(evt.start_at);
+      const evtEnd = parseCalDate(evt.end_at);
       for (let i = 0; i < 7; i++) {
         const dayStart = new Date(days[i]);
         dayStart.setHours(0, 0, 0, 0);
@@ -1108,7 +1118,7 @@ function WeekView({ weekStart, events, colors, onEventPress, onPrevWeek, onNextW
                         )}
                         {showTime && (
                           <Text style={[weekStyles.eventBlockTime, { color: bgColor }]} numberOfLines={1}>
-                            {formatTime(evt.start_at)}
+                            {formatTime(parseCalDate(evt.start_at))}
                           </Text>
                         )}
                       </TouchableOpacity>
@@ -1127,8 +1137,8 @@ function WeekView({ weekStart, events, colors, onEventPress, onPrevWeek, onNextW
                 <View key={i} style={weekStyles.dayColBody}>
                   {i === todayIdx && (
                     <View style={weekStyles.nowLineInner}>
-                      <View style={[weekStyles.nowDot, { backgroundColor: colors.error }]} />
-                      <View style={[weekStyles.nowBar, { backgroundColor: colors.error }]} />
+                      <View style={[weekStyles.nowDot, { backgroundColor: colors.text }]} />
+                      <View style={[weekStyles.nowBar, { backgroundColor: colors.text }]} />
                     </View>
                   )}
                 </View>
@@ -1210,7 +1220,7 @@ const weekStyles = StyleSheet.create({
 function getRelativeTime(startAt, t) {
   if (!startAt || !t) return '';
   const now = new Date();
-  const start = api.parseServerDate(startAt);
+  const start = parseCalDate(startAt);
   const diffMs = start - now;
   if (diffMs < 0) return ''; // past
   const diffMin = Math.floor(diffMs / 60000);
@@ -1412,7 +1422,7 @@ function SwipeableEventCard({ event, colors, onPress, onEdit, onDelete, onJoinMe
 // ============================================================
 // Add Event Modal
 // ============================================================
-function AddEventModal({ visible, onClose, onSave, colors, calendars, selectedDate, existingEvents, t }) {
+function AddEventModal({ visible, onClose, onSave, colors, calendars, selectedDate, existingEvents, t, prefill }) {
   const insets = useSafeAreaInsets();
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
@@ -1496,6 +1506,26 @@ function AddEventModal({ visible, onClose, onSave, colors, calendars, selectedDa
       setWeeklyDays([wdMap[seed.getDay()]]);
       setMonthlyDay(seed.getDate());
       setReminder('none');
+      // [2026-10-13] pré-preenchido por "Criar com a Bia", horário livre,
+      // toque na grade do Dia ou "Adicionar ao calendário" do e-mail.
+      if (prefill) {
+        const p2 = (n) => String(n).padStart(2, '0');
+        const dstr = (x) => `${x.getFullYear()}-${p2(x.getMonth() + 1)}-${p2(x.getDate())}`;
+        if (prefill.title) setTitle(String(prefill.title).slice(0, 200));
+        if (prefill.location) setLocation(String(prefill.location).slice(0, 200));
+        if (prefill.description) setDescription(String(prefill.description).slice(0, 2000));
+        if (prefill.start instanceof Date && Number.isFinite(prefill.start.getTime())) {
+          const st = prefill.start;
+          const en = prefill.end instanceof Date && prefill.end > st ? prefill.end : new Date(st.getTime() + 3600000);
+          setStartDate(dstr(st)); setEndDate(dstr(en));
+          setStartTime(`${p2(st.getHours())}:${p2(st.getMinutes())}`);
+          setEndTime(`${p2(en.getHours())}:${p2(en.getMinutes())}`);
+          if (prefill.allDay) setAllDay(true);
+          const wd = ['SU','MO','TU','WE','TH','FR','SA'];
+          setWeeklyDays([wd[st.getDay()]]);
+          setMonthlyDay(st.getDate());
+        }
+      }
     } else if (!visible) {
       wasVisibleRef.current = false;
     }
@@ -1517,8 +1547,8 @@ function AddEventModal({ visible, onClose, onSave, colors, calendars, selectedDa
       if (!Number.isFinite(newStart) || !Number.isFinite(newEnd) || newEnd <= newStart) return [];
       return (existingEvents || []).filter(evt => {
         if (!evt?.start_at || !evt?.end_at || evt.all_day) return false;
-        const s = api.parseServerDate(evt.start_at).getTime();
-        const e = api.parseServerDate(evt.end_at).getTime();
+        const s = parseCalDate(evt.start_at).getTime();
+        const e = parseCalDate(evt.end_at).getTime();
         if (!Number.isFinite(s) || !Number.isFinite(e)) return false;
         return s < newEnd && e > newStart;
       }).slice(0, 3);
@@ -1763,7 +1793,7 @@ function AddEventModal({ visible, onClose, onSave, colors, calendars, selectedDa
                     {conflictingEvents[0].title || t('calendar.untitledEvent')}{conflictingEvents.length > 1 ? ` +${conflictingEvents.length - 1}` : ''}
                   </Text>
                   <Text style={[styles.conflictWarningText, { color: colors.warning }]} numberOfLines={1}>
-                    {formatTime(conflictingEvents[0].start_at)} - {formatTime(conflictingEvents[0].end_at)}
+                    {formatTime(parseCalDate(conflictingEvents[0].start_at))} - {formatTime(parseCalDate(conflictingEvents[0].end_at))}
                   </Text>
                 </View>
               </View>
@@ -2108,7 +2138,26 @@ function CalendarScreenInner() {
   const [importResult, setImportResult] = useState(null); // { total, success, failed }
   const [syncingDevice, setSyncingDevice] = useState(false);
   const [deviceCalPermission, setDeviceCalPermission] = useState(null);
-  const [calendarView, setCalendarView] = useState('month'); // 'month' | 'week' | 'agenda'
+  const [calendarView, setCalendarViewRaw] = useState('month'); // 'day' | 'week' | 'month' | 'agenda'
+  // [2026-10-13] lembra a última visão (por aparelho).
+  const setCalendarView = useCallback((v) => {
+    setCalendarViewRaw(v);
+    try {
+      if (Platform.OS === 'web') { typeof localStorage !== 'undefined' && localStorage.setItem('cal_view', v); }
+      else import('@react-native-async-storage/async-storage').then(m => m.default.setItem('cal_view', v).catch(() => {})).catch(() => {});
+    } catch {}
+  }, []);
+  useEffect(() => {
+    try {
+      const ok = (v) => ['day', 'week', 'month', 'agenda'].includes(v);
+      if (Platform.OS === 'web') { const v = typeof localStorage !== 'undefined' && localStorage.getItem('cal_view'); if (ok(v)) setCalendarViewRaw(v); }
+      else import('@react-native-async-storage/async-storage').then(m => m.default.getItem('cal_view').then(v => { if (ok(v)) setCalendarViewRaw(v); }).catch(() => {})).catch(() => {});
+    } catch {}
+  }, []);
+  // [2026-10-13] tarefas p/ "Seu dia" + faixa do Dia; prefill do editor.
+  const [pimTasks, setPimTasks] = useState(() => pim.getCachedTasks()?.tasks || []);
+  const [prefill, setPrefill] = useState(null);
+  const routeParams = useLocalSearchParams();
   const [weekStartDate, setWeekStartDate] = useState(() => getWeekStart(new Date()));
   // Search UI scaffold — opens a TextInput in the gradient band that filters
   // the visible event list by title (also matches location/description).
@@ -2183,6 +2232,8 @@ function CalendarScreenInner() {
   // Load calendars on mount
   useEffect(() => {
     loadCalendars();
+    pim.reportTimezone();
+    pim.fetchTasks().then(r => setPimTasks(r.tasks || [])).catch(() => {});
   }, []);
 
   // Load events when month changes
@@ -2244,7 +2295,49 @@ function CalendarScreenInner() {
     setRefreshing(true);
     loadEvents(false);
     loadCalendars();
+    pim.fetchTasks().then(r => setPimTasks(r.tasks || [])).catch(() => {});
   }, [loadEvents]);
+
+  // [2026-10-13] Tempo real: mudança feita na web, no outro celular ou no
+  // iPhone (CalDAV) chega como frame `pim_changed` → recarrega.
+  const loadEventsRef = useRef(loadEvents);
+  loadEventsRef.current = loadEvents;
+  useEffect(() => {
+    let tm = null;
+    const off = pim.onPimChanged((d) => {
+      clearTimeout(tm);
+      tm = setTimeout(() => {
+        if (!d?.kind || d.kind === 'event' || d.kind === '*') loadEventsRef.current(false);
+        if (!d?.kind || d.kind === 'task' || d.kind === 'list' || d.kind === '*') pim.fetchTasks().then(r => setPimTasks(r.tasks || [])).catch(() => {});
+      }, 300);
+    });
+    return () => { clearTimeout(tm); off(); };
+  }, []);
+
+  // [2026-10-13] Deep link /calendar?newEvent=true&title=…&start=ISO&location=…&text=…
+  // (EmailReader "Adicionar ao calendário"; antes o parâmetro era ignorado).
+  const handledParamsRef = useRef('');
+  useEffect(() => {
+    const p = routeParams || {};
+    const key = JSON.stringify(p);
+    if (handledParamsRef.current === key) return;
+    handledParamsRef.current = key;
+    if (p.view && ['day', 'week', 'month', 'agenda'].includes(String(p.view))) setCalendarViewRaw(String(p.view));
+    if (p.date) { const d = parseCalDate(String(p.date)); if (Number.isFinite(d.getTime())) handleSelectDate(d); }
+    if (String(p.newEvent || '') !== 'true' && !p.text) return;
+    const base = {
+      title: p.title ? String(p.title) : '',
+      location: p.location ? String(p.location) : '',
+      start: p.start ? parseCalDate(String(p.start)) : null,
+      end: p.end ? parseCalDate(String(p.end)) : null,
+    };
+    if (base.start && !Number.isFinite(base.start.getTime())) base.start = null;
+    if (base.end && !Number.isFinite(base.end?.getTime?.())) base.end = null;
+    const open = (pf) => { if (pf.start) handleSelectDate(pf.start); setPrefill(pf); setShowAddModal(true); };
+    if (p.text && !base.start) {
+      pim.parseEventText(String(p.text)).then((r) => open({ ...base, ...(r || {}), title: base.title || r?.title || '' })).catch(() => open(base));
+    } else open(base);
+  }, [routeParams]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // [2026-10-08 apps-native] haptic de seleção na navegação mês/semana/hoje
   // (feedback tátil nativo, como o Calendário do iOS ao trocar de mês).
@@ -2295,6 +2388,48 @@ function CalendarScreenInner() {
     });
   };
 
+  const handlePrevDay = () => { haptic.select(); handleSelectDate(calAddDays(selectedDate || new Date(), -1)); };
+  const handleNextDay = () => { haptic.select(); handleSelectDate(calAddDays(selectedDate || new Date(), 1)); };
+
+  // [2026-10-13] arrastar bloco na visão Dia → novo horário (otimista).
+  const handleMoveEvent = async (evt, deltaMin) => {
+    const s0 = parseCalDate(evt.start_at); const e0 = parseCalDate(evt.end_at || evt.start_at);
+    const ns = new Date(s0.getTime() + deltaMin * 60000); const ne = new Date(e0.getTime() + deltaMin * 60000);
+    const prev = events;
+    setEvents(list => list.map(e => (e.id === evt.id ? { ...e, start_at: toCalString(ns).replace('T', ' '), end_at: toCalString(ne).replace('T', ' ') } : e)));
+    try {
+      const r = await api.calUpdateEvent(evt.id, { start_at: toCalString(ns), end_at: toCalString(ne) });
+      if (!r?.success) throw new Error(r?.message || 'update_failed');
+      haptic.success();
+      loadEvents(false);
+    } catch (e) {
+      setEvents(prev); haptic.error();
+      safeAlert(t('common.error') || 'Erro', t('calendar.moveFailed') || 'Não foi possível mudar o horário.');
+    }
+  };
+
+  const openEditorAt = (start, end) => {
+    setPrefill({ start, end: end || new Date(start.getTime() + 3600000) });
+    handleSelectDate(start);
+    setShowAddModal(true);
+  };
+
+  const createFromDraft = async (d) => {
+    const st = d.start; const en = d.end || new Date(st.getTime() + 3600000);
+    await handleCreateEvent({
+      title: d.title || t('calendar.untitledEvent') || 'Evento',
+      description: d.description || '',
+      location: d.location || '',
+      start_at: d.allDay ? `${calDayKey(st)}T00:00:00` : toCalString(st),
+      end_at: d.allDay ? `${calDayKey(en)}T23:59:59` : toCalString(en),
+      all_day: !!d.allDay,
+      color: '#111111',
+      calendar_id: calendars?.[0]?.id || 0,
+      reminder: d.allDay ? 'none' : '15min',
+    });
+    handleSelectDate(st);
+  };
+
   const handleSelectDate = (date) => {
     setSelectedDate(date);
     // If date is in a different month, navigate to it
@@ -2322,6 +2457,7 @@ function CalendarScreenInner() {
   // Quick-add: open add modal pre-filled with the tapped date
   const handleQuickAdd = (date) => {
     setSelectedDate(date);
+    setPrefill(null);
     setShowAddModal(true);
   };
 
@@ -2523,7 +2659,7 @@ function CalendarScreenInner() {
     setLoadingReminders(true);
     try {
       const { aiAssist } = await import('../services/api');
-      const upcomingEvents = events.filter(e => api.parseServerDate(e.start_at) >= new Date()).slice(0, 20);
+      const upcomingEvents = events.filter(e => parseCalDate(e.start_at) >= new Date()).slice(0, 20);
       const eventSummaries = upcomingEvents.map(e => ({
         title: e.title,
         start: e.start_at,
@@ -2710,8 +2846,8 @@ function CalendarScreenInner() {
         try {
           await ExpoCalendar.createEventAsync(targetCalId, {
             title: evt.title || t('calendar.untitledEvent'),
-            startDate: api.parseServerDate(evt.start_at),
-            endDate: api.parseServerDate(evt.end_at),
+            startDate: parseCalDate(evt.start_at),
+            endDate: parseCalDate(evt.end_at),
             location: evt.location || '',
             notes: evt.description || '',
             allDay: evt.all_day || false,
@@ -2742,8 +2878,8 @@ function CalendarScreenInner() {
           return hay.includes(q);
         })
       : events.filter(evt => {
-          const evtStart = api.parseServerDate(evt.start_at);
-          const evtEnd = api.parseServerDate(evt.end_at);
+          const evtStart = parseCalDate(evt.start_at);
+          const evtEnd = parseCalDate(evt.end_at);
           const dayStart = new Date(selectedDate.getFullYear(), selectedDate.getMonth(), selectedDate.getDate());
           const dayEnd = new Date(selectedDate.getFullYear(), selectedDate.getMonth(), selectedDate.getDate(), 23, 59, 59);
           return evtStart <= dayEnd && evtEnd >= dayStart;
@@ -2751,9 +2887,42 @@ function CalendarScreenInner() {
     return base.sort((a, b) => {
       if (a.all_day && !b.all_day) return -1;
       if (!a.all_day && b.all_day) return 1;
-      return api.parseServerDate(a.start_at) - api.parseServerDate(b.start_at);
+      return parseCalDate(a.start_at) - parseCalDate(b.start_at);
     });
   }, [events, selectedDate, searchQuery]);
+
+  // [2026-10-13] Agenda DE VERDADE: próximos 45 dias agrupados por dia (antes a
+  // "Agenda" só escondia a grade e mostrava o dia selecionado).
+  const agendaItems = useMemo(() => {
+    if (calendarView !== 'agenda') return [];
+    const q = (searchQuery || '').trim().toLowerCase();
+    const from = calStartOfDay(new Date()).getTime();
+    const to = from + 45 * 86400000;
+    const list = events.filter(e => {
+      const st = parseCalDate(e.start_at).getTime();
+      const en = parseCalDate(e.end_at || e.start_at).getTime();
+      if (!Number.isFinite(st)) return false;
+      if (q && ![e.title, e.location, e.description].filter(Boolean).join(' ').toLowerCase().includes(q)) return false;
+      return (Number.isFinite(en) ? en : st) >= from && st < to;
+    }).sort((a, b) => parseCalDate(a.start_at) - parseCalDate(b.start_at));
+    const out = []; let cur = '';
+    const groups = {};
+    list.forEach(e => {
+      const d = parseCalDate(e.start_at); const k = calDayKey(d < new Date(from) ? new Date(from) : d);
+      (groups[k] = groups[k] || []).push(e);
+    });
+    Object.keys(groups).sort().forEach(k => {
+      const [y, m, d] = k.split('-').map(Number);
+      const dt = new Date(y, m - 1, d);
+      let label = '';
+      try { label = dt.toLocaleDateString(t('_locale') || undefined, { weekday: 'long', day: 'numeric', month: 'long' }); } catch { label = k; }
+      if (isSameDay(dt, new Date())) label = `${t('calendar.today') || 'Hoje'} · ${label}`;
+      out.push({ _agendaHeader: true, key: k, label: label.charAt(0).toUpperCase() + label.slice(1), count: groups[k].length });
+      groups[k].forEach(e => out.push(e));
+      cur = k;
+    });
+    return out;
+  }, [calendarView, events, searchQuery, t]);
 
   // "Hoje" pill is only useful when the user has drifted off the current
   // month/week — hide it when they're already viewing today, so the band
@@ -2874,12 +3043,10 @@ function CalendarScreenInner() {
               >
                 <IconSearch size={22} color={colors.text} />
               </HeaderIconButton>
-              {!_CAL_HEADER_COMPACT && ExpoCalendar && (
-                <HeaderIconButton onPress={handleSyncDeviceCalendar} disabled={syncingDevice} accessibilityLabel={t('calendar.syncNow')}>
-                  {syncingDevice ? <ActivityIndicator size="small" color={colors.text} /> : <IconRefresh size={21} color={colors.text} />}
-                </HeaderIconButton>
-              )}
-              <HeaderIconButton onPress={() => setShowAddModal(true)} accessibilityLabel={t('calendar.newEvent')}>
+              <HeaderIconButton onPress={() => router.push('/calendar-sync')} accessibilityLabel={t('calSync.title') || 'Sincronizar com o celular'}>
+                <IconSmartphone size={21} color={colors.text} />
+              </HeaderIconButton>
+              <HeaderIconButton onPress={() => { setPrefill(null); setShowAddModal(true); }} accessibilityLabel={t('calendar.newEvent')}>
                 <IconPlus size={24} color={colors.text} />
               </HeaderIconButton>
             </View>
@@ -2929,18 +3096,15 @@ function CalendarScreenInner() {
             >
               <IconSearch size={20} color={bandInk} />
             </TouchableOpacity>
-            {!_CAL_HEADER_COMPACT && Platform.OS !== 'web' && ExpoCalendar && (
-              <TouchableOpacity
-                onPress={handleSyncDeviceCalendar}
-                disabled={syncingDevice}
-                style={styles.headerBtn}
-                accessibilityLabel={t('calendar.syncNow')}
-              >
-                {syncingDevice ? <ActivityIndicator size="small" color={bandInk} /> : <IconRefresh size={20} color={bandInk} />}
-              </TouchableOpacity>
-            )}
             <TouchableOpacity
-              onPress={() => setShowAddModal(true)}
+              onPress={() => router.push('/calendar-sync')}
+              style={styles.headerBtn}
+              accessibilityLabel={t('calSync.title') || 'Sincronizar com o celular'}
+            >
+              <IconSmartphone size={20} color={bandInk} />
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={() => { setPrefill(null); setShowAddModal(true); }}
               style={[styles.headerBtn, styles.headerFab, lb && lb.headerFab]}
               accessibilityLabel={t('calendar.newEvent')}
             >
@@ -2986,7 +3150,7 @@ function CalendarScreenInner() {
           <PressableScale
             haptic={false}
             scaleTo={0.9}
-            onPress={calendarView === 'week' ? handlePrevWeek : handlePrevMonth}
+            onPress={calendarView === 'week' ? handlePrevWeek : calendarView === 'day' ? handlePrevDay : handlePrevMonth}
             style={[styles.monthBandChevron, lb && lb.monthBandChevron]}
             accessibilityLabel={t('calendar.prevMonth') || 'Mês anterior'}
           >
@@ -3027,7 +3191,7 @@ function CalendarScreenInner() {
           <PressableScale
             haptic={false}
             scaleTo={0.9}
-            onPress={calendarView === 'week' ? handleNextWeek : handleNextMonth}
+            onPress={calendarView === 'week' ? handleNextWeek : calendarView === 'day' ? handleNextDay : handleNextMonth}
             style={[styles.monthBandChevron, lb && lb.monthBandChevron]}
             accessibilityLabel={t('calendar.nextMonth') || 'Próximo mês'}
           >
@@ -3039,8 +3203,9 @@ function CalendarScreenInner() {
         <View style={styles.viewSegmentRow}>
           <View style={[styles.viewSegment, lb && lb.viewSegment]}>
             {[
-              { key: 'month', label: t('calendar.monthView') },
+              { key: 'day', label: t('calendar.dayView') || 'Dia' },
               { key: 'week', label: t('calendar.weekView') },
+              { key: 'month', label: t('calendar.monthView') },
               { key: 'agenda', label: t('calendar.agendaView') || 'Agenda' },
             ].map(opt => {
               const active = calendarView === opt.key;
@@ -3081,7 +3246,7 @@ function CalendarScreenInner() {
         </View>
 
         {/* Day-of-week strip — current weekday highlighted in white pill */}
-        {calendarView !== 'agenda' && (
+        {(calendarView === 'month' || calendarView === 'week') && (
           <View style={styles.weekStrip}>
             {(Array.isArray(t('calendar.dayNames')) ? t('calendar.dayNames') : []).map((d, i) => {
               const isTodayDow = i === realToday.getDay();
@@ -3108,7 +3273,41 @@ function CalendarScreenInner() {
         )}
       </View>
 
-      {calendarView === 'week' ? (
+      {calendarView === 'day' ? (
+        <DayTimeline
+          date={selectedDate || new Date()}
+          events={events}
+          tasks={pimTasks}
+          colors={colors}
+          isDark={isDark}
+          t={t}
+          locale={t('_locale') || undefined}
+          ownerEmail={api.getActiveAccountEmail?.() || user?.email || ''}
+          onEventPress={handleEventPress}
+          onCreateAt={(d) => openEditorAt(d)}
+          onMoveEvent={handleMoveEvent}
+          onPrevDay={handlePrevDay}
+          onNextDay={handleNextDay}
+          onTaskPress={(tk) => router.push(`/tasks?focus=${tk.id}`)}
+          header={(
+            <CalendarSmartBar
+              compact
+              date={selectedDate || new Date()}
+              events={events}
+              tasks={pimTasks}
+              colors={colors}
+              isDark={isDark}
+              t={t}
+              locale={t('_locale') || undefined}
+              onCreate={createFromDraft}
+              onOpenEditor={(d) => { setPrefill(d); if (d?.start) handleSelectDate(d.start); setShowAddModal(true); }}
+              onCreateAt={openEditorAt}
+              onOpenSync={() => router.push('/calendar-sync')}
+              onOpenTasks={() => router.push('/tasks')}
+            />
+          )}
+        />
+      ) : calendarView === 'week' ? (
         <WeekView
           weekStart={weekStartDate}
           events={events}
@@ -3120,11 +3319,31 @@ function CalendarScreenInner() {
         />
       ) : (
         <FlatList
-          data={dayEvents}
-          keyExtractor={(item) => String(item.id)}
-          renderItem={renderEventItem}
+          data={calendarView === 'agenda' ? agendaItems : dayEvents}
+          keyExtractor={(item) => (item._agendaHeader ? 'h-' + item.key : String(item.id) + '-' + (item.start_at || ''))}
+          renderItem={(info) => (info.item._agendaHeader ? (
+            <View style={[styles.dayHeader, { borderTopColor: colors.border, marginTop: info.index === 0 ? 0 : 8 }]}>
+              <Text style={[styles.dayHeaderTitle, { color: colors.text }]}>{info.item.label}</Text>
+              <Text style={[styles.dayEventCount, { color: colors.textSecondary }]}>{eventCountLabel(t, info.item.count)}</Text>
+            </View>
+          ) : renderEventItem(info))}
           ListHeaderComponent={
             <>
+              {/* [2026-10-13] topo inteligente: resumo do dia, criar com a Bia, livres, sincronizar */}
+              <CalendarSmartBar
+                date={selectedDate || new Date()}
+                events={events}
+                tasks={pimTasks}
+                colors={colors}
+                isDark={isDark}
+                t={t}
+                locale={t('_locale') || undefined}
+                onCreate={createFromDraft}
+                onOpenEditor={(d) => { setPrefill(d); if (d?.start) handleSelectDate(d.start); setShowAddModal(true); }}
+                onCreateAt={openEditorAt}
+                onOpenSync={() => router.push('/calendar-sync')}
+                onOpenTasks={() => router.push('/tasks')}
+              />
               {/* Import result banner */}
               {importResult && (
                 <View style={[styles.importBanner, {
@@ -3237,6 +3456,7 @@ function CalendarScreenInner() {
               )}
 
               {/* Selected day header */}
+              {calendarView !== 'agenda' && (
               <View style={[styles.dayHeader, { borderTopColor: colors.border }]}>
                 <Text style={[styles.dayHeaderTitle, { color: colors.text }]}>
                   {selectedDateStr}
@@ -3245,6 +3465,7 @@ function CalendarScreenInner() {
                   {eventCountLabel(t, dayEvents.length)}
                 </Text>
               </View>
+              )}
 
               {loading && !refreshing && events.length === 0 && (
                 <CalendarSkeleton />
@@ -3252,7 +3473,7 @@ function CalendarScreenInner() {
             </>
           }
           ListEmptyComponent={renderEmpty}
-          contentContainerStyle={[styles.list, { paddingBottom: Spacing.xl + insets.bottom }, dayEvents.length === 0 && styles.listEmpty]}
+          contentContainerStyle={[styles.list, { paddingBottom: Spacing.xl + insets.bottom }, (calendarView === 'agenda' ? agendaItems.length === 0 : dayEvents.length === 0) && styles.listEmpty]}
           refreshControl={
             <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.primary} colors={[colors.primary]} progressBackgroundColor={colors.surface} />
           }
@@ -3262,7 +3483,8 @@ function CalendarScreenInner() {
       {/* Add Event Modal */}
       <AddEventModal
         visible={showAddModal}
-        onClose={() => setShowAddModal(false)}
+        prefill={prefill}
+        onClose={() => { setShowAddModal(false); setPrefill(null); }}
         onSave={handleCreateEvent}
         colors={colors}
         calendars={calendars}
