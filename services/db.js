@@ -1070,7 +1070,9 @@ const _VO_SQL_EXCLUDE = `
 export async function getMissingMediaMessages(limit = 500) {
   if (isWeb || !_db) return [];
   const _lim = Math.max(1, Math.min(limit, 2000));
-  const _base = `SELECT id, conversation_id, type, file_url, content, thumb_b64%RAW%
+  // [2026-10-12] thumb_b64 NÃO existe na tabela messages → o SELECT sempre falhava e o
+  // auto-download offline (mediaAutoSync/fullHistorySync) nunca baixava nada. Removido.
+  const _base = `SELECT id, conversation_id, type, file_url, content%RAW%
        FROM messages
        WHERE type IN ('image','video','audio','voice','short_video','gif','sticker','file','document')
          AND (local_path IS NULL OR local_path = '')
