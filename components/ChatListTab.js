@@ -263,6 +263,16 @@ function IconBellOff({ size = 24, color = '#666' }) {
   );
 }
 
+// [2026-10-12 sticker-preview] Figurinha (folha com canto dobrado) p/ a prévia.
+function IconStickerMini({ size = 14, color = '#666' }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <Path d="M15.5 3H6a3 3 0 0 0-3 3v12a3 3 0 0 0 3 3h7l8-8V6.5A3.5 3.5 0 0 0 17.5 3z" />
+      <Path d="M13 21v-5a3 3 0 0 1 3-3h5" />
+    </Svg>
+  );
+}
+
 // Preview rows build strings with a leading emoji (📎 📞 📹 …). House rule: no
 // emoji in UI — swap the leading glyph for an SVG at RENDER time (the string
 // itself stays untouched so startsWith() checks elsewhere keep working).
@@ -271,7 +281,7 @@ const PREVIEW_EMOJI_ICONS = {
   '\uD83D\uDCF7': IconCamera, '\uD83C\uDFAC': IconFilm, '\uD83C\uDFA5': IconVideo,
   '\uD83C\uDFB5': IconMusic, '\uD83C\uDF99': IconMic, '\uD83D\uDCCD': IconMapPin,
   '\uD83D\uDC64': IconUser, '\uD83D\uDCCA': IconBarChart, '\uD83D\uDCC5': IconCalendar,
-  '\uD83D\uDCAB': IconSparkles, '\uD83D\uDCC4': IconFileText,
+  '\uD83D\uDCAB': IconStickerMini, '\uD83D\uDCC4': IconFileText,
 };
 // [2026-10-12 chatlist-polish] Voice-note length in the preview (WhatsApp:
 // mic glyph + "0:12"). `duration` = seconds (chat_upload / chat_forward probe).
@@ -898,7 +908,9 @@ const ConversationRow = React.memo(function ConversationRow({
     const _mediaCap = (cap, body) => cap || (body && !_isFileNameLike(body) ? body : '');
     if (lastMsg.type === 'image') content = '\uD83D\uDCF7 ' + (_mediaCap(caption, _plainBody) || t('chat.photo') || 'Foto');
     else if (lastMsg.type === 'gif') content = '\uD83C\uDFAC ' + (caption || 'GIF');
-    else if (lastMsg.type === 'sticker') content = '\uD83D\uDCAB ' + (caption || t('chat.sticker') || 'Sticker');
+    // [2026-10-12 sticker-preview] Figurinha = SEMPRE o rótulo (WhatsApp): nunca
+    // URL/nome de arquivo/legenda/emoji-código. O glifo vira SVG no render.
+    else if (lastMsg.type === 'sticker' || lastMsg.type === 'lottie_sticker') content = '\uD83D\uDCAB ' + (t('chat.sticker') || 'Figurinha');
     else if (lastMsg.type === 'video' && !content.startsWith('\uD83C\uDFA5')) content = '\uD83C\uDFA5 ' + (_mediaCap(caption, _plainBody) || t('chat.video') || 'V\u00EDdeo');
     else if ((lastMsg.type === 'audio' || lastMsg.type === 'voice') && !content.startsWith('\uD83D\uDCDE')) content = '\uD83C\uDF99 ' + (_fmtVoiceDur(lastMsg.duration) || caption || t('chat.audio') || '\u00C1udio');
     else if (lastMsg.type === 'file') content = '\uD83D\uDCC4 ' + (lastMsg.file_name || caption || _plainBody || t('chat.file') || 'Arquivo');
@@ -4589,7 +4601,18 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
       // channel-split: recipients receive chat_summary, NEVER chat_message,
       // on their per-user channel so the in-thread and list-screen paths
       // don't both fire). Server guarantees the same payload shape.
-      const onIncomingForList = (data) => {
+      const onIncomingForList = (rawData) => {
+        // [2026-10-12 sticker-preview] Os ecos LOCAIS do envio (sendWorker
+        // _publishServerRow / _uploadAndSendMedia / replay do offlineCache) chegam
+        // como { conversation_id, message: {linha} } — o handler lia data.type
+        // (undefined → 'text') e data.content||data.message (o OBJETO → JSON →
+        // "Anexo"/URL) e a prévia mostrava lixo até o próximo refetch virar
+        // "Figurinha"/"Foto". Desembrulha a linha (só quando `message` é objeto;
+        // em alguns payloads `message` é o texto).
+        const data = (rawData && rawData.message && typeof rawData.message === 'object' && !Array.isArray(rawData.message))
+          ? { ...rawData.message, conversation_id: rawData.message.conversation_id ?? rawData.conversation_id }
+          : rawData;
+        if (!data) return;
         // Dedup real message events by id (chat_message + chat_summary carry
         // the same id). Only dedup when an id is present — presence/typing and
         // other id-less events must always pass through.

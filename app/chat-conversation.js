@@ -18073,7 +18073,15 @@ function ChatConversationInner() {
     // Sticker can be either an emoji string ("😀") or an image URL (custom
     // sticker uploaded via the picker's "Criar" button). Image stickers go
     // through file_url so the backend treats them as media.
+    // [2026-10-12 sticker-instant] Caminho relativo (/data/sticker-files/…) vinha
+    // como "não-imagem" → bolha de TEXTO com o caminho cru. Resolve p/ absoluto.
+    if (typeof sticker === 'string' && /^\/?data\//.test(sticker)) {
+      try { sticker = api.getMediaUrl(sticker) || sticker; } catch {}
+    }
     const isImage = typeof sticker === 'string' && (sticker.startsWith('http://') || sticker.startsWith('https://'));
+    // Aquece o cache de imagem (o picker já baixou a miniatura) p/ a bolha pintar
+    // a figurinha no 1º frame em vez de um quadro vazio + fade.
+    if (isImage && _expoImagePrefetch) { try { _expoImagePrefetch(api.getMediaUrl(sticker) || sticker, 'memory-disk')?.catch?.(() => {}); } catch {} }
     const msgId = 'msg_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
     const tempId = `tmp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     const optimisticMsg = {
@@ -18092,6 +18100,18 @@ function ChatConversationInner() {
         try { mailWs.ensureHealthy?.(); } catch {}
       }
       mailWs.relayChatMessage(conversationId, { ...optimisticMsg, _optimistic: true, _pending: false }, tempId, getMemberEmails());
+      // [2026-10-12 sticker-preview] Lista já com "Figurinha" (texto/mídia fazem
+      // o mesmo) — antes a prévia só mudava no eco/refetch, mostrando lixo antes.
+      mailWs._emit?.('chat_local_outbound', {
+        conversation_id: conversationId,
+        id: tempId,
+        sender_email: currentEmail,
+        sender_name: user?.name || currentEmail,
+        content: '',
+        type: 'sticker',
+        created_at: optimisticMsg.created_at,
+        _local: true,
+      });
     } catch {}
 
     // [2026-10-07 send-media] Native: durable outbox.
@@ -27013,7 +27033,9 @@ function ChatConversationInner() {
           // Stickers are transparent so the dark pill clashes — the footer
           // helper renders a small gray timestamp+checks row BELOW the sticker
           // for own messages (WhatsApp/Telegram parity).
-          if (msg.file_url || (msg.content && msg.content.startsWith('http'))) {
+          // [2026-10-12 sticker-instant] Caminho relativo (/data/sticker-files/…)
+          // também é imagem — antes caía no ramo de TEXTO e o caminho cru aparecia.
+          if (msg.file_url || (typeof msg.content === 'string' && /^(https?:\/\/|\/?data\/)/i.test(msg.content))) {
             const _stickerUri = msg.file_url || msg.content;
             return (
               <View>
@@ -27036,10 +27058,14 @@ function ChatConversationInner() {
                     uri={_stickerUri}
                     style={{ width: 120, height: 120 }}
                     contentFit="contain"
-                    recyclingKey={`sticker-${msg.id}`}
+                    // [2026-10-12 sticker-instant] Chave estável no tmp_→id do servidor (antes `msg.id` mudava
+                    // no ack → expo-image limpava e recarregava = piscada).
+                    recyclingKey={`sticker-${msg._client_id || msg.client_message_id || msg.id}`}
                     // Fade remote stickers in; instant for cached local files
                     // (file:// guard mirrors the photo case).
-                    transition={typeof _stickerUri === 'string' && _stickerUri.startsWith('file://') ? 0 : { duration: 200, effect: 'cross-dissolve' }}
+                    // [2026-10-12 sticker-instant] Figurinha que EU acabei de mandar
+                    // (_client_id local) já está no cache (picker + prefetch) → sem fade.
+                    transition={(typeof _stickerUri === 'string' && _stickerUri.startsWith('file://')) || msg._client_id ? 0 : { duration: 200, effect: 'cross-dissolve' }}
                   />
                 </TouchableOpacity>
                 <MediaStatusFooter msg={msg} isOwn={isOwn} variant="sticker" />
