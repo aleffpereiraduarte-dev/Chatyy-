@@ -72,8 +72,13 @@ if (Platform.OS !== 'web') {
           }
         } catch {}
 
+        // [2026-10-13 video-studio] Renders do Video Studio pendentes: confere o
+        // status no servidor (rápido) → notificação local "vídeo no ar".
+        let studioTouched = false;
+        try { studioTouched = !!(await require('./videoStudio/renderQueue').pollStudioRendersInBackground()); } catch {}
+
         if ((!size || size === 0) && v2Pending === 0) {
-          return BackgroundFetch.BackgroundFetchResult.NoData;
+          return studioTouched ? BackgroundFetch.BackgroundFetchResult.NewData : BackgroundFetch.BackgroundFetchResult.NoData;
         }
 
         let legacyReplayed = 0;

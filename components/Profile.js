@@ -2893,12 +2893,24 @@ export default function Profile({
                 ? _ti('profile.empty.reelsSelfSub', 'Grave seu primeiro vídeo curto.')
                 : _ti('profile.empty.reelsOtherSub', 'Os Reels aparecem aqui quando publicados.')}
               ctaLabel={actions.is_self ? _ti('profile.empty.reelsCta', 'Gravar Reel') : undefined}
-              onPress={actions.is_self ? () => router?.push('/spotlight?createPost=1') : undefined}
+              onPress={actions.is_self ? () => router?.push('/video-studio/camera') /* [2026-10-13 video-studio] */ : undefined}
             />
           );
         }
         return (
           <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
+            {/* [2026-10-13 video-studio] "+ Criar" no próprio perfil → câmera de criação */}
+            {!!actions.is_self && (
+              <Pressable
+                onPress={() => router?.push('/video-studio/camera')}
+                accessibilityRole="button"
+                accessibilityLabel={_ti('videoStudio.create', 'Criar')}
+                style={{ width: gridSize, height: gridSize, alignItems: 'center', justifyContent: 'center', gap: 6, borderWidth: StyleSheet.hairlineWidth, borderColor: isDark ? '#2A2A2A' : '#E5E5E5', backgroundColor: isDark ? '#0A0A0A' : '#FAFAFA' }}
+              >
+                <IconPlus size={26} color={isDark ? '#F1F3F5' : '#111111'} />
+                <Text style={{ color: isDark ? '#F1F3F5' : '#111111', fontSize: 13, fontWeight: '700' }}>{_ti('videoStudio.create', 'Criar')}</Text>
+              </Pressable>
+            )}
             {(gridRenderLimit === Infinity ? reels : reels.slice(0, gridRenderLimit)).map(r => <GridItem key={r.id} item={r} size={gridSize} isReel onPress={() => handleOpenPost(r, 'reels')} />)}
           </View>
         );

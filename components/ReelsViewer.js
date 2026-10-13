@@ -21,7 +21,7 @@ import { useIsFocused } from '@react-navigation/native';
 import {
   IconHeart, IconHeartOutline, IconMessageCircle, IconShare,
   IconBookmark, IconBookmarkFilled, IconMusic, IconPlay, IconPause,
-  IconX, IconSend, IconChevronDown, IconCamera, IconVolume2, IconVolumeX, IconEye,
+  IconX, IconSend, IconChevronDown, IconCamera, IconPlus, IconVolume2, IconVolumeX, IconEye,
   IconRepeat, IconLink, IconCopy, IconMoreHorizontal, IconDiamond, IconSliders,
 } from './Icons';
 // Reels P1 monetization shares the same diamond catalog + wallet ledger
@@ -2129,8 +2129,11 @@ const ReelItem = memo(function ReelItem({ onCreate, reel, isActive, colors, isDa
               hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
               accessibilityLabel={t?.('reels.create') || 'Criar reel'}
               accessibilityRole="button"
+              style={{ flexDirection: 'row', alignItems: 'center', gap: 4, height: 30, paddingHorizontal: 11, borderRadius: 15, borderWidth: 1.5, borderColor: '#fff', backgroundColor: 'rgba(0,0,0,0.25)' }}
             >
-              <IconCamera size={26} color="#fff" />
+              {/* [2026-10-13 video-studio] "+ Criar" → câmera de criação */}
+              <IconPlus size={15} color="#fff" />
+              <Text style={{ color: '#fff', fontSize: 13, fontWeight: '700' }}>{t?.('videoStudio.create') || 'Criar'}</Text>
             </PressableScale>
           )}
         </View>

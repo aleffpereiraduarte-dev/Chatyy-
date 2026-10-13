@@ -2092,6 +2092,12 @@ export default function RootLayout() {
                   <Stack.Screen name="reels-sound" options={{ headerShown: false, presentation: 'fullScreenModal', animation: 'fade', animationDuration: 150 }} />
                   {/* Reels recorder — dedicated full-screen camera (TikTok/Instagram-style). */}
                   <Stack.Screen name="reels-recorder" options={{ headerShown: false, presentation: 'fullScreenModal', animation: _navAnim('slide_from_bottom') }} />
+                  {/* [2026-10-13 video-studio] Câmera de criação em segmentos (→ /video-studio/editor). */}
+                  <Stack.Screen name="video-studio/camera" options={{ headerShown: false, presentation: 'fullScreenModal', animation: _navAnim('slide_from_bottom'), gestureEnabled: false, freezeOnBlur: false /* desmontar a câmera ao ir pro editor */ }} />
+                  {/* [2026-10-13 video-studio] Editor (timeline/texto/sons/filtros/legendas/capa) → Publicar; Rascunhos. */}
+                  <Stack.Screen name="video-studio/editor" options={{ headerShown: false, presentation: 'fullScreenModal', animation: _navAnim('fade'), gestureEnabled: false }} />
+                  <Stack.Screen name="video-studio/publish" options={{ headerShown: false, presentation: 'card', animation: _PUSH }} />
+                  <Stack.Screen name="video-studio/drafts" options={{ headerShown: false, presentation: 'card', animation: _PUSH }} />
                   {/* Reels drafts — grid of persisted drafts; tap to resume. */}
                   <Stack.Screen name="reels-drafts" options={{ headerShown: false, ..._FULL_MODAL }} />
                   {/* [2026-10-08 reels-publish] Reels composer — galeria/câmera → corte/capa/legenda → Publicar (2º plano). */}

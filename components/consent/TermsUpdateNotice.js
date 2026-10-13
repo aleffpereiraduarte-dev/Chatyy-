@@ -18,7 +18,7 @@ import ConsentOptions from './ConsentOptions';
 import { shouldShowTermsUpdate, recordTermsUpdate, loadConsents, TERMS_VERSION } from '../../services/consents';
 
 // Telas onde o aviso NÃO aparece (fluxos de entrada, chamadas, câmera, lives).
-const SKIP_RE = /^\/(login|signup|forgot|verify|call|group-call|meet|live|reels-recorder|reels-compose|native-sheet|legal)/;
+const SKIP_RE = /^\/(login|signup|forgot|verify|call|group-call|meet|live|reels-recorder|reels-compose|video-studio|native-sheet|legal)/;
 
 export default function TermsUpdateGate() {
   const auth = useAuth();

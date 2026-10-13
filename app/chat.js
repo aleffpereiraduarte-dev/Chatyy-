@@ -299,7 +299,10 @@ function ChatHub() {
   // foi fechado (fila durável no nativo). Atrasado p/ não competir com o boot.
   useEffect(() => {
     if (!user?.email || Platform.OS === 'web') return undefined;
-    const id = setTimeout(() => { try { require('../services/reelPublishQueue').resumeReelPublishes(user.email); } catch {} }, 6000);
+    const id = setTimeout(() => {
+      try { require('../services/reelPublishQueue').resumeReelPublishes(user.email); } catch {}
+      try { require('../services/videoStudio/renderQueue').resumeStudioRenders(); } catch {} // [2026-10-13 video-studio]
+    }, 6000);
     return () => clearTimeout(id);
   }, [user?.email]);
   // Valid tabs — anything else (legacy 'config'/'settings' deep links) falls back to 'chats' to avoid a blank page.

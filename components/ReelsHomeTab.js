@@ -13,7 +13,7 @@ const ReelsViewer = React.lazy(() => import('./ReelsViewer'));
 export default function ReelsHomeTab({ colors, isDark, t, user, router, tabActive }) {
   const insets = useSafeAreaInsets();
   const active = tabActive === 'reels';
-  const onCreate = useCallback(() => { try { router?.push('/reels-compose'); } catch {} }, [router]);
+  const onCreate = useCallback(() => { try { router?.push('/video-studio/camera'); } catch {} }, [router]);
   return (
     <View style={styles.root}>
       <React.Suspense fallback={<View style={styles.root} />}>

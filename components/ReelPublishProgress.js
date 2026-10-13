@@ -19,9 +19,20 @@ import {
   dismissReelJob,
   resumeReelPublishes,
 } from '../services/reelPublishQueue';
+// [2026-10-13 video-studio] Publicações do Video Studio (upload → render no servidor) no mesmo banner.
+import {
+  getStudioJobs,
+  subscribeStudioJobs,
+  retryStudioRender,
+  cancelStudioRender,
+  dismissStudioJob,
+  resumeStudioRenders,
+} from '../services/videoStudio/renderQueue';
+
+const allJobs = (email) => [...getReelJobs(email), ...getStudioJobs(email)].sort((a, b) => a.createdAt - b.createdAt);
 
 export default function ReelPublishProgress({ email, t, top = 0, bottom = null, onView, style }) {
-  const [jobs, setJobs] = useState(() => getReelJobs(email));
+  const [jobs, setJobs] = useState(() => allJobs(email));
   const tt = useCallback((k, fb, p) => {
     const v = t ? t(k, p) : null;
     if (v && v !== k) return v;
@@ -31,10 +42,12 @@ export default function ReelPublishProgress({ email, t, top = 0, bottom = null, 
   }, [t]);
 
   useEffect(() => {
-    setJobs(getReelJobs(email));
-    const unsub = subscribeReelJobs(() => setJobs(getReelJobs(email)));
+    setJobs(allJobs(email));
+    const unsub = subscribeReelJobs(() => setJobs(allJobs(email)));
+    const unsub2 = subscribeStudioJobs(() => setJobs(allJobs(email)));
     if (email) resumeReelPublishes(email).catch(() => {});
-    return unsub;
+    if (email) resumeStudioRenders().catch(() => {});
+    return () => { unsub(); unsub2(); };
   }, [email]);
 
   if (!jobs.length) return null;
@@ -48,6 +61,8 @@ export default function ReelPublishProgress({ email, t, top = 0, bottom = null, 
           ? tt('reels.publish.done', 'Reel publicado')
           : failed
             ? tt('reels.publish.failed', 'Falha ao publicar o reel')
+            : (j.kind === 'studio' && j.status === 'publishing' && j.phase === 'render')
+              ? tt('studio.publish.rendering', 'Criando seu vídeo… {pct}%', { pct })
             : j.status === 'publishing'
               ? tt('reels.publish.processing', 'Finalizando reel…')
               : (j.status === 'queued' && j.error)
@@ -69,18 +84,20 @@ export default function ReelPublishProgress({ email, t, top = 0, bottom = null, 
             </View>
             {!done && !failed && j.status === 'publishing' && <ActivityIndicator size="small" color="#fff" style={{ marginLeft: 6 }} />}
             {done && !!onView && (
-              <TouchableOpacity onPress={() => { onView(j.post); dismissReelJob(j.id); }} style={styles.pill} accessibilityRole="button">
+              <TouchableOpacity onPress={() => { onView(j.post); (j.kind === 'studio' ? dismissStudioJob : dismissReelJob)(j.id); }} style={styles.pill} accessibilityRole="button">
                 <Text style={styles.pillTxt}>{tt('reels.publish.view', 'Ver')}</Text>
               </TouchableOpacity>
             )}
             {failed && (
-              <TouchableOpacity onPress={() => retryReelPublish(j.id)} style={styles.pill} accessibilityRole="button">
+              <TouchableOpacity onPress={() => (j.kind === 'studio' ? retryStudioRender : retryReelPublish)(j.id)} style={styles.pill} accessibilityRole="button">
                 <Text style={styles.pillTxt}>{tt('reels.publish.retry', 'Tentar de novo')}</Text>
               </TouchableOpacity>
             )}
             {(failed || done) && (
               <TouchableOpacity
-                onPress={() => (done ? dismissReelJob(j.id) : cancelReelPublish(j.id))}
+                onPress={() => (j.kind === 'studio'
+                  ? (done ? dismissStudioJob(j.id) : cancelStudioRender(j.id))
+                  : (done ? dismissReelJob(j.id) : cancelReelPublish(j.id)))}
                 hitSlop={8}
                 style={styles.close}
                 accessibilityRole="button"

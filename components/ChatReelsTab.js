@@ -229,7 +229,7 @@ export default function ChatReelsTab({ active, parentActive: parentActiveProp, t
 
           {/* Create reel button (right of search) */}
           <Pressable
-            onPress={() => router.push('/reels-compose')} /* [2026-10-08 reels-publish] */
+            onPress={() => router.push('/video-studio/camera')} /* [2026-10-13 video-studio] */
             style={[styles.searchBtn, { right: 54 }]}
             accessibilityRole="button"
             accessibilityLabel={t?.('reels.recorder.title') || 'Criar reel'}

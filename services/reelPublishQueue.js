@@ -84,6 +84,12 @@ export function onReelPublished(fn) {
   return () => _publishedSubs.delete(fn);
 }
 
+/** [2026-10-13 video-studio] Reel publicado por outra fila (render do Video Studio) → mesmos assinantes. */
+export function emitReelPublished(post) {
+  if (!post) return;
+  for (const fn of _publishedSubs) { try { fn(post); } catch {} }
+}
+
 let _lastEmitAt = 0;
 function _emit(force = false) {
   const now = Date.now();
@@ -429,6 +435,7 @@ export default {
   getReelJobs,
   subscribeReelJobs,
   onReelPublished,
+  emitReelPublished,
   newReelJobId,
   REEL_MAX_MS,
 };
