@@ -1,4 +1,12 @@
 export default {
+  // [2026-10-12 sticker-picker-fix] galeria/câmera do criador de figurinhas
+  "stickerMaker.photosPermTitle": "ছবিতে অ্যাক্সেস",
+  "stickerMaker.photosPermBody": "স্টিকারের জন্য ছবি বাছতে ডিভাইসের সেটিংসে ছবিতে অ্যাক্সেসের অনুমতি দিন।",
+  "stickerMaker.cameraPermTitle": "ক্যামেরায় অ্যাক্সেস",
+  "stickerMaker.cameraPermBody": "স্টিকারের জন্য ছবি তুলতে ডিভাইসের সেটিংসে ক্যামেরায় অ্যাক্সেসের অনুমতি দিন।",
+  "stickerMaker.pickFailedTitle": "খোলা যায়নি",
+  "stickerMaker.pickFailed": "এখন আপনার গ্যালারি খোলা যায়নি। আবার চেষ্টা করুন।",
+  "stickerMaker.pickVideoFailed": "এখন আপনার ভিডিও খোলা যায়নি। আবার চেষ্টা করুন।",
   // [2026-10-09 signup-nophone/settings-logout]
   "login.createAccountNoPhone": "নম্বর ছাড়া অ্যাকাউন্ট খুলুন",
   "signupUsername.handlePlaceholder": "your.username",

@@ -1,4 +1,12 @@
 export default {
+  // [2026-10-12 sticker-picker-fix] galeria/câmera do criador de figurinhas
+  "stickerMaker.photosPermTitle": "Akses foto",
+  "stickerMaker.photosPermBody": "Untuk memilih foto stiker, izinkan akses foto di Pengaturan perangkat.",
+  "stickerMaker.cameraPermTitle": "Akses kamera",
+  "stickerMaker.cameraPermBody": "Untuk mengambil foto stiker, izinkan akses kamera di Pengaturan perangkat.",
+  "stickerMaker.pickFailedTitle": "Tidak dapat membuka",
+  "stickerMaker.pickFailed": "Galeri Anda tidak dapat dibuka saat ini. Coba lagi.",
+  "stickerMaker.pickVideoFailed": "Video Anda tidak dapat dibuka saat ini. Coba lagi.",
   // [2026-10-11 bughunt] chaves usadas com || fallback (t() devolve a chave crua → fallback nunca aparecia)
   "attachment.previewOpenWith": "Ketuk \"Buka dengan\" untuk melihat PDF",
   "attachment.openWith": "Buka dengan",

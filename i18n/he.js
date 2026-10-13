@@ -1,4 +1,12 @@
 export default {
+  // [2026-10-12 sticker-picker-fix] galeria/câmera do criador de figurinhas
+  "stickerMaker.photosPermTitle": "גישה לתמונות",
+  "stickerMaker.photosPermBody": "כדי לבחור תמונה למדבקה, יש לאפשר גישה לתמונות בהגדרות המכשיר.",
+  "stickerMaker.cameraPermTitle": "גישה למצלמה",
+  "stickerMaker.cameraPermBody": "כדי לצלם תמונה למדבקה, יש לאפשר גישה למצלמה בהגדרות המכשיר.",
+  "stickerMaker.pickFailedTitle": "לא ניתן לפתוח",
+  "stickerMaker.pickFailed": "לא הצלחנו לפתוח את הגלריה כרגע. נסו שוב.",
+  "stickerMaker.pickVideoFailed": "לא הצלחנו לפתוח את הסרטונים כרגע. נסו שוב.",
   // [2026-10-09 signup-nophone/settings-logout]
   "login.createAccountNoPhone": "יצירת חשבון בלי מספר",
   "signupUsername.handlePlaceholder": "your.username",

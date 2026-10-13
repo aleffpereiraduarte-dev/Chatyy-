@@ -10,6 +10,7 @@ import * as api from '../services/api';
 // [2026-10-08 sticker-maker] criador novo (recorte automático + contorno +
 // texto/desenho/emoji + WebP 512) substitui o StickerEditor antigo aqui.
 import StickerMaker, { pickStickerSourceImage } from './stickers/StickerMaker';
+import { pickMedia } from '../services/stickerImagePicker';
 import Svg, { Path as SvgPath } from 'react-native-svg';
 import Sheet from './ui/Sheet';
 import ActionList from './ui/ActionList';
@@ -383,47 +384,51 @@ export default function StickerPicker({ onSelect, onClose, colors, t, userEmail,
   // Pick image → open sticker editor → upload result as sticker
   const [editorUri, setEditorUri] = useState(null);
 
+  // [2026-10-12 sticker-picker-fix] "não abre a galeria" (iOS): a folha
+  // "Criar figurinha" é um <Modal> que ainda está saindo quando o picker era
+  // chamado; o iOS dispensava o PHPicker junto. pickStickerSourceImage agora
+  // espera o overlay sair, não bloqueia a galeria por permissão e mostra erro
+  // traduzido. `picking` = spinner no botão "Criar" + trava toque duplo.
+  const pickingRef = useRef(false);
+  const [picking, setPicking] = useState(false);
   const pickImageForEditor = useCallback(async (source) => {
+    if (pickingRef.current && Platform.OS !== 'web') return;
+    pickingRef.current = true;
+    if (Platform.OS !== 'web') setPicking(true); // web: seletor de arquivo pode não avisar cancelamento
     try {
-      const uri = await pickStickerSourceImage(source);
+      const uri = await pickStickerSourceImage(source, { t, afterOverlay: true });
       if (uri) setEditorUri(uri);
-    } catch (e) {
-      Alert.alert(t?.('common.error') || 'Erro', e?.message || 'Erro');
+    } catch {
+      Alert.alert(
+        _tr(t, 'stickerMaker.pickFailedTitle', 'Não foi possível abrir'),
+        _tr(t, 'stickerMaker.pickFailed', 'Não conseguimos abrir sua galeria agora. Tente de novo.'),
+      );
+    } finally {
+      pickingRef.current = false;
+      setPicking(false);
     }
   }, [t]);
 
   // Pick a short video and upload as animated WebP sticker (no editor)
   const pickVideoForAnimatedSticker = useCallback(async () => {
+    if (pickingRef.current && Platform.OS !== 'web') return;
+    pickingRef.current = true;
+    if (Platform.OS !== 'web') setPicking(true); // web: seletor de arquivo pode não avisar cancelamento
     try {
       let file = null;
-      if (Platform.OS === 'web') {
-        const f = await new Promise((resolve) => {
-          const input = document.createElement('input');
-          input.type = 'file';
-          input.accept = 'video/mp4,video/webm,video/quicktime,image/gif';
-          input.onchange = (e) => resolve(e.target.files?.[0] || null);
-          input.click();
-        });
-        if (!f) return;
-        if (f.size > 20 * 1024 * 1024) {
-          Alert.alert(t?.('common.error') || 'Erro', t?.('chat.stickerTooLarge') || 'Vídeo muito grande (máx 20MB)');
-          return;
-        }
-        file = { _raw: f, name: f.name || 'sticker.mp4', type: f.type || 'video/mp4' };
-      } else {
-        const ImagePicker = require('expo-image-picker');
-        const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
-        if (!perm.granted) return;
-        const result = await ImagePicker.launchImageLibraryAsync({
-          mediaTypes: ['videos'],
-          quality: 0.85,
-          videoMaxDuration: 5,
-          allowsEditing: false,
-        });
-        if (result.canceled || !result.assets?.[0]) return;
-        const a = result.assets[0];
-        file = { uri: a.uri, name: a.fileName || 'sticker.mp4', type: a.mimeType || 'video/mp4' };
+      const asset = await pickMedia({ source: 'gallery', media: 'video', t, afterOverlay: true, quality: 0.85, videoMaxDuration: 5 });
+      if (!asset) return;
+      if (asset.size && asset.size > 20 * 1024 * 1024) {
+        Alert.alert(_tr(t, 'common.error', 'Erro'), _tr(t, 'chat.stickerTooLarge', 'Vídeo muito grande (máx 20MB)'));
+        return;
       }
+      if (Platform.OS === 'web') {
+        file = { _raw: asset.file, name: asset.fileName || 'sticker.mp4', type: asset.mimeType || 'video/mp4' };
+      } else {
+        file = { uri: asset.uri, name: asset.fileName || 'sticker.mp4', type: asset.mimeType || 'video/mp4' };
+      }
+      pickingRef.current = false;
+      setPicking(false);
       if (!file) return;
       setCreating(true);
       const r = await api.chatStickerCreateAnimated(file);
@@ -445,11 +450,13 @@ export default function StickerPicker({ onSelect, onClose, colors, t, userEmail,
           } catch {}
         }
       } else {
-        Alert.alert(t?.('common.error') || 'Erro', r?.error || r?.message || _tr(t, 'stickerPicker.animatedFailed', 'Falha ao criar figurinha animada.'));
+        Alert.alert(_tr(t, 'common.error', 'Erro'), _tr(t, 'stickerPicker.animatedFailed', 'Falha ao criar figurinha animada.'));
       }
     } catch (e) {
-      Alert.alert(t?.('common.error') || 'Erro', e?.message || _tr(t, 'stickerPicker.animatedFailed', 'Falha ao criar figurinha animada.'));
+      Alert.alert(_tr(t, 'common.error', 'Erro'), _tr(t, 'stickerPicker.animatedFailed', 'Falha ao criar figurinha animada.'));
     } finally {
+      pickingRef.current = false;
+      setPicking(false);
       setCreating(false);
     }
   }, [t, mine]);
@@ -458,7 +465,7 @@ export default function StickerPicker({ onSelect, onClose, colors, t, userEmail,
   const [createSheet, setCreateSheet] = useState(false);
   const [mineSheet, setMineSheet] = useState(null); // url da figurinha (Minhas)
   const createSticker = useCallback(() => {
-    if (creating) return;
+    if (creating || (pickingRef.current && Platform.OS !== 'web')) return;
     setCreateSheet(true);
   }, [creating]);
 
@@ -533,7 +540,7 @@ export default function StickerPicker({ onSelect, onClose, colors, t, userEmail,
         Alert.alert(t?.('common.error') || 'Erro', _tr(t, 'stickerPicker.createFailed', 'Falha ao criar figurinha.'));
       }
     } catch (e) {
-      Alert.alert(t?.('common.error') || 'Erro', e?.message || _tr(t, 'stickerPicker.createFailed', 'Falha ao criar figurinha.'));
+      Alert.alert(_tr(t, 'common.error', 'Erro'), _tr(t, 'stickerPicker.createFailed', 'Falha ao criar figurinha.'));
     } finally {
       setCreating(false);
     }
@@ -720,9 +727,9 @@ export default function StickerPicker({ onSelect, onClose, colors, t, userEmail,
             <TouchableOpacity onPress={() => { setShowSearch(true); setTimeout(() => searchRef.current?.focus(), 100); }} style={{ padding: 4 }}>
               <IconSearch size={18} color={colors.textSecondary} />
             </TouchableOpacity>
-            <TouchableOpacity onPress={createSticker} disabled={creating}
+            <TouchableOpacity onPress={createSticker} disabled={creating || picking}
               style={{ flexDirection: 'row', alignItems: 'center', gap: 4, padding: 6, borderRadius: 16, backgroundColor: colors.primary + '15' }}>
-              {creating ? <ActivityIndicator size={14} color={colors.primary} /> : <IconPlus size={14} color={colors.primary} />}
+              {(creating || picking) ? <ActivityIndicator size={14} color={colors.primary} /> : <IconPlus size={14} color={colors.primary} />}
               <Text style={{ fontSize: 11, fontWeight: '700', color: colors.primary }}>{t?.('chat.createSticker') || 'Criar'}</Text>
             </TouchableOpacity>
             <TouchableOpacity onPress={onClose} style={{ padding: 4 }}>
@@ -913,7 +920,7 @@ export default function StickerPicker({ onSelect, onClose, colors, t, userEmail,
           renderItem={({ item }) => (item === CREATE_TILE ? (
             <TouchableOpacity
               onPress={createSticker}
-              disabled={creating}
+              disabled={creating || picking}
               style={{
                 flex: 1 / 5, aspectRatio: 1, alignItems: 'center', justifyContent: 'center',
                 borderRadius: 12, margin: 4, borderWidth: 1.5, borderStyle: 'dashed', borderColor: colors.textTertiary,
@@ -922,7 +929,7 @@ export default function StickerPicker({ onSelect, onClose, colors, t, userEmail,
               accessibilityLabel={_tr(t, 'stickerMaker.pickTitle', 'Criar figurinha')}
               activeOpacity={0.6}
             >
-              {creating ? <ActivityIndicator size="small" color={colors.text} /> : <IconStickerPlus size={24} color={colors.text} />}
+              {(creating || picking) ? <ActivityIndicator size="small" color={colors.text} /> : <IconStickerPlus size={24} color={colors.text} />}
               <Text style={{ fontSize: 10, fontWeight: '700', color: colors.text, marginTop: 3 }} numberOfLines={1}>{_tr(t, 'stickerMaker.createTile', 'Criar')}</Text>
             </TouchableOpacity>
           ) : (
@@ -1044,7 +1051,7 @@ export default function StickerPicker({ onSelect, onClose, colors, t, userEmail,
       <TouchableOpacity
         onPress={createSticker}
         activeOpacity={0.85}
-        disabled={creating}
+        disabled={creating || picking}
         style={{
           position: 'absolute', right: 14, bottom: 60 + _bi,
           width: 48, height: 48, borderRadius: 24,
@@ -1053,11 +1060,11 @@ export default function StickerPicker({ onSelect, onClose, colors, t, userEmail,
           shadowColor: '#111111', shadowOpacity: 0.45,
           shadowRadius: 10, shadowOffset: { width: 0, height: 4 },
           elevation: 6,
-          opacity: creating ? 0.6 : 1,
+          opacity: (creating || picking) ? 0.6 : 1,
         }}
         accessibilityLabel={_tr(t, 'stickerMaker.pickTitle', 'Criar figurinha')}
       >
-        {creating ? <ActivityIndicator color="#fff" /> : <IconPlus size={22} color="#fff" />}
+        {(creating || picking) ? <ActivityIndicator color="#fff" /> : <IconPlus size={22} color="#fff" />}
       </TouchableOpacity>
 
       {/* Long-press preview modal — large render of the sticker plus an

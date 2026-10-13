@@ -1,4 +1,12 @@
 export default {
+  // [2026-10-12 sticker-picker-fix] galeria/câmera do criador de figurinhas
+  "stickerMaker.photosPermTitle": "Acces la poze",
+  "stickerMaker.photosPermBody": "Pentru a alege poza pentru sticker, permite accesul la poze în Setările dispozitivului.",
+  "stickerMaker.cameraPermTitle": "Acces la cameră",
+  "stickerMaker.cameraPermBody": "Pentru a face poza pentru sticker, permite accesul la cameră în Setările dispozitivului.",
+  "stickerMaker.pickFailedTitle": "Nu s-a putut deschide",
+  "stickerMaker.pickFailed": "Nu am putut deschide galeria acum. Încearcă din nou.",
+  "stickerMaker.pickVideoFailed": "Nu am putut deschide videoclipurile acum. Încearcă din nou.",
   // [2026-10-09 signup-nophone/settings-logout]
   "login.createAccountNoPhone": "Creează cont fără număr",
   "signupUsername.handlePlaceholder": "numele.tau",

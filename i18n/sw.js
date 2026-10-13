@@ -1,4 +1,12 @@
 export default {
+  // [2026-10-12 sticker-picker-fix] galeria/câmera do criador de figurinhas
+  "stickerMaker.photosPermTitle": "Ufikiaji wa picha",
+  "stickerMaker.photosPermBody": "Ili kuchagua picha ya kibandiko, ruhusu ufikiaji wa picha kwenye Mipangilio ya kifaa.",
+  "stickerMaker.cameraPermTitle": "Ufikiaji wa kamera",
+  "stickerMaker.cameraPermBody": "Ili kupiga picha ya kibandiko, ruhusu ufikiaji wa kamera kwenye Mipangilio ya kifaa.",
+  "stickerMaker.pickFailedTitle": "Imeshindwa kufungua",
+  "stickerMaker.pickFailed": "Hatukuweza kufungua matunzio yako sasa hivi. Jaribu tena.",
+  "stickerMaker.pickVideoFailed": "Hatukuweza kufungua video zako sasa hivi. Jaribu tena.",
   // [2026-10-09 signup-nophone/settings-logout]
   "login.createAccountNoPhone": "Fungua akaunti bila namba",
   "signupUsername.handlePlaceholder": "jina.lako",

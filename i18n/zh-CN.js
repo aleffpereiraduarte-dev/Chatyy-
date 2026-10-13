@@ -1,4 +1,12 @@
 export default {
+  // [2026-10-12 sticker-picker-fix] galeria/câmera do criador de figurinhas
+  "stickerMaker.photosPermTitle": "照片访问权限",
+  "stickerMaker.photosPermBody": "要为贴纸选择照片，请在设备设置中允许访问照片。",
+  "stickerMaker.cameraPermTitle": "相机访问权限",
+  "stickerMaker.cameraPermBody": "要为贴纸拍照，请在设备设置中允许访问相机。",
+  "stickerMaker.pickFailedTitle": "无法打开",
+  "stickerMaker.pickFailed": "暂时无法打开你的相册，请重试。",
+  "stickerMaker.pickVideoFailed": "暂时无法打开你的视频，请重试。",
   // [2026-10-09 signup-nophone/settings-logout]
   "login.createAccountNoPhone": "不用手机号创建账号",
   "signupUsername.handlePlaceholder": "your.username",

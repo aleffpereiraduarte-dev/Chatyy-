@@ -1,4 +1,12 @@
 export default {
+  // [2026-10-12 sticker-picker-fix] galeria/câmera do criador de figurinhas
+  "stickerMaker.photosPermTitle": "Access sa mga larawan",
+  "stickerMaker.photosPermBody": "Para pumili ng larawan para sa sticker, payagan ang access sa mga larawan sa Settings ng device.",
+  "stickerMaker.cameraPermTitle": "Access sa camera",
+  "stickerMaker.cameraPermBody": "Para kumuha ng larawan para sa sticker, payagan ang access sa camera sa Settings ng device.",
+  "stickerMaker.pickFailedTitle": "Hindi mabuksan",
+  "stickerMaker.pickFailed": "Hindi mabuksan ang iyong gallery ngayon. Subukan ulit.",
+  "stickerMaker.pickVideoFailed": "Hindi mabuksan ang iyong mga video ngayon. Subukan ulit.",
   // [2026-10-09 signup-nophone/settings-logout]
   "login.createAccountNoPhone": "Gumawa ng account nang walang numero",
   "signupUsername.handlePlaceholder": "iyong.username",

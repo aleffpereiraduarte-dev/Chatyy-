@@ -1,4 +1,12 @@
 export default {
+  // [2026-10-12 sticker-picker-fix] galeria/câmera do criador de figurinhas
+  "stickerMaker.photosPermTitle": "Toegang tot foto's",
+  "stickerMaker.photosPermBody": "Sta toegang tot foto's toe in de Instellingen van je apparaat om een foto voor je sticker te kiezen.",
+  "stickerMaker.cameraPermTitle": "Cameratoegang",
+  "stickerMaker.cameraPermBody": "Sta cameratoegang toe in de Instellingen van je apparaat om een foto voor je sticker te maken.",
+  "stickerMaker.pickFailedTitle": "Openen mislukt",
+  "stickerMaker.pickFailed": "We konden je galerij nu niet openen. Probeer het opnieuw.",
+  "stickerMaker.pickVideoFailed": "We konden je video's nu niet openen. Probeer het opnieuw.",
   // [2026-10-09 signup-nophone/settings-logout]
   "login.createAccountNoPhone": "Account maken zonder nummer",
   "signupUsername.handlePlaceholder": "jouw.gebruikersnaam",

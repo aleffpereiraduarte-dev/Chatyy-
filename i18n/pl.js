@@ -1,4 +1,12 @@
 export default {
+  // [2026-10-12 sticker-picker-fix] galeria/câmera do criador de figurinhas
+  "stickerMaker.photosPermTitle": "Dostęp do zdjęć",
+  "stickerMaker.photosPermBody": "Aby wybrać zdjęcie do naklejki, zezwól na dostęp do zdjęć w Ustawieniach urządzenia.",
+  "stickerMaker.cameraPermTitle": "Dostęp do aparatu",
+  "stickerMaker.cameraPermBody": "Aby zrobić zdjęcie do naklejki, zezwól na dostęp do aparatu w Ustawieniach urządzenia.",
+  "stickerMaker.pickFailedTitle": "Nie można otworzyć",
+  "stickerMaker.pickFailed": "Nie udało się teraz otworzyć galerii. Spróbuj ponownie.",
+  "stickerMaker.pickVideoFailed": "Nie udało się teraz otworzyć filmów. Spróbuj ponownie.",
   // [2026-10-09 signup-nophone/settings-logout]
   "login.createAccountNoPhone": "Utwórz konto bez numeru",
   "signupUsername.handlePlaceholder": "twoja.nazwa",

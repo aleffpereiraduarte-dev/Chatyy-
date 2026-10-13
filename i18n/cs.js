@@ -1,4 +1,12 @@
 export default {
+  // [2026-10-12 sticker-picker-fix] galeria/câmera do criador de figurinhas
+  "stickerMaker.photosPermTitle": "Přístup k fotkám",
+  "stickerMaker.photosPermBody": "Chcete-li vybrat fotku pro nálepku, povolte přístup k fotkám v Nastavení zařízení.",
+  "stickerMaker.cameraPermTitle": "Přístup k fotoaparátu",
+  "stickerMaker.cameraPermBody": "Chcete-li pořídit fotku pro nálepku, povolte přístup k fotoaparátu v Nastavení zařízení.",
+  "stickerMaker.pickFailedTitle": "Nelze otevřít",
+  "stickerMaker.pickFailed": "Galerii se teď nepodařilo otevřít. Zkuste to znovu.",
+  "stickerMaker.pickVideoFailed": "Videa se teď nepodařilo otevřít. Zkuste to znovu.",
   // [2026-10-09 signup-nophone/settings-logout]
   "login.createAccountNoPhone": "Vytvořit účet bez čísla",
   "signupUsername.handlePlaceholder": "tvoje.jmeno",

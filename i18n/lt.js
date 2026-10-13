@@ -1,4 +1,12 @@
 export default {
+  // [2026-10-12 sticker-picker-fix] galeria/câmera do criador de figurinhas
+  "stickerMaker.photosPermTitle": "Prieiga prie nuotraukų",
+  "stickerMaker.photosPermBody": "Norėdami pasirinkti lipduko nuotrauką, įrenginio Nustatymuose leiskite prieigą prie nuotraukų.",
+  "stickerMaker.cameraPermTitle": "Prieiga prie kameros",
+  "stickerMaker.cameraPermBody": "Norėdami nufotografuoti lipduko nuotrauką, įrenginio Nustatymuose leiskite prieigą prie kameros.",
+  "stickerMaker.pickFailedTitle": "Nepavyko atidaryti",
+  "stickerMaker.pickFailed": "Šiuo metu nepavyko atidaryti galerijos. Bandykite dar kartą.",
+  "stickerMaker.pickVideoFailed": "Šiuo metu nepavyko atidaryti vaizdo įrašų. Bandykite dar kartą.",
   // [2026-10-09 signup-nophone/settings-logout]
   "login.createAccountNoPhone": "Sukurti paskyrą be numerio",
   "signupUsername.handlePlaceholder": "tavo.vardas",

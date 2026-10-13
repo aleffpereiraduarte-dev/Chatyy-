@@ -1,4 +1,12 @@
 export default {
+  // [2026-10-12 sticker-picker-fix] galeria/câmera do criador de figurinhas
+  "stickerMaker.photosPermTitle": "الوصول إلى الصور",
+  "stickerMaker.photosPermBody": "لاختيار صورة للملصق، اسمح بالوصول إلى الصور من إعدادات الجهاز.",
+  "stickerMaker.cameraPermTitle": "الوصول إلى الكاميرا",
+  "stickerMaker.cameraPermBody": "لالتقاط صورة للملصق، اسمح بالوصول إلى الكاميرا من إعدادات الجهاز.",
+  "stickerMaker.pickFailedTitle": "تعذّر الفتح",
+  "stickerMaker.pickFailed": "تعذّر فتح المعرض الآن. حاول مرة أخرى.",
+  "stickerMaker.pickVideoFailed": "تعذّر فتح مقاطع الفيديو الآن. حاول مرة أخرى.",
   // [2026-10-11 bughunt] chaves usadas com || fallback (t() devolve a chave crua → fallback nunca aparecia)
   "attachment.previewOpenWith": "اضغط على \"فتح باستخدام\" لعرض ملف PDF",
   "attachment.openWith": "فتح باستخدام",

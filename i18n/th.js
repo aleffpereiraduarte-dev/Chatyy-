@@ -1,4 +1,12 @@
 export default {
+  // [2026-10-12 sticker-picker-fix] galeria/câmera do criador de figurinhas
+  "stickerMaker.photosPermTitle": "การเข้าถึงรูปภาพ",
+  "stickerMaker.photosPermBody": "หากต้องการเลือกรูปสำหรับสติกเกอร์ ให้อนุญาตการเข้าถึงรูปภาพในการตั้งค่าของอุปกรณ์",
+  "stickerMaker.cameraPermTitle": "การเข้าถึงกล้อง",
+  "stickerMaker.cameraPermBody": "หากต้องการถ่ายรูปสำหรับสติกเกอร์ ให้อนุญาตการเข้าถึงกล้องในการตั้งค่าของอุปกรณ์",
+  "stickerMaker.pickFailedTitle": "เปิดไม่ได้",
+  "stickerMaker.pickFailed": "ไม่สามารถเปิดคลังภาพได้ในขณะนี้ โปรดลองอีกครั้ง",
+  "stickerMaker.pickVideoFailed": "ไม่สามารถเปิดวิดีโอได้ในขณะนี้ โปรดลองอีกครั้ง",
   // [2026-10-09 signup-nophone/settings-logout]
   "login.createAccountNoPhone": "สร้างบัญชีโดยไม่ใช้เบอร์",
   "signupUsername.handlePlaceholder": "your.username",

@@ -33965,7 +33965,7 @@ function ChatConversationInner() {
                     setSelectedMsg(null);
                     let src = fu;
                     try { src = api.getMediaUrl ? api.getMediaUrl(fu) : fu; } catch {}
-                    if (src) setStickerMakerSrc(src);
+                    if (src) setTimeout(() => setStickerMakerSrc(src), Platform.OS === 'ios' ? 450 : 0); // [2026-10-12] espera o menu fechar (iOS não apresenta o editor por cima de modal saindo)
                   }}
                   activeOpacity={0.6}
                 >

@@ -1,4 +1,12 @@
 export default {
+  // [2026-10-12 sticker-picker-fix] galeria/câmera do criador de figurinhas
+  "stickerMaker.photosPermTitle": "Accés a les fotos",
+  "stickerMaker.photosPermBody": "Per triar la foto de l'adhesiu, permet l'accés a les fotos a la Configuració del dispositiu.",
+  "stickerMaker.cameraPermTitle": "Accés a la càmera",
+  "stickerMaker.cameraPermBody": "Per fer la foto de l'adhesiu, permet l'accés a la càmera a la Configuració del dispositiu.",
+  "stickerMaker.pickFailedTitle": "No s'ha pogut obrir",
+  "stickerMaker.pickFailed": "No hem pogut obrir la galeria ara. Torna-ho a provar.",
+  "stickerMaker.pickVideoFailed": "No hem pogut obrir els vídeos ara. Torna-ho a provar.",
   // [2026-10-09 signup-nophone/settings-logout]
   "login.createAccountNoPhone": "Crea un compte sense número",
   "signupUsername.handlePlaceholder": "el.teu.usuari",

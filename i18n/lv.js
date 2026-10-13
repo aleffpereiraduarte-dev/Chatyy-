@@ -1,4 +1,12 @@
 export default {
+  // [2026-10-12 sticker-picker-fix] galeria/câmera do criador de figurinhas
+  "stickerMaker.photosPermTitle": "Piekļuve fotoattēliem",
+  "stickerMaker.photosPermBody": "Lai izvēlētos uzlīmes fotoattēlu, ierīces Iestatījumos atļaujiet piekļuvi fotoattēliem.",
+  "stickerMaker.cameraPermTitle": "Piekļuve kamerai",
+  "stickerMaker.cameraPermBody": "Lai uzņemtu uzlīmes fotoattēlu, ierīces Iestatījumos atļaujiet piekļuvi kamerai.",
+  "stickerMaker.pickFailedTitle": "Neizdevās atvērt",
+  "stickerMaker.pickFailed": "Pašlaik neizdevās atvērt galeriju. Mēģiniet vēlreiz.",
+  "stickerMaker.pickVideoFailed": "Pašlaik neizdevās atvērt videoklipus. Mēģiniet vēlreiz.",
   // [2026-10-09 signup-nophone/settings-logout]
   "login.createAccountNoPhone": "Izveidot kontu bez numura",
   "signupUsername.handlePlaceholder": "tavs.lietotajvards",

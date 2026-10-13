@@ -1,4 +1,12 @@
 export default {
+  // [2026-10-12 sticker-picker-fix] galeria/câmera do criador de figurinhas
+  "stickerMaker.photosPermTitle": "Juurdepääs fotodele",
+  "stickerMaker.photosPermBody": "Kleebise foto valimiseks luba seadme Seadetes juurdepääs fotodele.",
+  "stickerMaker.cameraPermTitle": "Juurdepääs kaamerale",
+  "stickerMaker.cameraPermBody": "Kleebise foto tegemiseks luba seadme Seadetes juurdepääs kaamerale.",
+  "stickerMaker.pickFailedTitle": "Ei saanud avada",
+  "stickerMaker.pickFailed": "Galeriid ei õnnestunud praegu avada. Proovi uuesti.",
+  "stickerMaker.pickVideoFailed": "Videoid ei õnnestunud praegu avada. Proovi uuesti.",
   // [2026-10-09 signup-nophone/settings-logout]
   "login.createAccountNoPhone": "Loo konto ilma numbrita",
   "signupUsername.handlePlaceholder": "sinu.kasutajanimi",

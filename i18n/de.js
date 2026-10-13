@@ -1,4 +1,12 @@
 export default {
+  // [2026-10-12 sticker-picker-fix] galeria/câmera do criador de figurinhas
+  "stickerMaker.photosPermTitle": "Fotozugriff",
+  "stickerMaker.photosPermBody": "Um ein Foto für deinen Sticker auszuwählen, erlaube den Fotozugriff in den Einstellungen des Geräts.",
+  "stickerMaker.cameraPermTitle": "Kamerazugriff",
+  "stickerMaker.cameraPermBody": "Um ein Foto für deinen Sticker aufzunehmen, erlaube den Kamerazugriff in den Einstellungen des Geräts.",
+  "stickerMaker.pickFailedTitle": "Öffnen nicht möglich",
+  "stickerMaker.pickFailed": "Deine Galerie konnte gerade nicht geöffnet werden. Bitte versuche es erneut.",
+  "stickerMaker.pickVideoFailed": "Deine Videos konnten gerade nicht geöffnet werden. Bitte versuche es erneut.",
   // [2026-10-11 bughunt] chaves usadas com || fallback (t() devolve a chave crua → fallback nunca aparecia)
   "attachment.previewOpenWith": "Tippe auf „Öffnen mit“, um das PDF anzusehen",
   "attachment.openWith": "Öffnen mit",

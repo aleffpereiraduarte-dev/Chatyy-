@@ -1,4 +1,12 @@
 export default {
+  // [2026-10-12 sticker-picker-fix] galeria/câmera do criador de figurinhas
+  "stickerMaker.photosPermTitle": "Quyền truy cập ảnh",
+  "stickerMaker.photosPermBody": "Để chọn ảnh cho nhãn dán, hãy cho phép truy cập ảnh trong Cài đặt của thiết bị.",
+  "stickerMaker.cameraPermTitle": "Quyền truy cập camera",
+  "stickerMaker.cameraPermBody": "Để chụp ảnh cho nhãn dán, hãy cho phép truy cập camera trong Cài đặt của thiết bị.",
+  "stickerMaker.pickFailedTitle": "Không thể mở",
+  "stickerMaker.pickFailed": "Hiện không thể mở thư viện ảnh. Vui lòng thử lại.",
+  "stickerMaker.pickVideoFailed": "Hiện không thể mở video của bạn. Vui lòng thử lại.",
   // [2026-10-09 signup-nophone/settings-logout]
   "login.createAccountNoPhone": "Tạo tài khoản không cần số",
   "signupUsername.handlePlaceholder": "ten.cua.ban",

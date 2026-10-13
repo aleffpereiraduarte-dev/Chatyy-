@@ -1,4 +1,12 @@
 export default {
+  // [2026-10-12 sticker-picker-fix] galeria/câmera do criador de figurinhas
+  "stickerMaker.photosPermTitle": "ഫോട്ടോ ആക്സസ്",
+  "stickerMaker.photosPermBody": "സ്റ്റിക്കറിനായി ഫോട്ടോ തിരഞ്ഞെടുക്കാൻ, ഉപകരണ ക്രമീകരണങ്ങളിൽ ഫോട്ടോ ആക്സസ് അനുവദിക്കുക.",
+  "stickerMaker.cameraPermTitle": "ക്യാമറ ആക്സസ്",
+  "stickerMaker.cameraPermBody": "സ്റ്റിക്കറിനായി ഫോട്ടോ എടുക്കാൻ, ഉപകരണ ക്രമീകരണങ്ങളിൽ ക്യാമറ ആക്സസ് അനുവദിക്കുക.",
+  "stickerMaker.pickFailedTitle": "തുറക്കാനായില്ല",
+  "stickerMaker.pickFailed": "ഇപ്പോൾ നിങ്ങളുടെ ഗാലറി തുറക്കാനായില്ല. വീണ്ടും ശ്രമിക്കുക.",
+  "stickerMaker.pickVideoFailed": "ഇപ്പോൾ നിങ്ങളുടെ വീഡിയോകൾ തുറക്കാനായില്ല. വീണ്ടും ശ്രമിക്കുക.",
   '_locale': 'ml-IN',
   'splash.tagline': 'സുരക്ഷിതവും സ്മാർട്ടുമായ ഇമെയിൽ',
   'folder.inbox': 'ഇൻബോക്സ്',

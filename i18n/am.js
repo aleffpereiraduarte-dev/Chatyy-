@@ -1,4 +1,12 @@
 export default {
+  // [2026-10-12 sticker-picker-fix] galeria/câmera do criador de figurinhas
+  "stickerMaker.photosPermTitle": "የፎቶ መዳረሻ",
+  "stickerMaker.photosPermBody": "ለስቲከሩ ፎቶ ለመምረጥ በመሣሪያው ቅንብሮች ውስጥ የፎቶ መዳረሻን ይፍቀዱ።",
+  "stickerMaker.cameraPermTitle": "የካሜራ መዳረሻ",
+  "stickerMaker.cameraPermBody": "ለስቲከሩ ፎቶ ለማንሳት በመሣሪያው ቅንብሮች ውስጥ የካሜራ መዳረሻን ይፍቀዱ።",
+  "stickerMaker.pickFailedTitle": "መክፈት አልተቻለም",
+  "stickerMaker.pickFailed": "አሁን ማዕከለ-ስዕላትዎን መክፈት አልተቻለም። እንደገና ይሞክሩ።",
+  "stickerMaker.pickVideoFailed": "አሁን ቪዲዮዎችዎን መክፈት አልተቻለም። እንደገና ይሞክሩ።",
   '_locale': 'am-ET',
   'calendar.quickAdd': 'አንድ ያክል',
   'chatConv.loadingImage': 'ምስል በማስገንዘብ ላይ...',

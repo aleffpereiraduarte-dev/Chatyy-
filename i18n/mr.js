@@ -1,4 +1,12 @@
 export default {
+  // [2026-10-12 sticker-picker-fix] galeria/câmera do criador de figurinhas
+  "stickerMaker.photosPermTitle": "फोटो ॲक्सेस",
+  "stickerMaker.photosPermBody": "स्टिकरसाठी फोटो निवडण्यासाठी, डिव्हाइसच्या सेटिंग्जमध्ये फोटो ॲक्सेसला परवानगी द्या.",
+  "stickerMaker.cameraPermTitle": "कॅमेरा ॲक्सेस",
+  "stickerMaker.cameraPermBody": "स्टिकरसाठी फोटो काढण्यासाठी, डिव्हाइसच्या सेटिंग्जमध्ये कॅमेरा ॲक्सेसला परवानगी द्या.",
+  "stickerMaker.pickFailedTitle": "उघडता आले नाही",
+  "stickerMaker.pickFailed": "आत्ता तुमची गॅलरी उघडता आली नाही. पुन्हा प्रयत्न करा.",
+  "stickerMaker.pickVideoFailed": "आत्ता तुमचे व्हिडिओ उघडता आले नाहीत. पुन्हा प्रयत्न करा.",
   '_locale': 'mr-IN',
   'calendar.quickAdd': 'जोडा',
   'chatConv.loadingImage': 'प्रतिमा लोड करत आहे...',

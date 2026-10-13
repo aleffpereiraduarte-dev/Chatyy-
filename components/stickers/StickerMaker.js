@@ -30,6 +30,7 @@ import {
 import { useLanguage } from '../../context/LanguageContext';
 import * as api from '../../services/api';
 import { cutoutSubject, prepareOnDeviceCutout, ensureLocalFile } from '../../services/stickerCutout';
+import { pickMedia, normalizeStickerSource, pickerDismissSettled } from '../../services/stickerImagePicker';
 
 let captureRefFn = null;
 if (Platform.OS !== 'web') {
@@ -457,6 +458,7 @@ function StickerMakerInner({ sourceUri, onClose, onSaved, onSend, autoCutout = t
   useEffect(() => {
     let dead = false;
     (async () => {
+     try {
       prepareOnDeviceCutout();
       const local = await ensureLocalFile(sourceUri);
       if (dead) return;
@@ -479,6 +481,16 @@ function StickerMakerInner({ sourceUri, onClose, onSaved, onSend, autoCutout = t
           ? tr(t, 'stickerMaker.noSubject', 'Não encontramos um objeto nesta foto. Você pode usar a foto inteira.')
           : tr(t, 'stickerMaker.cutFailed', 'Não deu para recortar agora. Usando a foto inteira.'));
       }
+     } catch {
+      // [2026-10-12 sticker-picker-fix] nada de rejeição solta: recorte que
+      // estoura (rede, módulo nativo) cai p/ a foto inteira em vez de ficar
+      // preso em "Recortando…".
+      if (dead) return;
+      setCutState('failed');
+      setUseCut(false);
+      setOutline(false);
+      showToast(tr(t, 'stickerMaker.cutFailed', 'Não deu para recortar agora. Usando a foto inteira.'));
+     }
     })();
     return () => { dead = true; };
   }, [sourceUri, autoCutout, showToast, t]);
@@ -979,30 +991,24 @@ function ToolBtn({ onPress, label, active, disabled, children }) {
 }
 
 // ── escolher a foto de origem (galeria/câmera) ──────────────────────────────
-export async function pickStickerSourceImage(source = 'gallery') {
-  if (Platform.OS === 'web') {
-    if (typeof document === 'undefined') return null;
-    return new Promise((resolve) => {
-      const input = document.createElement('input');
-      input.type = 'file';
-      input.accept = 'image/png,image/jpeg,image/webp,image/gif';
-      input.onchange = (e) => {
-        const f = e.target.files && e.target.files[0];
-        resolve(f ? URL.createObjectURL(f) : null);
-      };
-      input.click();
-    });
-  }
-  // eslint-disable-next-line global-require
-  const ImagePicker = require('expo-image-picker');
-  const perm = source === 'camera'
-    ? await ImagePicker.requestCameraPermissionsAsync()
-    : await ImagePicker.requestMediaLibraryPermissionsAsync();
-  if (!perm || !perm.granted) return null;
-  const launch = source === 'camera' ? ImagePicker.launchCameraAsync : ImagePicker.launchImageLibraryAsync;
-  const res = await launch({ mediaTypes: ['images'], quality: 0.9, allowsEditing: false });
-  if (!res || res.canceled || !res.assets || !res.assets[0]) return null;
-  return res.assets[0].uri;
+// [2026-10-12 sticker-picker-fix] Usa services/stickerImagePicker: espera o
+// overlay que abriu o picker sair (iOS levava o PHPicker junto com o Modal),
+// não bloqueia a galeria por permissão (PHPicker/Photo Picker não precisam),
+// câmera negada → alerta c/ Ajustes, erro traduzido, e normaliza a foto
+// (EXIF/HEIC → JPEG, ≤ 2048 px; PNG/WebP mantém alfa).
+// opts: { t, afterOverlay } — afterOverlay=true quando chamado a partir de uma
+// folha/alerta que acabou de fechar. Devolve a uri local ou null.
+export async function pickStickerSourceImage(source = 'gallery', opts = {}) {
+  const asset = await pickMedia({
+    source, media: 'image', t: opts.t, afterOverlay: opts.afterOverlay !== false,
+    quality: 0.9, allowsEditing: false,
+  });
+  if (!asset) return null;
+  if (Platform.OS === 'web') return asset.uri;
+  const settled = pickerDismissSettled();
+  const uri = await normalizeStickerSource(asset, 2048);
+  await settled; // editor (<Modal>) só depois do picker sair da tela
+  return uri;
 }
 
 const styles = StyleSheet.create({

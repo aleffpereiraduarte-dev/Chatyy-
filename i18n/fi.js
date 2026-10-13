@@ -1,4 +1,12 @@
 export default {
+  // [2026-10-12 sticker-picker-fix] galeria/câmera do criador de figurinhas
+  "stickerMaker.photosPermTitle": "Kuvien käyttöoikeus",
+  "stickerMaker.photosPermBody": "Valitse kuva tarralle sallimalla kuvien käyttö laitteen Asetuksissa.",
+  "stickerMaker.cameraPermTitle": "Kameran käyttöoikeus",
+  "stickerMaker.cameraPermBody": "Ota kuva tarralle sallimalla kameran käyttö laitteen Asetuksissa.",
+  "stickerMaker.pickFailedTitle": "Avaaminen epäonnistui",
+  "stickerMaker.pickFailed": "Galleriaa ei voitu avata juuri nyt. Yritä uudelleen.",
+  "stickerMaker.pickVideoFailed": "Videoita ei voitu avata juuri nyt. Yritä uudelleen.",
   // [2026-10-09 signup-nophone/settings-logout]
   "login.createAccountNoPhone": "Luo tili ilman numeroa",
   "signupUsername.handlePlaceholder": "kayttajanimesi",

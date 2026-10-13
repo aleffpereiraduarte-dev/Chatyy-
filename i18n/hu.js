@@ -1,4 +1,12 @@
 export default {
+  // [2026-10-12 sticker-picker-fix] galeria/câmera do criador de figurinhas
+  "stickerMaker.photosPermTitle": "Fotóhozzáférés",
+  "stickerMaker.photosPermBody": "A matrica fotójának kiválasztásához engedélyezd a fotókhoz való hozzáférést az eszköz Beállításaiban.",
+  "stickerMaker.cameraPermTitle": "Kamerahozzáférés",
+  "stickerMaker.cameraPermBody": "A matrica fotójának elkészítéséhez engedélyezd a kamerához való hozzáférést az eszköz Beállításaiban.",
+  "stickerMaker.pickFailedTitle": "Nem sikerült megnyitni",
+  "stickerMaker.pickFailed": "Most nem sikerült megnyitni a galériát. Próbáld újra.",
+  "stickerMaker.pickVideoFailed": "Most nem sikerült megnyitni a videóidat. Próbáld újra.",
   // [2026-10-09 signup-nophone/settings-logout]
   "login.createAccountNoPhone": "Fiók létrehozása szám nélkül",
   "signupUsername.handlePlaceholder": "felhasznalonev",

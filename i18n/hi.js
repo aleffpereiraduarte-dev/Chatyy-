@@ -1,4 +1,12 @@
 export default {
+  // [2026-10-12 sticker-picker-fix] galeria/câmera do criador de figurinhas
+  "stickerMaker.photosPermTitle": "फ़ोटो एक्सेस",
+  "stickerMaker.photosPermBody": "स्टिकर के लिए फ़ोटो चुनने हेतु, डिवाइस की सेटिंग में फ़ोटो एक्सेस की अनुमति दें।",
+  "stickerMaker.cameraPermTitle": "कैमरा एक्सेस",
+  "stickerMaker.cameraPermBody": "स्टिकर के लिए फ़ोटो लेने हेतु, डिवाइस की सेटिंग में कैमरा एक्सेस की अनुमति दें।",
+  "stickerMaker.pickFailedTitle": "खोला नहीं जा सका",
+  "stickerMaker.pickFailed": "अभी आपकी गैलरी नहीं खुल सकी। फिर से कोशिश करें।",
+  "stickerMaker.pickVideoFailed": "अभी आपके वीडियो नहीं खुल सके। फिर से कोशिश करें।",
   // [2026-10-11 bughunt] chaves usadas com || fallback (t() devolve a chave crua → fallback nunca aparecia)
   "attachment.previewOpenWith": "PDF देखने के लिए \"इसके साथ खोलें\" पर टैप करें",
   "attachment.openWith": "इसके साथ खोलें",

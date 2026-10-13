@@ -1,4 +1,12 @@
 export default {
+  // [2026-10-12 sticker-picker-fix] galeria/câmera do criador de figurinhas
+  "stickerMaker.photosPermTitle": "Πρόσβαση στις φωτογραφίες",
+  "stickerMaker.photosPermBody": "Για να επιλέξετε φωτογραφία για το αυτοκόλλητο, επιτρέψτε την πρόσβαση στις φωτογραφίες από τις Ρυθμίσεις της συσκευής.",
+  "stickerMaker.cameraPermTitle": "Πρόσβαση στην κάμερα",
+  "stickerMaker.cameraPermBody": "Για να τραβήξετε φωτογραφία για το αυτοκόλλητο, επιτρέψτε την πρόσβαση στην κάμερα από τις Ρυθμίσεις της συσκευής.",
+  "stickerMaker.pickFailedTitle": "Δεν ήταν δυνατό το άνοιγμα",
+  "stickerMaker.pickFailed": "Δεν ήταν δυνατό να ανοίξει η συλλογή σας τώρα. Δοκιμάστε ξανά.",
+  "stickerMaker.pickVideoFailed": "Δεν ήταν δυνατό να ανοίξουν τα βίντεό σας τώρα. Δοκιμάστε ξανά.",
   // [2026-10-09 signup-nophone/settings-logout]
   "login.createAccountNoPhone": "Δημιουργία λογαριασμού χωρίς αριθμό",
   "signupUsername.handlePlaceholder": "to.onoma.sou",

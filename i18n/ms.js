@@ -1,4 +1,12 @@
 export default {
+  // [2026-10-12 sticker-picker-fix] galeria/câmera do criador de figurinhas
+  "stickerMaker.photosPermTitle": "Akses foto",
+  "stickerMaker.photosPermBody": "Untuk memilih foto pelekat, benarkan akses foto dalam Tetapan peranti.",
+  "stickerMaker.cameraPermTitle": "Akses kamera",
+  "stickerMaker.cameraPermBody": "Untuk mengambil foto pelekat, benarkan akses kamera dalam Tetapan peranti.",
+  "stickerMaker.pickFailedTitle": "Tidak dapat dibuka",
+  "stickerMaker.pickFailed": "Galeri anda tidak dapat dibuka sekarang. Cuba lagi.",
+  "stickerMaker.pickVideoFailed": "Video anda tidak dapat dibuka sekarang. Cuba lagi.",
   // [2026-10-09 signup-nophone/settings-logout]
   "login.createAccountNoPhone": "Cipta akaun tanpa nombor",
   "signupUsername.handlePlaceholder": "nama.anda",

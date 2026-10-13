@@ -1,4 +1,12 @@
 export default {
+  // [2026-10-12 sticker-picker-fix] galeria/câmera do criador de figurinhas
+  "stickerMaker.photosPermTitle": "ການເຂົ້າເຖິງຮູບພາບ",
+  "stickerMaker.photosPermBody": "ເພື່ອເລືອກຮູບສຳລັບສະຕິກເກີ, ໃຫ້ອະນຸຍາດການເຂົ້າເຖິງຮູບພາບໃນການຕັ້ງຄ່າຂອງອຸປະກອນ.",
+  "stickerMaker.cameraPermTitle": "ການເຂົ້າເຖິງກ້ອງ",
+  "stickerMaker.cameraPermBody": "ເພື່ອຖ່າຍຮູບສຳລັບສະຕິກເກີ, ໃຫ້ອະນຸຍາດການເຂົ້າເຖິງກ້ອງໃນການຕັ້ງຄ່າຂອງອຸປະກອນ.",
+  "stickerMaker.pickFailedTitle": "ເປີດບໍ່ໄດ້",
+  "stickerMaker.pickFailed": "ບໍ່ສາມາດເປີດຄັງຮູບໄດ້ໃນຕອນນີ້. ກະລຸນາລອງໃໝ່.",
+  "stickerMaker.pickVideoFailed": "ບໍ່ສາມາດເປີດວິດີໂອໄດ້ໃນຕອນນີ້. ກະລຸນາລອງໃໝ່.",
   '_locale': 'lo-LA',
   'calendar.quickAdd': 'ເພີ່ມ',
   'chatConv.loadingImage': 'ກຳລັງໂອນຮູບ...',

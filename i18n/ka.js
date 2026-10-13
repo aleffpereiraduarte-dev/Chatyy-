@@ -1,4 +1,12 @@
 export default {
+  // [2026-10-12 sticker-picker-fix] galeria/câmera do criador de figurinhas
+  "stickerMaker.photosPermTitle": "ფოტოებზე წვდომა",
+  "stickerMaker.photosPermBody": "სტიკერისთვის ფოტოს ასარჩევად, მოწყობილობის პარამეტრებში დაუშვით ფოტოებზე წვდომა.",
+  "stickerMaker.cameraPermTitle": "კამერაზე წვდომა",
+  "stickerMaker.cameraPermBody": "სტიკერისთვის ფოტოს გადასაღებად, მოწყობილობის პარამეტრებში დაუშვით კამერაზე წვდომა.",
+  "stickerMaker.pickFailedTitle": "ვერ გაიხსნა",
+  "stickerMaker.pickFailed": "ამჟამად გალერეა ვერ გაიხსნა. სცადეთ ხელახლა.",
+  "stickerMaker.pickVideoFailed": "ამჟამად ვიდეოები ვერ გაიხსნა. სცადეთ ხელახლა.",
   '_locale': 'ka-GE',
   'calendar.quickAdd': 'დამატება',
   'chatConv.loadingImage': 'სურათის დატვირთვა...',

@@ -1,4 +1,12 @@
 export default {
+  // [2026-10-12 sticker-picker-fix] galeria/câmera do criador de figurinhas
+  "stickerMaker.photosPermTitle": "Photo access",
+  "stickerMaker.photosPermBody": "To pick a photo for your sticker, allow photo access in your device Settings.",
+  "stickerMaker.cameraPermTitle": "Camera access",
+  "stickerMaker.cameraPermBody": "To take a photo for your sticker, allow camera access in your device Settings.",
+  "stickerMaker.pickFailedTitle": "Couldn't open",
+  "stickerMaker.pickFailed": "We couldn't open your gallery right now. Please try again.",
+  "stickerMaker.pickVideoFailed": "We couldn't open your videos right now. Please try again.",
   // [2026-10-11 bughunt] chaves usadas com || fallback (t() devolve a chave crua → fallback nunca aparecia)
   "attachment.previewOpenWith": "Tap \"Open with\" to view the PDF",
   "attachment.openWith": "Open with",

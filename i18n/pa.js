@@ -1,4 +1,12 @@
 export default {
+  // [2026-10-12 sticker-picker-fix] galeria/câmera do criador de figurinhas
+  "stickerMaker.photosPermTitle": "ਫੋਟੋਆਂ ਤੱਕ ਪਹੁੰਚ",
+  "stickerMaker.photosPermBody": "ਸਟਿੱਕਰ ਲਈ ਫੋਟੋ ਚੁਣਨ ਲਈ, ਡਿਵਾਈਸ ਦੀਆਂ ਸੈਟਿੰਗਾਂ ਵਿੱਚ ਫੋਟੋਆਂ ਤੱਕ ਪਹੁੰਚ ਦੀ ਇਜਾਜ਼ਤ ਦਿਓ।",
+  "stickerMaker.cameraPermTitle": "ਕੈਮਰੇ ਤੱਕ ਪਹੁੰਚ",
+  "stickerMaker.cameraPermBody": "ਸਟਿੱਕਰ ਲਈ ਫੋਟੋ ਖਿੱਚਣ ਲਈ, ਡਿਵਾਈਸ ਦੀਆਂ ਸੈਟਿੰਗਾਂ ਵਿੱਚ ਕੈਮਰੇ ਤੱਕ ਪਹੁੰਚ ਦੀ ਇਜਾਜ਼ਤ ਦਿਓ।",
+  "stickerMaker.pickFailedTitle": "ਖੋਲ੍ਹਿਆ ਨਹੀਂ ਜਾ ਸਕਿਆ",
+  "stickerMaker.pickFailed": "ਹੁਣ ਤੁਹਾਡੀ ਗੈਲਰੀ ਨਹੀਂ ਖੁੱਲ੍ਹ ਸਕੀ। ਦੁਬਾਰਾ ਕੋਸ਼ਿਸ਼ ਕਰੋ।",
+  "stickerMaker.pickVideoFailed": "ਹੁਣ ਤੁਹਾਡੀਆਂ ਵੀਡੀਓਜ਼ ਨਹੀਂ ਖੁੱਲ੍ਹ ਸਕੀਆਂ। ਦੁਬਾਰਾ ਕੋਸ਼ਿਸ਼ ਕਰੋ।",
   '_locale': 'pa-IN',
   'splash.tagline': 'ਸੁਰੱਖਿਅਤ ਅਤੇ ਸਮਾਰਟ ਈਮੇਲ',
   'folder.inbox': 'ਇਨਬਾਕਸ',

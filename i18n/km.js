@@ -1,4 +1,12 @@
 export default {
+  // [2026-10-12 sticker-picker-fix] galeria/câmera do criador de figurinhas
+  "stickerMaker.photosPermTitle": "ការចូលប្រើរូបថត",
+  "stickerMaker.photosPermBody": "ដើម្បីជ្រើសរូបថតសម្រាប់ស្ទីគ័រ សូមអនុញ្ញាតការចូលប្រើរូបថតនៅក្នុងការកំណត់ឧបករណ៍។",
+  "stickerMaker.cameraPermTitle": "ការចូលប្រើកាមេរ៉ា",
+  "stickerMaker.cameraPermBody": "ដើម្បីថតរូបសម្រាប់ស្ទីគ័រ សូមអនុញ្ញាតការចូលប្រើកាមេរ៉ានៅក្នុងការកំណត់ឧបករណ៍។",
+  "stickerMaker.pickFailedTitle": "មិនអាចបើកបានទេ",
+  "stickerMaker.pickFailed": "មិនអាចបើកវិចិត្រសាលរបស់អ្នកបានទេឥឡូវនេះ។ សូមព្យាយាមម្តងទៀត។",
+  "stickerMaker.pickVideoFailed": "មិនអាចបើកវីដេអូរបស់អ្នកបានទេឥឡូវនេះ។ សូមព្យាយាមម្តងទៀត។",
   '_locale': 'km-KH',
   'calendar.quickAdd': 'បន្ថែម',
   'chatConv.loadingImage': 'កំពុងផ្ទុករូបភាព...',

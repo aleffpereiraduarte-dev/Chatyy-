@@ -1,4 +1,12 @@
 export default {
+  // [2026-10-12 sticker-picker-fix] galeria/câmera do criador de figurinhas
+  "stickerMaker.photosPermTitle": "Fotoğraf erişimi",
+  "stickerMaker.photosPermBody": "Çıkartma için fotoğraf seçmek üzere cihaz Ayarlarından fotoğraflara erişime izin verin.",
+  "stickerMaker.cameraPermTitle": "Kamera erişimi",
+  "stickerMaker.cameraPermBody": "Çıkartma için fotoğraf çekmek üzere cihaz Ayarlarından kameraya erişime izin verin.",
+  "stickerMaker.pickFailedTitle": "Açılamadı",
+  "stickerMaker.pickFailed": "Galerin şu anda açılamadı. Lütfen tekrar dene.",
+  "stickerMaker.pickVideoFailed": "Videoların şu anda açılamadı. Lütfen tekrar dene.",
   // [2026-10-09 signup-nophone/settings-logout]
   "login.createAccountNoPhone": "Numarasız hesap oluştur",
   "signupUsername.handlePlaceholder": "kullanici.adin",

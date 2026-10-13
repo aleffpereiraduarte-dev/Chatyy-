@@ -1,4 +1,12 @@
 export default {
+  // [2026-10-12 sticker-picker-fix] galeria/câmera do criador de figurinhas
+  "stickerMaker.photosPermTitle": "Լուսանկարների հասանելիություն",
+  "stickerMaker.photosPermBody": "Սթիքերի համար լուսանկար ընտրելու համար թույլատրեք լուսանկարների հասանելիությունը սարքի Կարգավորումներում։",
+  "stickerMaker.cameraPermTitle": "Տեսախցիկի հասանելիություն",
+  "stickerMaker.cameraPermBody": "Սթիքերի համար լուսանկարելու համար թույլատրեք տեսախցիկի հասանելիությունը սարքի Կարգավորումներում։",
+  "stickerMaker.pickFailedTitle": "Չհաջողվեց բացել",
+  "stickerMaker.pickFailed": "Այս պահին չհաջողվեց բացել պատկերասրահը։ Փորձեք կրկին։",
+  "stickerMaker.pickVideoFailed": "Այս պահին չհաջողվեց բացել տեսանյութերը։ Փորձեք կրկին։",
   '_locale': 'hy-AM',
   'calendar.quickAdd': 'Ավելացնել',
   'chatConv.loadingImage': 'Նկարն է բեռնվում...',

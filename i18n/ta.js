@@ -1,4 +1,12 @@
 export default {
+  // [2026-10-12 sticker-picker-fix] galeria/câmera do criador de figurinhas
+  "stickerMaker.photosPermTitle": "புகைப்பட அணுகல்",
+  "stickerMaker.photosPermBody": "ஸ்டிக்கருக்கு புகைப்படத்தைத் தேர்வுசெய்ய, சாதன அமைப்புகளில் புகைப்பட அணுகலை அனுமதிக்கவும்.",
+  "stickerMaker.cameraPermTitle": "கேமரா அணுகல்",
+  "stickerMaker.cameraPermBody": "ஸ்டிக்கருக்கு புகைப்படம் எடுக்க, சாதன அமைப்புகளில் கேமரா அணுகலை அனுமதிக்கவும்.",
+  "stickerMaker.pickFailedTitle": "திறக்க முடியவில்லை",
+  "stickerMaker.pickFailed": "இப்போது உங்கள் கேலரியைத் திறக்க முடியவில்லை. மீண்டும் முயலவும்.",
+  "stickerMaker.pickVideoFailed": "இப்போது உங்கள் வீடியோக்களைத் திறக்க முடியவில்லை. மீண்டும் முயலவும்.",
   '_locale': 'ta-IN',
   'calendar.quickAdd': 'சேர்',
   'chatConv.loadingImage': 'படத்தை ஏற்றுகிறது...',

@@ -1,4 +1,12 @@
 export default {
+  // [2026-10-12 sticker-picker-fix] galeria/câmera do criador de figurinhas
+  "stickerMaker.photosPermTitle": "Доступ до фото",
+  "stickerMaker.photosPermBody": "Щоб вибрати фото для стікера, дозвольте доступ до фото в Налаштуваннях пристрою.",
+  "stickerMaker.cameraPermTitle": "Доступ до камери",
+  "stickerMaker.cameraPermBody": "Щоб зробити фото для стікера, дозвольте доступ до камери в Налаштуваннях пристрою.",
+  "stickerMaker.pickFailedTitle": "Не вдалося відкрити",
+  "stickerMaker.pickFailed": "Зараз не вдалося відкрити галерею. Спробуйте ще раз.",
+  "stickerMaker.pickVideoFailed": "Зараз не вдалося відкрити відео. Спробуйте ще раз.",
   // [2026-10-09 signup-nophone/settings-logout]
   "login.createAccountNoPhone": "Створити акаунт без номера",
   "signupUsername.handlePlaceholder": "vashe.imya",

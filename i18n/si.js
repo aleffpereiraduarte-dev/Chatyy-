@@ -1,4 +1,12 @@
 export default {
+  // [2026-10-12 sticker-picker-fix] galeria/câmera do criador de figurinhas
+  "stickerMaker.photosPermTitle": "ඡායාරූප ප්‍රවේශය",
+  "stickerMaker.photosPermBody": "ස්ටිකරය සඳහා ඡායාරූපයක් තෝරා ගැනීමට, උපාංග සැකසීම්වල ඡායාරූප ප්‍රවේශයට ඉඩ දෙන්න.",
+  "stickerMaker.cameraPermTitle": "කැමරා ප්‍රවේශය",
+  "stickerMaker.cameraPermBody": "ස්ටිකරය සඳහා ඡායාරූපයක් ගැනීමට, උපාංග සැකසීම්වල කැමරා ප්‍රවේශයට ඉඩ දෙන්න.",
+  "stickerMaker.pickFailedTitle": "විවෘත කළ නොහැකි විය",
+  "stickerMaker.pickFailed": "දැන් ඔබගේ ගැලරිය විවෘත කළ නොහැකි විය. නැවත උත්සාහ කරන්න.",
+  "stickerMaker.pickVideoFailed": "දැන් ඔබගේ වීඩියෝ විවෘත කළ නොහැකි විය. නැවත උත්සාහ කරන්න.",
   '_locale': 'si-LK',
   'splash.tagline': 'ආරක්ෂිත සහ බුද්ධිමත් ඊමේල්',
   'folder.inbox': 'එන ලිපි',

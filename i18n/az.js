@@ -1,4 +1,12 @@
 export default {
+  // [2026-10-12 sticker-picker-fix] galeria/câmera do criador de figurinhas
+  "stickerMaker.photosPermTitle": "Fotolara giriş",
+  "stickerMaker.photosPermBody": "Stiker üçün foto seçmək üçün cihazın Ayarlarında fotolara girişə icazə verin.",
+  "stickerMaker.cameraPermTitle": "Kameraya giriş",
+  "stickerMaker.cameraPermBody": "Stiker üçün foto çəkmək üçün cihazın Ayarlarında kameraya girişə icazə verin.",
+  "stickerMaker.pickFailedTitle": "Açmaq mümkün olmadı",
+  "stickerMaker.pickFailed": "Hazırda qalereyanızı açmaq mümkün olmadı. Yenidən cəhd edin.",
+  "stickerMaker.pickVideoFailed": "Hazırda videolarınızı açmaq mümkün olmadı. Yenidən cəhd edin.",
   '_locale': 'az-AZ',
   'calendar.quickAdd': 'Əlavə et',
   'chatConv.loadingImage': 'Şəkil yüklənir...',

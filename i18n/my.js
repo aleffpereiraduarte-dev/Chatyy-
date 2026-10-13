@@ -1,4 +1,12 @@
 export default {
+  // [2026-10-12 sticker-picker-fix] galeria/câmera do criador de figurinhas
+  "stickerMaker.photosPermTitle": "ဓာတ်ပုံ ဝင်ရောက်ခွင့်",
+  "stickerMaker.photosPermBody": "စတစ်ကာအတွက် ဓာတ်ပုံရွေးရန် စက်ပစ္စည်း ဆက်တင်များတွင် ဓာတ်ပုံဝင်ရောက်ခွင့် ပေးပါ။",
+  "stickerMaker.cameraPermTitle": "ကင်မရာ ဝင်ရောက်ခွင့်",
+  "stickerMaker.cameraPermBody": "စတစ်ကာအတွက် ဓာတ်ပုံရိုက်ရန် စက်ပစ္စည်း ဆက်တင်များတွင် ကင်မရာဝင်ရောက်ခွင့် ပေးပါ။",
+  "stickerMaker.pickFailedTitle": "ဖွင့်၍မရပါ",
+  "stickerMaker.pickFailed": "ယခု သင့်ဓာတ်ပုံပြခန်းကို ဖွင့်၍မရပါ။ ထပ်စမ်းကြည့်ပါ။",
+  "stickerMaker.pickVideoFailed": "ယခု သင့်ဗီဒီယိုများကို ဖွင့်၍မရပါ။ ထပ်စမ်းကြည့်ပါ။",
   '_locale': 'my-MM',
   'calendar.quickAdd': 'ထည့်ပါ',
   'chatConv.loadingImage': 'ပုံကိုလွှင့်နေသည်...',

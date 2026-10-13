@@ -10,6 +10,7 @@ import {
   IconPackage, IconGiftBox, IconParty, IconArrowRight, IconGrid, IconFlame, IconBarChart,
 } from './Icons';
 import { useLanguage } from '../context/LanguageContext';
+import { pickMedia, toStickerFile } from '../services/stickerImagePicker';
 import * as api from '../services/api';
 import CachedImage from './CachedImage'; // [2026-10-08 polish-leftovers] was used but never imported (ReferenceError)
 // [2026-05-22 monetization-pause] hidden by MONETIZATION_ENABLED flag
@@ -502,36 +503,26 @@ function CreatePackModal({ colors, onClose, onCreated, t }) {
     Animated.timing(fadeAnim, { toValue: 1, duration: 200, useNativeDriver: true }).start();
   }, []);
 
+  // [2026-10-12 sticker-picker-fix] Antes: catch {} silencioso + galeria
+  // bloqueada por permissão + picker chamado DENTRO do onPress do Alert
+  // (UIAlertController ainda saindo → iOS não apresentava o PHPicker). Agora:
+  // espera o alerta sair, galeria sem gate de permissão, erro traduzido e a
+  // imagem já sai 512 px PNG (alfa preservado) → upload menor e rápido.
   const pickImage = useCallback(async (purpose) => {
     try {
-      if (Platform.OS === 'web') {
-        const file = await new Promise((resolve) => {
-          const input = document.createElement('input');
-          input.type = 'file';
-          input.accept = 'image/png,image/jpeg,image/webp,image/gif';
-          input.onchange = (e) => {
-            const f = e.target.files?.[0];
-            if (!f) { resolve(null); return; }
-            resolve({ uri: URL.createObjectURL(f), blob: f, name: f.name, type: f.type });
-          };
-          input.click();
-        });
-        return file;
-      }
-      const ImagePicker = require('expo-image-picker');
-      const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
-      if (!perm.granted) return null;
-      const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ['images'],
-        quality: 0.85,
+      const asset = await pickMedia({
+        source: 'gallery', media: 'image', t, afterOverlay: purpose !== 'cover',
+        quality: 0.9,
         allowsEditing: purpose === 'cover',
         aspect: purpose === 'cover' ? [1, 1] : undefined,
       });
-      if (result.canceled || !result.assets?.[0]) return null;
-      const a = result.assets[0];
-      return { uri: a.uri, name: a.fileName || `img_${Date.now()}.jpg`, type: a.mimeType || 'image/jpeg' };
-    } catch { return null; }
-  }, []);
+      if (!asset) return null;
+      return await toStickerFile(asset, 512);
+    } catch {
+      Alert.alert(t('stickerMaker.pickFailedTitle'), t('stickerMaker.pickFailed'));
+      return null;
+    }
+  }, [t]);
 
   const uploadFile = useCallback(async (file) => {
     const r = await api.rustUpload(file, '', 'sticker');
@@ -592,31 +583,11 @@ function CreatePackModal({ colors, onClose, onCreated, t }) {
     }
     let file = null;
     try {
-      if (Platform.OS === 'web') {
-        file = await new Promise(resolve => {
-          const input = document.createElement('input');
-          input.type = 'file';
-          input.accept = 'video/mp4,video/quicktime,video/webm';
-          input.onchange = (e) => {
-            const f = e.target.files?.[0];
-            if (!f) { resolve(null); return; }
-            resolve({ _raw: f, name: f.name, type: f.type, uri: URL.createObjectURL(f) });
-          };
-          input.click();
-        });
-      } else {
-        const ImagePicker = require('expo-image-picker');
-        const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
-        if (!perm.granted) return;
-        const result = await ImagePicker.launchImageLibraryAsync({
-          mediaTypes: ['videos'],
-          videoMaxDuration: 3,
-          quality: 0.8,
-        });
-        if (result.canceled || !result.assets?.[0]) return;
-        const a = result.assets[0];
-        file = { uri: a.uri, name: a.fileName || `vid_${Date.now()}.mp4`, type: a.mimeType || 'video/mp4' };
-      }
+      const asset = await pickMedia({ source: 'gallery', media: 'video', t, afterOverlay: true, quality: 0.8, videoMaxDuration: 3 });
+      if (!asset) return;
+      file = Platform.OS === 'web'
+        ? { _raw: asset.file, name: asset.fileName, type: asset.mimeType, uri: asset.uri }
+        : { uri: asset.uri, name: asset.fileName || `vid_${Date.now()}.mp4`, type: asset.mimeType || 'video/mp4' };
     } catch { return; }
     if (!file) return;
 

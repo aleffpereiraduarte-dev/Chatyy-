@@ -1,4 +1,12 @@
 export default {
+  // [2026-10-12 sticker-picker-fix] galeria/câmera do criador de figurinhas
+  "stickerMaker.photosPermTitle": "Фотосуреттерге рұқсат",
+  "stickerMaker.photosPermBody": "Стикерге фото таңдау үшін құрылғы Параметрлерінде фотосуреттерге рұқсат беріңіз.",
+  "stickerMaker.cameraPermTitle": "Камераға рұқсат",
+  "stickerMaker.cameraPermBody": "Стикерге фото түсіру үшін құрылғы Параметрлерінде камераға рұқсат беріңіз.",
+  "stickerMaker.pickFailedTitle": "Ашу мүмкін болмады",
+  "stickerMaker.pickFailed": "Қазір галереяңызды ашу мүмкін болмады. Қайталап көріңіз.",
+  "stickerMaker.pickVideoFailed": "Қазір бейнелеріңізді ашу мүмкін болмады. Қайталап көріңіз.",
   '_locale': 'kk-KZ',
   'calendar.quickAdd': 'Қосу',
   'chatConv.loadingImage': 'Сурет жүктелуде...',

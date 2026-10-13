@@ -1,4 +1,12 @@
 export default {
+  // [2026-10-12 sticker-picker-fix] galeria/câmera do criador de figurinhas
+  "stickerMaker.photosPermTitle": "Зурагт хандах",
+  "stickerMaker.photosPermBody": "Стикерт зураг сонгохын тулд төхөөрөмжийн Тохиргоонд зурагт хандахыг зөвшөөрнө үү.",
+  "stickerMaker.cameraPermTitle": "Камерт хандах",
+  "stickerMaker.cameraPermBody": "Стикерт зураг авахын тулд төхөөрөмжийн Тохиргоонд камерт хандахыг зөвшөөрнө үү.",
+  "stickerMaker.pickFailedTitle": "Нээж чадсангүй",
+  "stickerMaker.pickFailed": "Одоогоор таны зургийн санг нээж чадсангүй. Дахин оролдоно уу.",
+  "stickerMaker.pickVideoFailed": "Одоогоор таны видеог нээж чадсангүй. Дахин оролдоно уу.",
   '_locale': 'mn-MN',
   'calendar.quickAdd': 'Нэмэх',
   'chatConv.loadingImage': 'Зураг ачааллаж байна...',

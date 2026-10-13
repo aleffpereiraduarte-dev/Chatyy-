@@ -1,4 +1,12 @@
 export default {
+  // [2026-10-12 sticker-picker-fix] galeria/câmera do criador de figurinhas
+  "stickerMaker.photosPermTitle": "Rasmlarga ruxsat",
+  "stickerMaker.photosPermBody": "Stiker uchun rasm tanlash uchun qurilma Sozlamalarida rasmlarga ruxsat bering.",
+  "stickerMaker.cameraPermTitle": "Kameraga ruxsat",
+  "stickerMaker.cameraPermBody": "Stiker uchun rasmga olish uchun qurilma Sozlamalarida kameraga ruxsat bering.",
+  "stickerMaker.pickFailedTitle": "Ochib bo‘lmadi",
+  "stickerMaker.pickFailed": "Hozir galereyangizni ochib bo‘lmadi. Qayta urinib ko‘ring.",
+  "stickerMaker.pickVideoFailed": "Hozir videolaringizni ochib bo‘lmadi. Qayta urinib ko‘ring.",
   '_locale': 'uz-UZ',
   'calendar.quickAdd': 'Qo\'shish',
   'chatConv.loadingImage': 'Rasm yuklanmoqda...',

@@ -113,7 +113,13 @@ export async function cutoutSubject(srcUri, { allowServer = true } = {}) {
     const norm = await normalizeForCutout(local);
     file = { uri: norm.uri || local, name: 'photo.jpg', type: 'image/jpeg' };
   }
-  const r = await api.chatStickerCutout(file, { max: 768 });
+  let r;
+  try {
+    r = await api.chatStickerCutout(file, { max: 768 });
+  } catch {
+    // [2026-10-12 sticker-picker-fix] rede/timeout não pode estourar no editor
+    return { ok: false, reason: 'network' };
+  }
   if (r?.processed && r.dataUri) {
     if (Platform.OS === 'web') {
       return { ok: true, uri: r.dataUri, width: r.width, height: r.height, method: 'server' };
