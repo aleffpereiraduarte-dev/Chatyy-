@@ -455,7 +455,8 @@ export default function LoginScreen() {
         const Updates = require('expo-updates');
         ota = (Updates?.updateId || '').slice(0, 7) || (Updates?.isEmbeddedLaunch ? 'embedded' : '');
       } catch {}
-      return `v${ver} · b${ios || and} · ${ota}`;
+      // [2026-10-12 auth-polish] web has no build number / OTA id → was "v5.0.5 · b ·".
+      return [`v${ver}`, (ios || and) ? `b${ios || and}` : '', ota].filter(Boolean).join(' · ');
     } catch {
       return 'v?';
     }
@@ -2170,6 +2171,9 @@ export default function LoginScreen() {
               <Text style={[s.igGhostBtnLabel, { color: colors.text, fontSize: 14 }]}>{t('login.backToAccounts')}</Text>
             </TouchableOpacity>
           )}
+          {/* [2026-10-12 auth-polish] "Não lembra seu email?" is noise once the
+              user is typing a phone number (the phone path has no email). */}
+          {idKind !== 'phone' && (
           <TouchableOpacity
             onPress={() => { hSelection(); router.push('/forgot?find=1'); }}
             activeOpacity={0.6}
@@ -2178,13 +2182,25 @@ export default function LoginScreen() {
           >
             <Text style={[s.igGhostBtnLabel, { color: colors.textSecondary, fontSize: 14 }]}>{t('login.forgotEmail')}</Text>
           </TouchableOpacity>
+          )}
         </>
       )}
 
       {!isAddAccount && (
         <>
           {renderDivider()}
-          {renderSecondary(t('login.createAccount'), () => { hSelection(); router.push('/signup-phone'); })}
+          {renderSecondary(t('login.createAccount'), () => {
+            hSelection();
+            // [2026-10-12 auth-polish] carry a typed national number over to
+            // signup (it reads ?phone=&country= and starts on the number step)
+            // instead of making the user type it again.
+            const _digits = String(identifier || '').replace(/\D/g, '').replace(/^0+/, '');
+            if (idKind === 'phone' && !String(identifier).trim().startsWith('+') && _digits.length >= 8) {
+              router.push(`/signup-phone?phone=${encodeURIComponent(phoneCountryCode + _digits)}&country=${encodeURIComponent(_isoFromDial(phoneCountryCode))}`);
+            } else {
+              router.push('/signup-phone');
+            }
+          })}
           {/* [2026-10-09 signup-nophone] /signup-username (sem telefone) só abria pela URL. */}
           <TouchableOpacity
             onPress={() => { hSelection(); router.push('/signup-username'); }}
@@ -2436,10 +2452,14 @@ export default function LoginScreen() {
                               inputMode="numeric"
                               maxLength={6}
                               textContentType="oneTimeCode"
-                              autoComplete="sms-otp"
+                              // [2026-10-12 auth-polish] RN-web passes autoComplete through
+                              // verbatim: "sms-otp" is not an HTML token, so Safari/Chrome
+                              // never offered the code from the SMS. Web = one-time-code.
+                              autoComplete={Platform.OS === 'web' ? 'one-time-code' : 'sms-otp'}
                               autoFocus
                               caretHidden
                               importantForAutofill="yes"
+                              accessibilityLabel={t('login.phoneOtpInput') || 'Código de 6 dígitos'}
                             />
                           </Pressable>
 
@@ -2473,6 +2493,7 @@ export default function LoginScreen() {
                                   ...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {}),
                                 }}
                                 value={phoneLockPin}
+                                accessibilityLabel={t('login.phoneLockPinTitle') || 'PIN de segurança'}
                                 onChangeText={(v) => { setPhoneLockPin((v || '').replace(/\D/g, '').slice(0, 6)); if (error) setError(''); }}
                                 placeholder="••••"
                                 placeholderTextColor={colors.textTertiary}
@@ -2828,7 +2849,8 @@ export default function LoginScreen() {
               {/* Tech-grade keyboard hint pill — Vercel/Linear pattern. Web
                   only because mobile users rarely have a hardware ↵ key,
                   and the pill on a touch keyboard reads as decoration. */}
-              {Platform.OS === 'web' && isDesktop && (
+              {/* [2026-10-12 auth-polish] not on the QR tab (Enter does nothing there). */}
+              {Platform.OS === 'web' && isDesktop && loginMode !== 'qr' && (
                 <View style={{ marginTop: 32, alignSelf: 'center', flexDirection: 'row', alignItems: 'center', gap: 8 }}>
                   <View style={{
                     paddingHorizontal: 8, paddingVertical: 3,

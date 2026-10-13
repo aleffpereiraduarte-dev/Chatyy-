@@ -11,7 +11,7 @@
 // encrypted recovery blob (see /var/www/mail/api/phone-auth.php).
 
 import { androidBottomInset, androidTopInset } from '../utils/systemInsets'; // [2026-10-07 android-native] edge-to-edge
-import { useState, useEffect, useRef, useMemo } from 'react';
+import { useState, useEffect, useRef, useMemo, Fragment } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet, ActivityIndicator,
   Animated, Platform, ScrollView, Dimensions, Modal,
@@ -32,7 +32,7 @@ import { useSmsOtpAutofill } from '../services/smsOtp'; // [2026-10-08 android-o
 import useDebouncedCallback from '../hooks/useDebouncedCallback';
 import useIsMounted from '../hooks/useIsMounted';
 import { COUNTRIES, formatPhone, toE164, E164_RE, countryDisplayName } from '../constants/countries'; // [2026-10-06 UX2] countryDisplayName
-import { IconArrowLeft, IconArrowRight, IconCheck, IconCheckCircle, IconUser, IconAtSign, IconAlertTriangle, IconPhone, IconShield, IconSparkles, IconZap, IconCamera, IconChevronRight, IconLock, IconEye, IconEyeOff, IconX, IconMessageCircle, IconSmartphone, IconUsers } from '../components/Icons';
+import { IconArrowLeft, IconArrowRight, IconCheck, IconCheckCircle, IconUser, IconImage, IconAtSign, IconAlertTriangle, IconPhone, IconShield, IconSparkles, IconZap, IconCamera, IconChevronRight, IconLock, IconEye, IconEyeOff, IconX, IconMessageCircle, IconSmartphone, IconUsers } from '../components/Icons';
 import SignupIntro from '../components/SignupIntro';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import RestoreBackupPrompt from '../components/RestoreBackupPrompt';
@@ -70,6 +70,10 @@ export default function SignupPhone() {
   // [2026-10-07 signup-ux] the form now lives in a centered 520pt column on
   // tablet/web, so the old side-by-side @handle|password layout is retired.
   const isWide = false;
+  // [2026-10-12 auth-polish] Desktop/tablet web: the flow sits in a centered
+  // card on the auth background (same as /login) instead of a full-height
+  // column with the CTA stranded ~400px below the field.
+  const _wideWeb = Platform.OS === 'web' && _winW >= 768;
 
   // 5 steps: welcome → phone → otp → name → handle → done.
   // welcome is the Telegram-style 5-slide carousel (SignupIntro component).
@@ -969,6 +973,7 @@ export default function SignupPhone() {
   // sat under the keyboard on edge-to-edge builds.
   const _footerPadBottom = Math.max(Platform.OS === 'ios' ? 30 : 16, _insets.bottom + 12);
   const _topPad = Math.max(_insets.top, Platform.OS === 'android' ? (require('react-native').StatusBar.currentHeight || 24) : (Platform.OS === 'web' ? 12 : 44));
+  const AuthCardWrap = _wideWeb ? View : Fragment;
   const _stepOrder = ['phone', 'otp', 'name', 'handle'];
   const _stepIdx = _stepOrder.indexOf(step);
   // CTA disabled (not busy): the step's input isn't complete yet.
@@ -981,15 +986,16 @@ export default function SignupPhone() {
 
   return (
     <ThreadKeyboardAvoider
-      style={[styles.container, { backgroundColor: colors.background }]}
+      style={[styles.container, { backgroundColor: _wideWeb ? (colors.authBg || colors.background) : colors.background }, _wideWeb && styles.wideRoot]}
       bottomInset={_footerPadBottom - 12}
     >
+      <AuthCardWrap {...(_wideWeb ? { style: [styles.wideCard, { backgroundColor: colors.authCardBg || colors.background, borderColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(17,17,17,0.08)' }, Platform.OS === 'web' && { boxShadow: isDark ? '0 2px 8px rgba(0,0,0,0.30), 0 18px 60px rgba(0,0,0,0.40)' : '0 1px 2px rgba(60,64,67,0.06), 0 6px 20px rgba(17,17,17,0.07), 0 24px 64px rgba(60,64,67,0.10)' }] } : {})}>
       {/* [2026-10-07 signup-ux] One compact top row: back · progress · n/4.
           Replaces progress bar + separate header with a gradient "Chatyy"
           wordmark (≈70pt of chrome) so the question sits higher and the input
           stays above the keyboard on small phones. */}
       {step !== 'done' ? (
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 12, paddingTop: _topPad + 6, paddingBottom: 6, width: '100%', maxWidth: 520, alignSelf: 'center' }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 12, paddingTop: _wideWeb ? 18 : _topPad + 6, paddingBottom: 6, width: '100%', maxWidth: 520, alignSelf: 'center' }}>
           <Animated.View style={{ opacity: backFade }}>
             <TouchableOpacity onPress={goBack} style={styles.backBtn} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }} accessibilityRole="button" accessibilityLabel={t('common.back') || 'Voltar'}>
               <IconArrowLeft size={22} color={colors.text} />
@@ -1010,10 +1016,10 @@ export default function SignupPhone() {
           </Text>
         </View>
       ) : (
-        <View style={{ height: _topPad + 12 }} />
+        <View style={{ height: _wideWeb ? 24 : _topPad + 12 }} />
       )}
 
-      <ScrollView style={{ flex: 1 }} contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled" keyboardDismissMode="interactive" showsVerticalScrollIndicator={false}>
+      <ScrollView style={_wideWeb ? { flexGrow: 0, flexShrink: 1 } : { flex: 1 }} contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled" keyboardDismissMode="interactive" showsVerticalScrollIndicator={false}>
         <Animated.View style={{ opacity: fade, transform: [{ translateY: slide }, { scale: stepScale }], width: '100%' }}>
           {/* Resume banner — the app was closed mid-signup; fields came back
               from the local draft. "Começar de novo" wipes it. */}
@@ -1100,6 +1106,8 @@ export default function SignupPhone() {
                       onPress={() => setShowFromLoginBanner(false)}
                       hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
                       style={{ marginLeft: 8 }}
+                      accessibilityRole="button"
+                      accessibilityLabel={t('common.close') || 'Fechar'}
                     >
                       <IconX size={16} color={colors.primary} />
                     </TouchableOpacity>
@@ -1131,6 +1139,8 @@ export default function SignupPhone() {
                       <TouchableOpacity
                         onPress={() => { setCountrySearch(''); setShowCountryPicker(true); if (showFromLoginBanner) setShowFromLoginBanner(false); }}
                         activeOpacity={0.6}
+                        accessibilityRole="button"
+                        accessibilityLabel={`${t('signupPhone.countryLabel') || 'País'}: ${countryDisplayName(_country, language)} ${_country.dial}`}
                         style={{
                           flexDirection: 'row', alignItems: 'center',
                           paddingVertical: 13, paddingHorizontal: 14,
@@ -1221,7 +1231,10 @@ export default function SignupPhone() {
                 }}>
                   <IconMessageCircle size={18} color={colors.primary} />
                   <Text style={{ flex: 1, fontSize: 13, lineHeight: 18, color: colors.textSecondary }}>
-                    {t('onb.phoneHint')}
+                    {/* [2026-10-12 auth-polish] was "Enviamos o código por WhatsApp e SMS"
+                        — past tense before anything was sent, and wrong when only SMS
+                        goes out (Firebase / intl). Same line as the login field. */}
+                    {t('login.smartHintPhone')}
                   </Text>
                 </View>
                 {/* "Entrar com email" escape hatch — for legacy / pre-2026
@@ -1351,10 +1364,13 @@ export default function SignupPhone() {
                     inputMode="numeric"
                     maxLength={6}
                     textContentType="oneTimeCode"
-                    autoComplete="sms-otp"
+                    // [2026-10-12 auth-polish] RN-web passes this through verbatim;
+                    // "sms-otp" isn't an HTML token → browsers never offered the code.
+                    autoComplete={Platform.OS === 'web' ? 'one-time-code' : 'sms-otp'}
                     autoFocus
                     caretHidden
                     importantForAutofill="yes"
+                    accessibilityLabel={t('signupPhone.titleOtp') || 'Digite o código'}
                   />
                 </Pressable>
                 {/* Canais de envio: o código chega por WhatsApp e SMS (o que vier primeiro). */}
@@ -1400,6 +1416,8 @@ export default function SignupPhone() {
                   disabled={resendCountdown > 0 || busy}
                   onPress={() => sendOtp('sms')}
                   activeOpacity={0.7}
+                  accessibilityRole="button"
+                  accessibilityState={{ disabled: resendCountdown > 0 || busy }}
                   style={{
                     alignSelf: 'center', marginTop: 4,
                     paddingVertical: 10, paddingHorizontal: 18, borderRadius: 999,
@@ -1443,6 +1461,7 @@ export default function SignupPhone() {
                         ...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {}),
                       }}
                       value={lockPin}
+                      accessibilityLabel={t('signupPhone.lockPinTitle') || 'PIN de segurança'}
                       onChangeText={(v) => { setLockPin((v || '').replace(/\D/g, '').slice(0, 6)); if (error) setError(''); }}
                       placeholder="••••"
                       placeholderTextColor={colors.textTertiary}
@@ -1596,7 +1615,7 @@ export default function SignupPhone() {
                       autoFocus
                       maxLength={50}
                       textContentType="givenName"
-                      autoComplete="name-given"
+                      autoComplete={Platform.OS === 'web' ? 'given-name' : 'name-given'}
                       blurOnSubmit={false}
                       onSubmitEditing={() => { try { lastNameRef.current?.focus?.(); } catch {} }}
                       accessibilityLabel={t('signupPhone.firstName') || 'Nome'}
@@ -1615,7 +1634,7 @@ export default function SignupPhone() {
                     <TextInput
                       ref={lastNameRef}
                       textContentType="familyName"
-                      autoComplete="name-family"
+                      autoComplete={Platform.OS === 'web' ? 'family-name' : 'name-family'}
                       accessibilityLabel={t('signupPhone.lastNameOptional')}
                       style={[{
                         fontSize: 20, fontWeight: '600', paddingVertical: 12, color: colors.text,
@@ -1669,7 +1688,7 @@ export default function SignupPhone() {
                       onChangeText={(v) => { _usernameAutoRef.current = false; setUsername(sanitizeUsernameTyping(v)); if (error) setError(''); }}
                       autoCapitalize="none"
                       autoCorrect={false}
-                      autoComplete="username-new"
+                      autoComplete={Platform.OS === 'web' ? 'username' : 'username-new'}
                       textContentType="username"
                       autoFocus
                       maxLength={30}
@@ -1912,7 +1931,7 @@ export default function SignupPhone() {
 
       {/* Primary action button (sticky bottom for the form-like feel) */}
       {step !== 'done' && (
-        <View style={[styles.footer, { borderTopColor: colors.border, backgroundColor: colors.background, paddingBottom: _footerPadBottom }]}>
+        <View style={[styles.footer, { borderTopColor: colors.border, backgroundColor: _wideWeb ? 'transparent' : colors.background, paddingBottom: _wideWeb ? 24 : _footerPadBottom }]}>
           {/* ToS disclaimer — rendered on EVERY step (phone/otp/name/handle)
               so legal consent stays visible up through the moment of account
               creation. Hidden only on `done` (already signed up — no further
@@ -1999,6 +2018,8 @@ export default function SignupPhone() {
         </View>
       )}
 
+      </AuthCardWrap>
+
       {/* Avatar source picker (Android/Web fallback). iOS uses native
           ActionSheetIOS; this Modal handles every other platform. Same 3
           options: take photo, choose from gallery, cancel. */}
@@ -2027,7 +2048,7 @@ export default function SignupPhone() {
               style={{ paddingVertical: 14, paddingHorizontal: 16, flexDirection: 'row', alignItems: 'center', gap: 14 }}
               activeOpacity={0.6}
             >
-              <IconUser size={20} color={colors.text} />
+              <IconImage size={20} color={colors.text} />
               <Text style={{ fontSize: 16, color: colors.text, fontWeight: '500' }}>
                 {t('signupPhone.chooseFromGallery') || 'Abrir galeria'}
               </Text>
@@ -2053,13 +2074,18 @@ export default function SignupPhone() {
         transparent
         onRequestClose={() => setShowCountryPicker(false)}
       >
-        <View style={{ flex: 1, backgroundColor: colors.background }}>
+        {/* [2026-10-12 auth-polish] wide web: centered sheet over a scrim (was a
+            1440px-wide edge-to-edge list on desktop). Phones unchanged. */}
+        <View style={_wideWeb ? { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', alignItems: 'center', justifyContent: 'center', padding: 24 } : { flex: 1 }}>
+        <View style={_wideWeb
+          ? { width: '100%', maxWidth: 520, height: '80%', maxHeight: 720, borderRadius: 20, overflow: 'hidden', backgroundColor: colors.authCardBg || colors.background }
+          : { flex: 1, backgroundColor: colors.background }}>
           <View style={{
             flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-            paddingHorizontal: 16, paddingTop: Platform.OS === 'ios' ? 56 : androidTopInset(24), paddingBottom: 12,
+            paddingHorizontal: 16, paddingTop: _wideWeb ? 16 : (Platform.OS === 'ios' ? 56 : androidTopInset(24)), paddingBottom: 12,
             borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border,
           }}>
-            <TouchableOpacity onPress={() => setShowCountryPicker(false)} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+            <TouchableOpacity onPress={() => setShowCountryPicker(false)} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} accessibilityRole="button" accessibilityLabel={t('common.back') || 'Voltar'}>
               <IconArrowLeft size={22} color={colors.text} />
             </TouchableOpacity>
             <Text style={{ fontSize: 17, fontWeight: '700', color: colors.text }}>
@@ -2077,6 +2103,8 @@ export default function SignupPhone() {
               }, Platform.OS === 'web' && { outlineStyle: 'none' }]}
               placeholder={t('signup.stepPhone.searchCountry') || 'Buscar'}
               placeholderTextColor={colors.textTertiary}
+              accessibilityLabel={t('signup.stepPhone.searchCountry') || 'Buscar'}
+              autoCorrect={false}
               value={countrySearch}
               onChangeText={setCountrySearch}
               autoFocus={Platform.OS === 'web'}
@@ -2100,6 +2128,9 @@ export default function SignupPhone() {
                     setCountrySearch('');
                   }}
                   activeOpacity={0.6}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected: c.code === countryCode }}
+                  accessibilityLabel={`${countryDisplayName(c, language)} ${c.dial}`}
                   style={{
                     flexDirection: 'row', alignItems: 'center',
                     paddingVertical: 14, paddingHorizontal: 16,
@@ -2123,14 +2154,26 @@ export default function SignupPhone() {
                 }}>{text}</Text>
               );
               if (countrySearch) {
-                const _q = countrySearch.toLowerCase();
-                // [2026-10-06 UX2] match localized AND English names
-                return COUNTRIES.filter(c =>
-                  c.name.toLowerCase().includes(_q) ||
-                  countryDisplayName(c, language).toLowerCase().includes(_q) ||
+                // [2026-10-12 auth-polish] accent-insensitive ("pais"/"mexico"
+                // find País/México), "+55" or "55" both match the dial code, and
+                // an explicit empty state instead of a blank list.
+                const _norm = (v) => String(v || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+                const _q = _norm(countrySearch.trim());
+                const _qDial = countrySearch.replace(/[^0-9]/g, '');
+                const _hits = COUNTRIES.filter(c =>
+                  _norm(c.name).includes(_q) ||
+                  _norm(countryDisplayName(c, language)).includes(_q) ||
                   c.code.toLowerCase().includes(_q) ||
-                  c.dial.includes(countrySearch)
-                ).map(_renderRow);
+                  (!!_qDial && c.dial.replace('+', '').startsWith(_qDial))
+                );
+                if (!_hits.length) {
+                  return (
+                    <Text style={{ textAlign: 'center', color: colors.textSecondary, fontSize: 14, paddingVertical: 32, paddingHorizontal: 24 }}>
+                      {t('common.noResults') || 'Nenhum resultado encontrado'}
+                    </Text>
+                  );
+                }
+                return _hits.map(_renderRow);
               }
               const suggested = COUNTRIES.find(c => c.code === countryCode);
               const rest = COUNTRIES.filter(c => c.code !== countryCode);
@@ -2149,6 +2192,7 @@ export default function SignupPhone() {
               );
             })()}
           </ScrollView>
+        </View>
         </View>
       </Modal>
 
@@ -2184,6 +2228,9 @@ function IsoChip({ code, colors }) {
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
+  // [2026-10-12 auth-polish] wide-web card (login parity)
+  wideRoot: { alignItems: 'center', justifyContent: 'center', paddingVertical: 32, paddingHorizontal: 16 },
+  wideCard: { width: '100%', maxWidth: 520, maxHeight: '100%', borderRadius: 24, borderWidth: 1, overflow: 'hidden', paddingTop: 8 },
   header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingTop: Platform.OS === 'ios' ? 56 : androidTopInset(24), paddingBottom: 12 },
   backBtn: { width: 32, height: 32, alignItems: 'center', justifyContent: 'center' },
   brand: { fontSize: 22, fontWeight: '800', letterSpacing: -0.5 },

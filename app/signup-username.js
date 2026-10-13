@@ -13,10 +13,10 @@
 // user can add a phone later in settings without being nagged.
 
 import { androidBottomInset, androidTopInset } from '../utils/systemInsets'; // [2026-10-07 android-native] edge-to-edge
-import { useState, useEffect, useRef, useMemo } from 'react';
+import { useState, useEffect, useRef, useMemo, Fragment } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet, ActivityIndicator,
-  Animated, Platform, KeyboardAvoidingView, ScrollView, Easing,
+  Animated, Platform, KeyboardAvoidingView, ScrollView, Easing, useWindowDimensions,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { HapticsCompat as Haptics } from '../services/haptics'; // [2026-10-11] same API, routed via the shared haptics shim
@@ -31,6 +31,9 @@ import {
   IconArrowLeft, IconArrowRight, IconCheck, IconCheckCircle, IconUser,
   IconAtSign, IconAlertTriangle, IconSparkles, IconLock, IconEye, IconEyeOff,
 } from '../components/Icons';
+// [2026-10-12 auth-polish] same rules / error mapping / strength meter as /signup-phone.
+import SignupPasswordMeter from '../components/signup/SignupPasswordMeter';
+import { usernameLocalError, sanitizeUsernameTyping, friendlyServerError } from '../components/signup/signupSmarts';
 
 export default function SignupUsername() {
   const router = useRouter();
@@ -39,6 +42,11 @@ export default function SignupUsername() {
   const { loginWithToken } = useAuth();
   const insets = useSafeAreaInsets();
   const mountedRef = useIsMounted();
+  // [2026-10-12 auth-polish] wide web → centered card on the auth background (login parity).
+  const { width: _winW } = useWindowDimensions();
+  const _wideWeb = Platform.OS === 'web' && _winW >= 768;
+  const AuthCardWrap = _wideWeb ? View : Fragment;
+  const _errText = (r, fallbackKey) => { const f = friendlyServerError(r, fallbackKey); return f.text || t(f.key); };
 
   // Telegram-style step ladder: handle → name → done is the canonical flow,
   // but we lead with credentials (email + password) because the
@@ -110,21 +118,47 @@ export default function SignupUsername() {
   };
 
   // Live username availability check (same shape as signup-phone.js).
+  // [2026-10-12 auth-polish] Was: any non-success (429 / network blip) read as
+  // "taken", "a..b" / "joao." hit the server, and a slow reply for an older
+  // handle could overwrite the current one. Now mirrors /signup-phone.
+  const [usernameReason, setUsernameReason] = useState(null);
+  const _usernameLatestRef = useRef('');
   const runUsernameCheck = useDebouncedCallback(async (uname) => {
     try {
       const r = await api.checkUsername(uname, 'chatyy.com.br');
-      const ok = r && r.success && (r.data?.available !== false);
-      setUsernameAvailable(ok);
-      setUsernameSuggestions(r?.data?.suggestions || []);
+      if (!mountedRef.current || _usernameLatestRef.current !== uname) return;
+      const status = Number(r?.__httpStatus || 0);
+      if (r?.success) {
+        const ok = r.data?.available !== false;
+        setUsernameAvailable(ok);
+        setUsernameReason(ok ? null : 'taken');
+        const sugg = Array.isArray(r.data?.suggestions) ? r.data.suggestions.filter(x => typeof x === 'string' && !usernameLocalError(x)) : [];
+        setUsernameSuggestions(ok ? [] : sugg);
+      } else if (status === 429 || status === 0 || !r) {
+        setUsernameAvailable(null); setUsernameReason(null);
+      } else {
+        setUsernameAvailable(false); setUsernameReason('chars');
+        setUsernameSuggestions([]);
+      }
     } catch {
-      setUsernameAvailable(null);
-    } finally { setUsernameChecking(false); }
+      if (_usernameLatestRef.current === uname) { setUsernameAvailable(null); setUsernameReason(null); }
+    } finally { if (mountedRef.current && _usernameLatestRef.current === uname) setUsernameChecking(false); }
   }, 600);
 
   useEffect(() => {
-    if (step !== 'handle' || !username || username.length < 3) {
-      setUsernameAvailable(null);
+    _usernameLatestRef.current = username;
+    if (step !== 'handle' || !username) {
+      setUsernameAvailable(null); setUsernameReason(null);
       setUsernameSuggestions([]);
+      setUsernameChecking(false);
+      return;
+    }
+    const localErr = usernameLocalError(username);
+    if (localErr) {
+      setUsernameAvailable(localErr === 'short' ? null : false);
+      setUsernameReason(localErr);
+      setUsernameSuggestions([]);
+      setUsernameChecking(false);
       return;
     }
     setUsernameChecking(true);
@@ -143,6 +177,7 @@ export default function SignupUsername() {
   const goHandle = () => {
     const uname = (username || '').trim();
     if (uname.length < 3) { setError(t('signupUsername.handleTooShort') || 'Username muito curto'); return; }
+    if (usernameLocalError(uname)) { setError(t('signupPhone.err.usernameInvalid')); return; }
     if (usernameAvailable === false) { setError(t('signupUsername.handleTaken') || 'Esse username já foi escolhido'); return; }
     if (password.length < 8) { setError(t('signupUsername.passwordShort') || 'Senha precisa ter ao menos 8 caracteres'); return; }
     setError('');
@@ -164,10 +199,15 @@ export default function SignupUsername() {
           goStep('done');
           setTimeout(() => { if (mountedRef.current) try { router.replace('/chat'); } catch {} }, 700);
         } else {
-          setError(lr?.message || (t('signupUsername.loginFailed') || 'Falha ao entrar após criar conta'));
+          setError(lr?.message ? _errText(lr, 'signupUsername.loginFailed') : (t('signupUsername.loginFailed') || 'Falha ao entrar após criar conta'));
         }
       } else {
-        setError(r?.message || (t('signupUsername.signupFailed') || 'Falha ao criar conta'));
+        // [2026-10-12 auth-polish] backend messages are hard-coded pt-BR →
+        // translated/friendly text; a handle taken in the race window sends
+        // the user back to the @ step with the field flagged.
+        const f = friendlyServerError(r, 'signupUsername.signupFailed');
+        setError(f.text || t(f.key));
+        if (f.kind === 'username') { setUsernameAvailable(false); setUsernameReason('taken'); goStep('handle'); }
       }
     } catch {
       if (!mountedRef.current) return;
@@ -201,19 +241,20 @@ export default function SignupUsername() {
 
   const _hairline = colors.border;
   const _ctaOff = !busy && (
-    (step === 'handle' && (!username || usernameAvailable !== true || password.length < 8)) ||
+    (step === 'handle' && (!username || usernameAvailable !== true || !!usernameLocalError(username) || password.length < 8)) ||
     (step === 'name' && (name || '').trim().length < 2)
   );
 
   return (
     <KeyboardAvoidingView
-      style={[styles.container, { backgroundColor: colors.background }]}
+      style={[styles.container, { backgroundColor: _wideWeb ? (colors.authBg || colors.background) : colors.background }, _wideWeb && styles.wideRoot]}
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
     >
+      <AuthCardWrap {...(_wideWeb ? { style: [styles.wideCard, { backgroundColor: colors.authCardBg || colors.background, borderColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(17,17,17,0.08)' }, Platform.OS === 'web' && { boxShadow: isDark ? '0 2px 8px rgba(0,0,0,0.30), 0 18px 60px rgba(0,0,0,0.40)' : '0 1px 2px rgba(60,64,67,0.06), 0 6px 20px rgba(17,17,17,0.07), 0 24px 64px rgba(60,64,67,0.10)' }] } : {})}>
       {/* [2026-10-12 first-run polish] One compact top row — back · progress ·
           n/2 — identical to /signup-phone (was a centered "Chatyy" wordmark
           + a separate full-bleed bar), constrained to the 520pt column. */}
-      <View style={[styles.header, { paddingTop: Math.max(insets.top, Platform.OS === 'android' ? (require('react-native').StatusBar.currentHeight || 24) : (Platform.OS === 'web' ? 12 : 44)) + 6 }]}>
+      <View style={[styles.header, { paddingTop: _wideWeb ? 18 : Math.max(insets.top, Platform.OS === 'android' ? (require('react-native').StatusBar.currentHeight || 24) : (Platform.OS === 'web' ? 12 : 44)) + 6 }]}>
         <TouchableOpacity onPress={goBack} style={styles.backBtn} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }} accessibilityRole="button" accessibilityLabel={t('common.back') || 'Voltar'}>
           <IconArrowLeft size={22} color={colors.text} />
         </TouchableOpacity>
@@ -240,7 +281,7 @@ export default function SignupUsername() {
         })() : <View style={{ flex: 1 }} />}
       </View>
 
-      <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+      <ScrollView style={_wideWeb ? { flexGrow: 0, flexShrink: 1 } : undefined} contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
         <Animated.View style={{ opacity: fade, transform: [{ translateY: slide }, { scale: stepScale }], width: '100%' }}>
 
           {/* Hero orb — same pattern as signup-phone, only on the handle step
@@ -292,9 +333,12 @@ export default function SignupUsername() {
                       placeholder={t('signupUsername.handlePlaceholder')}
                       placeholderTextColor={colors.textTertiary}
                       value={username}
-                      onChangeText={(v) => setUsername(v.toLowerCase().replace(/[^a-z0-9._]/g, '').slice(0, 20))}
+                      onChangeText={(v) => { setUsername(sanitizeUsernameTyping(v).slice(0, 20)); if (error) setError(''); }}
                       autoCapitalize="none"
                       autoCorrect={false}
+                      autoComplete={Platform.OS === 'web' ? 'username' : 'username-new'}
+                      textContentType="username"
+                      accessibilityLabel={t('signupUsername.titleHandle') || 'Escolha seu @'}
                       autoFocus
                       maxLength={20}
                       onFocus={() => setFocused('handle')}
@@ -318,13 +362,13 @@ export default function SignupUsername() {
                         <TouchableOpacity
                           key={s}
                           onPress={() => setUsername(s)}
+                          accessibilityRole="button"
                           style={{
-                            paddingHorizontal: 12, paddingVertical: 7, borderRadius: 14,
-                            backgroundColor: isDark ? `${colors.primary}2e` : `${colors.primary}1a`,
-                            borderWidth: 1, borderColor: isDark ? `${colors.primary}59` : `${colors.primary}3f`,
+                            paddingHorizontal: 12, paddingVertical: 7, borderRadius: 999,
+                            borderWidth: 1, borderColor: colors.text,
                           }}
                         >
-                          <Text style={{ fontSize: 13, color: colors.primary, fontWeight: '600' }}>{s}</Text>
+                          <Text style={{ fontSize: 13, color: colors.text, fontWeight: '600' }}>@{s}</Text>
                         </TouchableOpacity>
                       ))}
                     </View>
@@ -344,9 +388,12 @@ export default function SignupUsername() {
                       <Text style={{ fontSize: 15, fontWeight: '700', color: colors.text, marginTop: 3 }} numberOfLines={1}>
                         {username}@chatyy.com.br
                       </Text>
-                      {usernameAvailable !== null && !usernameChecking && (
-                        <Text style={{ fontSize: 12, fontWeight: '600', marginTop: 3, color: usernameAvailable ? colors.success : colors.error }}>
-                          {usernameAvailable ? t('onb.available') : t('onb.taken')}
+                      {!usernameChecking && (usernameAvailable !== null || usernameReason === 'short') && (
+                        <Text style={{ fontSize: 12, fontWeight: '600', marginTop: 3, color: usernameAvailable ? colors.success : (usernameReason === 'short' ? colors.textTertiary : colors.error) }} accessibilityLiveRegion="polite">
+                          {usernameAvailable ? t('onb.available')
+                            : usernameReason === 'taken' ? t('onb.taken')
+                            : usernameReason === 'short' ? t('signupPhone.err.usernameShort')
+                            : t('signupPhone.err.usernameInvalid')}
                         </Text>
                       )}
                     </View>
@@ -378,7 +425,8 @@ export default function SignupUsername() {
                             placeholder={t('signupUsername.passwordPlaceholder') || 'Mínimo 8 caracteres'}
                             placeholderTextColor={colors.textTertiary}
                             value={password}
-                            onChangeText={setPassword}
+                            onChangeText={(v) => { setPassword(v); if (error) setError(''); }}
+                            accessibilityLabel={t('signupPhone.passwordLabel')}
                             autoCapitalize="none"
                             autoCorrect={false}
                             secureTextEntry={!showPassword}
@@ -391,11 +439,14 @@ export default function SignupUsername() {
                           <TouchableOpacity
                             onPress={() => setShowPassword(v => !v)}
                             hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                            accessibilityRole="button"
+                            accessibilityLabel={showPassword ? (t('signupPhone.hidePassword') || 'Ocultar senha') : (t('signupPhone.showPassword') || 'Mostrar senha')}
                           >
                             {showPassword ? <IconEyeOff size={18} color={colors.textSecondary} /> : <IconEye size={18} color={colors.textSecondary} />}
                           </TouchableOpacity>
                           {_pwdValid && <IconCheckCircle size={18} color={colors.success} style={{ marginLeft: 4 }} />}
                         </View>
+                        <SignupPasswordMeter password={password} context={[username, name]} colors={colors} t={t} />
                         <Text style={[styles.hint, { color: colors.textTertiary, marginTop: 8 }]}>
                           {t('signupUsername.passwordHint') || 'Use pra entrar pelo email também (IMAP / web). Guarde com carinho.'}
                         </Text>
@@ -425,6 +476,9 @@ export default function SignupUsername() {
                     autoCapitalize="words"
                     autoFocus
                     maxLength={50}
+                    textContentType="name"
+                    autoComplete="name"
+                    accessibilityLabel={t('signupPhone.firstName') || 'Nome'}
                     returnKeyType="done"
                     onFocus={() => setFocused('name')}
                     onBlur={() => setFocused('')}
@@ -442,20 +496,20 @@ export default function SignupUsername() {
                     <Animated.View style={{
                       position: 'absolute',
                       width: 124, height: 124, borderRadius: 62,
-                      backgroundColor: `${colors.success}26`,
+                      backgroundColor: colors.surfaceVariant, // [2026-10-12 auth-polish] B&W, /signup-phone parity
                       opacity: doneScale,
                       transform: [{ scale: doneScale.interpolate({ inputRange: [0, 1], outputRange: [0.85, 1] }) }],
                     }} />
                     <Animated.View style={{
                       width: 96, height: 96, borderRadius: 48,
-                      backgroundColor: colors.success,
+                      backgroundColor: colors.text,
                       alignItems: 'center', justifyContent: 'center',
                       transform: [{ scale: doneScale }],
-                      shadowColor: colors.success, shadowOffset: { width: 0, height: 10 },
-                      shadowOpacity: 0.45, shadowRadius: 22, elevation: 12,
-                      ...(Platform.OS === 'web' ? { boxShadow: `0 14px 32px ${colors.success}73, inset 0 1px 0 rgba(255,255,255,0.25)` } : {}),
+                      shadowColor: '#000', shadowOffset: { width: 0, height: 10 },
+                      shadowOpacity: 0.25, shadowRadius: 22, elevation: 10,
+                      ...(Platform.OS === 'web' ? { boxShadow: '0 14px 32px rgba(0,0,0,0.25)' } : {}),
                     }}>
-                      <IconCheck size={56} color="#fff" strokeWidth={3} />
+                      <IconCheck size={52} color={colors.background} strokeWidth={3} />
                     </Animated.View>
                   </View>
                   {!!_firstName && (
@@ -496,7 +550,23 @@ export default function SignupUsername() {
 
       {/* Sticky CTA */}
       {step !== 'done' && (
-        <View style={[styles.footer, { borderTopColor: colors.border, paddingBottom: Math.max(Platform.OS === 'ios' ? 30 : 16, insets.bottom + 12) }]}>
+        <View style={[styles.footer, { borderTopColor: colors.border, paddingBottom: _wideWeb ? 24 : Math.max(Platform.OS === 'ios' ? 30 : 16, insets.bottom + 12) }]}>
+          {/* [2026-10-12 auth-polish] this path created accounts with NO terms /
+              privacy consent anywhere (the phone path shows it). Same line as
+              /signup-phone, shown at the account-creating step. */}
+          {step === 'name' && (
+            <Text style={{ fontSize: 12, color: colors.textTertiary, textAlign: 'center', marginBottom: 10, lineHeight: 17, paddingHorizontal: 8 }}>
+              {t('signupPhone.tosLine') || 'Ao continuar você concorda com os '}
+              <Text style={{ color: colors.text, fontWeight: '600', textDecorationLine: 'underline' }} accessibilityRole="link" onPress={() => { try { router.push({ pathname: '/legal', params: { doc: 'terms' } }); } catch {} }}>
+                {t('signupPhone.tosLink') || 'Termos'}
+              </Text>
+              {' '}{t('common.and') || 'e'}{' '}
+              <Text style={{ color: colors.text, fontWeight: '600', textDecorationLine: 'underline' }} accessibilityRole="link" onPress={() => { try { router.push({ pathname: '/legal', params: { doc: 'privacy' } }); } catch {} }}>
+                {t('signupPhone.privacyLink') || 'Privacidade'}
+              </Text>
+              .
+            </Text>
+          )}
           <TouchableOpacity
             style={[
               styles.cta,
@@ -504,7 +574,7 @@ export default function SignupUsername() {
               _ctaOff ? [{ backgroundColor: colors.border }, styles.ctaFlat] : { backgroundColor: colors.primary, opacity: busy ? 0.85 : 1 },
             ]}
             disabled={busy ||
-              (step === 'handle' && (!username || usernameAvailable !== true || password.length < 8)) ||
+              (step === 'handle' && (!username || usernameAvailable !== true || !!usernameLocalError(username) || password.length < 8)) ||
               (step === 'name' && (name || '').trim().length < 2)}
             onPress={() => {
               if (step === 'handle') goHandle();
@@ -517,7 +587,7 @@ export default function SignupUsername() {
             ) : (
               <>
                 <Text style={[styles.ctaText, { color: _ctaOff ? colors.textTertiary : (colors.onPrimary || '#fff') }]}>
-                  {step === 'name' ? (t('signupPhone.finish') || 'Criar conta') : (t('common.next') || 'Próximo')}
+                  {step === 'name' ? (t('signupPhone.finish') || 'Criar conta') : (t('onb.continue') || 'Continuar')}
                 </Text>
                 {step !== 'name' && <IconArrowRight size={18} color={_ctaOff ? colors.textTertiary : (colors.onPrimary || '#fff')} style={{ marginLeft: 8 }} />}
               </>
@@ -525,12 +595,16 @@ export default function SignupUsername() {
           </TouchableOpacity>
         </View>
       )}
+      </AuthCardWrap>
     </KeyboardAvoidingView>
   );
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
+  // [2026-10-12 auth-polish] wide-web card (login parity)
+  wideRoot: { alignItems: 'center', justifyContent: 'center', paddingVertical: 32, paddingHorizontal: 16 },
+  wideCard: { width: '100%', maxWidth: 520, maxHeight: '100%', borderRadius: 24, borderWidth: 1, overflow: 'hidden', paddingTop: 8 },
   // [2026-10-12 first-run polish] same column / type scale as /signup-phone.
   header: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 12, paddingTop: Platform.OS === 'ios' ? 56 : androidTopInset(24), paddingBottom: 6, width: '100%', maxWidth: 520, alignSelf: 'center' },
   backBtn: { width: 32, height: 32, alignItems: 'center', justifyContent: 'center' },
