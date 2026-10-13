@@ -9579,7 +9579,7 @@ function ChatConversationInner() {
         const _vals = Array.from(map.values());
         const out = _chatOrder().timeModeFor(conversationId, _vals)
           ? _vals.sort(_chatOrder().compareMsgs)
-          : _vals.sort((a, b) => Number(a.id) - Number(b.id));
+          : _vals.sort(_chatOrder().compareById); // [2026-10-13 vídeo-sumiu] Number('tmp_…')=NaN embaralhava
         return out;
       });
       // Wait a tick for state to flush, then scroll. [2026-10-07 flashlist]
@@ -10863,7 +10863,7 @@ function ChatConversationInner() {
         const cached = await getCachedMessages(conversationId, 100);
         if (cancelled || !cached || cached.length === 0) return;
         if (_messagesCountRef.current > 0) return; // server já chegou
-        setMessages(normalizeMessageTypes(cached));
+        { const _cn = normalizeMessageTypes(cached); setMessages(prev => _chatOrder().keepLocalPending(prev, _cn)); } // [2026-10-13 vídeo-sumiu]
         setLoading(false);
         setHasMore(true);
       } catch {}
@@ -13024,7 +13024,7 @@ function ChatConversationInner() {
     // Navigating here with the keyboard still up from the previous screen
     // would otherwise open the thread lifted. Dismiss on mount.
     try { Keyboard.dismiss(); } catch {}
-    return () => { sub1.remove(); try { sub2 && sub2.remove(); } catch {} };
+    return () => { sub1.remove(); try { sub2 && sub2.remove(); } catch {} if (_kbSnapTimer) clearTimeout(_kbSnapTimer); };
   }, []);
 
   // ============================================================
@@ -13717,6 +13717,10 @@ function ChatConversationInner() {
   // fetch da abertura e o fetch logo após uma importação SUBSTITUEM a janela (as linhas
   // do cache local podem ter vindo recortadas por id → buraco no meio da conversa).
   const _timeWinRef = useRef({ cid: null, ok: false, reset: false });
+  // [2026-10-13 vídeo-sumiu] Re-mescla as bolhas pendentes do outbox durável
+  // (fila de mídia/texto) — chamada na abertura E depois de toda recarga de
+  // janela, p/ nenhuma substituição da lista apagar o que ainda está enviando.
+  const _outboxRehydrateRef = useRef(null);
   const loadMessages = useCallback(async (showLoader, beforeId = null) => {
     if (_PERF_WHY_ON) _whyHit(beforeId ? 'fn:loadOlder' : 'fn:loadMessages');
     if (_timeWinRef.current.cid !== conversationId) _timeWinRef.current = { cid: conversationId, ok: false, reset: false };
@@ -13848,7 +13852,7 @@ function ChatConversationInner() {
             const cached = await getCachedMessages(conversationId, 100);
             if (Array.isArray(cached) && cached.length > 0 && mountedRef.current) {
               const cachedNorm = normalizeMessageTypes(cached);
-              setMessages(cachedNorm);
+              setMessages(prev => _chatOrder().keepLocalPending(prev, cachedNorm)); // [2026-10-13 vídeo-sumiu] nunca apaga pendentes
               setLoadError(null);
               // [2026-10-05] "retry in background later" era só comentário — não
               // havia retry. Founder: push chegou, abriu a conversa, a msg nova
@@ -14071,6 +14075,10 @@ function ChatConversationInner() {
               // Drop optimistic rows whose server confirmation is in this batch.
               const myCid = m._client_id || m.client_message_id;
               if (myCid && ackedClientIds.has(String(myCid))) return false;
+              // [2026-10-13 vídeo-sumiu] Mídia com client_message_id: o cmi é a
+              // ÚNICA prova de confirmação — o "mesmo nome de arquivo em 60 s"
+              // apagava a 2ª foto/vídeo (IMG_0014.MP4, video.mp4…) ainda enviando.
+              if (myCid && m.type !== 'text') return true;
               // Last-ditch content match: if the server batch contains a row
               // from us with identical content + type close in time, treat
               // the tmp_ as already-acked and drop it.
@@ -14125,22 +14133,10 @@ function ChatConversationInner() {
             // typed in the same ms); without a tie-breaker the order flickers
             // between renders. created_at is server-stamped so it's the
             // canonical secondary key.
-            const _t = (m) => {
-              const t = m && m.created_at ? Date.parse(m.created_at) : 0;
-              return Number.isFinite(t) ? t : 0;
-            };
             if (_tm) merged.sort(_chatOrder().compareMsgs);
-            else merged.sort((a, b) => {
-              const ai = typeof a.id === 'number' ? a.id : (a._negId || 0);
-              const bi = typeof b.id === 'number' ? b.id : (b._negId || 0);
-              if (ai !== bi) return ai - bi;
-              const td = _t(a) - _t(b);
-              if (td !== 0) return td;
-              // Tertiary: client_id/temp_id keeps two same-ms optimistic sends stable
-              const ak = String(a._client_id || a.temp_id || a.id || '');
-              const bk = String(b._client_id || b.temp_id || b.id || '');
-              return ak < bk ? -1 : ak > bk ? 1 : 0;
-            });
+            // [2026-10-13 vídeo-sumiu] compareById: pendente sem _negId fica no
+            // FIM (antes chave 0 = topo do histórico = "sumiu").
+            else merged.sort(_chatOrder().compareById);
             // [2026-10-11 fluidez-2] Refetch sem novidade (todas as linhas
             // reaproveitadas, mesma ordem) → devolve o array anterior: sem
             // render da tela nem re-enrich (antes 1 render por refetch).
@@ -14151,6 +14147,9 @@ function ChatConversationInner() {
             }
             return merged;
           });
+          // [2026-10-13 vídeo-sumiu] Janela recarregada → re-mescla as pendentes do
+          // outbox durável (idempotente: dedup por id/client_message_id).
+          try { _outboxRehydrateRef.current?.(); } catch {}
           // Cache for offline + native view (only confirmed messages, no pending)
           const confirmedMsgs = newMsgs.filter(m => typeof m.id === 'number' && m.id > 0);
           if (confirmedMsgs.length > 0) {
@@ -14423,7 +14422,7 @@ function ChatConversationInner() {
           if (Array.isArray(cached) && cached.length > 0 && mountedRef.current) {
             let cachedNorm = normalizeMessageTypes(cached);
             try { if (_chatOrder().timeModeFor(conversationId, cachedNorm)) cachedNorm = _chatOrder().sortByTime(cachedNorm); } catch {} // [import-ordem 2026-10-13]
-            setMessages(cachedNorm);
+            setMessages(prev => _chatOrder().keepLocalPending(prev, cachedNorm)); // [2026-10-13 vídeo-sumiu] nunca apaga pendentes
             setLoadError(null);
             return;
           }
@@ -14654,7 +14653,7 @@ function ChatConversationInner() {
     //    rows as pending bubbles (clock icon), deduped by client_message_id so
     //    a row the server already confirmed never doubles. The sendWorker /
     //    replayOfflineQueue (above) still own the actual retry.
-    try {
+    const _rehydrateOutbox = () => { try {
       messageOutbox.getPending(conversationId).then((rows) => {
         if (!mountedRef.current || !Array.isArray(rows) || rows.length === 0) return;
         const bubbles = rows.map((row) => {
@@ -14663,8 +14662,11 @@ function ChatConversationInner() {
           const isFailed = row.state === 'failed';
           const createdAt = p.created_at
             || (row.created_at ? new Date(row.created_at).toISOString() : new Date().toISOString());
+          const _ct = Date.parse(createdAt);
           return {
             id: p.temp_id || ('tmp_' + cmi),
+            // [2026-10-13 vídeo-sumiu] ordem no FIM (sem _negId = topo do histórico).
+            _negId: (Number.isFinite(_ct) && _ct > 0 ? _ct : Date.now()) * 1000 + Math.floor(Math.random() * 1000),
             conversation_id: conversationId,
             sender_email: p.sender_email || currentEmail,
             content: p.display_content || p.content || p.caption || '',
@@ -14722,7 +14724,9 @@ function ChatConversationInner() {
           return fresh.length > 0 ? [...prev, ...fresh] : prev;
         });
       }).catch(() => {});
-    } catch {}
+    } catch {} };
+    _outboxRehydrateRef.current = _rehydrateOutbox;
+    _rehydrateOutbox();
     // 2. Clear native SQLite cache for this conversation (one-time fix for stale tmp_ msgs)
     //    The new Swift code (build 332+) won't save tmp_ anymore, but old data persists.
     try {
@@ -16825,7 +16829,7 @@ function ChatConversationInner() {
           }
           }).catch(() => {});
         };
-        const _tcpSortKey = (r) => (typeof r.id === 'number' ? r.id : (r._negId || 0));
+        const _tcpSortKey = (r) => _chatOrder().orderKey(r); // [2026-10-13 vídeo-sumiu] pendente sem _negId = fim (era 0 = topo)
         setMessages(prev => {
           const incomingIdStr = String(msg.id);
           // [2026-10-06 thread-tech] scan from the tail (new/echoed rows live there)
@@ -18092,7 +18096,8 @@ function ChatConversationInner() {
 
     try {
       const mailWs = require('../services/websocket').default;
-      const wsOk = !!(mailWs.isConnected && mailWs.authenticated);
+      // [chat-send-rapido 2026-10-13] + isHealthy (pong recente): ✓ instantâneo só com socket vivo de verdade.
+      const wsOk = !!(mailWs.isConnected && mailWs.authenticated && mailWs.isHealthy !== false);
       // Kick a reconnect IF the socket is dead. Non-blocking — we don't
       // want to delay the relay enqueue on the handshake. The relay below
       // will land in `_messageQueue` and flush the moment `auth_success`
@@ -19514,6 +19519,9 @@ function ChatConversationInner() {
     const localUri = file.blob ? URL.createObjectURL(file.blob) : file.uri;
     const optimisticMsg = {
       id: tempId,
+      // [2026-10-13 vídeo-sumiu] chave de ordem no FIM (sem ela = 0 → a bolha
+      // ia p/ o topo do histórico a cada reordenação e "sumia").
+      _negId: Date.now() * 1000 + Math.floor(Math.random() * 1000),
       sender_email: user?.email,
       sender_name: '',
       content: caption || '',

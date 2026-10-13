@@ -137,6 +137,39 @@ function _key(m) {
 }
 
 /**
+ * [2026-10-13 vídeo-sumiu] Chave de ordem "por id" de QUALQUER linha.
+ * id numérico → id. Linha local (tmp_/envelope/outbox) → _negId (Date.now()*1000,
+ * sempre > qualquer id do servidor = fica no FIM). Sem _negId (bolha de
+ * foto/vídeo/arquivo e bolhas reidratadas do outbox não tinham) → derivada do
+ * created_at; ilegível → fim. ANTES caía em 0 = a bolha pendente ia para o
+ * TOPO do histórico a cada reordenação (recarga de janela, msg fora de ordem,
+ * conversa por data) — "mandei um vídeo e ele SUMIU" (conv 973, 13/10).
+ */
+export function orderKey(m) {
+  if (!m || typeof m !== 'object') return Number.MAX_SAFE_INTEGER;
+  if (typeof m.id === 'number') return m.id;
+  const n = Number(m._negId);
+  if (Number.isFinite(n) && n > 0) return n;
+  const t = m.created_at ? Date.parse(m.created_at) : NaN;
+  if (Number.isFinite(t) && t > 0) return t * 1000;
+  return Number.MAX_SAFE_INTEGER;
+}
+
+/** Comparador "por id" (conversas sem importação) que nunca joga pendentes p/ o topo. */
+export function compareById(a, b) {
+  const ai = orderKey(a);
+  const bi = orderKey(b);
+  if (ai !== bi) return ai < bi ? -1 : 1;
+  const ta = a && a.created_at ? Date.parse(a.created_at) : 0;
+  const tb = b && b.created_at ? Date.parse(b.created_at) : 0;
+  const td = (Number.isFinite(ta) ? ta : 0) - (Number.isFinite(tb) ? tb : 0);
+  if (td !== 0) return td;
+  const ak = String((a && (a._client_id || a.temp_id || a.id)) || '');
+  const bk = String((b && (b._client_id || b.temp_id || b.id)) || '');
+  return ak < bk ? -1 : ak > bk ? 1 : 0;
+}
+
+/**
  * Comparador da conversa "por data". Linhas com id numérico: (data, id).
  * Demais (tmp_/envelope): regra antiga — id numérico vs _negId, depois created_at.
  */
@@ -149,9 +182,9 @@ export function compareMsgs(a, b) {
     if (ka && kb && ka !== kb) return ka < kb ? -1 : 1;
     return a.id - b.id;
   }
-  const ai = an ? a.id : ((a && a._negId) || 0);
-  const bi = bn ? b.id : ((b && b._negId) || 0);
-  if (ai !== bi) return ai - bi;
+  const ai = orderKey(a);
+  const bi = orderKey(b);
+  if (ai !== bi) return ai < bi ? -1 : 1;
   const ta = a && a.created_at ? Date.parse(a.created_at) : 0;
   const tb = b && b.created_at ? Date.parse(b.created_at) : 0;
   const td = (Number.isFinite(ta) ? ta : 0) - (Number.isFinite(tb) ? tb : 0);
@@ -170,7 +203,48 @@ export function sortByTime(rows) {
 /** Expressão SQLite equivalente a sortKeyOf p/ created_at em UTC ('Z' / '+00'). */
 export const SQL_SORT_EXPR = "substr(replace(created_at, 'T', ' '), 1, 19)";
 
+/** Linha local ainda não confirmada pelo servidor (bolha otimista/outbox). */
+export function isLocalPending(m) {
+  if (!m || typeof m.id === 'number') return false;
+  if (typeof m.id === 'string' && m.id.startsWith('tmp_')) return true;
+  return !!(m._pending || m._uploading || m._queued || m._failed);
+}
+
+/**
+ * [2026-10-13 vídeo-sumiu] Garante que nenhuma recarga/substituição de janela
+ * remove bolhas locais pendentes: toda linha de `prev` que é pendente
+ * (isLocalPending), não está em `next` (por id) e cuja confirmação do servidor
+ * (mesmo client_message_id) NÃO veio em `next` volta para a lista. Mantém a
+ * mesma referência quando nada precisa voltar.
+ */
+export function keepLocalPending(prev, next) {
+  if (!Array.isArray(prev) || !prev.length || !Array.isArray(next)) return next;
+  let missing = null;
+  let ids = null;
+  let cids = null;
+  for (const m of prev) {
+    if (!isLocalPending(m)) continue;
+    if (!ids) {
+      ids = new Set();
+      cids = new Set();
+      for (const n of next) {
+        if (!n) continue;
+        if (n.id != null) ids.add(String(n.id));
+        const c = n._client_id || n.client_message_id;
+        if (c) cids.add(String(c));
+      }
+    }
+    if (ids.has(String(m.id))) continue;
+    const c = m._client_id || m.client_message_id;
+    if (c && cids.has(String(c))) continue;
+    (missing || (missing = [])).push(m);
+  }
+  if (!missing) return next;
+  return [...next, ...missing];
+}
+
 export default {
   isImportedMsg, isTimeOrdered, markTimeOrdered, noteImportRev, forgetImportRev,
-  timeModeFor, sortKeyOf, compareMsgs, sortByTime, SQL_SORT_EXPR,
+  timeModeFor, sortKeyOf, compareMsgs, compareById, orderKey, sortByTime, SQL_SORT_EXPR,
+  isLocalPending, keepLocalPending,
 };
