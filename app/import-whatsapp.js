@@ -34,7 +34,8 @@ import { takeSharedText } from '../services/waImport/importer';
 import * as job from '../services/waImport/job';
 import { refreshImports, forgetImport } from '../services/waImport/registry';
 import { waImportDelete, waImportMatch } from '../services/waImport/api';
-import { bestLocalMatch, nameScore, NAME_MIN_SCORE } from '../services/waImport/match';
+import { bestLocalMatch, nameScore, NAME_MIN_SCORE, rankCandidates } from '../services/waImport/match';
+import AvatarCircle from '../components/AvatarCircle';
 
 let ConversationSummarySheet = null;
 try { ConversationSummarySheet = require('../components/chat/ConversationSummarySheet').default; } catch {}
@@ -128,7 +129,8 @@ export default function ImportWhatsAppScreen() {
   }, []);
 
   useEffect(() => {
-    if (params.linkEmail) setLink({ email: String(params.linkEmail), name: String(params.linkName || params.linkEmail), convId: originConvId || '' });
+    // [wa-remetente 2026-10-13] aberto de dentro da conversa = escolha explícita (o aviso de número/nome divergente continua).
+    if (params.linkEmail) setLink({ email: String(params.linkEmail), name: String(params.linkName || params.linkEmail), convId: originConvId || '', explicit: true });
   }, [params.linkEmail, params.linkName, originConvId]);
 
   // E2EE da conversa de destino/origem → nunca histórico em texto puro nela.
@@ -274,7 +276,11 @@ export default function ImportWhatsAppScreen() {
   const effDest = directPossible ? dest : 'copy';
   // Telefone no export → quem confere é o servidor (cadastro da pessoa); nome → confere aqui também.
   const exportPeerIsPhone = String(exportPeer).replace(/\D/g, '').length >= 8 && !/[A-Za-zÀ-ÿ]/.test(exportPeer);
-  const needsConfirm = effDest === 'direct' && (!!serverMismatch || (localMatch === false && !exportPeerIsPhone));
+  // [wa-remetente 2026-10-13] número no export que NÃO é o da pessoa escolhida → aviso claro antes de importar.
+  const phoneMismatch = effDest === 'direct' && !!link && exportPeerIsPhone && link.reason !== 'phone';
+  const needsConfirm = effDest === 'direct' && (!!serverMismatch || phoneMismatch || (localMatch === false && !exportPeerIsPhone));
+  // Só importa na conversa com X quando o número confirmou OU o usuário escolheu/confirmou a pessoa explicitamente.
+  const personConfirmed = !!link && (link.reason === 'phone' || !!link.explicit);
 
   const resolveTargetConv = useCallback(async () => {
     if (link?.convId) return link.convId;
@@ -291,6 +297,7 @@ export default function ImportWhatsAppScreen() {
     if (!prep || !meName) return;
     const useDirect = !forceCopy && effDest === 'direct';
     if (useDirect && needsConfirm && !mismatchOk) return;
+    if (useDirect && !personConfirmed) return; // [wa-remetente 2026-10-13]
     if (!useDirect && e2eeTarget && !forceCopy) {
       const ok = Platform.OS === 'web'
         ? (typeof window !== 'undefined' && window.confirm(t('waImport.errE2ee')))
@@ -314,6 +321,8 @@ export default function ImportWhatsAppScreen() {
         fileTitle: prep.fileTitle || '',
         confirmMismatch: useDirect && (mismatchOk || !!serverMismatch),
         originConvId: originConvId || targetConversationId || null,
+        // [wa-import-fase2] notificação local ao concluir com o app em 2º plano
+        notifyTitle: t('waImport.doneNotifTitle'), notifyBody: t('waImport.doneNotifBody', { n: '{n}' }),
       });
       refreshImports(true).then((l) => setImports(Array.isArray(l) ? l : [])).catch(() => {});
     } catch (e) {
@@ -328,7 +337,7 @@ export default function ImportWhatsAppScreen() {
       setErrorAction(['has_messages', 'e2ee', 'group_export', 'peer_imported'].includes(reason) ? 'copy' : null);
       setStep('error');
     }
-  }, [prep, meName, effDest, needsConfirm, mismatchOk, e2eeTarget, confirm, t, resolveTargetConv, errText, link, title, user, serverMismatch, originConvId, exportPeer]);
+  }, [prep, meName, effDest, needsConfirm, mismatchOk, personConfirmed, e2eeTarget, confirm, t, resolveTargetConv, errText, link, title, user, serverMismatch, originConvId, exportPeer]);
 
   const openConversation = useCallback((convId, name, direct) => {
     try {
@@ -364,15 +373,35 @@ export default function ImportWhatsAppScreen() {
   const serverCands = useMemo(() => (matchInfo?.candidates || []).map((c) => ({
     email: c.email, name: c.name || c.email, convId: c.conversation_id ? String(c.conversation_id) : '', reason: c.reason, matched: c.matched, tail: c.phone_tail,
   })), [matchInfo]);
+  // [wa-remetente 2026-10-13] Lista RANQUEADA (foto, nome, motivo) + busca por nome/@/telefone entre as MINHAS
+  // conversas diretas e contatos (servidor: universo fechado). Nunca escolhe sozinho alguém sem relação.
+  const [pickQuery, setPickQuery] = useState('');
+  const [searchRes, setSearchRes] = useState([]);
+  const searchSeqRef = useRef(0);
+  useEffect(() => {
+    const q = pickQuery.trim();
+    const seq = ++searchSeqRef.current;
+    if (!showLinkPicker || q.replace(/^@/, '').length < 2) { setSearchRes([]); return undefined; }
+    const tm = setTimeout(async () => {
+      try {
+        const r = await waImportMatch({ q });
+        if (seq === searchSeqRef.current && r?.success) setSearchRes(Array.isArray(r.data?.results) ? r.data.results : []);
+      } catch {}
+    }, 350);
+    return () => clearTimeout(tm);
+  }, [pickQuery, showLinkPicker]);
   const linkCandidates = useMemo(() => {
     if (!showLinkPicker) return [];
-    const seen = new Set(serverCands.map((c) => String(c.email).toLowerCase()));
     const local = readLocalConversations()
-      .filter((c) => (c.type || 'direct') === 'direct' && convPeerEmail(c) && !seen.has(String(convPeerEmail(c)).toLowerCase()))
-      .slice(0, 80)
+      .filter((c) => (c.type || 'direct') === 'direct' && convPeerEmail(c))
+      .slice(0, 200)
       .map((c) => ({ email: convPeerEmail(c), name: convName(c) || convPeerEmail(c), convId: String(c.id || '') }));
-    return [...serverCands, ...local];
-  }, [showLinkPicker, serverCands]);
+    return rankCandidates({ server: matchInfo?.candidates || [], search: pickQuery.trim() ? searchRes : [], recent: matchInfo?.recent || [], local, query: pickQuery }).slice(0, 60);
+  }, [showLinkPicker, matchInfo, searchRes, pickQuery]);
+  const candReason = (c) => (c.reason === 'phone' ? t('waImport.matchPhone', { tail: c.tail || '' })
+    : c.reason === 'name' ? t('waImport.matchName', { name: c.matched || '' })
+      : c.reason === 'recent' ? t('waImport.reasonRecent')
+        : (c.handle ? '@' + c.handle : ''));
   const linkReasonText = !link ? '' : link.reason === 'phone'
     ? t('waImport.matchPhone', { tail: link.tail || '' })
     : link.reason === 'name'
@@ -480,6 +509,10 @@ export default function ImportWhatsAppScreen() {
           </Text>
           {prep.format ? <Text style={{ color: sub, fontSize: 12, marginTop: 4 }}>{t('waImport.format', { fmt: prep.format })}</Text> : null}
         </View>
+        {(st.mediaOmitted || 0) > 0 && (st.mediaPresent || 0) === 0 ? (
+          // [wa-import-fase2] export "sem mídia": avisa e explica como exportar de novo com mídia.
+          <Note text={t('waImport.mediaOmittedHint', { n: st.mediaOmitted })} icon={IconAlertTriangle} />
+        ) : null}
 
         {meConfident && !showMePicker ? (
           // [import-ordem 2026-10-13] quem importa é o dono da conta: deduzido (meu número / "Você" / o outro
@@ -522,7 +555,7 @@ export default function ImportWhatsAppScreen() {
           ) : <IconChevronRight size={18} color={sub} />}
         </TouchableOpacity>
         {betterCand ? (
-          <TouchableOpacity onPress={() => { setLink(betterCand); setServerMismatch(null); setMismatchOk(false); }} style={[s.card, s.linkRow, { backgroundColor: card, borderColor: ink }]} accessibilityRole="button">
+          <TouchableOpacity onPress={() => { setLink({ ...betterCand, explicit: true }); setServerMismatch(null); setMismatchOk(false); }} style={[s.card, s.linkRow, { backgroundColor: card, borderColor: ink }]} accessibilityRole="button">
             <IconUser size={18} color={ink} />
             <View style={{ flex: 1, marginLeft: 10 }}>
               <Text style={{ color: ink, fontSize: 15 }} numberOfLines={1}>{t('waImport.useSuggested', { name: betterCand.name })}</Text>
@@ -533,17 +566,37 @@ export default function ImportWhatsAppScreen() {
             <IconChevronRight size={18} color={sub} />
           </TouchableOpacity>
         ) : null}
+        {effDest === 'direct' && link && !personConfirmed ? (
+          // [wa-remetente 2026-10-13] sugestão por nome: a pessoa precisa ser confirmada (ou escolhida na lista).
+          <View style={[s.card, { borderColor: ink, backgroundColor: card }]}>
+            <Text style={{ color: ink, fontSize: 14, lineHeight: 19, marginBottom: 6 }}>{t('waImport.pickPersonHint')}</Text>
+            <Radio on={false} onPress={() => setLink((l) => (l ? { ...l, explicit: true } : l))} title={t('waImport.confirmPerson', { name: link.name })} />
+          </View>
+        ) : null}
         {showLinkPicker && (
-          <View style={[s.card, { backgroundColor: card, borderColor: line, paddingVertical: 4, maxHeight: 260 }]}>
-            <ScrollView nestedScrollEnabled>
+          <View style={[s.card, { backgroundColor: card, borderColor: line, paddingVertical: 4, maxHeight: 380 }]}>
+            <TextInput
+              value={pickQuery} onChangeText={setPickQuery} autoCorrect={false} autoCapitalize="none"
+              placeholder={t('waImport.searchPeople')} placeholderTextColor={sub}
+              style={[s.input, { color: ink, borderColor: line, marginHorizontal: 8, marginTop: 6, marginBottom: 4 }]}
+              accessibilityLabel={t('waImport.searchPeople')}
+            />
+            <ScrollView nestedScrollEnabled keyboardShouldPersistTaps="handled">
               {linkCandidates.length === 0 ? <Text style={[s.small, { color: sub, padding: 12 }]}>{t('waImport.linkEmpty')}</Text> : null}
-              {linkCandidates.map((c) => (
-                <TouchableOpacity key={c.email} onPress={() => { setLink(c); setShowLinkPicker(false); setServerMismatch(null); setMismatchOk(false); }} style={s.partRow}>
-                  <IconUser size={16} color={ink} />
-                  <Text style={{ color: ink, fontSize: 15, marginLeft: 10, flex: 1 }} numberOfLines={1}>{c.name}</Text>
-                  {c.reason || (exportPeer && nameScore(exportPeer, c.name) >= NAME_MIN_SCORE) ? <Text style={[s.pill, { color: sub, borderColor: line }]}>{t('waImport.suggested')}</Text> : null}
-                </TouchableOpacity>
-              ))}
+              {linkCandidates.map((c) => {
+                const why = candReason(c);
+                const sugg = c.reason === 'phone' || c.reason === 'name' || (exportPeer && nameScore(exportPeer, c.name) >= NAME_MIN_SCORE);
+                return (
+                  <TouchableOpacity key={c.email} onPress={() => { setLink({ ...c, explicit: true }); setShowLinkPicker(false); setPickQuery(''); setServerMismatch(null); setMismatchOk(false); }} style={s.partRow} accessibilityRole="button">
+                    <AvatarCircle email={c.email} name={c.name} size={36} colors={colors} />
+                    <View style={{ flex: 1, marginLeft: 10 }}>
+                      <Text style={{ color: ink, fontSize: 15 }} numberOfLines={1}>{c.name}</Text>
+                      {why ? <Text style={{ color: sub, fontSize: 12, marginTop: 1 }} numberOfLines={1}>{why}</Text> : null}
+                    </View>
+                    {sugg ? <Text style={[s.pill, { color: sub, borderColor: line }]}>{t('waImport.suggested')}</Text> : null}
+                  </TouchableOpacity>
+                );
+              })}
             </ScrollView>
           </View>
         )}
@@ -560,7 +613,9 @@ export default function ImportWhatsAppScreen() {
           <View style={[s.card, { borderColor: ink, backgroundColor: card }]}>
             <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 8 }}>
               <IconAlertTriangle size={18} color={ink} />
-              <Text style={{ color: ink, fontSize: 14, flex: 1, lineHeight: 19 }}>{t('waImport.verifyMismatch', { export: mismatchExport, name: link?.name || '' })}</Text>
+              <Text style={{ color: ink, fontSize: 14, flex: 1, lineHeight: 19 }}>{phoneMismatch && !serverMismatch
+                ? t('waImport.verifyPhoneMismatch', { tail: String(exportPeer).replace(/\D/g, '').slice(-4), name: link?.name || '' })
+                : t('waImport.verifyMismatch', { export: mismatchExport, name: link?.name || '' })}</Text>
             </View>
             <Radio on={mismatchOk} onPress={() => setMismatchOk((v) => !v)} title={t('waImport.verifyConfirm', { name: link?.name || '' })} />
           </View>
@@ -577,7 +632,7 @@ export default function ImportWhatsAppScreen() {
           </>
         ) : null}
 
-        <Btn label={t('waImport.startImport')} onPress={() => start(false)} disabled={!meName || (effDest === 'direct' && needsConfirm && !mismatchOk)} icon={IconDownload} />
+        <Btn label={t('waImport.startImport')} onPress={() => start(false)} disabled={!meName || (effDest === 'direct' && ((needsConfirm && !mismatchOk) || !personConfirmed))} icon={IconDownload} />
         <View style={{ height: 10 }} />
         <Btn label={t('common.cancel')} solid={false} onPress={() => { job.reset(); setPrep(null); setStep('intro'); }} />
       </>

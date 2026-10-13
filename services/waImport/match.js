@@ -64,4 +64,43 @@ export function bestLocalMatch(names, convs) {
   return best;
 }
 
-export default { nameKey, nameScore, bestLocalMatch, NAME_MIN_SCORE };
+/**
+ * [wa-remetente 2026-10-13] Lista ranqueada para escolher a pessoa da conversa (tela de importar).
+ * Fontes: server = candidatos do wa_import_match (telefone/nome, com motivo), search = resultados da busca
+ * no servidor (nome/@/telefone, universo fechado), recent = conversas diretas recentes, local = conversas
+ * diretas do aparelho. query filtra (nome/@usuário/e-mail; dígitos casam o telefone só via servidor).
+ * Ordem: número confirmado > busca por número > nome parecido (pontuação) > busca > recentes > aparelho.
+ * Nunca inventa candidato: só reordena/filtra o que veio dessas fontes. → [{ email, name, handle, convId, reason, matched, tail, rank }]
+ */
+export function rankCandidates({ server = [], search = [], recent = [], local = [], query = '' } = {}) {
+  const q = nameKey(String(query || '').replace(/^@/, ''));
+  const qRaw = String(query || '').trim().toLowerCase().replace(/^@/, '');
+  const qDigits = /^[\d\s()+.-]+$/.test(String(query || '').trim()) && String(query || '').replace(/\D/g, '').length >= 4;
+  const matchesQuery = (c) => {
+    if (!qRaw) return true;
+    if (qDigits) return false; // telefone: só o servidor confere (hash) — nada local finge que bate
+    const nk = nameKey(c.name);
+    return (q && (nk.startsWith(q) || nk.includes(' ' + q) || (q.length >= 3 && nk.includes(q))))
+      || (c.handle && String(c.handle).toLowerCase().startsWith(qRaw))
+      || (qRaw.length >= 3 && String(c.email || '').toLowerCase().startsWith(qRaw));
+  };
+  const out = new Map();
+  const put = (c, rank) => {
+    const email = String(c?.email || '').toLowerCase();
+    if (!email) return;
+    const prev = out.get(email);
+    if (prev && prev.rank >= rank) return;
+    out.set(email, {
+      email, name: c.name || email, handle: c.handle || '',
+      convId: c.convId != null && c.convId !== '' ? String(c.convId) : (c.conversation_id ? String(c.conversation_id) : (prev?.convId || '')),
+      reason: c.reason || prev?.reason || '', matched: c.matched || '', tail: c.tail || c.phone_tail || '', rank,
+    });
+  };
+  for (const c of search || []) put(c, c.reason === 'phone' ? 950 : 500 + Math.min(99, Number(c.score) || 0));
+  for (const c of server || []) { if (matchesQuery(c)) put(c, c.reason === 'phone' ? 1000 : 600 + Math.min(99, Number(c.score) || 0)); }
+  (recent || []).forEach((c, i) => { if (matchesQuery(c)) put({ ...c, reason: c.reason || 'recent' }, 300 - i); });
+  (local || []).forEach((c, i) => { if (matchesQuery(c)) put(c, 100 - Math.min(99, i)); });
+  return Array.from(out.values()).sort((a, b) => b.rank - a.rank);
+}
+
+export default { nameKey, nameScore, bestLocalMatch, rankCandidates, NAME_MIN_SCORE };

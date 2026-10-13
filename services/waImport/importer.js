@@ -27,6 +27,36 @@ import { rememberImport } from './registry';
 const BATCH = 500;                     // = WA_IMPORT_MAX_BATCH do servidor
 const BATCH_MAX_BYTES = 900 * 1024;    // JSON por chamada
 const MEDIA_CONCURRENCY = 3;
+// [wa-import-fase2 2026-10-13] velocidade: paralelismo adaptativo (1..6 conforme a rede responde), foto JPEG
+// grande (> 2 MB) reduzida p/ ~1600 px JPEG 80 antes de subir (só no aparelho; .opus/áudio/vídeo intactos),
+// vídeos grandes (> 25 MB) vão para o FIM da fila (o resto aparece antes).
+const MEDIA_CONC_MIN = 1;
+const MEDIA_CONC_MAX = 6;
+const PHOTO_SHRINK_BYTES = 2 * 1024 * 1024;
+const PHOTO_MAX_SIDE = 1600;
+const VIDEO_LATE_BYTES = 25 * 1024 * 1024;
+
+function _fsLegacy() { try { return require('expo-file-system/legacy'); } catch { try { return require('expo-file-system'); } catch { return null; } } }
+function _imageSize(uri) {
+  return new Promise((resolve) => {
+    try { require('react-native').Image.getSize(uri, (w, h) => resolve({ w, h }), () => resolve(null)); } catch { resolve(null); }
+  });
+}
+/** Foto JPEG grande → cópia ~1600 px JPEG 80 (mesmo nome no servidor). Falhou → original. */
+async function _maybeShrinkPhoto(ref, tmp) {
+  try {
+    if (Platform.OS === 'web' || !tmp?.uri || ref.kind !== 'image') return null;
+    if (!['jpg', 'jpeg'].includes(_ext(ref.name)) || !(ref.size > PHOTO_SHRINK_BYTES)) return null;
+    const dim = await _imageSize(tmp.uri);
+    if (!dim || !dim.w || !dim.h) return null;
+    const big = Math.max(dim.w, dim.h);
+    const IM = require('expo-image-manipulator');
+    const act = big > PHOTO_MAX_SIDE ? [{ resize: dim.w >= dim.h ? { width: PHOTO_MAX_SIDE } : { height: PHOTO_MAX_SIDE } }] : [];
+    const out = await IM.manipulateAsync(tmp.uri, act, { compress: 0.8, format: IM.SaveFormat.JPEG });
+    if (!out?.uri) return null;
+    return { uri: out.uri, cleanup: () => { try { _fsLegacy()?.deleteAsync?.(out.uri, { idempotent: true })?.catch?.(() => {}); } catch {} } };
+  } catch { return null; }
+}
 const ATTACH_EVERY = 60;               // mídias enviadas → 1 chamada "anexar"
 export const MAX_MEDIA_BYTES = 100 * 1024 * 1024;     // por arquivo (= servidor)
 export const MAX_INPUT_BYTES = 4 * 1024 * 1024 * 1024; // .zip escolhido
@@ -316,6 +346,9 @@ export async function runImport(prep, opts, onProgress, signal = {}) {
     seen.add(key);
     pending.push(key);
   }
+  // [wa-import-fase2] vídeos grandes por último (ordem estável no resto).
+  const _late = (k) => { const r = prep.media.get(k); return !!r && r.kind === 'video' && (r.size || 0) > VIDEO_LATE_BYTES; };
+  pending.sort((a, b) => Number(_late(a)) - Number(_late(b)));
   // Retomada: mídia que já subiu numa tentativa anterior pode não ter sido anexada
   // (app fechou entre o upload e o "anexar") → reanexa (no servidor é no-op se já está).
   const toAttach = startAt > 0 ? Object.keys(uploaded).filter((k) => uploaded[k]) : [];
@@ -329,18 +362,30 @@ export async function runImport(prep, opts, onProgress, signal = {}) {
     }
   };
   let next = 0;
-  const worker = async () => {
+  // [wa-import-fase2] paralelismo adaptativo: começa em 3; upload rápido (< 2,5 s) sobe até 6,
+  // falha/lento (> 12 s) desce até 1. Cada worker só pega item novo se couber no alvo atual.
+  let target = MEDIA_CONCURRENCY; let active = 0;
+  const _tune = (ok, ms) => {
+    if (!ok || ms > 12000) target = Math.max(MEDIA_CONC_MIN, target - 1);
+    else if (ms < 2500) target = Math.min(MEDIA_CONC_MAX, target + 1);
+  };
+  const worker = async (slot) => {
     while (next < pending.length) {
       await _waitIfPaused(signal);
       if (signal.cancelled) return;
+      if (slot >= target) { await sleep(400); continue; }
       const key = pending[next++];
       const ref = prep.media.get(key);
       if (!ref) continue;
       if (ref.size && ref.size > MAX_MEDIA_BYTES) { sum.tooBig++; uploaded[key] = 0; continue; }
-      let tmp = null;
+      let tmp = null; let small = null; const _t = Date.now(); let _ok = false;
+      active++;
       try {
         tmp = await ref.open();
-        const r = await _withRetry(() => waImportMedia(importId, ref.name, Platform.OS === 'web' ? tmp.file : { uri: tmp.uri }, mimeForName(ref.name)), { tries: 4, signal });
+        small = await _maybeShrinkPhoto(ref, tmp);
+        const up = small ? { uri: small.uri } : (Platform.OS === 'web' ? tmp.file : { uri: tmp.uri });
+        const r = await _withRetry(() => waImportMedia(importId, ref.name, up, mimeForName(ref.name)), { tries: 4, signal });
+        _ok = !!r?.success;
         if (r?.success) { uploaded[key] = r.data.id; mediaDone++; toAttach.push(key); }
         else if (r?.status === 413) { sum.tooBig++; }
         else if (r?.status === 415) { sum.blocked++; }
@@ -350,13 +395,16 @@ export async function runImport(prep, opts, onProgress, signal = {}) {
         if (e?.status === 401) throw e;
         sum.failed++; // ex.: zip_bomb / arquivo corrompido — segue com o resto
       } finally {
+        active--;
+        _tune(_ok, Date.now() - _t);
+        try { small?.cleanup?.(); } catch {}
         try { tmp?.cleanup?.(); } catch {}
       }
       report('media');
       await flushAttach(false);
     }
   };
-  await Promise.all(Array.from({ length: Math.min(MEDIA_CONCURRENCY, pending.length) }, worker));
+  await Promise.all(Array.from({ length: Math.min(MEDIA_CONC_MAX, pending.length) }, (_, i) => worker(i)));
   await flushAttach(true);
   if (signal.cancelled) return cancelled();
 

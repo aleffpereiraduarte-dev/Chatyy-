@@ -1553,6 +1553,7 @@ function _msgEditKind(msg) {
   if (msg.is_view_once || msg.isViewOnce || msg.view_once) return null;
   const cmi = String(msg.client_message_id || '');
   if (msg.forwarded_from || msg.is_forwarded || cmi.startsWith('fwd_') || cmi.startsWith('fwd:')) return null;
+  if (cmi.startsWith('wai:')) return null; // [wa-remetente 2026-10-13] importada do WhatsApp nunca é editável
   const type = String(msg.type || 'text');
   if (type === 'text') return 'text';
   if (!_EDIT_CAPTION_TYPES.has(type) || isVideoNoteMessage(msg)) return null;
@@ -21416,7 +21417,7 @@ function ChatConversationInner() {
     // rest of the batch, leaving selection half-deleted and state stale.
     const results = await Promise.allSettled(ids.map(msgId => {
       const msg = messages.find(m => m.id === msgId);
-      const mode = (msg && msg.sender_email === currentEmail) ? 'for_all' : 'for_me';
+      const mode = (msg && msg.sender_email === currentEmail && !_chatOrder().isImportedMsg(msg)) ? 'for_all' : 'for_me'; // [wa-remetente 2026-10-13]
       return api.chatDelete(msgId, mode);
     }));
     results.forEach((res, i) => {
@@ -21466,7 +21467,8 @@ function ChatConversationInner() {
     // String-compare so tmp_xxx strings and numeric server IDs both match.
     const msg = messages.find(m => String(m.id) === String(msgId));
     if (!msg) return;
-    const isMine = msg.sender_email === user?.email;
+    // [wa-remetente 2026-10-13] importada do WhatsApp: só "apagar para mim" (servidor recusa imported_message).
+    const isMine = msg.sender_email === user?.email && !_chatOrder().isImportedMsg(msg);
 
     // [outbox-cancel] A bubble still owned by the outbox (never confirmed by
     // the server — tmp_ id, _pending/_queued/_failed) must be cancelled
@@ -24291,7 +24293,32 @@ function ChatConversationInner() {
   }, [messages, firstUnreadIdRef.current]);
 
   // Memoize reversed array to avoid re-creating every render
-  const reversedMessages = useMemo(() => [...messagesWithSeparators].reverse(), [messagesWithSeparators]);
+  // [wa-remetente 2026-10-13] Histórico importado do WhatsApp numa conversa 1:1: o servidor agora
+  // grava as falas da outra pessoa com o e-mail REAL dela (aparecem como dela, lado certo p/ cada um).
+  // Cache local antigo ainda pode ter a linha com o remetente sintético (wa-…@import.chatyy.invalid)
+  // até a recarga da janela (history_imported) substituir por id → aqui o sintético vira o membro
+  // que NÃO importou, só quando dá para saber sem ambiguidade (um único remetente real nas importadas).
+  const reversedMessages = useMemo(() => {
+    const arr = [...messagesWithSeparators].reverse();
+    if (conversationType === 'group') return arr;
+    try {
+      const _syn = (m) => _chatOrder().isImportedMsg(m) && /@import\.chatyy\.invalid$/i.test(String(m.sender_email || ''));
+      let hasSyn = false; const reals = new Set();
+      for (let i = 0; i < arr.length; i++) {
+        const m = arr[i];
+        if (!m || !_chatOrder().isImportedMsg(m)) continue;
+        if (_syn(m)) hasSyn = true; else if (m.sender_email) reals.add(String(m.sender_email).toLowerCase());
+      }
+      if (!hasSyn || reals.size !== 1) return arr;
+      const me = String(currentEmail || '').toLowerCase();
+      const importer = Array.from(reals)[0];
+      const peerM = (members || []).find(x => x && x.email && String(x.email).toLowerCase() !== me);
+      const peer = String(peerM?.email || params?.email || '').toLowerCase();
+      const real = importer === me ? peer : (importer === peer ? currentEmail : '');
+      if (!real) return arr;
+      return arr.map(m => (m && _syn(m)) ? { ...m, sender_email: real } : m);
+    } catch { return arr; }
+  }, [messagesWithSeparators, conversationType, members, currentEmail, params?.email]);
 
   // id → message index for O(1) reply-target resolution. Replaces a per-row
   // `messages.find()` linear scan that ran for EVERY reply bubble rendered
@@ -30337,7 +30364,7 @@ function ChatConversationInner() {
               <Text numberOfLines={1} style={[styles.msgTime, { color: isOwn ? ownMetaColor : otherMetaColor }]}>
                 {formatTime(msg.created_at)}
               </Text>
-              {isOwn && !isDeleted && (() => {
+              {isOwn && !isDeleted && !_chatOrder().isImportedMsg(msg) /* [wa-remetente 2026-10-13] importada: sem ✓✓ */ && (() => {
                 if (msg._failed) return (
                   <TouchableOpacity
                     onPress={() => {
@@ -34830,7 +34857,7 @@ function ChatConversationInner() {
                   por Xm Ys mais" subtitle that ticks down each second.
                   Out of window: shows greyed-out "(expirado)" label so the
                   user understands retraction is no longer possible. */}
-              {!selectedMsg?.deleted_at && selectedMsg?.sender_email === currentEmail && (() => {
+              {!selectedMsg?.deleted_at && selectedMsg?.sender_email === currentEmail && !_chatOrder().isImportedMsg(selectedMsg) /* [wa-remetente 2026-10-13] */ && (() => {
                 // 1h delete-for-everyone window in both DMs and groups
                 // (DM was 5 min before 2026-05-18 — see handleDelete).
                 const isGroupChat = conversationType === 'group';

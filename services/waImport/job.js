@@ -27,6 +27,68 @@ let _opts = null;
 let _signal = { cancelled: false, paused: false };
 const _subs = new Set();
 let _keep = null;
+let _lastFiles = null;     // [wa-import-fase2] arquivos do prepare (para retomar após reiniciar)
+let _lastPrepOpts = null;
+
+// ── [wa-import-fase2 2026-10-13] Retomar sozinho depois que o app fecha/reinicia ──────────
+// No start: cópia do(s) arquivo(s) no armazenamento do app (documentDirectory/wa-import-resume/) +
+// opções no AsyncStorage. Ao abrir o app de novo (mesma conta, < 7 dias), prepara e continua de onde
+// parou (o servidor é idempotente: nada duplica). Concluiu/cancelou/descartou → apaga a cópia.
+// Só no aparelho (web não guarda arquivo). Texto compartilhado sem arquivo não é retomável.
+const RESUME_KEY = 'waimp:resume:v1';
+const RESUME_MAX_AGE = 7 * 24 * 3600 * 1000;
+function _fs() { try { return require('expo-file-system/legacy'); } catch { try { return require('expo-file-system'); } catch { return null; } } }
+function _st() { try { return require('@react-native-async-storage/async-storage').default; } catch { return null; } }
+function _acct() { try { return String(require('../api').getActiveAccountEmail?.() || '').toLowerCase(); } catch { return ''; } }
+async function _clearResume() {
+  try {
+    const st = _st(); const raw = await st?.getItem(RESUME_KEY);
+    await st?.removeItem(RESUME_KEY);
+    const j = raw ? JSON.parse(raw) : null;
+    const FS = _fs();
+    if (j?.dir && FS?.deleteAsync) await FS.deleteAsync(j.dir, { idempotent: true }).catch(() => {});
+  } catch {}
+}
+async function _saveResume(opts) {
+  try {
+    const { Platform } = require('react-native');
+    if (Platform.OS === 'web' || !Array.isArray(_lastFiles) || !_lastFiles.length) return;
+    if (_lastFiles.some((f) => !f || !f.uri || typeof f.text === 'string')) return;
+    const FS = _fs(); if (!FS?.documentDirectory || !FS.copyAsync) return;
+    await _clearResume();
+    const dir = FS.documentDirectory + 'wa-import-resume/' + Date.now() + '/';
+    await FS.makeDirectoryAsync(dir, { intermediates: true });
+    const files = [];
+    for (let i = 0; i < _lastFiles.length; i++) {
+      const f = _lastFiles[i];
+      const to = dir + i + '-' + String(f.name || 'arquivo').replace(/[^\w.\-]+/g, '_').slice(0, 80);
+      await FS.copyAsync({ from: f.uri, to });
+      files.push({ uri: to, name: f.name || '', mime: f.mime || '', size: f.size || 0 });
+    }
+    if (_job.status !== 'running' && _job.status !== 'paused') { await FS.deleteAsync(dir, { idempotent: true }).catch(() => {}); return; }
+    const { signal: _s, onProgress: _p, ...prepOpts } = _lastPrepOpts || {};
+    await _st()?.setItem(RESUME_KEY, JSON.stringify({ v: 1, at: Date.now(), email: String(opts.email || '').toLowerCase(), dir, files, prepOpts, opts }));
+  } catch {}
+}
+let _autoTried = false;
+async function _autoResume() {
+  if (_autoTried) return; _autoTried = true;
+  try {
+    const raw = await _st()?.getItem(RESUME_KEY);
+    if (!raw) return;
+    const j = JSON.parse(raw);
+    const me = _acct();
+    if (!j || j.v !== 1 || !j.email || !me || j.email !== me || Date.now() - (j.at || 0) > RESUME_MAX_AGE) { await _clearResume(); return; }
+    if (_job.status !== 'idle') return;
+    const FS = _fs();
+    for (const f of j.files || []) { const inf = await FS?.getInfoAsync?.(f.uri).catch(() => null); if (!inf?.exists) { await _clearResume(); return; } }
+    await prepare(j.files, j.prepOpts || {});
+    await start({ ...j.opts, resumed: true });
+  } catch (e) {
+    // recusa definitiva do servidor (ex.: unverified/e2ee/peer_imported) ou arquivo ilegível → não tenta de novo
+    if (e?.reason || /no_chat_txt|no_messages|zip_|too_big|no_file/.test(String(e?.message || ''))) _clearResume();
+  }
+}
 
 function _set(patch) {
   _job = { ..._job, ...patch };
@@ -47,6 +109,7 @@ export async function prepare(files, opts = {}) {
   try { _prep?.close?.(); } catch {}
   _prep = null;
   _signal = { cancelled: false, paused: false };
+  _lastFiles = files; _lastPrepOpts = opts;
   _set({ ...IDLE, status: 'preparing', originConvId: opts.originConvId || null });
   try {
     const p = await prepareImport(files, { ...opts, signal: _signal, onProgress: (f) => _set({ prepProgress: f }) });
@@ -66,6 +129,18 @@ async function _keepAwake(on) {
   } catch {}
 }
 
+// [wa-import-fase2] "Importação concluída (X mensagens)" — notificação LOCAL quando o app não está na frente.
+async function _notifyDone(r) {
+  try {
+    if (AppState.currentState === 'active') return;
+    const title = String(_opts?.notifyTitle || '');
+    const body = String(_opts?.notifyBody || '').replace('{n}', String(Number(r?.summary?.messages) || 0));
+    if (!title) return;
+    const N = require('expo-notifications');
+    await N.scheduleNotificationAsync({ content: { title, body, data: { type: 'wa_import_done', conversation_id: r?.conversationId || null } }, trigger: null });
+  } catch {}
+}
+
 async function _run() {
   _signal.cancelled = false;
   _set({ status: _signal.paused ? 'paused' : 'running', error: null });
@@ -74,9 +149,11 @@ async function _run() {
     const r = await runImport(_prep, _opts, (p) => {
       _set({ progress: p, conversationId: p.conversationId || _job.conversationId, status: _signal.paused ? 'paused' : 'running' });
     }, _signal);
-    if (r.cancelled) { _set({ status: 'cancelled', result: r }); return r; }
+    if (r.cancelled) { _set({ status: 'cancelled', result: r }); _clearResume(); return r; }
     _set({ status: 'done', result: r, conversationId: r.conversationId });
     refreshImports(true).catch(() => {});
+    _clearResume();
+    _notifyDone(r);
     return r;
   } catch (e) {
     _set({ status: 'error', error: e });
@@ -93,7 +170,9 @@ export function start(opts) {
   _opts = { ...opts };
   _signal = { cancelled: false, paused: false };
   _set({ originConvId: opts.originConvId || _job.originConvId || null, targetConversationId: opts.targetConversationId || null, mode: opts.mode || 'copy', title: opts.title || _prep.title, startedAt: Date.now(), result: null });
-  return _run();
+  const p = _run();
+  if (!opts.resumed) _saveResume(_opts); // [wa-import-fase2] cópia p/ retomar após reiniciar (em 2º plano)
+  return p;
 }
 
 /** Tentar de novo depois de erro (rede/servidor) — mesmo arquivo, sem duplicar. */
@@ -110,12 +189,14 @@ export function cancel() {
   _signal.cancelled = true;
   _signal.paused = false;
   if (_job.status === 'preparing' || _job.status === 'ready') _set({ status: 'idle' });
+  _clearResume();
 }
 export function reset() {
   if (_job.status === 'running' || _job.status === 'paused') return;
   try { _prep?.close?.(); } catch {}
   _prep = null; _opts = null;
   _set({ ...IDLE });
+  _clearResume();
 }
 
 // ── 2º plano: retoma sozinho ao voltar se parou por rede ─────────────────
@@ -132,6 +213,8 @@ function _ensureAppState() {
   } catch {}
 }
 _ensureAppState();
+// [wa-import-fase2] retomada após reiniciar: alguns segundos depois do app abrir (conta já carregada).
+try { setTimeout(() => { _autoResume().catch(() => {}); }, 6000); } catch {}
 
 // ── Evento único do servidor: history_imported ───────────────────────────
 const _convListeners = new Set();
