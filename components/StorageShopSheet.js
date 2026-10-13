@@ -17,7 +17,7 @@ import { STORAGE_TIERS, purchaseStorage, getStorageLocalizedPrice } from '../ser
 import { getOriginBase, storageUsage } from '../services/api'; // [2026-10-10] loja web = host canônico
 import { startStripeCheckout, openStripePortal, isStripeCardAvailable, isStripeStorageCheckoutAvailable } from '../services/stripeCheckout';
 import { IconX, IconCloud, IconCheck, IconCheckCircle, IconUsers, IconImage, IconShield, IconZap } from './Icons';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useSafeAreaInsets, SafeAreaView as SACSafeAreaView } from 'react-native-safe-area-context';
 
 function formatBrl(v) {
   const n = Number(v) || 0;
@@ -401,9 +401,14 @@ export default function StorageShopSheet({ visible, onClose, currentTier = 'free
       statusBarTranslucent
       onRequestClose={onClose}
     >
-      <View style={{ flex: 1, backgroundColor: colors.background, paddingTop: Math.max(insets.top, 12) + 4, paddingBottom: Math.max(insets.bottom, 12), paddingHorizontal: 18 }}>
-        {body}
-      </View>
+      {/* [2026-10-13] Aberto por cima de outra folha, o insets do dono vinha 0 →
+          cabeçalho por baixo da status bar. SafeAreaView nativo mede a própria
+          área segura dentro do Modal. */}
+      <SACSafeAreaView edges={['top', 'bottom']} style={{ flex: 1, backgroundColor: colors.background }}>
+        <View style={{ flex: 1, paddingTop: 4, paddingBottom: insets.bottom > 0 ? 0 : 12, paddingHorizontal: 18 }}>
+          {body}
+        </View>
+      </SACSafeAreaView>
     </Modal>
   );
 }
