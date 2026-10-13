@@ -3132,7 +3132,7 @@ export async function setBadgeCount(count) {
  *   - After receiving a silent_sync push
  *   - On app foreground (AppState change to 'active')
  */
-export async function refreshBadgeCount() {
+export async function refreshBadgeCount(opts = null) {
   if (Platform.OS === 'web') return;
   try {
     const { chatUnreadCount, apiCall } = require('./api');
@@ -3140,7 +3140,7 @@ export async function refreshBadgeCount() {
     // Chat unread
     let chatUnread = 0;
     try {
-      const chatResp = await chatUnreadCount();
+      const chatResp = await chatUnreadCount(opts); // [2026-10-13 P2-8] exclui a conversa aberta
       chatUnread = chatResp?.data?.unread_count ?? 0;
     } catch {}
 

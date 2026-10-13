@@ -710,6 +710,8 @@ function _syncEnumPrefsToPolicy() {
   }
   // Route through the single source of truth so the gate + persistence stay
   // consistent with direct setAutoDownloadPolicy() callers.
+  // [2026-10-13 P1-2] Escolha explícita do usuário → nunca promover depois.
+  _markAutoDlMigDone();
   setAutoDownloadPolicy(next);
 }
 
@@ -775,9 +777,34 @@ const _defaultPolicy = {
   videos:    { mobile: 1, wifi: 1, roaming: 0 },
   documents: { mobile: 0, wifi: 1, roaming: 0 },
 };
-// Matriz padrão ANTIGA (vídeo só Wi-Fi). Quem nunca personalizou chega com ela
-// (servidor e cache local) → promovida ao padrão novo em _normalizePolicy.
+// Matriz padrão ANTIGA (vídeo só Wi-Fi). [2026-10-13 P1-2] Promovida ao padrão
+// novo UMA vez (flag persistida AUTO_DL_MIG_KEY) na primeira hidratação após a
+// OTA (local ou, sem cache local, a 1ª matriz do servidor). Depois nunca mais:
+// quem voltar vídeo p/ "só Wi-Fi" é respeitado.
 const _OLD_DEFAULT_SIG = '1,1,0|1,1,0|0,1,0|0,1,0';
+const AUTO_DL_MIG_KEY = 'autoDlPolicyMig.v2';
+let _autoDlMigState = 'unknown'; // 'unknown' (lendo) | 'pending' | 'done'
+let _autoDlSetBeforeHydrate = false;
+function _policySig(p) {
+  try { return ['photos', 'audio', 'videos', 'documents'].map(k => [p[k].mobile, p[k].wifi, p[k].roaming].join(',')).join('|'); } catch { return ''; }
+}
+function _markAutoDlMigDone() {
+  if (_autoDlMigState === 'done') return;
+  _autoDlMigState = 'done';
+  if (Platform.OS === 'web') return;
+  try {
+    import('@react-native-async-storage/async-storage').then(m => {
+      m.default.setItem(AUTO_DL_MIG_KEY, '1').catch(() => {});
+    }).catch(() => {});
+  } catch {}
+}
+// Aplica a promoção única (muta e devolve p) e grava a flag.
+function _applyAutoDlMigration(p) {
+  if (_autoDlMigState === 'done') return p;
+  if (_policySig(p) === _OLD_DEFAULT_SIG) p.videos.mobile = 1;
+  _markAutoDlMigDone();
+  return p;
+}
 let _autoDlPolicy = JSON.parse(JSON.stringify(_defaultPolicy));
 let _autoDlPolicyHydrated = false;
 // 60s cache so the gate can be queried at message-pump rate without parsing
@@ -797,10 +824,6 @@ function _normalizePolicy(raw) {
       }
     }
   }
-  try {
-    const sig = ['photos', 'audio', 'videos', 'documents'].map(k => [out[k].mobile, out[k].wifi, out[k].roaming].join(',')).join('|');
-    if (sig === _OLD_DEFAULT_SIG) out.videos.mobile = 1;
-  } catch {}
   return out;
 }
 
@@ -810,12 +833,25 @@ function _hydrateAutoDlPolicy() {
   if (Platform.OS === 'web') return;
   try {
     import('@react-native-async-storage/async-storage').then(m => {
-      m.default.getItem(AUTO_DL_POLICY_KEY).then(raw => {
-        if (!raw) return;
+      Promise.all([
+        m.default.getItem(AUTO_DL_POLICY_KEY).catch(() => null),
+        m.default.getItem(AUTO_DL_MIG_KEY).catch(() => null),
+      ]).then(([raw, mig]) => {
+        if (mig === '1') _autoDlMigState = 'done';
+        else if (_autoDlMigState === 'unknown') _autoDlMigState = 'pending';
+        // Servidor/usuário já setou antes da leitura → vale o mais novo.
+        if (_autoDlSetBeforeHydrate) {
+          if (_autoDlMigState === 'pending') { _applyAutoDlMigration(_autoDlPolicy); _persistAutoDlPolicy(); }
+          return;
+        }
+        if (!raw) return; // sem cache local: decide na 1ª matriz do servidor
         try {
           const parsed = JSON.parse(raw);
-          _autoDlPolicy = _normalizePolicy(parsed);
+          const p = _normalizePolicy(parsed);
+          const wasPending = _autoDlMigState === 'pending';
+          _autoDlPolicy = _applyAutoDlMigration(p);
           _autoDlPolicyCacheStamp = Date.now();
+          if (wasPending) _persistAutoDlPolicy();
         } catch {}
       }).catch(() => {});
     }).catch(() => {});
@@ -839,7 +875,10 @@ function _persistAutoDlPolicy() {
  * cells fall through to defaults.
  */
 export function setAutoDownloadPolicy(policy) {
-  _autoDlPolicy = _normalizePolicy(policy);
+  const p = _normalizePolicy(policy);
+  if (_autoDlMigState === 'unknown') _autoDlSetBeforeHydrate = true;
+  else if (_autoDlMigState === 'pending') _applyAutoDlMigration(p);
+  _autoDlPolicy = p;
   _autoDlPolicyCacheStamp = Date.now();
   _persistAutoDlPolicy();
 }
@@ -1150,7 +1189,9 @@ function _cancelPendingGalleryFor(messageId, urls) {
   for (const u of (urls || [])) { try { const a = _absMediaUrl(u); if (a) keys.add(urlToKey(a)); } catch {} }
   let changed = false;
   for (const [k, it] of [..._galleryPending.entries()]) {
-    if ((mid && it.m === mid) || keys.has(k)) {
+    // [2026-10-13 P1-1] Por id; por URL só itens sem id (a mesma URL pode ser
+    // de outra mensagem viva — encaminhada / figurinha repetida).
+    if ((mid && it.m === mid) || (!it.m && keys.has(k))) {
       const t = _galleryTimers.get(k);
       if (t) { try { clearTimeout(t); } catch {} _galleryTimers.delete(k); }
       _galleryPending.delete(k);
@@ -1638,7 +1679,11 @@ function _isDeletedBlocked(url, opts) {
   _hydrateDeleted();
   if (!_deletedMsgIds.size && !_deletedKeys.size) return false;
   try {
-    if (opts && opts.messageId != null && opts.messageId !== '' && _deletedMsgIds.has(String(opts.messageId))) return true;
+    if (opts && opts.messageId != null && opts.messageId !== '' && !String(opts.messageId).startsWith('temp')) {
+      // [2026-10-13 P1-1] Download de uma mensagem identificada: só a lápide
+      // DELA bloqueia (a mesma URL pode pertencer a outra mensagem viva).
+      return _deletedMsgIds.has(String(opts.messageId));
+    }
     if (url && typeof url === 'string' && _deletedKeys.size && !/^(file|content|ph|asset|assets-library|data):/i.test(url)) {
       const k = urlToKey(_absMediaUrl(url) || url);
       const exp = _deletedKeys.get(k);
@@ -1695,6 +1740,15 @@ async function _deleteExpoImageCacheFor(urls) {
 }
 
 const _purgingMsgs = new Map(); // id → Promise (dedupe WS + persistence + sync)
+// [2026-10-13 P1-3] urlKey → status HTTP da última falha DEFINITIVA (404/410/403
+// em todos os hosts). Lido pelo mediaAutoSync p/ backoff por id.
+const _dlFailStatus = new Map();
+export function getDownloadFailStatus(url) {
+  try {
+    const abs = _absMediaUrl(url);
+    return abs ? (_dlFailStatus.get(urlToKey(abs)) || _dlFailStatus.get(urlToKey(url)) || 0) : 0;
+  } catch { return 0; }
+}
 /**
  * Apaga do aparelho TODAS as cópias da mídia de uma mensagem apagada p/ todos.
  *   info: { conversationId, url|file_url, thumbnail_url, hls_url, local_path }
@@ -1705,12 +1759,15 @@ export function purgeDeletedMessageMedia(messageId, info = {}) {
   if (Platform.OS === 'web' || messageId == null || messageId === '') return Promise.resolve();
   const mid = String(messageId);
   const urls = _mediaUrlsOf(info);
-  markMessageDeleted(mid, urls);
+  // [2026-10-13 P1-1] Lápide só por ID na hora; a chave da URL só entra se
+  // nenhuma outra mensagem usa a mesma URL (ver abaixo).
+  markMessageDeleted(mid, []);
   _cancelPendingGalleryFor(mid, urls);
   const prev = _purgingMsgs.get(mid);
   const run = (async () => {
     if (prev) { try { await prev; } catch {} }
     const fs = getFS();
+    const st = _store();
     const paths = new Set();
     if (typeof info.local_path === 'string' && info.local_path.startsWith('file://')) paths.add(info.local_path);
     if (typeof info.localPath === 'string' && info.localPath.startsWith('file://')) paths.add(info.localPath);
@@ -1720,29 +1777,69 @@ export function purgeDeletedMessageMedia(messageId, info = {}) {
       const r = await require('./db').dbGetMessageMediaRefs?.(mid);
       if (r) {
         if (typeof r.local_path === 'string' && r.local_path.startsWith('file://')) paths.add(r.local_path);
-        if (r.file_url) { urls.push(r.file_url); markMessageDeleted(mid, [r.file_url]); }
+        if (r.file_url) urls.push(r.file_url);
         if (convId == null && r.conversation_id != null) convId = r.conversation_id;
       }
     } catch {}
-    // Store permanente: todas as entradas da mensagem (original + variantes).
+    // [2026-10-13 P1-1] Por URL: só apaga (arquivo/chave/expo-image) se
+    // NENHUMA outra linha viva do SQLite referencia a mesma URL. Foto
+    // encaminhada A→B / figurinha repetida compartilham file_url e o store
+    // indexa por URL (1 arquivo p/ as duas) — apagar em A não pode levar B.
+    const ownUrls = []; // URLs exclusivas desta mensagem
+    const keepKeys = new Set(); // chaves de URL compartilhadas
+    const keepPaths = new Set();
+    for (const u of [...new Set(urls)]) {
+      const abs = _absMediaUrl(u);
+      if (!abs) continue;
+      const variants = [abs, ..._fallbackUrls(abs)];
+      const keys = variants.map(v => urlToKey(v));
+      // Nada local p/ esta URL e é varredura de boot → pula a consulta.
+      let hasLocal = false;
+      try {
+        for (const k of keys) {
+          if (syncIndex.has(k) || (st && st.lookupByUrlKey(k))) { hasLocal = true; break; }
+        }
+      } catch {}
+      if (!hasLocal && info._sweep && !paths.size) continue;
+      const cands = new Set([u, ...variants]);
+      for (const v of variants) {
+        const rel = v.replace(/^https?:\/\/[^/]+/i, '');
+        if (rel && rel !== v && rel.startsWith('/')) { cands.add(rel); cands.add(rel.slice(1)); }
+      }
+      let shared = null;
+      try { shared = await require('./db').dbIsMediaUrlReferencedElsewhere?.(mid, [...cands]); } catch { shared = null; }
+      if (shared === false) {
+        ownUrls.push(abs);
+        markMessageDeleted(mid, [abs]);
+      } else {
+        // true ou desconhecido → preserva (nunca apaga mídia de outra mensagem por dúvida).
+        for (const k of keys) {
+          keepKeys.add(k);
+          const sp = syncIndex.get(k);
+          if (sp) keepPaths.add(sp);
+          try { keepPaths.add(getCacheDir() + k); keepPaths.add(getSavedDir() + k); } catch {}
+          try { const p = st && st.lookupByUrlKey(k); if (p) keepPaths.add(p); } catch {}
+        }
+      }
+    }
+    // Store permanente: entradas da mensagem (original + variantes), menos as
+    // de URL compartilhada (essas só perdem o vínculo com este id).
     try {
-      const st = _store();
-      const ents = st && st.forgetMessage ? st.forgetMessage(mid) : [];
+      const ents = st && st.forgetMessage ? st.forgetMessage(mid, keepKeys) : [];
       for (const e of ents) {
-        if (e.abs) paths.add(e.abs);
+        if (e.abs && !keepPaths.has(e.abs)) paths.add(e.abs);
         if (e.urlKey) { syncIndex.delete(e.urlKey); try { _cancelBgDownload(e.urlKey); } catch {} }
       }
     } catch {}
     // Cache plano / saved / store por URL + download nativo em voo.
-    for (const u of urls) {
-      const abs = _absMediaUrl(u);
-      if (!abs) continue;
+    for (const abs of ownUrls) {
       try { _cancelBgDownload(urlToKey(abs)); } catch {}
       try { await deleteCachedUrl(abs); } catch {}
       for (const fb of _fallbackUrls(abs)) { try { await deleteCachedUrl(fb); } catch {} }
     }
     if (fs) {
       for (const p of paths) {
+        if (keepPaths.has(p)) continue;
         try { await fs.deleteAsync(p, { idempotent: true }); } catch {}
         for (const [k, v] of syncIndex) { if (v === p) syncIndex.delete(k); }
       }
@@ -1750,7 +1847,7 @@ export function purgeDeletedMessageMedia(messageId, info = {}) {
     _schedulePersistIndex();
     try { await require('./hlsOffline').deleteHls?.(mid); } catch {}
     try { if (_thumbB64Cache.delete(mid)) _scheduleThumbB64Persist(); } catch {}
-    try { await _deleteExpoImageCacheFor(urls); } catch {}
+    try { await _deleteExpoImageCacheFor(ownUrls); } catch {}
     if (convId != null) {
       try { await require('./db').dbUpdateMessageFields?.(convId, mid, { local_path: null }); } catch {}
     }
@@ -1787,7 +1884,7 @@ export function runDeletedMediaSweep() {
     let rows = [];
     try { rows = (await require('./db').getDeletedMessagesWithMedia?.()) || []; } catch {}
     for (const r of rows) {
-      try { await purgeDeletedMessageMedia(r.id, { conversationId: r.conversation_id, file_url: r.file_url, local_path: r.local_path }); } catch {}
+      try { await purgeDeletedMessageMedia(r.id, { conversationId: r.conversation_id, file_url: r.file_url, local_path: r.local_path, _sweep: true }); } catch {}
     }
     // Lápides cuja linha já saiu do SQLite (hard delete): o store ainda pode
     // ter o arquivo indexado pelo id.
@@ -2111,6 +2208,7 @@ export async function cacheMedia(url, opts = {}) {
             } catch { okSize = false; }
             if (okSize) {
               registerSyncKey(url, localPath);
+              _dlFailStatus.delete(key);
               if (_plan && _st) { try { _st.record(_plan, { urlKey: key, messageId: opts.messageId, size: _gotSize, own: !!opts.own }); } catch {} }
               // Count the downloaded bytes toward the network-usage total
               // (settings.js getNetStats). Fire-and-forget stat.
@@ -2142,6 +2240,12 @@ export async function cacheMedia(url, opts = {}) {
       if (!(lastStatus >= 400 && lastStatus < 500)) break;
       if (isBig) { try { await fs.deleteAsync(localPath, { idempotent: true }); } catch {} }
       }
+      // [2026-10-13 P1-3] Ausente em TODOS os hosts (404/410/403) → marca
+      // falha definitiva p/ a varredura de fundo não re-tentar p/ sempre.
+      if (lastStatus === 404 || lastStatus === 410 || lastStatus === 403) {
+        _dlFailStatus.set(key, lastStatus);
+        if (_dlFailStatus.size > 2000) { const k0 = _dlFailStatus.keys().next().value; _dlFailStatus.delete(k0); }
+      }
       // Exhausted retries on a big-media transfer — clean up the partial so a
       // half-written video isn't mistaken for a complete cached file later.
       if (isBig) {
@@ -2159,10 +2263,14 @@ export async function cacheMedia(url, opts = {}) {
     const result = await dlPromise;
     // [2026-10-13 delete-for-all] Apagada p/ todos enquanto baixava → descarta
     // o arquivo recém-gravado (sem galeria, sem local_path).
+    // [2026-10-13 P1-1] Só a lápide do PRÓPRIO id descarta; quem baixou a
+    // mesma URL p/ outra mensagem nunca vira lápide.
     if (result && typeof result === 'string' && result.startsWith('file://') && _isDeletedBlocked(url, opts)) {
-      if (opts.messageId != null && opts.messageId !== '') {
-        try { purgeDeletedMessageMedia(opts.messageId, { url, conversationId: opts.conversationId, local_path: result }); } catch {}
+      if (opts.messageId != null && opts.messageId !== '' && isMessageDeletedLocally(opts.messageId)) {
+        try { purgeDeletedMessageMedia(opts.messageId, { url, conversationId: opts.conversationId }); } catch {}
       } else {
+        // Sem id (bloqueio pela chave da URL, que só existe se a URL era
+        // exclusiva da mensagem apagada).
         try { await deleteCachedUrl(url); } catch {}
         try { await fs.deleteAsync(result, { idempotent: true }); } catch {}
       }
@@ -2247,9 +2355,11 @@ export async function getCacheSize() {
 export async function saveMediaPermanent(url, opts = {}) {
   const r = await _saveMediaPermanentInner(url, opts);
   // [2026-10-13 delete-for-all] Lápide chegou durante o download → descarta.
+  // [2026-10-13 P1-1] Só a lápide do PRÓPRIO id descarta (nunca cria lápide
+  // p/ quem baixou a mesma URL p/ outra mensagem).
   if (r && r !== url && typeof r === 'string' && r.startsWith('file://') && _isDeletedBlocked(url, opts)) {
-    if (opts && opts.messageId != null && opts.messageId !== '') {
-      try { purgeDeletedMessageMedia(opts.messageId, { url, conversationId: opts.conversationId, local_path: r }); } catch {}
+    if (opts && opts.messageId != null && opts.messageId !== '' && isMessageDeletedLocally(opts.messageId)) {
+      try { purgeDeletedMessageMedia(opts.messageId, { url, conversationId: opts.conversationId }); } catch {}
     } else {
       try { await deleteCachedUrl(url); } catch {}
       try { await getFS()?.deleteAsync(r, { idempotent: true }); } catch {}

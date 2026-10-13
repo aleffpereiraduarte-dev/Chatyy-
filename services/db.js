@@ -597,6 +597,9 @@ async function _initOnce() {
         CREATE INDEX IF NOT EXISTS idx_messages_client_temp ON messages(client_temp_id);
       `);
     } catch {}
+    // [2026-10-13 P1-1] dbIsMediaUrlReferencedElsewhere (apagar mídia só se
+    // nenhuma outra mensagem usa a mesma URL).
+    try { await _db.execAsync('CREATE INDEX IF NOT EXISTS idx_messages_file_url ON messages(file_url);'); } catch {}
 
     // [#1223 2026-05-20 Wave 6] pending_messages schema mismatch.
     // chatCache.savePendingMessage() persists sender_email + client_message_id
@@ -1072,7 +1075,7 @@ export async function getMissingMediaMessages(limit = 500) {
   const _lim = Math.max(1, Math.min(limit, 2000));
   // [2026-10-12] thumb_b64 NÃO existe na tabela messages → o SELECT sempre falhava e o
   // auto-download offline (mediaAutoSync/fullHistorySync) nunca baixava nada. Removido.
-  const _base = `SELECT id, conversation_id, type, file_url, content%RAW%
+  const _base = `SELECT id, conversation_id, type, file_url, content, created_at%RAW%
        FROM messages
        WHERE type IN ('image','video','audio','voice','short_video','gif','sticker','file','document')
          AND (local_path IS NULL OR local_path = '')
@@ -1115,6 +1118,35 @@ export async function dbGetMessageMediaRefs(messageId) {
       'SELECT id, conversation_id, file_url, local_path FROM messages WHERE id = ? LIMIT 1',
       [messageId]
     );
+  } catch { return null; }
+}
+// [2026-10-13 P1-1] Outra linha VIVA (≠ messageId) ainda referencia alguma
+// destas URLs? (encaminhamento / figurinha / GIF repetido compartilham a
+// mesma file_url). Devolve true/false; null = não deu p/ saber (trata como
+// compartilhada — nunca apaga arquivo de outra mensagem por dúvida).
+export async function dbIsMediaUrlReferencedElsewhere(messageId, urls) {
+  if (isWeb || !_db) return null;
+  const vals = [...new Set((Array.isArray(urls) ? urls : []).filter(v => typeof v === 'string' && v))];
+  if (!vals.length) return false;
+  const ph = vals.map(() => '?').join(',');
+  const mid = messageId == null ? -1 : messageId;
+  try {
+    const a = await _db.getFirstAsync(
+      `SELECT 1 AS x FROM messages
+       WHERE file_url IN (${ph}) AND id <> ?
+         AND (deleted_at IS NULL OR deleted_at = '')
+       LIMIT 1`,
+      [...vals, mid]
+    );
+    if (a) return true;
+    const b = await _db.getFirstAsync(
+      `SELECT 1 AS x FROM messages
+       WHERE type IN ('gif','sticker') AND content IN (${ph}) AND id <> ?
+         AND (deleted_at IS NULL OR deleted_at = '')
+       LIMIT 1`,
+      [...vals, mid]
+    );
+    return !!b;
   } catch { return null; }
 }
 export async function getDeletedMessagesWithMedia(limit = 2000) {

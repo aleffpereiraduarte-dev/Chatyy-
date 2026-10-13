@@ -322,7 +322,10 @@ export function forgetUrlKey(urlKey) {
 // [2026-10-13 delete-for-all] Tira do índice TODAS as entradas de uma mensagem
 // (original `<mid>.<ext>` + variantes `<mid>_<hash>.<ext>`, ex.: miniatura) e
 // devolve [{ abs, urlKey }] p/ o mediaCache apagar os arquivos.
-export function forgetMessage(messageId) {
+// [2026-10-13 P1-1] keepUrlKeys (Set): entradas cuja URL ainda é usada por
+// OUTRA mensagem (encaminhada / figurinha repetida) ficam no índice e no
+// disco — só perdem o vínculo com este id.
+export function forgetMessage(messageId, keepUrlKeys) {
   const out = [];
   if (messageId == null || messageId === '' || !ensureAccount()) return out;
   const mid = String(messageId);
@@ -332,6 +335,10 @@ export function forgetMessage(messageId) {
       if (!e) continue;
       const hit = (e.m != null && String(e.m) === mid) || k === ek || k.startsWith(ek + '_');
       if (!hit) continue;
+      if (e.u && keepUrlKeys && keepUrlKeys.has(e.u)) {
+        if (e.m != null && String(e.m) === mid) { e.m = null; _dirty.add(c); }
+        continue;
+      }
       out.push({ abs: _abs(e.r), urlKey: e.u || null });
       m.delete(k);
       if (e.u) { const bu = _byUrl.get(e.u); if (bu && bu.c === c && bu.k === k) _byUrl.delete(e.u); }
@@ -339,7 +346,7 @@ export function forgetMessage(messageId) {
     }
   }
   _byMsg.delete(mid);
-  if (out.length) _schedulePersist();
+  if (out.length || _dirty.size) _schedulePersist();
   return out;
 }
 

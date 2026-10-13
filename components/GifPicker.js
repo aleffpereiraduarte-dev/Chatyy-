@@ -11,6 +11,11 @@ import { Overlay } from '../constants/theme';
 let ExpoImage = null;
 try { ExpoImage = require('expo-image').Image; } catch {}
 const Img = ExpoImage || require('react-native').Image;
+// [2026-10-13 P2-9] Desktop web (mouse + teclado físico).
+const _GIF_DESKTOP_WEB = (() => {
+  if (Platform.OS !== 'web') return false;
+  try { return !!(typeof window !== 'undefined' && window.matchMedia && window.matchMedia('(hover: hover) and (pointer: fine)').matches); } catch { return false; }
+})();
 
 const CATEGORIES = [
   { emoji: '😂', q: 'funny' },
@@ -198,6 +203,8 @@ export default function GifPickerPanel({ onSelect, onClose, colors, t, bottomIns
           <IconSearch size={16} color={colors.textTertiary} />
           <TextInput
             ref={inputRef}
+            // [2026-10-13 P2-9] Desktop web: digitar com o painel aberto busca GIF.
+            autoFocus={_GIF_DESKTOP_WEB}
             placeholder={t('chat.searchGifs') || 'Search GIFs'}
             placeholderTextColor={colors.textTertiary}
             value={query}

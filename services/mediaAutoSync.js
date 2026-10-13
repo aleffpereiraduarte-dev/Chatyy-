@@ -65,6 +65,17 @@ const BOOT_DELAY_MS = 5000;        // wait 5s past first paint
 const PER_PASS_CAP = 500;          // max msgs processed in a single pass
 const BATTERY_FLOOR = 0.15;        // skip pass if battery < 15% (not charging)
 const DEFERRED_RETRY_GAP_MS = 1500;// gap after wifi flip to let stack settle
+// [2026-10-13 P1-3] Histórico pelos dados móveis: só últimos 7 dias, e vídeo/
+// documento NUNCA (só Wi-Fi, independente da política — a política vale p/ as
+// mensagens NOVAS que chegam, via prefetchIncomingMessageMedia).
+const MOBILE_HISTORY_WINDOW_MS = 7 * 24 * 3600 * 1000;
+const HEAVY_TYPES = new Set(['video', 'short_video', 'file', 'document']);
+// Marca negativa por id após 404/410/403 (mídia perdida — ex. incidente R2):
+// backoff 1h → 4h → 16h → 64h → 30 dias.
+const DL_FAIL_KEY = 'media_dl_fail';
+const DL_FAIL_MAX = 3000;
+const DL_FAIL_BACKOFF_MS = [3600e3, 4 * 3600e3, 16 * 3600e3, 64 * 3600e3];
+const DL_FAIL_LONG_MS = 30 * 24 * 3600e3;
 
 // ─── State ─────────────────────────────────────────────────────────────────
 let _started = false;              // initStarted has run for this process
@@ -74,6 +85,8 @@ let _appStateSub = null;
 let _netUnsub = null;
 let _idleTimer = null;
 let _wsSubscribed = false;
+let _dlFail = null;                 // { [id]: { n, next } } (lazy, AsyncStorage)
+let _dlFailPersistT = null;
 let _lastProgress = {
   phase: 'idle',                   // 'idle' | 'syncing' | 'done'
   loaded: 0,
@@ -243,6 +256,21 @@ async function _runPass(reason, opts) {
     if (__DEV__) console.warn('[mediaAutoSync] db read failed:', e?.message);
     return;
   }
+  // [2026-10-13 P1-3] Filtros da varredura de HISTÓRICO.
+  const netTypeNow = mods.ni?.getNetworkType?.() || 'unknown';
+  const onWifi = netTypeNow === 'wifi';
+  await _loadDlFail();
+  const nowMs = Date.now();
+  rows = rows.filter((m) => {
+    const f = _dlFail && _dlFail[String(m.id)];
+    if (f && f.next > nowMs && !opts.force) return false;
+    if (onWifi || opts.force) return true;
+    if (HEAVY_TYPES.has(m.type)) return false;
+    const u = m.file_url || '';
+    if (/\.(mp4|mov|m4v|webm|mkv|avi|3gp|pdf|docx?|xlsx?|pptx?|zip|rar|7z)(\?|$|#)/i.test(u)) return false;
+    const t = _rowTimeMs(m);
+    return t > 0 && nowMs - t <= MOBILE_HISTORY_WINDOW_MS;
+  });
   const total = rows.length;
   if (total === 0) {
     _emit({ phase: 'done', loaded: 0, total: 0 });
@@ -278,12 +306,14 @@ async function _runPass(reason, opts) {
         // safe even if the same URL is in flight from a chat scroll.
         // For 'audio'/'voice' types we DO force (always wanted, tiny size).
         const forceTiny = (m.type === 'audio' || m.type === 'voice');
-        await mods.mc.cacheMedia(url, {
+        const res = await mods.mc.cacheMedia(url, {
           force: forceTiny || !!opts.force,
           messageId: m.id,
           conversationId: m.conversation_id,
           messageType: m.type,
         });
+        if (typeof res === 'string' && res !== url && /^file:/.test(res)) _clearDlFail(m.id);
+        else if (mods.mc.getDownloadFailStatus?.(url)) _markDlFail(m.id);
       } catch (e) {
         // Per-URL error — keep going. Next pass will re-pick it up since
         // local_path stays NULL until cacheMedia succeeds.
@@ -296,6 +326,54 @@ async function _runPass(reason, opts) {
   await Promise.all(Array.from({ length: CONCURRENCY }, () => worker()));
 
   _emit({ phase: 'done', loaded, total, finishedAt: Date.now() });
+}
+
+async function _loadDlFail() {
+  if (_dlFail) return _dlFail;
+  _dlFail = {};
+  try {
+    const AS = require('@react-native-async-storage/async-storage').default;
+    const raw = await AS.getItem(DL_FAIL_KEY);
+    const o = raw ? JSON.parse(raw) : null;
+    if (o && typeof o === 'object') _dlFail = o;
+  } catch {}
+  return _dlFail;
+}
+function _persistDlFailSoon() {
+  if (_dlFailPersistT) return;
+  _dlFailPersistT = setTimeout(() => {
+    _dlFailPersistT = null;
+    try {
+      const ids = Object.keys(_dlFail || {});
+      if (ids.length > DL_FAIL_MAX) {
+        ids.sort((a, b) => (_dlFail[a].next || 0) - (_dlFail[b].next || 0));
+        for (const id of ids.slice(0, ids.length - DL_FAIL_MAX)) delete _dlFail[id];
+      }
+      const AS = require('@react-native-async-storage/async-storage').default;
+      AS.setItem(DL_FAIL_KEY, JSON.stringify(_dlFail || {})).catch(() => {});
+    } catch {}
+  }, 2000);
+}
+function _markDlFail(id) {
+  if (!_dlFail || id == null) return;
+  const k = String(id);
+  const prev = _dlFail[k];
+  const n = (prev && prev.n ? prev.n : 0) + 1;
+  const gap = n <= DL_FAIL_BACKOFF_MS.length ? DL_FAIL_BACKOFF_MS[n - 1] : DL_FAIL_LONG_MS;
+  _dlFail[k] = { n, next: Date.now() + gap };
+  _persistDlFailSoon();
+}
+function _clearDlFail(id) {
+  if (!_dlFail || id == null) return;
+  const k = String(id);
+  if (_dlFail[k]) { delete _dlFail[k]; _persistDlFailSoon(); }
+}
+function _rowTimeMs(m) {
+  const v = m && m.created_at;
+  if (v == null || v === '') return 0;
+  if (typeof v === 'number') return v < 1e12 ? v * 1000 : v;
+  const t = Date.parse(String(v).replace(' ', 'T'));
+  return Number.isFinite(t) ? t : 0;
 }
 
 async function _batteryOk() {

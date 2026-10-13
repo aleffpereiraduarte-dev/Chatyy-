@@ -317,25 +317,31 @@ let _retryTimer = null;
 // const { data, revalidating, refresh } = useSettingsSection('blocked');
 // data = último valor salvo (null só na 1ª vez na vida) → render imediato.
 export function useSettingsSection(section, { ttl = DEFAULT_TTL_MS, enabled = true } = {}) {
-  const [data, setData] = useState(() => peek(section));
+  // [2026-10-13 P2-10] Troca de conta: o useAuth re-renderiza a tela e a conta
+  // ativa entra nas deps/estado → nunca mostra o snapshot da conta anterior.
+  try { require('../context/AuthContext').useAuth(); } catch {}
+  const acct = activeAccount();
+  const [st, setSt] = useState(() => ({ acct, data: peek(section) }));
+  const data = st.acct === acct ? st.data : peek(section);
+  const setData = useCallback((v) => setSt({ acct: activeAccount(), data: v }), []);
   const [revalidating, setRevalidating] = useState(false);
   useEffect(() => {
     if (!enabled) return undefined;
     let alive = true;
     const unsub = subscribe(section, (v) => { if (alive) setData(v); });
     const cur = peek(section);
-    if (cur !== data) setData(cur);
+    if (cur !== st.data || st.acct !== acct) setData(cur);
     if (isStale(section, ttl)) {
       setRevalidating(true);
       revalidate(section, { ttl }).finally(() => { if (alive) setRevalidating(false); });
     }
     return () => { alive = false; unsub(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [section, enabled]);
+  }, [section, enabled, acct]);
   const refresh = useCallback(async () => {
     setRevalidating(true);
     try { return await revalidate(section, { force: true }); } finally { setRevalidating(false); }
-  }, [section]);
+  }, [section, acct]);
   return { data, revalidating, refresh };
 }
 

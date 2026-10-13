@@ -4109,6 +4109,11 @@ function describeReplyTarget(rt, ref, t) {
   if (r.deleted_at || r.is_deleted || (L && (L.deleted_at || L.is_deleted))) {
     return { Icon: IconTrash, label: tr('chatConv.deletedMessage', 'Mensagem apagada'), italic: true, lines: 1, thumb: null };
   }
+  // [2026-10-13 P1-4] Visualização única NUNCA vaza pela citação: só ícone +
+  // rótulo, sem miniatura (nem do file_url do reply_to do servidor).
+  if (_isViewOnceMsg(r) || _isViewOnceMsg(L)) {
+    return { Icon: IconEye, label: tr('chatConv.viewOnce', 'Visualização única'), lines: 1, thumb: null };
+  }
   const m = L ? { ...r, ...L } : r;
   // [2026-10-12 srv-audit] Servidor novo manda reply_to.duration / file_name:
   // original NÃO carregado → usa direto (duração do áudio/vídeo, nome do
@@ -9930,9 +9935,9 @@ function ChatConversationInner() {
   // out so stale state doesn't flicker on the next mount.
   const goBack = useCallback(() => {
     try { Keyboard.dismiss(); } catch {}
-    try { setShowMenu(false); } catch {}
+    try { setShowHeaderMenu(false); } catch {}
     try { setShowAttachMenu(false); } catch {}
-    try { setShowEmojiPicker(false); } catch {}
+    try { setShowFullEmojiPicker(false); } catch {}
     try { setShowGifPicker(false); } catch {}
     try { setShowStickerPicker(false); } catch {}
     try { setSelectionMode(false); } catch {}
@@ -11843,10 +11848,10 @@ function ChatConversationInner() {
   // tocar no campo de texto (foco / teclado subindo PELO composer) fecha o
   // painel e o teclado abre sozinho. Antes o teclado ficava aberto POR CIMA do
   // painel e escondia as abas de pacotes ("tá sobrando embaixo").
-  const dismissComposerKeyboard = useCallback(() => {
-    // [2026-10-13 web-focus] Desktop web não tem teclado virtual: manter o foco
-    // no campo com o painel de figurinhas/GIF aberto (WhatsApp Web).
-    if (_IS_DESKTOP_WEB) return false;
+  const dismissComposerKeyboard = useCallback((kind) => {
+    // [2026-10-13 P2-9] Desktop web não tem teclado virtual: GIF/figurinha tiram
+    // o foco do campo (a busca do painel recebe as teclas); emoji mantém.
+    if (_IS_DESKTOP_WEB) { if (kind === 'gif' || kind === 'sticker') { try { inputRef.current?.blur?.(); } catch {} } return false; }
     let wasOpen = false;
     try { wasOpen = !!Keyboard.isVisible?.(); } catch {}
     try { inputRef.current?.blur?.(); } catch {}
@@ -11855,7 +11860,7 @@ function ChatConversationInner() {
     return wasOpen;
   }, []);
   const openComposerPanel = useCallback((kind) => {
-    const wasOpen = dismissComposerKeyboard();
+    const wasOpen = dismissComposerKeyboard(kind);
     const apply = () => {
       if (kind === 'sticker') { setShowStickerPicker(true); setShowGifPicker(false); }
       else if (kind === 'gif') { setShowGifPicker(true); setShowStickerPicker(false); }
@@ -11958,7 +11963,7 @@ function ChatConversationInner() {
   // abrir o teclado sozinho lá é ruim.
   const _desktopWebFocusRef = useRef({});
   useEffect(() => {
-    _desktopWebFocusRef.current = { isScreenFocused, replyTo, editingMsg, setReplyTo, setEditingMsg, setInputText };
+    _desktopWebFocusRef.current = { isScreenFocused, replyTo, editingMsg, setReplyTo, setEditingMsg, setInputText, panelOpen: !!(showGifPicker || showStickerPicker || showFullEmojiPicker) };
   });
   const focusComposerWeb = useCallback((delay = 0) => {
     if (!_IS_DESKTOP_WEB) return;
@@ -11967,6 +11972,7 @@ function ChatConversationInner() {
         const el = inputRef.current;
         if (!el || typeof document === 'undefined') return;
         if (!_desktopWebFocusRef.current.isScreenFocused) return;
+        if (_desktopWebFocusRef.current.panelOpen) return; // [2026-10-13 P2-9] busca do painel em uso
         // Modal aberto (RN-web Modal = aria-modal) → não roubar o foco dele.
         if (document.querySelector('[aria-modal="true"]')) return;
         const ae = document.activeElement;
@@ -12020,6 +12026,8 @@ function ChatConversationInner() {
         const tag = (ae?.tagName || '').toLowerCase();
         if (ae === el || tag === 'input' || tag === 'textarea' || tag === 'select' || ae?.isContentEditable) return;
         if (document.querySelector('[aria-modal="true"]')) return;
+        // [2026-10-13 P2-9] Painel de GIF/figurinha/emoji aberto → teclas são dele.
+        if (o.panelOpen) return;
         if (e.key === 'Escape') {
           if (o.editingMsg) { o.setEditingMsg(null); o.setInputText(''); o.setReplyTo(null); e.preventDefault(); }
           else if (o.replyTo) { o.setReplyTo(null); e.preventDefault(); }
@@ -14208,7 +14216,9 @@ function ChatConversationInner() {
           }
           // [2026-10-12 wa-parity] Recalcula o badge (soma das OUTRAS conversas
           // não lidas) em vez de zerar o ícone inteiro ao abrir uma conversa.
-          try { require('../services/pushNotifications').refreshBadgeCount?.()?.catch?.(() => {}); } catch {}
+          // [2026-10-13 P2-8] A conversa aberta não conta (o chat_read dela
+          // ainda vai/está em voo) e a lista em cache é invalidada.
+          try { require('../services/pushNotifications').refreshBadgeCount?.({ excludeConversationId: conversationId })?.catch?.(() => {}); } catch {}
         }
 
         // Pre-cache media in background (native only — web uses browser cache).
@@ -17641,7 +17651,7 @@ function ChatConversationInner() {
             // [2026-10-12 srv-audit] 4xx / code = recusa definitiva (não vai p/ fila).
             const _st = Number(r?.__httpStatus) || 0;
             const _code = api.chatErrorCode ? api.chatErrorCode(r) : '';
-            const isHard = (_st >= 400 && _st < 500) || !!_code || /expired|window|permission|forbidden|not_found|invalid/i.test(reason);
+            const isHard = !(_st === 401 || _st === 408 || _st === 429) && ((_st >= 400 && _st < 500) || !!_code || /expired|window|permission|forbidden|not_found|invalid/i.test(reason)); // [2026-10-13 P2-5] 401/408/429 = transitório (fila/retry)
             if (isHard) {
               // Restore the original row + surface the reason.
               if (_prevEditRow) {
@@ -17690,7 +17700,8 @@ function ChatConversationInner() {
       return;
     }
 
-    const replyId = replyTo?.id || null;
+    // [2026-10-13 P2-7] Alvo 'tmp_' já confirmado → id do servidor.
+    const replyId = _resolveReplyTargetId(replyTo) || replyTo?.id || null;
     let currentMentions = [...mentionedEmails];
     // @everyone / @all — mention all group members (not for direct chats)
     const hasEveryoneMention = /@(everyone|all|todos)\b/i.test(text);
@@ -17775,12 +17786,14 @@ function ChatConversationInner() {
       type: 'text',
       reply_to_id: replyId,
       reply_to: (replyId && replyTo) ? {
-        id: replyTo.id || 0,
+        id: replyId || replyTo.id || 0,
         sender_email: replyTo.sender_email || '',
         sender_name: replyTo.sender_name || (replyTo.sender_email || '').split('@')[0] || 'Unknown',
-        content: (replyTo.content || '').substring(0, 200),
+        content: _isViewOnceMsg(replyTo) ? '' : (replyTo.content || '').substring(0, 200),
         type: replyTo.type || 'text',
-        file_url: replyTo.file_url || null,
+        // [2026-10-13 P1-4] view-once nunca vaza mídia pela citação.
+        file_url: _isViewOnceMsg(replyTo) ? null : (replyTo.file_url || null),
+        ...(_isViewOnceMsg(replyTo) ? { is_view_once: 1 } : {}),
       } : null,
       created_at: new Date().toISOString(),
       _pending: true,
@@ -18555,19 +18568,52 @@ function ChatConversationInner() {
   // confirmado (tmp_*), devolve o objeto reply_to p/ a citação aparecer na
   // bolha otimista e fecha a barra. `rtOverride` (álbum) = alvo explícito sem
   // mexer na barra (null = sem resposta).
+  // [2026-10-13 P2-7] Alvo ainda 'tmp_' (bolha otimista): resolve p/ o id do
+  // servidor pelo _client_id (a bolha troca de id no ack). null = ainda sem ack.
+  const _resolveReplyTargetId = (rt) => {
+    if (!rt || rt.id == null || rt.id === '' || rt.id === 0) return null;
+    if (!(typeof rt.id === 'string' && rt.id.startsWith('tmp_'))) return rt.id;
+    try {
+      const list = messagesRef.current || [];
+      for (let i = list.length - 1; i >= 0; i--) {
+        const m = list[i];
+        if (!m || m.id == null) continue;
+        if (typeof m.id === 'string' && m.id.startsWith('tmp_')) continue;
+        if (rt._client_id && m._client_id === rt._client_id) return m.id;
+      }
+    } catch {}
+    return null;
+  };
+  const _replyTargetPending = (rt) => !!(rt && rt.id != null && rt.id !== '' && rt.id !== 0 && _resolveReplyTargetId(rt) == null);
+  const _currentReplyTarget = (rtOverride) => (rtOverride !== undefined ? rtOverride : (replyToLatestRef.current !== undefined ? replyToLatestRef.current : replyTo));
   const _takeReplyFor = (rtOverride) => {
-    const _rt = rtOverride !== undefined ? rtOverride : (replyToLatestRef.current !== undefined ? replyToLatestRef.current : replyTo);
-    if (rtOverride === undefined && _rt) { setReplyTo(null); replyToLatestRef.current = null; }
-    const replyId = (_rt?.id && !(typeof _rt.id === 'string' && _rt.id.startsWith('tmp_'))) ? _rt.id : null;
+    const _rt = _currentReplyTarget(rtOverride);
+    const replyId = _resolveReplyTargetId(_rt);
+    // Alvo sem ack ainda → mantém a barra (a citação não some em silêncio).
+    if (rtOverride === undefined && _rt && replyId != null) { setReplyTo(null); replyToLatestRef.current = null; }
+    // [2026-10-13 P1-4] Visualização única: a citação nunca leva a mídia.
+    const _vo = _isViewOnceMsg(_rt);
     const replyObj = (replyId && _rt) ? {
-      id: _rt.id || 0,
+      id: replyId,
       sender_email: _rt.sender_email || '',
       sender_name: _rt.sender_name || (_rt.sender_email || '').split('@')[0] || 'Unknown',
-      content: (_rt.content || '').substring(0, 200),
+      content: _vo ? '' : (_rt.content || '').substring(0, 200),
       type: _rt.type || 'text',
-      file_url: _rt.file_url || null,
+      file_url: _vo ? null : (_rt.file_url || null),
+      ...(_vo ? { is_view_once: 1, thumbnail_url: null } : {}),
     } : null;
     return { replyId, replyObj, rt: _rt || null };
+  };
+  // Espera o ack do alvo (até 5 s) antes de montar a resposta.
+  const _takeReplyForAsync = async (rtOverride) => {
+    const _rt = _currentReplyTarget(rtOverride);
+    if (_replyTargetPending(_rt)) {
+      const until = Date.now() + 5000;
+      while (Date.now() < until && _replyTargetPending(_rt)) {
+        await new Promise(r => setTimeout(r, 150));
+      }
+    }
+    return _takeReplyFor(rtOverride);
   };
 
   const handleSendGif = async (gif, caption = '') => {
@@ -18613,7 +18659,7 @@ function ChatConversationInner() {
       }
     } catch {}
     // [2026-10-12 reply-media] GIF respondendo (legenda vai solta, atrás).
-    const { replyId, replyObj } = _takeReplyFor();
+    const { replyId, replyObj } = await _takeReplyForAsync();
     const msgId = 'msg_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
     const tempId = `tmp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     const optimisticMsg = {
@@ -18717,9 +18763,8 @@ function ChatConversationInner() {
     if (isImage && _expoImagePrefetch) { try { _expoImagePrefetch(api.getMediaUrl(sticker) || sticker, 'memory-disk')?.catch?.(() => {}); } catch {} }
     // [2026-10-12] Arrastou p/ responder e mandou figurinha → vai como RESPOSTA
     // (antes ia solta: reply_to_id null e a barra de resposta continuava aberta).
-    const _rt = replyTo;
-    const replyId = (_rt?.id && !(typeof _rt.id === 'string' && _rt.id.startsWith('tmp_'))) ? _rt.id : null;
-    if (_rt) setReplyTo(null);
+    // [2026-10-13 P2-7] Alvo 'tmp_' → espera o ack e usa o id do servidor.
+    const { replyId, rt: _rt } = await _takeReplyForAsync();
     const msgId = 'msg_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
     const tempId = `tmp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     const optimisticMsg = {
@@ -18728,12 +18773,13 @@ function ChatConversationInner() {
       file_url: isImage ? sticker : null,
       reply_to_id: replyId,
       reply_to: (replyId && _rt) ? {
-        id: _rt.id || 0,
+        id: replyId,
         sender_email: _rt.sender_email || '',
         sender_name: _rt.sender_name || (_rt.sender_email || '').split('@')[0] || 'Unknown',
-        content: (_rt.content || '').substring(0, 200),
+        content: _isViewOnceMsg(_rt) ? '' : (_rt.content || '').substring(0, 200),
         type: _rt.type || 'text',
-        file_url: _rt.file_url || null,
+        file_url: _isViewOnceMsg(_rt) ? null : (_rt.file_url || null),
+        ...(_isViewOnceMsg(_rt) ? { is_view_once: 1 } : {}),
       } : null,
       created_at: new Date().toISOString(), _pending: true, _client_id: msgId,
     };
@@ -19342,7 +19388,7 @@ function ChatConversationInner() {
     setUploading(true);
     // [2026-10-12 reply-media] Foto/vídeo/arquivo respondendo. Álbum passa
     // rtOverride (só a 1ª mídia cita; as demais null) — ver MediaPreview onSend.
-    const { replyId, replyObj } = _takeReplyFor(rtOverride);
+    const { replyId, replyObj } = await _takeReplyForAsync(rtOverride);
     const tempId = 'tmp_upload_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
     // Stable client_message_id so server-side dedup, recipient WS dedup, and
     // retry-after-timeout all reconcile to a single message row. Without it,
@@ -20064,7 +20110,7 @@ function ChatConversationInner() {
     // `client_message_id` retry-dedup works (was missing → if upload retried
     // after a transient 5xx, server created two rows for the same voice).
     // [2026-10-12 reply-media] Áudio de voz respondendo (segurar ou travado).
-    const { replyId, replyObj } = _takeReplyFor();
+    const { replyId, replyObj } = await _takeReplyForAsync();
     const tempId = `tmp_audio_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     const audioMsgId = 'msg_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
     const localUri = audioData.blob ? URL.createObjectURL(audioData.blob) : audioData.uri;
@@ -20306,7 +20352,7 @@ function ChatConversationInner() {
     setUploading(true);
     try { if (Platform.OS !== 'web') Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success); } catch {}
     // [2026-10-12 reply-media] Vídeo-recado (bolinha) respondendo.
-    const { replyId, replyObj } = _takeReplyFor();
+    const { replyId, replyObj } = await _takeReplyForAsync();
     const tempId = `tmp_vnote_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     const clientId = 'msg_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
     const optimisticMsg = {
@@ -20580,7 +20626,7 @@ function ChatConversationInner() {
       const optimisticLabel = `${latitude.toFixed(5)}, ${longitude.toFixed(5)}`;
       const content = JSON.stringify({ latitude, longitude, label: presetAddress || optimisticLabel, address: presetAddress || '' });
       // [2026-10-12 reply-media] Localização respondendo.
-      const { replyId: locReplyId, replyObj: locReplyObj } = _takeReplyFor();
+      const { replyId: locReplyId, replyObj: locReplyObj } = await _takeReplyForAsync();
       const locMsgId = 'msg_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
       const locTempId = `tmp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 
@@ -20902,7 +20948,7 @@ function ChatConversationInner() {
 
       // [2026-10-12 reply-media] Localização ao vivo respondendo (sem bolha
       // otimista aqui — a citação vem na linha do servidor).
-      const { replyId: liveReplyId } = _takeReplyFor();
+      const { replyId: liveReplyId } = await _takeReplyForAsync();
       const liveMsgId = 'msg_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
       const liveTempId = `tmp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 
@@ -21203,7 +21249,7 @@ function ChatConversationInner() {
       email,
     });
     // [2026-10-12 reply-media] Contato respondendo.
-    const { replyId: ctReplyId } = _takeReplyFor();
+    const { replyId: ctReplyId } = await _takeReplyForAsync();
     try {
       const contactMsgId = 'msg_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
       const contactTempId = `tmp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
@@ -21482,7 +21528,7 @@ function ChatConversationInner() {
           const reason = String(r?.message || '');
           const _st = Number(r?.__httpStatus) || 0;
           const _code = api.chatErrorCode ? api.chatErrorCode(r) : '';
-          const isHard = (_st >= 400 && _st < 500) || !!_code || /expired|window|permission|forbidden|not_found|invalid/i.test(reason);
+          const isHard = !(_st === 401 || _st === 408 || _st === 429) && ((_st >= 400 && _st < 500) || !!_code || /expired|window|permission|forbidden|not_found|invalid/i.test(reason)); // [2026-10-13 P2-5] 401/408/429 = transitório (fila/retry)
           if (isHard) {
             if (_prevRow) setMessages(prev => _mapKeep(prev, m => String(m.id) === String(msgId) ? _prevRow : m));
             if (_code === 'delete_window_expired' || /expired|window|s[oó] (d[aá]|pode) apagar/i.test(reason)) {
@@ -21721,6 +21767,9 @@ function ChatConversationInner() {
     // Stored as String so the WS-side guard can match relay ids that arrive
     // as strings (local msgId here can be number or tmp_* string).
     inflightReactionMsgIdsRef.current.add(String(msgId));
+    // [2026-10-13 P2-6] client_action_id UMA vez aqui: vai na chamada e na fila
+    // (replay reaproveita → o toggle não se desfaz no servidor).
+    const _reactActionId = (api.chatNewActionId && api.chatNewActionId()) || null;
     try {
       // [2026-10-12 srv-audit] UMA chamada só: o servidor novo troca a reação
       // atomicamente (1 por pessoa; mesmo emoji = remove). Compat. com o
@@ -21730,7 +21779,7 @@ function ChatConversationInner() {
       // depois do add). Sem `reactions` na resposta (replay idempotente) não
       // mexe em nada: no servidor novo, mandar o emoji antigo de novo o
       // RE-ADICIONARIA no lugar do novo.
-      let r = await api.chatReact(msgId, isSticker ? null : emoji, isSticker ? stickerUrl : undefined);
+      let r = await api.chatReact(msgId, isSticker ? null : emoji, isSticker ? stickerUrl : undefined, _reactActionId);
       if (r?.success && _oldMine.length && Array.isArray(r.data?.reactions)) {
         const _stillMine = r.data.reactions
           .filter(x => { const e = x?.emoji || x?.reaction; return e && _oldMine.includes(e) && _usersOfR(x).some(u => String(u || '').toLowerCase() === _meLcR); })
@@ -21757,7 +21806,7 @@ function ChatConversationInner() {
         if (!r?._queuedOffline) {
           try {
             const { queueOfflineAction } = require('../services/offlineCache');
-            queueOfflineAction({ type: 'chat_react', message_id: msgId, emoji: isSticker ? null : emoji, sticker_url: isSticker ? stickerUrl : null }).catch(() => {});
+            queueOfflineAction({ type: 'chat_react', message_id: msgId, emoji: isSticker ? null : emoji, sticker_url: isSticker ? stickerUrl : null, client_action_id: _reactActionId }).catch(() => {});
           } catch {}
         }
       } else {
@@ -21785,6 +21834,7 @@ function ChatConversationInner() {
           message_id: msgId,
           emoji: isSticker ? null : emoji,
           sticker_url: isSticker ? stickerUrl : null,
+          client_action_id: _reactActionId,
         }).catch(() => {});
       } catch {
         // Queue itself unavailable — last-resort rollback so the chip doesn't
@@ -34143,7 +34193,7 @@ function ChatConversationInner() {
             colors={colors}
             t={t}
             conversationId={conversationId}
-            replyToId={(replyTo?.id && !(typeof replyTo.id === 'string' && replyTo.id.startsWith('tmp_'))) ? replyTo.id : null}
+            replyToId={_resolveReplyTargetId(replyTo)}
             onClose={() => setShowPollCreator(false)}
             onCreated={(msg) => { if (replyTo) setReplyTo(null); const normalized = normalizeMessageTypes([msg])[0]; setMessages(prev => prev.some(m => m.id === normalized.id) ? prev : [...prev, normalized]); setShowPollCreator(false); setTimeout(() => flatListRef.current?.scrollToOffset?.({ offset: 0, animated: true }), 200); }}
           />
@@ -34157,7 +34207,7 @@ function ChatConversationInner() {
             colors={colors}
             t={t}
             conversationId={conversationId}
-            replyToId={(replyTo?.id && !(typeof replyTo.id === 'string' && replyTo.id.startsWith('tmp_'))) ? replyTo.id : null}
+            replyToId={_resolveReplyTargetId(replyTo)}
             onClose={() => setShowMeetupCreator(false)}
             onCreated={(msg) => { if (replyTo) setReplyTo(null); const normalized = normalizeMessageTypes([msg])[0]; setMessages(prev => prev.some(m => m.id === normalized.id) ? prev : [...prev, normalized]); setShowMeetupCreator(false); setTimeout(() => flatListRef.current?.scrollToOffset?.({ offset: 0, animated: true }), 200); }}
           />

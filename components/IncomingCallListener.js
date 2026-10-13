@@ -631,7 +631,7 @@ function IncomingCallListenerWeb() {
         } catch {}
         // Clear all in-flight ringing state and dismiss native UI.
         try { stopRingtone(); } catch {}
-        try { callRef.current = null; } catch {}
+        // [2026-10-13] (removido `callRef.current = null` — `callRef` não existe neste escopo; a ref local do efeito de WS se auto-cura por call_id; callStateRef abaixo é a correta)
         callStateRef.current = null;
         if (timeoutRef.current) { clearTimeout(timeoutRef.current); timeoutRef.current = null; }
         setCall(null);

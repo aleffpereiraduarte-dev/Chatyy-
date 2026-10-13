@@ -1194,6 +1194,7 @@ export async function replayOfflineQueue(api) {
               action.message_id,
               action.emoji || null,
               action.sticker_url || null,
+              action.client_action_id || null, // [2026-10-13 P2-6] mesmo id da tela
             );
             if (r && r.success === false) {
               const msg = String(r.message || r.error || '');
@@ -1232,12 +1233,13 @@ export async function replayOfflineQueue(api) {
               // [2026-10-12 srv-audit] 4xx = recusa definitiva do servidor (ex.: 403 em pt
               // do servidor antigo, code forward_limit/not_editable do novo) → descarta.
               const _st = Number(r.__httpStatus) || 0;
-              const isHardError = (_st >= 400 && _st < 500) || !!(r.data && r.data.code) || /not_found|invalid|permission|forbidden|expired|window/i.test(msg);
+              const isHardError = !(_st === 401 || _st === 408 || _st === 429) && ((_st >= 400 && _st < 500) || !!(r.data && r.data.code) || /not_found|invalid|permission|forbidden|expired|window/i.test(msg)); // [2026-10-13 P2-5] 401/408/429 = transitório (fila/retry)
               if (!isHardError) throw new Error('chat_delete_failed:' + msg);
             }
           } catch (e) {
             const msg = String(e?.message || e || '');
-            const isHardError = /not_found|invalid|permission|forbidden|expired|window/i.test(msg);
+            // [2026-10-13 P2-5] Nosso throw de falha transitória (chat_*_failed:) volta p/ fila.
+            const isHardError = !/^(Error: )?chat_\w+_failed:/.test(msg) && /not_found|invalid|permission|forbidden|expired|window/i.test(msg);
             if (!isHardError) throw e;
           }
           break;
@@ -1253,12 +1255,13 @@ export async function replayOfflineQueue(api) {
               // [2026-10-12 srv-audit] 4xx = recusa definitiva do servidor (ex.: 403 em pt
               // do servidor antigo, code forward_limit/not_editable do novo) → descarta.
               const _st = Number(r.__httpStatus) || 0;
-              const isHardError = (_st >= 400 && _st < 500) || !!(r.data && r.data.code) || /not_found|invalid|permission|forbidden|expired|window/i.test(msg);
+              const isHardError = !(_st === 401 || _st === 408 || _st === 429) && ((_st >= 400 && _st < 500) || !!(r.data && r.data.code) || /not_found|invalid|permission|forbidden|expired|window/i.test(msg)); // [2026-10-13 P2-5] 401/408/429 = transitório (fila/retry)
               if (!isHardError) throw new Error('chat_edit_failed:' + msg);
             }
           } catch (e) {
             const msg = String(e?.message || e || '');
-            const isHardError = /not_found|invalid|permission|forbidden|expired|window/i.test(msg);
+            // [2026-10-13 P2-5] Nosso throw de falha transitória (chat_*_failed:) volta p/ fila.
+            const isHardError = !/^(Error: )?chat_\w+_failed:/.test(msg) && /not_found|invalid|permission|forbidden|expired|window/i.test(msg);
             if (!isHardError) throw e;
           }
           break;
@@ -1283,12 +1286,13 @@ export async function replayOfflineQueue(api) {
               // [2026-10-12 srv-audit] 4xx = recusa definitiva do servidor (ex.: 403 em pt
               // do servidor antigo, code forward_limit/not_editable do novo) → descarta.
               const _st = Number(r.__httpStatus) || 0;
-              const isHardError = (_st >= 400 && _st < 500) || !!(r.data && r.data.code) || /not_found|invalid|permission|forbidden|expired|window/i.test(msg);
+              const isHardError = !(_st === 401 || _st === 408 || _st === 429) && ((_st >= 400 && _st < 500) || !!(r.data && r.data.code) || /not_found|invalid|permission|forbidden|expired|window/i.test(msg)); // [2026-10-13 P2-5] 401/408/429 = transitório (fila/retry)
               if (!isHardError) throw new Error('chat_forward_multi_failed:' + msg);
             }
           } catch (e) {
             const msg = String(e?.message || e || '');
-            const isHardError = /not_found|invalid|permission|forbidden|expired|window/i.test(msg);
+            // [2026-10-13 P2-5] Nosso throw de falha transitória (chat_*_failed:) volta p/ fila.
+            const isHardError = !/^(Error: )?chat_\w+_failed:/.test(msg) && /not_found|invalid|permission|forbidden|expired|window/i.test(msg);
             if (!isHardError) throw e;
           }
           break;
@@ -1307,12 +1311,13 @@ export async function replayOfflineQueue(api) {
               // [2026-10-12 srv-audit] 4xx = recusa definitiva do servidor (ex.: 403 em pt
               // do servidor antigo, code forward_limit/not_editable do novo) → descarta.
               const _st = Number(r.__httpStatus) || 0;
-              const isHardError = (_st >= 400 && _st < 500) || !!(r.data && r.data.code) || /not_found|invalid|permission|forbidden|expired|window/i.test(msg);
+              const isHardError = !(_st === 401 || _st === 408 || _st === 429) && ((_st >= 400 && _st < 500) || !!(r.data && r.data.code) || /not_found|invalid|permission|forbidden|expired|window/i.test(msg)); // [2026-10-13 P2-5] 401/408/429 = transitório (fila/retry)
               if (!isHardError) throw new Error('chat_forward_failed:' + msg);
             }
           } catch (e) {
             const msg = String(e?.message || e || '');
-            const isHardError = /not_found|invalid|permission|forbidden|expired|window/i.test(msg);
+            // [2026-10-13 P2-5] Nosso throw de falha transitória (chat_*_failed:) volta p/ fila.
+            const isHardError = !/^(Error: )?chat_\w+_failed:/.test(msg) && /not_found|invalid|permission|forbidden|expired|window/i.test(msg);
             if (!isHardError) throw e;
           }
           break;

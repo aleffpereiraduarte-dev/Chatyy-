@@ -5483,9 +5483,11 @@ async function _rustChatPost(path, payload) {
   return null;
 }
 
-export async function chatReact(messageId, emoji, stickerUrl) {
+export async function chatReact(messageId, emoji, stickerUrl, clientActionId = null) {
   if (!messageId) return { success: false, message: 'invalid_message' };
-  const actionId = _chatActionId();
+  // [2026-10-13 P2-6] Id gerado pela tela e reutilizado no replay da fila →
+  // o servidor reconhece a repetição e o toggle não se desfaz.
+  const actionId = (typeof clientActionId === 'string' && clientActionId) ? clientActionId : _chatActionId();
 
   // Stage 1: reactions live on the `chat_message_reactions` PG table, not on
   // the message row itself. Local SQLite doesn't have a reactions table yet
@@ -7773,11 +7775,15 @@ export async function inboxUnreadCount() {
   return { success: !!r?.success, data: { unread: Number.isFinite(n) ? n : 0 } };
 }
 
-export async function chatUnreadCount() {
+export async function chatUnreadCount(opts = null) {
+  // [2026-10-13 P2-8] excludeConversationId = conversa aberta agora (o chat_read
+  // dela ainda está em voo): não conta no badge e não usa a lista em cache.
+  const _ex = opts && opts.excludeConversationId != null ? String(opts.excludeConversationId) : null;
+  if (_ex) { try { swrInvalidate('chat_list'); } catch {} }
   // Use chat_list and sum up unread counts client-side
   const r = await apiCall('chat_list');
   if (r.success && r.data?.conversations) {
-    const total = r.data.conversations.reduce((sum, c) => sum + (c.unread_count || 0), 0);
+    const total = r.data.conversations.reduce((sum, c) => sum + ((_ex && String(c.id ?? c.conversation_id) === _ex) ? 0 : (c.unread_count || 0)), 0);
     return { success: true, data: { unread_count: total } };
   }
   return r;

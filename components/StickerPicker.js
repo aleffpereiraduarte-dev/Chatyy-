@@ -20,6 +20,11 @@ function _tr(t, key, fb) {
   try { const v = t ? t(key) : ''; return v && v !== key ? v : fb; } catch { return fb; }
 }
 const CREATE_TILE = '__chatyy_create_sticker__';
+// [2026-10-13 P2-9] Desktop web: busca já aberta e focada (digitar busca figurinha).
+const _STK_DESKTOP_WEB = (() => {
+  if (Platform.OS !== 'web') return false;
+  try { return !!(typeof window !== 'undefined' && window.matchMedia && window.matchMedia('(hover: hover) and (pointer: fine)').matches); } catch { return false; }
+})();
 // figurinha é transparente: sem o fundo pastel (LQIP) do CachedImage atrás dela
 const STICKER_CLEAR_PLACEHOLDER = { uri: 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7' };
 function IconStickerPlus({ size = 26, color = '#111' }) {
@@ -207,7 +212,7 @@ export default function StickerPicker({ onSelect, onClose, colors, t, userEmail,
   const [searchResults, setSearchResults] = useState([]);
   const [searchBackend, setSearchBackend] = useState([]); // server-side emoji-tag results (installed)
   const [searchGlobal, setSearchGlobal] = useState([]);   // discovery results (every public pack)
-  const [showSearch, setShowSearch] = useState(false);
+  const [showSearch, setShowSearch] = useState(_STK_DESKTOP_WEB);
   const [selectedMyPack, setSelectedMyPack] = useState(null); // pack_id filter inside Mine tab
   const [showPackCreate, setShowPackCreate] = useState(false);
   const [newPackName, setNewPackName] = useState('');
