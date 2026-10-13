@@ -1636,6 +1636,15 @@ function AppInit({ onNotification, setOtaToast }) {
     return () => { alive = false; };
   }, [authUser?.email]);
 
+  // [roteamento-regiao 2026-10-13] RTT até us/br/eu em 2º plano (cache 30 min)
+  // → servidor escolhe o servidor de ligação/TURN mais perto do par/grupo.
+  useEffect(() => {
+    if (!authUser?.email) return;
+    (async () => {
+      try { (await import('../services/regionRtt')).startRegionRtt(20000); } catch {}
+    })();
+  }, [authUser?.email]);
+
   return null;
 }
 
