@@ -57,4 +57,6 @@ export default {
   "chatConv.recordingFailedRetry": "ریکارڈنگ ناکام ہو گئی، دوبارہ کوشش کریں",
   "chatConv.voiceTooShort": "آڈیو بہت مختصر ہے",
   "chatConv.recordingInterruptedCall": "کال کی وجہ سے ریکارڈنگ رک گئی",
+  // [2026-10-12 find-my]
+  "fmap.updating": "اپ ڈیٹ ہو رہا ہے…",
 };

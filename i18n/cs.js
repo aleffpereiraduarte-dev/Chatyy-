@@ -7502,4 +7502,6 @@ export default {
   "chatConv.recordingFailedRetry": "Nahrávání se nezdařilo, zkuste to znovu",
   "chatConv.voiceTooShort": "Zvuk je příliš krátký",
   "chatConv.recordingInterruptedCall": "Nahrávání přerušeno hovorem",
+  // [2026-10-12 find-my]
+  "fmap.updating": "Aktualizuje se…",
 };

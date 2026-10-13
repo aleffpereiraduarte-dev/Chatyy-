@@ -11102,4 +11102,6 @@ export default {
   "chatConv.recordingFailedRetry": "فشل التسجيل، حاول مرة أخرى",
   "chatConv.voiceTooShort": "الصوت قصير جدًا",
   "chatConv.recordingInterruptedCall": "توقف التسجيل بسبب مكالمة",
+  // [2026-10-12 find-my]
+  "fmap.updating": "جارٍ التحديث…",
 };

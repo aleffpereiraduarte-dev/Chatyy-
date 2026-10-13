@@ -1115,6 +1115,14 @@ export default function SnapMapScreen() {
   const [bgPermStatus, setBgPermStatus] = useState('unsupported');
   const [, setPlaceTick] = useState(0);
   const [pingedEmail, setPingedEmail] = useState(null);
+  // [2026-10-12 find-my] Pings em andamento: email → { at, base } (base =
+  // updated_at do pin quando pedimos). "Atualizando…" até o pin mudar ou 45 s.
+  const [pendingPings, setPendingPings] = useState({});
+  const markPingPending = useCallback((email, baseUpdatedAt) => {
+    const k = String(email || '').toLowerCase();
+    if (!k) return;
+    setPendingPings((cur) => ({ ...cur, [k]: { at: Date.now(), base: String(baseUpdatedAt || '') } }));
+  }, []);
 
   // [WAVE 49 2026-05-21] Filter pills above the map — Snapchat-style.
   // 'all'      = everyone I have a grant from
@@ -1633,7 +1641,11 @@ export default function SnapMapScreen() {
       if (now - last < (ageMs > OLD_SHARE_MS ? 10 * 60 * 1000 : COOLDOWN_MS)) return;
       lastPingedRef.current[p.email] = now;
       // Fire-and-forget; backend handles throttle + grant check.
-      api.friendLocationPing(p.email).catch(() => {});
+      // [2026-10-12 find-my] "Atualizando…" só se algum aparelho foi alcançado.
+      api.friendLocationPing(p.email).then((r) => {
+        const d = r?.data || r || {};
+        if (r?.success !== false && Number(d.devices_reached) > 0) markPingPending(p.email, share.updated_at);
+      }).catch(() => {});
     });
   }, [pinsPayload, filteredShares, user]);
 
@@ -2057,7 +2069,12 @@ export default function SnapMapScreen() {
 
   // Pedir atualização (silent push → app do amigo publica posição nova).
   const askForUpdate = async (email) => {
-    try { await api.friendLocationPing?.(email); } catch {}
+    const base = shareByEmail[String(email || '').toLowerCase()]?.updated_at || '';
+    let r = null;
+    try { r = await api.friendLocationPing?.(email); } catch {}
+    // [2026-10-12 find-my] Ping aceito (ou dentro do limite do servidor = já
+    // há um em andamento) → "Atualizando…" até o pin do amigo mudar.
+    if (r?.success !== false) markPingPending(email, base);
     lastPingedRef.current[email] = Date.now();
     setPingedEmail(email);
     setTimeout(() => setPingedEmail((cur) => (cur === email ? null : cur)), 4000);
@@ -2093,6 +2110,29 @@ export default function SnapMapScreen() {
     shares.forEach((x) => { if (x?.email) m[String(x.email).toLowerCase()] = x; });
     return m;
   }, [shares]);
+  // [2026-10-12 find-my] Ping pendente? Some quando o pin do amigo muda
+  // (updated_at diferente do pedido) ou após 45 s sem resposta.
+  const PING_PENDING_MS = 45 * 1000;
+  const isPingPending = (email) => {
+    const k = String(email || '').toLowerCase();
+    const p = pendingPings[k];
+    if (!p) return false;
+    if (Math.max(nowTick, Date.now()) - p.at > PING_PENDING_MS) return false;
+    const cur = String(shareByEmail[k]?.updated_at || '');
+    return !cur || cur === p.base;
+  };
+  // Limpa entradas resolvidas/expiradas (o nowTick de 10 s re-renderiza).
+  useEffect(() => {
+    const keys = Object.keys(pendingPings);
+    if (!keys.length) return;
+    const stale = keys.filter((k) => !isPingPending(k));
+    if (!stale.length) return;
+    setPendingPings((cur) => {
+      const next = { ...cur };
+      stale.forEach((k) => { delete next[k]; });
+      return next;
+    });
+  }, [nowTick, shareByEmail]); // eslint-disable-line react-hooks/exhaustive-deps
   const outgoingActive = fms.activeSharingGrants(grantsData);
   const isSharingWith = (email) => outgoingActive.some((g) => String(g.email).toLowerCase() === String(email || '').toLowerCase());
   // Aviso discreto: compartilho com alguém mas o iOS só deixa "Durante o uso".
@@ -2666,9 +2706,14 @@ export default function SnapMapScreen() {
           <View style={{ flex: 1 }} />
           <Pressable onPress={(e) => e.stopPropagation?.()} style={{ backgroundColor: colors.surface, padding: 22, paddingBottom: 22 + (insets.bottom || 0), borderTopLeftRadius: 24, borderTopRightRadius: 24 }}>
             {selected && (() => {
-              const ageMs = ageMsOf(selected.updated_at, nowTick);
+              // [2026-10-12 find-my] `selected` é um retrato — o updated_at vivo
+              // vem da lista (WS/poll) para refletir a resposta ao ping.
+              const liveRow = shareByEmail[String(selected.email || '').toLowerCase()];
+              const updAt = liveRow?.updated_at || selected.updated_at;
+              const updating = isPingPending(selected.email);
+              const ageMs = ageMsOf(updAt, nowTick);
               const isStale = ageMs !== null && ageMs > 2 * 60 * 1000;
-              const old = isOldShare(selected, nowTick);
+              const old = isOldShare(liveRow || selected, nowTick);
               const hasPos = Number.isFinite(Number(selected.latitude)) && Number.isFinite(Number(selected.longitude));
               const dist = myLocation && hasPos
                 ? haversineMeters(myLocation.lat, myLocation.lng, Number(selected.latitude), Number(selected.longitude))
@@ -2690,11 +2735,12 @@ export default function SnapMapScreen() {
                       {nm}
                     </Text>
                     <Text style={{ color: colors.textSecondary, fontSize: 12, marginTop: 3, fontWeight: isStale ? '700' : '400' }}>
-                      {!selected.updated_at
+                      {!updAt
                         ? (t?.('fmap.noLocationYet') || 'sem localização ainda')
                         : isStale
-                          ? `${t?.('snapmap.staleHeader') || 'Sem atualização'} ${ago(selected.updated_at)}`
-                          : `${t?.('snapmap.updated') || 'Atualizado'} ${ago(selected.updated_at)}`}
+                          ? `${t?.('snapmap.staleHeader') || 'Sem atualização'} ${ago(updAt)}`
+                          : `${t?.('snapmap.updated') || 'Atualizado'} ${ago(updAt)}`}
+                      {updating ? ` · ${t?.('fmap.updating') || 'Atualizando…'}` : ''}
                     </Text>
                     {(place || dist !== null) ? (
                       <Text style={{ color: colors.textSecondary, fontSize: 12, marginTop: 2 }} numberOfLines={1}>
@@ -2732,13 +2778,15 @@ export default function SnapMapScreen() {
                   )}
                   <TouchableOpacity
                     onPress={() => askForUpdate(selected.email)}
-                    disabled={pingedEmail === selected.email}
-                    style={[actionBtn, { opacity: pingedEmail === selected.email ? 0.6 : 1 }]}
+                    disabled={pingedEmail === selected.email || updating}
+                    style={[actionBtn, { opacity: (pingedEmail === selected.email || updating) ? 0.6 : 1 }]}
                     accessibilityRole="button"
                   >
                     <IconRefresh size={16} color={colors.text} />
                     <Text style={{ color: colors.text, fontWeight: '600', fontSize: 13 }} numberOfLines={1}>
-                      {pingedEmail === selected.email ? (t?.('fmap.updateRequested') || 'Pedido enviado') : (t?.('fmap.requestUpdate') || 'Pedir atualização')}
+                      {updating
+                        ? (t?.('fmap.updating') || 'Atualizando…')
+                        : pingedEmail === selected.email ? (t?.('fmap.updateRequested') || 'Pedido enviado') : (t?.('fmap.requestUpdate') || 'Pedir atualização')}
                     </Text>
                   </TouchableOpacity>
                 </View>
@@ -2922,7 +2970,9 @@ export default function SnapMapScreen() {
                         <Text style={{ color: colors.text, fontSize: 14, fontWeight: '600' }} numberOfLines={1}>{g.name || g.email}</Text>
                         <Text style={{ color: colors.textSecondary, fontSize: 11 }} numberOfLines={1}>
                           {hasPos
-                            ? (t?.('fmap.updatedAgo') || 'atualizado {ago}').replace('{ago}', ago(sh.updated_at))
+                            ? (isPingPending(g.email)
+                              ? (t?.('fmap.updating') || 'Atualizando…')
+                              : (t?.('fmap.updatedAgo') || 'atualizado {ago}').replace('{ago}', ago(sh.updated_at)))
                             : (t?.('fmap.noLocationYet') || 'sem localização ainda')}
                         </Text>
                       </View>

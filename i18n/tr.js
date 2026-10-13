@@ -7502,4 +7502,6 @@ export default {
   "chatConv.recordingFailedRetry": "Kayıt başarısız, tekrar deneyin",
   "chatConv.voiceTooShort": "Ses çok kısa",
   "chatConv.recordingInterruptedCall": "Kayıt arama nedeniyle kesildi",
+  // [2026-10-12 find-my]
+  "fmap.updating": "Güncelleniyor…",
 };

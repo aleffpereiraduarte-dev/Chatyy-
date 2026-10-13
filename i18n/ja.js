@@ -10324,4 +10324,6 @@ export default {
   "chatConv.recordingFailedRetry": "録音に失敗しました。もう一度お試しください",
   "chatConv.voiceTooShort": "音声が短すぎます",
   "chatConv.recordingInterruptedCall": "通話により録音が中断されました",
+  // [2026-10-12 find-my]
+  "fmap.updating": "更新中…",
 };

@@ -7498,4 +7498,6 @@ export default {
   "chatConv.recordingFailedRetry": "ការថតបានបរាជ័យ សូមព្យាយាមម្តងទៀត",
   "chatConv.voiceTooShort": "សំឡេងខ្លីពេក",
   "chatConv.recordingInterruptedCall": "ការថតត្រូវបានរំខានដោយការហៅ",
+  // [2026-10-12 find-my]
+  "fmap.updating": "កំពុងធ្វើបច្ចុប្បន្នភាព…",
 };

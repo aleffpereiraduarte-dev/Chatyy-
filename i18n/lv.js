@@ -7502,4 +7502,6 @@ export default {
   "chatConv.recordingFailedRetry": "Ierakstīšana neizdevās, mēģiniet vēlreiz",
   "chatConv.voiceTooShort": "Audio ir pārāk īss",
   "chatConv.recordingInterruptedCall": "Ierakstu pārtrauca zvans",
+  // [2026-10-12 find-my]
+  "fmap.updating": "Atjaunina…",
 };

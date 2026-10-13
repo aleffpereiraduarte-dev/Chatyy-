@@ -7540,4 +7540,6 @@ export default {
   "chatConv.recordingFailedRetry": "录音失败，请重试",
   "chatConv.voiceTooShort": "音频太短",
   "chatConv.recordingInterruptedCall": "录音因来电而中断",
+  // [2026-10-12 find-my]
+  "fmap.updating": "正在更新…",
 };

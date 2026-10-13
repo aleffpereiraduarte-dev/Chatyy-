@@ -47,4 +47,6 @@ export default {
   "chatConv.recordingFailedRetry": "റെക്കോർഡിംഗ് പരാജയപ്പെട്ടു, വീണ്ടും ശ്രമിക്കുക",
   "chatConv.voiceTooShort": "ഓഡിയോ വളരെ ചെറുതാണ്",
   "chatConv.recordingInterruptedCall": "കോൾ കാരണം റെക്കോർഡിംഗ് നിലച്ചു",
+  // [2026-10-12 find-my]
+  "fmap.updating": "അപ്ഡേറ്റ് ചെയ്യുന്നു…",
 };

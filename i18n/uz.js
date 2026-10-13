@@ -7498,4 +7498,6 @@ export default {
   "chatConv.recordingFailedRetry": "Yozib bo‘lmadi, qaytadan urinib ko‘ring",
   "chatConv.voiceTooShort": "Audio juda qisqa",
   "chatConv.recordingInterruptedCall": "Yozuv qo‘ng‘iroq sababli to‘xtatildi",
+  // [2026-10-12 find-my]
+  "fmap.updating": "Yangilanmoqda…",
 };

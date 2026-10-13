@@ -7502,4 +7502,6 @@ export default {
   "chatConv.recordingFailedRetry": "Η εγγραφή απέτυχε, δοκιμάστε ξανά",
   "chatConv.voiceTooShort": "Πολύ σύντομος ήχος",
   "chatConv.recordingInterruptedCall": "Η εγγραφή διακόπηκε από κλήση",
+  // [2026-10-12 find-my]
+  "fmap.updating": "Ενημέρωση…",
 };

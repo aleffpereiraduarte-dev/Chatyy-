@@ -7498,4 +7498,6 @@ export default {
   "chatConv.recordingFailedRetry": "Бичлэг амжилтгүй боллоо, дахин оролдоно уу",
   "chatConv.voiceTooShort": "Аудио хэт богино байна",
   "chatConv.recordingInterruptedCall": "Дуудлагын улмаас бичлэг тасарлаа",
+  // [2026-10-12 find-my]
+  "fmap.updating": "Шинэчилж байна…",
 };

@@ -7502,4 +7502,6 @@ export default {
   "chatConv.recordingFailedRetry": "Nabigo ang pag-record, subukan ulit",
   "chatConv.voiceTooShort": "Masyadong maikli ang audio",
   "chatConv.recordingInterruptedCall": "Naantala ang pag-record dahil sa tawag",
+  // [2026-10-12 find-my]
+  "fmap.updating": "Ina-update…",
 };

@@ -7498,4 +7498,6 @@ export default {
   "chatConv.recordingFailedRetry": "ჩაწერა ვერ მოხერხდა, სცადეთ ხელახლა",
   "chatConv.voiceTooShort": "აუდიო ძალიან მოკლეა",
   "chatConv.recordingInterruptedCall": "ჩაწერა ზარმა შეწყვიტა",
+  // [2026-10-12 find-my]
+  "fmap.updating": "ახლდება…",
 };

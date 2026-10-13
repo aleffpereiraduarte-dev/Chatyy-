@@ -148,6 +148,16 @@
       inline RemoteInput (quick reply), mark-as-read, mute 8h, snooze 1h.
       Explicit intent actions (setPackage in sender) so no permission/export.
     -->
+    <!--
+      [2026-10-12 find-my] Atualizações PASSIVAS de localização do Mapa de
+      amigos (PendingIntent do LocationManager). Só é registrado em runtime
+      quando ACCESS_BACKGROUND_LOCATION estiver concedida — hoje a permissão
+      não está no manifest (Play), então fica dormente.
+    -->
+    <receiver
+      android:name=".FriendLocationReceiver"
+      android:exported="false" />
+
     <receiver
       android:name=".ChatActionReceiver"
       android:exported="false">

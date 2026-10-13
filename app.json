@@ -33,6 +33,11 @@
     },
     "ios": {
       "supportsTablet": true,
+      "icon": {
+        "light": "./assets/icon.png",
+        "dark": "./assets/ios-icon-dark.png",
+        "tinted": "./assets/ios-icon-tinted.png"
+      },
       "bundleIdentifier": "com.onemundo.mail",
       "googleServicesFile": "./GoogleService-Info.plist",
       "privacyManifests": {
@@ -74,9 +79,9 @@
         "NSCalendarsFullAccessUsageDescription": "Chatyy accesses your calendar to sync and manage your events.",
         "NSPhotoLibraryUsageDescription": "Chatyy needs access to your photo library so you can pick an existing photo or video from your gallery to share in the app — for example, open a chat conversation, tap the paperclip attachment button, choose a vacation photo from last weekend, and send it to a friend. Photos you select are also used to set your profile picture, post as a feed publication, create a 24-hour story, and (only if you turn it on in Settings → Storage → Backup) automatically upload your camera roll to your own private Chatyy cloud so you can browse it from any device.",
         "NSPhotoLibraryAddUsageDescription": "Chatyy needs permission to save items to your photo library so that media a friend sends you can be downloaded to your device — for example, a friend shares a photo of their birthday party in chat and you tap the Save button at the bottom of the image to store it in your iPhone's Photos app. Also used when you take a photo inside Chatyy and choose Save to keep a copy in your gallery.",
-        "NSLocationWhenInUseUsageDescription": "Chatyy uses your current location only when you tap 'Share Location' in a chat so the recipient sees a pin of where you are right now.",
-        "NSLocationAlwaysAndWhenInUseUsageDescription": "Chatyy keeps your live location updating in the background ONLY while you are actively sharing it with a friend (the green pin you see at the top of the chat). Example: you tap 'Share Live Location' in a conversation, choose a duration (15 minutes, 1 hour, 8 hours, or until you stop), and walk to a restaurant — your friend's map updates in real time so they can meet you, even if you put the phone in your pocket and the screen turns off. The instant you tap 'Stop Sharing' in that chat (or the duration expires), background location stops completely. Chatyy never reads your location in the background for any other purpose — no analytics, no advertising, no tracking. You can revoke at any time in iOS Settings → Privacy → Location.",
-        "NSLocationAlwaysUsageDescription": "Chatyy keeps your live location updating in the background ONLY while you are actively sharing it with a friend in a chat. The moment you stop the share, background location stops. Used solely to keep the friend you chose seeing your real-time pin (like WhatsApp Live Location).",
+        "NSLocationWhenInUseUsageDescription": "Chatyy uses your location when you send a location in a chat, share your live location, or use the Friends Map to see friends who shared with you. Example: you open a chat, tap the attachment button, choose Location and send a pin so your friend can find the restaurant you are waiting at.",
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "Chatyy uses your location in the background ONLY for friends you chose to share it with: a live location you started in a chat, or a friend you accepted on the Friends Map. Example: your sister asks to see your location, you accept, and her map keeps showing roughly where you are even when Chatyy is closed, so she knows you got home. In the background Chatyy only uses low-power significant location changes (and one quick position when a friend taps Refresh). Nothing is shared with anyone else, and it is never used for ads or analytics. Stop at any time: Friends Map > Stop sharing, Ghost Mode, or iOS Settings > Privacy > Location.",
+        "NSLocationAlwaysUsageDescription": "Chatyy uses your location in the background ONLY for friends you chose to share it with (live location in a chat or the Friends Map), with low-power significant location changes. Never for ads or analytics. Stop at any time on the Friends Map or in iOS Settings.",
         "NSFaceIDUsageDescription": "Chatyy uses Face ID to unlock the app after you enable the biometric lock in Settings, keeping your chats, emails and photos private from anyone else who picks up your device.",
         "UIBackgroundModes": [
           "remote-notification",
@@ -322,6 +327,8 @@
       "./plugins/with-android-share-intents",
       "./plugins/with-android-native-polish",
       "./plugins/with-tablet-orientation",
+      "./plugins/with-ios-localizations",
+      "./plugins/with-android-auto",
       "./plugins/with-app-shortcuts",
       "./plugins/with-system-intents",
       "./plugins/with-chatyy-widgets",
@@ -342,8 +349,8 @@
       [
         "expo-location",
         {
-          "locationAlwaysAndWhenInUsePermission": "Chatyy needs access to your current location only when you explicitly share it in a chat — for example, open a conversation, tap the attachment button, choose Location, and send a live pin of where you are right now so your friend can find the restaurant you're waiting at. Your location is never read or sent in the background.",
-          "locationWhenInUsePermission": "Chatyy needs access to your current location only when you explicitly share it in a chat — for example, open a conversation, tap the attachment button, choose Location, and send a live pin of where you are right now so your friend can find the restaurant you're waiting at. Your location is never read or sent in the background."
+          "locationAlwaysAndWhenInUsePermission": "Chatyy uses your location in the background ONLY for friends you chose to share it with: a live location you started in a chat, or a friend you accepted on the Friends Map. Example: your sister asks to see your location, you accept, and her map keeps showing roughly where you are even when Chatyy is closed, so she knows you got home. In the background Chatyy only uses low-power significant location changes (and one quick position when a friend taps Refresh). Nothing is shared with anyone else, and it is never used for ads or analytics. Stop at any time: Friends Map > Stop sharing, Ghost Mode, or iOS Settings > Privacy > Location.",
+          "locationWhenInUsePermission": "Chatyy uses your location when you send a location in a chat, share your live location, or use the Friends Map to see friends who shared with you. Example: you open a chat, tap the attachment button, choose Location and send a pin so your friend can find the restaurant you are waiting at."
         }
       ],
       [

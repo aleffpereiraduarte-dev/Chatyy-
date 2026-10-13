@@ -7502,4 +7502,6 @@ export default {
   "chatConv.recordingFailedRetry": "Salvestamine ebaõnnestus, proovi uuesti",
   "chatConv.voiceTooShort": "Heli on liiga lühike",
   "chatConv.recordingInterruptedCall": "Kõne katkestas salvestamise",
+  // [2026-10-12 find-my]
+  "fmap.updating": "Värskendamine…",
 };

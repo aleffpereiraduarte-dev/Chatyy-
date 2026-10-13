@@ -1677,6 +1677,9 @@ export function AuthProvider({ children }) {
     // [2026-10-09 notif-native] Native notification Reply / Mark-read must not
     // keep signing with this session's bearers (Android prefs, iOS Keychain).
     try { require('../services/pushNotifications').clearNativeChatAuth?.(); } catch {}
+    // [2026-10-12 find-my] Para o envio de localização em 2º plano (nativo +
+    // expo-location) — senão o aparelho seguiria publicando após o logout.
+    try { await require('../services/friendMapShare').stopAllOnLogout?.(); } catch {}
 
     // CRITICAL: revoke the device's push token server-side BEFORE clearing
     // the bearer token. Previously this ran AFTER `api.clearAuthToken()` —

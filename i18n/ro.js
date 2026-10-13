@@ -7502,4 +7502,6 @@ export default {
   "chatConv.recordingFailedRetry": "Înregistrarea a eșuat, încearcă din nou",
   "chatConv.voiceTooShort": "Audio prea scurt",
   "chatConv.recordingInterruptedCall": "Înregistrare întreruptă de apel",
+  // [2026-10-12 find-my]
+  "fmap.updating": "Se actualizează…",
 };

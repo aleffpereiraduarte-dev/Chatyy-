@@ -7502,4 +7502,6 @@ export default {
   "chatConv.recordingFailedRetry": "การอัดเสียงล้มเหลว ลองอีกครั้ง",
   "chatConv.voiceTooShort": "เสียงสั้นเกินไป",
   "chatConv.recordingInterruptedCall": "การอัดเสียงถูกขัดจังหวะโดยสายเรียกเข้า",
+  // [2026-10-12 find-my]
+  "fmap.updating": "กำลังอัปเดต…",
 };

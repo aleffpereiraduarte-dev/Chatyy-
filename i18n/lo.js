@@ -7498,4 +7498,6 @@ export default {
   "chatConv.recordingFailedRetry": "ການບັນທຶກລົ້ມເຫຼວ, ລອງໃໝ່ອີກຄັ້ງ",
   "chatConv.voiceTooShort": "ສຽງສັ້ນເກີນໄປ",
   "chatConv.recordingInterruptedCall": "ການບັນທຶກຖືກຂັດຈັງຫວະໂດຍການໂທ",
+  // [2026-10-12 find-my]
+  "fmap.updating": "ກຳລັງອັບເດດ…",
 };

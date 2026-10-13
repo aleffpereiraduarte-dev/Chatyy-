@@ -7498,4 +7498,6 @@ export default {
   "chatConv.recordingFailedRetry": "Yazı alınmadı, yenidən cəhd edin",
   "chatConv.voiceTooShort": "Səs çox qısadır",
   "chatConv.recordingInterruptedCall": "Yazı zəng səbəbindən dayandırıldı",
+  // [2026-10-12 find-my]
+  "fmap.updating": "Yenilənir…",
 };

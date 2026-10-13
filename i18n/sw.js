@@ -7502,4 +7502,6 @@ export default {
   "chatConv.recordingFailedRetry": "Kurekodi kumeshindwa, jaribu tena",
   "chatConv.voiceTooShort": "Sauti ni fupi mno",
   "chatConv.recordingInterruptedCall": "Kurekodi kumekatizwa na simu",
+  // [2026-10-12 find-my]
+  "fmap.updating": "Inasasisha…",
 };

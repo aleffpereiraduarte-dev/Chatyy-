@@ -11101,4 +11101,6 @@ export default {
   "chatConv.recordingFailedRetry": "रिकॉर्डिंग विफल रही, फिर से कोशिश करें",
   "chatConv.voiceTooShort": "ऑडियो बहुत छोटा है",
   "chatConv.recordingInterruptedCall": "कॉल के कारण रिकॉर्डिंग रुक गई",
+  // [2026-10-12 find-my]
+  "fmap.updating": "अपडेट हो रहा है…",
 };

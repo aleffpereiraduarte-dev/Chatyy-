@@ -7540,4 +7540,6 @@ export default {
   "chatConv.recordingFailedRetry": "녹음에 실패했습니다. 다시 시도하세요",
   "chatConv.voiceTooShort": "오디오가 너무 짧습니다",
   "chatConv.recordingInterruptedCall": "통화로 인해 녹음이 중단되었습니다",
+  // [2026-10-12 find-my]
+  "fmap.updating": "업데이트 중…",
 };

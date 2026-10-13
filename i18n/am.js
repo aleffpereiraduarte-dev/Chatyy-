@@ -7498,4 +7498,6 @@ export default {
   "chatConv.recordingFailedRetry": "መቅዳት አልተሳካም፣ እንደገና ይሞክሩ",
   "chatConv.voiceTooShort": "ድምፁ በጣም አጭር ነው",
   "chatConv.recordingInterruptedCall": "ቀረጻው በጥሪ ተቋርጧል",
+  // [2026-10-12 find-my]
+  "fmap.updating": "በማዘመን ላይ…",
 };

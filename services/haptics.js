@@ -27,28 +27,73 @@ if (Platform.OS === 'ios') {
 let _expoHaptics = null;
 try { _expoHaptics = require('expo-haptics'); } catch {}
 
+// [2026-10-12 native-polish] Android: expo-haptics impactAsync/notificationAsync/
+// selectionAsync drive the VIBRATOR with a waveform (buzzy, ignores the user's
+// "touch feedback" setting). WhatsApp/Telegram use View.performHapticFeedback —
+// the crisp, system-tuned click that also honors that setting. expo-haptics 55
+// exposes it as performAndroidHapticsAsync(type). Types newer than the device
+// API (confirm/reject = API 30, segment-tick = API 34) reject the promise →
+// we fall back to the old vibrator path, so nothing ever goes mute.
+// Kill-switch (OTA): globalThis.__chatyy_android_view_haptics = false.
+const _isAndroid = Platform.OS === 'android';
+function _androidHaptic(type, fallback) {
+  if (!_isAndroid || globalThis.__chatyy_android_view_haptics === false
+      || typeof _expoHaptics?.performAndroidHapticsAsync !== 'function') return false;
+  try {
+    const p = _expoHaptics.performAndroidHapticsAsync(type);
+    if (p && typeof p.catch === 'function') p.catch(() => { try { fallback && fallback(); } catch {} });
+    return true;
+  } catch {
+    return false;
+  }
+}
+const _ANDROID_IMPACT = {
+  soft: 'context-click',
+  light: 'context-click',
+  medium: 'virtual-key',
+  heavy: 'long-press',
+  rigid: 'long-press',
+};
+
+function _expoImpact(intensity) {
+  if (!_expoHaptics?.impactAsync) return;
+  const map = {
+    light: _expoHaptics.ImpactFeedbackStyle?.Light,
+    medium: _expoHaptics.ImpactFeedbackStyle?.Medium,
+    heavy: _expoHaptics.ImpactFeedbackStyle?.Heavy,
+    rigid: _expoHaptics.ImpactFeedbackStyle?.Rigid,
+    soft: _expoHaptics.ImpactFeedbackStyle?.Soft,
+  };
+  try { _expoHaptics.impactAsync(map[intensity] || map.medium); } catch {}
+}
+
+function _expoNotification(kind) {
+  if (!_expoHaptics?.notificationAsync) return;
+  const T = _expoHaptics.NotificationFeedbackType || {};
+  const v = kind === 'error' ? T.Error : kind === 'warning' ? T.Warning : T.Success;
+  try { _expoHaptics.notificationAsync(v); } catch {}
+}
+
 export function tap(intensity = 'medium') {
   if (_native?.hapticImpact) {
     try { _native.hapticImpact(intensity); return; } catch {}
   }
-  if (_expoHaptics?.impactAsync) {
-    const map = {
-      light: _expoHaptics.ImpactFeedbackStyle?.Light,
-      medium: _expoHaptics.ImpactFeedbackStyle?.Medium,
-      heavy: _expoHaptics.ImpactFeedbackStyle?.Heavy,
-      rigid: _expoHaptics.ImpactFeedbackStyle?.Rigid,
-      soft: _expoHaptics.ImpactFeedbackStyle?.Soft,
-    };
-    try { _expoHaptics.impactAsync(map[intensity] || map.medium); } catch {}
-  }
+  if (_androidHaptic(_ANDROID_IMPACT[intensity] || 'virtual-key', () => _expoImpact(intensity))) return;
+  _expoImpact(intensity);
 }
 
 // [2026-10-07 native-polish] Selection tick (picker / drag-start / toggle).
 // Replaces scattered `Vibration.vibrate(6..30)` calls: on iOS Vibration
 // IGNORES the duration and fires the full ~400 ms system buzz, which felt
-// broken next to WhatsApp's crisp ticks; on Android expo-haptics uses
-// performHapticFeedback (respects the user's touch-feedback setting).
+// broken next to WhatsApp's crisp ticks; on Android it goes through
+// performHapticFeedback (see _androidHaptic above).
 export function selection() {
+  // Android: segment-tick (API 34) → clock-tick (all APIs) → vibrator.
+  if (_androidHaptic('segment-tick', () => {
+    if (!_androidHaptic('clock-tick', () => { try { _expoHaptics?.selectionAsync?.(); } catch {} })) {
+      try { _expoHaptics?.selectionAsync?.(); } catch {}
+    }
+  })) return;
   if (_expoHaptics?.selectionAsync) {
     try { _expoHaptics.selectionAsync(); return; } catch {}
   }
@@ -59,6 +104,7 @@ export function success() {
   if (_native?.hapticNotification) {
     try { _native.hapticNotification('success'); return; } catch {}
   }
+  if (_androidHaptic('confirm', () => _expoNotification('success'))) return;
   if (_expoHaptics?.notificationAsync) {
     try { _expoHaptics.notificationAsync(_expoHaptics.NotificationFeedbackType.Success); } catch {}
   }
@@ -68,6 +114,7 @@ export function warning() {
   if (_native?.hapticNotification) {
     try { _native.hapticNotification('warning'); return; } catch {}
   }
+  if (_androidHaptic('long-press', () => _expoNotification('warning'))) return;
   if (_expoHaptics?.notificationAsync) {
     try { _expoHaptics.notificationAsync(_expoHaptics.NotificationFeedbackType.Warning); } catch {}
   }
@@ -77,6 +124,7 @@ export function error() {
   if (_native?.hapticNotification) {
     try { _native.hapticNotification('error'); return; } catch {}
   }
+  if (_androidHaptic('reject', () => _expoNotification('error'))) return;
   if (_expoHaptics?.notificationAsync) {
     try { _expoHaptics.notificationAsync(_expoHaptics.NotificationFeedbackType.Error); } catch {}
   }

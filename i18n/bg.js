@@ -7502,4 +7502,6 @@ export default {
   "chatConv.recordingFailedRetry": "Записът е неуспешен, опитайте отново",
   "chatConv.voiceTooShort": "Аудиото е твърде кратко",
   "chatConv.recordingInterruptedCall": "Записът е прекъснат от обаждане",
+  // [2026-10-12 find-my]
+  "fmap.updating": "Актуализиране…",
 };

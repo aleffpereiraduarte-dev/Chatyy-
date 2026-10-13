@@ -7498,4 +7498,6 @@ export default {
   "chatConv.recordingFailedRetry": "Жазу сәтсіз аяқталды, қайталап көріңіз",
   "chatConv.voiceTooShort": "Аудио тым қысқа",
   "chatConv.recordingInterruptedCall": "Жазуды қоңырау тоқтатты",
+  // [2026-10-12 find-my]
+  "fmap.updating": "Жаңартылуда…",
 };

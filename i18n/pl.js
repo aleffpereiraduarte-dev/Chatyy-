@@ -8280,4 +8280,6 @@ export default {
   "chatConv.recordingFailedRetry": "Nagrywanie nie powiodło się, spróbuj ponownie",
   "chatConv.voiceTooShort": "Nagranie jest za krótkie",
   "chatConv.recordingInterruptedCall": "Nagrywanie przerwane przez połączenie",
+  // [2026-10-12 find-my]
+  "fmap.updating": "Aktualizowanie…",
 };

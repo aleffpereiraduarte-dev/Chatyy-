@@ -7502,4 +7502,6 @@ export default {
   "chatConv.recordingFailedRetry": "Rakaman gagal, cuba lagi",
   "chatConv.voiceTooShort": "Audio terlalu pendek",
   "chatConv.recordingInterruptedCall": "Rakaman terganggu oleh panggilan",
+  // [2026-10-12 find-my]
+  "fmap.updating": "Mengemas kini…",
 };

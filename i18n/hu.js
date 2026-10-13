@@ -7502,4 +7502,6 @@ export default {
   "chatConv.recordingFailedRetry": "A felvétel sikertelen, próbáld újra",
   "chatConv.voiceTooShort": "Túl rövid hang",
   "chatConv.recordingInterruptedCall": "A felvételt egy hívás megszakította",
+  // [2026-10-12 find-my]
+  "fmap.updating": "Frissítés…",
 };

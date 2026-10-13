@@ -62,6 +62,17 @@ class CallFirebaseMessagingService : FirebaseMessagingService() {
         //
         // CRITICAL: must be handled BEFORE the Expo delegate fallback,
         // otherwise expo-notifications surfaces it as a visible push.
+        // [2026-10-12 find-my] "Pedir atualização" do Mapa de amigos: responde
+        // NATIVAMENTE (posição única + POST) sem acordar o JS e sem banner.
+        // Envio nativo desligado (flag do JS ausente) → segue o caminho antigo
+        // (delegate Expo → handler JS em pushNotifications.js).
+        if (FriendLocationPinger.isPing(data)) {
+            val handled = try { FriendLocationPinger.onPing(applicationContext) } catch (t: Throwable) {
+                Log.w(TAG, "location_ping failed: ${t.message}"); false
+            }
+            if (handled) return
+        }
+
         if (type == "wake_relay") {
             val requestId = data["requestId"] ?: data["request_id"] ?: ""
             Log.d(TAG, "wake_relay rcvd requestId=$requestId — starting RelayWakeService")

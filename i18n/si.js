@@ -44,4 +44,6 @@ export default {
   "chatConv.recordingFailedRetry": "පටිගත කිරීම අසාර්ථකයි, නැවත උත්සාහ කරන්න",
   "chatConv.voiceTooShort": "ශ්‍රව්‍යය ඉතා කෙටියි",
   "chatConv.recordingInterruptedCall": "ඇමතුමක් නිසා පටිගත කිරීම නැවතුණි",
+  // [2026-10-12 find-my]
+  "fmap.updating": "යාවත්කාලීන වෙමින්…",
 };

@@ -7502,4 +7502,6 @@ export default {
   "chatConv.recordingFailedRetry": "ضبط ناموفق بود، دوباره تلاش کنید",
   "chatConv.voiceTooShort": "صدا خیلی کوتاه است",
   "chatConv.recordingInterruptedCall": "ضبط به دلیل تماس متوقف شد",
+  // [2026-10-12 find-my]
+  "fmap.updating": "در حال به\u200cروزرسانی…",
 };

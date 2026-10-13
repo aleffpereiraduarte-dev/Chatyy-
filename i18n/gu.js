@@ -5650,4 +5650,6 @@ export default {
   "chatConv.recordingFailedRetry": "રેકોર્ડિંગ નિષ્ફળ, ફરી પ્રયાસ કરો",
   "chatConv.voiceTooShort": "ઑડિયો ખૂબ ટૂંકો છે",
   "chatConv.recordingInterruptedCall": "કૉલને કારણે રેકોર્ડિંગ અટકી ગયું",
+  // [2026-10-12 find-my]
+  "fmap.updating": "અપડેટ થઈ રહ્યું છે…",
 };

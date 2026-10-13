@@ -8280,4 +8280,6 @@ export default {
   "chatConv.recordingFailedRetry": "Не удалось записать, попробуйте ещё раз",
   "chatConv.voiceTooShort": "Слишком короткое аудио",
   "chatConv.recordingInterruptedCall": "Запись прервана звонком",
+  // [2026-10-12 find-my]
+  "fmap.updating": "Обновление…",
 };

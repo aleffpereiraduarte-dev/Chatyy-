@@ -7498,4 +7498,6 @@ export default {
   "chatConv.recordingFailedRetry": "Ձայնագրումը ձախողվեց, փորձեք կրկին",
   "chatConv.voiceTooShort": "Ձայնը չափազանց կարճ է",
   "chatConv.recordingInterruptedCall": "Ձայնագրումն ընդհատվեց զանգի պատճառով",
+  // [2026-10-12 find-my]
+  "fmap.updating": "Թարմացվում է…",
 };

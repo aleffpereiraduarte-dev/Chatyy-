@@ -7502,4 +7502,6 @@ export default {
   "chatConv.recordingFailedRetry": "ההקלטה נכשלה, נסו שוב",
   "chatConv.voiceTooShort": "השמע קצר מדי",
   "chatConv.recordingInterruptedCall": "ההקלטה הופסקה בגלל שיחה",
+  // [2026-10-12 find-my]
+  "fmap.updating": "מעדכן…",
 };

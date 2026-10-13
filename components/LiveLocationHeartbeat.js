@@ -89,6 +89,14 @@ export default function LiveLocationHeartbeat() {
     // tarefa nunca religava para a razão do mapa.
     async function reconcileBackground() {
       try {
+        // [2026-10-12 find-my] Fonte única: friendMapShare decide entre o
+        // envio NATIVO (iOS mudança significativa / ping) e a tarefa contínua
+        // do expo-location (só ao vivo da conversa no iOS com módulo nativo).
+        if (fms?.reconcileBackgroundUpdates) {
+          const r0 = await shareReasons();
+          bgWasStarted = !!(await fms.reconcileBackgroundUpdates({ prompt: !!r0.live }));
+          return;
+        }
         if (!bgMod) return;
         const r = await shareReasons();
         if (r.any) {

@@ -7498,4 +7498,6 @@ export default {
   "chatConv.recordingFailedRetry": "အသံဖမ်းခြင်း မအောင်မြင်ပါ၊ ထပ်စမ်းကြည့်ပါ",
   "chatConv.voiceTooShort": "အသံ တိုလွန်းသည်",
   "chatConv.recordingInterruptedCall": "ဖုန်းခေါ်ဆိုမှုကြောင့် အသံဖမ်းခြင်း ရပ်သွားသည်",
+  // [2026-10-12 find-my]
+  "fmap.updating": "အပ်ဒိတ်လုပ်နေသည်…",
 };

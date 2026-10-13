@@ -7502,4 +7502,6 @@ export default {
   "chatConv.recordingFailedRetry": "Ghi âm thất bại, vui lòng thử lại",
   "chatConv.voiceTooShort": "Âm thanh quá ngắn",
   "chatConv.recordingInterruptedCall": "Ghi âm bị gián đoạn do cuộc gọi",
+  // [2026-10-12 find-my]
+  "fmap.updating": "Đang cập nhật…",
 };

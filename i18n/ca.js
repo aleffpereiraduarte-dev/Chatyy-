@@ -7502,4 +7502,6 @@ export default {
   "chatConv.recordingFailedRetry": "Error en la gravació, torna-ho a provar",
   "chatConv.voiceTooShort": "Àudio massa curt",
   "chatConv.recordingInterruptedCall": "Gravació interrompuda per la trucada",
+  // [2026-10-12 find-my]
+  "fmap.updating": "Actualitzant…",
 };

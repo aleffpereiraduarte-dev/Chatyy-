@@ -11102,4 +11102,6 @@ export default {
   "chatConv.recordingFailedRetry": "Aufnahme fehlgeschlagen, bitte erneut versuchen",
   "chatConv.voiceTooShort": "Audio zu kurz",
   "chatConv.recordingInterruptedCall": "Aufnahme durch Anruf unterbrochen",
+  // [2026-10-12 find-my]
+  "fmap.updating": "Wird aktualisiert…",
 };

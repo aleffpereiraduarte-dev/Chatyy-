@@ -7502,4 +7502,6 @@ export default {
   "chatConv.recordingFailedRetry": "Snemanje ni uspelo, poskusite znova",
   "chatConv.voiceTooShort": "Zvok je prekratek",
   "chatConv.recordingInterruptedCall": "Snemanje je prekinil klic",
+  // [2026-10-12 find-my]
+  "fmap.updating": "Posodabljanje…",
 };

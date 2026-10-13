@@ -7498,4 +7498,6 @@ export default {
   "chatConv.recordingFailedRetry": "రికార్డింగ్ విఫలమైంది, మళ్లీ ప్రయత్నించండి",
   "chatConv.voiceTooShort": "ఆడియో చాలా చిన్నది",
   "chatConv.recordingInterruptedCall": "కాల్ కారణంగా రికార్డింగ్ ఆగిపోయింది",
+  // [2026-10-12 find-my]
+  "fmap.updating": "అప్\u200cడేట్ అవుతోంది…",
 };

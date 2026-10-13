@@ -429,6 +429,12 @@ async function loadModules() {
             try {
               const now = Date.now();
               if (now - (globalThis.__chatyyLastLocPing || 0) < 60000) return;
+              // [2026-10-12 find-my] Binário com envio nativo ligado: o
+              // AppDelegate (iOS) / FCM service (Android) já respondeu ao ping.
+              try {
+                const nfl = require('./nativeFriendLocation');
+                if (nfl.isAvailable() && nfl.getNativeStatus()?.enabled) return;
+              } catch {}
               // Ghost/invisible mode: never answer location wake-pings while
               // "invisível" is on (snap_map_ghost_mode='1'), else the user
               // stays trackable despite it. Bug-hunt P1 (2026-05-30).

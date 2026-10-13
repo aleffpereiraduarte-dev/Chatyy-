@@ -7502,4 +7502,6 @@ export default {
   "chatConv.recordingFailedRetry": "Įrašyti nepavyko, bandykite dar kartą",
   "chatConv.voiceTooShort": "Garso įrašas per trumpas",
   "chatConv.recordingInterruptedCall": "Įrašymą nutraukė skambutis",
+  // [2026-10-12 find-my]
+  "fmap.updating": "Atnaujinama…",
 };

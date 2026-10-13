@@ -11071,4 +11071,6 @@ export default {
   "chatConv.recordingFailedRetry": "Error en la grabación, inténtalo de nuevo",
   "chatConv.voiceTooShort": "Audio demasiado corto",
   "chatConv.recordingInterruptedCall": "Grabación interrumpida por la llamada",
+  // [2026-10-12 find-my]
+  "fmap.updating": "Actualizando…",
 };

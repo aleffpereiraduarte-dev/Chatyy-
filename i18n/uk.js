@@ -7502,4 +7502,6 @@ export default {
   "chatConv.recordingFailedRetry": "Не вдалося записати, спробуйте ще раз",
   "chatConv.voiceTooShort": "Занадто коротке аудіо",
   "chatConv.recordingInterruptedCall": "Запис перервано дзвінком",
+  // [2026-10-12 find-my]
+  "fmap.updating": "Оновлення…",
 };

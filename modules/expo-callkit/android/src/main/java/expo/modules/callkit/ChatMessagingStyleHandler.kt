@@ -126,6 +126,13 @@ object ChatMessagingStyleHandler {
 
     private val CHAT_TYPES = setOf("chat_message", "chat_mention", "chat_keyword", "chat_reaction")
 
+    /** [2026-10-12 push-parity] Silent data push from the server (no title):
+     *  kind=read (up_to = last read id — read on ANOTHER device / the web),
+     *  kind=deleted (message_id deleted for everyone), kind=edited (message_id +
+     *  msg_preview). Always consumed natively (also in foreground): it only
+     *  updates or removes the conversation's MessagingStyle notification. */
+    const val CLEAR_TYPE = "chat_notif_clear"
+
     @Volatile private var baseChannelsEnsured = false
 
     fun notifIdFor(conversationId: String): Int = (conversationId.hashCode() and 0x7FFFFFFF)
@@ -152,7 +159,7 @@ object ChatMessagingStyleHandler {
     /** True when this FCM frame is (possibly) a chat push we can render. */
     fun looksLikeChatPush(data: Map<String, String>): Boolean {
         val t = data["type"]
-        if (!t.isNullOrEmpty()) return t in CHAT_TYPES
+        if (!t.isNullOrEmpty()) return t in CHAT_TYPES || t == CLEAR_TYPE
         val b = data["body"] ?: return false
         return b.trimStart().startsWith("{") && b.contains("conversation_id")
     }
@@ -186,7 +193,7 @@ object ChatMessagingStyleHandler {
             out["__route"] = "fcm"
         }
         val type = out["type"] ?: return null
-        if (type !in CHAT_TYPES) return null
+        if (type !in CHAT_TYPES && type != CLEAR_TYPE) return null
         if (out["conversation_id"].isNullOrBlank()) return null
         return out
     }
@@ -194,6 +201,14 @@ object ChatMessagingStyleHandler {
     private fun tryHandleData(ctx: Context, d: Map<String, String>): Boolean {
         val type = d["type"] ?: return false
         val conversationId = d["conversation_id"] ?: return false
+
+        // [2026-10-12 push-parity] Read elsewhere / deleted / edited → update or
+        // remove this conversation's notification. Before any foreground gate:
+        // the shade must match on every device, app open or not.
+        if (type == CLEAR_TYPE) {
+            try { handleClear(ctx, conversationId, d) } catch (t: Throwable) { Log.w(TAG, "handleClear failed: ${t.message}") }
+            return true
+        }
 
         // [2026-10-09 notif-native] A chat BUBBLE (ChatBubbleActivity) is our
         // process in the foreground but it is not the RN app: its own chat →
@@ -225,7 +240,11 @@ object ChatMessagingStyleHandler {
             isGroup -> (d["group_name"] ?: d["conversation_name"] ?: d["__title"] ?: senderName).take(60)
             else -> senderName
         }
-        val messageId = d["message_id"] ?: ""
+        // [2026-10-12] A reaction's message_id is the REACTED message → two
+        // reactions to it were deduped as one push. Key them per reactor+emoji.
+        val messageId = if (type == "chat_reaction")
+            "rx:" + (d["message_id"] ?: "") + ":" + senderEmail + ":" + (d["emoji"] ?: "")
+        else d["message_id"] ?: ""
 
         // Text without the sender prefix (MessagingStyle shows the Person) and
         // without the Expo-route "N mensagens não lidas" 2nd line.
@@ -237,7 +256,12 @@ object ChatMessagingStyleHandler {
             if (isGroup && t.startsWith("$senderName: ")) t = t.removePrefix("$senderName: ")
             t
         }
-        if (type == "chat_reaction") text = (d["emoji"] ?: "") + " " + text
+        // [2026-10-12] The server body already says "reagiu ❤️ …" — only prefix
+        // the emoji for older payloads that don't carry it in the text.
+        if (type == "chat_reaction") {
+            val e = d["emoji"] ?: ""
+            if (e.isNotEmpty() && !text.contains(e)) text = "$e $text"
+        }
         if (text.isBlank()) text = newMessageLabel(lang)
 
         // Persist (dedupe by message_id — FCM/Expo can redeliver).
@@ -494,6 +518,61 @@ object ChatMessagingStyleHandler {
         return true
     }
 
+    /**
+     * [2026-10-12 push-parity] Server-driven update of a posted conversation:
+     *  read    → drop incoming messages with id <= up_to (all when up_to absent);
+     *  deleted → drop message_id;   edited → replace its text with msg_preview.
+     * No incoming message left → cancel. Otherwise re-post silently, and only if
+     * the notification is still in the shade (a swiped one stays gone).
+     */
+    private fun handleClear(ctx: Context, conversationId: String, d: Map<String, String>) {
+        val kind = d["kind"] ?: "read"
+        val mid = d["message_id"] ?: ""
+        val upTo = d["up_to"]?.toLongOrNull() ?: 0L
+        val thread = loadThread(ctx, conversationId)
+        if (thread.isEmpty()) {
+            if (kind == "read") cancelConversation(ctx, conversationId)
+            return
+        }
+        val next: List<ThreadMsg> = when (kind) {
+            "read" -> if (upTo <= 0L) emptyList() else thread.filter { m ->
+                if (m.key == "me") true else {
+                    // reactions ("rx:…") and legacy rows without an id go too
+                    val id = m.mid.toLongOrNull()
+                    id != null && id > upTo
+                }
+            }
+            "deleted" -> if (mid.isEmpty()) thread else thread.filter { it.mid != mid }
+            "edited" -> {
+                val meta = loadMeta(ctx, conversationId)
+                val hidden = meta == null || meta.optBoolean("locked", false) || meta.optBoolean("hide_preview", false)
+                val txt = d["msg_preview"]?.trim().orEmpty()
+                if (mid.isEmpty() || txt.isEmpty() || hidden) thread
+                else thread.map { if (it.mid == mid) it.copy(text = txt.take(1000)) else it }
+            }
+            else -> thread
+        }
+        if (next.none { it.key != "me" }) {
+            cancelConversation(ctx, conversationId)
+            Log.d(TAG, "clear kind=$kind conv=$conversationId → cancelled")
+            return
+        }
+        if (next == thread) return
+        saveThread(ctx, conversationId, next)
+        if (isPosted(ctx, notifIdFor(conversationId))) {
+            render(ctx, conversationId, alert = false, subText = null)
+            Log.d(TAG, "clear kind=$kind conv=$conversationId → re-posted ${next.size} msgs")
+        }
+    }
+
+    private fun isPosted(ctx: Context, notifId: Int): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return true
+        return try {
+            val nm = ctx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            nm.activeNotifications.any { it.id == notifId }
+        } catch (_: Throwable) { true }
+    }
+
     /** Cancel one conversation's notification (read here / elsewhere / opened). */
     fun cancelConversation(ctx: Context, conversationId: String) {
         try {
@@ -659,19 +738,38 @@ object ChatMessagingStyleHandler {
 
     // ---- localized labels (pt default; backend ships `lang`) -----------------
 
-    private fun meLabel(lang: String) = when { lang.startsWith("en") -> "You"; lang.startsWith("es") -> "Tú"; else -> "Você" }
-    private fun replyLabel(lang: String) = when { lang.startsWith("en") -> "Reply"; lang.startsWith("es") -> "Responder"; else -> "Responder" }
-    private fun replyPlaceholder(lang: String) = when { lang.startsWith("en") -> "Message"; lang.startsWith("es") -> "Mensaje"; else -> "Mensagem" }
-    private fun markReadLabel(lang: String) = when { lang.startsWith("en") -> "Mark as read"; lang.startsWith("es") -> "Marcar como leído"; else -> "Marcar como lida" }
-    private fun muteLabel(lang: String) = when { lang.startsWith("en") -> "Mute 8h"; lang.startsWith("es") -> "Silenciar 8h"; else -> "Silenciar 8h" }
-    fun newMessageLabel(lang: String) = when { lang.startsWith("en") -> "New message"; lang.startsWith("es") -> "Nuevo mensaje"; else -> "Nova mensagem" }
-    fun sendFailedLabel(lang: String) = when { lang.startsWith("en") -> "Not sent. Tap to open"; lang.startsWith("es") -> "No enviado. Toca para abrir"; else -> "Não enviada. Toque para abrir" }
-    fun openAppToReplyLabel(lang: String) = when { lang.startsWith("en") -> "Open Chatyy to reply"; lang.startsWith("es") -> "Abre Chatyy para responder"; else -> "Abra o Chatyy para responder" }
-    private fun summaryLabel(lang: String, msgs: Int, convs: Int): String = when {
-        lang.startsWith("en") -> "$msgs ${if (msgs == 1) "message" else "messages"} from $convs ${if (convs == 1) "chat" else "chats"}"
-        lang.startsWith("es") -> "$msgs ${if (msgs == 1) "mensaje" else "mensajes"} de $convs ${if (convs == 1) "chat" else "chats"}"
-        else -> "$msgs ${if (msgs == 1) "mensagem" else "mensagens"} de $convs ${if (convs == 1) "conversa" else "conversas"}"
+    // [2026-10-12 push-parity] 11 app languages (pt-BR/pt-PT share "pt"). The
+    // backend ships the recipient's `lang` (2 letters); unknown → pt.
+    private val LBL: Map<String, Map<String, String>> = mapOf(
+        "pt" to mapOf("me" to "Você", "reply" to "Responder", "ph" to "Mensagem", "read" to "Marcar como lida", "mute" to "Silenciar 8h", "new" to "Nova mensagem", "fail" to "Não enviada. Toque para abrir", "open" to "Abra o Chatyy para responder", "m1" to "mensagem", "mN" to "mensagens", "c1" to "conversa", "cN" to "conversas", "sum" to "{m} {msgs} de {c} {convs}"),
+        "en" to mapOf("me" to "You", "reply" to "Reply", "ph" to "Message", "read" to "Mark as read", "mute" to "Mute 8h", "new" to "New message", "fail" to "Not sent. Tap to open", "open" to "Open Chatyy to reply", "m1" to "message", "mN" to "messages", "c1" to "chat", "cN" to "chats", "sum" to "{m} {msgs} from {c} {convs}"),
+        "es" to mapOf("me" to "Tú", "reply" to "Responder", "ph" to "Mensaje", "read" to "Marcar como leído", "mute" to "Silenciar 8 h", "new" to "Nuevo mensaje", "fail" to "No enviado. Toca para abrir", "open" to "Abre Chatyy para responder", "m1" to "mensaje", "mN" to "mensajes", "c1" to "chat", "cN" to "chats", "sum" to "{m} {msgs} de {c} {convs}"),
+        "fr" to mapOf("me" to "Vous", "reply" to "Répondre", "ph" to "Message", "read" to "Marquer comme lu", "mute" to "Silence 8 h", "new" to "Nouveau message", "fail" to "Non envoyé. Touchez pour ouvrir", "open" to "Ouvrez Chatyy pour répondre", "m1" to "message", "mN" to "messages", "c1" to "discussion", "cN" to "discussions", "sum" to "{m} {msgs} de {c} {convs}"),
+        "de" to mapOf("me" to "Du", "reply" to "Antworten", "ph" to "Nachricht", "read" to "Als gelesen markieren", "mute" to "8 Std. stumm", "new" to "Neue Nachricht", "fail" to "Nicht gesendet. Zum Öffnen tippen", "open" to "Öffne Chatyy zum Antworten", "m1" to "Nachricht", "mN" to "Nachrichten", "c1" to "Chat", "cN" to "Chats", "sum" to "{m} {msgs} aus {c} {convs}"),
+        "it" to mapOf("me" to "Tu", "reply" to "Rispondi", "ph" to "Messaggio", "read" to "Segna come letto", "mute" to "Silenzia 8 h", "new" to "Nuovo messaggio", "fail" to "Non inviato. Tocca per aprire", "open" to "Apri Chatyy per rispondere", "m1" to "messaggio", "mN" to "messaggi", "c1" to "chat", "cN" to "chat", "sum" to "{m} {msgs} da {c} {convs}"),
+        "ja" to mapOf("me" to "あなた", "reply" to "返信", "ph" to "メッセージ", "read" to "既読にする", "mute" to "8時間ミュート", "new" to "新着メッセージ", "fail" to "送信できませんでした。タップして開く", "open" to "Chatyyを開いて返信", "m1" to "件のメッセージ", "mN" to "件のメッセージ", "c1" to "件のチャット", "cN" to "件のチャット", "sum" to "{c}{convs}から{m}{msgs}"),
+        "ar" to mapOf("me" to "أنت", "reply" to "رد", "ph" to "رسالة", "read" to "وضع علامة كمقروءة", "mute" to "كتم 8 ساعات", "new" to "رسالة جديدة", "fail" to "لم تُرسل. اضغط للفتح", "open" to "افتح Chatyy للرد", "m1" to "رسالة", "mN" to "رسائل", "c1" to "محادثة", "cN" to "محادثات", "sum" to "{m} {msgs} من {c} {convs}"),
+        "id" to mapOf("me" to "Anda", "reply" to "Balas", "ph" to "Pesan", "read" to "Tandai dibaca", "mute" to "Bisukan 8 jam", "new" to "Pesan baru", "fail" to "Tidak terkirim. Ketuk untuk membuka", "open" to "Buka Chatyy untuk membalas", "m1" to "pesan", "mN" to "pesan", "c1" to "obrolan", "cN" to "obrolan", "sum" to "{m} {msgs} dari {c} {convs}"),
+        "hi" to mapOf("me" to "आप", "reply" to "जवाब दें", "ph" to "मैसेज", "read" to "पढ़ा हुआ मार्क करें", "mute" to "8 घंटे म्यूट", "new" to "नया मैसेज", "fail" to "नहीं भेजा गया। खोलने के लिए टैप करें", "open" to "जवाब देने के लिए Chatyy खोलें", "m1" to "मैसेज", "mN" to "मैसेज", "c1" to "चैट", "cN" to "चैट", "sum" to "{c} {convs} से {m} {msgs}"),
+    )
+    private fun lbl(lang: String, key: String): String {
+        val l = lang.lowercase().take(2)
+        return LBL[l]?.get(key) ?: LBL["pt"]?.get(key) ?: key
     }
+    private fun meLabel(lang: String) = lbl(lang, "me")
+    private fun replyLabel(lang: String) = lbl(lang, "reply")
+    private fun replyPlaceholder(lang: String) = lbl(lang, "ph")
+    private fun markReadLabel(lang: String) = lbl(lang, "read")
+    private fun muteLabel(lang: String) = lbl(lang, "mute")
+    fun newMessageLabel(lang: String) = lbl(lang, "new")
+    fun sendFailedLabel(lang: String) = lbl(lang, "fail")
+    fun openAppToReplyLabel(lang: String) = lbl(lang, "open")
+    private fun summaryLabel(lang: String, msgs: Int, convs: Int): String =
+        lbl(lang, "sum")
+            .replace("{m}", msgs.toString())
+            .replace("{c}", convs.toString())
+            .replace("{msgs}", lbl(lang, if (msgs == 1) "m1" else "mN"))
+            .replace("{convs}", lbl(lang, if (convs == 1) "c1" else "cN"))
 
     private fun pickSenderName(data: Map<String, String>, email: String): String {
         val raw = data["sender_name"]?.takeIf { it.isNotBlank() }
@@ -755,6 +853,20 @@ object ChatMessagingStyleHandler {
             out
         } catch (t: Throwable) {
             emptyList()
+        }
+    }
+
+    @Synchronized
+    private fun saveThread(ctx: Context, conversationId: String, list: List<ThreadMsg>) {
+        try {
+            val arr = JSONArray()
+            for (m in list.takeLast(MAX_MESSAGES_PER_THREAD)) {
+                arr.put(JSONArray().put(m.senderName).put(m.text).put(m.timestamp).put(m.key).put(m.mid))
+            }
+            ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+                .putString("thread_$conversationId", arr.toString()).apply()
+        } catch (t: Throwable) {
+            Log.w(TAG, "saveThread failed: ${t.message}")
         }
     }
 

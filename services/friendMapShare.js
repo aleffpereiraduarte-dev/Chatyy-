@@ -76,11 +76,58 @@ export async function getBackgroundPermissionStatus() {
   } catch { return 'unsupported'; }
 }
 
-/** Liga a OS-managed task se houver razão; desliga só se nenhuma razão restar. */
+function nativeMod() {
+  try { return require('./nativeFriendLocation'); } catch { return null; }
+}
+function currentAcct() {
+  try { return String(require('./api')?.getSavedEmail?.() || '').toLowerCase(); } catch { return ''; }
+}
+
+/** iOS: pede "Permitir sempre" (sem iniciar a tarefa contínua do expo-location). */
+async function requestAlwaysIOS() {
+  try {
+    const Location = require('expo-location');
+    const fg = await Location.getForegroundPermissionsAsync().catch(() => null);
+    if (fg?.status !== 'granted') return false;
+    const bg = await Location.getBackgroundPermissionsAsync().catch(() => null);
+    if (bg?.status === 'granted') return true;
+    const ask = await Location.requestBackgroundPermissionsAsync().catch(() => null);
+    return ask?.status === 'granted';
+  } catch { return false; }
+}
+
+/**
+ * Liga/desliga o envio em 2º plano conforme as razões (ao vivo / mapa / fantasma).
+ *
+ * [2026-10-12 find-my] Binário com o módulo nativo ChatyyFriendLocation:
+ *   • nativo (iOS: mudança significativa + visitas + ping silencioso; Android:
+ *     resposta nativa ao ping) liga para QUALQUER razão e desliga no fantasma;
+ *   • iOS: a tarefa CONTÍNUA do expo-location (GPS a cada 100 m, barra azul)
+ *     fica só para a localização ao vivo da conversa — para o Mapa de amigos
+ *     ("até eu desligar") a mudança significativa é o modelo do Find My e
+ *     gasta quase nada de bateria.
+ * Binário antigo → comportamento anterior (expo-location para as duas razões).
+ */
 export async function reconcileBackgroundUpdates({ prompt = false } = {}) {
   const m = bgMod();
-  if (!m) return false;
   const r = await getShareReasons();
+  const nat = nativeMod();
+  const native = !!nat?.isAvailable?.();
+  if (native) {
+    if (r.any) await nat.startNative(currentAcct()).catch?.(() => {});
+    else await nat.stopNative().catch?.(() => {});
+  }
+  if (native && Platform.OS === 'ios') {
+    if (r.any && prompt) await requestAlwaysIOS();
+    if (!m) return r.any;
+    if (r.any && r.live) {
+      await m.startBackgroundLocationUpdates({ prompt: false }).catch(() => false);
+    } else {
+      await m.stopBackgroundLocationUpdates().catch(() => {});
+    }
+    return r.any;
+  }
+  if (!m) return false;
   if (r.any) {
     // A localização ao vivo da conversa mantém o comportamento antigo (pede
     // "Sempre" se ainda não tiver). Só a razão do mapa nunca pede sozinha.
@@ -88,6 +135,18 @@ export async function reconcileBackgroundUpdates({ prompt = false } = {}) {
   }
   await m.stopBackgroundLocationUpdates().catch(() => {});
   return false;
+}
+
+/**
+ * Logout: para todo envio em 2º plano (nativo + tarefa) e limpa as razões
+ * locais — senão o aparelho seguiria publicando com o app fechado.
+ */
+export async function stopAllOnLogout() {
+  try { await nativeMod()?.stopNative?.(); } catch {}
+  try { await bgMod()?.stopBackgroundLocationUpdates?.(); } catch {}
+  await removeItem(FRIEND_SHARE_FLAG);
+  await removeItem(LAST_SYNC_KEY);
+  await removeItem(LAST_PUBLISH_KEY);
 }
 
 async function setFriendFlag(on) {
@@ -227,6 +286,8 @@ export async function setGhostMode(on) {
   } catch {}
   if (on) {
     await bgMod()?.stopBackgroundLocationUpdates?.().catch?.(() => {});
+    // [2026-10-12 find-my] fantasma também desliga o envio NATIVO (app fechado).
+    try { await nativeMod()?.stopNative?.(); } catch {}
   } else {
     await reconcileBackgroundUpdates({ prompt: false });
     publishMyLocationNow({ force: true }).catch(() => {});

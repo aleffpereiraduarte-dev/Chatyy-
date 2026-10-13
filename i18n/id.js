@@ -10323,4 +10323,6 @@ export default {
   "chatConv.recordingFailedRetry": "Perekaman gagal, coba lagi",
   "chatConv.voiceTooShort": "Audio terlalu pendek",
   "chatConv.recordingInterruptedCall": "Perekaman terhenti karena panggilan",
+  // [2026-10-12 find-my]
+  "fmap.updating": "Memperbarui…",
 };

@@ -8280,4 +8280,6 @@ export default {
   "chatConv.recordingFailedRetry": "Tallennus epäonnistui, yritä uudelleen",
   "chatConv.voiceTooShort": "Ääni on liian lyhyt",
   "chatConv.recordingInterruptedCall": "Puhelu keskeytti tallennuksen",
+  // [2026-10-12 find-my]
+  "fmap.updating": "Päivitetään…",
 };

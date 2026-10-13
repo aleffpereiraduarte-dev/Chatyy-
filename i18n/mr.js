@@ -5652,4 +5652,6 @@ export default {
   "chatConv.recordingFailedRetry": "रेकॉर्डिंग अयशस्वी, पुन्हा प्रयत्न करा",
   "chatConv.voiceTooShort": "ऑडिओ खूप लहान आहे",
   "chatConv.recordingInterruptedCall": "कॉलमुळे रेकॉर्डिंग थांबले",
+  // [2026-10-12 find-my]
+  "fmap.updating": "अपडेट होत आहे…",
 };

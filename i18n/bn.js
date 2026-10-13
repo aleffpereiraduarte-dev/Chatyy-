@@ -7502,4 +7502,6 @@ export default {
   "chatConv.recordingFailedRetry": "রেকর্ডিং ব্যর্থ হয়েছে, আবার চেষ্টা করুন",
   "chatConv.voiceTooShort": "অডিও খুব ছোট",
   "chatConv.recordingInterruptedCall": "কলের কারণে রেকর্ডিং বন্ধ হয়েছে",
+  // [2026-10-12 find-my]
+  "fmap.updating": "আপডেট হচ্ছে…",
 };

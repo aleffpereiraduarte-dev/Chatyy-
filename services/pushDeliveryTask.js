@@ -56,6 +56,25 @@ function _findDack(node, depth = 0) {
   return null;
 }
 
+// [2026-10-12 find-my] Push silencioso "Pedir atualização" (type location_ping)
+// em qualquer formato (APNs: data.body string JSON; FCM/Expo: objeto).
+function _isLocationPing(node, depth = 0) {
+  if (node == null || depth > 4) return false;
+  if (typeof node === 'string') {
+    const s = node.trim();
+    if (s.length > 2 && s.length < 8192 && s[0] === '{' && s.includes('location_ping')) {
+      try { return _isLocationPing(JSON.parse(s), depth + 1); } catch { return false; }
+    }
+    return false;
+  }
+  if (typeof node !== 'object') return false;
+  if (node.type === 'location_ping') return true;
+  for (const k of Object.keys(node)) {
+    if (_isLocationPing(node[k], depth + 1)) return true;
+  }
+  return false;
+}
+
 export async function ackPushDelivered(payload) {
   const tok = _findDack(payload);
   if (!tok || _seen.has(tok)) return false;
@@ -102,6 +121,21 @@ if (Platform.OS !== 'web') {
           const pn = require('./pushNotifications');
           if (pn?.isNotifClearPayload?.(data)) {
             const ok = await pn.applyNotifClear(data);
+            return ok ? NewData : NoData;
+          }
+        } catch {}
+        // [2026-10-12 find-my] "Pedir atualização" com o app suspenso: binário
+        // SEM o módulo nativo (ou com ele desligado) responde pelo JS — mesma
+        // rotina do 1º plano (respeita razões, fantasma e permissão).
+        try {
+          if (AppState.currentState !== 'active' && _isLocationPing(data)) {
+            let nativeOn = false;
+            try {
+              const nfl = require('./nativeFriendLocation');
+              nativeOn = !!(nfl.isAvailable() && nfl.getNativeStatus()?.enabled);
+            } catch {}
+            if (nativeOn) return NoData;
+            const ok = await require('./friendMapShare').publishMyLocationNow({ force: true });
             return ok ? NewData : NoData;
           }
         } catch {}

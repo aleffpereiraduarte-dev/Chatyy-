@@ -8280,4 +8280,6 @@ export default {
   "chatConv.recordingFailedRetry": "Opname mislukt, probeer het opnieuw",
   "chatConv.voiceTooShort": "Audio te kort",
   "chatConv.recordingInterruptedCall": "Opname onderbroken door een oproep",
+  // [2026-10-12 find-my]
+  "fmap.updating": "Bijwerken…",
 };

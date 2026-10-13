@@ -846,4 +846,6 @@ export default {
   "chatConv.recordingFailedRetry": "ರೆಕಾರ್ಡಿಂಗ್ ವಿಫಲವಾಗಿದೆ, ಮತ್ತೆ ಪ್ರಯತ್ನಿಸಿ",
   "chatConv.voiceTooShort": "ಆಡಿಯೋ ತುಂಬಾ ಚಿಕ್ಕದಾಗಿದೆ",
   "chatConv.recordingInterruptedCall": "ಕರೆಯಿಂದಾಗಿ ರೆಕಾರ್ಡಿಂಗ್ ನಿಂತಿದೆ",
+  // [2026-10-12 find-my]
+  "fmap.updating": "ಅಪ್\u200cಡೇಟ್ ಆಗುತ್ತಿದೆ…",
 };

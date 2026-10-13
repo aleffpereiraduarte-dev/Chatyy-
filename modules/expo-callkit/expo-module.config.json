@@ -11,19 +11,22 @@
     "swiftModuleName": "ExpoCallKit",
     "modules": [
       "ExpoCallKitModule",
-      "ChatCoreModule"
+      "ChatCoreModule",
+      "FriendLocationModule"
     ],
     "appDelegateSubscribers": [
       "VoipPushAppDelegateSubscriber",
       "RelayWakeAppDelegateSubscriber",
       "ChatBgSyncAppDelegateSubscriber",
-      "CallIntentAppDelegateSubscriber"
+      "CallIntentAppDelegateSubscriber",
+      "FriendLocationAppDelegateSubscriber"
     ]
   },
   "android": {
     "modules": [
       "expo.modules.callkit.ExpoCallKitModule",
-      "expo.modules.callkit.ChatCoreModule"
+      "expo.modules.callkit.ChatCoreModule",
+      "expo.modules.callkit.FriendLocationModule"
     ]
   }
 }

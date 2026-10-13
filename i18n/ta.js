@@ -3248,4 +3248,6 @@ export default {
   "chatConv.recordingFailedRetry": "பதிவு தோல்வியடைந்தது, மீண்டும் முயலவும்",
   "chatConv.voiceTooShort": "ஆடியோ மிகவும் குறுகியது",
   "chatConv.recordingInterruptedCall": "அழைப்பால் பதிவு நிறுத்தப்பட்டது",
+  // [2026-10-12 find-my]
+  "fmap.updating": "புதுப்பிக்கப்படுகிறது…",
 };

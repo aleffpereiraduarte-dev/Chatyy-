@@ -8280,4 +8280,6 @@ export default {
   "chatConv.recordingFailedRetry": "Optagelsen mislykkedes, prøv igen",
   "chatConv.voiceTooShort": "Lyden er for kort",
   "chatConv.recordingInterruptedCall": "Optagelsen blev afbrudt af et opkald",
+  // [2026-10-12 find-my]
+  "fmap.updating": "Opdaterer…",
 };

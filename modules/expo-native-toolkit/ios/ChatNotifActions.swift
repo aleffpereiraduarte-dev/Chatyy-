@@ -121,6 +121,9 @@ final class ChatNotifActionHandler: NotificationDelegate {
 
   private static let replyIds: Set<String> = ["reply", "REPLY", "reply_chat"]
   private static let readIds: Set<String> = ["mark_read", "MARK_READ", "mark_read_chat"]
+  // [2026-10-12 push-parity] "Silenciar 8h" / "Silenciar 1 semana" from the
+  // banner, app killed included (WhatsApp mute options).
+  private static let muteSeconds: [String: TimeInterval] = ["mute_8h": 8 * 3600, "mute_1w": 7 * 24 * 3600]
 
   private let lock = NSLock()
   private var handled: [String: Date] = [:]
@@ -141,7 +144,8 @@ final class ChatNotifActionHandler: NotificationDelegate {
     let action = response.actionIdentifier
     let isReply = Self.replyIds.contains(action) || action.hasPrefix("smart_reply_")
     let isRead = Self.readIds.contains(action)
-    guard isReply || isRead else { return false }
+    let muteFor = Self.muteSeconds[action]
+    guard isReply || isRead || muteFor != nil else { return false }
 
     let p = Self.payload(response.notification.request.content.userInfo)
     // E-mail pushes share "mark_read"/"REPLY" ids — they carry `uid`.
@@ -174,6 +178,21 @@ final class ChatNotifActionHandler: NotificationDelegate {
     }
 
     DispatchQueue.global(qos: .userInitiated).async {
+      if let secs = muteFor {
+        // Same call the JS handler / Android ChatActionReceiver make.
+        let fmt = ISO8601DateFormatter()
+        fmt.timeZone = TimeZone(identifier: "UTC")
+        let until = fmt.string(from: Date().addingTimeInterval(secs))
+        Self.removeDelivered(conv: conv, then: {})
+        for _ in 0..<2 {
+          let r = Self.post(base: base, bearer: bearer, action: "chat_user_conv_settings_set", body: [
+            "conversation_id": conv, "mute_until": until,
+          ])
+          if r.ok || (400..<500).contains(r.code) { break }
+        }
+        finish()
+        return
+      }
       if isReply {
         let cmid = "notif-" + UUID().uuidString.lowercased()
         var ok = false

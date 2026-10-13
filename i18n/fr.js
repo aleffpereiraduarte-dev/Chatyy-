@@ -11103,4 +11103,6 @@ export default {
   "chatConv.recordingFailedRetry": "Échec de l'enregistrement, réessayez",
   "chatConv.voiceTooShort": "Audio trop court",
   "chatConv.recordingInterruptedCall": "Enregistrement interrompu par l'appel",
+  // [2026-10-12 find-my]
+  "fmap.updating": "Mise à jour…",
 };
