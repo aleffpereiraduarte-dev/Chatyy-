@@ -207,16 +207,25 @@ export default function AccountSwitcherSheet({ visible, onClose }) {
   const column = (
     <View style={{ flex: 1, backgroundColor: oc.sheetBg }}>
       <View style={{ zIndex: 2, backgroundColor: oc.sheetBg }}>{header}</View>
-      <ScrollView
-        style={{ flex: 1, minHeight: 0 }}
-        contentContainerStyle={{ paddingBottom: Space.xs }}
-        contentInsetAdjustmentBehavior="never"
-        automaticallyAdjustContentInsets={false}
-        showsVerticalScrollIndicator={false}
-        bounces={false}
-      >
-        {list}
-      </ScrollView>
+      {/* [2026-10-13] No formSheet nativo do iOS o react-native-screens trata o 1º
+          ScrollView da folha como o "scroll da sheet" e o reposiciona (a conta ia
+          para trás do título e a lista ficava vazia). Com poucas contas a lista é
+          uma View comum; ScrollView só quando não cabe (raro). */}
+      {rows.length <= 6 ? (
+        <View style={{ paddingBottom: Space.xs }}>{list}</View>
+      ) : (
+        <ScrollView
+          style={{ flex: 1, minHeight: 0 }}
+          contentContainerStyle={{ paddingBottom: Space.xs }}
+          contentInsetAdjustmentBehavior="never"
+          automaticallyAdjustContentInsets={false}
+          showsVerticalScrollIndicator={false}
+          bounces={false}
+        >
+          {list}
+        </ScrollView>
+      )}
+      <View style={{ flex: 1 }} />
       {footer}
       {switchingOverlay}
     </View>
