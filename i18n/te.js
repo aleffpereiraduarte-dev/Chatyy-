@@ -8108,4 +8108,9 @@ export default {
   // [2026-10-13 reels-android] erro do player no Reels
   "reels.videoError": "ఈ వీడియోను ప్లే చేయలేకపోయాం",
   "reels.videoRetry": "మళ్లీ ప్రయత్నించండి",
+  // [2026-10-14 wallpaper] foto/IA: estados de envio, erro e aplicado
+  "chatConv.wallpaperUploading": "ఫోటో అప్‌లోడ్ అవుతోంది...",
+  "chatConv.wallpaperPhotoFailed": "ఈ ఫోటోను ఉపయోగించలేకపోయాము. కనెక్షన్‌ను తనిఖీ చేసి మళ్లీ ప్రయత్నించండి.",
+  "chatConv.wallpaperApplied": "వాల్‌పేపర్ వర్తింపజేయబడింది",
+  "chatConv.wallpaperAiSlow": "దీనికి 1 నిమిషం వరకు పట్టవచ్చు",
 };

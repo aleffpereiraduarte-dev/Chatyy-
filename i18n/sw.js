@@ -8112,4 +8112,9 @@ export default {
   // [2026-10-13 reels-android] erro do player no Reels
   "reels.videoError": "Imeshindwa kucheza video hii",
   "reels.videoRetry": "Jaribu tena",
+  // [2026-10-14 wallpaper] foto/IA: estados de envio, erro e aplicado
+  "chatConv.wallpaperUploading": "Inapakia picha...",
+  "chatConv.wallpaperPhotoFailed": "Imeshindwa kutumia picha hii. Angalia muunganisho wako na ujaribu tena.",
+  "chatConv.wallpaperApplied": "Mandhari imewekwa",
+  "chatConv.wallpaperAiSlow": "Hii inaweza kuchukua hadi dakika 1",
 };

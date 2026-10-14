@@ -8108,4 +8108,9 @@ export default {
   // [2026-10-13 reels-android] erro do player no Reels
   "reels.videoError": "ვიდეოს დაკვრა ვერ მოხერხდა",
   "reels.videoRetry": "ხელახლა ცდა",
+  // [2026-10-14 wallpaper] foto/IA: estados de envio, erro e aplicado
+  "chatConv.wallpaperUploading": "ფოტო იტვირთება...",
+  "chatConv.wallpaperPhotoFailed": "ამ ფოტოს გამოყენება ვერ მოხერხდა. შეამოწმეთ კავშირი და სცადეთ ხელახლა.",
+  "chatConv.wallpaperApplied": "ფონი დაყენებულია",
+  "chatConv.wallpaperAiSlow": "ამას შეიძლება 1 წუთამდე დასჭირდეს",
 };

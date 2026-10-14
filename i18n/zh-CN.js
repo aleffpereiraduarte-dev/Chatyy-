@@ -8150,4 +8150,9 @@ export default {
   // [2026-10-13 reels-android] erro do player no Reels
   "reels.videoError": "无法播放此视频",
   "reels.videoRetry": "重试",
+  // [2026-10-14 wallpaper] foto/IA: estados de envio, erro e aplicado
+  "chatConv.wallpaperUploading": "正在上传照片...",
+  "chatConv.wallpaperPhotoFailed": "无法使用这张照片。请检查网络连接后重试。",
+  "chatConv.wallpaperApplied": "壁纸已应用",
+  "chatConv.wallpaperAiSlow": "这可能需要最多 1 分钟",
 };

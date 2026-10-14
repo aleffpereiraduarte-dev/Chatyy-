@@ -8890,4 +8890,9 @@ export default {
   // [2026-10-13 reels-android] erro do player no Reels
   "reels.videoError": "Det gick inte att spela upp videon",
   "reels.videoRetry": "Försök igen",
+  // [2026-10-14 wallpaper] foto/IA: estados de envio, erro e aplicado
+  "chatConv.wallpaperUploading": "Laddar upp foto...",
+  "chatConv.wallpaperPhotoFailed": "Det gick inte att använda fotot. Kontrollera anslutningen och försök igen.",
+  "chatConv.wallpaperApplied": "Bakgrund tillämpad",
+  "chatConv.wallpaperAiSlow": "Det kan ta upp till 1 minut",
 };

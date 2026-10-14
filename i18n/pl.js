@@ -8890,4 +8890,9 @@ export default {
   // [2026-10-13 reels-android] erro do player no Reels
   "reels.videoError": "Nie udało się odtworzyć tego filmu",
   "reels.videoRetry": "Spróbuj ponownie",
+  // [2026-10-14 wallpaper] foto/IA: estados de envio, erro e aplicado
+  "chatConv.wallpaperUploading": "Wysyłanie zdjęcia...",
+  "chatConv.wallpaperPhotoFailed": "Nie można użyć tego zdjęcia. Sprawdź połączenie i spróbuj ponownie.",
+  "chatConv.wallpaperApplied": "Tapeta ustawiona",
+  "chatConv.wallpaperAiSlow": "To może potrwać do 1 minuty",
 };

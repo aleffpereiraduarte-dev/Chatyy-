@@ -1457,4 +1457,9 @@ export default {
   // [2026-10-13 reels-android] erro do player no Reels
   "reels.videoError": "ಈ ವೀಡಿಯೊ ಪ್ಲೇ ಮಾಡಲಾಗಲಿಲ್ಲ",
   "reels.videoRetry": "ಮತ್ತೆ ಪ್ರಯತ್ನಿಸಿ",
+  // [2026-10-14 wallpaper] foto/IA: estados de envio, erro e aplicado
+  "chatConv.wallpaperUploading": "ಫೋಟೋ ಅಪ್‌ಲೋಡ್ ಆಗುತ್ತಿದೆ...",
+  "chatConv.wallpaperPhotoFailed": "ಈ ಫೋಟೋವನ್ನು ಬಳಸಲು ಸಾಧ್ಯವಾಗಲಿಲ್ಲ. ಸಂಪರ್ಕ ಪರಿಶೀಲಿಸಿ ಮತ್ತೆ ಪ್ರಯತ್ನಿಸಿ.",
+  "chatConv.wallpaperApplied": "ವಾಲ್‌ಪೇಪರ್ ಅನ್ವಯಿಸಲಾಗಿದೆ",
+  "chatConv.wallpaperAiSlow": "ಇದಕ್ಕೆ 1 ನಿಮಿಷದವರೆಗೆ ಬೇಕಾಗಬಹುದು",
 };

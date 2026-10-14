@@ -8112,4 +8112,9 @@ export default {
   // [2026-10-13 reels-android] erro do player no Reels
   "reels.videoError": "Nepavyko paleisti šio vaizdo įrašo",
   "reels.videoRetry": "Bandyti dar kartą",
+  // [2026-10-14 wallpaper] foto/IA: estados de envio, erro e aplicado
+  "chatConv.wallpaperUploading": "Įkeliama nuotrauka...",
+  "chatConv.wallpaperPhotoFailed": "Nepavyko panaudoti šios nuotraukos. Patikrinkite ryšį ir bandykite dar kartą.",
+  "chatConv.wallpaperApplied": "Ekrano fonas pritaikytas",
+  "chatConv.wallpaperAiSlow": "Tai gali užtrukti iki 1 minutės",
 };

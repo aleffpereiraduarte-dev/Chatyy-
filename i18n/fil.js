@@ -8112,4 +8112,9 @@ export default {
   // [2026-10-13 reels-android] erro do player no Reels
   "reels.videoError": "Hindi ma-play ang video na ito",
   "reels.videoRetry": "Subukan ulit",
+  // [2026-10-14 wallpaper] foto/IA: estados de envio, erro e aplicado
+  "chatConv.wallpaperUploading": "Ina-upload ang larawan...",
+  "chatConv.wallpaperPhotoFailed": "Hindi magamit ang larawang ito. Suriin ang iyong koneksyon at subukang muli.",
+  "chatConv.wallpaperApplied": "Nailapat ang wallpaper",
+  "chatConv.wallpaperAiSlow": "Maaaring tumagal ito nang hanggang 1 minuto",
 };

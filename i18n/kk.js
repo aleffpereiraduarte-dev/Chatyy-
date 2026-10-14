@@ -8108,4 +8108,9 @@ export default {
   // [2026-10-13 reels-android] erro do player no Reels
   "reels.videoError": "Бұл бейнені ойнату мүмкін болмады",
   "reels.videoRetry": "Қайталау",
+  // [2026-10-14 wallpaper] foto/IA: estados de envio, erro e aplicado
+  "chatConv.wallpaperUploading": "Фото жүктелуде...",
+  "chatConv.wallpaperPhotoFailed": "Бұл фотоны пайдалану мүмкін болмады. Байланысты тексеріп, қайталап көріңіз.",
+  "chatConv.wallpaperApplied": "Тұсқағаз орнатылды",
+  "chatConv.wallpaperAiSlow": "Бұл 1 минутқа дейін созылуы мүмкін",
 };

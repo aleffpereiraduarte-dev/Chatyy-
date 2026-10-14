@@ -8108,4 +8108,9 @@ export default {
   // [2026-10-13 reels-android] erro do player no Reels
   "reels.videoError": "ဤဗီဒီယိုကို ဖွင့်၍မရပါ",
   "reels.videoRetry": "ထပ်စမ်းကြည့်ပါ",
+  // [2026-10-14 wallpaper] foto/IA: estados de envio, erro e aplicado
+  "chatConv.wallpaperUploading": "ဓာတ်ပုံ တင်နေသည်...",
+  "chatConv.wallpaperPhotoFailed": "ဤဓာတ်ပုံကို အသုံးပြု၍မရပါ။ ချိတ်ဆက်မှုကို စစ်ဆေးပြီး ထပ်စမ်းကြည့်ပါ။",
+  "chatConv.wallpaperApplied": "နောက်ခံပုံ သတ်မှတ်ပြီးပါပြီ",
+  "chatConv.wallpaperAiSlow": "၁ မိနစ်အထိ ကြာနိုင်သည်",
 };

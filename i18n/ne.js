@@ -655,4 +655,9 @@ export default {
   // [2026-10-13 reels-android] erro do player no Reels
   "reels.videoError": "यो भिडियो चलाउन सकिएन",
   "reels.videoRetry": "फेरि प्रयास गर्नुहोस्",
+  // [2026-10-14 wallpaper] foto/IA: estados de envio, erro e aplicado
+  "chatConv.wallpaperUploading": "फोटो अपलोड हुँदैछ...",
+  "chatConv.wallpaperPhotoFailed": "यो फोटो प्रयोग गर्न सकिएन। जडान जाँच गरेर फेरि प्रयास गर्नुहोस्।",
+  "chatConv.wallpaperApplied": "वालपेपर लागू गरियो",
+  "chatConv.wallpaperAiSlow": "यसमा १ मिनेटसम्म लाग्न सक्छ",
 };

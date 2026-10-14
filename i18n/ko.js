@@ -8150,4 +8150,9 @@ export default {
   // [2026-10-13 reels-android] erro do player no Reels
   "reels.videoError": "이 동영상을 재생할 수 없습니다",
   "reels.videoRetry": "다시 시도",
+  // [2026-10-14 wallpaper] foto/IA: estados de envio, erro e aplicado
+  "chatConv.wallpaperUploading": "사진 업로드 중...",
+  "chatConv.wallpaperPhotoFailed": "이 사진을 사용할 수 없습니다. 연결을 확인하고 다시 시도하세요.",
+  "chatConv.wallpaperApplied": "배경화면이 적용되었습니다",
+  "chatConv.wallpaperAiSlow": "최대 1분 정도 걸릴 수 있습니다",
 };

@@ -655,4 +655,9 @@ export default {
   // [2026-10-13 reels-android] erro do player no Reels
   "reels.videoError": "මෙම වීඩියෝව ධාවනය කළ නොහැකි විය",
   "reels.videoRetry": "නැවත උත්සාහ කරන්න",
+  // [2026-10-14 wallpaper] foto/IA: estados de envio, erro e aplicado
+  "chatConv.wallpaperUploading": "ඡායාරූපය උඩුගත වෙමින්...",
+  "chatConv.wallpaperPhotoFailed": "මෙම ඡායාරූපය භාවිත කළ නොහැකි විය. සම්බන්ධතාව පරීක්ෂා කර නැවත උත්සාහ කරන්න.",
+  "chatConv.wallpaperApplied": "බිතුපත යොදන ලදී",
+  "chatConv.wallpaperAiSlow": "මෙයට මිනිත්තු 1ක් දක්වා ගත විය හැක",
 };

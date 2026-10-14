@@ -8112,4 +8112,9 @@ export default {
   // [2026-10-13 reels-android] erro do player no Reels
   "reels.videoError": "ไม่สามารถเล่นวิดีโอนี้ได้",
   "reels.videoRetry": "ลองอีกครั้ง",
+  // [2026-10-14 wallpaper] foto/IA: estados de envio, erro e aplicado
+  "chatConv.wallpaperUploading": "กำลังอัปโหลดรูปภาพ...",
+  "chatConv.wallpaperPhotoFailed": "ใช้รูปภาพนี้ไม่ได้ ตรวจสอบการเชื่อมต่อแล้วลองอีกครั้ง",
+  "chatConv.wallpaperApplied": "ตั้งวอลเปเปอร์แล้ว",
+  "chatConv.wallpaperAiSlow": "อาจใช้เวลาถึง 1 นาที",
 };

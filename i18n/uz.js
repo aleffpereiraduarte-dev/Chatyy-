@@ -8108,4 +8108,9 @@ export default {
   // [2026-10-13 reels-android] erro do player no Reels
   "reels.videoError": "Bu videoni ijro etib bo'lmadi",
   "reels.videoRetry": "Qayta urinish",
+  // [2026-10-14 wallpaper] foto/IA: estados de envio, erro e aplicado
+  "chatConv.wallpaperUploading": "Rasm yuklanmoqda...",
+  "chatConv.wallpaperPhotoFailed": "Bu rasmdan foydalanib bo'lmadi. Ulanishni tekshirib, qayta urinib ko'ring.",
+  "chatConv.wallpaperApplied": "Fon rasmi qo'llandi",
+  "chatConv.wallpaperAiSlow": "Bu 1 daqiqagacha davom etishi mumkin",
 };

@@ -3859,4 +3859,9 @@ export default {
   // [2026-10-13 reels-android] erro do player no Reels
   "reels.videoError": "இந்த வீடியோவை இயக்க முடியவில்லை",
   "reels.videoRetry": "மீண்டும் முயலவும்",
+  // [2026-10-14 wallpaper] foto/IA: estados de envio, erro e aplicado
+  "chatConv.wallpaperUploading": "புகைப்படம் பதிவேற்றப்படுகிறது...",
+  "chatConv.wallpaperPhotoFailed": "இந்தப் புகைப்படத்தைப் பயன்படுத்த முடியவில்லை. இணைப்பைச் சரிபார்த்து மீண்டும் முயலவும்.",
+  "chatConv.wallpaperApplied": "வால்பேப்பர் அமைக்கப்பட்டது",
+  "chatConv.wallpaperAiSlow": "இதற்கு 1 நிமிடம் வரை ஆகலாம்",
 };

@@ -8108,4 +8108,9 @@ export default {
   // [2026-10-13 reels-android] erro do player no Reels
   "reels.videoError": "មិនអាចចាក់វីដេអូនេះបានទេ",
   "reels.videoRetry": "ព្យាយាមម្ដងទៀត",
+  // [2026-10-14 wallpaper] foto/IA: estados de envio, erro e aplicado
+  "chatConv.wallpaperUploading": "កំពុងផ្ទុករូបថតឡើង...",
+  "chatConv.wallpaperPhotoFailed": "មិនអាចប្រើរូបថតនេះបានទេ។ សូមពិនិត្យការតភ្ជាប់ ហើយព្យាយាមម្តងទៀត។",
+  "chatConv.wallpaperApplied": "បានដាក់ផ្ទាំងរូបភាព",
+  "chatConv.wallpaperAiSlow": "វាអាចចំណាយពេលរហូតដល់ 1 នាទី",
 };

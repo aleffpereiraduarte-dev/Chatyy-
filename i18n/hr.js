@@ -8112,4 +8112,9 @@ export default {
   // [2026-10-13 reels-android] erro do player no Reels
   "reels.videoError": "Ovaj videozapis nije moguće reproducirati",
   "reels.videoRetry": "Pokušaj ponovno",
+  // [2026-10-14 wallpaper] foto/IA: estados de envio, erro e aplicado
+  "chatConv.wallpaperUploading": "Prijenos fotografije...",
+  "chatConv.wallpaperPhotoFailed": "Ova se fotografija ne može upotrijebiti. Provjerite vezu i pokušajte ponovno.",
+  "chatConv.wallpaperApplied": "Pozadina primijenjena",
+  "chatConv.wallpaperAiSlow": "Ovo može potrajati do 1 minute",
 };

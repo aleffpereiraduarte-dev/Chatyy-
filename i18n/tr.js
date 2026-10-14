@@ -8112,4 +8112,9 @@ export default {
   // [2026-10-13 reels-android] erro do player no Reels
   "reels.videoError": "Bu video oynatılamadı",
   "reels.videoRetry": "Tekrar dene",
+  // [2026-10-14 wallpaper] foto/IA: estados de envio, erro e aplicado
+  "chatConv.wallpaperUploading": "Fotoğraf yükleniyor...",
+  "chatConv.wallpaperPhotoFailed": "Bu fotoğraf kullanılamadı. Bağlantınızı kontrol edip tekrar deneyin.",
+  "chatConv.wallpaperApplied": "Duvar kağıdı uygulandı",
+  "chatConv.wallpaperAiSlow": "Bu işlem 1 dakikaya kadar sürebilir",
 };

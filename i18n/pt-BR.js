@@ -11762,4 +11762,9 @@ export default {
   // [2026-10-13 reels-android] erro do player no Reels
   "reels.videoError": "Não foi possível reproduzir este vídeo",
   "reels.videoRetry": "Tentar de novo",
+  // [2026-10-14 wallpaper] foto/IA: estados de envio, erro e aplicado
+  "chatConv.wallpaperUploading": "Enviando foto...",
+  "chatConv.wallpaperPhotoFailed": "Não foi possível usar esta foto. Verifique a conexão e tente de novo.",
+  "chatConv.wallpaperApplied": "Papel de parede aplicado",
+  "chatConv.wallpaperAiSlow": "Isso pode levar até 1 minuto",
 };

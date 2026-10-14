@@ -8112,4 +8112,9 @@ export default {
   // [2026-10-13 reels-android] erro do player no Reels
   "reels.videoError": "Овај видео није могуће пустити",
   "reels.videoRetry": "Покушај поново",
+  // [2026-10-14 wallpaper] foto/IA: estados de envio, erro e aplicado
+  "chatConv.wallpaperUploading": "Отпремање фотографије...",
+  "chatConv.wallpaperPhotoFailed": "Ова фотографија не може да се користи. Проверите везу и покушајте поново.",
+  "chatConv.wallpaperApplied": "Позадина примењена",
+  "chatConv.wallpaperAiSlow": "Ово може да потраје до 1 минута",
 };

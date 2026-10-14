@@ -11714,4 +11714,9 @@ export default {
   // [2026-10-13 reels-android] erro do player no Reels
   "reels.videoError": "تعذّر تشغيل هذا الفيديو",
   "reels.videoRetry": "أعد المحاولة",
+  // [2026-10-14 wallpaper] foto/IA: estados de envio, erro e aplicado
+  "chatConv.wallpaperUploading": "جارٍ رفع الصورة...",
+  "chatConv.wallpaperPhotoFailed": "تعذّر استخدام هذه الصورة. تحقّق من الاتصال وحاول مرة أخرى.",
+  "chatConv.wallpaperApplied": "تم تطبيق الخلفية",
+  "chatConv.wallpaperAiSlow": "قد يستغرق ذلك حتى دقيقة واحدة",
 };

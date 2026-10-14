@@ -8112,4 +8112,9 @@ export default {
   // [2026-10-13 reels-android] erro do player no Reels
   "reels.videoError": "Neizdevās atskaņot šo video",
   "reels.videoRetry": "Mēģināt vēlreiz",
+  // [2026-10-14 wallpaper] foto/IA: estados de envio, erro e aplicado
+  "chatConv.wallpaperUploading": "Augšupielādē fotoattēlu...",
+  "chatConv.wallpaperPhotoFailed": "Šo fotoattēlu nevarēja izmantot. Pārbaudiet savienojumu un mēģiniet vēlreiz.",
+  "chatConv.wallpaperApplied": "Fona attēls lietots",
+  "chatConv.wallpaperAiSlow": "Tas var aizņemt līdz 1 minūtei",
 };

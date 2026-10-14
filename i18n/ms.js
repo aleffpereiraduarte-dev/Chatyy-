@@ -8112,4 +8112,9 @@ export default {
   // [2026-10-13 reels-android] erro do player no Reels
   "reels.videoError": "Video ini tidak dapat dimainkan",
   "reels.videoRetry": "Cuba lagi",
+  // [2026-10-14 wallpaper] foto/IA: estados de envio, erro e aplicado
+  "chatConv.wallpaperUploading": "Memuat naik foto...",
+  "chatConv.wallpaperPhotoFailed": "Foto ini tidak dapat digunakan. Semak sambungan anda dan cuba lagi.",
+  "chatConv.wallpaperApplied": "Kertas dinding digunakan",
+  "chatConv.wallpaperAiSlow": "Ini mungkin mengambil masa sehingga 1 minit",
 };

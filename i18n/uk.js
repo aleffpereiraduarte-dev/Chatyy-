@@ -8112,4 +8112,9 @@ export default {
   // [2026-10-13 reels-android] erro do player no Reels
   "reels.videoError": "Не вдалося відтворити відео",
   "reels.videoRetry": "Спробувати ще",
+  // [2026-10-14 wallpaper] foto/IA: estados de envio, erro e aplicado
+  "chatConv.wallpaperUploading": "Завантаження фото...",
+  "chatConv.wallpaperPhotoFailed": "Не вдалося використати це фото. Перевірте з'єднання та спробуйте ще раз.",
+  "chatConv.wallpaperApplied": "Шпалери встановлено",
+  "chatConv.wallpaperAiSlow": "Це може тривати до 1 хвилини",
 };

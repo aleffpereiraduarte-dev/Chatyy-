@@ -8108,4 +8108,9 @@ export default {
   // [2026-10-13 reels-android] erro do player no Reels
   "reels.videoError": "ບໍ່ສາມາດຫຼິ້ນວິດີໂອນີ້ໄດ້",
   "reels.videoRetry": "ລອງໃໝ່",
+  // [2026-10-14 wallpaper] foto/IA: estados de envio, erro e aplicado
+  "chatConv.wallpaperUploading": "ກຳລັງອັບໂຫຼດຮູບ...",
+  "chatConv.wallpaperPhotoFailed": "ບໍ່ສາມາດໃຊ້ຮູບນີ້ໄດ້. ກວດເບິ່ງການເຊື່ອມຕໍ່ແລ້ວລອງໃໝ່.",
+  "chatConv.wallpaperApplied": "ຕັ້ງພາບພື້ນຫຼັງແລ້ວ",
+  "chatConv.wallpaperAiSlow": "ອາດໃຊ້ເວລາເຖິງ 1 ນາທີ",
 };

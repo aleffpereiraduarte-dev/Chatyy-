@@ -8112,4 +8112,9 @@ export default {
   // [2026-10-13 reels-android] erro do player no Reels
   "reels.videoError": "Videoclipul nu a putut fi redat",
   "reels.videoRetry": "Încearcă din nou",
+  // [2026-10-14 wallpaper] foto/IA: estados de envio, erro e aplicado
+  "chatConv.wallpaperUploading": "Se încarcă fotografia...",
+  "chatConv.wallpaperPhotoFailed": "Nu s-a putut folosi această fotografie. Verifică conexiunea și încearcă din nou.",
+  "chatConv.wallpaperApplied": "Imagine de fundal aplicată",
+  "chatConv.wallpaperAiSlow": "Poate dura până la 1 minut",
 };

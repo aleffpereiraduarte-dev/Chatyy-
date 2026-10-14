@@ -8108,4 +8108,9 @@ export default {
   // [2026-10-13 reels-android] erro do player no Reels
   "reels.videoError": "Չհաջողվեց նվագարկել տեսանյութը",
   "reels.videoRetry": "Կրկին փորձել",
+  // [2026-10-14 wallpaper] foto/IA: estados de envio, erro e aplicado
+  "chatConv.wallpaperUploading": "Լուսանկարը վերբեռնվում է...",
+  "chatConv.wallpaperPhotoFailed": "Չհաջողվեց օգտագործել այս լուսանկարը։ Ստուգեք կապը և նորից փորձեք։",
+  "chatConv.wallpaperApplied": "Պաստառը կիրառվեց",
+  "chatConv.wallpaperAiSlow": "Սա կարող է տևել մինչև 1 րոպե",
 };

@@ -1189,7 +1189,7 @@ if (Platform.OS === 'web') {
 let _reloginPromise = null;
 
 // [send-reliability 2026-10-06] Per-action fetch timeout overrides (ms).
-const _ACTION_TIMEOUT_MS = { chat_send: 10000, chat_ai_digest: 45000 }; // [2026-10-13 bia-summary] IA lê até 300 msgs
+const _ACTION_TIMEOUT_MS = { chat_send: 10000, chat_ai_digest: 45000, ai_generate_image: 90000 }; // [2026-10-13 bia-summary] IA lê até 300 msgs · [2026-10-14 wallpaper-ai] gpt-image-1 leva 15-40 s (25 s abortava)
 // [2026-10-09 net-resilience] HTTP respondeu = a rede VOLTOU. Se o WS está
 // parado no backoff (até 10s entre tentativas depois de uma queda "muda" —
 // túnel, elevador, 2G que some sem o SO avisar), antecipa a reconexão agora em

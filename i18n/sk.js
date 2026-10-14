@@ -8112,4 +8112,9 @@ export default {
   // [2026-10-13 reels-android] erro do player no Reels
   "reels.videoError": "Toto video sa nepodarilo prehrať",
   "reels.videoRetry": "Skúsiť znova",
+  // [2026-10-14 wallpaper] foto/IA: estados de envio, erro e aplicado
+  "chatConv.wallpaperUploading": "Nahráva sa fotka...",
+  "chatConv.wallpaperPhotoFailed": "Túto fotku nie je možné použiť. Skontrolujte pripojenie a skúste to znova.",
+  "chatConv.wallpaperApplied": "Tapeta nastavená",
+  "chatConv.wallpaperAiSlow": "Môže to trvať až 1 minútu",
 };

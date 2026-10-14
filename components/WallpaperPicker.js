@@ -29,6 +29,7 @@ import React, { useState, useMemo, useCallback } from 'react';
 import {
   View, Text, ScrollView, TouchableOpacity, Modal, Image, Platform,
   ActivityIndicator, TextInput, StyleSheet, useWindowDimensions,
+  KeyboardAvoidingView,
 } from 'react-native';
 import Svg, { Defs, LinearGradient as SvgLinearGradient, Stop, Rect } from 'react-native-svg';
 import PressableScale from './PressableScale';
@@ -79,6 +80,19 @@ export function gradientById(id) {
 function gradientFromValue(v) {
   if (!isGradientValue(v)) return null;
   return gradientById(v.slice(5));
+}
+
+// [2026-10-14 wallpaper-photo] chat_upload silent devolve file_url RELATIVO
+// ("/data/chat-files/<cid>/<arq>") e era gravado assim; no iOS/Android a
+// <Image>/expo-image não resolve URI relativa → fundo vazio (web funcionava por
+// ser mesma origem). Resolve pela mesma regra das bolhas (getMediaUrl) — conserta
+// também valores já gravados. Locais (file://, data:) passam intactos.
+export function resolveWallpaperUri(v) {
+  if (typeof v !== 'string' || !v) return v;
+  try { return api.getMediaUrl(v) || v; } catch { return v; }
+}
+function isImageWallpaper(v) {
+  return typeof v === 'string' && !!v && v !== 'none' && !v.startsWith('#') && !isGradientValue(v);
 }
 
 // ── Reusable gradient fill (SVG) ───────────────────────────────────────────
@@ -132,6 +146,11 @@ export function WallpaperBackground({ value, isDark, preview = false, style }) {
     );
   }
   // Image URI
+  const uri = resolveWallpaperUri(v);
+  // [2026-10-14 wallpaper-photo] opacidade 0.15/0.2 deixava a foto/IA quase
+  // invisível (parecia "não aplicou"). Foto escolhida pelo usuário = visível;
+  // no escuro escurece o bastante p/ as bolhas seguirem legíveis.
+  const imgOp = isDark ? 0.55 : 0.85;
   // [2026-10-08 chat-open-flicker] expo-image (memory-disk, no fade) so a
   // photo wallpaper is decoded once and repaints from memory on every chat
   // open — RN <Image> re-decoded it per mount and the thread showed one or
@@ -139,8 +158,8 @@ export function WallpaperBackground({ value, isDark, preview = false, style }) {
   if (_WpExpoImage && !preview) {
     return (
       <_WpExpoImage
-        source={{ uri: v }}
-        style={[StyleSheet.absoluteFill, { opacity: isDark ? 0.15 : 0.2 }]}
+        source={{ uri }}
+        style={[StyleSheet.absoluteFill, { opacity: imgOp }]}
         contentFit="cover"
         cachePolicy="memory-disk"
         transition={0}
@@ -150,8 +169,8 @@ export function WallpaperBackground({ value, isDark, preview = false, style }) {
   }
   return (
     <Image
-      source={{ uri: v }}
-      style={[preview ? { flex: 1 } : StyleSheet.absoluteFill, { opacity: preview ? 1 : (isDark ? 0.15 : 0.2) }]}
+      source={{ uri }}
+      style={[preview ? { flex: 1 } : StyleSheet.absoluteFill, { opacity: preview ? 1 : imgOp }]}
       resizeMode="cover"
       pointerEvents="none"
     />
@@ -165,7 +184,7 @@ function PresetTile({ item, size, selected, onPress, isDark, t }) {
       <View style={{
         flex: 1, borderRadius: 16, overflow: 'hidden',
         borderWidth: selected ? 2.5 : StyleSheet.hairlineWidth,
-        borderColor: selected ? '#25D366' : (isDark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.10)'),
+        borderColor: selected ? (isDark ? '#fff' : '#111') : (isDark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.10)'),
         backgroundColor: isDark ? '#0b0b0b' : '#ECE5DD',
       }}>
         {item.id === 'none'
@@ -179,8 +198,8 @@ function PresetTile({ item, size, selected, onPress, isDark, t }) {
           </View>
         )}
         {selected && (
-          <View style={{ position: 'absolute', top: 6, right: 6, width: 22, height: 22, borderRadius: 11, backgroundColor: '#25D366', alignItems: 'center', justifyContent: 'center', shadowColor: '#000', shadowOpacity: 0.3, shadowRadius: 2, shadowOffset: { width: 0, height: 1 } }}>
-            <IconCheck size={14} color="#fff" strokeWidth={3} />
+          <View style={{ position: 'absolute', top: 6, right: 6, width: 22, height: 22, borderRadius: 11, backgroundColor: isDark ? '#fff' : '#111', alignItems: 'center', justifyContent: 'center', shadowColor: '#000', shadowOpacity: 0.3, shadowRadius: 2, shadowOffset: { width: 0, height: 1 } }}>
+            <IconCheck size={14} color={isDark ? '#000' : '#fff'} strokeWidth={3} />
           </View>
         )}
       </View>
@@ -209,6 +228,8 @@ export default function WallpaperPicker({
   const [aiBusy, setAiBusy] = useState(false);
   const [aiError, setAiError] = useState('');
   const [photoBusy, setPhotoBusy] = useState(false);
+  const [photoError, setPhotoError] = useState('');
+  const scrollRef = React.useRef(null);
   const { width } = useWindowDimensions();
 
   // 4-column grid sizing. Sheet horizontal padding = 20 each side, 12 gaps.
@@ -227,6 +248,7 @@ export default function WallpaperPicker({
       setShowAi(false);
       setAiPrompt('');
       setAiError('');
+      setPhotoError('');
     }
   }, [visible]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -240,7 +262,38 @@ export default function WallpaperPicker({
     []
   );
 
+  const photoFailMsg = t?.('chatConv.wallpaperPhotoFailed') || 'Não foi possível usar esta foto. Verifique a conexão e tente de novo.';
+
+  // [2026-10-14 wallpaper-photo] Sobe a foto e grava SEMPRE uma URL absoluta
+  // pública (sincroniza entre aparelhos e não some quando o iOS limpa o cache do
+  // ImagePicker). Antes: na conversa gravava o caminho RELATIVO do chat_upload
+  // (fundo vazio no nativo); em Configurações ("Todas as conversas", sem
+  // conversa) gravava o file:// local; na web, um data: URI truncado.
+  const uploadPicked = useCallback(async (picked) => {
+    let finalUri = '';
+    if (conversationId) {
+      try {
+        const up = await api.chatUploadFile(conversationId, picked, '', false, null, 'image', null, true);
+        const url = up?.data?.file_url || up?.data?.url || up?.data?.message?.file_url;
+        if (up?.success !== false && url) finalUri = resolveWallpaperUri(url);
+      } catch {}
+    }
+    if (!/^https?:\/\//i.test(finalUri)) {
+      // Sem conversa (ou chat_upload falhou): upload genérico → URL do CDN.
+      // Contexto 'media' = prefixo protegido do cleanup-r2-orphans.
+      try {
+        const r = await api.rustUpload(picked, '', 'media');
+        const url = r?.cdn_url || r?.data?.cdn_url;
+        if (r?.success !== false && url) finalUri = url;
+      } catch {}
+    }
+    if (/^https?:\/\//i.test(finalUri)) { apply(finalUri); return true; }
+    setPhotoError(photoFailMsg);
+    return false;
+  }, [apply, conversationId, photoFailMsg]);
+
   const pickPhoto = useCallback(async () => {
+    setPhotoError('');
     setPhotoBusy(true);
     try {
       if (Platform.OS === 'web') {
@@ -251,11 +304,9 @@ export default function WallpaperPicker({
           const file = e.target.files?.[0];
           if (!file) { setPhotoBusy(false); return; }
           try {
-            const reader = new FileReader();
-            reader.onload = () => { apply(String(reader.result).substring(0, 500000)); setPhotoBusy(false); };
-            reader.onerror = () => setPhotoBusy(false);
-            reader.readAsDataURL(file);
-          } catch { setPhotoBusy(false); }
+            await uploadPicked({ uri: '', blob: file, _raw: file, name: file.name || 'wallpaper.jpg', type: file.type || 'image/jpeg', size: file.size || 0 });
+          } catch { setPhotoError(photoFailMsg); }
+          finally { setPhotoBusy(false); }
         };
         input.oncancel = () => setPhotoBusy(false);
         input.click();
@@ -263,38 +314,32 @@ export default function WallpaperPicker({
       }
       const ImagePicker = require('expo-image-picker');
       const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], quality: 0.7, allowsEditing: true });
-      if (result.canceled || !result.assets?.[0]?.uri) { setPhotoBusy(false); return; }
+      if (result.canceled || !result.assets?.[0]?.uri) return;
       const a = result.assets[0];
-      let finalUri = a.uri;
-      // Upload so the wallpaper syncs across devices. Reuses the same silent
-      // chat_upload pipeline as group-photo changes. Needs a conversation to
-      // attach to; without one (global scope) we fall back to the local uri.
-      if (conversationId) {
-        try {
-          const picked = { uri: a.uri, name: a.fileName || 'wallpaper.jpg', type: a.mimeType || 'image/jpeg' };
-          const up = await api.chatUploadFile(conversationId, picked, '', false, null, 'image', null, true);
-          const url = up?.data?.file_url || up?.data?.url || up?.data?.message?.file_url;
-          if (url) finalUri = url;
-        } catch {}
-      }
-      apply(finalUri);
-    } catch {} finally {
+      await uploadPicked({ uri: a.uri, name: a.fileName || 'wallpaper.jpg', type: a.mimeType || 'image/jpeg', size: a.fileSize || 0 });
+    } catch {
+      setPhotoError(photoFailMsg);
+    } finally {
       if (Platform.OS !== 'web') setPhotoBusy(false);
     }
-  }, [apply, conversationId]);
+  }, [uploadPicked, photoFailMsg]);
 
   const generateAi = useCallback(async () => {
     const prompt = aiPrompt.trim();
-    if (!prompt || aiBusy) return;
+    if (prompt.length < 3 || aiBusy) return;
     setAiBusy(true);
     setAiError('');
     try {
-      const r = await api.aiGenerateImage(prompt, '1024x1024');
+      // [2026-10-14 wallpaper-ai] retrato (1024x1536) = formato de tela; o
+      // servidor leva 15-40 s (gpt-image-1) → timeout próprio no api.js.
+      const r = await api.aiGenerateImage(prompt, '1024x1536');
       const url = r?.data?.url || r?.data?.image_url || r?.data?.file_url || r?.data?.image || r?.url;
       if (r?.success && url) {
-        apply(url);
+        apply(resolveWallpaperUri(url));
       } else {
-        setAiError(t?.('chatConv.wallpaperAiUnavailable') || 'Não foi possível gerar agora. Tente novamente.');
+        // Mensagem do servidor (ex.: limite por hora, prompt recusado) quando houver.
+        const m = typeof r?.message === 'string' && /limite/i.test(r.message) ? r.message : '';
+        setAiError(m || t?.('chatConv.wallpaperAiUnavailable') || 'Não foi possível gerar agora. Tente novamente.');
       }
     } catch {
       setAiError(t?.('chatConv.wallpaperAiUnavailable') || 'Não foi possível gerar agora. Tente novamente.');
@@ -307,10 +352,14 @@ export default function WallpaperPicker({
   const cardBg = isDark ? 'rgba(255,255,255,0.05)' : '#FFFFFF';
   const rowBorder = isDark ? 'rgba(255,255,255,0.07)' : 'rgba(0,0,0,0.06)';
   const subText = C.textSecondary || (isDark ? 'rgba(255,255,255,0.55)' : 'rgba(0,0,0,0.5)');
+  // [2026-10-14 wallpaper] P&B: ícones/botões neutros (era azul/roxo/laranja/verde).
+  const ink = C.text || (isDark ? '#fff' : '#111');
+  const inkInv = isDark ? '#000' : '#fff';
+  const imgSelected = isImageWallpaper(selected) ? resolveWallpaperUri(selected) : '';
 
   const Row = ({ Icon, tint, title, subtitle, onPress, open, trailing }) => (
     <PressableScale onPress={onPress} scaleTo={0.985} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 14, paddingHorizontal: 16, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: rowBorder }}>
-      <View style={{ width: 40, height: 40, borderRadius: 12, backgroundColor: tint + '22', alignItems: 'center', justifyContent: 'center', marginRight: 14 }}>
+      <View style={{ width: 40, height: 40, borderRadius: 12, backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)', alignItems: 'center', justifyContent: 'center', marginRight: 14 }}>
         <Icon size={20} color={tint} />
       </View>
       <View style={{ flex: 1 }}>
@@ -330,17 +379,20 @@ export default function WallpaperPicker({
         activeOpacity={0.8}
         style={{
           flex: 1, paddingVertical: 9, borderRadius: 9, alignItems: 'center', justifyContent: 'center',
-          backgroundColor: active ? (isDark ? '#25D366' : '#111') : 'transparent',
+          backgroundColor: active ? ink : 'transparent',
           opacity: disabled ? 0.4 : 1,
         }}
       >
-        <Text style={{ fontSize: 13.5, fontWeight: '700', color: active ? '#fff' : (C.text || (isDark ? '#fff' : '#111')) }}>{label}</Text>
+        <Text style={{ fontSize: 13.5, fontWeight: '700', color: active ? inkInv : ink }}>{label}</Text>
       </TouchableOpacity>
     );
   };
 
   return (
     <Modal visible={!!visible} transparent animationType="slide" onRequestClose={onClose}>
+      {/* [2026-10-14 wallpaper-ai] KAV: o teclado cobria o campo e o botão Gerar
+          (sheet ancorada embaixo) — no iPhone não dava pra ver/tocar em Gerar. */}
+      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
       <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' }}>
         <TouchableOpacity activeOpacity={1} style={{ flex: 1 }} onPress={onClose} />
         <View style={{ backgroundColor: C.background || (isDark ? '#000000' : '#F7F7F7'), borderTopLeftRadius: 22, borderTopRightRadius: 22, maxHeight: '92%', overflow: 'hidden' }}>
@@ -354,7 +406,8 @@ export default function WallpaperPicker({
             </Text>
           </View>
 
-          <ScrollView contentContainerStyle={{ padding: GRID_PAD, paddingBottom: 40 }} showsVerticalScrollIndicator={false}>
+          <ScrollView ref={scrollRef} contentContainerStyle={{ padding: GRID_PAD, paddingBottom: 40 }} showsVerticalScrollIndicator={false}
+            keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag">
             {/* Scope segmented control */}
             <View style={{ flexDirection: 'row', backgroundColor: isDark ? 'rgba(255,255,255,0.07)' : 'rgba(0,0,0,0.05)', borderRadius: 11, padding: 3, marginBottom: 18 }}>
               <ScopeBtn value="conversation" label={t?.('chatConv.wallpaperScopeThis') || 'Esta conversa'} disabled={!canConversation} />
@@ -365,14 +418,22 @@ export default function WallpaperPicker({
             <View style={{ backgroundColor: cardBg, borderRadius: 16, overflow: 'hidden', marginBottom: 22, borderWidth: StyleSheet.hairlineWidth, borderColor: rowBorder }}>
               <Row
                 Icon={IconImage}
-                tint="#3B82F6"
+                tint={ink}
                 title={t?.('chatConv.wallpaperFromPhotos') || 'Escolher das Fotos'}
-                onPress={pickPhoto}
-                trailing={photoBusy ? <ActivityIndicator size="small" color="#3B82F6" /> : undefined}
+                subtitle={photoBusy ? (t?.('chatConv.wallpaperUploading') || 'Enviando foto...') : (imgSelected ? (t?.('chatConv.wallpaperApplied') || 'Papel de parede aplicado') : undefined)}
+                onPress={photoBusy ? undefined : pickPhoto}
+                trailing={photoBusy ? <ActivityIndicator size="small" color={ink} /> : (imgSelected ? (
+                  <View style={{ width: 34, height: 48, borderRadius: 8, overflow: 'hidden', borderWidth: 2, borderColor: ink }}>
+                    <Image source={{ uri: imgSelected }} style={{ flex: 1 }} resizeMode="cover" />
+                  </View>
+                ) : undefined)}
               />
+              {!!photoError && (
+                <Text style={{ color: '#EF4444', fontSize: 12.5, paddingHorizontal: 16, paddingVertical: 8 }}>{photoError}</Text>
+              )}
               <Row
                 Icon={IconPalette}
-                tint="#8B5CF6"
+                tint={ink}
                 title={t?.('chatConv.wallpaperSetColor') || 'Definir cor'}
                 onPress={() => { setShowColors(v => !v); setShowAi(false); }}
                 open={showColors}
@@ -381,7 +442,7 @@ export default function WallpaperPicker({
                 <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 14, padding: 16, paddingTop: 14, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: rowBorder }}>
                   {WALLPAPER_SOLIDS.map(c => (
                     <TouchableOpacity key={c} onPress={() => apply(c)} activeOpacity={0.8}
-                      style={{ width: 42, height: 42, borderRadius: 21, backgroundColor: c, alignItems: 'center', justifyContent: 'center', borderWidth: selected === c ? 3 : StyleSheet.hairlineWidth, borderColor: selected === c ? '#25D366' : 'rgba(128,128,128,0.4)' }}>
+                      style={{ width: 42, height: 42, borderRadius: 21, backgroundColor: c, alignItems: 'center', justifyContent: 'center', borderWidth: selected === c ? 3 : StyleSheet.hairlineWidth, borderColor: selected === c ? ink : 'rgba(128,128,128,0.4)' }}>
                       {selected === c && <IconCheck size={18} color="#fff" strokeWidth={3} />}
                     </TouchableOpacity>
                   ))}
@@ -389,10 +450,14 @@ export default function WallpaperPicker({
               )}
               <Row
                 Icon={IconSparkles}
-                tint="#F59E0B"
+                tint={ink}
                 title={t?.('chatConv.wallpaperCreateAi') || 'Criar com IA'}
                 subtitle={t?.('chatConv.wallpaperCreateAiSub') || 'Descreva um fundo e a Bia cria pra você'}
-                onPress={() => { setShowAi(v => !v); setShowColors(false); }}
+                onPress={() => {
+                  setShowAi(v => !v); setShowColors(false);
+                  // Leva o campo pra perto do topo (o teclado vai subir).
+                  setTimeout(() => { try { scrollRef.current?.scrollTo({ y: 150, animated: true }); } catch {} }, 80);
+                }}
                 open={showAi}
               />
               {showAi && (
@@ -403,18 +468,25 @@ export default function WallpaperPicker({
                     placeholder={t?.('chatConv.wallpaperAiPlaceholder') || 'Ex: montanhas ao pôr do sol, minimalista'}
                     placeholderTextColor={subText}
                     editable={!aiBusy}
+                    autoFocus
+                    maxLength={500}
                     style={{ backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)', borderRadius: 11, paddingHorizontal: 14, paddingVertical: 11, fontSize: 14.5, color: C.text || (isDark ? '#fff' : '#111') }}
                     returnKeyType="go"
                     onSubmitEditing={generateAi}
                   />
                   {!!aiError && <Text style={{ color: '#EF4444', fontSize: 12.5, marginTop: 8 }}>{aiError}</Text>}
-                  <TouchableOpacity onPress={generateAi} disabled={aiBusy || !aiPrompt.trim()} activeOpacity={0.85}
-                    style={{ marginTop: 12, backgroundColor: '#F59E0B', opacity: (aiBusy || !aiPrompt.trim()) ? 0.5 : 1, borderRadius: 11, paddingVertical: 11, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
-                    {aiBusy ? <ActivityIndicator size="small" color="#fff" /> : <IconSparkles size={16} color="#fff" />}
-                    <Text style={{ color: '#fff', fontWeight: '700', fontSize: 14.5 }}>
+                  <TouchableOpacity onPress={generateAi} disabled={aiBusy || aiPrompt.trim().length < 3} activeOpacity={0.85}
+                    style={{ marginTop: 12, backgroundColor: ink, opacity: (aiBusy || aiPrompt.trim().length < 3) ? 0.45 : 1, borderRadius: 11, paddingVertical: 11, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
+                    {aiBusy ? <ActivityIndicator size="small" color={inkInv} /> : <IconSparkles size={16} color={inkInv} />}
+                    <Text style={{ color: inkInv, fontWeight: '700', fontSize: 14.5 }}>
                       {aiBusy ? (t?.('chatConv.wallpaperAiGenerating') || 'Gerando...') : (t?.('chatConv.wallpaperAiGenerate') || 'Gerar')}
                     </Text>
                   </TouchableOpacity>
+                  {aiBusy && (
+                    <Text style={{ color: subText, fontSize: 12.5, marginTop: 8, textAlign: 'center' }}>
+                      {t?.('chatConv.wallpaperAiSlow') || 'Isso pode levar até 1 minuto'}
+                    </Text>
+                  )}
                 </View>
               )}
             </View>
@@ -443,12 +515,13 @@ export default function WallpaperPicker({
 
           {/* Done bar */}
           <View style={{ padding: 16, paddingBottom: Platform.OS === 'ios' ? 30 : androidBottomInset(16), borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: rowBorder, backgroundColor: C.background || (isDark ? '#000000' : '#F7F7F7') }}>
-            <TouchableOpacity onPress={onClose} activeOpacity={0.85} style={{ backgroundColor: '#25D366', borderRadius: 13, paddingVertical: 14, alignItems: 'center' }}>
-              <Text style={{ color: '#fff', fontWeight: '700', fontSize: 16 }}>{t?.('common.done') || 'Concluído'}</Text>
+            <TouchableOpacity onPress={onClose} activeOpacity={0.85} style={{ backgroundColor: ink, borderRadius: 13, paddingVertical: 14, alignItems: 'center' }}>
+              <Text style={{ color: inkInv, fontWeight: '700', fontSize: 16 }}>{t?.('common.done') || 'Concluído'}</Text>
             </TouchableOpacity>
           </View>
         </View>
       </View>
+      </KeyboardAvoidingView>
     </Modal>
   );
 }

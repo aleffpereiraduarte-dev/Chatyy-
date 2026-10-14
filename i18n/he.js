@@ -8112,4 +8112,9 @@ export default {
   // [2026-10-13 reels-android] erro do player no Reels
   "reels.videoError": "לא ניתן להפעיל את הסרטון",
   "reels.videoRetry": "נסה שוב",
+  // [2026-10-14 wallpaper] foto/IA: estados de envio, erro e aplicado
+  "chatConv.wallpaperUploading": "מעלה תמונה...",
+  "chatConv.wallpaperPhotoFailed": "לא ניתן להשתמש בתמונה הזו. בדקו את החיבור ונסו שוב.",
+  "chatConv.wallpaperApplied": "הטפט הוחל",
+  "chatConv.wallpaperAiSlow": "זה עשוי להימשך עד דקה",
 };

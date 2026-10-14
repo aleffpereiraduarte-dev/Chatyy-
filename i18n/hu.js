@@ -8112,4 +8112,9 @@ export default {
   // [2026-10-13 reels-android] erro do player no Reels
   "reels.videoError": "A videó nem játszható le",
   "reels.videoRetry": "Próbáld újra",
+  // [2026-10-14 wallpaper] foto/IA: estados de envio, erro e aplicado
+  "chatConv.wallpaperUploading": "Fotó feltöltése...",
+  "chatConv.wallpaperPhotoFailed": "Ez a fotó nem használható. Ellenőrizd a kapcsolatot, és próbáld újra.",
+  "chatConv.wallpaperApplied": "Háttérkép beállítva",
+  "chatConv.wallpaperAiSlow": "Ez akár 1 percig is tarthat",
 };

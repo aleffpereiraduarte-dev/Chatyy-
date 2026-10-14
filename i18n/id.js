@@ -10935,4 +10935,9 @@ export default {
   // [2026-10-13 reels-android] erro do player no Reels
   "reels.videoError": "Tidak dapat memutar video ini",
   "reels.videoRetry": "Coba lagi",
+  // [2026-10-14 wallpaper] foto/IA: estados de envio, erro e aplicado
+  "chatConv.wallpaperUploading": "Mengunggah foto...",
+  "chatConv.wallpaperPhotoFailed": "Foto ini tidak dapat digunakan. Periksa koneksi Anda dan coba lagi.",
+  "chatConv.wallpaperApplied": "Wallpaper diterapkan",
+  "chatConv.wallpaperAiSlow": "Ini bisa memakan waktu hingga 1 menit",
 };

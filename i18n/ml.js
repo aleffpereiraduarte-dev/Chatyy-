@@ -658,4 +658,9 @@ export default {
   // [2026-10-13 reels-android] erro do player no Reels
   "reels.videoError": "ഈ വീഡിയോ പ്ലേ ചെയ്യാനായില്ല",
   "reels.videoRetry": "വീണ്ടും ശ്രമിക്കുക",
+  // [2026-10-14 wallpaper] foto/IA: estados de envio, erro e aplicado
+  "chatConv.wallpaperUploading": "ഫോട്ടോ അപ്‌ലോഡ് ചെയ്യുന്നു...",
+  "chatConv.wallpaperPhotoFailed": "ഈ ഫോട്ടോ ഉപയോഗിക്കാനായില്ല. കണക്ഷൻ പരിശോധിച്ച് വീണ്ടും ശ്രമിക്കുക.",
+  "chatConv.wallpaperApplied": "വാൾപേപ്പർ പ്രയോഗിച്ചു",
+  "chatConv.wallpaperAiSlow": "ഇതിന് 1 മിനിറ്റ് വരെ എടുത്തേക്കാം",
 };

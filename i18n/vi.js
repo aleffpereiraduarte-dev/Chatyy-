@@ -8112,4 +8112,9 @@ export default {
   // [2026-10-13 reels-android] erro do player no Reels
   "reels.videoError": "Không thể phát video này",
   "reels.videoRetry": "Thử lại",
+  // [2026-10-14 wallpaper] foto/IA: estados de envio, erro e aplicado
+  "chatConv.wallpaperUploading": "Đang tải ảnh lên...",
+  "chatConv.wallpaperPhotoFailed": "Không thể dùng ảnh này. Hãy kiểm tra kết nối và thử lại.",
+  "chatConv.wallpaperApplied": "Đã áp dụng hình nền",
+  "chatConv.wallpaperAiSlow": "Việc này có thể mất tới 1 phút",
 };

@@ -10936,4 +10936,9 @@ export default {
   // [2026-10-13 reels-android] erro do player no Reels
   "reels.videoError": "この動画を再生できませんでした",
   "reels.videoRetry": "再試行",
+  // [2026-10-14 wallpaper] foto/IA: estados de envio, erro e aplicado
+  "chatConv.wallpaperUploading": "写真をアップロード中...",
+  "chatConv.wallpaperPhotoFailed": "この写真は使用できませんでした。接続を確認してもう一度お試しください。",
+  "chatConv.wallpaperApplied": "壁紙を適用しました",
+  "chatConv.wallpaperAiSlow": "最大1分ほどかかる場合があります",
 };

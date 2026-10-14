@@ -8112,4 +8112,9 @@ export default {
   // [2026-10-13 reels-android] erro do player no Reels
   "reels.videoError": "پخش این ویدیو ممکن نشد",
   "reels.videoRetry": "تلاش دوباره",
+  // [2026-10-14 wallpaper] foto/IA: estados de envio, erro e aplicado
+  "chatConv.wallpaperUploading": "در حال بارگذاری عکس...",
+  "chatConv.wallpaperPhotoFailed": "استفاده از این عکس ممکن نشد. اتصال را بررسی کنید و دوباره امتحان کنید.",
+  "chatConv.wallpaperApplied": "تصویر زمینه اعمال شد",
+  "chatConv.wallpaperAiSlow": "این کار ممکن است تا ۱ دقیقه طول بکشد",
 };

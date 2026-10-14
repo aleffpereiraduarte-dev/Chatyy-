@@ -8108,4 +8108,9 @@ export default {
   // [2026-10-13 reels-android] erro do player no Reels
   "reels.videoError": "Энэ видеог тоглуулж чадсангүй",
   "reels.videoRetry": "Дахин оролдох",
+  // [2026-10-14 wallpaper] foto/IA: estados de envio, erro e aplicado
+  "chatConv.wallpaperUploading": "Зураг илгээж байна...",
+  "chatConv.wallpaperPhotoFailed": "Энэ зургийг ашиглаж чадсангүй. Холболтоо шалгаад дахин оролдоно уу.",
+  "chatConv.wallpaperApplied": "Ханын зураг тохируулагдлаа",
+  "chatConv.wallpaperAiSlow": "Энэ 1 минут хүртэл үргэлжилж магадгүй",
 };

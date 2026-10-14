@@ -8112,4 +8112,9 @@ export default {
   // [2026-10-13 reels-android] erro do player no Reels
   "reels.videoError": "Δεν ήταν δυνατή η αναπαραγωγή του βίντεο",
   "reels.videoRetry": "Δοκιμάστε ξανά",
+  // [2026-10-14 wallpaper] foto/IA: estados de envio, erro e aplicado
+  "chatConv.wallpaperUploading": "Μεταφόρτωση φωτογραφίας...",
+  "chatConv.wallpaperPhotoFailed": "Δεν ήταν δυνατή η χρήση αυτής της φωτογραφίας. Ελέγξτε τη σύνδεση και δοκιμάστε ξανά.",
+  "chatConv.wallpaperApplied": "Η ταπετσαρία εφαρμόστηκε",
+  "chatConv.wallpaperAiSlow": "Αυτό μπορεί να διαρκέσει έως 1 λεπτό",
 };

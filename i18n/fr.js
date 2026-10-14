@@ -11715,4 +11715,9 @@ export default {
   // [2026-10-13 reels-android] erro do player no Reels
   "reels.videoError": "Impossible de lire cette vidéo",
   "reels.videoRetry": "Réessayer",
+  // [2026-10-14 wallpaper] foto/IA: estados de envio, erro e aplicado
+  "chatConv.wallpaperUploading": "Envoi de la photo...",
+  "chatConv.wallpaperPhotoFailed": "Impossible d'utiliser cette photo. Vérifiez votre connexion et réessayez.",
+  "chatConv.wallpaperApplied": "Fond d'écran appliqué",
+  "chatConv.wallpaperAiSlow": "Cela peut prendre jusqu'à 1 minute",
 };

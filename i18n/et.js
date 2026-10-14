@@ -8112,4 +8112,9 @@ export default {
   // [2026-10-13 reels-android] erro do player no Reels
   "reels.videoError": "Videot ei õnnestunud esitada",
   "reels.videoRetry": "Proovi uuesti",
+  // [2026-10-14 wallpaper] foto/IA: estados de envio, erro e aplicado
+  "chatConv.wallpaperUploading": "Foto üleslaadimine...",
+  "chatConv.wallpaperPhotoFailed": "Seda fotot ei saanud kasutada. Kontrolli ühendust ja proovi uuesti.",
+  "chatConv.wallpaperApplied": "Taustapilt rakendatud",
+  "chatConv.wallpaperAiSlow": "See võib võtta kuni 1 minut",
 };

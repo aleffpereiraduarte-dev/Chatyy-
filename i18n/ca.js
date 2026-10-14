@@ -8112,4 +8112,9 @@ export default {
   // [2026-10-13 reels-android] erro do player no Reels
   "reels.videoError": "No s'ha pogut reproduir aquest vídeo",
   "reels.videoRetry": "Torna-ho a provar",
+  // [2026-10-14 wallpaper] foto/IA: estados de envio, erro e aplicado
+  "chatConv.wallpaperUploading": "S'està pujant la foto...",
+  "chatConv.wallpaperPhotoFailed": "No s'ha pogut fer servir aquesta foto. Comprova la connexió i torna-ho a provar.",
+  "chatConv.wallpaperApplied": "Fons de pantalla aplicat",
+  "chatConv.wallpaperAiSlow": "Això pot trigar fins a 1 minut",
 };

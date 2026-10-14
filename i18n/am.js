@@ -8108,4 +8108,9 @@ export default {
   // [2026-10-13 reels-android] erro do player no Reels
   "reels.videoError": "ይህን ቪዲዮ ማጫወት አልተቻለም",
   "reels.videoRetry": "እንደገና ሞክር",
+  // [2026-10-14 wallpaper] foto/IA: estados de envio, erro e aplicado
+  "chatConv.wallpaperUploading": "ፎቶ በመስቀል ላይ...",
+  "chatConv.wallpaperPhotoFailed": "ይህን ፎቶ መጠቀም አልተቻለም። ግንኙነትዎን ያረጋግጡና እንደገና ይሞክሩ።",
+  "chatConv.wallpaperApplied": "የግድግዳ ወረቀት ተተግብሯል",
+  "chatConv.wallpaperAiSlow": "ይህ እስከ 1 ደቂቃ ሊወስድ ይችላል",
 };

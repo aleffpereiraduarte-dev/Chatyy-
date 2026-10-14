@@ -11714,4 +11714,9 @@ export default {
   // [2026-10-13 reels-android] erro do player no Reels
   "reels.videoError": "Dieses Video konnte nicht abgespielt werden",
   "reels.videoRetry": "Erneut versuchen",
+  // [2026-10-14 wallpaper] foto/IA: estados de envio, erro e aplicado
+  "chatConv.wallpaperUploading": "Foto wird hochgeladen...",
+  "chatConv.wallpaperPhotoFailed": "Dieses Foto konnte nicht verwendet werden. Prüfe deine Verbindung und versuche es erneut.",
+  "chatConv.wallpaperApplied": "Hintergrund angewendet",
+  "chatConv.wallpaperAiSlow": "Das kann bis zu 1 Minute dauern",
 };

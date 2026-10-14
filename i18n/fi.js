@@ -8890,4 +8890,9 @@ export default {
   // [2026-10-13 reels-android] erro do player no Reels
   "reels.videoError": "Videota ei voitu toistaa",
   "reels.videoRetry": "Yritä uudelleen",
+  // [2026-10-14 wallpaper] foto/IA: estados de envio, erro e aplicado
+  "chatConv.wallpaperUploading": "Ladataan kuvaa...",
+  "chatConv.wallpaperPhotoFailed": "Tätä kuvaa ei voitu käyttää. Tarkista yhteys ja yritä uudelleen.",
+  "chatConv.wallpaperApplied": "Taustakuva asetettu",
+  "chatConv.wallpaperAiSlow": "Tämä voi kestää jopa 1 minuutin",
 };
