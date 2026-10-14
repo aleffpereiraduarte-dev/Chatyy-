@@ -176,6 +176,9 @@ final class CallViewController: UIViewController, @unchecked Sendable {
     private var pipRenderer: PiPVideoRenderer?
     private var pipAttachedTrack: VideoTrack?
     private var pipResignObserver: NSObjectProtocol?
+    // [2026-10-14 pip-frozen] avatar card over the PiP video + stall watch.
+    private weak var pipContainer: PiPSampleBufferView?
+    private var pipStallTimer: Timer?
 
     // Ringback
     // [2026-10-13 ringback] AVAudioPlayer (in-memory WAV, 425 Hz 1 s on / 4 s
@@ -4009,6 +4012,7 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         self.pipDisplayLayer = displayLayer
         self.pipVideoCallVC = pipVC
         self.pipController = controller
+        self.pipContainer = container
         let renderer = PiPVideoRenderer(displayLayer: displayLayer)
         // PiP window aspect + layer rotation follow the remote video.
         renderer.onFormatChange = { [weak container, weak pipVC] rotation, size in
@@ -4041,6 +4045,37 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         track.add(videoRenderer: renderer)
         pipAttachedTrack = track
         print("[CallVC] PiP renderer attached to remote track")
+    }
+
+    /// [2026-10-14 pip-frozen] Founder print 13/10: call minimized, peer turned
+    /// the camera OFF → the PiP window kept the LAST frame (frozen face over
+    /// Settings). The display layer never clears itself. Now: no live remote
+    /// video (track detached / muted / no frame for 1.6 s — also covers a peer
+    /// whose camera stops without a mute event, e.g. app backgrounded) →
+    /// avatar + name card (WhatsApp); frames back → video again.
+    private func refreshPiPPlaceholder() {
+        guard let container = pipContainer else { return }
+        let fresh: Bool = {
+            guard pipAttachedTrack != nil, !remoteVideoMuted, let r = pipRenderer else { return false }
+            return CACurrentMediaTime() - r.lastFrameAt < 1.6
+        }()
+        let img = (viewIfLoaded?.viewWithTag(9030) as? UIImageView)?.image
+        container.setPlaceholder(visible: !fresh, name: callerName, image: img)
+    }
+
+    private func startPiPStallWatch() {
+        pipStallTimer?.invalidate()
+        refreshPiPPlaceholder()
+        let t = Timer(timeInterval: 0.5, repeats: true) { [weak self] _ in
+            self?.refreshPiPPlaceholder()
+        }
+        RunLoop.main.add(t, forMode: .common)
+        pipStallTimer = t
+    }
+
+    private func stopPiPStallWatch() {
+        pipStallTimer?.invalidate()
+        pipStallTimer = nil
     }
 
     private func installBackgroundObserverForPiP() {
@@ -4649,6 +4684,7 @@ final class CallViewController: UIViewController, @unchecked Sendable {
             track.remove(videoRenderer: renderer)
         }
         pipAttachedTrack = nil
+        pipStallTimer?.invalidate(); pipStallTimer = nil // [2026-10-14 pip-frozen]
         pipController = nil
         pipVideoCallVC = nil
         pipDisplayLayer = nil
@@ -6519,6 +6555,8 @@ extension CallViewController: RoomDelegate {
                     self.attachPiPRenderer(to: fallback)
                 }
             }
+            // [2026-10-14 pip-frozen] no remote video left → avatar card in PiP now.
+            if self.pipAttachedTrack == nil { self.refreshPiPPlaceholder() }
         }
     }
 
@@ -6600,6 +6638,9 @@ extension CallViewController: RoomDelegate {
                     track.remove(videoRenderer: renderer)
                     self.pipAttachedTrack = nil
                 }
+                // [2026-10-14 pip-frozen] detaching alone left the last frame on
+                // the display layer → swap to the avatar card right away.
+                self.refreshPiPPlaceholder()
                 self.session.remoteVideoTrack = nil
             } else {
                 // Camera back on — re-bind the same track (or the publication's
@@ -6774,6 +6815,7 @@ extension CallViewController: AVPictureInPictureControllerDelegate {
         print("[CallVC] PiP will start")
         // [2026-10-07 ios-native] full-rate I420 conversion while visible.
         pipRenderer?.isPiPActive = true
+        startPiPStallWatch() // [2026-10-14 pip-frozen]
         // [Bridge #3 2026-05-19] Notify JS so the chat header / OngoingCallBar
         // can shrink while the call docks. Mirrors the Android path
         // CallActivity.onPictureInPictureModeChanged → emitPipChanged. The
@@ -6807,10 +6849,12 @@ extension CallViewController: AVPictureInPictureControllerDelegate {
                                     failedToStartPictureInPictureWithError error: Error) {
         print("[CallVC] PiP failed to start: \(error)")
         pipRenderer?.isPiPActive = false
+        stopPiPStallWatch() // [2026-10-14 pip-frozen]
     }
     func pictureInPictureControllerWillStopPictureInPicture(_ controller: AVPictureInPictureController) {
         print("[CallVC] PiP will stop")
         pipRenderer?.isPiPActive = false
+        stopPiPStallWatch() // [2026-10-14 pip-frozen]
         // [Bridge #3 2026-05-19] Symmetric exit event.
         NotificationCenter.default.post(
             name: Notification.Name("ExpoCallKitPipChanged"),

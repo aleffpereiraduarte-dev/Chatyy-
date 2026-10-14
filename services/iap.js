@@ -70,21 +70,21 @@ export const PRODUCT_IDS = [
 // in /var/www/mail/api/chat.php (case 'wallet_buy_diamonds') is the source
 // of truth for diamond credit math; this list is just StoreKit metadata.
 //
-// 2026-05-21 FIX (WAVE 82): DIAMOND_PACK_SKUS must match the SKU IDs in
-// DIAMOND_PACKS exactly (the IDs the UI passes to purchaseDiamonds). Singular
-// `chatyy_diamond_*` is the canonical form — registered in ASC as Consumables
-// under those exact IDs. The previous plural `chatyy_diamonds_*` was wrong and
-// caused every tap to return sku_not_in_catalog because isDiamondSkuAvailable()
-// compared the singular DIAMOND_PACKS IDs against plural _diamondProducts — 0 matches.
+// [2026-10-13] IDs REAIS no App Store Connect (consultado via API): só existem os
+// consumíveis PLURAIS `chatyy_diamonds_<total>` — o número é o TOTAL entregue
+// (já com bônus): 100 / 550 / 1700 / 6000 / 19500. Os singulares
+// `chatyy_diamond_*` NUNCA existiram no ASC (o comentário antigo dizia o
+// contrário) → fetchProducts voltava vazio e todo toque dava sku_not_in_catalog.
+// DIAMOND_PACK_SKUS precisa bater 1:1 com DIAMOND_PACKS.sku.
 // Android Play IDs (chatyy_topup_*) are separate because Play Console was
 // created with those IDs; they map to the same diamond credit tiers in the backend.
 export const DIAMOND_PACK_SKUS = [
   // iOS/ASC Consumable SKUs — must match DIAMOND_PACKS.sku exactly
-  'chatyy_diamond_100',
-  'chatyy_diamond_500',
-  'chatyy_diamond_1500',
-  'chatyy_diamond_5000',
-  'chatyy_diamond_15000',
+  'chatyy_diamonds_100',
+  'chatyy_diamonds_550',
+  'chatyy_diamonds_1700',
+  'chatyy_diamonds_6000',
+  'chatyy_diamonds_19500',
   // Android Play Managed-product SKUs (separate namespace, same credit math)
   'chatyy_topup_5',
   'chatyy_topup_20',
@@ -157,11 +157,12 @@ export const STORAGE_FREE_GB = 20; // [2026-10-04] free = 20GB (era 50 stale; ba
 // `sku` is the canonical iOS/ASC SKU. `skuAndroid` is the Play Console SKU
 // (separate namespace). purchaseDiamonds() resolves the right one per platform.
 export const DIAMOND_PACKS = [
-  { sku: 'chatyy_diamond_100',   skuAndroid: 'chatyy_topup_5',   diamonds: 100,   priceBrl: 4.99,   bonusPct: 0  },
-  { sku: 'chatyy_diamond_500',   skuAndroid: 'chatyy_topup_20',  diamonds: 550,   priceBrl: 19.99,  bonusPct: 10 },
-  { sku: 'chatyy_diamond_1500',  skuAndroid: 'chatyy_topup_50',  diamonds: 1700,  priceBrl: 49.99,  bonusPct: 13 },
-  { sku: 'chatyy_diamond_5000',  skuAndroid: 'chatyy_topup_150', diamonds: 6000,  priceBrl: 149.99, bonusPct: 20 },
-  { sku: 'chatyy_diamond_15000', skuAndroid: 'chatyy_topup_400', diamonds: 19500, priceBrl: 399.99, bonusPct: 30 },
+  // priceBrl = preço web/Stripe e fallback antes do catálogo da loja chegar (iOS mostra o preço da App Store: 6000=R$149,90, 19500=R$399,90).
+  { sku: 'chatyy_diamonds_100',   skuAndroid: 'chatyy_topup_5',   diamonds: 100,   priceBrl: 4.99,   bonusPct: 0  },
+  { sku: 'chatyy_diamonds_550',   skuAndroid: 'chatyy_topup_20',  diamonds: 550,   priceBrl: 19.99,  bonusPct: 10 },
+  { sku: 'chatyy_diamonds_1700',  skuAndroid: 'chatyy_topup_50',  diamonds: 1700,  priceBrl: 49.99,  bonusPct: 13 },
+  { sku: 'chatyy_diamonds_6000',  skuAndroid: 'chatyy_topup_150', diamonds: 6000,  priceBrl: 149.99, bonusPct: 20 },
+  { sku: 'chatyy_diamonds_19500', skuAndroid: 'chatyy_topup_400', diamonds: 19500, priceBrl: 399.99, bonusPct: 30 },
 ];
 
 let _available = false;
@@ -550,7 +551,7 @@ export async function purchaseDiamonds(productId) {
     try { await initIAP(); } catch {}
     if (!_available) return { success: false, message: 'iap_unavailable' };
   }
-  // On Android, DIAMOND_PACKS uses iOS SKU IDs (chatyy_diamond_*) as canonical
+  // On Android, DIAMOND_PACKS uses iOS SKU IDs (chatyy_diamonds_*) as canonical
   // UI identifiers, but Play Console has separate chatyy_topup_* SKUs.
   // Translate before checking _diamondProducts and before requestPurchase.
   let resolvedSku = productId;
@@ -586,7 +587,7 @@ export async function purchaseDiamonds(productId) {
     }
   }, 90000);
   try {
-    // Use resolvedSku (Android: chatyy_topup_*, iOS: chatyy_diamond_*)
+    // Use resolvedSku (Android: chatyy_topup_*, iOS: chatyy_diamonds_*)
     await mod.requestPurchase({
       request: {
         ios: { sku: resolvedSku },
@@ -610,7 +611,7 @@ export async function purchaseDiamonds(productId) {
 
 export function getDiamondProducts() { return _diamondProducts; }
 export function getDiamondLocalizedPrice(productId) {
-  // On Android, productId is the iOS canonical SKU (chatyy_diamond_*);
+  // On Android, productId is the iOS canonical SKU (chatyy_diamonds_*);
   // resolve to the Android SKU (chatyy_topup_*) for the price lookup.
   let lookupId = productId;
   if (Platform.OS === 'android') {

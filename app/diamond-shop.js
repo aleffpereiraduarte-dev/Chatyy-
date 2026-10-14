@@ -25,6 +25,7 @@ import { IconArrowLeft, IconDiamond, IconCreditCard, IconChevronRight } from '..
 import { formatInt } from '../utils/dateFormat';
 import {
   DIAMOND_PACKS, getDiamondLocalizedPrice, getDiamondCheckoutUrl, initIAP, purchaseDiamonds,
+  isDiamondSkuAvailable,
 } from '../services/iap';
 
 function formatBrl(v) {
@@ -121,6 +122,9 @@ export default function DiamondShopScreen() {
   }, []);
 
   const packs = useMemo(() => DIAMOND_PACKS, []);
+  // [2026-10-13] Loja conectada → só tocável o pacote que voltou no catálogo
+  // (preço local); o resto aparece "Em breve" (igual StorageShopSheet).
+  const isPackAvailable = (p) => Platform.OS === 'web' || !iapReady || isDiamondSkuAvailable(p.sku);
 
   const onBuy = useCallback(async (pack) => {
     if (pendingSku) return;
@@ -162,7 +166,7 @@ export default function DiamondShopScreen() {
         }
       } else if (r?.message === 'sku_not_in_catalog') {
         // [WAVE 39 2026-05-20] BUG 3 — friendly message instead of showing
-        // raw "sku_not_in_catalog" string. Diamond SKUs (chatyy_diamond_*) may
+        // raw "sku_not_in_catalog" string. Diamond SKUs (chatyy_diamonds_*) may
         // still be pending approval in App Store Connect / Play Console.
         // TODO: pedir ao founder pra finalizar registro dos SKUs no ASC/Play.
         if (Platform.OS === 'android') {
@@ -178,8 +182,8 @@ export default function DiamondShopScreen() {
           );
         } else {
           Alert.alert(
-            t('wallet.topupUnavailableTitle') || 'Pacote indisponível',
-            t('wallet.topupSkuPending') || 'Este pacote ainda está em aprovação na App Store. Tente outro pacote por enquanto.',
+            t('common.comingSoon') || 'Em breve',
+            t('wallet.topupUnavailableBody') || 'Não conseguimos iniciar a compra. Tente novamente em alguns minutos.',
           );
         }
       } else {
@@ -197,7 +201,7 @@ export default function DiamondShopScreen() {
     }
   }, [pendingSku, t]);
 
-  const featuredSku = 'chatyy_diamond_5000';
+  const featuredSku = 'chatyy_diamonds_6000';
 
   return (
     <View style={[styles.container, { backgroundColor: colors.background, paddingTop: USE_NATIVE_HEADER ? 0 : (insets.top || 0) + 6 }]}>
@@ -271,6 +275,8 @@ export default function DiamondShopScreen() {
             forced on users who prefer in-app IAP. iOS opens Safari
             (App Review 3.1.1 compliance); Android can do the same
             until native Payment Sheet ships. */}
+        {/* [2026-10-13] iOS: sem atalho p/ pagamento fora da App Store (diretriz 3.1.1). */}
+        {Platform.OS !== 'ios' && (
         <TouchableOpacity
           onPress={() => openWebCheckout(null)}
           style={[styles.ccCta, {
@@ -293,13 +299,15 @@ export default function DiamondShopScreen() {
           </View>
           <IconChevronRight size={20} color={colors.primary} />
         </TouchableOpacity>
+        )}
 
         {/* Packs */}
         {packs.map(p => {
           const localized = getDiamondLocalizedPrice(p.sku);
           const priceLabel = localized || formatBrl(p.priceBrl);
           const isLoading = pendingSku === p.sku;
-          const featured = p.sku === featuredSku;
+          const unavailable = !isPackAvailable(p);
+          const featured = p.sku === featuredSku && !unavailable;
           const bonusBadge = p.bonusPct > 0
             ? (t('wallet.topupBonus') || 'Bônus +{p}%').replace('{p}', p.bonusPct)
             : null;
@@ -308,7 +316,7 @@ export default function DiamondShopScreen() {
             <PackWrapper
               key={p.sku}
               onPress={() => onBuy(p)}
-              disabled={!!pendingSku}
+              disabled={!!pendingSku || unavailable}
               activeOpacity={0.85}
               style={[
                 styles.packCard,
@@ -320,7 +328,7 @@ export default function DiamondShopScreen() {
                   backgroundColor: featured
                     ? (isDark ? 'rgba(17, 17, 17,0.16)' : 'rgba(17, 17, 17,0.08)')
                     : (isDark ? 'rgba(17, 17, 17,0.06)' : 'rgba(17, 17, 17,0.03)'),
-                  opacity: pendingSku && !isLoading ? 0.45 : 1,
+                  opacity: (pendingSku && !isLoading) || unavailable ? 0.45 : 1,
                   shadowColor: featured ? '#111111' : 'transparent',
                   shadowOffset: { width: 0, height: 4 },
                   shadowOpacity: featured ? 0.35 : 0,
@@ -359,7 +367,7 @@ export default function DiamondShopScreen() {
                 ) : (
                   <View style={[styles.buyBtn, { backgroundColor: featured ? '#111111' : (isDark ? 'rgba(17, 17, 17,0.20)' : 'rgba(17, 17, 17,0.12)') }]}>
                     <Text style={[styles.buyBtnText, { color: featured ? '#fff' : '#111111' }]}>
-                      {priceLabel}
+                      {unavailable ? (t('common.comingSoon') || 'Em breve') : priceLabel}
                     </Text>
                   </View>
                 )}

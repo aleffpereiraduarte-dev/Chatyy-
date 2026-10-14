@@ -1,454 +1,345 @@
-// /creator-earnings — "Meus Ganhos" creator dashboard.
+// /creator-earnings — "Meus Ganhos".
 //
-// Renders:
-//   • Hero card: saldo disponível pra saque em R$ (pending_payout_cents/100),
-//     plus a "Solicitar saque" CTA (greyed se < R$ 50,00).
-//   • Stat grid (3 cards): total ganho, ganho 30d, # gifts 30d.
-//   • Top fans 30d (top 5 com avatar + total).
-//   • Timeline de gifts recebidos (de quem + de onde — live/reel/feed + qtd).
-//   • Botão pra "Saques anteriores" (abre /wallet-cashout que já lista).
+// [2026-10-13 earnings-v2] Repaginada no padrão P&B do Painel de criador
+// (app/profile-creator-dashboard.js): saldo disponível em destaque + "Sacar"
+// (preto; desabilitado com motivo + barra até o mínimo), métricas em grade
+// compacta, "Saques anteriores" como linha com chevron, Top fãs e Presentes
+// como listas (vazio compacto via ScreenEmptyState), ícones SVG P&B, skeleton,
+// pull-to-refresh, escuro e coluna limitada no web desktop.
 //
-// All data via creator_earnings_summary single round-trip. SVG-only icons
-// (sem emoji em UI). pt-BR / en / es via i18n.
+// MOEDA: o servidor manda centavos de BRL (pending_payout_cents, amount_cents,
+// e `amount` dos créditos tip_recv/live_gift_recv do ledger). Tudo passa por
+// formatMoneyActive (converte p/ a moeda de exibição) — nada de "R$" fixo.
 //
-// Conversion math note: backend mantém pending_payout_cents direto em BRL,
-// alimentado pelos handlers feed_post_tip / live_gift_send (split 70/30).
-// O wallet_history mostra os movimentos em DIAMANTES; aqui usamos centavos
-// pra falar do saldo de saque (única unidade que vira dinheiro real).
+// API: api.creatorEarningsSummary — se o servidor não rotear a action
+// (email.php hoje responde "Unknown action"), o próprio api.js monta o mesmo
+// formato via wallet_history + wallet_cashout_list (só leitura).
+// Saque: WALLET_ENABLED=false (e o servidor responde 410 feature_disabled em
+// wallet_cashout_request) → botão desabilitado com o motivo, sem cair no
+// redirect para /chat.
 
 import React, { useCallback, useEffect, useState } from 'react';
-import {
-  View, Text, StyleSheet, TouchableOpacity, ScrollView, ActivityIndicator,
-  RefreshControl, StatusBar,
-} from 'react-native';
+import { View, Text, ScrollView, StyleSheet, RefreshControl } from 'react-native';
 import { useRouter, Redirect, Stack } from 'expo-router';
-import { USE_NATIVE_HEADER, nativeHeaderOptions } from '../components/nativeHeader'; // [2026-10-09 native-sheets-headers] header NATIVO
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import Svg, { Path } from 'react-native-svg';
+import { USE_NATIVE_HEADER, nativeHeaderOptions } from '../components/nativeHeader'; // [2026-10-09 native-sheets-headers] header NATIVO
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 // [2026-05-22 monetization-pause] hidden by MONETIZATION_ENABLED flag
-import { MONETIZATION_ENABLED } from '../constants/featureFlags';
+import { MONETIZATION_ENABLED, WALLET_ENABLED } from '../constants/featureFlags';
 import * as api from '../services/api';
-import {
-  IconArrowLeft, IconGiftBox, IconHeart, IconChevronRight, IconStar,
-} from '../components/Icons';
+import { formatMoneyActive } from '../services/currencyService';
+import { useCurrency } from '../context/CurrencyContext';
 import AvatarCircle from '../components/AvatarCircle';
-import FadeSlideIn from '../components/FadeSlideIn';
-import PressableScale from '../components/PressableScale';
+import { IconReceipt } from '../components/Icons';
+import {
+  Button, Card, ListRow, SectionHeader, TopBar, useSurface, Skeleton, SkeletonFadeIn,
+  ScreenEmptyState, Type, Space, Radius, Layout,
+} from '../components/ui';
 import { formatInt } from '../utils/dateFormat';
 
+// Espelha chat.php wallet_cashout_request (amount_cents < 5000 → min_cashout).
 const MIN_CASHOUT_CENTS = 5000;
-const BRAND_GREEN = '#10B981';
-const BRAND_PURPLE = '#111111';
-const BRAND_AMBER = '#F59E0B';
 
-function fmtBrl(cents) {
-  const v = (Number(cents) || 0) / 100;
-  return v.toFixed(2).replace('.', ',');
-}
+function tr(t, k, fb) { const v = t ? t(k) : ''; return v && v !== k ? v : fb; }
+function money(cents) { return formatMoneyActive(Number(cents) || 0); }
+function handleOf(email) { const s = String(email || ''); return s.split('@')[0] || s; }
 
-function fmtCount(n, lang) {
-  return formatInt(n, lang);
-}
-
-function shortHandle(email) {
-  const s = String(email || '');
-  if (!s) return '';
-  return s.split('@')[0] || s;
-}
-
-function StatCard({ label, value, sub, accent, colors, isDark }) {
+// Presente (caixa) em traço fino P&B.
+function GiftGlyph({ size = 16, color }) {
   return (
-    <View style={[styles.statCard, {
-      backgroundColor: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(15,23,42,0.04)',
-      borderColor: isDark ? 'rgba(255,255,255,0.10)' : 'rgba(15,23,42,0.10)',
-    }]}>
-      <Text style={[styles.statLabel, { color: colors.textSecondary }]} numberOfLines={1}>
-        {label}
-      </Text>
-      <Text style={[styles.statValue, { color: accent || colors.text }]} numberOfLines={1}>
-        {value}
-      </Text>
-      {sub ? (
-        <Text style={[styles.statSub, { color: colors.textTertiary }]} numberOfLines={1}>
-          {sub}
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
+      <Path d="M3 9h18v4H3zM5 13v8h14v-8M12 9v12" />
+      <Path d="M12 9c-1.5-3-5-3.5-5-1.25C7 9 9.5 9 12 9Zm0 0c1.5-3 5-3.5 5-1.25C17 9 14.5 9 12 9Z" />
+    </Svg>
+  );
+}
+
+function sourceLabel(t, refKind) {
+  const k = String(refKind || '');
+  if (k === 'live_gift' || k === 'live') return tr(t, 'creatorEarnings.source.live', 'Ao vivo');
+  if (k === 'reel_tip' || k === 'reel') return tr(t, 'creatorEarnings.source.reel', 'Reel');
+  if (k === 'feed_tip' || k === 'feed_post') return tr(t, 'creatorEarnings.source.feed', 'Post');
+  return tr(t, 'creatorEarnings.source.other', 'Direto');
+}
+
+function MetricTile({ label, value, sub, s }) {
+  return (
+    <View style={[styles.tile, { backgroundColor: s.surface, borderColor: s.border, borderWidth: s.isDark ? 0 : StyleSheet.hairlineWidth }]}>
+      <Text style={[Type.caption, { color: s.textSecondary }]} numberOfLines={2}>{label}</Text>
+      <Text style={[Type.headline, { color: s.text, marginTop: Space.xs }]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.6}>{value}</Text>
+      {sub ? <Text style={[Type.caption2, { color: s.textTertiary, marginTop: 2 }]} numberOfLines={1}>{sub}</Text> : null}
+    </View>
+  );
+}
+
+function EarningsSkeleton() {
+  return (
+    <View style={[styles.scrollBody, { gap: Space.md }]}>
+      <Skeleton height={196} radius={Radius.card} />
+      <View style={styles.grid}>
+        <Skeleton height={84} radius={Radius.card} style={{ flex: 1 }} delay={40} />
+        <Skeleton height={84} radius={Radius.card} style={{ flex: 1 }} delay={60} />
+        <Skeleton height={84} radius={Radius.card} style={{ flex: 1 }} delay={80} />
+      </View>
+      <Skeleton height={56} radius={Radius.card} delay={100} />
+      <Skeleton height={140} radius={Radius.card} delay={120} />
+    </View>
+  );
+}
+
+function CreatorEarnings() {
+  const router = useRouter();
+  const insets = useSafeAreaInsets();
+  const { colors, isDark } = useTheme();
+  const { t, language } = useLanguage();
+  const s = useSurface();
+  useCurrency(); // re-render quando a moeda de exibição muda
+
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [failed, setFailed] = useState(false);
+  const [data, setData] = useState({
+    pending_payout_cents: 0, lifetime_payout_cents: 0, month_payout_cents: 0,
+    gifts_count_30d: 0, gifts_count_lifetime: 0, top_fans: [], timeline: [],
+    min_cashout_cents: MIN_CASHOUT_CENTS,
+  });
+  const [cashouts, setCashouts] = useState(null); // null = desconhecido
+
+  const load = useCallback(async () => {
+    const [sum, list] = await Promise.allSettled([
+      api.creatorEarningsSummary({ limit: 50 }),
+      api.walletCashoutList?.(),
+    ]);
+    const r = sum.status === 'fulfilled' ? sum.value : null;
+    if (r?.success && r.data) {
+      const d = r.data;
+      setData({
+        pending_payout_cents: Number(d.pending_payout_cents) || 0,
+        lifetime_payout_cents: Number(d.lifetime_payout_cents) || 0,
+        month_payout_cents: Number(d.month_payout_cents) || 0,
+        gifts_count_30d: Number(d.gifts_count_30d) || 0,
+        gifts_count_lifetime: Number(d.gifts_count_lifetime) || 0,
+        top_fans: Array.isArray(d.top_fans) ? d.top_fans : [],
+        timeline: Array.isArray(d.timeline) ? d.timeline : [],
+        min_cashout_cents: Number(d.min_cashout_cents) || MIN_CASHOUT_CENTS,
+      });
+      setFailed(false);
+    } else {
+      setFailed(true);
+    }
+    const l = list.status === 'fulfilled' ? list.value : null;
+    if (l?.success && Array.isArray(l.data?.items)) setCashouts(l.data.items);
+    setLoading(false);
+    setRefreshing(false);
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+  const onRefresh = useCallback(() => { setRefreshing(true); load(); }, [load]);
+
+  const min = data.min_cashout_cents || MIN_CASHOUT_CENTS;
+  const pending = data.pending_payout_cents;
+  const reachedMin = pending >= min;
+  const canCashout = WALLET_ENABLED && reachedMin;
+  const progress = Math.max(0, Math.min(1, pending / min));
+  const go = (path) => () => { try { router.push(path); } catch {} };
+  const title = tr(t, 'creatorEarnings.title', 'Meus Ganhos');
+
+  const fmtDate = (ts) => {
+    const n = Number(ts) * 1000;
+    if (!n) return '';
+    try { return new Date(n).toLocaleDateString(language || undefined, { day: '2-digit', month: 'short' }); } catch { return ''; }
+  };
+
+  // Subtítulo da linha "Saques anteriores".
+  const historySub = (() => {
+    if (!Array.isArray(cashouts)) return tr(t, 'creatorEarnings.historySub', 'Status e comprovantes dos seus saques');
+    if (cashouts.length === 0) return tr(t, 'wallet.cashoutHistoryEmpty', 'Nenhum saque ainda.');
+    const last = cashouts[0];
+    const st = String(last.status || 'pending');
+    const stLabel = tr(t, `wallet.cashoutStatus.${st}`, st === 'paid' ? 'Pago' : st === 'rejected' ? 'Rejeitado' : 'Em análise');
+    return tr(t, 'creatorEarnings.historyLast', 'Último: {amount} · {status}')
+      .replace('{amount}', money(last.amount_cents)).replace('{status}', stLabel);
+  })();
+
+  const body = (
+    <>
+      {/* ── Saldo disponível + Sacar ─────────────────────────── */}
+      <Card elevated padding={Space.xl}>
+        <Text style={[Type.footnote, { color: s.textSecondary, fontWeight: '600' }]}>
+          {tr(t, 'creatorEarnings.availableLabel', 'Disponível para saque')}
+        </Text>
+        <Text style={[Type.largeTitle, { color: s.text, marginTop: Space.xs }]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.6}
+          accessibilityLabel={`${tr(t, 'creatorEarnings.availableLabel', 'Disponível para saque')}: ${money(pending)}`}>
+          {money(pending)}
+        </Text>
+        {!reachedMin ? (
+          <View style={{ marginTop: Space.md }}>
+            <View style={[styles.track, { backgroundColor: s.fill }]}
+              accessibilityRole="progressbar"
+              accessibilityValue={{ min: 0, max: 100, now: Math.round(progress * 100) }}>
+              <View style={[styles.trackFill, { width: `${Math.max(progress * 100, progress > 0 ? 2 : 0)}%`, backgroundColor: s.ink }]} />
+            </View>
+            <Text style={[Type.footnote, { color: s.textSecondary, marginTop: Space.sm }]}>
+              {tr(t, 'creatorDash.missing', 'Faltam {missing} para o saque mínimo de {min}')
+                .replace('{missing}', money(min - pending))
+                .replace('{min}', money(min))}
+            </Text>
+          </View>
+        ) : (
+          <Text style={[Type.footnote, { color: s.textSecondary, marginTop: Space.xs }]}>
+            {tr(t, 'creatorEarnings.pixEta', 'Via Pix, em até 48h úteis.')}
+          </Text>
+        )}
+        <Button
+          title={tr(t, 'creatorDash.withdraw', 'Sacar')}
+          size="lg"
+          fullWidth
+          disabled={!canCashout}
+          onPress={go('/wallet-cashout')}
+          style={{ marginTop: Space.lg }}
+          accessibilityLabel={!canCashout
+            ? `${tr(t, 'creatorDash.withdraw', 'Sacar')}. ${!WALLET_ENABLED ? tr(t, 'creatorEarnings.cashoutPaused', 'Saques temporariamente indisponíveis.') : tr(t, 'creatorEarnings.belowMin', 'Abaixo do mínimo para saque.')}`
+            : undefined}
+        />
+        {!WALLET_ENABLED ? (
+          <Text style={[Type.footnote, { color: s.textSecondary, marginTop: Space.sm, textAlign: 'center' }]}>
+            {tr(t, 'creatorEarnings.cashoutPaused', 'Saques temporariamente indisponíveis.')}
+          </Text>
+        ) : null}
+      </Card>
+
+      {/* ── Métricas ────────────────────────────────────────── */}
+      <View style={styles.grid}>
+        <MetricTile s={s} label={tr(t, 'creatorEarnings.stat.lifetime', 'Total ganho')} value={money(data.lifetime_payout_cents)} />
+        <MetricTile s={s} label={tr(t, 'creatorDash.chart30', 'Últimos 30 dias')} value={money(data.month_payout_cents)} />
+        <MetricTile s={s}
+          label={tr(t, 'creatorDash.gifts30d', 'Presentes · 30 dias')}
+          value={formatInt(data.gifts_count_30d, language)}
+          sub={tr(t, 'creatorEarnings.stat.giftsLifetime', '{n} no total').replace('{n}', formatInt(data.gifts_count_lifetime, language))}
+        />
+      </View>
+
+      {/* ── Saques anteriores ───────────────────────────────── */}
+      <Card padding={0}>
+        <ListRow
+          icon={IconReceipt}
+          iconTile
+          title={tr(t, 'creatorEarnings.stat.history', 'Saques anteriores')}
+          subtitle={historySub}
+          chevron
+          onPress={go('/wallet-cashout')}
+        />
+      </Card>
+
+      {/* ── Top fãs ─────────────────────────────────────────── */}
+      <SectionHeader variant="grouped" inset={Space.xs} style={{ paddingTop: Space.sm }} title={tr(t, 'creatorEarnings.topFans30', 'Top fãs · 30 dias')} />
+      <Card padding={0}>
+        {data.top_fans.length > 0 ? data.top_fans.map((fan, idx) => (
+          <View key={String(fan.email) + idx}
+            style={[styles.personRow, idx < data.top_fans.length - 1 && { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: s.separator }]}>
+            <Text style={[Type.footnote, styles.rank, { color: idx < 3 ? s.text : s.textTertiary }]}>{idx + 1}</Text>
+            <AvatarCircle email={fan.email} size={36} colors={colors} />
+            <View style={{ flex: 1, minWidth: 0, marginLeft: Space.md }}>
+              <Text style={[Type.callout, { color: s.text, fontWeight: '600' }]} numberOfLines={1}>{handleOf(fan.email)}</Text>
+              <Text style={[Type.caption, { color: s.textSecondary }]} numberOfLines={1}>
+                {tr(t, 'creatorEarnings.giftCount', '{n} presentes').replace('{n}', formatInt(fan.gift_count || 0, language))}
+              </Text>
+            </View>
+            <Text style={[Type.callout, { color: s.text, fontWeight: '600' }]}>{money(fan.total_amount)}</Text>
+          </View>
+        )) : (
+          <ScreenEmptyState compact kind="contacts"
+            title={tr(t, 'creatorDash.noSupporters', 'Ainda sem apoiadores')}
+            subtitle={tr(t, 'creatorEarnings.emptyFansShort', 'Quem mandar presentes nos seus reels e lives aparece aqui.')} />
+        )}
+      </Card>
+
+      {/* ── Presentes recebidos ─────────────────────────────── */}
+      <SectionHeader variant="grouped" inset={Space.xs} style={{ paddingTop: Space.sm }} title={tr(t, 'creatorEarnings.timeline', 'Presentes recebidos')} />
+      <Card padding={0}>
+        {data.timeline.length > 0 ? data.timeline.map((item, idx) => {
+          const when = fmtDate(item.created_at_ts);
+          const isMoney = item.kind === 'tip_recv' || item.kind === 'live_gift_recv';
+          return (
+            <View key={String(item.id ?? idx)}
+              style={[styles.personRow, idx < data.timeline.length - 1 && { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: s.separator }]}>
+              <AvatarCircle email={item.counterparty} size={36} colors={colors} />
+              <View style={{ flex: 1, minWidth: 0, marginLeft: Space.md }}>
+                <Text style={[Type.callout, { color: s.text, fontWeight: '600' }]} numberOfLines={1}>
+                  {handleOf(item.counterparty) || tr(t, 'creatorEarnings.someone', 'Alguém')}
+                </Text>
+                <Text style={[Type.caption, { color: s.textSecondary }]} numberOfLines={1}>
+                  {sourceLabel(t, item.ref_kind)}{when ? ' · ' + when : ''}
+                </Text>
+              </View>
+              <View style={styles.amount}>
+                <GiftGlyph size={14} color={s.textSecondary} />
+                <Text style={[Type.callout, { color: s.text, fontWeight: '600' }]}>
+                  +{isMoney ? money(item.amount) : formatInt(item.amount || 0, language)}
+                </Text>
+              </View>
+            </View>
+          );
+        }) : (
+          <ScreenEmptyState compact kind="lives"
+            title={tr(t, 'creatorEarnings.emptyTimelineTitle', 'Nenhum presente ainda')}
+            subtitle={tr(t, 'creatorEarnings.emptyTimelineShort', 'Presentes de lives, reels e posts aparecem aqui.')} />
+        )}
+      </Card>
+
+      {failed ? (
+        <Text style={[Type.footnote, { color: s.textSecondary, textAlign: 'center', marginTop: Space.sm }]}>
+          {tr(t, 'creatorDash.loadError', 'Não foi possível atualizar. Puxe para tentar de novo.')}
         </Text>
       ) : null}
-    </View>
-  );
-}
 
-function TopFanRow({ fan, rank, colors, isDark, t, lang }) {
-  const handle = shortHandle(fan.email);
-  return (
-    <View style={[styles.fanRow, {
-      borderBottomColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(15,23,42,0.06)',
-    }]}>
-      <View style={[styles.fanRank, {
-        backgroundColor: rank === 1 ? BRAND_AMBER : (rank === 2 ? '#A1A1AA' : (rank === 3 ? '#B45309' : (isDark ? 'rgba(255,255,255,0.10)' : 'rgba(15,23,42,0.08)'))),
-      }]}>
-        <Text style={styles.fanRankText}>{rank}</Text>
-      </View>
-      <AvatarCircle email={fan.email} size={36} />
-      <View style={styles.fanInfo}>
-        <Text style={[styles.fanName, { color: colors.text }]} numberOfLines={1}>
-          {handle}
-        </Text>
-        <Text style={[styles.fanSub, { color: colors.textSecondary }]} numberOfLines={1}>
-          {fmtCount(fan.gift_count, lang)} {t('creatorEarnings.gifts') || 'presentes'}
-        </Text>
-      </View>
-      <View style={styles.fanAmount}>
-        <IconGiftBox size={14} color={BRAND_PURPLE} />
-        <Text style={[styles.fanAmountText, { color: BRAND_PURPLE }]}>
-          {fmtCount(fan.total_amount, lang)}
-        </Text>
-      </View>
-    </View>
+      <Text style={[Type.caption, { color: s.textTertiary, textAlign: 'center', marginTop: Space.sm, paddingHorizontal: Space.lg }]}>
+        {tr(t, 'creatorEarnings.tos', 'Você recebe 70% do valor de cada presente. Os 30% restantes cobrem taxas de plataforma e processamento de IAP.')}
+      </Text>
+    </>
   );
-}
 
-function TimelineRow({ item, colors, isDark, t, lang }) {
-  const handle = shortHandle(item.counterparty);
-  const refKind = String(item.ref_kind || '');
-  const sourceLabel = (() => {
-    if (refKind === 'live_gift') return t('creatorEarnings.source.live') || 'Ao vivo';
-    if (refKind === 'reel_tip')  return t('creatorEarnings.source.reel') || 'Reel';
-    if (refKind === 'feed_tip')  return t('creatorEarnings.source.feed') || 'Post';
-    return t('creatorEarnings.source.other') || 'Direto';
-  })();
-  const when = (() => {
-    const ts = Number(item.created_at_ts) * 1000;
-    if (!ts) return '';
-    try { return new Date(ts).toLocaleDateString(); } catch { return ''; }
-  })();
   return (
-    <View style={[styles.tlRow, {
-      borderBottomColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(15,23,42,0.06)',
-    }]}>
-      <AvatarCircle email={item.counterparty} size={36} />
-      <View style={styles.tlInfo}>
-        <Text style={[styles.tlName, { color: colors.text }]} numberOfLines={1}>
-          {handle || (t('creatorEarnings.someone') || 'Alguém')}
-        </Text>
-        <Text style={[styles.tlSub, { color: colors.textSecondary }]} numberOfLines={1}>
-          {sourceLabel}{when ? ' · ' + when : ''}
-        </Text>
-      </View>
-      <View style={styles.tlAmount}>
-        <IconGiftBox size={14} color={BRAND_PURPLE} />
-        <Text style={[styles.tlAmountText, { color: BRAND_PURPLE }]}>
-          +{fmtCount(item.amount, lang)}
-        </Text>
-      </View>
+    <View style={{ flex: 1, backgroundColor: s.bgGrouped }}>
+      {USE_NATIVE_HEADER ? (
+        <Stack.Screen options={nativeHeaderOptions({ colors, isDark, title })} />
+      ) : (
+        <TopBar title={title} onBack={() => { try { router.back(); } catch {} }} maxWidth={Layout.contentMaxWidth} />
+      )}
+      {loading ? (
+        <EarningsSkeleton />
+      ) : (
+        <ScrollView
+          contentContainerStyle={[styles.scrollBody, { paddingBottom: Math.max(Space.xxxl, (insets.bottom || 0) + Space.xl) }]}
+          showsVerticalScrollIndicator={false}
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={s.textSecondary} />}
+        >
+          <SkeletonFadeIn style={{ gap: Space.md }}>{body}</SkeletonFadeIn>
+        </ScrollView>
+      )}
     </View>
   );
 }
 
 export default function CreatorEarningsScreen() {
-  // [2026-05-22 monetization-pause] hidden by MONETIZATION_ENABLED flag.
-  // Earnings come from paid gifts/tips — none of that exists while
-  // monetization is paused, so the dashboard is meaningless. Redirect.
-  if (!MONETIZATION_ENABLED) {
-    return <Redirect href="/chat" />;
-  }
-  const router = useRouter();
-  const insets = useSafeAreaInsets();
-  const { colors, isDark } = useTheme();
-  const { t, language } = useLanguage();
-
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
-  const [data, setData] = useState({
-    pending_payout_cents: 0,
-    lifetime_payout_cents: 0,
-    month_payout_cents: 0,
-    gifts_count_30d: 0,
-    gifts_count_lifetime: 0,
-    top_fans: [],
-    timeline: [],
-  });
-
-  const load = useCallback(async () => {
-    try {
-      const r = await api.creatorEarningsSummary({ limit: 50 });
-      if (r?.success && r?.data) {
-        setData({
-          pending_payout_cents: Number(r.data.pending_payout_cents) || 0,
-          lifetime_payout_cents: Number(r.data.lifetime_payout_cents) || 0,
-          month_payout_cents: Number(r.data.month_payout_cents) || 0,
-          gifts_count_30d: Number(r.data.gifts_count_30d) || 0,
-          gifts_count_lifetime: Number(r.data.gifts_count_lifetime) || 0,
-          top_fans: Array.isArray(r.data.top_fans) ? r.data.top_fans : [],
-          timeline: Array.isArray(r.data.timeline) ? r.data.timeline : [],
-        });
-      }
-    } catch (_) {
-      // Silent — empty state covers it.
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
-    }
-  }, []);
-
-  useEffect(() => { load(); }, [load]);
-
-  const onRefresh = useCallback(() => {
-    setRefreshing(true);
-    load();
-  }, [load]);
-
-  const canCashout = data.pending_payout_cents >= MIN_CASHOUT_CENTS;
-
-  return (
-    <View style={[styles.container, { backgroundColor: colors.background, paddingTop: USE_NATIVE_HEADER ? 0 : (insets.top || 0) + 8 }]}>
-      <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} />
-
-      {USE_NATIVE_HEADER && <Stack.Screen options={nativeHeaderOptions({ colors, isDark, title: t('creatorEarnings.title') })} />}
-      {!USE_NATIVE_HEADER && (
-      <View style={styles.headBar}>
-        <TouchableOpacity
-          onPress={() => router.back()}
-          style={styles.backBtn}
-          accessibilityRole="button"
-          accessibilityLabel={t('common.back') || 'Voltar'}
-        >
-          <IconArrowLeft size={22} color={colors.text} />
-        </TouchableOpacity>
-        <Text style={[styles.headTitle, { color: colors.text }]} numberOfLines={1}>
-          {t('creatorEarnings.title') || 'Meus Ganhos'}
-        </Text>
-        <View style={{ width: 38 }} />
-      </View>
-      )}
-
-      {loading ? (
-        <View style={{ paddingTop: 80, alignItems: 'center' }}>
-          <ActivityIndicator color={BRAND_GREEN} size="large" />
-        </View>
-      ) : (
-        <FadeSlideIn>
-        <ScrollView
-          contentContainerStyle={{ paddingHorizontal: 14, paddingBottom: 60 }}
-          showsVerticalScrollIndicator={false}
-          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={BRAND_GREEN} />}
-        >
-          {/* Hero — Saldo disponível pra saque */}
-          <View style={[styles.hero, {
-            backgroundColor: isDark ? 'rgba(16,185,129,0.16)' : 'rgba(16,185,129,0.10)',
-            borderColor: isDark ? 'rgba(16,185,129,0.40)' : 'rgba(16,185,129,0.28)',
-          }]}>
-            <Text style={[styles.heroLabel, { color: colors.textSecondary }]}>
-              {t('creatorEarnings.availableLabel') || 'Disponível para saque'}
-            </Text>
-            <Text style={[styles.heroValue, { color: BRAND_GREEN }]}>
-              R$ {fmtBrl(data.pending_payout_cents)}
-            </Text>
-            <Text style={[styles.heroSub, { color: colors.textTertiary }]} numberOfLines={2}>
-              {t('creatorEarnings.heroSub') || 'Receba via PIX em até 48h úteis. Mínimo R$ 50,00.'}
-            </Text>
-            <PressableScale
-              onPress={() => router.push('/wallet-cashout')}
-              disabled={!canCashout}
-              style={[styles.cashoutCta, {
-                backgroundColor: canCashout ? BRAND_GREEN : (isDark ? 'rgba(16,185,129,0.30)' : 'rgba(16,185,129,0.40)'),
-              }]}
-              accessibilityRole="button"
-              accessibilityLabel={t('creatorEarnings.cashoutCta') || 'Solicitar saque'}
-            >
-              <Text style={styles.cashoutCtaText}>
-                {t('creatorEarnings.cashoutCta') || 'Solicitar saque'}
-              </Text>
-            </PressableScale>
-            {!canCashout && data.pending_payout_cents > 0 ? (
-              <Text style={[styles.cashoutHint, { color: colors.textTertiary }]} numberOfLines={2}>
-                {(t('creatorEarnings.cashoutHint') || 'Faltam R$ {missing} para sacar.')
-                  .replace('{missing}', fmtBrl(MIN_CASHOUT_CENTS - data.pending_payout_cents))}
-              </Text>
-            ) : null}
-          </View>
-
-          {/* Stat grid */}
-          <View style={styles.statRow}>
-            <StatCard
-              colors={colors} isDark={isDark}
-              label={t('creatorEarnings.stat.lifetime') || 'Total ganho'}
-              value={`R$ ${fmtBrl(data.lifetime_payout_cents)}`}
-              accent={colors.text}
-            />
-            <StatCard
-              colors={colors} isDark={isDark}
-              label={t('creatorEarnings.stat.month') || '30 dias'}
-              value={`R$ ${fmtBrl(data.month_payout_cents)}`}
-              accent={BRAND_GREEN}
-            />
-          </View>
-          <View style={styles.statRow}>
-            <StatCard
-              colors={colors} isDark={isDark}
-              label={t('creatorEarnings.stat.giftsMonth') || 'Presentes 30d'}
-              value={fmtCount(data.gifts_count_30d, language)}
-              accent={BRAND_PURPLE}
-              sub={(t('creatorEarnings.stat.giftsLifetime') || '{n} no total').replace('{n}', fmtCount(data.gifts_count_lifetime, language))}
-            />
-            <StatCard
-              colors={colors} isDark={isDark}
-              label={t('creatorEarnings.stat.history') || 'Saques anteriores'}
-              value={t('creatorEarnings.stat.view') || 'Ver'}
-              sub={t('creatorEarnings.stat.tap') || 'tocar para abrir'}
-            />
-          </View>
-          <TouchableOpacity
-            onPress={() => router.push('/wallet-cashout')}
-            accessibilityRole="button"
-            style={[styles.linkRow, {
-              borderColor: isDark ? 'rgba(255,255,255,0.10)' : 'rgba(15,23,42,0.10)',
-              backgroundColor: isDark ? 'rgba(255,255,255,0.03)' : 'rgba(15,23,42,0.03)',
-            }]}
-          >
-            <Text style={[styles.linkRowText, { color: colors.text }]}>
-              {t('creatorEarnings.openCashout') || 'Saques + histórico de pagamento'}
-            </Text>
-            <IconChevronRight size={18} color={colors.textSecondary} />
-          </TouchableOpacity>
-
-          {/* Top fans */}
-          <View style={styles.sectionHead}>
-            <IconHeart size={16} color={'#EF4444'} />
-            <Text style={[styles.sectionTitle, { color: colors.text }]}>
-              {t('creatorEarnings.topFans') || 'Top fãs (30 dias)'}
-            </Text>
-          </View>
-          {data.top_fans.length === 0 ? (
-            <Text style={[styles.empty, { color: colors.textTertiary }]}>
-              {t('creatorEarnings.emptyFans') || 'Ainda sem fãs. Compartilhe seus reels e lives para receber presentes!'}
-            </Text>
-          ) : (
-            data.top_fans.map((fan, idx) => (
-              <TopFanRow
-                key={String(fan.email) + idx}
-                fan={fan}
-                rank={idx + 1}
-                colors={colors}
-                isDark={isDark}
-                t={t}
-                lang={language}
-              />
-            ))
-          )}
-
-          {/* Timeline */}
-          <View style={styles.sectionHead}>
-            <IconStar size={16} color={BRAND_AMBER} />
-            <Text style={[styles.sectionTitle, { color: colors.text }]}>
-              {t('creatorEarnings.timeline') || 'Presentes recebidos'}
-            </Text>
-          </View>
-          {data.timeline.length === 0 ? (
-            <Text style={[styles.empty, { color: colors.textTertiary }]}>
-              {t('creatorEarnings.emptyTimeline') || 'Você ainda não recebeu presentes. Quando alguém te enviar diamantes ao vivo, num reel ou post, eles aparecem aqui.'}
-            </Text>
-          ) : (
-            data.timeline.map(item => (
-              <TimelineRow
-                key={String(item.id)}
-                item={item}
-                colors={colors}
-                isDark={isDark}
-                t={t}
-                lang={language}
-              />
-            ))
-          )}
-
-          <Text style={[styles.tos, { color: colors.textTertiary }]}>
-            {t('creatorEarnings.tos') || 'Você recebe 70% do valor de cada presente. Os 30% restantes cobrem taxas de plataforma e processamento de IAP.'}
-          </Text>
-        </ScrollView>
-        </FadeSlideIn>
-      )}
-    </View>
-  );
+  // [2026-05-22 monetization-pause] Ganhos vêm de presentes pagos — com a
+  // monetização pausada a tela não faz sentido.
+  if (!MONETIZATION_ENABLED) return <Redirect href="/chat" />;
+  return <CreatorEarnings />;
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1 },
-  headBar: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    paddingHorizontal: 12, marginBottom: 8,
+  scrollBody: {
+    padding: Layout.gutter, gap: Space.md,
+    width: '100%', maxWidth: Layout.contentMaxWidth, alignSelf: 'center',
   },
-  backBtn: { width: 38, height: 38, borderRadius: 19, alignItems: 'center', justifyContent: 'center' },
-  headTitle: { fontSize: 17, fontWeight: '800', letterSpacing: -0.2 },
-
-  hero: {
-    borderRadius: 24, borderWidth: 1,
-    paddingVertical: 24, paddingHorizontal: 20,
-    marginBottom: 14, alignItems: 'center',
-    shadowColor: '#10B981', shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.14, shadowRadius: 18, elevation: 4,
-  },
-  heroLabel: { fontSize: 13, fontWeight: '600' },
-  heroValue: { fontSize: 38, fontWeight: '900', marginTop: 4, letterSpacing: -0.5 },
-  heroSub: { fontSize: 12, marginTop: 6, textAlign: 'center', lineHeight: 17 },
-  cashoutCta: {
-    marginTop: 16, alignSelf: 'stretch',
-    paddingVertical: 14, borderRadius: 14,
-    alignItems: 'center', justifyContent: 'center',
-  },
-  cashoutCtaText: { color: '#fff', fontSize: 15, fontWeight: '800' },
-  cashoutHint: { fontSize: 11, marginTop: 8, textAlign: 'center' },
-
-  statRow: { flexDirection: 'row', gap: 10, marginBottom: 10, alignItems: 'stretch' },
-  statCard: {
-    flex: 1, minWidth: 0, borderRadius: 14, borderWidth: StyleSheet.hairlineWidth,
-    paddingVertical: 14, paddingHorizontal: 12,
-  },
-  statLabel: { fontSize: 11, fontWeight: '600', textTransform: 'uppercase', letterSpacing: 0.5 },
-  statValue: { fontSize: 18, fontWeight: '900', marginTop: 4, letterSpacing: -0.2 },
-  statSub: { fontSize: 11, marginTop: 2 },
-
-  linkRow: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    paddingVertical: 14, paddingHorizontal: 14,
-    borderRadius: 14, borderWidth: StyleSheet.hairlineWidth,
-    marginTop: 4, marginBottom: 6,
-  },
-  linkRowText: { fontSize: 14, fontWeight: '700' },
-
-  sectionHead: {
-    flexDirection: 'row', alignItems: 'center', gap: 8,
-    marginTop: 22, marginBottom: 8, paddingHorizontal: 4,
-  },
-  sectionTitle: { fontSize: 14, fontWeight: '800', letterSpacing: -0.2 },
-
-  fanRow: {
-    flexDirection: 'row', alignItems: 'center', gap: 10,
-    paddingVertical: 10, paddingHorizontal: 6,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-  },
-  fanRank: {
-    width: 22, height: 22, borderRadius: 11,
-    alignItems: 'center', justifyContent: 'center',
-    flexShrink: 0,
-  },
-  fanRankText: { color: '#fff', fontSize: 11, fontWeight: '800' },
-  fanInfo: { flex: 1, minWidth: 0 },
-  fanName: { fontSize: 14, fontWeight: '700' },
-  fanSub: { fontSize: 11, marginTop: 2 },
-  fanAmount: { flexDirection: 'row', alignItems: 'center', gap: 4, flexShrink: 0, marginLeft: 8 },
-  fanAmountText: { fontSize: 14, fontWeight: '800' },
-
-  tlRow: {
-    flexDirection: 'row', alignItems: 'center', gap: 10,
-    paddingVertical: 10, paddingHorizontal: 6,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-  },
-  tlInfo: { flex: 1, minWidth: 0 },
-  tlName: { fontSize: 14, fontWeight: '700' },
-  tlSub: { fontSize: 11, marginTop: 2 },
-  tlAmount: { flexDirection: 'row', alignItems: 'center', gap: 4, flexShrink: 0, marginLeft: 8 },
-  tlAmountText: { fontSize: 14, fontWeight: '800' },
-
-  empty: { textAlign: 'center', fontSize: 13, paddingVertical: 22, paddingHorizontal: 12, lineHeight: 18 },
-  tos: { fontSize: 11, marginTop: 24, marginBottom: 8, textAlign: 'center', paddingHorizontal: 18, lineHeight: 15 },
+  track: { height: 6, borderRadius: 3, overflow: 'hidden' },
+  trackFill: { height: 6, borderRadius: 3 },
+  grid: { flexDirection: 'row', gap: Space.sm },
+  tile: { flex: 1, minWidth: 0, borderRadius: Radius.card, padding: Space.md, minHeight: 84 },
+  personRow: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: Space.lg, paddingVertical: Space.md },
+  rank: { width: 22, fontWeight: '700' },
+  amount: { flexDirection: 'row', alignItems: 'center', gap: 4, marginLeft: Space.sm },
 });

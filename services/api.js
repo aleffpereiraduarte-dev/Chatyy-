@@ -10132,7 +10132,60 @@ export async function walletDailyBonus() {
 // gift counts, top fans (last 30d), and a paginated timeline of
 // received gifts (newest first). `limit` controls timeline length.
 export async function creatorEarningsSummary({ limit = 50 } = {}) {
-  return apiCall('creator_earnings_summary', { limit }, 'POST');
+  const r = await apiCall('creator_earnings_summary', { limit }, 'POST');
+  // [2026-10-13 earnings-v2] email.php NÃO roteia creator_earnings_summary
+  // (responde "Unknown action") → "Meus Ganhos" mostrava R$ 0,00 p/ quem tinha
+  // saldo. Enquanto o servidor não roteia, monta o MESMO formato a partir de
+  // actions roteadas e só-leitura: wallet_history (saldo + ledger) +
+  // wallet_cashout_list (saques pagos → total ganho).
+  if (r && r.success === false && /unknown action/i.test(String(r.message || ''))) {
+    return _creatorEarningsFallback(limit);
+  }
+  return r;
+}
+// Créditos de ganho no ledger: tip_recv (post/reel) e live_gift_recv (live)
+// gravam `amount` = centavos de payout (mesma unidade do pending_payout_cents).
+const _EARN_CREDIT_KINDS = new Set(['tip_recv', 'live_gift_recv']);
+async function _creatorEarningsFallback(limit) {
+  const [h, co] = await Promise.allSettled([
+    apiCall('wallet_history', { limit: 100, offset: 0 }, 'POST'),
+    apiCall('wallet_cashout_list', {}, 'POST'),
+  ]);
+  const hist = h.status === 'fulfilled' ? h.value : null;
+  if (!hist || !hist.success) return hist || { success: false, data: null, message: 'earnings_unavailable' };
+  const d = hist.data || {};
+  const items = (Array.isArray(d.items) ? d.items : [])
+    .filter(x => x && x.direction === 'credit' && _EARN_CREDIT_KINDS.has(String(x.kind)));
+  const since = Math.floor(Date.now() / 1000) - 30 * 86400;
+  const month = items.filter(x => Number(x.created_at_ts) >= since);
+  const fans = new Map();
+  for (const x of month) {
+    const k = String(x.counterparty || '').toLowerCase();
+    if (!k) continue;
+    const f = fans.get(k) || { email: k, total_amount: 0, gift_count: 0 };
+    f.total_amount += Number(x.amount) || 0; f.gift_count += 1;
+    fans.set(k, f);
+  }
+  const cl = co.status === 'fulfilled' ? co.value : null;
+  const paid = (cl?.success && Array.isArray(cl.data?.items) ? cl.data.items : [])
+    .filter(x => x.status === 'paid').reduce((a, x) => a + (Number(x.amount_cents) || 0), 0);
+  const pending = Number(d.pending_payout_cents) || 0;
+  return {
+    success: true,
+    data: {
+      pending_payout_cents: pending,
+      lifetime_payout_cents: pending + paid,
+      month_payout_cents: month.reduce((a, x) => a + (Number(x.amount) || 0), 0),
+      gifts_count_30d: month.length,
+      gifts_count_lifetime: items.length,
+      top_fans: [...fans.values()].sort((a, b) => b.total_amount - a.total_amount).slice(0, 5),
+      timeline: items.slice(0, Math.max(1, Number(limit) || 50)),
+      cashouts: cl?.success && Array.isArray(cl.data?.items) ? cl.data.items : null,
+      min_cashout_cents: 5000,
+      max_cashout_cents: 5000000,
+      _fallback: true,
+    },
+  };
 }
 // Paid gift send — debits diamond balance, credits 70% to creator as
 // pending_payout_cents (30% platform retain). Returns the new balance.

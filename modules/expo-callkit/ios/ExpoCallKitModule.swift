@@ -2941,7 +2941,8 @@ private class ProviderDelegate: NSObject, CXProviderDelegate {
             if callerName.isEmpty { callerName = (p["caller_name"] as? String) ?? "" }
             // [2026-05-16 Stage 2] Surface conversation_id for the native
             // call_answered WS fire. May be missing on dialer-style pushes.
-            conversationId = (p["conversation_id"] as? String) ?? ""
+            if let s = p["conversation_id"] as? String { conversationId = s }
+            else if let n = p["conversation_id"] as? NSNumber { conversationId = n.stringValue } // [2026-10-14 add-to-call conv]
           }
           break
         }

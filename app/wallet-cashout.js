@@ -1,194 +1,136 @@
-// /wallet-cashout — creator payout request (PIX).
+// /wallet-cashout — saque de ganhos de criador via Pix.
 //
-// Surfaces when chat_wallet_balances.pending_payout_cents > 0. The user
-// fills a small form (PIX key + full name + CPF + amount) and we POST
-// wallet_cashout_request — backend debits pending_payout_cents and writes
-// a chat_wallet_payouts row in status='pending'. A back-office worker
-// (admin.php cron, out of scope here) reconciles and marks paid.
+// [2026-10-13 earnings-v2] Repaginada no padrão P&B (Painel de criador):
+// saldo em destaque, formulário com validação clara campo a campo (valor,
+// tipo/chave Pix, titular, CPF com dígito verificador), revisão em 2 passos
+// antes de enviar, estados de envio / sucesso / erro inline (sem Alert — no
+// web o Alert do RN é no-op), histórico como lista + detalhe em Sheet,
+// skeleton, pull-to-refresh, escuro, coluna limitada no web desktop.
 //
-// Constraints (mirrored on the backend):
-//   • Minimum: R$ 50,00 (5000 cents)
-//   • Maximum: R$ 50.000,00 (5_000_000 cents)
-//   • CPF: 11 digits (auto-stripped)
-//   • 3 requests / day per user
+// MOEDA: Pix paga em REAIS — o servidor valida e debita amount_cents em
+// centavos de BRL (chat.php wallet_cashout_request: mín 5000, máx 5_000_000).
+// Por isso o campo de valor é em BRL (formatMoney(…, 'BRL'), sem "R$" fixo
+// no código) e, se a moeda de exibição for outra, mostramos a conversão
+// (formatMoneyActive) ao lado. Saldo/mínimo/histórico = formatMoneyActive.
 //
-// No native deps — pure JS / Animated. Safe to OTA.
+// Saques desligados: WALLET_ENABLED=false no app E o servidor responde 410
+// {feature_disabled:true} (bloqueio 2026-06-28). Em vez de redirecionar p/
+// /chat, a tela mostra o aviso + o histórico (acessível de "Meus Ganhos").
+//
+// Sem deps nativas novas. OTA-safe.
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  View, Text, StyleSheet, TouchableOpacity, ScrollView, TextInput,
-  ActivityIndicator, Alert, Platform, StatusBar,
+  View, Text, StyleSheet, ScrollView, TextInput, Platform, RefreshControl, KeyboardAvoidingView,
 } from 'react-native';
-import { useRouter, Redirect, Stack } from 'expo-router';
-import { USE_NATIVE_HEADER, nativeHeaderOptions } from '../components/nativeHeader'; // [2026-10-09 native-sheets-headers] header NATIVO
+import { useRouter, Stack } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import * as Clipboard from 'expo-clipboard';
+import { USE_NATIVE_HEADER, nativeHeaderOptions } from '../components/nativeHeader'; // [2026-10-09 native-sheets-headers] header NATIVO
 import { useTheme } from '../context/ThemeContext';
-// [2026-05-22 monetization-pause] hidden by MONETIZATION_ENABLED flag
+// [2026-05-22 monetization-pause] carteira/saque escondidos por flag
 import { WALLET_ENABLED } from '../constants/featureFlags';
 import { useLanguage } from '../context/LanguageContext';
 import * as api from '../services/api';
-import { IconArrowLeft, IconDiamond, IconX } from '../components/Icons';
-import { formatInt, numberLocale } from '../utils/dateFormat';
-import { Modal } from 'react-native';
-import { Clipboard } from 'react-native';
+import { formatMoney, formatMoneyActive, getActiveCurrency } from '../services/currencyService';
+import { useCurrency } from '../context/CurrencyContext';
+import { IconInfo, IconCheckCircle, IconAlertCircle } from '../components/Icons';
+import {
+  Button, Card, SectionHeader, TopBar, useSurface, Skeleton, SkeletonFadeIn, SegmentedControl,
+  Badge, Sheet, PressableRow, showToast, Type, Space, Radius, Layout,
+} from '../components/ui';
 
-const MIN_CENTS = 5000;       // R$ 50,00
+const MIN_CENTS = 5000;       // R$ 50,00 — espelha chat.php
 const MAX_CENTS = 5000000;    // R$ 50.000,00
-// Conversion rate (mirrors backend feed_post_tip / live_gift_send split):
-// each diamond → R$ 0,05 of pending payout after the 70/30 split is applied
-// on the backend. Frontend exposes the post-fee rate so creators see the
-// number they will actually withdraw. 1000 ◆ ≈ R$ 50.
-const DIAMOND_TO_BRL_CENTS = 5;
 
-// Parse a user-typed BRL amount ("1.234,56" or "1234.56" or "1234")
-// into integer cents. Any non-digit besides , and . is stripped.
+function tr(t, k, fb) { const v = t ? t(k) : ''; return v && v !== k ? v : fb; }
+function money(cents) { return formatMoneyActive(Number(cents) || 0); }
+function brl(cents) { return formatMoney(Number(cents) || 0, 'BRL', 'pt-BR'); }
+
+// "1.234,56" | "1234.56" | "1234" → centavos inteiros.
 function parseBrlToCents(text) {
-  if (text === null || text === undefined) return 0;
-  let s = String(text).replace(/[^0-9,\.]/g, '');
-  if (s === '') return 0;
-  // Convert "1.234,56" → "1234.56"
-  if (s.includes(',')) {
-    s = s.replace(/\./g, '').replace(',', '.');
+  let v = String(text ?? '').replace(/[^0-9,.]/g, '');
+  if (!v) return 0;
+  if (v.includes(',')) v = v.replace(/\./g, '').replace(',', '.');
+  const n = Number(v);
+  return isFinite(n) && n > 0 ? Math.round(n * 100) : 0;
+}
+function centsToInput(cents) {
+  return ((Number(cents) || 0) / 100).toFixed(2).replace('.', ',');
+}
+function digits(v) { return String(v || '').replace(/\D/g, ''); }
+function fmtCpf(raw) {
+  const d = digits(raw).slice(0, 11);
+  if (d.length <= 3) return d;
+  if (d.length <= 6) return `${d.slice(0, 3)}.${d.slice(3)}`;
+  if (d.length <= 9) return `${d.slice(0, 3)}.${d.slice(3, 6)}.${d.slice(6)}`;
+  return `${d.slice(0, 3)}.${d.slice(3, 6)}.${d.slice(6, 9)}-${d.slice(9)}`;
+}
+// CPF com dígitos verificadores (o servidor só confere 11 dígitos).
+function isValidCpf(raw) {
+  const d = digits(raw);
+  if (d.length !== 11 || /^(\d)\1{10}$/.test(d)) return false;
+  const calc = (len) => {
+    let sum = 0;
+    for (let i = 0; i < len; i++) sum += Number(d[i]) * (len + 1 - i);
+    const r = (sum * 10) % 11;
+    return r === 10 ? 0 : r;
+  };
+  return calc(9) === Number(d[9]) && calc(10) === Number(d[10]);
+}
+function validPixKey(type, key) {
+  const k = String(key || '').trim();
+  if (k.length < 4 || k.length > 120) return false;
+  switch (type) {
+    case 'cpf': return isValidCpf(k);
+    case 'email': return /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(k);
+    case 'phone': { const n = digits(k); return n.length >= 10 && n.length <= 13; }
+    case 'random': return /^[0-9a-f]{8}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{12}$/i.test(k);
+    default: return true;
   }
-  const n = Number(s);
-  if (!isFinite(n) || n < 0) return 0;
-  return Math.round(n * 100);
 }
 
-function fmtBrl(cents) {
-  const v = (Number(cents) || 0) / 100;
-  return v.toFixed(2).replace('.', ',');
+function statusTone(st) { return st === 'paid' ? 'success' : st === 'rejected' ? 'danger' : 'neutral'; }
+function statusLabel(t, st) {
+  return tr(t, `wallet.cashoutStatus.${st}`, st === 'paid' ? 'Pago' : st === 'rejected' ? 'Rejeitado' : 'Em análise');
 }
 
-function CashoutHistoryRow({ row, colors, isDark, t, onPress }) {
-  const status = String(row.status || 'pending');
-  const statusLabel =
-    t(`wallet.statusBadge.${status}`) ||
-    t(`wallet.cashoutStatus.${status}`) ||
-    (status === 'paid' ? 'Pago' : status === 'rejected' ? 'Rejeitado' : 'Em análise');
-  const color = status === 'paid' ? '#10B981' : status === 'rejected' ? '#EF4444' : '#F59E0B';
-  const when = (() => {
-    const ts = Number(row.requested_at_ts) * 1000;
-    if (!ts) return '';
-    try { return new Date(ts).toLocaleDateString(); } catch { return ''; }
-  })();
+function Field({ label, error, hint, children, s }) {
   return (
-    <TouchableOpacity
-      onPress={onPress}
-      activeOpacity={0.7}
-      accessibilityRole="button"
-      accessibilityLabel={t('wallet.cashoutDetailTitle') || 'Detalhes do saque'}
-      style={[styles.histRow, { borderBottomColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(15,23,42,0.06)' }]}
-    >
-      <View style={styles.histLeft}>
-        <Text style={[styles.histAmount, { color: colors.text }]}>
-          R$ {fmtBrl(row.amount_cents)}
-        </Text>
-        <Text style={[styles.histKey, { color: colors.textSecondary }]} numberOfLines={1}>
-          {row.pix_key_masked || row.pix_key}
-        </Text>
-        <Text style={[styles.histWhen, { color: colors.textTertiary }]}>{when}</Text>
-      </View>
-      <View style={[styles.statusPill, { backgroundColor: `${color}22`, borderColor: color }]}>
-        <Text style={[styles.statusText, { color }]}>{statusLabel}</Text>
-      </View>
-    </TouchableOpacity>
+    <View style={{ marginTop: Space.lg }}>
+      <Text style={[Type.footnote, { color: s.text, fontWeight: '600', marginBottom: Space.xs }]}>{label}</Text>
+      {children}
+      {error ? (
+        <Text style={[Type.footnote, { color: s.danger, marginTop: Space.xs }]} accessibilityLiveRegion="polite">{error}</Text>
+      ) : hint ? (
+        <Text style={[Type.footnote, { color: s.textSecondary, marginTop: Space.xs }]}>{hint}</Text>
+      ) : null}
+    </View>
   );
 }
 
-// Detail modal — opens when user taps a history row. Reveals full PIX key
-// (no masking), processed_at if paid, admin_note if rejected. "Compartilhar
-// comprovante" copies a multi-line receipt to clipboard.
-function CashoutDetailModal({ visible, row, onClose, colors, isDark, t }) {
-  if (!row) return null;
-  const status = String(row.status || 'pending');
-  const color = status === 'paid' ? '#10B981' : status === 'rejected' ? '#EF4444' : '#F59E0B';
-  const statusLabel =
-    t(`wallet.statusBadge.${status}`) || t(`wallet.cashoutStatus.${status}`) || status;
-  const when = (() => {
-    const ts = Number(row.requested_at_ts) * 1000;
-    if (!ts) return '—';
-    try { return new Date(ts).toLocaleString(); } catch { return '—'; }
-  })();
-  const processed = (() => {
-    const ts = Number(row.processed_at_ts) * 1000;
-    if (!ts) return null;
-    try { return new Date(ts).toLocaleString(); } catch { return null; }
-  })();
-
-  const buildReceipt = () => {
-    const lines = [
-      `${t('wallet.cashoutDetailTitle') || 'Detalhes do saque'} #${row.id}`,
-      '',
-      `${t('wallet.cashoutDetail.amount') || 'Valor'}: R$ ${fmtBrl(row.amount_cents)}`,
-      `${t('wallet.cashoutDetail.status') || 'Status'}: ${statusLabel}`,
-      `${t('wallet.cashoutDetail.key') || 'Chave PIX'}: ${row.pix_key}`,
-      `${t('wallet.cashoutDetail.requested') || 'Solicitado em'}: ${when}`,
-    ];
-    if (processed) lines.push(`${t('wallet.cashoutDetail.processed') || 'Processado em'}: ${processed}`);
-    if (row.admin_note) lines.push(`${t('wallet.cashoutDetail.note') || 'Observação'}: ${row.admin_note}`);
-    return lines.join('\n');
-  };
-
-  const onShare = async () => {
-    const txt = buildReceipt();
-    try { Clipboard?.setString?.(txt); } catch {}
-    Alert.alert(t('wallet.copied') || 'Copiado', txt);
-  };
-
+function Notice({ icon: Icon, title, body, s, tone }) {
+  const c = tone === 'danger' ? s.danger : tone === 'success' ? s.success : s.text;
   return (
-    <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
-      <View style={styles.scrim}>
-        <View style={[styles.detailSheet, { backgroundColor: isDark ? '#0b0b0b' : '#fff' }]}>
-          <View style={styles.detailHead}>
-            <Text style={[styles.detailTitle, { color: colors.text }]} numberOfLines={1}>
-              {t('wallet.cashoutDetailTitle') || 'Detalhes do saque'}
-            </Text>
-            <TouchableOpacity onPress={onClose} style={styles.detailClose} accessibilityRole="button">
-              <IconX size={18} color={colors.text} />
-            </TouchableOpacity>
-          </View>
-
-          <View style={[styles.detailStatusBlock, { backgroundColor: `${color}14` }]}>
-            <Text style={[styles.detailStatusLabel, { color: colors.textSecondary }]}>
-              {t('wallet.cashoutDetail.status') || 'Status'}
-            </Text>
-            <Text style={[styles.detailStatusVal, { color }]}>{statusLabel}</Text>
-            <Text style={[styles.detailStatusAmount, { color: colors.text }]}>
-              R$ {fmtBrl(row.amount_cents)}
-            </Text>
-          </View>
-
-          <DetailRow label={t('wallet.cashoutDetail.key') || 'Chave PIX'} value={row.pix_key} colors={colors} mono />
-          <DetailRow label={t('wallet.cashoutDetail.type') || 'Tipo'} value={String(row.pix_key_type || 'auto').toUpperCase()} colors={colors} />
-          <DetailRow label={t('wallet.cashoutDetail.requested') || 'Solicitado em'} value={when} colors={colors} />
-          {processed ? <DetailRow label={t('wallet.cashoutDetail.processed') || 'Processado em'} value={processed} colors={colors} /> : null}
-          <DetailRow label={t('wallet.cashoutDetail.id') || 'ID do saque'} value={`#${row.id}`} colors={colors} />
-          {row.admin_note ? <DetailRow label={t('wallet.cashoutDetail.note') || 'Observação'} value={row.admin_note} colors={colors} /> : null}
-
-          <TouchableOpacity onPress={onShare} style={styles.detailShareBtn} accessibilityRole="button">
-            <Text style={styles.detailShareBtnText}>
-              {t('wallet.cashoutDetail.share') || 'Compartilhar comprovante'}
-            </Text>
-          </TouchableOpacity>
+    <Card>
+      <View style={{ flexDirection: 'row', gap: Space.md }}>
+        <Icon size={22} color={c} />
+        <View style={{ flex: 1, minWidth: 0 }}>
+          <Text style={[Type.headline, { color: s.text }]}>{title}</Text>
+          {body ? <Text style={[Type.footnote, { color: s.textSecondary, marginTop: 2 }]}>{body}</Text> : null}
         </View>
       </View>
-    </Modal>
+    </Card>
   );
 }
 
-function DetailRow({ label, value, colors, mono }) {
+function DetailRow({ label, value, s, mono }) {
   return (
     <View style={styles.detailRow}>
-      <Text style={[styles.detailRowLabel, { color: colors.textSecondary }]}>{label}</Text>
-      <Text
-        style={[
-          styles.detailRowVal,
-          { color: colors.text, fontFamily: mono ? (Platform.OS === 'ios' ? 'Menlo' : 'monospace') : undefined },
-        ]}
-        selectable
-        numberOfLines={3}
-      >
+      <Text style={[Type.footnote, { color: s.textSecondary, minWidth: 110 }]}>{label}</Text>
+      <Text selectable numberOfLines={3}
+        style={[Type.subhead, { flex: 1, color: s.text, fontWeight: '600', textAlign: 'right' },
+          mono && { fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace' }]}>
         {value || '—'}
       </Text>
     </View>
@@ -196,455 +138,388 @@ function DetailRow({ label, value, colors, mono }) {
 }
 
 export default function WalletCashoutScreen() {
-  // [2026-05-22 monetization-pause] hidden by MONETIZATION_ENABLED flag.
-  // Creator payouts ride on the wallet — hidden while wallet is off.
-  if (!WALLET_ENABLED) {
-    return <Redirect href="/chat" />;
-  }
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { colors, isDark } = useTheme();
   const { t, language } = useLanguage();
+  const s = useSurface();
+  useCurrency(); // re-render quando a moeda de exibição muda
 
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [available, setAvailable] = useState(0);
-  const [detailRow, setDetailRow] = useState(null);          // pending_payout_cents
-  const [loadingBal, setLoadingBal] = useState(true);
   const [history, setHistory] = useState([]);
+  const [serverDisabled, setServerDisabled] = useState(false);
+  const [detailRow, setDetailRow] = useState(null);
+
   const [amountText, setAmountText] = useState('');
+  const [pixType, setPixType] = useState('cpf');
   const [pixKey, setPixKey] = useState('');
-  const [pixType, setPixType] = useState('auto');         // auto|cpf|email|phone|random
   const [fullName, setFullName] = useState('');
   const [cpf, setCpf] = useState('');
-  const [submitting, setSubmitting] = useState(false);
+  const [touched, setTouched] = useState({});
+  const [step, setStep] = useState('form'); // form | review | sending | done
+  const [error, setError] = useState('');
+  const [result, setResult] = useState(null);
+
+  const paused = !WALLET_ENABLED || serverDisabled;
 
   const loadAll = useCallback(async () => {
-    setLoadingBal(true);
-    try {
-      const [bal, list] = await Promise.all([
-        api.walletBalance?.(),
-        api.walletCashoutList?.(),
-      ]);
-      if (bal?.success && bal.data) {
-        setAvailable(Number(bal.data.pending_payout_cents) || 0);
-      }
-      if (list?.success && Array.isArray(list?.data?.items)) {
-        setHistory(list.data.items);
-      }
-    } catch {}
-    setLoadingBal(false);
+    const [bal, list] = await Promise.allSettled([api.walletBalance?.(), api.walletCashoutList?.()]);
+    const b = bal.status === 'fulfilled' ? bal.value : null;
+    if (b?.success && b.data) setAvailable(Number(b.data.pending_payout_cents) || 0);
+    const l = list.status === 'fulfilled' ? list.value : null;
+    if (l?.success && Array.isArray(l.data?.items)) setHistory(l.data.items);
+    setLoading(false);
+    setRefreshing(false);
   }, []);
-
   useEffect(() => { loadAll(); }, [loadAll]);
+  const onRefresh = useCallback(() => { setRefreshing(true); loadAll(); }, [loadAll]);
 
   const amountCents = useMemo(() => parseBrlToCents(amountText), [amountText]);
-  const tooLow = amountCents > 0 && amountCents < MIN_CENTS;
-  const overAvailable = amountCents > available;
-  const canSubmit =
-    !submitting &&
-    amountCents >= MIN_CENTS &&
-    amountCents <= MAX_CENTS &&
-    amountCents <= available &&
-    pixKey.trim().length >= 4 &&
-    fullName.trim().length >= 3 &&
-    cpf.replace(/[^0-9]/g, '').length === 11;
+  const maxAllowed = Math.min(available, MAX_CENTS);
+  const reachedMin = available >= MIN_CENTS;
+  const progress = Math.max(0, Math.min(1, available / MIN_CENTS));
+  const showConverted = getActiveCurrency() !== 'BRL';
 
-  const onSubmit = useCallback(async () => {
-    if (!canSubmit) return;
-    setSubmitting(true);
-    try {
-      const r = await api.walletCashoutRequest({
-        amountCents,
-        pixKey,
-        pixKeyType: pixType,
-        fullName,
-        cpf,
-      });
-      if (r?.success && r?.data) {
-        const sentBrl = fmtBrl(r.data.amount_cents);
-        Alert.alert(
-          t('wallet.cashoutSent') || 'Saque solicitado',
-          (t('wallet.cashoutSentBody') || 'R$ {amount} serão enviados para o PIX em até 48h úteis.')
-            .replace('{amount}', sentBrl),
-        );
-        setAvailable(Number(r.data.pending_payout_cents) || 0);
-        setAmountText('');
-        // Optimistic prepend; loadAll will refresh canonical order.
-        setHistory(prev => [{
-          id: r.data.payout_id,
-          amount_cents: r.data.amount_cents,
-          pix_key: pixKey,
-          pix_key_type: pixType,
-          status: 'pending',
-          requested_at_ts: Math.floor(Date.now() / 1000),
-        }, ...prev]);
-        return;
-      }
-      const msg = r?.message || '';
-      const errKey =
-        msg === 'min_cashout'        ? 'wallet.cashoutMinError' :
-        msg === 'max_cashout'        ? 'wallet.cashoutMaxError' :
-        msg === 'cpf_invalid'        ? 'wallet.cashoutCpfError' :
-        msg === 'name_invalid'       ? 'wallet.cashoutNameError' :
-        msg === 'pix_key_invalid'    ? 'wallet.cashoutKeyError' :
-        msg === 'too_many_pending'   ? 'wallet.cashoutRateLimit' :
-        r?.data?.code === 'rate_limit'           ? 'wallet.cashoutRateLimit' :
-        r?.data?.code === 'insufficient_pending' ? 'wallet.cashoutInsufficient' :
-        'wallet.cashoutFailed';
-      Alert.alert(t('common.error') || 'Erro', t(errKey) || msg || 'Falha ao solicitar saque.');
-    } catch (e) {
-      Alert.alert(t('common.error') || 'Erro', e?.message || (t('wallet.cashoutFailed') || 'Falha ao solicitar saque.'));
-    } finally {
-      setSubmitting(false);
-    }
-  }, [amountCents, canSubmit, cpf, fullName, pixKey, pixType, t]);
+  const errors = {
+    amount: !amountCents ? tr(t, 'cashout2.errAmountEmpty', 'Informe o valor.')
+      : amountCents < MIN_CENTS ? tr(t, 'cashout2.errMin', 'O mínimo para saque é {min}.').replace('{min}', money(MIN_CENTS))
+      : amountCents > MAX_CENTS ? tr(t, 'cashout2.errMax', 'O máximo por saque é {max}.').replace('{max}', money(MAX_CENTS))
+      : amountCents > available ? tr(t, 'cashout2.errOver', 'Acima do disponível ({available}).').replace('{available}', money(available))
+      : '',
+    pixKey: validPixKey(pixType, pixKey) ? '' : tr(t, `cashout2.errKey.${pixType}`, {
+      cpf: 'CPF da chave inválido.', email: 'E-mail inválido.', phone: 'Telefone inválido (DDD + número).', random: 'Chave aleatória inválida (32 caracteres).',
+    }[pixType]),
+    fullName: fullName.trim().split(/\s+/).filter(Boolean).length >= 2 && fullName.trim().length >= 3
+      ? '' : tr(t, 'cashout2.errName', 'Informe nome e sobrenome do titular.'),
+    cpf: isValidCpf(cpf) ? '' : tr(t, 'cashout2.errCpf', 'CPF inválido.'),
+  };
+  const formValid = !errors.amount && !errors.pixKey && !errors.fullName && !errors.cpf;
+  const shown = (k) => (touched[k] || touched._all) ? errors[k] : '';
 
-  const fmtCpf = (raw) => {
-    const d = String(raw || '').replace(/[^0-9]/g, '').slice(0, 11);
-    if (d.length <= 3) return d;
-    if (d.length <= 6) return `${d.slice(0, 3)}.${d.slice(3)}`;
-    if (d.length <= 9) return `${d.slice(0, 3)}.${d.slice(3, 6)}.${d.slice(6)}`;
-    return `${d.slice(0, 3)}.${d.slice(3, 6)}.${d.slice(6, 9)}-${d.slice(9)}`;
+  const onPixKeyChange = (v) => {
+    const raw = String(v).slice(0, 120);
+    setPixKey(pixType === 'cpf' ? fmtCpf(raw) : raw);
   };
 
-  return (
-    <View style={[styles.container, { backgroundColor: colors.background, paddingTop: USE_NATIVE_HEADER ? 0 : (insets.top || 0) + 6 }]}>
-      <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} />
+  const goReview = () => {
+    setTouched({ _all: true });
+    setError('');
+    if (formValid) setStep('review');
+  };
 
-      {USE_NATIVE_HEADER && <Stack.Screen options={nativeHeaderOptions({ colors, isDark, title: t('wallet.cashoutTitle') })} />}
-      {!USE_NATIVE_HEADER && (
-      <View style={styles.headBar}>
-        <TouchableOpacity
-          onPress={() => router.back()}
-          style={styles.backBtn}
-          accessibilityRole="button"
-          accessibilityLabel={t('common.back') || 'Voltar'}
-        >
-          <IconArrowLeft size={22} color={colors.text} />
-        </TouchableOpacity>
-        <Text style={[styles.headTitle, { color: colors.text }]} numberOfLines={1}>
-          {t('wallet.cashoutTitle') || 'Sacar ganhos'}
-        </Text>
-        <View style={{ width: 38 }} />
-      </View>
-      )}
+  const submit = useCallback(async () => {
+    setStep('sending');
+    setError('');
+    try {
+      const r = await api.walletCashoutRequest({
+        amountCents, pixKey: pixType === 'cpf' ? digits(pixKey) : pixKey.trim(), pixKeyType: pixType, fullName, cpf,
+      });
+      if (r?.success && r.data) {
+        setAvailable(Number(r.data.pending_payout_cents) || 0);
+        setResult({ amount: Number(r.data.amount_cents) || amountCents });
+        setAmountText('');
+        setTouched({});
+        setStep('done');
+        loadAll();
+        return;
+      }
+      const msg = String(r?.message || '');
+      const code = r?.data?.code;
+      if (r?.data?.feature_disabled) { setServerDisabled(true); setStep('form'); return; }
+      if (code === 'insufficient_pending' && r?.data?.pending_payout_cents != null) setAvailable(Number(r.data.pending_payout_cents) || 0);
+      const map = {
+        min_cashout: tr(t, 'cashout2.errMin', 'O mínimo para saque é {min}.').replace('{min}', money(MIN_CENTS)),
+        max_cashout: tr(t, 'cashout2.errMax', 'O máximo por saque é {max}.').replace('{max}', money(MAX_CENTS)),
+        cpf_invalid: tr(t, 'wallet.cashoutCpfError', 'CPF inválido. Deve ter 11 dígitos.'),
+        name_invalid: tr(t, 'wallet.cashoutNameError', 'Informe seu nome completo.'),
+        pix_key_invalid: tr(t, 'wallet.cashoutKeyError', 'Chave PIX inválida.'),
+        too_many_pending: tr(t, 'wallet.cashoutRateLimit', 'Você já tem 3 saques em análise. Aguarde a aprovação.'),
+        insufficient_pending: tr(t, 'wallet.cashoutInsufficient', 'Saldo de saque insuficiente.'),
+      };
+      setError(map[msg] || map[code] || tr(t, 'wallet.cashoutFailed', 'Falha ao solicitar saque.'));
+      setStep('review');
+    } catch (e) {
+      setError(tr(t, 'cashout2.errNetwork', 'Sem conexão. Confira a internet e tente de novo.'));
+      setStep('review');
+    }
+  }, [amountCents, pixKey, pixType, fullName, cpf, t, loadAll]);
 
-      <ScrollView
-        contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 60 }}
-        showsVerticalScrollIndicator={false}
-        keyboardShouldPersistTaps="handled"
-      >
-        {/* Hero */}
-        <View style={[styles.hero, {
-          backgroundColor: isDark ? 'rgba(16,185,129,0.16)' : 'rgba(16,185,129,0.10)',
-          borderColor: isDark ? 'rgba(16,185,129,0.40)' : 'rgba(16,185,129,0.30)',
-        }]}>
-          <Text style={[styles.heroSubtitle, { color: colors.textSecondary }]}>
-            {t('wallet.cashoutHero') || 'Saque seus ganhos de criador via PIX. Mínimo R$ 50,00. Pagamento em até 48h úteis.'}
+  const copyReceipt = async (row) => {
+    const lines = [
+      `${tr(t, 'wallet.cashoutDetailTitle', 'Detalhes do saque')} #${row.id}`,
+      `${tr(t, 'wallet.cashoutDetail.amount', 'Valor')}: ${brl(row.amount_cents)}`,
+      `${tr(t, 'wallet.cashoutDetail.status', 'Status')}: ${statusLabel(t, String(row.status || 'pending'))}`,
+      `${tr(t, 'wallet.cashoutDetail.key', 'Chave PIX')}: ${row.pix_key_masked || row.pix_key || ''}`,
+    ];
+    try { await Clipboard.setStringAsync(lines.join('\n')); showToast({ message: tr(t, 'wallet.copied', 'Copiado'), kind: 'success' }); } catch {}
+  };
+
+  const title = tr(t, 'wallet.cashoutTitle', 'Sacar ganhos');
+  const inputStyle = [styles.input, Type.body, { color: s.text, backgroundColor: s.surface, borderColor: s.separator }];
+  const fmtDate = (ts, withTime) => {
+    const n = Number(ts) * 1000;
+    if (!n) return '';
+    try { return withTime ? new Date(n).toLocaleString(language || undefined) : new Date(n).toLocaleDateString(language || undefined); } catch { return ''; }
+  };
+
+  // ── Bloco do formulário / revisão / sucesso ────────────────────────────
+  let formBlock = null;
+  if (paused) {
+    formBlock = (
+      <Notice s={s} icon={IconInfo}
+        title={tr(t, 'creatorEarnings.cashoutPaused', 'Saques temporariamente indisponíveis.')}
+        body={tr(t, 'cashout2.pausedBody', 'Seu saldo continua guardado. Avisaremos quando os saques via Pix voltarem.')} />
+    );
+  } else if (step === 'done' && result) {
+    formBlock = (
+      <Card>
+        <View style={{ alignItems: 'center', paddingVertical: Space.md }}>
+          <IconCheckCircle size={40} color={s.success} />
+          <Text style={[Type.title3, { color: s.text, marginTop: Space.md }]}>{tr(t, 'wallet.cashoutSent', 'Saque solicitado')}</Text>
+          <Text style={[Type.subhead, { color: s.textSecondary, textAlign: 'center', marginTop: Space.xs }]}>
+            {tr(t, 'cashout2.sentBody', '{amount} via Pix em até 48h úteis. Acompanhe o status abaixo.').replace('{amount}', brl(result.amount))}
           </Text>
-          <Text style={[styles.heroLabel, { color: colors.textSecondary }]}>
-            {t('wallet.cashoutAvailable') || 'Disponível para saque'}
-          </Text>
-          {loadingBal ? (
-            <ActivityIndicator color="#10B981" />
-          ) : (
-            <Text style={[styles.heroValue, { color: '#10B981' }]}>
-              R$ {fmtBrl(available)}
-            </Text>
-          )}
-          <View style={styles.rateChip}>
-            <IconDiamond size={12} color={colors.primary} />
-            <Text style={[styles.rateChipText, { color: colors.textSecondary }]}>
-              {(t('wallet.cashoutRateLine') || '1 000 ◆ ≈ R$ {brl}')
-                .replace('{brl}', ((1000 * DIAMOND_TO_BRL_CENTS) / 100).toFixed(2).replace('.', numberLocale(language).startsWith('pt') ? ',' : '.'))}
-            </Text>
-          </View>
+          <Button title={tr(t, 'common.done', 'Concluir')} variant="secondary" style={{ marginTop: Space.lg }} fullWidth
+            onPress={() => { setStep('form'); setResult(null); }} />
         </View>
-
-        {/* Amount field */}
-        <Text style={[styles.label, { color: colors.text }]}>
-          {t('wallet.cashoutAmount') || 'Quanto você quer sacar?'}
+      </Card>
+    );
+  } else if (!reachedMin) {
+    formBlock = (
+      <Card>
+        <Text style={[Type.headline, { color: s.text }]}>{tr(t, 'creatorEarnings.belowMin', 'Abaixo do mínimo para saque.')}</Text>
+        <View style={[styles.track, { backgroundColor: s.fill, marginTop: Space.md }]}
+          accessibilityRole="progressbar" accessibilityValue={{ min: 0, max: 100, now: Math.round(progress * 100) }}>
+          <View style={[styles.trackFill, { width: `${Math.max(progress * 100, progress > 0 ? 2 : 0)}%`, backgroundColor: s.ink }]} />
+        </View>
+        <Text style={[Type.footnote, { color: s.textSecondary, marginTop: Space.sm }]}>
+          {tr(t, 'creatorDash.missing', 'Faltam {missing} para o saque mínimo de {min}')
+            .replace('{missing}', money(MIN_CENTS - available)).replace('{min}', money(MIN_CENTS))}
         </Text>
-        <View style={[styles.amountRow, {
-          borderColor: tooLow || overAvailable ? '#EF4444' : (isDark ? 'rgba(255,255,255,0.16)' : 'rgba(15,23,42,0.12)'),
-          backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : '#fff',
-        }]}>
-          <Text style={[styles.brlPrefix, { color: colors.textSecondary }]}>R$</Text>
-          <TextInput
-            value={amountText}
-            onChangeText={setAmountText}
-            placeholder={t('wallet.cashoutAmountPh') || '0,00'}
-            placeholderTextColor={colors.textTertiary}
-            keyboardType="decimal-pad"
-            maxLength={12}
-            style={[styles.amountInput, { color: colors.text }]}
-          />
-        </View>
-        {tooLow ? (
-          <Text style={styles.errText}>{t('wallet.cashoutMinError') || 'Mínimo R$ 50,00.'}</Text>
-        ) : overAvailable ? (
-          <Text style={styles.errText}>{t('wallet.cashoutInsufficient') || 'Saldo insuficiente.'}</Text>
-        ) : amountCents >= MIN_CENTS ? (
-          <View style={styles.previewRow}>
-            <Text style={[styles.previewLabel, { color: colors.textSecondary }]}>
-              {t('wallet.cashoutPreviewLabel') || 'Você vai receber'}
-            </Text>
-            <Text style={[styles.previewVal, { color: '#10B981' }]}>
-              R$ {fmtBrl(amountCents)}
-            </Text>
+      </Card>
+    );
+  } else if (step === 'review' || step === 'sending') {
+    formBlock = (
+      <Card>
+        <Text style={[Type.headline, { color: s.text, marginBottom: Space.sm }]}>{tr(t, 'cashout2.reviewTitle', 'Confira antes de enviar')}</Text>
+        <DetailRow s={s} label={tr(t, 'wallet.cashoutDetail.amount', 'Valor')} value={brl(amountCents) + (showConverted ? `  (≈ ${money(amountCents)})` : '')} />
+        <DetailRow s={s} label={tr(t, 'wallet.cashoutDetail.key', 'Chave PIX')} value={pixKey.trim()} mono />
+        <DetailRow s={s} label={tr(t, 'wallet.cashoutDetail.fullName', 'Titular')} value={fullName.trim()} />
+        <DetailRow s={s} label={tr(t, 'wallet.cashoutDetail.cpf', 'CPF')} value={fmtCpf(cpf)} mono />
+        {error ? (
+          <View style={{ flexDirection: 'row', gap: Space.sm, marginTop: Space.md }} accessibilityLiveRegion="polite">
+            <IconAlertCircle size={18} color={s.danger} />
+            <Text style={[Type.footnote, { color: s.danger, flex: 1 }]}>{error}</Text>
           </View>
         ) : null}
+        <Button title={tr(t, 'cashout2.confirm', 'Confirmar saque')} size="lg" fullWidth loading={step === 'sending'}
+          onPress={submit} style={{ marginTop: Space.lg }} />
+        <Button title={tr(t, 'cashout2.edit', 'Editar dados')} variant="ghost" fullWidth disabled={step === 'sending'}
+          onPress={() => { setError(''); setStep('form'); }} style={{ marginTop: Space.xs }} />
+      </Card>
+    );
+  } else {
+    formBlock = (
+      <Card>
+        <Field s={s} label={tr(t, 'wallet.cashoutAmount', 'Quanto você quer sacar?')} error={shown('amount')}
+          hint={showConverted && amountCents > 0 ? `≈ ${money(amountCents)}` : tr(t, 'cashout2.amountHint', 'Pix é pago em reais. Mínimo {min}.').replace('{min}', brl(MIN_CENTS))}>
+          <View style={[styles.amountRow, { backgroundColor: s.surface, borderColor: shown('amount') ? s.danger : s.separator }]}>
+            <Text style={[Type.title3, { color: s.textSecondary }]}>{brl(0).replace(/[\d.,\s ]/g, '') || 'BRL'}</Text>
+            <TextInput
+              value={amountText}
+              onChangeText={(v) => setAmountText(v.replace(/[^0-9,.]/g, '').slice(0, 12))}
+              onBlur={() => setTouched(p => ({ ...p, amount: true }))}
+              placeholder="0,00"
+              placeholderTextColor={s.textTertiary}
+              keyboardType="decimal-pad"
+              style={[Type.title2, styles.amountInput, { color: s.text }]}
+              accessibilityLabel={tr(t, 'wallet.cashoutAmount', 'Quanto você quer sacar?')}
+            />
+          </View>
+          <View style={{ flexDirection: 'row', gap: Space.sm, marginTop: Space.sm }}>
+            <Button size="sm" variant="secondary" title={tr(t, 'cashout2.useMin', 'Mínimo')}
+              onPress={() => { setAmountText(centsToInput(MIN_CENTS)); setTouched(p => ({ ...p, amount: true })); }} />
+            <Button size="sm" variant="secondary" title={tr(t, 'cashout2.useAll', 'Tudo ({amount})').replace('{amount}', brl(maxAllowed))}
+              onPress={() => { setAmountText(centsToInput(maxAllowed)); setTouched(p => ({ ...p, amount: true })); }} />
+          </View>
+        </Field>
 
-        {/* PIX type chips */}
-        <Text style={[styles.label, { color: colors.text }]}>
-          {t('wallet.cashoutPixKeyType') || 'Tipo da chave'}
-        </Text>
-        <View style={styles.chipsRow}>
-          {[
-            { id: 'cpf',    label: 'CPF' },
-            { id: 'email',  label: t('wallet.keyType.email') },
-            { id: 'phone',  label: t('wallet.keyType.phone') },
-            { id: 'random', label: t('wallet.keyType.random') },
-          ].map(c => {
-            const active = pixType === c.id;
-            return (
-              <TouchableOpacity
-                key={c.id}
-                onPress={() => setPixType(c.id)}
-                style={[styles.chip, {
-                  backgroundColor: active ? '#10B981' : (isDark ? 'rgba(16,185,129,0.10)' : 'rgba(16,185,129,0.06)'),
-                  borderColor: active ? '#10B981' : (isDark ? 'rgba(16,185,129,0.32)' : 'rgba(16,185,129,0.22)'),
-                }]}
-                accessibilityRole="button"
-              >
-                <Text style={[styles.chipText, { color: active ? '#fff' : colors.text }]}>
-                  {c.label}
-                </Text>
-              </TouchableOpacity>
-            );
-          })}
-        </View>
-
-        {/* PIX key */}
-        <Text style={[styles.label, { color: colors.text }]}>
-          {t('wallet.cashoutPixKey') || 'Chave PIX'}
-        </Text>
-        <TextInput
-          value={pixKey}
-          onChangeText={(s) => setPixKey(s.slice(0, 120))}
-          placeholder={t('wallet.cashoutPixKeyPh') || 'CPF, e-mail, telefone ou chave aleatória'}
-          placeholderTextColor={colors.textTertiary}
-          autoCapitalize="none"
-          autoCorrect={false}
-          keyboardType={pixType === 'email' ? 'email-address' : (pixType === 'phone' ? 'phone-pad' : 'default')}
-          style={[styles.textInput, {
-            color: colors.text,
-            backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : '#fff',
-            borderColor: isDark ? 'rgba(255,255,255,0.16)' : 'rgba(15,23,42,0.12)',
-          }]}
-        />
-
-        {/* Full name */}
-        <Text style={[styles.label, { color: colors.text }]}>
-          {t('wallet.cashoutFullName') || 'Nome completo (titular da conta)'}
-        </Text>
-        <TextInput
-          value={fullName}
-          onChangeText={(s) => setFullName(s.slice(0, 120))}
-          placeholder="Maria Aparecida da Silva"
-          placeholderTextColor={colors.textTertiary}
-          autoCapitalize="words"
-          autoCorrect={false}
-          style={[styles.textInput, {
-            color: colors.text,
-            backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : '#fff',
-            borderColor: isDark ? 'rgba(255,255,255,0.16)' : 'rgba(15,23,42,0.12)',
-          }]}
-        />
-
-        {/* CPF */}
-        <Text style={[styles.label, { color: colors.text }]}>
-          {t('wallet.cashoutCpf') || 'CPF'}
-        </Text>
-        <TextInput
-          value={cpf}
-          onChangeText={(s) => setCpf(fmtCpf(s))}
-          placeholder={t('wallet.cashoutCpfPh') || '000.000.000-00'}
-          placeholderTextColor={colors.textTertiary}
-          keyboardType="number-pad"
-          maxLength={14}
-          style={[styles.textInput, {
-            color: colors.text,
-            backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : '#fff',
-            borderColor: isDark ? 'rgba(255,255,255,0.16)' : 'rgba(15,23,42,0.12)',
-          }]}
-        />
-
-        {/* Submit */}
-        <TouchableOpacity
-          onPress={onSubmit}
-          disabled={!canSubmit}
-          style={[styles.submitBtn, {
-            backgroundColor: canSubmit ? '#10B981' : (isDark ? 'rgba(16,185,129,0.40)' : 'rgba(16,185,129,0.50)'),
-          }]}
-          accessibilityRole="button"
-          accessibilityLabel={t('wallet.cashoutCta') || 'Solicitar saque'}
-        >
-          {submitting ? (
-            <ActivityIndicator color="#fff" />
-          ) : (
-            <Text style={styles.submitBtnText}>
-              {t('wallet.cashoutCta') || 'Solicitar saque'}
-              {amountCents >= MIN_CENTS ? `  ·  R$ ${fmtBrl(amountCents)}` : ''}
-            </Text>
-          )}
-        </TouchableOpacity>
-
-        <Text style={[styles.tos, { color: colors.textTertiary }]}>
-          {t('wallet.cashoutTos') || 'Ao solicitar, você concorda com os termos. Taxa de plataforma de 30% já descontada do saldo de saque.'}
-        </Text>
-
-        {/* History */}
-        <Text style={[styles.histTitle, { color: colors.textSecondary }]}>
-          {t('wallet.cashoutHistory') || 'Saques anteriores'}
-        </Text>
-        {history.length === 0 ? (
-          <Text style={[styles.empty, { color: colors.textTertiary }]}>
-            {t('wallet.cashoutHistoryEmpty') || 'Nenhum saque ainda.'}
-          </Text>
-        ) : history.map(row => (
-          <CashoutHistoryRow
-            key={String(row.id)}
-            row={row}
-            colors={colors}
-            isDark={isDark}
-            t={t}
-            onPress={() => setDetailRow(row)}
+        <Field s={s} label={tr(t, 'wallet.cashoutPixKeyType', 'Tipo da chave')}>
+          <SegmentedControl
+            size="sm"
+            value={pixType}
+            onChange={(v) => { setPixType(v); setPixKey(''); setTouched(p => ({ ...p, pixKey: false })); }}
+            options={[
+              { value: 'cpf', label: tr(t, 'wallet.keyType.cpf', 'CPF') },
+              { value: 'email', label: tr(t, 'wallet.keyType.email', 'E-mail') },
+              { value: 'phone', label: tr(t, 'wallet.keyType.phone', 'Telefone') },
+              { value: 'random', label: tr(t, 'wallet.keyType.random', 'Aleatória') },
+            ]}
           />
-        ))}
-      </ScrollView>
+        </Field>
 
-      <CashoutDetailModal
-        visible={!!detailRow}
-        row={detailRow}
-        onClose={() => setDetailRow(null)}
-        colors={colors}
-        isDark={isDark}
-        t={t}
-      />
+        <Field s={s} label={tr(t, 'wallet.cashoutPixKey', 'Chave PIX')} error={shown('pixKey')}>
+          <TextInput
+            value={pixKey}
+            onChangeText={onPixKeyChange}
+            onBlur={() => setTouched(p => ({ ...p, pixKey: true }))}
+            placeholder={{ cpf: '000.000.000-00', email: 'nome@exemplo.com', phone: '+55 11 90000-0000', random: '0000…-0000' }[pixType]}
+            placeholderTextColor={s.textTertiary}
+            autoCapitalize="none"
+            autoCorrect={false}
+            keyboardType={pixType === 'email' ? 'email-address' : pixType === 'phone' ? 'phone-pad' : pixType === 'cpf' ? 'number-pad' : 'default'}
+            style={[inputStyle, shown('pixKey') && { borderColor: s.danger }]}
+            accessibilityLabel={tr(t, 'wallet.cashoutPixKey', 'Chave PIX')}
+          />
+        </Field>
+
+        <Field s={s} label={tr(t, 'wallet.cashoutFullName', 'Nome completo (titular da conta)')} error={shown('fullName')}>
+          <TextInput
+            value={fullName}
+            onChangeText={(v) => setFullName(v.slice(0, 120))}
+            onBlur={() => setTouched(p => ({ ...p, fullName: true }))}
+            placeholder={tr(t, 'wallet.cashoutFullNamePh', 'Nome completo')}
+            placeholderTextColor={s.textTertiary}
+            autoCapitalize="words"
+            autoCorrect={false}
+            style={[inputStyle, shown('fullName') && { borderColor: s.danger }]}
+            accessibilityLabel={tr(t, 'wallet.cashoutFullName', 'Nome completo (titular da conta)')}
+          />
+        </Field>
+
+        <Field s={s} label={tr(t, 'wallet.cashoutCpf', 'CPF')} error={shown('cpf')}
+          hint={tr(t, 'cashout2.cpfHint', 'CPF do titular da conta que recebe o Pix.')}>
+          <TextInput
+            value={cpf}
+            onChangeText={(v) => setCpf(fmtCpf(v))}
+            onBlur={() => setTouched(p => ({ ...p, cpf: true }))}
+            placeholder="000.000.000-00"
+            placeholderTextColor={s.textTertiary}
+            keyboardType="number-pad"
+            maxLength={14}
+            style={[inputStyle, shown('cpf') && { borderColor: s.danger }]}
+            accessibilityLabel={tr(t, 'wallet.cashoutCpf', 'CPF')}
+          />
+        </Field>
+
+        <Button title={tr(t, 'cashout2.continue', 'Continuar')} size="lg" fullWidth onPress={goReview} style={{ marginTop: Space.xl }} />
+        <Text style={[Type.caption, { color: s.textTertiary, textAlign: 'center', marginTop: Space.md }]}>
+          {tr(t, 'cashout2.tos', 'Pagamento via Pix em até 48h úteis após análise. A taxa de plataforma (30%) já foi descontada do saldo.')}
+        </Text>
+      </Card>
+    );
+  }
+
+  const body = (
+    <>
+      <Card elevated padding={Space.xl}>
+        <Text style={[Type.footnote, { color: s.textSecondary, fontWeight: '600' }]}>
+          {tr(t, 'wallet.cashoutAvailable', 'Disponível para saque')}
+        </Text>
+        <Text style={[Type.largeTitle, { color: s.text, marginTop: Space.xs }]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.6}>
+          {money(available)}
+        </Text>
+        <Text style={[Type.footnote, { color: s.textSecondary, marginTop: Space.xs }]}>
+          {tr(t, 'cashout2.heroSub', 'Mínimo {min} · Pix em até 48h úteis').replace('{min}', money(MIN_CENTS))}
+        </Text>
+      </Card>
+
+      {formBlock}
+
+      <SectionHeader variant="grouped" inset={Space.xs} style={{ paddingTop: Space.sm }} title={tr(t, 'wallet.cashoutHistory', 'Saques anteriores')} />
+      <Card padding={0}>
+        {history.length === 0 ? (
+          <Text style={[Type.footnote, { color: s.textSecondary, padding: Space.lg }]}>
+            {tr(t, 'wallet.cashoutHistoryEmpty', 'Nenhum saque ainda.')}
+          </Text>
+        ) : history.map((row, idx) => {
+          const st = String(row.status || 'pending');
+          return (
+            <PressableRow key={String(row.id)} onPress={() => setDetailRow(row)} accessibilityRole="button"
+              accessibilityLabel={`${money(row.amount_cents)}, ${statusLabel(t, st)}`}
+              style={[styles.histRow, idx < history.length - 1 && { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: s.separator }]}>
+              <View style={{ flex: 1, minWidth: 0 }}>
+                <Text style={[Type.callout, { color: s.text, fontWeight: '600' }]}>{money(row.amount_cents)}</Text>
+                <Text style={[Type.caption, { color: s.textSecondary }]} numberOfLines={1}>
+                  {(row.pix_key_masked || row.pix_key || '')}{row.requested_at_ts ? ' · ' + fmtDate(row.requested_at_ts) : ''}
+                </Text>
+              </View>
+              <Badge label={statusLabel(t, st)} tone={statusTone(st)} />
+            </PressableRow>
+          );
+        })}
+      </Card>
+    </>
+  );
+
+  return (
+    <View style={{ flex: 1, backgroundColor: s.bgGrouped }}>
+      {USE_NATIVE_HEADER ? (
+        <Stack.Screen options={nativeHeaderOptions({ colors, isDark, title })} />
+      ) : (
+        <TopBar title={title} onBack={() => { try { router.back(); } catch {} }} maxWidth={Layout.contentMaxWidth} />
+      )}
+      {loading ? (
+        <View style={[styles.scrollBody, { gap: Space.md }]}>
+          <Skeleton height={124} radius={Radius.card} />
+          <Skeleton height={300} radius={Radius.card} delay={60} />
+          <Skeleton height={64} radius={Radius.card} delay={120} />
+        </View>
+      ) : (
+        <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+          <ScrollView
+            contentContainerStyle={[styles.scrollBody, { paddingBottom: Math.max(Space.xxxl, (insets.bottom || 0) + Space.xl) }]}
+            showsVerticalScrollIndicator={false}
+            keyboardShouldPersistTaps="handled"
+            refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={s.textSecondary} />}
+          >
+            <SkeletonFadeIn style={{ gap: Space.md }}>{body}</SkeletonFadeIn>
+          </ScrollView>
+        </KeyboardAvoidingView>
+      )}
+
+      <Sheet visible={!!detailRow} onClose={() => setDetailRow(null)} title={tr(t, 'wallet.cashoutDetailTitle', 'Detalhes do saque')}>
+        {detailRow ? (
+          <View style={{ paddingHorizontal: Space.lg, paddingBottom: Space.lg }}>
+            <View style={{ alignItems: 'center', paddingVertical: Space.md }}>
+              <Text style={[Type.title1, { color: s.text }]}>{money(detailRow.amount_cents)}</Text>
+              <View style={{ marginTop: Space.sm }}>
+                <Badge label={statusLabel(t, String(detailRow.status || 'pending'))} tone={statusTone(String(detailRow.status || 'pending'))} />
+              </View>
+            </View>
+            <DetailRow s={s} label={tr(t, 'wallet.cashoutDetail.key', 'Chave PIX')} value={detailRow.pix_key_masked || detailRow.pix_key} mono />
+            <DetailRow s={s} label={tr(t, 'wallet.cashoutDetail.type', 'Tipo')} value={String(detailRow.pix_key_type || 'auto').toUpperCase()} />
+            <DetailRow s={s} label={tr(t, 'wallet.cashoutDetail.requested', 'Solicitado em')} value={fmtDate(detailRow.requested_at_ts, true)} />
+            {detailRow.processed_at_ts ? <DetailRow s={s} label={tr(t, 'wallet.cashoutDetail.processed', 'Processado em')} value={fmtDate(detailRow.processed_at_ts, true)} /> : null}
+            <DetailRow s={s} label={tr(t, 'wallet.cashoutDetail.id', 'ID do saque')} value={`#${detailRow.id}`} />
+            {detailRow.admin_note ? <DetailRow s={s} label={tr(t, 'wallet.cashoutDetail.note', 'Observação')} value={detailRow.admin_note} /> : null}
+            <Button title={tr(t, 'cashout2.copyReceipt', 'Copiar comprovante')} variant="secondary" fullWidth
+              onPress={() => copyReceipt(detailRow)} style={{ marginTop: Space.lg }} />
+          </View>
+        ) : null}
+      </Sheet>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1 },
-  headBar: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    paddingHorizontal: 12, marginBottom: 10,
+  scrollBody: {
+    padding: Layout.gutter, gap: Space.md,
+    width: '100%', maxWidth: Layout.contentMaxWidth, alignSelf: 'center',
   },
-  backBtn: { width: 38, height: 38, borderRadius: 19, alignItems: 'center', justifyContent: 'center' },
-  headTitle: { fontSize: 16, fontWeight: '800' },
-
-  hero: {
-    borderRadius: 18, borderWidth: StyleSheet.hairlineWidth,
-    paddingVertical: 18, paddingHorizontal: 16,
-    marginBottom: 18, alignItems: 'center',
-  },
-  heroSubtitle: { fontSize: 13, textAlign: 'center', marginBottom: 14, lineHeight: 18 },
-  heroLabel: { fontSize: 12, fontWeight: '600' },
-  heroValue: { fontSize: 30, fontWeight: '900', marginTop: 4 },
-
-  label: { fontSize: 13, fontWeight: '700', marginTop: 14, marginBottom: 6 },
+  track: { height: 6, borderRadius: 3, overflow: 'hidden' },
+  trackFill: { height: 6, borderRadius: 3 },
   amountRow: {
-    flexDirection: 'row', alignItems: 'center', gap: 8,
-    borderRadius: 12, borderWidth: 1,
-    paddingHorizontal: 14, paddingVertical: Platform.OS === 'ios' ? 14 : 8,
+    flexDirection: 'row', alignItems: 'center', gap: Space.sm,
+    borderRadius: Radius.control, borderWidth: 1, paddingHorizontal: Space.md, minHeight: 56,
   },
-  brlPrefix: { fontSize: 18, fontWeight: '800' },
-  amountInput: { flex: 1, fontSize: 22, fontWeight: '800', textAlign: 'right' },
-  errText: { color: '#EF4444', fontSize: 12, marginTop: 6 },
-
-  chipsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 4 },
-  chip: {
-    paddingHorizontal: 12, paddingVertical: 8,
-    borderRadius: 999, borderWidth: StyleSheet.hairlineWidth,
+  amountInput: { flex: 1, textAlign: 'right', paddingVertical: Space.sm, ...(Platform.OS === 'web' ? { outlineStyle: 'none' } : null) },
+  input: {
+    borderRadius: Radius.control, borderWidth: 1, paddingHorizontal: Space.md, minHeight: 48,
+    ...(Platform.OS === 'web' ? { outlineStyle: 'none' } : null),
   },
-  chipText: { fontSize: 12, fontWeight: '700' },
-
-  textInput: {
-    borderRadius: 12, borderWidth: 1,
-    paddingHorizontal: 14, paddingVertical: Platform.OS === 'ios' ? 12 : 8,
-    fontSize: 15, marginBottom: 4,
-  },
-
-  submitBtn: {
-    marginTop: 22, paddingVertical: 14, borderRadius: 14,
-    alignItems: 'center', justifyContent: 'center',
-  },
-  submitBtnText: { color: '#fff', fontSize: 15, fontWeight: '800' },
-  tos: { fontSize: 11, marginTop: 12, textAlign: 'center', lineHeight: 14 },
-
-  histTitle: {
-    fontSize: 12, marginTop: 26, marginBottom: 6,
-    textTransform: 'uppercase', letterSpacing: 0.6,
-  },
-  empty: { textAlign: 'center', fontSize: 13, paddingVertical: 24 },
-  histRow: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    paddingVertical: 12, borderBottomWidth: StyleSheet.hairlineWidth, gap: 12,
-  },
-  histLeft: { flex: 1 },
-  histAmount: { fontSize: 15, fontWeight: '800' },
-  histKey: { fontSize: 12, marginTop: 2 },
-  histWhen: { fontSize: 11, marginTop: 2 },
-  statusPill: {
-    paddingHorizontal: 10, paddingVertical: 4,
-    borderRadius: 999, borderWidth: StyleSheet.hairlineWidth,
-  },
-  statusText: { fontSize: 11, fontWeight: '800' },
-
-  rateChip: {
-    flexDirection: 'row', alignItems: 'center', gap: 5,
-    marginTop: 10, paddingHorizontal: 10, paddingVertical: 4,
-    borderRadius: 999, backgroundColor: 'rgba(17, 17, 17,0.10)',
-  },
-  rateChipText: { fontSize: 11, fontWeight: '700' },
-
-  previewRow: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    marginTop: 8, paddingHorizontal: 4,
-  },
-  previewLabel: { fontSize: 12 },
-  previewVal: { fontSize: 14, fontWeight: '800' },
-
-  scrim: { flex: 1, backgroundColor: 'rgba(0,0,0,0.55)', justifyContent: 'flex-end' },
-  detailSheet: {
-    borderTopLeftRadius: 18, borderTopRightRadius: 18,
-    paddingHorizontal: 18, paddingTop: 14, paddingBottom: 30,
-    minHeight: 380,
-  },
-  detailHead: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    marginBottom: 12,
-  },
-  detailTitle: { fontSize: 16, fontWeight: '800' },
-  detailClose: { width: 32, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center' },
-  detailStatusBlock: {
-    paddingVertical: 14, paddingHorizontal: 14,
-    borderRadius: 14, marginBottom: 14, alignItems: 'center',
-  },
-  detailStatusLabel: { fontSize: 12, fontWeight: '600', textTransform: 'uppercase', letterSpacing: 0.5 },
-  detailStatusVal: { fontSize: 13, fontWeight: '800', marginTop: 4 },
-  detailStatusAmount: { fontSize: 26, fontWeight: '900', marginTop: 6, letterSpacing: -0.4 },
-  detailRow: {
-    flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between',
-    paddingVertical: 10, gap: 12,
-  },
-  detailRowLabel: { fontSize: 12, fontWeight: '600', minWidth: 110 },
-  detailRowVal: { flex: 1, fontSize: 13, fontWeight: '700', textAlign: 'right' },
-  detailShareBtn: {
-    marginTop: 14, paddingVertical: 12,
-    borderRadius: 12, backgroundColor: '#111111',
-    alignItems: 'center',
-  },
-  detailShareBtnText: { color: '#fff', fontSize: 14, fontWeight: '800' },
+  histRow: { flexDirection: 'row', alignItems: 'center', gap: Space.md, paddingHorizontal: Space.lg, paddingVertical: Space.md },
+  detailRow: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', paddingVertical: Space.sm, gap: Space.md },
 });

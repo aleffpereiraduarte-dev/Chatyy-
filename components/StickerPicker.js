@@ -5,7 +5,7 @@ import {
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import CachedImage from './CachedImage';
-import { IconX, IconPlus, IconSearch, IconHeart, IconStar, IconStarFilled, IconTrash, IconFilm, IconPackage, IconClock, IconPalette, IconImage, IconCamera, IconSend, IconChevronUp } from './Icons';
+import { IconX, IconPlus, IconSearch, IconHeart, IconStar, IconStarFilled, IconTrash, IconFilm, IconPackage, IconClock, IconPalette, IconImage, IconCamera, IconSend, IconChevronUp, IconGrid } from './Icons';
 import * as api from '../services/api';
 // [2026-10-08 sticker-maker] criador novo (recorte automático + contorno +
 // texto/desenho/emoji + WebP 512) substitui o StickerEditor antigo aqui.
@@ -202,6 +202,8 @@ export default function StickerPicker({ onSelect, onClose, colors, t, userEmail,
   const _bi = Math.max(0, Number(bottomInset) || 0);
   const router = useRouter();
   const [activePack, setActivePack] = useState('recent');
+  // [2026-10-13 sticker-one-create] ÚNICA entrada p/ criar: tile no início da
+  // grade nas abas "Recentes" (abertura padrão) e "Minhas".
   const [recents, setRecents] = useState([]);
   const [mine, setMine] = useState([]);            // cached URL-only list for offline
   const [mineFull, setMineFull] = useState([]);    // full sticker rows from server (with id, emoji_tags)
@@ -649,6 +651,10 @@ export default function StickerPicker({ onSelect, onClose, colors, t, userEmail,
   else currentStickers = STICKER_PACKS.find(p => p.id === activePack)?.stickers
     || ANIMATED_PACKS.find(p => p.id === activePack)?.stickers
     || [];
+  // [2026-10-13 sticker-one-create] Tile "Criar figurinha" = única entrada de
+  // criação. Some só durante uma busca com texto (no desktop web a busca já
+  // abre visível, antes o tile nunca aparecia lá).
+  const showCreateTile = (activePack === 'recent' || activePack === 'mine') && !(showSearch && searchQuery.trim());
 
   // Accept http(s):// URLs and server-relative paths like /data/sticker-files/...
   const isImg = (s) => typeof s === 'string' && (/^https?:\/\//.test(s) || s.startsWith('/data/'));
@@ -732,11 +738,9 @@ export default function StickerPicker({ onSelect, onClose, colors, t, userEmail,
             <TouchableOpacity onPress={() => { setShowSearch(true); setTimeout(() => searchRef.current?.focus(), 100); }} style={{ padding: 4 }}>
               <IconSearch size={18} color={colors.textSecondary} />
             </TouchableOpacity>
-            <TouchableOpacity onPress={createSticker} disabled={creating || picking}
-              style={{ flexDirection: 'row', alignItems: 'center', gap: 4, padding: 6, borderRadius: 16, backgroundColor: colors.primary + '15' }}>
-              {(creating || picking) ? <ActivityIndicator size={14} color={colors.primary} /> : <IconPlus size={14} color={colors.primary} />}
-              <Text style={{ fontSize: 11, fontWeight: '700', color: colors.primary }}>{t?.('chat.createSticker') || 'Criar'}</Text>
-            </TouchableOpacity>
+            {/* [2026-10-13 sticker-one-create] O pill "+ Criar" do topo saiu: era o
+                3º atalho p/ a mesma folha (tile da grade + FAB). Criar = só o tile
+                "Criar figurinha" no início da grade (Recentes/Minhas). */}
             <TouchableOpacity onPress={onClose} style={{ padding: 4 }}>
               <IconX size={20} color={colors.textSecondary} />
             </TouchableOpacity>
@@ -892,7 +896,7 @@ export default function StickerPicker({ onSelect, onClose, colors, t, userEmail,
       )}
 
       {/* Sticker grid */}
-      {currentStickers.length === 0 && !(activePack === 'mine' && !showSearch) ? (
+      {currentStickers.length === 0 && !showCreateTile ? (
         <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 24 }}>
           {/* [2026-10-10 stickers-import] ícone SVG (antes emoji na UI) */}
           <View style={{ marginBottom: 10 }}>
@@ -909,13 +913,20 @@ export default function StickerPicker({ onSelect, onClose, colors, t, userEmail,
                 : activePack === 'favorites'
                   ? (t?.('chat.noFavorites') || 'Segure em uma figurinha para favoritar')
                   : activePack === 'mine'
-                    ? (t?.('chat.noMyStickers') || 'Toque em "Criar" para fazer sua figurinha')
+                    ? _tr(t, 'stickerPicker.mineEmpty', 'Toque em "Criar figurinha" para fazer a sua')
                     : ''}
           </Text>
         </View>
       ) : (
         <FlatList
-          data={(activePack === 'mine' && !showSearch) ? [CREATE_TILE, ...currentStickers] : currentStickers}
+          data={showCreateTile ? [CREATE_TILE, ...currentStickers] : currentStickers}
+          ListFooterComponent={showCreateTile && currentStickers.length === 0 ? (
+            <Text style={{ fontSize: 12, color: colors.textSecondary, textAlign: 'center', paddingHorizontal: 24, paddingTop: 12 }}>
+              {activePack === 'recent'
+                ? (t?.('chat.recentStickers') || 'Suas figurinhas recentes aparecerão aqui')
+                : _tr(t, 'stickerPicker.mineEmpty', 'Toque em "Criar figurinha" para fazer a sua')}
+            </Text>
+          ) : null}
           numColumns={5}
           keyExtractor={(item, i) => `${activePack}-${i}-${typeof item === 'string' ? item.slice(0, 32) : i}`}
           keyboardShouldPersistTaps="handled"
@@ -935,7 +946,7 @@ export default function StickerPicker({ onSelect, onClose, colors, t, userEmail,
               activeOpacity={0.6}
             >
               {(creating || picking) ? <ActivityIndicator size="small" color={colors.text} /> : <IconStickerPlus size={24} color={colors.text} />}
-              <Text style={{ fontSize: 10, fontWeight: '700', color: colors.text, marginTop: 3 }} numberOfLines={1}>{_tr(t, 'stickerMaker.createTile', 'Criar')}</Text>
+              <Text style={{ fontSize: 10, fontWeight: '700', color: colors.text, marginTop: 3, textAlign: 'center' }} numberOfLines={2}>{_tr(t, 'stickerMaker.pickTitle', 'Criar figurinha')}</Text>
             </TouchableOpacity>
           ) : (
             <TouchableOpacity
@@ -1034,43 +1045,30 @@ export default function StickerPicker({ onSelect, onClose, colors, t, userEmail,
             </TouchableOpacity>
           );
         })}
-        {/* "+" tab — opens the sticker store. Placed last so users always
-            know where to discover more packs. */}
+        {/* [2026-10-13 sticker-one-create] Loja de pacotes — antes um "+" que o
+            usuário confundia com "Criar". Agora ícone de grade + rótulo. */}
         <TouchableOpacity
           onPress={() => router.push('/stickers/store')}
           style={{
-            paddingHorizontal: 10, paddingVertical: 8, marginLeft: 4,
-            backgroundColor: colors.primary + '12',
-            borderRadius: 14, alignItems: 'center', justifyContent: 'center',
+            flexDirection: 'row', gap: 5,
+            paddingHorizontal: 10, height: 32, marginLeft: 4, marginRight: 6,
+            backgroundColor: colors.text + '10',
+            borderRadius: 16, alignItems: 'center', justifyContent: 'center',
           }}
           activeOpacity={0.6}
+          accessibilityRole="button"
+          accessibilityLabel={_tr(t, 'stickerPicker.storeA11y', 'Adicionar pacotes de figurinhas da loja')}
+          hitSlop={{ top: 6, bottom: 6 }}
         >
-          <IconPlus size={16} color={colors.primary} />
+          <IconGrid size={15} color={colors.text} />
+          <Text style={{ fontSize: 12, fontWeight: '600', color: colors.text }} numberOfLines={1}>
+            {_tr(t, 'stickerPicker.store', 'Loja')}
+          </Text>
         </TouchableOpacity>
       </ScrollView>
 
-      {/* "Criar sticker" floating button — bottom-right, brand purple. Opens
-          the same source picker as the top-right "Criar" button so users
-          have a discoverable shortcut without overlapping the header chrome
-          (matches WhatsApp's bottom-anchored "+" affordance). */}
-      <TouchableOpacity
-        onPress={createSticker}
-        activeOpacity={0.85}
-        disabled={creating || picking}
-        style={{
-          position: 'absolute', right: 14, bottom: 60 + _bi,
-          width: 48, height: 48, borderRadius: 24,
-          backgroundColor: '#111111',
-          alignItems: 'center', justifyContent: 'center',
-          shadowColor: '#111111', shadowOpacity: 0.45,
-          shadowRadius: 10, shadowOffset: { width: 0, height: 4 },
-          elevation: 6,
-          opacity: (creating || picking) ? 0.6 : 1,
-        }}
-        accessibilityLabel={_tr(t, 'stickerMaker.pickTitle', 'Criar figurinha')}
-      >
-        {(creating || picking) ? <ActivityIndicator color="#fff" /> : <IconPlus size={22} color="#fff" />}
-      </TouchableOpacity>
+      {/* [2026-10-13 sticker-one-create] FAB "+" preto removido — duplicava o
+          tile "Criar figurinha" (mesma folha Galeria/Câmera/Vídeo). */}
 
       {/* Long-press preview modal — large render of the sticker plus an
           "Adicionar aos favoritos" affordance. Tapping the dimmed backdrop or

@@ -35,6 +35,16 @@ final class PiPSampleBufferView: UIView {
     let displayLayer = AVSampleBufferDisplayLayer()
     private(set) var rotationDegrees: Int = 0
 
+    // [2026-10-14 pip-frozen] "Camera off" card shown INSTEAD of the video when
+    // the remote picture stops (muted / unpublished / no frames). Without it the
+    // AVSampleBufferDisplayLayer kept the LAST frame forever → a frozen face
+    // floating over the app (founder print 13/10). WhatsApp: avatar + name.
+    private let placeholder = UIView()
+    private let phAvatar = UIImageView()
+    private let phInitial = UILabel()
+    private let phName = UILabel()
+    private(set) var isPlaceholderVisible = false
+
     override init(frame: CGRect) {
         super.init(frame: frame)
         backgroundColor = .black
@@ -43,6 +53,42 @@ final class PiPSampleBufferView: UIView {
         displayLayer.videoGravity = .resizeAspectFill
         displayLayer.backgroundColor = UIColor.black.cgColor
         layer.addSublayer(displayLayer)
+
+        placeholder.backgroundColor = UIColor(red: 0x1F/255.0, green: 0x2C/255.0, blue: 0x34/255.0, alpha: 1.0)
+        placeholder.isHidden = true
+        placeholder.isUserInteractionEnabled = false
+        phAvatar.contentMode = .scaleAspectFill
+        phAvatar.clipsToBounds = true
+        phAvatar.backgroundColor = UIColor(red: 0x37/255.0, green: 0x4A/255.0, blue: 0x55/255.0, alpha: 1.0)
+        phInitial.textColor = .white
+        phInitial.textAlignment = .center
+        phInitial.adjustsFontSizeToFitWidth = true
+        phName.textColor = .white
+        phName.textAlignment = .center
+        phName.font = .systemFont(ofSize: 15, weight: .semibold)
+        phName.adjustsFontSizeToFitWidth = true
+        phName.minimumScaleFactor = 0.6
+        placeholder.addSubview(phAvatar)
+        placeholder.addSubview(phInitial)
+        placeholder.addSubview(phName)
+        addSubview(placeholder)
+    }
+
+    /// Main thread only. Shows/hides the avatar card over the video. Showing it
+    /// also drops the frozen last frame from the display layer.
+    func setPlaceholder(visible: Bool, name: String, image: UIImage?) {
+        phName.text = name
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        phInitial.text = trimmed.isEmpty ? "" : String(trimmed.prefix(1)).uppercased()
+        phAvatar.image = image
+        phInitial.isHidden = image != nil
+        guard visible != isPlaceholderVisible else { return }
+        isPlaceholderVisible = visible
+        if visible {
+            displayLayer.flushAndRemoveImage()
+        }
+        placeholder.isHidden = !visible
+        setNeedsLayout()
     }
 
     required init?(coder: NSCoder) {
@@ -71,6 +117,17 @@ final class PiPSampleBufferView: UIView {
         displayLayer.position = CGPoint(x: b.midX, y: b.midY)
         displayLayer.setAffineTransform(CGAffineTransform(rotationAngle: CGFloat(rotationDegrees) * .pi / 180))
         CATransaction.commit()
+        // [2026-10-14 pip-frozen] avatar card layout (PiP window is small).
+        placeholder.frame = b
+        let side = max(24, min(b.width, b.height) * 0.42)
+        let nameH: CGFloat = 22
+        let top = max(0, (b.height - side - 8 - nameH) / 2)
+        phAvatar.frame = CGRect(x: (b.width - side) / 2, y: top, width: side, height: side)
+        phAvatar.layer.cornerRadius = side / 2
+        phInitial.frame = phAvatar.frame
+        phInitial.font = .systemFont(ofSize: side * 0.42, weight: .semibold)
+        phName.frame = CGRect(x: 8, y: phAvatar.frame.maxY + 8, width: max(0, b.width - 16), height: nameH)
+        phName.isHidden = b.height < side + 8 + nameH
     }
 }
 
@@ -90,6 +147,9 @@ final class PiPVideoRenderer: NSObject, VideoRenderer {
     private var lastW: Int = 0
     private var lastH: Int = 0
     private var i420Counter: Int = 0
+    /// [2026-10-14 pip-frozen] CACurrentMediaTime() of the last frame handed to
+    /// us (any thread; a torn/stale read only delays the stall check one tick).
+    private(set) var lastFrameAt: CFTimeInterval = 0
 
     var isAdaptiveStreamEnabled: Bool { false }
     var adaptiveStreamSize: CGSize { .zero }
@@ -117,6 +177,7 @@ final class PiPVideoRenderer: NSObject, VideoRenderer {
 
     func render(frame: VideoFrame) {
         guard displayLayer != nil else { return }
+        lastFrameAt = CACurrentMediaTime()
 
         let pixelBuffer: CVPixelBuffer
         if let cv = frame.buffer as? CVPixelVideoBuffer {

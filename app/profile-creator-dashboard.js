@@ -24,7 +24,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { USE_NATIVE_HEADER, nativeHeaderOptions } from '../components/nativeHeader'; // [2026-10-09 native-sheets-headers] header NATIVO
 import Svg, { Path } from 'react-native-svg';
 // [2026-05-22 monetization-pause] hidden by MONETIZATION_ENABLED flag
-import { MONETIZATION_ENABLED } from '../constants/featureFlags';
+import { MONETIZATION_ENABLED, WALLET_ENABLED } from '../constants/featureFlags';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import AvatarCircle from '../components/AvatarCircle';
@@ -149,7 +149,7 @@ function sourceLabel(t, refKind) {
   const k = String(refKind || '');
   if (k === 'live_gift') return tr(t, 'creatorEarnings.source.live', 'Ao vivo');
   if (k === 'reel_tip') return tr(t, 'creatorEarnings.source.reel', 'Reel');
-  if (k === 'feed_tip') return tr(t, 'creatorEarnings.source.feed', 'Post');
+  if (k === 'feed_tip' || k === 'feed_post') return tr(t, 'creatorEarnings.source.feed', 'Post'); // ledger grava 'feed_post'
   return tr(t, 'creatorEarnings.source.other', 'Direto');
 }
 
@@ -234,10 +234,17 @@ function CreatorDashboard() {
           title={tr(t, 'creatorDash.withdraw', 'Sacar')}
           size="lg"
           fullWidth
-          disabled={!canCashout}
+          disabled={!canCashout || !WALLET_ENABLED}
           onPress={go('/wallet-cashout')}
           style={{ marginTop: Space.lg }}
         />
+        {/* [2026-10-13 earnings-v2] WALLET_ENABLED=false → /wallet-cashout só
+            mostra o aviso; o botão explica em vez de abrir uma tela morta. */}
+        {!WALLET_ENABLED ? (
+          <Text style={[Type.footnote, { color: s.textSecondary, marginTop: Space.sm, textAlign: 'center' }]}>
+            {tr(t, 'creatorEarnings.cashoutPaused', 'Saques temporariamente indisponíveis.')}
+          </Text>
+        ) : null}
       </Card>
 
       {/* ── Diamantes (linha secundária) ──────────────────────── */}
@@ -350,10 +357,15 @@ function CreatorDashboard() {
                   {sourceLabel(t, item.ref_kind)}{when ? ' · ' + when : ''}
                 </Text>
               </View>
-              <View style={styles.amount}>
-                <Text style={[Type.callout, { color: s.text, fontWeight: '600' }]}>+{formatInt(item.amount || 0, language)}</Text>
-                <DiamondGlyph size={12} color={s.text} />
-              </View>
+              {/* [2026-10-13 earnings-v2] tip_recv/live_gift_recv: `amount` = centavos de payout (não diamantes) */}
+              {(item.kind === 'tip_recv' || item.kind === 'live_gift_recv') ? (
+                <Text style={[Type.callout, { color: s.text, fontWeight: '600', marginLeft: Space.sm }]}>+{money(item.amount)}</Text>
+              ) : (
+                <View style={styles.amount}>
+                  <Text style={[Type.callout, { color: s.text, fontWeight: '600' }]}>+{formatInt(item.amount || 0, language)}</Text>
+                  <DiamondGlyph size={12} color={s.text} />
+                </View>
+              )}
             </View>
           );
         })}

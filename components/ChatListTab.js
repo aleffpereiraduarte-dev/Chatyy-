@@ -198,6 +198,55 @@ function normalizeISO(s) {
   if (!/Z$/.test(t) && !/[+-]\d{2}:?\d{2}$/.test(t)) t = t + 'Z';
   return t;
 }
+
+// [2026-10-13 lista-estavel] Epoch ms de QUALQUER timestamp do servidor (0 = ilegível).
+// created_at é TEXT misto no PG: mensagem normal = ISO "…T…Z", mas call_card/system/
+// status_reply/location e conversations.updated_at = now()::text ("2026-10-13 22:37:26.040777+00").
+// Hermes/Safari dão NaN nesse formato (fração 6 dígitos + "+00") → a ordenação virava
+// época 0 e a conversa ia pro FIM da lista ("o Fabrício sumiu" logo após uma ligação).
+function _tsMs(v) {
+  if (v == null || v === '') return 0;
+  if (typeof v === 'number') return Number.isFinite(v) ? (v < 1e12 ? v * 1000 : v) : 0;
+  if (v instanceof Date) { const n = v.getTime(); return Number.isFinite(n) ? n : 0; }
+  let s = String(v).trim();
+  if (!s) return 0;
+  if (/^\d{9,13}$/.test(s)) return _tsMs(Number(s));
+  if (/^\d{4}-\d{2}-\d{2} \d/.test(s)) s = s.replace(' ', 'T');
+  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(s)) {
+    s = s.replace(/(\.\d{3})\d+/, '$1');
+    s = s.replace(/([+-]\d{2})(\d{2})?$/, (m, h, mm) => `${h}:${mm || '00'}`);
+    if (!/(Z|[+-]\d{2}:\d{2})$/i.test(s)) s += 'Z';
+  }
+  const n = Date.parse(s);
+  return Number.isFinite(n) ? n : 0;
+}
+// Última atividade REAL da conversa (WhatsApp: data da última mensagem). Usa o maior
+// entre last_message_at e last_message.created_at; updated_at/created_at só quando a
+// conversa não tem mensagem nenhuma (nova/limpa) — nunca 0 por formato de data.
+function _convActivityMs(c) {
+  if (!c) return 0;
+  const lm = c.last_message && typeof c.last_message === 'object' ? c.last_message : null;
+  const t = Math.max(_tsMs(c.last_message_at), _tsMs(lm && lm.created_at), _tsMs(c.last_message_time));
+  if (t > 0) return t;
+  return Math.max(_tsMs(c.updated_at), _tsMs(c.created_at));
+}
+// Mescla a resposta do chat_list com o que já está na tela. O servidor manda a lista
+// inteira até o limite da página (100); quando a resposta veio CHEIA ela pode estar
+// truncada → linhas que já estavam na tela e não vieram NÃO são removidas (refresh
+// parcial nunca apaga conversa; remoção só por evento explícito: arquivar/apagar/sair).
+const _CHAT_LIST_PAGE = 100;
+function _keepBeyondPage(prev, next, serverCount, excludeIds) {
+  if (!Array.isArray(prev) || !prev.length || serverCount < _CHAT_LIST_PAGE) return next;
+  const have = new Set(next.map(c => String(c && c.id)));
+  const extra = [];
+  for (const p of prev) {
+    if (!p || p.id == null) continue;
+    const k = String(p.id);
+    if (have.has(k) || (excludeIds && excludeIds.has(k))) continue;
+    extra.push(p);
+  }
+  return extra.length ? next.concat(extra) : next;
+}
 // [perf 2026-10-06] toLocale*String(locale, opts) builds a new Intl.DateTimeFormat
 // per call — this runs for every visible row on every list re-render (typing /
 // presence ticks). Cache one formatter per (locale, kind); safe fallback.
@@ -3967,29 +4016,36 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
         // back to the previous message. Keep whichever row carries the newer
         // last message per id, and Math.max the unread so a concurrent bump
         // isn't lost either.
+        const _archIds = new Set(_arch.map(c => String(c.id)));
         setConversations(prev => {
           if (!Array.isArray(prev) || prev.length === 0) return _active;
-          const prevById = new Map(prev.map(p => [p.id, p]));
-          return _reuseConvRows(prev, _active.map(c => {
-            const old = prevById.get(c.id);
+          const prevById = new Map(prev.map(p => [String(p.id), p]));
+          return _reuseConvRows(prev, _keepBeyondPage(prev, _active.map(c => {
+            const old = prevById.get(String(c.id));
             if (!old) return c;
             const oldLm = old.last_message || {};
             const newLm = c.last_message || {};
-            // Prefer the newer last message: compare by message id when both
-            // are numeric (monotonic), else fall back to last_message_at
-            // (TEXT — lexical compare, per the created_at TEXT gotcha).
+            // Prefer the newer last message. [2026-10-13 lista-estavel] Pela DATA
+            // (parse tolerante), não pelo id: mensagem importada do WhatsApp tem id
+            // ALTO e data ANTIGA — o id deixava a prévia velha "ganhar" e a conversa
+            // afundava. Id só desempata o mesmo instante; string crua nunca (formatos
+            // mistos de created_at comparavam errado).
             let keepOld;
-            if (typeof oldLm.id === 'number' && typeof newLm.id === 'number') {
+            const oMs = _convActivityMs(old);
+            const nMs = _convActivityMs(c);
+            if (oMs !== nMs) {
+              keepOld = oMs > nMs;
+            } else if (typeof oldLm.id === 'number' && typeof newLm.id === 'number') {
               keepOld = oldLm.id > newLm.id;
             } else {
-              keepOld = String(old.last_message_at || '') > String(c.last_message_at || '');
+              keepOld = false;
             }
             const base = keepOld
               ? { ...c, last_message: old.last_message, last_message_at: old.last_message_at }
               : { ...c };
             base.unread_count = Math.max(c.unread_count || 0, old.unread_count || 0);
             return base;
-          }));
+          }), convs.length, _archIds));
         });
         setArchivedConversations(prev => _reuseConvRows(prev, _arch));
         cacheConversations(convs).catch(() => {});
@@ -4021,7 +4077,12 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
             if (!r?.success) return;
             const convs = Array.isArray(r.data) ? r.data : (r.data?.conversations || []);
             if (!convs.length || fp(convs) === fp(cached)) return;
-            setConversations(convs.filter(c => !c.archived));
+            {
+              const _act = convs.filter(c => !c.archived);
+              const _aIds = new Set(convs.filter(c => c.archived).map(c => String(c.id)));
+              // [2026-10-13 lista-estavel] página cheia = pode estar truncada → não perde as que já estavam.
+              setConversations(prev => _keepBeyondPage(prev, _act, convs.length, _aIds));
+            }
             setArchivedConversations(convs.filter(c => c.archived));
             cacheConversations(convs).catch(() => {});
             _saveNativeConversations(convs);
@@ -6458,7 +6519,6 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
     // updates and older cached rows may only have last_message.created_at /
     // updated_at. Fall back so the re-sort doesn't collapse to a no-op (which
     // would freeze the list order on stale data).
-    const _sortKey = (c) => String(c.last_message_at || c.last_message?.created_at || c.updated_at || '');
     // [2026-10-12 perf] decorate once: the comparator used to Date.parse +
     // isSelfChat both sides on every comparison (~2·n·log n parses per WS
     // message on a 500-chat list).
@@ -6466,16 +6526,20 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
     for (const c of list) {
       _pinK.set(c, (c.pinned || isSelfChat(c)) ? 1 : 0);
       // Compare numerically by parsed time, NOT localeCompare on the ISO
-      // string: a millisecond stamp "...17.789Z" vs "...17Z" compares wrong
-      // lexically ('.' < 'Z'), sinking an optimistic just-sent row below
-      // same-second server rows. Date.parse folds both to epoch ms.
-      _timeK.set(c, Date.parse(_sortKey(c)) || 0);
+      // string. [2026-10-13 lista-estavel] _convActivityMs parseia também o
+      // formato now()::text do PG ("… 22:37:26.040777+00") — com Date.parse cru
+      // isso dava NaN→0 no Hermes e a conversa (ex.: prévia = ligação) ia pro FIM.
+      _timeK.set(c, _convActivityMs(c));
     }
     list.sort((a, b) => {
       const aPinned = _pinK.get(a);
       const bPinned = _pinK.get(b);
       if (aPinned !== bPinned) return bPinned - aPinned;
-      return _timeK.get(b) - _timeK.get(a);
+      const d = _timeK.get(b) - _timeK.get(a);
+      if (d) return d;
+      // Desempate estável (mesmo segundo): id maior primeiro — a ordem não "pula".
+      const ai = Number(a.id) || 0; const bi = Number(b.id) || 0;
+      return bi - ai;
     });
     return list;
   }, [filter, conversations, archivedConversations, lockedConversations, lockedIds, debouncedQuery, chatFolders, user?.email]);

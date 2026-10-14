@@ -3,12 +3,12 @@
 // dashboard. Pure JS UI — the heavy lifting (initConnection, request,
 // listener, receipt verify) lives in services/iap.js.
 //
-// Pricing ladder (2026-05-18 — must match server + ASC SKUs):
-//   chatyy_diamond_100    R$  4,99 →    100 ◆
-//   chatyy_diamond_500    R$ 19,99 →    550 ◆  (+10 % bonus)
-//   chatyy_diamond_1500   R$ 49,99 →  1 700 ◆  (+13 %)
-//   chatyy_diamond_5000   R$149,99 →  6 000 ◆  (+20 %)
-//   chatyy_diamond_15000  R$399,99 → 19 500 ◆  (+30 %)
+// Pricing ladder (2026-10-13 — IDs reais do ASC; número do SKU = total entregue):
+//   chatyy_diamonds_100    R$  4,99 →    100 ◆
+//   chatyy_diamonds_550    R$ 19,99 →    550 ◆  (+10 % bonus)
+//   chatyy_diamonds_1700   R$ 49,99 →  1 700 ◆  (+13 %)
+//   chatyy_diamonds_6000   R$149,99 →  6 000 ◆  (+20 %)
+//   chatyy_diamonds_19500  R$399,99 → 19 500 ◆  (+30 %)
 //
 // Apple expects these registered as Consumable products in App Store Connect.
 // Google Play needs the same SKU IDs as Managed/Consumable products. Until
@@ -87,12 +87,11 @@ export default function DiamondTopUpSheet({ visible, onClose, onBalanceChange })
   // — we'd rather hide the tile than render a button that always errors.
   // `iapReady` triggers the re-eval once fetchProducts resolves. Web
   // keeps every pack visible (clicking deep-links to web checkout).
-  const packs = useMemo(() => {
-    if (Platform.OS === 'web') return DIAMOND_PACKS;
-    if (!iapReady) return DIAMOND_PACKS; // show grid while loading; rows just disabled
-    const filtered = DIAMOND_PACKS.filter(p => isDiamondSkuAvailable(p.sku));
-    return filtered.length ? filtered : DIAMOND_PACKS;
-  }, [iapReady]);
+  // [2026-10-13] Igual ao StorageShopSheet: com a loja conectada, só é tocável
+  // o pacote que voltou no catálogo (preço local); o resto fica "Em breve"
+  // (nunca mais "em aprovação" depois do toque). Antes de conectar: tudo visível.
+  const packs = DIAMOND_PACKS;
+  const isPackAvailable = (p) => Platform.OS === 'web' || !iapReady || isDiamondSkuAvailable(p.sku);
 
   const onBuy = useCallback(async (pack) => {
     if (pendingSku) return;
@@ -138,12 +137,10 @@ export default function DiamondTopUpSheet({ visible, onClose, onBalanceChange })
           );
         }
       } else if (r?.message === 'sku_not_in_catalog') {
-        // SKU exists in our ladder but App Store Connect hasn't activated it
-        // (or it's still propagating). Show a friendly note instead of the raw
-        // "SKU not found" error that StoreKit would have thrown.
+        // [2026-10-13] Pacote fora do catálogo da loja → "Em breve" (sem "em aprovação").
         Alert.alert(
-          t('wallet.topupUnavailableTitle') || 'Pacote indisponível',
-          t('wallet.topupSkuPending') || 'Este pacote ainda está em aprovação na App Store. Tente outro pacote por enquanto.',
+          t('common.comingSoon') || 'Em breve',
+          t('wallet.topupUnavailableBody') || 'Não conseguimos iniciar a compra. Tente novamente em alguns minutos.',
         );
       } else {
         Alert.alert(
@@ -190,6 +187,7 @@ export default function DiamondTopUpSheet({ visible, onClose, onBalanceChange })
               const localizedFromStore = getDiamondLocalizedPrice(p.sku);
               const priceLabel = localizedFromStore || formatBrl(p.priceBrl);
               const isLoading = pendingSku === p.sku;
+              const unavailable = !isPackAvailable(p);
               const bonusBadge = p.bonusPct > 0
                 ? (t('wallet.topupBonus') || 'Bônus +{p}%').replace('{p}', p.bonusPct)
                 : null;
@@ -197,8 +195,8 @@ export default function DiamondTopUpSheet({ visible, onClose, onBalanceChange })
                 <TouchableOpacity
                   key={p.sku}
                   onPress={() => onBuy(p)}
-                  disabled={!!pendingSku}
-                  style={[styles.packRow, { borderColor: isDark ? 'rgba(17, 17, 17,0.25)' : 'rgba(17, 17, 17,0.18)', backgroundColor: isDark ? 'rgba(17, 17, 17,0.08)' : 'rgba(17, 17, 17,0.04)', opacity: pendingSku && !isLoading ? 0.5 : 1 }]}
+                  disabled={!!pendingSku || unavailable}
+                  style={[styles.packRow, { borderColor: isDark ? 'rgba(17, 17, 17,0.25)' : 'rgba(17, 17, 17,0.18)', backgroundColor: isDark ? 'rgba(17, 17, 17,0.08)' : 'rgba(17, 17, 17,0.04)', opacity: (pendingSku && !isLoading) || unavailable ? 0.5 : 1 }]}
                   accessibilityRole="button"
                   accessibilityLabel={`${p.diamonds} ${t('wallet.diamondsLabel') || 'diamantes'} ${priceLabel}`}
                 >
@@ -217,7 +215,7 @@ export default function DiamondTopUpSheet({ visible, onClose, onBalanceChange })
                     {isLoading ? (
                       <ActivityIndicator color={colors.primary} />
                     ) : (
-                      <Text style={[styles.packPrice, { color: colors.text }]}>{priceLabel}</Text>
+                      <Text style={[styles.packPrice, { color: unavailable ? colors.textSecondary : colors.text }]}>{unavailable ? (t('common.comingSoon') || 'Em breve') : priceLabel}</Text>
                     )}
                   </View>
                 </TouchableOpacity>

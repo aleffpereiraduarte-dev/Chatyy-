@@ -644,6 +644,14 @@ extension VoipPushAppDelegateSubscriber: PKPushRegistryDelegate {
         // onCallAnswered JS event and the JS IncomingCallListener is dead on
         // mobile (WAVE 141). The stub is the sole presenter; CallViewController.
         // present de-dupes by callId so a stray double-call is harmless.
+        // [2026-10-14 add-to-call conv] Carry the push's conversation_id into the
+        // call screen — without it the in-call "Adicionar" picker sent no
+        // conversation_id and chat_call_add answered 400 (founder 13/10).
+        let conversationId: String = {
+            if let s = payload["conversation_id"] as? String { return s }
+            if let n = payload["conversation_id"] as? NSNumber { return n.stringValue }
+            return ""
+        }()
         // Cached LK token short-circuit (server may have published one via
         // the existing `persistPendingLkToken` JS function before the push).
         if let ud = UserDefaults(suiteName: kAppGroupId),
@@ -655,7 +663,8 @@ extension VoipPushAppDelegateSubscriber: PKPushRegistryDelegate {
                                     callerEmail: callerEmail,
                                     hasVideo: hasVideo,
                                     lkUrl: cachedUrl,
-                                    lkToken: cachedToken)
+                                    lkToken: cachedToken,
+                                    conversationId: conversationId)
             }
             return
         }
@@ -678,7 +687,8 @@ extension VoipPushAppDelegateSubscriber: PKPushRegistryDelegate {
                                         callerEmail: callerEmail,
                                         hasVideo: hasVideo,
                                         lkUrl: result.url,
-                                        lkToken: result.token)
+                                        lkToken: result.token,
+                                        conversationId: conversationId)
                 }
             } catch {
                 print("[VoipSubscriber] auto-accept LK token fetch failed: \(error)")
@@ -691,7 +701,8 @@ extension VoipPushAppDelegateSubscriber: PKPushRegistryDelegate {
                                                  callerEmail: String,
                                                  hasVideo: Bool,
                                                  lkUrl: String,
-                                                 lkToken: String) {
+                                                 lkToken: String,
+                                                 conversationId: String = "") {
         // [2026-05-25 ROOT-CAUSE FIX] Removed the module-bound bail — the module
         // does not present push calls (callAnswered only emits the dead-on-mobile
         // onCallAnswered JS event, WAVE 141). The stub must present. Idempotent:
@@ -717,7 +728,8 @@ extension VoipPushAppDelegateSubscriber: PKPushRegistryDelegate {
                 callerEmail: callerEmail,
                 hasVideo: hasVideo,
                 lkUrl: lkUrl,
-                lkToken: lkToken
+                lkToken: lkToken,
+                conversationId: conversationId
             )
         }
         if let root = robustPresentingViewController() {
