@@ -255,8 +255,14 @@ export function BiometricProvider({ children }) {
       appStateRef.current = nextState;
 
       if (nextState === 'background' || nextState === 'inactive') {
-        // Record when app went to background
-        backgroundTimeRef.current = Date.now();
+        // Record when app went to background.
+        // [2026-10-13 piscada] Só 'background' conta. 'inactive' sozinho = o
+        // próprio prompt do Face ID, Central de Controle, banner de ligação,
+        // alerta de permissão — o app nunca saiu da tela, e travar ali fazia o
+        // cadeado aparecer/sumir ("piscada") ao voltar.
+        if (nextState === 'background' || !backgroundTimeRef.current) {
+          backgroundTimeRef.current = nextState === 'background' ? Date.now() : null;
+        }
       } else if (nextState === 'active' && (prev === 'background' || prev === 'inactive')) {
         // App came back to foreground — check if we should lock.
         // Suppress lock entirely when the user is on a public auth

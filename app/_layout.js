@@ -115,7 +115,7 @@ try {
   }
 } catch {}
 import React, { Suspense } from "react";
-import { Platform, View as RNView, Text as RNText, Linking, Alert, Animated as _RNAnimated, InteractionManager, useColorScheme as _useColorScheme } from 'react-native';
+import { Platform, View as RNView, Text as RNText, Linking, Alert, Animated as _RNAnimated, InteractionManager } from 'react-native';
 // ─── Sentry crash reporting ───
 import { initSentry } from '../services/sentry';
 import { installCrashReporter, reportStep, setReporterIdentity } from '../services/crashReporter';
@@ -405,7 +405,7 @@ import { useReducedMotion } from '../components/reducedMotion'; // [2026-10-04] 
 import ChildRestrictionGuard from '../components/ChildRestrictionGuard';
 import { nativeSheetScreenOptions } from '../components/NativeSheet'; // [2026-10-09 native-sheets] formSheet nativo (rota-ponte /native-sheet)
 import { MailProvider } from '../context/MailContext';
-import { ThemeProvider } from '../context/ThemeContext';
+import { ThemeProvider, useStableColorScheme } from '../context/ThemeContext';
 import { LanguageProvider, useLanguage, useLanguageOptional, preloadBootLanguage, bootLanguageNeedsPreload } from '../context/LanguageContext';
 import { CurrencyProvider } from '../context/CurrencyContext';
 import { BiometricProvider } from '../context/BiometricContext';
@@ -1809,7 +1809,8 @@ export default function RootLayout() {
   // tema do SO. Sem isto o native-stack transita sobre fundo branco → "pisca"
   // (pior no modo escuro). Segue o esquema do sistema (themeMode padrão é
   // 'system'); usa useColorScheme direto pq RootLayout está acima do ThemeProvider.
-  const _osScheme = _useColorScheme();
+  // [2026-10-13 piscada] Estável: ignora o flip claro/escuro do snapshot do iOS no fundo.
+  const _osScheme = useStableColorScheme();
   // [2026-10-01] O fundo do container de transição deve seguir o tema do APP
   // (theme_mode em AsyncStorage: 'light'/'dark'/'system'), não só o do SO.
   // Sem isso, quem FORÇA dark com o OS no claro (ou vice-versa) via "pisca

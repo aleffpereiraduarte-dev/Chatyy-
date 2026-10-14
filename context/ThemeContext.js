@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { Platform, useColorScheme, InteractionManager } from 'react-native';
+import { Platform, useColorScheme, InteractionManager, Appearance, AppState } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Colors, DarkColors, FontFamily } from '../constants/theme';
 
@@ -62,8 +62,50 @@ const THEME_MODES = new Set(['light', 'dark', 'system']);
 // dark palette's inverted (white) primary — see ThemeProvider + useAuthTheme.
 const _NEAR_BLACK = /^#(0[0-9a-f]|1[0-9a-f]|2[0-9a-f])(0[0-9a-f]|1[0-9a-f]|2[0-9a-f])(0[0-9a-f]|1[0-9a-f]|2[0-9a-f])$/i;
 
+// [2026-10-13 piscada] iOS tira o snapshot do app switcher nos DOIS esquemas
+// (claro e escuro) ao ir pro fundo → o RN emite appearanceChanged light↔dark e o
+// useColorScheme() repinta a árvore inteira (fundo do Stack, headers nativos,
+// cores) — ao voltar, a tela "pisca" com o tema errado. Aqui ignoramos mudanças
+// fora do 'active' e reconferimos o esquema real logo depois de voltar.
+// Web: segue o useColorScheme normal.
+function _readScheme() {
+  try { return Appearance.getColorScheme() || null; } catch { return null; }
+}
+export function useStableColorScheme() {
+  const live = useColorScheme();
+  const [stable, setStable] = useState(_readScheme);
+  useEffect(() => {
+    if (Platform.OS === 'web') return undefined;
+    let t = null;
+    const apply = (cs) => { if (cs === 'light' || cs === 'dark') setStable((p) => (p === cs ? p : cs)); };
+    let subA = null;
+    let subS = null;
+    try {
+      subA = Appearance.addChangeListener(({ colorScheme }) => {
+        if (AppState.currentState !== 'active') return;
+        apply(colorScheme);
+      });
+    } catch {}
+    try {
+      subS = AppState.addEventListener('change', (st) => {
+        if (t) { clearTimeout(t); t = null; }
+        // Pequena espera: o evento de "volta ao esquema real" pode chegar logo
+        // após o 'active'; uma troca genuína feita no fundo aplica-se aqui.
+        if (st === 'active') t = setTimeout(() => { t = null; apply(_readScheme()); }, 300);
+      });
+    } catch {}
+    return () => {
+      if (t) clearTimeout(t);
+      try { subA && subA.remove && subA.remove(); } catch {}
+      try { subS && subS.remove && subS.remove(); } catch {}
+    };
+  }, []);
+  return Platform.OS === 'web' ? live : (stable || live);
+}
+
 export function ThemeProvider({ children }) {
-  const [systemIsDark, setSystemIsDark] = useState(false);
+  // Nativo: semeia do SO já no 1º frame (antes: false → 1 frame claro no escuro).
+  const [systemIsDark, setSystemIsDark] = useState(() => Platform.OS !== 'web' && _readScheme() === 'dark');
   // 3-state source of truth. Defaults to 'system' so a fresh install follows
   // the OS until the user explicitly forces light/dark. Backward compat: the
   // hydrate effect below maps a legacy `theme_dark` value into a mode when no
@@ -72,7 +114,7 @@ export function ThemeProvider({ children }) {
   const [density, setDensityState] = useState('comfortable');
   const [inboxType, setInboxTypeState] = useState('default');
   const [accentColor, setAccentColorState] = useState('#111111');
-  const systemScheme = useColorScheme();
+  const systemScheme = useStableColorScheme();
 
   // Load saved theme, density, inboxType
   useEffect(() => {
@@ -125,7 +167,7 @@ export function ThemeProvider({ children }) {
           AsyncStorage.getItem('inbox_type'),
           AsyncStorage.getItem('theme_accent'),
         ]).then(([savedMode, saved, savedDensity, savedInbox, savedAccent]) => {
-          setSystemIsDark(systemScheme === 'dark');
+          if (systemScheme) setSystemIsDark(systemScheme === 'dark');
           if (savedMode && THEME_MODES.has(savedMode)) {
             setThemeModeState(savedMode);
           } else if (saved !== null) {

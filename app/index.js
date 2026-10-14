@@ -1,9 +1,10 @@
 import { useEffect, useState, useRef } from 'react';
-import { View, StyleSheet, Dimensions, useColorScheme } from 'react-native';
+import { View, StyleSheet, Dimensions } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useAuth, isChildAccount } from '../context/AuthContext';
 import AnimatedSplash from '../components/AnimatedSplash';
 import { Colors, DarkColors } from '../constants/theme';
+import { useStableColorScheme } from '../context/ThemeContext';
 import { hideNativeSplash, markFirstPaintOther, mark as bootMark } from '../services/bootTrace';
 
 // [2026-10-07 coldstart] How long auth may stay `loading` behind the native
@@ -79,7 +80,7 @@ export default function Index() {
   // JS sumir (fade-out) e a rota pintar aparecia como um "flash branco". Segue
   // o esquema do SO (default do app é 'system'); a rota de destino pinta logo
   // em seguida, então qualquer divergência de tema forçado dura apenas o fade.
-  const scheme = useColorScheme();
+  const scheme = useStableColorScheme(); // [2026-10-13] sem flip do snapshot iOS
   const bg = scheme === 'dark' ? DarkColors.background : Colors.background;
   return (
     <View style={[s.container, { backgroundColor: bg }]}>
