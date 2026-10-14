@@ -1920,7 +1920,9 @@ const s = StyleSheet.create({
     alignItems: 'center', gap: 18, zIndex: 15,
   },
   stackBtn: {
-    width: 50, alignItems: 'center', justifyContent: 'center',
+    // minWidth (não width fixo): rótulos como "Velocidade"/"Desligado"/"Segmentos"
+    // quebravam no meio da palavra em 50px; o stack centraliza os ícones.
+    minWidth: 50, alignItems: 'center', justifyContent: 'center',
     paddingVertical: 4,
   },
   stackBtnActive: {},
