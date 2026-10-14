@@ -1,4 +1,9 @@
 export default {
+  // [2026-10-14 grupo-rajada]
+  "chatConv.unreadMessagesN": "{n} messaggi non letti",
+  "chatConv.unreadMessagesOne": "1 messaggio non letto",
+  "chatConv.typingPeople": "{n} persone stanno scrivendo...",
+  "chatConv.unreadMentionsA11y": "{n} menzioni non lette",
   // [2026-10-14 feel] toque duplo p/ reagir
   "settings.doubleTapReact.title": "Doppio tocco per mettere mi piace",
   "settings.doubleTapReact.subtitle": "Tocca due volte un messaggio per reagire con un cuore.",

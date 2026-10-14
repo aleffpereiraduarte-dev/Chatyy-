@@ -1,4 +1,10 @@
 export default {
+  // [2026-10-14 grupo-rajada]
+  "chatConv.unreadMessagesN": "{n} नपढिएका सन्देश",
+  "chatConv.unreadMessagesOne": "1 नपढिएको सन्देश",
+  "chatConv.typingPeople": "{n} जना टाइप गर्दै...",
+  "chatConv.unreadMentionsA11y": "{n} नपढिएका उल्लेख",
+  "chatConv.typingAnd": "र",
   // [2026-10-14 feel] toque duplo p/ reagir
   "settings.doubleTapReact.title": "मन पराउन दुई पटक ट्याप गर्नुहोस्",
   "settings.doubleTapReact.subtitle": "मुटुसहित प्रतिक्रिया दिन सन्देशमा दुई पटक ट्याप गर्नुहोस्।",

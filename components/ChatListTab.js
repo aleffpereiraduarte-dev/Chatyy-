@@ -939,9 +939,10 @@ const ConversationRow = React.memo(function ConversationRow({
   // "Ana e mais 2") plus a recording flag for the subtitle.
   const _typers = _normalizeTypers(typingUsers?.[conversation.id]);
   const typingNames = _typers.map(e => e.name).filter(Boolean);
+  // [2026-10-14 grupo-rajada] "Ana e João" (era "Ana, João"); 3+ = "Ana, João +1".
   const typingName = typingNames.length
     ? (typingNames.length <= 2
-        ? typingNames.join(', ')
+        ? typingNames.join(` ${(t && t('chatConv.typingAnd')) || 'e'} `)
         : `${typingNames.slice(0, 2).join(', ')} +${typingNames.length - 2}`)
     : null;
   // "gravando áudio…" only when EVERY active typer is recording a voice note

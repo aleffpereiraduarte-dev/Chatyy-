@@ -1,4 +1,9 @@
 export default {
+  // [2026-10-14 grupo-rajada]
+  "chatConv.unreadMessagesN": "{n} nepřečtených zpráv",
+  "chatConv.unreadMessagesOne": "1 nepřečtená zpráva",
+  "chatConv.typingPeople": "{n} lidí píše...",
+  "chatConv.unreadMentionsA11y": "{n} nepřečtených zmínek",
   // [2026-10-14 feel] toque duplo p/ reagir
   "settings.doubleTapReact.title": "Dvojité klepnutí pro To se mi líbí",
   "settings.doubleTapReact.subtitle": "Dvakrát klepněte na zprávu a zareagujte srdíčkem.",

@@ -1,4 +1,9 @@
 export default {
+  // [2026-10-14 grupo-rajada]
+  "chatConv.unreadMessagesN": "{n} olästa meddelanden",
+  "chatConv.unreadMessagesOne": "1 oläst meddelande",
+  "chatConv.typingPeople": "{n} personer skriver...",
+  "chatConv.unreadMentionsA11y": "{n} olästa omnämnanden",
   // [2026-10-14 feel] toque duplo p/ reagir
   "settings.doubleTapReact.title": "Dubbeltryck för att gilla",
   "settings.doubleTapReact.subtitle": "Tryck två gånger på ett meddelande för att reagera med ett hjärta.",

@@ -1,4 +1,9 @@
 export default {
+  // [2026-10-14 grupo-rajada]
+  "chatConv.unreadMessagesN": "{n} olvasatlan üzenet",
+  "chatConv.unreadMessagesOne": "1 olvasatlan üzenet",
+  "chatConv.typingPeople": "{n} ember ír...",
+  "chatConv.unreadMentionsA11y": "{n} olvasatlan említés",
   // [2026-10-14 feel] toque duplo p/ reagir
   "settings.doubleTapReact.title": "Dupla koppintás a kedveléshez",
   "settings.doubleTapReact.subtitle": "Koppints duplán egy üzenetre, hogy szívvel reagálj.",

@@ -1,4 +1,10 @@
 export default {
+  // [2026-10-14 grupo-rajada]
+  "chatConv.unreadMessagesN": "{n} படிக்காத செய்திகள்",
+  "chatConv.unreadMessagesOne": "1 படிக்காத செய்தி",
+  "chatConv.typingPeople": "{n} பேர் தட்டச்சு செய்கிறார்கள்...",
+  "chatConv.unreadMentionsA11y": "{n} படிக்காத குறிப்புகள்",
+  "chatConv.typingAnd": "மற்றும்",
   // [2026-10-14 feel] toque duplo p/ reagir
   "settings.doubleTapReact.title": "விரும்ப இருமுறை தட்டவும்",
   "settings.doubleTapReact.subtitle": "இதயத்துடன் எதிர்வினையாற்ற ஒரு செய்தியை இருமுறை தட்டவும்.",

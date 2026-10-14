@@ -1,4 +1,9 @@
 export default {
+  // [2026-10-14 grupo-rajada]
+  "chatConv.unreadMessagesN": "{n} הודעות שלא נקראו",
+  "chatConv.unreadMessagesOne": "הודעה אחת שלא נקראה",
+  "chatConv.typingPeople": "{n} אנשים מקלידים...",
+  "chatConv.unreadMentionsA11y": "{n} אזכורים שלא נקראו",
   // [2026-10-14 feel] toque duplo p/ reagir
   "settings.doubleTapReact.title": "הקשה כפולה לסימון לייק",
   "settings.doubleTapReact.subtitle": "הקישו פעמיים על הודעה כדי להגיב בלב.",

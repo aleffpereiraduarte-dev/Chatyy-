@@ -1,4 +1,9 @@
 export default {
+  // [2026-10-14 grupo-rajada]
+  "chatConv.unreadMessagesN": "សារមិនទាន់អាន {n}",
+  "chatConv.unreadMessagesOne": "សារមិនទាន់អាន 1",
+  "chatConv.typingPeople": "មនុស្ស {n} នាក់កំពុងវាយ...",
+  "chatConv.unreadMentionsA11y": "ការលើកឡើងមិនទាន់អាន {n}",
   // [2026-10-14 feel] toque duplo p/ reagir
   "settings.doubleTapReact.title": "ប៉ះពីរដងដើម្បីចូលចិត្ត",
   "settings.doubleTapReact.subtitle": "ប៉ះសារពីរដងដើម្បីប្រតិកម្មដោយបេះដូង។",

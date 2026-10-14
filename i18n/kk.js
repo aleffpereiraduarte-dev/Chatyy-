@@ -1,4 +1,9 @@
 export default {
+  // [2026-10-14 grupo-rajada]
+  "chatConv.unreadMessagesN": "{n} оқылмаған хабар",
+  "chatConv.unreadMessagesOne": "1 оқылмаған хабар",
+  "chatConv.typingPeople": "{n} адам жазып жатыр...",
+  "chatConv.unreadMentionsA11y": "{n} оқылмаған атау",
   // [2026-10-14 feel] toque duplo p/ reagir
   "settings.doubleTapReact.title": "Ұнату үшін екі рет түртіңіз",
   "settings.doubleTapReact.subtitle": "Жүрекшемен жауап беру үшін хабарды екі рет түртіңіз.",

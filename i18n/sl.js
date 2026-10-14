@@ -1,4 +1,9 @@
 export default {
+  // [2026-10-14 grupo-rajada]
+  "chatConv.unreadMessagesN": "{n} neprebranih sporočil",
+  "chatConv.unreadMessagesOne": "1 neprebrano sporočilo",
+  "chatConv.typingPeople": "{n} oseb tipka...",
+  "chatConv.unreadMentionsA11y": "{n} neprebranih omemb",
   // [2026-10-14 feel] toque duplo p/ reagir
   "settings.doubleTapReact.title": "Dvojni dotik za všeček",
   "settings.doubleTapReact.subtitle": "Dvakrat se dotaknite sporočila, da se odzovete s srčkom.",

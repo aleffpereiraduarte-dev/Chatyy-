@@ -159,6 +159,7 @@ import GiftSheet from '../components/gifts/GiftSheet';
 import GiftBubble from '../components/gifts/GiftBubble';
 import { giftPreviewText } from '../components/gifts/giftCatalog';
 import { IconGiftBox as _IconGiftBox } from '../components/Icons';
+import MentionJumpFab from '../components/chat/MentionJumpFab'; // [2026-10-14 grupo-rajada]
 import * as api from '../services/api';
 import { emailToDisplayName } from '../services/api';
 
@@ -1748,7 +1749,7 @@ const BubbleTail = React.memo(function BubbleTail({ own, color }) {
 // and people scrolled past without noticing it. Now it fades in + the label
 // pill pulses at 1.0 → 1.06 scale for ~2 cycles, then settles. Draws the eye
 // to the exact spot where new messages start.
-function UnreadSeparatorPulse({ isDark, t }) {
+function UnreadSeparatorPulse({ isDark, t, count }) {
   // [VISUAL-G5, 2026-05-19] Unread divider: violet→WA red, drop pulse loop, sentence-case label.
   const opacity = useRef(new Animated.Value(0)).current;
   useEffect(() => {
@@ -1772,7 +1773,11 @@ function UnreadSeparatorPulse({ isDark, t }) {
         color: isDark ? 'rgba(235,235,245,0.80)' : 'rgba(60,60,67,0.85)',
         backgroundColor: isDark ? 'rgba(44,44,46,0.82)' : 'rgba(236,236,240,0.88)',
       }}>
-        {t('chatConv.unreadMessages') || 'Mensagens não lidas'}
+        {count > 1
+          ? (t('chatConv.unreadMessagesN', { n: count }) || `${count} mensagens não lidas`)
+          : count === 1
+            ? (t('chatConv.unreadMessagesOne') || '1 mensagem não lida')
+            : (t('chatConv.unreadMessages') || 'Mensagens não lidas')}
       </Text>
       <View style={{ flex: 1, height: StyleSheet.hairlineWidth, backgroundColor: isDark ? 'rgba(255,255,255,0.18)' : 'rgba(0,0,0,0.14)' }} />
     </Animated.View>
@@ -2682,6 +2687,14 @@ function _parseMsgMentions(m) {
     const arr = Array.isArray(m) ? m : (typeof m === 'string' && m ? JSON.parse(m) : null);
     return Array.isArray(arr) ? arr.map(x => String(x || '').toLowerCase()).filter(Boolean) : null;
   } catch { return null; }
+}
+// [2026-10-14 grupo-rajada] a msg menciona `me` (email) ou @everyone? (botão "@")
+function _msgMentionsMe(m, me) {
+  if (!m || !me || m.type === 'system' || m.is_deleted || m.deleted_at) return false;
+  const _me = String(me).toLowerCase();
+  if (String(m.sender_email || '').toLowerCase() === _me) return false;
+  const arr = _parseMsgMentions(m.mentions);
+  return !!(arr && (arr.includes(_me) || arr.includes('@everyone')));
 }
 // → email (string) | '@meta' (everyone/admins) | null (texto comum)
 function _resolveMention(handleRaw, mentionsArr) {
@@ -9904,6 +9917,12 @@ function ChatConversationInner() {
   const newMsgCountRef = useRef(0);
   newMsgCountRef.current = newMsgCount;
   const isScrolledUpRef = useRef(false);
+  // [2026-10-14 grupo-rajada] Fila de menções não vistas (ids, mais antiga
+  // primeiro) → botão "@" acima do FAB. Ref espelho p/ o onScroll limpar sem
+  // setState a cada evento.
+  const [unreadMentionIds, setUnreadMentionIds] = _useStateT([]);
+  const unreadMentionIdsRef = useRef(unreadMentionIds);
+  unreadMentionIdsRef.current = unreadMentionIds;
 
   // ─────────────────────────────────────────────────────────────────────────
   // [VISTO AZUL FALSO — CAUSA-RAIZ 2026-10-06] Gate de VISIBILIDADE REAL para
@@ -11876,6 +11895,8 @@ function ChatConversationInner() {
       });
     } catch {}
   }, [conversationId, user, _scheduleReadHttp]);
+  const markReadUpToRef = useRef(markReadUpTo); // [2026-10-14 grupo-rajada] p/ o onScroll (deps [])
+  markReadUpToRef.current = markReadUpTo;
 
   // [VISTO AZUL FALSO causa-raiz 2026-10-06] Flush dos recibos DEFERIDOS: roda
   // quando a tela volta a ser visível de verdade (app ativo + tela focada +
@@ -15517,13 +15538,19 @@ function ChatConversationInner() {
     // Enfileira e aplica TODOS em ≤2 frames num único commit (FIFO; teto
     // 64ms se o rAF estiver pausado). Controle (ack/rejeição/conexão/sync)
     // continua síncrono.
-    const _rtBatch = createFrameBatcher({ label: 'conv-rt', frames: 2, maxDelay: 64 });
+    // [2026-10-14 grupo-rajada] Grupo com várias pessoas falando ao mesmo tempo:
+    // recibos (✓✓/azul/presença) entram como baixa prioridade (≤350 ms ou junto
+    // do próximo lote visível) e, com ≥6 eventos visíveis/s, o lote espera 180 ms
+    // (3-5 commits/s em vez de ~1 por mensagem + 1 por recibo). Teste de carga
+    // 200 msgs/30 s: a tela renderizava a cada evento → 150 long tasks (CPU 4x).
+    const _rtBatch = createFrameBatcher({ label: 'conv-rt', frames: 2, maxDelay: 64, lowDelay: 350, busyRate: 6, busyDelay: 180 });
     // Cleanup (troca de conversa/deps ou unmount): aplica o que já chegou
     // (os handlers checam mountedRef/conversa) e só então descarta.
     wsUnsubs.push(() => { try { _rtBatch.flush(); } catch {} _rtBatch.dispose(); });
     try {
       const mailWs = require('../services/websocket').default;
-      const _wsOnB = (ev, fn) => mailWs.on(ev, _rtBatch.wrap(_PERF_WHY_ON ? (...a) => { _whyHit('ev:' + ev); return fn(...a); } : fn));
+      const _RT_LOW = { message_delivered: 1, chat_delivered: 1, message_read: 1, chat_read: 1, message_status: 1, voice_played: 1, presence: 1 }; // [2026-10-14 grupo-rajada]
+      const _wsOnB = (ev, fn) => mailWs.on(ev, _rtBatch.wrap(_PERF_WHY_ON ? (...a) => { _whyHit('ev:' + ev); return fn(...a); } : fn, _RT_LOW[ev] ? { low: true } : undefined));
       const tcpClient = require('../services/tcp-client').getTCPClient();
       // Subscribe to this conversation via TCP (replaces MQTT)
       mailWs.subscribe(`chat_${conversationId}`);  // Keep WS for presence/typing
@@ -15985,6 +16012,10 @@ function ChatConversationInner() {
           // gate, so the scroll-down FAB showed without a number.
           if (msg.sender_email !== currentEmail && msg.id && chatyySettings.read_receipts === false && isScrolledUpRef.current) {
             setNewMsgCount(c => c + 1);
+          }
+          // [2026-10-14 grupo-rajada] menção chegando com o usuário lendo acima → botão "@"
+          if (msg.id && isScrolledUpRef.current && _msgMentionsMe(msg, currentEmail)) {
+            setUnreadMentionIds(prev => (prev.includes(msg.id) ? prev : [...prev, msg.id]));
           }
           if (msg.sender_email !== currentEmail && msg.id && chatyySettings.read_receipts !== false) {
             if (isScrolledUpRef.current) {
@@ -17251,7 +17282,7 @@ function ChatConversationInner() {
           });
         }
       };
-      { const _b = _rtBatch.wrap(onChatRead); tcpClient.on('chat_read', _b); tcpUnsubs.push(() => tcpClient.off('chat_read', _b)); }
+      { const _b = _rtBatch.wrap(onChatRead, { low: true }); tcpClient.on('chat_read', _b); tcpUnsubs.push(() => tcpClient.off('chat_read', _b)); }
 
       // TCP reactions (event name changed: chat_reaction → chat_react)
       // Aggregates into {emoji, count, users[]} matching the backend payload
@@ -17435,7 +17466,7 @@ function ChatConversationInner() {
             : m
         ));
       };
-      { const _b = _rtBatch.wrap(onChatDelivered); tcpClient.on('chat_delivered', _b); tcpUnsubs.push(() => tcpClient.off('chat_delivered', _b)); }
+      { const _b = _rtBatch.wrap(onChatDelivered, { low: true }); tcpClient.on('chat_delivered', _b); tcpUnsubs.push(() => tcpClient.off('chat_delivered', _b)); }
 
       // TCP typing indicators (action: "started" | "stopped")
       const onUserTyping = (data) => {
@@ -24374,6 +24405,9 @@ function ChatConversationInner() {
           return `${typingUser} ${t('chat.recording') || 'gravando áudio...'}`;
         }
         if (typerCount === 1) return `${typingUser} ${t('chat.typing') || 'digitando...'}`;
+        // [2026-10-14 grupo-rajada] 3+ ao mesmo tempo: "3 pessoas digitando…"
+        // (cabe no header estreito; 2 = "Ana e João estão digitando…").
+        if (typerCount >= 3) return t('chatConv.typingPeople', { n: typerCount }) || `${typerCount} pessoas digitando...`;
         return `${typingUser} ${t('chat.typingMultiple') || 'estão digitando...'}`;
       }
       if (members.length > 0) {
@@ -24437,6 +24471,7 @@ function ChatConversationInner() {
   // Strategy: take the unread_count from URL param (set by ChatListTab when opening)
   // and mark the (last - unread_count + 1)th incoming message as the first unread.
   const firstUnreadIdRef = useRef(null);
+  const unreadSepCountRef = useRef(null); // [2026-10-14 grupo-rajada] { id, n } do divisor
   const initialUnreadCountRef = useRef(parseInt(params.unread || '0', 10));
   // [2026-07-15] Read watermark for the "Não lidas" divider.
   //   lastReadWatermark: null  → conv meta not resolved yet
@@ -24542,6 +24577,24 @@ function ChatConversationInner() {
     setDividerRev(v => v + 1); // [2026-10-08 open-at-bottom]
   }, [messages, currentEmail, lastReadWatermark, convMetaResolved, openLoadDone]);
 
+  // [2026-10-14 grupo-rajada] Abertura: menções entre as não lidas (a partir do
+  // divisor) entram na fila do botão "@". Decidido 1x, logo após o divisor.
+  const mentionInitDoneRef = useRef(false);
+  useEffect(() => {
+    if (mentionInitDoneRef.current || conversationType !== 'group') return;
+    if (!dividerDecidedRef.current && firstUnreadIdRef.current == null) return;
+    mentionInitDoneRef.current = true;
+    const fu = firstUnreadIdRef.current;
+    if (fu == null) return;
+    const idx = messages.findIndex(m => m && m.id === fu);
+    if (idx < 0) return;
+    const ids = [];
+    for (let i = idx; i < messages.length; i++) {
+      if (_msgMentionsMe(messages[i], currentEmail) && messages[i].id != null) ids.push(messages[i].id);
+    }
+    if (ids.length) setUnreadMentionIds(prev => [...new Set([...ids, ...prev])]);
+  }, [messages, currentEmail, conversationType]);
+
   // Cache of wrapped message objects so identical messages keep the same
   // reference across renders — critical for MemoizedMessageRow to skip work.
   const _groupCacheRef = useRef(new Map()); // id → { wrapped, source, isFirst, isLast }
@@ -24639,7 +24692,19 @@ function ChatConversationInner() {
         lastDate = dateKey;
       }
       if (!unreadInserted && firstUnreadIdRef.current && msg.id === firstUnreadIdRef.current) {
-        result.push({ _type: 'unread_separator', _key: 'unread-sep' });
+        // [2026-10-14 grupo-rajada] "N mensagens não lidas" (WhatsApp): conta as
+        // recebidas do divisor até o fim UMA vez por divisor (msgs ao vivo
+        // depois da abertura não inflam o número).
+        if (!unreadSepCountRef.current || unreadSepCountRef.current.id !== msg.id) {
+          let _n = 0;
+          for (let j = i; j < messages.length; j++) {
+            const mm = messages[j];
+            if (!mm || mm._type || mm.type === 'system' || mm.sender_email === currentEmail) continue;
+            _n++;
+          }
+          unreadSepCountRef.current = { id: msg.id, n: _n };
+        }
+        result.push({ _type: 'unread_separator', _key: 'unread-sep', _count: unreadSepCountRef.current.n });
         unreadInserted = true;
       }
 
@@ -25905,6 +25970,7 @@ function ChatConversationInner() {
     // [2026-10-07 flashlist] distance from the NEWEST message, engine-agnostic
     // (inverted: contentOffset.y; oldest-first: contentH - viewportH - y).
     const _distLatest = threadScroll.distanceFromLatest(e);
+    const _prevDistLatest = threadScrollStateRef.current.lastDistance || 0; // [2026-10-14 grupo-rajada]
     threadScrollStateRef.current.lastDistance = _distLatest; // [2026-10-08 chat-gaps2] jumpToLatest
     _sendMotionState.atBottom = _distLatest <= 120; // [2026-10-08 send-motion] recebida só anima no fim
     // [2026-10-08 open-at-bottom] Grudado no fim: o offset que "se afastou"
@@ -25921,9 +25987,17 @@ function ChatConversationInner() {
       const _layoutMoved = Math.abs(_ch - (_st.pinCh || 0)) > 1 || Math.abs(_vh - (_st.pinVh || 0)) > 1;
       _st.pinCh = _ch; _st.pinVh = _vh;
       if (_distLatest <= 6) {
-        _st.pinned = true;
+        // [2026-10-14 grupo-rajada] logo após um gesto p/ cima (roda/toque) não
+        // regruda: o 1º onScroll ainda pode vir do fim (rolagem suave anterior).
+        if (!(_st.userUpAt && Date.now() - _st.userUpAt < 600)) _st.pinned = true;
       } else if (_st.pinned) {
-        if (_layoutMoved && !_st.dragging) threadScroll.pinSettle();
+        // [2026-10-14 grupo-rajada] Afastou do fim com o conteúdo do MESMO tamanho
+        // (barra de rolagem/teclado no web, rolagem por acessibilidade) = usuário →
+        // solta já, mesmo dentro da janela send-motion. Numa rajada de grupo essa
+        // janela se renovava a cada msg recebida e o pin nunca soltava: quem lia
+        // acima era puxado de volta ao fim (medido no teste de carga).
+        if (!_layoutMoved && _distLatest > _prevDistLatest + 24) _st.pinned = false;
+        else if (_layoutMoved && !_st.dragging) threadScroll.pinSettle();
         // [2026-10-08 send-motion] durante a rolagem animada do pinSettle os
         // onScroll intermediários (tamanho igual, ainda longe do fim) NÃO soltam
         // o pin — arraste real solta via onScrollBeginDrag.
@@ -25938,7 +26012,26 @@ function ChatConversationInner() {
       showScrollDownRef.current = scrolledUp;
       setShowScrollDown(scrolledUp);
     }
+    // [2026-10-14 grupo-rajada] Voltou ao fim depois de ler acima (com msgs
+    // chegando): marca lido até a mais nova RECEBIDA. O onViewableItemsChanged
+    // nem sempre refaz a conta no último frame do scroll (teste de carga: 2 msgs
+    // ficavam "não lidas" no servidor com a conversa aberta no fim).
+    if (scrolledUp) threadScrollStateRef.current.wasUp = true;
+    else if (threadScrollStateRef.current.wasUp && _distLatest <= 120) {
+      threadScrollStateRef.current.wasUp = false;
+      try {
+        const arr = messagesRef.current || [];
+        const me = String(currentEmailRef.current || '').toLowerCase();
+        let mx = 0;
+        for (let i = arr.length - 1; i >= 0 && i >= arr.length - 60; i--) {
+          const m = arr[i];
+          if (m && !m._type && typeof m.id === 'number' && m.id > mx && String(m.sender_email || '').toLowerCase() !== me) mx = m.id;
+        }
+        if (mx > 0 && settingsRef.current?.read_receipts !== false) markReadUpToRef.current?.(mx);
+      } catch {}
+    }
     if (!scrolledUp && newMsgCountRef.current !== 0) { newMsgCountRef.current = 0; setNewMsgCount(0); }
+    if (!scrolledUp && unreadMentionIdsRef.current.length) { unreadMentionIdsRef.current = []; setUnreadMentionIds([]); }
   }, []);
   // [2026-10-08 open-at-bottom] Conteúdo (rows medidas, imagem/preview que
   // carregou, delta do servidor, digitando) ou viewport (composer/teclado)
@@ -25979,6 +26072,51 @@ function ChatConversationInner() {
     st.dragging = false;
     if ((st.lastDistance || 0) <= 6) st.pinned = true;
   }, []);
+  // [2026-10-14 grupo-rajada] Web: roda do mouse/trackpad, teclado e toque NÃO
+  // disparam onScrollBeginDrag no RN-web → o pin nunca soltava e, com mensagens
+  // chegando (grupo movimentado), cada uma puxava quem estava lendo acima de
+  // volta ao fim. Solta o pin no gesto do usuário (igual ao arraste nativo).
+  useEffect(() => {
+    if (Platform.OS !== 'web' || !THREAD_OLDEST_FIRST) return undefined;
+    let node = null; let tries = 0; let tm = null;
+    const st = () => threadScrollStateRef.current;
+    // Gesto p/ cima: solta o pin e CANCELA uma rolagem suave (send-motion) em
+    // andamento — senão ela terminava no fim e o onScroll regrudava (≤6 px).
+    const release = () => {
+      const s0 = st(); s0.pinned = false; s0.userUpAt = Date.now();
+      try { if (node && typeof node.scrollTo === 'function') node.scrollTo({ top: node.scrollTop, behavior: 'instant' }); } catch {}
+    };
+    const onWheel = (e) => { if ((e && e.deltaY) < 0) release(); };
+    const onKey = (e) => { const k = e && e.key; if (k === 'PageUp' || k === 'ArrowUp' || k === 'Home') release(); };
+    const onTouchStart = () => { const s0 = st(); s0.dragging = true; s0.pinned = false; s0.userUpAt = Date.now(); };
+    const onTouchEnd = () => { const s0 = st(); s0.dragging = false; if ((s0.lastDistance || 0) <= 6) s0.pinned = true; };
+    const attach = () => {
+      try { const sv = flashListRef.current?.getNativeScrollRef?.(); node = (sv && (typeof sv.getScrollableNode === 'function' ? sv.getScrollableNode() : sv)) || null; } catch { node = null; }
+      if (node && typeof node.addEventListener === 'function') {
+        node.addEventListener('wheel', onWheel, { passive: true });
+        node.addEventListener('keydown', onKey);
+        node.addEventListener('touchstart', onTouchStart, { passive: true });
+        node.addEventListener('touchend', onTouchEnd, { passive: true });
+        node.addEventListener('touchcancel', onTouchEnd, { passive: true });
+        return;
+      }
+      node = null;
+      if (tries++ < 40) tm = setTimeout(attach, 250);
+    };
+    attach();
+    return () => {
+      if (tm) clearTimeout(tm);
+      if (node) {
+        try {
+          node.removeEventListener('wheel', onWheel);
+          node.removeEventListener('keydown', onKey);
+          node.removeEventListener('touchstart', onTouchStart);
+          node.removeEventListener('touchend', onTouchEnd);
+          node.removeEventListener('touchcancel', onTouchEnd);
+        } catch {}
+      }
+    };
+  }, [conversationId]);
 
   // ============================================================
   // MEDIA CACHE HELPER
@@ -26104,7 +26242,7 @@ function ChatConversationInner() {
       );
     }
     if (item._type === 'unread_separator') {
-      return <UnreadSeparatorPulse isDark={isDark} t={t} />;
+      return <UnreadSeparatorPulse isDark={isDark} t={t} count={item._count} />;
     }
     // WhatsApp-style album grid. Consecutive image/video messages from the
     // same sender within 30s collapse into a single bubble with a 1x1/2x1/
@@ -33316,6 +33454,26 @@ function ChatConversationInner() {
 
       {/* Message Effects Overlay */}
       {activeEffect && <MessageEffectOverlay effect={activeEffect} />}
+
+      {/* [2026-10-14 grupo-rajada] "@" menções não lidas → pula p/ a mais antiga */}
+      {unreadMentionIds.length > 0 && (
+        <MentionJumpFab
+          count={unreadMentionIds.length}
+          bottom={showScrollDown ? 142 : 90}
+          isDark={isDark}
+          colors={colors}
+          t={t}
+          onPress={() => {
+            const id = unreadMentionIdsRef.current[0];
+            const rest = unreadMentionIdsRef.current.slice(1);
+            unreadMentionIdsRef.current = rest;
+            setUnreadMentionIds(rest);
+            if (id == null) return;
+            try { if (Platform.OS !== 'web') Haptics.selectionAsync(); } catch {}
+            try { safeScrollToMsg({ id }); } catch {}
+          }}
+        />
+      )}
 
       {/* Scroll to bottom FAB */}
       {showScrollDown && (

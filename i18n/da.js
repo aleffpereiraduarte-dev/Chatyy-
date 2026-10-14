@@ -1,4 +1,9 @@
 export default {
+  // [2026-10-14 grupo-rajada]
+  "chatConv.unreadMessagesN": "{n} ulæste beskeder",
+  "chatConv.unreadMessagesOne": "1 ulæst besked",
+  "chatConv.typingPeople": "{n} personer skriver...",
+  "chatConv.unreadMentionsA11y": "{n} ulæste omtaler",
   // [2026-10-14 feel] toque duplo p/ reagir
   "settings.doubleTapReact.title": "Dobbelttryk for at synes godt om",
   "settings.doubleTapReact.subtitle": "Tryk to gange på en besked for at reagere med et hjerte.",

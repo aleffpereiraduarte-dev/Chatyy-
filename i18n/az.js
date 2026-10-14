@@ -1,4 +1,9 @@
 export default {
+  // [2026-10-14 grupo-rajada]
+  "chatConv.unreadMessagesN": "{n} oxunmamış mesaj",
+  "chatConv.unreadMessagesOne": "1 oxunmamış mesaj",
+  "chatConv.typingPeople": "{n} nəfər yazır...",
+  "chatConv.unreadMentionsA11y": "{n} oxunmamış qeyd",
   // [2026-10-14 feel] toque duplo p/ reagir
   "settings.doubleTapReact.title": "Bəyənmək üçün iki dəfə toxun",
   "settings.doubleTapReact.subtitle": "Ürəklə reaksiya vermək üçün mesaja iki dəfə toxun.",

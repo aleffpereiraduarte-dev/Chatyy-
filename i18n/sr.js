@@ -1,4 +1,9 @@
 export default {
+  // [2026-10-14 grupo-rajada]
+  "chatConv.unreadMessagesN": "{n} непрочитаних порука",
+  "chatConv.unreadMessagesOne": "1 непрочитана порука",
+  "chatConv.typingPeople": "{n} особа куца...",
+  "chatConv.unreadMentionsA11y": "{n} непрочитаних помињања",
   // [2026-10-14 feel] toque duplo p/ reagir
   "settings.doubleTapReact.title": "Двоструки додир за свиђање",
   "settings.doubleTapReact.subtitle": "Двапут додирните поруку да реагујете срцем.",

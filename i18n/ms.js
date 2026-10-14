@@ -1,4 +1,9 @@
 export default {
+  // [2026-10-14 grupo-rajada]
+  "chatConv.unreadMessagesN": "{n} mesej belum dibaca",
+  "chatConv.unreadMessagesOne": "1 mesej belum dibaca",
+  "chatConv.typingPeople": "{n} orang sedang menaip...",
+  "chatConv.unreadMentionsA11y": "{n} sebutan belum dibaca",
   // [2026-10-14 feel] toque duplo p/ reagir
   "settings.doubleTapReact.title": "Ketik dua kali untuk suka",
   "settings.doubleTapReact.subtitle": "Ketik dua kali pada mesej untuk bertindak balas dengan hati.",

@@ -1,4 +1,9 @@
 export default {
+  // [2026-10-14 grupo-rajada]
+  "chatConv.unreadMessagesN": "{n} ያልተነበቡ መልዕክቶች",
+  "chatConv.unreadMessagesOne": "1 ያልተነበበ መልዕክት",
+  "chatConv.typingPeople": "{n} ሰዎች እየጻፉ ነው...",
+  "chatConv.unreadMentionsA11y": "{n} ያልተነበቡ መጠቀሶች",
   // [2026-10-14 feel] toque duplo p/ reagir
   "settings.doubleTapReact.title": "ለመውደድ ሁለቴ መታ ያድርጉ",
   "settings.doubleTapReact.subtitle": "በልብ ምላሽ ለመስጠት መልዕክትን ሁለቴ መታ ያድርጉ።",

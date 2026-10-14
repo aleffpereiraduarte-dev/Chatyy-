@@ -1,4 +1,9 @@
 export default {
+  // [2026-10-14 grupo-rajada]
+  "chatConv.unreadMessagesN": "{n} hindi pa nababasang mensahe",
+  "chatConv.unreadMessagesOne": "1 hindi pa nababasang mensahe",
+  "chatConv.typingPeople": "{n} tao ang nagta-type...",
+  "chatConv.unreadMentionsA11y": "{n} hindi pa nababasang banggit",
   // [2026-10-14 feel] toque duplo p/ reagir
   "settings.doubleTapReact.title": "I-double tap para i-like",
   "settings.doubleTapReact.subtitle": "I-tap nang dalawang beses ang mensahe para mag-react ng puso.",

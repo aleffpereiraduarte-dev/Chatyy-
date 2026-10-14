@@ -1,4 +1,9 @@
 export default {
+  // [2026-10-14 grupo-rajada]
+  "chatConv.unreadMessagesN": "{n} tin nhắn chưa đọc",
+  "chatConv.unreadMessagesOne": "1 tin nhắn chưa đọc",
+  "chatConv.typingPeople": "{n} người đang nhập...",
+  "chatConv.unreadMentionsA11y": "{n} lượt nhắc chưa đọc",
   // [2026-10-14 feel] toque duplo p/ reagir
   "settings.doubleTapReact.title": "Chạm hai lần để thích",
   "settings.doubleTapReact.subtitle": "Chạm hai lần vào tin nhắn để bày tỏ cảm xúc bằng trái tim.",

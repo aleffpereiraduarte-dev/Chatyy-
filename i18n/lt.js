@@ -1,4 +1,9 @@
 export default {
+  // [2026-10-14 grupo-rajada]
+  "chatConv.unreadMessagesN": "{n} neperskaitytų žinučių",
+  "chatConv.unreadMessagesOne": "1 neperskaityta žinutė",
+  "chatConv.typingPeople": "{n} žmonės rašo...",
+  "chatConv.unreadMentionsA11y": "{n} neperskaitytų paminėjimų",
   // [2026-10-14 feel] toque duplo p/ reagir
   "settings.doubleTapReact.title": "Dukart bakstelėkite, kad patiktų",
   "settings.doubleTapReact.subtitle": "Dukart bakstelėkite žinutę, kad sureaguotumėte širdele.",

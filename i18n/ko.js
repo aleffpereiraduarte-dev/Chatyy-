@@ -1,4 +1,9 @@
 export default {
+  // [2026-10-14 grupo-rajada]
+  "chatConv.unreadMessagesN": "읽지 않은 메시지 {n}개",
+  "chatConv.unreadMessagesOne": "읽지 않은 메시지 1개",
+  "chatConv.typingPeople": "{n}명이 입력 중...",
+  "chatConv.unreadMentionsA11y": "읽지 않은 멘션 {n}개",
   // [2026-10-14 feel] toque duplo p/ reagir
   "settings.doubleTapReact.title": "두 번 탭하여 좋아요",
   "settings.doubleTapReact.subtitle": "메시지를 두 번 탭하면 하트로 반응합니다.",

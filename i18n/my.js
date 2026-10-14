@@ -1,4 +1,9 @@
 export default {
+  // [2026-10-14 grupo-rajada]
+  "chatConv.unreadMessagesN": "မဖတ်ရသေးသော မက်ဆေ့ချ် {n} ခု",
+  "chatConv.unreadMessagesOne": "မဖတ်ရသေးသော မက်ဆေ့ချ် 1 ခု",
+  "chatConv.typingPeople": "လူ {n} ဦး စာရိုက်နေသည်...",
+  "chatConv.unreadMentionsA11y": "မဖတ်ရသေးသော ဖော်ပြချက် {n} ခု",
   // [2026-10-14 feel] toque duplo p/ reagir
   "settings.doubleTapReact.title": "ကြိုက်ရန် နှစ်ချက်တို့ပါ",
   "settings.doubleTapReact.subtitle": "နှလုံးသားဖြင့် တုံ့ပြန်ရန် မက်ဆေ့ချ်ကို နှစ်ချက်တို့ပါ။",

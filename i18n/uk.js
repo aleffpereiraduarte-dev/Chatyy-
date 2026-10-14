@@ -1,4 +1,9 @@
 export default {
+  // [2026-10-14 grupo-rajada]
+  "chatConv.unreadMessagesN": "Непрочитаних повідомлень: {n}",
+  "chatConv.unreadMessagesOne": "1 непрочитане повідомлення",
+  "chatConv.typingPeople": "Друкують: {n}...",
+  "chatConv.unreadMentionsA11y": "Непрочитаних згадок: {n}",
   // [2026-10-14 feel] toque duplo p/ reagir
   "settings.doubleTapReact.title": "Подвійний дотик — вподобати",
   "settings.doubleTapReact.subtitle": "Двічі торкніться повідомлення, щоб відреагувати сердечком.",

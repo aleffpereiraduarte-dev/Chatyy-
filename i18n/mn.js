@@ -1,4 +1,9 @@
 export default {
+  // [2026-10-14 grupo-rajada]
+  "chatConv.unreadMessagesN": "{n} уншаагүй мессеж",
+  "chatConv.unreadMessagesOne": "1 уншаагүй мессеж",
+  "chatConv.typingPeople": "{n} хүн бичиж байна...",
+  "chatConv.unreadMentionsA11y": "{n} уншаагүй дурдалт",
   // [2026-10-14 feel] toque duplo p/ reagir
   "settings.doubleTapReact.title": "Таалагдсан гэхийн тулд хоёр товш",
   "settings.doubleTapReact.subtitle": "Зүрхээр хариу үйлдэл үзүүлэхийн тулд мессежийг хоёр товшино уу.",

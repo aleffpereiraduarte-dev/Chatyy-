@@ -1,4 +1,9 @@
 export default {
+  // [2026-10-14 grupo-rajada]
+  "chatConv.unreadMessagesN": "{n} رسائل غير مقروءة",
+  "chatConv.unreadMessagesOne": "رسالة واحدة غير مقروءة",
+  "chatConv.typingPeople": "{n} أشخاص يكتبون...",
+  "chatConv.unreadMentionsA11y": "{n} إشارات غير مقروءة",
   // [2026-10-14 feel] toque duplo p/ reagir
   "settings.doubleTapReact.title": "انقر مرتين للإعجاب",
   "settings.doubleTapReact.subtitle": "انقر مرتين على رسالة للتفاعل بقلب.",

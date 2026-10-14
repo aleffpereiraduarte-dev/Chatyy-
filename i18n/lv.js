@@ -1,4 +1,9 @@
 export default {
+  // [2026-10-14 grupo-rajada]
+  "chatConv.unreadMessagesN": "{n} nelasītas ziņas",
+  "chatConv.unreadMessagesOne": "1 nelasīta ziņa",
+  "chatConv.typingPeople": "{n} cilvēki raksta...",
+  "chatConv.unreadMentionsA11y": "{n} nelasīti pieminējumi",
   // [2026-10-14 feel] toque duplo p/ reagir
   "settings.doubleTapReact.title": "Dubultskāriens, lai atzīmētu Patīk",
   "settings.doubleTapReact.subtitle": "Divreiz pieskarieties ziņai, lai reaģētu ar sirsniņu.",

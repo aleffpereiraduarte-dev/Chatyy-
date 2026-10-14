@@ -1,4 +1,9 @@
 export default {
+  // [2026-10-14 grupo-rajada]
+  "chatConv.unreadMessagesN": "{n} ta o‘qilmagan xabar",
+  "chatConv.unreadMessagesOne": "1 ta o‘qilmagan xabar",
+  "chatConv.typingPeople": "{n} kishi yozmoqda...",
+  "chatConv.unreadMentionsA11y": "{n} ta o‘qilmagan eslatma",
   // [2026-10-14 feel] toque duplo p/ reagir
   "settings.doubleTapReact.title": "Yoqtirish uchun ikki marta bosing",
   "settings.doubleTapReact.subtitle": "Yurakcha bilan munosabat bildirish uchun xabarni ikki marta bosing.",

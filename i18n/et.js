@@ -1,4 +1,9 @@
 export default {
+  // [2026-10-14 grupo-rajada]
+  "chatConv.unreadMessagesN": "{n} lugemata sõnumit",
+  "chatConv.unreadMessagesOne": "1 lugemata sõnum",
+  "chatConv.typingPeople": "{n} inimest kirjutab...",
+  "chatConv.unreadMentionsA11y": "{n} lugemata mainimist",
   // [2026-10-14 feel] toque duplo p/ reagir
   "settings.doubleTapReact.title": "Topeltpuudutus meeldimiseks",
   "settings.doubleTapReact.subtitle": "Puuduta sõnumit kaks korda, et reageerida südamega.",

@@ -1,4 +1,9 @@
 export default {
+  // [2026-10-14 grupo-rajada]
+  "chatConv.unreadMessagesN": "未読メッセージ {n} 件",
+  "chatConv.unreadMessagesOne": "未読メッセージ 1 件",
+  "chatConv.typingPeople": "{n}人が入力中...",
+  "chatConv.unreadMentionsA11y": "未読のメンション {n} 件",
   // [2026-10-14 feel] toque duplo p/ reagir
   "settings.doubleTapReact.title": "ダブルタップで「いいね」",
   "settings.doubleTapReact.subtitle": "メッセージをダブルタップするとハートでリアクションできます。",

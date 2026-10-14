@@ -1,4 +1,10 @@
 export default {
+  // [2026-10-14 grupo-rajada]
+  "chatConv.unreadMessagesN": "{n} غیر پڑھے پیغامات",
+  "chatConv.unreadMessagesOne": "1 غیر پڑھا پیغام",
+  "chatConv.typingPeople": "{n} لوگ ٹائپ کر رہے ہیں...",
+  "chatConv.unreadMentionsA11y": "{n} غیر پڑھے تذکرے",
+  "chatConv.typingAnd": "اور",
   // [2026-10-14 feel] toque duplo p/ reagir
   "settings.doubleTapReact.title": "پسند کرنے کے لیے دو بار تھپتھپائیں",
   "settings.doubleTapReact.subtitle": "دل کے ساتھ ردِعمل کے لیے پیغام پر دو بار تھپتھپائیں۔",

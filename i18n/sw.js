@@ -1,4 +1,9 @@
 export default {
+  // [2026-10-14 grupo-rajada]
+  "chatConv.unreadMessagesN": "Ujumbe {n} haujasomwa",
+  "chatConv.unreadMessagesOne": "Ujumbe 1 haujasomwa",
+  "chatConv.typingPeople": "Watu {n} wanaandika...",
+  "chatConv.unreadMentionsA11y": "Mitajo {n} haijasomwa",
   // [2026-10-14 feel] toque duplo p/ reagir
   "settings.doubleTapReact.title": "Gusa mara mbili kupenda",
   "settings.doubleTapReact.subtitle": "Gusa ujumbe mara mbili ili kujibu kwa moyo.",

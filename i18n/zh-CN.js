@@ -1,4 +1,9 @@
 export default {
+  // [2026-10-14 grupo-rajada]
+  "chatConv.unreadMessagesN": "{n} 条未读消息",
+  "chatConv.unreadMessagesOne": "1 条未读消息",
+  "chatConv.typingPeople": "{n} 人正在输入...",
+  "chatConv.unreadMentionsA11y": "{n} 条未读提及",
   // [2026-10-14 feel] toque duplo p/ reagir
   "settings.doubleTapReact.title": "双击点赞",
   "settings.doubleTapReact.subtitle": "双击消息即可用爱心回应。",

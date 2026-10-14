@@ -1,4 +1,9 @@
 export default {
+  // [2026-10-14 grupo-rajada]
+  "chatConv.unreadMessagesN": "{n} წაუკითხავი შეტყობინება",
+  "chatConv.unreadMessagesOne": "1 წაუკითხავი შეტყობინება",
+  "chatConv.typingPeople": "{n} ადამიანი წერს...",
+  "chatConv.unreadMentionsA11y": "{n} წაუკითხავი მოხსენიება",
   // [2026-10-14 feel] toque duplo p/ reagir
   "settings.doubleTapReact.title": "ორჯერ შეხება მოწონებისთვის",
   "settings.doubleTapReact.subtitle": "შეეხეთ შეტყობინებას ორჯერ, რომ გულით მოახდინოთ რეაქცია.",

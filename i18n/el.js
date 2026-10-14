@@ -1,4 +1,9 @@
 export default {
+  // [2026-10-14 grupo-rajada]
+  "chatConv.unreadMessagesN": "{n} μη αναγνωσμένα μηνύματα",
+  "chatConv.unreadMessagesOne": "1 μη αναγνωσμένο μήνυμα",
+  "chatConv.typingPeople": "{n} άτομα πληκτρολογούν...",
+  "chatConv.unreadMentionsA11y": "{n} μη αναγνωσμένες αναφορές",
   // [2026-10-14 feel] toque duplo p/ reagir
   "settings.doubleTapReact.title": "Διπλό πάτημα για «μου αρέσει»",
   "settings.doubleTapReact.subtitle": "Πατήστε δύο φορές ένα μήνυμα για να αντιδράσετε με καρδιά.",

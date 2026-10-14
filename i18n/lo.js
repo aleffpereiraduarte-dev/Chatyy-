@@ -1,4 +1,9 @@
 export default {
+  // [2026-10-14 grupo-rajada]
+  "chatConv.unreadMessagesN": "ຂໍ້ຄວາມທີ່ຍັງບໍ່ໄດ້ອ່ານ {n}",
+  "chatConv.unreadMessagesOne": "ຂໍ້ຄວາມທີ່ຍັງບໍ່ໄດ້ອ່ານ 1",
+  "chatConv.typingPeople": "{n} ຄົນກຳລັງພິມ...",
+  "chatConv.unreadMentionsA11y": "ການກ່າວເຖິງທີ່ຍັງບໍ່ໄດ້ອ່ານ {n}",
   // [2026-10-14 feel] toque duplo p/ reagir
   "settings.doubleTapReact.title": "ແຕະສອງເທື່ອເພື່ອມັກ",
   "settings.doubleTapReact.subtitle": "ແຕະຂໍ້ຄວາມສອງເທື່ອເພື່ອສະແດງຄວາມຮູ້ສຶກດ້ວຍຫົວໃຈ.",

@@ -1,4 +1,9 @@
 export default {
+  // [2026-10-14 grupo-rajada]
+  "chatConv.unreadMessagesN": "{n} mesaje necitite",
+  "chatConv.unreadMessagesOne": "1 mesaj necitit",
+  "chatConv.typingPeople": "{n} persoane scriu...",
+  "chatConv.unreadMentionsA11y": "{n} mențiuni necitite",
   // [2026-10-14 feel] toque duplo p/ reagir
   "settings.doubleTapReact.title": "Atingere dublă pentru apreciere",
   "settings.doubleTapReact.subtitle": "Atinge de două ori un mesaj pentru a reacționa cu o inimă.",

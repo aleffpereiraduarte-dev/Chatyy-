@@ -1,4 +1,9 @@
 export default {
+  // [2026-10-14 grupo-rajada]
+  "chatConv.unreadMessagesN": "ข้อความที่ยังไม่ได้อ่าน {n} ข้อความ",
+  "chatConv.unreadMessagesOne": "ข้อความที่ยังไม่ได้อ่าน 1 ข้อความ",
+  "chatConv.typingPeople": "{n} คนกำลังพิมพ์...",
+  "chatConv.unreadMentionsA11y": "การกล่าวถึงที่ยังไม่ได้อ่าน {n} รายการ",
   // [2026-10-14 feel] toque duplo p/ reagir
   "settings.doubleTapReact.title": "แตะสองครั้งเพื่อถูกใจ",
   "settings.doubleTapReact.subtitle": "แตะข้อความสองครั้งเพื่อแสดงความรู้สึกด้วยหัวใจ",

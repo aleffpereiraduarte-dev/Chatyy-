@@ -1,4 +1,9 @@
 export default {
+  // [2026-10-14 grupo-rajada]
+  "chatConv.unreadMessagesN": "{n} ongelezen berichten",
+  "chatConv.unreadMessagesOne": "1 ongelezen bericht",
+  "chatConv.typingPeople": "{n} mensen typen...",
+  "chatConv.unreadMentionsA11y": "{n} ongelezen vermeldingen",
   // [2026-10-14 feel] toque duplo p/ reagir
   "settings.doubleTapReact.title": "Dubbeltikken om te liken",
   "settings.doubleTapReact.subtitle": "Tik twee keer op een bericht om met een hartje te reageren.",

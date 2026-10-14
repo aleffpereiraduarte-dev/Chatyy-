@@ -1,4 +1,9 @@
 export default {
+  // [2026-10-14 grupo-rajada]
+  "chatConv.unreadMessagesN": "{n} lukematonta viestiä",
+  "chatConv.unreadMessagesOne": "1 lukematon viesti",
+  "chatConv.typingPeople": "{n} henkilöä kirjoittaa...",
+  "chatConv.unreadMentionsA11y": "{n} lukematonta mainintaa",
   // [2026-10-14 feel] toque duplo p/ reagir
   "settings.doubleTapReact.title": "Kaksoisnapauta tykätäksesi",
   "settings.doubleTapReact.subtitle": "Napauta viestiä kahdesti reagoidaksesi sydämellä.",
