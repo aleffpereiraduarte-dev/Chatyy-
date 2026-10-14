@@ -26681,6 +26681,12 @@ function ChatConversationInner() {
                 createdAt: m.created_at || m.createdAt || null,
                 // [2026-10-14 viewer-album-only] passa só entre as mídias DESTE álbum.
                 albumIds: items.filter(x => x && !x.deleted_at && x.file_url).map(x => x.id),
+                // [2026-10-14 album-swipe] Âncoras extras p/ remontar o álbum na
+                // abertura mesmo se os ids acima estiverem velhos (tmp_ → id real
+                // depois do envio; a linha memoizada não re-renderiza só por id).
+                fromAlbum: true,
+                albumClientIds: items.map(x => x && (x._client_id || x.client_message_id)).filter(Boolean),
+                clientId: m._client_id || m.client_message_id || null,
               });
             }}
             style={cellStyle(w, h)}
@@ -36690,12 +36696,64 @@ function ChatConversationInner() {
         const mv = mediaViewer;
         let mediaList = null;
         let initialIndex = 0;
-        const _albumIdSet = Array.isArray(mv.albumIds) && mv.albumIds.length > 1 ? new Set(mv.albumIds.map(String)) : null;
-        if (mv.visible && !mv.viewOnce && _albumIdSet) {
+        // [2026-10-14 album-swipe] Founder: "abre um álbum com mais de uma foto
+        // ou vídeo e não passa pro lado". O álbum só virava lista quando TODOS os
+        // `albumIds` capturados no toque batiam com `messagesRef` E o fileUrl
+        // tocado batia exato — qualquer divergência (id tmp_ velho na linha
+        // memoizada após o envio, file_url local × remoto, item ainda sem
+        // file_url) caía em silêncio no modo de item único. Agora o grupo é
+        // remontado NA ABERTURA, do estado atual, em camadas:
+        //   1) a linha de álbum ATUAL da lista que contém o item tocado;  2) ids /
+        //   client ids do toque;  3) vizinhos do mesmo envio (mesmo remetente,
+        //   mídia consecutiva, mesmo lote ou ≤30 s). Item avulso (sem fromAlbum/
+        //   albumIds) continua abrindo sozinho, sem contador.
+        if (mv.visible && !mv.viewOnce && (mv.fromAlbum || (Array.isArray(mv.albumIds) && mv.albumIds.length > 1))) {
           try {
-            const all = (messagesRef.current || messages || [])
-              .filter(m => _albumIdSet.has(String(m.id)) && (m.type === 'image' || m.type === 'video') && m.file_url && !_isViewOnceMsg(m))
-              .map(m => {
+            const msgs = messagesRef.current || messages || [];
+            const _okM = (m) => !!m && !m.deleted_at && (m.type === 'image' || m.type === 'video' || m.type === 'photo')
+              && !!(m.file_url || m._localUri) && !_isViewOnceMsg(m);
+            const _cidOf = (m) => (m && (m._client_id || m.client_message_id)) || null;
+            const idSet = new Set((mv.albumIds || []).map(String));
+            const cidSet = new Set((mv.albumClientIds || []).map(String));
+            const _sameAsTap = (m) => !!m && (
+              (mv.messageId != null && String(m.id) === String(mv.messageId))
+              || (!!mv.clientId && String(_cidOf(m) || '') === String(mv.clientId))
+              || (!!mv.fileUrl && (m.file_url === mv.fileUrl || m._localUri === mv.fileUrl)));
+            const tapIdx = msgs.findIndex(_sameAsTap);
+            const tapMsg = tapIdx >= 0 ? msgs[tapIdx] : null;
+            // 1) linha de álbum ATUAL que contém o item tocado (itens frescos) —
+            //    exatamente o álbum que a pessoa está vendo.
+            let group = [];
+            if (tapMsg) {
+              const byId = new Map(msgs.map(m => [String(m.id), m]));
+              for (const r of (messagesWithSeparators || [])) {
+                if (!r || r._type !== 'album' || !Array.isArray(r._items)) continue;
+                if (!r._items.some(c => c && (String(c.id) === String(tapMsg.id) || (_cidOf(c) && _cidOf(c) === _cidOf(tapMsg))))) continue;
+                group = r._items.map(c => (c && byId.get(String(c.id))) || c).filter(_okM);
+                break;
+              }
+            }
+            // 2) ids / client ids capturados no toque.
+            if (group.length < 2) {
+              group = msgs.filter(m => _okM(m) && (idSet.has(String(m.id)) || (cidSet.size > 0 && cidSet.has(String(_cidOf(m) || '')))));
+            }
+            // 3) vizinhos do mesmo envio (fallback — melhor que item único).
+            if (group.length < 2 && tapMsg && _okM(tapMsg)) {
+              const _bOf = (m) => m._batch_id || m.batch_id || null;
+              const _t = (m) => { const v = Date.parse(_normalizeIso(m.created_at || '')); return Number.isFinite(v) ? v : null; };
+              const _link = (a, b) => {
+                if (!_okM(b) || b.sender_email !== a.sender_email) return false;
+                const ba = _bOf(a), bb = _bOf(b);
+                if (ba && bb) return ba === bb;
+                const ta = _t(a), tb = _t(b);
+                return ta != null && tb != null && Math.abs(ta - tb) <= 30000;
+              };
+              let lo = tapIdx, hi = tapIdx;
+              while (lo - 1 >= 0 && _link(msgs[lo], msgs[lo - 1])) lo--;
+              while (hi + 1 < msgs.length && _link(msgs[hi], msgs[hi + 1])) hi++;
+              group = msgs.slice(lo, hi + 1);
+            }
+            const all = group.map(m => {
                 // Compute thumbUri (server-side small variant) from image_variants
                 // JSON the same way the bubble does so the viewer's neighbor
                 // preload + blurred backdrop reuse identical URLs.
@@ -36714,13 +36772,15 @@ function ChatConversationInner() {
                   const c = String(m.content || '').trim();
                   if (c && c !== (m.file_name || '') && !/^https?:\/\//i.test(c) && !/^\{/.test(c)) _cap = c;
                 } catch {}
+                const _type = m.type === 'video' ? 'video' : 'image';
                 return {
-                  fileUrl: m.file_url,
+                  fileUrl: m.file_url || m._localUri,
                   hlsUrl: m.hls_url || null,
-                  fileName: m.file_name || (m.type === 'video' ? 'video.mp4' : 'image.jpg'),
+                  fileName: m.file_name || (_type === 'video' ? 'video.mp4' : 'image.jpg'),
                   fileSize: m.file_size || 0,
-                  type: m.type,
+                  type: _type,
                   messageId: m.id,
+                  _tap: _sameAsTap(m) || m === tapMsg,
                   caption: _cap,
                   // Carry LQIP / blurhash / thumb through so swipe between
                   // photos paints an instant blurred preview for each
@@ -36731,8 +36791,11 @@ function ChatConversationInner() {
                 };
               });
             if (all.length > 1) {
-              const idx = all.findIndex(x => x.fileUrl === mv.fileUrl);
-              if (idx >= 0) { mediaList = all; initialIndex = idx; }
+              let idx = all.findIndex(x => x._tap);
+              if (idx < 0) idx = all.findIndex(x => x.fileUrl === mv.fileUrl);
+              if (idx < 0) idx = Math.max(0, (mv.albumIds || []).map(String).indexOf(String(mv.messageId)));
+              mediaList = all;
+              initialIndex = Math.min(all.length - 1, Math.max(0, idx));
             }
           } catch {}
         }

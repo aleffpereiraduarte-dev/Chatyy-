@@ -5,7 +5,7 @@ import {
   Dimensions, Animated, PanResponder, ActivityIndicator, Linking, StatusBar, Alert, FlatList, Share, ScrollView,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { IconX, IconDownload, IconPlay, IconPause, IconLock, IconCheck, IconShare, IconStar, IconStarFilled, IconMoreHorizontal, IconInfo, IconForward, IconType, IconCopy } from './Icons';
+import { IconX, IconDownload, IconPlay, IconPause, IconLock, IconCheck, IconShare, IconStar, IconStarFilled, IconMoreHorizontal, IconInfo, IconForward, IconType, IconCopy, IconChevronLeft, IconChevronRight } from './Icons';
 // [2026-10-09 more-native] share do ARQUIVO (não do link) + texto da foto (Vision OCR já no binário iOS)
 import { shareMediaFile, canRecognizeImageText, recognizeImageText } from '../utils/mediaNativeActions';
 import { useLanguage } from '../context/LanguageContext';
@@ -1884,6 +1884,38 @@ export default function ChatMediaViewer({ visible, onClose, fileUrl, hlsUrl, fil
   // Reset on every open so reopening from a different index doesn't restore
   // the previous viewer position.
   useEffect(() => { if (visible) _setCurrentIdx(_initial); }, [visible, _initial]);
+  // [2026-10-14 album-swipe] Pager do álbum: ref p/ as setas do web + índice
+  // pelo onScroll no web (RNW não emite onMomentumScrollEnd).
+  const _pagerRef = useRef(null);
+  const [_webPagerH, _setWebPagerH] = useState(0);
+  const _idxRef = useRef(_initial);
+  _idxRef.current = _currentIdx;
+  const _onWebPagerScroll = useCallback((e) => {
+    const x = e?.nativeEvent?.contentOffset?.x;
+    if (typeof x !== 'number' || !(SCREEN_W > 0)) return;
+    const i = Math.round(x / SCREEN_W);
+    if (i >= 0 && i !== _idxRef.current) _setCurrentIdx(i);
+  }, []);
+  const _goToPage = useCallback((i) => {
+    const n = Array.isArray(mediaList) ? mediaList.length : 0;
+    if (!(n > 1) || i < 0 || i >= n) return;
+    try { _pagerRef.current?.scrollToIndex?.({ index: i, animated: true }); } catch {
+      try { _pagerRef.current?.scrollToOffset?.({ offset: i * SCREEN_W, animated: true }); } catch {}
+    }
+    _setCurrentIdx(i);
+  }, [mediaList]);
+  useEffect(() => {
+    if (Platform.OS !== 'web' || !visible || !(Array.isArray(mediaList) && mediaList.length > 1) || typeof document === 'undefined') return undefined;
+    const onKey = (e) => {
+      if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+      const cur = mediaList[_idxRef.current];
+      if (cur && cur.type === 'video') return; // ← → do vídeo = avançar/voltar 5 s
+      e.preventDefault?.();
+      _goToPage(_idxRef.current + (e.key === 'ArrowRight' ? 1 : -1));
+    };
+    document.addEventListener?.('keydown', onKey);
+    return () => document.removeEventListener?.('keydown', onKey);
+  }, [visible, mediaList, _goToPage]);
 
   // Block screenshots / screen recording while a view-once media is on
   // screen. Android: FLAG_SECURE makes thumbnails + screen recordings show
@@ -2529,7 +2561,9 @@ export default function ChatMediaViewer({ visible, onClose, fileUrl, hlsUrl, fil
         <Animated.View style={{ flex: 1, transform: [{ scale: _openScale }] }}>
         {_multi ? (
           <FlatList
+            ref={_pagerRef}
             data={_list}
+            extraData={Platform.OS === 'web' ? `${_currentIdx}_${_webPagerH}` : _currentIdx}
             keyExtractor={(it, i) => `${it?.fileUrl || ''}_${i}`}
             horizontal
             pagingEnabled
@@ -2542,6 +2576,12 @@ export default function ChatMediaViewer({ visible, onClose, fileUrl, hlsUrl, fil
               const i = Math.round(e.nativeEvent.contentOffset.x / SCREEN_W);
               if (i !== _currentIdx) _setCurrentIdx(i);
             }}
+            // [2026-10-14 album-swipe] Web (react-native-web) não emite
+            // onMomentumScrollEnd → o contador ficava parado em "2 / 3" depois
+            // de passar. No web o índice sai do onScroll.
+            onScroll={Platform.OS === 'web' ? _onWebPagerScroll : undefined}
+            onLayout={Platform.OS === 'web' ? (e) => { const h = Math.round(e?.nativeEvent?.layout?.height || 0); if (h > 0 && h !== _webPagerH) _setWebPagerH(h); } : undefined}
+            scrollEventThrottle={Platform.OS === 'web' ? 32 : undefined}
             renderItem={({ item, index }) => {
               const u = getFullUrl(item?.fileUrl);
               const e = getExt(item?.fileName);
@@ -2549,7 +2589,10 @@ export default function ChatMediaViewer({ visible, onClose, fileUrl, hlsUrl, fil
               const isVid = item?.type === 'video' || VIDEO_EXTS.includes(e);
               const isPrv = PREVIEWABLE_EXTS.includes(e);
               return (
-                <View style={{ width: SCREEN_W, flex: 1 }}>
+                // [2026-10-14 album-swipe] Web: a célula do VirtualizedList (row,
+                // altura = conteúdo) deixava a página com 0 px → foto PRETA no
+                // álbum. Altura explícita = altura medida do pager.
+                <View style={Platform.OS === 'web' && _webPagerH > 0 ? { width: SCREEN_W, height: _webPagerH } : { width: SCREEN_W, flex: 1 }}>
                   {isImg ? <ImageViewer url={u} messageId={item?.messageId || item?.id || 0} conversationId={conversationId} fileSize={item?.fileSize} createdAt={item?.createdAt || item?.created_at} t={t} placeholderUri={item?.placeholderUri || item?.thumbB64Uri} blurhash={item?.blurhash} thumbUri={item?.thumbUri} onDismissMove={_onDismissMove} onDismissEnd={_onDismissEnd} dismissSV={_dismissSV} onDismissStart={_onDismissStart} onZoomChange={_onZoomChange} /> :
                    isVid ? <VideoPlayer url={u} isActive={index === _currentIdx} allowPip={!viewOnce} noCache={!!viewOnce} /> :
                    isPrv ? <PreviewViewer url={u} filename={item?.fileName} messageId={item?.messageId || item?.id || 0} fileSize={item?.fileSize} t={t} /> :
@@ -2627,6 +2670,33 @@ export default function ChatMediaViewer({ visible, onClose, fileUrl, hlsUrl, fil
         )}
         </Animated.View>
         </TouchableWithoutFeedback>
+
+        {/* [2026-10-14 album-swipe] Web: mouse não "arrasta" o carrossel — setas
+            anterior/próxima (e ← → do teclado) passam entre as mídias do álbum. */}
+        {Platform.OS === 'web' && _multi && !_zoomed && (
+          <>
+            {_currentIdx > 0 && (
+              <TouchableOpacity
+                onPress={() => _goToPage(_currentIdx - 1)}
+                style={[s.webNavBtn, { left: 12 }]}
+                accessibilityRole="button"
+                accessibilityLabel={(typeof t === 'function' && t('common.back')) || 'Voltar'}
+              >
+                <IconChevronLeft size={26} color="#fff" />
+              </TouchableOpacity>
+            )}
+            {_currentIdx < _list.length - 1 && (
+              <TouchableOpacity
+                onPress={() => _goToPage(_currentIdx + 1)}
+                style={[s.webNavBtn, { right: 12 }]}
+                accessibilityRole="button"
+                accessibilityLabel={(typeof t === 'function' && t('common.next')) || 'Próximo'}
+              >
+                <IconChevronRight size={26} color="#fff" />
+              </TouchableOpacity>
+            )}
+          </>
+        )}
 
         {/* Caption — the text the sender attached to the photo (WhatsApp/IG).
             Sits just above the action bar, fades with the rest of the chrome,
@@ -2948,6 +3018,8 @@ const s = StyleSheet.create({
     backgroundColor: 'rgba(255,255,255,0.16)',
   },
   pillText: { color: '#fff', fontSize: 11, fontWeight: '600' },
+  // [2026-10-14 album-swipe] setas do carrossel no web.
+  webNavBtn: { position: 'absolute', top: '50%', marginTop: -24, width: 48, height: 48, borderRadius: 24, backgroundColor: 'rgba(0,0,0,0.45)', alignItems: 'center', justifyContent: 'center', zIndex: 20 },
   actionBar: {
     position: 'absolute', bottom: 0, left: 0, right: 0,
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-around',
