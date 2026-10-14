@@ -1,4 +1,18 @@
 export default {
+  // [2026-10-14 calendário premium]
+  "calendar.starts": "Begint",
+  "calendar.ends": "Eindigt",
+  "calendar.moreOptions": "Meer opties",
+  "calendar.longPressToAdd": "Houd ingedrukt om een afspraak te maken",
+  "calendar.timeZone": "Tijdzone",
+  // [2026-10-14 notif/carteira/404]
+  "wallet.kind.earningsConversion": "Omrekening van inkomsten",
+  "wallet.earningsConversionSub": "Oud saldo omgerekend naar real (BRL)",
+  "notifications.emptyFollowingDesc": "Lives en chats van mensen die je volgt verschijnen hier.",
+  "notFound.title": "Pagina niet gevonden",
+  "notFound.subtitle": "Deze link bestaat niet meer of is verkeerd getypt.",
+  "notFound.home": "Terug naar start",
+  "notFound.back": "Terug",
   // [2026-10-13 diamantes-religados]
   "gifts.title": "Gifts",
   "gifts.titleTo": "Gift for {name}",
@@ -8973,4 +8987,9 @@ export default {
   "chatConv.wallpaperPhotoFailed": "Deze foto kon niet worden gebruikt. Controleer je verbinding en probeer het opnieuw.",
   "chatConv.wallpaperApplied": "Achtergrond toegepast",
   "chatConv.wallpaperAiSlow": "Dit kan tot 1 minuut duren",
+  'pushBanner.offTitle': 'Notifications are off',
+  'pushBanner.staleTitle': 'Notifications may not arrive',
+  'pushBanner.sub': 'Turn them on to get messages and calls instantly.',
+  'pushBanner.ctaSettings': 'Settings',
+  'pushBanner.ctaRetry': 'Turn on',
 };

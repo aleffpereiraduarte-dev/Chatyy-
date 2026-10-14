@@ -1,4 +1,18 @@
 export default {
+  // [2026-10-14 calendário premium]
+  "calendar.starts": "დაწყება",
+  "calendar.ends": "დასრულება",
+  "calendar.moreOptions": "სხვა ვარიანტები",
+  "calendar.longPressToAdd": "ხანგრძლივად შეეხეთ ღონისძიების შესაქმნელად",
+  "calendar.timeZone": "სასაათო სარტყელი",
+  // [2026-10-14 notif/carteira/404]
+  "wallet.kind.earningsConversion": "შემოსავლის კონვერტაცია",
+  "wallet.earningsConversionSub": "ძველი ბალანსი გადაყვანილია რეალში (BRL)",
+  "notifications.emptyFollowingDesc": "აქ გამოჩნდება იმ ადამიანების ლაივები და ჩატები, ვისაც მიჰყვებით.",
+  "notFound.title": "გვერდი ვერ მოიძებნა",
+  "notFound.subtitle": "ეს ბმული აღარ არსებობს ან არასწორად არის აკრეფილი.",
+  "notFound.home": "დასაწყისში დაბრუნება",
+  "notFound.back": "უკან",
   // [2026-10-13 diamantes-religados]
   "gifts.title": "Gifts",
   "gifts.titleTo": "Gift for {name}",
@@ -8191,4 +8205,9 @@ export default {
   "chatConv.wallpaperPhotoFailed": "ამ ფოტოს გამოყენება ვერ მოხერხდა. შეამოწმეთ კავშირი და სცადეთ ხელახლა.",
   "chatConv.wallpaperApplied": "ფონი დაყენებულია",
   "chatConv.wallpaperAiSlow": "ამას შეიძლება 1 წუთამდე დასჭირდეს",
+  'pushBanner.offTitle': 'Notifications are off',
+  'pushBanner.staleTitle': 'Notifications may not arrive',
+  'pushBanner.sub': 'Turn them on to get messages and calls instantly.',
+  'pushBanner.ctaSettings': 'Settings',
+  'pushBanner.ctaRetry': 'Turn on',
 };

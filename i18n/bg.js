@@ -1,4 +1,18 @@
 export default {
+  // [2026-10-14 calendário premium]
+  "calendar.starts": "Начало",
+  "calendar.ends": "Край",
+  "calendar.moreOptions": "Още опции",
+  "calendar.longPressToAdd": "Задръжте, за да създадете събитие",
+  "calendar.timeZone": "Часова зона",
+  // [2026-10-14 notif/carteira/404]
+  "wallet.kind.earningsConversion": "Конвертиране на приходи",
+  "wallet.earningsConversionSub": "Старият баланс е конвертиран в реали (BRL)",
+  "notifications.emptyFollowingDesc": "Излъчванията на живо и чатовете на хората, които следвате, се показват тук.",
+  "notFound.title": "Страницата не е намерена",
+  "notFound.subtitle": "Тази връзка вече не съществува или е въведена грешно.",
+  "notFound.home": "Към началото",
+  "notFound.back": "Назад",
   // [2026-10-13 diamantes-religados]
   "gifts.title": "Gifts",
   "gifts.titleTo": "Gift for {name}",
@@ -8195,4 +8209,9 @@ export default {
   "chatConv.wallpaperPhotoFailed": "Тази снимка не може да се използва. Проверете връзката и опитайте отново.",
   "chatConv.wallpaperApplied": "Тапетът е приложен",
   "chatConv.wallpaperAiSlow": "Това може да отнеме до 1 минута",
+  'pushBanner.offTitle': 'Notifications are off',
+  'pushBanner.staleTitle': 'Notifications may not arrive',
+  'pushBanner.sub': 'Turn them on to get messages and calls instantly.',
+  'pushBanner.ctaSettings': 'Settings',
+  'pushBanner.ctaRetry': 'Turn on',
 };

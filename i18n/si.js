@@ -1,4 +1,18 @@
 export default {
+  // [2026-10-14 calendário premium]
+  "calendar.starts": "ආරම්භය",
+  "calendar.ends": "අවසානය",
+  "calendar.moreOptions": "තවත් විකල්ප",
+  "calendar.longPressToAdd": "සිදුවීමක් සෑදීමට ඔබා අල්ලාගෙන සිටින්න",
+  "calendar.timeZone": "වේලා කලාපය",
+  // [2026-10-14 notif/carteira/404]
+  "wallet.kind.earningsConversion": "ඉපැයීම් පරිවර්තනය",
+  "wallet.earningsConversionSub": "පැරණි ශේෂය රියල් (BRL) වලට පරිවර්තනය විය",
+  "notifications.emptyFollowingDesc": "ඔබ අනුගමනය කරන අයගේ සජීවී සහ කතාබස් මෙහි පෙනේ.",
+  "notFound.title": "පිටුව හමු නොවීය",
+  "notFound.subtitle": "මෙම සබැඳිය තවදුරටත් නොපවතී හෝ වැරදියට ටයිප් කර ඇත.",
+  "notFound.home": "ආරම්භයට යන්න",
+  "notFound.back": "ආපසු",
   // [2026-10-13 diamantes-religados]
   "gifts.title": "Gifts",
   "gifts.titleTo": "Gift for {name}",
@@ -740,4 +754,9 @@ export default {
   "chatConv.wallpaperPhotoFailed": "මෙම ඡායාරූපය භාවිත කළ නොහැකි විය. සම්බන්ධතාව පරීක්ෂා කර නැවත උත්සාහ කරන්න.",
   "chatConv.wallpaperApplied": "බිතුපත යොදන ලදී",
   "chatConv.wallpaperAiSlow": "මෙයට මිනිත්තු 1ක් දක්වා ගත විය හැක",
+  'pushBanner.offTitle': 'Notifications are off',
+  'pushBanner.staleTitle': 'Notifications may not arrive',
+  'pushBanner.sub': 'Turn them on to get messages and calls instantly.',
+  'pushBanner.ctaSettings': 'Settings',
+  'pushBanner.ctaRetry': 'Turn on',
 };

@@ -13,8 +13,11 @@
  * (web uses Service Worker for push and doesn't go through this path).
  */
 import React, { useEffect, useState } from 'react';
-import { Platform, View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, Linking, AppState } from 'react-native';
-import { IconX } from './Icons';
+import { Platform, View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, Linking, AppState, Pressable } from 'react-native';
+import { usePathname } from 'expo-router';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { IconX, IconBell } from './Icons';
+import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import { setActiveInterval } from '../utils/activeInterval'; // [2026-10-10 perf-battery]
 
@@ -35,8 +38,16 @@ function _markDeniedDismissed() {
   try { require('../services/mmkv').setJSON(DENIED_DISMISS_KEY, Date.now()); } catch {}
 }
 
+// [2026-10-14 redesign] Era uma faixa amarela colada no topo de TODAS as telas
+// (founder: "feia"). Agora é um cartão flutuante P&B, só na home (lista de
+// conversas), acima da barra de abas — não empurra o layout nem cobre headers.
+const HOME_PATHS = new Set(['/', '/chat']);
+
 export default function PushTokenStaleBanner() {
   const { t } = useLanguage();
+  const { colors, isDark } = useTheme();
+  const insets = useSafeAreaInsets();
+  const pathname = usePathname();
   const [visible, setVisible] = useState(false);
   const [dismissed, setDismissed] = useState(false);
   const [retrying, setRetrying] = useState(false);
@@ -140,64 +151,70 @@ export default function PushTokenStaleBanner() {
     setRetrying(false);
   };
 
-  const label = retrying
-    ? t('pushBanner.retrying')
-    : (openSettingsMode ? t('pushBanner.openSettings') : t('pushBanner.stale'));
+  if (!HOME_PATHS.has(pathname || '')) return null;
+
+  const title = openSettingsMode ? t('pushBanner.offTitle') : t('pushBanner.staleTitle');
+  const sub = retrying ? t('pushBanner.retrying') : t('pushBanner.sub');
+  const cta = openSettingsMode ? t('pushBanner.ctaSettings') : t('pushBanner.ctaRetry');
+  const fg = colors.text;
+  const muted = colors.textSecondary;
 
   return (
-    <TouchableOpacity
-      onPress={onRetry}
-      activeOpacity={0.85}
-      style={s.bar}
-      accessibilityRole="button"
-      accessibilityLabel={t('pushBanner.a11y')}
-      accessibilityLiveRegion="polite"
-    >
-      <Text style={s.text} numberOfLines={2}>
-        {label}
-      </Text>
-      {retrying ? (
-        <ActivityIndicator size="small" color="#7c5e00" />
-      ) : (
+    <View pointerEvents="box-none" style={[s.wrap, { bottom: (insets.bottom || 0) + 74 }]}>
+      <View
+        style={[s.card, {
+          backgroundColor: isDark ? '#1c1c1e' : '#ffffff',
+          borderColor: isDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.08)',
+        }]}
+        accessibilityLiveRegion="polite"
+      >
+        <View style={[s.iconWrap, { backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)' }]}>
+          {IconBell ? <IconBell size={18} color={fg} /> : null}
+        </View>
+        <View style={s.textCol}>
+          <Text style={[s.title, { color: fg }]} numberOfLines={1}>{title}</Text>
+          <Text style={[s.sub, { color: muted }]} numberOfLines={2}>{sub}</Text>
+        </View>
+        <Pressable
+          onPress={onRetry}
+          disabled={retrying}
+          style={({ pressed }) => [s.cta, { backgroundColor: colors.primary, opacity: pressed ? 0.8 : 1 }]}
+          accessibilityRole="button"
+          accessibilityLabel={t('pushBanner.a11y')}
+        >
+          {retrying
+            ? <ActivityIndicator size="small" color={colors.onPrimary} />
+            : <Text style={[s.ctaText, { color: colors.onPrimary }]} numberOfLines={1}>{cta}</Text>}
+        </Pressable>
         <TouchableOpacity
-          onPress={(e) => {
-            e?.stopPropagation?.();
+          onPress={() => {
             try { if (globalThis.__chatyy_push_denied) _markDeniedDismissed(); } catch {}
             setDismissed(true);
           }}
           style={s.closeBtn}
           accessibilityLabel={t('pushBanner.dismiss')}
           accessibilityRole="button"
-          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
         >
-          {IconX ? <IconX size={14} color="#7c5e00" /> : <Text style={{ color: '#7c5e00', fontSize: 14 }}>x</Text>}
+          {IconX ? <IconX size={14} color={muted} /> : <Text style={{ color: muted, fontSize: 14 }}>x</Text>}
         </TouchableOpacity>
-      )}
-    </TouchableOpacity>
+      </View>
+    </View>
   );
 }
 
 const s = StyleSheet.create({
-  bar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    backgroundColor: '#fff4c2',
-    borderBottomWidth: 1,
-    borderBottomColor: '#e5d27a',
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    width: '100%',
-    zIndex: 9999,
+  wrap: { position: 'absolute', left: 0, right: 0, alignItems: 'center', paddingHorizontal: 12, zIndex: 9999 },
+  card: {
+    width: '100%', maxWidth: 520, flexDirection: 'row', alignItems: 'center', gap: 12,
+    paddingVertical: 12, paddingLeft: 12, paddingRight: 8, borderRadius: 18, borderWidth: StyleSheet.hairlineWidth,
+    shadowColor: '#000', shadowOpacity: 0.18, shadowRadius: 18, shadowOffset: { width: 0, height: 8 }, elevation: 8,
   },
-  text: {
-    flex: 1,
-    fontSize: 13,
-    color: '#5a4500',
-    fontWeight: '500',
-  },
-  closeBtn: {
-    paddingHorizontal: 4,
-    paddingVertical: 2,
-  },
+  iconWrap: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
+  textCol: { flex: 1, minWidth: 0 },
+  title: { fontSize: 14, fontWeight: '600', letterSpacing: -0.1 },
+  sub: { fontSize: 12.5, marginTop: 2, lineHeight: 16 },
+  cta: { paddingHorizontal: 14, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center', minWidth: 64 },
+  ctaText: { fontSize: 13, fontWeight: '600' },
+  closeBtn: { padding: 6 },
 });

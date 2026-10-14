@@ -1,4 +1,18 @@
 export default {
+  // [2026-10-14 calendário premium]
+  "calendar.starts": "தொடக்கம்",
+  "calendar.ends": "முடிவு",
+  "calendar.moreOptions": "மேலும் விருப்பங்கள்",
+  "calendar.longPressToAdd": "நிகழ்வை உருவாக்க அழுத்திப் பிடிக்கவும்",
+  "calendar.timeZone": "நேர மண்டலம்",
+  // [2026-10-14 notif/carteira/404]
+  "wallet.kind.earningsConversion": "வருமான மாற்றம்",
+  "wallet.earningsConversionSub": "பழைய இருப்பு ரியாலாக (BRL) மாற்றப்பட்டது",
+  "notifications.emptyFollowingDesc": "நீங்கள் பின்தொடர்பவர்களின் நேரலைகளும் அரட்டைகளும் இங்கே தோன்றும்.",
+  "notFound.title": "பக்கம் கிடைக்கவில்லை",
+  "notFound.subtitle": "இந்த இணைப்பு இனி இல்லை அல்லது தவறாக தட்டச்சு செய்யப்பட்டது.",
+  "notFound.home": "தொடக்கத்திற்குச் செல்",
+  "notFound.back": "பின் செல்",
   // [2026-10-13 diamantes-religados]
   "gifts.title": "Gifts",
   "gifts.titleTo": "Gift for {name}",
@@ -3944,4 +3958,9 @@ export default {
   "chatConv.wallpaperPhotoFailed": "இந்தப் புகைப்படத்தைப் பயன்படுத்த முடியவில்லை. இணைப்பைச் சரிபார்த்து மீண்டும் முயலவும்.",
   "chatConv.wallpaperApplied": "வால்பேப்பர் அமைக்கப்பட்டது",
   "chatConv.wallpaperAiSlow": "இதற்கு 1 நிமிடம் வரை ஆகலாம்",
+  'pushBanner.offTitle': 'Notifications are off',
+  'pushBanner.staleTitle': 'Notifications may not arrive',
+  'pushBanner.sub': 'Turn them on to get messages and calls instantly.',
+  'pushBanner.ctaSettings': 'Settings',
+  'pushBanner.ctaRetry': 'Turn on',
 };

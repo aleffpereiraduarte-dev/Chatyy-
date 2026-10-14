@@ -10,6 +10,7 @@ import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import * as api from '../services/api';
 import { swr, getCachedSync, userScopedKey } from '../services/cache';
+import { filterSocialNotifications } from '../services/notificationFilter';
 import AvatarCircle from '../components/AvatarCircle';
 import ScreenEmptyState from '../components/ScreenEmptyState';
 
@@ -198,7 +199,7 @@ export default function NotificationsFeedScreen() {
       <TouchableOpacity
         onPress={() => handlePress(item)}
         activeOpacity={0.7}
-        style={[styles.row, { backgroundColor: item.read ? 'transparent' : (isDark ? 'rgba(17, 17, 17,0.08)' : 'rgba(17, 17, 17,0.05)') }]}
+        style={[styles.row, { backgroundColor: item.read ? 'transparent' : (isDark ? 'rgba(255,255,255,0.06)' : 'rgba(17, 17, 17,0.05)') }]}
       >
         <View style={{ position: 'relative' }}>
           <AvatarCircle email={item.author_email} name={item.author_email} size={44} />
@@ -280,7 +281,7 @@ export default function NotificationsFeedScreen() {
       ) : (
         <FlatList
           {...nativeScrollInsetProps()}
-          data={items}
+          data={filterSocialNotifications(items) /* [2026-10-14] sem e-mail na central */}
           keyExtractor={(item, i) => String(item.id) + '_' + i}
           renderItem={renderItem}
           onEndReached={onEndReached}

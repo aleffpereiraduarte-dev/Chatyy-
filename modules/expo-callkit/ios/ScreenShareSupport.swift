@@ -105,7 +105,8 @@ enum ScreenShareSupport {
 
     /// Human-readable description for the UI chip / logs.
     static var modeLabel: String {
-        return useBroadcastExtension ? "Compartilhando tela" : "Compartilhando tela do app"
+        // [2026-10-14] localized (CallStrings, 11 idiomas) for the system-wide path.
+        return useBroadcastExtension ? CallStrings.s("sharingScreen") : "Compartilhando tela do app"
     }
 
     /// True when the local participant currently has a screen-share video
@@ -127,18 +128,74 @@ enum ScreenShareSupport {
     /// later by the SDK once the extension connects. Callers must therefore
     /// drive UI state from `RoomDelegate.room(_:participant:didPublishTrack:)`
     /// / `didUnpublishTrack`, not from this call returning.
-    static func set(room: Room, enabled: Bool) async throws {
+    static func set(room: Room, enabled: Bool, callId: String = "") async throws {
         // [video-quality 2026-10-06] Explicit publish options for the screen
-        // track: H.264, ~3 Mbps @ 15 fps, degradation = maintainResolution
+        // track (codec/bitrate in CallViewController.screenSharePublishOptions),
+        // degradation = maintainResolution
         // (camera uses .balanced; a shared Room default can't express both).
         // Signature verified on LK Swift 2.0.18:
         //   set(source:enabled:captureOptions:publishOptions:)
+        let armedAt = CACurrentMediaTime()
         _ = try await room.localParticipant.set(
             source: .screenShareVideo,
             enabled: enabled,
             captureOptions: nil,
             publishOptions: enabled ? CallViewController.screenSharePublishOptions() : nil
         )
+        if enabled && useBroadcastExtension {
+            armStartWatchdog(room: room, callId: callId, armedAt: armedAt)
+        }
+    }
+
+    // MARK: - [2026-10-14 screen-share] "never started" watchdog
+    //
+    // LK Swift 2.0.18 shows RPSystemBroadcastPickerView and PUBLISHES the
+    // (still frame-less) broadcast track right away (voip_diag: published
+    // ~0.3 s after the tap). If the user dismisses the system sheet without
+    // tapping "Iniciar Transmissão", the track stayed published forever: our
+    // chip said "Compartilhando tela" and the peer saw a black/frozen tile.
+    // The extension (LKSampleHandler) posts the Darwin "iOS_BroadcastStarted"
+    // on start — no start within the window → unpublish (didUnpublishTrack
+    // resets the UI on every surface).
+
+    private static let startLock = NSLock()
+    private static var _lastBroadcastStartedAt: CFTimeInterval = 0
+    static var lastBroadcastStartedAt: CFTimeInterval {
+        startLock.lock(); defer { startLock.unlock() }
+        return _lastBroadcastStartedAt
+    }
+    /// Callback hook for the current surface's diag (callId of the share).
+    private static var startedDiagCallId: String = ""
+
+    private static let startedObserverAnchor = NSObject()
+    private static let startedObserverInstalled: Bool = {
+        let center = CFNotificationCenterGetDarwinNotifyCenter()
+        CFNotificationCenterAddObserver(
+            center,
+            Unmanaged.passUnretained(startedObserverAnchor).toOpaque(),
+            { (_, _, _, _, _) in
+                ScreenShareSupport.startLock.lock()
+                ScreenShareSupport._lastBroadcastStartedAt = CACurrentMediaTime()
+                let cid = ScreenShareSupport.startedDiagCallId
+                ScreenShareSupport.startLock.unlock()
+                nativeCallDiag("screen_share_broadcast_started", cid)
+            },
+            broadcastStartedName as CFString,
+            nil,
+            .deliverImmediately
+        )
+        return true
+    }()
+
+    private static func armStartWatchdog(room: Room, callId: String, armedAt: CFTimeInterval) {
+        _ = startedObserverInstalled
+        startLock.lock(); startedDiagCallId = callId; startLock.unlock()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 60) { [weak room] in
+            guard let room = room, ScreenShareSupport.isSharing(room: room) else { return }
+            if ScreenShareSupport.lastBroadcastStartedAt >= armedAt { return }   // user started it
+            nativeCallDiag("screen_share_never_started", callId, "unpublish")
+            Task { try? await ScreenShareSupport.set(room: room, enabled: false) }
+        }
     }
 
     // MARK: - Darwin notifications (extension → host, cross-process)

@@ -1,4 +1,18 @@
 export default {
+  // [2026-10-14 calendário premium]
+  "calendar.starts": "Boshlanishi",
+  "calendar.ends": "Tugashi",
+  "calendar.moreOptions": "Boshqa parametrlar",
+  "calendar.longPressToAdd": "Tadbir yaratish uchun bosib turing",
+  "calendar.timeZone": "Vaqt mintaqasi",
+  // [2026-10-14 notif/carteira/404]
+  "wallet.kind.earningsConversion": "Daromadni konvertatsiya qilish",
+  "wallet.earningsConversionSub": "Eski balans realga (BRL) aylantirildi",
+  "notifications.emptyFollowingDesc": "Siz kuzatayotganlarning jonli efirlari va chatlari shu yerda chiqadi.",
+  "notFound.title": "Sahifa topilmadi",
+  "notFound.subtitle": "Bu havola endi mavjud emas yoki xato yozilgan.",
+  "notFound.home": "Boshiga qaytish",
+  "notFound.back": "Orqaga",
   // [2026-10-13 diamantes-religados]
   "gifts.title": "Gifts",
   "gifts.titleTo": "Gift for {name}",
@@ -8191,4 +8205,9 @@ export default {
   "chatConv.wallpaperPhotoFailed": "Bu rasmdan foydalanib bo'lmadi. Ulanishni tekshirib, qayta urinib ko'ring.",
   "chatConv.wallpaperApplied": "Fon rasmi qo'llandi",
   "chatConv.wallpaperAiSlow": "Bu 1 daqiqagacha davom etishi mumkin",
+  'pushBanner.offTitle': 'Notifications are off',
+  'pushBanner.staleTitle': 'Notifications may not arrive',
+  'pushBanner.sub': 'Turn them on to get messages and calls instantly.',
+  'pushBanner.ctaSettings': 'Settings',
+  'pushBanner.ctaRetry': 'Turn on',
 };

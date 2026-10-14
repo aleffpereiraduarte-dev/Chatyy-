@@ -175,15 +175,20 @@ export function OptionSheet({ visible, title, message, options = [], value, onSe
   if (USE_NATIVE_SHEETS) {
     return (
       <NativeSheet visible={!!visible} onClose={onClose} detents="fitToContents" backgroundColor={g.cardBg}>
-        <View style={{ backgroundColor: g.cardBg, paddingTop: 14, paddingBottom: nativeSheetBottomPad(insets, 8) }}>
+        {/* [2026-10-14 sheet-overlap] Com detents fitToContents o formSheet do
+            RNS (iOS) "adota" o 1º ScrollView como scroll do sheet e o
+            posiciona no topo → o TÍTULO ficava por cima da 1ª opção (e sobrava
+            um vão embaixo). Listas curtas (≤8, o caso de todos os pickers)
+            agora são Views simples; listas longas mantêm o ScrollView. */}
+        <View style={{ backgroundColor: g.cardBg, paddingTop: 20, paddingBottom: nativeSheetBottomPad(insets, 12) }}>
           {(!!title || !!message) && (
             <View style={[st.sheetHead, { borderBottomColor: g.separator }]}>
-              {!!title && <Text style={[st.sheetTitle, { color: g.text }]} numberOfLines={2}>{title}</Text>}
+              {!!title && <Text style={[st.sheetTitle, { color: g.text }]} numberOfLines={2} accessibilityRole="header">{title}</Text>}
               {!!message && <Text style={[st.sheetMsg, { color: g.secondary }]}>{message}</Text>}
             </View>
           )}
-          <ScrollView style={{ maxHeight: 480 }} bounces={false}>
-            {options.map((o, i) => {
+          {React.createElement(options.length > 8 ? ScrollView : View, options.length > 8 ? { style: { maxHeight: 480 }, bounces: false } : null,
+            options.map((o, i) => {
               const sel = o.value === value;
               return (
                 <React.Fragment key={String(o.value)}>
@@ -198,8 +203,7 @@ export function OptionSheet({ visible, title, message, options = [], value, onSe
                   />
                 </React.Fragment>
               );
-            })}
-          </ScrollView>
+            }))}
         </View>
       </NativeSheet>
     );

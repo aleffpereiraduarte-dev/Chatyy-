@@ -93,6 +93,16 @@ function Glyph({ kind, color, size = 96 }) {
           <Path d="M24 64 L44 48 L58 60 L66 54 L72 60" {...s} />
         </Svg>
       );
+    case 'reels':
+      return (
+        <Svg width={size} height={size} viewBox="0 0 96 96">
+          <Rect x={20} y={22} width={56} height={52} rx={11} {...s} />
+          <Line x1={20} y1={36} x2={76} y2={36} {...s} />
+          <Line x1={36} y1={22} x2={42} y2={36} {...s} />
+          <Line x1={54} y1={22} x2={60} y2={36} {...s} />
+          <Path d="M43 46 L58 55 L43 64 Z" {...s} />
+        </Svg>
+      );
     case 'notifications':
       return (
         <Svg width={size} height={size} viewBox="0 0 96 96">

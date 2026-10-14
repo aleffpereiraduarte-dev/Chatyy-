@@ -16,15 +16,21 @@ const WHEEL_VISIBLE = 5; // odd → center row is the selection
 
 function pad2(n) { return n < 10 ? '0' + n : '' + n; }
 
-function buildDays(t) {
+// [2026-10-14] `count` (padrão 90) e `from` (dia inicial; padrão hoje) —
+// o calendário precisa de 1 ano+ e de editar eventos já passados.
+function buildDays(t, count = 90, from = null) {
   const out = [];
   const loc = (t && t('_locale')) || undefined; // follow APP language, not device
-  const base = new Date(); base.setHours(0, 0, 0, 0);
-  for (let i = 0; i < 90; i++) {
-    const d = new Date(base.getTime() + i * 86400000);
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const base = from instanceof Date && !isNaN(from) && from < today ? new Date(from) : new Date(today);
+  base.setHours(0, 0, 0, 0);
+  for (let i = 0; i < count; i++) {
+    // setDate (não +86400000): atravessa horário de verão sem pular/duplicar dia
+    const d = new Date(base); d.setDate(base.getDate() + i);
+    const diff = Math.round((d - today) / 86400000);
     let label;
-    if (i === 0) label = (t && t('chat.today')) || 'Hoje';
-    else if (i === 1) label = (t && t('chat.tomorrow')) || 'Amanhã';
+    if (diff === 0) label = (t && t('chat.today')) || 'Hoje';
+    else if (diff === 1) label = (t && t('chat.tomorrow')) || 'Amanhã';
     else {
       try { label = d.toLocaleDateString(loc, { weekday: 'short', day: 'numeric', month: 'short' }); }
       catch { label = `${pad2(d.getDate())}/${pad2(d.getMonth() + 1)}`; }
@@ -100,13 +106,13 @@ function Wheel({ data, index, onIndex, colors, width }) {
   );
 }
 
-export function WheelDateTimePicker({ colors, t, onChange, initial }) {
-  const days = useRef(buildDays(t)).current;
+export function WheelDateTimePicker({ colors, t, onChange, initial, mode = 'datetime', dayCount = 90 }) {
   const start = initial instanceof Date && !isNaN(initial) ? initial : new Date(Date.now() + 60 * 60000); // default: +1h
+  const days = useRef(buildDays(t, dayCount, start)).current;
   // find the day index matching `start` (0-89), else 0
   const startDi = (() => {
     const sm = new Date(start); sm.setHours(0, 0, 0, 0);
-    const i = Math.round((sm.getTime() - days[0].date.getTime()) / 86400000);
+    const i = days.findIndex((x) => x.date.getTime() === sm.getTime());
     return i >= 0 && i < days.length ? i : 0;
   })();
   const [di, setDi] = useState(startDi);
@@ -124,10 +130,14 @@ export function WheelDateTimePicker({ colors, t, onChange, initial }) {
   return (
     <View style={{ marginBottom: 16 }}>
       <View style={{ flexDirection: 'row', justifyContent: 'center', alignItems: 'center' }}>
-        <Wheel data={days} index={di} onIndex={setDi} colors={colors} width={150} />
-        <Wheel data={hours} index={hi} onIndex={setHi} colors={colors} width={56} />
-        <Text style={{ fontSize: 20, fontWeight: '700', color: colors.text, marginHorizontal: 2 }}>:</Text>
-        <Wheel data={mins} index={mi} onIndex={setMi} colors={colors} width={56} />
+        <Wheel data={days} index={di} onIndex={setDi} colors={colors} width={mode === 'date' ? 220 : 150} />
+        {mode !== 'date' && (
+          <>
+            <Wheel data={hours} index={hi} onIndex={setHi} colors={colors} width={56} />
+            <Text style={{ fontSize: 20, fontWeight: '700', color: colors.text, marginHorizontal: 2 }}>:</Text>
+            <Wheel data={mins} index={mi} onIndex={setMi} colors={colors} width={56} />
+          </>
+        )}
       </View>
     </View>
   );
@@ -164,7 +174,7 @@ export function ScheduleToast({ visible, message, colors }) {
  * Used by the calendar (meeting-create, event-detail) to replace manual
  * "YYYY-MM-DD HH:MM" typing. Returns a Date via onConfirm.
  */
-export function DateTimePickerModal({ visible, onClose, initial, onConfirm, colors, t, title, minDate }) {
+export function DateTimePickerModal({ visible, onClose, initial, onConfirm, colors, t, title, minDate, mode, dayCount }) {
   const [picked, setPicked] = React.useState(null);
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
@@ -173,7 +183,7 @@ export function DateTimePickerModal({ visible, onClose, initial, onConfirm, colo
           {!!title && (
             <Text style={{ fontSize: 16, fontWeight: '700', color: colors.text, marginBottom: 12, textAlign: 'center' }}>{title}</Text>
           )}
-          {visible && <WheelDateTimePicker colors={colors} t={t} initial={initial} onChange={setPicked} />}
+          {visible && <WheelDateTimePicker colors={colors} t={t} initial={initial} onChange={setPicked} mode={mode} dayCount={dayCount} />}
           <View style={{ flexDirection: 'row', gap: 10, justifyContent: 'flex-end' }}>
             <TouchableOpacity onPress={onClose} style={{ paddingVertical: 10, paddingHorizontal: 20, borderRadius: 8 }}>
               <Text style={{ color: colors.textSecondary }}>{t('common.cancel')}</Text>

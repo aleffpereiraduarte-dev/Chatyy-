@@ -1,4 +1,18 @@
 export default {
+  // [2026-10-14 calendário premium]
+  "calendar.starts": "Simula",
+  "calendar.ends": "Pagtatapos",
+  "calendar.moreOptions": "Higit pang opsyon",
+  "calendar.longPressToAdd": "Pindutin nang matagal para gumawa ng event",
+  "calendar.timeZone": "Time zone",
+  // [2026-10-14 notif/carteira/404]
+  "wallet.kind.earningsConversion": "Pag-convert ng kita",
+  "wallet.earningsConversionSub": "Na-convert sa real (BRL) ang lumang balanse",
+  "notifications.emptyFollowingDesc": "Lalabas dito ang mga live at chat ng mga sinusundan mo.",
+  "notFound.title": "Hindi nakita ang pahina",
+  "notFound.subtitle": "Wala na ang link na ito o mali ang pagkaka-type.",
+  "notFound.home": "Bumalik sa simula",
+  "notFound.back": "Bumalik",
   // [2026-10-13 diamantes-religados]
   "gifts.title": "Gifts",
   "gifts.titleTo": "Gift for {name}",
@@ -8195,4 +8209,9 @@ export default {
   "chatConv.wallpaperPhotoFailed": "Hindi magamit ang larawang ito. Suriin ang iyong koneksyon at subukang muli.",
   "chatConv.wallpaperApplied": "Nailapat ang wallpaper",
   "chatConv.wallpaperAiSlow": "Maaaring tumagal ito nang hanggang 1 minuto",
+  'pushBanner.offTitle': 'Notifications are off',
+  'pushBanner.staleTitle': 'Notifications may not arrive',
+  'pushBanner.sub': 'Turn them on to get messages and calls instantly.',
+  'pushBanner.ctaSettings': 'Settings',
+  'pushBanner.ctaRetry': 'Turn on',
 };

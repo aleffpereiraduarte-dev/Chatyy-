@@ -1,4 +1,18 @@
 export default {
+  // [2026-10-14 calendário premium]
+  "calendar.starts": "Έναρξη",
+  "calendar.ends": "Λήξη",
+  "calendar.moreOptions": "Περισσότερες επιλογές",
+  "calendar.longPressToAdd": "Πατήστε παρατεταμένα για δημιουργία συμβάντος",
+  "calendar.timeZone": "Ζώνη ώρας",
+  // [2026-10-14 notif/carteira/404]
+  "wallet.kind.earningsConversion": "Μετατροπή κερδών",
+  "wallet.earningsConversionSub": "Το παλιό υπόλοιπο μετατράπηκε σε ρεάλ (BRL)",
+  "notifications.emptyFollowingDesc": "Τα live και οι συνομιλίες όσων ακολουθείτε εμφανίζονται εδώ.",
+  "notFound.title": "Η σελίδα δεν βρέθηκε",
+  "notFound.subtitle": "Αυτός ο σύνδεσμος δεν υπάρχει πια ή πληκτρολογήθηκε λάθος.",
+  "notFound.home": "Επιστροφή στην αρχή",
+  "notFound.back": "Πίσω",
   // [2026-10-13 diamantes-religados]
   "gifts.title": "Gifts",
   "gifts.titleTo": "Gift for {name}",
@@ -8195,4 +8209,9 @@ export default {
   "chatConv.wallpaperPhotoFailed": "Δεν ήταν δυνατή η χρήση αυτής της φωτογραφίας. Ελέγξτε τη σύνδεση και δοκιμάστε ξανά.",
   "chatConv.wallpaperApplied": "Η ταπετσαρία εφαρμόστηκε",
   "chatConv.wallpaperAiSlow": "Αυτό μπορεί να διαρκέσει έως 1 λεπτό",
+  'pushBanner.offTitle': 'Notifications are off',
+  'pushBanner.staleTitle': 'Notifications may not arrive',
+  'pushBanner.sub': 'Turn them on to get messages and calls instantly.',
+  'pushBanner.ctaSettings': 'Settings',
+  'pushBanner.ctaRetry': 'Turn on',
 };

@@ -1,4 +1,18 @@
 export default {
+  // [2026-10-14 calendário premium]
+  "calendar.starts": "ಪ್ರಾರಂಭ",
+  "calendar.ends": "ಮುಕ್ತಾಯ",
+  "calendar.moreOptions": "ಇನ್ನಷ್ಟು ಆಯ್ಕೆಗಳು",
+  "calendar.longPressToAdd": "ಈವೆಂಟ್ ರಚಿಸಲು ಒತ್ತಿ ಹಿಡಿಯಿರಿ",
+  "calendar.timeZone": "ಸಮಯ ವಲಯ",
+  // [2026-10-14 notif/carteira/404]
+  "wallet.kind.earningsConversion": "ಗಳಿಕೆಯ ಪರಿವರ್ತನೆ",
+  "wallet.earningsConversionSub": "ಹಳೆಯ ಬ್ಯಾಲೆನ್ಸ್ ರಿಯಾಲ್ (BRL) ಗೆ ಪರಿವರ್ತಿಸಲಾಗಿದೆ",
+  "notifications.emptyFollowingDesc": "ನೀವು ಫಾಲೋ ಮಾಡುವವರ ಲೈವ್ ಮತ್ತು ಚಾಟ್‌ಗಳು ಇಲ್ಲಿ ಕಾಣಿಸುತ್ತವೆ.",
+  "notFound.title": "ಪುಟ ಸಿಗಲಿಲ್ಲ",
+  "notFound.subtitle": "ಈ ಲಿಂಕ್ ಈಗ ಇಲ್ಲ ಅಥವಾ ತಪ್ಪಾಗಿ ಟೈಪ್ ಮಾಡಲಾಗಿದೆ.",
+  "notFound.home": "ಆರಂಭಕ್ಕೆ ಹಿಂತಿರುಗಿ",
+  "notFound.back": "ಹಿಂದೆ",
   // [2026-10-13 diamantes-religados]
   "gifts.title": "Gifts",
   "gifts.titleTo": "Gift for {name}",
@@ -1542,4 +1556,9 @@ export default {
   "chatConv.wallpaperPhotoFailed": "ಈ ಫೋಟೋವನ್ನು ಬಳಸಲು ಸಾಧ್ಯವಾಗಲಿಲ್ಲ. ಸಂಪರ್ಕ ಪರಿಶೀಲಿಸಿ ಮತ್ತೆ ಪ್ರಯತ್ನಿಸಿ.",
   "chatConv.wallpaperApplied": "ವಾಲ್‌ಪೇಪರ್ ಅನ್ವಯಿಸಲಾಗಿದೆ",
   "chatConv.wallpaperAiSlow": "ಇದಕ್ಕೆ 1 ನಿಮಿಷದವರೆಗೆ ಬೇಕಾಗಬಹುದು",
+  'pushBanner.offTitle': 'Notifications are off',
+  'pushBanner.staleTitle': 'Notifications may not arrive',
+  'pushBanner.sub': 'Turn them on to get messages and calls instantly.',
+  'pushBanner.ctaSettings': 'Settings',
+  'pushBanner.ctaRetry': 'Turn on',
 };

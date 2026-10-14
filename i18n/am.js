@@ -1,4 +1,18 @@
 export default {
+  // [2026-10-14 calendário premium]
+  "calendar.starts": "ይጀምራል",
+  "calendar.ends": "ያበቃል",
+  "calendar.moreOptions": "ተጨማሪ አማራጮች",
+  "calendar.longPressToAdd": "ክስተት ለመፍጠር ነክተው ይያዙ",
+  "calendar.timeZone": "የሰዓት ሰቅ",
+  // [2026-10-14 notif/carteira/404]
+  "wallet.kind.earningsConversion": "የገቢ ልወጣ",
+  "wallet.earningsConversionSub": "የቀድሞው ቀሪ ሂሳብ ወደ ሪያል (BRL) ተቀይሯል",
+  "notifications.emptyFollowingDesc": "የሚከተሏቸው ሰዎች ቀጥታ ስርጭቶችና ውይይቶች እዚህ ይታያሉ።",
+  "notFound.title": "ገጹ አልተገኘም",
+  "notFound.subtitle": "ይህ አገናኝ ከእንግዲህ የለም ወይም በስህተት ተጽፏል።",
+  "notFound.home": "ወደ መጀመሪያ ተመለስ",
+  "notFound.back": "ተመለስ",
   // [2026-10-13 diamantes-religados]
   "gifts.title": "Gifts",
   "gifts.titleTo": "Gift for {name}",
@@ -8191,4 +8205,9 @@ export default {
   "chatConv.wallpaperPhotoFailed": "ይህን ፎቶ መጠቀም አልተቻለም። ግንኙነትዎን ያረጋግጡና እንደገና ይሞክሩ።",
   "chatConv.wallpaperApplied": "የግድግዳ ወረቀት ተተግብሯል",
   "chatConv.wallpaperAiSlow": "ይህ እስከ 1 ደቂቃ ሊወስድ ይችላል",
+  'pushBanner.offTitle': 'Notifications are off',
+  'pushBanner.staleTitle': 'Notifications may not arrive',
+  'pushBanner.sub': 'Turn them on to get messages and calls instantly.',
+  'pushBanner.ctaSettings': 'Settings',
+  'pushBanner.ctaRetry': 'Turn on',
 };

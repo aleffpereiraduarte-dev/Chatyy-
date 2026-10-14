@@ -1,4 +1,18 @@
 export default {
+  // [2026-10-14 calendário premium]
+  "calendar.starts": "Басталуы",
+  "calendar.ends": "Аяқталуы",
+  "calendar.moreOptions": "Басқа опциялар",
+  "calendar.longPressToAdd": "Оқиға жасау үшін басып тұрыңыз",
+  "calendar.timeZone": "Уақыт белдеуі",
+  // [2026-10-14 notif/carteira/404]
+  "wallet.kind.earningsConversion": "Табысты айырбастау",
+  "wallet.earningsConversionSub": "Ескі баланс реалға (BRL) айырбасталды",
+  "notifications.emptyFollowingDesc": "Сіз жазылған адамдардың эфирлері мен чаттары осында шығады.",
+  "notFound.title": "Бет табылмады",
+  "notFound.subtitle": "Бұл сілтеме енді жоқ немесе қате терілген.",
+  "notFound.home": "Басына оралу",
+  "notFound.back": "Артқа",
   // [2026-10-13 diamantes-religados]
   "gifts.title": "Gifts",
   "gifts.titleTo": "Gift for {name}",
@@ -8191,4 +8205,9 @@ export default {
   "chatConv.wallpaperPhotoFailed": "Бұл фотоны пайдалану мүмкін болмады. Байланысты тексеріп, қайталап көріңіз.",
   "chatConv.wallpaperApplied": "Тұсқағаз орнатылды",
   "chatConv.wallpaperAiSlow": "Бұл 1 минутқа дейін созылуы мүмкін",
+  'pushBanner.offTitle': 'Notifications are off',
+  'pushBanner.staleTitle': 'Notifications may not arrive',
+  'pushBanner.sub': 'Turn them on to get messages and calls instantly.',
+  'pushBanner.ctaSettings': 'Settings',
+  'pushBanner.ctaRetry': 'Turn on',
 };

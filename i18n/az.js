@@ -1,4 +1,18 @@
 export default {
+  // [2026-10-14 calendário premium]
+  "calendar.starts": "Başlama",
+  "calendar.ends": "Bitmə",
+  "calendar.moreOptions": "Daha çox seçim",
+  "calendar.longPressToAdd": "Tədbir yaratmaq üçün basıb saxlayın",
+  "calendar.timeZone": "Saat qurşağı",
+  // [2026-10-14 notif/carteira/404]
+  "wallet.kind.earningsConversion": "Qazancın çevrilməsi",
+  "wallet.earningsConversionSub": "Köhnə balans reala (BRL) çevrildi",
+  "notifications.emptyFollowingDesc": "İzlədiyiniz insanların canlı yayımları və söhbətləri burada görünür.",
+  "notFound.title": "Səhifə tapılmadı",
+  "notFound.subtitle": "Bu keçid artıq mövcud deyil və ya səhv yazılıb.",
+  "notFound.home": "Başlanğıca qayıt",
+  "notFound.back": "Geri",
   // [2026-10-13 diamantes-religados]
   "gifts.title": "Gifts",
   "gifts.titleTo": "Gift for {name}",
@@ -8191,4 +8205,9 @@ export default {
   "chatConv.wallpaperPhotoFailed": "Bu fotodan istifadə etmək mümkün olmadı. Bağlantını yoxlayın və yenidən cəhd edin.",
   "chatConv.wallpaperApplied": "Divar kağızı tətbiq edildi",
   "chatConv.wallpaperAiSlow": "Bu, 1 dəqiqəyə qədər çəkə bilər",
+  'pushBanner.offTitle': 'Notifications are off',
+  'pushBanner.staleTitle': 'Notifications may not arrive',
+  'pushBanner.sub': 'Turn them on to get messages and calls instantly.',
+  'pushBanner.ctaSettings': 'Settings',
+  'pushBanner.ctaRetry': 'Turn on',
 };

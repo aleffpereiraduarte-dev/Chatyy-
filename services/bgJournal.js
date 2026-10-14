@@ -195,8 +195,9 @@ export function planMerge(parsed, ctx) {
       id: cid,
       conversation_id: cid,
       type: isGroup ? 'group' : 'direct',
-      name: _str(latest.cname) || _str(latest.sname) || _str(latest.sender),
-      display_name: _str(latest.cname) || _str(latest.sname),
+      // [2026-10-14 grupo-nome] grupo nunca herda o nome de quem mandou.
+      name: _str(latest.cname) || (isGroup ? '' : (_str(latest.sname) || _str(latest.sender))),
+      display_name: isGroup ? _str(latest.cname) : (_str(latest.cname) || _str(latest.sname)),
       other_email: isGroup ? null : _str(latest.sender),
       muted: 0,
       pinned: 0,

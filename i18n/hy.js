@@ -1,4 +1,18 @@
 export default {
+  // [2026-10-14 calendário premium]
+  "calendar.starts": "Սկիզբ",
+  "calendar.ends": "Ավարտ",
+  "calendar.moreOptions": "Այլ ընտրանքներ",
+  "calendar.longPressToAdd": "Հպեք և պահեք՝ միջոցառում ստեղծելու համար",
+  "calendar.timeZone": "Ժամային գոտի",
+  // [2026-10-14 notif/carteira/404]
+  "wallet.kind.earningsConversion": "Եկամուտների փոխարկում",
+  "wallet.earningsConversionSub": "Հին մնացորդը փոխարկվել է ռեալի (BRL)",
+  "notifications.emptyFollowingDesc": "Ձեր հետևած մարդկանց ուղիղ եթերներն ու զրույցները կհայտնվեն այստեղ։",
+  "notFound.title": "Էջը չի գտնվել",
+  "notFound.subtitle": "Այս հղումն այլևս գոյություն չունի կամ սխալ է մուտքագրվել։",
+  "notFound.home": "Վերադառնալ սկիզբ",
+  "notFound.back": "Հետ",
   // [2026-10-13 diamantes-religados]
   "gifts.title": "Gifts",
   "gifts.titleTo": "Gift for {name}",
@@ -8191,4 +8205,9 @@ export default {
   "chatConv.wallpaperPhotoFailed": "Չհաջողվեց օգտագործել այս լուսանկարը։ Ստուգեք կապը և նորից փորձեք։",
   "chatConv.wallpaperApplied": "Պաստառը կիրառվեց",
   "chatConv.wallpaperAiSlow": "Սա կարող է տևել մինչև 1 րոպե",
+  'pushBanner.offTitle': 'Notifications are off',
+  'pushBanner.staleTitle': 'Notifications may not arrive',
+  'pushBanner.sub': 'Turn them on to get messages and calls instantly.',
+  'pushBanner.ctaSettings': 'Settings',
+  'pushBanner.ctaRetry': 'Turn on',
 };

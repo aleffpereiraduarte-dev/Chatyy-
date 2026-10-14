@@ -121,6 +121,14 @@ export async function initMeetingReminders() {
   } catch (e) {
     console.warn('[ChatReminders] init failed:', e?.message || e);
   }
+  // [notas-lembrete 2026-10-14] Notas: categoria de ações do push (Adiar /
+  // Concluir) + reenvio de lembretes criados offline. Mesmo slot de boot.
+  try {
+    const { initNoteReminders } = await import('./noteReminders');
+    await initNoteReminders();
+  } catch (e) {
+    console.warn('[NoteReminders] init failed:', e?.message || e);
+  }
   await syncMeetingReminders();
 }
 

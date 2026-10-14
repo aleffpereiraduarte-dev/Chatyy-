@@ -8,9 +8,19 @@
 // links keep their current behavior). Pure JS: works on the current binary too
 // (it simply never receives https links until the build with the entitlements).
 import { resolveUniversalLink } from '../utils/universalLinks';
+import { emailFromSystemPath } from '../utils/emailPath';
 
+// [2026-10-14 mailto-unmatched] "mailto:x@y" (o Chatyy é cliente de e-mail) e
+// "onemundomail://x@y" chegavam aqui como caminho "x@y" → tela "Unmatched Route".
+// mailto: real → o _layout (useDeepLinking) já abre o compose; aqui só não roteia.
+// Qualquer outro "scheme://local@dominio" vira compose direto.
 export function redirectSystemPath({ path, initial }) {
   try {
+    if (typeof path === 'string' && /^mailto:/i.test(path)) {
+      return initial ? '/' : null;
+    }
+    const _addr = emailFromSystemPath(path);
+    if (_addr) return '/compose?mailto=' + encodeURIComponent('mailto:' + _addr);
     // [2026-10-13] Compartilhar de outro app (Share Extension iOS / expo-share-intent):
     // chega como onemundomail:///dataUrl=onemundomailShareKey (às vezes sem o '?').
     // O expo-router tentava rotear isso como caminho → "Unmatched Route". Quem trata

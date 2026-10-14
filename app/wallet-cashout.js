@@ -44,7 +44,8 @@ const MIN_CENTS = 5000;       // R$ 50,00 — espelha chat.php
 const MAX_CENTS = 5000000;    // R$ 50.000,00
 
 function tr(t, k, fb) { const v = t ? t(k) : ''; return v && v !== k ? v : fb; }
-function money(cents) { return formatMoneyActive(Number(cents) || 0); }
+// [2026-10-14 ganhos-BRL] saldo/mínimo/histórico de saque em R$ (é o que cai no Pix).
+function money(cents) { return formatMoney(Number(cents) || 0, 'BRL', 'pt-BR'); }
 function brl(cents) { return formatMoney(Number(cents) || 0, 'BRL', 'pt-BR'); }
 
 // "1.234,56" | "1234.56" | "1234" → centavos inteiros.

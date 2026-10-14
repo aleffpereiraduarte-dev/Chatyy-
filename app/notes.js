@@ -6,7 +6,7 @@ import {
   KeyboardAvoidingView, Linking, PanResponder, Easing, AppState,
 } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
-import { useRouter, Stack } from 'expo-router';
+import { useRouter, Stack, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
@@ -24,6 +24,12 @@ import BrandFab from '../components/BrandFab';
 import PressableScale from '../components/PressableScale'; // [2026-10-08 apps-native]
 import { USE_NATIVE_HEADER, nativeHeaderOptions, HeaderIconButton, NativeHeaderSafeArea } from '../components/nativeHeader'; // [2026-10-08 apps-native]
 let NoteGridSkeleton = null; try { NoteGridSkeleton = require('../components/SkeletonLoader').NoteGridSkeleton; } catch {}
+// [notas-lembrete 2026-10-14] lembrete por PUSH do servidor (Lembrar-me + chip + seção "Com lembrete")
+import NoteReminderSheet, { NoteReminderChip } from '../components/notes/NoteReminderSheet';
+import {
+  loadNoteReminders, subscribeNoteReminders, getNoteRemindersSnapshot, reminderDisplayDate,
+  formatNoteReminderShort, repeatLabel, reminderIsOverdue,
+} from '../services/noteReminders';
 // J.2 — native date/time picker for the "Lembrar" reminder. Optional require
 // so web (which uses <input type="datetime-local">) and any build without the
 // native module degrade gracefully.
@@ -712,7 +718,7 @@ function BoardView({
 // tecla na busca, a cada estado (re-rodava animação de entrada, recriava
 // PanResponder, perdia swipe). Agora é memo de módulo; callbacks via props
 // e ref "latest" p/ o PanResponder (criado 1x) não usar note/onDelete velhos.
-const NoteCardItem = React.memo(function NoteCardItem({ note, index, isDark, colors, t, searchQuery, isDeleting, onOpen, onLongPress, onDelete }) {
+const NoteCardItem = React.memo(function NoteCardItem({ note, index, isDark, colors, t, searchQuery, isDeleting, onOpen, onLongPress, onDelete, reminder }) {
   const latestRef = useRef(null);
   latestRef.current = { note, onDelete };
   const colorMeta = getColorMeta(note.color);
@@ -917,6 +923,7 @@ const NoteCardItem = React.memo(function NoteCardItem({ note, index, isDark, col
               </View>
             )}
             <View style={s.noteFooter}>
+              {reminder ? <NoteReminderChip reminder={reminder} t={t} color={textColor} compact style={{ marginRight: 6 }} /> : null}
               {note.notebook_name && (
                 <View style={[s.notebookTag, { backgroundColor: (note.notebook_color || '#4285F4') + '22' }]}>
                   <Text style={[s.notebookTagText, { color: note.notebook_color || '#4285F4' }]} numberOfLines={1}>
@@ -1070,6 +1077,16 @@ export default function NotesScreen() {
   const { colors, isDark } = useTheme();
   const { t } = useLanguage();
   const insets = useSafeAreaInsets();
+  // [notas-lembrete 2026-10-14] /notes?open=<id> (toque no push do lembrete) abre a nota.
+  const routeParams = useLocalSearchParams();
+  const openParam = routeParams?.open != null ? String(routeParams.open) : '';
+  // Lembretes por nota { [note_id]: reminder } — servidor + cache local.
+  const [reminders, setReminders] = useState(() => getNoteRemindersSnapshot());
+  useEffect(() => {
+    const off = subscribeNoteReminders(setReminders);
+    loadNoteReminders().catch(() => {});
+    return off;
+  }, []);
 
   const [notes, setNotes] = useState([]);
   const [notebooks, setNotebooks] = useState([]);
@@ -1348,14 +1365,12 @@ export default function NotesScreen() {
     const is_sticky = editorStickyRef.current ? 1 : 0;
     const notebook_id = editorNotebookRef.current;
     const tags = editorTagsRef.current;
-    // J.2 — pass-through to the notes-save API. Backend column + cron push are
-    // being added by another agent; notesCreate/notesUpdate forward extra keys
-    // verbatim, so this lands once the backend accepts `reminder_at`.
-    const reminder_at = editorReminderRef.current || null;
+    // [notas-lembrete 2026-10-14] O lembrete NÃO vai mais no notes_update
+    // (reminder_at legado): vive em note_reminder_set/clear (services/noteReminders.js).
 
-    if (!title.trim() && !content.trim()) return;
+    if (!title.trim() && !content.trim()) return editingNote?.id || null;
 
-    const payload = { title, content, color, is_pinned, is_sticky, notebook_id, tags, reminder_at };
+    const payload = { title, content, color, is_pinned, is_sticky, notebook_id, tags };
 
     // Optimistic update + replay queue path. Use a stable temp id for new
     // notes so the next auto-save tick targets the same entry.
@@ -1385,23 +1400,33 @@ export default function NotesScreen() {
 
     if (!isOnline()) {
       try { await queueOrUpdate(); } catch (e) { console.warn('Failed to queue note offline:', e); }
-      return;
+      return null;
     }
 
     try {
       if (editingNote?.id) {
         await api.notesUpdate(editingNote.id, payload);
+        return editingNote.id;
       } else {
         const res = await api.notesCreate(payload);
         if (res?.success && res.data?.id) {
           setEditingNote(prev => prev ? { ...prev, id: res.data.id } : { id: res.data.id });
+          return res.data.id;
         }
       }
     } catch (e) {
       console.warn('Failed to save note, queueing for retry:', e);
       try { await queueOrUpdate(); } catch {}
     }
+    return null;
   }, [editingNote]);
+
+  // [notas-lembrete 2026-10-14] "Lembrar-me" numa nota nova: salva já (precisa do id do servidor).
+  const ensureNoteSaved = useCallback(async () => {
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    const id = await saveNote();
+    return id ? { id, title: editorTitleRef.current, content: editorContentRef.current } : null;
+  }, [saveNote]);
 
   const triggerAutoSave = useCallback(() => {
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
@@ -1415,6 +1440,28 @@ export default function NotesScreen() {
     setEditingNote(null);
     loadNotes(false);
   }, [saveNote, loadNotes]);
+
+  // [notas-lembrete 2026-10-14] Toque no push → /notes?open=<id> → abre o editor dessa nota.
+  const openedParamRef = useRef('');
+  useEffect(() => {
+    if (!openParam || openedParamRef.current === openParam || loading) return;
+    const hit = notes.find(n => String(n.id) === openParam);
+    openedParamRef.current = openParam;
+    if (hit) { openEditor(hit); }
+    else {
+      // fora da lista atual (arquivada / ainda não sincronizada) → busca e abre
+      (async () => {
+        try {
+          for (const archived of [0, 1]) {
+            const res = await api.notesList(archived ? { archived: 1 } : {});
+            const n = (res?.data?.notes || []).find(x => String(x.id) === openParam);
+            if (n) { openEditor(n); return; }
+          }
+        } catch {}
+      })();
+    }
+    try { router.setParams({ open: undefined }); } catch {}
+  }, [openParam, loading, notes, openEditor, router]);
 
   // Soft-delete: remove locally now, fire API after 5s unless undone.
   const finalizePendingDelete = useCallback(async () => {
@@ -1663,6 +1710,24 @@ export default function NotesScreen() {
   // Separated pinned and unpinned notes
   const pinnedNotes = useMemo(() => filteredNotes.filter(n => n.is_pinned), [filteredNotes]);
   const unpinnedNotes = useMemo(() => filteredNotes.filter(n => !n.is_pinned), [filteredNotes]);
+  // [notas-lembrete 2026-10-14] Seção "Com lembrete" (estilo Keep): notas não fixadas com
+  // lembrete ativo, pelo próximo aviso (vencidos por último). Só na visão "Todas".
+  const showReminderSection = activeFilter === 'all' && activeTab !== 'archived';
+  const reminderNotes = useMemo(() => {
+    if (!showReminderSection) return [];
+    const now = Date.now();
+    const key = (n) => {
+      const r = reminders[String(n.id)];
+      const d = reminderDisplayDate(r);
+      return reminderIsOverdue(r, now) ? 8.64e15 + (d ? d.getTime() : 0) : (d ? d.getTime() : 8.64e15);
+    };
+    return unpinnedNotes.filter(n => reminders[String(n.id)]).sort((a, b) => key(a) - key(b));
+  }, [unpinnedNotes, reminders, showReminderSection]);
+  const otherNotes = useMemo(() => {
+    if (!reminderNotes.length) return unpinnedNotes;
+    const ids = new Set(reminderNotes.map(n => String(n.id)));
+    return unpinnedNotes.filter(n => !ids.has(String(n.id)));
+  }, [unpinnedNotes, reminderNotes]);
 
   const getNoteBg = (color) => isDark ? (DARK_NOTE_COLORS[color] || '#2A2A2A') : (color || '#FFF9C4');
   const getNoteText = (color) => isDark ? (DARK_NOTE_TEXT[color] || '#E0E0E0') : '#212121';
@@ -1700,6 +1765,7 @@ export default function NotesScreen() {
       onOpen={openEditor}
       onLongPress={onNoteLongPress}
       onDelete={deleteNote}
+      reminder={reminders[String(note.id)]}
     />
   );
   // Pull-to-refresh (antes não existia: `refreshing` era setado mas nunca exibido).
@@ -1707,6 +1773,7 @@ export default function NotesScreen() {
     setRefreshing(true);
     loadNotes(false);
     loadNotebooks();
+    loadNoteReminders().catch(() => {});
   }, [loadNotes, loadNotebooks]);
 
   // Column count - single column list on mobile for clean card layout
@@ -2172,7 +2239,7 @@ export default function NotesScreen() {
           style={s.scrollContent}
           contentContainerStyle={s.gridContainer}
           showsVerticalScrollIndicator={false}
-          data={activeFilter === 'pinned' ? pinnedNotes : unpinnedNotes}
+          data={activeFilter === 'pinned' ? pinnedNotes : otherNotes}
           keyExtractor={(note) => String(note.id)}
           numColumns={numColumns}
           columnWrapperStyle={numColumns > 1 ? { columnGap: 10 } : undefined}
@@ -2194,16 +2261,31 @@ export default function NotesScreen() {
                   </View>
                 </>
               )}
-              {pinnedNotes.length > 0 && unpinnedNotes.length > 0 && activeFilter !== 'pinned' && (
+              {reminderNotes.length > 0 && (
+                <>
+                  <View style={[s.reminderSectionHead, { marginTop: pinnedNotes.length > 0 ? 12 : 0 }]}>
+                    <IconBell size={13} color={colors.textTertiary} />
+                    <Text style={[s.sectionLabel, { color: colors.textTertiary, marginBottom: 0 }]}>{t('noteReminder.section')}</Text>
+                  </View>
+                  <View style={[s.grid, { columnGap: 10 }]}>
+                    {reminderNotes.map((note, i) => (
+                      <View key={note.id} style={[s.gridItem, { width: `${100 / numColumns}%` }]}>
+                        {renderNoteCard(note, pinnedNotes.length + i)}
+                      </View>
+                    ))}
+                  </View>
+                </>
+              )}
+              {(pinnedNotes.length > 0 || reminderNotes.length > 0) && otherNotes.length > 0 && activeFilter !== 'pinned' && (
                 <Text style={[s.sectionLabel, { color: colors.textTertiary, marginTop: 12 }]}>
-                  {activeTab === 'archived' ? t('notes.archived') : ''}
+                  {activeTab === 'archived' ? t('notes.archived') : (reminderNotes.length > 0 ? t('noteReminder.othersSection') : '')}
                 </Text>
               )}
             </>
           )}
           renderItem={({ item: note, index: i }) => (
             <View style={[s.gridItem, { width: `${100 / numColumns}%` }]}>
-              {renderNoteCard(note, (activeFilter === 'pinned' ? 0 : pinnedNotes.length) + i)}
+              {renderNoteCard(note, (activeFilter === 'pinned' ? 0 : pinnedNotes.length + reminderNotes.length) + i)}
             </View>
           )}
         />
@@ -2281,6 +2363,8 @@ export default function NotesScreen() {
           notebookRef={editorNotebookRef}
           tagsRef={editorTagsRef}
           reminderRef={editorReminderRef}
+          reminder={editingNote?.id ? reminders[String(editingNote.id)] : null}
+          onEnsureSaved={ensureNoteSaved}
           allNotes={notes}
           onOpenNote={openEditor}
           onClose={closeEditor}
@@ -2576,7 +2660,7 @@ export default function NotesScreen() {
 }
 
 // ---- Note Editor (Full Screen - Premium) ----
-function NoteEditor({ note, colors, isDark, t, notebooks, titleRef, contentRef, colorRef, pinnedRef, stickyRef, notebookRef, tagsRef, reminderRef, allNotes = [], onOpenNote, onClose, onAutoSave, onDelete, onSendEmail, onExportPdf, onCopyText, allTags = [] }) {
+function NoteEditor({ note, colors, isDark, t, notebooks, titleRef, contentRef, colorRef, pinnedRef, stickyRef, notebookRef, tagsRef, reminderRef, reminder = null, onEnsureSaved, allNotes = [], onOpenNote, onClose, onAutoSave, onDelete, onSendEmail, onExportPdf, onCopyText, allTags = [] }) {
   const [title, setTitle] = useState(titleRef.current);
   const [content, setContent] = useState(contentRef.current);
   const [selectedColor, setSelectedColor] = useState(colorRef.current);
@@ -2590,6 +2674,8 @@ function NoteEditor({ note, colors, isDark, t, notebooks, titleRef, contentRef, 
   const [reminderAt, setReminderAt] = useState(reminderRef?.current || null);
   const [showReminderPicker, setShowReminderPicker] = useState(false);
   const [androidReminderMode, setAndroidReminderMode] = useState('date');
+  // [notas-lembrete 2026-10-14] sheet "Lembrar-me" (push do servidor)
+  const [reminderSheetOpen, setReminderSheetOpen] = useState(false);
   const [tagInput, setTagInput] = useState('');
   const [showTagInput, setShowTagInput] = useState(false);
   const [showPreview, setShowPreview] = useState(false);
@@ -3111,89 +3197,44 @@ function NoteEditor({ note, colors, isDark, t, notebooks, titleRef, contentRef, 
         )}
       </View>
 
-      {/* J.2 — "Lembrar" reminder row. Tap to set a date/time; a backend cron
-          fires a push at that moment (column + cron added separately). */}
+      {/* [notas-lembrete 2026-10-14] "Lembrar-me" — abre o sheet (Hoje / Amanhã /
+          Próxima semana / Personalizado + repetição). Push sai do SERVIDOR
+          (todos os aparelhos, app fechado). Substitui o J.2 (reminder_at). */}
       <View style={s.editorReminderRow}>
         <TouchableOpacity
-          onPress={() => {
-            if (Platform.OS === 'web') return; // web uses the inline input below
-            setAndroidReminderMode('date');
-            setShowReminderPicker(true);
-          }}
+          onPress={() => { try { haptic.select(); } catch {} setReminderSheetOpen(true); }}
           style={[s.editorReminderChip, {
-            borderColor: reminderAt
-              ? (reminderIsPast ? (colors.error || '#dc2626') : BRAND)
+            borderColor: reminder
+              ? (reminderIsOverdue(reminder) ? (isDark ? 'rgba(255,255,255,0.16)' : 'rgba(0,0,0,0.12)') : textColor + '66')
               : (isDark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.08)'),
-            backgroundColor: reminderAt ? (BRAND + '14') : 'transparent',
+            backgroundColor: reminder ? (isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)') : 'transparent',
           }]}
-          accessibilityLabel={t('notes.reminder') || 'Lembrar'}
+          accessibilityRole="button"
+          accessibilityLabel={t('noteReminder.title')}
+          testID="note-editor-reminder"
         >
-          <IconBell size={14} color={reminderAt ? (reminderIsPast ? (colors.error || '#dc2626') : BRAND) : secondaryText} />
+          <IconBell size={14} color={reminder ? textColor : secondaryText} />
           <Text
-            style={[s.editorReminderText, { color: reminderAt ? (reminderIsPast ? (colors.error || '#dc2626') : BRAND) : secondaryText }]}
+            style={[s.editorReminderText, {
+              color: reminder ? textColor : secondaryText,
+              textDecorationLine: reminder && reminderIsOverdue(reminder) ? 'line-through' : 'none',
+            }]}
             numberOfLines={1}
           >
-            {reminderAt
-              ? `${t('notes.remindAt') || 'Lembrar'} ${reminderLabel}${reminderIsPast ? ' · ' + (t('notes.reminderPast') || 'passado') : ''}`
-              : (t('notes.addReminder') || 'Lembrar')}
+            {reminder && reminderDisplayDate(reminder)
+              ? [formatNoteReminderShort(reminderDisplayDate(reminder), t), repeatLabel(reminder.repeat, t)].filter(Boolean).join(' · ')
+              : t('noteReminder.title')}
           </Text>
         </TouchableOpacity>
-        {!!reminderAt && (
-          <TouchableOpacity
-            onPress={() => setReminder(null)}
-            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-            style={s.editorReminderClear}
-            accessibilityLabel={t('common.clear') || 'Limpar'}
-          >
-            <IconX size={13} color={secondaryText} />
-          </TouchableOpacity>
-        )}
-        {/* Web: inline native datetime input */}
-        {Platform.OS === 'web' && (
-          <input
-            type="datetime-local"
-            value={reminderDate ? toLocalDateTimeInput(reminderDate) : ''}
-            min={toLocalDateTimeInput(new Date())}
-            onChange={(e) => {
-              const v = e.target.value;
-              if (!v) { setReminder(null); return; }
-              const d = new Date(v);
-              if (!isNaN(d.getTime())) setReminder(d);
-            }}
-            style={{
-              marginLeft: 8, padding: 6, fontSize: 13, borderRadius: 8,
-              border: `1px solid ${isDark ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.12)'}`,
-              backgroundColor: 'transparent', color: textColor,
-            }}
-          />
-        )}
       </View>
-      {/* Native date/time picker (iOS inline modal-ish / Android dialog) */}
-      {Platform.OS !== 'web' && showReminderPicker && DateTimePicker && (
-        Platform.OS === 'ios' ? (
-          <View style={[s.editorReminderPickerWrap, { backgroundColor: isDark ? 'rgba(40,40,60,0.95)' : 'rgba(255,255,255,0.98)', borderColor: isDark ? 'rgba(255,255,255,0.1)' : colors.border }]}>
-            <DateTimePicker
-              value={reminderDate || new Date(Date.now() + 60 * 60 * 1000)}
-              mode="datetime"
-              display="spinner"
-              minimumDate={new Date()}
-              themeVariant={isDark ? 'dark' : 'light'}
-              onChange={(_, v) => { if (v) setReminder(v); }}
-            />
-            <TouchableOpacity onPress={() => setShowReminderPicker(false)} style={s.editorReminderDone}>
-              <Text style={{ color: BRAND, fontWeight: '700', fontSize: 15 }}>{t('common.done') || 'OK'}</Text>
-            </TouchableOpacity>
-          </View>
-        ) : (
-          <DateTimePicker
-            value={reminderDate || new Date(Date.now() + 60 * 60 * 1000)}
-            mode={androidReminderMode}
-            display="default"
-            minimumDate={androidReminderMode === 'date' ? new Date() : undefined}
-            onChange={onAndroidReminderChange}
-          />
-        )
-      )}
+      <NoteReminderSheet
+        visible={reminderSheetOpen}
+        onClose={() => setReminderSheetOpen(false)}
+        note={note?.id ? { id: note.id, title: titleRef.current, content: contentRef.current } : null}
+        reminder={reminder}
+        ensureNote={onEnsureSaved}
+        t={t}
+      />
 
       {/* Title & Content */}
       <ScrollView style={s.editorBody} keyboardShouldPersistTaps="handled">
@@ -4305,6 +4346,7 @@ const s = StyleSheet.create({
   editorNotebookText: { fontSize: 13, fontWeight: '500' },
 
   // J.2 — Reminder row in editor
+  reminderSectionHead: { flexDirection: 'row', alignItems: 'center', gap: 2, paddingLeft: 5 },
   editorReminderRow: {
     flexDirection: 'row', alignItems: 'center',
     marginLeft: 20, marginTop: 10, paddingRight: 20,

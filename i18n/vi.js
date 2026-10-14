@@ -1,4 +1,18 @@
 export default {
+  // [2026-10-14 calendário premium]
+  "calendar.starts": "Bắt đầu",
+  "calendar.ends": "Kết thúc",
+  "calendar.moreOptions": "Tùy chọn khác",
+  "calendar.longPressToAdd": "Chạm và giữ để tạo sự kiện",
+  "calendar.timeZone": "Múi giờ",
+  // [2026-10-14 notif/carteira/404]
+  "wallet.kind.earningsConversion": "Quy đổi thu nhập",
+  "wallet.earningsConversionSub": "Số dư cũ đã được quy đổi sang real (BRL)",
+  "notifications.emptyFollowingDesc": "Livestream và trò chuyện của người bạn theo dõi sẽ hiện ở đây.",
+  "notFound.title": "Không tìm thấy trang",
+  "notFound.subtitle": "Liên kết này không còn tồn tại hoặc bị nhập sai.",
+  "notFound.home": "Về trang đầu",
+  "notFound.back": "Quay lại",
   // [2026-10-13 diamantes-religados]
   "gifts.title": "Gifts",
   "gifts.titleTo": "Gift for {name}",
@@ -8195,4 +8209,9 @@ export default {
   "chatConv.wallpaperPhotoFailed": "Không thể dùng ảnh này. Hãy kiểm tra kết nối và thử lại.",
   "chatConv.wallpaperApplied": "Đã áp dụng hình nền",
   "chatConv.wallpaperAiSlow": "Việc này có thể mất tới 1 phút",
+  'pushBanner.offTitle': 'Notifications are off',
+  'pushBanner.staleTitle': 'Notifications may not arrive',
+  'pushBanner.sub': 'Turn them on to get messages and calls instantly.',
+  'pushBanner.ctaSettings': 'Settings',
+  'pushBanner.ctaRetry': 'Turn on',
 };

@@ -169,6 +169,44 @@ function _rcMergeListRow(old, c) {
   const lm = _rcMergeListLm(old.last_message, c.last_message);
   return lm === c.last_message ? c : { ...c, last_message: lm };
 }
+// [2026-10-14 grupo-nome] Nome de grupo/canal: `name` do servidor é a verdade. display_name
+// de grupo só existe em placeholder local (WS/push/bgJournal — às vezes o nome de QUEM MANDOU),
+// então para grupo ele nunca vence o `name`. Sem emailToDisplayName (mudava caixa/quebrava
+// palavras: "AMIGOS"→"Amigos", "Rosamigos"→"Rosa Migos").
+function _isGroupishConv(c) { return !!c && (c.type === 'group' || c.type === 'channel'); }
+function _convTitleRaw(c) {
+  if (!c) return '';
+  if (_isGroupishConv(c)) return String(c.name || c.display_name || '').trim();
+  return String(c.display_name || c.name || '').trim();
+}
+// Refresh/merge nunca regride o nome de grupo para vazio quando já se conhece o real.
+function _keepKnownName(old, c) {
+  if (!old || !c || !_isGroupishConv(c)) return c;
+  if (String(c.name || '').trim()) return c;
+  const known = String(old.name || '').trim();
+  return known ? { ...c, name: known } : c;
+}
+// Aplica metadados EXPLÍCITOS (evento WS conversation_meta / rename local 'chatyy:convMeta').
+// Única via, fora do chat_list, pela qual o nome do grupo muda. name vazio é ignorado.
+function _patchConvMetaList(list, d) {
+  if (!Array.isArray(list) || !d || d.conversation_id == null) return list;
+  const id = String(d.conversation_id);
+  const nm = typeof d.name === 'string' ? d.name.trim() : '';
+  let changed = false;
+  const out = list.map((c) => {
+    if (!c || (String(c.id) !== id && String(c.conversation_id) !== id)) return c;
+    const n = { ...c };
+    if (nm) { n.name = nm; if (n.display_name) n.display_name = nm; }
+    if (typeof d.avatar === 'string' && d.avatar !== (c.avatar || '')) {
+      n.avatar = d.avatar;
+      if (Object.prototype.hasOwnProperty.call(c, 'avatar_url')) n.avatar_url = d.avatar;
+    }
+    if (typeof d.description === 'string') n.description = d.description;
+    changed = true;
+    return n;
+  });
+  return changed ? out : list;
+}
 function _rcListMark(c, who, kind) {
   const lm = c.last_message;
   const nowIso = new Date().toISOString();
@@ -540,7 +578,7 @@ function PulsingOnlineDot({ colors, isDark }) {
 // do nome). Removido o stack + pill "+N" pra ficar limpo.
 function GroupAvatarStack({ conversation, size = 56, isDark }) {
   const groupPhoto = conversation.avatar_url || conversation.avatar || '';
-  const name = conversation.display_name || conversation.name || '?';
+  const name = _convTitleRaw(conversation) || '?'; // [2026-10-14 grupo-nome]
   // When the group has no uploaded photo, fall back to a 2-4 tile collage
   // built from the members list (WhatsApp parity). Only fires when there's
   // no explicit group avatar — once the admin uploads one, the single
@@ -754,7 +792,9 @@ const ConversationRow = React.memo(function ConversationRow({
   const displayName = _isSavedRow
     ? (t('chat.savedMessages') || 'Mensagens Salvas')
     : (_nickname
-    || emailToDisplayName(conversation.display_name || conversation.name || t('chat.unknown')));
+    || ((isGroup || isChannel)
+      ? (_convTitleRaw(conversation) || t('chat.unknown')) // [2026-10-14 grupo-nome] nome cru do grupo
+      : emailToDisplayName(conversation.display_name || conversation.name || t('chat.unknown'))));
   const unread = conversation.unread_count > 0;
   const lastMsg = conversation.last_message;
   const isArchived = conversation.archived;
@@ -1761,7 +1801,9 @@ const ConversationRow = React.memo(function ConversationRow({
   // Re-render when @mention count changes so the spring-pop scale fires.
   if ((prevConv.unread_mentions || 0) !== (nextConv.unread_mentions || 0)) return false;
   if ((prevConv.last_message_at) !== (nextConv.last_message_at)) return false;
-  if ((prevConv.display_name || prevConv.name) !== (nextConv.display_name || nextConv.name)) return false;
+  // [2026-10-14 grupo-nome] compara os DOIS campos: grupo com display_name velho (placeholder)
+  // mascarava a troca de `name` e a linha não re-renderizava após o rename.
+  if ((prevConv.display_name || '') !== (nextConv.display_name || '') || (prevConv.name || '') !== (nextConv.name || '')) return false;
   // [2026-10-12 chatlist-wa] Fields the row paints that the comparator used to
   // ignore: a new group photo / peer avatar, archive state (swipe label),
   // media kind/caption/duration edits, a language switch (t/locale) or theme
@@ -4077,7 +4119,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
               ? { ...c, last_message: old.last_message, last_message_at: old.last_message_at }
               : { ..._rcMergeListRow(old, c) };
             base.unread_count = Math.max(c.unread_count || 0, old.unread_count || 0);
-            return base;
+            return _keepKnownName(old, base); // [2026-10-14 grupo-nome] nunca regride p/ vazio
           }), convs.length, _archIds));
         });
         setArchivedConversations(prev => _reuseConvRows(prev, _arch));
@@ -4117,7 +4159,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
               setConversations(prev => {
                 // [2026-10-14 recibos-mono] mesma última msg → não rebaixa o tick.
                 const _pById = new Map((Array.isArray(prev) ? prev : []).map(p => [String(p.id), p]));
-                const _actM = _act.map(c => _rcMergeListRow(_pById.get(String(c.id)), c));
+                const _actM = _act.map(c => { const _o = _pById.get(String(c.id)); return _keepKnownName(_o, _rcMergeListRow(_o, c)); });
                 return _keepBeyondPage(prev, _actM, convs.length, _aIds);
               });
             }
@@ -4513,6 +4555,30 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
       return next || prev;
     });
   }, [conversations]);
+  // [2026-10-14 grupo-nome] Nome/foto do grupo mudam na lista SÓ por evento explícito:
+  // WS `conversation_meta` (servidor, todos os membros/aparelhos) ou 'chatyy:convMeta'
+  // (rename feito neste aparelho). Patcha as duas listas + o cache local (senão o próximo
+  // cold start pintava o nome antigo até o chat_list).
+  const _applyConvMetaRef = useRef(null);
+  _applyConvMetaRef.current = (d) => {
+    if (!d || d.conversation_id == null) return;
+    setConversations(prev => _patchConvMetaList(prev, d));
+    setArchivedConversations(prev => _patchConvMetaList(prev, d));
+    try {
+      getCachedConversations().then((cached) => {
+        const next = _patchConvMetaList(cached, d);
+        if (next !== cached && Array.isArray(next)) cacheConversations(next).catch?.(() => {});
+      }).catch(() => {});
+    } catch {}
+  };
+  useEffect(() => {
+    let sub = null;
+    try {
+      const { DeviceEventEmitter } = require('react-native');
+      sub = DeviceEventEmitter.addListener('chatyy:convMeta', (p) => { _applyConvMetaRef.current?.(p); });
+    } catch {}
+    return () => { try { sub?.remove?.(); } catch {} };
+  }, []);
   // Instant (optimistic) lock/unlock from ANY screen: ChatLockSheet (folder),
   // conversation header, or this tab's own menus emit 'chatyy:lockChanged'.
   // Unlocking puts the row back in the main list right away (merging the
@@ -4887,12 +4953,15 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
               loadConvRef.current?.(false);
               const senderLc = String(data.sender_email || data.sender || '').toLowerCase();
               const meLc = String(user?.email || '').toLowerCase();
+              // [2026-10-14 grupo-nome] Grupo/canal NUNCA herda o nome de quem mandou (a linha
+              // "virava" a pessoa até o refetch). Sem conversation_name → vazio até o chat_list.
+              const _phGroup = data.conversation_type === 'group' || data.conversation_type === 'channel';
               const placeholder = {
                 id: data.conversation_id,
                 conversation_id: data.conversation_id,
                 type: data.conversation_type || 'direct',
-                name: data.conversation_name || data.sender_name || data.sender_email || data.sender || '',
-                display_name: data.conversation_name || data.sender_name || '',
+                name: data.conversation_name || (_phGroup ? '' : (data.sender_name || data.sender_email || data.sender || '')),
+                display_name: _phGroup ? (data.conversation_name || '') : (data.conversation_name || data.sender_name || ''),
                 avatar: data.conversation_avatar || '',
                 other_email: data.conversation_type === 'group' ? null : (senderLc !== meLc ? data.sender_email : null),
                 last_message: {
@@ -4982,6 +5051,9 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
         setConversations(prev => prev.filter(c => !(c.id == convId || c.conversation_id == convId)));
         setArchivedConversations(prev => prev.filter(c => !(c.id == convId || c.conversation_id == convId)));
       }));
+
+      // [2026-10-14 grupo-nome] Evento EXPLÍCITO de metadados (rename/foto/descrição) do servidor.
+      unsubs.push(mailWs.on('conversation_meta', (data) => { _applyConvMetaRef.current?.(data); }));
 
       // Backend broadcasts `delete`/`edit` when a message is deleted-for-all
       // or edited. The list never subscribed to these, so a deleted/edited

@@ -18,15 +18,15 @@ import { ListSkeleton } from '../components/SkeletonLoader';
 import AvatarCircle from '../components/AvatarCircle';
 import {
   IconArrowLeft, IconCheck, IconBell, IconAtSign, IconHeart,
-  IconUser, IconMessageSquare, IconMail, IconFilm,
+  IconUser, IconMessageSquare, IconFilm,
 } from '../components/Icons';
 import EmptyStateCard from '../components/EmptyStateCard';
 import ScreenEmptyState from '../components/ScreenEmptyState';
 import * as api from '../services/api';
 import { swr, getCachedSync, setCache, userScopedKey } from '../services/cache';
+import { filterSocialNotifications } from '../services/notificationFilter';
+import FadeSlideIn from '../components/FadeSlideIn';
 
-// Brand color (Chatyy purple)
-const BRAND = '#111111';
 
 // [WAVE 100] Module-scope live store — survives unmount/remount in the same
 // JS runtime (e.g. user opens /notifications, navigates to /inbox, comes
@@ -72,29 +72,34 @@ function tl(t, key, fb, params) {
 //   - Você:     direct interactions on my content (mentions + comments + likes)
 const TABS = [
   { key: 'all',       labelKey: 'notifications.tabAll',       label: 'Todas',     types: null },
-  { key: 'foryou',    labelKey: 'notifications.tabForYou',    label: 'Pra você',  types: ['like', 'comment', 'mention', 'follow', 'contact_joined'] },
-  { key: 'following', labelKey: 'notifications.tabFollowing', label: 'Seguindo',  types: ['chat', 'live', 'email'] },
-  { key: 'you',       labelKey: 'notifications.tabYou',       label: 'Você',      types: ['mention', 'comment', 'like'] },
+  // [2026-10-14 notif-no-email] só chat/social — e-mail saiu da central
+  // (filterSocialNotifications); feed_like/feed_comment são os tipos reais
+  // gravados pelo servidor p/ curtidas/comentários em posts.
+  { key: 'foryou',    labelKey: 'notifications.tabForYou',    label: 'Pra você',  types: ['like', 'comment', 'feed_like', 'feed_comment', 'mention', 'follow', 'contact_joined'] },
+  { key: 'following', labelKey: 'notifications.tabFollowing', label: 'Seguindo',  types: ['chat', 'live'] },
+  { key: 'you',       labelKey: 'notifications.tabYou',       label: 'Você',      types: ['mention', 'comment', 'like', 'feed_like', 'feed_comment'] },
 ];
 
 // ─── Per-type icon & colour ───────────────────────────────────────────────────
-function TypeBadge({ type, size = 18, ringColor = '#fff' }) {
-  const map = {
-    email:   { Icon: IconMail,          bg: BRAND,    color: '#fff' },
-    chat:    { Icon: IconMessageSquare, bg: BRAND,    color: '#fff' },
-    // [2026-10-11 polish-secondary] P&B: tipos diferenciados pelo ÍCONE, não
-    // pela cor (era azul/vermelho/âmbar/verde — fora da paleta).
-    mention: { Icon: IconAtSign,        bg: BRAND, color: '#fff' },
-    like:    { Icon: IconHeart,         bg: BRAND, color: '#fff' },
-    comment: { Icon: IconMessageSquare, bg: BRAND, color: '#fff' },
-    follow:  { Icon: IconUser,          bg: BRAND, color: '#fff' },
-    contact_joined: { Icon: IconUser,   bg: BRAND,    color: '#fff' }, // [2026-10-08 contact-joined-push]
-    live:    { Icon: IconFilm,          bg: '#111111', color: '#fff' },
-  };
-  const cfg = map[type] || { Icon: IconBell, bg: '#6b7280', color: '#fff' };
+// [2026-10-14] badge = tinta do tema (preto no claro / branco no escuro) —
+// '#111' fixo sumia sobre o fundo preto do modo escuro.
+const TYPE_ICONS = {
+  chat:    IconMessageSquare,
+  // [2026-10-11 polish-secondary] P&B: tipos diferenciados pelo ÍCONE, não pela cor.
+  mention: IconAtSign,
+  like:    IconHeart,
+  feed_like: IconHeart,
+  comment: IconMessageSquare,
+  feed_comment: IconMessageSquare,
+  follow:  IconUser,
+  contact_joined: IconUser, // [2026-10-08 contact-joined-push]
+  live:    IconFilm,
+};
+function TypeBadge({ type, size = 18, ringColor, ink, onInk }) {
+  const Icon = TYPE_ICONS[type] || IconBell;
   return (
-    <View style={[badge.wrap, { backgroundColor: cfg.bg, borderColor: ringColor }]}>
-      <cfg.Icon size={size - 4} color={cfg.color} />
+    <View style={[badge.wrap, { backgroundColor: ink, borderColor: ringColor }]}>
+      <Icon size={size - 8} color={onInk} />
     </View>
   );
 }
@@ -103,12 +108,12 @@ const badge = StyleSheet.create({
     position: 'absolute', bottom: -3, right: -3,
     width: 20, height: 20, borderRadius: 10,
     alignItems: 'center', justifyContent: 'center',
-    borderWidth: 2, borderColor: '#fff',
+    borderWidth: 2,
   },
 });
 
 // ─── Avatar stack (for grouped likes) ─────────────────────────────────────────
-function AvatarStack({ emails = [], size = 28, ringColor = '#fff' }) {
+function AvatarStack({ emails = [], size = 28, ringColor }) {
   const list = emails.slice(0, 3);
   return (
     <View style={{ flexDirection: 'row', alignItems: 'center', height: size }}>
@@ -150,7 +155,7 @@ function dateBucket(dateStr) {
   const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
   const ts = d.getTime();
   if (ts >= startOfToday) return 'today';
-  if (ts >= startOfToday - 86400000) return 'yesterday';
+  // [2026-10-14] seções enxutas: Hoje · Esta semana · Mais antigas
   if (ts >= startOfToday - 7 * 86400000) return 'thisWeek';
   return 'older';
 }
@@ -169,7 +174,7 @@ function NotifRow({ item, colors, isDark, onPress, onAction, t }) {
 
   // Like aggregation: build a "User1, User2 e mais 12 curtiram seu post"
   const isLikeGroup =
-    item.type === 'like' &&
+    (item.type === 'like' || item.type === 'feed_like') &&
     Array.isArray(item.actor_emails) &&
     item.actor_emails.length > 1;
 
@@ -208,11 +213,13 @@ function NotifRow({ item, colors, isDark, onPress, onAction, t }) {
     body = '';
   }
 
-  const unreadBg = isDark ? 'rgba(255,255,255,0.06)' : 'rgba(17, 17, 17,0.05)'; // [2026-10-11] escuro: #111 a 10% sobre preto era invisível
+  const unreadBg = isDark ? 'rgba(255,255,255,0.06)' : 'rgba(17, 17, 17,0.04)'; // [2026-10-11] escuro: #111 a 10% sobre preto era invisível
+  const ink = colors.text;
+  const onInk = colors.background;
 
   // Right-side thumbnail (post preview) for likes/comments referencing a post
   const thumbUri = item.thumbnail_url || item.post_thumbnail || null;
-  const showThumb = !!thumbUri && (item.type === 'like' || item.type === 'comment' || item.type === 'mention');
+  const showThumb = !!thumbUri && ['like', 'comment', 'feed_like', 'feed_comment', 'mention'].includes(item.type);
 
   // Inline action pills — only for follow notifications
   const showActions = item.type === 'follow' && !item.action_taken;
@@ -225,11 +232,10 @@ function NotifRow({ item, colors, isDark, onPress, onAction, t }) {
       accessibilityLabel={title}
     >
       {/* Left unread dot rail */}
-      {!item.read ? (
-        <View style={[styles.unreadRail, { backgroundColor: colors.text }]} />
-      ) : (
-        <View style={styles.unreadRailSpacer} />
-      )}
+      {/* [2026-10-14] ponto de não-lido (estado), no lugar do trilho */}
+      <View style={styles.unreadDotSlot}>
+        {!item.read ? <View style={[styles.unreadDot, { backgroundColor: colors.text }]} /> : null}
+      </View>
 
       {/* Avatar (44) — stack for like-groups, single for others */}
       <View style={styles.avatarWrap}>
@@ -238,11 +244,11 @@ function NotifRow({ item, colors, isDark, onPress, onAction, t }) {
         ) : item.author_email ? (
           <>
             <AvatarCircle email={item.author_email} size={44} />
-            <TypeBadge type={item.type} size={20} ringColor={colors.background} />
+            <TypeBadge type={item.type} size={20} ringColor={colors.background} ink={ink} onInk={onInk} />
           </>
         ) : (
-          <View style={[styles.typeCircle, { backgroundColor: colors.primaryLight || colors.border }]}>
-            <TypeBadge type={item.type} size={26} ringColor={colors.background} />
+          <View style={[styles.typeCircle, { backgroundColor: colors.surfaceVariant || colors.border, borderColor: colors.border }]}>
+            {(() => { const I = TYPE_ICONS[item.type] || IconBell; return <I size={20} color={colors.text} />; })()}
           </View>
         )}
       </View>
@@ -252,7 +258,7 @@ function NotifRow({ item, colors, isDark, onPress, onAction, t }) {
         <Text style={[styles.rowTitle, { color: colors.text }]} numberOfLines={2}>
           {title}
           {!!ts && (
-            <Text style={[styles.rowTimeInline, { color: colors.textTertiary || colors.textSecondary }]}>
+            <Text style={[styles.rowTimeInline, { color: colors.textSecondary }]}>
               {'  · ' + ts}
             </Text>
           )}
@@ -329,8 +335,8 @@ function NotifRow({ item, colors, isDark, onPress, onAction, t }) {
 function SectionHeader({ label, colors }) {
   return (
     <View style={styles.sectionHeaderWrap}>
-      <Text style={[styles.sectionHeaderText, { color: colors.text }]}>
-        {label}
+      <Text style={[styles.sectionHeaderText, { color: colors.textSecondary }]} accessibilityRole="header">
+        {String(label || '').toUpperCase()}
       </Text>
     </View>
   );
@@ -404,12 +410,16 @@ function TabBar({ activeTab, onChange, colors, t, unreadCounts = {} }) {
 }
 
 // ─── Empty state — premium canonical ScreenEmptyState ─────────────────────────
-function EmptyState({ colors, isDark, t, onOpenSettings }) {
+function EmptyState({ colors, isDark, t, tab, onOpenSettings }) {
+  // [2026-10-14] subtítulo por aba (Seguindo = chats/lives de quem você segue)
+  const sub = tab === 'following'
+    ? tl(t, 'notifications.emptyFollowingDesc', { pt: 'Lives e conversas de quem você segue aparecem aqui.', en: 'Lives and chats from people you follow show up here.', es: 'Los directos y chats de quienes sigues aparecen aquí.' })
+    : tl(t, 'notifications.allCaughtUpDesc', { pt: 'Quando rolar algo novo, aparece aqui.', en: 'New activity will show up here.', es: 'La actividad nueva aparecerá aquí.' });
   return (
     <ScreenEmptyState
       kind="notifications"
       title={tl(t, 'notifications.allCaughtUp', { pt: 'Você está em dia', en: "You're all caught up", es: 'Estás al día' })}
-      subtitle={tl(t, 'notifications.allCaughtUpDesc', { pt: 'Quando rolar algo novo, aparece aqui.', en: 'New activity will show up here.', es: 'La actividad nueva aparecerá aquí.' })}
+      subtitle={sub}
       secondary={onOpenSettings ? {
         label: tl(t, 'notifications.emptyManage', { pt: 'Gerenciar notificações', en: 'Manage notifications', es: 'Gestionar notificaciones' }),
         onPress: onOpenSettings,
@@ -436,10 +446,10 @@ function NotificationsScreenInner() {
   // mount (cold-start + re-mount). SWR below replaces with fresh data.
   const [notifications, setNotifications] = useState(() => {
     const live = _readLive();
-    if (live) return live;
+    if (live) return filterSocialNotifications(live);
     try {
       const cached = getCachedSync(LIVE_KEY);
-      if (cached?.notifications) return cached.notifications;
+      if (cached?.notifications) return filterSocialNotifications(cached.notifications);
     } catch {}
     return [];
   });
@@ -470,7 +480,8 @@ function NotificationsScreenInner() {
 
   const _applyTab = useCallback((tabKey, rawItems) => {
     const tabDef = TABS.find(tt => tt.key === tabKey);
-    let items = rawItems || [];
+    // [2026-10-14 notif-no-email] e-mail nunca entra na central
+    let items = filterSocialNotifications(rawItems || []);
     if (tabDef?.types && tabDef.types.length >= 1) {
       items = items.filter(n => tabDef.types.includes(n.type));
     }
@@ -662,16 +673,16 @@ function NotificationsScreenInner() {
     // navegação é gateada.
     if (!canNavigateNow()) return;
     switch (notif.type) {
-      case 'email':
-        router.push({ pathname: '/read', params: { uid: data.uid, folder: data.folder || 'INBOX' } });
-        break;
       case 'chat':
       case 'mention':
         require('../services/openConversation').openConversation({ pathname: '/chat-conversation', params: { id: data.conversation_id } });
         break;
       case 'like':
       case 'comment':
-        router.push('/chat');
+      case 'feed_like':
+      case 'feed_comment':
+        if (data.post_id) router.push(`/feed/${data.post_id}`);
+        else router.push('/chat');
         break;
       case 'follow':
         router.push(`/u/${encodeURIComponent(notif.author_email)}`);
@@ -696,12 +707,12 @@ function NotificationsScreenInner() {
   // Build sectioned list with date-bucket headers
   const groupedData = useMemo(() => {
     if (notifications.length === 0) return [];
-    const buckets = { today: [], yesterday: [], thisWeek: [], older: [] };
+    const buckets = { today: [], thisWeek: [], older: [] };
     for (const n of notifications) {
       buckets[dateBucket(n.created_at || n.latest_at)].push(n);
     }
     const out = [];
-    for (const k of ['today', 'yesterday', 'thisWeek', 'older']) {
+    for (const k of ['today', 'thisWeek', 'older']) {
       if (buckets[k].length === 0) continue;
       out.push({
         __section: true,
@@ -723,11 +734,11 @@ function NotificationsScreenInner() {
     return c;
   }, [notifications]);
 
-  const renderItem = useCallback(({ item }) => {
+  const renderItem = useCallback(({ item, index }) => {
     if (item.__section) {
       return <SectionHeader label={item.label} colors={colors} />;
     }
-    return (
+    const row = (
       <NotifRow
         item={item}
         colors={colors}
@@ -737,6 +748,8 @@ function NotificationsScreenInner() {
         t={t}
       />
     );
+    // [2026-10-14] entrada suave só nas primeiras linhas (sem custo no scroll)
+    return index < 10 ? <FadeSlideIn delay={Math.min(index, 8) * 24}>{row}</FadeSlideIn> : row;
   }, [colors, isDark, handleTap, handleAction, t]);
 
   const keyExtractor = useCallback((item, idx) => String(item.id || item.latest_at || `n-${idx}`), []);
@@ -828,7 +841,7 @@ function NotificationsScreenInner() {
         }
         ListEmptyComponent={
           !loading ? (
-            <EmptyState colors={colors} isDark={isDark} t={t} tab={activeTab} onOpenSettings={() => router.push('/settings')} />
+            <EmptyState colors={colors} isDark={isDark} t={t} tab={activeTab} onOpenSettings={() => router.push('/notification-preferences')} />
           ) : null
         }
         contentContainerStyle={notifications.length === 0 ? styles.listEmpty : styles.listContent}
@@ -859,7 +872,7 @@ function NotificationsScreenInner() {
             },
           ]}
         >
-          <IconCheck size={16} color="#10b981" />
+          <IconCheck size={16} color="#34C759" />
           <Text style={styles.toastText}>{toastMsg}</Text>
         </Animated.View>
       ) : null}
@@ -917,35 +930,33 @@ const styles = StyleSheet.create({
 
   // Section header (date bucket)
   sectionHeaderWrap: {
-    paddingHorizontal: Spacing.md,
-    paddingTop: 18,
+    paddingHorizontal: 16,
+    paddingTop: 24,
     paddingBottom: 8,
   },
   sectionHeaderText: {
-    fontSize: 13,
-    fontWeight: '700',
-    letterSpacing: -0.1,
+    fontSize: 12,
+    fontWeight: '600',
+    letterSpacing: 0.8,
   },
 
   // Notification row
   row: {
     flexDirection: 'row', alignItems: 'center',
     paddingLeft: 4,
-    paddingRight: Spacing.md,
-    paddingVertical: 11,
+    paddingRight: 16,
+    paddingVertical: 12,
     gap: 12,
     ...Platform.select({ web: { cursor: 'pointer' }, default: {} }),
   },
-  unreadRail: {
-    width: 3,
-    alignSelf: 'stretch',
-    borderRadius: 1.5,
-    marginRight: 8,
-    marginVertical: 4,
+  unreadDotSlot: {
+    width: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginLeft: 4,
   },
-  unreadRailSpacer: {
-    width: 3,
-    marginRight: 8,
+  unreadDot: {
+    width: 6, height: 6, borderRadius: 3,
   },
   avatarWrap: {
     width: 44, height: 44, flexShrink: 0,
@@ -953,13 +964,14 @@ const styles = StyleSheet.create({
   typeCircle: {
     width: 44, height: 44, borderRadius: 22,
     alignItems: 'center', justifyContent: 'center',
+    borderWidth: StyleSheet.hairlineWidth,
   },
   rowContent: { flex: 1, minWidth: 0 },
-  rowTitle: { fontSize: FontSize.md, fontWeight: '500', lineHeight: 20 },
+  rowTitle: { fontSize: 15, fontWeight: '500', lineHeight: 20, letterSpacing: -0.2 },
   rowTimeInline: { fontSize: FontSize.xs, fontWeight: '400' },
-  rowBody:  { fontSize: FontSize.sm, marginTop: 2, opacity: 0.8 },
+  rowBody:  { fontSize: 14, marginTop: 2, lineHeight: 19 },
   thumb: {
-    width: 44, height: 44, borderRadius: 4,
+    width: 44, height: 44, borderRadius: 8,
     overflow: 'hidden',
     flexShrink: 0,
     marginLeft: 8,
@@ -992,7 +1004,7 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
 
-  separator: { height: StyleSheet.hairlineWidth, marginLeft: 70 },
+  separator: { height: StyleSheet.hairlineWidth, marginLeft: 72 },
 
   // List
   listContent: { paddingBottom: 40 },

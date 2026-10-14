@@ -18,17 +18,22 @@ import { USE_NATIVE_HEADER, nativeHeaderOptions } from '../components/nativeHead
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import { useCurrency } from '../context/CurrencyContext';
-import { formatMoneyActive } from '../services/currencyService';
+import { formatMoney, formatMoneyActive, getActiveCurrency } from '../services/currencyService';
 import * as api from '../services/api';
 import { WALLET_ENABLED } from '../constants/featureFlags';
 import { IconDiamond, IconGiftBox, IconArrowRight, IconRotateCcw, IconChevronRight, IconPlus } from '../components/Icons';
-import { Card, SectionHeader, TopBar, useSurface, Skeleton, ScreenEmptyState, Type, Space, Radius, Layout } from '../components/ui';
+import { Card, SectionHeader, TopBar, useSurface, Skeleton, ScreenEmptyState, PressableScale, FadeSlideIn, Type, Space, Radius, Layout } from '../components/ui';
 import { formatInt } from '../utils/dateFormat';
 import DiamondTopUpSheet from '../components/DiamondTopUpSheet';
 import { useWallet, refreshWallet, isMinorAccount } from '../services/diamonds';
 
 function tr(t, k, fb) { const v = t ? t(k) : ''; return v && v !== k ? v : fb; }
-function money(cents) { return formatMoneyActive(Number(cents) || 0); }
+// [2026-10-14 ganhos-BRL] Ganhos/saques são em REAIS (servidor: payout_millicents
+// em BRL; saque via Pix). Mostrar sempre R$ — a moeda de exibição (ex.: USD)
+// só aparece como referência "≈ US$ …" no card de ganhos, nunca no lugar do R$.
+function money(cents) { return formatMoney(Number(cents) || 0, 'BRL', 'pt-BR'); }
+function approx(cents) { return getActiveCurrency() !== 'BRL' && Number(cents) > 0 ? '≈ ' + formatMoneyActive(Number(cents) || 0) : ''; }
+const TAB = { fontVariant: ['tabular-nums'] };
 function handleOf(email) { const s = String(email || ''); return s.split('@')[0] || s; }
 
 const KIND = {
@@ -46,7 +51,7 @@ const KIND = {
   promote: ['wallet.kind.promote', 'Promoção'],
   cashout: ['wallet.kind.cashout', 'Saque'],
   cashout_reversal: ['wallet.kind.cashoutReversal', 'Saque devolvido'],
-  legacy_convert: ['wallet.kind.legacyConvert', 'Ajuste de saldo'],
+  legacy_convert: ['wallet.kind.earningsConversion', 'Conversão de ganhos'],
 };
 const SOURCE = { live_gift: 'creatorEarnings.source.live', live: 'creatorEarnings.source.live', feed_post: 'creatorEarnings.source.feed', post: 'creatorEarnings.source.feed', reel: 'creatorEarnings.source.reel', chat: 'gifts.sourceChat', chat_gift: 'gifts.sourceChat' };
 
@@ -54,6 +59,7 @@ function KindIcon({ kind, color }) {
   if (/gift|tip|react/.test(kind)) return <IconGiftBox size={18} color={color} />;
   if (kind === 'cashout') return <IconArrowRight size={18} color={color} />;
   if (/refund|reversal/.test(kind)) return <IconRotateCcw size={18} color={color} />;
+  if (kind === 'legacy_convert') return <IconRotateCcw size={18} color={color} />;
   return <IconDiamond size={18} />;
 }
 
@@ -64,13 +70,16 @@ function Row({ item, s, t, language, last }) {
   const isCashout = kind === 'cashout' || kind === 'cashout_reversal';
   // Linhas legadas de ganho (tip_recv/live_gift_recv antigos) gravavam centavos em `amount`.
   const legacyEarn = (kind === 'tip_recv' || kind === 'live_gift_recv') && item.diamonds == null;
-  const diamonds = item.diamonds != null ? Number(item.diamonds) : (legacyEarn || isCashout ? null : Number(item.amount) || 0);
+  // [2026-10-14] conversão do saldo antigo: só o valor em R$ (era "+0 ◆").
+  const isConvert = kind === 'legacy_convert';
+  const diamonds = isConvert ? null : (item.diamonds != null ? Number(item.diamonds) : (legacyEarn || isCashout ? null : Number(item.amount) || 0));
   const payout = item.payout_cents != null ? Number(item.payout_cents) : (legacyEarn ? Number(item.amount) || 0 : null);
   const when = (() => { const n = Number(item.created_at_ts) * 1000; if (!n) return ''; try { return new Date(n).toLocaleDateString(language || undefined, { day: '2-digit', month: 'short' }); } catch { return ''; } })();
   const src = SOURCE[String(item.ref_kind || '')];
   const subParts = [];
   if (item.counterparty) subParts.push(handleOf(item.counterparty));
   if (src) subParts.push(tr(t, src, ''));
+  if (isConvert) subParts.push(tr(t, 'wallet.earningsConversionSub', 'Saldo antigo convertido em reais'));
   if (when) subParts.push(when);
   const sign = credit ? '+' : '-';
   return (
@@ -84,12 +93,12 @@ function Row({ item, s, t, language, last }) {
       <View style={{ alignItems: 'flex-end', marginLeft: Space.sm }}>
         {diamonds != null ? (
           <View style={styles.amt}>
-            <Text style={[Type.callout, { color: s.text, fontWeight: '700' }]}>{`${sign}${formatInt(Math.abs(diamonds), language)}`}</Text>
+            <Text style={[Type.callout, TAB, { color: s.text, fontWeight: '700' }]}>{`${sign}${formatInt(Math.abs(diamonds), language)}`}</Text>
             <IconDiamond size={12} />
           </View>
         ) : null}
-        {payout != null && (kind.endsWith('_recv') || isCashout || kind === 'legacy_convert') ? (
-          <Text style={[Type.caption, { color: s.textSecondary, fontWeight: '600' }]}>{(isCashout && !credit ? '-' : '+') + money(payout)}</Text>
+        {payout != null && (kind.endsWith('_recv') || isCashout || isConvert) ? (
+          <Text style={[isConvert ? Type.callout : Type.caption, TAB, { color: isConvert ? s.text : s.textSecondary, fontWeight: isConvert ? '700' : '600' }]}>{(isCashout && !credit ? '-' : '+') + money(payout)}</Text>
         ) : null}
       </View>
     </View>
@@ -136,11 +145,12 @@ function WalletScreen() {
 
   const body = (
     <>
-      <Card elevated padding={Space.xl}>
-        <Text style={[Type.footnote, { color: s.textSecondary, fontWeight: '600' }]}>{tr(t, 'wallet.diamondBalance', 'Saldo de diamantes')}</Text>
+      <FadeSlideIn>
+      <Card elevated bordered padding={Space.xl}>
+        <Text style={[Type.sectionCaps, styles.caps, { color: s.textSecondary }]}>{tr(t, 'wallet.diamondBalance', 'Saldo de diamantes')}</Text>
         <View style={styles.balRow}>
           <IconDiamond size={30} />
-          <Text style={[Type.largeTitle, { color: negative ? s.danger : s.text }]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.6}>
+          <Text style={[styles.bigNum, TAB, { color: negative ? s.danger : s.text }]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.6}>
             {wallet.diamonds == null ? '—' : formatInt(wallet.diamonds, language)}
           </Text>
         </View>
@@ -155,34 +165,41 @@ function WalletScreen() {
           <Text style={[Type.footnote, { color: s.textSecondary, marginTop: Space.xs }]}>{tr(t, 'diamondShop.purchasesOff', 'Compras de diamantes indisponíveis no momento.')}</Text>
         ) : (
           <View style={styles.actions}>
-            <TouchableOpacity onPress={() => setTopupOpen(true)} style={[styles.primary, { backgroundColor: s.ink }]} accessibilityRole="button">
-              <IconPlus size={18} color={isDark ? '#000' : '#fff'} />
-              <Text style={[styles.primaryText, { color: isDark ? '#000' : '#fff' }]}>{tr(t, 'gifts.topUp', 'Recarregar')}</Text>
-            </TouchableOpacity>
-            <TouchableOpacity onPress={() => router.push('/diamond-shop')} style={[styles.secondary, { borderColor: s.separator }]} accessibilityRole="button">
+            <PressableScale haptic="medium" onPress={() => setTopupOpen(true)} style={[styles.primary, { backgroundColor: s.ink }]} accessibilityRole="button">
+              <IconPlus size={18} color={s.onInk} />
+              <Text style={[styles.primaryText, { color: s.onInk }]}>{tr(t, 'gifts.topUp', 'Recarregar')}</Text>
+            </PressableScale>
+            <PressableScale onPress={() => router.push('/diamond-shop')} style={[styles.secondary, { borderColor: s.border || s.separator }]} accessibilityRole="button">
               <Text style={[styles.secondaryText, { color: s.text }]}>{tr(t, 'diamondShop.title', 'Loja de Diamantes')}</Text>
-            </TouchableOpacity>
+            </PressableScale>
           </View>
         )}
       </Card>
+      </FadeSlideIn>
 
-      <Card padding={0}>
-        <TouchableOpacity onPress={() => router.push('/creator-earnings')} style={styles.earnRow} accessibilityRole="button">
+      <FadeSlideIn delay={60}>
+      <Card bordered padding={0}>
+        <PressableScale onPress={() => router.push('/creator-earnings')} style={styles.earnRow} accessibilityRole="button"
+          accessibilityLabel={`${tr(t, 'creatorEarnings.title', 'Meus Ganhos')}: ${money(wallet.availableCents)}`}>
           <View style={{ flex: 1, minWidth: 0 }}>
-            <Text style={[Type.footnote, { color: s.textSecondary, fontWeight: '600' }]}>{tr(t, 'creatorEarnings.title', 'Meus Ganhos')}</Text>
-            <Text style={[Type.title3, { color: s.text, marginTop: 2 }]}>{money(wallet.availableCents)}</Text>
-            <Text style={[Type.caption, { color: s.textSecondary }]} numberOfLines={1}>
+            <Text style={[Type.sectionCaps, styles.caps, { color: s.textSecondary }]}>{tr(t, 'creatorEarnings.title', 'Meus Ganhos')}</Text>
+            <View style={styles.earnAmtRow}>
+              <Text style={[styles.midNum, TAB, { color: s.text }]} numberOfLines={1}>{money(wallet.availableCents)}</Text>
+              {approx(wallet.availableCents) ? <Text style={[Type.footnote, TAB, { color: s.textSecondary }]} numberOfLines={1}>{approx(wallet.availableCents)}</Text> : null}
+            </View>
+            <Text style={[Type.footnote, { color: s.textSecondary }]} numberOfLines={1}>
               {wallet.onHoldCents > 0
                 ? tr(t, 'earn.onHoldShort', '{amount} em liberação').replace('{amount}', money(wallet.onHoldCents))
                 : tr(t, 'creatorEarnings.availableLabel', 'Disponível para saque')}
             </Text>
           </View>
-          <IconChevronRight size={18} color={s.textTertiary} />
-        </TouchableOpacity>
+          <View style={[styles.chevWrap, { backgroundColor: s.fill }]}><IconChevronRight size={16} color={s.textSecondary} /></View>
+        </PressableScale>
       </Card>
+      </FadeSlideIn>
 
       <SectionHeader variant="grouped" inset={Space.xs} style={{ paddingTop: Space.sm }} title={tr(t, 'wallet.history', 'Histórico')} />
-      <Card padding={0}>
+      <Card bordered padding={0}>
         {items.length ? items.map((it, i) => (
           <Row key={String(it.id ?? i)} item={it} s={s} t={t} language={language} last={i === items.length - 1} />
         )) : (
@@ -233,13 +250,18 @@ export default function WalletRoute() {
 
 const styles = StyleSheet.create({
   scrollBody: { padding: Layout.gutter, width: '100%', maxWidth: Layout.contentMaxWidth, alignSelf: 'center' },
-  balRow: { flexDirection: 'row', alignItems: 'center', gap: Space.sm, marginTop: Space.xs },
+  balRow: { flexDirection: 'row', alignItems: 'center', gap: Space.sm, marginTop: Space.sm },
+  caps: { letterSpacing: 0.8 },
+  bigNum: { fontSize: 40, lineHeight: 46, fontWeight: '700', letterSpacing: -1 },
+  midNum: { fontSize: 26, lineHeight: 32, fontWeight: '700', letterSpacing: -0.6 },
+  earnAmtRow: { flexDirection: 'row', alignItems: 'baseline', gap: Space.sm, marginTop: Space.xs, marginBottom: 2 },
+  chevWrap: { width: 28, height: 28, borderRadius: 14, alignItems: 'center', justifyContent: 'center', marginLeft: Space.sm },
   actions: { flexDirection: 'row', gap: Space.sm, marginTop: Space.lg },
   primary: { flex: 1, height: 48, borderRadius: 24, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6 },
-  primaryText: { fontSize: 15, fontWeight: '800' },
+  primaryText: { fontSize: 15, fontWeight: '700' },
   secondary: { flex: 1, height: 48, borderRadius: 24, alignItems: 'center', justifyContent: 'center', borderWidth: 1 },
   secondaryText: { fontSize: 15, fontWeight: '700' },
-  earnRow: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: Space.lg, paddingVertical: Space.md, minHeight: 64 },
+  earnRow: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: Space.xl, paddingVertical: Space.lg, minHeight: 64 },
   row: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: Space.lg, paddingVertical: Space.md },
   rowIcon: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
   amt: { flexDirection: 'row', alignItems: 'center', gap: 4 },

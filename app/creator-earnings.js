@@ -29,7 +29,7 @@ import { useLanguage } from '../context/LanguageContext';
 // [2026-05-22 monetization-pause] hidden by MONETIZATION_ENABLED flag
 import { MONETIZATION_ENABLED, WALLET_ENABLED } from '../constants/featureFlags';
 import * as api from '../services/api';
-import { formatMoneyActive } from '../services/currencyService';
+import { formatMoney } from '../services/currencyService';
 import { useCurrency } from '../context/CurrencyContext';
 import AvatarCircle from '../components/AvatarCircle';
 import { IconReceipt, IconDiamond } from '../components/Icons';
@@ -43,7 +43,8 @@ import { formatInt } from '../utils/dateFormat';
 const MIN_CASHOUT_CENTS = 5000;
 
 function tr(t, k, fb) { const v = t ? t(k) : ''; return v && v !== k ? v : fb; }
-function money(cents) { return formatMoneyActive(Number(cents) || 0); }
+// [2026-10-14 ganhos-BRL] ganhos são em REAIS → sempre R$ (nunca convertido p/ USD).
+function money(cents) { return formatMoney(Number(cents) || 0, 'BRL', 'pt-BR'); }
 function handleOf(email) { const s = String(email || ''); return s.split('@')[0] || s; }
 
 // Presente (caixa) em traço fino P&B.
@@ -337,7 +338,7 @@ function CreatorEarnings() {
       <Text style={[Type.caption, { color: s.textTertiary, textAlign: 'center', marginTop: Space.sm, paddingHorizontal: Space.lg }]}>
         {perDiamond > 0
           ? tr(t, 'earn.tosPerDiamond', 'Cada diamante recebido vale {value} para você. Presentes ficam {days} dias em liberação (prazo de reembolso das lojas) antes de entrar no saldo de saque. Saques via Pix passam por análise manual.')
-            .replace('{value}', formatMoneyActive(perDiamond)).replace('{days}', String(data.hold_days || 7))
+            .replace('{value}', formatMoney(perDiamond, 'BRL', 'pt-BR')).replace('{days}', String(data.hold_days || 7))
           : tr(t, 'creatorEarnings.tos', 'Você recebe 70% do valor de cada presente. Os 30% restantes cobrem taxas de plataforma e processamento de IAP.')}
       </Text>
     </>

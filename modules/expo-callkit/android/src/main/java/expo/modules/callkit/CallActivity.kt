@@ -988,6 +988,8 @@ class CallActivity : ComponentActivity() {
             // remember the choice; the gated publish on answer uses isCameraOn.
             if (callerRingGateClosed() && state.isVideo) {
               state.isCameraOn = desired
+              // [2026-10-14 self-view] Ringing preview follows the toggle.
+              if (desired) room?.let { startCallerRingPreview(it) } else stopCallerRingPreview()
               return@onToggleCam
             }
             // [video-upgrade 2026-05-25] If this is still an audio-only call and
@@ -1499,6 +1501,7 @@ class CallActivity : ComponentActivity() {
 
   @OptIn(DelicateCoroutinesApi::class)
   override fun onDestroy() {
+    try { stopCallerRingPreview() } catch (_: Throwable) {} // [2026-10-14 self-view]
     // [2026-10-11 ongoing-call] Forget the live screen + refresh the JS bar.
     if (liveRef?.get() === this) { liveRef = null; uiVisible = false }
     try { ExpoCallKitModule.emitCallUiChanged() } catch (_: Throwable) {}
@@ -2048,8 +2051,16 @@ class CallActivity : ComponentActivity() {
     // answer. openCallerMediaGate() re-enters here on accept / first media.
     if (callerRingGateClosed()) {
       Log.i(TAG, "[call-states] caller mic/camera publish DEFERRED until answer callId=$callId")
+      // [2026-10-14 self-view] WhatsApp shows your own camera while a video
+      // call rings. Capture LOCALLY only (nothing published → the callee's
+      // subscribe-only preconnect still receives nothing before Accept).
+      startCallerRingPreview(r)
       return
     }
+    // [2026-10-14 self-view] Answered → release the preview capturer BEFORE
+    // setCameraEnabled builds the published camera (one camera session at a
+    // time — LK docs on createVideoTrack + setCameraEnabled).
+    stopCallerRingPreview()
     if (isOutgoing) callerMediaPublished = true
     // [#1191 audio fix, 2026-05-19] Only publish mic if RECORD_AUDIO is
     // actually granted. Calling setMicrophoneEnabled(true) without the
@@ -3439,6 +3450,7 @@ class CallActivity : ComponentActivity() {
       Log.d(TAG, "finishCall reason=$reason — already finishing, no-op")
       return
     }
+    try { stopCallerRingPreview() } catch (_: Throwable) {} // [2026-10-14 self-view] camera off now
     finishing = true
     ExpoCallKitModule.emitCallUiChanged() // [2026-10-11 ongoing-call] drop the in-app bar
 
@@ -3587,6 +3599,38 @@ class CallActivity : ComponentActivity() {
   // setVideoProcessor replaces the previous processor. Calling it twice (event
   // path + poll path) is harmless and gives us belt-and-suspenders coverage.
 
+  // ────────────── [2026-10-14 self-view] Caller preview while ringing
+  private var callerPreviewTrack: LocalVideoTrack? = null
+
+  private fun startCallerRingPreview(r: Room) {
+    if (!hasVideo || !state.isCameraOn || callerPreviewTrack != null || p2p != null || finishing) return
+    val camGranted = ContextCompat.checkSelfPermission(
+      this@CallActivity, Manifest.permission.CAMERA
+    ) == PackageManager.PERMISSION_GRANTED
+    if (!camGranted) return
+    try {
+      val t = r.localParticipant.createVideoTrack(name = "camera_preview")
+      t.startCapture()
+      callerPreviewTrack = t
+      localRenderer?.let { lv -> t.addRenderer(lv) }
+      state.hasLocalVideo = true
+      CallDiag.log("caller_cam_preview_started", callId, "", applicationContext)
+    } catch (t: Throwable) {
+      Log.w(TAG, "[self-view] ring preview failed: ${t.message}")
+      CallDiag.log("caller_cam_preview_failed", callId, "err=${t.message?.take(100)}", applicationContext)
+    }
+  }
+
+  private fun stopCallerRingPreview() {
+    val t = callerPreviewTrack ?: return
+    callerPreviewTrack = null
+    try { localRenderer?.let { lv -> t.removeRenderer(lv) } } catch (_: Throwable) {}
+    try { t.stopCapture() } catch (_: Throwable) {}
+    try { t.dispose() } catch (_: Throwable) {}
+    try { localRenderer?.clearImage() } catch (_: Throwable) {}
+    if (room?.localParticipant?.getTrackPublication(Track.Source.CAMERA) == null) state.hasLocalVideo = false
+  }
+
   private fun bindLocalCameraIfReady(r: Room) {
     try {
       val pub = r.localParticipant.getTrackPublication(Track.Source.CAMERA)
@@ -3724,7 +3768,8 @@ class CallActivity : ComponentActivity() {
     lifecycleScope.launch {
       try {
         val pub = r.localParticipant.getTrackPublication(Track.Source.CAMERA)
-        val track = pub?.track as? LocalVideoTrack
+        // [2026-10-14 self-view] Ringing: flip the local preview capturer.
+        val track = (pub?.track as? LocalVideoTrack) ?: callerPreviewTrack
         if (track != null) {
           // [2026-10-08 call-video-fix] Flip by EXPLICIT position. The no-arg
           // switchCamera() cycles `enumerator.deviceNames` starting from

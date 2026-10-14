@@ -1,4 +1,18 @@
 export default {
+  // [2026-10-14 calendário premium]
+  "calendar.starts": "Kezdés",
+  "calendar.ends": "Befejezés",
+  "calendar.moreOptions": "További lehetőségek",
+  "calendar.longPressToAdd": "Tartsa lenyomva esemény létrehozásához",
+  "calendar.timeZone": "Időzóna",
+  // [2026-10-14 notif/carteira/404]
+  "wallet.kind.earningsConversion": "Bevétel átváltása",
+  "wallet.earningsConversionSub": "Régi egyenleg reálra (BRL) átváltva",
+  "notifications.emptyFollowingDesc": "Az általad követettek élő adásai és csevegései itt jelennek meg.",
+  "notFound.title": "Az oldal nem található",
+  "notFound.subtitle": "Ez a link már nem létezik, vagy elgépelték.",
+  "notFound.home": "Vissza a kezdőlapra",
+  "notFound.back": "Vissza",
   // [2026-10-13 diamantes-religados]
   "gifts.title": "Gifts",
   "gifts.titleTo": "Gift for {name}",
@@ -8195,4 +8209,9 @@ export default {
   "chatConv.wallpaperPhotoFailed": "Ez a fotó nem használható. Ellenőrizd a kapcsolatot, és próbáld újra.",
   "chatConv.wallpaperApplied": "Háttérkép beállítva",
   "chatConv.wallpaperAiSlow": "Ez akár 1 percig is tarthat",
+  'pushBanner.offTitle': 'Notifications are off',
+  'pushBanner.staleTitle': 'Notifications may not arrive',
+  'pushBanner.sub': 'Turn them on to get messages and calls instantly.',
+  'pushBanner.ctaSettings': 'Settings',
+  'pushBanner.ctaRetry': 'Turn on',
 };

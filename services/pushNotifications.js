@@ -606,7 +606,7 @@ async function loadModules() {
         // explicitly asked "me lembra amanhã...") must ALWAYS surface: not
         // gated by the push master switch, not suppressed when the same
         // conversation is open, not hidden by the foreground gate.
-        if (data?.type === 'chat_reminder' || data?.type === 'task_reminder') { // [2026-10-13] lembrete local de tarefa idem
+        if (data?.type === 'chat_reminder' || data?.type === 'task_reminder' || data?.type === 'note_reminder') { // [2026-10-13] lembrete local de tarefa idem · [notas-lembrete 2026-10-14] lembrete de nota idem
           return { shouldShowAlert: true, shouldShowBanner: true, shouldShowList: true, shouldPlaySound: true, shouldSetBadge: false };
         }
         if (_pushMasterEnabled === false) {
@@ -2469,6 +2469,14 @@ export async function setupNotificationListeners() {
       }
     } catch {}
 
+    // [notas-lembrete 2026-10-14] Lembrete de nota: Adiar 10 min / Adiar 1 h / Concluir
+    // (categoria 'note_reminder', services/noteReminders.js). Toque no corpo cai
+    // na navegação abaixo e abre a nota.
+    if (data?.type === 'note_reminder' && typeof actionId === 'string' && actionId.indexOf('NOTE_') === 0) {
+      try { require('./noteReminders').handleNoteReminderAction(actionId, data, response).catch(() => {}); } catch {}
+      return;
+    }
+
     // Handle notification action buttons (new + legacy identifiers)
 
     // EMAIL: Reply (opens app to compose)
@@ -2836,6 +2844,11 @@ function _navigateForNotification(data) {
     }
     if (data.type === 'meeting_reminder' && data.room_id) {
       router.push(`/meeting-detail?room_id=${data.room_id}`);
+      return;
+    }
+    // [notas-lembrete 2026-10-14] lembrete de nota (push do servidor ou local offline) → abre a nota
+    if (data.type === 'note_reminder' && data.note_id) {
+      router.push(`/notes?open=${encodeURIComponent(String(data.note_id))}`);
       return;
     }
     // 'chat_reminder' = local reminder scheduled from the chat smart action

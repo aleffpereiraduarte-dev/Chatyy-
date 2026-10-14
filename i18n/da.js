@@ -1,4 +1,18 @@
 export default {
+  // [2026-10-14 calendário premium]
+  "calendar.starts": "Starter",
+  "calendar.ends": "Slutter",
+  "calendar.moreOptions": "Flere muligheder",
+  "calendar.longPressToAdd": "Tryk og hold for at oprette en begivenhed",
+  "calendar.timeZone": "Tidszone",
+  // [2026-10-14 notif/carteira/404]
+  "wallet.kind.earningsConversion": "Omregning af indtjening",
+  "wallet.earningsConversionSub": "Gammel saldo omregnet til real (BRL)",
+  "notifications.emptyFollowingDesc": "Livestreams og chats fra folk, du følger, vises her.",
+  "notFound.title": "Siden blev ikke fundet",
+  "notFound.subtitle": "Linket findes ikke længere eller er skrevet forkert.",
+  "notFound.home": "Til start",
+  "notFound.back": "Tilbage",
   // [2026-10-13 diamantes-religados]
   "gifts.title": "Gifts",
   "gifts.titleTo": "Gift for {name}",
@@ -8973,4 +8987,9 @@ export default {
   "chatConv.wallpaperPhotoFailed": "Kunne ikke bruge dette foto. Tjek din forbindelse, og prøv igen.",
   "chatConv.wallpaperApplied": "Baggrund anvendt",
   "chatConv.wallpaperAiSlow": "Det kan tage op til 1 minut",
+  'pushBanner.offTitle': 'Notifications are off',
+  'pushBanner.staleTitle': 'Notifications may not arrive',
+  'pushBanner.sub': 'Turn them on to get messages and calls instantly.',
+  'pushBanner.ctaSettings': 'Settings',
+  'pushBanner.ctaRetry': 'Turn on',
 };

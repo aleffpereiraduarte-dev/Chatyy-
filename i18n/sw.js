@@ -1,4 +1,18 @@
 export default {
+  // [2026-10-14 calendário premium]
+  "calendar.starts": "Inaanza",
+  "calendar.ends": "Inaisha",
+  "calendar.moreOptions": "Chaguo zaidi",
+  "calendar.longPressToAdd": "Gusa na ushikilie ili kuunda tukio",
+  "calendar.timeZone": "Saa za eneo",
+  // [2026-10-14 notif/carteira/404]
+  "wallet.kind.earningsConversion": "Ubadilishaji wa mapato",
+  "wallet.earningsConversionSub": "Salio la zamani limebadilishwa kuwa reali (BRL)",
+  "notifications.emptyFollowingDesc": "Matangazo mubashara na gumzo za unaowafuata huonekana hapa.",
+  "notFound.title": "Ukurasa haukupatikana",
+  "notFound.subtitle": "Kiungo hiki hakipo tena au kiliandikwa vibaya.",
+  "notFound.home": "Rudi mwanzo",
+  "notFound.back": "Rudi",
   // [2026-10-13 diamantes-religados]
   "gifts.title": "Gifts",
   "gifts.titleTo": "Gift for {name}",
@@ -8195,4 +8209,9 @@ export default {
   "chatConv.wallpaperPhotoFailed": "Imeshindwa kutumia picha hii. Angalia muunganisho wako na ujaribu tena.",
   "chatConv.wallpaperApplied": "Mandhari imewekwa",
   "chatConv.wallpaperAiSlow": "Hii inaweza kuchukua hadi dakika 1",
+  'pushBanner.offTitle': 'Notifications are off',
+  'pushBanner.staleTitle': 'Notifications may not arrive',
+  'pushBanner.sub': 'Turn them on to get messages and calls instantly.',
+  'pushBanner.ctaSettings': 'Settings',
+  'pushBanner.ctaRetry': 'Turn on',
 };

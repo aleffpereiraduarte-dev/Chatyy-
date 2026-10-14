@@ -18,6 +18,8 @@ import { getOriginBase, storageUsage } from '../services/api'; // [2026-10-10] l
 import { startStripeCheckout, openStripePortal, isStripeCardAvailable, isStripeStorageCheckoutAvailable } from '../services/stripeCheckout';
 import { IconX, IconCloud, IconCheck, IconCheckCircle, IconUsers, IconImage, IconShield, IconZap } from './Icons';
 import { useSafeAreaInsets, initialWindowMetrics } from 'react-native-safe-area-context';
+import { useSurface, PressableScale, FadeSlideIn } from './ui';
+import { haptic } from '../constants/theme';
 
 function formatBrl(v) {
   const n = Number(v) || 0;
@@ -26,9 +28,10 @@ function formatBrl(v) {
 
 const RECOMMENDED_TIER = '1tb';
 const FREE_GB_FALLBACK = 20;
+// Cor só p/ ESTADO (espaço quase cheio / cheio).
 const AMBER = '#f59e0b';
 const RED = '#ef4444';
-const GREEN = '#16a34a';
+const TAB = { fontVariant: ['tabular-nums'] };
 
 function gbLabel(gb) {
   return gb >= 1024 ? `${gb / 1024} TB` : `${gb} GB`;
@@ -45,6 +48,11 @@ function fmtBytes(b) {
 // apresentar o formSheet por cima faria o react-native-screens fechar o Modal.
 export default function StorageShopSheet({ visible, onClose, currentTier = 'free', usedBytes, limitBytes, native = true }) {
   const { colors, isDark } = useTheme();
+  const s = useSurface();
+  // [2026-10-14 dark-contrast] muted NÃO existe no tema → subtítulos,
+  // "Mensal", "5%", "R$ … / ano" e o heroSub caíam no preto padrão (invisíveis
+  // no escuro — o "vão" sob o título era o heroSub preto sobre preto).
+  const muted = s.textSecondary;
   const { t } = useLanguage();
   const { height: winH, width: winW } = useWindowDimensions();
   const insets = useSafeAreaInsets();
@@ -70,7 +78,7 @@ export default function StorageShopSheet({ visible, onClose, currentTier = 'free
   const hasUsage = Number.isFinite(used);
   const pct = hasUsage ? Math.min(100, Math.max(0, (used / limit) * 100)) : 0;
   const nearFull = pct >= 80;
-  const barColor = pct >= 95 ? RED : pct >= 80 ? AMBER : colors.text;
+  const barColor = pct >= 95 ? RED : pct >= 80 ? AMBER : s.text;
 
   const onBuy = useCallback(async (tier) => {
     if (pendingTier) return;
@@ -160,9 +168,10 @@ export default function StorageShopSheet({ visible, onClose, currentTier = 'free
   // [2026-10-12] Repaginado P&B premium: destaque = cor do texto; sobre ele, cor do fundo.
   const tint = colors.text;
   const onTint = colors.background;
-  const line = colors.border || (isDark ? '#2c2c2e' : '#e5e5ea');
-  const cardBg = colors.cardBackground || colors.surface || (isDark ? '#0b0b0b' : '#fff');
-  const soft = isDark ? '#1c1c1e' : '#f2f2f7';
+  const line = s.separator;
+  const cardBg = s.surface;
+  const soft = s.surfaceMuted;
+  const segActive = isDark ? '#3A3A3C' : '#FFFFFF';
   useEffect(() => { if (!annualAvailable && cycle === 'annual') setCycle('monthly'); }, [annualAvailable, cycle]);
   useEffect(() => {
     const cur = tiers.find((x) => x.id === selectedId);
@@ -199,26 +208,29 @@ export default function StorageShopSheet({ visible, onClose, currentTier = 'free
                 {t('storage.shopTitle') || 'Mais armazenamento'}
               </Text>
             </View>
-            <TouchableOpacity onPress={onClose} hitSlop={12}>
-              <IconX size={22} color={colors.muted} />
+            <TouchableOpacity onPress={onClose} hitSlop={12} accessibilityRole="button" accessibilityLabel={t('common.close') || 'Fechar'}
+              style={[styles.closeBtn, { backgroundColor: soft }]}>
+              <IconX size={18} color={s.text} />
             </TouchableOpacity>
           </View>
 
           <ScrollView
             style={{ flex: 1 }}
-            contentContainerStyle={{ paddingTop: 16, paddingBottom: 16 }}
+            // [2026-10-14] folga no fim: o último card (Recomendado) sobe inteiro acima do botão fixo
+            contentContainerStyle={{ paddingTop: 16, paddingBottom: 32 }}
             showsVerticalScrollIndicator={false}
           >
             {/* Barra de uso */}
             {hasUsage && (
-              <View style={[styles.usageCard, { backgroundColor: cardBg, borderColor: nearFull ? barColor : (colors.border || '#e5e7eb') }]}>
+              <FadeSlideIn style={{ flex: 0 }}>
+              <View style={[styles.usageCard, { backgroundColor: cardBg, borderColor: nearFull ? barColor : line }]}>
                 <View style={styles.usageRow}>
-                  <Text style={[styles.usageTitle, { color: colors.text }]}>
+                  <Text style={[styles.usageTitle, TAB, { color: s.text }]}>
                     {(t('storage.usageOf') || '{used} de {limit} usados').replace('{used}', fmtBytes(used)).replace('{limit}', fmtBytes(limit))}
                   </Text>
-                  <Text style={[styles.usagePct, { color: nearFull ? barColor : colors.muted }]}>{Math.round(pct)}%</Text>
+                  <Text style={[styles.usagePct, TAB, { color: nearFull ? barColor : s.text }]}>{Math.round(pct)}%</Text>
                 </View>
-                <View style={[styles.usageTrack, { backgroundColor: soft }]}>
+                <View style={[styles.usageTrack, { backgroundColor: s.fill }]}>
                   <View style={[styles.usageFill, { width: `${Math.max(pct, 1.5)}%`, backgroundColor: barColor }]} />
                 </View>
                 {nearFull && (
@@ -229,13 +241,14 @@ export default function StorageShopSheet({ visible, onClose, currentTier = 'free
                   </Text>
                 )}
               </View>
+              </FadeSlideIn>
             )}
 
             {/* Propaganda */}
             <Text style={[styles.hero, { color: colors.text }]}>
               {t('storage.heroTitle') || 'Nunca mais fique sem espaço'}
             </Text>
-            <Text style={[styles.heroSub, { color: colors.muted }]}>
+            <Text style={[styles.heroSub, { color: muted }]}>
               {t('storage.heroSub') || 'Guarde tudo com segurança na nuvem do Chatyy, do chat ao e-mail.'}
             </Text>
             <View style={styles.perks}>
@@ -256,11 +269,13 @@ export default function StorageShopSheet({ visible, onClose, currentTier = 'free
                 return (
                   <TouchableOpacity
                     key={c}
-                    onPress={() => setCycle(c)}
-                    style={[styles.toggleBtn, active && { backgroundColor: colors.background, shadowColor: '#000', shadowOpacity: isDark ? 0 : 0.08, shadowRadius: 4, shadowOffset: { width: 0, height: 1 }, elevation: 1 }]}
+                    onPress={() => { if (!active) { try { haptic.select(); } catch {} } setCycle(c); }}
+                    style={[styles.toggleBtn, active && { backgroundColor: segActive, shadowColor: '#000', shadowOpacity: isDark ? 0 : 0.08, shadowRadius: 4, shadowOffset: { width: 0, height: 1 }, elevation: 1 }]}
                     activeOpacity={0.85}
+                    accessibilityRole="tab"
+                    accessibilityState={{ selected: active }}
                   >
-                    <Text style={[styles.toggleText, { color: active ? colors.text : colors.muted }]}>
+                    <Text style={[styles.toggleText, { color: active ? s.text : s.textSecondary }]}>
                       {c === 'monthly' ? (t('storage.cycle.monthly') || 'Mensal') : (t('storage.cycle.annual') || 'Anual')}
                     </Text>
                     {c === 'annual' && (
@@ -290,11 +305,14 @@ export default function StorageShopSheet({ visible, onClose, currentTier = 'free
               const unavailable = !isCurrent && !isTierAvailable(tier, cycle);
 
               return (
-                <TouchableOpacity
+                <PressableScale
                   key={tier.id}
-                  onPress={() => setSelectedId(tier.id)}
-                  activeOpacity={0.9}
+                  haptic="select"
+                  scaleTo={0.985}
                   disabled={!!pendingTier || unavailable}
+                  onPress={() => setSelectedId(tier.id)}
+                  accessibilityRole="radio"
+                  accessibilityState={{ selected: isSel, disabled: !!pendingTier || unavailable }}
                   style={[
                     styles.tierCard,
                     { borderColor: isSel ? tint : accent, backgroundColor: cardBg,
@@ -306,7 +324,7 @@ export default function StorageShopSheet({ visible, onClose, currentTier = 'free
                       <Text style={[styles.badgeText, { color: onTint }]}>{t('storage.recommended') || 'Recomendado'}</Text>
                     </View>
                   )}
-                  <View style={[styles.radio, { borderColor: isSel ? tint : (colors.muted || '#9ca3af'), backgroundColor: isSel ? tint : 'transparent' }]}>
+                  <View style={[styles.radio, { borderColor: isSel ? tint : (s.textTertiary), backgroundColor: isSel ? tint : 'transparent' }]}>
                     {isSel && <IconCheck size={12} color={onTint} />}
                   </View>
                   <View style={{ flex: 1 }}>
@@ -314,7 +332,7 @@ export default function StorageShopSheet({ visible, onClose, currentTier = 'free
                       <Text style={[styles.tierName, { color: colors.text }]}>{gbLabel(tier.gb)}</Text>
                       {unavailable && (
                         <View style={[styles.badge, { backgroundColor: soft }]}>
-                          <Text style={[styles.badgeText, { color: colors.muted }]}>{t('common.comingSoon') || 'Em breve'}</Text>
+                          <Text style={[styles.badgeText, { color: muted }]}>{t('common.comingSoon') || 'Em breve'}</Text>
                         </View>
                       )}
                       {isCurrent && (
@@ -324,7 +342,7 @@ export default function StorageShopSheet({ visible, onClose, currentTier = 'free
                       )}
                     </View>
                     {saved > 0 && (
-                      <Text style={[styles.tierSave, { color: colors.muted }]}>
+                      <Text style={[styles.tierSave, { color: muted }]}>
                         {(t('storage.youSave') || 'Você economiza {amount} por ano').replace('{amount}', formatBrl(saved))}
                       </Text>
                     )}
@@ -334,23 +352,23 @@ export default function StorageShopSheet({ visible, onClose, currentTier = 'free
                       <ActivityIndicator color={colors.text} />
                     ) : (
                       <>
-                        <Text style={[styles.tierPrice, { color: colors.text }]}>
+                        <Text style={[styles.tierPrice, TAB, { color: colors.text }]}>
                           {cycle === 'annual' ? perMonthEq : price}
-                          <Text style={[styles.tierPer, { color: colors.muted }]}> /{t('storage.perMonth') || 'mês'}</Text>
+                          <Text style={[styles.tierPer, { color: muted }]}> /{t('storage.perMonth') || 'mês'}</Text>
                         </Text>
                         {cycle === 'annual' && (
-                          <Text style={[styles.tierPer, { color: colors.muted }]}>
+                          <Text style={[styles.tierPer, TAB, { color: muted }]}>
                             {`${price} / ${t('storage.perYear') || 'ano'}`}
                           </Text>
                         )}
                       </>
                     )}
                   </View>
-                </TouchableOpacity>
+                </PressableScale>
               );
             })}
 
-            <Text style={[styles.freeNote, { color: colors.muted }]}>
+            <Text style={[styles.freeNote, { color: muted }]}>
               {t('storage.freeNote') || 'Todo mundo começa com 20 GB grátis. Faça upgrade quando precisar.'}
             </Text>
           </ScrollView>
@@ -369,10 +387,11 @@ export default function StorageShopSheet({ visible, onClose, currentTier = 'free
                 </Text>
               </View>
             ) : (
-              <TouchableOpacity
+              <PressableScale
+                haptic="medium"
                 onPress={() => onBuy(selected)}
                 disabled={!!pendingTier}
-                activeOpacity={0.85}
+                accessibilityRole="button"
                 style={[styles.cta, { backgroundColor: tint, opacity: pendingTier ? 0.6 : 1 }]}
               >
                 {selectedPending ? <ActivityIndicator color={onTint} /> : (
@@ -382,7 +401,7 @@ export default function StorageShopSheet({ visible, onClose, currentTier = 'free
                       : (t('storage.ctaUpgrade') || 'Fazer upgrade para {size}').replace('{size}', gbLabel(selected.gb))}
                   </Text>
                 )}
-              </TouchableOpacity>
+              </PressableScale>
             )}
             {showCard && !selectedIsCurrent && !selectedPending && !downgradeBlocked && (
               <TouchableOpacity
@@ -404,11 +423,11 @@ export default function StorageShopSheet({ visible, onClose, currentTier = 'free
               </TouchableOpacity>
             )}
             {Platform.OS === 'ios' && (
-              <Text style={[styles.foot, { color: colors.muted }]}>
+              <Text style={[styles.foot, { color: muted }]}>
                 {t('storage.manageSite') || 'Gerencie sua assinatura pelo site chatyy.com.br'}
               </Text>
             )}
-            <Text style={[styles.foot, { color: colors.muted }]}>
+            <Text style={[styles.foot, { color: muted }]}>
               {t('storage.cancelAnytime') || 'Cancele quando quiser. Assinatura renova automaticamente.'}
             </Text>
           </View>
@@ -462,15 +481,16 @@ const styles = StyleSheet.create({
     paddingHorizontal: 18, paddingTop: 14, paddingBottom: 18,
   },
   head: { flexDirection: 'row', alignItems: 'center', paddingBottom: 12, borderBottomWidth: StyleSheet.hairlineWidth },
-  title: { fontSize: 17, fontWeight: '700' },
-  usageCard: { borderRadius: 14, borderWidth: 1.5, padding: 12, marginBottom: 14 },
+  title: { fontSize: 17, fontWeight: '700', letterSpacing: -0.2 },
+  closeBtn: { width: 32, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center' },
+  usageCard: { borderRadius: 14, borderWidth: StyleSheet.hairlineWidth, padding: 16, marginBottom: 20 },
   usageRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   usageTitle: { fontSize: 14, fontWeight: '700', flex: 1 },
   usagePct: { fontSize: 13, fontWeight: '700' },
-  usageTrack: { height: 10, borderRadius: 6, marginTop: 10, overflow: 'hidden' },
+  usageTrack: { height: 8, borderRadius: 4, marginTop: 12, overflow: 'hidden' },
   usageFill: { height: '100%', borderRadius: 6 },
   usageWarn: { fontSize: 13, fontWeight: '600', marginTop: 10, lineHeight: 18 },
-  hero: { fontSize: 26, fontWeight: '800', marginTop: 2, letterSpacing: -0.4, lineHeight: 31 },
+  hero: { fontSize: 28, fontWeight: '700', marginTop: 4, letterSpacing: -0.6, lineHeight: 33 },
   heroSub: { fontSize: 15, lineHeight: 21, marginTop: 6 },
   perks: { marginTop: 18, marginBottom: 22, gap: 12 },
   perkRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
@@ -483,7 +503,7 @@ const styles = StyleSheet.create({
   },
   toggleText: { fontSize: 14, fontWeight: '700' },
   togglePill: { paddingHorizontal: 7, paddingVertical: 2, borderRadius: 8 },
-  togglePillText: { color: '#fff', fontSize: 11, fontWeight: '700' },
+  togglePillText: { fontSize: 11, fontWeight: '700' },
   tierCard: {
     flexDirection: 'row', alignItems: 'center', gap: 12,
     paddingHorizontal: 14, paddingVertical: 16, marginBottom: 10, marginTop: 6,
@@ -492,12 +512,12 @@ const styles = StyleSheet.create({
   recRibbon: { position: 'absolute', top: -10, left: 14, paddingHorizontal: 10, paddingVertical: 3, borderRadius: 8 },
   radio: { width: 22, height: 22, borderRadius: 11, borderWidth: 2, alignItems: 'center', justifyContent: 'center' },
   tierTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
-  tierName: { fontSize: 20, fontWeight: '800' },
-  tierSave: { fontSize: 12.5, fontWeight: '500', marginTop: 3 },
-  tierPrice: { fontSize: 17, fontWeight: '800' },
+  tierName: { fontSize: 20, fontWeight: '700', letterSpacing: -0.3 },
+  tierSave: { fontSize: 13, fontWeight: '500', marginTop: 3 },
+  tierPrice: { fontSize: 17, fontWeight: '700' },
   tierPer: { fontSize: 12, fontWeight: '500', marginTop: 2 },
   badge: { paddingHorizontal: 8, paddingVertical: 2, borderRadius: 8 },
-  badgeText: { color: '#fff', fontSize: 11, fontWeight: '700' },
+  badgeText: { fontSize: 11, fontWeight: '700' },
   freeNote: { fontSize: 13, textAlign: 'center', marginTop: 10, marginBottom: 4, lineHeight: 18 },
   ctaWrap: { paddingTop: 12, borderTopWidth: StyleSheet.hairlineWidth },
   cta: {

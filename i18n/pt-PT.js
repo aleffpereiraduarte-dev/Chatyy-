@@ -1,4 +1,18 @@
 export default {
+  // [2026-10-14 calendário premium]
+  "calendar.starts": "Início",
+  "calendar.ends": "Fim",
+  "calendar.moreOptions": "Mais opções",
+  "calendar.longPressToAdd": "Toque sem soltar para criar um evento",
+  "calendar.timeZone": "Fuso horário",
+  // [2026-10-14 notif/carteira/404]
+  "wallet.kind.earningsConversion": "Conversão de ganhos",
+  "wallet.earningsConversionSub": "Saldo antigo convertido em reais",
+  "notifications.emptyFollowingDesc": "Diretos e conversas de quem segue aparecem aqui.",
+  "notFound.title": "Página não encontrada",
+  "notFound.subtitle": "Esta ligação já não existe ou foi escrita incorretamente.",
+  "notFound.home": "Voltar ao início",
+  "notFound.back": "Voltar",
   // [2026-10-13 diamantes-religados]
   "gifts.title": "Presentes",
   "gifts.titleTo": "Presente para {name}",
@@ -11043,4 +11057,9 @@ export default {
   "chatConv.wallpaperPhotoFailed": "Não foi possível usar esta fotografia. Verifique a ligação e tente novamente.",
   "chatConv.wallpaperApplied": "Imagem de fundo aplicada",
   "chatConv.wallpaperAiSlow": "Isto pode demorar até 1 minuto",
+  'pushBanner.offTitle': 'Notificações desativadas',
+  'pushBanner.staleTitle': 'As notificações podem não chegar',
+  'pushBanner.sub': 'Ative para receber mensagens e chamadas de imediato.',
+  'pushBanner.ctaSettings': 'Definições',
+  'pushBanner.ctaRetry': 'Ativar',
 };

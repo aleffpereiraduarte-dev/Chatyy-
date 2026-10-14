@@ -40,7 +40,7 @@ import ProfilePostViewer from './ProfilePostViewer';
 import ProfileEditSheet from './ProfileEditSheet';
 import ProfileSettingsSheet from './ProfileSettingsSheet';
 import FollowersSheet from './FollowersSheet';
-import EmptyStateCard from './EmptyStateCard';
+import ScreenEmptyState from './ScreenEmptyState'; // [2026-10-14] vazio P&B (era mosaico cinza)
 import SendDiamondSheet from './SendDiamondSheet';
 import { useWallet, refreshWallet } from '../services/diamonds';
 import { humanizeCount as _humanizeDiamonds } from './gifts/giftCatalog';
@@ -2400,8 +2400,8 @@ export default function Profile({
                 // Soft depth so the avatar reads as a lifted, premium focal
                 // point instead of sitting flat on the background. Purely
                 // cosmetic — kept subtle so it never looks like a heavy halo.
-                ...(Platform.OS === 'web'
-                  ? { boxShadow: isDark ? '0 4px 16px rgba(0,0,0,0.45)' : '0 4px 16px rgba(15,23,42,0.12)' }
+                ...(isDark ? {} : Platform.OS === 'web'
+                  ? { boxShadow: '0 4px 16px rgba(15,23,42,0.12)' }
                   : {
                       shadowColor: '#000',
                       shadowOpacity: isDark ? 0.35 : 0.14,
@@ -2410,7 +2410,8 @@ export default function Profile({
                       elevation: 4,
                     }),
               }}>
-                {!isLive && renderHalo()}
+                {/* [2026-10-14] escuro: sem anel (lia como moldura cinza estranha) */}
+                {!isLive && !isDark && renderHalo()}
                 <StoryRingAvatar
                   name={identity.name}
                   email={identity.email}
@@ -2894,16 +2895,17 @@ export default function Profile({
         const combined = combinedPosts;
         if (combined.length === 0) {
           return (
-            <EmptyStateCard
-              illustration={<EmptyGridIllustration isDark={isDark} />}
+            <ScreenEmptyState
+              compact
+              kind="photos"
+              style={{ paddingVertical: 40 }}
               title={actions.is_self
                 ? _ti('profile.empty.postsSelfTitle', 'Sem publicações ainda')
                 : _ti('profile.empty.postsOtherTitle', 'Nenhuma publicação')}
               subtitle={actions.is_self
                 ? _ti('profile.empty.postsSelfSub', 'Compartilhe sua primeira foto ou Reel.')
                 : _ti('profile.empty.postsOtherSub', 'Quando publicar, vai aparecer aqui.')}
-              ctaLabel={actions.is_self ? _ti('profile.empty.postsCta', 'Criar publicação') : undefined}
-              onPress={actions.is_self ? () => router?.push('/spotlight?createPost=1') : undefined}
+              cta={actions.is_self ? { label: _ti('profile.empty.postsCta', 'Criar publicação'), onPress: () => router?.push('/spotlight?createPost=1') } : undefined}
             />
           );
         }
@@ -2924,16 +2926,17 @@ export default function Profile({
       if (activeTab === 'reels') {
         if (!reels.length) {
           return (
-            <EmptyStateCard
-              illustration={<EmptyGridIllustration isDark={isDark} />}
+            <ScreenEmptyState
+              compact
+              kind="reels"
+              style={{ paddingVertical: 40 }}
               title={actions.is_self
                 ? _ti('profile.empty.reelsSelfTitle', 'Nenhum Reel ainda')
                 : _ti('profile.empty.reelsOtherTitle', 'Nenhum Reel')}
               subtitle={actions.is_self
                 ? _ti('profile.empty.reelsSelfSub', 'Grave seu primeiro vídeo curto.')
                 : _ti('profile.empty.reelsOtherSub', 'Os Reels aparecem aqui quando publicados.')}
-              ctaLabel={actions.is_self ? _ti('profile.empty.reelsCta', 'Gravar Reel') : undefined}
-              onPress={actions.is_self ? () => router?.push('/video-studio/camera') /* [2026-10-13 video-studio] */ : undefined}
+              cta={actions.is_self ? { label: _ti('profile.empty.reelsCta', 'Gravar Reel'), onPress: () => router?.push('/video-studio/camera') /* [2026-10-13 video-studio] */ } : undefined}
             />
           );
         }
@@ -2968,16 +2971,17 @@ export default function Profile({
         }
         if (lives.length === 0) {
           return (
-            <EmptyStateCard
-              illustration={<EmptyGridIllustration isDark={isDark} />}
+            <ScreenEmptyState
+              compact
+              kind="lives"
+              style={{ paddingVertical: 40 }}
               title={actions.is_self
                 ? _ti('profile.empty.livesSelfTitle', 'Sem lives salvos ainda')
                 : _ti('profile.empty.livesOtherTitle', 'Sem lives salvos')}
               subtitle={actions.is_self
                 ? _ti('profile.empty.livesSelfSub', 'Suas transmissões salvas vão aparecer aqui.')
                 : _ti('profile.empty.livesOtherSub', 'Quando esse usuário salvar uma live, vai aparecer aqui.')}
-              ctaLabel={actions.is_self ? _ti('profile.empty.livesCta', 'Iniciar live') : undefined}
-              onPress={actions.is_self ? () => router?.push('/live-broadcast') : undefined}
+              cta={actions.is_self ? { label: _ti('profile.empty.livesCta', 'Iniciar live'), onPress: () => router?.push('/live-broadcast') } : undefined}
             />
           );
         }

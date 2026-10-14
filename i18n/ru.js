@@ -1,4 +1,18 @@
 export default {
+  // [2026-10-14 calendário premium]
+  "calendar.starts": "Начало",
+  "calendar.ends": "Конец",
+  "calendar.moreOptions": "Ещё",
+  "calendar.longPressToAdd": "Нажмите и удерживайте, чтобы создать событие",
+  "calendar.timeZone": "Часовой пояс",
+  // [2026-10-14 notif/carteira/404]
+  "wallet.kind.earningsConversion": "Конвертация заработка",
+  "wallet.earningsConversionSub": "Старый баланс переведён в реалы (BRL)",
+  "notifications.emptyFollowingDesc": "Здесь появятся эфиры и чаты тех, на кого вы подписаны.",
+  "notFound.title": "Страница не найдена",
+  "notFound.subtitle": "Эта ссылка больше не существует или введена с ошибкой.",
+  "notFound.home": "На главную",
+  "notFound.back": "Назад",
   // [2026-10-13 diamantes-religados]
   "gifts.title": "Gifts",
   "gifts.titleTo": "Gift for {name}",
@@ -8973,4 +8987,9 @@ export default {
   "chatConv.wallpaperPhotoFailed": "Не удалось использовать это фото. Проверьте подключение и повторите попытку.",
   "chatConv.wallpaperApplied": "Обои установлены",
   "chatConv.wallpaperAiSlow": "Это может занять до 1 минуты",
+  'pushBanner.offTitle': 'Notifications are off',
+  'pushBanner.staleTitle': 'Notifications may not arrive',
+  'pushBanner.sub': 'Turn them on to get messages and calls instantly.',
+  'pushBanner.ctaSettings': 'Settings',
+  'pushBanner.ctaRetry': 'Turn on',
 };

@@ -3,7 +3,7 @@ import {
   View, FlatList, Text, TouchableOpacity, StyleSheet, TextInput,
   ActivityIndicator, RefreshControl, Alert, Modal, ScrollView,
   Switch, Platform, Linking, KeyboardAvoidingView, Animated, PanResponder, Easing,
-  Dimensions,
+  Dimensions, AppState, Keyboard,
 } from 'react-native';
 
 // Compact header heuristic: narrow phone screens (< 420px) can't fit
@@ -11,7 +11,7 @@ import {
 // User reported "header do calendário quebrando no celular". On narrow
 // screens we collapse the lower-priority controls (view toggle, timezones,
 // sync) — the FAB and "Hoje" stay. Toggle still works via swipe gesture.
-const _CAL_HEADER_COMPACT = Dimensions.get('window').width < 420;
+// (2026-10-14: chip de fuso saiu da barra; heurística _CAL_HEADER_COMPACT removida)
 // FlashList reverted to FlatList
 import { useRouter, Stack, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -33,7 +33,10 @@ import {
   IconCheck, IconX, IconEdit, IconTrash, IconMapPin, IconRepeat,
   IconChevronLeft, IconChevronRight, IconUsers, IconSearch, IconSparkles,
   IconUpload, IconDownload, IconSmartphone, IconRefresh, IconBell, IconVideo,
+  IconMoreHorizontal, IconGlobe,
 } from '../components/Icons';
+import { Sheet, ActionList } from '../components/ui'; // [2026-10-14] menu do calendário (fuso/sync/importar)
+import { DateTimePickerModal } from '../components/ScheduleModals'; // [2026-10-14] seletor de data/hora (era texto cru)
 import EmptyStateCard from '../components/EmptyStateCard';
 import PressableScale from '../components/PressableScale'; // [2026-10-08 apps-native]
 import { USE_NATIVE_HEADER, nativeHeaderOptions, HeaderIconButton } from '../components/nativeHeader'; // [2026-10-08 apps-native]
@@ -83,6 +86,23 @@ function getDaysInMonth(year, month) {
 
 function getFirstDayOfWeek(year, month) {
   return new Date(year, month, 1).getDay();
+}
+
+// [2026-10-14] Cor do evento legível nos dois temas: sem cor (ou a cor
+// padrão #111 sobre fundo preto / branca sobre fundo branco) → tinta do tema.
+function _luma(hex) {
+  const m = /^#?([0-9a-f]{6})$/i.exec(String(hex || '').trim());
+  if (!m) return null;
+  const n = parseInt(m[1], 16);
+  return (0.2126 * ((n >> 16) & 255) + 0.7152 * ((n >> 8) & 255) + 0.0722 * (n & 255)) / 255;
+}
+function eventInk(color, colors) {
+  const c = color || '';
+  const l = _luma(c);
+  if (l == null) return c || colors.text;
+  const bgL = _luma(colors.background) ?? 1;
+  if (Math.abs(l - bgL) < 0.22) return colors.text;
+  return c;
 }
 
 function isSameDay(d1, d2) {
@@ -425,62 +445,26 @@ function parseICSEvents(icsContent) {
 // (non-today) gets a purple outline + light tint. Other-month days mute.
 // ============================================================
 function DayCellInner({ isSelected, isToday, isOtherMonth, day, colors }) {
-  const scale = useRef(new Animated.Value(isSelected ? 1.06 : 1)).current;
-  // Subtle slow pulse on today's outer halo — gives the cell a "live" beat
-  // without distracting. Only animates when isToday is true; pauses otherwise.
-  const todayPulse = useRef(new Animated.Value(0)).current;
+  // [2026-10-14 calendário premium] Hoje = círculo cheio na tinta do tema
+  // (branco no escuro / preto no claro), sem halo pulsante. Selecionado =
+  // círculo neutro suave. Números tabulares (colunas não "dançam").
+  const scale = useRef(new Animated.Value(1)).current;
   useEffect(() => {
-    Animated.spring(scale, {
-      toValue: isSelected ? 1.06 : 1,
-      friction: 6, tension: 180, useNativeDriver: true,
-    }).start();
+    if (!isSelected) { scale.setValue(1); return; }
+    scale.setValue(0.86);
+    Animated.spring(scale, { toValue: 1, friction: 6, tension: 220, useNativeDriver: true }).start();
   }, [isSelected, scale]);
-  useEffect(() => {
-    if (!isToday) return undefined;
-    const loop = Animated.loop(
-      Animated.sequence([
-        Animated.timing(todayPulse, { toValue: 1, duration: 1400, useNativeDriver: true }),
-        Animated.timing(todayPulse, { toValue: 0, duration: 1400, useNativeDriver: true }),
-      ])
-    );
-    loop.start();
-    return () => loop.stop();
-  }, [isToday, todayPulse]);
-  const pulseScale = todayPulse.interpolate({ inputRange: [0, 1], outputRange: [1, 1.22] });
-  const pulseOpacity = todayPulse.interpolate({ inputRange: [0, 1], outputRange: [0.40, 0] });
-
-  // Today = filled purple circle + glow shadow; Selected (non-today) =
-  // outlined purple ring + tinted purple bg; default = transparent.
-  const todayFillStyle = isToday ? {
-    backgroundColor: colors.primary,
-    ...Platform.select({
-      ios: { shadowColor: colors.primary, shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.45, shadowRadius: 8 },
-      android: { elevation: 4 },
-      web: { boxShadow: `0 2px 10px ${colors.primary}55, 0 0 0 1px ${colors.primary}33` },
-    }),
-  } : null;
-  const selectedOutlineStyle = (isSelected && !isToday) ? {
-    backgroundColor: colors.primaryLight,
-    borderWidth: 2, borderColor: colors.primary,
-  } : null;
-
+  const fill = isToday
+    ? { backgroundColor: colors.text }
+    : isSelected ? { backgroundColor: colors.surfaceVariant || colors.surface } : null;
   return (
-    <Animated.View style={[styles.dayCellInner, { transform: [{ scale }] }, todayFillStyle, selectedOutlineStyle]}>
-      {isToday && (
-        <Animated.View
-          pointerEvents="none"
-          style={{
-            position: 'absolute', top: -4, left: -4, right: -4, bottom: -4,
-            borderRadius: 18, borderWidth: 2, borderColor: colors.primary,
-            opacity: pulseOpacity, transform: [{ scale: pulseScale }],
-          }}
-        />
-      )}
+    <Animated.View style={[styles.dayCellInner, fill, { transform: [{ scale }] }]}>
       <Text style={[
         styles.dayCellText,
         { color: isOtherMonth ? colors.textTertiary : colors.text },
-        isToday && { color: colors.onPrimary, fontWeight: '800' },
-        isSelected && !isToday && { color: colors.primary, fontWeight: '800' },
+        isOtherMonth && { opacity: 0.55 },
+        isToday && { color: colors.background, fontWeight: '700' },
+        isSelected && !isToday && { fontWeight: '700' },
       ]}>
         {day}
       </Text>
@@ -597,13 +581,29 @@ function CalendarGrid({ year, month, selectedDate, events, colors, onSelectDate,
   useEffect(() => {
     const dir = month > prevMonthRef.current || (month === 0 && prevMonthRef.current === 11) ? 1 : -1;
     prevMonthRef.current = month;
-    fade.setValue(0);
-    slide.setValue(dir * 12);
+    fade.setValue(0.2);
+    slide.setValue(dir * 36);
     Animated.parallel([
-      Animated.timing(fade, { toValue: 1, duration: 180, useNativeDriver: true }),
-      Animated.timing(slide, { toValue: 0, duration: 180, useNativeDriver: true, easing: Easing.out(Easing.cubic) }),
+      Animated.timing(fade, { toValue: 1, duration: 220, useNativeDriver: true }),
+      Animated.spring(slide, { toValue: 0, friction: 9, tension: 110, useNativeDriver: true }),
     ]).start();
   }, [year, month, fade, slide]);
+
+  // [2026-10-14] Arrastar p/ os lados troca o mês (segue o dedo; solta >50px
+  // ou com velocidade → próximo/anterior; senão volta com mola).
+  const navRef = useRef({ onPrevMonth, onNextMonth });
+  navRef.current = { onPrevMonth, onNextMonth };
+  const swipe = useMemo(() => PanResponder.create({
+    onMoveShouldSetPanResponder: (_, g) => Math.abs(g.dx) > 16 && Math.abs(g.dx) > Math.abs(g.dy) * 1.8,
+    onPanResponderTerminationRequest: () => true,
+    onPanResponderMove: (_, g) => { slide.setValue(g.dx * 0.4); },
+    onPanResponderRelease: (_, g) => {
+      if (g.dx < -50 || g.vx < -0.6) { haptic.select(); navRef.current.onNextMonth?.(); }
+      else if (g.dx > 50 || g.vx > 0.6) { haptic.select(); navRef.current.onPrevMonth?.(); }
+      else Animated.spring(slide, { toValue: 0, friction: 7, tension: 140, useNativeDriver: true }).start();
+    },
+    onPanResponderTerminate: () => { Animated.spring(slide, { toValue: 0, useNativeDriver: true }).start(); },
+  }), [slide]);
 
   // Previous month days to show
   const prevMonthDays = getDaysInMonth(year, month - 1);
@@ -692,7 +692,7 @@ function CalendarGrid({ year, month, selectedDate, events, colors, onSelectDate,
       )}
 
       {/* Calendar rows */}
-      <Animated.View style={{ opacity: fade, transform: [{ translateX: slide }] }}>
+      <Animated.View {...swipe.panHandlers} style={{ opacity: fade, transform: [{ translateX: slide }] }}>
       {rows.map((row, ri) => (
         <View key={ri} style={styles.calendarRow}>
           {row.map((cell, ci) => {
@@ -701,7 +701,6 @@ function CalendarGrid({ year, month, selectedDate, events, colors, onSelectDate,
             const isOtherMonth = cell.type !== 'current';
             const dateKey = `${cell.date.getFullYear()}-${cell.date.getMonth()}-${cell.date.getDate()}`;
             const cellEvents = eventsByDate[dateKey] || [];
-            const hasEvents = cellEvents.length > 0;
             // Has-events dot row: surface up to 3 colored dots matching each
             // event.color so categories register at a glance even on small
             // cells. "+N" fills in when more events overflow.
@@ -720,66 +719,37 @@ function CalendarGrid({ year, month, selectedDate, events, colors, onSelectDate,
                 colors={colors}
                 isSelected={!!isSelected}
                 onPress={() => { haptic.select(); onSelectDate(cell.date); }}
+                onLongPress={!isOtherMonth && onQuickAdd ? () => { haptic.medium(); onSelectDate(cell.date); onQuickAdd(cell.date); } : undefined}
+                accessibilityLabel={cell.date.toLocaleDateString((t && t('_locale')) || undefined, { weekday: 'long', day: 'numeric', month: 'long' })}
+                accessibilityHint={t ? t('calendar.longPressToAdd') : undefined}
               >
-                <View style={styles.cellTopRow}>
-                  <DayCellInner
-                    isSelected={!!isSelected}
-                    isToday={isToday}
-                    isOtherMonth={isOtherMonth}
-                    day={cell.day}
-                    colors={colors}
-                  />
-                  <View style={styles.cellBadges}>
-                    {anyLive && <LiveBadge size={6} />}
-                    {anyRecurring && !anyLive && <RecurringBadge color={colors.textTertiary} />}
-                    {!isOtherMonth && onQuickAdd && !hasEvents && (
-                      <TouchableOpacity
-                        onPress={(e) => { e.stopPropagation && e.stopPropagation(); haptic.light(); onQuickAdd(cell.date); }}
-                        style={styles.cellAddBtn}
-                        hitSlop={{ top: 4, bottom: 4, left: 4, right: 4 }}
-                      >
-                        <IconPlus size={10} color={colors.textTertiary} />
-                      </TouchableOpacity>
-                    )}
-                  </View>
+                {/* [2026-10-14] sem "+" por célula (poluía): criar = toque longo
+                    no dia ou botão + do topo. Número centralizado + pontos. */}
+                <DayCellInner
+                  isSelected={!!isSelected}
+                  isToday={isToday}
+                  isOtherMonth={isOtherMonth}
+                  day={cell.day}
+                  colors={colors}
+                />
+                <View style={styles.cellDotRow}>
+                  {anyLive ? <LiveBadge size={6} /> : dotEvents.map((evt, di) => (
+                    <View
+                      key={di}
+                      style={[styles.cellDot, { backgroundColor: eventInk(evt.color || evt.calendar_color, colors), opacity: isOtherMonth ? 0.4 : 1 }]}
+                    />
+                  ))}
+                  {!anyLive && cellEvents.length > 3 && (
+                    <Text style={[styles.cellDotMore, { color: colors.textTertiary }]}>+{cellEvents.length - 3}</Text>
+                  )}
+                  {!anyLive && anyRecurring && cellEvents.length <= 3 && dotEvents.length === 0 && <RecurringBadge color={colors.textTertiary} />}
                 </View>
 
-                {/* Apple-Calendar-style event indicator — up to 3 colored dots
-                    below the day number, "+N" badge for overflow. Full event
-                    list with names appears in the FlatList below the grid when
-                    the day is selected. Removed the in-cell chip overlay
-                    (truncated names like "Aniv…", "Vick…") because it cluttered
-                    the month view; the dots + day-list pattern is cleaner and
-                    matches Apple Calendar / WhatsApp Status. */}
-                {hasEvents && (
-                  <View style={styles.cellDotRow}>
-                    {dotEvents.map((evt, di) => {
-                      const dotColor = evt.color || evt.calendar_color || colors.primary;
-                      return (
-                        <View
-                          key={di}
-                          style={[
-                            styles.cellDot,
-                            { backgroundColor: dotColor, opacity: isOtherMonth ? 0.45 : 1 },
-                          ]}
-                        />
-                      );
-                    })}
-                    {cellEvents.length > 3 && (
-                      <Text style={[styles.cellDotMore, { color: colors.textTertiary }]}>
-                        +{cellEvents.length - 3}
-                      </Text>
-                    )}
-                  </View>
-                )}
-
-                {/* Multi-day stripe — continuous color bar pinned to the
-                    bottom of the cell with rounded caps on the first/last
-                    day so the stripe visually links across cells. */}
+                {/* Multi-day stripe — barra fina contínua entre células. */}
                 {multiDayEvents.length > 0 && (
                   <View style={styles.cellStripeStack} pointerEvents="none">
                     {multiDayEvents.map((evt, mi) => {
-                      const accent = evt.color || evt.calendar_color || colors.primary;
+                      const accent = eventInk(evt.color || evt.calendar_color, colors);
                       const s = parseCalDate(evt.start_at), e = parseCalDate(evt.end_at);
                       const isFirst = isSameDay(s, cell.date);
                       const isLast = isSameDay(e, cell.date);
@@ -790,35 +760,19 @@ function CalendarGrid({ year, month, selectedDate, events, colors, onSelectDate,
                             styles.cellMultiDayStripe,
                             {
                               backgroundColor: accent,
-                              opacity: isOtherMonth ? 0.35 : 0.85,
-                              borderTopLeftRadius: isFirst ? 3 : 0,
-                              borderBottomLeftRadius: isFirst ? 3 : 0,
-                              borderTopRightRadius: isLast ? 3 : 0,
-                              borderBottomRightRadius: isLast ? 3 : 0,
-                              marginLeft: isFirst ? 2 : 0,
-                              marginRight: isLast ? 2 : 0,
+                              opacity: isOtherMonth ? 0.3 : 0.75,
+                              borderTopLeftRadius: isFirst ? 2 : 0,
+                              borderBottomLeftRadius: isFirst ? 2 : 0,
+                              borderTopRightRadius: isLast ? 2 : 0,
+                              borderBottomRightRadius: isLast ? 2 : 0,
+                              marginLeft: isFirst ? 4 : 0,
+                              marginRight: isLast ? 4 : 0,
                             },
                           ]}
                         />
                       );
                     })}
                   </View>
-                )}
-
-                {/* Empty-day CTA — selected day with no events gets an inline
-                    "Adicionar evento" pill so the empty cell stays useful. */}
-                {isSelected && !isOtherMonth && !hasEvents && onQuickAdd && (
-                  <TouchableOpacity
-                    activeOpacity={0.75}
-                    onPress={(e) => { e.stopPropagation && e.stopPropagation(); haptic.light(); onQuickAdd(cell.date); }}
-                    style={[styles.cellEmptyCta, { borderColor: colors.primary, backgroundColor: colors.surface }]}
-                    accessibilityRole="button"
-                    accessibilityLabel={t ? t('calendar.quickAdd') : undefined}
-                  >
-                    {/* [2026-10-10] só o "+": o texto "Adicionar" não cabia na
-                        célula (~50px) e saía cortado ("+ Adicion"). */}
-                    <IconPlus size={11} color={colors.primary} />
-                  </TouchableOpacity>
                 )}
               </DayCellPressable>
             );
@@ -832,20 +786,23 @@ function CalendarGrid({ year, month, selectedDate, events, colors, onSelectDate,
 
 // Day-cell pressable wrapper — owns the scale-0.95 spring on press so the
 // whole cell feels tactile without re-creating an Animated.Value per render.
-function DayCellPressable({ colors, isSelected, onPress, children }) {
+function DayCellPressable({ colors, isSelected, onPress, onLongPress, accessibilityLabel, accessibilityHint, children }) {
   const pressScale = useRef(new Animated.Value(1)).current;
   return (
     <TouchableOpacity
       activeOpacity={1}
-      onPressIn={() => Animated.spring(pressScale, { toValue: 0.95, useNativeDriver: true, friction: 6, tension: 220 }).start()}
+      onPressIn={() => Animated.spring(pressScale, { toValue: 0.92, useNativeDriver: true, friction: 6, tension: 260 }).start()}
       onPressOut={() => Animated.spring(pressScale, { toValue: 1, useNativeDriver: true, friction: 5, tension: 200 }).start()}
       onPress={onPress}
-      style={[
-        styles.calendarCell,
-        isSelected && { backgroundColor: colors.primaryLight + '88' },
-      ]}
+      onLongPress={onLongPress}
+      delayLongPress={380}
+      accessibilityRole="button"
+      accessibilityLabel={accessibilityLabel}
+      accessibilityHint={accessibilityHint}
+      accessibilityState={{ selected: !!isSelected }}
+      style={styles.calendarCell}
     >
-      <Animated.View style={{ transform: [{ scale: pressScale }], flex: 1 }}>
+      <Animated.View style={{ transform: [{ scale: pressScale }], flex: 1, alignItems: 'center' }}>
         {children}
       </Animated.View>
     </TouchableOpacity>
@@ -873,6 +830,17 @@ function WeekView({ weekStart, events, colors, onEventPress, onPrevWeek, onNextW
   useEffect(() => { const i = setInterval(() => setNowTick((x) => x + 1), 60000); return () => clearInterval(i); }, []);
   const today = new Date();
   const dayNames = Array.isArray(t('calendar.dayNames')) ? t('calendar.dayNames') : [];
+  // [2026-10-14] arrastar p/ os lados troca a semana
+  const weekNav = useRef({ onPrevWeek, onNextWeek });
+  weekNav.current = { onPrevWeek, onNextWeek };
+  const weekSwipe = useMemo(() => PanResponder.create({
+    onMoveShouldSetPanResponder: (_, g) => Math.abs(g.dx) > 18 && Math.abs(g.dx) > Math.abs(g.dy) * 2,
+    onPanResponderTerminationRequest: () => true,
+    onPanResponderRelease: (_, g) => {
+      if (g.dx < -50 || g.vx < -0.6) { haptic.select(); weekNav.current.onNextWeek?.(); }
+      else if (g.dx > 50 || g.vx > 0.6) { haptic.select(); weekNav.current.onPrevWeek?.(); }
+    },
+  }), []);
 
   // Build 7 days from weekStart
   const days = useMemo(() => {
@@ -980,16 +948,11 @@ function WeekView({ weekStart, events, colors, onEventPress, onPrevWeek, onNextW
   }, [days, t]);
 
   return (
-    <View style={weekStyles.container}>
+    <View style={weekStyles.container} {...weekSwipe.panHandlers}>
       {/* Week navigation header */}
+      {/* [2026-10-14] setas já estão na faixa do topo → só o intervalo, em caps */}
       <View style={weekStyles.navRow}>
-        <TouchableOpacity onPress={onPrevWeek} style={weekStyles.navArrow}>
-          <IconChevronLeft size={22} color={colors.text} />
-        </TouchableOpacity>
-        <Text style={[weekStyles.navTitle, { color: colors.text }]}>{weekLabel}</Text>
-        <TouchableOpacity onPress={onNextWeek} style={weekStyles.navArrow}>
-          <IconChevronRight size={22} color={colors.text} />
-        </TouchableOpacity>
+        <Text style={[weekStyles.navTitle, { color: colors.textSecondary }]}>{weekLabel}</Text>
       </View>
 
       {/* Day name headers */}
@@ -998,12 +961,12 @@ function WeekView({ weekStart, events, colors, onEventPress, onPrevWeek, onNextW
         {days.map((d, i) => {
           const isToday = isSameDay(d, today);
           return (
-            <View key={i} style={[weekStyles.dayCol, isToday && { backgroundColor: colors.primary + '08' }]}>
-              <Text style={[weekStyles.dayName, { color: isToday ? colors.primary : colors.textTertiary }]}>
+            <View key={i} style={weekStyles.dayCol}>
+              <Text style={[weekStyles.dayName, { color: isToday ? colors.text : colors.textTertiary }]}>
                 {dayNames[i] || ''}
               </Text>
-              <View style={[weekStyles.dayNum, isToday && { backgroundColor: colors.primary }]}>
-                <Text style={[weekStyles.dayNumText, { color: isToday ? colors.onPrimary : colors.text }]}>
+              <View style={[weekStyles.dayNum, isToday && { backgroundColor: colors.text }]}>
+                <Text style={[weekStyles.dayNumText, { color: isToday ? colors.background : colors.text }]}>
                   {d.getDate()}
                 </Text>
               </View>
@@ -1029,7 +992,7 @@ function WeekView({ weekStart, events, colors, onEventPress, onPrevWeek, onNextW
             return (
               <View key={i} style={weekStyles.allDayCol}>
                 {visible.map(evt => {
-                  const bg = evt.color || evt.calendar_color || colors.primary;
+                  const bg = eventInk(evt.color || evt.calendar_color, colors);
                   return (
                     <TouchableOpacity
                       key={evt.id}
@@ -1037,7 +1000,7 @@ function WeekView({ weekStart, events, colors, onEventPress, onPrevWeek, onNextW
                       onPress={() => onEventPress(evt)}
                       activeOpacity={0.7}
                     >
-                      <Text style={[weekStyles.allDayChipText, bg === colors.primary ? { color: colors.onPrimary } : null]} numberOfLines={1} ellipsizeMode="tail">
+                      <Text style={[weekStyles.allDayChipText, bg === colors.text ? { color: colors.background } : null]} numberOfLines={1} ellipsizeMode="tail">
                         {evt.title || ''}
                       </Text>
                     </TouchableOpacity>
@@ -1080,10 +1043,10 @@ function WeekView({ weekStart, events, colors, onEventPress, onPrevWeek, onNextW
             {days.map((d, i) => {
               const isToday = isSameDay(d, today);
               return (
-                <View key={i} style={[weekStyles.dayColBody, { borderLeftColor: colors.border }, isToday && { backgroundColor: colors.primary + '05' }]}>
+                <View key={i} style={[weekStyles.dayColBody, { borderLeftColor: colors.border }, isToday && { backgroundColor: colors.text + '08' }]}>
                   {(dayEvents[i] || []).map((item, idx) => {
                     const { evt, topPx, heightPx, trackIdx, trackCount } = item;
-                    const bgColor = evt.color || evt.calendar_color || colors.primary;
+                    const bgColor = eventInk(evt.color || evt.calendar_color, colors);
                     // Side-by-side tracks: each takes 1/trackCount of column width
                     // (with a 1px outer + small inner gap so blocks read as separate).
                     const widthPct = 100 / trackCount;
@@ -1154,11 +1117,11 @@ function WeekView({ weekStart, events, colors, onEventPress, onPrevWeek, onNextW
 const weekStyles = StyleSheet.create({
   container: { flex: 1 },
   navRow: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    paddingHorizontal: Spacing.sm, paddingVertical: Spacing.xs,
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+    paddingHorizontal: Spacing.sm, paddingTop: 10, paddingBottom: 6,
   },
   navArrow: { width: 36, height: 36, alignItems: 'center', justifyContent: 'center' },
-  navTitle: { fontSize: FontSize.md, fontWeight: '600' },
+  navTitle: { fontSize: 11, fontWeight: '700', letterSpacing: 1, textTransform: 'uppercase', fontVariant: ['tabular-nums'] },
   dayHeaderRow: {
     flexDirection: 'row', borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: '#e0e0e0', paddingBottom: 6,
@@ -1185,14 +1148,14 @@ const weekStyles = StyleSheet.create({
   },
   dayName: { fontSize: 10, fontWeight: '600', textTransform: 'uppercase', marginBottom: 2 },
   dayNum: { width: 28, height: 28, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
-  dayNumText: { fontSize: FontSize.sm, fontWeight: '600' },
+  dayNumText: { fontSize: FontSize.sm, fontWeight: '600', fontVariant: ['tabular-nums'] },
   scrollArea: { flex: 1 },
   gridBody: { position: 'relative' },
   hourRow: {
     position: 'absolute', left: 0, right: 0, height: HOUR_HEIGHT,
     borderBottomWidth: StyleSheet.hairlineWidth, flexDirection: 'row',
   },
-  hourLabel: { fontSize: 10, fontWeight: '500', textAlign: 'right', paddingRight: 6, paddingTop: 2 },
+  hourLabel: { fontSize: 10, fontWeight: '500', textAlign: 'right', paddingRight: 6, paddingTop: 2, fontVariant: ['tabular-nums'] },
   columnsOverlay: {
     position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
     flexDirection: 'row',
@@ -1298,7 +1261,7 @@ function SwipeableEventCard({ event, colors, onPress, onEdit, onDelete, onJoinMe
     onPress && onPress();
   }, [close, onPress]);
 
-  const borderColor = event.color || event.calendar_color || colors.primary;
+  const borderColor = eventInk(event.color || event.calendar_color, colors); // [2026-10-14] #111 some no escuro
   const relTime = getRelativeTime(event.start_at, t);
   const isSynced = event.calendar_name || event.source === 'device';
   const hasReminder = event.reminder && event.reminder !== 'none';
@@ -1433,22 +1396,40 @@ function AddEventModal({ visible, onClose, onSave, colors, calendars, selectedDa
   const [endDate, setEndDate] = useState('');
   const [endTime, setEndTime] = useState('10:00');
 
-  // Auto-format time with colon (e.g., "14" -> "14:", "1430" -> "14:30")
-  const formatTimeInput = (text, setter) => {
-    let clean = text.replace(/[^0-9]/g, '');
-    if (clean.length >= 3) clean = clean.slice(0, 2) + ':' + clean.slice(2, 4);
-    else if (clean.length === 2 && text.length > (setter === setStartTime ? startTime : endTime).length) clean = clean + ':';
-    if (clean.length > 5) clean = clean.slice(0, 5);
-    setter(clean);
+  // [2026-10-14] seletor de data/hora (rodas) no lugar de digitar "AAAA-MM-DD".
+  const [pickerFor, setPickerFor] = useState(null); // 'start' | 'end' | null
+  const p2 = (n) => String(n).padStart(2, '0');
+  const dateToStr = (x) => `${x.getFullYear()}-${p2(x.getMonth() + 1)}-${p2(x.getDate())}`;
+  const fmtPickerDate = (ds) => {
+    const [y, m, d] = String(ds || '').split('-').map(Number);
+    if (!y || !m || !d) return '--';
+    const dt = new Date(y, m - 1, d);
+    try {
+      return dt.toLocaleDateString((t && t('_locale')) || undefined, {
+        weekday: 'short', day: 'numeric', month: 'short',
+        ...(y !== new Date().getFullYear() ? { year: 'numeric' } : {}),
+      });
+    } catch { return `${p2(d)}/${p2(m)}/${y}`; }
   };
-
-  // Auto-format date (e.g., "2026" -> "2026-", "202603" -> "2026-03-")
-  const formatDateInput = (text, setter) => {
-    let clean = text.replace(/[^0-9]/g, '');
-    if (clean.length >= 5) clean = clean.slice(0, 4) + '-' + clean.slice(4);
-    if (clean.length >= 8) clean = clean.slice(0, 7) + '-' + clean.slice(7, 9);
-    if (clean.length > 10) clean = clean.slice(0, 10);
-    setter(clean);
+  const onPickerConfirm = (d) => {
+    if (!(d instanceof Date) || isNaN(d.getTime())) return;
+    if (pickerFor === 'start') {
+      const oldS = new Date(`${startDate}T${allDay ? '00:00' : startTime}:00`).getTime();
+      const oldE = new Date(`${endDate || startDate}T${allDay ? '00:00' : endTime}:00`).getTime();
+      const dur = Number.isFinite(oldS) && Number.isFinite(oldE) && oldE > oldS ? oldE - oldS : (allDay ? 0 : 3600000);
+      const ne = new Date(d.getTime() + dur);
+      setStartDate(dateToStr(d));
+      if (!allDay) setStartTime(`${p2(d.getHours())}:${p2(d.getMinutes())}`);
+      setEndDate(dateToStr(ne));
+      if (!allDay) setEndTime(`${p2(ne.getHours())}:${p2(ne.getMinutes())}`);
+      const wd = ['SU','MO','TU','WE','TH','FR','SA'];
+      setWeeklyDays([wd[d.getDay()]]);
+      setMonthlyDay(d.getDate());
+    } else if (pickerFor === 'end') {
+      setEndDate(dateToStr(d));
+      if (!allDay) setEndTime(`${p2(d.getHours())}:${p2(d.getMinutes())}`);
+    }
+    haptic.select();
   };
   const [selectedColor, setSelectedColor] = useState('#111111');
   const [calendarId, setCalendarId] = useState(0);
@@ -1653,7 +1634,7 @@ function AddEventModal({ visible, onClose, onSave, colors, calendars, selectedDa
           <ScrollView style={styles.modalBody} contentContainerStyle={{ paddingBottom: 40 + insets.bottom }} keyboardShouldPersistTaps="handled">
             {/* Title */}
             <TextInput
-              style={[styles.input, styles.inputLarge, { color: colors.text, borderColor: colors.border, backgroundColor: colors.surface }]}
+              style={[styles.titleInput, { color: colors.text }]}
               placeholder={t('calendar.eventTitlePlaceholder')}
               placeholderTextColor={colors.textTertiary}
               value={title}
@@ -1661,128 +1642,104 @@ function AddEventModal({ visible, onClose, onSave, colors, calendars, selectedDa
               autoFocus
             />
 
-            {/* Quick Duration Buttons */}
+            {/* [2026-10-14 novo evento premium] Grupo estilo Ajustes: Dia inteiro
+                (um só controle — o chip duplicado saiu) + Início/Término com
+                pílulas de data/hora no formato do idioma ("ter., 13 de out.")
+                que abrem o seletor de rodas (era texto cru "2026-10-13"). */}
+            <View style={[styles.formGroup, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+              <View style={styles.formRow}>
+                <Text style={[styles.formRowLabel, { color: colors.text }]}>{t('calendar.allDay')}</Text>
+                <NativeSwitch value={allDay} onValueChange={setAllDay} accessibilityLabel={t('calendar.allDay')} />
+              </View>
+              <View style={[styles.formSep, { backgroundColor: colors.border }]} />
+              {[
+                { key: 'start', label: t('calendar.starts'), date: startDate, time: startTime },
+                { key: 'end', label: t('calendar.ends'), date: endDate, time: endTime },
+              ].map((row, ri) => (
+                <React.Fragment key={row.key}>
+                  {ri > 0 && <View style={[styles.formSep, { backgroundColor: colors.border }]} />}
+                  <View style={styles.formRow}>
+                    <Text style={[styles.formRowLabel, { color: colors.text }]}>{row.label}</Text>
+                    <View style={styles.formPills}>
+                      <PressableScale
+                        onPress={() => { Keyboard.dismiss(); setPickerFor(row.key); }}
+                        style={[styles.formPill, { backgroundColor: colors.surfaceVariant || colors.background }]}
+                        accessibilityRole="button"
+                        accessibilityLabel={`${row.label}: ${fmtPickerDate(row.date)}`}
+                      >
+                        <Text style={[styles.formPillText, { color: colors.text }]}>{fmtPickerDate(row.date)}</Text>
+                      </PressableScale>
+                      {!allDay && (
+                        <PressableScale
+                          onPress={() => { Keyboard.dismiss(); setPickerFor(row.key); }}
+                          style={[styles.formPill, { backgroundColor: colors.surfaceVariant || colors.background }]}
+                          accessibilityRole="button"
+                          accessibilityLabel={`${row.label}: ${row.time}`}
+                        >
+                          <Text style={[styles.formPillText, { color: colors.text }]}>{row.time || '--:--'}</Text>
+                        </PressableScale>
+                      )}
+                    </View>
+                  </View>
+                </React.Fragment>
+              ))}
+            </View>
+
+            {/* Duração rápida — só com horário */}
             {!allDay && (
               <>
-                <Text style={[styles.fieldLabel, { color: colors.textSecondary, marginTop: Spacing.xs }]}>{t('calendar.quickDuration')}</Text>
+                <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>{t('calendar.quickDuration')}</Text>
                 <View style={styles.durationRow}>
                   {[
-                    { label: '30min', mins: 30 },
-                    { label: '1h', mins: 60 },
-                    { label: '2h', mins: 120 },
+                    { label: '30 min', mins: 30 },
+                    { label: '1 h', mins: 60 },
+                    { label: '1 h 30', mins: 90 },
+                    { label: '2 h', mins: 120 },
                   ].map(dur => {
-                    // Check if this duration is currently active
                     const [sh, sm] = startTime.split(':').map(Number);
                     const [eh, em] = endTime.split(':').map(Number);
                     const diffMins = ((eh * 60 + em) - (sh * 60 + sm) + 1440) % 1440;
-                    const isActive = diffMins === dur.mins;
+                    const isActive = diffMins === dur.mins && endDate === startDate;
                     return (
-                      <TouchableOpacity
+                      <PressableScale
                         key={dur.label}
                         style={[
                           styles.durationChip,
-                          { borderColor: colors.border, backgroundColor: isActive ? colors.primary : colors.surface },
+                          isActive
+                            ? { backgroundColor: colors.text, borderColor: colors.text }
+                            : { backgroundColor: 'transparent', borderColor: colors.border },
                         ]}
                         onPress={() => {
                           const [h, m] = startTime.split(':').map(Number);
-                          const totalMin = h * 60 + m + dur.mins;
-                          const newH = String(Math.floor(totalMin / 60) % 24).padStart(2, '0');
-                          const newM = String(totalMin % 60).padStart(2, '0');
-                          setEndTime(`${newH}:${newM}`);
-                          setEndDate(startDate);
+                          const st = new Date(`${startDate}T00:00:00`);
+                          if (isNaN(st.getTime()) || !Number.isFinite(h) || !Number.isFinite(m)) return;
+                          st.setHours(h, m + dur.mins, 0, 0);
+                          setEndDate(dateToStr(st));
+                          setEndTime(`${String(st.getHours()).padStart(2, '0')}:${String(st.getMinutes()).padStart(2, '0')}`);
                         }}
+                        accessibilityState={{ selected: isActive }}
                       >
-                        <Text style={[styles.durationChipText, { color: isActive ? colors.onPrimary : colors.text }]}>{dur.label}</Text>
-                      </TouchableOpacity>
+                        <Text style={[styles.durationChipText, { color: isActive ? colors.background : colors.text }]}>{dur.label}</Text>
+                      </PressableScale>
                     );
                   })}
-                  <TouchableOpacity
-                    style={[
-                      styles.durationChip,
-                      { borderColor: colors.border, backgroundColor: allDay ? colors.primary : colors.surface },
-                    ]}
-                    onPress={() => setAllDay(true)}
-                  >
-                    <Text style={[styles.durationChipText, { color: allDay ? colors.onPrimary : colors.text }]}>{t('calendar.allDay')}</Text>
-                  </TouchableOpacity>
                 </View>
               </>
             )}
 
-            {/* All Day Toggle */}
-            <View style={[styles.switchRow, { borderColor: colors.border }]}>
-              <Text style={[styles.switchLabel, { color: colors.text }]}>{t('calendar.allDay')}</Text>
-              <NativeSwitch
-                value={allDay}
-                onValueChange={setAllDay}
-                trackColor={{ true: colors.primary, false: colors.border }}
-                thumbColor="#fff"
-              />
-            </View>
-
-            {/* Start Date/Time */}
-            <View style={styles.dateTimeRow}>
-              <View style={styles.dateTimeCol}>
-                <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>{t('calendar.startDate')}</Text>
-                <TextInput
-                  style={[styles.input, styles.inputImproved, { color: colors.text, borderColor: colors.border, backgroundColor: colors.surface }]}
-                  placeholder={t('calendar.dateFormat')}
-                  placeholderTextColor={colors.textTertiary}
-                  value={startDate}
-                  onChangeText={(t) => formatDateInput(t, setStartDate)}
-                  keyboardType="numeric"
-                  maxLength={10}
-                  accessibilityLabel={t('calendar.startDate')}
-                />
-              </View>
-              {!allDay && (
-                <View style={styles.dateTimeCol}>
-                  <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>{t('calendar.startTime')}</Text>
-                  <TextInput
-                    style={[styles.input, styles.inputImproved, { color: colors.text, borderColor: colors.border, backgroundColor: colors.surface }]}
-                    placeholder="HH:MM"
-                    placeholderTextColor={colors.textTertiary}
-                    value={startTime}
-                    onChangeText={(t) => formatTimeInput(t, setStartTime)}
-                    keyboardType="numeric"
-                    maxLength={5}
-                    accessibilityLabel={t('calendar.startTime')}
-                  />
-                </View>
-              )}
-            </View>
-
-            {/* End Date/Time */}
-            <View style={styles.dateTimeRow}>
-              <View style={styles.dateTimeCol}>
-                <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>{t('calendar.endDate')}</Text>
-                <TextInput
-                  style={[styles.input, styles.inputImproved, { color: colors.text, borderColor: colors.border, backgroundColor: colors.surface }]}
-                  placeholder={t('calendar.dateFormat')}
-                  placeholderTextColor={colors.textTertiary}
-                  value={endDate}
-                  onChangeText={(t) => formatDateInput(t, setEndDate)}
-                  keyboardType="numeric"
-                  maxLength={10}
-                  accessibilityLabel={t('calendar.endDate')}
-                />
-              </View>
-              {!allDay && (
-                <View style={styles.dateTimeCol}>
-                  <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>{t('calendar.endTime')}</Text>
-                  <TextInput
-                    style={[styles.input, styles.inputImproved, { color: colors.text, borderColor: colors.border, backgroundColor: colors.surface }]}
-                    placeholder="HH:MM"
-                    placeholderTextColor={colors.textTertiary}
-                    value={endTime}
-                    onChangeText={(t) => formatTimeInput(t, setEndTime)}
-                    keyboardType="numeric"
-                    maxLength={5}
-                    accessibilityLabel={t('calendar.endTime')}
-                  />
-                </View>
-              )}
-            </View>
+            <DateTimePickerModal
+              visible={!!pickerFor}
+              onClose={() => setPickerFor(null)}
+              initial={pickerFor === 'end'
+                ? new Date(`${endDate || startDate}T${allDay ? '00:00' : (endTime || '00:00')}:00`)
+                : new Date(`${startDate}T${allDay ? '00:00' : (startTime || '00:00')}:00`)}
+              onConfirm={onPickerConfirm}
+              colors={colors}
+              t={t}
+              mode={allDay ? 'date' : 'datetime'}
+              dayCount={730}
+              title={pickerFor === 'end' ? t('calendar.ends') : t('calendar.starts')}
+            />
 
             {/* Conflict warning — non-blocking, just informs of overlap */}
             {conflictingEvents.length > 0 && (
@@ -1836,11 +1793,11 @@ function AddEventModal({ visible, onClose, onSave, colors, calendars, selectedDa
                   key={opt.value}
                   style={[
                     styles.recurrenceChip,
-                    { borderColor: colors.border, backgroundColor: recurrence === opt.value ? colors.primary : colors.surface },
+                    { borderColor: recurrence === opt.value ? colors.text : colors.border, backgroundColor: recurrence === opt.value ? colors.text : 'transparent' },
                   ]}
                   onPress={() => setRecurrence(opt.value)}
                 >
-                  <Text style={[styles.recurrenceChipText, { color: recurrence === opt.value ? colors.onPrimary : colors.text }]}>
+                  <Text style={[styles.recurrenceChipText, { color: recurrence === opt.value ? colors.background : colors.text }]}>
                     {opt.label}
                   </Text>
                 </TouchableOpacity>
@@ -1931,10 +1888,10 @@ function AddEventModal({ visible, onClose, onSave, colors, calendars, selectedDa
               {PRESET_COLORS.map(c => (
                 <TouchableOpacity
                   key={c}
-                  style={[styles.colorCircle, { backgroundColor: c, borderColor: selectedColor === c ? colors.text : 'transparent' }]}
+                  style={[styles.colorCircle, { backgroundColor: c, borderColor: selectedColor === c ? colors.text : colors.border, borderWidth: selectedColor === c ? 2.5 : StyleSheet.hairlineWidth }]}
                   onPress={() => setSelectedColor(c)}
                 >
-                  {selectedColor === c && <IconCheck size={14} color="#fff" />}
+                  {selectedColor === c && <IconCheck size={14} color={(_luma(c) ?? 0) > 0.6 ? '#111' : '#fff'} />}
                 </TouchableOpacity>
               ))}
             </View>
@@ -1975,11 +1932,11 @@ function AddEventModal({ visible, onClose, onSave, colors, calendars, selectedDa
                   key={opt.value}
                   style={[
                     styles.recurrenceChip,
-                    { borderColor: colors.border, backgroundColor: reminder === opt.value ? colors.primary : colors.surface },
+                    { borderColor: reminder === opt.value ? colors.text : colors.border, backgroundColor: reminder === opt.value ? colors.text : 'transparent' },
                   ]}
                   onPress={() => setReminder(opt.value)}
                 >
-                  <Text style={[styles.recurrenceChipText, { color: reminder === opt.value ? colors.onPrimary : colors.text }]}>
+                  <Text style={[styles.recurrenceChipText, { color: reminder === opt.value ? colors.background : colors.text }]}>
                     {t(`calendar.reminder_${opt.value}`)}
                   </Text>
                 </TouchableOpacity>
@@ -2224,9 +2181,16 @@ function CalendarScreenInner() {
       }).catch(() => {});
     }
   }, [showTz, persistShowTz]);
-  const deviceTz = useMemo(() => {
-    try { return Intl.DateTimeFormat().resolvedOptions().timeZone || ''; } catch { return ''; }
+  // [2026-10-14] fuso do aparelho AO VIVO (expo-localization > Intl) e
+  // re-lido ao voltar p/ o app (viagem / relógio ajustado).
+  const [deviceTz, setDeviceTz] = useState(() => pim.getDeviceTimeZone());
+  useEffect(() => {
+    const sub = AppState.addEventListener?.('change', (st) => {
+      if (st === 'active') { setDeviceTz(pim.getDeviceTimeZone()); pim.reportTimezone(); }
+    });
+    return () => { try { sub?.remove?.(); } catch {} };
   }, []);
+  const [moreOpen, setMoreOpen] = useState(false);
   const effectiveTz = tzPref === 'system' ? deviceTz : tzPref;
 
   // Load calendars on mount
@@ -3043,8 +3007,8 @@ function CalendarScreenInner() {
               >
                 <IconSearch size={22} color={colors.text} />
               </HeaderIconButton>
-              <HeaderIconButton onPress={() => router.push('/calendar-sync')} accessibilityLabel={t('calSync.title') || 'Sincronizar com o celular'}>
-                <IconSmartphone size={21} color={colors.text} />
+              <HeaderIconButton onPress={() => { haptic.select(); setMoreOpen(true); }} accessibilityLabel={t('calendar.moreOptions')}>
+                <IconMoreHorizontal size={22} color={colors.text} />
               </HeaderIconButton>
               <HeaderIconButton onPress={() => { setPrefill(null); setShowAddModal(true); }} accessibilityLabel={t('calendar.newEvent')}>
                 <IconPlus size={24} color={colors.text} />
@@ -3097,11 +3061,11 @@ function CalendarScreenInner() {
               <IconSearch size={20} color={bandInk} />
             </TouchableOpacity>
             <TouchableOpacity
-              onPress={() => router.push('/calendar-sync')}
+              onPress={() => setMoreOpen(true)}
               style={styles.headerBtn}
-              accessibilityLabel={t('calSync.title') || 'Sincronizar com o celular'}
+              accessibilityLabel={t('calendar.moreOptions')}
             >
-              <IconSmartphone size={20} color={bandInk} />
+              <IconMoreHorizontal size={20} color={bandInk} />
             </TouchableOpacity>
             <TouchableOpacity
               onPress={() => { setPrefill(null); setShowAddModal(true); }}
@@ -3154,7 +3118,7 @@ function CalendarScreenInner() {
             style={[styles.monthBandChevron, lb && lb.monthBandChevron]}
             accessibilityLabel={t('calendar.prevMonth') || 'Mês anterior'}
           >
-            <IconChevronLeft size={22} color={bandInk} />
+            <IconChevronLeft size={18} color={bandInk} />
           </PressableScale>
 
           <View style={styles.monthBandCenter}>
@@ -3195,7 +3159,7 @@ function CalendarScreenInner() {
             style={[styles.monthBandChevron, lb && lb.monthBandChevron]}
             accessibilityLabel={t('calendar.nextMonth') || 'Próximo mês'}
           >
-            <IconChevronRight size={22} color={bandInk} />
+            <IconChevronRight size={18} color={bandInk} />
           </PressableScale>
         </View>
 
@@ -3214,39 +3178,22 @@ function CalendarScreenInner() {
                   key={opt.key}
                   onPress={() => { if (!active) haptic.select(); setCalendarView(opt.key); }}
                   style={[styles.viewSegmentBtn, active && styles.viewSegmentBtnActive, active && lb && lb.viewSegmentBtnActive]}
+                  accessibilityRole="tab"
                   accessibilityLabel={opt.label}
                   accessibilityState={{ selected: active }}
                 >
-                  <Text style={[styles.viewSegmentText, lb && lb.viewSegmentText, active && styles.viewSegmentTextActive]}>
+                  <Text numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8} style={[styles.viewSegmentText, lb && lb.viewSegmentText, active && styles.viewSegmentTextActive]}>
                     {opt.label}
                   </Text>
                 </TouchableOpacity>
               );
             })}
           </View>
-          {!_CAL_HEADER_COMPACT && (
-            <TouchableOpacity
-              onPress={() => setTzPickerOpen(true)}
-              style={[styles.tzGhostBtn, lb && lb.tzGhostBtn, showTz && styles.tzGhostBtnActive, showTz && lb && lb.tzGhostBtnActive]}
-              accessibilityLabel={t('calendar.showTz') || t('calendar.timezones')}
-            >
-              <IconClock size={14} color={bandInk} />
-              {/* Show the ACTIVE zone right on the chip so the user always
-                  knows which fuso the times are in (device by default). */}
-              <Text
-                style={[styles.tzGhostBtnText, lb && lb.tzGhostBtnText, { opacity: showTz ? 1 : 0.85 }]}
-                numberOfLines={1}
-              >
-                {tzPref === 'system'
-                  ? `${t('common.system') || 'Dispositivo'}${deviceTz ? ' · ' + shortTzLabel(deviceTz) : ''}`
-                  : shortTzLabel(effectiveTz)}
-              </Text>
-            </TouchableOpacity>
-          )}
+          {/* [2026-10-14] chip de fuso saiu da barra → menu "…" do topo */}
         </View>
 
         {/* Day-of-week strip — current weekday highlighted in white pill */}
-        {(calendarView === 'month' || calendarView === 'week') && (
+        {calendarView === 'month' && (
           <View style={styles.weekStrip}>
             {(Array.isArray(t('calendar.dayNames')) ? t('calendar.dayNames') : []).map((d, i) => {
               const isTodayDow = i === realToday.getDay();
@@ -3329,6 +3276,27 @@ function CalendarScreenInner() {
           ) : renderEventItem(info))}
           ListHeaderComponent={
             <>
+              {/* [2026-10-14] grade logo abaixo da faixa (cabeçalho DOM..SÁB colado nela);
+                  topo inteligente vem depois. Calendar Grid — hidden in agenda view. Month/day-headers are
+                  owned by the new gradient band so the grid suppresses both. */}
+              {calendarView !== 'agenda' && (
+                <CalendarGrid
+                  year={currentYear}
+                  month={currentMonth}
+                  selectedDate={selectedDate}
+                  events={events}
+                  colors={colors}
+                  onSelectDate={handleSelectDate}
+                  onPrevMonth={handlePrevMonth}
+                  onNextMonth={handleNextMonth}
+                  onQuickAdd={handleQuickAdd}
+                  onEventOpen={handleEventPress}
+                  t={t}
+                  hideMonthHeader
+                  hideDayHeaders
+                />
+              )}
+
               {/* [2026-10-13] topo inteligente: resumo do dia, criar com a Bia, livres, sincronizar */}
               <CalendarSmartBar
                 date={selectedDate || new Date()}
@@ -3359,86 +3327,6 @@ function CalendarScreenInner() {
                   </TouchableOpacity>
                 </View>
               )}
-
-              {/* Calendar Grid — hidden in agenda view. Month/day-headers are
-                  owned by the new gradient band so the grid suppresses both. */}
-              {calendarView !== 'agenda' && (
-                <CalendarGrid
-                  year={currentYear}
-                  month={currentMonth}
-                  selectedDate={selectedDate}
-                  events={events}
-                  colors={colors}
-                  onSelectDate={handleSelectDate}
-                  onPrevMonth={handlePrevMonth}
-                  onNextMonth={handleNextMonth}
-                  onQuickAdd={handleQuickAdd}
-                  onEventOpen={handleEventPress}
-                  t={t}
-                  hideMonthHeader
-                  hideDayHeaders
-                />
-              )}
-
-              {/* Sync / Import / Export bar */}
-              <View style={[styles.syncBar, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-                {Platform.OS !== 'web' && ExpoCalendar && (
-                  <>
-                    <PressableScale
-                      onPress={handleSyncDeviceCalendar}
-                      disabled={syncingDevice}
-                      style={[styles.syncBarBtn, { backgroundColor: colors.primary + '10', borderColor: colors.primary + '30' }]}
-                    >
-                      {syncingDevice ? <ActivityIndicator size="small" color={colors.primary} /> : <IconSmartphone size={15} color={colors.primary} />}
-                      <Text style={[styles.syncBarBtnText, { color: colors.primary }]}>
-                        {t('calendar.syncToApp', { device: Platform.OS === 'ios' ? 'iPhone' : 'Android' })}
-                      </Text>
-                    </PressableScale>
-                    <PressableScale
-                      onPress={handlePushToDevice}
-                      disabled={syncingDevice}
-                      style={[styles.syncBarBtn, { backgroundColor: colors.primary + '10', borderColor: colors.primary + '30' }]}
-                    >
-                      {syncingDevice ? <ActivityIndicator size="small" color={colors.primary} /> : <IconRefresh size={15} color={colors.primary} />}
-                      <Text style={[styles.syncBarBtnText, { color: colors.primary }]}>
-                        {t('calendar.syncToDevice', { device: Platform.OS === 'ios' ? 'iPhone' : 'Android' })}
-                      </Text>
-                    </PressableScale>
-                  </>
-                )}
-                <PressableScale
-                  onPress={handleImportICS}
-                  disabled={importing}
-                  style={[styles.syncBarBtn, { borderColor: colors.border }]}
-                >
-                  {importing ? <ActivityIndicator size="small" color={colors.primary} /> : <IconUpload size={15} color={colors.primary} />}
-                  <Text style={[styles.syncBarBtnText, { color: colors.primary }]}>{t('calendar.importIcs')}</Text>
-                </PressableScale>
-                <PressableScale
-                  onPress={handleExportMonth}
-                  style={[styles.syncBarBtn, { borderColor: colors.border }]}
-                >
-                  <IconDownload size={15} color={colors.textSecondary} />
-                  <Text style={[styles.syncBarBtnText, { color: colors.textSecondary }]}>{t('calendar.export')}</Text>
-                </PressableScale>
-                {Platform.OS === 'web' && (
-                  <PressableScale
-                    onPress={handleSubscribeCalendar}
-                    style={[styles.syncBarBtn, { borderColor: colors.border }]}
-                  >
-                    <IconSmartphone size={15} color={colors.primary} />
-                    <Text style={[styles.syncBarBtnText, { color: colors.primary }]}>{t('calendar.subscribe')}</Text>
-                  </PressableScale>
-                )}
-                <PressableScale
-                  onPress={generateSmartReminders}
-                  disabled={loadingReminders}
-                  style={[styles.syncBarBtn, { borderColor: colors.border }]}
-                >
-                  {loadingReminders ? <ActivityIndicator size="small" color={colors.primary} /> : <IconSparkles size={15} color={colors.primary} />}
-                  <Text style={[styles.syncBarBtnText, { color: colors.primary }]}>{t('compose.ai')}</Text>
-                </PressableScale>
-              </View>
 
               {aiReminders.length > 0 && (
                 <View style={[styles.remindersCard, { backgroundColor: colors.primaryLight + '30', borderColor: colors.primaryLight }]}>
@@ -3492,6 +3380,34 @@ function CalendarScreenInner() {
         existingEvents={dayEvents}
         t={t}
       />
+
+      {/* [2026-10-14] Menu "…" do calendário — fuso, sincronizar, importar,
+          exportar, lembretes IA (antes: chip de fuso na barra + fileira de
+          botões coloridos sob a grade). */}
+      <Sheet visible={moreOpen} onClose={() => setMoreOpen(false)} title={t('calendar.title')}>
+        <ActionList
+          onDone={() => setMoreOpen(false)}
+          items={[
+            {
+              key: 'tz', icon: IconGlobe, label: t('calendar.timeZone'),
+              subtitle: tzPref === 'system'
+                ? `${t('calendar.autoDetect') || 'Automático'}${deviceTz ? ' · ' + deviceTz.replace(/_/g, ' ') + (tzOffsetLabel(deviceTz) ? ' (' + tzOffsetLabel(deviceTz) + ')' : '') : ''}`
+                : `${effectiveTz.replace(/_/g, ' ')}${tzOffsetLabel(effectiveTz) ? ' (' + tzOffsetLabel(effectiveTz) + ')' : ''}`,
+              onPress: () => setTzPickerOpen(true),
+            },
+            { key: 'sync', icon: IconSmartphone, label: t('calSync.title') || 'Sincronizar com o celular', onPress: () => router.push('/calendar-sync') },
+            ...(Platform.OS !== 'web' && ExpoCalendar ? [
+              { key: 'pull', icon: IconDownload, label: t('calendar.syncToApp', { device: Platform.OS === 'ios' ? 'iPhone' : 'Android' }), onPress: handleSyncDeviceCalendar, disabled: syncingDevice },
+              { key: 'push', icon: IconRefresh, label: t('calendar.syncToDevice', { device: Platform.OS === 'ios' ? 'iPhone' : 'Android' }), onPress: handlePushToDevice, disabled: syncingDevice },
+            ] : []),
+            { separator: true },
+            { key: 'import', icon: IconUpload, label: t('calendar.importIcs'), onPress: handleImportICS, disabled: importing },
+            { key: 'export', icon: IconDownload, label: t('calendar.export'), onPress: handleExportMonth },
+            ...(Platform.OS === 'web' ? [{ key: 'sub', icon: IconCalendar, label: t('calendar.subscribe'), onPress: handleSubscribeCalendar }] : []),
+            { key: 'ai', icon: IconSparkles, label: t('calendar.smartReminders'), onPress: generateSmartReminders, disabled: loadingReminders },
+          ]}
+        />
+      </Sheet>
 
       {/* Timezone picker — Lester QA #32 2026-05-28. Tap on the Timezones
           button opens this; lets the user pick a display timezone and toggle
@@ -3608,12 +3524,9 @@ const calLightBand = StyleSheet.create({
   tzGhostBtn: { backgroundColor: '#F4F5F6', borderColor: '#eef0f1' },
   tzGhostBtnActive: { backgroundColor: '#E6E8EB' },
   tzGhostBtnText: { color: '#111b21' },
-  weekStripPillToday: {
-    backgroundColor: '#111111',
-    ...Platform.select({ web: { boxShadow: 'none' }, ios: { shadowOpacity: 0 }, android: { elevation: 0 } }),
-  },
+  weekStripPillToday: {},
   weekStripText: { color: '#8696a0' },
-  weekStripTextToday: { color: '#ffffff' },
+  weekStripTextToday: { color: '#111b21' },
 });
 
 const styles = StyleSheet.create({
@@ -3670,21 +3583,21 @@ const styles = StyleSheet.create({
     marginBottom: Spacing.xs,
   },
   monthBandChevron: {
-    width: 40, height: 40, borderRadius: 20,
+    width: 36, height: 36, borderRadius: 18,
     alignItems: 'center', justifyContent: 'center',
-    backgroundColor: 'rgba(255,255,255,0.12)',
-    borderWidth: 1, borderColor: 'rgba(255,255,255,0.18)',
+    backgroundColor: 'rgba(255,255,255,0.06)',
+    borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(255,255,255,0.14)',
     ...(Platform.OS === 'web' ? { transition: 'background-color 180ms ease, transform 160ms ease' } : {}),
   },
   monthBandCenter: { flex: 1, alignItems: 'center', justifyContent: 'center', minHeight: 56 },
   monthBandLabel: {
-    fontSize: 28, fontWeight: '600',
-    color: '#fff', letterSpacing: -0.6,
+    fontSize: 28, fontWeight: '700',
+    color: '#fff', letterSpacing: -0.8,
     textAlign: 'center',
   },
   monthBandYear: {
     fontSize: 26, fontWeight: '300',
-    color: 'rgba(255,255,255,0.78)', letterSpacing: -0.4,
+    color: 'rgba(255,255,255,0.5)', letterSpacing: -0.4, fontVariant: ['tabular-nums'],
   },
   // "Hoje" pill — only visible when not viewing current month.
   todayPillWrap: { marginTop: 4 },
@@ -3708,15 +3621,15 @@ const styles = StyleSheet.create({
   },
   viewSegment: {
     flexDirection: 'row',
-    backgroundColor: 'rgba(255,255,255,0.14)',
+    backgroundColor: 'rgba(255,255,255,0.08)',
     borderRadius: 12,
     padding: 3,
     flex: 1,
-    borderWidth: 1, borderColor: 'rgba(255,255,255,0.18)',
+    borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(255,255,255,0.12)',
   },
   viewSegmentBtn: {
     flex: 1, alignItems: 'center', justifyContent: 'center',
-    paddingVertical: 6, paddingHorizontal: 6,
+    paddingVertical: 7, paddingHorizontal: 2, minWidth: 0,
     borderRadius: 9,
     ...(Platform.OS === 'web' ? { transition: 'background-color 180ms ease' } : {}),
   },
@@ -3728,7 +3641,7 @@ const styles = StyleSheet.create({
       web: { boxShadow: '0 1px 6px rgba(0,0,0,0.18)' },
     }),
   },
-  viewSegmentText: { color: 'rgba(255,255,255,0.85)', fontSize: FontSize.xs + 1, fontWeight: '700', letterSpacing: 0.1 },
+  viewSegmentText: { color: 'rgba(255,255,255,0.72)', fontSize: 13, fontWeight: '600', letterSpacing: -0.1 },
   viewSegmentTextActive: { color: '#111111' },
   // Timezones toggle (ghost pill on the right of the segment row)
   tzGhostBtn: {
@@ -3752,19 +3665,13 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     alignItems: 'center', justifyContent: 'center',
   },
-  weekStripPillToday: {
-    backgroundColor: '#fff',
-    ...Platform.select({
-      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.15, shadowRadius: 5 },
-      android: { elevation: 2 },
-      web: { boxShadow: '0 2px 8px rgba(0,0,0,0.18)' },
-    }),
-  },
+  // [2026-10-14] dia da semana de hoje: só tinta cheia (era pílula branca)
+  weekStripPillToday: {},
   weekStripText: {
-    color: 'rgba(255,255,255,0.85)', fontSize: FontSize.xs, fontWeight: '700',
-    textTransform: 'uppercase', letterSpacing: 0.6,
+    color: 'rgba(255,255,255,0.45)', fontSize: 11, fontWeight: '600',
+    textTransform: 'uppercase', letterSpacing: 1,
   },
-  weekStripTextToday: { color: '#111111' },
+  weekStripTextToday: { color: '#ffffff', fontWeight: '800' },
   headerBtn: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center', borderRadius: 12 },
   // Mini-FAB inside header — same brand-accented style as the floating FABs
   // in Inbox/Chat (purple gradient orb + soft glow), so the "novo evento"
@@ -3803,7 +3710,7 @@ const styles = StyleSheet.create({
   viewToggleBtnText: { fontSize: FontSize.xs, fontWeight: '700' },
 
   // Calendar Grid
-  calendarGrid: { paddingHorizontal: Spacing.sm, paddingTop: Spacing.sm },
+  calendarGrid: { paddingHorizontal: Spacing.sm, paddingTop: 6, paddingBottom: 4 },
   monthHeader: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
     paddingHorizontal: Spacing.sm, marginBottom: Spacing.sm,
@@ -3814,10 +3721,11 @@ const styles = StyleSheet.create({
   dayHeaderCell: { flex: 1, alignItems: 'center', paddingVertical: 6 },
   dayHeaderText: { fontSize: FontSize.xs, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.5 },
   calendarRow: { flexDirection: 'row' },
+  // [2026-10-14] densidade: célula ~56px (era 11% da altura da tela = 90px+ vazios)
   calendarCell: {
-    flex: 1, alignItems: 'stretch', paddingVertical: 3, paddingHorizontal: 2,
-    minHeight: Math.max(72, Dimensions.get('window').height * 0.11),
-    borderRadius: 10,
+    flex: 1, alignItems: 'stretch', paddingTop: 4, paddingBottom: 2, paddingHorizontal: 1,
+    height: 56,
+    borderRadius: 12,
     ...Platform.select({
       web: { transition: 'background-color 0.2s ease, transform 0.15s ease' },
       default: {},
@@ -3832,11 +3740,11 @@ const styles = StyleSheet.create({
     alignItems: 'center', justifyContent: 'center', opacity: 0.4,
   },
   dayCellInner: {
-    width: 28, height: 28, borderRadius: 14,
+    width: 32, height: 32, borderRadius: 16,
     alignItems: 'center', justifyContent: 'center',
     ...(Platform.OS === 'web' ? { transition: 'background-color 180ms ease, transform 160ms ease' } : {}),
   },
-  dayCellText: { fontSize: FontSize.xs + 1, fontWeight: '600' },
+  dayCellText: { fontSize: 16, fontWeight: '500', letterSpacing: -0.2, fontVariant: ['tabular-nums'] },
   dayCellTodayLabel: {
     position: 'absolute', bottom: -10, left: -4, right: -4,
     textAlign: 'center',
@@ -3875,9 +3783,9 @@ const styles = StyleSheet.create({
   // Dots are now the only in-cell event indicator (chips removed for clarity),
   // so they're slightly larger (6px) with a roomier gap so 3 dots + "+N" still
   // read crisp on small day cells.
-  cellDotRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 3, paddingHorizontal: 4 },
-  cellDot: { width: 6, height: 6, borderRadius: 3 },
-  cellDotMore: { fontSize: 10, fontWeight: '700', marginLeft: 2 },
+  cellDotRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 3, marginTop: 3, height: 10 },
+  cellDot: { width: 5, height: 5, borderRadius: 2.5 },
+  cellDotMore: { fontSize: 9, fontWeight: '700', marginLeft: 1, fontVariant: ['tabular-nums'] },
   // Multi-day stripe: stacked thin bars pinned to the bottom of the cell.
   cellStripeStack: { marginTop: 'auto', gap: 2, paddingBottom: 2 },
   cellMultiDayStripe: { height: 3 },
@@ -4003,9 +3911,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.xl, paddingVertical: Spacing.md,
     borderRadius: 16, marginTop: Spacing.lg,
     ...Platform.select({
-      ios: { shadowColor: '#4F46E5', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.25, shadowRadius: 12 },
+      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.18, shadowRadius: 12 },
       android: { elevation: 4 },
-      web: { boxShadow: '0 4px 16px rgba(79,70,229,0.25)', transition: 'transform 0.15s ease' },
+      web: { boxShadow: '0 4px 16px rgba(0,0,0,0.18)', transition: 'transform 0.15s ease' },
     }),
   },
   emptyAddBtnText: { color: '#fff', fontSize: FontSize.md, fontWeight: '700' },
@@ -4037,17 +3945,38 @@ const styles = StyleSheet.create({
   modalTitle: { fontSize: FontSize.lg, fontWeight: '800', letterSpacing: -0.2 },
   modalBody: { paddingHorizontal: Spacing.md, paddingTop: Spacing.md },
 
+  // [2026-10-14] título grande sem caixa + grupo estilo Ajustes
+  titleInput: {
+    fontSize: 24, fontWeight: '700', letterSpacing: -0.5,
+    paddingVertical: 6, paddingHorizontal: 2, marginBottom: Spacing.md,
+    ...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {}),
+  },
+  formGroup: {
+    borderRadius: 14, borderWidth: StyleSheet.hairlineWidth,
+    paddingHorizontal: 14, marginBottom: Spacing.sm, overflow: 'hidden',
+  },
+  formRow: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    minHeight: 52, gap: 10,
+  },
+  formRowLabel: { fontSize: 16, fontWeight: '500', letterSpacing: -0.2 },
+  formSep: { height: StyleSheet.hairlineWidth },
+  formPills: { flexDirection: 'row', alignItems: 'center', gap: 6, flexShrink: 1 },
+  formPill: { paddingHorizontal: 12, paddingVertical: 7, borderRadius: 9 },
+  formPillText: { fontSize: 15, fontWeight: '500', fontVariant: ['tabular-nums'] },
   // Form — rounded inputs
   input: {
-    borderWidth: 1.5, borderRadius: 14,
+    borderWidth: StyleSheet.hairlineWidth, borderRadius: 12,
     paddingHorizontal: Spacing.md, paddingVertical: Spacing.xs + 4,
     fontSize: FontSize.md, marginBottom: Spacing.sm,
     ...(Platform.OS === 'web' ? { outlineStyle: 'none', transition: 'border-color 0.2s ease' } : {}),
   },
   inputLarge: { fontSize: FontSize.lg, fontWeight: '700', paddingVertical: Spacing.sm },
   inputMultiline: { minHeight: 72, textAlignVertical: 'top' },
+  // [2026-10-14] rótulos pequenos em caixa-alta c/ tracking
   fieldLabel: {
-    fontSize: FontSize.sm, fontWeight: '600', marginBottom: Spacing.xs, marginTop: Spacing.xs,
+    fontSize: 11, fontWeight: '700', letterSpacing: 0.9, textTransform: 'uppercase',
+    marginBottom: 8, marginTop: Spacing.sm,
   },
   switchRow: {
     flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
@@ -4084,13 +4013,13 @@ const styles = StyleSheet.create({
 
   // Recurrence
   recurrenceRow: {
-    flexDirection: 'row', gap: Spacing.xs, flexWrap: 'wrap', marginBottom: Spacing.sm,
+    flexDirection: 'row', gap: 8, flexWrap: 'wrap', alignItems: 'center', marginBottom: Spacing.sm,
   },
   recurrenceChip: {
-    paddingHorizontal: Spacing.sm, paddingVertical: Spacing.xs,
-    borderRadius: BorderRadius.md, borderWidth: 1,
+    paddingHorizontal: 14, minHeight: 34, justifyContent: 'center',
+    borderRadius: 999, borderWidth: StyleSheet.hairlineWidth,
   },
-  recurrenceChipText: { fontSize: FontSize.sm, fontWeight: '500' },
+  recurrenceChipText: { fontSize: 14, fontWeight: '600' },
   weekdayRow: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 6, marginBottom: 4 },
   weekdayChip: {
     width: 36, height: 36, borderRadius: 18, borderWidth: 1,
@@ -4142,13 +4071,13 @@ const styles = StyleSheet.create({
 
   // Duration quick-select
   durationRow: {
-    flexDirection: 'row', gap: Spacing.xs, flexWrap: 'wrap', marginBottom: Spacing.sm,
+    flexDirection: 'row', gap: 8, flexWrap: 'wrap', alignItems: 'center', marginBottom: Spacing.sm,
   },
   durationChip: {
-    paddingHorizontal: Spacing.md, paddingVertical: Spacing.xs + 2,
-    borderRadius: BorderRadius.xxl || 99, borderWidth: 1,
+    paddingHorizontal: 14, minHeight: 34, justifyContent: 'center',
+    borderRadius: 999, borderWidth: StyleSheet.hairlineWidth,
   },
-  durationChipText: { fontSize: FontSize.sm, fontWeight: '600' },
+  durationChipText: { fontSize: 14, fontWeight: '600', fontVariant: ['tabular-nums'] },
 
   // Improved inputs (bigger, clearer)
   inputImproved: {

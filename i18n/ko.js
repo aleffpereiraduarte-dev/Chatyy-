@@ -1,4 +1,18 @@
 export default {
+  // [2026-10-14 calendário premium]
+  "calendar.starts": "시작",
+  "calendar.ends": "종료",
+  "calendar.moreOptions": "더보기",
+  "calendar.longPressToAdd": "길게 눌러 일정 만들기",
+  "calendar.timeZone": "시간대",
+  // [2026-10-14 notif/carteira/404]
+  "wallet.kind.earningsConversion": "수익 환산",
+  "wallet.earningsConversionSub": "이전 잔액이 레알(BRL)로 환산되었습니다",
+  "notifications.emptyFollowingDesc": "팔로우하는 사람의 라이브와 채팅이 여기에 표시됩니다.",
+  "notFound.title": "페이지를 찾을 수 없습니다",
+  "notFound.subtitle": "이 링크는 더 이상 존재하지 않거나 잘못 입력되었습니다.",
+  "notFound.home": "처음으로",
+  "notFound.back": "뒤로",
   // [2026-10-13 diamantes-religados]
   "gifts.title": "Gifts",
   "gifts.titleTo": "Gift for {name}",
@@ -8233,4 +8247,9 @@ export default {
   "chatConv.wallpaperPhotoFailed": "이 사진을 사용할 수 없습니다. 연결을 확인하고 다시 시도하세요.",
   "chatConv.wallpaperApplied": "배경화면이 적용되었습니다",
   "chatConv.wallpaperAiSlow": "최대 1분 정도 걸릴 수 있습니다",
+  'pushBanner.offTitle': 'Notifications are off',
+  'pushBanner.staleTitle': 'Notifications may not arrive',
+  'pushBanner.sub': 'Turn them on to get messages and calls instantly.',
+  'pushBanner.ctaSettings': 'Settings',
+  'pushBanner.ctaRetry': 'Turn on',
 };

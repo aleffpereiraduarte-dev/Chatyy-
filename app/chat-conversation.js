@@ -10184,6 +10184,12 @@ function ChatConversationInner() {
     // carried `email`). emailToDisplayName('') → '' → empty title above
     // "visto há 6m". Always fall back to formatting the peer email so
     // there's never an empty header — user reported "Carol não aparece".
+    // [2026-10-14 grupo-nome] Grupo/canal: nome cru (emailToDisplayName mudava caixa/quebrava
+    // palavras → o título "mudava" entre telas).
+    if ((params.type === 'group' || params.type === 'channel') && params.name) {
+      const rawName = String(params.name).trim();
+      if (rawName) return rawName;
+    }
     const fromName = emailToDisplayName(params.name || '');
     if (fromName) return fromName;
     const peer = params.email || '';
@@ -10211,9 +10217,14 @@ function ChatConversationInner() {
       // [2026-10-10 qa-sweep] Self-chat: o servidor chama de "Saved Messages"
       // (inglês) e sobrescrevia o título localizado vindo da rota.
       const _isSavedConv = conv.type === 'saved' || String(params.saved || '') === '1';
+      // [2026-10-14 grupo-nome] Grupo/canal: `name` do servidor (display_name de grupo só existe
+      // em placeholder local, às vezes = quem mandou), cru; vazio nunca sobrescreve (if abaixo).
+      const _isGroupConv = conv.type === 'group' || conv.type === 'channel';
       const name = _isSavedConv
         ? t('chat.savedMessages')
-        : (nn || emailToDisplayName(conv.display_name || conv.name || ''));
+        : (nn || (_isGroupConv
+          ? String(conv.name || conv.display_name || '').trim()
+          : emailToDisplayName(conv.display_name || conv.name || '')));
       if (name) setConversationName(name);
       // Track the group's avatar separately so the group info header can
       // actually render the uploaded photo (AvatarCircle has no email to
@@ -10304,6 +10315,31 @@ function ChatConversationInner() {
         }
       } catch {}
     }).catch(() => { setConvMetaResolved(true); });
+  }, [conversationId]);
+
+  // [2026-10-14 grupo-nome] Rename/foto do grupo AO VIVO no header: evento explícito do servidor
+  // (WS conversation_meta → todos os membros/aparelhos) ou rename feito aqui ('chatyy:convMeta').
+  // Nome vazio é ignorado — o título nunca regride para fallback.
+  useEffect(() => {
+    if (!conversationId) return undefined;
+    const apply = (d) => {
+      if (!d || String(d.conversation_id) !== String(conversationId)) return;
+      const nm = typeof d.name === 'string' ? d.name.trim() : '';
+      if (nm) setConversationName(nm);
+      if (typeof d.avatar === 'string' && d.avatar) setConversationAvatar(d.avatar);
+    };
+    const offs = [];
+    try {
+      const ws = require('../services/websocket').default;
+      const off = ws?.on?.('conversation_meta', apply);
+      if (typeof off === 'function') offs.push(off);
+    } catch {}
+    try {
+      const { DeviceEventEmitter } = require('react-native');
+      const sub = DeviceEventEmitter.addListener('chatyy:convMeta', apply);
+      offs.push(() => sub.remove());
+    } catch {}
+    return () => { for (const off of offs) { try { off(); } catch {} } };
   }, [conversationId]);
 
   // Chatyy settings (font size, read receipts, etc.)
@@ -22669,7 +22705,14 @@ function ChatConversationInner() {
         safeAlert(t('common.error') || 'Error', r?.message || 'Falha ao renomear grupo');
         return;
       }
-      setConversationName(newName);
+      // [2026-10-14 grupo-nome] nome GRAVADO (servidor corta em 60) + avisa a lista deste
+      // aparelho na hora (antes só o header mudava; a lista/cache seguiam com o nome antigo).
+      const savedName = String(r?.data?.name || newName).trim() || newName;
+      setConversationName(savedName);
+      try {
+        const { DeviceEventEmitter } = require('react-native');
+        DeviceEventEmitter.emit('chatyy:convMeta', { conversation_id: conversationId, name: savedName });
+      } catch {}
       setShowGroupInfo(false);
     } catch {}
   };

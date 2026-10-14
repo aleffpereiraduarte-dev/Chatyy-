@@ -1,4 +1,18 @@
 export default {
+  // [2026-10-14 calendário premium]
+  "calendar.starts": "Mulai",
+  "calendar.ends": "Selesai",
+  "calendar.moreOptions": "Opsi lainnya",
+  "calendar.longPressToAdd": "Sentuh lama untuk membuat acara",
+  "calendar.timeZone": "Zona waktu",
+  // [2026-10-14 notif/carteira/404]
+  "wallet.kind.earningsConversion": "Konversi penghasilan",
+  "wallet.earningsConversionSub": "Saldo lama dikonversi ke real (BRL)",
+  "notifications.emptyFollowingDesc": "Live dan chat dari orang yang kamu ikuti muncul di sini.",
+  "notFound.title": "Halaman tidak ditemukan",
+  "notFound.subtitle": "Tautan ini sudah tidak ada atau salah ketik.",
+  "notFound.home": "Kembali ke awal",
+  "notFound.back": "Kembali",
   // [2026-10-13 diamantes-religados]
   "gifts.title": "Gifts",
   "gifts.titleTo": "Gift for {name}",
@@ -11018,4 +11032,9 @@ export default {
   "chatConv.wallpaperPhotoFailed": "Foto ini tidak dapat digunakan. Periksa koneksi Anda dan coba lagi.",
   "chatConv.wallpaperApplied": "Wallpaper diterapkan",
   "chatConv.wallpaperAiSlow": "Ini bisa memakan waktu hingga 1 menit",
+  'pushBanner.offTitle': 'Notifications are off',
+  'pushBanner.staleTitle': 'Notifications may not arrive',
+  'pushBanner.sub': 'Turn them on to get messages and calls instantly.',
+  'pushBanner.ctaSettings': 'Settings',
+  'pushBanner.ctaRetry': 'Turn on',
 };

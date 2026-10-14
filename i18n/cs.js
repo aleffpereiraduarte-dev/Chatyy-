@@ -1,4 +1,18 @@
 export default {
+  // [2026-10-14 calendário premium]
+  "calendar.starts": "Začátek",
+  "calendar.ends": "Konec",
+  "calendar.moreOptions": "Další možnosti",
+  "calendar.longPressToAdd": "Podržením vytvoříte událost",
+  "calendar.timeZone": "Časové pásmo",
+  // [2026-10-14 notif/carteira/404]
+  "wallet.kind.earningsConversion": "Převod výdělků",
+  "wallet.earningsConversionSub": "Starý zůstatek převeden na realy (BRL)",
+  "notifications.emptyFollowingDesc": "Živá vysílání a chaty lidí, které sledujete, se zobrazí zde.",
+  "notFound.title": "Stránka nenalezena",
+  "notFound.subtitle": "Tento odkaz už neexistuje nebo byl zadán chybně.",
+  "notFound.home": "Zpět na začátek",
+  "notFound.back": "Zpět",
   // [2026-10-13 diamantes-religados]
   "gifts.title": "Gifts",
   "gifts.titleTo": "Gift for {name}",
@@ -8195,4 +8209,9 @@ export default {
   "chatConv.wallpaperPhotoFailed": "Tuto fotku nelze použít. Zkontrolujte připojení a zkuste to znovu.",
   "chatConv.wallpaperApplied": "Tapeta nastavena",
   "chatConv.wallpaperAiSlow": "Může to trvat až 1 minutu",
+  'pushBanner.offTitle': 'Notifications are off',
+  'pushBanner.staleTitle': 'Notifications may not arrive',
+  'pushBanner.sub': 'Turn them on to get messages and calls instantly.',
+  'pushBanner.ctaSettings': 'Settings',
+  'pushBanner.ctaRetry': 'Turn on',
 };

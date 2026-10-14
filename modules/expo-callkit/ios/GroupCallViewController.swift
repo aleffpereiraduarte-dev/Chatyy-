@@ -346,15 +346,33 @@ final class GroupCallViewController: UIViewController, @unchecked Sendable {
     private func publishCamera(on r: Room) async {
         let captureOpts = CallViewController.defaultCameraCaptureOptions(position: currentCameraPosition, isGroup: true)
         let publishOpts = CallViewController.defaultVideoPublishOptions()
-        if let pub = try? await r.localParticipant.setCamera(
-            enabled: true,
-            captureOptions: captureOpts,
-            publishOptions: publishOpts
-        ), let track = pub.track as? LocalVideoTrack {
-            await MainActor.run { self.updateLocalParticipant(videoTrack: track) }
-            print("[GroupCallVC] camera published (profile=\(CallViewController.CallVideoQuality.current.rawValue) layers=\(CallViewController.CallVideoQuality.layersLabel())) — room=\(roomName)")
-            await MainActor.run { self.startAdaptiveVideo(r) }
+        // [2026-10-14 self-view] Was a single `try?` — a throw (ICE
+        // reconnecting / publisher not ready) left the group call with no
+        // camera and no self tile for the whole call. 3 tries + diag.
+        var lastError: Error?
+        for attempt in 1...3 {
+            do {
+                let pub = try await r.localParticipant.setCamera(
+                    enabled: true,
+                    captureOptions: captureOpts,
+                    publishOptions: publishOpts
+                )
+                if let track = pub?.track as? LocalVideoTrack {
+                    await MainActor.run { self.updateLocalParticipant(videoTrack: track) }
+                    print("[GroupCallVC] camera published (profile=\(CallViewController.CallVideoQuality.current.rawValue) layers=\(CallViewController.CallVideoQuality.layersLabel())) — room=\(roomName)")
+                    await MainActor.run { self.startAdaptiveVideo(r) }
+                    return
+                }
+                lastError = nil
+                break
+            } catch {
+                lastError = error
+                print("[GroupCallVC] camera publish failed (try \(attempt)): \(error)")
+                try? await Task.sleep(nanoseconds: 700_000_000)
+            }
         }
+        let errText: String = lastError.map { "\($0)" } ?? "no_track"
+        nativeCallDiag("group_cam_publish_failed", roomName, String(errText.prefix(160)))
     }
 
     private func fetchTokenAndConnect() {

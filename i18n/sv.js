@@ -1,4 +1,18 @@
 export default {
+  // [2026-10-14 calendário premium]
+  "calendar.starts": "Börjar",
+  "calendar.ends": "Slutar",
+  "calendar.moreOptions": "Fler alternativ",
+  "calendar.longPressToAdd": "Tryck länge för att skapa en händelse",
+  "calendar.timeZone": "Tidszon",
+  // [2026-10-14 notif/carteira/404]
+  "wallet.kind.earningsConversion": "Omräkning av intäkter",
+  "wallet.earningsConversionSub": "Gammalt saldo omräknat till real (BRL)",
+  "notifications.emptyFollowingDesc": "Livesändningar och chattar från personer du följer visas här.",
+  "notFound.title": "Sidan hittades inte",
+  "notFound.subtitle": "Länken finns inte längre eller skrevs fel.",
+  "notFound.home": "Till startsidan",
+  "notFound.back": "Tillbaka",
   // [2026-10-13 diamantes-religados]
   "gifts.title": "Gifts",
   "gifts.titleTo": "Gift for {name}",
@@ -8973,4 +8987,9 @@ export default {
   "chatConv.wallpaperPhotoFailed": "Det gick inte att använda fotot. Kontrollera anslutningen och försök igen.",
   "chatConv.wallpaperApplied": "Bakgrund tillämpad",
   "chatConv.wallpaperAiSlow": "Det kan ta upp till 1 minut",
+  'pushBanner.offTitle': 'Notifications are off',
+  'pushBanner.staleTitle': 'Notifications may not arrive',
+  'pushBanner.sub': 'Turn them on to get messages and calls instantly.',
+  'pushBanner.ctaSettings': 'Settings',
+  'pushBanner.ctaRetry': 'Turn on',
 };

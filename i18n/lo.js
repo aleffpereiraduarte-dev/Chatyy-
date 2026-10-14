@@ -1,4 +1,18 @@
 export default {
+  // [2026-10-14 calendário premium]
+  "calendar.starts": "ເລີ່ມ",
+  "calendar.ends": "ສິ້ນສຸດ",
+  "calendar.moreOptions": "ຕົວເລືອກເພີ່ມເຕີມ",
+  "calendar.longPressToAdd": "ແຕະຄ້າງໄວ້ເພື່ອສ້າງກິດຈະກຳ",
+  "calendar.timeZone": "ເຂດເວລາ",
+  // [2026-10-14 notif/carteira/404]
+  "wallet.kind.earningsConversion": "ການແປງລາຍຮັບ",
+  "wallet.earningsConversionSub": "ຍອດເງິນເກົ່າຖືກແປງເປັນເຣອານ (BRL)",
+  "notifications.emptyFollowingDesc": "ໄລຟ໌ ແລະ ແຊັດຂອງຄົນທີ່ທ່ານຕິດຕາມຈະສະແດງຢູ່ນີ້.",
+  "notFound.title": "ບໍ່ພົບໜ້ານີ້",
+  "notFound.subtitle": "ລິ້ງນີ້ບໍ່ມີແລ້ວ ຫຼື ພິມຜິດ.",
+  "notFound.home": "ກັບໄປໜ້າຫຼັກ",
+  "notFound.back": "ກັບຄືນ",
   // [2026-10-13 diamantes-religados]
   "gifts.title": "Gifts",
   "gifts.titleTo": "Gift for {name}",
@@ -8191,4 +8205,9 @@ export default {
   "chatConv.wallpaperPhotoFailed": "ບໍ່ສາມາດໃຊ້ຮູບນີ້ໄດ້. ກວດເບິ່ງການເຊື່ອມຕໍ່ແລ້ວລອງໃໝ່.",
   "chatConv.wallpaperApplied": "ຕັ້ງພາບພື້ນຫຼັງແລ້ວ",
   "chatConv.wallpaperAiSlow": "ອາດໃຊ້ເວລາເຖິງ 1 ນາທີ",
+  'pushBanner.offTitle': 'Notifications are off',
+  'pushBanner.staleTitle': 'Notifications may not arrive',
+  'pushBanner.sub': 'Turn them on to get messages and calls instantly.',
+  'pushBanner.ctaSettings': 'Settings',
+  'pushBanner.ctaRetry': 'Turn on',
 };

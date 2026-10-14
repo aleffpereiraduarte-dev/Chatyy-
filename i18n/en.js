@@ -1,4 +1,18 @@
 export default {
+  // [2026-10-14 calendário premium]
+  "calendar.starts": "Starts",
+  "calendar.ends": "Ends",
+  "calendar.moreOptions": "More options",
+  "calendar.longPressToAdd": "Touch and hold to create an event",
+  "calendar.timeZone": "Time zone",
+  // [2026-10-14 notif/carteira/404]
+  "wallet.kind.earningsConversion": "Earnings conversion",
+  "wallet.earningsConversionSub": "Old balance converted to reais (BRL)",
+  "notifications.emptyFollowingDesc": "Lives and chats from people you follow show up here.",
+  "notFound.title": "Page not found",
+  "notFound.subtitle": "This link no longer exists or was mistyped.",
+  "notFound.home": "Back to home",
+  "notFound.back": "Go back",
   // [2026-10-13 diamantes-religados]
   "gifts.title": "Gifts",
   "gifts.titleTo": "Gift for {name}",
@@ -1767,6 +1781,11 @@ export default {
   'pushBanner.retrying': 'Re-enabling notifications…',
   'pushBanner.openSettings': 'Notifications are off — tap to open Settings',
   'pushBanner.a11y': 'Tap to re-enable call notifications',
+  'pushBanner.offTitle': 'Notifications are off',
+  'pushBanner.staleTitle': 'Notifications may not arrive',
+  'pushBanner.sub': 'Turn them on to get messages and calls instantly.',
+  'pushBanner.ctaSettings': 'Settings',
+  'pushBanner.ctaRetry': 'Turn on',
   'pushBanner.dismiss': 'Dismiss',
   // [2026-10-07 native-polish] push pre-permission primer
   'pushPrimer.title': 'Turn on notifications',

@@ -1,4 +1,18 @@
 export default {
+  // [2026-10-14 calendário premium]
+  "calendar.starts": "Sākums",
+  "calendar.ends": "Beigas",
+  "calendar.moreOptions": "Vairāk opciju",
+  "calendar.longPressToAdd": "Pieskarieties un turiet, lai izveidotu notikumu",
+  "calendar.timeZone": "Laika josla",
+  // [2026-10-14 notif/carteira/404]
+  "wallet.kind.earningsConversion": "Ienākumu konvertēšana",
+  "wallet.earningsConversionSub": "Vecais atlikums konvertēts reālos (BRL)",
+  "notifications.emptyFollowingDesc": "Šeit parādās to cilvēku tiešraides un tērzēšanas, kurus seko.",
+  "notFound.title": "Lapa nav atrasta",
+  "notFound.subtitle": "Šī saite vairs nepastāv vai ir ierakstīta nepareizi.",
+  "notFound.home": "Uz sākumu",
+  "notFound.back": "Atpakaļ",
   // [2026-10-13 diamantes-religados]
   "gifts.title": "Gifts",
   "gifts.titleTo": "Gift for {name}",
@@ -8195,4 +8209,9 @@ export default {
   "chatConv.wallpaperPhotoFailed": "Šo fotoattēlu nevarēja izmantot. Pārbaudiet savienojumu un mēģiniet vēlreiz.",
   "chatConv.wallpaperApplied": "Fona attēls lietots",
   "chatConv.wallpaperAiSlow": "Tas var aizņemt līdz 1 minūtei",
+  'pushBanner.offTitle': 'Notifications are off',
+  'pushBanner.staleTitle': 'Notifications may not arrive',
+  'pushBanner.sub': 'Turn them on to get messages and calls instantly.',
+  'pushBanner.ctaSettings': 'Settings',
+  'pushBanner.ctaRetry': 'Turn on',
 };

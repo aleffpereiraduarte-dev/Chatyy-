@@ -1,4 +1,18 @@
 export default {
+  // [2026-10-14 calendário premium]
+  "calendar.starts": "শুরু",
+  "calendar.ends": "শেষ",
+  "calendar.moreOptions": "আরও বিকল্প",
+  "calendar.longPressToAdd": "ইভেন্ট তৈরি করতে চেপে ধরে রাখুন",
+  "calendar.timeZone": "সময় অঞ্চল",
+  // [2026-10-14 notif/carteira/404]
+  "wallet.kind.earningsConversion": "আয়ের রূপান্তর",
+  "wallet.earningsConversionSub": "পুরোনো ব্যালেন্স রিয়ালে (BRL) রূপান্তরিত",
+  "notifications.emptyFollowingDesc": "আপনি যাদের ফলো করেন তাদের লাইভ ও চ্যাট এখানে দেখা যাবে।",
+  "notFound.title": "পৃষ্ঠা পাওয়া যায়নি",
+  "notFound.subtitle": "এই লিংকটি আর নেই বা ভুল টাইপ করা হয়েছে।",
+  "notFound.home": "শুরুতে ফিরুন",
+  "notFound.back": "ফিরে যান",
   // [2026-10-13 diamantes-religados]
   "gifts.title": "Gifts",
   "gifts.titleTo": "Gift for {name}",
@@ -8195,4 +8209,9 @@ export default {
   "chatConv.wallpaperPhotoFailed": "এই ছবিটি ব্যবহার করা যায়নি। সংযোগ পরীক্ষা করে আবার চেষ্টা করুন।",
   "chatConv.wallpaperApplied": "ওয়ালপেপার প্রয়োগ করা হয়েছে",
   "chatConv.wallpaperAiSlow": "এতে ১ মিনিট পর্যন্ত লাগতে পারে",
+  'pushBanner.offTitle': 'Notifications are off',
+  'pushBanner.staleTitle': 'Notifications may not arrive',
+  'pushBanner.sub': 'Turn them on to get messages and calls instantly.',
+  'pushBanner.ctaSettings': 'Settings',
+  'pushBanner.ctaRetry': 'Turn on',
 };

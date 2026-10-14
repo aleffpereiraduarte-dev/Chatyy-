@@ -1804,7 +1804,10 @@ function SettingsScreenInner() {
         <Stack.Screen options={nativeHeaderOptions({
           colors,
           isDark,
-          blur: activeCategory !== null, // [2026-10-07 native-ui-build] iOS: vidro do sistema; Android sólido
+          // [2026-10-14 header-overlap] header OPACO também nas categorias: o vidro
+          // (blur) deixava as linhas do topo ("Plano, pagamento e upgrade")
+          // visíveis/cortadas por baixo do título no escuro.
+          blur: false,
           title: activeCategory !== null ? activeCategoryTitle : (t('settings.title') || 'Configurações'),
           // [2026-10-12 settings-back] Swipe-back só fica desligado DENTRO de
           // uma categoria aberta pela lista (o voltar dela leva à lista); com

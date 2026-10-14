@@ -200,6 +200,12 @@ final class CallViewController: UIViewController, @unchecked Sendable {
     // [WAVE 177] Video views — remote fullscreen + local PiP corner
     private var remoteVideoView: VideoView?
     private var localVideoView: VideoView?
+    // [2026-10-14 self-view] Caller's camera captured LOCALLY while ringing
+    // (WhatsApp shows your own camera before the peer answers). NOT published
+    // (ring-leak gate) — published as-is in openOutgoingMicGate on answer.
+    private var outgoingPreviewTrack: LocalVideoTrack?
+    // [2026-10-14 self-view] Tap the self-view tile = swap main/mini.
+    private var videoSwapped: Bool = false
     private var remoteVideoObserver: AnyCancellable?
     private var localVideoObserver: AnyCancellable?
 
@@ -726,15 +732,59 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         // too, gated the same as the mic. Done BEFORE the mic-enabled guard so a
         // muted-mic video call still shows the caller's camera after Accept.
         if self.hasVideo {
+            // [2026-10-14 self-view] Was a single `try?` setCamera: any throw
+            // (SFU log call_1791946803888_gfxpp5v5q: ICE reconnecting right at
+            // the answer) left the CALLER with no camera at all — no self-view
+            // (voip_diag video_quality cap=none) and the peer never saw him.
+            // Now: publish the ringing preview track (or a fresh camera), 3
+            // tries, diag on failure, bind the self-view directly.
+            let preview = self.outgoingPreviewTrack
             Task { [weak self] in
-                guard let self = self, let r2 = self.room else { return }
+                guard let self = self else { return }
                 let captureOpts = Self.defaultCameraCaptureOptions(position: self.currentCameraPosition)
                 let publishOpts = Self.defaultVideoPublishOptions()
-                if let pub = try? await r2.localParticipant.setCamera(enabled: true, captureOptions: captureOpts, publishOptions: publishOpts),
-                   let track = pub.track as? LocalVideoTrack {
-                    await MainActor.run { self.session.localVideoTrack = track }
-                    print("[CallVC] outgoing camera published on answer (\(reason)) callId=\(self.callId)")
+                var lastError: Error?
+                for attempt in 1...3 {
+                    guard let r2 = self.room, !self.didHangup else { return }
+                    do {
+                        let pub: LocalTrackPublication?
+                        if let preview = preview, attempt < 3 {
+                            pub = try await r2.localParticipant.publish(videoTrack: preview, options: publishOpts)
+                        } else {
+                            // Last try: drop the preview capturer (if any) and
+                            // let LiveKit build a fresh camera track.
+                            if let preview = preview, r2.localParticipant.localVideoTracks.first(where: { $0.track === preview }) == nil {
+                                try? await preview.stop()
+                            }
+                            pub = try await r2.localParticipant.setCamera(enabled: true, captureOptions: captureOpts, publishOptions: publishOpts)
+                        }
+                        if let track = pub?.track as? LocalVideoTrack {
+                            await MainActor.run {
+                                self.outgoingPreviewTrack = nil   // published (or replaced) — LK owns it now
+                                self.session.localVideoTrack = track
+                                self.applyLocalVideoTrack(track)
+                            }
+                            // Camera was switched off while ringing → keep it off.
+                            let camOn: Bool = await MainActor.run { self.session.camEnabled }
+                            if !camOn {
+                                // Preview muted while ringing: publish restarted
+                                // the capture → stop it again (unmute restarts).
+                                if track.isMuted { try? await track.stop() } else { try? await track.mute() }
+                            }
+                            nativeCallDiag("outgoing_cam_published_on_answer", self.callId, "attempt=\(attempt) preview=\(preview != nil)")
+                            print("[CallVC] outgoing camera published on answer (\(reason)) callId=\(self.callId)")
+                            return
+                        }
+                        lastError = nil
+                        break
+                    } catch {
+                        lastError = error
+                        print("[CallVC] outgoing camera publish on answer failed (try \(attempt)): \(error)")
+                        try? await Task.sleep(nanoseconds: 700_000_000)
+                    }
                 }
+                let errText: String = lastError.map { "\($0)" } ?? "no_track"
+                nativeCallDiag("outgoing_cam_publish_on_answer_failed", self.callId, String(errText.prefix(160)))
             }
         }
         let desired = self.session.micEnabled
@@ -1475,6 +1525,9 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         // into them. This is the heart of the #1358 fix: receiving a video call
         // now actually renders the peer's camera (was an avatar-only screen).
         setupVideoViews()
+        // [2026-10-14 self-view] Outgoing VIDEO call: show my own camera in the
+        // tile while it rings (the publish stays gated until the answer).
+        if hasVideo && isOutgoing { startOutgoingCameraPreview() }
 
         // [STAGE-A 2026-05-20] GAP #2 — If preconnectRoom (push-receive path)
         // already published a Room for this callId, adopt it instead of
@@ -1758,6 +1811,11 @@ final class CallViewController: UIViewController, @unchecked Sendable {
                         // received the caller's live camera stream BEFORE tapping
                         // Accept. Published in openOutgoingMicGate() on answer.
                         print("[CallVC] outgoing camera publish DEFERRED until answer — callId=\(self.callId)")
+                    } else if self.hasVideo, await MainActor.run(body: { self.outgoingPreviewTrack != nil }) {
+                        // [2026-10-14 self-view] Answered while connecting: the
+                        // gate path is publishing the ringing preview — a
+                        // setCamera here would open a 2nd capturer.
+                        print("[CallVC] camera publish left to the answer gate (preview track) — callId=\(self.callId)")
                     } else if self.hasVideo {
                         // [Wave C, 2026-05-18] Pass explicit captureOptions +
                         // publishOptions so the *first* publish carries our
@@ -1860,6 +1918,7 @@ final class CallViewController: UIViewController, @unchecked Sendable {
             return
         }
         didHangup = true
+        stopOutgoingCameraPreview() // [2026-10-14 self-view] camera off if never answered
         peerGoneWork?.cancel(); peerGoneWork = nil // [2026-10-12 peer-gone]
         P2PCallBridge.close(callId: callId, reason: "hangup") // [2026-10-09 p2p-ios]
         cancelOutgoingRingTimer()
@@ -2557,6 +2616,16 @@ final class CallViewController: UIViewController, @unchecked Sendable {
                     return
                 }
             }
+            // [2026-10-14 self-view] Ringing preview (not published yet): the
+            // republish fallback below would PUBLISH the camera before the
+            // answer (ring-leak gate) — restart the preview capture instead.
+            let ringingPreview: LocalVideoTrack? = await MainActor.run { self.outgoingPreviewTrack }
+            if let pv = ringingPreview {
+                if let cam = pv.capturer as? CameraCapturer {
+                    _ = try? await cam.set(cameraPosition: next)
+                }
+                return
+            }
             // Path 2: fallback to the old republish path. Still happens
             // suspend-async so we don't block the UI thread.
             do {
@@ -2689,7 +2758,7 @@ final class CallViewController: UIViewController, @unchecked Sendable {
                 // publication is created by the SDK after the user confirms —
                 // didPublishTrack (LocalParticipant) flips the UI then.
                 // In-app capture: publishes immediately → didPublishTrack too.
-                try await ScreenShareSupport.set(room: r, enabled: desired)
+                try await ScreenShareSupport.set(room: r, enabled: desired, callId: self.callId)
                 await MainActor.run {
                     self.screenShareInFlight = false
                     if !desired {
@@ -2702,7 +2771,7 @@ final class CallViewController: UIViewController, @unchecked Sendable {
                 }
             } catch {
                 print("[CallVC] set(.screenShareVideo, enabled: \(desired)) failed: \(error)")
-                nativeCallDiag("screen_share_error", self.callId)
+                nativeCallDiag("screen_share_error", self.callId, String("\(error)".prefix(160)))
                 await MainActor.run {
                     self.screenShareInFlight = false
                     self.applyScreenShareState(ScreenShareSupport.isSharing(room: r))
@@ -2781,7 +2850,7 @@ final class CallViewController: UIViewController, @unchecked Sendable {
 
         let stop = UIButton(type: .system)
         stop.translatesAutoresizingMaskIntoConstraints = false
-        stop.setTitle("Parar", for: .normal)
+        stop.setTitle(CallStrings.s("stop"), for: .normal)
         stop.setTitleColor(.white, for: .normal)
         stop.titleLabel?.font = .systemFont(ofSize: 13, weight: .bold)
         stop.backgroundColor = UIColor.white.withAlphaComponent(0.22)
@@ -4397,12 +4466,23 @@ final class CallViewController: UIViewController, @unchecked Sendable {
     /// Publish options for a SCREEN SHARE track (ScreenShareSupport passes
     /// these explicitly): same codec pin, 1080p15 ~3 Mbps, keep resolution.
     static func screenSharePublishOptions() -> VideoPublishOptions {
+        // [2026-10-14 screen-share bg-freeze] Was `.h264`. Founder: "só deixa
+        // ver a tela do chat; quando sai do app, trava". The broadcast
+        // extension keeps sending frames system-wide, but the ENCODER runs in
+        // the host app and iOS invalidates VideoToolbox (HW H.264) sessions
+        // while the app is not active (kVTInvalidSessionErr → libwebrtc logs
+        // "Invalid compression session, resetting." and emits nothing) — the
+        // peer froze on the last frame captured while Chatyy was in front
+        // (= the chat). VP8 is libvpx SOFTWARE → keeps encoding in background
+        // (the app stays alive via the CallKit/audio background mode). Same
+        // choice Jitsi/LiveKit samples make for ReplayKit broadcast. Every
+        // receiver (LK Swift/Android/JS) decodes VP8.
         return VideoPublishOptions(
             name: nil,
             encoding: CallVideoQuality.screenShareEncoding,
             screenShareEncoding: CallVideoQuality.screenShareEncoding,
             simulcast: false,
-            preferredCodec: .h264,
+            preferredCodec: .vp8,
             degradationPreference: .maintainResolution
         )
     }
@@ -4622,6 +4702,7 @@ final class CallViewController: UIViewController, @unchecked Sendable {
             ScreenShareSupport.stopObserving(tok)
             broadcastStopToken = nil
         }
+        stopOutgoingCameraPreview() // [2026-10-14 self-view]
         // [minimize-drop fix 2026-05-26] CRITICAL: do NOT disconnect the Room
         // when this dealloc is the result of a MINIMIZE. The incoming-answer
         // path presents this VC as a plain modal, so when handleMinimize() (or
@@ -5744,6 +5825,9 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         // Drag gesture (FaceTime edge-snap).
         let pan = UIPanGestureRecognizer(target: self, action: #selector(handlePipPan(_:)))
         pip.addGestureRecognizer(pan)
+        // [2026-10-14 self-view] Tap = swap main/mini (WhatsApp).
+        let pipTap = UITapGestureRecognizer(target: self, action: #selector(handleLocalPipTap))
+        pip.addGestureRecognizer(pipTap)
         pip.isUserInteractionEnabled = true
 
         // Make sure controls + top bar render ABOVE the remote video. The
@@ -5819,7 +5903,17 @@ final class CallViewController: UIViewController, @unchecked Sendable {
     /// the video-mode controls scrim + auto-hide timer.
     private func applyRemoteVideoTrack(_ track: VideoTrack?) {
         guard let remote = remoteVideoView else { return }
+        if videoSwapped { restoreVideoSwap() }   // [2026-10-14 self-view]
         if let track = track {
+            // [2026-10-14 screen-share viewer] Peer's SCREEN → aspect-FIT (the
+            // whole screen legible, no crop; pinch zooms + drag pans), camera →
+            // aspect-FILL. Reset any zoom when the source changes (screen ends
+            // → back to the camera at 1×).
+            let isScreen = (track.source == .screenShareVideo)
+            let wantMode: VideoView.LayoutMode = isScreen ? .fit : .fill
+            if remote.layoutMode != wantMode { remote.layoutMode = wantMode }
+            if remote.track !== track { resetRemoteZoom() }
+            remote.backgroundColor = isScreen ? .black : .clear
             remote.track = track
             remote.isHidden = false
             remoteVideoActive = true
@@ -5857,6 +5951,7 @@ final class CallViewController: UIViewController, @unchecked Sendable {
             remote.track = nil
             remote.isHidden = true
             remoteVideoActive = false
+            resetRemoteZoom()
             // Mid-call camera-off (it WAS a video call): show avatar over a dim
             // background instead of a black screen (P1 item 6).
             UIView.animate(withDuration: 0.3) {
@@ -5883,10 +5978,91 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         return nil
     }
 
+    /// [2026-10-14 self-view] Founder: "quando estou na câmera não consigo me
+    /// ver". The caller's camera was only created on ANSWER (ring-leak gate,
+    /// 2026-10-04), so a video call showed no self-view while ringing, and if
+    /// that single publish threw there was none for the whole call. Capture
+    /// locally now (no publish → the callee's subscribe-only preconnect still
+    /// gets nothing before Accept); openOutgoingMicGate publishes this same
+    /// track. Idempotent; main thread.
+    private func startOutgoingCameraPreview() {
+        guard hasVideo, isOutgoing, !outgoingMicGateOpen, !didHangup,
+              session.camEnabled, session.localVideoTrack == nil,
+              outgoingPreviewTrack == nil else { return }
+        let track = LocalVideoTrack.createCameraTrack(
+            options: Self.defaultCameraCaptureOptions(position: currentCameraPosition))
+        outgoingPreviewTrack = track
+        let cid = callId
+        Task { [weak self] in
+            do {
+                try await track.start()
+                await MainActor.run {
+                    guard let self = self, self.outgoingPreviewTrack === track,
+                          self.session.localVideoTrack == nil else { return }
+                    self.session.localVideoTrack = track
+                    self.applyLocalVideoTrack(track)
+                }
+                nativeCallDiag("outgoing_cam_preview_started", cid)
+            } catch {
+                nativeCallDiag("outgoing_cam_preview_failed", cid, String("\(error)".prefix(160)))
+                await MainActor.run {
+                    guard let self = self, self.outgoingPreviewTrack === track else { return }
+                    self.outgoingPreviewTrack = nil
+                }
+            }
+        }
+    }
+
+    /// Stops the never-published ringing preview (hang-up / dismissed before
+    /// answer) so the camera (green dot) turns off. No-op once published —
+    /// LiveKit owns published tracks.
+    private func stopOutgoingCameraPreview() {
+        guard let pv = outgoingPreviewTrack else { return }
+        outgoingPreviewTrack = nil
+        Task { try? await pv.stop() }
+    }
+
+    /// [2026-10-14 self-view] Tap the self-view tile = swap: my camera full
+    /// screen, the peer in the tile (tap again to swap back). Only while both
+    /// videos exist; any track change resets to the normal layout.
+    @objc private func handleLocalPipTap() {
+        guard let remote = remoteVideoView, let local = localVideoView else { return }
+        guard let remoteTrack = session.remoteVideoTrack, let localTrack = session.localVideoTrack,
+              session.camEnabled, !remote.isHidden else { return }
+        videoSwapped.toggle()
+        resetRemoteZoom()
+        if videoSwapped {
+            remote.track = localTrack
+            remote.layoutMode = .fill
+            remote.mirrorMode = (currentCameraPosition == .front) ? .mirror : .off
+            local.track = remoteTrack
+            local.mirrorMode = .off
+            local.layoutMode = (remoteTrack.source == .screenShareVideo) ? .fit : .fill
+        } else {
+            restoreVideoSwap()
+        }
+        resetControlsAutoHide()
+    }
+
+    /// Put renderers back in the normal layout (peer full screen, me in tile).
+    private func restoreVideoSwap() {
+        videoSwapped = false
+        guard let remote = remoteVideoView, let local = localVideoView else { return }
+        remote.mirrorMode = .off
+        if let rt = session.remoteVideoTrack {
+            remote.layoutMode = (rt.source == .screenShareVideo) ? .fit : .fill
+            remote.track = rt
+        }
+        local.layoutMode = .fill
+        local.mirrorMode = (currentCameraPosition == .front) ? .mirror : .off
+        if let lt = session.localVideoTrack { local.track = lt }
+    }
+
     /// Bind / unbind the local camera into the PiP tile. Visible only while the
     /// camera is enabled (session.camEnabled). Mirrors the front camera.
     private func applyLocalVideoTrack(_ track: LocalVideoTrack?) {
         guard let local = localVideoView, localPipContainer != nil else { return }
+        if videoSwapped { restoreVideoSwap() }   // [2026-10-14 self-view]
         if let track = track, session.camEnabled {
             local.track = track
             // mirrorMode = .auto handles front-camera mirroring; pin explicitly
@@ -5965,6 +6141,11 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         if let local = localVideoView {
             local.mirrorMode = (currentCameraPosition == .front) ? .mirror : .off
         }
+        // [2026-10-14 self-view] Swapped layout: my camera is the big view.
+        if videoSwapped, let remote = remoteVideoView {
+            remote.mirrorMode = (currentCameraPosition == .front) ? .mirror : .off
+            localVideoView?.mirrorMode = .off
+        }
         // Keep controls visible after interacting.
         resetControlsAutoHide()
     }
@@ -6022,6 +6203,11 @@ final class CallViewController: UIViewController, @unchecked Sendable {
             let pinch = UIPinchGestureRecognizer(target: self, action: #selector(handleRemotePinch(_:)))
             remote.addGestureRecognizer(pinch)
             remotePinchGesture = pinch
+            // [2026-10-14 screen-share viewer] Drag to pan while zoomed in
+            // (reading a shared screen). No-op at 1×.
+            let pan = UIPanGestureRecognizer(target: self, action: #selector(handleRemotePan(_:)))
+            pan.maximumNumberOfTouches = 2
+            remote.addGestureRecognizer(pan)
         }
         controlsHidden = false
         resetControlsAutoHide()
@@ -6090,22 +6276,62 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         case .changed:
             let proposed = remoteZoomScale * gr.scale
             let clamped = min(max(proposed, 1.0), 3.0)
-            remote.transform = CGAffineTransform(scaleX: clamped, y: clamped)
+            remote.transform = remoteZoomTransform(scale: clamped, offset: clampedRemotePan(remotePanOffset, scale: clamped))
         case .ended, .cancelled:
             // Commit the clamped scale; if at/below 1× spring back to identity.
             let current = remoteZoomScale * gr.scale
             let clamped = min(max(current, 1.0), 3.0)
             if clamped <= 1.01 {
                 remoteZoomScale = 1.0
+                remotePanOffset = .zero
                 UIView.animate(withDuration: 0.3, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: 0.5, options: []) {
                     remote.transform = .identity
                 }
             } else {
                 remoteZoomScale = clamped
+                remotePanOffset = clampedRemotePan(remotePanOffset, scale: clamped)
+                remote.transform = remoteZoomTransform(scale: clamped, offset: remotePanOffset)
             }
         default:
             break
         }
+    }
+
+    // [2026-10-14 screen-share viewer] Pan while zoomed (WhatsApp-style
+    // reading of a shared screen). Offset is clamped so the content edge never
+    // leaves the screen edge.
+    private var remotePanOffset: CGPoint = .zero
+    private var remotePanStart: CGPoint = .zero
+
+    @objc private func handleRemotePan(_ gr: UIPanGestureRecognizer) {
+        guard let remote = remoteVideoView, remoteZoomScale > 1.01 else { return }
+        switch gr.state {
+        case .began:
+            remotePanStart = remotePanOffset
+        case .changed:
+            let t = gr.translation(in: view)
+            let proposed = CGPoint(x: remotePanStart.x + t.x, y: remotePanStart.y + t.y)
+            remotePanOffset = clampedRemotePan(proposed, scale: remoteZoomScale)
+            remote.transform = remoteZoomTransform(scale: remoteZoomScale, offset: remotePanOffset)
+        default:
+            break
+        }
+    }
+
+    private func remoteZoomTransform(scale: CGFloat, offset: CGPoint) -> CGAffineTransform {
+        return CGAffineTransform(translationX: offset.x, y: offset.y).scaledBy(x: scale, y: scale)
+    }
+
+    private func clampedRemotePan(_ p: CGPoint, scale: CGFloat) -> CGPoint {
+        let maxX = max(0, (scale - 1) * view.bounds.width / 2)
+        let maxY = max(0, (scale - 1) * view.bounds.height / 2)
+        return CGPoint(x: min(max(p.x, -maxX), maxX), y: min(max(p.y, -maxY), maxY))
+    }
+
+    private func resetRemoteZoom() {
+        remoteZoomScale = 1.0
+        remotePanOffset = .zero
+        remoteVideoView?.transform = .identity
     }
 }
 

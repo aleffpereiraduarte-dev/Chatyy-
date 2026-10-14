@@ -1,4 +1,18 @@
 export default {
+  // [2026-10-14 calendário premium]
+  "calendar.starts": "Începe",
+  "calendar.ends": "Se termină",
+  "calendar.moreOptions": "Mai multe opțiuni",
+  "calendar.longPressToAdd": "Atinge lung pentru a crea un eveniment",
+  "calendar.timeZone": "Fus orar",
+  // [2026-10-14 notif/carteira/404]
+  "wallet.kind.earningsConversion": "Conversia câștigurilor",
+  "wallet.earningsConversionSub": "Soldul vechi convertit în reali (BRL)",
+  "notifications.emptyFollowingDesc": "Live-urile și conversațiile celor pe care îi urmărești apar aici.",
+  "notFound.title": "Pagina nu a fost găsită",
+  "notFound.subtitle": "Acest link nu mai există sau a fost scris greșit.",
+  "notFound.home": "Înapoi la început",
+  "notFound.back": "Înapoi",
   // [2026-10-13 diamantes-religados]
   "gifts.title": "Gifts",
   "gifts.titleTo": "Gift for {name}",
@@ -8195,4 +8209,9 @@ export default {
   "chatConv.wallpaperPhotoFailed": "Nu s-a putut folosi această fotografie. Verifică conexiunea și încearcă din nou.",
   "chatConv.wallpaperApplied": "Imagine de fundal aplicată",
   "chatConv.wallpaperAiSlow": "Poate dura până la 1 minut",
+  'pushBanner.offTitle': 'Notifications are off',
+  'pushBanner.staleTitle': 'Notifications may not arrive',
+  'pushBanner.sub': 'Turn them on to get messages and calls instantly.',
+  'pushBanner.ctaSettings': 'Settings',
+  'pushBanner.ctaRetry': 'Turn on',
 };

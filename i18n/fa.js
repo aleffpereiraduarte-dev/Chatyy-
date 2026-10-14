@@ -1,4 +1,18 @@
 export default {
+  // [2026-10-14 calendário premium]
+  "calendar.starts": "شروع",
+  "calendar.ends": "پایان",
+  "calendar.moreOptions": "گزینه‌های بیشتر",
+  "calendar.longPressToAdd": "برای ایجاد رویداد، لمس کنید و نگه دارید",
+  "calendar.timeZone": "منطقه زمانی",
+  // [2026-10-14 notif/carteira/404]
+  "wallet.kind.earningsConversion": "تبدیل درآمد",
+  "wallet.earningsConversionSub": "موجودی قدیمی به رئال (BRL) تبدیل شد",
+  "notifications.emptyFollowingDesc": "پخش‌های زنده و گفتگوهای کسانی که دنبال می‌کنید اینجا نمایش داده می‌شود.",
+  "notFound.title": "صفحه پیدا نشد",
+  "notFound.subtitle": "این پیوند دیگر وجود ندارد یا اشتباه وارد شده است.",
+  "notFound.home": "بازگشت به خانه",
+  "notFound.back": "بازگشت",
   // [2026-10-13 diamantes-religados]
   "gifts.title": "Gifts",
   "gifts.titleTo": "Gift for {name}",
@@ -8195,4 +8209,9 @@ export default {
   "chatConv.wallpaperPhotoFailed": "استفاده از این عکس ممکن نشد. اتصال را بررسی کنید و دوباره امتحان کنید.",
   "chatConv.wallpaperApplied": "تصویر زمینه اعمال شد",
   "chatConv.wallpaperAiSlow": "این کار ممکن است تا ۱ دقیقه طول بکشد",
+  'pushBanner.offTitle': 'Notifications are off',
+  'pushBanner.staleTitle': 'Notifications may not arrive',
+  'pushBanner.sub': 'Turn them on to get messages and calls instantly.',
+  'pushBanner.ctaSettings': 'Settings',
+  'pushBanner.ctaRetry': 'Turn on',
 };

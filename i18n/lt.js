@@ -1,4 +1,18 @@
 export default {
+  // [2026-10-14 calendário premium]
+  "calendar.starts": "Pradžia",
+  "calendar.ends": "Pabaiga",
+  "calendar.moreOptions": "Daugiau parinkčių",
+  "calendar.longPressToAdd": "Palaikykite, kad sukurtumėte įvykį",
+  "calendar.timeZone": "Laiko juosta",
+  // [2026-10-14 notif/carteira/404]
+  "wallet.kind.earningsConversion": "Uždarbio konvertavimas",
+  "wallet.earningsConversionSub": "Senas likutis konvertuotas į realus (BRL)",
+  "notifications.emptyFollowingDesc": "Čia rodomos žmonių, kuriuos sekate, transliacijos ir pokalbiai.",
+  "notFound.title": "Puslapis nerastas",
+  "notFound.subtitle": "Ši nuoroda nebeegzistuoja arba įvesta neteisingai.",
+  "notFound.home": "Į pradžią",
+  "notFound.back": "Atgal",
   // [2026-10-13 diamantes-religados]
   "gifts.title": "Gifts",
   "gifts.titleTo": "Gift for {name}",
@@ -8195,4 +8209,9 @@ export default {
   "chatConv.wallpaperPhotoFailed": "Nepavyko panaudoti šios nuotraukos. Patikrinkite ryšį ir bandykite dar kartą.",
   "chatConv.wallpaperApplied": "Ekrano fonas pritaikytas",
   "chatConv.wallpaperAiSlow": "Tai gali užtrukti iki 1 minutės",
+  'pushBanner.offTitle': 'Notifications are off',
+  'pushBanner.staleTitle': 'Notifications may not arrive',
+  'pushBanner.sub': 'Turn them on to get messages and calls instantly.',
+  'pushBanner.ctaSettings': 'Settings',
+  'pushBanner.ctaRetry': 'Turn on',
 };

@@ -1,4 +1,18 @@
 export default {
+  // [2026-10-14 calendário premium]
+  "calendar.starts": "Início",
+  "calendar.ends": "Término",
+  "calendar.moreOptions": "Mais opções",
+  "calendar.longPressToAdd": "Toque e segure para criar um evento",
+  "calendar.timeZone": "Fuso horário",
+  // [2026-10-14 notif/carteira/404]
+  "wallet.kind.earningsConversion": "Conversão de ganhos",
+  "wallet.earningsConversionSub": "Saldo antigo convertido em reais",
+  "notifications.emptyFollowingDesc": "Lives e conversas de quem você segue aparecem aqui.",
+  "notFound.title": "Página não encontrada",
+  "notFound.subtitle": "Esse link não existe mais ou foi digitado errado.",
+  "notFound.home": "Voltar ao início",
+  "notFound.back": "Voltar",
   // [2026-10-13 diamantes-religados]
   "gifts.title": "Presentes",
   "gifts.titleTo": "Presente para {name}",
@@ -1747,6 +1761,11 @@ export default {
   'pushBanner.retrying': 'Reativando notificações…',
   'pushBanner.openSettings': 'Notificações desativadas — toque pra abrir os Ajustes',
   'pushBanner.a11y': 'Toque para reativar notificações de chamada',
+  'pushBanner.offTitle': 'Notificações desativadas',
+  'pushBanner.staleTitle': 'Notificações podem não chegar',
+  'pushBanner.sub': 'Ative para receber mensagens e chamadas na hora.',
+  'pushBanner.ctaSettings': 'Ajustes',
+  'pushBanner.ctaRetry': 'Ativar',
   'pushBanner.dismiss': 'Fechar aviso',
   // [2026-10-07 native-polish] push pre-permission primer
   'pushPrimer.title': 'Ative as notificações',

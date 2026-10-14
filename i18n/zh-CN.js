@@ -1,4 +1,18 @@
 export default {
+  // [2026-10-14 calendário premium]
+  "calendar.starts": "开始",
+  "calendar.ends": "结束",
+  "calendar.moreOptions": "更多选项",
+  "calendar.longPressToAdd": "长按以创建日程",
+  "calendar.timeZone": "时区",
+  // [2026-10-14 notif/carteira/404]
+  "wallet.kind.earningsConversion": "收益换算",
+  "wallet.earningsConversionSub": "旧余额已换算为雷亚尔（BRL）",
+  "notifications.emptyFollowingDesc": "你关注的人的直播和聊天会显示在这里。",
+  "notFound.title": "页面未找到",
+  "notFound.subtitle": "此链接已不存在或输入有误。",
+  "notFound.home": "返回首页",
+  "notFound.back": "返回",
   // [2026-10-13 diamantes-religados]
   "gifts.title": "Gifts",
   "gifts.titleTo": "Gift for {name}",
@@ -8233,4 +8247,9 @@ export default {
   "chatConv.wallpaperPhotoFailed": "无法使用这张照片。请检查网络连接后重试。",
   "chatConv.wallpaperApplied": "壁纸已应用",
   "chatConv.wallpaperAiSlow": "这可能需要最多 1 分钟",
+  'pushBanner.offTitle': 'Notifications are off',
+  'pushBanner.staleTitle': 'Notifications may not arrive',
+  'pushBanner.sub': 'Turn them on to get messages and calls instantly.',
+  'pushBanner.ctaSettings': 'Settings',
+  'pushBanner.ctaRetry': 'Turn on',
 };

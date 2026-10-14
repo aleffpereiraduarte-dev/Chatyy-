@@ -29,9 +29,11 @@ export default function NativeSwitch({
 }) {
   const { isDark } = useTheme() || {};
   const onTrack = isDark ? '#F5F5F7' : '#111111';
+  // [2026-10-14 dark-contrast] escuro: trilho desligado #39393D sobre célula
+  // #1C1C1E sumia (≈1.3:1) → #636366 (systemGray do iOS, ≈2.6:1 + knob branco).
   const offTrack = Platform.OS === 'ios'
-    ? (isDark ? '#39393D' : '#E9E9EA')
-    : (isDark ? '#3A3D40' : '#C7C9CC');
+    ? (isDark ? '#636366' : '#E9E9EA')
+    : (isDark ? '#5F6368' : '#C7C9CC');
   const onThumb = isDark ? '#0b0b0b' : '#ffffff';
   const offThumb = Platform.OS === 'android' ? (isDark ? '#9AA0A6' : '#ffffff') : '#ffffff';
 

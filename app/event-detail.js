@@ -110,6 +110,18 @@ function RsvpStatusBadge({ status, colors, t }) {
 // ============================================================
 // Edit Event Screen (inline, not modal)
 // ============================================================
+// [2026-10-14] "2026-10-13" → "ter., 13 de out." no idioma do app.
+function fmtDateLabel(ds, t) {
+  const [y, m, d] = String(ds || '').split('-').map(Number);
+  if (!y || !m || !d) return '';
+  try {
+    return new Date(y, m - 1, d).toLocaleDateString((t && t('_locale')) || undefined, {
+      weekday: 'short', day: 'numeric', month: 'short',
+      ...(y !== new Date().getFullYear() ? { year: 'numeric' } : {}),
+    });
+  } catch { return ds; }
+}
+
 function EditEventView({ event, onSave, onCancel, colors, t }) {
   const insets = useSafeAreaInsets();
   const [title, setTitle] = useState('');
@@ -328,7 +340,7 @@ function EditEventView({ event, onSave, onCancel, colors, t }) {
               style={[styles.editInput, { borderColor: colors.border, backgroundColor: colors.surface, justifyContent: 'center' }]}
               onPress={() => setShowStartPicker(true)}
             >
-              <Text style={{ color: startDate ? colors.text : colors.textTertiary, fontSize: 15 }}>{startDate || 'YYYY-MM-DD'}</Text>
+              <Text style={{ color: startDate ? colors.text : colors.textTertiary, fontSize: 15 }}>{fmtDateLabel(startDate, t) || '--'}</Text>
             </TouchableOpacity>
           </View>
           {!allDay && (
@@ -354,7 +366,7 @@ function EditEventView({ event, onSave, onCancel, colors, t }) {
               style={[styles.editInput, { borderColor: colors.border, backgroundColor: colors.surface, justifyContent: 'center' }]}
               onPress={() => setShowEndPicker(true)}
             >
-              <Text style={{ color: endDate ? colors.text : colors.textTertiary, fontSize: 15 }}>{endDate || 'YYYY-MM-DD'}</Text>
+              <Text style={{ color: endDate ? colors.text : colors.textTertiary, fontSize: 15 }}>{fmtDateLabel(endDate, t) || '--'}</Text>
             </TouchableOpacity>
           </View>
           {!allDay && (
@@ -378,6 +390,8 @@ function EditEventView({ event, onSave, onCancel, colors, t }) {
         onConfirm={(d) => { setStartDate(dateToDateStr(d)); if (!allDay) setStartTime(dateToTimeStr(d)); }}
         colors={colors}
         t={t}
+        mode={allDay ? 'date' : 'datetime'}
+        dayCount={730}
         title={t('eventDetail.startDate')}
       />
       <DateTimePickerModal
@@ -387,6 +401,8 @@ function EditEventView({ event, onSave, onCancel, colors, t }) {
         onConfirm={(d) => { setEndDate(dateToDateStr(d)); if (!allDay) setEndTime(dateToTimeStr(d)); }}
         colors={colors}
         t={t}
+        mode={allDay ? 'date' : 'datetime'}
+        dayCount={730}
         title={t('eventDetail.endDate')}
       />
 
@@ -1352,10 +1368,11 @@ const styles = StyleSheet.create({
 
   // Edit mode styles
   editSection: { paddingHorizontal: Spacing.md, paddingVertical: Spacing.xs },
-  editLabel: { fontSize: FontSize.sm, fontWeight: '600', marginBottom: Spacing.xs, marginTop: Spacing.xs },
+  // [2026-10-14] rótulos caps c/ tracking + bordas hairline (eram fortes)
+  editLabel: { fontSize: 11, fontWeight: '700', letterSpacing: 0.9, textTransform: 'uppercase', marginBottom: 8, marginTop: Spacing.xs },
   editLabelRow: { flexDirection: 'row', alignItems: 'center', marginBottom: Spacing.xs, marginTop: Spacing.xs },
   editInput: {
-    borderWidth: 1, borderRadius: BorderRadius.lg,
+    borderWidth: StyleSheet.hairlineWidth, borderRadius: 12,
     paddingHorizontal: Spacing.md, paddingVertical: Spacing.sm,
     fontSize: FontSize.md,
   },

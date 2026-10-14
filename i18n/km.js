@@ -1,4 +1,18 @@
 export default {
+  // [2026-10-14 calendário premium]
+  "calendar.starts": "ចាប់ផ្តើម",
+  "calendar.ends": "បញ្ចប់",
+  "calendar.moreOptions": "ជម្រើសច្រើនទៀត",
+  "calendar.longPressToAdd": "ចុចឱ្យជាប់ដើម្បីបង្កើតព្រឹត្តិការណ៍",
+  "calendar.timeZone": "ល្វែងម៉ោង",
+  // [2026-10-14 notif/carteira/404]
+  "wallet.kind.earningsConversion": "ការប្តូរប្រាក់ចំណូល",
+  "wallet.earningsConversionSub": "សមតុល្យចាស់ត្រូវបានប្តូរទៅជារ៉េអាល (BRL)",
+  "notifications.emptyFollowingDesc": "ការផ្សាយផ្ទាល់ និងការជជែករបស់អ្នកដែលអ្នកតាមដាននឹងបង្ហាញនៅទីនេះ។",
+  "notFound.title": "រកមិនឃើញទំព័រ",
+  "notFound.subtitle": "តំណនេះលែងមាន ឬត្រូវបានវាយខុស។",
+  "notFound.home": "ត្រឡប់ទៅដើម",
+  "notFound.back": "ថយក្រោយ",
   // [2026-10-13 diamantes-religados]
   "gifts.title": "Gifts",
   "gifts.titleTo": "Gift for {name}",
@@ -8191,4 +8205,9 @@ export default {
   "chatConv.wallpaperPhotoFailed": "មិនអាចប្រើរូបថតនេះបានទេ។ សូមពិនិត្យការតភ្ជាប់ ហើយព្យាយាមម្តងទៀត។",
   "chatConv.wallpaperApplied": "បានដាក់ផ្ទាំងរូបភាព",
   "chatConv.wallpaperAiSlow": "វាអាចចំណាយពេលរហូតដល់ 1 នាទី",
+  'pushBanner.offTitle': 'Notifications are off',
+  'pushBanner.staleTitle': 'Notifications may not arrive',
+  'pushBanner.sub': 'Turn them on to get messages and calls instantly.',
+  'pushBanner.ctaSettings': 'Settings',
+  'pushBanner.ctaRetry': 'Turn on',
 };

@@ -1,4 +1,18 @@
 export default {
+  // [2026-10-14 calendário premium]
+  "calendar.starts": "ప్రారంభం",
+  "calendar.ends": "ముగింపు",
+  "calendar.moreOptions": "మరిన్ని ఎంపికలు",
+  "calendar.longPressToAdd": "ఈవెంట్ సృష్టించడానికి నొక్కి పట్టుకోండి",
+  "calendar.timeZone": "సమయ మండలం",
+  // [2026-10-14 notif/carteira/404]
+  "wallet.kind.earningsConversion": "ఆదాయ మార్పిడి",
+  "wallet.earningsConversionSub": "పాత బ్యాలెన్స్ రియాల్ (BRL)కి మార్చబడింది",
+  "notifications.emptyFollowingDesc": "మీరు ఫాలో అయ్యే వారి లైవ్‌లు, చాట్‌లు ఇక్కడ కనిపిస్తాయి.",
+  "notFound.title": "పేజీ కనుగొనబడలేదు",
+  "notFound.subtitle": "ఈ లింక్ ఇక లేదు లేదా తప్పుగా టైప్ చేయబడింది.",
+  "notFound.home": "ప్రారంభానికి వెళ్లండి",
+  "notFound.back": "వెనుకకు",
   // [2026-10-13 diamantes-religados]
   "gifts.title": "Gifts",
   "gifts.titleTo": "Gift for {name}",
@@ -8191,4 +8205,9 @@ export default {
   "chatConv.wallpaperPhotoFailed": "ఈ ఫోటోను ఉపయోగించలేకపోయాము. కనెక్షన్‌ను తనిఖీ చేసి మళ్లీ ప్రయత్నించండి.",
   "chatConv.wallpaperApplied": "వాల్‌పేపర్ వర్తింపజేయబడింది",
   "chatConv.wallpaperAiSlow": "దీనికి 1 నిమిషం వరకు పట్టవచ్చు",
+  'pushBanner.offTitle': 'Notifications are off',
+  'pushBanner.staleTitle': 'Notifications may not arrive',
+  'pushBanner.sub': 'Turn them on to get messages and calls instantly.',
+  'pushBanner.ctaSettings': 'Settings',
+  'pushBanner.ctaRetry': 'Turn on',
 };

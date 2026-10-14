@@ -1,4 +1,18 @@
 export default {
+  // [2026-10-14 calendário premium]
+  "calendar.starts": "Inici",
+  "calendar.ends": "Final",
+  "calendar.moreOptions": "Més opcions",
+  "calendar.longPressToAdd": "Mantén premut per crear un esdeveniment",
+  "calendar.timeZone": "Fus horari",
+  // [2026-10-14 notif/carteira/404]
+  "wallet.kind.earningsConversion": "Conversió de guanys",
+  "wallet.earningsConversionSub": "Saldo antic convertit a reals (BRL)",
+  "notifications.emptyFollowingDesc": "Els directes i xats de qui segueixes apareixen aquí.",
+  "notFound.title": "Pàgina no trobada",
+  "notFound.subtitle": "Aquest enllaç ja no existeix o s’ha escrit malament.",
+  "notFound.home": "Torna a l’inici",
+  "notFound.back": "Enrere",
   // [2026-10-13 diamantes-religados]
   "gifts.title": "Gifts",
   "gifts.titleTo": "Gift for {name}",
@@ -8195,4 +8209,9 @@ export default {
   "chatConv.wallpaperPhotoFailed": "No s'ha pogut fer servir aquesta foto. Comprova la connexió i torna-ho a provar.",
   "chatConv.wallpaperApplied": "Fons de pantalla aplicat",
   "chatConv.wallpaperAiSlow": "Això pot trigar fins a 1 minut",
+  'pushBanner.offTitle': 'Notifications are off',
+  'pushBanner.staleTitle': 'Notifications may not arrive',
+  'pushBanner.sub': 'Turn them on to get messages and calls instantly.',
+  'pushBanner.ctaSettings': 'Settings',
+  'pushBanner.ctaRetry': 'Turn on',
 };

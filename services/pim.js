@@ -172,14 +172,41 @@ export async function davProfileLink(label) {
   return r.data;
 }
 
-// Fuso do aparelho → servidor (CalDAV gera TZID certo; 1x por sessão).
-let _tzSent = false;
-export function reportTimezone() {
-  if (_tzSent) return;
-  _tzSent = true;
+// [2026-10-14] Fuso REAL do aparelho. Fonte 1 = expo-localization
+// getCalendars()[0].timeZone (lê TimeZone.current/NSTimeZone.local AO VIVO no
+// nativo); fonte 2 = Intl (Hermes pode cachear o fuso da abertura do processo).
+// Se as duas divergirem, vence a cujo offset bate com Date#getTimezoneOffset().
+function _offsetMin(tz) {
   try {
-    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
-    if (tz) api.apiCall('pim_tz_set', { tz }, 'POST').catch(() => {});
+    const d = new Date();
+    const parts = new Intl.DateTimeFormat('en-US', { timeZone: tz, hourCycle: 'h23', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }).formatToParts(d);
+    const g = (k) => Number(parts.find((p) => p.type === k)?.value || 0);
+    const asUtc = Date.UTC(g('year'), g('month') - 1, g('day'), g('hour') % 24, g('minute'));
+    return Math.round((asUtc - Math.floor(d.getTime() / 60000) * 60000) / 60000);
+  } catch { return null; }
+}
+export function getDeviceTimeZone() {
+  let nativeTz = '';
+  let intlTz = '';
+  try { nativeTz = require('expo-localization').getCalendars?.()?.[0]?.timeZone || ''; } catch {}
+  try { intlTz = Intl.DateTimeFormat().resolvedOptions().timeZone || ''; } catch {}
+  if (!nativeTz || nativeTz === intlTz) return intlTz || nativeTz;
+  if (!intlTz) return nativeTz;
+  const local = -new Date().getTimezoneOffset();
+  if (_offsetMin(nativeTz) === local) return nativeTz;
+  if (_offsetMin(intlTz) === local) return intlTz;
+  return nativeTz;
+}
+
+// Fuso do aparelho → servidor (CalDAV gera TZID certo). Reenvia se mudar
+// (viagem / ajuste manual do relógio) em vez de 1x por sessão.
+let _tzSent = '';
+export function reportTimezone() {
+  try {
+    const tz = getDeviceTimeZone();
+    if (!tz || tz === _tzSent) return;
+    _tzSent = tz;
+    api.apiCall('pim_tz_set', { tz }, 'POST').catch(() => { _tzSent = ''; });
   } catch {}
 }
 

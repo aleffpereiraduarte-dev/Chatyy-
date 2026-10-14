@@ -1,4 +1,18 @@
 export default {
+  // [2026-10-14 calendário premium]
+  "calendar.starts": "Alkaa",
+  "calendar.ends": "Päättyy",
+  "calendar.moreOptions": "Lisää vaihtoehtoja",
+  "calendar.longPressToAdd": "Luo tapahtuma painamalla pitkään",
+  "calendar.timeZone": "Aikavyöhyke",
+  // [2026-10-14 notif/carteira/404]
+  "wallet.kind.earningsConversion": "Ansioiden muunto",
+  "wallet.earningsConversionSub": "Vanha saldo muunnettu realeiksi (BRL)",
+  "notifications.emptyFollowingDesc": "Seuraamiesi ihmisten livet ja keskustelut näkyvät täällä.",
+  "notFound.title": "Sivua ei löytynyt",
+  "notFound.subtitle": "Tätä linkkiä ei enää ole tai se on kirjoitettu väärin.",
+  "notFound.home": "Takaisin alkuun",
+  "notFound.back": "Takaisin",
   // [2026-10-13 diamantes-religados]
   "gifts.title": "Gifts",
   "gifts.titleTo": "Gift for {name}",
@@ -8973,4 +8987,9 @@ export default {
   "chatConv.wallpaperPhotoFailed": "Tätä kuvaa ei voitu käyttää. Tarkista yhteys ja yritä uudelleen.",
   "chatConv.wallpaperApplied": "Taustakuva asetettu",
   "chatConv.wallpaperAiSlow": "Tämä voi kestää jopa 1 minuutin",
+  'pushBanner.offTitle': 'Notifications are off',
+  'pushBanner.staleTitle': 'Notifications may not arrive',
+  'pushBanner.sub': 'Turn them on to get messages and calls instantly.',
+  'pushBanner.ctaSettings': 'Settings',
+  'pushBanner.ctaRetry': 'Turn on',
 };

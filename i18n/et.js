@@ -1,4 +1,18 @@
 export default {
+  // [2026-10-14 calendário premium]
+  "calendar.starts": "Algus",
+  "calendar.ends": "Lõpp",
+  "calendar.moreOptions": "Rohkem valikuid",
+  "calendar.longPressToAdd": "Sündmuse loomiseks puudutage pikalt",
+  "calendar.timeZone": "Ajavöönd",
+  // [2026-10-14 notif/carteira/404]
+  "wallet.kind.earningsConversion": "Tulu ümberarvestus",
+  "wallet.earningsConversionSub": "Vana saldo arvestati ümber reaalideks (BRL)",
+  "notifications.emptyFollowingDesc": "Siin kuvatakse nende otseülekanded ja vestlused, keda jälgid.",
+  "notFound.title": "Lehte ei leitud",
+  "notFound.subtitle": "Seda linki pole enam olemas või see on valesti sisestatud.",
+  "notFound.home": "Tagasi algusesse",
+  "notFound.back": "Tagasi",
   // [2026-10-13 diamantes-religados]
   "gifts.title": "Gifts",
   "gifts.titleTo": "Gift for {name}",
@@ -8195,4 +8209,9 @@ export default {
   "chatConv.wallpaperPhotoFailed": "Seda fotot ei saanud kasutada. Kontrolli ühendust ja proovi uuesti.",
   "chatConv.wallpaperApplied": "Taustapilt rakendatud",
   "chatConv.wallpaperAiSlow": "See võib võtta kuni 1 minut",
+  'pushBanner.offTitle': 'Notifications are off',
+  'pushBanner.staleTitle': 'Notifications may not arrive',
+  'pushBanner.sub': 'Turn them on to get messages and calls instantly.',
+  'pushBanner.ctaSettings': 'Settings',
+  'pushBanner.ctaRetry': 'Turn on',
 };

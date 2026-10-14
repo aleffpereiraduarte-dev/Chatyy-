@@ -1,4 +1,18 @@
 export default {
+  // [2026-10-14 calendário premium]
+  "calendar.starts": "התחלה",
+  "calendar.ends": "סיום",
+  "calendar.moreOptions": "אפשרויות נוספות",
+  "calendar.longPressToAdd": "יש ללחוץ לחיצה ארוכה כדי ליצור אירוע",
+  "calendar.timeZone": "אזור זמן",
+  // [2026-10-14 notif/carteira/404]
+  "wallet.kind.earningsConversion": "המרת רווחים",
+  "wallet.earningsConversionSub": "היתרה הישנה הומרה לריאל (BRL)",
+  "notifications.emptyFollowingDesc": "שידורים חיים וצ׳אטים של מי שאתם עוקבים אחריו יופיעו כאן.",
+  "notFound.title": "הדף לא נמצא",
+  "notFound.subtitle": "הקישור הזה כבר לא קיים או שהוקלד לא נכון.",
+  "notFound.home": "חזרה להתחלה",
+  "notFound.back": "חזרה",
   // [2026-10-13 diamantes-religados]
   "gifts.title": "Gifts",
   "gifts.titleTo": "Gift for {name}",
@@ -8195,4 +8209,9 @@ export default {
   "chatConv.wallpaperPhotoFailed": "לא ניתן להשתמש בתמונה הזו. בדקו את החיבור ונסו שוב.",
   "chatConv.wallpaperApplied": "הטפט הוחל",
   "chatConv.wallpaperAiSlow": "זה עשוי להימשך עד דקה",
+  'pushBanner.offTitle': 'Notifications are off',
+  'pushBanner.staleTitle': 'Notifications may not arrive',
+  'pushBanner.sub': 'Turn them on to get messages and calls instantly.',
+  'pushBanner.ctaSettings': 'Settings',
+  'pushBanner.ctaRetry': 'Turn on',
 };

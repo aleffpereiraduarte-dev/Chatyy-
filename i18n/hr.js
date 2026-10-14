@@ -1,4 +1,18 @@
 export default {
+  // [2026-10-14 calendário premium]
+  "calendar.starts": "Početak",
+  "calendar.ends": "Završetak",
+  "calendar.moreOptions": "Više opcija",
+  "calendar.longPressToAdd": "Dodirnite i držite za stvaranje događaja",
+  "calendar.timeZone": "Vremenska zona",
+  // [2026-10-14 notif/carteira/404]
+  "wallet.kind.earningsConversion": "Pretvorba zarade",
+  "wallet.earningsConversionSub": "Stari saldo pretvoren u reale (BRL)",
+  "notifications.emptyFollowingDesc": "Prijenosi uživo i razgovori osoba koje pratite pojavljuju se ovdje.",
+  "notFound.title": "Stranica nije pronađena",
+  "notFound.subtitle": "Ova poveznica više ne postoji ili je pogrešno upisana.",
+  "notFound.home": "Natrag na početak",
+  "notFound.back": "Natrag",
   // [2026-10-13 diamantes-religados]
   "gifts.title": "Gifts",
   "gifts.titleTo": "Gift for {name}",
@@ -8195,4 +8209,9 @@ export default {
   "chatConv.wallpaperPhotoFailed": "Ova se fotografija ne može upotrijebiti. Provjerite vezu i pokušajte ponovno.",
   "chatConv.wallpaperApplied": "Pozadina primijenjena",
   "chatConv.wallpaperAiSlow": "Ovo može potrajati do 1 minute",
+  'pushBanner.offTitle': 'Notifications are off',
+  'pushBanner.staleTitle': 'Notifications may not arrive',
+  'pushBanner.sub': 'Turn them on to get messages and calls instantly.',
+  'pushBanner.ctaSettings': 'Settings',
+  'pushBanner.ctaRetry': 'Turn on',
 };

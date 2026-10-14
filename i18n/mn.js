@@ -1,4 +1,18 @@
 export default {
+  // [2026-10-14 calendário premium]
+  "calendar.starts": "Эхлэх",
+  "calendar.ends": "Дуусах",
+  "calendar.moreOptions": "Бусад сонголт",
+  "calendar.longPressToAdd": "Үйл явдал үүсгэхийн тулд удаан дарна уу",
+  "calendar.timeZone": "Цагийн бүс",
+  // [2026-10-14 notif/carteira/404]
+  "wallet.kind.earningsConversion": "Орлогын хөрвүүлэлт",
+  "wallet.earningsConversionSub": "Хуучин үлдэгдлийг реал (BRL) руу хөрвүүлсэн",
+  "notifications.emptyFollowingDesc": "Таны дагадаг хүмүүсийн шууд дамжуулалт, чат энд гарна.",
+  "notFound.title": "Хуудас олдсонгүй",
+  "notFound.subtitle": "Энэ холбоос байхгүй болсон эсвэл буруу бичигдсэн.",
+  "notFound.home": "Эхлэл рүү буцах",
+  "notFound.back": "Буцах",
   // [2026-10-13 diamantes-religados]
   "gifts.title": "Gifts",
   "gifts.titleTo": "Gift for {name}",
@@ -8191,4 +8205,9 @@ export default {
   "chatConv.wallpaperPhotoFailed": "Энэ зургийг ашиглаж чадсангүй. Холболтоо шалгаад дахин оролдоно уу.",
   "chatConv.wallpaperApplied": "Ханын зураг тохируулагдлаа",
   "chatConv.wallpaperAiSlow": "Энэ 1 минут хүртэл үргэлжилж магадгүй",
+  'pushBanner.offTitle': 'Notifications are off',
+  'pushBanner.staleTitle': 'Notifications may not arrive',
+  'pushBanner.sub': 'Turn them on to get messages and calls instantly.',
+  'pushBanner.ctaSettings': 'Settings',
+  'pushBanner.ctaRetry': 'Turn on',
 };
