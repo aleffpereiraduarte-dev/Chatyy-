@@ -125,7 +125,11 @@ export async function syncNativeChatAuth(force = false) {
     try {
       const accts = (typeof api.getStoredAccounts === 'function' ? api.getStoredAccounts() : []) || [];
       for (const a of (Array.isArray(accts) ? accts : [])) {
-        if (a && a.email && typeof a.token === 'string' && a.token) tokens[String(a.email)] = a.token;
+        if (!(a && a.email && typeof a.token === 'string' && a.token)) continue;
+        // [incidente-sessao 2026-10-14] nativo (NSE/Android) só recebe bearer da conta ativa + secundárias recentes.
+        const isActive = String(a.email).toLowerCase() === String(email || '').toLowerCase();
+        if (!isActive && typeof api.isStoredAccountFresh === 'function' && !api.isStoredAccountFresh(a)) continue;
+        tokens[String(a.email)] = a.token;
       }
     } catch {}
     // Never wipe native state from a not-yet-hydrated JS (cold start race).
@@ -1790,10 +1794,14 @@ async function _registerForOtherAccounts(entries, activeEmail) {
     if (!url || !Array.isArray(accts)) return;
     const AsyncStorage = require('@react-native-async-storage/async-storage').default;
     const active = String(activeEmail || '').toLowerCase();
+    try { if (active && typeof api.touchStoredAccount === 'function') api.touchStoredAccount(active); } catch {}
     let n = 0;
     for (const a of accts) {
       const em = String(a?.email || '').toLowerCase();
       if (!em || em === active || typeof a?.token !== 'string' || !a.token) continue;
+      // [incidente-sessao 2026-10-14] conta parada há >30d neste aparelho
+      // (ex.: outra pessoa que logou aqui uma vez) NÃO recebe push daqui.
+      if (typeof api.isStoredAccountFresh === 'function' && !api.isStoredAccountFresh(a)) continue;
       if (++n > 4) break;
       try { if ((await AsyncStorage.getItem(`push_enabled:${em}`)) === 'false') continue; } catch {}
       for (const p of entries) {
@@ -2794,6 +2802,8 @@ export async function ensureNotificationAccount(data) {
     const stored = require('./api').getStoredAccounts?.() || [];
     const acc = stored.find((a) => _normAcctEmail(a.email) === rcpt);
     if (!acc || !_switchAccountHandler) return false;
+    // [incidente-sessao 2026-10-14] nunca troca sozinho p/ conta parada (>30d).
+    try { const api = require('./api'); if (typeof api.isStoredAccountFresh === 'function' && !api.isStoredAccountFresh(acc)) return false; } catch {}
     const r = await _switchAccountHandler(acc.email);
     return !!r?.success;
   } catch { return true; }

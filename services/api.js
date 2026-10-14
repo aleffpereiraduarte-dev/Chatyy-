@@ -1080,15 +1080,44 @@ function upsertAccount(email, password, name) {
   const idx = accounts.findIndex(a => a.email === email);
   // Store token for account switching (NOT plaintext password)
   const token = authToken || '';
+  // [incidente-sessao 2026-10-14] lastActiveAt: quando a conta foi usada
+  // (login/troca) NESTE aparelho. Conta secundária sem uso recente não recebe
+  // push nem é ativada por toque em notificação (ver isStoredAccountFresh).
+  const lastActiveAt = Date.now();
   if (idx >= 0) {
-    accounts[idx] = { ...accounts[idx], email, name: name || accounts[idx].name, token };
+    accounts[idx] = { ...accounts[idx], email, name: name || accounts[idx].name, token, lastActiveAt };
   } else {
-    accounts.push({ email, name: name || '', token });
+    accounts.push({ email, name: name || '', token, lastActiveAt });
   }
   storeAccounts(accounts);
 }
 
-export { getStoredAccounts, storeAccounts, getActiveAccountEmail, setActiveAccountEmail, upsertAccount };
+// [incidente-sessao 2026-10-14] Conta de OUTRA pessoa que logou uma vez neste
+// aparelho (ex.: abril) ficava no mail_accounts com bearer eterno; desde 10/2026
+// o app registrava push p/ todas as contas guardadas e o toque na notificação
+// trocava de conta sozinho → "minha conta logou no celular dele". Só conta
+// usada aqui nos últimos 30 dias conta como "secundária ativa".
+const STORED_ACCOUNT_MAX_IDLE_MS = 30 * 24 * 3600 * 1000;
+function isStoredAccountFresh(acc) {
+  const t = Number(acc?.lastActiveAt || 0);
+  return t > 0 && Date.now() - t < STORED_ACCOUNT_MAX_IDLE_MS;
+}
+function touchStoredAccount(email) {
+  try {
+    const lower = String(email || '').toLowerCase();
+    if (!lower) return;
+    const accounts = getStoredAccounts();
+    const idx = accounts.findIndex(a => String(a?.email || '').toLowerCase() === lower);
+    if (idx < 0) return;
+    const now = Date.now();
+    if (now - Number(accounts[idx].lastActiveAt || 0) < 3600 * 1000) return;
+    const next = accounts.slice();
+    next[idx] = { ...accounts[idx], lastActiveAt: now };
+    storeAccounts(next);
+  } catch {}
+}
+
+export { getStoredAccounts, storeAccounts, getActiveAccountEmail, setActiveAccountEmail, upsertAccount, isStoredAccountFresh, touchStoredAccount };
 
 function removeStoredAccount(email) {
   // Best-effort: revoke the stored bearer token server-side so a leaked
