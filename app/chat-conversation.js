@@ -2438,6 +2438,50 @@ function _waMetaGhost({ time, own, edited, icons }) {
   if (Platform.OS === 'android') s = s.replace(/[^\u00A0 ]/g, _NB + _NB);
   return s;
 }
+// [2026-10-14 bubble-hug] Texto que QUEBRA linha (inclusive quando s\u00F3 o ghost
+// da hora desce p/ a 2\u00AA linha) fazia o <Text> ocupar a largura M\u00C1XIMA da bolha
+// (layout de texto quebrado = largura dispon\u00EDvel, n\u00E3o a da linha mais longa) \u2192
+// bolha esticada com vazio \u00E0 direita ("Sim, porque vou fazer dois rounds bixa"
+// + hora sozinha embaixo). WhatsApp: a bolha abra\u00E7a a linha mais longa. Mede as
+// linhas (onTextLayout no nativo; Range.getClientRects no web) e fixa a largura
+// = linha mais longa (+ paddingRight 3 do msgText + 1 de arredondamento). S\u00F3
+// encolhe; zera quando o texto/fonte muda (hugKey).
+function WaHugText({ hugKey, style, children, ...rest }) {
+  const [hug, setHug] = useState(null);
+  const w = hug && hug.k === hugKey ? hug.w : null;
+  const ref = useRef(null);
+  const apply = (widths) => {
+    if (!widths || widths.length < 2) return;
+    let m = 0; for (const x of widths) if (x > m) m = x;
+    if (!(m > 0)) return;
+    const nw = Math.ceil(m) + 4;
+    if (w == null || nw < w - 1) setHug({ k: hugKey, w: nw });
+  };
+  const onTextLayout = Platform.OS === 'web' ? undefined : (e) => {
+    try { apply((e?.nativeEvent?.lines || []).map(l => l.width)); } catch {}
+  };
+  const onLayout = Platform.OS !== 'web' ? undefined : () => {
+    try {
+      const el = ref.current;
+      if (!el || typeof document === 'undefined' || !el.getBoundingClientRect) return;
+      const box = el.getBoundingClientRect();
+      const lh = parseFloat(window.getComputedStyle(el).lineHeight) || 21;
+      const rg = document.createRange(); rg.selectNodeContents(el);
+      const rows = [];
+      for (const rc of rg.getClientRects()) {
+        if (!rc.width) continue;
+        const i = Math.max(0, Math.floor((rc.top + rc.height / 2 - box.top) / lh));
+        rows[i] = Math.max(rows[i] || 0, rc.right - box.left);
+      }
+      apply(rows.filter(x => x > 0));
+    } catch {}
+  };
+  return (
+    <Text ref={ref} {...rest} style={w != null ? [style, { width: w }] : style} onTextLayout={onTextLayout} onLayout={onLayout}>
+      {children}
+    </Text>
+  );
+}
 function _hasBlockMarkdown(text) {
   if (!text || text.indexOf('\n') === -1 && !_QUOTE_LINE_RE.test(text) && !_BULLET_LINE_RE.test(text) && !_NUM_LINE_RE.test(text)) return false;
   const lines = text.split('\n');
@@ -30325,7 +30369,7 @@ function ChatConversationInner() {
                     ? (_ec > 1 ? `(${(t('chatConv.edited') || 'editada')} ${_ec}x)` : (t('chatConv.edited') || 'editado'))
                     : '';
                   return (
-                    <Text style={_txtStyle} selectable={true}>
+                    <WaHugText hugKey={`${_c}|${msgFontSize}|${BUBBLE_MAX_W}|${_editedTxt}|${formatTime(msg.created_at)}|${msg.starred ? 1 : 0}${msg._e2e ? 1 : 0}${disappearingTimer > 0 ? 1 : 0}${msg.vanish_at ? 1 : 0}`} style={_txtStyle} selectable={true}>
                       {msg._searchTerm ? (
                         <SearchHighlightText text={_c} term={msg._searchTerm} style={_txtStyle} markBg={isOwn ? ownTextColor : colors.text} markInk={_searchMarkInk(isOwn, ownTextColor, colors)} />
                       ) : (
@@ -30347,7 +30391,7 @@ function ChatConversationInner() {
                           icons: (msg.starred ? 1 : 0) + (msg._e2e ? 1 : 0) + (disappearingTimer > 0 ? 1 : 0) + (msg.vanish_at ? 3 : 0),
                         })}
                       </Text>
-                    </Text>
+                    </WaHugText>
                   );
                 }
                 if (msg._searchTerm && typeof msg.content === 'string') {
