@@ -1,4 +1,4 @@
-// ─── [roteamento-regiao 2026-10-13] RTT do app até cada região (us/br/eu) ───
+// ─── [roteamento-regiao 2026-10-13] RTT do app até cada região (us/br/eu/usw) ───
 // Para o servidor escolher o servidor de ligação (LiveKit) e o TURN mais perto do
 // PAR/GRUPO (minimax). Barato e em segundo plano:
 //   • alvos = /ping (nginx 204, sem corpo) em cada região; lista vem do servidor
@@ -6,7 +6,8 @@
 //   • por região: 1 warm-up (DNS+TCP+TLS) + 2 medições na conexão quente → menor;
 //   • no máx. 1 rodada a cada 30 min (e na troca de rede, respeitando 10 min);
 //   • só com o app em primeiro plano e logado; nunca bloqueia nada;
-//   • envia SÓ {us,br,eu → ms}. Sem IP, sem tipo de rede.
+//   • envia SÓ {us,br,eu,usw → ms}. Sem IP, sem tipo de rede.
+//   • [usw 2026-10-13] usw = US-West (Seattle, lk-usw). Servidor sem o patch usw ignora a chave.
 // O resultado não muda nada no cliente: quem decide é o servidor no join da
 // chamada (o `url`/iceServers do chat_livekit_token / chat_call_invite_v2 já
 // vêm da região escolhida — JS e nativo usam o que vier).
@@ -16,8 +17,9 @@ const DEFAULT_TARGETS = {
   us: 'https://livekit.chatyy.com.br/ping',
   br: 'https://api-br.chatyy.com.br/ping',
   eu: 'https://api-eu.chatyy.com.br/ping',
+  usw: 'https://lk-usw.chatyy.com.br/ping',
 };
-const REGIONS = ['us', 'br', 'eu'];
+const REGIONS = ['us', 'br', 'eu', 'usw'];
 const TTL_MS = 30 * 60 * 1000;
 const MIN_GAP_MS = 10 * 60 * 1000;
 const WARM_TIMEOUT_MS = 8000;
