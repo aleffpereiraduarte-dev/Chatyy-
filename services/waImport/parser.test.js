@@ -239,6 +239,64 @@ test('guessMe pelo nome do perfil', () => {
   assert.equal(P.guessMe(parts, { myName: 'Outro' }), null);
 });
 
+// [wa-phone 2026-10-14] números FICTÍCIOS (faixa 555-01xx / 90000-0000).
+test('senderPhoneE164: remetente que já é número → E.164', () => {
+  // iPhone: U+202A … U+202C em volta, hífen não separável U+2011, espaço fino / NBSP
+  assert.equal(P.senderPhoneE164('‪+1 (555) 010‑0123‬'), '+15550100123');
+  assert.equal(P.senderPhoneE164(LRM + '+1 (555) 010-0123'), '+15550100123');
+  assert.equal(P.senderPhoneE164('+55 11 90000-0000'), '+5511900000000');
+  assert.equal(P.senderPhoneE164('+55 11 90000‑0000'), '+5511900000000');
+  assert.equal(P.senderPhoneE164('0055 11 90000-0000'), '+5511900000000');
+  assert.equal(P.senderPhoneE164('+44 7700 900123'), '+447700900123');
+  assert.equal(P.senderPhoneE164('+٥٥ ١١ ٩٠٠٠٠-٠٠٠٠'), '+5511900000000'); // dígitos arábicos
+  // não é número / ambíguo
+  assert.equal(P.senderPhoneE164('Sara Exemplo'), '');
+  assert.equal(P.senderPhoneE164('Maria 2015'), '');
+  assert.equal(P.senderPhoneE164('(11) 90000-0000'), ''); // nacional, sem DDI
+  assert.equal(P.senderPhoneE164('+12 345'), '');
+  assert.equal(P.senderPhoneE164('+1 555 0100 123 456 789 0'), ''); // > 15 dígitos
+  assert.equal(P.isPhoneName('‪+1 (555) 010‑0123‬'), true);
+});
+
+test('guessMe: meu número no export = eu', () => {
+  const parts = [{ name: '‪+55 11 90000-0000‬' }, { name: 'Ana Exemplo' }];
+  assert.equal(P.guessMe(parts, { myPhone: '+5511900000000' }), parts[0].name);
+  assert.equal(P.guessMe(parts, { myPhone: '+5511911112222' }), null);
+});
+
+test('agenda: nome do remetente × contato do aparelho (exato, sem acento/emoji/caixa)', () => {
+  const M = load('match.js');
+  const book = [
+    { firstName: 'Sara', lastName: 'Exemplo', phones: ['+1 555 010 0123'] },
+    { name: 'João da Silva', firstName: 'João', middleName: 'da', lastName: 'Silva', phones: ['(11) 90000-0001', '(11) 90000-0001'] },
+    { firstName: 'Carla', lastName: 'Teste', nickname: 'Cacá', phones: ['+55 21 90000-0002'] },
+    { company: 'Padaria Central', phones: ['+55 31 3000-0003'] },
+    { firstName: 'Ana', lastName: 'Um', phones: ['+55 11 90000-0004'] },
+    { firstName: 'Ana', lastName: 'Dois', phones: ['+55 11 90000-0005'] },
+    { firstName: 'Bruno', lastName: 'Sem Telefone', phones: [] },
+  ];
+  assert.deepEqual(M.agendaPhonesFor('Sara Exemplo', book), ['+1 555 010 0123']);
+  assert.deepEqual(M.agendaPhonesFor('sara  EXEMPLO 🌿', book), ['+1 555 010 0123']);
+  assert.deepEqual(M.agendaPhonesFor('Joao da Silva', book), ['(11) 90000-0001']);
+  assert.deepEqual(M.agendaPhonesFor('João Silva', book), ['(11) 90000-0001']);
+  assert.deepEqual(M.agendaPhonesFor('Silva João', book), ['(11) 90000-0001']);
+  assert.deepEqual(M.agendaPhonesFor('Cacá', book), ['+55 21 90000-0002']);
+  assert.deepEqual(M.agendaPhonesFor('Padaria Central', book), ['+55 31 3000-0003']);
+  assert.deepEqual(M.agendaPhonesFor('Sara', book), ['+1 555 010 0123']); // 1º nome, contato único
+  assert.deepEqual(M.agendaPhonesFor('Ana', book), []); // 2 "Ana" → não chuta
+  assert.deepEqual(M.agendaPhonesFor('Sara Outra', book), []); // sobrenome diferente → nada (sem fuzzy)
+  assert.deepEqual(M.agendaPhonesFor('+1 555 010 0123', book), []);
+  assert.equal(M.isPhoneReason('contact_phone'), true);
+  assert.equal(M.isPhoneReason('phone'), true);
+  assert.equal(M.isPhoneReason('name'), false);
+  // número (export ou agenda) sempre acima de nome igual
+  const r = M.rankCandidates({ server: [
+    { email: 'a@x', name: 'Sara Exemplo', reason: 'name', score: 100 },
+    { email: 'b@x', name: 'sara.b', reason: 'contact_phone', score: 100 },
+  ] });
+  assert.equal(r[0].email, 'b@x');
+});
+
 test('localTsToIso', () => {
   const iso = P.localTsToIso('2024-01-02T21:05:12');
   const d = new Date(iso);

@@ -1149,6 +1149,8 @@ function CallScreenInner() {
   const p2pDisabledRef = useRef(false); // já caiu p/ LiveKit nesta ligação
   const p2pAttemptRef = useRef(null);
   const connectToRoomRef = useRef(null);
+  // [2026-10-14 queda-auto-rejoin] rejoins automáticos após Disconnected terminal de rede.
+  const autoRejoinRef = useRef({ count: 0, lastAt: 0 });
   const timerRef = useRef(null);
   const callerTimeoutRef = useRef(null);
   const controlsTimerRef = useRef(null);
@@ -2640,7 +2642,8 @@ function CallScreenInner() {
       reconnectGraceTimerRef.current = setTimeout(() => {
         if (endedRef.current) return;
         try {
-          const state = r?.state;
+          // [2026-10-14 queda-auto-rejoin] o rejoin abaixo cria OUTRA Room: vale o estado da atual.
+          const state = (roomRef.current || r)?.state;
           if (state === ConnectionState.Connected) return;
         } catch {}
         console.warn('[Call] hard reconnect timeout after', RECONNECT_HARD_TIMEOUT_MS, 'ms');
@@ -2649,6 +2652,36 @@ function CallScreenInner() {
         setConnectionFailed(true);
         try { setErrorMsg(t('call.reconnectFailed') || 'Não foi possível reconectar. Tente novamente.'); } catch {}
       }, RECONNECT_HARD_TIMEOUT_MS);
+      // [2026-10-14 queda-auto-rejoin] Disconnected terminal com motivo de REDE/servidor
+      // (SIGNAL_CLOSE, CONNECTION_TIMEOUT, MEDIA_FAILURE, JOIN_FAILURE, SERVER_SHUTDOWN,
+      // MIGRATION, STATE_MISMATCH, desconhecido) = o livekit-client desistiu do resume/
+      // full-reconnect. Antes: banner 25s e "Não foi possível reconectar" (só o botão
+      // manual refazia). Agora: rejoin automático na MESMA sala (mesmo fluxo do botão),
+      // no máx. 2x por ligação e 1x a cada 8s. Motivos de decisão (sair, removido, sala
+      // apagada, identidade duplicada, recusado) NÃO re-entram.
+      try {
+        const _rs = String(reason ?? '');
+        const _noRejoin = [
+          DisconnectReason?.CLIENT_INITIATED, DisconnectReason?.DUPLICATE_IDENTITY,
+          DisconnectReason?.PARTICIPANT_REMOVED, DisconnectReason?.ROOM_DELETED,
+          DisconnectReason?.ROOM_CLOSED, DisconnectReason?.USER_REJECTED,
+          DisconnectReason?.USER_UNAVAILABLE,
+        ].filter((x) => x !== undefined).map(String);
+        const _st = autoRejoinRef.current;
+        const _now = Date.now();
+        if (!_noRejoin.includes(_rs) && _st.count < 2 && _now - _st.lastAt > 8000) {
+          _st.count += 1; _st.lastAt = _now;
+          try { _diag('auto_rejoin', { reason: _rs, n: _st.count }); } catch {}
+          setTimeout(() => {
+            if (endedRef.current) return;
+            if (roomRef.current && roomRef.current !== r) return; // outro caminho já reconectou
+            const go = connectToRoomRef.current;
+            if (typeof go !== 'function') return;
+            if (roomRef.current === r) roomRef.current = null;
+            Promise.resolve(go()).catch(() => {});
+          }, 600);
+        }
+      } catch {}
     });
 
     r.on(RoomEvent.ParticipantConnected, (participant) => {

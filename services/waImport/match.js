@@ -96,11 +96,53 @@ export function rankCandidates({ server = [], search = [], recent = [], local = 
       reason: c.reason || prev?.reason || '', matched: c.matched || '', tail: c.tail || c.phone_tail || '', rank,
     });
   };
-  for (const c of search || []) put(c, c.reason === 'phone' ? 950 : 500 + Math.min(99, Number(c.score) || 0));
-  for (const c of server || []) { if (matchesQuery(c)) put(c, c.reason === 'phone' ? 1000 : 600 + Math.min(99, Number(c.score) || 0)); }
+  for (const c of search || []) put(c, isPhoneReason(c.reason) ? 950 : 500 + Math.min(99, Number(c.score) || 0));
+  for (const c of server || []) { if (matchesQuery(c)) put(c, isPhoneReason(c.reason) ? 1000 : 600 + Math.min(99, Number(c.score) || 0)); }
   (recent || []).forEach((c, i) => { if (matchesQuery(c)) put({ ...c, reason: c.reason || 'recent' }, 300 - i); });
   (local || []).forEach((c, i) => { if (matchesQuery(c)) put(c, 100 - Math.min(99, i)); });
   return Array.from(out.values()).sort((a, b) => b.rank - a.rank);
 }
 
-export default { nameKey, nameScore, bestLocalMatch, rankCandidates, NAME_MIN_SCORE };
+/** [wa-phone 2026-10-14] Número confirmado: no export ('phone') ou na agenda do aparelho ('contact_phone'). */
+export function isPhoneReason(r) { return r === 'phone' || r === 'contact_phone'; }
+
+/**
+ * [wa-phone 2026-10-14] Formas como o WhatsApp mostra um contato salvo: nome completo, nome+sobrenome,
+ * nome do meio, ordem invertida (sobrenome primeiro), apelido (sozinho ou + sobrenome), empresa (sem nome).
+ * contact: { name, firstName, middleName, lastName, nickname, company } → Set de nameKey.
+ */
+export function contactNameKeys(c) {
+  const k = (...xs) => nameKey(xs.filter(Boolean).join(' '));
+  const out = new Set();
+  const f = c?.firstName; const m = c?.middleName; const l = c?.lastName; const n = c?.nickname;
+  [k(c?.name), k(f, m, l), k(f, l), k(l, f), k(l, m, f), k(n), k(n, l)].forEach((x) => { if (x) out.add(x); });
+  if (!f && !l && !c?.name) { const co = k(c?.company); if (co) out.add(co); }
+  return out;
+}
+
+/**
+ * [wa-phone 2026-10-14] Contatos da agenda cujo nome bate EXATAMENTE (sem acento/caixa/emoji/espaços extras)
+ * com o remetente do export. Sem fuzzy: o número que sai daqui vira certeza, então o nome tem que ser o mesmo.
+ * Remetente só com 1 palavra também casa o 1º nome/apelido, mas só se for o ÚNICO contato assim.
+ * contacts: [{ ...nome, phones: [string] }] → [phone] (dedup, máx. 6).
+ */
+export function agendaPhonesFor(sender, contacts) {
+  const key = nameKey(sender);
+  if (!key || /^\d+$/.test(key.replace(/ /g, ''))) return [];
+  const flat = key.replace(/ /g, '');
+  let hits = (contacts || []).filter((c) => {
+    const ks = contactNameKeys(c);
+    if (ks.has(key)) return true;
+    for (const x of ks) if (x.replace(/ /g, '') === flat) return true;
+    return false;
+  });
+  if (!hits.length && !key.includes(' ')) {
+    const one = (contacts || []).filter((c) => nameKey(c?.firstName) === key || nameKey(c?.nickname) === key);
+    if (one.length === 1) hits = one;
+  }
+  const out = [];
+  for (const c of hits) for (const p of c.phones || []) { const v = String(p || '').trim(); if (v && !out.includes(v)) out.push(v); }
+  return out.slice(0, 6);
+}
+
+export default { nameKey, nameScore, bestLocalMatch, rankCandidates, isPhoneReason, contactNameKeys, agendaPhonesFor, NAME_MIN_SCORE };

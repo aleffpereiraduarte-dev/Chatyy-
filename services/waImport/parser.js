@@ -538,6 +538,22 @@ export function isPhoneName(name) {
   return _digits(s).length >= 8 && !/[A-Za-zÀ-ÿ\u0370-\u03ff\u0400-\u04ff\u0600-\u06ff\u3040-\u30ff\u4e00-\u9fff]/.test(s);
 }
 
+/**
+ * [wa-phone 2026-10-14] Remetente que JÁ é um número (contato não salvo no aparelho de quem exportou) → E.164.
+ * "‪+1 (561) 703‑6109‬" (U+202A/U+202C, hífen U+2011, espaço fino), "+55 11 9…", "0055 11 9…", dígitos árabes/índicos.
+ * Sem "+"/"00" (formato nacional) ou fora de 7..15 dígitos → '' (ambíguo; o hash cobre variantes à parte).
+ */
+export function senderPhoneE164(name) {
+  const s = normalizeDigits(stripBidi(String(name || ''))).replace(SPACE_RE, ' ').trim();
+  if (!isPhoneName(s)) return '';
+  if (/[^\d\s+()\-.‐-―−/]/.test(s)) return '';
+  let d = s.replace(/\D/g, '');
+  if (s.startsWith('+')) { /* já internacional */ } else if (s.startsWith('00')) d = d.slice(2);
+  else return '';
+  d = d.replace(/^0+/, '');
+  return d.length >= 7 && d.length <= 15 ? '+' + d : '';
+}
+
 export function guessMe(participants, { myName = '', title = '', myPhone = '', peerName = '', peerPhone = '' } = {}) {
   const norm = (s) => stripBidi(String(s || '')).normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
   const names = (participants || []).map((p) => p.name);

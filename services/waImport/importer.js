@@ -257,7 +257,7 @@ function* _chunks(payloads) {
 
 /**
  * opts: { meName, title, linkEmail, email (conta), mode: 'copy'|'direct', targetConversationId,
- *         peerHintName, fileTitle, confirmMismatch, preferImportId }
+ *         peerHintName, fileTitle, confirmMismatch, preferImportId, peerPhoneHashes }
  * onProgress({ phase, sent, total, mediaDone, mediaTotal, frac, etaSec })
  * signal: { cancelled, paused }
  * → { importId, conversationId, mode, verified, summary, cancelled? }
@@ -279,6 +279,8 @@ export async function runImport(prep, opts, onProgress, signal = {}) {
     target_conversation_id: direct ? Number(opts.targetConversationId) || 0 : undefined,
     peer_hint_name: opts.peerHintName || '', file_title: opts.fileTitle || prep.fileTitle || '',
     confirm_mismatch: opts.confirmMismatch ? 1 : 0,
+    // [wa-phone 2026-10-14] só hashes sha256(E.164) do contato da agenda/export; servidor confere SÓ contra a pessoa escolhida
+    peer_phone_hashes: direct && Array.isArray(opts.peerPhoneHashes) && opts.peerPhoneHashes.length ? opts.peerPhoneHashes.slice(0, 16) : undefined,
     prefer_import_id: opts.preferImportId || undefined,
     // [import-ordem 2026-10-13] este app ordena por data → servidor novo aceita importar
     // na conversa que JÁ tem mensagens (intercala pela data). Servidor velho ignora → 409 has_messages.

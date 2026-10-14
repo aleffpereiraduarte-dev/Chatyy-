@@ -127,7 +127,7 @@ export function getHomeDialDigits() {
 // so we emit every plausible canonical form and let the hash match decide.
 //
 // Returns an array of E.164 strings (each like '+5533999652818'), deduped.
-function e164Candidates(rawPhone, homeDial) {
+export function e164Candidates(rawPhone, homeDial) { // [wa-phone 2026-10-14] exportado p/ o importador do WhatsApp
   if (!rawPhone || typeof rawPhone !== 'string') return [];
   const out = new Set();
   const add = (e) => { if (e && /^\+\d{6,15}$/.test(e)) out.add(e); };
