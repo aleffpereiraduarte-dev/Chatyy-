@@ -11802,6 +11802,8 @@ export default {
   "waImport.matchPhone": "Bestätigt durch die Nummer mit Endung {tail}",
   "waImport.matchName": "Ähnlicher Name: {name}",
   "waImport.reasonRecent": "Letzter Chat",
+  "waImport.matchFirstName": "Gleicher Vorname: {name}",
+  "waImport.pickAmbiguous": "Mehrere Personen passen – wähle die richtige aus.",
   "waImport.searchPeople": "Nach Name, @Benutzername oder Telefon suchen",
   "waImport.confirmPerson": "Bestätigen: Es ist {name}",
   "waImport.pickPersonHint": "Bestätige vor dem Import, mit wem dieser Chat ist.",

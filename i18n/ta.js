@@ -3949,6 +3949,8 @@ export default {
   "waImport.matchPhone": "{tail} இல் முடியும் எண்ணால் உறுதிசெய்யப்பட்டது",
   "waImport.matchName": "ஒத்த பெயர்: {name}",
   "waImport.reasonRecent": "சமீபத்திய அரட்டை",
+  "waImport.matchFirstName": "அதே முதல் பெயர்: {name}",
+  "waImport.pickAmbiguous": "ஒன்றுக்கு மேற்பட்டவர்கள் பொருந்துகின்றனர் — சரியானவரைத் தேர்வுசெய்யவும்.",
   "waImport.searchPeople": "பெயர், @பயனர்பெயர் அல்லது தொலைபேசியால் தேடுக",
   "waImport.confirmPerson": "உறுதிசெய்: இது {name}",
   "waImport.pickPersonHint": "இறக்குமதி செய்யும் முன் இந்த அரட்டை யாருடன் என்பதை உறுதிசெய்யவும்.",

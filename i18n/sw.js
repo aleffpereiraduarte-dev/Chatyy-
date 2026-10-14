@@ -8200,6 +8200,8 @@ export default {
   "waImport.matchPhone": "Imethibitishwa kwa namba inayoishia na {tail}",
   "waImport.matchName": "Jina linalofanana: {name}",
   "waImport.reasonRecent": "Gumzo la hivi karibuni",
+  "waImport.matchFirstName": "Jina la kwanza sawa: {name}",
+  "waImport.pickAmbiguous": "Zaidi ya mtu mmoja analingana — chagua ni nani.",
   "waImport.searchPeople": "Tafuta kwa jina, @jina la mtumiaji au simu",
   "waImport.confirmPerson": "Thibitisha: ni {name}",
   "waImport.pickPersonHint": "Thibitisha gumzo hili ni na nani kabla ya kuingiza.",

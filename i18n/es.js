@@ -11776,6 +11776,8 @@ export default {
   "waImport.matchPhone": "Confirmado por el número que termina en {tail}",
   "waImport.matchName": "Nombre parecido: {name}",
   "waImport.reasonRecent": "Chat reciente",
+  "waImport.matchFirstName": "Mismo nombre: {name}",
+  "waImport.pickAmbiguous": "Coincide más de una persona: elige cuál es.",
   "waImport.searchPeople": "Buscar por nombre, @usuario o teléfono",
   "waImport.confirmPerson": "Confirmar: es {name}",
   "waImport.pickPersonHint": "Confirma con quién es este chat antes de importar.",

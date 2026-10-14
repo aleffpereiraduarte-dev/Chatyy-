@@ -8200,6 +8200,8 @@ export default {
   "waImport.matchPhone": "Đã xác nhận bằng số điện thoại kết thúc bằng {tail}",
   "waImport.matchName": "Tên tương tự: {name}",
   "waImport.reasonRecent": "Cuộc trò chuyện gần đây",
+  "waImport.matchFirstName": "Cùng tên: {name}",
+  "waImport.pickAmbiguous": "Có nhiều người khớp — hãy chọn đúng người.",
   "waImport.searchPeople": "Tìm theo tên, @tên người dùng hoặc số điện thoại",
   "waImport.confirmPerson": "Xác nhận: là {name}",
   "waImport.pickPersonHint": "Hãy xác nhận cuộc trò chuyện này với ai trước khi nhập.",

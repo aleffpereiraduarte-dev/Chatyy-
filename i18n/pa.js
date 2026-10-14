@@ -746,6 +746,8 @@ export default {
   "waImport.matchPhone": "{tail} ’ਤੇ ਖਤਮ ਹੋਣ ਵਾਲੇ ਨੰਬਰ ਨਾਲ ਪੁਸ਼ਟੀ",
   "waImport.matchName": "ਮਿਲਦਾ-ਜੁਲਦਾ ਨਾਮ: {name}",
   "waImport.reasonRecent": "ਹਾਲੀਆ ਚੈਟ",
+  "waImport.matchFirstName": "ਇੱਕੋ ਪਹਿਲਾ ਨਾਮ: {name}",
+  "waImport.pickAmbiguous": "ਇੱਕ ਤੋਂ ਵੱਧ ਲੋਕ ਮੇਲ ਖਾਂਦੇ ਹਨ — ਸਹੀ ਵਿਅਕਤੀ ਚੁਣੋ।",
   "waImport.searchPeople": "ਨਾਮ, @ਯੂਜ਼ਰਨੇਮ ਜਾਂ ਫ਼ੋਨ ਨਾਲ ਖੋਜੋ",
   "waImport.confirmPerson": "ਪੁਸ਼ਟੀ ਕਰੋ: ਇਹ {name} ਹੈ",
   "waImport.pickPersonHint": "ਇੰਪੋਰਟ ਕਰਨ ਤੋਂ ਪਹਿਲਾਂ ਪੁਸ਼ਟੀ ਕਰੋ ਕਿ ਇਹ ਚੈਟ ਕਿਸ ਨਾਲ ਹੈ।",

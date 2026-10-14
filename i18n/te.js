@@ -8196,6 +8196,8 @@ export default {
   "waImport.matchPhone": "{tail}తో ముగిసే నంబర్‌తో నిర్ధారించబడింది",
   "waImport.matchName": "పోలిన పేరు: {name}",
   "waImport.reasonRecent": "ఇటీవలి చాట్",
+  "waImport.matchFirstName": "అదే మొదటి పేరు: {name}",
+  "waImport.pickAmbiguous": "ఒకరికంటే ఎక్కువ మంది సరిపోతున్నారు — సరైనవారిని ఎంచుకోండి.",
   "waImport.searchPeople": "పేరు, @యూజర్‌నేమ్ లేదా ఫోన్‌తో వెతకండి",
   "waImport.confirmPerson": "నిర్ధారించండి: ఇది {name}",
   "waImport.pickPersonHint": "దిగుమతి చేసే ముందు ఈ చాట్ ఎవరితోనో నిర్ధారించండి.",

@@ -8196,6 +8196,8 @@ export default {
   "waImport.matchPhone": "{tail}-ээр төгсдөг дугаараар баталгаажсан",
   "waImport.matchName": "Төстэй нэр: {name}",
   "waImport.reasonRecent": "Сүүлийн чат",
+  "waImport.matchFirstName": "Ижил нэр: {name}",
+  "waImport.pickAmbiguous": "Нэгээс олон хүн таарч байна — зөвийг нь сонгоно уу.",
   "waImport.searchPeople": "Нэр, @хэрэглэгч эсвэл утсаар хайх",
   "waImport.confirmPerson": "Баталгаажуулах: энэ бол {name}",
   "waImport.pickPersonHint": "Импортлохын өмнө энэ чат хэнтэй болохыг баталгаажуулна уу.",

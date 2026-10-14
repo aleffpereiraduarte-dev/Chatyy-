@@ -8196,6 +8196,8 @@ export default {
   "waImport.matchPhone": "በ{tail} በሚያልቅ ቁጥር ተረጋግጧል",
   "waImport.matchName": "ተመሳሳይ ስም፦ {name}",
   "waImport.reasonRecent": "የቅርብ ጊዜ ውይይት",
+  "waImport.matchFirstName": "ተመሳሳይ የመጀመሪያ ስም፦ {name}",
+  "waImport.pickAmbiguous": "ከአንድ በላይ ሰው ይመሳሰላል — የትኛው እንደሆነ ይምረጡ።",
   "waImport.searchPeople": "በስም፣ በ@የተጠቃሚ ስም ወይም በስልክ ፈልግ",
   "waImport.confirmPerson": "አረጋግጥ፡ {name} ነው",
   "waImport.pickPersonHint": "ከማስመጣትዎ በፊት ይህ ውይይት ከማን ጋር እንደሆነ ያረጋግጡ።",

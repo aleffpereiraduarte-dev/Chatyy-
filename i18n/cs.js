@@ -8200,6 +8200,8 @@ export default {
   "waImport.matchPhone": "Potvrzeno číslem končícím na {tail}",
   "waImport.matchName": "Podobné jméno: {name}",
   "waImport.reasonRecent": "Nedávný chat",
+  "waImport.matchFirstName": "Stejné křestní jméno: {name}",
+  "waImport.pickAmbiguous": "Odpovídá víc lidí – vyberte, o koho jde.",
   "waImport.searchPeople": "Hledat podle jména, @uživatele nebo telefonu",
   "waImport.confirmPerson": "Potvrdit: je to {name}",
   "waImport.pickPersonHint": "Před importem potvrďte, s kým je tento chat.",

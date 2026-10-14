@@ -11803,6 +11803,8 @@ export default {
   "waImport.matchPhone": "Confirmé par le numéro se terminant par {tail}",
   "waImport.matchName": "Nom similaire : {name}",
   "waImport.reasonRecent": "Discussion récente",
+  "waImport.matchFirstName": "Même prénom : {name}",
+  "waImport.pickAmbiguous": "Plusieurs personnes correspondent — choisissez la bonne.",
   "waImport.searchPeople": "Rechercher par nom, @identifiant ou téléphone",
   "waImport.confirmPerson": "Confirmer : c’est {name}",
   "waImport.pickPersonHint": "Confirmez avec qui est cette discussion avant d’importer.",

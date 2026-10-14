@@ -8200,6 +8200,8 @@ export default {
   "waImport.matchPhone": "Підтверджено номером, що закінчується на {tail}",
   "waImport.matchName": "Схоже імʼя: {name}",
   "waImport.reasonRecent": "Нещодавній чат",
+  "waImport.matchFirstName": "Те саме ім'я: {name}",
+  "waImport.pickAmbiguous": "Підходить кілька людей — виберіть потрібну.",
   "waImport.searchPeople": "Пошук за ім’ям, @ніком або телефоном",
   "waImport.confirmPerson": "Підтвердити: це {name}",
   "waImport.pickPersonHint": "Перед імпортом підтвердьте, з ким цей чат.",

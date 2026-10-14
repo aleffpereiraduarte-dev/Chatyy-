@@ -8978,6 +8978,8 @@ export default {
   "waImport.matchPhone": "Подтверждено номером, оканчивающимся на {tail}",
   "waImport.matchName": "Похожее имя: {name}",
   "waImport.reasonRecent": "Недавний чат",
+  "waImport.matchFirstName": "То же имя: {name}",
+  "waImport.pickAmbiguous": "Подходит несколько человек — выберите нужного.",
   "waImport.searchPeople": "Поиск по имени, @нику или телефону",
   "waImport.confirmPerson": "Подтвердить: это {name}",
   "waImport.pickPersonHint": "Перед импортом подтвердите, с кем этот чат.",

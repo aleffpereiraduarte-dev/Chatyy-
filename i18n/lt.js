@@ -8200,6 +8200,8 @@ export default {
   "waImport.matchPhone": "Patvirtinta numeriu, kuris baigiasi {tail}",
   "waImport.matchName": "Panašus vardas: {name}",
   "waImport.reasonRecent": "Naujausias pokalbis",
+  "waImport.matchFirstName": "Tas pats vardas: {name}",
+  "waImport.pickAmbiguous": "Atitinka daugiau nei vienas žmogus – pasirinkite, kuris.",
   "waImport.searchPeople": "Ieškoti pagal vardą, @naudotoją ar telefoną",
   "waImport.confirmPerson": "Patvirtinti: tai {name}",
   "waImport.pickPersonHint": "Prieš importuodami patvirtinkite, su kuo šis pokalbis.",

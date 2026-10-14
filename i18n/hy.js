@@ -8196,6 +8196,8 @@ export default {
   "waImport.matchPhone": "Հաստատված է {tail}-ով ավարտվող համարով",
   "waImport.matchName": "Նման անուն՝ {name}",
   "waImport.reasonRecent": "Վերջին զրույց",
+  "waImport.matchFirstName": "Նույն անունը՝ {name}",
+  "waImport.pickAmbiguous": "Համընկնում է մեկից ավելի մարդ — ընտրեք ճիշտը։",
   "waImport.searchPeople": "Որոնել անունով, @օգտանունով կամ հեռախոսով",
   "waImport.confirmPerson": "Հաստատել՝ սա {name} է",
   "waImport.pickPersonHint": "Ներմուծելուց առաջ հաստատեք, թե ում հետ է այս զրույցը։",

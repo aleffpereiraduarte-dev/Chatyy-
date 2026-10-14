@@ -745,6 +745,8 @@ export default {
   "waImport.matchPhone": "{tail} න් අවසන් වන අංකයෙන් තහවුරු විය",
   "waImport.matchName": "සමාන නම: {name}",
   "waImport.reasonRecent": "මෑත කතාබහ",
+  "waImport.matchFirstName": "එකම මුල් නම: {name}",
+  "waImport.pickAmbiguous": "එක් අයෙකුට වඩා ගැළපේ — නිවැරදි අය තෝරන්න.",
   "waImport.searchPeople": "නම, @පරිශීලක නාමය හෝ දුරකථනයෙන් සොයන්න",
   "waImport.confirmPerson": "තහවුරු කරන්න: මෙය {name}",
   "waImport.pickPersonHint": "ආනයනයට පෙර මෙම කතාබහ කා සමඟදැයි තහවුරු කරන්න.",

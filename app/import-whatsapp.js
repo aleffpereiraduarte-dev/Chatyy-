@@ -109,6 +109,7 @@ export default function ImportWhatsAppScreen() {
   const matchSeqRef = useRef(0);
   const matchedOnceRef = useRef(false);
   const [showLinkPicker, setShowLinkPicker] = useState(false);
+  const [linkAmbiguous, setLinkAmbiguous] = useState(false); // [wa-1a1 2026-10-14] 2+ pessoas igualmente prováveis → escolher
   const [dest, setDest] = useState('direct'); // direct | copy
   const [mismatchOk, setMismatchOk] = useState(false);
   const [serverMismatch, setServerMismatch] = useState(null); // { peer_name, export_name }
@@ -178,16 +179,30 @@ export default function ImportWhatsAppScreen() {
     const names = (p.participants || []).map((x) => x.name);
     let r = null;
     try {
-      r = await waImportMatch({ participants: names, file_title: p.fileTitle || '', origin_conversation_id: originConvId ? (Number(originConvId) || undefined) : undefined });
+      r = await waImportMatch({ participants: names, me: p.guessedMe || undefined, file_title: p.fileTitle || '', origin_conversation_id: originConvId ? (Number(originConvId) || undefined) : undefined });
     } catch {}
     if (seq !== matchSeqRef.current) return; // outro arquivo foi escolhido nesse meio-tempo
     if (!r?.success) { suggestLink(p, p.guessedMe); return; }
-    const d = r.data || {};
+    const d0 = r.data || {};
+    const me = (d0.me && names.includes(d0.me) && !meManualRef.current) ? d0.me : p.guessedMe;
+    // [wa-1a1 2026-10-14] a pessoa é o OUTRO autor: candidato que só bate com o MEU nome no export
+    // (ex.: conta com @ "aleff_qa" × autor "Aleff") nunca é sugerido (servidor antigo ainda manda).
+    const d = { ...d0, candidates: (d0.candidates || []).filter((c) => !me || c.reason === 'phone' || c.matched !== me) };
     setMatchInfo(d);
     if (d.me && names.includes(d.me) && !meManualRef.current) setMeName(d.me);
     if (!params.linkEmail) {
-      const c = (d.candidates || [])[0];
-      if (c) setLink({ email: c.email, name: c.name || c.email, convId: c.conversation_id ? String(c.conversation_id) : '', reason: c.reason, matched: c.matched, tail: c.phone_tail });
+      const cs = d.candidates;
+      const c = cs[0];
+      const strong = (x) => x && (x.reason === 'phone' || Number(x.score) >= NAME_MIN_SCORE);
+      // empate entre os melhores (ou só "mesmo primeiro nome" com 2+ pessoas) → não escolhe sozinho: abre a lista.
+      const tie = !!c && cs.length > 1 && c.reason !== 'phone' && (Number(cs[1].score) >= Number(c.score) || (!strong(c) && !strong(cs[1])));
+      if (c && !tie) {
+        setLinkAmbiguous(false);
+        setLink({ email: c.email, name: c.name || c.email, convId: c.conversation_id ? String(c.conversation_id) : '', reason: c.reason, matched: c.matched, tail: c.phone_tail });
+      } else if (tie) {
+        setLinkAmbiguous(true);
+        setShowLinkPicker(true);
+      }
     } else if (d.origin) {
       setLink((l) => (l && String(l.email).toLowerCase() === String(d.origin.email || '').toLowerCase()
         ? { ...l, reason: d.origin.verdict, matched: d.origin.matched, tail: d.origin.phone_tail } : l));
@@ -210,6 +225,7 @@ export default function ImportWhatsAppScreen() {
       setTitle(p.title || '');
       setMeName(p.guessedMe);
       setMatchInfo(null); setMeManual(false); meManualRef.current = false; setShowMePicker(false);
+      setLinkAmbiguous(false); // [wa-1a1 2026-10-14]
       matchedOnceRef.current = true;
       runMatch(p); // [import-ordem 2026-10-13]
       setStep('review');
@@ -262,12 +278,15 @@ export default function ImportWhatsAppScreen() {
 
   // ── Inteligência: quem é a outra pessoa no export / bate com o contato? ──
   const others = useMemo(() => (prep?.participants || []).filter((p) => p.name !== meName), [prep, meName]);
-  const isGroupExport = others.length > 1;
+  // [wa-1a1 2026-10-14] grupo = 2+ outros autores reais OU aviso de grupo no export ("criou o grupo", "adicionou"…).
+  // Remetente raro de texto colado já foi desfeito no parser (não conta como 3º participante).
+  const isGroupExport = others.length > 1 || (!!prep?.isGroup && (prep?.groupSignals || 0) > 0);
   const exportPeer = others.length === 1 ? others[0].name : '';
   const localMatch = useMemo(() => {
     if (!link || !prep) return null;
     if (link.reason === 'phone' || link.reason === 'name') return true; // [import-ordem 2026-10-13] confirmado no servidor
     if (link.reason === 'mismatch') return false;
+    if (link.reason === 'first_name') return link.explicit ? true : null; // [wa-1a1 2026-10-14] só confirmar a pessoa (1 passo)
     if (exportPeer && nameLike(exportPeer, link.name)) return true;
     if (prep.fileTitle && nameLike(prep.fileTitle, link.name)) return true;
     return false;
@@ -319,7 +338,7 @@ export default function ImportWhatsAppScreen() {
         targetConversationId,
         peerHintName: link?.name || '',
         fileTitle: prep.fileTitle || '',
-        confirmMismatch: useDirect && (mismatchOk || !!serverMismatch),
+        confirmMismatch: useDirect && (mismatchOk || !!serverMismatch || (link?.reason === 'first_name' && !!link?.explicit)),
         originConvId: originConvId || targetConversationId || null,
         // [wa-import-fase2] notificação local ao concluir com o app em 2º plano
         notifyTitle: t('waImport.doneNotifTitle'), notifyBody: t('waImport.doneNotifBody', { n: '{n}' }),
@@ -400,12 +419,15 @@ export default function ImportWhatsAppScreen() {
   }, [showLinkPicker, matchInfo, searchRes, pickQuery]);
   const candReason = (c) => (c.reason === 'phone' ? t('waImport.matchPhone', { tail: c.tail || '' })
     : c.reason === 'name' ? t('waImport.matchName', { name: c.matched || '' })
+      : c.reason === 'first_name' ? t('waImport.matchFirstName', { name: String(c.matched || '').trim().split(/\s+/)[0] })
       : c.reason === 'recent' ? t('waImport.reasonRecent')
         : (c.handle ? '@' + c.handle : ''));
   const linkReasonText = !link ? '' : link.reason === 'phone'
     ? t('waImport.matchPhone', { tail: link.tail || '' })
     : link.reason === 'name'
       ? t('waImport.matchName', { name: link.matched || '' })
+      : link.reason === 'first_name'
+        ? t('waImport.matchFirstName', { name: String(link.matched || '').trim().split(/\s+/)[0] })
       : link.reason === 'mismatch'
         ? t('waImport.matchOriginMismatch', { export: exportPeer || prep?.fileTitle || '', name: link.name })
         : (localMatch ? t('waImport.verifiedOk', { name: link.name }) : '');
@@ -573,6 +595,7 @@ export default function ImportWhatsAppScreen() {
             <Radio on={false} onPress={() => setLink((l) => (l ? { ...l, explicit: true } : l))} title={t('waImport.confirmPerson', { name: link.name })} />
           </View>
         ) : null}
+        {showLinkPicker && linkAmbiguous && !link ? <Text style={[s.small, { color: sub, marginBottom: 6 }]}>{t('waImport.pickAmbiguous')}</Text> : null}
         {showLinkPicker && (
           <View style={[s.card, { backgroundColor: card, borderColor: line, paddingVertical: 4, maxHeight: 380 }]}>
             <TextInput
@@ -585,7 +608,7 @@ export default function ImportWhatsAppScreen() {
               {linkCandidates.length === 0 ? <Text style={[s.small, { color: sub, padding: 12 }]}>{t('waImport.linkEmpty')}</Text> : null}
               {linkCandidates.map((c) => {
                 const why = candReason(c);
-                const sugg = c.reason === 'phone' || c.reason === 'name' || (exportPeer && nameScore(exportPeer, c.name) >= NAME_MIN_SCORE);
+                const sugg = c.reason === 'phone' || c.reason === 'name' || c.reason === 'first_name' || (exportPeer && nameScore(exportPeer, c.name) >= NAME_MIN_SCORE);
                 return (
                   <TouchableOpacity key={c.email} onPress={() => { setLink({ ...c, explicit: true }); setShowLinkPicker(false); setPickQuery(''); setServerMismatch(null); setMismatchOk(false); }} style={s.partRow} accessibilityRole="button">
                     <AvatarCircle email={c.email} name={c.name} size={36} colors={colors} />

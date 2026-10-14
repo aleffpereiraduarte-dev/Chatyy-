@@ -745,6 +745,8 @@ export default {
   "waImport.matchPhone": "{tail} मा अन्त्य हुने नम्बरले पुष्टि भयो",
   "waImport.matchName": "मिल्दो नाम: {name}",
   "waImport.reasonRecent": "हालको च्याट",
+  "waImport.matchFirstName": "उही पहिलो नाम: {name}",
+  "waImport.pickAmbiguous": "एकभन्दा बढी व्यक्ति मिल्छन् — सही व्यक्ति छान्नुहोस्।",
   "waImport.searchPeople": "नाम, @प्रयोगकर्ता वा फोनबाट खोज्नुहोस्",
   "waImport.confirmPerson": "पुष्टि गर्नुहोस्: यो {name} हो",
   "waImport.pickPersonHint": "आयात गर्नुअघि यो च्याट कोसँग हो पुष्टि गर्नुहोस्।",

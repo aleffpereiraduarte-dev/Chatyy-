@@ -8200,6 +8200,8 @@ export default {
   "waImport.matchPhone": "אושר לפי המספר שמסתיים ב-{tail}",
   "waImport.matchName": "שם דומה: {name}",
   "waImport.reasonRecent": "צ׳אט אחרון",
+  "waImport.matchFirstName": "אותו שם פרטי: {name}",
+  "waImport.pickAmbiguous": "יותר מאדם אחד מתאים — בחרו מי זה.",
   "waImport.searchPeople": "חיפוש לפי שם, @משתמש או טלפון",
   "waImport.confirmPerson": "אישור: זה {name}",
   "waImport.pickPersonHint": "לפני הייבוא, אשרו עם מי הצ׳אט הזה.",

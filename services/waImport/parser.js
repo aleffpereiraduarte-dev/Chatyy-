@@ -226,7 +226,7 @@ function* _parseGen(text, opts = {}) {
         if (bracket) bracketCount++; else if (/[-–—]/.test(closer)) dashCount++;
         cur = {
           d1: m[1], d2: m[2], d3: m[3], a, b, c, H, M, S: m[7] ? +m[7] : 0,
-          ampm: ampmKind(m[4] || m[8]), bracket, rest: m[10] || '', extra: [],
+          ampm: ampmKind(m[4] || m[8]), bracket, rest: m[10] || '', extra: [], raw: line,
         };
         entries.push(cur);
       }
@@ -237,6 +237,11 @@ function* _parseGen(text, opts = {}) {
   }
 
   const platform = bracketCount >= dashCount ? (bracketCount ? 'ios' : 'unknown') : 'android';
+
+  // [wa-1a1 2026-10-14] 1:1 × grupo + remetentes FALSOS. Um "remetente" com pouquíssimas linhas numa conversa
+  // de 2 pessoas quase sempre é texto colado/encaminhado que começa com "[data, hora] Nome: …" (copiar mensagem
+  // de outra conversa no WhatsApp leva o cabeçalho junto) → a linha era continuação da mensagem anterior.
+  const oneToOne = _foldStraySenders(entries, opts);
 
   // Ordem da data: ymd | dmy | mdy
   let dateOrder = 'dmy';
@@ -364,7 +369,84 @@ function* _parseGen(text, opts = {}) {
     last: messages.length ? messages[messages.length - 1].tsLocal : null,
   };
   const clock = entries.some((e) => e.ampm) ? '12h' : '24h';
-  return { messages, participants, title, dateOrder, platform, stats, clock };
+  // [wa-1a1 2026-10-14] isGroup: sinal de grupo no export (criou/adicionou/saiu…) ou 3+ autores de verdade.
+  const isGroup = oneToOne.groupSignals > 0 || participants.length > 2;
+  return { messages, participants, title, dateOrder, platform, stats, clock, isGroup, groupSignals: oneToOne.groupSignals, folded: oneToOne.folded, aliased: oneToOne.aliased };
+}
+
+// [wa-1a1 2026-10-14] Avisos que SÓ existem em grupo (linha de sistema: sem "Nome:" no Android; com U+200E
+// antes do texto no iPhone, onde o remetente é o nome do grupo).
+const GROUP_SYS_RE = /(created (the )?group|criou (o )?grupo|creó (el )?grupo|hat die gruppe|a créé (le )?groupe|ha creato (il )?gruppo|membuat grup|\badded\b|adicionou|añadió|hinzugefügt|a ajouté|ha aggiunto|menambahkan|\bremoved\b|removeu|eliminó a|entfernt|a retiré|ha rimosso|\bleft\b|\bsaiu\b|salió|verlassen|est parti|ha abbandonato|joined using|entrou usando|se unió (usando|con)|changed (the )?(group|subject)|(mudou|alterou) (o nome|a imagem|a foto|a descrição|o assunto|as configurações) d[oe] grupo|(group|grupo|gruppe|groupe|gruppo|grup) (name|description|icon|nome|descrição|imagem)|\bcommunity\b|comunidade)/i;
+
+function _senderOf(e) {
+  const sp = splitSender(e.rest);
+  if (!sp) return null;
+  const name = stripBidi(sp.name).trim();
+  return name || null;
+}
+
+/**
+ * Decide 1:1 × grupo e desfaz remetentes falsos (muta entries). Regra:
+ *   • sinal de grupo (aviso de sistema típico de grupo, ou remetente-sistema = título que não é autor) → grupo, nada muda;
+ *   • senão, se há 2 autores dominantes e os demais têm ≤ 5 linhas ou < 0,5% → é 1:1:
+ *     nome quase igual a um dominante ("~ Sara" × "Sara Zelle") vira esse dominante; o resto volta a ser
+ *     continuação (texto) da mensagem anterior, com a linha original.
+ * → { groupSignals, folded, aliased }
+ */
+function _foldStraySenders(entries, opts) {
+  const counts = new Map();
+  let groupSignals = 0;
+  const title = stripBidi(String(opts?.title || '')).trim();
+  for (const e of entries) {
+    const name = _senderOf(e);
+    if (name) {
+      counts.set(name, (counts.get(name) || 0) + 1);
+      const body = splitSender(e.rest).body;
+      const pb = stripBidi(body).trim();
+      if (/^[\u200e\u200f]/.test(body) && pb.length <= 240 && !ATTACHED_RE.test(pb) && GROUP_SYS_RE.test(pb)) groupSignals++;
+    } else {
+      const plain = stripBidi(e.rest).trim();
+      if (plain.length <= 240 && GROUP_SYS_RE.test(plain)) groupSignals++;
+    }
+  }
+  const ranked = [...counts.entries()].sort((x, y) => y[1] - x[1]);
+  // iPhone: aviso de sistema com remetente = nome do grupo (título) que nunca é um dos 2 autores principais.
+  if (title && ranked.length >= 3 && counts.has(title) && ranked[0][0] !== title && ranked[1][0] !== title) {
+    const ent = entries.find((e) => _senderOf(e) === title);
+    if (ent && /^[\u200e\u200f]/.test(splitSender(ent.rest).body)) groupSignals++;
+  }
+  const res = { groupSignals, folded: 0, aliased: 0 };
+  if (groupSignals > 0 || ranked.length < 3) return res;
+  const total = ranked.reduce((n, r) => n + r[1], 0);
+  const minor = (n) => n <= 5 || n < total * 0.005;
+  const dom = ranked.slice(0, 2);
+  if (dom.some(([, n]) => minor(n))) return res; // 2 "dominantes" que também são raros → não dá para afirmar
+  const strays = ranked.slice(2);
+  if (!strays.every(([, n]) => minor(n))) return res; // 3º autor de verdade → grupo
+  const alias = new Map();
+  const fold = new Set();
+  for (const [name] of strays) {
+    const sim = dom.map(([d]) => ({ d, sc: nameScore(name, d) })).sort((x, y) => y.sc - x.sc)[0];
+    if (sim && sim.sc >= 78) alias.set(name, sim.d); else fold.add(name);
+  }
+  const out = [];
+  for (const e of entries) {
+    const name = _senderOf(e);
+    if (name && alias.has(name)) {
+      const sp = splitSender(e.rest);
+      e.rest = `${alias.get(name)}: ${sp.body}`;
+      res.aliased++;
+      out.push(e);
+    } else if (name && fold.has(name) && out.length) {
+      const prev = out[out.length - 1];
+      prev.extra.push(e.raw != null ? e.raw : e.rest, ...e.extra);
+      res.folded++;
+    } else {
+      out.push(e);
+    }
+  }
+  if (out.length !== entries.length) { entries.length = 0; for (const e of out) entries.push(e); }
+  return res;
 }
 
 function isSystemLike(plain, sender, opts) {

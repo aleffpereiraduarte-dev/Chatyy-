@@ -8200,6 +8200,8 @@ export default {
   "waImport.matchPhone": "Potvrđeno brojem koji se završava na {tail}",
   "waImport.matchName": "Slično ime: {name}",
   "waImport.reasonRecent": "Недавни разговор",
+  "waImport.matchFirstName": "Исто име: {name}",
+  "waImport.pickAmbiguous": "Одговара више особа — изаберите ко је.",
   "waImport.searchPeople": "Претражи по имену, @кориснику или телефону",
   "waImport.confirmPerson": "Потврди: то је {name}",
   "waImport.pickPersonHint": "Пре увоза потврдите с ким је овај разговор.",

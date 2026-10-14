@@ -8200,6 +8200,8 @@ export default {
   "waImport.matchPhone": "{tail} ile biten numarayla doğrulandı",
   "waImport.matchName": "Benzer ad: {name}",
   "waImport.reasonRecent": "Son sohbet",
+  "waImport.matchFirstName": "Aynı ad: {name}",
+  "waImport.pickAmbiguous": "Birden fazla kişi eşleşiyor — doğru kişiyi seçin.",
   "waImport.searchPeople": "Ad, @kullanıcı adı veya telefonla ara",
   "waImport.confirmPerson": "Onayla: bu {name}",
   "waImport.pickPersonHint": "İçe aktarmadan önce bu sohbetin kiminle olduğunu onaylayın.",

@@ -8200,6 +8200,8 @@ export default {
   "waImport.matchPhone": "Kumpirmado ng numerong nagtatapos sa {tail}",
   "waImport.matchName": "Kahawig na pangalan: {name}",
   "waImport.reasonRecent": "Kamakailang chat",
+  "waImport.matchFirstName": "Parehong pangalan: {name}",
+  "waImport.pickAmbiguous": "Higit sa isang tao ang tugma — piliin kung sino.",
   "waImport.searchPeople": "Maghanap ayon sa pangalan, @username o telepono",
   "waImport.confirmPerson": "Kumpirmahin: si {name} ito",
   "waImport.pickPersonHint": "Kumpirmahin kung sino ang kausap sa chat na ito bago mag-import.",

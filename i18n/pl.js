@@ -8978,6 +8978,8 @@ export default {
   "waImport.matchPhone": "Potwierdzone numerem kończącym się na {tail}",
   "waImport.matchName": "Podobne imię: {name}",
   "waImport.reasonRecent": "Ostatni czat",
+  "waImport.matchFirstName": "To samo imię: {name}",
+  "waImport.pickAmbiguous": "Pasuje więcej niż jedna osoba — wybierz właściwą.",
   "waImport.searchPeople": "Szukaj po imieniu, @nazwie lub numerze",
   "waImport.confirmPerson": "Potwierdź: to {name}",
   "waImport.pickPersonHint": "Przed importem potwierdź, z kim jest ten czat.",

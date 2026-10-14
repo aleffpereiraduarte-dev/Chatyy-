@@ -8200,6 +8200,8 @@ export default {
   "waImport.matchPhone": "Potrjeno s številko, ki se konča na {tail}",
   "waImport.matchName": "Podobno ime: {name}",
   "waImport.reasonRecent": "Nedaven klepet",
+  "waImport.matchFirstName": "Isto ime: {name}",
+  "waImport.pickAmbiguous": "Ujema se več oseb – izberite pravo.",
   "waImport.searchPeople": "Išči po imenu, @uporabniku ali telefonu",
   "waImport.confirmPerson": "Potrdi: to je {name}",
   "waImport.pickPersonHint": "Pred uvozom potrdite, s kom je ta klepet.",

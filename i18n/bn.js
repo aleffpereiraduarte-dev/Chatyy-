@@ -8200,6 +8200,8 @@ export default {
   "waImport.matchPhone": "{tail} দিয়ে শেষ হওয়া নম্বরে নিশ্চিত",
   "waImport.matchName": "মিলে যাওয়া নাম: {name}",
   "waImport.reasonRecent": "সাম্প্রতিক চ্যাট",
+  "waImport.matchFirstName": "একই প্রথম নাম: {name}",
+  "waImport.pickAmbiguous": "একাধিক মিল পাওয়া গেছে — সঠিক জনকে বেছে নিন।",
   "waImport.searchPeople": "নাম, @ইউজারনেম বা ফোন দিয়ে খুঁজুন",
   "waImport.confirmPerson": "নিশ্চিত করুন: এটি {name}",
   "waImport.pickPersonHint": "ইমপোর্ট করার আগে নিশ্চিত করুন এই চ্যাট কার সঙ্গে।",

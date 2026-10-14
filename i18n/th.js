@@ -8200,6 +8200,8 @@ export default {
   "waImport.matchPhone": "ยืนยันด้วยหมายเลขที่ลงท้ายด้วย {tail}",
   "waImport.matchName": "ชื่อคล้ายกัน: {name}",
   "waImport.reasonRecent": "แชทล่าสุด",
+  "waImport.matchFirstName": "ชื่อเดียวกัน: {name}",
+  "waImport.pickAmbiguous": "มีมากกว่าหนึ่งคนที่ตรงกัน — เลือกคนที่ถูกต้อง",
   "waImport.searchPeople": "ค้นหาด้วยชื่อ @ชื่อผู้ใช้ หรือเบอร์โทร",
   "waImport.confirmPerson": "ยืนยัน: คือ {name}",
   "waImport.pickPersonHint": "ยืนยันว่าแชทนี้เป็นกับใครก่อนนำเข้า",

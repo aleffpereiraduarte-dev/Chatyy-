@@ -8200,6 +8200,8 @@ export default {
   "waImport.matchPhone": "Επιβεβαιώθηκε από τον αριθμό που λήγει σε {tail}",
   "waImport.matchName": "Παρόμοιο όνομα: {name}",
   "waImport.reasonRecent": "Πρόσφατη συνομιλία",
+  "waImport.matchFirstName": "Ίδιο μικρό όνομα: {name}",
+  "waImport.pickAmbiguous": "Ταιριάζουν περισσότερα από ένα άτομα — επίλεξε ποιο είναι.",
   "waImport.searchPeople": "Αναζήτηση με όνομα, @χρήστη ή τηλέφωνο",
   "waImport.confirmPerson": "Επιβεβαίωση: είναι {name}",
   "waImport.pickPersonHint": "Επιβεβαιώστε με ποιον είναι αυτή η συνομιλία πριν την εισαγωγή.",

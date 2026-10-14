@@ -11024,6 +11024,8 @@ export default {
   "waImport.matchPhone": "末尾 {tail} の番号で確認済み",
   "waImport.matchName": "似た名前：{name}",
   "waImport.reasonRecent": "最近のチャット",
+  "waImport.matchFirstName": "同じ名前：{name}",
+  "waImport.pickAmbiguous": "該当する人が複数います。どの人か選んでください。",
   "waImport.searchPeople": "名前・@ユーザー名・電話番号で検索",
   "waImport.confirmPerson": "確認：{name} です",
   "waImport.pickPersonHint": "インポートする前に、このチャットの相手を確認してください。",

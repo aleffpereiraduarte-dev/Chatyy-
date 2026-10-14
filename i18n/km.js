@@ -8196,6 +8196,8 @@ export default {
   "waImport.matchPhone": "បានបញ្ជាក់ដោយលេខដែលបញ្ចប់ដោយ {tail}",
   "waImport.matchName": "ឈ្មោះស្រដៀង៖ {name}",
   "waImport.reasonRecent": "ការជជែកថ្មីៗ",
+  "waImport.matchFirstName": "ឈ្មោះដូចគ្នា៖ {name}",
+  "waImport.pickAmbiguous": "មានមនុស្សច្រើនជាងម្នាក់ដែលត្រូវគ្នា — ជ្រើសរើសអ្នកត្រឹមត្រូវ។",
   "waImport.searchPeople": "ស្វែងរកតាមឈ្មោះ @ឈ្មោះអ្នកប្រើ ឬលេខទូរសព្ទ",
   "waImport.confirmPerson": "បញ្ជាក់៖ គឺ {name}",
   "waImport.pickPersonHint": "បញ្ជាក់ថាការជជែកនេះជាមួយអ្នកណា មុនពេលនាំចូល។",

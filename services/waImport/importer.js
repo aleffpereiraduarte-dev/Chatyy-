@@ -186,6 +186,8 @@ export async function prepareImport(files, { localeHint = '', myName = '', myPho
       title,
       fileTitle,
       participants: parsed.participants,
+      // [wa-1a1 2026-10-14] grupo de verdade × 1:1 (remetentes falsos de texto colado já desfeitos no parser)
+      isGroup: !!parsed.isGroup, groupSignals: parsed.groupSignals || 0, folded: parsed.folded || 0,
       guessedMe: guessMe(parsed.participants, { myName, title: fileTitle, myPhone, peerName, peerPhone }),
       platform: parsed.platform,
       dateOrder: parsed.dateOrder,

@@ -8196,6 +8196,8 @@ export default {
   "waImport.matchPhone": "{tail} ဖြင့်ဆုံးသော နံပါတ်ဖြင့် အတည်ပြုပြီး",
   "waImport.matchName": "ဆင်တူသော အမည်: {name}",
   "waImport.reasonRecent": "မကြာသေးမီ ချက်",
+  "waImport.matchFirstName": "အမည်တူ- {name}",
+  "waImport.pickAmbiguous": "လူတစ်ယောက်ထက်ပို၍ ကိုက်ညီသည် — မှန်ကန်သူကို ရွေးပါ။",
   "waImport.searchPeople": "အမည်၊ @အသုံးပြုသူအမည် သို့မဟုတ် ဖုန်းဖြင့် ရှာပါ",
   "waImport.confirmPerson": "အတည်ပြုရန်- {name} ဖြစ်သည်",
   "waImport.pickPersonHint": "တင်သွင်းမီ ဤချက်သည် မည်သူနှင့်ဖြစ်ကြောင်း အတည်ပြုပါ။",

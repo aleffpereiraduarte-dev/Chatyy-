@@ -11023,6 +11023,8 @@ export default {
   "waImport.matchPhone": "Dikonfirmasi lewat nomor berakhiran {tail}",
   "waImport.matchName": "Nama mirip: {name}",
   "waImport.reasonRecent": "Obrolan terbaru",
+  "waImport.matchFirstName": "Nama depan sama: {name}",
+  "waImport.pickAmbiguous": "Lebih dari satu orang cocok — pilih yang benar.",
   "waImport.searchPeople": "Cari dengan nama, @nama pengguna, atau telepon",
   "waImport.confirmPerson": "Konfirmasi: ini {name}",
   "waImport.pickPersonHint": "Konfirmasi obrolan ini dengan siapa sebelum mengimpor.",

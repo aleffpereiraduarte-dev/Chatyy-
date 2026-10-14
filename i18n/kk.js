@@ -8196,6 +8196,8 @@ export default {
   "waImport.matchPhone": "{tail} деп аяқталатын нөмірмен расталды",
   "waImport.matchName": "Ұқсас есім: {name}",
   "waImport.reasonRecent": "Соңғы чат",
+  "waImport.matchFirstName": "Аты бірдей: {name}",
+  "waImport.pickAmbiguous": "Бірнеше адам сәйкес келеді — дұрысын таңдаңыз.",
   "waImport.searchPeople": "Аты, @қолданушы аты немесе телефон бойынша іздеу",
   "waImport.confirmPerson": "Растау: бұл {name}",
   "waImport.pickPersonHint": "Импорттау алдында бұл чат кіммен екенін растаңыз.",

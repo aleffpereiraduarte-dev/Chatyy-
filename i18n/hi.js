@@ -11801,6 +11801,8 @@ export default {
   "waImport.matchPhone": "{tail} पर खत्म होने वाले नंबर से पुष्टि हुई",
   "waImport.matchName": "मिलता-जुलता नाम: {name}",
   "waImport.reasonRecent": "हाल की चैट",
+  "waImport.matchFirstName": "एक जैसा पहला नाम: {name}",
+  "waImport.pickAmbiguous": "एक से ज़्यादा लोग मेल खाते हैं — सही व्यक्ति चुनें।",
   "waImport.searchPeople": "नाम, @यूज़रनेम या फ़ोन से खोजें",
   "waImport.confirmPerson": "पुष्टि करें: यह {name} है",
   "waImport.pickPersonHint": "इंपोर्ट करने से पहले पुष्टि करें कि यह चैट किसके साथ है।",

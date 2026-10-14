@@ -11802,6 +11802,8 @@ export default {
   "waImport.matchPhone": "تم التأكيد بالرقم المنتهي بـ {tail}",
   "waImport.matchName": "اسم مشابه: {name}",
   "waImport.reasonRecent": "محادثة حديثة",
+  "waImport.matchFirstName": "الاسم الأول نفسه: {name}",
+  "waImport.pickAmbiguous": "يوجد أكثر من شخص مطابق — اختر الشخص الصحيح.",
   "waImport.searchPeople": "ابحث بالاسم أو @اسم المستخدم أو الهاتف",
   "waImport.confirmPerson": "تأكيد: إنه {name}",
   "waImport.pickPersonHint": "أكّد مع من هذه المحادثة قبل الاستيراد.",

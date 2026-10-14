@@ -6350,6 +6350,8 @@ export default {
   "waImport.matchPhone": "{tail} ने संपणाऱ्या नंबरने पुष्टी",
   "waImport.matchName": "सारखे नाव: {name}",
   "waImport.reasonRecent": "अलीकडील चॅट",
+  "waImport.matchFirstName": "एकच पहिले नाव: {name}",
+  "waImport.pickAmbiguous": "एकापेक्षा जास्त व्यक्ती जुळतात — योग्य व्यक्ती निवडा.",
   "waImport.searchPeople": "नाव, @युजरनेम किंवा फोनने शोधा",
   "waImport.confirmPerson": "पुष्टी करा: हे {name} आहे",
   "waImport.pickPersonHint": "इम्पोर्ट करण्यापूर्वी ही चॅट कोणासोबत आहे याची पुष्टी करा.",

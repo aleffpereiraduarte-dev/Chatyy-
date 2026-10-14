@@ -8196,6 +8196,8 @@ export default {
   "waImport.matchPhone": "დადასტურებულია ნომრით, რომელიც მთავრდება {tail}-ით",
   "waImport.matchName": "მსგავსი სახელი: {name}",
   "waImport.reasonRecent": "ბოლო ჩატი",
+  "waImport.matchFirstName": "იგივე სახელი: {name}",
+  "waImport.pickAmbiguous": "ემთხვევა ერთზე მეტი ადამიანი — აირჩიეთ სწორი.",
   "waImport.searchPeople": "ძიება სახელით, @მომხმარებლით ან ტელეფონით",
   "waImport.confirmPerson": "დადასტურება: ეს არის {name}",
   "waImport.pickPersonHint": "იმპორტამდე დაადასტურეთ, ვისთანაა ეს ჩატი.",

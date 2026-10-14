@@ -758,6 +758,8 @@ export default {
   "waImport.matchPhone": "{tail} پر ختم ہونے والے نمبر سے تصدیق شدہ",
   "waImport.matchName": "ملتا جلتا نام: {name}",
   "waImport.reasonRecent": "حالیہ چیٹ",
+  "waImport.matchFirstName": "ایک جیسا پہلا نام: {name}",
+  "waImport.pickAmbiguous": "ایک سے زیادہ لوگ ملتے ہیں — درست شخص منتخب کریں۔",
   "waImport.searchPeople": "نام، @یوزر نیم یا فون سے تلاش کریں",
   "waImport.confirmPerson": "تصدیق: یہ {name} ہے",
   "waImport.pickPersonHint": "درآمد سے پہلے تصدیق کریں کہ یہ چیٹ کس کے ساتھ ہے۔",

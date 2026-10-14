@@ -8196,6 +8196,8 @@ export default {
   "waImport.matchPhone": "{tail} ilə bitən nömrə ilə təsdiqləndi",
   "waImport.matchName": "Oxşar ad: {name}",
   "waImport.reasonRecent": "Son söhbət",
+  "waImport.matchFirstName": "Eyni ad: {name}",
+  "waImport.pickAmbiguous": "Birdən çox uyğun şəxs var — hansı olduğunu seçin.",
   "waImport.searchPeople": "Ad, @istifadəçi adı və ya telefonla axtar",
   "waImport.confirmPerson": "Təsdiqlə: bu {name}",
   "waImport.pickPersonHint": "İdxaldan əvvəl bu söhbətin kiminlə olduğunu təsdiqləyin.",

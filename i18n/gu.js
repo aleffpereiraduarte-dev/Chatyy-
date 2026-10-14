@@ -6348,6 +6348,8 @@ export default {
   "waImport.matchPhone": "{tail} થી પૂરા થતા નંબરથી પુષ્ટિ",
   "waImport.matchName": "મળતું નામ: {name}",
   "waImport.reasonRecent": "તાજેતરની ચેટ",
+  "waImport.matchFirstName": "સરખું પહેલું નામ: {name}",
+  "waImport.pickAmbiguous": "એકથી વધુ વ્યક્તિ મેળ ખાય છે — કોણ છે તે પસંદ કરો.",
   "waImport.searchPeople": "નામ, @યુઝરનેમ અથવા ફોનથી શોધો",
   "waImport.confirmPerson": "પુષ્ટિ કરો: આ {name} છે",
   "waImport.pickPersonHint": "ઇમ્પોર્ટ કરતાં પહેલાં પુષ્ટિ કરો કે આ ચેટ કોની સાથે છે.",

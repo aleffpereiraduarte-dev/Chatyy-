@@ -8200,6 +8200,8 @@ export default {
   "waImport.matchPhone": "Confirmat pel número acabat en {tail}",
   "waImport.matchName": "Nom semblant: {name}",
   "waImport.reasonRecent": "Xat recent",
+  "waImport.matchFirstName": "Mateix nom: {name}",
+  "waImport.pickAmbiguous": "Hi ha més d'una persona que coincideix: tria quina és.",
   "waImport.searchPeople": "Cerca per nom, @usuari o telèfon",
   "waImport.confirmPerson": "Confirma: és {name}",
   "waImport.pickPersonHint": "Confirma amb qui és aquest xat abans d’importar.",

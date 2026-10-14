@@ -8200,6 +8200,8 @@ export default {
   "waImport.matchPhone": "Megerősítve a(z) {tail} végű számmal",
   "waImport.matchName": "Hasonló név: {name}",
   "waImport.reasonRecent": "Legutóbbi csevegés",
+  "waImport.matchFirstName": "Azonos keresztnév: {name}",
+  "waImport.pickAmbiguous": "Több személy is egyezik – válaszd ki, ki az.",
   "waImport.searchPeople": "Keresés név, @felhasználónév vagy telefon alapján",
   "waImport.confirmPerson": "Megerősítés: ez {name}",
   "waImport.pickPersonHint": "Importálás előtt erősítsd meg, kivel van ez a csevegés.",

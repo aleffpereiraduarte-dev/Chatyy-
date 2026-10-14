@@ -8978,6 +8978,8 @@ export default {
   "waImport.matchPhone": "Vahvistettu numerosta, joka päättyy {tail}",
   "waImport.matchName": "Samankaltainen nimi: {name}",
   "waImport.reasonRecent": "Viimeaikainen keskustelu",
+  "waImport.matchFirstName": "Sama etunimi: {name}",
+  "waImport.pickAmbiguous": "Useampi henkilö täsmää – valitse oikea.",
   "waImport.searchPeople": "Hae nimellä, @käyttäjänimellä tai puhelinnumerolla",
   "waImport.confirmPerson": "Vahvista: se on {name}",
   "waImport.pickPersonHint": "Vahvista ennen tuontia, kenen kanssa tämä keskustelu on.",

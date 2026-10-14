@@ -8978,6 +8978,8 @@ export default {
   "waImport.matchPhone": "Bekräftat av numret som slutar på {tail}",
   "waImport.matchName": "Liknande namn: {name}",
   "waImport.reasonRecent": "Senaste chatt",
+  "waImport.matchFirstName": "Samma förnamn: {name}",
+  "waImport.pickAmbiguous": "Flera personer matchar – välj vem det är.",
   "waImport.searchPeople": "Sök på namn, @användarnamn eller telefon",
   "waImport.confirmPerson": "Bekräfta: det är {name}",
   "waImport.pickPersonHint": "Bekräfta vem chatten är med innan du importerar.",

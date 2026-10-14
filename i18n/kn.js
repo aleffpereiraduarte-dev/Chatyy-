@@ -1547,6 +1547,8 @@ export default {
   "waImport.matchPhone": "{tail} ನಲ್ಲಿ ಕೊನೆಗೊಳ್ಳುವ ಸಂಖ್ಯೆಯಿಂದ ದೃಢೀಕರಿಸಲಾಗಿದೆ",
   "waImport.matchName": "ಹೋಲುವ ಹೆಸರು: {name}",
   "waImport.reasonRecent": "ಇತ್ತೀಚಿನ ಚಾಟ್",
+  "waImport.matchFirstName": "ಅದೇ ಮೊದಲ ಹೆಸರು: {name}",
+  "waImport.pickAmbiguous": "ಒಂದಕ್ಕಿಂತ ಹೆಚ್ಚು ವ್ಯಕ್ತಿಗಳು ಹೊಂದುತ್ತಾರೆ — ಸರಿಯಾದವರನ್ನು ಆರಿಸಿ.",
   "waImport.searchPeople": "ಹೆಸರು, @ಬಳಕೆದಾರಹೆಸರು ಅಥವಾ ಫೋನ್ ಮೂಲಕ ಹುಡುಕಿ",
   "waImport.confirmPerson": "ದೃಢೀಕರಿಸಿ: ಇದು {name}",
   "waImport.pickPersonHint": "ಆಮದು ಮಾಡುವ ಮೊದಲು ಈ ಚಾಟ್ ಯಾರೊಂದಿಗೆ ಎಂದು ದೃಢೀಕರಿಸಿ.",

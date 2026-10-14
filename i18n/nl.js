@@ -8978,6 +8978,8 @@ export default {
   "waImport.matchPhone": "Bevestigd door het nummer dat eindigt op {tail}",
   "waImport.matchName": "Vergelijkbare naam: {name}",
   "waImport.reasonRecent": "Recente chat",
+  "waImport.matchFirstName": "Zelfde voornaam: {name}",
+  "waImport.pickAmbiguous": "Er passen meerdere personen — kies wie het is.",
   "waImport.searchPeople": "Zoeken op naam, @gebruikersnaam of telefoon",
   "waImport.confirmPerson": "Bevestigen: het is {name}",
   "waImport.pickPersonHint": "Bevestig met wie deze chat is voordat je importeert.",

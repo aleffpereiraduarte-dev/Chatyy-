@@ -8200,6 +8200,8 @@ export default {
   "waImport.matchPhone": "Kinnitatud numbriga, mis lõpeb {tail}",
   "waImport.matchName": "Sarnane nimi: {name}",
   "waImport.reasonRecent": "Hiljutine vestlus",
+  "waImport.matchFirstName": "Sama eesnimi: {name}",
+  "waImport.pickAmbiguous": "Sobib mitu inimest – vali, kes see on.",
   "waImport.searchPeople": "Otsi nime, @kasutajanime või telefoni järgi",
   "waImport.confirmPerson": "Kinnita: see on {name}",
   "waImport.pickPersonHint": "Enne importimist kinnita, kellega see vestlus on.",

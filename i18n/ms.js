@@ -8200,6 +8200,8 @@ export default {
   "waImport.matchPhone": "Disahkan melalui nombor berakhir {tail}",
   "waImport.matchName": "Nama serupa: {name}",
   "waImport.reasonRecent": "Sembang terkini",
+  "waImport.matchFirstName": "Nama pertama sama: {name}",
+  "waImport.pickAmbiguous": "Lebih daripada seorang sepadan — pilih yang betul.",
   "waImport.searchPeople": "Cari mengikut nama, @nama pengguna atau telefon",
   "waImport.confirmPerson": "Sahkan: ini {name}",
   "waImport.pickPersonHint": "Sahkan sembang ini dengan siapa sebelum mengimport.",

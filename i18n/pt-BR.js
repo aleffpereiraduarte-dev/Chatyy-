@@ -11855,6 +11855,8 @@ export default {
   "waImport.matchPhone": "Confirmado pelo número terminado em {tail}",
   "waImport.matchName": "Nome parecido: {name}",
   "waImport.reasonRecent": "Conversa recente",
+  "waImport.matchFirstName": "Mesmo primeiro nome: {name}",
+  "waImport.pickAmbiguous": "Mais de uma pessoa combina — escolha quem é.",
   "waImport.searchPeople": "Buscar por nome, @usuário ou telefone",
   "waImport.confirmPerson": "Confirmar: é {name}",
   "waImport.pickPersonHint": "Confirme quem é a pessoa desta conversa antes de importar.",

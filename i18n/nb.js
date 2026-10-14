@@ -8978,6 +8978,8 @@ export default {
   "waImport.matchPhone": "Bekreftet av nummeret som slutter på {tail}",
   "waImport.matchName": "Lignende navn: {name}",
   "waImport.reasonRecent": "Nylig chat",
+  "waImport.matchFirstName": "Samme fornavn: {name}",
+  "waImport.pickAmbiguous": "Flere personer passer – velg hvem det er.",
   "waImport.searchPeople": "Søk etter navn, @brukernavn eller telefon",
   "waImport.confirmPerson": "Bekreft: det er {name}",
   "waImport.pickPersonHint": "Bekreft hvem chatten er med før du importerer.",

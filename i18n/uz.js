@@ -8196,6 +8196,8 @@ export default {
   "waImport.matchPhone": "{tail} bilan tugaydigan raqam orqali tasdiqlandi",
   "waImport.matchName": "O'xshash ism: {name}",
   "waImport.reasonRecent": "Soʻnggi suhbat",
+  "waImport.matchFirstName": "Bir xil ism: {name}",
+  "waImport.pickAmbiguous": "Bir nechta odam mos keladi — to‘g‘risini tanlang.",
   "waImport.searchPeople": "Ism, @foydalanuvchi yoki telefon boʻyicha qidirish",
   "waImport.confirmPerson": "Tasdiqlash: bu {name}",
   "waImport.pickPersonHint": "Import qilishdan oldin bu suhbat kim bilan ekanini tasdiqlang.",

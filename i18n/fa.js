@@ -8200,6 +8200,8 @@ export default {
   "waImport.matchPhone": "با شماره‌ای که به {tail} ختم می‌شود تأیید شد",
   "waImport.matchName": "نام مشابه: {name}",
   "waImport.reasonRecent": "گفتگوی اخیر",
+  "waImport.matchFirstName": "نام کوچک یکسان: {name}",
+  "waImport.pickAmbiguous": "بیش از یک نفر مطابقت دارد — انتخاب کنید کدام است.",
   "waImport.searchPeople": "جستجو با نام، @نام کاربری یا تلفن",
   "waImport.confirmPerson": "تأیید: {name} است",
   "waImport.pickPersonHint": "پیش از وارد کردن، تأیید کنید این گفتگو با چه کسی است.",

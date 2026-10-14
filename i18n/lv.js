@@ -8200,6 +8200,8 @@ export default {
   "waImport.matchPhone": "Apstiprināts ar numuru, kas beidzas ar {tail}",
   "waImport.matchName": "Līdzīgs vārds: {name}",
   "waImport.reasonRecent": "Nesena saruna",
+  "waImport.matchFirstName": "Tas pats vārds: {name}",
+  "waImport.pickAmbiguous": "Atbilst vairāk nekā viena persona — izvēlieties pareizo.",
   "waImport.searchPeople": "Meklēt pēc vārda, @lietotāja vai tālruņa",
   "waImport.confirmPerson": "Apstiprināt: tas ir {name}",
   "waImport.pickPersonHint": "Pirms importēšanas apstipriniet, ar ko ir šī saruna.",

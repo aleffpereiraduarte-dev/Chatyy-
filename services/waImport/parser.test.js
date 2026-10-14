@@ -70,6 +70,43 @@ test('iOS pt-BR 24h com segundos, multilinha, anexo, mídia oculta, apagada, edi
   assert.deepEqual(r.participants.map((p) => p.name).sort(), ['Ana Exemplo', 'Bruno Ficticio']);
 });
 
+// [wa-1a1 2026-10-14] 1:1 com 2 linhas "[data] Terceiro: …" coladas dentro de mensagens → continua 1:1.
+test('1:1 iPhone: cabeçalho colado de outra conversa não vira 3º participante', () => {
+  const lines = [`[3/1/26, 9:00:00${NNBSP}AM] Zoe Ficticia: ${LRM}Messages and calls are end-to-end encrypted.`];
+  for (let i = 0; i < 40; i++) {
+    const h = 10 + (i % 10);
+    lines.push(`[3/2/26, ${h}:0${i % 10}:00${NNBSP}AM] ${i % 2 ? 'Zoe Ficticia' : 'Leo Teste'}: msg ${i}`);
+    if (i === 7) lines.push('olha isso:', `[2/20/26, 4:10:00${NNBSP}PM] Kai Fulano: texto colado`);
+    if (i === 21) lines.push(`[2/21/26, 5:11:00${NNBSP}PM] Kai Fulano: outro colado`);
+  }
+  lines.push(`[3/3/26, 9:00:00${NNBSP}AM] ~ Zoe: oi`);
+  const r = P.parseWhatsAppChat(lines.join('\n'), { fileName: 'WhatsApp Chat - Zoe Ficticia.zip', title: 'Zoe Ficticia' });
+  assert.deepEqual(r.participants.map((p) => p.name).sort(), ['Leo Teste', 'Zoe Ficticia']);
+  assert.equal(r.isGroup, false);
+  assert.equal(r.folded, 2);
+  assert.equal(r.aliased, 1);
+  const m7 = r.messages.find((m) => m.text.startsWith('msg 7'));
+  assert.ok(m7.text.includes('Kai Fulano: texto colado'));
+  assert.equal(r.messages.find((m) => m.text.startsWith('msg 21')).text.split('\n').length, 2);
+});
+
+test('grupo de verdade: aviso "adicionou" mantém grupo mesmo com 3º autor raro', () => {
+  const lines = [`[3/1/26, 9:00:00${NNBSP}AM] Turma: ${LRM}Leo Teste adicionou Kai Fulano`];
+  for (let i = 0; i < 40; i++) lines.push(`[3/2/26, 10:${String(i).padStart(2, '0')}:00${NNBSP}AM] ${i % 2 ? 'Zoe Ficticia' : 'Leo Teste'}: msg ${i}`);
+  lines.push(`[3/3/26, 9:00:00${NNBSP}AM] Kai Fulano: oi`);
+  const r = P.parseWhatsAppChat(lines.join('\n'), { title: 'Turma' });
+  assert.equal(r.isGroup, true);
+  assert.ok(r.participants.some((p) => p.name === 'Kai Fulano'));
+});
+
+test('3 autores de verdade (sem aviso) = grupo', () => {
+  const lines = [];
+  for (let i = 0; i < 60; i++) lines.push(`[3/2/26, 10:${String(i).padStart(2, '0')}:00${NNBSP}AM] ${['Ana Exemplo', 'Bruno Ficticio', 'Caio Mock'][i % 3]}: msg ${i}`);
+  const r = P.parseWhatsAppChat(lines.join('\n'), {});
+  assert.equal(r.isGroup, true);
+  assert.equal(r.participants.length, 3);
+});
+
 test('iOS en-US 12h AM/PM com U+202F', () => {
   const txt = [
     `[1/2/24, 9:05:12${NNBSP}PM] Dana Sample: hello`,

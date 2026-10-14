@@ -8200,6 +8200,8 @@ export default {
   "waImport.matchPhone": "Confirmat de numărul care se termină în {tail}",
   "waImport.matchName": "Nume asemănător: {name}",
   "waImport.reasonRecent": "Conversație recentă",
+  "waImport.matchFirstName": "Același prenume: {name}",
+  "waImport.pickAmbiguous": "Se potrivește mai mult de o persoană — alege cine este.",
   "waImport.searchPeople": "Caută după nume, @utilizator sau telefon",
   "waImport.confirmPerson": "Confirmă: este {name}",
   "waImport.pickPersonHint": "Confirmă cu cine este această conversație înainte de import.",

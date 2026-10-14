@@ -8196,6 +8196,8 @@ export default {
   "waImport.matchPhone": "ຢືນຢັນດ້ວຍເບີທີ່ລົງທ້າຍດ້ວຍ {tail}",
   "waImport.matchName": "ຊື່ຄ້າຍກັນ: {name}",
   "waImport.reasonRecent": "ແຊັດຫຼ້າສຸດ",
+  "waImport.matchFirstName": "ຊື່ດຽວກັນ: {name}",
+  "waImport.pickAmbiguous": "ມີຫຼາຍກວ່າໜຶ່ງຄົນທີ່ກົງກັນ — ເລືອກຄົນທີ່ຖືກຕ້ອງ.",
   "waImport.searchPeople": "ຊອກຫາດ້ວຍຊື່, @ຊື່ຜູ້ໃຊ້ ຫຼື ເບີໂທ",
   "waImport.confirmPerson": "ຢືນຢັນ: ແມ່ນ {name}",
   "waImport.pickPersonHint": "ຢືນຢັນວ່າແຊັດນີ້ແມ່ນກັບໃຜກ່ອນນຳເຂົ້າ.",

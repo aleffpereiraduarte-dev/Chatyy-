@@ -8238,6 +8238,8 @@ export default {
   "waImport.matchPhone": "{tail}(으)로 끝나는 번호로 확인됨",
   "waImport.matchName": "비슷한 이름: {name}",
   "waImport.reasonRecent": "최근 채팅",
+  "waImport.matchFirstName": "같은 이름: {name}",
+  "waImport.pickAmbiguous": "일치하는 사람이 여러 명이에요. 누구인지 선택하세요.",
   "waImport.searchPeople": "이름, @사용자 이름 또는 전화번호로 검색",
   "waImport.confirmPerson": "확인: {name}님입니다",
   "waImport.pickPersonHint": "가져오기 전에 이 채팅의 상대를 확인하세요.",

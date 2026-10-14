@@ -748,6 +748,8 @@ export default {
   "waImport.matchPhone": "{tail}-ൽ അവസാനിക്കുന്ന നമ്പർ വഴി സ്ഥിരീകരിച്ചു",
   "waImport.matchName": "സമാന പേര്: {name}",
   "waImport.reasonRecent": "സമീപകാല ചാറ്റ്",
+  "waImport.matchFirstName": "ഒരേ പേര്: {name}",
+  "waImport.pickAmbiguous": "ഒന്നിലധികം പേർ യോജിക്കുന്നു — ശരിയായ ആളെ തിരഞ്ഞെടുക്കുക.",
   "waImport.searchPeople": "പേര്, @ഉപയോക്തൃനാമം അല്ലെങ്കിൽ ഫോൺ വഴി തിരയുക",
   "waImport.confirmPerson": "സ്ഥിരീകരിക്കുക: ഇത് {name} ആണ്",
   "waImport.pickPersonHint": "ഇമ്പോർട്ട് ചെയ്യുന്നതിന് മുമ്പ് ഈ ചാറ്റ് ആരുമായാണെന്ന് സ്ഥിരീകരിക്കുക.",

@@ -8238,6 +8238,8 @@ export default {
   "waImport.matchPhone": "已通过尾号 {tail} 的号码确认",
   "waImport.matchName": "相似名称：{name}",
   "waImport.reasonRecent": "最近聊天",
+  "waImport.matchFirstName": "名字相同：{name}",
+  "waImport.pickAmbiguous": "有多个人匹配——请选择是谁。",
   "waImport.searchPeople": "按姓名、@用户名或电话搜索",
   "waImport.confirmPerson": "确认：是 {name}",
   "waImport.pickPersonHint": "导入前请确认这个聊天是和谁的。",
