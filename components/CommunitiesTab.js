@@ -368,8 +368,10 @@ export default function CommunitiesTab({ colors: propColors, isDark: propIsDark 
         )}
       />
 
-      {/* FAB — Telegram-grade glass orb */}
-      <BrandFab
+      {/* FAB — Telegram-grade glass orb.
+          [2026-10-14] Só com comunidades na lista: vazio já tem o botão "Criar comunidade"
+          (founder: "não precisa ter o + e o botão de criar"). */}
+      {communities.length > 0 && <BrandFab
         style={{ position: 'absolute', bottom: 20, right: 20 }}
         size={56}
         color={colors?.primary || ACCENT}
@@ -377,7 +379,7 @@ export default function CommunitiesTab({ colors: propColors, isDark: propIsDark 
         accessibilityLabel={t('community.create') || 'Create community'}
       >
         <IconPlus size={24} color={colors?.onPrimary || '#fff'} />
-      </BrandFab>
+      </BrandFab>}
 
       {/* Create Modal */}
       <Modal visible={showCreate} transparent animationType="slide" onRequestClose={() => setShowCreate(false)}>

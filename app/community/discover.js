@@ -167,11 +167,6 @@ export default function CommunityDiscoverScreen() {
           onSearchButtonPress: () => load(),
           onCancelButtonPress: () => setQ(''),
         },
-        headerRight: () => (
-          <HeaderIconButton onPress={() => router.push('/community/create')} accessibilityLabel={t('community.create')}>
-            <IconPlus size={22} color={colors.text} />
-          </HeaderIconButton>
-        ),
       })} />}
       {!USE_NATIVE_HEADER && (
       <View style={sty.header}>
@@ -181,9 +176,7 @@ export default function CommunityDiscoverScreen() {
         <Text style={[sty.headerTitle, { color: colors.text }]} numberOfLines={1}>
           {t('community.discoverTitle') || 'Descobrir comunidades'}
         </Text>
-        <TouchableOpacity onPress={() => router.push('/community/create')} style={sty.headerBtn} accessibilityRole="button" accessibilityLabel={t('community.create') || 'Criar comunidade'}>
-          <IconPlus size={22} color={colors.primary} />
-        </TouchableOpacity>
+        <View style={sty.headerBtn} />
       </View>
       )}
 
@@ -264,16 +257,29 @@ export default function CommunityDiscoverScreen() {
           contentContainerStyle={items.length === 0 ? { padding: 12, flexGrow: 1 } : { padding: 12, paddingBottom: 80 }}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); load(true); }} tintColor={colors.primary} />}
           ListHeaderComponent={
-            <Text style={[sty.sectionTitle, { color: colors.textSecondary, marginTop: myComm.length ? 16 : 0 }]}>
-              {t('community.public') || 'Comunidades públicas'}
-            </Text>
+            <>
+              {/* [2026-10-14] Uma só entrada p/ criar (founder: "não precisa ter o + e o botão") */}
+              <TouchableOpacity
+                onPress={() => router.push('/community/create')}
+                style={[sty.createRow, { borderColor: colors.border }]}
+                accessibilityRole="button"
+                accessibilityLabel={t('community.create') || 'Criar comunidade'}
+              >
+                <View style={[sty.createIcon, { backgroundColor: colors.primary }]}>
+                  <IconPlus size={18} color={colors.onPrimary || colors.background} />
+                </View>
+                <Text style={[sty.createText, { color: colors.text }]}>{t('community.create') || 'Criar comunidade'}</Text>
+              </TouchableOpacity>
+              <Text style={[sty.sectionTitle, { color: colors.textSecondary, marginTop: myComm.length ? 16 : 0 }]}>
+                {t('community.public') || 'Comunidades públicas'}
+              </Text>
+            </>
           }
           ListEmptyComponent={
             <ScreenEmptyState
               kind="search"
               compact
               title={t('community.empty') || 'Nenhuma comunidade encontrada'}
-              cta={{ label: t('community.create') || 'Criar comunidade', onPress: () => router.push('/community/create') }}
             />
           }
         />
@@ -284,6 +290,9 @@ export default function CommunityDiscoverScreen() {
 
 const makeStyles = (colors, isDark) => StyleSheet.create({
   container: { flex: 1 },
+  createRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 12, paddingHorizontal: 4, marginBottom: 8, borderBottomWidth: StyleSheet.hairlineWidth },
+  createIcon: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center' },
+  createText: { fontSize: 16, fontWeight: '600' },
   header: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
     paddingHorizontal: 12, paddingVertical: 10,
