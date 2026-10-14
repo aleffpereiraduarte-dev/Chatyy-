@@ -8351,4 +8351,9 @@ export default {
   // [incidente-sessao 2026-10-14]
   "account.removedFromDevice": "החשבון {email} הוסר מהמכשיר הזה",
   "chatConv.cancelDownload": "ביטול ההורדה",
+  "chatConv.playedAt": "הושמע",
+  "chatConv.playedBy": "הושמע על ידי",
+  "chatConv.notPlayed": "לא הושמע",
+  "chatConv.voiceHeard": "ההודעה הקולית הושמעה",
+  "chatConv.voiceNotHeard": "ההודעה הקולית לא הושמעה",
 };

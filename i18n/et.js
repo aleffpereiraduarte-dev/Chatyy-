@@ -8351,4 +8351,9 @@ export default {
   // [incidente-sessao 2026-10-14]
   "account.removedFromDevice": "Konto {email} eemaldati sellest seadmest",
   "chatConv.cancelDownload": "Tühista allalaadimine",
+  "chatConv.playedAt": "Esitatud",
+  "chatConv.playedBy": "Esitanud",
+  "chatConv.notPlayed": "Esitamata",
+  "chatConv.voiceHeard": "Häälsõnum esitatud",
+  "chatConv.voiceNotHeard": "Häälsõnum esitamata",
 };

@@ -8351,4 +8351,9 @@ export default {
   // [incidente-sessao 2026-10-14]
   "account.removedFromDevice": "Akaun {email} telah dialih keluar daripada peranti ini",
   "chatConv.cancelDownload": "Batalkan muat turun",
+  "chatConv.playedAt": "Dimainkan",
+  "chatConv.playedBy": "Dimainkan oleh",
+  "chatConv.notPlayed": "Belum dimainkan",
+  "chatConv.voiceHeard": "Mesej suara dimainkan",
+  "chatConv.voiceNotHeard": "Mesej suara belum dimainkan",
 };

@@ -9129,4 +9129,9 @@ export default {
   // [incidente-sessao 2026-10-14]
   "account.removedFromDevice": "Аккаунт {email} удалён с этого устройства",
   "chatConv.cancelDownload": "Отменить загрузку",
+  "chatConv.playedAt": "Прослушано",
+  "chatConv.playedBy": "Прослушали",
+  "chatConv.notPlayed": "Не прослушано",
+  "chatConv.voiceHeard": "Голосовое сообщение прослушано",
+  "chatConv.voiceNotHeard": "Голосовое сообщение не прослушано",
 };

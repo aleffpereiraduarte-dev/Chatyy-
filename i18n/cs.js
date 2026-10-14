@@ -8351,4 +8351,9 @@ export default {
   // [incidente-sessao 2026-10-14]
   "account.removedFromDevice": "Účet {email} byl z tohoto zařízení odebrán",
   "chatConv.cancelDownload": "Zrušit stahování",
+  "chatConv.playedAt": "Přehráno",
+  "chatConv.playedBy": "Přehráli",
+  "chatConv.notPlayed": "Nepřehráno",
+  "chatConv.voiceHeard": "Hlasová zpráva přehrána",
+  "chatConv.voiceNotHeard": "Hlasová zpráva nepřehrána",
 };

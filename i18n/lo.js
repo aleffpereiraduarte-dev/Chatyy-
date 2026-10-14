@@ -8347,4 +8347,9 @@ export default {
   // [incidente-sessao 2026-10-14]
   "account.removedFromDevice": "ບັນຊີ {email} ຖືກລຶບອອກຈາກອຸປະກອນນີ້ແລ້ວ",
   "chatConv.cancelDownload": "ຍົກເລີກການດາວໂຫຼດ",
+  "chatConv.playedAt": "ຫຼິ້ນແລ້ວ",
+  "chatConv.playedBy": "ຫຼິ້ນໂດຍ",
+  "chatConv.notPlayed": "ຍັງບໍ່ໄດ້ຫຼິ້ນ",
+  "chatConv.voiceHeard": "ຂໍ້ຄວາມສຽງຫຼິ້ນແລ້ວ",
+  "chatConv.voiceNotHeard": "ຂໍ້ຄວາມສຽງຍັງບໍ່ໄດ້ຫຼິ້ນ",
 };

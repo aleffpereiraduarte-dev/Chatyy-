@@ -8347,4 +8347,9 @@ export default {
   // [incidente-sessao 2026-10-14]
   "account.removedFromDevice": "ანგარიში {email} ამ მოწყობილობიდან წაიშალა",
   "chatConv.cancelDownload": "ჩამოტვირთვის გაუქმება",
+  "chatConv.playedAt": "მოსმენილია",
+  "chatConv.playedBy": "მოუსმინეს",
+  "chatConv.notPlayed": "არ არის მოსმენილი",
+  "chatConv.voiceHeard": "ხმოვანი შეტყობინება მოსმენილია",
+  "chatConv.voiceNotHeard": "ხმოვანი შეტყობინება არ არის მოსმენილი",
 };

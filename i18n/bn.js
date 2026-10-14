@@ -8351,4 +8351,9 @@ export default {
   // [incidente-sessao 2026-10-14]
   "account.removedFromDevice": "{email} অ্যাকাউন্টটি এই ডিভাইস থেকে সরানো হয়েছে",
   "chatConv.cancelDownload": "ডাউনলোড বাতিল করুন",
+  "chatConv.playedAt": "চালানো হয়েছে",
+  "chatConv.playedBy": "যারা চালিয়েছেন",
+  "chatConv.notPlayed": "চালানো হয়নি",
+  "chatConv.voiceHeard": "ভয়েস মেসেজ চালানো হয়েছে",
+  "chatConv.voiceNotHeard": "ভয়েস মেসেজ চালানো হয়নি",
 };

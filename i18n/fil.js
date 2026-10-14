@@ -8351,4 +8351,9 @@ export default {
   // [incidente-sessao 2026-10-14]
   "account.removedFromDevice": "Inalis ang account na {email} sa device na ito",
   "chatConv.cancelDownload": "Kanselahin ang pag-download",
+  "chatConv.playedAt": "Na-play",
+  "chatConv.playedBy": "Na-play ni",
+  "chatConv.notPlayed": "Hindi pa na-play",
+  "chatConv.voiceHeard": "Na-play ang voice message",
+  "chatConv.voiceNotHeard": "Hindi pa na-play ang voice message",
 };

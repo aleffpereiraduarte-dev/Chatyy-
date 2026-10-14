@@ -8351,4 +8351,9 @@ export default {
   // [incidente-sessao 2026-10-14]
   "account.removedFromDevice": "Ο λογαριασμός {email} αφαιρέθηκε από αυτήν τη συσκευή",
   "chatConv.cancelDownload": "Ακύρωση λήψης",
+  "chatConv.playedAt": "Αναπαράχθηκε",
+  "chatConv.playedBy": "Αναπαράχθηκε από",
+  "chatConv.notPlayed": "Δεν αναπαράχθηκε",
+  "chatConv.voiceHeard": "Το φωνητικό μήνυμα αναπαράχθηκε",
+  "chatConv.voiceNotHeard": "Το φωνητικό μήνυμα δεν αναπαράχθηκε",
 };

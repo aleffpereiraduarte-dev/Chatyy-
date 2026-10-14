@@ -8351,4 +8351,9 @@ export default {
   // [incidente-sessao 2026-10-14]
   "account.removedFromDevice": "Профилът {email} беше премахнат от това устройство",
   "chatConv.cancelDownload": "Отказ на изтеглянето",
+  "chatConv.playedAt": "Прослушано",
+  "chatConv.playedBy": "Прослушано от",
+  "chatConv.notPlayed": "Непрослушано",
+  "chatConv.voiceHeard": "Гласовото съобщение е прослушано",
+  "chatConv.voiceNotHeard": "Гласовото съобщение не е прослушано",
 };

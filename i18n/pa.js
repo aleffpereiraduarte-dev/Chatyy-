@@ -900,4 +900,9 @@ export default {
   // [incidente-sessao 2026-10-14]
   "account.removedFromDevice": "{email} ਖਾਤਾ ਇਸ ਡਿਵਾਈਸ ਤੋਂ ਹਟਾ ਦਿੱਤਾ ਗਿਆ",
   "chatConv.cancelDownload": "ਡਾਊਨਲੋਡ ਰੱਦ ਕਰੋ",
+  "chatConv.playedAt": "ਚਲਾਇਆ ਗਿਆ",
+  "chatConv.playedBy": "ਚਲਾਉਣ ਵਾਲੇ",
+  "chatConv.notPlayed": "ਨਹੀਂ ਚਲਾਇਆ",
+  "chatConv.voiceHeard": "ਵੌਇਸ ਸੁਨੇਹਾ ਚਲਾਇਆ ਗਿਆ",
+  "chatConv.voiceNotHeard": "ਵੌਇਸ ਸੁਨੇਹਾ ਨਹੀਂ ਚਲਾਇਆ",
 };

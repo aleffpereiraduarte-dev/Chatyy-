@@ -8347,4 +8347,9 @@ export default {
   // [incidente-sessao 2026-10-14]
   "account.removedFromDevice": "መለያው {email} ከዚህ መሣሪያ ተወግዷል",
   "chatConv.cancelDownload": "ማውረድን ሰርዝ",
+  "chatConv.playedAt": "ተጫውቷል",
+  "chatConv.playedBy": "የተጫወተው በ",
+  "chatConv.notPlayed": "አልተጫወተም",
+  "chatConv.voiceHeard": "የድምፅ መልዕክት ተጫውቷል",
+  "chatConv.voiceNotHeard": "የድምፅ መልዕክት አልተጫወተም",
 };

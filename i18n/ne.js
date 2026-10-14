@@ -899,4 +899,9 @@ export default {
   // [incidente-sessao 2026-10-14]
   "account.removedFromDevice": "{email} खाता यो यन्त्रबाट हटाइयो",
   "chatConv.cancelDownload": "डाउनलोड रद्द गर्नुहोस्",
+  "chatConv.playedAt": "बजाइयो",
+  "chatConv.playedBy": "बजाउनेहरू",
+  "chatConv.notPlayed": "बजाइएको छैन",
+  "chatConv.voiceHeard": "भ्वाइस सन्देश बजाइयो",
+  "chatConv.voiceNotHeard": "भ्वाइस सन्देश बजाइएको छैन",
 };

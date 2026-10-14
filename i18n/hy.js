@@ -8347,4 +8347,9 @@ export default {
   // [incidente-sessao 2026-10-14]
   "account.removedFromDevice": "{email} հաշիվը հեռացվել է այս սարքից",
   "chatConv.cancelDownload": "Չեղարկել ներբեռնումը",
+  "chatConv.playedAt": "Լսված",
+  "chatConv.playedBy": "Լսել են",
+  "chatConv.notPlayed": "Չլսված",
+  "chatConv.voiceHeard": "Ձայնային հաղորդագրությունը լսված է",
+  "chatConv.voiceNotHeard": "Ձայնային հաղորդագրությունը չի լսվել",
 };

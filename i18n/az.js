@@ -8347,4 +8347,9 @@ export default {
   // [incidente-sessao 2026-10-14]
   "account.removedFromDevice": "{email} hesabı bu cihazdan silindi",
   "chatConv.cancelDownload": "Endirməni ləğv et",
+  "chatConv.playedAt": "Dinlənilib",
+  "chatConv.playedBy": "Dinləyənlər",
+  "chatConv.notPlayed": "Dinlənilməyib",
+  "chatConv.voiceHeard": "Səsli mesaj dinlənilib",
+  "chatConv.voiceNotHeard": "Səsli mesaj dinlənilməyib",
 };

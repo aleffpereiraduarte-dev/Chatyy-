@@ -4101,4 +4101,9 @@ export default {
   // [incidente-sessao 2026-10-14]
   "account.removedFromDevice": "{email} கணக்கு இந்தச் சாதனத்திலிருந்து அகற்றப்பட்டது",
   "chatConv.cancelDownload": "பதிவிறக்கத்தை ரத்துசெய்",
+  "chatConv.playedAt": "இயக்கப்பட்டது",
+  "chatConv.playedBy": "இயக்கியவர்கள்",
+  "chatConv.notPlayed": "இயக்கப்படவில்லை",
+  "chatConv.voiceHeard": "குரல் செய்தி இயக்கப்பட்டது",
+  "chatConv.voiceNotHeard": "குரல் செய்தி இயக்கப்படவில்லை",
 };

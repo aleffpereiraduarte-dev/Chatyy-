@@ -9129,4 +9129,9 @@ export default {
   // [incidente-sessao 2026-10-14]
   "account.removedFromDevice": "Het account {email} is van dit apparaat verwijderd",
   "chatConv.cancelDownload": "Download annuleren",
+  "chatConv.playedAt": "Afgespeeld",
+  "chatConv.playedBy": "Afgespeeld door",
+  "chatConv.notPlayed": "Niet afgespeeld",
+  "chatConv.voiceHeard": "Spraakbericht afgespeeld",
+  "chatConv.voiceNotHeard": "Spraakbericht niet afgespeeld",
 };

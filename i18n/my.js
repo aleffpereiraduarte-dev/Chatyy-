@@ -8347,4 +8347,9 @@ export default {
   // [incidente-sessao 2026-10-14]
   "account.removedFromDevice": "{email} အကောင့်ကို ဤစက်မှ ဖယ်ရှားလိုက်ပါပြီ",
   "chatConv.cancelDownload": "ဒေါင်းလုဒ်ကို ပယ်ဖျက်ရန်",
+  "chatConv.playedAt": "ဖွင့်ပြီး",
+  "chatConv.playedBy": "ဖွင့်သူများ",
+  "chatConv.notPlayed": "မဖွင့်ရသေး",
+  "chatConv.voiceHeard": "အသံမက်ဆေ့ချ် ဖွင့်ပြီး",
+  "chatConv.voiceNotHeard": "အသံမက်ဆေ့ချ် မဖွင့်ရသေး",
 };

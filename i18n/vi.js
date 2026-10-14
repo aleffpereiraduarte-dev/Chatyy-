@@ -8351,4 +8351,9 @@ export default {
   // [incidente-sessao 2026-10-14]
   "account.removedFromDevice": "Tài khoản {email} đã bị xóa khỏi thiết bị này",
   "chatConv.cancelDownload": "Hủy tải xuống",
+  "chatConv.playedAt": "Đã phát",
+  "chatConv.playedBy": "Đã phát bởi",
+  "chatConv.notPlayed": "Chưa phát",
+  "chatConv.voiceHeard": "Đã phát tin nhắn thoại",
+  "chatConv.voiceNotHeard": "Chưa phát tin nhắn thoại",
 };

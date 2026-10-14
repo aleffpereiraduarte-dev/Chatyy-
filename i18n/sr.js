@@ -8351,4 +8351,9 @@ export default {
   // [incidente-sessao 2026-10-14]
   "account.removedFromDevice": "Налог {email} је уклоњен са овог уређаја",
   "chatConv.cancelDownload": "Откажи преузимање",
+  "chatConv.playedAt": "Pušteno",
+  "chatConv.playedBy": "Pustili",
+  "chatConv.notPlayed": "Nije pušteno",
+  "chatConv.voiceHeard": "Glasovna poruka puštena",
+  "chatConv.voiceNotHeard": "Glasovna poruka nije puštena",
 };

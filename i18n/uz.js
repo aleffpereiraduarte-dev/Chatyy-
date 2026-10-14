@@ -8347,4 +8347,9 @@ export default {
   // [incidente-sessao 2026-10-14]
   "account.removedFromDevice": "{email} hisobi ushbu qurilmadan olib tashlandi",
   "chatConv.cancelDownload": "Yuklab olishni bekor qilish",
+  "chatConv.playedAt": "Tinglangan",
+  "chatConv.playedBy": "Tinglaganlar",
+  "chatConv.notPlayed": "Tinglanmagan",
+  "chatConv.voiceHeard": "Ovozli xabar tinglangan",
+  "chatConv.voiceNotHeard": "Ovozli xabar tinglanmagan",
 };

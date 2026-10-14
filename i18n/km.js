@@ -8347,4 +8347,9 @@ export default {
   // [incidente-sessao 2026-10-14]
   "account.removedFromDevice": "គណនី {email} ត្រូវបានដកចេញពីឧបករណ៍នេះ",
   "chatConv.cancelDownload": "បោះបង់ការទាញយក",
+  "chatConv.playedAt": "បានចាក់",
+  "chatConv.playedBy": "បានចាក់ដោយ",
+  "chatConv.notPlayed": "មិនទាន់ចាក់",
+  "chatConv.voiceHeard": "សារសំឡេងបានចាក់",
+  "chatConv.voiceNotHeard": "សារសំឡេងមិនទាន់ចាក់",
 };

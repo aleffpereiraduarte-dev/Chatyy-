@@ -9129,4 +9129,9 @@ export default {
   // [incidente-sessao 2026-10-14]
   "account.removedFromDevice": "Kontoen {email} er fjernet fra denne enhed",
   "chatConv.cancelDownload": "Annuller download",
+  "chatConv.playedAt": "Afspillet",
+  "chatConv.playedBy": "Afspillet af",
+  "chatConv.notPlayed": "Ikke afspillet",
+  "chatConv.voiceHeard": "Talebesked afspillet",
+  "chatConv.voiceNotHeard": "Talebesked ikke afspillet",
 };

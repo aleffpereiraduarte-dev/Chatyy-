@@ -8389,4 +8389,9 @@ export default {
   // [incidente-sessao 2026-10-14]
   "account.removedFromDevice": "{email} 계정이 이 기기에서 삭제되었습니다",
   "chatConv.cancelDownload": "다운로드 취소",
+  "chatConv.playedAt": "재생함",
+  "chatConv.playedBy": "재생한 사람",
+  "chatConv.notPlayed": "재생 안 함",
+  "chatConv.voiceHeard": "음성 메시지 재생됨",
+  "chatConv.voiceNotHeard": "음성 메시지 재생 안 됨",
 };

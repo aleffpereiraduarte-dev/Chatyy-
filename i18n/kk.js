@@ -8347,4 +8347,9 @@ export default {
   // [incidente-sessao 2026-10-14]
   "account.removedFromDevice": "{email} аккаунты осы құрылғыдан жойылды",
   "chatConv.cancelDownload": "Жүктеуді болдырмау",
+  "chatConv.playedAt": "Тыңдалды",
+  "chatConv.playedBy": "Тыңдағандар",
+  "chatConv.notPlayed": "Тыңдалмады",
+  "chatConv.voiceHeard": "Дауыстық хабар тыңдалды",
+  "chatConv.voiceNotHeard": "Дауыстық хабар тыңдалмады",
 };

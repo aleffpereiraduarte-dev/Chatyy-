@@ -9129,4 +9129,9 @@ export default {
   // [incidente-sessao 2026-10-14]
   "account.removedFromDevice": "Tili {email} poistettiin tästä laitteesta",
   "chatConv.cancelDownload": "Peruuta lataus",
+  "chatConv.playedAt": "Toistettu",
+  "chatConv.playedBy": "Toistaneet",
+  "chatConv.notPlayed": "Ei toistettu",
+  "chatConv.voiceHeard": "Ääniviesti toistettu",
+  "chatConv.voiceNotHeard": "Ääniviestiä ei toistettu",
 };

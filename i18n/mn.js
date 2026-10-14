@@ -8347,4 +8347,9 @@ export default {
   // [incidente-sessao 2026-10-14]
   "account.removedFromDevice": "{email} бүртгэлийг энэ төхөөрөмжөөс хассан",
   "chatConv.cancelDownload": "Татахыг цуцлах",
+  "chatConv.playedAt": "Тоглуулсан",
+  "chatConv.playedBy": "Тоглуулсан хүмүүс",
+  "chatConv.notPlayed": "Тоглуулаагүй",
+  "chatConv.voiceHeard": "Дуут мессеж тоглуулсан",
+  "chatConv.voiceNotHeard": "Дуут мессеж тоглуулаагүй",
 };

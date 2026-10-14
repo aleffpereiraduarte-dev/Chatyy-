@@ -1700,4 +1700,9 @@ export default {
   // [incidente-sessao 2026-10-14]
   "account.removedFromDevice": "{email} ಖಾತೆಯನ್ನು ಈ ಸಾಧನದಿಂದ ತೆಗೆದುಹಾಕಲಾಗಿದೆ",
   "chatConv.cancelDownload": "ಡೌನ್‌ಲೋಡ್ ರದ್ದುಮಾಡಿ",
+  "chatConv.playedAt": "ಪ್ಲೇ ಮಾಡಲಾಗಿದೆ",
+  "chatConv.playedBy": "ಪ್ಲೇ ಮಾಡಿದವರು",
+  "chatConv.notPlayed": "ಪ್ಲೇ ಮಾಡಿಲ್ಲ",
+  "chatConv.voiceHeard": "ಧ್ವನಿ ಸಂದೇಶ ಪ್ಲೇ ಮಾಡಲಾಗಿದೆ",
+  "chatConv.voiceNotHeard": "ಧ್ವನಿ ಸಂದೇಶ ಪ್ಲೇ ಮಾಡಿಲ್ಲ",
 };

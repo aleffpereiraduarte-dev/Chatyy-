@@ -8351,4 +8351,9 @@ export default {
   // [incidente-sessao 2026-10-14]
   "account.removedFromDevice": "Akaunti {email} imeondolewa kwenye kifaa hiki",
   "chatConv.cancelDownload": "Ghairi upakuaji",
+  "chatConv.playedAt": "Imechezwa",
+  "chatConv.playedBy": "Imechezwa na",
+  "chatConv.notPlayed": "Haijachezwa",
+  "chatConv.voiceHeard": "Ujumbe wa sauti umechezwa",
+  "chatConv.voiceNotHeard": "Ujumbe wa sauti haujachezwa",
 };

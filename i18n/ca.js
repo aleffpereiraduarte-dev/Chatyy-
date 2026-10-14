@@ -8351,4 +8351,9 @@ export default {
   // [incidente-sessao 2026-10-14]
   "account.removedFromDevice": "El compte {email} s'ha eliminat d'aquest dispositiu",
   "chatConv.cancelDownload": "Cancel·la la baixada",
+  "chatConv.playedAt": "Reproduït",
+  "chatConv.playedBy": "Reproduït per",
+  "chatConv.notPlayed": "No reproduït",
+  "chatConv.voiceHeard": "Missatge de veu reproduït",
+  "chatConv.voiceNotHeard": "Missatge de veu no reproduït",
 };

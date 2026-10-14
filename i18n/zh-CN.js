@@ -8389,4 +8389,9 @@ export default {
   // [incidente-sessao 2026-10-14]
   "account.removedFromDevice": "帐号 {email} 已从此设备移除",
   "chatConv.cancelDownload": "取消下载",
+  "chatConv.playedAt": "已播放",
+  "chatConv.playedBy": "播放者",
+  "chatConv.notPlayed": "未播放",
+  "chatConv.voiceHeard": "语音消息已播放",
+  "chatConv.voiceNotHeard": "语音消息未播放",
 };

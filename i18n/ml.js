@@ -902,4 +902,9 @@ export default {
   // [incidente-sessao 2026-10-14]
   "account.removedFromDevice": "{email} അക്കൗണ്ട് ഈ ഉപകരണത്തിൽ നിന്ന് നീക്കം ചെയ്തു",
   "chatConv.cancelDownload": "ഡൗൺലോഡ് റദ്ദാക്കുക",
+  "chatConv.playedAt": "പ്ലേ ചെയ്തു",
+  "chatConv.playedBy": "പ്ലേ ചെയ്തവർ",
+  "chatConv.notPlayed": "പ്ലേ ചെയ്തിട്ടില്ല",
+  "chatConv.voiceHeard": "വോയ്സ് സന്ദേശം പ്ലേ ചെയ്തു",
+  "chatConv.voiceNotHeard": "വോയ്സ് സന്ദേശം പ്ലേ ചെയ്തിട്ടില്ല",
 };

@@ -572,6 +572,13 @@ function _rcClampReceipt(sentAt, deliveredAt, readAt) {
     read: Number.isFinite(r) ? new Date(r).toISOString() : (readAt || null),
   };
 }
+// [voz-reproduzido 2026-10-14] reproduzido ≥ lido (ordem física enviado ≤ entregue ≤ lido ≤ reproduzido).
+function _rcClampPlayed(readAt, playedAt) {
+  if (!playedAt) return null;
+  const p = Date.parse(_normalizeIso(playedAt)); const r = readAt ? Date.parse(_normalizeIso(readAt)) : NaN;
+  if (!Number.isFinite(p)) return playedAt;
+  return new Date(Number.isFinite(r) && p < r ? r : p).toISOString();
+}
 function _formatReceiptDate(ts, t) {
   if (!ts) return '';
   const d = new Date(_normalizeIso(ts));
@@ -2491,6 +2498,125 @@ function WaHugText({ hugKey, style, children, ...rest }) {
     </Text>
   );
 }
+// [2026-10-14 meta-inline] Hora/✓✓ na MESMA linha do texto decidida por CONTA,
+// não pelo ghost. Medido (print do founder, iPhone 440pt, bolha máx 343 →
+// conteúdo 319): "Sim, porque vou fazer dois rounds bixa" última linha ≈282pt +
+// meta "13:26" ≈31pt cabia (282+7+31 = 320 ≤ 319+2), mas o ghost (espaço 16pt +
+// 2 NBSP + hora + paddingRight 3 ≈ 41pt) somava 323 > 316 de área de glifo →
+// o ghost quebrava e a hora descia. Agora:
+//  • uma cópia invisível do texto (SEM ghost, largura = conteúdo máx da bolha)
+//    mede as linhas (onTextLayout nativo / Range.getClientRects web) — 1x por
+//    texto/fonte/largura (cache de módulo, sobrevive a remount/reciclagem);
+//  • a largura REAL da linha de meta (hora, ✓✓ só nas enviadas, "editada",
+//    estrela/cadeado/relógio) vem do onLayout da própria meta flutuante;
+//  • inline ⇔ última linha + 5 + meta ≤ conteúdo máx + 2 (a meta, right:10,
+//    avança 2pt sobre o padding 12 da bolha). Inline: largura = max(linha mais
+//    longa, última+5+meta−2). Senão: largura = linha mais longa e reserva só a
+//    altura da meta embaixo (meta continua à direita).
+// Até medir (1º frame de uma bolha nova) cai no caminho antigo (ghost+hug).
+const _WA_META_GAP = 5; // + bearings dos glifos ≈ 8pt visíveis (WhatsApp 6–8)
+const _WA_META_OVERHANG = 2; // bubble.paddingHorizontal 12 − msgMetaInline.right 10
+const _WA_TEXT_AVAIL = _waBubbleContentMax(); // conteúdo máx = bolha máx − 2×12
+function _waBubbleContentMax() {
+  // Mesma conta do BUBBLE_MAX_W (definido no fim do arquivo; const ainda em TDZ aqui).
+  const W = Dimensions.get('window').width || 390;
+  const bw = (Platform.OS === 'web' && W >= 900)
+    ? Math.round(Math.max(484, Math.min(W - 340, 960) * 0.65))
+    : Math.round(Math.min(W, 620) * 0.78);
+  return bw - 24;
+}
+const _waLineCache = new Map(); // lkey -> { last, max, n }
+const _waLineOff = new Set();   // lkey que falhou na guarda (quebrou diferente) → ghost
+const _waMetaBox = new Map();   // metaKey -> { w, h }
+const _waMetaSubs = new Map();  // metaKey -> Set<fn>
+function _waPutMetaBox(key, w, h) {
+  if (!key || !(w > 0)) return;
+  const p = _waMetaBox.get(key);
+  if (p && Math.abs(p.w - w) < 0.5 && Math.abs(p.h - h) < 0.5) return;
+  if (_waMetaBox.size > 4000) _waMetaBox.clear();
+  _waMetaBox.set(key, { w, h });
+  const s = _waMetaSubs.get(key);
+  if (s) s.forEach(fn => { try { fn(); } catch {} });
+}
+function _waRowsFromDom(el) {
+  if (!el || typeof document === 'undefined' || !el.getBoundingClientRect) return null;
+  const box = el.getBoundingClientRect();
+  const lh = parseFloat(window.getComputedStyle(el).lineHeight) || 21;
+  const rg = document.createRange(); rg.selectNodeContents(el);
+  const rows = [];
+  for (const rc of rg.getClientRects()) {
+    if (!rc.width) continue;
+    const i = Math.max(0, Math.floor((rc.top + rc.height / 2 - box.top) / lh));
+    rows[i] = Math.max(rows[i] || 0, rc.right - box.left);
+  }
+  const out = []; for (let i = 0; i < rows.length; i++) out.push(rows[i] || 0);
+  return out.length ? out : null;
+}
+function WaMetaText({ hugKey, metaKey, own, style, ghost, children, ...rest }) {
+  const [, force] = useState(0);
+  const lkey = `${hugKey}|${_WA_TEXT_AVAIL}`;
+  useEffect(() => {
+    if (!metaKey) return undefined;
+    const fn = () => force(x => x + 1);
+    let s = _waMetaSubs.get(metaKey);
+    if (!s) { s = new Set(); _waMetaSubs.set(metaKey, s); }
+    s.add(fn);
+    if (_waMetaBox.has(metaKey)) fn();
+    return () => { s.delete(fn); if (!s.size) _waMetaSubs.delete(metaKey); };
+  }, [metaKey]);
+  const measRef = useRef(null);
+  const off = _waLineOff.has(lkey);
+  const L = off ? null : _waLineCache.get(lkey);
+  const lastM = useRef(null);
+  // id temporário → id do servidor (envio) troca a chave: usa a última meta medida
+  // até o onLayout da nova chegar (sem piscar p/ o ghost).
+  // (célula reciclada da FlashList: só reaproveita se for do mesmo lado — ✓✓ ou não)
+  const M = (metaKey ? _waMetaBox.get(metaKey) : null) || (lastM.current && lastM.current.own === !!own ? lastM.current.m : null);
+  if (M) lastM.current = { m: M, own: !!own };
+  const putLines = (ws) => {
+    if (!ws || !ws.length || _waLineCache.has(lkey)) return;
+    let mx = 0; for (const x of ws) if (x > mx) mx = x;
+    if (_waLineCache.size > 3000) _waLineCache.clear();
+    _waLineCache.set(lkey, { last: ws[ws.length - 1] || 0, max: mx, n: ws.length });
+    force(x => x + 1);
+  };
+  if (L && M) {
+    const fits = L.last + _WA_META_GAP + M.w <= _WA_TEXT_AVAIL + _WA_META_OVERHANG;
+    const textW = Math.ceil(L.max) + 4; // + msgText.paddingRight 3 + 1 de arredondamento
+    const w = Math.min(_WA_TEXT_AVAIL, Math.max(textW, fits
+      ? Math.ceil(L.last + _WA_META_GAP + M.w - _WA_META_OVERHANG)
+      : Math.ceil(M.w - _WA_META_OVERHANG)));
+    const guard = Platform.OS === 'web' ? undefined : (e) => {
+      try {
+        const n = (e?.nativeEvent?.lines || []).length;
+        if (n > L.n) { _waLineOff.add(lkey); force(x => x + 1); }
+      } catch {}
+    };
+    return (
+      <View style={{ width: w, paddingBottom: fits ? 0 : Math.max(14, Math.ceil(M.h)) }}>
+        <Text {...rest} style={style} onTextLayout={guard}>{children}</Text>
+      </View>
+    );
+  }
+  const onMeasLines = Platform.OS === 'web' ? undefined : (e) => {
+    try { putLines((e?.nativeEvent?.lines || []).map(l => l.width)); } catch {}
+  };
+  const onMeasLayout = Platform.OS !== 'web' ? undefined : () => {
+    try { putLines(_waRowsFromDom(measRef.current)); } catch {}
+  };
+  return (
+    <View>
+      <WaHugText hugKey={hugKey} style={style} {...rest}>{children}{ghost}</WaHugText>
+      {!L && !off ? (
+        <View pointerEvents="none" accessibilityElementsHidden importantForAccessibility="no-hide-descendants"
+          style={[{ position: 'absolute', top: 0, width: _WA_TEXT_AVAIL, opacity: 0 }, own ? { right: 0 } : { left: 0 },
+            Platform.OS === 'web' ? { userSelect: 'none', visibility: 'hidden' } : null]}>
+          <Text ref={measRef} style={style} onTextLayout={onMeasLines} onLayout={onMeasLayout}>{children}</Text>
+        </View>
+      ) : null}
+    </View>
+  );
+}
 function _hasBlockMarkdown(text) {
   if (!text || text.indexOf('\n') === -1 && !_QUOTE_LINE_RE.test(text) && !_BULLET_LINE_RE.test(text) && !_NUM_LINE_RE.test(text)) return false;
   const lines = text.split('\n');
@@ -4213,6 +4339,12 @@ const MemoizedMessageRow = React.memo(function MemoizedMessageRow({ item, render
     a._blurred === b._blurred &&
     a._localUri === b._localUri &&
     a.file_url === b.file_url &&
+    // [voz-reproduzido 2026-10-14] microfone azul/"ouvido" — sem isto o
+    // `voice_played` ao vivo atualizava a msg mas a bolha não repintava.
+    a.played_at === b.played_at &&
+    a._voice_played === b._voice_played &&
+    a.played_by_me === b.played_by_me &&
+    a._played_by_me === b._played_by_me &&
     // Audio transcribe state — without these, the "Transcrever" tap looked
     // dead (API returned the text, but the bubble never re-rendered to show
     // it). Same for the spinner during the network round-trip.
@@ -4591,7 +4723,7 @@ function _replyTargetOf(msg) {
 //   • progress + scrubbing on the UI thread (components/chat/VoiceWaveform):
 //     the bars render once, the engine position (~4 Hz) is interpolated with
 //     withTiming → no React render per tick (only the mm:ss label, ≤ 1×/s).
-function AudioPlayer({ url, duration, isOwn, colors, messageId, waveform, playedByPeer, conversationId }) {
+function AudioPlayer({ url, duration, isOwn, colors, messageId, waveform, playedByPeer, playedByMe, conversationId }) {
   const { t } = useLanguage();
   const isDarkMode = colors.background === '#0B141A' || colors.background === '#000' || colors.background === '#000000' || (colors.background && colors.background.startsWith('#0'));
   const ownMetaColor = isDarkMode ? 'rgba(233,237,239,0.7)' : 'rgba(17,27,33,0.55)';
@@ -4934,12 +5066,24 @@ function AudioPlayer({ url, duration, isOwn, colors, messageId, waveform, played
             <Text style={[audioStyles.duration, { color: isOwn ? ownMetaColor : colors.textTertiary }]}>
               {formatDuration(displayTime)}
             </Text>
-            {/* Played indicator (WhatsApp blue mic dot): INCOMING = local "I
-                listened" (after the played threshold); OWN = real "heard by
-                recipient" receipt (server played_at via `voice_played` WS). */}
-            {(isOwn ? playedByPeer : played) ? (
-              <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: '#53BDEB' }} />
-            ) : null}
+            {/* [voz-reproduzido 2026-10-14] Microfone nível WhatsApp (azul = cor de estado):
+                PRÓPRIO  → cinza = ainda não reproduzido; AZUL = reproduzido pelo
+                           destinatário (1:1) / por TODOS (grupo) — played_at do servidor
+                           ou `voice_played` ao vivo.
+                RECEBIDO → AZUL = ainda não ouvi; cinza = já ouvi (limiar ~1 s ou fim,
+                           neste aparelho ou em outro meu: played_by_me / message_played). */}
+            {(() => {
+              const _heard = isOwn ? !!playedByPeer : !!(played || playedByMe);
+              const _blue = isOwn ? _heard : !_heard;
+              return (
+                <View
+                  accessible
+                  accessibilityLabel={_heard ? (t('chatConv.voiceHeard') || 'Áudio reproduzido') : (t('chatConv.voiceNotHeard') || 'Áudio não reproduzido')}
+                >
+                  <IconMic size={12} color={_blue ? '#53BDEB' : (isOwn ? ownMetaColor : (colors.textTertiary || '#9ca3af'))} />
+                </View>
+              );
+            })()}
             {vs.earpiece ? (
               <IconPhone size={11} color={isOwn ? ownMetaColor : (colors.textTertiary || '#9ca3af')} />
             ) : null}
@@ -15669,7 +15813,7 @@ function ChatConversationInner() {
     wsUnsubs.push(() => { try { _rtBatch.flush(); } catch {} _rtBatch.dispose(); });
     try {
       const mailWs = require('../services/websocket').default;
-      const _RT_LOW = { message_delivered: 1, chat_delivered: 1, message_read: 1, chat_read: 1, message_status: 1, voice_played: 1, presence: 1 }; // [2026-10-14 grupo-rajada]
+      const _RT_LOW = { message_delivered: 1, chat_delivered: 1, message_read: 1, chat_read: 1, message_status: 1, voice_played: 1, message_played: 1, presence: 1 }; // [2026-10-14 grupo-rajada] [voz-reproduzido]
       const _wsOnB = (ev, fn) => mailWs.on(ev, _rtBatch.wrap(_PERF_WHY_ON ? (...a) => { _whyHit('ev:' + ev); return fn(...a); } : fn, _RT_LOW[ev] ? { low: true } : undefined));
       const tcpClient = require('../services/tcp-client').getTCPClient();
       // Subscribe to this conversation via TCP (replaces MQTT)
@@ -16822,17 +16966,47 @@ function ChatConversationInner() {
       // This was computed + broadcast but NEVER consumed — the sender's mic dot
       // never turned blue. Map played_at onto the matching own message so the
       // bubble flips in real time (playedByPeer prop).
-      const unsubVoicePlayed = _wsOnB('voice_played', (data) => {
+      // [voz-reproduzido 2026-10-14] Por destinatário: `voice_played` = TODOS
+      // reproduziram (1:1 = o peer; servidor antigo não manda all_played → 1:1);
+      // `message_played` = um ouvinte em grupo (all_played:false) ou EU em outro
+      // aparelho (self:true → ícone "ouvido"). Reproduzido ⇒ lido: o ouvinte entra
+      // em read_by (grupo) e read_at/_read quando todos (✓✓ azul sem esperar refetch).
+      const _applyVoicePlayed = (data, all) => {
         if (!mountedRef.current) return;
         const vpId = data?.message_id ?? data?.id;
         if (vpId == null) return;
-        setMessages(prev => _mapKeep(prev, m =>
-          (String(m.id) === String(vpId))
-            ? { ...m, _voice_played: true, played_at: m.played_at || data?.played_at || new Date().toISOString() }
-            : m
-        ));
-      });
+        const by = String(data?.by || '').toLowerCase();
+        const me = String(currentEmail || '').toLowerCase();
+        if (data?.self || (by && me && by === me)) {
+          try { VoiceNote.markLocallyPlayed(vpId); } catch {}
+          setMessages(prev => _mapKeep(prev, m =>
+            (String(m.id) === String(vpId) && !m._played_by_me) ? { ...m, _played_by_me: true } : m
+          ));
+          return;
+        }
+        const at = data?.played_at || new Date().toISOString();
+        setMessages(prev => _mapKeep(prev, m => {
+          if (String(m.id) !== String(vpId)) return m;
+          const nx = { ...m };
+          if (by) {
+            const pb = Array.isArray(m.played_by) ? m.played_by : [];
+            if (!pb.some(x => String(x).toLowerCase() === by)) nx.played_by = [...pb, by];
+            const rb = Array.isArray(m.read_by) ? m.read_by : [];
+            if (!rb.some(x => String((x && x.email) || x).toLowerCase() === by)) nx.read_by = [...rb, by];
+          }
+          if (all) {
+            nx._voice_played = true;
+            nx.played_at = m.played_at || at;
+            nx.read_at = m.read_at || at;
+            nx._read = true;
+          }
+          return nx;
+        }));
+      };
+      const unsubVoicePlayed = _wsOnB('voice_played', (data) => _applyVoicePlayed(data, data?.all_played !== false));
       wsUnsubs.push(unsubVoicePlayed);
+      const unsubMsgPlayed = _wsOnB('message_played', (data) => _applyVoicePlayed(data, data?.all_played === true));
+      wsUnsubs.push(unsubMsgPlayed);
 
       // Listen for message delivery/read status updates via WS (instant tick updates).
       // Skip if reader_email missing — otherwise we'd create a phantom 'peer'
@@ -23838,7 +24012,7 @@ function ChatConversationInner() {
     const offs = [];
     try {
       const _ws = require('../services/websocket').default;
-      for (const ev of ['chat_read', 'message_read', 'chat_delivered', 'message_delivered']) {
+      for (const ev of ['chat_read', 'message_read', 'chat_delivered', 'message_delivered', 'voice_played', 'message_played']) { // [voz-reproduzido 2026-10-14]
         const off = _ws?.on?.(ev, onRc);
         if (typeof off === 'function') offs.push(off);
       }
@@ -26826,6 +27000,7 @@ function ChatConversationInner() {
     // switches to absolute positioning. renderContent() runs before the meta
     // JSX is evaluated (children are evaluated in order), so the flag is set.
     let _waInlineMeta = false;
+    let _waTextMetaKey = null; // [2026-10-14 meta-inline] meta da bolha de texto mede-se (onLayout) p/ WaMetaText
     // [2026-10-08 location-bubble-fast] Emoji-only (1–3 emoji, sem texto):
     // WhatsApp mostra GRANDE e SEM bolha, hora/✓ numa pílula pequena embaixo.
     // Mesmas condições do ramo jumbo do renderContent (sem resposta/encaminhada/
@@ -28204,7 +28379,7 @@ function ChatConversationInner() {
                 colors={isOwn ? ownAudioColors : colors}
                 messageId={msg.id}
                 waveform={msg.waveform}
-                playedByPeer={!!(msg.played_at || msg._voice_played)}
+                playedByPeer={!!(msg.played_at || msg._voice_played)} playedByMe={!!(msg.played_by_me || msg._played_by_me)}
                 conversationId={conversationId}
               />
               {/* [WAVE 43D] Multi-select sticky — overlay intercepts taps on
@@ -29565,7 +29740,7 @@ function ChatConversationInner() {
                   colors={isOwn ? ownAudioColors : colors}
                   messageId={msg.id}
                   waveform={msg.waveform}
-                  playedByPeer={!!(msg.played_at || msg._voice_played)}
+                  playedByPeer={!!(msg.played_at || msg._voice_played)} playedByMe={!!(msg.played_by_me || msg._played_by_me)}
                   conversationId={conversationId}
                 />
                 {!!audioCap && (
@@ -30504,12 +30679,25 @@ function ChatConversationInner() {
                   && detectSmartActions(_c).length === 0;
                 if (_canInline) {
                   _waInlineMeta = true;
+                  _waTextMetaKey = String(msg.id || msg.client_message_id || msg._clientId || _c.slice(0, 40)); // [2026-10-14 meta-inline]
                   const _ec = Number(msg.edited_count) || 0;
                   const _editedTxt = msg.edited_at
                     ? (_ec > 1 ? `(${(t('chatConv.edited') || 'editada')} ${_ec}x)` : (t('chatConv.edited') || 'editado'))
                     : '';
                   return (
-                    <WaHugText hugKey={`${_c}|${msgFontSize}|${BUBBLE_MAX_W}|${_editedTxt}|${formatTime(msg.created_at)}|${msg.starred ? 1 : 0}${msg._e2e ? 1 : 0}${disappearingTimer > 0 ? 1 : 0}${msg.vanish_at ? 1 : 0}`} style={_txtStyle} selectable={true}>
+                    // [2026-10-14 meta-inline] decisão inline/quebra por medida (WaMetaText).
+                    // hugKey = só o que muda a QUEBRA do texto (meta é medida à parte).
+                    <WaMetaText hugKey={`${_c}|${msgFontSize}|${msgLineHeight}`} metaKey={_waTextMetaKey} own={isOwn} style={_txtStyle} selectable={true}
+                      ghost={(
+                        <Text style={styles.metaGhost} selectable={false} accessible={false} importantForAccessibility="no">
+                          {_waMetaGhost({
+                            time: formatTime(msg.created_at),
+                            own: isOwn,
+                            edited: _editedTxt,
+                            icons: (msg.starred ? 1 : 0) + (msg._e2e ? 1 : 0) + (disappearingTimer > 0 ? 1 : 0) + (msg.vanish_at ? 3 : 0),
+                          })}
+                        </Text>
+                      )}>
                       {msg._searchTerm ? (
                         <SearchHighlightText text={_c} term={msg._searchTerm} style={_txtStyle} markBg={isOwn ? ownTextColor : colors.text} markInk={_searchMarkInk(isOwn, ownTextColor, colors)} />
                       ) : (
@@ -30523,15 +30711,7 @@ function ChatConversationInner() {
                         mentions={msg.mentions}
                       />
                       )}
-                      <Text style={styles.metaGhost} selectable={false} accessible={false} importantForAccessibility="no">
-                        {_waMetaGhost({
-                          time: formatTime(msg.created_at),
-                          own: isOwn,
-                          edited: _editedTxt,
-                          icons: (msg.starred ? 1 : 0) + (msg._e2e ? 1 : 0) + (disappearingTimer > 0 ? 1 : 0) + (msg.vanish_at ? 3 : 0),
-                        })}
-                      </Text>
-                    </WaHugText>
+                    </WaMetaText>
                   );
                 }
                 if (msg._searchTerm && typeof msg.content === 'string') {
@@ -31101,7 +31281,8 @@ function ChatConversationInner() {
               comum → precisam da linha de hora como qualquer bolha (antes saía
               uma pílula sem hora e com padding 3 colado na borda). */}
           {(isDeleted || (msg.type !== 'sticker' && msg.type !== 'gif' && msg.type !== 'image' && msg.type !== 'video')) && (
-            <View style={[styles.msgMeta, _waInlineMeta && styles.msgMetaInline,
+            <View onLayout={_waTextMetaKey ? (e) => { const l = e?.nativeEvent?.layout; if (l) _waPutMetaBox(_waTextMetaKey, l.width, l.height); } : undefined /* [2026-10-14 meta-inline] largura REAL da meta → WaMetaText */}
+              style={[styles.msgMeta, _waInlineMeta && styles.msgMetaInline,
               // [2026-10-08 location-bubble-fast] emoji-only: pílula com o fundo da bolha (hora/✓ legíveis no tema).
               _jumboNoBubble && { alignSelf: isOwn ? 'flex-end' : 'flex-start', backgroundColor: isOwn ? ownBubbleBg : otherBubbleBg, borderRadius: 10, paddingHorizontal: 7, paddingVertical: 2, marginTop: 0 },
               msg.type === 'location' && !isDeleted && { paddingHorizontal: 6 }]}>
@@ -36295,17 +36476,20 @@ function ChatConversationInner() {
               // posiciona no topo (sobrepunha título/Enviado). Lista curta = View simples.
               <_MsgInfoListWrap count={(messageInfoModal?.receipts || []).length}>
                 {(() => {
-                  const all = (messageInfoModal?.receipts || []).map(x => { const c = _rcClampReceipt(messageInfoModal?.sent_at, x.delivered_at || x.read_at, x.read_at); return { ...x, delivered_at: c.delivered, read_at: c.read }; }); // [2026-10-14 recibos-info]
+                  // [voz-reproduzido 2026-10-14] áudio: "Reproduzido por" (reproduzido ⇒ lido ⇒ entregue).
+                  const _isVoiceInfo = ['audio', 'voice'].includes(messageInfoModal?.message?.type);
+                  const all = (messageInfoModal?.receipts || []).map(x => { const _rd = x.read_at || (_isVoiceInfo ? x.played_at : null); const c = _rcClampReceipt(messageInfoModal?.sent_at, x.delivered_at || _rd, _rd); return { ...x, delivered_at: c.delivered, read_at: c.read, played_at: _isVoiceInfo ? _rcClampPlayed(c.read, x.played_at) : null }; }); // [2026-10-14 recibos-info]
                   // [2026-10-14 recibos] read_at do recibo vem SEM fuso ("… 01:38:57.89")
                   // e delivered_at com "+00" — normaliza antes de ordenar (NaN embaralhava).
                   const _rts = (v) => { const n = Date.parse(_normalizeIso(v)); return Number.isFinite(n) ? n : 0; };
-                  const readList = all.filter(r => r.read_at).slice().sort((a, b) => _rts(b.read_at) - _rts(a.read_at));
+                  const playedList = all.filter(r => r.played_at).slice().sort((a, b) => _rts(b.played_at) - _rts(a.played_at));
+                  const readList = all.filter(r => r.read_at && !r.played_at).slice().sort((a, b) => _rts(b.read_at) - _rts(a.read_at));
                   const deliveredList = all.filter(r => !r.read_at && r.delivered_at).slice().sort((a, b) => _rts(b.delivered_at) - _rts(a.delivered_at));
                   const pendingList = all.filter(r => !r.read_at && !r.delivered_at);
-                  const Section = ({ titleKey, fallback, list, tintColor, tsKey }) => (
+                  const Section = ({ titleKey, fallback, list, tintColor, tsKey, icon }) => (
                     <View style={{ marginBottom: 18 }}>
                       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 10 }}>
-                        {tintColor && (
+                        {icon ? icon : tintColor && (
                           <View style={{ flexDirection: 'row' }}>
                             <IconCheck size={14} color={tintColor} />
                             <IconCheck size={14} color={tintColor} style={{ marginLeft: -7 }} />
@@ -36338,6 +36522,9 @@ function ChatConversationInner() {
                   );
                   return (
                     <>
+                      {_isVoiceInfo && (
+                        <Section titleKey="chatConv.playedBy" fallback="Reproduzido por" list={playedList} tsKey="played_at" icon={<IconMic size={14} color="#53BDEB" />} />
+                      )}
                       <Section titleKey="chatConv.readBy" fallback="Lido por" list={readList} tintColor={colors.text} tsKey="read_at" />
                       <Section titleKey="chatConv.deliveredTo" fallback="Entregue para" list={deliveredList} tintColor={colors.textSecondary} tsKey="delivered_at" />
                       {pendingList.length > 0 && (
@@ -36363,9 +36550,14 @@ function ChatConversationInner() {
                 // [2026-10-14 recibos-info] Ordem física: enviado ≤ entregue ≤ lido. O
                 // servidor antigo dava "Lido 16:08" p/ msg enviada 16:10 (horário da
                 // última leitura da CONVERSA, não desta msg). Clamp no app também.
-                const _cl = _rcClampReceipt(messageInfoModal?.sent_at, r.delivered_at || r.read_at, r.read_at);
+                // [voz-reproduzido 2026-10-14] áudio: linha "Reproduzido" (reproduzido ⇒ lido ⇒ entregue).
+                // Fallback p/ servidor sem recibo por pessoa: played_at da própria msg (1:1).
+                const _isVoiceInfo = ['audio', 'voice'].includes(messageInfoModal?.message?.type);
+                const _plRaw = _isVoiceInfo ? (r.played_at || (receipts.length === 1 ? (messageInfoModal?.message?.played_at || null) : null)) : null;
+                const _rdRaw = r.read_at || _plRaw;
+                const _cl = _rcClampReceipt(messageInfoModal?.sent_at, r.delivered_at || _rdRaw, _rdRaw);
                 const delivered = _cl.delivered;
-                r = { ...r, read_at: _cl.read };
+                r = { ...r, read_at: _cl.read, played_at: _rcClampPlayed(_cl.read, _plRaw) };
                 const DoubleCheck = ({ color, active }) => (
                   <View style={{ width: 20, marginTop: 2, flexDirection: 'row', opacity: active ? 1 : 0.5 }}>
                     <IconCheck size={15} color={color} />
@@ -36404,6 +36596,21 @@ function ChatConversationInner() {
                         </Text>
                       </View>
                     </View>
+
+                    {/* [voz-reproduzido 2026-10-14] Reproduzido (só áudio/voz) */}
+                    {_isVoiceInfo && (
+                      <View style={styles.messageInfoRow}>
+                        <View style={{ width: 20, marginTop: 2, flexDirection: 'row', opacity: r.played_at ? 1 : 0.5 }}>
+                          <IconMic size={15} color={r.played_at ? '#53BDEB' : colors.textSecondary} />
+                        </View>
+                        <View style={{ flex: 1 }}>
+                          <Text style={[styles.messageInfoLabel, { color: colors.textSecondary }]}>{t('chatConv.playedAt') !== 'chatConv.playedAt' ? t('chatConv.playedAt') : 'Reproduzido'}</Text>
+                          <Text style={[styles.messageInfoTime, { color: colors.text }]}>
+                            {r.played_at ? _formatReceiptDate(r.played_at, t) : (t('chatConv.notPlayed') !== 'chatConv.notPlayed' ? t('chatConv.notPlayed') : 'Não reproduzido')}
+                          </Text>
+                        </View>
+                      </View>
+                    )}
 
                     {idx < receipts.length - 1 && (
                       <View style={[styles.messageInfoDivider, { backgroundColor: colors.border }]} />

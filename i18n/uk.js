@@ -8351,4 +8351,9 @@ export default {
   // [incidente-sessao 2026-10-14]
   "account.removedFromDevice": "Обліковий запис {email} видалено з цього пристрою",
   "chatConv.cancelDownload": "Скасувати завантаження",
+  "chatConv.playedAt": "Прослухано",
+  "chatConv.playedBy": "Прослухали",
+  "chatConv.notPlayed": "Не прослухано",
+  "chatConv.voiceHeard": "Голосове повідомлення прослухано",
+  "chatConv.voiceNotHeard": "Голосове повідомлення не прослухано",
 };

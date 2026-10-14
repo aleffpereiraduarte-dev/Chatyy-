@@ -11922,4 +11922,9 @@ export default {
   // [incidente-sessao 2026-10-14]
   "account.removedFromDevice": "La cuenta {email} se eliminó de este dispositivo",
   "chatConv.cancelDownload": "Cancelar descarga",
+  "chatConv.playedAt": "Reproducido",
+  "chatConv.playedBy": "Reproducido por",
+  "chatConv.notPlayed": "No reproducido",
+  "chatConv.voiceHeard": "Mensaje de voz reproducido",
+  "chatConv.voiceNotHeard": "Mensaje de voz no reproducido",
 };

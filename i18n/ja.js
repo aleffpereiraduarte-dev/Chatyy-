@@ -11175,4 +11175,9 @@ export default {
   // [incidente-sessao 2026-10-14]
   "account.removedFromDevice": "アカウント {email} はこの端末から削除されました",
   "chatConv.cancelDownload": "ダウンロードをキャンセル",
+  "chatConv.playedAt": "再生済み",
+  "chatConv.playedBy": "再生した人",
+  "chatConv.notPlayed": "未再生",
+  "chatConv.voiceHeard": "音声メッセージ再生済み",
+  "chatConv.voiceNotHeard": "音声メッセージ未再生",
 };

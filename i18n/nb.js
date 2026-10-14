@@ -9129,4 +9129,9 @@ export default {
   // [incidente-sessao 2026-10-14]
   "account.removedFromDevice": "Kontoen {email} ble fjernet fra denne enheten",
   "chatConv.cancelDownload": "Avbryt nedlasting",
+  "chatConv.playedAt": "Avspilt",
+  "chatConv.playedBy": "Avspilt av",
+  "chatConv.notPlayed": "Ikke avspilt",
+  "chatConv.voiceHeard": "Talemelding avspilt",
+  "chatConv.voiceNotHeard": "Talemelding ikke avspilt",
 };

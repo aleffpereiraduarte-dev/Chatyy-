@@ -899,4 +899,9 @@ export default {
   // [incidente-sessao 2026-10-14]
   "account.removedFromDevice": "{email} ගිණුම මෙම උපාංගයෙන් ඉවත් කරන ලදී",
   "chatConv.cancelDownload": "බාගැනීම අවලංගු කරන්න",
+  "chatConv.playedAt": "වාදනය කළා",
+  "chatConv.playedBy": "වාදනය කළේ",
+  "chatConv.notPlayed": "වාදනය කර නැත",
+  "chatConv.voiceHeard": "හඬ පණිවිඩය වාදනය කළා",
+  "chatConv.voiceNotHeard": "හඬ පණිවිඩය වාදනය කර නැත",
 };

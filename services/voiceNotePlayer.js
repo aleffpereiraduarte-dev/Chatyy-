@@ -8,7 +8,7 @@
 //     screen unmounts so the chain keeps going from the mini bar);
 //   • speed 1× / 1.5× / 2× is global + persisted (MMKV / localStorage);
 //   • "played" receipt (blue mic) only after the listener actually heard
-//     ≥ min(2 s, 40 % of the note) — or reached the end — never on tap;
+//     ≥ min(1 s, 40 % of the note) — or reached the end — never on tap;
 //   • raise-to-ear (proximity → earpiece + screen off) on the native engine.
 //
 // Engines (picked per play):
@@ -456,8 +456,9 @@ function _onEngineStatus(st) {
 }
 
 function _receiptThreshold() {
+  // [voz-reproduzido 2026-10-14] WhatsApp: "reproduzido" após ~1 s ouvido (ou ao terminar).
   const dur = _durationMs || _state.item?.durationMs || 0;
-  return dur > 0 ? Math.min(2000, dur * 0.4) : 2000;
+  return dur > 0 ? Math.min(1000, dur * 0.4) : 1000;
 }
 
 function _maybeReceipt(ended) {

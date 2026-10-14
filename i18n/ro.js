@@ -8351,4 +8351,9 @@ export default {
   // [incidente-sessao 2026-10-14]
   "account.removedFromDevice": "Contul {email} a fost eliminat de pe acest dispozitiv",
   "chatConv.cancelDownload": "Anulează descărcarea",
+  "chatConv.playedAt": "Redat",
+  "chatConv.playedBy": "Redat de",
+  "chatConv.notPlayed": "Neredat",
+  "chatConv.voiceHeard": "Mesaj vocal redat",
+  "chatConv.voiceNotHeard": "Mesaj vocal neredat",
 };

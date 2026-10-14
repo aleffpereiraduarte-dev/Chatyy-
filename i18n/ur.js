@@ -912,4 +912,9 @@ export default {
   // [incidente-sessao 2026-10-14]
   "account.removedFromDevice": "اکاؤنٹ {email} اس ڈیوائس سے ہٹا دیا گیا",
   "chatConv.cancelDownload": "ڈاؤن لوڈ منسوخ کریں",
+  "chatConv.playedAt": "چلایا گیا",
+  "chatConv.playedBy": "چلانے والے",
+  "chatConv.notPlayed": "نہیں چلایا گیا",
+  "chatConv.voiceHeard": "صوتی پیغام چلایا گیا",
+  "chatConv.voiceNotHeard": "صوتی پیغام نہیں چلایا گیا",
 };

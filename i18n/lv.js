@@ -8351,4 +8351,9 @@ export default {
   // [incidente-sessao 2026-10-14]
   "account.removedFromDevice": "Konts {email} tika noņemts no šīs ierīces",
   "chatConv.cancelDownload": "Atcelt lejupielādi",
+  "chatConv.playedAt": "Atskaņots",
+  "chatConv.playedBy": "Atskaņoja",
+  "chatConv.notPlayed": "Nav atskaņots",
+  "chatConv.voiceHeard": "Balss ziņa atskaņota",
+  "chatConv.voiceNotHeard": "Balss ziņa nav atskaņota",
 };

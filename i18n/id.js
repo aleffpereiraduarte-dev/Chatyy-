@@ -11174,4 +11174,9 @@ export default {
   // [incidente-sessao 2026-10-14]
   "account.removedFromDevice": "Akun {email} telah dihapus dari perangkat ini",
   "chatConv.cancelDownload": "Batalkan unduhan",
+  "chatConv.playedAt": "Diputar",
+  "chatConv.playedBy": "Diputar oleh",
+  "chatConv.notPlayed": "Belum diputar",
+  "chatConv.voiceHeard": "Pesan suara diputar",
+  "chatConv.voiceNotHeard": "Pesan suara belum diputar",
 };

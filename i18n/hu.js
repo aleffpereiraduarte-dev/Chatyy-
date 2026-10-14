@@ -8351,4 +8351,9 @@ export default {
   // [incidente-sessao 2026-10-14]
   "account.removedFromDevice": "A(z) {email} fiók el lett távolítva erről az eszközről",
   "chatConv.cancelDownload": "Letöltés megszakítása",
+  "chatConv.playedAt": "Lejátszva",
+  "chatConv.playedBy": "Lejátszotta",
+  "chatConv.notPlayed": "Nincs lejátszva",
+  "chatConv.voiceHeard": "Hangüzenet lejátszva",
+  "chatConv.voiceNotHeard": "Hangüzenet nincs lejátszva",
 };

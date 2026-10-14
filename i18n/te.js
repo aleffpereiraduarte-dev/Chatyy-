@@ -8347,4 +8347,9 @@ export default {
   // [incidente-sessao 2026-10-14]
   "account.removedFromDevice": "{email} ఖాతా ఈ పరికరం నుండి తీసివేయబడింది",
   "chatConv.cancelDownload": "డౌన్‌లోడ్ రద్దు చేయి",
+  "chatConv.playedAt": "ప్లే అయింది",
+  "chatConv.playedBy": "ప్లే చేసినవారు",
+  "chatConv.notPlayed": "ప్లే కాలేదు",
+  "chatConv.voiceHeard": "వాయిస్ సందేశం ప్లే అయింది",
+  "chatConv.voiceNotHeard": "వాయిస్ సందేశం ప్లే కాలేదు",
 };

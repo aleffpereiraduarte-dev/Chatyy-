@@ -8351,4 +8351,9 @@ export default {
   // [incidente-sessao 2026-10-14]
   "account.removedFromDevice": "حساب {email} از این دستگاه حذف شد",
   "chatConv.cancelDownload": "لغو دانلود",
+  "chatConv.playedAt": "پخش شد",
+  "chatConv.playedBy": "پخش‌شده توسط",
+  "chatConv.notPlayed": "پخش نشده",
+  "chatConv.voiceHeard": "پیام صوتی پخش شد",
+  "chatConv.voiceNotHeard": "پیام صوتی پخش نشده",
 };

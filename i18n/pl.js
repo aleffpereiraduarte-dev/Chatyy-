@@ -9129,4 +9129,9 @@ export default {
   // [incidente-sessao 2026-10-14]
   "account.removedFromDevice": "Konto {email} zostało usunięte z tego urządzenia",
   "chatConv.cancelDownload": "Anuluj pobieranie",
+  "chatConv.playedAt": "Odtworzono",
+  "chatConv.playedBy": "Odtworzone przez",
+  "chatConv.notPlayed": "Nie odtworzono",
+  "chatConv.voiceHeard": "Wiadomość głosowa odtworzona",
+  "chatConv.voiceNotHeard": "Wiadomość głosowa nieodtworzona",
 };

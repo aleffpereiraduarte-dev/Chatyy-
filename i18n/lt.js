@@ -8351,4 +8351,9 @@ export default {
   // [incidente-sessao 2026-10-14]
   "account.removedFromDevice": "Paskyra {email} pašalinta iš šio įrenginio",
   "chatConv.cancelDownload": "Atšaukti atsisiuntimą",
+  "chatConv.playedAt": "Paleista",
+  "chatConv.playedBy": "Paleido",
+  "chatConv.notPlayed": "Nepaleista",
+  "chatConv.voiceHeard": "Balso žinutė paleista",
+  "chatConv.voiceNotHeard": "Balso žinutė nepaleista",
 };
