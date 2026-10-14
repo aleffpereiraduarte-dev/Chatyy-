@@ -34,9 +34,10 @@ import { useCurrency } from '../context/CurrencyContext';
 import AvatarCircle from '../components/AvatarCircle';
 import { IconReceipt, IconDiamond } from '../components/Icons';
 import {
-  Button, Card, ListRow, SectionHeader, TopBar, useSurface, Skeleton, SkeletonFadeIn,
+  Card, ListRow, SectionHeader, TopBar, useSurface, Skeleton, SkeletonFadeIn, FadeSlideIn,
   ScreenEmptyState, Type, Space, Radius, Layout,
 } from '../components/ui';
+import { HeroCard, HeroButton, HERO, AnimatedNumber, ProgressBar, TABULAR, approxActive, NOFLEX } from '../components/wallet/WalletKit';
 import { formatInt } from '../utils/dateFormat';
 
 // Espelha chat.php wallet_cashout_request (amount_cents < 5000 → min_cashout).
@@ -70,7 +71,7 @@ function MetricTile({ label, value, sub, s }) {
   return (
     <View style={[styles.tile, { backgroundColor: s.surface, borderColor: s.border, borderWidth: s.isDark ? 0 : StyleSheet.hairlineWidth }]}>
       <Text style={[Type.caption, { color: s.textSecondary }]} numberOfLines={2}>{label}</Text>
-      <Text style={[Type.headline, { color: s.text, marginTop: Space.xs }]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.6}>{value}</Text>
+      <Text style={[Type.headline, TABULAR, { color: s.text, marginTop: Space.xs }]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.6}>{value}</Text>
       {sub ? <Text style={[Type.caption2, { color: s.textTertiary, marginTop: 2 }]} numberOfLines={1}>{sub}</Text> : null}
     </View>
   );
@@ -79,7 +80,7 @@ function MetricTile({ label, value, sub, s }) {
 function EarningsSkeleton() {
   return (
     <View style={[styles.scrollBody, { gap: Space.md }]}>
-      <Skeleton height={196} radius={Radius.card} />
+      <Skeleton height={300} radius={22} />
       <View style={styles.grid}>
         <Skeleton height={84} radius={Radius.card} style={{ flex: 1 }} delay={40} />
         <Skeleton height={84} radius={Radius.card} style={{ flex: 1 }} delay={60} />
@@ -189,56 +190,52 @@ function CreatorEarnings() {
 
   const body = (
     <>
-      {/* ── Saldo disponível + Sacar ─────────────────────────── */}
-      <Card elevated padding={Space.xl}>
-        <Text style={[Type.footnote, { color: s.textSecondary, fontWeight: '600' }]}>
-          {tr(t, 'creatorEarnings.availableLabel', 'Disponível para saque')}
-        </Text>
-        <Text style={[Type.largeTitle, { color: s.text, marginTop: Space.xs }]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.6}
-          accessibilityLabel={`${tr(t, 'creatorEarnings.availableLabel', 'Disponível para saque')}: ${money(pending)}`}>
-          {money(pending)}
-        </Text>
-        {data.on_hold_cents > 0 ? (
-          <Text style={[Type.footnote, { color: s.textSecondary, marginTop: Space.xs }]}>
-            {tr(t, 'earn.onHold', '{amount} em liberação (presentes dos últimos {days} dias)')
-              .replace('{amount}', money(data.on_hold_cents)).replace('{days}', String(data.hold_days || 7))}
-          </Text>
-        ) : null}
-        {!reachedMin ? (
-          <View style={{ marginTop: Space.md }}>
-            <View style={[styles.track, { backgroundColor: s.fill }]}
-              accessibilityRole="progressbar"
-              accessibilityValue={{ min: 0, max: 100, now: Math.round(progress * 100) }}>
-              <View style={[styles.trackFill, { width: `${Math.max(progress * 100, progress > 0 ? 2 : 0)}%`, backgroundColor: s.ink }]} />
+      {/* ── Saldo disponível + Sacar (herói grafite, igual à Carteira) ── */}
+      <FadeSlideIn style={NOFLEX}>
+        <HeroCard isDark={isDark} glow={false}>
+          <Text style={[styles.heroCaps, { color: HERO.sub }]}>{tr(t, 'creatorEarnings.availableLabel', 'Disponível para saque')}</Text>
+          <View style={styles.heroAmtRow} accessible accessibilityLabel={`${tr(t, 'creatorEarnings.availableLabel', 'Disponível para saque')}: ${money(pending)}`}>
+            <AnimatedNumber value={pending} format={(n) => money(n)} style={[styles.heroNum, { color: HERO.text }]} adjustsFontSizeToFit minimumFontScale={0.6} />
+          </View>
+          {approxActive(pending) ? <Text style={[Type.footnote, TABULAR, { color: HERO.sub }]}>{approxActive(pending)}</Text> : null}
+          <View style={[styles.heroStats, { borderTopColor: HERO.line }]}>
+            <View style={{ flex: 1 }}>
+              <Text style={[Type.caption, { color: HERO.sub }]}>{tr(t, 'walletV3.onHold', 'Em liberação')}</Text>
+              <Text style={[Type.callout, TABULAR, { color: HERO.text, fontWeight: '700', marginTop: 2 }]}>{money(data.on_hold_cents)}</Text>
+              <Text style={[Type.caption2, { color: HERO.faint, marginTop: 1 }]}>{tr(t, 'walletV3.holdDays', 'retido {days} dias').replace('{days}', String(data.hold_days || 7))}</Text>
             </View>
-            <Text style={[Type.footnote, { color: s.textSecondary, marginTop: Space.sm }]}>
-              {tr(t, 'creatorDash.missing', 'Faltam {missing} para o saque mínimo de {min}')
-                .replace('{missing}', money(min - pending))
-                .replace('{min}', money(min))}
+            <View style={[styles.heroDivider, { backgroundColor: HERO.line }]} />
+            <View style={{ flex: 1, paddingLeft: Space.lg }}>
+              <Text style={[Type.caption, { color: HERO.sub }]}>{tr(t, 'walletV3.minCashout', 'Saque mínimo')}</Text>
+              <Text style={[Type.callout, TABULAR, { color: HERO.text, fontWeight: '700', marginTop: 2 }]}>{money(min)}</Text>
+              <Text style={[Type.caption2, { color: HERO.faint, marginTop: 1 }]}>{tr(t, 'walletV3.viaPix', 'via Pix')}</Text>
+            </View>
+          </View>
+          <View style={{ marginTop: Space.lg }}>
+            <ProgressBar progress={progress} color="#FFFFFF" track={HERO.fill} label={tr(t, 'walletV3.progressLabel', 'Progresso até o saque mínimo')} />
+            <Text style={[Type.footnote, { color: HERO.sub, marginTop: Space.sm }]}>
+              {reachedMin
+                ? tr(t, 'creatorEarnings.pixEta', 'Via Pix, em até 48h úteis.')
+                : tr(t, 'creatorDash.missing', 'Faltam {missing} para o saque mínimo de {min}').replace('{missing}', money(min - pending)).replace('{min}', money(min))}
             </Text>
           </View>
-        ) : (
-          <Text style={[Type.footnote, { color: s.textSecondary, marginTop: Space.xs }]}>
-            {tr(t, 'creatorEarnings.pixEta', 'Via Pix, em até 48h úteis.')}
-          </Text>
-        )}
-        <Button
-          title={tr(t, 'creatorDash.withdraw', 'Sacar')}
-          size="lg"
-          fullWidth
-          disabled={!canCashout}
-          onPress={go('/wallet-cashout')}
-          style={{ marginTop: Space.lg }}
-          accessibilityLabel={!canCashout
-            ? `${tr(t, 'creatorDash.withdraw', 'Sacar')}. ${blockReason || tr(t, 'creatorEarnings.belowMin', 'Abaixo do mínimo para saque.')}`
-            : undefined}
-        />
-        {blockReason ? (
-          <Text style={[Type.footnote, { color: s.textSecondary, marginTop: Space.sm, textAlign: 'center' }]}>
-            {blockReason}
-          </Text>
-        ) : null}
-      </Card>
+          <View style={{ flexDirection: 'row', marginTop: Space.lg }}>
+            <HeroButton
+              primary
+              haptic="medium"
+              label={tr(t, 'creatorDash.withdraw', 'Sacar')}
+              disabled={!canCashout}
+              onPress={go('/wallet-cashout')}
+              accessibilityLabel={!canCashout
+                ? `${tr(t, 'creatorDash.withdraw', 'Sacar')}. ${blockReason || tr(t, 'creatorEarnings.belowMin', 'Abaixo do mínimo para saque.')}`
+                : undefined}
+            />
+          </View>
+          {blockReason ? (
+            <Text style={[Type.footnote, { color: HERO.sub, marginTop: Space.sm, textAlign: 'center' }]}>{blockReason}</Text>
+          ) : null}
+        </HeroCard>
+      </FadeSlideIn>
 
       {/* ── Métricas ────────────────────────────────────────── */}
       <View style={styles.grid}>
@@ -381,7 +378,12 @@ const styles = StyleSheet.create({
   track: { height: 6, borderRadius: 3, overflow: 'hidden' },
   trackFill: { height: 6, borderRadius: 3 },
   grid: { flexDirection: 'row', gap: Space.sm },
-  tile: { flex: 1, minWidth: 0, borderRadius: Radius.card, padding: Space.md, minHeight: 84 },
+  tile: { flex: 1, minWidth: 0, borderRadius: Radius.card + 4, padding: Space.md, minHeight: 84 },
+  heroCaps: { fontSize: 12, fontWeight: '700', letterSpacing: 0.9, textTransform: 'uppercase' },
+  heroAmtRow: { marginTop: Space.sm },
+  heroNum: { fontSize: 42, lineHeight: 50, fontWeight: '700', letterSpacing: -1.2 },
+  heroStats: { flexDirection: 'row', marginTop: Space.lg, paddingTop: Space.md, borderTopWidth: StyleSheet.hairlineWidth },
+  heroDivider: { width: StyleSheet.hairlineWidth, alignSelf: 'stretch' },
   personRow: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: Space.lg, paddingVertical: Space.md },
   rank: { width: 22, fontWeight: '700' },
   amount: { flexDirection: 'row', alignItems: 'center', gap: 4, marginLeft: Space.sm },

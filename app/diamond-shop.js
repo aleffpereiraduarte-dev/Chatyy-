@@ -1,20 +1,21 @@
 // /diamond-shop — Loja de Diamantes (tela cheia).
 //
-// [2026-10-13 diamantes-religados] Reescrita P&B sobre DiamondStorePanel:
+// [2026-10-14 carteira-v3] Mesmo acabamento da Carteira: fundo agrupado,
+// herói grafite, grade de pacotes (DiamondStorePanel/useDiamondStore).
 // iOS = só compra in-app (3.1.1, sem atalho de cartão/web); Android = só Play
 // Billing ("Em breve" sem catálogo); web = cartão via Stripe. Preço local da
-// loja, "Em breve" quando o produto não veio, "Restaurar compras pendentes".
-// Atalhos: Carteira (histórico) e Meus ganhos.
+// loja, "Restaurar compras pendentes". Atalho: Carteira (histórico).
 
 import React from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ScrollView, StatusBar } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity } from 'react-native';
 import { useRouter, Redirect, Stack } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { USE_NATIVE_HEADER, nativeHeaderOptions } from '../components/nativeHeader';
 import { useTheme } from '../context/ThemeContext';
 import { DIAMONDS_ENABLED } from '../constants/featureFlags';
 import { useLanguage } from '../context/LanguageContext';
-import { IconArrowLeft } from '../components/Icons';
+import { IconChevronRight } from '../components/Icons';
+import { TopBar, useSurface, PressableScale, Type, Space, Layout } from '../components/ui';
 import DiamondStorePanel from '../components/diamonds/DiamondStorePanel';
 
 function tr(t, k, fb) { const v = t ? t(k) : ''; return v && v !== k ? v : fb; }
@@ -29,38 +30,45 @@ function DiamondShop() {
   const insets = useSafeAreaInsets();
   const { colors, isDark } = useTheme();
   const { t } = useLanguage();
+  const s = useSurface();
   const title = tr(t, 'diamondShop.title', 'Loja de Diamantes');
   const walletLabel = tr(t, 'diamondShop.wallet', 'Carteira');
+  const goWallet = () => { try { router.push('/wallet'); } catch {} };
 
   return (
-    <View style={[styles.container, { backgroundColor: colors.background, paddingTop: USE_NATIVE_HEADER ? 0 : (insets.top || 0) + 6 }]}>
-      <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} />
+    <View style={[styles.container, { backgroundColor: s.bgGrouped }]}>
       {USE_NATIVE_HEADER ? (
         <Stack.Screen options={nativeHeaderOptions({
           colors, isDark, title,
           headerRight: () => (
-            <TouchableOpacity onPress={() => router.push('/wallet')} hitSlop={10} accessibilityRole="button">
+            <TouchableOpacity onPress={goWallet} hitSlop={10} accessibilityRole="button">
               <Text style={{ fontSize: 16, fontWeight: '600', color: colors.text }}>{walletLabel}</Text>
             </TouchableOpacity>
           ),
         })} />
       ) : (
-        <View style={styles.headBar}>
-          <TouchableOpacity onPress={() => router.back()} style={styles.backBtn} accessibilityRole="button" accessibilityLabel={tr(t, 'common.back', 'Voltar')}>
-            <IconArrowLeft size={22} color={colors.text} />
-          </TouchableOpacity>
-          <Text style={[styles.headTitle, { color: colors.text }]}>{title}</Text>
-          <TouchableOpacity onPress={() => router.push('/wallet')} style={styles.headerLinkBtn} accessibilityRole="button">
-            <Text style={[styles.headerLinkText, { color: colors.text }]}>{walletLabel}</Text>
-          </TouchableOpacity>
-        </View>
+        <TopBar
+          title={title}
+          onBack={() => { try { router.back(); } catch {} }}
+          maxWidth={Layout.contentMaxWidth}
+          right={(
+            <PressableScale onPress={goWallet} hitSlop={10} accessibilityRole="button" style={styles.headerLinkBtn}>
+              <Text style={[Type.subhead, { color: s.text, fontWeight: '600' }]}>{walletLabel}</Text>
+            </PressableScale>
+          )}
+        />
       )}
 
-      <ScrollView contentContainerStyle={styles.body} showsVerticalScrollIndicator={false}>
+      <ScrollView
+        contentContainerStyle={[styles.body, { paddingBottom: Math.max(Space.xxxl, (insets.bottom || 0) + Space.xl) }]}
+        showsVerticalScrollIndicator={false}
+      >
         <DiamondStorePanel />
-        <TouchableOpacity onPress={() => router.push('/wallet')} style={styles.link} accessibilityRole="button">
-          <Text style={[styles.linkText, { color: colors.text }]}>{tr(t, 'diamondShop.viewHistory2', 'Ver histórico de transações')}</Text>
-        </TouchableOpacity>
+        <PressableScale onPress={goWallet} haptic="light" accessibilityRole="link"
+          style={[styles.link, { backgroundColor: s.surface, borderColor: s.border }]}>
+          <Text style={[Type.callout, { color: s.text, fontWeight: '600', flex: 1 }]}>{tr(t, 'diamondShop.viewHistory2', 'Ver histórico de transações')}</Text>
+          <IconChevronRight size={18} color={s.textSecondary} />
+        </PressableScale>
       </ScrollView>
     </View>
   );
@@ -68,12 +76,7 @@ function DiamondShop() {
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  headBar: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 12, marginBottom: 10 },
-  backBtn: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center' },
-  headTitle: { fontSize: 16, fontWeight: '800' },
-  headerLinkBtn: { paddingHorizontal: 8, height: 44, alignItems: 'center', justifyContent: 'center' },
-  headerLinkText: { fontSize: 14, fontWeight: '700' },
-  body: { paddingHorizontal: 16, paddingBottom: 40, width: '100%', maxWidth: 560, alignSelf: 'center' },
-  link: { marginTop: 18, paddingVertical: 12, alignItems: 'center', minHeight: 44 },
-  linkText: { fontSize: 14, fontWeight: '700' },
+  headerLinkBtn: { paddingHorizontal: Space.sm, height: 44, alignItems: 'center', justifyContent: 'center' },
+  body: { padding: Layout.gutter, width: '100%', maxWidth: Layout.contentMaxWidth, alignSelf: 'center' },
+  link: { marginTop: Space.xl, minHeight: 52, borderRadius: 18, borderWidth: StyleSheet.hairlineWidth, flexDirection: 'row', alignItems: 'center', paddingHorizontal: Space.lg },
 });

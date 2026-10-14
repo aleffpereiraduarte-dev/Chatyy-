@@ -12,6 +12,7 @@ import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import { IconX } from './Icons';
 import DiamondStorePanel from './diamonds/DiamondStorePanel';
+import useSurface from './ui/useSurface';
 import { DIAMONDS_ENABLED } from '../constants/featureFlags';
 
 function tr(t, k, fb) { const v = t ? t(k) : ''; return v && v !== k ? v : fb; }
@@ -20,12 +21,13 @@ export default function DiamondTopUpSheet({ visible, onClose, onBalanceChange })
   const { colors } = useTheme();
   const { t } = useLanguage();
   const insets = useSafeAreaInsets();
+  const s = useSurface();
   if (!visible || !DIAMONDS_ENABLED) return null;
   return (
     <Modal visible transparent animationType="slide" onRequestClose={onClose}>
       <Pressable style={styles.backdrop} onPress={onClose} accessibilityRole="button" accessibilityLabel={tr(t, 'common.close', 'Fechar')} />
-      <View style={[styles.sheet, { backgroundColor: colors.background, paddingBottom: Math.max(insets.bottom, 12) + 8 }]}>
-        <View style={[styles.handle, { backgroundColor: colors.border || 'rgba(0,0,0,0.2)' }]} />
+      <View style={[styles.sheet, { backgroundColor: s.isDark ? s.surfaceRaised : s.bgGrouped, paddingBottom: Math.max(insets.bottom, 12) + 8 }]}>
+        <View style={[styles.handle, { backgroundColor: s.separator }]} />
         <View style={styles.head}>
           <Text style={[styles.title, { color: colors.text }]}>{tr(t, 'wallet.topup', 'Comprar diamantes')}</Text>
           <TouchableOpacity onPress={onClose} style={styles.x} accessibilityRole="button" accessibilityLabel={tr(t, 'common.close', 'Fechar')}>
@@ -48,6 +50,6 @@ const styles = StyleSheet.create({
   },
   handle: { alignSelf: 'center', width: 38, height: 4, borderRadius: 2, marginBottom: 8 },
   head: { flexDirection: 'row', alignItems: 'center', marginBottom: 10 },
-  title: { flex: 1, fontSize: 17, fontWeight: '800' },
+  title: { flex: 1, fontSize: 19, fontWeight: '700', letterSpacing: -0.3 },
   x: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
 });
