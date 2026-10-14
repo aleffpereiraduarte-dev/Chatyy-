@@ -555,11 +555,27 @@ function _normalizeIso(dateStr) {
 
 // Format a receipt timestamp (delivered_at / read_at) for the info modal.
 // Returns "20/04/2026 18:20" or the raw string if unparseable.
+// [2026-10-14 recibos-info] enviado ≤ entregue ≤ lido (devolve strings ISO).
+function _rcClampReceipt(sentAt, deliveredAt, readAt) {
+  const ms = (v) => { if (!v) return NaN; const n = Date.parse(_normalizeIso(v)); return Number.isFinite(n) ? n : NaN; };
+  const s0 = ms(sentAt); let d = ms(deliveredAt); let r = ms(readAt);
+  if (Number.isFinite(d) && Number.isFinite(s0) && d < s0) d = s0;
+  if (Number.isFinite(r)) {
+    if (Number.isFinite(d) && r < d) r = d;
+    else if (!Number.isFinite(d) && Number.isFinite(s0) && r < s0) r = s0;
+  }
+  return {
+    delivered: Number.isFinite(d) ? new Date(d).toISOString() : (deliveredAt || null),
+    read: Number.isFinite(r) ? new Date(r).toISOString() : (readAt || null),
+  };
+}
 function _formatReceiptDate(ts, t) {
   if (!ts) return '';
   const d = new Date(_normalizeIso(ts));
   if (isNaN(d.getTime())) return ts;
-  return d.toLocaleString([], {
+  // [2026-10-14 recibos-info] idioma do APP (pt-BR "13/10/2026 16:10"), não o do
+  // aparelho (en-US mostrava "10/13/2026, 4:10 PM" com o app em português).
+  return d.toLocaleString(_appLocale || [], {
     day: '2-digit', month: '2-digit', year: 'numeric',
     hour: '2-digit', minute: '2-digit',
   });
@@ -953,6 +969,49 @@ function _rcPeerRow(m, me) {
   const se = m && m.sender_email;
   if (!se || !me) return false;
   return String(se).toLowerCase() !== String(me).toLowerCase();
+}
+// [2026-10-14 recibos-mono] Recibo é MONOTÔNICO (✓ → ✓✓ → azul, nunca volta).
+// Medido em produção: logo após o peer ler, o chat_messages servido pelo EDGE
+// (réplica BR/EU) devolveu o estado ANTIGO em 5 de 8 tentativas (sem read_by /
+// watermark 1 abaixo). O refetch substituía a linha local (já azul pelo evento
+// ao vivo) pela do servidor atrasado → azul voltava a cinza (e ✓✓ a ✓) até o
+// próximo evento. Aqui a linha do servidor herda a evidência MAIS FORTE que a
+// linha local já tinha (só msgs PRÓPRIAS; só campos de recibo; união de
+// read_by/delivered_to). Não cria azul do nada: só preserva o que um sinal do
+// peer/servidor já tinha marcado nesta sessão.
+const _RC_STATUS_RANK = { sending: 0, pending: 0, sent: 1, delivered: 2, read: 3 };
+function _rcUnionEmails(a, b) {
+  const A = Array.isArray(a) ? a : [];
+  const B = Array.isArray(b) ? b : [];
+  if (B.length === 0) return A;
+  const norm = (x) => String((typeof x === 'string' ? x : (x && (x.email || x.user_email || x.user))) || '').toLowerCase();
+  const seen = new Set(A.map(norm));
+  let out = null;
+  for (const x of B) {
+    const e = norm(x);
+    if (!e || seen.has(e)) continue;
+    seen.add(e);
+    if (!out) out = A.slice();
+    out.push(x);
+  }
+  return out || A;
+}
+function _rcKeepStronger(nm, local, meLc) {
+  if (!nm || !local || nm === local || typeof nm.id !== 'number') return nm;
+  if (!meLc || String(nm.sender_email || '').toLowerCase() !== meLc) return nm;
+  let out = null;
+  const set = (k, v) => { if (!out) out = { ...nm }; out[k] = v; };
+  if (local.read_at && !nm.read_at) set('read_at', local.read_at);
+  if (local.delivered_at && !nm.delivered_at) set('delivered_at', local.delivered_at);
+  if (local._delivered === true && nm._delivered !== true) set('_delivered', true);
+  if (local._read === true && nm._read !== true) set('_read', true);
+  const rb = _rcUnionEmails(nm.read_by, local.read_by);
+  if (rb !== nm.read_by && Array.isArray(rb) && rb.length > (Array.isArray(nm.read_by) ? nm.read_by.length : 0)) set('read_by', rb);
+  const dt = _rcUnionEmails(nm.delivered_to, local.delivered_to);
+  if (dt !== nm.delivered_to && Array.isArray(dt) && dt.length > (Array.isArray(nm.delivered_to) ? nm.delivered_to.length : 0)) set('delivered_to', dt);
+  const ls = _RC_STATUS_RANK[local.status]; const ns = _RC_STATUS_RANK[nm.status];
+  if (ls != null && ls >= 2 && (ns == null || ls > ns)) set('status', local.status);
+  return out || nm;
 }
 function _sameServerRow(nm, local) {
   if (!nm || !local || nm === local) return nm === local;
@@ -11146,6 +11205,17 @@ function ChatConversationInner() {
   const [myCustomEmojiLoading, setMyCustomEmojiLoading] = _useStateT(false);
   const [inputFocused, setInputFocused] = _useStateT(false);
   const [readReceipts, setReadReceipts] = _useStateT([]);
+  // [2026-10-14 recibos-mono] Último watermark de leitura do PEER visto AO VIVO
+  // (chat_read / message_read), por e-mail (lc) → { id, at }. O snapshot do
+  // chat_messages vindo do edge (réplica) pode chegar 1 leitura atrás; dentro de
+  // 2 min ele não rebaixa o watermark (azul nunca volta a cinza por réplica
+  // atrasada). Fora da janela o servidor continua autoritativo.
+  const peerReadLiveRef = useRef(new Map());
+  // Maior tick já mostrado por msg própria nesta sessão (id → {st, at}).
+  const _tickHwmRef = useRef(new Map());
+  // Último recibo AO VIVO (entregue/lido) desta conversa — o merge monotônico do
+  // refetch só vale até 2 min depois dele (janela de réplica atrasada).
+  const lastLiveReceiptAtRef = useRef(0);
   const [messageInfoModal, setMessageInfoModal] = _useStateT(null); // { message, receipts, sent_at, loading }
   // [2026-10-06 thread-tech] Per-row overlay store (see utils/threadRowOverlay).
   const rowOverlayStore = useRowOverlayStore();
@@ -14114,8 +14184,11 @@ function ChatConversationInner() {
               if (matched) return false;
               return true;
             });
-            const reconciled = newMsgs.map(nm => {
-              const local = prevById.get(nm.id);
+            const _rcMeLc = String(currentEmailRef.current || currentEmail || '').toLowerCase();
+            const reconciled = newMsgs.map(_nm0 => {
+              const local = prevById.get(_nm0.id);
+              // [2026-10-14 recibos-mono] servidor (réplica atrasada) nunca rebaixa o tick.
+              const nm = (local && (Date.now() - (lastLiveReceiptAtRef.current || 0)) < 120000) ? _rcKeepStronger(_nm0, local, _rcMeLc) : _nm0;
               // [2026-10-08 chat-open-flicker] Server row identical to what is
               // already on screen → keep the SAME object (enrich cache + row
               // memo skip it; local-only extras like _localUri survive).
@@ -14278,7 +14351,15 @@ function ChatConversationInner() {
               // o valor correto (menor) a cada load, mas o cliente mantinha o
               // antigo → balões meus ficavam ✓✓ azul mesmo o peer não tendo lido,
               // e reabrir o app NÃO corrigia. Confiar no snapshot do servidor.
-              map.set(rr.email, rr.last_read_id || 0);
+              // [2026-10-14 recibos-mono] …exceto quando um evento AO VIVO do peer
+              // (≤ 2 min) já mostrou um watermark maior: o snapshot é de réplica
+              // atrasada (medido: 5/8 respostas do edge logo após a leitura).
+              let _srvWm = Number(rr.last_read_id) || 0;
+              try {
+                const _lv = peerReadLiveRef.current.get(String(rr.email || '').toLowerCase());
+                if (_lv && _lv.id > _srvWm && (Date.now() - _lv.at) < 120000) _srvWm = _lv.id;
+              } catch {}
+              map.set(rr.email, _srvWm);
             }
             // [2026-10-11 fluidez-2] Mesmo conteúdo → mesmo array (cada refetch
             // criava um array novo = 1 render extra da tela + re-enrich).
@@ -16125,6 +16206,7 @@ function ChatConversationInner() {
       // Listen for delivery receipt updates via WS (WhatsApp-style double grey check)
       const unsubDelivered = _wsOnB('message_delivered', (data) => {
         if (!mountedRef.current) return;
+        if (String(data?.conversation_id) === String(conversationId)) lastLiveReceiptAtRef.current = Date.now(); // [2026-10-14 recibos-mono]
         if (String(data?.conversation_id) === String(conversationId) && Array.isArray(data?.message_ids)) {
           // [delivered-batch id-mismatch fix 2026-05-25] message_ids are
           // server NUMERIC ids. The sender's own just-sent bubble is keyed
@@ -16175,6 +16257,7 @@ function ChatConversationInner() {
       // delivered shape carries a single {message_id, email}. Support both.
       const unsubChatDelivered = _wsOnB('chat_delivered', (data) => {
         if (!mountedRef.current) return;
+        if (String(data?.conversation_id) === String(conversationId)) lastLiveReceiptAtRef.current = Date.now(); // [2026-10-14 recibos-mono]
         if (String(data?.conversation_id) !== String(conversationId)) return;
         // [batched-delivery fix] PHP coalesces a delivery-ack burst into ONE
         // chat_delivered carrying the full data.message_ids[] array. Without
@@ -16268,6 +16351,8 @@ function ChatConversationInner() {
           if (nums.length) newId = Math.max(...nums);
         }
         if (!newId) return;
+        try { const _lv = peerReadLiveRef.current.get(peerEmail); if (!_lv || _lv.id < newId) peerReadLiveRef.current.set(peerEmail, { id: newId, at: Date.now() }); } catch {}
+        lastLiveReceiptAtRef.current = Date.now();
         setReadReceipts(prev => {
           const existing = prev.find(rr => (rr.email || '').toLowerCase() === peerEmail);
           if (existing) {
@@ -16303,6 +16388,12 @@ function ChatConversationInner() {
         // flipped our bubbles to false ✓✓-blue (the message_read path above was
         // already hardened the same way).
         if (String(data?.conversation_id) === String(conversationId) && (data?.email || '').toLowerCase() !== (currentEmail || '').toLowerCase()) {
+          try {
+            const _lid = Number(data.last_read_id) || 0; const _le = String(data.email || '').toLowerCase();
+            const _lv = _le && peerReadLiveRef.current.get(_le);
+            if (_le && _lid > 0 && (!_lv || _lv.id < _lid)) peerReadLiveRef.current.set(_le, { id: _lid, at: Date.now() });
+            lastLiveReceiptAtRef.current = Date.now();
+          } catch {}
           setReadReceipts(prev => {
             const newId = Number(data.last_read_id) || 0;
             const existing = prev.find(rr => rr.email === data.email);
@@ -23292,6 +23383,39 @@ function ChatConversationInner() {
     }
   };
 
+  // [2026-10-14 recibos] "Dados da mensagem" AO VIVO (WhatsApp): com a folha
+  // aberta, qualquer recibo novo desta conversa (entregue/lido, WS do hub ou do
+  // PHP) re-busca chat_message_info (debounce 600 ms) → "Lida por"/"Entregue
+  // para" e horários atualizam sem fechar e abrir.
+  const _infoMsgId = messageInfoModal?.message?.id;
+  useEffect(() => {
+    if (typeof _infoMsgId !== 'number' || !(_infoMsgId > 0)) return undefined;
+    let alive = true; let tm = null;
+    const onRc = (data) => {
+      if (String(data?.conversation_id) !== String(conversationId) || tm) return;
+      tm = setTimeout(async () => {
+        tm = null;
+        try {
+          const r = await api.chatMessageInfo(_infoMsgId);
+          if (!alive || !r?.success || !r.data) return;
+          setMessageInfoModal(prev => (prev && prev.message && prev.message.id === _infoMsgId)
+            ? { ...prev, receipts: Array.isArray(r.data.receipts) ? r.data.receipts : prev.receipts, sent_at: r.data.sent_at || prev.sent_at, loading: false }
+            : prev);
+        } catch {}
+      }, 600);
+    };
+    const offs = [];
+    try {
+      const _ws = require('../services/websocket').default;
+      for (const ev of ['chat_read', 'message_read', 'chat_delivered', 'message_delivered']) {
+        const off = _ws?.on?.(ev, onRc);
+        if (typeof off === 'function') offs.push(off);
+      }
+    } catch {}
+    return () => { alive = false; if (tm) clearTimeout(tm); for (const off of offs) { try { off(); } catch {} } };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [_infoMsgId, conversationId]);
+
   const handleMessageInfo = async (msg) => {
     // [2026-10-09 native-sheets] Vindo do menu de contexto (<Modal> RN): no iOS o
     // sheet nativo não pode ser apresentado enquanto o Modal ainda está descendo.
@@ -24536,6 +24660,28 @@ function ChatConversationInner() {
         if (e && e !== _meLc && Number.isFinite(v)) _groupReadWm.set(e, Math.max(v, _groupReadWm.get(e) || 0));
       }
     }
+    // [2026-10-14 recibos-mono] Tick NUNCA regride na sessão (WhatsApp): o maior
+    // estado já mostrado p/ cada msg própria confirmada vira piso. Fecha as janelas
+    // em que um snapshot atrasado (réplica do edge / refetch que cruzou com o evento
+    // ao vivo) rebaixava azul→cinza ou ✓✓→✓. Com MINHA confirmação de leitura
+    // desligada o azul não é retido (o servidor deixa de mostrá-lo — reciprocidade).
+    const _hwm = _tickHwmRef.current;
+    const _hwmRrOn = settingsRef.current?.read_receipts !== false;
+    const _rcHwm = (key, own, st) => {
+      if (!own || key == null || key === '' || key === 'a:' || !(st >= 1)) return st;
+      if (typeof key === 'number' ? !(key > 0) : (typeof key === 'string' && key.startsWith('tmp_'))) return st;
+      // Piso vale 2 min desde a última vez que o estado foi visto (janela de
+      // réplica atrasada). Depois o servidor volta a mandar — um estado errado
+      // vindo de cache antigo nunca fica "grudado".
+      const now = Date.now();
+      const e = _hwm.get(key);
+      const h = e && (now - e.at) < 120000 ? e.st : 0;
+      const cap = _hwmRrOn ? 2 : 1.5;
+      const floor = Math.min(h, cap);
+      if (st < floor) return floor;
+      if (!e || st > e.st || st === e.st) { _hwm.set(key, { st, at: now }); if (_hwm.size > 5000) { const k0 = _hwm.keys().next().value; _hwm.delete(k0); } }
+      return st;
+    };
     for (let i = 0; i < reversedMessages.length; i++) {
       const item = reversedMessages[i];
       if (item._type === 'separator') { out[i] = item; continue; }
@@ -24551,14 +24697,14 @@ function ChatConversationInner() {
         const albumPeerDelivered = isGroupConv
           ? !!item._delivered
           : !!(item._delivered || item.delivered_at || _peerDeliveredOnLoad(item));
-        const albumStatus = computeTickState(item, {
+        const albumStatus = _rcHwm('a:' + String(item._key || ''), isOwnA, computeTickState(item, {
           isOwn: isOwnA,
           isGroup: isGroupConv,
           peerReadWatermark: readWatermark,
           peerDeliveredWatermark: isGroupConv ? -1 : deliveredWatermark,
           peerReadAt: !isGroupConv && (item.read_at || _peerReadOnLoad(item)),
           peerDelivered: albumPeerDelivered,
-        });
+        }));
         const prev = cache.get(item._key);
         if (prev && prev.source === item && prev.enriched._readStatus === albumStatus) {
           out[i] = prev.enriched;
@@ -24592,14 +24738,14 @@ function ChatConversationInner() {
       const peerDelivered = isGroupConv
         ? (_gAgg ? _gAgg.delivered : !!item._delivered)
         : !!(item._delivered || item.delivered_at || _peerDeliveredOnLoad(item));
-      const readStatus = computeTickState((_gAgg && _gAgg.read && item._read !== true) ? { ...item, _read: true } : item, {
+      const readStatus = _rcHwm(item.id, isOwn, computeTickState((_gAgg && _gAgg.read && item._read !== true) ? { ...item, _read: true } : item, {
         isOwn,
         isGroup: isGroupConv,
         peerReadWatermark: readWatermark,
         peerDeliveredWatermark: isGroupConv ? -1 : deliveredWatermark,
         peerReadAt: !isGroupConv && (item.read_at || _peerReadOnLoad(item)),
         peerDelivered,
-      });
+      }));
       const isHighlighted = item.id === highlightedMsgId;
       const isHeartPop = item.id === heartPopMsg;
       const searchTerm = (_searchHlIds && _searchHlIds.has(item.id)) ? _searchHlTerm : null;
@@ -35506,9 +35652,7 @@ function ChatConversationInner() {
                   <Text style={[styles.messageInfoLabel, { color: colors.textSecondary }]}>{t('chatConv.sentAt')}</Text>
                   <Text style={[styles.messageInfoTime, { color: colors.text }]}>
                     {(() => {
-                      const str = messageInfoModal.sent_at.endsWith('Z') || messageInfoModal.sent_at.includes('+') ? messageInfoModal.sent_at : messageInfoModal.sent_at + 'Z';
-                      const d = new Date(str);
-                      return isNaN(d.getTime()) ? messageInfoModal.sent_at : d.toLocaleString([], { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+                      return _formatReceiptDate(messageInfoModal.sent_at, t); // [2026-10-14 recibos-info] idioma do app
                     })()}
                   </Text>
                 </View>
@@ -35522,9 +35666,12 @@ function ChatConversationInner() {
               // Sorted by ts desc inside each section so most-recent receipt is on top.
               <ScrollView style={{ maxHeight: 420 }} showsVerticalScrollIndicator={false}>
                 {(() => {
-                  const all = messageInfoModal?.receipts || [];
-                  const readList = all.filter(r => r.read_at).slice().sort((a, b) => +new Date(b.read_at) - +new Date(a.read_at));
-                  const deliveredList = all.filter(r => !r.read_at && r.delivered_at).slice().sort((a, b) => +new Date(b.delivered_at) - +new Date(a.delivered_at));
+                  const all = (messageInfoModal?.receipts || []).map(x => { const c = _rcClampReceipt(messageInfoModal?.sent_at, x.delivered_at || x.read_at, x.read_at); return { ...x, delivered_at: c.delivered, read_at: c.read }; }); // [2026-10-14 recibos-info]
+                  // [2026-10-14 recibos] read_at do recibo vem SEM fuso ("… 01:38:57.89")
+                  // e delivered_at com "+00" — normaliza antes de ordenar (NaN embaralhava).
+                  const _rts = (v) => { const n = Date.parse(_normalizeIso(v)); return Number.isFinite(n) ? n : 0; };
+                  const readList = all.filter(r => r.read_at).slice().sort((a, b) => _rts(b.read_at) - _rts(a.read_at));
+                  const deliveredList = all.filter(r => !r.read_at && r.delivered_at).slice().sort((a, b) => _rts(b.delivered_at) - _rts(a.delivered_at));
                   const pendingList = all.filter(r => !r.read_at && !r.delivered_at);
                   const Section = ({ titleKey, fallback, list, tintColor, tsKey }) => (
                     <View style={{ marginBottom: 18 }}>
@@ -35584,7 +35731,12 @@ function ChatConversationInner() {
               // which vanished on the dark sheet).
               (messageInfoModal?.receipts || []).map((r, idx) => {
                 const receipts = messageInfoModal?.receipts || [];
-                const delivered = r.delivered_at || r.read_at;
+                // [2026-10-14 recibos-info] Ordem física: enviado ≤ entregue ≤ lido. O
+                // servidor antigo dava "Lido 16:08" p/ msg enviada 16:10 (horário da
+                // última leitura da CONVERSA, não desta msg). Clamp no app também.
+                const _cl = _rcClampReceipt(messageInfoModal?.sent_at, r.delivered_at || r.read_at, r.read_at);
+                const delivered = _cl.delivered;
+                r = { ...r, read_at: _cl.read };
                 const DoubleCheck = ({ color, active }) => (
                   <View style={{ width: 20, marginTop: 2, flexDirection: 'row', opacity: active ? 1 : 0.5 }}>
                     <IconCheck size={15} color={color} />

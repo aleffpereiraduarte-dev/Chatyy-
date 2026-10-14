@@ -328,6 +328,8 @@ function _nudgeKeyframe(pub) {
 
 function CallScreenInner() {
   useEffect(() => { initCallModules(); }, []);
+  // [regiao-v2 2026-10-13] tela de chamada abriu: remede RTT por região em 2º plano se a medição tiver > 10 min
+  useEffect(() => { import('../services/regionRtt').then((m) => m.refreshForCall()).catch(() => {}); }, []);
 
 
   // WhatsApp-grade cold-start: the moment the call screen mounts (even before

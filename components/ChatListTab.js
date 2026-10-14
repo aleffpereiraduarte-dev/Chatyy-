@@ -143,12 +143,39 @@ function _rcGroupNeeded(c) {
   const n = Number(c.member_count) || (Array.isArray(c.members) ? c.members.length : 0);
   return n > 1 ? n - 1 : 0;
 }
+// [2026-10-14 recibos-mono] Refetch da lista nunca rebaixa o tick da prévia.
+// Mesma última msg (mesmo id) → herda a evidência mais forte que a linha local
+// já tinha (read_at/delivered_at/all_read + agregados de grupo ao vivo). Medido:
+// o chat_list/chat_messages servido pelo edge (réplica) volta 1 leitura atrás
+// logo após o peer ler; a lista ficava cinza com a conversa azul.
+function _rcMergeListLm(oldLm, newLm) {
+  if (!oldLm || !newLm || oldLm === newLm) return newLm;
+  if (oldLm.id == null || String(oldLm.id) !== String(newLm.id)) return newLm;
+  // Só dentro de 2 min de um recibo AO VIVO nesta linha (janela da réplica
+  // atrasada). Fora disso o servidor manda — estado velho de cache não gruda.
+  if (!(oldLm._rcLiveAt && (Date.now() - oldLm._rcLiveAt) < 120000)) return newLm;
+  let out = null;
+  const set = (k, v) => { if (!out) out = { ...newLm }; out[k] = v; };
+  if (oldLm.read_at && !newLm.read_at) set('read_at', oldLm.read_at);
+  if (oldLm.delivered_at && !newLm.delivered_at) set('delivered_at', oldLm.delivered_at);
+  if (oldLm.all_read && !newLm.all_read) set('all_read', true);
+  if (Array.isArray(oldLm._dlv_by) && oldLm._dlv_by.length && !Array.isArray(newLm._dlv_by)) set('_dlv_by', oldLm._dlv_by);
+  if (Array.isArray(oldLm._rd_by) && oldLm._rd_by.length && !Array.isArray(newLm._rd_by)) set('_rd_by', oldLm._rd_by);
+  if (out) out._rcLiveAt = oldLm._rcLiveAt;
+  return out || newLm;
+}
+function _rcMergeListRow(old, c) {
+  if (!old || !c || !old.last_message || !c.last_message) return c;
+  const lm = _rcMergeListLm(old.last_message, c.last_message);
+  return lm === c.last_message ? c : { ...c, last_message: lm };
+}
 function _rcListMark(c, who, kind) {
   const lm = c.last_message;
   const nowIso = new Date().toISOString();
+  const _lv = Date.now(); // [2026-10-14 recibos-mono] carimbo de recibo ao vivo (ver _rcMergeListLm)
   if (c.type !== 'group') {
-    if (kind === 'read') return { ...c, last_message: { ...lm, read_at: lm.read_at || nowIso, delivered_at: lm.delivered_at || nowIso } };
-    return lm.delivered_at ? c : { ...c, last_message: { ...lm, delivered_at: nowIso } };
+    if (kind === 'read') return { ...c, last_message: { ...lm, read_at: lm.read_at || nowIso, delivered_at: lm.delivered_at || nowIso, _rcLiveAt: _lv } };
+    return lm.delivered_at ? c : { ...c, last_message: { ...lm, delivered_at: nowIso, _rcLiveAt: _lv } };
   }
   const needed = _rcGroupNeeded(c);
   if (!who || !needed) return c;
@@ -156,7 +183,7 @@ function _rcListMark(c, who, kind) {
   const rd = new Set(Array.isArray(lm._rd_by) ? lm._rd_by : []);
   dlv.add(who);
   if (kind === 'read') rd.add(who);
-  const next = { ...lm, _dlv_by: Array.from(dlv), _rd_by: Array.from(rd) };
+  const next = { ...lm, _dlv_by: Array.from(dlv), _rd_by: Array.from(rd), _rcLiveAt: _lv };
   if (dlv.size >= needed && !next.delivered_at) next.delivered_at = nowIso;
   if (rd.size >= needed) { next.read_at = next.read_at || nowIso; next.all_read = true; }
   return { ...c, last_message: next };
@@ -4048,7 +4075,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
             }
             const base = keepOld
               ? { ...c, last_message: old.last_message, last_message_at: old.last_message_at }
-              : { ...c };
+              : { ..._rcMergeListRow(old, c) };
             base.unread_count = Math.max(c.unread_count || 0, old.unread_count || 0);
             return base;
           }), convs.length, _archIds));
@@ -4087,7 +4114,12 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
               const _act = convs.filter(c => !c.archived);
               const _aIds = new Set(convs.filter(c => c.archived).map(c => String(c.id)));
               // [2026-10-13 lista-estavel] página cheia = pode estar truncada → não perde as que já estavam.
-              setConversations(prev => _keepBeyondPage(prev, _act, convs.length, _aIds));
+              setConversations(prev => {
+                // [2026-10-14 recibos-mono] mesma última msg → não rebaixa o tick.
+                const _pById = new Map((Array.isArray(prev) ? prev : []).map(p => [String(p.id), p]));
+                const _actM = _act.map(c => _rcMergeListRow(_pById.get(String(c.id)), c));
+                return _keepBeyondPage(prev, _actM, convs.length, _aIds);
+              });
             }
             setArchivedConversations(convs.filter(c => c.archived));
             cacheConversations(convs).catch(() => {});
@@ -4167,23 +4199,36 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
       // Collapse each conv's events into a single {deliveredUpTo, readUpTo}
       // high-watermark. `read` carries payload.message_id (the last-read id);
       // `delivered` coalesces a burst into payload.message_ids[].
+      // [2026-10-14 recibos] AZUL FALSO NA LISTA (medido: 148 de 578 eventos
+      // 'read' em 24 h eram o PRÓPRIO usuário marcando até a msg DELE — abrir a
+      // conversa = chat_read sem message_id = MAX(id)). Sem olhar o autor, esse
+      // eco pintava a prévia de azul mesmo com o peer sem nem ter recebido (conv
+      // 973: 23592/23593 sem entrega, lista azul). Agora: evento do próprio
+      // usuário é ignorado, e por AUTOR (grupo agrega por membro via _rcListMark —
+      // 1 membro recebeu ≠ ✓✓).
       const marks = new Map();
       for (const c of perConv) {
         const cid = c?.id;
         if (cid == null || !Array.isArray(c?.events)) continue;
         let deliveredUpTo = 0, readUpTo = 0;
+        const byActor = new Map(); // actor(lc) → { r, d }
         for (const ev of c.events) {
           try {
+            const actor = String(ev?.actor || ev?.payload?.email || '').toLowerCase();
+            if (!actor || actor === meLower) continue;
+            const a = byActor.get(actor) || { r: 0, d: 0 };
             if (ev?.type === 'read') {
               const mid = Number(ev?.payload?.message_id) || 0;
               if (mid > readUpTo) readUpTo = mid;
+              if (mid > a.r) a.r = mid;
             } else if (ev?.type === 'delivered') {
               const dids = Array.isArray(ev?.payload?.message_ids) ? ev.payload.message_ids : [];
-              for (const d of dids) { const n = Number(d) || 0; if (n > deliveredUpTo) deliveredUpTo = n; }
-            }
+              for (const d of dids) { const n = Number(d) || 0; if (n > deliveredUpTo) deliveredUpTo = n; if (n > a.d) a.d = n; }
+            } else continue;
+            byActor.set(actor, a);
           } catch {}
         }
-        if (deliveredUpTo > 0 || readUpTo > 0) marks.set(String(cid), { deliveredUpTo, readUpTo });
+        if (deliveredUpTo > 0 || readUpTo > 0) marks.set(String(cid), { deliveredUpTo, readUpTo, byActor });
       }
       if (marks.size === 0) return;
       const nowIso = new Date().toISOString();
@@ -4197,6 +4242,17 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
           // peer's own message never flips my ✓/✓✓.
           if (!lm.sender_email || lm.sender_email.toLowerCase() !== meLower) return c;
           const lmId = Number(lm.id) || 0;
+          if (c.type === 'group') {
+            // Grupo: cada membro conta 1x; ✓✓/azul só quando TODOS (_rcListMark).
+            if (!lmId) return c;
+            let cc = c;
+            for (const [who, a] of m.byActor) {
+              if (a.r >= lmId) cc = _rcListMark(cc, who, 'read');
+              else if (a.d >= lmId) cc = _rcListMark(cc, who, 'delivered');
+            }
+            if (cc !== c) changed = true;
+            return cc;
+          }
           const coveredRead = m.readUpTo > 0 && (!lmId || m.readUpTo >= lmId);
           const coveredDelivered = m.deliveredUpTo > 0 && (!lmId || m.deliveredUpTo >= lmId);
           const wantRead = coveredRead && !lm.read_at;
@@ -4209,6 +4265,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
               ...lm,
               ...((wantDelivered || wantRead) ? { delivered_at: lm.delivered_at || nowIso } : {}),
               ...(wantRead ? { read_at: lm.read_at || nowIso } : {}),
+              _rcLiveAt: Date.now(),
             },
           };
         });
@@ -4406,7 +4463,12 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
             for (const c of convs) (c.archived ? _arch : _active).push(c);
             // [2026-10-12 perf] keep the previous object for rows that did not
             // change → memoized rows skip, the list doesn't re-diff 500 cells.
-            setConversations(prev => _reuseConvRows(prev, _active));
+            setConversations(prev => {
+              // [2026-10-14 recibos-mono] volta da conversa (azul) + chat_list do edge
+              // atrasado → a prévia não rebaixa p/ cinza.
+              const _pById = new Map((Array.isArray(prev) ? prev : []).map(p => [String(p.id), p]));
+              return _reuseConvRows(prev, _active.map(c => _rcMergeListRow(_pById.get(String(c.id)), c)));
+            });
             setArchivedConversations(prev => _reuseConvRows(prev, _arch));
             cacheConversations(convs).catch(() => {});
           }

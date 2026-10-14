@@ -195,6 +195,8 @@ export default function GroupCallScreen() {
   // sustained speaking.
   const [displayedSpeaker, setDisplayedSpeaker] = useState(null);
   const _speakerDebounceTimerRef = useRef(null);
+  // [regiao-v2 2026-10-13] tela de chamada abriu: remede RTT por região em 2º plano se a medição tiver > 10 min
+  useEffect(() => { import('../services/regionRtt').then((m) => m.refreshForCall()).catch(() => {}); }, []);
   useEffect(() => {
     if (!activeSpeakerEmail) return;
     if (activeSpeakerEmail === displayedSpeaker) return;

@@ -12,6 +12,11 @@ const EDGE_SERVERS = [
   { url: 'https://chatyy.com.br', region: 'us', base: 'https://chatyy.com.br' },
   { url: 'https://api-br.chatyy.com.br', region: 'br', base: 'https://api-br.chatyy.com.br' },
   { url: 'https://api-eu.chatyy.com.br', region: 'eu', base: 'https://api-eu.chatyy.com.br' },
+  // [2026-10-14 nivel-whatsapp] US-West (Seattle): edge RELAY — TLS termina perto do usuário e TODO
+  // /api + /ws segue pelo WireGuard (pool aquecido) até o MESMO PHP/hub do US (sem réplica local →
+  // leitura sempre no master). Enquanto o DNS api-usw não existir o probe falha (99999) e nada muda;
+  // a histerese (>25% E >40ms) + "empate → US" seguem valendo.
+  { url: 'https://api-usw.chatyy.com.br', region: 'usw', base: 'https://api-usw.chatyy.com.br' },
 ];
 
 // US origin/master is the INVIOLABLE fallback. Whenever latency detection has
@@ -31,7 +36,7 @@ export function getOriginBase() { return ORIGIN_BASE; }
 // + histerese. Sobe a versão para descartar as escolhas v11 (1 probe frio) —
 // ~20% dos clientes nos EUA estavam presos em EU/BR (+150-300ms por escrita).
 const EDGE_CACHE_VERSION = 12;
-const VALID_REGIONS = ['us', 'br', 'eu'];
+const VALID_REGIONS = ['us', 'br', 'eu', 'usw'];
 
 let _bestServer = null;
 let _detecting = false;

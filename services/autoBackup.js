@@ -104,6 +104,90 @@ async function _autoRunBlocked(settings) {
   return null;
 }
 
+// ─── [2026-10-14 precheck-storm] Native pass limiter + confirmed-id cache ──
+// Incident (EU edge, iPhone build 677-680): ~46k POST /api/rust/backup/precheck
+// per day (72% of EU traffic) + 37 drive_precheck_asset_ids (1500 ids each)
+// per native pass start. Cause: every startForegroundBackup re-ran the
+// server asset-id sync and OVERWROTE the native UserDefaults set with ONLY the
+// server's md5(asset_id)-tagged rows. Assets whose bytes are on the server
+// under another tag (duplicates, iCloud re-sync, other device) are confirmed
+// by native content-hash precheck every pass (200 deduped) but never get a
+// tag → the overwrite dropped them and the next pass re-hashed + re-prechecked
+// all of them (~2.5k per pass). uploadGovernor stopped/restarted the pass on
+// every chat burst (15 s quiet), so an active chatter re-ran it dozens of
+// times per hour. Fixes:
+//   1. ids confirmed by native onComplete (dedup or fresh upload, both
+//      server-confirmed) are remembered for 7 d and unioned into setBackedUpIds;
+//   2. the server sync + overwrite runs at most once per 6 h per process;
+//   3. automatic native passes: ≤1 in flight (existing), min gap with
+//      exponential backoff (5 min → 2 h) when a pass makes no progress, and a
+//      single deferred retry instead of dropping/hot-looping.
+const NATIVE_CONFIRMED_KEY = '@chatyy_backup/native_confirmed_v1'; // { assetId: ts }
+const NATIVE_CONFIRMED_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+const NATIVE_SYNC_MIN_GAP_MS = 6 * 60 * 60 * 1000;
+const NATIVE_SYNC_AT_KEY = '@chatyy_backup/native_sync_at_v1';
+// Per-account: the native UserDefaults set must be re-synced after an
+// account switch, and confirmations of one account never count for another.
+function _acctKey(base) {
+  let e = '';
+  try { e = String((api.getSavedEmail && api.getSavedEmail()) || '').toLowerCase(); } catch {}
+  return base + ':' + e;
+}
+const AUTO_PASS_MIN_GAP_MS = 5 * 60 * 1000;
+const AUTO_PASS_MAX_GAP_MS = 2 * 60 * 60 * 1000;
+let _lastNativeSyncAt = 0;
+let _lastNativeSyncEmail = null;
+let _lastAutoPassAt = 0;
+let _autoPassGapMs = AUTO_PASS_MIN_GAP_MS;
+let _deferredAutoTimer = null;
+
+async function _loadNativeConfirmed() {
+  try {
+    const AsyncStorage = require('@react-native-async-storage/async-storage').default;
+    const raw = await AsyncStorage.getItem(_acctKey(NATIVE_CONFIRMED_KEY));
+    const m = raw ? JSON.parse(raw) : {};
+    return (m && typeof m === 'object') ? m : {};
+  } catch { return {}; }
+}
+async function _saveNativeConfirmed(map) {
+  try {
+    const AsyncStorage = require('@react-native-async-storage/async-storage').default;
+    const now = Date.now();
+    const out = {};
+    for (const id in map) { if (now - (map[id] || 0) < NATIVE_CONFIRMED_TTL_MS) out[id] = map[id]; }
+    await AsyncStorage.setItem(_acctKey(NATIVE_CONFIRMED_KEY), JSON.stringify(out));
+  } catch {}
+}
+async function _addNativeConfirmed(ids) {
+  if (!ids || !ids.length) return;
+  const m = await _loadNativeConfirmed();
+  const now = Date.now();
+  for (const id of ids) m[id] = now;
+  await _saveNativeConfirmed(m);
+}
+/** ms until the next automatic native pass may start (0 = now). */
+function _autoPassWaitMs() {
+  if (!_lastAutoPassAt) return 0;
+  return Math.max(0, _lastAutoPassAt + _autoPassGapMs - Date.now());
+}
+function _noteAutoPassStart() { _lastAutoPassAt = Date.now(); }
+/** After a pass: progress resets the gap, no progress doubles it (capped). */
+function _noteAutoPassResult(freshUploads) {
+  _autoPassGapMs = freshUploads > 0
+    ? AUTO_PASS_MIN_GAP_MS
+    : Math.min(AUTO_PASS_MAX_GAP_MS, Math.max(AUTO_PASS_MIN_GAP_MS, _autoPassGapMs * 2));
+}
+function _scheduleDeferredAuto(waitMs) {
+  if (_deferredAutoTimer) return; // one pending retry at most (debounce)
+  _deferredAutoTimer = setTimeout(() => {
+    _deferredAutoTimer = null;
+    try {
+      if (AppState.currentState !== 'active') return; // bg: BGTaskScheduler covers it
+      startForegroundBackup(null, { auto: true }).catch(() => {});
+    } catch {}
+  }, Math.max(1000, waitMs) + 500);
+}
+
 // Lock with timestamp + auto-expiry. Bare string lock left stuck whenever a
 // JS error escaped the upload loop — every subsequent backup attempt was
 // blocked until app restart. 30 min expiry = "if a backup hasn't made any
@@ -336,6 +420,19 @@ export async function startForegroundBackup(onProgress, options = {}) {
       console.log('[backup] startForegroundBackup: auto run held — ' + why);
       return { uploaded: 0, total: 0, skipped: why };
     }
+    // [2026-10-14 precheck-storm] global limiter for automatic iOS native
+    // passes (boot, resume, media listener, uploadGovernor restart): min gap +
+    // backoff; a held run is retried ONCE when the window opens.
+    if (Platform.OS === 'ios' && NativeUpload?.startNativeBackup) {
+      if (isNativeRunning()) return { uploaded: 0, total: 0, skipped: 'native_running' };
+      const wait = _autoPassWaitMs();
+      if (wait > 0) {
+        _lastSkipReason = 'rate_limited';
+        console.log('[backup] startForegroundBackup: auto native pass rate-limited, retry in ' + Math.round(wait / 1000) + 's');
+        _scheduleDeferredAuto(wait);
+        return { uploaded: 0, total: 0, skipped: 'rate_limited' };
+      }
+    }
   }
   _lastSkipReason = null;
 
@@ -491,7 +588,37 @@ export async function startForegroundBackup(onProgress, options = {}) {
       //      device assets are already in drive_files (by md5(asset_id) filename
       //      tag). Without this, a fresh install re-dedupes 40k+ photos one-by-
       //      one at ~2/sec = hours of idle precheck traffic.
-      try {
+      // [2026-10-14 precheck-storm] The sync below is 37+ batched POSTs for a
+      // 55k library and its setBackedUpIds REPLACES the native set. Between
+      // passes the native UserDefaults set is already correct (it only grows
+      // with server-confirmed ids), so re-syncing on every pass start only
+      // threw away content-hash dedups and forced a full re-precheck. Run it
+      // at most once per NATIVE_SYNC_MIN_GAP_MS per process (cold start,
+      // user tap after 6 h, …).
+      if (_lastNativeSyncEmail !== String(userEmail || '').toLowerCase()) {
+        _lastNativeSyncEmail = String(userEmail || '').toLowerCase();
+        _lastNativeSyncAt = 0;
+      }
+      if (!_lastNativeSyncAt) {
+        // persisted across cold starts (iOS kills the app often; each cold
+        // start re-ran the 37-POST sync).
+        try {
+          const AsyncStorage = require('@react-native-async-storage/async-storage').default;
+          _lastNativeSyncAt = Number(await AsyncStorage.getItem(_acctKey(NATIVE_SYNC_AT_KEY))) || 0;
+          // The native set is DEVICE-wide: if another account synced it last,
+          // it holds that account's ids → must re-sync now.
+          const owner = await AsyncStorage.getItem('@chatyy_backup/native_sync_owner_v1');
+          if ((owner || '') !== _lastNativeSyncEmail) _lastNativeSyncAt = 0;
+        } catch {}
+      }
+      const _syncDue = userInitiated || (Date.now() - _lastNativeSyncAt) > NATIVE_SYNC_MIN_GAP_MS;
+      if (_syncDue) try {
+        _lastNativeSyncAt = Date.now();
+        try {
+          const AsyncStorage = require('@react-native-async-storage/async-storage').default;
+          AsyncStorage.setItem(_acctKey(NATIVE_SYNC_AT_KEY), String(_lastNativeSyncAt)).catch(() => {});
+          AsyncStorage.setItem('@chatyy_backup/native_sync_owner_v1', _lastNativeSyncEmail || '').catch(() => {});
+        } catch {}
         const backedUpMap = await getBackedUpMap();
         // INTENTIONALLY do NOT seed unionSet from the local map.
         //
@@ -509,6 +636,7 @@ export async function startForegroundBackup(onProgress, options = {}) {
         // a single backup pass (saves repeated precheck on the same asset),
         // but it never claims authority over the server.
         const unionSet = new Set();
+        const missingSet = new Set();
 
         // Pull ALL device asset ids once (fast, PHAsset fetch is in-memory)
         let deviceIds = [];
@@ -541,10 +669,29 @@ export async function startForegroundBackup(onProgress, options = {}) {
               const r = await api.apiCall('drive_precheck_asset_ids', { asset_ids: slice }, 'POST');
               const backedUp = r?.data?.backed_up || [];
               for (const id of backedUp) unionSet.add(id);
+              for (const id of (r?.data?.missing || [])) missingSet.add(id);
             } catch {}
           }
           console.log(`[backup] Batch precheck synced: ${unionSet.size} total IDs known (from ${deviceIds.length} device + ${Object.keys(backedUpMap || {}).length} cache)`);
         }
+        // [2026-10-14 precheck-storm] + ids the native module confirmed
+        // against the server (content-hash dedup or confirmed upload) in the
+        // last 7 days. These have no md5(asset_id) tag on the server, so the
+        // batch above never returns them; dropping them made every pass
+        // re-hash + re-precheck the same ~2.5k assets. Blobs the server lost
+        // (`missing`) are excluded so they still get re-uploaded.
+        try {
+          const confirmed = await _loadNativeConfirmed();
+          const deviceSet = deviceIds.length ? new Set(deviceIds) : null;
+          let added = 0;
+          for (const id in confirmed) {
+            if (missingSet.has(id)) { delete confirmed[id]; continue; }
+            if (deviceSet && !deviceSet.has(id)) continue;
+            if (!unionSet.has(id)) { unionSet.add(id); added++; }
+          }
+          if (missingSet.size) await _saveNativeConfirmed(confirmed);
+          if (added) console.log(`[backup] +${added} native-confirmed (hash-dedup) ids kept in native set`);
+        } catch {}
 
         const backedUpArray = Array.from(unionSet);
         if (backedUpArray.length > 0 && typeof NativeUpload.setBackedUpIds === 'function') {
@@ -585,6 +732,8 @@ export async function startForegroundBackup(onProgress, options = {}) {
         _pendingMarks = [];
         _flushTimer = null;
         if (batch.length === 0) return;
+        // [2026-10-14 precheck-storm] native onComplete = server-confirmed.
+        try { await _addNativeConfirmed(batch); } catch {}
         try {
           const map = await getBackedUpMap();
           const now = Date.now();
@@ -667,6 +816,7 @@ export async function startForegroundBackup(onProgress, options = {}) {
               break;
             }
             nativeRunningSet(true);
+            _noteAutoPassStart();
             let r;
             try {
               r = await NativeUpload.startNativeBackup(serverUrl, authToken, userEmail);
@@ -695,6 +845,9 @@ export async function startForegroundBackup(onProgress, options = {}) {
           }
           uploaded = totalUploadedThisSession;
           done = lastTotal;
+          // [2026-10-14 precheck-storm] backoff for the next AUTOMATIC pass:
+          // only real (non-dedup) uploads count as progress.
+          _noteAutoPassResult(_hasFreshUpload ? 1 : 0);
           console.log(`[backup] native backup session total: uploaded=${uploaded} total=${done} spins=${spins - 1}`);
           progressSub?.remove?.();
           // Drain any pending batched writes before detaching the listener,
@@ -985,6 +1138,17 @@ function setupAppStateListener() {
         }
         const settings = await getSettings();
         if (!settings.enabled) return;
+        // [2026-10-14 precheck-storm] this entry used to fire on EVERY
+        // background transition with no Wi-Fi/charging/busy gate and no
+        // cooldown. Same policy + limiter as the other automatic entries.
+        try {
+          const why = await _autoRunBlocked(settings);
+          if (why) { console.log('[backup] backgrounded — bg fire held: ' + why); return; }
+        } catch {}
+        if (_autoPassWaitMs() > 0) {
+          console.log('[backup] backgrounded — bg fire rate-limited');
+          return;
+        }
         // Skip if nothing pending — avoid spinning native through a full
         // PHAsset dedup pass just to fire an empty progress callback.
         try {
@@ -1011,6 +1175,7 @@ function setupAppStateListener() {
           // but we set + clear via .then/.catch so the flag eventually
           // releases when the native side returns.
           nativeRunningSet(true);
+          _noteAutoPassStart();
           NativeUpload.startNativeBackup(serverUrl, authToken, userEmail)
             .then(() => { nativeRunningSet(false); })
             .catch((e) => {

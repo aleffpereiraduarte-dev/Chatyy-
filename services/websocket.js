@@ -171,6 +171,17 @@ function _netAdapt(baseMs, rttMult) {
     return Math.round(Math.min(Math.max(baseMs, 20000), Math.max(baseMs * sc, rttMult * srtt + 1000)));
   } catch { return baseMs; }
 }
+// [2026-10-14 ws-churn] Upload pesado em curso no aparelho (backup nativo iOS,
+// engine JS de backup, fila de mídia do chat)? Usado só p/ dar UMA sonda de
+// confirmação antes de condenar o socket por pong atrasado. Requires lazy:
+// sem ciclo de import.
+function _uplinkBusy() {
+  if (Platform.OS === 'web') return false;
+  try { if (require('./autoBackup').isNativeBackupRunning?.()) return true; } catch {}
+  try { const q = require('./mediaSendQueue'); if ((q?.activeUploadCount?.() || 0) > 0) return true; } catch {}
+  try { const e = require('./backupEngine').getBackupEngine?.(); if (e && e.isRunning && !e.isPaused) return true; } catch {}
+  return false;
+}
 // [2026-10-08 regions-fast] Entrada REGIONAL do WebSocket. Usuário cuja região
 // escolhida (services/api.js, region_hint + probe) é BR/EU abre o socket em
 // wss://api-<região>.chatyy.com.br/ws: o TLS termina no edge (perto do usuário)
@@ -187,6 +198,7 @@ const US_WS_URL = 'wss://ws.chatyy.com.br/ws';
 const REGIONAL_WS_URLS = {
   br: 'wss://api-br.chatyy.com.br/ws',
   eu: 'wss://api-eu.chatyy.com.br/ws',
+  usw: 'wss://api-usw.chatyy.com.br/ws', // [2026-10-14 nivel-whatsapp] relay Seattle→hub US (WG); nativo sem 'usw' cai em 'us'
 };
 const REGIONAL_WS_BLOCK_MS = 15 * 60 * 1000;
 let _regionalWsBlockedUntil = 0;
@@ -1488,6 +1500,23 @@ class MailWebSocket {
         const late = Date.now() - sentAt;
         if (late > deadline + interval * 2 + 1000) return; // timer estrangulado
         if ((this.lastInboundAt || 0) >= sentAt || (this.lastPongTime || 0) >= sentAt) return;
+        // [2026-10-14 ws-churn] Uplink saturado (backup de fotos / envio de
+        // mídia): o ping fica na fila do rádio atrás de MBs de upload e o pong
+        // chega depois do prazo → falso half-open → reconexão, cujo handshake
+        // também atola (iPhone do founder: ~330 sockets/dia, 30 s conectado /
+        // 30 s desconectado, 27% < 5 s, enquanto o backup re-prechecava a
+        // biblioteca). Só nesse caso: UMA sonda de confirmação antes de
+        // derrubar. Socket morto de verdade continua caindo (prazo + sonda);
+        // sem upload em curso o veredito segue imediato como antes.
+        if (this._pongGraceWs === ws && Date.now() < (this._pongGraceUntil || 0)) {
+          if (this._probeTimer) return; // a sonda de confirmação decide
+        } else if (_uplinkBusy()) {
+          this._pongGraceWs = ws;
+          this._pongGraceUntil = Date.now() + deadline * 3 + interval;
+          this._logGhost?.('pong_deadline_grace', { interval, deadline });
+          this._probe('pong_grace', deadline);
+          if (this._probeTimer) return;
+        }
         try { console.warn('[WS] sem frame ' + deadline + 'ms após ping — half-open, reconectando'); } catch {}
         this._logGhost?.('pong_deadline', { interval, deadline });
         this._droppedCount++;
