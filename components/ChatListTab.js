@@ -165,6 +165,20 @@ function _rcMergeListLm(oldLm, newLm) {
   if (out) out._rcLiveAt = oldLm._rcLiveAt;
   return out || newLm;
 }
+// [2026-10-14 lista-apagada] A linha da lista recebia a msg nova do WS como
+// { ...last_message_ANTERIOR, id, content, type, … }: tudo que não era sobrescrito
+// vazava da msg velha → se a anterior foi APAGADA p/ todos (chat_list manda
+// deleted:true/deleted_at) a nova nascia "Mensagem apagada"; se era foto, a prévia
+// mostrava a LEGENDA velha; em grupo all_read:true pintava azul. Agora a última msg
+// sai SÓ do evento: estes campos opcionais vêm do próprio evento (ou ficam ausentes).
+const _LM_EVENT_EXTRAS = ['caption', 'file_name', 'file_url', 'file_size', 'duration', 'thumbnail_url', 'is_scheduled', 'scheduled_at', 'is_view_once', 'forwarded_from', 'mentions', 'mentions_everyone', 'meta', 'edited'];
+function _lmExtrasFromEvent(d) {
+  const o = { deleted: false, deleted_at: null, all_read: false, all_delivered: false };
+  if (!d || typeof d !== 'object') return o;
+  for (const k of _LM_EVENT_EXTRAS) if (d[k] != null) o[k] = d[k];
+  if (d.deleted_at || d.deleted === true || d.is_deleted) { o.deleted = true; o.deleted_at = d.deleted_at || new Date().toISOString(); }
+  return o;
+}
 function _rcMergeListRow(old, c) {
   if (!old || !c || !old.last_message || !c.last_message) return c;
   const lm = _rcMergeListLm(old.last_message, c.last_message);
@@ -211,6 +225,14 @@ function _sameLm(a, b, meLc) {
   // Linha otimista (id tmp_…/negativo) x linha do servidor da MESMA msg minha.
   const aTmp = !(Number(a.id) > 0);
   if (aTmp && _lmIsMine(a, meLc) && _lmIsMine(b, meLc)
+      && String(a.content || '') === String(b.content || '')
+      && Math.abs(_tsMs(a.created_at) - _tsMs(b.created_at)) < 120000) return true;
+  // [2026-10-14 lista-apagada] Relay otimista do PEER (id tmp_…, relógio do aparelho
+  // dele, alguns ms à frente) x a mesma msg no chat_list (id real, sem cmi): mesmo
+  // remetente + conteúdo em ≤2 min = mesma msg → o servidor manda (antes "linha local
+  // mais nova" mantinha a otimista para sempre, com o que tivesse de errado).
+  const _sa = String(a.sender_email || a.sender || '').trim().toLowerCase();
+  if (aTmp && Number(b.id) > 0 && _sa && _sa === String(b.sender_email || b.sender || '').trim().toLowerCase()
       && String(a.content || '') === String(b.content || '')
       && Math.abs(_tsMs(a.created_at) - _tsMs(b.created_at)) < 120000) return true;
   return false;
@@ -4991,7 +5013,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
               nextArch[ai] = {
                 ...nextArch[ai],
                 last_message: {
-                  ...(nextArch[ai].last_message || {}),
+                  ..._lmExtrasFromEvent(data), // [2026-10-14 lista-apagada] NUNCA herda campos da msg anterior (deleted/caption/all_read…)
                   // [receipt-sync 2026-06-03] Carry the NEW message's id and
                   // reset the receipt stamps — spreading the old last_message
                   // kept the PREVIOUS message's read_at/delivered_at, so a
@@ -4999,7 +5021,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
                   // the thread correctly showed ✓. Same fix in all 4
                   // last_message constructions below.
                   id: data.id ?? data.message_id ?? null,
-                  client_message_id: data.client_message_id || null, // [2026-10-14 lista-eco-envio] nunca herda o cmi da msg anterior
+                  client_message_id: data.client_message_id || data._client_id || null, // [2026-10-14 lista-eco-envio] nunca herda o cmi da msg anterior; relay otimista do peer traz _client_id
                   read_at: data.read_at || null,
                   delivered_at: data.delivered_at || null,
                   content: data.content || data.message,
@@ -5036,9 +5058,9 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
                 ...unarchivedConv,
                 archived: 0,
                 last_message: {
-                  ...(unarchivedConv.last_message || {}),
+                  ..._lmExtrasFromEvent(data), // [2026-10-14 lista-apagada] NUNCA herda campos da msg anterior (deleted/caption/all_read…)
                   id: data.id ?? data.message_id ?? null,
-                  client_message_id: data.client_message_id || null, // [2026-10-14 lista-eco-envio] nunca herda o cmi da msg anterior
+                  client_message_id: data.client_message_id || data._client_id || null, // [2026-10-14 lista-eco-envio] nunca herda o cmi da msg anterior; relay otimista do peer traz _client_id
                   read_at: data.read_at || null,
                   delivered_at: data.delivered_at || null,
                   content: data.content || data.message,
@@ -5078,7 +5100,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
                 other_email: data.conversation_type === 'group' ? null : (senderLc !== meLc ? data.sender_email : null),
                 last_message: {
                   id: data.id ?? data.message_id ?? null,
-                  client_message_id: data.client_message_id || null, // [2026-10-14 lista-eco-envio] nunca herda o cmi da msg anterior
+                  client_message_id: data.client_message_id || data._client_id || null, // [2026-10-14 lista-eco-envio] nunca herda o cmi da msg anterior; relay otimista do peer traz _client_id
                   read_at: data.read_at || null,
                   delivered_at: data.delivered_at || null,
                   content: data.content || data.message,
@@ -5100,9 +5122,9 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
             const updated = {
               ...prev[idx],
               last_message: {
-                ...(prev[idx].last_message || {}),
+                ..._lmExtrasFromEvent(data), // [2026-10-14 lista-apagada] NUNCA herda campos da msg anterior (deleted/caption/all_read…)
                 id: data.id ?? data.message_id ?? null,
-                client_message_id: data.client_message_id || null, // [2026-10-14 lista-eco-envio] nunca herda o cmi da msg anterior
+                client_message_id: data.client_message_id || data._client_id || null, // [2026-10-14 lista-eco-envio] nunca herda o cmi da msg anterior; relay otimista do peer traz _client_id
                 read_at: data.read_at || null,
                 delivered_at: data.delivered_at || null,
                 content: data.content || data.message,
