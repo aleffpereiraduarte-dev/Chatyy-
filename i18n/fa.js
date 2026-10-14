@@ -8372,4 +8372,6 @@ export default {
   "chatConv.notPlayed": "پخش نشده",
   "chatConv.voiceHeard": "پیام صوتی پخش شد",
   "chatConv.voiceNotHeard": "پیام صوتی پخش نشده",
+  'chatConv.seenAt': 'Seen',
+  'chatConv.seenBy': 'Seen by',
 };

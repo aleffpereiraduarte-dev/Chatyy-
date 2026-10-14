@@ -921,4 +921,6 @@ export default {
   "chatConv.notPlayed": "ਨਹੀਂ ਚਲਾਇਆ",
   "chatConv.voiceHeard": "ਵੌਇਸ ਸੁਨੇਹਾ ਚਲਾਇਆ ਗਿਆ",
   "chatConv.voiceNotHeard": "ਵੌਇਸ ਸੁਨੇਹਾ ਨਹੀਂ ਚਲਾਇਆ",
+  'chatConv.seenAt': 'Seen',
+  'chatConv.seenBy': 'Seen by',
 };

@@ -8368,4 +8368,6 @@ export default {
   "chatConv.notPlayed": "አልተጫወተም",
   "chatConv.voiceHeard": "የድምፅ መልዕክት ተጫውቷል",
   "chatConv.voiceNotHeard": "የድምፅ መልዕክት አልተጫወተም",
+  'chatConv.seenAt': 'Seen',
+  'chatConv.seenBy': 'Seen by',
 };

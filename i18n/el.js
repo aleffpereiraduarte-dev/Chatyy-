@@ -8372,4 +8372,6 @@ export default {
   "chatConv.notPlayed": "Δεν αναπαράχθηκε",
   "chatConv.voiceHeard": "Το φωνητικό μήνυμα αναπαράχθηκε",
   "chatConv.voiceNotHeard": "Το φωνητικό μήνυμα δεν αναπαράχθηκε",
+  'chatConv.seenAt': 'Seen',
+  'chatConv.seenBy': 'Seen by',
 };

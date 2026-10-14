@@ -8372,4 +8372,6 @@ export default {
   "chatConv.notPlayed": "Nepaleista",
   "chatConv.voiceHeard": "Balso žinutė paleista",
   "chatConv.voiceNotHeard": "Balso žinutė nepaleista",
+  'chatConv.seenAt': 'Seen',
+  'chatConv.seenBy': 'Seen by',
 };

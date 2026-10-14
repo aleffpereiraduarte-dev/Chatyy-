@@ -8372,4 +8372,6 @@ export default {
   "chatConv.notPlayed": "No reproduït",
   "chatConv.voiceHeard": "Missatge de veu reproduït",
   "chatConv.voiceNotHeard": "Missatge de veu no reproduït",
+  'chatConv.seenAt': 'Seen',
+  'chatConv.seenBy': 'Seen by',
 };

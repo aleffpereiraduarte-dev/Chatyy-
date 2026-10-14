@@ -8372,4 +8372,6 @@ export default {
   "chatConv.notPlayed": "Не прослухано",
   "chatConv.voiceHeard": "Голосове повідомлення прослухано",
   "chatConv.voiceNotHeard": "Голосове повідомлення не прослухано",
+  'chatConv.seenAt': 'Seen',
+  'chatConv.seenBy': 'Seen by',
 };

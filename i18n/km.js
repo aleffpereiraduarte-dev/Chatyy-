@@ -8368,4 +8368,6 @@ export default {
   "chatConv.notPlayed": "មិនទាន់ចាក់",
   "chatConv.voiceHeard": "សារសំឡេងបានចាក់",
   "chatConv.voiceNotHeard": "សារសំឡេងមិនទាន់ចាក់",
+  'chatConv.seenAt': 'Seen',
+  'chatConv.seenBy': 'Seen by',
 };

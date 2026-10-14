@@ -8368,4 +8368,6 @@ export default {
   "chatConv.notPlayed": "မဖွင့်ရသေး",
   "chatConv.voiceHeard": "အသံမက်ဆေ့ချ် ဖွင့်ပြီး",
   "chatConv.voiceNotHeard": "အသံမက်ဆေ့ချ် မဖွင့်ရသေး",
+  'chatConv.seenAt': 'Seen',
+  'chatConv.seenBy': 'Seen by',
 };

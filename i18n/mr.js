@@ -6523,4 +6523,6 @@ export default {
   "chatConv.notPlayed": "प्ले केले नाही",
   "chatConv.voiceHeard": "व्हॉइस मेसेज प्ले केला",
   "chatConv.voiceNotHeard": "व्हॉइस मेसेज प्ले केला नाही",
+  'chatConv.seenAt': 'Seen',
+  'chatConv.seenBy': 'Seen by',
 };

@@ -8372,4 +8372,6 @@ export default {
   "chatConv.notPlayed": "Haijachezwa",
   "chatConv.voiceHeard": "Ujumbe wa sauti umechezwa",
   "chatConv.voiceNotHeard": "Ujumbe wa sauti haujachezwa",
+  'chatConv.seenAt': 'Seen',
+  'chatConv.seenBy': 'Seen by',
 };

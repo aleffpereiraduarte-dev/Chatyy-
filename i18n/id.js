@@ -11195,4 +11195,6 @@ export default {
   "chatConv.notPlayed": "Belum diputar",
   "chatConv.voiceHeard": "Pesan suara diputar",
   "chatConv.voiceNotHeard": "Pesan suara belum diputar",
+  'chatConv.seenAt': 'Seen',
+  'chatConv.seenBy': 'Seen by',
 };

@@ -8372,4 +8372,6 @@ export default {
   "chatConv.notPlayed": "Chưa phát",
   "chatConv.voiceHeard": "Đã phát tin nhắn thoại",
   "chatConv.voiceNotHeard": "Chưa phát tin nhắn thoại",
+  'chatConv.seenAt': 'Seen',
+  'chatConv.seenBy': 'Seen by',
 };

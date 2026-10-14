@@ -8372,4 +8372,6 @@ export default {
   "chatConv.notPlayed": "Nincs lejátszva",
   "chatConv.voiceHeard": "Hangüzenet lejátszva",
   "chatConv.voiceNotHeard": "Hangüzenet nincs lejátszva",
+  'chatConv.seenAt': 'Seen',
+  'chatConv.seenBy': 'Seen by',
 };

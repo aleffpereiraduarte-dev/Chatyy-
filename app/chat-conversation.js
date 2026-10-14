@@ -5718,6 +5718,9 @@ function buildAttachItems(t, opts = {}) {
   ];
 }
 
+// [2026-10-14] Mensagem de voz: Info diz "Visto" (não "Lido"), igual WhatsApp.
+function _isVoiceMsg(m) { const tp = m && m.type; return tp === 'audio' || tp === 'voice'; }
+
 // [2026-10-14 info-grupo] Lista de recibos do grupo: View quando curta (evita o
 // formSheet do iOS adotar o ScrollView e jogar a lista por cima do cabeçalho).
 function _MsgInfoListWrap({ count, children }) {
@@ -36525,7 +36528,7 @@ function ChatConversationInner() {
                       {_isVoiceInfo && (
                         <Section titleKey="chatConv.playedBy" fallback="Reproduzido por" list={playedList} tsKey="played_at" icon={<IconMic size={14} color="#53BDEB" />} />
                       )}
-                      <Section titleKey="chatConv.readBy" fallback="Lido por" list={readList} tintColor={colors.text} tsKey="read_at" />
+                      <Section titleKey={_isVoiceMsg(messageInfoModal?.message) ? "chatConv.seenBy" : "chatConv.readBy"} fallback={_isVoiceMsg(messageInfoModal?.message) ? "Visto por" : "Lido por"} list={readList} tintColor={colors.text} tsKey="read_at" />
                       <Section titleKey="chatConv.deliveredTo" fallback="Entregue para" list={deliveredList} tintColor={colors.textSecondary} tsKey="delivered_at" />
                       {pendingList.length > 0 && (
                         <Section titleKey="chatConv.pendingTo" fallback="Pendente" list={pendingList} tintColor={null} tsKey={null} />
@@ -36590,7 +36593,7 @@ function ChatConversationInner() {
                     <View style={styles.messageInfoRow}>
                       <DoubleCheck color={colors.text} active={!!r.read_at} />
                       <View style={{ flex: 1 }}>
-                        <Text style={[styles.messageInfoLabel, { color: colors.textSecondary }]}>{t('chatConv.readAt')}</Text>
+                        <Text style={[styles.messageInfoLabel, { color: colors.textSecondary }]}>{_isVoiceMsg(messageInfoModal?.message) ? (t('chatConv.seenAt') !== 'chatConv.seenAt' ? t('chatConv.seenAt') : 'Visto') : t('chatConv.readAt')}</Text>
                         <Text style={[styles.messageInfoTime, { color: colors.text }]}>
                           {r.read_at ? _formatReceiptDate(r.read_at, t) : t('chatConv.notRead')}
                         </Text>

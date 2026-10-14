@@ -8372,4 +8372,6 @@ export default {
   "chatConv.notPlayed": "Nav atskaņots",
   "chatConv.voiceHeard": "Balss ziņa atskaņota",
   "chatConv.voiceNotHeard": "Balss ziņa nav atskaņota",
+  'chatConv.seenAt': 'Seen',
+  'chatConv.seenBy': 'Seen by',
 };

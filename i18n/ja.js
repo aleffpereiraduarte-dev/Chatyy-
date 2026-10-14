@@ -11196,4 +11196,6 @@ export default {
   "chatConv.notPlayed": "未再生",
   "chatConv.voiceHeard": "音声メッセージ再生済み",
   "chatConv.voiceNotHeard": "音声メッセージ未再生",
+  'chatConv.seenAt': 'Seen',
+  'chatConv.seenBy': 'Seen by',
 };

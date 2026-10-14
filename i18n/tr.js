@@ -8372,4 +8372,6 @@ export default {
   "chatConv.notPlayed": "Oynatılmadı",
   "chatConv.voiceHeard": "Sesli mesaj oynatıldı",
   "chatConv.voiceNotHeard": "Sesli mesaj oynatılmadı",
+  'chatConv.seenAt': 'Seen',
+  'chatConv.seenBy': 'Seen by',
 };

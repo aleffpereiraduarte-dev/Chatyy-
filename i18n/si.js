@@ -920,4 +920,6 @@ export default {
   "chatConv.notPlayed": "වාදනය කර නැත",
   "chatConv.voiceHeard": "හඬ පණිවිඩය වාදනය කළා",
   "chatConv.voiceNotHeard": "හඬ පණිවිඩය වාදනය කර නැත",
+  'chatConv.seenAt': 'Seen',
+  'chatConv.seenBy': 'Seen by',
 };

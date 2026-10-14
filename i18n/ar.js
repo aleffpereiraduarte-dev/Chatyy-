@@ -11974,4 +11974,6 @@ export default {
   "chatConv.notPlayed": "لم يتم التشغيل",
   "chatConv.voiceHeard": "تم تشغيل الرسالة الصوتية",
   "chatConv.voiceNotHeard": "لم يتم تشغيل الرسالة الصوتية",
+  'chatConv.seenAt': 'Seen',
+  'chatConv.seenBy': 'Seen by',
 };

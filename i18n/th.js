@@ -8372,4 +8372,6 @@ export default {
   "chatConv.notPlayed": "ยังไม่ได้เล่น",
   "chatConv.voiceHeard": "เล่นข้อความเสียงแล้ว",
   "chatConv.voiceNotHeard": "ยังไม่ได้เล่นข้อความเสียง",
+  'chatConv.seenAt': 'Seen',
+  'chatConv.seenBy': 'Seen by',
 };

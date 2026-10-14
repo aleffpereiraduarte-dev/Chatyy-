@@ -6521,4 +6521,6 @@ export default {
   "chatConv.notPlayed": "વગાડ્યું નથી",
   "chatConv.voiceHeard": "વૉઇસ સંદેશ વગાડ્યો",
   "chatConv.voiceNotHeard": "વૉઇસ સંદેશ વગાડ્યો નથી",
+  'chatConv.seenAt': 'Seen',
+  'chatConv.seenBy': 'Seen by',
 };

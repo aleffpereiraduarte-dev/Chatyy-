@@ -11973,4 +11973,6 @@ export default {
   "chatConv.notPlayed": "नहीं चलाया गया",
   "chatConv.voiceHeard": "वॉइस मैसेज चलाया गया",
   "chatConv.voiceNotHeard": "वॉइस मैसेज नहीं चलाया गया",
+  'chatConv.seenAt': 'Seen',
+  'chatConv.seenBy': 'Seen by',
 };

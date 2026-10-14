@@ -12022,4 +12022,6 @@ export default {
   "chatConv.notPlayed": "Não reproduzido",
   "chatConv.voiceHeard": "Áudio reproduzido",
   "chatConv.voiceNotHeard": "Áudio não reproduzido",
+  'chatConv.seenAt': 'Visto',
+  'chatConv.seenBy': 'Visto por',
 };

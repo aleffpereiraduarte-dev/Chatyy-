@@ -923,4 +923,6 @@ export default {
   "chatConv.notPlayed": "പ്ലേ ചെയ്തിട്ടില്ല",
   "chatConv.voiceHeard": "വോയ്സ് സന്ദേശം പ്ലേ ചെയ്തു",
   "chatConv.voiceNotHeard": "വോയ്സ് സന്ദേശം പ്ലേ ചെയ്തിട്ടില്ല",
+  'chatConv.seenAt': 'Seen',
+  'chatConv.seenBy': 'Seen by',
 };

@@ -9150,4 +9150,6 @@ export default {
   "chatConv.notPlayed": "Ei toistettu",
   "chatConv.voiceHeard": "Ääniviesti toistettu",
   "chatConv.voiceNotHeard": "Ääniviestiä ei toistettu",
+  'chatConv.seenAt': 'Seen',
+  'chatConv.seenBy': 'Seen by',
 };

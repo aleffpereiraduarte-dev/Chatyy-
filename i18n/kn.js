@@ -1721,4 +1721,6 @@ export default {
   "chatConv.notPlayed": "ಪ್ಲೇ ಮಾಡಿಲ್ಲ",
   "chatConv.voiceHeard": "ಧ್ವನಿ ಸಂದೇಶ ಪ್ಲೇ ಮಾಡಲಾಗಿದೆ",
   "chatConv.voiceNotHeard": "ಧ್ವನಿ ಸಂದೇಶ ಪ್ಲೇ ಮಾಡಿಲ್ಲ",
+  'chatConv.seenAt': 'Seen',
+  'chatConv.seenBy': 'Seen by',
 };

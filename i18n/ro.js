@@ -8372,4 +8372,6 @@ export default {
   "chatConv.notPlayed": "Neredat",
   "chatConv.voiceHeard": "Mesaj vocal redat",
   "chatConv.voiceNotHeard": "Mesaj vocal neredat",
+  'chatConv.seenAt': 'Seen',
+  'chatConv.seenBy': 'Seen by',
 };

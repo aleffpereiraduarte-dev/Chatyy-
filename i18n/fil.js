@@ -8372,4 +8372,6 @@ export default {
   "chatConv.notPlayed": "Hindi pa na-play",
   "chatConv.voiceHeard": "Na-play ang voice message",
   "chatConv.voiceNotHeard": "Hindi pa na-play ang voice message",
+  'chatConv.seenAt': 'Seen',
+  'chatConv.seenBy': 'Seen by',
 };

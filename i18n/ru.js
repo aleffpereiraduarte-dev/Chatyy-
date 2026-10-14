@@ -9150,4 +9150,6 @@ export default {
   "chatConv.notPlayed": "Не прослушано",
   "chatConv.voiceHeard": "Голосовое сообщение прослушано",
   "chatConv.voiceNotHeard": "Голосовое сообщение не прослушано",
+  'chatConv.seenAt': 'Seen',
+  'chatConv.seenBy': 'Seen by',
 };

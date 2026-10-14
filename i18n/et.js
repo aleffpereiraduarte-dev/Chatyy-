@@ -8372,4 +8372,6 @@ export default {
   "chatConv.notPlayed": "Esitamata",
   "chatConv.voiceHeard": "Häälsõnum esitatud",
   "chatConv.voiceNotHeard": "Häälsõnum esitamata",
+  'chatConv.seenAt': 'Seen',
+  'chatConv.seenBy': 'Seen by',
 };

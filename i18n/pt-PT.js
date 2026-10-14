@@ -11220,4 +11220,6 @@ export default {
   "chatConv.notPlayed": "Não reproduzido",
   "chatConv.voiceHeard": "Mensagem de voz reproduzida",
   "chatConv.voiceNotHeard": "Mensagem de voz não reproduzida",
+  'chatConv.seenAt': 'Visto',
+  'chatConv.seenBy': 'Visto por',
 };

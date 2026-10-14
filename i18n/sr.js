@@ -8372,4 +8372,6 @@ export default {
   "chatConv.notPlayed": "Nije pušteno",
   "chatConv.voiceHeard": "Glasovna poruka puštena",
   "chatConv.voiceNotHeard": "Glasovna poruka nije puštena",
+  'chatConv.seenAt': 'Seen',
+  'chatConv.seenBy': 'Seen by',
 };

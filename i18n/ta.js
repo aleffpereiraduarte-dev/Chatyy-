@@ -4122,4 +4122,6 @@ export default {
   "chatConv.notPlayed": "இயக்கப்படவில்லை",
   "chatConv.voiceHeard": "குரல் செய்தி இயக்கப்பட்டது",
   "chatConv.voiceNotHeard": "குரல் செய்தி இயக்கப்படவில்லை",
+  'chatConv.seenAt': 'Seen',
+  'chatConv.seenBy': 'Seen by',
 };

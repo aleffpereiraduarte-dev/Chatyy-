@@ -8368,4 +8368,6 @@ export default {
   "chatConv.notPlayed": "Dinlənilməyib",
   "chatConv.voiceHeard": "Səsli mesaj dinlənilib",
   "chatConv.voiceNotHeard": "Səsli mesaj dinlənilməyib",
+  'chatConv.seenAt': 'Seen',
+  'chatConv.seenBy': 'Seen by',
 };

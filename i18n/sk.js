@@ -8372,4 +8372,6 @@ export default {
   "chatConv.notPlayed": "Neprehrané",
   "chatConv.voiceHeard": "Hlasová správa prehraná",
   "chatConv.voiceNotHeard": "Hlasová správa neprehraná",
+  'chatConv.seenAt': 'Seen',
+  'chatConv.seenBy': 'Seen by',
 };

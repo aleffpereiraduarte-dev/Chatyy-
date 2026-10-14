@@ -8410,4 +8410,6 @@ export default {
   "chatConv.notPlayed": "未播放",
   "chatConv.voiceHeard": "语音消息已播放",
   "chatConv.voiceNotHeard": "语音消息未播放",
+  'chatConv.seenAt': 'Seen',
+  'chatConv.seenBy': 'Seen by',
 };

@@ -8372,4 +8372,6 @@ export default {
   "chatConv.notPlayed": "לא הושמע",
   "chatConv.voiceHeard": "ההודעה הקולית הושמעה",
   "chatConv.voiceNotHeard": "ההודעה הקולית לא הושמעה",
+  'chatConv.seenAt': 'Seen',
+  'chatConv.seenBy': 'Seen by',
 };

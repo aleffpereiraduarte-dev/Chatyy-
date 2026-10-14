@@ -933,4 +933,6 @@ export default {
   "chatConv.notPlayed": "نہیں چلایا گیا",
   "chatConv.voiceHeard": "صوتی پیغام چلایا گیا",
   "chatConv.voiceNotHeard": "صوتی پیغام نہیں چلایا گیا",
+  'chatConv.seenAt': 'Seen',
+  'chatConv.seenBy': 'Seen by',
 };

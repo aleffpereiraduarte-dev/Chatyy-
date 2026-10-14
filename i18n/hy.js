@@ -8368,4 +8368,6 @@ export default {
   "chatConv.notPlayed": "Չլսված",
   "chatConv.voiceHeard": "Ձայնային հաղորդագրությունը լսված է",
   "chatConv.voiceNotHeard": "Ձայնային հաղորդագրությունը չի լսվել",
+  'chatConv.seenAt': 'Seen',
+  'chatConv.seenBy': 'Seen by',
 };

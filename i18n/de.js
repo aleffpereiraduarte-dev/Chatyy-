@@ -11974,4 +11974,6 @@ export default {
   "chatConv.notPlayed": "Nicht abgespielt",
   "chatConv.voiceHeard": "Sprachnachricht abgespielt",
   "chatConv.voiceNotHeard": "Sprachnachricht nicht abgespielt",
+  'chatConv.seenAt': 'Seen',
+  'chatConv.seenBy': 'Seen by',
 };
