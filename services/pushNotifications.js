@@ -3144,16 +3144,8 @@ export async function refreshBadgeCount(opts = null) {
       chatUnread = chatResp?.data?.unread_count ?? 0;
     } catch {}
 
-    // Email unread (INBOX only — keep the badge focused on important mail)
-    let emailUnread = 0;
-    try {
-      const emailResp = await apiCall('folder_counts');
-      // folder_counts devolve { counts: { INBOX: n } } — o formato antigo
-      // (data.INBOX.unseen) nunca existiu, então o e-mail não entrava no ícone.
-      emailUnread = Number(emailResp?.data?.counts?.INBOX ?? emailResp?.data?.INBOX?.unseen ?? 0) || 0;
-    } catch {}
-
-    const total = chatUnread + emailUnread;
+    // [2026-10-14] Ícone conta SÓ chat (founder: e-mail não entra no número, igual WhatsApp).
+    const total = chatUnread;
     await setBadgeCount(total);
     return total;
   } catch (err) {
