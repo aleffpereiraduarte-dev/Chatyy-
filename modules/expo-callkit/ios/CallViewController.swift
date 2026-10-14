@@ -4289,18 +4289,22 @@ final class CallViewController: UIViewController, @unchecked Sendable {
     // Capture rungs (16:9, 30 fps) + 3-layer simulcast (H.264 hardware via
     // LK's VideoEncoderFactorySimulcast; dynacast pauses layers nobody watches,
     // so in 1:1 only the layer the peer renders flows):
-    //   hd1080  1920x1080  3.2 Mbps | 960x540 800k @30 | 480x270 200k @15  (default)
+    //   hd1080  1920x1080  2.5 Mbps | 960x540 800k @30 | 480x270 200k @15  (Wi-Fi)
     //   hd720   1280x720   1.7 Mbps | 640x360 450k @30 | 320x180 150k @15
     //   sd540    960x540   0.9 Mbps | 480x270 300k @30 | 240x135 100k @15
     //   "Economizar dados": capture ≤ hd720, top layer 1.0 Mbps (640x360 350k |
     //   320x180 120k) and the receive side asks the SFU for the MEDIUM layer.
-    // Default = Full HD on Wi-Fi AND cellular when the camera has a 1080p30
-    // format (Low Data Mode / weak link start at 720p). No manual resolution
+    // Default = Full HD on Wi-Fi when the camera has a 1080p30 format; 720p30
+    // on cellular / hotspot ("expensive") / Low Data Mode — [2026-10-14
+    // call-quality] same envelope WhatsApp/FaceTime use on a phone screen,
+    // 1080p over cellular only bought loss + heat. No manual resolution
     // choice — adaptation is automatic (WhatsApp model):
     //   - bandwidth: WebRTC BWE + simulcast shed top layers by themselves; the
     //     AdaptiveVideoController below also steps the CAPTURE down one rung
     //     after ~10 s of poor/lost local quality, back up after ~20 s good;
-    //   - CPU: degradation .balanced (encoder sheds some fps AND res);
+    //   - CPU: degradation .maintainFramerate while simulcast is on (motion
+    //     stays fluid; bandwidth is handled by layer dropping, not by the
+    //     encoder), .balanced on the single-encoding fallback;
     //   - thermal: ProcessInfo.thermalState .serious → 720p, .critical → 540p,
     //     recovering when the device cools down.
     // The 2026-05-26 "H.264 + simulcast = dead track" note was really the
@@ -4323,7 +4327,10 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         }
         var maxBitrate: Int {
             switch self {
-            case .hd1080: return 3_200_000
+            // [2026-10-14 call-quality] 3.2 → 2.5 Mbps: 1080p30 H.264 HW is
+            // visually saturated at ~2.5M on a phone screen; the extra 0.7M
+            // only raised loss/queueing on mid Wi-Fi.
+            case .hd1080: return 2_500_000
             case .hd720:  return 1_700_000
             case .sd540:  return 900_000
             }
@@ -4475,6 +4482,11 @@ final class CallViewController: UIViewController, @unchecked Sendable {
             var why = cameraSupports1080 ? "device_1080" : "camera_no_1080"
             if isDataSaver && p.rank > CallVideoProfile.hd720.rank { p = .hd720; why = "data_saver" }
             if CallNetworkSnapshot.shared.isConstrained && p.rank > CallVideoProfile.hd720.rank { p = .hd720; why = "low_data_mode" }
+            // [2026-10-14 call-quality] Full HD only on Wi-Fi/ethernet. The
+            // controller re-reads this every 5 s, so Wi-Fi → 4G drops to 720p
+            // in place (capture restart, no republish) and climbs back on Wi-Fi.
+            let net = CallNetworkSnapshot.shared
+            if (net.isCellular || net.isExpensive) && p.rank > CallVideoProfile.hd720.rank { p = .hd720; why = "cellular" }
             switch ProcessInfo.processInfo.thermalState {
             case .critical:
                 if p.rank > CallVideoProfile.sd540.rank { p = .sd540; why = "thermal_critical" }
@@ -4555,7 +4567,8 @@ final class CallViewController: UIViewController, @unchecked Sendable {
     /// Android (VP9 lacked reliable HW decode). Mirror on Android
     /// (CallVideoQuality.publishDefaults). [2026-10-11 full-hd] simulcast ON
     /// with the explicit 3-layer ladder (see header); `degradationPreference`
-    /// .balanced (camera); screen share keeps its own options below.
+    /// .maintainFramerate (camera, simulcast) / .balanced (single encoding);
+    /// screen share keeps its own options below.
     /// LK Swift 2.0.18 init: (name:encoding:screenShareEncoding:simulcast:
     /// simulcastLayers:screenShareSimulcastLayers:preferredCodec:
     /// preferredBackupCodec:degradationPreference:streamName:).
@@ -4573,7 +4586,13 @@ final class CallViewController: UIViewController, @unchecked Sendable {
             preferredCodec: .h264,
             // [Wave 19 fix] LK iOS 2.0.x has no backupCodec param; the SFU falls
             // back to the negotiated codec list automatically.
-            degradationPreference: .balanced
+            // [2026-10-14 call-quality] Camera keeps FRAME RATE (FaceTime /
+            // Chrome camera default): with simulcast the bandwidth response is
+            // dropping layers, so this only decides what CPU/thermal overuse
+            // sheds — resolution, not motion. Single encoding (simulcast
+            // auto-disabled) stays .balanced: there the QP scaler would
+            // otherwise push a congested face to 180p@30.
+            degradationPreference: simulcast ? .maintainFramerate : .balanced
         )
     }
 

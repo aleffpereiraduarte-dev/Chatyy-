@@ -244,16 +244,41 @@ const _nativeOnlyOutgoingActive = () => {
 // degradation = 'balanced' (maintain-framerate made a congested face
 // 180p-blurry at 30 fps). 1080p "HD" is native-only (needs the native camera
 // pipeline); JS stays at 720p.
+// [2026-10-14 call-quality] WEB (browsers) now publishes VP8 + 3-layer
+// simulcast (180p15 / 360p30 / 720p30) in 1:1 AND group — the most
+// battle-tested livekit-client path in every browser (Chrome/Firefox/Safari),
+// and what lets the SFU hand a weak downlink 360p/180p instead of pausing the
+// video. Every receiver decodes VP8 (iOS/Android native already receive VP8
+// from software-encoded Android and from the iOS screen share). Group no
+// longer caps at 540p/700k: tiles pull 180p/360p through adaptiveStream and
+// dynacast pauses the 720p layer until a tile is spotlighted. With simulcast
+// the camera keeps FRAME RATE ('maintain-framerate': bandwidth is answered by
+// layer dropping, so the 180p@30 blur above can't happen). The RN/native JS
+// fallback Room keeps H.264 single + 'balanced' (unchanged).
+const _VQ_WEB = Platform.OS === 'web';
 export const VIDEO_QUALITY = {
   hd720:    { width: 1280, height: 720, frameRate: 30, maxBitrate: 2_300_000 },
   sd540:    { width: 960,  height: 540, frameRate: 30, maxBitrate: 1_100_000 },
   group540: { width: 960,  height: 540, frameRate: 30, maxBitrate: 700_000 },
   screen:   { width: 1920, height: 1080, frameRate: 15, maxBitrate: 3_000_000 },
-  codec: 'h264',
-  degradation: 'balanced',
+  codec: _VQ_WEB ? 'vp8' : 'h264',
+  simulcast: _VQ_WEB,
+  // Lower simulcast layers under the 720p top (smallest first).
+  simulcastLayers: [
+    { width: 320, height: 180, frameRate: 15, maxBitrate: 150_000 },
+    { width: 640, height: 360, frameRate: 30, maxBitrate: 450_000 },
+  ],
+  degradation: _VQ_WEB ? 'maintain-framerate' : 'balanced',
 };
 const _vqCapture = (p) => ({ width: p.width, height: p.height, frameRate: p.frameRate });
 const _vqEncoding = (p) => ({ maxBitrate: p.maxBitrate, maxFramerate: p.frameRate });
+// VideoPreset-shaped objects (fresh array per call: livekit-client sorts it in place).
+const _vqSimulcastLayers = () => VIDEO_QUALITY.simulcastLayers.map((l) => ({
+  width: l.width, height: l.height, aspectRatio: l.width / l.height,
+  encoding: { maxBitrate: l.maxBitrate, maxFramerate: l.frameRate },
+}));
+// Camera top profile: web → 720p in 1:1 and group (simulcast); native JS → 540p/700k in group.
+const _vqCamProfile = (isGroup) => (isGroup && !VIDEO_QUALITY.simulcast ? VIDEO_QUALITY.group540 : VIDEO_QUALITY.hd720);
 
 // Max participants per group call. Matches WhatsApp 2025 + native iOS
 // `kMaxCallParticipants` + Android `GroupCallActivity.MAX_PARTICIPANTS`.
@@ -2116,8 +2141,9 @@ function CallScreenInner() {
     // Old 48 was conservative carried over from cellular-first Wave B; with
     // simulcast + adaptive the SFU downshifts gracefully so we can afford
     // to start higher and let the loop pull down only when actually needed.
+    // [2026-10-14 call-quality] 64k → 48k (mesmo teto dos nativos; ver classifyQuality).
     const audioOpts = buildAudioRoomOptions({
-      initialBitrate: 64000,
+      initialBitrate: 48000,
       videoCall: !!initialVideoCall,
     });
     const roomOpts = {
@@ -2130,7 +2156,7 @@ function CallScreenInner() {
         // 720p é desperdício. 540p dá qualidade ótima no tamanho real e alivia
         // encode/CPU/bateria. 1:1 (tela cheia) mantém 720p.
         // [video-quality 2026-10-06] numbers come from VIDEO_QUALITY (top of file).
-        resolution: _vqCapture(isGroupCall ? VIDEO_QUALITY.group540 : VIDEO_QUALITY.hd720),
+        resolution: _vqCapture(_vqCamProfile(isGroupCall)),
       },
       publishDefaults: {
         ...audioOpts.publishDefaults,
@@ -2154,13 +2180,15 @@ function CallScreenInner() {
         // No simulcast → single H.264 encoding (benign in 1:1; adaptiveStream +
         // dynacast + maintain-framerate still shed resolution under congestion).
         videoCodec: VIDEO_QUALITY.codec,
-        simulcast: false,
+        // [2026-10-14 call-quality] web: VP8 + 3 layers (see VIDEO_QUALITY).
+        simulcast: VIDEO_QUALITY.simulcast,
+        ...(VIDEO_QUALITY.simulcast ? { videoSimulcastLayers: _vqSimulcastLayers() } : {}),
         // [2026-10-01] GRUPO cap bitrate MUITO menor. Sem simulcast, cada
         // receptor baixa N× o bitrate do publisher; em grupo 540p/700k por tile
         // dá qualidade boa no tamanho real do tile e escala muito melhor.
         // [video-quality 2026-10-06] 1:1 1.8M → 2.3M (720p30 H.264 tem headroom
         // real pra detalhe/movimento; BWE segura em rede fraca).
-        videoEncoding: _vqEncoding(isGroupCall ? VIDEO_QUALITY.group540 : VIDEO_QUALITY.hd720),
+        videoEncoding: _vqEncoding(_vqCamProfile(isGroupCall)),
         // [video-quality 2026-10-06] Screen share published through the Room
         // defaults: 1080p15 ~3 Mbps instead of livekit-client's 2.5M default.
         screenShareEncoding: _vqEncoding(VIDEO_QUALITY.screen),

@@ -1025,21 +1025,24 @@ object NativeCallRoom {
  *
  * Capture rungs (16:9, 30 fps) + simulcast ladder (3 encodings, dynacast pauses
  * the ones nobody subscribes to — in 1:1 only the layer the peer watches flows):
- *   HD1080  1920x1080  3.2 Mbps | 960x540 800k @30 | 480x270 200k @15   (default)
+ *   HD1080  1920x1080  2.5 Mbps | 960x540 800k @30 | 480x270 200k @15   (Wi-Fi)
  *   HD720   1280x720   1.7 Mbps | 640x360 450k @30 | 320x180 150k @15
  *   SD540    960x540   0.9 Mbps | 480x270 300k @30 | 240x135 100k @15
  *   Data saver ("Economizar dados"): capture capped at HD720 with a 1.0 Mbps top
  *   layer (640x360 350k | 320x180 120k) and the RECEIVE side asks the SFU for
  *   the MEDIUM layer (= 540p from a Full HD sender).
  *
- * Default = Full HD whenever the device can (camera has a ≥1920x1080 output AND
- * the libwebrtc hardware encoder for the chosen codec does 1080p30), on Wi-Fi
- * AND on cellular (a weak cellular estimate starts at 720p). No manual
+ * Default = Full HD on Wi-Fi whenever the device can (camera has a ≥1920x1080
+ * output AND the libwebrtc hardware encoder for the chosen codec does 1080p30);
+ * 720p30 on cellular / metered ([2026-10-14 call-quality], WhatsApp/FaceTime
+ * envelope — 1080p over 4G only bought loss + heat). No manual
  * resolution choice exists — adaptation is automatic (WhatsApp model):
  *   - bandwidth: WebRTC BWE + simulcast already sheds top layers on its own;
  *     on top of that a 5 s controller steps the CAPTURE down one rung after
  *     ~10 s of poor/lost local quality and back up after ~20 s of good;
- *   - CPU: degradation BALANCED (encoder sheds a bit of fps AND res);
+ *   - CPU: degradation MAINTAIN_FRAMERATE while simulcast is on (motion stays
+ *     fluid; bandwidth is answered by layer dropping), BALANCED on the
+ *     single-encoding fallback;
  *   - thermal: PowerManager thermal status SEVERE → 720p, CRITICAL → 540p,
  *     recovering when the device cools down.
  *
@@ -1126,7 +1129,9 @@ object CallVideoQuality {
     private const val DIAG_ENDPOINT = "https://chatyy.com.br/api/email.php?action=push_diag"
 
     enum class Profile(val width: Int, val height: Int, val fps: Int, val maxBitrate: Int, val rank: Int) {
-        HD1080(1920, 1080, 30, 3_200_000, 3),
+        // [2026-10-14 call-quality] 3.2 → 2.5 Mbps (1080p30 HW H.264 is
+        // saturated at ~2.5M on a phone screen; mirror of iOS).
+        HD1080(1920, 1080, 30, 2_500_000, 3),
         HD720(1280, 720, 30, 1_700_000, 2),
         SD540(960, 540, 30, 900_000, 1);
 
@@ -1331,6 +1336,9 @@ object CallVideoQuality {
         var p = maxProfile(ctx)
         var why = if (p == Profile.HD1080) "device_1080" else capabilityWhy
         if (isDataSaver(ctx) && p.rank > Profile.HD720.rank) { p = Profile.HD720; why = "data_saver" }
+        // [2026-10-14 call-quality] Full HD only on Wi-Fi/ethernet (unmetered).
+        // The 5 s controller re-reads this → Wi-Fi→4G drops to 720p in place.
+        if (isCellular(ctx) && p.rank > Profile.HD720.rank) { p = Profile.HD720; why = "cellular" }
         val th = thermalStatus(ctx)
         if (th >= 4 && p.rank > Profile.SD540.rank) { p = Profile.SD540; why = "thermal_critical" }
         else if (th >= 3 && p.rank > Profile.HD720.rank) { p = Profile.HD720; why = "thermal_severe" }
@@ -1385,7 +1393,12 @@ object CallVideoQuality {
             videoEncoding = VideoEncoding(top, p.fps),
             simulcast = sim,
             videoCodec = codec,
-            degradationPreference = RtpParameters.DegradationPreference.BALANCED,
+            // [2026-10-14 call-quality] Camera keeps FRAME RATE when simulcast
+            // is on (bandwidth → SFU/encoder drop layers; this only picks what
+            // CPU/thermal overuse sheds). Single encoding stays BALANCED (the QP
+            // scaler would otherwise push a congested face to 180p@30).
+            degradationPreference = if (sim) RtpParameters.DegradationPreference.MAINTAIN_FRAMERATE
+                                    else RtpParameters.DegradationPreference.BALANCED,
             simulcastLayers = if (sim) simulcastLayers(p, saver) else null
         )
     }

@@ -238,20 +238,27 @@ export function classifyQuality({ rtt = 0, loss = 0, jitter = 0 } = {}) {
   // wifi forte. Ceiling agora 96kbps (sweet spot voz HD sem desperdiço).
   // Bitrate em bps. RED ativo em level 2+3 (perdas pequenas) — FEC sozinho
   // não cobre bursts. RED OFF em level 4 (sem perdas, RED só dobra packets).
+  // [2026-10-14 call-quality] Teto 48 kbps (= iOS/Android nativos, 48k fixo).
+  // Voz mono Opus satura em ~32-40k; 64-96k só aumentava pacote/fila sem ganho
+  // audível e competia com o vídeo no uplink. Em perda o Opus precisa de folga
+  // p/ o FEC in-band (ele rouba bits do primário) + o RED duplica o payload.
   let bitrate;
   switch (level) {
-    case 4: bitrate = 96000; break;  // excellent — full Opus HD
-    case 3: bitrate = 64000; break;  // good
-    case 2: bitrate = 48000; break;  // medium
+    case 4: bitrate = 48000; break;  // excellent
+    case 3: bitrate = 48000; break;  // good
+    case 2: bitrate = 40000; break;  // medium
     case 1: bitrate = 32000; break;  // poor
-    default: bitrate = 24000; break; // lost — NB Opus fallback
+    default: bitrate = 24000; break; // lost — WB ainda inteligível
   }
 
   const dtx = true;
   const fec = true;
   // [Wave 16 B4] RED ativo em loss bands 2-3, off em excelente + perdido.
   // Pacote redundante ajuda bursts curtos de loss — onde FEC sozinho falha.
-  const red = level === 2 || level === 3;
+  // [2026-10-14 call-quality] RED sempre ligado (é publicado uma vez no início;
+  // o loop só mexe no maxBitrate). Desligá-lo em 'poor/lost' era o contrário do
+  // que se quer: é exatamente onde a redundância salva sílabas.
+  const red = true;
 
   const label = LEVEL_LABEL[level];
   return { level, label, bitrate, dtx, fec, red };
