@@ -903,6 +903,15 @@ function CallScreenInner() {
   // grid. Render-only: selects which tile spans full-width; never touches
   // publish/subscribe. 1:1 path ignores this entirely.
   const [pinnedPeerKey, setPinnedPeerKey] = useState(null);
+  // [chamadas-grupo 2026-10-14] 1:1 que ganhou mais gente (Adicionar → chat_call_add) passa a
+  // desenhar a GRADE (antes ficava 1 remoto na tela e o 3º só no áudio). Só a
+  // apresentação muda: a lógica da ligação (mic gate, timeouts, call_end) segue a
+  // de 1:1 via isGroupCall. Grudento: não volta para 1:1 se alguém sair.
+  const [promotedGroup, setPromotedGroup] = useState(false);
+  useEffect(() => {
+    if (!promotedGroup && groupPeers.size >= 2) setPromotedGroup(true);
+  }, [groupPeers, promotedGroup]);
+  const gridMode = isGroupCall || promotedGroup;
 
   // [WAVE 68 2026-05-21] Progressive connect-phase state machine.
   // Previously a single 8s timer flipped showSlowConnectOverlay — too
@@ -1116,7 +1125,7 @@ function CallScreenInner() {
   // when it goes away, so a camera-off→on cycle fades back in). Opacity only,
   // native driver — never touches the media path.
   useEffect(() => {
-    const remoteShown = !!(isVideoCall && peerConnected && peerVideoEnabled && remoteVideoTrack);
+    const remoteShown = !!((isVideoCall && peerConnected && peerVideoEnabled && remoteVideoTrack) || (peerConnected && remoteScreenShareTrack)); // [chamadas-grupo 2026-10-14] tela compartilhada
     if (remoteShown) {
       Animated.timing(remoteVideoFadeAnim, {
         toValue: 1, duration: 250, useNativeDriver: true,
@@ -1124,7 +1133,7 @@ function CallScreenInner() {
     } else {
       remoteVideoFadeAnim.setValue(0);
     }
-  }, [isVideoCall, peerConnected, peerVideoEnabled, remoteVideoTrack, remoteVideoFadeAnim]);
+  }, [isVideoCall, peerConnected, peerVideoEnabled, remoteVideoTrack, remoteScreenShareTrack, remoteVideoFadeAnim]);
 
   // ───── Refs ─────
   const roomRef = useRef(null);
@@ -1572,7 +1581,7 @@ function CallScreenInner() {
   // per-participant equivalent for the group grid only.
   const _refreshGroupPeerTracks = useCallback((participant) => {
     if (!participant || !participant.identity) return;
-    const { cam } = _pickVideoTrack(participant);
+    const { cam, screen } = _pickVideoTrack(participant);
     let micMuted = false;
     try {
       const micPub = participant.getTrackPublication
@@ -1585,6 +1594,7 @@ function CallScreenInner() {
       participant,
       name: participant.name || participant.identity,
       videoTrack: cam || null,
+      screenTrack: screen || null, // [chamadas-grupo 2026-10-14] tela compartilhada vira tile próprio
       micMuted,
     });
   }, [_pickVideoTrack, _updateGroupPeer]);
@@ -5522,7 +5532,10 @@ function CallScreenInner() {
   // publish/subscribe is untouched.
   const swapActive = pipSwapped && showRemoteVideo && !!localVideoTrack && videoEnabled;
   // Track + mirror for the FULLSCREEN remote VideoView.
-  const fullVideoTrack = swapActive ? localVideoTrack : remoteVideoTrack;
+  // [chamadas-grupo 2026-10-14] 1:1: tela compartilhada do outro lado tem prioridade na tela cheia
+  // (antes remoteScreenShareTrack era guardado e nunca desenhado no JS/web).
+  const remoteShareFull = !swapActive && !!remoteScreenShareTrack;
+  const fullVideoTrack = swapActive ? localVideoTrack : (remoteScreenShareTrack || remoteVideoTrack);
   const fullVideoMirror = swapActive ? facingFront : false;
   // Track + mirror for the PiP VideoView.
   const pipVideoTrack = swapActive ? remoteVideoTrack : localVideoTrack;
@@ -5571,7 +5584,7 @@ function CallScreenInner() {
           other person should appear to the local user the same way they
           appear to themselves in a real mirror would distort. Only the
           LOCAL preview gets mirror={facingFront} below. */}
-      {!isGroupCall && LK_VideoView && remoteVideoTrack && isVideoCall && peerConnected && peerVideoEnabled && (
+      {!gridMode && LK_VideoView && peerConnected && ((remoteVideoTrack && isVideoCall && peerVideoEnabled) || remoteShareFull) && (
         <Animated.View
           {...(!isGroupCall ? remotePinchResponder.panHandlers : {})}
           style={[StyleSheet.absoluteFill, { opacity: remoteVideoFadeAnim, transform: [{ scale: remoteZoomScale }] }]}
@@ -5579,7 +5592,7 @@ function CallScreenInner() {
           <LK_VideoView
             videoTrack={fullVideoTrack}
             style={StyleSheet.absoluteFill}
-            objectFit="cover"
+            objectFit={remoteShareFull ? 'contain' : 'cover'}
             zOrder={0}
             mirror={fullVideoMirror}
           />
@@ -5603,8 +5616,13 @@ function CallScreenInner() {
           overlay. Content is inset (top/bottom padding) so the existing top bar
           / status strip (zIndex 10/11 inside the overlay) and the control bar
           (zIndex 20, root sibling) stay visible and on top. */}
-      {isGroupCall && LK_VideoView && peerConnected && (() => {
+      {gridMode && LK_VideoView && peerConnected && (() => {
         const tiles = [];
+        // [chamadas-grupo 2026-10-14] tela compartilhada = tile próprio, primeiro e largura total.
+        const shareTiles = [];
+        for (const [ident, p] of groupPeers.entries()) {
+          if (p?.screenTrack) shareTiles.push({ key: ident + '::screen', isScreen: true, name: p?.name || (ident || '').split('@')[0], email: ident, videoTrack: p.screenTrack });
+        }
         // Local participant first (self-view). Video only when the camera is on.
         tiles.push({
           key: '__self__',
@@ -5632,23 +5650,39 @@ function CallScreenInner() {
           });
         }
 
-        // Responsive columns: 2 for ≤4 peers, 3 for more (per spec).
-        const cols = groupPeers.size <= 4 ? 2 : 3;
+        // [chamadas-grupo 2026-10-14] Grade estilo WhatsApp: 2 pessoas = uma em cima da outra (tela
+        // cheia cada metade), 3–4 = 2x2, 5–9 = 3 colunas, 10+ = 3 colunas com
+        // rolagem (antes: 2 colunas até 4, sem rolagem → tiles saíam da tela).
+        // Com tela compartilhada, ela ocupa o topo e as câmeras viram faixa menor.
+        const n = tiles.length;
+        const cols = n <= 2 ? 1 : (n <= 4 ? 2 : 3);
         const gap = 6;
         const topPad = insets.top + 52;
         const botPad = insets.bottom + 150;
         const availW = SCREEN_W - gap * 2;
-        const rows = Math.max(1, Math.ceil(tiles.length / cols));
-        const availH = Math.max(160, SCREEN_H - topPad - botPad);
+        const availH0 = Math.max(160, SCREEN_H - topPad - botPad);
+        const shareH = shareTiles.length ? Math.round(availH0 * (n <= 2 ? 0.6 : 0.5)) : 0;
+        const availH = Math.max(120, availH0 - (shareTiles.length ? (shareH + gap) * shareTiles.length : 0));
+        const rowsFit = n > 9 ? 4 : Math.max(1, Math.ceil(n / cols));
         const tileW = Math.floor((availW - gap * (cols - 1)) / cols);
-        const tileH = Math.max(90, Math.min(Math.round(tileW * 1.35), Math.floor((availH - gap * (rows - 1)) / rows)));
+        const tileH = Math.max(90, Math.min(cols === 1 ? availH : Math.round(tileW * 1.35), Math.floor((availH - gap * (rowsFit - 1)) / rowsFit)));
+        const scroll = n > 9 || (shareTiles.length > 0 && n > 4);
+        const Grid = scroll ? ScrollView : View;
+        const gridProps = scroll
+          ? { contentContainerStyle: [styles.groupGridContent, { flex: 0, paddingTop: topPad, paddingBottom: botPad, paddingHorizontal: gap, gap: gap }], showsVerticalScrollIndicator: false, style: StyleSheet.absoluteFill }
+          : { pointerEvents: 'box-none', style: [styles.groupGridContent, { paddingTop: topPad, paddingBottom: botPad, paddingHorizontal: gap, gap: gap }] };
 
         return (
           <View pointerEvents="box-none" style={[StyleSheet.absoluteFill, { zIndex: 6 }]}>
-            <View
-              pointerEvents="box-none"
-              style={[styles.groupGridContent, { paddingTop: topPad, paddingBottom: botPad, paddingHorizontal: gap, gap: gap }]}
-            >
+            <Grid {...gridProps}>
+              {shareTiles.map((st) => (
+                <View key={st.key} style={[styles.groupTile, { width: availW, height: shareH, backgroundColor: '#000' }]}>
+                  <LK_VideoView videoTrack={st.videoTrack} style={StyleSheet.absoluteFill} objectFit="contain" zOrder={0} mirror={false} />
+                  <View pointerEvents="none" style={styles.groupTileLabelWrap}>
+                    <Text style={styles.groupTileName} numberOfLines={1}>{(t('call.screenOf') || 'Tela de {name}').replace('{name}', st.name)}</Text>
+                  </View>
+                </View>
+              ))}
               {tiles.map((tile) => {
                 const pinned = pinnedPeerKey === tile.key;
                 const w = pinned ? availW : tileW;
@@ -5690,7 +5724,7 @@ function CallScreenInner() {
                   </TouchableOpacity>
                 );
               })}
-            </View>
+            </Grid>
           </View>
         );
       })()}
@@ -6039,7 +6073,7 @@ function CallScreenInner() {
               turns OFF their camera the remote hard-cuts to the avatar with no
               explanation — this small label says why. Suppressed while the peer
               is on hold (the hold overlay covers that case). */}
-          {!isGroupCall && isVideoCall && peerConnected && !peerVideoEnabled && !peerOnHold && !ended && (
+          {!gridMode && isVideoCall && peerConnected && !peerVideoEnabled && !peerOnHold && !ended && (
             <View style={styles.peerMutedBanner} pointerEvents="none">
               <IconVideoOff size={15} color="#fff" />
               <Text style={styles.peerMutedBannerText}>{t('call.peerCameraOff') || 'Câmera desligada'}</Text>
@@ -6049,7 +6083,7 @@ function CallScreenInner() {
           {/* [polish] Video loading placeholder. Peer's camera is ON but the
               remote track hasn't arrived yet (1-3s). Show "starting video"
               instead of a frozen avatar. */}
-          {!isGroupCall && isVideoCall && peerConnected && peerVideoEnabled && !remoteVideoAvailable && !peerOnHold && !ended && (
+          {!gridMode && isVideoCall && peerConnected && peerVideoEnabled && !remoteVideoAvailable && !peerOnHold && !ended && (
             <View style={styles.peerMutedBanner} pointerEvents="none">
               <ActivityIndicator size="small" color="#fff" />
               <Text style={styles.peerMutedBannerText}>{t('call.video.connecting') || 'Iniciando vídeo…'}</Text>
@@ -6060,7 +6094,7 @@ function CallScreenInner() {
               once the tile grid is up (isGroupCall && peerConnected) so it never
               overlaps the grid; still show it while the group call is ringing
               (pre-connect) so the "calling…" UI isn't blank. */}
-          {!showRemoteVideo && !(isGroupCall && peerConnected) && (
+          {!(showRemoteVideo && !gridMode) && !(gridMode && peerConnected) && (
             <View style={[styles.centerArea, { paddingTop: insets.top, paddingBottom: insets.bottom + 180 }]}>
               {/* [2026-10-12 live-polish] anéis + avatar num bloco próprio: os
                   anéis absolutos centravam na área inteira (avatar + nome +
@@ -6257,7 +6291,7 @@ function CallScreenInner() {
               NOT mirrored (see above) so the peer's perspective is preserved.
             • flipCameraFadeAnim — cross-fades to 30% opacity for 150ms during
               switchCamera() to avoid the hard cut when facing flips. */}
-      {LK_VideoView && localVideoTrack && videoEnabled && (!isGroupCall || !peerConnected) && (
+      {LK_VideoView && localVideoTrack && videoEnabled && (!gridMode || !peerConnected) && (
         <Animated.View
           {...pipPanResponder.panHandlers}
           style={[

@@ -11070,4 +11070,5 @@ export default {
   'pushBanner.sub': 'Turn them on to get messages and calls instantly.',
   'pushBanner.ctaSettings': 'Settings',
   'pushBanner.ctaRetry': 'Turn on',
+  'call.screenOf': 'Layar {name}',
 };

@@ -11819,4 +11819,5 @@ export default {
   "chatConv.wallpaperPhotoFailed": "Couldn't use this photo. Check your connection and try again.",
   "chatConv.wallpaperApplied": "Wallpaper applied",
   "chatConv.wallpaperAiSlow": "This can take up to 1 minute",
+  'call.screenOf': '{name}\'s screen',
 };

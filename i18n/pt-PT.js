@@ -11095,4 +11095,5 @@ export default {
   'pushBanner.sub': 'Ative para receber mensagens e chamadas de imediato.',
   'pushBanner.ctaSettings': 'Definições',
   'pushBanner.ctaRetry': 'Ativar',
+  'call.screenOf': 'Ecrã de {name}',
 };
