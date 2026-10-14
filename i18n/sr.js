@@ -1,4 +1,7 @@
 export default {
+  // [2026-10-14 feel] toque duplo p/ reagir
+  "settings.doubleTapReact.title": "Двоструки додир за свиђање",
+  "settings.doubleTapReact.subtitle": "Двапут додирните поруку да реагујете срцем.",
   // [2026-10-14 vis3] auditoria visual
   "search.peopleHint": "Тражите људе по имену или @корисничком имену",
   "chatConv.groupMembersCount": "Чланови: {n}",

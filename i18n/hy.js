@@ -1,4 +1,7 @@
 export default {
+  // [2026-10-14 feel] toque duplo p/ reagir
+  "settings.doubleTapReact.title": "Կրկնակի հպում՝ հավանելու համար",
+  "settings.doubleTapReact.subtitle": "Կրկնակի հպեք հաղորդագրությանը՝ սրտիկով արձագանքելու համար։",
   // [2026-10-14 vis3] auditoria visual
   "search.peopleHint": "Որոնեք մարդկանց անունով կամ @օգտանունով",
   "chatConv.groupMembersCount": "{n} անդամ",

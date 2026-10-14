@@ -1,4 +1,7 @@
 export default {
+  // [2026-10-14 feel] toque duplo p/ reagir
+  "settings.doubleTapReact.title": "Таалагдсан гэхийн тулд хоёр товш",
+  "settings.doubleTapReact.subtitle": "Зүрхээр хариу үйлдэл үзүүлэхийн тулд мессежийг хоёр товшино уу.",
   // [2026-10-14 vis3] auditoria visual
   "search.peopleHint": "Хүмүүсийг нэр эсвэл @хэрэглэгчийн нэрээр хайх",
   "chatConv.groupMembersCount": "{n} гишүүн",

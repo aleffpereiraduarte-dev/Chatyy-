@@ -1,4 +1,7 @@
 export default {
+  // [2026-10-14 feel] toque duplo p/ reagir
+  "settings.doubleTapReact.title": "पसंद करने के लिए दो बार टैप करें",
+  "settings.doubleTapReact.subtitle": "दिल से प्रतिक्रिया देने के लिए किसी संदेश पर दो बार टैप करें।",
   // [2026-10-14 vis3] auditoria visual
   "search.peopleHint": "नाम या @यूज़रनेम से लोगों को खोजें",
   "chatConv.groupMembersCount": "{n} सदस्य",

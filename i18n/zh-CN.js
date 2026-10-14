@@ -1,4 +1,7 @@
 export default {
+  // [2026-10-14 feel] toque duplo p/ reagir
+  "settings.doubleTapReact.title": "双击点赞",
+  "settings.doubleTapReact.subtitle": "双击消息即可用爱心回应。",
   // [2026-10-14 vis3] auditoria visual
   "search.peopleHint": "按姓名或 @用户名 搜索用户",
   "chatConv.groupMembersCount": "{n} 位成员",

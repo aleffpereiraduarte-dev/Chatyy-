@@ -1,4 +1,7 @@
 export default {
+  // [2026-10-14 feel] toque duplo p/ reagir
+  "settings.doubleTapReact.title": "ਪਸੰਦ ਕਰਨ ਲਈ ਦੋ ਵਾਰ ਟੈਪ ਕਰੋ",
+  "settings.doubleTapReact.subtitle": "ਦਿਲ ਨਾਲ ਪ੍ਰਤੀਕਿਰਿਆ ਦੇਣ ਲਈ ਸੁਨੇਹੇ ’ਤੇ ਦੋ ਵਾਰ ਟੈਪ ਕਰੋ।",
   // [2026-10-14 vis3] auditoria visual
   "search.peopleHint": "ਨਾਮ ਜਾਂ @ਯੂਜ਼ਰਨੇਮ ਨਾਲ ਲੋਕ ਲੱਭੋ",
   "chatConv.groupMembersCount": "{n} ਮੈਂਬਰ",

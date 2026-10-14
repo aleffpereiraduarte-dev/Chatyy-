@@ -1,4 +1,7 @@
 export default {
+  // [2026-10-14 feel] toque duplo p/ reagir
+  "settings.doubleTapReact.title": "Beğenmek için çift dokun",
+  "settings.doubleTapReact.subtitle": "Kalple tepki vermek için bir mesaja iki kez dokun.",
   // [2026-10-14 vis3] auditoria visual
   "search.peopleHint": "Kişileri ada veya @kullanıcı adına göre arayın",
   "chatConv.groupMembersCount": "{n} üye",

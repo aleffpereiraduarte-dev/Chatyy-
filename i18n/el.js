@@ -1,4 +1,7 @@
 export default {
+  // [2026-10-14 feel] toque duplo p/ reagir
+  "settings.doubleTapReact.title": "Διπλό πάτημα για «μου αρέσει»",
+  "settings.doubleTapReact.subtitle": "Πατήστε δύο φορές ένα μήνυμα για να αντιδράσετε με καρδιά.",
   // [2026-10-14 vis3] auditoria visual
   "search.peopleHint": "Αναζητήστε άτομα με όνομα ή @όνομα χρήστη",
   "chatConv.groupMembersCount": "{n} μέλη",

@@ -3397,11 +3397,66 @@ function SwipeReplyWrap({ children, onReply, onInfo, disabled, colors, style, on
   const [_armed, _setArmed] = useState(false);
   const _setArmedRef = useRef(_setArmed);
   _setArmedRef.current = _setArmed;
+  // [2026-10-14 feel] Desktop web: arrastar a bolha com o MOUSE p/ responder.
+  // O PanResponder só funcionava com toque — com mouse o navegador começava a
+  // SELECIONAR o texto e o RN-web encerra o responder no selectionchange, então
+  // a bolha nem se mexia. Caminho próprio por pointer events (só pointerType
+  // 'mouse'): só "pega" depois de um arraste claramente horizontal (>10px e
+  // 1.5× o vertical) — antes disso a seleção de texto segue normal; ao pegar,
+  // limpa a seleção, trava user-select durante o arraste e engole o clique
+  // que o mouseup geraria (não abre foto / não conta como toque duplo).
+  const _mouseDragRef = useRef(null);
+  const _onMouseDown = useCallback((e) => {
+    const ne = e && e.nativeEvent;
+    if (!ne || ne.pointerType !== 'mouse' || ne.button !== 0 || propsRef.current.disabled || !propsRef.current.onReply) return;
+    if (typeof window === 'undefined') return;
+    const st = { x: ne.clientX, y: ne.clientY, active: false, dx: 0, hit: false, prevSel: '' };
+    _mouseDragRef.current = null;
+    const finish = (commit) => {
+      window.removeEventListener('pointermove', move, true);
+      window.removeEventListener('pointerup', up, true);
+      window.removeEventListener('pointercancel', cancel, true);
+      if (!st.active) return;
+      try { document.body.style.userSelect = st.prevSel; } catch {}
+      const swallow = (ev) => { ev.stopPropagation(); ev.preventDefault(); };
+      window.addEventListener('click', swallow, true);
+      setTimeout(() => { window.removeEventListener('click', swallow, true); _mouseDragRef.current = null; }, 0);
+      if (commit && st.dx > 30) { try { propsRef.current.onReply?.(); } catch {} }
+      Animated.spring(swipeX, { toValue: 0, useNativeDriver: false, stiffness: 250, damping: 20, mass: 0.7 }).start(({ finished }) => {
+        if (finished) _setArmedRef.current(false);
+      });
+    };
+    const move = (ev) => {
+      const dx = ev.clientX - st.x;
+      const dy = ev.clientY - st.y;
+      if (!st.active) {
+        if (Math.abs(dy) > 12 && Math.abs(dy) > Math.abs(dx)) { finish(false); return; }
+        if (!(dx > 10 && dx > Math.abs(dy) * 1.5)) return;
+        st.active = true;
+        _mouseDragRef.current = st;
+        try { window.getSelection?.()?.removeAllRanges?.(); } catch {}
+        try { st.prevSel = document.body.style.userSelect || ''; document.body.style.userSelect = 'none'; } catch {}
+        swipeX.stopAnimation(); _setArmedRef.current(true);
+      }
+      try { ev.preventDefault(); } catch {}
+      st.dx = dx;
+      const val = Math.min(65, Math.max(0, dx));
+      swipeX.setValue(val);
+      if (val >= 30 && !st.hit) { st.hit = true; try { Haptics.selectionAsync(); } catch {} }
+      if (val < 30) st.hit = false;
+    };
+    const up = () => finish(true);
+    const cancel = () => finish(false);
+    window.addEventListener('pointermove', move, true);
+    window.addEventListener('pointerup', up, true);
+    window.addEventListener('pointercancel', cancel, true);
+  }, [swipeX]);
 
   const panResponder = useRef(
     PanResponder.create({
       onMoveShouldSetPanResponder: (_, g) => {
         if (propsRef.current.disabled) return false;
+        if (_mouseDragRef.current) return false; // [2026-10-14 feel] arraste de mouse tem caminho próprio
         return g.dx > 8 && g.dx > Math.abs(g.dy) * 1.5;
       },
       onMoveShouldSetPanResponderCapture: () => false,
@@ -3444,7 +3499,7 @@ function SwipeReplyWrap({ children, onReply, onInfo, disabled, colors, style, on
     // [2026-10-10 qa-sweep] onContextMenu mora AQUI (View web) — no
     // TouchableOpacity da linha ele era sobrescrito pelos pressEventHandlers do
     // RN-web (spread depois do ...rest) → clique direito nunca abria o menu.
-    <Animated.View {...panResponder.panHandlers} onContextMenu={onContextMenu} style={[{ transform: [{ translateX: swipeX }] }, style]}>
+    <Animated.View {...panResponder.panHandlers} onPointerDown={Platform.OS === 'web' ? _onMouseDown : undefined} onContextMenu={onContextMenu} style={[{ transform: [{ translateX: swipeX }] }, style]}>
       {/* slot fixo (false quando parado) → {children} nunca muda de posição */}
       {_armed && (
       <Animated.View style={{
@@ -10465,6 +10520,10 @@ function ChatConversationInner() {
   const [autocorrectOn, setAutocorrectOn] = _useStateT(() => _lpInit.autocorrect_enabled !== 'false');
   const [bubbleShape, setBubbleShape] = _useStateT(() => ((_lpInit.bubble_shape === 'square' || _lpInit.bubble_shape === 'classic') ? _lpInit.bubble_shape : 'rounded'));
   const [wallpaperDefaultPref, setWallpaperDefaultPref] = _useStateT(() => ((typeof _lpInit.wallpaper_default === 'string' && _lpInit.wallpaper_default.length > 0) ? _lpInit.wallpaper_default : null));
+  // [2026-10-14 feel] double_tap_react — toque duplo na bolha reage com ❤ (padrão ON; Configurações › Conversas).
+  const [doubleTapReact, setDoubleTapReact] = _useStateT(() => _lpInit.double_tap_react !== 'false');
+  const doubleTapReactRef = useRef(doubleTapReact);
+  doubleTapReactRef.current = doubleTapReact;
   const _hydrateLocalPrefs = useCallback(() => {
     const apply = (kv) => {
       try {
@@ -10478,10 +10537,12 @@ function ChatConversationInner() {
         if (typeof kv.wallpaper_default === 'string' && kv.wallpaper_default.length > 0) {
           setWallpaperDefaultPref(kv.wallpaper_default);
         }
+        if (kv.double_tap_react === 'false') setDoubleTapReact(false);
+        else if (kv.double_tap_react === 'true') setDoubleTapReact(true);
         setCachedLocalPrefs(kv); // [2026-10-08 chat-open-flicker] frame-1 seed for the next open
       } catch {}
     };
-    const KEYS = ['enter_sends', 'autocorrect_enabled', 'bubble_shape', 'wallpaper_default'];
+    const KEYS = ['enter_sends', 'autocorrect_enabled', 'bubble_shape', 'wallpaper_default', 'double_tap_react'];
     if (Platform.OS === 'web') {
       try {
         const kv = {};
@@ -15732,6 +15793,26 @@ function ChatConversationInner() {
                 }
                 const next = [...prev];
                 next[existingIdx] = { ...msg, _pending: false, reply_to: preservedReplyTo, sender_email: preservedSenderEmail, _client_id: preservedClientId };
+                // [2026-10-14 caos] Relays chegam fora de ordem quando o remetente reconecta
+                // (fila do WS + retry de 3 s disparam juntos) → a linha real herdava a posição
+                // errada do relay e ficava fora de ordem até reabrir. Reposiciona pelo id.
+                try {
+                  const _n = Number(msg.id);
+                  // só p/ mensagens de OUTROS (as minhas mantêm a ordem em que digitei)
+                  const _mine = String(preservedSenderEmail || '').toLowerCase() === String(currentEmail || '').toLowerCase();
+                  if (!_mine && Number.isFinite(_n) && !_chatOrder().isTimeOrdered(conversationId)) {
+                    const _idn = (r) => { const v = Number(r && r.id); return Number.isFinite(v) ? v : null; };
+                    let _bad = false;
+                    for (let i = existingIdx - 1; i >= 0; i--) { const v = _idn(next[i]); if (v != null) { _bad = v > _n; break; } }
+                    if (!_bad) for (let i = existingIdx + 1; i < next.length; i++) { const v = _idn(next[i]); if (v != null) { _bad = v < _n; break; } }
+                    if (_bad) {
+                      const [row] = next.splice(existingIdx, 1);
+                      let at = next.length;
+                      for (let i = 0; i < next.length; i++) { const v = _idn(next[i]); if (v != null && v > _n) { at = i; break; } }
+                      next.splice(at, 0, row);
+                    }
+                  }
+                } catch {}
                 return next;
               }
             }
@@ -18365,7 +18446,7 @@ function ChatConversationInner() {
       // waiting on their own poll cycle.
       // [SEND-07, 2026-05-19] Carry ciphertext envelope (`contentToSend`),
       // NOT the plaintext content. Peers decrypt locally from the envelope.
-      if (!_convBusyAtSend) mailWs.relayChatMessage(conversationId, {
+      const _relayP = _convBusyAtSend ? null : mailWs.relayChatMessage(conversationId, {
         ...optimisticMsg,
         content: contentToSend,
         _optimistic: true,
@@ -18392,12 +18473,20 @@ function ChatConversationInner() {
       //      `chat_delivered` now buffers its id (deliveredIdBufferRef) and the
       //      HTTP swap re-applies it; read receipts self-heal via readReceipts
       //      state which is re-evaluated against the server id on every render.
-      if (wsOk && !_convBusyAtSend) {
-        setMessages(prev => _mapKeep(prev, m =>
-          (m.id === tempId || m._client_id === msgId)
-            ? { ...m, _pending: false, _queued: false }
-            : m
-        ));
+      // [2026-10-14 caos] ✓ só quando o HUB confirma o relay (message_ack, ~1 RTT). Antes
+      // pintava na hora com "pong recente": com a rede morta SEM evento offline (túnel/
+      // elevador) o socket zumbi ainda parecia saudável por ~6-9 s e 5 textos ficavam ✓
+      // sem ter saído do aparelho (fechar a aba nesse intervalo = mensagem perdida c/ ✓).
+      // Sem ack (zumbi/timeout) ou se o HTTP já devolveu p/ a fila → fica o relógio.
+      if (wsOk && _relayP && typeof _relayP.then === 'function') {
+        _relayP.then((ack) => {
+          if (!ack || ack.failed) return;
+          setMessages(prev => _mapKeep(prev, m =>
+            ((m.id === tempId || m._client_id === msgId) && m._pending && !m._queued && !m._failed)
+              ? { ...m, _pending: false, _queued: false }
+              : m
+          ));
+        }).catch(() => {});
       }
     } catch (e) {
       _reportChatDebug('ws-relay-err', { error: String(e?.message || e) });
@@ -18467,6 +18556,12 @@ function ChatConversationInner() {
 
     // Stop typing indicator immediately when sending
     try { const mailWs = require('../services/websocket').default; mailWs.sendStoppedTyping(conversationId); } catch {}
+    // [2026-10-14 feel] Zera também o throttle LOCAL (3 s) e o auto-stop do
+    // composer: antes, quem enviava e já começava a próxima mensagem ficava até
+    // 3 s sem emitir "digitando…" (o throttle ainda contava o envio anterior) —
+    // o par via o header parado. WhatsApp: digitando reaparece na 1ª tecla.
+    typingLastSentAt.current = 0;
+    if (typingStopTimerRef.current) { clearTimeout(typingStopTimerRef.current); typingStopTimerRef.current = null; }
 
     // Always try to send (don't queue offline - polling will catch up)
     // Token guard: when Promise.race picks the timeout branch, the sendPromise
@@ -20012,12 +20107,16 @@ function ChatConversationInner() {
       // but with throttling. Permanent errors (4xx like 400/413 size, 415 mime)
       // skip the retry. Network/timeout/abort always transient.
       if (msg.includes('timeout') || msg.includes('network') || msg.includes('aborted')) return true;
+      // [2026-10-14 caos] XHR ontimeout = "Upload timed out" e apiCall sem rede = "offline"
+      // caíam como erro DEFINITIVO → balão vermelho + alerta, sem fila (teste de caos, rede caindo).
+      if (msg.includes('timed out') || msg.includes('offline')) return true;
       if (msg.includes('failed to fetch') || msg.includes('chunk_') || msg.includes('init_failed')) return true;
       if (/\b50[023]\b|\b504\b|\b429\b/.test(msg)) return true;
       return false;
     };
     let lastError = null;
     let r = null;
+    let _keepBlobForReplay = false; // [2026-10-14 caos] true = foi p/ a fila offline (não revogar o blob)
     // Auto-retry up to 2 attempts (1 retry) on transient network failures.
     // User on weak/roaming cellular hit "Upload timeout" repeatedly — retrying
     // once silently in the background catches transient drops without forcing
@@ -20025,6 +20124,17 @@ function ChatConversationInner() {
     for (let uploadAttempt = 1; uploadAttempt <= 2; uploadAttempt++) {
     try {
       r = null;
+      // [2026-10-14 caos] ORDEM no web: com a rede caindo, os textos digitados ANTES ficavam
+      // presos no fio de envio (timeouts) e a foto/vídeo (retentada em 1,5 s) era gravada
+      // primeiro → id menor → aparecia ANTES dos textos p/ todos. Espera o fio dos textos
+      // (barreira, teto 20 s) e, se ainda houver envio anterior desta conversa na fila
+      // offline, entra na fila ATRÁS dele (falha "network" → chat_file_upload, replay FIFO).
+      if (Platform.OS === 'web') {
+        try { await Promise.race([enqueueChatSend(() => Promise.resolve()), new Promise(res => setTimeout(res, 20000))]); } catch {}
+        let _behind = false;
+        try { _behind = !!require('../services/offlineCache').hasQueuedSend?.(conversationId, msgId); } catch {}
+        if (_behind) throw new Error('network: queued behind earlier sends');
+      }
 
       // Native image compression — without this, iPhone HEIC photos hit the
       // upload at 3-8MB raw. ImageManipulator transcode to JPEG@2048 brings
@@ -20382,6 +20492,8 @@ function ChatConversationInner() {
             _errMsg.includes('http 0') ||
             _errMsg.includes('network') ||
             _errMsg.includes('timeout') ||
+            _errMsg.includes('timed out') || // [2026-10-14 caos] XHR ontimeout
+            _errMsg.includes('offline') ||   // [2026-10-14 caos] apiCall sem rede (Rust subiu, chat_send não)
             _errMsg.includes('failed to fetch') ||
             _errMsg.includes('aborted') ||
             _errMsg.includes('chunk_') ||
@@ -20402,7 +20514,10 @@ function ChatConversationInner() {
               await queueOfflineAction({
                 type: 'chat_file_upload',
                 conversation_id: conversationId,
-                uri: file?.uri || localUri,
+                // [2026-10-14 caos] Web: o blob: do CHAMADOR (kickoff da foto comprimida) é
+                // revogado assim que esta função volta → replay dava 'blob_lost' (balão vermelho,
+                // some no reload). localUri é desta função e fica vivo (finally não revoga).
+                uri: (Platform.OS === 'web' && file?.blob) ? localUri : (file?.uri || localUri),
                 name: file?.name || '',
                 file_type: file?.type || '',
                 msg_type: fileType,
@@ -20418,6 +20533,7 @@ function ChatConversationInner() {
             // reconnects, NetInfo listener in OfflineNotice triggers
             // replayOfflineQueue which redrives the upload via case
             // 'chat_file_upload' in offlineCache. No alert, no red bubble.
+            _keepBlobForReplay = true;
             setMessages(prev => _mapKeep(prev, m => m.id === tempId ? {
               ...m,
               _failed: false,
@@ -20449,7 +20565,8 @@ function ChatConversationInner() {
       // (causing "ERR_FILE_NOT_FOUND" on the next render tick). 45s is
       // long enough for the server echo to propagate + any cached list
       // screens to refresh. Still releases the Blob so no runaway leak.
-      if (file?.blob && typeof URL !== 'undefined' && URL.revokeObjectURL) {
+      // [2026-10-14 caos] Na fila p/ replay → o blob precisa sobreviver (o replay faz fetch(uri)).
+      if (file?.blob && !_keepBlobForReplay && typeof URL !== 'undefined' && URL.revokeObjectURL) {
         setTimeout(() => {
           try { URL.revokeObjectURL(localUri); } catch {}
           try { webBlobUrlsRef.current?.delete?.(localUri); } catch {}
@@ -22328,6 +22445,15 @@ function ChatConversationInner() {
     // listener after a delete-for-everyone race), this short-circuits
     // before setMediaViewer or handleReact can run.
     if (!msg || msg.deleted_at) return;
+    // [2026-10-14 feel] Toque duplo desligado nas Configurações → toque simples
+    // abre a mídia NA HORA (sem os 310 ms de espera pelo 2º toque).
+    if (!doubleTapReactRef.current) {
+      const _vo = !!(msg.is_view_once || msg.isViewOnce);
+      if (!_vo && (msg.type === 'image' || msg.type === 'video') && !msg._uploading && msg.file_url) {
+        setMediaViewer({ visible: true, fileUrl: msg.file_url, fileName: msg.file_name || msg.type, fileSize: msg.file_size || 0, type: msg.type, messageId: msg.id });
+      }
+      return;
+    }
     const now = Date.now();
     const lastTap = lastTapRef.current[msg.id] || 0;
     // Prune stale entries to keep the map from growing unbounded in long

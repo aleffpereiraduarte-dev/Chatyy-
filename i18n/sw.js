@@ -1,4 +1,7 @@
 export default {
+  // [2026-10-14 feel] toque duplo p/ reagir
+  "settings.doubleTapReact.title": "Gusa mara mbili kupenda",
+  "settings.doubleTapReact.subtitle": "Gusa ujumbe mara mbili ili kujibu kwa moyo.",
   // [2026-10-14 vis3] auditoria visual
   "search.peopleHint": "Tafuta watu kwa jina au @jina la mtumiaji",
   "chatConv.groupMembersCount": "Wanachama {n}",

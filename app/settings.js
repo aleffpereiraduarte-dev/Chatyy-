@@ -446,6 +446,7 @@ function SettingsScreenInner() {
   // `themeMode` from context and the picker calls setThemeModeCtx().
   const [enterSends, setEnterSends] = useState(Platform.OS === 'web');
   const [autocorrectOn, setAutocorrectOn] = useState(true);
+  const [doubleTapReact, setDoubleTapReact] = useState(true); // [2026-10-14 feel] toque duplo = ❤
   const [voiceSpeedDefault, setVoiceSpeedDefault] = useState(1); // 0.5 | 1 | 1.5 | 2
   const [betaFeatures, setBetaFeatures] = useState(false);
   const [languageAuto, setLanguageAuto] = useState(false);
@@ -747,6 +748,7 @@ function SettingsScreenInner() {
       if (kv.enter_sends === 'true') setEnterSends(true);
       else if (kv.enter_sends === 'false') setEnterSends(false);
       if (kv.autocorrect_enabled === 'false') setAutocorrectOn(false);
+      if (kv.double_tap_react === 'false') setDoubleTapReact(false);
       const vs = parseFloat(kv.voice_speed_default);
       if (Number.isFinite(vs) && [0.5, 1, 1.5, 2].includes(vs)) setVoiceSpeedDefault(vs);
       if (kv.beta_features === 'true') setBetaFeatures(true);
@@ -764,7 +766,7 @@ function SettingsScreenInner() {
       'enter_sends', 'autocorrect_enabled', 'voice_speed_default',
       'beta_features', 'language_auto', 'data_saver', 'bubble_shape',
       'notif_led_color', 'media_auto_dl_roaming', 'wallpaper_default',
-      'chatyy_low_data_calls', 'autoSaveMediaToGallery',
+      'chatyy_low_data_calls', 'autoSaveMediaToGallery', 'double_tap_react',
     ];
     if (Platform.OS === 'web') {
       const kv = {};
@@ -2350,6 +2352,7 @@ function SettingsScreenInner() {
           t('settings.autocorrect.title') || 'Auto-correção',
           t('settings.voiceSpeed.title') || 'Velocidade dos áudios',
           t('settings.bubble.title') || 'Estilo dos balões',
+          t('settings.doubleTapReact.title') || 'Toque duplo para curtir',
         ) && (
         <View>
           <SettingsGroup header={t('settings.rd2.typing') || 'Digitação'}>
@@ -2367,6 +2370,12 @@ function SettingsScreenInner() {
             />
           </SettingsGroup>
           <SettingsGroup header={t('settings.rd2.messages') || 'Mensagens'}>
+            <SettingsSwitchRow
+              title={t('settings.doubleTapReact.title') || 'Toque duplo para curtir'}
+              subtitle={t('settings.doubleTapReact.subtitle') || 'Toque duas vezes numa mensagem para reagir com coração.'}
+              value={doubleTapReact}
+              onValueChange={(v) => { setDoubleTapReact(v); setStorage('double_tap_react', String(v)); }}
+            />
             <SettingsPickerRow
               title={t('settings.voiceSpeed.title') || 'Velocidade padrão dos áudios'}
               value={voiceSpeedDefault}

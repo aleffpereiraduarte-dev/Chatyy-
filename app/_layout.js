@@ -111,6 +111,22 @@ try {
     const _phone = (window.innerWidth || 0) > 0 && window.innerWidth < 768;
     if (_tok && (_p === '/chat' || (_p === '/' && _phone))) {
       import('./chat').catch(() => {});
+      // [2026-10-14 perf-web] Além de baixar o chunk, já resolve o React.lazy da
+      // rota (services/webRoutePrewarm): sem isso a 1ª render de /chat suspende
+      // e o React 19 segura a lista ~300 ms (throttle do fallback do Suspense).
+      try { require('../services/webRoutePrewarm').prewarmWebRoutes(_p === '/' ? ['index', 'chat'] : ['chat']); } catch {}
+      // Depois da 1ª pintura da lista: abrir conversa/perfil sem o mesmo pedágio
+      // (chat-conversation ~330 KB gz em idle; perfil ~3 KB; configurações ~35 KB gz).
+      // Rota pré-aquecida = sem fallback do Suspense = sem frame vazio na transição.
+      try { afterFirstPaint(() => { try { require('../services/webRoutePrewarm').prewarmWebRoutes(['chat-conversation', 'u/[username]', 'settings']); } catch {} }, 600); } catch {}
+      // [2026-10-14 piscada-nav] Medido (Playwright, frames do screencast): sem chunk
+      // pronto a rota suspende → 100-400 ms de tela VAZIA (só o fundo) ao abrir Email,
+      // Configurações e Carteira pela barra/Apps (settings já vai no lote acima). 2º lote em idle.
+      try { afterFirstPaint(() => { try { require('../services/webRoutePrewarm').prewarmWebRoutes(['inbox', 'wallet']); } catch {} }, 2500); } catch {}
+    } else if (_tok && !_phone && (_p === '/' || _p === '/inbox')) {
+      // Desktop: app/index.js manda p/ /inbox — mesmo pedágio do Suspense.
+      try { require('../services/webRoutePrewarm').prewarmWebRoutes(_p === '/' ? ['index', 'inbox'] : ['inbox']); } catch {}
+      try { afterFirstPaint(() => { try { require('../services/webRoutePrewarm').prewarmWebRoutes(['chat-conversation', 'settings']); } catch {} }, 1200); } catch {}
     }
   }
 } catch {}
@@ -395,6 +411,7 @@ function initGlobalErrorHandlers() {
 
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { Stack, useRouter, usePathname } from 'expo-router';
+import { ThemeProvider as NavThemeProvider, DarkTheme as NavDarkTheme, DefaultTheme as NavDefaultTheme } from '@react-navigation/native'; // [2026-10-14 nav-nativa]
 import { StatusBar } from 'expo-status-bar';
 import * as SplashScreen from 'expo-splash-screen';
 import { QueryClientProvider } from '@tanstack/react-query';
@@ -1878,7 +1895,13 @@ export default function RootLayout() {
   //    p/ telas que usam insets.top/KeyboardAvoiding (compose, photo-new...).
   //  - pageSheet ('modal') SÓ p/ tela que não empurra card nem usa insets.top
   //    (iOS renderiza card empurrado de dentro de modal ATRÁS dele).
-  const _PUSH = _navAnim(Platform.OS === 'web' ? 'slide_from_right' : 'ios_from_right');
+  // [2026-10-14 nav-nativa] Founder: "transição entre páginas NATIVA". iOS: 'default' =
+  // push do UINavigationController (parallax + sombra + swipe-back) — 'ios_from_right'
+  // já resolvia p/ o mesmo no iOS (RNSScreen.mm), agora explícito. Android: 'default'
+  // = transição do SISTEMA (Material 3 shared-axis no Android 14+, fade/zoom antes)
+  // em vez do clone do iOS. Web: o stack não anima (troca instantânea); o valor só
+  // fica por compat.
+  const _PUSH = _navAnim(Platform.OS === 'web' ? 'slide_from_right' : 'default');
   const _FULL_MODAL = Platform.OS === 'ios' ? { presentation: 'fullScreenModal' } : { presentation: 'modal', animation: _navAnim('slide_from_bottom') };
   // Telas com header NATIVO (settings/contacts/chat-new → components/nativeHeader.js):
   // headerShown já no 1º frame (senão o header "entra" depois do push e o
@@ -1889,6 +1912,31 @@ export default function RootLayout() {
     headerStyle: { backgroundColor: _navIsDark ? '#0b0b0b' : '#ffffff' },
     headerTintColor: _navIsDark ? '#F5F5F7' : '#111b21',
   };
+  // [2026-10-14 piscada-nav] Sub-telas de Ajustes (<SettingsScreen>, components/
+  // settings/SettingsKit.js) trocavam DEPOIS do 1º frame: header opaco → vidro
+  // (headerTransparent+blur muda o layout: conteúdo passa a começar por baixo da
+  // barra) e fundo #fff → agrupado #F2F2F7. Isso acontecia já com o push em
+  // andamento = "piscada" no topo/fundo. Agora a rota já nasce com a MESMA
+  // config que a tela aplica (nativeHeaderOptions blur:true) → nada troca.
+  const _GROUPED_BG = _navIsDark ? '#000000' : '#F2F2F7';
+  const _NATIVE_HDR_GROUPED = Platform.OS === 'web' ? {} : {
+    ..._NATIVE_HDR,
+    contentStyle: { backgroundColor: _GROUPED_BG },
+  };
+  const _NATIVE_HDR_GLASS = Platform.OS !== 'ios' ? _NATIVE_HDR_GROUPED : {
+    ..._NATIVE_HDR_GROUPED,
+    headerTransparent: true,
+    headerBlurEffect: _navIsDark ? 'systemChromeMaterialDark' : 'systemChromeMaterialLight',
+    headerStyle: { backgroundColor: 'transparent' },
+  };
+  // [2026-10-14 nav-nativa] Navegação React Navigation com as cores do APP (antes
+  // DefaultTheme: fundo rgb(242,242,242)/card branco também no escuro → header de
+  // tela sem headerStyle próprio e qualquer área não coberta pelo contentStyle
+  // nasciam claras no modo escuro).
+  const _navTheme = React.useMemo(() => {
+    const base = _navIsDark ? NavDarkTheme : NavDefaultTheme;
+    return { ...base, dark: _navIsDark, colors: { ...base.colors, background: _navBg, card: _navIsDark ? '#0b0b0b' : '#ffffff', text: _navIsDark ? '#F5F5F7' : '#111b21', border: _navIsDark ? '#1f1f1f' : '#e5e5ea' } };
+  }, [_navIsDark, _navBg]);
   // Cache-ready gate: services/mmkv.js hydrates the in-memory cache from
   // AsyncStorage asynchronously at module load. Before that finishes,
   // SmartCache.getCachedMessagesSync / getCachedConversationsSync return
@@ -1999,6 +2047,7 @@ export default function RootLayout() {
                     "Toque para voltar à ligação" bar while a call is minimized
                     (always mounted — never remounts the navigator). */}
                 <CallBarInsetProvider>
+                <NavThemeProvider value={_navTheme}>
                 <Stack screenLayout={callBarScreenLayout} screenOptions={{
                   headerShown: false,
                   animation: _PUSH,
@@ -2017,17 +2066,17 @@ export default function RootLayout() {
                   <Stack.Screen name="change-phone" options={{ headerShown: false, presentation: 'card', animation: _PUSH, ..._NATIVE_HDR /* [2026-10-09 native-headers] */ }} />
                   <Stack.Screen name="linked-phones" options={{ headerShown: false, presentation: 'card', animation: _PUSH, ..._NATIVE_HDR /* [2026-10-09 native-headers] */ }} />
                   <Stack.Screen name="verify-phone-required" options={{ animation: 'fade', animationDuration: 150, gestureEnabled: false }} />
-                  <Stack.Screen name="inbox" options={{ animation: 'fade', animationDuration: 100 }} />
+                  <Stack.Screen name="inbox" options={{ animation: _PUSH, fullScreenGestureEnabled: false /* linhas do e-mail têm swipe (EmailRow) → voltar só pela borda */ }} />{/* [2026-10-14 nav-nativa] era fade 100ms + replace (desmontava /chat → lista re-montava ao voltar = piscada); agora push nativo a partir da aba Email */}
                   <Stack.Screen name="compose" options={{ ..._FULL_MODAL }} />
                   <Stack.Screen name="read" options={{ presentation: 'card', animation: _PUSH }} />
                   <Stack.Screen name="profile" options={{ presentation: 'card', animation: _PUSH }} />
-                  <Stack.Screen name="settings" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR }} />
-                  <Stack.Screen name="bia-settings" options={{ headerShown: false, animation: _PUSH, ..._NATIVE_HDR /* [2026-10-09 native-headers] */ }} />
+                  <Stack.Screen name="settings" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR_GROUPED }} />
+                  <Stack.Screen name="bia-settings" options={{ headerShown: false, animation: _PUSH, ..._NATIVE_HDR_GLASS /* [2026-10-09 native-headers] · [2026-10-14] nasce c/ o vidro do SettingsScreen */ }} />
                   <Stack.Screen name="meet/[id]" options={{ headerShown: false, presentation: 'fullScreenModal', animation: 'fade', animationDuration: 120 }} />
                   <Stack.Screen name="feed/[id]" options={{ headerShown: false, presentation: 'card', animation: _PUSH }} />
                   <Stack.Screen name="search" options={{ headerShown: false, animation: _PUSH }} />
                   <Stack.Screen name="call" options={{ headerShown: false, presentation: 'fullScreenModal', animation: 'fade', animationDuration: 120, gestureEnabled: false, freezeOnBlur: false }} />
-                  <Stack.Screen name="call/[id]" options={{ headerShown: false, presentation: 'card', animation: 'fade', animationDuration: 120 }} />
+                  <Stack.Screen name="call/[id]" options={{ headerShown: false, presentation: 'card', animation: _PUSH }} />{/* [2026-10-14 nav-nativa] era fade 120ms (página de link de chamada, não é o player) */}
                   <Stack.Screen name="voicemail-recorder" options={{ headerShown: false, presentation: 'fullScreenModal', animation: 'fade', animationDuration: 120, gestureEnabled: false }} />
                   <Stack.Screen name="meetings" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR /* [2026-10-08 apps-native] */ }} />
                   <Stack.Screen name="meeting-create" options={{ ..._FULL_MODAL }} />
@@ -2064,9 +2113,14 @@ export default function RootLayout() {
                       family, pgp-keys, ...) empilham normal com swipe-back nativo. */}
                   <Stack.Screen name="activity-log" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR /* [2026-10-09 native-headers] */ }} />
                   <Stack.Screen name="advanced-key" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR /* [2026-10-09 native-headers] */ }} />
-                  <Stack.Screen name="advanced-privacy" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR /* [2026-10-09 native-headers] */ }} />
-                  <Stack.Screen name="privacy-personalization" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR /* [2026-10-13 consent-lgpd] */ }} />
-                  <Stack.Screen name="passkeys" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR /* [2026-10-09 passkeys] */ }} />
+                  <Stack.Screen name="advanced-privacy" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR_GLASS /* [2026-10-09 native-headers] */ }} />
+                  <Stack.Screen name="privacy-personalization" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR_GLASS /* [2026-10-13 consent-lgpd] */ }} />
+                  <Stack.Screen name="passkeys" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR_GLASS /* [2026-10-09 passkeys] */ }} />
+                  {/* [2026-10-14 piscada-nav] Sub-telas de Ajustes que NÃO tinham rota declarada: nasciam sem header
+                      (headerShown:false do default) e o header nativo "caía" depois do push, empurrando o conteúdo. */}
+                  <Stack.Screen name="settings-blocked" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR_GLASS }} />
+                  <Stack.Screen name="settings-export" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR_GLASS }} />
+                  <Stack.Screen name="settings-one" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR_GLASS }} />
                   <Stack.Screen name="profile-qr" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR /* [2026-10-09 native-headers] */ }} />
                   <Stack.Screen name="email-signatures" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR /* [2026-10-09 native-headers] */ }} />
                   <Stack.Screen name="email-outbox" options={{ headerShown: false, presentation: 'card', animation: _PUSH, ..._NATIVE_HDR /* [2026-10-09 native-headers] */ }} />
@@ -2075,7 +2129,7 @@ export default function RootLayout() {
                   <Stack.Screen name="pgp-keys" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR /* [2026-10-09 native-headers] */ }} />
                   <Stack.Screen name="tasks" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR }} />{/* [2026-10-08 settings-redesign] header nativo (título grande) */}
                   <Stack.Screen name="calendar-sync" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR }} />{/* [2026-10-13 calendario] CalDAV/perfil iPhone */}
-                  <Stack.Screen name="notification-preferences" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR /* [2026-10-09 native-headers] */ }} />
+                  <Stack.Screen name="notification-preferences" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR_GLASS /* [2026-10-09 native-headers] */ }} />
                   <Stack.Screen name="spotlight" options={{ presentation: 'card', animation: _navAnim('slide_from_bottom') }} />
                   <Stack.Screen name="bots" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR /* [2026-10-09 native-headers] */ }} />
                   <Stack.Screen name="documentos" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR /* [2026-10-08 apps-native] */ }} />
@@ -2092,7 +2146,7 @@ export default function RootLayout() {
                   <Stack.Screen name="notes" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR /* [2026-10-08 apps-native] */ }} />
                   <Stack.Screen name="notebook-editor" options={{ presentation: 'card', animation: _PUSH, gestureEnabled: false }} />
                   <Stack.Screen name="plans" options={{ presentation: 'card', animation: _PUSH }} />
-                  <Stack.Screen name="wallet" options={{ presentation: 'card', animation: _PUSH }} />
+                  <Stack.Screen name="wallet" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR }} />{/* [2026-10-14 piscada-nav] header nativo desde o 1º frame (antes caía depois do push) */}
                   <Stack.Screen name="diamond-shop" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR /* [2026-10-09 native-headers] */ }} />
                   <Stack.Screen name="storage" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR /* [2026-10-09 native-headers] */ }} />
                   <Stack.Screen name="wallet-cashout" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR /* [2026-10-09 native-headers] */ }} />
@@ -2106,8 +2160,8 @@ export default function RootLayout() {
                   <Stack.Screen name="group-call" options={{ presentation: 'fullScreenModal', animation: 'fade', animationDuration: 120, headerShown: false }} />
                   <Stack.Screen name="one-memory" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR /* [2026-10-09 native-headers] */ }} />
                   <Stack.Screen name="share-receive" options={{ ..._FULL_MODAL }} />
-                  <Stack.Screen name="parental" options={{ presentation: 'card', animation: _PUSH }} />
-                  <Stack.Screen name="parental-monitor" options={{ presentation: 'card', animation: _PUSH }} />
+                  <Stack.Screen name="parental" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR_GROUPED }} />
+                  <Stack.Screen name="parental-monitor" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR_GROUPED }} />
                   <Stack.Screen name="parental-child-chat" options={{ presentation: 'card', animation: _PUSH }} />
                   <Stack.Screen name="family" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR /* [2026-10-09 native-headers] */ }} />
                   <Stack.Screen name="kids-learn" options={{ presentation: 'card', animation: _PUSH }} />
@@ -2148,6 +2202,7 @@ export default function RootLayout() {
                   {/* [2026-10-09 native-sheets] Sheet do SISTEMA (detents/grabber/arrastar) p/ <NativeSheet> — components/NativeSheet.js. Web nunca empurra esta rota. */}
                   <Stack.Screen name="native-sheet" options={Platform.OS === 'web' ? { headerShown: false } : nativeSheetScreenOptions} />
                 </Stack>
+                </NavThemeProvider>
                 </CallBarInsetProvider>
                 </ChildRestrictionGuard>
                 <Suspense fallback={null}>

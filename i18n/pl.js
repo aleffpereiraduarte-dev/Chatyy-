@@ -1,4 +1,7 @@
 export default {
+  // [2026-10-14 feel] toque duplo p/ reagir
+  "settings.doubleTapReact.title": "Stuknij dwukrotnie, aby polubić",
+  "settings.doubleTapReact.subtitle": "Stuknij dwukrotnie wiadomość, aby zareagować serduszkiem.",
   // [2026-10-14 vis3] auditoria visual
   "search.peopleHint": "Szukaj osób po imieniu lub @nazwie użytkownika",
   "chatConv.groupMembersCount": "Członkowie: {n}",

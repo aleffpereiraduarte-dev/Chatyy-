@@ -1,4 +1,7 @@
 export default {
+  // [2026-10-14 feel] toque duplo p/ reagir
+  "settings.doubleTapReact.title": "ఇష్టపడటానికి రెండుసార్లు నొక్కండి",
+  "settings.doubleTapReact.subtitle": "హృదయంతో స్పందించడానికి సందేశంపై రెండుసార్లు నొక్కండి.",
   // [2026-10-14 vis3] auditoria visual
   "search.peopleHint": "పేరు లేదా @యూజర్‌నేమ్‌తో వ్యక్తులను వెతకండి",
   "chatConv.groupMembersCount": "{n} సభ్యులు",

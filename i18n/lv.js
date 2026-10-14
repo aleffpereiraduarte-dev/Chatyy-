@@ -1,4 +1,7 @@
 export default {
+  // [2026-10-14 feel] toque duplo p/ reagir
+  "settings.doubleTapReact.title": "Dubultskāriens, lai atzīmētu Patīk",
+  "settings.doubleTapReact.subtitle": "Divreiz pieskarieties ziņai, lai reaģētu ar sirsniņu.",
   // [2026-10-14 vis3] auditoria visual
   "search.peopleHint": "Meklējiet cilvēkus pēc vārda vai @lietotājvārda",
   "chatConv.groupMembersCount": "Dalībnieki: {n}",

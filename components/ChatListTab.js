@@ -1348,7 +1348,7 @@ const ConversationRow = React.memo(function ConversationRow({
             <Text style={s.nativeSwipeLabel} numberOfLines={1} adjustsFontSizeToFit>{unreadSwipeLabel}</Text>
           </Animated.View>
         </TouchableOpacity>
-        <TouchableOpacity style={[s.nativeSwipeBtn, { backgroundColor: SWIPE_C.mute }]} onPress={() => { swipeRef.current?.close(); propsRef.current.onMute?.(conversation); }}>
+        <TouchableOpacity style={[s.nativeSwipeBtn, { backgroundColor: SWIPE_C.mute }]} onPress={() => { try { haptic.select(); } catch {} swipeRef.current?.close(); propsRef.current.onMute?.(conversation); }}>
           <Animated.View style={{ transform: [{ scale }], alignItems: 'center' }}>
             <MuteIc size={20} color="#fff" />
             <Text style={s.nativeSwipeLabel} numberOfLines={1} adjustsFontSizeToFit>{isMuted ? (t('chat.unmute') || 'Reativar') : (t('chat.mute') || 'Silenciar')}</Text>
@@ -4846,6 +4846,16 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
         // the same id). Only dedup when an id is present — presence/typing and
         // other id-less events must always pass through.
         const _recvId = data && (data.id ?? data.message_id);
+        // [2026-10-14 caos] O relay otimista do remetente (id tmp_…, _client_id) e a linha
+        // do servidor (id numérico, client_message_id) são a MESMA mensagem: só o id não
+        // casa → o 2º aparelho contava +2 por mensagem (badge 4 com 2 não lidas). Casa
+        // também pelo client id.
+        const _recvCmi = data && (data.client_message_id || data._client_id);
+        if (_recvCmi) {
+          const _ck = 'c:' + String(_recvCmi);
+          if (_listRecvIds.has(_ck)) { if (_recvId != null) _listRecvIds.add(String(_recvId)); return; }
+          _listRecvIds.add(_ck);
+        }
         if (_recvId != null) {
           const _rk = String(_recvId);
           if (_listRecvIds.has(_rk)) return;
@@ -5947,6 +5957,10 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
       }
     }
 
+    // [2026-10-14 feel] A linha SOBE/DESCE deslizando até o lugar novo (como o
+    // arquivar), em vez de teleportar pro topo; + toque leve de confirmação.
+    try { LayoutAnimation.configureNext(LayoutAnimation.create(260, LayoutAnimation.Types.easeInEaseOut, LayoutAnimation.Properties.opacity)); } catch {}
+    try { haptic.select(); } catch {}
     // Optimistic toggle (plus displacement) so swipe feels instant.
     setConversations(prev => prev.map(c => {
       if (c.id === conv.id) return { ...c, pinned: willPin };

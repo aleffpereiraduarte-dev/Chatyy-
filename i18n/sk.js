@@ -1,4 +1,7 @@
 export default {
+  // [2026-10-14 feel] toque duplo p/ reagir
+  "settings.doubleTapReact.title": "Dvojité ťuknutie na páči sa mi",
+  "settings.doubleTapReact.subtitle": "Dvakrát ťuknite na správu a zareagujte srdiečkom.",
   // [2026-10-14 vis3] auditoria visual
   "search.peopleHint": "Hľadajte ľudí podľa mena alebo @používateľského mena",
   "chatConv.groupMembersCount": "Členovia: {n}",

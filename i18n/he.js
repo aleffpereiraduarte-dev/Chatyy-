@@ -1,4 +1,7 @@
 export default {
+  // [2026-10-14 feel] toque duplo p/ reagir
+  "settings.doubleTapReact.title": "הקשה כפולה לסימון לייק",
+  "settings.doubleTapReact.subtitle": "הקישו פעמיים על הודעה כדי להגיב בלב.",
   // [2026-10-14 vis3] auditoria visual
   "search.peopleHint": "חפשו אנשים לפי שם או @שם משתמש",
   "chatConv.groupMembersCount": "{n} חברים",

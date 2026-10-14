@@ -1,4 +1,7 @@
 export default {
+  // [2026-10-14 feel] toque duplo p/ reagir
+  "settings.doubleTapReact.title": "Dupla koppintás a kedveléshez",
+  "settings.doubleTapReact.subtitle": "Koppints duplán egy üzenetre, hogy szívvel reagálj.",
   // [2026-10-14 vis3] auditoria visual
   "search.peopleHint": "Keress embereket név vagy @felhasználónév alapján",
   "chatConv.groupMembersCount": "{n} tag",

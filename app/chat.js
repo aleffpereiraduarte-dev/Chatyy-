@@ -39,6 +39,14 @@ const KidsLearnTab = React.lazy(() => import('../components/KidsLearnTab'));
 const KidsTVTab = React.lazy(() => import('../components/KidsTVTab'));
 // [reels-v1 2026-10-13] Aba Reels (tela cheia, ranking do servidor) — lazy: só monta ao abrir.
 const ReelsHomeTab = React.lazy(() => import('../components/ReelsHomeTab'));
+// [2026-10-14 perf] 1º toque em Ligações/Reels: o lazy suspendia → skeleton e o
+// React 19 segura a revelação ≥300 ms. Resolve os 2 lazies em idle após a 1ª
+// pintura da lista (Ligações ~25 KB gz na web; Reels ~1 KB) → troca de aba sem espera.
+try {
+  require('../services/bootTrace').afterFirstPaint(() => {
+    try { require('../services/webRoutePrewarm').prewarmLazyComponents([ChatCallsTab, ReelsHomeTab]); } catch {}
+  }, 2500);
+} catch {}
 // [2026-10-13 sync-status] SyncBar (faixa no topo) saiu da home: o status de
 // sincronização agora troca o TÍTULO ("Conversas" → "Conectando…"), padrão
 // WhatsApp, via services/syncStatus.js (fonte única). SyncBar segue na conversa.
@@ -339,6 +347,24 @@ function ChatHub() {
     if (_wantsStatusComposer) s.add('status');
     return s;
   });
+  // [2026-10-14 perf] Aba lazy montada → quando o chunk resolver, 1 re-render normal
+  // da home. Sem isso o <Suspense> da aba podia ficar preso no fallback (web, após
+  // reload: Ligações em skeleton >15 s) e, no melhor caso, pagava o throttle de
+  // 300 ms do React 19. Inócuo quando o lazy já está pronto (não re-renderiza).
+  const [, _setLazyTick] = useState(0);
+  useEffect(() => {
+    let alive = true;
+    const LAZY = { calls: ChatCallsTab, feed: ChatFeedTab, status: ChatStatusTab, channels: ChannelsTab, communities: CommunitiesTab, learn: KidsLearnTab, tv: KidsTVTab, reels: ReelsHomeTab };
+    try {
+      const { whenLazyReady } = require('../services/webRoutePrewarm');
+      mountedTabs.forEach((k) => {
+        const l = LAZY[k];
+        if (!l || (l._payload && l._payload._status === 1)) return;
+        whenLazyReady(l).then((ok) => { if (ok && alive) _setLazyTick((n) => n + 1); }, () => {});
+      });
+    } catch {}
+    return () => { alive = false; };
+  }, [mountedTabs]);
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const searchAnim = useRef(new Animated.Value(0)).current;
@@ -707,7 +733,11 @@ function ChatHub() {
     // "One" is the AI assistant screen — full navigation, not an inline tab.
     if (tab === 'one') { try { router.push('/one'); } catch (e) { console.warn("[chat] router.push failed:", e); } return; }
     // "Email" jumps to the inbox screen (same pattern as One).
-    if (tab === 'email') { try { router.replace('/inbox'); } catch (e) { console.warn("[chat] router.replace failed:", e); } return; }
+    // [2026-10-14 piscada-nav] push (não replace): o replace DESMONTAVA a /chat → voltar do
+    // e-mail remontava a lista inteira (skeleton/avatares recarregando = piscada) e a
+    // transição era um fade de 100 ms. Push = slide nativo + swipe-back; o "Conversas"
+    // do inbox (goToChats) já faz router.back() quando há pilha.
+    if (tab === 'email') { try { router.push('/inbox'); } catch (e) { console.warn("[chat] router.push failed:", e); } return; }
     // "Reels" bottom-nav button opens the feed screen on the Posts tab by
     // default (Reels is the second sub-tab inside the feed). Reverts #896
     // which forced reels mode — user feedback 2026-05-21: clicking Reels

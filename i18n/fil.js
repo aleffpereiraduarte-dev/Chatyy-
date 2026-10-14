@@ -1,4 +1,7 @@
 export default {
+  // [2026-10-14 feel] toque duplo p/ reagir
+  "settings.doubleTapReact.title": "I-double tap para i-like",
+  "settings.doubleTapReact.subtitle": "I-tap nang dalawang beses ang mensahe para mag-react ng puso.",
   // [2026-10-14 vis3] auditoria visual
   "search.peopleHint": "Maghanap ng tao ayon sa pangalan o @username",
   "chatConv.groupMembersCount": "{n} miyembro",

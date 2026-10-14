@@ -956,6 +956,11 @@ export async function replayOfflineQueue(api) {
           }
           if (r?.success && r.data) {
             const serverMsg = r.data.message || r.data;
+            // [2026-10-14 caos] o envio ao vivo deixou o blob: vivo p/ este replay — libera agora
+            // (com atraso: a bolha otimista ainda pode estar pintando a partir dele).
+            if (Platform.OS === 'web' && /^blob:/.test(String(action.uri || ''))) {
+              setTimeout(() => { try { URL.revokeObjectURL(action.uri); } catch {} }, 45000);
+            }
             try {
               const { removePendingMessage, cacheSingleMessage } = require('./chatCache');
               await removePendingMessage(action.conversation_id, action.temp_id).catch(() => {});

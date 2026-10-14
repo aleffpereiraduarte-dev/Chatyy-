@@ -1,4 +1,7 @@
 export default {
+  // [2026-10-14 feel] toque duplo p/ reagir
+  "settings.doubleTapReact.title": "Double appui pour aimer",
+  "settings.doubleTapReact.subtitle": "Appuyez deux fois sur un message pour réagir avec un cœur.",
   // [2026-10-14 vis3] auditoria visual
   "search.peopleHint": "Recherchez des personnes par nom ou @nom d'utilisateur",
   "chatConv.groupMembersCount": "{n} membres",

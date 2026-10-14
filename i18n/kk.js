@@ -1,4 +1,7 @@
 export default {
+  // [2026-10-14 feel] toque duplo p/ reagir
+  "settings.doubleTapReact.title": "Ұнату үшін екі рет түртіңіз",
+  "settings.doubleTapReact.subtitle": "Жүрекшемен жауап беру үшін хабарды екі рет түртіңіз.",
   // [2026-10-14 vis3] auditoria visual
   "search.peopleHint": "Адамдарды аты немесе @пайдаланушы аты бойынша іздеңіз",
   "chatConv.groupMembersCount": "{n} қатысушы",

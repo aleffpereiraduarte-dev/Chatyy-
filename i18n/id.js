@@ -1,4 +1,7 @@
 export default {
+  // [2026-10-14 feel] toque duplo p/ reagir
+  "settings.doubleTapReact.title": "Ketuk dua kali untuk menyukai",
+  "settings.doubleTapReact.subtitle": "Ketuk dua kali pesan untuk bereaksi dengan hati.",
   // [2026-10-14 vis3] auditoria visual
   "search.peopleHint": "Cari orang berdasarkan nama atau @nama pengguna",
   "chatConv.groupMembersCount": "{n} anggota",

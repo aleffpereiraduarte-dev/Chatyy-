@@ -1,4 +1,7 @@
 export default {
+  // [2026-10-14 feel] toque duplo p/ reagir
+  "settings.doubleTapReact.title": "Dubbeltryck för att gilla",
+  "settings.doubleTapReact.subtitle": "Tryck två gånger på ett meddelande för att reagera med ett hjärta.",
   // [2026-10-14 vis3] auditoria visual
   "search.peopleHint": "Sök personer efter namn eller @användarnamn",
   "chatConv.groupMembersCount": "{n} medlemmar",

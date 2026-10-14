@@ -1,4 +1,7 @@
 export default {
+  // [2026-10-14 feel] toque duplo p/ reagir
+  "settings.doubleTapReact.title": "Chạm hai lần để thích",
+  "settings.doubleTapReact.subtitle": "Chạm hai lần vào tin nhắn để bày tỏ cảm xúc bằng trái tim.",
   // [2026-10-14 vis3] auditoria visual
   "search.peopleHint": "Tìm người theo tên hoặc @tên người dùng",
   "chatConv.groupMembersCount": "{n} thành viên",

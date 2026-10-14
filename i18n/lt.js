@@ -1,4 +1,7 @@
 export default {
+  // [2026-10-14 feel] toque duplo p/ reagir
+  "settings.doubleTapReact.title": "Dukart bakstelėkite, kad patiktų",
+  "settings.doubleTapReact.subtitle": "Dukart bakstelėkite žinutę, kad sureaguotumėte širdele.",
   // [2026-10-14 vis3] auditoria visual
   "search.peopleHint": "Ieškokite žmonių pagal vardą arba @naudotojo vardą",
   "chatConv.groupMembersCount": "Nariai: {n}",

@@ -1,4 +1,7 @@
 export default {
+  // [2026-10-14 feel] toque duplo p/ reagir
+  "settings.doubleTapReact.title": "Doble toque para dar me gusta",
+  "settings.doubleTapReact.subtitle": "Toca dos veces un mensaje para reaccionar con un corazón.",
   // [2026-10-14 vis3] auditoria visual
   "search.peopleHint": "Busca personas por nombre o @usuario",
   "chatConv.groupMembersCount": "{n} miembros",

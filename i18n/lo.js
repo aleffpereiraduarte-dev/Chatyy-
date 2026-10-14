@@ -1,4 +1,7 @@
 export default {
+  // [2026-10-14 feel] toque duplo p/ reagir
+  "settings.doubleTapReact.title": "ແຕະສອງເທື່ອເພື່ອມັກ",
+  "settings.doubleTapReact.subtitle": "ແຕະຂໍ້ຄວາມສອງເທື່ອເພື່ອສະແດງຄວາມຮູ້ສຶກດ້ວຍຫົວໃຈ.",
   // [2026-10-14 vis3] auditoria visual
   "search.peopleHint": "ຊອກຫາຄົນດ້ວຍຊື່ ຫຼື @ຊື່ຜູ້ໃຊ້",
   "chatConv.groupMembersCount": "ສະມາຊິກ {n} ຄົນ",

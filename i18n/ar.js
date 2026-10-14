@@ -1,4 +1,7 @@
 export default {
+  // [2026-10-14 feel] toque duplo p/ reagir
+  "settings.doubleTapReact.title": "انقر مرتين للإعجاب",
+  "settings.doubleTapReact.subtitle": "انقر مرتين على رسالة للتفاعل بقلب.",
   // [2026-10-14 vis3] auditoria visual
   "search.peopleHint": "ابحث عن الأشخاص بالاسم أو @اسم المستخدم",
   "chatConv.groupMembersCount": "الأعضاء: {n}",

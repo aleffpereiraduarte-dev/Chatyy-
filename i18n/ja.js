@@ -1,4 +1,7 @@
 export default {
+  // [2026-10-14 feel] toque duplo p/ reagir
+  "settings.doubleTapReact.title": "ダブルタップで「いいね」",
+  "settings.doubleTapReact.subtitle": "メッセージをダブルタップするとハートでリアクションできます。",
   // [2026-10-14 vis3] auditoria visual
   "search.peopleHint": "名前または@ユーザー名で人を検索",
   "chatConv.groupMembersCount": "メンバー{n}人",

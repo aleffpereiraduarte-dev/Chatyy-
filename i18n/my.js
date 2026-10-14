@@ -1,4 +1,7 @@
 export default {
+  // [2026-10-14 feel] toque duplo p/ reagir
+  "settings.doubleTapReact.title": "ကြိုက်ရန် နှစ်ချက်တို့ပါ",
+  "settings.doubleTapReact.subtitle": "နှလုံးသားဖြင့် တုံ့ပြန်ရန် မက်ဆေ့ချ်ကို နှစ်ချက်တို့ပါ။",
   // [2026-10-14 vis3] auditoria visual
   "search.peopleHint": "အမည် သို့မဟုတ် @အသုံးပြုသူအမည်ဖြင့် လူများကို ရှာပါ",
   "chatConv.groupMembersCount": "အဖွဲ့ဝင် {n} ဦး",

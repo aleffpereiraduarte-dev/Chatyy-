@@ -1,4 +1,7 @@
 export default {
+  // [2026-10-14 feel] toque duplo p/ reagir
+  "settings.doubleTapReact.title": "ორჯერ შეხება მოწონებისთვის",
+  "settings.doubleTapReact.subtitle": "შეეხეთ შეტყობინებას ორჯერ, რომ გულით მოახდინოთ რეაქცია.",
   // [2026-10-14 vis3] auditoria visual
   "search.peopleHint": "მოძებნეთ ადამიანები სახელით ან @მომხმარებლის სახელით",
   "chatConv.groupMembersCount": "{n} წევრი",

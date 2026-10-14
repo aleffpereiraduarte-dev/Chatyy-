@@ -1,4 +1,7 @@
 export default {
+  // [2026-10-14 feel] toque duplo p/ reagir
+  "settings.doubleTapReact.title": "Topeltpuudutus meeldimiseks",
+  "settings.doubleTapReact.subtitle": "Puuduta sõnumit kaks korda, et reageerida südamega.",
   // [2026-10-14 vis3] auditoria visual
   "search.peopleHint": "Otsi inimesi nime või @kasutajanime järgi",
   "chatConv.groupMembersCount": "{n} liiget",

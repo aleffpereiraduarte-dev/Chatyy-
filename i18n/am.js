@@ -1,4 +1,7 @@
 export default {
+  // [2026-10-14 feel] toque duplo p/ reagir
+  "settings.doubleTapReact.title": "ለመውደድ ሁለቴ መታ ያድርጉ",
+  "settings.doubleTapReact.subtitle": "በልብ ምላሽ ለመስጠት መልዕክትን ሁለቴ መታ ያድርጉ።",
   // [2026-10-14 vis3] auditoria visual
   "search.peopleHint": "ሰዎችን በስም ወይም በ@የተጠቃሚ ስም ይፈልጉ",
   "chatConv.groupMembersCount": "{n} አባላት",

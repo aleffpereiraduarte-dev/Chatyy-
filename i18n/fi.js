@@ -1,4 +1,7 @@
 export default {
+  // [2026-10-14 feel] toque duplo p/ reagir
+  "settings.doubleTapReact.title": "Kaksoisnapauta tykätäksesi",
+  "settings.doubleTapReact.subtitle": "Napauta viestiä kahdesti reagoidaksesi sydämellä.",
   // [2026-10-14 vis3] auditoria visual
   "search.peopleHint": "Hae ihmisiä nimellä tai @käyttäjänimellä",
   "chatConv.groupMembersCount": "{n} jäsentä",

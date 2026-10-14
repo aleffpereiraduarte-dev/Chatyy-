@@ -1,4 +1,7 @@
 export default {
+  // [2026-10-14 feel] toque duplo p/ reagir
+  "settings.doubleTapReact.title": "Atingere dublă pentru apreciere",
+  "settings.doubleTapReact.subtitle": "Atinge de două ori un mesaj pentru a reacționa cu o inimă.",
   // [2026-10-14 vis3] auditoria visual
   "search.peopleHint": "Caută persoane după nume sau @utilizator",
   "chatConv.groupMembersCount": "{n} membri",

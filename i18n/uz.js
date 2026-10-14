@@ -1,4 +1,7 @@
 export default {
+  // [2026-10-14 feel] toque duplo p/ reagir
+  "settings.doubleTapReact.title": "Yoqtirish uchun ikki marta bosing",
+  "settings.doubleTapReact.subtitle": "Yurakcha bilan munosabat bildirish uchun xabarni ikki marta bosing.",
   // [2026-10-14 vis3] auditoria visual
   "search.peopleHint": "Odamlarni ism yoki @foydalanuvchi nomi bo'yicha qidiring",
   "chatConv.groupMembersCount": "{n} a'zo",
