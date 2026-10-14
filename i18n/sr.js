@@ -8348,4 +8348,6 @@ export default {
   "gsearch.you": "Ви",
   "profile.notFoundTitle": "Корисник није пронађен",
   "profile.notFoundMsg": "@{handle} не постоји на Chatyy-ју",
+  // [incidente-sessao 2026-10-14]
+  "account.removedFromDevice": "Налог {email} је уклоњен са овог уређаја",
 };

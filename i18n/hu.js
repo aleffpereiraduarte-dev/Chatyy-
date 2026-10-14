@@ -8348,4 +8348,6 @@ export default {
   "gsearch.you": "Te",
   "profile.notFoundTitle": "A felhasználó nem található",
   "profile.notFoundMsg": "@{handle} nem létezik a Chatyy-n",
+  // [incidente-sessao 2026-10-14]
+  "account.removedFromDevice": "A(z) {email} fiók el lett távolítva erről az eszközről",
 };

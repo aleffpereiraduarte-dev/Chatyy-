@@ -8348,4 +8348,6 @@ export default {
   "gsearch.you": "Sina",
   "profile.notFoundTitle": "Kasutajat ei leitud",
   "profile.notFoundMsg": "@{handle} ei ole Chatyys olemas",
+  // [incidente-sessao 2026-10-14]
+  "account.removedFromDevice": "Konto {email} eemaldati sellest seadmest",
 };

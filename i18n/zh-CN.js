@@ -8386,4 +8386,6 @@ export default {
   "gsearch.you": "你",
   "profile.notFoundTitle": "找不到用户",
   "profile.notFoundMsg": "Chatyy 上不存在 @{handle}",
+  // [incidente-sessao 2026-10-14]
+  "account.removedFromDevice": "帐号 {email} 已从此设备移除",
 };

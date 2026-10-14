@@ -8344,4 +8344,6 @@ export default {
   "gsearch.you": "Siz",
   "profile.notFoundTitle": "Foydalanuvchi topilmadi",
   "profile.notFoundMsg": "@{handle} Chatyy’da mavjud emas",
+  // [incidente-sessao 2026-10-14]
+  "account.removedFromDevice": "{email} hisobi ushbu qurilmadan olib tashlandi",
 };

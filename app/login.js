@@ -84,6 +84,17 @@ export default function LoginScreen() {
   const [capsLockOn, setCapsLockOn] = useState(false); // web only (real CapsLock state)
   const [pwHint, setPwHint] = useState(''); // shown after a failed password attempt
   const [remembered, setRemembered] = useState([]); // [{ email, name, token }]
+  // [incidente-sessao 2026-10-14] conta guardada revogada (validação em 2º plano) sai da lista na hora.
+  useEffect(() => {
+    let unsub = null;
+    try {
+      unsub = require('../services/storedAccountRevocation').onStoredAccountRemoved((em) => {
+        const k = String(em || '').toLowerCase();
+        setRemembered(prev => prev.filter(a => String(a?.email || '').toLowerCase() !== k));
+      });
+    } catch {}
+    return () => { try { unsub?.(); } catch {} };
+  }, []);
   const [useAnother, setUseAnother] = useState(false); // user chose "Entrar com outra conta"
   const [busyEmail, setBusyEmail] = useState(''); // remembered row doing a one-tap login
   const [bioReadyEmail, setBioReadyEmail] = useState(''); // Face ID usable for THIS email
@@ -938,6 +949,11 @@ export default function LoginScreen() {
           saveLastIdentifier(acc.email);
           showSuccessPop();
           goAfterLogin(r.data?.is_child || isChildAccount());
+          return;
+        }
+        if (r?.removed) {
+          // [incidente-sessao 2026-10-14] token revogado: conta saiu do aparelho — não pré-preenche.
+          setRemembered(prev => prev.filter(a => a.email !== acc.email));
           return;
         }
       } catch {}

@@ -11171,4 +11171,6 @@ export default {
   "gsearch.you": "Anda",
   "profile.notFoundTitle": "Pengguna tidak ditemukan",
   "profile.notFoundMsg": "@{handle} tidak ada di Chatyy",
+  // [incidente-sessao 2026-10-14]
+  "account.removedFromDevice": "Akun {email} telah dihapus dari perangkat ini",
 };

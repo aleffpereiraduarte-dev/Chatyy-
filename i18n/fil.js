@@ -8348,4 +8348,6 @@ export default {
   "gsearch.you": "Ikaw",
   "profile.notFoundTitle": "Hindi nahanap ang user",
   "profile.notFoundMsg": "Walang @{handle} sa Chatyy",
+  // [incidente-sessao 2026-10-14]
+  "account.removedFromDevice": "Inalis ang account na {email} sa device na ito",
 };

@@ -84,6 +84,9 @@ export default function AccountSwitcherSheet({ visible, onClose }) {
       if (result && result.success) {
         try { resetMailState?.(); } catch {}
         onClose?.();
+      } else if (result && result.removed) {
+        // [incidente-sessao 2026-10-14] bearer revogado: conta já saiu do aparelho (aviso global).
+        onClose?.();
       } else {
         goReLogin(email);
       }

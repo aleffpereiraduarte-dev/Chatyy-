@@ -9126,4 +9126,6 @@ export default {
   "gsearch.you": "Sinä",
   "profile.notFoundTitle": "Käyttäjää ei löytynyt",
   "profile.notFoundMsg": "@{handle} ei ole Chatyyssa",
+  // [incidente-sessao 2026-10-14]
+  "account.removedFromDevice": "Tili {email} poistettiin tästä laitteesta",
 };

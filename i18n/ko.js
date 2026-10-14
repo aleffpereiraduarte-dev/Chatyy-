@@ -8386,4 +8386,6 @@ export default {
   "gsearch.you": "나",
   "profile.notFoundTitle": "사용자를 찾을 수 없음",
   "profile.notFoundMsg": "@{handle}은(는) Chatyy에 없습니다",
+  // [incidente-sessao 2026-10-14]
+  "account.removedFromDevice": "{email} 계정이 이 기기에서 삭제되었습니다",
 };

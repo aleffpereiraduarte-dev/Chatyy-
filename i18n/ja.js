@@ -11172,4 +11172,6 @@ export default {
   "gsearch.you": "あなた",
   "profile.notFoundTitle": "ユーザーが見つかりません",
   "profile.notFoundMsg": "@{handle} は Chatyy に存在しません",
+  // [incidente-sessao 2026-10-14]
+  "account.removedFromDevice": "アカウント {email} はこの端末から削除されました",
 };

@@ -11919,4 +11919,6 @@ export default {
   "gsearch.you": "Tú",
   "profile.notFoundTitle": "Usuario no encontrado",
   "profile.notFoundMsg": "@{handle} no existe en Chatyy",
+  // [incidente-sessao 2026-10-14]
+  "account.removedFromDevice": "La cuenta {email} se eliminó de este dispositivo",
 };

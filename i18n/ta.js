@@ -4098,4 +4098,6 @@ export default {
   "gsearch.you": "நீங்கள்",
   "profile.notFoundTitle": "பயனர் கிடைக்கவில்லை",
   "profile.notFoundMsg": "@{handle} Chatyy-இல் இல்லை",
+  // [incidente-sessao 2026-10-14]
+  "account.removedFromDevice": "{email} கணக்கு இந்தச் சாதனத்திலிருந்து அகற்றப்பட்டது",
 };

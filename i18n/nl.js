@@ -9126,4 +9126,6 @@ export default {
   "gsearch.you": "Jij",
   "profile.notFoundTitle": "Gebruiker niet gevonden",
   "profile.notFoundMsg": "@{handle} bestaat niet op Chatyy",
+  // [incidente-sessao 2026-10-14]
+  "account.removedFromDevice": "Het account {email} is van dit apparaat verwijderd",
 };

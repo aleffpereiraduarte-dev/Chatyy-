@@ -8344,4 +8344,6 @@ export default {
   "gsearch.you": "Դուք",
   "profile.notFoundTitle": "Օգտատերը չի գտնվել",
   "profile.notFoundMsg": "@{handle}-ը Chatyy-ում գոյություն չունի",
+  // [incidente-sessao 2026-10-14]
+  "account.removedFromDevice": "{email} հաշիվը հեռացվել է այս սարքից",
 };

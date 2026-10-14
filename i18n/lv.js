@@ -8348,4 +8348,6 @@ export default {
   "gsearch.you": "Tu",
   "profile.notFoundTitle": "Lietotājs nav atrasts",
   "profile.notFoundMsg": "@{handle} Chatyy neeksistē",
+  // [incidente-sessao 2026-10-14]
+  "account.removedFromDevice": "Konts {email} tika noņemts no šīs ierīces",
 };

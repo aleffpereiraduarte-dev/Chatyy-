@@ -1812,12 +1812,21 @@ async function _registerForOtherAccounts(entries, activeEmail) {
           const resp = await fetch(`${url}?action=register_push_token`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${a.token}` },
+            // [incidente-sessao 2026-10-14] sem cookie: com bearer morto a sessão
+            // PHP da conta ATIVA respondia (e registrava o token nela).
+            credentials: 'omit',
             body: JSON.stringify(p),
             signal: ctl?.signal,
           });
           clearTimeout(to);
           const j = await resp.json().catch(() => null);
           if (j?.success) _markPushSent(p.token, em, p.token_type || 'expo', p.notif_perm);
+          else {
+            // [incidente-sessao 2026-10-14] bearer revogado → conta sai do aparelho.
+            let gone = false;
+            try { gone = require('./storedAccountRevocation').noteStoredAccountAuthResult({ email: em, token: a.token, status: resp.status, json: j, source: 'register_push_token' }); } catch {}
+            if (gone) break;
+          }
         } catch {}
       }
     }

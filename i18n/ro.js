@@ -8348,4 +8348,6 @@ export default {
   "gsearch.you": "Tu",
   "profile.notFoundTitle": "Utilizatorul nu a fost găsit",
   "profile.notFoundMsg": "@{handle} nu există pe Chatyy",
+  // [incidente-sessao 2026-10-14]
+  "account.removedFromDevice": "Contul {email} a fost eliminat de pe acest dispozitiv",
 };

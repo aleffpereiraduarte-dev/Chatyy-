@@ -305,6 +305,8 @@ async function _sendVoipForOtherAccounts(token, meta, active, force) {
   for (const a of accts) {
     const em = String(a?.email || '').toLowerCase();
     if (!em || em === active || typeof a?.token !== 'string' || !a.token) continue;
+    // [incidente-sessao 2026-10-14] conta parada há >30d neste aparelho não recebe VoIP daqui.
+    if (typeof api.isStoredAccountFresh === 'function' && !api.isStoredAccountFresh(a)) continue;
     if (++n > 4) break;
     const key = `${em}|${token}|${String(meta.app_version || '')}`;
     if (!force && (await _voipSentRecently(key))) continue;
@@ -314,12 +316,17 @@ async function _sendVoipForOtherAccounts(token, meta, active, force) {
       const resp = await fetch(`${url}?action=register_voip_token`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${a.token}` },
+        credentials: 'omit', // [incidente-sessao 2026-10-14] sem cookie da conta ativa
         body: JSON.stringify({ token, ...meta }),
         signal: ctl?.signal,
       });
       clearTimeout(to);
       const j = await resp.json().catch(() => null);
       if (j?.success) await _markVoipSent(key);
+      else {
+        // [incidente-sessao 2026-10-14] bearer revogado → conta sai do aparelho.
+        try { require('./storedAccountRevocation').noteStoredAccountAuthResult({ email: em, token: a.token, status: resp.status, json: j, source: 'register_voip_token' }); } catch {}
+      }
     } catch {}
   }
 }

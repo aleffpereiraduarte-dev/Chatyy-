@@ -1787,6 +1787,11 @@ async function _oflGetAsync(action, params) {
   return _oflGet(action, params);
 }
 export function getOfflineLastKnown(action, params = {}) { return _oflGet(action, params); }
+// [incidente-sessao 2026-10-14] hash do namespace last-known de UMA conta (purga seletiva).
+export function offlineLastKnownAccountHash(email) {
+  const e = String(email || '').trim().toLowerCase();
+  return e ? _oflHash(e) : '';
+}
 export function purgeOfflineLastKnown() {
   try {
     const mm = require('./mmkv');
@@ -1952,6 +1957,9 @@ const _IDEMPOTENT_RETRY_POST = new Set([
 ]);
 
 async function _apiCallImpl(action, params = {}, method = 'GET') {
+  // [incidente-sessao 2026-10-14] bearer com que a chamada SAIU (p/ remover do
+  // aparelho a conta guardada cujo token o servidor declarar revogado).
+  const _tokSent = authToken || '';
   let result = await _rawApiCall(action, params, method);
 
   // [network-resilience 2026-07-12] Retry-once-with-backoff for transient
@@ -2015,6 +2023,11 @@ async function _apiCallImpl(action, params = {}, method = 'GET') {
       if ((explicitErr === 'logged_out' || explicitErr === 'revoked') &&
           action !== 'login' && action !== 'check_auth' && action !== 'signup') {
         try { recordLogoutAttempt('explicit_revoke', { source: 'api_401_logged_out', action, server_error: explicitErr }); } catch {}
+        // [incidente-sessao 2026-10-14] também tira a conta da lista de contas
+        // guardadas — só se o token rejeitado é o mesmo em uso (sem corrida de troca).
+        if (_tokSent && _tokSent === authToken) {
+          try { require('./storedAccountRevocation').purgeRevokedStoredAccount({ token: _tokSent, source: 'api_401_' + action }).catch(() => {}); } catch {}
+        }
         _authFailureSignaled = true;
         authToken = '';
         try { if (Platform.OS === 'web' && typeof localStorage !== 'undefined') localStorage.removeItem('mail_token'); } catch {}

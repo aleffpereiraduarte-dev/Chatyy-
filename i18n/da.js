@@ -9126,4 +9126,6 @@ export default {
   "gsearch.you": "Dig",
   "profile.notFoundTitle": "Bruger ikke fundet",
   "profile.notFoundMsg": "@{handle} findes ikke på Chatyy",
+  // [incidente-sessao 2026-10-14]
+  "account.removedFromDevice": "Kontoen {email} er fjernet fra denne enhed",
 };

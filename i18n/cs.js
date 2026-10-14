@@ -8348,4 +8348,6 @@ export default {
   "gsearch.you": "Vy",
   "profile.notFoundTitle": "Uživatel nenalezen",
   "profile.notFoundMsg": "@{handle} v Chatyy neexistuje",
+  // [incidente-sessao 2026-10-14]
+  "account.removedFromDevice": "Účet {email} byl z tohoto zařízení odebrán",
 };

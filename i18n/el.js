@@ -8348,4 +8348,6 @@ export default {
   "gsearch.you": "Εσείς",
   "profile.notFoundTitle": "Ο χρήστης δεν βρέθηκε",
   "profile.notFoundMsg": "Ο @{handle} δεν υπάρχει στο Chatyy",
+  // [incidente-sessao 2026-10-14]
+  "account.removedFromDevice": "Ο λογαριασμός {email} αφαιρέθηκε από αυτήν τη συσκευή",
 };

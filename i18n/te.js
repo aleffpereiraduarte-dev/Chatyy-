@@ -8344,4 +8344,6 @@ export default {
   "gsearch.you": "మీరు",
   "profile.notFoundTitle": "వినియోగదారు కనుగొనబడలేదు",
   "profile.notFoundMsg": "@{handle} Chatyyలో లేరు",
+  // [incidente-sessao 2026-10-14]
+  "account.removedFromDevice": "{email} ఖాతా ఈ పరికరం నుండి తీసివేయబడింది",
 };

@@ -8348,4 +8348,6 @@ export default {
   "gsearch.you": "Tu",
   "profile.notFoundTitle": "Usuari no trobat",
   "profile.notFoundMsg": "@{handle} no existeix a Chatyy",
+  // [incidente-sessao 2026-10-14]
+  "account.removedFromDevice": "El compte {email} s'ha eliminat d'aquest dispositiu",
 };

@@ -8348,4 +8348,6 @@ export default {
   "gsearch.you": "شما",
   "profile.notFoundTitle": "کاربر پیدا نشد",
   "profile.notFoundMsg": "@{handle} در Chatyy وجود ندارد",
+  // [incidente-sessao 2026-10-14]
+  "account.removedFromDevice": "حساب {email} از این دستگاه حذف شد",
 };

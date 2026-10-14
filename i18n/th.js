@@ -8348,4 +8348,6 @@ export default {
   "gsearch.you": "คุณ",
   "profile.notFoundTitle": "ไม่พบผู้ใช้",
   "profile.notFoundMsg": "ไม่มี @{handle} ใน Chatyy",
+  // [incidente-sessao 2026-10-14]
+  "account.removedFromDevice": "บัญชี {email} ถูกนำออกจากอุปกรณ์นี้แล้ว",
 };

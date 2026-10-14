@@ -8344,4 +8344,6 @@ export default {
   "gsearch.you": "እርስዎ",
   "profile.notFoundTitle": "ተጠቃሚ አልተገኘም",
   "profile.notFoundMsg": "@{handle} በChatyy ላይ የለም",
+  // [incidente-sessao 2026-10-14]
+  "account.removedFromDevice": "መለያው {email} ከዚህ መሣሪያ ተወግዷል",
 };

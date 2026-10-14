@@ -436,6 +436,7 @@ import ErrorBoundary from '../components/ErrorBoundary';
 import OfflineNotice from '../components/OfflineNotice';
 import NotificationToast from '../components/NotificationToast';
 import { ToastHost } from '../components/ui/Toast'; // [2026-10-12 overlays] snackbar global único
+import RemovedAccountNotice from '../components/RemovedAccountNotice'; // [incidente-sessao 2026-10-14]
 import { hasDialogHost as _hasDialogHost, showDialog as _showDialog } from '../utils/confirm';
 import { CallProvider } from '../context/CallContext';
 import CallStatusBar, { CallBarInsetProvider, callBarScreenLayout } from '../components/CallStatusBar';
@@ -2254,6 +2255,7 @@ export default function RootLayout() {
                   onDismiss={() => setToastNotif(null)}
                 />
                 <ToastHost />
+                <RemovedAccountNotice />
                 </ConfirmProvider>
               </PhotosProvider>
               </MailProvider>

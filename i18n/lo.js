@@ -8344,4 +8344,6 @@ export default {
   "gsearch.you": "ທ່ານ",
   "profile.notFoundTitle": "ບໍ່ພົບຜູ້ໃຊ້",
   "profile.notFoundMsg": "@{handle} ບໍ່ມີຢູ່ໃນ Chatyy",
+  // [incidente-sessao 2026-10-14]
+  "account.removedFromDevice": "ບັນຊີ {email} ຖືກລຶບອອກຈາກອຸປະກອນນີ້ແລ້ວ",
 };

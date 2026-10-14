@@ -661,6 +661,21 @@ export function AuthProvider({ children }) {
     setAccounts(api.getStoredAccounts());
   }, []);
 
+  // [incidente-sessao 2026-10-14] Conta guardada com bearer revogado sai do
+  // aparelho: recarrega a lista quando isso acontece + valida as guardadas
+  // (check_auth leve, ≤1×/dia por conta, só com rede) ~15s após abrir/logar.
+  useEffect(() => {
+    let unsub = null;
+    try { unsub = require('../services/storedAccountRevocation').onStoredAccountRemoved(() => { try { loadAccounts(); } catch {} }); } catch {}
+    return () => { try { unsub?.(); } catch {} };
+  }, [loadAccounts]);
+  useEffect(() => {
+    const tm = setTimeout(() => {
+      try { require('../services/storedAccountRevocation').validateStoredAccountsInBackground().catch(() => {}); } catch {}
+    }, 15000);
+    return () => clearTimeout(tm);
+  }, [user?.email]);
+
   // Sync the current bearer token + base URL into the App Group so the
   // native iOS ShareExtension UI can post on the user's behalf. Idempotent
   // and silent on failure (Android / web all no-op). Called whenever the
@@ -807,6 +822,11 @@ export function AuthProvider({ children }) {
                   new Promise(r => setTimeout(() => r(null), 8000)),
                 ]).then((r) => {
                   if (!r) return; // network/timeout — keep cached session
+                  // [incidente-sessao 2026-10-14] revogação explícita → sai da lista de contas guardadas.
+                  try {
+                    const _rv = require('../services/storedAccountRevocation');
+                    if (_rv.isRevokedAuthPayload(r)) _rv.purgeRevokedStoredAccount({ token: api.getAuthToken?.() || '', source: 'hydrate_check_auth' }).catch(() => {});
+                  } catch {}
                   const explicitlyRejected = !r.success && typeof r.message === 'string' &&
                     /not.*authenticated|session.*expired|invalid.*token|unauthor|revoked|logged_out/i.test(r.message);
                   if (explicitlyRejected) {
@@ -1501,8 +1521,17 @@ export function AuthProvider({ children }) {
       verified = { success: false, message: 'verify failed' };
     }
     if (!verified?.success || !verified?.data?.email) {
+      // [incidente-sessao 2026-10-14] token guardado revogado → remove a conta do aparelho.
+      let _removed = false;
+      try {
+        const _rv = require('../services/storedAccountRevocation');
+        if (_rv.isRevokedAuthPayload(verified)) {
+          _removed = await _rv.purgeRevokedStoredAccount({ email, token: authToken, source: 'login_with_token' });
+          if (_removed) loadAccounts();
+        }
+      } catch {}
       api.clearAuthToken();
-      return { success: false, message: verified?.message || 'Token invalid' };
+      return { success: false, removed: _removed, message: verified?.message || 'Token invalid' };
     }
 
     // Re-arm the "once-per-process" auth-failure guard. Without this, if
@@ -2046,6 +2075,19 @@ export function AuthProvider({ children }) {
             try { registerPushAfterAuth(); } catch {}
             return { success: true, data: check.data };
           }
+          // [incidente-sessao 2026-10-14] servidor declarou o token da conta
+          // guardada REVOGADO → restaura a sessão atual e remove a conta do aparelho.
+          try {
+            const _rv = require('../services/storedAccountRevocation');
+            if (_rv.isRevokedAuthPayload(check)) {
+              if (previousToken) api.setAuthTokenDirect(previousToken);
+              const _removed = await _rv.purgeRevokedStoredAccount({ email, token: account.token, source: 'switch_account' });
+              if (_removed) {
+                loadAccounts();
+                return { success: false, removed: true, message: 'Account removed' };
+              }
+            }
+          } catch {}
         } catch {
           // checkAuth failed (network error etc.)
         }

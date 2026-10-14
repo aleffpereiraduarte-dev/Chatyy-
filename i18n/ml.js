@@ -899,4 +899,6 @@ export default {
   "gsearch.you": "നിങ്ങൾ",
   "profile.notFoundTitle": "ഉപയോക്താവിനെ കണ്ടെത്തിയില്ല",
   "profile.notFoundMsg": "@{handle} Chatyy-യിൽ ഇല്ല",
+  // [incidente-sessao 2026-10-14]
+  "account.removedFromDevice": "{email} അക്കൗണ്ട് ഈ ഉപകരണത്തിൽ നിന്ന് നീക്കം ചെയ്തു",
 };

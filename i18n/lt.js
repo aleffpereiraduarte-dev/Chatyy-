@@ -8348,4 +8348,6 @@ export default {
   "gsearch.you": "Jūs",
   "profile.notFoundTitle": "Naudotojas nerastas",
   "profile.notFoundMsg": "@{handle} Chatyy neegzistuoja",
+  // [incidente-sessao 2026-10-14]
+  "account.removedFromDevice": "Paskyra {email} pašalinta iš šio įrenginio",
 };

@@ -1727,7 +1727,9 @@ function InboxScreenInner() {
                         setShowMenu(false);
                         try {
                           const result = await switchAccount(acc.email);
-                          if (!result || !result.success) {
+                          if (result && result.removed) {
+                            // [incidente-sessao 2026-10-14] conta revogada removida do aparelho (aviso global).
+                          } else if (!result || !result.success) {
                             setSwitchLoginEmail(acc.email);
                             setSwitchLoginPassword('');
                             setSwitchLoginError('');

@@ -8348,4 +8348,6 @@ export default {
   "gsearch.you": "Anda",
   "profile.notFoundTitle": "Pengguna tidak ditemui",
   "profile.notFoundMsg": "@{handle} tiada di Chatyy",
+  // [incidente-sessao 2026-10-14]
+  "account.removedFromDevice": "Akaun {email} telah dialih keluar daripada peranti ini",
 };

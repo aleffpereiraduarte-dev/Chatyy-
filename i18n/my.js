@@ -8344,4 +8344,6 @@ export default {
   "gsearch.you": "သင်",
   "profile.notFoundTitle": "အသုံးပြုသူ မတွေ့ပါ",
   "profile.notFoundMsg": "@{handle} သည် Chatyy တွင် မရှိပါ",
+  // [incidente-sessao 2026-10-14]
+  "account.removedFromDevice": "{email} အကောင့်ကို ဤစက်မှ ဖယ်ရှားလိုက်ပါပြီ",
 };
