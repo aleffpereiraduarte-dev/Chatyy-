@@ -130,10 +130,13 @@ export function prefetchAvatars(emails) {
     let url = null;
     try { url = api.getAvatarUrlForEmail(email); } catch {}
     if (!url) { _avatarPrefetchInflight.delete(email); continue; }
-    // force:true — avatars are tiny enough that the cellular gate would
-    // be over-conservative. Same call shape AvatarCircle uses internally.
+    // [avatar-privacy-auth 2026-10-14] avatarCache.cacheAvatar (o mesmo cache em disco
+    // que o AvatarCircle lê) — baixa COM o Bearer (foto restrita) e não grava iniciais
+    // restritas. Antes: cacheMedia sem credencial, num cache que o avatar nem consulta.
+    let _dl = null;
+    try { _dl = require('./avatarCache').cacheAvatar; } catch { _dl = null; }
     try {
-      cacheMedia(url, { force: true })
+      (_dl ? _dl(url) : cacheMedia(url, { force: true }))
         .catch(() => {})
         .finally(() => { _avatarPrefetchInflight.delete(email); });
     } catch { _avatarPrefetchInflight.delete(email); }

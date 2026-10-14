@@ -1282,7 +1282,13 @@ export function AuthProvider({ children }) {
       } else {
         // expo-image has built-in prefetch with disk caching
         import('expo-image').then(({ Image }) => {
-          if (Image.prefetch) Image.prefetch(url);
+          if (!Image.prefetch) return;
+          // [avatar-privacy-auth 2026-10-14] com Bearer: dono com foto restrita só vê a
+          // própria foto autenticado — sem isto o cache do expo-image (chave = URL)
+          // guardava as iniciais e o AvatarCircle (que manda o Bearer) acertava nelas.
+          let headers = null;
+          try { headers = require('../services/avatar').avatarAuthHeaders(url); } catch { headers = null; }
+          Image.prefetch(url, headers ? { cachePolicy: 'memory-disk', headers } : undefined);
         }).catch(() => {});
       }
     } catch {}

@@ -89,6 +89,31 @@ export function isAvatarUrl(url) {
   return typeof url === 'string' && url.indexOf('get_avatar') !== -1;
 }
 
+// ── Credencial nas requisições de avatar [avatar-privacy-auth 2026-10-14] ──
+// O servidor decide a foto RESTRITA ("meus contatos"/"ninguém"/exceções) pela
+// identidade AUTENTICADA — o `viewer=` da URL virou só chave de cache (era
+// forjável). Nativo: manda o Bearer (expo-image `source.headers`, prefetch e o
+// download do avatarCache). Web: `<img>`/`new Image()` levam o cookie de sessão
+// PHP do host da API (mesmo site chatyy.com.br) — nada a fazer aqui.
+// Fotos públicas continuam idênticas (o Cloudflare ignora Authorization na chave
+// e a resposta pública segue imutável); só host nosso recebe o token.
+const _OUR_API_HOST_RE = /^https:\/\/([a-z0-9-]+\.)*chatyy\.com\.br\//i;
+export function avatarAuthHeaders(url) {
+  if (Platform.OS === 'web') return null;
+  if (typeof url !== 'string' || !isAvatarUrl(url) || !_OUR_API_HOST_RE.test(url)) return null;
+  const api = _api();
+  let tok = null;
+  try { tok = api && typeof api.getAuthToken === 'function' ? api.getAuthToken() : null; } catch { tok = null; }
+  return tok ? { Authorization: `Bearer ${tok}` } : null;
+}
+
+/** `source` do expo-image p/ uma URL de avatar (com Bearer quando for get_avatar nosso). */
+export function avatarSource(uri) {
+  if (!uri) return { uri };
+  const h = avatarAuthHeaders(uri);
+  return h ? { uri, headers: h } : { uri };
+}
+
 /**
  * Normaliza QUALQUER URL get_avatar (relativa do servidor, outro host, com
  * `d=`/`av=`/`v=` velho) para a canônica. Outras URLs (foto de grupo em /data,
@@ -159,7 +184,9 @@ export function prefetchAvatarFull(emailOrUrl, opts = {}) {
       if (_webHold.length > 12) _webHold.shift();
     } else {
       const ExpoImage = require('expo-image').Image;
-      ExpoImage?.prefetch?.(url, 'memory-disk')?.catch?.(() => {});
+      // [avatar-privacy-auth 2026-10-14] prefetch(urls, { cachePolicy, headers }) — Bearer p/ foto restrita.
+      const headers = avatarAuthHeaders(url);
+      ExpoImage?.prefetch?.(url, headers ? { cachePolicy: 'memory-disk', headers } : 'memory-disk')?.catch?.(() => {});
     }
   } catch {}
   return url;

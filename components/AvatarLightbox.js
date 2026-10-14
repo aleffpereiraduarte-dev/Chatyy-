@@ -27,7 +27,7 @@ import { useLanguage } from '../context/LanguageContext';
 // memória/disco do expo-image ou do navegador) e carrega a versão grande
 // (size=1024) por cima, com fade quando chega. Nada de tela preta/spinner:
 // iniciais embaixo de tudo, miniatura, depois a grande.
-import { avatarViewerSources, prefetchAvatarFull } from '../services/avatar';
+import { avatarViewerSources, prefetchAvatarFull, avatarSource } from '../services/avatar';
 import { getCachedAvatarUriOrNull } from '../services/avatarCache';
 
 let ExpoImage = null;
@@ -200,7 +200,7 @@ export default function AvatarLightbox({ visible, onClose, email, uri, name }) {
           </View>
           {showImage ? (
             <ImageComponent
-              source={{ uri: thumbUri }}
+              source={avatarSource(thumbUri)} // [avatar-privacy-auth 2026-10-14]
               style={[styles.image, StyleSheet.absoluteFill]}
               onError={() => setImgError(true)}
               {...(ExpoImage ? { contentFit: 'contain', cachePolicy: 'memory-disk', transition: 0, recyclingKey: `avlb-thumb#${_src.thumb || ''}` } : { resizeMode: 'contain' })}
@@ -209,7 +209,7 @@ export default function AvatarLightbox({ visible, onClose, email, uri, name }) {
           {hasFull ? (
             <Animated.View style={[StyleSheet.absoluteFill, { opacity: fullOpacity }]} pointerEvents="none">
               <ImageComponent
-                source={{ uri: fullUri }}
+                source={avatarSource(fullUri)} // [avatar-privacy-auth 2026-10-14]
                 style={styles.image}
                 onLoad={onFullLoad}
                 onError={() => setFullError(true)}

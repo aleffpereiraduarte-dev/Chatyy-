@@ -11,7 +11,7 @@ import { useLanguageOptional } from '../context/LanguageContext';
 import { getCachedAvatarUriOrNull, cacheAvatar } from '../services/avatarCache';
 import { seenAwareTransition, markImageLoaded } from '../utils/imageSeen'; // [2026-10-08 chat-open-flicker]
 // [2026-10-14 avatar-instant] URL canônica única (lista = cabeçalho = perfil = visualizador).
-import { buildAvatarUrl, canonicalAvatarUrl, prefetchAvatarFull } from '../services/avatar';
+import { buildAvatarUrl, canonicalAvatarUrl, prefetchAvatarFull, avatarSource } from '../services/avatar';
 let _networkInfo = null;
 try { _networkInfo = require('../services/networkInfo'); } catch {}
 
@@ -285,7 +285,7 @@ function _CollageTile({ member, size, width, height }) {
       </Text>
       {uri && !tileErr ? (
         <ImageComponent
-          source={{ uri }}
+          source={avatarSource(uri)} // [avatar-privacy-auth 2026-10-14] Bearer p/ foto restrita (nativo)
           style={{ width: w, height: h, position: 'absolute' }}
           onError={() => setTileErr(true)}
           // PERF/polish: in the recycled conversation FlashList a group row can
@@ -600,7 +600,7 @@ function AvatarCircle({ name, email, uri, size = 48, style, online = false, ring
       </Text>
       {showImage ? (
         <ImageComponent
-          source={{ uri: avatarUrl }}
+          source={avatarSource(avatarUrl)} // [avatar-privacy-auth 2026-10-14] Bearer p/ foto restrita (nativo)
           style={{ width: size, height: size, borderRadius: size / 2, position: 'absolute' }}
           onError={() => setImgError(true)}
           accessibilityLabel={accessLabel}

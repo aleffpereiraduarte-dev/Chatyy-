@@ -271,6 +271,17 @@ export function getCachedAvatarUriOrNull(url) {
  * up the freshly-cached path automatically (via a setState the caller
  * triggers from the resolved promise).
  */
+// [avatar-privacy-auth 2026-10-14] urlKey → epoch até quando NÃO baixar de novo
+// (resposta de iniciais restritas). Só memória: some no próximo boot.
+const _restrictedUntil = new Map();
+function _isRestrictedAvatarResp(headers) {
+  if (!headers || typeof headers !== 'object') return false;
+  for (const k of Object.keys(headers)) {
+    if (String(k).toLowerCase() === 'x-avatar-restricted') return String(headers[k]).trim() === '1';
+  }
+  return false;
+}
+
 export async function cacheAvatar(url) {
   if (!url || Platform.OS === 'web') return url;
   // Logout in progress — don't materialize new files into a dir that's
@@ -309,6 +320,10 @@ export async function cacheAvatar(url) {
 
   // Dedup in-flight.
   if (_inflight.has(key)) return _inflight.get(key);
+  // [avatar-privacy-auth 2026-10-14] dono com foto restrita que respondeu iniciais
+  // p/ este aparelho há pouco → não martela o servidor (remoto direto, 10 min).
+  const _ru = _restrictedUntil.get(key);
+  if (_ru && _ru > Date.now()) return url;
 
   const dlPromise = (async () => {
     if (_aborted) return url;
@@ -330,10 +345,22 @@ export async function cacheAvatar(url) {
       // 15s timeout — avatars are tiny so a stuck CDN means dead edge.
       // Cheaper to bail and let the next mount retry than hold the
       // semaphore slot blocking other prefetches.
+      // [avatar-privacy-auth 2026-10-14] Bearer: a foto RESTRITA ("meus contatos"/
+      // "ninguém") é decidida pela identidade autenticada (o `viewer=` da URL não vale mais).
+      let _hdrs = null;
+      try { _hdrs = require('./avatar').avatarAuthHeaders(url); } catch { _hdrs = null; }
       const download = await Promise.race([
-        fs.downloadAsync(url, localPath),
+        _hdrs ? fs.downloadAsync(url, localPath, { headers: _hdrs }) : fs.downloadAsync(url, localPath),
         new Promise((_, rej) => setTimeout(() => rej(new Error('avatar_dl_timeout')), 15000)),
       ]);
+      if (download?.status === 200 && _isRestrictedAvatarResp(download.headers)) {
+        // Iniciais de dono RESTRITO (X-Avatar-Restricted: 1): não vão pro disco — se
+        // ficassem, a pessoa continuaria em iniciais mesmo depois de virar contato.
+        try { await fs.deleteAsync(localPath, { idempotent: true }); } catch {}
+        _restrictedUntil.set(key, Date.now() + 10 * 60 * 1000);
+        if (_restrictedUntil.size > 500) { const k0 = _restrictedUntil.keys().next().value; _restrictedUntil.delete(k0); }
+        return url;
+      }
       if (download?.status === 200) {
         syncIndex.set(key, localPath);
         _schedulePersist();
