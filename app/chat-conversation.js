@@ -5298,6 +5298,9 @@ function buildAttachItems(t) {
   // botões dedicados no input bar (atalho de câmera + microfone), ficavam
   // redundantes aqui.
   return [
+    // [2026-10-13] Câmera de volta como 1ª opção (founder: "não tem como tirar foto
+    // dentro desse módulo") — WhatsApp tem a câmera no menu de anexo.
+    { key: 'camera', icon: IconCamera, label: t('chatConv.camera') || 'Câmera', color: '#111111' },
     { key: 'gallery', icon: IconImage, label: t('chatConv.gallery') || 'Galeria', color: '#111111' },
     // GIF relocated here from the composer pill — see handlePickAttachment
     // 'gif' case. Keeps the feature one tap away without crowding the
