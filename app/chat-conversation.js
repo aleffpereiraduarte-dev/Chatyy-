@@ -13944,7 +13944,12 @@ function ChatConversationInner() {
           const _storeHasMsgs = Array.isArray(_have) && _have.length > 0;
           const _cur = _cs.getCursor('conv:' + conversationId);
           const _lastId = Number(_cur?.last_msg_id || 0);
-          if (_storeHasMsgs && _lastId > 0 && !_resetWin) {
+          // [2026-10-14 notif-open-partial] Delta só "completa" linhas que JÁ
+          // estão na tela. Tela vazia (abertura só-por-email: push/central
+          // "Dizer oi" → id resolvido depois do mount, state inicial = []) +
+          // delta = só a cauda desde o piso de não-lidas (QA 20261014: conversa
+          // 996 c/ 12 msgs abriu só as 3 últimas). Sem linhas visíveis → página cheia.
+          if (_storeHasMsgs && _lastId > 0 && !_resetWin && _messagesCountRef.current > 0) {
             sinceId = _lastId; // delta-only
             // [2026-10-08 web-receipts-i18n] RECIBOS no delta-open. O delta só
             // traz id > cursor, então os balões MEUS já guardados no store local
@@ -14656,7 +14661,12 @@ function ChatConversationInner() {
     (async () => {
       if (!conversationId) return;
       try {
-        let haveCache = !!(_initialCached && _initialCached.length > 0);
+        // [2026-10-14 notif-open-partial] Só conta como "cache pintado" se as
+        // linhas estão de fato no state. Abrindo só-por-email o id resolve
+        // DEPOIS do mount: _initialCached é recalculado p/ o id novo, mas o
+        // useState(messages/hasMore) já inicializou vazio/false → antes ia
+        // direto pro delta com a tela vazia e sem paginação.
+        let haveCache = !!(_initialCached && _initialCached.length > 0) && _messagesCountRef.current > 0;
 
         if (!haveCache) {
           try {
@@ -14678,6 +14688,11 @@ function ChatConversationInner() {
               try { if (_chatOrder().timeModeFor(conversationId, cachedNormalized)) cachedNormalized = _chatOrder().sortByTime(cachedNormalized); } catch {} // [import-ordem 2026-10-13]
               setMessages(prev => prev.length > 0 ? prev : cachedNormalized);
               setLoading(false);
+              // [2026-10-14 notif-open-partial] cache pintado → pode haver mais
+              // antigas no servidor (mesma regra do init via _initialCached), e
+              // o espelho do count já reflete a pintura p/ o delta logo abaixo.
+              setHasMore(true);
+              if (_messagesCountRef.current < cachedNormalized.length) _messagesCountRef.current = cachedNormalized.length;
               try {
                 const { observePts } = require('../services/chatSync');
                 let maxPts = 0;
@@ -17773,6 +17788,27 @@ function ChatConversationInner() {
       if (loadingMoreRef.current) { loadingMoreRef.current = false; setLoadingMore(false); }
     }, 15000);
   }, [hasMore, messages, loadMessages, conversationId]);
+
+  // [2026-10-14 notif-open-partial] Janela curta não rola → onStartReached
+  // nunca dispara de novo (só no 1º layout, às vezes antes do hasMore/linhas
+  // existirem) e o histórico mais antigo nunca vinha. Após a 1ª carga, se a
+  // lista é curta e ainda há mais no servidor, puxa a página anterior sozinho
+  // (até 2x por conversa; para quando has_more=false ou a lista enche a tela).
+  const _shortAutoPageRef = useRef({ cid: 0, n: 0, len: -1 });
+  useEffect(() => {
+    if (!conversationId || !openLoadDone || !hasMore) return;
+    const len = messages.length;
+    if (len === 0 || len >= 20) return;
+    const st = _shortAutoPageRef.current;
+    if (st.cid !== conversationId) { st.cid = conversationId; st.n = 0; st.len = -1; }
+    if (st.n >= 2 || st.len === len) return;
+    const tm = setTimeout(() => {
+      if (!mountedRef.current || loadingMoreRef.current) return;
+      st.n += 1; st.len = len;
+      try { handleLoadMoreRef.current?.(); } catch {}
+    }, 300);
+    return () => clearTimeout(tm);
+  }, [conversationId, openLoadDone, hasMore, messages.length]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ============================================================
   // COMPRESS LARGE TEXT — collapse whitespace runs to save bandwidth
