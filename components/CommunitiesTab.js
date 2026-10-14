@@ -157,8 +157,9 @@ export default function CommunitiesTab({ colors: propColors, isDark: propIsDark 
       const res = await api.communityAnnouncement(announceCommunity.id, announceText.trim());
       if (api.apiOk(res)) {
         haptic.success();
-        const count = api.apiPayload(res)?.sent_to || 0;
-        Alert.alert(t('community.announcement'), (t('community.sentTo') || 'Sent to {count} groups').replace('{count}', count));
+        // community_announce não devolve sent_to (posta no canal de avisos) —
+        // a contagem saía sempre "0 grupos".
+        Alert.alert(t('community.announcement'), t('community.announceSent') || 'Anúncio enviado');
         setAnnounceCommunity(null);
         setAnnounceText('');
       } else {
@@ -219,7 +220,9 @@ export default function CommunitiesTab({ colors: propColors, isDark: propIsDark 
 
   const renderCommunity = useCallback(({ item }) => {
     const isExpanded = expandedId === item.id;
-    const isAdmin = item.role === 'admin';
+    // Criador da comunidade tem role 'owner' (community_create) — backend
+    // trata owner como admin ($assertCommunityAdmin), igual a [id].js.
+    const isAdmin = item.role === 'admin' || item.role === 'owner';
     const initial = (item.name || '?')[0].toUpperCase();
 
     return (

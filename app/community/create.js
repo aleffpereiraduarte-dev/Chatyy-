@@ -56,15 +56,14 @@ export default function CommunityCreateScreen() {
         allowsEditing: true, aspect: [1, 1], quality: 0.85,
       });
       if (!r.canceled && r.assets?.[0]?.uri) {
-        // Upload via existing chat_upload flow if available
-        if (api.chatUpload) {
-          const up = await api.chatUpload(r.assets[0].uri, 'image/jpeg');
-          if (up?.success && up.data?.url) {
-            setPhotoUrl(up.data.url);
-            return;
-          }
-        }
-        setPhotoUrl(r.assets[0].uri); // fallback: local URI (still saved as photo_url)
+        // api.chatUpload não existe → caía na URI local, que o
+        // community_create rejeita (400 Invalid photo_url) e a criação falhava.
+        // Mesmo pipeline do ChannelsTab (rustUpload → cdn_url).
+        const a = r.assets[0];
+        const up = await api.rustUpload({ uri: a.uri, name: a.fileName || 'community.jpg', type: a.mimeType || 'image/jpeg' }, '', 'media');
+        const url = up?.cdn_url || up?.data?.cdn_url;
+        if (up?.success !== false && url) { setPhotoUrl(url); return; }
+        Alert.alert(t('common.error') || 'Erro', t('channel.uploadFailed') || 'Não foi possível enviar a mídia');
       }
     } catch (e) {
       Alert.alert(t('common.error') || 'Erro', String(e?.message || e));
@@ -87,7 +86,7 @@ export default function CommunityCreateScreen() {
       if (r.success && r.data?.community_id) {
         router.replace(`/community/${r.data.community_id}`);
       } else {
-        Alert.alert(t('common.error') || 'Erro', r.error || t('community.createFailed'));
+        Alert.alert(t('common.error') || 'Erro', api.apiMsg(r) || t('community.createFailed'));
       }
     } catch (e) {
       Alert.alert(t('common.error') || 'Erro', String(e?.message || e));
