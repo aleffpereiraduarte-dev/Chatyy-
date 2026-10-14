@@ -2552,7 +2552,7 @@ function _waRowsFromDom(el) {
   const out = []; for (let i = 0; i < rows.length; i++) out.push(rows[i] || 0);
   return out.length ? out : null;
 }
-function WaMetaText({ hugKey, metaKey, own, style, ghost, children, ...rest }) {
+function WaMetaText({ hugKey, metaKey, own, style, ghost, children, minW = 0, ...rest }) {
   const [, force] = useState(0);
   const lkey = `${hugKey}|${_WA_TEXT_AVAIL}`;
   useEffect(() => {
@@ -2583,7 +2583,9 @@ function WaMetaText({ hugKey, metaKey, own, style, ghost, children, ...rest }) {
   if (L && M) {
     const fits = L.last + _WA_META_GAP + M.w <= _WA_TEXT_AVAIL + _WA_META_OVERHANG;
     const textW = Math.ceil(L.max) + 4; // + msgText.paddingRight 3 + 1 de arredondamento
-    const w = Math.min(_WA_TEXT_AVAIL, Math.max(textW, fits
+    // [2026-10-14 reply-width] minW: bolha com citação/cabeçalho não encolhe abaixo
+    // da largura deles (a citação ficava espremida em "…").
+    const w = Math.min(_WA_TEXT_AVAIL, Math.max(textW, minW || 0, fits
       ? Math.ceil(L.last + _WA_META_GAP + M.w - _WA_META_OVERHANG)
       : Math.ceil(M.w - _WA_META_OVERHANG)));
     const guard = Platform.OS === 'web' ? undefined : (e) => {
@@ -30739,7 +30741,7 @@ function ChatConversationInner() {
                   return (
                     // [2026-10-14 meta-inline] decisão inline/quebra por medida (WaMetaText).
                     // hugKey = só o que muda a QUEBRA do texto (meta é medida à parte).
-                    <WaMetaText hugKey={`${_c}|${msgFontSize}|${msgLineHeight}`} metaKey={_waTextMetaKey} own={isOwn} style={_txtStyle} selectable={true}
+                    <WaMetaText hugKey={`${_c}|${msgFontSize}|${msgLineHeight}`} metaKey={_waTextMetaKey} own={isOwn} style={_txtStyle} selectable={true} minW={(msg.reply_to || msg.reply_to_id || msg.forwarded || msg.is_forwarded) ? _WA_TEXT_AVAIL : 0}
                       ghost={(
                         <Text style={styles.metaGhost} selectable={false} accessible={false} importantForAccessibility="no">
                           {_waMetaGhost({
