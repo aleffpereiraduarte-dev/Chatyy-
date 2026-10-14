@@ -22,7 +22,13 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { IconX } from './Icons';
 import { useLanguage } from '../context/LanguageContext';
-import { getAvatarUrlForEmail } from '../services/api';
+// [2026-10-14 avatar-instant] Abre INSTANTÂNEO (nível WhatsApp): mostra NA HORA a
+// miniatura que a lista/cabeçalho já pintou (MESMA URL canônica → cache de
+// memória/disco do expo-image ou do navegador) e carrega a versão grande
+// (size=1024) por cima, com fade quando chega. Nada de tela preta/spinner:
+// iniciais embaixo de tudo, miniatura, depois a grande.
+import { avatarViewerSources, prefetchAvatarFull } from '../services/avatar';
+import { getCachedAvatarUriOrNull } from '../services/avatarCache';
 
 let ExpoImage = null;
 if (Platform.OS !== 'web') {
@@ -35,6 +41,9 @@ export default function AvatarLightbox({ visible, onClose, email, uri, name }) {
   const insets = useSafeAreaInsets();
   const { t } = useLanguage();
   const [imgError, setImgError] = useState(false);
+  const [fullError, setFullError] = useState(false);
+  const fullOpacity = useRef(new Animated.Value(0)).current;
+  const zoomIn = useRef(new Animated.Value(0.94)).current;
   const scale = useRef(new Animated.Value(1)).current;
   const translateX = useRef(new Animated.Value(0)).current;
   const translateY = useRef(new Animated.Value(0)).current;
@@ -47,9 +56,15 @@ export default function AvatarLightbox({ visible, onClose, email, uri, name }) {
   useEffect(() => {
     if (visible) {
       setImgError(false);
+      setFullError(false);
+      fullOpacity.setValue(0);
       stateRef.current = { scale: 1, lastScale: 1, tx: 0, ty: 0, lastTx: 0, lastTy: 0, pinchStartDist: 0 };
       scale.setValue(1); translateX.setValue(0); translateY.setValue(0);
-      Animated.timing(opacity, { toValue: 1, duration: 180, useNativeDriver: true }).start();
+      zoomIn.setValue(0.94);
+      Animated.parallel([
+        Animated.timing(opacity, { toValue: 1, duration: 160, useNativeDriver: true }),
+        Animated.spring(zoomIn, { toValue: 1, useNativeDriver: true, speed: 22, bounciness: 3 }),
+      ]).start();
     } else {
       opacity.setValue(0);
     }
@@ -61,16 +76,27 @@ export default function AvatarLightbox({ visible, onClose, email, uri, name }) {
     });
   }, [onClose]);
 
-  // Build the avatar URL. Prefer explicit `uri` (caller-provided), fall back
-  // to `getAvatarUrlForEmail(email)` which appends the standard ?v= cache-bust.
-  let resolvedUri = '';
-  if (typeof uri === 'string' && uri) {
-    resolvedUri = /^https?:\/\//i.test(uri) || uri.startsWith('data:') || uri.startsWith('file://')
-      ? uri
-      : `https://chatyy.com.br${uri.startsWith('/') ? '' : '/'}${uri}`;
-  } else if (email && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
-    resolvedUri = getAvatarUrlForEmail(email) || '';
+  // [2026-10-14 avatar-instant] thumb = URL canônica da lista (já em cache);
+  // full = mesma foto em size=1024. E-mail vem da prop OU do `email=` da URL
+  // get_avatar (perfil passa identity.avatar_url relativa do servidor).
+  const _src = avatarViewerSources({ email, uri, name });
+  let thumbUri = _src.thumb || '';
+  const fullUri = _src.full || '';
+  // Nativo: a lista pinta o arquivo do disco (services/avatarCache) — usar o
+  // MESMO file:// acerta o cache de memória do expo-image na hora.
+  if (Platform.OS !== 'web' && thumbUri && /^https?:/i.test(thumbUri)) {
+    thumbUri = getCachedAvatarUriOrNull(thumbUri) || thumbUri;
   }
+  // Sem `v=` = iniciais geradas → não existe "versão grande", fica só a miniatura.
+  const hasFull = !!fullUri && fullUri !== _src.thumb && !fullError
+    && (fullUri.indexOf('get_avatar') === -1 || /[?&]v=/.test(fullUri));
+  // Garante a grande em voo assim que abrir (no-op se já pré-carregada).
+  useEffect(() => {
+    if (visible && hasFull) { try { prefetchAvatarFull(fullUri, { high: true }); } catch {} }
+  }, [visible, fullUri]);
+  const onFullLoad = useCallback(() => {
+    Animated.timing(fullOpacity, { toValue: 1, duration: 180, useNativeDriver: true }).start();
+  }, [fullOpacity]);
 
   // Pinch-zoom: classic 2-finger handler. We don't pull in react-native-gesture-handler
   // because AvatarCircle is leaf-rendered everywhere and we want zero extra deps
@@ -138,7 +164,7 @@ export default function AvatarLightbox({ visible, onClose, email, uri, name }) {
   ).current;
 
   const ImageComponent = ExpoImage || require('react-native').Image;
-  const showImage = !!resolvedUri && !imgError;
+  const showImage = !!thumbUri && !imgError;
 
   // Initials fallback so we still show SOMETHING if the avatar 404s.
   const initials = (() => {
@@ -164,21 +190,33 @@ export default function AvatarLightbox({ visible, onClose, email, uri, name }) {
           {...panResponder.panHandlers}
           style={[
             styles.imageWrap,
-            { transform: [{ translateX }, { translateY }, { scale }] },
+            { transform: [{ translateX }, { translateY }, { scale }, { scale: zoomIn }] },
           ]}
         >
+          {/* Camada 0: iniciais (nunca tela preta). Camada 1: miniatura do cache
+              (instantânea, sem fade). Camada 2: versão grande, fade ao carregar. */}
+          <View style={[styles.fallback, styles.fallbackCenter]} pointerEvents="none">
+            <Text style={styles.fallbackInitials} allowFontScaling={false}>{initials}</Text>
+          </View>
           {showImage ? (
             <ImageComponent
-              source={{ uri: resolvedUri }}
-              style={styles.image}
+              source={{ uri: thumbUri }}
+              style={[styles.image, StyleSheet.absoluteFill]}
               onError={() => setImgError(true)}
-              {...(ExpoImage ? { contentFit: 'contain', cachePolicy: 'memory-disk', transition: 200 } : { resizeMode: 'contain' })}
+              {...(ExpoImage ? { contentFit: 'contain', cachePolicy: 'memory-disk', transition: 0, recyclingKey: `avlb-thumb#${_src.thumb || ''}` } : { resizeMode: 'contain' })}
             />
-          ) : (
-            <View style={styles.fallback}>
-              <Text style={styles.fallbackInitials} allowFontScaling={false}>{initials}</Text>
-            </View>
-          )}
+          ) : null}
+          {hasFull ? (
+            <Animated.View style={[StyleSheet.absoluteFill, { opacity: fullOpacity }]} pointerEvents="none">
+              <ImageComponent
+                source={{ uri: fullUri }}
+                style={styles.image}
+                onLoad={onFullLoad}
+                onError={() => setFullError(true)}
+                {...(ExpoImage ? { contentFit: 'contain', cachePolicy: 'memory-disk', transition: 0, priority: 'high', recyclingKey: `avlb-full#${fullUri}` } : { resizeMode: 'contain' })}
+              />
+            </Animated.View>
+          ) : null}
         </Animated.View>
 
         {/* Header — name + close button. Sits above wrapper so it stays tappable. */}
@@ -230,6 +268,12 @@ const styles = StyleSheet.create({
     backgroundColor: '#111111',
     justifyContent: 'center',
     alignItems: 'center',
+  },
+  fallbackCenter: {
+    // fallback ocupa o centro do quadrado da foto (absoluteFill + mesmo círculo)
+    position: 'absolute',
+    left: SCREEN_W * 0.15,
+    top: SCREEN_W * 0.15,
   },
   fallbackInitials: {
     color: '#fff',

@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, memo } from 'react';
 import { View, Text, StyleSheet, Platform, TouchableOpacity } from 'react-native';
 import Svg, { Defs, LinearGradient as SvgLinearGradient, Stop, Rect } from 'react-native-svg';
-import { getAvatarUrlForEmail } from '../services/api';
+import { getAvatarUrlForEmail } from '../services/api'; // collage tiles (= buildAvatarUrl)
 import ChatyyOneAvatar from './ChatyyOneAvatar';
 import { useLanguageOptional } from '../context/LanguageContext';
 // Disk-persistent avatar cache (documentDirectory/avatar-saved). Survives
@@ -10,6 +10,8 @@ import { useLanguageOptional } from '../context/LanguageContext';
 // Web: no-ops (browser Cache API + Cache-Control headers already cover).
 import { getCachedAvatarUriOrNull, cacheAvatar } from '../services/avatarCache';
 import { seenAwareTransition, markImageLoaded } from '../utils/imageSeen'; // [2026-10-08 chat-open-flicker]
+// [2026-10-14 avatar-instant] URL canônica única (lista = cabeçalho = perfil = visualizador).
+import { buildAvatarUrl, canonicalAvatarUrl, prefetchAvatarFull } from '../services/avatar';
 let _networkInfo = null;
 try { _networkInfo = require('../services/networkInfo'); } catch {}
 
@@ -82,57 +84,17 @@ function getAvatarVersion(email) {
 // strip any existing `v=` param, then append the current `?v=YYYYMMDD`.
 // External URLs (R2/CDN, https://, data:) and non-avatar paths pass through
 // untouched so we don't accidentally cache-bust unrelated images.
-function _todayBust() {
-  const d = new Date();
-  const y = d.getUTCFullYear();
-  const m = String(d.getUTCMonth() + 1).padStart(2, '0');
-  const day = String(d.getUTCDate()).padStart(2, '0');
-  return `${y}${m}${day}`;
-}
-// Remove every existing `v=` query param from a URL and normalize any orphaned
-// separators. Used so AvatarCircle can be the single writer of the `v=`
-// cache-bust param (see the remoteAvatarUrl construction below).
-function _stripVParam(u) {
-  if (!u || typeof u !== 'string') return u;
-  return u
-    .replace(/([?&])v=[^&]*/gi, '$1') // drop v= but keep the leading ?/&
-    .replace(/\?&/g, '?')             // '?&x' → '?x'
-    .replace(/&&+/g, '&')             // collapse '&&'
-    .replace(/[?&]$/g, '');           // trailing ?/&
-}
 function normalizeAvatarUrl(url) {
   if (!url || typeof url !== 'string') return url;
   // Only target our own avatar endpoint — leave R2/CDN/data: URLs alone.
   if (url.indexOf('get_avatar') === -1) return url;
-  // [2026-10-12 avatar-realtime] URL montada pelo servidor (conv.avatar_url,
-  // member.avatar_url…) pode estar sem `v=` ou com `v=` velho: sobrepõe a
-  // versão mais nova conhecida (WS avatar_updated / payloads) — senão a foto
-  // nova de um contato nunca aparecia em quem renderiza via `uri`.
-  url = _AV.withLatestAvatarVersion(url);
-  // ⚠️ Do NOT strip an existing `v=`. That carries the WS-pushed
-  // `avatar_version` which the backend uses for ETag/304 negotiation, and
-  // stripping it caused friend photos to revert to whatever version was
-  // cached during the 2026-05-18 ACL outage (the URL became identical to
-  // the poisoned-cache entry once daily-bust matched the stored v=).
-  //
-  // Strategy: keep any existing `v=` untouched, but ALWAYS overlay a fresh
-  // `&d=YYYYMMDD` so the URL rotates daily even if `v=` is sticky. New
-  // `&d=` → new cache key → fresh fetch → friend's photo appears again.
-  const bust = _todayBust();
-  // [2026-10-08 chat-fix-composer-location] Sem `v=` = avatar padrão/iniciais
-  // (ou versão desconhecida): carimba a versão da RENDERIZAÇÃO das iniciais
-  // (`av=`, ver AVATAR_INITIALS_RENDER_V em services/api.js) — o cache em disco
-  // ignora o `d=` diário, então só um param novo derruba as iniciais cortadas.
-  let out = url;
-  if (!/[?&]v=/.test(out) && !/[?&]av=/.test(out)) {
-    out = `${out}${out.indexOf('?') === -1 ? '?' : '&'}av=2`;
-  }
-  // Replace existing &d= if present (idempotent), otherwise append.
-  if (/[?&]d=\d{8}(?:&|$)/.test(out)) {
-    return out.replace(/([?&])d=\d{8}/, `$1d=${bust}`);
-  }
-  const sep = out.indexOf('?') === -1 ? '?' : '&';
-  return `${out}${sep}d=${bust}`;
+  // [2026-10-14 avatar-instant] Reconstrói a URL CANÔNICA (services/avatar.js):
+  // e-mail + maior versão conhecida (`v=` da URL do servidor vs store
+  // WS/payloads) + viewer, em ordem fixa, SEM o `d=` diário e com `av=` único.
+  // Antes cada caminho gerava uma variante (av=2 aqui, av=3 no api.js, `name=`
+  // antes/depois do `v=`, host chatyy.com.br vs edge) → mesma foto baixada 2×
+  // e cache inteiro invalidado todo dia à meia-noite UTC.
+  return canonicalAvatarUrl(url);
 }
 
 // Bug 2026-05-12 v2: initials flipped after restart (JA→AU, ML→OF, N→NO).
@@ -266,9 +228,8 @@ function _CollageTile({ member, size, width, height }) {
   // and lets the caller pin a specific version (e.g. WS-pushed update).
   let uri = '';
   if (typeof member?.avatar_url === 'string' && member.avatar_url) {
-    uri = /^https?:\/\//i.test(member.avatar_url)
-      ? member.avatar_url
-      : `https://chatyy.com.br${member.avatar_url.startsWith('/') ? '' : '/'}${member.avatar_url}`;
+    // [2026-10-14 avatar-instant] canônica (relativa/outro host/`v=` velho → mesma URL da lista)
+    uri = canonicalAvatarUrl(member.avatar_url) || '';
   } else if (baseUrl) {
     uri = baseUrl;
   }
@@ -392,7 +353,7 @@ function _GroupCollage({ members, size, style }) {
   );
 }
 
-function AvatarCircle({ name, email, uri, size = 48, style, online = false, ringColor = '#111111', showStatus = false, members, onPress }) {
+function AvatarCircle({ name, email, uri, size = 48, style, online = false, ringColor = '#111111', showStatus = false, members, onPress, prefetchFull = false }) {
   const _lang = useLanguageOptional();
   const [imgError, setImgError] = useState(false);
   // [2026-10-12 avatar-realtime] e-mail p/ versão: prop `email` OU o `email=` de
@@ -431,6 +392,21 @@ function AvatarCircle({ name, email, uri, size = 48, style, online = false, ring
     });
   }, [_verEmail]);
 
+  // [2026-10-14 avatar-instant] Pré-carrega a versão GRANDE (size=1024) quando a
+  // conversa/perfil abre (prefetchFull) → o toque no avatar já acha a foto nítida
+  // no cache. Fora do caminho crítico (600 ms depois do mount). Hook ANTES de
+  // qualquer return antecipado (ordem estável de hooks — ver comentário acima).
+  useEffect(() => {
+    if (!prefetchFull) return undefined;
+    const src = _verEmail || uri;
+    if (!src) return undefined;
+    const tm = setTimeout(() => { try { prefetchAvatarFull(src, { name }); } catch {} }, 600);
+    return () => clearTimeout(tm);
+  }, [prefetchFull, _verEmail, uri, version]);
+  // Toque começando (onPressIn) = ~100-150 ms de vantagem antes do onPress abrir
+  // o visualizador: dispara a versão grande já (dedupe interno de 10 min).
+  const _onPressIn = onPress ? () => { try { prefetchAvatarFull(_verEmail || uri, { name, high: true }); } catch {} } : undefined;
+
   // ── Group collage short-circuit ────────────────────────────────
   // When the caller passes `members` and there's no single image to show
   // (no explicit `uri` AND no email-derived avatar would apply), render
@@ -456,12 +432,12 @@ function AvatarCircle({ name, email, uri, size = 48, style, online = false, ring
         </View>
       );
       return onPress
-        ? <TouchableOpacity activeOpacity={0.7} onPress={onPress} accessibilityRole="button">{node}</TouchableOpacity>
+        ? <TouchableOpacity activeOpacity={0.7} onPress={onPress} onPressIn={_onPressIn} accessibilityRole="button">{node}</TouchableOpacity>
         : node;
     }
     const node = <_GroupCollage members={members} size={size} style={style} />;
     return onPress
-      ? <TouchableOpacity activeOpacity={0.7} onPress={onPress} accessibilityRole="button">{node}</TouchableOpacity>
+      ? <TouchableOpacity activeOpacity={0.7} onPress={onPress} onPressIn={_onPressIn} accessibilityRole="button">{node}</TouchableOpacity>
       : node;
   }
 
@@ -475,14 +451,12 @@ function AvatarCircle({ name, email, uri, size = 48, style, online = false, ring
   // "@itsneres" or plain names sometimes leak through from feed posts and
   // would otherwise trigger a 400 loop against /get_avatar.
   const looksLikeEmail = typeof email === 'string' && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email);
-  let baseAvatarUrl = looksLikeEmail ? getAvatarUrlForEmail(email) : null;
   // [2026-10-03] Pass the display name so the server's generated initials
   // fallback uses it (sender "Google" → "GO") instead of the email local-part
-  // ("no-reply" → "NO"). Ignored server-side when a real profile avatar exists.
-  // Only when `name` is a real human name, not itself an email.
-  if (baseAvatarUrl && typeof name === 'string' && name.trim() && !/@/.test(name)) {
-    baseAvatarUrl += (baseAvatarUrl.includes('?') ? '&' : '?') + 'name=' + encodeURIComponent(name.trim().slice(0, 40));
-  }
+  // ("no-reply" → "NO"). [2026-10-14 avatar-instant] buildAvatarUrl só põe o
+  // `name=` quando NÃO há versão (iniciais) — com foto real ele só fragmentava o
+  // cache — e já inclui o `v=` mais novo do store (fonte única).
+  const baseAvatarUrl = looksLikeEmail ? buildAvatarUrl(email, { name }) : null;
   // Stable cache key — only busts when `bumpAvatarCache(email)` is called
   // (happens on explicit avatar upload OR WS avatar_updated event). When
   // it does bust, expo-image's disk cache is also cleared globally so
@@ -495,14 +469,8 @@ function AvatarCircle({ name, email, uri, size = 48, style, online = false, ring
   // Strip any existing `v=` first, then append exactly one (AvatarCircle's
   // version map is fed by BOTH bustAvatarCache and direct bumpAvatarCache
   // callers, so it's the authoritative bust value).
-  const remoteAvatarUrl = baseAvatarUrl
-    ? (cacheBust > 0
-        ? (() => {
-            const stripped = _stripVParam(baseAvatarUrl);
-            return `${stripped}${stripped.includes('?') ? '&' : '?'}v=${cacheBust}`;
-          })()
-        : baseAvatarUrl)
-    : null;
+  // [2026-10-14 avatar-instant] buildAvatarUrl já põe exatamente 1 `v=` (store).
+  const remoteAvatarUrl = baseAvatarUrl || null;
   // Skip the native synchronous cache — ele retorna sempre o ÚLTIMO arquivo
   // baixado pra esse email (sem considerar a version), então quando o user
   // troca a foto e a version está em 0 (cold-start, MMKV ainda não populada)
@@ -685,7 +653,7 @@ function AvatarCircle({ name, email, uri, size = 48, style, online = false, ring
       </View>
     );
     return onPress
-      ? <TouchableOpacity activeOpacity={0.7} onPress={onPress} accessibilityRole="button" accessibilityLabel={accessLabel}>{node}</TouchableOpacity>
+      ? <TouchableOpacity activeOpacity={0.7} onPress={onPress} onPressIn={_onPressIn} accessibilityRole="button" accessibilityLabel={accessLabel}>{node}</TouchableOpacity>
       : node;
   }
 
@@ -702,7 +670,7 @@ function AvatarCircle({ name, email, uri, size = 48, style, online = false, ring
     </View>
   );
   return onPress
-    ? <TouchableOpacity activeOpacity={0.7} onPress={onPress} accessibilityRole="button" accessibilityLabel={accessLabel}>{node}</TouchableOpacity>
+    ? <TouchableOpacity activeOpacity={0.7} onPress={onPress} onPressIn={_onPressIn} accessibilityRole="button" accessibilityLabel={accessLabel}>{node}</TouchableOpacity>
     : node;
 }
 
@@ -755,6 +723,7 @@ function _avatarEqual(prev, next) {
     prev.online === next.online &&
     prev.ringColor === next.ringColor &&
     prev.showStatus === next.showStatus &&
+    prev.prefetchFull === next.prefetchFull &&
     // `onPress` swaps from undefined → fn when the caller wires tap-to-fullscreen
     // mid-mount (rare, but happens on Profile peek's avatar). Treating it as a
     // tracked dim means a freshly-passed callback re-wraps the avatar in a

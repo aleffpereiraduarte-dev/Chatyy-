@@ -3973,7 +3973,7 @@ function _avatarDailyBust() {
 // showed on web but fell back to the initials PNG on iOS whenever the target's
 // profile-photo visibility was "meus contatos"/"ninguém". The backend documents
 // `viewer=` as the mechanism for <img> tags exactly for this reason.
-function _avatarViewerPart() {
+function _avatarViewerEmail() {
   // [2026-07-03] savedCredentials is only set during login()/signup() of the
   // CURRENT process — it is NOT rehydrated on a cold start / OTA reload (the
   // session is restored from the stored token without calling login()). So
@@ -3981,34 +3981,25 @@ function _avatarViewerPart() {
   // served the initials PNG for contacts-only avatars (e.g. "Nicole"), which is
   // why the photo showed on web (cookie) but not on native. getActiveAccountEmail()
   // IS hydrated from SecureStore on boot, so it survives a restart.
-  const me = savedCredentials?.email || (typeof getActiveAccountEmail === 'function' ? getActiveAccountEmail() : '') || '';
-  return me ? `&viewer=${encodeURIComponent(me)}` : '';
+  return savedCredentials?.email || (typeof getActiveAccountEmail === 'function' ? getActiveAccountEmail() : '') || '';
 }
+// Usado por services/avatar.js (URL canônica) — mesmo valor do `viewer=` de sempre.
+export function getAvatarViewerEmail() { return _avatarViewerEmail(); }
 // [2026-10-08 chat-fix-composer-location] Versão da RENDERIZAÇÃO das iniciais
-// geradas pelo servidor (email.php get_avatar centralizou as iniciais hoje — as
-// antigas saíam cortadas, "TH"). O cache em disco (services/avatarCache.js)
-// descarta o `d=` diário ao montar a chave, então sem `v=` a imagem velha das
-// iniciais nunca era rebaixada. `av=` entra SÓ quando não há `v=` (sem foto
-// enviada conhecida = avatar padrão/iniciais); fotos reais seguem pelo `v=`.
-// Subir este número quando o desenho das iniciais mudar de novo.
-export const AVATAR_INITIALS_RENDER_V = 3; // [2026-10-10] servidor gera cinza puro
-function _avatarRenderPart(v) {
-  return v ? '' : `&av=${AVATAR_INITIALS_RENDER_V}`;
-}
+// geradas pelo servidor. [2026-10-14 avatar-instant] mora em services/avatar.js
+// (fonte única); reexportada aqui por compat.
+export const AVATAR_INITIALS_RENDER_V = 3; // manter = services/avatar.js
+// [2026-10-14 avatar-instant] URL CANÔNICA (services/avatar.js): ordem fixa de
+// parâmetros, SEM o `d=AAAAMMDD` diário (invalidava o cache inteiro todo dia e
+// gerava 2 URLs p/ a mesma foto). Foto nova muda o `v=`; iniciais mudam o `av=`.
 export function getAvatarUrl(email) {
   const e = email || savedCredentials?.email || '';
-  const v = _avatarV(e);
-  const d = _avatarDailyBust();
-  const vPart = v ? `&v=${v}` : _avatarRenderPart(v);
-  return `${API_URL}?action=get_avatar&email=${encodeURIComponent(e)}${vPart}&d=${d}${_avatarViewerPart()}`;
+  try { return require('./avatar').buildAvatarUrl(e) || ''; } catch { return ''; }
 }
 
-export function getAvatarUrlForEmail(email) {
+export function getAvatarUrlForEmail(email, opts) {
   if (!email) return null;
-  const v = _avatarV(email);
-  const d = _avatarDailyBust();
-  const vPart = v ? `&v=${v}` : _avatarRenderPart(v);
-  return `${API_URL}?action=get_avatar&email=${encodeURIComponent(email)}${vPart}&d=${d}${_avatarViewerPart()}`;
+  try { return require('./avatar').buildAvatarUrl(email, opts) || null; } catch { return null; }
 }
 
 /**

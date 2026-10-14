@@ -1207,6 +1207,17 @@ export default function Profile({
 
   const identity = data?.identity;
 
+  // [2026-10-14 avatar-instant] Perfil aberto → pré-carrega a foto GRANDE
+  // (size=1024, URL canônica) p/ o toque no avatar abrir já nítido.
+  useEffect(() => {
+    const src = identity?.email || identity?.avatar_url;
+    if (!visible || !src) return undefined;
+    const tm = setTimeout(() => {
+      try { require('../services/avatar').prefetchAvatarFull(src, { name: identity?.name }); } catch {}
+    }, 500);
+    return () => clearTimeout(tm);
+  }, [visible, identity?.email, identity?.avatar_url]);
+
   // Load saved nickname when we know which identity we're viewing.
   useEffect(() => {
     if (!identity?.email) return;
