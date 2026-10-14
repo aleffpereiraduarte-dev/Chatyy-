@@ -179,6 +179,7 @@ export default {
   "creatorDash.subscribers": "Suscriptores",
   "creatorDash.gifts7d": "Regalos · 7 días",
   "creatorDash.gifts30d": "Regalos · 30 días",
+  "creatorEarnings.stat.gifts30short": "Regalos 30d",
   "creatorDash.chartTitle": "Últimos 7 días",
   "creatorDash.chartEmpty": "Sin regalos en los últimos 7 días.",
   "creatorDash.topSupporters": "Mayores seguidores · 30 días",

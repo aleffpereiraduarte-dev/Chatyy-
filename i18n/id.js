@@ -179,6 +179,7 @@ export default {
   "creatorDash.subscribers": "Pelanggan",
   "creatorDash.gifts7d": "Hadiah · 7 hari",
   "creatorDash.gifts30d": "Hadiah · 30 hari",
+  "creatorEarnings.stat.gifts30short": "Hadiah 30h",
   "creatorDash.chartTitle": "7 hari terakhir",
   "creatorDash.chartEmpty": "Tidak ada hadiah dalam 7 hari terakhir.",
   "creatorDash.topSupporters": "Pendukung teratas · 30 hari",

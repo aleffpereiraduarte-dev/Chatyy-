@@ -16,7 +16,7 @@ import * as api from '../../services/api';
 import { formatInt } from '../../utils/dateFormat';
 import { DIAMONDS_IAP_ENABLED } from '../../constants/featureFlags';
 import {
-  DIAMOND_PACKS, getDiamondLocalizedPrice, initIAP, purchaseDiamonds, isDiamondSkuAvailable, restoreDiamondPurchases,
+  DIAMOND_PACKS, getDiamondLocalizedPrice, getDiamondStoreUnitPrice, initIAP, purchaseDiamonds, isDiamondSkuAvailable, restoreDiamondPurchases,
 } from '../../services/iap';
 import { useWallet, refreshWallet, setDiamondBalance, isMinorAccount } from '../../services/diamonds';
 import { haptic } from '../../constants/theme';
@@ -144,6 +144,28 @@ export default function useDiamondStore({ t, language, onBalanceChange } = {}) {
     } finally { setRestoring(false); }
   }, [restoring, t]);
 
+  // "≈ valor de compra" do saldo na moeda/preço que a LOJA mostra a esta pessoa:
+  // nativo = preço StoreKit/Play do pacote base; web = preço Stripe (BRL).
+  // Sem preço da loja → '' (a UI omite; nada de câmbio estimado).
+  const refValue = useCallback((diamonds) => {
+    const n = Number(diamonds) || 0;
+    if (n <= 0) return '';
+    let unit = null;
+    if (isWeb) {
+      const base = (webPacks || []).find((p) => p.priceBrl > 0 && p.diamonds > 0 && !p.bonusPct) || (webPacks || []).find((p) => p.priceBrl > 0 && p.diamonds > 0);
+      if (base) unit = { currency: 'BRL', perDiamond: base.priceBrl / base.diamonds };
+    } else if (iapState === 'ready') {
+      unit = getDiamondStoreUnitPrice();
+    }
+    if (!unit) return '';
+    const v = n * unit.perDiamond;
+    try {
+      return new Intl.NumberFormat(language || undefined, { style: 'currency', currency: unit.currency, maximumFractionDigits: v >= 1000 ? 0 : 2 }).format(v);
+    } catch {
+      return unit.currency + ' ' + v.toFixed(2);
+    }
+  }, [isWeb, webPacks, iapState, language]);
+
   const allSoon = !isWeb && packs.length > 0 && packs.every((p) => !available(p));
 
   const checkout = webPack ? (
@@ -157,7 +179,7 @@ export default function useDiamondStore({ t, language, onBalanceChange } = {}) {
 
   return {
     wallet, isWeb, packs, webPacks, iapState, pendingSku, banner, setBanner, restoring,
-    available, priceLabel, isSoon, canBuy, onBuy, onRestore, blockText, allSoon, checkout,
+    available, priceLabel, isSoon, canBuy, onBuy, onRestore, blockText, allSoon, checkout, refValue,
     restoreAvailable: !isWeb && DIAMONDS_IAP_ENABLED,
   };
 }

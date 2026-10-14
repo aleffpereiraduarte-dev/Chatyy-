@@ -70,7 +70,7 @@ function sourceLabel(t, refKind) {
 function MetricTile({ label, value, sub, s }) {
   return (
     <View style={[styles.tile, { backgroundColor: s.surface, borderColor: s.border, borderWidth: s.isDark ? 0 : StyleSheet.hairlineWidth }]}>
-      <Text style={[Type.caption, { color: s.textSecondary }]} numberOfLines={2}>{label}</Text>
+      <Text style={[Type.caption, { color: s.textSecondary }]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8}>{label}</Text>
       <Text style={[Type.headline, TABULAR, { color: s.text, marginTop: Space.xs }]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.6}>{value}</Text>
       {sub ? <Text style={[Type.caption2, { color: s.textTertiary, marginTop: 2 }]} numberOfLines={1}>{sub}</Text> : null}
     </View>
@@ -242,7 +242,7 @@ function CreatorEarnings() {
         <MetricTile s={s} label={tr(t, 'creatorEarnings.stat.lifetime', 'Total ganho')} value={money(data.lifetime_payout_cents)} />
         <MetricTile s={s} label={tr(t, 'creatorDash.chart30', 'Últimos 30 dias')} value={money(data.month_payout_cents)} />
         <MetricTile s={s}
-          label={tr(t, 'creatorDash.gifts30d', 'Presentes · 30 dias')}
+          label={tr(t, 'creatorEarnings.stat.gifts30short', 'Presentes 30d')}
           value={formatInt(data.gifts_count_30d, language)}
           sub={tr(t, 'creatorEarnings.stat.giftsLifetime', '{n} no total').replace('{n}', formatInt(data.gifts_count_lifetime, language))}
         />

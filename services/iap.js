@@ -652,6 +652,26 @@ export function getDiamondLocalizedPrice(productId) {
   const p = _diamondProducts.find(x => x.id === lookupId || x.productId === lookupId);
   return p?.localizedPrice || p?.displayPrice || '';
 }
+/** [2026-10-14 carteira-v3.1] Preço por diamante na moeda da LOJA (App Store /
+ *  Play) a partir do pacote base (sem bônus) — ou do menor pacote que a loja
+ *  devolveu. Usado no "≈ valor de compra" do saldo. null = loja sem preço
+ *  numérico (aí a UI omite a referência em vez de inventar câmbio). */
+export function getDiamondStoreUnitPrice() {
+  if (!_diamondProducts.length) return null;
+  for (const pack of DIAMOND_PACKS) {
+    const id = Platform.OS === 'android' && pack.skuAndroid ? pack.skuAndroid : pack.sku;
+    const p = _diamondProducts.find(x => (x?.id || x?.productId) === id);
+    if (!p) continue;
+    let price = typeof p.price === 'number' ? p.price : Number(p.price);
+    let currency = p.currency || p.priceCurrencyCode || '';
+    const micros = p?.oneTimePurchaseOfferDetailsAndroid?.priceAmountMicros || p?.oneTimePurchaseOfferDetails?.priceAmountMicros;
+    if ((!isFinite(price) || price <= 0) && micros) price = Number(micros) / 1e6;
+    if (!currency && p?.oneTimePurchaseOfferDetailsAndroid?.priceCurrencyCode) currency = p.oneTimePurchaseOfferDetailsAndroid.priceCurrencyCode;
+    if (!isFinite(price) || price <= 0 || !/^[A-Z]{3}$/.test(String(currency))) continue;
+    return { currency: String(currency), perDiamond: price / pack.diamonds };
+  }
+  return null;
+}
 /** True iff this SKU was returned by fetchProducts (StoreKit on iOS,
  *  Google Play Billing on Android). UI uses this to grey out / hide
  *  diamond packs that aren't registered in ASC / Play Console, instead

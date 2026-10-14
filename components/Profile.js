@@ -42,6 +42,7 @@ import ProfileSettingsSheet from './ProfileSettingsSheet';
 import FollowersSheet from './FollowersSheet';
 import ScreenEmptyState from './ScreenEmptyState'; // [2026-10-14] vazio P&B (era mosaico cinza)
 import SendDiamondSheet from './SendDiamondSheet';
+import { haptic } from '../constants/theme';
 import { useWallet, refreshWallet } from '../services/diamonds';
 import { humanizeCount as _humanizeDiamonds } from './gifts/giftCatalog';
 // [2026-05-22 monetization-pause] hidden by MONETIZATION_ENABLED flag
@@ -356,26 +357,35 @@ function LiveWatchCta({ label, onPress }) {
 // Secondary chip with icon + label — used for supplementary actions (call,
 // video, email) that sit below the primary Follow/Message row. Pill-shape
 // matches the FlatButton above so the action stack reads as one family.
-// [2026-10-13 diamantes] Linha compacta "Carteira · <saldo>" no perfil próprio.
-const ProfileWalletRow = memo(function ProfileWalletRow({ colors, isDark, t, onPress }) {
+// [2026-10-14 carteira-discreta] Saldo de diamantes como 3º botão compacto da
+// linha "Editar perfil · Compartilhar" (mesmo preenchimento suave, sem borda) —
+// estilo TikTok/Instagram: discreto, 1 toque até a Carteira, só no próprio perfil.
+const ProfileWalletChip = memo(function ProfileWalletChip({ colors, isDark, t, onPress }) {
   const w = useWallet();
   useEffect(() => { refreshWallet(); }, []);
   if (w.loaded && !w.enabled) return null;
+  const fill = colors?.surfaceVariant || (isDark ? 'rgba(255,255,255,0.09)' : 'rgba(15,23,42,0.055)');
+  const has = typeof w.diamonds === 'number';
+  const label = t?.('wallet.title') || 'Carteira';
   return (
     <TouchableOpacity
-      onPress={onPress}
-      activeOpacity={0.8}
+      onPress={() => { try { haptic.light(); } catch {} onPress?.(); }}
+      activeOpacity={0.7}
       accessibilityRole="button"
-      accessibilityLabel={`${t?.('wallet.title') || 'Carteira'}: ${w.diamonds ?? ''}`}
+      accessibilityLabel={has ? `${label}: ${w.diamonds}` : label}
+      hitSlop={{ top: 4, bottom: 4 }}
       style={{
-        marginTop: 8, minHeight: 44, borderRadius: 12, paddingHorizontal: 14,
-        flexDirection: 'row', alignItems: 'center', gap: 8,
-        borderWidth: 1, borderColor: colors?.border || (isDark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.10)'),
+        minHeight: 38, borderRadius: 10, paddingHorizontal: 12,
+        flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 5,
+        backgroundColor: fill,
       }}
     >
-      <IconDiamond size={16} />
-      <Text style={{ flex: 1, color: colors?.text, fontSize: 14, fontWeight: '700' }}>{t?.('wallet.title') || 'Carteira'}</Text>
-      <Text style={{ color: colors?.text, fontSize: 14, fontWeight: '800' }}>{w.diamonds == null ? '—' : _humanizeDiamonds(w.diamonds)}</Text>
+      <IconDiamond size={14} />
+      {has ? (
+        <Text style={{ color: colors?.text || (isDark ? '#fff' : '#111'), fontSize: 14, fontWeight: '600', letterSpacing: 0.1, fontVariant: ['tabular-nums'] }} numberOfLines={1}>
+          {_humanizeDiamonds(w.diamonds)}
+        </Text>
+      ) : null}
     </TouchableOpacity>
   );
 });
@@ -2708,12 +2718,12 @@ export default function Profile({
               colors={colors}
               isDark={isDark}
             />
+            {/* [2026-10-14 carteira-discreta] saldo compacto no fim da linha. */}
+            {DIAMONDS_ENABLED ? (
+              <ProfileWalletChip colors={colors} isDark={isDark} t={t} onPress={() => { try { router?.push('/wallet'); } catch {} }} />
+            ) : null}
           </View>
         )}
-        {/* [2026-10-13 diamantes] Carteira (saldo de diamantes) no próprio perfil. */}
-        {DIAMONDS_ENABLED && actions.is_self ? (
-          <ProfileWalletRow colors={colors} isDark={isDark} t={t} onPress={() => { try { router?.push('/wallet'); } catch {} }} />
-        ) : null}
 
         {/* "Assistindo agora" CTA — Instagram parity. Lives outrank every
             other action on the profile, so we paint a bold red pulsing

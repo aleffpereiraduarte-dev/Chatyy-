@@ -182,6 +182,7 @@ export default {
   "creatorDash.subscribers": "Subscribers",
   "creatorDash.gifts7d": "Gifts · 7 days",
   "creatorDash.gifts30d": "Gifts · 30 days",
+  "creatorEarnings.stat.gifts30short": "സമ്മാനം 30ദി",
   "creatorDash.chartTitle": "Last 7 days",
   "creatorDash.chartEmpty": "No gifts in the last 7 days.",
   "creatorDash.topSupporters": "Top supporters · 30 days",

@@ -179,6 +179,7 @@ export default {
   "creatorDash.subscribers": "सब्सक्राइबर",
   "creatorDash.gifts7d": "उपहार · 7 दिन",
   "creatorDash.gifts30d": "उपहार · 30 दिन",
+  "creatorEarnings.stat.gifts30short": "उपहार 30दि",
   "creatorDash.chartTitle": "पिछले 7 दिन",
   "creatorDash.chartEmpty": "पिछले 7 दिनों में कोई उपहार नहीं।",
   "creatorDash.topSupporters": "शीर्ष समर्थक · 30 दिन",

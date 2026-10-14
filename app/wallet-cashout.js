@@ -35,6 +35,8 @@ import * as api from '../services/api';
 import { formatMoney, formatMoneyActive, getActiveCurrency } from '../services/currencyService';
 import { useCurrency } from '../context/CurrencyContext';
 import { IconInfo, IconCheckCircle, IconAlertCircle } from '../components/Icons';
+import { haptic } from '../constants/theme';
+import { HeroCard, HERO, TABULAR } from '../components/wallet/WalletKit';
 import {
   Button, Card, SectionHeader, TopBar, useSurface, Skeleton, SkeletonFadeIn, SegmentedControl,
   Badge, Sheet, PressableRow, showToast, Type, Space, Radius, Layout,
@@ -85,10 +87,27 @@ function validPixKey(type, key) {
   switch (type) {
     case 'cpf': return isValidCpf(k);
     case 'email': return /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(k);
-    case 'phone': { const n = digits(k); return n.length >= 10 && n.length <= 13; }
+    case 'phone': {
+      // Pix telefone = só Brasil (espelha o servidor): DDI estrangeiro não vira +55.
+      let n = digits(k);
+      if ((k.startsWith('+') && !n.startsWith('55')) || k.startsWith('00')) return false;
+      if (n.length === 10 || n.length === 11) n = '55' + n;
+      return /^55[1-9]{2}(9\d{8}|[2-5]\d{7})$/.test(n);
+    }
     case 'random': return /^[0-9a-f]{8}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{12}$/i.test(k);
     default: return true;
   }
+}
+
+// Chave no formato que o servidor aceita (aleatória sem hífens → UUID com hífens).
+function normPixKey(type, key) {
+  const k = String(key || '').trim();
+  if (type === 'cpf') return digits(k);
+  if (type === 'random') {
+    const h = k.replace(/-/g, '').toLowerCase();
+    return /^[0-9a-f]{32}$/.test(h) ? `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}` : k;
+  }
+  return k;
 }
 
 function statusTone(st) { return st === 'paid' ? 'success' : st === 'rejected' ? 'danger' : 'neutral'; }
@@ -130,7 +149,7 @@ function DetailRow({ label, value, s, mono }) {
     <View style={styles.detailRow}>
       <Text style={[Type.footnote, { color: s.textSecondary, minWidth: 110 }]}>{label}</Text>
       <Text selectable numberOfLines={3}
-        style={[Type.subhead, { flex: 1, color: s.text, fontWeight: '600', textAlign: 'right' },
+        style={[Type.subhead, { flex: 1, minWidth: 0, color: s.text, fontWeight: '600', textAlign: 'right' }, Platform.OS === 'web' ? { wordBreak: 'break-all' } : null,
           mono && { fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace' }]}>
         {value || '—'}
       </Text>
@@ -226,7 +245,8 @@ export default function WalletCashoutScreen() {
   const goReview = () => {
     setTouched({ _all: true });
     setError('');
-    if (formValid) setStep('review');
+    if (formValid) { try { haptic.light(); } catch {} setStep('review'); }
+    else { try { haptic.warning(); } catch {} }
   };
 
   const submit = useCallback(async () => {
@@ -234,7 +254,7 @@ export default function WalletCashoutScreen() {
     setError('');
     try {
       const r = await api.walletCashoutRequest({
-        amountCents, pixKey: pixType === 'cpf' ? digits(pixKey) : pixKey.trim(), pixKeyType: pixType, fullName, cpf,
+        amountCents, pixKey: normPixKey(pixType, pixKey), pixKeyType: pixType, fullName, cpf,
       });
       if (r?.success && r.data) {
         setAvailable(r.data.available_cents != null ? Number(r.data.available_cents) || 0 : Number(r.data.pending_payout_cents) || 0);
@@ -242,6 +262,7 @@ export default function WalletCashoutScreen() {
         setAmountText('');
         setTouched({});
         setStep('done');
+        try { haptic.success(); } catch {}
         loadAll();
         return;
       }
@@ -256,7 +277,11 @@ export default function WalletCashoutScreen() {
         cpf_invalid: tr(t, 'wallet.cashoutCpfError', 'CPF inválido. Deve ter 11 dígitos.'),
         name_invalid: tr(t, 'wallet.cashoutNameError', 'Informe seu nome completo.'),
         pix_key_invalid: tr(t, 'wallet.cashoutKeyError', 'Chave PIX inválida.'),
-        too_many_pending: tr(t, 'wallet.cashoutRateLimit', 'Você já tem 3 saques em análise. Aguarde a aprovação.'),
+        // [2026-10-14] servidor permite 1 pendente por vez (não 3) → texto certo.
+        too_many_pending: tr(t, 'earn.blockPending', 'Você já tem um saque em análise.'),
+        pending_exists: tr(t, 'earn.blockPending', 'Você já tem um saque em análise.'),
+        negative_balance: tr(t, 'earn.blockNegative', 'Há um estorno pendente na sua carteira. Regularize para sacar.'),
+        rate_limited: tr(t, 'wallet.cashoutFailed', 'Falha ao solicitar saque.'),
         insufficient_pending: tr(t, 'wallet.cashoutInsufficient', 'Saldo de saque insuficiente.'),
         insufficient_available: tr(t, 'cashout3.errAvailable', 'Valor acima do disponível. Presentes recentes ainda estão em liberação.'),
         daily_limit: tr(t, 'cashout3.errDaily', 'Limite diário de saque atingido. Tente amanhã.'),
@@ -266,11 +291,12 @@ export default function WalletCashoutScreen() {
         account_too_new: tr(t, 'earn.blockAccountNew', 'Sua conta precisa ter pelo menos {n} dias para sacar.').replace('{n}', String(rules.minAgeDays || 30)),
         minor_blocked: tr(t, 'earn.blockMinor', 'Saques não estão disponíveis para contas supervisionadas.'),
         disabled: tr(t, 'creatorEarnings.cashoutPaused', 'Saques temporariamente indisponíveis.'),
-        rate_limit: tr(t, 'wallet.cashoutRateLimit', 'Você já tem 3 saques em análise. Aguarde a aprovação.'),
       };
       if (msg === 'disabled') { setServerDisabled(true); setStep('form'); return; }
       setError(map[msg] || map[code] || tr(t, 'wallet.cashoutFailed', 'Falha ao solicitar saque.'));
       setStep('review');
+      try { haptic.error(); } catch {}
+      if (msg === 'too_many_pending' || msg === 'insufficient_available' || msg === 'negative_balance') loadAll();
     } catch (e) {
       setError(tr(t, 'cashout2.errNetwork', 'Sem conexão. Confira a internet e tente de novo.'));
       setStep('review');
@@ -346,7 +372,7 @@ export default function WalletCashoutScreen() {
       <Card>
         <Text style={[Type.headline, { color: s.text, marginBottom: Space.sm }]}>{tr(t, 'cashout2.reviewTitle', 'Confira antes de enviar')}</Text>
         <DetailRow s={s} label={tr(t, 'wallet.cashoutDetail.amount', 'Valor')} value={brl(amountCents) + (showConverted ? `  (≈ ${money(amountCents)})` : '')} />
-        <DetailRow s={s} label={tr(t, 'wallet.cashoutDetail.key', 'Chave PIX')} value={pixKey.trim()} mono />
+        <DetailRow s={s} label={tr(t, 'wallet.cashoutDetail.key', 'Chave PIX')} value={pixType === 'cpf' ? fmtCpf(pixKey) : normPixKey(pixType, pixKey)} mono />
         <DetailRow s={s} label={tr(t, 'wallet.cashoutDetail.fullName', 'Titular')} value={fullName.trim()} />
         <DetailRow s={s} label={tr(t, 'wallet.cashoutDetail.cpf', 'CPF')} value={fmtCpf(cpf)} mono />
         {error ? (
@@ -457,23 +483,24 @@ export default function WalletCashoutScreen() {
 
   const body = (
     <>
-      <Card elevated padding={Space.xl}>
-        <Text style={[Type.footnote, { color: s.textSecondary, fontWeight: '600' }]}>
+      {/* [2026-10-14 v3.1] mesmo cartão-herói grafite da Carteira / Meus Ganhos. */}
+      <HeroCard isDark={isDark} glow={false}>
+        <Text style={[styles.heroCaps, { color: HERO.sub }]}>
           {tr(t, 'wallet.cashoutAvailable', 'Disponível para saque')}
         </Text>
-        <Text style={[Type.largeTitle, { color: s.text, marginTop: Space.xs }]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.6}>
+        <Text style={[styles.heroNum, TABULAR, { color: HERO.text, marginTop: Space.sm }]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.6}>
           {money(available)}
         </Text>
-        <Text style={[Type.footnote, { color: s.textSecondary, marginTop: Space.xs }]}>
+        <Text style={[Type.footnote, { color: HERO.sub, marginTop: Space.xs }]}>
           {tr(t, 'cashout3.heroSub', 'Mínimo {min} · análise manual · Pix em até 3 dias úteis').replace('{min}', money(MIN_CENTS))}
         </Text>
         {rules.onHold > 0 ? (
-          <Text style={[Type.footnote, { color: s.textSecondary, marginTop: Space.xs }]}>
+          <Text style={[Type.footnote, { color: HERO.sub, marginTop: Space.xs }]}>
             {tr(t, 'earn.onHold', '{amount} em liberação (presentes dos últimos {days} dias)')
               .replace('{amount}', money(rules.onHold)).replace('{days}', String(rules.holdDays || 7))}
           </Text>
         ) : null}
-      </Card>
+      </HeroCard>
 
       {formBlock}
 
@@ -558,6 +585,8 @@ const styles = StyleSheet.create({
     padding: Layout.gutter, gap: Space.md,
     width: '100%', maxWidth: Layout.contentMaxWidth, alignSelf: 'center',
   },
+  heroCaps: { fontSize: 12, fontWeight: '700', letterSpacing: 0.9, textTransform: 'uppercase' },
+  heroNum: { fontSize: 42, lineHeight: 50, fontWeight: '700', letterSpacing: -1.2 },
   track: { height: 6, borderRadius: 3, overflow: 'hidden' },
   trackFill: { height: 6, borderRadius: 3 },
   amountRow: {

@@ -49,26 +49,41 @@ export const HERO = {
 let _gid = 0;
 function useGradId(prefix) { const r = useRef(null); if (r.current == null) r.current = `${prefix}${++_gid}`; return r.current; }
 
+// [2026-10-14 v3.1] O degradê é medido (onLayout) e desenhado com tamanho
+// NUMÉRICO: no iOS o <Svg width="100%"> ficava com o tamanho da 1ª medição
+// (antes do saldo/botões crescerem) e sobrava uma faixa escura à direita e
+// embaixo. Fundo sólido = cor final do degradê, então nunca aparece "buraco".
 export function HeroCard({ children, style, isDark, glow = true }) {
   const lg = useGradId('wlg');
   const rg = useGradId('wrg');
+  const [box, setBox] = useState(null);
+  const onLayout = (e) => {
+    const { width, height } = e.nativeEvent.layout;
+    const w = Math.ceil(width), h = Math.ceil(height);
+    if (w > 0 && h > 0 && (!box || box.w !== w || box.h !== h)) setBox({ w, h });
+  };
+  const end = isDark ? '#0E0E10' : '#09090A';
   return (
-    <View style={[styles.hero, isDark ? styles.heroDark : styles.heroLight, style]}>
-      <Svg style={StyleSheet.absoluteFill} width="100%" height="100%" preserveAspectRatio="none" pointerEvents="none">
-        <Defs>
-          <LinearGradient id={lg} x1="0" y1="0" x2="1" y2="1">
-            <Stop offset="0" stopColor={isDark ? '#1E1E21' : '#232326'} />
-            <Stop offset="1" stopColor={isDark ? '#0E0E10' : '#09090A'} />
-          </LinearGradient>
-          <RadialGradient id={rg} cx="12%" cy="0%" rx="70%" ry="80%" fx="12%" fy="0%">
-            <Stop offset="0" stopColor="#60A5FA" stopOpacity={glow ? 0.22 : 0} />
-            <Stop offset="0.55" stopColor="#3B82F6" stopOpacity={glow ? 0.06 : 0} />
-            <Stop offset="1" stopColor="#3B82F6" stopOpacity={0} />
-          </RadialGradient>
-        </Defs>
-        <Rect x="0" y="0" width="100%" height="100%" fill={`url(#${lg})`} />
-        <Rect x="0" y="0" width="100%" height="100%" fill={`url(#${rg})`} />
-      </Svg>
+    <View onLayout={onLayout} style={[styles.hero, { backgroundColor: end }, isDark ? styles.heroDark : styles.heroLight, style]}>
+      {box ? (
+        <View style={[StyleSheet.absoluteFill, styles.heroBg]} pointerEvents="none">
+          <Svg width={box.w} height={box.h} viewBox={`0 0 ${box.w} ${box.h}`}>
+            <Defs>
+              <LinearGradient id={lg} x1="0" y1="0" x2={box.w} y2={box.h} gradientUnits="userSpaceOnUse">
+                <Stop offset="0" stopColor={isDark ? '#1E1E21' : '#232326'} />
+                <Stop offset="1" stopColor={end} />
+              </LinearGradient>
+              <RadialGradient id={rg} cx={box.w * 0.12} cy={0} rx={box.w * 0.7} ry={box.h * 0.8} fx={box.w * 0.12} fy={0} gradientUnits="userSpaceOnUse">
+                <Stop offset="0" stopColor="#60A5FA" stopOpacity={glow ? 0.22 : 0} />
+                <Stop offset="0.55" stopColor="#3B82F6" stopOpacity={glow ? 0.06 : 0} />
+                <Stop offset="1" stopColor="#3B82F6" stopOpacity={0} />
+              </RadialGradient>
+            </Defs>
+            <Rect x="0" y="0" width={box.w} height={box.h} fill={`url(#${lg})`} />
+            {glow ? <Rect x="0" y="0" width={box.w} height={box.h} fill={`url(#${rg})`} /> : null}
+          </Svg>
+        </View>
+      ) : null}
       {children}
     </View>
   );
@@ -87,10 +102,15 @@ export function HeroButton({ label, onPress, primary = false, icon, disabled, ac
       accessibilityRole="button"
       accessibilityLabel={accessibilityLabel || label}
       accessibilityState={{ disabled: !!disabled }}
-      style={[styles.heroBtn, primary ? { backgroundColor: '#FFFFFF' } : { borderWidth: 1, borderColor: HERO.outline }, disabled && { opacity: 0.45 }]}
+      style={[
+        styles.heroBtn,
+        // Desabilitado = contorno sutil + texto apagado (nada de branco translúcido).
+        disabled ? { borderWidth: 1, borderColor: HERO.line, backgroundColor: 'rgba(255,255,255,0.04)' }
+          : primary ? { backgroundColor: '#FFFFFF' } : { borderWidth: 1, borderColor: HERO.outline },
+      ]}
     >
       {icon || null}
-      <Text style={[styles.heroBtnText, { color: primary ? '#000000' : HERO.text }]} numberOfLines={1}>{label}</Text>
+      <Text style={[styles.heroBtnText, { color: disabled ? HERO.faint : (primary ? '#000000' : HERO.text) }]} numberOfLines={1}>{label}</Text>
     </PressableScale>
     </View>
   );
@@ -194,25 +214,64 @@ export function TxGlyph({ kind, name, size = 20, color, strokeWidth = 1.6 }) {
   );
 }
 
-export function FilterChips({ options, value, onChange, s }) {
+// `inset` = recuo lateral dentro do ScrollView (o pai sangra até a borda da
+// tela); `fadeColor` = cor do fundo p/ o esmaecido da borda direita, que some
+// quando a lista chega ao fim (nada de pílula "cortada" seca na borda).
+export function FilterChips({ options, value, onChange, s, inset = 0, fadeColor }) {
+  const [atEnd, setAtEnd] = useState(false);
+  const [overflow, setOverflow] = useState(false);
+  const wRef = useRef(0);
+  const cRef = useRef(0);
+  const fid = useGradId('wcf');
+  const sync = (x) => {
+    const over = cRef.current > wRef.current + 1;
+    setOverflow(over);
+    setAtEnd(!over || x + wRef.current >= cRef.current - 4);
+  };
+  const xRef = useRef(0);
+  const bg = fadeColor || s.bgGrouped || s.bg;
   return (
-    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chips} accessibilityRole="tablist">
-      {options.map((o) => {
-        const sel = o.value === value;
-        return (
-          <PressableScale
-            key={o.value}
-            haptic="select"
-            onPress={() => onChange(o.value)}
-            accessibilityRole="tab"
-            accessibilityState={{ selected: sel }}
-            style={[styles.chip, sel ? { backgroundColor: s.ink, borderColor: s.ink } : { backgroundColor: 'transparent', borderColor: s.separator }]}
-          >
-            <Text style={[styles.chipText, { color: sel ? s.onInk : s.text }]}>{o.label}</Text>
-          </PressableScale>
-        );
-      })}
-    </ScrollView>
+    <View>
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={[styles.chips, { paddingLeft: inset, paddingRight: inset }]}
+        accessibilityRole="tablist"
+        onLayout={(e) => { wRef.current = e.nativeEvent.layout.width; sync(xRef.current); }}
+        onContentSizeChange={(w) => { cRef.current = w; sync(xRef.current); }}
+        onScroll={(e) => { xRef.current = e.nativeEvent.contentOffset.x; sync(xRef.current); }}
+        scrollEventThrottle={32}
+      >
+        {options.map((o) => {
+          const sel = o.value === value;
+          return (
+            <PressableScale
+              key={o.value}
+              haptic="select"
+              onPress={() => onChange(o.value)}
+              accessibilityRole="tab"
+              accessibilityState={{ selected: sel }}
+              style={[styles.chip, sel ? { backgroundColor: s.ink, borderColor: s.ink } : { backgroundColor: 'transparent', borderColor: s.separator }]}
+            >
+              <Text style={[styles.chipText, { color: sel ? s.onInk : s.text }]} numberOfLines={1}>{o.label}</Text>
+            </PressableScale>
+          );
+        })}
+      </ScrollView>
+      {overflow && !atEnd && bg ? (
+        <View pointerEvents="none" style={styles.chipFade}>
+          <Svg width="100%" height="100%" preserveAspectRatio="none" viewBox="0 0 40 10">
+            <Defs>
+              <LinearGradient id={fid} x1="0" y1="0" x2="1" y2="0">
+                <Stop offset="0" stopColor={bg} stopOpacity={0} />
+                <Stop offset="1" stopColor={bg} stopOpacity={1} />
+              </LinearGradient>
+            </Defs>
+            <Rect x="0" y="0" width="40" height="10" fill={`url(#${fid})`} />
+          </Svg>
+        </View>
+      ) : null}
+    </View>
   );
 }
 
@@ -264,11 +323,13 @@ const styles = StyleSheet.create({
     ios: { shadowColor: '#000', shadowOpacity: 0.18, shadowRadius: 18, shadowOffset: { width: 0, height: 8 } },
     default: { elevation: 6 },
   }),
-  heroDark: { borderWidth: 1, borderColor: 'rgba(255,255,255,0.09)' },
+  heroDark: { borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(255,255,255,0.14)' },
+  heroBg: { borderRadius: 22, overflow: 'hidden' },
   heroBtnWrap: { flex: 1, minWidth: 0 },
   heroBtn: { height: 48, borderRadius: 24, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingHorizontal: Space.sm },
   heroBtnText: { fontSize: 15, fontWeight: '700', letterSpacing: -0.1 },
-  chips: { gap: Space.sm, paddingVertical: 2, paddingRight: Space.lg },
+  chips: { gap: Space.sm, paddingVertical: 2 },
+  chipFade: { position: 'absolute', right: 0, top: 0, bottom: 0, width: 40 },
   chip: { height: 34, paddingHorizontal: 14, borderRadius: 17, borderWidth: 1, alignItems: 'center', justifyContent: 'center' },
   chipText: { fontSize: 14, fontWeight: '600' },
   pack: { borderRadius: Radius.card + 4, padding: Space.md, paddingTop: Space.sm, minHeight: 170 },

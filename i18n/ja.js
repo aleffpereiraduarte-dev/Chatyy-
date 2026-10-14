@@ -179,6 +179,7 @@ export default {
   "creatorDash.subscribers": "サブスクライバー",
   "creatorDash.gifts7d": "ギフト · 7日間",
   "creatorDash.gifts30d": "ギフト · 30日間",
+  "creatorEarnings.stat.gifts30short": "ギフト 30日",
   "creatorDash.chartTitle": "過去7日間",
   "creatorDash.chartEmpty": "過去7日間にギフトはありません。",
   "creatorDash.topSupporters": "トップサポーター · 30日間",

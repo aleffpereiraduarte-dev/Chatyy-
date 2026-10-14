@@ -179,6 +179,7 @@ export default {
   "creatorDash.subscribers": "المشتركون",
   "creatorDash.gifts7d": "الهدايا · 7 أيام",
   "creatorDash.gifts30d": "الهدايا · 30 يومًا",
+  "creatorEarnings.stat.gifts30short": "هدايا 30ي",
   "creatorDash.chartTitle": "آخر 7 أيام",
   "creatorDash.chartEmpty": "لا هدايا خلال آخر 7 أيام.",
   "creatorDash.topSupporters": "أبرز الداعمين · 30 يومًا",

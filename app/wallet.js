@@ -23,7 +23,6 @@ import { USE_NATIVE_HEADER, nativeHeaderOptions } from '../components/nativeHead
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import { useCurrency } from '../context/CurrencyContext';
-import { formatMoneyActive } from '../services/currencyService';
 import * as api from '../services/api';
 import { WALLET_ENABLED } from '../constants/featureFlags';
 import { IconDiamond, IconChevronRight, IconBroadcast, IconReels, IconMessageCircle, IconCopy, IconShare } from '../components/Icons';
@@ -43,8 +42,6 @@ try { Clipboard = require('expo-clipboard'); } catch {}
 
 const PAGE = 30;
 const HOLD_DAYS = 7;
-// Referência de valor: pacote base (100 diamantes = R$ 4,99).
-const REF_CENTS_PER_DIAMOND = 4.99;
 const FEATURED = [550, 1700, 6000];
 const RECV = new Set(['gift_recv', 'live_gift_recv', 'tip_recv', 'receive']);
 
@@ -441,9 +438,9 @@ function WalletScreen() {
     { value: 'cashouts', label: tr(t, 'walletV3.filterCashouts', 'Saques') },
   ];
 
-  const refAmount = typeof wallet.diamonds === 'number' && wallet.diamonds > 0
-    ? tr(t, 'walletV3.refValue', '≈ {amount} em valor de compra').replace('{amount}', formatMoneyActive(Math.round(wallet.diamonds * REF_CENTS_PER_DIAMOND)))
-    : '';
+  // Referência na moeda/preço da loja desta pessoa (App Store US → US$; web → R$ Stripe).
+  const refPrice = typeof wallet.diamonds === 'number' && wallet.diamonds > 0 ? store.refValue(wallet.diamonds) : '';
+  const refAmount = refPrice ? tr(t, 'walletV3.refValue', '≈ {amount} em valor de compra').replace('{amount}', refPrice) : '';
 
   const header = (
     <View style={{ gap: Space.lg }}>
@@ -566,7 +563,7 @@ function WalletScreen() {
       <View style={{ gap: Space.md, marginTop: Space.xs }}>
         <Text style={[Type.title3, { color: s.text, fontWeight: '700' }]} accessibilityRole="header">{tr(t, 'walletV3.activity', 'Atividade')}</Text>
         <View style={styles.chipsBleed}>
-          <FilterChips options={filters} value={filter} onChange={setFilter} s={s} />
+          <FilterChips options={filters} value={filter} onChange={setFilter} s={s} inset={Layout.gutter} fadeColor={s.bgGrouped} />
         </View>
       </View>
     </View>
@@ -653,7 +650,7 @@ const styles = StyleSheet.create({
   secHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: Space.md },
   carouselWrap: { marginHorizontal: -Layout.gutter, flexGrow: 0, flexShrink: 0 },
   carousel: { gap: Space.sm, paddingHorizontal: Layout.gutter, paddingVertical: 4 },
-  chipsBleed: { marginHorizontal: -Layout.gutter, paddingLeft: Layout.gutter },
+  chipsBleed: { marginHorizontal: -Layout.gutter },
   dayLabel: { fontWeight: '600', marginTop: Space.lg, marginBottom: Space.sm, marginLeft: Space.xs },
   txRow: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: Space.lg, paddingVertical: Space.md, minHeight: 64 },
   txFirst: { borderTopLeftRadius: Radius.card + 4, borderTopRightRadius: Radius.card + 4 },
