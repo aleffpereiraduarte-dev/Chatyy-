@@ -675,7 +675,7 @@ function NotificationsScreenInner() {
     switch (notif.type) {
       case 'chat':
       case 'mention':
-        require('../services/openConversation').openConversation({ pathname: '/chat-conversation', params: { id: data.conversation_id } });
+        require('../services/openConversation').openConversation({ pathname: '/chat-conversation', params: { id: data.conversation_id, ...(data.conversation_type || data.is_group != null ? { type: data.conversation_type || ((data.is_group === true || String(data.is_group) === '1' || data.is_group === 'true') ? 'group' : 'direct') } : {}) } });
         break;
       case 'like':
       case 'comment':

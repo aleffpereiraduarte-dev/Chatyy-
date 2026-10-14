@@ -1238,23 +1238,33 @@ function DriveScreenInner() {
 
   // --- Tab Bar ---
   const renderTabs = () => (
-    <View style={[styles.tabBar, { borderBottomColor: colors.border }]}>
+    // [2026-10-14 vis-audit] fileira espremida no celular → rolagem horizontal; em tela larga
+    // as abas continuam se distribuindo (flexGrow).
+    <ScrollView
+      horizontal
+      showsHorizontalScrollIndicator={false}
+      style={[styles.tabBar, { borderBottomColor: colors.border }]}
+      contentContainerStyle={styles.tabBarContent}
+      accessibilityRole="tablist"
+    >
       {TABS.map(tab => (
         <TouchableOpacity
           key={tab}
           style={[styles.tab, activeTab === tab && { borderBottomColor: colors.primary, borderBottomWidth: 2 }]}
           onPress={() => { setActiveTab(tab); setSearchResults(null); setSearchText(''); clearSelection(); }}
+          accessibilityRole="tab"
+          accessibilityState={{ selected: activeTab === tab }}
         >
           {tab === 'files' && <IconFolder size={16} color={activeTab === tab ? colors.primary : colors.textSecondary} />}
           {tab === 'photos' && <IconImage size={16} color={activeTab === tab ? colors.primary : colors.textSecondary} />}
           {tab === 'shared' && <IconUsers size={16} color={activeTab === tab ? colors.primary : colors.textSecondary} />}
           {tab === 'trash' && <IconTrash size={16} color={activeTab === tab ? colors.primary : colors.textSecondary} />}
-          <Text style={[styles.tabText, { color: activeTab === tab ? colors.primary : colors.textSecondary }]}>
+          <Text numberOfLines={1} style={[styles.tabText, { color: activeTab === tab ? colors.primary : colors.textSecondary }]}>
             {t(`drive.tab${tab.charAt(0).toUpperCase() + tab.slice(1)}`)}
           </Text>
         </TouchableOpacity>
       ))}
-    </View>
+    </ScrollView>
   );
 
   // --- File/Folder Item (List View) ---
@@ -2620,8 +2630,9 @@ const styles = StyleSheet.create({
   storageFill: { height: '100%', borderRadius: 3 },
 
   // Tabs
-  tabBar: { flexDirection: 'row', borderBottomWidth: 1, paddingHorizontal: 16 },
-  tab: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingVertical: 12 },
+  tabBar: { borderBottomWidth: 1, flexGrow: 0, flexShrink: 0 },
+  tabBarContent: { flexGrow: 1, flexDirection: 'row', paddingHorizontal: 8 },
+  tab: { flexGrow: 1, flexShrink: 0, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingVertical: 12, paddingHorizontal: 12 },
   tabText: { fontSize: FontSize.sm, fontWeight: '600' },
 
   // Breadcrumbs

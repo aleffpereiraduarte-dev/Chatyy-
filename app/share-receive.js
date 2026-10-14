@@ -457,7 +457,7 @@ export default function ShareReceiveScreen() {
     if (failed) { setSending(false); setSendError(true); return; }
     if (selected.length === 1) {
       const conv = selected[0];
-      require('../services/openConversation').openConversation({ pathname: '/chat-conversation', params: { id: String(conv.id), name: displayNameOf(conv), email: conv.other_email || '' } }, { replace: true });
+      require('../services/openConversation').openConversation({ pathname: '/chat-conversation', params: { id: String(conv.id), name: displayNameOf(conv), email: conv.other_email || '', ...(conv.type ? { type: conv.type } : {}) } }, { replace: true });
     } else {
       router.replace('/chat');
     }

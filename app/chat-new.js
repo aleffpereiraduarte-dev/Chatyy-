@@ -127,9 +127,12 @@ function HighlightText({ text, highlight, style, highlightStyle }) {
 }
 
 // Alphabet sidebar for jumping through contacts
-function AlphabetSidebar({ letters, onPress, colors }) {
+function AlphabetSidebar({ letters, onPress, colors, topInset = 0, hidden = false }) {
+  // [2026-10-14 vis-audit] Só ao lado da lista alfabética: começa abaixo do cabeçalho fixo
+  // (atalhos/recentes/linhas fixas) visível na tela e some enquanto ele ocupa a área.
   return (
-    <View style={[sty.alphabetSidebar]} pointerEvents="box-none">
+    <View style={[sty.alphabetSidebar, { paddingTop: topInset }]} pointerEvents="box-none">
+      {hidden ? null : (
       <View style={sty.alphabetInner}>
         {letters.map((letter) => (
           <TouchableOpacity
@@ -142,6 +145,7 @@ function AlphabetSidebar({ letters, onPress, colors }) {
           </TouchableOpacity>
         ))}
       </View>
+      )}
     </View>
   );
 }
@@ -552,6 +556,22 @@ export default function ChatNewScreen() {
 
   const searchTimeout = useRef(null);
   const sectionListRef = useRef(null);
+  // [2026-10-14 vis-audit] Índice A–Z só ao lado da lista alfabética: topo do índice =
+  // fim do cabeçalho (atalhos/recentes/linhas fixas) na tela; null = ainda não medido.
+  const alphaHeaderHRef = useRef(0);
+  const alphaScrollYRef = useRef(0);
+  const [alphaTop, setAlphaTop] = useState(null);
+  const [alphaViewH, setAlphaViewH] = useState(0);
+  const _updateAlphaTop = useCallback(() => {
+    const hh = alphaHeaderHRef.current || 0;
+    if (!hh) return;
+    const v = Math.max(0, Math.round((hh - alphaScrollYRef.current) / 8) * 8);
+    setAlphaTop(prev => (prev === v ? prev : v));
+  }, []);
+  const _onAlphaScroll = useCallback((e) => {
+    alphaScrollYRef.current = e?.nativeEvent?.contentOffset?.y || 0;
+    _updateAlphaTop();
+  }, [_updateAlphaTop]);
   const hasSyncedRef = useRef(false);
   // [2026-10-09 find-contacts] 'granted' | 'denied' | null (unknown yet) —
   // drives the "Encontre seus contatos" card when the agenda isn't connected.
@@ -2192,10 +2212,12 @@ export default function ChatNewScreen() {
         )
       ) : (
         /* Default view: recents + contacts + invite */
-        <View style={{ flex: 1, flexDirection: 'row' }}>
+        <View style={{ flex: 1, flexDirection: 'row' }} onLayout={(e) => { const h = Math.round(e.nativeEvent.layout.height); if (h !== alphaViewH) setAlphaViewH(h); }}>
           <View style={{ flex: 1 }}>
             <SectionList
               ref={sectionListRef}
+              onScroll={_onAlphaScroll}
+              scrollEventThrottle={32}
               sections={onlyChatyy ? sections.filter(sec => String(sec.key).startsWith('phone_chatyy')) : sections}
               keyExtractor={(item, idx) => item.email || item.phone || String(idx)}
               renderItem={renderContact}
@@ -2215,7 +2237,7 @@ export default function ChatNewScreen() {
               contentContainerStyle={sty.contactList}
               stickySectionHeadersEnabled
               ListHeaderComponent={
-                <View>
+                <View onLayout={(e) => { alphaHeaderHRef.current = e.nativeEvent.layout.height; _updateAlphaTop(); }}>
                   {/* [2026-10-09 find-contacts] WhatsApp-style shortcuts at the
                       very top: Novo grupo · Novo contato · Escanear QR · Meu QR. */}
                   {mode === 'direct' && !pickMode && (
@@ -2601,7 +2623,13 @@ export default function ChatNewScreen() {
 
           {/* Alphabet sidebar (only for contact list, not search) */}
           {alphabetLetters.length > 5 && !searchText && (
-            <AlphabetSidebar letters={alphabetLetters} onPress={handleAlphabetPress} colors={colors} />
+            <AlphabetSidebar
+              letters={alphabetLetters}
+              onPress={handleAlphabetPress}
+              colors={colors}
+              topInset={alphaTop == null ? 0 : alphaTop}
+              hidden={alphaTop == null || (alphaViewH > 0 && alphaViewH - alphaTop < alphabetLetters.length * 14 + 24)}
+            />
           )}
         </View>
       )}

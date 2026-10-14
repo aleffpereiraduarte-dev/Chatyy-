@@ -312,8 +312,14 @@ export default function LiveDiscoverScreen() {
   // Hero palette: deep purple base + lighter accent blob — light/dark aware.
   // We fake the gradient with 2 stacked blob layers (no expo-linear-gradient
   // dep just for one screen).
-  const heroBg     = isDark ? '#161618' : BRAND_PURPLE_DARK;
-  const heroAccent = isDark ? '#161618' : BRAND_PURPLE;
+  // [2026-10-14 vis-audit] Topo segue o tema (era preto fixo no modo claro). Escuro de verdade
+  // fica só no player full-screen (live-viewer).
+  const heroBg     = colors.background;
+  const heroFg     = colors.text;
+  const heroFgSub  = colors.textSecondary || (isDark ? '#A1A1A6' : '#5F5F66');
+  const heroGlass  = isDark
+    ? { backgroundColor: 'rgba(255,255,255,0.10)', borderColor: 'rgba(255,255,255,0.14)' }
+    : { backgroundColor: 'rgba(0,0,0,0.04)', borderColor: 'rgba(0,0,0,0.08)' };
 
   // Long-press popover (Compartilhar / Reportar). Stubbed buttons for now —
   // wired to nothing until ShareSheet + report flows land. Triggers haptic
@@ -359,30 +365,27 @@ export default function LiveDiscoverScreen() {
     <View style={[styles.fill, { backgroundColor: colors.background }]}>
       {/* ── Premium gradient hero ─────────────────────────────────────── */}
       <View style={[styles.heroBarWrap, { backgroundColor: heroBg, paddingTop: insets.top + 4 }]}>
-        {/* 2 accent blobs to fake a gradient (no expo-linear-gradient dep). */}
-        <View pointerEvents="none" style={[styles.heroBarBlob, { backgroundColor: heroAccent }]} />
-        <View pointerEvents="none" style={[styles.heroBarBlob2, { backgroundColor: heroAccent }]} />
 
         {/* Top row: glassy back btn + actions cluster (search + Go-Live CTA). */}
         <View style={styles.heroBarTopRow}>
           <TouchableOpacity
             onPress={() => router.back()}
-            style={styles.heroGlassBtn}
+            style={[styles.heroGlassBtn, heroGlass]}
             accessibilityRole="button"
             accessibilityLabel={t('common.back') || 'Voltar'}
             hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
           >
-            <IconArrowLeft size={20} color="#fff" />
+            <IconArrowLeft size={20} color={heroFg} />
           </TouchableOpacity>
 
           <View style={styles.heroBarActions}>
             <TouchableOpacity
-              style={styles.heroGlassBtn}
+              style={[styles.heroGlassBtn, heroGlass]}
               accessibilityRole="button"
               accessibilityLabel={t('common.search') || 'Buscar'}
               hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}
             >
-              <IconSearch size={18} color="#fff" />
+              <IconSearch size={18} color={heroFg} />
             </TouchableOpacity>
 
             {/* Go-Live CTA — subtle pulse when user is "stale" (per brief
@@ -391,12 +394,12 @@ export default function LiveDiscoverScreen() {
               <TouchableOpacity
                 onPress={onGoLive}
                 activeOpacity={0.85}
-                style={styles.heroGoLiveBtn}
+                style={[styles.heroGoLiveBtn, { backgroundColor: heroFg }]}
                 accessibilityRole="button"
                 accessibilityLabel={t('live.goLive') || 'Criar live'}
               >
-                <IconVideo size={14} color={BRAND_PURPLE} />
-                <Text style={styles.heroGoLiveText}>
+                <IconVideo size={14} color={heroBg} />
+                <Text style={[styles.heroGoLiveText, { color: heroBg }]}>
                   {t('live.goLive') || 'Criar live'}
                 </Text>
               </TouchableOpacity>
@@ -425,7 +428,7 @@ export default function LiveDiscoverScreen() {
           </View>
 
           {(loading && !sessions.length) ? null : (
-            <Text style={styles.heroBarCountText}>
+            <Text style={[styles.heroBarCountText, { color: heroFgSub }]}>
               {liveCount}{' '}
               {liveCount === 1
                 ? (t('live.headerCountOne') || 'transmissão agora')
@@ -435,10 +438,10 @@ export default function LiveDiscoverScreen() {
         </View>
         )}
 
-        <Text style={styles.heroBarTitle}>
+        <Text style={[styles.heroBarTitle, { color: heroFg }]}>
           {t('live.discover') || 'Lives'}
         </Text>
-        <Text style={styles.heroBarSubtitle}>
+        <Text style={[styles.heroBarSubtitle, { color: heroFgSub }]}>
           {t('live.heroSubtitle') || 'Entre numa live, mande presente, ou comece a sua agora.'}
         </Text>
       </View>
@@ -681,7 +684,9 @@ function CategoryPill({ pillKey, label, icon: Icon, active, dark, onPress, onLay
 
   // P&B: active pill = ink (black in light, white in dark — #111 was
   // invisible on the black dark-mode background).
-  const iconColor = active ? (dark ? '#000' : '#fff') : '#9CA3AF';
+  // [2026-10-14 vis-audit] inativo #9CA3AF dava 2,5:1 no claro → zinc 600/400 (≥7:1).
+  const mutedInk = dark ? '#A1A1AA' : '#52525B';
+  const iconColor = active ? (dark ? '#000' : '#fff') : mutedInk;
   return (
     <Animated.View
       onLayout={onLayout}
@@ -694,7 +699,7 @@ function CategoryPill({ pillKey, label, icon: Icon, active, dark, onPress, onLay
           styles.pill,
           active
             ? [styles.pillActive, dark && styles.pillActiveDark]
-            : styles.pillInactive,
+            : [styles.pillInactive, { borderColor: dark ? 'rgba(255,255,255,0.18)' : 'rgba(0,0,0,0.14)' }],
         ]}
         accessibilityRole="button"
         accessibilityState={{ selected: active }}
@@ -704,6 +709,7 @@ function CategoryPill({ pillKey, label, icon: Icon, active, dark, onPress, onLay
         <Text
           style={[
             styles.pillText,
+            !active && { color: mutedInk },
             active && styles.pillTextActive,
             active && dark && styles.pillTextActiveDark,
           ]}
@@ -1098,15 +1104,7 @@ const styles = StyleSheet.create({
   // ── Premium gradient hero (top of screen) ────────────────────────────
   heroBarWrap: {
     paddingHorizontal: 16,
-    paddingBottom: 18,
-    borderBottomLeftRadius: 24,
-    borderBottomRightRadius: 24,
-    overflow: 'hidden',
-    ...Platform.select({
-      ios: { shadowColor: BRAND_PURPLE, shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.25, shadowRadius: 14 },
-      android: { elevation: 6 },
-      default: {},
-    }),
+    paddingBottom: 14,
   },
   heroBarBlob: {
     position: 'absolute',

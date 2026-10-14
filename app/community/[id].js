@@ -474,7 +474,7 @@ export default function CommunityScreen() {
             {groups.map(g => (
               <TouchableOpacity
                 key={g.conversation_id}
-                onPress={() => require('../../services/openConversation').openConversation(`/chat-conversation?id=${g.conversation_id}&name=${encodeURIComponent(g.name || '')}`)}
+                onPress={() => require('../../services/openConversation').openConversation(`/chat-conversation?id=${g.conversation_id}&type=group&name=${encodeURIComponent(g.name || '')}`)}
                 style={[sty.row, { backgroundColor: isDark ? '#1c1c1e' : '#f8f8fa' }]}
               >
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>

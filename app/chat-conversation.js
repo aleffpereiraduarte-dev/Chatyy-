@@ -22182,7 +22182,7 @@ function ChatConversationInner() {
       } catch { return ''; }
     };
     try {
-      let r = await api.chatTranscribeAudio(msg.id);
+      let r = await api.chatTranscribeAudio(msg.id, language); // [2026-10-14 transcricao-idioma] dica p/ o Whisper
       if (!mountedRef.current) return;
       if (!(r?.success && r.data?.transcript)) {
         const devTx = await onDeviceTx();
@@ -23802,7 +23802,7 @@ function ChatConversationInner() {
       textToTranslate = msg.transcript || msg.transcription || '';
       if (!textToTranslate) {
         try {
-          const tr = await api.chatTranscribeAudio(msg.id);
+          const tr = await api.chatTranscribeAudio(msg.id, language); // [2026-10-14 transcricao-idioma]
           if (tr?.success && tr.data?.transcript) {
             textToTranslate = String(tr.data.transcript || '');
             // Mirror onto the message so the bubble's transcript label fills in too.

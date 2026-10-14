@@ -1517,56 +1517,54 @@ function ChatFeedTab({ colors, isDark, t, user, router, initialFeedMode, onFeedM
     </View>
   ), [algorithm, algoPillLeft, isDark, colors, t]);
 
-  const renderTabBar = () => (
-    <View style={[styles.tabBar, {
-      backgroundColor: isDark ? colors.background : FEED_CANVAS,
-      borderBottomColor: 'transparent',
-    }]}>
-      <Animated.View pointerEvents="none" style={{
-        position: 'absolute',
-        top: 6, bottom: 6, left: pillLeft,
-        width: '48%',
-        backgroundColor: isDark ? 'rgba(255,255,255,0.12)' : 'rgba(17, 17, 17,0.10)', // [2026-10-08 apps-native] dark pill was black-on-black
-        borderRadius: 10,
-      }} />
-      <TouchableOpacity
-        style={styles.tabItem}
-        onPress={() => { if (feedMode !== 'posts') { try { haptic.select(); } catch {} } setFeedMode('posts'); }}
-        activeOpacity={0.7}
-        accessibilityLabel={t('feed.posts') || 'Posts'}
-        accessibilityRole="tab"
+  // [2026-10-14 vis-audit] UMA barra só (antes: Posts/Reels segmentado + Para você/Seguindo
+  // empilhados). Para você / Seguindo = algoritmo dos posts; Reels = modo imersivo (volta pelo
+  // pill "Posts" do próprio Reels). Mesmas funções, metade da altura.
+  const renderTabBar = () => {
+    const activeKey = feedMode === 'reels' ? 'reels' : (algorithm === 'following' ? 'following' : 'fyp');
+    const tabs = [
+      { key: 'fyp', label: t('feed.forYou') || 'Para você', onPress: () => { setFeedMode('posts'); setAlgorithm('fyp'); } },
+      { key: 'following', label: t('feed.following') || 'Seguindo', onPress: () => { setFeedMode('posts'); setAlgorithm('following'); } },
+      { key: 'reels', label: t('feed.reels') || 'Reels', onPress: () => setFeedMode('reels') },
+    ];
+    return (
+      <View
+        accessibilityRole="tablist"
+        style={[styles.tabBar, {
+          backgroundColor: isDark ? colors.background : FEED_CANVAS,
+          borderBottomColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)',
+          borderBottomWidth: StyleSheet.hairlineWidth,
+          paddingVertical: 0,
+        }]}
       >
-        <Text style={[
-          styles.tabItemText,
-          { color: feedMode === 'posts' ? (isDark ? '#fff' : ACCENT) : (isDark ? '#aaa' : '#666') },
-          feedMode === 'posts' && styles.tabItemTextActive,
-        ]}>
-          {t('feed.posts') || 'Posts'}
-        </Text>
-      </TouchableOpacity>
-      <TouchableOpacity
-        style={styles.tabItem}
-        onPress={() => { if (feedMode !== 'reels') { try { haptic.select(); } catch {} } setFeedMode('reels'); }}
-        activeOpacity={0.7}
-        accessibilityLabel={t('feed.reels') || 'Reels'}
-        accessibilityRole="tab"
-      >
-        <Text style={[
-          styles.tabItemText,
-          { color: feedMode === 'reels' ? (isDark ? '#fff' : ACCENT) : (isDark ? '#aaa' : '#666') },
-          feedMode === 'reels' && styles.tabItemTextActive,
-        ]}>
-          {t('feed.reels') || 'Reels'}
-        </Text>
-      </TouchableOpacity>
-      {/* Spotlight tab removed — was duplicating Reels (both = short-form
-          vertical video feed). User reported the redundancy. The /spotlight
-          route still exists for deep links / direct sharing.
-          Profile tab removed 2026-05-02 — Profile is reachable via the
-          dedicated `Config` tab + the avatar header; having it inside Feed
-          duplicated the surface and made the tab bar feel cluttered. */}
-    </View>
-  );
+        {tabs.map((tb) => {
+          const on = tb.key === activeKey;
+          return (
+            <TouchableOpacity
+              key={tb.key}
+              style={styles.tabItem}
+              onPress={() => { if (!on) { try { haptic.select(); } catch {} } tb.onPress(); }}
+              activeOpacity={0.7}
+              accessibilityLabel={tb.label}
+              accessibilityRole="tab"
+              accessibilityState={{ selected: on }}
+            >
+              <Text style={[
+                styles.tabItemText,
+                { color: on ? (isDark ? '#fff' : ACCENT) : (isDark ? '#aaa' : '#666') },
+                on && styles.tabItemTextActive,
+              ]}>
+                {tb.label}
+              </Text>
+              {on ? (
+                <View pointerEvents="none" style={{ position: 'absolute', bottom: 0, left: '18%', right: '18%', height: 2, borderRadius: 1, backgroundColor: colors.text }} />
+              ) : null}
+            </TouchableOpacity>
+          );
+        })}
+      </View>
+    );
+  };
 
   // ── Posts mode data — interleaved list ──
   // [hooks-order-fix] This useMemo MUST sit before any conditional `return`
@@ -1658,7 +1656,6 @@ function ChatFeedTab({ colors, isDark, t, user, router, initialFeedMode, onFeedM
       <View style={[styles.container, { backgroundColor: isDark ? colors.background : FEED_CANVAS }]}>
         {renderSearchBar()}
         {renderTabBar()}
-        {renderAlgorithmTabs()}
         <FeedSkeleton isDark={isDark} />
       </View>
     );
@@ -1708,7 +1705,7 @@ function ChatFeedTab({ colors, isDark, t, user, router, initialFeedMode, onFeedM
            every feed re-render (unread poll, live poll, activePostId flipping on
            each scroll viewability change, search keystrokes). As an element React
            reconciles it by position and just re-renders it. Same visual output. */
-        ListHeaderComponent={<>{renderSearchBar()}{renderTabBar()}{renderAlgorithmTabs()}<StoriesStrip user={user} colors={colors} isDark={isDark} t={t} requestOpenStatus={requestOpenStatus} requestNewStatus={requestNewStatus} />{renderLiveHeader()}</>}
+        ListHeaderComponent={<>{renderSearchBar()}{renderTabBar()}<StoriesStrip user={user} colors={colors} isDark={isDark} t={t} requestOpenStatus={requestOpenStatus} requestNewStatus={requestNewStatus} />{renderLiveHeader()}</>}
         ListEmptyComponent={renderEmpty}
         ListFooterComponent={renderFooter}
         showsVerticalScrollIndicator={false}

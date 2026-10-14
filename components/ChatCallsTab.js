@@ -6,7 +6,8 @@ import Svg, { Path, Polyline, Circle as SvgCircle, Line, Rect } from 'react-nati
 import AvatarCircle from './AvatarCircle';
 import BrandFab from './BrandFab';
 import { PSTN_ENABLED } from '../constants/featureFlags';
-import { IconPhone, IconVideo, IconInfo, IconX, IconPhoneOff, IconMic, IconMicOff, IconVolume2, IconVolumeX, IconGrid, IconUserPlus, IconTrash, IconSmartphone, IconCheck, IconCalendar, IconVerifiedBadge, IconLink } from './Icons';
+import { IconPhone, IconVideo, IconInfo, IconX, IconPhoneOff, IconMic, IconMicOff, IconVolume2, IconVolumeX, IconGrid, IconUserPlus, IconTrash, IconSmartphone, IconCheck, IconCalendar, IconVerifiedBadge, IconLink, IconMoreHorizontal } from './Icons';
+import Sheet from './ui/Sheet'; import ActionList from './ui/ActionList'; // [2026-10-14 vis-audit] menu "…" do histórico
 import SwipeAction from './SwipeAction';
 import ScheduleCallModal from './ScheduleCallModal';
 import { callHistoryList, callHistoryAdd, callHistoryDelete, callHistoryClear, voipCall, voipToken, voipSipCredentials, voipMinutesRemaining, voipUpdateDuration, searchContacts, voipVerifiedNumberRequest, voipVerifiedNumberConfirm, getProfile, callNotify as apiCallNotify } from '../services/api';
@@ -3185,6 +3186,7 @@ function ChatCallsTab({ colors, isDark, t, user, router }) {
     router.push(`/call?contactName=${encodeURIComponent(name)}&contactEmail=${encodeURIComponent(email)}&isVideo=${isVideo}&isCaller=1`);
   }, [router, handleHistoryPress]);
 
+  const [historyMenuOpen, setHistoryMenuOpen] = useState(false);
   const handleClearAll = useCallback(() => {
     const doIt = async () => {
       try {
@@ -3422,7 +3424,7 @@ function ChatCallsTab({ colors, isDark, t, user, router }) {
           horizontal
           showsHorizontalScrollIndicator={false}
           style={{ marginHorizontal: -16, marginBottom: 8, flexGrow: 0 }}
-          contentContainerStyle={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 16, minHeight: 24 }}
+          contentContainerStyle={{ flexGrow: 1, flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 16, minHeight: 24 }}
         >
           <TouchableOpacity
             onPress={() => setScheduleVisible(true)}
@@ -3456,24 +3458,32 @@ function ChatCallsTab({ colors, isDark, t, user, router }) {
               </Text>
             </TouchableOpacity>
           )}
+          {/* [2026-10-14 vis-audit] "Limpar tudo" saiu da fileira de ações (chip vermelho ao lado
+              de Agendar) → menu "…" do histórico; a ação mantém a confirmação (handleClearAll). */}
           {filteredHistory.length > 0 && (
-            <TouchableOpacity
-              onPress={handleClearAll}
-              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-              style={[s.editBtn, {
-                flexDirection: 'row', alignItems: 'center', gap: 5,
-                paddingHorizontal: 12, paddingVertical: 7, borderRadius: 16,
-                backgroundColor: isDark ? 'rgba(255,69,58,0.15)' : 'rgba(255,69,58,0.10)',
-              }]}
-              accessibilityLabel={t?.('calls.clearAll') || 'Limpar histórico'}
-            >
-              <IconTrash size={13} color={isDark ? '#ff453a' : '#D70015'} />
-              <Text style={{ color: isDark ? '#ff453a' : '#D70015', fontSize: 13, fontWeight: '600' }}>
-                {t?.('calls.clearAll') || 'Limpar'}
-              </Text>
-            </TouchableOpacity>
+            <>
+              <View style={{ flex: 1 }} />
+              <TouchableOpacity
+                onPress={() => setHistoryMenuOpen(true)}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                style={{
+                  width: 32, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center',
+                  backgroundColor: isDark ? 'rgba(255, 255, 255,0.12)' : 'rgba(17, 17, 17,0.07)',
+                }}
+                accessibilityRole="button"
+                accessibilityLabel={t?.('common.more') || 'Mais'}
+              >
+                <IconMoreHorizontal size={18} color={isDark ? '#F5F5F7' : '#111111'} />
+              </TouchableOpacity>
+            </>
           )}
         </ScrollView>
+        <Sheet visible={historyMenuOpen} onClose={() => setHistoryMenuOpen(false)}>
+          <ActionList
+            onDone={() => setHistoryMenuOpen(false)}
+            items={[{ key: 'clear', label: t?.('calls.clearHistory') || 'Limpar histórico', icon: IconTrash, destructive: true, onPress: handleClearAll }]}
+          />
+        </Sheet>
         <SegmentTabs
           activeTab={activeTab}
           onTabChange={setActiveTab}

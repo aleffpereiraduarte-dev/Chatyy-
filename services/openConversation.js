@@ -159,6 +159,19 @@ export function openConversation(href, opts = {}) {
     return 'passthrough';
   }
 
+  // [2026-10-14 tipo-conv] Quem abre só com `id` (busca, notificações, toast, perfil, comunidade,
+  // links /j/…) não sabe o tipo → a tela assumia direct e tratava grupo como contato. Preenche
+  // pelo tipo da conversa conhecida (handoff/snapshot da lista); desconhecido segue sem `type`.
+  if (!params.type && params.id != null && params.id !== '') {
+    try {
+      const c = require('../utils/chatOpenHandoff').peekOpenConversation(params.id);
+      if (c && typeof c.type === 'string' && c.type) {
+        params.type = c.type;
+        href = { pathname, params };
+      }
+    } catch {}
+  }
+
   const key = _convKey(params);
   if (key && _last && _last.key === key && now - _last.at < WINDOW_MS) return 'dedup';
   if (key) _last = { key, at: now };

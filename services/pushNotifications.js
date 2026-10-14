@@ -2862,13 +2862,26 @@ function _navigateForNotification(data) {
       // [2026-07-03] chat_mention / chat_keyword pushes carry conversation_id
       // just like chat_message; tapping them used to fall through to the email
       // Inbox route below. Route them to the conversation too.
-      const senderName = data.sender_name || data.title || '';
-      const nameParam = senderName ? `&name=${encodeURIComponent(senderName)}` : '';
+      const _ctPush = String(data.conversation_type || '');
       const emailParam = data.sender_email ? `&email=${encodeURIComponent(data.sender_email)}` : '';
       // Derive conv type from is_group so a group push doesn't open in direct
       // mode (wrong header/membership affordances on first paint).
-      const convType = (data.is_group === true || data.is_group === 'true' || data.is_group === 1 || data.is_group === '1') ? 'group' : 'direct';
-      const _convTarget = `/chat-conversation?id=${data.conversation_id}${nameParam}${emailParam}&type=${convType}`;
+      // [2026-10-14 tipo-conv] is_group ausente (push antigo/local/lembrete) NÃO é "direct": usa o
+      // tipo do push (group/group_message) ou da conversa em cache; desconhecido → sem `type`
+      // (a tela resolve pelo cache/servidor em vez de abrir grupo como contato).
+      const _ig = data.is_group;
+      let convType = (_ctPush === 'group' || _ctPush === 'channel' || _ctPush === 'direct') ? _ctPush
+        : (_ig === true || _ig === 'true' || _ig === 1 || _ig === '1') ? 'group'
+        : (_ig === false || _ig === 'false' || _ig === 0 || _ig === '0') ? 'direct'
+        : (data.type === 'group' || data.type === 'group_message') ? 'group' : '';
+      if (!convType) {
+        try { const _c = require('../utils/chatOpenHandoff').peekOpenConversation(data.conversation_id); if (_c && _c.type) convType = String(_c.type); } catch {}
+      }
+      // Grupo: título = nome da conversa (sender_name virava título do grupo no 1º frame).
+      const _isGrpT = convType === 'group' || convType === 'channel';
+      const senderName = _isGrpT ? (data.conversation_name || data.group_name || '') : (data.sender_name || data.title || '');
+      const nameParam = senderName ? `&name=${encodeURIComponent(senderName)}` : '';
+      const _convTarget = `/chat-conversation?id=${data.conversation_id}${nameParam}${convType === 'direct' || !convType ? emailParam : ''}${convType ? `&type=${convType}` : ''}`;
       // [2026-10-02] Tocar na notificação com um chat JÁ aberto empurrava uma
       // 2ª tela /chat-conversation por cima → ao voltar precisava voltar 2×
       // (founder). Se já há um chat aberto, REPLACE (troca a tela, back vai

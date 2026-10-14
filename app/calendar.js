@@ -2049,6 +2049,7 @@ function CalendarScreenInner() {
   const { colors, isDark } = useTheme();
   // [2026-10-11 polish-secondary] banda do topo segue o tema no claro.
   const lb = isDark ? null : calLightBand;
+  const calDarkFab = { backgroundColor: colors.text || '#fff', ...(Platform.OS === 'web' ? { background: colors.text || '#fff', boxShadow: 'none' } : { elevation: 0, shadowOpacity: 0 }) };
   const bandInk = isDark ? '#fff' : (colors.text || '#111b21');
   const bandMuted = isDark ? 'rgba(255,255,255,0.75)' : (colors.textSecondary || '#667781');
   const { t } = useLanguage();
@@ -3069,10 +3070,11 @@ function CalendarScreenInner() {
             </TouchableOpacity>
             <TouchableOpacity
               onPress={() => { setPrefill(null); setShowAddModal(true); }}
-              style={[styles.headerBtn, styles.headerFab, lb && lb.headerFab]}
+              // [2026-10-14 vis-audit] escuro: era cinza translúcido → tinta do tema (branco c/ ícone preto).
+              style={[styles.headerBtn, styles.headerFab, lb && lb.headerFab, isDark && calDarkFab]}
               accessibilityLabel={t('calendar.newEvent')}
             >
-              <IconPlus size={22} color="#fff" />
+              <IconPlus size={22} color={isDark ? '#000' : '#fff'} />
             </TouchableOpacity>
           </View>
         </View>

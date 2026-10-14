@@ -991,7 +991,7 @@ function ContactsScreenInner() {
       const r = await api.chatSend(conv.id, content, 'contact', null, null, null, tempId, clientMessageId);
       if (!r?.success) throw new Error(r?.message || 'send_failed');
       setShareContactCard(null);
-      require('../services/openConversation').openConversation({ pathname: '/chat-conversation', params: { id: String(conv.id), name: conv.name || conv.display_name || conv.other_email || '' } });
+      require('../services/openConversation').openConversation({ pathname: '/chat-conversation', params: { id: String(conv.id), name: conv.name || conv.display_name || conv.other_email || '', ...(conv.type ? { type: conv.type } : {}) } });
     } catch (e) {
       const msg = t('chatConv.contactSendError') || 'Não foi possível enviar o contato';
       if (Platform.OS === 'web') { try { window.alert(msg); } catch {} }
@@ -1540,6 +1540,10 @@ function ContactsScreenInner() {
     return null;
   }, [loadingMoreDevice, colors, t]);
 
+  // [2026-10-14 vis-audit] Um só "adicionar": lista vazia já mostra o CTA grande
+  // "Adicionar contato" → o "+" do topo some nesse estado (volta quando há contatos).
+  const _openAddContact = () => { setForm({ name: '', email: '', phone: '', group: '', notes: '', favorite: false }); setEditContact(null); setShowAdd(true); };
+  const _emptyHasAddCta = activeTab === 'my' && !isLoading && contacts.length === 0 && !debouncedSearch;
   return (
     <View style={[s.container, { backgroundColor: colors.background, paddingTop: USE_NATIVE_HEADER ? 0 : insets.top }]}>
       {/* [2026-10-07 app-feel-nav] Nativo: header do sistema + barra de busca
@@ -1549,7 +1553,7 @@ function ContactsScreenInner() {
         <Stack.Screen options={nativeHeaderOptions({
           colors,
           title: `${t('contacts.title')}${contacts.length > 0 ? ` (${contacts.length})` : ''}`,
-          headerRight: () => (
+          headerRight: () => (_emptyHasAddCta ? null :
             <HeaderIconButton
               onPress={() => { setForm({ name: '', email: '', phone: '', group: '', notes: '', favorite: false }); setEditContact(null); setShowAdd(true); }}
               accessibilityLabel={t('contacts.addContact') || 'Add contact'}
@@ -1572,8 +1576,8 @@ function ContactsScreenInner() {
         <Text style={[s.headerTitle, { color: colors.text }]}>
           {t('contacts.title')}{contacts.length > 0 ? ` (${contacts.length})` : ''}
         </Text>
-        <View style={{ flexDirection: 'row', gap: 4 }}>
-          <PressableScale
+        <View style={{ flexDirection: 'row', gap: 4, minWidth: 36 }}>
+          {!_emptyHasAddCta && <PressableScale
             onPress={() => { setForm({ name: '', email: '', phone: '', group: '', notes: '', favorite: false }); setEditContact(null); setShowAdd(true); }}
             style={[s.addBtn, { backgroundColor: colors.primary + '14', borderRadius: 18, width: 36, height: 36, alignItems: 'center', justifyContent: 'center' }]}
             activeOpacity={0.7}
@@ -1581,7 +1585,7 @@ function ContactsScreenInner() {
             accessibilityRole="button"
           >
             <IconPlus size={20} color={colors.primary} />
-          </PressableScale>
+          </PressableScale>}
         </View>
       </View>
       )}
@@ -1779,7 +1783,7 @@ function ContactsScreenInner() {
               isDark={isDark}
               t={t}
               searching={!!debouncedSearch}
-              onAdd={() => setShowAdd(true)}
+              onAdd={_openAddContact}
               onClearSearch={() => setSearch('')}
               onSync={() => setActiveTab('device')}
               onDiscover={handleDiscover}

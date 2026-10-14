@@ -554,7 +554,7 @@ export default function GlobalSearch({
                     title={c.name || (t?.('chat.untitled') || 'Conversa')}
                     subtitle={c.last_message || (c.type === 'group' ? (t?.('chat.group') || 'Grupo') : (t?.('chat.direct') || 'Conversa direta'))}
                     time={formatTime(c.last_message_at || c.updated_at, t, _lang?.language)}
-                    onPress={() => go(`/chat-conversation?id=${c.id}`)}
+                    onPress={() => go(`/chat-conversation?id=${c.id}${c.type ? `&type=${encodeURIComponent(c.type)}` : ''}`)}
                     colors={colors}
                     query={q.trim()}
                   />
