@@ -2660,6 +2660,42 @@ const SearchHighlightText = React.memo(function SearchHighlightText({ text, term
 const URL_REGEX = /(https?:\/\/[^\s<]+)/g;
 const MENTION_PAT = /@([\w.\-]+(?:@[\w.\-]+\.\w+)?)/g;
 const HASHTAG_PAT = /(?:^|\s)(#[\w\u00C0-\u017F]{2,30})/g;
+// [2026-10-14 mention-real] Só é MENÇÃO (negrito + toque) o @ que veio do
+// seletor (msg.mentions = emails) ou que resolve p/ um usuário CONHECIDO
+// localmente (membros/peer/eu). "@delta airlines" virava link p/ /u/delta
+// (inexistente) → "Verifique sua conexão". Registry módulo: chave lower
+// (email, local-part, username) → email.
+const _knownMentionUsers = new Map();
+function _registerMentionUser(email, extra) {
+  try {
+    const e = String(email || '').trim().toLowerCase();
+    if (!e || e.indexOf('@') < 1) return;
+    _knownMentionUsers.set(e, e);
+    const lp = e.split('@')[0];
+    if (lp && !_knownMentionUsers.has(lp)) _knownMentionUsers.set(lp, e);
+    const u = String(extra || '').trim().replace(/^@/, '').toLowerCase();
+    if (u) _knownMentionUsers.set(u, e);
+  } catch {}
+}
+function _parseMsgMentions(m) {
+  try {
+    const arr = Array.isArray(m) ? m : (typeof m === 'string' && m ? JSON.parse(m) : null);
+    return Array.isArray(arr) ? arr.map(x => String(x || '').toLowerCase()).filter(Boolean) : null;
+  } catch { return null; }
+}
+// → email (string) | '@meta' (everyone/admins) | null (texto comum)
+function _resolveMention(handleRaw, mentionsArr) {
+  const h = String(handleRaw || '').replace(/^@/, '').replace(/[.\-]+$/, '').toLowerCase();
+  if (!h) return null;
+  if (mentionsArr && mentionsArr.length) {
+    if ((h === 'everyone' || h === 'all' || h === 'todos') && mentionsArr.includes('@everyone')) return '@meta';
+    if (h === 'admins' && mentionsArr.includes('@admins')) return '@meta';
+    for (const e of mentionsArr) {
+      if (e === h || (e.indexOf('@') > 0 && e.split('@')[0] === h)) return e;
+    }
+  }
+  return _knownMentionUsers.get(h) || null;
+}
 
 
 // ============================================================
@@ -2895,7 +2931,7 @@ function _a11yMsgLabelRaw(msg, { t, isOwn, isGroup, isDeleted, readStatus, react
   return parts.filter(Boolean).join(', ');
 }
 
-function TextWithLinks({ text, style, linkColor, colors, mentionColor, router: routerProp }) {
+function TextWithLinks({ text, style, linkColor, colors, mentionColor, router: routerProp, mentions }) {
   if (!text) return null;
 
   // ★ Split by spoiler text first ||...||
@@ -2916,7 +2952,7 @@ function TextWithLinks({ text, style, linkColor, colors, mentionColor, router: r
         {spoilerParts.map((part, idx) =>
           part.type === 'spoiler'
             ? <SpoilerText key={idx} style={style}>{part.value}</SpoilerText>
-            : <TextWithLinks key={idx} text={part.value} style={style} linkColor={linkColor} colors={colors} mentionColor={mentionColor} router={routerProp} />
+            : <TextWithLinks key={idx} text={part.value} style={style} linkColor={linkColor} colors={colors} mentionColor={mentionColor} router={routerProp} mentions={mentions} />
         )}
       </Text>
     );
@@ -2967,13 +3003,20 @@ function TextWithLinks({ text, style, linkColor, colors, mentionColor, router: r
     if (!str) return null;
     if (!mTest.test(str)) return renderHashtags(str, kp);
     const re = new RegExp(MENTION_PAT.source, 'g');
+    const _mArr = _parseMsgMentions(mentions);
     const segs = []; let li = 0, mt;
     while ((mt = re.exec(str)) !== null) {
+      // [2026-10-14 mention-real] "@" colado em palavra (foo@bar.com) não é
+      // menção; e @handle sem usuário real = texto comum (sem negrito/toque).
+      const _prev = mt.index > 0 ? str[mt.index - 1] : '';
+      const _to = (_prev && /[\w.]/.test(_prev)) ? null : _resolveMention(mt[1], _mArr);
+      if (!_to) continue;
       if (mt.index > li) segs.push({ t: 'x', v: str.slice(li, mt.index) });
-      segs.push({ t: '@', v: mt[0] });
+      segs.push({ t: '@', v: mt[0], to: _to });
       li = re.lastIndex;
     }
     if (li < str.length) segs.push({ t: 'x', v: str.slice(li) });
+    if (!segs.some(sg => sg.t === '@')) return renderHashtags(str, kp);
     return segs.map((p, j) =>
       p.t === '@'
         ? (
@@ -2988,7 +3031,7 @@ function TextWithLinks({ text, style, linkColor, colors, mentionColor, router: r
               // available (web fallback).
               try {
                 const handle = p.v.replace(/^@/, '').trim();
-                if (!handle) return;
+                if (!handle || p.to === '@meta') return;
                 if (handle.includes('@')) {
                   // [2026-10-02] replace (não push): abrir outro chat de DENTRO
                   // do chat empilhava telas /chat-conversation → ao arrastar de
@@ -2996,7 +3039,10 @@ function TextWithLinks({ text, style, linkColor, colors, mentionColor, router: r
                   // 1 chat na pilha (back vai direto pra lista, igual WhatsApp).
                   try { require('../services/openConversation').openConversation({ pathname: '/chat-conversation', params: { email: handle, type: 'direct' } }, { replace: true }); } catch { routerProp?.replace({ pathname: '/chat-conversation', params: { email: handle, type: 'direct' } }); }
                 } else {
-                  routerProp?.push({ pathname: '/profile', params: { handle } });
+                  // [2026-10-14 mention-real] abre o perfil pelo EMAIL resolvido
+                  // (local-part ≠ username → /u/<handle> dava "não encontrado").
+                  const _dest = (p.to && p.to.includes('@')) ? p.to : handle;
+                  routerProp?.push({ pathname: '/u/[username]', params: { username: _dest } });
                 }
               } catch {}
             }}
@@ -12455,6 +12501,10 @@ function ChatConversationInner() {
   const [members, setMembers] = _useStateT([]);
   const membersRef = useRef([]);
   useEffect(() => { membersRef.current = members; }, [members]);
+  // [2026-10-14 mention-real] alimenta o registry de menções resolvíveis.
+  useEffect(() => {
+    try { (members || []).forEach(m => _registerMentionUser(m?.email, m?.username || m?.handle)); } catch {}
+  }, [members]);
   const getMemberEmails = useCallback(() => membersRef.current.map(m => m.email).filter(Boolean), []);
   // [deep-20260816-032528] `members` was only set on open/local actions — a
   // member removed by an admin on ANOTHER device stayed in membersRef, so the
@@ -13010,6 +13060,8 @@ function ChatConversationInner() {
   // ticks) until re-render. Fall back to the synchronously-available stored
   // active account (localStorage/MMKV cache) so the side is correct immediately.
   const currentEmail = user?.email || (api.getActiveAccountEmail?.() || '');
+  // [2026-10-14 mention-real] eu + peer do direct também resolvem @handle.
+  useEffect(() => { _registerMentionUser(currentEmail, user?.username); _registerMentionUser(params?.email); }, [currentEmail, user?.username, params?.email]);
   // [2026-10-09 wa-real #13] aquece módulos de áudio + cache da permissão do
   // mic (sem diálogo) depois que a conversa assenta → o toque no mic grava já.
   useEffect(() => {
@@ -29948,6 +30000,7 @@ function ChatConversationInner() {
                           mentionColor={isOwn ? ownTextColor : otherInk}
                           colors={colors}
                           router={router}
+                          mentions={msg.mentions}
                         />
                       ) : null}
                     </View>
@@ -29983,6 +30036,7 @@ function ChatConversationInner() {
                         mentionColor={isOwn ? ownTextColor : otherInk}
                         colors={colors}
                         router={router}
+                        mentions={msg.mentions}
                       />
                       )}
                       <Text style={styles.metaGhost} selectable={false} accessible={false} importantForAccessibility="no">
@@ -30007,6 +30061,7 @@ function ChatConversationInner() {
                     mentionColor={isOwn ? ownTextColor : otherInk}
                     colors={colors}
                     router={router}
+                    mentions={msg.mentions}
                   />
                 );
               })()}

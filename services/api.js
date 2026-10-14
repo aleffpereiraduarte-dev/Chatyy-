@@ -1516,6 +1516,7 @@ const POST_READ_DEDUP = new Set([
   'chat_starred_messages', 'chat_pinned_messages', 'chat_pending_members',
   'chat_scheduled_list', 'chat_blocked_list', 'chat_bot_list',
   'chat_check_blocked', 'common_contacts',
+  'chat_search_advanced', // [2026-10-14 busca-global] leitura pura: não invalida chat_list nem entra na fila offline
 ]);
 function _isReadablePost(action) {
   return POST_READ_SWR.has(action) || POST_READ_DEDUP.has(action);
@@ -5167,8 +5168,34 @@ export async function chatTopicPin(topicId) {
   return apiCall('chat_topic_pin', { topic_id: topicId }, 'POST');
 }
 // Voice transcription
-export async function chatTranscribeAudio(messageId) {
-  return apiCall('chat_transcribe_audio', { message_id: messageId }, 'POST');
+// [2026-10-14 transcricao-idioma] `language` = idioma do app de quem pede — o
+// servidor usa como dica pro Whisper (depois do idioma do remetente), com
+// fallback automático. Servidor antigo ignora o campo.
+export async function chatTranscribeAudio(messageId, language) {
+  const body = { message_id: messageId };
+  if (language && typeof language === 'string') body.language = language;
+  return apiCall('chat_transcribe_audio', body, 'POST');
+}
+
+// [2026-10-14 busca-global] Busca global de mensagens por tipo/data (WhatsApp).
+// opts: { query, types: ['photo'|'video'|'link'|'audio'|'doc'|'poll'], dateFrom: Date,
+//         dateTo: Date (inclusive, dia local), conversationId, cursor, limit }.
+// Os limites do dia são calculados no fuso do APARELHO e enviados em UTC.
+// Resposta: { messages[], conversations{}, has_more, next_cursor }.
+export async function chatSearchAdvanced(opts = {}) {
+  const body = { limit: opts.limit || 40 };
+  const q = String(opts.query || '').trim();
+  if (q) body.query = q;
+  if (Array.isArray(opts.types) && opts.types.length) body.types = opts.types;
+  const dayStart = (d) => { const x = new Date(d); x.setHours(0, 0, 0, 0); return x; };
+  if (opts.dateFrom instanceof Date && !isNaN(opts.dateFrom)) body.date_from = dayStart(opts.dateFrom).toISOString();
+  if (opts.dateTo instanceof Date && !isNaN(opts.dateTo)) {
+    const end = dayStart(opts.dateTo); end.setDate(end.getDate() + 1); // fim do dia local (exclusivo)
+    body.date_to = end.toISOString();
+  }
+  if (opts.conversationId) body.conversation_id = opts.conversationId;
+  if (opts.cursor) body.cursor = opts.cursor;
+  return apiCall('chat_search_advanced', body, 'POST');
 }
 
 // Voice pre-upload session (Telegram-style) — start a session as soon as the
@@ -10773,7 +10800,7 @@ export async function chatSetNotificationSound(conversationId, sound) { return a
 // ============================================================
 // ADVANCED SEARCH
 // ============================================================
-export async function chatSearchAdvanced(opts) { return apiCall('chat_search_advanced', opts, 'POST'); }
+// chatSearchAdvanced → ver a versão com tipo/data/cursor junto de chatTranscribeAudio [2026-10-14 busca-global].
 
 // ============================================================
 // SESSION / DEVICE MANAGEMENT

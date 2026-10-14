@@ -106,9 +106,11 @@ function Wheel({ data, index, onIndex, colors, width }) {
   );
 }
 
-export function WheelDateTimePicker({ colors, t, onChange, initial, mode = 'datetime', dayCount = 90 }) {
+// [2026-10-14 busca-global] `listStart` (opcional): 1º dia da roda ≠ do dia selecionado
+// (busca por data: lista 2 anos p/ trás mas já abre em "30 dias atrás"/hoje).
+export function WheelDateTimePicker({ colors, t, onChange, initial, mode = 'datetime', dayCount = 90, listStart }) {
   const start = initial instanceof Date && !isNaN(initial) ? initial : new Date(Date.now() + 60 * 60000); // default: +1h
-  const days = useRef(buildDays(t, dayCount, start)).current;
+  const days = useRef(buildDays(t, dayCount, listStart instanceof Date && !isNaN(listStart) && listStart <= start ? listStart : start)).current;
   // find the day index matching `start` (0-89), else 0
   const startDi = (() => {
     const sm = new Date(start); sm.setHours(0, 0, 0, 0);
@@ -174,7 +176,7 @@ export function ScheduleToast({ visible, message, colors }) {
  * Used by the calendar (meeting-create, event-detail) to replace manual
  * "YYYY-MM-DD HH:MM" typing. Returns a Date via onConfirm.
  */
-export function DateTimePickerModal({ visible, onClose, initial, onConfirm, colors, t, title, minDate, mode, dayCount }) {
+export function DateTimePickerModal({ visible, onClose, initial, onConfirm, colors, t, title, minDate, mode, dayCount, listStart }) {
   const [picked, setPicked] = React.useState(null);
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
@@ -183,7 +185,7 @@ export function DateTimePickerModal({ visible, onClose, initial, onConfirm, colo
           {!!title && (
             <Text style={{ fontSize: 16, fontWeight: '700', color: colors.text, marginBottom: 12, textAlign: 'center' }}>{title}</Text>
           )}
-          {visible && <WheelDateTimePicker colors={colors} t={t} initial={initial} onChange={setPicked} mode={mode} dayCount={dayCount} />}
+          {visible && <WheelDateTimePicker colors={colors} t={t} initial={initial} onChange={setPicked} mode={mode} dayCount={dayCount} listStart={listStart} />}
           <View style={{ flexDirection: 'row', gap: 10, justifyContent: 'flex-end' }}>
             <TouchableOpacity onPress={onClose} style={{ paddingVertical: 10, paddingHorizontal: 20, borderRadius: 8 }}>
               <Text style={{ color: colors.textSecondary }}>{t('common.cancel')}</Text>

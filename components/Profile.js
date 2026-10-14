@@ -50,7 +50,7 @@ import HighlightEditSheet from './HighlightEditSheet';
 import HighlightShareSheet from './HighlightShareSheet';
 import {
   IconX, IconPhone, IconVideo, IconMail, IconMessageSquare, IconUserPlus,
-  IconChevronRight, IconSettings, IconMoreHorizontal, IconShare, IconAlertTriangle, IconLock, IconEdit,
+  IconChevronRight, IconSettings, IconMoreHorizontal, IconShare, IconAlertTriangle, IconLock, IconEdit, IconUser,
   IconTrash, IconPlus, IconGrid, IconFilm, IconTag, IconCheck, IconEyeOff, IconLink, IconPlay, IconImage,
   IconGiftBox, IconBrush, IconBriefcase, IconDiamond,
 } from './Icons';
@@ -1171,7 +1171,12 @@ export default function Profile({
           // is what requireAuth() emits on 401.
           const msg = r?.message || 'Failed to load profile';
           setErr(msg);
-          setErrStatus(/not authenticated/i.test(msg) ? 401 : 0);
+          // [2026-10-14 mention-404] profile_get responde 404 "Usuário não
+          // encontrado" p/ @handle inexistente — não é erro de rede; a tela
+          // dizia "Verifique sua conexão" (mentira) e oferecia retry inútil.
+          const _st = Number(r?.__httpStatus) || 0;
+          setErrStatus(/not authenticated/i.test(msg) ? 401
+            : (_st === 404 || /n[ãa]o encontrad|not found/i.test(msg)) ? 404 : 0);
         }
       } catch (e) {
         // Offline / network failure: keep showing cached snapshot (no error,
@@ -3105,18 +3110,43 @@ export default function Profile({
       }}>
         {errStatus === 401
           ? <IconLock size={32} color={isDark ? '#fca5a5' : '#dc2626'} />
-          : <IconAlertTriangle size={32} color={isDark ? '#fca5a5' : '#dc2626'} />}
+          : errStatus === 404
+            ? <IconUser size={32} color={colors?.textSecondary || (isDark ? 'rgba(255,255,255,0.6)' : 'rgba(0,0,0,0.55)')} />
+            : <IconAlertTriangle size={32} color={isDark ? '#fca5a5' : '#dc2626'} />}
       </View>
       <Text style={{ color: colors?.text, fontSize: 18, fontWeight: '700', marginBottom: 6, textAlign: 'center' }}>
         {errStatus === 401
           ? (t?.('profile.errSessionTitle') || 'Sessão expirada')
-          : (t?.('profile.errLoadTitle') || 'Não foi possível carregar')}
+          : errStatus === 404
+            ? (t?.('profile.notFoundTitle') || 'Usuário não encontrado')
+            : (t?.('profile.errLoadTitle') || 'Não foi possível carregar')}
       </Text>
       <Text style={{ color: colors?.textSecondary || (isDark ? 'rgba(255,255,255,0.6)' : 'rgba(0,0,0,0.55)'), fontSize: 14, lineHeight: 20, textAlign: 'center', marginBottom: 24 }}>
         {errStatus === 401
           ? (t?.('profile.errSessionMsg') || 'Sua sessão expirou. Faça login de novo pra ver o perfil.')
-          : (t?.('profile.errLoadMsg') || 'Verifique sua conexão e tente novamente.')}
+          : errStatus === 404
+            ? (() => { const _h = String(fetchKey || '').replace(/^@/, ''); const _fb = `@${_h} não existe no Chatyy`; const _v = t?.('profile.notFoundMsg', { handle: _h }); return (_v && _v !== 'profile.notFoundMsg') ? _v : _fb; })()
+            : (t?.('profile.errLoadMsg') || 'Verifique sua conexão e tente novamente.')}
       </Text>
+      {errStatus === 404 ? (
+        <TouchableOpacity
+          onPress={() => {
+            try {
+              if (mode === 'peek' && onClose) { onClose(); return; }
+              if (router?.canGoBack?.()) router.back(); else router?.replace?.('/chat');
+            } catch {}
+          }}
+          style={{
+            paddingHorizontal: 22, paddingVertical: 11, borderRadius: 12, minHeight: 44, justifyContent: 'center',
+            backgroundColor: colors?.primary || '#111111',
+          }}
+          accessibilityRole="button"
+        >
+          <Text style={{ color: colors?.onPrimary || '#fff', fontWeight: '700', fontSize: 14 }}>
+            {t?.('common.back') || 'Voltar'}
+          </Text>
+        </TouchableOpacity>
+      ) : (
       <View style={{ flexDirection: 'row', gap: 10 }}>
         <TouchableOpacity
           onPress={() => { setErr(null); setErrStatus(0); setLoading(true); setRetryCounter(c => c + 1); }}
@@ -3145,6 +3175,7 @@ export default function Profile({
           </TouchableOpacity>
         ) : null}
       </View>
+      )}
     </View>
   ) : (
     <>

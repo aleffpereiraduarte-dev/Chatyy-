@@ -5,13 +5,14 @@ import {
   ActivityIndicator, Platform, ScrollView, Image,
 } from 'react-native';
 import { FlashList } from '@shopify/flash-list';
-import { useRouter } from 'expo-router';
+import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import { IconArrowLeft, IconSearch, IconX, IconHash, IconVideo, IconMusic } from '../components/Icons';
 import AvatarCircle from '../components/AvatarCircle';
 import FadeSlideIn from '../components/FadeSlideIn';
 import * as api from '../services/api';
+import GlobalMessageSearch from '../components/GlobalMessageSearch'; // [2026-10-14 busca-global]
 
 
 // Unified search screen — Pessoas / Hashtags / Sons / Lives. Each tab calls
@@ -20,6 +21,8 @@ import * as api from '../services/api';
 // pill consistent with the rest of the app (ChatFeedTab + ChatListTab).
 const TABS = [
   { key: 'people',   labelKey: 'search.people',   fallback: 'Pessoas' },
+  // [2026-10-14 busca-global] mensagens de todas as conversas por texto/tipo/data (chat_search_advanced).
+  { key: 'messages', labelKey: 'gsearch.tab',     fallback: 'Mensagens' },
   { key: 'hashtags', labelKey: 'search.hashtags', fallback: 'Hashtags' },
   { key: 'sounds',   labelKey: 'search.sounds',   fallback: 'Sons' },
   { key: 'lives',    labelKey: 'search.lives',    fallback: 'Lives' },
@@ -30,7 +33,9 @@ export default function SearchScreen() {
   const { colors, isDark } = useTheme();
   const { t } = useLanguage();
 
-  const [tab, setTab] = useState('people');
+  // [2026-10-14 busca-global] /search?tab=messages abre direto na aba Mensagens.
+  const _params = useLocalSearchParams();
+  const [tab, setTab] = useState(() => (TABS.some((x) => x.key === _params?.tab) ? String(_params.tab) : 'people'));
   const [query, setQuery] = useState('');
   const [loading, setLoading] = useState(false);
   const [results, setResults] = useState({ people: [], hashtags: [], sounds: [], lives: [] });
@@ -90,6 +95,7 @@ export default function SearchScreen() {
   // results immediately for the most common case (Pessoas). Other tabs are
   // lazy-loaded on demand to keep mobile bandwidth low.
   const runSearch = useCallback(async (q, activeTab) => {
+    if (activeTab === 'messages') return; // [2026-10-14 busca-global] a aba Mensagens busca sozinha (GlobalMessageSearch)
     const trimmed = String(q || '').trim();
     if (trimmed.length < 2) {
       setLoading(false);
@@ -358,7 +364,7 @@ export default function SearchScreen() {
           <IconSearch size={18} color={colors.textSecondary} />
           <TextInput
             style={[styles.searchInput, { color: colors.text }]}
-            placeholder={t('search.placeholder') || 'Pesquisar pessoas, hashtags, sons…'}
+            placeholder={tab === 'messages' ? (t('gsearch.placeholder') || 'Pesquisar mensagens…') : (t('search.placeholder') || 'Pesquisar pessoas, hashtags, sons…')}
             placeholderTextColor={colors.textSecondary}
             value={query}
             onChangeText={setQuery}
@@ -421,6 +427,9 @@ export default function SearchScreen() {
 
       <FadeSlideIn>
         {tab === 'people' && renderPeople()}
+        {tab === 'messages' && (
+          <GlobalMessageSearch query={query} colors={colors} isDark={isDark} t={t} router={router} pillStyle={styles.tabPill} />
+        )}
         {tab === 'hashtags' && renderHashtags()}
         {tab === 'sounds' && renderSounds()}
         {tab === 'lives' && renderLives()}
